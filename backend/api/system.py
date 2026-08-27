@@ -90,7 +90,7 @@ async def get_system_info() -> Dict[str, Any]:
 
 @router.get("/check-update")
 async def check_for_updates() -> Dict[str, Any]:
-    latest_version = "0.1.1" if VERSION == "0.1.0" else VERSION
+    latest_version = VERSION
     return {
         "current_version": VERSION,
         "latest_version": latest_version,

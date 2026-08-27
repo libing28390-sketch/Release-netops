@@ -278,16 +278,10 @@ PLATFORM_ACTION_COMMANDS["ruijie_rgos"].update({"get_bgp_routes": "show ip bgp",
 PLATFORM_ACTION_COMMANDS["huawei_vrpv8"] = dict(PLATFORM_ACTION_COMMANDS["huawei_vrp"])
 
 # A parser platform describes the parser/driver family.  A platform profile
-# is the concrete vendor + product/version identity.  Most profiles can use
-# the family catalog unchanged, but this explicit per-profile override is the
-# extension point for platforms whose command grammar differs inside one
-# family (for example Comware V5 versus V7).
+# is the concrete vendor + product/version identity.  Comware V5 has a small
+# but important CLI difference from V7/V9 (notably BGP and ARP), so keep its
+# action catalog explicit instead of making the transport driver decide it.
 PROFILE_ACTION_COMMANDS: dict[str, dict[str, str]] = {
-    "hp_comware": {
-        **PLATFORM_ACTION_COMMANDS["h3c_comware"],
-        "get_arp_table": "display arp",
-        "get_bgp_neighbors": "display bgp peer ipv4",
-    },
     "h3c_comware": {
         **PLATFORM_ACTION_COMMANDS["h3c_comware"],
         # The V7 grammar/fixture is registered for the command without the
@@ -295,8 +289,18 @@ PROFILE_ACTION_COMMANDS: dict[str, dict[str, str]] = {
         # identical so a published action cannot bind the wrong grammar.
         "get_bgp_routes": "display bgp routing-table ipv4",
     },
-    "h3c_comware9": dict(PLATFORM_ACTION_COMMANDS["h3c_comware"]),
 }
+# ``hp_comware`` is Netmiko's legacy H3C/Comware V5 driver name and is also a
+# legacy system profile code in this application.  The explicit V5 profile
+# uses the same catalog so old and new device bindings remain consistent.
+PROFILE_ACTION_COMMANDS["hp_comware"] = {
+    **PLATFORM_ACTION_COMMANDS["h3c_comware"],
+    "get_arp_table": "display arp all",
+    "get_bgp_neighbors": "display bgp peer",
+    "get_bgp_routes": "display bgp routing-table",
+}
+PROFILE_ACTION_COMMANDS["h3c_comware_v5"] = dict(PROFILE_ACTION_COMMANDS["hp_comware"])
+PROFILE_ACTION_COMMANDS["h3c_comware9"] = dict(PROFILE_ACTION_COMMANDS["h3c_comware"])
 
 
 def get_profile_action_commands(profile: dict[str, Any]) -> dict[str, str]:

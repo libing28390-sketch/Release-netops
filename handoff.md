@@ -382,3 +382,123 @@ backend/tests/platform_registry（PostgreSQL 专用夹具）             124 pas
 - 使用 `admin/admin` 重新登录后，AI Center 11 个路由（Provider、Model、Prompt、Copilot、Agent、Knowledge、Retrieval、Catalog、Governance、Usage、Security）逐一加载成功，无动态模块错误、登录丢失或新增前端 error；拓扑页同样加载成功，无 `Failed to fetch`。
 - Security 事件/审计搜索与页码控件已验证；Catalog 服务端 API 搜索 `CE68` 返回 3 条、Alias API 返回 14 条；Prompt/Model 搜索和分页已在页面复验。
 - 最终门禁：定向基础回归 `25 passed`；后端（排除独立 PostgreSQL 夹具目录）`1772 passed, 2 skipped`；`platform_registry` PostgreSQL 专用夹具 `124 passed`；前端 AI `29 passed`；lint、build、compileall、diff check 均通过。
+
+---
+
+# 2026-08-27 机柜只读 3D 工作台交接
+
+## 目标与当前结论
+
+本轮按 `docs/rack-3d-readonly-recommendation.md` 开始实施机柜改造。产品边界已确定为：
+
+- 2D 机柜是唯一写入入口和事实来源。
+- 3D 永久只读，只同步展示 2D 布局、设备健康和已验证拓扑。
+- 先完成可信的单机柜工作台，再增加摘要优先的多机柜逻辑总览。
+- 无真实链路、接口或遥测时明确显示缺失状态，不生成演示数据冒充真实数据。
+
+当前 **Phase 0 已完成代码实现和自动化门禁**；真实页面已验证只读标识、完整 3D 工作区、设备列表、无已验证链路提示和跨面板全屏视觉边界。全屏退出后状态保留的自动点击回归尚未取得稳定结果，应在下一轮继续验证。Phase 1/2 尚未完成，不能将整个建议书视为已全部实施。
+
+## 本轮已完成
+
+### 只读边界
+
+- 3D 模式隐藏设备型号、新建机柜、导入、下载模板、安装、下载 PNG、机柜编辑/删除和设备移除入口。
+- 页面与 3D 工具栏增加“只读视图/只读”标识。
+- 设备详情抽屉在 3D 中只显示只读提示，写操作仍保留在 2D。
+- “抽出检修”改为“拉出观察”，避免误导为资产或检修状态变更。
+
+### 全屏与交互
+
+- 全屏根节点从单独 Canvas 扩展到机柜工作区，包含机柜列表、工具栏、3D、图例、设备清单和详情抽屉。
+- 监听 `fullscreenchange`，以浏览器实际全屏元素同步按钮状态。
+- 相机按机柜宽、高、深和当前视口 FOV 计算 fit-to-view，全屏尺寸变化会重新计算。
+- 设备列表、搜索结果和外部选中状态统一触发 3D 相机聚焦。
+- 修复机柜卡片外层按钮嵌套编辑/删除按钮导致的 hydration/DOM 结构错误。
+
+### 数据真实性与资源生命周期
+
+- 新增后端 `/topology/links` 契约归一化，将 `source_device_id` / `target_device_id`、端口、状态和速率映射到机柜本地链路。
+- 支持机柜设备位于链路 source 或 target 两个方向，并优先使用 `networkDeviceId` 匹配。
+- 删除 F1090 特例、按设备顺序自动级联、虚构端口/速率/线缆类型等造线逻辑。
+- 没有真实拓扑时显示“无已验证链路”，接口失败和截断分别显示状态。
+- `TubeGeometry` 改为 memoized 组件并在变化/卸载时显式 `dispose()`。
+- 生产 Canvas 关闭 `preserveDrawingBuffer`。
+- 设备 tooltip 删除模拟 24 端口、MGMT/CONSOLE/USB 状态和模拟流量；只有 IF-MIB 实际接口才显示端口矩阵。
+- 修复遥测设备匹配：稳定 monitoring device ID 优先，空 hostname 不再参与模糊匹配，避免读取错设备。
+
+## 关键文件
+
+- `src/pages/RackManagement/index.tsx`：3D 只读边界、全屏工作区、机柜卡片结构。
+- `src/pages/RackManagement/Rack3D/index.tsx`：只读工具栏、搜索/选择聚焦、拓扑请求和状态。
+- `src/pages/RackManagement/Rack3D/RackScene.tsx`：按真实机柜尺寸驱动相机、Canvas 设置。
+- `src/pages/RackManagement/Rack3D/CameraController.tsx`：基于 FOV/视口的 fit-to-view。
+- `src/pages/RackManagement/Rack3D/RackCableLayer.tsx`：仅渲染已验证链路和 geometry 生命周期。
+- `src/pages/RackManagement/Rack3D/RackDeviceTooltip.tsx`：真实接口遥测和诚实空状态。
+- `src/pages/RackManagement/Rack3D/topology.ts`：拓扑 API 契约归一化。
+- `src/pages/RackManagement/adapters/snmpTelemetry.ts`：稳定设备身份匹配。
+- `src/pages/RackManagement/Rack3D/index.test.tsx`、`topology.test.ts`、`adapters/__tests__/snmpTelemetry.test.ts`：新增回归测试。
+- `docs/rack-3d-readonly-recommendation.md`：完整审查、架构和分阶段建议书。
+
+## 验证证据
+
+已执行：
+
+```text
+npm run test:frontend -- --run \
+  src/pages/RackManagement/Rack3D/topology.test.ts \
+  src/pages/RackManagement/Rack3D/index.test.tsx \
+  src/pages/RackManagement/adapters/__tests__/rackViewModel.test.ts \
+  src/pages/RackManagement/adapters/__tests__/snmpTelemetry.test.ts
+# 4 test files passed, 14 tests passed
+
+npm run lint
+# passed, tsc --noEmit exit 0
+
+npm run build
+# passed, 4254 modules transformed；仅有既有 large chunk 提示
+
+git diff --check -- <rack files>
+# exit 0；只有 Git 的 LF/CRLF 提示，无空白错误
+```
+
+真实页面 `http://192.168.56.1:5400/cmdb/racks` 已观察到：4 个机柜、当前机柜 8 台设备；3D 无安装/删除入口；显示只读标识；全屏画面覆盖左侧机柜列表、中间 3D 和右侧设备列表；无拓扑数据时显示“无已验证链路”。未向环境写入演示数据。
+
+## 下一步规划与任务
+
+### P0：完成 Phase 0 浏览器验收
+
+1. 复验进入/退出全屏，确认选中机柜、选中设备、相机聚焦和显示图层不丢失。
+2. 从搜索结果、右侧列表和 3D 模型分别选择设备，确认三者同步并打开同一只读详情。
+3. 验证 24U、42U、48U 默认视角都完整可见；当前真实数据主要覆盖 42U。
+4. 检查控制台无 hydration、WebGL 资源泄漏或拓扑请求错误。
+
+### P1：完成单机柜日常可用体验
+
+1. 增加统一只读 Inspector，展示数据来源、更新时间/过期状态、U 位、面向、资产关联、健康、功耗和数据质量。
+2. 对 topology loading/error/empty/truncated、遥测 loading/error/empty 分别提供解释与重试入口。
+3. 将工具栏整理为常用视角与“更多图层”，改善窄屏和全屏下的密度。
+4. 增加“在 2D 中查看”入口，只切换视图并保留当前机柜/设备，不在 3D 写数据。
+5. 补充异常 U 位、重叠设备、WebGL 不可用、拓扑失败和遥测失败测试。
+
+### P1/P2：先改读取模型，再做多机柜 3D
+
+1. 当前页面仍在首屏通过 `Promise.all` 请求所有机柜完整 layout；不能直接扩展到大量机柜。
+2. 后端增加兼容的机柜摘要接口/查询：Site、楼层、房间、行、状态、关键词、分页；返回设备数、U/功率利用率、健康和数据质量摘要，不返回完整布局。
+3. 前端抽离 `useRackReadModel`：首屏只取摘要，选择机柜后才取 `/racks/{id}/layout`；使用有上限/失效时间的详情缓存和 `AbortController`。
+4. 现有 `allLayouts` 还承担资产重复安装校验和全量导出。在移除预加载前，必须把重复占用校验移到后端或增加紧凑 occupancy 接口，不能削弱 2D 写入校验。
+5. 拓扑和健康改为按 Site/机柜范围获取，禁止把全局 500 条数据下发后再前端筛选。
+
+### P2：轻量多机柜逻辑总览
+
+1. 先按 Site → 房间 → 行 → 机柜序号生成逻辑位置，并明确标识 `inferred`，不伪装成现场坐标。
+2. L0 使用 `InstancedMesh` 只渲染机柜摘要和状态色；不创建每台设备、端口、线缆和大量 HTML 标签。
+3. 单击机柜定位，双击/打开详情后才加载布局并进入当前单机柜工作台。
+4. 增加 Site、楼层、房间、行、健康和关键词组合筛选；超过 500 条使用服务端分页/搜索。
+5. 用 50/100/500 个机柜摘要做首屏请求数、切换延迟、FPS 和内存基准。
+
+## 注意事项
+
+- 当前工作树同时存在 H3C/TextFSM、导航、版本和其他页面的大量改动；用户已于 2026-08-27 明确要求将全部代码改动统一提交并推送，因此本次提交范围包含整个当前工作树。后续接手时应以最终 commit 的完整 diff 为准。
+- `docs/rack-3d-readonly-recommendation.md` 受 `.gitignore` 的 `**/*.md` 规则影响，提交时需要显式 `git add -f`。
+- 生产构建已更新 `dist/index.html`；因用户要求全部改动一起推送，本次统一提交包含当前构建产物。
+- 本轮未改后端和数据库；多机柜摘要接口尚未实现，后续开始该部分时应使用 `netops-backend`，涉及持久模型/索引时同时使用 `netops-data-migrations`。

@@ -13,6 +13,7 @@ import DeviceMfaModal from './AccessCenterTab/components/DeviceMfaModal';
 import { createPamWebSession, enabledWebProfiles, ensurePamWebAgent, launchPamWebSession, type WebAccessLevel } from '../api/pamWeb';
 import type { WebAccessProfile } from './AssetManagement/types';
 import { WebAccessRequestModal } from './AssetManagement/components/WebAccessRequestModal';
+import { formatTerminalAgentError, getLocalTerminalConfig, TERMINAL_APP_LABELS } from '../utils/localTerminal';
 
 interface Device {
   id: string;
@@ -447,9 +448,8 @@ export default function AccessCenterTab({ devices, language, showToast }: Access
 
   const handleAccessRequest = async (dev: Device, appType: 'xshell' | 'web', identity: 'normal' | 'privileged', webScheme?: WebScheme) => {
     if (appType === 'xshell') {
-      // 1. Get saved path from Profile Settings (localStorage keys: local_terminal_path, terminal_app)
-      let terminalPath = localStorage.getItem('local_terminal_path');
-      let terminalType = localStorage.getItem('terminal_app') || 'standard';
+      // Read the normalized configuration for the workstation running this browser.
+      const { path: terminalPath, app: terminalType } = getLocalTerminalConfig();
 
       if (terminalType !== 'standard' && !terminalPath) {
         showToast(isZh ? '请先在个人信息中配置终端路径' : 'Please configure terminal path in Profile first', 'info');
@@ -595,7 +595,7 @@ export default function AccessCenterTab({ devices, language, showToast }: Access
         throw new Error(agentResult.error || `HTTP ${agentRes.status}`);
       }
 
-      const appName = terminalType === 'standard' ? 'SSH' : terminalType === 'xshell' ? 'Xshell' : terminalType === 'putty' ? 'PuTTY' : terminalType === 'securecrt' ? 'SecureCRT' : terminalType === 'mobaxterm' ? 'MobaXterm' : 'Terminal';
+      const appName = TERMINAL_APP_LABELS[terminalType] || 'Terminal';
 
       showToast(
         isZh ? `正在拉起 ${appName}` : `Launching ${appName}`,
@@ -604,12 +604,7 @@ export default function AccessCenterTab({ devices, language, showToast }: Access
 
     } catch (err) {
       console.error('Local Terminal Agent launch failed', err);
-      showToast(
-        isZh
-          ? '\u65e0\u6cd5\u8fde\u63a5\u672c\u5730\u7ec8\u7aef\u4ee3\u7406\uff0c\u8bf7\u5148\u542f\u52a8 Terminal Agent\uff08\u4ec5\u76d1\u542c 127.0.0.1:17890\uff09'
-          : 'Cannot connect to the local Terminal Agent. Start it on this workstation (127.0.0.1:17890) and retry.',
-        'error',
-      );
+      showToast(formatTerminalAgentError(err, isZh), 'error');
     }
   };
 
@@ -659,8 +654,7 @@ export default function AccessCenterTab({ devices, language, showToast }: Access
     const pin = fixedPassword;
 
     if (target.appType === 'xshell') {
-      const terminalPath = localStorage.getItem('local_terminal_path') || '';
-      const terminalType = localStorage.getItem('terminal_app') || 'standard';
+      const { path: terminalPath, app: terminalType } = getLocalTerminalConfig();
       if (terminalType !== 'standard' && !terminalPath) {
         showToast(isZh ? '请先在个人信息中配置终端路径' : 'Please configure terminal path in Profile first', 'info');
         return;

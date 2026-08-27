@@ -1,4 +1,4 @@
-import React, { useMemo, useRef } from 'react';
+import React, { useEffect, useMemo, useRef } from 'react';
 import * as THREE from 'three';
 import { useFrame } from '@react-three/fiber';
 import { Html } from '@react-three/drei';
@@ -15,7 +15,7 @@ export interface TopologyLinkItem {
   remote_device_name?: string;
   remote_interface: string;
   speed_mbps?: number;
-  status: 'up' | 'down';
+  status: 'up' | 'down' | 'degraded' | 'stale' | 'unknown';
   cable_type?: 'fiber' | 'dac' | 'copper';
 }
 
@@ -52,6 +52,33 @@ const CableTrafficParticle: React.FC<{
         emissive={isFiber ? '#38bdf8' : '#fbbf24'}
         emissiveIntensity={3.5}
         roughness={0.1}
+      />
+    </mesh>
+  );
+};
+
+const RackCableTube: React.FC<{
+  curve: THREE.CatmullRomCurve3;
+  radius: number;
+  color: string;
+  emissiveColor: string;
+  emissiveIntensity: number;
+}> = ({ curve, radius, color, emissiveColor, emissiveIntensity }) => {
+  const geometry = useMemo(
+    () => new THREE.TubeGeometry(curve, 36, radius, 8, false),
+    [curve, radius],
+  );
+
+  useEffect(() => () => geometry.dispose(), [geometry]);
+
+  return (
+    <mesh geometry={geometry}>
+      <meshStandardMaterial
+        color={color}
+        roughness={0.3}
+        metalness={0.5}
+        emissive={emissiveColor}
+        emissiveIntensity={emissiveIntensity}
       />
     </mesh>
   );
@@ -108,13 +135,12 @@ export const RackCableLayer: React.FC<RackCableLayerProps> = ({
 }) => {
   if (cableMode === 'off') return null;
 
-  const devices = rackVM.validDevices;
-
   // Build device lookup map by ID and Name
   const deviceMap = useMemo(() => {
     const map = new Map<string, RackDeviceVM>();
     rackVM.devices.forEach(d => {
       map.set(d.id, d);
+      if (d.networkDeviceId) map.set(d.networkDeviceId, d);
       map.set(d.name.toLowerCase(), d);
       map.set(d.name.replace(/[^a-zA-Z0-9]/g, '').toLowerCase(), d);
     });
@@ -123,83 +149,7 @@ export const RackCableLayer: React.FC<RackCableLayerProps> = ({
 
   // Compute cables
   const activeCables = useMemo(() => {
-    if (devices.length < 2) return [];
-
-    // Identify Top-of-Rack (ToR) switch (highest startU)
-    const torSwitch = [...devices].sort((a, b) => b.startU - a.startU)[0];
-
-    // Build intelligent intra-rack and inter-device links
-    const effectiveLinks: TopologyLinkItem[] = [];
-
-    // 1. If explicit topology links exist, add them
-    if (links && links.length > 0) {
-      effectiveLinks.push(...links);
-    }
-
-    // 2. Add description-based links for firewall / switches in rack
-    devices.forEach((dev, idx) => {
-      const devName = dev.name.toUpperCase();
-      if (devName.includes('F1090-9')) {
-        // GE1/0/0 -> TO-S6850-1
-        effectiveLinks.push({
-          id: `link-${dev.id}-s6850-1`,
-          local_device_id: dev.id,
-          local_device_name: dev.name,
-          local_interface: 'GE1/0/0',
-          remote_device_name: 'S6850-1',
-          remote_interface: 'GE1/0/1',
-          speed_mbps: 1000,
-          status: 'up',
-          cable_type: 'copper'
-        });
-        // GE1/0/2 -> RBM-TO-F1090-10
-        effectiveLinks.push({
-          id: `link-${dev.id}-f1090-10`,
-          local_device_id: dev.id,
-          local_device_name: dev.name,
-          local_interface: 'GE1/0/2',
-          remote_device_name: 'F1090-10',
-          remote_interface: 'GE1/0/2',
-          speed_mbps: 1000,
-          status: 'up',
-          cable_type: 'copper'
-        });
-      } else if (devName.includes('F1090-10')) {
-        // GE1/0/2 -> RBM-TO-F1090-9
-        effectiveLinks.push({
-          id: `link-${dev.id}-f1090-9`,
-          local_device_id: dev.id,
-          local_device_name: dev.name,
-          local_interface: 'GE1/0/2',
-          remote_device_name: 'F1090-9',
-          remote_interface: 'GE1/0/2',
-          speed_mbps: 1000,
-          status: 'up',
-          cable_type: 'copper'
-        });
-      } else {
-        // Cascade link to adjacent device or ToR
-        const targetDev = idx < devices.length - 1 ? devices[idx + 1] : torSwitch;
-        if (targetDev.id !== dev.id) {
-          const localPort = (idx % 12) * 2;
-          const remotePort = 22 - (idx % 12) * 2;
-          effectiveLinks.push({
-            id: `link-${dev.id}-${targetDev.id}`,
-            local_device_id: dev.id,
-            local_device_name: dev.name,
-            local_interface: `10GE1/0/${localPort}`,
-            remote_device_id: targetDev.id,
-            remote_device_name: targetDev.name,
-            remote_interface: `10GE1/0/${remotePort}`,
-            speed_mbps: 10000,
-            status: 'up',
-            cable_type: idx % 2 === 0 ? 'dac' : 'fiber'
-          });
-        }
-      }
-    });
-
-    return effectiveLinks
+    return links
       .map(link => {
         const srcDev =
           deviceMap.get(link.local_device_id) ||
@@ -282,7 +232,7 @@ export const RackCableLayer: React.FC<RackCableLayerProps> = ({
         srcDev: RackDeviceVM;
         dstDev?: RackDeviceVM;
       }>;
-  }, [links, devices, deviceMap, selectedDeviceId, cableMode, rackVM.totalU]);
+  }, [links, deviceMap, selectedDeviceId, cableMode, rackVM.totalU]);
 
   // If in 'select' mode, highlight the primary connection
   const highlightedCables = activeCables.filter(c => c.isHighlighted);
@@ -293,26 +243,30 @@ export const RackCableLayer: React.FC<RackCableLayerProps> = ({
       {activeCables.map((item, idx) => {
         const { link, curve, isHighlighted } = item;
         const isFiber = link.cable_type === 'fiber';
-        const cableColor = isFiber ? '#06b6d4' : isHighlighted ? '#38bdf8' : '#475569';
+        const cableColor = link.status === 'down'
+          ? '#ef4444'
+          : link.status === 'degraded'
+            ? '#f59e0b'
+            : link.status === 'stale'
+              ? '#64748b'
+              : isFiber
+                ? '#06b6d4'
+                : isHighlighted ? '#38bdf8' : '#475569';
         const emissiveColor = isHighlighted ? (isFiber ? '#06b6d4' : '#0ea5e9') : '#000000';
         const emissiveIntensity = isHighlighted ? 1.4 : 0;
         // Slender professional cabling (Fiber 2.5mm, Cat6 5mm)
         const radius = isHighlighted ? (isFiber ? 0.013 : 0.017) : (isFiber ? 0.009 : 0.013);
 
-        const geometry = new THREE.TubeGeometry(curve, 36, radius, 8, false);
-
         return (
           <group key={link.id || idx}>
             {/* Cable 3D Tube */}
-            <mesh geometry={geometry}>
-              <meshStandardMaterial
-                color={cableColor}
-                roughness={0.3}
-                metalness={0.5}
-                emissive={emissiveColor}
-                emissiveIntensity={emissiveIntensity}
-              />
-            </mesh>
+            <RackCableTube
+              curve={curve}
+              radius={radius}
+              color={cableColor}
+              emissiveColor={emissiveColor}
+              emissiveIntensity={emissiveIntensity}
+            />
 
             {/* Dynamic Data Traffic Flow Particles */}
             {(isHighlighted || cableMode === 'all') && (
@@ -352,7 +306,15 @@ export const RackCableLayer: React.FC<RackCableLayerProps> = ({
               </span>
             </div>
             <div className="text-[9px] text-amber-300 mt-0.5">
-              {primaryCable.link.cable_type === 'fiber' ? '10G 光纤跳线' : '千兆双绞线 (Cat6)'} · LINK UP
+              {primaryCable.link.cable_type === 'fiber'
+                ? '光纤链路'
+                : primaryCable.link.cable_type === 'dac'
+                  ? 'DAC 链路'
+                  : primaryCable.link.cable_type === 'copper'
+                    ? '铜缆链路'
+                    : '物理链路'}
+              {primaryCable.link.speed_mbps ? ` · ${primaryCable.link.speed_mbps} Mbps` : ''}
+              {` · ${primaryCable.link.status.toUpperCase()}`}
             </div>
           </div>
         </Html>

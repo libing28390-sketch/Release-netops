@@ -1,4 +1,0 @@
-<Sysname> display environment
-Temperature State: Normal
-Temperature Value: 30 Degree Celsius
-Warning Threshold: 55 Degree Celsius

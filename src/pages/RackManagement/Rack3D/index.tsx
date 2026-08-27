@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useRef } from 'react';
+import React, { useState, useEffect } from 'react';
 import {
   RotateCcw,
   Layers,
@@ -13,6 +13,7 @@ import {
   Zap,
   Tag,
   Cable,
+  Eye,
   ZoomIn,
   ZoomOut
 } from 'lucide-react';
@@ -24,12 +25,15 @@ import { RackDeviceTooltip } from './RackDeviceTooltip';
 import { CableMode, TopologyLinkItem } from './RackCableLayer';
 import { API } from '../constants';
 import { authHeaders } from '../helpers';
+import { normalizeRackTopologyLinks, RawTopologyLinkItem } from './topology';
 
 interface Rack3DContainerProps {
   rackVM: RackVM;
   selectedDeviceId?: string | null;
   onSelectDevice: (deviceId: string) => void;
   onFallbackTo2D: () => void;
+  isFullscreen: boolean;
+  onToggleFullscreen: () => void | Promise<void>;
   zh: boolean;
 }
 
@@ -75,9 +79,10 @@ export const Rack3DContainer: React.FC<Rack3DContainerProps> = ({
   selectedDeviceId,
   onSelectDevice,
   onFallbackTo2D,
+  isFullscreen,
+  onToggleFullscreen,
   zh
 }) => {
-  const containerRef = useRef<HTMLDivElement>(null);
   const [webglSupported, setWebglSupported] = useState<boolean | null>(null);
   const [cameraPreset, setCameraPreset] = useState<CameraPreset>('reset');
   const [focusTarget, setFocusTarget] = useState<DeviceFocusTarget | null>(null);
@@ -88,8 +93,9 @@ export const Rack3DContainer: React.FC<Rack3DContainerProps> = ({
   const [showULabels, setShowULabels] = useState(true);
   const [displayMode, setDisplayMode] = useState<RackDisplayMode>('physical');
   const [cableMode, setCableMode] = useState<CableMode>('select');
-  const [topologyLinks, setTopologyLinks] = useState<TopologyLinkItem[]>([]);
-  const [isFullscreen, setIsFullscreen] = useState(false);
+  const [rawTopologyLinks, setRawTopologyLinks] = useState<RawTopologyLinkItem[]>([]);
+  const [topologyStatus, setTopologyStatus] = useState<'loading' | 'ready' | 'error'>('loading');
+  const [topologyTruncated, setTopologyTruncated] = useState(false);
   const [hoveredDevice, setHoveredDevice] = useState<RackDeviceVM | null>(null);
   const [searchQuery, setSearchQuery] = useState('');
   const [showSearchDropdown, setShowSearchDropdown] = useState(false);
@@ -109,6 +115,17 @@ export const Rack3DContainer: React.FC<Rack3DContainerProps> = ({
   };
 
   useEffect(() => {
+    if (!selectedDeviceId) return;
+    const device = rackVM.validDevices.find(item => item.id === selectedDeviceId);
+    if (!device) return;
+    setFocusTarget({
+      centerY: device.coordinates.centerY,
+      face: device.face,
+      timestamp: Date.now()
+    });
+  }, [selectedDeviceId, rackVM.validDevices]);
+
+  useEffect(() => {
     setWebglSupported(isWebGLAvailable());
   }, []);
 
@@ -116,48 +133,37 @@ export const Rack3DContainer: React.FC<Rack3DContainerProps> = ({
   useEffect(() => {
     let cancelled = false;
     async function loadTopology() {
+      setTopologyStatus('loading');
       try {
-        const res = await fetch(`${API}/topology/links?limit=500`, {
+        const params = new URLSearchParams({ limit: '500' });
+        if (rackVM.siteId) params.set('site_id', rackVM.siteId);
+        const res = await fetch(`${API}/topology/links?${params.toString()}`, {
           headers: authHeaders()
         });
         if (!res.ok) throw new Error('Topology fetch failed');
         const data = await res.json();
         if (cancelled) return;
         const rawLinks = Array.isArray(data) ? data : (data?.links || []);
-        setTopologyLinks(rawLinks);
-      } catch (err) {
-        // Fallback default links handled in RackCableLayer
+        setRawTopologyLinks(rawLinks);
+        setTopologyTruncated(Boolean(data?.truncated));
+        setTopologyStatus('ready');
+      } catch {
+        if (cancelled) return;
+        setRawTopologyLinks([]);
+        setTopologyTruncated(false);
+        setTopologyStatus('error');
       }
     }
     loadTopology();
     return () => {
       cancelled = true;
     };
-  }, []);
+  }, [rackVM.siteId]);
 
-  // Listen for fullscreen change events
-  useEffect(() => {
-    const handleFullscreenChange = () => {
-      setIsFullscreen(!!document.fullscreenElement);
-    };
-    document.addEventListener('fullscreenchange', handleFullscreenChange);
-    return () => {
-      document.removeEventListener('fullscreenchange', handleFullscreenChange);
-    };
-  }, []);
-
-  const handleToggleFullscreen = async () => {
-    if (!containerRef.current) return;
-    try {
-      if (!document.fullscreenElement) {
-        await containerRef.current.requestFullscreen();
-      } else {
-        await document.exitFullscreen();
-      }
-    } catch (err) {
-      console.error('Fullscreen toggle error:', err);
-    }
-  };
+  const topologyLinks: TopologyLinkItem[] = React.useMemo(
+    () => normalizeRackTopologyLinks(rawTopologyLinks, rackVM),
+    [rawTopologyLinks, rackVM],
+  );
 
   // Search filtered devices
   const filteredDevices = React.useMemo(() => {
@@ -214,12 +220,16 @@ export const Rack3DContainer: React.FC<Rack3DContainerProps> = ({
   return (
     <ThreeErrorBoundary onFallback={onFallbackTo2D} zh={zh}>
       <div
-        ref={containerRef}
         className="w-full h-full relative overflow-hidden flex flex-col select-none"
         style={{ background: '#090d16' }}
       >
         {/* Top Floating Control Bar (Left Island) */}
-        <div className="absolute top-3 left-3 z-10 flex items-center gap-1.5 p-1.5 rounded-xl shadow-2xl backdrop-blur-xl bg-slate-950/90 border border-slate-700/70 text-slate-200">
+        <div className="absolute top-3 left-3 z-10 flex max-w-[calc(100%_-_19rem)] flex-wrap items-center gap-1.5 p-1.5 rounded-xl shadow-2xl backdrop-blur-xl bg-slate-950/90 border border-slate-700/70 text-slate-200">
+          <span className="flex items-center gap-1 rounded-lg border border-cyan-500/40 bg-cyan-500/10 px-2 py-1 text-[10px] font-bold text-cyan-300">
+            <Eye size={11} />
+            {zh ? '只读' : 'Read-only'}
+          </span>
+          <div className="w-[1px] h-3.5 bg-slate-700/80" />
           {/* Camera View Presets */}
           <div className="flex items-center gap-1">
             <button
@@ -406,7 +416,7 @@ export const Rack3DContainer: React.FC<Rack3DContainerProps> = ({
 
           <div className="w-[1px] h-3.5 bg-slate-700/80" />
 
-          {/* Maintenance Pull-Out Button */}
+          {/* Read-only pull-out visualization */}
           {selectedDeviceId && (
             <>
               <button
@@ -416,10 +426,10 @@ export const Rack3DContainer: React.FC<Rack3DContainerProps> = ({
                     ? 'bg-amber-600 text-white shadow-lg shadow-amber-900/50 ring-1 ring-amber-400 animate-pulse'
                     : 'bg-slate-900 hover:bg-slate-800 text-amber-300 border border-amber-500/50'
                 }`}
-                title={zh ? '沿导轨抽出 38cm 检修设备' : 'Pull Out 38cm for Maintenance'}
+                title={zh ? '只读观察动画，不改变设备状态' : 'Read-only inspection animation; no state change'}
               >
                 <Layers size={11} />
-                <span>{pulledOutDeviceId === selectedDeviceId ? (zh ? '推回' : 'Push In') : (zh ? '抽出检修' : 'Pull Out')}</span>
+                <span>{pulledOutDeviceId === selectedDeviceId ? (zh ? '收回设备' : 'Push In') : (zh ? '拉出观察' : 'Inspect')}</span>
               </button>
               <div className="w-[1px] h-3.5 bg-slate-700/80" />
             </>
@@ -427,7 +437,7 @@ export const Rack3DContainer: React.FC<Rack3DContainerProps> = ({
 
           {/* Fullscreen Button */}
           <button
-            onClick={handleToggleFullscreen}
+            onClick={onToggleFullscreen}
             className="flex items-center gap-1 px-2 py-1 rounded-lg text-xs font-medium text-slate-300 hover:bg-slate-800 hover:text-white transition-colors"
             title={zh ? (isFullscreen ? '退出全屏' : '全屏显示') : (isFullscreen ? 'Exit Fullscreen' : 'Fullscreen')}
           >
@@ -547,6 +557,7 @@ export const Rack3DContainer: React.FC<Rack3DContainerProps> = ({
             isDoorOpen={isDoorOpen}
             showDoor={showDoor}
             showULabels={showULabels}
+            zh={zh}
           />
         </div>
 
@@ -604,6 +615,20 @@ export const Rack3DContainer: React.FC<Rack3DContainerProps> = ({
               <span>{zh ? '无遥测' : 'Unknown'} {unknownCount}</span>
             </div>
           )}
+          <div className="w-[1px] h-3 bg-slate-700" />
+          <div className={`flex items-center gap-1 ${topologyStatus === 'error' || topologyTruncated ? 'text-amber-400' : 'text-cyan-300'}`}>
+            <Cable size={11} />
+            <span>
+              {topologyStatus === 'loading'
+                ? (zh ? '拓扑加载中' : 'Loading topology')
+                : topologyStatus === 'error'
+                  ? (zh ? '拓扑不可用' : 'Topology unavailable')
+                  : topologyLinks.length === 0
+                    ? (zh ? '无已验证链路' : 'No verified links')
+                    : `${zh ? '已验证链路' : 'Verified links'} ${topologyLinks.length}`}
+              {topologyTruncated ? (zh ? '（结果已截断）' : ' (truncated)') : ''}
+            </span>
+          </div>
         </div>
 
         {/* Floating Device Tooltip HUD */}

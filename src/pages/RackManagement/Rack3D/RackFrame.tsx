@@ -22,6 +22,7 @@ interface RackFrameProps {
   showULabels?: boolean;
   occupiedUs?: Set<number>;
   onHoverEmptyU?: (u: number | null) => void;
+  zh?: boolean;
 }
 
 export const RackFrame: React.FC<RackFrameProps> = ({
@@ -33,7 +34,8 @@ export const RackFrame: React.FC<RackFrameProps> = ({
   isDoorOpen = true,
   showULabels = true,
   occupiedUs = new Set(),
-  onHoverEmptyU
+  onHoverEmptyU,
+  zh = true
 }) => {
   const [hoveredEmptyU, setHoveredEmptyU] = useState<number | null>(null);
   const rackHeight = totalU * U_HEIGHT_3D;
@@ -210,7 +212,7 @@ export const RackFrame: React.FC<RackFrameProps> = ({
                   <Html position={[0, 0, (rackDepth * 0.7) / 2 + 0.15]} center distanceFactor={22}>
                     <div className="px-2 py-0.5 rounded-md text-[10px] font-semibold text-slate-300 bg-slate-950/90 border border-slate-700/80 shadow-lg pointer-events-none whitespace-nowrap flex items-center gap-1.5">
                       <span className="w-1.5 h-1.5 rounded-full bg-cyan-400" />
-                      <span>U{u} 空闲可用</span>
+                      <span>{zh ? `U${u} 空闲（只读）` : `U${u} free (read-only)`}</span>
                     </div>
                   </Html>
                 </>

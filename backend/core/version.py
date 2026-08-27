@@ -1,7 +1,7 @@
 # NetOps Automation Platform - Version Information
 
 # The core version of the platform
-VERSION = "0.1.1"
+VERSION = "1.0.7"
 
 # The edition of the current deployment
 # Possible values: "Standard", "Professional", "Enterprise"

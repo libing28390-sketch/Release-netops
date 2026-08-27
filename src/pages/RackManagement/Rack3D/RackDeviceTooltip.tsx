@@ -15,13 +15,18 @@ export const RackDeviceTooltip: React.FC<RackDeviceTooltipProps> = memo(({
   zh
 }) => {
   const [telemetry, setTelemetry] = useState<DeviceTelemetryResult | null>(null);
+  const [telemetryLoading, setTelemetryLoading] = useState(true);
   const [selectedPortName, setSelectedPortName] = useState<string | null>(null);
 
   useEffect(() => {
     let cancelled = false;
-    fetchDeviceTelemetry(device.name, device.id).then(res => {
+    setTelemetryLoading(true);
+    setTelemetry(null);
+    setSelectedPortName(null);
+    fetchDeviceTelemetry(device.name, device.networkDeviceId || device.assetId || device.id).then(res => {
       if (cancelled) return;
       setTelemetry(res);
+      setTelemetryLoading(false);
       if (res && res.interfaces && res.interfaces.length > 0) {
         const firstUp = res.interfaces.find(i => i.status === 'up');
         setSelectedPortName((firstUp || res.interfaces[0]).name);
@@ -30,29 +35,15 @@ export const RackDeviceTooltip: React.FC<RackDeviceTooltipProps> = memo(({
     return () => {
       cancelled = true;
     };
-  }, [device.id, device.name]);
+  }, [device.assetId, device.id, device.name, device.networkDeviceId]);
 
   // Interfaces list
   const interfaces: PhysicalInterfaceItem[] = React.useMemo(() => {
-    if (telemetry && telemetry.interfaces && telemetry.interfaces.length > 0) {
-      return telemetry.interfaces;
-    }
-    // Baseline 24-port physical layout
-    return Array.from({ length: 24 }, (_, i) => ({
-      name: `GigabitEthernet1/0/${i}`,
-      shortName: `GE1/0/${i}`,
-      status: i < 3 ? 'up' : 'down',
-      speedMbps: 1000,
-      inBps: 0,
-      outBps: 0,
-      inErrors: i === 0 ? 106 : 0,
-      outErrors: i === 0 ? 112 : 0,
-      description: i === 0 ? 'TO-S6850-1' : i === 1 ? 'TO-HOST-ONLY' : i === 2 ? 'RBM-TO-F1090-10' : undefined
-    }));
+    return telemetry?.interfaces || [];
   }, [telemetry]);
 
-  const upCount = telemetry ? telemetry.upCount : interfaces.filter(i => i.status === 'up').length;
-  const downCount = interfaces.length - upCount;
+  const upCount = telemetry?.upCount ?? 0;
+  const downCount = telemetry?.downCount ?? 0;
 
   // Split into 2 rows for realistic physical dual-row patch/switch panel
   const topRow = React.useMemo(() => interfaces.filter((_, idx) => idx % 2 === 0), [interfaces]);
@@ -127,137 +118,94 @@ export const RackDeviceTooltip: React.FC<RackDeviceTooltipProps> = memo(({
 
       {/* Embedded Real SNMP Port Matrix */}
       <div className="p-2.5 rounded-lg bg-slate-900/95 border border-slate-800 mb-2">
-        {/* Module 1: Dedicated Out-of-band MGMT, CONSOLE & USB Section */}
-        <div className="flex items-center justify-between px-2 py-1 rounded bg-slate-950/90 border border-slate-800 text-[10px] mb-2 font-mono">
-          <div className="flex items-center gap-1">
-            <span className="text-amber-400 font-bold">MGMT:</span>
-            <span className="px-1 py-0.2 rounded text-[9px] bg-emerald-950/80 text-emerald-300 border border-emerald-500/40 font-semibold">1000M UP</span>
-          </div>
-          <div className="flex items-center gap-1">
-            <span className="text-cyan-400 font-bold">CONSOLE:</span>
-            <span className="px-1 py-0.2 rounded text-[9px] bg-cyan-950/60 text-cyan-300 border border-cyan-500/40">READY</span>
-          </div>
-          <div className="flex items-center gap-1">
-            <span className="text-slate-400">USB:</span>
-            <span className="px-1 py-0.2 rounded text-[9px] bg-slate-800 text-slate-300">v3.0</span>
-          </div>
-        </div>
-
-        {/* Module 2: Business Traffic Ports Header */}
         <div className="flex items-center justify-between text-[10px] text-slate-400 mb-1.5">
           <div className="flex items-center gap-1 font-semibold text-slate-200">
             <Network size={12} className="text-cyan-400" />
-            <span>{zh ? '24× 业务端口矩阵 (IF-MIB)' : '24x Service Port Matrix'}</span>
+            <span>
+              {telemetryLoading
+                ? (zh ? '正在读取接口遥测' : 'Loading interface telemetry')
+                : interfaces.length > 0
+                  ? `${interfaces.length}× ${zh ? '真实接口（IF-MIB）' : 'verified interfaces (IF-MIB)'}`
+                  : (zh ? '无接口遥测数据' : 'No interface telemetry')}
+            </span>
           </div>
-          <div className="flex items-center gap-2 font-mono">
-            <span className="text-emerald-400 font-bold">{upCount} UP</span>
-            <span className="text-slate-500">{downCount} DOWN</span>
-          </div>
-        </div>
-
-
-        {/* Physical Port Matrix (Fixed Geometry - Zero Layout Shift) */}
-        <div className="flex flex-col gap-1 mb-2">
-          {/* Top Row (Even Ports: 0, 2, 4, 6...) */}
-          <div className="flex gap-1">
-            {topRow.map(p => {
-              const isSelected = activePort?.name === p.name;
-              const isUp = p.status === 'up';
-              return (
-                <div
-                  key={p.name}
-                  onMouseEnter={() => setSelectedPortName(p.name)}
-                  className={`flex-1 h-5 rounded-[3px] border flex items-center justify-center transition-colors cursor-pointer ${
-                    isSelected
-                      ? 'border-cyan-400 ring-2 ring-cyan-500/60 bg-cyan-950/90 brightness-125'
-                      : isUp
-                      ? 'border-emerald-500/80 bg-emerald-950/70 hover:border-emerald-400'
-                      : 'border-slate-800 bg-slate-950 hover:border-slate-600'
-                  }`}
-                  title={`${p.name} (${isUp ? 'UP 正常' : 'DOWN 未连通'})`}
-                >
-                  <span
-                    className={`w-1.5 h-1.5 rounded-full ${
-                      isUp ? 'bg-emerald-400 shadow-[0_0_5px_#34d399]' : 'bg-slate-600'
-                    }`}
-                  />
-                </div>
-              );
-            })}
-          </div>
-
-          {/* Bottom Row (Odd Ports: 1, 3, 5, 7...) */}
-          <div className="flex gap-1">
-            {bottomRow.map(p => {
-              const isSelected = activePort?.name === p.name;
-              const isUp = p.status === 'up';
-              return (
-                <div
-                  key={p.name}
-                  onMouseEnter={() => setSelectedPortName(p.name)}
-                  className={`flex-1 h-5 rounded-[3px] border flex items-center justify-center transition-colors cursor-pointer ${
-                    isSelected
-                      ? 'border-cyan-400 ring-2 ring-cyan-500/60 bg-cyan-950/90 brightness-125'
-                      : isUp
-                      ? 'border-emerald-500/80 bg-emerald-950/70 hover:border-emerald-400'
-                      : 'border-slate-800 bg-slate-950 hover:border-slate-600'
-                  }`}
-                  title={`${p.name} (${isUp ? 'UP 正常' : 'DOWN 未连通'})`}
-                >
-                  <span
-                    className={`w-1.5 h-1.5 rounded-full ${
-                      isUp ? 'bg-emerald-400 shadow-[0_0_5px_#34d399]' : 'bg-slate-600'
-                    }`}
-                  />
-                </div>
-              );
-            })}
-          </div>
-        </div>
-
-        {/* Fixed Height Port Inspector HUD (prevents height jitter) */}
-        <div className="h-[68px] p-2 rounded bg-slate-950/90 border border-cyan-500/40 text-[11px] font-mono flex flex-col justify-between overflow-hidden">
-          {activePort ? (
-            <>
-              <div className="flex items-center justify-between font-bold">
-                <span className="text-cyan-300 truncate">{activePort.name}</span>
-                <span
-                  className={`px-1.5 py-0.2 rounded text-[9px] font-semibold ${
-                    activePort.status === 'up'
-                      ? 'bg-emerald-500/20 text-emerald-400 border border-emerald-500/40'
-                      : 'bg-slate-800 text-slate-400 border border-slate-700'
-                  }`}
-                >
-                  {activePort.status === 'up' ? '● UP 正常' : '● DOWN 断开'}
-                </span>
-              </div>
-
-              {/* Description / Peer Target */}
-              <div className="text-[10px] text-amber-300 truncate">
-                {activePort.description ? (
-                  <span>{zh ? '对端/说明:' : 'Desc:'} <strong>{activePort.description}</strong></span>
-                ) : (
-                  <span className="text-slate-500">{zh ? '无对端描述信息' : 'No description'}</span>
-                )}
-              </div>
-
-              {/* Real Traffic / Errors */}
-              <div className="flex items-center justify-between text-[10px] text-slate-300">
-                <span>IN: {formatBps(activePort.inBps)}</span>
-                <span>OUT: {formatBps(activePort.outBps)}</span>
-                {(activePort.inErrors || 0) + (activePort.outErrors || 0) > 0 && (
-                  <span className="text-red-400">
-                    {zh ? '错包' : 'Err'}: {activePort.inErrors}/{activePort.outErrors}
-                  </span>
-                )}
-              </div>
-            </>
-          ) : (
-            <div className="flex items-center justify-center h-full text-slate-500 text-xs">
-              {zh ? '移动鼠标查看端口详情' : 'Hover port to inspect'}
+          {interfaces.length > 0 && (
+            <div className="flex items-center gap-2 font-mono">
+              <span className="text-emerald-400 font-bold">{upCount} UP</span>
+              <span className="text-slate-500">{downCount} DOWN</span>
             </div>
           )}
         </div>
+
+        {telemetryLoading ? (
+          <div className="flex h-24 items-center justify-center rounded border border-slate-800 bg-slate-950/70 text-xs text-slate-500">
+            {zh ? '正在从监控接口读取真实数据…' : 'Loading verified monitoring data…'}
+          </div>
+        ) : interfaces.length === 0 ? (
+          <div className="flex h-24 flex-col items-center justify-center rounded border border-dashed border-slate-700 bg-slate-950/70 px-4 text-center text-xs text-slate-500">
+            <span>{zh ? '当前设备没有可用的物理接口遥测' : 'No physical interface telemetry is available for this device.'}</span>
+            <span className="mt-1 text-[10px] text-slate-600">{zh ? '系统不会生成模拟端口或流量' : 'No simulated ports or traffic are generated.'}</span>
+          </div>
+        ) : (
+          <>
+            {/* Physical Port Matrix (Fixed Geometry - Zero Layout Shift) */}
+            <div className="flex flex-col gap-1 mb-2">
+              {[topRow, bottomRow].map((row, rowIndex) => (
+                <div key={rowIndex} className="flex gap-1">
+                  {row.map(p => {
+                    const isSelected = activePort?.name === p.name;
+                    const isUp = p.status === 'up';
+                    return (
+                      <div
+                        key={p.name}
+                        onMouseEnter={() => setSelectedPortName(p.name)}
+                        className={`flex-1 h-5 rounded-[3px] border flex items-center justify-center transition-colors cursor-pointer ${
+                          isSelected
+                            ? 'border-cyan-400 ring-2 ring-cyan-500/60 bg-cyan-950/90 brightness-125'
+                            : isUp
+                              ? 'border-emerald-500/80 bg-emerald-950/70 hover:border-emerald-400'
+                              : 'border-slate-800 bg-slate-950 hover:border-slate-600'
+                        }`}
+                        title={`${p.name} (${isUp ? 'UP' : 'DOWN'})`}
+                      >
+                        <span className={`w-1.5 h-1.5 rounded-full ${isUp ? 'bg-emerald-400 shadow-[0_0_5px_#34d399]' : 'bg-slate-600'}`} />
+                      </div>
+                    );
+                  })}
+                </div>
+              ))}
+            </div>
+
+            <div className="h-[68px] p-2 rounded bg-slate-950/90 border border-cyan-500/40 text-[11px] font-mono flex flex-col justify-between overflow-hidden">
+              {activePort && (
+                <>
+                  <div className="flex items-center justify-between font-bold">
+                    <span className="text-cyan-300 truncate">{activePort.name}</span>
+                    <span className={`px-1.5 py-0.2 rounded text-[9px] font-semibold ${activePort.status === 'up' ? 'bg-emerald-500/20 text-emerald-400 border border-emerald-500/40' : 'bg-slate-800 text-slate-400 border border-slate-700'}`}>
+                      {activePort.status === 'up' ? '● UP' : '● DOWN'}
+                    </span>
+                  </div>
+
+                  <div className="text-[10px] text-amber-300 truncate">
+                    {activePort.description ? (
+                      <span>{zh ? '对端/说明:' : 'Desc:'} <strong>{activePort.description}</strong></span>
+                    ) : (
+                      <span className="text-slate-500">{zh ? '无对端描述信息' : 'No description'}</span>
+                    )}
+                  </div>
+
+                  <div className="flex items-center justify-between text-[10px] text-slate-300">
+                    <span>IN: {formatBps(activePort.inBps)}</span>
+                    <span>OUT: {formatBps(activePort.outBps)}</span>
+                    {(activePort.inErrors || 0) + (activePort.outErrors || 0) > 0 && (
+                      <span className="text-red-400">{zh ? '错包' : 'Err'}: {activePort.inErrors}/{activePort.outErrors}</span>
+                    )}
+                  </div>
+                </>
+              )}
+            </div>
+          </>
+        )}
       </div>
 
       {/* Telemetry quick summary (CPU/Mem/Temp from real SNMP) */}

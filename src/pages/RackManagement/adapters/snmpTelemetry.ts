@@ -116,22 +116,30 @@ export async function fetchDeviceTelemetry(
 
   const networkDevices = await getNetworkDevices();
   const lowerName = deviceName.toLowerCase().trim();
+  const normalizedRawDeviceId = rawDeviceId?.toLowerCase().trim();
 
   // Match device in network monitoring registry
-  const matched = networkDevices.find((d: any) => {
+  // Prefer stable IDs before hostname heuristics. Rack data normally carries the
+  // monitoring device ID, so this also prevents similarly named devices from
+  // resolving to the wrong telemetry record.
+  const matchedById = normalizedRawDeviceId
+    ? networkDevices.find((d: any) => {
+        const id = String(d.id || '').toLowerCase().trim();
+        const assetId = String(d.asset_id || '').toLowerCase().trim();
+        return id === normalizedRawDeviceId || assetId === normalizedRawDeviceId;
+      })
+    : undefined;
+
+  const matched = matchedById || networkDevices.find((d: any) => {
     const h = String(d.hostname || '').toLowerCase().trim();
     const ip = String(d.ip_address || '').trim();
     const id = String(d.id || '').toLowerCase().trim();
-    const assetId = String(d.asset_id || '').toLowerCase().trim();
 
     return (
       h === lowerName ||
       id === lowerName ||
-      (rawDeviceId && id === rawDeviceId.toLowerCase()) ||
-      (rawDeviceId && assetId === rawDeviceId.toLowerCase()) ||
       ip === lowerName ||
-      h.includes(lowerName) ||
-      lowerName.includes(h)
+      (Boolean(h) && Boolean(lowerName) && (h.includes(lowerName) || lowerName.includes(h)))
     );
   });
 

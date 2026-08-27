@@ -13,6 +13,8 @@ export interface DeviceFocusTarget {
 interface CameraControllerProps {
   preset: CameraPreset;
   rackHeight: number;
+  rackWidth: number;
+  rackDepth: number;
   focusTarget?: DeviceFocusTarget | null;
   zoomAction?: { type: 'in' | 'out'; timestamp: number } | null;
   controlsRef?: React.RefObject<any>;
@@ -22,12 +24,14 @@ interface CameraControllerProps {
 export const CameraController: React.FC<CameraControllerProps> = ({
   preset,
   rackHeight,
+  rackWidth,
+  rackDepth,
   focusTarget,
   zoomAction,
   controlsRef,
   onPresetApplied
 }) => {
-  const { camera } = useThree();
+  const { camera, size } = useThree();
 
   const targetPos = useRef(new THREE.Vector3(0, rackHeight / 2, 28));
   const targetLook = useRef(new THREE.Vector3(0, rackHeight / 2, 0));
@@ -76,7 +80,16 @@ export const CameraController: React.FC<CameraControllerProps> = ({
   // Handle Camera Presets
   useEffect(() => {
     const centerY = rackHeight / 2;
-    const distanceZ = Math.max(22, rackHeight * 1.35);
+    const perspectiveFov = camera instanceof THREE.PerspectiveCamera ? camera.fov : 45;
+    const verticalFov = THREE.MathUtils.degToRad(perspectiveFov);
+    const aspect = Math.max(0.1, size.width / Math.max(1, size.height));
+    const horizontalFov = 2 * Math.atan(Math.tan(verticalFov / 2) * aspect);
+    const fitDistance = (height: number, width: number, padding = 1.18) => Math.max(
+      height / (2 * Math.tan(verticalFov / 2)),
+      width / (2 * Math.tan(horizontalFov / 2)),
+    ) * padding;
+    const distanceZ = Math.max(12, fitDistance(rackHeight + 1.2, rackWidth + 1.5));
+    const topDistance = Math.max(10, fitDistance(rackDepth + 2, rackWidth + 2, 1.1));
 
     switch (preset) {
       case 'front':
@@ -88,11 +101,11 @@ export const CameraController: React.FC<CameraControllerProps> = ({
         targetLook.current.set(0, centerY, 0);
         break;
       case 'iso':
-        targetPos.current.set(distanceZ * 0.75, centerY + 8, distanceZ * 0.85);
+        targetPos.current.set(distanceZ * 0.7, centerY + Math.min(8, rackHeight * 0.35), distanceZ * 0.8);
         targetLook.current.set(0, centerY, 0);
         break;
       case 'top':
-        targetPos.current.set(0, rackHeight + distanceZ * 0.9, 0.1);
+        targetPos.current.set(0, rackHeight + topDistance, 0.1);
         targetLook.current.set(0, centerY, 0);
         break;
       case 'focus_top':
@@ -113,7 +126,7 @@ export const CameraController: React.FC<CameraControllerProps> = ({
     }
     isTransitioning.current = true;
     if (onPresetApplied) onPresetApplied();
-  }, [preset, rackHeight, onPresetApplied]);
+  }, [preset, rackHeight, rackWidth, rackDepth, size.width, size.height, camera, onPresetApplied]);
 
   useFrame((_, delta) => {
     if (!isTransitioning.current) return;

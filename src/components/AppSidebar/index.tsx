@@ -477,7 +477,7 @@ const AppSidebar: React.FC<AppSidebarProps> = ({
                 {zh ? '当前版本' : 'VERSION'}
               </span>
               <span className="px-1.5 py-0.5 rounded bg-[rgba(0,120,212,0.08)] text-[#0078d4] text-[10px] font-mono font-bold border border-[rgba(0,120,212,0.15)]">
-                v{systemInfo?.version || '0.1.0'}
+                v{systemInfo?.version || '1.0.7'}
               </span>
             </div>
           </div>

@@ -19,6 +19,7 @@ import PageHero from '../../components/PageHero';
 import TagFilterDropdown from '../../components/TagFilterDropdown';
 import { fetchAllPaginatedItems } from '../../utils/pagination';
 import { useSystem } from '../../hooks/useSystem';
+import { formatTerminalAgentError, getLocalTerminalConfig, TERMINAL_APP_LABELS } from '../../utils/localTerminal';
 import type { TagDefinition } from '../../types';
 
 import { Asset, AssetSummary, AssetManagementTabProps } from './types';
@@ -2131,8 +2132,7 @@ const AssetManagementTab: React.FC<AssetManagementTabProps> = ({ language, setAc
                   <div className="flex items-center gap-2">
                     <button
                       onClick={async () => {
-                        const terminalType = localStorage.getItem('terminal_app') || 'xshell';
-                        const terminalPath = localStorage.getItem('local_terminal_path') || '';
+                        const { app: terminalType, path: terminalPath } = getLocalTerminalConfig();
                         let user = '';
                         let host = '';
                         let port = 22;
@@ -2170,31 +2170,50 @@ const AssetManagementTab: React.FC<AssetManagementTabProps> = ({ language, setAc
                               port = Number(result.port) || port;
                             }
                             if (!result.success) {
-                              throw new Error(result.error || 'Unable to create local terminal session');
+                              setFeedbackMsg({
+                                type: 'error',
+                                text: zh
+                                  ? `设备会话创建失败：${result.error || '无法创建本地终端会话'}`
+                                  : `Device session creation failed: ${result.error || 'Unable to create the local terminal session'}`,
+                              });
+                              setTerminalSession(null);
+                              return;
                             }
                             if (!result.client_side) {
                               setTerminalSession(null);
                               return;
                             }
-                            const agentBase = (localStorage.getItem('terminal_agent_url') || 'http://127.0.0.1:17890').replace(/\/$/, '');
-                            const agentRes = await fetch(`${agentBase}/v1/terminal/launch`, {
-                              method: 'POST',
-                              headers: { 'Content-Type': 'application/json' },
-                              body: JSON.stringify({
-                                backend_url: window.location.origin,
-                                session_token: sessionToken,
-                                client: terminalType,
-                                path: terminalPath,
-                              }),
-                            });
-                            const agentResult = await agentRes.json().catch(() => ({}));
-                            if (!agentRes.ok || !agentResult.success) {
-                              throw new Error(agentResult.error || `HTTP ${agentRes.status}`);
+                            try {
+                              const agentBase = (localStorage.getItem('terminal_agent_url') || 'http://127.0.0.1:17890').replace(/\/$/, '');
+                              const agentRes = await fetch(`${agentBase}/v1/terminal/launch`, {
+                                method: 'POST',
+                                headers: { 'Content-Type': 'application/json' },
+                                body: JSON.stringify({
+                                  backend_url: window.location.origin,
+                                  session_token: sessionToken,
+                                  client: terminalType,
+                                  path: terminalPath,
+                                }),
+                              });
+                              const agentResult = await agentRes.json().catch(() => ({}));
+                              if (!agentRes.ok || !agentResult.success) {
+                                throw new Error(agentResult.error || `HTTP ${agentRes.status}`);
+                              }
+                            } catch (agentError) {
+                              console.error('Local Terminal Agent launch failed', agentError);
+                              setFeedbackMsg({ type: 'error', text: formatTerminalAgentError(agentError, zh) });
+                              setTerminalSession(null);
+                              return;
                             }
                             setTerminalSession(null);
                             return;
                           } catch (err) {
-                            console.error('Local Terminal Agent launch failed', err);
+                            console.error('Local terminal session request failed', err);
+                            const detail = err instanceof Error ? err.message : String(err || 'Unknown error');
+                            setFeedbackMsg({
+                              type: 'error',
+                              text: zh ? `设备会话请求失败，请检查后端服务或网络连接：${detail}` : `Device session request failed. Check the backend service or network: ${detail}`,
+                            });
                             setTerminalSession(null);
                             return;
                           }
@@ -2204,8 +2223,8 @@ const AssetManagementTab: React.FC<AssetManagementTabProps> = ({ language, setAc
                     >
                       <MonitorSpeaker size={10} />
                       {(() => {
-                        const app = localStorage.getItem('terminal_app') || 'xshell';
-                        const appName = app === 'standard' ? 'SSH' : app === 'xshell' ? 'Xshell' : app === 'putty' ? 'PuTTY' : app === 'securecrt' ? 'SecureCRT' : app === 'mobaxterm' ? 'MobaXterm' : 'Terminal';
+                        const app = getLocalTerminalConfig().app;
+                        const appName = TERMINAL_APP_LABELS[app] || 'Terminal';
                         return zh ? `${appName} 调起` : `Launch ${appName}`;
                       })()}
                     </button>

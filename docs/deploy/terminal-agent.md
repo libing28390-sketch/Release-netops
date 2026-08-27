@@ -23,7 +23,7 @@ Set-ExecutionPolicy -Scope Process Bypass
 Invoke-WebRequest http://127.0.0.1:17890/health
 ```
 
-Xshell、PuTTY 等终端程序路径仍在个人设置中配置；需要自定义端口时，将 `terminal_agent_url` 设置为 `http://127.0.0.1:<端口>`。
+Xshell、PuTTY 等终端程序路径仍在个人设置中配置。个人设置会根据打开浏览器的工作站系统匹配 Agent 下载入口；需要自定义端口时，将 `terminal_agent_url` 设置为 `http://127.0.0.1:<端口>`。
 
 ## Ubuntu 工作站
 
@@ -32,7 +32,7 @@ chmod +x scripts/install-terminal-agent.sh
 ./scripts/install-terminal-agent.sh
 ```
 
-标准终端模式调用本机 `ssh`。Xshell、PuTTY 等 Windows 客户端只能在 Windows 工作站上使用。
+Ubuntu/Linux 工作站不需要配置 Windows 客户端路径，安装并运行对应脚本即可。Xshell、PuTTY 等 Windows 客户端只能在 Windows 工作站上使用。
 
 ## Docker / Ubuntu 服务端
 
@@ -58,7 +58,7 @@ Docker 镜像会携带 `NexoraTerminalAgent.exe` 作为下载附件。自定义�
 TERMINAL_AGENT_WINDOWS_URL=https://github.com/libing28390-sketch/Release-netops/raw/refs/heads/windows/NexoraTerminalAgent.exe
 ```
 
-Windows EXE 和 Ubuntu 安装脚本是两个独立下载入口，不能互相替代。
+个人设置会识别浏览器所在的工作站系统，并只显示匹配的下载入口：Windows 显示 EXE，Ubuntu/Linux 显示安装脚本。不要在远程设备的操作系统和本机 Agent 包之间做映射。
 
 ## Web PAM（HTTP/HTTPS 设备页面）
 

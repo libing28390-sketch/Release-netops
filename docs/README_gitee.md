@@ -2,7 +2,7 @@
 
 [English](#english) | [中文](#中文说明)
 
-> Version 0.1.1 · Standard Edition
+> Version 1.0.7 · Standard Edition
 
 Nexora is a full-stack network operations platform covering device inventory, real-time monitoring, automation, configuration backup, compliance auditing, and operational traceability.
 

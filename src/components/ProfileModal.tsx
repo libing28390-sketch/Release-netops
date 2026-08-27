@@ -1,10 +1,11 @@
 import React from 'react';
 import { motion } from 'motion/react';
-import { Bell, Eye, EyeOff, Terminal, MonitorSpeaker, Shield, Download, Lock, Info, UserRound, KeyRound, ChevronLeft, ChevronRight, CheckCircle2 } from 'lucide-react';
+import { Bell, Eye, EyeOff, Terminal, MonitorSpeaker, Shield, Download, Lock, Info, UserRound, KeyRound } from 'lucide-react';
 import type { ThemeMode } from '../types';
 import { useSystem } from '../hooks/useSystem';
 import QRCode from 'react-qr-code';
 import { ActionLink } from './ui/ActionIconButton';
+import { detectTerminalPlatform, getLocalTerminalConfig, TERMINAL_APP_LABELS, type TerminalApp } from '../utils/localTerminal';
 
 interface AvatarPreset {
   id: string;
@@ -201,8 +202,10 @@ const ProfileModal: React.FC<ProfileModalProps> = ({
       setMfaLoading(false);
     }
   };
-  const [localTerminalPath, setLocalTerminalPath] = React.useState(() => localStorage.getItem('local_terminal_path') || '');
-  const [terminalApp, setTerminalApp] = React.useState(() => localStorage.getItem('terminal_app') || 'standard');
+  const terminalPlatform = React.useMemo(() => detectTerminalPlatform(), []);
+  const initialTerminalConfig = React.useMemo(() => getLocalTerminalConfig(terminalPlatform), [terminalPlatform]);
+  const [localTerminalPath, setLocalTerminalPath] = React.useState(() => initialTerminalConfig.path);
+  const [terminalApp, setTerminalApp] = React.useState<TerminalApp>(() => initialTerminalConfig.app);
   const [showFixedPin, setShowFixedPin] = React.useState(false);
   const [showPathSuggestions, setShowPathSuggestions] = React.useState(false);
   const [wizardStep, setWizardStep] = React.useState(0);
@@ -245,6 +248,7 @@ const ProfileModal: React.FC<ProfileModalProps> = ({
   // 各终端工具的常见安装路径（Windows）
   const PATH_PRESETS: Record<string, string[]> = {
     xshell: [
+      'C:\\Program Files (x86)\\NetSarang\\Xshell 6\\Xshell.exe',
       'C:\\Program Files (x86)\\NetSarang\\Xshell 8\\Xshell.exe',
       'C:\\Program Files (x86)\\NetSarang\\Xshell 7\\Xshell.exe',
       'C:\\Program Files\\NetSarang\\Xshell 8\\Xshell.exe',
@@ -310,6 +314,7 @@ const ProfileModal: React.FC<ProfileModalProps> = ({
 
   const isDark = resolvedTheme === 'dark';
   const ActiveStepIcon = activeWizardStep.icon;
+  const terminalPlatformLabel = terminalPlatform === 'windows' ? 'Windows' : 'Ubuntu / Linux';
 
   return (
     <div className="fixed inset-0 z-[70] flex items-center justify-center bg-slate-950/55 p-4 backdrop-blur-sm">
@@ -325,12 +330,9 @@ const ProfileModal: React.FC<ProfileModalProps> = ({
                 <span className={`flex h-9 w-9 items-center justify-center rounded-xl ${isDark ? 'bg-cyan-400/15 text-cyan-300' : 'bg-cyan-50 text-cyan-700'}`}>
                   <Shield size={18} />
                 </span>
-                <h3 className={`text-lg font-bold ${isDark ? 'text-white/90' : 'text-[#0b2a3c]'}`}>{isZh ? '个人设置向导' : 'Personal setup guide'}</h3>
-                <span className={`rounded-full px-2 py-0.5 text-[10px] font-bold ${isDark ? 'bg-white/10 text-white/50' : 'bg-slate-100 text-slate-500'}`}>
-                  {wizardStep + 1} / {wizardSteps.length}
-                </span>
+                <h3 className={`text-lg font-bold ${isDark ? 'text-white/90' : 'text-[#0b2a3c]'}`}>{isZh ? '个人设置' : 'Personal settings'}</h3>
               </div>
-              <p className={`mt-1.5 text-xs ${isDark ? 'text-white/45' : 'text-black/45'}`}>{isZh ? '按步骤完成账户安全、告警通知和本机终端配置' : 'Complete account security, notifications, and local terminal settings step by step'}</p>
+              <p className={`mt-1.5 text-xs ${isDark ? 'text-white/45' : 'text-black/45'}`}>{isZh ? '账户资料、登录安全、告警通知和终端工具可独立设置' : 'Manage profile, security, notifications, and terminal tools independently'}</p>
             </div>
             <div className={`hidden shrink-0 items-center gap-1.5 rounded-xl px-3 py-2 text-right sm:flex ${isDark ? 'bg-white/5' : 'bg-white/75'}`}>
               <ActiveStepIcon size={15} className={isDark ? 'text-cyan-300' : 'text-cyan-600'} />
@@ -343,22 +345,21 @@ const ProfileModal: React.FC<ProfileModalProps> = ({
 
           <div className="mt-5 flex items-center gap-1.5 overflow-x-auto pb-0.5">
             {wizardSteps.map((step, index) => {
-              const StepIcon = step.icon;
-              const completed = index < wizardStep;
               const active = index === wizardStep;
               return (
                 <React.Fragment key={step.key}>
                   <button
                     type="button"
                     onClick={() => goToWizardStep(index)}
+                    aria-current={active ? 'page' : undefined}
                     className={`flex min-w-max items-center gap-2 rounded-xl px-2.5 py-2 text-left transition-all ${active ? (isDark ? 'bg-cyan-400/15 text-cyan-200 ring-1 ring-cyan-300/20' : 'bg-cyan-50 text-cyan-800 ring-1 ring-cyan-200') : (isDark ? 'text-white/40 hover:bg-white/5 hover:text-white/70' : 'text-slate-400 hover:bg-slate-50 hover:text-slate-700')}`}
                   >
-                    <span className={`flex h-6 w-6 items-center justify-center rounded-full text-[10px] font-black ${active ? (isDark ? 'bg-cyan-300 text-slate-950' : 'bg-cyan-600 text-white') : completed ? 'bg-emerald-500 text-white' : (isDark ? 'bg-white/10 text-white/45' : 'bg-slate-100 text-slate-400')}`}>
-                      {completed ? <CheckCircle2 size={13} /> : <StepIcon size={13} />}
+                    <span className={`flex h-6 w-6 items-center justify-center rounded-full text-[10px] font-black ${active ? (isDark ? 'bg-cyan-300 text-slate-950' : 'bg-cyan-600 text-white') : (isDark ? 'bg-white/10 text-white/45' : 'bg-slate-100 text-slate-400')}`}>
+                      {index + 1}
                     </span>
                     <span className="text-[11px] font-bold">{step.label}</span>
                   </button>
-                  {index < wizardSteps.length - 1 && <span className={`h-px min-w-3 flex-1 ${index < wizardStep ? (isDark ? 'bg-emerald-400/50' : 'bg-emerald-300') : (isDark ? 'bg-white/10' : 'bg-slate-200')}`} />}
+                  {index < wizardSteps.length - 1 && <span className={`h-px min-w-3 flex-1 ${isDark ? 'bg-white/10' : 'bg-slate-200'}`} />}
                 </React.Fragment>
               );
             })}
@@ -369,7 +370,7 @@ const ProfileModal: React.FC<ProfileModalProps> = ({
           <div className={`mb-5 flex items-start gap-3 rounded-2xl border px-4 py-3 ${isDark ? 'border-cyan-400/15 bg-cyan-400/5' : 'border-cyan-100 bg-cyan-50/70'}`} aria-live="polite">
             <ActiveStepIcon size={16} className={`mt-0.5 shrink-0 ${isDark ? 'text-cyan-300' : 'text-cyan-700'}`} />
             <div>
-              <div className={`text-xs font-bold ${isDark ? 'text-cyan-100' : 'text-cyan-900'}`}>{isZh ? `第 ${wizardStep + 1} 步：${activeWizardStep.label}` : `Step ${wizardStep + 1}: ${activeWizardStep.label}`}</div>
+              <div className={`text-xs font-bold ${isDark ? 'text-cyan-100' : 'text-cyan-900'}`}>{isZh ? `当前设置：${activeWizardStep.label}` : `Current section: ${activeWizardStep.label}`}</div>
               <p className={`mt-0.5 text-[11px] leading-relaxed ${isDark ? 'text-white/45' : 'text-cyan-800/70'}`}>{activeWizardStep.description}{wizardStep === 1 && (isZh ? '；密码只在本次提交时处理，不会显示在页面上。' : '; passwords are processed on submit and are not displayed.')}</p>
             </div>
           </div>
@@ -874,53 +875,40 @@ const ProfileModal: React.FC<ProfileModalProps> = ({
               <div className="flex items-start gap-3">
                 <span className={`flex h-9 w-9 shrink-0 items-center justify-center rounded-xl ${isDark ? 'bg-cyan-400/15 text-cyan-300' : 'bg-cyan-50 text-cyan-700'}`}><MonitorSpeaker size={17} /></span>
                 <div>
-                  <div className={`text-xs font-bold ${isDark ? 'text-white/85' : 'text-slate-800'}`}>{isZh ? '配置本机如何打开设备终端' : 'Choose how this workstation opens terminals'}</div>
-                  <p className={`mt-1 text-[11px] leading-relaxed ${isDark ? 'text-white/45' : 'text-slate-500'}`}>{isZh ? '这里的路径指当前电脑上的程序，不是远程设备路径。没有桌面客户端时，直接使用推荐的系统 SSH。' : 'The path below belongs to this workstation, not the remote device. If you do not have a desktop client, use the recommended System SSH option.'}</p>
+                  <div className={`text-xs font-bold ${isDark ? 'text-white/85' : 'text-slate-800'}`}>{isZh ? '配置本机终端工具' : 'Configure the local terminal tool'}</div>
+                  <p className={`mt-1 text-[11px] leading-relaxed ${isDark ? 'text-white/45' : 'text-slate-500'}`}>
+                    {isZh ? '系统会根据打开浏览器的工作站自动匹配 Agent 下载内容。远程设备的操作系统不会影响这里的选择。' : 'The Agent download is matched to the workstation running this browser. The remote device operating system does not affect this choice.'}
+                  </p>
                 </div>
               </div>
             </div>
 
             <div className={`rounded-2xl border p-4 ${isDark ? 'border-cyan-400/15 bg-cyan-400/5' : 'border-cyan-100 bg-cyan-50/45'}`}>
-              <div className="grid gap-3 sm:grid-cols-3">
-                <div className="flex gap-2">
-                  <span className={`flex h-6 w-6 shrink-0 items-center justify-center rounded-full text-[10px] font-black ${isDark ? 'bg-cyan-300 text-slate-950' : 'bg-cyan-600 text-white'}`}>1</span>
-                  <div>
-                    <div className={`text-[11px] font-bold ${isDark ? 'text-white/80' : 'text-slate-700'}`}>{isZh ? '选启动方式' : 'Choose a launcher'}</div>
-                    <p className={`mt-0.5 text-[10px] leading-relaxed ${isDark ? 'text-white/40' : 'text-slate-500'}`}>{isZh ? '推荐系统 SSH，免填路径。' : 'System SSH is recommended; no path needed.'}</p>
-                  </div>
-                </div>
-                <div className="flex gap-2">
-                  <span className={`flex h-6 w-6 shrink-0 items-center justify-center rounded-full text-[10px] font-black ${isDark ? 'bg-cyan-300 text-slate-950' : 'bg-cyan-600 text-white'}`}>2</span>
-                  <div>
-                    <div className={`text-[11px] font-bold ${isDark ? 'text-white/80' : 'text-slate-700'}`}>{isZh ? '只选客户端时填路径' : 'Add a path for desktop clients'}</div>
-                    <p className={`mt-0.5 text-[10px] leading-relaxed ${isDark ? 'text-white/40' : 'text-slate-500'}`}>{isZh ? '路径必须是本机 exe 文件。' : 'Use the local client executable path.'}</p>
-                  </div>
-                </div>
-                <div className="flex gap-2">
-                  <span className={`flex h-6 w-6 shrink-0 items-center justify-center rounded-full text-[10px] font-black ${isDark ? 'bg-cyan-300 text-slate-950' : 'bg-cyan-600 text-white'}`}>3</span>
-                  <div>
-                    <div className={`text-[11px] font-bold ${isDark ? 'text-white/80' : 'text-slate-700'}`}>{isZh ? '下载并运行 Agent' : 'Run the local Agent'}</div>
-                    <p className={`mt-0.5 text-[10px] leading-relaxed ${isDark ? 'text-white/40' : 'text-slate-500'}`}>{isZh ? 'Agent 负责把浏览器请求交给本机程序。' : 'The Agent hands browser requests to local apps.'}</p>
-                  </div>
+              <div className="flex items-start gap-3">
+                <span className={`flex h-8 w-8 shrink-0 items-center justify-center rounded-lg ${isDark ? 'bg-cyan-300/15 text-cyan-300' : 'bg-white text-cyan-700'}`}><MonitorSpeaker size={15} /></span>
+                <div>
+                  <div className={`text-[11px] font-bold ${isDark ? 'text-white/80' : 'text-slate-700'}`}>{isZh ? '浏览器工作站系统' : 'Browser workstation'}</div>
+                  <p className={`mt-0.5 text-[11px] leading-relaxed ${isDark ? 'text-cyan-100/65' : 'text-cyan-900/70'}`}>
+                    {isZh ? `已识别为 ${terminalPlatformLabel}，下载入口将只显示对应的 Agent。` : `Detected as ${terminalPlatformLabel}; only the matching Agent package is shown below.`}
+                  </p>
                 </div>
               </div>
             </div>
 
-            <div className={`p-4 rounded-xl border ${isDark ? 'bg-white/[0.02] border-white/10' : 'bg-black/[0.01] border-black/5'}`}>
-              <div className="flex flex-col gap-4">
+            {terminalPlatform === 'windows' ? (
+              <div className={`p-4 rounded-xl border ${isDark ? 'bg-white/[0.02] border-white/10' : 'bg-black/[0.01] border-black/5'}`}>
                 <div className="flex flex-col gap-4 sm:flex-row">
                   <div className="w-full sm:w-1/3">
-                    <label className={`block text-[10px] font-bold uppercase tracking-widest mb-2 ${isDark ? 'text-white/40' : 'text-black/40'}`}>{isZh ? '启动方式' : 'Launch method'}</label>
-                    <select 
+                    <label className={`block text-[10px] font-bold uppercase tracking-widest mb-2 ${isDark ? 'text-white/40' : 'text-black/40'}`}>{isZh ? '终端客户端' : 'Terminal client'}</label>
+                    <select
                       value={terminalApp}
                       onChange={e => {
-                        const val = e.target.value;
+                        const val = e.target.value as TerminalApp;
                         setTerminalApp(val);
                         localStorage.setItem('terminal_app', val);
                       }}
                       className={`w-full px-3 py-2 rounded-lg text-xs outline-none border transition-all ${isDark ? 'bg-black/20 border-white/10 text-white focus:border-cyan-500/50' : 'bg-white border-black/10 text-black focus:border-cyan-500/40'}`}
                     >
-                      <option value="standard">{isZh ? '系统 SSH（推荐，无需路径）' : 'System SSH (recommended)'}</option>
                       <option value="xshell">Xshell</option>
                       <option value="putty">PuTTY</option>
                       <option value="securecrt">SecureCRT</option>
@@ -932,124 +920,119 @@ const ProfileModal: React.FC<ProfileModalProps> = ({
                     <div className="flex gap-2">
                       <div className="relative flex-1">
                         <Terminal size={14} className={`absolute left-3 top-1/2 -translate-y-1/2 ${isDark ? 'text-white/20' : 'text-black/20'}`} />
-                        <input 
+                        <input
                           type="text"
-                          disabled={terminalApp === 'standard'}
                           value={localTerminalPath}
                           onChange={e => {
                             const val = e.target.value;
                             setLocalTerminalPath(val);
                             localStorage.setItem('local_terminal_path', val);
                           }}
-                          placeholder={terminalApp === 'standard' ? (isZh ? '系统 SSH 不需要填写' : 'Not needed for System SSH') : (isZh ? '例如 C:\\Program Files\\...\\Xshell.exe' : 'e.g. C:\\Program Files\\...\\Xshell.exe')}
-                          className={`w-full pl-9 pr-3 py-2 rounded-lg text-xs outline-none border transition-all ${terminalApp === 'standard' ? 'opacity-40 cursor-not-allowed bg-black/5' : (isDark ? 'bg-black/20 border-white/10 text-white placeholder-white/30 focus:border-cyan-500/50' : 'bg-white border-black/10 text-black placeholder-black/20 focus:border-cyan-500/40')}`}
+                          placeholder={isZh ? '例如 C:\\Program Files\\...\\Xshell.exe' : 'e.g. C:\\Program Files\\...\\Xshell.exe'}
+                          className={`w-full pl-9 pr-3 py-2 rounded-lg text-xs outline-none border transition-all ${isDark ? 'bg-black/20 border-white/10 text-white placeholder-white/30 focus:border-cyan-500/50' : 'bg-white border-black/10 text-black placeholder-black/20 focus:border-cyan-500/40'}`}
                         />
                       </div>
-                      {terminalApp !== 'standard' && (
-                        <div className="relative">
-                          <button
-                            type="button"
-                            onClick={() => setShowPathSuggestions(v => !v)}
-                            className={`px-3 py-2 rounded-lg text-[11px] font-bold flex items-center gap-1.5 transition-all bg-cyan-500/10 text-cyan-400 border border-cyan-500/20 hover:bg-cyan-500/20 shadow-sm`}
-                          >
-                            <MonitorSpeaker size={14} />
-                            {isZh ? '选择常见路径' : 'Choose a common path'}
-                          </button>
-                          {showPathSuggestions && (
-                            <div className={`absolute right-0 top-full mt-1 z-50 w-96 rounded-xl border shadow-xl overflow-hidden ${isDark ? 'bg-[#0d1a2a] border-white/15' : 'bg-white border-black/10'}`}>
-                              <div className={`px-3 py-2 border-b text-[10px] font-bold uppercase tracking-widest ${isDark ? 'border-white/10 text-white/40' : 'border-black/8 text-black/40'}`}>
-                                {isZh ? '选择后请确认这是当前电脑上的路径' : 'Confirm the selected path belongs to this workstation'}
-                              </div>
-                              {(PATH_PRESETS[terminalApp] || []).map((p) => (
-                                <button
-                                  key={p}
-                                  type="button"
-                                  onClick={() => {
-                                    setLocalTerminalPath(p);
-                                    localStorage.setItem('local_terminal_path', p);
-                                    setShowPathSuggestions(false);
-                                  }}
-                                  className={`w-full text-left px-3 py-2 text-[11px] font-mono transition-colors ${isDark ? 'text-white/70 hover:bg-white/8' : 'text-black/70 hover:bg-black/5'}`}
-                                >
-                                  {p}
-                                </button>
-                              ))}
-                              <div className={`px-3 py-2 border-t ${isDark ? 'border-white/10' : 'border-black/8'}`}>
-                                <p className={`text-[10px] ${isDark ? 'text-white/30' : 'text-black/35'}`}>
-                                  {language === 'zh'
-                                    ? '也可以直接粘贴完整路径；服务器上的路径不能使用。'
-                                    : 'Or paste the full path directly into the input box'}
-                                </p>
-                              </div>
+                      <div className="relative">
+                        <button
+                          type="button"
+                          onClick={() => setShowPathSuggestions(v => !v)}
+                          className="px-3 py-2 rounded-lg text-[11px] font-bold flex items-center gap-1.5 transition-all bg-cyan-500/10 text-cyan-400 border border-cyan-500/20 hover:bg-cyan-500/20 shadow-sm"
+                        >
+                          <MonitorSpeaker size={14} />
+                          {isZh ? '选择常见路径' : 'Choose a common path'}
+                        </button>
+                        {showPathSuggestions && (
+                          <div className={`absolute right-0 top-full mt-1 z-50 w-96 rounded-xl border shadow-xl overflow-hidden ${isDark ? 'bg-[#0d1a2a] border-white/15' : 'bg-white border-black/10'}`}>
+                            <div className={`px-3 py-2 border-b text-[10px] font-bold uppercase tracking-widest ${isDark ? 'border-white/10 text-white/40' : 'border-black/8 text-black/40'}`}>
+                              {isZh ? '选择后请确认这是当前电脑上的路径' : 'Confirm the selected path belongs to this workstation'}
                             </div>
-                          )}
-                        </div>
-                      )}
+                            {(PATH_PRESETS[terminalApp] || []).map((p) => (
+                              <button
+                                key={p}
+                                type="button"
+                                onClick={() => {
+                                  setLocalTerminalPath(p);
+                                  localStorage.setItem('local_terminal_path', p);
+                                  setShowPathSuggestions(false);
+                                }}
+                                className={`w-full text-left px-3 py-2 text-[11px] font-mono transition-colors ${isDark ? 'text-white/70 hover:bg-white/8' : 'text-black/70 hover:bg-black/5'}`}
+                              >
+                                {p}
+                              </button>
+                            ))}
+                            <div className={`px-3 py-2 border-t ${isDark ? 'border-white/10' : 'border-black/8'}`}>
+                              <p className={`text-[10px] ${isDark ? 'text-white/30' : 'text-black/35'}`}>
+                                {isZh
+                                  ? '也可以直接粘贴完整路径；服务器上的路径不能使用。'
+                                  : 'Or paste the full path directly into the input box'}
+                              </p>
+                            </div>
+                          </div>
+                        )}
+                      </div>
                     </div>
                   </div>
                 </div>
-                
-                <div className={`flex flex-col gap-3 rounded-xl border p-3 ${isDark ? 'border-cyan-500/15 bg-cyan-500/5' : 'border-cyan-500/10 bg-cyan-50/50'}`}>
+              </div>
+            ) : (
+              <div className={`rounded-xl border p-4 ${isDark ? 'border-white/10 bg-white/[0.02]' : 'border-black/5 bg-black/[0.01]'}`}>
+                <div className="flex items-start gap-3">
+                  <span className={`flex h-8 w-8 shrink-0 items-center justify-center rounded-lg ${isDark ? 'bg-cyan-300/15 text-cyan-300' : 'bg-cyan-50 text-cyan-700'}`}><Terminal size={15} /></span>
                   <div>
-                    <div className={`flex items-center gap-1.5 text-[11px] font-bold ${isDark ? 'text-white/75' : 'text-slate-700'}`}>
-                      <Download size={13} className={isDark ? 'text-cyan-300' : 'text-cyan-600'} />
-                      {isZh ? '还没有 Terminal Agent？先下载到当前工作站' : 'Need the Terminal Agent? Download it to this workstation'}
-                    </div>
-                    <p className={`mt-1 text-[10px] leading-relaxed ${isDark ? 'text-white/35' : 'text-slate-500'}`}>
-                      {isZh ? '下载后运行 Agent，它只负责接收本机浏览器请求，不会把设备密码保存在本地。' : 'Run the Agent after downloading. It only receives browser requests on this workstation and does not store device passwords locally.'}
+                    <div className={`text-xs font-bold ${isDark ? 'text-white/85' : 'text-slate-800'}`}>{isZh ? 'Ubuntu / Linux 终端' : 'Ubuntu / Linux terminal'}</div>
+                    <p className={`mt-1 text-[11px] leading-relaxed ${isDark ? 'text-white/45' : 'text-slate-500'}`}>
+                      {isZh ? '当前工作站不需要填写客户端路径。安装并运行对应 Agent 后，Agent 会在本机处理浏览器发起的终端请求。' : 'No client path is needed on this workstation. Install and run the matching Agent to handle terminal requests from this browser.'}
                     </p>
                   </div>
-                  <div className="flex flex-wrap gap-2">
-                    <ActionLink
-                      href="/api/system/download-terminal-agent?platform=windows"
-                      download="NexoraTerminalAgent.exe"
-                      icon={Download}
-                      variant="success"
-                      size="sm"
-                      className="!text-[11px]"
-                    >
-                      {isZh ? '下载 Windows Agent' : 'Download Windows Agent'}
-                    </ActionLink>
-                    <ActionLink
-                      href="/api/system/download-terminal-agent?platform=ubuntu"
-                      download="install-terminal-agent.sh"
-                      icon={Download}
-                      variant="accent"
-                      size="sm"
-                      className="!text-[11px]"
-                    >
-                      {isZh ? '下载 Ubuntu 安装脚本' : 'Download Ubuntu script'}
-                    </ActionLink>
-                  </div>
                 </div>
-                
-                <p className={`text-[10px] leading-relaxed flex items-center gap-1.5 ${isDark ? 'text-white/30' : 'text-black/40'}`}>
-                  <Info size={12} className="text-cyan-500" />
-                  {terminalApp === 'standard' 
-                    ? (isZh ? '当前选择系统 SSH：只需让 127.0.0.1:17890 的 Terminal Agent 运行，程序路径留空即可。' : 'System SSH selected: keep the Terminal Agent running at 127.0.0.1:17890; no program path is required.')
-                    : (isZh ? '当前选择桌面客户端：Agent 会在本机启动上面填写的程序；路径必须指向当前电脑的 exe 文件。' : 'Desktop client selected: the Agent launches the program above; the path must point to an exe on this workstation.')}
+              </div>
+            )}
+
+            <div className={`flex flex-col gap-3 rounded-xl border p-3 ${isDark ? 'border-cyan-500/15 bg-cyan-500/5' : 'border-cyan-500/10 bg-cyan-50/50'}`}>
+              <div>
+                <div className={`flex items-center gap-1.5 text-[11px] font-bold ${isDark ? 'text-white/75' : 'text-slate-700'}`}>
+                  <Download size={13} className={isDark ? 'text-cyan-300' : 'text-cyan-600'} />
+                  {isZh ? `下载 ${terminalPlatformLabel} 版 Terminal Agent` : `Download the ${terminalPlatformLabel} Terminal Agent`}
+                </div>
+                <p className={`mt-1 text-[10px] leading-relaxed ${isDark ? 'text-white/35' : 'text-slate-500'}`}>
+                  {isZh ? '下载后在当前浏览器工作站运行 Agent，它只接收本机请求，不会把设备密码保存在本地。' : 'Run the Agent on this browser workstation after downloading. It only receives local requests and does not store device passwords locally.'}
                 </p>
               </div>
+              <div className="flex flex-wrap gap-2">
+                <ActionLink
+                  href={`/api/system/download-terminal-agent?platform=${terminalPlatform}`}
+                  download={terminalPlatform === 'windows' ? 'NexoraTerminalAgent.exe' : 'install-terminal-agent.sh'}
+                  icon={Download}
+                  variant={terminalPlatform === 'windows' ? 'success' : 'accent'}
+                  size="sm"
+                  className="!text-[11px]"
+                >
+                  {terminalPlatform === 'windows'
+                    ? (isZh ? '下载 Windows Agent' : 'Download Windows Agent')
+                    : (isZh ? '下载 Ubuntu 安装脚本' : 'Download Ubuntu script')}
+                </ActionLink>
+              </div>
             </div>
+
+            <p className={`text-[10px] leading-relaxed flex items-center gap-1.5 ${isDark ? 'text-white/30' : 'text-black/40'}`}>
+              <Info size={12} className="text-cyan-500" />
+              {terminalPlatform === 'windows'
+                ? (isZh ? `当前选择 ${TERMINAL_APP_LABELS[terminalApp]}；Agent 会在本机启动填写的客户端程序，路径必须是当前电脑上的 exe 文件。` : `${TERMINAL_APP_LABELS[terminalApp]} is selected; the Agent launches it on this workstation, so the path must point to a local exe.`)
+                : (isZh ? '当前工作站识别为 Ubuntu / Linux；运行对应 Agent 即可，不需要配置 Windows 客户端路径。' : 'This workstation is Ubuntu / Linux; run the matching Agent without configuring a Windows client path.')}
+            </p>
           </div>
 
           <p className={`text-[11px] ${isDark ? 'text-white/40' : 'text-black/40'}`}>上次登录时间：{currentUserLastLogin}</p>
 
-          </div>
+        </div>
 
         <div className={`sticky bottom-0 flex gap-3 border-t bg-white/95 px-6 py-4 backdrop-blur ${isDark ? 'border-white/10 bg-[#121c2d]/95' : 'border-slate-200/80'}`}>
-          <button type="button" onClick={wizardStep === 0 ? onClose : () => goToWizardStep(wizardStep - 1)} className={`flex-1 px-4 py-2.5 rounded-xl text-sm font-medium transition-all ${isDark ? 'bg-white/10 text-white/80 hover:bg-white/15' : 'bg-black/[0.04] text-black/70 hover:bg-black/[0.08]'}`}>
-            {wizardStep === 0 ? (isZh ? '取消' : 'Cancel') : <><ChevronLeft size={15} className="mr-1 inline" />{isZh ? '上一步' : 'Back'}</>}
+          <button type="button" onClick={onClose} className={`flex-1 px-4 py-2.5 rounded-xl text-sm font-medium transition-all ${isDark ? 'bg-white/10 text-white/80 hover:bg-white/15' : 'bg-black/[0.04] text-black/70 hover:bg-black/[0.08]'}`}>
+            {isZh ? '取消' : 'Cancel'}
           </button>
-          {wizardStep < wizardSteps.length - 1 ? (
-            <button type="button" onClick={() => goToWizardStep(wizardStep + 1)} className="flex-1 px-4 py-2.5 rounded-xl text-sm font-semibold text-white bg-[#008bb0] hover:bg-[#00769a] transition-all shadow-lg shadow-[#00bceb]/20">
-              {isZh ? '下一步' : 'Next'} <ChevronRight size={15} className="ml-1 inline" />
-            </button>
-          ) : (
-            <button type="button" disabled={Boolean(passwordConfirmationError)} onClick={onSave} className={`flex-1 px-4 py-2.5 rounded-xl text-sm font-semibold text-white transition-all shadow-lg shadow-[#00bceb]/20 ${passwordConfirmationError ? 'cursor-not-allowed bg-slate-300 shadow-none' : 'bg-[#008bb0] hover:bg-[#00769a]'}`}>
-              {isZh ? '保存个人设置' : 'Save settings'}
-            </button>
-          )}
+          <button type="button" disabled={Boolean(passwordConfirmationError)} onClick={onSave} className={`flex-1 px-4 py-2.5 rounded-xl text-sm font-semibold text-white transition-all shadow-lg shadow-[#00bceb]/20 ${passwordConfirmationError ? 'cursor-not-allowed bg-slate-300 shadow-none' : 'bg-[#008bb0] hover:bg-[#00769a]'}`}>
+            {isZh ? '保存个人设置' : 'Save settings'}
+          </button>
           <button type="button" onClick={onClose} className={`hidden px-4 py-2.5 text-sm font-medium transition-all sm:block ${isDark ? 'text-white/50 hover:text-white/80' : 'text-slate-400 hover:text-slate-700'}`}>
             {isZh ? '退出' : 'Close'}
           </button>

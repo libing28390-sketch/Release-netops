@@ -251,70 +251,9 @@ def _template_catalog_file_sort_key(path: Path) -> tuple[int, str]:
 
 
 # ── 默认命令采集样本映射 ───────────────────────────────────────────
-TEMPLATE_DEFAULT_SAMPLES = {
-    'huawei_vrp5_display_memory_usage.textfsm': (
-        "Memory utilization statistics at 2026-07-14 10:06:07-08:00\n"
-        "System Total Memory Is: 171493452 bytes\n"
-        "Total Memory Used Is: 123510940 bytes\n"
-        "Memory Using Percentage Is: 72%"
-    ),
-    'huawei_vrp5_display_cpu_usage.textfsm': (
-        "CPU Usage Stat. Cycle: 10 (Second)\n"
-        "CPU utilization for ten seconds: 11.9%\n"
-        "one minute: 12.0%\n"
-        "five minutes: 12.0%"
-    ),
-    'h3c_comware_v5_display_memory.textfsm': (
-        "System Total Memory(bytes): 431869088\n"
-        "Total Used Memory(bytes): 71963156\n"
-        "Used Rate: 16%"
-    ),
-    'h3c_comware_v5_display_cpu_usage.textfsm': (
-        "Unit CPU usage:\n"
-        "      Slot 1 CPU 0: 14%\n"
-        "      Slot 2 CPU 0:  8%"
-    ),
-    'h3c_comware_v5_display_device.textfsm': (
-        "Slot No. Brd Type             Brd Status   Subslot Num  Sft Ver           Patch Ver\n"
-        "1        LSW1GT24PSC0         Normal       0            V700R001C01       None"
-    ),
-    'h3c_comware_v5_display_fan.textfsm': (
-        "Fan 1 State: Normal\n"
-        "Fan 2 State: Absent"
-    ),
-    'huawei_vrp5_display_fan.textfsm': (
-        "Slot  FanID  Status  Speed\n"
-        "1     1      Normal  60%\n"
-        "1     2      Absent  -"
-    ),
-    'ruijie_rgos_show_ip_interface_brief.textfsm': (
-        "Interface                IP-Address      OK? Method Status                Protocol\n"
-        "GigabitEthernet 0/1      192.168.1.1     YES manual up                    up\n"
-        "GigabitEthernet 0/2      unassigned      YES unset  down                  down\n"
-        "Vlan 1                   10.1.1.1        YES manual up                    up"
-    ),
-    'dptech_ios_show_interface_brief.textfsm': (
-        "Interface                Link   Speed     Duplex   Type     PVID  Description\n"
-        "ge0/0                    up     1G        full     trunk    1     To_Core_SW\n"
-        "ge0/1                    down   auto      auto     access   10    LAN_Port"
-    ),
-    'dptech_ios_show_ip_interface_brief.textfsm': (
-        "Interface                IP Address        Physical Protocol Description\n"
-        "eth0/0                   192.168.1.1/24    up       up       WAN1\n"
-        "eth0/1                   10.0.0.1/24       up       up       LAN1"
-    ),
-    'maipu_show_ip_interface_brief.textfsm': (
-        "Interface                IP-Address      OK? Method Status                Protocol\n"
-        "GigabitEthernet0/1       192.168.1.1     YES manual up                    up\n"
-        "GigabitEthernet0/2       unassigned      YES unset  down                  down\n"
-        "Vlan1                    10.1.1.1        YES manual up                    up"
-    ),
-    'maipu_show_interface_brief.textfsm': (
-        "Port                     Link  Speed    Duplex  Vlan  Type       Description\n"
-        "Gi0/1                    up    1G       full    1     Trunk      Uplink_Core\n"
-        "Gi0/2                    down  auto     auto    10    Access     User_Port"
-    )
-}
+# Built-in reference output is intentionally disabled. Users should paste
+# the actual device output when testing a template.
+TEMPLATE_DEFAULT_SAMPLES: dict[str, str] = {}
 
 
 def _get_builtin_templates_dir() -> Path | None:
@@ -495,6 +434,10 @@ def _looks_like_device_error(output: str) -> str | None:
 
 
 _HUAWEI_H3C_COMMAND_MAPPING = [
+    # The history graph is a separate V5 grammar. It must precede the
+    # summary rule because ``display cpu-usage history`` also starts with
+    # ``display cpu-usage``.
+    (re.compile(r'^dis(?:play)?\s+cpu(?:-usage)?\s+history\b', re.I), 'display cpu-usage history'),
     (re.compile(r'^dis(?:play)?\s+cpu(?:-usage)?\b', re.I), 'display cpu-usage'),
     (re.compile(r'^dis(?:play)?\s+mem(?:ory)?(?:-usage)?\b', re.I), 'display memory-usage'),
     (re.compile(r'^dis(?:play)?\s+memory\b', re.I), 'display memory'),  # For HP Comware
@@ -510,6 +453,7 @@ _HUAWEI_H3C_COMMAND_MAPPING = [
     (re.compile(r'^dis(?:play)?\s+bgp\s+peer\s*$', re.I), 'display bgp peer'),
     (re.compile(r'^dis(?:play)?\s+bgp\s+routing-table\s*$', re.I), 'display bgp routing-table'),
     (re.compile(r'^dis(?:play)?\s+mac-address\b', re.I), 'display mac-address'),
+    (re.compile(r'^dis(?:play)?\s+dev(?:ice)?\s+manuinfo\s*$', re.I), 'display device manuinfo'),
     (re.compile(r'^dis(?:play)?\s+dev(?:ice)?\b', re.I), 'display device'),
     (re.compile(r'^dis(?:play)?\s+temp(?:erature)?\b', re.I), 'display temperature'),
     (re.compile(r'^dis(?:play)?\s+env(?:ironment)?\b', re.I), 'display environment'),
@@ -521,8 +465,16 @@ _HUAWEI_H3C_COMMAND_MAPPING = [
     (re.compile(r'^dis(?:play)?\s+pow(?:er)?\b', re.I), 'display power'),
     (re.compile(r'^dis(?:play)?\s+stack\b', re.I), 'display stack'),
     (re.compile(r'^dis(?:play)?\s+irf\b', re.I), 'display irf'),
+    # V5 exposes three optical-information commands beside the normal
+    # interface view. Keep these before the generic transceiver rule.
+    (re.compile(r'^dis(?:play)?\s+trans(?:ceiver)?\s+alarm\b', re.I), 'display transceiver alarm'),
+    (re.compile(r'^dis(?:play)?\s+trans(?:ceiver)?\s+diag(?:nosis)?\b', re.I), 'display transceiver diagnosis'),
+    (re.compile(r'^dis(?:play)?\s+trans(?:ceiver)?\s+manuinfo\b', re.I), 'display transceiver manuinfo'),
     (re.compile(r'^dis(?:play)?\s+trans(?:ceiver)?(?:\s+(?:diag(?:nosis)?|verbose))?\s+int(?:erface)?\b', re.I), 'display transceiver interface'),
     (re.compile(r'^dis(?:play)?\s+trans(?:ceiver)?\s+(?:diag(?:nosis)?|verbose)\b', re.I), 'display transceiver interface'),
+    (re.compile(r'^dis(?:play)?\s+trans(?:ceiver)?\s*$', re.I), 'display transceiver interface'),
+    (re.compile(r'^dis(?:play)?\s+job\b', re.I), 'display job'),
+    (re.compile(r'^dis(?:play)?\s+reboot-type\b', re.I), 'display reboot-type'),
     (re.compile(r'^dis(?:play)?\s+link-aggregation\s+verbose\b', re.I), 'display link-aggregation verbose'),
 ]
 
@@ -921,7 +873,20 @@ def smart_parse_cli(
                 normalized_records.append(norm_record)
                 
             normalized_records = post_process_parsed_records(normalized_records)
-                
+
+            # ``display device manuinfo`` prints ``Subslot`` under the most
+            # recent ``Slot`` heading instead of repeating the slot number.
+            # Keep the nested record attached to its parent without using
+            # TextFSM Filldown (which would otherwise emit a trailing empty
+            # record at EOF).
+            if template_path.name == 'h3c_comware_v5_display_device_manuinfo.textfsm':
+                active_slot = ''
+                for record in normalized_records:
+                    if record.get('SLOT'):
+                        active_slot = str(record['SLOT'])
+                    elif record.get('SUBSLOT') and active_slot:
+                        record['SLOT'] = active_slot
+
             return {
                 'success': True,
                 'platform': platform,
@@ -1017,6 +982,44 @@ def post_process_parsed_records(records: list[dict[str, Any]]) -> list[dict[str,
     例如：在 bytes 格式和 MB 格式之间进行换算，或复制内存使用率。
     """
     for record in records:
+        # H3C Comware V5 reports memory in bytes, while the V7/V9 table
+        # reports it in KB. Expose one user-facing unit across all H3C
+        # generations and remove the raw-unit fields from the result.
+        h3c_memory_fields = (
+            ('TOTAL_BYTES', 'TOTAL_MEMORY_MB', 1024 * 1024),
+            ('USED_BYTES', 'USED_MEMORY_MB', 1024 * 1024),
+            ('TOTAL_KB', 'TOTAL_MEMORY_MB', 1024),
+            ('USED_KB', 'USED_MEMORY_MB', 1024),
+            ('FREE_KB', 'FREE_MEMORY_MB', 1024),
+            ('SHARED_KB', 'SHARED_MEMORY_MB', 1024),
+            ('BUFFERS_KB', 'BUFFERS_MEMORY_MB', 1024),
+            ('CACHED_KB', 'CACHED_MEMORY_MB', 1024),
+            ('USER_FREE_KB', 'USER_FREE_MEMORY_MB', 1024),
+        )
+        for source_key, target_key, divisor in h3c_memory_fields:
+            if source_key not in record:
+                continue
+            raw_value = str(record.get(source_key) or '').strip()
+            if not raw_value or raw_value == '--':
+                converted_value = raw_value
+            else:
+                try:
+                    converted_value = f'{float(raw_value) / divisor:.2f} MB'
+                except (TypeError, ValueError):
+                    converted_value = raw_value
+            record[target_key] = converted_value
+            record.pop(source_key, None)
+
+        # Keep percentage units visible in the parsed result. FREE_RATIO is
+        # already captured with '%' by the V7/V9 templates, while V5's
+        # USED_RATE is normalized here as a defensive fallback.
+        for percent_key in ('USED_RATE', 'FREE_RATIO'):
+            if percent_key not in record:
+                continue
+            percent_value = str(record.get(percent_key) or '').strip()
+            if percent_value and percent_value != '--' and not percent_value.endswith('%'):
+                record[percent_key] = f'{percent_value}%'
+
         # 1. 字节 ➔ MB 换算
         if record.get('SYSTEM_TOTAL_MEMORY') and not record.get('TOTAL_MEMORY_MB'):
             try:
@@ -1308,13 +1311,18 @@ _TEMPLATE_COMMAND_CANONICAL: dict[str, dict[str, str]] = {
     },
     'h3c_comware': {
         'display cpu usage': 'display cpu-usage',
+        'display cpu usage history': 'display cpu-usage history',
+        'display bgp routing table': 'display bgp routing-table',
         'display bgp routing table ipv4': 'display bgp routing-table ipv4',
+        'display diagnostic information': 'display diagnostic-information',
         'display ip routing table': 'display ip routing-table',
         'display ip routing table statistics': 'display ip routing-table statistics',
         'display ntp service status': 'display ntp-service status',
         'display link aggregation verbose': 'display link-aggregation verbose',
         'display mac address': 'display mac-address',
         'display lldp neighbor information list': 'display lldp neighbor-information list',
+        'display reboot type': 'display reboot-type',
+        'display system failure': 'display system-failure',
     },
     'cisco_ios': {
         # The NTC filename uses the singular spelling, while IOS/IOS-XE exposes

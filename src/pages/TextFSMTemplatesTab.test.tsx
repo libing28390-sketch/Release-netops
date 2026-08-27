@@ -17,8 +17,29 @@ const builtinTemplate = {
   version: 'common',
   command: 'show version',
   source: 'builtin',
-  action_code: '',
+  action_code: 'get_version',
 };
+
+const actionOptions = [
+  {
+    action_code: 'get_version',
+    name_zh: '版本信息',
+    name_en: 'Version information',
+    command: 'show version',
+    group_zh: '系统状态监控',
+    group_en: 'System status monitoring',
+    available: true,
+  },
+  {
+    action_code: 'get_interfaces',
+    name_zh: '接口信息',
+    name_en: 'Interface information',
+    command: 'show interfaces',
+    group_zh: '基础网络查询',
+    group_en: 'Basic network queries',
+    available: true,
+  },
+];
 
 describe('TextFSMTemplatesTab', () => {
   let fetchMock: ReturnType<typeof vi.fn>;
@@ -53,7 +74,7 @@ describe('TextFSMTemplatesTab', () => {
         });
       }
       if (url.startsWith('/api/textfsm/action-options?')) {
-        return jsonResponse({ success: true, data: [], message: '' });
+        return jsonResponse({ success: true, data: actionOptions, message: '' });
       }
       return jsonResponse({ success: true, data: {}, message: '' });
     });
@@ -90,6 +111,30 @@ describe('TextFSMTemplatesTab', () => {
         && init?.method === 'PUT'
         && JSON.parse(String(init.body)).content.includes('Value VERSION')
       ))).toBe(true);
+    });
+  });
+
+  it('allows changing the action association while editing an existing template', async () => {
+    render(<TextFSMTemplatesTab t={(key) => key} language="zh" />);
+
+    await screen.findByText(builtinTemplate.filename);
+    await screen.getByTitle('编辑并创建自定义覆盖').click();
+
+    const actionSelect = await screen.findByRole('combobox', { name: '关联 Action' });
+    await waitFor(() => expect((actionSelect as HTMLSelectElement).disabled).toBe(false));
+    expect((actionSelect as HTMLSelectElement).value).toBe('get_version');
+
+    fireEvent.change(actionSelect, { target: { value: 'get_interfaces' } });
+    expect((actionSelect as HTMLSelectElement).value).toBe('get_interfaces');
+    await screen.getByRole('button', { name: '保存模板' }).click();
+
+    await waitFor(() => {
+      const saveCall = fetchMock.mock.calls.find(([input, init]) => (
+        String(input) === `/api/textfsm/templates/${builtinTemplate.filename}`
+        && init?.method === 'PUT'
+      ));
+      expect(saveCall).toBeTruthy();
+      expect(JSON.parse(String(saveCall?.[1]?.body)).action_code).toBe('get_interfaces');
     });
   });
 

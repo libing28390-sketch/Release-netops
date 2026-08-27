@@ -6,6 +6,7 @@ import { RackFrame } from './RackFrame';
 import { RackDeviceItem } from './RackDeviceItem';
 import { CameraController, CameraPreset, DeviceFocusTarget } from './CameraController';
 import { RackCableLayer, CableMode, TopologyLinkItem } from './RackCableLayer';
+import { RACK_OUTER_WIDTH_DEFAULT, RACK_TOTAL_DEPTH_DEFAULT } from '../adapters/rackViewModel';
 
 interface RackSceneProps {
   rackVM: RackVM;
@@ -23,6 +24,7 @@ interface RackSceneProps {
   isDoorOpen: boolean;
   showDoor: boolean;
   showULabels: boolean;
+  zh: boolean;
 }
 
 export const RackScene: React.FC<RackSceneProps> = ({
@@ -40,9 +42,12 @@ export const RackScene: React.FC<RackSceneProps> = ({
   cameraPreset,
   isDoorOpen,
   showDoor,
-  showULabels
+  showULabels,
+  zh
 }) => {
   const rackHeight = rackVM.totalU * 0.4445;
+  const rackWidth = (rackVM.widthMm / 600) * RACK_OUTER_WIDTH_DEFAULT;
+  const rackDepth = (rackVM.depthMm / 1000) * RACK_TOTAL_DEPTH_DEFAULT;
   const centerY = rackHeight / 2;
   const controlsRef = useRef<any>(null);
 
@@ -69,7 +74,7 @@ export const RackScene: React.FC<RackSceneProps> = ({
           antialias: true,
           alpha: true,
           powerPreference: 'default',
-          preserveDrawingBuffer: true
+          preserveDrawingBuffer: false
         }}
         dpr={[1, 2]}
         onCreated={({ gl }) => {
@@ -92,6 +97,8 @@ export const RackScene: React.FC<RackSceneProps> = ({
         <CameraController
           preset={cameraPreset}
           rackHeight={rackHeight}
+          rackWidth={rackWidth}
+          rackDepth={rackDepth}
           focusTarget={focusTarget}
           zoomAction={zoomAction}
           controlsRef={controlsRef}
@@ -133,6 +140,7 @@ export const RackScene: React.FC<RackSceneProps> = ({
           isDoorOpen={isDoorOpen}
           showULabels={showULabels}
           occupiedUs={occupiedUs}
+          zh={zh}
         />
 
         {/* Installed Devices */}

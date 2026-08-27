@@ -13,6 +13,8 @@ Start
   ^\s+${INTERFACE}\s+${STATUS}\s+${PRIORITY}\s+${INDEX}\s+${OPER_KEY}\s+${FLAG}\s*$$ -> Record
   ^Loadsharing Type:
   ^Management VLANs:
+  ^System ID:
+  ^Creation Mode:
   ^Local:
   ^Remote:
   ^Port\s+Status
@@ -20,3 +22,4 @@ Start
   ^Flags:
   ^Role:
   ^-+
+  ^.*

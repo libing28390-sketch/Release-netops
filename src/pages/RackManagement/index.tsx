@@ -100,6 +100,8 @@ export const RackManagementTab: React.FC<Props> = ({ language }) => {
   const rackScrollRef = useRef<HTMLDivElement>(null);
   const fileInputRef = useRef<HTMLInputElement>(null);
   const layoutCacheRef = useRef<Map<string, RackLayout>>(new Map());
+  const rackWorkspaceRef = useRef<HTMLDivElement>(null);
+  const [isRackFullscreen, setIsRackFullscreen] = useState(false);
 
   const [confirmDeleteRack, setConfirmDeleteRack] = useState<{ rackId: string; rackName: string } | null>(null);
   const [blockedDeleteRack, setBlockedDeleteRack] = useState<{ rackName: string; deviceCount: number } | null>(null);
@@ -406,6 +408,29 @@ export const RackManagementTab: React.FC<Props> = ({ language }) => {
     setDrawerAssetDetail(null);
     setDrawerAssetLoading(false);
   };
+
+  useEffect(() => {
+    const handleFullscreenChange = () => {
+      setIsRackFullscreen(document.fullscreenElement === rackWorkspaceRef.current);
+    };
+    document.addEventListener('fullscreenchange', handleFullscreenChange);
+    return () => document.removeEventListener('fullscreenchange', handleFullscreenChange);
+  }, []);
+
+  const handleToggleRackFullscreen = useCallback(async () => {
+    const target = rackWorkspaceRef.current;
+    if (!target) return;
+    try {
+      if (document.fullscreenElement === target) {
+        await document.exitFullscreen();
+      } else {
+        await target.requestFullscreen();
+      }
+    } catch (fullscreenError) {
+      console.error('Rack workspace fullscreen toggle failed:', fullscreenError);
+      setError(zh ? '无法切换全屏，请检查浏览器权限' : 'Unable to toggle fullscreen. Check browser permissions.');
+    }
+  }, [zh]);
 
   useEffect(() => {
     if (!drawerVisible || !selectedDeviceId || !layout) {
@@ -1159,15 +1184,23 @@ export const RackManagementTab: React.FC<Props> = ({ language }) => {
                 ))}
               </div>
             )}
-            <button onClick={openNewDeviceType} className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-medium transition-colors" style={{ background: 'var(--card-bg)', border: '1px solid var(--card-border)', color: 'var(--body-text)' }}>
-              <Package size={14} /> {zh ? '设备型号' : 'Device Types'}
-            </button>
-            <button onClick={openNewRack} className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-semibold text-white bg-cyan-600 hover:bg-cyan-700 transition-colors">
-              <Plus size={14} /> {zh ? '新建机柜' : 'New Rack'}
-            </button>
+            {viewMode === '2d' && (
+              <>
+                <button onClick={openNewDeviceType} className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-medium transition-colors" style={{ background: 'var(--card-bg)', border: '1px solid var(--card-border)', color: 'var(--body-text)' }}>
+                  <Package size={14} /> {zh ? '设备型号' : 'Device Types'}
+                </button>
+                <button onClick={openNewRack} className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-semibold text-white bg-cyan-600 hover:bg-cyan-700 transition-colors">
+                  <Plus size={14} /> {zh ? '新建机柜' : 'New Rack'}
+                </button>
+              </>
+            )}
             <ActionIconGroup label={zh ? '机柜工具' : 'Rack tools'}>
-              <ActionIconButton icon={FileText} label={zh ? '下载导入模板' : 'Download import template'} variant="accent" onClick={handleDownloadTemplate} />
-              <ActionIconButton icon={Upload} label={zh ? '导入机柜' : 'Import racks'} variant="accent" onClick={() => fileInputRef.current?.click()} />
+              {viewMode === '2d' && (
+                <>
+                  <ActionIconButton icon={FileText} label={zh ? '下载导入模板' : 'Download import template'} variant="accent" onClick={handleDownloadTemplate} />
+                  <ActionIconButton icon={Upload} label={zh ? '导入机柜' : 'Import racks'} variant="accent" onClick={() => fileInputRef.current?.click()} />
+                </>
+              )}
               <ActionIconButton icon={Download} label={zh ? '导出机柜' : 'Export racks'} variant="accent" onClick={handleExport} />
               <ActionIconButton icon={RefreshCw} label={zh ? '刷新' : 'Refresh'} onClick={refresh} />
             </ActionIconGroup>
@@ -1208,7 +1241,10 @@ export const RackManagementTab: React.FC<Props> = ({ language }) => {
       )}
 
       {/* -- Main: Rack List + Elevation -- */}
-      <div className="flex gap-3 flex-1 min-h-0">
+      <div
+        ref={rackWorkspaceRef}
+        className={`flex gap-3 flex-1 min-h-0 ${isRackFullscreen ? 'p-3 bg-[#090d16]' : ''}`}
+      >
         {/* Left: rack list */}
         <div className="w-56 flex-shrink-0 rounded-xl overflow-hidden flex flex-col" style={{ background: 'var(--card-bg)', border: '1px solid var(--card-border)' }}>
           <div className="p-3 space-y-2 border-b" style={{ borderColor: 'var(--card-border)' }}>
@@ -1233,19 +1269,20 @@ export const RackManagementTab: React.FC<Props> = ({ language }) => {
               const pCap = (ly as any)?.power_capacity_watts ?? 0;
               const pPct = (ly as any)?.power_utilization_pct ?? 0;
               return (
-                <button
+                <div
                   key={rack.id}
-                  onClick={() => setSelectedRackId(rack.id)}
-                  className={`w-full text-left rounded-lg px-3 py-2 transition-all group ${rack.id === selectedRackId ? 'ring-1 ring-cyan-500/50' : ''}`}
+                  className={`relative w-full rounded-lg transition-all group ${rack.id === selectedRackId ? 'ring-1 ring-cyan-500/50' : ''}`}
                   style={{ background: rack.id === selectedRackId ? 'var(--app-hover-bg)' : 'transparent', color: 'var(--body-text)' }}
                 >
-                  <div className="flex items-center justify-between">
-                    <span className="text-[13px] font-semibold truncate">{rack.name}</span>
-                    <ActionIconGroup className="opacity-0 group-hover:opacity-100 transition-opacity">
-                      <ActionIconButton icon={Pencil} label={zh ? `编辑${rack.name}` : `Edit ${rack.name}`} size="xs" onClick={(e) => { e.stopPropagation(); openEditRack(rack); }} />
-                      <ActionIconButton icon={Trash2} label={zh ? `删除${rack.name}` : `Delete ${rack.name}`} size="xs" variant="danger" onClick={(e) => { e.stopPropagation(); handleDeleteRack(rack.id); }} />
-                    </ActionIconGroup>
-                  </div>
+                  <button
+                    type="button"
+                    onClick={() => setSelectedRackId(rack.id)}
+                    className={`w-full text-left rounded-lg px-3 py-2 ${viewMode === '2d' ? 'pr-16' : ''}`}
+                    aria-pressed={rack.id === selectedRackId}
+                  >
+                    <div className="flex items-center justify-between">
+                      <span className="text-[13px] font-semibold truncate">{rack.name}</span>
+                    </div>
                   <div className="flex items-center gap-2 mt-0.5">
                     {siteLabel(rack) && <span className="text-[10px] px-1.5 py-0.5 rounded-full" style={{ background: '#06b6d415', color: '#06b6d4' }}>{siteLabel(rack)}</span>}
                     {rack.floor && <span className="text-[10px] px-1.5 py-0.5 rounded-full" style={{ background: '#8b5cf615', color: '#7c3aed' }}>{rack.floor}</span>}
@@ -1297,7 +1334,14 @@ export const RackManagementTab: React.FC<Props> = ({ language }) => {
                       )}
                     </div>
                   )}
-                </button>
+                  </button>
+                  {viewMode === '2d' && (
+                    <ActionIconGroup className="absolute right-2 top-1.5 opacity-0 group-hover:opacity-100 group-focus-within:opacity-100 transition-opacity">
+                      <ActionIconButton icon={Pencil} label={zh ? `编辑${rack.name}` : `Edit ${rack.name}`} size="xs" onClick={() => openEditRack(rack)} />
+                      <ActionIconButton icon={Trash2} label={zh ? `删除${rack.name}` : `Delete ${rack.name}`} size="xs" variant="danger" onClick={() => handleDeleteRack(rack.id)} />
+                    </ActionIconGroup>
+                  )}
+                </div>
               );
             })}
           </div>
@@ -1338,6 +1382,13 @@ export const RackManagementTab: React.FC<Props> = ({ language }) => {
                       {zh ? '3D 孪生' : '3D'}
                     </button>
                   </div>
+
+                  {viewMode === '3d' && (
+                    <span className="inline-flex items-center gap-1 rounded-full border border-cyan-500/30 bg-cyan-500/10 px-2 py-1 text-[10px] font-semibold text-cyan-500">
+                      <Eye size={11} />
+                      {zh ? '只读视图' : 'Read-only'}
+                    </span>
+                  )}
 
                   {viewMode === '2d' && (
                     <>
@@ -1397,10 +1448,14 @@ export const RackManagementTab: React.FC<Props> = ({ language }) => {
                       )}
                     </span>
                   )}
-                  <ActionButton icon={Download} variant="accent" size="sm" onClick={handleDownloadRack}>{zh ? '下载 PNG' : 'Download PNG'}</ActionButton>
-                  <button onClick={openInstallDevice} className="flex items-center gap-1 px-2.5 py-1 rounded-lg text-[11px] font-semibold text-white bg-cyan-600 hover:bg-cyan-700 transition-colors">
-                    <Plus size={12} /> {zh ? '安装' : 'Install'}
-                  </button>
+                  {viewMode === '2d' && (
+                    <>
+                      <ActionButton icon={Download} variant="accent" size="sm" onClick={handleDownloadRack}>{zh ? '下载 PNG' : 'Download PNG'}</ActionButton>
+                      <button onClick={openInstallDevice} className="flex items-center gap-1 px-2.5 py-1 rounded-lg text-[11px] font-semibold text-white bg-cyan-600 hover:bg-cyan-700 transition-colors">
+                        <Plus size={12} /> {zh ? '安装' : 'Install'}
+                      </button>
+                    </>
+                  )}
                 </div>
               </div>
 
@@ -1419,6 +1474,8 @@ export const RackManagementTab: React.FC<Props> = ({ language }) => {
                       selectedDeviceId={selectedDeviceId}
                       onSelectDevice={handleDeviceSelect}
                       onFallbackTo2D={() => setViewMode('2d')}
+                      isFullscreen={isRackFullscreen}
+                      onToggleFullscreen={handleToggleRackFullscreen}
                       zh={zh}
                     />
                   </React.Suspense>
@@ -1596,7 +1653,13 @@ export const RackManagementTab: React.FC<Props> = ({ language }) => {
                       </div>
 
                       <div className="p-4 border-t" style={{ borderColor: 'var(--card-border)' }}>
-                        <button onClick={() => handleRemoveDevice(device.id, device.name)} className="w-full px-3 py-2 rounded-lg text-[12px] font-medium text-red-500 hover:bg-red-50/80">{zh ? '移除设备' : 'Remove'}</button>
+                        {viewMode === '2d' ? (
+                          <button onClick={() => handleRemoveDevice(device.id, device.name)} className="w-full px-3 py-2 rounded-lg text-[12px] font-medium text-red-500 hover:bg-red-50/80">{zh ? '移除设备' : 'Remove'}</button>
+                        ) : (
+                          <div className="flex items-center justify-center gap-1.5 rounded-lg bg-cyan-500/10 px-3 py-2 text-[11px] font-semibold text-cyan-600">
+                            <Eye size={12} /> {zh ? '3D 详情为只读，修改请切换到 2D' : '3D details are read-only. Switch to 2D to edit.'}
+                          </div>
+                        )}
                       </div>
                     </motion.div>
                   </AnimatePresence>

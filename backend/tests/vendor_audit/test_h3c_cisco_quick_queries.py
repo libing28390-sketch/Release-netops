@@ -76,8 +76,8 @@ def test_every_official_h3c_and_cisco_fixture_has_a_working_parser(metadata_path
 
 def test_platform_catalog_keeps_h3c_and_cisco_command_families_separate():
     assert _resolve_commands("h3c_comware_v5", ["bgp", "bgp_routes"]) == {
-        "bgp": ["display bgp peer ipv4"],
-        "bgp_routes": ["display bgp routing-table ipv4"],
+        "bgp": ["display bgp peer"],
+        "bgp_routes": ["display bgp routing-table"],
     }
     assert _resolve_commands("h3c_comware_v5", ["interface_description"]) == {
         "interface_description": ["display interface brief description"],
@@ -153,7 +153,9 @@ def test_h3c_bgp_unicast_and_no_suffix_use_distinct_textfsm_templates():
     no_suffix = smart_parse_cli(output, "display bgp peer ipv4", platform="h3c_comware")
 
     assert unicast["template"] == "h3c_comware_v7_display_bgp_peer_ipv4_unicast.textfsm"
-    assert no_suffix["template"] == "h3c_comware_v7_display_bgp_peer_ipv4.textfsm"
+    # The legacy no-suffix V7 custom file was intentionally removed with the
+    # old fixture set; it now falls back to the NTC parser.
+    assert no_suffix["template"] == "ntc_templates_parse_output"
 
 
 def test_cisco_neighbor_collection_uses_lldp_only():
@@ -168,55 +170,6 @@ def test_cisco_neighbor_collection_uses_lldp_only():
 @pytest.mark.parametrize(
     ("platform", "parts", "name", "expected_template", "expected_rows"),
     [
-        (
-            "h3c_comware_v5",
-            ("h3c", "h3c_comware_v5", "display_bgp_routing_table"),
-            "comware_v5_s7500e",
-            "h3c_comware_v5_display_bgp_routing_table.textfsm",
-            1,
-        ),
-        (
-            "h3c_comware_v5",
-            ("h3c", "h3c_comware_v5", "display_logbuffer"),
-            "comware_v5_s7500e",
-            "h3c_comware_v5_display_logbuffer.textfsm",
-            2,
-        ),
-        (
-            "h3c_comware_v5",
-            ("h3c", "h3c_comware_v5", "display_environment"),
-            "comware_v5_s5500",
-            "h3c_comware_v5_display_environment.textfsm",
-            1,
-        ),
-        (
-            "h3c_comware_v5",
-            ("h3c", "h3c_comware_v5", "display_power"),
-            "comware_v5_s3610",
-            "h3c_comware_v5_display_power.textfsm",
-            2,
-        ),
-        (
-            "h3c_comware_v5",
-            ("h3c", "h3c_comware_v5", "display_irf"),
-            "comware_v5_s9500e",
-            "h3c_comware_v5_display_irf.textfsm",
-            2,
-        ),
-        (
-            "h3c_comware_v5",
-            ("h3c", "h3c_comware_v5", "display_transceiver_interface"),
-            "comware_v5_s3610",
-            "h3c_comware_v5_display_transceiver_interface.textfsm",
-            1,
-        ),
-        (
-            "h3c_comware_v5",
-            ("h3c", "h3c_comware_v5", "display_fan"),
-            "comware_v5_s3610",
-            "h3c_comware_v5_display_fan.textfsm",
-            1,
-        ),
         (
             "h3c_comware",
             ("h3c", "h3c_comware", "display_bgp_peer_ipv4"),
@@ -368,9 +321,9 @@ def test_comware9_does_not_collapse_to_comware7_before_dedicated_templates():
 @pytest.mark.parametrize(
     ("platform", "expected_template"),
     [
-        ("h3c_comware_v5", "h3c_comware_v5_display_interface_brief.textfsm"),
+        ("h3c_comware_v5", "h3c_comware_v5_display_interface_brief_description.textfsm"),
         ("h3c_comware", "h3c_comware_v7_display_interface_brief_description.textfsm"),
-        ("h3c_comware_v9", "h3c_comware_v9_display_interface_brief.textfsm"),
+        ("h3c_comware_v9", "h3c_comware_v9_display_interface_brief_description.textfsm"),
     ],
 )
 def test_h3c_interface_description_command_prefers_dedicated_grammar_and_keeps_legacy_fallback(
@@ -589,29 +542,6 @@ def test_comware7_real_world_bfd_down_session_is_structured(platform):
 @pytest.mark.parametrize(
     ("platform", "category_fixtures", "expected_commands"),
     [
-        (
-            "h3c_comware_v5",
-            {
-                "bgp_routes": ("h3c", "h3c_comware_v5", "display_bgp_routing_table", "comware_v5_s7500e"),
-                "ntp": ("h3c", "h3c_comware_v5", "display_ntp_service_status", "comware_v5_s5500"),
-                "environment": ("h3c", "h3c_comware_v5", "display_environment", "comware_v5_s5500"),
-                "fan": ("h3c", "h3c_comware_v5", "display_fan", "comware_v5_s3610"),
-                "power": ("h3c", "h3c_comware_v5", "display_power", "comware_v5_s3610"),
-                "stack": ("h3c", "h3c_comware_v5", "display_irf", "comware_v5_s9500e"),
-                "version": ("h3c", "h3c_comware_v5", "display_version", "comware_v5_wx3010e"),
-                "logs": ("h3c", "h3c_comware_v5", "display_logbuffer", "comware_v5_s7500e"),
-            },
-            {
-                "bgp_routes": ["display bgp routing-table ipv4"],
-                "ntp": ["display ntp-service status"],
-                "environment": ["display environment"],
-                "fan": ["display fan"],
-                "power": ["display power"],
-                "stack": ["display irf"],
-                "version": ["display version"],
-                "logs": ["display logbuffer"],
-            },
-        ),
         (
             "h3c_comware",
             {

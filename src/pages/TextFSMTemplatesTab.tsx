@@ -652,44 +652,6 @@ const TextFSMTemplatesTab: React.FC<Props> = ({ language }) => {
                           </select>
                         </div>
                       )}
-                      <div className="lg:col-span-7">
-                        <label className="flex items-center gap-1.5 text-[11px] font-semibold text-black/50 uppercase tracking-wider">
-                          <span>{isZh ? '关联 Action' : 'Action'}</span>
-                          <span className="rounded-full bg-slate-200/70 px-1.5 py-0.5 text-[9px] font-medium normal-case tracking-normal text-black/40">
-                            {isZh ? '可选' : 'Optional'}
-                          </span>
-                        </label>
-                        <select
-                          value={editorActionCode}
-                          disabled={actionOptionsLoading}
-                          onChange={(event) => {
-                            const nextActionCode = event.target.value;
-                            const selectedAction = actionOptions.find((option) => option.action_code === nextActionCode);
-                            setEditorActionCode(nextActionCode);
-                            if (selectedAction?.command) setEditorCommand(selectedAction.command);
-                          }}
-                          className="mt-1.5 h-9 w-full rounded-lg border border-black/10 bg-white px-2.5 text-xs outline-none focus:border-[#00bceb] disabled:bg-slate-50"
-                        >
-                          <option value="">{actionOptionsLoading ? (isZh ? '加载动作中…' : 'Loading actions…') : (isZh ? '不关联 Action' : 'No action')}</option>
-                          {actionOptionGroups.map(([group, options]) => (
-                            <optgroup key={group} label={group}>
-                              {options.map((option) => (
-                                <option key={option.action_code} value={option.action_code}>
-                                  {isZh ? option.name_zh : option.name_en} · {option.action_code}
-                                </option>
-                              ))}
-                            </optgroup>
-                          ))}
-                        </select>
-                        {editorActionCode && (
-                          <div className="mt-1.5 flex min-w-0 items-center gap-1.5 text-[10px] text-cyan-700/70">
-                            <span className="shrink-0 text-black/35">{isZh ? '命令' : 'Command'}</span>
-                            <code className="truncate rounded bg-cyan-50 px-1.5 py-0.5 font-mono text-[10px] text-cyan-800/80">
-                              {actionOptions.find((option) => option.action_code === editorActionCode)?.command || (isZh ? '未配置平台命令' : 'No platform command configured')}
-                            </code>
-                          </div>
-                        )}
-                      </div>
                       <div className="lg:col-span-5">
                         <label className="text-[11px] font-semibold text-black/50 uppercase tracking-wider">{isZh ? '命令' : 'Command'}</label>
                         <input
@@ -701,6 +663,51 @@ const TextFSMTemplatesTab: React.FC<Props> = ({ language }) => {
                       </div>
                     </div>
                   )}
+
+                  <div className="rounded-xl border border-slate-200/80 bg-slate-50/40 p-3">
+                    <label className="flex items-center gap-1.5 text-[11px] font-semibold text-black/50 uppercase tracking-wider">
+                      <span>{isZh ? '关联 Action' : 'Action'}</span>
+                      <span className="rounded-full bg-slate-200/70 px-1.5 py-0.5 text-[9px] font-medium normal-case tracking-normal text-black/40">
+                        {isZh ? '可选' : 'Optional'}
+                      </span>
+                    </label>
+                    <select
+                      aria-label={isZh ? '关联 Action' : 'Action'}
+                      value={editorActionCode}
+                      disabled={actionOptionsLoading}
+                      onChange={(event) => {
+                        const nextActionCode = event.target.value;
+                        const selectedAction = actionOptions.find((option) => option.action_code === nextActionCode);
+                        setEditorActionCode(nextActionCode);
+                        if (!editingTemplate && selectedAction?.command) setEditorCommand(selectedAction.command);
+                      }}
+                      className="mt-1.5 h-9 w-full rounded-lg border border-black/10 bg-white px-2.5 text-xs outline-none focus:border-[#00bceb] disabled:bg-slate-50"
+                    >
+                      <option value="">{actionOptionsLoading ? (isZh ? '加载动作中…' : 'Loading actions…') : (isZh ? '不关联 Action' : 'No action')}</option>
+                      {actionOptionGroups.map(([group, options]) => (
+                        <optgroup key={group} label={group}>
+                          {options.map((option) => (
+                            <option key={option.action_code} value={option.action_code}>
+                              {isZh ? option.name_zh : option.name_en} · {option.action_code}
+                            </option>
+                          ))}
+                        </optgroup>
+                      ))}
+                    </select>
+                    {editorActionCode && (
+                      <div className="mt-1.5 flex min-w-0 items-center gap-1.5 text-[10px] text-cyan-700/70">
+                        <span className="shrink-0 text-black/35">{isZh ? '命令' : 'Command'}</span>
+                        <code className="truncate rounded bg-cyan-50 px-1.5 py-0.5 font-mono text-[10px] text-cyan-800/80">
+                          {actionOptions.find((option) => option.action_code === editorActionCode)?.command || (isZh ? '未配置平台命令' : 'No platform command configured')}
+                        </code>
+                      </div>
+                    )}
+                    <div className="mt-1.5 text-[10px] text-black/35">
+                      {isZh
+                        ? '可在新建或编辑模板时选择；不选择不会影响模板解析。'
+                        : 'Optional for both new and existing templates; leaving it empty does not affect parsing.'}
+                    </div>
+                  </div>
 
                   {!editingTemplate && generateFilename() && (
                     <div className="space-y-1 text-[11px] text-black/40">

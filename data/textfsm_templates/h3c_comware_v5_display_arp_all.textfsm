@@ -1,0 +1,15 @@
+# nexora-action-code: get_arp_table
+Value IP_ADDRESS (\d{1,3}(?:\.\d{1,3}){3})
+Value MAC_ADDRESS ([0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4})
+Value VLAN_ID (\d+|N/A|--)
+Value INTERFACE (\S+)
+Value AGING (\d+|-)
+Value TYPE ([SD])
+
+Start
+  ^\s*<.*>\s*display\s+arp(?:\s+all)?\s*$$
+  ^\s*Type:\s+S-Static\s+D-Dynamic\s*$$
+  ^\s*IP\s+Address\s+MAC\s+Address\s+VLAN\s+ID\s+Interface\s+Aging\s+Type\s*$$
+  ^\s*${IP_ADDRESS}\s+${MAC_ADDRESS}\s+${VLAN_ID}\s+${INTERFACE}\s+${AGING}\s+${TYPE}\s*$$ -> Record
+  ^\s*$$
+  ^.*$$

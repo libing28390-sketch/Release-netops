@@ -587,16 +587,16 @@ COMMAND_CATALOG: dict[str, dict[str, list[str]]] = {
     'h3c_comware_v5': {
         'interfaces': ['display interface brief'],
         'neighbors': ['display lldp neighbor-information list'],
-        'arp': ['display arp'],
+        'arp': ['display arp all'],
         'mac_table': ['display mac-address'],
         'vlan': ['display vlan brief'],
         'routing_table': ['display ip routing-table'],
-        # Comware V5 accepts the family command without the V7/V9 `unicast`
-        # suffix. Keep this catalog separate from H3C Comware V7/V9 so a
-        # parser template cannot be selected for the wrong CLI grammar.
-        'bgp': ['display bgp peer ipv4'],
+        # Comware V5 uses the shorter BGP forms. Keep this catalog separate
+        # from H3C Comware V7/V9 so the command and parser grammar cannot
+        # drift across software generations.
+        'bgp': ['display bgp peer'],
         'ospf': ['display ospf peer'],
-        'bgp_routes': ['display bgp routing-table ipv4'],
+        'bgp_routes': ['display bgp routing-table'],
         'ntp': ['display ntp-service status'],
         'environment': ['display environment'],
         'fan': ['display fan'],

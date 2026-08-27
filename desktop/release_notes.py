@@ -1,6 +1,6 @@
 """Versioned release notes for the Windows desktop client."""
 
-CLIENT_VERSION = "1.0.6"
+CLIENT_VERSION = "1.0.7"
 CLIENT_BUILD = "20260816.0001"
 
 RELEASE_NOTES = {

@@ -132,7 +132,7 @@ git pull origin windows
 
 注意：当前 GitHub Actions 只负责推送 GitHub Release 仓库，并不会自动同步 Gitee。Gitee 分支是否包含最新 Windows 构建，需要发布人员确认；配置了 `BAIDU_PAN_TOKEN` 的发布任务还会上传 Windows ZIP，可用于受限网络下的离线分发。客户端的“自动检查更新”设置目前不改变上述手动检查链路。
 
-当前客户端版本为 `1.0.6`。如果托盘提示没有新版本，请使用最新 Windows ZIP 或执行 `git pull origin windows`；GitHub Release 尚未发布对应构建时，在线更新不会生效。
+当前客户端版本为 `1.0.7`。如果托盘提示没有新版本，请使用最新 Windows ZIP 或执行 `git pull origin windows`；GitHub Release 尚未发布对应构建时，在线更新不会生效。
 
 ## 重新打包
 
