@@ -12,6 +12,48 @@ from datetime import datetime, timezone
 logger = logging.getLogger(__name__)
 
 
+_RACK_OFFLINE_STATES = frozenset({'offline', 'unreachable', 'down', 'inactive'})
+_RACK_HEALTHY_STATES = frozenset({'online', 'active', 'healthy', 'up'})
+
+
+def _normalize_asset_id(asset_id: object) -> str:
+    return str(asset_id or '').strip()
+
+
+def _derive_rack_health(
+    *,
+    device_count: int,
+    monitored_device_count: int,
+    healthy_device_count: int,
+    offline_device_count: int,
+    unknown_monitoring_device_count: int,
+    invalid_device_count: int,
+) -> tuple[str, str]:
+    """Derive a conservative rack health/data-quality state.
+
+    A monitoring row is not proof of health: its status must be a recognized
+    healthy state. Unknown or missing status therefore remains unknown/partial
+    instead of being silently promoted to healthy.
+    """
+    if device_count == 0:
+        return 'empty', 'empty'
+    if offline_device_count > 0:
+        health_status = 'offline'
+    elif monitored_device_count == device_count and healthy_device_count == device_count:
+        health_status = 'healthy'
+    elif healthy_device_count > 0:
+        health_status = 'partial'
+    else:
+        health_status = 'unknown'
+
+    data_quality_status = 'invalid' if invalid_device_count else (
+        'complete'
+        if monitored_device_count == device_count and unknown_monitoring_device_count == 0
+        else 'partial'
+    )
+    return health_status, data_quality_status
+
+
 def _utc_now() -> str:
     return datetime.now(timezone.utc).replace(microsecond=0).isoformat()
 
@@ -198,13 +240,17 @@ def list_rack_summaries(
         filters.append("r.status = ?")
         params.append(status)
     if health:
-        offline_condition = "LOWER(COALESCE(d_health.status, '')) IN ('offline', 'unreachable', 'down', 'inactive')"
-        healthy_condition = "LOWER(COALESCE(d_health.status, '')) IN ('online', 'active', 'healthy', 'up')"
+        offline_condition = "LOWER(COALESCE(d_health.status, '')) IN (" + ','.join(
+            f"'{state}'" for state in sorted(_RACK_OFFLINE_STATES)
+        ) + ")"
+        healthy_condition = "LOWER(COALESCE(d_health.status, '')) IN (" + ','.join(
+            f"'{state}'" for state in sorted(_RACK_HEALTHY_STATES)
+        ) + ")"
         rack_devices_exist = "EXISTS (SELECT 1 FROM rack_devices rd_health WHERE rd_health.rack_id = r.id)"
-        monitored_exist = """EXISTS (
+        healthy_exist = f"""EXISTS (
             SELECT 1 FROM rack_devices rd_health
             JOIN devices d_health ON d_health.asset_id = rd_health.asset_id
-            WHERE rd_health.rack_id = r.id
+            WHERE rd_health.rack_id = r.id AND {healthy_condition}
         )"""
         offline_exist = f"""EXISTS (
             SELECT 1 FROM rack_devices rd_health
@@ -216,20 +262,21 @@ def list_rack_summaries(
             LEFT JOIN devices d_health ON d_health.asset_id = rd_health.asset_id
             WHERE rd_health.rack_id = r.id AND d_health.id IS NULL
         )"""
-        nonhealthy_exist = f"""EXISTS (
+        unknown_monitoring_exist = f"""EXISTS (
             SELECT 1 FROM rack_devices rd_health
-            LEFT JOIN devices d_health ON d_health.asset_id = rd_health.asset_id
+            JOIN devices d_health ON d_health.asset_id = rd_health.asset_id
             WHERE rd_health.rack_id = r.id
-              AND (d_health.id IS NULL OR NOT ({healthy_condition}))
+              AND NOT ({healthy_condition})
+              AND NOT ({offline_condition})
         )"""
         if health == 'offline':
             filters.append(offline_exist)
         elif health == 'healthy':
-            filters.extend((rack_devices_exist, f"NOT ({nonhealthy_exist})"))
+            filters.extend((rack_devices_exist, f"NOT ({offline_exist})", f"NOT ({unmonitored_exist})", f"NOT ({unknown_monitoring_exist})"))
         elif health == 'partial':
-            filters.extend((monitored_exist, unmonitored_exist, f"NOT ({offline_exist})"))
+            filters.extend((rack_devices_exist, f"NOT ({offline_exist})", healthy_exist, f"({unmonitored_exist} OR {unknown_monitoring_exist})"))
         elif health == 'unknown':
-            filters.extend((rack_devices_exist, f"NOT ({monitored_exist})"))
+            filters.extend((rack_devices_exist, f"NOT ({offline_exist})", f"NOT ({healthy_exist})"))
         elif health == 'empty':
             filters.append(f"NOT ({rack_devices_exist})")
     if keyword.strip():
@@ -323,8 +370,8 @@ def list_rack_summaries(
                     str(monitoring.get('status') or '').lower()
                 )
 
-    offline_states = {'offline', 'unreachable', 'down', 'inactive'}
-    healthy_states = {'online', 'active', 'healthy', 'up'}
+    offline_states = _RACK_OFFLINE_STATES
+    healthy_states = _RACK_HEALTHY_STATES
     summaries = []
     for rack in rack_items:
         devices = devices_by_rack.get(str(rack['id']), [])
@@ -335,6 +382,7 @@ def list_rack_summaries(
         monitored_device_count = 0
         offline_device_count = 0
         healthy_device_count = 0
+        unknown_monitoring_device_count = 0
         unlinked_asset_count = 0
 
         for device in devices:
@@ -349,7 +397,7 @@ def list_rack_summaries(
                 target.update(range(start_u, end_u + 1))
             power_used_watts += int(device.get('power_watts') or 0)
 
-            asset_id_value = str(device.get('asset_id') or '').strip()
+            asset_id_value = _normalize_asset_id(device.get('asset_id'))
             if not asset_id_value:
                 unlinked_asset_count += 1
                 continue
@@ -360,27 +408,22 @@ def list_rack_summaries(
                     offline_device_count += 1
                 elif any(state in healthy_states for state in monitoring_states):
                     healthy_device_count += 1
+                else:
+                    unknown_monitoring_device_count += 1
 
         occupied = front_occupied | rear_occupied
         total_u = int(rack.get('total_u') or 0)
         capacity_watts = int(rack.get('power_capacity_watts') or rack.get('power_capacity_w') or 0)
         device_count = len(devices)
         unmonitored_device_count = device_count - monitored_device_count
-        if device_count == 0:
-            health_status = 'empty'
-            data_quality_status = 'empty'
-        elif offline_device_count > 0:
-            health_status = 'offline'
-            data_quality_status = 'invalid' if invalid_device_count else ('partial' if unmonitored_device_count else 'complete')
-        elif monitored_device_count == device_count:
-            health_status = 'healthy'
-            data_quality_status = 'invalid' if invalid_device_count else 'complete'
-        elif monitored_device_count > 0:
-            health_status = 'partial'
-            data_quality_status = 'invalid' if invalid_device_count else 'partial'
-        else:
-            health_status = 'unknown'
-            data_quality_status = 'invalid' if invalid_device_count else 'partial'
+        health_status, data_quality_status = _derive_rack_health(
+            device_count=device_count,
+            monitored_device_count=monitored_device_count,
+            healthy_device_count=healthy_device_count,
+            offline_device_count=offline_device_count,
+            unknown_monitoring_device_count=unknown_monitoring_device_count,
+            invalid_device_count=invalid_device_count,
+        )
 
         summaries.append({
             **rack,
@@ -396,6 +439,7 @@ def list_rack_summaries(
             'monitored_device_count': monitored_device_count,
             'healthy_device_count': healthy_device_count,
             'offline_device_count': offline_device_count,
+            'unknown_monitoring_device_count': unknown_monitoring_device_count,
             'unlinked_asset_count': unlinked_asset_count,
             'unmonitored_device_count': unmonitored_device_count,
             'invalid_device_count': invalid_device_count,
@@ -672,13 +716,27 @@ def _check_u_constraints(conn, rack_id: str, start_u: int, u_height: int,
 
 
 def _check_asset_installation(conn, asset_id: str, exclude_device_id: str = '') -> None:
-    """Prevent one CMDB asset from being installed in multiple rack slots."""
-    normalized_asset_id = (asset_id or '').strip()
+    """Prevent one asset identity from being installed in multiple rack slots.
+
+    PostgreSQL advisory locks cover legacy/unlinked asset IDs for which there
+    is no ``physical_assets`` row to lock.  The physical-asset row lock is kept
+    as an additional guard for canonical CMDB assets.  Both locks are
+    transaction-scoped and therefore released automatically on commit/rollback.
+    """
+    normalized_asset_id = _normalize_asset_id(asset_id)
     if not normalized_asset_id:
         return
 
     from database import _USE_PG
     if _USE_PG:
+        # ``rack_devices.asset_id`` is historically nullable/free-text, so a
+        # row lock alone is insufficient when the referenced physical asset is
+        # missing.  A stable advisory lock serializes all service writes for
+        # the same normalized identity, including that legacy case.
+        conn.execute(
+            "SELECT pg_advisory_xact_lock(hashtext(?))",
+            (normalized_asset_id,),
+        )
         # Valid assets share this row lock across racks, serializing concurrent
         # installation attempts before the duplicate check.
         conn.execute(
@@ -733,7 +791,8 @@ def create_rack_device(conn, *, name: str, rack_id: str, device_type_id: str,
     u_height = dt['u_height']
 
     # Enforce cross-rack asset uniqueness and rack-local U constraints.
-    _check_asset_installation(conn, asset_id)
+    normalized_asset_id = _normalize_asset_id(asset_id)
+    _check_asset_installation(conn, normalized_asset_id)
     _check_u_constraints(conn, rack_id, start_u, u_height, position)
 
     device_id = str(uuid.uuid4())
@@ -743,7 +802,7 @@ def create_rack_device(conn, *, name: str, rack_id: str, device_type_id: str,
            (id, name, rack_id, device_type_id, start_u, position, status, serial_number, asset_id, created_at, updated_at)
            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
         (device_id, name, rack_id, device_type_id, start_u, position, status,
-         serial_number, asset_id, now, now)
+         serial_number, normalized_asset_id, now, now)
     )
     conn.commit()
     logger.info(f"[RackService] Added '{name}' to rack at U{start_u} ({position})")
@@ -759,9 +818,10 @@ def update_rack_device(conn, device_id: str, **fields) -> dict:
     start_u = fields.get('start_u') if fields.get('start_u') is not None else existing['start_u']
     position = fields.get('position') or existing['position']
     asset_id = fields.get('asset_id') if fields.get('asset_id') is not None else existing.get('asset_id', '')
+    normalized_asset_id = _normalize_asset_id(asset_id)
 
     dt = get_device_type(conn, device_type_id)
-    _check_asset_installation(conn, asset_id, exclude_device_id=device_id)
+    _check_asset_installation(conn, normalized_asset_id, exclude_device_id=device_id)
     _check_u_constraints(conn, rack_id, start_u, dt['u_height'], position, exclude_device_id=device_id)
 
     updates = []
@@ -769,7 +829,7 @@ def update_rack_device(conn, device_id: str, **fields) -> dict:
     for key in ('name', 'rack_id', 'device_type_id', 'start_u', 'position', 'status', 'serial_number', 'asset_id'):
         if key in fields and fields[key] is not None:
             updates.append(f"{key} = ?")
-            params.append(fields[key])
+            params.append(normalized_asset_id if key == 'asset_id' else fields[key])
     if not updates:
         return existing
     updates.append("updated_at = ?")

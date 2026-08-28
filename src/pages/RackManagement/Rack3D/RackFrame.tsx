@@ -88,7 +88,7 @@ export const RackFrame: React.FC<RackFrameProps> = ({
     <group>
       {/* 4 Vertical Corner Structural Posts */}
       {postPositions.map((pos, i) => (
-        <group key={i} position={pos}>
+        <group key={`post-${i}`} position={pos}>
           <mesh castShadow receiveShadow>
             <boxGeometry args={[postThickness, rackHeight, postThickness]} />
             <meshStandardMaterial color="#2d3748" roughness={0.55} metalness={0.25} />
@@ -129,7 +129,7 @@ export const RackFrame: React.FC<RackFrameProps> = ({
 
       {/* 4 Leveling Feet */}
       {postPositions.map((pos, i) => (
-        <mesh key={i} position={[pos[0], -0.45, pos[2]]}>
+        <mesh key={`foot-${i}`} position={[pos[0], -0.45, pos[2]]}>
           <cylinderGeometry args={[0.12, 0.16, 0.1, 16]} />
           <meshStandardMaterial color="#64748b" roughness={0.4} metalness={0.5} />
         </mesh>

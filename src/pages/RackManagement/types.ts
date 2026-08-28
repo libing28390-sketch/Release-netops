@@ -51,6 +51,7 @@ export interface RackSummary extends Rack {
   monitored_device_count: number;
   healthy_device_count: number;
   offline_device_count: number;
+  unknown_monitoring_device_count: number;
   unlinked_asset_count: number;
   unmonitored_device_count: number;
   invalid_device_count: number;

@@ -510,7 +510,7 @@ export const Rack3DContainer: React.FC<Rack3DContainerProps> = ({
 
             {/* Search Dropdown */}
             {showSearchDropdown && filteredDevices.length > 0 && (
-              <div className="absolute right-0 top-full mt-1.5 w-72 max-h-60 overflow-y-auto rounded-xl shadow-2xl backdrop-blur-xl bg-slate-950/95 border border-slate-700 p-1 z-30 space-y-0.5">
+              <div className="absolute left-0 top-full mt-1.5 w-72 max-h-60 overflow-y-auto rounded-xl shadow-2xl backdrop-blur-xl bg-slate-950/95 border border-slate-700 p-1 z-30 space-y-0.5">
                 {filteredDevices.map(d => (
                   <button
                     key={d.id}

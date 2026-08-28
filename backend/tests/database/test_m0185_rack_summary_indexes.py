@@ -1,34 +1,27 @@
-import sqlite3
-
 from database.migrations.m0185_rack_summary_indexes import downgrade, upgrade
 
 
-def _index_names(conn: sqlite3.Connection, table: str) -> set[str]:
-    return {str(row[1]) for row in conn.execute(f"PRAGMA index_list('{table}')").fetchall()}
+def _index_names(conn, table: str) -> set[str]:
+    rows = conn.execute(
+        '''SELECT indexname
+           FROM pg_indexes
+           WHERE schemaname = current_schema() AND tablename = ?''',
+        (table,),
+    ).fetchall()
+    return {str(row['indexname']) for row in rows}
 
 
-def test_rack_summary_indexes_upgrade_is_idempotent_and_downgrade_is_reversible() -> None:
-    conn = sqlite3.connect(':memory:')
-    try:
-        conn.execute(
-            '''CREATE TABLE racks (
-                id TEXT PRIMARY KEY, site_id TEXT, floor TEXT, room TEXT, row TEXT, status TEXT
-            )'''
-        )
-        conn.execute(
-            '''CREATE TABLE rack_devices (
-                id TEXT PRIMARY KEY, rack_id TEXT, asset_id TEXT
-            )'''
-        )
+def test_rack_summary_indexes_upgrade_is_idempotent_and_downgrade_is_reversible(isolated_db) -> None:
+    conn = isolated_db['module'].get_db_connection()
+    conn.execute('DROP INDEX IF EXISTS idx_racks_summary_scope')
+    conn.execute('DROP INDEX IF EXISTS idx_rack_devices_rack_asset')
 
-        upgrade(conn.cursor(), use_pg=False)
-        upgrade(conn.cursor(), use_pg=False)
+    upgrade(conn.cursor(), use_pg=True)
+    upgrade(conn.cursor(), use_pg=True)
 
-        assert 'idx_racks_summary_scope' in _index_names(conn, 'racks')
-        assert 'idx_rack_devices_rack_asset' in _index_names(conn, 'rack_devices')
+    assert 'idx_racks_summary_scope' in _index_names(conn, 'racks')
+    assert 'idx_rack_devices_rack_asset' in _index_names(conn, 'rack_devices')
 
-        downgrade(conn.cursor(), use_pg=False)
-        assert 'idx_racks_summary_scope' not in _index_names(conn, 'racks')
-        assert 'idx_rack_devices_rack_asset' not in _index_names(conn, 'rack_devices')
-    finally:
-        conn.close()
+    downgrade(conn.cursor(), use_pg=True)
+    assert 'idx_racks_summary_scope' not in _index_names(conn, 'racks')
+    assert 'idx_rack_devices_rack_asset' not in _index_names(conn, 'rack_devices')

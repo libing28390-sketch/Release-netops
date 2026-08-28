@@ -545,3 +545,66 @@ git diff --check                          exit 0（仅 LF/CRLF 提示）
 - 本地前后端健康检查均为 HTTP 200，浏览器已打开登录页；需要登录后完成全屏、搜索/列表/3D 同步选择、图层保持和控制台检查。
 - 24U/42U/48U 的 FOV 数学回归已通过，仍需在真实页面数据具备对应机柜时做视觉复验。
 - 非 platform_registry 全后端回归按正确夹具运行到 11% 时，因用户要求先 push 而主动停止；停止前无失败。platform_registry 仍需按独立 PostgreSQL fixture 单独执行。
+
+---
+
+# 2026-08-28 PostgreSQL 与浏览器验收复核
+
+本次复核按当前运行环境执行：数据库为 PostgreSQL，机柜相关测试和平台注册专项测试均使用一次性 PostgreSQL 数据库夹具；本次没有使用 sqlite3 或 SQLite 作为机柜/迁移验证环境。不会在交接记录中保存登录凭据。
+
+## 本次补齐与修复
+
+- 机柜健康摘要改为保守判定：未知/缺失监控状态不会被提升为 healthy，并返回 `unknown_monitoring_device_count`；健康筛选与摘要聚合使用同一套状态契约。
+- PostgreSQL 资产重复上架校验增加事务级 advisory lock，同时保留 canonical `physical_assets` 行锁；资产 ID 在创建、更新和校验前统一去除首尾空格。
+- 基线 schema 不再重复创建由 migration 185 管理的机柜摘要索引，避免降级后基线初始化把索引重新带回。
+- 3D/窄屏验收暴露并修复了工作区宽度塌缩、搜索下拉溢出、全屏退出不可逆和 React Three 结构键重复问题：窄屏下收起固定设备栏并在 3D 时隐藏机柜列表，搜索下拉左对齐，全屏使用状态兜底，机柜立柱/底脚使用不同 key 前缀。
+
+## PostgreSQL 验证结果
+
+```text
+backend/tests/test_rack_read_model.py
+backend/tests/database/test_m0185_rack_summary_indexes.py
+  8 passed in 40.82s
+
+backend/tests/platform_registry
+  108 passed in 1653.07s
+
+实际运行数据库检查
+  admin 用户存在且 active；schema_migrations 已到 185；
+  idx_racks_summary_scope、idx_rack_devices_rack_asset 均存在。
+```
+
+## 前端与构建验证
+
+```text
+npm run test:frontend -- --run src/pages/RackManagement
+  8 files / 32 tests passed
+
+npm run lint
+  passed（tsc --noEmit）
+
+npm run build -- --outDir <temporary directory>
+  passed（4258 modules transformed）
+
+git diff --check
+  passed；仅有 Git 的 LF/CRLF 提示，无空白错误
+```
+
+`npm run benchmark:rack-fleet` 已通过：50/100/500 摘要规模均保持总览首屏 1 个摘要请求、0 个布局请求；布局 p95 分别为 6.308ms、13.823ms、57.965ms，选择 p95 均低于 0.03ms。FPS 仍需真实 GPU 环境测量。
+
+## 浏览器验收
+
+本地页面 `http://127.0.0.1:5400/cmdb/racks` 已使用用户提供的账号完成登录，后端 `http://127.0.0.1:5310/api/health` 与前端健康检查均返回 HTTP 200，数据库状态为 connected。
+
+- 2D 首屏显示 4 个机柜、8 台设备、8/168U、1600W；搜索 `S6850-1` 只返回包含该设备的 `JG-02 / DEFAULT_SITE` 机柜。
+- 进入 3D 后显示“只读视图/只读”，`JG-02` 显示 8U/42U、1600W、8 个无遥测设备和“无已验证链路”；没有安装、删除、移除或 PNG 写入入口。
+- 3D 设备搜索 `S6850-1`、选中设备和只读 Inspector 已验证；Inspector 显示 CMDB 布局来源、U 位、资产关联、额定功率以及“缺少有效遥测”，没有伪造端口或流量。
+- 全屏通过真实浏览器手势展开工作区，右侧设备列表和 3D 画面可见；退出全屏后机柜选择和设备焦点保持。窄屏下模式按钮及设备搜索下拉均可操作。
+- “多机柜逻辑总览”显示 4 个摘要实例和 `inferred` 位置说明；未触发全量机柜布局加载。
+- 修复后未再出现重复 React key 日志；页面仅保留当前环境可解释的 `THREE.Clock` 弃用提示、WebGL context lost 恢复提示，以及未关联监控对象导致的 422/无遥测提示，不影响只读真实性。
+
+## 当前风险与边界
+
+- 当前样例数据主要为 42U；24U/48U 仍只有数学/FOV 自动化覆盖，缺少对应真实机柜页面样本。
+- 平台注册专项 PostgreSQL 回归通过；仓库历史全量后端/前端中仍有与本次机柜改造无关的既有失败/超时，因此不把它们作为本次机柜交付的阻断证据。后续若处理那些模块，应单独建立对应 PostgreSQL/服务夹具并修复。
+- 本地开发服务当前使用 `127.0.0.1:5310` 与 `127.0.0.1:5400`；迁移 185 已应用，两个摘要索引已在当前 PostgreSQL 实例中验证。

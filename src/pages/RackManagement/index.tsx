@@ -404,16 +404,22 @@ export const RackManagementTab: React.FC<Props> = ({ language }) => {
     const target = rackWorkspaceRef.current;
     if (!target) return;
     try {
-      if (document.fullscreenElement === target) {
-        await document.exitFullscreen();
-      } else {
-        await target.requestFullscreen();
+      if (isRackFullscreen) {
+        if (document.fullscreenElement) {
+          await document.exitFullscreen();
+        } else {
+          // Some embedded browser surfaces resize the page without exposing a
+          // document.fullscreenElement. Keep the shell toggle reversible there.
+          setIsRackFullscreen(false);
+        }
+        return;
       }
+      await target.requestFullscreen();
     } catch (fullscreenError) {
       console.error('Rack workspace fullscreen toggle failed:', fullscreenError);
       setError(zh ? '无法切换全屏，请检查浏览器权限' : 'Unable to toggle fullscreen. Check browser permissions.');
     }
-  }, [zh]);
+  }, [isRackFullscreen, zh]);
 
   useEffect(() => {
     if (!drawerVisible || !selectedDeviceId || !layout) {
@@ -1236,7 +1242,7 @@ export const RackManagementTab: React.FC<Props> = ({ language }) => {
         className={`flex gap-3 flex-1 min-h-0 ${isRackFullscreen ? 'p-3 bg-[#090d16]' : ''}`}
       >
         {/* Left: rack list */}
-        <div className="w-56 flex-shrink-0 rounded-xl overflow-hidden flex flex-col" style={{ background: 'var(--card-bg)', border: '1px solid var(--card-border)' }}>
+        <div className={`${viewMode === '3d' ? 'hidden md:flex' : 'flex'} w-56 flex-shrink-0 rounded-xl overflow-hidden flex-col`} style={{ background: 'var(--card-bg)', border: '1px solid var(--card-border)' }}>
           <div className="p-3 space-y-2 border-b" style={{ borderColor: 'var(--card-border)' }}>
             <div className="flex items-center gap-1.5 rounded-lg px-2.5 py-1.5" style={{ background: 'var(--app-hover-bg)' }}>
               <Search size={14} style={{ color: 'var(--muted-text)' }} />
@@ -1503,7 +1509,7 @@ export const RackManagementTab: React.FC<Props> = ({ language }) => {
           ) : selectedRack && layout ? (
             <>
               <div className="flex items-center justify-between px-4 py-2.5 border-b" style={{ borderColor: 'var(--card-border)' }}>
-                <div className="flex items-center gap-3">
+                <div className="flex min-w-0 flex-wrap items-center gap-3">
                   <h3 className="text-sm font-bold" style={{ color: 'var(--heading-text)' }}>
                     {selectedRack.name}
                     <span className="text-[11px] font-normal ml-2" style={{ color: 'var(--muted-text)' }}>
@@ -1568,7 +1574,7 @@ export const RackManagementTab: React.FC<Props> = ({ language }) => {
                         </button>
                       </div>
 
-                      <div className="flex items-center gap-1 ml-3 pl-3 border-l" style={{ borderColor: 'var(--card-border)' }}>
+                      <div className="hidden items-center gap-1 ml-3 pl-3 border-l md:flex" style={{ borderColor: 'var(--card-border)' }}>
                         <button
                           onClick={() => setCollapseEmpty(!collapseEmpty)}
                           className={`flex items-center gap-1 px-2 py-1 rounded-md text-[11px] font-medium transition-all ${collapseEmpty ? 'bg-cyan-600/20 text-cyan-600' : 'hover:bg-cyan-50'}`}
@@ -1851,7 +1857,7 @@ export const RackManagementTab: React.FC<Props> = ({ language }) => {
 
         {/* Right: installed device list */}
         {showDeviceList && viewMode !== 'overview' && (
-          <div className="w-64 flex-shrink-0 rounded-xl overflow-hidden flex flex-col" style={{ background: 'var(--card-bg)', border: '1px solid var(--card-border)' }}>
+          <div className="hidden w-64 flex-shrink-0 rounded-xl overflow-hidden md:flex md:flex-col" style={{ background: 'var(--card-bg)', border: '1px solid var(--card-border)' }}>
             {!layout ? (
               <div className="flex-1 flex items-center justify-center" style={{ color: 'var(--muted-text)' }}>
                 {zh ? '请选择机柜' : 'Select a rack'}

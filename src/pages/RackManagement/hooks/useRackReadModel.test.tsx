@@ -32,6 +32,7 @@ const summaryPage = {
     monitored_device_count: 0,
     healthy_device_count: 0,
     offline_device_count: 0,
+    unknown_monitoring_device_count: 0,
     unlinked_asset_count: 0,
     unmonitored_device_count: 0,
     invalid_device_count: 0,

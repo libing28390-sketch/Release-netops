@@ -26,6 +26,7 @@ const makeRack = (index: number): RackSummary => ({
   monitored_device_count: 8,
   healthy_device_count: 8,
   offline_device_count: 0,
+  unknown_monitoring_device_count: 0,
   unlinked_asset_count: 0,
   unmonitored_device_count: 0,
   invalid_device_count: 0,
