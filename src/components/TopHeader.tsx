@@ -121,7 +121,7 @@ const ROLE_LEVEL: Record<string, number> = { Administrator: 3, Operator: 2, View
     { id: 'ipam',       label: 'IPAM地址管理', labelEn: 'IPAM',        icon: Globe,             path: '/ipam/locate',        accent: '#0078d4', minRole: 'Viewer' },
     { id: 'cmdb',       label: 'CMDB基础数据', labelEn: 'CMDB Core',    icon: Database,          path: '/cmdb/credentials',   accent: '#6366f1', minRole: 'Operator' },
     { id: 'config',     label: '配置管理',   labelEn: 'Config',       icon: FileCode2,         path: '/config/backup',      accent: '#722ed1', minRole: 'Viewer' },
-    { id: 'automation', label: '自动化',     labelEn: 'Automation',   icon: Zap,               path: '/automation/tasks',   accent: '#0891b2', minRole: 'Viewer' },
+    { id: 'automation', label: '自动化',     labelEn: 'Automation',   icon: Zap,               path: '/automation/quick-ops',   accent: '#0891b2', minRole: 'Viewer' },
     { id: 'tickets',    label: '工单管理',   labelEn: 'Tickets',      icon: ClipboardList,     path: '/change-orders/all',  accent: '#1677ff', minRole: 'Viewer' },
     { id: 'capacity',   label: '容量与报表', labelEn: 'Reports',      icon: BarChart2,         path: '/capacity/analysis',  accent: '#13c2c2', minRole: 'Viewer' },
     { id: 'platform',   label: '平台管理',   labelEn: 'Platform',     icon: SlidersHorizontal, path: '/management/audit',   accent: '#8c8c8c', minRole: 'Administrator' },

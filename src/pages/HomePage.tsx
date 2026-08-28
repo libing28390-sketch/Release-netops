@@ -60,7 +60,7 @@ const apps: AppEntry[] = [
   { id: 'ipam',       label: 'IPAM地址管理', labelEn: 'IPAM',       desc: '网段前缀与IP分配',    descEn: 'IPAM & prefixes',      icon: Globe,             path: '/ipam/locate',        accent: '#06b6d4' },
   { id: 'cmdb',       label: 'CMDB基础数据', labelEn: 'CMDB Core',  desc: '凭据、站点、VLAN与租户', descEn: 'CMDB Core records',    icon: Database,          path: '/cmdb/credentials',   accent: '#6366f1' },
   { id: 'config',     label: '配置管理',   labelEn: 'Config',       desc: '备份、差异与合规',   descEn: 'Backup & compliance',  icon: FileCode2,         path: '/config/backup',      accent: '#722ed1' },
-  { id: 'automation', label: '自动化',     labelEn: 'Automation',   desc: '作业执行与编排',     descEn: 'Jobs & orchestration', icon: Zap,               path: '/automation/tasks',   accent: '#0891b2' },
+  { id: 'automation', label: '自动化',     labelEn: 'Automation',   desc: '作业执行与编排',     descEn: 'Jobs & orchestration', icon: Zap,               path: '/automation/quick-ops',   accent: '#0891b2' },
   { id: 'tickets',    label: '工单管理',   labelEn: 'Tickets',      desc: '变更审批与跟踪',     descEn: 'Change & approval',    icon: ClipboardList,     path: '/change-orders/all',  accent: '#1677ff' },
   { id: 'capacity',   label: '容量与报表', labelEn: 'Reports',      desc: '趋势分析与报表',     descEn: 'Trends & reports',     icon: BarChart2,         path: '/capacity/analysis',  accent: '#13c2c2' },
   { id: 'platform',   label: '平台管理',   labelEn: 'Platform',     desc: '用户、审计与系统',   descEn: 'Users, audit & system', icon: SlidersHorizontal, path: '/management/audit',   accent: '#8c8c8c' },

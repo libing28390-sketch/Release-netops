@@ -114,7 +114,7 @@ export const navConfig: NavGroup[] = [
     labelEn: 'AUTOMATION',
     icon: 'Zap',
     children: [
-      { id: 'auto-exec',           label: '自动化任务', labelEn: 'Automation',           path: '/automation/tasks', activeMatch: '/automation/tasks,/automation/playbooks,/automation/scenarios', icon: 'Zap' },
+      { id: 'auto-exec',           label: '快捷操作',   labelEn: 'Quick Operations',     path: '/automation/quick-ops', activeMatch: '/automation/quick-ops,/automation/tasks,/automation/execute,/automation/playbooks,/automation/scenarios', icon: 'Zap' },
       { id: 'inspection',          label: '巡检概览',   labelEn: 'Inspection Overview',  path: '/automation/inspections',          icon: 'ClipboardCheck' },
       { id: 'inspection-records',  label: '巡检记录',   labelEn: 'Inspection Records',   path: '/automation/records',              icon: 'FileSearch' },
       { id: 'exec-schedule',       label: '执行计划',   labelEn: 'Execution Schedules',  path: '/automation/schedules',            icon: 'CalendarClock', requiredRole: 'Operator' },

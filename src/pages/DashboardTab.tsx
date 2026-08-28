@@ -171,7 +171,7 @@ const DashboardTab: React.FC<DashboardTabProps> = ({
 
             {/* Primary Action: Run Automation */}
             <button 
-              onClick={() => navigate('/automation/tasks')}
+              onClick={() => navigate('/automation/quick-ops')}
               className="flex items-center gap-1.5 px-4 py-1.5 rounded-full text-xs font-semibold text-white bg-blue-600 hover:bg-blue-700 shadow-xs hover:shadow-sm transition-all cursor-pointer active:scale-98"
             >
               <Zap size={13} fill="currentColor" />

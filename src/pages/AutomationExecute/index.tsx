@@ -841,7 +841,7 @@ export const AutomationExecuteTab: React.FC<AutomationExecuteTabProps> = (props)
     <div className="h-full min-h-0 flex flex-col relative">
       <PageHero
         icon={Zap}
-        title={isZh ? '自动化执行控制台' : 'Automation Console'}
+        title={isZh ? '自动化快捷操作' : 'Quick Operations'}
         subtitle={isZh ? '选择设备进行快捷查询或执行自定义命令' : 'Select devices for quick query or custom commands'}
       />
 

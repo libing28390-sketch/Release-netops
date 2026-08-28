@@ -105,7 +105,7 @@ export function getRouteContext(pathname: string): RouteContext {
   // 7. Automation (/automation/...)
   else if (first === 'automation') {
     activeTab = 'automation';
-    if (second === 'tasks') {
+    if (second === 'quick-ops' || second === 'tasks' || second === 'execute' || second === 'actions') {
       automationPage = 'execute';
     } else if (second === 'inspections') {
       automationPage = 'inspection';

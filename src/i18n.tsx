@@ -308,7 +308,7 @@ export const translations: Translations = {
   retentionHint: { en: 'Snapshots older than this period will be pruned automatically', zh: '超过保留期的快照将自动清理' },
 
   // Automation — Playbooks & Scenarios
-  directExecution: { en: 'Task Runner', zh: '任务执行' },
+  directExecution: { en: 'Quick Operations', zh: '快捷操作' },
   scenarioLibrary: { en: 'Scenario Library', zh: '场景库' },
   scenarioLibraryDesc: { en: 'Built-in playbook templates for common network operations', zh: '常见网络运维场景的内置 Playbook 模板' },
   executionHistoryDesc: { en: 'View automation execution logs and history', zh: '查看自动化任务执行历史日志' },
