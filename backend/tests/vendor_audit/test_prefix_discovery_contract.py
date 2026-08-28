@@ -326,7 +326,7 @@ def test_persist_is_idempotent_and_does_not_default_to_server(monkeypatch) -> No
     conn.row_factory = sqlite3.Row
     conn.executescript('''
         CREATE TABLE prefixes (
-            id TEXT PRIMARY KEY, prefix TEXT, vrf_id TEXT, site_id TEXT, tenant_id TEXT,
+            id TEXT PRIMARY KEY, prefix TEXT, prefix_cidr TEXT, vrf_id TEXT, site_id TEXT, tenant_id TEXT,
             status TEXT, name TEXT, network_type TEXT, traceable INTEGER, source_type TEXT,
             source_ref TEXT, confidence REAL, last_observed_at TEXT,
             classification_status TEXT, classification_source TEXT, classification_confidence REAL,
@@ -375,7 +375,7 @@ def test_persist_attaches_vip_address_role_without_changing_prefix_type(monkeypa
     conn.row_factory = sqlite3.Row
     conn.executescript('''
         CREATE TABLE prefixes (
-            id TEXT PRIMARY KEY, prefix TEXT, vrf_id TEXT, site_id TEXT, tenant_id TEXT,
+            id TEXT PRIMARY KEY, prefix TEXT, prefix_cidr TEXT, vrf_id TEXT, site_id TEXT, tenant_id TEXT,
             status TEXT, name TEXT, network_type TEXT, traceable INTEGER, source_type TEXT,
             source_ref TEXT, confidence REAL, last_observed_at TEXT,
             classification_status TEXT, classification_source TEXT, classification_confidence REAL,

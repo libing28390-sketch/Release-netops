@@ -608,3 +608,111 @@ git diff --check
 - 当前样例数据主要为 42U；24U/48U 仍只有数学/FOV 自动化覆盖，缺少对应真实机柜页面样本。
 - 平台注册专项 PostgreSQL 回归通过；仓库历史全量后端/前端中仍有与本次机柜改造无关的既有失败/超时，因此不把它们作为本次机柜交付的阻断证据。后续若处理那些模块，应单独建立对应 PostgreSQL/服务夹具并修复。
 - 本地开发服务当前使用 `127.0.0.1:5310` 与 `127.0.0.1:5400`；迁移 185 已应用，两个摘要索引已在当前 PostgreSQL 实例中验证。
+
+---
+
+# 2026-08-28 机柜范围外质量门禁修复与 PostgreSQL-only 复核
+
+本节覆盖上一节“机柜范围外仍有既有失败/超时”的旧结论。本轮已对这些失败逐项定位、修复并执行扩大回归；所有后端数据库测试均使用 PostgreSQL，未运行或创建 SQLite/sqlite3 测试环境。
+
+## 已修复问题
+
+- AI 安全分类/DLP：规范化 `<REDACTED>` 赋值，避免 JSON 转义反斜杠误报；请求 ID 保留 `ai_req_` 前缀；未知产品型号不再误解析。
+- AI 知识迁移与公开问答：跨主机导出/导入集成测试改为两个独立 PostgreSQL 数据库，修复 Provider assurance、异步调用和公开聊天路由测试。
+- Catalog / Source Registry：PostgreSQL boolean 查询改为原生布尔值，补齐 CAT-001/CAT-002 架构交付文档。
+- 数据库契约：DB001-DB019 相关测试改用 PostgreSQL `information_schema` / `pg_indexes`，迁移测试显式使用 `use_pg=True`；补齐 DB-001～DB-019 中本轮要求的架构报告。
+- Ruijie RGOS：恢复 legacy family → 当前 RGOS 12 解析兼容，补齐 interface brief/status、NTP、温度模板，修复 LLDP、路由、CPU、内存、电源字段契约和拓扑邻居归一化。
+- DPtech / Huawei：修正平台注册表中 DPtech 被覆盖为 Huawei `display ...` 命令的问题，并恢复 Huawei VRP5 `dis fan`；新增迁移 `186 repair_vendor_action_catalogs`，只更新 SYSTEM release，不改租户 Profile。
+- PAM：测试会话先创建真实 `physical_assets` 行并引用有效 `asset_id`，符合 PostgreSQL 外键约束。
+- 前端稳定性：清理 API 测试残留 global stub；TextFSM Action 下拉等待目标选项真实加载；拆分 SNMP MIB 超长交互测试，保留厂商/状态筛选与节点映射全部断言；编辑模板时保留当前 Action 选项。
+
+## 验证结果
+
+```text
+后端聚焦（厂商命令/解析、迁移 186、PAM）
+  49 passed
+
+PostgreSQL-only 扩大回归
+  193 个不含任何 sqlite 字样的测试文件
+  1177 passed, 26 subtests passed, 1 warning
+  1440.03s（24:00）
+
+Catalog
+  204 passed
+
+AI 安全平台聚焦
+  36 passed
+
+数据库契约聚焦
+  122 passed
+
+前端全量
+  46 files / 176 tests passed
+
+npm run lint
+  passed（tsc --noEmit）
+
+npm run build
+  passed（4258 modules transformed；仅既有 large chunk warning）
+
+迁移序号审计
+  最新 VERSION=186，无重复版本
+
+敏感信息审计
+  diff 中未发现本轮登录凭据或新增密钥
+```
+
+扩大回归通过文件内容筛选排除了所有引用 `sqlite` 的历史测试文件。这是用户明确要求的 PostgreSQL-only 边界，不代表这些 SQLite 专用历史测试已运行。
+
+## 浏览器状态
+
+- `http://192.168.56.1:5400/` 与 `http://127.0.0.1:5310/api/health` 均返回 HTTP 200；浏览器复验时已有有效登录会话，仪表盘显示数据库 `connected`，因此未再次提交或保存凭据。
+- TextFSM 页面可正常加载；筛选“锐捷 / RGOS / V12”显示 21 个模板，新增的 interface brief/status、NTP、temperature 模板均可见。只读打开 `ruijie_rgos_v12_show_interfaces.textfsm` 时，`接口详情 · get_interfaces` 仍保持选中，未执行保存。
+- 平台注册页面加载 34 个可见且就绪的平台。DPtech ConPlat 的 LLDP、CPU、路由动作分别显示 `show lldp neighbors`、`show cpu-usage`、`show ip route`；Huawei VRP V5 的 `get_fans` 显示 `dis fan`。系统平台均以只读方式查看，未修改业务数据。
+- 浏览器错误日志为空；仅观察到既有 `THREE.Clock` 弃用 warning。旧页面此前的动态模块加载错误由本地 Vite 服务停止引起，服务恢复后未复现。
+
+---
+
+# 2026-08-28 Route Collector 资格判定、Prefix 写入与 SSH 日志修复
+
+本节分析的 `No eligible L3 routing devices found` 来自另一台部署机器，不是本机日志或本机 PostgreSQL 数据。因此这里记录代码中的确切判断链和新增诊断字段，不用本机设备清单推断远端机器被排除的具体原因。
+
+## 原因与修复
+
+- 原 Route Collector 先筛选 `status='online'`、受支持平台和可解析 SSH 凭据，再应用 `routes` 采集策略，最后又用固定角色白名单二次过滤。最后一层只接受 router/gateway/core/dist/distribution/aggregation/l3switch，导致 firewall、load-balancer、显式配置 `routes=true` 的其他角色，以及已有 L3/SVI 接口证据的交换机被错误排除。
+- 新判断保留在线、平台、凭据等设备能力条件；设备具备 L3 角色或接口表存在带有效 IP 的 L3/SVI 证据即可进入 NSOT 路由采集。firewall 和 load-balancer 属于 L3 路由表采集角色，但不会因此默认采集 BGP。
+- NSOT 页面“立即同步全网数据”与巡检页“设备采集计划”是两个独立产品入口。统一 NSOT 工作流现在以 `policy_scope=nsot_independent` 运行 Route Collector，忽略巡检计划中的 `routes=true/false`；计划感知的其他调用仍可使用 `policy_scope=device_plan`，其中显式 `routes=false` 才是硬停止条件。
+- 每次路由采集现在输出一条 `Eligibility` 汇总，包含 `policy_scope`、`inventory`、`not_online`、`unsupported_platform`、`no_credentials`、`online_with_credentials`、`selected`、`role`、`explicit`、`interface_evidence`、`policy_disabled`、`policy_ignored`、`no_l3_evidence`。远端升级后可由这一行直接判断设备在哪一层被排除，以及巡检策略是否被刻意忽略。
+- 附件中的 PostgreSQL `NotNullViolation: null value in column prefix_cidr` 是 Prefix Discovery 写入路径只保存旧文本列 `prefix`、漏写原生 CIDR 列造成的。新增和更新路径现同时维护 `prefix` 与 `prefix_cidr`，不需要新增迁移。
+- 附件中 `Error reading SSH protocol banner` 表示目标 TCP 端口可连接但未返回有效 SSH 识别串。现有兼容层已经给 banner/auth/connect/blocking timeout 至少 60 秒，所以未继续盲目放大超时。调度器在首次 transport/auth/timeout 类连接错误后停止同设备其余接口动作，避免同一故障连续重试三次。
+- Netmiko 日志不再输出用户名、密码长度和 enable secret 长度。HTTP 200 的慢请求记录属于性能告警，不是请求失败。
+
+## PostgreSQL-only 验证
+
+```text
+聚焦回归
+  48 passed（33.68s）
+
+NSOT / 巡检策略解耦聚焦回归
+  36 passed（33.51s）
+
+扩大后端回归
+  194 个文件；逐文件排除包含 sqlite 字样的测试
+  1182 passed, 26 subtests passed, 1 warning
+  1015.92s（16:55）
+```
+
+新增 Prefix 测试使用隔离 PostgreSQL，实际执行 CIDR 插入和二次 upsert，并断言 `prefix` 与 `prefix_cidr::text` 一致。未运行或创建 SQLite/sqlite3 测试环境。唯一 warning 是 Starlette TestClient 对 httpx 兼容层的弃用提示，与本轮改动无关且不影响通过结果。
+
+## 远端复核方法
+
+远端部署这版代码后在 NSOT 页面点击“立即同步全网数据”，查看 `Starting route cache sync...` 后紧跟的 `Eligibility` 行。该入口应显示 `policy_scope=nsot_independent`：
+
+- `not_online`：设备状态不是 online；
+- `unsupported_platform`：平台被标记为不支持网络采集；
+- `no_credentials`：无法解析出可用 SSH 登录凭据；
+- `policy_ignored`：检测到巡检计划中的路由覆盖值，但 NSOT 独立同步没有应用它；
+- `policy_disabled`：仅在 `policy_scope=device_plan` 时表示设备显式配置了 `routes=false`；
+- `no_l3_evidence`：角色不是 L3、没有 `routes=true`，接口库存也没有 L3/SVI 证据。
+
+若已进入 `selected` 但随后出现 SSH banner 错误，应在远端设备侧检查管理 IP/端口映射、SSH 服务、H3C SSH/VTY 配置、ACL/防火墙/NAT，以及端口 22 是否实际指向非 SSH 服务。

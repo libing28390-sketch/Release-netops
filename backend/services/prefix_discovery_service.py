@@ -291,14 +291,14 @@ def _upsert_candidate(conn, candidate: dict[str, Any], collection_run_id: str, n
     if existing:
         conn.execute(
             """
-            UPDATE prefixes SET network_type = ?, classification_status = ?, classification_source = ?,
+            UPDATE prefixes SET prefix_cidr = ?, network_type = ?, classification_status = ?, classification_source = ?,
                 classification_confidence = ?, classification_rule_version = ?, mixed_network = ?, address_roles_json = ?,
                 discovered_devices_json = ?, observed_interfaces_json = ?, observed_vlans_json = ?, observed_vrfs_json = ?, evidence_json = ?,
                 candidate_scores_json = ?, last_seen_at = ?, miss_count = 0, is_active = 1,
                 last_observed_at = ?, updated_at = ?
             WHERE id = ?
             """,
-            (effective_type, "manual" if manual else "auto", "manual" if manual else "evidence",
+            (candidate["prefix"], effective_type, "manual" if manual else "auto", "manual" if manual else "evidence",
              float(existing["classification_confidence"] or 0) if manual else candidate["confidence"],
              CLASSIFICATION_RULE_VERSION, int(candidate.get('mixed_network') or 0), _json(candidate.get('address_roles') or []), _json(candidate["observed_devices"]),
              _json(candidate["observed_interfaces"]), _json(candidate.get("observed_vlans") or []), _json(candidate.get("observed_vrfs") or []), evidence_json,
@@ -320,16 +320,16 @@ def _upsert_candidate(conn, candidate: dict[str, Any], collection_run_id: str, n
         conn.execute(
             """
             INSERT INTO prefixes (
-                id, prefix, vrf_id, site_id, tenant_id, status, name, network_type,
+                id, prefix, prefix_cidr, vrf_id, site_id, tenant_id, status, name, network_type,
                 traceable, source_type, source_ref, confidence, last_observed_at,
                 classification_status, classification_source, classification_confidence,
                 classification_rule_version, manual_override, mixed_network,
                 address_roles_json, discovered_devices_json, observed_interfaces_json, observed_vlans_json, observed_vrfs_json, evidence_json,
                 candidate_scores_json, first_seen_at, last_seen_at, miss_count, is_active,
                 created_at, updated_at
-            ) VALUES (?, ?, ?, ?, ?, 'active', '', ?, 1, 'discovery', ?, ?, ?, 'auto', 'evidence', ?, ?, 0, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 0, 1, ?, ?)
+            ) VALUES (?, ?, ?, ?, ?, ?, 'active', '', ?, 1, 'discovery', ?, ?, ?, 'auto', 'evidence', ?, ?, 0, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 0, 1, ?, ?)
             """,
-            (prefix_id, candidate["prefix"], candidate["vrf_id"] or None, candidate["site_id"] or None,
+            (prefix_id, candidate["prefix"], candidate["prefix"], candidate["vrf_id"] or None, candidate["site_id"] or None,
              candidate["tenant_id"], effective_type, collection_run_id, candidate["confidence"], now,
              candidate["confidence"], CLASSIFICATION_RULE_VERSION, int(candidate.get('mixed_network') or 0), _json(candidate.get('address_roles') or []),
              _json(candidate["observed_devices"]), _json(candidate["observed_interfaces"]), _json(candidate.get("observed_vlans") or []),

@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import uuid
+import json
 
 import pytest
 
@@ -21,12 +22,12 @@ def test_m0142_postgresql_tables_constraints_and_metadata_boundary():
         with pytest.raises(Exception):
             conn.execute(
                 "INSERT INTO ai_security_events (id, request_id, tenant_id, policy_version, classification, data_region, decision, disposition, finding_categories_json, created_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
-                (event_id, event_id, "tenant-pg-test", "sec-v2", "UNKNOWN", "unknown", "ALLOW", "sent", ["credential"], "now"),
+                (event_id, event_id, "tenant-pg-test", "sec-v2", "UNKNOWN", "unknown", "ALLOW", "sent", json.dumps(["credential"]), "now"),
             )
-            conn.rollback()
+        conn.rollback()
         conn.execute(
             "INSERT INTO ai_security_events (id, request_id, tenant_id, policy_version, classification, data_region, decision, disposition, finding_categories_json, created_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
-            (event_id, event_id, "tenant-pg-test", "sec-v2", "CONFIDENTIAL", "cn", "TOKENIZE", "prepared", ["ip_address"], "now"),
+            (event_id, event_id, "tenant-pg-test", "sec-v2", "CONFIDENTIAL", "cn", "TOKENIZE", "prepared", json.dumps(["ip_address"]), "now"),
         )
         row = conn.execute("SELECT finding_categories_json, payload_bytes FROM ai_security_events WHERE id = ?", (event_id,)).fetchone()
         assert row[0] == ["ip_address"]

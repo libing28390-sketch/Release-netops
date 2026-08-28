@@ -1,6 +1,10 @@
-import { describe, expect, it, vi } from 'vitest';
+import { afterEach, describe, expect, it, vi } from 'vitest';
 
 import { apiRequest } from './http';
+
+afterEach(() => {
+  vi.unstubAllGlobals();
+});
 
 describe('stable API error contract', () => {
   it('exposes error code and request id without losing the safe message', async () => {

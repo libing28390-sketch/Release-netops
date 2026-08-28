@@ -28,7 +28,7 @@ def test_zte_brief_command_is_not_a_supported_collection_command() -> None:
         assert_lldp_command('zte_zxros', 'show lldp neighbor brief')
 
 
-def test_operational_neighbor_catalog_is_lldp_only() -> None:
+def test_operational_neighbor_catalog_is_lldp_only(isolated_db) -> None:
     for platform in ('cisco_ios', 'cisco_nxos', 'huawei_vrpv8', 'h3c_comware', 'dptech_ios', 'maipu'):
         commands = _resolve_commands(platform, ['neighbors'])['neighbors']
         assert commands

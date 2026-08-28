@@ -22,6 +22,17 @@ export const describeCron = (cron: string, zh: boolean): string => {
 
 export const describeScope = (scope: string, filter: string, zh: boolean): string => {
   if (scope === 'all') return zh ? '全部设备' : 'All devices';
+  if (scope === 'composite') {
+    try {
+      const cfg = JSON.parse(filter || '{}');
+      const parts = [];
+      if (cfg.site) parts.push(cfg.site);
+      if (cfg.role) parts.push(cfg.role);
+      if (cfg.category) parts.push(cfg.category);
+      if (parts.length > 0) return parts.join(' · ');
+    } catch { /* ignore */ }
+    return zh ? '资产复合筛选' : 'Composite Filter';
+  }
   if (scope === 'ip') {
     const ips = filter.split(/[,\n;]+/).map(s => s.trim()).filter(Boolean);
     if (ips.length === 0) return zh ? 'IP 地址' : 'IP addresses';

@@ -362,8 +362,6 @@ def create_scheduled_job(
     # eligible online devices and does not accept arbitrary commands, scripts,
     # config mode, or borrowed privileged credentials.
     if action_type == "nsot":
-        device_scope = "all"
-        device_filter = ""
         commands = ""
         script_id = ""
         is_config = 0
@@ -610,8 +608,6 @@ def update_scheduled_job(
         new_use_admin_creds = (1 if payload.get("use_admin_creds") else 0) if "use_admin_creds" in payload else None
 
         if action_type == "nsot":
-            device_scope = "all"
-            device_filter = ""
             new_script_id = ""
             new_commands = ""
             new_use_admin_creds = 0

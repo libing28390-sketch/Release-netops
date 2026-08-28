@@ -168,6 +168,19 @@ const ScheduledJobsTab: React.FC<ScheduledJobsTabProps> = ({ language, showToast
     } catch { /* ignore */ }
   }, [authHeaders]);
 
+  const [devices, setDevices] = useState<any[]>([]);
+
+  const fetchDevices = useCallback(async () => {
+    try {
+      const r = await fetch('/api/devices', { headers: authHeaders });
+      if (r.ok) {
+        const j = await r.json();
+        const list = Array.isArray(j) ? j : (j.data?.items || j.data || []);
+        setDevices(list);
+      }
+    } catch { /* ignore */ }
+  }, [authHeaders]);
+
   const fetchScripts = useCallback(async () => {
     try {
       const r = await fetch('/api/scripts', { headers: authHeaders });
@@ -182,6 +195,9 @@ const ScheduledJobsTab: React.FC<ScheduledJobsTabProps> = ({ language, showToast
 
   useEffect(() => { fetchJobs(); }, [fetchJobs]);
   useEffect(() => { fetchSystemJobs(); }, [fetchSystemJobs]);
+  useEffect(() => {
+    if (showAddJob || editingJob) fetchDevices();
+  }, [showAddJob, editingJob, fetchDevices]);
   useEffect(() => {
     if (showAddJob) fetchApprovers();
     if ((showAddJob || detailJob) && (form.action_type === 'script_run' || form.action_type === 'inspection' || detailJob?.action_type === 'script_run' || detailJob?.action_type === 'inspection')) fetchScripts();
@@ -796,6 +812,7 @@ const ScheduledJobsTab: React.FC<ScheduledJobsTabProps> = ({ language, showToast
               verifyApproval={verifyApproval}
               submitForm={submitForm}
               language={language}
+              devices={devices}
             />
           ) : (
             <motion.div

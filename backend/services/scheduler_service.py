@@ -78,7 +78,35 @@ async def run_scheduled_automation_job(job_id: str):
         # 1. 确定设备范围
         device_ids = []
         if job['device_scope'] == 'all':
-            rows = conn.execute("SELECT id FROM devices").fetchall()
+            rows = conn.execute("SELECT id FROM devices WHERE is_active = 1 OR is_active IS NULL").fetchall()
+            device_ids = [r['id'] for r in rows]
+        elif job['device_scope'] == 'composite':
+            try:
+                comp = json.loads(job['device_filter'] or '{}')
+            except (TypeError, ValueError):
+                comp = {}
+            conditions = ["(is_active = 1 OR is_active IS NULL)"]
+            params = []
+            if comp.get('site'):
+                conditions.append("site = ?")
+                params.append(comp['site'])
+            if comp.get('role'):
+                conditions.append("role = ?")
+                params.append(comp['role'])
+            if comp.get('category'):
+                conditions.append("category = ?")
+                params.append(comp['category'])
+            if comp.get('platform'):
+                conditions.append("platform = ?")
+                params.append(comp['platform'])
+            where_clause = " WHERE " + " AND ".join(conditions)
+            rows = conn.execute(f"SELECT id FROM devices{where_clause}", params).fetchall()
+            device_ids = [r['id'] for r in rows]
+        elif job['device_scope'] == 'site':
+            rows = conn.execute("SELECT id FROM devices WHERE site = ? AND (is_active = 1 OR is_active IS NULL)", (job['device_filter'],)).fetchall()
+            device_ids = [r['id'] for r in rows]
+        elif job['device_scope'] == 'role':
+            rows = conn.execute("SELECT id FROM devices WHERE role = ? AND (is_active = 1 OR is_active IS NULL)", (job['device_filter'],)).fetchall()
             device_ids = [r['id'] for r in rows]
         elif job['device_scope'] in ('tag', 'tags'):
             # Resolve the saved AND/OR/NOT expression with the same tag
@@ -936,10 +964,19 @@ def _collect_registry_interfaces(device: dict) -> list[dict]:
         try:
             result = execute_platform_action(str(device['id']), action_code, user=user)
         except Exception as exc:
+            from drivers.ssh_compat import get_ssh_error_code
+
+            error_code = get_ssh_error_code(str(exc))
             logger.warning(
                 "Registry interface action failed device=%s action=%s: %s",
-                device.get('hostname') or device.get('id'), action_code, exc,
+                device.get('hostname') or device.get('id'), action_code,
+                error_code or type(exc).__name__,
             )
+            # All three actions use the same transport and credentials. Once
+            # the connection itself fails, retrying the remaining actions only
+            # repeats the same banner/auth/timeout error and delays the sweep.
+            if error_code:
+                break
             continue
         if result.get('success'):
             action_records[action_code] = result.get('records') or []

@@ -40,6 +40,12 @@ def test_server_does_not_collect_route_table_by_default():
     assert should_collect(device, "bgp") is False
 
 
+def test_firewall_collects_route_table_but_not_bgp_by_default():
+    device = _device("firewall", platform="h3c_comware")
+    assert should_collect(device, "routes") is True
+    assert should_collect(device, "bgp") is False
+
+
 def test_l3_device_can_explicitly_disable_bgp_discovery():
     device = _device(
         "distribution",

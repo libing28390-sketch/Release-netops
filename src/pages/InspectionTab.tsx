@@ -1,5 +1,5 @@
 import React, { useCallback, useEffect, useMemo, useState } from 'react';
-import { Activity, AlertTriangle, ArrowRight, CheckCircle2, ChevronRight, ClipboardCheck, Clock, Cpu, Loader2, Play, RefreshCw, Search, Server, Shield, X, XCircle, Wifi, WifiOff, Zap, BarChart3, Eye, Download } from 'lucide-react';
+import { Activity, AlertTriangle, ArrowRight, CheckCircle2, ChevronRight, ClipboardCheck, Clock, Cpu, Download, Eye, FileText, Loader2, Play, RefreshCw, Search, Server, Shield, Wifi, WifiOff, X, XCircle, Zap, BarChart3, CalendarClock, ExternalLink, HardDrive, Layers } from 'lucide-react';
 import { Bar, CartesianGrid, ComposedChart, Line, ResponsiveContainer, Tooltip, XAxis, YAxis } from 'recharts';
 import type { Device, DeviceHealthHistoryResponse, DeviceHealthOverview } from '../types';
 import { useChartTheme } from '../hooks/useChartTheme';
@@ -119,19 +119,6 @@ const Th: React.FC<{ children?: React.ReactNode; className?: string }> = ({ chil
   <th className={`px-4 py-3 text-[10px] font-bold uppercase tracking-[0.12em] text-black/35 whitespace-nowrap ${className}`}>{children}</th>
 );
 
-/* ── Device role category helper ── */
-const NETWORK_ROLES = new Set(['router', 'switch', 'firewall', 'ap', 'wlc', 'load-balancer', 'core', 'distribution', 'access']);
-const isNetworkDevice = (role: string, platform: string): boolean => {
-  if (!role && !platform) return true; // default to network device
-  if (NETWORK_ROLES.has(role.toLowerCase())) return true;
-  if (['server', 'host', 'vm', 'virtual-machine', 'hypervisor', 'storage'].includes(role.toLowerCase())) return false;
-  // Infer from platform — common network vendor prefixes
-  const p = platform.toLowerCase();
-  if (['cisco', 'juniper', 'huawei', 'arista', 'h3c', 'fortinet'].some(v => p.includes(v))) return true;
-  if (['linux', 'windows', 'vmware', 'esxi'].some(v => p.includes(v))) return false;
-  return true; // default network
-};
-
 /* ────────────────────────────────────────── */
 /* Component                                  */
 /* ────────────────────────────────────────── */
@@ -165,55 +152,13 @@ const InspectionTab: React.FC<InspectionTabProps> = ({ language, devices, overvi
   const [recordPage, setRecordPage] = useState(1);
   const [recordPageSize, setRecordPageSize] = useState(10);
   const [recordTotal, setRecordTotal] = useState(0);
-
-  // ── run inspection ──
-  const [isRunning, setIsRunning] = useState(false);
-  const [runResult, setRunResult] = useState<Record<string, unknown> | null>(null);
-  const [collectionPlans, setCollectionPlans] = useState<any[]>([]);
-  const [selectedPlanDeviceId, setSelectedPlanDeviceId] = useState('');
-  const [collectionPlansLoading, setCollectionPlansLoading] = useState(false);
-  const [collectionPlanMessage, setCollectionPlanMessage] = useState('');
+  const [exportingReportId, setExportingReportId] = useState<string | null>(null);
 
   /* ─── token helper ─── */
   const authHeaders = useMemo(() => {
     const token = localStorage.getItem('netops_token');
     return token ? { Authorization: `Bearer ${token}`, 'Content-Type': 'application/json' } : { 'Content-Type': 'application/json' };
   }, []);
-
-  const fetchCollectionPlans = useCallback(async () => {
-    setCollectionPlansLoading(true);
-    try {
-      const resp = await fetch('/api/collection-plans/devices', { headers: authHeaders });
-      if (!resp.ok) return;
-      const json = await resp.json();
-      const rows = Array.isArray(json.data) ? json.data : [];
-      setCollectionPlans(rows);
-      setSelectedPlanDeviceId((current) => current || rows[0]?.device?.id || '');
-    } catch {
-      setCollectionPlanMessage(isZh ? '采集计划加载失败' : 'Failed to load collection plans');
-    } finally {
-      setCollectionPlansLoading(false);
-    }
-  }, [authHeaders, isZh]);
-
-  const updateCollectionPlan = useCallback(async (collector: string, enabled: boolean) => {
-    const current = collectionPlans.find((row) => row.device?.id === selectedPlanDeviceId);
-    if (!current) return;
-    const overrides = { ...(current.plan?.overrides || {}), [collector]: enabled };
-    try {
-      const resp = await fetch(`/api/collection-plans/devices/${selectedPlanDeviceId}`, {
-        method: 'PUT',
-        headers: authHeaders,
-        body: JSON.stringify({ policy: { collectors: overrides } }),
-      });
-      const json = await resp.json();
-      if (!resp.ok) throw new Error(json.detail || 'update failed');
-      setCollectionPlanMessage(isZh ? '采集计划已更新' : 'Collection plan updated');
-      fetchCollectionPlans();
-    } catch {
-      setCollectionPlanMessage(isZh ? '采集计划更新失败' : 'Failed to update collection plan');
-    }
-  }, [authHeaders, collectionPlans, fetchCollectionPlans, isZh, selectedPlanDeviceId]);
 
   /* ─── data fetchers ─── */
 
@@ -249,13 +194,9 @@ const InspectionTab: React.FC<InspectionTabProps> = ({ language, devices, overvi
       if (resp.ok) {
         const json = await resp.json();
         const d = json.data;
-        if (d && typeof d === 'object' && !Array.isArray(d)) {
-          setRuns(Array.isArray(d.items) ? d.items : []);
-          setRecordTotal(typeof d.total === 'number' ? d.total : 0);
-        } else {
-          setRuns(Array.isArray(d) ? d : []);
-          setRecordTotal(Array.isArray(d) ? d.length : 0);
-        }
+        const items = Array.isArray(d) ? d : Array.isArray(d?.items) ? d.items : [];
+        setRuns(items);
+        setRecordTotal(typeof d?.total === 'number' ? d.total : items.length);
       }
     } finally {
       setRunsLoading(false);
@@ -279,7 +220,6 @@ const InspectionTab: React.FC<InspectionTabProps> = ({ language, devices, overvi
 
   useEffect(() => { fetchHistory(); }, [fetchHistory]);
   useEffect(() => { fetchRecentRuns(); }, [fetchRecentRuns]);
-  useEffect(() => { fetchCollectionPlans(); }, [fetchCollectionPlans]);
   useEffect(() => {
     if (subTab === 'records') fetchRuns();
   }, [subTab, fetchRuns]);
@@ -287,25 +227,7 @@ const InspectionTab: React.FC<InspectionTabProps> = ({ language, devices, overvi
   // Reset page when search changes
   useEffect(() => { setRecordPage(1); }, [recordSearch]);
 
-  /* ─── actions ─── */
-
-  const triggerInspection = async (scopeType = 'all', scopeFilter = '') => {
-    setIsRunning(true);
-    setRunResult(null);
-    try {
-      const resp = await fetch('/api/inspections/run', {
-        method: 'POST',
-        headers: authHeaders,
-        body: JSON.stringify({ scope_type: scopeType, scope_filter: scopeFilter }),
-      });
-      const json = await resp.json();
-      setRunResult(json.data || json);
-      fetchRecentRuns();
-      if (subTab === 'records') fetchRuns();
-    } finally {
-      setIsRunning(false);
-    }
-  };
+  /* ─── Export records ─── */
 
   const handleExportRecords = async () => {
     try {
@@ -318,65 +240,70 @@ const InspectionTab: React.FC<InspectionTabProps> = ({ language, devices, overvi
         if (!resp.ok) break;
         const json = await resp.json();
         const items = Array.isArray(json.data?.items) ? json.data.items : Array.isArray(json.data) ? json.data : [];
+        if (!items.length) break;
         allRecords.push(...items);
-        if (items.length < limit || (json.data?.total && allRecords.length >= json.data.total)) break;
+        if (items.length < limit) break;
         offset += limit;
       }
 
-      if (allRecords.length === 0) return;
+      if (!allRecords.length) {
+        alert(isZh ? '暂无巡检记录可导出' : 'No inspection records to export');
+        return;
+      }
 
-      const headers = [
-        isZh ? '时间' : 'Time',
-        isZh ? '类型' : 'Type',
-        isZh ? '状态' : 'Status',
-        isZh ? '设备总数' : 'Total Devices',
-        isZh ? '健康' : 'Healthy',
-        isZh ? '告警' : 'Warning',
-        isZh ? '严重' : 'Critical',
-        isZh ? '平均分' : 'Avg Score',
-        isZh ? '操作人' : 'Created By'
-      ];
+      const headers = isZh 
+        ? ['执行批次ID', '触发方式', '范围类型', '范围过滤', '状态', '开始时间', '完成时间', '设备总数', '成功数', '失败数', '不可达数', '健康数', '告警数', '严重数', '平均得分', '创建人']
+        : ['Run ID', 'Trigger Type', 'Scope Type', 'Scope Filter', 'Status', 'Started At', 'Completed At', 'Total Devices', 'Success', 'Failed', 'Unreachable', 'Healthy', 'Warning', 'Critical', 'Avg Score', 'Created By'];
 
       const rows = allRecords.map(r => [
-        new Date(r.started_at).toLocaleString(),
+        r.id,
         r.trigger_type,
+        r.scope_type,
+        r.scope_filter || '-',
         r.status,
+        r.started_at,
+        r.completed_at || '-',
         r.total_devices,
+        r.success_count,
+        r.failed_count,
+        r.unreachable_count,
         r.healthy_count,
         r.warning_count,
         r.critical_count,
-        r.avg_health_score,
+        r.avg_health_score ?? '-',
         r.created_by
       ]);
 
-      const csvContent = "\ufeff" + [headers.join(','), ...rows.map(r => r.join(','))].join('\n');
+      const csvContent = '\uFEFF' + [
+        headers.join(','),
+        ...rows.map(row => row.map(cell => `"${String(cell).replace(/"/g, '""')}"`).join(','))
+      ].join('\n');
+
       const blob = new Blob([csvContent], { type: 'text/csv;charset=utf-8;' });
-      const link = document.createElement("a");
       const url = URL.createObjectURL(blob);
-      link.setAttribute("href", url);
-      link.setAttribute("download", `inspection_records_${new Date().toISOString().slice(0, 10)}.csv`);
-      link.style.visibility = 'hidden';
+      const link = document.createElement('a');
+      link.setAttribute('href', url);
+      link.setAttribute('download', `inspection_runs_${new Date().toISOString().slice(0, 10)}.csv`);
       document.body.appendChild(link);
       link.click();
       document.body.removeChild(link);
-    } catch (err) {
-      console.error('Export failed:', err);
+    } catch (e) {
+      console.error('Export failed:', e);
+      alert(isZh ? '导出失败' : 'Export failed');
     }
   };
 
-  const handleDownloadReport = async (runId: string, format: 'xlsx' | 'html' | 'json' | 'pdf' = 'xlsx') => {
+  const downloadReport = async (runId: string, format: 'excel' | 'pdf' | 'html' | 'json') => {
+    setExportingReportId(runId);
     try {
-      const resp = await fetch(`/api/inspections/${runId}/export?format=${format}`, { headers: authHeaders });
-      if (!resp.ok) {
-        alert(isZh ? `报表生成失败 (${resp.status})` : `Report generation failed (${resp.status})`);
-        return;
-      }
+      const resp = await fetch(`/api/inspections/${runId}/report/${format}`, { headers: authHeaders });
+      if (!resp.ok) throw new Error(`HTTP ${resp.status}`);
       const blob = await resp.blob();
+      const ext = format === 'excel' ? 'xlsx' : format;
       const url = window.URL.createObjectURL(blob);
       const a = document.createElement('a');
       a.href = url;
-      const today = new Date().toISOString().slice(0, 10).replace(/-/g, '');
-      a.download = `${systemInfo?.system_name || 'Nexora'}_Inspection_${runId}_${today}.${format}`;
+      a.download = `inspection_report_${runId.slice(0, 8)}_${new Date().toISOString().slice(0, 10)}.${ext}`;
       document.body.appendChild(a);
       a.click();
       document.body.removeChild(a);
@@ -384,6 +311,8 @@ const InspectionTab: React.FC<InspectionTabProps> = ({ language, devices, overvi
     } catch (err) {
       console.error('Download failed:', err);
       alert(isZh ? '报表下载失败' : 'Report download failed');
+    } finally {
+      setExportingReportId(null);
     }
   };
 
@@ -417,439 +346,605 @@ const InspectionTab: React.FC<InspectionTabProps> = ({ language, devices, overvi
 
   return (
     <div className="flex-1 flex flex-col overflow-hidden min-h-0">
+      {/* ── Page Hero Header ── */}
       <PageHero
-        icon={ClipboardCheck}
-        title={isZh ? '巡检概览' : 'Inspection Overview'}
-        subtitle={isZh ? '按计划或手动触发网络健康巡检，一眼看清全网状态' : 'Schedule or trigger network health inspection runs and view the fleet at a glance'}
+        icon={subTab === 'overview' ? ClipboardCheck : FileText}
+        title={
+          subTab === 'overview'
+            ? (isZh ? '巡检健康概览' : 'Inspection Overview')
+            : (isZh ? '巡检记录与报告' : 'Inspection Records & Reports')
+        }
+        subtitle={
+          subTab === 'overview'
+            ? (isZh ? '全网设备健康评分、异常隐患雷达与运行健康走势分析' : 'Fleet health score, risk radar, and health score trends over time')
+            : (isZh ? '审计历史巡检执行批次、单设备检查明细及一键下载巡检报告' : 'Audit historical inspection runs, per-device check details, and export reports')
+        }
         actions={
-          <button
-            onClick={() => triggerInspection('all')}
-            disabled={isRunning}
-            className="flex items-center gap-2 px-5 py-2.5 rounded-xl text-sm font-bold shadow-lg transition-all
-              bg-gradient-to-r from-cyan-500 to-cyan-600 text-white hover:from-cyan-400 hover:to-cyan-500
-              disabled:opacity-50 disabled:cursor-not-allowed active:scale-[0.97]"
-          >
-            {isRunning ? <Loader2 size={14} className="animate-spin" /> : <Play size={14} />}
-            {isRunning ? (isZh ? '巡检中' : 'Running') : (isZh ? '立即巡检全部' : 'Run All Inspection')}
-          </button>
+          <div className="flex items-center gap-2">
+            {subTab === 'records' && (
+              <button
+                onClick={handleExportRecords}
+                className="flex items-center gap-1.5 px-4 py-2 rounded-xl text-xs font-bold bg-[#06b6d4] hover:bg-[#0891b2] text-white transition-all shadow-md shadow-cyan-500/20"
+              >
+                <Download size={13} />
+                {isZh ? '导出巡检台账' : 'Export CSV'}
+              </button>
+            )}
+            <a
+              href="/automation/scheduled-jobs"
+              className="flex items-center gap-1.5 px-3.5 py-2 rounded-xl text-xs font-bold bg-[#00172d] text-white hover:bg-[#00284f] transition-all shadow-md"
+            >
+              <CalendarClock size={13} className="text-cyan-400" />
+              {isZh ? '配置定时巡检' : 'Scheduled Jobs'}
+            </a>
+            <button
+              onClick={() => { fetchHistory(); fetchRecentRuns(); if (subTab === 'records') fetchRuns(); }}
+              className="flex items-center gap-1.5 px-3 py-2 rounded-xl text-xs font-medium border border-black/10 dark:border-white/10 hover:bg-black/5 dark:hover:bg-white/5 transition-all text-slate-700 dark:text-slate-300 bg-white dark:bg-slate-900"
+            >
+              <RefreshCw size={13} className={historyLoading || runsLoading ? 'animate-spin' : ''} />
+              {isZh ? '刷新' : 'Refresh'}
+            </button>
+          </div>
         }
       />
 
       <div className="flex-1 flex flex-col overflow-hidden px-6 py-5 space-y-4 min-h-0">
-      <div className="rounded-2xl border border-cyan-100 bg-white p-4 shadow-sm shrink-0">
-        <div className="flex flex-wrap items-center justify-between gap-3 mb-3">
-          <div>
-            <p className="text-sm font-bold text-[#0b2340]">{isZh ? '设备采集计划' : 'Device Collection Plan'}</p>
-            <p className="text-[11px] text-black/40 mt-1">{isZh ? '默认采集基本信息；L3 设备额外采集路由表和 BGP 状态，其他拓扑、表项和动态协议可按设备单独开启。' : 'The default plan collects device basics; L3 devices also collect the main route table and BGP state. Other topology, tables, and dynamic protocols are opt-in per device.'}</p>
-          </div>
-          <div className="flex items-center gap-2">
-            <select
-              value={selectedPlanDeviceId}
-              onChange={(event) => { setSelectedPlanDeviceId(event.target.value); setCollectionPlanMessage(''); }}
-              className="rounded-lg border border-black/10 bg-white px-3 py-2 text-xs text-[#0b2340] min-w-[210px]"
-              disabled={collectionPlansLoading || collectionPlans.length === 0}
-            >
-              {collectionPlans.map((row) => <option key={row.device?.id} value={row.device?.id}>{row.device?.hostname || row.device?.ip_address}</option>)}
-            </select>
-            <button onClick={fetchCollectionPlans} className={alertSecondaryButtonClass} title={isZh ? '刷新采集计划' : 'Refresh collection plans'}>
-              <RefreshCw className={`w-4 h-4 ${collectionPlansLoading ? 'animate-spin' : ''}`} />
-            </button>
-          </div>
-        </div>
-        {(() => {
-          const selected = collectionPlans.find((row) => row.device?.id === selectedPlanDeviceId);
-          const effective = selected?.plan?.effective || {};
-          const keys = ['reachability', 'health_metrics', 'interface_status', 'interface_ip', 'lldp', 'arp', 'mac_table', 'vlan', 'routes', 'bgp', 'ospf', 'eigrp', 'isis', 'rip', 'bfd', 'endpoint_location', 'prefix_projection'];
-          const labels: Record<string, string> = { reachability: '可达性', health_metrics: '健康指标', interface_status: '接口状态', interface_ip: '接口 IP', arp: 'ARP', mac_table: 'MAC', vlan: 'VLAN', lldp: 'LLDP', routes: '路由', bgp: 'BGP', ospf: 'OSPF', eigrp: 'EIGRP', isis: 'IS-IS', rip: 'RIP', bfd: 'BFD', endpoint_location: '终端定位', prefix_projection: 'Prefix 投影' };
-          return selected ? (
-            <div className="flex flex-wrap items-center gap-2">
-              <span className="text-[10px] font-bold text-black/35 mr-1">{selected.plan?.profile || selected.device?.role || 'default'}</span>
-              {keys.map((key) => (
+        
+        {/* ═══════ Hero gauge strip (ONLY on Overview mode) ═══════ */}
+        {subTab === 'overview' && (
+          <div className="relative rounded-2xl overflow-hidden bg-gradient-to-r from-[#0c1e35] via-[#0e2942] to-[#0a3455] p-5 shadow-lg shrink-0">
+            <div className="absolute inset-0 opacity-[0.04]" style={{ backgroundImage: 'radial-gradient(circle, white 1px, transparent 1px)', backgroundSize: '18px 18px' }} />
+            <div className="relative flex flex-col md:flex-row items-start md:items-center justify-between gap-4">
+              <div className="flex items-center gap-5">
+                <ScoreGauge score={typeof avgScore === 'number' ? Math.round(avgScore) : null} size={76} />
+                <div>
+                  <h2 className="text-white/90 text-lg font-bold tracking-tight">{isZh ? '网络运行健康总览' : 'Network Health Overview'}</h2>
+                  <div className="flex items-center gap-3 mt-2">
+                    {([
+                      { label: isZh ? '受管设备' : 'Devices', value: overview?.total_devices ?? devices.length, cls: 'bg-white/10 text-white/80' },
+                      { label: isZh ? '正常' : 'Healthy', value: overview?.healthy ?? 0, cls: 'bg-emerald-500/20 text-emerald-300' },
+                      { label: isZh ? '告警' : 'Warning', value: overview?.warning ?? 0, cls: 'bg-amber-500/20 text-amber-300' },
+                      { label: isZh ? '严重' : 'Critical', value: overview?.critical ?? 0, cls: 'bg-red-500/20 text-red-300' },
+                    ] as const).map((p) => (
+                      <span key={p.label} className={`inline-flex items-center gap-1.5 rounded-full px-2.5 py-1 text-[11px] font-semibold tabular-nums ${p.cls}`}>
+                        {p.label} <strong className="text-[13px]">{p.value}</strong>
+                      </span>
+                    ))}
+                  </div>
+                </div>
+              </div>
+
+              <div className="flex items-center gap-2">
                 <button
-                  key={key}
-                  onClick={() => updateCollectionPlan(key, !Boolean(effective[key]))}
-                  className={`rounded-full px-3 py-1.5 text-[11px] font-semibold border transition-colors ${effective[key] ? 'bg-emerald-50 text-emerald-700 border-emerald-200' : 'bg-slate-50 text-slate-400 border-slate-200'}`}
+                  onClick={() => setSubTab('records')}
+                  className="flex items-center gap-1.5 px-4 py-2.5 rounded-xl text-xs font-bold bg-white/10 hover:bg-white/20 text-white transition-all backdrop-blur-sm border border-white/10"
                 >
-                  {labels[key]} · {effective[key] ? (isZh ? '启用' : 'ON') : (isZh ? '关闭' : 'OFF')}
+                  <Clock size={14} className="text-cyan-400" />
+                  {isZh ? '查看全部巡检流水' : 'View All Records'}
                 </button>
-              ))}
-              {collectionPlanMessage && <span className="text-[11px] text-cyan-600 ml-2">{collectionPlanMessage}</span>}
-            </div>
-          ) : <span className="text-xs text-black/35">{isZh ? '暂无设备采集计划' : 'No collection plans available'}</span>;
-        })()}
-      </div>
-      {/* ═══════ Hero gauge strip ═══════ */}
-      <div className="relative rounded-2xl overflow-hidden bg-gradient-to-r from-[#0c1e35] via-[#0e2942] to-[#0a3455] p-5 shadow-lg shrink-0">
-        <div className="absolute inset-0 opacity-[0.04]" style={{ backgroundImage: 'radial-gradient(circle, white 1px, transparent 1px)', backgroundSize: '18px 18px' }} />
-        <div className="relative flex flex-col md:flex-row items-start md:items-center justify-between gap-4">
-          <div className="flex items-center gap-5">
-            <ScoreGauge score={typeof avgScore === 'number' ? Math.round(avgScore) : null} size={76} />
-            <div>
-              <h2 className="text-white/90 text-lg font-bold tracking-tight">{isZh ? '网络健康总览' : 'Network Health Overview'}</h2>
-              <div className="flex items-center gap-3 mt-2">
-                {([
-                  { label: isZh ? '设备' : 'Devices', value: overview?.total_devices ?? devices.length, cls: 'bg-white/10 text-white/80' },
-                  { label: isZh ? '健康' : 'Healthy', value: overview?.healthy ?? 0, cls: 'bg-emerald-500/20 text-emerald-300' },
-                  { label: isZh ? '告警' : 'Warning', value: overview?.warning ?? 0, cls: 'bg-amber-500/20 text-amber-300' },
-                  { label: isZh ? '严重' : 'Critical', value: overview?.critical ?? 0, cls: 'bg-red-500/20 text-red-300' },
-                ] as const).map((p) => (
-                  <span key={p.label} className={`inline-flex items-center gap-1.5 rounded-full px-2.5 py-1 text-[11px] font-semibold tabular-nums ${p.cls}`}>
-                    {p.label} <strong className="text-[13px]">{p.value}</strong>
-                  </span>
-                ))}
               </div>
             </div>
-          </div>
-
-          <button
-            onClick={() => triggerInspection('all')}
-            disabled={isRunning}
-            className="flex items-center gap-2 px-5 py-2.5 rounded-xl text-sm font-bold shadow-lg transition-all
-              bg-gradient-to-r from-cyan-500 to-cyan-600 text-white hover:from-cyan-400 hover:to-cyan-500
-              disabled:opacity-50 disabled:cursor-not-allowed active:scale-[0.97]"
-          >
-            {isRunning ? <Loader2 className="w-4 h-4 animate-spin" /> : <Play className="w-4 h-4" />}
-            {isRunning ? (isZh ? '巡检执行中…' : 'Running...') : (isZh ? '立即巡检' : 'Run Inspection')}
-          </button>
-        </div>
-      </div>
-
-      {/* ═══════ Result toast ═══════ */}
-      {runResult && (
-        <div className="rounded-xl border border-cyan-200 bg-gradient-to-r from-cyan-50 to-white p-3.5 flex items-center justify-between gap-3 shadow-sm shrink-0">
-          <div className="flex items-center gap-3 text-sm">
-            <div className="w-7 h-7 rounded-full bg-cyan-100 flex items-center justify-center shrink-0"><CheckCircle2 className="w-4 h-4 text-cyan-600" /></div>
-            <span className="text-[#0b2340]">
-              {isZh ? '巡检完成' : 'Inspection complete'} — {isZh ? '设备' : 'Devices'}: {String(runResult.total_devices || 0)}, <span className="text-emerald-600 font-semibold">{isZh ? '健康' : 'healthy'} {String(runResult.healthy_count || 0)}</span>, <span className="text-amber-600 font-semibold">{isZh ? '告警' : 'warning'} {String(runResult.warning_count || 0)}</span>, <span className="text-red-600 font-semibold">{isZh ? '严重' : 'critical'} {String(runResult.critical_count || 0)}</span>
-            </span>
-          </div>
-          <button onClick={() => setRunResult(null)} className="p-1 rounded-md text-black/30 hover:text-black/60 hover:bg-black/5 transition-colors"><X className="w-4 h-4" /></button>
-        </div>
-      )}
-
-      {/* ═══════ Main Content Area ═══════ */}
-      <div className={`${alertPanelClass} flex-1 min-h-0 flex flex-col overflow-hidden`}>
-        {/* Navigation Tabs — only shown when NOT driven by sidebar navigation.
-            When initialView is set, the sidebar already provides the navigation
-            so showing these tabs would duplicate the menu items. */}
-        {!initialView && (
-          <div className="flex items-center gap-1.5 border-b border-black/5 px-5 py-3 shrink-0">
-            {[
-              { key: 'overview', label: isZh ? '巡检概览' : 'Overview', icon: <BarChart3 className="w-3.5 h-3.5" /> },
-              { key: 'records', label: isZh ? '巡检记录' : 'Records', icon: <Clock className="w-3.5 h-3.5" /> },
-            ].map((tab) => (
-              <button
-                key={tab.key}
-                onClick={() => { setSubTab(tab.key as SubTab); setSelectedRunDetail(null); }}
-                className={`flex items-center gap-2 rounded-xl px-4 py-2 text-sm font-bold transition-all ${subTab === tab.key ? 'bg-[#00172d] text-white shadow-lg' : 'text-black/40 hover:bg-black/5 hover:text-black/60'}`}
-              >
-                {tab.icon}
-                {tab.label}
-              </button>
-            ))}
           </div>
         )}
 
-        {/* Scrollable Body */}
-        <div className="flex-1 min-h-0 overflow-y-auto custom-scrollbar">
-          {/* ═══════ SUB-TAB: OVERVIEW ═══════ */}
+        {/* ═══════ Main Content Area ═══════ */}
+        <div className={`${alertPanelClass} flex-1 min-h-0 flex flex-col overflow-hidden`}>
+          {/* Navigation Tabs (Only when NOT driven by sidebar navigation) */}
+          {!initialView && (
+            <div className="flex items-center gap-1.5 border-b border-black/5 px-5 py-3 shrink-0 bg-slate-50/50 dark:bg-slate-900/30">
+              {[
+                { key: 'overview', label: isZh ? '健康总览' : 'Overview', icon: <BarChart3 className="w-3.5 h-3.5" /> },
+                { key: 'records', label: isZh ? '巡检流水与报告' : 'Records & Reports', icon: <Clock className="w-3.5 h-3.5" /> },
+              ].map((tab) => (
+                <button
+                  key={tab.key}
+                  onClick={() => { setSubTab(tab.key as SubTab); setSelectedRunDetail(null); }}
+                  className={`flex items-center gap-2 rounded-xl px-4 py-2 text-xs font-bold transition-all ${
+                    subTab === tab.key
+                      ? 'bg-[#00172d] text-white shadow-md'
+                      : 'text-slate-500 hover:bg-black/5 hover:text-slate-800'
+                  }`}
+                >
+                  {tab.icon}
+                  {tab.label}
+                </button>
+              ))}
+            </div>
+          )}
+
+          {/* ═══════ SUB-TAB: Overview ═══════ */}
           {subTab === 'overview' && (
-            <div className="p-5 space-y-5">
-              {/* Health Trend Chart */}
-              <div className="rounded-2xl border border-black/[0.06] bg-white p-5 shadow-sm">
-                <div className="flex flex-col sm:flex-row items-start sm:items-center justify-between gap-3 mb-4">
-                  <div className="flex items-center gap-3">
-                    <div className="w-8 h-8 rounded-lg bg-blue-50 flex items-center justify-center"><Activity className="w-4 h-4 text-blue-600" /></div>
+            <div className="flex-1 overflow-y-auto p-5 space-y-5">
+              {/* Chart + Risky Devices grid */}
+              <div className="grid grid-cols-1 lg:grid-cols-3 gap-5">
+                {/* Health history chart (2 cols) */}
+                <div className="lg:col-span-2 rounded-2xl border border-black/5 dark:border-white/5 bg-white dark:bg-[#111827] p-5 shadow-sm space-y-4">
+                  <div className="flex items-center justify-between">
                     <div>
-                      <h3 className="text-sm font-bold text-[#0b2340]">{isZh ? '设备健康趋势' : 'Device Health Trend'}</h3>
-                      <p className="text-[11px] text-black/35">{isZh ? '柱状图为异常设备数量，折线为平均健康评分' : 'Bars = abnormal devices, Line = avg health score'}</p>
+                      <h3 className="text-sm font-bold text-[#0b2340] dark:text-white flex items-center gap-2">
+                        <Activity className="w-4 h-4 text-cyan-500" />
+                        {isZh ? '健康度趋势走势' : 'Health Score Trend'}
+                      </h3>
+                      <p className="text-[11px] text-slate-400 mt-0.5">{isZh ? '统计时间窗口内的全网健康评分与正常设备数量变化' : 'Average score and healthy device counts over time'}</p>
+                    </div>
+                    <div className="flex items-center gap-1 bg-slate-100 dark:bg-slate-800 p-1 rounded-xl">
+                      {[
+                        { hours: 12, label: '12h' },
+                        { hours: 24, label: '24h' },
+                        { hours: 72, label: '3d' },
+                        { hours: 168, label: '7d' },
+                      ].map((btn) => (
+                        <button
+                          key={btn.hours}
+                          onClick={() => setRangeHours(btn.hours)}
+                          className={`rounded-lg px-2.5 py-1 text-[11px] font-semibold transition-all ${
+                            rangeHours === btn.hours
+                              ? 'bg-white dark:bg-slate-700 text-[#0b2340] dark:text-white shadow-sm font-bold'
+                              : 'text-slate-400 hover:text-slate-700'
+                          }`}
+                        >
+                          {btn.label}
+                        </button>
+                      ))}
                     </div>
                   </div>
-                  <div className="flex items-center gap-0.5 rounded-lg bg-black/[0.03] p-0.5">
-                    {([{ h: 1, l: '1H' }, { h: 24, l: '24H' }, { h: 168, l: '7D' }] as const).map(({ h, l }) => (
-                      <button key={h} onClick={() => setRangeHours(h)} className={`px-2.5 py-1 rounded-md text-[10px] font-bold tracking-wide transition-all ${rangeHours === h ? 'bg-white text-[#0b2340] shadow-sm ring-1 ring-black/5' : 'text-black/40 hover:text-black/60'}`}>{l}</button>
-                    ))}
+
+                  <div className="h-64 w-full">
+                    {historyLoading ? (
+                      <div className="h-full flex items-center justify-center text-xs text-slate-400">
+                        <Loader2 className="w-5 h-5 animate-spin mr-2 text-cyan-500" />
+                        {isZh ? '加载趋势数据中...' : 'Loading trend data...'}
+                      </div>
+                    ) : historySeries.length === 0 ? (
+                      <div className="h-full flex items-center justify-center text-xs text-slate-400">
+                        {isZh ? '暂无历史趋势数据' : 'No history data available'}
+                      </div>
+                    ) : (
+                      <ResponsiveContainer width="100%" height="100%">
+                        <ComposedChart data={historySeries} margin={{ top: 10, right: 10, left: -20, bottom: 0 }}>
+                          <CartesianGrid strokeDasharray="3 3" stroke={ct.grid} vertical={false} />
+                          <XAxis dataKey="timestamp" stroke={ct.axis} tick={{ fill: ct.textMuted, fontSize: 10 }} tickFormatter={(ts) => ts.slice(11, 16)} />
+                          <YAxis yAxisId="score" domain={[0, 100]} stroke={ct.axis} tick={{ fill: ct.textMuted, fontSize: 10 }} />
+                          <YAxis yAxisId="count" orientation="right" stroke={ct.axis} tick={{ fill: ct.textMuted, fontSize: 10 }} />
+                          <Tooltip
+                            contentStyle={{ background: ct.tooltipBg, border: `1px solid ${ct.tooltipBorder}`, borderRadius: '12px', fontSize: '11px' }}
+                            formatter={(value: any, name: string) => [
+                              value,
+                              name === 'average_score' ? (isZh ? '平均得分' : 'Avg Score') : (isZh ? '健康设备数' : 'Healthy Devices'),
+                            ]}
+                            labelFormatter={(label) => `${isZh ? '时间' : 'Time'}: ${label}`}
+                          />
+                          <Bar yAxisId="count" dataKey="healthy_count" fill="#10b981" opacity={0.3} radius={[4, 4, 0, 0]} maxBarSize={20} />
+                          <Line yAxisId="score" type="monotone" dataKey="average_score" stroke="#06b6d4" strokeWidth={2.5} dot={false} activeDot={{ r: 4 }} />
+                        </ComposedChart>
+                      </ResponsiveContainer>
+                    )}
                   </div>
                 </div>
 
-                <div className="h-[240px]">
-                  {historySeries.length > 0 ? (
-                    <ResponsiveContainer width="100%" height="100%">
-                      <ComposedChart data={historySeries} margin={{ top: 8, right: 12, left: -4, bottom: 0 }}>
-                        <CartesianGrid strokeDasharray="3 6" vertical={false} stroke={ct.gridAlt} />
-                        <XAxis dataKey="ts" axisLine={false} tickLine={false} tick={{ fontSize: 10, fill: ct.axisAlt }} tickFormatter={(v) => new Date(String(v)).toLocaleString(isZh ? 'zh-CN' : 'en-US', { month: '2-digit', day: '2-digit', hour: '2-digit', minute: '2-digit', hour12: false })} minTickGap={36} />
-                        <YAxis yAxisId="count" axisLine={false} tickLine={false} tick={{ fontSize: 10, fill: ct.axisAlt }} width={28} allowDecimals={false} />
-                        <YAxis yAxisId="score" orientation="right" axisLine={false} tickLine={false} tick={{ fontSize: 10, fill: ct.axisAlt }} domain={[0, 100]} width={32} />
-                        <Tooltip contentStyle={{ borderRadius: 12, border: 'none', boxShadow: '0 8px 32px rgba(0,0,0,0.12)', padding: '12px 16px', background: ct.tooltipBg, color: ct.tooltipText, fontSize: 12 }} />
-                        <Bar yAxisId="count" dataKey="critical" stackId="devices" fill="#f87171" radius={[0, 0, 2, 2]} barSize={16} />
-                        <Bar yAxisId="count" dataKey="warning" stackId="devices" fill="#fbbf24" radius={[2, 2, 0, 0]} barSize={16} />
-                        <Line yAxisId="score" type="monotone" dataKey="average_score" stroke="#3b82f6" strokeWidth={2.5} dot={false} activeDot={{ r: 4, fill: '#3b82f6', stroke: '#fff', strokeWidth: 2 }} />
-                      </ComposedChart>
-                    </ResponsiveContainer>
-                  ) : <div className="h-full flex flex-col items-center justify-center gap-2 text-black/25"><BarChart3 className="w-8 h-8" /><p className="text-sm">{isZh ? '暂无趋势数据' : 'No trend data'}</p></div>}
-                </div>
-              </div>
-
-              {/* Recent runs + risk devices */}
-              <div className="grid grid-cols-1 xl:grid-cols-2 gap-5">
-                <div className="rounded-2xl border border-black/[0.06] bg-white shadow-sm overflow-hidden flex flex-col">
-                  <div className="px-5 pt-4 pb-3 flex items-center justify-between shrink-0">
-                    <div className="flex items-center gap-2.5">
-                      <div className="w-7 h-7 rounded-lg bg-cyan-50 flex items-center justify-center"><Clock className="w-3.5 h-3.5 text-cyan-600" /></div>
-                      <h3 className="text-sm font-bold text-[#0b2340]">{isZh ? '最近巡检' : 'Recent Inspections'}</h3>
+                {/* Top Risky Devices (1 col) */}
+                <div className="rounded-2xl border border-black/5 dark:border-white/5 bg-white dark:bg-[#111827] p-5 shadow-sm space-y-3">
+                  <div className="flex items-center justify-between">
+                    <div>
+                      <h3 className="text-sm font-bold text-[#0b2340] dark:text-white flex items-center gap-2">
+                        <AlertTriangle className="w-4 h-4 text-amber-500" />
+                        {isZh ? '重点隐患设备' : 'Top Risky Devices'}
+                      </h3>
+                      <p className="text-[11px] text-slate-400 mt-0.5">{isZh ? '当前处于严重或告警状态的设备' : 'Devices in warning or critical state'}</p>
                     </div>
                   </div>
-                  <div className="px-4 pb-4 space-y-2">
-                    {recentRuns.map((run) => (
-                      <button key={run.id} onClick={() => { setSubTab('records'); fetchRunDetail(run.id); }} className="w-full group rounded-xl border border-black/[0.06] bg-white px-4 py-3 text-left transition-all hover:border-cyan-300/60 hover:shadow-sm">
-                        <div className="flex items-center justify-between gap-3">
-                          <div className="min-w-0 flex-1">
-                            <div className="flex items-center gap-2">
-                              <span className={`inline-flex items-center gap-1 rounded-md px-2 py-0.5 text-[10px] font-bold uppercase ${run.status === 'completed' ? 'bg-emerald-50 text-emerald-600' : 'bg-cyan-50 text-cyan-600'}`}>{run.status}</span>
-                              <span className="text-[10px] text-black/30">{new Date(run.started_at).toLocaleString(isZh ? 'zh-CN' : 'en-US', { hour12: false })}</span>
+
+                  <div className="space-y-2 max-h-72 overflow-y-auto">
+                    {riskyDevices.length === 0 ? (
+                      <div className="py-12 text-center text-xs text-slate-400">
+                        <CheckCircle2 className="w-8 h-8 text-emerald-500 mx-auto mb-2 opacity-80" />
+                        {isZh ? '太棒了，全网暂无高风险设备！' : 'All devices healthy!'}
+                      </div>
+                    ) : (
+                      riskyDevices.map((dev) => {
+                        const tone = statusToneMap[dev.health_status] || statusToneMap.unknown;
+                        return (
+                          <div
+                            key={dev.id}
+                            onClick={() => onShowDetails(dev)}
+                            className="p-3 rounded-xl border border-black/5 dark:border-white/5 hover:border-cyan-200 dark:hover:border-cyan-800 transition-all cursor-pointer bg-slate-50/50 dark:bg-slate-900/50 flex items-center justify-between group"
+                          >
+                            <div className="min-w-0 pr-2">
+                              <div className="text-xs font-bold text-slate-800 dark:text-slate-200 truncate group-hover:text-cyan-600 transition-colors">
+                                {dev.hostname || dev.ip_address}
+                              </div>
+                              <div className="text-[10px] text-slate-400 font-mono truncate mt-0.5">
+                                {dev.ip_address} · {dev.platform || 'generic'}
+                              </div>
+                            </div>
+                            <div className="flex items-center gap-2 shrink-0">
+                              <span className={`text-[10px] font-bold px-2 py-0.5 rounded-full ${tone}`}>
+                                {dev.health_status}
+                              </span>
+                              <span className="text-xs font-bold font-mono text-slate-700 dark:text-slate-300">
+                                {dev.health_score ?? '—'}
+                              </span>
                             </div>
                           </div>
-                          <div className="w-10 h-10 rounded-lg bg-slate-50 flex items-center justify-center group-hover:bg-cyan-50 transition-colors">
-                            <span className="text-sm font-bold tabular-nums text-[#0b2340]">{run.avg_health_score ?? '—'}</span>
-                          </div>
-                        </div>
-                      </button>
-                    ))}
-                  </div>
-                </div>
-
-                <div className="rounded-2xl border border-black/[0.06] bg-white shadow-sm overflow-hidden flex flex-col">
-                  <div className="px-5 pt-4 pb-3 flex items-center gap-2.5 shrink-0">
-                    <div className="w-7 h-7 rounded-lg bg-red-50 flex items-center justify-center"><AlertTriangle className="w-3.5 h-3.5 text-red-500" /></div>
-                    <h3 className="text-sm font-bold text-[#0b2340]">{isZh ? '高风险设备' : 'High-Risk Devices'}</h3>
-                  </div>
-                  <div className="px-4 pb-4 space-y-2">
-                    {riskyDevices.map((device) => (
-                      <button key={device.id} onClick={() => onShowDetails(device)} className="w-full group rounded-xl border border-black/[0.06] px-4 py-3 text-left transition-all hover:border-red-200/80 hover:shadow-sm">
-                        <div className="flex items-center justify-between gap-3">
-                          <div className="min-w-0 flex-1">
-                            <p className="text-sm font-semibold text-[#0b2340] truncate">{device.hostname || device.ip_address}</p>
-                            <p className="text-[11px] text-black/35 truncate mt-0.5">{device.site} · {device.platform}</p>
-                          </div>
-                          <div className="w-9 h-9 rounded-lg bg-slate-50 flex items-center justify-center group-hover:bg-red-50 transition-colors">
-                            <span className="text-sm font-bold tabular-nums text-[#0b2340]">{device.health_score}</span>
-                          </div>
-                        </div>
-                      </button>
-                    ))}
+                        );
+                      })
+                    )}
                   </div>
                 </div>
               </div>
-            </div>
-          )}
 
-          {/* ═══════ SUB-TAB: RECORDS ═══════ */}
-          {subTab === 'records' && !selectedRunDetail && (
-            <div className="flex flex-col min-h-full">
-              <div className="p-5 border-b border-black/5 bg-slate-50/30 flex items-center gap-3 shrink-0">
-                <div className="relative flex-1 max-w-sm">
-                  <Search className="absolute left-3.5 top-1/2 -translate-y-1/2 w-3.5 h-3.5 text-black/25" />
-                  <input type="text" placeholder={isZh ? '搜索巡检记录…' : 'Search runs...'} value={recordSearch} onChange={(e) => setRecordSearch(e.target.value)} className="w-full pl-10 pr-3 py-2 rounded-xl border border-black/[0.08] text-sm bg-white focus:outline-none focus:ring-2 focus:ring-cyan-500/20" />
-                </div>
-                <div className="flex items-center gap-2">
-                  <ActionButton
-                    icon={Download}
-                    variant="accent"
-                    onClick={handleExportRecords}
-                    title={isZh ? '导出所有巡检记录' : 'Export all records'}
+              {/* Recent Inspection Runs Summary */}
+              <div className="rounded-2xl border border-black/5 dark:border-white/5 bg-white dark:bg-[#111827] p-5 shadow-sm space-y-4">
+                <div className="flex items-center justify-between">
+                  <div>
+                    <h3 className="text-sm font-bold text-[#0b2340] dark:text-white flex items-center gap-2">
+                      <Clock className="w-4 h-4 text-cyan-500" />
+                      {isZh ? '最近巡检批次概况' : 'Recent Inspection Runs'}
+                    </h3>
+                    <p className="text-[11px] text-slate-400 mt-0.5">{isZh ? '最近完成的巡检批次与健康汇总' : 'Latest completed inspection executions'}</p>
+                  </div>
+                  <button
+                    onClick={() => setSubTab('records')}
+                    className="text-xs font-bold text-cyan-600 hover:text-cyan-700 flex items-center gap-1"
                   >
-                    <span className="ml-1 hidden sm:inline">{isZh ? '导出' : 'Export'}</span>
-                  </ActionButton>
-                  <ActionIconButton icon={RefreshCw} label={isZh ? '刷新巡检记录' : 'Refresh inspection records'} disabled={runsLoading} iconClassName={runsLoading ? 'animate-spin' : undefined} onClick={fetchRuns} />
-                </div>
-              </div>
-
-              <div className="flex-1 min-h-0">
-                <table className="nx-data-table text-left text-sm">
-                  <thead className="sticky top-0 bg-white border-b border-black/[0.05] z-10">
-                    <tr className="bg-slate-50/50">
-                      <Th>{isZh ? '时间' : 'Time'}</Th>
-                      <Th>{isZh ? '类型' : 'Type'}</Th>
-                      <Th>{isZh ? '状态' : 'Status'}</Th>
-                      <Th>{isZh ? '设备数' : 'Devices'}</Th>
-                      <Th>{isZh ? '健康/告警/严重' : 'H/W/C'}</Th>
-                      <Th>{isZh ? '平均分' : 'Avg'}</Th>
-                      <Th>{isZh ? '操作人' : 'User'}</Th>
-                      <Th className="w-10"></Th>
-                    </tr>
-                  </thead>
-                  <tbody className="divide-y divide-black/[0.04]">
-                    {filteredRuns.map((run) => (
-                      <tr key={run.id} className="group hover:bg-cyan-50/30 cursor-pointer transition-colors" onClick={() => fetchRunDetail(run.id)}>
-                        <td className="px-4 py-3 text-[12px] text-black/55">{new Date(run.started_at).toLocaleString(isZh ? 'zh-CN' : 'en-US', { hour12: false })}</td>
-                        <td className="px-4 py-3"><span className={`inline-flex rounded-md px-2 py-0.5 text-[10px] font-bold uppercase ${run.trigger_type === 'manual' ? 'bg-blue-50 text-blue-600' : 'bg-violet-50 text-violet-600'}`}>{run.trigger_type}</span></td>
-                        <td className="px-4 py-3"><span className={`inline-flex items-center gap-1 rounded-md px-2 py-0.5 text-[10px] font-bold uppercase ${run.status === 'completed' ? 'bg-emerald-50 text-emerald-600' : 'bg-red-50 text-red-600'}`}>{run.status}</span></td>
-                        <td className="px-4 py-3 font-semibold tabular-nums">{run.total_devices}</td>
-                        <td className="px-4 py-3 font-bold tabular-nums"><span className="text-emerald-600">{run.healthy_count}</span><span className="text-black/10 mx-1">/</span><span className="text-amber-500">{run.warning_count}</span><span className="text-black/10 mx-1">/</span><span className="text-red-500">{run.critical_count}</span></td>
-                        <td className="px-4 py-3 font-bold tabular-nums text-[#0b2340]">{run.avg_health_score ?? '—'}</td>
-                        <td className="px-4 py-3 text-[12px] text-black/40">{run.created_by}</td>
-                        <td className="px-4 py-3"><Eye className="w-3.5 h-3.5 text-black/20 group-hover:text-cyan-500" /></td>
-                      </tr>
-                    ))}
-                  </tbody>
-                </table>
-              </div>
-            </div>
-          )}
-
-          {/* ═══════ RECORDS: Run Detail ═══════ */}
-          {subTab === 'records' && selectedRunDetail && (
-            <div className="p-5 space-y-5">
-              <button onClick={() => setSelectedRunDetail(null)} className="flex items-center gap-1.5 text-sm text-cyan-600 font-medium"><ChevronRight className="w-3.5 h-3.5 rotate-180" />{isZh ? '返回列表' : 'Back'}</button>
-              
-              <div className="rounded-2xl border border-black/[0.06] bg-white p-5 shadow-sm">
-                <div className="flex items-center gap-4 mb-5">
-                  <ScoreGauge score={selectedRunDetail.avg_health_score} size={64} />
-                  <div className="flex-1">
-                    <h3 className="text-base font-bold text-[#0b2340]">{isZh ? '巡检详情' : 'Inspection Detail'}</h3>
-                    <p className="text-[11px] text-black/35 mt-0.5">{new Date(selectedRunDetail.started_at).toLocaleString(isZh ? 'zh-CN' : 'en-US', { hour12: false })}</p>
-                  </div>
-                    <ActionIconGroup label={isZh ? '报表下载' : 'Report downloads'}>
-                      <ActionButton
-                        icon={Download}
-                        variant="default"
-                        onClick={() => handleDownloadReport(selectedRunDetail.id, 'xlsx')}
-                        title={isZh ? '下载 Excel 报表（含 7 个 Sheet）' : 'Download Excel report (7 sheets)'}
-                      >
-                        Excel
-                      </ActionButton>
-                      <ActionButton
-                        icon={Download}
-                        variant="default"
-                        onClick={() => handleDownloadReport(selectedRunDetail.id, 'html')}
-                        title={isZh ? '下载 HTML 报表（含 ECharts 图表）' : 'Download HTML report (ECharts inline)'}
-                      >
-                        HTML
-                      </ActionButton>
-                      <ActionButton
-                        icon={Download}
-                        variant="default"
-                        onClick={() => handleDownloadReport(selectedRunDetail.id, 'pdf')}
-                        title={isZh ? '下载 PDF 报表（适合打印和归档）' : 'Download PDF report (Archive-ready)'}
-                      >
-                        PDF
-                      </ActionButton>
-                      <ActionButton
-                        icon={Download}
-                        variant="default"
-                        onClick={() => handleDownloadReport(selectedRunDetail.id, 'json')}
-                        title={isZh ? '下载 JSON 原始数据（机器可读）' : 'Download raw JSON data'}
-                      >
-                        JSON
-                      </ActionButton>
-                    </ActionIconGroup>
+                    {isZh ? '查看完整流水记录' : 'View Full History'}
+                    <ChevronRight size={13} />
+                  </button>
                 </div>
 
-                <div className="grid grid-cols-2 sm:grid-cols-4 gap-3">
-                  {[{ label: 'Total', value: selectedRunDetail.total_devices, bg: 'bg-slate-50' }, { label: 'Healthy', value: selectedRunDetail.healthy_count, bg: 'bg-emerald-50' }, { label: 'Warning', value: selectedRunDetail.warning_count, bg: 'bg-amber-50' }, { label: 'Critical', value: selectedRunDetail.critical_count, bg: 'bg-red-50' }].map(s => (
-                    <div key={s.label} className={`${s.bg} rounded-xl p-3 text-center`}><p className="text-[10px] font-bold uppercase opacity-60">{s.label}</p><p className="text-xl font-bold tabular-nums mt-1">{s.value}</p></div>
-                  ))}
-                </div>
-              </div>
-
-              <div className="rounded-2xl border border-black/[0.06] bg-white shadow-sm overflow-hidden">
                 <div className="overflow-x-auto">
-                  <table className="nx-data-table text-left text-sm">
-                    <thead className="bg-slate-50 border-b border-black/[0.05]">
-                      <tr>
-                        <Th>{isZh ? '设备' : 'Device'}</Th>
-                        <Th>Ping/SSH</Th>
-                        <Th>{isZh ? '精细化指标 (取值)' : 'Granular Metrics'}</Th>
-                        <Th>{isZh ? '状态/评分' : 'Status/Score'}</Th>
-                        <Th>{isZh ? '详细发现' : 'Findings'}</Th>
+                  <table className="w-full text-left">
+                    <thead>
+                      <tr className="border-b border-black/5 dark:border-white/5">
+                        <Th>{isZh ? '批次 ID' : 'Run ID'}</Th>
+                        <Th>{isZh ? '触发类型' : 'Trigger'}</Th>
+                        <Th>{isZh ? '范围' : 'Scope'}</Th>
+                        <Th>{isZh ? '设备总数' : 'Devices'}</Th>
+                        <Th>{isZh ? '健康分布' : 'Healthy / Warn / Crit'}</Th>
+                        <Th>{isZh ? '平均得分' : 'Avg Score'}</Th>
+                        <Th>{isZh ? '执行时间' : 'Time'}</Th>
+                        <Th className="text-right">{isZh ? '操作' : 'Actions'}</Th>
                       </tr>
                     </thead>
-                    <tbody className="divide-y divide-black/[0.04]">
-                      {selectedRunDetail.results.map(r => {
-                        const metrics = JSON.parse(r.metrics_json || '{}');
-                        const findings = JSON.parse(r.findings_json || '[]');
-                        
-                        return (
-                          <tr key={r.id} className="hover:bg-slate-50/50">
-                            <td className="px-4 py-3">
-                              <div className="font-semibold text-[#0b2340]">{r.hostname}</div>
-                              <div className="text-[10px] text-black/30 font-mono">{r.ip_address}</div>
-                            </td>
-                            <td className="px-4 py-3 flex flex-col gap-1">
-                              <span className={`text-[10px] font-bold ${r.ping_ok ? 'text-emerald-600' : 'text-red-500'}`}>PING {r.ping_ok ? 'OK' : 'FAIL'}</span>
-                              <span className={`text-[10px] font-bold ${r.ssh_ok ? 'text-emerald-600' : 'text-red-500'}`}>SSH {r.ssh_ok ? 'OK' : 'FAIL'}</span>
+                    <tbody className="divide-y divide-black/[0.03] dark:divide-white/[0.03] text-xs">
+                      {recentRuns.length === 0 ? (
+                        <tr>
+                          <td colSpan={8} className="py-8 text-center text-slate-400 text-xs">
+                            {isZh ? '暂无巡检记录' : 'No inspection runs found'}
+                          </td>
+                        </tr>
+                      ) : (
+                        recentRuns.map((run) => (
+                          <tr key={run.id} className="hover:bg-black/[0.01] dark:hover:bg-white/[0.01] transition-colors">
+                            <td className="px-4 py-3 font-mono text-[11px] font-bold text-slate-700 dark:text-slate-300">
+                              {run.id.slice(0, 8)}...
                             </td>
                             <td className="px-4 py-3">
-                              <div className="flex flex-wrap gap-1.5 max-w-[300px]">
-                                {Object.entries(metrics)
-                                  .filter(([key]) => !key.endsWith('_status'))
-                                  .map(([key, val]) => {
-                                    const status = metrics[`${key}_status`] || (typeof val === 'number' ? 'SUCCESS' : 'ERROR');
-                                    const isError = status === 'ERROR';
-                                    return (
-                                      <div key={key} className={`px-2 py-0.5 rounded-md text-[10px] font-bold border ${!isError ? 'bg-emerald-50 border-emerald-200 text-emerald-700' : 'bg-red-50 border-red-100 text-red-600'}`}>
-                                        <span className="opacity-50 mr-1">{key}:</span>
-                                        <span className="font-mono">
-                                          {typeof val === 'number'
-                                            ? val.toFixed(1) + (key.includes('util') || key.includes('avail') || key.includes('pct') ? '%' : '')
-                                            : (val && typeof val === 'object' && 'error' in val)
-                                              ? String(val.error)
-                                              : String(val)}
-                                        </span>
-                                        <span className="ml-1 text-[8px] opacity-75">({status})</span>
-                                      </div>
-                                    );
-                                  })}
-                                {Object.keys(metrics).length === 0 && <span className="text-black/20 text-[10px] italic">No metrics collected</span>}
-                              </div>
+                              <span className="text-[10px] font-semibold px-2 py-0.5 rounded-full bg-slate-100 dark:bg-slate-800 text-slate-600 dark:text-slate-300">
+                                {run.trigger_type}
+                              </span>
                             </td>
-                            <td className="px-4 py-3">
-                              <div className={`inline-flex items-center gap-1 rounded-full px-2 py-0.5 text-[10px] font-bold uppercase ${
-                                r.health_status === 'healthy' 
-                                  ? 'bg-emerald-50 text-emerald-700 ring-1 ring-emerald-200/60' 
-                                  : (r.health_status === 'warning' || r.health_status === 'critical') 
-                                    ? 'bg-red-50 text-red-700 ring-1 ring-red-200/60' 
-                                    : 'bg-slate-50 text-slate-600 ring-1 ring-slate-200/60'
-                              }`}>
-                                {r.health_status === 'healthy' ? 'SUCCESS' : (r.health_status === 'warning' || r.health_status === 'critical') ? 'ERROR' : r.health_status} ({r.health_score ?? '—'})
-                              </div>
+                            <td className="px-4 py-3 text-slate-600 dark:text-slate-400 text-[11px]">
+                              {run.scope_type}: {run.scope_filter || (isZh ? '全部' : 'all')}
                             </td>
-                            <td className="px-4 py-3">
-                              <div className="space-y-1">
-                                {findings.map((f: any, idx: number) => (
-                                  <div key={idx} className={`text-[11px] leading-tight ${f.severity === 'critical' ? 'text-red-600 font-medium' : 'text-amber-600'}`}>
-                                    • {f.message}
-                                  </div>
-                                ))}
-                                {findings.length === 0 && <span className="text-emerald-600 text-[11px] font-medium">✓ Passed all checks</span>}
-                              </div>
+                            <td className="px-4 py-3 font-bold font-mono text-slate-800 dark:text-slate-200">
+                              {run.total_devices}
+                            </td>
+                            <td className="px-4 py-3 font-mono text-[11px]">
+                              <span className="text-emerald-600 font-semibold">{run.healthy_count}</span> /{' '}
+                              <span className="text-amber-600 font-semibold">{run.warning_count}</span> /{' '}
+                              <span className="text-red-600 font-semibold">{run.critical_count}</span>
+                            </td>
+                            <td className="px-4 py-3 font-mono font-bold text-slate-800 dark:text-slate-200">
+                              {run.avg_health_score ?? '—'}
+                            </td>
+                            <td className="px-4 py-3 text-slate-400 text-[11px] whitespace-nowrap">
+                              {run.started_at?.replace('T', ' ').slice(0, 19) || '-'}
+                            </td>
+                            <td className="px-4 py-3 text-right">
+                              <button
+                                onClick={() => {
+                                  setSubTab('records');
+                                  fetchRunDetail(run.id);
+                                }}
+                                className="text-xs font-semibold text-cyan-600 hover:text-cyan-700 px-2 py-1 rounded-lg hover:bg-cyan-50 dark:hover:bg-cyan-950 transition-colors"
+                              >
+                                {isZh ? '明细与报告' : 'Detail & Report'}
+                              </button>
                             </td>
                           </tr>
-                        );
-                      })}
+                        ))
+                      )}
                     </tbody>
                   </table>
                 </div>
               </div>
             </div>
           )}
-        </div>
 
-        {/* Fixed Pagination Bar (Only for Records) */}
-        {subTab === 'records' && !selectedRunDetail && (
-          <div className="shrink-0 border-t border-black/5 bg-white p-3">
-            <Pagination
-              currentPage={recordPage}
-              totalItems={recordTotal}
-              itemsPerPage={recordPageSize}
-              onPageChange={setRecordPage}
-              onItemsPerPageChange={(size) => { setRecordPageSize(size); setRecordPage(1); }}
-              language={language}
-            />
+          {/* ═══════ SUB-TAB: Records ═══════ */}
+          {subTab === 'records' && (
+            <div className="flex-1 flex flex-col min-h-0 overflow-hidden p-5 space-y-4">
+              {/* Toolbar */}
+              <div className="flex flex-wrap items-center justify-between gap-3 shrink-0">
+                <div className="relative w-72">
+                  <Search size={13} className="absolute left-3 top-1/2 -translate-y-1/2 text-slate-400" />
+                  <input
+                    type="text"
+                    value={recordSearch}
+                    onChange={(e) => setRecordSearch(e.target.value)}
+                    placeholder={isZh ? '搜索批次 ID、触发类型、范围...' : 'Search runs by ID, trigger, scope...'}
+                    className="w-full pl-9 pr-3 py-2 rounded-xl border border-black/10 dark:border-white/10 text-xs bg-white dark:bg-slate-900 focus:outline-none focus:ring-2 focus:ring-cyan-500/20 focus:border-cyan-500"
+                  />
+                </div>
+
+                <div className="flex items-center gap-2">
+                  <span className="text-xs text-slate-400 font-mono">
+                    {isZh ? `共 ${recordTotal} 条批次记录` : `Total ${recordTotal} runs`}
+                  </span>
+                </div>
+              </div>
+
+              {/* Table */}
+              <div className="flex-1 overflow-auto rounded-2xl border border-black/5 dark:border-white/5 bg-white dark:bg-[#111827]">
+                <table className="w-full text-left">
+                  <thead className="sticky top-0 bg-slate-50/90 dark:bg-slate-900/90 backdrop-blur-sm z-10">
+                    <tr className="border-b border-black/5 dark:border-white/5">
+                      <Th>{isZh ? '批次 ID' : 'Run ID'}</Th>
+                      <Th>{isZh ? '触发方式' : 'Trigger'}</Th>
+                      <Th>{isZh ? '设备范围' : 'Scope'}</Th>
+                      <Th>{isZh ? '创建人 / 来源' : 'Created By'}</Th>
+                      <Th>{isZh ? '设备总数' : 'Total'}</Th>
+                      <Th>{isZh ? '健康分布 (正常/告警/严重)' : 'Healthy / Warn / Crit'}</Th>
+                      <Th>{isZh ? '平均得分' : 'Avg Score'}</Th>
+                      <Th>{isZh ? '开始时间' : 'Started At'}</Th>
+                      <Th className="text-right">{isZh ? '操作与报告导出' : 'Actions & Export'}</Th>
+                    </tr>
+                  </thead>
+                  <tbody className="divide-y divide-black/[0.03] dark:divide-white/[0.03] text-xs">
+                    {runsLoading ? (
+                      <tr>
+                        <td colSpan={9} className="py-16 text-center text-slate-400">
+                          <Loader2 className="w-6 h-6 animate-spin mx-auto mb-2 text-cyan-500" />
+                          {isZh ? '加载巡检记录中...' : 'Loading inspection runs...'}
+                        </td>
+                      </tr>
+                    ) : filteredRuns.length === 0 ? (
+                      <tr>
+                        <td colSpan={9} className="py-16 text-center text-slate-400">
+                          {isZh ? '未找到符合条件的巡检记录' : 'No inspection records found'}
+                        </td>
+                      </tr>
+                    ) : (
+                      filteredRuns.map((run) => (
+                        <tr key={run.id} className="hover:bg-slate-50/60 dark:hover:bg-slate-800/40 transition-colors">
+                          <td className="px-4 py-3 font-mono text-[11px] font-bold text-slate-700 dark:text-slate-300">
+                            {run.id.slice(0, 8)}...
+                          </td>
+                          <td className="px-4 py-3">
+                            <span className="text-[10px] font-semibold px-2 py-0.5 rounded-full bg-slate-100 dark:bg-slate-800 text-slate-600 dark:text-slate-300">
+                              {run.trigger_type}
+                            </span>
+                          </td>
+                          <td className="px-4 py-3 text-slate-600 dark:text-slate-400 text-[11px]">
+                            {run.scope_type}: {run.scope_filter || (isZh ? '全部' : 'all')}
+                          </td>
+                          <td className="px-4 py-3 text-slate-600 dark:text-slate-400 text-[11px]">
+                            {run.created_by || 'system'}
+                          </td>
+                          <td className="px-4 py-3 font-bold font-mono text-slate-800 dark:text-slate-200">
+                            {run.total_devices}
+                          </td>
+                          <td className="px-4 py-3 font-mono text-[11px]">
+                            <span className="text-emerald-600 font-semibold">{run.healthy_count}</span> /{' '}
+                            <span className="text-amber-600 font-semibold">{run.warning_count}</span> /{' '}
+                            <span className="text-red-600 font-semibold">{run.critical_count}</span>
+                          </td>
+                          <td className="px-4 py-3 font-mono font-bold text-slate-800 dark:text-slate-200">
+                            {run.avg_health_score ?? '—'}
+                          </td>
+                          <td className="px-4 py-3 text-slate-400 text-[11px] whitespace-nowrap">
+                            {run.started_at?.replace('T', ' ').slice(0, 19) || '-'}
+                          </td>
+                          <td className="px-4 py-3 text-right">
+                            <div className="inline-flex items-center gap-1.5">
+                              <button
+                                onClick={() => fetchRunDetail(run.id)}
+                                className="px-2.5 py-1 text-xs font-semibold rounded-lg bg-slate-100 hover:bg-slate-200 dark:bg-slate-800 dark:hover:bg-slate-700 text-slate-700 dark:text-slate-200 transition-colors"
+                              >
+                                {isZh ? '查看详情' : 'Details'}
+                              </button>
+                              <button
+                                onClick={() => downloadReport(run.id, 'excel')}
+                                disabled={exportingReportId === run.id}
+                                className="p-1.5 text-xs rounded-lg text-emerald-600 hover:bg-emerald-50 dark:hover:bg-emerald-950 transition-colors"
+                                title={isZh ? '下载 Excel 巡检报表' : 'Download Excel Report'}
+                              >
+                                <Download size={13} />
+                              </button>
+                              <button
+                                onClick={() => downloadReport(run.id, 'pdf')}
+                                disabled={exportingReportId === run.id}
+                                className="p-1.5 text-xs rounded-lg text-rose-600 hover:bg-rose-50 dark:hover:bg-rose-950 transition-colors"
+                                title={isZh ? '下载 PDF 巡检报表' : 'Download PDF Report'}
+                              >
+                                <FileText size={13} />
+                              </button>
+                            </div>
+                          </td>
+                        </tr>
+                      ))
+                    )}
+                  </tbody>
+                </table>
+              </div>
+
+              {/* Pagination */}
+              <div className="shrink-0">
+                <Pagination
+                  currentPage={recordPage}
+                  totalItems={recordTotal}
+                  itemsPerPage={recordPageSize}
+                  onPageChange={setRecordPage}
+                  onItemsPerPageChange={(v) => { setRecordPage(1); setRecordPageSize(v); }}
+                  language={language}
+                />
+              </div>
+            </div>
+          )}
+        </div>
+      </div>
+
+      {/* ═══════ Drawer: Run Detail Modal ═══════ */}
+      {selectedRunDetail && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/60 backdrop-blur-sm animate-in fade-in duration-150">
+          <div className="bg-white dark:bg-[#0f172a] rounded-2xl border border-black/10 dark:border-white/10 shadow-2xl w-full max-w-5xl max-h-[90vh] flex flex-col overflow-hidden animate-in zoom-in-95 duration-200">
+            {/* Header */}
+            <div className="flex items-center justify-between px-6 py-4 border-b border-black/5 dark:border-white/10 bg-slate-50/50 dark:bg-slate-900/50">
+              <div className="flex items-center gap-3">
+                <div className="w-9 h-9 rounded-xl bg-gradient-to-br from-cyan-500 to-cyan-700 flex items-center justify-center text-white shadow-md shadow-cyan-500/20">
+                  <ClipboardCheck size={18} />
+                </div>
+                <div>
+                  <h3 className="text-base font-bold text-slate-900 dark:text-white">
+                    {isZh ? '巡检批次执行详情' : 'Inspection Run Details'}
+                  </h3>
+                  <p className="text-xs text-slate-500 dark:text-slate-400 font-mono mt-0.5">
+                    ID: {selectedRunDetail.id} · {selectedRunDetail.started_at?.replace('T', ' ').slice(0, 19)}
+                  </p>
+                </div>
+              </div>
+              <div className="flex items-center gap-2">
+                <button
+                  onClick={() => downloadReport(selectedRunDetail.id, 'excel')}
+                  className="flex items-center gap-1 px-3 py-1.5 rounded-lg text-xs font-bold bg-emerald-50 text-emerald-700 hover:bg-emerald-100 transition-colors"
+                >
+                  <Download size={12} />
+                  Excel
+                </button>
+                <button
+                  onClick={() => downloadReport(selectedRunDetail.id, 'pdf')}
+                  className="flex items-center gap-1 px-3 py-1.5 rounded-lg text-xs font-bold bg-rose-50 text-rose-700 hover:bg-rose-100 transition-colors"
+                >
+                  <Download size={12} />
+                  PDF
+                </button>
+                <button
+                  onClick={() => setSelectedRunDetail(null)}
+                  className="p-1.5 rounded-lg text-slate-400 hover:text-slate-600 hover:bg-slate-100 dark:hover:bg-slate-800 transition-colors"
+                >
+                  <X size={18} />
+                </button>
+              </div>
+            </div>
+
+            {/* Content Table */}
+            <div className="flex-1 overflow-y-auto p-6 space-y-4">
+              <div className="grid grid-cols-4 gap-3">
+                <div className="p-3 rounded-xl bg-slate-50 dark:bg-slate-900/50 border border-black/5 dark:border-white/5">
+                  <div className="text-[10px] text-slate-400 uppercase font-bold">{isZh ? '设备总数' : 'Total'}</div>
+                  <div className="text-xl font-bold text-slate-900 dark:text-white font-mono mt-0.5">{selectedRunDetail.total_devices}</div>
+                </div>
+                <div className="p-3 rounded-xl bg-emerald-50/50 dark:bg-emerald-950/20 border border-emerald-200/50">
+                  <div className="text-[10px] text-emerald-600 uppercase font-bold">{isZh ? '正常设备' : 'Healthy'}</div>
+                  <div className="text-xl font-bold text-emerald-700 dark:text-emerald-300 font-mono mt-0.5">{selectedRunDetail.healthy_count}</div>
+                </div>
+                <div className="p-3 rounded-xl bg-amber-50/50 dark:bg-amber-950/20 border border-amber-200/50">
+                  <div className="text-[10px] text-amber-600 uppercase font-bold">{isZh ? '告警设备' : 'Warning'}</div>
+                  <div className="text-xl font-bold text-amber-700 dark:text-amber-300 font-mono mt-0.5">{selectedRunDetail.warning_count}</div>
+                </div>
+                <div className="p-3 rounded-xl bg-rose-50/50 dark:bg-rose-950/20 border border-rose-200/50">
+                  <div className="text-[10px] text-rose-600 uppercase font-bold">{isZh ? '严重设备' : 'Critical'}</div>
+                  <div className="text-xl font-bold text-rose-700 dark:text-rose-300 font-mono mt-0.5">{selectedRunDetail.critical_count}</div>
+                </div>
+              </div>
+
+              <div className="overflow-x-auto rounded-xl border border-black/5 dark:border-white/5">
+                <table className="w-full text-left">
+                  <thead className="bg-slate-50 dark:bg-slate-900/80">
+                    <tr className="border-b border-black/5 dark:border-white/5">
+                      <Th>{isZh ? '设备主机名 / IP' : 'Device'}</Th>
+                      <Th>{isZh ? '厂商平台' : 'Platform'}</Th>
+                      <Th>{isZh ? '健康状态' : 'Status'}</Th>
+                      <Th>{isZh ? '得分' : 'Score'}</Th>
+                      <Th>{isZh ? 'CPU / 内存' : 'CPU / Mem'}</Th>
+                      <Th>{isZh ? '环境/电源' : 'Env / PSU'}</Th>
+                      <Th>{isZh ? '接口总/Down' : 'Ports / Down'}</Th>
+                      <Th>{isZh ? 'Ping / SSH' : 'Connectivity'}</Th>
+                    </tr>
+                  </thead>
+                  <tbody className="divide-y divide-black/[0.03] dark:divide-white/[0.03] text-xs">
+                    {detailLoading ? (
+                      <tr>
+                        <td colSpan={8} className="py-12 text-center text-slate-400">
+                          <Loader2 className="w-5 h-5 animate-spin mx-auto mb-2 text-cyan-500" />
+                          {isZh ? '加载明细数据中...' : 'Loading results...'}
+                        </td>
+                      </tr>
+                    ) : (selectedRunDetail.results || []).length === 0 ? (
+                      <tr>
+                        <td colSpan={8} className="py-12 text-center text-slate-400">
+                          {isZh ? '无单设备执行结果' : 'No result rows'}
+                        </td>
+                      </tr>
+                    ) : (
+                      selectedRunDetail.results.map((res) => {
+                        const tone = statusToneMap[res.health_status] || statusToneMap.unknown;
+                        return (
+                          <tr key={res.id} className="hover:bg-black/[0.01] dark:hover:bg-white/[0.01]">
+                            <td className="px-4 py-3">
+                              <div className="font-bold text-slate-800 dark:text-slate-200">{res.hostname || res.ip_address}</div>
+                              <div className="text-[10px] text-slate-400 font-mono">{res.ip_address}</div>
+                            </td>
+                            <td className="px-4 py-3 text-slate-600 dark:text-slate-400 font-mono text-[11px]">
+                              {res.platform || '-'}
+                            </td>
+                            <td className="px-4 py-3">
+                              <span className={`text-[10px] font-bold px-2 py-0.5 rounded-full ${tone}`}>
+                                {res.health_status}
+                              </span>
+                            </td>
+                            <td className="px-4 py-3 font-mono font-bold text-slate-800 dark:text-slate-200">
+                              {res.health_score ?? '—'}
+                            </td>
+                            <td className="px-4 py-3 font-mono text-[11px] text-slate-700 dark:text-slate-300">
+                              {res.cpu_usage != null ? `${res.cpu_usage}%` : '—'} / {res.memory_usage != null ? `${res.memory_usage}%` : '—'}
+                            </td>
+                            <td className="px-4 py-3 text-[11px] text-slate-600 dark:text-slate-400 font-mono">
+                              {res.temperature != null ? `${res.temperature}°C` : '—'} · {res.fan_status ? 'Fan✓' : 'Fan—'}
+                            </td>
+                            <td className="px-4 py-3 text-[11px] font-mono text-slate-700 dark:text-slate-300">
+                              {res.interface_total} / <span className={res.interface_down > 0 ? 'text-rose-500 font-bold' : ''}>{res.interface_down}</span>
+                            </td>
+                            <td className="px-4 py-3 text-[11px]">
+                              <span className={res.ping_ok ? 'text-emerald-600 font-semibold' : 'text-rose-500 font-semibold'}>
+                                {res.ping_ok ? 'Ping✓' : 'Ping✗'}
+                              </span> ·{' '}
+                              <span className={res.ssh_ok ? 'text-emerald-600 font-semibold' : 'text-rose-500 font-semibold'}>
+                                {res.ssh_ok ? 'SSH✓' : 'SSH✗'}
+                              </span>
+                            </td>
+                          </tr>
+                        );
+                      })
+                    )}
+                  </tbody>
+                </table>
+              </div>
+            </div>
+
+            {/* Footer */}
+            <div className="flex items-center justify-end px-6 py-3.5 border-t border-black/5 dark:border-white/10 bg-slate-50/50 dark:bg-slate-900/50">
+              <button
+                onClick={() => setSelectedRunDetail(null)}
+                className="px-5 py-2 rounded-xl text-xs font-bold bg-[#06b6d4] hover:bg-[#0891b2] text-white shadow-md shadow-cyan-500/20 transition-all active:scale-95"
+              >
+                {isZh ? '关闭' : 'Close'}
+              </button>
+            </div>
           </div>
-        )}
-      </div>
-      </div>
+        </div>
+      )}
     </div>
   );
 };

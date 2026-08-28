@@ -86,6 +86,10 @@ _ARP_L3_ROLES = frozenset({
     'aggregation', 'l3switch', 'firewall', 'load-balancer',
 })
 _ARP_SVI_ROLES = frozenset({'access', 'switch', 'dist', 'distribution', 'aggregation', 'l3switch'})
+_ROUTE_L3_ROLES = frozenset({
+    'router', 'gateway', 'core', 'dist', 'distribution',
+    'aggregation', 'l3switch', 'firewall', 'load-balancer',
+})
 _ARP_RETRY_BASE_SECONDS = 300
 _ARP_RETRY_MAX_SECONDS = 3600
 _ARP_AUTH_RETRY_SECONDS = 3600
@@ -581,21 +585,39 @@ def _prune_memory_cache(now_ts: float):
         _ARP_CACHE.pop(k, None)
 
 
-def _load_eligible_devices(role_filter: list[str] | None = None) -> list[dict]:
-    """加载有 SSH 凭据的设备列表，可按 role 过滤。"""
+def _load_eligible_devices(
+    role_filter: list[str] | None = None,
+    diagnostics: dict[str, int] | None = None,
+) -> list[dict]:
+    """加载在线且有 SSH 凭据的设备列表，可按 role 过滤。
+
+    Callers that need an eligibility explanation may pass ``diagnostics``.
+    Ordinary collector calls retain the narrower online-only query.
+    """
     conn = get_db_connection()
     try:
-        sql = "SELECT * FROM devices WHERE status = 'online'"
+        sql = "SELECT * FROM devices" if diagnostics is not None else "SELECT * FROM devices WHERE status = 'online'"
         rows = conn.execute(sql).fetchall()
     finally:
         conn.close()
 
+    counters = {
+        'inventory_total': len(rows),
+        'not_online': 0,
+        'unsupported_platform': 0,
+        'no_credentials': 0,
+        'role_filtered': 0,
+    }
     devices = []
     for r in rows:
         d = dict(r)
+        if str(d.get('status') or '').strip().lower() != 'online':
+            counters['not_online'] += 1
+            continue
         # 跳过不支持 ARP 采集的平台（Linux 服务器等），避免超时
         platform = str(d.get('platform') or '').lower()
         if platform in _ARP_UNSUPPORTED_PLATFORMS:
+            counters['unsupported_platform'] += 1
             continue
         creds = resolve_device_credentials(d)
         auth_model = (d.get('auth_model') or 'single').lower()
@@ -605,16 +627,21 @@ def _load_eligible_devices(role_filter: list[str] | None = None) -> list[dict]:
         # for dual-auth devices whose normal account is unavailable.
         credential_attempts = _credential_attempts(creds, auth_model)
         if not credential_attempts:
+            counters['no_credentials'] += 1
             continue
         if role_filter:
             dev_role = (d.get('role') or '').lower().strip()
             if dev_role not in role_filter:
+                counters['role_filtered'] += 1
                 continue
         # 把解析好的登录凭据写回 dict，供 _build_ssh_params 直接使用
         d['_ssh_username'], d['_ssh_password'] = credential_attempts[0]
         d['_ssh_fallback_credentials'] = credential_attempts[1:]
         d['_ssh_enable'] = creds.get('enable_password') or ''
         devices.append(d)
+    if diagnostics is not None:
+        diagnostics.clear()
+        diagnostics.update(counters)
     return devices
 
 
@@ -1263,7 +1290,7 @@ def _collect_live_interface_status(device_id: str, port: str) -> tuple[str, str]
         for record in category.get('records') or []:
             if not isinstance(record, dict):
                 continue
-            interface_name, _ip, admin_status, oper_status = _status_record(record, {})
+            interface_name, _ip, _prefix, admin_status, oper_status = _status_record(record, {})
             if normalize_interface_name(str(interface_name or '')).lower() == port_key:
                 return admin_status, oper_status
     except Exception as exc:
@@ -2379,6 +2406,82 @@ def _load_svi_evidence() -> set[str]:
         if is_svi_interface(name) and ip_value not in {'', '--', 'unassigned', '0.0.0.0'}:
             evidence.add(str(row_data['device_id']))
     return evidence
+
+
+def _load_route_l3_evidence() -> set[str]:
+    """Return device ids whose interface inventory proves L3 capability."""
+    conn = get_db_connection()
+    try:
+        rows = conn.execute(
+            "SELECT device_id, interface_name, ip_address, primary_ip, is_l3 FROM interfaces"
+        ).fetchall()
+    except Exception as exc:
+        logger.debug("[Route Collector] Could not load interface L3 evidence: %s", exc)
+        return set()
+    finally:
+        conn.close()
+
+    evidence: set[str] = set()
+    for row in rows:
+        row_data = dict(row) if hasattr(row, 'keys') else row
+        device_id = str(row_data.get('device_id') or '').strip()
+        interface_name = str(row_data.get('interface_name') or '').strip()
+        ip_value = str(row_data.get('ip_address') or row_data.get('primary_ip') or '').strip()
+        raw_is_l3 = row_data.get('is_l3')
+        is_l3 = raw_is_l3 is True or str(raw_is_l3 or '').strip().lower() in {'1', 'true', 'yes', 'on'}
+        has_usable_ip = ip_value.lower() not in {'', '--', 'unassigned', '0.0.0.0'}
+        if device_id and has_usable_ip and (is_l3 or is_svi_interface(interface_name)):
+            evidence.add(device_id)
+    return evidence
+
+
+def _select_route_devices(
+    all_eligible: list[dict],
+    *,
+    respect_collection_policy: bool = True,
+) -> tuple[list[dict], dict[str, int]]:
+    """Select route-capable devices with explicit policy and interface evidence.
+
+    Role and discovered L3/SVI interfaces are capability signals. Device
+    collection-plan overrides are consulted only for plan-aware callers;
+    the explicit NSOT full-sync action is a separate product workflow and
+    deliberately ignores inspection-plan overrides.
+    """
+    l3_evidence = _load_route_l3_evidence()
+    stats = {
+        'credentialed_online': len(all_eligible),
+        'selected': 0,
+        'role': 0,
+        'explicit': 0,
+        'interface_evidence': 0,
+        'policy_disabled': 0,
+        'policy_ignored': 0,
+        'no_l3_evidence': 0,
+    }
+    selected: list[dict] = []
+    for device in all_eligible:
+        explicit = explicit_collector_override(device, 'routes')
+        role = str(device.get('role') or '').strip().lower()
+        device_id = str(device.get('id') or '').strip()
+        if not respect_collection_policy and explicit is not None:
+            stats['policy_ignored'] += 1
+        if respect_collection_policy and explicit is False:
+            stats['policy_disabled'] += 1
+            continue
+        if respect_collection_policy and explicit is True:
+            stats['explicit'] += 1
+        elif role in _ROUTE_L3_ROLES:
+            stats['role'] += 1
+        elif device_id in l3_evidence:
+            stats['interface_evidence'] += 1
+        else:
+            stats['no_l3_evidence'] += 1
+            continue
+        selected.append(device)
+
+    selected.sort(key=lambda item: str(item.get('id') or item.get('ip_address') or ''))
+    stats['selected'] = len(selected)
+    return selected, stats
 
 
 def _arp_device_is_due(state: dict[str, Any], now: datetime) -> bool:
@@ -4205,7 +4308,9 @@ def run_unified_nsot_sync() -> dict[str, Any]:
     try:
         run_arp_sweep()
         run_endpoint_collector(refresh_arp=False)
-        run_route_collector()
+        # The NSOT page's explicit "Sync All Data" action is independent from
+        # the inspection page's per-device collection plan.
+        run_route_collector(respect_collection_policy=False)
         sync_routing_neighbors_job()
         sync_bgp_routes_job()
         topology_result = sync_topology_and_interfaces_job() or {}
@@ -4709,7 +4814,7 @@ def _collect_device_vrfs(dev: dict) -> list[str]:
     return vrfs
 
 
-def run_route_collector():
+def run_route_collector(*, respect_collection_policy: bool = True):
     """
     后台路由事实库同步任务：
     1. 获取所有支持路由的在线设备。
@@ -4719,15 +4824,30 @@ def run_route_collector():
     logger.info("[Route Collector] Starting route cache sync...")
     t0 = time.time()
 
-    all_eligible = _load_eligible_devices()
-    _L3_ROLES = {'router', 'gateway', 'core', 'dist', 'distribution', 'aggregation', 'l3switch'}
-    route_devices = [
-        d for d in filter_devices(all_eligible, "routes")
-        if (d.get('role') or '').lower().strip() in _L3_ROLES
-    ]
+    inventory_diagnostics: dict[str, int] = {}
+    all_eligible = _load_eligible_devices(diagnostics=inventory_diagnostics)
+    route_devices, eligibility = _select_route_devices(
+        all_eligible,
+        respect_collection_policy=respect_collection_policy,
+    )
+    logger.info(
+        "[Route Collector] Eligibility: policy_scope=%s inventory=%s not_online=%s unsupported_platform=%s "
+        "no_credentials=%s online_with_credentials=%s selected=%s "
+        "role=%s explicit=%s interface_evidence=%s policy_disabled=%s policy_ignored=%s no_l3_evidence=%s",
+        'device_plan' if respect_collection_policy else 'nsot_independent',
+        inventory_diagnostics['inventory_total'], inventory_diagnostics['not_online'],
+        inventory_diagnostics['unsupported_platform'], inventory_diagnostics['no_credentials'],
+        eligibility['credentialed_online'], eligibility['selected'], eligibility['role'],
+        eligibility['explicit'], eligibility['interface_evidence'], eligibility['policy_disabled'],
+        eligibility['policy_ignored'], eligibility['no_l3_evidence'],
+    )
 
     if not route_devices:
-        logger.info("[Route Collector] No eligible L3 routing devices found.")
+        logger.info(
+            "[Route Collector] No eligible L3 routing devices found. A device must be online, "
+            "have usable credentials and have an L3 role or an observed L3/SVI interface. "
+            "A plan-aware run may also use an explicit routes=true override or exclude routes=false."
+        )
         return
 
     workers = min(5, len(route_devices))

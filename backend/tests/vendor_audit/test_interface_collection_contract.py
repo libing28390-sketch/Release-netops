@@ -4,7 +4,7 @@ from services.scheduler_service import normalize_collected_interface_rate
 
 
 def test_ntc_lowercase_loopback_record_is_collected_with_status() -> None:
-    interface_name, ip_address, admin_status, oper_status = _status_record(
+    interface_name, ip_address, prefix_len, admin_status, oper_status = _status_record(
         {
             'interface': 'Loopback0',
             'ip_address': '5.5.5.5',

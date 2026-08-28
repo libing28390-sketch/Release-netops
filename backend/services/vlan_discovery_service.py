@@ -144,21 +144,30 @@ def _link_prefixes_to_svis(conn, device_sites: dict[str, str]) -> int:
         if vlan_id is None:
             continue
         raw_ip = str(row["primary_ip"] or row["ip_address"] or "").strip()
+        if not raw_ip:
+            continue
         prefix_length = str(row["ip_prefix_length"] or "").strip()
         if not prefix_length:
-            prefix_length = inventory_masks.get(
-                (str(row["device_id"] or ""), normalize_interface_name(row["interface_name"])),
-                "",
-            )
-        if not raw_ip or not prefix_length:
-            continue
-        if "." in prefix_length and "/" not in prefix_length:
+            if "/" in raw_ip:
+                raw_ip, prefix_length = raw_ip.split("/", 1)
+            else:
+                prefix_length = inventory_masks.get(
+                    (str(row["device_id"] or ""), normalize_interface_name(row["interface_name"])),
+                    "",
+                )
+        if prefix_length and "." in prefix_length and "/" not in prefix_length:
             try:
                 prefix_length = str(ipaddress.IPv4Network(f"0.0.0.0/{prefix_length}").prefixlen)
             except ValueError:
-                continue
+                prefix_length = ""
+        clean_host_ip = raw_ip.split("/", 1)[0].strip()
+        if not clean_host_ip:
+            continue
         try:
-            address = ipaddress.ip_interface(f"{raw_ip.split('/', 1)[0]}/{prefix_length}")
+            if prefix_length:
+                address = ipaddress.ip_interface(f"{clean_host_ip}/{prefix_length}")
+            else:
+                address = ipaddress.ip_interface(f"{clean_host_ip}/32")
         except ValueError:
             continue
         candidates.append({

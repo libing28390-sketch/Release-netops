@@ -1,6 +1,6 @@
 import React, { useState, useEffect, useCallback, useMemo, useRef } from 'react';
 import { useNavigate } from 'react-router-dom';
-import { Plus, Pencil, Trash2, RefreshCw, X, KeyRound, Building2, Network, Layers, Users as UsersIcon, Server, Search, Check, ShieldAlert, Eye, EyeOff, Copy, ChevronDown, ChevronUp, ChevronRight, FolderTree, Download, Upload, FileSpreadsheet } from 'lucide-react';
+import { Plus, Pencil, Trash2, RefreshCw, X, KeyRound, Building2, Network, Layers, Users as UsersIcon, Server, Search, Check, ShieldAlert, Eye, EyeOff, Copy, ChevronDown, ChevronUp, ChevronRight, FolderTree, Download, Upload, FileSpreadsheet, Radio, Activity, Hash, AlertCircle, Briefcase, ShieldCheck, Route, Monitor, Sparkles } from 'lucide-react';
 import * as XLSX from 'xlsx';
 import PageHero from '../components/PageHero';
 import Pagination from '../components/Pagination';
@@ -3244,15 +3244,26 @@ const CmdbManagementTab: React.FC<Props> = ({ language, cmdbPage, currentUser })
   const renderVlanTreeNode = (node: any, depth = 0): React.ReactNode => {
     const expanded = expandedVlanTree[node.id] !== false;
     const selected = JSON.stringify(vlanTreeBranch) === JSON.stringify(node.branch || {});
-    const Icon = node.kind === 'root' ? Layers : node.kind === 'site' ? FolderTree : node.kind === 'type' ? Server : node.kind === 'category' ? Network : UsersIcon;
+    const Icon = node.kind === 'root' ? Layers : node.kind === 'site' ? Building2 : node.kind === 'type' ? Server : node.kind === 'category' ? Network : UsersIcon;
     return (
-      <div key={node.id}>
-        <div className={`group flex items-center gap-1.5 rounded-lg px-2 py-2 text-xs ${selected ? 'bg-cyan-50 text-cyan-800' : 'text-slate-600 hover:bg-slate-50'}`} style={{ paddingLeft: `${8 + depth * 14}px` }}>
-          {node.children?.length ? <button type="button" onClick={() => toggleVlanTreeNode(node.id)} className="shrink-0 text-slate-400" aria-label={expanded ? 'Collapse' : 'Expand'}><ChevronRight size={14} className={expanded ? 'rotate-90 transition-transform' : 'transition-transform'} /></button> : <span className="w-[14px]" />}
+      <div key={node.id} className="relative">
+        <div
+          className={`group my-0.5 flex items-center gap-1.5 rounded-xl px-2.5 py-1.5 text-xs transition-all duration-200 ${selected ? 'border border-cyan-500/30 bg-gradient-to-r from-cyan-50 to-sky-50/60 font-semibold text-cyan-900 shadow-sm dark:border-cyan-800/50 dark:from-cyan-950/40 dark:to-slate-900 dark:text-cyan-200' : 'text-slate-600 hover:bg-slate-100/70 dark:text-slate-400 dark:hover:bg-slate-800/60'}`}
+          style={{ paddingLeft: `${8 + depth * 12}px` }}
+        >
+          {node.children?.length ? (
+            <button type="button" onClick={() => toggleVlanTreeNode(node.id)} className="shrink-0 text-slate-400 hover:text-slate-600" aria-label={expanded ? 'Collapse' : 'Expand'}>
+              <ChevronRight size={13} className={`transition-transform duration-200 ${expanded ? 'rotate-90 text-cyan-600' : ''}`} />
+            </button>
+          ) : (
+            <span className="w-[13px]" />
+          )}
           <button type="button" onClick={() => selectVlanTreeBranch(node)} className="flex min-w-0 flex-1 items-center gap-2 text-left">
-            <Icon size={14} className={node.kind === 'site' ? 'text-cyan-600' : node.kind === 'type' ? 'text-indigo-500' : 'text-slate-400'} />
+            <Icon size={13} className={node.kind === 'site' ? 'text-cyan-600' : node.kind === 'type' ? 'text-indigo-500' : node.kind === 'category' ? 'text-emerald-600' : 'text-slate-400'} />
             <span className="truncate">{vlanScopeLabel(node)}</span>
-            <span className="ml-auto rounded-full bg-slate-100 px-1.5 py-0.5 text-[10px] tabular-nums text-slate-500">{node.count || 0}</span>
+            <span className={`ml-auto rounded-full px-1.5 py-0.5 text-[10px] tabular-nums font-mono ${selected ? 'bg-cyan-200/70 font-bold text-cyan-900 dark:bg-cyan-800/60 dark:text-cyan-100' : 'bg-slate-100 text-slate-500 dark:bg-slate-800 dark:text-slate-400'}`}>
+              {node.count || 0}
+            </span>
           </button>
         </div>
         {expanded && node.children?.map((child: any) => renderVlanTreeNode(child, depth + 1))}
@@ -3623,15 +3634,18 @@ const CmdbManagementTab: React.FC<Props> = ({ language, cmdbPage, currentUser })
 
         {tab === 'vlans' ? (
           <div className={`grid grid-cols-1 gap-5 ${vlanTreeCollapsed ? 'xl:grid-cols-[56px_minmax(0,1fr)]' : 'xl:grid-cols-[240px_minmax(0,1fr)]'}`}>
-            <aside className={`relative rounded-[28px] border border-black/5 bg-white shadow-[0_16px_36px_rgba(11,35,64,0.06)] ${vlanTreeCollapsed ? 'p-2' : 'p-4'}`}>
-              <div className={`border-b border-black/5 px-2 pb-3 ${vlanTreeCollapsed ? 'hidden' : ''}`}>
-                <div className="text-sm font-semibold text-[#164e63]">资产分类</div>
-                <div className="mt-1 text-xs text-slate-400">按站点查看 VLAN 与网段</div>
+            <aside className={`relative rounded-[28px] border border-slate-200/80 bg-white/90 shadow-[0_16px_36px_rgba(11,35,64,0.05)] backdrop-blur-sm dark:border-slate-800 dark:bg-slate-900/90 ${vlanTreeCollapsed ? 'p-2' : 'p-4'}`}>
+              <div className={`border-b border-black/5 px-2 pb-3.5 dark:border-slate-800 ${vlanTreeCollapsed ? 'hidden' : ''}`}>
+                <div className="flex items-center gap-2 text-sm font-bold text-[#164e63] dark:text-cyan-400">
+                  <FolderTree size={16} className="text-cyan-600" />
+                  <span>{zh ? '资产分类' : 'Asset Hierarchy'}</span>
+                </div>
+                <div className="mt-1 text-xs text-slate-400 dark:text-slate-500">{zh ? '按站点与设备层级查看 VLAN' : 'Explore VLANs by site and device'}</div>
               </div>
               <button
                 type="button"
                 onClick={() => setVlanTreeCollapsed((current) => !current)}
-                className={`rounded-lg p-1.5 text-slate-400 transition-colors hover:bg-cyan-50 hover:text-cyan-700 ${vlanTreeCollapsed ? 'mx-auto block' : 'absolute right-5 top-5'}`}
+                className={`rounded-xl p-1.5 text-slate-400 transition-colors hover:bg-cyan-50 hover:text-cyan-700 dark:hover:bg-cyan-950/40 dark:hover:text-cyan-400 ${vlanTreeCollapsed ? 'mx-auto block' : 'absolute right-4 top-4'}`}
                 title={vlanTreeCollapsed ? (zh ? '展开 VLAN 分类' : 'Expand VLAN tree') : (zh ? '折叠 VLAN 分类' : 'Collapse VLAN tree')}
                 aria-label={vlanTreeCollapsed ? (zh ? '展开 VLAN 分类' : 'Expand VLAN tree') : (zh ? '折叠 VLAN 分类' : 'Collapse VLAN tree')}
               >
@@ -3639,23 +3653,41 @@ const CmdbManagementTab: React.FC<Props> = ({ language, cmdbPage, currentUser })
               </button>
               <div className={`mt-3 space-y-1 ${vlanTreeCollapsed ? 'hidden' : ''}`}>
                 {vlanScopeTree.length ? vlanScopeTree.map((node) => renderVlanTreeNode(node)) : (
-                  <button type="button" onClick={() => { setVlanTreeBranch({}); setVlanSiteFilter(''); setPage(1); }} className="flex w-full items-center justify-between rounded-xl bg-cyan-50 px-3 py-2.5 text-left text-sm font-semibold text-cyan-700">
-                    <span className="inline-flex items-center gap-2"><Layers size={14} />鍏ㄩ儴璧勪骇</span>
-                    <span className="rounded-full bg-white px-2 py-0.5 text-[11px] text-slate-500 shadow-sm">{vlanListMeta.total}</span>
+                  <button type="button" onClick={() => { setVlanTreeBranch({}); setVlanSiteFilter(''); setPage(1); }} className="flex w-full items-center justify-between rounded-xl bg-cyan-50 px-3 py-2.5 text-left text-sm font-semibold text-cyan-700 dark:bg-cyan-950/30 dark:text-cyan-300">
+                    <span className="inline-flex items-center gap-2"><Layers size={14} />{zh ? '全部资产' : 'All Assets'}</span>
+                    <span className="rounded-full bg-white px-2 py-0.5 text-[11px] text-slate-500 shadow-sm dark:bg-slate-800 dark:text-slate-400">{vlanListMeta.total}</span>
                   </button>
                 )}
               </div>
             </aside>
 
-            <section className="min-w-0 rounded-[28px] border border-black/5 bg-white shadow-[0_16px_36px_rgba(11,35,64,0.06)]">
-              <div className="flex flex-wrap items-center justify-between gap-3 border-b border-black/5 px-5 py-4">
-                <div>
-                  <h2 className="text-base font-semibold text-[#164e63]">VLAN 清单</h2>
-                   <p className="mt-1 text-xs text-slate-400">以站点为维度聚合，优先查看网关、终端和业务责任；展开行查看完整明细</p>
+            <section className="min-w-0 rounded-[28px] border border-slate-200/80 bg-white/95 shadow-[0_16px_36px_rgba(11,35,64,0.06)] backdrop-blur-sm dark:border-slate-800 dark:bg-slate-900/95">
+              <div className="flex flex-wrap items-center justify-between gap-3 border-b border-black/5 px-6 py-4 dark:border-slate-800">
+                <div className="flex items-center gap-3">
+                  <div className="flex h-9 w-9 items-center justify-center rounded-xl bg-gradient-to-br from-cyan-500/20 to-sky-500/10 text-cyan-700 border border-cyan-500/20 dark:text-cyan-400">
+                    <Network size={18} />
+                  </div>
+                  <div>
+                    <div className="flex items-center gap-2">
+                      <h2 className="text-base font-bold text-slate-900 dark:text-slate-100">{zh ? 'VLAN 清单' : 'VLAN Inventory'}</h2>
+                      <span className="rounded-full border border-cyan-200 bg-cyan-50/80 px-2.5 py-0.5 text-[11px] font-bold text-cyan-700 dark:border-cyan-800/40 dark:bg-cyan-950/30 dark:text-cyan-300">
+                        {vlanListMeta.total} {zh ? '条记录' : 'records'}
+                      </span>
+                    </div>
+                    <p className="mt-0.5 text-xs text-slate-400 dark:text-slate-500">{zh ? '以站点为维度聚合，全景呈现网关 SVI、接入端口、终端定位与业务映射' : 'Aggregated by site; full visibility of gateway SVI, access ports, endpoints, and business mapping'}</p>
+                  </div>
                 </div>
                 <div className="flex flex-wrap items-center justify-end gap-2 text-xs text-slate-500">
-                  <span className="rounded-full bg-cyan-50 px-2.5 py-1 font-semibold text-cyan-700">{vlanListMeta.total} 条记录</span>
-                  {vlanSiteFilter && <button type="button" onClick={() => { setVlanTreeBranch({}); setVlanSiteFilter(''); setPage(1); }} className="text-cyan-700 hover:text-cyan-900">清除站点筛选</button>}
+                  {vlanSiteFilter && (
+                    <button
+                      type="button"
+                      onClick={() => { setVlanTreeBranch({}); setVlanSiteFilter(''); setPage(1); }}
+                      className="inline-flex items-center gap-1 rounded-lg border border-cyan-200/80 bg-cyan-50 px-2.5 py-1 text-xs font-semibold text-cyan-700 hover:bg-cyan-100 dark:border-cyan-800 dark:bg-cyan-950/40 dark:text-cyan-300"
+                    >
+                      <X size={12} />
+                      {zh ? '清除站点筛选' : 'Clear filter'}
+                    </button>
+                  )}
                   <ActionButton
                     type="button"
                     icon={vlanExporting ? RefreshCw : Download}
@@ -3666,29 +3698,120 @@ const CmdbManagementTab: React.FC<Props> = ({ language, cmdbPage, currentUser })
                     disabled={vlanExporting}
                     title={zh ? '导出完整 VLAN 信息' : 'Export complete VLAN inventory'}
                   >
-                    {vlanExporting ? '导出中' : '导出 VLAN'}
+                    {vlanExporting ? (zh ? '导出中...' : 'Exporting...') : (zh ? '导出 VLAN' : 'Export VLAN')}
                   </ActionButton>
                 </div>
               </div>
 
-              <div className="grid grid-cols-2 gap-3 border-b border-black/5 bg-slate-50/45 p-4 md:grid-cols-5">
-                <div className="rounded-2xl border border-cyan-100 bg-cyan-50/70 px-4 py-3"><div className="text-[11px] font-medium text-cyan-700">VLAN 总数</div><div className="mt-1 text-2xl font-bold text-cyan-900">{vlanSummary.total}</div></div>
-                <div className="rounded-2xl border border-emerald-100 bg-emerald-50/70 px-4 py-3"><div className="text-[11px] font-medium text-emerald-700">已发现网关</div><div className="mt-1 text-2xl font-bold text-emerald-900">{vlanSummary.gateways}</div></div>
-                <div className="rounded-2xl border border-blue-100 bg-blue-50/70 px-4 py-3"><div className="text-[11px] font-medium text-blue-700">ARP 终端</div><div className="mt-1 text-2xl font-bold text-blue-900">{vlanSummary.arp}</div></div>
-                <div className="rounded-2xl border border-slate-200 bg-white px-4 py-3"><div className="text-[11px] font-medium text-slate-500">MAC 记录</div><div className="mt-1 text-2xl font-bold text-slate-800">{vlanSummary.mac}</div></div>
-                <div className={`rounded-2xl border px-4 py-3 ${vlanSummary.unbound ? 'border-amber-200 bg-amber-50/80' : 'border-violet-100 bg-violet-50/70'}`}><div className={`text-[11px] font-medium ${vlanSummary.unbound ? 'text-amber-700' : 'text-violet-700'}`}>待补业务</div><div className={`mt-1 text-2xl font-bold ${vlanSummary.unbound ? 'text-amber-900' : 'text-violet-900'}`}>{vlanSummary.unbound}</div></div>
+              {/* KPI Summary Cards */}
+              <div className="grid grid-cols-2 gap-3.5 border-b border-black/5 bg-slate-50/50 p-4 md:grid-cols-5 dark:border-slate-800 dark:bg-slate-900/30">
+                {/* 1. VLAN 总数 */}
+                <div className="group relative overflow-hidden rounded-2xl border border-cyan-200/60 bg-gradient-to-br from-cyan-50/90 via-white to-sky-50/50 p-3.5 shadow-sm transition-all duration-300 hover:-translate-y-0.5 hover:shadow-md dark:border-cyan-800/40 dark:from-cyan-950/30 dark:via-slate-900 dark:to-sky-950/20">
+                  <div className="absolute top-0 left-0 right-0 h-1 bg-gradient-to-r from-cyan-500 to-sky-400 opacity-80" />
+                  <div className="flex items-center justify-between">
+                    <span className="text-[11px] font-semibold text-cyan-800 dark:text-cyan-300">{zh ? 'VLAN 总数' : 'Total VLANs'}</span>
+                    <div className="flex h-7 w-7 items-center justify-center rounded-lg bg-cyan-500/10 text-cyan-700 dark:text-cyan-400">
+                      <Layers size={14} />
+                    </div>
+                  </div>
+                  <div className="mt-2 flex items-baseline gap-1.5">
+                    <span className="font-mono text-2xl font-bold tracking-tight text-cyan-950 dark:text-cyan-100">{vlanSummary.total}</span>
+                    <span className="text-[10px] font-medium text-cyan-600/80 dark:text-cyan-400/80">{zh ? '个域' : 'domains'}</span>
+                  </div>
+                </div>
+
+                {/* 2. 已发现网关 */}
+                <div className="group relative overflow-hidden rounded-2xl border border-emerald-200/60 bg-gradient-to-br from-emerald-50/90 via-white to-teal-50/50 p-3.5 shadow-sm transition-all duration-300 hover:-translate-y-0.5 hover:shadow-md dark:border-emerald-800/40 dark:from-emerald-950/30 dark:via-slate-900 dark:to-teal-950/20">
+                  <div className="absolute top-0 left-0 right-0 h-1 bg-gradient-to-r from-emerald-500 to-teal-400 opacity-80" />
+                  <div className="flex items-center justify-between">
+                    <span className="text-[11px] font-semibold text-emerald-800 dark:text-emerald-300">{zh ? '已发现网关' : 'Gateways Found'}</span>
+                    <div className="flex h-7 w-7 items-center justify-center rounded-lg bg-emerald-500/10 text-emerald-700 dark:text-emerald-400">
+                      <Radio size={14} className="animate-pulse" />
+                    </div>
+                  </div>
+                  <div className="mt-2 flex items-baseline gap-1.5">
+                    <span className="font-mono text-2xl font-bold tracking-tight text-emerald-950 dark:text-emerald-100">{vlanSummary.gateways}</span>
+                    <span className="text-[10px] font-medium text-emerald-600/80 dark:text-emerald-400/80">{zh ? '活跃网关' : 'active'}</span>
+                  </div>
+                </div>
+
+                {/* 3. ARP 终端 */}
+                <div className="group relative overflow-hidden rounded-2xl border border-blue-200/60 bg-gradient-to-br from-blue-50/90 via-white to-indigo-50/50 p-3.5 shadow-sm transition-all duration-300 hover:-translate-y-0.5 hover:shadow-md dark:border-blue-800/40 dark:from-blue-950/30 dark:via-slate-900 dark:to-indigo-950/20">
+                  <div className="absolute top-0 left-0 right-0 h-1 bg-gradient-to-r from-blue-500 to-indigo-400 opacity-80" />
+                  <div className="flex items-center justify-between">
+                    <span className="text-[11px] font-semibold text-blue-800 dark:text-blue-300">{zh ? 'ARP 终端' : 'ARP Endpoints'}</span>
+                    <div className="flex h-7 w-7 items-center justify-center rounded-lg bg-blue-500/10 text-blue-700 dark:text-blue-400">
+                      <Activity size={14} />
+                    </div>
+                  </div>
+                  <div className="mt-2 flex items-baseline gap-1.5">
+                    <span className="font-mono text-2xl font-bold tracking-tight text-blue-950 dark:text-blue-100">{vlanSummary.arp}</span>
+                    <span className="text-[10px] font-medium text-blue-600/80 dark:text-blue-400/80">{zh ? '在线解析' : 'resolved'}</span>
+                  </div>
+                </div>
+
+                {/* 4. MAC 记录 */}
+                <div className="group relative overflow-hidden rounded-2xl border border-slate-200/80 bg-gradient-to-br from-slate-50/90 via-white to-slate-100/50 p-3.5 shadow-sm transition-all duration-300 hover:-translate-y-0.5 hover:shadow-md dark:border-slate-800 dark:from-slate-900 dark:via-slate-900 dark:to-slate-800/40">
+                  <div className="absolute top-0 left-0 right-0 h-1 bg-gradient-to-r from-slate-400 to-slate-500 opacity-80" />
+                  <div className="flex items-center justify-between">
+                    <span className="text-[11px] font-semibold text-slate-700 dark:text-slate-300">{zh ? 'MAC 记录' : 'MAC Table'}</span>
+                    <div className="flex h-7 w-7 items-center justify-center rounded-lg bg-slate-500/10 text-slate-700 dark:text-slate-400">
+                      <Hash size={14} />
+                    </div>
+                  </div>
+                  <div className="mt-2 flex items-baseline gap-1.5">
+                    <span className="font-mono text-2xl font-bold tracking-tight text-slate-900 dark:text-slate-100">{vlanSummary.mac}</span>
+                    <span className="text-[10px] font-medium text-slate-500">{zh ? '条目' : 'entries'}</span>
+                  </div>
+                </div>
+
+                {/* 5. 待补业务 */}
+                <div className={`group relative overflow-hidden rounded-2xl border p-3.5 shadow-sm transition-all duration-300 hover:-translate-y-0.5 hover:shadow-md ${vlanSummary.unbound ? 'border-amber-200/80 bg-gradient-to-br from-amber-50/90 via-white to-orange-50/50 dark:border-amber-800/40 dark:from-amber-950/30 dark:via-slate-900 dark:to-orange-950/20' : 'border-violet-200/60 bg-gradient-to-br from-violet-50/90 via-white to-purple-50/50 dark:border-violet-800/40 dark:from-violet-950/30 dark:via-slate-900 dark:to-purple-950/20'}`}>
+                  <div className={`absolute top-0 left-0 right-0 h-1 bg-gradient-to-r opacity-80 ${vlanSummary.unbound ? 'from-amber-500 to-orange-400' : 'from-violet-500 to-purple-400'}`} />
+                  <div className="flex items-center justify-between">
+                    <span className={`text-[11px] font-semibold ${vlanSummary.unbound ? 'text-amber-800 dark:text-amber-300' : 'text-violet-800 dark:text-violet-300'}`}>{zh ? '待补业务' : 'Unmapped Business'}</span>
+                    <div className={`flex h-7 w-7 items-center justify-center rounded-lg ${vlanSummary.unbound ? 'bg-amber-500/15 text-amber-700 dark:text-amber-400' : 'bg-violet-500/10 text-violet-700 dark:text-violet-400'}`}>
+                      {vlanSummary.unbound ? <AlertCircle size={14} /> : <Briefcase size={14} />}
+                    </div>
+                  </div>
+                  <div className="mt-2 flex items-baseline gap-1.5">
+                    <span className={`font-mono text-2xl font-bold tracking-tight ${vlanSummary.unbound ? 'text-amber-950 dark:text-amber-100' : 'text-violet-950 dark:text-violet-100'}`}>{vlanSummary.unbound}</span>
+                    <span className={`text-[10px] font-medium ${vlanSummary.unbound ? 'text-amber-600 dark:text-amber-400' : 'text-violet-600 dark:text-violet-400'}`}>{zh ? '待关联' : 'unbound'}</span>
+                  </div>
+                </div>
               </div>
 
+              {/* Main VLAN Table */}
               <div className="overflow-x-auto">
-                     <DataTable className="min-w-[1080px] text-left">
+                <DataTable className="min-w-[1080px] text-left">
                   <thead>
-                    <tr className="border-b border-black/5 bg-slate-50 text-[11px] font-bold tracking-wide text-slate-400">
-                        <th className="px-5 py-3">VLAN / 设备</th><th className="px-5 py-3">网络</th><th className="px-5 py-3">网关</th><th className="px-5 py-3">接入端口</th><th className="px-5 py-3">终端定位</th><th className="px-5 py-3">业务</th><th className="px-5 py-3 text-right">操作</th>
+                    <tr className="border-b border-black/5 bg-slate-50/80 text-[11px] font-bold tracking-wider text-slate-400 uppercase dark:border-slate-800 dark:bg-slate-900/60">
+                      <th className="px-6 py-4">{zh ? 'VLAN / 设备' : 'VLAN / Device'}</th>
+                      <th className="px-6 py-4">{zh ? '网络与网段' : 'Prefix & Network'}</th>
+                      <th className="px-6 py-4">{zh ? '网关与 SVI' : 'Gateway & SVI'}</th>
+                      <th className="px-6 py-4">{zh ? '接入端口' : 'Access Ports'}</th>
+                      <th className="px-6 py-4">{zh ? '终端定位 (ARP/MAC)' : 'Endpoints'}</th>
+                      <th className="px-6 py-4">{zh ? '业务归属' : 'Business'}</th>
+                      <th className="px-6 py-4 text-right whitespace-nowrap" style={{ width: 150 }}>{zh ? '操作' : 'Actions'}</th>
                     </tr>
                   </thead>
-                  <tbody className="divide-y divide-slate-100">
-                      {loading && vlanFilteredRows.length === 0 && <tr><td colSpan={7} className="py-16 text-center text-sm text-slate-400"><RefreshCw size={18} className="mr-2 inline animate-spin text-cyan-600" />正在加载数据...</td></tr>}
-                      {!loading && vlanFilteredRows.length === 0 && <tr><td colSpan={7} className="py-16 text-center text-sm text-slate-400">没有匹配的 VLAN 记录</td></tr>}
+                  <tbody className="divide-y divide-slate-100 dark:divide-slate-800/60">
+                    {loading && vlanFilteredRows.length === 0 && (
+                      <tr>
+                        <td colSpan={7} className="py-20 text-center text-sm text-slate-400">
+                          <RefreshCw size={20} className="mr-2 inline animate-spin text-cyan-600" />
+                          {zh ? '正在加载 VLAN 资产数据...' : 'Loading VLAN data...'}
+                        </td>
+                      </tr>
+                    )}
+                    {!loading && vlanFilteredRows.length === 0 && (
+                      <tr>
+                        <td colSpan={7} className="py-20 text-center text-sm text-slate-400">
+                          <Layers size={28} className="mx-auto mb-2 text-slate-300 dark:text-slate-600" />
+                          {zh ? '没有匹配的 VLAN 记录' : 'No matching VLAN records found'}
+                        </td>
+                      </tr>
+                    )}
                     {paginatedVlanRows.map((row, index) => {
                       const rowKey = String(`${row.device_id || row.device_hostname || row.site_id || row.site_name || 'device'}-${row.vlan_id}-${idOf(row) || index}`);
                       const expanded = Boolean(expandedVlans[rowKey]);
@@ -3717,16 +3840,312 @@ const CmdbManagementTab: React.FC<Props> = ({ language, cmdbPage, currentUser })
                       const hiddenPortDetailCount = Math.max(0, ports.length - displayedPortDetails.length);
                       return (
                         <React.Fragment key={rowKey}>
-                          <tr className="group align-top transition-colors hover:bg-cyan-50/30">
-                             <td className="px-5 py-4"><div className="flex items-start gap-2"><button type="button" onClick={() => setExpandedVlans(previous => ({ ...previous, [rowKey]: !previous[rowKey] }))} className="mt-1 shrink-0 rounded p-0.5 text-cyan-600 hover:bg-cyan-50" title={expanded ? '收起明细' : '展开明细'}>{expanded ? <ChevronUp size={14} /> : <ChevronDown size={14} />}</button><div><div className="font-mono text-lg font-bold text-[#164e63]">VLAN {row.vlan_id}</div><div className="mt-1 text-sm font-semibold text-slate-700">{row.device_hostname || '未关联设备'}</div>{row.device_ip && <div className="mt-0.5 font-mono text-[11px] text-slate-500">{row.device_ip}</div>}{row.description && <div className="mt-1 max-w-[190px] truncate text-sm font-medium text-slate-600" title={String(row.description)}>{row.description}</div>}{row.vrf_name && <div className="mt-1 text-[11px] text-slate-400">VRF：{row.vrf_name}</div>}</div></div></td>
-                             <td className="px-5 py-4"><div className="font-mono text-sm font-semibold text-slate-700">{prefixes[0] || '暂无网段'}</div>{prefixes.length > 1 && <div className="mt-1 text-[11px] text-cyan-700">+{prefixes.length - 1} 个网段</div>}<div className="mt-2 text-xs text-slate-500">{row.gateway ? `网关 ${row.gateway}` : '暂无网关'}</div></td>
-                             <td className="px-5 py-4"><div className="text-sm font-semibold text-slate-700">{row.gateway_device || '未发现网关'}</div>{svi.length ? <div className="mt-1 text-xs text-slate-500">{svi[0]}{svi.length > 1 ? ` +${svi.length - 1}` : ''}</div> : <div className="mt-1 text-xs text-slate-300">暂无三层接口</div>}</td>
-                             <td className="px-5 py-4"><div className="text-sm font-semibold text-slate-700">{displayedAccessInterfaces.length ? displayedAccessInterfaces.join('、') : '未发现端口'}{hiddenAccessInterfaceCount > 0 && <span className="ml-1 text-xs font-medium text-cyan-700">+{hiddenAccessInterfaceCount}</span>}</div><div className="mt-1 text-xs text-slate-500">{Number(row.port_count || 0)} 个端口 · {Number(row.device_count || 0)} 台设备</div>{Number(row.undocumented_port_count || 0) > 0 && <div className="mt-1 text-[11px] font-medium text-amber-600">{Number(row.undocumented_port_count)} 个缺少描述</div>}</td>
-                              <td className="px-5 py-4">{terminalRecords.length ? <><div className="text-sm font-semibold text-cyan-700">终端 {terminalRecords.length}</div><div className="mt-1 space-y-1.5">{terminalRecords.slice(0, 2).map((item: any, endpointIndex: number) => <div key={`${item.ip_address || item.mac_address}-${endpointIndex}`}><div className="font-mono text-xs font-semibold text-slate-800">{item.ip_address || '未发现 IP'}</div>{item.mac_address && <div className="font-mono text-[11px] text-slate-500">{formatMacAddress(item.mac_address)}</div>}</div>)}{terminalRecords.length > 2 && <div className="text-[11px] text-cyan-700">+{terminalRecords.length - 2} 个终端</div>}</div></> : <div className="text-sm text-slate-400">暂无终端</div>}</td>
-                            <td className="px-5 py-4"><div className="flex flex-wrap gap-1.5 text-xs"><span className={`rounded-full border px-2 py-0.5 font-semibold ${businesses.length ? 'border-emerald-100 bg-emerald-50 text-emerald-700' : 'border-amber-100 bg-amber-50 text-amber-700'}`}>{businesses.length ? `已关联 ${businesses.length} 个业务` : '待补充业务'}</span></div>{businesses.slice(0, 2).map(value => <div key={value} className="mt-1 max-w-[180px] truncate text-sm font-medium text-slate-700" title={value}>{value}</div>)}{businesses.length > 2 && <div className="text-xs text-cyan-700">+{businesses.length - 2} 个</div>}{(businessDepartment || businessOwner || businessLevel) && <div className="mt-2 space-y-0.5 text-[11px] text-slate-500">{businessDepartment && <div>部门：{businessDepartment}</div>}{businessOwner && <div>负责人：{businessOwner}</div>}{businessLevel && <div>等级：{businessLevel}</div>}</div>}</td>
-                            <td className="px-5 py-4 text-right align-middle"><div className="flex items-center justify-end gap-1.5 opacity-70 transition-opacity group-hover:opacity-100"><button onClick={() => setVlanDetailRow(row)} className="inline-flex h-8 items-center justify-center gap-1 rounded-md border border-[var(--ui-border)] bg-[var(--ui-surface)] px-2 text-xs font-semibold text-[var(--ui-fg)] shadow-sm hover:bg-[var(--ui-surface-muted)]" title="查看明细"><Eye size={16} strokeWidth={1.8} />明细</button>{!isReadOnlyTab && <><ActionIconButton icon={Pencil} label={zh ? '编辑' : 'Edit'} onClick={() => openEdit(row)} /><ActionIconButton icon={Trash2} label={zh ? '删除' : 'Delete'} variant="danger" onClick={() => openDeleteConfirm(row)} /></>}</div></td>
+                          <tr className={`group align-top transition-colors ${expanded ? 'bg-cyan-50/30 dark:bg-cyan-950/20' : 'hover:bg-slate-50/70 dark:hover:bg-slate-800/40'}`}>
+                            {/* Column 1: VLAN / 设备 */}
+                            <td className="px-6 py-4">
+                              <div className="flex items-start gap-2.5">
+                                <button
+                                  type="button"
+                                  onClick={() => setExpandedVlans(previous => ({ ...previous, [rowKey]: !previous[rowKey] }))}
+                                  className={`mt-0.5 flex h-6 w-6 shrink-0 items-center justify-center rounded-lg border transition-all ${expanded ? 'border-cyan-300 bg-cyan-500 text-white shadow-sm' : 'border-slate-200 bg-white text-slate-500 hover:border-cyan-300 hover:bg-cyan-50 hover:text-cyan-700 dark:border-slate-700 dark:bg-slate-800 dark:text-slate-400'}`}
+                                  title={expanded ? (zh ? '收起明细' : 'Collapse') : (zh ? '展开明细' : 'Expand')}
+                                >
+                                  {expanded ? <ChevronUp size={13} strokeWidth={2.5} /> : <ChevronDown size={13} strokeWidth={2.5} />}
+                                </button>
+                                <div className="space-y-1">
+                                  <div className="inline-flex items-center gap-1.5 rounded-lg border border-cyan-500/25 bg-gradient-to-r from-cyan-500/15 via-sky-500/10 to-transparent px-2.5 py-0.5 font-mono text-sm font-bold text-cyan-900 shadow-sm/5 dark:text-cyan-300">
+                                    <span>VLAN {row.vlan_id}</span>
+                                  </div>
+                                  <div className="flex items-center gap-1.5 text-xs font-semibold text-slate-800 dark:text-slate-200">
+                                    <Server size={12} className="text-slate-400" />
+                                    <span>{row.device_hostname || (zh ? '未关联设备' : 'No device')}</span>
+                                  </div>
+                                  {row.device_ip && (
+                                    <div className="font-mono text-[11px] text-slate-400 dark:text-slate-500">
+                                      {row.device_ip}
+                                    </div>
+                                  )}
+                                  {row.description && (
+                                    <div className="inline-block max-w-[200px] truncate rounded bg-slate-100/80 px-1.5 py-0.5 text-[11px] font-medium text-slate-600 dark:bg-slate-800 dark:text-slate-400" title={String(row.description)}>
+                                      {row.description}
+                                    </div>
+                                  )}
+                                  {row.vrf_name && (
+                                    <div className="text-[10px] font-medium text-slate-400">
+                                      VRF: <span className="font-mono text-slate-600 dark:text-slate-300">{row.vrf_name}</span>
+                                    </div>
+                                  )}
+                                </div>
+                              </div>
+                            </td>
+
+                            {/* Column 2: 网络 */}
+                            <td className="px-6 py-4">
+                              <div className="space-y-1.5">
+                                <div className="inline-block rounded-md border border-slate-200/70 bg-slate-100/80 px-2 py-0.5 font-mono text-xs font-bold text-slate-800 dark:border-slate-700 dark:bg-slate-800 dark:text-slate-200">
+                                  {prefixes[0] || (zh ? '暂无网段' : 'No prefix')}
+                                </div>
+                                {prefixes.length > 1 && (
+                                  <div className="text-[11px] font-medium text-cyan-700 dark:text-cyan-400">
+                                    +{prefixes.length - 1} {zh ? '个网段' : 'more'}
+                                  </div>
+                                )}
+                                <div className="flex items-center gap-1.5 text-xs text-slate-500 dark:text-slate-400">
+                                  <Route size={12} className={row.gateway ? 'text-emerald-500' : 'text-slate-400'} />
+                                  <span className="font-mono">{row.gateway ? `${zh ? '网关' : 'GW'} ${row.gateway}` : (zh ? '暂无网关' : 'No gateway')}</span>
+                                </div>
+                              </div>
+                            </td>
+
+                            {/* Column 3: 网关 */}
+                            <td className="px-6 py-4">
+                              <div className="space-y-1.5">
+                                <div className="flex items-center gap-1.5 text-xs font-semibold text-slate-800 dark:text-slate-200">
+                                  <ShieldCheck size={14} className={row.gateway_device ? 'text-emerald-600 dark:text-emerald-400' : 'text-slate-300 dark:text-slate-600'} />
+                                  <span>{row.gateway_device || (zh ? '未发现网关' : 'No gateway')}</span>
+                                </div>
+                                {svi.length ? (
+                                  <div className="inline-block rounded border border-emerald-200/70 bg-emerald-50/80 px-1.5 py-0.5 font-mono text-[11px] font-semibold text-emerald-700 dark:border-emerald-800/40 dark:bg-emerald-950/30 dark:text-emerald-400">
+                                    {svi[0]}{svi.length > 1 ? ` +${svi.length - 1}` : ''}
+                                  </div>
+                                ) : (
+                                  <div className="text-xs text-slate-300 dark:text-slate-600">{zh ? '暂无三层接口' : 'No SVI'}</div>
+                                )}
+                              </div>
+                            </td>
+
+                            {/* Column 4: 接入端口 */}
+                            <td className="px-6 py-4">
+                              <div className="space-y-1.5">
+                                <div className="flex flex-wrap items-center gap-1 text-xs font-medium text-slate-700 dark:text-slate-300">
+                                  {displayedAccessInterfaces.length ? (
+                                    displayedAccessInterfaces.map((iface, idx) => (
+                                      <span key={idx} className="rounded bg-slate-100 px-1.5 py-0.5 font-mono text-[11px] font-semibold text-slate-700 dark:bg-slate-800 dark:text-slate-300">
+                                        {iface}
+                                      </span>
+                                    ))
+                                  ) : (
+                                    <span className="text-slate-400">{zh ? '未发现端口' : 'No ports'}</span>
+                                  )}
+                                  {hiddenAccessInterfaceCount > 0 && (
+                                    <span className="rounded bg-cyan-50 px-1.5 py-0.5 text-[11px] font-semibold text-cyan-700 dark:bg-cyan-950/40 dark:text-cyan-400">
+                                      +{hiddenAccessInterfaceCount}
+                                    </span>
+                                  )}
+                                </div>
+                                <div className="text-[11px] text-slate-400">
+                                  {Number(row.port_count || 0)} {zh ? '个端口' : 'ports'} · {Number(row.device_count || 0)} {zh ? '台设备' : 'devices'}
+                                </div>
+                                {Number(row.undocumented_port_count || 0) > 0 && (
+                                  <div className="inline-flex items-center gap-1 text-[10px] font-medium text-amber-600 dark:text-amber-400">
+                                    <AlertCircle size={10} />
+                                    <span>{Number(row.undocumented_port_count)} {zh ? '个缺少描述' : 'missing desc'}</span>
+                                  </div>
+                                )}
+                              </div>
+                            </td>
+
+                            {/* Column 5: 终端定位 */}
+                            <td className="px-6 py-4">
+                              {terminalRecords.length ? (
+                                <div className="space-y-1.5">
+                                  <div className="inline-flex items-center gap-1 rounded-full bg-cyan-50 px-2 py-0.5 text-[11px] font-semibold text-cyan-700 dark:bg-cyan-950/30 dark:text-cyan-400">
+                                    <Monitor size={11} />
+                                    <span>{zh ? `终端 ${terminalRecords.length}` : `${terminalRecords.length} endpoints`}</span>
+                                  </div>
+                                  <div className="space-y-1">
+                                    {terminalRecords.slice(0, 2).map((item: any, endpointIndex: number) => (
+                                      <div key={`${item.ip_address || item.mac_address}-${endpointIndex}`} className="rounded-lg bg-slate-50/80 px-2 py-1 dark:bg-slate-800/50">
+                                        <div className="font-mono text-xs font-bold text-slate-800 dark:text-slate-200">
+                                          {item.ip_address || (zh ? '未发现 IP' : 'No IP')}
+                                        </div>
+                                        {item.mac_address && (
+                                          <div className="font-mono text-[10px] text-slate-400">
+                                            {formatMacAddress(item.mac_address)}
+                                          </div>
+                                        )}
+                                      </div>
+                                    ))}
+                                    {terminalRecords.length > 2 && (
+                                      <div className="text-[10px] font-semibold text-cyan-700 dark:text-cyan-400">
+                                        +{terminalRecords.length - 2} {zh ? '个终端' : 'more'}
+                                      </div>
+                                    )}
+                                  </div>
+                                </div>
+                              ) : (
+                                <div className="text-xs text-slate-400">{zh ? '暂无终端' : 'No endpoints'}</div>
+                              )}
+                            </td>
+
+                            {/* Column 6: 业务 */}
+                            <td className="px-6 py-4">
+                              <div className="space-y-1.5">
+                                <div className="flex flex-wrap gap-1.5">
+                                  <span className={`inline-flex items-center gap-1 rounded-full border px-2 py-0.5 text-[11px] font-semibold ${businesses.length ? 'border-emerald-200 bg-emerald-50 text-emerald-700 dark:border-emerald-800 dark:bg-emerald-950/30 dark:text-emerald-400' : 'border-amber-200 bg-amber-50 text-amber-700 dark:border-amber-800 dark:bg-amber-950/30 dark:text-amber-400'}`}>
+                                    <span className={`h-1.5 w-1.5 rounded-full ${businesses.length ? 'bg-emerald-500' : 'bg-amber-500 animate-pulse'}`} />
+                                    {businesses.length ? (zh ? `已关联 ${businesses.length} 个业务` : `${businesses.length} linked`) : (zh ? '待补充业务' : 'Unmapped')}
+                                  </span>
+                                </div>
+                                {businesses.slice(0, 2).map(value => (
+                                  <div key={value} className="max-w-[180px] truncate text-xs font-semibold text-slate-700 dark:text-slate-300" title={value}>
+                                    {value}
+                                  </div>
+                                ))}
+                                {businesses.length > 2 && (
+                                  <div className="text-[10px] font-medium text-cyan-700 dark:text-cyan-400">+{businesses.length - 2} {zh ? '个' : 'more'}</div>
+                                )}
+                                {(businessDepartment || businessOwner || businessLevel) && (
+                                  <div className="space-y-0.5 rounded-lg bg-slate-50 p-1.5 text-[10px] text-slate-500 dark:bg-slate-800/60 dark:text-slate-400">
+                                    {businessDepartment && <div>{zh ? '部门：' : 'Dept: '}<span className="font-medium text-slate-700 dark:text-slate-300">{businessDepartment}</span></div>}
+                                    {businessOwner && <div>{zh ? '负责人：' : 'Owner: '}<span className="font-medium text-slate-700 dark:text-slate-300">{businessOwner}</span></div>}
+                                    {businessLevel && <div>{zh ? '等级：' : 'Level: '}<span className="font-semibold text-amber-600 dark:text-amber-400">{businessLevel}</span></div>}
+                                  </div>
+                                )}
+                              </div>
+                            </td>
+
+                            {/* Column 7: 操作 */}
+                            <td className="px-6 py-4 text-right whitespace-nowrap align-top">
+                              <div className="flex items-center justify-end gap-1.5 pt-0.5">
+                                <button
+                                  type="button"
+                                  onClick={() => setVlanDetailRow(row)}
+                                  className="inline-flex h-8 items-center justify-center gap-1 rounded-lg border border-cyan-200/80 bg-cyan-50/60 px-2.5 text-xs font-semibold text-cyan-700 shadow-sm transition-all hover:bg-cyan-100 hover:border-cyan-300 dark:border-cyan-800 dark:bg-cyan-950/40 dark:text-cyan-300"
+                                  title={zh ? '查看明细' : 'View details'}
+                                >
+                                  <Eye size={14} strokeWidth={2} />
+                                  <span>{zh ? '明细' : 'Detail'}</span>
+                                </button>
+                                {!isReadOnlyTab && (
+                                  <ActionIconGroup label={zh ? '记录操作' : 'Record actions'}>
+                                    <ActionIconButton icon={Pencil} label={zh ? '编辑' : 'Edit'} onClick={() => openEdit(row)} size="sm" />
+                                    <ActionIconButton icon={Trash2} label={zh ? '删除' : 'Delete'} variant="danger" onClick={() => openDeleteConfirm(row)} size="sm" />
+                                  </ActionIconGroup>
+                                )}
+                              </div>
+                            </td>
                           </tr>
-                          {expanded && <tr className="bg-slate-50/70"><td colSpan={8} className="px-12 py-5"><div className="space-y-5"><div><div className="mb-2 flex items-center justify-between"><div className="text-xs font-semibold text-slate-600">终端明细（IP / MAC / 设备 / 接口）</div><span className="text-[11px] text-slate-400">ARP 与 MAC 采集结果</span></div>{endpointDetails.length ? <div className="max-h-[360px] overflow-auto rounded-xl border border-slate-200 bg-white"><div className="grid grid-cols-[110px_150px_minmax(120px,1fr)_minmax(120px,1fr)_80px] gap-3 border-b border-slate-100 bg-slate-50 px-3 py-2 text-[11px] font-semibold text-slate-500"><span>来源</span><span>IP 地址</span><span>MAC 地址</span><span>设备 / 接口</span><span>更新时间</span></div>{endpointDetails.map((item: any, endpointIndex: number) => <div key={`${item.source}-${item.ip_address || item.mac_address || endpointIndex}`} className="grid grid-cols-[110px_150px_minmax(120px,1fr)_minmax(120px,1fr)_80px] gap-3 border-b border-slate-100 px-3 py-2 text-xs last:border-b-0"><span className={`w-fit rounded-full border px-2 py-0.5 ${String(item.source).toLowerCase() === 'arp' ? 'border-blue-100 bg-blue-50 text-blue-700' : 'border-slate-200 bg-slate-50 text-slate-600'}`}>{String(item.source).toLowerCase() === 'arp' ? 'ARP' : 'MAC'}</span><span className="font-mono text-slate-700">{item.ip_address || '—'}</span><span className="font-mono text-slate-700">{formatMacAddress(item.mac_address) || '—'}</span><span className="text-slate-600">{item.device_hostname || '—'}{item.interface_name ? ` / ${item.interface_name}` : ''}</span><span className="text-[11px] text-slate-400">{item.last_updated ? new Date(item.last_updated).toLocaleString(zh ? 'zh-CN' : 'en-US', { hour12: false }) : '—'}</span></div>)}</div> : <div className="rounded-xl border border-dashed border-slate-200 bg-white px-4 py-4 text-xs text-slate-400">暂无 ARP/MAC 明细</div>}</div><div className="grid gap-4 md:grid-cols-2"><div><div className="mb-2 text-xs font-semibold text-slate-500">端口描述（最多展示 50 条）</div><div className="max-h-[300px] space-y-1.5 overflow-auto text-xs text-slate-700">{displayedPortDetails.length ? displayedPortDetails.map(value => <div key={value} className="rounded-lg border border-slate-200 bg-white px-3 py-2 font-mono">{value}</div>) : <div className="text-slate-400">暂无端口描述</div>}{hiddenPortDetailCount > 0 && <div className="rounded-lg border border-dashed border-cyan-200 bg-cyan-50 px-3 py-2 text-cyan-700">还有 {hiddenPortDetailCount} 条端口明细未展开，建议使用“导出 VLAN”查看完整清单。</div>}</div></div><div className="space-y-3"><div><div className="text-xs font-semibold text-slate-500">三层接口</div><div className="mt-1 text-xs text-slate-700">{svi.length ? svi.join('、') : '未发现三层接口'}</div></div><div><div className="text-xs font-semibold text-slate-500">数据统计</div><div className="mt-1 text-xs text-slate-700">设备 {Number(row.device_count || 0)} 台 · 端口 {Number(row.port_count || 0)} 个 · MAC {Number(row.mac_count || 0)} 条 · ARP {Number(row.arp_count || 0)} 条</div></div></div></div></div></td></tr>}
+
+                          {/* Expanded Detail Panel */}
+                          {expanded && (
+                            <tr className="bg-slate-50/80 dark:bg-slate-900/60">
+                              <td colSpan={7} className="px-8 py-5">
+                                <div className="space-y-4">
+                                  {/* Top Row: Terminal Records */}
+                                  <div>
+                                    <div className="mb-2.5 flex items-center justify-between">
+                                      <div className="flex items-center gap-2">
+                                        <Monitor size={15} className="text-cyan-600 dark:text-cyan-400" />
+                                        <span className="text-xs font-bold text-slate-700 dark:text-slate-200">
+                                          {zh ? '终端定位明细（IP / MAC / 设备 / 接口）' : 'Terminal Endpoint Evidence (IP / MAC / Device / Interface)'}
+                                        </span>
+                                      </div>
+                                      <span className="rounded-full bg-slate-200/60 px-2 py-0.5 text-[10px] font-medium text-slate-600 dark:bg-slate-800 dark:text-slate-400">
+                                        {zh ? '基于 ARP 表与 MAC 转发表' : 'From ARP & MAC tables'}
+                                      </span>
+                                    </div>
+                                    {endpointDetails.length ? (
+                                      <div className="max-h-[360px] overflow-auto rounded-2xl border border-slate-200/80 bg-white shadow-sm dark:border-slate-800 dark:bg-slate-900">
+                                        <div className="grid grid-cols-[100px_160px_minmax(140px,1fr)_minmax(140px,1fr)_120px] gap-3 border-b border-slate-100 bg-slate-50/80 px-4 py-2.5 text-[11px] font-bold text-slate-500 uppercase dark:border-slate-800 dark:bg-slate-800/50 dark:text-slate-400">
+                                          <span>{zh ? '来源' : 'Source'}</span>
+                                          <span>{zh ? 'IP 地址' : 'IP Address'}</span>
+                                          <span>{zh ? 'MAC 地址' : 'MAC Address'}</span>
+                                          <span>{zh ? '设备 / 接口' : 'Device / Interface'}</span>
+                                          <span>{zh ? '采集时间' : 'Collected At'}</span>
+                                        </div>
+                                        {endpointDetails.map((item: any, endpointIndex: number) => (
+                                          <div
+                                            key={`${item.source}-${item.ip_address || item.mac_address || endpointIndex}`}
+                                            className="grid grid-cols-[100px_160px_minmax(140px,1fr)_minmax(140px,1fr)_120px] gap-3 border-b border-slate-100 px-4 py-2 text-xs transition-colors hover:bg-slate-50/60 last:border-b-0 dark:border-slate-800 dark:hover:bg-slate-800/40"
+                                          >
+                                            <div>
+                                              <span className={`inline-flex items-center rounded-full px-2 py-0.5 text-[10px] font-bold ${String(item.source).toLowerCase() === 'arp' ? 'bg-blue-50 text-blue-700 border border-blue-200/60 dark:bg-blue-950/30 dark:text-blue-400 dark:border-blue-800/40' : 'bg-slate-100 text-slate-600 border border-slate-200 dark:bg-slate-800 dark:text-slate-400 dark:border-slate-700'}`}>
+                                                {String(item.source).toUpperCase()}
+                                              </span>
+                                            </div>
+                                            <span className="font-mono font-semibold text-slate-800 dark:text-slate-200">{item.ip_address || '—'}</span>
+                                            <span className="font-mono text-slate-600 dark:text-slate-400">{formatMacAddress(item.mac_address) || '—'}</span>
+                                            <span className="text-slate-700 dark:text-slate-300">
+                                              {item.device_hostname || '—'}{item.interface_name ? ` / ${item.interface_name}` : ''}
+                                            </span>
+                                            <span className="text-[11px] text-slate-400">
+                                              {item.last_updated ? new Date(item.last_updated).toLocaleString(zh ? 'zh-CN' : 'en-US', { hour12: false }) : '—'}
+                                            </span>
+                                          </div>
+                                        ))}
+                                      </div>
+                                    ) : (
+                                      <div className="rounded-2xl border border-dashed border-slate-200 bg-white px-4 py-6 text-center text-xs text-slate-400 dark:border-slate-800 dark:bg-slate-900">
+                                        {zh ? '暂无 ARP / MAC 终端明细' : 'No ARP/MAC endpoint evidence'}
+                                      </div>
+                                    )}
+                                  </div>
+
+                                  {/* Bottom Grid: Port Details & Stats */}
+                                  <div className="grid gap-4 md:grid-cols-2">
+                                    <div className="rounded-2xl border border-slate-200/80 bg-white p-4 shadow-sm dark:border-slate-800 dark:bg-slate-900">
+                                      <div className="mb-2.5 flex items-center justify-between">
+                                        <span className="text-xs font-bold text-slate-700 dark:text-slate-200">{zh ? '端口配置与描述' : 'Port Descriptions'}</span>
+                                        <span className="text-[10px] text-slate-400">{displayedPortDetails.length} {zh ? '条' : 'ports'}</span>
+                                      </div>
+                                      <div className="max-h-[240px] space-y-1.5 overflow-auto pr-1 text-xs text-slate-700 dark:text-slate-300">
+                                        {displayedPortDetails.length ? (
+                                          displayedPortDetails.map(value => (
+                                            <div key={value} className="rounded-lg border border-slate-100 bg-slate-50/70 px-3 py-1.5 font-mono text-xs dark:border-slate-800 dark:bg-slate-800/50">
+                                              {value}
+                                            </div>
+                                          ))
+                                        ) : (
+                                          <div className="py-4 text-center text-slate-400">{zh ? '暂无端口描述' : 'No port description'}</div>
+                                        )}
+                                        {hiddenPortDetailCount > 0 && (
+                                          <div className="rounded-lg border border-dashed border-cyan-200 bg-cyan-50 px-3 py-2 text-center text-xs text-cyan-700 dark:border-cyan-800 dark:bg-cyan-950/30 dark:text-cyan-400">
+                                            {zh ? `还有 ${hiddenPortDetailCount} 条端口明细未展开，建议使用“导出 VLAN”查看完整清单。` : `${hiddenPortDetailCount} more ports. Use "Export VLAN" for full details.`}
+                                          </div>
+                                        )}
+                                      </div>
+                                    </div>
+
+                                    <div className="space-y-4">
+                                      <div className="rounded-2xl border border-slate-200/80 bg-white p-4 shadow-sm dark:border-slate-800 dark:bg-slate-900">
+                                        <div className="text-xs font-bold text-slate-700 dark:text-slate-200">{zh ? '三层网关与 SVI 接口' : 'L3 Gateway & SVI'}</div>
+                                        <div className="mt-2 flex flex-wrap gap-1.5">
+                                          {svi.length ? (
+                                            svi.map((sviName, sIdx) => (
+                                              <span key={sIdx} className="rounded-lg border border-emerald-200/80 bg-emerald-50 px-2.5 py-1 font-mono text-xs font-semibold text-emerald-700 dark:border-emerald-800/40 dark:bg-emerald-950/30 dark:text-emerald-400">
+                                                {sviName}
+                                              </span>
+                                            ))
+                                          ) : (
+                                            <span className="text-xs text-slate-400">{zh ? '未发现关联三层接口' : 'No associated SVI'}</span>
+                                          )}
+                                        </div>
+                                      </div>
+
+                                      <div className="rounded-2xl border border-slate-200/80 bg-white p-4 shadow-sm dark:border-slate-800 dark:bg-slate-900">
+                                        <div className="text-xs font-bold text-slate-700 dark:text-slate-200">{zh ? '数据统计总览' : 'Inventory Telemetry'}</div>
+                                        <div className="mt-2 flex flex-wrap items-center gap-2 text-xs">
+                                          <span className="rounded-lg bg-slate-100 px-2.5 py-1 text-slate-700 dark:bg-slate-800 dark:text-slate-300">
+                                            {zh ? '设备' : 'Devices'} <strong className="font-mono text-cyan-700 dark:text-cyan-400">{Number(row.device_count || 0)}</strong>
+                                          </span>
+                                          <span className="rounded-lg bg-slate-100 px-2.5 py-1 text-slate-700 dark:bg-slate-800 dark:text-slate-300">
+                                            {zh ? '端口' : 'Ports'} <strong className="font-mono text-cyan-700 dark:text-cyan-400">{Number(row.port_count || 0)}</strong>
+                                          </span>
+                                          <span className="rounded-lg bg-slate-100 px-2.5 py-1 text-slate-700 dark:bg-slate-800 dark:text-slate-300">
+                                            {zh ? 'MAC 条目' : 'MAC'} <strong className="font-mono text-indigo-700 dark:text-indigo-400">{Number(row.mac_count || 0)}</strong>
+                                          </span>
+                                          <span className="rounded-lg bg-slate-100 px-2.5 py-1 text-slate-700 dark:bg-slate-800 dark:text-slate-300">
+                                            {zh ? 'ARP 解析' : 'ARP'} <strong className="font-mono text-blue-700 dark:text-blue-400">{Number(row.arp_count || 0)}</strong>
+                                          </span>
+                                        </div>
+                                      </div>
+                                    </div>
+                                  </div>
+                                </div>
+                              </td>
+                            </tr>
+                          )}
                         </React.Fragment>
                       );
                     })}

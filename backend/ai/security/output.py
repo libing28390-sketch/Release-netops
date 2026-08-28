@@ -6,7 +6,7 @@ import html
 import re
 from typing import Any
 
-from ai.security.classification import PRIVATE_KEY_RE, SECRET_ASSIGNMENT_RE
+from ai.security.classification import PRIVATE_KEY_RE, SECRET_ASSIGNMENT_RE, is_redacted_assignment_match
 from ai.security.sanitizer import sanitize_text
 from ai.security.tokenization import TOKEN_RE, ScopedTokenVault
 
@@ -26,6 +26,8 @@ def sanitize_output(value: Any, *, tenant_id: str, task_id: str, vault: ScopedTo
         # error rather than the original user message.
         clean = PRIVATE_KEY_RE.sub("<REDACTED_PRIVATE_KEY>", clean)
         def redact_credential(match: re.Match[str]) -> str:
+            if is_redacted_assignment_match(match):
+                return match.group(0)
             # A provider may quote an opaque or fake token as ``token X``.
             # Preserve it so exact-token resolution remains observable and
             # never turn an unknown token into a misleading redaction.

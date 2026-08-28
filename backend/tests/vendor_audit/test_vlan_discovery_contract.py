@@ -73,7 +73,7 @@ def test_svi_observation_creates_vlan_inventory_record(isolated_db):
            (id, device_id, interface_name, description, interface_type, switchport_mode,
             primary_ip, ip_address, is_l3, last_seen)
            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
-        ("intf-svi-10", "device-svi-1", "Vlanif10", "Finance gateway", "svi", "routed", "10.0.10.1", "10.0.10.1", 1, "2026-07-29T00:00:00+00:00"),
+        ("intf-svi-10", "device-svi-1", "Vlanif10", "Finance gateway", "svi", "routed", "10.0.10.1", "10.0.10.1", True, "2026-07-29T00:00:00+00:00"),
     )
     conn.commit()
     result = sync_observed_vlans()
@@ -233,7 +233,7 @@ def test_default_vlan_facts_are_not_projected_as_business_vlans(isolated_db):
         """INSERT INTO interfaces
            (id, device_id, interface_name, description, interface_type, switchport_mode,
             access_vlan, is_l3, last_seen)
-           VALUES (?, ?, ?, '', 'physical', 'access', ?, 0, ?)""",
+           VALUES (?, ?, ?, '', 'physical', 'access', ?, False, ?)""",
         ("intf-default-vlan", "device-default-vlan", "Gi0/1", 1, "2026-07-29T00:00:00+00:00"),
     )
     conn.commit()
@@ -281,3 +281,62 @@ def test_vlan_business_binding_requires_a_vlan_in_the_same_site_scope(isolated_d
     with pytest.raises(ValueError, match="does not exist"):
         update_vlan_business_binding(conn, binding["id"], vlan_id=20)
     conn.close()
+
+
+def test_vlan_svi_gateway_deduction_with_cidr_and_mask_fallback(isolated_db):
+    conn = isolated_db["module"].get_db_connection()
+    conn.execute(
+        "INSERT INTO devices (id, hostname, ip_address, status, site_id, site) VALUES (?, ?, ?, ?, ?, ?)",
+        ("dev-s6850-1", "S6850-1", "10.254.0.1", "online", "site-1", "SITE-1"),
+    )
+    conn.execute(
+        "INSERT INTO sites (id, site_code, site_name, status) VALUES (?, ?, ?, ?)",
+        ("site-1", "SITE-1", "SITE-1", "active"),
+    )
+    conn.execute(
+        "INSERT INTO vlans (id, vlan_id, name, site_id) VALUES (?, ?, ?, ?)",
+        ("vlan-100", 100, "FIREWALL-INSIDE", "site-1"),
+    )
+    conn.execute(
+        "INSERT INTO vlans (id, vlan_id, name, site_id) VALUES (?, ?, ?, ?)",
+        ("vlan-112", 112, "OSPF-TO-S6850-2", "site-1"),
+    )
+    # SVI 100: primary_ip without prefix length in interfaces, but with CIDR in raw string
+    conn.execute(
+        """INSERT INTO interfaces
+           (id, device_id, interface_name, description, interface_type, switchport_mode,
+            primary_ip, ip_address, ip_prefix_length, is_l3, last_seen)
+           VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
+        ("intf-vlan-100", "dev-s6850-1", "Vlan-interface100", "FIREWALL-INSIDE", "svi", "l3", "10.254.100.4", "10.254.100.4", None, True, "2026-08-28T15:00:00+08:00"),
+    )
+    # SVI 112: primary_ip with CIDR slash directly
+    conn.execute(
+        """INSERT INTO interfaces
+           (id, device_id, interface_name, description, interface_type, switchport_mode,
+            primary_ip, ip_address, ip_prefix_length, is_l3, last_seen)
+           VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
+        ("intf-vlan-112", "dev-s6850-1", "Vlan-interface112", "OSPF-TO-S6850-2", "svi", "l3", "10.254.12.1/30", "10.254.12.1/30", 30, True, "2026-08-28T15:00:00+08:00"),
+    )
+    # Provide inventory mask for Vlan-interface100
+    conn.execute(
+        """INSERT INTO ip_inventory (device_id, ip, mask, interface, type, last_seen)
+           VALUES (?, ?, ?, ?, ?, ?)""",
+        ("dev-s6850-1", "10.254.100.4", "255.255.255.248", "Vlan-interface100", "interface", "2026-08-28T15:00:00+08:00"),
+    )
+    conn.commit()
+
+    result = list_vlans(conn, device_scoped=True, page=1, page_size=20)
+    items = result["items"] if isinstance(result, dict) else result
+    conn.close()
+
+    vlan_100_item = next(item for item in items if item["vlan_id"] == 100)
+    assert vlan_100_item["gateway"] == "10.254.100.4"
+    assert vlan_100_item["gateway_device"] == "S6850-1"
+    assert vlan_100_item["gateway_interface"] == "Vlan-interface100"
+    assert "10.254.100.0/29" in vlan_100_item["prefixes"]
+
+    vlan_112_item = next(item for item in items if item["vlan_id"] == 112)
+    assert vlan_112_item["gateway"] == "10.254.12.1"
+    assert vlan_112_item["gateway_device"] == "S6850-1"
+    assert "10.254.12.0/30" in vlan_112_item["prefixes"]
+

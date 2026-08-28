@@ -9,7 +9,7 @@ _REQUEST_ID_PATTERN = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._:-]{0,127}$")
 def new_request_id(prefix: str = "req") -> str:
     """Create a bounded, log/header-safe correlation identifier."""
 
-    safe_prefix = re.sub(r"[^A-Za-z0-9]+", "-", str(prefix or "req")).strip("-") or "req"
+    safe_prefix = re.sub(r"[^A-Za-z0-9_-]+", "-", str(prefix or "req")).strip("-_") or "req"
     return f"{safe_prefix}_{uuid.uuid4().hex[:20]}"
 
 

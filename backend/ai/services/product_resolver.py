@@ -260,59 +260,64 @@ class ProductResolver:
 
         candidates: list[dict[str, Any]] = []
         platforms: set[str] = set()
-        try:
-            with get_db_connection() as conn:
-                cursor = conn.cursor()
-                cursor.execute(
-                    "SELECT * FROM ai_document "
-                    "WHERE status = 'active' "
-                    "AND (tenant_id = ? OR tenant_id = 'tenant-default' OR tenant_id IS NULL) "
-                    "ORDER BY id",
-                    (tenant_id or "tenant-default",),
-                )
-                descriptions = [str(item[0]) for item in (cursor.description or [])]
-                for row in cursor.fetchall():
-                    item = dict(zip(descriptions, row))
-                    raw_meta = self._json(item.get("metadata_json"))
-                    is_registry = "product_registry" in str(item.get("name") or "").lower() or str(raw_meta.get("document_type") or "").lower() in {"hardware_manual", "product_registry"}
-                    if not is_registry:
-                        continue
-                    row_series = item.get("product_series") or raw_meta.get("product_series") or raw_meta.get("technical_series")
-                    row_models = raw_meta.get("product_models") or raw_meta.get("applicable_product_models") or []
-                    row_model = item.get("product_model") or (row_models[0] if isinstance(row_models, list) and len(row_models) == 1 else None)
-                    row_platform = item.get("cli_platform") or raw_meta.get("cli_platform")
-                    row_train = item.get("software_train") or raw_meta.get("software_train")
-                    if not row_series:
-                        try:
-                            parsed = parse_markdown_document(item.get("normalized_content") or "")
-                            row_meta = parsed.metadata
-                            row_series = row_meta.get("product_series") or row_meta.get("technical_series")
-                            row_platform = row_platform or row_meta.get("cli_platform")
-                            row_train = row_train or row_meta.get("software_train")
-                        except Exception:
-                            pass
-                    canonical_row_series = self._canonical_series(row_series)
-                    if series and not self._series_matches(series, canonical_row_series):
-                        continue
-                    if normalized.get("vendor") and str(item.get("vendor") or raw_meta.get("vendor") or "").lower() != str(normalized["vendor"]).lower():
-                        continue
-                    if normalized.get("software_train") and str(row_train or "").upper() != str(normalized["software_train"]).upper():
-                        continue
-                    candidate = {
-                        "document_id": item.get("id"),
-                        "document_name": item.get("name"),
-                        "product_series": canonical_row_series or row_series,
-                        "product_model": row_model,
-                        "software_train": row_train,
-                        "cli_platform": row_platform,
-                    }
-                    candidates.append(candidate)
-                    if row_platform:
-                        platforms.add(str(row_platform))
-        except Exception:
-            # Resolver is advisory; retrieval still uses explicit fields from
-            # the parser when the registry is temporarily unavailable.
-            candidates = []
+        # A vendor-only query is not a product identity.  Do not turn every
+        # model registered for that vendor into an ambiguous match; doing so
+        # would manufacture a product-registry decision for an intentionally
+        # unknown model such as ``Huawei unknown-9000``.
+        if series or normalized.get("product_model"):
+            try:
+                with get_db_connection() as conn:
+                    cursor = conn.cursor()
+                    cursor.execute(
+                        "SELECT * FROM ai_document "
+                        "WHERE status = 'active' "
+                        "AND (tenant_id = ? OR tenant_id = 'tenant-default' OR tenant_id IS NULL) "
+                        "ORDER BY id",
+                        (tenant_id or "tenant-default",),
+                    )
+                    descriptions = [str(item[0]) for item in (cursor.description or [])]
+                    for row in cursor.fetchall():
+                        item = dict(zip(descriptions, row))
+                        raw_meta = self._json(item.get("metadata_json"))
+                        is_registry = "product_registry" in str(item.get("name") or "").lower() or str(raw_meta.get("document_type") or "").lower() in {"hardware_manual", "product_registry"}
+                        if not is_registry:
+                            continue
+                        row_series = item.get("product_series") or raw_meta.get("product_series") or raw_meta.get("technical_series")
+                        row_models = raw_meta.get("product_models") or raw_meta.get("applicable_product_models") or []
+                        row_model = item.get("product_model") or (row_models[0] if isinstance(row_models, list) and len(row_models) == 1 else None)
+                        row_platform = item.get("cli_platform") or raw_meta.get("cli_platform")
+                        row_train = item.get("software_train") or raw_meta.get("software_train")
+                        if not row_series:
+                            try:
+                                parsed = parse_markdown_document(item.get("normalized_content") or "")
+                                row_meta = parsed.metadata
+                                row_series = row_meta.get("product_series") or row_meta.get("technical_series")
+                                row_platform = row_platform or row_meta.get("cli_platform")
+                                row_train = row_train or row_meta.get("software_train")
+                            except Exception:
+                                pass
+                        canonical_row_series = self._canonical_series(row_series)
+                        if series and not self._series_matches(series, canonical_row_series):
+                            continue
+                        if normalized.get("vendor") and str(item.get("vendor") or raw_meta.get("vendor") or "").lower() != str(normalized["vendor"]).lower():
+                            continue
+                        if normalized.get("software_train") and str(row_train or "").upper() != str(normalized["software_train"]).upper():
+                            continue
+                        candidate = {
+                            "document_id": item.get("id"),
+                            "document_name": item.get("name"),
+                            "product_series": canonical_row_series or row_series,
+                            "product_model": row_model,
+                            "software_train": row_train,
+                            "cli_platform": row_platform,
+                        }
+                        candidates.append(candidate)
+                        if row_platform:
+                            platforms.add(str(row_platform))
+            except Exception:
+                # Resolver is advisory; retrieval still uses explicit fields
+                # from the parser when the registry is temporarily unavailable.
+                candidates = []
 
         explicit_platform = bool(normalized.get("cli_platform"))
         has_product_identity = bool(series or normalized.get("product_model"))

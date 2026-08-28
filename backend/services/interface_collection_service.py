@@ -108,18 +108,26 @@ def _looks_like_interface_name(value: Any) -> bool:
                 and re.search(r"\d", normalized))
 
 
-def _status_record(record: dict[str, Any], ip_by_interface: dict[str, str]) -> tuple[str, str, str, str]:
+def _status_record(record: dict[str, Any], ip_by_interface: dict[str, str]) -> tuple[str, str, int | None, str, str]:
     interface_name = _record_value(record, "INTERFACE", "interface", "PORT", "IFNAME")
     key = normalize_interface_name(interface_name)
-    ip_value = _normalize_ip(_record_value(record, "IP_ADDRESS", "PRIMARY_IP", "MAIN_IP", "IP", "ADDRESS"))
+    raw_ip_field = _record_value(record, "IP_ADDRESS", "PRIMARY_IP", "MAIN_IP", "IP", "ADDRESS")
+    raw_mask_field = _record_value(record, "MASK", "NETMASK", "PREFIX_LENGTH", "PREFIX_LEN", "SUBNET_MASK", "PREFIX")
+    ip_value = _normalize_ip(raw_ip_field)
     if not ip_value:
         ip_value = ip_by_interface.get(key, "")
+
+    prefix_length = None
+    if raw_ip_field and "/" in raw_ip_field:
+        prefix_length = _normalize_prefix_length(raw_ip_field.split("/", 1)[1])
+    elif raw_mask_field:
+        prefix_length = _normalize_prefix_length(raw_mask_field)
 
     # The Playbook/TextFSM families use different field names:
     # Cisco: STATUS + PROTO, Huawei: PHY + PROTOCOL, H3C: LINK + PROTOCOL.
     admin_value = _record_value(record, "STATUS", "LINK", "PHY", "ADMIN_STATUS", "LINK_STATUS")
     oper_value = _record_value(record, "PROTO", "PROTOCOL", "OPER_STATUS", "OPERATE_STATUS")
-    return interface_name, ip_value, _normalize_status(admin_value), _normalize_status(oper_value)
+    return interface_name, ip_value, prefix_length, _normalize_status(admin_value), _normalize_status(oper_value)
 
 
 def _prefer_status(current: str, candidate: str) -> str:
@@ -150,7 +158,7 @@ def _build_interface_status_rows(
     for record in records:
         if not isinstance(record, dict):
             continue
-        interface_name, direct_ip, admin_status, oper_status = _status_record(record, {})
+        interface_name, direct_ip, direct_prefix_len, admin_status, oper_status = _status_record(record, {})
         if not _looks_like_interface_name(interface_name):
             continue
         key = normalize_interface_name(interface_name)
@@ -167,6 +175,7 @@ def _build_interface_status_rows(
             {
                 "interface_name": interface_name,
                 "interface_ip": interface_ip,
+                "prefix_length": direct_prefix_len,
                 "admin_status": "unknown",
                 "oper_status": "unknown",
                 "description": None,
@@ -176,6 +185,8 @@ def _build_interface_status_rows(
             parsed["interface_name"] = interface_name
         if interface_ip and not parsed.get("interface_ip"):
             parsed["interface_ip"] = interface_ip
+        if direct_prefix_len is not None:
+            parsed["prefix_length"] = direct_prefix_len
         parsed["admin_status"] = _prefer_status(parsed["admin_status"], admin_status)
         parsed["oper_status"] = _prefer_status(parsed["oper_status"], oper_status)
         if descriptions.get(key, {}).get("description") is not None:
@@ -191,6 +202,9 @@ def _build_interface_status_rows(
         interface_ip = parsed.get("interface_ip") or item.get("ip", "")
         if not interface_ip:
             continue
+        resolved_prefix_length = parsed.get("prefix_length")
+        if resolved_prefix_length is None:
+            resolved_prefix_length = item.get("prefix_length")
         rows.append(
             {
                 "interface_name": parsed.get("interface_name") or item.get("interface") or key,
@@ -198,7 +212,7 @@ def _build_interface_status_rows(
                 if parsed
                 else descriptions.get(key, {}).get("description"),
                 "interface_ip": interface_ip,
-                "prefix_length": item.get("prefix_length"),
+                "prefix_length": resolved_prefix_length,
                 "admin_status": parsed.get("admin_status") or "unknown",
                 "oper_status": parsed.get("oper_status") or "unknown",
             }

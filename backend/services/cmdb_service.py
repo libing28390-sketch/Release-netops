@@ -1525,6 +1525,7 @@ def list_vlans(conn, site_id: str = '', tenant_id: str = '', *, device_scoped: b
         device_rows = conn.execute(
             """SELECT i.device_id, d.hostname, d.ip_address AS device_ip,
                       i.interface_name, i.description, i.interface_type,
+                      i.primary_ip, i.ip_address, i.ip_prefix_length,
                       i.access_vlan, i.native_vlan, i.allowed_vlans
                FROM interfaces i
                JOIN devices d ON d.id = i.device_id
@@ -1548,6 +1549,12 @@ def list_vlans(conn, site_id: str = '', tenant_id: str = '', *, device_scoped: b
                 if svi_description:
                     svi_descriptions.add(svi_description)
                 devices.add(str(interface['hostname'] or interface['device_id']))
+                if not item.get('gateway'):
+                    svi_ip = str(interface['primary_ip'] or interface['ip_address'] or '').strip()
+                    if svi_ip:
+                        item['gateway'] = svi_ip.split('/', 1)[0]
+                        item['gateway_device'] = str(interface['hostname'] or interface['device_id'])
+                        item['gateway_interface'] = str(interface['interface_name'])
                 continue
             interface_vlans = parse_vlan_values(interface['access_vlan']) | parse_vlan_values(interface['native_vlan'])
             interface_vlans |= parse_vlan_values(interface['allowed_vlans'])
@@ -1802,10 +1809,41 @@ def _expand_vlan_rows_by_device(conn, vlan_rows: list[dict]) -> list[dict]:
                 if not raw_ip:
                     continue
                 prefix_length = str(svi['ip_prefix_length'] or '').strip()
+                if not prefix_length:
+                    if '/' in raw_ip:
+                        raw_ip, prefix_length = raw_ip.split('/', 1)
+                    else:
+                        norm_intf = normalize_interface_name(svi['interface_name'])
+                        inv_row = conn.execute(
+                            "SELECT mask FROM ip_inventory WHERE device_id = ? AND (interface = ? OR LOWER(interface) = ?) LIMIT 1",
+                            (device_id, svi['interface_name'], norm_intf),
+                        ).fetchone()
+                        if inv_row and inv_row['mask']:
+                            prefix_length = str(inv_row['mask']).strip()
+
+                clean_host_ip = raw_ip.split('/', 1)[0].strip()
+                if not clean_host_ip:
+                    continue
+
+                if prefix_length and '.' in prefix_length:
+                    try:
+                        net = ipaddress.IPv4Network(f'0.0.0.0/{prefix_length}')
+                        prefix_length = str(net.prefixlen)
+                    except ValueError:
+                        prefix_length = ''
+
                 try:
-                    address = ipaddress.ip_interface(raw_ip if '/' in raw_ip else f'{raw_ip}/{prefix_length}')
+                    if prefix_length:
+                        address = ipaddress.ip_interface(f'{clean_host_ip}/{prefix_length}')
+                    else:
+                        address = ipaddress.ip_interface(f'{clean_host_ip}/32')
                     gateways.append(str(address.ip))
-                    prefixes.append(str(address.network))
+                    if prefix_length and prefix_length != '32':
+                        prefixes.append(str(address.network))
+                    elif '/' in str(svi['primary_ip'] or svi['ip_address'] or ''):
+                        prefixes.append(str(address.network))
+                    else:
+                        prefixes.append(str(address.ip))
                 except ValueError:
                     continue
 

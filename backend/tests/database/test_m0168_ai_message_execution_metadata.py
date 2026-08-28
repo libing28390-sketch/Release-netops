@@ -1,10 +1,24 @@
 def test_m0168_adds_and_backfills_ai_message_execution_metadata(isolated_db) -> None:
     database = isolated_db["module"]
     with database.get_db_connection() as conn:
-        columns = {row[1] for row in conn.execute("PRAGMA table_info(ai_messages)").fetchall()}
+        columns = {
+            row[0]
+            for row in conn.execute(
+                "SELECT column_name FROM information_schema.columns "
+                "WHERE table_schema = current_schema() AND table_name = ?",
+                ("ai_messages",),
+            ).fetchall()
+        }
         assert {"execution_mode", "external_egress", "input_tokens", "output_tokens", "latency_ms"}.issubset(columns)
 
-        indexes = {row[1] for row in conn.execute("PRAGMA index_list(ai_messages)").fetchall()}
+        indexes = {
+            row[0]
+            for row in conn.execute(
+                "SELECT indexname FROM pg_indexes "
+                "WHERE schemaname = current_schema() AND tablename = ?",
+                ("ai_messages",),
+            ).fetchall()
+        }
         assert "ix_ai_messages_execution_mode" in indexes
 
 
@@ -29,7 +43,7 @@ def test_m0168_backfill_does_not_invent_unknown_provider_usage(isolated_db) -> N
             "INSERT INTO ai_messages (id, conversation_id, sequence_no, role, content_safe, citations_json, token_count, execution_mode, created_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)",
             ("msg_unknown", "conv_m168", 3, "assistant", "old", "[]", 1, None, "2026-08-24T00:00:02Z"),
         )
-        migration.upgrade(conn, False)
+        migration.upgrade(conn, True)
         rows = conn.execute(
             "SELECT id, execution_mode, external_egress, input_tokens, output_tokens FROM ai_messages WHERE conversation_id = ? ORDER BY sequence_no",
             ("conv_m168",),

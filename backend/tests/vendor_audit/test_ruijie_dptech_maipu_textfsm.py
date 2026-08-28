@@ -9,7 +9,7 @@ GigabitEthernet 0/2      unassigned      YES unset  down                  down
 GigabitEthernet 0/3      unassigned      YES unset  administratively down down
 Vlan 1                   10.1.1.1        YES manual up                    up
 """
-    result = smart_parse_cli(output, "show ip interface brief", platform="ruijie_rgos")
+    result = smart_parse_cli(output, "show ip interface brief", platform="ruijie_rgos_v12")
     assert result["success"] is True
     assert len(result["data"]) == 4
     assert result["data"][0]["INTERFACE"] == "GigabitEthernet 0/1"
@@ -25,11 +25,12 @@ Interface                IP-Address(Pri)         IP-Address(Sec)         Status 
 GigabitEthernet 0/0      192.168.10.1/24         no address              up          up
 GigabitEthernet 0/1      no address              no address              down        down
 """
-    result = smart_parse_cli(output, "show ip interface brief", platform="ruijie_rgos")
+    result = smart_parse_cli(output, "show ip interface brief", platform="ruijie_rgos_v12")
     assert result["success"] is True
     assert len(result["data"]) == 2
     assert result["data"][0]["INTERFACE"] == "GigabitEthernet 0/0"
-    assert result["data"][0]["IP_ADDRESS_PRI"] == "192.168.10.1/24"
+    assert result["data"][0]["IP_ADDRESS"] == "192.168.10.1"
+    assert result["data"][0]["PREFIX_LENGTH"] == "24"
     assert result["data"][0]["STATUS"] == "up"
 
 
@@ -39,7 +40,7 @@ Interface                Status   Protocol  Description
 GigabitEthernet 0/1      up       up        Uplink_To_Core
 GigabitEthernet 0/2      down     down      Unused_Port
 """
-    result = smart_parse_cli(output, "show interface brief", platform="ruijie_rgos")
+    result = smart_parse_cli(output, "show interface brief", platform="ruijie_rgos_v12")
     assert result["success"] is True
     assert len(result["data"]) == 2
     assert result["data"][0]["INTERFACE"] == "GigabitEthernet 0/1"

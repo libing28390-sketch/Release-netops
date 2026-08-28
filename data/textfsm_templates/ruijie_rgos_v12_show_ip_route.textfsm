@@ -14,6 +14,7 @@ Start
   ^Gateway of last resort is -> Next
   ^.*#\s*show\s+ -> Next
   ^\s*${PROTOCOL}\s+${NETWORK}\/${PREFIX_LENGTH}\s+is\s+directly\s+connected,\s+${INTERFACE}\s*$$ -> Record
+  ^\s*${PROTOCOL}\s+${NETWORK}\/${PREFIX_LENGTH}\s+is\s+local\s+host\.\s*$$ -> Record
   ^\s*${PROTOCOL}\s+${NETWORK}\/${PREFIX_LENGTH}\s+\[${DISTANCE}\/${METRIC}\]\s+via\s+${NEXTHOP_IP},\s+${UPTIME},\s+${INTERFACE}\s*$$ -> Record
   ^\s*${PROTOCOL}\s+${NETWORK}\/${PREFIX_LENGTH}\s+\[${DISTANCE}\/${METRIC}\]\s+via\s+${NEXTHOP_IP},\s+${INTERFACE}\s*$$ -> Record
   ^\s*${PROTOCOL}\s+${NETWORK}\/${PREFIX_LENGTH}\s+\[${DISTANCE}\/${METRIC}\]\s+via\s+${NEXTHOP_IP}\s*$$ -> Record

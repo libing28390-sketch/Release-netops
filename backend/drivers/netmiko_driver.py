@@ -282,7 +282,6 @@ class NetmikoDriver(BaseDriver):
             'global_delay_factor':1.5 if is_slow else 0.5,
             'blocking_timeout':   max(60, int(self.device_info.get('blocking_timeout') or 60)),
         }
-        logger.info(f"Login to {self.host} as username={self.username!r} pwd_len={len(self.password or '')}")
         device_params.update(build_netmiko_compatibility_kwargs(timeout=connection_timeout))
         
         # Override connection timeout if specified in device_info
@@ -303,7 +302,6 @@ class NetmikoDriver(BaseDriver):
         )
         if secret:
             device_params['secret'] = secret
-        logger.info(f"Secret set for {self.host}: len={len(secret)}")
         auth_secrets = [
             self.password,
             secret,

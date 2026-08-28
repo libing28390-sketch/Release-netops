@@ -2,26 +2,73 @@ from __future__ import annotations
 
 import io
 import json
-import queue
+import uuid
 import zipfile
+from urllib.parse import urlparse, urlunparse
 
 import pytest
+import psycopg2
 
-import database
+import database.core as database_core
+import database.schema as database_schema
+from database import init_db
 from ai.services.knowledge_bundle_import_service import KnowledgeBundleImportError, import_knowledge_bundle
 from ai.services.knowledge_export_service import knowledge_export_service
 from ai.services.knowledge_service import knowledge_service
 
 
-def _switch_database(path: str) -> None:
+@pytest.fixture
+def pg_host_databases():
+    """Provide two disposable PostgreSQL databases for the host transfer test."""
+    original_url = database_core._DATABASE_URL
+    original_use_pg = database_core._USE_PG
+    original_schema_use_pg = database_schema._USE_PG
+    original_initialized = database_schema._db_initialized
+    original_pool = database_core._pg_pool
+    parsed = urlparse(original_url)
+    admin_url = urlunparse(parsed._replace(path="/postgres"))
+    names = [f"nexora_bundle_test_{index}_{uuid.uuid4().hex[:10]}" for index in ("a", "b")]
+    urls = {name: urlunparse(parsed._replace(path=f"/{name}")) for name in names}
+
+    admin = psycopg2.connect(admin_url)
+    admin.autocommit = True
     try:
-        while True:
-            database._pool.get_nowait().close()
-    except queue.Empty:
-        pass
-    database.DB_PATH = path
-    database._db_initialized = False
-    database.init_db()
+        with admin.cursor() as cursor:
+            for name in names:
+                cursor.execute(f'CREATE DATABASE "{name}"')
+    finally:
+        admin.close()
+
+    def switch(name: str) -> None:
+        current_pool = database_core._pg_pool
+        if current_pool is not None and current_pool is not original_pool:
+            current_pool.closeall()
+        database_core._pg_pool = None
+        database_core._DATABASE_URL = urls[name]
+        database_core._USE_PG = True
+        database_schema._USE_PG = True
+        database_schema._db_initialized = False
+        init_db()
+
+    try:
+        yield switch, names
+    finally:
+        current_pool = database_core._pg_pool
+        if current_pool is not None and current_pool is not original_pool:
+            current_pool.closeall()
+        database_core._pg_pool = original_pool
+        database_core._DATABASE_URL = original_url
+        database_core._USE_PG = original_use_pg
+        database_schema._USE_PG = original_schema_use_pg
+        database_schema._db_initialized = original_initialized
+        cleanup = psycopg2.connect(admin_url)
+        cleanup.autocommit = True
+        try:
+            with cleanup.cursor() as cursor:
+                for name in names:
+                    cursor.execute(f'DROP DATABASE IF EXISTS "{name}" WITH (FORCE)')
+        finally:
+            cleanup.close()
 
 
 def _tamper_bundle(bundle: bytes) -> bytes:
@@ -36,10 +83,9 @@ def _tamper_bundle(bundle: bytes) -> bytes:
     return output.getvalue()
 
 
-def test_host_a_export_host_b_import_reconciles_and_tamper_rolls_back(isolated_db, tmp_path) -> None:
-    host_a = str(tmp_path / "host-a.db")
-    host_b = str(tmp_path / "host-b.db")
-    _switch_database(host_a)
+def test_host_a_export_host_b_import_reconciles_and_tamper_rolls_back(pg_host_databases) -> None:
+    switch, names = pg_host_databases
+    switch(names[0])
     kb_a = knowledge_service.create_knowledge_base("Host A", tenant_id="tenant-portable")
     knowledge_service.add_document_and_chunk(
         knowledge_base_id=kb_a["id"],
@@ -60,7 +106,7 @@ def test_host_a_export_host_b_import_reconciles_and_tamper_rolls_back(isolated_d
     exported = knowledge_export_service.build_export(tenant_id="tenant-portable")
     assert exported["manifest"]["document_count"] == 1
 
-    _switch_database(host_b)
+    switch(names[1])
     imported = import_knowledge_bundle(exported["content"], tenant_id="tenant-portable")
     report = imported["reconciliation"]
     assert report == {

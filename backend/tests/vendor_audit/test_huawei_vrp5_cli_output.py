@@ -226,7 +226,7 @@ ge0/0/2 105 ge0/0/3 lsw4
         assert observation["target_port_normalized"]
 
 
-def test_vrp5_command_catalog_uses_device_compatible_spellings():
+def test_vrp5_command_catalog_uses_device_compatible_spellings(isolated_db):
     commands = _resolve_commands("huawei_vrp", ["fan", "eth_trunk", "neighbors"])
     assert commands["fan"] == ["dis fan"]
     assert commands["eth_trunk"] == ["display eth-trunk"]

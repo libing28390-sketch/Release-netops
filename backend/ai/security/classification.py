@@ -56,7 +56,7 @@ PRIVATE_KEY_RE = re.compile(
 )
 SECRET_ASSIGNMENT_RE = re.compile(
     r"(?im)\b(?:password|passwd|secret|community|token|api[_ -]?key|access[_ -]?token|"
-    r"private[_ -]?key|pre-shared-key|key-string|shared-key)\b\s*(?:[:=]|cipher|simple|hash|7|8|9)?\s*['\"]?([^\s,'\";]+)",
+    r"private[_ -]?key|pre-shared-key|key-string|shared-key)\b\s*(?:[:=]|cipher|simple|hash|7|8|9|read|write)?\s*['\"]?([^\s,'\";\\]+)",
 )
 RADIUS_TACACS_SECRET_RE = re.compile(
     r"(?im)\b(?:radius|tacacs(?:\+|[-_ ]plus)?)[-_ ]?(?:key|secret|shared[-_ ]?secret|server[-_ ]?key)\b\s*(?:[:=]|secret|key)?\s*['\"]?([^\s,'\";]+)"
@@ -66,7 +66,26 @@ COOKIE_RE = re.compile(r"(?i)\b(?:cookie|set-cookie)\s*[:=]\s*[^\r\n;]+")
 SERIAL_RE = re.compile(r"(?i)\b(?:serial(?:[-_ ]?number)?|sn)\s*[:=#-]?\s*[A-Z0-9][A-Z0-9._-]{5,31}\b")
 SITE_NAME_RE = re.compile(r"(?i)\b(?:site|机房|园区|站点)\s*[:=：]\s*[\u4e00-\u9fffA-Za-z0-9][^\r\n,;]{1,80}")
 BUSINESS_NAME_RE = re.compile(r"(?i)\b(?:customer|business|project|department|业务|客户|项目|部门)\s*[:=：]\s*[^\r\n,;]{1,80}")
-SNMP_SECRET_RE = re.compile(r"(?im)\bsnmp(?:-agent|-server)?\s+community\s+(?:read|write|cipher|simple)?\s*([^\s]+)")
+SNMP_SECRET_RE = re.compile(r"(?im)\bsnmp(?:-agent|-server)?\s+community\s+(?:read|write|cipher|simple)?\s*([^\s\\]+)")
+_ASSIGNMENT_MODIFIER_VALUES = frozenset({"read", "write", "cipher", "simple", "hash", "7", "8", "9"})
+_REDACTED_ASSIGNMENT_VALUE_RE = re.compile(r"^<REDACTED(?:_[A-Z0-9]+)?>$", re.IGNORECASE)
+
+
+def is_redacted_assignment_match(match: re.Match[str]) -> bool:
+    """Return whether a credential detector matched only a safe placeholder.
+
+    Sanitized network configuration deliberately keeps the directive shape,
+    for example ``snmp-agent community read <REDACTED>``.  The detector must
+    not treat the redaction marker, or the ``read`` modifier when no value is
+    present, as a live credential.
+    """
+
+    value = (match.group(1) or "").strip().strip("'\"")
+    if _REDACTED_ASSIGNMENT_VALUE_RE.fullmatch(value):
+        return True
+    if value.casefold() in _ASSIGNMENT_MODIFIER_VALUES:
+        return bool(re.search(r"\bcommunity\s+$", match.group(0), re.IGNORECASE))
+    return False
 IPV4_RE = re.compile(r"(?<![\w.])(?:25[0-5]|2[0-4]\d|1?\d?\d)(?:\.(?:25[0-5]|2[0-4]\d|1?\d?\d)){3}(?![\w.])")
 IPV6_RE = re.compile(r"(?i)(?<![\w:])(?:[0-9a-f]{1,4}:){2,7}[0-9a-f]{1,4}(?![\w:])")
 MAC_RE = re.compile(r"(?i)(?<![\w])(?:[0-9a-f]{2}[:-]){5}[0-9a-f]{2}(?![\w])")
@@ -154,6 +173,8 @@ def classify_text(text: str) -> list[Finding]:
         (COOKIE_RE, "cookie"),
     ):
         for match in pattern.finditer(text):
+            if pattern in {SECRET_ASSIGNMENT_RE, SNMP_SECRET_RE} and is_redacted_assignment_match(match):
+                continue
             findings.append(Finding(DataLevel.L4_PROHIBITED, category, match.start(), match.end()))
 
     for match in FULL_CONFIG_RE.finditer(text):

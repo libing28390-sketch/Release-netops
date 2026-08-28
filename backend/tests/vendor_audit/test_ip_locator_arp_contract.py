@@ -67,6 +67,166 @@ def test_realtime_arp_lookup_uses_capability_rules_and_never_builds_zero_workers
     assert ip_locator_service._calc_ssh_workers(0) == 1
 
 
+def test_route_selection_accepts_l3_roles_explicit_policy_and_interface_evidence(monkeypatch):
+    devices = [
+        {"id": "router-1", "role": "router"},
+        {"id": "firewall-1", "role": "firewall"},
+        {
+            "id": "switch-explicit",
+            "role": "switch",
+            "collection_policy_json": '{"collectors":{"routes":true}}',
+        },
+        {"id": "switch-evidence", "role": "switch"},
+        {
+            "id": "core-disabled",
+            "role": "core",
+            "collection_policy_json": '{"collectors":{"routes":false}}',
+        },
+        {"id": "access-plain", "role": "access"},
+    ]
+    monkeypatch.setattr(ip_locator_service, "_load_route_l3_evidence", lambda: {"switch-evidence"})
+
+    selected, stats = ip_locator_service._select_route_devices(devices)
+
+    assert [device["id"] for device in selected] == [
+        "firewall-1", "router-1", "switch-evidence", "switch-explicit",
+    ]
+    assert stats == {
+        "credentialed_online": 6,
+        "selected": 4,
+        "role": 2,
+        "explicit": 1,
+        "interface_evidence": 1,
+        "policy_disabled": 1,
+        "policy_ignored": 0,
+        "no_l3_evidence": 1,
+    }
+
+
+def test_nsot_route_selection_is_independent_from_inspection_plan(monkeypatch):
+    devices = [
+        {
+            "id": "core-disabled-in-inspection",
+            "role": "core",
+            "collection_policy_json": '{"collectors":{"routes":false}}',
+        },
+        {
+            "id": "access-enabled-in-inspection",
+            "role": "access",
+            "collection_policy_json": '{"collectors":{"routes":true}}',
+        },
+        {"id": "switch-with-l3-evidence", "role": "switch"},
+    ]
+    monkeypatch.setattr(
+        ip_locator_service,
+        "_load_route_l3_evidence",
+        lambda: {"switch-with-l3-evidence"},
+    )
+
+    selected, stats = ip_locator_service._select_route_devices(
+        devices,
+        respect_collection_policy=False,
+    )
+
+    assert [device["id"] for device in selected] == [
+        "core-disabled-in-inspection",
+        "switch-with-l3-evidence",
+    ]
+    assert stats == {
+        "credentialed_online": 3,
+        "selected": 2,
+        "role": 1,
+        "explicit": 0,
+        "interface_evidence": 1,
+        "policy_disabled": 0,
+        "policy_ignored": 2,
+        "no_l3_evidence": 1,
+    }
+
+
+def test_unified_nsot_sync_runs_route_collection_without_inspection_policy(monkeypatch):
+    calls: list[tuple[str, object]] = []
+
+    monkeypatch.setattr(ip_locator_service, "run_arp_sweep", lambda: calls.append(("arp", None)))
+    monkeypatch.setattr(
+        ip_locator_service,
+        "run_endpoint_collector",
+        lambda **kwargs: calls.append(("endpoint", kwargs)),
+    )
+    monkeypatch.setattr(
+        ip_locator_service,
+        "run_route_collector",
+        lambda **kwargs: calls.append(("routes", kwargs)),
+    )
+    monkeypatch.setattr(
+        ip_locator_service,
+        "_sync_prefixes_from_current_interfaces",
+        lambda: {"devices": 0, "created": 0, "updated": 0, "failed": 0},
+    )
+    monkeypatch.setattr(
+        "services.scheduler_service.sync_routing_neighbors_job",
+        lambda: calls.append(("neighbors", None)),
+    )
+    monkeypatch.setattr(
+        "services.scheduler_service.sync_bgp_routes_job",
+        lambda: calls.append(("bgp", None)),
+    )
+    monkeypatch.setattr(
+        "services.scheduler_service.sync_topology_and_interfaces_job",
+        lambda: calls.append(("topology", None)) or {},
+    )
+    monkeypatch.setattr(
+        "services.interface_collection_service.collect_interface_status_for_online_devices",
+        lambda: calls.append(("interface_status", None)) or {},
+    )
+
+    ip_locator_service.run_unified_nsot_sync()
+
+    assert ("routes", {"respect_collection_policy": False}) in calls
+
+
+def test_eligible_device_diagnostics_explain_pre_route_exclusions(monkeypatch):
+    rows = [
+        {"id": "offline", "status": "offline", "platform": "cisco_ios", "has_credentials": True},
+        {"id": "server", "status": "online", "platform": "linux", "has_credentials": True},
+        {"id": "missing-creds", "status": "online", "platform": "cisco_ios", "has_credentials": False},
+        {"id": "firewall", "status": "online", "platform": "h3c_comware", "has_credentials": True},
+    ]
+
+    class Connection:
+        def execute(self, sql):
+            assert sql == "SELECT * FROM devices"
+            return self
+
+        def fetchall(self):
+            return rows
+
+        def close(self):
+            return None
+
+    monkeypatch.setattr(ip_locator_service, "get_db_connection", Connection)
+    monkeypatch.setattr(
+        ip_locator_service,
+        "resolve_device_credentials",
+        lambda device: {
+            "normal_username": "operator" if device.get("has_credentials") else "",
+            "normal_password": "credential" if device.get("has_credentials") else "",
+        },
+    )
+    diagnostics: dict[str, int] = {}
+
+    selected = ip_locator_service._load_eligible_devices(diagnostics=diagnostics)
+
+    assert [device["id"] for device in selected] == ["firewall"]
+    assert diagnostics == {
+        "inventory_total": 4,
+        "not_online": 1,
+        "unsupported_platform": 1,
+        "no_credentials": 1,
+        "role_filtered": 0,
+    }
+
+
 def test_locator_context_falls_back_to_latest_interface_telemetry(isolated_db):
     conn = isolated_db["module"].get_db_connection()
     conn.execute(

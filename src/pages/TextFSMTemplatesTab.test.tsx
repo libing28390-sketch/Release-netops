@@ -121,7 +121,8 @@ describe('TextFSMTemplatesTab', () => {
     await screen.getByTitle('编辑并创建自定义覆盖').click();
 
     const actionSelect = await screen.findByRole('combobox', { name: '关联 Action' });
-    await waitFor(() => expect((actionSelect as HTMLSelectElement).disabled).toBe(false));
+    await screen.findByRole('option', { name: /get_interfaces/ });
+    expect((actionSelect as HTMLSelectElement).disabled).toBe(false);
     expect((actionSelect as HTMLSelectElement).value).toBe('get_version');
 
     fireEvent.change(actionSelect, { target: { value: 'get_interfaces' } });

@@ -110,6 +110,28 @@ def test_scheduler_interface_sync_uses_registry_actions_for_bound_device(monkeyp
     assert result[0]["switchport_mode"] == "l3"
 
 
+def test_scheduler_interface_sync_stops_after_transport_failure(monkeypatch):
+    from services import scheduler_service
+
+    calls: list[str] = []
+
+    def fail_transport(_device_id, action_code, **_kwargs):
+        calls.append(action_code)
+        raise Exception("Error reading SSH protocol banner")
+
+    monkeypatch.setattr("services.platform_registry_service.execute_platform_action", fail_transport)
+
+    result = scheduler_service._collect_registry_interfaces({
+        "id": "device-transport-failure",
+        "hostname": "edge-offline",
+        "platform_profile_id": "profile-1",
+        "tenant_id": "tenant-1",
+    })
+
+    assert result == []
+    assert calls == ["get_interfaces"]
+
+
 def test_playbook_action_step_uses_published_action_preview(monkeypatch):
     from api.playbooks import engine
 

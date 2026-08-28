@@ -684,6 +684,9 @@ const TextFSMTemplatesTab: React.FC<Props> = ({ language }) => {
                       className="mt-1.5 h-9 w-full rounded-lg border border-black/10 bg-white px-2.5 text-xs outline-none focus:border-[#00bceb] disabled:bg-slate-50"
                     >
                       <option value="">{actionOptionsLoading ? (isZh ? '加载动作中…' : 'Loading actions…') : (isZh ? '不关联 Action' : 'No action')}</option>
+                      {editorActionCode && !actionOptions.some((option) => option.action_code === editorActionCode) && (
+                        <option value={editorActionCode}>{editorActionCode}</option>
+                      )}
                       {actionOptionGroups.map(([group, options]) => (
                         <optgroup key={group} label={group}>
                           {options.map((option) => (

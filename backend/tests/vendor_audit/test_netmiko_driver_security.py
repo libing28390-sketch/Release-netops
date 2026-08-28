@@ -55,6 +55,9 @@ def test_no_enable_secret_skips_privilege_escalation(monkeypatch, caplog) -> Non
     assert connection.writes == []
     assert "No explicit enable secret" in caplog.text
     assert "login-password" not in caplog.text
+    assert "username='user'" not in caplog.text
+    assert "pwd_len" not in caplog.text
+    assert "Secret set" not in caplog.text
 
 
 def test_interactive_enable_response_never_logs_password_or_terminal_buffer(monkeypatch, caplog) -> None:

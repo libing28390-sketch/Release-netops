@@ -105,8 +105,10 @@ Interface TenGigabitEthernet 1/0/49 alarm detect.
     assert len(result["data"]) == 1
     assert result["data"][0]["INTERFACE"] == "TenGigabitEthernet 1/0/49"
     assert result["data"][0]["SERIAL_NUMBER"] == "G1SPARK055550"
-    assert result["data"][0]["TEMPERATURE"] == "26(OK)"
-    assert result["data"][0]["RX_POWER"] == "-40.00(alarm)[AP]"
+    assert result["data"][0]["TEMPERATURE"] == "26"
+    assert result["data"][0]["TEMPERATURE_STATUS"] == "OK"
+    assert result["data"][0]["RX_POWER"] == "-40.00"
+    assert result["data"][0]["RX_POWER_STATUS"] == "alarm"
 
 
 def test_ruijie_show_ip_route():
@@ -123,7 +125,8 @@ C     10.88.1.251/32 is local host.
     result = smart_parse_cli(output, "show ip route", platform="ruijie_os")
     assert result["success"] is True
     assert len(result["data"]) == 2
-    assert result["data"][0]["NETWORK"] == "10.88.1.0/24"
+    assert result["data"][0]["NETWORK"] == "10.88.1.0"
+    assert result["data"][0]["PREFIX_LENGTH"] == "24"
     assert result["data"][0]["INTERFACE"] == "VLAN 3499"
 
 

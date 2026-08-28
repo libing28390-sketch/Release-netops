@@ -1,6 +1,10 @@
-import { describe, expect, it, vi } from 'vitest';
+import { afterEach, describe, expect, it, vi } from 'vitest';
 
 import { chatAssistantStream } from './ai';
+
+afterEach(() => {
+  vi.unstubAllGlobals();
+});
 
 
 describe('versioned assistant SSE contract', () => {

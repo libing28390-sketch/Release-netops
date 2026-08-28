@@ -17,6 +17,7 @@ from ai.security.classification import (
     RADIUS_TACACS_SECRET_RE,
     JWT_RE,
     COOKIE_RE,
+    is_redacted_assignment_match,
 )
 
 
@@ -40,7 +41,7 @@ def scan(value: Any, *, identifiers_blocked: bool = True) -> list[DLPFinding]:
     findings: list[DLPFinding] = []
     if PRIVATE_KEY_RE.search(text):
         findings.append(DLPFinding("private_key"))
-    if SECRET_ASSIGNMENT_RE.search(text):
+    if any(not is_redacted_assignment_match(match) for match in SECRET_ASSIGNMENT_RE.finditer(text)):
         findings.append(DLPFinding("credential"))
     if RADIUS_TACACS_SECRET_RE.search(text):
         findings.append(DLPFinding("radius_or_tacacs_key"))

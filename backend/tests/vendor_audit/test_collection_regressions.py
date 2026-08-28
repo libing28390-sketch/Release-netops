@@ -120,7 +120,7 @@ def test_device_ip_output_supersedes_legacy_inventory_rows():
 
     direct_ip_keys = set()
     for record in records:
-        interface_name, direct_ip, _, _ = interfaces._status_record(record, {})
+        interface_name, direct_ip, _, _, _ = interfaces._status_record(record, {})
         key = interfaces.normalize_interface_name(interface_name)
         if direct_ip:
             direct_ip_keys.add(key)

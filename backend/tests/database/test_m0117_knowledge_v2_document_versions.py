@@ -11,7 +11,9 @@ def test_m0117_creates_idempotent_document_version_shadow_tables(isolated_db):
         tables = {
             row[0]
             for row in conn.execute(
-                "SELECT name FROM sqlite_master WHERE type = 'table' AND name IN ('kb_document', 'kb_document_version')"
+                "SELECT table_name FROM information_schema.tables "
+                "WHERE table_schema = current_schema() AND table_name IN (?, ?) ",
+                ("kb_document", "kb_document_version"),
             ).fetchall()
         }
         assert tables == {"kb_document", "kb_document_version"}

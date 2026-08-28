@@ -22,68 +22,71 @@ const mibNode = {
   description: 'ZTE environment monitor capabilities',
 };
 
+const repositoryStats = {
+  module_count: 1,
+  parsed_module_count: 1,
+  zero_node_module_count: 0,
+  failed_module_count: 0,
+  unresolved_oid_node_count: 0,
+  vendor_counts: { ZTE: 1 },
+  latest_import: null,
+};
+
+const mockSearchableRepository = () => {
+  mockedApiRequest.mockImplementation(async (url) => {
+    const requestUrl = String(url);
+    if (requestUrl.startsWith('/api/platform-registry/mibs/sync-librenms/status')) {
+      return { success: true, data: { running: false, repository: repositoryStats } } as never;
+    }
+    if (requestUrl.startsWith('/api/platform-registry/mibs/nodes/search?')) {
+      return { success: true, data: [{ ...mibNode, mib_id: 'mib-1', mib_name: 'ZTE-AN-ENVMON-MIB', vendor: 'ZTE' }] } as never;
+    }
+    if (requestUrl === '/api/platform-registry/mibs/mib-1') {
+      return {
+        success: true,
+        data: {
+          id: 'mib-1',
+          name: 'ZTE-AN-ENVMON-MIB',
+          vendor: 'ZTE',
+          description: 'Official LibreNMS MIB for ZTE',
+          nodes: [mibNode],
+          resolved_node_count: 1,
+          unresolved_node_count: 0,
+        },
+      } as never;
+    }
+    if (requestUrl.startsWith('/api/platform-registry/mibs?')) {
+      return {
+        success: true,
+        data: [{
+          id: 'mib-1',
+          name: 'ZTE-AN-ENVMON-MIB',
+          vendor: 'ZTE',
+          filename: 'ZTE-AN-ENVMON-MIB',
+          file_size: 1024,
+          node_count: 1,
+          source_type: 'librenms',
+          created_at: '',
+          updated_at: '',
+        }],
+        total: 1,
+        page: 1,
+        stats: repositoryStats,
+      } as never;
+    }
+    return { success: true, data: [] } as never;
+  });
+};
+
 describe('MibUploadModal node search and template mapping', () => {
   afterEach(() => {
     cleanup();
     vi.clearAllMocks();
   });
 
-  it('searches nodes in the selected MIB and exposes direct template mapping', async () => {
+  it('filters the repository by vendor and parsed status', async () => {
     const user = userEvent.setup();
-    const onMapNodeToTemplate = vi.fn();
-    const stats = {
-      module_count: 1,
-      parsed_module_count: 1,
-      zero_node_module_count: 0,
-      failed_module_count: 0,
-      unresolved_oid_node_count: 0,
-      vendor_counts: { ZTE: 1 },
-      latest_import: null,
-    };
-
-    mockedApiRequest.mockImplementation(async (url) => {
-      const requestUrl = String(url);
-      if (requestUrl.startsWith('/api/platform-registry/mibs/sync-librenms/status')) {
-        return { success: true, data: { running: false, repository: stats } } as never;
-      }
-      if (requestUrl.startsWith('/api/platform-registry/mibs/nodes/search?')) {
-        return { success: true, data: [{ ...mibNode, mib_id: 'mib-1', mib_name: 'ZTE-AN-ENVMON-MIB', vendor: 'ZTE' }] } as never;
-      }
-      if (requestUrl === '/api/platform-registry/mibs/mib-1') {
-        return {
-          success: true,
-          data: {
-            id: 'mib-1',
-            name: 'ZTE-AN-ENVMON-MIB',
-            vendor: 'ZTE',
-            description: 'Official LibreNMS MIB for ZTE',
-            nodes: [mibNode],
-            resolved_node_count: 1,
-            unresolved_node_count: 0,
-          },
-        } as never;
-      }
-      if (requestUrl.startsWith('/api/platform-registry/mibs?')) {
-        return {
-          success: true,
-          data: [{
-            id: 'mib-1',
-            name: 'ZTE-AN-ENVMON-MIB',
-            vendor: 'ZTE',
-            filename: 'ZTE-AN-ENVMON-MIB',
-            file_size: 1024,
-            node_count: 1,
-            source_type: 'librenms',
-            created_at: '',
-            updated_at: '',
-          }],
-          total: 1,
-          page: 1,
-          stats,
-        } as never;
-      }
-      return { success: true, data: [] } as never;
-    });
+    mockSearchableRepository();
 
     render(
       <MibUploadModal
@@ -91,7 +94,6 @@ describe('MibUploadModal node search and template mapping', () => {
         language="zh"
         onClose={vi.fn()}
         showToast={vi.fn()}
-        onMapNodeToTemplate={onMapNodeToTemplate}
       />,
     );
 
@@ -111,6 +113,24 @@ describe('MibUploadModal node search and template mapping', () => {
     await waitFor(() => expect(
       mockedApiRequest.mock.calls.some(([url]) => String(url).includes('status=parsed')),
     ).toBe(true));
+  });
+
+  it('searches nodes in the selected MIB and exposes direct template mapping', async () => {
+    const user = userEvent.setup();
+    const onMapNodeToTemplate = vi.fn();
+    mockSearchableRepository();
+
+    render(
+      <MibUploadModal
+        open
+        language="zh"
+        onClose={vi.fn()}
+        showToast={vi.fn()}
+        onMapNodeToTemplate={onMapNodeToTemplate}
+      />,
+    );
+
+    await waitFor(() => expect(screen.getAllByText('ZTE-AN-ENVMON-MIB').length).toBeGreaterThan(0));
     await user.click(screen.getAllByText('ZTE-AN-ENVMON-MIB')[0]);
     await waitFor(() => expect(screen.getByText('zxAnEnvMonCapabilities')).toBeTruthy());
 

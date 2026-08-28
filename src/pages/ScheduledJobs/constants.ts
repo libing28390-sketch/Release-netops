@@ -32,10 +32,11 @@ export const MAJOR_CATEGORIES = [
 
 export const SCOPE_OPTIONS = [
   { value: 'all', labelZh: '全部在线设备', labelEn: 'All online devices' },
-  { value: 'ip', labelZh: '按 IP 地址', labelEn: 'By IP address' },
-  { value: 'tag', labelZh: '按标签', labelEn: 'By tag' },
-  { value: 'site', labelZh: '按站点', labelEn: 'By site' },
-  { value: 'role', labelZh: '按角色', labelEn: 'By role' },
+  { value: 'composite', labelZh: '资产复合筛选 (站点/角色/类型)', labelEn: 'Asset Matrix (Site / Role / Category)' },
+  { value: 'tag', labelZh: '业务逻辑标签 (Tag Conditions)', labelEn: 'Business Tags (Tag Conditions)' },
+  { value: 'ip', labelZh: '指定 IP / 设备清单', labelEn: 'Specific IPs / Device List' },
+  { value: 'site', labelZh: '按单个站点 (Site)', labelEn: 'By Single Site' },
+  { value: 'role', labelZh: '按单个角色 (Role)', labelEn: 'By Single Role' },
 ];
 
 export const INITIAL_FORM: FormState = {

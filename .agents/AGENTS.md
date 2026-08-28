@@ -17,16 +17,21 @@
 
 ## 3. 项目 Skills 路由
 
-项目级 skills 位于 `.agents/skills/`。任务匹配时优先使用以下最小集合：
+项目级 skills 位于 `.agents/skills/`。任务匹配时按以下专业领域与职责路由：
 
 - `netops-backend`：FastAPI、Service、鉴权、调度与后端接口。
 - `netops-frontend`：React、TypeScript、页面、组件、hooks 与状态管理。
-- `netops-network-drivers`：多厂商 SSH、SNMP、CLI 解析、拓扑和诊断。
+- `netops-network-drivers`：多厂商 SSH、SNMP、CLI 执行、基础解析与多厂商规范化。
 - `netops-data-migrations`：PostgreSQL 表结构、迁移、索引、事务与回填。
+- `netops-ai-knowledge`：AI 知识库、RAG 向量检索 (pgvector/trgm)、Security Vault 脱敏与多模型网关。
+- `netops-topology-engine`：网络拓扑发现、LLDP/CDP 计算、LAG/VLAN 链路推导与图谱可视化。
+- `netops-monitoring-telemetry`：SNMP 遥测指标、出向探针 (SSRF 防护)、告警规则、抑制与多通道分发。
+- `netops-pam-automation`：特权访问 (PAM)、Web 终端堡垒机、密码轮转、危险命令拦截与变更工单。
+- `netops-textfsm-engineering`：TextFSM 模板开发、沙箱测试、多厂商 CLI 捕获组与模板目录规范。
 - `netops-quality-gate`：pytest、TypeScript 检查、生产构建与回归验证。
 - `netops-release`：Windows、Docker、Ubuntu、Nginx、CI 与发布打包。
 
-跨层功能通常组合业务 skill 与 `netops-quality-gate`；只有实际涉及数据库持久化或发布配置时才追加对应 skill。
+跨层功能通常组合业务 skill 与 `netops-quality-gate`；涉及多领域时按最小必要集合引入对应专业 skill。
 
 ## 4. Agent 协作规则
 

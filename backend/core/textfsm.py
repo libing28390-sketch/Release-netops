@@ -1405,6 +1405,12 @@ def _template_platform_candidates(platform: str) -> list[str]:
         # legacy family callers and then allow a common template. Bound
         # devices use an explicit V5/V7/V9 parser selector above.
         return ['h3c_comware_v7', 'h3c_comware']
+    if selected == 'ruijie_rgos':
+        # The legacy family value is still stored by existing devices. The
+        # current built-in Ruijie profile is RGOS 12, so preserve that
+        # backwards-compatible parser path without letting the explicit
+        # ``unknown`` profile silently select a release grammar.
+        return ['ruijie_rgos_v12', 'ruijie_rgos']
     candidates = [normalized] if normalized else []
     candidates.extend(_COMPATIBLE_PLATFORMS.get(normalized, []))
     return list(dict.fromkeys(candidates))

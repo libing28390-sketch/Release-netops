@@ -20,7 +20,10 @@ def _load() -> dict:
 
 
 def _index_snapshot(conn) -> tuple[str, ...]:
-    rows = conn.execute("SELECT name FROM sqlite_master WHERE type='index' AND name IS NOT NULL ORDER BY name").fetchall()
+    rows = conn.execute(
+        "SELECT indexname FROM pg_indexes "
+        "WHERE schemaname = current_schema() ORDER BY indexname"
+    ).fetchall()
     return tuple(str(row[0]) for row in rows)
 
 
@@ -47,8 +50,12 @@ def test_db019_fresh_baseline_has_every_discovered_version_and_v1_tables(isolate
         assert set(applied) == set(discovered)
         assert all(applied[version] == name for version, name in discovered.items())
         for table in ("schema_migrations", "users", "devices", "ai_document", "ai_document_chunk"):
-            assert conn.execute("SELECT 1 FROM sqlite_master WHERE type='table' AND name=?", (table,)).fetchone()
-        assert build_migration_plan(conn, use_pg=False).pending_versions == ()
+            assert conn.execute(
+                "SELECT 1 FROM information_schema.tables "
+                "WHERE table_schema = current_schema() AND table_name = ?",
+                (table,),
+            ).fetchone()
+        assert build_migration_plan(conn, use_pg=True).pending_versions == ()
     finally:
         conn.close()
 
@@ -64,14 +71,14 @@ def test_db019_test_only_114_to_115_upgrade_applies_once(isolated_db):
         conn.commit()
         snapshot = get_applied_records(conn)
         assert max(snapshot) == current_version - 1
-        plan = build_migration_plan(conn, use_pg=False)
+        plan = build_migration_plan(conn, use_pg=True)
         assert plan.pending_versions == (current_version,)
         assert plan.safe is True
-        assert run_migrations(conn, use_pg=False, strict_history=True) == 1
+        assert run_migrations(conn, use_pg=True, strict_history=True) == 1
         after = get_applied_records(conn)
         assert set(after) == set(before)
         assert _index_snapshot(conn) == before_indexes
-        assert run_migrations(conn, use_pg=False, strict_history=True) == 0
+        assert run_migrations(conn, use_pg=True, strict_history=True) == 0
         assert get_applied_records(conn) == after
     finally:
         conn.close()

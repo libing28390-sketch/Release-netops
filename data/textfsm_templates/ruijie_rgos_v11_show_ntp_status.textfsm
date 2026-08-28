@@ -1,4 +1,4 @@
-Value Filldown STATUS (synchronized|unsynchronized|\S+)
+Value Filldown SYNCHRONIZED (synchronized|unsynchronized|\S+)
 Value Filldown STRATUM (\d+)
 Value Filldown REFERENCE (\S+)
 Value Filldown NOMINAL_FREQ (\S+)
@@ -15,7 +15,7 @@ Value Filldown SYSTEM_TIME (.+?)
 
 Start
   ^.*#\s*show\s+ -> Next
-  ^Clock\s+is\s+${STATUS},\s+stratum\s+${STRATUM},\s+reference\s+is\s+${REFERENCE}
+  ^Clock\s+is\s+${SYNCHRONIZED},\s+stratum\s+${STRATUM},\s+reference\s+is\s+${REFERENCE}
   ^nominal\s+freq\s+is\s+${NOMINAL_FREQ}\s+Hz,\s+actual\s+freq\s+is\s+${ACTUAL_FREQ}\s+Hz,\s+precision\s+is\s+${PRECISION}
   ^reference\s+time\s+is\s+${REFERENCE_TIME}\s*$$
   ^clock\s+offset\s+is\s+${CLOCK_OFFSET}\s+sec,\s+root\s+delay\s+is\s+${ROOT_DELAY}\s+sec

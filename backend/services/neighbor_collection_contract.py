@@ -95,14 +95,14 @@ def normalize_neighbor_record(record: dict[str, Any], *, protocol: str = "lldp")
                 return str(value).strip()
         return ""
 
-    capabilities = first("neighbor_capabilities", "capabilities")
+    capabilities = first("neighbor_capabilities", "capabilities", "capability")
     if isinstance(capabilities, str):
         capabilities = [item for item in re.split(r"[,;\s]+", capabilities) if item]
     if not isinstance(capabilities, list):
         capabilities = []
     return {
         "local_interface": first("local_interface", "local_port", "local_port_id", "interface", "src_port"),
-        "neighbor_name": first("neighbor_name", "neighbor", "neighbor_id", "remote_system_name", "system_name"),
+        "neighbor_name": first("neighbor_name", "neighbor", "neighbor_id", "device_id", "remote_system_name", "system_name"),
         "neighbor_interface": first("neighbor_interface", "neighbor_port_id", "remote_port", "port_id", "remote_interface", "port"),
         "neighbor_management_ip": first("neighbor_management_ip", "mgmt_address", "management_address", "mgmt_ip", "neighbor_ip", "remote_management_address", "ip_address"),
         "neighbor_platform": first("neighbor_platform", "platform", "system_description", "description"),

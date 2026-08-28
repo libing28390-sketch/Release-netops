@@ -71,8 +71,16 @@ def test_summary_behavior_checkpoint_and_external_queue_are_safe(isolated_db):
     now = datetime.now(timezone.utc).replace(microsecond=0).isoformat()
     with get_db_connection() as conn:
         conn.execute(
-            "INSERT INTO pam_sessions (id, tenant_id, requester_username, token_expires_at, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?)",
-            ("sess-1", "tenant-default", "alice", now, now, now),
+            """INSERT INTO physical_assets
+               (id, asset_type, hostname, created_at, updated_at)
+               VALUES (?, 'network_device', 'pam-control-plane-test', ?, ?)""",
+            ("asset-pam-control-1", now, now),
+        )
+        conn.execute(
+            """INSERT INTO pam_sessions
+               (id, tenant_id, asset_id, requester_username, token_expires_at, created_at, updated_at)
+               VALUES (?, ?, ?, ?, ?, ?, ?)""",
+            ("sess-1", "tenant-default", "asset-pam-control-1", "alice", now, now, now),
         )
         conn.commit()
     decision = assess_command("show interfaces")

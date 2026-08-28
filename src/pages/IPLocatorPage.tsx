@@ -1,5 +1,5 @@
 import React, { useState, useCallback, useEffect, useRef, useMemo } from 'react';
-import { Search, MapPin, ArrowRight, Loader2, Server, Monitor, Network, AlertCircle, ChevronDown, ChevronUp, Cable, Clock, RotateCcw, Activity, Wifi, Globe, Zap, CheckCircle2, XCircle, Minus, Database, RefreshCw, Filter, Download, X, ShieldAlert, Check, Play, FileText, Copy, Router, ExternalLink, Cpu, MemoryStick, Eye, Users } from 'lucide-react';
+import { Search, MapPin, ArrowRight, Loader2, Server, Monitor, Network, AlertCircle, ChevronDown, ChevronUp, Cable, Clock, RotateCcw, Activity, Wifi, Globe, Zap, CheckCircle2, XCircle, Minus, Database, RefreshCw, Filter, Download, X, ShieldAlert, Check, Play, FileText, Copy, Router, ExternalLink, Cpu, MemoryStick, Eye, Users, Sliders, Settings } from 'lucide-react';
 import Pagination from '../components/Pagination';
 import PageHero from '../components/PageHero';
 import { ActionButton } from '../components/ui/ActionIconButton';
@@ -503,6 +503,7 @@ const reconcileDiagnosticProbeResult = (raw: any) => {
 
 const IPLocatorPage: React.FC<IPLocatorPageProps> = ({ language, t, mode }) => {
   const zh = language === 'zh';
+  const token = localStorage.getItem('netops_token') || '';
   const [searchParams] = useSearchParams();
   const requestedIp = searchParams.get('ip')?.trim() || '';
   const autoLocateIpRef = useRef('');
@@ -578,6 +579,66 @@ const IPLocatorPage: React.FC<IPLocatorPageProps> = ({ language, t, mode }) => {
 
   // Advanced Search/Filter States
   const [nsotShowAdvanced, setNsotShowAdvanced] = useState(false);
+
+  // ── NSOT Collection Policy Modal state ──
+  const [nsotPolicyModalOpen, setNsotPolicyModalOpen] = useState(false);
+  const [nsotPlans, setNsotPlans] = useState<any[]>([]);
+  const [nsotSelectedPlanDeviceId, setNsotSelectedPlanDeviceId] = useState('');
+  const [nsotPlansLoading, setNsotPlansLoading] = useState(false);
+  const [nsotPlanMessage, setNsotPlanMessage] = useState('');
+  const [nsotPlanSearch, setNsotPlanSearch] = useState('');
+
+  const fetchNsotCollectionPlans = useCallback(async () => {
+    setNsotPlansLoading(true);
+    try {
+      const resp = await fetch('/api/collection-plans/devices', {
+        headers: { Authorization: `Bearer ${token}` }
+      });
+      if (!resp.ok) return;
+      const json = await resp.json();
+      const rows = Array.isArray(json.data) ? json.data : [];
+      setNsotPlans(rows);
+      setNsotSelectedPlanDeviceId((curr) => curr || rows[0]?.device?.id || '');
+    } catch {
+      setNsotPlanMessage(zh ? '采集能力策略加载失败' : 'Failed to load collection policies');
+    } finally {
+      setNsotPlansLoading(false);
+    }
+  }, [token, zh]);
+
+  const updateNsotCollectionPlan = useCallback(async (collector: string, enabled: boolean) => {
+    const current = nsotPlans.find((row) => row.device?.id === nsotSelectedPlanDeviceId);
+    if (!current) return;
+    const overrides = { ...(current.plan?.overrides || {}), [collector]: enabled };
+    try {
+      const resp = await fetch(`/api/collection-plans/devices/${nsotSelectedPlanDeviceId}`, {
+        method: 'PUT',
+        headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` },
+        body: JSON.stringify({ policy: { collectors: overrides } }),
+      });
+      const json = await resp.json();
+      if (!resp.ok) throw new Error(json.detail || 'Update failed');
+      setNsotPlanMessage(zh ? '采集能力策略已更新' : 'Collection policy updated');
+      fetchNsotCollectionPlans();
+    } catch {
+      setNsotPlanMessage(zh ? '采集能力策略更新失败' : 'Failed to update collection policy');
+    }
+  }, [fetchNsotCollectionPlans, nsotPlans, nsotSelectedPlanDeviceId, token, zh]);
+
+  const resetNsotCollectionPlan = useCallback(async () => {
+    if (!nsotSelectedPlanDeviceId) return;
+    try {
+      const resp = await fetch(`/api/collection-plans/devices/${nsotSelectedPlanDeviceId}`, {
+        method: 'DELETE',
+        headers: { Authorization: `Bearer ${token}` },
+      });
+      if (!resp.ok) throw new Error('Reset failed');
+      setNsotPlanMessage(zh ? '已恢复角色默认策略' : 'Reset to role default policy');
+      fetchNsotCollectionPlans();
+    } catch {
+      setNsotPlanMessage(zh ? '恢复默认策略失败' : 'Failed to reset policy');
+    }
+  }, [fetchNsotCollectionPlans, nsotSelectedPlanDeviceId, token, zh]);
   // Endpoints tab filters
   const [epFilterIp, setEpFilterIp] = useState('');
   const [epFilterMac, setEpFilterMac] = useState('');
@@ -657,7 +718,6 @@ const IPLocatorPage: React.FC<IPLocatorPageProps> = ({ language, t, mode }) => {
   const [copiedCmd, setCopiedCmd] = useState(false);
   const [selectedStepIdx, setSelectedStepIdx] = useState<number | null>(null);
 
-  const token = localStorage.getItem('netops_token') || '';
 
   const getStepNames = useCallback(() => {
     const p8Name = diagProtocol === 'ICMP' ? "P8. ICMP 验证 (ICMP Validation)" : `P8. ${diagProtocol} 验证 (${diagProtocol} Validation)`;
@@ -2287,6 +2347,14 @@ ${rep.repair_commands}
         >
           <Filter size={13} />
           {zh ? '高级搜索' : 'Advanced'}
+        </button>
+        <button
+          onClick={() => { setNsotPolicyModalOpen(true); fetchNsotCollectionPlans(); }}
+          className="flex items-center gap-1.5 px-3.5 py-2 bg-white dark:bg-[#1f2937]/30 border border-black/5 dark:border-white/5 text-black/70 dark:text-white/70 hover:bg-black/[0.02] dark:hover:bg-white/[0.02] rounded-xl text-sm font-medium transition-colors"
+          title={zh ? '设置各设备的 NSOT 事实库采集能力与策略' : 'Configure NSOT collection capabilities per device'}
+        >
+          <Sliders size={13} className="text-[#06b6d4]" />
+          {zh ? '采集策略与能力' : 'Collection Policy'}
         </button>
         <button
           onClick={handleNsotSweep}
@@ -4296,6 +4364,256 @@ ${rep.repair_commands}
           </div>
         );
       })()}
+      {/* ── NSOT Collection Policy Modal ── */}
+      {nsotPolicyModalOpen && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/60 backdrop-blur-sm animate-in fade-in duration-150">
+          <div className="bg-white dark:bg-[#0f172a] rounded-2xl border border-black/10 dark:border-white/10 shadow-2xl w-full max-w-4xl max-h-[88vh] flex flex-col overflow-hidden animate-in zoom-in-95 duration-200">
+            {/* Header */}
+            <div className="flex items-center justify-between px-6 py-4 border-b border-black/5 dark:border-white/10 bg-slate-50/50 dark:bg-slate-900/50">
+              <div className="flex items-center gap-3">
+                <div className="w-9 h-9 rounded-xl bg-gradient-to-br from-cyan-500 to-cyan-700 flex items-center justify-center text-white shadow-md shadow-cyan-500/20">
+                  <Sliders size={18} />
+                </div>
+                <div>
+                  <h3 className="text-base font-bold text-slate-900 dark:text-white">
+                    {zh ? '网络事实库 (NSOT) 设备采集能力策略' : 'Device NSOT Collection Policies'}
+                  </h3>
+                  <p className="text-xs text-slate-500 dark:text-slate-400 mt-0.5">
+                    {zh ? '控制哪些设备参与 NSOT 事实库的转发表项、动态协议与拓扑数据采集' : 'Control which collectors run per device during unified NSOT reality collection'}
+                  </p>
+                </div>
+              </div>
+              <button
+                onClick={() => setNsotPolicyModalOpen(false)}
+                className="p-1.5 rounded-lg text-slate-400 hover:text-slate-600 hover:bg-slate-100 dark:hover:bg-slate-800 transition-colors"
+              >
+                <X size={18} />
+              </button>
+            </div>
+
+            {/* Body (Split Left / Right) */}
+            <div className="flex-1 flex overflow-hidden divide-x divide-black/5 dark:divide-white/10 min-h-[420px]">
+              {/* Left Device List */}
+              <div className="w-1/3 flex flex-col bg-slate-50/30 dark:bg-slate-950/20 min-w-[240px]">
+                <div className="p-3 border-b border-black/5 dark:border-white/10">
+                  <div className="relative">
+                    <Search size={13} className="absolute left-2.5 top-1/2 -translate-y-1/2 text-slate-400" />
+                    <input
+                      type="text"
+                      value={nsotPlanSearch}
+                      onChange={(e) => setNsotPlanSearch(e.target.value)}
+                      placeholder={zh ? '搜索设备...' : 'Search devices...'}
+                      className="w-full pl-8 pr-2.5 py-1.5 rounded-lg text-xs bg-white dark:bg-slate-900 border border-black/10 dark:border-white/10 focus:outline-none focus:ring-1 focus:ring-cyan-500"
+                    />
+                  </div>
+                </div>
+                <div className="flex-1 overflow-y-auto p-2 space-y-1">
+                  {nsotPlansLoading ? (
+                    <div className="flex items-center justify-center py-10 text-xs text-slate-400">
+                      <Loader2 size={16} className="animate-spin mr-2 text-cyan-500" />
+                      {zh ? '加载中...' : 'Loading...'}
+                    </div>
+                  ) : nsotPlans
+                      .filter((row) => {
+                        const q = nsotPlanSearch.trim().toLowerCase();
+                        if (!q) return true;
+                        return (
+                          (row.device?.hostname || '').toLowerCase().includes(q) ||
+                          (row.device?.ip_address || '').toLowerCase().includes(q) ||
+                          (row.device?.platform || '').toLowerCase().includes(q) ||
+                          (row.device?.role || '').toLowerCase().includes(q)
+                        );
+                      })
+                      .map((row) => {
+                        const isSelected = row.device?.id === nsotSelectedPlanDeviceId;
+                        const hasOverrides = row.plan?.overrides && Object.keys(row.plan.overrides).length > 0;
+                        return (
+                          <button
+                            key={row.device?.id}
+                            onClick={() => {
+                              setNsotSelectedPlanDeviceId(row.device?.id);
+                              setNsotPlanMessage('');
+                            }}
+                            className={`w-full text-left p-2.5 rounded-xl text-xs transition-all flex items-center justify-between ${
+                              isSelected
+                                ? 'bg-cyan-500 text-white shadow-md shadow-cyan-500/20'
+                                : 'hover:bg-black/5 dark:hover:bg-white/5 text-slate-700 dark:text-slate-200'
+                            }`}
+                          >
+                            <div className="truncate pr-2">
+                              <div className="font-semibold truncate">{row.device?.hostname || row.device?.ip_address}</div>
+                              <div className={`text-[10px] font-mono truncate ${isSelected ? 'text-white/80' : 'text-slate-400'}`}>
+                                {row.device?.ip_address} · {row.device?.platform || 'generic'}
+                              </div>
+                            </div>
+                            {hasOverrides && (
+                              <span className={`text-[9px] px-1.5 py-0.5 rounded font-medium ${
+                                isSelected ? 'bg-white/20 text-white' : 'bg-amber-100 dark:bg-amber-950 text-amber-700 dark:text-amber-300'
+                              }`}>
+                                {zh ? '自定义' : 'Custom'}
+                              </span>
+                            )}
+                          </button>
+                        );
+                      })}
+                </div>
+              </div>
+
+              {/* Right Policy Detail */}
+              <div className="flex-1 flex flex-col overflow-y-auto p-6 bg-white dark:bg-[#0f172a]">
+                {(() => {
+                  const selected = nsotPlans.find((row) => row.device?.id === nsotSelectedPlanDeviceId);
+                  if (!selected) {
+                    return (
+                      <div className="flex-1 flex items-center justify-center text-xs text-slate-400">
+                        {zh ? '请从左侧选择设备以查看其采集策略' : 'Select a device from the left to view its collection policy'}
+                      </div>
+                    );
+                  }
+
+                  const effective = selected.plan?.effective || {};
+                  const overrides = selected.plan?.overrides || {};
+                  const profile = selected.plan?.profile || selected.device?.role || 'default';
+
+                  const collectorGroups = [
+                    {
+                      groupTitle: zh ? '基础与接口事实' : 'Basics & Interface Facts',
+                      items: [
+                        { key: 'reachability', label: zh ? '连通性测试 (Ping)' : 'Reachability', desc: zh ? '测试管理 IP 可达性' : 'ICMP reachability check' },
+                        { key: 'interface_status', label: zh ? '接口状态与物理层' : 'Interface Status', desc: zh ? '采集接口 Up/Down 与速率' : 'Port oper/admin status and speed' },
+                        { key: 'interface_ip', label: zh ? '接口 IP 与 SVI' : 'Interface IP / SVI', desc: zh ? '采集接口 IP 地址与子网' : 'Port IPs, masks, and SVI bindings' },
+                      ],
+                    },
+                    {
+                      groupTitle: zh ? '二层拓扑与转发表项' : 'L2 Topology & Forwarding Facts',
+                      items: [
+                        { key: 'arp', label: zh ? 'ARP 映射表' : 'ARP Table', desc: zh ? '采集 IP 与 MAC 对应表项' : 'IP-to-MAC resolution table' },
+                        { key: 'mac_table', label: zh ? 'MAC 转发表' : 'MAC Table', desc: zh ? '采集端口与 MAC 映射' : 'Switchport MAC forwarding table' },
+                        { key: 'lldp', label: zh ? 'LLDP / CDP 拓扑邻居' : 'LLDP / CDP Neighbors', desc: zh ? '发现设备直连邻居与端口' : 'Direct neighbor port discovery' },
+                        { key: 'vlan', label: zh ? 'VLAN 记录与划分' : 'VLAN Records', desc: zh ? '采集 VLAN 配置与 Trunk 划分' : 'VLANs and port memberships' },
+                      ],
+                    },
+                    {
+                      groupTitle: zh ? '三层路由与协议状态' : 'L3 Routing & Protocol Facts',
+                      items: [
+                        { key: 'routes', label: zh ? 'IP 路由表 (RIB)' : 'IP Route Table', desc: zh ? '采集全局路由表项' : 'Global routing table snapshot' },
+                        { key: 'bgp', label: zh ? 'BGP 邻居与 RIB' : 'BGP Peers & Routes', desc: zh ? '采集 BGP 对等体与路由' : 'BGP sessions and prefix table' },
+                        { key: 'ospf', label: zh ? 'OSPF 邻居状态' : 'OSPF Neighbors', desc: zh ? '采集 OSPF 邻接关系' : 'OSPF adjacency states' },
+                      ],
+                    },
+                    {
+                      groupTitle: zh ? '推导计算与 IPAM 事实' : 'Derivation & IPAM Projection',
+                      items: [
+                        { key: 'endpoint_location', label: zh ? '终端定位计算' : 'Endpoint Location', desc: zh ? '参与 IP 接入端口定位推导' : 'Include in endpoint location derivation' },
+                        { key: 'prefix_projection', label: zh ? 'Prefix 前缀投影' : 'Prefix Projection', desc: zh ? '投影至 IPAM 网段事实库' : 'Project to IPAM prefix facts' },
+                      ],
+                    },
+                  ];
+
+                  return (
+                    <div className="space-y-6">
+                      {/* Device meta header */}
+                      <div className="flex flex-wrap items-center justify-between gap-3 p-4 rounded-xl bg-slate-50 dark:bg-slate-900/50 border border-black/5 dark:border-white/5">
+                        <div>
+                          <div className="flex items-center gap-2">
+                            <span className="text-sm font-bold text-slate-900 dark:text-white">
+                              {selected.device?.hostname || selected.device?.ip_address}
+                            </span>
+                            <span className="text-[10px] font-mono px-2 py-0.5 rounded-full bg-cyan-100 dark:bg-cyan-950 text-cyan-700 dark:text-cyan-300 font-semibold uppercase">
+                              {profile}
+                            </span>
+                          </div>
+                          <div className="text-xs text-slate-500 dark:text-slate-400 mt-1 font-mono">
+                            IP: {selected.device?.ip_address} · {zh ? '平台' : 'Platform'}: {selected.device?.platform || 'generic'} · {zh ? '状态' : 'Status'}: {selected.device?.status || 'active'}
+                          </div>
+                        </div>
+                        <div className="flex items-center gap-2">
+                          <button
+                            onClick={resetNsotCollectionPlan}
+                            className="px-3 py-1.5 rounded-lg text-xs font-semibold text-slate-600 dark:text-slate-300 bg-white dark:bg-slate-800 border border-slate-200 dark:border-slate-700 hover:bg-slate-100 dark:hover:bg-slate-700 transition-colors"
+                          >
+                            {zh ? '恢复角色默认策略' : 'Reset to Default'}
+                          </button>
+                        </div>
+                      </div>
+
+                      {nsotPlanMessage && (
+                        <div className="text-xs font-medium text-cyan-600 dark:text-cyan-400 px-1 animate-in fade-in">
+                          {nsotPlanMessage}
+                        </div>
+                      )}
+
+                      {/* Grouped collectors list */}
+                      <div className="space-y-5">
+                        {collectorGroups.map((grp) => (
+                          <div key={grp.groupTitle} className="space-y-2">
+                            <div className="text-[11px] font-bold uppercase tracking-wider text-slate-400 dark:text-slate-500">
+                              {grp.groupTitle}
+                            </div>
+                            <div className="grid grid-cols-1 md:grid-cols-2 gap-2.5">
+                              {grp.items.map((it) => {
+                                const isEnabled = Boolean(effective[it.key]);
+                                const hasExplicitOverride = Object.prototype.hasOwnProperty.call(overrides, it.key);
+                                return (
+                                  <div
+                                    key={it.key}
+                                    className={`p-3 rounded-xl border transition-all flex items-start justify-between gap-3 ${
+                                      isEnabled
+                                        ? 'bg-emerald-50/40 dark:bg-emerald-950/10 border-emerald-200/80 dark:border-emerald-800/40'
+                                        : 'bg-slate-50/50 dark:bg-slate-900/30 border-slate-200/60 dark:border-slate-800/60'
+                                    }`}
+                                  >
+                                    <div className="min-w-0">
+                                      <div className="flex items-center gap-2">
+                                        <span className="text-xs font-bold text-slate-800 dark:text-slate-200">
+                                          {it.label}
+                                        </span>
+                                        {hasExplicitOverride && (
+                                          <span className="text-[9px] px-1 py-0.2 rounded font-medium bg-amber-100 dark:bg-amber-950 text-amber-700 dark:text-amber-400">
+                                            {zh ? '覆盖' : 'Override'}
+                                          </span>
+                                        )}
+                                      </div>
+                                      <div className="text-[11px] text-slate-400 dark:text-slate-500 mt-0.5 leading-snug">
+                                        {it.desc}
+                                      </div>
+                                    </div>
+                                    <button
+                                      onClick={() => updateNsotCollectionPlan(it.key, !isEnabled)}
+                                      className={`px-2.5 py-1 rounded-lg text-xs font-semibold shrink-0 transition-colors ${
+                                        isEnabled
+                                          ? 'bg-emerald-600 text-white hover:bg-emerald-700 shadow-sm'
+                                          : 'bg-slate-200 dark:bg-slate-800 text-slate-500 hover:bg-slate-300 dark:hover:bg-slate-700'
+                                      }`}
+                                    >
+                                      {isEnabled ? (zh ? '已开启' : 'ON') : (zh ? '已关闭' : 'OFF')}
+                                    </button>
+                                  </div>
+                                );
+                              })}
+                            </div>
+                          </div>
+                        ))}
+                      </div>
+                    </div>
+                  );
+                })()}
+              </div>
+            </div>
+
+            {/* Footer */}
+            <div className="flex items-center justify-end px-6 py-3.5 border-t border-black/5 dark:border-white/10 bg-slate-50/50 dark:bg-slate-900/50">
+              <button
+                onClick={() => setNsotPolicyModalOpen(false)}
+                className="px-5 py-2 rounded-xl text-xs font-bold bg-[#06b6d4] hover:bg-[#0891b2] text-white shadow-md shadow-cyan-500/20 transition-all active:scale-95"
+              >
+                {zh ? '完成' : 'Done'}
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
     </div>
   );
 };

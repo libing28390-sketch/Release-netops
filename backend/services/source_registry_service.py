@@ -968,7 +968,7 @@ def update_source(source_id: str, payload: dict[str, Any], user: dict[str, Any])
                     "policy_version": int(source.get("policy_version") or 1) + 1,
                     "validation_status": "unvalidated",
                     "validation_json": "{}",
-                    "fetch_enabled": 0,
+                    "fetch_enabled": False,
                 }
             )
             if str(source.get("status") or "") == "active":

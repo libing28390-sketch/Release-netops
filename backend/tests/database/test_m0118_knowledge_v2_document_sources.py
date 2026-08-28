@@ -6,11 +6,15 @@ def test_m0118_creates_idempotent_source_observation_boundary(isolated_db):
 
     conn = isolated_db["module"].get_db_connection()
     try:
-        upgrade(conn.cursor(), False)
+        upgrade(conn.cursor(), True)
         conn.commit()
         columns = {
-            row[1]
-            for row in conn.execute("PRAGMA table_info(kb_document_source)").fetchall()
+            row[0]
+            for row in conn.execute(
+                "SELECT column_name FROM information_schema.columns "
+                "WHERE table_schema = current_schema() AND table_name = ?",
+                ("kb_document_source",),
+            ).fetchall()
         }
         assert {
             "tenant_id", "document_id", "document_version_id", "source_registry_id",
@@ -24,8 +28,14 @@ def test_m0118_creates_idempotent_source_observation_boundary(isolated_db):
 def test_m0118_has_tenant_and_source_version_unique_guards(isolated_db):
     conn = isolated_db["module"].get_db_connection()
     try:
-        indexes = conn.execute("PRAGMA index_list(kb_document_source)").fetchall()
-        index_names = {str(row[1]) for row in indexes}
+        index_names = {
+            str(row[0])
+            for row in conn.execute(
+                "SELECT indexname FROM pg_indexes "
+                "WHERE schemaname = current_schema() AND tablename = ?",
+                ("kb_document_source",),
+            ).fetchall()
+        }
         assert any("source_version" in name for name in index_names)
         assert any("document_version" in name for name in index_names)
         assert "ix_kb_document_source_hash" in index_names

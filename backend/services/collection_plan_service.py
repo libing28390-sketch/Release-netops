@@ -57,6 +57,7 @@ _ROUTING_ROLES = {
     "aggregation",
     "l3switch",
 }
+_ROUTE_TABLE_ROLES = _ROUTING_ROLES | {"firewall", "load-balancer"}
 
 
 def _as_bool(value: Any) -> bool | None:
@@ -132,10 +133,8 @@ def _default_plan(device: dict[str, Any]) -> dict[str, bool]:
     return {
         collector: (
             collector in {"reachability", "health_metrics", "interface_status", "interface_ip"}
-            or (
-                collector in {"routes", "bgp"}
-                and _role(device) in _ROUTING_ROLES
-            )
+            or (collector == "routes" and _role(device) in _ROUTE_TABLE_ROLES)
+            or (collector == "bgp" and _role(device) in _ROUTING_ROLES)
         )
         for collector in COLLECTORS
     }
