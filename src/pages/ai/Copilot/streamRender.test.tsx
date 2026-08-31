@@ -188,4 +188,63 @@ describe('AssistantTab streaming render', () => {
     expect(screen.getByText('实际模型：DeepSeek · deepseek-chat')).toBeTruthy();
     expect(screen.getByText('实际 Token：输入 18 / 输出 7')).toBeTruthy();
   });
+
+  it('renders a clarification card and submits its bounded state on selection', async () => {
+    primeBackendMocks();
+    const clarification = {
+      required: true,
+      state_id: 'clar_ui',
+      revision: 1,
+      request_kind: 'configuration_reference',
+      risk: 'medium',
+      missing_fields: ['feature', 'platform_or_model'],
+      question: '请补充配置功能和设备平台。',
+      options: [
+        { field: 'feature', value: 'vlan', label: 'VLAN / Access / Trunk' },
+        { field: 'cli_platform', value: 'huawei_yunshan_v600', label: 'Huawei YunShan V600' },
+      ],
+      allow_free_text: true,
+      retrieval_allowed: false,
+    };
+    apiMocks.chatAssistantStream.mockImplementation(
+      async (...args: any[]) => {
+        const message = args[0] as string;
+        const onToken = args[2] as (token: string) => void;
+        const onMeta = args[3] as (meta: Record<string, unknown>) => void;
+        const onDone = args[5] as (meta: Record<string, unknown>) => void;
+        if (message === '请给我华为交换机配置') {
+          onMeta({
+            intent: 'knowledge',
+            clarification,
+            execution_mode: 'local_clarification',
+            external_egress: false,
+          });
+          onToken('请补充范围');
+          onDone({ execution_mode: 'local_clarification', external_egress: false, duration_ms: 5 });
+          return;
+        }
+
+        expect(args[15]).toMatchObject({
+          state_id: 'clar_ui',
+          revision: 1,
+          values: { feature: 'vlan' },
+          action: 'submit',
+        });
+        onMeta({ intent: 'knowledge', execution_mode: 'local_knowledge', external_egress: false });
+        onToken('已按范围返回');
+        onDone({ execution_mode: 'local_knowledge', external_egress: false, duration_ms: 8 });
+      },
+    );
+
+    const user = userEvent.setup();
+    render(<AssistantTab />);
+    const input = screen.getByPlaceholderText('询问 Nexora AI，或输入 / 使用快捷指令...');
+    await user.type(input, '请给我华为交换机配置');
+    await user.click(screen.getByRole('button', { name: '发送' }));
+
+    const option = await screen.findByRole('button', { name: /VLAN \/ Access \/ Trunk/ });
+    await user.click(option);
+    await waitFor(() => expect(screen.getByText('已按范围返回')).toBeTruthy());
+    expect(apiMocks.chatAssistantStream).toHaveBeenCalledTimes(2);
+  });
 });

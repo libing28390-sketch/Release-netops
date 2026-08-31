@@ -46,6 +46,21 @@ def test_retrieval_metrics_snapshot_exposes_bounded_quality_rates():
     }
 
 
+def test_clarification_metrics_are_low_cardinality():
+    metrics = AIMetrics()
+    metrics.clarification_observed("required", "configuration_reference")
+    metrics.clarification_observed("allowed", "configuration_reference")
+    metrics.clarification_observed("disabled")
+    metrics.clarification_observed("unexpected-status", "raw-user-value")
+
+    assert metrics.snapshot()["clarification"] == {
+        "required:configuration_reference": 1,
+        "allowed:configuration_reference": 1,
+        "disabled:none": 1,
+        "unknown:unknown": 1,
+    }
+
+
 def test_retrieval_trace_runtime_quality_projection_is_bounded():
     from ai.services.retrieval_trace_store import clear_retrieval_traces, get_retrieval_trace, record_retrieval_trace
 

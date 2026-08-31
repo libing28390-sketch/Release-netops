@@ -37,12 +37,14 @@ export const CopilotInspectorDrawer: React.FC<CopilotInspectorDrawerProps> = ({
 
   const retrieval = activeMessage?.retrieval as AssistantRetrievalTrace | undefined;
   const retrievalRequest = retrieval?.request || {};
-  const retrievalStatus = retrieval?.status === 'no_match'
+  const retrievalStatus = retrieval?.status === 'clarification_required'
+    ? '本地策略已拦截 · 未检索知识库正文'
+    : retrieval?.status === 'no_match'
     ? '本地 RAG 已执行 · 精确检索未命中'
     : retrieval?.status === 'hit'
       ? '本地 RAG 已执行 · 已命中'
       : '未收到本次检索 Trace';
-  const llmSkipped = retrieval?.status === 'no_match';
+  const llmSkipped = retrieval?.status === 'no_match' || retrieval?.status === 'clarification_required';
   const metric = (value: unknown, suffix = '') => (
     typeof value === 'number' && Number.isFinite(value) ? `${value}${suffix}` : (llmSkipped ? '未调用' : '未上报')
   );
@@ -139,9 +141,14 @@ export const CopilotInspectorDrawer: React.FC<CopilotInspectorDrawerProps> = ({
           </div>
           {retrieval ? (
             <div className="space-y-2 font-mono text-[11px]">
-              <div className={`rounded border px-2 py-1.5 ${retrieval.status === 'no_match' ? 'border-amber-200 bg-amber-50 text-amber-700 dark:border-amber-900/60 dark:bg-amber-950/20 dark:text-amber-300' : 'border-blue-200 bg-blue-50 text-blue-700 dark:border-blue-900/60 dark:bg-blue-950/20 dark:text-blue-300'}`}>
+              <div className={`rounded border px-2 py-1.5 ${retrieval.status === 'clarification_required' ? 'border-violet-200 bg-violet-50 text-violet-700 dark:border-violet-900/60 dark:bg-violet-950/20 dark:text-violet-300' : retrieval.status === 'no_match' ? 'border-amber-200 bg-amber-50 text-amber-700 dark:border-amber-900/60 dark:bg-amber-950/20 dark:text-amber-300' : 'border-blue-200 bg-blue-50 text-blue-700 dark:border-blue-900/60 dark:bg-blue-950/20 dark:text-blue-300'}`}>
                 {retrievalStatus}
               </div>
+              {retrieval.clarification_required && (
+                <div className="rounded border border-violet-200 bg-violet-50 px-2 py-1.5 text-violet-700 dark:border-violet-900/60 dark:bg-violet-950/20 dark:text-violet-300">
+                  澄清前不返回正文、不调用外部模型；补齐范围后才会重新检索。
+                </div>
+              )}
               <div className="grid grid-cols-2 gap-x-3 gap-y-1 text-gray-500 dark:text-gray-400">
                 <span>Metadata candidates</span><span className="text-right text-gray-700 dark:text-gray-200">{metric(retrieval.metadata_candidate_documents)}</span>
                 <span>Final documents</span><span className="text-right text-gray-700 dark:text-gray-200">{metric(retrieval.final_document_count)}</span>

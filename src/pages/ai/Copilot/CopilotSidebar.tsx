@@ -15,6 +15,7 @@ import {
   X,
 } from 'lucide-react';
 import { ActionButton } from '../../../components/ui/ActionIconButton';
+import type { AssistantClarification } from '../../../api/ai';
 
 export interface ChatSession {
   id: string;
@@ -22,6 +23,7 @@ export interface ChatSession {
   updatedAt: string;
   messages: any[];
   status?: 'active' | 'archived';
+  pending_clarification?: AssistantClarification | null;
   created_at?: string;
   updated_at?: string;
 }

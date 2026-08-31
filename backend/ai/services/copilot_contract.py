@@ -32,10 +32,14 @@ def build_copilot_contract(
     context: dict[str, Any] | None = None,
     retrieval: dict[str, Any] | None = None,
     citations: list[dict[str, Any]] | None = None,
+    clarification: dict[str, Any] | None = None,
     runtime: dict[str, Any] | None = None,
 ) -> dict[str, Any]:
     context = context if isinstance(context, dict) else {}
     category, risk = INTENT_RISK.get(str(intent), ("consultation", "low"))
+    clarification = clarification if isinstance(clarification, dict) else None
+    if clarification and clarification.get("risk") in {"low", "medium", "high", "critical"}:
+        risk = str(clarification["risk"])
     resolution = (retrieval or {}).get("resolution") or {}
     if hasattr(resolution, "to_dict"):
         resolution = resolution.to_dict()
@@ -46,7 +50,9 @@ def build_copilot_contract(
     # noisy.  Those fields are required only when the assistant is about to
     # diagnose a symptom or generate a device-specific change.
     evidence_free_intents = {"general_qa", "chitchat", "device_search", "asset_analysis"}
-    if str(intent) in evidence_free_intents:
+    if clarification and clarification.get("required"):
+        required_fields = {}
+    elif str(intent) in evidence_free_intents:
         required_fields = {}
     else:
         required_fields = {
@@ -74,7 +80,10 @@ def build_copilot_contract(
         facts.append("已关联拓扑邻居")
     if context.get("metrics"):
         facts.append("已关联性能指标")
-    if str(intent) in evidence_free_intents:
+    if clarification and clarification.get("required"):
+        confidence = 0.25 if missing else 0.45
+        next_checks = [str(clarification.get("question") or "补充配置范围")[:600]]
+    elif str(intent) in evidence_free_intents:
         confidence = 0.95
         next_checks = []
     else:
@@ -101,7 +110,9 @@ def build_copilot_contract(
             )
         )
     source_labels = sorted(set(source_labels))
-    if not source_labels:
+    if clarification and clarification.get("required"):
+        source_labels = ["local_policy"]
+    elif not source_labels:
         # CMDB/IP/MAC handlers are deterministic read-only evidence sources,
         # even when their response does not carry citation rows.  Reserve the
         # model-inference label for true free-form synthesis/no-match paths.
@@ -141,6 +152,7 @@ def build_copilot_contract(
         "confidence": round(float(confidence), 2),
         "required_evidence": [f"补充 {item}" for item in missing],
         "next_checks": next_checks,
+        "clarification": clarification,
         "source_labels": source_labels,
         "recognized": {
             "vendor": context.get("vendor"),

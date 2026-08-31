@@ -33,6 +33,7 @@ class AIMetrics:
         self.provider_limits = Counter()
         self.fallbacks = Counter()
         self.retrieval = Counter()
+        self.clarification = Counter()
         # Import/Reindex operational signals intentionally contain only
         # low-cardinality event names and aggregate queue gauges.  Job IDs,
         # tenant IDs, worker IDs and error bodies never enter this object.
@@ -130,6 +131,24 @@ class AIMetrics:
             ):
                 if active:
                     self.retrieval[name] += 1
+
+    def clarification_observed(self, status: str, request_kind: str | None = None) -> None:
+        """Record low-cardinality configuration-scope guard outcomes."""
+
+        normalized_status = str(status or "unknown").strip().lower()
+        if normalized_status not in {"required", "allowed", "disabled"}:
+            normalized_status = "unknown"
+        normalized_kind = str(request_kind or "none").strip().lower()
+        if normalized_kind not in {
+            "configuration_reference",
+            "configuration_change",
+            "running_config_export",
+            "read_only_command",
+            "none",
+        }:
+            normalized_kind = "unknown"
+        with self._lock:
+            self.clarification[f"{normalized_status}:{normalized_kind}"] += 1
 
     def job_event(self, job_kind: str, event: str) -> None:
         """Record one bounded Import/Reindex lifecycle event.
@@ -231,6 +250,7 @@ class AIMetrics:
                     "low_confidence": int(self.retrieval.get("low_confidence", 0)),
                     "errors": int(self.retrieval.get("errors", 0)),
                 },
+                "clarification": dict(self.clarification),
                 "jobs": self._job_snapshot(),
                 "tools": dict(self.tools),
                 "agents": dict(self.agents),

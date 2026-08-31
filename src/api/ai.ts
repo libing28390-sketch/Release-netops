@@ -760,7 +760,7 @@ export interface AssistantStreamDoneMeta {
   token_source?: AITokenSource;
 }
 
-export type AIExecutionMode = 'local_knowledge' | 'local_operation' | 'provider_generated' | 'local_fallback' | 'legacy_unknown';
+export type AIExecutionMode = 'local_knowledge' | 'local_operation' | 'local_clarification' | 'provider_generated' | 'local_fallback' | 'legacy_unknown';
 export type AITokenSource = 'provider_reported' | 'estimated' | 'local_zero';
 
 export interface AssistantStreamCitation {
@@ -787,6 +787,9 @@ export interface AssistantRetrievalTrace {
     platform_candidates?: string[];
     evidence?: string;
   };
+  clarification_required?: boolean;
+  content_retrieval_skipped?: boolean;
+  clarification?: AssistantClarification;
   runtime?: {
     quality?: {
       no_match?: boolean;
@@ -800,6 +803,36 @@ export interface AssistantRetrievalTrace {
   };
 }
 
+export interface AssistantClarificationOption {
+  field?: string;
+  value: string;
+  label: string;
+}
+
+export interface AssistantClarification {
+  required?: boolean;
+  state_id?: string | null;
+  revision?: number;
+  request_kind?: string;
+  risk?: string;
+  reason_code?: string | null;
+  missing_fields?: string[];
+  recognized_fields?: Record<string, string>;
+  question?: string;
+  options?: AssistantClarificationOption[];
+  allow_free_text?: boolean;
+  allow_generic_reference?: boolean;
+  retrieval_allowed?: boolean;
+  expires_at?: string | null;
+}
+
+export interface AssistantClarificationAnswer {
+  state_id?: string;
+  revision?: number;
+  values?: Record<string, string>;
+  action?: 'submit' | 'cancel';
+}
+
 export interface AssistantStreamMeta {
   event_version?: string;
   request_id?: string;
@@ -809,6 +842,7 @@ export interface AssistantStreamMeta {
   citations?: any[];
   facts_retrieved?: boolean;
   retrieval?: AssistantRetrievalTrace;
+  clarification?: AssistantClarification;
   copilot?: CopilotContract;
   model_id?: string;
   requested_model_id?: string;
@@ -831,6 +865,7 @@ export interface CopilotContract {
   assumptions?: string[];
   confidence?: number;
   required_evidence?: string[];
+  clarification?: AssistantClarification;
   next_checks?: string[];
   source_labels?: string[];
   recognized?: { vendor?: string; model?: string; os?: string; version?: string; ambiguous_candidates?: string[] };
@@ -865,6 +900,8 @@ export interface AIConversationSummary {
   context_budget?: number;
   selected_model_id?: string | null;
   model_locked?: boolean;
+  pending_clarification?: AssistantClarification | null;
+  clarification_state_version?: number;
   created_at: string;
   updated_at: string;
 }
@@ -953,7 +990,7 @@ export async function importAIConversationMessages(
   });
 }
 
-export async function chatAssistant(message: string, history?: Array<{ role: string; content: string }>, modelId?: string): Promise<{ answer: string; intent: string; citations: any[]; retrieval?: AssistantRetrievalTrace; request_id: string }> {
+export async function chatAssistant(message: string, history?: Array<{ role: string; content: string }>, modelId?: string): Promise<{ answer: string; intent: string; citations: any[]; retrieval?: AssistantRetrievalTrace; clarification?: AssistantClarification; execution_mode?: AIExecutionMode; external_egress?: boolean; request_id: string }> {
   return apiRequest('/api/ai/assistant/chat', {
     method: 'POST',
     body: JSON.stringify({ message, history, model_id: modelId }),
@@ -976,6 +1013,7 @@ export async function chatAssistantStream(
   streamId?: string,
   lastEventId?: number,
   onStreamPosition?: (session: AssistantStreamSession) => void,
+  clarification?: AssistantClarificationAnswer,
 ): Promise<void> {
   const token = localStorage.getItem('netops_token') || localStorage.getItem('token');
   const headers: Record<string, string> = {
@@ -1003,6 +1041,7 @@ export async function chatAssistantStream(
       conversation_id: conversationId,
       model_id: modelId,
       context: context || {},
+      clarification: clarification || undefined,
       stream_id: activeRequestStreamId,
       last_event_id: activeRequestLastEventId,
     }),

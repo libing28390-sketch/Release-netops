@@ -1,28 +1,11 @@
+# nexora-action-code: get_fans
 Value Filldown SLOT (\d+)
-Value Required DEVICE_ID (\d+)
-Value Required STATUS (\S+)
-Value AIRFLOW (.+)
+Value FAN_ID (\d+)
+Value STATE (.+?)
+Value AIRFLOW (.+?)
 
 Start
-  # S5500/S3610 style: Slot 1 / FAN 1 / State : Normal
-  ^\s*Slot\s+${SLOT}\s*:?[ \t]*$$
-  ^\s*(?:FAN|Fan)\s+${DEVICE_ID}\s*:?[ \t]*$$
-  ^\s*(?:State|Status)\s*:\s*${STATUS}\s*$$ -> Record Start
-  ^\s*Device\s+Info\s+on\s+Slot\s+${SLOT}
-  ^\s*Device\s+ID\.\s+Status -> TabularFan
-  ^\s*Fan\s+${DEVICE_ID}: -> VerboseFan
-  ^.*
-
-TabularFan
-  ^\s*${DEVICE_ID}\s+${STATUS}\s*$$ -> Record
-  ^\s*Device\s+Info\s+on\s+Slot\s+${SLOT}
-  ^\s*Device\s+ID\.\s+Status
-  ^\s*$$
-  ^.*
-
-VerboseFan
-  ^\s*Fan\s+${DEVICE_ID}: -> VerboseFan
-  ^\s*State\s*:\s*${STATUS}
-  ^\s*Airflow\s+Direction\s*:\s*${AIRFLOW} -> Record Start
-  ^\s*$$
-  ^.*
+  ^\s*Slot\s*$$
+  ^\s*${SLOT}:\s*$$
+  ^\s*Fan\s+${FAN_ID}\s+State:\s+${STATE}\s*$$
+  ^\s*Airflow\s+Direction:\s+${AIRFLOW}\s*$$ -> Record

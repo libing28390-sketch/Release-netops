@@ -5,7 +5,7 @@ FastAPI Router for AI Assistant Copilot, Natural Query, IP/MAC Location, and Kno
 from __future__ import annotations
 
 import json
-from typing import Any, Dict, List, Optional
+from typing import Any, Dict, List, Literal, Optional
 from fastapi import APIRouter, Depends, HTTPException, Query, UploadFile, File
 from pydantic import BaseModel, ConfigDict, Field
 from ai.security.permissions import require_ai_permission
@@ -39,7 +39,13 @@ from ai.services.metadata_confirmation_service import (
     validate_metadata_confirmation,
 )
 from ai.services.knowledge_reindex_service import knowledge_reindex_service
-from ai.services.conversation_service import append_message, get_context, set_conversation_model
+from ai.services.conversation_service import (
+    append_message,
+    clear_clarification_state,
+    get_context,
+    set_clarification_state,
+    set_conversation_model,
+)
 from ai.security.security_service import create_diagnostic_case, handoff_case, record_feedback
 from api.knowledge_contracts import (
     ChatHistoryMessage,
@@ -58,6 +64,15 @@ from api.knowledge_response import DOCUMENT_SUMMARY_FIELDS, PaginationMeta, atta
 router = APIRouter(prefix="/assistant", tags=["AI Copilot & Knowledge"])
 
 
+class ClarificationAnswer(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    state_id: Optional[str] = Field(default=None, max_length=80)
+    revision: Optional[int] = Field(default=None, ge=0, le=100_000)
+    values: Dict[str, str] = Field(default_factory=dict, max_length=12)
+    action: Literal["submit", "cancel"] = "submit"
+
+
 class ChatRequest(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
@@ -66,6 +81,7 @@ class ChatRequest(BaseModel):
     conversation_id: Optional[str] = None
     model_id: Optional[str] = None
     context: CopilotContext = Field(default_factory=CopilotContext)
+    clarification: Optional[ClarificationAnswer] = None
     stream_id: Optional[str] = Field(default=None, pattern=r"^[A-Za-z0-9_-]{8,128}$")
     last_event_id: Optional[int] = Field(default=None, ge=0, le=10_000_000)
 
@@ -121,6 +137,61 @@ class KnowledgeDocumentActionRequest(BaseModel):
     reason: str = Field(default="", max_length=1024)
 
 
+def _sync_clarification_state(
+    *,
+    conversation_id: str | None,
+    tenant_id: str,
+    user_id: str,
+    result: Dict[str, Any],
+    pending: Dict[str, Any] | None,
+    cancel_requested: bool = False,
+) -> None:
+    """Persist only the bounded policy result, retaining safe old state on errors."""
+
+    if not conversation_id:
+        return
+    current = pending if isinstance(pending, dict) else {}
+    expected_revision = current.get("revision")
+    expected_state_id = current.get("state_id")
+    clarification = result.get("clarification")
+    try:
+        if cancel_requested:
+            clear_clarification_state(
+                conversation_id=conversation_id,
+                tenant_id=tenant_id,
+                user_id=user_id,
+                expected_revision=int(expected_revision) if expected_revision is not None else None,
+                expected_state_id=str(expected_state_id) if expected_state_id else None,
+            )
+        elif isinstance(clarification, dict) and clarification.get("required"):
+            persisted = set_clarification_state(
+                conversation_id=conversation_id,
+                tenant_id=tenant_id,
+                user_id=user_id,
+                state=clarification,
+                expected_revision=int(expected_revision) if expected_revision is not None else None,
+                expected_state_id=str(expected_state_id) if expected_state_id else None,
+            )
+            # The service canonicalizes the revision while holding the row
+            # lock.  Keep the in-memory REST response consistent with it.
+            result["clarification"] = persisted
+            if isinstance(result.get("copilot"), dict):
+                result["copilot"]["clarification"] = persisted
+        elif current and str(result.get("intent") or ""):
+            clear_clarification_state(
+                conversation_id=conversation_id,
+                tenant_id=tenant_id,
+                user_id=user_id,
+                expected_revision=int(expected_revision) if expected_revision is not None else None,
+                expected_state_id=str(expected_state_id) if expected_state_id else None,
+            )
+    except (LookupError, RuntimeError, ValueError):
+        # A state write must not turn a valid read-only answer into a failed
+        # request.  The next conversation load will expose the previous state
+        # and the user can retry without losing knowledge content.
+        return
+
+
 from fastapi.responses import StreamingResponse
 from core.context import request_id_var
 
@@ -130,12 +201,16 @@ async def chat_assistant(req: ChatRequest, user=Depends(require_ai_permission("a
     user_id = user.get("username", "user")
     tenant_id = user.get("tenant_id") or "tenant-default"
     history = [item.model_dump() for item in req.history] if req.history else None
+    pending_clarification: Optional[Dict[str, Any]] = None
+    clarification_response = req.clarification.model_dump(exclude_none=True) if req.clarification else None
+    cancel_requested = bool(req.clarification and req.clarification.action == "cancel")
     requested_model_id = req.model_id
     model_selection_source = "message_explicit_model" if req.model_id else None
     if req.conversation_id:
         try:
             context = get_context(conversation_id=req.conversation_id, tenant_id=tenant_id, user_id=user_id)
             history = [{"role": item["role"], "content": item["content"]} for item in context["messages"]]
+            pending_clarification = context.get("conversation", {}).get("pending_clarification")
             if not requested_model_id and context.get("conversation", {}).get("selected_model_id"):
                 requested_model_id = context["conversation"]["selected_model_id"]
                 model_selection_source = "session_model"
@@ -161,8 +236,18 @@ async def chat_assistant(req: ChatRequest, user=Depends(require_ai_permission("a
         model_selection_source=model_selection_source,
         context=req.context.model_dump(exclude_none=True),
         request_id=request_id_var.get("-"),
+        pending_clarification=pending_clarification,
+        clarification_response=clarification_response,
     )
     if req.conversation_id:
+        _sync_clarification_state(
+            conversation_id=req.conversation_id,
+            tenant_id=tenant_id,
+            user_id=user_id,
+            result=result,
+            pending=pending_clarification,
+            cancel_requested=cancel_requested,
+        )
         try:
             append_message(
                 conversation_id=req.conversation_id,
@@ -196,6 +281,7 @@ async def chat_assistant_stream(req: ChatRequest, user=Depends(require_ai_permis
     user_id = str(user.get("username") or "user")
     tenant_id = str(user.get("tenant_id") or "tenant-default")
     history = [item.model_dump() for item in req.history] if req.history else None
+    pending_clarification: Optional[Dict[str, Any]] = None
     requested_model_id = req.model_id
     model_selection_source = "message_explicit_model" if req.model_id else None
     fingerprint = request_fingerprint(
@@ -205,6 +291,7 @@ async def chat_assistant_stream(req: ChatRequest, user=Depends(require_ai_permis
             "conversation_id": req.conversation_id,
             "model_id": req.model_id,
             "context": req.context.model_dump(exclude_none=True),
+            "clarification": req.clarification.model_dump(exclude_none=True) if req.clarification else None,
         }
     )
     try:
@@ -229,6 +316,7 @@ async def chat_assistant_stream(req: ChatRequest, user=Depends(require_ai_permis
     if req.conversation_id and not stream_state.completed:
         try:
             context = get_context(conversation_id=req.conversation_id, tenant_id=tenant_id, user_id=user_id)
+            pending_clarification = context.get("conversation", {}).get("pending_clarification")
             context_messages = list(context["messages"])
             if stream_state.user_message_persisted and context_messages:
                 last_message = context_messages[-1]
@@ -275,6 +363,8 @@ async def chat_assistant_stream(req: ChatRequest, user=Depends(require_ai_permis
                 context=req.context.model_dump(exclude_none=True),
                 stream_id=stream_state.stream_id,
                 request_id=request_id_var.get("-"),
+                pending_clarification=pending_clarification,
+                clarification_response=req.clarification.model_dump(exclude_none=True) if req.clarification else None,
             ):
                 for part in split_sse_events(event):
                     sequence = event_sequence(part)
@@ -282,7 +372,7 @@ async def chat_assistant_stream(req: ChatRequest, user=Depends(require_ai_permis
                     payload = event_payload(part)
                     if isinstance(payload, dict):
                         for key in (
-                            "requested_model_id", "model_id", "provider_id", "route_reason",
+                            "intent", "clarification", "requested_model_id", "model_id", "provider_id", "route_reason",
                             "fallback_used", "execution_mode", "external_egress", "input_tokens",
                             "output_tokens", "latency_ms", "duration_ms", "token_source",
                         ):
@@ -300,6 +390,19 @@ async def chat_assistant_stream(req: ChatRequest, user=Depends(require_ai_permis
                     # bytes instead of appending a second token.
                     cached_event = stream_state.events.get(sequence_number, part)
                     yield cached_event.rstrip() + "\n\n"
+
+            if req.conversation_id:
+                _sync_clarification_state(
+                    conversation_id=req.conversation_id,
+                    tenant_id=tenant_id,
+                    user_id=user_id,
+                    result={
+                        "intent": route_meta.get("intent"),
+                        "clarification": route_meta.get("clarification"),
+                    },
+                    pending=pending_clarification,
+                    cancel_requested=bool(req.clarification and req.clarification.action == "cancel"),
+                )
 
             if req.conversation_id and stream_state.assistant_content and not stream_state.assistant_message_persisted:
                 try:

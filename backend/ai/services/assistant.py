@@ -10,6 +10,7 @@ import re
 import time
 import uuid
 from contextvars import ContextVar
+from datetime import datetime, timedelta, timezone
 from typing import Any, Dict, List, Optional
 from ai.gateway.llm_gateway import llm_gateway
 from ai.gateway.exceptions import AISecurityBlockedException
@@ -29,6 +30,12 @@ from services.official_config_template_service import _render_template, search_o
 from services.official_source_suggestion_service import suggest_official_sources
 from services.official_source_supplement_service import record_official_source_suggestions
 from ai.services.copilot_contract import build_copilot_contract
+from ai.services.config_clarification import (
+    assess_configuration_request,
+    clarification_policy_enabled,
+    merge_context_fields,
+    render_clarification_payload,
+)
 from ai.services.retrieval_trace_store import record_retrieval_trace, update_retrieval_trace
 from ai.services.metrics import ai_metrics
 from ai.security.sanitizer import sanitize_log_text
@@ -235,8 +242,10 @@ class AIAssistantService:
         user_id: Optional[str] = None,
         roles: Optional[List[str]] = None,
         site_ids: Optional[List[str]] = None,
+        context: Optional[Dict[str, Any]] = None,
     ) -> tuple[RetrievalRequest, EntityResolution]:
         metadata = intent_info.get("knowledge_intent") or intent_info.get("metadata") or intent_info.get("filters") or {}
+        metadata = merge_context_fields(metadata, context)
         resolution = product_resolver.resolve_query(
             message,
             dict(metadata),
@@ -276,6 +285,8 @@ class AIAssistantService:
         roles: Optional[List[str]] = None,
         site_ids: Optional[List[str]] = None,
         request_id: Optional[str] = None,
+        context: Optional[Dict[str, Any]] = None,
+        pending_clarification: Optional[Dict[str, Any]] = None,
     ) -> Dict[str, Any]:
         retrieval_started_at = time.perf_counter()
         request, resolution = self.build_knowledge_request(
@@ -285,11 +296,45 @@ class AIAssistantService:
             user_id=user_id,
             roles=roles,
             site_ids=site_ids,
+            context=context,
         )
         clarification_required = self._requires_platform_clarification(request, resolution)
+        policy_enabled = clarification_policy_enabled(tenant_id)
+        clarification_decision = assess_configuration_request(
+            message=message,
+            metadata=request.__dict__,
+            context=context,
+            resolution=resolution,
+        ) if policy_enabled else None
+        if not policy_enabled:
+            ai_metrics.clarification_observed("disabled")
+        elif clarification_decision is not None:
+            ai_metrics.clarification_observed(
+                "required"
+                if clarification_decision.required or not clarification_decision.retrieval_allowed
+                else "allowed",
+                clarification_decision.request_kind,
+            )
+        if clarification_decision and (clarification_decision.required or not clarification_decision.retrieval_allowed):
+            clarification_required = True
+        clarification_payload = clarification_decision.to_dict() if clarification_decision else None
+        if clarification_decision and (clarification_decision.required or not clarification_decision.retrieval_allowed):
+            if clarification_payload is None:
+                clarification_payload = clarification_decision.to_dict()
+            clarification_payload["required"] = True
+            clarification_payload["expires_at"] = (
+                datetime.now(timezone.utc) + timedelta(minutes=30)
+            ).replace(microsecond=0).isoformat()
+            pending = pending_clarification if isinstance(pending_clarification, dict) else {}
+            clarification_payload["state_id"] = str(
+                pending.get("state_id") or f"clar_{uuid.uuid4().hex[:20]}"
+            )[:80]
+            clarification_payload["revision"] = int(pending.get("revision") or 0) + 1
         if clarification_required:
             retrieval = {
                 "results": [],
+                "status": "clarification_required",
+                "clarification": clarification_payload,
                 "debug": {
                     "metadata_candidate_documents": len(resolution.candidates),
                     "candidate_count": 0,
@@ -297,6 +342,8 @@ class AIAssistantService:
                     "vector_top_n": 0,
                     "clarification_required": True,
                     "cross_platform_search": False,
+                    "content_retrieval_skipped": True,
+                    "clarification_policy_enabled": policy_enabled,
                 },
             }
             retrieval["explanation"] = build_retrieval_explanation(request, retrieval["debug"], [])
@@ -304,7 +351,12 @@ class AIAssistantService:
             retrieval = rag_retriever.search(request)
             retrieval.setdefault("debug", {})["clarification_required"] = False
             retrieval["debug"]["cross_platform_search"] = bool(resolution.ambiguous)
+            retrieval["debug"]["clarification_policy_enabled"] = policy_enabled
+            retrieval["clarification"] = clarification_payload
         quality = self._retrieval_quality_signals(request, retrieval)
+        if clarification_decision and (clarification_decision.required or not clarification_decision.retrieval_allowed):
+            quality["no_match"] = False
+            quality["clarification_required"] = True
         retrieval.setdefault("debug", {})["quality"] = quality
         ai_metrics.retrieval_observed(
             no_match=bool(quality["no_match"]),
@@ -361,7 +413,13 @@ class AIAssistantService:
                 # closed and never pretends that a source was imported.
                 pass
         retrieval["request_id"] = request_id
-        return {"request": request, "resolution": resolution, **retrieval}
+        return {
+            "request": request,
+            "resolution": resolution,
+            "clarification": clarification_payload,
+            "clarification_decision": clarification_decision,
+            **retrieval,
+        }
 
     @staticmethod
     def _retrieval_quality_signals(request: RetrievalRequest, retrieval: Dict[str, Any]) -> Dict[str, Any]:
@@ -424,6 +482,10 @@ class AIAssistantService:
             )
 
         request = knowledge_result.get("request")
+        clarification = knowledge_result.get("clarification")
+        clarification_required = bool(
+            isinstance(clarification, dict) and clarification.get("required")
+        ) or bool(debug.get("clarification_required"))
         official_sources = suggest_official_sources(request, limit=3)
 
         def official_followup() -> str:
@@ -825,6 +887,10 @@ class AIAssistantService:
         resolution = knowledge_result.get("resolution")
         resolution_data = resolution.to_dict() if hasattr(resolution, "to_dict") else (resolution or {})
         request = knowledge_result.get("request")
+        clarification = knowledge_result.get("clarification")
+        clarification_required = bool(
+            isinstance(clarification, dict) and clarification.get("required")
+        ) or bool(debug.get("clarification_required"))
 
         def as_int(value: Any) -> int:
             try:
@@ -840,14 +906,16 @@ class AIAssistantService:
             "request_id": knowledge_result.get("request_id"),
             "trace_id": knowledge_result.get("retrieval_trace_id"),
             "source": "local_rag",
-            "status": "hit" if rag_chunks else "no_match",
+            "status": "clarification_required" if clarification_required else ("hit" if rag_chunks else "no_match"),
             "metadata_candidate_documents": as_int(debug.get("metadata_candidate_documents")),
             "candidate_count": as_int(debug.get("candidate_count")),
             "dedup_document_count": as_int(debug.get("dedup_document_count")),
             "final_document_count": len(rag_chunks or []),
             "vector_top_n": as_int(debug.get("vector_top_n")),
-            "clarification_required": bool(debug.get("clarification_required")),
+            "clarification_required": clarification_required,
             "cross_platform_search": bool(debug.get("cross_platform_search")),
+            "content_retrieval_skipped": bool(debug.get("content_retrieval_skipped")),
+            "clarification": clarification if isinstance(clarification, dict) else None,
             "request": {
                 field: getattr(request, field, None)
                 for field in request_fields
@@ -870,6 +938,179 @@ class AIAssistantService:
             "explanation": knowledge_result.get("explanation") or {},
         }
 
+    @staticmethod
+    def _merge_pending_clarification_intent(
+        message: str,
+        intent_info: Dict[str, Any],
+        pending_clarification: Optional[Dict[str, Any]],
+        clarification_response: Optional[Dict[str, Any]],
+    ) -> Dict[str, Any]:
+        """Merge a structured follow-up into the original configuration scope."""
+
+        pending = pending_clarification if isinstance(pending_clarification, dict) else {}
+        response = clarification_response if isinstance(clarification_response, dict) else {}
+        values = response.get("values") if isinstance(response.get("values"), dict) else {}
+        current_intent = str(intent_info.get("intent") or "general_qa")
+        pending_kind = str(pending.get("request_kind") or "")
+        pending_config = pending_kind in {
+            "configuration_reference",
+            "configuration_change",
+            "running_config_export",
+        }
+        lower_message = str(message or "").lower()
+        reply_markers = (
+            "display version", "v200", "v300", "v600", "vrp", "yunshan",
+            "vlan", "ospf", "bgp", "stp", "trunk", "access", "静态路由",
+            "交换机", "型号", "版本", "平台", "配置",
+        )
+        looks_like_slot_reply = bool(values) or any(marker in lower_message for marker in reply_markers)
+        if not pending_config or not looks_like_slot_reply:
+            return intent_info
+
+        metadata = dict(
+            intent_info.get("knowledge_intent")
+            or intent_info.get("metadata")
+            or intent_info.get("filters")
+            or {}
+        )
+        field_aliases = {
+            "software_version": "software_release",
+            "version": "software_release",
+            "target_device": "device_identifier",
+            "device_id": "device_identifier",
+            "model": "product_model",
+            "platform": "cli_platform",
+        }
+        previous = pending.get("recognized_fields") if isinstance(pending.get("recognized_fields"), dict) else {}
+        for key, value in previous.items():
+            target = field_aliases.get(str(key), str(key))
+            if metadata.get(target) in (None, "", [], {}) and str(value or "").strip():
+                metadata[target] = str(value).strip()[:256]
+        for key, value in values.items():
+            target = field_aliases.get(str(key), str(key))
+            if target not in {
+                "vendor", "product_family", "product_series", "product_model",
+                "os_family", "os_generation", "software_train", "software_release",
+                "cli_platform", "feature_domain", "feature", "subfeature",
+                "device_identifier",
+            }:
+                continue
+            normalized = str(value or "").strip()[:256]
+            if normalized and normalized != "display_version":
+                metadata[target] = normalized
+        metadata.setdefault("request_type", "knowledge")
+        metadata.setdefault("knowledge_type", "configuration")
+        metadata.setdefault("document_category", "configuration")
+        if current_intent != "knowledge":
+            return {
+                "intent": "knowledge",
+                "knowledge_intent": metadata,
+                "metadata": metadata,
+                "filters": metadata,
+                **metadata,
+            }
+        intent_info["knowledge_intent"] = metadata
+        intent_info["metadata"] = metadata
+        intent_info["filters"] = metadata
+        intent_info.update(metadata)
+        return intent_info
+
+    @staticmethod
+    def _clarification_response(
+        *,
+        message: str,
+        intent: str,
+        knowledge_result: Dict[str, Any],
+        knowledge_trace: Optional[Dict[str, Any]],
+        context: Dict[str, Any],
+        request_id: str,
+    ) -> Dict[str, Any]:
+        """Build a local response without invoking retrieval content or an LLM."""
+
+        clarification = knowledge_result.get("clarification") or {}
+        answer = render_clarification_payload(clarification)
+        return {
+            "answer": answer,
+            "intent": intent,
+            "facts_retrieved": False,
+            "citations": [],
+            "answer_contract": answer_contract(
+                intent=intent,
+                citations=[],
+                grounded=False,
+                no_match=False,
+            ),
+            "retrieval": knowledge_trace,
+            "clarification": clarification,
+            "request_id": request_id,
+            "execution_mode": "local_clarification",
+            "external_egress": False,
+            "input_tokens": 0,
+            "output_tokens": 0,
+            "token_source": "local_zero",
+            "copilot": build_copilot_contract(
+                intent=intent,
+                message=message,
+                context=context,
+                retrieval=knowledge_trace,
+                citations=[],
+                clarification=clarification,
+                runtime={
+                    "device_connected": False,
+                    "cli_executed": False,
+                    "external_egress": False,
+                    "execution_mode": "local_clarification",
+                    "input_tokens": 0,
+                    "output_tokens": 0,
+                },
+            ),
+        }
+
+    @staticmethod
+    def _clarification_cancel_response(
+        *,
+        message: str,
+        request_id: str,
+        context: Dict[str, Any],
+    ) -> Dict[str, Any]:
+        """Cancel the guided flow locally without consulting the provider."""
+
+        intent = "general_qa"
+        answer = "已取消本次配置范围引导。你可以重新描述需求，例如：查询 Huawei V300 的 VLAN 配置。"
+        return {
+            "answer": answer,
+            "intent": intent,
+            "facts_retrieved": False,
+            "citations": [],
+            "answer_contract": answer_contract(
+                intent=intent,
+                citations=[],
+                grounded=False,
+                no_match=False,
+            ),
+            "clarification": None,
+            "request_id": request_id,
+            "execution_mode": "local_clarification",
+            "external_egress": False,
+            "input_tokens": 0,
+            "output_tokens": 0,
+            "token_source": "local_zero",
+            "copilot": build_copilot_contract(
+                intent=intent,
+                message=message,
+                context=context,
+                clarification=None,
+                runtime={
+                    "device_connected": False,
+                    "cli_executed": False,
+                    "external_egress": False,
+                    "execution_mode": "local_clarification",
+                    "input_tokens": 0,
+                    "output_tokens": 0,
+                },
+            ),
+        }
+
     async def chat(
         self,
         message: str,
@@ -882,10 +1123,18 @@ class AIAssistantService:
         model_selection_source: Optional[str] = None,
         context: Optional[Dict[str, Any]] = None,
         request_id: Optional[str] = None,
+        pending_clarification: Optional[Dict[str, Any]] = None,
+        clarification_response: Optional[Dict[str, Any]] = None,
     ) -> Dict[str, Any]:
         request_id = resolve_request_id(request_id or request_id_var.get("-"), prefix="req")
         # 1. Parse intent
         intent_info = await intent_parser.parse_intent(message, user_id=user_id)
+        intent_info = self._merge_pending_clarification_intent(
+            message,
+            intent_info,
+            pending_clarification,
+            clarification_response,
+        )
         intent = intent_info.get("intent", "general_qa")
         filters = intent_info.get("filters", {})
 
@@ -898,6 +1147,13 @@ class AIAssistantService:
             context_facts["copilot_context"] = copilot_context
         citations = []
         knowledge_trace: Optional[Dict[str, Any]] = None
+
+        if isinstance(clarification_response, dict) and clarification_response.get("action") == "cancel":
+            return self._clarification_cancel_response(
+                message=message,
+                request_id=request_id,
+                context=copilot_context,
+            )
 
         # 2. Dispatch to specialized intent handler
         if intent == "asset_analysis":
@@ -954,6 +1210,8 @@ class AIAssistantService:
                 roles=roles,
                 site_ids=site_ids,
                 request_id=request_id,
+                context=copilot_context,
+                pending_clarification=pending_clarification,
             )
             rag_chunks = knowledge_result.get("results") or []
             knowledge_trace = self._knowledge_retrieval_trace(knowledge_result, rag_chunks)
@@ -1007,6 +1265,16 @@ class AIAssistantService:
                     )
 
         knowledge_no_match = intent == "knowledge" and not rag_chunks
+        clarification = knowledge_result.get("clarification") if isinstance(knowledge_result, dict) else None
+        if intent == "knowledge" and isinstance(clarification, dict) and clarification.get("required"):
+            return self._clarification_response(
+                message=message,
+                intent=intent,
+                knowledge_result=knowledge_result,
+                knowledge_trace=knowledge_trace,
+                context=copilot_context,
+                request_id=request_id,
+            )
         if knowledge_no_match:
             # Keep the normal LLM path alive for a useful DeepSeek/general
             # answer.  The local miss is explicit in the prompt and the
@@ -1170,6 +1438,8 @@ class AIAssistantService:
         context: Optional[Dict[str, Any]] = None,
         stream_id: Optional[str] = None,
         request_id: Optional[str] = None,
+        pending_clarification: Optional[Dict[str, Any]] = None,
+        clarification_response: Optional[Dict[str, Any]] = None,
     ):
         """Stream one request under a stable, resumable SSE identity.
 
@@ -1194,6 +1464,8 @@ class AIAssistantService:
                 model_selection_source=model_selection_source,
                 context=context,
                 request_id=request_id,
+                pending_clarification=pending_clarification,
+                clarification_response=clarification_response,
             ):
                 yield event
         finally:
@@ -1211,6 +1483,8 @@ class AIAssistantService:
         model_selection_source: Optional[str] = None,
         context: Optional[Dict[str, Any]] = None,
         request_id: Optional[str] = None,
+        pending_clarification: Optional[Dict[str, Any]] = None,
+        clarification_response: Optional[Dict[str, Any]] = None,
     ):
         request_id = resolve_request_id(request_id or request_id_var.get("-"), prefix="req")
         started_at = time.perf_counter()
@@ -1227,9 +1501,17 @@ class AIAssistantService:
         citations = []
         knowledge_trace: Optional[Dict[str, Any]] = None
         knowledge_result: Dict[str, Any] | None = None
+        clarification_payload: Dict[str, Any] | None = None
+        clarification_required = False
 
         try:
             intent_info = await intent_parser.parse_intent(message, user_id=user_id)
+            intent_info = self._merge_pending_clarification_intent(
+                message,
+                intent_info,
+                pending_clarification,
+                clarification_response,
+            )
             intent = intent_info.get("intent", "general_qa")
             filters = intent_info.get("filters", {})
             yield _progress_event(
@@ -1239,6 +1521,45 @@ class AIAssistantService:
                 detail=f"识别为 {intent}",
                 operation="intent_parser.parse_intent",
             )
+
+            if isinstance(clarification_response, dict) and clarification_response.get("action") == "cancel":
+                cancel_result = self._clarification_cancel_response(
+                    message=message,
+                    request_id=request_id,
+                    context=copilot_context,
+                )
+                yield _meta_event({
+                    "request_id": request_id,
+                    "intent": cancel_result["intent"],
+                    "facts_retrieved": False,
+                    "citations": [],
+                    "answer_contract": cancel_result["answer_contract"],
+                    "clarification": None,
+                    "execution_mode": cancel_result["execution_mode"],
+                    "external_egress": False,
+                    "input_tokens": 0,
+                    "output_tokens": 0,
+                    "token_source": "local_zero",
+                    "copilot": cancel_result["copilot"],
+                })
+                cancel_step = ("clarification", "取消配置范围确认", "assistant.configuration_clarification")
+                yield _progress_event(cancel_step[0], cancel_step[1], "running", operation=cancel_step[2])
+                yield _token_event(cancel_result["answer"])
+                yield _progress_event(
+                    cancel_step[0],
+                    cancel_step[1],
+                    "completed",
+                    detail="已取消本次配置范围引导",
+                    operation=cancel_step[2],
+                )
+                yield _done_event(started_at, extra={
+                    "execution_mode": "local_clarification",
+                    "external_egress": False,
+                    "input_tokens": 0,
+                    "output_tokens": 0,
+                    "token_source": "local_zero",
+                })
+                return
 
             if intent == "asset_analysis":
                 active_step = ("asset_analysis", "\u805a\u5408 CMDB \u8d44\u4ea7\uff08\u53ea\u8bfb\uff09", "natural_query_service.execute_asset_analysis")
@@ -1333,9 +1654,16 @@ class AIAssistantService:
                     roles=roles,
                     site_ids=site_ids,
                     request_id=request_id,
+                    context=copilot_context,
+                    pending_clarification=pending_clarification,
                 )
                 rag_chunks = knowledge_result.get("results") or []
                 knowledge_trace = self._knowledge_retrieval_trace(knowledge_result, rag_chunks)
+                clarification_payload = knowledge_result.get("clarification")
+                clarification_required = bool(
+                    isinstance(clarification_payload, dict)
+                    and clarification_payload.get("required")
+                )
                 context_facts["knowledge_intent"] = knowledge_result["request"].__dict__
                 context_facts["entity_resolution"] = knowledge_result["resolution"].to_dict()
                 context_facts["retrieval_debug"] = knowledge_result.get("debug", {})
@@ -1354,7 +1682,12 @@ class AIAssistantService:
             # configuration query is otherwise well-scoped, use only the
             # reviewed local official template catalog as a second chance;
             # never broaden to another vendor or an unverified web result.
-            if intent == "knowledge" and not rag_chunks and knowledge_result is not None:
+            if (
+                intent == "knowledge"
+                and not rag_chunks
+                and knowledge_result is not None
+                and not clarification_required
+            ):
                 template_request = knowledge_result.get("request")
                 template_chunks = search_official_templates(template_request, limit=5)
                 if template_chunks:
@@ -1413,10 +1746,14 @@ class AIAssistantService:
                 active_step[0],
                 active_step[1],
                 "completed",
-                detail=f"命中 {len(rag_chunks) if rag_chunks else 0} 个知识片段",
+                detail=(
+                    "请求范围不足，已跳过知识库正文检索"
+                    if clarification_required
+                    else f"命中 {len(rag_chunks) if rag_chunks else 0} 个知识片段"
+                ),
                 operation=active_step[2],
             )
-            knowledge_no_match = intent == "knowledge" and not rag_chunks
+            knowledge_no_match = intent == "knowledge" and not rag_chunks and not clarification_required
             if knowledge_no_match:
                 # Continue through the ordinary model path in general-reference
                 # mode.  Only structured query scope is retained for cloud
@@ -1445,6 +1782,74 @@ class AIAssistantService:
             )
             yield _sse_event("error", {"code": "ASSISTANT_CONTEXT_ERROR", "message": "只读数据准备失败", "retryable": True})
             yield _done_event(started_at)
+            return
+
+        if clarification_required and isinstance(clarification_payload, dict):
+            contract = answer_contract(
+                intent=intent,
+                citations=[],
+                grounded=False,
+                no_match=False,
+            )
+            meta = {
+                "request_id": request_id,
+                "intent": intent,
+                "facts_retrieved": False,
+                "citations": [],
+                "answer_contract": contract,
+                "clarification": clarification_payload,
+                "retrieval": knowledge_trace,
+                "requested_model_id": model_id,
+                "selection_source": model_selection_source,
+                "execution_mode": "local_clarification",
+                "external_egress": False,
+                "input_tokens": 0,
+                "output_tokens": 0,
+                "token_source": "local_zero",
+                "copilot": build_copilot_contract(
+                    intent=intent,
+                    message=message,
+                    context=copilot_context,
+                    retrieval=knowledge_trace,
+                    citations=[],
+                    clarification=clarification_payload,
+                    runtime={
+                        "device_connected": False,
+                        "cli_executed": False,
+                        "external_egress": False,
+                        "execution_mode": "local_clarification",
+                        "input_tokens": 0,
+                        "output_tokens": 0,
+                    },
+                ),
+            }
+            yield _meta_event(meta)
+            clarification_step = (
+                "clarification",
+                "确认配置范围",
+                "assistant.configuration_clarification",
+            )
+            yield _progress_event(
+                clarification_step[0],
+                clarification_step[1],
+                "running",
+                operation=clarification_step[2],
+            )
+            yield _token_event(render_clarification_payload(clarification_payload))
+            yield _progress_event(
+                clarification_step[0],
+                clarification_step[1],
+                "completed",
+                detail="等待补充配置功能和设备平台信息",
+                operation=clarification_step[2],
+            )
+            yield _done_event(started_at, extra={
+                "execution_mode": "local_clarification",
+                "external_egress": False,
+                "input_tokens": 0,
+                "output_tokens": 0,
+                "token_source": "local_zero",
+            })
             return
 
         # Send SSE metadata

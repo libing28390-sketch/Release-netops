@@ -165,3 +165,125 @@ def test_chat_stream_route_releases_cancelled_stream_lease(monkeypatch):
     assert "event: done" in "".join(tail)
     assert "event: token" not in "".join(tail)
     assistant_api.sse_stream_registry.clear()
+
+
+def test_chat_route_passes_clarification_state_and_persists_policy_result(monkeypatch):
+    pending = None
+    clarification = {
+        "required": True,
+        "state_id": "clar_api",
+        "revision": 1,
+        "request_kind": "configuration_reference",
+        "risk": "medium",
+        "missing_fields": ["feature", "platform_or_model"],
+        "recognized_fields": {"vendor": "Huawei"},
+        "question": "请补充配置功能和设备平台。",
+        "options": [],
+        "retrieval_allowed": False,
+    }
+    state_writes: list[dict] = []
+    assistant_calls: list[dict] = []
+
+    monkeypatch.setattr(
+        assistant_api,
+        "get_context",
+        lambda **_: {"conversation": {"pending_clarification": pending}, "messages": []},
+    )
+    monkeypatch.setattr(assistant_api, "append_message", lambda **kwargs: None)
+
+    async def fake_chat(*args, **kwargs):
+        assistant_calls.append(kwargs)
+        return {
+            "answer": "请补充范围",
+            "intent": "knowledge",
+            "clarification": clarification,
+            "copilot": {},
+            "citations": [],
+            "execution_mode": "local_clarification",
+            "external_egress": False,
+            "input_tokens": 0,
+            "output_tokens": 0,
+            "token_source": "local_zero",
+        }
+
+    def fake_set_state(**kwargs):
+        state_writes.append(kwargs)
+        return clarification
+
+    monkeypatch.setattr(assistant_api.ai_assistant_service, "chat", fake_chat)
+    monkeypatch.setattr(assistant_api, "set_clarification_state", fake_set_state)
+
+    request = assistant_api.ChatRequest(message="请给我华为交换机配置", conversation_id="conv_api007_clar")
+    user = {"username": "alice", "tenant_id": "tenant-a", "role": "admin"}
+    result = asyncio.run(assistant_api.chat_assistant(request, user=user))
+
+    assert assistant_calls[0]["pending_clarification"] is None
+    assert assistant_calls[0]["clarification_response"] is None
+    assert result["clarification"]["state_id"] == "clar_api"
+    assert state_writes and state_writes[0]["conversation_id"] == "conv_api007_clar"
+
+
+def test_chat_stream_route_persists_clarification_from_meta(monkeypatch):
+    assistant_api.sse_stream_registry.clear()
+    clarification = {
+        "required": True,
+        "state_id": "clar_stream",
+        "revision": 1,
+        "request_kind": "configuration_reference",
+        "risk": "medium",
+        "missing_fields": ["feature", "platform_or_model"],
+        "recognized_fields": {"vendor": "Huawei"},
+        "question": "请补充配置功能和设备平台。",
+        "options": [],
+        "retrieval_allowed": False,
+    }
+    stream_calls: list[dict] = []
+    state_writes: list[dict] = []
+    appended: list[dict] = []
+
+    monkeypatch.setattr(
+        assistant_api,
+        "get_context",
+        lambda **_: {"conversation": {"pending_clarification": None}, "messages": []},
+    )
+    monkeypatch.setattr(assistant_api, "append_message", lambda **kwargs: appended.append(kwargs))
+
+    async def fake_chat_stream(*args, stream_id=None, **kwargs):
+        stream_calls.append(kwargs)
+        context_token = assistant_module._SSE_CONTEXT.set(assistant_module._SSEEventContext(stream_id))
+        try:
+            yield assistant_module._meta_event({
+                "intent": "knowledge",
+                "clarification": clarification,
+                "execution_mode": "local_clarification",
+                "external_egress": False,
+            })
+            yield assistant_module._token_event("请补充范围")
+            yield assistant_module._done_event(0, extra={"execution_mode": "local_clarification"})
+        finally:
+            assistant_module._SSE_CONTEXT.reset(context_token)
+
+    def fake_set_state(**kwargs):
+        state_writes.append(kwargs)
+        return clarification
+
+    monkeypatch.setattr(assistant_api.ai_assistant_service, "chat_stream", fake_chat_stream)
+    monkeypatch.setattr(assistant_api, "set_clarification_state", fake_set_state)
+    request = assistant_api.ChatRequest(
+        message="请给我华为交换机配置",
+        conversation_id="conv_api007_stream_clar",
+        stream_id="sse_api007_stream_clar",
+    )
+    user = {"username": "alice", "tenant_id": "tenant-a", "role": "admin"}
+
+    async def collect():
+        response = await assistant_api.chat_assistant_stream(request, user=user)
+        return [chunk async for chunk in response.body_iterator]
+
+    chunks = asyncio.run(collect())
+    assert stream_calls[0]["pending_clarification"] is None
+    assert stream_calls[0]["clarification_response"] is None
+    assert state_writes and state_writes[0]["state"]["state_id"] == "clar_stream"
+    assert any("请补充范围" in str(chunk) for chunk in chunks)
+    assert appended and appended[-1]["execution_mode"] == "local_clarification"
+    assistant_api.sse_stream_registry.clear()

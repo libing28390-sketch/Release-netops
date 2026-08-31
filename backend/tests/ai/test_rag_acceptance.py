@@ -6,6 +6,7 @@ from ai.services import assistant as assistant_module
 from ai.services import product_resolver as resolver_module
 from ai.services import rag_retriever as retriever_module
 from ai.services.assistant import AIAssistantService
+from ai.services.config_clarification import clarification_policy_enabled
 from ai.services.intent_parser import intent_parser
 
 
@@ -122,22 +123,65 @@ def test_six_acceptance_queries(monkeypatch):
     assert train_only["debug"]["clarification_required"] is True
 
 
-def test_tospf_configuration_alias_is_cross_platform_searchable(monkeypatch):
+def test_tospf_configuration_alias_requires_scope_before_retrieval(monkeypatch):
     connection = _fixture_connection()
     monkeypatch.setattr(retriever_module, "get_db_connection", lambda: connection)
     monkeypatch.setattr(resolver_module, "get_db_connection", lambda: connection)
     monkeypatch.setattr(retriever_module.embedding_provider, "embed_text", lambda text: [1.0, 0.0])
 
     service = AIAssistantService()
+    search_calls = 0
+
+    def forbidden_search(*args, **kwargs):
+        nonlocal search_calls
+        search_calls += 1
+        raise AssertionError("ambiguous configuration must not retrieve document bodies")
+
+    monkeypatch.setattr(retriever_module.rag_retriever, "search", forbidden_search)
     query = "\u67e5\u8be2Tospf\u7684\u914d\u7f6e"
     metadata = intent_parser.parse_knowledge_metadata(query)
     result = service.retrieve_knowledge(query, {"knowledge_intent": metadata})
 
     assert metadata["feature"] == "ospf"
     assert result["resolution"].ambiguous is True
-    assert result["debug"]["clarification_required"] is False
-    assert result["debug"]["cross_platform_search"] is True
-    assert "当前信息不足以安全确定唯一 CLI 平台" not in service._knowledge_no_match_answer(result)
+    assert result["debug"]["clarification_required"] is True
+    assert result["debug"]["content_retrieval_skipped"] is True
+    assert result["status"] == "clarification_required"
+    assert result["results"] == []
+    assert result["clarification"]["required"] is True
+    assert result["clarification"]["missing_fields"] == ["platform_or_model"]
+    assert any(item["field"] == "cli_platform" for item in result["clarification"]["options"])
+    assert search_calls == 0
+
+
+def test_vendor_only_configuration_request_is_local_clarification(monkeypatch):
+    connection = _fixture_connection()
+    monkeypatch.setattr(retriever_module, "get_db_connection", lambda: connection)
+    monkeypatch.setattr(resolver_module, "get_db_connection", lambda: connection)
+    monkeypatch.setattr(retriever_module.embedding_provider, "embed_text", lambda text: [1.0, 0.0])
+
+    service = AIAssistantService()
+    query = "请给我华为交换机配置"
+    metadata = intent_parser.parse_knowledge_metadata(query)
+    result = service.retrieve_knowledge(query, {"knowledge_intent": metadata})
+
+    assert result["request"].vendor == "Huawei"
+    assert result["results"] == []
+    assert result["clarification"]["required"] is True
+    assert set(result["clarification"]["missing_fields"]) == {"feature", "platform_or_model"}
+    assert result["debug"]["content_retrieval_skipped"] is True
+
+
+def test_configuration_clarification_rollout_is_deterministic(monkeypatch):
+    monkeypatch.setenv("AI_CONFIG_CLARIFICATION_ENABLED", "0")
+    assert clarification_policy_enabled("tenant-a") is False
+
+    monkeypatch.setenv("AI_CONFIG_CLARIFICATION_ENABLED", "1")
+    monkeypatch.setenv("AI_CONFIG_CLARIFICATION_ROLLOUT_PERCENT", "0")
+    assert clarification_policy_enabled("tenant-a") is False
+
+    monkeypatch.setenv("AI_CONFIG_CLARIFICATION_ROLLOUT_PERCENT", "100")
+    assert clarification_policy_enabled("tenant-a") is True
 
 
 def test_short_device_family_prefixes_are_resolved_without_using_version_as_identity(monkeypatch):
@@ -347,6 +391,80 @@ def test_grounded_knowledge_stream_is_marked_not_external(monkeypatch):
     events = asyncio.run(collect())
     assert any('"external_egress": false' in event for event in events)
     assert any("system-view" in event for event in events)
+
+
+def test_configuration_clarification_stops_chat_and_stream_before_provider(monkeypatch):
+    async def fake_parse_intent(message, user_id=None):
+        return {
+            "intent": "knowledge",
+            "filters": {},
+            "knowledge_intent": {
+                "vendor": "Huawei",
+                "document_category": "configuration",
+            },
+        }
+
+    class _Resolution:
+        def to_dict(self):
+            return {"ambiguous": True, "metadata": {"vendor": "Huawei"}}
+
+    clarification = {
+        "required": True,
+        "state_id": "clar_test",
+        "revision": 1,
+        "request_kind": "configuration_reference",
+        "risk": "medium",
+        "reason_code": "MISSING_CONFIGURATION_FEATURE",
+        "missing_fields": ["feature", "platform_or_model"],
+        "recognized_fields": {"vendor": "Huawei"},
+        "question": "请补充功能和设备平台。",
+        "options": [
+            {"field": "feature", "value": "vlan", "label": "VLAN"},
+            {"field": "cli_platform", "value": "huawei_vrp", "label": "Huawei VRP"},
+        ],
+        "allow_free_text": True,
+        "retrieval_allowed": False,
+    }
+    result = {
+        "request": SimpleNamespace(document_category="configuration", vendor="Huawei", feature=None),
+        "resolution": _Resolution(),
+        "results": [],
+        "debug": {"clarification_required": True, "content_retrieval_skipped": True},
+        "clarification": clarification,
+    }
+    provider_calls = []
+
+    async def unexpected_chat(**kwargs):
+        provider_calls.append(kwargs)
+        raise AssertionError("clarification must not invoke a provider")
+
+    async def unexpected_chat_stream(**kwargs):
+        provider_calls.append(kwargs)
+        raise AssertionError("clarification must not invoke a provider")
+        yield "unreachable"
+
+    monkeypatch.setattr(assistant_module.intent_parser, "parse_intent", fake_parse_intent)
+    monkeypatch.setattr(assistant_module.llm_gateway, "chat", unexpected_chat)
+    monkeypatch.setattr(assistant_module.llm_gateway, "chat_stream", unexpected_chat_stream)
+    service = AIAssistantService()
+    monkeypatch.setattr(service, "retrieve_knowledge", lambda *args, **kwargs: result)
+
+    import asyncio
+
+    answer = asyncio.run(service.chat("请给我华为交换机配置"))
+    assert answer["execution_mode"] == "local_clarification"
+    assert answer["external_egress"] is False
+    assert answer["clarification"]["required"] is True
+    assert "知识库" in answer["answer"]
+
+    async def collect():
+        return [event async for event in service.chat_stream("请给我华为交换机配置")]
+
+    events = asyncio.run(collect())
+    assert any('"execution_mode": "local_clarification"' in event for event in events)
+    assert any('"clarification"' in event and '"required": true' in event for event in events)
+    assert any("配置范围" in event for event in events)
+    assert provider_calls == []
 
 
 def test_chat_no_match_uses_bounded_cloud_general_reference(monkeypatch):

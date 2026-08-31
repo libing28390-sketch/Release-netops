@@ -5,7 +5,7 @@ from __future__ import annotations
 import json
 import uuid
 from datetime import datetime, timedelta, timezone
-from typing import Any
+from typing import Any, Mapping
 
 from database.core import get_db_connection
 from ai.security.classification import DataLevel, classify_text
@@ -15,6 +15,79 @@ from ai.security.tokenization import opaque_user_id, tokenize_text, token_vault
 
 def _now() -> str:
     return datetime.now(timezone.utc).replace(microsecond=0).isoformat()
+
+
+def _decode_clarification_state(value: Any) -> dict[str, Any]:
+    if isinstance(value, Mapping):
+        return dict(value)
+    if isinstance(value, str):
+        try:
+            parsed = json.loads(value or "{}")
+        except (TypeError, ValueError):
+            return {}
+        return dict(parsed) if isinstance(parsed, Mapping) else {}
+    return {}
+
+
+def _safe_clarification_state(value: Mapping[str, Any] | None) -> dict[str, Any]:
+    """Keep only bounded, policy-generated clarification metadata at rest."""
+
+    source = dict(value or {})
+    allowed = {
+        "required", "state_id", "revision", "request_kind", "risk", "reason_code", "missing_fields",
+        "recognized_fields", "question", "options", "allow_free_text",
+        "allow_generic_reference", "retrieval_allowed", "expires_at",
+    }
+    state: dict[str, Any] = {}
+    for key in allowed:
+        if key not in source:
+            continue
+        item = source[key]
+        if key in {"missing_fields"}:
+            if isinstance(item, (list, tuple)):
+                state[key] = [str(entry)[:80] for entry in list(item)[:12] if str(entry).strip()]
+        elif key in {"recognized_fields"}:
+            if isinstance(item, Mapping):
+                state[key] = {
+                    str(entry_key)[:64]: str(entry_value)[:160]
+                    for entry_key, entry_value in list(item.items())[:12]
+                    if str(entry_key).strip() and str(entry_value).strip()
+                }
+        elif key in {"options"}:
+            if isinstance(item, (list, tuple)):
+                state[key] = [
+                    {
+                        "field": str(option.get("field") or "")[:64],
+                        "value": str(option.get("value"))[:96],
+                        "label": str(option.get("label"))[:160],
+                    }
+                    for option in list(item)[:12]
+                    if isinstance(option, Mapping) and str(option.get("value") or "").strip()
+                ]
+        elif key in {"required"}:
+            state[key] = bool(item)
+        elif key in {"revision"}:
+            try:
+                state[key] = max(0, int(item))
+            except (TypeError, ValueError):
+                state[key] = 0
+        elif isinstance(item, bool):
+            state[key] = item
+        else:
+            state[key] = str(item)[:600]
+    encoded = json.dumps(state, ensure_ascii=False, separators=(",", ":"))
+    if len(encoded) > 12000:
+        raise ValueError("clarification state is too large")
+    if any(marker in encoded.lower() for marker in ("password", "private key", "snmp community", "api_key", "token=")):
+        raise ValueError("clarification state contains prohibited secret markers")
+    return state
+
+
+def _row_has(row: Any, key: str) -> bool:
+    try:
+        return key in row.keys()
+    except AttributeError:
+        return False
 
 
 TASK_TERMINAL_STATES = frozenset({"completed", "failed", "cancelled", "timeout", "budget_exceeded", "step_limit"})
@@ -44,16 +117,24 @@ def create_conversation(*, tenant_id: str, user_id: str, title: str | None = Non
             conn.execute(
                 """
                 INSERT INTO ai_conversations
-                    (id, tenant_id, user_id_opaque, title, status, context_budget, selected_model_id, model_locked, created_at, updated_at)
-                VALUES (?, ?, ?, ?, 'active', ?, ?, ?, ?, ?)
+                    (id, tenant_id, user_id_opaque, title, status, context_budget, selected_model_id, model_locked, clarification_state_json, clarification_state_version, clarification_updated_at, created_at, updated_at)
+                VALUES (?, ?, ?, ?, 'active', ?, ?, ?, ?, 0, NULL, ?, ?)
                 """,
-                (conversation_id, tenant_id, opaque_user_id(user_id, tenant_id=tenant_id, task_id="conversation-owner"), (title or "")[:200], max(4096, min(int(context_budget), 131072)), selected_model_id, int(model_locked), now, now),
+                (conversation_id, tenant_id, opaque_user_id(user_id, tenant_id=tenant_id, task_id="conversation-owner"), (title or "")[:200], max(4096, min(int(context_budget), 131072)), selected_model_id, int(model_locked), "{}", now, now),
             )
         except Exception:
-            conn.execute(
-                "INSERT INTO ai_conversations (id, tenant_id, user_id_opaque, title, status, context_budget, created_at, updated_at) VALUES (?, ?, ?, ?, 'active', ?, ?, ?)",
-                (conversation_id, tenant_id, opaque_user_id(user_id, tenant_id=tenant_id, task_id="conversation-owner"), (title or "")[:200], max(4096, min(int(context_budget), 131072)), now, now),
-            )
+            conn.rollback()
+            try:
+                conn.execute(
+                    "INSERT INTO ai_conversations (id, tenant_id, user_id_opaque, title, status, context_budget, selected_model_id, model_locked, created_at, updated_at) VALUES (?, ?, ?, ?, 'active', ?, ?, ?, ?, ?)",
+                    (conversation_id, tenant_id, opaque_user_id(user_id, tenant_id=tenant_id, task_id="conversation-owner"), (title or "")[:200], max(4096, min(int(context_budget), 131072)), selected_model_id, int(model_locked), now, now),
+                )
+            except Exception:
+                conn.rollback()
+                conn.execute(
+                    "INSERT INTO ai_conversations (id, tenant_id, user_id_opaque, title, status, context_budget, created_at, updated_at) VALUES (?, ?, ?, ?, 'active', ?, ?, ?)",
+                    (conversation_id, tenant_id, opaque_user_id(user_id, tenant_id=tenant_id, task_id="conversation-owner"), (title or "")[:200], max(4096, min(int(context_budget), 131072)), now, now),
+                )
         conn.commit()
     return {"id": conversation_id, "tenant_id": tenant_id, "title": (title or "")[:200], "status": "active", "context_budget": max(4096, min(int(context_budget), 131072)), "selected_model_id": selected_model_id, "model_locked": model_locked, "created_at": now, "updated_at": now}
 
@@ -84,7 +165,7 @@ def _get_conversation(conn, conversation_id: str, *, tenant_id: str, user_id: st
 
 
 def _conversation_result(row: Any) -> dict[str, Any]:
-    return {
+    result = {
         "id": row["id"],
         "tenant_id": row["tenant_id"],
         "title": row["title"] or "",
@@ -95,6 +176,24 @@ def _conversation_result(row: Any) -> dict[str, Any]:
         "selected_model_id": row["selected_model_id"] if "selected_model_id" in row.keys() else None,
         "model_locked": bool(row["model_locked"]) if "model_locked" in row.keys() and row["model_locked"] is not None else False,
     }
+    if _row_has(row, "clarification_state_json"):
+        state = _decode_clarification_state(row["clarification_state_json"])
+        expires_at = str(state.get("expires_at") or "").strip()
+        expired = False
+        if expires_at:
+            try:
+                expired = datetime.fromisoformat(expires_at.replace("Z", "+00:00")) <= datetime.now(timezone.utc)
+            except ValueError:
+                expired = False
+        if state.get("required") and not expired:
+            result["pending_clarification"] = state
+        else:
+            result["pending_clarification"] = None
+    else:
+        result["pending_clarification"] = None
+    if _row_has(row, "clarification_state_version"):
+        result["clarification_state_version"] = int(row["clarification_state_version"] or 0)
+    return result
 
 
 def set_conversation_model(*, conversation_id: str, tenant_id: str, user_id: str, model_id: str, locked: bool = True) -> dict[str, Any]:
@@ -109,6 +208,106 @@ def set_conversation_model(*, conversation_id: str, tenant_id: str, user_id: str
             raise RuntimeError("conversation model persistence requires m0139") from exc
         conn.commit()
         return _conversation_result(conn.execute("SELECT * FROM ai_conversations WHERE id = ?", (conversation_id,)).fetchone())
+
+
+def _locked_conversation(conn: Any, conversation_id: str, *, tenant_id: str, user_id: str) -> Any:
+    """Load an owned conversation for a state transition.
+
+    PostgreSQL uses the row lock to serialize competing Copilot tabs.  The
+    fallback keeps older compatibility fixtures usable when their driver does
+    not implement ``FOR UPDATE``.
+    """
+
+    opaque = opaque_user_id(user_id, tenant_id=tenant_id, task_id="conversation-owner")
+    try:
+        return conn.execute(
+            "SELECT * FROM ai_conversations WHERE id = ? AND tenant_id = ? AND user_id_opaque = ? FOR UPDATE",
+            (conversation_id, tenant_id, opaque),
+        ).fetchone()
+    except Exception:
+        return conn.execute(
+            "SELECT * FROM ai_conversations WHERE id = ? AND tenant_id = ? AND user_id_opaque = ?",
+            (conversation_id, tenant_id, opaque),
+        ).fetchone()
+
+
+def set_clarification_state(
+    *,
+    conversation_id: str,
+    tenant_id: str,
+    user_id: str,
+    state: Mapping[str, Any],
+    expected_revision: int | None = None,
+    expected_state_id: str | None = None,
+) -> dict[str, Any]:
+    """Persist one bounded pending clarification with optimistic concurrency."""
+
+    safe_state = _safe_clarification_state(state)
+    now = _now()
+    with get_db_connection() as conn:
+        conversation = _locked_conversation(conn, conversation_id, tenant_id=tenant_id, user_id=user_id)
+        if not conversation:
+            raise LookupError("conversation not found")
+        if not _row_has(conversation, "clarification_state_json") or not _row_has(conversation, "clarification_state_version"):
+            raise RuntimeError("clarification state persistence requires m0197")
+
+        current_state = _decode_clarification_state(conversation["clarification_state_json"])
+        current_revision = int(conversation["clarification_state_version"] or 0)
+        current_state_id = str(current_state.get("state_id") or "")
+        if expected_revision is not None and current_revision != int(expected_revision):
+            raise RuntimeError("clarification state revision conflict")
+        if expected_state_id and current_state_id != str(expected_state_id):
+            raise RuntimeError("clarification state identity conflict")
+
+        next_revision = current_revision + 1
+        state_id = str(safe_state.get("state_id") or current_state_id or f"clar_{uuid.uuid4().hex[:20]}")[:80]
+        safe_state["state_id"] = state_id
+        safe_state["revision"] = next_revision
+        safe_state["required"] = True
+        encoded = json.dumps(safe_state, ensure_ascii=False, separators=(",", ":"))
+        result = conn.execute(
+            "UPDATE ai_conversations SET clarification_state_json = ?, clarification_state_version = ?, clarification_updated_at = ?, updated_at = ? WHERE id = ? AND tenant_id = ? AND user_id_opaque = ? AND clarification_state_version = ?",
+            (encoded, next_revision, now, now, conversation_id, tenant_id, opaque_user_id(user_id, tenant_id=tenant_id, task_id="conversation-owner"), current_revision),
+        )
+        if int(getattr(result, "rowcount", 1) or 0) != 1:
+            conn.rollback()
+            raise RuntimeError("clarification state revision conflict")
+        conn.commit()
+    return safe_state
+
+
+def clear_clarification_state(
+    *,
+    conversation_id: str,
+    tenant_id: str,
+    user_id: str,
+    expected_revision: int | None = None,
+    expected_state_id: str | None = None,
+) -> None:
+    """Clear pending clarification state after resolution, cancel, or topic change."""
+
+    now = _now()
+    with get_db_connection() as conn:
+        conversation = _locked_conversation(conn, conversation_id, tenant_id=tenant_id, user_id=user_id)
+        if not conversation:
+            raise LookupError("conversation not found")
+        if not _row_has(conversation, "clarification_state_json") or not _row_has(conversation, "clarification_state_version"):
+            return
+        current_state = _decode_clarification_state(conversation["clarification_state_json"])
+        current_revision = int(conversation["clarification_state_version"] or 0)
+        current_state_id = str(current_state.get("state_id") or "")
+        if expected_revision is not None and current_revision != int(expected_revision):
+            raise RuntimeError("clarification state revision conflict")
+        if expected_state_id and current_state_id != str(expected_state_id):
+            raise RuntimeError("clarification state identity conflict")
+        result = conn.execute(
+            "UPDATE ai_conversations SET clarification_state_json = ?, clarification_state_version = ?, clarification_updated_at = ?, updated_at = ? WHERE id = ? AND clarification_state_version = ?",
+            ("{}", current_revision + 1, now, now, conversation_id, current_revision),
+        )
+        if int(getattr(result, "rowcount", 1) or 0) != 1:
+            conn.rollback()
+            raise RuntimeError("clarification state revision conflict")
+        conn.commit()
 
 
 def rename_conversation(*, conversation_id: str, tenant_id: str, user_id: str, title: str) -> dict[str, Any]:
@@ -131,7 +330,11 @@ def archive_conversation(*, conversation_id: str, tenant_id: str, user_id: str, 
         conversation = _get_conversation(conn, conversation_id, tenant_id=tenant_id, user_id=user_id)
         if not conversation:
             raise LookupError("conversation not found")
-        conn.execute("UPDATE ai_conversations SET status = ?, updated_at = ? WHERE id = ?", (status, now, conversation_id))
+        try:
+            conn.execute("UPDATE ai_conversations SET status = ?, clarification_state_json = '{}', clarification_updated_at = ?, updated_at = ? WHERE id = ?", (status, now, now, conversation_id))
+        except Exception:
+            conn.rollback()
+            conn.execute("UPDATE ai_conversations SET status = ?, updated_at = ? WHERE id = ?", (status, now, conversation_id))
         conn.commit()
         row = conn.execute("SELECT id, tenant_id, title, status, context_budget, created_at, updated_at FROM ai_conversations WHERE id = ?", (conversation_id,)).fetchone()
     return _conversation_result(row)
@@ -154,7 +357,11 @@ def clear_messages(*, conversation_id: str, tenant_id: str, user_id: str) -> dic
         if not conversation:
             raise LookupError("conversation not found")
         conn.execute("DELETE FROM ai_messages WHERE conversation_id = ?", (conversation_id,))
-        conn.execute("UPDATE ai_conversations SET updated_at = ? WHERE id = ?", (now, conversation_id))
+        try:
+            conn.execute("UPDATE ai_conversations SET clarification_state_json = '{}', clarification_state_version = clarification_state_version + 1, clarification_updated_at = ?, updated_at = ? WHERE id = ?", (now, now, conversation_id))
+        except Exception:
+            conn.rollback()
+            conn.execute("UPDATE ai_conversations SET updated_at = ? WHERE id = ?", (now, conversation_id))
         conn.commit()
         row = conn.execute("SELECT id, tenant_id, title, status, context_budget, created_at, updated_at FROM ai_conversations WHERE id = ?", (conversation_id,)).fetchone()
     return _conversation_result(row)
@@ -197,7 +404,7 @@ def append_message(*, conversation_id: str, tenant_id: str, user_id: str, role: 
     if role not in {"system", "user", "assistant", "tool"}:
         raise ValueError("unsupported conversation role")
     safe_content = _safe_message_content(content, tenant_id=tenant_id, scope_id=conversation_id, role=role)
-    allowed_execution_modes = {"local_knowledge", "local_operation", "provider_generated", "local_fallback", "legacy_unknown"}
+    allowed_execution_modes = {"local_knowledge", "local_operation", "local_clarification", "provider_generated", "local_fallback", "legacy_unknown"}
     safe_execution_mode = execution_mode if execution_mode in allowed_execution_modes else None
     safe_input_tokens = max(0, int(input_tokens)) if input_tokens is not None else None
     safe_output_tokens = max(0, int(output_tokens)) if output_tokens is not None else None

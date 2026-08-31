@@ -1,15 +1,14 @@
-Value LOCAL_DISCRIMINATOR (\d+)
-Value REMOTE_DISCRIMINATOR (\d+)
-Value SOURCE_IP (\d+\.\d+\.\d+\.\d+)
-Value DESTINATION_IP (\d+\.\d+\.\d+\.\d+)
-Value STATUS (\S+)
+# nexora-action-code: get_bfd_sessions
+Value Filldown TOTAL_SESSIONS (\d+)
+Value Filldown UP_SESSIONS (\d+)
+Value Filldown INIT_MODE (\S+)
+Value Required LD_RD (\d+/\d+)
+Value SOURCE_ADDR (\S+)
+Value DEST_ADDR (\S+)
+Value STATE (\S+)
 Value HOLDTIME (\S+)
 Value INTERFACE (\S+)
 
 Start
-  ^\s*${LOCAL_DISCRIMINATOR}/${REMOTE_DISCRIMINATOR}\s+${SOURCE_IP}\s+${DESTINATION_IP}\s+${STATUS}\s+${HOLDTIME}\s+${INTERFACE}\s*$$ -> Record
-  ^\s*BFD\s+is\s+not\s+configured\.\s*$$
-  ^\s*LD/RD\s+Source(?:Addr|IP)\s+Dest(?:Addr|inationIP)
-  ^\s*(?:Total sessions|Total Session Num):
-  ^\s*(?:IPv4|IPv6).*session.*:
-  ^\s*-+
+  ^\s*Total\s+sessions:\s+${TOTAL_SESSIONS}\s+Up\s+sessions:\s+${UP_SESSIONS}\s+Init\s+mode:\s+${INIT_MODE}\s*$$
+  ^\s*${LD_RD}\s+${SOURCE_ADDR}\s+${DEST_ADDR}\s+${STATE}\s+${HOLDTIME}\s+${INTERFACE}\s*$$ -> Record

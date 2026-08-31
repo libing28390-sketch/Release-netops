@@ -49,3 +49,30 @@ def test_context_budget_is_explainable_and_trace_has_no_raw_prompt():
     assert contract["context_budget"]["used_chars"] <= contract["context_budget"]["limit_chars"]
     assert contract["developer_trace"]["message_hash_only"] is True
     assert "x" * 100 not in str(contract["developer_trace"])
+
+
+def test_configuration_clarification_contract_is_local_and_low_confidence():
+    clarification = {
+        "required": True,
+        "risk": "medium",
+        "question": "请补充配置功能和平台。",
+        "missing_fields": ["feature", "platform_or_model"],
+    }
+    contract = build_copilot_contract(
+        intent="knowledge",
+        message="请给我华为交换机配置",
+        context={"vendor": "Huawei"},
+        retrieval={
+            "status": "clarification_required",
+            "debug": {"clarification_required": True, "content_retrieval_skipped": True},
+        },
+        clarification=clarification,
+        runtime={"execution_mode": "local_clarification", "external_egress": False},
+    )
+
+    assert contract["risk"] == "medium"
+    assert contract["confidence"] < 0.5
+    assert contract["required_evidence"] == []
+    assert contract["next_checks"] == ["请补充配置功能和平台。"]
+    assert contract["source_labels"] == ["local_policy"]
+    assert contract["runtime"]["external_egress"] is False

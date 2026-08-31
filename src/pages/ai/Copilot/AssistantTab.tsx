@@ -4,6 +4,9 @@ import {
   AIConversationMessage,
   AIExecutionMode,
   AITokenSource,
+  AssistantClarification,
+  AssistantClarificationAnswer,
+  AssistantClarificationOption,
   AssistantProcessStep,
   AssistantRetrievalTrace,
   CopilotContract,
@@ -33,6 +36,7 @@ import { CopilotHeader } from './CopilotHeader';
 import { CopilotEmptyState } from './CopilotEmptyState';
 import { CopilotComposer, CopilotModelOption } from './CopilotComposer';
 import { CopilotInspectorDrawer } from './CopilotInspectorDrawer';
+import { ClarificationCard } from './ClarificationCard';
 import { formatCopilotDuration, upsertCopilotProcessStep } from './progress';
 import { ActionButton, ActionIconButton, ActionIconGroup } from '../../../components/ui/ActionIconButton';
 
@@ -69,6 +73,7 @@ interface ChatMessage {
   intent?: string;
   sources?: CitationSource[];
   retrieval?: AssistantRetrievalTrace;
+  clarification?: AssistantClarification;
   created_at: string;
   latency_ms?: number;
   input_tokens?: number;
@@ -286,6 +291,9 @@ export const AssistantTab: React.FC = () => {
 
   const activeSession = sessions.find((s) => s.id === activeSessionId);
   const messages = (activeSession?.messages || []) as ChatMessage[];
+  const pendingClarification = activeSession?.pending_clarification?.required
+    ? activeSession.pending_clarification
+    : null;
   // Keep the Copilot session rail under the user's control. Auto-collapsing it
   // at 900px made the conversation list look like an empty white strip in an
   // embedded browser and hid rename/archive actions.
@@ -377,6 +385,7 @@ export const AssistantTab: React.FC = () => {
             status: context.conversation.status,
             updatedAt: formatSessionTime(context.conversation.updated_at),
             messages: remoteMessages,
+            pending_clarification: context.conversation.pending_clarification || null,
           }
           : session
       )));
@@ -587,7 +596,7 @@ export const AssistantTab: React.FC = () => {
         : { status: archived ? 'archived' as const : 'active' as const, updated_at: new Date().toISOString() };
       setSessions((previous) => previous.map((session) => (
         session.id === id
-          ? { ...session, status: updated.status, updatedAt: formatSessionTime(updated.updated_at) }
+          ? { ...session, status: updated.status, updatedAt: formatSessionTime(updated.updated_at), pending_clarification: updated.status === 'archived' ? null : session.pending_clarification }
           : session
       )));
       if (archived && activeSessionId === id) {
@@ -621,7 +630,7 @@ export const AssistantTab: React.FC = () => {
     try {
       if (activeSessionId.startsWith('conv_')) await clearAIConversation(activeSessionId);
       setSessions((previous) => previous.map((session) => (
-        session.id === activeSessionId ? { ...session, messages: [], updatedAt: formatSessionTime(new Date().toISOString()) } : session
+        session.id === activeSessionId ? { ...session, messages: [], pending_clarification: null, updatedAt: formatSessionTime(new Date().toISOString()) } : session
       )));
     } catch (error: any) {
       setSessionError(error?.message || '清空会话失败');
@@ -678,7 +687,7 @@ export const AssistantTab: React.FC = () => {
     void handleSend(continuation);
   };
 
-  const handleSend = async (userMsg: string) => {
+  const handleSend = async (userMsg: string, clarificationAnswer?: AssistantClarificationAnswer) => {
     if (!userMsg.trim() || loading || !activeSession) return;
 
     shouldStickToBottomRef.current = true;
@@ -809,6 +818,17 @@ export const AssistantTab: React.FC = () => {
           setSessions((prev) =>
             prev.map((s) => {
               if (s.id === activeSessionId) {
+                const resolvesPendingClarification = Boolean(s.pending_clarification)
+                  && meta.intent === 'knowledge'
+                  && meta.execution_mode !== 'local_clarification';
+                const changesTopic = Boolean(s.pending_clarification)
+                  && Boolean(meta.intent)
+                  && meta.intent !== 'knowledge';
+                const nextPendingClarification = meta.clarification
+                  ? (meta.clarification.required ? meta.clarification : null)
+                  : (clarificationAnswer || resolvesPendingClarification || changesTopic
+                    ? null
+                    : s.pending_clarification);
                 const msgs = s.messages.map((m) => {
                   if (m.id === assistantMsgId) {
                     return {
@@ -817,6 +837,7 @@ export const AssistantTab: React.FC = () => {
                       intent: meta.intent || m.intent,
                       sources: meta.citations || m.sources,
                       retrieval: meta.retrieval || m.retrieval,
+                      clarification: meta.clarification || m.clarification,
                       copilot: meta.copilot || m.copilot,
                       route_model: meta.model_id || meta.requested_model_id || meta.copilot?.runtime?.model_id || m.route_model,
                       provider_id: meta.provider_id || meta.copilot?.runtime?.provider_id || m.provider_id,
@@ -831,7 +852,7 @@ export const AssistantTab: React.FC = () => {
                   }
                   return m;
                 });
-                return { ...s, messages: msgs };
+                return { ...s, messages: msgs, pending_clarification: nextPendingClarification };
               }
               return s;
             })
@@ -921,6 +942,10 @@ export const AssistantTab: React.FC = () => {
             }),
           );
         },
+        undefined,
+        undefined,
+        undefined,
+        clarificationAnswer,
       );
 
       finalizeStreamText(true);
@@ -975,6 +1000,30 @@ export const AssistantTab: React.FC = () => {
       requestStartedAtRef.current = null;
       setLiveElapsedMs(0);
     }
+  };
+
+  const handleClarificationOption = (clarification: AssistantClarification, option: AssistantClarificationOption) => {
+    const fallbackField = clarification.missing_fields?.includes('feature')
+      ? 'feature'
+      : clarification.missing_fields?.includes('target_device')
+        ? 'target_device'
+        : 'cli_platform';
+    const field = option.field || fallbackField;
+    const values = option.value === 'display_version' ? {} : { [field]: option.value };
+    void handleSend(option.label || option.value, {
+      state_id: clarification.state_id || undefined,
+      revision: clarification.revision,
+      values,
+      action: 'submit',
+    });
+  };
+
+  const handleCancelClarification = (clarification: AssistantClarification) => {
+    void handleSend('取消配置引导', {
+      state_id: clarification.state_id || undefined,
+      revision: clarification.revision,
+      action: 'cancel',
+    });
   };
 
   const handleCopyMessage = async (id: string, text: string) => {
@@ -1126,7 +1175,7 @@ export const AssistantTab: React.FC = () => {
 
         {/* Center Scrollable Chat List (Max-width 820px) */}
         <div ref={messagesContainerRef} onScroll={handleMessagesScroll} className="flex min-h-0 flex-1 flex-col overflow-y-auto">
-          {messages.length === 0 ? (
+          {messages.length === 0 && !pendingClarification ? (
             <CopilotEmptyState onSelectPrompt={handleSend} />
           ) : (
             <div className="max-w-[820px] mx-auto w-full px-4 py-8 space-y-8">
@@ -1176,6 +1225,12 @@ export const AssistantTab: React.FC = () => {
 
                 // Assistant Message (No Card Box, Pure Document-like Experience)
                 const isMessageStreaming = streamingMessageId === m.id;
+                const currentMessageClarification = m.clarification?.required
+                  && pendingClarification
+                  && (!m.clarification.state_id || m.clarification.state_id === pendingClarification.state_id)
+                  && (m.clarification.revision === undefined || m.clarification.revision === pendingClarification.revision)
+                  ? m.clarification
+                  : null;
                 const copilotIntent = String(m.copilot?.intent || '');
                 // Consultation/CMDB answers are complete read-only results,
                 // not diagnostic plans.  Keep the developer Trace available,
@@ -1202,6 +1257,8 @@ export const AssistantTab: React.FC = () => {
                   ? '本地知识直出'
                   : m.execution_mode === 'local_operation'
                     ? '本地数据计算'
+                    : m.execution_mode === 'local_clarification'
+                      ? '本地范围确认'
                     : m.execution_mode === 'provider_generated'
                       ? `${displayProviderName || '外部模型'} 生成`
                       : m.execution_mode === 'local_fallback'
@@ -1211,6 +1268,8 @@ export const AssistantTab: React.FC = () => {
                           : '历史消息 · 路由未知';
                 const executionBadgeClass = m.execution_mode === 'local_knowledge' || m.execution_mode === 'local_operation'
                   ? 'border-emerald-200 bg-emerald-50 text-emerald-700 dark:border-emerald-800 dark:bg-emerald-950/40 dark:text-emerald-300'
+                  : m.execution_mode === 'local_clarification'
+                    ? 'border-violet-200 bg-violet-50 text-violet-700 dark:border-violet-800 dark:bg-violet-950/40 dark:text-violet-300'
                   : m.execution_mode === 'provider_generated'
                     ? 'border-indigo-200 bg-indigo-50 text-indigo-700 dark:border-indigo-800 dark:bg-indigo-950/40 dark:text-indigo-300'
                     : m.execution_mode === 'local_fallback'
@@ -1263,6 +1322,15 @@ export const AssistantTab: React.FC = () => {
                       )}
                     </div>
 
+                    {currentMessageClarification && (
+                      <ClarificationCard
+                        clarification={currentMessageClarification}
+                        disabled={loading}
+                        onSelect={(option) => handleClarificationOption(currentMessageClarification, option)}
+                        onCancel={() => handleCancelClarification(currentMessageClarification)}
+                      />
+                    )}
+
                     {m.copilot && showCopilotSummary && (
                       (m.copilot.required_evidence && m.copilot.required_evidence.length > 0) ||
                       (m.copilot.confirmed_facts && m.copilot.confirmed_facts.length > 0) ||
@@ -1283,7 +1351,7 @@ export const AssistantTab: React.FC = () => {
                           <div className="text-amber-700 dark:text-amber-300"><span className="font-medium">待补证据：</span>{m.copilot.required_evidence.join('；')}</div>
                         )}
                         <div className="flex flex-wrap gap-1.5 text-[11px] text-gray-500 dark:text-gray-400">
-                          {(m.copilot.source_labels || []).map((label) => <span key={label} className="rounded border border-gray-200 dark:border-gray-700 px-1.5 py-0.5">{label === 'official' ? '官方知识' : label === 'enterprise' ? '企业知识' : label === 'realtime_device' ? '实时设备' : '模型推断'}</span>)}
+                          {(m.copilot.source_labels || []).map((label) => <span key={label} className="rounded border border-gray-200 dark:border-gray-700 px-1.5 py-0.5">{label === 'official' ? '官方知识' : label === 'enterprise' ? '企业知识' : label === 'realtime_device' ? '实时设备' : label === 'local_policy' ? '本地策略' : '模型推断'}</span>)}
                           <span className="rounded border border-gray-200 dark:border-gray-700 px-1.5 py-0.5">{m.copilot.runtime?.external_egress ? '已通过安全网关外发' : '未外发'}</span>
                           <span className="rounded border border-gray-200 dark:border-gray-700 px-1.5 py-0.5">{m.copilot.runtime?.cli_executed ? '已执行 CLI' : '未执行 CLI'}</span>
                         </div>
@@ -1454,6 +1522,20 @@ export const AssistantTab: React.FC = () => {
                   </div>
                 );
               })}
+
+              {pendingClarification && !messages.some((message) => (
+                message.role === 'assistant'
+                && message.clarification?.required
+                && message.clarification.state_id === pendingClarification.state_id
+                && message.clarification.revision === pendingClarification.revision
+              )) && (
+                <ClarificationCard
+                  clarification={pendingClarification}
+                  disabled={loading}
+                  onSelect={(option) => handleClarificationOption(pendingClarification, option)}
+                  onCancel={() => handleCancelClarification(pendingClarification)}
+                />
+              )}
 
               {loading && (
                 <div className="flex gap-2 items-center text-xs text-indigo-500 font-medium p-2 select-none">
