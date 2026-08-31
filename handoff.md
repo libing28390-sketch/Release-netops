@@ -223,6 +223,6 @@ PostgreSQL 门禁矩阵已实际执行：fresh 临时库初始化后关闭连接
 ### 发布状态
 
 - 当前分支：`main`。
-- 提交和 push 已获用户明确授权；当前已创建 `feat: complete AI admin enhancements` commit，待远端分支核对后 push，并在 push 成功后记录最终远端结果。
+- 提交和 push 已获用户明确授权；功能代码基线 `e1a0f8bbe0272bd6ef3f9536cc5735f3017a8ee6` 已成功推送到 `origin/main`（从 `257b1070` 更新）。本次交接记录的最终状态由后续文档收口提交随即推送。
 - 本次提交共包含 939 个文件，涵盖当前工作区中已授权的代码、测试、迁移和交付文档改动；不是只提交 AI 页面局部文件。
 - `data/backups/`、`.codex/`、`.codex_kb_refs.txt` 等本地/备份工件不作为代码提交内容；提交时显式排除，不使用无差别的 `git add -A`。
