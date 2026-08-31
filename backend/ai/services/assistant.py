@@ -251,6 +251,19 @@ class AIAssistantService:
             roles=roles,
             site_ids=site_ids,
         )
+        # CLI-oriented questions without a resolved CLI platform are
+        # intentionally cross-platform searches. Mark them ambiguous so the
+        # answer keeps each vendor/platform syntax separate; the clarification
+        # guard below still stops unsafe queries that name a concrete product
+        # or software boundary.
+        category = str(getattr(request, "document_category", "") or "").lower()
+        if not getattr(request, "cli_platform", None) and category in {
+            "command",
+            "cli_output",
+            "configuration",
+            "troubleshooting",
+        }:
+            resolution.ambiguous = True
         return request, resolution
 
     def retrieve_knowledge(

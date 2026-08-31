@@ -2,9 +2,7 @@
 
 The API exposes only aggregate catalog statistics.  It deliberately does not
 return SQL text, query parameters, database credentials, tenant identifiers,
-document bodies, or host details.  PostgreSQL is the production authority;
-SQLite is reported as a compatibility boundary and is never accepted as a
-production capacity result.
+document bodies, or host details. PostgreSQL is the only database authority.
 """
 
 from __future__ import annotations
@@ -21,8 +19,7 @@ _OBSERVATION_TABLES = (
     "ai_document_chunk",
     "ai_request_log",
     "ai_trace",
-    "kb_document",
-    "kb_document_version",
+    "ai_document_revision",
 )
 _MAX_SLOW_QUERIES = 20
 _DEFAULT_SLOW_QUERY_MS = 500.0
@@ -196,15 +193,6 @@ def _capacity_probe(connection: Any) -> dict[str, Any]:
 def snapshot(connection: Any | None = None) -> dict[str, Any]:
     """Return a bounded OBS-008 snapshot without changing database state."""
 
-    use_pg = bool(database_core._USE_PG)
-    if not use_pg:
-        return {
-            "backend": "sqlite",
-            "status": "NOT_APPLICABLE",
-            "production_authority": "postgresql",
-            "reason": "SQLite is compatibility-only for OBS-008 production monitoring",
-        }
-
     own_connection = connection is None
     conn = connection or database_core.get_db_connection()
     try:
@@ -213,7 +201,6 @@ def snapshot(connection: Any | None = None) -> dict[str, Any]:
             lambda: collect_postgres_relation_stats(
                 conn,
                 table_names=_OBSERVATION_TABLES,
-                use_pg=True,
             ),
             conn,
         )

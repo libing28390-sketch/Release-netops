@@ -153,12 +153,12 @@ def test_cat018_api_routes_and_permission_catalog_are_explicit():
     from api.knowledge_collections import router as collection_router
 
     catalog_routes = {(route.path, tuple(sorted(route.methods or []))) for route in catalog_router.routes}
-    assert not any(path.rstrip("/") == "/knowledge-v2/catalog" and "POST" in methods for path, methods in catalog_routes)
+    assert not any(path.rstrip("/") == "/knowledge/catalog" and "POST" in methods for path, methods in catalog_routes)
     routes = {(route.path, tuple(sorted(route.methods or []))) for route in collection_router.routes}
-    assert any(path == "/knowledge-v2/collections/boundary" and "GET" in methods for path, methods in routes)
-    assert any(path == "/knowledge-v2/collections" and "POST" in methods for path, methods in routes)
-    assert any(path == "/knowledge-v2/collections/{collection_id}" and "PATCH" in methods for path, methods in routes)
-    assert any(path == "/knowledge-v2/collections/{collection_id}/archive" and "POST" in methods for path, methods in routes)
+    assert any(path == "/knowledge/collections/boundary" and "GET" in methods for path, methods in routes)
+    assert any(path == "/knowledge/collections" and "POST" in methods for path, methods in routes)
+    assert any(path == "/knowledge/collections/{collection_id}" and "PATCH" in methods for path, methods in routes)
+    assert any(path == "/knowledge/collections/{collection_id}/archive" and "POST" in methods for path, methods in routes)
     catalog = permission_catalog()
     assert set(catalog["knowledge_collection"]) >= {"read", "view", "create", "update", "archive"}
     assert set(RECOMMENDED_ROLE_PROFILES["Platform Viewer"]["knowledge_collection"]) == {"read", "view"}

@@ -5,32 +5,21 @@ NAME = "outbound_health_v1"
 
 
 def _columns(cursor, table: str, _use_pg: bool = True) -> set[str]:
-    if _use_pg:
-        rows = cursor.execute(
-            "SELECT column_name FROM information_schema.columns "
-            "WHERE table_schema = current_schema() AND table_name = %s",
-            (table,),
-        ).fetchall()
-        return {str(row[0]) for row in rows}
-    else:
-        rows = cursor.execute(f"PRAGMA table_info({table})").fetchall()
-        return {str(row[1]) for row in rows}
+    rows = cursor.execute(
+        "SELECT column_name FROM information_schema.columns "
+        "WHERE table_schema = current_schema() AND table_name = %s",
+        (table,),
+    ).fetchall()
+    return {str(row[0]) for row in rows}
 
 
 def _data_type(cursor, table: str, column: str, _use_pg: bool = True) -> str | None:
-    if _use_pg:
-        row = cursor.execute(
-            "SELECT data_type FROM information_schema.columns "
-            "WHERE table_schema = current_schema() AND table_name = %s AND column_name = %s",
-            (table, column),
-        ).fetchone()
-        return str(row[0]).lower() if row else None
-    else:
-        rows = cursor.execute(f"PRAGMA table_info({table})").fetchall()
-        for r in rows:
-            if str(r[1]).lower() == column.lower():
-                return str(r[2]).lower()
-        return None
+    row = cursor.execute(
+        "SELECT data_type FROM information_schema.columns "
+        "WHERE table_schema = current_schema() AND table_name = %s AND column_name = %s",
+        (table, column),
+    ).fetchone()
+    return str(row[0]).lower() if row else None
 
 
 def _add_columns(cursor, table: str, definitions: dict[str, str], _use_pg: bool = True) -> None:
@@ -42,7 +31,7 @@ def _add_columns(cursor, table: str, definitions: dict[str, str], _use_pg: bool 
 
 
 def _seed_target(cursor, row: tuple, _use_pg: bool = True) -> None:
-    placeholder = "%s" if _use_pg else "?"
+    placeholder = "%s"
     placeholders = ", ".join([placeholder] * len(row))
     cursor.execute(
         f"""
@@ -76,17 +65,16 @@ def upgrade(cursor, _use_pg: bool) -> None:
 
     # Version 24 deployments may have created integer flags. Normalize them
     # before the boolean expressions below are evaluated.
-    if _use_pg:
-        if _data_type(cursor, "outbound_probe_targets", "is_active", _use_pg) != "boolean":
-            cursor.execute(
-                "ALTER TABLE outbound_probe_targets ALTER COLUMN is_active TYPE BOOLEAN "
-                "USING (is_active <> 0)"
-            )
-        if _data_type(cursor, "outbound_probe_targets", "enabled", _use_pg) != "boolean":
-            cursor.execute(
-                "ALTER TABLE outbound_probe_targets ALTER COLUMN enabled TYPE BOOLEAN "
-                "USING (enabled <> 0)"
-            )
+    if _data_type(cursor, "outbound_probe_targets", "is_active", _use_pg) != "boolean":
+        cursor.execute(
+            "ALTER TABLE outbound_probe_targets ALTER COLUMN is_active TYPE BOOLEAN "
+            "USING (is_active <> 0)"
+        )
+    if _data_type(cursor, "outbound_probe_targets", "enabled", _use_pg) != "boolean":
+        cursor.execute(
+            "ALTER TABLE outbound_probe_targets ALTER COLUMN enabled TYPE BOOLEAN "
+            "USING (enabled <> 0)"
+        )
     _add_columns(
         cursor,
         "outbound_probe_samples",
@@ -186,7 +174,7 @@ def upgrade(cursor, _use_pg: bool) -> None:
     from datetime import datetime, timezone
 
     now = datetime.now(timezone.utc).replace(microsecond=0).isoformat()
-    q_placeholder = "%s" if _use_pg else "?"
+    q_placeholder = "%s"
     cursor.execute(f"SELECT id FROM outbound_probe_nodes WHERE node_name = {q_placeholder}", ("platform-server",))
     node = cursor.fetchone()
     node_id = str(node[0]) if node else "platform-server"
@@ -221,14 +209,9 @@ def upgrade(cursor, _use_pg: bool) -> None:
         """,
         (now,),
     )
-    if _use_pg:
-        cursor.execute(
-            "UPDATE outbound_probe_targets SET is_active = enabled WHERE is_active IS NULL OR is_active IS DISTINCT FROM enabled"
-        )
-    else:
-        cursor.execute(
-            "UPDATE outbound_probe_targets SET is_active = enabled WHERE is_active IS NULL OR is_active IS NOT enabled"
-        )
+    cursor.execute(
+        "UPDATE outbound_probe_targets SET is_active = enabled WHERE is_active IS NULL OR is_active IS DISTINCT FROM enabled"
+    )
 
     # Add a minimum domestic/international set without duplicating user data.
     cursor.execute("SELECT target_name FROM outbound_probe_targets")

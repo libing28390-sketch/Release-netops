@@ -1,4 +1,4 @@
-"""HTTP API for the Knowledge Engine V2 Source Registry (CAT-003)."""
+"""HTTP API for the Knowledge Engine V1 Source Registry (CAT-003)."""
 
 from __future__ import annotations
 
@@ -9,7 +9,7 @@ from fastapi import APIRouter, Body, HTTPException, Path, Query
 from pydantic import BaseModel, ConfigDict, Field
 
 from core.rbac import require_permission
-from services.source_registry_service import (
+from services.knowledge_v1_source_service import (
     SourceRegistryError,
     collect_source,
     create_source,
@@ -25,7 +25,7 @@ from services.source_registry_service import (
     update_source,
     validate_source,
 )
-from api.knowledge_v2_response import (
+from api.knowledge_response import (
     REFRESH_OBSERVATION_SUMMARY_FIELDS,
     SOURCE_SUMMARY_FIELDS,
     SOURCE_VERSION_SUMMARY_FIELDS,
@@ -35,7 +35,7 @@ from api.knowledge_v2_response import (
 )
 
 
-router = APIRouter(prefix="/knowledge-v2/sources", tags=["knowledge-v2-source-registry"])
+router = APIRouter(prefix="/knowledge/sources", tags=["knowledge-source-registry"])
 logger = logging.getLogger(__name__)
 
 

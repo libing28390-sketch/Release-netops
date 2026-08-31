@@ -7,7 +7,7 @@ import yaml
 
 
 ROOT = Path(__file__).resolve().parents[3]
-SAMPLE = ROOT / "docs" / "knowledge-engine-v2" / "catalog" / "CAT-008-CISCO-OS-BOUNDARY.yaml"
+SAMPLE = ROOT / "docs" / "knowledge-engine" / "catalog" / "CAT-008-CISCO-OS-BOUNDARY.yaml"
 
 
 def _load() -> dict:

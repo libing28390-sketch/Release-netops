@@ -20,7 +20,7 @@ from urllib.parse import urljoin, urlsplit
 
 import httpx
 
-from services.source_registry_service import (
+from services.knowledge_v1_source_service import (
     SourceRegistryError,
     _canonicalize_url,
 )

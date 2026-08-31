@@ -6,7 +6,7 @@ from starlette.requests import Request
 
 from core.config import settings
 from ai.api.security import set_dev_passthrough
-from api.knowledge_v2_contracts import DevPassthroughRequest
+from api.knowledge_contracts import DevPassthroughRequest
 from ai.security.dev_passthrough import dev_passthrough
 from ai.security.gateway import AISecurityGateway, SecurityBlocked, SecurityPolicy
 from ai.security.tokenization import ScopedTokenVault

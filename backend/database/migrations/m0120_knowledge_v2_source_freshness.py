@@ -15,11 +15,11 @@ NAME = "knowledge_v2_source_freshness"
 
 
 def _json_type(use_pg: bool) -> tuple[str, str]:
-    return ("JSONB", "'{}'::jsonb") if use_pg else ("TEXT", "'{}'")
+    return ("JSONB", "'{}'::jsonb")
 
 
 def _time_type(use_pg: bool) -> str:
-    return "TIMESTAMPTZ" if use_pg else "TEXT"
+    return "TIMESTAMPTZ"
 
 
 def upgrade(cursor, use_pg: bool) -> None:

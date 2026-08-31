@@ -1,7 +1,8 @@
 from __future__ import annotations
 
 import json
-import sqlite3
+from backend.tests import pg_catalog_assertions as pg_catalog
+from backend.tests.pg_test_utils import postgresql_test_driver
 from pathlib import Path
 
 import yaml
@@ -16,8 +17,8 @@ from database import get_db_connection
 
 
 ROOT = Path(__file__).resolve().parents[3]
-CONTRACT = ROOT / "docs" / "knowledge-engine-v2" / "architecture" / "DB-022-REINDEX-BATCH-LEASE-CONTRACT.yaml"
-REPORT = ROOT / "docs" / "knowledge-engine-v2" / "architecture" / "DB-022-REINDEX-BATCH-LEASE-CONTRACT.md"
+CONTRACT = ROOT / "docs" / "knowledge-engine" / "architecture" / "DB-022-REINDEX-BATCH-LEASE-CONTRACT.yaml"
+REPORT = ROOT / "docs" / "knowledge-engine" / "architecture" / "DB-022-REINDEX-BATCH-LEASE-CONTRACT.md"
 SERVICE = ROOT / "backend" / "ai" / "services" / "knowledge_reindex_service.py"
 ASSISTANT = ROOT / "backend" / "ai" / "api" / "assistant.py"
 
@@ -48,7 +49,7 @@ def test_db022_contract_and_runtime_markers_are_frozen():
 
 
 def test_db022_lease_excludes_duplicate_worker_and_fences_owner():
-    conn = sqlite3.connect(":memory:")
+    conn = postgresql_test_driver.connect()
     conn.execute(
         "CREATE TABLE scheduler_locks (lock_name TEXT PRIMARY KEY, locked_at TEXT NOT NULL, expires_at TEXT NOT NULL)"
     )
@@ -155,7 +156,7 @@ def test_db022_lease_loss_preserves_checkpoint_and_is_retryable(isolated_db, mon
 def test_db022_v1_schema_and_source_rows_are_preserved(isolated_db):
     conn = get_db_connection()
     try:
-        before = tuple(row[0] for row in conn.execute("SELECT name FROM sqlite_master WHERE type='table' ORDER BY name").fetchall())
+        before = tuple(sorted(pg_catalog.table_names(conn)))
         source_count = conn.execute("SELECT COUNT(*) FROM ai_document").fetchone()[0]
         assert conn.execute("SELECT COUNT(*) FROM schema_migrations").fetchone()[0] == conn.execute("SELECT MAX(version) FROM schema_migrations").fetchone()[0]
         assert "devices" in before and "ai_document" in before

@@ -19,7 +19,7 @@ describe('stable API error contract', () => {
       }),
     }));
 
-    await expect(apiRequest('/api/v2/kb/sources')).rejects.toMatchObject({
+    await expect(apiRequest('/api/knowledge/sources')).rejects.toMatchObject({
       status: 403,
       requestId: 'req-api004',
       code: 'PERMISSION_DENIED',

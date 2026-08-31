@@ -6,15 +6,15 @@ import yaml
 
 
 ROOT = Path(__file__).resolve().parents[3]
-CONTRACT = ROOT / "docs" / "knowledge-engine-v2" / "architecture" / "DB-007-OS-SOFTWARE-STRUCTURE.yaml"
-REPORT = ROOT / "docs" / "knowledge-engine-v2" / "architecture" / "DB-007-OS-SOFTWARE-STRUCTURE.md"
-ER_CONTRACT = ROOT / "docs" / "knowledge-engine-v2" / "architecture" / "DB-001-core-er-model.yaml"
-COMMON_CONTRACT = ROOT / "docs" / "knowledge-engine-v2" / "architecture" / "DB-002-COMMON-COLUMN-SEMANTICS.yaml"
-LIFECYCLE_CONTRACT = ROOT / "docs" / "knowledge-engine-v2" / "architecture" / "DB-003-LIFECYCLE-POLICY.yaml"
+CONTRACT = ROOT / "docs" / "knowledge-engine" / "architecture" / "DB-007-OS-SOFTWARE-STRUCTURE.yaml"
+REPORT = ROOT / "docs" / "knowledge-engine" / "architecture" / "DB-007-OS-SOFTWARE-STRUCTURE.md"
+ER_CONTRACT = ROOT / "docs" / "knowledge-engine" / "architecture" / "DB-001-core-er-model.yaml"
+COMMON_CONTRACT = ROOT / "docs" / "knowledge-engine" / "architecture" / "DB-002-COMMON-COLUMN-SEMANTICS.yaml"
+LIFECYCLE_CONTRACT = ROOT / "docs" / "knowledge-engine" / "architecture" / "DB-003-LIFECYCLE-POLICY.yaml"
 RAG_MIGRATION = ROOT / "backend" / "database" / "migrations" / "m0113_rag_metadata_v2.py"
 INTENT_PARSER = ROOT / "backend" / "ai" / "services" / "intent_parser.py"
 PLATFORM_MIGRATION = ROOT / "backend" / "database" / "migrations" / "m0072_platform_registry_p0.py"
-VENDOR_SCOPE = ROOT / "docs" / "knowledge-engine-v2" / "governance" / "vendor-scope.yaml"
+VENDOR_SCOPE = ROOT / "docs" / "knowledge-engine" / "governance" / "vendor-scope.yaml"
 
 
 def _load(path: Path) -> dict:

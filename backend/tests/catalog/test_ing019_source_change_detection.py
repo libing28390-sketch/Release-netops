@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import hashlib
+import json
 
 import httpx
 import pytest
@@ -387,11 +388,19 @@ def test_ing019_change_action_failure_is_durable_and_retryable(isolated_db, make
     assert failed["action_status"] == "failed"
     assert failed["document_errors"] == [{"document_id": imported["document"]["id"], "code": "DOCUMENT_CHANGE_DEPENDENCY_FAILED"}]
     with get_db_connection() as conn:
-        action = conn.execute(
-            "SELECT status, attempt_count, last_error_code FROM kb_source_change_action WHERE tenant_id = ? AND refresh_observation_id = ?",
+        state_row = conn.execute(
+            "SELECT metadata_json FROM ai_document_revision "
+            "WHERE tenant_id = ? AND id = ? AND record_type = 'source_observation'",
             ("tenant-default", observation["id"]),
         ).fetchone()
-    assert tuple(action) == ("failed", 1, "DOCUMENT_CHANGE_DEPENDENCY_FAILED")
+    state = state_row[0] if isinstance(state_row[0], dict) else json.loads(state_row[0] or "{}")
+    assert state["change_application"] == {
+        "status": "failed",
+        "attempt_count": 1,
+        "last_error_code": "DOCUMENT_CHANGE_DEPENDENCY_FAILED",
+        "updated_at": state["change_application"]["updated_at"],
+        "applied_at": "",
+    }
 
     monkeypatch.setattr(change_service, "transition_document_lifecycle", original_transition)
     recovered = apply_official_source_detection(
@@ -405,11 +414,15 @@ def test_ing019_change_action_failure_is_durable_and_retryable(isolated_db, make
     assert recovered["action_status"] == "applied"
     assert recovered["documents_quarantined"] == 1
     with get_db_connection() as conn:
-        action = conn.execute(
-            "SELECT status, attempt_count, last_error_code FROM kb_source_change_action WHERE tenant_id = ? AND refresh_observation_id = ?",
+        state_row = conn.execute(
+            "SELECT metadata_json FROM ai_document_revision "
+            "WHERE tenant_id = ? AND id = ? AND record_type = 'source_observation'",
             ("tenant-default", observation["id"]),
         ).fetchone()
-    assert tuple(action) == ("applied", 2, "")
+    state = state_row[0] if isinstance(state_row[0], dict) else json.loads(state_row[0] or "{}")
+    assert state["change_application"]["status"] == "applied"
+    assert state["change_application"]["attempt_count"] == 2
+    assert state["change_application"]["last_error_code"] == ""
 
 
 def test_ing019_change_action_requires_source_update_permission(isolated_db, make_user):

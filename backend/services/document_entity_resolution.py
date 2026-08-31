@@ -1,4 +1,4 @@
-"""Tenant-scoped Product/OS/Version resolution for Knowledge Engine V2.
+"""Tenant-scoped Product/OS/Version resolution for the Knowledge Engine.
 
 This module is deliberately read-only. It resolves metadata against an
 active, tenant-scoped catalog snapshot and never turns a draft seed, body

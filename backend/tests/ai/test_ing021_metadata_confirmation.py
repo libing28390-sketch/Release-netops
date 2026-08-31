@@ -9,7 +9,7 @@ from ai.services.metadata_confirmation_service import (
     preview_document_metadata,
     validate_metadata_confirmation,
 )
-from api.knowledge_v2_contracts import KnowledgeDocumentCreateRequest, KnowledgeMetadataPreviewRequest
+from api.knowledge_contracts import KnowledgeDocumentCreateRequest, KnowledgeMetadataPreviewRequest
 
 
 USER = {"id": "operator-ing021", "username": "operator", "tenant_id": "tenant-ing021", "role": "Administrator"}

@@ -1,10 +1,9 @@
-import sqlite3
-
+from backend.tests.pg_test_utils import postgresql_test_driver
 from database.migrations.m0036_consolidate_interface_aliases import upgrade
 from services.cmdb_service import list_cmdb_interfaces
 
 
-def _interface_schema(conn: sqlite3.Connection) -> None:
+def _interface_schema(conn: postgresql_test_driver.Connection) -> None:
     conn.executescript(
         """
         CREATE TABLE interfaces (
@@ -28,7 +27,7 @@ def _interface_schema(conn: sqlite3.Connection) -> None:
 
 
 def test_migration_merges_alias_rows_and_repoints_references() -> None:
-    conn = sqlite3.connect(":memory:")
+    conn = postgresql_test_driver.connect()
     _interface_schema(conn)
     conn.execute(
         "INSERT INTO interfaces VALUES ("
@@ -46,17 +45,17 @@ def test_migration_merges_alias_rows_and_repoints_references() -> None:
     conn.execute("INSERT INTO topology_links VALUES ('link-1', 'long', NULL)")
     conn.execute("INSERT INTO interface_status_history VALUES ('history-1', 'long')")
 
-    upgrade(conn.cursor(), False)
+    upgrade(conn.cursor(), True)
 
     rows = conn.execute("SELECT id, interface_name FROM interfaces WHERE device_id = 'dev-1'").fetchall()
-    assert rows == [("short", "GE1/0/1")]
+    assert [tuple(row) for row in rows] == [("short", "GE1/0/1")]
     assert conn.execute("SELECT interface_id FROM ip_addresses WHERE id = 'ip-1'").fetchone()[0] == "short"
     assert conn.execute("SELECT source_interface_id FROM topology_links WHERE id = 'link-1'").fetchone()[0] == "short"
     assert conn.execute("SELECT interface_id FROM interface_status_history WHERE id = 'history-1'").fetchone()[0] == "short"
 
 
 def test_short_loop_aliases_share_one_identity() -> None:
-    conn = sqlite3.connect(":memory:")
+    conn = postgresql_test_driver.connect()
     _interface_schema(conn)
     for interface_id, name in (("short", "Loop0"), ("long", "LoopBack0")):
         conn.execute(
@@ -66,14 +65,14 @@ def test_short_loop_aliases_share_one_identity() -> None:
             (interface_id, "dev-1", name, name, name, "", "up" if interface_id == "short" else "unknown", "up" if interface_id == "short" else "unknown", "", 0, 0, 1500, "physical", "routed", None, None, "", "10.0.0.1", "10.0.0.1", 32, 1, 1, None, None, None, None, None, None),
         )
 
-    upgrade(conn.cursor(), False)
+    upgrade(conn.cursor(), True)
 
     assert conn.execute("SELECT COUNT(*) FROM interfaces WHERE device_id = 'dev-1'").fetchone()[0] == 1
 
 
 def test_cmdb_listing_does_not_append_inventory_alias_as_second_row() -> None:
-    conn = sqlite3.connect(":memory:")
-    conn.row_factory = sqlite3.Row
+    conn = postgresql_test_driver.connect()
+    conn.row_factory = postgresql_test_driver.Row
     _interface_schema(conn)
     conn.execute("INSERT INTO devices VALUES ('dev-1', 'S6850-3', '10.254.0.3', 'h3c_comware', 'online')")
     conn.execute(

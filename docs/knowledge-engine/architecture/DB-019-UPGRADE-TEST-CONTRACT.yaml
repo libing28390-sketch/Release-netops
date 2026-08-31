@@ -1,0 +1,77 @@
+task_id: DB-019
+priority: P0
+owner: DBA+QA
+milestone: M1
+status: implemented_upgrade_harness_contract
+authority: PostgreSQL_with_SQLite_compatibility_fixture
+contract_version: v2.0
+depends_on: [DB-017, DB-018]
+
+decision:
+  choice: current_highest_snapshot_to_contract_v2_upgrade_harness
+  summary: >-
+    The upgrade test starts from the highest discovered legacy migration
+    version, proves that every version is tracked on the isolated fresh
+    baseline, then replays the highest-version upgrade from a 114 snapshot to
+    115 using the real runner. The V2 target is the frozen DB-001..DB-018
+    contract set until physical V2 catalog migrations are introduced by the
+    later MIG tasks. This keeps the test honest: no production DDL, no fake
+    vector extension, and no destructive downgrade are performed.
+  invariants:
+    - current_highest_version_is_discovered_and_unique
+    - fresh_baseline_applies_all_discovered_versions_in_order
+    - upgrade_snapshot_has_no_missing_prior_tracking_rows
+    - highest_pending_module_applies_once_and_is_idempotent_on_repeat
+    - prior_tracking_rows_and_V1_tables_remain_unchanged
+    - V2_contract_prerequisites_are_present_before_target_gate
+    - failed_or_drifted_history_fails_closed_without_skipping_versions
+    - PostgreSQL_execution_is_required_for_real_lock_and_catalog_gate
+
+upgrade_fixture:
+  legacy_highest_version: 115
+  snapshot_version: 114
+  target: contract_v2_db001_to_db018
+  source_of_truth: docs/knowledge-engine/architecture/DB-001..DB-018
+  fixture_backend: isolated_SQLite_for_repeatable_contract_and_runner_probe
+  production_backend: PostgreSQL_required_for_real_upgrade_and_lock_measurements
+  snapshot_steps: [fresh_isolated_bootstrap, assert_all_versions_applied, remove_only_latest_tracking_row_in_test_copy, run_strict_runner, assert_latest_restored, run_again_and_assert_zero]
+  forbidden: [production_database_mutation, delete_production_tracking_history, fake_vector_extension, skip_failed_migration, downgrade_by_deleting_rows]
+
+checks:
+  discovery: [numeric_VERSION_sorted, unique_VERSION, NAME_stable, highest_is_115]
+  pre_upgrade: [schema_migrations_present, versions_1_to_114_present, V1_required_tables_present, contract_docs_DB001_to_DB018_present]
+  upgrade: [plan_pending_is_115_only, strict_history_safe, run_count_is_1, tracking_115_inserted_after_success, required_tables_unchanged]
+  repeat: [plan_pending_empty, run_count_is_0, tracking_count_unchanged, schema_objects_unchanged]
+  failure: [module_exception_rolls_back_data, version_remains_untracked, higher_versions_do_not_run, corrected_retry_succeeds]
+  drift: [unknown_version_or_name_drift_returns_zero, no_new_version_applied]
+
+v2_contract_target:
+  physical_schema_status: contract_only_before_MIG_tasks
+  required_docs: [DB-001, DB-002, DB-003, DB-004, DB-005, DB-006, DB-007, DB-008, DB-009, DB-010, DB-011, DB-012, DB-013, DB-014, DB-015, DB-016, DB-017, DB-018]
+  gate: do_not_claim_physical_V2_tables_or_vector_cutover_until_MIG_and_REL
+  compatibility: V1_tables_and_current_highest_migration_remain_authoritative
+
+evidence:
+  artifacts: [applied_versions_before, plan_json_redacted, pending_versions, applied_count, tracking_count_after, repeat_count, schema_table_snapshot, contract_target_hash]
+  metrics: [upgrade_duration_ms, lock_wait_ms, row_count_delta, index_count_delta, orphan_delta, cross_tenant_delta]
+  redaction: no_DSN_password_api_key_raw_document_prompt_or_embedding_payload
+  retention: store_hashes_counts_and_safe_errors_only
+
+security_and_governance:
+  authorization: upgrade_runner_requires_database_maintenance_identity_and_change_ticket
+  tenant_scope: validation_and_future_backfill_follow_DB-017_tenant_batch_contract
+  audit_events: [upgrade_start, plan, module_start, module_success, module_failure, rollback, repeat_noop, drift_block]
+  rollback: restore_last_verified_backup_or_stop_at_failed_version; never_delete_schema_migrations_history
+
+verification:
+  contract_tests: backend/tests/database/test_db019_current_highest_upgrade.py
+  required_checks: [discovery, fresh_pre_upgrade, 114_to_115_snapshot, repeat, failure_and_retry, drift, V1_preservation, report_markers]
+  local_result: SQLite_contract_and_runner_probe
+  production_gate: PostgreSQL_current_highest_upgrade_and_lock_measurement_in_DB-020
+
+limitations:
+  - physical_V2_catalog_tables_are_not_created_by_DB-019
+  - vector_EXPLAIN_remains_blocked_by_DB-016_missing_extension
+  - production_PostgreSQL_upgrade_requires_approved_maintenance_window
+
+next_tasks: [DB-020, DB-021, DB-022, MIG-001]

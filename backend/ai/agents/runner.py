@@ -20,6 +20,30 @@ from ai.security.tokenization import opaque_user_id
 from ai.services.metrics import ai_metrics
 
 
+class AgentNotFoundError(ValueError):
+    """Raised when a requested Agent code is not registered and enabled."""
+
+
+def _resolve_agent_id(agent_code: str) -> str:
+    """Resolve the public Agent code to the primary key required by the FK."""
+
+    code = str(agent_code or "").strip()
+    if not code:
+        raise AgentNotFoundError("Agent code is required")
+
+    with get_db_connection() as conn:
+        row = conn.execute(
+            "SELECT id, enabled FROM ai_agent WHERE code = ? LIMIT 1",
+            (code,),
+        ).fetchone()
+
+    if not row:
+        raise AgentNotFoundError(f"Agent '{code}' is not registered")
+    if not bool(row[1]):
+        raise AgentNotFoundError(f"Agent '{code}' is disabled")
+    return str(row[0])
+
+
 def _safe_text(value: Any, *, tenant_id: str, task_id: str) -> str:
     text = str(value or "")[:200_000]
     findings = classify_text(text)
@@ -44,6 +68,8 @@ class AgentRunner:
         max_tool_calls: int = 12,
         timeout_seconds: int = 180,
     ) -> Dict[str, Any]:
+        agent_code = str(agent_code or "").strip()
+        agent_id = _resolve_agent_id(agent_code)
         now_iso = datetime.now(timezone.utc).isoformat()
         run_id = f"run_{uuid.uuid4().hex[:12]}"
         tenant = tenant_id or "tenant-default"
@@ -66,7 +92,7 @@ class AgentRunner:
                                              max_steps, max_tool_calls, deadline_at, cancel_requested, started_at)
                     VALUES (?, ?, ?, ?, NULL, ?, 'running', 'R0', ?, ?, ?, 0, ?)
                     """,
-                    (run_id, agent_code, tenant, owner_opaque, safe_question, max_steps, max_tool_calls,
+                    (run_id, agent_id, tenant, owner_opaque, safe_question, max_steps, max_tool_calls,
                      (datetime.now(timezone.utc).timestamp() + timeout_seconds), now_iso)
                 )
             except Exception:
@@ -79,7 +105,7 @@ class AgentRunner:
                                              max_steps, max_tool_calls, deadline_at, cancel_requested, started_at)
                     VALUES (?, ?, ?, ?, 'running', 'R0', ?, ?, ?, 0, ?)
                     """,
-                    (run_id, agent_code, user_id, safe_question, max_steps, max_tool_calls,
+                    (run_id, agent_id, user_id, safe_question, max_steps, max_tool_calls,
                      (datetime.now(timezone.utc).timestamp() + timeout_seconds), now_iso)
                 )
             conn.commit()
@@ -317,6 +343,7 @@ class AgentRunner:
                 conn.rollback()
                 raise
 
+    @staticmethod
     def _read_control(run_id: str, *, tenant_id: str, user_id_opaque: str) -> dict[str, Any]:
         try:
             with get_db_connection() as conn:

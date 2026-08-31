@@ -7,25 +7,27 @@ import yaml
 
 
 ROOT = Path(__file__).resolve().parents[3]
-CONTRACT = ROOT / "docs" / "knowledge-engine-v2" / "architecture" / "CAT-002-OFFICIAL-SOURCE-TYPES.yaml"
-REPORT = ROOT / "docs" / "knowledge-engine-v2" / "architecture" / "CAT-002-OFFICIAL-SOURCE-TYPES.md"
-CAT001 = ROOT / "docs" / "knowledge-engine-v2" / "architecture" / "CAT-001-OFFICIAL-SOURCE-ALLOWLIST.yaml"
+CONTRACT = ROOT / "docs" / "knowledge-engine" / "architecture" / "CAT-002-OFFICIAL-SOURCE-TYPES.yaml"
+REPORT = ROOT / "docs" / "knowledge-engine" / "architecture" / "CAT-002-OFFICIAL-SOURCE-TYPES.md"
+CAT001 = ROOT / "docs" / "knowledge-engine" / "architecture" / "CAT-001-OFFICIAL-SOURCE-ALLOWLIST.yaml"
+CAT001_EXTENSIONS = ROOT / "docs" / "knowledge-engine" / "architecture" / "CAT-001-OFFICIAL-SOURCE-ALLOWLIST-EXTENSIONS.yaml"
 
 
 def _load(path: Path) -> dict:
     return yaml.safe_load(path.read_text(encoding="utf-8"))
 
 
-def test_cat002_freezes_five_explicit_source_types():
+def test_cat002_freezes_six_explicit_source_types():
     data = _load(CONTRACT)
     assert data["task_id"] == "CAT-002"
     assert data["priority"] == "P0"
-    assert data["status"] == "frozen_for_implementation"
+    assert data["status"] == "reviewed_for_knowledge_backfill"
     assert [item["code"] for item in data["source_types"]] == [
         "official_url",
         "product_page",
         "configuration_guide",
         "command_reference",
+        "troubleshooting_guide",
         "release_note",
     ]
     assert all(item["required_fields"] for item in data["source_types"])
@@ -47,12 +49,14 @@ def test_cat002_type_specific_evidence_and_fail_closed_rules_are_explicit():
 def test_cat002_examples_stay_inside_cat001_registered_host_and_paths():
     data = _load(CONTRACT)
     cat001 = _load(CAT001)
+    cat001_extensions = _load(CAT001_EXTENSIONS)
     allowed = {}
-    for vendor in cat001["vendor_entries"]:
-        allowed[vendor["vendor"]] = [
-            (entry["host"], tuple(entry["path_prefixes"]))
-            for entry in vendor["official_hosts"]
-        ]
+    for allowlist in (cat001, cat001_extensions):
+        for vendor in allowlist["vendor_entries"]:
+            allowed.setdefault(vendor["vendor"], []).extend(
+                (entry["host"], tuple(entry["path_prefixes"]))
+                for entry in vendor["official_hosts"]
+            )
     for vendor_name, typed_examples in data["first_batch_examples"].items():
         assert vendor_name in allowed
         for urls in typed_examples.values():

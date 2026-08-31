@@ -12,17 +12,11 @@ NAME = "consolidate_interface_aliases"
 
 
 def _table_exists(cursor, table: str, use_pg: bool) -> bool:
-    if use_pg:
-        row = cursor.execute(
-            "SELECT 1 FROM information_schema.tables "
-            "WHERE table_schema = current_schema() AND table_name = ? LIMIT 1",
-            (table,),
-        ).fetchone()
-    else:
-        row = cursor.execute(
-            "SELECT 1 FROM sqlite_master WHERE type = 'table' AND name = ? LIMIT 1",
-            (table,),
-        ).fetchone()
+    row = cursor.execute(
+        "SELECT 1 FROM information_schema.tables "
+        "WHERE table_schema = current_schema() AND table_name = ? LIMIT 1",
+        (table,),
+    ).fetchone()
     return row is not None
 
 

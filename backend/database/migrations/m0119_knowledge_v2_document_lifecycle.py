@@ -37,14 +37,12 @@ _COLUMNS = {
 
 
 def _table_columns(cursor, table: str, use_pg: bool) -> set[str]:
-    if use_pg:
-        cursor.execute(
-            "SELECT column_name FROM information_schema.columns WHERE table_name = %s",
-            (table,),
-        )
-        return {str(row[0]) for row in cursor.fetchall()}
-    cursor.execute(f"PRAGMA table_info({table})")
-    return {str(row[1]) for row in cursor.fetchall()}
+    cursor.execute(
+        "SELECT column_name FROM information_schema.columns WHERE table_name = %s",
+        (table,),
+    )
+    return {str(row[0]) for row in cursor.fetchall()}
+
 
 
 def _add_columns(cursor, table: str, use_pg: bool) -> None:
@@ -52,10 +50,7 @@ def _add_columns(cursor, table: str, use_pg: bool) -> None:
     for name, definition in _COLUMNS.items():
         if name in existing:
             continue
-        if use_pg:
-            cursor.execute(f"ALTER TABLE {table} ADD COLUMN IF NOT EXISTS {name} {definition}")
-        else:
-            cursor.execute(f"ALTER TABLE {table} ADD COLUMN {name} {definition}")
+        cursor.execute(f"ALTER TABLE {table} ADD COLUMN IF NOT EXISTS {name} {definition}")
 
 
 def _seed_lifecycle_projection(cursor, table: str) -> None:
@@ -78,9 +73,9 @@ def _seed_lifecycle_projection(cursor, table: str) -> None:
 
 
 def _create_event_table(cursor, use_pg: bool) -> None:
-    time_type = "TIMESTAMPTZ" if use_pg else "TEXT"
-    json_type = "JSONB" if use_pg else "TEXT"
-    json_default = "'{}'::jsonb" if use_pg else "'{}'"
+    time_type = "TIMESTAMPTZ"
+    json_type = "JSONB"
+    json_default = "'{}'::jsonb"
     cursor.execute(
         f"""
         CREATE TABLE IF NOT EXISTS kb_document_lifecycle_event (
@@ -132,4 +127,3 @@ def downgrade(cursor, use_pg: bool) -> None:
     # Lifecycle history is audit/provenance. Disable the adapter rather than
     # dropping transition events or rewriting the V1-compatible status fields.
     return None
-

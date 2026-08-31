@@ -8,10 +8,12 @@ from typing import Any
 from fastapi import APIRouter, Body, HTTPException, Path, Query
 from pydantic import BaseModel, ConfigDict, Field
 
-from api.knowledge_v2_contracts import (
+from api.knowledge_contracts import (
     CatalogVersionBundleContract,
     CatalogVersionImportContract,
     CatalogVersionRollbackContract,
+    CatalogCustomModelCreateRequest,
+    CatalogCustomModelUpdateRequest,
     ProductAliasRequest,
     ProductCatalogModelRequest,
 )
@@ -31,11 +33,14 @@ from services.product_catalog_service import (
     list_product_aliases,
     list_product_catalog,
     resolve_product_alias_dry_run,
+    create_custom_product_model,
+    update_custom_product_model,
+    delete_custom_product_model,
 )
-from api.knowledge_v2_response import attach_pagination, paginate_items
+from api.knowledge_response import attach_pagination, paginate_items
 
 
-router = APIRouter(prefix="/knowledge-v2/catalog", tags=["knowledge-v2-product-catalog"])
+router = APIRouter(prefix="/knowledge/catalog", tags=["knowledge-product-catalog"])
 logger = logging.getLogger(__name__)
 
 
@@ -126,6 +131,32 @@ def api_list_catalog(
     )
     result = attach_pagination({**result, "items": items}, meta, filters={"search": search, "vendor_id": vendor_id, "family_code": family_code, "series_code": series_code, "model": model, "software_version": software_version, "status": status})
     return {"success": True, "data": result, "message": ""}
+
+
+@router.post("/custom/models")
+def api_create_custom_catalog_model(
+    payload: CatalogCustomModelCreateRequest = Body(...),
+    user=require_permission("knowledge_catalog", "create"),
+):
+    return {"success": True, "data": _call(create_custom_product_model, user, payload.model_dump()), "message": "Catalog model created"}
+
+
+@router.patch("/custom/models/{model_id}")
+def api_update_custom_catalog_model(
+    model_id: str = Path(..., min_length=1, max_length=256),
+    payload: CatalogCustomModelUpdateRequest = Body(...),
+    user=require_permission("knowledge_catalog", "update"),
+):
+    return {"success": True, "data": _call(update_custom_product_model, user, model_id, payload.model_dump(exclude_none=True)), "message": "Catalog model updated"}
+
+
+@router.delete("/custom/models/{model_id}")
+def api_delete_custom_catalog_model(
+    model_id: str = Path(..., min_length=1, max_length=256),
+    reason: str = Query(default="Catalog model archived", min_length=1, max_length=500),
+    user=require_permission("knowledge_catalog", "delete"),
+):
+    return {"success": True, "data": _call(delete_custom_product_model, user, model_id, reason=reason), "message": "Catalog model archived"}
 
 
 @router.get("/aliases")

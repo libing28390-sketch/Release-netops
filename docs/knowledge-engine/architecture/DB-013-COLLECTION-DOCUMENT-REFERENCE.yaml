@@ -1,0 +1,148 @@
+task_id: DB-013
+priority: P0
+owner: DBA
+milestone: M1
+status: frozen_for_implementation
+authority: PostgreSQL
+contract_version: v2.0
+
+decision:
+  choice: additive_tenant_scoped_collection_document_membership
+  summary: >-
+    Add a normalized Collection Document membership relation so one document
+    can be curated into many collections without copying or modifying
+    canonical Document, Document Version, Scope, product, software or
+    Metadata fields. kb_collection ACL remains the access boundary; a
+    membership grants no access by itself. The existing kb_document.collection_id
+    remains the DB-001 owner/default compatibility reference and is never
+    overwritten by membership edits.
+  invariants:
+    - membership_is_a_relational_reference_not_a_metadata_or_json_array_patch
+    - every_membership_has_one_tenant_collection_and_document
+    - collection_acl_and_document_acl_are_intersected_not_widened
+    - membership_does_not_change_document_identity_version_scope_or_metadata
+    - duplicate_membership_is_idempotent_by_tenant_collection_document_kind
+    - inactive_or_unknown_membership_is_excluded_from_retrieval_and_exports
+    - cross_tenant_collection_document_links_are_rejected
+    - deleting_a_collection_or_membership_never_deletes_document_source_facts
+
+canonical_entities:
+  kb_collection:
+    source: DB-001
+    required_columns: [id, tenant_id, code, name, collection_kind, acl_json, status, created_at, updated_at, created_by, updated_by]
+    identity: tenant_id_plus_code
+    lifecycle_statuses: [draft, active, disabled, archived, deleted, quarantined, purged]
+    acl_rule: collection_acl_is_server_authorized_and_never_read_from_document_metadata
+  kb_document:
+    source: DB-001
+    required_columns: [id, tenant_id, collection_id, source_registry_id, canonical_key, title, document_kind, status, created_at, updated_at, created_by, updated_by]
+    owner_reference: collection_id_remains_required_default_or_owner_compatibility_reference
+    membership_rule: collection_id_is_not_overwritten_when_secondary_memberships_are_added_or_removed
+    canonical_fields_untouched: [title, document_kind, status, source_registry_id, canonical_key, metadata_json, acl_json]
+  kb_document_version:
+    source: DB-001_and_DB-009
+    scope_rule: collection_membership_never_replaces_document_product_or_document_software_scope
+
+membership_entity:
+  name: kb_collection_document
+  table: kb_collection_document
+  aggregate: knowledge
+  purpose: explicit_many_to_many_collection_document_reference
+  required_columns: [id, tenant_id, collection_id, document_id, membership_kind, status, created_at, updated_at, created_by, updated_by]
+  optional_columns: [sort_order, effective_from, effective_to, source_ref, added_reason, removed_at, removed_by, metadata_json]
+  foreign_keys:
+    - tenant_id_and_collection_id_to_kb_collection_tenant_and_id
+    - tenant_id_and_document_id_to_kb_document_tenant_and_id
+    - created_by_to_principal_id
+    - updated_by_to_principal_id
+    - removed_by_to_principal_id
+  unique_keys: [[tenant_id, collection_id, document_id, membership_kind]]
+  indexes: [[tenant_id, collection_id, status, sort_order], [tenant_id, document_id, status], [tenant_id, membership_kind, status]]
+  lifecycle_statuses: [draft, active, disabled, archived, deleted, purged]
+  membership_kinds: [primary, secondary, curated, system, temporary]
+  membership_kind_rule: unknown_kind_rejected_before_persist
+  active_rule: only_active_collection_active_document_active_membership_can_enter_retrieval_scope
+  time_rule: effective_from_is_inclusive_effective_to_is_exclusive; null_end_means_until_disabled
+  metadata_rule: metadata_json_is_display_or_provenance_only_not_acl_scope_product_or_version_authority
+
+reference_behavior:
+  cardinality: kb_collection_many_to_many_kb_document_through_kb_collection_document
+  read_join: collection_acl_intersection_document_acl_intersection_membership_status_and_document_scope
+  write_operations: [attach, detach, disable_membership, restore_membership, reorder]
+  attach_preconditions: [tenant_scope, collection_active, document_active_or_reviewable, actor_has_kb.collection.manage_and_kb.document.link, no_legal_hold_conflict]
+  detach_behavior: logical_status_deleted_or_disabled_with_reason_and_actor; never_delete_document
+  restore_behavior: only_after_collection_document_acl_scope_and_source_health_check
+  reorder_behavior: update_sort_order_only; never_change_document_metadata_or_scope
+  idempotency: same_tenant_collection_document_kind_attach_returns_existing_active_reference
+  concurrency: lock_collection_then_document; compare_and_set_status_and_updated_at
+
+access_and_retrieval:
+  authorization_formula: tenant_match AND collection_acl_allows AND document_acl_allows AND membership_active AND document_active AND scope_verified
+  acl_precedence: deny_in_any_collection_or_document_acl_wins; membership_never_grants
+  collection_acl_fields: [allowed_roles, allowed_user_ids, allowed_site_ids, deny_roles, deny_user_ids]
+  document_scope: DB-009_collection_acl_plus_explicit_product_and_software_links
+  retrieval_predicate: collection_document.status = active AND collection.status = active AND document.status = active
+  export_predicate: same_as_retrieval_plus_export_permission_and_source_trust_gate
+  unknown_or_missing: fail_closed_and_exclude
+  no_shortcuts: [metadata_json_collection_ids, document_metadata_acl_override, all_collection_sentinel, cross_tenant_default_fallback]
+
+legacy_gap_audit:
+  ai_knowledge_base:
+    migration: backend/database/migrations/m0103_ai_platform_tables.py
+    observed_columns: [id, name, description, enabled, created_by, created_at]
+    later_additions: [tenant_id, acl_json]
+    mapping: ai_knowledge_base_to_kb_collection; enabled_maps_to_adapter_visibility_only
+  ai_document:
+    migration: backend/database/migrations/m0103_ai_platform_tables.py
+    observed_columns: [id, knowledge_base_id, name, source, vendor, platform, version, status, created_at, updated_at]
+    later_additions: [tenant_id, acl_json, source_trust_level, knowledge_source_type, metadata_json]
+    mapping: knowledge_base_id_to_legacy_default_collection_owner; create_additive_kb_collection_document_reference
+  ai_knowledge_directory:
+    migration: backend/database/migrations/m0112_ai_knowledge_directories.py
+    observed_columns: [id, knowledge_base_id, tenant_id, parent_id, name, path, depth, is_system, sort_order, created_by, created_at, updated_at]
+    mapping: directory_tree_is_collection_ui_organization; directory_path_in_document_metadata_is_not_authoritative_membership
+  knowledge_service:
+    module: backend/ai/services/knowledge_service.py
+    observed_paths: [create_knowledge_base, list_knowledge_bases, list_documents, get_document_detail, delete_document, batch_delete_documents, clear_sample_knowledge]
+    compatibility_rule: preserve_V1_calls_and_replace_only_membership_adapter_after_MIG_gate
+
+canonical_metadata_boundary:
+  protected_tables: [kb_collection, kb_document, kb_document_version, kb_document_product, kb_document_software]
+  protected_fields: [canonical_key, title, document_kind, source_registry_id, original_content, normalized_content, content_hash, metadata_json, acl_json, product_model_id, os_generation_id, software_version_id, cli_platform]
+  allowed_membership_fields: [collection_id, document_id, membership_kind, status, sort_order, effective_from, effective_to, source_ref, added_reason, removed_at, removed_by]
+  forbidden_mutations: [copy_document_metadata_into_membership, update_document_scope_from_collection_name, overwrite_document_collection_id_on_secondary_attach, put_authorization_in_membership_metadata_json]
+  read_model: collection_document_view_may_project_metadata_but_must_not_become_canonical_source
+
+tenant_security_and_audit:
+  tenant_scope: composite_tenant_id_plus_parent_id_foreign_keys_and_predicates_on_every_operation
+  permissions: [kb.collection.read, kb.collection.manage, kb.document.read, kb.document.link, kb.document.unlink, kb.export]
+  deny_conditions: [missing_tenant, cross_tenant_parent, inactive_collection, inactive_document, ACL_denied, unknown_membership_kind, unknown_status, scope_unverified]
+  audit_events: [collection_document_attached, collection_document_detached, collection_document_disabled, collection_document_restored, collection_document_reordered, cross_tenant_reference_denied]
+  audit_payload: [tenant_id, collection_id, document_id, membership_kind, before_status, after_status, actor_id, reason, request_id]
+  sensitive_data: [no_source_content, no_prompt, no_device_credential, no_api_key, no_acl_bypass_details]
+  collection_acl_change: separate_audited_operation_and_never_implicit_from_membership_write
+
+migration_contract:
+  status: contract_only_no_production_ddl_in_db_013
+  prerequisites: [DB-001_collection_and_document, DB-003_lifecycle, DB-009_document_scope, DB-012_trace_scope]
+  backfill: report_legacy_knowledge_base_document_pairs_then_insert_primary_membership_only_after_duplicate_and_tenant_review
+  fresh_upgrade: create_additive_membership_table_and_composite_constraints_after_postgresql_review
+  idempotence: tenant_collection_document_kind_unique_and_replay_safe
+  downgrade: disable_membership_reads_then_route_to_legacy_collection_id_adapter; retain_documents_and_metadata
+  rollback: restore_previous_collection_membership_visibility_without_deleting_document_or_version
+  production_gate: forbidden_until_MIG_API_RBAC_RETRIEVAL_AND_V1_parallel_tests_pass
+  data_loss_policy: no_canonical_metadata_rewrite_and_no_document_source_delete
+
+verification:
+  contract_tests: backend/tests/database/test_db013_collection_document_reference.py
+  required_checks: [DB-001_collection_document_alignment, DB-002_common_fields, lifecycle, membership_unique_keys, ACL_intersection, canonical_metadata_forbidden_mutations, legacy_migration_audit, tenant_and_rollback_gates, report_markers]
+  test_database: PostgreSQL_isolated_contract_database
+  production_database: PostgreSQL_required_for_composite_fk_and_lock_validation
+
+rollback:
+  runtime: disable_v2_membership_join_and_read_legacy_collection_id_adapter
+  data: retain_all_document_document_version_metadata_and_V1_knowledge_base_rows
+  schema: no_DB-013_production_DDL; later_downgrade_removes_only_additive_membership_rows_after_disable
+  audit: retain_attach_detach_and_cross_tenant_denial_events
+
+next_tasks: [DB-014, DB-015, DB-016, DB-017, DB-018, CAT-001, API-001, KUI-001]

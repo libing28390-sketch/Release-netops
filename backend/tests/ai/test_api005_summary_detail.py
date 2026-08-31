@@ -1,9 +1,9 @@
 from __future__ import annotations
 
 from api import knowledge_sources
-from api.knowledge_v2_response import project_summary
+from api.knowledge_response import project_summary
 from ai.api import assistant
-from api.knowledge_v2_response import (
+from api.knowledge_response import (
     SOURCE_SUMMARY_FIELDS,
 )
 
@@ -121,5 +121,5 @@ def test_contract_declares_separate_trace_and_document_detail_routes():
     trace_paths = {route.path for route in trace_router.routes}
     assert "/assistant/documents" in assistant_paths
     assert "/assistant/documents/{doc_id}" in assistant_paths
-    assert "/knowledge-v2/retrieval-traces" in trace_paths
-    assert "/knowledge-v2/retrieval-traces/{trace_id}" in trace_paths
+    assert "/knowledge/retrieval-traces" in trace_paths
+    assert "/knowledge/retrieval-traces/{trace_id}" in trace_paths

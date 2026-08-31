@@ -24,13 +24,12 @@ def _resolve_site(cursor, value):
 
 def _columns(cursor, table: str, use_pg: bool) -> set[str]:
     try:
-        if use_pg:
-            rows = cursor.execute(
-                "SELECT column_name FROM information_schema.columns WHERE table_name = ?",
-                (table,),
-            ).fetchall()
-            return {str(row[0]) for row in rows}
-        return {str(row[1]) for row in cursor.execute(f"PRAGMA table_info({table})").fetchall()}
+        rows = cursor.execute(
+            "SELECT column_name FROM information_schema.columns WHERE table_name = ?",
+            (table,),
+        ).fetchall()
+        return {str(row[0]) for row in rows}
+
     except Exception:
         return set()
 

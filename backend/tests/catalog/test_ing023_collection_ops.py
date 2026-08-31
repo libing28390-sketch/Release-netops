@@ -17,7 +17,7 @@ URL_B = "https://www.cisco.com/c/en/us/td/docs/switches/lan/catalyst9300/softwar
 def _item(url: str) -> dict:
     return {
         "url": url,
-        "source_kind": "product_page",
+        "source_kind": "product_page" if "/products/switches/" in url else "command_reference",
         "vendor": "Cisco",
         "product_family": "Catalyst 9300",
         "version_scope": {"primary": "17.9.x", "compatibility": "17.18.x"},
@@ -139,7 +139,7 @@ def test_ing023_site_alert_read_route_is_tenant_bounded(monkeypatch):
     from api.knowledge_ingestion import api_list_official_site_alerts, router
 
     paths = {(route.path, tuple(sorted(route.methods or []))) for route in router.routes}
-    assert ("/knowledge-v2/ingestion/official-site-alerts", ("GET",)) in paths
+    assert ("/knowledge/ingestion/official-site-alerts", ("GET",)) in paths
     monkeypatch.setattr(
         "api.knowledge_ingestion.list_site_anomaly_alerts",
         lambda user, **kwargs: [{"tenant_id": user["tenant_id"], "host": "www.cisco.com", "status": "open"}],

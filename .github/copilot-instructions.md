@@ -59,7 +59,7 @@ applyTo: "**"
 
 ### 后端
 - Python 3.10+ / FastAPI / Pydantic / SQLite (`data/netops.db`)
-- 混合使用 SQLAlchemy 模型 (`models/models.py`) 和原生 `sqlite3` (`get_db_connection`)
+- 混合使用 SQLAlchemy 模型 (`models/models.py`) 和 PostgreSQL 原生连接适配器 (`get_db_connection`)
 - 配置：`pydantic-settings` + `.env`，单例 `core/config.settings`
 - 认证：Bearer Token → `core/rbac.require_role()` 三级角色（Administrator > Operator > Viewer）
 - 凭据加密：Fernet/AES + PBKDF2，`enc:v1:` 前缀标记，函数见 `core/crypto.py`

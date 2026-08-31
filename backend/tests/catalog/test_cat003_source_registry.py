@@ -137,8 +137,8 @@ def test_cat003_api_contract_exposes_crud_lifecycle_validation_and_versions():
     from api.knowledge_sources import router
 
     paths = {(route.path, tuple(sorted(route.methods or ()))) for route in router.routes}
-    assert any(path.endswith("/knowledge-v2/sources") and "GET" in methods for path, methods in paths)
-    assert any(path.endswith("/knowledge-v2/sources/{source_id}") and "PATCH" in methods for path, methods in paths)
+    assert any(path.endswith("/knowledge/sources") and "GET" in methods for path, methods in paths)
+    assert any(path.endswith("/knowledge/sources/{source_id}") and "PATCH" in methods for path, methods in paths)
     assert any(path.endswith("/{source_id}/validate") and "POST" in methods for path, methods in paths)
     assert any(path.endswith("/{source_id}/enable") and "POST" in methods for path, methods in paths)
     assert any(path.endswith("/{source_id}/disable") and "POST" in methods for path, methods in paths)

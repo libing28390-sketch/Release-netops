@@ -1,6 +1,5 @@
 import os
 import re
-import queue
 import logging
 import threading
 import time
@@ -22,15 +21,16 @@ try:
     )
     _env_path = os.path.join(_project_root, '.env')
     _env_local_path = os.path.join(_project_root, '.env.local')
-    load_dotenv(_env_path, override=True)
+    # Explicit process/CI environment is authoritative.  A local dotenv may
+    # provide defaults, but must never replace an isolated test DATABASE_URL.
+    load_dotenv(_env_path, override=False)
     if os.path.exists(_env_local_path):
-        load_dotenv(_env_local_path, override=True)
+        load_dotenv(_env_local_path, override=False)
 except ImportError:
     pass
 
 BACKEND_DIR = os.path.dirname(os.path.abspath(__file__))
 PROJECT_ROOT = os.path.dirname(os.path.dirname(BACKEND_DIR))
-DB_PATH = os.path.join(PROJECT_ROOT, 'data', 'netops.db')
 
 logger = logging.getLogger(__name__)
 
@@ -43,23 +43,24 @@ if not _in_compose and '@db:' in _DATABASE_URL:
     logger.info("Non-compose environment: Auto-replaced 'db' host with 'localhost' in DATABASE_URL")
 
 normalized_db_url = _DATABASE_URL.lower()
-_USE_PG = normalized_db_url.startswith('postgresql://') or normalized_db_url.startswith('postgres://')
+if not (normalized_db_url.startswith('postgresql://') or normalized_db_url.startswith('postgres://')):
+    raise RuntimeError(
+        "PostgreSQL DATABASE_URL is required; SQLite and file-database fallbacks are not supported"
+    )
+_USE_PG = True
 
-_SERIAL_PK = 'SERIAL PRIMARY KEY' if _USE_PG else 'INTEGER PRIMARY KEY AUTOINCREMENT'
-_JSON_ARRAY_FN = 'json_build_array' if _USE_PG else 'json_array'
+_SERIAL_PK = 'SERIAL PRIMARY KEY'
+_JSON_ARRAY_FN = 'json_build_array'
 
 
 _safe_db_url = re.sub(r'://[^@]+@', '://***@', _DATABASE_URL)
 logger.info("Database backend selected: %s, DATABASE_URL=%s",
-            "PostgreSQL" if _USE_PG else "SQLite",
+            "PostgreSQL",
             _safe_db_url or "(unset)")
 
-if _USE_PG:
-    import psycopg2
-    import psycopg2.extras
-    import psycopg2.pool
-else:
-    import sqlite3
+import psycopg2
+import psycopg2.extras
+import psycopg2.pool
 
 _POOL_SIZE = int(os.environ.get('DB_POOL_SIZE', '16'))
 _PG_OVERFLOW_MAX = max(0, int(os.environ.get('DB_POOL_OVERFLOW_MAX', '4')))
@@ -68,9 +69,11 @@ _PG_ACQUIRE_TIMEOUT = max(0.1, float(os.environ.get('DB_POOL_ACQUIRE_TIMEOUT_SEC
 _LIKE_RE = re.compile(r'\bLIKE\b', re.IGNORECASE)
 
 
-def _adapt_pg_sql(sql: str) -> str:
+def _adapt_pg_sql(sql: str, *, escape_percent: bool = True) -> str:
     """Translate project ``?`` placeholders to psycopg2 safely."""
     translated = sql.replace('?', '%s')
+    if not escape_percent:
+        return translated
     result: list[str] = []
     index = 0
     while index < len(translated):
@@ -210,12 +213,15 @@ if _USE_PG:
             self._cur = cur
 
         @staticmethod
-        def _adapt(sql: str) -> str:
+        def _adapt(sql: str, *, escape_percent: bool = True) -> str:
             sql = _LIKE_RE.sub('ILIKE', sql)
-            return _adapt_pg_sql(sql)
+            return _adapt_pg_sql(sql, escape_percent=escape_percent)
 
         def execute(self, sql, params=None):
-            self._cur.execute(self._adapt(sql), params)
+            self._cur.execute(
+                self._adapt(sql, escape_percent=params is not None),
+                params,
+            )
             return self
 
         def executemany(self, sql, params_list):
@@ -321,119 +327,61 @@ if _USE_PG:
         def __del__(self):
             self.close()
 
-# ── SQLite Connection pooling wrappers ──
-else:
-    _pool: queue.Queue = queue.Queue(maxsize=_POOL_SIZE)
-    _active_connections = 0
-
-    class _PooledConnection:
-        __slots__ = ('_conn',)
-        def __init__(self, conn):
-            global _active_connections
-            self._conn = conn
-            _active_connections += 1
-
-        def close(self):
-            global _active_connections
-            conn = self._conn
-            if conn is None:
-                return
-            self._conn = None
-            _active_connections = max(0, _active_connections - 1)
-            try:
-                conn.rollback()
-                _pool.put_nowait(conn)
-            except queue.Full:
-                conn.close()
-            except Exception:
-                try:
-                    conn.close()
-                except Exception:
-                    pass
-
-        def __getattr__(self, name):
-            conn = self._conn
-            if conn is None:
-                raise RuntimeError("Connection already returned to pool")
-            return getattr(conn, name)
-
-        def __enter__(self):
-            return self
-
-        def __exit__(self, *args):
-            self.close()
-
-        def __del__(self):
-            self.close()
-
-
 def _make_raw_connection():
-    if _USE_PG:
-        _ensure_pg_pool()
-        _pg_kwargs = dict(
+    _ensure_pg_pool()
+    pg_kwargs = dict(
             keepalives=1, keepalives_idle=30,
             keepalives_interval=10, keepalives_count=5,
-        )
+    )
 
-        def acquire_connection():
-            """Get a pooled connection, waiting briefly before failing under saturation."""
-            deadline = time.monotonic() + _PG_ACQUIRE_TIMEOUT
-            while True:
-                try:
-                    return _pg_pool.getconn(), False
-                except psycopg2.pool.PoolError as pool_error:
-                    if _reserve_pg_overflow():
-                        try:
-                            raw_connection = _pg_connect(dsn=_DATABASE_URL, **_pg_kwargs)
-                            logger.warning(
-                                "PG pool exhausted (max=%d). Using bounded overflow connection (active/max=%d/%d).",
-                                _POOL_SIZE, _pg_overflow_active, _PG_OVERFLOW_MAX,
-                            )
-                            return raw_connection, True
-                        except Exception:
-                            _release_pg_overflow()
-                            raise
-
-                    remaining = deadline - time.monotonic()
-                    if remaining <= 0:
-                        raise psycopg2.pool.PoolError(
-                            "PG connection pool exhausted; waited %.1fs (pool=%d, overflow=%d/%d)"
-                            % (_PG_ACQUIRE_TIMEOUT, _POOL_SIZE, _pg_overflow_active, _PG_OVERFLOW_MAX)
-                        ) from pool_error
-                    with _pg_pool_condition:
-                        _pg_pool_condition.wait(timeout=min(0.25, remaining))
-
-        raw, overflow = acquire_connection()
-
-        try:
-            with raw.cursor() as tmp_cur:
-                tmp_cur.execute("SELECT 1")
-            raw.rollback()
-        except Exception:
-            # 连接已失效，丢弃并重建一个
+    def acquire_connection():
+        """Get a pooled connection, waiting briefly before failing under saturation."""
+        deadline = time.monotonic() + _PG_ACQUIRE_TIMEOUT
+        while True:
             try:
-                if overflow:
-                    raw.close()
-                else:
-                    _pg_pool.putconn(raw, close=True)
-            except Exception:
-                pass
-            finally:
-                if overflow:
-                    _release_pg_overflow()
-            raw, overflow = acquire_connection()
-        return _PgPooledConnection(_PgRawConnection(raw), raw, overflow)
-    else:
-        conn = sqlite3.connect(DB_PATH, timeout=10.0, check_same_thread=False)
-        conn.execute('PRAGMA journal_mode=WAL;')
-        conn.execute('PRAGMA synchronous=NORMAL;')
-        conn.row_factory = sqlite3.Row
+                return _pg_pool.getconn(), False
+            except psycopg2.pool.PoolError as pool_error:
+                if _reserve_pg_overflow():
+                    try:
+                        raw_connection = _pg_connect(dsn=_DATABASE_URL, **pg_kwargs)
+                        logger.warning(
+                            "PG pool exhausted (max=%d). Using bounded overflow connection (active/max=%d/%d).",
+                            _POOL_SIZE, _pg_overflow_active, _PG_OVERFLOW_MAX,
+                        )
+                        return raw_connection, True
+                    except Exception:
+                        _release_pg_overflow()
+                        raise
+
+                remaining = deadline - time.monotonic()
+                if remaining <= 0:
+                    raise psycopg2.pool.PoolError(
+                        "PG connection pool exhausted; waited %.1fs (pool=%d, overflow=%d/%d)"
+                        % (_PG_ACQUIRE_TIMEOUT, _POOL_SIZE, _pg_overflow_active, _PG_OVERFLOW_MAX)
+                    ) from pool_error
+                with _pg_pool_condition:
+                    _pg_pool_condition.wait(timeout=min(0.25, remaining))
+
+    raw, overflow = acquire_connection()
+
+    try:
+        with raw.cursor() as tmp_cur:
+            tmp_cur.execute("SELECT 1")
+        raw.rollback()
+    except Exception:
+        # 连接已失效，丢弃并重建一个
         try:
-            conn.execute('PRAGMA journal_mode=WAL;')
-            conn.execute('PRAGMA synchronous=NORMAL;')
+            if overflow:
+                raw.close()
+            else:
+                _pg_pool.putconn(raw, close=True)
         except Exception:
             pass
-        return _PooledConnection(conn)
+        finally:
+            if overflow:
+                _release_pg_overflow()
+        raw, overflow = acquire_connection()
+    return _PgPooledConnection(_PgRawConnection(raw), raw, overflow)
 
 
 def _utc_now_iso():
@@ -441,36 +389,7 @@ def _utc_now_iso():
 
 
 def get_db_connection():
-    if _USE_PG:
-        return _make_raw_connection()
-    if not os.path.exists(os.path.dirname(DB_PATH)):
-        os.makedirs(os.path.dirname(DB_PATH))
-    try:
-        conn = _pool.get_nowait()
-        try:
-            conn.execute('SELECT 1')
-            return _PooledConnection(conn)
-        except Exception:
-            try:
-                conn.close()
-            except Exception:
-                pass
-    except queue.Empty:
-        if _active_connections >= _POOL_SIZE:
-            logger.warning("SQLite pool exhausted (active=%d, max=%d). Creating overflow connection.", 
-                           _active_connections, _POOL_SIZE)
-        pass
-    try:
-        return _make_raw_connection()
-    except sqlite3.DatabaseError as e:
-        if "malformed" in str(e).lower():
-            logger.warning(f"Database corrupted, deleting {DB_PATH} and recreating...")
-            for suffix in ('', '-wal', '-shm'):
-                path = DB_PATH + suffix
-                if os.path.exists(path):
-                    os.remove(path)
-            return _make_raw_connection()
-        raise e
+    return _make_raw_connection()
 
 
 def fetch_interface_data(conn, device_id: str) -> list[dict]:

@@ -1,5 +1,4 @@
-import sqlite3
-
+from backend.tests.pg_test_utils import postgresql_test_driver
 from api import templates as templates_api
 
 
@@ -8,7 +7,7 @@ ADMIN = {"username": "session-admin", "role": "Administrator"}
 
 def _database(tmp_path, monkeypatch):
     db_path = tmp_path / "template-center.db"
-    conn = sqlite3.connect(db_path)
+    conn = postgresql_test_driver.connect(db_path)
     conn.executescript(
         """
         CREATE TABLE templates (
@@ -66,8 +65,8 @@ def _database(tmp_path, monkeypatch):
     conn.close()
 
     def connect():
-        connection = sqlite3.connect(db_path)
-        connection.row_factory = sqlite3.Row
+        connection = postgresql_test_driver.connect(db_path)
+        connection.row_factory = postgresql_test_driver.Row
         return connection
 
     audit_events = []
@@ -112,8 +111,8 @@ def test_session_identity_wins_and_updates_append_immutable_versions(tmp_path, m
         user=ADMIN,
     )
 
-    conn = sqlite3.connect(db_path)
-    conn.row_factory = sqlite3.Row
+    conn = postgresql_test_driver.connect(db_path)
+    conn.row_factory = postgresql_test_driver.Row
     try:
         template = dict(conn.execute(
             "SELECT created_by, current_version, content FROM templates WHERE id = ?",
@@ -146,7 +145,7 @@ def test_unchanged_save_does_not_create_a_duplicate_version(tmp_path, monkeypatc
 
     result = templates_api.update_template("custom-versioned", payload, user=ADMIN)
 
-    conn = sqlite3.connect(db_path)
+    conn = postgresql_test_driver.connect(db_path)
     try:
         version_count = conn.execute(
             "SELECT COUNT(*) FROM config_template_versions WHERE template_id = ?",
@@ -192,7 +191,7 @@ def test_template_center_crud_routes_keep_legacy_aliases():
 
 def test_next_version_skips_existing_candidate(tmp_path, monkeypatch):
     db_path, _audit_events = _database(tmp_path, monkeypatch)
-    conn = sqlite3.connect(db_path)
+    conn = postgresql_test_driver.connect(db_path)
     conn.execute(
         "INSERT INTO config_template_versions "
         "(id, template_id, version, source, created_at) VALUES (?, ?, ?, ?, ?)",

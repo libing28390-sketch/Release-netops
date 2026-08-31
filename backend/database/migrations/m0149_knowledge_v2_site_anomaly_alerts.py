@@ -15,8 +15,7 @@ NAME = "knowledge_v2_site_anomaly_alerts"
 
 
 def _json_type(use_pg: bool) -> tuple[str, str]:
-    if use_pg:
-        return "JSONB", "'{}'::jsonb"
+    return "JSONB", "'{}'::jsonb"
     return "TEXT", "'{}'"
 
 

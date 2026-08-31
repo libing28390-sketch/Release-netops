@@ -1,0 +1,59 @@
+task_id: MIG-005
+title: Legacy metadata confidence grading
+original_requirement: "为旧 Metadata 建立可信、需验证、不可用三个等级。"
+status: frozen_for_execution_planning
+authority: PostgreSQL
+sqlite: forbidden_for_acceptance
+production_database_write: false
+
+grades:
+  trusted:
+    meaning: canonical_metadata_complete_and_safe_for_reconciliation_wave
+    required: [json_object, parsed_status, required_fields, valid_types, no_unknown_required_values, no_security_finding, active, not_excluded, allowed_source_trust]
+    retrieval: may_be_considered_after_source_document_gate
+  needs_validation:
+    meaning: recoverable_metadata_with_missing_unknown_or_lifecycle_proof
+    examples: [missing_front_matter, unknown_applicability, missing_required_field, stale_lifecycle, missing_parse_status]
+    retrieval: exclude_until_review
+  unusable:
+    meaning: malformed_or_security_unsafe_metadata
+    examples: [invalid_json, non_object, parse_error, reserved_server_field, secret_like_value, instruction_like_value, oversized]
+    retrieval: quarantine_and_exclude
+
+rules:
+  authority: [ai_document.metadata_json, ai_document.semantic_columns, metadata_parse_status, metadata_parse_error]
+  required_fields: [schema_version, document_id, title, vendor, product_type, document_category, source_type, official_only, status]
+  allowed_document_categories: [hardware, command, configuration, cli_output, troubleshooting, example, release_note, reference, guide, sop, product, other]
+  allowed_lifecycle_statuses: [draft, active, published, quarantined, superseded, disabled, archived, deprecated]
+  allowed_source_trust_levels: [official, reviewed, internal]
+  unknown_tokens: [unknown, n/a, na, none, null, unset, -, 未知, 未指定, 不明]
+  applicability_fields: [product_family, product_series, product_model, os_family, os_generation, software_train, software_release, cli_platform]
+  server_owned_keys: [tenant_id, workspace_id, user_id, created_by, updated_by, acl, acl_json, permissions, roles, authorization, api_key, password, secret, token, private_key, raw_content, original_content, content, body]
+  max_canonical_bytes: 65536
+  metadata_hash: sha256_canonical_json_normalized
+  security_scan: [secret_shaped_value, instruction_like_value, server_owned_key]
+
+manifest:
+  format: nexora-knowledge-engine-v2-metadata-confidence-manifest/v1
+  entry_fields: [legacy_id, legacy_document_id, tenant_id_hash, grade, metadata_hash, parse_status, reason_codes, action]
+  forbidden_fields: [raw_metadata, original_content, normalized_content, acl_json, secret, database_url]
+  digest_rule: canonical_json_without_generated_at_and_manifest_sha256
+
+acceptance:
+  - every_legacy_document_has_exactly_one_grade
+  - trusted_requires_all_required_fields_and_safe_values
+  - unknown_or_missing_values_are_needs_validation_not_trusted
+  - malformed_or_security_unsafe_values_are_unusable
+  - metadata_hash_is_reproducible
+  - report_contains_counts_and_hashes_not_raw_metadata
+  - PostgreSQL_read_only_inventory_completes
+  - zero_production_database_writes
+  - SQLite_not_used
+  - V1_baseline_non_regression
+
+evidence:
+  contract: docs/knowledge-engine/architecture/MIG-005-METADATA-CONFIDENCE-CONTRACT.yaml
+  runner: scripts/knowledge_engine_v2_mig005_metadata_confidence_check.py
+  report: docs/knowledge-engine/eval/mig-005-metadata-confidence-report-v1.json
+  manifest: docs/knowledge-engine/eval/mig-005-metadata-confidence-manifest-v1.json
+  test: tests/knowledge_engine_v2/test_mig005_metadata_confidence.py

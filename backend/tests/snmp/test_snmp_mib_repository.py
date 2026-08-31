@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import io
 import asyncio
-import sqlite3
+from backend.tests.pg_test_utils import postgresql_test_driver
 import zipfile
 import pytest
 from fastapi import HTTPException, UploadFile
@@ -268,7 +268,7 @@ def test_manual_mib_upload_can_be_disabled_explicitly(monkeypatch) -> None:
     assert "Manual MIB uploads are disabled" in str(exc_info.value.detail)
 
 
-def _create_upload_schema(conn: sqlite3.Connection) -> None:
+def _create_upload_schema(conn: postgresql_test_driver.Connection) -> None:
     conn.executescript(
         """
         CREATE TABLE snmp_mibs (
@@ -294,7 +294,7 @@ def _create_upload_schema(conn: sqlite3.Connection) -> None:
 
 def test_manual_mib_zip_upload_imports_supported_members(monkeypatch) -> None:
     monkeypatch.setattr(settings, "SNMP_MIB_MANUAL_UPLOAD_ENABLED", True)
-    conn = sqlite3.connect(":memory:")
+    conn = postgresql_test_driver.connect()
     _create_upload_schema(conn)
     monkeypatch.setattr(devices_api, "get_db_connection", lambda: conn)
 
@@ -357,7 +357,7 @@ def test_manual_large_zip_archive_upload_triggers_background_indexing(monkeypatc
 
 
 def test_zip_member_failure_does_not_abort_other_members(monkeypatch) -> None:
-    conn = sqlite3.connect(":memory:")
+    conn = postgresql_test_driver.connect()
     conn.execute("CREATE TABLE imported_files (filename TEXT PRIMARY KEY)")
     archive = io.BytesIO()
     with zipfile.ZipFile(archive, "w") as zip_file:
@@ -378,7 +378,7 @@ def test_zip_member_failure_does_not_abort_other_members(monkeypatch) -> None:
 
     assert results == [{"filename": "good.mib"}]
     assert errors == [{"filename": "broken.mib", "error": "invalid MIB"}]
-    assert conn.execute("SELECT filename FROM imported_files").fetchall() == [("good.mib",)]
+    assert [tuple(row) for row in conn.execute("SELECT filename FROM imported_files").fetchall()] == [("good.mib",)]
     conn.close()
 
 

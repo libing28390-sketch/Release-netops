@@ -21,7 +21,7 @@ from services.catalog_collection_service import (
 )
 
 
-router = APIRouter(prefix="/knowledge-v2/collections", tags=["knowledge-v2-custom-collections"])
+router = APIRouter(prefix="/knowledge/collections", tags=["knowledge-custom-collections"])
 logger = logging.getLogger(__name__)
 
 
@@ -168,4 +168,3 @@ def api_archive_custom_collection(
         ),
         "message": "Custom collection archived",
     }
-

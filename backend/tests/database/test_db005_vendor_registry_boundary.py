@@ -6,10 +6,10 @@ import yaml
 
 
 ROOT = Path(__file__).resolve().parents[3]
-CONTRACT = ROOT / "docs" / "knowledge-engine-v2" / "architecture" / "DB-005-VENDOR-REGISTRY-BOUNDARY.yaml"
-REPORT = ROOT / "docs" / "knowledge-engine-v2" / "architecture" / "DB-005-VENDOR-REGISTRY-BOUNDARY.md"
-ER_CONTRACT = ROOT / "docs" / "knowledge-engine-v2" / "architecture" / "DB-001-core-er-model.yaml"
-COMMON_CONTRACT = ROOT / "docs" / "knowledge-engine-v2" / "architecture" / "DB-002-COMMON-COLUMN-SEMANTICS.yaml"
+CONTRACT = ROOT / "docs" / "knowledge-engine" / "architecture" / "DB-005-VENDOR-REGISTRY-BOUNDARY.yaml"
+REPORT = ROOT / "docs" / "knowledge-engine" / "architecture" / "DB-005-VENDOR-REGISTRY-BOUNDARY.md"
+ER_CONTRACT = ROOT / "docs" / "knowledge-engine" / "architecture" / "DB-001-core-er-model.yaml"
+COMMON_CONTRACT = ROOT / "docs" / "knowledge-engine" / "architecture" / "DB-002-COMMON-COLUMN-SEMANTICS.yaml"
 PLATFORM_MIGRATION = ROOT / "backend" / "database" / "migrations" / "m0072_platform_registry_p0.py"
 PLATFORM_SERVICE = ROOT / "backend" / "services" / "platform_registry_service.py"
 

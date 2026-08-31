@@ -8,7 +8,7 @@ from core.rbac import require_permission
 from ai.services.retrieval_trace_store import get_retrieval_trace, list_retrieval_traces
 
 
-router = APIRouter(prefix="/knowledge-v2/retrieval-traces", tags=["knowledge-v2-retrieval-traces"])
+router = APIRouter(prefix="/knowledge/retrieval-traces", tags=["knowledge-retrieval-traces"])
 
 
 def _tenant(user: dict) -> str:

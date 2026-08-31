@@ -1,4 +1,4 @@
-import React, { useEffect, useState } from 'react';
+import React, { useCallback, useEffect, useState } from 'react';
 import {
   Activity,
   Bot,
@@ -21,9 +21,14 @@ import {
   XCircle,
   type LucideIcon,
 } from 'lucide-react';
-import { getAIProviders, createAIProvider, updateAIProvider, deleteAIProvider, getAIProviderDeletePreview, testAIProvider, AIProvider } from '../../../api/ai';
+import { getAIProvidersPage, createAIProvider, updateAIProvider, deleteAIProvider, getAIProviderDeletePreview, testAIProvider, AIProvider } from '../../../api/ai';
 import { useCoreApp } from '../../../contexts/AppDomainContext';
 import { ActionButton, ActionIconButton, ActionIconGroup, ActionLink } from '../../../components/ui/ActionIconButton';
+import Pagination from '../../../components/Pagination';
+import { aiAdminText } from '../../../i18n/aiAdmin';
+
+type TextVariables = Record<string, string | number>;
+type AIAdminText = (key: string, variables?: TextVariables) => string;
 
 interface ProviderTestResult {
   id: string;
@@ -51,11 +56,11 @@ const metricToneClasses: Record<MetricCardProps['tone'], string> = {
 };
 
 const DATA_REGION_OPTIONS = [
-  { value: 'unknown', zh: '未配置', en: 'Not configured' },
-  { value: 'global', zh: '全球', en: 'Global' },
-  { value: 'cn', zh: '中国', en: 'China' },
-  { value: 'us', zh: '美国', en: 'United States' },
-  { value: 'eu', zh: '欧盟', en: 'European Union' },
+  { value: 'unknown', labelKey: 'ai.provider.region.unknown' },
+  { value: 'global', labelKey: 'ai.provider.region.global' },
+  { value: 'cn', labelKey: 'ai.provider.region.cn' },
+  { value: 'us', labelKey: 'ai.provider.region.us' },
+  { value: 'eu', labelKey: 'ai.provider.region.eu' },
 ] as const;
 
 const MetricCard: React.FC<MetricCardProps> = ({ icon: Icon, label, value, helper, tone }) => (
@@ -77,73 +82,144 @@ const getErrorMessage = (error: unknown, fallback: string) => (
   error instanceof Error && error.message ? error.message : fallback
 );
 
-const getTestTitle = (result: ProviderTestResult, zh: boolean) => (
-  result.success ? (zh ? '连接测试通过' : 'Connection test passed') : (zh ? '连接测试未通过' : 'Connection test failed')
+const getTestTitle = (result: ProviderTestResult, tx: AIAdminText) => (
+  tx(result.success ? 'ai.provider.test.passed' : 'ai.provider.test.failed')
 );
 
-const getTestDescription = (result: ProviderTestResult, zh: boolean) => {
+const getTestDescription = (result: ProviderTestResult, tx: AIAdminText) => {
   if (result.success) {
-    return zh
-      ? `安全网关已完成模型探测${result.model_tested ? ` · ${result.model_tested}` : ''}，Provider 可以正常响应。`
-      : `The security gateway completed the model probe${result.model_tested ? ` · ${result.model_tested}` : ''}. The Provider is responding normally.`;
+    return tx('ai.provider.test.successDescription', { model: result.model_tested ? ` · ${result.model_tested}` : '' });
   }
 
   if (result.error_code === 'AI_SECURITY_CLASSIFICATION_DENIED') {
-    return zh
-      ? '安全网关拒绝了本次请求：Provider 允许的数据分类级别不足，请在编辑 Provider 中提高允许分类。'
-      : 'The security gateway rejected this request because the Provider data-classification ceiling is too low. Edit the Provider to raise it.';
+    return tx('ai.provider.test.classification');
   }
 
   if (result.error_code === 'AI_SECURITY_POLICY_DISABLED') {
-    return zh
-      ? '安全网关当前未启用外部 AI 出口，请先在 AI 安全网关中启用。'
-      : 'The external AI egress is disabled. Enable it in AI Security Gateway first.';
+    return tx('ai.provider.test.policy');
   }
 
   if (result.error_code === 'AI_AUTH_FAILED') {
-    return zh
-      ? 'Provider 已拒绝 API Key（HTTP 401/403）。请重新填写或轮换 API Key；认证失败不会继续重试。'
-      : 'The Provider rejected the API key (HTTP 401/403). Re-enter or rotate the key; authentication failures are not retried.';
+    return tx('ai.provider.test.auth');
   }
 
   if (result.error_code === 'AI_PROVIDER_CIRCUIT_OPEN') {
-    return zh
-      ? 'Provider 因连续失败暂时熔断。请先修正 API Key、Base URL 或模型配置；保存新 API Key 会自动清除旧熔断，或等待冷却后重试。'
-      : 'The Provider circuit is temporarily open after repeated failures. Fix the API key, Base URL, or model; saving a new key resets the circuit, or retry after cooldown.';
+    return tx('ai.provider.test.circuit');
   }
 
   if (result.error_code === 'AI_HEALTH_BACKOFF') {
-    return zh
-      ? '刚刚已经执行过一次失败探测，系统正在短暂冷却。请修正 API Key 后保存，或等待冷却结束再重试。'
-      : 'A failed probe just ran and the health backoff is active. Fix and save the API key, or retry after the cooldown.';
+    return tx('ai.provider.test.backoff');
   }
 
   if (result.error_code === 'AI_MODEL_NOT_FOUND') {
-    return zh
-      ? 'Provider 找不到绑定模型或接口地址，请检查模型代码和 Base URL。'
-      : 'The Provider could not find the bound model or endpoint. Check the model code and Base URL.';
+    return tx('ai.provider.test.modelNotFound');
   }
 
   if (result.error_code === 'AI_NETWORK_ERROR') {
-    return zh
-      ? '无法连接 Provider，请检查 Base URL、网络代理和 HTTPS 配置。'
-      : 'The Provider could not be reached. Check the Base URL, network proxy, and HTTPS configuration.';
+    return tx('ai.provider.test.network');
   }
 
-  return zh
-    ? '没有收到有效的模型响应，请检查 API Key、Base URL、绑定模型和安全网关策略。'
-    : 'No valid model response was received. Check the API key, Base URL, bound model, and gateway policy.';
+  return tx('ai.provider.test.generic');
 };
+
+interface ProviderRegistryWorkspaceProps {
+  providers: AIProvider[];
+  total: number;
+  selectedProviderId: string | null;
+  onSelect: (id: string) => void;
+  onEdit: (provider: AIProvider) => void;
+  onToggle: (provider: AIProvider) => void;
+  onDelete: (id: string) => void;
+  onTest: (id: string) => void;
+  testingId: string | null;
+  deletingId: string | null;
+  testResult: ProviderTestResult | null;
+  tx: AIAdminText;
+}
+
+const ProviderRegistryWorkspace: React.FC<ProviderRegistryWorkspaceProps> = ({
+  providers,
+  total,
+  selectedProviderId,
+  onSelect,
+  onEdit,
+  onToggle,
+  onDelete,
+  onTest,
+  testingId,
+  deletingId,
+  testResult,
+  tx,
+}) => {
+  const selectedProvider = providers.find((provider) => provider.id === selectedProviderId) || providers[0];
+  const selectedResult = selectedProvider && testResult?.id === selectedProvider.id ? testResult : null;
+  const selectedTesting = selectedProvider ? testingId === selectedProvider.id : false;
+  const selectedDeleting = selectedProvider ? deletingId === selectedProvider.id : false;
+  const selectedRegion = selectedProvider && DATA_REGION_OPTIONS.find((option) => option.value === selectedProvider.data_region?.toLowerCase());
+
+  if (!selectedProvider) return null;
+
+  return (
+    <div className="grid grid-cols-1 gap-4 xl:grid-cols-[minmax(300px,0.82fr)_minmax(0,1.65fr)]">
+      <section className="overflow-hidden rounded-2xl border border-slate-200 bg-white shadow-sm dark:border-slate-800 dark:bg-slate-900" aria-label={tx('ai.provider.list.aria')}>
+        <div className="border-b border-slate-100 p-4 dark:border-slate-800">
+          <div className="flex items-center justify-between gap-2"><div><h3 className="text-sm font-bold text-slate-900 dark:text-white">{tx('ai.provider.list.title')}</h3><p className="mt-1 text-[11px] text-slate-500 dark:text-slate-400">{tx('ai.provider.list.body')}</p></div><span className="rounded-full bg-indigo-50 px-2 py-1 text-[10px] font-bold text-indigo-700 dark:bg-indigo-950/50 dark:text-indigo-300">{total}</span></div>
+        </div>
+        <div className="max-h-[620px] space-y-2 overflow-y-auto p-3">
+          {providers.length === 0 ? <div className="px-3 py-8 text-center text-xs text-slate-400">{tx('ai.provider.list.empty')}</div> : providers.map((provider) => {
+            const active = provider.id === selectedProvider.id;
+            const region = DATA_REGION_OPTIONS.find((option) => option.value === provider.data_region?.toLowerCase());
+            return <div key={provider.id} className={cnProviderRow(active)}>
+              <button type="button" onClick={() => onSelect(provider.id)} className="min-w-0 flex-1 text-left" aria-label={tx('ai.provider.action.select', { name: provider.name })}>
+                <div className="flex items-start gap-2"><span className={provider.enabled ? 'mt-1 h-2 w-2 shrink-0 rounded-full bg-emerald-500' : 'mt-1 h-2 w-2 shrink-0 rounded-full bg-slate-300'} /><span className="min-w-0 flex-1"><span className="block truncate text-sm font-bold text-slate-900 dark:text-white">{provider.name}</span><span className="mt-0.5 block truncate font-mono text-[10px] text-indigo-500">{provider.provider_type}</span></span><span className={provider.health_status === 'healthy' ? 'rounded-full bg-emerald-50 px-1.5 py-0.5 text-[9px] font-semibold text-emerald-700 dark:bg-emerald-950/40 dark:text-emerald-300' : provider.health_status === 'unhealthy' ? 'rounded-full bg-rose-50 px-1.5 py-0.5 text-[9px] font-semibold text-rose-700 dark:bg-rose-950/40 dark:text-rose-300' : 'rounded-full bg-slate-100 px-1.5 py-0.5 text-[9px] font-semibold text-slate-500 dark:bg-slate-800 dark:text-slate-400'}>{provider.health_status || 'unknown'}</span></div>
+                <div className="mt-2 flex flex-wrap gap-1.5 text-[10px] text-slate-500 dark:text-slate-400"><span className="max-w-[220px] truncate font-mono">{provider.base_url || tx('ai.provider.endpoint.default')}</span>{provider.api_key_masked && <span className="rounded bg-slate-100 px-1.5 py-0.5 dark:bg-slate-800">{tx('ai.provider.key.configured')}</span>}{region && <span>{tx(region.labelKey)}</span>}</div>
+              </button>
+              <ActionIconGroup label={tx('ai.provider.list.actions')} className="flex shrink-0 items-center gap-0.5"><ActionIconButton icon={Pencil} label={tx('ai.provider.action.edit', { name: provider.name })} size="xs" variant="accent" disabled={testingId === provider.id || deletingId === provider.id} onClick={() => onEdit(provider)} /><ActionIconButton icon={Power} label={tx(provider.enabled ? 'ai.provider.action.disable' : 'ai.provider.action.enable', { name: provider.name })} size="xs" disabled={testingId === provider.id || deletingId === provider.id} onClick={() => onToggle(provider)} /><ActionIconButton icon={Trash2} label={tx('ai.provider.action.delete', { name: provider.name })} size="xs" variant="danger" disabled={deletingId === provider.id} onClick={() => onDelete(provider.id)} /></ActionIconGroup>
+            </div>;
+          })}
+        </div>
+      </section>
+
+      <section className="min-w-0 rounded-2xl border border-indigo-100 bg-gradient-to-br from-white via-indigo-50/40 to-violet-50/60 p-5 shadow-sm dark:border-indigo-900/60 dark:from-slate-900 dark:via-indigo-950/20 dark:to-violet-950/20 sm:p-6" aria-label={tx('ai.provider.detail.aria')}>
+        <div className="flex flex-wrap items-start justify-between gap-3"><div className="flex min-w-0 items-center gap-3"><span className="flex h-11 w-11 shrink-0 items-center justify-center rounded-2xl bg-slate-950 text-white shadow-md dark:bg-indigo-500/20 dark:text-indigo-200"><Bot className="h-5 w-5" /></span><div className="min-w-0"><div className="flex flex-wrap items-center gap-2"><h3 className="truncate text-lg font-bold text-slate-900 dark:text-white">{selectedProvider.name}</h3><span className={selectedProvider.enabled ? 'rounded-full bg-emerald-50 px-2 py-0.5 text-[10px] font-bold text-emerald-700 dark:bg-emerald-950/40 dark:text-emerald-300' : 'rounded-full bg-slate-100 px-2 py-0.5 text-[10px] font-bold text-slate-500 dark:bg-slate-800 dark:text-slate-400'}>{tx(selectedProvider.enabled ? 'ai.provider.status.enabled' : 'ai.provider.status.disabled')}</span></div><p className="mt-1 truncate font-mono text-xs text-indigo-500">{selectedProvider.provider_type} · {selectedProvider.id}</p></div></div><div className="flex items-center gap-1"><ActionIconButton icon={Pencil} label={tx('ai.provider.action.edit', { name: selectedProvider.name })} variant="accent" disabled={selectedTesting || selectedDeleting} onClick={() => onEdit(selectedProvider)} /><ActionIconButton icon={Power} label={tx(selectedProvider.enabled ? 'ai.provider.action.disable' : 'ai.provider.action.enable', { name: selectedProvider.name })} disabled={selectedTesting || selectedDeleting} onClick={() => onToggle(selectedProvider)} /><ActionIconButton icon={Trash2} label={tx('ai.provider.action.delete', { name: selectedProvider.name })} variant="danger" disabled={selectedDeleting} onClick={() => onDelete(selectedProvider.id)} /></div></div>
+        <div className="mt-5 grid gap-3 sm:grid-cols-2"><div className="rounded-xl border border-white/80 bg-white/75 p-3 dark:border-slate-800 dark:bg-slate-950/45"><div className="flex items-center gap-2 text-[10px] font-bold uppercase tracking-[0.14em] text-slate-400"><Globe2 className="h-3.5 w-3.5" />Base URL</div><div className="mt-2 truncate font-mono text-xs text-slate-700 dark:text-slate-200" title={selectedProvider.base_url || undefined}>{selectedProvider.base_url || tx('ai.provider.endpoint.default')}</div></div><div className="rounded-xl border border-white/80 bg-white/75 p-3 dark:border-slate-800 dark:bg-slate-950/45"><div className="flex items-center gap-2 text-[10px] font-bold uppercase tracking-[0.14em] text-slate-400"><KeyRound className="h-3.5 w-3.5" />API Key</div><div className="mt-2 flex items-center gap-2"><span className="truncate font-mono text-xs text-slate-700 dark:text-slate-200">{selectedProvider.api_key_masked || tx('ai.provider.key.notConfigured')}</span><span className="shrink-0 rounded-md bg-emerald-100 px-1.5 py-0.5 text-[10px] font-bold text-emerald-700 dark:bg-emerald-950/40 dark:text-emerald-300">AES-256</span></div></div></div>
+        <div className="mt-3 flex flex-wrap gap-2 text-[10px]"><span className={selectedProvider.health_status === 'healthy' ? 'rounded-full bg-emerald-100 px-2 py-1 font-semibold text-emerald-700' : selectedProvider.health_status === 'unhealthy' ? 'rounded-full bg-rose-100 px-2 py-1 font-semibold text-rose-700' : 'rounded-full bg-slate-200 px-2 py-1 font-semibold text-slate-600'}>{tx('ai.provider.status.health')}: {selectedProvider.health_status || tx('ai.provider.status.unknown')}</span>{selectedProvider.last_error_code && <span className="rounded-full bg-rose-50 px-2 py-1 font-mono text-rose-700">{selectedProvider.last_error_code}</span>}{selectedRegion && <span className="rounded-full bg-indigo-50 px-2 py-1 text-indigo-700">{tx('ai.provider.detail.region', { value: tx(selectedRegion.labelKey) })}</span>}<span className="rounded-full bg-slate-100 px-2 py-1 text-slate-600 dark:bg-slate-800 dark:text-slate-300">{tx('ai.provider.detail.classification', { value: selectedProvider.allowed_data_classification || 'PUBLIC' })}</span></div>
+        <div className={selectedTesting ? 'mt-5 min-h-[112px] rounded-2xl border border-indigo-100 bg-indigo-50/70 p-4 dark:border-indigo-900/60 dark:bg-indigo-950/30' : selectedResult?.success ? 'mt-5 min-h-[112px] rounded-2xl border border-emerald-100 bg-emerald-50/70 p-4 dark:border-emerald-900/60 dark:bg-emerald-950/30' : selectedResult ? 'mt-5 min-h-[112px] rounded-2xl border border-rose-100 bg-rose-50/70 p-4 dark:border-rose-900/60 dark:bg-rose-950/30' : 'mt-5 min-h-[112px] rounded-2xl border border-slate-100 bg-white/70 p-4 dark:border-slate-800 dark:bg-slate-950/45'}>
+          {selectedTesting ? <div className="flex items-start gap-3"><RefreshCw className="mt-0.5 h-4 w-4 shrink-0 animate-spin text-indigo-600" /><div><p className="text-sm font-bold text-indigo-900 dark:text-indigo-100">{tx('ai.provider.detail.testing')}</p><p className="mt-1 text-xs leading-5 text-indigo-900/65 dark:text-indigo-200/65">{tx('ai.provider.detail.testingBody')}</p></div></div> : selectedResult ? <div className="flex items-start gap-3">{selectedResult.success ? <CheckCircle2 className="mt-0.5 h-4 w-4 shrink-0 text-emerald-600" /> : <XCircle className="mt-0.5 h-4 w-4 shrink-0 text-rose-600" />}<div className="min-w-0 flex-1"><div className="flex flex-wrap items-center gap-2"><p className="text-sm font-bold text-slate-900 dark:text-white">{getTestTitle(selectedResult, tx)}</p>{typeof selectedResult.latency_ms === 'number' && <span className="rounded-full bg-white/80 px-2 py-0.5 text-[10px] font-semibold text-slate-600">{selectedResult.latency_ms} ms</span>}</div><p className="mt-1 text-xs leading-5 text-slate-600 dark:text-slate-300">{getTestDescription(selectedResult, tx)}</p>{!selectedResult.success && selectedResult.error_code && <p className="mt-1 text-[11px] font-mono font-semibold text-rose-700 dark:text-rose-300">{tx('ai.provider.detail.errorCode', { code: selectedResult.error_code })}</p>}{selectedResult.success && selectedResult.sample_response && <div className="mt-2 flex flex-wrap items-center gap-2 text-[11px] text-emerald-800 dark:text-emerald-200"><span className="font-semibold">{tx('ai.provider.detail.modelResponse')}</span><code className="max-w-full truncate rounded-md bg-white/80 px-2 py-1 font-mono">{selectedResult.sample_response}</code></div>}</div></div> : <div className="flex items-start gap-3"><Clock3 className="mt-0.5 h-4 w-4 shrink-0 text-slate-400" /><div><p className="text-sm font-semibold text-slate-700 dark:text-slate-200">{tx('ai.provider.detail.notTested')}</p><p className="mt-1 text-xs leading-5 text-slate-400 dark:text-slate-500">{tx('ai.provider.detail.notTestedBody')}</p></div></div>}
+        </div>
+        <div className="mt-5 flex flex-wrap items-center justify-between gap-3 border-t border-indigo-100 pt-4 dark:border-indigo-900/50"><div className="flex items-center gap-3 text-xs text-slate-500 dark:text-slate-400"><Clock3 className="h-3.5 w-3.5" />{tx('ai.provider.detail.timeout', { seconds: selectedProvider.timeout, count: selectedProvider.max_retries })}</div><button type="button" onClick={() => onTest(selectedProvider.id)} disabled={selectedTesting || selectedDeleting} className="inline-flex items-center gap-2 rounded-xl bg-indigo-600 px-4 py-2.5 text-xs font-bold text-white shadow-sm transition hover:bg-indigo-700 disabled:cursor-wait disabled:opacity-60">{selectedTesting ? <RefreshCw className="h-3.5 w-3.5 animate-spin" /> : <ShieldCheck className="h-3.5 w-3.5" />}{selectedTesting ? tx('ai.provider.detail.testingShort') : tx('ai.provider.detail.test')}</button></div>
+      </section>
+    </div>
+  );
+};
+
+function cnProviderRow(active: boolean): string {
+  return active
+    ? 'flex items-center gap-2 rounded-xl border border-indigo-300 bg-indigo-50/80 p-3 shadow-sm dark:border-indigo-800 dark:bg-indigo-950/30'
+    : 'flex items-center gap-2 rounded-xl border border-transparent p-3 transition hover:border-slate-200 hover:bg-slate-50 dark:hover:border-slate-700 dark:hover:bg-slate-800/60';
+}
 
 export const ProviderManagementTab: React.FC = () => {
   const { language, showToast } = useCoreApp();
-  const zh = language === 'zh';
+  const tx = (key: string, variables?: TextVariables) => aiAdminText(key, language, variables);
   const [providers, setProviders] = useState<AIProvider[]>([]);
+  const [total, setTotal] = useState(0);
+  const [search, setSearch] = useState('');
+  const [appliedSearch, setAppliedSearch] = useState('');
+  const [dataRegionFilter, setDataRegionFilter] = useState('');
+  const [healthFilter, setHealthFilter] = useState('');
+  const [enabledFilter, setEnabledFilter] = useState('all');
+  const [providerTypeFilter, setProviderTypeFilter] = useState('');
+  const [tagFilter, setTagFilter] = useState('');
+  const [providerFacets, setProviderFacets] = useState({ data_regions: [] as string[], health_statuses: [] as string[], provider_types: [] as string[], tags: [] as string[] });
+  const [page, setPage] = useState(1);
+  const [pageSize, setPageSize] = useState(20);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [testingId, setTestingId] = useState<string | null>(null);
   const [testResult, setTestResult] = useState<ProviderTestResult | null>(null);
   const [deletingId, setDeletingId] = useState<string | null>(null);
+  const [selectedProviderId, setSelectedProviderId] = useState<string | null>(null);
 
   const [showModal, setShowModal] = useState(false);
   const [editingId, setEditingId] = useState<string | null>(null);
@@ -158,24 +234,46 @@ export const ProviderManagementTab: React.FC = () => {
   const [allowedDataClassification, setAllowedDataClassification] = useState('PUBLIC');
   const [submitting, setSubmitting] = useState(false);
 
-  const fetchProviders = async () => {
+  const fetchProviders = useCallback(async () => {
     setLoading(true);
     setError(null);
     try {
-      const data = await getAIProviders();
-      setProviders(data);
+      const result = await getAIProvidersPage({
+        search: appliedSearch,
+        data_region: dataRegionFilter,
+        health_status: healthFilter,
+        enabled: enabledFilter === 'all' ? undefined : enabledFilter === 'enabled',
+        provider_type: providerTypeFilter,
+        tag: tagFilter,
+        page,
+        page_size: pageSize,
+      });
+      setProviders(result.items);
+      setTotal(result.total);
+      setProviderFacets({
+        data_regions: result.facets?.data_regions || [],
+        health_statuses: result.facets?.health_statuses || [],
+        provider_types: result.facets?.provider_types || [],
+        tags: result.facets?.tags || [],
+      });
+      setSelectedProviderId((current) => current && result.items.some((item) => item.id === current) ? current : (result.items[0]?.id || null));
     } catch (err: unknown) {
-      const message = getErrorMessage(err, zh ? '获取 Provider 列表失败' : 'Failed to load Providers');
+      const message = getErrorMessage(err, tx('ai.provider.error.list'));
       setError(message);
       showToast(message, 'error');
     } finally {
       setLoading(false);
     }
-  };
+  }, [appliedSearch, dataRegionFilter, enabledFilter, healthFilter, language, page, pageSize, providerTypeFilter, showToast, tagFilter]);
 
   useEffect(() => {
     void fetchProviders();
-  }, []);
+  }, [fetchProviders]);
+
+  useEffect(() => {
+    if (selectedProviderId && providers.some((provider) => provider.id === selectedProviderId)) return;
+    setSelectedProviderId(providers[0]?.id || null);
+  }, [providers, selectedProviderId]);
 
   const handleTest = async (id: string) => {
     const provider = providers.find((item) => item.id === id);
@@ -204,17 +302,12 @@ export const ProviderManagementTab: React.FC = () => {
             last_error_code: result.success ? null : (result.error_code || item.last_error_code),
           }
         : item));
-      showToast(
-        result.success
-          ? (zh ? `${provider?.name || 'Provider'} 连接测试通过` : `${provider?.name || 'Provider'} connection test passed`)
-          : (zh ? `${provider?.name || 'Provider'} 连接测试未通过` : `${provider?.name || 'Provider'} connection test failed`),
-        result.success ? 'success' : 'error',
-      );
+      showToast(tx(result.success ? 'ai.provider.toast.testPassed' : 'ai.provider.toast.testFailed', { name: provider?.name || 'Provider' }), result.success ? 'success' : 'error');
     } catch (err: unknown) {
       const result: ProviderTestResult = {
         id,
         success: false,
-        message: getErrorMessage(err, zh ? '测试连通性失败' : 'Connection test failed'),
+        message: getErrorMessage(err, tx('ai.provider.error.test')),
       };
       setTestResult(result);
       showToast(result.message, 'error');
@@ -227,22 +320,21 @@ export const ProviderManagementTab: React.FC = () => {
     const provider = providers.find((item) => item.id === id);
     try {
       const preview = await getAIProviderDeletePreview(id);
-      const summary = zh
-        ? `${provider?.name || 'Provider'}：${preview.model_count || 0} 个模型、${preview.route_count || 0} 条路由引用。继续尝试删除？`
-        : `${provider?.name || 'Provider'}: ${preview.model_count || 0} models and ${preview.route_count || 0} route references. Continue?`;
+      const summary = tx('ai.provider.delete.preview', { name: provider?.name || 'Provider', models: preview.model_count || 0, routes: preview.route_count || 0 });
       if (!window.confirm(summary)) return;
     } catch {
-      if (!window.confirm(zh ? '无法读取删除预览，仍要尝试删除吗？' : 'Delete preview failed. Try anyway?')) return;
+      if (!window.confirm(tx('ai.provider.delete.previewFailed'))) return;
     }
 
     setDeletingId(id);
     try {
       await deleteAIProvider(id);
-      setProviders((current) => current.filter((item) => item.id !== id));
+      await fetchProviders();
+      if (selectedProviderId === id) setSelectedProviderId(null);
       if (testResult?.id === id) setTestResult(null);
-      showToast(zh ? `${provider?.name || 'Provider'} 已删除` : `${provider?.name || 'Provider'} deleted`, 'success');
+      showToast(tx('ai.provider.toast.deleted', { name: provider?.name || 'Provider' }), 'success');
     } catch (err: unknown) {
-      showToast(getErrorMessage(err, zh ? '删除失败' : 'Delete failed'), 'error');
+      showToast(getErrorMessage(err, tx('ai.provider.error.delete')), 'error');
     } finally {
       setDeletingId(null);
     }
@@ -252,9 +344,10 @@ export const ProviderManagementTab: React.FC = () => {
     try {
       const updated = await updateAIProvider(provider.id, { enabled: !provider.enabled });
       setProviders((current) => current.map((item) => item.id === updated.id ? updated : item));
-      showToast(zh ? `${provider.name} 已${updated.enabled ? '启用' : '停用'}` : `${provider.name} ${updated.enabled ? 'enabled' : 'disabled'}`, 'success');
+      await fetchProviders();
+      showToast(tx('ai.provider.toast.toggled', { name: provider.name, status: tx(updated.enabled ? 'ai.provider.status.enabled' : 'ai.provider.status.disabled') }), 'success');
     } catch (err: unknown) {
-      showToast(getErrorMessage(err, zh ? '更新 Provider 状态失败' : 'Failed to update Provider status'), 'error');
+      showToast(getErrorMessage(err, tx('ai.provider.error.toggle')), 'error');
     }
   };
 
@@ -292,9 +385,9 @@ export const ProviderManagementTab: React.FC = () => {
       setDataRegion('unknown');
       setAllowedDataClassification('PUBLIC');
       await fetchProviders();
-      showToast(zh ? (editingId ? 'Provider 已更新' : 'Provider 已添加') : (editingId ? 'Provider updated' : 'Provider added'), 'success');
+      showToast(tx(editingId ? 'ai.provider.toast.updated' : 'ai.provider.toast.added'), 'success');
     } catch (err: unknown) {
-      showToast(getErrorMessage(err, zh ? '添加 Provider 失败' : 'Failed to add Provider'), 'error');
+      showToast(getErrorMessage(err, tx('ai.provider.error.create')), 'error');
     } finally {
       setSubmitting(false);
     }
@@ -302,6 +395,23 @@ export const ProviderManagementTab: React.FC = () => {
 
   const activeCount = providers.filter((provider) => provider.enabled).length;
   const securedCount = providers.filter((provider) => Boolean(provider.api_key_masked)).length;
+
+  const submitSearch = (event: React.FormEvent) => {
+    event.preventDefault();
+    setPage(1);
+    setAppliedSearch(search.trim());
+  };
+
+  const clearProviderFilters = () => {
+    setSearch('');
+    setAppliedSearch('');
+    setDataRegionFilter('');
+    setHealthFilter('');
+    setEnabledFilter('all');
+    setProviderTypeFilter('');
+    setTagFilter('');
+    setPage(1);
+  };
 
   return (
     <div className="mx-auto w-full max-w-[1500px] space-y-5 pb-8">
@@ -312,27 +422,23 @@ export const ProviderManagementTab: React.FC = () => {
           <div className="max-w-3xl">
             <div className="mb-3 inline-flex items-center gap-2 rounded-full border border-indigo-200/80 bg-white/70 px-3 py-1 text-[11px] font-bold uppercase tracking-[0.18em] text-indigo-600 dark:border-indigo-800 dark:bg-indigo-950/50 dark:text-indigo-300">
               <Activity className="h-3.5 w-3.5" />
-              {zh ? 'AI 基础设施 · Provider 管理' : 'AI Infrastructure · Provider Management'}
+              {tx('ai.provider.header.eyebrow')}
             </div>
             <h2 className="nx-page-title flex items-center gap-3 text-slate-950 dark:text-white">
               <span className="flex h-11 w-11 items-center justify-center rounded-2xl bg-indigo-600 text-white shadow-lg shadow-indigo-600/25">
                 <Bot className="h-6 w-6" />
               </span>
-              {zh ? 'AI Provider 供应商管理' : 'AI Provider Management'}
+              {tx('ai.provider.header.title')}
             </h2>
-            <p className="nx-page-description mt-3 max-w-2xl text-slate-600 dark:text-slate-300">
-              {zh
-                ? '集中管理外部模型入口、密钥和默认模型。所有请求都会经过 AI 安全网关。'
-                : 'Manage external model endpoints, keys, and default models in one place. Every request passes through the AI security gateway.'}
-            </p>
+            <p className="nx-page-description mt-3 max-w-2xl text-slate-600 dark:text-slate-300">{tx('ai.provider.header.description')}</p>
             <div className="mt-4 flex flex-wrap items-center gap-2 text-xs text-slate-500 dark:text-slate-400">
               <span className="inline-flex items-center gap-1.5 rounded-full bg-white/75 px-2.5 py-1.5 font-medium shadow-sm shadow-indigo-100/50 dark:bg-slate-900/70 dark:shadow-none">
                 <ShieldCheck className="h-3.5 w-3.5 text-emerald-500" />
-                {zh ? 'API Key 使用 AES-256-GCM 加密存储' : 'API keys are encrypted with AES-256-GCM'}
+                {tx('ai.provider.security.keys')}
               </span>
               <span className="inline-flex items-center gap-1.5 rounded-full bg-white/75 px-2.5 py-1.5 font-medium shadow-sm shadow-indigo-100/50 dark:bg-slate-900/70 dark:shadow-none">
                 <LockKeyhole className="h-3.5 w-3.5 text-indigo-500" />
-                {zh ? '外部请求统一走安全网关' : 'External requests use the security gateway'}
+                {tx('ai.provider.security.gateway')}
               </span>
             </div>
           </div>
@@ -340,14 +446,14 @@ export const ProviderManagementTab: React.FC = () => {
           <div className="flex shrink-0 items-center gap-2 self-start xl:self-center">
             <ActionLink
               href="/downloads/nexora-ai-provider-debug-manual.md"
-              download="Nexora-AI-使用手册.md"
-              aria-label={zh ? '下载 AI 使用手册' : 'Download AI user manual'}
-              title={zh ? '下载 AI 接入与调试使用手册' : 'Download AI integration and troubleshooting manual'}
+              download={tx('ai.provider.manual.filename')}
+              aria-label={tx('ai.provider.manual.aria')}
+              title={tx('ai.provider.manual.title')}
               icon={Download}
               variant="accent"
               size="md"
             >
-              {zh ? '下载 AI 使用手册' : 'Download AI manual'}
+              {tx('ai.provider.manual.label')}
             </ActionLink>
             <ActionButton
               type="button"
@@ -357,7 +463,7 @@ export const ProviderManagementTab: React.FC = () => {
               size="md"
               onClick={() => void fetchProviders()}
             >
-              {zh ? '刷新' : 'Refresh'}
+              {tx('ai.common.refresh')}
             </ActionButton>
             <button
               type="button"
@@ -365,39 +471,52 @@ export const ProviderManagementTab: React.FC = () => {
               className="inline-flex items-center gap-2 rounded-xl bg-indigo-600 px-4 py-2.5 text-sm font-semibold text-white shadow-lg shadow-indigo-600/20 transition hover:bg-indigo-700 focus:outline-none focus:ring-2 focus:ring-indigo-500 focus:ring-offset-2 dark:focus:ring-offset-slate-950"
             >
               <Plus className="h-4 w-4" />
-              {zh ? '添加 Provider' : 'Add Provider'}
+              {tx('ai.provider.action.add')}
             </button>
           </div>
         </div>
       </section>
 
+      <section className="rounded-2xl border border-slate-200 bg-white p-4 shadow-sm dark:border-slate-800 dark:bg-slate-900" aria-label={tx('ai.provider.filter.aria')}>
+        <div className="mb-3 flex flex-wrap items-center justify-between gap-2"><div><h3 className="text-sm font-bold text-slate-900 dark:text-white">{tx('ai.provider.filter.title')}</h3><p className="mt-1 text-[11px] text-slate-500 dark:text-slate-400">{tx('ai.provider.filter.body')}</p></div><span className="rounded-full bg-indigo-50 px-2.5 py-1 text-[10px] font-semibold text-indigo-700 dark:bg-indigo-950/50 dark:text-indigo-300">{tx('ai.provider.filter.count', { count: total })}</span></div>
+        <form onSubmit={submitSearch} className="grid gap-2 md:grid-cols-2 xl:grid-cols-6">
+          <div className="relative md:col-span-2 xl:col-span-2"><Eye className="pointer-events-none absolute left-3 top-2.5 h-3.5 w-3.5 text-slate-400" /><input value={search} onChange={(event) => setSearch(event.target.value)} placeholder={tx('ai.provider.filter.search')} aria-label={tx('ai.provider.filter.searchLabel')} className="w-full rounded-xl border border-slate-200 bg-slate-50 py-2 pl-9 pr-3 text-xs outline-none focus:border-indigo-400 dark:border-slate-700 dark:bg-slate-950 dark:text-white" /></div>
+          <select value={dataRegionFilter} onChange={(event) => { setDataRegionFilter(event.target.value); setPage(1); }} aria-label={tx('ai.provider.filter.regionLabel')} className="rounded-xl border border-slate-200 bg-white px-3 py-2 text-xs dark:border-slate-700 dark:bg-slate-950 dark:text-white"><option value="">{tx('ai.provider.filter.allRegions')}</option>{Array.from(new Set([...DATA_REGION_OPTIONS.map((item) => item.value), ...providerFacets.data_regions])).map((region) => <option key={region} value={region}>{DATA_REGION_OPTIONS.find((item) => item.value === region) ? tx(DATA_REGION_OPTIONS.find((item) => item.value === region)!.labelKey) : region}</option>)}</select>
+          <select value={healthFilter} onChange={(event) => { setHealthFilter(event.target.value); setPage(1); }} aria-label={tx('ai.provider.filter.allHealth')} className="rounded-xl border border-slate-200 bg-white px-3 py-2 text-xs dark:border-slate-700 dark:bg-slate-950 dark:text-white"><option value="">{tx('ai.provider.filter.allHealth')}</option>{Array.from(new Set(['healthy', 'unhealthy', 'unknown', 'disabled', ...providerFacets.health_statuses])).map((health) => <option key={health} value={health}>{health}</option>)}</select>
+          <select value={enabledFilter} onChange={(event) => { setEnabledFilter(event.target.value); setPage(1); }} aria-label={tx('ai.provider.filter.allEnabled')} className="rounded-xl border border-slate-200 bg-white px-3 py-2 text-xs dark:border-slate-700 dark:bg-slate-950 dark:text-white"><option value="all">{tx('ai.provider.filter.allEnabled')}</option><option value="enabled">{tx('ai.provider.status.enabled')}</option><option value="disabled">{tx('ai.provider.status.disabled')}</option></select>
+          <select value={providerTypeFilter} onChange={(event) => { setProviderTypeFilter(event.target.value); setPage(1); }} aria-label={tx('ai.provider.filter.allTypes')} className="rounded-xl border border-slate-200 bg-white px-3 py-2 text-xs dark:border-slate-700 dark:bg-slate-950 dark:text-white"><option value="">{tx('ai.provider.filter.allTypes')}</option>{providerFacets.provider_types.map((type) => <option key={type} value={type}>{type}</option>)}</select>
+          <select value={tagFilter} onChange={(event) => { setTagFilter(event.target.value); setPage(1); }} aria-label={tx('ai.provider.filter.allTags')} className="rounded-xl border border-slate-200 bg-white px-3 py-2 text-xs dark:border-slate-700 dark:bg-slate-950 dark:text-white"><option value="">{tx('ai.provider.filter.allTags')}</option>{providerFacets.tags.map((tag) => <option key={tag} value={tag}>{tag}</option>)}</select>
+          <div className="flex gap-2 md:col-span-2 xl:col-span-6"><button type="submit" className="rounded-xl bg-indigo-600 px-4 py-2 text-xs font-semibold text-white hover:bg-indigo-700">{tx('ai.provider.filter.searchAction')}</button><button type="button" onClick={clearProviderFilters} className="rounded-xl border border-slate-200 px-4 py-2 text-xs font-semibold text-slate-600 hover:border-indigo-300 dark:border-slate-700 dark:text-slate-300">{tx('ai.common.clearFilters')}</button></div>
+        </form>
+      </section>
+
       <section className="grid grid-cols-2 gap-3 xl:grid-cols-4">
         <MetricCard
           icon={Bot}
-          label={zh ? 'Provider 总数' : 'Total Providers'}
-          value={providers.length}
-          helper={zh ? '已登记的外部模型入口' : 'Registered external model endpoints'}
+          label={tx('ai.provider.metric.total')}
+          value={total}
+          helper={tx('ai.provider.metric.totalHelp')}
           tone="indigo"
         />
         <MetricCard
           icon={CheckCircle2}
-          label={zh ? '已启用' : 'Enabled'}
+          label={tx('ai.provider.metric.enabled')}
           value={activeCount}
-          helper={zh ? '当前可以接收请求' : 'Ready to receive requests'}
+          helper={tx('ai.provider.metric.enabledHelp')}
           tone="emerald"
         />
         <MetricCard
           icon={KeyRound}
-          label={zh ? '密钥状态' : 'Key Status'}
+          label={tx('ai.provider.metric.keys')}
           value={`${securedCount}/${providers.length}`}
-          helper={zh ? '已配置并完成脱敏显示' : 'Configured and masked'}
+          helper={tx('ai.provider.metric.keysHelp')}
           tone="amber"
         />
         <MetricCard
           icon={ShieldCheck}
-          label={zh ? '安全通道' : 'Security Channel'}
+          label={tx('ai.provider.metric.channel')}
           value="AES-256"
-          helper={zh ? '所有外部 AI 请求经过网关' : 'All external AI requests use the gateway'}
+          helper={tx('ai.provider.metric.channelHelp')}
           tone="slate"
         />
       </section>
@@ -408,18 +527,16 @@ export const ProviderManagementTab: React.FC = () => {
         </span>
         <div className="min-w-0 flex-1">
           <div className="flex flex-wrap items-center gap-2">
-            <h3 className="text-sm font-bold text-indigo-950 dark:text-indigo-100">{zh ? '关于“测试连通性”' : 'About “Test connectivity”'}</h3>
+            <h3 className="text-sm font-bold text-indigo-950 dark:text-indigo-100">{tx('ai.provider.probe.title')}</h3>
             <span className="rounded-full bg-white/80 px-2 py-0.5 text-[10px] font-semibold text-indigo-600 dark:bg-indigo-900/60 dark:text-indigo-300">
-              {zh ? '不读取业务数据' : 'No business data'}
+              {tx('ai.provider.probe.badge')}
             </span>
           </div>
           <p className="mt-1.5 max-w-4xl text-xs leading-5 text-indigo-900/70 dark:text-indigo-200/70">
-            {zh
-              ? '测试会通过安全网关发送一条最小探测请求，仅验证 Provider、绑定模型和返回链路；不会携带设备、配置或业务数据。'
-              : 'The test sends a minimal probe through the security gateway to verify the Provider, bound model, and response path. No device, configuration, or business data is included.'}
+            {tx('ai.provider.probe.body')}
           </p>
           <p className="mt-2 text-[11px] text-indigo-900/55 dark:text-indigo-200/55">
-            {zh ? '探测内容：' : 'Probe: '}
+            {tx('ai.provider.probe.label')}
             <code className="rounded bg-white/70 px-1.5 py-0.5 font-mono text-[10px] text-indigo-700 dark:bg-indigo-900/50 dark:text-indigo-200">Reply with one short word: ok</code>
           </p>
         </div>
@@ -432,7 +549,7 @@ export const ProviderManagementTab: React.FC = () => {
             <span>{error}</span>
           </div>
           <button type="button" onClick={() => void fetchProviders()} className="self-start rounded-lg bg-white/80 px-3 py-1.5 text-xs font-semibold text-rose-700 transition hover:bg-white dark:bg-rose-900/30 dark:text-rose-200 dark:hover:bg-rose-900/50 sm:self-auto">
-            {zh ? '重试' : 'Retry'}
+            {tx('ai.common.retry')}
           </button>
         </div>
       )}
@@ -454,156 +571,32 @@ export const ProviderManagementTab: React.FC = () => {
           <span className="relative mx-auto flex h-14 w-14 items-center justify-center rounded-2xl bg-indigo-50 text-indigo-500 dark:bg-indigo-950/50 dark:text-indigo-300">
             <Bot className="h-7 w-7" />
           </span>
-          <h3 className="relative mt-4 text-base font-bold text-slate-800 dark:text-white">{zh ? '还没有 Provider' : 'No Providers yet'}</h3>
+          <h3 className="relative mt-4 text-base font-bold text-slate-800 dark:text-white">{tx('ai.provider.empty.title')}</h3>
           <p className="relative mx-auto mt-1.5 max-w-md text-sm leading-6 text-slate-500 dark:text-slate-400">
-            {zh ? '可添加多个供应商实例，并在模型管理与 Copilot 中自由切换。' : 'Add multiple provider instances and switch models from Model Management or Copilot.'}
+            {tx('ai.provider.empty.body')}
           </p>
           <button type="button" onClick={() => { setEditingId(null); setApiKey(''); setShowApiKey(false); setDataRegion('unknown'); setAllowedDataClassification('PUBLIC'); setShowModal(true); }} className="relative mt-5 inline-flex items-center gap-2 rounded-xl bg-indigo-600 px-4 py-2.5 text-sm font-semibold text-white shadow-lg shadow-indigo-600/20 transition hover:bg-indigo-700">
             <Plus className="h-4 w-4" />
-            {zh ? '添加第一个 Provider' : 'Add your first Provider'}
+            {tx('ai.provider.empty.action')}
           </button>
         </div>
       ) : (
-        <div className="grid grid-cols-1 gap-4 xl:grid-cols-2">
-          {providers.map((provider) => {
-            const result = testResult?.id === provider.id ? testResult : null;
-            const isTesting = testingId === provider.id;
-            const isDeleting = deletingId === provider.id;
-
-            return (
-              <article key={provider.id} className="group relative flex h-full min-h-[390px] flex-col overflow-hidden rounded-2xl border border-slate-200/90 bg-white shadow-sm shadow-slate-200/50 transition duration-200 hover:-translate-y-0.5 hover:border-indigo-200 hover:shadow-xl hover:shadow-indigo-100/50 dark:border-slate-800 dark:bg-slate-900 dark:shadow-none dark:hover:border-indigo-800">
-                <div className="h-1 bg-gradient-to-r from-indigo-500 via-violet-500 to-fuchsia-400" />
-                <div className="flex flex-1 flex-col p-5 sm:p-6">
-                  <div className="flex items-start justify-between gap-4">
-                    <div className="flex min-w-0 items-center gap-3">
-                      <span className="flex h-11 w-11 shrink-0 items-center justify-center rounded-2xl bg-slate-950 text-white shadow-md shadow-slate-900/10 dark:bg-indigo-500/20 dark:text-indigo-200">
-                        <Bot className="h-5 w-5" />
-                      </span>
-                      <div className="min-w-0">
-                        <div className="flex flex-wrap items-center gap-2">
-                          <h3 className="truncate text-base font-bold text-slate-900 dark:text-white">{provider.name}</h3>
-                          <span className={`rounded-full px-2 py-0.5 text-[10px] font-bold uppercase tracking-[0.12em] ${provider.enabled ? 'bg-emerald-50 text-emerald-700 dark:bg-emerald-500/10 dark:text-emerald-300' : 'bg-slate-100 text-slate-500 dark:bg-slate-800 dark:text-slate-400'}`}>
-                            {provider.enabled ? (zh ? '已启用' : 'Enabled') : (zh ? '已停用' : 'Disabled')}
-                          </span>
-                        </div>
-                        <p className="mt-1 text-xs font-semibold uppercase tracking-[0.12em] text-indigo-500 dark:text-indigo-300">{provider.provider_type}</p>
-                      </div>
-                    </div>
-                    <ActionIconGroup label={zh ? 'Provider 操作' : 'Provider actions'}>
-                      <ActionIconButton
-                        icon={Pencil}
-                        label={zh ? `编辑 ${provider.name}` : `Edit ${provider.name}`}
-                        variant="accent"
-                        disabled={isTesting || isDeleting}
-                        onClick={() => openEdit(provider)}
-                      />
-                      <ActionIconButton
-                        icon={Power}
-                        label={provider.enabled ? (zh ? `停用 ${provider.name}` : `Disable ${provider.name}`) : (zh ? `启用 ${provider.name}` : `Enable ${provider.name}`)}
-                        disabled={isTesting || isDeleting}
-                        onClick={() => void handleToggle(provider)}
-                      />
-                      <ActionIconButton
-                        icon={Trash2}
-                        label={zh ? `删除 ${provider.name}` : `Delete ${provider.name}`}
-                        variant="danger"
-                        disabled={isDeleting}
-                        iconClassName={isDeleting ? 'animate-pulse' : undefined}
-                        onClick={() => void handleDelete(provider.id)}
-                      />
-                    </ActionIconGroup>
-                  </div>
-
-                  <p className="mt-3 truncate font-mono text-[11px] text-slate-400 dark:text-slate-500" title={provider.id}>{provider.id}</p>
-
-                  <div className="mt-4 rounded-2xl border border-slate-100 bg-slate-50/80 p-4 dark:border-slate-800 dark:bg-slate-950/50">
-                    <div className="mb-3 flex items-center justify-between">
-                      <span className="text-[11px] font-bold uppercase tracking-[0.14em] text-slate-400 dark:text-slate-500">{zh ? '连接配置' : 'Connection config'}</span>
-                      <span className="inline-flex items-center gap-1 text-[10px] font-semibold text-emerald-600 dark:text-emerald-400">
-                        <LockKeyhole className="h-3 w-3" />
-                        {zh ? '已加密' : 'Encrypted'}
-                      </span>
-                    </div>
-                    <dl className="space-y-3">
-                      <div className="flex min-w-0 items-center gap-3">
-                        <Globe2 className="h-4 w-4 shrink-0 text-slate-400" />
-                        <dt className="w-20 shrink-0 text-xs text-slate-400">Base URL</dt>
-                        <dd className="min-w-0 truncate font-mono text-xs text-slate-700 dark:text-slate-200" title={provider.base_url || undefined}>{provider.base_url || (zh ? '使用默认端点' : 'Default endpoint')}</dd>
-                      </div>
-                      <div className="flex min-w-0 items-center gap-3">
-                        <KeyRound className="h-4 w-4 shrink-0 text-slate-400" />
-                        <dt className="w-20 shrink-0 text-xs text-slate-400">API Key</dt>
-                        <dd className="min-w-0 truncate font-mono text-xs text-slate-700 dark:text-slate-200">{provider.api_key_masked || (zh ? '未配置' : 'Not configured')}</dd>
-                        <span className="ml-auto shrink-0 rounded-md bg-emerald-100 px-1.5 py-0.5 text-[10px] font-bold text-emerald-700 dark:bg-emerald-500/10 dark:text-emerald-300">AES-256</span>
-                      </div>
-                    </dl>
-                    <div className="mt-3 flex flex-wrap gap-2 text-[10px]">
-                      <span className={`rounded-full px-2 py-0.5 font-semibold ${provider.health_status === 'healthy' ? 'bg-emerald-100 text-emerald-700' : provider.health_status === 'unhealthy' ? 'bg-rose-100 text-rose-700' : 'bg-slate-200 text-slate-600'}`}>{zh ? '健康' : 'Health'}: {provider.health_status || 'unknown'}</span>
-                      {provider.last_error_code && <span className="rounded-full bg-rose-50 px-2 py-0.5 font-mono text-rose-700">{provider.last_error_code}</span>}
-                      {provider.data_region && (() => {
-                        const region = DATA_REGION_OPTIONS.find((option) => option.value === provider.data_region?.toLowerCase());
-                        return <span className="rounded-full bg-indigo-50 px-2 py-0.5 text-indigo-700">{zh ? `区域: ${region?.zh || provider.data_region}` : `Region: ${region?.en || provider.data_region}`}</span>;
-                      })()}
-                    </div>
-                  </div>
-
-                  <div className={`mt-4 min-h-[92px] rounded-2xl border p-4 ${isTesting ? 'border-indigo-100 bg-indigo-50/60 dark:border-indigo-900/60 dark:bg-indigo-950/20' : result?.success ? 'border-emerald-100 bg-emerald-50/70 dark:border-emerald-900/60 dark:bg-emerald-950/20' : result ? 'border-rose-100 bg-rose-50/70 dark:border-rose-900/60 dark:bg-rose-950/20' : 'border-slate-100 bg-white dark:border-slate-800 dark:bg-slate-900'}`}>
-                    {isTesting ? (
-                      <div className="flex items-start gap-3">
-                        <RefreshCw className="mt-0.5 h-4 w-4 shrink-0 animate-spin text-indigo-600 dark:text-indigo-300" />
-                        <div>
-                          <p className="text-sm font-bold text-indigo-900 dark:text-indigo-100">{zh ? '正在通过安全网关测试…' : 'Testing through security gateway…'}</p>
-                          <p className="mt-1 text-xs leading-5 text-indigo-900/65 dark:text-indigo-200/65">{zh ? '正在发送最小探测请求，请稍候。' : 'Sending the minimal probe request. Please wait.'}</p>
-                        </div>
-                      </div>
-                    ) : result ? (
-                      <div className="flex items-start gap-3">
-                        {result.success ? <CheckCircle2 className="mt-0.5 h-4 w-4 shrink-0 text-emerald-600 dark:text-emerald-300" /> : <XCircle className="mt-0.5 h-4 w-4 shrink-0 text-rose-600 dark:text-rose-300" />}
-                        <div className="min-w-0 flex-1">
-                          <div className="flex flex-wrap items-center gap-2">
-                            <p className={`text-sm font-bold ${result.success ? 'text-emerald-900 dark:text-emerald-100' : 'text-rose-900 dark:text-rose-100'}`}>{getTestTitle(result, zh)}</p>
-                            {typeof result.latency_ms === 'number' && <span className={`rounded-full px-2 py-0.5 text-[10px] font-semibold ${result.success ? 'bg-white/80 text-emerald-700 dark:bg-emerald-900/40 dark:text-emerald-200' : 'bg-white/80 text-rose-700 dark:bg-rose-900/40 dark:text-rose-200'}`}>{result.latency_ms} ms</span>}
-                          </div>
-                          <p className={`mt-1 text-xs leading-5 ${result.success ? 'text-emerald-900/70 dark:text-emerald-200/70' : 'text-rose-900/70 dark:text-rose-200/70'}`}>{getTestDescription(result, zh)}</p>
-                          {result.success && result.sample_response && (
-                            <div className="mt-2 flex flex-wrap items-center gap-2 text-[11px] text-emerald-800 dark:text-emerald-200">
-                              <span className="font-semibold">{zh ? '模型响应' : 'Model response'}</span>
-                              <code className="max-w-full truncate rounded-md bg-white/80 px-2 py-1 font-mono dark:bg-emerald-900/40">{result.sample_response}</code>
-                            </div>
-                          )}
-                          {!result.success && result.error_code && <p className="mt-2 font-mono text-[10px] text-rose-700/70 dark:text-rose-200/70">{zh ? '错误标识' : 'Error code'}: {result.error_code}</p>}
-                        </div>
-                      </div>
-                    ) : (
-                      <div className="flex items-start gap-3">
-                        <Clock3 className="mt-0.5 h-4 w-4 shrink-0 text-slate-400" />
-                        <div>
-                          <p className="text-sm font-semibold text-slate-700 dark:text-slate-200">{zh ? '尚未进行连通性测试' : 'Connectivity has not been tested'}</p>
-                          <p className="mt-1 text-xs leading-5 text-slate-400 dark:text-slate-500">{zh ? '测试只会发送一条不含业务数据的最小请求。' : 'The test sends only a minimal request without business data.'}</p>
-                        </div>
-                      </div>
-                    )}
-                  </div>
-
-                  <div className="mt-5 flex items-center justify-between gap-3 border-t border-slate-100 pt-4 dark:border-slate-800">
-                    <span className="inline-flex items-center gap-1.5 text-xs text-slate-400 dark:text-slate-500">
-                      <Clock3 className="h-3.5 w-3.5" />
-                      {zh ? `超时 ${provider.timeout}s` : `Timeout ${provider.timeout}s`}
-                    </span>
-                    <button
-                      type="button"
-                      onClick={() => void handleTest(provider.id)}
-                      disabled={isTesting || isDeleting}
-                      className="inline-flex items-center gap-2 rounded-xl bg-indigo-50 px-3.5 py-2 text-xs font-bold text-indigo-700 transition hover:bg-indigo-100 disabled:cursor-wait disabled:opacity-60 dark:bg-indigo-500/10 dark:text-indigo-300 dark:hover:bg-indigo-500/20"
-                    >
-                      {isTesting ? <RefreshCw className="h-3.5 w-3.5 animate-spin" /> : <ShieldCheck className="h-3.5 w-3.5" />}
-                      {isTesting ? (zh ? '测试中…' : 'Testing…') : (zh ? '测试连通性' : 'Test connectivity')}
-                    </button>
-                  </div>
-                </div>
-              </article>
-            );
-          })}
+        <div className="space-y-3">
+          <ProviderRegistryWorkspace
+            providers={providers}
+            total={total}
+            selectedProviderId={selectedProviderId}
+            onSelect={setSelectedProviderId}
+            onEdit={openEdit}
+            onToggle={(provider) => void handleToggle(provider)}
+            onDelete={(id) => void handleDelete(id)}
+            onTest={(id) => void handleTest(id)}
+            testingId={testingId}
+            deletingId={deletingId}
+            testResult={testResult}
+            tx={tx}
+          />
+          <Pagination currentPage={page} totalItems={total} itemsPerPage={pageSize} onPageChange={setPage} onItemsPerPageChange={(size) => { setPageSize(size); setPage(1); }} language={language} alwaysVisible />
         </div>
       )}
 
@@ -614,12 +607,12 @@ export const ProviderManagementTab: React.FC = () => {
               <div>
                 <div className="mb-2 inline-flex items-center gap-1.5 text-[10px] font-bold uppercase tracking-[0.16em] text-indigo-500">
                   <Plus className="h-3.5 w-3.5" />
-                  {zh ? '新增接入' : 'New connection'}
+                  {tx('ai.provider.editor.eyebrow')}
                 </div>
-                <h3 id="add-provider-title" className="text-xl font-bold tracking-tight text-slate-950 dark:text-white">{zh ? (editingId ? '编辑 AI Provider' : '添加 AI Provider') : (editingId ? 'Edit AI Provider' : 'Add AI Provider')}</h3>
-                <p className="mt-1 text-xs text-slate-500 dark:text-slate-400">{zh ? '填写连接信息，密钥只会以加密形式保存。' : 'Add connection details. The key is stored only in encrypted form.'}</p>
+                <h3 id="add-provider-title" className="text-xl font-bold tracking-tight text-slate-950 dark:text-white">{tx(editingId ? 'ai.provider.editor.editTitle' : 'ai.provider.editor.newTitle')}</h3>
+                <p className="mt-1 text-xs text-slate-500 dark:text-slate-400">{tx('ai.provider.editor.body')}</p>
               </div>
-              <button type="button" onClick={() => { setEditingId(null); setShowApiKey(false); setShowModal(false); }} aria-label={zh ? '关闭' : 'Close'} className="flex h-9 w-9 shrink-0 items-center justify-center rounded-xl text-slate-400 transition hover:bg-slate-100 hover:text-slate-700 dark:hover:bg-slate-800 dark:hover:text-slate-200">
+              <button type="button" onClick={() => { setEditingId(null); setShowApiKey(false); setShowModal(false); }} aria-label={tx('ai.provider.editor.close')} className="flex h-9 w-9 shrink-0 items-center justify-center rounded-xl text-slate-400 transition hover:bg-slate-100 hover:text-slate-700 dark:hover:bg-slate-800 dark:hover:text-slate-200">
                 <X className="h-5 w-5" />
               </button>
             </div>
@@ -627,25 +620,25 @@ export const ProviderManagementTab: React.FC = () => {
             <form onSubmit={handleCreate} className="overflow-y-auto px-5 py-5 sm:px-6">
               <div className="space-y-4">
                 <div>
-                  <label htmlFor="provider-data-region" className="mb-1.5 block text-xs font-bold text-slate-700 dark:text-slate-300">{zh ? '数据区域' : 'Data region'}</label>
+                  <label htmlFor="provider-data-region" className="mb-1.5 block text-xs font-bold text-slate-700 dark:text-slate-300">{tx('ai.provider.editor.region')}</label>
                   <select
                     id="provider-data-region"
                     value={dataRegion}
                     onChange={(e) => setDataRegion(e.target.value)}
                     className="w-full rounded-xl border border-slate-200 bg-white px-3.5 py-2.5 text-sm text-slate-900 outline-none transition focus:border-indigo-500 focus:ring-4 focus:ring-indigo-500/10 dark:border-slate-700 dark:bg-slate-950 dark:text-white"
                   >
-                    {DATA_REGION_OPTIONS.map((option) => <option key={option.value} value={option.value}>{option.value} · {zh ? option.zh : option.en}</option>)}
+                    {DATA_REGION_OPTIONS.map((option) => <option key={option.value} value={option.value}>{option.value} · {tx(option.labelKey)}</option>)}
                   </select>
-                  <p className="mt-1.5 text-[10px] text-slate-400">{zh ? '按供应商实际数据驻留/合规区域选择；不确定时保持未配置。' : 'Choose the Provider\'s actual data-residency/compliance region; keep Not configured when uncertain.'}</p>
+                  <p className="mt-1.5 text-[10px] text-slate-400">{tx('ai.provider.editor.regionBody')}</p>
                 </div>
 
                 <div>
-                  <label htmlFor="provider-name" className="mb-1.5 block text-xs font-bold text-slate-700 dark:text-slate-300">{zh ? 'Provider 名称' : 'Provider name'}</label>
-                  <input id="provider-name" type="text" required placeholder={zh ? '例如：DeepSeek 官方' : 'e.g. DeepSeek official'} value={name} onChange={(e) => setName(e.target.value)} className="w-full rounded-xl border border-slate-200 bg-white px-3.5 py-2.5 text-sm text-slate-900 outline-none transition placeholder:text-slate-400 focus:border-indigo-500 focus:ring-4 focus:ring-indigo-500/10 dark:border-slate-700 dark:bg-slate-950 dark:text-white" />
+                  <label htmlFor="provider-name" className="mb-1.5 block text-xs font-bold text-slate-700 dark:text-slate-300">{tx('ai.provider.editor.name')}</label>
+                  <input id="provider-name" type="text" required placeholder={tx('ai.provider.editor.namePlaceholder')} value={name} onChange={(e) => setName(e.target.value)} className="w-full rounded-xl border border-slate-200 bg-white px-3.5 py-2.5 text-sm text-slate-900 outline-none transition placeholder:text-slate-400 focus:border-indigo-500 focus:ring-4 focus:ring-indigo-500/10 dark:border-slate-700 dark:bg-slate-950 dark:text-white" />
                 </div>
 
                 <div>
-                  <label className="mb-1.5 block text-xs font-bold text-slate-700 dark:text-slate-300">{zh ? '供应商类型' : 'Provider type'}</label>
+                  <label className="mb-1.5 block text-xs font-bold text-slate-700 dark:text-slate-300">{tx('ai.provider.editor.type')}</label>
                   <select value={providerType} onChange={(e) => {
                     const next = e.target.value;
                     setProviderType(next);
@@ -654,12 +647,12 @@ export const ProviderManagementTab: React.FC = () => {
                     else if (next === 'ollama' || next === 'local') { setBaseUrl('http://127.0.0.1:11434/v1'); setDefaultModelCode('llama3.1'); }
                     else { setBaseUrl(''); setDefaultModelCode(''); }
                   }} className="w-full rounded-xl border border-indigo-200 bg-indigo-50/70 px-3.5 py-2.5 text-sm font-semibold text-indigo-950 dark:border-indigo-900/60 dark:bg-indigo-950/30 dark:text-indigo-100">
-                    <option value="deepseek">DeepSeek（官方适配器）</option>
+                    <option value="deepseek">{tx('ai.provider.editor.deepseek')}</option>
                     <option value="openai">OpenAI</option>
-                    <option value="openai_compatible">OpenAI-compatible 自定义端点</option>
+                    <option value="openai_compatible">{tx('ai.provider.editor.compatible')}</option>
                     <option value="azure_openai">Azure OpenAI</option>
-                    <option value="qwen">通义千问兼容端点</option>
-                    <option value="ollama">Ollama / 本地</option>
+                    <option value="qwen">{tx('ai.provider.editor.qwen')}</option>
+                    <option value="ollama">{tx('ai.provider.editor.ollama')}</option>
                     <option value="local">Local OpenAI-compatible</option>
                   </select>
                 </div>
@@ -675,12 +668,12 @@ export const ProviderManagementTab: React.FC = () => {
                     <span className="inline-flex items-center gap-1 text-[10px] font-semibold text-emerald-600 dark:text-emerald-400"><LockKeyhole className="h-3 w-3" />AES-256-GCM</span>
                   </div>
                   <div className="relative">
-                    <input id="provider-api-key" type={showApiKey ? 'text' : 'password'} required={providerType !== 'ollama' && providerType !== 'local'} placeholder={providerType === 'ollama' || providerType === 'local' ? (zh ? '本地端点可留空' : 'Optional for local endpoint') : 'sk-...'} value={apiKey} onChange={(e) => setApiKey(e.target.value)} className="w-full rounded-xl border border-slate-200 bg-white px-3.5 py-2.5 pr-11 font-mono text-sm text-slate-900 outline-none transition placeholder:text-slate-400 focus:border-indigo-500 focus:ring-4 focus:ring-indigo-500/10 dark:border-slate-700 dark:bg-slate-950 dark:text-white" />
+                    <input id="provider-api-key" type={showApiKey ? 'text' : 'password'} required={providerType !== 'ollama' && providerType !== 'local'} placeholder={providerType === 'ollama' || providerType === 'local' ? tx('ai.provider.editor.apiKeyOptional') : 'sk-...'} value={apiKey} onChange={(e) => setApiKey(e.target.value)} className="w-full rounded-xl border border-slate-200 bg-white px-3.5 py-2.5 pr-11 font-mono text-sm text-slate-900 outline-none transition placeholder:text-slate-400 focus:border-indigo-500 focus:ring-4 focus:ring-indigo-500/10 dark:border-slate-700 dark:bg-slate-950 dark:text-white" />
                     <button
                       type="button"
                       onClick={() => setShowApiKey((visible) => !visible)}
-                      aria-label={showApiKey ? (zh ? '隐藏 API Key' : 'Hide API Key') : (zh ? '显示 API Key' : 'Show API Key')}
-                      title={showApiKey ? (zh ? '隐藏本次输入的 API Key' : 'Hide the newly entered API Key') : (zh ? '显示本次输入的 API Key' : 'Show the newly entered API Key')}
+                      aria-label={tx(showApiKey ? 'ai.provider.editor.keyVisibility.hide' : 'ai.provider.editor.keyVisibility.show')}
+                      title={tx(showApiKey ? 'ai.provider.editor.keyVisibility.hideTitle' : 'ai.provider.editor.keyVisibility.showTitle')}
                       className="absolute right-2 top-1/2 flex h-8 w-8 -translate-y-1/2 items-center justify-center rounded-lg text-slate-400 transition hover:bg-slate-100 hover:text-indigo-600 dark:hover:bg-slate-800 dark:hover:text-indigo-300"
                     >
                       {showApiKey ? <EyeOff className="h-4 w-4" /> : <Eye className="h-4 w-4" />}
@@ -690,38 +683,38 @@ export const ProviderManagementTab: React.FC = () => {
 
                 <div className="grid gap-4 sm:grid-cols-[1fr_150px]">
                   <div>
-                    <label htmlFor="provider-model-code" className="mb-1.5 block text-xs font-bold text-slate-700 dark:text-slate-300">{zh ? '绑定模型' : 'Bound model'} <span className="font-normal text-slate-400">(Model Code)</span></label>
+                    <label htmlFor="provider-model-code" className="mb-1.5 block text-xs font-bold text-slate-700 dark:text-slate-300">{tx('ai.provider.editor.model')} <span className="font-normal text-slate-400">(Model Code)</span></label>
                     <input id="provider-model-code" type="text" placeholder="deepseek-v4-flash" value={defaultModelCode} onChange={(e) => setDefaultModelCode(e.target.value)} className="w-full rounded-xl border border-slate-200 bg-white px-3.5 py-2.5 font-mono text-sm text-slate-900 outline-none transition placeholder:text-slate-400 focus:border-indigo-500 focus:ring-4 focus:ring-indigo-500/10 dark:border-slate-700 dark:bg-slate-950 dark:text-white" />
-                    <p className="mt-1.5 text-[10px] text-slate-400">{zh ? '将自动注册至模型列表与路由' : 'Registered in models and routes automatically'}</p>
+                    <p className="mt-1.5 text-[10px] text-slate-400">{tx('ai.provider.editor.modelHelp')}</p>
                   </div>
                   <div>
-                    <label htmlFor="provider-timeout" className="mb-1.5 block text-xs font-bold text-slate-700 dark:text-slate-300">{zh ? '超时（秒）' : 'Timeout (sec)'}</label>
+                    <label htmlFor="provider-timeout" className="mb-1.5 block text-xs font-bold text-slate-700 dark:text-slate-300">{tx('ai.provider.editor.timeout')}</label>
                     <input id="provider-timeout" type="number" min={5} max={300} value={timeout} onChange={(e) => setTimeout(Number(e.target.value) || 30)} className="w-full rounded-xl border border-slate-200 bg-white px-3.5 py-2.5 text-sm text-slate-900 outline-none transition focus:border-indigo-500 focus:ring-4 focus:ring-indigo-500/10 dark:border-slate-700 dark:bg-slate-950 dark:text-white" />
                   </div>
                 </div>
 
                 <div>
-                  <label htmlFor="provider-allowed-data-classification" className="mb-1.5 block text-xs font-bold text-slate-700 dark:text-slate-300">{zh ? '允许数据分类' : 'Allowed data classification'}</label>
+                  <label htmlFor="provider-allowed-data-classification" className="mb-1.5 block text-xs font-bold text-slate-700 dark:text-slate-300">{tx('ai.provider.editor.classification')}</label>
                   <select
                     id="provider-allowed-data-classification"
                     value={allowedDataClassification}
                     onChange={(e) => setAllowedDataClassification(e.target.value)}
                     className="w-full rounded-xl border border-indigo-200 bg-indigo-50/70 px-3.5 py-2.5 text-sm font-semibold text-indigo-950 dark:border-indigo-900/60 dark:bg-indigo-950/30 dark:text-indigo-100"
                   >
-                    <option value="PUBLIC">PUBLIC · 公开</option>
-                    <option value="INTERNAL">INTERNAL · 内部</option>
-                    <option value="CONFIDENTIAL">CONFIDENTIAL · 机密</option>
+                    <option value="PUBLIC">PUBLIC · {tx('ai.provider.editor.public')}</option>
+                    <option value="INTERNAL">INTERNAL · {tx('ai.provider.editor.internal')}</option>
+                    <option value="CONFIDENTIAL">CONFIDENTIAL · {tx('ai.provider.editor.confidential')}</option>
                   </select>
-                  <p className="mt-1.5 text-[10px] text-slate-400">{zh ? '网关不会向该 Provider 发送高于此级别的数据。' : 'The gateway will not send data above this level to the Provider.'}</p>
+                  <p className="mt-1.5 text-[10px] text-slate-400">{tx('ai.provider.editor.classificationHelp')}</p>
                 </div>
 
               </div>
 
               <div className="mt-6 flex flex-col-reverse gap-2 border-t border-slate-100 pt-4 dark:border-slate-800 sm:flex-row sm:justify-end">
-                <button type="button" onClick={() => { setEditingId(null); setShowApiKey(false); setShowModal(false); }} className="rounded-xl px-4 py-2.5 text-sm font-semibold text-slate-500 transition hover:bg-slate-100 hover:text-slate-800 dark:hover:bg-slate-800 dark:hover:text-slate-200">{zh ? '取消' : 'Cancel'}</button>
+                <button type="button" onClick={() => { setEditingId(null); setShowApiKey(false); setShowModal(false); }} className="rounded-xl px-4 py-2.5 text-sm font-semibold text-slate-500 transition hover:bg-slate-100 hover:text-slate-800 dark:hover:bg-slate-800 dark:hover:text-slate-200">{tx('ai.provider.editor.cancel')}</button>
                 <button type="submit" disabled={submitting} className="inline-flex items-center justify-center gap-2 rounded-xl bg-indigo-600 px-4 py-2.5 text-sm font-semibold text-white shadow-lg shadow-indigo-600/20 transition hover:bg-indigo-700 disabled:cursor-wait disabled:opacity-60">
                   {submitting && <RefreshCw className="h-4 w-4 animate-spin" />}
-                  {submitting ? (zh ? '保存中…' : 'Saving…') : (editingId ? (zh ? '保存修改' : 'Save changes') : (zh ? '确认添加' : 'Add Provider'))}
+                  {submitting ? tx('ai.provider.editor.saving') : (editingId ? tx('ai.provider.editor.save') : tx('ai.provider.editor.add'))}
                 </button>
               </div>
             </form>

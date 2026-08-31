@@ -17,15 +17,13 @@ NAME = "ai_session_scope_hardening"
 
 def _columns(cursor, table: str, use_pg: bool) -> set[str]:
     try:
-        if use_pg:
-            rows = cursor.execute(
-                "SELECT column_name FROM information_schema.columns "
-                "WHERE table_schema = current_schema() AND table_name = ?",
-                (table,),
-            ).fetchall()
-            return {str(row[0]) for row in rows}
-        rows = cursor.execute(f"PRAGMA table_info({table})").fetchall()
-        return {str(row[1]) for row in rows}
+        rows = cursor.execute(
+            "SELECT column_name FROM information_schema.columns "
+            "WHERE table_schema = current_schema() AND table_name = ?",
+            (table,),
+        ).fetchall()
+        return {str(row[0]) for row in rows}
+
     except Exception:
         return set()
 

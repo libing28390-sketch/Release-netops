@@ -1,7 +1,6 @@
 from __future__ import annotations
 
-import sqlite3
-
+from backend.tests.pg_test_utils import postgresql_test_driver
 import pytest
 from fastapi import HTTPException
 
@@ -212,13 +211,15 @@ def test_ring_group_tracks_both_edge_ends_and_uses_circular_layout():
 
 @pytest.fixture()
 def graph_db(monkeypatch):
-    conn = sqlite3.connect(":memory:")
-    conn.row_factory = sqlite3.Row
-    conn.execute("CREATE TABLE alert_events (id TEXT)")
-    conn.execute("CREATE TABLE pam_sessions (id TEXT)")
-    conn.execute("CREATE TABLE ai_model (model_code TEXT, name TEXT, thinking_supported INTEGER)")
-    upgrade_graph_base(conn.cursor(), False)
-    upgrade_graph_completion(conn.cursor(), False)
+    conn = postgresql_test_driver.connect()
+    conn.row_factory = postgresql_test_driver.Row
+    conn.execute("CREATE TABLE alert_events (id TEXT PRIMARY KEY)")
+    conn.execute("CREATE TABLE pam_sessions (id TEXT PRIMARY KEY)")
+    conn.execute(
+        "CREATE TABLE ai_model (model_code TEXT PRIMARY KEY, name TEXT, thinking_supported INTEGER)"
+    )
+    upgrade_graph_base(conn.cursor(), True)
+    upgrade_graph_completion(conn.cursor(), True)
     conn.commit()
     monkeypatch.setattr(graph_service, "get_db_connection", lambda: conn)
     yield conn

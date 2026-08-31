@@ -19,13 +19,12 @@ def _now() -> str:
 
 
 def _columns(cursor, table: str, use_pg: bool) -> set[str]:
-    if use_pg:
-        rows = cursor.execute(
-            "SELECT column_name FROM information_schema.columns WHERE table_schema = current_schema() AND table_name = ?",
-            (table,),
-        ).fetchall()
-        return {str(row[0]).lower() for row in rows}
-    return {str(row[1]).lower() for row in cursor.execute(f"PRAGMA table_info({table})").fetchall()}
+    rows = cursor.execute(
+        "SELECT column_name FROM information_schema.columns WHERE table_schema = current_schema() AND table_name = ?",
+        (table,),
+    ).fetchall()
+    return {str(row[0]).lower() for row in rows}
+
 
 
 def _ensure_column(cursor, table: str, column: str, definition: str, use_pg: bool) -> None:
@@ -42,8 +41,8 @@ def _sha(value: str) -> str:
 
 
 def _create_tables(cursor, use_pg: bool) -> None:
-    code_check = "platform_code ~ '^[a-z][a-z0-9_]{2,63}$'" if use_pg else "platform_code NOT GLOB '*[^a-z0-9_]*' AND platform_code GLOB '[a-z]*' AND length(platform_code) BETWEEN 3 AND 64"
-    template_check = "template_code ~ '^[A-Z][A-Z0-9_]{0,63}$'" if use_pg else "template_code NOT GLOB '*[^A-Z0-9_]*' AND template_code GLOB '[A-Z]*' AND length(template_code) BETWEEN 1 AND 64"
+    code_check = "platform_code ~ '^[a-z][a-z0-9_]{2,63}$'"
+    template_check = "template_code ~ '^[A-Z][A-Z0-9_]{0,63}$'"
     cursor.execute(f"""
         CREATE TABLE IF NOT EXISTS platform_profiles (
             id TEXT PRIMARY KEY, tenant_id TEXT, platform_code TEXT NOT NULL,

@@ -417,9 +417,45 @@ class ChunkingEngine:
                 result.append(child)
                 ordinal += 1
 
+        result = self._deduplicate_exact(result)
         self._link_neighbors(result)
         self.validate(result)
         return result
+
+    @staticmethod
+    def _deduplicate_exact(chunks: Sequence[Chunk]) -> list[Chunk]:
+        """Remove exact duplicate chunks emitted by repetitive source pages.
+
+        Vendor portals sometimes repeat the same command/example under more
+        than one navigation heading.  Keeping both copies adds no retrieval
+        evidence and violates the content-hash invariant.  Prefer a semantic
+        parent when one exists; otherwise retain a retrieval candidate.  Any
+        children that pointed at a removed duplicate parent are redirected to
+        the retained parent before neighbour links are rebuilt.
+        """
+        by_hash: dict[str, list[Chunk]] = {}
+        for chunk in chunks:
+            by_hash.setdefault(chunk.content_hash, []).append(chunk)
+
+        replacement: dict[str, str] = {}
+        retained_ids: set[str] = set()
+        for items in by_hash.values():
+            if len(items) == 1:
+                retained_ids.add(items[0].chunk_id)
+                continue
+            parent = next((item for item in items if item.chunk_role == "parent"), None)
+            keeper = parent or next((item for item in items if item.is_retrieval_candidate), items[0])
+            retained_ids.add(keeper.chunk_id)
+            for item in items:
+                if item.chunk_id != keeper.chunk_id:
+                    replacement[item.chunk_id] = keeper.chunk_id
+
+        retained = [chunk for chunk in chunks if chunk.chunk_id in retained_ids]
+        for chunk in retained:
+            if chunk.parent_chunk_id in replacement:
+                chunk.parent_chunk_id = replacement[chunk.parent_chunk_id]
+            chunk.ordinal = len([item for item in retained if item.ordinal < chunk.ordinal])
+        return retained
 
     @staticmethod
     def _link_neighbors(chunks: Sequence[Chunk]) -> None:

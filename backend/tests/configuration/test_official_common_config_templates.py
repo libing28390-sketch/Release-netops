@@ -1,12 +1,12 @@
-import sqlite3
-
+from backend.tests import pg_catalog_assertions as pg_catalog
+from backend.tests.pg_test_utils import postgresql_test_driver
 from database.migrations.m0052_official_common_config_templates import upgrade
 from services.config_template_validation_service import validate_template
 
 
-def _connection() -> sqlite3.Connection:
-    conn = sqlite3.connect(":memory:")
-    conn.row_factory = sqlite3.Row
+def _connection() -> postgresql_test_driver.Connection:
+    conn = postgresql_test_driver.connect()
+    conn.row_factory = postgresql_test_driver.Row
     conn.execute(
         """
         CREATE TABLE templates (
@@ -27,8 +27,8 @@ def _connection() -> sqlite3.Connection:
 def test_official_template_seed_is_idempotent_and_complete() -> None:
     conn = _connection()
     try:
-        upgrade(conn, use_pg=False)
-        upgrade(conn, use_pg=False)
+        upgrade(conn, use_pg=True)
+        upgrade(conn, use_pg=True)
         rows = conn.execute(
             """
             SELECT id, vendor, content, rollback, platform_family,
@@ -38,9 +38,7 @@ def test_official_template_seed_is_idempotent_and_complete() -> None:
             ORDER BY id
             """
         ).fetchall()
-        columns = {
-            row["name"] for row in conn.execute("PRAGMA table_info(templates)")
-        }
+        columns = pg_catalog.table_columns(conn, "templates")
     finally:
         conn.close()
 
@@ -62,7 +60,7 @@ def test_official_template_seed_is_idempotent_and_complete() -> None:
 def test_every_seeded_template_parses_and_renders() -> None:
     conn = _connection()
     try:
-        upgrade(conn, use_pg=False)
+        upgrade(conn, use_pg=True)
         rows = conn.execute(
             """
             SELECT id, vendor, platform_family, software_version, content, rollback

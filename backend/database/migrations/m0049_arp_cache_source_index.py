@@ -10,14 +10,12 @@ NAME = "arp_cache_source_index"
 
 
 def _columns(cursor, table: str, use_pg: bool) -> set[str]:
-    if use_pg:
-        cursor.execute(
-            "SELECT column_name FROM information_schema.columns WHERE table_name = %s",
-            (table,),
-        )
-        return {row[0] for row in cursor.fetchall()}
-    cursor.execute(f"PRAGMA table_info({table})")
-    return {row[1] for row in cursor.fetchall()}
+    cursor.execute(
+        "SELECT column_name FROM information_schema.columns WHERE table_name = %s",
+        (table,),
+    )
+    return {row[0] for row in cursor.fetchall()}
+
 
 
 def upgrade(cursor, use_pg: bool) -> None:
@@ -35,9 +33,7 @@ def upgrade(cursor, use_pg: bool) -> None:
         source_id = str(source.get("device_id") or "")
         if source_id:
             cursor.execute(
-                "UPDATE arp_cache SET source_device_id = %s WHERE target_ip = %s"
-                if use_pg else
-                "UPDATE arp_cache SET source_device_id = ? WHERE target_ip = ?",
+                "UPDATE arp_cache SET source_device_id = %s WHERE target_ip = %s",
                 (source_id, row[0]),
             )
     cursor.execute("CREATE INDEX IF NOT EXISTS idx_arp_cache_source_device ON arp_cache(source_device_id)")

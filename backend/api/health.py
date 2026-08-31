@@ -4,7 +4,7 @@ import math
 from typing import Any
 from fastapi import APIRouter, Query
 from core.config import settings
-from database import DB_PATH, get_db_connection, init_db
+from database import PROJECT_ROOT, get_db_connection, init_db
 from services import alert_maintenance_service
 from services import notification_service
 import logging
@@ -172,25 +172,13 @@ def _get_db_health() -> tuple[bool, str]:
     db_ok = False
     db_status = "missing"
     try:
-        from database import _USE_PG
-        if _USE_PG:
-            # PostgreSQL 模式：直接尝试连接
-            conn = get_db_connection()
-            try:
-                conn.execute("SELECT 1").fetchone()
-            finally:
-                conn.close()
-            db_ok = True
-            db_status = "connected"
-        elif os.path.exists(DB_PATH):
-            # SQLite 模式：检查文件存在再连接
-            conn = get_db_connection()
-            try:
-                conn.execute("SELECT 1").fetchone()
-            finally:
-                conn.close()
-            db_ok = True
-            db_status = "connected"
+        conn = get_db_connection()
+        try:
+            conn.execute("SELECT 1").fetchone()
+        finally:
+            conn.close()
+        db_ok = True
+        db_status = "connected"
     except Exception as e:
         db_status = f"error: {str(e)[:100]}"
     return db_ok, db_status
@@ -227,7 +215,7 @@ def _resource_status(cpu_percent: float | None, memory_percent: float | None, di
 
 
 def _build_resource_snapshot(db_ok: bool, db_status: str) -> dict[str, Any]:
-    disk = shutil.disk_usage(os.path.dirname(DB_PATH) or '.')
+    disk = shutil.disk_usage(PROJECT_ROOT)
     disk_total_gb = round(disk.total / (1024**3), 2)
     disk_used_gb = round(disk.used / (1024**3), 2)
     disk_free_gb = round(disk.free / (1024**3), 2)
@@ -559,26 +547,17 @@ def _downsample_host_resource_series(rows: list[dict[str, Any]], max_points: int
     return aggregated
 
 def _get_db_pool_status() -> dict:
-    from database import _USE_PG
-    from database.core import _POOL_SIZE
-    if _USE_PG:
-        from database.core import _PG_OVERFLOW_MAX, _pg_overflow_active, _pg_pool
-        if _pg_pool is not None:
-            used = len(_pg_pool._used) if hasattr(_pg_pool, '_used') else 0
-            maxconn = _pg_pool.maxconn if hasattr(_pg_pool, 'maxconn') else _POOL_SIZE
-            return {
-                "active": used,
-                "max": maxconn,
-                "overflow_active": _pg_overflow_active,
-                "overflow_max": _PG_OVERFLOW_MAX,
-            }
-        return {"active": 0, "max": _POOL_SIZE, "overflow_active": 0, "overflow_max": _PG_OVERFLOW_MAX}
-    else:
-        try:
-            from database.core import _active_connections
-            return {"active": _active_connections, "max": _POOL_SIZE}
-        except ImportError:
-            return {"active": 0, "max": _POOL_SIZE}
+    from database.core import _PG_OVERFLOW_MAX, _POOL_SIZE, _pg_overflow_active, _pg_pool
+    if _pg_pool is not None:
+        used = len(_pg_pool._used) if hasattr(_pg_pool, '_used') else 0
+        maxconn = _pg_pool.maxconn if hasattr(_pg_pool, 'maxconn') else _POOL_SIZE
+        return {
+            "active": used,
+            "max": maxconn,
+            "overflow_active": _pg_overflow_active,
+            "overflow_max": _PG_OVERFLOW_MAX,
+        }
+    return {"active": 0, "max": _POOL_SIZE, "overflow_active": 0, "overflow_max": _PG_OVERFLOW_MAX}
 
 def _get_db_metrics() -> dict:
     conn = get_db_connection()

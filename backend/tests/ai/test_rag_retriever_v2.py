@@ -1,12 +1,11 @@
 import json
-import sqlite3
-
+from backend.tests.pg_test_utils import postgresql_test_driver
 from ai.services import rag_retriever as module
 from ai.services.rag_retriever import RAGRetriever, RetrievalRequest
 
 
 def test_metadata_hard_filter_and_document_dedup(monkeypatch):
-    connection = sqlite3.connect(":memory:")
+    connection = postgresql_test_driver.connect()
     connection.executescript(
         """
         CREATE TABLE ai_document (
@@ -15,11 +14,11 @@ def test_metadata_hard_filter_and_document_dedup(monkeypatch):
             document_id TEXT, document_category TEXT, product_series TEXT,
             product_model TEXT, software_train TEXT, cli_platform TEXT,
             feature_domain TEXT, feature TEXT, exclude_from_rag INTEGER DEFAULT 0,
-            metadata_json TEXT
+            metadata_json JSONB
         );
         CREATE TABLE ai_document_chunk (
             id TEXT PRIMARY KEY, document_id TEXT, content TEXT, embedding TEXT,
-            metadata_json TEXT, section TEXT, created_at TEXT,
+            metadata_json JSONB, section TEXT, created_at TEXT,
             is_retrieval_candidate INTEGER, chunk_role TEXT, parent_chunk_id TEXT
         );
         """
@@ -39,7 +38,6 @@ def test_metadata_hard_filter_and_document_dedup(monkeypatch):
         [("c1", "d1", "display ospf peer", json.dumps([1.0, 0.0]), "2026-01-01"), ("c2", "d1", "OSPF verification", json.dumps([1.0, 0.0]), "2026-01-02"), ("c3", "d2", "display ospf peer", json.dumps([1.0, 0.0]), "2026-01-03")],
     )
     monkeypatch.setattr(module, "get_db_connection", lambda: connection)
-    monkeypatch.setattr(module, "_USE_PG", False)
     monkeypatch.setattr(module.embedding_provider, "embed_text", lambda text: [1.0, 0.0])
 
     request = RetrievalRequest(
@@ -63,18 +61,18 @@ def test_cosine_does_not_give_orthogonal_vectors_false_relevance():
 
 
 def test_exact_command_ranking_expands_sibling_configuration_context(monkeypatch):
-    connection = sqlite3.connect(":memory:")
+    connection = postgresql_test_driver.connect()
     connection.executescript(
         """
         CREATE TABLE ai_document (
             id TEXT PRIMARY KEY, name TEXT, vendor TEXT, platform TEXT,
             tenant_id TEXT, status TEXT, acl_json TEXT, source_trust_level TEXT,
             document_id TEXT, document_category TEXT, cli_platform TEXT,
-            exclude_from_rag INTEGER DEFAULT 0, metadata_json TEXT
+            exclude_from_rag INTEGER DEFAULT 0, metadata_json JSONB
         );
         CREATE TABLE ai_document_chunk (
             id TEXT PRIMARY KEY, document_id TEXT, content TEXT, embedding TEXT,
-            metadata_json TEXT, section TEXT, created_at TEXT,
+            metadata_json JSONB, section TEXT, created_at TEXT,
             is_retrieval_candidate INTEGER, chunk_role TEXT, parent_chunk_id TEXT,
             ordinal INTEGER, embedding_model TEXT
         );
@@ -94,7 +92,6 @@ def test_exact_command_ranking_expands_sibling_configuration_context(monkeypatch
         ],
     )
     monkeypatch.setattr(module, "get_db_connection", lambda: connection)
-    monkeypatch.setattr(module, "_USE_PG", False)
     monkeypatch.setattr(module.embedding_provider, "embed_text", lambda text: [1.0, 0.0])
 
     result = RAGRetriever().search(
@@ -108,7 +105,7 @@ def test_exact_command_ranking_expands_sibling_configuration_context(monkeypatch
 
 
 def test_all_metadata_eligible_chunks_are_scored_before_top_k(monkeypatch):
-    connection = sqlite3.connect(":memory:")
+    connection = postgresql_test_driver.connect()
     connection.executescript(
         """
         CREATE TABLE ai_document (
@@ -118,7 +115,7 @@ def test_all_metadata_eligible_chunks_are_scored_before_top_k(monkeypatch):
         );
         CREATE TABLE ai_document_chunk (
             id TEXT PRIMARY KEY, document_id TEXT, content TEXT, embedding TEXT,
-            metadata_json TEXT, section TEXT, created_at TEXT,
+            metadata_json JSONB, section TEXT, created_at TEXT,
             is_retrieval_candidate INTEGER, chunk_role TEXT, parent_chunk_id TEXT
         );
         """
@@ -134,7 +131,6 @@ def test_all_metadata_eligible_chunks_are_scored_before_top_k(monkeypatch):
             (f"chunk-{index:03d}", doc_id, f"term-{index}", json.dumps([1.0, 0.0])),
         )
     monkeypatch.setattr(module, "get_db_connection", lambda: connection)
-    monkeypatch.setattr(module, "_USE_PG", False)
     monkeypatch.setattr(module.embedding_provider, "embed_text", lambda text: [1.0, 0.0])
 
     result = RAGRetriever().search(RetrievalRequest(query="term-124", top_k=1), min_relevance=0.0)

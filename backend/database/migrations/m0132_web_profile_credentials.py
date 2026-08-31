@@ -8,17 +8,11 @@ NAME = "web_profile_credentials"
 
 
 def _ensure_column(cursor, column: str, definition: str, use_pg: bool) -> None:
-    if use_pg:
-        cursor.execute(
-            f"ALTER TABLE asset_web_access_profiles ADD COLUMN IF NOT EXISTS {column} {definition}"
-        )
-        return
-    columns = {
-        str(row[1])
-        for row in cursor.execute("PRAGMA table_info(asset_web_access_profiles)").fetchall()
-    }
-    if column not in columns:
-        cursor.execute(f"ALTER TABLE asset_web_access_profiles ADD COLUMN {column} {definition}")
+    cursor.execute(
+        f"ALTER TABLE asset_web_access_profiles ADD COLUMN IF NOT EXISTS {column} {definition}"
+    )
+    return
+
 
 
 def upgrade(cursor, use_pg: bool) -> None:

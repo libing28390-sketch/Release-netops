@@ -1,0 +1,259 @@
+# Additive CAT-001 entries for the campus and data-center switch coverage
+# required by the Copilot retrieval contract.  This file is intentionally
+# separate from the frozen first-batch allowlist; both files are merged by the
+# source-registry loader and retain exact HTTPS host/path matching.
+contract_version: v1.0-additive
+status: reviewed_for_knowledge_backfill
+authority: official_vendor_documentation
+
+vendor_entries:
+  - vendor: Huawei
+    vendor_key: huawei
+    product_family: S5700/S6700
+    model_pattern: S(57|67)00
+    platform_code: huawei_vrp
+    os_family: VRP
+    primary_version: V200R024C10
+    compatibility_version: V200R023C00
+    official_hosts:
+      - host: support.huawei.com
+        path_prefixes:
+          - /enterprise/en/doc/EDOC1100459443/
+          - /enterprise/en/doc/EDOC1100333453/
+          - /enterprise/en/doc/EDOC1000047418/
+          - /enterprise/zh/doc/EDOC1100459455/a3558870/example-for-configuring-mux-vlan-on-an-aggregation-device
+          - /enterprise/zh/doc/EDOC1100278276/c3f6a316
+        source_urls:
+          - https://support.huawei.com/enterprise/en/doc/EDOC1100459443/d770f3cd/configuring-ospf-attributes-on-different-types-of-networks
+          - https://support.huawei.com/enterprise/en/doc/EDOC1100333453/ac09508/static-routes-and-dynamic-routes
+          - https://support.huawei.com/enterprise/en/doc/EDOC1000047418/2ebe2b92/setting-parameters-for-ospf-neighbor-relationship
+          - https://support.huawei.com/enterprise/zh/doc/EDOC1100459455/a3558870/example-for-configuring-mux-vlan-on-an-aggregation-device
+          - https://support.huawei.com/enterprise/zh/doc/EDOC1100278276/c3f6a316
+    source_authority: Huawei Enterprise Support
+    allowed_source_kinds: [product_support, configuration_guide, command_reference, release_note]
+
+  - vendor: H3C
+    vendor_key: h3c
+    product_family: Comware 7 Switches
+    model_pattern: S(51|68|98|12)\d+
+    platform_code: h3c_comware
+    os_family: Comware 7
+    primary_version: Comware 7
+    compatibility_version: CMW710
+    official_hosts:
+      - host: www.h3c.com
+        path_prefixes:
+          - /en/d_201903/
+          - /en/Support/Resource_Center/EN/Home/Public/00-Public/Technical_Documents/Configure___Deploy/Configuration_Guides/
+        source_urls:
+          - https://www.h3c.com/en/d_201903/1159013_294551_0.htm
+          - https://www.h3c.com/en/Support/Resource_Center/EN/Home/Public/00-Public/Technical_Documents/Configure___Deploy/Configuration_Guides/H3C_CG-19994/07/202410/2284787_294551_0.htm
+          - https://www.h3c.com/en/Support/Resource_Center/EN/Home/Public/00-Public/Technical_Documents/Configure___Deploy/Configuration_Guides/H3C_CG-18480/05/202404/2113517_294551_0.htm
+          - https://www.h3c.com/en/Support/Resource_Center/EN/Home/Public/00-Public/Technical_Documents/Configure___Deploy/Configuration_Guides/S12500X-AF_S12500-X_S9800_CG_R2700/05/
+    source_authority: H3C Support
+    allowed_source_kinds: [product_support, configuration_guide, command_reference, release_note]
+
+  - vendor: Cisco
+    vendor_key: cisco
+    product_family: Catalyst 9300
+    model_pattern: C9300
+    platform_code: cisco_iosxe
+    os_family: IOS-XE
+    primary_version: 17.13.x
+    compatibility_version: 17.18.x
+    official_hosts:
+      - host: www.cisco.com
+        path_prefixes:
+          - /c/en/us/td/docs/switches/lan/catalyst9300/software/release/17-13/
+          - /c/en/us/td/docs/switches/lan/catalyst9300/software/release/17-18/
+        source_urls:
+          - https://www.cisco.com/c/en/us/td/docs/switches/lan/catalyst9300/software/release/17-13/configuration_guide/rtng/b_1713_rtng_9300_cg/configuring_ospf.html
+          - https://www.cisco.com/c/en/us/td/docs/switches/lan/catalyst9300/software/release/17-18/configuration_guide/sys_mgmt/b_1718_sys_mgmt_9300_cg.pdf
+          - https://www.cisco.com/c/en/us/td/docs/switches/lan/catalyst9300/software/release/17-18/command_reference/b_1718_9300_cr/system_management_commands.html
+    source_authority: Cisco IOS XE Documentation
+    allowed_source_kinds: [product_support, configuration_guide, command_reference, release_note]
+
+  - vendor: Cisco
+    vendor_key: cisco
+    product_family: Nexus 3000/9000
+    model_pattern: Nexus(3|9)K
+    platform_code: cisco_nxos
+    os_family: NX-OS
+    primary_version: NX-OS 9.x
+    compatibility_version: NX-OS 10.x
+    official_hosts:
+      - host: www.cisco.com
+        path_prefixes:
+          - /c/en/us/td/docs/switches/datacenter/nexus3000/
+          - /c/en/us/td/docs/switches/datacenter/nexus9000/
+          - /c/en/us/td/docs/dcn/nx-os/nexus9000/
+        source_urls:
+          - https://www.cisco.com/c/en/us/td/docs/switches/datacenter/nexus3000/sw/unicast/602_u1_1/l3_nx-os/l3_ospf.html
+          - https://www.cisco.com/c/en/us/td/docs/switches/datacenter/nexus9000/sw/6-x/unicast/configuration/guide/l3_cli_nxos/l3_ospf.html
+          - https://www.cisco.com/c/en/us/td/docs/switches/datacenter/nexus9000/sw/92x/vxlan-92x/configuration/guide/b-cisco-nexus-9000-series-nx-os-vxlan-configuration-guide-92x/b_Cisco_Nexus_9000_Series_NX-OS_VXLAN_Configuration_Guide_9x_chapter_0100.html
+    source_authority: Cisco Data Center Documentation
+    allowed_source_kinds: [product_support, configuration_guide, command_reference, release_note]
+
+  - vendor: H3C
+    vendor_key: h3c
+    product_family: H3C Switches
+    model_pattern: H3C-switch
+    platform_code: h3c_comware
+    os_family: Comware 7
+    primary_version: Comware 7 2026 documentation
+    compatibility_version: CMW710
+    official_hosts:
+      - host: www.h3c.com
+        path_prefixes:
+          - /cn/Service/Document_Software/Document_Center/Home/Switches/00-Public/Configure/Typical_Configuration_Example/H3C_CE_R6010Pxx_R8307Pxx-25482/00/
+          - /cn/d_202401/2035540_30005_0.htm
+          - /cn/Service/Document_Software/Document_Center/Home/Switches/00-Public/Maintenance/Maintenance_Treasure/H3C-WHBD-Long/02/
+          - /cn/d_202603/2776299_30005_0.htm
+          - /cn/Service/Document_Software/Document_Center/Switches/Catalog/S6300/S6300/Maintenance/Troubleshooting/H3C_S6300_TG-6W100/
+          - /cn/Service/Document_Software/Document_Center/Switches/Catalog/S12500/S12500G-AF/Maintenance/Troubleshooting/H3C_S12500G-AF_TG-R7595-6W100/
+        source_urls:
+          - https://www.h3c.com/cn/Service/Document_Software/Document_Center/Home/Switches/00-Public/Configure/Typical_Configuration_Example/H3C_CE_R6010Pxx_R8307Pxx-25482/00/
+          - https://www.h3c.com/cn/d_202401/2035540_30005_0.htm
+          - https://www.h3c.com/cn/Service/Document_Software/Document_Center/Home/Switches/00-Public/Maintenance/Maintenance_Treasure/H3C-WHBD-Long/02/
+          - https://www.h3c.com/cn/d_202603/2776299_30005_0.htm
+          - https://www.h3c.com/cn/Service/Document_Software/Document_Center/Switches/Catalog/S6300/S6300/Maintenance/Troubleshooting/H3C_S6300_TG-6W100/
+          - https://www.h3c.com/cn/Service/Document_Software/Document_Center/Switches/Catalog/S12500/S12500G-AF/Maintenance/Troubleshooting/H3C_S12500G-AF_TG-R7595-6W100/
+    source_authority: H3C Support
+    allowed_source_kinds: [product_support, configuration_guide, command_reference, troubleshooting_guide, release_note]
+
+  - vendor: Huawei
+    vendor_key: huawei
+    product_family: enterprise-routing-and-switching
+    model_pattern: CloudEngine
+    platform_code: huawei_vrp
+    os_family: VRP
+    primary_version: VRP V100/V200
+    compatibility_version: VRP V300
+    official_hosts:
+      - host: info.support.huawei.com
+        path_prefixes:
+          - /enterprise/zh/doc/EDOC1100305532/b79910c8
+          - /enterprise/zh/doc/EDOC1000052631/25fd81d3
+        source_urls:
+          - https://info.support.huawei.com/enterprise/zh/doc/EDOC1100305532/b79910c8
+          - https://info.support.huawei.com/enterprise/zh/doc/EDOC1000052631/25fd81d3
+    source_authority: Huawei Enterprise Support
+    allowed_source_kinds: [troubleshooting_guide]
+
+  - vendor: Huawei
+    vendor_key: huawei
+    product_family: S5700/S6700
+    model_pattern: S(57|67)00
+    platform_code: huawei_vrp
+    os_family: VRP
+    primary_version: V200 exact-document-scope
+    compatibility_version: V200 exact-document-scope
+    official_hosts:
+      - host: info.support.huawei.com
+        path_prefixes:
+          - /enterprise/zh/doc/EDOC1100459453/99234d3a
+          - /enterprise/zh/doc/EDOC1100459421/ddc3d496
+        source_urls:
+          - https://info.support.huawei.com/enterprise/zh/doc/EDOC1100459453/99234d3a
+          - https://info.support.huawei.com/enterprise/zh/doc/EDOC1100459421/ddc3d496
+    source_authority: Huawei Enterprise Support
+    allowed_source_kinds: [configuration_guide, command_reference]
+
+  - vendor: Huawei
+    vendor_key: huawei
+    product_family: S-series
+    model_pattern: S-series
+    platform_code: huawei_vrp
+    os_family: VRP
+    primary_version: VRP V100/V200
+    compatibility_version: VRP V300
+    official_hosts:
+      - host: info.support.huawei.com
+        path_prefixes:
+          - /enterprise/zh/doc/EDOC1000075592/4079ef29
+        source_urls:
+          - https://info.support.huawei.com/enterprise/zh/doc/EDOC1000075592/4079ef29
+    source_authority: Huawei Enterprise Support
+    allowed_source_kinds: [troubleshooting_guide]
+
+  - vendor: Ruijie
+    vendor_key: ruijie
+    product_family: RGOS Switches
+    model_pattern: RG-S\d+
+    platform_code: ruijie_rgos
+    os_family: RGOS
+    primary_version: RGOS public-current
+    compatibility_version: RGOS multi-version
+    official_hosts:
+      - host: www.ruijie.com.cn
+        path_prefixes:
+          - /fw/wt/90122/
+          - /fw/wt/90882/
+          - /fw/wd/86075/
+          - /fw/wd/88538/
+          - /fw/wt/93440/
+          - /fw/wt/93439/
+          - /fw/wt/32970/
+          - /fw/wt/18792
+        source_urls:
+          - https://www.ruijie.com.cn/fw/wt/90122/
+          - https://www.ruijie.com.cn/fw/wt/90882/
+          - https://www.ruijie.com.cn/fw/wd/86075/
+          - https://www.ruijie.com.cn/fw/wd/88538/
+          - https://www.ruijie.com.cn/fw/wt/93440/
+          - https://www.ruijie.com.cn/fw/wt/93439/
+          - https://www.ruijie.com.cn/fw/wt/32970/
+          - https://www.ruijie.com.cn/fw/wt/18792
+    source_authority: Ruijie Support
+    allowed_source_kinds: [product_support, configuration_guide, command_reference, troubleshooting_guide, release_note]
+
+  - vendor: Cisco
+    vendor_key: cisco
+    product_family: Catalyst 9300
+    model_pattern: C9300
+    platform_code: cisco_iosxe
+    os_family: IOS-XE
+    primary_version: 17.13.x
+    compatibility_version: 17.18.x
+    official_hosts:
+      - host: www.cisco.com
+        path_prefixes:
+          - /c/en/us/td/docs/switches/lan/catalyst9300/software/release/17-13/configuration_guide/sys_mgmt/
+        source_urls:
+          - https://www.cisco.com/c/en/us/td/docs/switches/lan/catalyst9300/software/release/17-13/configuration_guide/sys_mgmt/b_1713_sys_mgmt_9300_cg/troubleshooting_the_software_configuration.html
+    source_authority: Cisco IOS XE Documentation
+    allowed_source_kinds: [troubleshooting_guide]
+
+  - vendor: Cisco
+    vendor_key: cisco
+    product_family: Catalyst 9000
+    model_pattern: C(9|9300)
+    platform_code: cisco_iosxe
+    os_family: IOS-XE
+    primary_version: document-defined
+    compatibility_version: 17.x
+    official_hosts:
+      - host: www.cisco.com
+        path_prefixes:
+          - /c/zh_cn/support/docs/switches/catalyst-9300-series-switches/225617-troubleshooting-network-latency-and.html
+        source_urls:
+          - https://www.cisco.com/c/zh_cn/support/docs/switches/catalyst-9300-series-switches/225617-troubleshooting-network-latency-and.html
+    source_authority: Cisco Support Technical Notes
+    allowed_source_kinds: [troubleshooting_guide]
+
+  - vendor: Cisco
+    vendor_key: cisco
+    product_family: Nexus 9000
+    model_pattern: Nexus9K
+    platform_code: cisco_nxos
+    os_family: NX-OS
+    primary_version: NX-OS 9.2(x)
+    compatibility_version: NX-OS 10.x
+    official_hosts:
+      - host: www.cisco.com
+        path_prefixes:
+          - /c/en/us/td/docs/switches/datacenter/nexus9000/sw/92x/troubleshooting/guide/b-cisco-nexus-9000-nx-os-troubleshooting-guide-92x/
+        source_urls:
+          - https://www.cisco.com/c/en/us/td/docs/switches/datacenter/nexus9000/sw/92x/troubleshooting/guide/b-cisco-nexus-9000-nx-os-troubleshooting-guide-92x/b-cisco-nexus-9000-nx-os-troubleshooting-guide-92x_chapter_010.html
+    source_authority: Cisco Data Center Documentation
+    allowed_source_kinds: [troubleshooting_guide]

@@ -1,6 +1,7 @@
 from __future__ import annotations
 
-import sqlite3
+from backend.tests import pg_catalog_assertions as pg_catalog
+from backend.tests.pg_test_utils import postgresql_test_driver
 from pathlib import Path
 from types import SimpleNamespace
 
@@ -11,8 +12,8 @@ from database.migrations import build_migration_plan, get_applied_records, run_m
 
 
 ROOT = Path(__file__).resolve().parents[3]
-CONTRACT = ROOT / "docs" / "knowledge-engine-v2" / "architecture" / "DB-020-FRESH-FAILURE-ROLLBACK-CONTRACT.yaml"
-REPORT = ROOT / "docs" / "knowledge-engine-v2" / "architecture" / "DB-020-FRESH-FAILURE-ROLLBACK-CONTRACT.md"
+CONTRACT = ROOT / "docs" / "knowledge-engine" / "architecture" / "DB-020-FRESH-FAILURE-ROLLBACK-CONTRACT.yaml"
+REPORT = ROOT / "docs" / "knowledge-engine" / "architecture" / "DB-020-FRESH-FAILURE-ROLLBACK-CONTRACT.md"
 
 
 def _load() -> dict:
@@ -21,7 +22,7 @@ def _load() -> dict:
 
 def _snapshot(conn) -> tuple[tuple[int, str], tuple[str, ...], tuple[tuple[str, int], ...]]:
     tracking = tuple(conn.execute("SELECT version, name FROM schema_migrations ORDER BY version").fetchall())
-    objects = tuple(row[0] for row in conn.execute("SELECT name FROM sqlite_master WHERE type IN ('table','index') AND name IS NOT NULL ORDER BY name"))
+    objects = tuple(sorted(pg_catalog.schema_object_names(conn)))
     counts = []
     for table in ("users", "devices", "ai_document", "ai_document_chunk", "schema_migrations"):
         counts.append((table, int(conn.execute(f"SELECT COUNT(*) FROM {table}").fetchone()[0])))
@@ -45,11 +46,11 @@ def test_db020_fresh_install_and_repeat_are_noop_safe(isolated_db):
         assert before[0][0][0] == 1
         assert before[0][-1][0] == max(row[0] for row in before[0])
         for table in ("schema_migrations", "users", "devices", "ai_document", "ai_document_chunk"):
-            assert conn.execute("SELECT 1 FROM sqlite_master WHERE type='table' AND name=?", (table,)).fetchone()
-        assert build_migration_plan(conn, use_pg=False).pending_versions == ()
+            assert pg_catalog.table_exists(conn, table)
+        assert build_migration_plan(conn, use_pg=True).pending_versions == ()
         # init_db is guarded by _db_initialized; a direct runner repeat is the
         # migration half of a second bootstrap and must return zero.
-        assert run_migrations(conn, use_pg=False, strict_history=True) == 0
+        assert run_migrations(conn, use_pg=True, strict_history=True) == 0
         after_runner = _snapshot(conn)
         assert after_runner == before
         init_db()
@@ -84,15 +85,15 @@ def test_db020_partial_failure_halts_higher_and_corrected_retry_succeeds(monkeyp
     import database.migrations as migrations
 
     monkeypatch.setattr(migrations, "discover_migrations", lambda: modules)
-    conn = sqlite3.connect(":memory:")
+    conn = postgresql_test_driver.connect()
     try:
-        assert run_migrations(conn, use_pg=False, strict_history=True) == 1
+        assert run_migrations(conn, use_pg=True, strict_history=True) == 1
         assert calls == [1, 2]
-        assert conn.execute("SELECT version FROM schema_migrations ORDER BY version").fetchall() == [(1,)]
-        assert conn.execute("SELECT COUNT(*) FROM db020_data").fetchone()[0] == 0
-        assert run_migrations(conn, use_pg=False, strict_history=True) == 2
+        assert [tuple(row) for row in conn.execute("SELECT version FROM schema_migrations ORDER BY version").fetchall()] == [(1,)]
+        assert not pg_catalog.table_exists(conn, "db020_data")
+        assert run_migrations(conn, use_pg=True, strict_history=True) == 2
         assert calls == [1, 2, 2, 3]
-        assert conn.execute("SELECT version FROM schema_migrations ORDER BY version").fetchall() == [(1,), (2,), (3,)]
+        assert [tuple(row) for row in conn.execute("SELECT version FROM schema_migrations ORDER BY version").fetchall()] == [(1,), (2,), (3,)]
         assert conn.execute("SELECT COUNT(*) FROM db020_data").fetchone()[0] == 1
     finally:
         conn.close()
@@ -104,17 +105,17 @@ def test_db020_strict_history_drift_blocks_without_new_module():
     modules = [SimpleNamespace(VERSION=1, NAME="baseline", upgrade=lambda cursor, use_pg: None), SimpleNamespace(VERSION=2, NAME="expected", upgrade=lambda cursor, use_pg: None)]
     original = migrations.discover_migrations
     migrations.discover_migrations = lambda: modules  # type: ignore[assignment]
-    conn = sqlite3.connect(":memory:")
+    conn = postgresql_test_driver.connect()
     try:
         conn.execute("CREATE TABLE schema_migrations (version INTEGER PRIMARY KEY, name TEXT NOT NULL, applied_at TEXT NOT NULL)")
         conn.execute("INSERT INTO schema_migrations VALUES (1, 'baseline', 'now')")
         conn.execute("INSERT INTO schema_migrations VALUES (99, 'unknown', 'now')")
         conn.commit()
-        plan = build_migration_plan(conn, use_pg=False)
+        plan = build_migration_plan(conn, use_pg=True)
         assert plan.safe is False
         assert plan.unknown_applied_versions == (99,)
-        assert run_migrations(conn, use_pg=False, strict_history=True) == 0
-        assert conn.execute("SELECT version FROM schema_migrations ORDER BY version").fetchall() == [(1,), (99,)]
+        assert run_migrations(conn, use_pg=True, strict_history=True) == 0
+        assert [tuple(row) for row in conn.execute("SELECT version FROM schema_migrations ORDER BY version").fetchall()] == [(1,), (99,)]
     finally:
         conn.close()
         migrations.discover_migrations = original  # type: ignore[assignment]

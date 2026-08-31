@@ -1,10 +1,9 @@
-import sqlite3
-
+from backend.tests.pg_test_utils import postgresql_test_driver
 from database.migrations.m0164_official_required_switch_features import upgrade
 
 
 def _database():
-    conn = sqlite3.connect(":memory:")
+    conn = postgresql_test_driver.connect()
     conn.execute(
         "CREATE TABLE templates ("
         "id TEXT PRIMARY KEY, name TEXT, type TEXT, category TEXT, vendor TEXT, "
@@ -15,7 +14,7 @@ def _database():
 
 def test_required_switch_feature_starters_are_seeded_for_each_vendor():
     conn = _database()
-    upgrade(conn.cursor(), use_pg=False)
+    upgrade(conn.cursor(), use_pg=True)
     rows = conn.execute("SELECT vendor, name, content, rollback, official_reference FROM templates").fetchall()
 
     for vendor in ("Huawei", "H3C", "Cisco"):
@@ -31,7 +30,7 @@ def test_required_switch_feature_starters_are_seeded_for_each_vendor():
 
 def test_required_switch_feature_migration_is_idempotent():
     conn = _database()
-    upgrade(conn.cursor(), use_pg=False)
+    upgrade(conn.cursor(), use_pg=True)
     first_count = conn.execute("SELECT count(*) FROM templates").fetchone()[0]
-    upgrade(conn.cursor(), use_pg=False)
+    upgrade(conn.cursor(), use_pg=True)
     assert conn.execute("SELECT count(*) FROM templates").fetchone()[0] == first_count

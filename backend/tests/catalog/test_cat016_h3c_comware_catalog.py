@@ -9,8 +9,8 @@ import yaml
 
 
 ROOT = Path(__file__).resolve().parents[3]
-SAMPLE = ROOT / "docs" / "knowledge-engine-v2" / "catalog" / "CAT-016-H3C-COMWARE.yaml"
-BASE_ALLOWLIST = ROOT / "docs" / "knowledge-engine-v2" / "architecture" / "CAT-001-OFFICIAL-SOURCE-ALLOWLIST.yaml"
+SAMPLE = ROOT / "docs" / "knowledge-engine" / "catalog" / "CAT-016-H3C-COMWARE.yaml"
+BASE_ALLOWLIST = ROOT / "docs" / "knowledge-engine" / "architecture" / "CAT-001-OFFICIAL-SOURCE-ALLOWLIST.yaml"
 
 
 def _load(path: Path) -> dict:

@@ -31,6 +31,15 @@ def _json(value: Any) -> str:
     return json.dumps(value or {}, ensure_ascii=False, sort_keys=True, default=str)
 
 
+def _table_columns(conn, table_name: str) -> set[str]:
+    rows = conn.execute(
+        "SELECT column_name FROM information_schema.columns "
+        "WHERE table_schema = current_schema() AND table_name = ?",
+        (table_name,),
+    ).fetchall()
+    return {str(row[0]) for row in rows}
+
+
 def _first(record: dict[str, Any], *keys: str) -> str:
     folded = {str(key).lower(): value for key, value in record.items()}
     for key in keys:
@@ -398,24 +407,26 @@ def _infer_discovered_gateway(conn, candidate: dict[str, Any]) -> tuple[str, str
     if not device_ids or not interface_names:
         return None
 
-    placeholders = ",".join("?" for _ in device_ids)
-    try:
-        rows = conn.execute(
-            f"""
-            SELECT i.id, i.device_id, i.interface_name, i.primary_ip, i.ip_address,
-                   i.ip_prefix_length, i.interface_type, i.is_l3,
-                   d.hostname, d.role
-            FROM interfaces i
-            LEFT JOIN devices d ON d.id = i.device_id
-            WHERE i.device_id IN ({placeholders})
-            """,
-            tuple(device_ids),
-        ).fetchall()
-    except Exception:
-        # Older isolated test schemas and partially migrated installations may
-        # not have the complete interface columns yet.  Discovery should not
-        # fail just because the optional gateway enrichment is unavailable.
+    interface_columns = _table_columns(conn, "interfaces")
+    device_columns = _table_columns(conn, "devices")
+    required_interface_columns = {
+        "id", "device_id", "interface_name", "primary_ip", "ip_address",
+        "ip_prefix_length", "interface_type", "is_l3",
+    }
+    if not required_interface_columns.issubset(interface_columns) or not {"id", "hostname", "role"}.issubset(device_columns):
         return None
+    placeholders = ",".join("?" for _ in device_ids)
+    rows = conn.execute(
+        f"""
+        SELECT i.id, i.device_id, i.interface_name, i.primary_ip, i.ip_address,
+               i.ip_prefix_length, i.interface_type, i.is_l3,
+               d.hostname, d.role
+        FROM interfaces i
+        LEFT JOIN devices d ON d.id = i.device_id
+        WHERE i.device_id IN ({placeholders})
+        """,
+        tuple(device_ids),
+    ).fetchall()
 
     candidates: list[tuple[tuple[int, int, int], tuple[str, str, str]]] = []
     for row in rows:
@@ -457,39 +468,40 @@ def _bind_discovered_gateway(conn, prefix_id: str, candidate: dict[str, Any], no
     refresh while still repairing legacy discovery rows whose gateway fields
     were never populated.
     """
-    try:
-        current = conn.execute(
+    required_prefix_columns = {
+        "id", "gateway", "gateway_device_id", "gateway_interface_id",
+        "manual_override", "source_type", "updated_at",
+    }
+    if not required_prefix_columns.issubset(_table_columns(conn, "prefixes")):
+        return False
+    current = conn.execute(
             """
             SELECT gateway, gateway_device_id, gateway_interface_id,
                    manual_override, source_type
             FROM prefixes WHERE id = ?
             """,
             (prefix_id,),
-        ).fetchone()
-        if not current:
-            return False
-        if bool(current["manual_override"]) or str(current["source_type"] or "").lower() == "manual":
-            return False
-        if any(str(current[key] or "").strip() for key in ("gateway", "gateway_device_id", "gateway_interface_id")):
-            return False
+    ).fetchone()
+    if not current:
+        return False
+    if bool(current["manual_override"]) or str(current["source_type"] or "").lower() == "manual":
+        return False
+    if any(str(current[key] or "").strip() for key in ("gateway", "gateway_device_id", "gateway_interface_id")):
+        return False
 
-        binding = _infer_discovered_gateway(conn, candidate)
-        if not binding:
-            return False
-        gateway, device_id, interface_id = binding
-        conn.execute(
+    binding = _infer_discovered_gateway(conn, candidate)
+    if not binding:
+        return False
+    gateway, device_id, interface_id = binding
+    conn.execute(
             """
             UPDATE prefixes
             SET gateway = ?, gateway_device_id = ?, gateway_interface_id = ?, updated_at = ?
             WHERE id = ?
             """,
             (gateway, device_id, interface_id, now, prefix_id),
-        )
-        return True
-    except Exception:
-        # Gateway binding is enrichment; do not make an otherwise valid prefix
-        # discovery fail on a legacy schema without these optional columns.
-        return False
+    )
+    return True
 
 
 def _derive_address_roles(conn, candidate: dict[str, Any]) -> list[dict[str, Any]]:
@@ -500,12 +512,13 @@ def _derive_address_roles(conn, candidate: dict[str, Any]) -> list[dict[str, Any
     """
     network = ipaddress.ip_network(candidate['prefix'], strict=False)
     roles: list[dict[str, Any]] = []
-    try:
+    vip_columns = _table_columns(conn, "ipam_vips")
+    if {"address", "vip_type", "status", "tenant_id"}.issubset(vip_columns):
         rows = conn.execute(
             "SELECT address, vip_type, status FROM ipam_vips WHERE COALESCE(tenant_id, 'tenant-default') = ?",
             (candidate['tenant_id'],),
         ).fetchall()
-    except Exception:
+    else:
         rows = []
     for row in rows:
         try:
@@ -518,7 +531,8 @@ def _derive_address_roles(conn, candidate: dict[str, Any]) -> list[dict[str, Any
                 'address_role': str(row['vip_type'] or 'service_vip'),
                 'status': str(row['status'] or 'active'),
             })
-    try:
+    lease_columns = _table_columns(conn, "ipam_dhcp_leases")
+    if {"address", "mac_address", "hostname", "dhcp_server", "lease_state", "tenant_id"}.issubset(lease_columns):
         lease_rows = conn.execute(
             """
             SELECT address, mac_address, hostname, dhcp_server, lease_state
@@ -528,7 +542,7 @@ def _derive_address_roles(conn, candidate: dict[str, Any]) -> list[dict[str, Any
             """,
             (candidate['tenant_id'],),
         ).fetchall()
-    except Exception:
+    else:
         lease_rows = []
     for row in lease_rows:
         try:

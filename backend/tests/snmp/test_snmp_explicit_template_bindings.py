@@ -1,5 +1,4 @@
-import sqlite3
-
+from backend.tests.pg_test_utils import postgresql_test_driver
 import pytest
 
 from services.snmp_metric_profile_service import (
@@ -11,9 +10,9 @@ from services.snmp_metric_profile_service import (
 )
 
 
-def _connection() -> sqlite3.Connection:
-    conn = sqlite3.connect(":memory:")
-    conn.row_factory = sqlite3.Row
+def _connection() -> postgresql_test_driver.Connection:
+    conn = postgresql_test_driver.connect()
+    conn.row_factory = postgresql_test_driver.Row
     conn.executescript(
         """
         CREATE TABLE snmp_metric_profiles (

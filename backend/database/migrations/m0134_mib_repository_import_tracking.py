@@ -14,13 +14,10 @@ NAME = "mib_repository_import_tracking"
 
 
 def _ensure_column(cursor, table: str, column: str, definition: str, use_pg: bool) -> None:
-    if use_pg:
-        cursor.execute(f"ALTER TABLE {table} ADD COLUMN IF NOT EXISTS {column} {definition}")
-        return
+    cursor.execute(f"ALTER TABLE {table} ADD COLUMN IF NOT EXISTS {column} {definition}")
+    return
 
-    columns = {str(row[1]).lower() for row in cursor.execute(f"PRAGMA table_info({table})").fetchall()}
-    if column.lower() not in columns:
-        cursor.execute(f"ALTER TABLE {table} ADD COLUMN {column} {definition}")
+
 
 
 def upgrade(cursor, use_pg: bool) -> None:

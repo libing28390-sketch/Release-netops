@@ -27,7 +27,7 @@ class KnowledgeEvaluationError(Exception):
 
 
 ROOT = Path(__file__).resolve().parents[2]
-CASE_FILE = ROOT / "docs" / "knowledge-engine-v2" / "eval" / "v1-baseline-cases.yaml"
+CASE_FILE = ROOT / "docs" / "knowledge-engine" / "eval" / "v1-baseline-cases.yaml"
 SUITE_ID = "v1_baseline_postgresql"
 CONTRACT_VERSION = "kui-016-v1"
 MAX_CASES = 200
@@ -206,7 +206,7 @@ def _run_postgresql_baseline() -> dict[str, Any]:
     """Run the existing authoritative PG probe while restoring process globals."""
 
     try:
-        runner_path = ROOT / "scripts" / "knowledge_engine_v2_v1_baseline_pg.py"
+        runner_path = ROOT / "scripts" / "knowledge_baseline_pg.py"
         spec = importlib.util.spec_from_file_location("nexora_kui016_pg_baseline", runner_path)
         if spec is None or spec.loader is None:
             raise ImportError("evaluation runner spec unavailable")

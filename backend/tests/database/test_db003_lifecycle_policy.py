@@ -6,9 +6,9 @@ import yaml
 
 
 ROOT = Path(__file__).resolve().parents[3]
-CONTRACT = ROOT / "docs" / "knowledge-engine-v2" / "architecture" / "DB-003-LIFECYCLE-POLICY.yaml"
-REPORT = ROOT / "docs" / "knowledge-engine-v2" / "architecture" / "DB-003-LIFECYCLE-BEHAVIOR.md"
-ER_CONTRACT = ROOT / "docs" / "knowledge-engine-v2" / "architecture" / "DB-001-core-er-model.yaml"
+CONTRACT = ROOT / "docs" / "knowledge-engine" / "architecture" / "DB-003-LIFECYCLE-POLICY.yaml"
+REPORT = ROOT / "docs" / "knowledge-engine" / "architecture" / "DB-003-LIFECYCLE-BEHAVIOR.md"
+ER_CONTRACT = ROOT / "docs" / "knowledge-engine" / "architecture" / "DB-001-core-er-model.yaml"
 
 
 def _load(path: Path) -> dict:

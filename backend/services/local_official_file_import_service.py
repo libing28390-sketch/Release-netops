@@ -25,7 +25,7 @@ from services.ingestion_pipeline_service import (
     ingestion_pipeline,
 )
 from services.official_url_import_service import _ensure_source, _find_source
-from services.source_registry_service import (
+from services.knowledge_v1_source_service import (
     SourceRegistryError,
     list_source_versions,
     record_source_version,
@@ -199,7 +199,7 @@ def _audit_local(event_type: str, *, user: dict[str, Any], source: dict[str, Any
             actor_id=_actor(user),
             actor_username=str(user.get("username") or _actor(user)),
             actor_role=str(user.get("role") or "system"),
-            target_type="kb_source_registry",
+            target_type="knowledge_source",
             target_id=str(source.get("id") or ""),
             target_name=str(source.get("name") or source.get("canonical_url") or ""),
             request_id=request_id,

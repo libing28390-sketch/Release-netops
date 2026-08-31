@@ -8,20 +8,18 @@ NAME = "config_backup_policies"
 
 
 def _column_exists(cursor, table: str, column: str, use_pg: bool) -> bool:
-    if use_pg:
-        row = cursor.execute(
-            """
-            SELECT 1
-            FROM information_schema.columns
-            WHERE table_schema = current_schema()
-              AND table_name = ?
-              AND column_name = ?
-            """,
-            (table, column),
-        ).fetchone()
-        return row is not None
-    rows = cursor.execute(f"PRAGMA table_info({table})").fetchall()
-    return any(str(row[1]) == column for row in rows)
+    row = cursor.execute(
+        """
+        SELECT 1
+        FROM information_schema.columns
+        WHERE table_schema = current_schema()
+          AND table_name = ?
+          AND column_name = ?
+        """,
+        (table, column),
+    ).fetchone()
+    return row is not None
+
 
 
 def _ensure_column(cursor, table: str, column: str, definition: str, use_pg: bool) -> None:

@@ -15,7 +15,7 @@ from services.diagnostic_orchestrator import (
     diagnostic_orchestrator,
     parse_cli_output,
 )
-from api.knowledge_v2_contracts import DiagnosticContext, DiagnosticPlanPayload
+from api.knowledge_contracts import DiagnosticContext, DiagnosticPlanPayload
 
 router = APIRouter(prefix="/diagnostics", tags=["AI Read-only Diagnostics"])
 

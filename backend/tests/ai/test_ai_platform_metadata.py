@@ -1,11 +1,10 @@
 import json
-import sqlite3
-
+from backend.tests.pg_test_utils import postgresql_test_driver
 from database.migrations import m0110_repair_ai_document_platforms
 
 
 def test_repairs_cross_vendor_huawei_default_and_preserves_compatible_platforms():
-    conn = sqlite3.connect(":memory:")
+    conn = postgresql_test_driver.connect()
     cursor = conn.cursor()
     cursor.executescript(
         """
@@ -49,11 +48,11 @@ def test_repairs_cross_vendor_huawei_default_and_preserves_compatible_platforms(
         ("chunk-h3c", "doc-h3c", json.dumps({"vendor": "H3C", "platform": "huawei_vrp"})),
     )
 
-    m0110_repair_ai_document_platforms.upgrade(cursor, use_pg=False)
+    m0110_repair_ai_document_platforms.upgrade(cursor, use_pg=True)
     conn.commit()
 
     rows = cursor.execute("SELECT id, platform FROM ai_document ORDER BY id").fetchall()
-    assert rows == [
+    assert [tuple(row) for row in rows] == [
         ("doc-cisco", "cisco_ios"),
         ("doc-h3c", "h3c_comware"),
         ("doc-h3c-compatible", "hp_comware"),

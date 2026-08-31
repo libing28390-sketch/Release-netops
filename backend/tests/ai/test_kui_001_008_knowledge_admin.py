@@ -1,7 +1,6 @@
 import importlib
 import json
-import sqlite3
-
+from backend.tests.pg_test_utils import postgresql_test_driver
 import pytest
 
 
@@ -10,8 +9,8 @@ assistant_module = importlib.import_module("ai.api.assistant")
 
 
 def _connection():
-    connection = sqlite3.connect(":memory:")
-    connection.row_factory = sqlite3.Row
+    connection = postgresql_test_driver.connect()
+    connection.row_factory = postgresql_test_driver.Row
     connection.executescript(
         """
         CREATE TABLE ai_document (

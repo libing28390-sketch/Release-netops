@@ -1,11 +1,11 @@
-import sqlite3
-
+from backend.tests import pg_catalog_assertions as pg_catalog
+from backend.tests.pg_test_utils import postgresql_test_driver
 from database.migrations.m0181_explicit_snmp_template_bindings import upgrade
 
 
 def test_m0181_adds_explicit_binding_columns_and_removes_model_unique_constraint() -> None:
-    conn = sqlite3.connect(":memory:")
-    conn.row_factory = sqlite3.Row
+    conn = postgresql_test_driver.connect()
+    conn.row_factory = postgresql_test_driver.Row
     conn.executescript(
         """
         CREATE TABLE devices (
@@ -36,10 +36,10 @@ def test_m0181_adds_explicit_binding_columns_and_removes_model_unique_constraint
         """
     )
 
-    upgrade(conn.cursor(), False)
+    upgrade(conn.cursor(), True)
 
-    device_columns = {row[1] for row in conn.execute("PRAGMA table_info(devices)")}
-    profile_columns = {row[1] for row in conn.execute("PRAGMA table_info(snmp_metric_profiles)")}
+    device_columns = pg_catalog.table_columns(conn, "devices")
+    profile_columns = pg_catalog.table_columns(conn, "snmp_metric_profiles")
     assert "snmp_metric_profile_id" in device_columns
     assert {"template_name", "source", "official_preset_id"}.issubset(profile_columns)
     assert conn.execute(
@@ -57,7 +57,7 @@ def test_m0181_adds_explicit_binding_columns_and_removes_model_unique_constraint
     conn.commit()
 
     # A second invocation is safe and does not remove the explicit reference.
-    upgrade(conn.cursor(), False)
+    upgrade(conn.cursor(), True)
     assert conn.execute(
         "SELECT snmp_metric_profile_id FROM devices WHERE id = 'device-1'"
     ).fetchone()[0] == "profile-1"

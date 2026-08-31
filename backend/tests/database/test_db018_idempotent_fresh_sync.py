@@ -1,6 +1,7 @@
 from __future__ import annotations
 
-import sqlite3
+from backend.tests import pg_catalog_assertions as pg_catalog
+from backend.tests.pg_test_utils import postgresql_test_driver
 from types import SimpleNamespace
 from pathlib import Path
 
@@ -14,8 +15,8 @@ from database.migrations import (
 
 
 ROOT = Path(__file__).resolve().parents[3]
-CONTRACT = ROOT / "docs" / "knowledge-engine-v2" / "architecture" / "DB-018-IDEMPOTENT-FRESH-SYNC-CONTRACT.yaml"
-REPORT = ROOT / "docs" / "knowledge-engine-v2" / "architecture" / "DB-018-IDEMPOTENT-FRESH-SYNC-CONTRACT.md"
+CONTRACT = ROOT / "docs" / "knowledge-engine" / "architecture" / "DB-018-IDEMPOTENT-FRESH-SYNC-CONTRACT.yaml"
+REPORT = ROOT / "docs" / "knowledge-engine" / "architecture" / "DB-018-IDEMPOTENT-FRESH-SYNC-CONTRACT.md"
 SCHEMA = ROOT / "backend" / "database" / "schema.py"
 
 
@@ -40,9 +41,9 @@ def test_db018_fresh_plan_is_read_only_and_ordered(monkeypatch):
     import database.migrations as migrations
 
     monkeypatch.setattr(migrations, "discover_migrations", lambda: [second, first])
-    conn = sqlite3.connect(":memory:")
+    conn = postgresql_test_driver.connect()
     try:
-        plan = build_migration_plan(conn, use_pg=False)
+        plan = build_migration_plan(conn, use_pg=True)
         assert plan.fresh_install is True
         assert plan.discovered_versions == (1, 2)
         assert plan.applied_versions == ()
@@ -67,13 +68,13 @@ def test_db018_fresh_run_and_repeat_are_idempotent(monkeypatch):
     import database.migrations as migrations
 
     monkeypatch.setattr(migrations, "discover_migrations", lambda: modules)
-    conn = sqlite3.connect(":memory:")
+    conn = postgresql_test_driver.connect()
     try:
-        assert run_migrations(conn, use_pg=False, strict_history=True) == 2
+        assert run_migrations(conn, use_pg=True, strict_history=True) == 2
         assert calls == [1, 2]
         first_rows = conn.execute(f"SELECT version, name FROM {_TRACKING_TABLE} ORDER BY version").fetchall()
-        assert first_rows == [(1, "baseline"), (2, "second")]
-        assert run_migrations(conn, use_pg=False, strict_history=True) == 0
+        assert [tuple(row) for row in first_rows] == [(1, "baseline"), (2, "second")]
+        assert run_migrations(conn, use_pg=True, strict_history=True) == 0
         assert calls == [1, 2]
         assert conn.execute(f"SELECT COUNT(*) FROM {_TRACKING_TABLE}").fetchone()[0] == 2
     finally:
@@ -94,16 +95,16 @@ def test_db018_failure_rolls_back_and_corrected_retry_remains_pending(monkeypatc
     import database.migrations as migrations
 
     monkeypatch.setattr(migrations, "discover_migrations", lambda: modules)
-    conn = sqlite3.connect(":memory:")
+    conn = postgresql_test_driver.connect()
     try:
-        assert run_migrations(conn, use_pg=False, strict_history=True) == 1
-        assert conn.execute(f"SELECT version FROM {_TRACKING_TABLE}").fetchall() == [(1,)]
+        assert run_migrations(conn, use_pg=True, strict_history=True) == 1
+        assert [tuple(row) for row in conn.execute(f"SELECT version FROM {_TRACKING_TABLE}").fetchall()] == [(1,)]
         # SQLite's compatibility driver keeps CREATE TABLE metadata while
         # rolling back the data transaction; PostgreSQL rolls back both. The
         # important invariant is that no row or tracking version leaked.
-        assert conn.execute("SELECT COUNT(*) FROM db018_failed_probe").fetchone()[0] == 0
-        assert run_migrations(conn, use_pg=False, strict_history=True) == 1
-        assert conn.execute(f"SELECT version FROM {_TRACKING_TABLE} ORDER BY version").fetchall() == [(1,), (2,)]
+        assert not pg_catalog.table_exists(conn, "db018_failed_probe")
+        assert run_migrations(conn, use_pg=True, strict_history=True) == 1
+        assert [tuple(row) for row in conn.execute(f"SELECT version FROM {_TRACKING_TABLE} ORDER BY version").fetchall()] == [(1,), (2,)]
         assert conn.execute("SELECT COUNT(*) FROM db018_failed_probe").fetchone()[0] == 1
         assert attempts["count"] == 2
     finally:
@@ -115,17 +116,17 @@ def test_db018_strict_history_rejects_unknown_versions_and_name_drift(monkeypatc
     import database.migrations as migrations
 
     monkeypatch.setattr(migrations, "discover_migrations", lambda: modules)
-    conn = sqlite3.connect(":memory:")
+    conn = postgresql_test_driver.connect()
     try:
         conn.execute(f"CREATE TABLE {_TRACKING_TABLE} (version INTEGER PRIMARY KEY, name TEXT NOT NULL, applied_at TEXT NOT NULL)")
         conn.execute(f"INSERT INTO {_TRACKING_TABLE} VALUES (1, 'renamed', 'now')")
         conn.execute(f"INSERT INTO {_TRACKING_TABLE} VALUES (99, 'removed', 'now')")
         conn.commit()
-        plan = build_migration_plan(conn, use_pg=False)
+        plan = build_migration_plan(conn, use_pg=True)
         assert plan.safe is False
         assert plan.unknown_applied_versions == (99,)
         assert plan.name_drift == ((1, "renamed", "baseline"),)
-        assert run_migrations(conn, use_pg=False, strict_history=True) == 0
+        assert run_migrations(conn, use_pg=True, strict_history=True) == 0
     finally:
         conn.close()
 
@@ -143,16 +144,16 @@ def test_db018_accepts_explicit_legacy_name_alias(monkeypatch):
     import database.migrations as migrations
 
     monkeypatch.setattr(migrations, "discover_migrations", lambda: modules)
-    conn = sqlite3.connect(":memory:")
+    conn = postgresql_test_driver.connect()
     try:
         conn.execute(f"CREATE TABLE {_TRACKING_TABLE} (version INTEGER PRIMARY KEY, name TEXT NOT NULL, applied_at TEXT NOT NULL)")
         conn.execute(f"INSERT INTO {_TRACKING_TABLE} VALUES (1, 'baseline', 'now')")
         conn.execute(f"INSERT INTO {_TRACKING_TABLE} VALUES (2, 'historical_name', 'now')")
         conn.commit()
-        plan = build_migration_plan(conn, use_pg=False)
+        plan = build_migration_plan(conn, use_pg=True)
         assert plan.name_drift == ()
         assert plan.safe_for(strict_history=True) is True
-        assert run_migrations(conn, use_pg=False, strict_history=True) == 0
+        assert run_migrations(conn, use_pg=True, strict_history=True) == 0
     finally:
         conn.close()
 

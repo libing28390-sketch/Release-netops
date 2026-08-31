@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import hashlib
+import json
 
 import httpx
 import pytest
@@ -77,10 +78,12 @@ def test_ing013_changed_url_content_appends_document_version_and_supersedes_prev
     conn = isolated_db["module"].get_db_connection()
     try:
         rows = conn.execute(
-            "SELECT version_no, content_hash FROM kb_document_version WHERE tenant_id = ? AND document_id = ? ORDER BY version_no",
+            "SELECT revision_no, content_hash, CAST(metadata_json AS TEXT) FROM ai_document_revision "
+            "WHERE tenant_id = ? AND document_id = ? AND record_type = 'document_revision' "
+            "ORDER BY revision_no",
             ("tenant-default", first["document"]["id"]),
         ).fetchall()
-        assert [(int(row[0]), str(row[1])) for row in rows] == [
+        assert [(int(json.loads(row[2] or "{}").get("document_version_no") or row[0]), str(row[1])) for row in rows] == [
             (1, hashlib.sha256(b"document version one").hexdigest()),
             (2, hashlib.sha256(b"document version two").hexdigest()),
         ]
@@ -110,7 +113,7 @@ def test_ing013_same_content_replays_document_version_without_duplicate(isolated
     conn = isolated_db["module"].get_db_connection()
     try:
         count = conn.execute(
-            "SELECT COUNT(*) FROM kb_document_version WHERE tenant_id = ? AND document_id = ?",
+            "SELECT COUNT(*) FROM ai_document_revision WHERE tenant_id = ? AND document_id = ? AND record_type = 'document_revision'",
             ("tenant-default", first["document"]["id"]),
         ).fetchone()[0]
         assert int(count) == 1

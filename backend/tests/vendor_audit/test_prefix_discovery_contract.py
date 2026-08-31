@@ -1,7 +1,6 @@
 from services.prefix_discovery_service import build_prefix_candidates
 import json
-import sqlite3
-
+from backend.tests.pg_test_utils import postgresql_test_driver
 import services.prefix_discovery_service as prefix_service
 from services.read_only_collection_adapter import READ_ONLY_EVIDENCE_CATEGORIES
 
@@ -13,8 +12,8 @@ def test_read_only_evidence_categories_are_explicit_and_vendor_neutral() -> None
 
 
 def test_empty_discovery_prefix_binds_to_higher_level_svi_gateway() -> None:
-    conn = sqlite3.connect(':memory:')
-    conn.row_factory = sqlite3.Row
+    conn = postgresql_test_driver.connect()
+    conn.row_factory = postgresql_test_driver.Row
     conn.executescript('''
         CREATE TABLE prefixes (
             id TEXT PRIMARY KEY, gateway TEXT, gateway_device_id TEXT,
@@ -126,8 +125,8 @@ def test_loopback_without_mask_is_inferred_as_host_prefix() -> None:
 
 
 def test_interface_snapshot_bridge_upserts_loopback_prefix(monkeypatch) -> None:
-    conn = sqlite3.connect(':memory:')
-    conn.row_factory = sqlite3.Row
+    conn = postgresql_test_driver.connect()
+    conn.row_factory = postgresql_test_driver.Row
     conn.executescript('''
         CREATE TABLE devices (
             id TEXT PRIMARY KEY, hostname TEXT, ip_address TEXT, platform TEXT,
@@ -174,8 +173,8 @@ def test_interface_snapshot_bridge_upserts_loopback_prefix(monkeypatch) -> None:
 
 
 def test_interface_snapshot_bridge_falls_back_to_ip_inventory(monkeypatch) -> None:
-    conn = sqlite3.connect(':memory:')
-    conn.row_factory = sqlite3.Row
+    conn = postgresql_test_driver.connect()
+    conn.row_factory = postgresql_test_driver.Row
     conn.executescript('''
         CREATE TABLE devices (
             id TEXT PRIMARY KEY, hostname TEXT, ip_address TEXT, platform TEXT,
@@ -222,8 +221,8 @@ def test_interface_snapshot_bridge_falls_back_to_ip_inventory(monkeypatch) -> No
 
 
 def test_interface_snapshot_matches_h3c_svi_alias_and_dotted_mask(monkeypatch) -> None:
-    conn = sqlite3.connect(':memory:')
-    conn.row_factory = sqlite3.Row
+    conn = postgresql_test_driver.connect()
+    conn.row_factory = postgresql_test_driver.Row
     conn.executescript('''
         CREATE TABLE devices (
             id TEXT PRIMARY KEY, hostname TEXT, ip_address TEXT, platform TEXT,
@@ -273,8 +272,8 @@ def test_interface_snapshot_matches_h3c_svi_alias_and_dotted_mask(monkeypatch) -
 
 
 def test_prefix_classification_summary_returns_sql_row(monkeypatch) -> None:
-    conn = sqlite3.connect(':memory:')
-    conn.row_factory = sqlite3.Row
+    conn = postgresql_test_driver.connect()
+    conn.row_factory = postgresql_test_driver.Row
     conn.execute('''
         CREATE TABLE prefixes (
             classification_status TEXT, manual_override INTEGER, source_type TEXT,
@@ -322,8 +321,8 @@ def test_arp_and_mac_evidence_enrich_existing_interface_prefix() -> None:
 
 
 def test_persist_is_idempotent_and_does_not_default_to_server(monkeypatch) -> None:
-    conn = sqlite3.connect(':memory:')
-    conn.row_factory = sqlite3.Row
+    conn = postgresql_test_driver.connect()
+    conn.row_factory = postgresql_test_driver.Row
     conn.executescript('''
         CREATE TABLE prefixes (
             id TEXT PRIMARY KEY, prefix TEXT, prefix_cidr TEXT, vrf_id TEXT, site_id TEXT, tenant_id TEXT,
@@ -371,8 +370,8 @@ def test_persist_is_idempotent_and_does_not_default_to_server(monkeypatch) -> No
 
 
 def test_persist_attaches_vip_address_role_without_changing_prefix_type(monkeypatch) -> None:
-    conn = sqlite3.connect(':memory:')
-    conn.row_factory = sqlite3.Row
+    conn = postgresql_test_driver.connect()
+    conn.row_factory = postgresql_test_driver.Row
     conn.executescript('''
         CREATE TABLE prefixes (
             id TEXT PRIMARY KEY, prefix TEXT, prefix_cidr TEXT, vrf_id TEXT, site_id TEXT, tenant_id TEXT,

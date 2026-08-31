@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import hashlib
+import json
 
 import httpx
 import pytest
@@ -10,6 +11,7 @@ from services.official_url_import_service import OfficialUrlImportError, import_
 
 
 OFFICIAL_URL = "https://www.cisco.com/c/en/us/td/docs/switches/lan/catalyst9300/software/release/17-9/command_reference/b_179_9300_cr/system_management_commands.html"
+TROUBLESHOOTING_URL = "https://www.h3c.com/cn/d_202603/2776299_30005_0.htm"
 
 
 def _payload(**overrides):
@@ -86,6 +88,39 @@ def test_ing002_explicit_publish_completes_local_projection(isolated_db, make_us
             "SELECT source, knowledge_source_type, status FROM ai_document WHERE knowledge_source_type = 'official_url'"
         ).fetchone()
     assert row and row[0] == OFFICIAL_URL and row[1] == "official_url" and row[2] == "active"
+
+
+def test_ing002_troubleshooting_source_publishes_allowlisted_document_kind(isolated_db, make_user):
+    user = make_user("ing002-troubleshooting", role="Operator")
+    payload = {
+        "url": TROUBLESHOOTING_URL,
+        "source_kind": "troubleshooting_guide",
+        "vendor": "H3C",
+        "product_family": "H3C Switches",
+        "version_scope": {"primary": "reviewed-current", "compatibility": "CMW710"},
+        "terms_review_status": "approved",
+        "reviewer": "catalog-reviewer",
+        "idempotency_key": "ing002-troubleshooting-publish",
+        "publish_to_knowledge_base": True,
+    }
+    body = b"OSPF neighbor troubleshooting\nCheck adjacency state and interface errors."
+    result = import_single_official_url(
+        user,
+        payload,
+        transport=_transport(lambda request: httpx.Response(200, headers={"content-type": "text/plain"}, content=body, request=request)),
+        resolver=_public,
+    )
+    assert result["success"] is True
+    assert result["published"] is True
+    with isolated_db["module"].get_db_connection() as conn:
+        row = conn.execute(
+            "SELECT document_category, metadata_json, status, lifecycle_status "
+            "FROM ai_document WHERE source = ? AND document_category = 'troubleshooting'",
+            (TROUBLESHOOTING_URL,),
+        ).fetchone()
+    metadata = row[1] if row and isinstance(row[1], dict) else json.loads((row[1] if row else "") or "{}")
+    assert row and row[0] == "troubleshooting" and metadata.get("source_kind") == "troubleshooting_guide"
+    assert row[2] == "active" and row[3] == "published"
 
 
 def test_ing002_same_idempotency_replays_version_without_second_fetch(isolated_db, make_user):
@@ -227,4 +262,4 @@ def test_ing002_api_contract_exposes_single_url_job_route():
     from api.knowledge_ingestion import router
 
     paths = {(route.path, tuple(sorted(route.methods or ()))) for route in router.routes}
-    assert any(path == "/knowledge-v2/ingestion/official-url" and "POST" in methods for path, methods in paths)
+    assert any(path == "/knowledge/ingestion/official-url" and "POST" in methods for path, methods in paths)

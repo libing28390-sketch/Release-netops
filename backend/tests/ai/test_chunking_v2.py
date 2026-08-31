@@ -100,3 +100,28 @@ def test_estimated_tokens_are_positive_and_cli_metadata_is_deterministic():
     second = engine.chunk("## Verify\n\n```huawei\ndisplay ospf peer\n```", document_identity="same")
     assert [chunk.chunk_id for chunk in first] == [chunk.chunk_id for chunk in second]
     assert first[-1].metadata["commands"] == ["display ospf peer"]
+
+
+def test_repeated_source_blocks_are_deduplicated_before_validation():
+    engine = ChunkingEngine()
+    chunks = engine.chunk(
+        """## Configuration example
+
+```h3c
+system-view
+display version
+```
+
+## Configuration example
+
+```h3c
+system-view
+display version
+```
+""",
+        document_identity="duplicate-source-page",
+    )
+
+    assert len(chunks) == 1
+    assert len({chunk.content_hash for chunk in chunks}) == 1
+    assert chunks[0].ordinal == 0

@@ -6,9 +6,9 @@ import yaml
 
 
 ROOT = Path(__file__).resolve().parents[3]
-CONTRACT = ROOT / "docs" / "knowledge-engine-v2" / "architecture" / "DB-013-COLLECTION-DOCUMENT-REFERENCE.yaml"
-REPORT = ROOT / "docs" / "knowledge-engine-v2" / "architecture" / "DB-013-COLLECTION-DOCUMENT-REFERENCE.md"
-ER_CONTRACT = ROOT / "docs" / "knowledge-engine-v2" / "architecture" / "DB-001-core-er-model.yaml"
+CONTRACT = ROOT / "docs" / "knowledge-engine" / "architecture" / "DB-013-COLLECTION-DOCUMENT-REFERENCE.yaml"
+REPORT = ROOT / "docs" / "knowledge-engine" / "architecture" / "DB-013-COLLECTION-DOCUMENT-REFERENCE.md"
+ER_CONTRACT = ROOT / "docs" / "knowledge-engine" / "architecture" / "DB-001-core-er-model.yaml"
 M0103 = ROOT / "backend" / "database" / "migrations" / "m0103_ai_platform_tables.py"
 M0105 = ROOT / "backend" / "database" / "migrations" / "m0105_ai_security_operations_graph.py"
 M0112 = ROOT / "backend" / "database" / "migrations" / "m0112_ai_knowledge_directories.py"

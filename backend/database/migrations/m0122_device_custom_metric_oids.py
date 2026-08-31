@@ -14,15 +14,13 @@ _COLUMNS = {
 
 
 def _table_columns(cursor, table: str, use_pg: bool) -> set[str]:
-    if use_pg:
-        cursor.execute(
-            "SELECT column_name FROM information_schema.columns "
-            "WHERE table_schema = current_schema() AND table_name = %s",
-            (table,),
-        )
-        return {str(row[0]) for row in cursor.fetchall()}
-    cursor.execute(f"PRAGMA table_info({table})")
-    return {str(row[1]) for row in cursor.fetchall()}
+    cursor.execute(
+        "SELECT column_name FROM information_schema.columns "
+        "WHERE table_schema = current_schema() AND table_name = %s",
+        (table,),
+    )
+    return {str(row[0]) for row in cursor.fetchall()}
+
 
 
 def upgrade(cursor, use_pg: bool) -> None:
@@ -30,12 +28,9 @@ def upgrade(cursor, use_pg: bool) -> None:
     for name, definition in _COLUMNS.items():
         if name in existing:
             continue
-        if use_pg:
-            cursor.execute(
-                f"ALTER TABLE devices ADD COLUMN IF NOT EXISTS {name} {definition}"
-            )
-        else:
-            cursor.execute(f"ALTER TABLE devices ADD COLUMN {name} {definition}")
+        cursor.execute(
+            f"ALTER TABLE devices ADD COLUMN IF NOT EXISTS {name} {definition}"
+        )
 
 
 def downgrade(cursor, use_pg: bool) -> None:  # noqa: ARG001

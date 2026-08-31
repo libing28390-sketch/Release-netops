@@ -10,8 +10,7 @@ NAME = "retrieval_rollout_flags"
 def upgrade(cursor, use_pg: bool) -> None:
     """Create the PostgreSQL-only rollout-state projection idempotently."""
 
-    if not use_pg:
-        return
+    pass
 
     cursor.execute(
         """

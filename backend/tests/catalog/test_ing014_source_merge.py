@@ -76,7 +76,8 @@ def test_ing014_different_urls_same_content_merge_and_append_source_observation(
     conn = isolated_db["module"].get_db_connection()
     try:
         rows = conn.execute(
-            "SELECT canonical_url, document_id, document_version_id FROM kb_document_source WHERE tenant_id = ? ORDER BY canonical_url",
+            "SELECT canonical_url, document_id, legacy_document_version_id FROM ai_document_revision "
+            "WHERE tenant_id = ? AND record_type = 'document_source_link' ORDER BY canonical_url",
             ("tenant-default",),
         ).fetchall()
         assert len(rows) == 2

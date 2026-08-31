@@ -19,12 +19,12 @@ class _Cursor:
         return self.row
 
 
-def test_m0127_skips_sqlite_without_schema_changes():
-    cursor = _Cursor({"is_l3": "integer", "ip_enabled": "integer"})
+def test_m0127_skips_missing_column_without_schema_changes():
+    cursor = _Cursor({})
 
-    migration.upgrade(cursor, False)
+    migration.upgrade(cursor, True)
 
-    assert cursor.statements == []
+    assert not any("ALTER TABLE" in sql for sql, _ in cursor.statements)
 
 
 def test_m0127_converts_only_the_l3_flag_to_postgres_boolean():

@@ -1,7 +1,6 @@
 import importlib
 import json
-import sqlite3
-
+from backend.tests.pg_test_utils import postgresql_test_driver
 import pytest
 
 from database.migrations import m0112_ai_knowledge_directories
@@ -11,10 +10,9 @@ knowledge_service_module = importlib.import_module("ai.services.knowledge_servic
 
 
 def _knowledge_connection():
-    connection = sqlite3.connect(":memory:")
+    connection = postgresql_test_driver.connect()
     connection.executescript(
         """
-        PRAGMA foreign_keys = ON;
         CREATE TABLE ai_knowledge_base (
             id TEXT PRIMARY KEY,
             name TEXT NOT NULL,
@@ -29,7 +27,7 @@ def _knowledge_connection():
         VALUES ('kb-1', 'Default KB', 'tenant-a', '2026-08-08T00:00:00Z');
         """
     )
-    m0112_ai_knowledge_directories.upgrade(connection.cursor(), use_pg=False)
+    m0112_ai_knowledge_directories.upgrade(connection.cursor(), use_pg=True)
     connection.commit()
     return connection
 
@@ -83,7 +81,7 @@ def test_directory_tree_is_tenant_scoped(monkeypatch):
 
 
 def test_document_listing_filters_by_directory_metadata(monkeypatch):
-    connection = sqlite3.connect(":memory:")
+    connection = postgresql_test_driver.connect()
     connection.executescript(
         """
         CREATE TABLE ai_document (

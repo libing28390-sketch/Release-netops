@@ -22,7 +22,7 @@ from services.ingestion_pipeline_service import (
     ingestion_pipeline,
 )
 from services.local_official_file_import_service import LocalOfficialFileImportError, _file_bytes, _filename_and_type
-from services.source_registry_service import (
+from services.knowledge_v1_source_service import (
     SourceRegistryError,
     create_source,
     disable_source,
@@ -77,7 +77,7 @@ def _audit(event_type: str, *, user: dict[str, Any], source: dict[str, Any], det
             actor_id=_actor(user),
             actor_username=str(user.get("username") or _actor(user)),
             actor_role=str(user.get("role") or "system"),
-            target_type="kb_source_registry",
+        target_type="knowledge_source",
             target_id=str(source.get("id") or ""),
             target_name=str(source.get("name") or source.get("canonical_url") or ""),
             request_id=request_id,
@@ -90,15 +90,10 @@ def _audit(event_type: str, *, user: dict[str, Any], source: dict[str, Any], det
 
 
 def _find_source(canonical_url: str, tenant_id: str) -> dict[str, Any] | None:
-    from database import get_db_connection
-    from services.source_registry_service import _decode_registry
+    from services.knowledge_v1_source_service import list_sources
 
-    conn = get_db_connection()
-    try:
-        row = conn.execute("SELECT * FROM kb_source_registry WHERE tenant_id = ? AND canonical_url = ?", (tenant_id, canonical_url)).fetchone()
-        return _decode_registry(row) if row else None
-    finally:
-        conn.close()
+    user = {"id": "system", "username": "system", "role": "Administrator", "tenant_id": tenant_id}
+    return next((item for item in list_sources(user, status="all", tenant_id=tenant_id) if str(item.get("canonical_url") or "") == canonical_url), None)
 
 
 def _ensure_source(user: dict[str, Any], *, canonical_url: str, metadata: dict[str, Any], title: str, description: str) -> dict[str, Any]:

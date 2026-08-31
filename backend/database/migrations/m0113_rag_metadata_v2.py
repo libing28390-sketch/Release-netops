@@ -64,14 +64,12 @@ CHUNK_COLUMNS = {
 
 
 def _columns(cursor, table: str, use_pg: bool) -> set[str]:
-    if use_pg:
-        cursor.execute(
-            "SELECT column_name FROM information_schema.columns WHERE table_name = ?",
-            (table,),
-        )
-        return {str(row[0]) for row in cursor.fetchall()}
-    cursor.execute(f"PRAGMA table_info({table})")
-    return {str(row[1]) for row in cursor.fetchall()}
+    cursor.execute(
+        "SELECT column_name FROM information_schema.columns WHERE table_name = ?",
+        (table,),
+    )
+    return {str(row[0]) for row in cursor.fetchall()}
+
 
 
 def _add_columns(cursor, table: str, definitions: dict[str, str], use_pg: bool) -> None:
@@ -101,23 +99,22 @@ def upgrade(cursor, use_pg: bool) -> None:
     _add_columns(cursor, "ai_document", DOCUMENT_COLUMNS, use_pg)
     _add_columns(cursor, "ai_document_chunk", CHUNK_COLUMNS, use_pg)
 
-    if use_pg:
-        _normalise_existing_json(cursor)
-        # The baseline declared a TEXT default.  PostgreSQL validates a
-        # column's default while changing its type, so clear it first and add
-        # a typed JSONB default after the conversion.
-        cursor.execute("ALTER TABLE ai_document ALTER COLUMN metadata_json DROP DEFAULT")
-        cursor.execute(
-            "ALTER TABLE ai_document ALTER COLUMN metadata_json TYPE JSONB "
-            "USING COALESCE(NULLIF(metadata_json, ''), '{}')::jsonb"
-        )
-        cursor.execute("ALTER TABLE ai_document ALTER COLUMN metadata_json SET DEFAULT '{}'::jsonb")
-        cursor.execute("ALTER TABLE ai_document_chunk ALTER COLUMN metadata_json DROP DEFAULT")
-        cursor.execute(
-            "ALTER TABLE ai_document_chunk ALTER COLUMN metadata_json TYPE JSONB "
-            "USING COALESCE(NULLIF(metadata_json, ''), '{}')::jsonb"
-        )
-        cursor.execute("ALTER TABLE ai_document_chunk ALTER COLUMN metadata_json SET DEFAULT '{}'::jsonb")
+    _normalise_existing_json(cursor)
+    # The baseline declared a TEXT default.  PostgreSQL validates a
+    # column's default while changing its type, so clear it first and add
+    # a typed JSONB default after the conversion.
+    cursor.execute("ALTER TABLE ai_document ALTER COLUMN metadata_json DROP DEFAULT")
+    cursor.execute(
+        "ALTER TABLE ai_document ALTER COLUMN metadata_json TYPE JSONB "
+        "USING COALESCE(NULLIF(metadata_json, ''), '{}')::jsonb"
+    )
+    cursor.execute("ALTER TABLE ai_document ALTER COLUMN metadata_json SET DEFAULT '{}'::jsonb")
+    cursor.execute("ALTER TABLE ai_document_chunk ALTER COLUMN metadata_json DROP DEFAULT")
+    cursor.execute(
+        "ALTER TABLE ai_document_chunk ALTER COLUMN metadata_json TYPE JSONB "
+        "USING COALESCE(NULLIF(metadata_json, ''), '{}')::jsonb"
+    )
+    cursor.execute("ALTER TABLE ai_document_chunk ALTER COLUMN metadata_json SET DEFAULT '{}'::jsonb")
 
     indexes = (
         "CREATE UNIQUE INDEX IF NOT EXISTS ux_ai_document_document_id "
@@ -132,22 +129,14 @@ def upgrade(cursor, use_pg: bool) -> None:
     )
     for statement in indexes:
         cursor.execute(statement)
-    if use_pg:
-        cursor.execute(
-            "CREATE INDEX IF NOT EXISTS ix_ai_document_metadata_gin "
-            "ON ai_document USING GIN (metadata_json)"
-        )
-        cursor.execute(
-            "CREATE INDEX IF NOT EXISTS ix_ai_document_chunk_metadata_gin "
-            "ON ai_document_chunk USING GIN (metadata_json)"
-        )
-    else:
-        # SQLite's JSON1 functions are available in supported deployments;
-        # normal indexes cover the high-frequency scalar columns above.
-        cursor.execute(
-            "CREATE INDEX IF NOT EXISTS ix_ai_document_metadata_text "
-            "ON ai_document(metadata_json)"
-        )
+    cursor.execute(
+        "CREATE INDEX IF NOT EXISTS ix_ai_document_metadata_gin "
+        "ON ai_document USING GIN (metadata_json)"
+    )
+    cursor.execute(
+        "CREATE INDEX IF NOT EXISTS ix_ai_document_chunk_metadata_gin "
+        "ON ai_document_chunk USING GIN (metadata_json)"
+    )
 
     cursor.execute(
         """
@@ -190,13 +179,12 @@ def downgrade(cursor, use_pg: bool) -> None:
     ):
         cursor.execute(f"DROP INDEX IF EXISTS {name}")
     cursor.execute("DROP TABLE IF EXISTS ai_knowledge_reindex_job")
-    if use_pg:
-        cursor.execute(
-            "ALTER TABLE ai_document ALTER COLUMN metadata_json TYPE TEXT USING metadata_json::text"
-        )
-        cursor.execute(
-            "ALTER TABLE ai_document_chunk ALTER COLUMN metadata_json TYPE TEXT USING metadata_json::text"
-        )
+    cursor.execute(
+        "ALTER TABLE ai_document ALTER COLUMN metadata_json TYPE TEXT USING metadata_json::text"
+    )
+    cursor.execute(
+        "ALTER TABLE ai_document_chunk ALTER COLUMN metadata_json TYPE TEXT USING metadata_json::text"
+    )
     # PostgreSQL and modern SQLite support DROP COLUMN.  Best-effort is used
     # for old SQLite runtimes where the baseline schema remains usable.
     for table, names in (("ai_document", DOCUMENT_COLUMNS), ("ai_document_chunk", CHUNK_COLUMNS)):

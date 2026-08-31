@@ -1,0 +1,52 @@
+task_id: EVAL-004
+title: version-state coverage
+priority: P0
+status: executable
+authority: offline_fixture
+scope:
+  - cover specified, unspecified, conflicting and unknown versions
+  - reuse EVAL-001 parent cases for specified/unspecified/conflict states
+  - add an explicit 12-case unknown-version fixture without changing the frozen parent dataset
+  - require fail-closed no_match for conflicts and unknown versions
+coverage:
+  manifest: docs/knowledge-engine/eval/eval-version-coverage-v1.yaml
+  manifest_report: docs/knowledge-engine/eval/eval-version-coverage-v1.manifest.json
+  parent_dataset: docs/knowledge-engine/eval/eval-query-dataset-v1.yaml
+  parent_dataset_id: nexora-kb-eval-v1-20260817
+  classes: [specified, unspecified, conflict, unknown]
+  cases_per_class: 12
+  specified_source: parent_dataset.version_exact
+  unspecified_source: parent_dataset.exact
+  conflict_source: parent_dataset.version_conflict
+  unknown_source: eval_fixture.synthetic_unknown_version
+invariants:
+  - specified cases carry a requested release, exact relation, answer and citation
+  - unspecified cases carry no requested release, unspecified relation, answer and citation
+  - conflict cases carry a conflicting release, conflict relation and no_match with empty Gold
+  - unknown cases use a requested release absent from the supported list and no_match with empty Gold
+  - unknown cases cover every Huawei/Cisco × VLAN/Interface/OSPF/SSH/NTP/Route combination once
+  - unknown fixture IDs do not overlap EVAL-001 IDs
+safety:
+  database: none
+  sqlite: not_used
+  external_network: forbidden
+  secrets: forbidden
+  production_writes: forbidden
+verification:
+  validator: scripts/knowledge_engine_v2_eval_version_coverage_check.py
+  focused_test: tests/knowledge_engine_v2/test_eval004_version_coverage.py
+  commands:
+    - "$env:PYTHONPATH='backend'; .venv\\Scripts\\python.exe scripts/knowledge_engine_v2_eval_version_coverage_check.py"
+    - "$env:PYTHONPATH='backend'; .venv\\Scripts\\python.exe -m pytest tests/knowledge_engine_v2/test_eval004_version_coverage.py -q -p no:cacheprovider"
+    - ".venv\\Scripts\\python.exe -m py_compile scripts/knowledge_engine_v2_eval_version_coverage_check.py tests/knowledge_engine_v2/test_eval004_version_coverage.py"
+    - "git diff --check"
+  required_results:
+    - status: PASS
+    - class_counts: {specified: 12, unspecified: 12, conflict: 12, unknown: 12}
+    - database: none
+    - sqlite: not_used
+rollback:
+  runtime: remove EVAL-004 version fixture from evaluation selection
+  data: delete the version coverage YAML, report, validator, test and documentation
+  database: none; no migration or persistent rows are created
+  compatibility: EVAL-001, V1 retrieval and existing response contracts are unchanged

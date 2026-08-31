@@ -15,7 +15,7 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
 
-from .core import _USE_PG, get_db_connection
+from .core import get_db_connection
 
 
 logger = logging.getLogger(__name__)
@@ -91,12 +91,8 @@ def collect_postgres_relation_stats(
     conn: Any,
     *,
     table_names: tuple[str, ...] = ("ai_document", "ai_document_chunk"),
-    use_pg: bool | None = None,
 ) -> dict[str, Any]:
     """Read PostgreSQL table/index/bloat signals without ANALYZE or writes."""
-    backend_pg = _USE_PG if use_pg is None else bool(use_pg)
-    if not backend_pg:
-        return {"backend": "sqlite", "status": "NOT_APPLICABLE", "tables": []}
     tables: list[dict[str, Any]] = []
     for table in table_names:
         if not table.replace("_", "").isalnum():
@@ -143,23 +139,21 @@ def collect_postgres_relation_stats(
 def run_capacity_evaluation(
     conn: Any | None = None,
     *,
-    use_pg: bool | None = None,
     assumptions: dict[str, Any] | None = None,
 ) -> dict[str, Any]:
     """Return scale scenarios plus optional live PostgreSQL relation stats."""
     own_conn = conn is None
     connection = conn or get_db_connection()
-    backend_pg = _USE_PG if use_pg is None else bool(use_pg)
     try:
         scenarios = [
             estimate_scale(document_count=docs, chunk_count=chunks, assumptions=assumptions)
             for _, docs, chunks in SCENARIOS
         ]
-        stats = collect_postgres_relation_stats(connection, use_pg=backend_pg)
+        stats = collect_postgres_relation_stats(connection)
         return {
-            "scope": "knowledge_engine_v2_capacity",
+            "scope": "knowledge_engine_capacity",
             "checked_at": _now(),
-            "backend": "postgresql" if backend_pg else "sqlite",
+            "backend": "postgresql",
             "read_only": True,
             "scenarios": scenarios,
             "relation_stats": stats,
@@ -172,7 +166,7 @@ def run_capacity_evaluation(
 
 
 def _cli() -> int:
-    parser = argparse.ArgumentParser(description="Nexora Knowledge Engine V2 capacity evaluation")
+    parser = argparse.ArgumentParser(description="Nexora Knowledge Engine capacity evaluation")
     parser.add_argument("--output")
     args = parser.parse_args()
     result = run_capacity_evaluation()

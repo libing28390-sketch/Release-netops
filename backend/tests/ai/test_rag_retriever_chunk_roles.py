@@ -1,11 +1,10 @@
 import json
-import sqlite3
-
+from backend.tests.pg_test_utils import postgresql_test_driver
 from ai.services import rag_retriever as rag_retriever_module
 
 
 def test_v2_retrieval_excludes_parent_context_chunks(monkeypatch):
-    connection = sqlite3.connect(":memory:")
+    connection = postgresql_test_driver.connect()
     connection.executescript(
         """
         CREATE TABLE ai_document (

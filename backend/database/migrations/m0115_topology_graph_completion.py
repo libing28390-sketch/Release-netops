@@ -23,18 +23,12 @@ def _now() -> str:
 
 
 def _columns(cursor, table: str, use_pg: bool) -> set[str]:
-    try:
-        if use_pg:
-            rows = cursor.execute(
-                "SELECT column_name FROM information_schema.columns "
-                "WHERE table_schema = current_schema() AND table_name = ?",
-                (table,),
-            ).fetchall()
-            return {str(row[0]).lower() for row in rows}
-        rows = cursor.execute(f"PRAGMA table_info({table})").fetchall()
-        return {str(row[1]).lower() for row in rows}
-    except Exception:
-        return set()
+    rows = cursor.execute(
+        "SELECT column_name FROM information_schema.columns "
+        "WHERE table_schema = current_schema() AND table_name = ?",
+        (table,),
+    ).fetchall()
+    return {str(row[0]).lower() for row in rows}
 
 
 def _ensure_columns(cursor, table: str, definitions: dict[str, str], use_pg: bool) -> None:
@@ -194,13 +188,12 @@ def _seed_protocol_actions(cursor) -> None:
     except Exception:
         return
 
-    # The migration is also used by isolated schema tests and by rolling
-    # upgrades where the registry tables may be created by a later/optional
-    # component. Graph tables must not be held hostage by those seed tables.
-    try:
-        cursor.execute("SELECT 1 FROM action_definitions LIMIT 1")
-        cursor.execute("SELECT 1 FROM platform_release_actions LIMIT 1")
-    except Exception:
+    # The migration is also used by isolated schema tests and rolling upgrades.
+    # Probe metadata first so a missing optional seed table cannot abort the
+    # PostgreSQL transaction that created the graph tables.
+    if not _columns(cursor, "action_definitions", True):
+        return
+    if not _columns(cursor, "platform_release_actions", True):
         return
 
     now = _now()

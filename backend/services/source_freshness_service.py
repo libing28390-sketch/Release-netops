@@ -11,9 +11,8 @@ from __future__ import annotations
 import logging
 from typing import Any
 
-import database as _database
 from database import get_db_connection
-from services.source_registry_service import (
+from services.knowledge_v1_source_service import (
     SourceRegistryError,
     collect_source,
     list_sources,
@@ -28,19 +27,17 @@ REFRESH_INTERVAL_MINUTES = 30
 
 
 def _freshness_schema_ready() -> bool:
-    """Keep the V1-only runtime quiet until the release-gated V2 schema exists."""
+    """Return whether the V1 provenance stream is available."""
     try:
         with get_db_connection() as conn:
-            if _database._USE_PG:
-                row = conn.execute(
-                    "SELECT 1 FROM information_schema.columns WHERE table_schema = current_schema() AND table_name = 'kb_source_refresh_observation' AND column_name = 'detection_type'"
-                ).fetchone()
-                return bool(row)
             row = conn.execute(
-                "SELECT 1 FROM pragma_table_info('kb_source_refresh_observation') WHERE name = ?",
-                ("detection_type",),
+                "SELECT 1 FROM ai_document_revision WHERE record_type = 'source_observation' LIMIT 1"
             ).fetchone()
-            return bool(row)
+            # An empty installation is still V1-ready once the table exists.
+            if row:
+                return True
+            conn.execute("SELECT record_type FROM ai_document_revision WHERE 1 = 0")
+            return True
     except Exception:
         return False
 
@@ -185,9 +182,8 @@ def run_scheduled_source_freshness_refresh() -> dict[str, Any]:
     try:
         result = refresh_sources()
     except SourceRegistryError as exc:
-        # V1 installations may not yet have the release-gated V2 migrations.
-        # The periodic job must be a no-op with a stable, redacted status until
-        # the migration cutover is approved.
+        # A deployment without the V1 provenance migration is not ready for
+        # scheduled refresh; keep the scheduler result stable and redacted.
         if exc.code != "SOURCE_FRESHNESS_SCHEMA_UNAVAILABLE":
             raise
         result = {

@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-import sqlite3
+from backend.tests.pg_test_utils import postgresql_test_driver
 import pytest
 
 from services.platform_registry_service import (
@@ -37,8 +37,8 @@ def test_platform_registry_action_and_commands():
 
 def test_backup_policy_model_with_tftp_and_startup():
     """Test policy model creation and parsing with startup config and TFTP fields."""
-    conn = sqlite3.connect(":memory:")
-    conn.row_factory = sqlite3.Row
+    conn = postgresql_test_driver.connect()
+    conn.row_factory = postgresql_test_driver.Row
     conn.execute(
         """
         CREATE TABLE config_backup_policies (
@@ -126,8 +126,8 @@ def test_finish_backup_run_records_counts_and_tftp(monkeypatch, tmp_path):
     db_file = str(tmp_path / "test_backup_runs.db")
 
     def _get_conn():
-        conn = sqlite3.connect(db_file)
-        conn.row_factory = sqlite3.Row
+        conn = postgresql_test_driver.connect(db_file)
+        conn.row_factory = postgresql_test_driver.Row
         return conn
 
     conn = _get_conn()

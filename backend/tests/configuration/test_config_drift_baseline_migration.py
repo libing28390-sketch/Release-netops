@@ -1,11 +1,11 @@
-import sqlite3
-
+from backend.tests import pg_catalog_assertions as pg_catalog
+from backend.tests.pg_test_utils import postgresql_test_driver
 from database.migrations.m0051_config_drift_baselines import upgrade
 
 
 def test_baseline_migration_is_idempotent() -> None:
-    conn = sqlite3.connect(":memory:")
-    conn.row_factory = sqlite3.Row
+    conn = postgresql_test_driver.connect()
+    conn.row_factory = postgresql_test_driver.Row
     conn.execute(
         """
         CREATE TABLE config_drift_results (
@@ -16,14 +16,10 @@ def test_baseline_migration_is_idempotent() -> None:
         """
     )
     try:
-        upgrade(conn, use_pg=False)
-        upgrade(conn, use_pg=False)
-        columns = {
-            row["name"] for row in conn.execute("PRAGMA table_info(config_drift_results)")
-        }
-        indexes = {
-            row["name"] for row in conn.execute("PRAGMA index_list(config_baselines)")
-        }
+        upgrade(conn, use_pg=True)
+        upgrade(conn, use_pg=True)
+        columns = pg_catalog.table_columns(conn, "config_drift_results")
+        indexes = pg_catalog.index_names(conn, "config_baselines")
     finally:
         conn.close()
 

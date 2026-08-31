@@ -32,24 +32,33 @@ def _json(value) -> str:
     return json.dumps(value if value is not None else {}, ensure_ascii=False, sort_keys=True)
 
 
+def _table_columns(cursor, table_name: str) -> set[str]:
+    rows = cursor.execute(
+        "SELECT column_name FROM information_schema.columns "
+        "WHERE table_schema = current_schema() AND table_name = ?",
+        (table_name,),
+    ).fetchall()
+    return {str(row[0]) for row in rows}
+
+
 def _parser_version_id(cursor, profile_id: str, parser_platform: str, command: str) -> str | None:
     """Find the latest published SYSTEM parser for the exact command."""
-    try:
-        rows = cursor.execute(
-            """SELECT v.id, t.command
-               FROM parser_template_versions v
-               JOIN parser_templates t ON t.id = v.template_id
-               WHERE v.status = 'PUBLISHED'
-                 AND t.source = 'SYSTEM'
-                 AND t.platform_profile_id = ?
-               ORDER BY v.version_number DESC, v.id""",
-            (profile_id,),
-        ).fetchall()
-    except Exception:
-        # Older/partial installations may not have parser tables yet. The
-        # action remains usable without a parser binding and can be repaired
-        # by the later parser migrations.
+    version_columns = _table_columns(cursor, "parser_template_versions")
+    template_columns = _table_columns(cursor, "parser_templates")
+    if not {"id", "template_id", "status", "version_number"}.issubset(version_columns) or not {
+        "id", "command", "source", "platform_profile_id",
+    }.issubset(template_columns):
         return None
+    rows = cursor.execute(
+        """SELECT v.id, t.command
+           FROM parser_template_versions v
+           JOIN parser_templates t ON t.id = v.template_id
+           WHERE v.status = 'PUBLISHED'
+             AND t.source = 'SYSTEM'
+             AND t.platform_profile_id = ?
+           ORDER BY v.version_number DESC, v.id""",
+        (profile_id,),
+    ).fetchall()
     expected = " ".join(str(command or "").replace("-", " ").lower().split())
     for row in rows:
         actual = " ".join(str(row[1] or "").replace("-", " ").lower().split())
@@ -105,12 +114,13 @@ def _ensure_action_definition(cursor, definition: dict, now: str) -> None:
 
 def upgrade(cursor, use_pg: bool) -> None:
     del use_pg  # The migration adapter accepts portable '?' placeholders.
-    try:
-        cursor.execute("SELECT 1 FROM platform_profiles LIMIT 1")
-        cursor.execute("SELECT 1 FROM platform_releases LIMIT 1")
-        cursor.execute("SELECT 1 FROM platform_release_actions LIMIT 1")
-        cursor.execute("SELECT 1 FROM action_definitions LIMIT 1")
-    except Exception:
+    required_tables = {
+        "platform_profiles": {"id", "tenant_id", "source", "platform_code", "parser_platform", "current_release_id"},
+        "platform_releases": {"id", "status", "checksum", "updated_at"},
+        "platform_release_actions": {"id", "release_id", "action_code"},
+        "action_definitions": {"action_code"},
+    }
+    if any(not columns.issubset(_table_columns(cursor, table)) for table, columns in required_tables.items()):
         return
 
     from services.platform_registry_service import (

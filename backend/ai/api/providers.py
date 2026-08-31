@@ -5,11 +5,12 @@ FastAPI Router for AI Providers Management & Connection Testing
 from __future__ import annotations
 
 import json
+import math
 import re
 import uuid
 from datetime import datetime, timezone
 from typing import List, Optional
-from fastapi import APIRouter, Depends, HTTPException, status
+from fastapi import APIRouter, Depends, HTTPException, Query, status
 from fnmatch import fnmatchcase
 from urllib.parse import urlparse
 from database.core import get_db_connection
@@ -17,12 +18,13 @@ from ai.security.crypto import encrypt_api_key, mask_api_key, require_configured
 from ai.security.permissions import require_ai_permission
 from ai.schemas.provider import (
     AIProviderCreate,
+    AIProviderPageResponse,
     AIProviderResponse,
     AIProviderTestResponse,
     AIProviderUpdate,
     SUPPORTED_PROVIDER_TYPES,
 )
-from api.knowledge_v2_contracts import ProviderKeyInvalidationRequest, ProviderKeyRotationRequest
+from api.knowledge_contracts import ProviderKeyInvalidationRequest, ProviderKeyRotationRequest
 from ai.gateway.exceptions import AIException
 from ai.gateway.llm_gateway import llm_gateway
 from ai.gateway.limits import ai_limits
@@ -122,17 +124,114 @@ _PROVIDER_SELECT = """SELECT id, name, provider_type, base_url, api_key_masked, 
        FROM ai_provider"""
 
 
-@router.get("", response_model=List[AIProviderResponse])
-def list_providers(user=Depends(require_ai_permission("ai.provider.manage"))):
-    """List all AI Providers."""
+def _provider_filter_sql(
+    search: str,
+    data_region: str,
+    health_status: str,
+    enabled: bool | None,
+    provider_type: str,
+    tag: str,
+) -> tuple[str, list[object]]:
+    clauses: list[str] = []
+    params: list[object] = []
+    if search.strip():
+        needle = f"%{search.strip().lower()}%"
+        clauses.append(
+            "(LOWER(name) LIKE ? OR LOWER(provider_type) LIKE ? OR LOWER(COALESCE(base_url, '')) LIKE ? "
+            "OR LOWER(COALESCE(data_region, '')) LIKE ? OR LOWER(COALESCE(health_status, '')) LIKE ? "
+            "OR LOWER(COALESCE(tags_json, '')) LIKE ?)"
+        )
+        params.extend([needle] * 6)
+    if data_region.strip():
+        clauses.append("LOWER(COALESCE(data_region, 'unknown')) = ?")
+        params.append(data_region.strip().lower())
+    if health_status.strip():
+        clauses.append("LOWER(COALESCE(health_status, 'unknown')) = ?")
+        params.append(health_status.strip().lower())
+    if enabled is not None:
+        clauses.append("enabled = ?")
+        params.append(int(enabled))
+    if provider_type.strip():
+        clauses.append("LOWER(provider_type) = ?")
+        params.append(provider_type.strip().lower())
+    if tag.strip():
+        clauses.append("LOWER(COALESCE(tags_json, '')) LIKE ?")
+        # tags_json is a bounded JSON string column for legacy compatibility.
+        # Match a quoted JSON token so a filter for `prod` cannot accidentally
+        # return a provider tagged `production`.
+        params.append(f"%{json.dumps(tag.strip().lower())}%")
+    return (f"WHERE {' AND '.join(clauses)}" if clauses else ""), params
+
+
+def _provider_page_facets(cursor) -> dict[str, list[str]]:
+    facets: dict[str, list[str]] = {}
+    for key, expression in (
+        ("data_regions", "COALESCE(data_region, 'unknown')"),
+        ("health_statuses", "COALESCE(health_status, 'unknown')"),
+        ("provider_types", "provider_type"),
+    ):
+        rows = cursor.execute(
+            f"SELECT DISTINCT {expression} FROM ai_provider WHERE {expression} IS NOT NULL ORDER BY 1"
+        ).fetchall()
+        facets[key] = [str(row[0]) for row in rows if row[0] is not None]
+    tags: set[str] = set()
+    for row in cursor.execute("SELECT tags_json FROM ai_provider WHERE tags_json IS NOT NULL").fetchall():
+        raw = row[0]
+        try:
+            parsed = json.loads(raw) if isinstance(raw, str) else raw
+        except (TypeError, ValueError, json.JSONDecodeError):
+            parsed = []
+        if isinstance(parsed, list):
+            tags.update(str(item).strip() for item in parsed if str(item).strip())
+    facets["tags"] = sorted(tags, key=str.casefold)
+    return facets
+
+
+@router.get("")
+def list_providers(
+    search: str = Query(default="", max_length=256),
+    data_region: str = Query(default="", max_length=64),
+    health_status: str = Query(default="", max_length=32),
+    enabled: bool | None = Query(default=None),
+    provider_type: str = Query(default="", max_length=64),
+    tag: str = Query(default="", max_length=64),
+    page: int | None = Query(default=None, ge=1),
+    page_size: int = Query(default=20, ge=1, le=100),
+    user=Depends(require_ai_permission("ai.provider.manage")),
+):
+    """List providers with a paged/filterable contract for the registry UI.
+
+    Calls without query parameters retain the legacy array response consumed
+    by Model Management and Copilot's provider picker.
+    """
+    del user
     with get_db_connection() as conn:
         cursor = conn.cursor()
-        try:
-            cursor.execute(_PROVIDER_SELECT + " ORDER BY created_at DESC")
-        except Exception:
-            cursor.execute("SELECT id, name, provider_type, base_url, api_key_masked, timeout, max_retries, proxy_url, enabled, created_by, created_at, updated_at, NULL, 'unknown', NULL, NULL, NULL, 'unknown', 'PUBLIC', 0, NULL, NULL, NULL, '[]' FROM ai_provider ORDER BY created_at DESC")
-        rows = cursor.fetchall()
-        return [_row_to_provider(r) for r in rows]
+        where_sql, params = _provider_filter_sql(search, data_region, health_status, enabled, provider_type, tag)
+        is_paged = page is not None or bool(search.strip() or data_region.strip() or health_status.strip() or provider_type.strip() or tag.strip() or enabled is not None)
+        if not is_paged:
+            try:
+                rows = cursor.execute(_PROVIDER_SELECT + " ORDER BY created_at DESC, id DESC").fetchall()
+            except Exception:
+                rows = cursor.execute("SELECT id, name, provider_type, base_url, api_key_masked, timeout, max_retries, proxy_url, enabled, created_by, created_at, updated_at, NULL, 'unknown', NULL, NULL, NULL, 'unknown', 'PUBLIC', 0, NULL, NULL, NULL, '[]' FROM ai_provider ORDER BY created_at DESC, id DESC").fetchall()
+            return [_row_to_provider(row) for row in rows]
+
+        total_row = cursor.execute(f"SELECT COUNT(*) FROM ai_provider {where_sql}", tuple(params)).fetchone()
+        total = int(total_row[0] if total_row else 0)
+        total_pages = max(1, math.ceil(total / page_size))
+        effective_page = min(page or 1, total_pages)
+        rows = cursor.execute(
+            _PROVIDER_SELECT + f" {where_sql} ORDER BY created_at DESC, id DESC LIMIT ? OFFSET ?",
+            tuple([*params, page_size, (effective_page - 1) * page_size]),
+        ).fetchall()
+        return AIProviderPageResponse(
+            items=[_row_to_provider(row) for row in rows],
+            total=total,
+            page=effective_page,
+            page_size=page_size,
+            total_pages=total_pages,
+            facets=_provider_page_facets(cursor),
+        )
 
 
 @router.post("", response_model=AIProviderResponse, status_code=status.HTTP_201_CREATED)

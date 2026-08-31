@@ -56,22 +56,22 @@ def _scope_denied(code: str = "DEVICE_SCOPE_DENIED") -> PlatformRegistryError:
     return PlatformRegistryError(code, "Device or platform is outside the current resource scope", status_code=403)
 
 
-def _load_device(conn, device_id: str, user: dict[str, Any], *, lock: bool = False) -> dict[str, Any]:
-    import database as database_module
+def _table_columns(conn, table_name: str) -> set[str]:
+    rows = conn.execute(
+        "SELECT column_name FROM information_schema.columns "
+        "WHERE table_schema = current_schema() AND table_name = ?",
+        (table_name,),
+    ).fetchall()
+    return {str(row[0]) for row in rows}
 
-    suffix = " FOR UPDATE" if lock and database_module._USE_PG else ""
+
+def _load_device(conn, device_id: str, user: dict[str, Any], *, lock: bool = False) -> dict[str, Any]:
+    suffix = " FOR UPDATE" if lock else ""
     # Older upgrade fixtures and some installations do not yet carry the
     # optional vendor/device_type columns. Resolve the projection from the
     # actual table so binding remains compatible while still using those
     # fields when they exist.
-    if database_module._USE_PG:
-        column_rows = conn.execute(
-            "SELECT column_name FROM information_schema.columns WHERE table_name = 'devices'",
-        ).fetchall()
-        available_columns = {str(row[0]) for row in column_rows}
-    else:
-        column_rows = conn.execute("PRAGMA table_info(devices)").fetchall()
-        available_columns = {str(row[1]) for row in column_rows}
+    available_columns = _table_columns(conn, "devices")
     preferred_columns = [
         "id", "hostname", "tenant_id", "site_id", "site", "device_group_id",
         "vendor", "device_type", "platform", "version", "os_version",
@@ -514,16 +514,7 @@ def _persist_discovered_version(device_id: str, version: str) -> None:
         return
     conn = get_db_connection()
     try:
-        import database as database_module
-
-        if database_module._USE_PG:
-            column_rows = conn.execute(
-                "SELECT column_name FROM information_schema.columns WHERE table_name = 'devices'",
-            ).fetchall()
-            available_columns = {str(row[0]) for row in column_rows}
-        else:
-            column_rows = conn.execute("PRAGMA table_info(devices)").fetchall()
-            available_columns = {str(row[1]) for row in column_rows}
+        available_columns = _table_columns(conn, "devices")
         if "version" not in available_columns:
             return
         projection = ["version"]
@@ -554,16 +545,7 @@ def _persist_discovered_version(device_id: str, version: str) -> None:
 def _inventory_device(conn, device_id: str, user: dict[str, Any]) -> dict[str, Any]:
     """Load the version/platform fields used by SNMP-first identification."""
     scope = _assert_device_view(conn, device_id, user)
-    import database as database_module
-
-    if database_module._USE_PG:
-        column_rows = conn.execute(
-            "SELECT column_name FROM information_schema.columns WHERE table_name = 'devices'",
-        ).fetchall()
-        available_columns = {str(row[0]) for row in column_rows}
-    else:
-        column_rows = conn.execute("PRAGMA table_info(devices)").fetchall()
-        available_columns = {str(row[1]) for row in column_rows}
+    available_columns = _table_columns(conn, "devices")
     preferred_columns = [
         "id", "platform", "vendor", "device_type", "version", "os_version",
         "platform_profile_id",
@@ -841,11 +823,10 @@ def bind_device(device_id: str, platform_profile_id: str, user: dict[str, Any], 
         raise _scope_denied("PLATFORM_BIND_FORCE_FORBIDDEN")
     conn = get_db_connection()
     try:
-        import database as database_module
-        if database_module._USE_PG:
-            conn.execute("SELECT id FROM platform_profiles WHERE id = ? FOR UPDATE", (platform_profile_id,)).fetchone()
-        else:
-            conn.execute("BEGIN IMMEDIATE")
+        conn.execute(
+            "SELECT id FROM platform_profiles WHERE id = ? FOR UPDATE",
+            (platform_profile_id,),
+        ).fetchone()
         profile = _assert_profile_access(conn, platform_profile_id, user)
         _assert_profile_active(profile)
         profile_tenant = str(profile.get("tenant_id") or "")

@@ -261,6 +261,36 @@ def canonical_vendor(value: Any) -> str:
     }.get(normalized, str(value or "").strip())
 
 
+def directory_metadata_for_document(document_category: Any, vendor: Any) -> dict[str, Any]:
+    """Return the stable directory projection for a document's taxonomy.
+
+    The directory tree is a browse/import projection, while the relational
+    category and vendor fields remain the semantic source of truth.  Keep the
+    mapping in one place so official publication, migration backfill and
+    future import paths cannot drift apart.
+    """
+    category = canonical_document_category(document_category)
+    root = next(
+        (directory for directory, semantic in ROOT_CATEGORY_MAP.items() if semantic == category),
+        None,
+    )
+    if not root:
+        return {}
+
+    canonical = canonical_vendor(vendor)
+    vendor_slug = next(
+        (slug for slug, display in DIRECTORY_VENDOR_MAP.items() if display == canonical),
+        None,
+    )
+    path = f"{root}/{vendor_slug}" if vendor_slug else root
+    return {
+        "knowledge_directory": root,
+        "knowledge_directory_root": root,
+        "knowledge_directory_vendor": vendor_slug,
+        "knowledge_directory_path": path,
+    }
+
+
 def canonical_document_category(value: Any) -> str:
     """Normalize UI directory ids and semantic categories to one RAG value."""
     normalized = str(value or "").strip().lower().replace("-", "_")

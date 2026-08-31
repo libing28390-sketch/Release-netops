@@ -6,11 +6,11 @@ import yaml
 
 
 ROOT = Path(__file__).resolve().parents[3]
-CONTRACT = ROOT / "docs" / "knowledge-engine-v2" / "architecture" / "DB-010-CHUNK-INDEX-RELATIONSHIPS.yaml"
-REPORT = ROOT / "docs" / "knowledge-engine-v2" / "architecture" / "DB-010-CHUNK-INDEX-RELATIONSHIPS.md"
-ER_CONTRACT = ROOT / "docs" / "knowledge-engine-v2" / "architecture" / "DB-001-core-er-model.yaml"
-COMMON_CONTRACT = ROOT / "docs" / "knowledge-engine-v2" / "architecture" / "DB-002-COMMON-COLUMN-SEMANTICS.yaml"
-LIFECYCLE_CONTRACT = ROOT / "docs" / "knowledge-engine-v2" / "architecture" / "DB-003-LIFECYCLE-POLICY.yaml"
+CONTRACT = ROOT / "docs" / "knowledge-engine" / "architecture" / "DB-010-CHUNK-INDEX-RELATIONSHIPS.yaml"
+REPORT = ROOT / "docs" / "knowledge-engine" / "architecture" / "DB-010-CHUNK-INDEX-RELATIONSHIPS.md"
+ER_CONTRACT = ROOT / "docs" / "knowledge-engine" / "architecture" / "DB-001-core-er-model.yaml"
+COMMON_CONTRACT = ROOT / "docs" / "knowledge-engine" / "architecture" / "DB-002-COMMON-COLUMN-SEMANTICS.yaml"
+LIFECYCLE_CONTRACT = ROOT / "docs" / "knowledge-engine" / "architecture" / "DB-003-LIFECYCLE-POLICY.yaml"
 M0111 = ROOT / "backend" / "database" / "migrations" / "m0111_ai_chunking_v2.py"
 ENGINE = ROOT / "backend" / "ai" / "chunking" / "engine.py"
 RETRIEVER = ROOT / "backend" / "ai" / "services" / "rag_retriever.py"

@@ -10,21 +10,17 @@ NAME = "config_template_center"
 
 
 def _column_exists(cursor, table: str, column: str, use_pg: bool) -> bool:
-    if use_pg:
-        return cursor.execute(
-            """
-            SELECT 1
-            FROM information_schema.columns
-            WHERE table_schema = current_schema()
-              AND table_name = ?
-              AND column_name = ?
-            """,
-            (table, column),
-        ).fetchone() is not None
-    return any(
-        str(row[1]) == column
-        for row in cursor.execute(f"PRAGMA table_info({table})").fetchall()
-    )
+    return cursor.execute(
+        """
+        SELECT 1
+        FROM information_schema.columns
+        WHERE table_schema = current_schema()
+          AND table_name = ?
+          AND column_name = ?
+        """,
+        (table, column),
+    ).fetchone() is not None
+
 
 
 def _ensure_column(cursor, table: str, column: str, definition: str, use_pg: bool) -> None:
@@ -199,4 +195,3 @@ def upgrade(cursor, use_pg: bool) -> None:
         """,
         (now, now),
     )
-

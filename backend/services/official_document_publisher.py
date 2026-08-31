@@ -13,6 +13,7 @@ import re
 from typing import Any
 from urllib.parse import urlsplit
 
+from ai.services.knowledge_metadata import directory_metadata_for_document
 from ai.services.knowledge_service import knowledge_service
 from database import get_db_connection
 from services.document_content_cleaning import CleanedDocument, parse_and_clean_document
@@ -67,6 +68,8 @@ def _feature_for(*values: Any) -> tuple[str, str]:
 
 
 def _category_for(source_kind: str, feature: str) -> str:
+    if source_kind == "troubleshooting_guide":
+        return "troubleshooting"
     if source_kind in {"configuration_guide", "command_reference"}:
         return "configuration" if source_kind == "configuration_guide" else "command"
     if source_kind == "release_note":
@@ -81,18 +84,24 @@ def _decode_source_metadata(source: dict[str, Any]) -> dict[str, Any]:
     return dict(value) if isinstance(value, dict) else {}
 
 
-def _existing_document(tenant_id: str, content_hash: str) -> dict[str, Any] | None:
+def _existing_document(tenant_id: str, content_hash: str, *, exclude_document_id: str = "") -> dict[str, Any] | None:
+    params: list[Any] = [tenant_id, content_hash]
+    exclusion = ""
+    if exclude_document_id:
+        exclusion = " AND id <> ?"
+        params.append(exclude_document_id)
     with get_db_connection() as conn:
         row = conn.execute(
-            """
+            f"""
             SELECT id, document_id, name, content_hash, knowledge_source_type
             FROM ai_document
             WHERE tenant_id = ? AND knowledge_source_type = 'official_url'
               AND content_hash = ?
+              {exclusion}
             ORDER BY created_at ASC, id ASC
             LIMIT 1
             """,
-            (tenant_id, content_hash),
+            tuple(params),
         ).fetchone()
     if not row:
         return None
@@ -150,7 +159,15 @@ def publish_official_document(
     document_id = f"official-{str(source_version.get('id') or hashlib.sha256(canonical_url.encode('utf-8')).hexdigest()[:24])}"
     content_hash = hashlib.sha256(normalized_content.encode("utf-8")).hexdigest()
     tenant_id = str(source.get("tenant_id") or user.get("tenant_id") or "tenant-default")
-    replay = _existing_document(tenant_id, content_hash)
+    # The V1 source identity is intentionally not treated as a published
+    # searchable document.  Exclude it from the content replay lookup so an
+    # explicit publish creates the local ai_document/ai_document_chunk
+    # projection exactly once.
+    replay = _existing_document(
+        tenant_id,
+        content_hash,
+        exclude_document_id=str(source.get("source_document_id") or ""),
+    )
     if replay:
         return {
             "published": True,
@@ -215,6 +232,7 @@ def publish_official_document(
     metadata["source_type"] = "official_url"
     metadata["official_only"] = True
     metadata["status"] = "active"
+    metadata.update(directory_metadata_for_document(category, vendor))
 
     kb = knowledge_service.get_or_create_default_knowledge_base(tenant_id=tenant_id, created_by=str(user.get("id") or user.get("username") or "system"))
     result = knowledge_service.add_document_and_chunk(
@@ -230,6 +248,39 @@ def publish_official_document(
         metadata=metadata,
         source=canonical_url,
     )
+    # Persist the searchable publication as a V1 revision after the formal
+    # document/chunk transaction succeeds.  The source manifest remains the
+    # immutable fetch fact; this row records the normalized text actually used
+    # by the V1 retriever.
+    try:
+        from services.knowledge_v1_source_service import record_document_revision
+
+        original_for_revision: bytes | None = None
+        try:
+            raw_content.decode("utf-8")
+            original_for_revision = raw_content
+        except UnicodeDecodeError:
+            # Binary documents keep their source hash and fetch metadata; the
+            # normalized searchable representation is still fully recorded.
+            original_for_revision = None
+        record_document_revision(
+            str(result.get("document_id") or ""),
+            source,
+            source_version,
+            user,
+            metadata=metadata,
+            original_content=original_for_revision,
+            normalized_content=normalized_content,
+            cleaner_name=cleaned_document.cleaning_name,
+            cleaner_version=cleaned_document.cleaning_version,
+            document_kind=(
+                "command_reference"
+                if source_kind == "command_reference"
+                else ("troubleshooting" if source_kind == "troubleshooting_guide" else "official_manual")
+            ),
+        )
+    except Exception as exc:
+        raise OfficialDocumentPublicationError("PUBLISH_REVISION_FAILED", "V1 document revision could not be persisted") from exc
     return {
         "published": True,
         "replayed": False,

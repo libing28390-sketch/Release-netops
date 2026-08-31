@@ -1,5 +1,4 @@
-import sqlite3
-
+from backend.tests.pg_test_utils import postgresql_test_driver
 from services.tag_service import (
     resolve_device_ids_by_condition_groups,
     resolve_device_ids_by_expression,
@@ -7,9 +6,9 @@ from services.tag_service import (
 )
 
 
-def _connection() -> sqlite3.Connection:
-    conn = sqlite3.connect(":memory:")
-    conn.row_factory = sqlite3.Row
+def _connection() -> postgresql_test_driver.Connection:
+    conn = postgresql_test_driver.connect()
+    conn.row_factory = postgresql_test_driver.Row
     conn.executescript(
         """
         CREATE TABLE devices (id TEXT PRIMARY KEY);

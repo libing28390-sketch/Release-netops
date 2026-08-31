@@ -1,4 +1,4 @@
-import sqlite3
+from backend.tests.pg_test_utils import postgresql_test_driver
 import sys
 from pathlib import Path
 
@@ -197,7 +197,7 @@ def test_create_api_uses_explicit_version_to_build_template_filename(monkeypatch
 
 
 def test_scope_templates_allocates_around_existing_legacy_identity_conflict():
-    conn = sqlite3.connect(':memory:')
+    conn = postgresql_test_driver.connect()
     conn.execute(
         '''
         CREATE TABLE parser_templates (

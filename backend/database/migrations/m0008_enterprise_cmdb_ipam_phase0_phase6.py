@@ -10,14 +10,12 @@ NAME = "enterprise_cmdb_ipam_phase0_phase6"
 
 
 def _columns(cursor, table: str, use_pg: bool) -> set[str]:
-    if use_pg:
-        cursor.execute(
-            "SELECT column_name FROM information_schema.columns WHERE table_name = ?",
-            (table,),
-        )
-        return {row[0] for row in cursor.fetchall()}
-    cursor.execute(f"PRAGMA table_info({table})")
-    return {row[1] for row in cursor.fetchall()}
+    cursor.execute(
+        "SELECT column_name FROM information_schema.columns WHERE table_name = ?",
+        (table,),
+    )
+    return {row[0] for row in cursor.fetchall()}
+
 
 
 def _ensure_columns(cursor, table: str, definitions: list[tuple[str, str]], use_pg: bool) -> None:
@@ -255,33 +253,22 @@ def upgrade(cursor, use_pg: bool) -> None:
         _ensure_columns(cursor, table, fact_fields, use_pg)
 
     _create_enterprise_tables(cursor)
-    if use_pg:
-        cursor.execute("ALTER TABLE vrfs DROP CONSTRAINT IF EXISTS vrfs_vrf_name_key")
-        cursor.execute("""
-            DO $$ BEGIN
-              IF NOT EXISTS (SELECT 1 FROM vlans GROUP BY site_id, vlan_id HAVING COUNT(*) > 1) THEN
-                CREATE UNIQUE INDEX IF NOT EXISTS uq_vlans_site_vlan ON vlans(site_id, vlan_id);
-              END IF;
-              IF NOT EXISTS (SELECT 1 FROM vrfs GROUP BY tenant_id, vrf_name HAVING COUNT(*) > 1) THEN
-                CREATE UNIQUE INDEX IF NOT EXISTS uq_vrfs_tenant_name ON vrfs(tenant_id, vrf_name);
-              END IF;
-              IF NOT EXISTS (
-                SELECT 1 FROM devices WHERE asset_id IS NOT NULL AND asset_id <> ''
-                GROUP BY asset_id HAVING COUNT(*) > 1
-              ) THEN
-                CREATE UNIQUE INDEX IF NOT EXISTS uq_devices_asset_id
-                  ON devices(asset_id) WHERE asset_id IS NOT NULL AND asset_id <> '';
-              END IF;
-            END $$
-        """)
-        _convert_native_network_types(cursor)
-    else:
-        duplicate_checks = [
-            ("SELECT 1 FROM vlans GROUP BY site_id, vlan_id HAVING COUNT(*) > 1 LIMIT 1", "CREATE UNIQUE INDEX IF NOT EXISTS uq_vlans_site_vlan ON vlans(site_id, vlan_id)"),
-            ("SELECT 1 FROM vrfs GROUP BY tenant_id, vrf_name HAVING COUNT(*) > 1 LIMIT 1", "CREATE UNIQUE INDEX IF NOT EXISTS uq_vrfs_tenant_name ON vrfs(tenant_id, vrf_name)"),
-            ("SELECT 1 FROM devices WHERE asset_id IS NOT NULL AND asset_id <> '' GROUP BY asset_id HAVING COUNT(*) > 1 LIMIT 1", "CREATE UNIQUE INDEX IF NOT EXISTS uq_devices_asset_id ON devices(asset_id) WHERE asset_id IS NOT NULL AND asset_id <> ''"),
-            ("SELECT 1 FROM ip_addresses WHERE COALESCE(status, 'active') NOT IN ('released', 'available') GROUP BY tenant_id, vrf_id, address_inet HAVING COUNT(*) > 1 LIMIT 1", "CREATE UNIQUE INDEX IF NOT EXISTS uq_ip_addresses_scope_active ON ip_addresses(tenant_id, vrf_id, address_inet) WHERE COALESCE(status, 'active') NOT IN ('released', 'available')"),
-        ]
-        for check_sql, index_sql in duplicate_checks:
-            if cursor.execute(check_sql).fetchone() is None:
-                cursor.execute(index_sql)
+    cursor.execute("ALTER TABLE vrfs DROP CONSTRAINT IF EXISTS vrfs_vrf_name_key")
+    cursor.execute("""
+        DO $$ BEGIN
+          IF NOT EXISTS (SELECT 1 FROM vlans GROUP BY site_id, vlan_id HAVING COUNT(*) > 1) THEN
+            CREATE UNIQUE INDEX IF NOT EXISTS uq_vlans_site_vlan ON vlans(site_id, vlan_id);
+          END IF;
+          IF NOT EXISTS (SELECT 1 FROM vrfs GROUP BY tenant_id, vrf_name HAVING COUNT(*) > 1) THEN
+            CREATE UNIQUE INDEX IF NOT EXISTS uq_vrfs_tenant_name ON vrfs(tenant_id, vrf_name);
+          END IF;
+          IF NOT EXISTS (
+            SELECT 1 FROM devices WHERE asset_id IS NOT NULL AND asset_id <> ''
+            GROUP BY asset_id HAVING COUNT(*) > 1
+          ) THEN
+            CREATE UNIQUE INDEX IF NOT EXISTS uq_devices_asset_id
+              ON devices(asset_id) WHERE asset_id IS NOT NULL AND asset_id <> '';
+          END IF;
+        END $$
+    """)
+    _convert_native_network_types(cursor)

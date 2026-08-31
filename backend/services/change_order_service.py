@@ -364,7 +364,7 @@ def list_change_orders(conn, *, page: int = 1, page_size: int = 20,
 
     offset = (page - 1) * page_size
     rows = conn.execute(
-        f"SELECT * FROM change_orders {where} ORDER BY created_at DESC LIMIT ? OFFSET ?",
+        f"SELECT * FROM change_orders {where} ORDER BY created_at DESC, id DESC LIMIT ? OFFSET ?",
         params + [page_size, offset],
     ).fetchall()
     

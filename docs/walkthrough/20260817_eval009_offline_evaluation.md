@@ -11,7 +11,7 @@ $env:PYTHONPATH='backend'
 .venv\Scripts\python.exe scripts/knowledge_engine_v2_eval_offline.py --strict
 ```
 
-默认报告为 `docs/knowledge-engine-v2/eval/eval-offline-report-v1.json`。严格模式要求 8 个组件全部 PASS；报告包含每个组件的状态和报告、数据库/外网安全边界、生产写入标记、固定命令版本和 SHA-256。
+默认报告为 `docs/knowledge-engine/eval/eval-offline-report-v1.json`。严格模式要求 8 个组件全部 PASS；报告包含每个组件的状态和报告、数据库/外网安全边界、生产写入标记、固定命令版本和 SHA-256。
 
 ## 可重复性
 

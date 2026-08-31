@@ -1,7 +1,7 @@
 """Deterministic V2 product-alias normalization and resolution.
 
 CAT-009 deliberately keeps this layer persistence-neutral.  DB-006 freezes
-the tenant-scoped ``kb_product_alias`` contract but does not authorize a
+the tenant-scoped product-alias contract but does not authorize a
 production migration yet.  The service therefore accepts/returns immutable
 records that a later repository can persist without changing matching rules.
 """

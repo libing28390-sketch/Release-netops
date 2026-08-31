@@ -77,6 +77,9 @@ def _supports_template_center_columns(conn) -> bool:
         conn.execute("SELECT variable_schema_json, source_type, status FROM templates LIMIT 0")
         return True
     except Exception:
+        # A failed catalog/column probe aborts the PostgreSQL transaction.
+        # Roll it back before falling back to the legacy template columns.
+        conn.rollback()
         return False
 
 
@@ -349,6 +352,10 @@ def update_template(
         if not existing_row:
             raise HTTPException(status_code=404, detail="Template not found")
         existing = dict(existing_row)
+        # Probe once, before any write.  A failed PostgreSQL column probe must
+        # roll back its aborted transaction, and repeating the probe after the
+        # legacy UPDATE would otherwise roll that UPDATE back as well.
+        supports_template_center_columns = _supports_template_center_columns(conn)
         if bool(existing.get("is_official")) or existing.get("source_type") == "official":
             raise HTTPException(status_code=403, detail="Official templates are read-only; copy it before editing")
         definition = _definition_payload(template, existing=existing)
@@ -404,14 +411,14 @@ def update_template(
         previous_version = str(existing.get("current_version") or "1.0")
         definition["current_version"] = (
             _next_template_version(conn, template_id, previous_version)
-            if reviewed_content_changed and _supports_template_center_columns(conn)
+            if reviewed_content_changed and supports_template_center_columns
             else previous_version
         )
         definition["variable_schema_json"] = definition["variable_schema_json"]
         definition["example_values_json"] = definition["example_values_json"]
         definition["quality_score"] = template_quality_score({**existing, **definition, "validation_status": validation_status}, definition["schema"])["score"]
 
-        if _supports_template_center_columns(conn):
+        if supports_template_center_columns:
             conn.execute('''
                 UPDATE templates
                 SET name = ?, type = ?, category = ?, vendor = ?, content = ?,
@@ -473,7 +480,7 @@ def update_template(
             "rollback": template.get('rollback', existing.get('rollback') or ''),
             "status": definition['status'],
         })
-        if _supports_template_center_columns(conn):
+        if supports_template_center_columns:
             current_version_row = conn.execute(
                 "SELECT 1 FROM config_template_versions WHERE template_id = ? AND version = ?",
                 (template_id, definition["current_version"]),

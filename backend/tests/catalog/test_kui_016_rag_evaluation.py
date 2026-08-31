@@ -81,8 +81,8 @@ def test_kui016_api_contract_and_suite_validation():
     from api.knowledge_evaluation import EvaluationRunRequest, api_get_evaluation, api_run_evaluation, router
 
     paths = {(route.path, tuple(sorted(route.methods or ()))) for route in router.routes}
-    assert any(path.endswith("/knowledge-v2/evaluation") and "GET" in methods for path, methods in paths)
-    assert any(path.endswith("/knowledge-v2/evaluation/run") and "POST" in methods for path, methods in paths)
+    assert any(path.endswith("/knowledge/evaluation") and "GET" in methods for path, methods in paths)
+    assert any(path.endswith("/knowledge/evaluation/run") and "POST" in methods for path, methods in paths)
     with pytest.raises(Exception):
         EvaluationRunRequest.model_validate({"suite": "v1_baseline_postgresql", "raw_sql": "SELECT 1"})
     assert api_get_evaluation(user=_user())["success"] is True

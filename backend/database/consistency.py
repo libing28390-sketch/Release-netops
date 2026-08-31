@@ -17,7 +17,7 @@ import re
 from datetime import datetime, timezone
 from typing import Any, Iterable
 
-from .core import _USE_PG, get_db_connection
+from .core import get_db_connection
 
 
 logger = logging.getLogger(__name__)
@@ -50,59 +50,18 @@ def _row_value(row: Any, key: str, index: int) -> Any:
         return row[index]
 
 
-def _table_columns(conn: Any, table: str, *, use_pg: bool) -> set[str]:
+def _table_columns(conn: Any, table: str) -> set[str]:
     if not _IDENTIFIER.fullmatch(table):
         return set()
     try:
-        if use_pg:
-            rows = conn.execute(
-                "SELECT column_name FROM information_schema.columns "
-                "WHERE table_schema = current_schema() AND table_name = ?",
-                (table,),
-            ).fetchall()
-            return {str(_row_value(row, "column_name", 0)) for row in rows}
-        rows = conn.execute(f"PRAGMA table_info({_identifier(table)})").fetchall()
-        return {str(_row_value(row, "name", 1)) for row in rows}
+        rows = conn.execute(
+            "SELECT column_name FROM information_schema.columns "
+            "WHERE table_schema = current_schema() AND table_name = ?",
+            (table,),
+        ).fetchall()
+        return {str(_row_value(row, "column_name", 0)) for row in rows}
     except Exception:
         return set()
-
-
-def _sqlite_foreign_keys(conn: Any) -> list[dict[str, Any]]:
-    tables = conn.execute(
-        "SELECT name FROM sqlite_master WHERE type = 'table' "
-        "AND name NOT LIKE 'sqlite_%' ORDER BY name"
-    ).fetchall()
-    relationships: list[dict[str, Any]] = []
-    for row in tables:
-        table = str(_row_value(row, "name", 0))
-        if not _IDENTIFIER.fullmatch(table):
-            continue
-        try:
-            fk_rows = conn.execute(f"PRAGMA foreign_key_list({_identifier(table)})").fetchall()
-        except Exception:
-            continue
-        counts_by_id: dict[Any, int] = {}
-        for fk in fk_rows:
-            fk_id = _row_value(fk, "id", 0)
-            counts_by_id[fk_id] = counts_by_id.get(fk_id, 0) + 1
-        for fk in fk_rows:
-            # SQLite exposes (id, seq, table, from, to, on_update, ...).
-            # Composite constraints are intentionally skipped: a partial
-            # check would report false orphans and hide the real constraint.
-            if str(_row_value(fk, "seq", 1)) != "0":
-                continue
-            fk_id = _row_value(fk, "id", 0)
-            relationships.append({
-                "constraint": f"sqlite:{table}:{fk_id}",
-                "child_schema": "main",
-                "child_table": table,
-                "child_column": str(_row_value(fk, "from", 3)),
-                "parent_schema": "main",
-                "parent_table": str(_row_value(fk, "table", 2)),
-                "parent_column": str(_row_value(fk, "to", 4)),
-                "column_count": counts_by_id.get(fk_id, 1),
-            })
-    return relationships
 
 
 def _postgres_foreign_keys(conn: Any) -> list[dict[str, Any]]:
@@ -130,22 +89,24 @@ def _postgres_foreign_keys(conn: Any) -> list[dict[str, Any]]:
     relationships: list[dict[str, Any]] = []
     for row in rows:
         relationships.append({
-            "constraint": str(_row_value(row, "conname", 6)),
-            "child_schema": str(_row_value(row, "nspname", 0)),
-            "child_table": str(_row_value(row, "relname", 1)),
-            "child_column": str(_row_value(row, "attname", 2)),
-            "parent_schema": str(_row_value(row, "nspname", 3)),
-            "parent_table": str(_row_value(row, "relname", 4)),
-            "parent_column": str(_row_value(row, "attname", 5)),
-            "column_count": int(_row_value(row, "array_length", 7) or 0),
+            # Catalog joins intentionally expose repeated column names
+            # (nspname/relname/attname). DictRow name lookups are ambiguous,
+            # so use the stable SELECT order here.
+            "constraint": str(row[6]),
+            "child_schema": str(row[0]),
+            "child_table": str(row[1]),
+            "child_column": str(row[2]),
+            "parent_schema": str(row[3]),
+            "parent_table": str(row[4]),
+            "parent_column": str(row[5]),
+            "column_count": int(row[7] or 0),
         })
     return relationships
 
 
-def discover_foreign_keys(conn: Any, *, use_pg: bool | None = None) -> list[dict[str, Any]]:
+def discover_foreign_keys(conn: Any) -> list[dict[str, Any]]:
     """Return declared single-column and composite foreign-key metadata."""
-    backend = _USE_PG if use_pg is None else bool(use_pg)
-    return _postgres_foreign_keys(conn) if backend else _sqlite_foreign_keys(conn)
+    return _postgres_foreign_keys(conn)
 
 
 def _fingerprint(*parts: Any) -> str:
@@ -163,30 +124,14 @@ def _count(conn: Any, sql: str, params: tuple[Any, ...] = ()) -> int:
         return int(row[0] or 0)
 
 
-def _foreign_key_enforcement(conn: Any, *, use_pg: bool) -> dict[str, Any]:
-    if use_pg:
-        return {"name": "foreign_key_enforcement", "status": "PASS", "enforced": True}
-    try:
-        row = conn.execute("PRAGMA foreign_keys").fetchone()
-        enforced = bool(_row_value(row, "foreign_keys", 0)) if row is not None else False
-    except Exception as exc:
-        return {
-            "name": "foreign_key_enforcement", "status": "WARN", "enforced": None,
-            "error_class": type(exc).__name__,
-        }
-    return {
-        "name": "foreign_key_enforcement",
-        "status": "PASS" if enforced else "WARN",
-        "enforced": enforced,
-        "remediation": None if enforced else "Enable PRAGMA foreign_keys=ON for write paths; patrol remains read-only.",
-    }
+def _foreign_key_enforcement() -> dict[str, Any]:
+    return {"name": "foreign_key_enforcement", "status": "PASS", "enforced": True}
 
 
 def _run_fk_check(
     conn: Any,
     relationship: dict[str, Any],
     *,
-    use_pg: bool,
     tenant_id: str | None,
     sample_limit: int,
 ) -> dict[str, Any]:
@@ -205,8 +150,8 @@ def _run_fk_check(
     }
     if relationship.get("column_count", 1) not in (0, 1):
         return {**base, "status": "NOT_APPLICABLE", "reason": "composite_foreign_key"}
-    child_columns = _table_columns(conn, child_table, use_pg=use_pg)
-    parent_columns = _table_columns(conn, parent_table, use_pg=use_pg)
+    child_columns = _table_columns(conn, child_table)
+    parent_columns = _table_columns(conn, parent_table)
     if child_column not in child_columns or parent_column not in parent_columns:
         return {**base, "status": "NOT_APPLICABLE", "reason": "table_or_column_missing"}
     child_ref = f"{_qualified(relationship, 'child')} c"
@@ -256,13 +201,12 @@ def _run_tenant_scope_check(
     conn: Any,
     relationship: dict[str, Any],
     *,
-    use_pg: bool,
     tenant_id: str | None,
 ) -> dict[str, Any] | None:
     child_table = str(relationship.get("child_table") or "")
     parent_table = str(relationship.get("parent_table") or "")
-    child_columns = _table_columns(conn, child_table, use_pg=use_pg)
-    parent_columns = _table_columns(conn, parent_table, use_pg=use_pg)
+    child_columns = _table_columns(conn, child_table)
+    parent_columns = _table_columns(conn, parent_table)
     if "tenant_id" not in child_columns or "tenant_id" not in parent_columns:
         return None
     child_ref = f"{_qualified(relationship, 'child')} c"
@@ -302,7 +246,6 @@ def _run_tenant_scope_check(
 def run_consistency_patrol(
     conn: Any | None = None,
     *,
-    use_pg: bool | None = None,
     tenant_id: str | None = None,
     max_checks: int = _DEFAULT_MAX_CHECKS,
     sample_limit: int = _DEFAULT_SAMPLE_LIMIT,
@@ -314,17 +257,16 @@ def run_consistency_patrol(
     """
     own_conn = conn is None
     connection = conn or get_db_connection()
-    backend_pg = _USE_PG if use_pg is None else bool(use_pg)
     started = datetime.now(timezone.utc).replace(microsecond=0).isoformat()
     try:
-        relationships = discover_foreign_keys(connection, use_pg=backend_pg)
-        checks: list[dict[str, Any]] = [_foreign_key_enforcement(connection, use_pg=backend_pg)]
+        relationships = discover_foreign_keys(connection)
+        checks: list[dict[str, Any]] = [_foreign_key_enforcement()]
         skipped = 0
         for relationship in relationships:
             if len(checks) >= max(1, int(max_checks)):
                 break
             check = _run_fk_check(
-                connection, relationship, use_pg=backend_pg,
+                connection, relationship,
                 tenant_id=tenant_id, sample_limit=max(1, int(sample_limit)),
             )
             checks.append(check)
@@ -333,7 +275,7 @@ def run_consistency_patrol(
             if len(checks) >= max(1, int(max_checks)):
                 break
             scope_check = _run_tenant_scope_check(
-                connection, relationship, use_pg=backend_pg, tenant_id=tenant_id,
+                connection, relationship, tenant_id=tenant_id,
             )
             if scope_check is not None:
                 checks.append(scope_check)
@@ -345,7 +287,7 @@ def run_consistency_patrol(
             "scope": "database_consistency",
             "status": status,
             "checked_at": started,
-            "backend": "postgresql" if backend_pg else "sqlite",
+            "backend": "postgresql",
             "tenant_id": str(tenant_id) if tenant_id is not None else None,
             "relationship_count": len(relationships),
             "check_count": len(checks),

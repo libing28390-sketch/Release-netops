@@ -1,11 +1,10 @@
-import sqlite3
-
+from backend.tests.pg_test_utils import postgresql_test_driver
 from database.migrations.m0058_official_domestic_vendor_templates import upgrade
 from services.config_template_validation_service import validate_template
 
 
-def _connection() -> sqlite3.Connection:
-    conn = sqlite3.connect(":memory:")
+def _connection() -> postgresql_test_driver.Connection:
+    conn = postgresql_test_driver.connect()
     conn.execute(
         """
         CREATE TABLE templates (
@@ -34,8 +33,8 @@ def _connection() -> sqlite3.Connection:
 def test_domestic_vendor_templates_are_idempotent_and_renderable() -> None:
     conn = _connection()
     try:
-        upgrade(conn, use_pg=False)
-        upgrade(conn, use_pg=False)
+        upgrade(conn, use_pg=True)
+        upgrade(conn, use_pg=True)
         rows = conn.execute(
             "SELECT id, vendor, platform_family, content, rollback FROM templates ORDER BY id"
         ).fetchall()

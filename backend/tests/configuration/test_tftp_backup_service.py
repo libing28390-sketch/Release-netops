@@ -220,7 +220,7 @@ def test_batch_uploads_one_plaintext_zip_archive(monkeypatch):
 @pytest.mark.anyio
 async def test_tftp_api_endpoints(monkeypatch, tmp_path):
     """Test TFTP API endpoints: settings, test connection, sync snapshot and sync batch."""
-    import sqlite3
+    from backend.tests.pg_test_utils import postgresql_test_driver
     from api.configs import (
         TFTPTestPayload,
         TFTPSettingsPayload,
@@ -237,8 +237,8 @@ async def test_tftp_api_endpoints(monkeypatch, tmp_path):
     db_file = str(tmp_path / "test_tftp_api.db")
 
     def _get_conn():
-        conn = sqlite3.connect(db_file)
-        conn.row_factory = sqlite3.Row
+        conn = postgresql_test_driver.connect(db_file)
+        conn.row_factory = postgresql_test_driver.Row
         return conn
 
     conn = _get_conn()
@@ -266,7 +266,7 @@ async def test_tftp_api_endpoints(monkeypatch, tmp_path):
         """
     )
     from database.migrations.m0157_global_vars_timestamps import upgrade as upgrade_global_vars
-    upgrade_global_vars(conn, use_pg=False)
+    upgrade_global_vars(conn, use_pg=True)
     conn.execute("INSERT INTO config_backup_runs (id) VALUES ('run-01')")
 
     backup_root = str(tmp_path / "backups_root")

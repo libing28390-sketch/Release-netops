@@ -28,8 +28,7 @@ def _to_boolean(cursor, column: str) -> None:
 
 
 def upgrade(cursor, use_pg: bool) -> None:
-    if not use_pg:
-        return
+    del use_pg
     _to_boolean(cursor, "is_l3")
 
 

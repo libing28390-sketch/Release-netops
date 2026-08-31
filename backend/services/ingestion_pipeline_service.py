@@ -1,7 +1,7 @@
-"""Canonical Knowledge V2 ingestion pipeline state machine.
+"""Canonical Knowledge Engine ingestion pipeline state machine.
 
 ING-001 deliberately implements the control-plane contract without claiming a
-physical ``kb_import_job`` migration.  It gives every future URL/file/parser/
+physical import-job migration.  It gives every future URL/file/parser/
 embedding worker the same state, phase, progress, lease, cancellation, and
 error semantics while leaving the existing V1 reindex rows untouched.
 """
@@ -87,6 +87,8 @@ class IngestionErrorCode(_ValueEnum):
     UNSUPPORTED_FORMAT = "UNSUPPORTED_FORMAT"
     SECRET_OR_SSRF_VIOLATION = "SECRET_OR_SSRF_VIOLATION"
     DATA_INTEGRITY = "DATA_INTEGRITY"
+    ROBOTS_DISALLOWED = "ROBOTS_DISALLOWED"
+    ROBOTS_UNAVAILABLE = "ROBOTS_UNAVAILABLE"
     INTERNAL_ERROR = "INTERNAL_ERROR"
 
 
@@ -149,6 +151,7 @@ RETRYABLE_ERROR_CODES = frozenset({
     IngestionErrorCode.TRANSIENT_DATABASE.value,
     IngestionErrorCode.PROVIDER_UNAVAILABLE.value,
     IngestionErrorCode.WORKER_LOST.value,
+    IngestionErrorCode.ROBOTS_UNAVAILABLE.value,
 })
 NON_RETRYABLE_ERROR_CODES = frozenset({
     IngestionErrorCode.INVALID_SCOPE.value,
@@ -157,6 +160,7 @@ NON_RETRYABLE_ERROR_CODES = frozenset({
     IngestionErrorCode.UNSUPPORTED_FORMAT.value,
     IngestionErrorCode.SECRET_OR_SSRF_VIOLATION.value,
     IngestionErrorCode.DATA_INTEGRITY.value,
+    IngestionErrorCode.ROBOTS_DISALLOWED.value,
     IngestionErrorCode.INTERNAL_ERROR.value,
 })
 
@@ -172,6 +176,8 @@ ERROR_CATALOG: dict[str, dict[str, Any]] = {
     IngestionErrorCode.UNSUPPORTED_FORMAT.value: {"retryable": False, "safe_message": "The source format is not supported by the ingestion pipeline."},
     IngestionErrorCode.SECRET_OR_SSRF_VIOLATION.value: {"retryable": False, "safe_message": "The source violated the secure ingestion policy."},
     IngestionErrorCode.DATA_INTEGRITY.value: {"retryable": False, "safe_message": "The source data failed an integrity check."},
+    IngestionErrorCode.ROBOTS_DISALLOWED.value: {"retryable": False, "safe_message": "The source robots policy disallows automated collection."},
+    IngestionErrorCode.ROBOTS_UNAVAILABLE.value: {"retryable": True, "safe_message": "The source robots policy could not be verified; collection may be retried later."},
     IngestionErrorCode.INTERNAL_ERROR.value: {"retryable": False, "safe_message": "The ingestion pipeline encountered an internal error."},
 }
 

@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useMemo, useCallback } from 'react';
+import React, { Suspense, lazy, useState, useEffect, useMemo, useCallback } from 'react';
 import { motion } from 'motion/react';
 import { Routes, Route, useLocation, useNavigate, Navigate } from 'react-router-dom';
 import { Plus, Server, CheckCircle, CheckCircle2, XCircle, RotateCcw, Play, Activity, LayoutDashboard, Database, Zap, ShieldCheck, History, LogOut, Search, Bell, Settings, Upload, FileText, ChevronLeft, ChevronRight, Filter, Globe, TrendingUp, PieChart as PieChartIcon, Clock, AlertCircle, FolderOpen, Eye, EyeOff, Sun, Moon, User as UserIcon, ChevronDown, Menu, PanelLeftClose, Monitor, ExternalLink, Wrench, Maximize2, Minimize2, BarChart3, GitCompareArrows, Cpu, Network, Pin, AlertTriangle, X } from 'lucide-react';
@@ -11,31 +11,15 @@ import type { ConfigVersion, Device, Job, AuditEvent, ComplianceFinding, Complia
 import { PLATFORM_LABELS, getPlatformLabel, getVendorFromPlatform } from './types';
 import { sectionHeaderRowClass, sectionToolbarClass, primaryActionBtnClass, secondaryActionBtnClass, darkActionBtnClass, severityBadgeClass, complianceStatusBadgeClass, auditStatusBadgeClass } from './components/shared';
 import Pagination from './components/Pagination';
-import DeviceFormModal from './components/DeviceFormModal';
-import DeviceDetailModal from './components/DeviceDetailModal';
 import CustomCommandModal from './components/CustomCommandModal';
 import AddScenarioModal from './components/AddScenarioModal';
 import AppLayout from './components/AppLayout';
 import AppMainContent from './components/AppMainContent';
 import { AppRuntimeBoundary } from './components/AppRuntimeBoundary';
 import type { ToastState } from './components/ToastNotification';
-import ProfileModal, { ProfileFormState } from './components/ProfileModal';
 import CommandPreviewModal from './components/CommandPreviewModal';
-import TerminalWindow from './components/access/TerminalWindow';
-import ImportInventoryModal from './components/ImportInventoryModal';
-import HistoricalConfigModal from './components/HistoricalConfigModal';
-import ScheduleTaskModal from './components/ScheduleTaskModal';
-import RemediationModal from './components/RemediationModal';
-import DeleteConfirmModal from './components/DeleteConfirmModal';
-import AuditEventDetailModal from './components/AuditEventDetailModal';
-import ComplianceFindingDetailModal from './components/ComplianceFindingDetailModal';
-import JobOutputModal from './components/JobOutputModal';
-import ConfigDiffModal from './components/ConfigDiffModal';
 import LoginScreen from './components/LoginScreen';
 import SetupWizard from './components/SetupWizard';
-import TestConnectionResultModal from './components/TestConnectionResultModal';
-import SnmpTestResultModal from './components/SnmpTestResultModal';
-import { AppModals } from './components/modals/AppModals';
 import { buildConnectionTestMessage, buildConnectionTestHint, buildConnectionCheckStatus, connectionCheckBadgeMeta, formatConnectionCheckTime } from './utils/connectionHelpers';
 import { useConfigDiff } from './hooks/useConfigDiff';
 import { useTheme } from './hooks/useTheme';
@@ -77,6 +61,9 @@ import { useDeviceDetail } from './hooks/useDeviceDetail';
 import { useInventoryImportExport } from './hooks/useInventoryImportExport';
 import { AppProviders } from './contexts/AppProviders';
 import { authHeaders } from './api/http';
+
+const TerminalWindow = lazy(() => import('./components/access/TerminalWindow'));
+const AppModals = lazy(() => import('./components/modals/AppModals').then(({ AppModals: Component }) => ({ default: Component })));
 
 // Types imported from ./types — re-export User as UserType to avoid clash with lucide-react User icon
 
@@ -1564,13 +1551,15 @@ const App: React.FC = () => {
     const hostname = params.get('hostname') || 'Terminal';
 
     return (
-      <div className="w-screen h-screen bg-black overflow-hidden">
-        <TerminalWindow 
-          sessionToken={sessionToken} 
-          hostname={hostname} 
-          language={language}
-        />
-      </div>
+      <Suspense fallback={<div className="flex h-screen w-screen items-center justify-center bg-black text-sm text-white/60">Loading terminal…</div>}>
+        <div className="w-screen h-screen bg-black overflow-hidden">
+          <TerminalWindow
+            sessionToken={sessionToken}
+            hostname={hostname}
+            language={language}
+          />
+        </div>
+      </Suspense>
     );
   }
 
@@ -1899,8 +1888,9 @@ const App: React.FC = () => {
         />
       )}
 
-      <AppModals
-        {...{
+      <Suspense fallback={null}>
+        <AppModals
+          {...{
           showProfileModal, language, resolvedTheme, currentUser, currentUserRecord,
           currentUserLastLogin, profileAvatarPreview, avatarPresets, profileForm,
           showProfilePwd, notificationChannels, notifyTestLoading, renderAvatarContent,
@@ -1928,8 +1918,9 @@ const App: React.FC = () => {
           selectedFinding, setSelectedFinding, updateComplianceFinding,
           selectedJob, setSelectedJob, copyTextWithFallback,
           navigate,
-        }}
-      />
+          }}
+        />
+      </Suspense>
 
       {/* Toast Notification */}
         </AppLayout>

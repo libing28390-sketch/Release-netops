@@ -1,13 +1,12 @@
 from __future__ import annotations
 
 import json
-import sqlite3
-
+from backend.tests.pg_test_utils import postgresql_test_driver
 from database.migrations.m0154_interface_counter64_error_oids import upgrade
 
 
 def test_m0154_backfills_new_interface_oids_without_overwriting_custom_values() -> None:
-    conn = sqlite3.connect(":memory:")
+    conn = postgresql_test_driver.connect()
     conn.execute(
         "CREATE TABLE snmp_metric_profiles (id TEXT PRIMARY KEY, interface_config_json TEXT)"
     )
@@ -28,8 +27,8 @@ def test_m0154_backfills_new_interface_oids_without_overwriting_custom_values() 
         ("empty", "{}"),
     )
 
-    upgrade(conn.cursor(), use_pg=False)
-    upgrade(conn.cursor(), use_pg=False)
+    upgrade(conn.cursor(), use_pg=True)
+    upgrade(conn.cursor(), use_pg=True)
 
     config = json.loads(
         conn.execute(

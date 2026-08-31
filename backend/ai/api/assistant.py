@@ -41,7 +41,7 @@ from ai.services.metadata_confirmation_service import (
 from ai.services.knowledge_reindex_service import knowledge_reindex_service
 from ai.services.conversation_service import append_message, get_context, set_conversation_model
 from ai.security.security_service import create_diagnostic_case, handoff_case, record_feedback
-from api.knowledge_v2_contracts import (
+from api.knowledge_contracts import (
     ChatHistoryMessage,
     CopilotContext,
     CopilotPlanItem,
@@ -53,7 +53,7 @@ from api.knowledge_v2_contracts import (
     KnowledgeReindexRequest,
     SearchContract,
 )
-from api.knowledge_v2_response import DOCUMENT_SUMMARY_FIELDS, PaginationMeta, attach_pagination, project_summary_items
+from api.knowledge_response import DOCUMENT_SUMMARY_FIELDS, PaginationMeta, attach_pagination, project_summary_items
 
 router = APIRouter(prefix="/assistant", tags=["AI Copilot & Knowledge"])
 

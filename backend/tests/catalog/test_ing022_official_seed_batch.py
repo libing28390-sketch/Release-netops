@@ -130,7 +130,7 @@ def test_ing022_runtime_errors_are_bounded_per_item_and_batch_continues():
 
 def test_ing022_api_contract_and_handler_return_bounded_batch(monkeypatch):
     paths = {(route.path, tuple(sorted(route.methods or []))) for route in router.routes}
-    assert ("/knowledge-v2/ingestion/official-seed-batch", ("POST",)) in paths
+    assert ("/knowledge/ingestion/official-seed-batch", ("POST",)) in paths
     payload = OfficialSeedBatchRequest(items=[_item(URL_A)], rate_limit_per_minute=30, request_id="api-seed-001")
     monkeypatch.setattr(
         "api.knowledge_ingestion.collect_official_seed_batch",

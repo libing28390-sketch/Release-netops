@@ -1,0 +1,56 @@
+task_id: MIG-004
+title: Dry-run, checkpoint resume, idempotency and batch rollback migration runner
+original_requirement: "迁移脚本支持 dry-run、断点续跑、幂等和批次回滚。"
+status: frozen_for_execution_planning
+authority: PostgreSQL
+sqlite: forbidden_for_acceptance
+production_database_write: false
+
+input:
+  manifest: docs/knowledge-engine/eval/mig-003-migration-manifest-v1.json
+  manifest_digest_required: true
+  source_hash_and_registry_gate_required: true
+
+execution:
+  default_mode: dry_run
+  batch_order: manifest_entry_order
+  batch_size: bounded_positive_integer
+  dry_run: no_target_writes_and_persist_redacted_plan_checkpoint
+  resume: continue_after_last_committed_batch_only
+  idempotency_key: [tenant_id_hash, legacy_id, v2_document_id, v2_document_version_id]
+  idempotent_action: skip_existing_same_digest_and_fail_on_conflicting_mapping
+  apply_guard: approved_target_and_reconciled_manifest_required
+  current_snapshot_policy: conditional_rows_block_production_apply
+
+checkpoint:
+  format: nexora-knowledge-engine-v2-migration-checkpoint/v1
+  required_fields: [checkpoint_version, task_id, manifest_sha256, batch_size, next_offset, committed_batches, status, counts, last_error_code]
+  stores: [manifest_sha256, cursor, counts, stable_error_code]
+  forbidden: [raw_content, metadata_json, acl_json, secret, database_url, raw_exception]
+  atomic_write: temporary_file_then_replace
+  mismatch: fail_closed_and_start_new_checkpoint
+
+batch_rollback:
+  boundary: one_bounded_batch
+  failure_action: rollback_current_batch_and_preserve_previous_checkpoint
+  retry_state: retry_wait
+  recovery: rerun_with_same_manifest_and_checkpoint
+  production_probe: PostgreSQL_temp_transaction_only
+
+acceptance:
+  - dry_run_has_zero_target_writes
+  - checkpoint_is_redacted_and_manifest_bound
+  - resume_starts_at_last_committed_cursor
+  - duplicate_rerun_is_idempotent
+  - conflicting_mapping_fails_closed
+  - failed_batch_rolls_back_without_advancing_cursor
+  - PostgreSQL_temp_transaction_rollback_probe_passes
+  - SQLite_not_used
+  - V1_baseline_non_regression
+
+evidence:
+  contract: docs/knowledge-engine/architecture/MIG-004-MIGRATION-RUNNER-CONTRACT.yaml
+  runner: scripts/knowledge_engine_v2_mig004_migration_runner_check.py
+  report: docs/knowledge-engine/eval/mig-004-migration-runner-v1.json
+  checkpoint: docs/knowledge-engine/eval/mig-004-checkpoint-v1.json
+  test: tests/knowledge_engine_v2/test_mig004_migration_runner.py

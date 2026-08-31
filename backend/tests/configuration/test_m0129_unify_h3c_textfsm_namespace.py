@@ -1,12 +1,11 @@
 from __future__ import annotations
 
-import sqlite3
-
+from backend.tests.pg_test_utils import postgresql_test_driver
 from database.migrations.m0129_unify_h3c_textfsm_namespace import upgrade
 
 
 def test_h3c_textfsm_namespace_migration_is_canonical_and_idempotent() -> None:
-    conn = sqlite3.connect(":memory:")
+    conn = postgresql_test_driver.connect()
     try:
         conn.executescript(
             """
@@ -61,11 +60,11 @@ def test_h3c_textfsm_namespace_migration_is_canonical_and_idempotent() -> None:
             [("device-v5", "hp_comware"), ("device-v9", "h3c_comware9")],
         )
 
-        upgrade(conn, use_pg=False)
+        upgrade(conn, use_pg=True)
         first = [tuple(row) for row in conn.execute(
             "SELECT platform_code, source_filename, template_code FROM parser_templates ORDER BY id"
         )]
-        upgrade(conn, use_pg=False)
+        upgrade(conn, use_pg=True)
         second = [tuple(row) for row in conn.execute(
             "SELECT platform_code, source_filename, template_code FROM parser_templates ORDER BY id"
         )]
@@ -75,7 +74,7 @@ def test_h3c_textfsm_namespace_migration_is_canonical_and_idempotent() -> None:
             ("h3c_comware", "h3c_comware_v5_display_bgp_peer_ipv4.textfsm", "H3C_COMWARE_V5_DISPLAY_BGP_PEER_IPV4"),
             ("h3c_comware", "h3c_comware_v9_display_bgp_peer_ipv4_unicast.textfsm", "H3C_COMWARE_V9_DISPLAY_BGP_PEER_IPV4_UNICAST"),
         ]
-        assert conn.execute("SELECT DISTINCT parser_platform FROM platform_profiles").fetchall() == [("h3c_comware",)]
-        assert conn.execute("SELECT platform FROM devices ORDER BY id").fetchall() == [("h3c_comware",), ("h3c_comware",)]
+        assert [tuple(row) for row in conn.execute("SELECT DISTINCT parser_platform FROM platform_profiles").fetchall()] == [("h3c_comware",)]
+        assert [tuple(row) for row in conn.execute("SELECT platform FROM devices ORDER BY id").fetchall()] == [("h3c_comware",), ("h3c_comware",)]
     finally:
         conn.close()

@@ -1,0 +1,16 @@
+{
+  "status": "PASS",
+  "task_id": "EVAL-010",
+  "small_ci_profile": "small",
+  "full_release_profile": "full",
+  "database_url_scheme": "postgresql",
+  "postgres_service": true,
+  "sqlite_references": 0,
+  "external_network": "not_used_by_offline_runner",
+  "production_write": false,
+  "workflow_sha256": {
+    "knowledge_engine_eval": "cee2f232527abd17c600dd770d61b49607931432099ae10d8d3012ad823a6fbe",
+    "backend_pytest": "fa099d2adadf9f34ed2ef6193b6dfc3d2a6b7fd31663fdac46220c8541aa02d1",
+    "release": "18af3880c01521a3977d044a0ec0a7e2c0d1333a7d30774c40f613c97c5a371f"
+  }
+}

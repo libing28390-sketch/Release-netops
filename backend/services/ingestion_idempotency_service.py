@@ -1,4 +1,4 @@
-"""Pure URL/content idempotency decisions for Knowledge V2 ingestion."""
+"""Pure URL/content idempotency decisions for Knowledge Engine ingestion."""
 
 from __future__ import annotations
 

@@ -21,17 +21,16 @@ _SOURCE_KINDS = "'official_url','product_page','configuration_guide','command_re
 
 
 def _json_type(use_pg: bool) -> tuple[str, str]:
-    if use_pg:
-        return "JSONB", "'{}'::jsonb"
+    return "JSONB", "'{}'::jsonb"
     return "TEXT", "'{}'"
 
 
 def _time_type(use_pg: bool) -> str:
-    return "TIMESTAMPTZ" if use_pg else "TEXT"
+    return "TIMESTAMPTZ"
 
 
 def _bool_type(use_pg: bool) -> tuple[str, str]:
-    return ("BOOLEAN", "FALSE") if use_pg else ("INTEGER", "0")
+    return ("BOOLEAN", "FALSE")
 
 
 def _create_registry_table(cursor, use_pg: bool) -> None:
@@ -142,42 +141,41 @@ def _create_version_table(cursor, use_pg: bool) -> None:
 
 def _create_immutable_fact_guard(cursor, use_pg: bool) -> None:
     """Protect the fetch facts even when a caller bypasses the service layer."""
-    if use_pg:
-        cursor.execute(
-            """
-            CREATE OR REPLACE FUNCTION kb_source_version_fact_immutable_guard()
-            RETURNS trigger
-            LANGUAGE plpgsql
-            AS $$
-            BEGIN
-                IF NEW.tenant_id IS DISTINCT FROM OLD.tenant_id
-                   OR NEW.source_registry_id IS DISTINCT FROM OLD.source_registry_id
-                   OR NEW.fetched_at IS DISTINCT FROM OLD.fetched_at
-                   OR NEW.content_hash IS DISTINCT FROM OLD.content_hash
-                   OR NEW.byte_size IS DISTINCT FROM OLD.byte_size
-                   OR NEW.parser_name IS DISTINCT FROM OLD.parser_name
-                   OR NEW.parser_version IS DISTINCT FROM OLD.parser_version
-                   OR NEW.source_etag IS DISTINCT FROM OLD.source_etag
-                   OR NEW.source_last_modified IS DISTINCT FROM OLD.source_last_modified
-                   OR NEW.fetch_url IS DISTINCT FROM OLD.fetch_url
-                   OR NEW.raw_content_ref IS DISTINCT FROM OLD.raw_content_ref
-                THEN
-                    RAISE EXCEPTION 'kb_source_version_fact_immutable';
-                END IF;
-                RETURN NEW;
-            END;
-            $$
-            """
-        )
-        cursor.execute("DROP TRIGGER IF EXISTS trg_kb_source_version_fact_immutable ON kb_source_version")
-        cursor.execute(
-            """
-            CREATE TRIGGER trg_kb_source_version_fact_immutable
-            BEFORE UPDATE ON kb_source_version
-            FOR EACH ROW EXECUTE FUNCTION kb_source_version_fact_immutable_guard()
-            """
-        )
-        return
+    cursor.execute(
+        """
+        CREATE OR REPLACE FUNCTION kb_source_version_fact_immutable_guard()
+        RETURNS trigger
+        LANGUAGE plpgsql
+        AS $$
+        BEGIN
+            IF NEW.tenant_id IS DISTINCT FROM OLD.tenant_id
+               OR NEW.source_registry_id IS DISTINCT FROM OLD.source_registry_id
+               OR NEW.fetched_at IS DISTINCT FROM OLD.fetched_at
+               OR NEW.content_hash IS DISTINCT FROM OLD.content_hash
+               OR NEW.byte_size IS DISTINCT FROM OLD.byte_size
+               OR NEW.parser_name IS DISTINCT FROM OLD.parser_name
+               OR NEW.parser_version IS DISTINCT FROM OLD.parser_version
+               OR NEW.source_etag IS DISTINCT FROM OLD.source_etag
+               OR NEW.source_last_modified IS DISTINCT FROM OLD.source_last_modified
+               OR NEW.fetch_url IS DISTINCT FROM OLD.fetch_url
+               OR NEW.raw_content_ref IS DISTINCT FROM OLD.raw_content_ref
+            THEN
+                RAISE EXCEPTION 'kb_source_version_fact_immutable';
+            END IF;
+            RETURN NEW;
+        END;
+        $$
+        """
+    )
+    cursor.execute("DROP TRIGGER IF EXISTS trg_kb_source_version_fact_immutable ON kb_source_version")
+    cursor.execute(
+        """
+        CREATE TRIGGER trg_kb_source_version_fact_immutable
+        BEFORE UPDATE ON kb_source_version
+        FOR EACH ROW EXECUTE FUNCTION kb_source_version_fact_immutable_guard()
+        """
+    )
+    return
 
     cursor.execute(
         """

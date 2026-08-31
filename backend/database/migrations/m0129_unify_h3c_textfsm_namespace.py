@@ -31,11 +31,20 @@ def _digest(value: str) -> str:
 
 
 def _table_exists(cursor, table: str) -> bool:
-    try:
-        cursor.execute(f"SELECT 1 FROM {table} LIMIT 1")
-        return True
-    except Exception:
-        return False
+    return cursor.execute(
+        "SELECT 1 FROM information_schema.tables "
+        "WHERE table_schema = current_schema() AND table_name = ?",
+        (table,),
+    ).fetchone() is not None
+
+
+def _table_columns(cursor, table: str) -> set[str]:
+    rows = cursor.execute(
+        "SELECT column_name FROM information_schema.columns "
+        "WHERE table_schema = current_schema() AND table_name = ?",
+        (table,),
+    ).fetchall()
+    return {str(row[0]) for row in rows}
 
 
 def _canonical_template_filename(filename: str, profile_code: str = "") -> str:
@@ -93,14 +102,14 @@ def _unique_template_code(cursor, row_id: str, tenant_id, profile_id, platform_c
 
 
 def _update_profile_parser_keys(cursor, now: str) -> None:
-    if _table_exists(cursor, "platform_profiles"):
+    if {"parser_platform", "updated_at"}.issubset(_table_columns(cursor, "platform_profiles")):
         cursor.execute(
             """UPDATE platform_profiles
                SET parser_platform = 'h3c_comware', updated_at = ?
                WHERE lower(COALESCE(parser_platform, '')) IN ('hp_comware', 'h3c_comware9')""",
             (now,),
         )
-    if _table_exists(cursor, "platform_releases"):
+    if {"parser_platform", "updated_at"}.issubset(_table_columns(cursor, "platform_releases")):
         cursor.execute(
             """UPDATE platform_releases
                SET parser_platform = ?, updated_at = ?
@@ -123,7 +132,7 @@ def _update_parser_templates(cursor, now: str) -> None:
         old_platform = str(row[3] or "").strip().lower()
         old_filename = str(row[5] or "")
         profile_code = ""
-        if _table_exists(cursor, "platform_profiles") and profile_id:
+        if "platform_code" in _table_columns(cursor, "platform_profiles") and profile_id:
             profile = cursor.execute(
                 "SELECT platform_code FROM platform_profiles WHERE id = ?",
                 (profile_id,),
@@ -151,16 +160,12 @@ def _update_parser_templates(cursor, now: str) -> None:
 
 
 def _update_device_platforms(cursor) -> None:
-    if not _table_exists(cursor, "devices"):
+    if "platform" not in _table_columns(cursor, "devices"):
         return
-    try:
-        cursor.execute(
-            """UPDATE devices SET platform = 'h3c_comware'
-               WHERE lower(COALESCE(platform, '')) IN ('hp_comware', 'h3c_comware9')"""
-        )
-    except Exception:
-        # Some early fixtures do not have the platform column yet.
-        return
+    cursor.execute(
+        """UPDATE devices SET platform = 'h3c_comware'
+           WHERE lower(COALESCE(platform, '')) IN ('hp_comware', 'h3c_comware9')"""
+    )
 
 
 def upgrade(cursor, use_pg: bool) -> None:

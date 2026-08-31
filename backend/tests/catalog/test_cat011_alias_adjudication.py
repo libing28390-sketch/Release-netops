@@ -160,7 +160,7 @@ def test_cat011_contract_and_rollback_have_no_production_ddl():
     from pathlib import Path
 
     root = Path(__file__).resolve().parents[3]
-    contract = yaml.safe_load((root / "docs" / "knowledge-engine-v2" / "architecture" / "CAT-011-ALIAS-ADJUDICATION.yaml").read_text(encoding="utf-8"))
+    contract = yaml.safe_load((root / "docs" / "knowledge-engine" / "architecture" / "CAT-011-ALIAS-ADJUDICATION.yaml").read_text(encoding="utf-8"))
     assert contract["task_id"] == "CAT-011"
     assert contract["manual_adjudication"]["decisions"] == ["approve", "reject", "reset"]
     assert contract["candidate_list"]["one_row_per_product_model"] is True

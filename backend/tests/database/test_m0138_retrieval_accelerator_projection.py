@@ -1,10 +1,10 @@
-import sqlite3
-
+from backend.tests import pg_catalog_assertions as pg_catalog
+from backend.tests.pg_test_utils import postgresql_test_driver
 from database.migrations.m0138_retrieval_accelerator_projection import upgrade
 
 
 def _connection():
-    conn = sqlite3.connect(":memory:")
+    conn = postgresql_test_driver.connect()
     conn.executescript(
         """
         CREATE TABLE ai_document (
@@ -21,15 +21,19 @@ def _connection():
     return conn
 
 
-def test_m0138_sqlite_upgrade_is_additive_and_idempotent():
+def test_m0138_postgresql_upgrade_is_additive_and_idempotent():
     conn = _connection()
-    upgrade(conn.cursor(), use_pg=False)
+    upgrade(conn.cursor(), use_pg=True)
     conn.commit()
-    upgrade(conn.cursor(), use_pg=False)
+    upgrade(conn.cursor(), use_pg=True)
     conn.commit()
 
-    columns = {row[1] for row in conn.execute("PRAGMA table_info(ai_document_chunk)")}
+    columns = pg_catalog.table_columns(conn, "ai_document_chunk")
     assert {"search_text", "embedding_vector", "retrieval_index_version"} <= columns
     assert conn.execute("SELECT search_text FROM ai_document_chunk WHERE id='c1'").fetchone()[0] == "Command display ospf peer"
-    assert conn.execute("SELECT COUNT(*) FROM sqlite_master WHERE name='ix_ai_chunk_search_text'").fetchone()[0] == 1
-
+    indexes = pg_catalog.index_names(conn, "ai_document_chunk")
+    assert {
+        "ix_ai_chunk_search_fts",
+        "ix_ai_chunk_search_trgm",
+        "ix_ai_chunk_embedding_vector_hnsw",
+    }.issubset(indexes)

@@ -1,11 +1,10 @@
 import json
-import sqlite3
-
+from backend.tests.pg_test_utils import postgresql_test_driver
 from ai.services import knowledge_service as knowledge_service_module
 
 
-def _connection() -> sqlite3.Connection:
-    connection = sqlite3.connect(":memory:")
+def _connection() -> postgresql_test_driver.Connection:
+    connection = postgresql_test_driver.connect()
     connection.executescript(
         """
         CREATE TABLE ai_document (

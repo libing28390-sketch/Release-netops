@@ -48,7 +48,7 @@ RESOURCE_ACTION_CATALOG = {
     # actions distinct from source CRUD prevents a source editor from silently
     # cancelling or replaying a tenant's ingestion work.
     'knowledge_import': {'read', 'view', 'create', 'manage', 'cancel', 'retry'},
-    'knowledge_catalog': {'read', 'view', 'resolve', 'review', 'import', 'rollback'},
+    'knowledge_catalog': {'read', 'view', 'create', 'update', 'delete', 'resolve', 'review', 'import', 'rollback'},
     'knowledge_collection': {'read', 'view', 'create', 'update', 'archive'},
     'command': {'view', 'edit_draft', 'test', 'execute'},
     'pam': {'view', 'request_approval', 'approve', 'create_change', 'intervene'},
@@ -75,7 +75,7 @@ RECOMMENDED_ROLE_PROFILES = {
         'platform': {'view', 'create', 'update', 'delete', 'edit_draft', 'submit', 'bind_device'},
         'knowledge_source': {'read', 'view', 'create', 'update', 'delete', 'validate', 'enable', 'disable'},
         'knowledge_import': {'read', 'view', 'create', 'manage', 'cancel', 'retry'},
-        'knowledge_catalog': {'read', 'view', 'resolve', 'review', 'import', 'rollback'},
+        'knowledge_catalog': {'read', 'view', 'create', 'update', 'delete', 'resolve', 'review', 'import', 'rollback'},
         'knowledge_collection': {'read', 'view', 'create', 'update', 'archive'},
         'command': {'view', 'edit_draft', 'test'}, 'textfsm': {'view'},
         'sample_output': {'view'}, 'playbook': {'view'},

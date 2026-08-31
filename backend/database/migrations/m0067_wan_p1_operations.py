@@ -8,9 +8,9 @@ NAME = "wan_p1_operations"
 
 
 def upgrade(cursor, use_pg: bool) -> None:
-    time_type = "TIMESTAMPTZ" if use_pg else "TEXT"
-    json_type = "JSONB" if use_pg else "TEXT"
-    json_default = "'{}'::jsonb" if use_pg else "'{}'"
+    time_type = "TIMESTAMPTZ"
+    json_type = "JSONB"
+    json_default = "'{}'::jsonb"
     cursor.execute(
         f"""CREATE TABLE IF NOT EXISTS wan_maintenance_windows (
             id TEXT PRIMARY KEY, site_id TEXT DEFAULT '', link_id TEXT DEFAULT '',

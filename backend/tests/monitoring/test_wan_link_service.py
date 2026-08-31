@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+from backend.tests import pg_catalog_assertions as pg_catalog
+
 import asyncio
 from datetime import datetime, timedelta, timezone
 
@@ -11,16 +13,15 @@ from services.wan_link_service import _calculate_rates, _deduplicate_interface_o
 from services.wan_p1_service import _valid_sample
 
 
-def test_wan_migration_is_idempotent_on_sqlite() -> None:
-    import sqlite3
-
-    conn = sqlite3.connect(":memory:")
+def test_wan_migration_is_idempotent_on_postgresql() -> None:
+    from backend.tests.pg_test_utils import postgresql_test_driver
+    conn = postgresql_test_driver.connect()
     try:
         conn.execute("CREATE TABLE interfaces (id TEXT, device_id TEXT, interface_name TEXT)")
-        upgrade(conn, use_pg=False)
-        upgrade(conn, use_pg=False)
-        tables = {row[0] for row in conn.execute("SELECT name FROM sqlite_master WHERE type = 'table'")}
-        columns = {row[1] for row in conn.execute("PRAGMA table_info(interfaces)")}
+        upgrade(conn, use_pg=True)
+        upgrade(conn, use_pg=True)
+        tables = pg_catalog.table_names(conn)
+        columns = pg_catalog.table_columns(conn, "interfaces")
     finally:
         conn.close()
 
@@ -28,22 +29,22 @@ def test_wan_migration_is_idempotent_on_sqlite() -> None:
     assert "if_index" in columns
 
 
-def test_acknowledged_alert_remains_unique_on_sqlite() -> None:
-    import sqlite3
-
-    conn = sqlite3.connect(":memory:")
+def test_acknowledged_alert_remains_unique_on_postgresql() -> None:
+    from backend.tests.pg_test_utils import postgresql_test_driver
+    conn = postgresql_test_driver.connect()
     try:
-        conn.row_factory = sqlite3.Row
+        conn.row_factory = postgresql_test_driver.Row
         conn.execute("CREATE TABLE interfaces (id TEXT, device_id TEXT, interface_name TEXT)")
-        upgrade(conn, use_pg=False)
-        upgrade_p0(conn, use_pg=False)
-        upgrade_ack_uniqueness(conn, use_pg=False)
+        upgrade(conn, use_pg=True)
+        upgrade_p0(conn, use_pg=True)
+        upgrade_ack_uniqueness(conn, use_pg=True)
         conn.execute("INSERT INTO wan_alert_events (id, event_key, link_id, metric, severity, status, title, message, started_at, last_seen_at, created_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)", ("e-1", "k-1", "link-1", "interface_down", "critical", "acknowledged", "down", "", "2026-08-23T00:00:00+00:00", "2026-08-23T00:00:00+00:00", "2026-08-23T00:00:00+00:00"))
+        conn.commit()
         try:
             conn.execute("INSERT INTO wan_alert_events (id, event_key, link_id, metric, severity, status, title, message, started_at, last_seen_at, created_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)", ("e-2", "k-2", "link-1", "interface_down", "critical", "firing", "down", "", "2026-08-23T00:01:00+00:00", "2026-08-23T00:01:00+00:00", "2026-08-23T00:01:00+00:00"))
             assert False, "acknowledged events must remain active-unique"
-        except sqlite3.IntegrityError:
-            pass
+        except postgresql_test_driver.IntegrityError:
+            conn.rollback()
         conn.execute("UPDATE wan_alert_events SET status = 'resolved' WHERE id = 'e-1'")
         conn.execute("INSERT INTO wan_alert_events (id, event_key, link_id, metric, severity, status, title, message, started_at, last_seen_at, created_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)", ("e-2", "k-2", "link-1", "interface_down", "critical", "firing", "down", "", "2026-08-23T00:01:00+00:00", "2026-08-23T00:01:00+00:00", "2026-08-23T00:01:00+00:00"))
     finally:
@@ -51,15 +52,14 @@ def test_acknowledged_alert_remains_unique_on_sqlite() -> None:
 
 
 def test_error_discard_rate_migration_is_idempotent() -> None:
-    import sqlite3
-
-    conn = sqlite3.connect(":memory:")
+    from backend.tests.pg_test_utils import postgresql_test_driver
+    conn = postgresql_test_driver.connect()
     try:
         conn.execute("CREATE TABLE interfaces (id TEXT, device_id TEXT, interface_name TEXT)")
-        upgrade(conn, use_pg=False)
-        upgrade_rates(conn, use_pg=False)
-        upgrade_rates(conn, use_pg=False)
-        columns = {row[1] for row in conn.execute("PRAGMA table_info(wan_link_samples_1m)")}
+        upgrade(conn, use_pg=True)
+        upgrade_rates(conn, use_pg=True)
+        upgrade_rates(conn, use_pg=True)
+        columns = pg_catalog.table_columns(conn, "wan_link_samples_1m")
     finally:
         conn.close()
     assert {"in_error_rate", "out_error_rate", "in_discard_rate", "out_discard_rate"}.issubset(columns)

@@ -32,7 +32,7 @@ from ai.security.security_service import (
 from ai.services.document_security_scan import scan_document_security
 from services.document_parser_adapters import ParsedBlock, ParsedDocument
 from ai.schemas.provider import SUPPORTED_PROVIDER_TYPES
-from api.knowledge_v2_contracts import (
+from api.knowledge_contracts import (
     AttachmentCheckRequest,
     SecurityIncidentRequest,
     SecurityKillSwitchRequest,

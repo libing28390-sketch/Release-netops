@@ -1,0 +1,172 @@
+task_id: DB-007
+priority: P0
+owner: DBA
+status: frozen_for_implementation
+milestone: M1
+authority: PostgreSQL
+
+decision:
+  choice: additive_orthogonal_os_and_software_catalog
+  summary: >-
+    Establish kb_os_family -> kb_os_generation and the independent
+    kb_release_train -> kb_software_version hierarchy. Do not make software
+    train, software version, or OS generation a product, CLI platform, or
+    network driver identity.
+  invariants:
+    - os_family_is_scoped_to_a_kb_vendor
+    - os_generation_is_scoped_to_one_os_family
+    - release_train_is_scoped_to_a_kb_vendor_but_not_an_os_or_product
+    - software_version_is_scoped_to_one_release_train
+    - cli_platform_and_platform_profile_remain_execution_identity
+    - unknown_is_a_resolution_outcome_not_an_active_catalog_code
+    - original_version_string_is_immutable_fact_and_normalized_version_is_derived
+
+entities:
+  kb_os_family:
+    table: kb_os_family
+    purpose: operating_system_identity
+    required_columns: [id, tenant_id, vendor_id, code, name, status, created_at, updated_at, created_by, updated_by]
+    optional_columns: [description, version_scheme, metadata_json, source_kind, canonical_source]
+    foreign_keys: [tenant_id_and_vendor_id_to_kb_vendor_tenant_and_id]
+    unique_keys: [[tenant_id, vendor_id, code]]
+    code_rule: lowercase_ascii_slug_2_to_64_characters
+    lifecycle_statuses: [draft, active, disabled, archived, deleted, purged]
+
+  kb_os_generation:
+    table: kb_os_generation
+    purpose: operating_system_generation
+    required_columns: [id, tenant_id, os_family_id, code, name, status, created_at, updated_at, created_by, updated_by]
+    optional_columns: [generation_order, support_end_at, metadata_json, source_kind, canonical_source]
+    foreign_keys: [tenant_id_and_os_family_id_to_kb_os_family_tenant_and_id]
+    unique_keys: [[tenant_id, os_family_id, code]]
+    code_rule: lowercase_ascii_slug_2_to_64_characters
+    lifecycle_statuses: [draft, active, disabled, archived, deleted, purged]
+
+  kb_release_train:
+    table: kb_release_train
+    purpose: software_train_without_os_or_product_inference
+    required_columns: [id, tenant_id, vendor_id, code, name, status, created_at, updated_at, created_by, updated_by]
+    optional_columns: [version_scheme, release_pattern, lifecycle_notes, metadata_json, source_kind, canonical_source]
+    foreign_keys: [tenant_id_and_vendor_id_to_kb_vendor_tenant_and_id]
+    unique_keys: [[tenant_id, vendor_id, code]]
+    code_rule: lowercase_ascii_slug_2_to_64_characters
+    lifecycle_statuses: [draft, active, disabled, archived, deleted, purged]
+
+  kb_software_version:
+    table: kb_software_version
+    purpose: released_software_version
+    required_columns: [id, tenant_id, release_train_id, version_string, normalized_version, status, created_at, updated_at, created_by, updated_by]
+    optional_columns: [version_scheme, sort_key, is_range, release_date, end_of_support_at, metadata_json, source_kind, canonical_source]
+    foreign_keys: [tenant_id_and_release_train_id_to_kb_release_train_tenant_and_id]
+    unique_keys: [[tenant_id, release_train_id, normalized_version]]
+    version_rules:
+      original_version_string: immutable_source_fact
+      normalized_version: deterministic_derived_value_used_for_exact_lookup
+      ordering: provider_or_vendor_scheme_required; never_plain_lexicographic_comparison
+      range_values: allowed_only_when_is_range_true_and_not_used_as_exact_version
+      unknown: unresolved_import_value_not_an_active_catalog_row
+    lifecycle_statuses: [draft, active, disabled, archived, deleted, purged]
+
+orthogonality_contract:
+  cli_platform:
+    owner: platform_profiles
+    resolution_rule: explicit_platform_or_reviewed_platform_registry_mapping
+    forbidden_inference: software_train_or_os_generation_must_not_select_driver
+  software_train:
+    examples: [V300, V600, IOS_XE_17, RGOS_12]
+    meaning: vendor_release_line_or_train
+    forbidden_parent: [kb_product_family, kb_product_series, kb_product_model, platform_profiles]
+  os_family_and_generation:
+    examples: [VRP, VRP8, IOS_XE, JUNOS]
+    meaning: operating_system_taxonomy
+    forbidden_use: convert_os_name_to_cli_platform_without_explicit_mapping
+  version_resolution:
+    exact_version: active_kb_software_version_only
+    unsupported_or_unknown: return_unknown_and_require_source_or_clarification
+    ambiguous_version: return_candidates_and_require_clarification
+
+normalization_and_validation:
+  os_and_train_code:
+    algorithm: unicode_nfkc_casefold_trim_collapse_whitespace_and_dash_to_underscore
+    preserve_original_name: true
+    no_silent_translation: true
+  software_version:
+    algorithm: trim_unicode_nfkc_preserve_vendor_tokens_and_normalize_case_only_when_scheme_allows
+    preserve_original_version_string: true
+    scheme_registry: vendor_or_os_specific_parser_versioned_and_audited
+    invalid_value: rejected_or_pending_review_not_silently_coerced
+  status:
+    allowlist: [draft, active, disabled, archived, deleted, purged]
+    unknown_status: fail_closed
+
+legacy_gap_audit:
+  rag_metadata:
+    observed_fields: [os_family, os_generation, software_train, software_release]
+    source_tables: [ai_document, ai_document_chunk]
+    classification: denormalized_v1_compatibility_and_import_input
+    migration_rule: preserve_original_values_and_backfill_explicit_ids_later
+  query_parser:
+    source: "backend/ai/services/intent_parser.py: train_and_release_regex_and_explicit_platform_guard"
+    observed_behavior:
+      - extracts_V200_V300_V600_like_train_tokens
+      - extracts_VxxxRxxx_release_tokens
+      - maps_only_explicit_platform_aliases_to_os_context
+      - explicitly_forbids_platform_inference_from_software_train
+    classification: runtime_advisory_until_catalog_resolver_is_available
+  inventory_devices:
+    observed_fields: [devices.platform, devices.version, devices.model]
+    classification: asset_snapshot_not_software_catalog_fact
+    migration_rule: preserve_and_link_only_with_device_scope_and_evidence
+  config_templates:
+    observed_fields: [templates.platform_family, templates.software_version, config_template_compatibility.min_version, config_template_compatibility.max_version]
+    classification: compatibility_range_input
+    migration_rule: keep_range_semantics_and_do_not_convert_to_exact_version_without_evidence
+  governance_scope:
+    source: docs/knowledge-engine/governance/vendor-scope.yaml
+    classification: reviewed_fixture_scope_and_seed_candidate
+    migration_rule: seed_as_reviewed_catalog_facts_with_source_provenance
+
+resolution_boundary:
+  input_fields: [tenant_id, vendor_id, os_family_code, os_generation_code, release_train_code, software_version]
+  order:
+    - exact_active_os_family_and_generation
+    - exact_active_release_train_and_normalized_version
+    - provider_scheme_parser_and_sort_key
+    - candidate_list_with_source_evidence
+    - manual_review_or_clarification
+  ambiguity_behavior: return_candidates_and_require_clarification
+  unknown_behavior: preserve_unknown_and_never_guess_all_or_cli_platform
+
+tenant_and_security:
+  common_columns: [id, tenant_id, created_at, updated_at, created_by, updated_by, status]
+  tenant_fk_strategy: composite_tenant_id_plus_parent_id_foreign_keys
+  authorization: catalog_manage_permission_and_tenant_scope_required
+  audit: actor_and_source_evidence_required_for_catalog_changes
+  forbidden_storage:
+    - os_or_version_identity_only_in_metadata_json
+    - software_version_as_authorization_scope
+    - raw_provider_secret_or_endpoint_in_catalog_metadata
+
+migration_contract:
+  status: contract_only_no_production_ddl_in_db_007
+  prerequisites:
+    - DB-001_DB-002_DB-003_contracts_are_available
+    - DB-005_vendor_mapping_boundary_is_frozen
+    - PostgreSQL_snapshot_and_vendor_version_inventory_are_available
+    - version_scheme_and_duplicate_report_is_approved
+  forward_steps:
+    - create_four_tables_with_common_columns_composite_fks_and_checks
+    - seed_reviewed_os_and_release_train_facts_from_governance_scope
+    - import_versions_as_pending_then_validate_scheme_and_conflicts
+    - expose_only_active_rows_to_document_scope_and_retrieval
+  rollback:
+    - disable_v2_os_software_resolution_flag
+    - retain_v1_metadata_and_device_version_strings
+    - remove_only_unreferenced_catalog_rows_transactionally
+    - restore_legacy_metadata_filters_and_explicit_platform_guard
+  data_loss_policy: no_destructive_delete_and_no_original_version_rewrite
+
+v1_compatibility:
+  preserved_sources: [ai_document, ai_document_chunk, devices.version, templates.software_version, governance.vendor-scope.yaml]
+  fallback: v1_denormalized_metadata_with_unknown_and_ambiguity_signals
+  production_cutover: prohibited_until_DB-018_DB-020_and_DB-009_scope_gates_pass

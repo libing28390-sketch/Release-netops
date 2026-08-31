@@ -2,7 +2,7 @@
 
 The existing ``scheduler_locks`` table is the already-migrated, PostgreSQL
 authoritative lock primitive used by DB-022.  Reusing it keeps this change
-additive and avoids a second lock table while the durable ``kb_import_job``
+additive and avoids a second lock table while the durable import-job
 schema remains release-gated by DB-011/MIG.  The lock name is tenant-hashed,
 and the opaque owner token is never part of an API response.
 """

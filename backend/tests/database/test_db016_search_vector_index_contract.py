@@ -6,8 +6,8 @@ import yaml
 
 
 ROOT = Path(__file__).resolve().parents[3]
-CONTRACT = ROOT / "docs" / "knowledge-engine-v2" / "architecture" / "DB-016-SEARCH-VECTOR-INDEX-CONTRACT.yaml"
-REPORT = ROOT / "docs" / "knowledge-engine-v2" / "architecture" / "DB-016-SEARCH-VECTOR-INDEX-CONTRACT.md"
+CONTRACT = ROOT / "docs" / "knowledge-engine" / "architecture" / "DB-016-SEARCH-VECTOR-INDEX-CONTRACT.yaml"
+REPORT = ROOT / "docs" / "knowledge-engine" / "architecture" / "DB-016-SEARCH-VECTOR-INDEX-CONTRACT.md"
 M0104 = ROOT / "backend" / "database" / "migrations" / "m0104_ai_pgvector_rag.py"
 M0113 = ROOT / "backend" / "database" / "migrations" / "m0113_rag_metadata_v2.py"
 RETRIEVER = ROOT / "backend" / "ai" / "services" / "rag_retriever.py"

@@ -120,7 +120,7 @@ def test_cat015_api_contract_and_permission_profile_are_explicit():
     from api.knowledge_catalog import router
 
     paths = {(route.path, tuple(sorted(route.methods or ()))) for route in router.routes}
-    assert any(path.endswith("/knowledge-v2/catalog/versions") and "GET" in methods for path, methods in paths)
+    assert any(path.endswith("/knowledge/catalog/versions") and "GET" in methods for path, methods in paths)
     assert any(path.endswith("/versions/preview") and "POST" in methods for path, methods in paths)
     assert any(path.endswith("/versions/import") and "POST" in methods for path, methods in paths)
     assert any(path.endswith("/versions/{version_id}/rollback") and "POST" in methods for path, methods in paths)

@@ -44,6 +44,9 @@ croniter>=2.0.0
 
 # HTTP & WebSocket
 httpx>=0.27.0
+# Starlette 1.x uses httpx2 for its TestClient; keep httpx for the application
+# and outbound-client contracts above while satisfying the test-client runtime.
+httpx2>=2.0.0
 socksio>=1.0.0
 PySocks>=1.7.1
 websockets>=12.0

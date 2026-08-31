@@ -68,7 +68,7 @@ from api.collection_plans import router as collection_plans_router
 from api.textfsm_templates import router as textfsm_templates_router
 from api.platform_registry import router as platform_registry_router, device_registry_router
 from api.knowledge_sources import router as knowledge_sources_router
-from api.knowledge_v2_contract import router as knowledge_v2_contract_router
+from api.knowledge_contract import router as knowledge_contract_router
 from api.knowledge_evaluation import router as knowledge_evaluation_router
 from api.knowledge_traces import router as knowledge_traces_router
 from api.knowledge_documents import router as knowledge_documents_router
@@ -89,7 +89,7 @@ from ai.api import ai_router
 from ai.gateway.exceptions import AIException
 from ai.api.chat_v1 import router as ai_v1_chat_router
 from ai.api.security import load_persisted_security_policy
-from api.knowledge_v2_response import is_stable_api_path, stable_error_payload
+from api.knowledge_response import is_stable_api_path, stable_error_payload
 from services.scheduler_service import sync_scheduler_jobs, run_scheduled_automation_job_sync_wrapper
 from engine.orchestrator import get_telemetry_orchestrator
 import logging
@@ -101,7 +101,7 @@ from datetime import datetime, timedelta, timezone
 from urllib import request as urlrequest
 from urllib import error as urlerror
 from ping3 import ping
-from database import DB_PATH, init_db, get_db_connection, _USE_PG
+from database import init_db, get_db_connection
 from apscheduler.schedulers.asyncio import AsyncIOScheduler
 from apscheduler.triggers.cron import CronTrigger
 from core.scheduler_manager import scheduler, refresh_dynamic_scheduler
@@ -409,38 +409,6 @@ async def redirect_redoc():
     return RedirectResponse(url="/api/redoc")
 
 
-def rewrite_knowledge_v2_path(path: str) -> str | None:
-    """Map the canonical KB V2 prefix to the legacy route registration.
-
-    Resource routers keep their established `/api/knowledge-v2` paths for
-    backwards compatibility.  The public V2 contract is `/api/v2/kb`; this
-    narrow rewrite avoids duplicating handlers and keeps one authorization
-    implementation for both prefixes.
-    """
-    canonical = "/api/v2/kb"
-    legacy = "/api/knowledge-v2"
-    if path == canonical:
-        return legacy
-    if path.startswith(f"{canonical}/"):
-        return legacy + path[len(canonical):]
-    return None
-
-
-@app.middleware("http")
-async def knowledge_v2_boundary_alias(request: Request, call_next):
-    original_path = request.scope.get("path", "")
-    rewritten_path = rewrite_knowledge_v2_path(original_path)
-    if rewritten_path:
-        request.scope["kb_v2_original_path"] = original_path
-        request.scope["path"] = rewritten_path
-        request.scope["raw_path"] = rewritten_path.encode("utf-8")
-    response = await call_next(request)
-    if rewritten_path:
-        response.headers["X-API-Version"] = "nxa.kb.v2"
-        response.headers["X-API-Canonical-Path"] = original_path
-    return response
-
-
 @app.middleware("http")
 async def enforce_request_body_limit(request: Request, call_next):
     """Reject oversized HTTP bodies before FastAPI/Pydantic buffers them.
@@ -680,7 +648,7 @@ app.include_router(collection_plans_router, prefix="/api")
 app.include_router(textfsm_templates_router, prefix="/api")
 app.include_router(platform_registry_router, prefix="/api")
 app.include_router(knowledge_sources_router, prefix="/api")
-app.include_router(knowledge_v2_contract_router, prefix="/api")
+app.include_router(knowledge_contract_router, prefix="/api")
 app.include_router(knowledge_evaluation_router, prefix="/api")
 app.include_router(knowledge_traces_router, prefix="/api")
 app.include_router(knowledge_documents_router, prefix="/api")
@@ -702,7 +670,7 @@ app.include_router(pam_ws_router,         prefix="/api")
 # scheduler is now imported from core.scheduler_manager
 
 def _daily_db_maintenance():
-    """Clean expired sessions, vacuum database."""
+    """Clean expired sessions; PostgreSQL autovacuum handles storage maintenance."""
     conn = get_db_connection()
     try:
         import time
@@ -712,15 +680,6 @@ def _daily_db_maintenance():
         conn.commit()
     finally:
         conn.close()
-    # VACUUM is SQLite-only maintenance; PG handles this via autovacuum
-    if not _USE_PG:
-        conn2 = get_db_connection()
-        try:
-            conn2.execute('VACUUM')
-        except Exception as e:
-            logger.warning(f"VACUUM failed: {e}")
-        finally:
-            conn2.close()
     logger.info("[Maintenance] Daily DB maintenance completed")
 
 
@@ -783,11 +742,8 @@ else:
     logger.warning("dist directory not found. Frontend will not be served.")
 
 def seed_data():
-    from database import _USE_PG
     from ai.prompts.manager import prompt_manager
     from services.tag_service import seed_builtin_tags, sync_all_device_status_tags
-    if not _USE_PG and not os.path.exists(DB_PATH):
-        return
     conn = get_db_connection()
     
     try:

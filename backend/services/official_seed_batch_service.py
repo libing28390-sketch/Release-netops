@@ -20,7 +20,7 @@ from typing import Any
 from urllib.parse import urlsplit
 
 from services.official_url_import_service import OfficialUrlImportError, import_single_official_url
-from services.source_registry_service import SourceRegistryError, validate_official_url_input
+from services.knowledge_v1_source_service import SourceRegistryError, validate_official_url_input
 
 
 MAX_SEED_ITEMS = 20
@@ -110,6 +110,19 @@ def _preflight_item(item: Mapping[str, Any], *, index: int, user: Mapping[str, A
             status_code=exc.status_code,
             details=[detail],
         ) from exc
+    if not preflight.get("valid"):
+        raise OfficialSeedBatchError(
+            "SEED_PREFLIGHT_FAILED",
+            "One or more Seed URLs failed the official-source preflight",
+            status_code=403,
+            details=[
+                {
+                    "index": index,
+                    "code": "OFFICIAL_URL_NOT_ALLOWLISTED",
+                    "reasons": list(preflight.get("reasons") or [])[:8],
+                }
+            ],
+        )
     return {
         "index": index,
         "canonical_url": str(preflight.get("canonical_url") or ""),
@@ -182,38 +195,42 @@ def _utc_now() -> str:
 
 
 def _record_site_alerts(user: Mapping[str, Any], *, batch_id: str, alerts: Sequence[Mapping[str, Any]]) -> None:
-    """Persist bounded tenant/host/code alerts, never using legacy alert_events."""
+    """Persist bounded site alerts in the V1 provenance stream."""
     if not alerts:
         return
-    from database import get_db_connection
+    from services.knowledge_v1_source_service import record_site_alert
 
-    tenant_id = _tenant(user)
     actor = _bounded_text(user.get("id") or user.get("username") or "system", maximum=128)
     now = _utc_now()
-    conn = get_db_connection()
-    try:
-        for alert in alerts:
-            host = _bounded_text(alert.get("host"), maximum=255).lower()
-            code = _bounded_text(alert.get("alert_code"), maximum=128)
-            if not host or not code:
+    for alert in alerts:
+        source_ids = sorted({_bounded_text(item, maximum=128) for item in (alert.get("source_ids") or []) if item})
+        # Every V1 revision needs a document FK. If a preflight failed before
+        # a source row existed, the bounded batch result remains available to
+        # the caller but there is no safe anchor for durable alert history.
+        for source_id in source_ids:
+            try:
+                record_site_alert(
+                    source_id,
+                    {
+                        "host": _bounded_text(alert.get("host"), maximum=255).lower(),
+                        "alert_code": _bounded_text(alert.get("alert_code"), maximum=128),
+                        "severity": _bounded_text(alert.get("severity") or "warning", maximum=16),
+                        "title": _bounded_text(alert.get("title") or "Official source site anomaly", maximum=256),
+                        "status": "open",
+                        "observed_count": int(alert.get("observed_count") or 0),
+                        "failure_count": int(alert.get("observed_count") or 0),
+                        "first_seen_at": now,
+                        "last_seen_at": now,
+                        "source_ids": source_ids,
+                        "details": {"batch_id": _bounded_text(batch_id), "actor": actor},
+                    },
+                    dict(user),
+                )
+            except Exception:
+                # A telemetry alert must not turn an otherwise completed seed
+                # batch into a failed import. The source observation remains
+                # the primary evidence when an alert anchor is unavailable.
                 continue
-            source_ids = sorted({_bounded_text(item, maximum=128) for item in (alert.get("source_ids") or []) if item})
-            details = {"batch_id": _bounded_text(batch_id), "observed_count": int(alert.get("observed_count") or 0), "actor": actor}
-            row = conn.execute("SELECT id, failure_count FROM kb_site_anomaly_alert WHERE tenant_id = ? AND host = ? AND alert_code = ?", (tenant_id, host, code)).fetchone()
-            if row:
-                row_dict = dict(row)
-                conn.execute(
-                    "UPDATE kb_site_anomaly_alert SET severity = ?, title = ?, status = 'open', failure_count = ?, last_seen_at = ?, resolved_at = NULL, source_ids_json = ?, details_json = ? WHERE tenant_id = ? AND host = ? AND alert_code = ?",
-                    (_bounded_text(alert.get("severity") or "warning", maximum=16), _bounded_text(alert.get("title") or "Official source site anomaly", maximum=256), int(row_dict.get("failure_count") or 0) + int(alert.get("observed_count") or 0), now, json.dumps(source_ids, ensure_ascii=True), json.dumps(details, ensure_ascii=True), tenant_id, host, code),
-                )
-            else:
-                conn.execute(
-                    "INSERT INTO kb_site_anomaly_alert (id, tenant_id, host, alert_code, severity, title, status, failure_count, first_seen_at, last_seen_at, resolved_at, source_ids_json, details_json) VALUES (?, ?, ?, ?, ?, ?, 'open', ?, ?, ?, NULL, ?, ?)",
-                    (str(uuid.uuid4()), tenant_id, host, code, _bounded_text(alert.get("severity") or "warning", maximum=16), _bounded_text(alert.get("title") or "Official source site anomaly", maximum=256), int(alert.get("observed_count") or 0), now, now, json.dumps(source_ids, ensure_ascii=True), json.dumps(details, ensure_ascii=True)),
-                )
-        conn.commit()
-    finally:
-        conn.close()
 
 
 def _build_site_alerts(candidates: Sequence[Mapping[str, Any]], results: Sequence[Mapping[str, Any]]) -> list[dict[str, Any]]:
@@ -258,24 +275,44 @@ def list_site_anomaly_alerts(
         raise OfficialSeedBatchError("SITE_ALERT_STATUS_INVALID", "status must be open or resolved", status_code=400)
     from database import get_db_connection
 
-    clauses = ["tenant_id = ?"]
-    params: list[Any] = [_tenant(user)]
-    if host_value:
-        clauses.append("host = ?")
-        params.append(host_value)
-    if status_value:
-        clauses.append("status = ?")
-        params.append(status_value)
-    conn = get_db_connection()
-    try:
+    with get_db_connection() as conn:
         rows = conn.execute(
-            "SELECT id, host, alert_code, severity, title, status, failure_count, first_seen_at, last_seen_at, resolved_at "
-            "FROM kb_site_anomaly_alert WHERE " + " AND ".join(clauses) + " ORDER BY last_seen_at DESC, id DESC LIMIT ?",
-            tuple([*params, bounded_limit]),
+            "SELECT id, metadata_json, created_at FROM ai_document_revision "
+            "WHERE tenant_id = ? AND record_type = 'site_alert' "
+            "ORDER BY created_at DESC, id DESC LIMIT 1000",
+            (_tenant(user),),
         ).fetchall()
-        return [dict(row) for row in rows]
-    finally:
-        conn.close()
+    latest: dict[tuple[str, str], dict[str, Any]] = {}
+    for row in rows:
+        metadata = row[1] if isinstance(row[1], dict) else None
+        if metadata is None:
+            try:
+                metadata = json.loads(row[1] or "")
+            except (TypeError, ValueError, json.JSONDecodeError):
+                metadata = {}
+        alert = metadata.get("site_alert") if isinstance(metadata, dict) else None
+        if not isinstance(alert, dict):
+            continue
+        host_item = _bounded_text(alert.get("host"), maximum=255).lower()
+        code_item = _bounded_text(alert.get("alert_code"), maximum=128)
+        status_item = _bounded_text(alert.get("status") or "open", maximum=16).lower()
+        if not host_item or not code_item:
+            continue
+        if host_value and host_item != host_value:
+            continue
+        if status_value and status_item != status_value:
+            continue
+        key = (host_item, code_item)
+        if key not in latest:
+            item = dict(alert)
+            item["id"] = str(row[0] or "")
+            item.setdefault("resolved_at", None)
+            latest[key] = item
+    return sorted(
+        latest.values(),
+        key=lambda item: (str(item.get("last_seen_at") or ""), str(item.get("id") or "")),
+        reverse=True,
+    )[:bounded_limit]
 
 
 def collect_official_seed_batch(

@@ -1,4 +1,4 @@
-"""Knowledge V2 ingestion and Import Job control API."""
+"""Knowledge V1 ingestion and Import Job control API."""
 
 from __future__ import annotations
 
@@ -34,7 +34,7 @@ from services.official_source_supplement_service import (
 )
 
 
-router = APIRouter(prefix="/knowledge-v2/ingestion", tags=["knowledge-v2-ingestion"])
+router = APIRouter(prefix="/knowledge/ingestion", tags=["knowledge-ingestion"])
 logger = logging.getLogger(__name__)
 
 
@@ -114,7 +114,7 @@ def _call_job_control(fn, *args, **kwargs):
     except HTTPException:
         raise
     except Exception as exc:
-        logger.exception("Knowledge V2 ingestion job operation failed")
+        logger.exception("Knowledge ingestion job operation failed")
         raise HTTPException(status_code=500, detail={"code": "INGESTION_JOB_ERROR", "message": "Ingestion job operation failed"}) from exc
 
 

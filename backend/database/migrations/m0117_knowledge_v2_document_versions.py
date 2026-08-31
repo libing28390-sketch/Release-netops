@@ -21,13 +21,12 @@ _TRUST_LEVELS = "'official','reviewed','internal','untrusted'"
 
 
 def _json_type(use_pg: bool) -> tuple[str, str]:
-    if use_pg:
-        return "JSONB", "'{}'::jsonb"
+    return "JSONB", "'{}'::jsonb"
     return "TEXT", "'{}'"
 
 
 def _time_type(use_pg: bool) -> str:
-    return "TIMESTAMPTZ" if use_pg else "TEXT"
+    return "TIMESTAMPTZ"
 
 
 def _create_document_table(cursor, use_pg: bool) -> None:
@@ -136,40 +135,39 @@ def _create_version_table(cursor, use_pg: bool) -> None:
 
 def _create_fact_guard(cursor, use_pg: bool) -> None:
     """Protect the original/hash/source facts while allowing lifecycle updates."""
-    if use_pg:
-        cursor.execute(
-            """
-            CREATE OR REPLACE FUNCTION kb_document_version_fact_immutable_guard()
-            RETURNS trigger
-            LANGUAGE plpgsql
-            AS $$
-            BEGIN
-                IF NEW.tenant_id IS DISTINCT FROM OLD.tenant_id
-                   OR NEW.document_id IS DISTINCT FROM OLD.document_id
-                   OR NEW.source_version_id IS DISTINCT FROM OLD.source_version_id
-                   OR NEW.version_no IS DISTINCT FROM OLD.version_no
-                   OR NEW.original_content IS DISTINCT FROM OLD.original_content
-                   OR NEW.content_hash IS DISTINCT FROM OLD.content_hash
-                   OR NEW.parser_name IS DISTINCT FROM OLD.parser_name
-                   OR NEW.parser_version IS DISTINCT FROM OLD.parser_version
-                   OR NEW.fetched_at IS DISTINCT FROM OLD.fetched_at
-                THEN
-                    RAISE EXCEPTION 'kb_document_version_fact_immutable';
-                END IF;
-                RETURN NEW;
-            END;
-            $$
-            """
-        )
-        cursor.execute("DROP TRIGGER IF EXISTS trg_kb_document_version_fact_immutable ON kb_document_version")
-        cursor.execute(
-            """
-            CREATE TRIGGER trg_kb_document_version_fact_immutable
-            BEFORE UPDATE ON kb_document_version
-            FOR EACH ROW EXECUTE FUNCTION kb_document_version_fact_immutable_guard()
-            """
-        )
-        return
+    cursor.execute(
+        """
+        CREATE OR REPLACE FUNCTION kb_document_version_fact_immutable_guard()
+        RETURNS trigger
+        LANGUAGE plpgsql
+        AS $$
+        BEGIN
+            IF NEW.tenant_id IS DISTINCT FROM OLD.tenant_id
+               OR NEW.document_id IS DISTINCT FROM OLD.document_id
+               OR NEW.source_version_id IS DISTINCT FROM OLD.source_version_id
+               OR NEW.version_no IS DISTINCT FROM OLD.version_no
+               OR NEW.original_content IS DISTINCT FROM OLD.original_content
+               OR NEW.content_hash IS DISTINCT FROM OLD.content_hash
+               OR NEW.parser_name IS DISTINCT FROM OLD.parser_name
+               OR NEW.parser_version IS DISTINCT FROM OLD.parser_version
+               OR NEW.fetched_at IS DISTINCT FROM OLD.fetched_at
+            THEN
+                RAISE EXCEPTION 'kb_document_version_fact_immutable';
+            END IF;
+            RETURN NEW;
+        END;
+        $$
+        """
+    )
+    cursor.execute("DROP TRIGGER IF EXISTS trg_kb_document_version_fact_immutable ON kb_document_version")
+    cursor.execute(
+        """
+        CREATE TRIGGER trg_kb_document_version_fact_immutable
+        BEFORE UPDATE ON kb_document_version
+        FOR EACH ROW EXECUTE FUNCTION kb_document_version_fact_immutable_guard()
+        """
+    )
+    return
 
     cursor.execute("DROP TRIGGER IF EXISTS trg_kb_document_version_fact_immutable")
     cursor.execute(

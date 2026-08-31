@@ -24,7 +24,7 @@ from services.ingestion_idempotency_service import build_url_idempotency_key
 from services.document_version_service import DocumentVersionError, record_document_version
 from services.document_content_cleaning import parse_and_clean_document
 from services.official_document_publisher import publish_official_document
-from services.source_registry_service import (
+from services.knowledge_v1_source_service import (
     SourceRegistryError,
     collect_source,
     create_source,
@@ -37,7 +37,7 @@ from services.source_registry_service import (
 
 
 _CONTROL_RE = re.compile(r"[\x00-\x1f\x7f]")
-_OFFICIAL_SOURCE_KINDS = {"official_url", "product_page", "configuration_guide", "command_reference", "release_note", "product_support"}
+_OFFICIAL_SOURCE_KINDS = {"official_url", "product_page", "configuration_guide", "command_reference", "release_note", "troubleshooting_guide", "product_support"}
 _VERSION_KEYS = {"primary", "compatibility"}
 
 
@@ -84,6 +84,12 @@ def _metadata(payload: dict[str, Any], *, actor: str) -> dict[str, Any]:
         "terms_review_status": terms,
         "reviewer": _text(payload.get("reviewer") or actor, field="reviewer", maximum=256, required=True),
         "reviewed_at": _text(payload.get("reviewed_at") or "", field="reviewed_at", maximum=128),
+        "product_series": _text(payload.get("product_series"), field="product_series", maximum=256),
+        "product_model": _text(payload.get("product_model"), field="product_model", maximum=256),
+        "platform_code": _text(payload.get("platform_code"), field="platform_code", maximum=128),
+        "os_family": _text(payload.get("os_family"), field="os_family", maximum=128),
+        "os_generation": _text(payload.get("os_generation"), field="os_generation", maximum=128),
+        "document_category": _text(payload.get("document_category"), field="document_category", maximum=64),
         "ingestion": {"boundary": "ING-002_single_official_url", "actor": actor},
     }
 
@@ -184,6 +190,18 @@ def import_single_official_url(
         preflight = validate_official_url_input(raw_url, source_kind=source_kind, metadata=source_metadata)
     except SourceRegistryError as exc:
         raise OfficialUrlImportError(exc.code, exc.message, status_code=exc.status_code, details=exc.details) from exc
+    if not preflight.get("valid"):
+        raise OfficialUrlImportError(
+            "OFFICIAL_URL_NOT_ALLOWLISTED",
+            "The official URL is outside the approved source allowlist",
+            status_code=403,
+            details={
+                "host": preflight.get("host"),
+                "path": preflight.get("path"),
+                "source_kind": preflight.get("source_kind"),
+                "reasons": preflight.get("reasons") or [],
+            },
+        )
     canonical_url = preflight["canonical_url"]
     explicit_key = _text(payload.get("idempotency_key") or "", field="idempotency_key", maximum=256)
     key = explicit_key or build_url_idempotency_key(canonical_url)
@@ -301,7 +319,11 @@ def import_single_official_url(
             original_content=raw_for_document,
             normalized_content=cleaned.text if cleaned is not None else None,
             collection_id=payload.get("collection_id") or payload.get("knowledge_base_id"),
-            document_kind="command_reference" if source_kind == "command_reference" else "official_manual",
+            document_kind=(
+                "command_reference"
+                if source_kind == "command_reference"
+                else ("troubleshooting" if source_kind == "troubleshooting_guide" else "official_manual")
+            ),
         )
         job.advance_phase(
             "fetched",

@@ -3,14 +3,14 @@ import { cleanup, render, screen, waitFor } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { ProviderManagementTab } from './ProviderManagementTab';
-import { createAIProvider, getAIProviders, testAIProvider } from '../../../api/ai';
+import { createAIProvider, getAIProvidersPage, testAIProvider } from '../../../api/ai';
 
 vi.mock('../../../contexts/AppDomainContext', () => ({
   useCoreApp: vi.fn(),
 }));
 
 vi.mock('../../../api/ai', () => ({
-  getAIProviders: vi.fn(),
+  getAIProvidersPage: vi.fn(),
   createAIProvider: vi.fn(),
   updateAIProvider: vi.fn(),
   deleteAIProvider: vi.fn(),
@@ -35,7 +35,7 @@ const provider = {
   updated_at: '2026-08-17T00:00:00Z',
 };
 
-const getProviders = vi.mocked(getAIProviders);
+const getProviders = vi.mocked(getAIProvidersPage);
 const createProvider = vi.mocked(createAIProvider);
 const testProvider = vi.mocked(testAIProvider);
 
@@ -43,7 +43,14 @@ describe('ProviderManagementTab browser key paths', () => {
   beforeEach(async () => {
     const { useCoreApp } = await import('../../../contexts/AppDomainContext');
     vi.mocked(useCoreApp).mockReturnValue({ language: 'zh', showToast: vi.fn() } as never);
-    getProviders.mockResolvedValue([provider as any]);
+    getProviders.mockResolvedValue({
+      items: [provider as any],
+      total: 1,
+      page: 1,
+      page_size: 20,
+      total_pages: 1,
+      facets: { data_regions: ['unknown'], health_statuses: ['unhealthy'], provider_types: ['deepseek'], tags: [] },
+    });
     createProvider.mockResolvedValue(provider as any);
     testProvider.mockResolvedValue({ success: true, message: 'ok', model_tested: 'deepseek-chat', sample_response: 'ok', latency_ms: 12 } as any);
   });
@@ -54,7 +61,7 @@ describe('ProviderManagementTab browser key paths', () => {
     const user = userEvent.setup();
     render(<ProviderManagementTab />);
 
-    expect(await screen.findByText('DeepSeek 主供应商')).toBeTruthy();
+    expect((await screen.findAllByText('DeepSeek 主供应商')).length).toBeGreaterThanOrEqual(1);
     expect(screen.getByText('sk-****181f')).toBeTruthy();
     expect(screen.queryByText('sk-live-secret')).toBeNull();
     const manualLink = screen.getByRole('link', { name: '下载 AI 使用手册' });
@@ -91,7 +98,7 @@ describe('ProviderManagementTab browser key paths', () => {
   }, 10_000);
 
   it('shows the empty state and a recoverable request error', async () => {
-    getProviders.mockResolvedValueOnce([]);
+    getProviders.mockResolvedValueOnce({ items: [], total: 0, page: 1, page_size: 20, total_pages: 1, facets: {} });
     const user = userEvent.setup();
     render(<ProviderManagementTab />);
     expect(await screen.findByText('还没有 Provider')).toBeTruthy();
@@ -115,7 +122,7 @@ describe('ProviderManagementTab browser key paths', () => {
     const user = userEvent.setup();
     render(<ProviderManagementTab />);
 
-    await screen.findByText('DeepSeek 主供应商');
+    await screen.findAllByText('DeepSeek 主供应商');
     await user.click(screen.getByRole('button', { name: '测试连通性' }));
     expect(await screen.findByText(/允许的数据分类级别不足/)).toBeTruthy();
   });
@@ -130,9 +137,10 @@ describe('ProviderManagementTab browser key paths', () => {
     const user = userEvent.setup();
     render(<ProviderManagementTab />);
 
-    await screen.findByText('DeepSeek 主供应商');
+    await screen.findAllByText('DeepSeek 主供应商');
     await user.click(screen.getByRole('button', { name: '测试连通性' }));
     expect(await screen.findByText(/Provider 已拒绝 API Key/)).toBeTruthy();
+    expect(screen.getByText('错误标识：AI_AUTH_FAILED')).toBeTruthy();
   });
 
   it('explains the health backoff after a recent failed probe', async () => {
@@ -145,7 +153,7 @@ describe('ProviderManagementTab browser key paths', () => {
     const user = userEvent.setup();
     render(<ProviderManagementTab />);
 
-    await screen.findByText('DeepSeek 主供应商');
+    await screen.findAllByText('DeepSeek 主供应商');
     await user.click(screen.getByRole('button', { name: '测试连通性' }));
     expect(await screen.findByText(/短暂冷却/)).toBeTruthy();
   });

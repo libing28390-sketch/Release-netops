@@ -67,8 +67,8 @@ def test_kui017_api_contract_and_not_found():
     from api.knowledge_traces import api_get_retrieval_trace, router
 
     paths = {(route.path, tuple(sorted(route.methods or ()))) for route in router.routes}
-    assert any(path.endswith("/knowledge-v2/retrieval-traces") and "GET" in methods for path, methods in paths)
-    assert any(path.endswith("/knowledge-v2/retrieval-traces/{trace_id}") and "GET" in methods for path, methods in paths)
+    assert any(path.endswith("/knowledge/retrieval-traces") and "GET" in methods for path, methods in paths)
+    assert any(path.endswith("/knowledge/retrieval-traces/{trace_id}") and "GET" in methods for path, methods in paths)
     with pytest.raises(Exception) as exc:
         api_get_retrieval_trace(trace_id="rt_missing", user={"tenant_id": "tenant-kui017", "role": "Administrator"})
     assert getattr(exc.value, "status_code", None) == 404

@@ -1,10 +1,4 @@
-"""Fail-closed PostgreSQL extension checks for V2 database migrations.
-
-The application may run SQLite for local/offline tests, but SQLite must never
-be reported as having PostgreSQL capabilities.  PostgreSQL migrations call
-``ensure_required_extensions`` so a missing ``vector`` or ``pg_trgm`` package
-produces an actionable, non-secret error instead of being silently ignored.
-"""
+"""Fail-closed PostgreSQL extension checks for database migrations."""
 
 from __future__ import annotations
 
@@ -44,15 +38,13 @@ class ExtensionInstallError(PostgreSQLExtensionError):
 class ExtensionState:
     """Observed extension state without connection credentials or raw errors."""
 
-    use_pg: bool
     installed: Mapping[str, str]
     available: Mapping[str, str]
     missing: tuple[str, ...]
-    not_applicable: bool = False
 
     @property
     def ok(self) -> bool:
-        return self.not_applicable or not self.missing
+        return not self.missing
 
 
 def _normalise_names(names: Iterable[str]) -> tuple[str, ...]:
@@ -72,24 +64,10 @@ def _placeholder_list(names: tuple[str, ...]) -> str:
     return ", ".join("?" for _ in names)
 
 
-def inspect_extensions(cursor, *, use_pg: bool, names: Iterable[str] = REQUIRED_V2_EXTENSIONS) -> ExtensionState:
-    """Inspect installed/available PostgreSQL extensions.
-
-    SQLite returns ``not_applicable=True`` deliberately.  A SQLite run may
-    continue in compatibility mode, but callers cannot use it as evidence that
-    PostgreSQL vector/trigram support exists.
-    """
+def inspect_extensions(cursor, *, names: Iterable[str] = REQUIRED_V2_EXTENSIONS) -> ExtensionState:
+    """Inspect installed and available PostgreSQL extensions."""
 
     required = _normalise_names(names)
-    if not use_pg:
-        return ExtensionState(
-            use_pg=False,
-            installed={},
-            available={},
-            missing=(),
-            not_applicable=True,
-        )
-
     placeholders = _placeholder_list(required)
     try:
         installed_rows = cursor.execute(
@@ -110,7 +88,6 @@ def inspect_extensions(cursor, *, use_pg: bool, names: Iterable[str] = REQUIRED_
     available = {str(row[0]).lower(): str(row[1] or "") for row in available_rows}
     missing = tuple(name for name in required if name not in installed)
     return ExtensionState(
-        use_pg=True,
         installed=installed,
         available=available,
         missing=missing,
@@ -120,7 +97,6 @@ def inspect_extensions(cursor, *, use_pg: bool, names: Iterable[str] = REQUIRED_
 def ensure_required_extensions(
     cursor,
     *,
-    use_pg: bool,
     names: Iterable[str] = REQUIRED_V2_EXTENSIONS,
     create_missing: bool = True,
 ) -> ExtensionState:
@@ -131,9 +107,7 @@ def ensure_required_extensions(
     """
 
     required = _normalise_names(names)
-    state = inspect_extensions(cursor, use_pg=use_pg, names=required)
-    if not use_pg:
-        return state
+    state = inspect_extensions(cursor, names=required)
     if not state.missing:
         return state
     if not create_missing:
@@ -161,7 +135,7 @@ def ensure_required_extensions(
                 f"Grant CREATE privilege or install it as a database administrator ({type(exc).__name__}).",
             ) from exc
 
-    final_state = inspect_extensions(cursor, use_pg=True, names=required)
+    final_state = inspect_extensions(cursor, names=required)
     if final_state.missing:
         missing = ", ".join(final_state.missing)
         raise MissingPostgreSQLExtension(

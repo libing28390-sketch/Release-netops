@@ -117,10 +117,7 @@ class TelemetryOrchestrator:
         
         while True:
             try:
-                # Always query through the configured database adapter.  The
-                # Docker deployment uses PostgreSQL, so the SQLite DB_PATH file
-                # is intentionally absent and cannot be used as a readiness
-                # check for the monitoring loop.
+                # Always query through the configured PostgreSQL adapter.
                 devices = _db_quick(
                     "SELECT * FROM devices WHERE ip_address IS NOT NULL AND ip_address != ''",
                     fetchall=True,
@@ -150,9 +147,7 @@ class TelemetryOrchestrator:
 
         while True:
             try:
-                # As in the A-Loop, the database adapter is authoritative for
-                # both SQLite and PostgreSQL. Do not gate PostgreSQL polling on
-                # the presence of the local SQLite file.
+                # As in the A-Loop, PostgreSQL is authoritative.
                 devices = _db_quick("SELECT * FROM devices WHERE status = 'online'", fetchall=True)
                 current_slow_cycle = slow_cycle_tick
                 slow_cycle_tick += 1

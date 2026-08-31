@@ -7,15 +7,13 @@ NAME = "repair_pam_transaction_metadata"
 
 
 def _columns(cursor, use_pg: bool) -> set[str]:
-    if use_pg:
-        rows = cursor.execute(
-            "SELECT column_name FROM information_schema.columns "
-            "WHERE table_schema = current_schema() AND table_name = ?",
-            ("pam_change_transactions",),
-        ).fetchall()
-        return {str(row[0]) for row in rows}
-    rows = cursor.execute("PRAGMA table_info(pam_change_transactions)").fetchall()
-    return {str(row[1]) for row in rows}
+    rows = cursor.execute(
+        "SELECT column_name FROM information_schema.columns "
+        "WHERE table_schema = current_schema() AND table_name = ?",
+        ("pam_change_transactions",),
+    ).fetchall()
+    return {str(row[0]) for row in rows}
+
 
 
 def upgrade(cursor, use_pg: bool) -> None:

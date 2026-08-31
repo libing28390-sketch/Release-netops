@@ -29,14 +29,13 @@ def _checksum(value) -> str:
 
 
 def _columns(cursor, table: str, use_pg: bool) -> set[str]:
-    if use_pg:
-        rows = cursor.execute(
-            "SELECT column_name FROM information_schema.columns "
-            "WHERE table_schema = current_schema() AND table_name = ?",
-            (table,),
-        ).fetchall()
-        return {str(row[0]).lower() for row in rows}
-    return {str(row[1]).lower() for row in cursor.execute(f"PRAGMA table_info({table})").fetchall()}
+    rows = cursor.execute(
+        "SELECT column_name FROM information_schema.columns "
+        "WHERE table_schema = current_schema() AND table_name = ?",
+        (table,),
+    ).fetchall()
+    return {str(row[0]).lower() for row in rows}
+
 
 
 def _ensure_column(cursor, table: str, column: str, definition: str, use_pg: bool) -> None:

@@ -8,9 +8,9 @@ from ai.services.product_alias_service import build_alias_record, detect_alias_c
 
 
 ROOT = Path(__file__).resolve().parents[3]
-SAMPLE = ROOT / "docs" / "knowledge-engine-v2" / "catalog" / "CAT-010-ALIAS-SAMPLES.yaml"
-CAT005 = ROOT / "docs" / "knowledge-engine-v2" / "catalog" / "CAT-005-HUAWEI-CE6800.yaml"
-CAT006 = ROOT / "docs" / "knowledge-engine-v2" / "catalog" / "CAT-006-CISCO-C9300.yaml"
+SAMPLE = ROOT / "docs" / "knowledge-engine" / "catalog" / "CAT-010-ALIAS-SAMPLES.yaml"
+CAT005 = ROOT / "docs" / "knowledge-engine" / "catalog" / "CAT-005-HUAWEI-CE6800.yaml"
+CAT006 = ROOT / "docs" / "knowledge-engine" / "catalog" / "CAT-006-CISCO-C9300.yaml"
 
 
 def _load(path: Path) -> dict:

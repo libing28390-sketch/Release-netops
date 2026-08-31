@@ -6,8 +6,8 @@ import yaml
 
 
 ROOT = Path(__file__).resolve().parents[3]
-CONTRACT = ROOT / "docs" / "knowledge-engine-v2" / "architecture" / "DB-017-MIGRATION-ORDER-CONTRACT.yaml"
-REPORT = ROOT / "docs" / "knowledge-engine-v2" / "architecture" / "DB-017-MIGRATION-ORDER-CONTRACT.md"
+CONTRACT = ROOT / "docs" / "knowledge-engine" / "architecture" / "DB-017-MIGRATION-ORDER-CONTRACT.yaml"
+REPORT = ROOT / "docs" / "knowledge-engine" / "architecture" / "DB-017-MIGRATION-ORDER-CONTRACT.md"
 RUNNER = ROOT / "backend" / "database" / "migrations" / "__init__.py"
 M0111 = ROOT / "backend" / "database" / "migrations" / "m0111_ai_chunking_v2.py"
 M0113 = ROOT / "backend" / "database" / "migrations" / "m0113_rag_metadata_v2.py"

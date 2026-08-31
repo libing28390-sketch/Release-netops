@@ -6,8 +6,8 @@ import yaml
 
 
 ROOT = Path(__file__).resolve().parents[3]
-CONTRACT = ROOT / "docs" / "knowledge-engine-v2" / "architecture" / "DB-015-QUERY-INDEX-CONTRACT.yaml"
-REPORT = ROOT / "docs" / "knowledge-engine-v2" / "architecture" / "DB-015-QUERY-INDEX-CONTRACT.md"
+CONTRACT = ROOT / "docs" / "knowledge-engine" / "architecture" / "DB-015-QUERY-INDEX-CONTRACT.yaml"
+REPORT = ROOT / "docs" / "knowledge-engine" / "architecture" / "DB-015-QUERY-INDEX-CONTRACT.md"
 M0113 = ROOT / "backend" / "database" / "migrations" / "m0113_rag_metadata_v2.py"
 RESOLVER = ROOT / "backend" / "ai" / "services" / "product_resolver.py"
 RETRIEVER = ROOT / "backend" / "ai" / "services" / "rag_retriever.py"

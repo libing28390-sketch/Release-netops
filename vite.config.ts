@@ -20,36 +20,73 @@ export default defineConfig(({ mode }) => {
       },
     },
     build: {
+      // The remaining three.js chunk is an intentionally lazy WebGL dependency
+      // for the rack/home 3D views; keep the warning focused on initial app code.
+      chunkSizeWarningLimit: 768,
       rollupOptions: {
         output: {
           manualChunks(id) {
-            if (!id.includes('node_modules')) return undefined;
+            const moduleId = id.replaceAll('\\', '/');
+            if (!moduleId.includes('/node_modules/')) return undefined;
 
-            if (id.includes('react') || id.includes('scheduler')) {
+            // Match package boundaries instead of using `id.includes('react')`.
+            // The latter also pulled @react-three/* and react-markdown into the
+            // core React chunk, making the initial bundle unnecessarily large.
+            if (moduleId.includes('/node_modules/react-router/')
+              || moduleId.includes('/node_modules/react-router-dom/')
+              || moduleId.includes('/node_modules/@remix-run/router/')) {
+              return 'router-vendor';
+            }
+
+            if (moduleId.includes('/node_modules/react/')
+              || moduleId.includes('/node_modules/react-dom/')
+              || moduleId.includes('/node_modules/scheduler/')
+              || moduleId.includes('/node_modules/react-is/')
+              || moduleId.includes('/node_modules/use-sync-external-store/')) {
               return 'react-vendor';
             }
 
-            if (id.includes('react-router')) {
-              return 'router-vendor';
+            if (moduleId.includes('/node_modules/@react-three/')) {
+              return 'react-three-vendor';
+            }
+
+            if (moduleId.includes('/node_modules/three/')) {
+              return 'three-vendor';
+            }
+
+            if (moduleId.includes('/node_modules/three-')
+              || moduleId.includes('/node_modules/troika-')
+              || moduleId.includes('/node_modules/camera-controls/')) {
+              return 'webgl-addons-vendor';
             }
 
             // Recharts and React Three Fiber both depend on this shared
             // module. Keep it with React so Rollup cannot create a
             // charts-vendor -> react-vendor -> charts-vendor cycle.
-            if (id.includes('use-sync-external-store')) {
-              return 'react-vendor';
-            }
-
-            if (id.includes('recharts') || id.includes('/d3-')) {
+            if (moduleId.includes('/node_modules/recharts/')
+              || moduleId.includes('/node_modules/d3-')
+              || moduleId.includes('/node_modules/d3/')) {
               return 'charts-vendor';
             }
 
-            if (id.includes('xlsx') || id.includes('html-to-image') || id.includes('html2canvas')) {
+            if (moduleId.includes('/node_modules/xlsx/')
+              || moduleId.includes('/node_modules/html-to-image/')
+              || moduleId.includes('/node_modules/html2canvas/')) {
               return 'export-vendor';
             }
 
-            if (id.includes('lucide-react') || id.includes('motion')) {
+            if (moduleId.includes('/node_modules/lucide-react/')
+              || moduleId.includes('/node_modules/motion/')
+              || moduleId.includes('/node_modules/motion-dom/')
+              || moduleId.includes('/node_modules/framer-motion/')) {
               return 'ui-vendor';
+            }
+
+            if (moduleId.includes('/node_modules/react-markdown/')
+              || moduleId.includes('/node_modules/remark-gfm/')
+              || moduleId.includes('/node_modules/unified/')
+              || moduleId.includes('/node_modules/remark-')) {
+              return 'markdown-vendor';
             }
 
             return undefined;

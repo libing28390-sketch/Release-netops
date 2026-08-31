@@ -1,7 +1,8 @@
 from __future__ import annotations
 
-import sqlite3
+from backend.tests import pg_catalog_assertions as pg_catalog
 
+from backend.tests.pg_test_utils import postgresql_test_driver
 import pytest
 
 from database.migrations import m0116_knowledge_v2_source_registry as m0116
@@ -11,19 +12,18 @@ from database.migrations import m0120_knowledge_v2_source_freshness as m0120
 from database.migrations import m0121_knowledge_v2_source_change_detection as m0121
 
 
-def _connection() -> sqlite3.Connection:
-    conn = sqlite3.connect(":memory:")
-    conn.execute("PRAGMA foreign_keys = ON")
+def _connection() -> postgresql_test_driver.Connection:
+    conn = postgresql_test_driver.connect()
     return conn
 
 
-def _apply_through_m0120(conn: sqlite3.Connection) -> None:
+def _apply_through_m0120(conn: postgresql_test_driver.Connection) -> None:
     for migration in (m0116, m0117, m0119, m0120):
-        migration.upgrade(conn.cursor(), False)
+        migration.upgrade(conn.cursor(), True)
     conn.commit()
 
 
-def _seed_source_version(conn: sqlite3.Connection, *, source_id: str = "source-121", version_id: str = "version-121") -> tuple[str, str, str, int]:
+def _seed_source_version(conn: postgresql_test_driver.Connection, *, source_id: str = "source-121", version_id: str = "version-121") -> tuple[str, str, str, int]:
     tenant_id = "tenant-121"
     content_hash = "a" * 64
     byte_size = 121
@@ -73,38 +73,36 @@ def test_m0121_upgrade_from_m0120_adds_guards_and_is_idempotent():
     conn = _connection()
     try:
         _apply_through_m0120(conn)
-        m0121.upgrade(conn.cursor(), False)
+        m0121.upgrade(conn.cursor(), True)
         conn.commit()
-        m0121.upgrade(conn.cursor(), False)
+        m0121.upgrade(conn.cursor(), True)
         conn.commit()
 
-        columns = {row[1] for row in conn.execute("PRAGMA table_info(kb_source_refresh_observation)")}
+        columns = pg_catalog.table_columns(conn, "kb_source_refresh_observation")
         assert {"detection_type", "replacement_url", "version_signal_json"} <= columns
-        refresh_indexes = {row[1] for row in conn.execute("PRAGMA index_list(kb_source_refresh_observation)")}
-        document_indexes = {row[1] for row in conn.execute("PRAGMA index_list(kb_document)")}
+        refresh_indexes = pg_catalog.index_names(conn, "kb_source_refresh_observation")
+        document_indexes = pg_catalog.index_names(conn, "kb_document")
         assert "ix_kb_source_refresh_detection" in refresh_indexes
         assert "ix_kb_document_source_lifecycle" in document_indexes
-        action_indexes = {row[1] for row in conn.execute("PRAGMA index_list(kb_source_change_action)")}
+        action_indexes = pg_catalog.index_names(conn, "kb_source_change_action")
         assert "ix_kb_source_change_action_pending" in action_indexes
-        action_foreign_keys = {row[2] for row in conn.execute("PRAGMA foreign_key_list(kb_source_change_action)")}
+        action_foreign_keys = pg_catalog.foreign_key_targets(conn, "kb_source_change_action")
         assert {"kb_source_refresh_observation", "kb_source_registry"} <= action_foreign_keys
-        triggers = {row[0] for row in conn.execute("SELECT name FROM sqlite_master WHERE type = 'trigger'")}
+        triggers = pg_catalog.trigger_names(conn)
         assert {
-            "trg_kb_source_refresh_observation_append_only_update",
-            "trg_kb_source_refresh_observation_append_only_delete",
+            "trg_kb_source_refresh_observation_append_only",
             "trg_kb_source_refresh_observation_insert_guard",
-            "trg_kb_source_change_action_scope_insert",
-            "trg_kb_source_change_action_scope_update",
+            "trg_kb_source_change_action_scope",
         } <= triggers
     finally:
         conn.close()
 
 
-def test_m0121_fresh_v2_schema_accepts_valid_append_only_observation():
+def test_m0121_historical_schema_accepts_valid_append_only_observation():
     conn = _connection()
     try:
         _apply_through_m0120(conn)
-        m0121.upgrade(conn.cursor(), False)
+        m0121.upgrade(conn.cursor(), True)
         tenant_id, source_id, content_hash, byte_size = _seed_source_version(conn)
         conn.execute(
             _OBSERVATION_SQL,
@@ -115,10 +113,12 @@ def test_m0121_fresh_v2_schema_accepts_valid_append_only_observation():
         )
         conn.commit()
 
-        with pytest.raises(sqlite3.IntegrityError, match="append_only"):
+        with pytest.raises(postgresql_test_driver.DatabaseError, match="append_only"):
             conn.execute("UPDATE kb_source_refresh_observation SET outcome = 'unchanged' WHERE id = 'observation-valid'")
-        with pytest.raises(sqlite3.IntegrityError, match="append_only"):
+        conn.rollback()
+        with pytest.raises(postgresql_test_driver.DatabaseError, match="append_only"):
             conn.execute("DELETE FROM kb_source_refresh_observation WHERE id = 'observation-valid'")
+        conn.rollback()
     finally:
         conn.close()
 
@@ -127,7 +127,7 @@ def test_m0121_change_action_is_tenant_scoped_retry_outbox_with_status_and_scope
     conn = _connection()
     try:
         _apply_through_m0120(conn)
-        m0121.upgrade(conn.cursor(), False)
+        m0121.upgrade(conn.cursor(), True)
         tenant_id, source_id, content_hash, byte_size = _seed_source_version(conn)
         conn.execute(
             _OBSERVATION_SQL,
@@ -152,12 +152,16 @@ def test_m0121_change_action_is_tenant_scoped_retry_outbox_with_status_and_scope
         conn.execute(
             "UPDATE kb_source_change_action SET status = 'applying', attempt_count = 1, updated_by = 'worker' WHERE id = 'action-121'"
         )
-        with pytest.raises(sqlite3.IntegrityError):
+        conn.commit()
+        with pytest.raises(postgresql_test_driver.IntegrityError):
             conn.execute(action_sql, ("action-duplicate", *values[1:]))
-        with pytest.raises(sqlite3.IntegrityError):
+        conn.rollback()
+        with pytest.raises(postgresql_test_driver.IntegrityError):
             conn.execute(action_sql, ("action-status", tenant_id, "observation-action", source_id, "replacement", "unknown", 0, "", "2026-08-09", "2026-08-09", "test", "test"))
-        with pytest.raises(sqlite3.IntegrityError, match="scope_mismatch"):
+        conn.rollback()
+        with pytest.raises(postgresql_test_driver.DatabaseError, match="scope_mismatch"):
             conn.execute(action_sql, ("action-scope", tenant_id, "observation-action", source_id, "removed", "pending", 0, "", "2026-08-09", "2026-08-09", "test", "test"))
+        conn.rollback()
     finally:
         conn.close()
 
@@ -186,11 +190,11 @@ def test_m0121_raw_sql_rejects_cross_source_fact_and_signal_shape_mismatches(
     conn = _connection()
     try:
         _apply_through_m0120(conn)
-        m0121.upgrade(conn.cursor(), False)
+        m0121.upgrade(conn.cursor(), True)
         tenant_id, _, _, _ = _seed_source_version(conn)
         if source_id == "source-other":
             _seed_source_version(conn, source_id="source-other", version_id="version-other")
-        with pytest.raises(sqlite3.IntegrityError, match="insert_invariant"):
+        with pytest.raises(postgresql_test_driver.DatabaseError, match="kb_source_refresh_observation_"):
             conn.execute(
                 _OBSERVATION_SQL,
                 _observation_values(

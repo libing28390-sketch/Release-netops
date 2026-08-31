@@ -1,11 +1,10 @@
-import sqlite3
-
+from backend.tests.pg_test_utils import postgresql_test_driver
 from services.cmdb_service import list_cmdb_devices
 
 
 def test_cmdb_device_interface_count_uses_vendor_neutral_identity() -> None:
-    conn = sqlite3.connect(":memory:")
-    conn.row_factory = sqlite3.Row
+    conn = postgresql_test_driver.connect()
+    conn.row_factory = postgresql_test_driver.Row
     conn.executescript(
         """
         CREATE TABLE devices (

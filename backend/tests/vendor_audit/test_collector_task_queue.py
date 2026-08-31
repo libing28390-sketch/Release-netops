@@ -1,4 +1,4 @@
-import sqlite3
+from backend.tests.pg_test_utils import postgresql_test_driver
 from datetime import datetime, timedelta, timezone
 
 import services.collector_task_queue_service as queue_service
@@ -18,12 +18,13 @@ class _ConnectionProxy:
 
 
 def _patch_queue_db(monkeypatch):
-    connection = sqlite3.connect(":memory:")
-    connection.row_factory = sqlite3.Row
+    connection = postgresql_test_driver.connect()
+    connection.row_factory = postgresql_test_driver.Row
     connection.execute("CREATE TABLE devices (id TEXT PRIMARY KEY)")
-    upgrade_queue(connection.cursor(), use_pg=False)
+    upgrade_queue(connection.cursor(), use_pg=True)
     monkeypatch.setattr(queue_service, "get_db_connection", lambda: _ConnectionProxy(connection))
-    monkeypatch.setattr(queue_service, "_USE_PG", False)
+    monkeypatch.setattr(queue_service, "_USE_PG", True)
+    connection.execute("INSERT INTO devices (id) VALUES (?)", ("device-1",))
     return connection
 
 
@@ -53,7 +54,7 @@ def test_queue_claim_is_exclusive_and_failed_task_is_requeued(monkeypatch):
 
 
 def test_queue_migrations_are_idempotent_and_arp_source_is_backfilled():
-    connection = sqlite3.connect(":memory:")
+    connection = postgresql_test_driver.connect()
     connection.execute("CREATE TABLE devices (id TEXT PRIMARY KEY)")
     connection.execute(
         """CREATE TABLE arp_cache (
@@ -65,7 +66,7 @@ def test_queue_migrations_are_idempotent_and_arp_source_is_backfilled():
         "INSERT INTO arp_cache(target_ip, mac, arp_source, cached_at, expires_at) VALUES (?, ?, ?, ?, ?)",
         ("10.0.0.1", "0000-0000-0001", '{"device_id":"device-1"}', "now", 1),
     )
-    upgrade_arp_cache(connection.cursor(), use_pg=False)
-    upgrade_arp_cache(connection.cursor(), use_pg=False)
+    upgrade_arp_cache(connection.cursor(), use_pg=True)
+    upgrade_arp_cache(connection.cursor(), use_pg=True)
     source = connection.execute("SELECT source_device_id FROM arp_cache").fetchone()[0]
     assert source == "device-1"

@@ -24,8 +24,7 @@ def _to_boolean(cursor, table: str, column: str, default_sql: str) -> None:
 
 
 def upgrade(cursor, _use_pg: bool) -> None:
-    if not _use_pg:
-        return
+    pass
     # m0024/m0025 were previously applied in some PostgreSQL installations
     # with integer flags. Convert only when needed, so fresh installations
     # remain idempotent.

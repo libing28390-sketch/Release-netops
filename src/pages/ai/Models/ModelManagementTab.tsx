@@ -1,10 +1,29 @@
 import React, { useEffect, useMemo, useState } from 'react';
-import { Cpu, Plus, RefreshCw, Trash2, GitBranch, Star, Power, Search, AlertTriangle } from 'lucide-react';
+import { Cpu, Plus, RefreshCw, Trash2, GitBranch, Star, Power, Search, AlertTriangle, Info, ShieldCheck } from 'lucide-react';
 import { getAIModels, createAIModel, updateAIModel, setAIUserDefaultModel, deleteAIModel, getAIModelRoutes, upsertAIModelRoute, getAIProviders, AIModel, AIModelRoute, AIProvider } from '../../../api/ai';
 import Pagination from '../../../components/Pagination';
 import { ActionIconButton, ActionIconGroup } from '../../../components/ui/ActionIconButton';
+import { useCoreApp } from '../../../contexts/AppDomainContext';
+import { aiAdminText } from '../../../i18n/aiAdmin';
+
+const SCENES = [
+  { code: 'command_explain', labelKey: 'ai.prompt.scene.command_explain.label', shortKey: 'ai.prompt.scene.command_explain.short', descriptionKey: 'ai.prompt.scene.command_explain.description' },
+  { code: 'config_explain', labelKey: 'ai.prompt.scene.config_explain.label', shortKey: 'ai.prompt.scene.config_explain.short', descriptionKey: 'ai.prompt.scene.config_explain.description' },
+  { code: 'config_diff', labelKey: 'ai.prompt.scene.config_diff.label', shortKey: 'ai.prompt.scene.config_diff.short', descriptionKey: 'ai.prompt.scene.config_diff.description' },
+  { code: 'alarm_analysis', labelKey: 'ai.prompt.scene.alarm_analysis.label', shortKey: 'ai.prompt.scene.alarm_analysis.short', descriptionKey: 'ai.prompt.scene.alarm_analysis.description' },
+  { code: 'chat', labelKey: 'ai.prompt.scene.chat.label', shortKey: 'ai.prompt.scene.chat.short', descriptionKey: 'ai.prompt.scene.chat.description' },
+  { code: 'troubleshooting', labelKey: 'ai.prompt.scene.troubleshooting.label', shortKey: 'ai.prompt.scene.troubleshooting.short', descriptionKey: 'ai.prompt.scene.troubleshooting.description' },
+  { code: 'topology_analysis', labelKey: 'ai.prompt.scene.topology_analysis.label', shortKey: 'ai.prompt.scene.topology_analysis.short', descriptionKey: 'ai.prompt.scene.topology_analysis.description' },
+  { code: 'health_summary', labelKey: 'ai.prompt.scene.health_summary.label', shortKey: 'ai.prompt.scene.health_summary.short', descriptionKey: 'ai.prompt.scene.health_summary.description' },
+  { code: 'compliance_audit', labelKey: 'ai.prompt.scene.compliance_audit.label', shortKey: 'ai.prompt.scene.compliance_audit.short', descriptionKey: 'ai.prompt.scene.compliance_audit.description' },
+  { code: 'change_plan', labelKey: 'ai.prompt.scene.change_plan.label', shortKey: 'ai.prompt.scene.change_plan.short', descriptionKey: 'ai.prompt.scene.change_plan.description' },
+  { code: 'rag_answer', labelKey: 'ai.prompt.scene.rag_answer.label', shortKey: 'ai.prompt.scene.rag_answer.short', descriptionKey: 'ai.prompt.scene.rag_answer.description' },
+  { code: 'capacity_analysis', labelKey: 'ai.prompt.scene.capacity_analysis.label', shortKey: 'ai.prompt.scene.capacity_analysis.short', descriptionKey: 'ai.prompt.scene.capacity_analysis.description' },
+];
 
 export const ModelManagementTab: React.FC = () => {
+  const { language } = useCoreApp();
+  const tx = (key: string, variables: Record<string, string | number> = {}) => aiAdminText(key, language, variables);
   const [models, setModels] = useState<AIModel[]>([]);
   const [routes, setRoutes] = useState<AIModelRoute[]>([]);
   const [providers, setProviders] = useState<AIProvider[]>([]);
@@ -39,7 +58,7 @@ export const ModelManagementTab: React.FC = () => {
       setProviders(pList);
       if (pList.length > 0) setProviderId(pList[0].id);
     } catch (err: any) {
-      setError(err?.message || '模型、Provider 或路由加载失败');
+      setError(err?.message || tx('ai.model.error.load'));
     } finally {
       setLoading(false);
     }
@@ -66,7 +85,7 @@ export const ModelManagementTab: React.FC = () => {
       setModelType('chat');
       fetchData();
     } catch (err: any) {
-      alert(err.message || '添加模型失败');
+      alert(err.message || tx('ai.model.error.create'));
     }
   };
 
@@ -75,7 +94,7 @@ export const ModelManagementTab: React.FC = () => {
       await updateAIModel(model.id, { enabled: !model.enabled });
       await fetchData();
     } catch (err: any) {
-      alert(err.message || '更新模型状态失败');
+      alert(err.message || tx('ai.model.error.toggle'));
     }
   };
 
@@ -85,37 +104,51 @@ export const ModelManagementTab: React.FC = () => {
       await setAIUserDefaultModel(model.id);
       await fetchData();
     } catch (err: any) {
-      alert(err.message || '设置默认模型失败');
+      alert(err.message || tx('ai.model.error.default'));
     }
   };
 
   const handleDelete = async (id: string) => {
-    if (!window.confirm('确定删除该 Model 吗？')) return;
+    if (!window.confirm(tx('ai.model.confirm.delete'))) return;
     try {
       await deleteAIModel(id);
       fetchData();
     } catch (err: any) {
-      alert(err.message || '删除失败');
+      alert(err.message || tx('ai.model.error.delete'));
     }
   };
 
   const handleRouteChange = async (scene: string, modelId: string) => {
+    if (!modelId) return;
     try {
       await upsertAIModelRoute({ scene, model_id: modelId, enabled: true });
-      fetchData();
+      await fetchData();
     } catch (err: any) {
-      alert(err.message || '配置场景路由失败');
+      alert(err.message || tx('ai.model.error.route'));
     }
   };
 
-  const SCENES = [
-    { code: 'command_explain', label: '命令解释' },
-    { code: 'config_explain', label: '配置分析' },
-    { code: 'config_diff', label: 'Diff 智能分析' },
-    { code: 'alarm_analysis', label: '告警分析' },
-    { code: 'chat', label: 'AI 助手' },
-    { code: 'troubleshooting', label: '网络故障诊断' },
-  ];
+  const handleRoutePolicyChange = async (scene: string, fallbackModelId: string, dataClassification: string) => {
+    const route = routes.find((item) => item.scene === scene);
+    const primaryModelId = route?.model_id || models.find((item) => item.is_default && item.enabled)?.id || models.find((item) => item.enabled)?.id;
+    if (!primaryModelId) {
+      alert(tx('ai.model.error.noEnabled'));
+      return;
+    }
+    try {
+      await upsertAIModelRoute({
+        scene,
+        model_id: primaryModelId,
+        fallback_model_id: fallbackModelId || undefined,
+        data_classification: dataClassification,
+        priority: route?.priority || 10,
+        enabled: true,
+      });
+      await fetchData();
+    } catch (err: any) {
+      alert(err.message || tx('ai.model.error.routePolicy'));
+    }
+  };
 
   const filteredModels = useMemo(() => {
     const needle = search.trim().toLowerCase();
@@ -136,6 +169,11 @@ export const ModelManagementTab: React.FC = () => {
     if (page > maxPage) setPage(maxPage);
   }, [filteredModels.length, page, pageSize]);
 
+  const defaultModel = useMemo(
+    () => models.find((model) => model.is_default && model.enabled) || models.find((model) => model.enabled),
+    [models],
+  );
+
   return (
     <div className="space-y-8">
       {/* Models Section */}
@@ -144,10 +182,10 @@ export const ModelManagementTab: React.FC = () => {
           <div>
             <h2 className="nx-page-title flex items-center gap-2 text-gray-900 dark:text-white">
               <Cpu className="w-6 h-6 text-indigo-500" />
-              AI Model 模型管理
+              {tx('ai.model.header.title')}
             </h2>
             <p className="nx-page-description mt-1 text-gray-500 dark:text-gray-400">
-              定义可供调用的模型标识（如 deepseek-v4-flash, deepseek-v4-pro）。
+              {tx('ai.model.header.description')}
             </p>
           </div>
           <div className="flex gap-3">
@@ -156,40 +194,40 @@ export const ModelManagementTab: React.FC = () => {
               className="px-3 py-2 text-sm bg-gray-100 dark:bg-gray-800 hover:bg-gray-200 text-gray-700 dark:text-gray-300 rounded-lg flex items-center gap-1.5 transition"
             >
               <RefreshCw className="w-4 h-4" />
-              刷新
+              {tx('ai.model.action.refresh')}
             </button>
             <button
               onClick={() => setShowModal(true)}
               className="px-4 py-2 text-sm bg-indigo-600 hover:bg-indigo-700 text-white rounded-lg flex items-center gap-1.5 font-medium shadow-sm transition"
             >
               <Plus className="w-4 h-4" />
-              添加 Model
+              {tx('ai.model.action.add')}
             </button>
           </div>
         </div>
 
         <div className="flex flex-wrap gap-2 rounded-xl border border-gray-200 bg-white p-3 shadow-sm dark:border-gray-700 dark:bg-gray-800">
-          <div className="relative min-w-[240px] flex-1"><Search className="pointer-events-none absolute left-3 top-2.5 h-4 w-4 text-gray-400" /><input value={search} onChange={(event) => { setSearch(event.target.value); setPage(1); }} placeholder="搜索模型名称、Model Code、Provider 或健康状态" className="w-full rounded-lg border border-gray-200 py-2 pl-9 pr-3 text-xs dark:border-gray-600 dark:bg-gray-900 dark:text-white" /></div>
-          <select value={providerFilter} onChange={(event) => { setProviderFilter(event.target.value); setPage(1); }} className="rounded-lg border border-gray-200 px-3 py-2 text-xs dark:border-gray-600 dark:bg-gray-900 dark:text-white"><option value="">全部 Provider</option>{providers.map((provider) => <option key={provider.id} value={provider.id}>{provider.name}</option>)}</select>
-          <select value={typeFilter} onChange={(event) => { setTypeFilter(event.target.value); setPage(1); }} className="rounded-lg border border-gray-200 px-3 py-2 text-xs dark:border-gray-600 dark:bg-gray-900 dark:text-white"><option value="">全部用途</option><option value="chat">Chat</option><option value="reasoning">Reasoning</option><option value="embedding">Embedding</option><option value="rerank">Rerank</option></select>
-          <select value={statusFilter} onChange={(event) => { setStatusFilter(event.target.value); setPage(1); }} className="rounded-lg border border-gray-200 px-3 py-2 text-xs dark:border-gray-600 dark:bg-gray-900 dark:text-white"><option value="all">全部状态</option><option value="enabled">已启用</option><option value="disabled">已停用</option></select>
+          <div className="relative min-w-[240px] flex-1"><Search className="pointer-events-none absolute left-3 top-2.5 h-4 w-4 text-gray-400" /><input value={search} onChange={(event) => { setSearch(event.target.value); setPage(1); }} placeholder={tx('ai.model.filter.search')} className="w-full rounded-lg border border-gray-200 py-2 pl-9 pr-3 text-xs dark:border-gray-600 dark:bg-gray-900 dark:text-white" /></div>
+          <select value={providerFilter} onChange={(event) => { setProviderFilter(event.target.value); setPage(1); }} className="rounded-lg border border-gray-200 px-3 py-2 text-xs dark:border-gray-600 dark:bg-gray-900 dark:text-white"><option value="">{tx('ai.model.filter.allProviders')}</option>{providers.map((provider) => <option key={provider.id} value={provider.id}>{provider.name}</option>)}</select>
+          <select value={typeFilter} onChange={(event) => { setTypeFilter(event.target.value); setPage(1); }} className="rounded-lg border border-gray-200 px-3 py-2 text-xs dark:border-gray-600 dark:bg-gray-900 dark:text-white"><option value="">{tx('ai.model.filter.allTypes')}</option><option value="chat">{tx('ai.model.modal.chat')}</option><option value="reasoning">{tx('ai.model.modal.reasoning')}</option><option value="embedding">{tx('ai.model.modal.embedding')}</option><option value="rerank">{tx('ai.model.modal.rerank')}</option></select>
+          <select value={statusFilter} onChange={(event) => { setStatusFilter(event.target.value); setPage(1); }} className="rounded-lg border border-gray-200 px-3 py-2 text-xs dark:border-gray-600 dark:bg-gray-900 dark:text-white"><option value="all">{tx('ai.model.filter.allStatuses')}</option><option value="enabled">{tx('ai.model.filter.enabled')}</option><option value="disabled">{tx('ai.model.filter.disabled')}</option></select>
         </div>
 
         {error && <div className="flex items-center gap-2 rounded-xl border border-red-200 bg-red-50 px-3 py-2 text-xs text-red-700 dark:border-red-900/60 dark:bg-red-950/30 dark:text-red-300"><AlertTriangle className="h-4 w-4" />{error}</div>}
 
         {loading ? (
-          <div className="p-8 text-center text-gray-400">加载中...</div>
+          <div className="p-8 text-center text-gray-400">{tx('ai.model.loading')}</div>
         ) : (
           <div className="bg-white dark:bg-gray-800 border border-gray-200 dark:border-gray-700 rounded-xl overflow-hidden shadow-sm">
             <table className="w-full text-left border-collapse text-sm">
               <thead>
                 <tr className="border-b border-gray-200 dark:border-gray-700 bg-gray-50 dark:bg-gray-900/50 text-gray-500 dark:text-gray-400 text-xs font-semibold">
-                  <th className="py-3 px-4">模型名称</th>
+                  <th className="py-3 px-4">{tx('ai.model.table.name')}</th>
                   <th className="py-3 px-4">Model Code</th>
-                  <th className="py-3 px-4">Provider / 能力</th>
-                  <th className="py-3 px-4">默认模型</th>
-                  <th className="py-3 px-4">状态</th>
-                  <th className="py-3 px-4 text-right">操作</th>
+                  <th className="py-3 px-4">{tx('ai.model.table.providerCapability')}</th>
+                  <th className="py-3 px-4">{tx('ai.model.table.default')}</th>
+                  <th className="py-3 px-4">{tx('ai.model.table.status')}</th>
+                  <th className="py-3 px-4 text-right">{tx('ai.model.table.actions')}</th>
                 </tr>
               </thead>
               <tbody className="divide-y divide-gray-200 dark:divide-gray-700 text-gray-700 dark:text-gray-300">
@@ -217,61 +255,110 @@ export const ModelManagementTab: React.FC = () => {
                     </td>
                     <td className="py-3 px-4">
                       <span className={`px-2 py-0.5 text-xs rounded-full font-medium ${m.enabled ? 'bg-emerald-100 text-emerald-800 dark:bg-emerald-950 dark:text-emerald-300' : 'bg-gray-100 text-gray-600'}`}>
-                        {m.enabled ? '启用' : '禁用'}
+                        {m.enabled ? tx('ai.model.status.enabled') : tx('ai.model.status.disabled')}
                       </span>
                     </td>
                     <td className="py-3 px-4 text-right">
-                      <ActionIconGroup label="模型操作">
-                        <ActionIconButton icon={Star} label="设为当前用户默认" variant="accent" onClick={() => void handleSetDefault(m)} />
-                        <ActionIconButton icon={Power} label={m.enabled ? '禁用' : '启用'} onClick={() => void handleToggle(m)} />
-                        <ActionIconButton icon={Trash2} label="删除" variant="danger" onClick={() => handleDelete(m.id)} />
+                      <ActionIconGroup label={tx('ai.model.actionGroup')}>
+                        <ActionIconButton icon={Star} label={tx('ai.model.action.setDefault')} variant="accent" onClick={() => void handleSetDefault(m)} />
+                        <ActionIconButton icon={Power} label={m.enabled ? tx('ai.model.action.disable') : tx('ai.model.action.enable')} onClick={() => void handleToggle(m)} />
+                        <ActionIconButton icon={Trash2} label={tx('ai.model.action.delete')} variant="danger" onClick={() => handleDelete(m.id)} />
                       </ActionIconGroup>
                     </td>
                   </tr>
                 ))}
               </tbody>
             </table>
-            {!visibleModels.length && <div className="border-t border-gray-100 px-4 py-10 text-center text-sm text-gray-400 dark:border-gray-700">当前搜索和筛选没有匹配模型</div>}
-            <Pagination currentPage={page} totalItems={filteredModels.length} itemsPerPage={pageSize} onPageChange={setPage} onItemsPerPageChange={(size) => { setPageSize(size); setPage(1); }} language="zh" alwaysVisible />
+            {!visibleModels.length && <div className="border-t border-gray-100 px-4 py-10 text-center text-sm text-gray-400 dark:border-gray-700">{tx('ai.model.empty')}</div>}
+            <Pagination currentPage={page} totalItems={filteredModels.length} itemsPerPage={pageSize} onPageChange={setPage} onItemsPerPageChange={(size) => { setPageSize(size); setPage(1); }} language={language} alwaysVisible />
           </div>
         )}
       </div>
 
       {/* Scene Routes Section */}
-      <div className="space-y-4 pt-6 border-t border-gray-200 dark:border-gray-700">
+      <div className="space-y-4 border-t border-gray-200 pt-6 dark:border-gray-700">
         <div>
-          <h3 className="text-lg font-bold text-gray-900 dark:text-white flex items-center gap-2">
-            <GitBranch className="w-5 h-5 text-indigo-500" />
-            Model Route 场景动态路由
+          <h3 className="flex items-center gap-2 text-lg font-bold text-gray-900 dark:text-white">
+            <GitBranch className="h-5 w-5 text-indigo-500" />
+            {tx('ai.model.route.title')}
           </h3>
-          <p className="text-sm text-gray-500 dark:text-gray-400 mt-1">
-            针对不同业务场景（如配置分析、Diff 智能分析、告警诊断）分派最适合的模型。
+          <p className="mt-1 max-w-4xl text-sm leading-6 text-gray-500 dark:text-gray-400">
+            {tx('ai.model.route.description')}
           </p>
         </div>
 
-        <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-          {SCENES.map((scene) => {
-            const activeRoute = routes.find((r) => r.scene === scene.code);
-            return (
-              <div key={scene.code} className="bg-white dark:bg-gray-800 border border-gray-200 dark:border-gray-700 rounded-xl p-4 flex items-center justify-between shadow-sm">
-                <div>
-                  <h4 className="font-semibold text-gray-900 dark:text-white text-sm">{scene.label}</h4>
-                  <p className="text-xs text-gray-400 font-mono mt-0.5">{scene.code}</p>
-                </div>
-                <select
-                  aria-label={`${scene.label}模型路由`}
-                  value={activeRoute?.model_id || ''}
-                  onChange={(e) => handleRouteChange(scene.code, e.target.value)}
-                  className="px-3 py-1.5 text-xs border border-gray-300 dark:border-gray-600 rounded-lg dark:bg-gray-900 dark:text-white font-medium"
-                >
-                  <option value="">(使用全局默认模型)</option>
-                  {models.map((m) => (
-                    <option key={m.id} value={m.id}>
-                      {m.name} ({m.model_code})
-                    </option>
-                  ))}
-                </select>
+        <section className="grid gap-3 rounded-2xl border border-indigo-100 bg-indigo-50/60 p-4 dark:border-indigo-900/60 dark:bg-indigo-950/20" aria-label={tx('ai.model.route.aria')}>
+          <div className="flex items-center gap-2 text-xs font-bold text-indigo-900 dark:text-indigo-100"><Info className="h-4 w-4 text-indigo-500" />{tx('ai.model.route.how')}</div>
+          <div className="grid gap-2 md:grid-cols-4">
+            {[
+              ['1', 'ai.model.route.step.identify', 'ai.model.route.step.identifyBody'],
+              ['2', 'ai.model.route.step.primary', 'ai.model.route.step.primaryBody'],
+              ['3', 'ai.model.route.step.fallback', 'ai.model.route.step.fallbackBody'],
+              ['4', 'ai.model.route.step.default', 'ai.model.route.step.defaultBody'],
+            ].map(([step, titleKey, descriptionKey], index) => (
+              <div key={step} className="relative rounded-xl border border-indigo-100 bg-white/80 p-3 dark:border-indigo-900/50 dark:bg-slate-900/40">
+                <div className="flex items-center gap-2"><span className="flex h-6 w-6 items-center justify-center rounded-full bg-indigo-600 text-[10px] font-bold text-white">{step}</span><span className="text-xs font-semibold text-slate-800 dark:text-slate-100">{tx(titleKey)}</span></div>
+                <p className="mt-2 text-[10px] leading-4 text-slate-500 dark:text-slate-400">{tx(descriptionKey)}</p>
+                {index < 3 && <span className="absolute -right-2 top-1/2 hidden text-indigo-400 md:block">→</span>}
               </div>
+            ))}
+          </div>
+          <div className="flex flex-wrap items-center gap-1.5 text-[10px] text-indigo-800 dark:text-indigo-200">
+            <span className="font-semibold">{tx('ai.model.route.execution')}</span>
+            {[tx('ai.model.route.request'), 'Model Route', 'Model → Provider', tx('ai.model.route.security'), tx('ai.model.route.response')].map((step, index, steps) => (
+              <React.Fragment key={step}>
+                <span className="rounded-full border border-indigo-100 bg-white/80 px-2 py-1 font-medium dark:border-indigo-900/50 dark:bg-slate-900/50">{step}</span>
+                {index < steps.length - 1 && <span className="text-indigo-400">→</span>}
+              </React.Fragment>
+            ))}
+          </div>
+          <div className="flex flex-wrap items-center gap-2 text-[11px] text-indigo-800 dark:text-indigo-200"><ShieldCheck className="h-3.5 w-3.5 text-emerald-500" /><span>{tx('ai.model.route.currentDefault')}</span><strong className="font-mono">{defaultModel ? defaultModel.name + ' (' + defaultModel.model_code + ')' : tx('ai.model.route.noneAvailable')}</strong><span className="text-indigo-700/60 dark:text-indigo-300/60">{tx('ai.model.route.enabledOnly')}</span></div>
+        </section>
+
+        <div className="grid grid-cols-1 gap-4 md:grid-cols-2">
+          {SCENES.map((scene) => {
+            const configuredRoute = routes.find((route) => route.scene === scene.code);
+            const routeModel = models.find((model) => model.id === configuredRoute?.model_id);
+            const fallbackModel = models.find((model) => model.id === configuredRoute?.fallback_model_id);
+            const routeProvider = routeModel ? providers.find((provider) => provider.id === routeModel.provider_id) : undefined;
+            const routeConfigured = Boolean(configuredRoute?.enabled);
+            const effectiveModel = routeConfigured ? routeModel : defaultModel;
+            const effectiveProvider = effectiveModel ? providers.find((provider) => provider.id === effectiveModel.provider_id) : undefined;
+            const routeTargetBlocked = routeConfigured && Boolean(routeModel) && (!routeModel?.enabled || !routeProvider || routeProvider.enabled === false);
+            const routeHealthWarning = routeConfigured && Boolean(routeModel?.enabled) && routeModel?.health_status === 'unhealthy';
+            const routeStatus = !routeConfigured
+              ? tx('ai.model.route.useDefault')
+              : !routeModel
+                ? tx('ai.model.route.missing')
+                : routeTargetBlocked
+                  ? tx('ai.model.route.unavailable')
+                  : routeHealthWarning
+                    ? tx('ai.model.route.unhealthy')
+                    : tx('ai.model.route.active');
+            return (
+              <article key={scene.code} className="rounded-2xl border border-gray-200 bg-white p-4 shadow-sm dark:border-gray-700 dark:bg-gray-800">
+                <div className="flex items-start justify-between gap-3">
+                  <div className="min-w-0">
+                    <h4 className="font-semibold text-sm text-gray-900 dark:text-white">{tx(scene.labelKey)}</h4>
+                    <p className="mt-0.5 font-mono text-xs text-indigo-500">{scene.code}</p>
+                    <p className="mt-2 text-[11px] leading-5 text-gray-500 dark:text-gray-400">{tx(scene.descriptionKey)}</p>
+                  </div>
+                  <span className={`shrink-0 rounded-full px-2 py-1 text-[10px] font-semibold ${routeTargetBlocked ? 'bg-rose-50 text-rose-700 dark:bg-rose-950/40 dark:text-rose-300' : routeHealthWarning ? 'bg-amber-50 text-amber-700 dark:bg-amber-950/40 dark:text-amber-300' : routeConfigured && routeModel ? 'bg-emerald-50 text-emerald-700 dark:bg-emerald-950/40 dark:text-emerald-300' : 'bg-slate-100 text-slate-500 dark:bg-slate-700 dark:text-slate-300'}`}>{routeStatus}</span>
+                </div>
+                <div className="mt-3 rounded-xl bg-slate-50 p-3 dark:bg-slate-900/70">
+                  <div className="text-[10px] font-semibold uppercase tracking-[0.12em] text-slate-400">{tx('ai.model.route.effective')}</div>
+                  <div className="mt-1 truncate text-xs font-bold text-slate-800 dark:text-slate-100">{effectiveModel ? effectiveModel.name : tx('ai.model.route.noModel')}</div>
+                  <div className="mt-0.5 truncate font-mono text-[10px] text-slate-500 dark:text-slate-400">{effectiveModel ? effectiveModel.model_code : tx('ai.model.route.addAndEnable')}</div>
+                  <div className="mt-1 truncate text-[10px] text-slate-500 dark:text-slate-400">{effectiveProvider ? tx('ai.model.route.provider', { name: effectiveProvider.name, status: effectiveProvider.enabled === false ? tx('ai.model.route.providerDisabled') : tx('ai.model.route.providerEnabled') }) : effectiveModel ? tx('ai.model.route.providerMissing') : tx('ai.model.route.providerDash')}</div>
+                  {routeTargetBlocked && <p className="mt-2 text-[10px] leading-4 text-rose-700 dark:text-rose-300">{tx('ai.model.route.targetBlocked')}</p>}
+                  {routeHealthWarning && !routeTargetBlocked && <p className="mt-2 text-[10px] leading-4 text-amber-700 dark:text-amber-300">{tx('ai.model.route.healthWarning')}</p>}
+                </div>
+                <div className="mt-3 grid gap-2 sm:grid-cols-2">
+                  <label className="text-[10px] font-semibold text-gray-500 dark:text-gray-400">{tx('ai.model.route.primary')}<select aria-label={tx('ai.model.route.primaryAria', { name: tx(scene.shortKey) })} value={configuredRoute?.model_id || ''} onChange={(event) => handleRouteChange(scene.code, event.target.value)} className="mt-1 w-full rounded-lg border border-gray-300 bg-white px-2.5 py-2 text-xs font-medium text-gray-800 dark:border-gray-600 dark:bg-gray-900 dark:text-white"><option value="">{tx('ai.model.route.defaultOption')}</option>{models.filter((model) => model.enabled || model.id === configuredRoute?.model_id).map((model) => <option key={model.id} value={model.id}>{model.name} ({model.model_code})</option>)}</select></label>
+                  <label className="text-[10px] font-semibold text-gray-500 dark:text-gray-400">{tx('ai.model.route.fallback')}<select aria-label={tx('ai.model.route.fallbackAria', { name: tx(scene.shortKey) })} value={configuredRoute?.fallback_model_id || ''} onChange={(event) => void handleRoutePolicyChange(scene.code, event.target.value, configuredRoute?.data_classification || 'PUBLIC')} className="mt-1 w-full rounded-lg border border-gray-300 bg-white px-2.5 py-2 text-xs font-medium text-gray-800 dark:border-gray-600 dark:bg-gray-900 dark:text-white"><option value="">{tx('ai.model.route.noFallbackOption')}</option>{models.filter((model) => model.enabled && model.id !== configuredRoute?.model_id).map((model) => <option key={model.id} value={model.id}>{model.name} ({model.model_code})</option>)}</select></label>
+                </div>
+                <div className="mt-2 flex items-center justify-between gap-2"><label className="text-[10px] font-semibold text-gray-500 dark:text-gray-400">{tx('ai.model.route.classification')}<select aria-label={tx('ai.model.route.classificationAria', { name: tx(scene.shortKey) })} value={configuredRoute?.data_classification || 'PUBLIC'} onChange={(event) => void handleRoutePolicyChange(scene.code, configuredRoute?.fallback_model_id || '', event.target.value)} className="ml-2 rounded-lg border border-gray-300 bg-white px-2 py-1.5 text-[10px] dark:border-gray-600 dark:bg-gray-900 dark:text-white"><option value="PUBLIC">PUBLIC</option><option value="INTERNAL">INTERNAL</option><option value="CONFIDENTIAL">CONFIDENTIAL</option></select></label><span className="text-[10px] text-gray-400">{tx('ai.model.route.priority', { priority: configuredRoute?.priority || 10, fallback: fallbackModel ? tx('ai.model.route.hasFallback') : tx('ai.model.route.noFallback') })}</span></div>
+              </article>
             );
           })}
         </div>
@@ -281,14 +368,14 @@ export const ModelManagementTab: React.FC = () => {
       {showModal && (
         <div className="fixed inset-0 z-50 bg-black/50 flex items-center justify-center p-4">
           <div className="bg-white dark:bg-gray-800 rounded-xl max-w-md w-full p-6 space-y-4 shadow-xl">
-            <h3 className="text-lg font-bold text-gray-900 dark:text-white">添加 AI Model 模型</h3>
+            <h3 className="text-lg font-bold text-gray-900 dark:text-white">{tx('ai.model.modal.title')}</h3>
             <form onSubmit={handleCreate} className="space-y-4">
               <div>
-                <label className="block text-xs font-medium text-gray-700 dark:text-gray-300 mb-1">模型显示名称</label>
+                <label className="block text-xs font-medium text-gray-700 dark:text-gray-300 mb-1">{tx('ai.model.modal.name')}</label>
                 <input
                   type="text"
                   required
-                  placeholder="例如：DeepSeek V4 Flash"
+                  placeholder={tx('ai.model.modal.namePlaceholder')}
                   value={name}
                   onChange={(e) => setName(e.target.value)}
                   className="w-full px-3 py-2 text-sm border border-gray-300 dark:border-gray-600 rounded-lg dark:bg-gray-900 dark:text-white"
@@ -296,7 +383,7 @@ export const ModelManagementTab: React.FC = () => {
               </div>
 
               <div>
-                <label className="block text-xs font-medium text-gray-700 dark:text-gray-300 mb-1">Model Code (实际 API 请求参数)</label>
+                <label className="block text-xs font-medium text-gray-700 dark:text-gray-300 mb-1">{tx('ai.model.modal.code')}</label>
                 <input
                   type="text"
                   required
@@ -308,17 +395,17 @@ export const ModelManagementTab: React.FC = () => {
               </div>
 
               <div>
-                <label className="block text-xs font-medium text-gray-700 dark:text-gray-300 mb-1">模型用途</label>
+                <label className="block text-xs font-medium text-gray-700 dark:text-gray-300 mb-1">{tx('ai.model.modal.type')}</label>
                 <select value={modelType} onChange={(e) => setModelType(e.target.value)} className="w-full px-3 py-2 text-sm border border-gray-300 dark:border-gray-600 rounded-lg dark:bg-gray-900 dark:text-white">
-                  <option value="chat">Chat 对话</option>
-                  <option value="reasoning">Reasoning 推理</option>
-                  <option value="embedding">Embedding 向量</option>
-                  <option value="rerank">Rerank 重排</option>
+                  <option value="chat">{tx('ai.model.modal.chat')}</option>
+                  <option value="reasoning">{tx('ai.model.modal.reasoning')}</option>
+                  <option value="embedding">{tx('ai.model.modal.embedding')}</option>
+                  <option value="rerank">{tx('ai.model.modal.rerank')}</option>
                 </select>
               </div>
 
               <div>
-                <label className="block text-xs font-medium text-gray-700 dark:text-gray-300 mb-1">关联 Provider</label>
+                <label className="block text-xs font-medium text-gray-700 dark:text-gray-300 mb-1">{tx('ai.model.modal.provider')}</label>
                 <select
                   value={providerId}
                   onChange={(e) => setProviderId(e.target.value)}
@@ -341,7 +428,7 @@ export const ModelManagementTab: React.FC = () => {
                   className="rounded border-gray-300"
                 />
                 <label htmlFor="is_default" className="text-xs text-gray-700 dark:text-gray-300 font-medium">
-                  设为系统全局默认模型
+                  {tx('ai.model.modal.default')}
                 </label>
               </div>
 
@@ -351,13 +438,13 @@ export const ModelManagementTab: React.FC = () => {
                   onClick={() => setShowModal(false)}
                   className="px-4 py-2 text-sm text-gray-600 dark:text-gray-400 hover:bg-gray-100 dark:hover:bg-gray-700 rounded-lg"
                 >
-                  取消
+                  {tx('ai.model.modal.cancel')}
                 </button>
                 <button
                   type="submit"
                   className="px-4 py-2 text-sm bg-indigo-600 hover:bg-indigo-700 text-white font-medium rounded-lg"
                 >
-                  确认添加
+                  {tx('ai.model.modal.submit')}
                 </button>
               </div>
             </form>

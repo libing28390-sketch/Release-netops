@@ -14,15 +14,13 @@ NAME = "retrieval_accelerator_projection"
 
 
 def _columns(cursor, table: str, use_pg: bool) -> set[str]:
-    if use_pg:
-        rows = cursor.execute(
-            "SELECT column_name FROM information_schema.columns "
-            "WHERE table_schema = current_schema() AND table_name = ?",
-            (table,),
-        ).fetchall()
-        return {str(row[0]) for row in rows}
-    rows = cursor.execute(f"PRAGMA table_info({table})").fetchall()
-    return {str(row[1]) for row in rows}
+    rows = cursor.execute(
+        "SELECT column_name FROM information_schema.columns "
+        "WHERE table_schema = current_schema() AND table_name = ?",
+        (table,),
+    ).fetchall()
+    return {str(row[0]) for row in rows}
+
 
 
 def _ensure_columns(cursor, table: str, definitions: dict[str, str], use_pg: bool) -> None:
@@ -35,18 +33,11 @@ def _ensure_columns(cursor, table: str, definitions: dict[str, str], use_pg: boo
 
 
 def upgrade(cursor, use_pg: bool) -> None:
-    if use_pg:
-        # PostgreSQL is the production authority for RET-008..010.  Fail
-        # closed (with the shared actionable error) instead of silently
-        # creating a text-only shadow path when the required extensions are
-        # unavailable.  m0104 normally installs these first; the explicit
-        # guard also protects databases upgraded from an incomplete history.
-        ensure_required_extensions(
-            cursor,
-            use_pg=True,
-            names=("vector", "pg_trgm"),
-            create_missing=True,
-        )
+    ensure_required_extensions(
+        cursor,
+        names=("vector", "pg_trgm"),
+        create_missing=True,
+    )
     _ensure_columns(
         cursor,
         "ai_document",
@@ -62,7 +53,7 @@ def upgrade(cursor, use_pg: bool) -> None:
         {
             "search_text": "TEXT",
             "retrieval_index_version": "TEXT DEFAULT 'retrieval-v1'",
-            "embedding_vector": "vector(1536)" if use_pg else "TEXT",
+            "embedding_vector": "vector(1536)",
         },
         use_pg,
     )
@@ -76,21 +67,18 @@ def upgrade(cursor, use_pg: bool) -> None:
     )
     cursor.execute("CREATE INDEX IF NOT EXISTS ix_ai_doc_retrieval_version ON ai_document(tenant_id, status, retrieval_index_version)")
     cursor.execute("CREATE INDEX IF NOT EXISTS ix_ai_chunk_retrieval_version ON ai_document_chunk(document_id, retrieval_index_version)")
-    if use_pg:
-        cursor.execute(
-            "CREATE INDEX IF NOT EXISTS ix_ai_chunk_search_fts "
-            "ON ai_document_chunk USING GIN (to_tsvector('simple', COALESCE(search_text, '')))"
-        )
-        cursor.execute(
-            "CREATE INDEX IF NOT EXISTS ix_ai_chunk_search_trgm "
-            "ON ai_document_chunk USING GIN (search_text gin_trgm_ops)"
-        )
-        cursor.execute(
-            "CREATE INDEX IF NOT EXISTS ix_ai_chunk_embedding_vector_hnsw "
-            "ON ai_document_chunk USING hnsw (embedding_vector vector_cosine_ops)"
-        )
-    else:
-        cursor.execute("CREATE INDEX IF NOT EXISTS ix_ai_chunk_search_text ON ai_document_chunk(search_text)")
+    cursor.execute(
+        "CREATE INDEX IF NOT EXISTS ix_ai_chunk_search_fts "
+        "ON ai_document_chunk USING GIN (to_tsvector('simple', COALESCE(search_text, '')))"
+    )
+    cursor.execute(
+        "CREATE INDEX IF NOT EXISTS ix_ai_chunk_search_trgm "
+        "ON ai_document_chunk USING GIN (search_text gin_trgm_ops)"
+    )
+    cursor.execute(
+        "CREATE INDEX IF NOT EXISTS ix_ai_chunk_embedding_vector_hnsw "
+        "ON ai_document_chunk USING hnsw (embedding_vector vector_cosine_ops)"
+    )
 
 
 def downgrade(cursor, use_pg: bool) -> None:

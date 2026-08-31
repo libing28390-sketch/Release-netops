@@ -8,6 +8,7 @@ Enforces U-position constraints: no overlap, within rack bounds, start_u >= 1.
 import uuid
 import logging
 from datetime import datetime, timezone
+from decimal import Decimal
 
 logger = logging.getLogger(__name__)
 
@@ -62,8 +63,16 @@ def _row_to_dict(row) -> dict:
     if row is None:
         return {}
     if hasattr(row, 'keys'):
-        return {k: row[k] for k in row.keys()}
-    return dict(row)
+        values = {k: row[k] for k in row.keys()}
+    else:
+        values = dict(row)
+    # PostgreSQL returns NUMERIC/DECIMAL columns as Decimal instances.  Rack
+    # service responses are JSON-facing read models, so expose the same
+    # numeric contract as the SQLite-era API and avoid leaking driver types.
+    return {
+        key: float(value) if isinstance(value, Decimal) else value
+        for key, value in values.items()
+    }
 
 
 def _resolve_site(conn, site_id: str = '', legacy_label: str = '') -> tuple[str, str, str]:

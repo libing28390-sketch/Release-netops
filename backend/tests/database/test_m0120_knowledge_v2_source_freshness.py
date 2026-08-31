@@ -1,46 +1,39 @@
 from __future__ import annotations
 
+from backend.tests import pg_catalog_assertions as pg_catalog
 
-def test_m0120_adds_tenant_scoped_append_only_refresh_observations(isolated_db):
-    from database.migrations.m0120_knowledge_v2_source_freshness import upgrade
 
+def test_m0120_refresh_evidence_is_projected_to_v1_observations(isolated_db):
     conn = isolated_db["module"].get_db_connection()
     try:
-        upgrade(conn.cursor(), True)
-        conn.commit()
-        columns = {
-            row[0]
-            for row in conn.execute(
-                "SELECT column_name FROM information_schema.columns "
-                "WHERE table_schema = current_schema() AND table_name = ?",
-                ("kb_source_refresh_observation",),
-            ).fetchall()
-        }
-        assert {"tenant_id", "source_registry_id", "source_version_id", "checked_at", "outcome", "content_hash", "source_etag", "source_last_modified", "error_json", "metadata_json"} <= columns
-        indexes = {
-            str(row[0])
-            for row in conn.execute(
-                "SELECT indexname FROM pg_indexes "
-                "WHERE schemaname = current_schema() AND tablename = ?",
-                ("kb_source_refresh_observation",),
-            ).fetchall()
-        }
-        assert "ix_kb_source_refresh_source_time" in indexes
-        assert "ix_kb_source_refresh_outcome" in indexes
+        assert not pg_catalog.table_exists(conn, "kb_source_refresh_observation")
+        columns = pg_catalog.table_columns(conn, "ai_document_revision")
+        assert {
+            "record_type",
+            "source_observation_id",
+            "checked_at",
+            "observation_outcome",
+            "detection_type",
+            "error_code",
+            "replacement_url",
+            "request_method",
+        } <= columns
+        indexes = pg_catalog.index_names(conn, "ai_document_revision")
+        assert "ix_ai_document_revision_observation" in indexes
+        assert "ux_ai_document_revision_source_observation" in indexes
     finally:
         conn.close()
 
 
-def test_m0120_is_idempotent_and_tracked(isolated_db):
+def test_m0120_history_is_tracked_without_recreating_refresh_tables(isolated_db):
     conn = isolated_db["module"].get_db_connection()
     try:
-        from database.migrations.m0120_knowledge_v2_source_freshness import upgrade
-
-        upgrade(conn.cursor(), True)
-        conn.commit()
-        upgrade(conn.cursor(), True)
-        conn.commit()
-        assert conn.execute("SELECT name FROM schema_migrations WHERE version = 120").fetchone()[0] == "knowledge_v2_source_freshness"
+        assert conn.execute(
+            "SELECT name FROM schema_migrations WHERE version = 120"
+        ).fetchone()[0] == "knowledge_v2_source_freshness"
+        assert conn.execute(
+            "SELECT COUNT(*) FROM schema_migrations WHERE version = 120"
+        ).fetchone()[0] == 1
+        assert not pg_catalog.table_exists(conn, "kb_source_refresh_observation")
     finally:
         conn.close()
-

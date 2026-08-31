@@ -1,6 +1,5 @@
 import importlib
-import sqlite3
-
+from backend.tests.pg_test_utils import postgresql_test_driver
 import pytest
 
 
@@ -9,8 +8,8 @@ assistant_module = importlib.import_module("ai.api.assistant")
 
 
 def _connection():
-    conn = sqlite3.connect(":memory:")
-    conn.row_factory = sqlite3.Row
+    conn = postgresql_test_driver.connect()
+    conn.row_factory = postgresql_test_driver.Row
     conn.executescript(
         """
         CREATE TABLE ai_document (
@@ -32,6 +31,13 @@ def _connection():
             document_id TEXT NOT NULL,
             content TEXT
         );
+        CREATE TABLE ai_document_revision (
+            id TEXT PRIMARY KEY,
+            tenant_id TEXT NOT NULL,
+            document_id TEXT NOT NULL,
+            record_type TEXT NOT NULL,
+            metadata_json TEXT NOT NULL DEFAULT '{}'
+        );
         CREATE TABLE ai_knowledge_document_action (
             id TEXT PRIMARY KEY,
             tenant_id TEXT NOT NULL,
@@ -49,13 +55,11 @@ def _connection():
             created_at TEXT NOT NULL,
             completed_at TEXT
         );
-        CREATE TABLE kb_document_source (tenant_id TEXT, document_id TEXT);
-        CREATE TABLE kb_document_version (tenant_id TEXT, document_id TEXT);
         INSERT INTO ai_document (id, knowledge_base_id, name, status, tenant_id, updated_at, original_content, normalized_content, metadata_json, document_id, vendor, platform)
         VALUES ('doc-a', 'kb-a', 'OSPF guide', 'active', 'tenant-a', '2026-08-17', '# OSPF\nhello', '# OSPF\nhello', '{}', 'doc-a', 'Huawei', 'huawei_vrp');
         INSERT INTO ai_document_chunk (id, document_id, content) VALUES ('chunk-a', 'doc-a', 'hello');
-        INSERT INTO kb_document_source (tenant_id, document_id) VALUES ('tenant-a', 'doc-a');
-        INSERT INTO kb_document_version (tenant_id, document_id) VALUES ('tenant-a', 'doc-a');
+        INSERT INTO ai_document_revision (id, tenant_id, document_id, record_type) VALUES ('rev-source-a', 'tenant-a', 'doc-a', 'source_observation');
+        INSERT INTO ai_document_revision (id, tenant_id, document_id, record_type) VALUES ('rev-document-a', 'tenant-a', 'doc-a', 'document_revision');
         INSERT INTO ai_document (id, knowledge_base_id, name, status, tenant_id, updated_at, original_content, normalized_content, metadata_json, document_id, vendor, platform)
         VALUES ('doc-b', 'kb-b', 'Other tenant', 'active', 'tenant-b', '2026-08-17', '# OSPF\nother', '# OSPF\nother', '{}', 'doc-b', 'Huawei', 'huawei_vrp');
         """
@@ -86,10 +90,10 @@ def test_impact_preview_is_read_only_and_counts_references(monkeypatch):
         "indexes": 1,
         "references": 2,
         "reference_details": [
-            {"type": "source_observation", "count": 1},
-            {"type": "document_version", "count": 1},
+            {"type": "document_revision", "count": 1},
+            {"type": "v1_provenance_event", "count": 1},
         ],
-        "reference_scope": "kb_document_source_and_kb_document_version",
+        "reference_scope": "ai_document_revision",
     }
     assert conn.execute("SELECT status FROM ai_document WHERE id = 'doc-a'").fetchone()[0] == "active"
     assert conn.execute("SELECT COUNT(*) FROM ai_knowledge_document_action").fetchone()[0] == 0

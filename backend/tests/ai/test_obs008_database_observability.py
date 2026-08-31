@@ -70,19 +70,6 @@ def test_obs008_permission_failure_is_degraded_without_error_text(monkeypatch):
     assert all(sql.startswith("select") for sql in connection.sql)
 
 
-def test_obs008_sqlite_is_explicitly_not_applicable(monkeypatch):
-    monkeypatch.setattr(database_observability.database_core, "_USE_PG", False)
-
-    result = database_observability.snapshot()
-
-    assert result == {
-        "backend": "sqlite",
-        "status": "NOT_APPLICABLE",
-        "production_authority": "postgresql",
-        "reason": "SQLite is compatibility-only for OBS-008 production monitoring",
-    }
-
-
 def test_obs008_metrics_endpoint_exposes_database_snapshot(monkeypatch):
     monkeypatch.setattr(usage.ai_metrics, "snapshot", lambda: {"jobs": {}})
     monkeypatch.setattr(usage, "job_observability_snapshot", lambda: {"status": "PASS"})

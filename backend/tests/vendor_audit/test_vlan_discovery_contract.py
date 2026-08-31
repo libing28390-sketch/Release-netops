@@ -1,5 +1,5 @@
-import sqlite3
-
+from backend.tests import pg_catalog_assertions as pg_catalog
+from backend.tests.pg_test_utils import postgresql_test_driver
 import pytest
 
 from database.migrations.m0044_vlan_discovery_metadata import upgrade
@@ -54,11 +54,11 @@ def test_allowed_vlan_ranges_are_bounded_and_normalized():
 
 
 def test_vlan_discovery_migration_is_idempotent():
-    conn = sqlite3.connect(":memory:")
+    conn = postgresql_test_driver.connect()
     conn.execute("CREATE TABLE vlans (id TEXT PRIMARY KEY, vlan_id INTEGER, name TEXT)")
-    upgrade(conn.cursor(), False)
-    upgrade(conn.cursor(), False)
-    columns = {row[1] for row in conn.execute("PRAGMA table_info(vlans)").fetchall()}
+    upgrade(conn.cursor(), True)
+    upgrade(conn.cursor(), True)
+    columns = pg_catalog.table_columns(conn, "vlans")
     assert {"discovery_source", "first_discovered_at", "last_discovered_at", "discovery_run_id"} <= columns
 
 

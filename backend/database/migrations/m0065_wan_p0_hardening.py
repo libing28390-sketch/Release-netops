@@ -8,14 +8,13 @@ NAME = "wan_p0_hardening"
 
 
 def _columns(cursor, table: str, use_pg: bool) -> set[str]:
-    if use_pg:
-        rows = cursor.execute(
-            "SELECT column_name FROM information_schema.columns "
-            "WHERE table_schema = current_schema() AND table_name = ?",
-            (table,),
-        ).fetchall()
-        return {str(row[0]).lower() for row in rows}
-    return {str(row[1]).lower() for row in cursor.execute(f"PRAGMA table_info({table})").fetchall()}
+    rows = cursor.execute(
+        "SELECT column_name FROM information_schema.columns "
+        "WHERE table_schema = current_schema() AND table_name = ?",
+        (table,),
+    ).fetchall()
+    return {str(row[0]).lower() for row in rows}
+
 
 
 def _ensure_column(cursor, table: str, name: str, definition: str, use_pg: bool) -> None:
@@ -24,8 +23,8 @@ def _ensure_column(cursor, table: str, name: str, definition: str, use_pg: bool)
 
 
 def upgrade(cursor, use_pg: bool) -> None:
-    json_type = "JSONB" if use_pg else "TEXT"
-    json_default = "'{}'::jsonb" if use_pg else "'{}'"
+    json_type = "JSONB"
+    json_default = "'{}'::jsonb"
     for name, definition in (
         ("in_octets_hc", "NUMERIC(20,0)"),
         ("out_octets_hc", "NUMERIC(20,0)"),
@@ -48,8 +47,7 @@ def upgrade(cursor, use_pg: bool) -> None:
     # The legacy event_key uniqueness prevented a recovered rule from firing
     # again. PostgreSQL uses the authoritative partial index; SQLite keeps the
     # old unique column but the service generates a new event key per episode.
-    if use_pg:
-        cursor.execute("ALTER TABLE wan_alert_events DROP CONSTRAINT IF EXISTS wan_alert_events_event_key_key")
+    cursor.execute("ALTER TABLE wan_alert_events DROP CONSTRAINT IF EXISTS wan_alert_events_event_key_key")
     cursor.execute(
         "CREATE UNIQUE INDEX IF NOT EXISTS uq_wan_active_event "
         "ON wan_alert_events(link_id, metric) WHERE status = 'firing'"

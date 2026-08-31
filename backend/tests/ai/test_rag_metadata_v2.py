@@ -1,6 +1,5 @@
 import json
-import sqlite3
-
+from backend.tests.pg_test_utils import postgresql_test_driver
 import pytest
 
 from ai.providers.embedding import StableLocalEmbeddingProvider

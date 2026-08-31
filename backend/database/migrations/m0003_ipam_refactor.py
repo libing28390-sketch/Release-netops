@@ -10,16 +10,11 @@ NAME = "ipam_refactor"
 
 
 def _column_exists(cursor, table_name: str, column_name: str, use_pg: bool) -> bool:
-    if use_pg:
-        cursor.execute(
-            "SELECT 1 FROM information_schema.columns WHERE table_name = %s AND column_name = %s",
-            (table_name, column_name)
-        )
-        return cursor.fetchone() is not None
-    else:
-        cursor.execute(f"PRAGMA table_info({table_name})")
-        columns = [row[1] for row in cursor.fetchall()]
-        return column_name in columns
+    cursor.execute(
+        "SELECT 1 FROM information_schema.columns WHERE table_name = %s AND column_name = %s",
+        (table_name, column_name)
+    )
+    return cursor.fetchone() is not None
 
 
 def upgrade(cursor, use_pg: bool) -> None:

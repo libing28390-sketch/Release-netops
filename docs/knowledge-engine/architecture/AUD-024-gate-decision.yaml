@@ -1,0 +1,74 @@
+task_id: AUD-024
+milestone: M0
+decision: CONDITIONAL_GO
+decision_scope:
+  implementation_and_validation: CONDITIONAL_GO
+  production_cutover: NO_GO
+  automatic_data_migration: NO_GO
+  unmediated_external_ai_egress: NO_GO
+basis:
+  architecture_invariants: [ADR-001, ADR-002, ADR-003, ADR-006, ADR-007, ADR-009]
+  governance_controls: [GOV-001, GOV-002, GOV-003, GOV-004, GOV-005, GOV-006, GOV-007, GOV-008, GOV-009, GOV-010, GOV-011, GOV-012]
+  audit_outputs: [AUD-001, AUD-002, AUD-003, AUD-004, AUD-005, AUD-006, AUD-007, AUD-008, AUD-009, AUD-010, AUD-011, AUD-012, AUD-013, AUD-014, AUD-015, AUD-016, AUD-017, AUD-018, AUD-019, AUD-020, AUD-021, AUD-022, AUD-023]
+  decision_matrix: docs/knowledge-engine/architecture/decision-matrix.yaml
+  migration_confidence: docs/knowledge-engine/migration/AUD-023-migration-confidence.yaml
+gate_review:
+  p0_tasks_complete: true
+  p0_task_count: 48
+  p0_completed_count: 48
+  exit_criteria_met: true
+  evidence_complete: true
+  blocker_count: 6
+  test_gate: PASS
+  security_gate: CONDITIONAL
+  migration_gate: CONDITIONAL
+  rollback_gate: PASS
+  documentation_gate: PASS
+release_blockers:
+  - id: DEC-006
+    severity: P0
+    condition: external_ai_gateway_dlp_allowlist_prompt_injection_and_key_audit_fail_closed
+    resolve_tasks: [LLM-001, SEC-001, SEC-002, API-001, OBS-001]
+  - id: DEC-013
+    severity: P0
+    condition: versioned_rotatable_fail_closed_api_key_crypto
+    resolve_tasks: [DB-009, SEC-003, SEC-004, MIG-004, REL-005]
+  - id: DEC-014
+    severity: P0
+    condition: tenant_owner_safe_trace_storage_and_retention
+    resolve_tasks: [DB-010, API-007, SEC-008, OBS-003, MIG-006]
+  - id: DEC-015
+    severity: P0
+    condition: server_side_ingestion_scan_quarantine_and_non_executable_context
+    resolve_tasks: [ING-001, ING-006, ING-012, SEC-011, KUI-012, EVAL-010]
+  - id: DEC-019
+    severity: P0
+    condition: server_side_attachment_validation_magic_size_archive_and_malware_gate
+    resolve_tasks: [ING-012, ING-013, API-008, SEC-011, REL-009]
+  - id: DEC-020
+    severity: P0
+    condition: remove_direct_provider_gateway_bypass_and_lock_with_tests
+    resolve_tasks: [LLM-006, SEC-002, API-002]
+allowed_until_release:
+  - proceed_with_DB_CAT_ING_CHK_RET_CIT_LLM_SEC_COP_DIA_KUI_API_OBS_EVAL_MIG_REL_in_dev_or_staging
+  - keep_V1_route_and_local_fallback_as_default
+  - run_V2_shadow_or_feature_flagged_with_auditable_rollback
+  - use_only_read_only_network_diagnostics
+forbidden_until_blockers_closed:
+  - production_V2_cutover
+  - automatic_copy_of_unverified_documents_chunks_or_embeddings
+  - direct_provider_or_embedding_network_calls_outside_gateway
+  - network_device_write_commands_from_copilot
+  - deletion_of_V1_data_or_legacy_generations
+exit_conditions_for_unconditional_go:
+  - all_release_blockers_have_PASS_evidence
+  - PostgreSQL_fresh_upgrade_rollback_migrations_pass
+  - source_metadata_chunk_embedding_gates_pass
+  - V1_V2_parallel_regression_and_evaluation_hard_thresholds_pass
+  - release_security_and_rollback_review_pass
+rollback:
+  implementation: disable_V2_feature_flag_and_restore_last_READY_generation
+  external_ai: activate_kill_switch_and_route_to_local_deterministic_path
+  migration: retain_legacy_rows_and_disable_new_generation
+  V1: preserve_V1_routes_and_response_projection
+next_task: DB-001

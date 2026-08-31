@@ -8,14 +8,13 @@ NAME = "wan_rollup_p95_utilization"
 
 
 def _columns(cursor, table: str, use_pg: bool) -> set[str]:
-    if use_pg:
-        rows = cursor.execute(
-            "SELECT column_name FROM information_schema.columns "
-            "WHERE table_schema = current_schema() AND table_name = ?",
-            (table,),
-        ).fetchall()
-        return {str(row[0]).lower() for row in rows}
-    return {str(row[1]).lower() for row in cursor.execute(f"PRAGMA table_info({table})").fetchall()}
+    rows = cursor.execute(
+        "SELECT column_name FROM information_schema.columns "
+        "WHERE table_schema = current_schema() AND table_name = ?",
+        (table,),
+    ).fetchall()
+    return {str(row[0]).lower() for row in rows}
+
 
 
 def upgrade(cursor, use_pg: bool) -> None:
@@ -25,4 +24,3 @@ def upgrade(cursor, use_pg: bool) -> None:
             cursor.execute(f"ALTER TABLE {table} ADD COLUMN p95_download_util_pct NUMERIC(7,3)")
         if "p95_upload_util_pct" not in columns:
             cursor.execute(f"ALTER TABLE {table} ADD COLUMN p95_upload_util_pct NUMERIC(7,3)")
-

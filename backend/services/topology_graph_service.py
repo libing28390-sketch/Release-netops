@@ -101,6 +101,16 @@ def _json_load(value: Any, default: Any) -> Any:
         return default
 
 
+def _table_exists(conn: Any, table_name: str) -> bool:
+    return bool(
+        conn.execute(
+            "SELECT 1 FROM information_schema.tables "
+            "WHERE table_schema = current_schema() AND table_name = ?",
+            (table_name,),
+        ).fetchone()
+    )
+
+
 def normalize_role(value: Any) -> str:
     text = str(value or "").strip().upper().replace("-", "_").replace(" ", "_")
     aliases = {
@@ -1385,9 +1395,9 @@ def _graph_rows(
     # A re-import can recreate a managed device with a new primary key while
     # historical discovery evidence still references the old key.  Never
     # expose those orphaned DEVICE nodes as part of the active read model.
-    # Older rolling-upgrade databases may not have the devices table yet, so
-    # retain the additive migration's existing graceful fallback.
-    try:
+    # During a rolling upgrade the inventory table may not exist yet. Probe
+    # PostgreSQL metadata first so absence does not abort the read transaction.
+    if _table_exists(conn, "devices"):
         current_device_ids = {
             str(row["id"])
             for row in conn.execute("SELECT id FROM devices").fetchall()
@@ -1397,8 +1407,6 @@ def _graph_rows(
             if str(item.get("node_type") or "").upper() != "DEVICE"
             or str(item.get("device_id") or "") in current_device_ids
         ]
-    except Exception:
-        pass
     node_ids = {str(item["id"]) for item in nodes}
     if not node_ids:
         return nodes, []

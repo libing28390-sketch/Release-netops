@@ -1,6 +1,6 @@
 """CAT-018 boundary between immutable official catalog facts and custom collections.
 
-The physical ``kb_collection`` repository remains gated by DB-001/DB-013.  This
+The collection repository remains gated by DB-001/DB-013.  This
 adapter therefore keeps custom collection metadata in a process-local registry,
 but enforces the production contract now: official catalog rows are always
 read-only, custom rows are tenant-scoped, and a custom collection can only hold

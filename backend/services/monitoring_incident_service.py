@@ -32,6 +32,15 @@ def utc_now_iso() -> str:
     return datetime.now(timezone.utc).replace(microsecond=0).isoformat()
 
 
+def _table_columns(conn, table_name: str) -> set[str]:
+    rows = conn.execute(
+        "SELECT column_name FROM information_schema.columns "
+        "WHERE table_schema = current_schema() AND table_name = ?",
+        (table_name,),
+    ).fetchall()
+    return {str(row[0]) for row in rows}
+
+
 def _append_timeline(
     conn,
     incident_id_value: str,
@@ -370,16 +379,15 @@ def get_incident(conn, incident_id_value: str, *, sync: bool = True) -> dict[str
         {"device_id": device_id, "hostname": next((str(alert.get("hostname") or "") for alert in alerts if str(alert.get("device_id") or "") == device_id), "")}
         for device_id in sorted({str(alert.get("device_id") or "") for alert in alerts if alert.get("device_id")})
     ]
-    try:
+    change_order_columns = _table_columns(conn, "change_orders")
+    if {"incident_id", "created_at"}.issubset(change_order_columns):
         work_order_rows = conn.execute(
             "SELECT id, order_number, title, status FROM change_orders "
             "WHERE incident_id = ? ORDER BY created_at DESC",
             (incident_id_value,),
         ).fetchall()
         item["work_orders"] = [dict(work_order) for work_order in work_order_rows]
-    except Exception:
-        # Keep incident reads compatible with databases that have not applied
-        # the optional work-order link migration yet.
+    else:
         item["work_orders"] = []
     return item
 
@@ -483,7 +491,8 @@ def get_incident_impact(conn, incident_id_value: str, *, sync: bool = True) -> d
     data_gaps: list[str] = []
     if site_ids:
         site_placeholders = ",".join("?" for _ in site_ids)
-        try:
+        site_columns = _table_columns(conn, "sites")
+        if {"id", "site_name", "contact_name", "contact_phone", "contact_email"}.issubset(site_columns):
             site_rows = conn.execute(
                 f"SELECT id, site_name, contact_name, contact_phone, contact_email FROM sites WHERE id IN ({site_placeholders})",
                 tuple(site_ids),
@@ -500,9 +509,10 @@ def get_incident_impact(conn, incident_id_value: str, *, sync: bool = True) -> d
                         "phone": item.get("contact_phone") or "",
                         "email": item.get("contact_email") or "",
                     })
-        except Exception:
+        else:
             data_gaps.append("Site contact details are unavailable in the current CMDB snapshot.")
-        try:
+        binding_columns = _table_columns(conn, "vlan_business_bindings")
+        if {"site_id", "business_system", "department", "owner", "business_level", "status"}.issubset(binding_columns):
             binding_rows = conn.execute(
                 f"SELECT business_system, department, owner, business_level FROM vlan_business_bindings WHERE site_id IN ({site_placeholders}) AND COALESCE(status, 'active') = 'active'",
                 tuple(site_ids),
@@ -511,7 +521,7 @@ def get_incident_impact(conn, incident_id_value: str, *, sync: bool = True) -> d
                 business_systems.add(str(row["business_system"] or "").strip())
                 business_units.add(str(row["department"] or "").strip())
                 business_owners.add(str(row["owner"] or "").strip())
-        except Exception:
+        else:
             data_gaps.append("No VLAN business binding data is available for the affected site scope.")
     if not site_names:
         data_gaps.append("Affected devices do not have a user-defined site mapping.")

@@ -48,7 +48,7 @@ def upgrade(cursor, _use_pg: bool) -> None:
             (str(uuid.uuid4()), "Baidu Web", "www.baidu.com", 443, "TCP_CONNECT", True, now),
             (str(uuid.uuid4()), "Aliyun Web", "www.aliyun.com", 443, "TCP_CONNECT", True, now),
         ]
-        placeholder = "%s" if _use_pg else "?"
+        placeholder = "%s"
         for row in defaults:
             cursor.execute(
                 f"""

@@ -14,13 +14,12 @@ NAME = "knowledge_v2_document_sources"
 
 
 def _json_type(use_pg: bool) -> tuple[str, str]:
-    if use_pg:
-        return "JSONB", "'{}'::jsonb"
+    return "JSONB", "'{}'::jsonb"
     return "TEXT", "'{}'"
 
 
 def _time_type(use_pg: bool) -> str:
-    return "TIMESTAMPTZ" if use_pg else "TEXT"
+    return "TIMESTAMPTZ"
 
 
 def upgrade(cursor, use_pg: bool) -> None:

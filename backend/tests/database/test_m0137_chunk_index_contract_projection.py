@@ -1,10 +1,10 @@
-import sqlite3
-
+from backend.tests import pg_catalog_assertions as pg_catalog
+from backend.tests.pg_test_utils import postgresql_test_driver
 from database.migrations import m0137_chunk_index_contract_projection
 
 
 def test_chk008_projection_is_idempotent_and_preserves_v1_columns():
-    conn = sqlite3.connect(":memory:")
+    conn = postgresql_test_driver.connect()
     conn.executescript(
         """
         CREATE TABLE ai_document (id TEXT PRIMARY KEY, content TEXT);
@@ -19,11 +19,11 @@ def test_chk008_projection_is_idempotent_and_preserves_v1_columns():
     )
 
     cursor = conn.cursor()
-    m0137_chunk_index_contract_projection.upgrade(cursor, use_pg=False)
-    m0137_chunk_index_contract_projection.upgrade(cursor, use_pg=False)
+    m0137_chunk_index_contract_projection.upgrade(cursor, use_pg=True)
+    m0137_chunk_index_contract_projection.upgrade(cursor, use_pg=True)
 
-    document_columns = {row[1] for row in conn.execute("PRAGMA table_info(ai_document)").fetchall()}
-    chunk_columns = {row[1] for row in conn.execute("PRAGMA table_info(ai_document_chunk)").fetchall()}
+    document_columns = pg_catalog.table_columns(conn, "ai_document")
+    chunk_columns = pg_catalog.table_columns(conn, "ai_document_chunk")
     assert "content" in document_columns
     assert "embedding" in chunk_columns
     assert "page" in chunk_columns
@@ -45,5 +45,5 @@ def test_chk008_projection_is_idempotent_and_preserves_v1_columns():
         "embedding_mode",
         "embedding_contract_version",
     } <= chunk_columns
-    indexes = {row[1] for row in conn.execute("PRAGMA index_list(ai_document_chunk)").fetchall()}
+    indexes = pg_catalog.index_names(conn, "ai_document_chunk")
     assert "ix_ai_doc_chunk_neighbor_projection" in indexes

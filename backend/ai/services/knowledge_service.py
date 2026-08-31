@@ -12,7 +12,8 @@ import uuid
 from contextlib import nullcontext
 from datetime import datetime, timezone
 from typing import Any, Dict, List, Optional
-from database.core import get_db_connection, _USE_PG
+from database.core import get_db_connection
+from psycopg2.extras import Json
 from ai.chunking.engine import ChunkingEngine
 from ai.providers.embedding import (
     EmbeddingProviderError,
@@ -36,23 +37,9 @@ from ai.services.knowledge_metadata import (
 from ai.services.knowledge_source_parser import KnowledgeSourceParseError, parse_knowledge_source
 
 
-try:
-    import sqlite3
-    from psycopg2.extras import Json as _PgJson
-    sqlite3.register_adapter(_PgJson, lambda j: json.dumps(getattr(j, "adapted", j), ensure_ascii=False))
-except Exception:
-    pass
-
-
 def _json_db_value(value: Dict[str, Any]) -> Any:
-    """Adapt a metadata mapping to JSONB on PostgreSQL and TEXT on SQLite."""
-    if _USE_PG:
-        try:
-            from psycopg2.extras import Json
-            return Json(value, dumps=lambda item: json.dumps(item, ensure_ascii=False))
-        except ImportError:
-            pass
-    return json_safe_metadata(value)
+    """Adapt a metadata mapping to PostgreSQL JSONB."""
+    return Json(value, dumps=lambda item: json.dumps(item, ensure_ascii=False))
 from ai.services.rag_policy import parse_acl
 from ai.services.retrieval_contract import retrieval_cache
 
@@ -873,11 +860,10 @@ class KnowledgeService:
     ) -> Optional[Dict[str, Any]]:
         """Return one document's on-demand body, provenance and ordered chunks.
 
-        The legacy ``ai_document`` table is still the V1-compatible index
-        projection.  When the canonical V2 version tables contain a matching
-        document id, their immutable version rows are joined into the detail
-        response; otherwise the response explicitly returns an empty history
-        instead of inventing lineage.
+        ``ai_document`` is the current V1 document and
+        ``ai_document_revision`` is the only retained provenance/history
+        stream.  Detail responses are assembled from those two tables and the
+        formal chunk index.
         """
         with get_db_connection() as conn:
             cursor = conn.cursor()
@@ -1016,70 +1002,48 @@ class KnowledgeService:
 
             source_version_history: List[Dict[str, Any]] = []
             raw_sources: List[Dict[str, Any]] = []
-            canonical_document_id = str(row_values.get("document_id") or doc_id)
-            canonical_tables_ready = False
-            try:
+            revision_table_exists = bool(
                 cursor.execute(
-                    "SELECT 1 FROM information_schema.tables WHERE table_schema = current_schema() "
-                    "AND table_name IN ('kb_document', 'kb_document_version', 'kb_document_source')"
-                )
-                canonical_tables_ready = len(cursor.fetchall()) == 3
-            except Exception:
-                try:
-                    cursor.execute(
-                        "SELECT COUNT(*) FROM sqlite_master WHERE type = 'table' "
-                        "AND name IN ('kb_document', 'kb_document_version', 'kb_document_source')"
-                    )
-                    canonical_tables_ready = int((cursor.fetchone() or [0])[0] or 0) == 3
-                except Exception:
-                    canonical_tables_ready = False
-            if canonical_tables_ready:
+                    "SELECT 1 FROM information_schema.tables "
+                    "WHERE table_schema = current_schema() AND table_name = ?",
+                    ("ai_document_revision",),
+                ).fetchone()
+            )
+            if revision_table_exists:
                 cursor.execute(
-                    "SELECT id, source_uri, canonical_key, source_registry_id, current_version_id "
-                    "FROM kb_document WHERE tenant_id = ? AND id = ?",
-                    (tenant_id, canonical_document_id),
+                    "SELECT id, revision_no, legacy_source_version_id, content_hash, status, "
+                    "lifecycle_status, mime_type, byte_size, canonical_url, source_kind, "
+                    "fetched_at, created_at FROM ai_document_revision "
+                    "WHERE tenant_id = ? AND document_id = ? AND record_type = 'document_revision' "
+                    "ORDER BY revision_no DESC, created_at DESC, id DESC",
+                    (tenant_id, doc_id),
                 )
-                canonical_row = cursor.fetchone()
-                if canonical_row:
-                    canonical_id = str(canonical_row[0])
-                    cursor.execute(
-                        "SELECT id, version_no, source_version_id, content_hash, status, "
-                        "lifecycle_status, mime_type, byte_size, created_at, updated_at "
-                        "FROM kb_document_version WHERE tenant_id = ? AND document_id = ? "
-                        "ORDER BY version_no DESC",
-                        (tenant_id, canonical_id),
-                    )
-                    source_version_history = [
-                        {
-                            "id": version[0],
-                            "version_no": int(version[1] or 0),
-                            "source_version_id": version[2],
-                            "content_hash": version[3],
-                            "status": version[4],
-                            "lifecycle_status": version[5],
-                            "mime_type": version[6],
-                            "byte_size": int(version[7] or 0),
-                            "created_at": version[8],
-                            "updated_at": version[9],
-                        }
-                        for version in cursor.fetchall()
-                    ]
-                    cursor.execute(
-                        "SELECT canonical_url, source_registry_id, source_version_id, status, observed_at "
-                        "FROM kb_document_source WHERE tenant_id = ? AND document_id = ? "
-                        "ORDER BY observed_at DESC",
-                        (tenant_id, canonical_id),
-                    )
-                    raw_sources = [
-                        {
-                            "canonical_url": source[0],
-                            "source_registry_id": source[1],
-                            "source_version_id": source[2],
-                            "status": source[3],
-                            "observed_at": source[4],
-                        }
-                        for source in cursor.fetchall()
-                    ]
+                revision_rows = cursor.fetchall()
+            else:
+                # Startup normally applies m0189 before serving requests. Keep
+                # the detail endpoint usable during a rolling PostgreSQL upgrade
+                # without relying on localized driver error text.
+                revision_rows = []
+            for revision in revision_rows:
+                source_version_history.append({
+                    "id": revision[0],
+                    "version_no": int(revision[1] or 0),
+                    "source_version_id": revision[2],
+                    "content_hash": revision[3],
+                    "status": revision[4],
+                    "lifecycle_status": revision[5],
+                    "mime_type": revision[6],
+                    "byte_size": int(revision[7] or 0),
+                    "created_at": revision[11] or revision[10],
+                    "fetched_at": revision[10],
+                })
+                raw_sources.append({
+                    "canonical_url": revision[8],
+                    "source_kind": revision[9],
+                    "source_version_id": revision[2] or revision[0],
+                    "status": revision[4],
+                    "observed_at": revision[10] or revision[11],
+                })
 
             return {
                 "id": row_values["id"],
@@ -1227,26 +1191,6 @@ class KnowledgeService:
             # appear to have failed or leak an implementation error.
             return
 
-    @staticmethod
-    def _table_exists(cursor, table_name: str) -> bool:
-        """Check an optional canonical table without aborting a PG transaction."""
-        try:
-            cursor.execute(
-                "SELECT 1 FROM information_schema.tables "
-                "WHERE table_schema = current_schema() AND table_name = ?",
-                (table_name,),
-            )
-            return cursor.fetchone() is not None
-        except Exception:
-            try:
-                cursor.execute(
-                    "SELECT 1 FROM sqlite_master WHERE type = 'table' AND name = ?",
-                    (table_name,),
-                )
-                return cursor.fetchone() is not None
-            except Exception:
-                return False
-
     def _document_action_impact(self, cursor, row_values: Dict[str, Any]) -> Dict[str, Any]:
         doc_id = str(row_values.get("id") or "")
         chunk_row = cursor.execute(
@@ -1254,32 +1198,28 @@ class KnowledgeService:
             (doc_id,),
         ).fetchone()
         chunk_count = int((chunk_row[0] if chunk_row else 0) or 0)
-        canonical_document_id = str(row_values.get("document_id") or doc_id)
-        source_references = 0
-        version_references = 0
+        tenant_id = str(row_values.get("tenant_id") or "tenant-default")
+        revision_count = int((cursor.execute(
+            "SELECT COUNT(*) FROM ai_document_revision WHERE tenant_id = ? AND document_id = ?",
+            (tenant_id, doc_id),
+        ).fetchone() or [0])[0] or 0)
+        observation_count = int((cursor.execute(
+            "SELECT COUNT(*) FROM ai_document_revision WHERE tenant_id = ? AND document_id = ? "
+            "AND record_type IN ('source_observation', 'site_alert', 'lifecycle_event')",
+            (tenant_id, doc_id),
+        ).fetchone() or [0])[0] or 0)
         reference_details: list[Dict[str, Any]] = []
-        if self._table_exists(cursor, "kb_document_source"):
-            source_references = int((cursor.execute(
-                "SELECT COUNT(*) FROM kb_document_source WHERE tenant_id = ? AND document_id = ?",
-                (str(row_values.get("tenant_id") or "tenant-default"), canonical_document_id),
-            ).fetchone() or [0])[0] or 0)
-            if source_references:
-                reference_details.append({"type": "source_observation", "count": source_references})
-        if self._table_exists(cursor, "kb_document_version"):
-            version_references = int((cursor.execute(
-                "SELECT COUNT(*) FROM kb_document_version WHERE tenant_id = ? AND document_id = ?",
-                (str(row_values.get("tenant_id") or "tenant-default"), canonical_document_id),
-            ).fetchone() or [0])[0] or 0)
-            if version_references:
-                reference_details.append({"type": "document_version", "count": version_references})
-        references = source_references + version_references
+        if revision_count:
+            reference_details.append({"type": "document_revision", "count": revision_count - observation_count})
+        if observation_count:
+            reference_details.append({"type": "v1_provenance_event", "count": observation_count})
         return {
             "documents": 1,
             "chunks": chunk_count,
             "indexes": chunk_count,
-            "references": references,
+            "references": revision_count,
             "reference_details": reference_details,
-            "reference_scope": "kb_document_source_and_kb_document_version" if self._table_exists(cursor, "kb_document_source") or self._table_exists(cursor, "kb_document_version") else "legacy_ai_document_has_no_reference_graph",
+            "reference_scope": "ai_document_revision",
         }
 
     def get_document_action_impact(self, *, doc_id: str, tenant_id: str = "tenant-default") -> Dict[str, Any]:
@@ -1488,10 +1428,10 @@ class KnowledgeService:
             raise KnowledgeDocumentActionError(safe_code, "document action could not be queued", status_code=503) from exc
 
     def smart_chunk_markdown(self, markdown_text: str, max_chunk_size: int = 800) -> List[Dict[str, Any]]:
-        """Compatibility wrapper around the V2 chunking engine.
+        """Compatibility wrapper around the current chunking engine.
 
         ``max_chunk_size`` is retained for callers of the old service method,
-        but V2 interprets it as a token target. New code should use the
+        but the current engine interprets it as a token target. New code should use the
         structured fields returned by :class:`ChunkingEngine` directly.
         """
         chunks = ChunkingEngine().chunk(

@@ -1,7 +1,6 @@
 from __future__ import annotations
 
-import sqlite3
-
+from backend.tests.pg_test_utils import postgresql_test_driver
 import services.librenms_mib_service as sync_librenms_mibs
 from services.snmp_mib_service import MibParser
 
@@ -21,7 +20,7 @@ END
 """
 
 
-def _create_import_schema(conn: sqlite3.Connection) -> None:
+def _create_import_schema(conn: postgresql_test_driver.Connection) -> None:
     conn.executescript(
         """
         CREATE TABLE snmp_mibs (
@@ -74,12 +73,13 @@ def test_librenms_import_scans_root_and_vendor_files_idempotently(tmp_path, monk
     db_path = tmp_path / "mib-import.sqlite"
 
     def open_conn():
-        connection = sqlite3.connect(db_path)
-        connection.row_factory = sqlite3.Row
+        connection = postgresql_test_driver.connect(db_path)
+        connection.row_factory = postgresql_test_driver.Row
         return connection
 
     conn = open_conn()
     _create_import_schema(conn)
+    conn.commit()
     conn.close()
     monkeypatch.setattr(sync_librenms_mibs, "get_db_connection", open_conn)
     mibs_dir = tmp_path / "mibs"
@@ -134,12 +134,13 @@ def test_librenms_update_after_upstream_commit_reuses_same_active_row(tmp_path, 
     db_path = tmp_path / "mib-commit-update.sqlite"
 
     def open_conn():
-        connection = sqlite3.connect(db_path)
-        connection.row_factory = sqlite3.Row
+        connection = postgresql_test_driver.connect(db_path)
+        connection.row_factory = postgresql_test_driver.Row
         return connection
 
     conn = open_conn()
     _create_import_schema(conn)
+    conn.commit()
     conn.close()
 
     mibs_dir = tmp_path / "mibs"
@@ -179,12 +180,13 @@ def test_librenms_full_snapshot_retires_removed_path(tmp_path, monkeypatch) -> N
     db_path = tmp_path / "mib-removed.sqlite"
 
     def open_conn():
-        connection = sqlite3.connect(db_path)
-        connection.row_factory = sqlite3.Row
+        connection = postgresql_test_driver.connect(db_path)
+        connection.row_factory = postgresql_test_driver.Row
         return connection
 
     conn = open_conn()
     _create_import_schema(conn)
+    conn.commit()
     conn.close()
 
     mibs_dir = tmp_path / "mibs"

@@ -1,12 +1,11 @@
 from __future__ import annotations
 
-import sqlite3
-
+from backend.tests.pg_test_utils import postgresql_test_driver
 from services.scheduler_service import _persist_routing_neighbor_results
 
 
-def _routing_neighbors_db() -> sqlite3.Connection:
-    conn = sqlite3.connect(":memory:")
+def _routing_neighbors_db() -> postgresql_test_driver.Connection:
+    conn = postgresql_test_driver.connect()
     conn.execute(
         """
         CREATE TABLE routing_neighbors (

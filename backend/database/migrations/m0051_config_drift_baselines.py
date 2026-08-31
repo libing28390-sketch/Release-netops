@@ -8,17 +8,16 @@ NAME = "config_drift_baselines"
 
 
 def _column_exists(cursor, table: str, column: str, use_pg: bool) -> bool:
-    if use_pg:
-        return cursor.execute(
-            """
-            SELECT 1 FROM information_schema.columns
-            WHERE table_schema = current_schema()
-              AND table_name = ?
-              AND column_name = ?
-            """,
-            (table, column),
-        ).fetchone() is not None
-    return any(str(row[1]) == column for row in cursor.execute(f"PRAGMA table_info({table})").fetchall())
+    return cursor.execute(
+        """
+        SELECT 1 FROM information_schema.columns
+        WHERE table_schema = current_schema()
+          AND table_name = ?
+          AND column_name = ?
+        """,
+        (table, column),
+    ).fetchone() is not None
+
 
 
 def upgrade(cursor, use_pg: bool) -> None:

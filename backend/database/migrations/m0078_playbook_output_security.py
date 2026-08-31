@@ -10,29 +10,23 @@ NAME = "playbook_output_security"
 
 
 def _columns(cursor, table: str, use_pg: bool) -> set[str]:
-    if use_pg:
-        rows = cursor.execute(
-            "SELECT column_name FROM information_schema.columns "
-            "WHERE table_schema = current_schema() AND table_name = ?",
-            (table,),
-        ).fetchall()
-        return {str(row[0]).lower() for row in rows}
-    return {str(row[1]).lower() for row in cursor.execute(f"PRAGMA table_info({table})").fetchall()}
+    rows = cursor.execute(
+        "SELECT column_name FROM information_schema.columns "
+        "WHERE table_schema = current_schema() AND table_name = ?",
+        (table,),
+    ).fetchall()
+    return {str(row[0]).lower() for row in rows}
+
 
 
 def _table_exists(cursor, table: str, use_pg: bool) -> bool:
-    if use_pg:
-        row = cursor.execute(
-            "SELECT 1 FROM information_schema.tables "
-            "WHERE table_schema = current_schema() AND table_name = ?",
-            (table,),
-        ).fetchone()
-        return bool(row)
     row = cursor.execute(
-        "SELECT 1 FROM sqlite_master WHERE type = 'table' AND name = ?",
+        "SELECT 1 FROM information_schema.tables "
+        "WHERE table_schema = current_schema() AND table_name = ?",
         (table,),
     ).fetchone()
     return bool(row)
+
 
 
 def _add_columns(cursor, table: str, use_pg: bool, additions: tuple[tuple[str, str], ...]) -> set[str]:

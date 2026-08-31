@@ -14,15 +14,13 @@ NAME = "ai_multi_provider_model_switching"
 
 
 def _columns(cursor, table: str, use_pg: bool) -> set[str]:
-    if use_pg:
-        rows = cursor.execute(
-            "SELECT column_name FROM information_schema.columns "
-            "WHERE table_schema = current_schema() AND table_name = ?",
-            (table,),
-        ).fetchall()
-        return {str(row[0]) for row in rows}
-    rows = cursor.execute(f"PRAGMA table_info({table})").fetchall()
-    return {str(row[1]) for row in rows}
+    rows = cursor.execute(
+        "SELECT column_name FROM information_schema.columns "
+        "WHERE table_schema = current_schema() AND table_name = ?",
+        (table,),
+    ).fetchall()
+    return {str(row[0]) for row in rows}
+
 
 
 def _add_columns(cursor, table: str, definitions: dict[str, str], use_pg: bool) -> None:

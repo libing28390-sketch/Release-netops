@@ -14,14 +14,13 @@ NAME = "wan_link_monitoring_p0"
 
 
 def _columns(cursor, table: str, use_pg: bool) -> set[str]:
-    if use_pg:
-        rows = cursor.execute(
-            "SELECT column_name FROM information_schema.columns "
-            "WHERE table_schema = current_schema() AND table_name = ?",
-            (table,),
-        ).fetchall()
-        return {str(row[0]).lower() for row in rows}
-    return {str(row[1]).lower() for row in cursor.execute(f"PRAGMA table_info({table})").fetchall()}
+    rows = cursor.execute(
+        "SELECT column_name FROM information_schema.columns "
+        "WHERE table_schema = current_schema() AND table_name = ?",
+        (table,),
+    ).fetchall()
+    return {str(row[0]).lower() for row in rows}
+
 
 
 def _ensure_column(cursor, table: str, name: str, definition: str, use_pg: bool) -> None:
@@ -30,9 +29,9 @@ def _ensure_column(cursor, table: str, name: str, definition: str, use_pg: bool)
 
 
 def upgrade(cursor, use_pg: bool) -> None:
-    time_type = "TIMESTAMPTZ" if use_pg else "TEXT"
-    json_type = "JSONB" if use_pg else "TEXT"
-    json_default = "'{}'::jsonb" if use_pg else "'{}'"
+    time_type = "TIMESTAMPTZ"
+    json_type = "JSONB"
+    json_default = "'{}'::jsonb"
 
     _ensure_column(cursor, "interfaces", "if_index", "INTEGER", use_pg)
 

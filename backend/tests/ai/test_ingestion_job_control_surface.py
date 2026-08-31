@@ -38,11 +38,11 @@ def test_ing016_api_routes_and_permission_catalog_are_explicit():
     from core.rbac import permission_catalog
 
     paths = {(route.path, tuple(sorted(route.methods or []))) for route in router.routes}
-    assert ("/knowledge-v2/ingestion/jobs", ("GET",)) in paths
-    assert ("/knowledge-v2/ingestion/jobs/{job_id}", ("GET",)) in paths
-    assert ("/knowledge-v2/ingestion/jobs/{job_id}/errors", ("GET",)) in paths
-    assert ("/knowledge-v2/ingestion/jobs/{job_id}/cancel", ("POST",)) in paths
-    assert ("/knowledge-v2/ingestion/jobs/{job_id}/retry", ("POST",)) in paths
+    assert ("/knowledge/ingestion/jobs", ("GET",)) in paths
+    assert ("/knowledge/ingestion/jobs/{job_id}", ("GET",)) in paths
+    assert ("/knowledge/ingestion/jobs/{job_id}/errors", ("GET",)) in paths
+    assert ("/knowledge/ingestion/jobs/{job_id}/cancel", ("POST",)) in paths
+    assert ("/knowledge/ingestion/jobs/{job_id}/retry", ("POST",)) in paths
     assert set(permission_catalog()["knowledge_import"]) >= {"read", "cancel", "retry"}
 
 

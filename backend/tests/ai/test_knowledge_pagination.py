@@ -1,12 +1,10 @@
 import importlib
-import sqlite3
-
-
+from backend.tests.pg_test_utils import postgresql_test_driver
 knowledge_service_module = importlib.import_module("ai.services.knowledge_service")
 
 
 def _knowledge_connection():
-    connection = sqlite3.connect(":memory:")
+    connection = postgresql_test_driver.connect()
     connection.executescript(
         """
         CREATE TABLE ai_document (

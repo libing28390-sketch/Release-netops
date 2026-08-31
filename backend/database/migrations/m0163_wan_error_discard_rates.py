@@ -15,14 +15,13 @@ NAME = "wan_error_discard_rates"
 
 
 def _columns(cursor, table: str, use_pg: bool) -> set[str]:
-    if use_pg:
-        rows = cursor.execute(
-            "SELECT column_name FROM information_schema.columns "
-            "WHERE table_schema = current_schema() AND table_name = ?",
-            (table,),
-        ).fetchall()
-        return {str(row[0]).lower() for row in rows}
-    return {str(row[1]).lower() for row in cursor.execute(f"PRAGMA table_info({table})").fetchall()}
+    rows = cursor.execute(
+        "SELECT column_name FROM information_schema.columns "
+        "WHERE table_schema = current_schema() AND table_name = ?",
+        (table,),
+    ).fetchall()
+    return {str(row[0]).lower() for row in rows}
+
 
 
 def _ensure_column(cursor, table: str, name: str, definition: str, use_pg: bool) -> None:
@@ -59,8 +58,7 @@ def upgrade(cursor, use_pg: bool) -> None:
             # The partitioned compatibility table is not present on some
             # legacy SQLite databases.  The authoritative raw table above is
             # still upgraded; PostgreSQL errors must propagate.
-            if use_pg or table == "wan_link_samples_1m":
-                raise
+            raise
     for table in ("wan_link_samples_5m", "wan_link_samples_1h", "wan_link_samples_daily"):
         for name in ("avg_in_error_rate", "avg_out_error_rate", "avg_in_discard_rate", "avg_out_discard_rate"):
             _ensure_column(cursor, table, name, rate_type, use_pg)

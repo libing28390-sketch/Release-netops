@@ -1,11 +1,11 @@
-import sqlite3
-
+from backend.tests import pg_catalog_assertions as pg_catalog
+from backend.tests.pg_test_utils import postgresql_test_driver
 from database.migrations.m0046_arp_collection_resilience import upgrade
 from database.migrations.m0047_collector_sweep_state import upgrade as upgrade_sweep_state
 
 
 def test_arp_resilience_migration_is_idempotent():
-    conn = sqlite3.connect(":memory:")
+    conn = postgresql_test_driver.connect()
     conn.execute(
         """
         CREATE TABLE device_collection_status (
@@ -18,26 +18,20 @@ def test_arp_resilience_migration_is_idempotent():
         """
     )
     try:
-        upgrade(conn.cursor(), use_pg=False)
-        upgrade(conn.cursor(), use_pg=False)
-        columns = {
-            row[1]
-            for row in conn.execute("PRAGMA table_info(device_collection_status)").fetchall()
-        }
+        upgrade(conn.cursor(), use_pg=True)
+        upgrade(conn.cursor(), use_pg=True)
+        columns = pg_catalog.table_columns(conn, "device_collection_status")
         assert {"next_retry_at", "failure_class", "circuit_state", "last_failure_at"} <= columns
     finally:
         conn.close()
 
 
 def test_collector_sweep_state_migration_is_idempotent():
-    conn = sqlite3.connect(":memory:")
+    conn = postgresql_test_driver.connect()
     try:
-        upgrade_sweep_state(conn.cursor(), use_pg=False)
-        upgrade_sweep_state(conn.cursor(), use_pg=False)
-        columns = {
-            row[1]
-            for row in conn.execute("PRAGMA table_info(collector_sweep_state)").fetchall()
-        }
+        upgrade_sweep_state(conn.cursor(), use_pg=True)
+        upgrade_sweep_state(conn.cursor(), use_pg=True)
+        columns = pg_catalog.table_columns(conn, "collector_sweep_state")
         assert {
             "collector", "cursor_position", "last_run_id", "last_started_at",
             "last_completed_at", "last_eligible", "last_selected",

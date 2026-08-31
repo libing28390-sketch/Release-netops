@@ -1,0 +1,61 @@
+task_id: MIG-007
+title: Parse Chunk Embed Index rebuild gate
+priority: P0
+milestone: M2
+owner: AI+BE
+status: implemented_pending_gate
+authority: PostgreSQL
+sqlite: forbidden_for_acceptance
+production_database_write: false
+
+purpose:
+  - Rebuild only migration documents that passed MIG-006 official entity validation.
+  - Enforce Parse -> Normalize -> Classify -> Chunk -> Embed -> Index -> Validate -> Commit ordering.
+  - Keep unverified legacy rows out of the V2 rebuild worker until source/catalog reconciliation completes.
+
+input:
+  manifest: docs/knowledge-engine/eval/mig-006-official-entity-validation-manifest-v1.json
+  eligible_grade: verified
+  rejected_grades: [needs_validation, unusable]
+  source_body: normalized_content_then_original_content_for_legacy_rows
+  metadata: original_front_matter_then_metadata_json
+
+phase_order: [parsed, normalized, classified, chunked, embedded, indexed, validated, committed, completed]
+phase_rules:
+  - every_phase_requires_running_tenant_scoped_job
+  - a_phase_may_not_be_skipped_without_explicit_evidence
+  - embedding_requires_pinned_provider_model_dimension_contract
+  - index_commit_occurs_only_after_all_chunks_and_vectors_succeed
+  - stale_document_compare_and_set_rejects_delete_or_insert
+  - provider_or_dimension_failure_preserves_previous_projection
+
+eligibility:
+  verified_source_and_unique_catalog_match_required: true
+  unknown_or_ambiguous_value: blocked_from_rebuild
+  direct_chunk_copy: forbidden
+  direct_embedding_copy: forbidden
+  body_inference_for_entity: forbidden
+  no_verified_rows_behavior: BLOCKED_NO_VERIFIED_SOURCE_ENTITIES
+
+security:
+  tenant_predicate_required: true
+  device_write_authority: false
+  external_fetch_in_gate: false
+  job_error_forbidden: [raw_document, source_url, credential, secret, DSN, provider_exception_text]
+  manifest_fields: [legacy_id, tenant_id_hash, metadata_hash, validation_grade, reason_codes, action]
+
+compatibility:
+  v1_rows_preserved: true
+  v1_reindex_adapter_retained: true
+  rollback: stop_rebuild_worker_and_route_reads_to_v1_projection
+  production_ddl: none
+
+acceptance:
+  - PostgreSQL_read_only_transaction_is_verified
+  - all_manifest_rows_are_tenant_scoped_and_unique
+  - only_verified_rows_are_eligible
+  - no_verified_rows_is_blocked_without_provider_call
+  - phase_order_is_deterministic
+  - dry_run_has_no_persisted_side_effect
+  - previous_chunks_and_embeddings_are_preserved_on_failure
+  - V1_baseline_is_unchanged

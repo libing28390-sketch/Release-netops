@@ -16,14 +16,12 @@ from .seed import (
 _db_initialized = False
 
 def _table_columns(cursor, table_name: str) -> set[str]:
-    """Return column names for *table_name*. Backend-aware."""
-    if _USE_PG:
-        cursor.execute(
-            "SELECT column_name FROM information_schema.columns WHERE table_name = %s",
-            (table_name,),
-        )
-        return {row[0] for row in cursor.fetchall()}
-    return {row['name'] for row in cursor.execute(f'PRAGMA table_info({table_name})').fetchall()}
+    """Return PostgreSQL column names for *table_name*."""
+    cursor.execute(
+        "SELECT column_name FROM information_schema.columns WHERE table_name = %s",
+        (table_name,),
+    )
+    return {row[0] for row in cursor.fetchall()}
 
 
 def _table_columns_deprecated(cursor, table_name: str) -> set[str]:
@@ -95,21 +93,14 @@ def _init_db_logic(conn, *, allow_legacy_import: bool = True):
     # partially initialized database must not be mistaken for a new install
     # and resurrect records that an operator deliberately deleted.
     try:
-        if _USE_PG:
-            cursor.execute(
-                "SELECT EXISTS ("
-                "SELECT 1 FROM information_schema.tables "
-                "WHERE table_schema = current_schema() "
-                "AND table_name = 'schema_migrations'"
-                ")"
-            )
-            legacy_bootstrap_new = not bool(cursor.fetchone()[0])
-        else:
-            cursor.execute(
-                "SELECT 1 FROM sqlite_master "
-                "WHERE type = 'table' AND name = 'schema_migrations'"
-            )
-            legacy_bootstrap_new = cursor.fetchone() is None
+        cursor.execute(
+            "SELECT EXISTS ("
+            "SELECT 1 FROM information_schema.tables "
+            "WHERE table_schema = current_schema() "
+            "AND table_name = 'schema_migrations'"
+            ")"
+        )
+        legacy_bootstrap_new = not bool(cursor.fetchone()[0])
     except Exception:
         # The baseline has to remain usable even when the metadata table is
         # unavailable; migration runner will create it later in this boot.
@@ -1188,14 +1179,10 @@ def _init_db_logic(conn, *, allow_legacy_import: bool = True):
 
     # Check if network_endpoints has the old 'port' column instead of 'switch_port'
     try:
-        if _USE_PG:
-            cursor.execute(
-                "SELECT column_name FROM information_schema.columns WHERE table_name = 'network_endpoints' AND column_name = 'port'"
-            )
-            has_old_port = bool(cursor.fetchone())
-        else:
-            cols = [row['name'] for row in cursor.execute("PRAGMA table_info(network_endpoints)").fetchall()]
-            has_old_port = ('port' in cols and 'switch_port' not in cols)
+        cursor.execute(
+            "SELECT column_name FROM information_schema.columns WHERE table_name = 'network_endpoints' AND column_name = 'port'"
+        )
+        has_old_port = bool(cursor.fetchone())
         if has_old_port:
             cursor.execute("DROP TABLE network_endpoints")
     except Exception:
@@ -3192,7 +3179,7 @@ def _init_db_logic(conn, *, allow_legacy_import: bool = True):
     # `assets.py` / `devices.py` set `asset_id = ''` and `archived = 1`
     # rather than dropping the row, so the audit trail survives.
     # The FK below uses ON DELETE SET NULL for fresh databases so that
-    # even with PRAGMA foreign_keys=ON the cascade behavior is correct.
+    # PostgreSQL foreign-key cascades preserve the expected cleanup behavior.
     # Existing databases were created with ON DELETE CASCADE; that FK is
     # currently inert because the connection layer does not enable
     # foreign_keys, and the application-level soft-delete is the source
@@ -4109,12 +4096,8 @@ def _init_db_logic(conn, *, allow_legacy_import: bool = True):
     # Data migration: Move interface data from devices to interfaces table
     # ──────────────────────────────────────────────────────────────────
     try:
-        if _USE_PG:
-            cursor.execute("SELECT EXISTS (SELECT 1 FROM information_schema.tables WHERE table_name = 'interfaces')")
-            has_interfaces_table = cursor.fetchone()[0]
-        else:
-            cursor.execute("SELECT name FROM sqlite_master WHERE type='table' AND name='interfaces'")
-            has_interfaces_table = bool(cursor.fetchone())
+        cursor.execute("SELECT EXISTS (SELECT 1 FROM information_schema.tables WHERE table_name = 'interfaces')")
+        has_interfaces_table = cursor.fetchone()[0]
 
         if has_interfaces_table:
             dev_cols = _table_columns(cursor, 'devices')

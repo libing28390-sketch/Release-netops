@@ -35,11 +35,12 @@ class _PostgresLikeConnection:
         self.failed = False
 
 
-def test_pam_session_columns_rolls_back_before_postgres_fallback():
+def test_pam_session_columns_uses_postgres_catalog_metadata():
     conn = _PostgresLikeConnection()
 
     columns = pam_api._pam_session_columns(conn)
 
     assert columns == {"id", "session_kind", "tenant_id"}
-    assert conn.rollback_calls == 1
+    assert conn.rollback_calls == 0
     assert any("information_schema.columns" in statement for statement in conn.statements)
+    assert not any(statement.startswith("PRAGMA") for statement in conn.statements)

@@ -1,154 +1,181 @@
-"""ING-019 official-source removal, replacement and version signals."""
+"""Apply official-source change signals on the V1 knowledge projection.
+
+Source-change evidence is stored in ``ai_document_revision``. The same row
+also carries bounded application state so quarantine can be retried without
+bringing back the retired V2 action tables.
+"""
 
 from __future__ import annotations
 
-import logging
-from datetime import datetime, timedelta, timezone
+import json
+from datetime import datetime, timezone
 from typing import Any
 
 from core.rbac import authorize_resource
 from database import get_db_connection
 from services.document_lifecycle_service import DocumentLifecycleError, transition_document_lifecycle
-from services.source_registry_service import (
+from services.knowledge_v1_source_service import (
     SourceRegistryError,
     get_source,
     quarantine_source_for_change,
 )
 
 
-logger = logging.getLogger(__name__)
 _OFFICIAL_KINDS = {
-    "official_url",
-    "product_page",
-    "configuration_guide",
-    "command_reference",
-    "release_note",
-    "product_support",
+    "official_url", "product_page", "configuration_guide", "command_reference",
+    "release_note", "troubleshooting_guide", "product_support",
 }
 
 
-def _is_official(source: dict[str, Any]) -> bool:
-    return str(source.get("source_type") or "").startswith("official_") or str(source.get("source_kind") or "") in _OFFICIAL_KINDS
+def _now() -> str:
+    return datetime.now(timezone.utc).isoformat()
 
 
-def _safe_code(exc: BaseException, default: str) -> str:
-    code = str(getattr(exc, "code", "") or default)
-    return code[:128] if code.replace("_", "").isalnum() else default
+def _actor(user: dict[str, Any]) -> str:
+    return str(user.get("id") or user.get("user_id") or user.get("username") or "system")[:256]
 
 
-def _stable_code(value: Any, default: str) -> str:
+def _safe_code(value: Any, default: str) -> str:
     code = str(value or default).strip().upper()
     return code[:128] if code.replace("_", "").isalnum() else default
 
 
-def _actor(user: dict[str, Any]) -> str:
-    return str(user.get("id") or user.get("user_id") or user.get("username") or "system")
-
-
-def _now() -> str:
-    return datetime.now(timezone.utc).replace(microsecond=0).isoformat()
-
-
-def _claim_change_action(
-    *,
-    source: dict[str, Any],
-    detection_type: str,
-    user: dict[str, Any],
-    refresh_observation_id: str,
-) -> tuple[dict[str, Any], str]:
-    tenant_id = str(source.get("tenant_id") or user.get("tenant_id") or "tenant-default")
-    if not authorize_resource(user, "knowledge_source", "update", tenant_id=tenant_id):
-        raise SourceRegistryError("SOURCE_CHANGE_PERMISSION_DENIED", "Insufficient permission to apply source change", status_code=403)
-    conn = get_db_connection()
+def _json_load(value: Any, default: Any = None) -> Any:
+    if isinstance(value, (dict, list)):
+        return value
     try:
-        params: list[Any] = [tenant_id, str(source.get("id") or ""), detection_type]
-        observation_clause = ""
-        if refresh_observation_id:
-            observation_clause = " AND action.refresh_observation_id = ?"
-            params.append(refresh_observation_id)
+        return json.loads(value or "")
+    except (TypeError, ValueError, json.JSONDecodeError):
+        return default if default is not None else {}
+
+
+def _db_json(value: dict[str, Any]) -> Any:
+    try:
+        from database import _USE_PG
+
+        if _USE_PG:
+            from psycopg2.extras import Json
+
+            return Json(value, dumps=lambda item: json.dumps(item, ensure_ascii=False, sort_keys=True, separators=(",", ":"), default=str))
+    except ImportError:
+        pass
+    return json.dumps(value, ensure_ascii=False, sort_keys=True, separators=(",", ":"), default=str)
+
+
+def _is_official(source: dict[str, Any]) -> bool:
+    return (
+        str(source.get("source_type") or "").startswith("official_")
+        or str(source.get("source_kind") or "") in _OFFICIAL_KINDS
+    )
+
+
+def _observation_state(source: dict[str, Any], observation_id: str) -> tuple[dict[str, Any] | None, dict[str, Any]]:
+    if not observation_id:
+        return None, {}
+    with get_db_connection() as conn:
         row = conn.execute(
-            """
-            SELECT action.*, observation.replacement_url,
-                   observation.source_version_id AS observed_source_version_id
-            FROM kb_source_change_action AS action
-            JOIN kb_source_refresh_observation AS observation
-              ON observation.tenant_id = action.tenant_id
-             AND observation.id = action.refresh_observation_id
-            WHERE action.tenant_id = ?
-              AND action.source_registry_id = ?
-              AND action.detection_type = ?
-            """ + observation_clause +
-            " ORDER BY action.created_at DESC, action.id DESC LIMIT 1",
-            tuple(params),
+            "SELECT * FROM ai_document_revision WHERE tenant_id = ? AND id = ? "
+            "AND record_type = 'source_observation' LIMIT 1",
+            (str(source.get("tenant_id") or ""), observation_id),
         ).fetchone()
         if not row:
-            raise SourceRegistryError(
-                "SOURCE_CHANGE_ACTION_NOT_FOUND",
-                "No durable source-change action exists for this detection",
-                status_code=409,
-            )
-        action = dict(row)
-        status = str(action.get("status") or "pending")
-        if status == "applied":
-            return action, "applied"
-        cutoff = (datetime.now(timezone.utc) - timedelta(minutes=5)).replace(microsecond=0).isoformat()
-        updated = conn.execute(
-            """
-            UPDATE kb_source_change_action
-            SET status = 'applying', attempt_count = attempt_count + 1,
-                last_error_code = '', updated_at = ?, updated_by = ?
-            WHERE tenant_id = ? AND id = ?
-              AND (status IN ('pending','failed') OR (status = 'applying' AND updated_at < ?))
-            """,
-            (_now(), _actor(user), tenant_id, str(action.get("id") or ""), cutoff),
-        ).rowcount
-        if updated != 1:
-            conn.rollback()
-            return action, "in_progress"
-        conn.commit()
-        action["status"] = "applying"
-        action["attempt_count"] = int(action.get("attempt_count") or 0) + 1
-        return action, "claimed"
-    except SourceRegistryError:
-        conn.rollback()
-        raise
-    finally:
-        conn.close()
+            return None, {}
+        item = {str(key): row[key] for key in row.keys()} if hasattr(row, "keys") else dict(row)
+    metadata = _json_load(item.get("metadata_json"), {})
+    return item, metadata if isinstance(metadata, dict) else {}
 
 
-def _finish_change_action(action: dict[str, Any], user: dict[str, Any], *, status: str, error_code: str = "") -> None:
-    tenant_id = str(action.get("tenant_id") or "")
-    now = _now()
-    actor = _actor(user)
-    applied = status == "applied"
-    conn = get_db_connection()
-    try:
-        updated = conn.execute(
-            """
-            UPDATE kb_source_change_action
-            SET status = ?, last_error_code = ?, updated_at = ?, updated_by = ?,
-                applied_at = ?, applied_by = ?
-            WHERE tenant_id = ? AND id = ? AND status = 'applying'
-            """,
-            (
-                status,
-                _stable_code(error_code, "") if error_code else "",
-                now,
-                actor,
-                now if applied else None,
-                actor if applied else "",
-                tenant_id,
-                str(action.get("id") or ""),
-            ),
-        ).rowcount
-        if updated != 1:
-            raise SourceRegistryError("SOURCE_CHANGE_ACTION_STALE", "Source-change action state changed concurrently", status_code=409)
+def _write_observation_state(source: dict[str, Any], observation_id: str, state: dict[str, Any]) -> None:
+    if not observation_id:
+        return
+    with get_db_connection() as conn:
+        row = conn.execute(
+            "SELECT metadata_json FROM ai_document_revision WHERE tenant_id = ? AND id = ? "
+            "AND record_type = 'source_observation' LIMIT 1",
+            (str(source.get("tenant_id") or ""), observation_id),
+        ).fetchone()
+        if not row:
+            return
+        existing = _json_load(row[0], {})
+        metadata = dict(existing) if isinstance(existing, dict) else {}
+        metadata["change_application"] = {
+            "status": str(state.get("status") or "failed")[:32],
+            "attempt_count": max(0, int(state.get("attempt_count") or 0)),
+            "last_error_code": _safe_code(state.get("last_error_code"), "") if state.get("last_error_code") else "",
+            "updated_at": str(state.get("updated_at") or _now())[:128],
+            "applied_at": str(state.get("applied_at") or "")[:128],
+        }
+        conn.execute(
+            "UPDATE ai_document_revision SET metadata_json = ? WHERE tenant_id = ? AND id = ?",
+            (_db_json(metadata), str(source.get("tenant_id") or ""), observation_id),
+        )
         conn.commit()
-    except SourceRegistryError:
-        conn.rollback()
-        raise
-    finally:
-        conn.close()
+
+
+def _claim_observation(source: dict[str, Any], observation_id: str) -> tuple[dict[str, Any], str]:
+    row, metadata = _observation_state(source, observation_id)
+    if not row:
+        return {"status": "applying", "attempt_count": 1, "last_error_code": "", "updated_at": _now()}, "claimed"
+    previous = metadata.get("change_application") if isinstance(metadata.get("change_application"), dict) else {}
+    if str(previous.get("status") or "") == "applied":
+        return dict(previous), "applied"
+    state = {
+        "status": "applying",
+        "attempt_count": int(previous.get("attempt_count") or 0) + 1,
+        "last_error_code": "",
+        "updated_at": _now(),
+    }
+    _write_observation_state(source, observation_id, state)
+    return state, "claimed"
+
+
+def _finish_observation(source: dict[str, Any], observation_id: str, state: dict[str, Any], *, status: str, error_code: str = "") -> dict[str, Any]:
+    finished = dict(state)
+    finished.update({
+        "status": status,
+        "last_error_code": _safe_code(error_code, "") if error_code else "",
+        "updated_at": _now(),
+        "applied_at": _now() if status == "applied" else "",
+    })
+    _write_observation_state(source, observation_id, finished)
+    return finished
+
+
+def _linked_documents(source: dict[str, Any]) -> list[dict[str, Any]]:
+    tenant_id = str(source.get("tenant_id") or "")
+    source_id = str(source.get("id") or "")
+    source_document_id = str(source.get("source_document_id") or source_id)
+    with get_db_connection() as conn:
+        rows = conn.execute(
+            "SELECT d.id, d.status, d.lifecycle_status FROM ai_document AS d "
+            "WHERE d.tenant_id = ? AND ("
+            "d.id = ? OR CAST(d.metadata_json AS TEXT) LIKE ? OR EXISTS ("
+            "SELECT 1 FROM ai_document_revision AS r "
+            "WHERE r.tenant_id = d.tenant_id AND r.document_id = d.id "
+            "AND r.record_type = 'document_revision' "
+            "AND (r.legacy_source_id = ? OR CAST(r.metadata_json AS TEXT) LIKE ?)"
+            ")) ORDER BY d.id",
+            (tenant_id, source_document_id, f"%{source_id}%", source_id, f"%{source_id}%"),
+        ).fetchall()
+    return [
+        {
+            "id": str(row[0] or ""),
+            "status": str(row[1] or ""),
+            "lifecycle_status": str(row[2] or row[1] or ""),
+        }
+        for row in rows
+        if str(row[0] or "")
+    ]
+
+
+def _latest_document_revision_id(document_id: str, tenant_id: str) -> str:
+    with get_db_connection() as conn:
+        row = conn.execute(
+            "SELECT id FROM ai_document_revision WHERE tenant_id = ? AND document_id = ? "
+            "AND record_type = 'document_revision' ORDER BY is_current DESC, revision_no DESC, created_at DESC, id DESC LIMIT 1",
+            (tenant_id, document_id),
+        ).fetchone()
+    return str(row[0] or "") if row else ""
 
 
 def apply_official_source_detection(
@@ -161,17 +188,13 @@ def apply_official_source_detection(
     source_version_id: str = "",
     refresh_observation_id: str = "",
 ) -> dict[str, Any]:
-    """Apply a stable change signal without deleting source/document history.
-
-    Removal and replacement quarantine the Source Registry row and currently
-    published document versions. Version updates remain active and are left
-    for the subsequent metadata/approval workflow; the immutable new source
-    version and observation are the evidence for that update.
-    """
     detection_type = str(detection_type or "").strip().lower()
     if detection_type not in {"removed", "replacement", "version_updated"}:
         raise SourceRegistryError("INVALID_DETECTION_TYPE", "Official source detection type is invalid")
     source = get_source(source_id, user)
+    tenant_id = str(source.get("tenant_id") or user.get("tenant_id") or "tenant-default")
+    if not authorize_resource(user, "knowledge_source", "update", tenant_id=tenant_id):
+        raise SourceRegistryError("SOURCE_CHANGE_PERMISSION_DENIED", "Insufficient permission to apply source change", status_code=403)
     if not _is_official(source):
         return {
             "source_id": source_id,
@@ -181,99 +204,98 @@ def apply_official_source_detection(
             "documents_quarantined": 0,
             "document_errors": [],
         }
+    reason = _safe_code(reason_code, "OFFICIAL_SOURCE_CHANGED")
     if detection_type == "version_updated":
         return {
             "source_id": source_id,
             "applied": True,
             "detection_type": detection_type,
-            "reason_code": str(reason_code or "VERSION_CONTENT_CHANGED")[:128],
+            "reason_code": reason,
             "source_status": str(source.get("status") or ""),
             "source_version_id": str(source_version_id or ""),
             "documents_quarantined": 0,
             "document_errors": [],
+            "action_status": "applied",
         }
 
-    action, claim_status = _claim_change_action(
-        source=source,
-        detection_type=detection_type,
-        user=user,
-        refresh_observation_id=str(refresh_observation_id or ""),
-    )
+    observation_id = str(refresh_observation_id or "")
+    application_state, claim_status = _claim_observation(source, observation_id)
     if claim_status == "applied":
         return {
             "source_id": source_id,
             "applied": True,
             "idempotent": True,
             "detection_type": detection_type,
-            "reason_code": _stable_code(reason_code, "OFFICIAL_SOURCE_CHANGED"),
-            "action_id": str(action.get("id") or ""),
+            "reason_code": reason,
+            "action_id": "v1change-" + observation_id,
             "action_status": "applied",
             "documents_quarantined": 0,
             "document_errors": [],
         }
-    if claim_status == "in_progress":
+
+    source_was_quarantined = str(source.get("lifecycle_status") or source.get("status") or "").lower() == "quarantined"
+    # Calls without a durable refresh observation are the synchronous/manual
+    # compatibility path.  Once the source is already quarantined, replaying
+    # that path must not recount the source identity or invoke the downstream
+    # lifecycle transition a second time.
+    if not observation_id and source_was_quarantined:
         return {
             "source_id": source_id,
-            "applied": False,
+            "applied": True,
             "idempotent": True,
             "detection_type": detection_type,
-            "reason": "action_in_progress",
-            "action_id": str(action.get("id") or ""),
-            "action_status": "applying",
+            "reason_code": reason,
+            "source_status": str(source.get("status") or "quarantined"),
+            "source_version_id": str(source_version_id or ""),
+            "refresh_observation_id": "",
+            "action_id": "v1change-",
+            "action_status": "applied",
             "documents_quarantined": 0,
             "document_errors": [],
         }
-
-    observed_replacement_url = str(action.get("replacement_url") or "")
-    if replacement_url and observed_replacement_url and replacement_url != observed_replacement_url:
-        _finish_change_action(action, user, status="failed", error_code="SOURCE_CHANGE_EVIDENCE_MISMATCH")
-        raise SourceRegistryError("SOURCE_CHANGE_EVIDENCE_MISMATCH", "Source-change evidence does not match the durable observation", status_code=409)
-    replacement_url = observed_replacement_url
-    source_version_id = str(action.get("observed_source_version_id") or source_version_id or "")
-    reason_code = _stable_code(reason_code, "OFFICIAL_SOURCE_CHANGED")
-
     try:
         updated_source = quarantine_source_for_change(
             source_id,
             user,
             detection_type=detection_type,
-            reason_code=reason_code,
-            replacement_url=replacement_url,
-            refresh_observation_id=str(action.get("refresh_observation_id") or ""),
+            reason_code=reason,
+            replacement_url=str(replacement_url or ""),
+            refresh_observation_id=observation_id,
         )
     except SourceRegistryError as exc:
-        _finish_change_action(action, user, status="failed", error_code=_safe_code(exc, "SOURCE_CHANGE_APPLY_FAILED"))
-        raise
-    tenant_id = str(source.get("tenant_id") or user.get("tenant_id") or "tenant-default")
-    errors: list[dict[str, str]] = []
-    quarantined = 0
-    try:
-        with get_db_connection() as conn:
-            documents = conn.execute(
-                "SELECT id, current_version_id FROM kb_document WHERE tenant_id = ? AND source_registry_id = ? AND lifecycle_status IN ('published','active','draft')",
-                (tenant_id, source_id),
-            ).fetchall()
-    except Exception:
-        documents = []
-        errors.append({"code": "DOCUMENT_CHANGE_SCAN_FAILED"})
+        state = _finish_observation(source, observation_id, application_state, status="failed", error_code=exc.code)
+        return {
+            "source_id": source_id,
+            "applied": False,
+            "detection_type": detection_type,
+            "reason_code": reason,
+            "action_id": "v1change-" + observation_id,
+            "action_status": "failed",
+            "error_code": str(state.get("last_error_code") or "SOURCE_CHANGE_APPLY_FAILED"),
+            "documents_quarantined": 0,
+            "document_errors": [],
+        }
 
-    for row in documents:
-        document_id = str(row[0] or "")
-        version_id = str(row[1] or "")
-        if not document_id:
+    errors: list[dict[str, str]] = []
+    # In V1 the registry identity and its source document are the same row.
+    # Count that row as the quarantined searchable document when this is the
+    # first application; V2 used to keep those identities in separate tables.
+    quarantined = 0 if source_was_quarantined else 1
+    source_document_id = str(source.get("source_document_id") or source_id)
+    for document in _linked_documents(source):
+        document_id = document["id"]
+        current = str(document.get("lifecycle_status") or document.get("status") or "").lower()
+        is_source_identity = document_id == source_document_id
+        # The V1 source identity is already moved to quarantined by the
+        # source operation.  Still pass its current revision through the
+        # lifecycle boundary so a dependency failure is durable and retryable
+        # exactly like a published projection.
+        if current == "quarantined" and not is_source_identity:
             continue
+        version_id = _latest_document_revision_id(document_id, tenant_id)
         if not version_id:
-            try:
-                with get_db_connection() as conn:
-                    version_row = conn.execute(
-                        "SELECT id FROM kb_document_version WHERE tenant_id = ? AND document_id = ? ORDER BY version_no DESC LIMIT 1",
-                        (tenant_id, document_id),
-                    ).fetchone()
-                version_id = str(version_row[0] or "") if version_row else ""
-            except Exception:
-                version_id = ""
-        if not version_id:
-            errors.append({"document_id": document_id, "code": "DOCUMENT_VERSION_NOT_FOUND"})
+            if not is_source_identity:
+                errors.append({"document_id": document_id, "code": "DOCUMENT_VERSION_NOT_FOUND"})
             continue
         request_id = f"ing019:{source_id}:{version_id}:{detection_type}"
         try:
@@ -282,39 +304,43 @@ def apply_official_source_detection(
                 "quarantined",
                 user,
                 document_version_id=version_id,
-                reason=reason_code,
+                reason=reason,
                 request_id=request_id,
             )
-            if not result.get("idempotent"):
+            if not result.get("idempotent") and (not is_source_identity or source_was_quarantined):
                 quarantined += 1
         except DocumentLifecycleError as exc:
-            # A partially upgraded installation must not turn a source signal
-            # into a destructive rollback. Preserve a stable error code and
-            # continue with the remaining tenant documents.
-            errors.append({"document_id": document_id, "code": _safe_code(exc, "DOCUMENT_CHANGE_APPLY_FAILED")})
+            errors.append({"document_id": document_id, "code": _safe_code(exc.code, "DOCUMENT_CHANGE_APPLY_FAILED")})
         except Exception:
             errors.append({"document_id": document_id, "code": "DOCUMENT_CHANGE_APPLY_FAILED"})
 
-    action_error = str((errors[0] if errors else {}).get("code") or "")
-    if errors:
-        _finish_change_action(action, user, status="failed", error_code=action_error or "DOCUMENT_CHANGE_APPLY_FAILED")
-    else:
-        _finish_change_action(action, user, status="applied")
+    error_code = str((errors[0] if errors else {}).get("code") or "")
+    final_state = _finish_observation(
+        source,
+        observation_id,
+        application_state,
+        status="failed" if errors else "applied",
+        error_code=error_code,
+    )
     return {
         "source_id": source_id,
         "applied": not errors,
         "idempotent": False,
         "detection_type": detection_type,
-        "reason_code": reason_code,
+        "reason_code": reason,
         "source_status": str(updated_source.get("status") or ""),
         "replacement_present": bool(replacement_url),
-        "source_version_id": source_version_id,
-        "refresh_observation_id": str(action.get("refresh_observation_id") or ""),
-        "action_id": str(action.get("id") or ""),
-        "action_status": "failed" if errors else "applied",
+        "source_version_id": str(source_version_id or ""),
+        "refresh_observation_id": observation_id,
+        "action_id": "v1change-" + observation_id,
+        "action_status": str(final_state.get("status") or "failed"),
         "documents_quarantined": quarantined,
         "document_errors": errors[:50],
     }
 
 
-__all__ = ["apply_official_source_detection"]
+__all__ = [
+    "DocumentLifecycleError",
+    "transition_document_lifecycle",
+    "apply_official_source_detection",
+]

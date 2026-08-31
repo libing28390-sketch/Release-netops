@@ -15,45 +15,14 @@ VERSION = 181
 NAME = "explicit_snmp_template_bindings"
 
 
-_PROFILE_COLUMNS = (
-    "id",
-    "vendor_key",
-    "vendor_name",
-    "model_key",
-    "model_name",
-    "cpu_oid",
-    "memory_oid",
-    "created_at",
-    "updated_at",
-    "updated_by",
-    "verification_status",
-    "last_test_at",
-    "last_test_device_id",
-    "last_test_message",
-    "cpu_config_json",
-    "memory_config_json",
-    "metric_definitions_json",
-    "interface_config_json",
-    "interface_verification_status",
-    "interface_last_test_at",
-    "interface_last_test_device_id",
-    "interface_last_test_message",
-    "template_name",
-    "source",
-    "official_preset_id",
-)
+def _columns(cursor, table: str) -> set[str]:
+    cursor.execute(
+        "SELECT column_name FROM information_schema.columns "
+        "WHERE table_schema = current_schema() AND table_name = ?",
+        (table,),
+    )
+    return {str(row[0]) for row in cursor.fetchall()}
 
-
-def _columns(cursor, use_pg: bool, table: str) -> set[str]:
-    if use_pg:
-        cursor.execute(
-            "SELECT column_name FROM information_schema.columns "
-            "WHERE table_schema = current_schema() AND table_name = ?",
-            (table,),
-        )
-        return {str(row[0]) for row in cursor.fetchall()}
-    cursor.execute(f"PRAGMA table_info({table})")
-    return {str(row[1]) for row in cursor.fetchall()}
 
 
 def _value(row, key: str, index: int, default: str = "") -> str:
@@ -112,8 +81,8 @@ def _quote_identifier(value: str) -> str:
     return '"' + value.replace('"', '""') + '"'
 
 
-def _ensure_profile_columns(cursor, use_pg: bool) -> None:
-    existing = _columns(cursor, use_pg, "snmp_metric_profiles")
+def _ensure_profile_columns(cursor) -> None:
+    existing = _columns(cursor, "snmp_metric_profiles")
     definitions = {
         "template_name": "TEXT NOT NULL DEFAULT ''",
         "source": "TEXT NOT NULL DEFAULT 'legacy'",
@@ -122,75 +91,9 @@ def _ensure_profile_columns(cursor, use_pg: bool) -> None:
     for name, definition in definitions.items():
         if name in existing:
             continue
-        if use_pg:
-            cursor.execute(
-                f"ALTER TABLE snmp_metric_profiles ADD COLUMN IF NOT EXISTS {name} {definition}"
-            )
-        else:
-            cursor.execute(f"ALTER TABLE snmp_metric_profiles ADD COLUMN {name} {definition}")
-
-
-def _sqlite_has_vendor_model_unique(cursor) -> bool:
-    cursor.execute("PRAGMA index_list(snmp_metric_profiles)")
-    for row in cursor.fetchall():
-        index_name = str(row[1])
-        is_unique = bool(row[2])
-        if not is_unique:
-            continue
-        cursor.execute(f"PRAGMA index_info({_quote_identifier(index_name)})")
-        columns = {str(item[2]) for item in cursor.fetchall()}
-        if columns == {"vendor_key", "model_key"}:
-            return True
-    return False
-
-
-def _rebuild_sqlite_profiles(cursor) -> None:
-    if not _sqlite_has_vendor_model_unique(cursor):
-        return
-
-    cursor.execute("DROP INDEX IF EXISTS idx_snmp_metric_profiles_model")
-    cursor.execute("DROP INDEX IF EXISTS idx_snmp_metric_profiles_source")
-    cursor.execute("ALTER TABLE snmp_metric_profiles RENAME TO snmp_metric_profiles_m0181_old")
-    cursor.execute(
-        """
-        CREATE TABLE snmp_metric_profiles (
-            id TEXT PRIMARY KEY,
-            vendor_key TEXT NOT NULL,
-            vendor_name TEXT NOT NULL DEFAULT '',
-            model_key TEXT NOT NULL,
-            model_name TEXT NOT NULL DEFAULT '',
-            cpu_oid TEXT NOT NULL DEFAULT '',
-            memory_oid TEXT NOT NULL DEFAULT '',
-            created_at TEXT NOT NULL,
-            updated_at TEXT NOT NULL,
-            updated_by TEXT NOT NULL DEFAULT '',
-            verification_status TEXT NOT NULL DEFAULT 'unverified',
-            last_test_at TEXT,
-            last_test_device_id TEXT NOT NULL DEFAULT '',
-            last_test_message TEXT NOT NULL DEFAULT '',
-            cpu_config_json TEXT NOT NULL DEFAULT '{}',
-            memory_config_json TEXT NOT NULL DEFAULT '{}',
-            metric_definitions_json TEXT NOT NULL DEFAULT '{}',
-            interface_config_json TEXT NOT NULL DEFAULT '{}',
-            interface_verification_status TEXT NOT NULL DEFAULT 'unverified',
-            interface_last_test_at TEXT,
-            interface_last_test_device_id TEXT NOT NULL DEFAULT '',
-            interface_last_test_message TEXT NOT NULL DEFAULT '',
-            template_name TEXT NOT NULL DEFAULT '',
-            source TEXT NOT NULL DEFAULT 'legacy',
-            official_preset_id TEXT NOT NULL DEFAULT ''
-        )
-        """
-    )
-    old_columns = _columns(cursor, False, "snmp_metric_profiles_m0181_old")
-    copy_columns = [column for column in _PROFILE_COLUMNS if column in old_columns]
-    if copy_columns:
-        names = ", ".join(_quote_identifier(column) for column in copy_columns)
         cursor.execute(
-            f"INSERT INTO snmp_metric_profiles ({names}) "
-            f"SELECT {names} FROM snmp_metric_profiles_m0181_old"
+            f"ALTER TABLE snmp_metric_profiles ADD COLUMN IF NOT EXISTS {name} {definition}"
         )
-    cursor.execute("DROP TABLE snmp_metric_profiles_m0181_old")
 
 
 def _drop_postgres_vendor_model_unique(cursor) -> None:
@@ -247,17 +150,11 @@ def _backfill_device_bindings(cursor) -> None:
 
 
 def upgrade(cursor, use_pg: bool) -> None:
-    _ensure_profile_columns(cursor, use_pg)
-    if use_pg:
-        cursor.execute(
-            "ALTER TABLE devices ADD COLUMN IF NOT EXISTS snmp_metric_profile_id TEXT DEFAULT ''"
-        )
-        _drop_postgres_vendor_model_unique(cursor)
-    else:
-        columns = _columns(cursor, False, "devices")
-        if "snmp_metric_profile_id" not in columns:
-            cursor.execute("ALTER TABLE devices ADD COLUMN snmp_metric_profile_id TEXT DEFAULT ''")
-        _rebuild_sqlite_profiles(cursor)
+    _ensure_profile_columns(cursor)
+    cursor.execute(
+        "ALTER TABLE devices ADD COLUMN IF NOT EXISTS snmp_metric_profile_id TEXT DEFAULT ''"
+    )
+    _drop_postgres_vendor_model_unique(cursor)
 
     cursor.execute(
         "CREATE INDEX IF NOT EXISTS idx_devices_snmp_metric_profile_id "

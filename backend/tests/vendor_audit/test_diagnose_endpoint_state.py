@@ -1,10 +1,9 @@
 import asyncio
-import sqlite3
-
+from backend.tests.pg_test_utils import postgresql_test_driver
 from services import diagnose_service
 
 
-def _schema(conn: sqlite3.Connection) -> None:
+def _schema(conn: postgresql_test_driver.Connection) -> None:
     conn.executescript(
         """
         CREATE TABLE network_endpoints (
@@ -26,8 +25,8 @@ def _schema(conn: sqlite3.Connection) -> None:
 
 
 def test_persisted_endpoint_port_down_wins_over_aliases() -> None:
-    conn = sqlite3.connect(":memory:")
-    conn.row_factory = sqlite3.Row
+    conn = postgresql_test_driver.connect()
+    conn.row_factory = postgresql_test_driver.Row
     _schema(conn)
     conn.execute("INSERT INTO devices VALUES ('sw6', 'LSW6', '10.0.0.6', 'huawei_vrp')")
     conn.execute("INSERT INTO interfaces VALUES ('sw6', 'GigabitEthernet0/0/1', 'down', 'down', '2026-07-27T10:00:00+08:00')")
@@ -40,8 +39,8 @@ def test_persisted_endpoint_port_down_wins_over_aliases() -> None:
 
 
 def test_live_down_snapshot_overrides_historical_endpoint(monkeypatch) -> None:
-    conn = sqlite3.connect(":memory:")
-    conn.row_factory = sqlite3.Row
+    conn = postgresql_test_driver.connect()
+    conn.row_factory = postgresql_test_driver.Row
     _schema(conn)
     conn.execute("INSERT INTO devices VALUES ('sw6', 'LSW6', '10.0.0.6', 'huawei_vrp')")
     conn.execute("INSERT INTO interfaces VALUES ('sw6', 'GE0/0/1', 'up', 'up', '2026-07-27T09:00:00+08:00')")

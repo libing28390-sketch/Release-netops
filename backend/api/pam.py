@@ -91,44 +91,28 @@ mfa_store: dict[str, dict] = {}
 
 
 def _pam_session_columns(conn) -> set[str]:
-    """Return available PAM session columns for legacy/isolated databases.
+    """Return the available PAM session columns from PostgreSQL metadata.
 
     The production schema is migrated to the complete PAM shape, but audit
-    readers are also used against older SQLite files and small read-only
-    fixtures.  Discovering columns lets the list/export path substitute safe
-    defaults instead of failing the entire history view when a post-migration
-    column (for example ``session_kind``) is absent.
+    readers may run while a deployment upgrade is still converging. Discovering
+    columns lets the list/export path substitute safe defaults in that window.
     """
     try:
-        rows = conn.execute("PRAGMA table_info(pam_sessions)").fetchall()
-        return {str(row[1] if not hasattr(row, 'keys') else row['name']) for row in rows}
+        rows = conn.execute(
+            "SELECT column_name FROM information_schema.columns "
+            "WHERE table_schema = current_schema() AND table_name = ?",
+            ('pam_sessions',),
+        ).fetchall()
+        return {
+            str(row[0] if not hasattr(row, 'keys') else row['column_name'])
+            for row in rows
+        }
     except Exception:
-        # PostgreSQL rejects SQLite's PRAGMA syntax and marks the current
-        # transaction as failed. Roll it back before issuing the PostgreSQL
-        # information_schema fallback; otherwise the caller's next SELECT
-        # raises InFailedSqlTransaction and the audit page cannot open.
         try:
             conn.rollback()
         except Exception:
             pass
-        try:
-            rows = conn.execute(
-                "SELECT column_name FROM information_schema.columns "
-                "WHERE table_schema = current_schema() AND table_name = ?",
-                ('pam_sessions',),
-            ).fetchall()
-            return {
-                str(row[0] if not hasattr(row, 'keys') else row['column_name'])
-                for row in rows
-            }
-        except Exception:
-            try:
-                conn.rollback()
-            except Exception:
-                pass
-            # The caller will still issue a useful query for the canonical
-            # schema; an empty set only occurs for an unusable connection.
-            return set()
+        return set()
 
 
 def _utc_now() -> str:
@@ -640,7 +624,7 @@ def list_sessions(
         # snapshot captured at session creation time when the asset has been
         # removed since (soft-delete preserves the audit trail). After the
         # ON DELETE SET NULL FK migration runs, archived rows have
-        # asset_id = NULL on PG; pre-migration SQLite rows may have ''.
+        # asset_id = NULL after the PostgreSQL foreign-key migration.
         #
         # Was previously a per-row SELECT against physical_assets — a 200×
         # query amplification on the History tab. Replaced with a single

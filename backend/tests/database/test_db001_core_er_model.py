@@ -6,8 +6,8 @@ import yaml
 
 
 ROOT = Path(__file__).resolve().parents[3]
-CONTRACT = ROOT / "docs" / "knowledge-engine-v2" / "architecture" / "DB-001-core-er-model.yaml"
-REPORT = ROOT / "docs" / "knowledge-engine-v2" / "architecture" / "DB-001-CORE-ER-MODEL.md"
+CONTRACT = ROOT / "docs" / "knowledge-engine" / "architecture" / "DB-001-core-er-model.yaml"
+REPORT = ROOT / "docs" / "knowledge-engine" / "architecture" / "DB-001-CORE-ER-MODEL.md"
 
 
 def _contract() -> dict:
@@ -19,7 +19,7 @@ def test_db001_contract_freezes_authority_and_naming():
     assert data["task_id"] == "DB-001"
     assert data["status"] == "frozen_for_implementation"
     assert data["authority"]["production_database"] == "PostgreSQL"
-    assert data["authority"]["local_test_database"] == "SQLite_compatibility_only"
+    assert data["authority"]["local_test_database"] == "PostgreSQL_isolated_test_database"
     naming = data["naming"]
     assert naming["table_case"] == "lower_snake_case"
     assert naming["primary_key"] == "id"

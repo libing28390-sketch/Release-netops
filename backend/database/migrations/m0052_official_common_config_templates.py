@@ -8,17 +8,16 @@ NAME = "official_common_config_templates"
 
 
 def _column_exists(cursor, column: str, use_pg: bool) -> bool:
-    if use_pg:
-        return cursor.execute(
-            """
-            SELECT 1 FROM information_schema.columns
-            WHERE table_schema = current_schema()
-              AND table_name = 'templates'
-              AND column_name = ?
-            """,
-            (column,),
-        ).fetchone() is not None
-    return any(str(row[1]) == column for row in cursor.execute("PRAGMA table_info(templates)").fetchall())
+    return cursor.execute(
+        """
+        SELECT 1 FROM information_schema.columns
+        WHERE table_schema = current_schema()
+          AND table_name = 'templates'
+          AND column_name = ?
+        """,
+        (column,),
+    ).fetchone() is not None
+
 
 
 def upgrade(cursor, use_pg: bool) -> None:

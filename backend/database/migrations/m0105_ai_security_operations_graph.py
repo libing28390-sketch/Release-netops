@@ -13,17 +13,12 @@ NAME = "ai_security_operations_graph"
 
 
 def _columns(cursor, table: str, use_pg: bool) -> set[str]:
-    try:
-        if use_pg:
-            rows = cursor.execute(
-                "SELECT column_name FROM information_schema.columns WHERE table_name = ?",
-                (table,),
-            ).fetchall()
-            return {str(row[0]) for row in rows}
-        rows = cursor.execute(f"PRAGMA table_info({table})").fetchall()
-        return {str(row[1]) for row in rows}
-    except Exception:
-        return set()
+    rows = cursor.execute(
+        "SELECT column_name FROM information_schema.columns "
+        "WHERE table_schema = current_schema() AND table_name = ?",
+        (table,),
+    ).fetchall()
+    return {str(row[0]) for row in rows}
 
 
 def _ensure_columns(cursor, table: str, columns: dict[str, str], use_pg: bool) -> None:
@@ -712,15 +707,14 @@ def _seed_capabilities(cursor) -> None:
     # Migrate the identifiers rather than leaving an old model as default.
     # ``ai_model`` belongs to the baseline schema. Guard the compatibility
     # update so a standalone fresh-database migration remains runnable.
-    try:
+    ai_model_columns = _columns(cursor, "ai_model", True)
+    if {"model_code", "name", "thinking_supported"}.issubset(ai_model_columns):
         cursor.execute(
             "UPDATE ai_model SET model_code = 'deepseek-v4-flash', name = 'DeepSeek V4 Flash', thinking_supported = 0 WHERE lower(model_code) = 'deepseek-chat'"
         )
         cursor.execute(
             "UPDATE ai_model SET model_code = 'deepseek-v4-pro', name = 'DeepSeek V4 Pro', thinking_supported = 1 WHERE lower(model_code) = 'deepseek-reasoner'"
         )
-    except Exception:
-        pass
 
 
 def upgrade(cursor, use_pg: bool) -> None:

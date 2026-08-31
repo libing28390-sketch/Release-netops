@@ -15,7 +15,7 @@ from services.knowledge_evaluation_service import (
 )
 
 
-router = APIRouter(prefix="/knowledge-v2/evaluation", tags=["knowledge-v2-evaluation"])
+router = APIRouter(prefix="/knowledge/evaluation", tags=["knowledge-evaluation"])
 
 
 class EvaluationRunRequest(BaseModel):

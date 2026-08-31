@@ -9,10 +9,10 @@ from database.migrations import build_migration_plan, discover_migrations, get_a
 
 
 ROOT = Path(__file__).resolve().parents[3]
-CONTRACT = ROOT / "docs" / "knowledge-engine-v2" / "architecture" / "DB-019-UPGRADE-TEST-CONTRACT.yaml"
-REPORT = ROOT / "docs" / "knowledge-engine-v2" / "architecture" / "DB-019-UPGRADE-TEST-CONTRACT.md"
+CONTRACT = ROOT / "docs" / "knowledge-engine" / "architecture" / "DB-019-UPGRADE-TEST-CONTRACT.yaml"
+REPORT = ROOT / "docs" / "knowledge-engine" / "architecture" / "DB-019-UPGRADE-TEST-CONTRACT.md"
 SCHEMA = ROOT / "backend" / "database" / "schema.py"
-CONTRACT_DIR = ROOT / "docs" / "knowledge-engine-v2" / "architecture"
+CONTRACT_DIR = ROOT / "docs" / "knowledge-engine" / "architecture"
 
 
 def _load() -> dict:

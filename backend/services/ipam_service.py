@@ -12,12 +12,12 @@ from typing import Optional
 
 from core.interface_utils import normalize_interface_name
 
-from database import get_db_connection, _USE_PG
+from database import get_db_connection
 
 logger = logging.getLogger(__name__)
 
-_GROUP_CONCAT = 'STRING_AGG({col}, \',\')' if _USE_PG else 'GROUP_CONCAT({col})'
-_PH = '%s' if _USE_PG else '?'
+_GROUP_CONCAT = 'STRING_AGG({col}, \',\')'
+_PH = '?'
 
 ADDRESS_STATUSES = {
     'available', 'reserved', 'allocated', 'active', 'dhcp', 'vip',
@@ -42,8 +42,16 @@ def _utc_now() -> str:
 
 
 def _table_columns(conn, table: str) -> set[str]:
-    cursor = conn.execute(f"SELECT * FROM {table} WHERE 1 = 0")
-    return {column[0] for column in (cursor.description or [])}
+    rows = conn.execute(
+        "SELECT column_name FROM information_schema.columns "
+        "WHERE table_schema = current_schema() AND table_name = ?",
+        (table,),
+    ).fetchall()
+    return {str(row[0]) for row in rows}
+
+
+def _table_exists(conn, table: str) -> bool:
+    return bool(_table_columns(conn, table))
 
 
 def _ip_in_subnet(addr: str, network: str, prefix_len: int) -> bool:
@@ -160,15 +168,14 @@ def _validate_address_conflicts(conn, subnet, address: str, *, exclude_id: str =
         except Exception:
             pass
         raise ValueError(f'IP address {address} is already allocated in this tenant/VRF')
-    try:
+    vip = None
+    if _table_exists(conn, 'ipam_vips'):
         vip = conn.execute(
             f"""SELECT id FROM ipam_vips
                 WHERE address = {_PH} AND COALESCE(tenant_id, 'tenant-default') = {_PH}
                   AND COALESCE(status, 'active') NOT IN ('released', 'deprecated') LIMIT 1""",
             (address, tenant_id),
         ).fetchone()
-    except Exception:
-        vip = None
     if vip:
         try:
             from core.metrics import metrics_registry
@@ -176,15 +183,14 @@ def _validate_address_conflicts(conn, subnet, address: str, *, exclude_id: str =
         except Exception:
             pass
         raise ValueError(f'IP address {address} conflicts with an active VIP')
-    try:
+    lease = None
+    if _table_exists(conn, 'ipam_dhcp_leases'):
         lease = conn.execute(
             f"""SELECT id FROM ipam_dhcp_leases
                 WHERE address = {_PH} AND COALESCE(lease_state, 'active') IN ('active', 'offered')
                 LIMIT 1""",
             (address,),
         ).fetchone()
-    except Exception:
-        lease = None
     if lease:
         try:
             from core.metrics import metrics_registry
@@ -232,10 +238,10 @@ def _validate_prefix_overlap(conn, *, prefix: str, tenant_id: str | None = None,
 
 
 def _select_prefix_for_update(conn, subnet_id: str):
-    sql = f"SELECT * FROM prefixes WHERE id = {_PH}"
-    if _USE_PG:
-        sql += " FOR UPDATE"
-    return conn.execute(sql, (subnet_id,)).fetchone()
+    return conn.execute(
+        f"SELECT * FROM prefixes WHERE id = {_PH} FOR UPDATE",
+        (subnet_id,),
+    ).fetchone()
 
 
 def _ph(n: int = 1) -> str:
@@ -1550,11 +1556,15 @@ def get_utilization_analytics() -> dict:
 
         # ── Counts for the overview cards ───────────────────
         def _count(table: str) -> int:
-            try:
-                row = conn.execute(f'SELECT COUNT(*) as cnt FROM {table}').fetchone()
-                return row['cnt'] if row else 0
-            except Exception:
+            exists = conn.execute(
+                "SELECT 1 FROM information_schema.tables "
+                "WHERE table_schema = current_schema() AND table_name = ?",
+                (table,),
+            ).fetchone()
+            if not exists:
                 return 0
+            row = conn.execute(f'SELECT COUNT(*) as cnt FROM {table}').fetchone()
+            return row['cnt'] if row else 0
 
         prefixes_count = len(per_prefix)
         ips_count = _count('ip_addresses')
@@ -1579,33 +1589,30 @@ def get_utilization_analytics() -> dict:
 
         # ── Allocation trend for allocatable prefixes (cumulative, by created day) ───
         forecast_trend = []
-        try:
-            day_rows = conn.execute(
-                '''SELECT ip.created_at, p.prefix, p.status AS prefix_status
-                   FROM ip_addresses ip
-                   LEFT JOIN prefixes p ON p.id = ip.subnet_id
-                   WHERE ip.created_at IS NOT NULL
-                     AND COALESCE(ip.status, 'active') NOT IN ('released', 'available')
-                   ORDER BY ip.created_at'''
-            ).fetchall()
-            day_counts: dict[str, int] = {}
-            for dr in day_rows:
-                created_at = str(dr['created_at'] or '')
-                if len(created_at) < 10 or not _is_capacity_prefix(
-                    dr['prefix'] or '',
-                    dr['prefix_status'] or '',
-                ):
-                    continue
-                day = created_at[:10]
-                day_counts[day] = day_counts.get(day, 0) + 1
-            cumulative = 0
-            for day in sorted(day_counts):
-                cumulative += day_counts[day]
-                forecast_trend.append({'day': day, 'allocated': cumulative})
-            # Keep the most recent 14 data points for a readable chart
-            forecast_trend = forecast_trend[-14:]
-        except Exception:
-            forecast_trend = []
+        day_rows = conn.execute(
+            '''SELECT ip.created_at, p.prefix, p.status AS prefix_status
+               FROM ip_addresses ip
+               LEFT JOIN prefixes p ON p.id = ip.subnet_id
+               WHERE ip.created_at IS NOT NULL
+                 AND COALESCE(ip.status, 'active') NOT IN ('released', 'available')
+               ORDER BY ip.created_at'''
+        ).fetchall()
+        day_counts: dict[str, int] = {}
+        for dr in day_rows:
+            created_at = str(dr['created_at'] or '')
+            if len(created_at) < 10 or not _is_capacity_prefix(
+                dr['prefix'] or '',
+                dr['prefix_status'] or '',
+            ):
+                continue
+            day = created_at[:10]
+            day_counts[day] = day_counts.get(day, 0) + 1
+        cumulative = 0
+        for day in sorted(day_counts):
+            cumulative += day_counts[day]
+            forecast_trend.append({'day': day, 'allocated': cumulative})
+        # Keep the most recent 14 data points for a readable chart
+        forecast_trend = forecast_trend[-14:]
 
         return {
             'overview': overview,

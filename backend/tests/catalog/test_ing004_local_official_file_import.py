@@ -61,8 +61,12 @@ def test_ing004_imports_one_official_pdf_and_persists_provenance(isolated_db, ma
     conn = get_db_connection()
     try:
         tenant_id = operator.get("tenant_id") or "tenant-default"
-        source_count = conn.execute("SELECT COUNT(*) AS count FROM kb_source_registry WHERE tenant_id = ?", (tenant_id,)).fetchone()["count"]
-        version_count = conn.execute("SELECT COUNT(*) AS count FROM kb_source_version WHERE tenant_id = ?", (tenant_id,)).fetchone()["count"]
+        source_count = conn.execute("SELECT COUNT(*) AS count FROM ai_document WHERE tenant_id = ? AND id = ?", (tenant_id, result["source"]["id"])).fetchone()["count"]
+        version_count = conn.execute(
+            "SELECT COUNT(*) AS count FROM ai_document_revision "
+            "WHERE tenant_id = ? AND legacy_source_id = ? AND record_type = 'source_version'",
+            (tenant_id, result["source"]["id"]),
+        ).fetchone()["count"]
         events = conn.execute("SELECT event_type, details_json FROM audit_events WHERE target_id = ? ORDER BY created_at", (result["source"]["id"],)).fetchall()
     finally:
         conn.close()
@@ -89,7 +93,11 @@ def test_ing004_replays_same_tenant_key_and_deduplicates_same_content(isolated_d
 
     conn = get_db_connection()
     try:
-        count = conn.execute("SELECT COUNT(*) AS count FROM kb_source_version WHERE tenant_id = ?", (operator.get("tenant_id") or "tenant-default",)).fetchone()["count"]
+        count = conn.execute(
+            "SELECT COUNT(*) AS count FROM ai_document_revision "
+            "WHERE tenant_id = ? AND legacy_source_id = ? AND record_type = 'source_version'",
+            (operator.get("tenant_id") or "tenant-default", first["source"]["id"]),
+        ).fetchone()["count"]
     finally:
         conn.close()
     assert count == 1
@@ -128,7 +136,7 @@ def test_ing004_requires_official_proof_before_job_or_source_creation(isolated_d
 
     conn = get_db_connection()
     try:
-        assert conn.execute("SELECT COUNT(*) AS count FROM kb_source_registry WHERE tenant_id = ?", (operator.get("tenant_id") or "tenant-default",)).fetchone()["count"] == 0
+        assert conn.execute("SELECT COUNT(*) AS count FROM ai_document WHERE tenant_id = ?", (operator.get("tenant_id") or "tenant-default",)).fetchone()["count"] == 0
     finally:
         conn.close()
 

@@ -8,9 +8,9 @@ NAME = "wan_p2_correlation"
 
 
 def upgrade(cursor, use_pg: bool) -> None:
-    time_type = "TIMESTAMPTZ" if use_pg else "TEXT"
-    json_type = "JSONB" if use_pg else "TEXT"
-    json_default = "'{}'::jsonb" if use_pg else "'{}'"
+    time_type = "TIMESTAMPTZ"
+    json_type = "JSONB"
+    json_default = "'{}'::jsonb"
     cursor.execute(
         f"""CREATE TABLE IF NOT EXISTS wan_probe_bindings (
             id TEXT PRIMARY KEY, link_id TEXT NOT NULL, target_id TEXT NOT NULL,

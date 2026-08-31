@@ -2,8 +2,7 @@ from __future__ import annotations
 
 import asyncio
 import json
-import sqlite3
-
+from backend.tests.pg_test_utils import postgresql_test_driver
 from services.snmp_counter_service import calculate_counter_delta
 from services.snmp_metric_profile_service import (
     _collector_status,
@@ -566,8 +565,8 @@ def test_interface_health_collector_only_walks_identity_and_oper_status(monkeypa
 
 
 def test_health_profile_resolution_filters_non_health_metrics_and_keeps_template_status(monkeypatch) -> None:
-    conn = sqlite3.connect(":memory:")
-    conn.row_factory = sqlite3.Row
+    conn = postgresql_test_driver.connect()
+    conn.row_factory = postgresql_test_driver.Row
     conn.execute(
         """
         CREATE TABLE snmp_metric_profiles (
@@ -630,8 +629,8 @@ def test_health_profile_resolution_filters_non_health_metrics_and_keeps_template
 
 
 def test_apply_official_preset_materializes_the_profile_used_by_device_resolution(monkeypatch) -> None:
-    conn = sqlite3.connect(":memory:")
-    conn.row_factory = sqlite3.Row
+    conn = postgresql_test_driver.connect()
+    conn.row_factory = postgresql_test_driver.Row
     conn.execute(
         """
         CREATE TABLE snmp_metric_profiles (
@@ -696,8 +695,8 @@ def test_apply_official_preset_materializes_the_profile_used_by_device_resolutio
 
 
 def test_template_resolution_ignores_legacy_device_oids_without_an_applied_profile(monkeypatch) -> None:
-    conn = sqlite3.connect(":memory:")
-    conn.row_factory = sqlite3.Row
+    conn = postgresql_test_driver.connect()
+    conn.row_factory = postgresql_test_driver.Row
     conn.execute(
         """
         CREATE TABLE snmp_metric_profiles (
@@ -833,8 +832,8 @@ def test_saved_profile_status_distinguishes_match_and_activation() -> None:
 
 
 def test_profile_mapping_uses_canonical_vendor_and_exact_model() -> None:
-    conn = sqlite3.connect(":memory:")
-    conn.row_factory = sqlite3.Row
+    conn = postgresql_test_driver.connect()
+    conn.row_factory = postgresql_test_driver.Row
     conn.execute(
         """
         CREATE TABLE snmp_metric_profiles (

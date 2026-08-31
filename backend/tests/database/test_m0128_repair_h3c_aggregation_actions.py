@@ -1,13 +1,12 @@
 from __future__ import annotations
 
-import sqlite3
-
+from backend.tests.pg_test_utils import postgresql_test_driver
 from database.migrations import m0128_repair_h3c_aggregation_actions as migration
 
 
 def test_repairs_h3c_aggregation_action_idempotently(monkeypatch):
-    conn = sqlite3.connect(":memory:")
-    conn.row_factory = sqlite3.Row
+    conn = postgresql_test_driver.connect()
+    conn.row_factory = postgresql_test_driver.Row
     conn.executescript(
         """
         CREATE TABLE action_definitions (
@@ -69,8 +68,8 @@ def test_repairs_h3c_aggregation_action_idempotently(monkeypatch):
         }],
     )
 
-    migration.upgrade(conn.cursor(), False)
-    migration.upgrade(conn.cursor(), False)
+    migration.upgrade(conn.cursor(), True)
+    migration.upgrade(conn.cursor(), True)
 
     row = conn.execute(
         "SELECT command FROM platform_release_actions "

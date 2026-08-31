@@ -4,7 +4,6 @@ from . import core
 from . import schema
 
 __all__ = [
-    'DB_PATH',
     'PROJECT_ROOT',
     'BACKEND_DIR',
     'get_db_connection',
@@ -15,20 +14,17 @@ __all__ = [
     '_table_columns',
     '_table_columns_deprecated',
     '_db_initialized',
-    '_pool',
     'fetch_interface_data'
 ]
 
 # Map attributes to their source modules
 _ATTR_MAP = {
-    'DB_PATH': core,
     'PROJECT_ROOT': core,
     'BACKEND_DIR': core,
     'get_db_connection': core,
     '_USE_PG': core,
     '_SERIAL_PK': core,
     '_JSON_ARRAY_FN': core,
-    '_pool': core,
     'fetch_interface_data': core,
     'init_db': schema,
     '_table_columns': schema,
@@ -49,5 +45,4 @@ class _DatabaseModule(types.ModuleType):
             super().__setattr__(name, value)
 
 sys.modules[__name__].__class__ = _DatabaseModule
-
 

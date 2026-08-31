@@ -8,8 +8,8 @@ import yaml
 
 
 ROOT = Path(__file__).resolve().parents[3]
-SAMPLE = ROOT / "docs" / "knowledge-engine-v2" / "catalog" / "CAT-005-HUAWEI-CE6800.yaml"
-CAT001 = ROOT / "docs" / "knowledge-engine-v2" / "architecture" / "CAT-001-OFFICIAL-SOURCE-ALLOWLIST.yaml"
+SAMPLE = ROOT / "docs" / "knowledge-engine" / "catalog" / "CAT-005-HUAWEI-CE6800.yaml"
+CAT001 = ROOT / "docs" / "knowledge-engine" / "architecture" / "CAT-001-OFFICIAL-SOURCE-ALLOWLIST.yaml"
 
 
 def _load(path: Path) -> dict:

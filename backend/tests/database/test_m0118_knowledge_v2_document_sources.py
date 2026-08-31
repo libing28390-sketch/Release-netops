@@ -1,44 +1,37 @@
 from __future__ import annotations
 
+from backend.tests import pg_catalog_assertions as pg_catalog
 
-def test_m0118_creates_idempotent_source_observation_boundary(isolated_db):
-    from database.migrations.m0118_knowledge_v2_document_sources import upgrade
 
+def test_m0118_history_is_projected_into_v1_source_observation_columns(isolated_db):
     conn = isolated_db["module"].get_db_connection()
     try:
-        upgrade(conn.cursor(), True)
-        conn.commit()
-        columns = {
-            row[0]
-            for row in conn.execute(
-                "SELECT column_name FROM information_schema.columns "
-                "WHERE table_schema = current_schema() AND table_name = ?",
-                ("kb_document_source",),
-            ).fetchall()
-        }
+        assert not pg_catalog.table_exists(conn, "kb_document_source")
+        columns = pg_catalog.table_columns(conn, "ai_document_revision")
         assert {
-            "tenant_id", "document_id", "document_version_id", "source_registry_id",
-            "source_version_id", "canonical_url", "content_hash", "observation_count",
+            "record_type",
+            "observation_outcome",
+            "checked_at",
+            "source_observation_id",
+            "source_etag",
+            "source_last_modified",
+            "fetch_metadata_json",
         } <= columns
-        assert conn.execute("SELECT name FROM schema_migrations WHERE version = 118").fetchone()[0] == "knowledge_v2_document_sources"
+        applied = conn.execute(
+            "SELECT name FROM schema_migrations WHERE version = 118"
+        ).fetchone()
+        assert applied[0] == "knowledge_v2_document_sources"
     finally:
         conn.close()
 
 
-def test_m0118_has_tenant_and_source_version_unique_guards(isolated_db):
+def test_m0118_final_observation_indexes_are_tenant_scoped_and_replay_safe(isolated_db):
     conn = isolated_db["module"].get_db_connection()
     try:
-        index_names = {
-            str(row[0])
-            for row in conn.execute(
-                "SELECT indexname FROM pg_indexes "
-                "WHERE schemaname = current_schema() AND tablename = ?",
-                ("kb_document_source",),
-            ).fetchall()
-        }
-        assert any("source_version" in name for name in index_names)
-        assert any("document_version" in name for name in index_names)
-        assert "ix_kb_document_source_hash" in index_names
+        index_names = pg_catalog.index_names(conn, "ai_document_revision")
+        assert "ix_ai_document_revision_observation" in index_names
+        assert "ux_ai_document_revision_source_observation" in index_names
+        assert "ix_ai_document_revision_source" in index_names
+        assert not pg_catalog.table_exists(conn, "kb_document_source")
     finally:
         conn.close()
-

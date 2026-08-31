@@ -1,14 +1,14 @@
-import sqlite3
-
+from backend.tests import pg_catalog_assertions as pg_catalog
+from backend.tests.pg_test_utils import postgresql_test_driver
 from database.migrations.m0050_config_backup_policies import upgrade as upgrade_m0050
 from database.migrations.m0153_config_backup_tftp_and_startup import upgrade as upgrade_m0153
 from database.migrations.m0155_config_backup_transfer_protocol import upgrade as upgrade_m0155
 from services import config_backup_policy_service as policy_service
 
 
-def _connection() -> sqlite3.Connection:
-    conn = sqlite3.connect(":memory:")
-    conn.row_factory = sqlite3.Row
+def _connection() -> postgresql_test_driver.Connection:
+    conn = postgresql_test_driver.connect()
+    conn.row_factory = postgresql_test_driver.Row
     conn.executescript(
         """
         CREATE TABLE action_definitions (
@@ -62,27 +62,21 @@ def _connection() -> sqlite3.Connection:
         );
         """
     )
-    upgrade_m0050(conn, use_pg=False)
-    upgrade_m0153(conn, use_pg=False)
-    upgrade_m0155(conn, use_pg=False)
+    upgrade_m0050(conn, use_pg=True)
+    upgrade_m0153(conn, use_pg=True)
+    upgrade_m0155(conn, use_pg=True)
     return conn
 
 
 def test_migration_is_idempotent_and_adds_policy_attribution() -> None:
     conn = _connection()
     try:
-        upgrade_m0050(conn, use_pg=False)
-        upgrade_m0153(conn, use_pg=False)
-        upgrade_m0155(conn, use_pg=False)
-        run_columns = {
-            row["name"] for row in conn.execute("PRAGMA table_info(config_backup_runs)")
-        }
-        snapshot_columns = {
-            row["name"] for row in conn.execute("PRAGMA table_info(config_snapshots)")
-        }
-        policy_indexes = {
-            row["name"] for row in conn.execute("PRAGMA index_list(config_backup_policies)")
-        }
+        upgrade_m0050(conn, use_pg=True)
+        upgrade_m0153(conn, use_pg=True)
+        upgrade_m0155(conn, use_pg=True)
+        run_columns = pg_catalog.table_columns(conn, "config_backup_runs")
+        snapshot_columns = pg_catalog.table_columns(conn, "config_snapshots")
+        policy_indexes = pg_catalog.index_names(conn, "config_backup_policies")
         action = conn.execute(
             "SELECT risk_level, consumers_json FROM action_definitions "
             "WHERE action_code = 'get_startup_config'"

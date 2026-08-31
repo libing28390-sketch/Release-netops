@@ -76,7 +76,7 @@ def test_cat012_invalid_outcome_is_rejected_and_contract_has_no_ddl():
     from pathlib import Path
 
     root = Path(__file__).resolve().parents[3]
-    contract = yaml.safe_load((root / "docs" / "knowledge-engine-v2" / "architecture" / "CAT-012-MODEL-AMBIGUITY-BOUNDARY.yaml").read_text(encoding="utf-8"))
+    contract = yaml.safe_load((root / "docs" / "knowledge-engine" / "architecture" / "CAT-012-MODEL-AMBIGUITY-BOUNDARY.yaml").read_text(encoding="utf-8"))
     assert contract["task_id"] == "CAT-012"
     assert contract["security"]["driver_selection_allowed"] is False
     assert contract["persistence"]["production_ddl"] == "none_in_CAT-012"

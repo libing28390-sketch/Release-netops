@@ -44,7 +44,7 @@ def parse_database_target(database_url: str) -> DatabaseTarget:
     parsed = urlparse(database_url)
     scheme = parsed.scheme.lower()
     if scheme not in {"postgresql", "postgres"}:
-        return DatabaseTarget("sqlite", "local", None, Path(core.DB_PATH).name, "")
+        raise DatabaseResetError("PostgreSQL DATABASE_URL is required")
 
     database = unquote(parsed.path.lstrip("/"))
     if not database:
@@ -60,9 +60,6 @@ def parse_database_target(database_url: str) -> DatabaseTarget:
 
 def inspect_target() -> DatabaseTarget:
     target = parse_database_target(_database_url())
-    if target.backend != "postgresql":
-        return target
-
     connection = core._pg_connect(dsn=_database_url())
     try:
         connection.autocommit = True
@@ -159,25 +156,15 @@ def _reset_postgresql_schema(target: DatabaseTarget) -> int:
         connection.close()
 
 
-def _reset_sqlite_files() -> None:
-    for suffix in ("", "-wal", "-shm"):
-        path = Path(f"{core.DB_PATH}{suffix}")
-        path.unlink(missing_ok=True)
-
-
 def _initialize_and_verify(target: DatabaseTarget) -> dict[str, Any]:
     schema._db_initialized = False
     schema.init_db()
     connection = core.get_db_connection()
     try:
-        if target.backend == "postgresql":
-            rows = connection.execute(
-                "SELECT table_name FROM information_schema.tables WHERE table_schema = 'public'"
-            ).fetchall()
-            table_names = {row[0] for row in rows}
-        else:
-            rows = connection.execute("SELECT name FROM sqlite_master WHERE type = 'table'").fetchall()
-            table_names = {row[0] for row in rows}
+        rows = connection.execute(
+            "SELECT table_name FROM information_schema.tables WHERE table_schema = 'public'"
+        ).fetchall()
+        table_names = {row[0] for row in rows}
         missing = sorted(REQUIRED_TABLES - table_names)
         if missing:
             raise DatabaseResetError(f"Database initialization is incomplete; missing tables: {', '.join(missing)}")
@@ -197,12 +184,9 @@ def reset_database(confirm_database: str, backup: bool = True) -> dict[str, Any]
 
     backup_path: Path | None = None
     terminated_connections = 0
-    if target.backend == "postgresql":
-        if backup:
-            backup_path = create_backup(target)
-        terminated_connections = _reset_postgresql_schema(target)
-    else:
-        _reset_sqlite_files()
+    if backup:
+        backup_path = create_backup(target)
+    terminated_connections = _reset_postgresql_schema(target)
 
     verification = _initialize_and_verify(target)
     return {

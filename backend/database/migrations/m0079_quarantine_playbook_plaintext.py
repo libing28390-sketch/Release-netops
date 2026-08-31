@@ -10,15 +10,11 @@ NAME = "quarantine_playbook_plaintext"
 
 
 def _table_exists(cursor, table: str, use_pg: bool) -> bool:
-    if use_pg:
-        return bool(cursor.execute(
-            "SELECT 1 FROM information_schema.tables WHERE table_schema = current_schema() AND table_name = ?",
-            (table,),
-        ).fetchone())
     return bool(cursor.execute(
-        "SELECT 1 FROM sqlite_master WHERE type = 'table' AND name = ?",
+        "SELECT 1 FROM information_schema.tables WHERE table_schema = current_schema() AND table_name = ?",
         (table,),
     ).fetchone())
+
 
 
 def _expiry(value: object) -> str:

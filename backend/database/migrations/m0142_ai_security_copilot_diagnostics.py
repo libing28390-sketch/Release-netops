@@ -13,11 +13,11 @@ NAME = "ai_security_copilot_diagnostics"
 
 
 def _json_type(use_pg: bool) -> str:
-    return "JSONB" if use_pg else "TEXT"
+    return "JSONB"
 
 
 def _json_default(use_pg: bool, value: str = "{}") -> str:
-    return f"'{value}'::jsonb" if use_pg else f"'{value}'"
+    return f"'{value}'::jsonb"
 
 
 def upgrade(cursor, use_pg: bool) -> None:

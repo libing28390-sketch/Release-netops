@@ -1,25 +1,20 @@
 from __future__ import annotations
 
 import json
-import sqlite3
+from backend.tests import pg_catalog_assertions as pg_catalog
+from backend.tests.pg_test_utils import postgresql_test_driver
 from pathlib import Path
 
 import pytest
 import yaml
 
 from database import get_db_connection
-from database.backup import (
-    MANIFEST_FORMAT,
-    backup_sqlite,
-    build_postgres_backup_plan,
-    export_source_manifest,
-    restore_rehearsal_sqlite,
-)
+from database.backup import MANIFEST_FORMAT, build_postgres_backup_plan, export_source_manifest
 
 
 ROOT = Path(__file__).resolve().parents[3]
-CONTRACT = ROOT / "docs" / "knowledge-engine-v2" / "architecture" / "DB-023-BACKUP-MANIFEST-RESTORE-CONTRACT.yaml"
-REPORT = ROOT / "docs" / "knowledge-engine-v2" / "architecture" / "DB-023-BACKUP-MANIFEST-RESTORE-CONTRACT.md"
+CONTRACT = ROOT / "docs" / "knowledge-engine" / "architecture" / "DB-023-BACKUP-MANIFEST-RESTORE-CONTRACT.yaml"
+REPORT = ROOT / "docs" / "knowledge-engine" / "architecture" / "DB-023-BACKUP-MANIFEST-RESTORE-CONTRACT.md"
 BACKUP_SCRIPT = ROOT / "scripts" / "install-daily-backup.sh"
 
 
@@ -27,8 +22,8 @@ def _load() -> dict:
     return yaml.safe_load(CONTRACT.read_text(encoding="utf-8"))
 
 
-def _source_db(path: Path) -> sqlite3.Connection:
-    conn = sqlite3.connect(str(path))
+def _source_db(path: Path) -> postgresql_test_driver.Connection:
+    conn = postgresql_test_driver.connect(str(path))
     conn.executescript(
         """
         CREATE TABLE schema_migrations (version INTEGER PRIMARY KEY, name TEXT NOT NULL, applied_at TEXT NOT NULL);
@@ -81,8 +76,8 @@ def test_db023_manifest_is_redacted_and_digest_is_deterministic(tmp_path):
     source = tmp_path / "source.db"
     conn = _source_db(source)
     try:
-        first = export_source_manifest(conn=conn, use_pg=False)
-        second = export_source_manifest(conn=conn, use_pg=False)
+        first = export_source_manifest(conn=conn)
+        second = export_source_manifest(conn=conn)
         assert first["format"] == MANIFEST_FORMAT
         assert first["schema_version"] == 115
         assert first["document_count"] == 1
@@ -94,36 +89,11 @@ def test_db023_manifest_is_redacted_and_digest_is_deterministic(tmp_path):
         record = first["documents"][0]
         assert set(record) >= {"document_key_hash", "source_ref_hash", "content_hash", "metadata_hash", "tenant_hash"}
         assert all(len(str(record[key])) >= 16 for key in ("document_key_hash", "source_ref_hash", "content_hash", "metadata_hash"))
-        filtered = export_source_manifest(conn=conn, use_pg=False, tenant_id="tenant-a")
+        filtered = export_source_manifest(conn=conn, tenant_id="tenant-a")
         assert filtered["document_count"] == 1
         assert filtered["tenant_scope"] == "filtered"
     finally:
         conn.close()
-
-
-def test_db023_sqlite_backup_and_restore_rehearsal_compare_manifest(tmp_path):
-    source = tmp_path / "source.db"
-    backup = tmp_path / "backup.db"
-    rehearsal = tmp_path / "rehearsal.db"
-    conn = _source_db(source)
-    try:
-        expected = export_source_manifest(conn=conn, use_pg=False)
-    finally:
-        conn.close()
-    result = backup_sqlite(source, backup)
-    assert result["integrity"] == "ok"
-    restored = restore_rehearsal_sqlite(backup, rehearsal, expected_manifest=expected)
-    assert restored["restore_verified"] is True
-    assert restored["source_manifest_digest"] == expected["source_manifest_digest"]
-    assert restored["document_count"] == 1
-    assert restored["chunk_count"] == 1
-
-
-def test_db023_backup_failure_does_not_create_unspecified_target(tmp_path):
-    target = tmp_path / "should-not-exist.db"
-    with pytest.raises(FileNotFoundError):
-        backup_sqlite(tmp_path / "missing.db", target)
-    assert not target.exists()
 
 
 def test_db023_postgres_plan_is_credential_free_and_restore_isolated(tmp_path):
@@ -143,14 +113,14 @@ def test_db023_postgres_plan_is_credential_free_and_restore_isolated(tmp_path):
 def test_db023_v1_isolated_schema_and_manifest_export_are_non_mutating(isolated_db, tmp_path):
     conn = get_db_connection()
     try:
-        before = tuple(row[0] for row in conn.execute("SELECT name FROM sqlite_master WHERE type='table' ORDER BY name").fetchall())
+        before = tuple(sorted(pg_catalog.table_names(conn)))
         manifest_path = tmp_path / "v1-manifest.json"
-        manifest = export_source_manifest(conn=conn, output_path=manifest_path, use_pg=False)
+        manifest = export_source_manifest(conn=conn, output_path=manifest_path)
         assert manifest_path.is_file()
         current_version = conn.execute("SELECT MAX(version) FROM schema_migrations").fetchone()[0]
         assert manifest["schema_version"] == current_version
         assert conn.execute("SELECT COUNT(*) FROM schema_migrations").fetchone()[0] == current_version
-        after = tuple(row[0] for row in conn.execute("SELECT name FROM sqlite_master WHERE type='table' ORDER BY name").fetchall())
+        after = tuple(sorted(pg_catalog.table_names(conn)))
         assert after == before
         assert "devices" in after and "ai_document" in after
     finally:

@@ -1,10 +1,10 @@
-import sqlite3
-
+from backend.tests import pg_catalog_assertions as pg_catalog
+from backend.tests.pg_test_utils import postgresql_test_driver
 from database.migrations import m0113_rag_metadata_v2
 
 
 def _baseline():
-    conn = sqlite3.connect(":memory:")
+    conn = postgresql_test_driver.connect()
     conn.executescript(
         """
         CREATE TABLE ai_document (
@@ -32,16 +32,15 @@ def _baseline():
 def test_upgrade_and_downgrade_are_additive_and_reversible():
     conn = _baseline()
     cursor = conn.cursor()
-    m0113_rag_metadata_v2.upgrade(cursor, use_pg=False)
+    m0113_rag_metadata_v2.upgrade(cursor, use_pg=True)
     conn.commit()
-    columns = {row[1] for row in cursor.execute("PRAGMA table_info(ai_document)").fetchall()}
+    columns = pg_catalog.table_columns(cursor, "ai_document")
     assert {"document_id", "document_category", "cli_platform", "metadata_parse_status", "embedding_model"} <= columns
     assert cursor.execute("SELECT COUNT(*) FROM ai_document").fetchone()[0] == 1
     assert cursor.execute("SELECT COUNT(*) FROM ai_knowledge_reindex_job").fetchone()[0] == 0
 
-    m0113_rag_metadata_v2.downgrade(cursor, use_pg=False)
+    m0113_rag_metadata_v2.downgrade(cursor, use_pg=True)
     conn.commit()
-    columns_after = {row[1] for row in cursor.execute("PRAGMA table_info(ai_document)").fetchall()}
+    columns_after = pg_catalog.table_columns(cursor, "ai_document")
     assert "document_id" not in columns_after
     assert cursor.execute("SELECT COUNT(*) FROM ai_document").fetchone()[0] == 1
-

@@ -6,11 +6,11 @@ import yaml
 
 
 ROOT = Path(__file__).resolve().parents[3]
-CONTRACT = ROOT / "docs" / "knowledge-engine-v2" / "architecture" / "DB-006-PRODUCT-CATALOG-STRUCTURE.yaml"
-REPORT = ROOT / "docs" / "knowledge-engine-v2" / "architecture" / "DB-006-PRODUCT-CATALOG-STRUCTURE.md"
-ER_CONTRACT = ROOT / "docs" / "knowledge-engine-v2" / "architecture" / "DB-001-core-er-model.yaml"
-COMMON_CONTRACT = ROOT / "docs" / "knowledge-engine-v2" / "architecture" / "DB-002-COMMON-COLUMN-SEMANTICS.yaml"
-LIFECYCLE_CONTRACT = ROOT / "docs" / "knowledge-engine-v2" / "architecture" / "DB-003-LIFECYCLE-POLICY.yaml"
+CONTRACT = ROOT / "docs" / "knowledge-engine" / "architecture" / "DB-006-PRODUCT-CATALOG-STRUCTURE.yaml"
+REPORT = ROOT / "docs" / "knowledge-engine" / "architecture" / "DB-006-PRODUCT-CATALOG-STRUCTURE.md"
+ER_CONTRACT = ROOT / "docs" / "knowledge-engine" / "architecture" / "DB-001-core-er-model.yaml"
+COMMON_CONTRACT = ROOT / "docs" / "knowledge-engine" / "architecture" / "DB-002-COMMON-COLUMN-SEMANTICS.yaml"
+LIFECYCLE_CONTRACT = ROOT / "docs" / "knowledge-engine" / "architecture" / "DB-003-LIFECYCLE-POLICY.yaml"
 SCHEMA = ROOT / "backend" / "database" / "schema.py"
 RESOLVER = ROOT / "backend" / "ai" / "services" / "product_resolver.py"
 RAG_MIGRATION = ROOT / "backend" / "database" / "migrations" / "m0113_rag_metadata_v2.py"

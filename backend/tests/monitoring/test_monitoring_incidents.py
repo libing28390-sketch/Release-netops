@@ -1,5 +1,4 @@
-import sqlite3
-
+from backend.tests.pg_test_utils import postgresql_test_driver
 from database.migrations.m0061_monitoring_incidents import upgrade
 from database.migrations.m0062_monitoring_incident_timeline import upgrade as upgrade_timeline
 from services.monitoring_incident_service import (
@@ -13,9 +12,9 @@ from services.monitoring_incident_service import (
 )
 
 
-def _connection() -> sqlite3.Connection:
-    conn = sqlite3.connect(":memory:")
-    conn.row_factory = sqlite3.Row
+def _connection() -> postgresql_test_driver.Connection:
+    conn = postgresql_test_driver.connect()
+    conn.row_factory = postgresql_test_driver.Row
     conn.execute(
         """
         CREATE TABLE devices (
@@ -53,8 +52,8 @@ def _connection() -> sqlite3.Connection:
         )
         """
     )
-    upgrade(conn, use_pg=False)
-    upgrade_timeline(conn, use_pg=False)
+    upgrade(conn, use_pg=True)
+    upgrade_timeline(conn, use_pg=True)
     conn.execute(
         """
         CREATE TABLE topology_links (

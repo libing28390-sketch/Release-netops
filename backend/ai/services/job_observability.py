@@ -1,7 +1,7 @@
 """Bounded Import/Reindex queue and lease observability (OBS-007).
 
 The ingestion control-plane is still process-local until the DB-011 migration
-gate, while the legacy Knowledge V2 reindex job is durable in PostgreSQL.  This
+gate, while the knowledge reindex job is durable in PostgreSQL.  This
 module deliberately normalizes both sources into the same aggregate shape for
 the AI metrics endpoint.  No job, tenant, worker, URL, SQL or exception text is
 returned.
@@ -95,7 +95,7 @@ def _reindex_queue_snapshot() -> tuple[dict[str, int], str]:
                     if not expires_at or parsed_expiry is None or parsed_expiry <= now:
                         snapshot["lease_anomalies"] += 1
                         snapshot["lease_expired"] += 1
-            return snapshot, "postgresql" if database_core._USE_PG else "database"
+            return snapshot, "postgresql"
     except Exception:
         return _empty_queue(), "unavailable"
 

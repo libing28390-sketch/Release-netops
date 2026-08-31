@@ -39,9 +39,9 @@ def _job(pipeline: IngestionPipeline, *, max_retries: int = 0):
 def test_ing001_machine_and_error_taxonomy_are_explicit_and_fail_closed():
     assert PHASE_ORDER == ("accepted", "scoped", "fetched", "parsed", "normalized", "classified", "chunked", "embedded", "indexed", "validated", "committed", "completed")
     assert EXECUTION_TRANSITIONS["queued"] == frozenset({"running", "cancel_requested"})
-    assert RETRYABLE_ERROR_CODES == {"SOURCE_TIMEOUT", "RATE_LIMITED", "TRANSIENT_DATABASE", "PROVIDER_UNAVAILABLE", "WORKER_LOST"}
+    assert RETRYABLE_ERROR_CODES == {"SOURCE_TIMEOUT", "RATE_LIMITED", "TRANSIENT_DATABASE", "PROVIDER_UNAVAILABLE", "WORKER_LOST", "ROBOTS_UNAVAILABLE"}
     assert set(ERROR_CATALOG) == RETRYABLE_ERROR_CODES | {
-        "INVALID_SCOPE", "ACL_DENIED", "PARSER_CONTRACT", "UNSUPPORTED_FORMAT", "SECRET_OR_SSRF_VIOLATION", "DATA_INTEGRITY", "INTERNAL_ERROR",
+        "INVALID_SCOPE", "ACL_DENIED", "PARSER_CONTRACT", "UNSUPPORTED_FORMAT", "SECRET_OR_SSRF_VIOLATION", "DATA_INTEGRITY", "ROBOTS_DISALLOWED", "INTERNAL_ERROR",
     }
     assert error_catalog()["SOURCE_TIMEOUT"]["retryable"] is True
     assert error_catalog()["SECRET_OR_SSRF_VIOLATION"]["retryable"] is False
@@ -111,6 +111,9 @@ def test_ing001_error_classification_is_stable_retryable_and_redacted():
     blocked = classify_ingestion_error(RuntimeError("SSRF blocked by policy with token=secret"), phase="fetched")
     assert blocked.code == "SECRET_OR_SSRF_VIOLATION"
     assert blocked.retryable is False
+    robots = classify_ingestion_error("ROBOTS_DISALLOWED", phase="scoped")
+    assert robots.code == "ROBOTS_DISALLOWED"
+    assert robots.retryable is False
     unknown = classify_ingestion_error(RuntimeError("unclassified raw device output"), phase="parsed")
     assert unknown.code == "INTERNAL_ERROR"
     assert "device output" not in str(unknown.to_dict())

@@ -1,3 +1,4 @@
+from backend.tests import pg_catalog_assertions as pg_catalog
 from services.device_health_service import _build_collection_stats, build_health_overview, evaluate_device_health, fetch_device_health_history, normalize_hardware_status
 from database.migrations.m0060_monitoring_health_dimensions import upgrade
 from services.site_identity_service import canonical_site_name, is_reserved_system_site
@@ -152,10 +153,9 @@ def test_top_risky_devices_use_role_impact_within_same_health_status() -> None:
     assert overview["top_risky_devices"][0]["impact_priority"] > overview["top_risky_devices"][1]["impact_priority"]
 
 
-def test_health_dimension_migration_is_idempotent_on_sqlite_compatibility_path() -> None:
-    import sqlite3
-
-    conn = sqlite3.connect(":memory:")
+def test_health_dimension_migration_is_idempotent_on_postgresql() -> None:
+    from backend.tests.pg_test_utils import postgresql_test_driver
+    conn = postgresql_test_driver.connect()
     try:
         conn.execute(
             """
@@ -167,9 +167,9 @@ def test_health_dimension_migration_is_idempotent_on_sqlite_compatibility_path()
             )
             """
         )
-        upgrade(conn, use_pg=False)
-        upgrade(conn, use_pg=False)
-        columns = {row[1] for row in conn.execute("PRAGMA table_info(device_health_samples)")}
+        upgrade(conn.cursor(), use_pg=True)
+        upgrade(conn.cursor(), use_pg=True)
+        columns = pg_catalog.table_columns(conn, "device_health_samples")
     finally:
         conn.close()
 
@@ -182,12 +182,12 @@ def test_health_dimension_migration_is_idempotent_on_sqlite_compatibility_path()
 
 
 def test_collection_status_marks_partial_failures_and_confidence() -> None:
-    import sqlite3
+    from backend.tests.pg_test_utils import postgresql_test_driver
     from datetime import datetime, timezone
 
     now = datetime.now(timezone.utc).replace(microsecond=0).isoformat()
-    conn = sqlite3.connect(":memory:")
-    conn.row_factory = sqlite3.Row
+    conn = postgresql_test_driver.connect()
+    conn.row_factory = postgresql_test_driver.Row
     try:
         conn.execute(
             """
@@ -225,12 +225,12 @@ def test_collection_status_marks_partial_failures_and_confidence() -> None:
 
 
 def test_health_history_exposes_new_recovered_alerts_and_mttr() -> None:
-    import sqlite3
+    from backend.tests.pg_test_utils import postgresql_test_driver
     from datetime import datetime, timedelta, timezone
 
     now = datetime.now(timezone.utc).replace(microsecond=0)
-    conn = sqlite3.connect(":memory:")
-    conn.row_factory = sqlite3.Row
+    conn = postgresql_test_driver.connect()
+    conn.row_factory = postgresql_test_driver.Row
     try:
         conn.execute(
             """

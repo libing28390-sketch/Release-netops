@@ -70,7 +70,7 @@ def test_ing005_rejects_public_or_external_source_claims_before_job_creation(iso
 
     conn = get_db_connection()
     try:
-        assert conn.execute("SELECT COUNT(*) AS count FROM kb_source_registry WHERE tenant_id = ?", (operator.get("tenant_id") or "tenant-default",)).fetchone()["count"] == 0
+        assert conn.execute("SELECT COUNT(*) AS count FROM ai_document WHERE tenant_id = ?", (operator.get("tenant_id") or "tenant-default",)).fetchone()["count"] == 0
     finally:
         conn.close()
 
@@ -91,7 +91,11 @@ def test_ing005_replays_by_tenant_and_content_without_duplicate_version(isolated
 
     conn = get_db_connection()
     try:
-        count = conn.execute("SELECT COUNT(*) AS count FROM kb_source_version WHERE tenant_id = ?", (operator.get("tenant_id") or "tenant-default",)).fetchone()["count"]
+        count = conn.execute(
+            "SELECT COUNT(*) AS count FROM ai_document_revision "
+            "WHERE tenant_id = ? AND legacy_source_id = ? AND record_type = 'source_version'",
+            (operator.get("tenant_id") or "tenant-default", first["source"]["id"]),
+        ).fetchone()["count"]
     finally:
         conn.close()
     assert count == 1

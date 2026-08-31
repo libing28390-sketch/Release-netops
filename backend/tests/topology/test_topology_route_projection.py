@@ -1,13 +1,12 @@
 from __future__ import annotations
 
-import sqlite3
-
+from backend.tests.pg_test_utils import postgresql_test_driver
 from services.topology_service import _route_table_graph_observations
 
 
 def test_route_table_next_hop_projects_to_logical_edge_without_physical_relation():
-    conn = sqlite3.connect(":memory:")
-    conn.row_factory = sqlite3.Row
+    conn = postgresql_test_driver.connect()
+    conn.row_factory = postgresql_test_driver.Row
     conn.executescript(
         """
         CREATE TABLE devices (
@@ -67,8 +66,8 @@ def test_route_table_next_hop_projects_to_logical_edge_without_physical_relation
 
 
 def test_unresolved_route_next_hop_is_retained_as_logical_evidence():
-    conn = sqlite3.connect(":memory:")
-    conn.row_factory = sqlite3.Row
+    conn = postgresql_test_driver.connect()
+    conn.row_factory = postgresql_test_driver.Row
     conn.executescript(
         """
         CREATE TABLE devices (id TEXT PRIMARY KEY, hostname TEXT, ip_address TEXT);

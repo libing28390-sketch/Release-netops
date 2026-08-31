@@ -44,6 +44,8 @@ import RetrievalTracePanel from './RetrievalTracePanel';
 import IngestionJobsPanel from './IngestionJobsPanel';
 import KnowledgeAdminNavigation, { type KnowledgeAdminView } from './KnowledgeAdminNavigation';
 import { ActionButton, ActionIconButton, ActionIconGroup } from '../../../components/ui/ActionIconButton';
+import { useCoreApp } from '../../../contexts/AppDomainContext';
+import { aiAdminText, type AIAdminLanguage } from '../../../i18n/aiAdmin';
 
 /* ── Types ── */
 interface FolderCategory {
@@ -87,22 +89,22 @@ const TEXT_EXTENSIONS = ['.md', '.markdown', '.txt', '.html', '.htm', '.json', '
 const ALL_SUPPORTED_EXTENSIONS = [...TEXT_EXTENSIONS, '.docx', '.pdf', '.zip'];
 
 const KNOWLEDGE_DIRECTORY_OPTIONS = [
-  { id: '01_product', label: '01_product · 产品知识', description: '产品、架构、功能与版本说明' },
-  { id: '02_commands', label: '02_commands · 命令参考', description: '命令语法、参数与使用说明' },
-  { id: '03_configuration', label: '03_configuration · 配置流程', description: '配置方法、操作步骤与变更流程' },
-  { id: '04_cli_outputs', label: '04_cli_outputs · CLI 输出', description: '验证命令、预期输出与表格' },
-  { id: '05_troubleshooting', label: '05_troubleshooting · 故障排查', description: '症状、原因、解决方案与排障记录' },
-  { id: '06_examples', label: '06_examples · 示例案例', description: '完整案例、Runbook 与操作示例' },
+  { id: '01_product', labelKey: 'ai.knowledge.directory.product.label', descriptionKey: 'ai.knowledge.directory.product.description' },
+  { id: '02_commands', labelKey: 'ai.knowledge.directory.commands.label', descriptionKey: 'ai.knowledge.directory.commands.description' },
+  { id: '03_configuration', labelKey: 'ai.knowledge.directory.configuration.label', descriptionKey: 'ai.knowledge.directory.configuration.description' },
+  { id: '04_cli_outputs', labelKey: 'ai.knowledge.directory.cliOutputs.label', descriptionKey: 'ai.knowledge.directory.cliOutputs.description' },
+  { id: '05_troubleshooting', labelKey: 'ai.knowledge.directory.troubleshooting.label', descriptionKey: 'ai.knowledge.directory.troubleshooting.description' },
+  { id: '06_examples', labelKey: 'ai.knowledge.directory.examples.label', descriptionKey: 'ai.knowledge.directory.examples.description' },
 ] as const;
 
 const KNOWLEDGE_DIRECTORY_IDS: Set<string> = new Set(KNOWLEDGE_DIRECTORY_OPTIONS.map((item) => item.id));
 const KNOWLEDGE_DIRECTORY_DISPLAY_LABELS: Record<string, string> = {
-  '01_product': '01_product · 产品知识',
-  '02_commands': '02_commands · 命令参考',
-  '03_configuration': '03_configuration · 配置流程',
-  '04_cli_outputs': '04_cli_outputs · CLI 输出',
-  '05_troubleshooting': '05_troubleshooting · 故障排查',
-  '06_examples': '06_examples · 示例案例',
+  '01_product': 'ai.knowledge.directory.product.label',
+  '02_commands': 'ai.knowledge.directory.commands.label',
+  '03_configuration': 'ai.knowledge.directory.configuration.label',
+  '04_cli_outputs': 'ai.knowledge.directory.cliOutputs.label',
+  '05_troubleshooting': 'ai.knowledge.directory.troubleshooting.label',
+  '06_examples': 'ai.knowledge.directory.examples.label',
 };
 const KNOWLEDGE_VENDOR_DIRECTORY_ALIASES: Record<string, string> = {
   huawei: 'huawei',
@@ -119,8 +121,10 @@ function getKnowledgeDirectoryVendor(value: string): string {
   return KNOWLEDGE_VENDOR_DIRECTORY_ALIASES[String(value || '').trim().toLowerCase()] || '';
 }
 
-function getKnowledgeDirectoryDisplayName(node: KnowledgeDirectoryNode): string {
-  return KNOWLEDGE_DIRECTORY_DISPLAY_LABELS[node.name] || node.name;
+function getKnowledgeDirectoryDisplayName(node: KnowledgeDirectoryNode, language: AIAdminLanguage = 'zh'): string {
+  if (KNOWLEDGE_DIRECTORY_DISPLAY_LABELS[node.name]) return aiAdminText(KNOWLEDGE_DIRECTORY_DISPLAY_LABELS[node.name], language);
+  if (getKnowledgeDirectoryVendor(node.name)) return getVendorDisplayLabel(node.name, language);
+  return node.name;
 }
 
 function inferKnowledgeDirectory(relativePath: string): { category?: string; vendor?: string; path?: string } {
@@ -150,23 +154,24 @@ function formatFileSize(bytes: number): string {
 }
 
 const VENDOR_DISPLAY_LABELS: Record<string, string> = {
-  Cisco: 'Cisco (思科)',
-  Huawei: 'Huawei (华为)',
-  H3C: 'H3C (华三)',
-  Ruijie: 'Ruijie (锐捷)',
-  ZTE: 'ZTE (中兴)',
-  cisco: 'Cisco (思科)',
-  huawei: 'Huawei (华为)',
-  h3c: 'H3C (华三)',
-  ruijie: 'Ruijie (锐捷)',
+  Cisco: 'ai.knowledge.vendor.cisco',
+  Huawei: 'ai.knowledge.vendor.huawei',
+  H3C: 'ai.knowledge.vendor.h3c',
+  Ruijie: 'ai.knowledge.vendor.ruijie',
+  ZTE: 'ai.knowledge.vendor.zte',
+  cisco: 'ai.knowledge.vendor.cisco',
+  huawei: 'ai.knowledge.vendor.huawei',
+  h3c: 'ai.knowledge.vendor.h3c',
+  ruijie: 'ai.knowledge.vendor.ruijie',
 };
 
-function getVendorDisplayLabel(vendor: string): string {
-  return VENDOR_DISPLAY_LABELS[vendor] || vendor;
+function getVendorDisplayLabel(vendor: string, language: AIAdminLanguage = 'zh'): string {
+  const key = VENDOR_DISPLAY_LABELS[vendor];
+  return key ? aiAdminText(key, language) : vendor;
 }
 
-function getPlatformDisplayLabel(vendor: string, platform?: string | null): string {
-  if (!platform || platform.toLowerCase() === 'all') return '通用（未指定 CLI 平台）';
+function getPlatformDisplayLabel(vendor: string, platform?: string | null, language: AIAdminLanguage = 'zh'): string {
+  if (!platform || platform.toLowerCase() === 'all') return aiAdminText('ai.knowledge.platform.generic', language);
   return VENDOR_PLATFORMS[vendor]?.find((item) => item.value === platform)?.label || platform;
 }
 
@@ -176,7 +181,9 @@ interface DirectoryTreePickerProps {
   loading: boolean;
   error?: string;
   disabled?: boolean;
+  canManage?: boolean;
   inline?: boolean;
+  title?: string;
   onUpload?: (node: KnowledgeDirectoryNode) => void;
   onSelect: (node: KnowledgeDirectoryNode) => void;
   onCreate: (name: string, parentId: string | null) => Promise<void>;
@@ -184,19 +191,23 @@ interface DirectoryTreePickerProps {
   onDelete: (node: KnowledgeDirectoryNode) => Promise<void>;
 }
 
-const DirectoryTreePicker: React.FC<DirectoryTreePickerProps> = ({
+export const DirectoryTreePicker: React.FC<DirectoryTreePickerProps> = ({
   nodes,
   selectedPath,
   loading,
   error,
   disabled,
+  canManage = false,
   inline = false,
+  title,
   onUpload,
   onSelect,
   onCreate,
   onRename,
   onDelete,
 }) => {
+  const { language } = useCoreApp();
+  const tx = (key: string, variables: Record<string, string | number> = {}) => aiAdminText(key, language, variables);
   const [open, setOpen] = useState(false);
   const [expandedIds, setExpandedIds] = useState<Set<string>>(new Set());
   const [creatingParentId, setCreatingParentId] = useState<string | null | undefined>(undefined);
@@ -215,6 +226,7 @@ const DirectoryTreePicker: React.FC<DirectoryTreePickerProps> = ({
   }, [nodes]);
 
   const beginCreate = (parentId: string | null) => {
+    if (!canManage) return;
     setOpen(true);
     setCreatingParentId(parentId);
     setDraftName('');
@@ -224,6 +236,7 @@ const DirectoryTreePicker: React.FC<DirectoryTreePickerProps> = ({
 
   const submitCreate = async (event: React.FormEvent) => {
     event.preventDefault();
+    if (!canManage) return;
     const name = draftName.trim();
     if (!name || creatingParentId === undefined) return;
     setBusyAction('create');
@@ -233,13 +246,14 @@ const DirectoryTreePicker: React.FC<DirectoryTreePickerProps> = ({
       setCreatingParentId(undefined);
       setDraftName('');
     } catch (err: any) {
-      setActionError(err?.message || '创建目录失败');
+      setActionError(err?.message || tx('ai.knowledge.directory.createFailed'));
     } finally {
       setBusyAction(null);
     }
   };
 
   const beginRename = (node: KnowledgeDirectoryNode) => {
+    if (!canManage) return;
     setOpen(true);
     setCreatingParentId(undefined);
     setEditingNodeId(node.id);
@@ -249,6 +263,7 @@ const DirectoryTreePicker: React.FC<DirectoryTreePickerProps> = ({
 
   const submitRename = async (event: React.FormEvent, node: KnowledgeDirectoryNode) => {
     event.preventDefault();
+    if (!canManage) return;
     const name = editingName.trim();
     if (!name) return;
     setBusyAction(`rename:${node.id}`);
@@ -257,24 +272,25 @@ const DirectoryTreePicker: React.FC<DirectoryTreePickerProps> = ({
       await onRename(node, name);
       setEditingNodeId(null);
     } catch (err: any) {
-      setActionError(err?.message || '重命名目录失败');
+      setActionError(err?.message || tx('ai.knowledge.directory.renameFailed'));
     } finally {
       setBusyAction(null);
     }
   };
 
   const handleDelete = async (node: KnowledgeDirectoryNode) => {
+    if (!canManage) return;
     const hasChildren = node.children.length > 0;
     const message = hasChildren
-      ? `确定删除目录“${node.name}”及其 ${countDirectoryNodes(node)} 个子目录吗？已入库文档不会被删除。`
-      : `确定删除目录“${node.name}”吗？已入库文档不会被删除。`;
+      ? tx('ai.knowledge.directory.deleteWithChildrenConfirm', { name: node.name, count: countDirectoryNodes(node) })
+      : tx('ai.knowledge.directory.deleteConfirm', { name: node.name });
     if (!window.confirm(message)) return;
     setBusyAction(`delete:${node.id}`);
     setActionError('');
     try {
       await onDelete(node);
     } catch (err: any) {
-      setActionError(err?.message || '删除目录失败');
+      setActionError(err?.message || tx('ai.knowledge.directory.deleteFailed'));
     } finally {
       setBusyAction(null);
     }
@@ -283,7 +299,7 @@ const DirectoryTreePicker: React.FC<DirectoryTreePickerProps> = ({
   const renderNode = (node: KnowledgeDirectoryNode): React.ReactNode => {
     const expanded = expandedIds.has(node.id);
     const selected = selectedPath === node.path;
-    const editing = editingNodeId === node.id;
+    const editing = canManage && editingNodeId === node.id;
     const rowBusy = Boolean(busyAction && (busyAction === 'create' || busyAction.endsWith(`:${node.id}`)));
     return (
       <React.Fragment key={node.id}>
@@ -296,7 +312,7 @@ const DirectoryTreePicker: React.FC<DirectoryTreePickerProps> = ({
               return next;
             })}
             className="flex h-7 w-7 shrink-0 items-center justify-center rounded-lg text-gray-400 hover:bg-gray-100 dark:hover:bg-gray-700"
-            aria-label={expanded ? '收起子目录' : '展开子目录'}
+            aria-label={expanded ? tx('ai.knowledge.directory.collapse') : tx('ai.knowledge.directory.expand')}
           >
             {node.children.length > 0 ? <ChevronRight className={`h-3.5 w-3.5 transition-transform ${expanded ? 'rotate-90' : ''}`} /> : <span className="w-3.5" />}
           </button>
@@ -309,8 +325,8 @@ const DirectoryTreePicker: React.FC<DirectoryTreePickerProps> = ({
                 disabled={rowBusy}
                 className="min-w-0 flex-1 rounded-lg border border-indigo-300 bg-white px-2 py-1 text-xs dark:border-indigo-700 dark:bg-gray-900 dark:text-white"
               />
-              <button type="submit" disabled={rowBusy || !editingName.trim()} className="rounded-lg p-1 text-emerald-600 hover:bg-emerald-50 disabled:opacity-50 dark:hover:bg-emerald-950/40" title="保存重命名"><CheckCircle2 className="h-3.5 w-3.5" /></button>
-              <button type="button" onClick={() => setEditingNodeId(null)} disabled={rowBusy} className="rounded-lg p-1 text-gray-400 hover:bg-gray-100 dark:hover:bg-gray-700" title="取消"><X className="h-3.5 w-3.5" /></button>
+              <button type="submit" disabled={rowBusy || !editingName.trim()} className="rounded-lg p-1 text-emerald-600 hover:bg-emerald-50 disabled:opacity-50 dark:hover:bg-emerald-950/40" title={tx('ai.knowledge.directory.saveRename')}><CheckCircle2 className="h-3.5 w-3.5" /></button>
+              <button type="button" onClick={() => setEditingNodeId(null)} disabled={rowBusy} className="rounded-lg p-1 text-gray-400 hover:bg-gray-100 dark:hover:bg-gray-700" title={tx('ai.knowledge.common.cancel')}><X className="h-3.5 w-3.5" /></button>
             </form>
           ) : (
             <button
@@ -318,20 +334,20 @@ const DirectoryTreePicker: React.FC<DirectoryTreePickerProps> = ({
               onClick={() => { onSelect(node); setOpen(false); }}
               disabled={disabled}
               className={`flex min-w-0 flex-1 items-center gap-2 rounded-lg px-2 py-1.5 text-left text-xs transition ${selected ? 'bg-indigo-50 font-semibold text-indigo-700 dark:bg-indigo-950/50 dark:text-indigo-300' : 'text-gray-700 hover:bg-gray-100 dark:text-gray-300 dark:hover:bg-gray-700'}`}
-              title={`知识目录：${node.path}`}
+              title={tx('ai.knowledge.directory.generic', { path: node.path })}
             >
               {expanded ? <FolderOpen className="h-3.5 w-3.5 shrink-0 text-indigo-500" /> : <Folder className="h-3.5 w-3.5 shrink-0 text-indigo-400" />}
-              <span className="truncate">{getKnowledgeDirectoryDisplayName(node)}</span>
+              <span className="truncate">{getKnowledgeDirectoryDisplayName(node, language)}</span>
             </button>
           )}
-          {!editing && (
-            <ActionIconGroup className="flex shrink-0 items-center gap-0.5" label="目录操作">
+          {!editing && canManage && (
+            <ActionIconGroup className="flex shrink-0 items-center gap-0.5" label={tx('ai.knowledge.directory.actions')}>
               {onUpload && (
-                <ActionIconButton icon={UploadCloud} label="在此目录导入文件" size="xs" variant="success" onClick={() => onUpload(node)} disabled={disabled || Boolean(busyAction)} />
+                <ActionIconButton icon={UploadCloud} label={tx('ai.knowledge.directory.uploadHere')} size="xs" variant="success" onClick={() => onUpload(node)} disabled={disabled || Boolean(busyAction)} />
               )}
-              <ActionIconButton icon={Plus} label="新建子目录" size="xs" variant="accent" onClick={() => beginCreate(node.id)} disabled={disabled || Boolean(busyAction)} />
-              <ActionIconButton icon={Pencil} label="重命名目录" size="xs" onClick={() => beginRename(node)} disabled={disabled || Boolean(busyAction)} />
-              <ActionIconButton icon={Trash2} label="删除目录" size="xs" variant="danger" onClick={() => void handleDelete(node)} disabled={disabled || Boolean(busyAction)} />
+              <ActionIconButton icon={Plus} label={tx('ai.knowledge.directory.createChild')} size="xs" variant="accent" onClick={() => beginCreate(node.id)} disabled={disabled || Boolean(busyAction)} />
+              <ActionIconButton icon={Pencil} label={tx('ai.knowledge.directory.rename')} size="xs" onClick={() => beginRename(node)} disabled={disabled || Boolean(busyAction)} />
+              <ActionIconButton icon={Trash2} label={tx('ai.knowledge.directory.delete')} size="xs" variant="danger" onClick={() => void handleDelete(node)} disabled={disabled || Boolean(busyAction)} />
             </ActionIconGroup>
           )}
         </div>
@@ -351,29 +367,29 @@ const DirectoryTreePicker: React.FC<DirectoryTreePickerProps> = ({
           disabled={disabled}
           className="flex w-full items-center justify-between gap-2 rounded-xl border border-gray-300 bg-white px-3 py-2 text-left text-xs text-gray-700 shadow-sm transition hover:border-indigo-400 disabled:cursor-not-allowed disabled:opacity-60 dark:border-gray-600 dark:bg-gray-900 dark:text-gray-200"
         >
-          <span className="flex min-w-0 items-center gap-2"><FolderOpen className="h-3.5 w-3.5 shrink-0 text-indigo-500" /><span className="truncate">{selectedPath ? `目录：${selectedPath}` : '请选择目录'}</span></span>
+          <span className="flex min-w-0 items-center gap-2"><FolderOpen className="h-3.5 w-3.5 shrink-0 text-indigo-500" /><span className="truncate">{selectedPath ? tx('ai.knowledge.directory.generic', { path: selectedPath }) : tx('ai.knowledge.directory.select')}</span></span>
           <ChevronRight className={`h-3.5 w-3.5 shrink-0 text-gray-400 transition-transform ${open ? 'rotate-90' : ''}`} />
         </button>
       )}
       {showTree && (
         <div className={inline ? 'overflow-hidden rounded-xl border border-gray-200 bg-white p-2 dark:border-gray-700 dark:bg-gray-800' : 'absolute left-0 right-0 z-40 mt-1 overflow-hidden rounded-xl border border-gray-200 bg-white p-2 shadow-xl dark:border-gray-700 dark:bg-gray-800'}>
           <div className="flex items-center justify-between gap-2 border-b border-gray-100 pb-2 dark:border-gray-700">
-            <span className="text-[11px] font-semibold text-gray-700 dark:text-gray-200">目录树（选择导入位置）</span>
-            <button type="button" onClick={() => beginCreate(null)} disabled={disabled || Boolean(busyAction)} className="inline-flex items-center gap-1 rounded-lg bg-indigo-50 px-2 py-1 text-[10px] font-semibold text-indigo-600 hover:bg-indigo-100 disabled:opacity-40 dark:bg-indigo-950/40 dark:text-indigo-300" title="新建根目录"><Plus className="h-3 w-3" />新建目录</button>
+            <span className="text-[11px] font-semibold text-gray-700 dark:text-gray-200">{title || tx('ai.knowledge.directory.pickerTitle')}</span>
+            {canManage && <button type="button" onClick={() => beginCreate(null)} disabled={disabled || Boolean(busyAction)} className="inline-flex items-center gap-1 rounded-lg bg-indigo-50 px-2 py-1 text-[10px] font-semibold text-indigo-600 hover:bg-indigo-100 disabled:opacity-40 dark:bg-indigo-950/40 dark:text-indigo-300" title={tx('ai.knowledge.directory.createRoot')}><Plus className="h-3 w-3" />{tx('ai.knowledge.directory.create')}</button>}
           </div>
-          {creatingParentId !== undefined && (
+          {canManage && creatingParentId !== undefined && (
             <form onSubmit={(event) => void submitCreate(event)} className="mt-2 rounded-lg border border-indigo-100 bg-indigo-50/60 p-2 dark:border-indigo-900/60 dark:bg-indigo-950/30">
-              <div className="mb-1 text-[10px] text-indigo-700 dark:text-indigo-300">在 {creatingParentId ? '选定的子目录' : '根目录'} 下新建</div>
+              <div className="mb-1 text-[10px] text-indigo-700 dark:text-indigo-300">{tx('ai.knowledge.directory.createUnder', { scope: creatingParentId ? tx('ai.knowledge.directory.selectedChild') : tx('ai.knowledge.directory.root') })}</div>
               <div className="flex items-center gap-1">
-                <input autoFocus value={draftName} onChange={(event) => setDraftName(event.target.value)} placeholder="输入目录名称" disabled={busyAction === 'create'} className="min-w-0 flex-1 rounded-lg border border-indigo-200 bg-white px-2 py-1.5 text-xs dark:border-indigo-800 dark:bg-gray-900 dark:text-white" />
-                <button type="submit" disabled={busyAction === 'create' || !draftName.trim()} className="rounded-lg bg-indigo-600 px-2 py-1.5 text-[10px] font-semibold text-white disabled:opacity-50">{busyAction === 'create' ? <Loader2 className="h-3 w-3 animate-spin" /> : '创建'}</button>
-                <button type="button" onClick={() => setCreatingParentId(undefined)} disabled={busyAction === 'create'} className="rounded-lg p-1.5 text-gray-400 hover:bg-white dark:hover:bg-gray-700" title="取消"><X className="h-3.5 w-3.5" /></button>
+                <input autoFocus value={draftName} onChange={(event) => setDraftName(event.target.value)} placeholder={tx('ai.knowledge.directory.namePlaceholder')} disabled={busyAction === 'create'} className="min-w-0 flex-1 rounded-lg border border-indigo-200 bg-white px-2 py-1.5 text-xs dark:border-indigo-800 dark:bg-gray-900 dark:text-white" />
+                <button type="submit" disabled={busyAction === 'create' || !draftName.trim()} className="rounded-lg bg-indigo-600 px-2 py-1.5 text-[10px] font-semibold text-white disabled:opacity-50">{busyAction === 'create' ? <Loader2 className="h-3 w-3 animate-spin" /> : tx('ai.knowledge.directory.create')}</button>
+                <button type="button" onClick={() => setCreatingParentId(undefined)} disabled={busyAction === 'create'} className="rounded-lg p-1.5 text-gray-400 hover:bg-white dark:hover:bg-gray-700" title={tx('ai.knowledge.common.cancel')}><X className="h-3.5 w-3.5" /></button>
               </div>
             </form>
           )}
           {(error || actionError) && <div className="mt-2 rounded-lg bg-red-50 px-2 py-1.5 text-[10px] text-red-600 dark:bg-red-950/30 dark:text-red-300">{actionError || error}</div>}
           <div className={`mt-2 overflow-y-auto pr-1 ${inline ? 'max-h-[430px]' : 'max-h-72'}`}>
-            {loading ? <div className="flex items-center gap-2 px-2 py-5 text-xs text-gray-400"><Loader2 className="h-4 w-4 animate-spin" />正在加载目录树…</div> : nodes.length === 0 ? <div className="px-2 py-5 text-center text-xs text-gray-400">暂无目录，请先新建目录</div> : nodes.map(renderNode)}
+            {loading ? <div className="flex items-center gap-2 px-2 py-5 text-xs text-gray-400"><Loader2 className="h-4 w-4 animate-spin" />{tx('ai.knowledge.directory.loading')}</div> : nodes.length === 0 ? <div className="px-2 py-5 text-center text-xs text-gray-400">{tx('ai.knowledge.directory.empty')}</div> : nodes.map(renderNode)}
           </div>
         </div>
       )}
@@ -389,9 +405,9 @@ function flattenDirectoryNodes(nodes: KnowledgeDirectoryNode[]): KnowledgeDirect
   return nodes.flatMap((node) => [node, ...flattenDirectoryNodes(node.children)]);
 }
 
-function getDirectoryImportPath(directoryPath: string, vendor: string): string {
+function getDirectoryImportPath(directoryPath: string, vendor: string, language: AIAdminLanguage = 'zh'): string {
   const selectedPath = String(directoryPath || '').replace(/^\/+|\/+$/g, '');
-  if (!selectedPath) return '全部知识目录';
+  if (!selectedPath) return aiAdminText('ai.knowledge.directory.all', language);
   const hasVendorSegment = selectedPath.split('/').some((segment) => Boolean(getKnowledgeDirectoryVendor(segment)));
   const vendorSlug = getKnowledgeDirectoryVendor(vendor);
   const targetPath = !hasVendorSegment && vendorSlug ? `${selectedPath}/${vendorSlug}` : selectedPath;
@@ -399,6 +415,9 @@ function getDirectoryImportPath(directoryPath: string, vendor: string): string {
 }
 
 export const KnowledgeManagementTab: React.FC = () => {
+  const { currentUser, language } = useCoreApp();
+  const tx = (key: string, variables: Record<string, string | number> = {}) => aiAdminText(key, language, variables);
+  const canManageDirectories = currentUser.role === 'Administrator';
   const [stats, setStats] = useState({
     total_documents: 0,
     total_chunks: 0,
@@ -412,6 +431,7 @@ export const KnowledgeManagementTab: React.FC = () => {
   const [documents, setDocuments] = useState<KnowledgeDocument[]>([]);
   const [documentFacets, setDocumentFacets] = useState<KnowledgeDocumentFacets>({ vendors: [], families: [], series: [] });
   const [totalDocuments, setTotalDocuments] = useState(0);
+  const [allDirectoryDocuments, setAllDirectoryDocuments] = useState(0);
   const [currentPage, setCurrentPage] = useState(1);
   const [itemsPerPage, setItemsPerPage] = useState(20);
   const [loading, setLoading] = useState(true);
@@ -512,12 +532,12 @@ export const KnowledgeManagementTab: React.FC = () => {
   const documentsAbortRef = useRef<AbortController | null>(null);
 
   const folders: FolderCategory[] = [
-    { id: 'all', name: '全部知识文档', icon: '📂', description: '汇总展示所有目录与厂商知识底座' },
-    { id: 'internal_sop', name: '企业内部 SOP', icon: '📘', description: '标准化变更与日常运维指导手册' },
-    { id: 'official_vendor', name: '厂商官方资料', icon: '🏢', description: 'Huawei / Cisco / H3C / Ruijie 官方资料' },
-    { id: 'internal_standard', name: '企业规范标准', icon: '📜', description: 'IP 划分子网、VLAN 命名与安全基线规范' },
-    { id: 'case', name: '应急处置与排查案例', icon: '🚨', description: '历史重大故障与 Emergency Runbook' },
-    { id: 'sample', name: '系统初始化示例', icon: '🧪', description: '系统自带演示文档' },
+    { id: 'all', name: tx('ai.knowledge.scope.all.label'), icon: '📂', description: tx('ai.knowledge.scope.all.description') },
+    { id: 'internal_sop', name: tx('ai.knowledge.scope.internalSop.label'), icon: '📘', description: tx('ai.knowledge.scope.internalSop.description') },
+    { id: 'official_vendor', name: tx('ai.knowledge.scope.official.label'), icon: '🏢', description: tx('ai.knowledge.scope.official.description') },
+    { id: 'internal_standard', name: tx('ai.knowledge.scope.standard.label'), icon: '📜', description: tx('ai.knowledge.scope.standard.description') },
+    { id: 'case', name: tx('ai.knowledge.scope.case.label'), icon: '🚨', description: tx('ai.knowledge.scope.case.description') },
+    { id: 'sample', name: tx('ai.knowledge.scope.sample.label'), icon: '🧪', description: tx('ai.knowledge.scope.sample.description') },
   ];
 
   const directoryVendorOptions = useMemo(
@@ -538,8 +558,20 @@ export const KnowledgeManagementTab: React.FC = () => {
     setLoading(true);
     setLoadError('');
     setPermissionDenied(false);
+    setAllDirectoryDocuments(0);
     try {
-      const [s, docsPage, facets] = await Promise.all([
+      const allDirectoryPageRequest = selectedDirectoryPath
+        ? getKnowledgeDocuments({
+          sourceType: selectedFolder === 'all' ? undefined : selectedFolder,
+          knowledgeScope,
+          search: searchQuery,
+          ...semanticFilters,
+          page: 1,
+          pageSize: 1,
+          signal: controller.signal,
+        })
+        : Promise.resolve(null);
+      const [s, docsPage, facets, allDirectoryPage] = await Promise.all([
         getKnowledgeStats(controller.signal),
         getKnowledgeDocuments({
           sourceType: selectedFolder === 'all' ? undefined : selectedFolder,
@@ -558,11 +590,13 @@ export const KnowledgeManagementTab: React.FC = () => {
           status: semanticFilters.status,
           signal: controller.signal,
         }),
+        allDirectoryPageRequest,
       ]);
       if (requestId !== documentsRequestIdRef.current) return;
       setStats(s);
       setDocuments(docsPage.items);
       setTotalDocuments(docsPage.total);
+      setAllDirectoryDocuments(allDirectoryPage?.total ?? docsPage.total);
       setDocumentFacets(facets);
       setCurrentPage((page) => page === docsPage.page ? page : docsPage.page);
     } catch (e: any) {
@@ -570,12 +604,12 @@ export const KnowledgeManagementTab: React.FC = () => {
       if (e?.name === 'AbortError') return;
       const denied = Number(e?.status) === 403;
       setPermissionDenied(denied);
-      setLoadError(denied ? '当前账号没有知识库查看权限。' : (e?.message || '知识文档加载失败，请重试'));
+      setLoadError(denied ? tx('ai.knowledge.error.permission') : (e?.message || tx('ai.knowledge.error.load')));
       console.error('Failed to load knowledge metrics:', e);
     } finally {
       if (requestId === documentsRequestIdRef.current) setLoading(false);
     }
-  }, [currentPage, itemsPerPage, knowledgeScope, searchQuery, selectedDirectoryPath, selectedFolder, semanticFilters]);
+  }, [currentPage, itemsPerPage, knowledgeScope, language, searchQuery, selectedDirectoryPath, selectedFolder, semanticFilters]);
 
   useEffect(() => {
     void fetchStatsAndDocs();
@@ -613,13 +647,13 @@ export const KnowledgeManagementTab: React.FC = () => {
       link.click();
       link.remove();
       window.setTimeout(() => URL.revokeObjectURL(url), 0);
-      setDocumentActionNotice(`已导出 ${exported.documentCount} 篇文档（${formatFileSize(exported.contentBytes)}）。ZIP 内含 Markdown 与 manifest，导入时会重新切片和生成向量。`);
+      setDocumentActionNotice(tx('ai.knowledge.message.exported', { count: exported.documentCount, size: formatFileSize(exported.contentBytes) }));
     } catch (error: any) {
-      setDocumentActionNotice(error?.message || '知识库导出失败');
+      setDocumentActionNotice(error?.message || tx('ai.knowledge.error.export'));
     } finally {
       setExporting(false);
     }
-  }, [exporting, knowledgeScope, searchQuery, selectedDirectoryPath, selectedFolder, semanticFilters]);
+  }, [exporting, knowledgeScope, language, searchQuery, selectedDirectoryPath, selectedFolder, semanticFilters]);
 
   useEffect(() => {
     const timer = window.setTimeout(() => {
@@ -637,11 +671,11 @@ export const KnowledgeManagementTab: React.FC = () => {
       setAssetOptions(await getKnowledgeAssetOptions());
     } catch (error: any) {
       setAssetOptions({ source: 'physical_assets', asset_count: 0, vendors: [] });
-      setAssetOptionsError(error?.message || '资产厂商同步失败');
+      setAssetOptionsError(error?.message || tx('ai.knowledge.error.assetSync'));
     } finally {
       setAssetOptionsLoading(false);
     }
-  }, []);
+  }, [language]);
 
   const loadKnowledgeDirectories = useCallback(async (): Promise<KnowledgeDirectoryNode[]> => {
     setDirectoryTreeLoading(true);
@@ -654,12 +688,12 @@ export const KnowledgeManagementTab: React.FC = () => {
       setKnowledgeDirectory((current) => flattened.some((node) => node.path === current) ? current : (flattened[0]?.path || ''));
       return items;
     } catch (error: any) {
-      setDirectoryTreeError(error?.message || '目录树加载失败');
+      setDirectoryTreeError(error?.message || tx('ai.knowledge.error.directoryLoad'));
       return [];
     } finally {
       setDirectoryTreeLoading(false);
     }
-  }, []);
+  }, [language]);
 
   useEffect(() => {
     void loadAssetOptions();
@@ -688,7 +722,7 @@ export const KnowledgeManagementTab: React.FC = () => {
     return new Promise((resolve, reject) => {
       const reader = new FileReader();
       reader.onload = (e) => resolve((e.target?.result as string) || '');
-      reader.onerror = () => reject(new Error('文件读取失败'));
+      reader.onerror = () => reject(new Error(tx('ai.knowledge.error.fileRead')));
       reader.readAsText(file);
     });
   };
@@ -709,14 +743,14 @@ export const KnowledgeManagementTab: React.FC = () => {
       try {
         manifest = JSON.parse(await manifestEntry[1].async('string'));
       } catch {
-        throw new Error('知识库导出包的 manifest.json 无法解析');
+        throw new Error(tx('ai.knowledge.error.manifestParse'));
       }
       if (String(manifest?.schema_version || '').startsWith('knowledge-export-')) {
         if (manifest?.embeddings_exported === true || manifest?.reindex_required_on_import !== true) {
-          throw new Error('知识库导出包缺少可移植的重建索引标记');
+          throw new Error(tx('ai.knowledge.error.manifestReindex'));
         }
         if (!Array.isArray(manifest?.documents)) {
-          throw new Error('知识库导出包缺少 documents 清单');
+          throw new Error(tx('ai.knowledge.error.manifestDocuments'));
         }
       }
     }
@@ -726,7 +760,7 @@ export const KnowledgeManagementTab: React.FC = () => {
       // skip hidden/system files
       const segments = relativePath.split('/');
       if (segments.some(s => s === '..') || relativePath.startsWith('/')) {
-        throw new Error('ZIP 中包含不安全的目录路径');
+        throw new Error(tx('ai.knowledge.error.unsafeZipPath'));
       }
       if (segments.some(s => s.startsWith('.'))) continue;
       // A Nexora export ZIP carries a control-plane manifest alongside the
@@ -762,7 +796,7 @@ export const KnowledgeManagementTab: React.FC = () => {
     if (manifest && String(manifest?.schema_version || '').startsWith('knowledge-export-')) {
       const expected = Number(manifest.document_count || 0);
       if (Number.isFinite(expected) && expected !== items.length) {
-        throw new Error(`知识库导出包文档数量不一致：清单 ${expected}，可导入 ${items.length}`);
+        throw new Error(tx('ai.knowledge.error.manifestCount', { expected, actual: items.length }));
       }
     }
     return items;
@@ -789,7 +823,7 @@ export const KnowledgeManagementTab: React.FC = () => {
               fileSize: file.size,
               content: '',
               status: 'error',
-              error: 'ZIP 中没有可识别的文本文件',
+              error: tx('ai.knowledge.error.zipNoText'),
               fromZip: undefined,
             });
           } else {
@@ -802,7 +836,7 @@ export const KnowledgeManagementTab: React.FC = () => {
             fileSize: file.size,
             content: '',
             status: 'error',
-            error: error?.message || 'ZIP 解压失败，文件可能已损坏',
+            error: error?.message || tx('ai.knowledge.error.zipExtract'),
           });
         }
       } else if (TEXT_EXTENSIONS.includes(ext)) {
@@ -822,7 +856,7 @@ export const KnowledgeManagementTab: React.FC = () => {
             fileSize: file.size,
             content: '',
             status: 'error',
-            error: '文件读取失败',
+            error: tx('ai.knowledge.error.fileRead'),
           });
         }
       } else if (ext === '.pdf' || ext === '.docx') {
@@ -843,14 +877,14 @@ export const KnowledgeManagementTab: React.FC = () => {
           fileSize: file.size,
           content: '',
           status: 'error',
-          error: `不支持的文件格式：${ext || '无扩展名'}`,
+          error: tx('ai.knowledge.error.unsupportedFormat', { extension: ext || tx('ai.knowledge.status.noExtension') }),
         });
       }
     }
 
     setFileQueue(prev => [...prev, ...newItems]);
     return newItems;
-  }, []);
+  }, [language]);
 
   const handleFileInputChange = (e: React.ChangeEvent<HTMLInputElement>) => {
     if (e.target.files && e.target.files.length > 0) {
@@ -889,7 +923,7 @@ export const KnowledgeManagementTab: React.FC = () => {
       phase: 'processing',
       completed: 0,
       total: files.length,
-      message: `正在读取 ${files.length} 个文件…`,
+      message: tx('ai.knowledge.message.readingFiles', { count: files.length }),
     });
     void processFiles(files)
       .then((items) => submitDirectDirectoryUpload(target, items))
@@ -900,7 +934,7 @@ export const KnowledgeManagementTab: React.FC = () => {
           phase: 'error',
           completed: 0,
           total: files.length,
-          message: error?.message || '文件读取失败，请重试。',
+          message: error?.message || tx('ai.knowledge.error.fileReadRetry'),
         });
       });
   };
@@ -970,11 +1004,11 @@ export const KnowledgeManagementTab: React.FC = () => {
     setIngestionError('');
     setIngestionMessage('');
     if (!officialUrl.trim().toLowerCase().startsWith('https://')) {
-      setIngestionError('官方来源必须使用 HTTPS URL，并由 Source Registry 做域名与重定向校验。');
+      setIngestionError(tx('ai.knowledge.ingestion.httpsRequired'));
       return;
     }
     if (!officialFamily.trim() || !officialVersion.trim() || !officialCompatibilityVersion.trim() || officialTerms !== 'approved') {
-      setIngestionError('请填写 Product Family、主版本、兼容版本，并确认官方条款已审核。');
+      setIngestionError(tx('ai.knowledge.ingestion.requiredFields'));
       return;
     }
     setIngestionSubmitting(true);
@@ -989,14 +1023,14 @@ export const KnowledgeManagementTab: React.FC = () => {
         publish_to_knowledge_base: true,
         name: officialName.trim(),
       });
-      setIngestionMessage('官方来源导入任务已提交，后续状态由 Ingestion Job 管理。');
+      setIngestionMessage(tx('ai.knowledge.message.ingestionSubmitted'));
       setOfficialUrl('');
       setOfficialFamily('');
       setOfficialVersion('');
       setOfficialCompatibilityVersion('');
       await fetchStatsAndDocs();
     } catch (error: any) {
-      setIngestionError(error?.message || '官方来源导入失败');
+      setIngestionError(error?.message || tx('ai.knowledge.ingestion.officialFailed'));
     } finally {
       setIngestionSubmitting(false);
     }
@@ -1007,15 +1041,15 @@ export const KnowledgeManagementTab: React.FC = () => {
     setIngestionError('');
     setIngestionMessage('');
     if (!enterpriseSopFile) {
-      setIngestionError('请选择一个企业 SOP 文件。');
+      setIngestionError(tx('ai.knowledge.ingestion.fileRequired'));
       return;
     }
     if (!enterpriseTitle.trim() || !enterpriseOwner.trim() || !enterpriseDepartment.trim()) {
-      setIngestionError('企业 SOP 必须填写标题、负责人和所属部门。');
+      setIngestionError(tx('ai.knowledge.ingestion.fieldsRequired'));
       return;
     }
     if (enterpriseSopFile.size > 20_000_000) {
-      setIngestionError('企业 SOP 文件不能超过 20 MB。');
+      setIngestionError(tx('ai.knowledge.ingestion.fileTooLarge'));
       return;
     }
     setIngestionSubmitting(true);
@@ -1025,14 +1059,14 @@ export const KnowledgeManagementTab: React.FC = () => {
         owner: enterpriseOwner.trim(),
         department: enterpriseDepartment.trim(),
       });
-      setIngestionMessage('企业 SOP 导入任务已提交；分类已由服务端固定为 INTERNAL。');
+      setIngestionMessage(tx('ai.knowledge.message.enterpriseSubmitted'));
       setEnterpriseSopFile(null);
       setEnterpriseTitle('');
       setEnterpriseOwner('');
       setEnterpriseDepartment('');
       await fetchStatsAndDocs();
     } catch (error: any) {
-      setIngestionError(error?.message || '企业 SOP 导入失败');
+      setIngestionError(error?.message || tx('ai.knowledge.ingestion.enterpriseFailed'));
     } finally {
       setIngestionSubmitting(false);
     }
@@ -1041,7 +1075,7 @@ export const KnowledgeManagementTab: React.FC = () => {
   const selectedVendorOption = directoryVendorOptions.find((item) => item.value === vendor);
 
   const getQueueMetadataPreview = (item: FileQueueItem): QueueMetadataPreview => {
-    const directoryPath = item.metadata?.directoryPath || item.directoryPath || knowledgeDirectory || '未指定目录';
+    const directoryPath = item.metadata?.directoryPath || item.directoryPath || knowledgeDirectory || tx('ai.knowledge.status.notSpecified');
     const inferredSlug = item.directoryVendor || directoryPath.split('/').map((segment) => getKnowledgeDirectoryVendor(segment)).find(Boolean) || '';
     const inferredOption = inferredSlug
       ? directoryVendorOptions.find((option) => getKnowledgeDirectoryVendor(option.value) === inferredSlug)
@@ -1055,16 +1089,16 @@ export const KnowledgeManagementTab: React.FC = () => {
     let issue = '';
     if (inferredSlug && !inferredOption) {
       validation = 'error';
-      issue = `目录厂商 ${inferredSlug} 尚未同步到资产选项`;
+      issue = tx('ai.knowledge.metadata.vendorNotSynced', { vendor: inferredSlug });
     } else if (inferredSlug && getKnowledgeDirectoryVendor(selectedVendor) !== inferredSlug) {
       validation = 'error';
-      issue = `目录厂商为 ${inferredSlug}，当前 Metadata 却选择 ${selectedVendor || '未选择'}`;
+      issue = tx('ai.knowledge.metadata.vendorMismatch', { directoryVendor: inferredSlug, selectedVendor: selectedVendor || tx('ai.knowledge.status.notSelected') });
     } else if (!selectedVendor || !selectedPlatform) {
       validation = 'error';
-      issue = '必须为每个文件选择可用 Vendor 和 CLI Platform';
+      issue = tx('ai.knowledge.metadata.vendorPlatformRequired');
     } else if (!inferredSlug) {
       validation = 'warning';
-      issue = '未从文件路径推断厂商，将使用当前行选择的 Metadata';
+      issue = tx('ai.knowledge.metadata.vendorInferredFallback');
     }
     return { vendor: selectedVendor, platform: selectedPlatform, sourceType: selectedSourceType, directoryPath, validation, issue };
   };
@@ -1108,7 +1142,7 @@ export const KnowledgeManagementTab: React.FC = () => {
         phase: 'error',
         completed: 0,
         total: items.length,
-        message: '没有可导入的文件：ZIP 中未找到可识别的文本文件，或文件读取失败。',
+        message: tx('ai.knowledge.error.noImportableFiles'),
       });
       return;
     }
@@ -1154,7 +1188,7 @@ export const KnowledgeManagementTab: React.FC = () => {
       phase: 'uploading',
       completed: 0,
       total: pendingItems.length,
-      message: `正在导入到目录：${node.path}…`,
+      message: tx('ai.knowledge.message.importStarted', { path: node.path }),
     });
 
     let completed = 0;
@@ -1169,7 +1203,7 @@ export const KnowledgeManagementTab: React.FC = () => {
           relativePath: item.relativePath,
         });
         const metadataPreview = directPreviews.get(item.id);
-        if (!metadataPreview) throw new Error('Metadata 预览已失效，请重新提交');
+        if (!metadataPreview) throw new Error(tx('ai.knowledge.error.metadataExpired'));
         await addKnowledgeDocument({
           name: getFileNameWithoutExt(item.fileName),
           content: item.content.trim(),
@@ -1181,14 +1215,14 @@ export const KnowledgeManagementTab: React.FC = () => {
         });
         completed += 1;
       } catch (error: any) {
-        failures.push(`${item.fileName}: ${error?.message || '入库失败'}`);
+        failures.push(`${item.fileName}: ${error?.message || tx('ai.knowledge.error.indexFailed')}`);
       }
       setDirectUploadStatus({
         directoryPath: node.path,
         phase: 'uploading',
         completed,
         total: pendingItems.length,
-        message: `正在导入到目录：${node.path}（${completed}/${pendingItems.length}）`,
+        message: tx('ai.knowledge.message.importProgress', { path: node.path, completed, total: pendingItems.length }),
       });
     }
 
@@ -1202,7 +1236,7 @@ export const KnowledgeManagementTab: React.FC = () => {
         phase: 'error',
         completed,
         total: pendingItems.length,
-        message: `已导入 ${completed}/${pendingItems.length} 个文件；失败：${failures.join('；')}`,
+        message: tx('ai.knowledge.message.importFailures', { completed, total: pendingItems.length, failures: failures.join(language === 'zh' ? '；' : '; ') }),
       });
       return;
     }
@@ -1211,13 +1245,13 @@ export const KnowledgeManagementTab: React.FC = () => {
       phase: 'success',
       completed,
       total: pendingItems.length,
-      message: `已将 ${completed} 个文件导入目录：${node.path}。`,
+      message: tx('ai.knowledge.message.imported', { count: completed, path: node.path }),
     });
   };
 
   const ensureAssetMetadataSelection = () => {
     if (knowledgeDirectory && vendor && platform) return true;
-    window.alert(assetOptionsError || '请先在资产管理中导入网络设备，系统将同步厂商和平台后再导入知识文件。');
+    window.alert(assetOptionsError || tx('ai.knowledge.error.assetsRequired'));
     return false;
   };
 
@@ -1254,7 +1288,7 @@ export const KnowledgeManagementTab: React.FC = () => {
         });
         previews.push({ candidate, preview });
       } catch (error: any) {
-        const message = error?.message || '服务端 Metadata 预览失败';
+        const message = error?.message || tx('ai.knowledge.error.metadataPreview');
         onPreviewError?.(candidate.key, message);
         return null;
       }
@@ -1262,12 +1296,12 @@ export const KnowledgeManagementTab: React.FC = () => {
     if (previews.length === 0) return null;
     const visibleRows = previews.slice(0, 8).map(({ candidate, preview }) => {
       const normalized = preview.normalized;
-      const warning = preview.warnings.length > 0 ? `；提示 ${preview.warnings.length} 项` : '';
-      return `${candidate.label}: 格式=${normalized.format || 'markdown'} / Parser=${normalized.parser_name || 'legacy'} / Vendor=${normalized.vendor || 'UNKNOWN'} / Platform=${normalized.platform || 'UNKNOWN'} / 状态=${normalized.metadata_parse_status}${warning}`;
+      const warning = preview.warnings.length > 0 ? tx('ai.knowledge.metadata.warning', { count: preview.warnings.length }) : '';
+      return `${candidate.label}: format=${normalized.format || 'markdown'} / Parser=${normalized.parser_name || 'legacy'} / Vendor=${normalized.vendor || 'UNKNOWN'} / Platform=${normalized.platform || 'UNKNOWN'} / ${tx('ai.knowledge.metadata.status')}=${normalized.metadata_parse_status}${warning}`;
     });
-    const remainder = previews.length > visibleRows.length ? `\n其余 ${previews.length - visibleRows.length} 个文件已在同一服务端预览中校验。` : '';
+    const remainder = previews.length > visibleRows.length ? `\n${tx('ai.knowledge.metadata.remainder', { count: previews.length - visibleRows.length })}` : '';
     const confirmed = window.confirm(
-      `导入前 Metadata 预览（${previews.length} 个文件）\n\n${visibleRows.join('\n')}${remainder}\n\n确认以上规范化 Metadata，并继续导入？`,
+      `${tx('ai.knowledge.message.previewReady', { count: previews.length })}\n\n${visibleRows.join('\n')}${remainder}\n\n${tx('ai.knowledge.metadata.confirm')}`,
     );
     if (!confirmed) return null;
     return new Map(previews.map(({ candidate, preview }) => [candidate.key, preview]));
@@ -1277,7 +1311,7 @@ export const KnowledgeManagementTab: React.FC = () => {
   const handleBatchSubmit = async () => {
     if (bundleFiles.length > 0) {
       if (bundleFiles.length !== 1) {
-        window.alert('一次只能原子导入一个 Nexora 导出 ZIP；请先清空队列后再选择。');
+        window.alert(tx('ai.knowledge.error.singleBundle'));
         return;
       }
       const bundle = bundleFiles[0];
@@ -1290,12 +1324,12 @@ export const KnowledgeManagementTab: React.FC = () => {
           item.fromZip === bundle.name ? { ...item, status: 'done' as FileQueueStatus, error: undefined } : item
         )));
         setBatchProgress({ done: 1, total: 1 });
-        setDocumentActionNotice(`已原子导入 ${imported} 篇文档；目标主机将重新切片和生成向量，官方来源声明已降级为待复核。`);
+        setDocumentActionNotice(tx('ai.knowledge.message.atomicImported', { count: imported }));
         setBundleFiles([]);
         await fetchStatsAndDocs();
       } catch (error: any) {
         setFileQueue((items) => items.map((item) => (
-          item.fromZip === bundle.name ? { ...item, status: 'error' as FileQueueStatus, error: error?.message || 'ZIP 原子导入失败，已回滚' } : item
+          item.fromZip === bundle.name ? { ...item, status: 'error' as FileQueueStatus, error: error?.message || tx('ai.knowledge.error.atomicImport') } : item
         )));
       } finally {
         setBatchSubmitting(false);
@@ -1306,7 +1340,7 @@ export const KnowledgeManagementTab: React.FC = () => {
     if (binaryItems.length > 0) {
       const textPending = fileQueue.some((item) => item.status === 'pending' && item.content.trim());
       if (textPending) {
-        window.alert('PDF/DOCX 与文本文件请分批提交，以便清楚展示每个服务端解析任务的状态。');
+        window.alert(tx('ai.knowledge.error.binarySeparate'));
         return;
       }
       setBatchSubmitting(true);
@@ -1318,15 +1352,15 @@ export const KnowledgeManagementTab: React.FC = () => {
         setFileQueue((items) => items.map((item) => {
           if (!item.binaryFile) return item;
           const outcome = byName.get(item.fileName);
-          if (!outcome) return { ...item, status: 'error', error: '服务端未返回该文件的任务状态' };
+          if (!outcome) return { ...item, status: 'error', error: tx('ai.knowledge.error.noTask') };
           return outcome.success
-            ? { ...item, status: 'done', error: outcome.status === 'queued' ? '已创建解析任务，可在“采集任务”查看进度' : undefined }
-            : { ...item, status: 'error', error: outcome.error?.message || '服务端解析任务创建失败' };
+            ? { ...item, status: 'done', error: outcome.status === 'queued' ? tx('ai.knowledge.message.pendingTask') : undefined }
+            : { ...item, status: 'error', error: outcome.error?.message || tx('ai.knowledge.error.parseTask') };
         }));
         setBatchProgress({ done: result.data.total, total: result.data.total });
-        setDocumentActionNotice(`批量任务已受理 ${result.data.accepted}/${result.data.total} 个文件；采用文件级提交，失败文件不会污染成功文件。`);
+        setDocumentActionNotice(tx('ai.knowledge.message.importBatch', { accepted: result.data.accepted, total: result.data.total }));
       } catch (error: any) {
-        setFileQueue((items) => items.map((item) => item.binaryFile && item.status === 'indexing' ? { ...item, status: 'error', error: error?.message || '批量解析任务创建失败' } : item));
+        setFileQueue((items) => items.map((item) => item.binaryFile && item.status === 'indexing' ? { ...item, status: 'error', error: error?.message || tx('ai.knowledge.error.batchParse') } : item));
       } finally {
         setBatchSubmitting(false);
       }
@@ -1341,9 +1375,9 @@ export const KnowledgeManagementTab: React.FC = () => {
     if (invalidItems.length > 0) {
       setFileQueue((items) => items.map((item) => {
         const invalid = invalidItems.find(({ item: candidate }) => candidate.id === item.id);
-        return invalid ? { ...item, error: invalid.metadata.issue || 'Metadata 校验失败' } : item;
+        return invalid ? { ...item, error: invalid.metadata.issue || tx('ai.knowledge.error.metadataValidation') } : item;
       }));
-      window.alert(`有 ${invalidItems.length} 个文件的 Metadata 与目录/资产不一致，请逐行修正后再提交。`);
+      window.alert(tx('ai.knowledge.error.metadataMismatch', { count: invalidItems.length }));
       return;
     }
 
@@ -1385,7 +1419,7 @@ export const KnowledgeManagementTab: React.FC = () => {
           relativePath: item.relativePath,
         });
         const metadataPreview = metadataPreviews.get(item.id);
-        if (!metadataPreview) throw new Error('Metadata 预览已失效，请重新提交');
+        if (!metadataPreview) throw new Error(tx('ai.knowledge.error.metadataExpired'));
         await addKnowledgeDocument({
           name: getFileNameWithoutExt(item.fileName),
           content: item.content.trim(),
@@ -1398,7 +1432,7 @@ export const KnowledgeManagementTab: React.FC = () => {
         });
         setFileQueue(prev => prev.map(f => f.id === item.id ? { ...f, status: 'done' as FileQueueStatus } : f));
       } catch (err: any) {
-        setFileQueue(prev => prev.map(f => f.id === item.id ? { ...f, status: 'error' as FileQueueStatus, error: err.message || '提交失败' } : f));
+        setFileQueue(prev => prev.map(f => f.id === item.id ? { ...f, status: 'error' as FileQueueStatus, error: err.message || tx('ai.knowledge.error.submit') } : f));
       }
 
       setBatchProgress({ done: i + 1, total: preparedItems.length });
@@ -1409,12 +1443,12 @@ export const KnowledgeManagementTab: React.FC = () => {
   };
 
   const handleClearSample = async () => {
-    if (!window.confirm('确认清空所有系统示例知识 (Sample) 吗？此操作不会影响您的企业正式 SOP。')) return;
+    if (!window.confirm(tx('ai.knowledge.confirm.clearSample'))) return;
     try {
       await clearSampleKnowledge();
       fetchStatsAndDocs();
     } catch (err: any) {
-      alert(err.message || '清空失败');
+      alert(err.message || tx('ai.knowledge.error.clear'));
     }
   };
 
@@ -1465,31 +1499,31 @@ export const KnowledgeManagementTab: React.FC = () => {
       setIndexingStep(0);
       fetchStatsAndDocs();
     } catch (err: any) {
-      alert(err.message || '创建文档失败');
+      alert(err.message || tx('ai.knowledge.error.createDocument'));
     } finally {
       setSubmitting(false);
     }
   };
 
   const sourceBadges: Record<string, { label: string; bg: string; color: string }> = {
-    official_vendor: { label: '厂商官方资料', bg: 'bg-blue-50 dark:bg-blue-950/60', color: 'text-blue-600 dark:text-blue-400' },
-    official_url: { label: '官方 URL / 产品目录', bg: 'bg-blue-50 dark:bg-blue-950/60', color: 'text-blue-600 dark:text-blue-400' },
-    official_local: { label: '官方本地文件', bg: 'bg-blue-50 dark:bg-blue-950/60', color: 'text-blue-600 dark:text-blue-400' },
-    official_template: { label: '官方配置模板', bg: 'bg-cyan-50 dark:bg-cyan-950/60', color: 'text-cyan-600 dark:text-cyan-400' },
-    internal_sop: { label: '企业内部 SOP', bg: 'bg-emerald-50 dark:bg-emerald-950/60', color: 'text-emerald-600 dark:text-emerald-400' },
-    internal_standard: { label: '企业规范标准', bg: 'bg-indigo-50 dark:bg-indigo-950/60', color: 'text-indigo-600 dark:text-indigo-400' },
-    case: { label: '故障排查案例', bg: 'bg-amber-50 dark:bg-amber-950/60', color: 'text-amber-600 dark:text-amber-400' },
-    user_document: { label: '用户上传', bg: 'bg-purple-50 dark:bg-purple-950/60', color: 'text-purple-600 dark:text-purple-400' },
-    sample: { label: '系统示例 (Sample)', bg: 'bg-gray-100 dark:bg-gray-800', color: 'text-gray-600 dark:text-gray-300' },
+    official_vendor: { label: tx('ai.knowledge.scope.official.label'), bg: 'bg-blue-50 dark:bg-blue-950/60', color: 'text-blue-600 dark:text-blue-400' },
+    official_url: { label: tx('ai.knowledge.source.officialUrl'), bg: 'bg-blue-50 dark:bg-blue-950/60', color: 'text-blue-600 dark:text-blue-400' },
+    official_local: { label: tx('ai.knowledge.source.officialLocal'), bg: 'bg-blue-50 dark:bg-blue-950/60', color: 'text-blue-600 dark:text-blue-400' },
+    official_template: { label: tx('ai.knowledge.source.officialTemplate'), bg: 'bg-cyan-50 dark:bg-cyan-950/60', color: 'text-cyan-600 dark:text-cyan-400' },
+    internal_sop: { label: tx('ai.knowledge.scope.internalSop.label'), bg: 'bg-emerald-50 dark:bg-emerald-950/60', color: 'text-emerald-600 dark:text-emerald-400' },
+    internal_standard: { label: tx('ai.knowledge.scope.standard.label'), bg: 'bg-indigo-50 dark:bg-indigo-950/60', color: 'text-indigo-600 dark:text-indigo-400' },
+    case: { label: tx('ai.knowledge.source.case'), bg: 'bg-amber-50 dark:bg-amber-950/60', color: 'text-amber-600 dark:text-amber-400' },
+    user_document: { label: tx('ai.knowledge.source.userDocument'), bg: 'bg-purple-50 dark:bg-purple-950/60', color: 'text-purple-600 dark:text-purple-400' },
+    sample: { label: tx('ai.knowledge.scope.sample.label'), bg: 'bg-gray-100 dark:bg-gray-800', color: 'text-gray-600 dark:text-gray-300' },
   };
 
   const pipelineSteps = [
-    '原始文件解析/提取',
-    '转换为标准 Markdown 中间格式',
-    'Heading 标题 & CLI 结构抽取',
-    'Metadata JSON 提炼',
-    'Heading-Aware Smart Chunking',
-    'Embedding 向量与 FTS 就绪',
+    tx('ai.knowledge.pipeline.extract'),
+    tx('ai.knowledge.pipeline.normalize'),
+    tx('ai.knowledge.pipeline.structure'),
+    tx('ai.knowledge.pipeline.metadata'),
+    tx('ai.knowledge.upload.pipeline.heading'),
+    tx('ai.knowledge.pipeline.embedding'),
   ];
 
   /* ── Queue counts ── */
@@ -1540,6 +1574,19 @@ export const KnowledgeManagementTab: React.FC = () => {
     setSelectedDocIds(new Set());
   };
 
+  const handleDirectorySelect = (node: KnowledgeDirectoryNode) => {
+    setKnowledgeDirectory(node.path);
+    setSelectedDirectoryPath(node.path);
+    setCurrentPage(1);
+    setSelectedDocIds(new Set());
+  };
+
+  const clearDirectorySelection = () => {
+    setSelectedDirectoryPath('');
+    setCurrentPage(1);
+    setSelectedDocIds(new Set());
+  };
+
   const clearSemanticFilters = () => {
     setSemanticFilters({
       vendor: '',
@@ -1565,7 +1612,7 @@ export const KnowledgeManagementTab: React.FC = () => {
       const detail = await getKnowledgeDocument(document.id);
       if (requestId === documentDetailRequestIdRef.current) setSelectedDocument(detail);
     } catch (err: any) {
-      if (requestId === documentDetailRequestIdRef.current) setDocumentDetailError(err?.message || '文档内容加载失败');
+      if (requestId === documentDetailRequestIdRef.current) setDocumentDetailError(err?.message || tx('ai.knowledge.error.documentLoad'));
     } finally {
       if (requestId === documentDetailRequestIdRef.current) setDocumentDetailLoading(false);
     }
@@ -1596,7 +1643,7 @@ export const KnowledgeManagementTab: React.FC = () => {
       const comparison = await compareKnowledgeDocumentVersions(selectedDocument.document_id, versionId, latest.id);
       setVersionCompareResult(comparison);
     } catch (err: any) {
-      setVersionAdminNotice(err?.message || '版本比较失败');
+      setVersionAdminNotice(err?.message || tx('ai.knowledge.error.versionCompare'));
     } finally {
       setVersionAdminBusy(null);
     }
@@ -1606,14 +1653,14 @@ export const KnowledgeManagementTab: React.FC = () => {
     if (!selectedDocument?.document_id) return;
     const history = selectedDocument.source_version_history || [];
     const version = history.find((item) => item.id === versionId);
-    const label = action === 'publish' ? '发布' : action === 'supersede' ? '替代' : '回滚';
+    const label = action === 'publish' ? tx('ai.knowledge.action.publish') : action === 'supersede' ? tx('ai.knowledge.action.supersede') : tx('ai.knowledge.action.rollback');
     if (!version) return;
     if (action === 'supersede' && !replacementVersionId) return;
     const warning = action === 'rollback'
-      ? `确认将文档回滚到 v${version.version_no}？当前版本会被标记为 Superseded。`
+      ? tx('ai.knowledge.version.rollbackConfirm', { version: version.version_no })
       : action === 'supersede'
-        ? `确认将 v${version.version_no} 标记为 Superseded，并使用新版本替代？`
-        : `确认发布文档 v${version.version_no}？发布后会成为当前检索版本。`;
+        ? tx('ai.knowledge.version.supersedeConfirm', { version: version.version_no })
+        : tx('ai.knowledge.version.publishConfirm', { version: version.version_no });
     if (!window.confirm(warning)) return;
     setVersionAdminBusy(`${action}:${versionId}`);
     setVersionAdminNotice('');
@@ -1621,12 +1668,12 @@ export const KnowledgeManagementTab: React.FC = () => {
       if (action === 'publish') await publishKnowledgeDocumentVersion(selectedDocument.document_id, versionId);
       if (action === 'supersede') await supersedeKnowledgeDocumentVersion(selectedDocument.document_id, versionId, replacementVersionId || '');
       if (action === 'rollback') await rollbackKnowledgeDocumentVersion(selectedDocument.document_id, versionId);
-      setVersionAdminNotice(`${label}操作已完成，版本历史已刷新。`);
+      setVersionAdminNotice(tx('ai.knowledge.version.actionDone', { label }));
       setVersionCompareResult(null);
       await refreshSelectedDocument();
       void fetchStatsAndDocs();
     } catch (err: any) {
-      setVersionAdminNotice(err?.message || `${label}操作失败`);
+      setVersionAdminNotice(err?.message || tx('ai.knowledge.error.action', { label }));
     } finally {
       setVersionAdminBusy(null);
     }
@@ -1639,8 +1686,8 @@ export const KnowledgeManagementTab: React.FC = () => {
       <section className="rounded-2xl border border-indigo-100 bg-indigo-50/40 p-4 shadow-sm dark:border-indigo-900/60 dark:bg-indigo-950/20">
         <div className="flex flex-wrap items-center justify-between gap-2">
           <div>
-            <div className="text-xs font-semibold text-indigo-900 dark:text-indigo-100">版本管理</div>
-            <div className="mt-1 text-[10px] text-indigo-700/75 dark:text-indigo-200/70">比较只返回哈希、元数据和行数；发布、替代、回滚都会写入生命周期审计。</div>
+            <div className="text-xs font-semibold text-indigo-900 dark:text-indigo-100">{tx('ai.knowledge.version.title')}</div>
+            <div className="mt-1 text-[10px] text-indigo-700/75 dark:text-indigo-200/70">{tx('ai.knowledge.version.body')}</div>
           </div>
           {versionAdminBusy && <Loader2 className="h-4 w-4 animate-spin text-indigo-500" />}
         </div>
@@ -1651,13 +1698,13 @@ export const KnowledgeManagementTab: React.FC = () => {
             return (
               <div key={version.id} className="flex flex-wrap items-center gap-2 rounded-xl bg-white/80 px-3 py-2 text-[10px] dark:bg-slate-900/70">
                 <span className="font-semibold text-slate-800 dark:text-slate-100">v{version.version_no}</span>
-                <span className="rounded-full bg-slate-100 px-2 py-0.5 text-slate-600 dark:bg-slate-800 dark:text-slate-300">{status}</span>
-                <span className="font-mono text-slate-500">{version.content_hash ? `${version.content_hash.slice(0, 10)}…` : 'hash 未记录'}</span>
+                <span className="rounded-full bg-slate-100 px-2 py-0.5 text-slate-600 dark:bg-slate-800 dark:text-slate-300">{getKnowledgeLifecycleStatusLabel(status)}</span>
+                <span className="font-mono text-slate-500">{version.content_hash ? `${version.content_hash.slice(0, 10)}…` : tx('ai.knowledge.version.hashMissing')}</span>
                 <div className="ml-auto flex flex-wrap gap-1">
-                  {!isLatest && <button type="button" onClick={() => void compareSelectedVersions(version.id)} disabled={Boolean(versionAdminBusy)} className="rounded-lg border border-indigo-200 px-2 py-1 font-semibold text-indigo-700 hover:bg-indigo-100 disabled:opacity-50 dark:border-indigo-800 dark:text-indigo-300">比较最新</button>}
-                  {status !== 'active' && status !== 'published' && <button type="button" onClick={() => void runVersionAdminAction('publish', version.id)} disabled={Boolean(versionAdminBusy)} className="rounded-lg border border-emerald-200 px-2 py-1 font-semibold text-emerald-700 hover:bg-emerald-100 disabled:opacity-50 dark:border-emerald-800 dark:text-emerald-300">发布</button>}
-                  {!isLatest && (latest?.lifecycle_status === 'published' || latest?.status === 'active') && status !== 'superseded' && <button type="button" onClick={() => void runVersionAdminAction('supersede', version.id, latest.id)} disabled={Boolean(versionAdminBusy)} className="rounded-lg border border-amber-200 px-2 py-1 font-semibold text-amber-700 hover:bg-amber-100 disabled:opacity-50 dark:border-amber-800 dark:text-amber-300">替代</button>}
-                  {!isLatest && status !== 'quarantined' && status !== 'disabled' && <button type="button" onClick={() => void runVersionAdminAction('rollback', version.id)} disabled={Boolean(versionAdminBusy)} className="rounded-lg border border-rose-200 px-2 py-1 font-semibold text-rose-700 hover:bg-rose-100 disabled:opacity-50 dark:border-rose-800 dark:text-rose-300">回滚</button>}
+                  {!isLatest && <button type="button" onClick={() => void compareSelectedVersions(version.id)} disabled={Boolean(versionAdminBusy)} className="rounded-lg border border-indigo-200 px-2 py-1 font-semibold text-indigo-700 hover:bg-indigo-100 disabled:opacity-50 dark:border-indigo-800 dark:text-indigo-300">{tx('ai.knowledge.action.compareLatest')}</button>}
+                  {status !== 'active' && status !== 'published' && <button type="button" onClick={() => void runVersionAdminAction('publish', version.id)} disabled={Boolean(versionAdminBusy)} className="rounded-lg border border-emerald-200 px-2 py-1 font-semibold text-emerald-700 hover:bg-emerald-100 disabled:opacity-50 dark:border-emerald-800 dark:text-emerald-300">{tx('ai.knowledge.action.publish')}</button>}
+                  {!isLatest && (latest?.lifecycle_status === 'published' || latest?.status === 'active') && status !== 'superseded' && <button type="button" onClick={() => void runVersionAdminAction('supersede', version.id, latest.id)} disabled={Boolean(versionAdminBusy)} className="rounded-lg border border-amber-200 px-2 py-1 font-semibold text-amber-700 hover:bg-amber-100 disabled:opacity-50 dark:border-amber-800 dark:text-amber-300">{tx('ai.knowledge.action.supersede')}</button>}
+                  {!isLatest && status !== 'quarantined' && status !== 'disabled' && <button type="button" onClick={() => void runVersionAdminAction('rollback', version.id)} disabled={Boolean(versionAdminBusy)} className="rounded-lg border border-rose-200 px-2 py-1 font-semibold text-rose-700 hover:bg-rose-100 disabled:opacity-50 dark:border-rose-800 dark:text-rose-300">{tx('ai.knowledge.action.rollback')}</button>}
                 </div>
               </div>
             );
@@ -1666,9 +1713,9 @@ export const KnowledgeManagementTab: React.FC = () => {
         {versionAdminNotice && <div className="mt-2 rounded-lg bg-white/80 px-3 py-2 text-[10px] text-indigo-800 dark:bg-slate-900/70 dark:text-indigo-200">{versionAdminNotice}</div>}
         {versionCompareResult && (
           <div className="mt-3 rounded-xl border border-indigo-200 bg-white/80 p-3 text-[10px] text-slate-700 dark:border-indigo-800 dark:bg-slate-900/70 dark:text-slate-200">
-            <div className="flex items-center justify-between gap-2 font-semibold"><span>v{versionCompareResult.left.version_no} → v{versionCompareResult.right.version_no}</span><button type="button" onClick={() => setVersionCompareResult(null)} className="text-slate-400 hover:text-slate-700" aria-label="关闭版本比较">×</button></div>
-            <div className="mt-2 grid grid-cols-2 gap-2 sm:grid-cols-4"><span>内容：{versionCompareResult.content_changed ? '已变化' : '未变化'}</span><span>Metadata：{versionCompareResult.metadata_changed ? '已变化' : '未变化'}</span><span>新增行：{versionCompareResult.line_diff.added_lines}</span><span>删除行：{versionCompareResult.line_diff.removed_lines}</span></div>
-            <div className="mt-2 text-slate-500 dark:text-slate-400">变化字段：{versionCompareResult.changed_fields.join('、') || '无'}</div>
+            <div className="flex items-center justify-between gap-2 font-semibold"><span>v{versionCompareResult.left.version_no} → v{versionCompareResult.right.version_no}</span><button type="button" onClick={() => setVersionCompareResult(null)} className="text-slate-400 hover:text-slate-700" aria-label={tx('ai.knowledge.action.closeComparison')}>×</button></div>
+            <div className="mt-2 grid grid-cols-2 gap-2 sm:grid-cols-4"><span>{tx('ai.knowledge.version.content')}{versionCompareResult.content_changed ? tx('ai.knowledge.version.changed') : tx('ai.knowledge.version.unchanged')}</span><span>Metadata: {versionCompareResult.metadata_changed ? tx('ai.knowledge.version.changed') : tx('ai.knowledge.version.unchanged')}</span><span>{tx('ai.knowledge.version.addedLines')}{versionCompareResult.line_diff.added_lines}</span><span>{tx('ai.knowledge.version.removedLines')}{versionCompareResult.line_diff.removed_lines}</span></div>
+            <div className="mt-2 text-slate-500 dark:text-slate-400">{tx('ai.knowledge.version.changedFields')}{versionCompareResult.changed_fields.join(language === 'zh' ? '、' : ', ') || tx('ai.knowledge.version.none')}</div>
           </div>
         )}
       </section>
@@ -1676,12 +1723,12 @@ export const KnowledgeManagementTab: React.FC = () => {
   })() : null;
 
   const documentActionLabels: Record<KnowledgeDocumentAction, string> = {
-    delete: '删除',
-    disable: '禁用',
-    enable: '启用',
-    reparse: '重新解析 Metadata',
-    rechunk: '重新切片',
-    reindex: '重建索引',
+    delete: tx('ai.knowledge.action.delete'),
+    disable: tx('ai.knowledge.action.disable'),
+    enable: tx('ai.knowledge.action.enable'),
+    reparse: tx('ai.knowledge.action.reparse'),
+    rechunk: tx('ai.knowledge.action.rechunk'),
+    reindex: tx('ai.knowledge.action.reindex'),
   };
 
   const requestDocumentAction = async (doc: KnowledgeDocument, action: KnowledgeDocumentAction) => {
@@ -1689,10 +1736,10 @@ export const KnowledgeManagementTab: React.FC = () => {
     setDocumentActionNotice('');
     try {
       const preview = await getKnowledgeDocumentActionImpact(doc.id);
-      if (!preview.safe_to_confirm) throw new Error('当前文档不满足安全确认条件');
+      if (!preview.safe_to_confirm) throw new Error(tx('ai.knowledge.error.unsafeDocumentAction'));
       setPendingDocumentAction({ doc, action, preview });
     } catch (err: any) {
-      alert(err.message || '无法读取危险操作影响预览');
+      alert(err.message || tx('ai.knowledge.error.impactPreview'));
     } finally {
       setDocumentActionBusy(null);
     }
@@ -1709,12 +1756,12 @@ export const KnowledgeManagementTab: React.FC = () => {
     try {
       const handlers = { delete: deleteKnowledgeDocument, disable: disableKnowledgeDocument, enable: enableKnowledgeDocument, reparse: reparseKnowledgeDocument, rechunk: rechunkKnowledgeDocument, reindex: reindexKnowledgeDocument } as const;
       const result = await handlers[action](doc.id, `knowledge admin confirmed ${action}`);
-      const suffix = result.job_id ? `（任务 ${result.job_id} 已排队）` : '';
+      const suffix = result.job_id ? tx('ai.knowledge.danger.jobQueued', { job: result.job_id }) : '';
       setSelectedDocIds(prev => { const next = new Set(prev); if (action === 'delete') next.delete(doc.id); return next; });
-      setDocumentActionNotice(`${label}已提交${suffix}；影响 ${preview.impact.documents} 文档 / ${preview.impact.chunks} Chunk / ${preview.impact.indexes} Index / ${preview.impact.references} 引用。恢复方式已记录。`);
+      setDocumentActionNotice(tx('ai.knowledge.danger.submitted', { label, suffix, documents: preview.impact.documents, chunks: preview.impact.chunks, indexes: preview.impact.indexes, references: preview.impact.references }));
       void fetchStatsAndDocs();
     } catch (err: any) {
-      alert(err.message || `${label}失败`);
+      alert(err.message || tx('ai.knowledge.error.action', { label }));
     } finally {
       setDocumentActionBusy(null);
     }
@@ -1732,15 +1779,32 @@ export const KnowledgeManagementTab: React.FC = () => {
         indexes: total.indexes + item.impact.indexes,
         references: total.references + item.impact.references,
       }), { documents: 0, chunks: 0, indexes: 0, references: 0 });
-      if (!window.confirm(`确认批量删除 ${impact.documents} 篇文档吗？\n影响：${impact.chunks} Chunk / ${impact.indexes} Index / ${impact.references} 引用。\n操作不可原地撤销，恢复方式为 PostgreSQL 备份恢复。`)) return;
+      if (!window.confirm(tx('ai.knowledge.danger.batchDeleteConfirm', { documents: impact.documents, chunks: impact.chunks, indexes: impact.indexes, references: impact.references }))) return;
       await batchDeleteKnowledgeDocuments(ids, 'knowledge admin confirmed batch delete');
       setSelectedDocIds(new Set());
       void fetchStatsAndDocs();
     } catch (err: any) {
-      alert(err.message || '批量删除失败');
+      alert(err.message || tx('ai.knowledge.error.batchDelete'));
     } finally {
       setDeleting(false);
     }
+  };
+
+  const getKnowledgeLifecycleStatusLabel = (status?: string | null): string => {
+    const statusKey: Record<string, string> = {
+      active: 'ai.knowledge.status.active',
+      published: 'ai.knowledge.status.published',
+      draft: 'ai.knowledge.status.draft',
+      quarantined: 'ai.knowledge.status.quarantined',
+      disabled: 'ai.knowledge.status.disabled',
+    };
+    return status && statusKey[status] ? tx(statusKey[status]) : status || tx('ai.knowledge.status.pending');
+  };
+
+  const getDocumentStatusLabel = (document: KnowledgeDocument): string => {
+    if (document.status === 'active' && !document.exclude_from_rag) return tx('ai.knowledge.status.ready');
+    const translatedStatus = getKnowledgeLifecycleStatusLabel(document.status);
+    return `${translatedStatus}${document.exclude_from_rag ? tx('ai.knowledge.table.excludedRag') : ''}`;
   };
 
   return (
@@ -1761,58 +1825,58 @@ export const KnowledgeManagementTab: React.FC = () => {
         <div>
           <h2 className="nx-page-title flex items-center gap-2 text-gray-900 dark:text-white">
             <BookOpen className="w-6 h-6 text-indigo-500" />
-            企业网络知识库中心 (RAG Data Engine)
+            {tx('ai.knowledge.header.title')}
           </h2>
           <p className="nx-page-description mt-1 text-gray-500 dark:text-gray-400">
-            支持目录分类、多文件批量上传 (Markdown / HTML / PDF / DOCX / TXT / ZIP 压缩包) 与统一服务端解析。
+            {tx('ai.knowledge.header.description')}
           </p>
           <div className="mt-2 flex flex-wrap items-center gap-2 text-[10px] text-slate-500 dark:text-slate-400">
-            <span className="inline-flex items-center gap-1"><Info className="h-3 w-3 text-indigo-500" />自定义文档推荐 UTF-8 Markdown + Front Matter；JSON/YAML 使用 Nexora envelope。</span>
-            <a href="/downloads/nexora-knowledge-document-template.md" download="nexora-knowledge-document-template.md" className="inline-flex items-center gap-1 rounded-lg border border-indigo-200 bg-indigo-50 px-2 py-1 font-semibold text-indigo-700 hover:bg-indigo-100 dark:border-indigo-900/60 dark:bg-indigo-950/30 dark:text-indigo-300"><FileText className="h-3 w-3" />Markdown 模板</a>
-            <a href="/downloads/nexora-knowledge-document-template.json" download="nexora-knowledge-document-template.json" className="inline-flex items-center gap-1 rounded-lg border border-indigo-200 bg-indigo-50 px-2 py-1 font-semibold text-indigo-700 hover:bg-indigo-100 dark:border-indigo-900/60 dark:bg-indigo-950/30 dark:text-indigo-300"><FileCode className="h-3 w-3" />JSON 模板</a>
-            <a href="/downloads/nexora-knowledge-import-format.md" download="nexora-knowledge-import-format.md" className="inline-flex items-center gap-1 rounded-lg border border-slate-200 bg-white px-2 py-1 font-semibold text-slate-600 hover:bg-slate-50 dark:border-slate-700 dark:bg-slate-900 dark:text-slate-300"><HelpCircle className="h-3 w-3" />格式说明</a>
+            <span className="inline-flex items-center gap-1"><Info className="h-3 w-3 text-indigo-500" />{tx('ai.knowledge.header.tip')}</span>
+            <a href="/downloads/nexora-knowledge-document-template.md" download="nexora-knowledge-document-template.md" className="inline-flex items-center gap-1 rounded-lg border border-indigo-200 bg-indigo-50 px-2 py-1 font-semibold text-indigo-700 hover:bg-indigo-100 dark:border-indigo-900/60 dark:bg-indigo-950/30 dark:text-indigo-300"><FileText className="h-3 w-3" />{tx('ai.knowledge.header.markdownTemplate')}</a>
+            <a href="/downloads/nexora-knowledge-document-template.json" download="nexora-knowledge-document-template.json" className="inline-flex items-center gap-1 rounded-lg border border-indigo-200 bg-indigo-50 px-2 py-1 font-semibold text-indigo-700 hover:bg-indigo-100 dark:border-indigo-900/60 dark:bg-indigo-950/30 dark:text-indigo-300"><FileCode className="h-3 w-3" />{tx('ai.knowledge.header.jsonTemplate')}</a>
+            <a href="/downloads/nexora-knowledge-import-format.md" download="nexora-knowledge-import-format.md" className="inline-flex items-center gap-1 rounded-lg border border-slate-200 bg-white px-2 py-1 font-semibold text-slate-600 hover:bg-slate-50 dark:border-slate-700 dark:bg-slate-900 dark:text-slate-300"><HelpCircle className="h-3 w-3" />{tx('ai.knowledge.header.formatGuide')}</a>
           </div>
         </div>
         <button type="button" onClick={() => { setShowModal(true); setInputMode('upload'); setIngestionError(''); }} className="hidden items-center gap-2 rounded-xl bg-indigo-600 px-3 py-2 text-xs font-semibold text-white shadow-sm transition hover:bg-indigo-700 sm:inline-flex">
-          <UploadCloud className="h-3.5 w-3.5" />批量上传企业文件
+          <UploadCloud className="h-3.5 w-3.5" />{tx('ai.knowledge.header.upload')}
         </button>
       </div>
 
-      <section className="rounded-2xl border border-slate-200/80 bg-white p-4 shadow-xs dark:border-slate-700/80 dark:bg-slate-800" aria-label="知识来源导入入口">
+      <section className="rounded-2xl border border-slate-200/80 bg-white p-4 shadow-xs dark:border-slate-700/80 dark:bg-slate-800" aria-label={tx('ai.knowledge.ingestion.aria')}>
         <div className="flex flex-wrap items-center justify-between gap-3">
           <div>
-            <h3 className="text-sm font-bold text-slate-900 dark:text-white">受治理的知识导入</h3>
-            <p className="mt-1 text-[10px] text-slate-500 dark:text-slate-400">官方来源走 URL / Source Registry 校验；企业 SOP 走本地文件 / INTERNAL 分类，两套表单互不混用。</p>
+            <h3 className="text-sm font-bold text-slate-900 dark:text-white">{tx('ai.knowledge.ingestion.title')}</h3>
+            <p className="mt-1 text-[10px] text-slate-500 dark:text-slate-400">{tx('ai.knowledge.ingestion.body')}</p>
           </div>
           <div className="flex flex-wrap gap-2">
             <button type="button" onClick={() => { setIngestionMode('official_url'); setIngestionError(''); setIngestionMessage(''); }} className={`rounded-xl px-3 py-2 text-xs font-semibold transition ${ingestionMode === 'official_url' ? 'bg-blue-600 text-white' : 'border border-blue-200 bg-blue-50 text-blue-700 hover:bg-blue-100 dark:border-blue-900 dark:bg-blue-950/30 dark:text-blue-200'}`}>
-              <span className="mr-1.5">🌐</span>导入官方 URL
+              <span className="mr-1.5">🌐</span>{tx('ai.knowledge.ingestion.official')}
             </button>
             <button type="button" onClick={() => { setIngestionMode('enterprise_sop'); setIngestionError(''); setIngestionMessage(''); }} className={`rounded-xl px-3 py-2 text-xs font-semibold transition ${ingestionMode === 'enterprise_sop' ? 'bg-emerald-600 text-white' : 'border border-emerald-200 bg-emerald-50 text-emerald-700 hover:bg-emerald-100 dark:border-emerald-900 dark:bg-emerald-950/30 dark:text-emerald-200'}`}>
-              <span className="mr-1.5">📄</span>上传企业 SOP
+              <span className="mr-1.5">📄</span>{tx('ai.knowledge.ingestion.enterprise')}
             </button>
-            {ingestionMode && <button type="button" onClick={closeIngestionPanel} disabled={ingestionSubmitting} className="rounded-xl px-2.5 py-2 text-xs text-slate-400 hover:bg-slate-100 dark:hover:bg-slate-700" aria-label="关闭导入表单"><X className="h-3.5 w-3.5" /></button>}
+            {ingestionMode && <button type="button" onClick={closeIngestionPanel} disabled={ingestionSubmitting} className="rounded-xl px-2.5 py-2 text-xs text-slate-400 hover:bg-slate-100 dark:hover:bg-slate-700" aria-label={tx('ai.knowledge.ingestion.close')}><X className="h-3.5 w-3.5" /></button>}
           </div>
         </div>
         {ingestionMode === 'official_url' && (
           <form onSubmit={handleOfficialUrlImport} className="mt-4 grid gap-3 border-t border-blue-100 pt-4 dark:border-blue-900/50 md:grid-cols-2 xl:grid-cols-4">
-            <label className="text-[11px] text-slate-600 dark:text-slate-300 md:col-span-2 xl:col-span-2">官方 HTTPS URL<input value={officialUrl} onChange={(event) => setOfficialUrl(event.target.value)} placeholder="https://support.huawei.com/..." className="mt-1 w-full rounded-xl border border-slate-200 bg-slate-50 px-3 py-2 text-xs dark:border-slate-700 dark:bg-slate-900 dark:text-white" required /></label>
-            <label className="text-[11px] text-slate-600 dark:text-slate-300">Vendor<select value={officialVendor} onChange={(event) => setOfficialVendor(event.target.value)} className="mt-1 w-full rounded-xl border border-slate-200 bg-slate-50 px-3 py-2 text-xs dark:border-slate-700 dark:bg-slate-900 dark:text-white"><option>Huawei</option><option>Cisco</option><option>H3C</option><option>Ruijie</option></select></label>
-            <label className="text-[11px] text-slate-600 dark:text-slate-300">Product Family<input value={officialFamily} onChange={(event) => setOfficialFamily(event.target.value)} placeholder="CloudEngine / Catalyst" className="mt-1 w-full rounded-xl border border-slate-200 bg-slate-50 px-3 py-2 text-xs dark:border-slate-700 dark:bg-slate-900 dark:text-white" required /></label>
-            <label className="text-[11px] text-slate-600 dark:text-slate-300">版本范围<input value={officialVersion} onChange={(event) => setOfficialVersion(event.target.value)} placeholder="V800R022 / IOS XE 17.9" className="mt-1 w-full rounded-xl border border-slate-200 bg-slate-50 px-3 py-2 text-xs dark:border-slate-700 dark:bg-slate-900 dark:text-white" required /></label>
-            <label className="text-[11px] text-slate-600 dark:text-slate-300">兼容版本<input value={officialCompatibilityVersion} onChange={(event) => setOfficialCompatibilityVersion(event.target.value)} placeholder="兼容版本或系列" className="mt-1 w-full rounded-xl border border-slate-200 bg-slate-50 px-3 py-2 text-xs dark:border-slate-700 dark:bg-slate-900 dark:text-white" required /></label>
-            <label className="text-[11px] text-slate-600 dark:text-slate-300">名称（可选）<input value={officialName} onChange={(event) => setOfficialName(event.target.value)} placeholder="官方产品页" className="mt-1 w-full rounded-xl border border-slate-200 bg-slate-50 px-3 py-2 text-xs dark:border-slate-700 dark:bg-slate-900 dark:text-white" /></label>
-            <label className="text-[11px] text-slate-600 dark:text-slate-300">条款审核<select value={officialTerms} onChange={(event) => setOfficialTerms(event.target.value)} className="mt-1 w-full rounded-xl border border-slate-200 bg-slate-50 px-3 py-2 text-xs dark:border-slate-700 dark:bg-slate-900 dark:text-white"><option value="pending">未审核</option><option value="approved">已审核并同意</option></select></label>
-            <div className="flex items-end"><button type="submit" disabled={ingestionSubmitting} className="w-full rounded-xl bg-blue-600 px-3 py-2 text-xs font-semibold text-white hover:bg-blue-700 disabled:opacity-50">{ingestionSubmitting ? '提交中…' : '提交官方导入任务'}</button></div>
+            <label className="text-[11px] text-slate-600 dark:text-slate-300 md:col-span-2 xl:col-span-2">{tx('ai.knowledge.ingestion.officialUrl')}<input value={officialUrl} onChange={(event) => setOfficialUrl(event.target.value)} placeholder={tx('ai.knowledge.ingestion.officialUrlPlaceholder')} className="mt-1 w-full rounded-xl border border-slate-200 bg-slate-50 px-3 py-2 text-xs dark:border-slate-700 dark:bg-slate-900 dark:text-white" required /></label>
+            <label className="text-[11px] text-slate-600 dark:text-slate-300">{tx('ai.knowledge.ingestion.vendor')}<select value={officialVendor} onChange={(event) => setOfficialVendor(event.target.value)} className="mt-1 w-full rounded-xl border border-slate-200 bg-slate-50 px-3 py-2 text-xs dark:border-slate-700 dark:bg-slate-900 dark:text-white"><option>Huawei</option><option>Cisco</option><option>H3C</option><option>Ruijie</option></select></label>
+            <label className="text-[11px] text-slate-600 dark:text-slate-300">{tx('ai.knowledge.ingestion.family')}<input value={officialFamily} onChange={(event) => setOfficialFamily(event.target.value)} placeholder={tx('ai.knowledge.ingestion.familyPlaceholder')} className="mt-1 w-full rounded-xl border border-slate-200 bg-slate-50 px-3 py-2 text-xs dark:border-slate-700 dark:bg-slate-900 dark:text-white" required /></label>
+            <label className="text-[11px] text-slate-600 dark:text-slate-300">{tx('ai.knowledge.ingestion.versionRange')}<input value={officialVersion} onChange={(event) => setOfficialVersion(event.target.value)} placeholder={tx('ai.knowledge.ingestion.versionPlaceholder')} className="mt-1 w-full rounded-xl border border-slate-200 bg-slate-50 px-3 py-2 text-xs dark:border-slate-700 dark:bg-slate-900 dark:text-white" required /></label>
+            <label className="text-[11px] text-slate-600 dark:text-slate-300">{tx('ai.knowledge.ingestion.compatibleVersion')}<input value={officialCompatibilityVersion} onChange={(event) => setOfficialCompatibilityVersion(event.target.value)} placeholder={tx('ai.knowledge.ingestion.compatiblePlaceholder')} className="mt-1 w-full rounded-xl border border-slate-200 bg-slate-50 px-3 py-2 text-xs dark:border-slate-700 dark:bg-slate-900 dark:text-white" required /></label>
+            <label className="text-[11px] text-slate-600 dark:text-slate-300">{tx('ai.knowledge.ingestion.optionalName')}<input value={officialName} onChange={(event) => setOfficialName(event.target.value)} placeholder={tx('ai.knowledge.ingestion.officialNamePlaceholder')} className="mt-1 w-full rounded-xl border border-slate-200 bg-slate-50 px-3 py-2 text-xs dark:border-slate-700 dark:bg-slate-900 dark:text-white" /></label>
+            <label className="text-[11px] text-slate-600 dark:text-slate-300">{tx('ai.knowledge.ingestion.terms')}<select value={officialTerms} onChange={(event) => setOfficialTerms(event.target.value)} className="mt-1 w-full rounded-xl border border-slate-200 bg-slate-50 px-3 py-2 text-xs dark:border-slate-700 dark:bg-slate-900 dark:text-white"><option value="pending">{tx('ai.knowledge.ingestion.termsPending')}</option><option value="approved">{tx('ai.knowledge.ingestion.termsApproved')}</option></select></label>
+            <div className="flex items-end"><button type="submit" disabled={ingestionSubmitting} className="w-full rounded-xl bg-blue-600 px-3 py-2 text-xs font-semibold text-white hover:bg-blue-700 disabled:opacity-50">{ingestionSubmitting ? tx('ai.knowledge.ingestion.submitting') : tx('ai.knowledge.ingestion.submitOfficial')}</button></div>
           </form>
         )}
         {ingestionMode === 'enterprise_sop' && (
           <form onSubmit={handleEnterpriseSopImport} className="mt-4 grid gap-3 border-t border-emerald-100 pt-4 dark:border-emerald-900/50 md:grid-cols-2 xl:grid-cols-4">
-            <label className="text-[11px] text-slate-600 dark:text-slate-300 md:col-span-2">企业 SOP 文件（≤20 MB）<input type="file" accept=".md,.markdown,.txt,.log,.html,.htm,.docx,.pdf,.json,.yaml,.yml,.csv,.xml,.conf,.cfg,.ini" onChange={(event) => setEnterpriseSopFile(event.target.files?.[0] || null)} className="mt-1 block w-full rounded-xl border border-slate-200 bg-slate-50 px-3 py-2 text-xs dark:border-slate-700 dark:bg-slate-900 dark:text-white" required /></label>
-            <label className="text-[11px] text-slate-600 dark:text-slate-300">标题<input value={enterpriseTitle} onChange={(event) => setEnterpriseTitle(event.target.value)} placeholder="变更 SOP" className="mt-1 w-full rounded-xl border border-slate-200 bg-slate-50 px-3 py-2 text-xs dark:border-slate-700 dark:bg-slate-900 dark:text-white" required /></label>
-            <label className="text-[11px] text-slate-600 dark:text-slate-300">负责人<input value={enterpriseOwner} onChange={(event) => setEnterpriseOwner(event.target.value)} placeholder="姓名或工号" className="mt-1 w-full rounded-xl border border-slate-200 bg-slate-50 px-3 py-2 text-xs dark:border-slate-700 dark:bg-slate-900 dark:text-white" required /></label>
-            <label className="text-[11px] text-slate-600 dark:text-slate-300">所属部门<input value={enterpriseDepartment} onChange={(event) => setEnterpriseDepartment(event.target.value)} placeholder="网络运维部" className="mt-1 w-full rounded-xl border border-slate-200 bg-slate-50 px-3 py-2 text-xs dark:border-slate-700 dark:bg-slate-900 dark:text-white" required /></label>
-            <div className="flex items-end gap-2"><span className="flex-1 rounded-xl bg-emerald-50 px-3 py-2 text-[10px] text-emerald-700 dark:bg-emerald-950/30 dark:text-emerald-200">分类固定为 INTERNAL</span><button type="submit" disabled={ingestionSubmitting} className="rounded-xl bg-emerald-600 px-3 py-2 text-xs font-semibold text-white hover:bg-emerald-700 disabled:opacity-50">{ingestionSubmitting ? '提交中…' : '提交企业 SOP'}</button></div>
+            <label className="text-[11px] text-slate-600 dark:text-slate-300 md:col-span-2">{tx('ai.knowledge.ingestion.file')}<input type="file" accept=".md,.markdown,.txt,.log,.html,.htm,.docx,.pdf,.json,.yaml,.yml,.csv,.xml,.conf,.cfg,.ini" onChange={(event) => setEnterpriseSopFile(event.target.files?.[0] || null)} className="mt-1 block w-full rounded-xl border border-slate-200 bg-slate-50 px-3 py-2 text-xs dark:border-slate-700 dark:bg-slate-900 dark:text-white" required /></label>
+            <label className="text-[11px] text-slate-600 dark:text-slate-300">{tx('ai.knowledge.ingestion.titleField')}<input value={enterpriseTitle} onChange={(event) => setEnterpriseTitle(event.target.value)} placeholder={tx('ai.knowledge.ingestion.titlePlaceholder')} className="mt-1 w-full rounded-xl border border-slate-200 bg-slate-50 px-3 py-2 text-xs dark:border-slate-700 dark:bg-slate-900 dark:text-white" required /></label>
+            <label className="text-[11px] text-slate-600 dark:text-slate-300">{tx('ai.knowledge.ingestion.owner')}<input value={enterpriseOwner} onChange={(event) => setEnterpriseOwner(event.target.value)} placeholder={tx('ai.knowledge.ingestion.ownerPlaceholder')} className="mt-1 w-full rounded-xl border border-slate-200 bg-slate-50 px-3 py-2 text-xs dark:border-slate-700 dark:bg-slate-900 dark:text-white" required /></label>
+            <label className="text-[11px] text-slate-600 dark:text-slate-300">{tx('ai.knowledge.ingestion.department')}<input value={enterpriseDepartment} onChange={(event) => setEnterpriseDepartment(event.target.value)} placeholder={tx('ai.knowledge.ingestion.departmentPlaceholder')} className="mt-1 w-full rounded-xl border border-slate-200 bg-slate-50 px-3 py-2 text-xs dark:border-slate-700 dark:bg-slate-900 dark:text-white" required /></label>
+            <div className="flex items-end gap-2"><span className="flex-1 rounded-xl bg-emerald-50 px-3 py-2 text-[10px] text-emerald-700 dark:bg-emerald-950/30 dark:text-emerald-200">{tx('ai.knowledge.ingestion.internalFixed')}</span><button type="submit" disabled={ingestionSubmitting} className="rounded-xl bg-emerald-600 px-3 py-2 text-xs font-semibold text-white hover:bg-emerald-700 disabled:opacity-50">{ingestionSubmitting ? tx('ai.knowledge.ingestion.submitting') : tx('ai.knowledge.ingestion.submitEnterprise')}</button></div>
           </form>
         )}
         {(ingestionError || ingestionMessage) && <div className={`mt-3 rounded-xl px-3 py-2 text-[11px] ${ingestionError ? 'bg-rose-50 text-rose-700 dark:bg-rose-950/30 dark:text-rose-300' : 'bg-emerald-50 text-emerald-700 dark:bg-emerald-950/30 dark:text-emerald-300'}`}>{ingestionError || ingestionMessage}</div>}
@@ -1824,25 +1888,25 @@ export const KnowledgeManagementTab: React.FC = () => {
       <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4">
         <div className="p-4 bg-white dark:bg-gray-800 rounded-2xl border border-gray-200/80 dark:border-gray-700/80 shadow-xs space-y-1">
           <div className="flex items-center justify-between text-xs text-gray-500 dark:text-gray-400">
-            <span>文档总数</span>
+            <span>{tx('ai.knowledge.stat.documents')}</span>
             <FileText className="w-4 h-4 text-indigo-500" />
           </div>
           <div className="text-2xl font-bold text-gray-900 dark:text-white font-mono">{stats.total_documents}</div>
-          <div className="text-[11px] text-gray-400">已激活标准化中间文档</div>
+          <div className="text-[11px] text-gray-400">{tx('ai.knowledge.stat.documentsHelp')}</div>
         </div>
 
         <div className="p-4 bg-white dark:bg-gray-800 rounded-2xl border border-gray-200/80 dark:border-gray-700/80 shadow-xs space-y-1">
           <div className="flex items-center justify-between text-xs text-gray-500 dark:text-gray-400">
-            <span>Heading 智能切片</span>
+            <span>{tx('ai.knowledge.stat.chunks')}</span>
             <Layers className="w-4 h-4 text-emerald-500" />
           </div>
           <div className="text-2xl font-bold text-gray-900 dark:text-white font-mono">{stats.total_chunks}</div>
-          <div className="text-[11px] text-gray-400">标题与 CLI 结构感知切片</div>
+          <div className="text-[11px] text-gray-400">{tx('ai.knowledge.stat.chunksHelp')}</div>
         </div>
 
         <div className="p-4 bg-white dark:bg-gray-800 rounded-2xl border border-gray-200/80 dark:border-gray-700/80 shadow-xs space-y-1">
           <div className="flex items-center justify-between text-xs text-gray-500 dark:text-gray-400">
-            <span>涵盖网络厂商</span>
+            <span>{tx('ai.knowledge.stat.vendors')}</span>
             <Server className="w-4 h-4 text-blue-500" />
           </div>
           <div className="text-2xl font-bold text-gray-900 dark:text-white font-mono">{stats.total_vendors || 4}</div>
@@ -1851,22 +1915,22 @@ export const KnowledgeManagementTab: React.FC = () => {
 
         <div className="p-4 bg-white dark:bg-gray-800 rounded-2xl border border-gray-200/80 dark:border-gray-700/80 shadow-xs space-y-1">
           <div className="flex items-center justify-between text-xs text-gray-500 dark:text-gray-400">
-            <span>向量 Ready 索引</span>
+            <span>{tx('ai.knowledge.stat.index')}</span>
             <ShieldCheck className="w-4 h-4 text-amber-500" />
           </div>
           <div className="text-2xl font-bold text-emerald-600 dark:text-emerald-400 font-mono">{stats.ready_indexes}</div>
-          <div className="text-[11px] text-gray-400">100% 可被 RAG 实时检索</div>
+          <div className="text-[11px] text-gray-400">{tx('ai.knowledge.stat.indexHelp')}</div>
         </div>
       </div>
 
       {/* Full-Width Document Management Section */}
       <div className="space-y-4 w-full">
-        <div className="grid gap-3 md:grid-cols-3" aria-label="官方知识与企业知识分区">
+        <div className="grid gap-3 md:grid-cols-3" aria-label={tx('ai.knowledge.filter.scopeAria')}>
             {([
-              ['all', '全部知识', '统一查看，但保留来源徽标与服务端边界', 'bg-slate-50 border-slate-200 text-slate-700 dark:bg-slate-900/50 dark:border-slate-700 dark:text-slate-200'],
-              ['official', '官方知识', '厂商官方资料与 Source Registry 来源', 'bg-blue-50 border-blue-200 text-blue-800 dark:bg-blue-950/30 dark:border-blue-900 dark:text-blue-200'],
-              ['enterprise', '企业知识', 'SOP、规范、案例与用户上传资料', 'bg-emerald-50 border-emerald-200 text-emerald-800 dark:bg-emerald-950/30 dark:border-emerald-900 dark:text-emerald-200'],
-            ] as const).map(([scope, title, description, tone]) => (
+              ['all', 'ai.knowledge.filter.scopeAll', 'ai.knowledge.filter.scopeAllBody', 'bg-slate-50 border-slate-200 text-slate-700 dark:bg-slate-900/50 dark:border-slate-700 dark:text-slate-200'],
+              ['official', 'ai.knowledge.filter.scopeOfficial', 'ai.knowledge.filter.scopeOfficialBody', 'bg-blue-50 border-blue-200 text-blue-800 dark:bg-blue-950/30 dark:border-blue-900 dark:text-blue-200'],
+              ['enterprise', 'ai.knowledge.filter.scopeEnterprise', 'ai.knowledge.filter.scopeEnterpriseBody', 'bg-emerald-50 border-emerald-200 text-emerald-800 dark:bg-emerald-950/30 dark:border-emerald-900 dark:text-emerald-200'],
+            ] as const).map(([scope, titleKey, descriptionKey, tone]) => (
               <button
                 key={scope}
                 type="button"
@@ -1875,20 +1939,70 @@ export const KnowledgeManagementTab: React.FC = () => {
                 aria-pressed={knowledgeScope === scope}
               >
                 <div className="flex items-center justify-between gap-2">
-                  <span className="text-sm font-bold">{title}</span>
+                  <span className="text-sm font-bold">{tx(titleKey)}</span>
                   {knowledgeScope === scope && <CheckCircle2 className="h-4 w-4 text-indigo-500" />}
                 </div>
-                <span className="mt-1 block text-[10px] leading-4 opacity-75">{description}</span>
+                <span className="mt-1 block text-[10px] leading-4 opacity-75">{tx(descriptionKey)}</span>
               </button>
             ))}
           </div>
+          <section className="grid gap-4 rounded-2xl border border-indigo-100 bg-indigo-50/40 p-3 shadow-xs dark:border-indigo-900/60 dark:bg-indigo-950/15 lg:grid-cols-[minmax(260px,360px)_minmax(0,1fr)]" aria-label={tx('ai.knowledge.directory.sectionAria')}>
+            <div className="min-w-0">
+              <div className="mb-2 flex items-center justify-between gap-2">
+                <div>
+                  <h3 className="text-sm font-bold text-indigo-950 dark:text-indigo-100">{tx('ai.knowledge.directory.sectionTitle')}</h3>
+                  <p className="mt-0.5 text-[10px] text-indigo-700/70 dark:text-indigo-300/70">{tx('ai.knowledge.directory.sectionBody')}</p>
+                </div>
+                <FolderOpen className="h-4 w-4 shrink-0 text-indigo-500" />
+              </div>
+              <button
+                type="button"
+                onClick={clearDirectorySelection}
+                className={`mb-2 flex w-full items-center gap-2 rounded-xl border px-3 py-2 text-left text-xs transition ${!selectedDirectoryPath ? 'border-indigo-500 bg-indigo-600 font-semibold text-white shadow-sm' : 'border-indigo-200 bg-white text-indigo-800 hover:border-indigo-400 dark:border-indigo-800 dark:bg-indigo-950/30 dark:text-indigo-200'}`}
+                aria-pressed={!selectedDirectoryPath}
+              >
+                <Database className="h-3.5 w-3.5 shrink-0" />
+                <span className="min-w-0 flex-1 truncate">{tx('ai.knowledge.directory.all')}</span>
+                <span className="text-[10px] opacity-70">{tx('ai.knowledge.directory.documentCount', { count: allDirectoryDocuments })}</span>
+              </button>
+              <DirectoryTreePicker
+                nodes={directoryTree}
+                selectedPath={selectedDirectoryPath}
+                loading={directoryTreeLoading}
+                error={directoryTreeError}
+                disabled={permissionDenied}
+                canManage={canManageDirectories}
+                inline
+                title={tx('ai.knowledge.directory.treeAria')}
+                onUpload={handleDirectoryUpload}
+                onSelect={handleDirectorySelect}
+                onCreate={handleCreateDirectory}
+                onRename={handleRenameDirectory}
+                onDelete={handleDeleteDirectory}
+              />
+            </div>
+            <div className="flex min-w-0 flex-col justify-between gap-3 rounded-xl border border-white/80 bg-white/70 p-4 dark:border-indigo-900/40 dark:bg-slate-900/35">
+              <div>
+                <div className="flex items-center gap-2 text-[10px] font-bold uppercase tracking-[0.14em] text-indigo-500"><Filter className="h-3.5 w-3.5" />{tx('ai.knowledge.directory.currentFilter')}</div>
+                <div className="mt-2 break-all font-mono text-base font-bold text-slate-900 dark:text-white">{selectedDirectoryPath || tx('ai.knowledge.directory.all')}</div>
+                <p className="mt-2 max-w-2xl text-xs leading-5 text-slate-500 dark:text-slate-400">
+                  {tx('ai.knowledge.directory.filterBody')}
+                </p>
+              </div>
+              <div className="flex flex-wrap items-center gap-2 text-[10px] text-slate-500 dark:text-slate-400">
+                <span className="rounded-full bg-indigo-100 px-2 py-1 font-semibold text-indigo-700 dark:bg-indigo-950/60 dark:text-indigo-300">{tx('ai.knowledge.directory.rootCount', { count: directoryTree.length })}</span>
+                <span className="rounded-full bg-slate-100 px-2 py-1 dark:bg-slate-800">{tx('ai.knowledge.directory.nodeCount', { count: flattenDirectoryNodes(directoryTree).length })}</span>
+                <span className="rounded-full bg-emerald-100 px-2 py-1 font-semibold text-emerald-700 dark:bg-emerald-950/40 dark:text-emerald-300">{tx('ai.knowledge.directory.documentCount', { count: totalDocuments })}</span>
+              </div>
+            </div>
+          </section>
           {/* Action Bar & Search */}
           <div className="flex items-center justify-between gap-4 bg-white dark:bg-gray-800 p-3 rounded-2xl border border-gray-200/80 dark:border-gray-700/80 shadow-xs">
             <div className="relative flex-1 max-w-md">
               <Search className="w-4 h-4 absolute left-3 top-2.5 text-gray-400" />
               <input
                 type="text"
-                placeholder="搜索文档名称、厂商、型号或知识库内容..."
+                placeholder={tx('ai.knowledge.search.placeholder')}
                 value={searchInput}
                 onChange={(e) => setSearchInput(e.target.value)}
                 className="w-full pl-9 pr-3 py-1.5 text-xs bg-gray-50 dark:bg-gray-900 border border-gray-200 dark:border-gray-700 rounded-xl focus:outline-none focus:border-indigo-500 dark:text-white"
@@ -1901,18 +2015,18 @@ export const KnowledgeManagementTab: React.FC = () => {
                 onClick={() => void handleKnowledgeExport()}
                 disabled={exporting || loading || permissionDenied || totalDocuments === 0}
                 className="inline-flex items-center gap-1.5 rounded-xl border border-indigo-200 bg-indigo-50 px-3 py-1.5 text-xs font-semibold text-indigo-700 shadow-xs transition hover:bg-indigo-100 disabled:cursor-not-allowed disabled:opacity-50 dark:border-indigo-900 dark:bg-indigo-950/30 dark:text-indigo-200"
-                title="导出当前筛选范围的知识文档与元数据"
+                title={tx('ai.knowledge.action.export')}
               >
                 {exporting ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <PackageOpen className="h-3.5 w-3.5" />}
-                {exporting ? '导出中…' : '导出当前筛选'}
+                {exporting ? tx('ai.knowledge.action.exporting') : tx('ai.knowledge.action.export')}
               </button>
               {selectedDocIds.size > 0 && (
                 <ActionButton icon={Trash2} variant="danger" size="sm" onClick={handleBatchDelete} disabled={deleting}>
-                  {deleting ? '删除中...' : `批量删除 (${selectedDocIds.size})`}
+                  {deleting ? tx('ai.knowledge.action.deleting') : tx('ai.knowledge.action.batchDelete', { count: selectedDocIds.size })}
                 </ActionButton>
               )}
               <div className="text-xs text-gray-500 dark:text-gray-400">
-                共计 <strong className="text-gray-800 dark:text-gray-200 font-semibold">{totalDocuments}</strong> 篇知识文档
+                {tx('ai.knowledge.search.total', { count: totalDocuments })}
               </div>
             </div>
           </div>
@@ -1922,13 +2036,13 @@ export const KnowledgeManagementTab: React.FC = () => {
             </div>
           )}
 
-          <div className="rounded-2xl border border-indigo-100 bg-indigo-50/50 p-3 shadow-xs dark:border-indigo-900/60 dark:bg-indigo-950/20" aria-label="产品层级浏览">
+          <div className="rounded-2xl border border-indigo-100 bg-indigo-50/50 p-3 shadow-xs dark:border-indigo-900/60 dark:bg-indigo-950/20" aria-label={tx('ai.knowledge.product.title')}>
             <div className="mb-2 flex items-center justify-between gap-2">
               <div>
-                <span className="text-[11px] font-semibold text-indigo-900 dark:text-indigo-200">产品层级浏览</span>
+                <span className="text-[11px] font-semibold text-indigo-900 dark:text-indigo-200">{tx('ai.knowledge.product.title')}</span>
                 <span className="ml-2 text-[10px] text-indigo-700/70 dark:text-indigo-300/70">Vendor / Product Family / Series</span>
               </div>
-              <span className="text-[10px] text-indigo-700/70 dark:text-indigo-300/70">点击层级即可应用服务端筛选</span>
+              <span className="text-[10px] text-indigo-700/70 dark:text-indigo-300/70">{tx('ai.knowledge.product.body')}</span>
             </div>
             <div className="grid gap-3 md:grid-cols-3">
               {([
@@ -1945,12 +2059,12 @@ export const KnowledgeManagementTab: React.FC = () => {
                         type="button"
                         onClick={() => setSemanticFilter(filterKey, item.value === 'UNKNOWN' ? '' : item.value)}
                         className={`rounded-full border px-2 py-1 text-[10px] font-medium transition ${semanticFilters[filterKey] === item.value ? 'border-indigo-500 bg-indigo-600 text-white' : 'border-indigo-200 bg-white text-indigo-800 hover:border-indigo-400 dark:border-indigo-800 dark:bg-indigo-950/40 dark:text-indigo-200'}`}
-                        title={`筛选 ${item.value}`}
+                        title={tx('ai.knowledge.product.filter', { value: item.value })}
                       >
                         {item.value} <span className="opacity-60">{item.count}</span>
                       </button>
                     ))}
-                    {items.length === 0 && <span className="text-[10px] text-indigo-700/50 dark:text-indigo-300/50">暂无已解析层级</span>}
+                    {items.length === 0 && <span className="text-[10px] text-indigo-700/50 dark:text-indigo-300/50">{tx('ai.knowledge.product.empty')}</span>}
                     {items.length > 12 && <span className="self-center text-[10px] text-indigo-700/60 dark:text-indigo-300/60">+{items.length - 12}</span>}
                   </div>
                 </div>
@@ -1958,16 +2072,16 @@ export const KnowledgeManagementTab: React.FC = () => {
             </div>
           </div>
 
-          <div className="rounded-2xl border border-gray-200/80 bg-white p-3 shadow-xs dark:border-gray-700/80 dark:bg-gray-800" aria-label="知识文档服务端筛选">
+          <div className="rounded-2xl border border-gray-200/80 bg-white p-3 shadow-xs dark:border-gray-700/80 dark:bg-gray-800" aria-label={tx('ai.knowledge.filter.semantic')}>
             <div className="mb-2 flex items-center justify-between gap-2">
-              <span className="text-[11px] font-semibold text-gray-600 dark:text-gray-300">语义筛选（服务端执行）</span>
+              <span className="text-[11px] font-semibold text-gray-600 dark:text-gray-300">{tx('ai.knowledge.filter.semantic')}</span>
               <button
                 type="button"
                 onClick={clearSemanticFilters}
                 disabled={!Object.entries(semanticFilters).some(([key, value]) => key === 'status' ? value !== 'active' : Boolean(value))}
                 className="text-[10px] font-medium text-indigo-600 hover:text-indigo-700 disabled:cursor-not-allowed disabled:opacity-40 dark:text-indigo-300"
               >
-                清除筛选
+                {tx('ai.knowledge.action.clearFilters')}
               </button>
             </div>
             <div className="grid grid-cols-1 gap-2 sm:grid-cols-2 xl:grid-cols-4">
@@ -1975,7 +2089,7 @@ export const KnowledgeManagementTab: React.FC = () => {
                 value={selectedFolder}
                 onChange={(event) => handleFolderChange(event.target.value)}
                 className="rounded-xl border border-gray-200 bg-gray-50 px-2.5 py-2 text-[11px] text-gray-700 dark:border-gray-700 dark:bg-gray-900 dark:text-gray-200"
-                aria-label="按知识来源类型筛选"
+                aria-label={tx('ai.knowledge.filter.sourceLabel')}
               >
                 {folders.map((folder) => <option key={folder.id} value={folder.id}>{folder.name}</option>)}
               </select>
@@ -1983,74 +2097,74 @@ export const KnowledgeManagementTab: React.FC = () => {
                 value={semanticFilters.vendor}
                 onChange={(event) => setSemanticFilter('vendor', event.target.value)}
                 className="rounded-xl border border-gray-200 bg-gray-50 px-2.5 py-2 text-[11px] text-gray-700 dark:border-gray-700 dark:bg-gray-900 dark:text-gray-200"
-                aria-label="按厂商筛选"
+                aria-label={tx('ai.knowledge.filter.vendorLabel')}
               >
-                <option value="">全部厂商</option>
-                {knowledgeVendorOptions.map((item) => <option key={item.value} value={item.value}>{getVendorDisplayLabel(item.value)}</option>)}
+                <option value="">{tx('ai.knowledge.filter.allVendors')}</option>
+                {knowledgeVendorOptions.map((item) => <option key={item.value} value={item.value}>{getVendorDisplayLabel(item.value, language)}</option>)}
               </select>
               <input
                 value={semanticFilters.productFamily}
                 onChange={(event) => setSemanticFilter('productFamily', event.target.value)}
-                placeholder="产品 Family"
+                placeholder={tx('ai.knowledge.filter.familyPlaceholder')}
                 className="rounded-xl border border-gray-200 bg-gray-50 px-2.5 py-2 text-[11px] text-gray-700 placeholder:text-gray-400 dark:border-gray-700 dark:bg-gray-900 dark:text-gray-200"
-                aria-label="按产品 Family 筛选"
+                aria-label={tx('ai.knowledge.filter.familyLabel')}
               />
               <input
                 value={semanticFilters.productModel}
                 onChange={(event) => setSemanticFilter('productModel', event.target.value)}
-                placeholder="型号 Model"
+                placeholder={tx('ai.knowledge.filter.modelPlaceholder')}
                 className="rounded-xl border border-gray-200 bg-gray-50 px-2.5 py-2 text-[11px] text-gray-700 placeholder:text-gray-400 dark:border-gray-700 dark:bg-gray-900 dark:text-gray-200"
-                aria-label="按产品型号筛选"
+                aria-label={tx('ai.knowledge.filter.modelLabel')}
               />
               <input
                 value={semanticFilters.productSeries}
                 onChange={(event) => setSemanticFilter('productSeries', event.target.value)}
-                placeholder="产品 Series"
+                placeholder={tx('ai.knowledge.filter.seriesPlaceholder')}
                 className="rounded-xl border border-gray-200 bg-gray-50 px-2.5 py-2 text-[11px] text-gray-700 placeholder:text-gray-400 dark:border-gray-700 dark:bg-gray-900 dark:text-gray-200"
-                aria-label="按产品 Series 筛选"
+                aria-label={tx('ai.knowledge.filter.seriesLabel')}
               />
               <input
                 value={semanticFilters.osFamily}
                 onChange={(event) => setSemanticFilter('osFamily', event.target.value)}
                 placeholder="OS Family"
                 className="rounded-xl border border-gray-200 bg-gray-50 px-2.5 py-2 text-[11px] text-gray-700 placeholder:text-gray-400 dark:border-gray-700 dark:bg-gray-900 dark:text-gray-200"
-                aria-label="按 OS Family 筛选"
+                aria-label={tx('ai.knowledge.filter.osLabel')}
               />
               <input
                 value={semanticFilters.softwareRelease}
                 onChange={(event) => setSemanticFilter('softwareRelease', event.target.value)}
-                placeholder="软件版本"
+                placeholder={tx('ai.knowledge.filter.versionPlaceholder')}
                 className="rounded-xl border border-gray-200 bg-gray-50 px-2.5 py-2 text-[11px] text-gray-700 placeholder:text-gray-400 dark:border-gray-700 dark:bg-gray-900 dark:text-gray-200"
-                aria-label="按软件版本筛选"
+                aria-label={tx('ai.knowledge.filter.versionLabel')}
               />
               <input
                 value={semanticFilters.featureDomain}
                 onChange={(event) => setSemanticFilter('featureDomain', event.target.value)}
-                placeholder="主题 / Feature Domain"
+                placeholder={tx('ai.knowledge.filter.featurePlaceholder')}
                 className="rounded-xl border border-gray-200 bg-gray-50 px-2.5 py-2 text-[11px] text-gray-700 placeholder:text-gray-400 dark:border-gray-700 dark:bg-gray-900 dark:text-gray-200"
-                aria-label="按主题筛选"
+                aria-label={tx('ai.knowledge.filter.featureLabel')}
               />
               <select
                 value={semanticFilters.documentCategory}
                 onChange={(event) => setSemanticFilter('documentCategory', event.target.value)}
                 className="rounded-xl border border-gray-200 bg-gray-50 px-2.5 py-2 text-[11px] text-gray-700 dark:border-gray-700 dark:bg-gray-900 dark:text-gray-200"
-                aria-label="按文档类型筛选"
+                aria-label={tx('ai.knowledge.filter.typeLabel')}
               >
-                <option value="">全部文档类型</option>
-                {KNOWLEDGE_DIRECTORY_OPTIONS.map((item) => <option key={item.id} value={item.id}>{item.label}</option>)}
+                <option value="">{tx('ai.knowledge.filter.allDocumentTypes')}</option>
+                {KNOWLEDGE_DIRECTORY_OPTIONS.map((item) => <option key={item.id} value={item.id}>{tx(item.labelKey)}</option>)}
               </select>
               <select
                 value={semanticFilters.status}
                 onChange={(event) => setSemanticFilter('status', event.target.value)}
                 className="rounded-xl border border-gray-200 bg-gray-50 px-2.5 py-2 text-[11px] text-gray-700 dark:border-gray-700 dark:bg-gray-900 dark:text-gray-200"
-                aria-label="按生命周期状态筛选"
+                aria-label={tx('ai.knowledge.filter.lifecycleLabel')}
               >
-                <option value="active">已启用</option>
-                <option value="all">全部状态</option>
-                <option value="published">已发布</option>
-                <option value="draft">草稿</option>
-                <option value="quarantined">已隔离</option>
-                <option value="disabled">已禁用</option>
+                <option value="active">{tx('ai.knowledge.status.active')}</option>
+                <option value="all">{tx('ai.knowledge.status.all')}</option>
+                <option value="published">{tx('ai.knowledge.status.published')}</option>
+                <option value="draft">{tx('ai.knowledge.status.draft')}</option>
+                <option value="quarantined">{tx('ai.knowledge.status.quarantined')}</option>
+                <option value="disabled">{tx('ai.knowledge.status.disabled')}</option>
               </select>
             </div>
           </div>
@@ -2058,19 +2172,19 @@ export const KnowledgeManagementTab: React.FC = () => {
           {/* Table Container */}
           <div className="bg-white dark:bg-gray-800 border border-gray-200/80 dark:border-gray-700/80 rounded-2xl overflow-hidden shadow-xs">
             {loading ? (
-              <div className="p-8 text-center text-xs text-gray-400">数据加载中...</div>
+              <div className="p-8 text-center text-xs text-gray-400">{tx('ai.common.loading')}</div>
             ) : loadError ? (
               <div className="p-10 text-center">
                 <XCircle className={`mx-auto h-8 w-8 ${permissionDenied ? 'text-amber-400' : 'text-rose-400'}`} />
-                <div className={`mt-3 text-sm font-semibold ${permissionDenied ? 'text-amber-700 dark:text-amber-300' : 'text-rose-700 dark:text-rose-300'}`}>{permissionDenied ? '无权限查看知识文档' : '知识文档加载失败'}</div>
+                <div className={`mt-3 text-sm font-semibold ${permissionDenied ? 'text-amber-700 dark:text-amber-300' : 'text-rose-700 dark:text-rose-300'}`}>{permissionDenied ? tx('ai.knowledge.empty.permission') : tx('ai.knowledge.empty.load')}</div>
                 <p className="mt-1 text-xs text-gray-500 dark:text-gray-400">{loadError}</p>
-                {!permissionDenied && <button type="button" onClick={() => void fetchStatsAndDocs()} className="mt-4 rounded-xl bg-indigo-600 px-3 py-2 text-xs font-semibold text-white hover:bg-indigo-700">重试</button>}
+                {!permissionDenied && <button type="button" onClick={() => void fetchStatsAndDocs()} className="mt-4 rounded-xl bg-indigo-600 px-3 py-2 text-xs font-semibold text-white hover:bg-indigo-700">{tx('ai.common.retry')}</button>}
               </div>
             ) : documents.length === 0 ? (
               <div className="p-12 text-center space-y-3">
                 <BookOpen className="w-8 h-8 text-gray-300 mx-auto" />
-                <div className="text-sm font-semibold text-gray-700 dark:text-gray-300">当前目录暂无符合条件的知识文档</div>
-                <p className="text-xs text-gray-400">点击上方“上传本地知识文件”导入属于您的企业文档。</p>
+                <div className="text-sm font-semibold text-gray-700 dark:text-gray-300">{tx('ai.knowledge.empty.filtered')}</div>
+                <p className="text-xs text-gray-400">{tx('ai.knowledge.empty.body')}</p>
               </div>
             ) : (
               <div className="overflow-x-auto">
@@ -2083,16 +2197,16 @@ export const KnowledgeManagementTab: React.FC = () => {
                         checked={documents.length > 0 && documents.every((doc) => selectedDocIds.has(doc.id))}
                         onChange={toggleSelectAll}
                         className="w-3.5 h-3.5 rounded border-gray-300 dark:border-gray-600 text-indigo-600 focus:ring-indigo-500 cursor-pointer"
-                        title="全选 / 取消全选"
+                        title={tx('ai.knowledge.table.selectAll')}
                       />
                     </th>
-                    <th className="px-4 py-3">文档名称</th>
-                    <th className="px-4 py-3">目录 / 知识类型</th>
-                    <th className="px-4 py-3">适配厂商/平台</th>
-                    <th className="px-4 py-3">Heading 智能切片</th>
-                    <th className="px-4 py-3">索引状态</th>
-                    <th className="px-4 py-3">入库时间</th>
-                    <th className="px-4 py-3 text-center">操作</th>
+                    <th className="px-4 py-3">{tx('ai.knowledge.table.name')}</th>
+                    <th className="px-4 py-3">{tx('ai.knowledge.table.directory')}</th>
+                    <th className="px-4 py-3">{tx('ai.knowledge.table.vendor')}</th>
+                    <th className="px-4 py-3">{tx('ai.knowledge.table.chunks')}</th>
+                    <th className="px-4 py-3">{tx('ai.knowledge.table.index')}</th>
+                    <th className="px-4 py-3">{tx('ai.knowledge.table.created')}</th>
+                    <th className="px-4 py-3 text-center">{tx('ai.knowledge.table.actions')}</th>
                   </tr>
                 </thead>
                 <tbody className="divide-y divide-gray-200 dark:divide-gray-700 bg-white dark:bg-gray-800">
@@ -2114,7 +2228,7 @@ export const KnowledgeManagementTab: React.FC = () => {
                             type="button"
                             onClick={() => void openDocument(doc)}
                             className="group flex max-w-[260px] items-center gap-2 text-left transition hover:text-indigo-600 dark:hover:text-indigo-300"
-                            title="查看文档内容"
+                            title={tx('ai.knowledge.action.viewDocument')}
                           >
                             <FileCode className="w-4 h-4 flex-shrink-0 text-indigo-500" />
                             <span className="min-w-0">
@@ -2134,18 +2248,18 @@ export const KnowledgeManagementTab: React.FC = () => {
                           </span>
                         </td>
                         <td className="px-4 py-3 font-mono text-gray-600 dark:text-gray-300">
-                          <span className="block">{getVendorDisplayLabel(doc.vendor)} / {getPlatformDisplayLabel(doc.vendor, doc.platform)}</span>
+                          <span className="block">{getVendorDisplayLabel(doc.vendor, language)} / {getPlatformDisplayLabel(doc.vendor, doc.platform, language)}</span>
                           {(doc.os_family || doc.software_release) && (
                             <span className="mt-0.5 block text-[10px] text-gray-400">{[doc.os_family, doc.software_release].filter(Boolean).join(' · ')}</span>
                           )}
                         </td>
                         <td className="px-4 py-3 font-mono text-gray-700 dark:text-gray-200">
-                          {doc.chunk_count || 1} 切片
+                          {tx('ai.knowledge.table.chunkCount', { count: doc.chunk_count || 1 })}
                         </td>
                         <td className="px-4 py-3">
                           <span className={`inline-flex items-center gap-1 font-medium ${doc.status === 'active' && !doc.exclude_from_rag ? 'text-emerald-600 dark:text-emerald-400' : 'text-amber-600 dark:text-amber-400'}`}>
                             {doc.status === 'active' && !doc.exclude_from_rag ? <CheckCircle2 className="w-3.5 h-3.5" /> : <AlertTriangle className="w-3.5 h-3.5" />}
-                            {doc.status === 'active' && !doc.exclude_from_rag ? 'Ready (就绪)' : `${doc.status || '待处理'}${doc.exclude_from_rag ? ' · 已排除 RAG' : ''}`}
+                            {getDocumentStatusLabel(doc)}
                           </span>
                         </td>
                         <td className="px-4 py-3 text-gray-400 font-mono text-[11px]">
@@ -2158,8 +2272,8 @@ export const KnowledgeManagementTab: React.FC = () => {
                               onClick={() => void requestDocumentAction(doc, doc.status === 'disabled' ? 'enable' : 'disable')}
                               disabled={Boolean(documentActionBusy)}
                               className="rounded-lg p-1.5 text-gray-400 transition hover:bg-amber-50 hover:text-amber-600 disabled:cursor-wait disabled:opacity-40 dark:hover:bg-amber-950/40"
-                              title={doc.status === 'disabled' ? '启用文档（独立确认）' : '禁用文档（独立确认）'}
-                              aria-label={doc.status === 'disabled' ? '启用文档' : '禁用文档'}
+                              title={doc.status === 'disabled' ? tx('ai.knowledge.action.enableIndependent') : tx('ai.knowledge.action.disableIndependent')}
+                              aria-label={doc.status === 'disabled' ? tx('ai.knowledge.action.enable') : tx('ai.knowledge.action.disable')}
                             >
                               {doc.status === 'disabled' ? <CheckCircle2 className="h-3.5 w-3.5" /> : <Archive className="h-3.5 w-3.5" />}
                             </button>
@@ -2168,8 +2282,8 @@ export const KnowledgeManagementTab: React.FC = () => {
                               onClick={() => void requestDocumentAction(doc, 'reparse')}
                               disabled={Boolean(documentActionBusy)}
                               className="rounded-lg p-1.5 text-gray-400 transition hover:bg-blue-50 hover:text-blue-600 disabled:cursor-wait disabled:opacity-40 dark:hover:bg-blue-950/40"
-                              title="重新解析 Metadata（独立确认）"
-                              aria-label="重新解析 Metadata"
+                              title={tx('ai.knowledge.action.reparseIndependent')}
+                              aria-label={tx('ai.knowledge.action.reparse')}
                             >
                               <FileText className="h-3.5 w-3.5" />
                             </button>
@@ -2178,8 +2292,8 @@ export const KnowledgeManagementTab: React.FC = () => {
                               onClick={() => void requestDocumentAction(doc, 'rechunk')}
                               disabled={Boolean(documentActionBusy)}
                               className="rounded-lg p-1.5 text-gray-400 transition hover:bg-violet-50 hover:text-violet-600 disabled:cursor-wait disabled:opacity-40 dark:hover:bg-violet-950/40"
-                              title="重新切片（独立确认）"
-                              aria-label="重新切片"
+                              title={tx('ai.knowledge.action.rechunkIndependent')}
+                              aria-label={tx('ai.knowledge.action.rechunk')}
                             >
                               <Layers className="h-3.5 w-3.5" />
                             </button>
@@ -2188,14 +2302,14 @@ export const KnowledgeManagementTab: React.FC = () => {
                               onClick={() => void requestDocumentAction(doc, 'reindex')}
                               disabled={Boolean(documentActionBusy)}
                               className="rounded-lg p-1.5 text-gray-400 transition hover:bg-indigo-50 hover:text-indigo-600 disabled:cursor-wait disabled:opacity-40 dark:hover:bg-indigo-950/40"
-                              title="重建索引（独立确认）"
-                              aria-label="重建索引"
+                              title={tx('ai.knowledge.action.reindexIndependent')}
+                              aria-label={tx('ai.knowledge.action.reindex')}
                             >
                               <RefreshCw className="h-3.5 w-3.5" />
                             </button>
                             <ActionIconButton
                               icon={Trash2}
-                              label="删除此文档（独立确认）"
+                              label={tx('ai.knowledge.action.deleteIndependent')}
                               size="sm"
                               variant="danger"
                               onClick={() => void requestDocumentAction(doc, 'delete')}
@@ -2221,7 +2335,7 @@ export const KnowledgeManagementTab: React.FC = () => {
                   setCurrentPage(1);
                   setSelectedDocIds(new Set());
                 }}
-                language="zh"
+                language={language}
               />
             )}
           </div>
@@ -2244,12 +2358,12 @@ export const KnowledgeManagementTab: React.FC = () => {
               <div className="min-w-0">
                 <div className="mb-2 flex items-center gap-2 text-[10px] font-bold uppercase tracking-[0.16em] text-indigo-500">
                   <BookOpen className="h-3.5 w-3.5" />
-                  文档查看器
+                  {tx('ai.knowledge.viewer.title')}
                 </div>
                 <h2 id="knowledge-document-title" className="truncate text-xl font-bold tracking-tight text-slate-950 dark:text-white">{selectedDocument.name}</h2>
                 <p className="mt-1 truncate font-mono text-[11px] text-slate-400" title={selectedDocument.id}>{selectedDocument.id}</p>
               </div>
-              <button type="button" onClick={closeDocument} aria-label="关闭文档查看器" title="关闭文档查看器" className="flex h-9 w-9 shrink-0 items-center justify-center rounded-xl text-slate-400 transition hover:bg-slate-100 hover:text-slate-700 dark:hover:bg-slate-800 dark:hover:text-slate-200">
+              <button type="button" onClick={closeDocument} aria-label={tx('ai.knowledge.action.closeViewer')} title={tx('ai.knowledge.action.closeViewer')} className="flex h-9 w-9 shrink-0 items-center justify-center rounded-xl text-slate-400 transition hover:bg-slate-100 hover:text-slate-700 dark:hover:bg-slate-800 dark:hover:text-slate-200">
                 <X className="h-5 w-5" />
               </button>
             </div>
@@ -2259,76 +2373,76 @@ export const KnowledgeManagementTab: React.FC = () => {
                 const badge = sourceBadges[selectedDocument.knowledge_source_type] || sourceBadges.user_document;
                 return <span className={`rounded-full px-2.5 py-1 text-[11px] font-semibold ${badge.bg} ${badge.color}`}>{badge.label}</span>;
               })()}
-              <span className="rounded-full bg-slate-100 px-2.5 py-1 text-[11px] font-medium text-slate-600 dark:bg-slate-800 dark:text-slate-300">{getVendorDisplayLabel(selectedDocument.vendor)} / {getPlatformDisplayLabel(selectedDocument.vendor, selectedDocument.platform)}</span>
-              <span className="inline-flex items-center gap-1.5 rounded-full bg-emerald-50 px-2.5 py-1 text-[11px] font-semibold text-emerald-700 dark:bg-emerald-950/40 dark:text-emerald-300"><CheckCircle2 className="h-3.5 w-3.5" />{selectedDocument.status === 'active' ? 'Ready（就绪）' : selectedDocument.status}</span>
-              <span className="inline-flex items-center gap-1.5 rounded-full bg-slate-100 px-2.5 py-1 text-[11px] text-slate-500 dark:bg-slate-800 dark:text-slate-400"><Layers className="h-3.5 w-3.5" />{selectedDocument.chunk_count} 个切片</span>
+              <span className="rounded-full bg-slate-100 px-2.5 py-1 text-[11px] font-medium text-slate-600 dark:bg-slate-800 dark:text-slate-300">{getVendorDisplayLabel(selectedDocument.vendor, language)} / {getPlatformDisplayLabel(selectedDocument.vendor, selectedDocument.platform, language)}</span>
+              <span className="inline-flex items-center gap-1.5 rounded-full bg-emerald-50 px-2.5 py-1 text-[11px] font-semibold text-emerald-700 dark:bg-emerald-950/40 dark:text-emerald-300"><CheckCircle2 className="h-3.5 w-3.5" />{selectedDocument.status === 'active' ? tx('ai.knowledge.viewer.ready') : getKnowledgeLifecycleStatusLabel(selectedDocument.status)}</span>
+              <span className="inline-flex items-center gap-1.5 rounded-full bg-slate-100 px-2.5 py-1 text-[11px] text-slate-500 dark:bg-slate-800 dark:text-slate-400"><Layers className="h-3.5 w-3.5" />{tx('ai.knowledge.viewer.chunkCount', { count: selectedDocument.chunk_count })}</span>
             </div>
 
             <div className="min-h-0 flex-1 overflow-y-auto px-5 py-5 sm:px-7">
               {documentDetailLoading ? (
-                <div className="space-y-4" aria-label="正在加载文档内容">
+                <div className="space-y-4" aria-label={tx('ai.knowledge.viewer.actionLoading')}>
                   {[0, 1, 2].map((item) => <div key={item} className="animate-pulse rounded-2xl border border-slate-100 p-4 dark:border-slate-800"><div className="h-4 w-1/3 rounded bg-slate-100 dark:bg-slate-800" /><div className="mt-4 h-20 rounded-xl bg-slate-100 dark:bg-slate-800" /></div>)}
                 </div>
               ) : documentDetailError ? (
                 <div className="rounded-2xl border border-rose-200 bg-rose-50 p-5 text-sm text-rose-700 dark:border-rose-900/60 dark:bg-rose-950/30 dark:text-rose-300">
-                  <div className="flex items-start gap-3"><XCircle className="mt-0.5 h-5 w-5 shrink-0" /><div><p className="font-semibold">文档内容加载失败</p><p className="mt-1 text-xs leading-5 opacity-80">{documentDetailError}</p><button type="button" onClick={() => void openDocument(selectedDocument)} className="mt-3 rounded-lg bg-white/80 px-3 py-1.5 text-xs font-semibold dark:bg-rose-900/30">重试</button></div></div>
+                  <div className="flex items-start gap-3"><XCircle className="mt-0.5 h-5 w-5 shrink-0" /><div><p className="font-semibold">{tx('ai.knowledge.error.documentLoad')}</p><p className="mt-1 text-xs leading-5 opacity-80">{documentDetailError}</p><button type="button" onClick={() => void openDocument(selectedDocument)} className="mt-3 rounded-lg bg-white/80 px-3 py-1.5 text-xs font-semibold dark:bg-rose-900/30">{tx('ai.knowledge.viewer.retry')}</button></div></div>
                 </div>
               ) : selectedDocument.chunks.length === 0 ? (
                 <div className="space-y-4">
                   <div className="grid gap-3 md:grid-cols-2">
                     <section className="rounded-2xl border border-slate-200/90 bg-slate-50/70 p-4 dark:border-slate-800 dark:bg-slate-900/50">
-                      <div className="text-[10px] font-semibold uppercase tracking-[0.12em] text-slate-400">Raw Source / 原始来源</div>
-                      <div className="mt-2 text-xs font-medium text-slate-700 dark:text-slate-200">{selectedDocument.raw_source?.source || selectedDocument.source || '未记录来源'}</div>
+                      <div className="text-[10px] font-semibold uppercase tracking-[0.12em] text-slate-400">{tx('ai.knowledge.viewer.rawSource')}</div>
+                      <div className="mt-2 text-xs font-medium text-slate-700 dark:text-slate-200">{selectedDocument.raw_source?.source || selectedDocument.source || tx('ai.knowledge.viewer.sourceNotRecorded')}</div>
                     </section>
                     <section className="rounded-2xl border border-slate-200/90 bg-slate-50/70 p-4 dark:border-slate-800 dark:bg-slate-900/50">
                       <div className="text-[10px] font-semibold uppercase tracking-[0.12em] text-slate-400">Version / Index</div>
                       <div className="mt-2 grid grid-cols-2 gap-2 text-xs text-slate-700 dark:text-slate-200">
-                        <span>文档版本：{selectedDocument.document_version || '未记录'}</span>
-                        <span>索引版本：{selectedDocument.index_version || '未记录'}</span>
-                        <span>Parser：{selectedDocument.parser_version || '未记录'}</span>
-                        <span>历史：{selectedDocument.source_version_history?.length || 0} 条</span>
+                        <span>{tx('ai.knowledge.viewer.documentVersion')}{selectedDocument.document_version || tx('ai.knowledge.status.notRecorded')}</span>
+                        <span>{tx('ai.knowledge.viewer.indexVersion')}{selectedDocument.index_version || tx('ai.knowledge.status.notRecorded')}</span>
+                        <span>{tx('ai.knowledge.viewer.parser')}{selectedDocument.parser_version || tx('ai.knowledge.status.notRecorded')}</span>
+                        <span>{tx('ai.knowledge.viewer.history')}{tx('ai.knowledge.viewer.historyCount', { count: selectedDocument.source_version_history?.length || 0 })}</span>
                       </div>
                     </section>
                   </div>
                   {versionManagementPanel}
-                  {selectedDocument.original_content && <details className="rounded-2xl border border-slate-200/90 bg-white shadow-sm dark:border-slate-800 dark:bg-slate-950/40"><summary className="cursor-pointer px-4 py-3 text-xs font-semibold text-slate-700 dark:text-slate-200">查看原始正文（按需展开）</summary><pre className="max-h-72 overflow-auto whitespace-pre-wrap break-words border-t border-slate-100 px-4 py-4 font-mono text-xs leading-6 text-slate-700 dark:border-slate-800 dark:text-slate-300">{selectedDocument.original_content}</pre></details>}
-                  <div className="rounded-2xl border border-dashed border-slate-300 px-5 py-8 text-center text-sm text-slate-500 dark:border-slate-700 dark:text-slate-400">当前文档没有可展示的内容切片。</div>
+                  {selectedDocument.original_content && <details className="rounded-2xl border border-slate-200/90 bg-white shadow-sm dark:border-slate-800 dark:bg-slate-950/40"><summary className="cursor-pointer px-4 py-3 text-xs font-semibold text-slate-700 dark:text-slate-200">{tx('ai.knowledge.viewer.original')}</summary><pre className="max-h-72 overflow-auto whitespace-pre-wrap break-words border-t border-slate-100 px-4 py-4 font-mono text-xs leading-6 text-slate-700 dark:border-slate-800 dark:text-slate-300">{selectedDocument.original_content}</pre></details>}
+                  <div className="rounded-2xl border border-dashed border-slate-300 px-5 py-8 text-center text-sm text-slate-500 dark:border-slate-700 dark:text-slate-400">{tx('ai.knowledge.viewer.noChunksTitle')}</div>
                 </div>
               ) : (
                 <div className="space-y-4">
                   <div className="grid gap-3 md:grid-cols-2">
                     <section className="rounded-2xl border border-slate-200/90 bg-slate-50/70 p-4 dark:border-slate-800 dark:bg-slate-900/50">
-                      <div className="text-[10px] font-semibold uppercase tracking-[0.12em] text-slate-400">Raw Source / 原始来源</div>
-                      <div className="mt-2 text-xs font-medium text-slate-700 dark:text-slate-200">{selectedDocument.raw_source?.source || selectedDocument.source || '未记录来源'}</div>
+                      <div className="text-[10px] font-semibold uppercase tracking-[0.12em] text-slate-400">{tx('ai.knowledge.viewer.rawSource')}</div>
+                      <div className="mt-2 text-xs font-medium text-slate-700 dark:text-slate-200">{selectedDocument.raw_source?.source || selectedDocument.source || tx('ai.knowledge.viewer.sourceNotRecorded')}</div>
                       {selectedDocument.raw_source?.references?.map((reference, index) => (
-                        <div key={`${String(reference.source_registry_id || 'source')}-${index}`} className="mt-1 truncate text-[10px] text-slate-500 dark:text-slate-400" title={String(reference.canonical_url || '')}>{String(reference.canonical_url || reference.source_version_id || '来源观察记录')}</div>
+                        <div key={`${String(reference.source_registry_id || 'source')}-${index}`} className="mt-1 truncate text-[10px] text-slate-500 dark:text-slate-400" title={String(reference.canonical_url || '')}>{String(reference.canonical_url || reference.source_version_id || tx('ai.knowledge.viewer.sourceObservation'))}</div>
                       ))}
                     </section>
                     <section className="rounded-2xl border border-slate-200/90 bg-slate-50/70 p-4 dark:border-slate-800 dark:bg-slate-900/50">
                       <div className="text-[10px] font-semibold uppercase tracking-[0.12em] text-slate-400">Version / Index</div>
                       <div className="mt-2 grid grid-cols-2 gap-2 text-xs text-slate-700 dark:text-slate-200">
-                        <span>文档版本：{selectedDocument.document_version || '未记录'}</span>
-                        <span>索引版本：{selectedDocument.index_version || '未记录'}</span>
-                        <span>Parser：{selectedDocument.parser_version || '未记录'}</span>
-                        <span>版本历史：{selectedDocument.source_version_history?.length || 0} 条</span>
+                        <span>{tx('ai.knowledge.viewer.documentVersion')}{selectedDocument.document_version || tx('ai.knowledge.status.notRecorded')}</span>
+                        <span>{tx('ai.knowledge.viewer.indexVersion')}{selectedDocument.index_version || tx('ai.knowledge.status.notRecorded')}</span>
+                        <span>{tx('ai.knowledge.viewer.parser')}{selectedDocument.parser_version || tx('ai.knowledge.status.notRecorded')}</span>
+                        <span>{tx('ai.knowledge.viewer.history')}{tx('ai.knowledge.viewer.historyCount', { count: selectedDocument.source_version_history?.length || 0 })}</span>
                       </div>
                     </section>
                   </div>
                   {versionManagementPanel}
                   {selectedDocument.original_content && (
                     <details className="rounded-2xl border border-slate-200/90 bg-white shadow-sm dark:border-slate-800 dark:bg-slate-950/40">
-                      <summary className="cursor-pointer px-4 py-3 text-xs font-semibold text-slate-700 dark:text-slate-200">查看原始正文（按需展开）</summary>
+                      <summary className="cursor-pointer px-4 py-3 text-xs font-semibold text-slate-700 dark:text-slate-200">{tx('ai.knowledge.viewer.original')}</summary>
                       <pre className="max-h-72 overflow-auto whitespace-pre-wrap break-words border-t border-slate-100 px-4 py-4 font-mono text-xs leading-6 text-slate-700 dark:border-slate-800 dark:text-slate-300">{selectedDocument.original_content}</pre>
                     </details>
                   )}
-                  <div className="flex items-center gap-2 rounded-2xl border border-indigo-100 bg-indigo-50/60 px-4 py-3 text-xs leading-5 text-indigo-900/70 dark:border-indigo-900/60 dark:bg-indigo-950/20 dark:text-indigo-200/70"><Info className="h-4 w-4 shrink-0 text-indigo-500" />文档已按 Heading / CLI 结构拆分为切片，以下内容按原始顺序展示。</div>
+                  <div className="flex items-center gap-2 rounded-2xl border border-indigo-100 bg-indigo-50/60 px-4 py-3 text-xs leading-5 text-indigo-900/70 dark:border-indigo-900/60 dark:bg-indigo-950/20 dark:text-indigo-200/70"><Info className="h-4 w-4 shrink-0 text-indigo-500" />{tx('ai.knowledge.viewer.chunkInfo')}</div>
                   {selectedDocument.chunks.map((chunk, index) => (
                     <section key={chunk.id} className="overflow-hidden rounded-2xl border border-slate-200/90 bg-white shadow-sm dark:border-slate-800 dark:bg-slate-950/40">
                       <div className="flex items-start gap-3 border-b border-slate-100 bg-slate-50/80 px-4 py-3 dark:border-slate-800 dark:bg-slate-900/70">
                         <span className="flex h-7 w-7 shrink-0 items-center justify-center rounded-lg bg-indigo-100 text-[11px] font-bold text-indigo-700 dark:bg-indigo-950/60 dark:text-indigo-300">{String(chunk.page || index + 1).padStart(2, '0')}</span>
                         <div className="min-w-0">
                           <h3 className="truncate text-sm font-bold text-slate-800 dark:text-slate-100">{chunk.section || 'General Overview'}</h3>
-                          <p className="mt-0.5 text-[10px] uppercase tracking-[0.12em] text-slate-400">Chunk {index + 1} · ordinal {chunk.ordinal ?? index}</p>
+                          <p className="mt-0.5 text-[10px] uppercase tracking-[0.12em] text-slate-400">{tx('ai.knowledge.viewer.chunkHeading', { index: index + 1, ordinal: chunk.ordinal ?? index })}</p>
                         </div>
                         <div className="ml-auto flex shrink-0 flex-wrap justify-end gap-1 text-[10px]">
                           {chunk.chunk_role && <span className="rounded-full bg-indigo-100 px-2 py-0.5 font-medium text-indigo-700 dark:bg-indigo-950/60 dark:text-indigo-300">{chunk.chunk_role}</span>}
@@ -2338,35 +2452,35 @@ export const KnowledgeManagementTab: React.FC = () => {
                       <pre className="whitespace-pre-wrap break-words px-4 py-4 font-mono text-xs leading-6 text-slate-700 dark:text-slate-300">{chunk.content}</pre>
                       <div className="grid gap-2 border-t border-slate-100 bg-slate-50/50 px-4 py-3 text-[10px] dark:border-slate-800 dark:bg-slate-900/40 sm:grid-cols-2">
                         <div className="flex flex-wrap items-center gap-1.5 text-slate-500 dark:text-slate-400">
-                          <span className="font-semibold text-slate-600 dark:text-slate-300">可检索：</span>{chunk.is_retrieval_candidate === false ? '否' : '是'}
-                          <span className="ml-2 font-semibold text-slate-600 dark:text-slate-300">Token：</span>{chunk.token_count ?? 0}
-                          {chunk.content_hash && <span className="ml-2 font-mono" title={chunk.content_hash}>hash {chunk.content_hash.slice(0, 10)}…</span>}
+                          <span className="font-semibold text-slate-600 dark:text-slate-300">{tx('ai.knowledge.viewer.retrievable')}</span>{chunk.is_retrieval_candidate === false ? tx('ai.knowledge.viewer.retrievalNo') : tx('ai.knowledge.viewer.retrievalYes')}
+                          <span className="ml-2 font-semibold text-slate-600 dark:text-slate-300">{tx('ai.knowledge.viewer.token')}</span>{chunk.token_count ?? 0}
+                          {chunk.content_hash && <span className="ml-2 font-mono" title={chunk.content_hash}>{tx('ai.knowledge.viewer.hash', { value: chunk.content_hash.slice(0, 10) })}</span>}
                         </div>
-                        <div className="text-right text-slate-400">{chunk.chunking_version || 'chunker 未记录'} · {chunk.parser_version || selectedDocument.parser_version || 'parser 未记录'}</div>
+                        <div className="text-right text-slate-400">{chunk.chunking_version || tx('ai.knowledge.viewer.chunkerNotRecorded')} · {chunk.parser_version || selectedDocument.parser_version || tx('ai.knowledge.viewer.parserNotRecorded')}</div>
                       </div>
                       {(chunk.parent_chunk || (chunk.neighbors && chunk.neighbors.length > 0)) && (
                         <div className="space-y-2 border-t border-slate-100 px-4 py-3 dark:border-slate-800">
                           {chunk.parent_chunk && (
                             <details className="rounded-xl border border-amber-200/80 bg-amber-50/50 px-3 py-2 dark:border-amber-900/60 dark:bg-amber-950/20">
-                              <summary className="cursor-pointer text-[10px] font-semibold text-amber-800 dark:text-amber-200">Parent Chunk · {chunk.parent_chunk.section || chunk.parent_chunk.id}</summary>
-                              <pre className="mt-2 max-h-36 overflow-auto whitespace-pre-wrap break-words border-t border-amber-200/60 pt-2 font-mono text-[10px] leading-5 text-amber-900/80 dark:border-amber-900/50 dark:text-amber-100/80">{chunk.parent_chunk.content || 'Parent 内容为空'}</pre>
+                              <summary className="cursor-pointer text-[10px] font-semibold text-amber-800 dark:text-amber-200">{tx('ai.knowledge.viewer.parent', { name: chunk.parent_chunk.section || chunk.parent_chunk.id })}</summary>
+                              <pre className="mt-2 max-h-36 overflow-auto whitespace-pre-wrap break-words border-t border-amber-200/60 pt-2 font-mono text-[10px] leading-5 text-amber-900/80 dark:border-amber-900/50 dark:text-amber-100/80">{chunk.parent_chunk.content || tx('ai.knowledge.viewer.parentEmpty')}</pre>
                             </details>
                           )}
                           {chunk.neighbors && chunk.neighbors.length > 0 && (
                             <details className="rounded-xl border border-sky-200/80 bg-sky-50/50 px-3 py-2 dark:border-sky-900/60 dark:bg-sky-950/20">
-                              <summary className="cursor-pointer text-[10px] font-semibold text-sky-800 dark:text-sky-200">Neighbor Chunks · {chunk.neighbors.length}</summary>
+                              <summary className="cursor-pointer text-[10px] font-semibold text-sky-800 dark:text-sky-200">{tx('ai.knowledge.viewer.neighbors', { count: chunk.neighbors.length })}</summary>
                               <div className="mt-2 space-y-2 border-t border-sky-200/60 pt-2 dark:border-sky-900/50">
-                                {chunk.neighbors.map((neighbor) => <div key={neighbor.id} className="rounded-lg bg-white/70 p-2 dark:bg-slate-950/40"><div className="font-semibold text-[10px] text-sky-800 dark:text-sky-200">{neighbor.section || neighbor.id} · ordinal {neighbor.ordinal ?? '—'}</div><pre className="mt-1 max-h-24 overflow-auto whitespace-pre-wrap break-words font-mono text-[10px] leading-5 text-slate-600 dark:text-slate-300">{neighbor.content || 'Neighbor 内容为空'}</pre></div>)}
+                                {chunk.neighbors.map((neighbor) => <div key={neighbor.id} className="rounded-lg bg-white/70 p-2 dark:bg-slate-950/40"><div className="font-semibold text-[10px] text-sky-800 dark:text-sky-200">{tx('ai.knowledge.viewer.ordinal', { name: neighbor.section || neighbor.id, ordinal: neighbor.ordinal ?? '—' })}</div><pre className="mt-1 max-h-24 overflow-auto whitespace-pre-wrap break-words font-mono text-[10px] leading-5 text-slate-600 dark:text-slate-300">{neighbor.content || tx('ai.knowledge.viewer.neighborEmpty')}</pre></div>)}
                               </div>
                             </details>
                           )}
                         </div>
                       )}
                       <details className="border-t border-slate-100 px-4 py-3 dark:border-slate-800">
-                        <summary className="cursor-pointer text-[10px] font-semibold text-slate-600 dark:text-slate-300">Metadata / 来源定位 / 版本字段</summary>
+                        <summary className="cursor-pointer text-[10px] font-semibold text-slate-600 dark:text-slate-300">{tx('ai.knowledge.viewer.metadataFields')}</summary>
                         <div className="mt-2 grid gap-3 border-t border-slate-100 pt-2 dark:border-slate-800 sm:grid-cols-2">
-                          <div><div className="mb-1 text-[10px] font-semibold text-slate-400">Metadata</div><pre className="max-h-48 overflow-auto whitespace-pre-wrap break-words rounded-lg bg-slate-950/[0.03] p-2 font-mono text-[10px] leading-5 text-slate-600 dark:bg-white/[0.04] dark:text-slate-300">{JSON.stringify(chunk.metadata || {}, null, 2)}</pre></div>
-                          <div><div className="mb-1 text-[10px] font-semibold text-slate-400">Source locator</div><pre className="max-h-48 overflow-auto whitespace-pre-wrap break-words rounded-lg bg-slate-950/[0.03] p-2 font-mono text-[10px] leading-5 text-slate-600 dark:bg-white/[0.04] dark:text-slate-300">{JSON.stringify(chunk.source_locator || {}, null, 2)}</pre><div className="mt-2 text-[10px] text-slate-400">Document：{chunk.document_version || selectedDocument.document_version || '未记录'} · Index：{chunk.index_version || selectedDocument.index_version || '未记录'}</div></div>
+                          <div><div className="mb-1 text-[10px] font-semibold text-slate-400">{tx('ai.knowledge.viewer.metadata')}</div><pre className="max-h-48 overflow-auto whitespace-pre-wrap break-words rounded-lg bg-slate-950/[0.03] p-2 font-mono text-[10px] leading-5 text-slate-600 dark:bg-white/[0.04] dark:text-slate-300">{JSON.stringify(chunk.metadata || {}, null, 2)}</pre></div>
+                          <div><div className="mb-1 text-[10px] font-semibold text-slate-400">{tx('ai.knowledge.viewer.sourceLocator')}</div><pre className="max-h-48 overflow-auto whitespace-pre-wrap break-words rounded-lg bg-slate-950/[0.03] p-2 font-mono text-[10px] leading-5 text-slate-600 dark:bg-white/[0.04] dark:text-slate-300">{JSON.stringify(chunk.source_locator || {}, null, 2)}</pre><div className="mt-2 text-[10px] text-slate-400">{tx('ai.knowledge.viewer.documentIndex', { document: chunk.document_version || selectedDocument.document_version || tx('ai.knowledge.status.notRecorded'), index: chunk.index_version || selectedDocument.index_version || tx('ai.knowledge.status.notRecorded') })}</div></div>
                         </div>
                       </details>
                     </section>
@@ -2375,7 +2489,7 @@ export const KnowledgeManagementTab: React.FC = () => {
               )}
             </div>
 
-            <div className="flex items-center justify-between gap-3 border-t border-slate-100 px-5 py-4 text-xs text-slate-400 dark:border-slate-800 sm:px-7"><span className="inline-flex items-center gap-1.5"><CalendarDays className="h-3.5 w-3.5" />入库于 {new Date(selectedDocument.created_at).toLocaleString()}</span><button type="button" onClick={closeDocument} className="rounded-xl bg-slate-100 px-4 py-2 text-sm font-semibold text-slate-700 transition hover:bg-slate-200 dark:bg-slate-800 dark:text-slate-200 dark:hover:bg-slate-700">关闭</button></div>
+            <div className="flex items-center justify-between gap-3 border-t border-slate-100 px-5 py-4 text-xs text-slate-400 dark:border-slate-800 sm:px-7"><span className="inline-flex items-center gap-1.5"><CalendarDays className="h-3.5 w-3.5" />{tx('ai.knowledge.viewer.indexedAt')}{new Date(selectedDocument.created_at).toLocaleString()}</span><button type="button" onClick={closeDocument} className="rounded-xl bg-slate-100 px-4 py-2 text-sm font-semibold text-slate-700 transition hover:bg-slate-200 dark:bg-slate-800 dark:text-slate-200 dark:hover:bg-slate-700">{tx('ai.knowledge.viewer.close')}</button></div>
           </aside>
         </div>
       )}
@@ -2386,16 +2500,16 @@ export const KnowledgeManagementTab: React.FC = () => {
             <div className="flex items-start gap-3">
               <div className="flex h-10 w-10 shrink-0 items-center justify-center rounded-xl bg-rose-100 text-rose-700 dark:bg-rose-950/50 dark:text-rose-300"><AlertTriangle className="h-5 w-5" /></div>
               <div className="min-w-0">
-                <h3 id="knowledge-action-impact-title" className="text-base font-bold text-slate-950 dark:text-white">危险操作影响确认</h3>
-                <p className="mt-1 text-xs text-slate-500 dark:text-slate-400">{documentActionLabels[pendingDocumentAction.action]}「{pendingDocumentAction.preview.name}」前，请确认以下服务端预览。</p>
+                <h3 id="knowledge-action-impact-title" className="text-base font-bold text-slate-950 dark:text-white">{tx('ai.knowledge.danger.title')}</h3>
+                <p className="mt-1 text-xs text-slate-500 dark:text-slate-400">{tx('ai.knowledge.danger.before', { action: documentActionLabels[pendingDocumentAction.action], name: pendingDocumentAction.preview.name })}</p>
               </div>
             </div>
             <div className="mt-4 grid grid-cols-2 gap-2 sm:grid-cols-4">
               {([
-                ['文档', pendingDocumentAction.preview.impact.documents],
-                ['Chunk', pendingDocumentAction.preview.impact.chunks],
-                ['Index', pendingDocumentAction.preview.impact.indexes],
-                ['引用', pendingDocumentAction.preview.impact.references],
+                [tx('ai.knowledge.danger.documents'), pendingDocumentAction.preview.impact.documents],
+                [tx('ai.knowledge.danger.chunks'), pendingDocumentAction.preview.impact.chunks],
+                [tx('ai.knowledge.danger.indexes'), pendingDocumentAction.preview.impact.indexes],
+                [tx('ai.knowledge.danger.references'), pendingDocumentAction.preview.impact.references],
               ] as const).map(([label, value]) => (
                 <div key={label} className="rounded-xl border border-slate-200 bg-slate-50 px-3 py-2 dark:border-slate-700 dark:bg-slate-950/50">
                   <div className="text-[10px] text-slate-400">{label}</div>
@@ -2405,18 +2519,18 @@ export const KnowledgeManagementTab: React.FC = () => {
             </div>
             {pendingDocumentAction.preview.impact.reference_details && pendingDocumentAction.preview.impact.reference_details.length > 0 && (
               <div className="mt-3 rounded-xl border border-amber-200 bg-amber-50 px-3 py-2 text-[11px] text-amber-800 dark:border-amber-900/60 dark:bg-amber-950/25 dark:text-amber-200">
-                引用明细：{pendingDocumentAction.preview.impact.reference_details.map((item) => `${item.type} ${item.count}`).join('、')}
+                {tx('ai.knowledge.danger.referenceDetails')}{pendingDocumentAction.preview.impact.reference_details.map((item) => `${item.type} ${item.count}`).join(tx('ai.knowledge.danger.referenceSeparator'))}
               </div>
             )}
             <div className="mt-3 rounded-xl border border-indigo-100 bg-indigo-50/70 px-3 py-2 text-[11px] leading-5 text-indigo-900 dark:border-indigo-900/60 dark:bg-indigo-950/25 dark:text-indigo-200">
-              <span className="font-semibold">恢复方式：</span>{pendingDocumentAction.preview.recovery[pendingDocumentAction.action] || '按租户动作审计与任务状态恢复'}
+              <span className="font-semibold">{tx('ai.knowledge.danger.recovery')}</span>{pendingDocumentAction.preview.recovery[pendingDocumentAction.action] || tx('ai.knowledge.danger.defaultRecovery')}
             </div>
             <div className="mt-3 rounded-xl border border-rose-200 bg-rose-50 px-3 py-2 text-[11px] leading-5 text-rose-800 dark:border-rose-900/60 dark:bg-rose-950/25 dark:text-rose-200">
-              {pendingDocumentAction.action === 'delete' ? '删除会移除文档与全部切片，不能在系统内原地撤销；请确认已具备 PostgreSQL 备份恢复条件。' : '动作会写入租户动作审计；任务型操作失败时保留源文档并允许重试。'}
+              {pendingDocumentAction.action === 'delete' ? tx('ai.knowledge.danger.deleteWarning') : tx('ai.knowledge.danger.taskWarning')}
             </div>
             <div className="mt-5 flex justify-end gap-2">
-              <button type="button" onClick={() => setPendingDocumentAction(null)} disabled={Boolean(documentActionBusy)} className="rounded-xl px-4 py-2 text-xs font-semibold text-slate-600 transition hover:bg-slate-100 disabled:opacity-40 dark:text-slate-300 dark:hover:bg-slate-800">取消</button>
-              <button type="button" onClick={() => void confirmDocumentAction()} disabled={Boolean(documentActionBusy)} className="rounded-xl bg-rose-600 px-4 py-2 text-xs font-semibold text-white transition hover:bg-rose-700 disabled:cursor-wait disabled:opacity-50">确认{documentActionLabels[pendingDocumentAction.action]}</button>
+              <button type="button" onClick={() => setPendingDocumentAction(null)} disabled={Boolean(documentActionBusy)} className="rounded-xl px-4 py-2 text-xs font-semibold text-slate-600 transition hover:bg-slate-100 disabled:opacity-40 dark:text-slate-300 dark:hover:bg-slate-800">{tx('ai.knowledge.danger.cancel')}</button>
+              <button type="button" onClick={() => void confirmDocumentAction()} disabled={Boolean(documentActionBusy)} className="rounded-xl bg-rose-600 px-4 py-2 text-xs font-semibold text-white transition hover:bg-rose-700 disabled:cursor-wait disabled:opacity-50">{tx('ai.knowledge.danger.confirm', { action: documentActionLabels[pendingDocumentAction.action] })}</button>
             </div>
           </div>
         </div>
@@ -2429,7 +2543,7 @@ export const KnowledgeManagementTab: React.FC = () => {
             <div className="flex items-center justify-between border-b border-gray-100 dark:border-gray-700 pb-3">
               <h3 className="text-base font-bold text-gray-900 dark:text-white flex items-center gap-2">
                 <UploadCloud className="w-5 h-5 text-indigo-500" />
-                新增与上传企业知识文件
+                {tx('ai.knowledge.upload.title')}
               </h3>
               <div className="flex items-center gap-2">
                 <div className="flex items-center gap-1 bg-gray-100 dark:bg-gray-700 p-1 rounded-xl text-xs font-semibold">
@@ -2440,7 +2554,7 @@ export const KnowledgeManagementTab: React.FC = () => {
                       inputMode === 'upload' ? 'bg-white dark:bg-gray-800 text-indigo-600 dark:text-indigo-400 shadow-2xs' : 'text-gray-500'
                     }`}
                   >
-                    📁 批量上传文件
+                    📁 {tx('ai.knowledge.upload.batch')}
                   </button>
                   <button
                     type="button"
@@ -2449,15 +2563,15 @@ export const KnowledgeManagementTab: React.FC = () => {
                       inputMode === 'paste' ? 'bg-white dark:bg-gray-800 text-indigo-600 dark:text-indigo-400 shadow-2xs' : 'text-gray-500'
                     }`}
                   >
-                    📝 手动录入文本
+                    📝 {tx('ai.knowledge.upload.manual')}
                   </button>
                 </div>
                 <button
                   type="button"
                   onClick={closeModal}
                   disabled={batchSubmitting || submitting}
-                  aria-label="关闭上传窗口"
-                  title="关闭上传窗口"
+                  aria-label={tx('ai.knowledge.upload.close')}
+                  title={tx('ai.knowledge.upload.close')}
                   className="p-1.5 text-gray-400 hover:text-gray-700 dark:hover:text-gray-200 rounded-lg hover:bg-gray-100 dark:hover:bg-gray-700 disabled:opacity-40"
                 >
                   <X className="w-4 h-4" />
@@ -2471,12 +2585,12 @@ export const KnowledgeManagementTab: React.FC = () => {
                 : 'bg-indigo-50 text-indigo-700 dark:bg-indigo-950/30 dark:text-indigo-300'
             }`}>
               {assetOptionsLoading
-                ? '正在同步资产管理中的网络设备厂商与平台...'
+                ? tx('ai.knowledge.upload.assetSyncing')
                 : assetOptionsError
                 ? assetOptionsError
                 : directoryVendorOptions.length === 0
-                ? '资产管理中暂无 Huawei / H3C / Cisco / Ruijie 设备，请先导入对应设备资产。'
-                : `已同步 ${assetOptions.asset_count} 台网络设备，目录厂商与平台选项来自资产管理。`}
+                ? tx('ai.knowledge.upload.noAssets')
+                : tx('ai.knowledge.upload.assetSynced', { count: assetOptions.asset_count })}
             </div>
 
             {/* ═══════════ MODE: BATCH UPLOAD ═══════════ */}
@@ -2511,23 +2625,23 @@ export const KnowledgeManagementTab: React.FC = () => {
                       <Archive className="w-6 h-6 text-amber-500" />
                     </div>
                     <div className="text-xs font-semibold text-gray-800 dark:text-gray-200">
-                      点击选择文件 或 拖拽到此处 · 支持同时选择多个文件
+                      {tx('ai.knowledge.upload.chooseFiles')}
                     </div>
                     <div className="text-[11px] text-gray-400 space-y-0.5">
                       <div>
-                        文本格式：<strong>.md / .html / .txt / .json / .yaml / .csv / .xml / .conf / .cfg / .ini / .log</strong>（服务端按扩展名校验并规范化）
+                        {tx('ai.knowledge.upload.textFormatsFull')}
                       </div>
                       <div>
-                        自定义文档：<strong>.md</strong> 使用 Front Matter；<strong>.json / .yaml</strong> 可使用 <strong>nexora-knowledge-document</strong> 的 metadata + content envelope；缺少 envelope 的结构化文件按正文处理，不会猜测型号。
+                        {tx('ai.knowledge.upload.customFormatFull')}
                       </div>
                       <div>
-                        压缩包：<strong className="text-amber-500">.zip</strong>（Nexora 导出包走服务端原子回导；普通 ZIP 仅解压预览并按文件解析）
+                        {tx('ai.knowledge.upload.archiveFull')}
                       </div>
                       <div>
-                        二进制：<strong>.docx / .pdf</strong>（请使用“上传企业 SOP”入口，由服务端解析；解析失败不会入库）
+                        {tx('ai.knowledge.upload.binaryFull')}
                       </div>
                       <div className="pt-1 text-indigo-500 dark:text-indigo-300">
-                        Nexora 导出 ZIP 可直接回导：服务端会先完整校验 manifest、路径、大小与 SHA-256，确认后用一个事务原子写入；任一文件失败全部回滚。目标机重新切片和生成向量，不复制旧主机 Embedding，官方来源声明会降级为“待复核”。
+                        {tx('ai.knowledge.upload.restoreNote')}
                       </div>
                     </div>
                   </div>
@@ -2536,34 +2650,38 @@ export const KnowledgeManagementTab: React.FC = () => {
                 {/* Metadata selectors (shared for all files in batch) */}
                 <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-4 gap-3">
                   <div>
-                    <label className="block text-xs font-medium text-gray-700 dark:text-gray-300 mb-1">知识分类目录</label>
-                    <select
-                      value={knowledgeDirectory}
-                      onChange={(e) => setKnowledgeDirectory(e.target.value)}
-                      className="w-full px-3 py-2 text-xs border border-gray-300 dark:border-gray-600 rounded-xl dark:bg-gray-900 dark:text-white"
-                    >
-                      {KNOWLEDGE_DIRECTORY_OPTIONS.map((item) => (
-                        <option key={item.id} value={item.id}>{item.label}</option>
-                      ))}
-                    </select>
+                    <label className="block text-xs font-medium text-gray-700 dark:text-gray-300 mb-1">{tx('ai.knowledge.upload.category')}</label>
+                    <DirectoryTreePicker
+                      nodes={directoryTree}
+                      selectedPath={knowledgeDirectory}
+                      loading={directoryTreeLoading}
+                      error={directoryTreeError}
+                      disabled={batchSubmitting || submitting}
+                      canManage={canManageDirectories}
+                      title={tx('ai.knowledge.directory.pickerTitle')}
+                      onSelect={(node) => setKnowledgeDirectory(node.path)}
+                      onCreate={handleCreateDirectory}
+                      onRename={handleRenameDirectory}
+                      onDelete={handleDeleteDirectory}
+                    />
                   </div>
 
                   <div>
-                    <label className="block text-xs font-medium text-gray-700 dark:text-gray-300 mb-1">资料来源 (文档元数据)</label>
+                    <label className="block text-xs font-medium text-gray-700 dark:text-gray-300 mb-1">{tx('ai.knowledge.upload.source')}</label>
                     <select
                       value={sourceType}
                       onChange={(e) => setSourceType(e.target.value)}
                       className="w-full px-3 py-2 text-xs border border-gray-300 dark:border-gray-600 rounded-xl dark:bg-gray-900 dark:text-white"
                     >
-                      <option value="internal_sop">📘 企业内部 SOP 目录</option>
-                      <option value="internal_standard">📜 企业规范标准库</option>
-                      <option value="case">🚨 应急处置与排查案例</option>
-                      <option value="sample">🧪 系统示例知识 (Sample)</option>
+                      <option value="internal_sop">{tx('ai.knowledge.upload.source.internalSop')}</option>
+                      <option value="internal_standard">{tx('ai.knowledge.upload.source.internalStandard')}</option>
+                      <option value="case">{tx('ai.knowledge.upload.source.case')}</option>
+                      <option value="sample">{tx('ai.knowledge.upload.source.sample')}</option>
                     </select>
                   </div>
 
                   <div>
-                    <label className="block text-xs font-medium text-gray-700 dark:text-gray-300 mb-1">目标网络厂商 (资产同步)</label>
+                    <label className="block text-xs font-medium text-gray-700 dark:text-gray-300 mb-1">{tx('ai.knowledge.upload.vendor')}</label>
                     <select
                       value={vendor}
                       onChange={(e) => {
@@ -2575,32 +2693,32 @@ export const KnowledgeManagementTab: React.FC = () => {
                       disabled={assetOptionsLoading || directoryVendorOptions.length === 0}
                       className="w-full px-3 py-2 text-xs border border-gray-300 dark:border-gray-600 rounded-xl dark:bg-gray-900 dark:text-white"
                     >
-                      <option value="">请选择资产厂商</option>
+                      <option value="">{tx('ai.knowledge.upload.selectVendor')}</option>
                       {directoryVendorOptions.map((item) => (
-                        <option key={item.value} value={item.value}>{getVendorDisplayLabel(item.value)}</option>
+                        <option key={item.value} value={item.value}>{getVendorDisplayLabel(item.value, language)}</option>
                       ))}
                     </select>
                   </div>
 
                   <div>
-                    <label className="block text-xs font-medium text-gray-700 dark:text-gray-300 mb-1">目标平台 (资产同步)</label>
+                    <label className="block text-xs font-medium text-gray-700 dark:text-gray-300 mb-1">{tx('ai.knowledge.upload.platform')}</label>
                     <select
                       value={platform}
                       onChange={(e) => setPlatform(e.target.value)}
                       disabled={assetOptionsLoading || !selectedVendorOption}
                       className="w-full px-3 py-2 text-xs border border-gray-300 dark:border-gray-600 rounded-xl dark:bg-gray-900 dark:text-white"
                     >
-                      <option value="">请选择对应平台</option>
+                      <option value="">{tx('ai.knowledge.upload.selectPlatform')}</option>
                       {(selectedVendorOption?.platforms || []).map((item) => (
-                        <option key={item.value} value={item.value}>{getPlatformDisplayLabel(vendor, item.value)}</option>
+                        <option key={item.value} value={item.value}>{getPlatformDisplayLabel(vendor, item.value, language)}</option>
                       ))}
                     </select>
                   </div>
                 </div>
 
                 <div className="rounded-xl border border-indigo-100 bg-indigo-50/60 px-3 py-2 text-[11px] text-indigo-800 dark:border-indigo-900/60 dark:bg-indigo-950/20 dark:text-indigo-200">
-                  导入目录前缀：<span className="font-mono font-semibold">{getDirectoryImportPath(knowledgeDirectory, vendor)}</span>
-                  <span className="ml-2 text-indigo-600/70 dark:text-indigo-300/70">ZIP 内已有的目录路径会保留在文档元数据中。</span>
+                  {tx('ai.knowledge.upload.directoryPrefix')}<span className="font-mono font-semibold">{getDirectoryImportPath(knowledgeDirectory, vendor, language)}</span>
+                  <span className="ml-2 text-indigo-600/70 dark:text-indigo-300/70">{tx('ai.knowledge.upload.zipPathNote')}</span>
                 </div>
 
                 {/* File Queue List */}
@@ -2609,22 +2727,22 @@ export const KnowledgeManagementTab: React.FC = () => {
                     <div className="flex items-center justify-between">
                       <div className="text-xs font-semibold text-gray-700 dark:text-gray-300 flex items-center gap-2">
                         <FileUp className="w-4 h-4 text-indigo-500" />
-                        文件队列
+                        {tx('ai.knowledge.upload.fileQueue')}
                         <span className="text-[10px] font-mono text-gray-400">
-                          ({fileQueue.length} 个文件 · {formatFileSize(totalQueueSize)})
+                          ({tx('ai.knowledge.upload.fileCount', { count: fileQueue.length, size: formatFileSize(totalQueueSize) })})
                         </span>
                       </div>
                       <div className="flex items-center gap-3 text-[10px] font-mono">
-                        {pendingCount > 0 && <span className="text-blue-500">待提交 {pendingCount}</span>}
-                        {doneCount > 0 && <span className="text-emerald-500">已完成 {doneCount}</span>}
-                        {errorCount > 0 && <span className="text-red-500">失败 {errorCount}</span>}
+                        {pendingCount > 0 && <span className="text-blue-500">{tx('ai.knowledge.upload.pending', { count: pendingCount })}</span>}
+                        {doneCount > 0 && <span className="text-emerald-500">{tx('ai.knowledge.upload.done', { count: doneCount })}</span>}
+                        {errorCount > 0 && <span className="text-red-500">{tx('ai.knowledge.upload.failed', { count: errorCount })}</span>}
                         <button
                           type="button"
                           onClick={clearQueue}
                           disabled={batchSubmitting}
                           className="text-gray-400 hover:text-red-500 transition cursor-pointer disabled:opacity-40"
                         >
-                          清空队列
+                          {tx('ai.knowledge.upload.clearQueue')}
                         </button>
                       </div>
                     </div>
@@ -2656,8 +2774,8 @@ export const KnowledgeManagementTab: React.FC = () => {
                           {item.status === 'pending' && (
                             <div className="w-full basis-full rounded-xl border border-slate-200 bg-white/80 p-2 dark:border-slate-700 dark:bg-slate-900/60">
                               <div className="mb-1 flex items-center justify-between gap-2 text-[10px] font-semibold text-slate-500 dark:text-slate-400">
-                                <span>本文件 Metadata 预览</span>
-                                <span className={metadata.validation === 'error' ? 'text-rose-600' : metadata.validation === 'warning' ? 'text-amber-600' : 'text-emerald-600'}>{metadata.validation === 'error' ? '需修正' : metadata.validation === 'warning' ? '请确认' : '可提交'}</span>
+                                <span>{tx('ai.knowledge.upload.preview')}</span>
+                                <span className={metadata.validation === 'error' ? 'text-rose-600' : metadata.validation === 'warning' ? 'text-amber-600' : 'text-emerald-600'}>{metadata.validation === 'error' ? tx('ai.knowledge.upload.metadata.needsFix') : metadata.validation === 'warning' ? tx('ai.knowledge.upload.metadata.confirm') : tx('ai.knowledge.upload.metadata.ready')}</span>
                               </div>
                               <div className="grid grid-cols-1 gap-1.5 sm:grid-cols-3">
                                 <select value={metadata.vendor} onChange={(event) => updateQueueMetadata(item.id, 'vendor', event.target.value)} className="rounded-lg border border-slate-200 bg-slate-50 px-2 py-1.5 text-[10px] dark:border-slate-700 dark:bg-slate-950 dark:text-slate-200" aria-label={`${item.fileName} Vendor Metadata`}>
@@ -2669,14 +2787,14 @@ export const KnowledgeManagementTab: React.FC = () => {
                                   {(directoryVendorOptions.find((option) => option.value === metadata.vendor)?.platforms || []).map((option) => <option key={option.value} value={option.value}>{option.value}</option>)}
                                 </select>
                                 <select value={metadata.sourceType} onChange={(event) => updateQueueMetadata(item.id, 'sourceType', event.target.value)} className="rounded-lg border border-slate-200 bg-slate-50 px-2 py-1.5 text-[10px] dark:border-slate-700 dark:bg-slate-950 dark:text-slate-200" aria-label={`${item.fileName} source type Metadata`}>
-                                  <option value="internal_sop">企业 SOP</option>
-                                  <option value="internal_standard">企业规范</option>
-                                  <option value="case">排查案例</option>
-                                  <option value="sample">系统示例</option>
-                                  <option value="user_document">用户上传</option>
+                                  <option value="internal_sop">{tx('ai.knowledge.upload.source.internalSop')}</option>
+                                  <option value="internal_standard">{tx('ai.knowledge.upload.source.internalStandard')}</option>
+                                  <option value="case">{tx('ai.knowledge.upload.source.case')}</option>
+                                  <option value="sample">{tx('ai.knowledge.upload.source.sample')}</option>
+                                  <option value="user_document">{tx('ai.knowledge.upload.source.userDocument')}</option>
                                 </select>
                               </div>
-                              <div className="mt-1 text-[10px] text-slate-500 dark:text-slate-400">目录：{metadata.directoryPath}{metadata.issue ? ` · ${metadata.issue}` : ''}</div>
+                              <div className="mt-1 text-[10px] text-slate-500 dark:text-slate-400">{tx('ai.knowledge.upload.metadata.directory', { path: metadata.directoryPath, issue: metadata.issue ? ` · ${metadata.issue}` : '' })}</div>
                             </div>
                           )}
 
@@ -2689,12 +2807,12 @@ export const KnowledgeManagementTab: React.FC = () => {
                             {item.fromZip && (
                               <div className="text-[10px] text-amber-500 flex items-center gap-1 mt-0.5">
                                 <PackageOpen className="w-3 h-3" />
-                                来自压缩包: {item.fromZip}
+                                {tx('ai.knowledge.upload.fromZip', { name: item.fromZip })}
                               </div>
                             )}
                             {item.relativePath && (
                               <div className="text-[10px] text-indigo-500 truncate mt-0.5" title={item.relativePath}>
-                                目录路径: {item.relativePath}
+                                {tx('ai.knowledge.upload.relativePath', { path: item.relativePath })}
                               </div>
                             )}
                             {item.error && (
@@ -2704,10 +2822,10 @@ export const KnowledgeManagementTab: React.FC = () => {
 
                           {/* Status label */}
                           <div className="flex-shrink-0 text-[10px] font-mono">
-                            {item.status === 'pending' && <span className="text-blue-500">等待提交</span>}
-                            {item.status === 'indexing' && <span className="text-indigo-500">索引中...</span>}
-                            {item.status === 'done' && <span className="text-emerald-500">已入库</span>}
-                            {item.status === 'error' && <span className="text-red-500">失败</span>}
+                            {item.status === 'pending' && <span className="text-blue-500">{tx('ai.knowledge.upload.queueStatus.pending')}</span>}
+                            {item.status === 'indexing' && <span className="text-indigo-500">{tx('ai.knowledge.upload.queueStatus.indexing')}</span>}
+                            {item.status === 'done' && <span className="text-emerald-500">{tx('ai.knowledge.upload.queueStatus.done')}</span>}
+                            {item.status === 'error' && <span className="text-red-500">{tx('ai.knowledge.upload.queueStatus.error')}</span>}
                           </div>
 
                           {/* Remove button */}
@@ -2732,7 +2850,7 @@ export const KnowledgeManagementTab: React.FC = () => {
                         <div className="flex items-center justify-between text-xs font-semibold text-indigo-600 dark:text-indigo-400">
                           <span className="flex items-center gap-2">
                             <Loader2 className="w-3.5 h-3.5 animate-spin" />
-                            正在批量解析与建立索引...
+                            {tx('ai.knowledge.upload.parsing')}
                           </span>
                           <span className="font-mono">{batchProgress.done} / {batchProgress.total}</span>
                         </div>
@@ -2755,7 +2873,7 @@ export const KnowledgeManagementTab: React.FC = () => {
                     disabled={batchSubmitting}
                     className="px-4 py-2 text-xs text-gray-600 dark:text-gray-400 hover:bg-gray-100 dark:hover:bg-gray-700 rounded-xl cursor-pointer disabled:opacity-40"
                   >
-                    取消
+                    {tx('ai.knowledge.common.cancel')}
                   </button>
                   <button
                     type="button"
@@ -2766,12 +2884,12 @@ export const KnowledgeManagementTab: React.FC = () => {
                     {batchSubmitting ? (
                       <>
                         <Loader2 className="w-3.5 h-3.5 animate-spin" />
-                        批量索引中...
+                        {tx('ai.knowledge.upload.batchIndexing')}
                       </>
                     ) : (
                       <>
                         <UploadCloud className="w-3.5 h-3.5" />
-                        批量解析并建立索引 ({pendingCount} 个文件)
+                        {tx('ai.knowledge.upload.batchSubmit', { count: pendingCount })}
                       </>
                     )}
                   </button>
@@ -2783,11 +2901,11 @@ export const KnowledgeManagementTab: React.FC = () => {
             {inputMode === 'paste' && (
               <form onSubmit={handleCreateDocument} className="space-y-4">
                 <div>
-                  <label className="block text-xs font-medium text-gray-700 dark:text-gray-300 mb-1">文档标题</label>
+                  <label className="block text-xs font-medium text-gray-700 dark:text-gray-300 mb-1">{tx('ai.knowledge.upload.documentTitle')}</label>
                   <input
                     type="text"
                     required
-                    placeholder="例如：华为 S6800 OSPF 异常排查 SOP"
+                    placeholder={tx('ai.knowledge.upload.documentTitlePlaceholder')}
                     value={docName}
                     onChange={(e) => setDocName(e.target.value)}
                     className="w-full px-3 py-2 text-xs border border-gray-300 dark:border-gray-600 rounded-xl dark:bg-gray-900 dark:text-white"
@@ -2796,34 +2914,38 @@ export const KnowledgeManagementTab: React.FC = () => {
 
                 <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-4 gap-3">
                   <div>
-                    <label className="block text-xs font-medium text-gray-700 dark:text-gray-300 mb-1">知识分类目录</label>
-                    <select
-                      value={knowledgeDirectory}
-                      onChange={(e) => setKnowledgeDirectory(e.target.value)}
-                      className="w-full px-3 py-2 text-xs border border-gray-300 dark:border-gray-600 rounded-xl dark:bg-gray-900 dark:text-white"
-                    >
-                      {KNOWLEDGE_DIRECTORY_OPTIONS.map((item) => (
-                        <option key={item.id} value={item.id}>{item.label}</option>
-                      ))}
-                    </select>
+                    <label className="block text-xs font-medium text-gray-700 dark:text-gray-300 mb-1">{tx('ai.knowledge.upload.category')}</label>
+                    <DirectoryTreePicker
+                      nodes={directoryTree}
+                      selectedPath={knowledgeDirectory}
+                      loading={directoryTreeLoading}
+                      error={directoryTreeError}
+                      disabled={batchSubmitting || submitting}
+                      canManage={canManageDirectories}
+                      title={tx('ai.knowledge.directory.pickerTitle')}
+                      onSelect={(node) => setKnowledgeDirectory(node.path)}
+                      onCreate={handleCreateDirectory}
+                      onRename={handleRenameDirectory}
+                      onDelete={handleDeleteDirectory}
+                    />
                   </div>
 
                   <div>
-                    <label className="block text-xs font-medium text-gray-700 dark:text-gray-300 mb-1">资料来源 (文档元数据)</label>
+                    <label className="block text-xs font-medium text-gray-700 dark:text-gray-300 mb-1">{tx('ai.knowledge.upload.source')}</label>
                     <select
                       value={sourceType}
                       onChange={(e) => setSourceType(e.target.value)}
                       className="w-full px-3 py-2 text-xs border border-gray-300 dark:border-gray-600 rounded-xl dark:bg-gray-900 dark:text-white"
                     >
-                      <option value="internal_sop">📘 企业内部 SOP 目录</option>
-                      <option value="internal_standard">📜 企业规范标准库</option>
-                      <option value="case">🚨 应急处置与排查案例</option>
-                      <option value="sample">🧪 系统示例知识 (Sample)</option>
+                      <option value="internal_sop">{tx('ai.knowledge.upload.source.internalSop')}</option>
+                      <option value="internal_standard">{tx('ai.knowledge.upload.source.internalStandard')}</option>
+                      <option value="case">{tx('ai.knowledge.upload.source.case')}</option>
+                      <option value="sample">{tx('ai.knowledge.upload.source.sample')}</option>
                     </select>
                   </div>
 
                   <div>
-                    <label className="block text-xs font-medium text-gray-700 dark:text-gray-300 mb-1">目标网络厂商 (资产同步)</label>
+                    <label className="block text-xs font-medium text-gray-700 dark:text-gray-300 mb-1">{tx('ai.knowledge.upload.vendor')}</label>
                     <select
                       value={vendor}
                       onChange={(e) => {
@@ -2835,42 +2957,42 @@ export const KnowledgeManagementTab: React.FC = () => {
                       disabled={assetOptionsLoading || directoryVendorOptions.length === 0}
                       className="w-full px-3 py-2 text-xs border border-gray-300 dark:border-gray-600 rounded-xl dark:bg-gray-900 dark:text-white"
                     >
-                      <option value="">请选择资产厂商</option>
+                      <option value="">{tx('ai.knowledge.upload.selectVendor')}</option>
                       {directoryVendorOptions.map((item) => (
-                        <option key={item.value} value={item.value}>{getVendorDisplayLabel(item.value)}</option>
+                        <option key={item.value} value={item.value}>{getVendorDisplayLabel(item.value, language)}</option>
                       ))}
                     </select>
                   </div>
 
                   <div>
-                    <label className="block text-xs font-medium text-gray-700 dark:text-gray-300 mb-1">目标平台 (资产同步)</label>
+                    <label className="block text-xs font-medium text-gray-700 dark:text-gray-300 mb-1">{tx('ai.knowledge.upload.platform')}</label>
                     <select
                       value={platform}
                       onChange={(e) => setPlatform(e.target.value)}
                       disabled={assetOptionsLoading || !selectedVendorOption}
                       className="w-full px-3 py-2 text-xs border border-gray-300 dark:border-gray-600 rounded-xl dark:bg-gray-900 dark:text-white"
                     >
-                      <option value="">请选择对应平台</option>
+                      <option value="">{tx('ai.knowledge.upload.selectPlatform')}</option>
                       {(selectedVendorOption?.platforms || []).map((item) => (
-                        <option key={item.value} value={item.value}>{getPlatformDisplayLabel(vendor, item.value)}</option>
+                        <option key={item.value} value={item.value}>{getPlatformDisplayLabel(vendor, item.value, language)}</option>
                       ))}
                     </select>
                   </div>
                 </div>
 
                 <div className="rounded-xl border border-indigo-100 bg-indigo-50/60 px-3 py-2 text-[11px] text-indigo-800 dark:border-indigo-900/60 dark:bg-indigo-950/20 dark:text-indigo-200">
-                  导入目录：<span className="font-mono font-semibold">{getDirectoryImportPath(knowledgeDirectory, vendor)}</span>
-                  <span className="ml-2 text-indigo-600/70 dark:text-indigo-300/70">资料来源会单独保存为文档元数据。</span>
+                  {tx('ai.knowledge.upload.directory')}<span className="font-mono font-semibold">{getDirectoryImportPath(knowledgeDirectory, vendor, language)}</span>
+                  <span className="ml-2 text-indigo-600/70 dark:text-indigo-300/70">{tx('ai.knowledge.upload.sourceNote')}</span>
                 </div>
 
                 <div>
                   <label className="block text-xs font-medium text-gray-700 dark:text-gray-300 mb-1">
-                    文档正文预览 (已自动提取 Heading 与 CLI 语法结构)
+                    {tx('ai.knowledge.upload.contentPreview')}
                   </label>
                   <textarea
                     required
                     rows={5}
-                    placeholder="在此粘贴 Markdown 正文、HTML 手册或包含 Heading / CLI 代码块的 SOP 步骤..."
+                    placeholder={tx('ai.knowledge.upload.contentPlaceholder')}
                     value={content}
                     onChange={(e) => setContent(e.target.value)}
                     className="w-full px-3 py-2 text-xs border border-gray-300 dark:border-gray-600 rounded-xl dark:bg-gray-900 dark:text-white font-mono leading-relaxed"
@@ -2881,7 +3003,7 @@ export const KnowledgeManagementTab: React.FC = () => {
                 {submitting && (
                   <div className="p-3 bg-gray-50 dark:bg-gray-900 rounded-xl border border-gray-200 dark:border-gray-700 space-y-2">
                     <div className="text-xs font-semibold text-indigo-600 dark:text-indigo-400 flex items-center justify-between">
-                      <span>标准化中间格式解析与 RAG 索引构建...</span>
+                      <span>{tx('ai.knowledge.upload.pipeline')}</span>
                       <span>{indexingStep} / 6</span>
                     </div>
                     <div className="grid grid-cols-6 gap-1">
@@ -2899,7 +3021,7 @@ export const KnowledgeManagementTab: React.FC = () => {
                       })}
                     </div>
                     <div className="text-[11px] text-gray-500 font-mono text-center pt-1">
-                      当前阶段: {pipelineSteps[Math.max(0, indexingStep - 1)]}
+                      {tx('ai.knowledge.upload.currentStage', { stage: pipelineSteps[Math.max(0, indexingStep - 1)] })}
                     </div>
                   </div>
                 )}
@@ -2911,14 +3033,14 @@ export const KnowledgeManagementTab: React.FC = () => {
                     disabled={submitting}
                     className="px-4 py-2 text-xs text-gray-600 dark:text-gray-400 hover:bg-gray-100 dark:hover:bg-gray-700 rounded-xl cursor-pointer"
                   >
-                    取消
+                    {tx('ai.knowledge.common.cancel')}
                   </button>
                   <button
                     type="submit"
                     disabled={submitting || !docName.trim() || !content.trim() || !vendor || !platform || assetOptionsLoading}
                     className="px-4 py-2 bg-indigo-600 hover:bg-indigo-700 text-white rounded-xl text-xs font-semibold disabled:opacity-50 transition shadow-xs cursor-pointer"
                   >
-                    {submitting ? '标准化解析中...' : '解析并建立索引'}
+                    {submitting ? tx('ai.knowledge.ingestion.submitting') : tx('ai.knowledge.upload.parseIndex')}
                   </button>
                 </div>
               </form>

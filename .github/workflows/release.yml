@@ -19,26 +19,22 @@ jobs:
       postgres:
         image: postgres:16
         env:
-          POSTGRES_DB: nexora_kb_v2_eval
+          POSTGRES_DB: nexora_knowledge_eval
           POSTGRES_USER: postgres
           POSTGRES_PASSWORD: postgres
         ports:
           - 5432:5432
         options: >-
-          --health-cmd "pg_isready -U postgres -d nexora_kb_v2_eval"
+          --health-cmd "pg_isready -U postgres -d nexora_knowledge_eval"
           --health-interval 10s
           --health-timeout 5s
           --health-retries 5
     env:
       ENVIRONMENT: test
-      DATABASE_URL: postgresql://postgres:postgres@127.0.0.1:5432/nexora_kb_v2_eval
+      DATABASE_URL: postgresql://postgres:postgres@127.0.0.1:5432/nexora_knowledge_eval
       PYTHONPATH: backend
       AI_ENABLED: "false"
       EXTERNAL_AI_ENABLED: "false"
-      KNOWLEDGE_V2_ENABLED: "false"
-      KNOWLEDGE_V2_SHADOW_READ: "false"
-      KNOWLEDGE_V2_ROLLOUT_PERCENT: "0"
-      KNOWLEDGE_V2_WRITE_ENABLED: "false"
       NETWORK_WRITE_ENABLED: "false"
       PRODUCTION_CREDENTIALS_ALLOWED: "false"
     steps:
@@ -67,14 +63,14 @@ jobs:
           npm run build
           python -m compileall -q backend
 
-      - name: Run complete KB V2 evaluation release gate
+      - name: Run complete Knowledge Engine evaluation release gate
         shell: bash
         run: |
           set -euo pipefail
           python -m pip install --upgrade pip
           pip install -r backend/requirements.txt
-          python scripts/knowledge_engine_v2_eval_ci_gate_check.py
-          python scripts/knowledge_engine_v2_eval_offline.py \
+          python scripts/knowledge_eval_ci_gate_check.py
+          python scripts/knowledge_eval_offline.py \
             --profile full \
             --strict \
             --output "$RUNNER_TEMP/eval-offline-full-report-v1.json"

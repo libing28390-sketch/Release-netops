@@ -1,0 +1,45 @@
+task_id: REL-007
+priority: P0
+owner: OPS+QA
+milestone: M2
+status: executable_quality_gate
+contract_version: v1.0
+authority: PostgreSQL
+depends_on: [REL-001, REL-002, REL-003, REL-004, REL-005, REL-006]
+
+decision:
+  choice: postgres_acceptance_probes_plus_frontend_lint_build_plus_target_config_validation
+  summary: >-
+    Release evidence must use PostgreSQL-only backend probes and contract tests;
+    the repository's SQLite compatibility fixtures are excluded from the
+    acceptance result.  Frontend lint and production build must pass. Docker
+    Compose and Nginx syntax are checked with their native tools when present;
+    absence of a target tool is a visible BLOCKED condition, never a pass.
+
+required_checks:
+  backend:
+    commands:
+      - scripts/knowledge_engine_v2_v1_baseline_pg.py
+      - scripts/knowledge_engine_v2_mig008_consistency_audit_check.py
+      - scripts/knowledge_engine_v2_ret_pg_probe.py
+      - tests/knowledge_engine_v2 PostgreSQL contract wrappers
+    database: PostgreSQL
+    writes: transaction_rollback_only
+    sqlite_acceptance: forbidden
+  frontend:
+    commands: [npm run lint, npm run build]
+  configuration:
+    commands: [docker compose config --quiet, nginx -t]
+    missing_tool: BLOCKED
+  source_safety:
+    commands: [Python compile, git diff --check, tracked secret scan]
+
+failure_policy:
+  test_or_build_failure: FAILED_then_FIXING_then_TESTING
+  missing_target_tool: BLOCKED_and_continue_independent_tasks
+  production_write: forbidden
+
+verification:
+  runner: scripts/knowledge_engine_v2_rel007_quality_gate.py
+  focused_tests: tests/knowledge_engine_v2/test_rel007_quality_gate.py
+  report: docs/knowledge-engine/eval/rel-007-quality-gate-v1.json

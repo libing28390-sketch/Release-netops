@@ -9,13 +9,12 @@ NAME = "official_required_switch_features"
 
 
 def _columns(cursor, use_pg: bool) -> set[str]:
-    if use_pg:
-        cursor.execute(
-            "SELECT column_name FROM information_schema.columns "
-            "WHERE table_schema = current_schema() AND table_name = 'templates'"
-        )
-        return {str(row[0]) for row in cursor.fetchall()}
-    return {str(row[1]) for row in cursor.execute("PRAGMA table_info(templates)").fetchall()}
+    cursor.execute(
+        "SELECT column_name FROM information_schema.columns "
+        "WHERE table_schema = current_schema() AND table_name = 'templates'"
+    )
+    return {str(row[0]) for row in cursor.fetchall()}
+
 
 
 def _ensure_columns(cursor, use_pg: bool) -> None:

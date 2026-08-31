@@ -8,7 +8,7 @@ NAME = "platform_identification_conflicts"
 
 
 def upgrade(cursor, use_pg: bool) -> None:
-    json_type = "JSONB" if use_pg else "TEXT"
+    json_type = "JSONB"
     cursor.execute(
         f"""
         CREATE TABLE IF NOT EXISTS platform_identification_conflicts (

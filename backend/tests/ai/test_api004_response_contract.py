@@ -4,7 +4,7 @@ import asyncio
 
 import httpx
 
-from api.knowledge_v2_response import paginate_items, stable_error_payload
+from api.knowledge_response import paginate_items, stable_error_payload
 from main import app
 
 
@@ -30,11 +30,11 @@ def test_stable_error_payload_has_code_message_and_request_id():
     }
 
 
-def test_v2_unknown_route_returns_normalized_error_and_request_id():
+def test_unknown_knowledge_route_returns_normalized_error_and_request_id():
     async def run() -> httpx.Response:
         transport = httpx.ASGITransport(app=app)
         async with httpx.AsyncClient(transport=transport, base_url="http://test") as client:
-            return await client.get("/api/v2/kb/not-a-resource", headers={"X-Request-ID": "req-api004-http"})
+            return await client.get("/api/knowledge/not-a-resource", headers={"X-Request-ID": "req-api004-http"})
 
     response = asyncio.run(run())
     assert response.status_code == 404

@@ -1,7 +1,8 @@
 from __future__ import annotations
 
 import json
-import sqlite3
+from backend.tests import pg_catalog_assertions as pg_catalog
+from backend.tests.pg_test_utils import postgresql_test_driver
 from pathlib import Path
 
 import pytest
@@ -17,8 +18,8 @@ from database.capacity import (
 
 
 ROOT = Path(__file__).resolve().parents[3]
-CONTRACT = ROOT / "docs" / "knowledge-engine-v2" / "architecture" / "DB-024-CAPACITY-BLOAT-INDEX-CONTRACT.yaml"
-REPORT = ROOT / "docs" / "knowledge-engine-v2" / "architecture" / "DB-024-CAPACITY-BLOAT-INDEX-CONTRACT.md"
+CONTRACT = ROOT / "docs" / "knowledge-engine" / "architecture" / "DB-024-CAPACITY-BLOAT-INDEX-CONTRACT.yaml"
+REPORT = ROOT / "docs" / "knowledge-engine" / "architecture" / "DB-024-CAPACITY-BLOAT-INDEX-CONTRACT.md"
 
 
 def _load() -> dict:
@@ -57,17 +58,17 @@ def test_db024_rejects_invalid_scale_inputs():
         estimate_scale(document_count=1, chunk_count=1, assumptions={"embedding_dimensions": 0})
 
 
-def test_db024_sqlite_is_not_production_bloat_evidence_and_does_not_write():
-    conn = sqlite3.connect(":memory:")
+def test_db024_blank_postgres_catalog_probe_does_not_write():
+    conn = postgresql_test_driver.connect()
     conn.execute("CREATE TABLE ai_document (id TEXT PRIMARY KEY)")
-    before = tuple(row[0] for row in conn.execute("SELECT name FROM sqlite_master ORDER BY name").fetchall())
-    stats = collect_postgres_relation_stats(conn, use_pg=False)
-    report = run_capacity_evaluation(conn, use_pg=False)
-    after = tuple(row[0] for row in conn.execute("SELECT name FROM sqlite_master ORDER BY name").fetchall())
+    before = tuple(sorted(pg_catalog.schema_object_names(conn)))
+    stats = collect_postgres_relation_stats(conn)
+    report = run_capacity_evaluation(conn)
+    after = tuple(sorted(pg_catalog.schema_object_names(conn)))
     try:
-        assert stats["status"] == "NOT_APPLICABLE"
+        assert stats["backend"] == "postgresql"
         assert report["read_only"] is True
-        assert report["relation_stats"]["status"] == "NOT_APPLICABLE"
+        assert report["relation_stats"]["backend"] == "postgresql"
         assert report["no_synthetic_production_rows"] is True
         assert after == before
     finally:
@@ -77,14 +78,14 @@ def test_db024_sqlite_is_not_production_bloat_evidence_and_does_not_write():
 def test_db024_postgres_catalog_probe_is_read_only_and_safe(isolated_db):
     conn = get_db_connection()
     try:
-        before = tuple(row[0] for row in conn.execute("SELECT name FROM sqlite_master WHERE type='table' ORDER BY name").fetchall())
-        stats = collect_postgres_relation_stats(conn, use_pg=False)
-        report = run_capacity_evaluation(conn, use_pg=False)
-        assert stats["backend"] == "sqlite"
-        assert report["backend"] == "sqlite"
+        before = tuple(sorted(pg_catalog.table_names(conn)))
+        stats = collect_postgres_relation_stats(conn)
+        report = run_capacity_evaluation(conn)
+        assert stats["backend"] == "postgresql"
+        assert report["backend"] == "postgresql"
         assert report["scenarios"][0]["document_count"] == 10_000
         assert report["scenarios"][1]["chunk_count"] == 1_000_000
-        after = tuple(row[0] for row in conn.execute("SELECT name FROM sqlite_master WHERE type='table' ORDER BY name").fetchall())
+        after = tuple(sorted(pg_catalog.table_names(conn)))
         assert before == after
         assert conn.execute("SELECT COUNT(*) FROM schema_migrations").fetchone()[0] == conn.execute("SELECT MAX(version) FROM schema_migrations").fetchone()[0]
     finally:
@@ -95,11 +96,9 @@ def test_db024_local_postgres_probe_emits_only_relation_stats():
     import database.capacity as capacity
     import database
 
-    if not database._USE_PG:
-        pytest.skip("local test fixture is SQLite")
     conn = database.get_db_connection()
     try:
-        report = run_capacity_evaluation(conn, use_pg=True)
+        report = run_capacity_evaluation(conn)
         assert report["backend"] == "postgresql"
         assert report["read_only"] is True
         assert report["no_synthetic_production_rows"] is True

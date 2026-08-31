@@ -136,6 +136,8 @@ tools/node/
 !**/docs/BROWSER_VALIDATION.md
 !**/docs/modules/**/*.md
 !**/docs/fixes/**/*.md
+!**/docs/knowledge-engine/governance/official-document-source-catalog.md
+!handoff.md
 !**/docs/introduction.md
 !**/docs/cmdb_development.md
 !**/docs/blog/**/*.md

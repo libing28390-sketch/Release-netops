@@ -1,11 +1,10 @@
 from __future__ import annotations
 
-import sqlite3
-
+from backend.tests.pg_test_utils import postgresql_test_driver
 from database.migrations.m0135_deduplicate_snmp_mibs import upgrade
 
 
-def _create_schema(conn: sqlite3.Connection) -> None:
+def _create_schema(conn: postgresql_test_driver.Connection) -> None:
     conn.executescript(
         """
         CREATE TABLE snmp_mibs (
@@ -34,7 +33,7 @@ def _create_schema(conn: sqlite3.Connection) -> None:
 
 
 def test_m0135_keeps_preferred_exact_copy_and_repoints_import_items() -> None:
-    conn = sqlite3.connect(":memory:")
+    conn = postgresql_test_driver.connect()
     _create_schema(conn)
     conn.executemany(
         "INSERT INTO snmp_mibs "
@@ -60,15 +59,15 @@ def test_m0135_keeps_preferred_exact_copy_and_repoints_import_items() -> None:
     )
     conn.execute("INSERT INTO snmp_mib_import_items (id, mib_id) VALUES ('item-old', 'builtin-old')")
 
-    upgrade(conn.cursor(), use_pg=False)
+    upgrade(conn.cursor(), use_pg=True)
     conn.commit()
 
     rows = conn.execute(
         "SELECT id, source_type FROM snmp_mibs ORDER BY id"
     ).fetchall()
-    assert rows == [("legacy-b", "builtin"), ("librenms", "librenms")]
+    assert [tuple(row) for row in rows] == [("legacy-b", "builtin"), ("librenms", "librenms")]
     assert conn.execute("SELECT mib_id FROM snmp_mib_import_items WHERE id = 'item-old'").fetchone()[0] == "librenms"
-    assert conn.execute("SELECT id FROM snmp_mib_nodes ORDER BY id").fetchall() == [
+    assert [tuple(row) for row in conn.execute("SELECT id FROM snmp_mib_nodes ORDER BY id").fetchall()] == [
         ("node-legacy-b",),
         ("node-lib",),
     ]
@@ -83,7 +82,7 @@ def test_m0135_keeps_preferred_exact_copy_and_repoints_import_items() -> None:
             "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)",
             duplicate_builtin,
         )
-    except sqlite3.IntegrityError:
+    except postgresql_test_driver.IntegrityError:
         pass
     else:
         raise AssertionError("builtin identity index allowed a duplicate row")

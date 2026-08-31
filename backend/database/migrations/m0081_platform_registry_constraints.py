@@ -43,26 +43,25 @@ def upgrade(cursor, use_pg: bool) -> None:
         cursor.execute("UPDATE platform_profiles SET current_release_id = ? WHERE id = ?", (keep, profile[0]))
     cursor.execute("CREATE UNIQUE INDEX IF NOT EXISTS uq_platform_releases_one_published ON platform_releases(profile_id) WHERE status = 'PUBLISHED'")
 
-    if use_pg:
-        _add_pg_constraint(
-            cursor,
-            "devices",
-            "fk_devices_platform_profile",
-            "FOREIGN KEY (platform_profile_id) REFERENCES platform_profiles(id) ON DELETE SET NULL",
-        )
-        _add_pg_constraint(
-            cursor,
-            "platform_profiles",
-            "fk_platform_profiles_current_release",
-            "FOREIGN KEY (current_release_id) REFERENCES platform_releases(id) ON DELETE SET NULL",
-        )
-        _add_pg_constraint(
-            cursor,
-            "platform_releases",
-            "ck_platform_releases_status",
-            "CHECK (status IN ('DRAFT', 'IN_REVIEW', 'APPROVED', 'PUBLISHED', 'DEPRECATED'))",
-        )
-        return
+    _add_pg_constraint(
+        cursor,
+        "devices",
+        "fk_devices_platform_profile",
+        "FOREIGN KEY (platform_profile_id) REFERENCES platform_profiles(id) ON DELETE SET NULL",
+    )
+    _add_pg_constraint(
+        cursor,
+        "platform_profiles",
+        "fk_platform_profiles_current_release",
+        "FOREIGN KEY (current_release_id) REFERENCES platform_releases(id) ON DELETE SET NULL",
+    )
+    _add_pg_constraint(
+        cursor,
+        "platform_releases",
+        "ck_platform_releases_status",
+        "CHECK (status IN ('DRAFT', 'IN_REVIEW', 'APPROVED', 'PUBLISHED', 'DEPRECATED'))",
+    )
+    return
 
     # SQLite cannot add a foreign key to an existing table without rebuilding
     # the full legacy schema.  These equivalent triggers enforce the same

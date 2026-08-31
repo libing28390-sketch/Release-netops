@@ -215,7 +215,7 @@ async def run_scheduled_automation_job(job_id: str):
             if script:
                 commands_str = script['content']
                 script_name = script['name']
-                # sqlite3.Row 不支持 .get(),需要直接索引;同时兼容旧记录中 script_type 为 NULL 的情况
+                # Row mappings use direct indexing; legacy script_type values may be NULL.
                 if script['script_type'] == 'shell':
                     is_shell_script = True
         

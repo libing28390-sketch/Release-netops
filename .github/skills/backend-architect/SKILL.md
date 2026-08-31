@@ -16,7 +16,7 @@ description: "Designs scalable FastAPI backend architecture and APIs. Invoke whe
 ```
 backend/
 ├── main.py              # FastAPI 应用入口，注册所有 router
-├── database.py           # get_db_connection() — 原生 sqlite3 连接
+├── database.py           # get_db_connection() — PostgreSQL 连接适配器
 ├── api/                  # 路由层 — 接收请求、调用 service、注入 RBAC
 │   ├── devices.py
 │   ├── configs.py
@@ -45,7 +45,7 @@ backend/
 
 项目混合使用两种方式——**不要混在同一个函数里**：
 
-### 原生 sqlite3（主流，用于大多数 API）
+### PostgreSQL 原生连接适配器（用于大多数 API）
 ```python
 from database import get_db_connection
 
@@ -54,7 +54,7 @@ cursor = conn.execute("SELECT * FROM devices WHERE id = ?", (device_id,))
 row = cursor.fetchone()
 conn.close()
 ```
-- `get_db_connection()` 返回 `sqlite3.Connection`，`row_factory = sqlite3.Row`。
+- `get_db_connection()` 返回 PostgreSQL 连接适配器，查询行支持名称索引。
 - 写操作后必须 `conn.commit()`，异常时 `conn.rollback()`。
 - **注意 SQLite 并发写锁**：写操作应尽快完成，避免长事务。
 
@@ -65,7 +65,7 @@ from models.models import Device, SessionLocal
 db = SessionLocal()
 device = db.query(Device).filter(Device.id == device_id).first()
 ```
-- 仅部分表有 SQLAlchemy 模型，新增表优先用原生 sqlite3 以保持一致。
+- 仅部分表有 SQLAlchemy 模型，新增持久化结构必须使用 PostgreSQL 迁移并保持事务一致性。
 
 ## 新增 API 端点步骤
 
@@ -121,7 +121,7 @@ device = db.query(Device).filter(Device.id == device_id).first()
 
 ## Service 层规范
 
-- 接收 `conn` 参数（sqlite3.Connection）和业务参数。
+- 接收 `conn` 参数（PostgreSQL 连接适配器）和业务参数。
 - 不直接导入 `get_db_connection()`，由调用方传入。
 - 不处理 HTTP 相关逻辑（status code、Response 对象）。
 - 可抛出自定义异常，由路由层捕获转换。

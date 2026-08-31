@@ -6,8 +6,8 @@ import yaml
 
 
 ROOT = Path(__file__).resolve().parents[3]
-CONTRACT = ROOT / "docs" / "knowledge-engine-v2" / "architecture" / "DB-014-RELATIONAL-JSONB-BOUNDARY.yaml"
-REPORT = ROOT / "docs" / "knowledge-engine-v2" / "architecture" / "DB-014-RELATIONAL-JSONB-BOUNDARY.md"
+CONTRACT = ROOT / "docs" / "knowledge-engine" / "architecture" / "DB-014-RELATIONAL-JSONB-BOUNDARY.yaml"
+REPORT = ROOT / "docs" / "knowledge-engine" / "architecture" / "DB-014-RELATIONAL-JSONB-BOUNDARY.md"
 M0103 = ROOT / "backend" / "database" / "migrations" / "m0103_ai_platform_tables.py"
 M0105 = ROOT / "backend" / "database" / "migrations" / "m0105_ai_security_operations_graph.py"
 M0113 = ROOT / "backend" / "database" / "migrations" / "m0113_rag_metadata_v2.py"

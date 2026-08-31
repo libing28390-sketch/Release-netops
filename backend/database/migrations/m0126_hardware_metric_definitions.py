@@ -15,14 +15,12 @@ NAME = "hardware_metric_definitions"
 
 
 def _columns(cursor, use_pg: bool) -> set[str]:
-    if use_pg:
-        cursor.execute(
-            "SELECT column_name FROM information_schema.columns "
-            "WHERE table_schema = current_schema() AND table_name = 'snmp_metric_profiles'"
-        )
-        return {str(row[0]) for row in cursor.fetchall()}
-    cursor.execute("PRAGMA table_info(snmp_metric_profiles)")
-    return {str(row[1]) for row in cursor.fetchall()}
+    cursor.execute(
+        "SELECT column_name FROM information_schema.columns "
+        "WHERE table_schema = current_schema() AND table_name = 'snmp_metric_profiles'"
+    )
+    return {str(row[0]) for row in cursor.fetchall()}
+
 
 
 def _decode(value) -> dict:
@@ -37,16 +35,10 @@ def _decode(value) -> dict:
 
 def upgrade(cursor, use_pg: bool) -> None:
     if "metric_definitions_json" not in _columns(cursor, use_pg):
-        if use_pg:
-            cursor.execute(
-                "ALTER TABLE snmp_metric_profiles "
-                "ADD COLUMN IF NOT EXISTS metric_definitions_json TEXT NOT NULL DEFAULT '{}'"
-            )
-        else:
-            cursor.execute(
-                "ALTER TABLE snmp_metric_profiles "
-                "ADD COLUMN metric_definitions_json TEXT NOT NULL DEFAULT '{}'"
-            )
+        cursor.execute(
+            "ALTER TABLE snmp_metric_profiles "
+            "ADD COLUMN IF NOT EXISTS metric_definitions_json TEXT NOT NULL DEFAULT '{}'"
+        )
 
     rows = cursor.execute(
         "SELECT id, metric_definitions_json, cpu_config_json, memory_config_json, cpu_oid, memory_oid "

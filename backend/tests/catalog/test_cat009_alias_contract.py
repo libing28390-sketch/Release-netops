@@ -7,7 +7,7 @@ import yaml
 
 
 ROOT = Path(__file__).resolve().parents[3]
-CONTRACT = ROOT / "docs" / "knowledge-engine-v2" / "architecture" / "CAT-009-ALIAS-CONTRACT.yaml"
+CONTRACT = ROOT / "docs" / "knowledge-engine" / "architecture" / "CAT-009-ALIAS-CONTRACT.yaml"
 
 
 def _record(alias_id: str, model_id: str, alias: str, kind: str, *, tenant: str = "tenant-a", status: str = "active"):

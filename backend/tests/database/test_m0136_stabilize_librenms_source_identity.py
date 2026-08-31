@@ -1,8 +1,9 @@
 from __future__ import annotations
 
-import hashlib
-import sqlite3
+from backend.tests import pg_catalog_assertions as pg_catalog
 
+import hashlib
+from backend.tests.pg_test_utils import postgresql_test_driver
 from database.migrations.m0136_stabilize_librenms_source_identity import upgrade
 
 
@@ -12,7 +13,7 @@ def _stable_source_id() -> str:
 
 
 def test_m0136_rekeys_and_retires_duplicate_active_paths() -> None:
-    conn = sqlite3.connect(":memory:")
+    conn = postgresql_test_driver.connect()
     conn.executescript(
         """
         CREATE TABLE snmp_mibs (
@@ -53,18 +54,16 @@ def test_m0136_rekeys_and_retires_duplicate_active_paths() -> None:
         [("item-old", "source-old", "old"), ("item-new", "source-new", "new")],
     )
 
-    upgrade(conn.cursor(), use_pg=False)
+    upgrade(conn.cursor(), use_pg=True)
     conn.commit()
 
     stable_id = _stable_source_id()
-    assert conn.execute(
+    assert [tuple(row) for row in conn.execute(
         "SELECT id, source_id, is_active FROM snmp_mibs ORDER BY id"
-    ).fetchall() == [("new", stable_id, 1), ("old", stable_id, 0)]
-    assert conn.execute(
+    ).fetchall()] == [("new", stable_id, 1), ("old", stable_id, 0)]
+    assert [tuple(row) for row in conn.execute(
         "SELECT mib_id FROM snmp_mib_import_items ORDER BY id"
-    ).fetchall() == [("new",), ("new",)]
-    index_names = {
-        row[1] for row in conn.execute("PRAGMA index_list('snmp_mibs')").fetchall()
-    }
+    ).fetchall()] == [("new",), ("new",)]
+    index_names = pg_catalog.index_names(conn, "snmp_mibs")
     assert "idx_snmp_mibs_librenms_path" in index_names
     conn.close()

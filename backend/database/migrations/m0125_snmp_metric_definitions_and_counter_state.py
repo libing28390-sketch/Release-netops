@@ -15,14 +15,12 @@ NAME = "snmp_metric_definitions_and_counter_state"
 
 
 def _columns(cursor, use_pg: bool) -> set[str]:
-    if use_pg:
-        cursor.execute(
-            "SELECT column_name FROM information_schema.columns "
-            "WHERE table_schema = current_schema() AND table_name = 'snmp_metric_profiles'"
-        )
-        return {str(row[0]) for row in cursor.fetchall()}
-    cursor.execute("PRAGMA table_info(snmp_metric_profiles)")
-    return {str(row[1]) for row in cursor.fetchall()}
+    cursor.execute(
+        "SELECT column_name FROM information_schema.columns "
+        "WHERE table_schema = current_schema() AND table_name = 'snmp_metric_profiles'"
+    )
+    return {str(row[0]) for row in cursor.fetchall()}
+
 
 
 def upgrade(cursor, use_pg: bool) -> None:
@@ -33,12 +31,9 @@ def upgrade(cursor, use_pg: bool) -> None:
     }.items():
         if name in existing:
             continue
-        if use_pg:
-            cursor.execute(
-                f"ALTER TABLE snmp_metric_profiles ADD COLUMN IF NOT EXISTS {name} {definition}"
-            )
-        else:
-            cursor.execute(f"ALTER TABLE snmp_metric_profiles ADD COLUMN {name} {definition}")
+        cursor.execute(
+            f"ALTER TABLE snmp_metric_profiles ADD COLUMN IF NOT EXISTS {name} {definition}"
+        )
 
     cursor.execute(
         """

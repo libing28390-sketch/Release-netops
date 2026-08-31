@@ -13,6 +13,10 @@ import {
   upsertAIModelRoute,
 } from '../../../api/ai';
 
+vi.mock('../../../contexts/AppDomainContext', () => ({
+  useCoreApp: () => ({ language: 'zh', currentUser: { role: 'Administrator' } }),
+}));
+
 vi.mock('../../../api/ai', () => ({
   createAIModel: vi.fn(),
   deleteAIModel: vi.fn(),
@@ -72,7 +76,7 @@ describe('ModelManagementTab browser key paths', () => {
   it('renders model/provider mapping and switches the default and scene route', async () => {
     const user = userEvent.setup();
     render(<ModelManagementTab />);
-    expect(await screen.findByText('DeepSeek V4 Flash')).toBeTruthy();
+    expect((await screen.findAllByText('DeepSeek V4 Flash')).length).toBeGreaterThanOrEqual(1);
     expect(screen.getAllByText('DeepSeek 主供应商').some((element) => element.tagName === 'DIV')).toBe(true);
     await user.click(screen.getByTitle('设为当前用户默认'));
     expect(updateModel).toHaveBeenCalledWith(model.id, { is_default: true });

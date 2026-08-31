@@ -1,0 +1,83 @@
+task_id: REL-010
+priority: P0
+owner: OPS+BE
+milestone: M2
+status: implemented_runbook_gate
+contract_version: v1.0
+authority: PostgreSQL
+depends_on: [REL-003, REL-005, DB-022]
+
+decision:
+  choice: layered_runtime_stop_with_database_lease_recovery
+  summary: >-
+    Emergency control is ordered from the smallest blast radius to the
+    broadest: disable one Provider, stop one tenant, enable the global AI
+    kill switch, disable V2 traffic/writes, and finally stop the reindex
+    worker.  Reindex is never paused by deleting rows or editing a private
+    cursor; the PostgreSQL lease expires and the last committed keyset batch
+    remains the recovery point.
+
+controls:
+  global_ai:
+    api: POST /api/ai/security/kill-switch
+    permission: ai.provider.manage
+    payload: '{"enabled": true, "reason": "incident:<ticket>"}'
+    stable_block_code: AI_SECURITY_KILL_SWITCH
+    database_row: ai_kill_switch(id=1)
+  tenant_ai:
+    api: POST /api/ai/security/tenant-kill-switch
+    permission: ai.security.manage
+    database_table: ai_tenant_security_controls
+  provider:
+    api: PUT /api/ai/providers/{provider_id}
+    permission: ai.provider.manage
+    disable_payload: '{"enabled": false}'
+    database_column: ai_provider.enabled
+    stable_health_code: AI_PROVIDER_DISABLED
+  knowledge_v2:
+    flags: [KNOWLEDGE_V2_ENABLED, KNOWLEDGE_V2_SHADOW_READ,
+      KNOWLEDGE_V2_ROLLOUT_PERCENT, KNOWLEDGE_V2_WRITE_ENABLED]
+    emergency_values: ["0", "0", "0", "0"]
+    action: secret_manager_update_then_application_restart
+    v1_preservation: true
+  reindex:
+    table: ai_knowledge_reindex_job
+    statuses: [queued, running, retry_wait, completed, failed, cancelled]
+    lease_table: scheduler_locks
+    lease_prefix: 'knowledge_reindex:'
+    pause_action: stop_worker_and_scheduler_then_wait_for_lease_expiry
+    checkpoint: private_scope_control.cursor_after_committed_batch
+    resume_action: restart_worker_and_invoke_existing_job_id
+
+invariants:
+  - no_provider_request_after_global_or_tenant_kill_switch
+  - disabled_provider_is_not_eligible_for_model_routing
+  - v2_disable_does_not_delete_or_mutate_v1_rows
+  - no_new_reindex_batch_after_worker_stop
+  - committed_checkpoint_is_the_only_resume_cursor
+  - lease_owner_fences_stale_worker
+  - tenant_scope_is_preserved_for_status_and_actions
+  - raw_secrets_dsns_content_and_lease_owner_are_never_logged
+
+verification:
+  runbook: docs/knowledge-engine/runbooks/REL-010-KILL-SWITCH-PAUSE-RUNBOOK.md
+  static_gate: scripts/knowledge_engine_v2_rel010_runbook_gate.py
+  focused_tests: tests/knowledge_engine_v2/test_rel010_runbook_gate.py
+  postgres_probe: read_only_transaction_schema_and_control_inventory
+  required_checks: [contract, permissions, stable_codes, v2_flags, lease_checkpoint,
+    tenant_scope, redaction, rollback, v1_preservation, postgres_authority]
+
+safety:
+  production_database_write: false
+  production_reindex_execution: false
+  external_provider_request: false
+  network_device_write: false
+  sqlite_acceptance: forbidden
+  destructive_sql_in_runbook: forbidden
+
+rollback:
+  kill_switch: authenticated_operator_disables_the_same_switch_with_reason
+  provider: restore_enabled_only_after_health_probe_and_approval
+  v2: restore_previous_flag_snapshot_then_restart_and_smoke_test
+  reindex: restart_worker_with_existing_job_id_from_committed_checkpoint
+  data: source_documents_and_v1_rows_are_never_deleted

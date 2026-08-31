@@ -20,6 +20,29 @@ def test_cat014_browse_filters_cover_vendor_family_series_model_and_version():
     assert list_product_catalog(DEFAULT_USER, software_version="V300R024C10SPC500")["total"] == 3
 
 
+def test_cat014_hierarchy_is_a_bounded_vendor_family_series_model_index():
+    result = list_product_catalog(DEFAULT_USER)
+
+    hierarchy = result["facets"]["hierarchy"]
+    assert {item["vendor_id"] for item in hierarchy} == {"cisco", "h3c", "huawei", "ruijie"}
+    assert all(set(item) == {"vendor_id", "vendor_name", "model_count", "families"} for item in hierarchy)
+
+    cisco = next(item for item in hierarchy if item["vendor_id"] == "cisco")
+    family = next(item for item in cisco["families"] if item["family_code"] == "catalyst_9300")
+    series = next(item for item in family["series"] if item["series_code"] == "c9300")
+    model = next(item for item in series["models"] if item["model_code"] == "C9300-48P")
+
+    assert cisco["model_count"] == family["model_count"] == series["model_count"] == 3
+    assert model == {
+        "product_model_id": "cisco:catalyst_9300:c9300:c9300-48p",
+        "model_code": "C9300-48P",
+        "display_name": "Catalyst C9300-48P",
+        "status": "draft",
+    }
+    assert "source_artifact" not in model
+    assert "software_scope" not in model
+
+
 def test_cat014_version_filter_is_exact_and_tenant_scoped():
     assert list_product_catalog(DEFAULT_USER, software_version="17.9")["total"] == 0
     assert list_product_catalog({"role": "Viewer", "tenant_id": "tenant-other"}, software_version="17.9.x")["total"] == 0
@@ -36,5 +59,5 @@ def test_cat014_api_contract_exposes_version_query_without_write_route():
 
     assert "software_version" in inspect.signature(api_list_catalog).parameters
     routes = {(route.path, tuple(sorted(route.methods or []))) for route in router.routes}
-    assert any(path == "/knowledge-v2/catalog" and "GET" in methods for path, methods in routes)
-    assert not any(path.rstrip("/") == "/knowledge-v2/catalog" and "POST" in methods for path, methods in routes)
+    assert any(path == "/knowledge/catalog" and "GET" in methods for path, methods in routes)
+    assert not any(path.rstrip("/") == "/knowledge/catalog" and "POST" in methods for path, methods in routes)

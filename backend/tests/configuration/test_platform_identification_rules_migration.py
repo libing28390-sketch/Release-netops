@@ -1,11 +1,10 @@
-import sqlite3
-
+from backend.tests.pg_test_utils import postgresql_test_driver
 from database.migrations.m0095_seed_core_platform_identification_rules import RULES, upgrade
 
 
 def test_core_platform_identification_migration_is_idempotent_and_driver_specific() -> None:
-    conn = sqlite3.connect(':memory:')
-    conn.row_factory = sqlite3.Row
+    conn = postgresql_test_driver.connect()
+    conn.row_factory = postgresql_test_driver.Row
     try:
         conn.execute(
             """CREATE TABLE platform_profiles (
@@ -24,9 +23,9 @@ def test_core_platform_identification_migration_is_idempotent_and_driver_specifi
             [(f'profile-{code}', code) for code in RULES],
         )
 
-        upgrade(conn, use_pg=False)
+        upgrade(conn, use_pg=True)
         first_count = conn.execute('SELECT COUNT(*) FROM platform_identification_rules').fetchone()[0]
-        upgrade(conn, use_pg=False)
+        upgrade(conn, use_pg=True)
         second_count = conn.execute('SELECT COUNT(*) FROM platform_identification_rules').fetchone()[0]
 
         assert first_count == second_count == sum(len(patterns) for _, patterns in RULES.values())

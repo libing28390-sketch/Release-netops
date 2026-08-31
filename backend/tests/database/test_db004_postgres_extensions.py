@@ -46,17 +46,9 @@ class _FakeCursor:
         raise AssertionError(f"unexpected SQL: {sql}")
 
 
-def test_sqlite_is_explicitly_not_applicable():
-    state = inspect_extensions(None, use_pg=False)
-    assert state.not_applicable is True
-    assert state.ok is True
-    assert state.installed == {}
-    assert state.missing == ()
-
-
 def test_installed_required_extensions_pass_without_create():
     cursor = _FakeCursor(installed=(("vector", "0.8.0"), ("pg_trgm", "1.6")))
-    state = ensure_required_extensions(cursor, use_pg=True)
+    state = ensure_required_extensions(cursor)
     assert state.ok is True
     assert state.missing == ()
     assert not any(sql.startswith("CREATE EXTENSION") for sql, _ in cursor.calls)
@@ -65,7 +57,7 @@ def test_installed_required_extensions_pass_without_create():
 def test_unavailable_extension_is_actionable_and_does_not_leak_secret():
     cursor = _FakeCursor(available=(("pg_trgm", "1.6"),))
     with pytest.raises(MissingPostgreSQLExtension) as caught:
-        ensure_required_extensions(cursor, use_pg=True)
+        ensure_required_extensions(cursor)
     error = caught.value
     assert error.code == "POSTGRES_EXTENSION_MISSING"
     assert error.extension == "vector"
@@ -76,7 +68,7 @@ def test_unavailable_extension_is_actionable_and_does_not_leak_secret():
 
 def test_available_extension_is_created_and_rechecked():
     cursor = _FakeCursor(available=(("vector", "0.8.0"), ("pg_trgm", "1.6")))
-    state = ensure_required_extensions(cursor, use_pg=True)
+    state = ensure_required_extensions(cursor)
     assert state.ok is True
     assert set(state.installed) == {"vector", "pg_trgm"}
     create_calls = [sql for sql, _ in cursor.calls if sql.startswith("CREATE EXTENSION")]
@@ -89,7 +81,7 @@ def test_install_failure_is_stable_and_secret_free():
         fail_create=("vector",),
     )
     with pytest.raises(ExtensionInstallError) as caught:
-        ensure_required_extensions(cursor, use_pg=True)
+        ensure_required_extensions(cursor)
     assert caught.value.code == "POSTGRES_EXTENSION_INSTALL_FAILED"
     assert caught.value.extension == "vector"
     assert "password" not in str(caught.value).lower()
@@ -99,7 +91,7 @@ def test_install_failure_is_stable_and_secret_free():
 def test_extension_names_are_allowlisted_and_migration_no_longer_swallows_errors():
     cursor = _FakeCursor(available=(("vector", "0.8.0"),))
     with pytest.raises(ValueError):
-        inspect_extensions(cursor, use_pg=True, names=("vector; DROP DATABASE",))
+        inspect_extensions(cursor, names=("vector; DROP DATABASE",))
     source = MIGRATION.read_text(encoding="utf-8")
     assert "ensure_required_extensions" in source
     assert "except Exception:\n            pass" not in source

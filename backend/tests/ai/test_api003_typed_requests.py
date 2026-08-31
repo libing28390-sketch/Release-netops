@@ -6,7 +6,7 @@ from pathlib import Path
 import pytest
 from pydantic import ValidationError
 
-from api.knowledge_v2_contracts import (
+from api.knowledge_contracts import (
     AttachmentCheckRequest,
     DiagnosticContext,
     DiagnosticPlanPayload,

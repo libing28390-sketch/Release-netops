@@ -18,7 +18,7 @@ from ai.schemas.model import (
     AIModelRouteResponse,
     AIModelUpdate,
 )
-from api.knowledge_v2_contracts import DefaultModelRequest, ModelAccessRequest
+from api.knowledge_contracts import DefaultModelRequest, ModelAccessRequest
 from ai.security.tokenization import opaque_user_id
 
 router = APIRouter(prefix="/models", tags=["AI Models & Routes"])

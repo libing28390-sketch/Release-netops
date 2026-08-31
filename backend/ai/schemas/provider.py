@@ -101,6 +101,15 @@ class AIProviderResponse(AIProviderBase):
     allowed_data_classification: str = "PUBLIC"
 
 
+class AIProviderPageResponse(BaseModel):
+    items: list[AIProviderResponse]
+    total: int
+    page: int
+    page_size: int
+    total_pages: int
+    facets: dict[str, list[str]] = Field(default_factory=dict)
+
+
 class AIProviderTestResponse(BaseModel):
     success: bool
     latency_ms: int

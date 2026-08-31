@@ -1,4 +1,4 @@
-"""HTTP contract for the ING-015 V2 document lifecycle boundary."""
+"""HTTP contract for the V1 document lifecycle boundary."""
 
 from __future__ import annotations
 
@@ -12,7 +12,7 @@ from services.document_lifecycle_service import DocumentLifecycleError, get_docu
 from services.document_version_service import DocumentVersionError, compare_document_versions, list_document_versions
 
 
-router = APIRouter(prefix="/knowledge-v2/documents", tags=["knowledge-v2-document-lifecycle"])
+router = APIRouter(prefix="/knowledge/documents", tags=["knowledge-document-lifecycle"])
 
 
 class DocumentLifecycleRequest(BaseModel):

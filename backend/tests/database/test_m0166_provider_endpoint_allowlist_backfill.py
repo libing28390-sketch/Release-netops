@@ -1,11 +1,10 @@
 import json
-import sqlite3
-
+from backend.tests.pg_test_utils import postgresql_test_driver
 from database.migrations.m0166_provider_endpoint_allowlist_backfill import upgrade
 
 
 def test_m0166_backfills_only_empty_cloud_endpoint_allowlists():
-    conn = sqlite3.connect(":memory:")
+    conn = postgresql_test_driver.connect()
     conn.execute(
         "CREATE TABLE ai_provider (id TEXT PRIMARY KEY, provider_type TEXT, base_url TEXT, approved_endpoint_patterns_json TEXT)"
     )
@@ -17,7 +16,7 @@ def test_m0166_backfills_only_empty_cloud_endpoint_allowlists():
             ("local", "ollama", "http://127.0.0.1:11434/v1", "[]"),
         ],
     )
-    upgrade(conn, use_pg=False)
+    upgrade(conn, use_pg=True)
     assert conn.execute("SELECT approved_endpoint_patterns_json FROM ai_provider WHERE id = 'cloud'").fetchone()[0] == '["https://api.deepseek.com"]'
     assert conn.execute("SELECT approved_endpoint_patterns_json FROM ai_provider WHERE id = 'configured'").fetchone()[0] == '["https://api.openai.com/v1"]'
     assert conn.execute("SELECT approved_endpoint_patterns_json FROM ai_provider WHERE id = 'local'").fetchone()[0] == "[]"

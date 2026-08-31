@@ -116,6 +116,5 @@ def test_ing015_api_contract_exposes_lifecycle_routes():
     from api.knowledge_documents import router
 
     routes = {(route.path, tuple(sorted(route.methods or ()))) for route in router.routes}
-    assert any(path.endswith("/knowledge-v2/documents/{document_id}/lifecycle") and "GET" in methods for path, methods in routes)
-    assert any(path.endswith("/knowledge-v2/documents/{document_id}/lifecycle") and "POST" in methods for path, methods in routes)
-
+    assert any(path.endswith("/knowledge/documents/{document_id}/lifecycle") and "GET" in methods for path, methods in routes)
+    assert any(path.endswith("/knowledge/documents/{document_id}/lifecycle") and "POST" in methods for path, methods in routes)

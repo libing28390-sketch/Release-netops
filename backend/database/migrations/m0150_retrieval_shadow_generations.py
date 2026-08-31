@@ -17,12 +17,9 @@ NAME = "retrieval_shadow_generations"
 
 
 def upgrade(cursor, use_pg: bool) -> None:
-    if not use_pg:
-        # The V2 retrieval index contract is PostgreSQL-only.  Do not create a
-        # misleading text-only shadow index on SQLite compatibility databases.
-        return
+    pass
 
-    ensure_required_extensions(cursor, use_pg=True, names=("vector", "pg_trgm"), create_missing=True)
+    ensure_required_extensions(cursor, names=("vector", "pg_trgm"), create_missing=True)
 
     cursor.execute(
         """

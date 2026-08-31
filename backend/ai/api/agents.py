@@ -11,7 +11,7 @@ from pydantic import BaseModel, Field
 from database.core import get_db_connection
 from ai.security.permissions import ROLE_AI_PERMISSIONS, require_ai_permission
 from ai.tools.registry import tool_registry
-from ai.agents.runner import agent_runner
+from ai.agents.runner import AgentNotFoundError, agent_runner
 from ai.security.tokenization import opaque_user_id
 
 router = APIRouter(prefix="/agents", tags=["AI Agents & Tools"])
@@ -36,16 +36,19 @@ async def run_agent(req: AgentRunRequest, user=Depends(require_ai_permission("ai
     """Execute Multi-step READ_ONLY Autonomous Agent Loop."""
     user_id = str(user.get("username") or "user")
     tenant_id = str(user.get("tenant_id") or "tenant-default")
-    return await agent_runner.run(
-        agent_code=req.agent_code,
-        question=req.question,
-        max_steps=req.max_steps,
-        max_tool_calls=req.max_tool_calls,
-        timeout_seconds=req.timeout_seconds,
-        user_id=user_id,
-        tenant_id=tenant_id,
-        permissions=set(user.get("permissions") or ROLE_AI_PERMISSIONS.get(user.get("role", "Viewer"), set())),
-    )
+    try:
+        return await agent_runner.run(
+            agent_code=req.agent_code,
+            question=req.question,
+            max_steps=req.max_steps,
+            max_tool_calls=req.max_tool_calls,
+            timeout_seconds=req.timeout_seconds,
+            user_id=user_id,
+            tenant_id=tenant_id,
+            permissions=set(user.get("permissions") or ROLE_AI_PERMISSIONS.get(user.get("role", "Viewer"), set())),
+        )
+    except AgentNotFoundError as exc:
+        raise HTTPException(status_code=404, detail=str(exc)) from exc
 
 
 @router.post("/runs/{run_id}/cancel")

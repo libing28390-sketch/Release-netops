@@ -1,4 +1,4 @@
-"""Deterministic Query Normalizer contract for Knowledge Engine V2.
+"""Deterministic Query Normalizer contract for the Knowledge Engine.
 
 The normalizer is deliberately conservative.  It extracts only evidence that
 is present in the operator query; absent entities remain ``None`` and are never
