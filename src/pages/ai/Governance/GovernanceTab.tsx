@@ -47,7 +47,7 @@ export const GovernanceTab: React.FC = () => {
   };
 
   return (
-    <div className="space-y-6">
+    <div className="w-full space-y-6 pb-8">
       <div>
         <h2 className="text-xl font-bold text-gray-900 dark:text-white flex items-center gap-2">
           <ShieldCheck className="w-6 h-6 text-indigo-500" />

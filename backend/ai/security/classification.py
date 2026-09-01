@@ -94,7 +94,12 @@ PHONE_RE = re.compile(r"(?<!\w)(?:\+?\d[\d ()-]{7,18}\d)(?!\w)")
 HOSTNAME_RE = re.compile(
     r"(?<![\w.-])(?=[A-Za-z0-9.-]{3,253}(?![\w.-]))"
     r"(?:[A-Za-z0-9](?:[A-Za-z0-9-]{0,61}[A-Za-z0-9])?\.)+[A-Za-z]{2,63}|"
-    r"[A-Za-z]{2,}[A-Za-z0-9]*(?:-[A-Za-z0-9]+)+(?:\d+)?(?![\w.-])"
+    # A bare hyphenated English phrase (for example ``read-only`` or
+    # ``natural-language``) is common in system prompts and is not evidence
+    # of a network hostname.  Keep short hostname detection for the usual
+    # device-style form with a numeric segment (``sw-core01``), while dotted
+    # DNS names remain covered by the branch above.
+    r"[A-Za-z]{2,}[A-Za-z0-9]*(?:-[A-Za-z0-9]*\d[A-Za-z0-9]*)+(?![\w.-])"
 )
 
 PROMPT_INJECTION_RE = re.compile(

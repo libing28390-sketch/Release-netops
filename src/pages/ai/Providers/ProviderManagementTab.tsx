@@ -115,6 +115,10 @@ const getTestDescription = (result: ProviderTestResult, tx: AIAdminText) => {
     return tx('ai.provider.test.modelNotFound');
   }
 
+  if (result.error_code === 'AI_PROVIDER_UNSUPPORTED') {
+    return tx('ai.provider.test.unsupported');
+  }
+
   if (result.error_code === 'AI_NETWORK_ERROR') {
     return tx('ai.provider.test.network');
   }
@@ -414,7 +418,7 @@ export const ProviderManagementTab: React.FC = () => {
   };
 
   return (
-    <div className="mx-auto w-full max-w-[1500px] space-y-5 pb-8">
+    <div className="w-full space-y-5 pb-8">
       <section className="relative overflow-hidden rounded-[26px] border border-indigo-100/80 bg-gradient-to-br from-white via-indigo-50/70 to-violet-100/70 px-5 py-6 shadow-sm shadow-indigo-100/50 dark:border-indigo-900/60 dark:from-slate-900 dark:via-indigo-950/50 dark:to-slate-900 dark:shadow-none sm:px-7 sm:py-7">
         <div className="pointer-events-none absolute -right-20 -top-24 h-64 w-64 rounded-full bg-indigo-300/20 blur-3xl dark:bg-indigo-500/10" />
         <div className="pointer-events-none absolute -bottom-32 left-1/3 h-64 w-64 rounded-full bg-violet-300/20 blur-3xl dark:bg-violet-500/10" />
@@ -668,7 +672,7 @@ export const ProviderManagementTab: React.FC = () => {
                     <span className="inline-flex items-center gap-1 text-[10px] font-semibold text-emerald-600 dark:text-emerald-400"><LockKeyhole className="h-3 w-3" />AES-256-GCM</span>
                   </div>
                   <div className="relative">
-                    <input id="provider-api-key" type={showApiKey ? 'text' : 'password'} required={providerType !== 'ollama' && providerType !== 'local'} placeholder={providerType === 'ollama' || providerType === 'local' ? tx('ai.provider.editor.apiKeyOptional') : 'sk-...'} value={apiKey} onChange={(e) => setApiKey(e.target.value)} className="w-full rounded-xl border border-slate-200 bg-white px-3.5 py-2.5 pr-11 font-mono text-sm text-slate-900 outline-none transition placeholder:text-slate-400 focus:border-indigo-500 focus:ring-4 focus:ring-indigo-500/10 dark:border-slate-700 dark:bg-slate-950 dark:text-white" />
+                    <input id="provider-api-key" type={showApiKey ? 'text' : 'password'} required={providerType !== 'ollama' && providerType !== 'local' && !editingId} placeholder={editingId ? tx('ai.provider.editor.keyOptionalOnEdit') : providerType === 'ollama' || providerType === 'local' ? tx('ai.provider.editor.apiKeyOptional') : 'sk-...'} value={apiKey} onChange={(e) => setApiKey(e.target.value)} className="w-full rounded-xl border border-slate-200 bg-white px-3.5 py-2.5 pr-11 font-mono text-sm text-slate-900 outline-none transition placeholder:text-slate-400 focus:border-indigo-500 focus:ring-4 focus:ring-indigo-500/10 dark:border-slate-700 dark:bg-slate-950 dark:text-white" />
                     <button
                       type="button"
                       onClick={() => setShowApiKey((visible) => !visible)}

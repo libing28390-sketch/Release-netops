@@ -175,7 +175,7 @@ export const ModelManagementTab: React.FC = () => {
   );
 
   return (
-    <div className="space-y-8">
+    <div className="w-full space-y-6 pb-8">
       {/* Models Section */}
       <div className="space-y-4">
         <div className="flex items-center justify-between">

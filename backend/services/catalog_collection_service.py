@@ -13,7 +13,7 @@ import copy
 import re
 import threading
 import uuid
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from typing import Any, Callable
 
 from core.rbac import authorize_resource
@@ -52,6 +52,28 @@ def _now() -> str:
     # Keep microseconds so two rapid mutations cannot share an optimistic
     # concurrency token.
     return datetime.now(timezone.utc).isoformat(timespec="microseconds").replace("+00:00", "Z")
+
+
+def _next_timestamp(previous: str) -> str:
+    """Return a strictly newer optimistic-concurrency token.
+
+    A create followed immediately by an update can observe the same wall-clock
+    microsecond on platforms whose clock resolution is coarser than the
+    formatter.  CAS tokens must still change in that case.
+    """
+
+    current = _now()
+    try:
+        previous_dt = datetime.fromisoformat(str(previous).replace("Z", "+00:00"))
+        current_dt = datetime.fromisoformat(current.replace("Z", "+00:00"))
+        if current_dt <= previous_dt:
+            current_dt = previous_dt + timedelta(microseconds=1)
+            return current_dt.isoformat(timespec="microseconds").replace("+00:00", "Z")
+    except (TypeError, ValueError):
+        # Existing malformed legacy state is not a reason to reject a new
+        # mutation; the next valid timestamp repairs the CAS token.
+        pass
+    return current
 
 
 def _tenant(user: dict[str, Any]) -> str:
@@ -273,7 +295,7 @@ def update_custom_collection(
             if status not in COLLECTION_STATUSES:
                 raise CatalogCollectionError("COLLECTION_STATUS_INVALID", "status is invalid")
             candidate["status"] = status
-        candidate["updated_at"] = _now()
+        candidate["updated_at"] = _next_timestamp(row["updated_at"])
         candidate["updated_by"] = _actor(user)
         _audit(user, "update", candidate, before_status=before_status, writer=audit_writer)
         state = _state(tenant_id)
@@ -301,7 +323,7 @@ def archive_custom_collection(
         candidate = copy.deepcopy(row)
         before_status = candidate["status"]
         candidate["status"] = "archived"
-        candidate["updated_at"] = _now()
+        candidate["updated_at"] = _next_timestamp(row["updated_at"])
         candidate["updated_by"] = _actor(user)
         _audit(user, "archive", candidate, before_status=before_status, writer=audit_writer)
         state = _state(tenant_id)

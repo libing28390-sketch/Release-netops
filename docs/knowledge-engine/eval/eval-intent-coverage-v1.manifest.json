@@ -30,8 +30,8 @@
     "ssh": 2,
     "vlan": 2
   },
-  "dataset_sha256": "132f36c7b2b0534372b44907284c036f751e4a4b21c8370f03ef7d51212261e9",
-  "coverage_sha256": "2e2cdaa5da92487954ea41645bb4c237ae23d4d9869092ce02bc055b2b9e64dc",
+  "dataset_sha256": "800c775cfb0371ef4751c7234de00c74cecc5d823b3f019d7631dcaeb20248c6",
+  "coverage_sha256": "33dce858bfc5f9b7db74cf0e486e8c9a796f6006c08d0fae6d1c5fa070788179",
   "database": "none",
   "sqlite": "not_used",
   "external_network": "not_used",

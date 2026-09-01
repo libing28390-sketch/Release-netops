@@ -94,6 +94,58 @@ def test_directory_category_alias_is_normalized_to_semantic_category(monkeypatch
     assert result["items"][0]["document_category"] == "01_product"
 
 
+def test_directory_filter_uses_semantic_projection_for_legacy_rows(monkeypatch):
+    connection = _connection()
+    connection.execute(
+        """
+        INSERT INTO ai_document (
+            id, knowledge_base_id, name, source, vendor, platform, status,
+            knowledge_source_type, tenant_id, acl_json, source_trust_level,
+            metadata_json, product_family, product_series, product_model,
+            os_family, software_release, feature_domain, document_category,
+            created_at, updated_at
+        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+        """,
+        (
+            "doc-h3c-legacy", "kb-a", "H3C legacy product", "upload", "H3C", "h3c_comware",
+            "active", "official_vendor", "tenant-a", "{}", "official", "{}", "Comware 7",
+            "S5130S", "S5130S-28P-EI", "Comware 7", "V7", "switching", "hardware",
+            "2026-08-14", "2026-08-14",
+        ),
+    )
+    connection.execute(
+        """
+        INSERT INTO ai_document (
+            id, knowledge_base_id, name, source, vendor, platform, status,
+            knowledge_source_type, tenant_id, acl_json, source_trust_level,
+            metadata_json, product_family, product_series, product_model,
+            os_family, software_release, feature_domain, document_category,
+            created_at, updated_at
+        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+        """,
+        (
+            "doc-h3c-custom", "kb-a", "H3C custom product", "upload", "H3C", "h3c_comware",
+            "active", "official_vendor", "tenant-a", "{}", "official",
+            '{"knowledge_directory_path":"custom/h3c"}', "Comware 7", "S5130S",
+            "S5130S-28P-EI", "Comware 7", "V7", "switching", "hardware",
+            "2026-08-13", "2026-08-13",
+        ),
+    )
+    monkeypatch.setattr(knowledge_service_module, "get_db_connection", lambda: connection)
+
+    result = knowledge_service_module.KnowledgeService().list_documents(
+        tenant_id="tenant-a",
+        directory_path="01_product/h3c",
+    )
+
+    assert {item["id"] for item in result["items"]} == {"doc-h3c-legacy"}
+    facets = knowledge_service_module.KnowledgeService().list_document_facets(
+        tenant_id="tenant-a",
+        directory_path="01_product/h3c",
+    )
+    assert facets["vendors"] == [{"value": "H3C", "count": 1}]
+
+
 def test_product_hierarchy_facets_are_bounded_and_tenant_scoped(monkeypatch):
     connection = _connection()
     monkeypatch.setattr(knowledge_service_module, "get_db_connection", lambda: connection)
@@ -106,7 +158,42 @@ def test_product_hierarchy_facets_are_bounded_and_tenant_scoped(monkeypatch):
     assert facets["vendors"] == [{"value": "Huawei", "count": 1}]
     assert facets["families"] == [{"value": "CloudEngine", "count": 1}]
     assert facets["series"] == [{"value": "CE6800", "count": 1}]
+    assert facets["unknown_count"] == 0
     assert "kb_import" not in json.dumps(facets, ensure_ascii=False)
+
+    vendor_facets = knowledge_service_module.KnowledgeService().list_document_facets(
+        tenant_id="tenant-a",
+        vendor="Huawei",
+    )
+    assert vendor_facets["vendors"] == [{"value": "Huawei", "count": 1}]
+    assert vendor_facets["families"] == [{"value": "CloudEngine", "count": 1}]
+    assert vendor_facets["series"] == [{"value": "CE6800", "count": 1}]
+
+
+def test_product_hierarchy_facets_group_incomplete_metadata_once(monkeypatch):
+    connection = _connection()
+    connection.execute(
+        """
+        INSERT INTO ai_document (
+            id, knowledge_base_id, name, source, vendor, platform, status,
+            knowledge_source_type, tenant_id, acl_json, source_trust_level,
+            metadata_json, product_family, product_series, product_model,
+            os_family, software_release, feature_domain, document_category,
+            created_at, updated_at
+        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+        """,
+        (
+            "doc-incomplete", "kb-a", "Legacy document", "upload", "UNKNOWN", "", "active",
+            "official_vendor", "tenant-a", "{}", "official", "{}", "", None, None,
+            None, None, None, "01_product", "2026-08-14", "2026-08-14",
+        ),
+    )
+    monkeypatch.setattr(knowledge_service_module, "get_db_connection", lambda: connection)
+
+    facets = knowledge_service_module.KnowledgeService().list_document_facets(tenant_id="tenant-a")
+
+    assert facets["unknown_count"] == 1
+    assert all(item["value"].upper() != "UNKNOWN" for key in ("vendors", "families", "series") for item in facets[key])
 
 
 def test_official_and_enterprise_scopes_are_server_side(monkeypatch):

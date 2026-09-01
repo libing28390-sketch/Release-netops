@@ -34,6 +34,12 @@ def test_named_classification_matrix_is_stable():
     assert action_for(DataLevel.L4_PROHIBITED) == "BLOCK"
 
 
+def test_hyphenated_prompt_prose_is_not_misclassified_as_a_hostname():
+    prose = "read-only natural-language high-risk intent.v1"
+    assert not any(item.category == "hostname" for item in classify_text(prose))
+    assert any(item.category == "hostname" for item in classify_text("sw-core01"))
+
+
 @pytest.mark.parametrize(
     ("sample", "category"),
     [

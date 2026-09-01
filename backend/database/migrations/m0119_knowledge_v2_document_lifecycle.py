@@ -38,7 +38,8 @@ _COLUMNS = {
 
 def _table_columns(cursor, table: str, use_pg: bool) -> set[str]:
     cursor.execute(
-        "SELECT column_name FROM information_schema.columns WHERE table_name = %s",
+        "SELECT column_name FROM information_schema.columns "
+        "WHERE table_schema = current_schema() AND table_name = %s",
         (table,),
     )
     return {str(row[0]) for row in cursor.fetchall()}

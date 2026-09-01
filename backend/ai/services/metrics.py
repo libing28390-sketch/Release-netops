@@ -32,6 +32,7 @@ class AIMetrics:
         self.provider_costs: defaultdict[str, float] = defaultdict(float)
         self.provider_limits = Counter()
         self.fallbacks = Counter()
+        self.intent = Counter()
         self.retrieval = Counter()
         self.clarification = Counter()
         # Import/Reindex operational signals intentionally contain only
@@ -108,6 +109,30 @@ class AIMetrics:
         key = f"{str(scene or 'unknown')[:64]}:{str(primary_provider_id or 'unknown')[:96]}:{str(fallback_model_id or 'unknown')[:128]}:{str(status or 'unknown')[:24]}"
         with self._lock:
             self.fallbacks[key] += 1
+
+    def intent_observed(self, status: str, intent: str | None = None) -> None:
+        """Record low-cardinality intent parser outcomes without payloads."""
+
+        allowed_statuses = {
+            "deterministic",
+            "llm_success",
+            "schema_retry_started",
+            "schema_retry_succeeded",
+            "schema_retry_failed",
+            "provider_error",
+        }
+        normalized_status = str(status or "unknown").strip().lower()
+        if normalized_status not in allowed_statuses:
+            normalized_status = "unknown"
+        normalized_intent = str(intent or "unknown").strip().lower()
+        if normalized_intent not in {
+            "asset_analysis", "device_search", "ip_location", "mac_location",
+            "alarm_search", "config_search", "troubleshooting", "general_qa",
+            "knowledge", "unknown",
+        }:
+            normalized_intent = "unknown"
+        with self._lock:
+            self.intent[f"{normalized_status}:{normalized_intent}"] += 1
 
     def retrieval_observed(
         self,
@@ -241,6 +266,7 @@ class AIMetrics:
                 "providers": providers,
                 "limits": dict(self.provider_limits),
                 "fallbacks": dict(self.fallbacks),
+                "intent": dict(self.intent),
                 "retrieval": {
                     "queries": int(self.retrieval.get("queries", 0)),
                     "no_match": int(self.retrieval.get("no_match", 0)),

@@ -17,8 +17,12 @@ _db_initialized = False
 
 def _table_columns(cursor, table_name: str) -> set[str]:
     """Return PostgreSQL column names for *table_name*."""
+    # The application and PostgreSQL test driver both use search_path-scoped
+    # schemas.  Without the schema predicate, a same-named table in public (or
+    # another isolated test schema) can make bootstrap skip a required column.
+    where = "table_schema = current_schema() AND " if _USE_PG else ""
     cursor.execute(
-        "SELECT column_name FROM information_schema.columns WHERE table_name = %s",
+        f"SELECT column_name FROM information_schema.columns WHERE {where}table_name = %s",
         (table_name,),
     )
     return {row[0] for row in cursor.fetchall()}
@@ -37,7 +41,16 @@ def init_db():
     conn = get_db_connection()
     try:
         if _USE_PG and hasattr(conn, 'autocommit'):
-            conn.autocommit = True
+            try:
+                conn.autocommit = True
+            except Exception as autocommit_error:
+                # A transaction-scoped PostgreSQL test connection may already
+                # have an active savepoint.  DDL remains transactional and the
+                # idempotent bootstrap can safely run inside that boundary;
+                # never hide unrelated connection failures.
+                if "transaction" not in str(autocommit_error).lower():
+                    raise
+                logger.debug("Keeping the existing PostgreSQL transaction for database bootstrap")
         
         os.makedirs(os.path.join(PROJECT_ROOT, 'data', 'pam_recordings'), exist_ok=True)
         os.makedirs(os.path.join(PROJECT_ROOT, 'data', 'change_order_attachments'), exist_ok=True)

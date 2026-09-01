@@ -216,6 +216,8 @@ class KnowledgeDirectoryRenameRequest(StrictContract):
 
 
 class RetrievalFilters(StrictContract):
+    knowledge_scope: Literal["all", "official", "enterprise"] | None = Field(default=None)
+    directory_path: str | None = Field(default=None, max_length=512)
     vendor: str | None = Field(default=None, max_length=128)
     product_family: str | None = Field(default=None, max_length=256)
     product_series: str | None = Field(default=None, max_length=256)

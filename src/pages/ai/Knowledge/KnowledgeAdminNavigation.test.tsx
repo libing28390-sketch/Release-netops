@@ -7,16 +7,16 @@ import KnowledgeAdminNavigation from './KnowledgeAdminNavigation';
 describe('KnowledgeAdminNavigation', () => {
   afterEach(() => cleanup());
 
-  it('uses Chinese-first labels and explains all knowledge administration views', () => {
+  it('uses compact Chinese-first labels and keeps view guidance in tooltips', () => {
     render(<KnowledgeAdminNavigation activeView="documents" onChange={vi.fn()} />);
 
     expect(screen.getByText('文档与版本')).toBeTruthy();
     expect(screen.getByText('来源与更新')).toBeTruthy();
     expect(screen.getByText('基线自检')).toBeTruthy();
     expect(screen.getByText('检索诊断')).toBeTruthy();
-    expect(screen.getByText('校验厂商官网并监控来源更新')).toBeTruthy();
-    expect(screen.getByText('用固定夹具检查检索规则是否回退')).toBeTruthy();
-    expect(screen.getByText('查看一次检索为何命中或未命中')).toBeTruthy();
+    expect(screen.getByRole('button', { name: /来源与更新/ }).getAttribute('title')).toContain('校验厂商官网并监控来源更新');
+    expect(screen.getByRole('button', { name: /基线自检/ }).getAttribute('title')).toContain('用固定夹具检查检索规则是否回退');
+    expect(screen.getByRole('button', { name: /检索诊断/ }).getAttribute('title')).toContain('查看一次检索为何命中或未命中');
   });
 
   it('announces the selected function and requests a view change', async () => {
@@ -29,7 +29,7 @@ describe('KnowledgeAdminNavigation', () => {
 
     rerender(<KnowledgeAdminNavigation activeView="evaluation" onChange={onChange} />);
     expect(screen.getByText('当前：基线自检')).toBeTruthy();
-    expect(screen.getByText(/它不读取当前租户文档/)).toBeTruthy();
+    expect(screen.getByRole('button', { name: /基线自检/ }).getAttribute('title')).toContain('它不读取当前租户文档');
     expect(screen.getByRole('button', { name: /基线自检/ }).getAttribute('aria-pressed')).toBe('true');
   });
 });

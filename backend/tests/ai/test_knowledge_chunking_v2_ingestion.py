@@ -1,4 +1,6 @@
 import json
+import json
+
 from backend.tests.pg_test_utils import postgresql_test_driver
 from ai.services import knowledge_service as knowledge_service_module
 
@@ -88,3 +90,5 @@ def test_add_document_persists_v2_parent_child_metadata(monkeypatch):
     assert all(row[2] for row in children)
     assert all("vendor: H3C" in row[4] for row in children)
     assert all(json.loads(row[5]) for row in rows)
+    metadata = connection.execute("SELECT metadata_json FROM ai_document").fetchone()[0]
+    assert json.loads(str(metadata))["knowledge_directory_path"] == "01_product/h3c"

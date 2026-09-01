@@ -71,7 +71,13 @@ HIGH_FREQUENCY_METADATA_FIELDS = (
     "verification_level",
     "rag_priority",
     "status",
+    "metadata_governance_status",
+    "metadata_governance_reason",
 )
+
+METADATA_GOVERNANCE_READY = "ready"
+METADATA_GOVERNANCE_PENDING_REVIEW = "pending_review"
+_TAXONOMY_FIELDS = ("vendor", "product_family", "product_series")
 
 # These values belong to the server-owned document/ACL boundary.  They may
 # remain on the parent row for authorization, but must never be copied into a
@@ -215,6 +221,8 @@ def validate_metadata(
     vendor = str(result.get("vendor") or "").strip()
     if vendor:
         result["vendor"] = canonical_vendor(vendor)
+    if result.get("feature"):
+        result["feature"] = canonical_feature(result["feature"])
 
     root, directory_vendor = _first_path_parts(directory_path)
     expected_category = ROOT_CATEGORY_MAP.get(root or "")
@@ -252,13 +260,85 @@ def canonical_vendor(value: Any) -> str:
     return {
         "huawei": "Huawei",
         "华为": "Huawei",
+        "华为技术": "Huawei",
+        "huawei technologies": "Huawei",
         "h3c": "H3C",
+        "华三": "H3C",
+        "新华三": "H3C",
         "cisco": "Cisco",
         "思科": "Cisco",
+        "思科系统": "Cisco",
         "ruijie": "Ruijie",
         "锐捷": "Ruijie",
+        "锐捷网络": "Ruijie",
         "all": "all",
     }.get(normalized, str(value or "").strip())
+
+
+_FEATURE_ALIASES = {
+    "ospf": {"ospf", "tospf", "开放式最短路径优先"},
+    "bgp": {"bgp", "边界网关协议"},
+    "arp": {"arp", "地址解析"},
+    "vlan": {"vlan", "虚拟局域网"},
+    "stp": {"stp", "生成树"},
+    "access_port": {"access port", "access-port", "接入口", "接入端口"},
+    "trunk": {"trunk", "中继端口", "trunk端口"},
+    "lacp": {"lacp", "eth-trunk", "etherchannel", "bridge-aggregation", "链路聚合"},
+    "loopback": {"loopback", "环回接口", "环回口"},
+    "static_route": {"static route", "static-route", "静态路由", "ip route-static"},
+    "ntp": {"ntp", "网络时间协议"},
+    "snmp": {"snmp", "snmpv3", "简单网络管理协议"},
+    "ssh": {"ssh", "stelnet", "secure shell", "安全登录"},
+    "vrrp": {"vrrp", "虚拟路由器冗余"},
+    "lldp": {"lldp", "链路层发现"},
+    "evpn": {"evpn"},
+    "vxlan": {"vxlan"},
+    "acl": {"acl", "访问控制列表"},
+}
+
+
+def canonical_feature(value: Any) -> str:
+    normalized = str(value or "").strip().lower()
+    for canonical, aliases in _FEATURE_ALIASES.items():
+        if normalized in aliases:
+            return canonical
+    return str(value or "").strip()
+
+
+def normalize_facet_value(value: Any) -> str:
+    """Return a displayable facet or empty for values requiring governance."""
+
+    normalized = str(value or "").strip()
+    if not normalized or normalized.upper() in {"UNKNOWN", "未分类", "未识别", "ALL"}:
+        return ""
+    return canonical_vendor(normalized)
+
+
+def metadata_governance(metadata: Mapping[str, Any], *, name: str | None = None) -> tuple[str, str]:
+    """Classify whether a document has enough taxonomy evidence for RAG.
+
+    Missing taxonomy is not a reason to fabricate a vendor or product family.
+    It is kept visible for administrators, but excluded from retrieval until a
+    reviewer supplies the missing evidence.  System registry documents are
+    deliberately exempt because they are already excluded from RAG for a
+    separate reason.
+    """
+
+    if is_system_registry_document(name, metadata):
+        return METADATA_GOVERNANCE_READY, ""
+
+    missing: list[str] = []
+    for field in _TAXONOMY_FIELDS:
+        value = str(metadata.get(field) or "").strip()
+        normalized = value.upper()
+        if not value or normalized in {"UNKNOWN", "未分类", "未识别"} or (field == "vendor" and normalized == "ALL"):
+            missing.append(field)
+    if not missing:
+        return METADATA_GOVERNANCE_READY, ""
+    return (
+        METADATA_GOVERNANCE_PENDING_REVIEW,
+        "missing_taxonomy_fields:" + ",".join(missing),
+    )
 
 
 def directory_metadata_for_document(document_category: Any, vendor: Any) -> dict[str, Any]:

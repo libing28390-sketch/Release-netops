@@ -37,7 +37,8 @@ DOCUMENT_SUMMARY_FIELDS: tuple[str, ...] = (
     "product_series", "product_model", "os_family", "os_generation",
     "software_train", "software_release", "feature_domain", "feature",
     "subfeature", "risk_level", "verification_level", "rag_priority",
-    "metadata_parse_status", "exclude_from_rag", "status",
+    "metadata_parse_status", "metadata_governance_status", "metadata_governance_reason",
+    "exclude_from_rag", "status",
     "knowledge_source_type", "tenant_id", "acl", "source_trust_level",
     "created_at", "chunk_count",
 )

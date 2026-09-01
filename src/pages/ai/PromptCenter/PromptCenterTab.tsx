@@ -404,7 +404,7 @@ export const PromptCenterTab: React.FC = () => {
   const emptySearchResult = !loading && total > 0 && prompts.length === 0;
 
   return (
-    <div className="mx-auto w-full max-w-[1500px] space-y-5 pb-8">
+    <div className="w-full space-y-5 pb-8">
       <section className="relative overflow-hidden rounded-[26px] border border-violet-100/80 bg-gradient-to-br from-white via-violet-50/70 to-indigo-100/70 px-5 py-6 shadow-sm shadow-violet-100/50 dark:border-violet-900/60 dark:from-slate-900 dark:via-violet-950/40 dark:to-slate-900 dark:shadow-none sm:px-7 sm:py-7">
         <div className="relative flex flex-col justify-between gap-6 xl:flex-row xl:items-center"><div className="max-w-4xl">
           <div className="mb-3 inline-flex items-center gap-2 rounded-full border border-violet-200/80 bg-white/70 px-3 py-1 text-[11px] font-bold uppercase tracking-[0.18em] text-violet-600 dark:border-violet-800 dark:bg-violet-950/50 dark:text-violet-300"><Sparkles className="h-3.5 w-3.5" />{tx('ai.prompt.header.eyebrow')}</div>

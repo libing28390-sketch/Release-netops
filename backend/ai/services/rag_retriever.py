@@ -19,6 +19,8 @@ from ai.providers.embedding import embedding_provider
 from ai.security.sanitizer import sanitize_text
 from ai.services.rag_policy import document_is_visible, trust_rank
 from ai.services.knowledge_metadata import canonical_vendor
+from ai.schemas.knowledge import KnowledgeQueryPlan
+from ai.services.knowledge_service import _directory_filter_sql
 from ai.services.product_resolver import product_resolver
 from ai.services.retrieval_contract import (
     BoundedReranker,
@@ -51,6 +53,8 @@ class RetrievalRequest:
     verification_level: Optional[str] = None
     rag_priority: Optional[int] = None
     status: str = "active"
+    knowledge_scope: Optional[str] = None
+    directory_path: Optional[str] = None
     applicability: Dict[str, Sequence[str] | str] = field(default_factory=dict)
     tenant_id: str = "tenant-default"
     user_id: str | None = None
@@ -210,6 +214,29 @@ class RAGRetriever:
         if request.document_category and "document_category" in columns:
             where.append("LOWER(d.document_category) = LOWER(?)")
             params.append(request.document_category)
+
+        scope_types = {
+            "official": ("official_vendor", "official_url", "official_local", "official_template"),
+            "enterprise": ("internal_sop", "internal_standard", "case", "user_document", "sample"),
+        }.get(str(request.knowledge_scope or "").strip().lower())
+        if scope_types:
+            if "knowledge_source_type" not in columns:
+                where.append("0 = 1")
+            else:
+                placeholders = ", ".join("?" for _ in scope_types)
+                where.append(f"d.knowledge_source_type IN ({placeholders})")
+                params.extend(scope_types)
+
+        if request.directory_path:
+            directory_path = KnowledgeQueryPlan.model_validate(
+                {"directory_path": request.directory_path}
+            ).directory_path
+            directory_sql, directory_params = _directory_filter_sql(
+                directory_path,
+                columns,
+            )
+            where.append(directory_sql)
+            params.extend(directory_params)
         for column, value in scalar_filters:
             if value is not None and column in columns:
                 where.append(f"LOWER(COALESCE(d.{column}, '')) = LOWER(?)")
@@ -339,6 +366,7 @@ class RAGRetriever:
             cli_platform_expr = "d.cli_platform" if "cli_platform" in columns else "NULL"
             semantic_document_id_expr = "d.document_id" if "document_id" in columns else "NULL"
             source_expr = "d.source" if "source" in columns else "NULL"
+            source_type_expr = "d.knowledge_source_type" if "knowledge_source_type" in columns else "NULL"
             document_version_expr = "d.version" if "version" in columns else "NULL"
             software_train_expr = "d.software_train" if "software_train" in columns else "NULL"
             software_release_expr = "d.software_release" if "software_release" in columns else "NULL"
@@ -352,7 +380,7 @@ class RAGRetriever:
             candidate_where = f"AND {candidate_expr} = 1"
             cursor.execute(
                 f"""SELECT c.id, c.content, c.embedding, c.metadata_json, c.section,
-                           d.id, d.name, {source_expr}, {document_version_expr}, d.vendor, d.platform, d.tenant_id,
+                           d.id, d.name, {source_expr}, {source_type_expr}, {document_version_expr}, d.vendor, d.platform, d.tenant_id,
                            d.acl_json, d.source_trust_level,
                            {document_category_expr}, {cli_platform_expr}, {semantic_document_id_expr},
                            {software_train_expr}, {software_release_expr},
@@ -523,7 +551,7 @@ class RAGRetriever:
             for row in rows:
                 (
                     c_id, content, embedding_json, meta_json, section,
-                    doc_id, doc_name, document_source, document_version, d_vendor, d_platform, d_tenant,
+                    doc_id, doc_name, document_source, knowledge_source_type, document_version, d_vendor, d_platform, d_tenant,
                     acl_json, trust_level, document_category, cli_platform,
                     semantic_document_id, document_software_train, document_software_release,
                     _is_candidate, chunk_role,
@@ -625,6 +653,7 @@ class RAGRetriever:
                     "content": sanitize_text(str(content or "")),
                     "document_name": doc_name,
                     "source": document_source,
+                    "knowledge_source_type": knowledge_source_type,
                     "document_version": document_version,
                     "document_status": request.status,
                     "document_id": semantic_document_id or doc_id,

@@ -64,8 +64,9 @@ CHUNK_COLUMNS = {
 
 
 def _columns(cursor, table: str, use_pg: bool) -> set[str]:
+    schema_clause = "table_schema = current_schema() AND " if use_pg else ""
     cursor.execute(
-        "SELECT column_name FROM information_schema.columns WHERE table_name = ?",
+        f"SELECT column_name FROM information_schema.columns WHERE {schema_clause}table_name = ?",
         (table,),
     )
     return {str(row[0]) for row in cursor.fetchall()}

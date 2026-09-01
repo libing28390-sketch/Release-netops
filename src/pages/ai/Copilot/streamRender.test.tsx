@@ -189,6 +189,22 @@ describe('AssistantTab streaming render', () => {
     expect(screen.getByText('实际 Token：输入 18 / 输出 7')).toBeTruthy();
   });
 
+  it('shows an actionable message when the selected provider is unavailable', async () => {
+    primeBackendMocks();
+    apiMocks.chatAssistantStream.mockImplementation(async (...args: any[]) => {
+      const onError = args[6] as (error: { code: string }) => void;
+      onError({ code: 'AI_PROVIDER_UNSUPPORTED' });
+    });
+
+    const user = userEvent.setup();
+    render(<AssistantTab />);
+    await user.type(screen.getByPlaceholderText('询问 Nexora AI，或输入 / 使用快捷指令...'), '请检查设备状态');
+    await user.click(screen.getByRole('button', { name: '发送' }));
+
+    await waitFor(() => expect(screen.getByText(/模型服务暂时不可用，未执行任何设备操作/)).toBeTruthy());
+    expect(screen.getByText(/Provider\/模型配置/)).toBeTruthy();
+  });
+
   it('renders a clarification card and submits its bounded state on selection', async () => {
     primeBackendMocks();
     const clarification = {

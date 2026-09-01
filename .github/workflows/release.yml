@@ -69,11 +69,14 @@ jobs:
           set -euo pipefail
           python -m pip install --upgrade pip
           pip install -r backend/requirements.txt
+          pip install pytest
           python scripts/knowledge_eval_ci_gate_check.py
           python scripts/knowledge_eval_offline.py \
             --profile full \
             --strict \
             --output "$RUNNER_TEMP/eval-offline-full-report-v1.json"
+          python -m pytest -q backend/tests -k "ai or knowledge" --tb=short
+          python -m pytest -q backend/tests --tb=short
 
       - name: Remove private and development-only files
         shell: bash

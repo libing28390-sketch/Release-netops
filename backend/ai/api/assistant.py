@@ -507,6 +507,7 @@ def knowledge_retrieval_test(
         key: value
         for key, value in payload.filters.model_dump(exclude_none=True).items()
         if key in {
+            "knowledge_scope", "directory_path",
             "vendor", "product_family", "product_series", "product_model",
             "os_family", "os_generation", "software_train", "software_release",
             "cli_platform", "document_category", "feature_domain", "feature",
@@ -533,6 +534,10 @@ def knowledge_retrieval_test(
             "chunk_id": item.get("chunk_id"),
             "document_id": item.get("document_id"),
             "document_name": item.get("document_name"),
+            "source": item.get("source"),
+            "knowledge_source_type": item.get("knowledge_source_type"),
+            "vendor": item.get("vendor"),
+            "product_series": item.get("product_series"),
             "section": item.get("section"),
             "platform": item.get("platform"),
             "score": item.get("relevance_score"),
@@ -570,14 +575,24 @@ def knowledge_retrieval_test(
 async def locate_ip(req: IPLocationRequest, user=Depends(require_ai_permission("ai.use"))):
     """Intelligent IP Location & Troubleshooting Endpoint."""
     user_id = user.get("username", "user")
-    return await ip_troubleshooting_service.troubleshoot_ip(req.ip, user_id=user_id)
+    tenant_id = user.get("tenant_id") or "tenant-default"
+    return await ip_troubleshooting_service.troubleshoot_ip(
+        req.ip,
+        user_id=user_id,
+        tenant_id=tenant_id,
+    )
 
 
 @router.post("/mac-location")
 async def locate_mac(req: MACLocationRequest, user=Depends(require_ai_permission("ai.use"))):
     """Intelligent MAC Location Endpoint."""
     user_id = user.get("username", "user")
-    return await mac_troubleshooting_service.troubleshoot_mac(req.mac, user_id=user_id)
+    tenant_id = user.get("tenant_id") or "tenant-default"
+    return await mac_troubleshooting_service.troubleshoot_mac(
+        req.mac,
+        user_id=user_id,
+        tenant_id=tenant_id,
+    )
 
 
 # --- Knowledge Base & Document Chunking Endpoints ---
@@ -739,6 +754,7 @@ def list_documents(
     feature_domain: str = Query(default="", max_length=128),
     status: str = Query(default="active", max_length=32),
     source_trust_level: str = Query(default="", max_length=32),
+    metadata_governance_status: str = Query(default="", max_length=32),
     page: int = Query(default=1, ge=1),
     page_size: int = Query(default=20, ge=1, le=100),
     sort_by: str = Query(default="created_at", max_length=64),
@@ -764,6 +780,7 @@ def list_documents(
         feature_domain=feature_domain,
         status=status,
         source_trust_level=source_trust_level,
+        metadata_governance_status=metadata_governance_status,
         page=page,
         page_size=page_size,
         sort_by=sort_by,
@@ -790,6 +807,7 @@ def list_documents(
             "os_generation": os_generation, "software_train": software_train, "software_release": software_release,
             "cli_platform": cli_platform, "document_category": document_category, "feature_domain": feature_domain,
             "status": status, "source_trust_level": source_trust_level,
+            "metadata_governance_status": metadata_governance_status,
         },
     )
 
@@ -813,6 +831,7 @@ def export_knowledge_documents(
     feature_domain: str = Query(default="", max_length=128),
     status: str = Query(default="active", max_length=32),
     source_trust_level: str = Query(default="", max_length=32),
+    metadata_governance_status: str = Query(default="", max_length=32),
     user=Depends(require_ai_permission("ai.knowledge.manage")),
 ):
     """Download a bounded, portable source/metadata ZIP for this tenant.
@@ -840,6 +859,7 @@ def export_knowledge_documents(
             feature_domain=feature_domain,
             status=status,
             source_trust_level=source_trust_level,
+            metadata_governance_status=metadata_governance_status,
         )
     except KnowledgeExportError as exc:
         raise HTTPException(status_code=exc.status_code, detail={"code": exc.code, "message": str(exc)}) from exc
@@ -863,6 +883,10 @@ def list_document_facets(
     directory_path: Optional[str] = Query(default=None, max_length=500),
     knowledge_scope: Optional[str] = Query(default=None, max_length=32),
     status: str = Query(default="active", max_length=32),
+    vendor: Optional[str] = Query(default=None, max_length=128),
+    product_family: Optional[str] = Query(default=None, max_length=128),
+    product_series: Optional[str] = Query(default=None, max_length=128),
+    metadata_governance_status: str = Query(default="", max_length=32),
     user=Depends(require_ai_permission("ai.view")),
 ):
     """Return bounded product hierarchy facets for the knowledge browser."""
@@ -871,6 +895,10 @@ def list_document_facets(
         directory_path=directory_path,
         knowledge_scope=knowledge_scope,
         status=status,
+        vendor=vendor,
+        product_family=product_family,
+        product_series=product_series,
+        metadata_governance_status=metadata_governance_status,
         tenant_id=user.get("tenant_id") or "tenant-default",
     )
 
@@ -937,6 +965,7 @@ async def import_document_bundle(
         result = import_knowledge_bundle(
             content,
             tenant_id=user.get("tenant_id") or "tenant-default",
+            request_id=request_id_var.get("-"),
         )
     except KnowledgeBundleImportError as exc:
         detail: dict[str, Any] = {"code": exc.code, "message": str(exc)}

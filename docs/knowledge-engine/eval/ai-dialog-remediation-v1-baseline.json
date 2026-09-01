@@ -1,0 +1,33 @@
+{
+  "baseline_id": "nexora-ai-dialog-remediation-baseline-v1-20260901",
+  "dataset_id": "nexora-ai-dialog-remediation-v1-20260901",
+  "status": "measured_with_gaps",
+  "collected_at": "2026-09-01",
+  "collection_mode": "offline_contract_tests_plus_browser_business_sessions",
+  "external_network": "only_minimal_provider_probe; no evaluation prompt sent externally",
+  "database": "postgresql",
+  "provider_matrix": {
+    "deepseek": {"configured": true, "health": "healthy", "allowed_data_classification": "INTERNAL", "probe": "ok"},
+    "qwen": {"configured": false, "live_cases": 0},
+    "ollama": {"configured": false, "live_cases": 0}
+  },
+  "quality_metrics": {
+    "high_risk_unconfirmed_execution_rate": {"numerator": 0, "denominator": 10, "value": 0.0, "status": "measured"},
+    "sensitive_credential_egress_pass_rate": {"passed": 4, "total": 4, "value": 1.0, "status": "measured"},
+    "browser_business_sessions": {"passed": 10, "total": 10, "status": "measured_final"},
+    "structured_first_pass_success_rate": {"status": "not_measured_on_live_provider_matrix"},
+    "structured_correction_success_rate": {"status": "covered_by_contract_tests; live_rate_not_measured"},
+    "intent_accuracy": {"status": "requires labeled evaluator run"},
+    "retrieval_top5_recall": {"status": "covered by frozen RAG fixture; production corpus rate not measured"}
+  },
+  "automated_evidence": {
+    "ai_knowledge_focus": "616 passed, 1010 deselected",
+    "provider_edit_regression": "7 frontend tests passed",
+    "metadata_governance_migration": "11 focused tests passed",
+    "typescript": "tsc --noEmit passed"
+  },
+  "gaps": [
+    "Qwen and Ollama are not configured on this installation, so no live cross-provider result is claimed.",
+    "Live structured-output rates and labeled intent accuracy still require a repeatable provider-backed evaluator run."
+  ]
+}

@@ -4,7 +4,7 @@ from types import SimpleNamespace
 
 import pytest
 
-from ai.gateway.llm_gateway import LLMGateway
+from ai.gateway.llm_gateway import LLMGateway, _resolve_approved_endpoint_patterns
 from ai.providers.registry import ADAPTER_REGISTRY, AzureOpenAIProvider, OllamaProvider, provider_adapter
 from ai.schemas.model import AIModelCreate
 from ai.schemas.provider import AIProviderCreate
@@ -25,6 +25,17 @@ def test_llm_006_008_adapter_registry_covers_deepseek_openai_azure_ollama_local(
     assert provider_adapter("openai-compatible").__name__ == "OpenAICompatibleProvider"
     assert ADAPTER_REGISTRY["azure_openai"] is AzureOpenAIProvider
     assert ADAPTER_REGISTRY["ollama"] is OllamaProvider
+
+
+def test_llm_legacy_empty_cloud_endpoint_allowlist_falls_back_to_exact_base_url():
+    assert _resolve_approved_endpoint_patterns("[]", "https://api.deepseek.com/", "deepseek") == [
+        "https://api.deepseek.com"
+    ]
+    assert _resolve_approved_endpoint_patterns("{}", "https://api.openai.com/v1", "openai") == [
+        "https://api.openai.com/v1"
+    ]
+    assert _resolve_approved_endpoint_patterns("[]", "http://127.0.0.1:11434/v1", "ollama") == []
+    assert _resolve_approved_endpoint_patterns("[]", "http://api.example.test/v1", "openai") == []
 
 
 def test_llm_013_018_model_scope_capabilities_and_types_are_not_deepseek_only():

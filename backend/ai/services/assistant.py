@@ -19,6 +19,7 @@ from ai.services.natural_query import natural_query_service
 from ai.services.ip_troubleshooting import ip_troubleshooting_service
 from ai.services.mac_troubleshooting import mac_troubleshooting_service
 from ai.services.rag_retriever import rag_retriever, RetrievalRequest
+from ai.schemas.knowledge import KnowledgeQueryPlan
 from ai.services.product_resolver import product_resolver, EntityResolution
 from ai.services.retrieval_contract import build_retrieval_explanation
 from ai.services.citation_service import (
@@ -38,7 +39,7 @@ from ai.services.config_clarification import (
 )
 from ai.services.retrieval_trace_store import record_retrieval_trace, update_retrieval_trace
 from ai.services.metrics import ai_metrics
-from ai.security.sanitizer import sanitize_log_text
+from ai.security.sanitizer import sanitize_log_text, sanitize_text
 from core.context import request_id_var, resolve_request_id
 
 
@@ -246,15 +247,34 @@ class AIAssistantService:
     ) -> tuple[RetrievalRequest, EntityResolution]:
         metadata = intent_info.get("knowledge_intent") or intent_info.get("metadata") or intent_info.get("filters") or {}
         metadata = merge_context_fields(metadata, context)
+        plan = KnowledgeQueryPlan.from_sources(
+            message,
+            metadata,
+            context=context,
+            knowledge_scope=(
+                intent_info.get("knowledge_scope")
+                or (context or {}).get("knowledge_scope")
+                or (context or {}).get("document_scope")
+            ),
+            top_k=5,
+        )
         resolution = product_resolver.resolve_query(
             message,
-            dict(metadata),
+            plan.to_resolver_metadata(),
             tenant_id=tenant_id or "tenant-default",
         )
+        retrieval_values = plan.to_retrieval_values()
+        # Product Registry evidence is authoritative for identity. Retain its
+        # resolved values while keeping non-plan keys out of RetrievalRequest.
+        retrieval_values.update({
+            key: value
+            for key, value in resolution.metadata.items()
+            if key in RetrievalRequest.__dataclass_fields__ and value not in (None, "", [], {})
+        })
         request = RetrievalRequest.from_mapping(
             message,
-            resolution.metadata,
-            top_k=5,
+            retrieval_values,
+            top_k=plan.top_k,
             tenant_id=tenant_id or "tenant-default",
             user_id=user_id,
             roles=roles,
@@ -388,7 +408,7 @@ class AIAssistantService:
                         "vendor", "product_family", "product_series", "product_model", "os_family",
                         "os_generation", "software_train", "software_release", "cli_platform",
                         "document_category", "feature_domain", "feature", "subfeature", "risk_level",
-                        "verification_level", "rag_priority", "status",
+                        "verification_level", "rag_priority", "status", "knowledge_scope", "directory_path",
                     )
                     if getattr(request, field, None) not in (None, "", [], {})
                 },
@@ -901,6 +921,7 @@ class AIAssistantService:
         request_fields = (
             "vendor", "product_series", "product_model", "software_train",
             "cli_platform", "document_category", "feature_domain", "feature",
+            "knowledge_scope", "directory_path",
         )
         return {
             "request_id": knowledge_result.get("request_id"),
@@ -939,6 +960,138 @@ class AIAssistantService:
         }
 
     @staticmethod
+    def _merge_generic_pending_clarification(
+        message: str,
+        intent_info: Dict[str, Any],
+        pending: Dict[str, Any],
+        response: Dict[str, Any],
+    ) -> Dict[str, Any]:
+        """Merge one bounded follow-up into a pending generic intent task."""
+
+        allowed_fields = {
+            "device_id", "device_identifier", "device_name", "interface", "protocol",
+            "metric", "time_range", "action", "site", "role", "vendor", "product_family",
+            "product_series", "product_model", "software_train", "software_release",
+            "cli_platform", "feature", "feature_domain", "subfeature", "symptom",
+        }
+        aliases = {
+            "target_device": "device_id",
+            "device": "device_id",
+            "model": "product_model",
+            "platform": "cli_platform",
+            "version": "software_release",
+            "software_version": "software_release",
+            "device_or_scope": "device_id",
+        }
+
+        # A stale card must not be able to overwrite a newer task state. The
+        # API layer also rejects the revision during persistence; ignoring its
+        # values here prevents the stale request from being executed first.
+        response_state_id = str(response.get("state_id") or "")
+        pending_state_id = str(pending.get("state_id") or "")
+        response_revision = response.get("revision")
+        pending_revision = pending.get("revision")
+        stale = bool(
+            (response_state_id and pending_state_id and response_state_id != pending_state_id)
+            or (
+                response_revision is not None
+                and pending_revision is not None
+                and int(response_revision) != int(pending_revision)
+            )
+        )
+        submitted_values = {} if stale else (
+            response.get("values") if isinstance(response.get("values"), dict) else {}
+        )
+
+        def normalize_fields(source: Any) -> Dict[str, Any]:
+            if not isinstance(source, dict):
+                return {}
+            normalized: Dict[str, Any] = {}
+            for key, value in source.items():
+                target = aliases.get(str(key), str(key))
+                if target not in allowed_fields or value in (None, "", [], {}):
+                    continue
+                normalized[target] = sanitize_text(str(value)).strip()[:256]
+            return {key: value for key, value in normalized.items() if value}
+
+        merged: Dict[str, Any] = {}
+        merged.update(normalize_fields(pending.get("recognized_fields")))
+        merged.update(normalize_fields(intent_info.get("metadata")))
+        merged.update(normalize_fields(intent_info.get("filters")))
+        merged.update(normalize_fields(submitted_values))
+
+        current_intent = str(intent_info.get("intent") or "general_qa")
+        pending_intent = str(pending.get("intent") or "")
+        known_intents = {
+            "asset_analysis", "device_search", "ip_location", "mac_location",
+            "alarm_search", "config_search", "troubleshooting", "general_qa", "knowledge",
+        }
+        if current_intent == "general_qa" and pending_intent in known_intents:
+            target_intent = pending_intent
+        else:
+            target_intent = current_intent
+
+        raw_missing = pending.get("missing_fields") if isinstance(pending.get("missing_fields"), list) else []
+        missing = [str(item)[:64] for item in raw_missing[:12] if str(item).strip()]
+
+        def satisfied(field: str) -> bool:
+            canonical = aliases.get(field, field)
+            if canonical in {"device_id", "device_or_scope"}:
+                return any(merged.get(key) for key in ("device_id", "device_identifier", "device_name", "site", "role"))
+            if canonical == "symptom_or_metric":
+                return any(merged.get(key) for key in ("symptom", "metric", "feature", "protocol"))
+            return bool(merged.get(canonical))
+
+        missing = [field for field in missing if not satisfied(field)]
+        current_missing = intent_info.get("missing_fields") if isinstance(intent_info.get("missing_fields"), list) else []
+        for field in current_missing[:12]:
+            name = str(field)[:64]
+            if name and not satisfied(name) and name not in missing:
+                missing.append(name)
+
+        if not pending_intent and not submitted_values and not normalize_fields(intent_info.get("filters")):
+            # The follow-up was not a recognizable slot response. Preserve the
+            # pending task instead of letting a low-confidence general answer
+            # clear it or leak the old context into a new topic.
+            target_intent = current_intent if current_intent != "general_qa" else "general_qa"
+
+        result = dict(intent_info)
+        result["intent"] = target_intent
+        result["filters"] = {**(intent_info.get("filters") or {}), **merged}
+        result["metadata"] = {**(intent_info.get("metadata") or {}), **merged}
+        result["needs_clarification"] = bool(missing) or bool(intent_info.get("needs_clarification"))
+        result["missing_fields"] = missing[:12]
+        if missing:
+            question_by_field = {
+                "device_id": "请提供目标设备名称或设备 ID。",
+                "interface": "请提供要检查的接口名称，例如 GigabitEthernet0/0/1。",
+                "ip": "请提供需要定位的 IP 地址。",
+                "mac": "请提供需要定位的 MAC 地址。",
+                "time_range": "请提供需要查询的时间范围。",
+                "protocol": "请说明要查询或排查的协议，例如 OSPF、BGP 或 VLAN。",
+                "metric": "请说明要关注的指标，例如延迟、丢包、CPU 或接口利用率。",
+                "action": "请明确希望执行的动作或命令，并说明目标范围。",
+                "device_or_scope": "请提供设备名称、站点或角色范围。",
+                "device_or_time_range": "请提供目标设备、站点或告警时间范围。",
+                "symptom_or_metric": "请说明要排查的现象或指标。",
+                "confirmation": "请明确目标设备、变更内容，并确认是否继续。",
+            }
+            result["clarification_question"] = question_by_field.get(
+                missing[0], str(intent_info.get("clarification_question") or "请补充继续处理所需的信息。")[:1000]
+            )
+        elif result["needs_clarification"]:
+            result["clarification_question"] = str(
+                intent_info.get("clarification_question") or pending.get("question") or "请补充继续处理所需的信息。"
+            )[:1000]
+        else:
+            result["clarification_question"] = None
+        if pending.get("risk_level") and not result.get("risk_level"):
+            result["risk_level"] = str(pending["risk_level"])[:8]
+        if pending.get("requires_confirmation"):
+            result["requires_confirmation"] = True
+        return result
+
+    @staticmethod
     def _merge_pending_clarification_intent(
         message: str,
         intent_info: Dict[str, Any],
@@ -952,6 +1105,13 @@ class AIAssistantService:
         values = response.get("values") if isinstance(response.get("values"), dict) else {}
         current_intent = str(intent_info.get("intent") or "general_qa")
         pending_kind = str(pending.get("request_kind") or "")
+        if pending_kind == "intent_classification":
+            return AIAssistantService._merge_generic_pending_clarification(
+                message,
+                intent_info,
+                pending,
+                response,
+            )
         pending_config = pending_kind in {
             "configuration_reference",
             "configuration_change",
@@ -1014,6 +1174,254 @@ class AIAssistantService:
         intent_info["filters"] = metadata
         intent_info.update(metadata)
         return intent_info
+
+    @staticmethod
+    def _intent_clarification_payload(intent_info: Dict[str, Any]) -> Dict[str, Any]:
+        """Build a bounded local clarification payload from a typed decision."""
+
+        raw_missing = intent_info.get("missing_fields")
+        missing_fields = [
+            str(value)[:64]
+            for value in raw_missing[:12]
+            if str(value).strip()
+        ] if isinstance(raw_missing, list) else []
+        question = str(intent_info.get("clarification_question") or "").strip()[:1000]
+        if not question:
+            question = "请补充目标设备、具体需求和执行范围后再继续。"
+        risk_level = str(intent_info.get("risk_level") or "R0").strip()[:8]
+        risk = {
+            "R0": "low",
+            "R1": "low",
+            "R2": "medium",
+            "R3": "high",
+            "R4": "critical",
+        }.get(risk_level, "low")
+        recognized: Dict[str, str] = {}
+        safe_fields = {
+            "device_id", "device_identifier", "device_name", "interface", "protocol",
+            "metric", "time_range", "action", "site", "role", "vendor", "product_family",
+            "product_series", "product_model", "software_train", "software_release",
+            "cli_platform", "feature", "feature_domain", "subfeature",
+        }
+        for source in (intent_info.get("metadata"), intent_info.get("filters")):
+            if not isinstance(source, dict):
+                continue
+            for key, value in source.items():
+                if str(key) not in safe_fields or value in (None, "", [], {}):
+                    continue
+                text = sanitize_text(str(value)).strip()[:160]
+                if text:
+                    recognized[str(key)[:64]] = text
+        return {
+            "required": True,
+            "request_kind": "intent_classification",
+            "intent": str(intent_info.get("intent") or "general_qa")[:64],
+            "question": question,
+            "missing_fields": missing_fields,
+            "recognized_fields": recognized,
+            "risk": risk,
+            "risk_level": risk_level,
+            "requires_confirmation": bool(intent_info.get("requires_confirmation")),
+            "reason_code": "AI_INTENT_CLARIFICATION_REQUIRED",
+            "allow_free_text": True,
+            "retrieval_allowed": False,
+            "expires_at": (datetime.now(timezone.utc) + timedelta(minutes=30)).replace(microsecond=0).isoformat(),
+        }
+
+    @staticmethod
+    def _intent_failure_response(
+        *,
+        message: str,
+        intent_info: Dict[str, Any],
+        context: Dict[str, Any],
+        request_id: str,
+    ) -> Dict[str, Any]:
+        """Return an understandable local failure without another provider call."""
+
+        failure = intent_info.get("parse_failure") if isinstance(intent_info.get("parse_failure"), dict) else {}
+        answer = str(failure.get("message") or "意图识别未完成，未执行任何设备操作。请稍后重试。")[:1000]
+        safe_failure = {
+            "status": str(failure.get("status") or "unknown")[:64],
+            "error_code": str(failure.get("error_code") or "AI_INTENT_PARSE_FAILED")[:64],
+        }
+        return {
+            "answer": answer,
+            "intent": "general_qa",
+            "facts_retrieved": False,
+            "citations": [],
+            "answer_contract": answer_contract(intent="general_qa", citations=[], grounded=False, no_match=False),
+            "request_id": request_id,
+            "execution_mode": "local_fallback",
+            "external_egress": False,
+            "input_tokens": 0,
+            "output_tokens": 0,
+            "token_source": "local_zero",
+            "intent_parse": safe_failure,
+            "copilot": build_copilot_contract(
+                intent="general_qa",
+                message=message,
+                context=context,
+                runtime={
+                    "device_connected": False,
+                    "cli_executed": False,
+                    "external_egress": False,
+                    "execution_mode": "local_fallback",
+                    "input_tokens": 0,
+                    "output_tokens": 0,
+                },
+            ),
+        }
+
+    @staticmethod
+    def _intent_clarification_response(
+        *,
+        message: str,
+        intent_info: Dict[str, Any],
+        context: Dict[str, Any],
+        request_id: str,
+    ) -> Dict[str, Any]:
+        """Return a local response when intent parsing requires clarification."""
+
+        intent = str(intent_info.get("intent") or "general_qa")
+        clarification = AIAssistantService._intent_clarification_payload(intent_info)
+        answer = clarification["question"]
+        return {
+            "answer": answer,
+            "intent": intent,
+            "facts_retrieved": False,
+            "citations": [],
+            "answer_contract": answer_contract(
+                intent=intent,
+                citations=[],
+                grounded=False,
+                no_match=False,
+            ),
+            "clarification": clarification,
+            "request_id": request_id,
+            "execution_mode": "local_clarification",
+            "external_egress": False,
+            "input_tokens": 0,
+            "output_tokens": 0,
+            "token_source": "local_zero",
+            "copilot": build_copilot_contract(
+                intent=intent,
+                message=message,
+                context=context,
+                clarification=clarification,
+                runtime={
+                    "device_connected": False,
+                    "cli_executed": False,
+                    "external_egress": False,
+                    "execution_mode": "local_clarification",
+                    "input_tokens": 0,
+                    "output_tokens": 0,
+                },
+            ),
+        }
+
+    @staticmethod
+    def _sensitive_identifier_location_response(
+        *,
+        message: str,
+        intent: str,
+        trace: Dict[str, Any],
+        context: Dict[str, Any],
+        request_id: str,
+    ) -> Dict[str, Any]:
+        """Render IP/MAC evidence without sending identifiers to a provider."""
+
+        safe_trace = trace if isinstance(trace, dict) else {}
+        facts = safe_trace.get("facts") if isinstance(safe_trace.get("facts"), dict) else {}
+        analysis = safe_trace.get("analysis") if isinstance(safe_trace.get("analysis"), dict) else {}
+        recommendations = analysis.get("recommendations") if isinstance(analysis.get("recommendations"), list) else []
+        recommendations = [str(item)[:300] for item in recommendations if str(item).strip()][:4]
+
+        def display(value: Any, fallback: str = "未找到") -> str:
+            if value in (None, "", [], {}):
+                return fallback
+            return str(value)[:240]
+
+        if intent == "ip_location":
+            target = safe_trace.get("target_ip") or analysis.get("ip") or facts.get("target_ip")
+            arp = facts.get("arp_record") if isinstance(facts.get("arp_record"), dict) else {}
+            device = facts.get("device") if isinstance(facts.get("device"), dict) else {}
+            lines = [
+                "已完成本地只读 IP 定位（未调用外部模型）。",
+                "",
+                f"- 目标 IP：`{display(target)}`",
+                f"- 设备：{display(device.get('hostname') or analysis.get('access_switch'))}",
+                f"- MAC：`{display(arp.get('mac_address') or analysis.get('located_mac'))}`",
+                f"- 接口：`{display(arp.get('interface') or analysis.get('access_port'))}`",
+                f"- VLAN：`{display(arp.get('vlan') or analysis.get('vlan'))}`",
+                f"- 结论：{display(analysis.get('status_summary'), '暂无本地结论')}",
+                f"- 分析：{display(analysis.get('root_cause_analysis'), '暂无本地分析')}",
+            ]
+            alarm_count = len(facts.get("active_alarms") or [])
+            if alarm_count:
+                lines.append(f"- 关联未恢复告警：{alarm_count} 条")
+        else:
+            target = safe_trace.get("mac") or facts.get("raw_mac")
+            entry = facts.get("mac_entry") if isinstance(facts.get("mac_entry"), dict) else {}
+            lines = [
+                "已完成本地只读 MAC 定位（未调用外部模型）。",
+                "",
+                f"- 目标 MAC：`{display(target)}`",
+                f"- 规范化 MAC：`{display(analysis.get('normalized_mac') or facts.get('normalized_mac'))}`",
+                f"- 关联 IP：`{display(analysis.get('associated_ip') or facts.get('associated_ip') or entry.get('ip_address'))}`",
+                f"- 设备：{display(analysis.get('located_switch') or entry.get('device_hostname') or entry.get('device_id'))}",
+                f"- 接口：`{display(analysis.get('located_port') or entry.get('interface'))}`",
+                f"- VLAN：`{display(analysis.get('vlan') or entry.get('vlan'))}`",
+                f"- 结论：{display(analysis.get('path_summary'), '暂无本地结论')}",
+            ]
+
+        if recommendations:
+            lines.extend(["", "下一步建议：", *[f"- {item}" for item in recommendations]])
+        answer = "\n".join(lines)
+        facts_retrieved = bool(
+            facts.get("arp_record")
+            or facts.get("device")
+            or facts.get("mac_entry")
+            or facts.get("associated_ip")
+        )
+        contract = answer_contract(
+            intent=intent,
+            citations=[],
+            grounded=facts_retrieved,
+            no_match=not facts_retrieved,
+        )
+        return {
+            "answer": answer,
+            "intent": intent,
+            "facts_retrieved": facts_retrieved,
+            "citations": [],
+            "answer_contract": contract,
+            "request_id": request_id,
+            "analysis": analysis,
+            "diagnostic": {
+                "facts": facts,
+                "analysis_source": safe_trace.get("analysis_source") or "local_deterministic",
+                "classification": "CONFIDENTIAL",
+            },
+            "execution_mode": "local_sensitive_identifier",
+            "external_egress": False,
+            "input_tokens": 0,
+            "output_tokens": 0,
+            "token_source": "local_zero",
+            "copilot": build_copilot_contract(
+                intent=intent,
+                message=message,
+                context=context,
+                citations=[],
+                runtime={
+                    "device_connected": False,
+                    "cli_executed": False,
+                    "external_egress": False,
+                    "execution_mode": "local_sensitive_identifier",
+                    "input_tokens": 0,
+                    "output_tokens": 0,
+                },
+            ),
+        }
 
     @staticmethod
     def _clarification_response(
@@ -1139,6 +1547,7 @@ class AIAssistantService:
         filters = intent_info.get("filters", {})
 
         context_facts: Dict[str, Any] = {}
+        sensitive_location_result: Optional[Dict[str, Any]] = None
         copilot_context = {
             key: value for key, value in (context or {}).items()
             if key in {"device_id", "interface", "site_id", "workspace_id", "department", "time_range", "alert_ids", "recent_changes", "topology_neighbors", "metrics", "history_events", "vendor", "model", "version", "impact_scope", "os", "document_scope"}
@@ -1153,6 +1562,22 @@ class AIAssistantService:
                 message=message,
                 request_id=request_id,
                 context=copilot_context,
+            )
+
+        if intent_info.get("parse_failure") and not intent_info.get("needs_clarification"):
+            return self._intent_failure_response(
+                message=message,
+                intent_info=intent_info,
+                context=copilot_context,
+                request_id=request_id,
+            )
+
+        if intent_info.get("needs_clarification"):
+            return self._intent_clarification_response(
+                message=message,
+                intent_info=intent_info,
+                context=copilot_context,
+                request_id=request_id,
             )
 
         # 2. Dispatch to specialized intent handler
@@ -1193,11 +1618,26 @@ class AIAssistantService:
             )
             context_facts["devices"] = query_res.get("data")
         elif intent == "ip_location" and filters.get("ip"):
-            ip_res = await ip_troubleshooting_service.troubleshoot_ip(filters["ip"], user_id=user_id)
+            ip_res = await ip_troubleshooting_service.troubleshoot_ip(
+                filters["ip"], user_id=user_id, tenant_id=tenant_id
+            )
             context_facts["ip_trace"] = ip_res.get("facts")
+            sensitive_location_result = ip_res
         elif intent == "mac_location" and filters.get("mac"):
-            mac_res = await mac_troubleshooting_service.troubleshoot_mac(filters["mac"], user_id=user_id)
+            mac_res = await mac_troubleshooting_service.troubleshoot_mac(
+                filters["mac"], user_id=user_id, tenant_id=tenant_id
+            )
             context_facts["mac_trace"] = mac_res.get("facts")
+            sensitive_location_result = mac_res
+
+        if sensitive_location_result is not None:
+            return self._sensitive_identifier_location_response(
+                message=message,
+                intent=intent,
+                trace=sensitive_location_result,
+                context=copilot_context,
+                request_id=request_id,
+            )
         
         # 3. Retrieve RAG only for intents that explicitly need internal
         # evidence; general chat remains a clean, non-tenant-context request.
@@ -1561,6 +2001,96 @@ class AIAssistantService:
                 })
                 return
 
+            if intent_info.get("parse_failure") and not intent_info.get("needs_clarification"):
+                failure_result = self._intent_failure_response(
+                    message=message,
+                    intent_info=intent_info,
+                    context=copilot_context,
+                    request_id=request_id,
+                )
+                yield _meta_event({
+                    "request_id": request_id,
+                    "intent": failure_result["intent"],
+                    "facts_retrieved": False,
+                    "citations": [],
+                    "answer_contract": failure_result["answer_contract"],
+                    "clarification": None,
+                    "execution_mode": failure_result["execution_mode"],
+                    "external_egress": False,
+                    "input_tokens": 0,
+                    "output_tokens": 0,
+                    "token_source": "local_zero",
+                    "intent_parse": failure_result["intent_parse"],
+                    "copilot": failure_result["copilot"],
+                })
+                failure_step = ("fallback", "说明意图识别状态", "assistant.intent_parse_fallback")
+                yield _progress_event(failure_step[0], failure_step[1], "running", operation=failure_step[2])
+                yield _token_event(failure_result["answer"])
+                yield _progress_event(
+                    failure_step[0],
+                    failure_step[1],
+                    "completed",
+                    detail="未执行设备操作，等待重试",
+                    operation=failure_step[2],
+                )
+                yield _done_event(started_at, extra={
+                    "execution_mode": "local_fallback",
+                    "external_egress": False,
+                    "input_tokens": 0,
+                    "output_tokens": 0,
+                    "token_source": "local_zero",
+                })
+                return
+
+            if intent_info.get("needs_clarification"):
+                clarification_result = self._intent_clarification_response(
+                    message=message,
+                    intent_info=intent_info,
+                    context=copilot_context,
+                    request_id=request_id,
+                )
+                yield _meta_event({
+                    "request_id": request_id,
+                    "intent": clarification_result["intent"],
+                    "facts_retrieved": False,
+                    "citations": [],
+                    "answer_contract": clarification_result["answer_contract"],
+                    "clarification": clarification_result["clarification"],
+                    "execution_mode": "local_clarification",
+                    "external_egress": False,
+                    "input_tokens": 0,
+                    "output_tokens": 0,
+                    "token_source": "local_zero",
+                    "copilot": clarification_result["copilot"],
+                })
+                clarification_step = (
+                    "clarification",
+                    "补充请求范围",
+                    "assistant.intent_clarification",
+                )
+                yield _progress_event(
+                    clarification_step[0],
+                    clarification_step[1],
+                    "running",
+                    operation=clarification_step[2],
+                )
+                yield _token_event(clarification_result["answer"])
+                yield _progress_event(
+                    clarification_step[0],
+                    clarification_step[1],
+                    "completed",
+                    detail="等待补充请求范围或确认信息",
+                    operation=clarification_step[2],
+                )
+                yield _done_event(started_at, extra={
+                    "execution_mode": "local_clarification",
+                    "external_egress": False,
+                    "input_tokens": 0,
+                    "output_tokens": 0,
+                    "token_source": "local_zero",
+                })
+                return
+
             if intent == "asset_analysis":
                 active_step = ("asset_analysis", "\u805a\u5408 CMDB \u8d44\u4ea7\uff08\u53ea\u8bfb\uff09", "natural_query_service.execute_asset_analysis")
                 yield _progress_event(active_step[0], active_step[1], "running", operation=active_step[2])
@@ -1621,7 +2151,9 @@ class AIAssistantService:
             elif intent == "ip_location" and filters.get("ip"):
                 active_step = ("ip_trace", "追踪 IP 证据链（只读）", "ip_troubleshooting.troubleshoot_ip")
                 yield _progress_event(active_step[0], active_step[1], "running", operation=active_step[2])
-                ip_res = await ip_troubleshooting_service.troubleshoot_ip(filters["ip"], user_id=user_id)
+                ip_res = await ip_troubleshooting_service.troubleshoot_ip(
+                    filters["ip"], user_id=user_id, tenant_id=tenant_id
+                )
                 context_facts["ip_trace"] = ip_res.get("facts") if isinstance(ip_res, dict) else None
                 yield _progress_event(
                     active_step[0],
@@ -1630,10 +2162,48 @@ class AIAssistantService:
                     detail="已收集 IP、ARP、拓扑与告警证据",
                     operation=active_step[2],
                 )
+                local_result = self._sensitive_identifier_location_response(
+                    message=message,
+                    intent=intent,
+                    trace=ip_res,
+                    context=copilot_context,
+                    request_id=request_id,
+                )
+                yield _meta_event({
+                    "intent": intent,
+                    "facts_retrieved": local_result["facts_retrieved"],
+                    "citations": [],
+                    "answer_contract": local_result["answer_contract"],
+                    "analysis": local_result.get("analysis"),
+                    "diagnostic": local_result.get("diagnostic"),
+                    "execution_mode": "local_sensitive_identifier",
+                    "external_egress": False,
+                    "input_tokens": 0,
+                    "output_tokens": 0,
+                    "token_source": "local_zero",
+                })
+                local_step = ("local_result", "整理本地定位结果", "assistant.local_sensitive_identifier")
+                yield _progress_event(local_step[0], local_step[1], "running", operation=local_step[2])
+                yield _token_event(local_result["answer"])
+                yield _progress_event(
+                    local_step[0], local_step[1], "completed",
+                    detail="未调用外部模型，结果来自本地只读证据",
+                    operation=local_step[2],
+                )
+                yield _done_event(started_at, extra={
+                    "execution_mode": "local_sensitive_identifier",
+                    "external_egress": False,
+                    "input_tokens": 0,
+                    "output_tokens": 0,
+                    "token_source": "local_zero",
+                })
+                return
             elif intent == "mac_location" and filters.get("mac"):
                 active_step = ("mac_trace", "追踪 MAC 证据链（只读）", "mac_troubleshooting.troubleshoot_mac")
                 yield _progress_event(active_step[0], active_step[1], "running", operation=active_step[2])
-                mac_res = await mac_troubleshooting_service.troubleshoot_mac(filters["mac"], user_id=user_id)
+                mac_res = await mac_troubleshooting_service.troubleshoot_mac(
+                    filters["mac"], user_id=user_id, tenant_id=tenant_id
+                )
                 context_facts["mac_trace"] = mac_res.get("facts") if isinstance(mac_res, dict) else None
                 yield _progress_event(
                     active_step[0],
@@ -1642,6 +2212,42 @@ class AIAssistantService:
                     detail="已完成端口、交换机 MAC 表与拓扑对账",
                     operation=active_step[2],
                 )
+                local_result = self._sensitive_identifier_location_response(
+                    message=message,
+                    intent=intent,
+                    trace=mac_res,
+                    context=copilot_context,
+                    request_id=request_id,
+                )
+                yield _meta_event({
+                    "intent": intent,
+                    "facts_retrieved": local_result["facts_retrieved"],
+                    "citations": [],
+                    "answer_contract": local_result["answer_contract"],
+                    "analysis": local_result.get("analysis"),
+                    "diagnostic": local_result.get("diagnostic"),
+                    "execution_mode": "local_sensitive_identifier",
+                    "external_egress": False,
+                    "input_tokens": 0,
+                    "output_tokens": 0,
+                    "token_source": "local_zero",
+                })
+                local_step = ("local_result", "整理本地定位结果", "assistant.local_sensitive_identifier")
+                yield _progress_event(local_step[0], local_step[1], "running", operation=local_step[2])
+                yield _token_event(local_result["answer"])
+                yield _progress_event(
+                    local_step[0], local_step[1], "completed",
+                    detail="未调用外部模型，结果来自本地只读证据",
+                    operation=local_step[2],
+                )
+                yield _done_event(started_at, extra={
+                    "execution_mode": "local_sensitive_identifier",
+                    "external_egress": False,
+                    "input_tokens": 0,
+                    "output_tokens": 0,
+                    "token_source": "local_zero",
+                })
+                return
 
             active_step = ("knowledge", "检索知识库", "rag_retriever.retrieve")
             yield _progress_event(active_step[0], active_step[1], "running", operation=active_step[2])

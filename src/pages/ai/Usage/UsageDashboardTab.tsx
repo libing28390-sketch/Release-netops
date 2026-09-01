@@ -117,7 +117,7 @@ export const UsageDashboardTab: React.FC = () => {
   const errorCount = metrics?.requests.error || 0;
 
   return (
-    <div className="mx-auto w-full max-w-[1500px] space-y-5 pb-8">
+    <div className="w-full space-y-5 pb-8">
       <section className="relative overflow-hidden rounded-[26px] border border-indigo-100/80 bg-gradient-to-br from-white via-indigo-50/70 to-cyan-100/60 px-5 py-6 shadow-sm shadow-indigo-100/50 dark:border-indigo-900/60 dark:from-slate-900 dark:via-indigo-950/40 dark:to-slate-900 dark:shadow-none sm:px-7 sm:py-7">
         <div className="pointer-events-none absolute -right-20 -top-24 h-64 w-64 rounded-full bg-cyan-300/20 blur-3xl dark:bg-cyan-500/10" />
         <div className="relative flex flex-col justify-between gap-6 xl:flex-row xl:items-center">

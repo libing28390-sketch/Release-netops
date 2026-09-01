@@ -130,6 +130,7 @@ tools/node/
 !**/docs/walkthrough/**/*.md
 !**/docs/PROJECT_ANALYSIS.md
 !**/docs/TASK_REMEDIATION.md
+!**/docs/AI对话能力整改任务清单_20260901.md
 !**/docs/EXECUTION_LOG.md
 !**/docs/TEST_REPORT.md
 !**/docs/MODULES_OVERVIEW.md

@@ -8,8 +8,9 @@ NAME = "monitoring_health_dimensions"
 
 
 def upgrade(cursor, use_pg: bool) -> None:
+    schema_clause = "table_schema = current_schema() AND " if use_pg else ""
     cursor.execute(
-        "SELECT column_name FROM information_schema.columns WHERE table_name = ?",
+        f"SELECT column_name FROM information_schema.columns WHERE {schema_clause}table_name = ?",
         ("device_health_samples",),
     )
     existing = {row[0] for row in cursor.fetchall()}

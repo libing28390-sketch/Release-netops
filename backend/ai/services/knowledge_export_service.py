@@ -142,6 +142,7 @@ class KnowledgeExportService:
         feature_domain: str = "",
         status: str = "active",
         source_trust_level: str = "",
+        metadata_governance_status: str = "",
     ) -> dict[str, Any]:
         normalized_scope = str(knowledge_scope or "").strip().lower() or None
         if normalized_scope not in {None, "all", "official", "enterprise"}:
@@ -168,6 +169,7 @@ class KnowledgeExportService:
             "feature_domain": feature_domain,
             "status": normalized_status,
             "source_trust_level": source_trust_level,
+            "metadata_governance_status": metadata_governance_status,
         }
 
         first_page = knowledge_service.list_documents(

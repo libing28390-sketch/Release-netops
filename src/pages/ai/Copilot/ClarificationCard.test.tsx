@@ -37,4 +37,35 @@ describe('ClarificationCard', () => {
     await user.click(screen.getByRole('button', { name: /取消引导/ }));
     expect(onCancel).toHaveBeenCalledTimes(1);
   });
+
+  it('shows recognized entities and prevents submitting an expired clarification', async () => {
+    const onSelect = vi.fn();
+    const onCancel = vi.fn();
+    const user = userEvent.setup();
+    render(
+      <ClarificationCard
+        clarification={{
+          required: true,
+          request_kind: 'intent_classification',
+          risk: 'high',
+          risk_level: 'R3',
+          requires_confirmation: true,
+          expires_at: '2020-01-01T00:00:00Z',
+          question: '旧问题',
+          missing_fields: ['confirmation'],
+          recognized_fields: { device_id: 'edge-01', interface: 'Gi1/0/1' },
+          options: [{ field: 'confirmation', value: 'yes', label: '确认执行' }],
+        }}
+        onSelect={onSelect}
+        onCancel={onCancel}
+      />,
+    );
+
+    expect(screen.getByText('补充信息已过期')).toBeTruthy();
+    expect(screen.getByText(/不会继续提交旧条件/)).toBeTruthy();
+    expect((screen.getByRole('button', { name: /确认执行/ }) as HTMLButtonElement).disabled).toBe(true);
+    await user.click(screen.getByRole('button', { name: /重新开始/ }));
+    expect(onSelect).not.toHaveBeenCalled();
+    expect(onCancel).toHaveBeenCalledTimes(1);
+  });
 });

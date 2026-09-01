@@ -8,9 +8,10 @@ NAME = "change_order_incident_link"
 
 
 def upgrade(cursor, use_pg: bool) -> None:
+    schema_clause = "table_schema = current_schema() AND " if use_pg else ""
     cursor.execute(
         "SELECT column_name FROM information_schema.columns "
-        "WHERE table_name = ? AND column_name = ?",
+        f"WHERE {schema_clause}table_name = ? AND column_name = ?",
         ("change_orders", "incident_id"),
     )
     exists = cursor.fetchone() is not None

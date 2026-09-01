@@ -3,7 +3,7 @@ import { cleanup, render, screen, waitFor } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { ProviderManagementTab } from './ProviderManagementTab';
-import { createAIProvider, getAIProvidersPage, testAIProvider } from '../../../api/ai';
+import { createAIProvider, getAIProvidersPage, testAIProvider, updateAIProvider } from '../../../api/ai';
 
 vi.mock('../../../contexts/AppDomainContext', () => ({
   useCoreApp: vi.fn(),
@@ -37,6 +37,7 @@ const provider = {
 
 const getProviders = vi.mocked(getAIProvidersPage);
 const createProvider = vi.mocked(createAIProvider);
+const updateProvider = vi.mocked(updateAIProvider);
 const testProvider = vi.mocked(testAIProvider);
 
 describe('ProviderManagementTab browser key paths', () => {
@@ -52,6 +53,7 @@ describe('ProviderManagementTab browser key paths', () => {
       facets: { data_regions: ['unknown'], health_statuses: ['unhealthy'], provider_types: ['deepseek'], tags: [] },
     });
     createProvider.mockResolvedValue(provider as any);
+    updateProvider.mockResolvedValue(provider as any);
     testProvider.mockResolvedValue({ success: true, message: 'ok', model_tested: 'deepseek-chat', sample_response: 'ok', latency_ms: 12 } as any);
   });
 
@@ -96,6 +98,25 @@ describe('ProviderManagementTab browser key paths', () => {
     expect(createProvider.mock.calls[0][0]).not.toHaveProperty('data_processing_agreement_ref');
     expect(createProvider.mock.calls[0][0]).not.toHaveProperty('approved_endpoint_patterns');
   }, 10_000);
+
+  it('keeps the existing API key when editing a provider without re-entering it', async () => {
+    const user = userEvent.setup();
+    render(<ProviderManagementTab />);
+
+    await screen.findAllByText('DeepSeek 主供应商');
+    await user.click(screen.getAllByRole('button', { name: '编辑 DeepSeek 主供应商' })[0]);
+
+    const apiKeyInput = screen.getByLabelText('API Key');
+    expect(apiKeyInput.hasAttribute('required')).toBe(false);
+    expect(apiKeyInput.getAttribute('placeholder')).toBe('留空以保留现有密钥');
+
+    await user.selectOptions(screen.getByLabelText('允许数据分类'), 'INTERNAL');
+    await user.click(screen.getByRole('button', { name: '保存修改' }));
+    await waitFor(() => expect(updateProvider).toHaveBeenCalledWith(provider.id, expect.objectContaining({
+      allowed_data_classification: 'INTERNAL',
+      api_key: undefined,
+    })));
+  });
 
   it('shows the empty state and a recoverable request error', async () => {
     getProviders.mockResolvedValueOnce({ items: [], total: 0, page: 1, page_size: 20, total_pages: 1, facets: {} });
@@ -156,5 +177,21 @@ describe('ProviderManagementTab browser key paths', () => {
     await screen.findAllByText('DeepSeek 主供应商');
     await user.click(screen.getByRole('button', { name: '测试连通性' }));
     expect(await screen.findByText(/短暂冷却/)).toBeTruthy();
+  });
+
+  it('explains an unsupported provider or endpoint instead of showing a generic failure', async () => {
+    testProvider.mockResolvedValueOnce({
+      success: false,
+      message: 'provider endpoint is not approved',
+      error_code: 'AI_PROVIDER_UNSUPPORTED',
+      latency_ms: 21,
+    } as any);
+    const user = userEvent.setup();
+    render(<ProviderManagementTab />);
+
+    await screen.findAllByText('DeepSeek 主供应商');
+    await user.click(screen.getByRole('button', { name: '测试连通性' }));
+    expect(await screen.findByText(/安全网关未批准该 Provider 类型或端点/)).toBeTruthy();
+    expect(screen.getByText('错误标识：AI_PROVIDER_UNSUPPORTED')).toBeTruthy();
   });
 });

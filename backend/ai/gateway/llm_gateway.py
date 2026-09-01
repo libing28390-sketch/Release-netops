@@ -12,6 +12,7 @@ import uuid
 from datetime import datetime, timezone
 from fnmatch import fnmatchcase
 from typing import Any, Dict, List, Optional
+from urllib.parse import urlparse
 
 from database.core import get_db_connection
 from ai.security.crypto import decrypt_api_key
@@ -41,6 +42,46 @@ from ai.providers.registry import provider_adapter
 from ai.services.metrics import ai_metrics
 
 logger = logging.getLogger(__name__)
+
+
+def _resolve_approved_endpoint_patterns(raw_patterns: Any, base_url: Any, provider_type: Any) -> list[str]:
+    """Normalize the persisted endpoint allowlist with a legacy-safe fallback.
+
+    Older Provider rows may have been created before the endpoint allowlist
+    column existed, or may have been written after the one-time backfill ran.
+    A configured Base URL is already the operator-selected destination, so an
+    empty allowlist can safely fall back to that exact URL.  This never creates
+    a wildcard and does not apply to local providers, which do not use the
+    cloud egress allowlist.
+    """
+
+    if isinstance(raw_patterns, list):
+        candidates = raw_patterns
+    else:
+        try:
+            parsed = json.loads(raw_patterns or "[]")
+        except (TypeError, ValueError, json.JSONDecodeError):
+            parsed = []
+        candidates = parsed if isinstance(parsed, list) else []
+
+    patterns = [
+        str(item).strip().rstrip("/")
+        for item in candidates
+        if item is not None and str(item).strip()
+    ]
+    if patterns:
+        return patterns
+
+    normalized_type = str(provider_type or "").lower().replace("-", "_")
+    normalized_base_url = str(base_url or "").strip().rstrip("/")
+    parsed_base_url = urlparse(normalized_base_url)
+    if (
+        normalized_type not in {"local", "ollama"}
+        and parsed_base_url.scheme.lower() == "https"
+        and parsed_base_url.hostname
+    ):
+        return [normalized_base_url]
+    return []
 
 
 class LLMGateway:
@@ -91,13 +132,13 @@ class LLMGateway:
             if not p_data["enabled"]:
                 raise AIModelNotFoundException(f"Provider '{row[1]}' is currently disabled.")
 
-            raw_patterns = row[9] if len(row) > 9 else "[]"
-            try:
-                endpoint_patterns = raw_patterns if isinstance(raw_patterns, list) else json.loads(raw_patterns or "[]")
-            except (TypeError, ValueError, json.JSONDecodeError):
-                endpoint_patterns = []
-            endpoint_patterns = [str(item).strip().rstrip("/") for item in endpoint_patterns if str(item).strip()]
             provider_type = str(p_data["provider_type"] or "").lower().replace("-", "_")
+            raw_patterns = row[9] if len(row) > 9 else "[]"
+            endpoint_patterns = _resolve_approved_endpoint_patterns(
+                raw_patterns,
+                p_data.get("base_url"),
+                provider_type,
+            )
             if provider_type not in {"local", "ollama"}:
                 base_url = str(p_data.get("base_url") or "").rstrip("/")
                 if not endpoint_patterns or not any(fnmatchcase(base_url, pattern) for pattern in endpoint_patterns):

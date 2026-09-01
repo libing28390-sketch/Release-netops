@@ -38,6 +38,7 @@ import { CopilotComposer, CopilotModelOption } from './CopilotComposer';
 import { CopilotInspectorDrawer } from './CopilotInspectorDrawer';
 import { ClarificationCard } from './ClarificationCard';
 import { formatCopilotDuration, upsertCopilotProcessStep } from './progress';
+import { formatAssistantStreamError } from './assistantError';
 import { ActionButton, ActionIconButton, ActionIconGroup } from '../../../components/ui/ActionIconButton';
 
 interface CopilotSelectionSnapshot {
@@ -902,9 +903,7 @@ export const AssistantTab: React.FC = () => {
           );
         },
         (streamError) => {
-          const message = streamError.code === 'AI_SECURITY_BLOCKED'
-            ? 'AI_SECURITY_BLOCKED：请求被安全策略拦截，请减少敏感内容后重试。'
-            : `[Copilot 处理失败] ${streamError.message || streamError.code || '服务返回错误'}`;
+          const message = formatAssistantStreamError(streamError);
           setSessions((prev) =>
             prev.map((s) => {
               if (s.id !== activeSessionId) return s;
@@ -1259,6 +1258,8 @@ export const AssistantTab: React.FC = () => {
                     ? '本地数据计算'
                     : m.execution_mode === 'local_clarification'
                       ? '本地范围确认'
+                    : m.execution_mode === 'local_sensitive_identifier'
+                      ? '本地敏感标识定位'
                     : m.execution_mode === 'provider_generated'
                       ? `${displayProviderName || '外部模型'} 生成`
                       : m.execution_mode === 'local_fallback'
@@ -1270,6 +1271,8 @@ export const AssistantTab: React.FC = () => {
                   ? 'border-emerald-200 bg-emerald-50 text-emerald-700 dark:border-emerald-800 dark:bg-emerald-950/40 dark:text-emerald-300'
                   : m.execution_mode === 'local_clarification'
                     ? 'border-violet-200 bg-violet-50 text-violet-700 dark:border-violet-800 dark:bg-violet-950/40 dark:text-violet-300'
+                  : m.execution_mode === 'local_sensitive_identifier'
+                    ? 'border-cyan-200 bg-cyan-50 text-cyan-700 dark:border-cyan-800 dark:bg-cyan-950/40 dark:text-cyan-300'
                   : m.execution_mode === 'provider_generated'
                     ? 'border-indigo-200 bg-indigo-50 text-indigo-700 dark:border-indigo-800 dark:bg-indigo-950/40 dark:text-indigo-300'
                     : m.execution_mode === 'local_fallback'

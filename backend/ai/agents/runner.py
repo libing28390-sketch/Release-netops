@@ -9,6 +9,7 @@ import uuid
 import asyncio
 from datetime import datetime, timezone
 from typing import Any, Dict, List, Optional
+from pydantic import ValidationError
 from database.core import get_db_connection
 from ai.gateway.llm_gateway import llm_gateway
 from ai.tools.registry import tool_registry
@@ -18,10 +19,37 @@ from ai.security.sanitizer import sanitize_text
 from ai.security.tokenization import token_vault, tokenize_text
 from ai.security.tokenization import opaque_user_id
 from ai.services.metrics import ai_metrics
+from ai.schemas.tool import AgentResponse
 
 
 class AgentNotFoundError(ValueError):
     """Raised when a requested Agent code is not registered and enabled."""
+
+
+def _agent_json_candidate(content: Any) -> str:
+    """Extract one bounded JSON object for strict AgentResponse validation."""
+
+    text = str(content or "").strip()[:20_000]
+    if not text:
+        raise ValueError("agent response is empty")
+    decoder = json.JSONDecoder()
+    candidate = None
+    for offset, char in enumerate(text):
+        if char != "{":
+            continue
+        try:
+            _value, end = decoder.raw_decode(text[offset:])
+        except json.JSONDecodeError:
+            continue
+        candidate = text[offset:offset + end]
+        try:
+            AgentResponse.model_validate_json(candidate)
+            return candidate
+        except ValidationError:
+            continue
+    if candidate:
+        return candidate
+    raise ValueError("agent response is not a JSON object")
 
 
 def _resolve_agent_id(agent_code: str) -> str:
@@ -110,7 +138,10 @@ class AgentRunner:
                 )
             conn.commit()
 
-        tools_catalog = tool_registry.list_tools()
+        # Agents only receive the read-only catalogue. Write-capable tools can
+        # be planned by the registry, but are never offered as an autonomous
+        # next step without the separate approval/change-order flow.
+        tools_catalog = [item for item in tool_registry.list_tools() if item.get("read_only") is True]
         tools_prompt_str = json.dumps(tools_catalog, ensure_ascii=False)
 
         sys_prompt = (
@@ -152,13 +183,8 @@ class AgentRunner:
                 )
                 content = llm_res.get("content", "")
                 
-                clean_json = content.strip()
-                if clean_json.startswith("```json"): clean_json = clean_json[7:]
-                if clean_json.startswith("```"): clean_json = clean_json[3:]
-                if clean_json.endswith("```"): clean_json = clean_json[:-3]
-                
-                parsed = json.loads(clean_json.strip())
-                action = parsed.get("action")
+                parsed = AgentResponse.model_validate_json(_agent_json_candidate(content))
+                action = parsed.action
 
                 if action == "tool_call":
                     tool_calls += 1
@@ -166,11 +192,18 @@ class AgentRunner:
                         run_status = "budget_exceeded"
                         final_result = "Agent tool-call budget exceeded"
                         break
-                    t_name = parsed.get("tool_name")
-                    t_args = parsed.get("arguments", {})
+                    t_name = parsed.tool_name
+                    t_args = parsed.arguments
                     
                     # Execute tool
-                    tool_res = tool_registry.execute_tool(t_name, t_args, tenant_id=tenant, user_id=user_id, permissions=permissions)
+                    tool_res = tool_registry.execute_tool(
+                        t_name,
+                        t_args,
+                        tenant_id=tenant,
+                        user_id=user_id,
+                        permissions=permissions,
+                        task_id=run_id,
+                    )
                     step_finish = datetime.now(timezone.utc).isoformat()
                     
                     step_info = {
@@ -224,8 +257,8 @@ class AgentRunner:
                     messages.append({"role": "assistant", "content": content})
                     messages.append({"role": "user", "content": f"Tool '{t_name}' Output:\n{json.dumps(tool_res, ensure_ascii=False)}"})
 
-                elif action == "final_answer" or "result" in parsed:
-                    final_result = sanitize_text(str(parsed.get("result", content) or ""))
+                elif action == "final_answer":
+                    final_result = sanitize_text(str(parsed.result or content or ""))
                     step_finish = datetime.now(timezone.utc).isoformat()
                     steps_executed.append({"step_no": step_no, "step_type": "final_answer", "output": final_result})
                     

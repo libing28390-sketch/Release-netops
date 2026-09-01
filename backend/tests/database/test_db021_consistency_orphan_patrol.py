@@ -65,13 +65,17 @@ def test_db021_discovers_declared_relationships_and_skips_composites():
     conn = _synthetic_connection()
     try:
         relationships = discover_foreign_keys(conn)
+        # The PostgreSQL test driver uses an isolated search_path schema.  The
+        # production database normally calls this schema public, so assert the
+        # catalog's actual scope instead of hard-coding the production name.
+        expected_schema = getattr(conn, "_schema", "public")
         assert relationships == [
             {
                 "constraint": "child_parent_id_fkey",
-                "child_schema": "public",
+                "child_schema": expected_schema,
                 "child_table": "child",
                 "child_column": "parent_id",
-                "parent_schema": "public",
+                "parent_schema": expected_schema,
                 "parent_table": "parent",
                 "parent_column": "id",
                 "column_count": 1,

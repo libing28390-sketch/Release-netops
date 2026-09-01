@@ -11,7 +11,7 @@ import re
 import uuid
 from contextlib import nullcontext
 from datetime import datetime, timezone
-from typing import Any, Dict, List, Optional
+from typing import Any, Callable, Dict, List, Optional
 from database.core import get_db_connection
 from psycopg2.extras import Json
 from ai.chunking.engine import ChunkingEngine
@@ -25,14 +25,20 @@ from ai.providers.embedding import (
 )
 from ai.security.gateway import SecurityBlocked
 from ai.services.knowledge_metadata import (
+    DIRECTORY_VENDOR_MAP,
     MetadataParseError,
     MetadataValidationError,
+    ROOT_CATEGORY_MAP,
+    directory_metadata_for_document,
     json_safe_metadata,
     merge_metadata,
     metadata_columns,
     chunk_projection_metadata,
+    canonical_vendor,
     document_category_query_values,
     validate_metadata,
+    normalize_facet_value,
+    metadata_governance,
 )
 from ai.services.knowledge_source_parser import KnowledgeSourceParseError, parse_knowledge_source
 
@@ -62,6 +68,92 @@ _CHUNK_DETAIL_SENSITIVE_KEY_RE = re.compile(
     re.IGNORECASE,
 )
 _CHUNK_DETAIL_MAX_TEXT = 20_000
+
+
+def _directory_filter_sql(
+    directory_path: Optional[str],
+    document_columns: set[str],
+    *,
+    table_alias: str = "d",
+) -> tuple[str, List[Any]]:
+    """Build a tenant-safe directory predicate for current and legacy rows.
+
+    The directory tree is a browse projection.  Newer rows persist its path in
+    ``metadata_json``, while older rows may only have the semantic category and
+    vendor columns.  A root/vendor fallback keeps those rows browseable without
+    allowing a document explicitly assigned to a custom path to leak into the
+    default directory.  Nested custom directories remain metadata-only because
+    their semantic columns cannot identify the custom child.
+    """
+
+    parts = [
+        part.strip().lower()
+        for part in str(directory_path or "").replace("\\", "/").split("/")
+        if part.strip()
+    ]
+    if parts and parts[0] == "kb_import":
+        parts = parts[1:]
+    if not parts:
+        return "1 = 0", []
+
+    normalized_path = "/".join(parts)
+    clauses: List[str] = []
+    params: List[Any] = []
+    has_metadata = "metadata_json" in document_columns
+    metadata_expression = f"LOWER(COALESCE(CAST({table_alias}.metadata_json AS TEXT), ''))"
+
+    if has_metadata:
+        clauses.append(
+            f"({metadata_expression} LIKE ? OR {metadata_expression} LIKE ?)"
+        )
+        params.extend([
+            f"%{normalized_path}%",
+            f"%kb_import/{normalized_path}%",
+        ])
+
+    expected_category = ROOT_CATEGORY_MAP.get(parts[0])
+    expected_vendor = DIRECTORY_VENDOR_MAP.get(parts[1]) if len(parts) == 2 else None
+    semantic_clauses: List[str] = []
+    semantic_params: List[Any] = []
+    if expected_category and "document_category" in document_columns:
+        category_values = document_category_query_values(parts[0])
+        if category_values:
+            placeholders = ", ".join("?" for _ in category_values)
+            semantic_clauses.append(
+                f"LOWER(COALESCE({table_alias}.document_category, '')) IN ({placeholders})"
+            )
+            semantic_params.extend(category_values)
+
+    # A vendor child can use semantic fallback only when both dimensions are
+    # available.  Otherwise a path such as 01_product/h3c could accidentally
+    # return every product-category row.
+    semantic_dimensions_complete = bool(
+        expected_category
+        and "document_category" in document_columns
+        and (len(parts) == 1 or (expected_vendor and "vendor" in document_columns))
+    )
+    if semantic_dimensions_complete and len(parts) == 2 and expected_vendor:
+        semantic_clauses.append(f"LOWER(COALESCE({table_alias}.vendor, '')) = ?")
+        semantic_params.append(str(expected_vendor).strip().lower())
+
+    if semantic_dimensions_complete and semantic_clauses:
+        semantic_sql = " AND ".join(semantic_clauses)
+        if has_metadata:
+            # A non-empty explicit path is authoritative.  The semantic
+            # fallback applies only to rows created before path projection was
+            # wired into the ingestion/publication path.
+            clauses.append(
+                f"(({metadata_expression} = '' OR {metadata_expression} NOT LIKE ?) "
+                f"AND ({semantic_sql}))"
+            )
+            params.extend(["%knowledge_directory_path%", *semantic_params])
+        else:
+            clauses.append(f"({semantic_sql})")
+            params.extend(semantic_params)
+
+    if not clauses:
+        return "1 = 0", []
+    return f"({' OR '.join(clauses)})", params
 
 
 def _decode_json_value(value: Any, default: Any) -> Any:
@@ -579,6 +671,7 @@ class KnowledgeService:
         feature_domain: str = "",
         status: str = "active",
         source_trust_level: str = "",
+        metadata_governance_status: str = "",
         page: int = 1,
         page_size: int = 20,
         sort_by: str = "created_at",
@@ -633,26 +726,22 @@ class KnowledgeService:
                 where.append(f"d.knowledge_source_type IN ({', '.join('?' for _ in scope_types)})")
                 params.extend(scope_types)
             if directory_path and directory_path.strip():
-                # Directory paths are persisted inside metadata_json.  Keep
-                # this portable across PostgreSQL/SQLite and tolerate the
-                # minimal legacy test schema that has no metadata column.
-                if "metadata_json" in document_columns:
-                    normalized_directory_path = directory_path.strip().strip("/").lower()
-                    # metadata_json is JSONB on PostgreSQL after migration
-                    # 0113 and TEXT on legacy/SQLite installations.
-                    # New documents store only the semantic directory path;
-                    # the legacy kb_import prefix remains readable for
-                    # existing rows during the migration window.
-                    where.append(
-                        "(LOWER(COALESCE(CAST(d.metadata_json AS TEXT), '')) LIKE ? "
-                        "OR LOWER(COALESCE(CAST(d.metadata_json AS TEXT), '')) LIKE ?)"
-                    )
-                    params.extend([
-                        f"%{normalized_directory_path}%",
-                        f"%kb_import/{normalized_directory_path}%",
-                    ])
-                else:
+                directory_sql, directory_params = _directory_filter_sql(
+                    directory_path,
+                    document_columns,
+                )
+                where.append(directory_sql)
+                params.extend(directory_params)
+            normalized_governance = str(metadata_governance_status or "").strip().lower()
+            if normalized_governance:
+                if normalized_governance not in {"ready", "pending_review", "approved", "rejected", "all"}:
                     where.append("1 = 0")
+                elif normalized_governance != "all":
+                    if "metadata_governance_status" not in document_columns:
+                        where.append("1 = 0")
+                    else:
+                        where.append("d.metadata_governance_status = ?")
+                        params.append(normalized_governance)
             semantic_filters = {
                 "vendor": vendor,
                 "product_family": product_family,
@@ -662,12 +751,12 @@ class KnowledgeService:
                 "os_generation": os_generation,
                 "software_train": software_train,
                 "software_release": software_release,
-            "cli_platform": cli_platform,
+                "cli_platform": cli_platform,
             # Keep the caller's value here so the query helper can match both
             # canonical categories and legacy directory ids during migration.
             "document_category": document_category,
-            "feature_domain": feature_domain,
-            "source_trust_level": source_trust_level,
+                "feature_domain": feature_domain,
+                "source_trust_level": source_trust_level,
             }
             for column, value in semantic_filters.items():
                 normalized_value = str(value or "").strip().lower()
@@ -685,6 +774,8 @@ class KnowledgeService:
                     where.append(f"LOWER(COALESCE(d.{column}, '')) IN ({placeholders})")
                     params.extend(category_values)
                     continue
+                if column == "vendor":
+                    normalized_value = canonical_vendor(value).lower()
                 where.append(f"LOWER(COALESCE(d.{column}, '')) = ?")
                 params.append(normalized_value)
             if search_term:
@@ -726,7 +817,8 @@ class KnowledgeService:
                 "product_model", "os_family", "os_generation", "software_train",
                 "software_release", "cli_platform", "feature_domain", "feature",
                 "subfeature", "risk_level", "verification_level", "rag_priority",
-                "metadata_parse_status", "exclude_from_rag",
+                "metadata_parse_status", "metadata_governance_status",
+                "metadata_governance_reason", "exclude_from_rag",
             )
             available_semantic = [field for field in semantic_fields if field in document_columns]
             if available_semantic and rows:
@@ -768,6 +860,8 @@ class KnowledgeService:
                     "verification_level": semantic.get("verification_level"),
                     "rag_priority": semantic.get("rag_priority"),
                     "metadata_parse_status": semantic.get("metadata_parse_status"),
+                    "metadata_governance_status": semantic.get("metadata_governance_status") or "ready",
+                    "metadata_governance_reason": semantic.get("metadata_governance_reason") or "",
                     "exclude_from_rag": bool(semantic.get("exclude_from_rag")),
                     "status": r[6],
                     "knowledge_source_type": r[7] or "user_document",
@@ -793,6 +887,10 @@ class KnowledgeService:
         directory_path: Optional[str] = None,
         knowledge_scope: Optional[str] = None,
         status: str = "active",
+        vendor: Optional[str] = None,
+        product_family: Optional[str] = None,
+        product_series: Optional[str] = None,
+        metadata_governance_status: str = "",
     ) -> Dict[str, Any]:
         """Return bounded Vendor/Family/Series browse facets without bodies."""
         with get_db_connection() as conn:
@@ -800,7 +898,7 @@ class KnowledgeService:
             document_columns = self._table_columns(cursor, "ai_document")
             required = {"vendor", "product_family", "product_series", "metadata_json"}
             if not required <= document_columns:
-                return {"vendors": [], "families": [], "series": []}
+                return {"vendors": [], "families": [], "series": [], "unknown_count": 0}
             where = ["(d.tenant_id = ? OR d.tenant_id = 'tenant-default')"]
             params: List[Any] = [tenant_id]
             normalized_status = str(status or "active").strip().lower()
@@ -821,12 +919,47 @@ class KnowledgeService:
                 where.append(f"d.knowledge_source_type IN ({', '.join('?' for _ in scope_types)})")
                 params.extend(scope_types)
             if directory_path and directory_path.strip():
-                normalized_path = directory_path.strip().strip("/").lower()
-                where.append(
-                    "(LOWER(COALESCE(CAST(d.metadata_json AS TEXT), '')) LIKE ? "
-                    "OR LOWER(COALESCE(CAST(d.metadata_json AS TEXT), '')) LIKE ?)"
+                directory_sql, directory_params = _directory_filter_sql(
+                    directory_path,
+                    document_columns,
                 )
-                params.extend([f"%{normalized_path}%", f"%kb_import/{normalized_path}%"])
+                where.append(directory_sql)
+                params.extend(directory_params)
+            normalized_governance = str(metadata_governance_status or "").strip().lower()
+            if normalized_governance:
+                if normalized_governance not in {"ready", "pending_review", "approved", "rejected", "all"}:
+                    where.append("1 = 0")
+                elif normalized_governance != "all":
+                    if "metadata_governance_status" not in document_columns:
+                        where.append("1 = 0")
+                    else:
+                        where.append("d.metadata_governance_status = ?")
+                        params.append(normalized_governance)
+            for column, value in (
+                ("vendor", vendor),
+                ("product_family", product_family),
+                ("product_series", product_series),
+            ):
+                normalized_value = str(value or "").strip().lower()
+                if normalized_value:
+                    if column == "vendor":
+                        normalized_value = canonical_vendor(value).lower()
+                    where.append(f"LOWER(COALESCE(d.{column}, '')) = ?")
+                    params.append(normalized_value)
+            incomplete_classification = " OR ".join(
+                "NULLIF(TRIM(COALESCE(d.%s, '')), '') IS NULL OR UPPER(TRIM(COALESCE(d.%s, ''))) = 'UNKNOWN'" % (column, column)
+                for column in ("vendor", "product_family", "product_series")
+            )
+            incomplete_classification = (
+                f"({incomplete_classification}) OR "
+                "UPPER(TRIM(COALESCE(d.vendor, ''))) = 'ALL'"
+            )
+            cursor.execute(
+                "SELECT COUNT(*) FROM ai_document d WHERE "
+                + " AND ".join([*where, f"({incomplete_classification})"]),
+                params,
+            )
+            unknown_count = int((cursor.fetchone() or [0])[0] or 0)
             cursor.execute(
                 "SELECT d.vendor, d.product_family, d.product_series, COUNT(*) "
                 "FROM ai_document d WHERE " + " AND ".join(where) +
@@ -838,17 +971,30 @@ class KnowledgeService:
             vendors: Dict[str, int] = {}
             families: Dict[str, int] = {}
             series: Dict[str, int] = {}
+
             for vendor, family, product_series, count in cursor.fetchall():
-                vendor_value = str(vendor or "UNKNOWN").strip() or "UNKNOWN"
-                family_value = str(family or "UNKNOWN").strip() or "UNKNOWN"
-                series_value = str(product_series or "UNKNOWN").strip() or "UNKNOWN"
-                vendors[vendor_value] = vendors.get(vendor_value, 0) + int(count or 0)
-                families[family_value] = families.get(family_value, 0) + int(count or 0)
-                series[series_value] = series.get(series_value, 0) + int(count or 0)
+                count_value = int(count or 0)
+                vendor_value = normalize_facet_value(vendor)
+                family_value = normalize_facet_value(family)
+                series_value = normalize_facet_value(product_series)
+                if vendor_value:
+                    vendors[vendor_value] = vendors.get(vendor_value, 0) + count_value
+                if family_value:
+                    families[family_value] = families.get(family_value, 0) + count_value
+                if series_value:
+                    series[series_value] = series.get(series_value, 0) + count_value
+
+            def facet_rows(values: Dict[str, int]) -> List[Dict[str, Any]]:
+                return [
+                    {"value": key, "count": value}
+                    for key, value in sorted(values.items(), key=lambda item: (-item[1], item[0].lower()))
+                ]
+
             return {
-                "vendors": [{"value": key, "count": value} for key, value in vendors.items()],
-                "families": [{"value": key, "count": value} for key, value in families.items()],
-                "series": [{"value": key, "count": value} for key, value in series.items()],
+                "vendors": facet_rows(vendors),
+                "families": facet_rows(families),
+                "series": facet_rows(series),
+                "unknown_count": unknown_count,
             }
 
     def get_document_detail(
@@ -877,6 +1023,7 @@ class KnowledgeService:
                 "document_id", "original_content", "normalized_content", "metadata_json",
                 "document_version", "index_version", "parser_version",
                 "retrieval_index_version", "metadata_parse_status",
+                "metadata_governance_status", "metadata_governance_reason",
             ]
             selected_optional = [field for field in optional_columns if field in document_columns]
             status_clause = "" if include_inactive else " AND d.status = 'active'"
@@ -1067,6 +1214,8 @@ class KnowledgeService:
                 "index_version": row_values.get("index_version") or row_values.get("retrieval_index_version"),
                 "parser_version": row_values.get("parser_version"),
                 "metadata_parse_status": row_values.get("metadata_parse_status"),
+                "metadata_governance_status": row_values.get("metadata_governance_status") or "ready",
+                "metadata_governance_reason": row_values.get("metadata_governance_reason") or "",
                 "raw_source": {
                     "source": row_values["source"],
                     "references": raw_sources,
@@ -1463,13 +1612,27 @@ class KnowledgeService:
         source: Optional[str] = None,
         db_connection: Any = None,
         invalidate_cache: bool = True,
+        diagnostic_callback: Optional[Callable[[str, str, Dict[str, Any]], None]] = None,
     ) -> Dict[str, Any]:
+        def notify(stage: str, status: str, **details: Any) -> None:
+            """Report optional ingestion diagnostics without affecting writes."""
+
+            if diagnostic_callback is None:
+                return
+            try:
+                diagnostic_callback(str(stage), str(status), dict(details))
+            except Exception:
+                # An observer must never change the ingestion result or
+                # interfere with the transaction it is observing.
+                return
+
         now_iso = datetime.now(timezone.utc).isoformat()
         doc_id = f"doc_{uuid.uuid4().hex[:12]}"
         
         # Front Matter is parsed before chunking so YAML keys never pollute
         # retrieval content.  A malformed header is a hard indexing error;
         # callers receive the exact reason and the source is not persisted.
+        notify("parse", "started")
         try:
             parsed_document = parse_knowledge_source(str(content or ""), filename=name)
             source_metadata = metadata if isinstance(metadata, dict) else {}
@@ -1484,9 +1647,17 @@ class KnowledgeService:
                 allow_missing_required=parsed_document.metadata_parse_status == "missing",
             )
         except KnowledgeSourceParseError as exc:
+            notify("parse", "failed", error_type=type(exc).__name__, error_code=exc.code)
             raise ValueError(f"知识文档文件格式无法解析: {exc.message}") from exc
         except (MetadataParseError, MetadataValidationError) as exc:
+            notify("parse", "failed", error_type=type(exc).__name__)
             raise ValueError(f"知识文档 Metadata 无法索引: {exc}") from exc
+        notify(
+            "parse",
+            "completed",
+            parser_version=parsed_document.parser_version,
+            metadata_parse_status=parsed_document.metadata_parse_status,
+        )
 
         merged = merge_metadata(frontmatter, source_metadata)
         # A source/upload hint may be used only when the document has no
@@ -1508,22 +1679,50 @@ class KnowledgeService:
         document_platform = merged.get("cli_platform")
         if str(document_platform or "").strip().lower() == "all":
             document_platform = None
+        if not str(merged.get("knowledge_directory_path") or "").strip():
+            # Keep the browse tree useful for documents that were imported
+            # without an explicit directory hint.  An explicit custom path
+            # remains authoritative; otherwise derive the stable root/vendor
+            # projection from the semantic metadata.
+            merged.update(
+                directory_metadata_for_document(
+                    merged.get("document_category") or "hardware",
+                    document_vendor,
+                )
+            )
+        governance_input = dict(merged)
+        if not str(governance_input.get("vendor") or "").strip() and str(vendor or "").strip().lower() != "all":
+            governance_input["vendor"] = vendor
+        governance_status, governance_reason = metadata_governance(governance_input, name=name)
+        merged["metadata_governance_status"] = governance_status
+        merged["metadata_governance_reason"] = governance_reason
+        if governance_status == "pending_review":
+            # Keep the source visible for administrators, but do not let an
+            # unclassified document influence answers until reviewed.
+            merged["exclude_from_rag"] = True
         semantic_columns = metadata_columns(merged)
         content_hash = hashlib.sha256(normalized_markdown.encode("utf-8")).hexdigest()
-        structured_chunks = ChunkingEngine().chunk(
-            normalized_markdown,
-            document_identity=doc_id,
-            document_metadata={
-                **merged,
-                "vendor": document_vendor,
-                "platform": document_platform,
-                "knowledge_source_type": knowledge_source_type,
-                "tenant_id": tenant_id,
-                "source_trust_level": source_trust_level,
-                "verified_version": merged.get("verified_version"),
-            },
-            target_tokens_override=chunk_size,
-        )
+        notify("chunk", "started")
+        try:
+            structured_chunks = ChunkingEngine().chunk(
+                normalized_markdown,
+                document_identity=doc_id,
+                document_metadata={
+                    **merged,
+                    "vendor": document_vendor,
+                    "platform": document_platform,
+                    "knowledge_source_type": knowledge_source_type,
+                    "tenant_id": tenant_id,
+                    "source_trust_level": source_trust_level,
+                    "verified_version": merged.get("verified_version"),
+                },
+                target_tokens_override=chunk_size,
+            )
+        except Exception as exc:
+            notify("chunk", "failed", error_type=type(exc).__name__)
+            raise
+        notify("chunk", "completed", chunk_count=len(structured_chunks))
+        notify("embedding", "started", chunk_count=len(structured_chunks))
         try:
             embedding_vectors = embed_documents_batch(
                 [chk.embedding_content for chk in structured_chunks],
@@ -1532,15 +1731,31 @@ class KnowledgeService:
                 task_id=f"knowledge-ingestion:{doc_id}",
                 idempotency_namespace=f"knowledge:{tenant_id}",
             )
-        except (EmbeddingProviderError, SecurityBlocked) as exc:
+        except Exception as exc:
+            notify(
+                "embedding",
+                "failed",
+                error_type=type(exc).__name__,
+                error_code=getattr(exc, "code", None),
+            )
+            if not isinstance(exc, (EmbeddingProviderError, SecurityBlocked)):
+                raise
             # Embeddings are computed before the document transaction starts;
             # a provider/dimension failure therefore cannot leave partial rows.
             raise ValueError(f"知识文档 Embedding 无法索引: {exc}") from exc
         contract = embedding_contract(embedding_provider)
         embedding_info = embedding_metadata()
+        notify(
+            "embedding",
+            "completed",
+            vector_count=len(embedding_vectors),
+            embedding_dimensions=contract.dimensions,
+            embedding_model=str(embedding_info.get("embedding_model") or ""),
+        )
 
         owns_connection = db_connection is None
         connection_context = get_db_connection() if owns_connection else nullcontext(db_connection)
+        notify("database", "started", chunk_count=len(structured_chunks))
         with connection_context as conn:
             cursor = conn.cursor()
             document_columns = self._table_columns(cursor, "ai_document")
@@ -1562,7 +1777,7 @@ class KnowledgeService:
                 "original_content": parsed_document.original_content,
                 "content_hash": content_hash,
                 "chunking_version": "v2",
-                "ingestion_status": "ready",
+                "ingestion_status": governance_status if governance_status == "pending_review" else "ready",
                 "metadata_parse_status": parsed_document.metadata_parse_status,
                 "metadata_parse_error": parsed_document.metadata_parse_error,
                 "chunker_version": ChunkingEngine.chunker_version,
@@ -1590,7 +1805,11 @@ class KnowledgeService:
             )
 
             chunk_columns = self._table_columns(cursor, "ai_document_chunk")
-            assert_pgvector_column_compatible(cursor, expected_dimensions=contract.dimensions)
+            assert_pgvector_column_compatible(
+                cursor,
+                column="embedding_vector",
+                expected_dimensions=contract.dimensions,
+            )
             for idx, (chk, vec) in enumerate(zip(structured_chunks, embedding_vectors)):
                 section_name = chk.to_dict()["section"]
                 # Every chunk carries the complete document metadata so a
@@ -1662,6 +1881,7 @@ class KnowledgeService:
                 )
             if owns_connection:
                 conn.commit()
+        notify("database", "completed", chunk_count=len(structured_chunks))
 
         # Exact invalidation occurs only after the document and all chunks are
         # committed; a failed transaction cannot evict a still-valid result.

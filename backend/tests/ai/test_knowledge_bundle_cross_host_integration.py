@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import io
 import json
+import logging
 import uuid
 import zipfile
 from urllib.parse import urlparse, urlunparse
@@ -11,6 +12,7 @@ import psycopg2
 
 import database.core as database_core
 import database.schema as database_schema
+import ai.services.knowledge_service as knowledge_service_module
 from database import init_db
 from ai.services.knowledge_bundle_import_service import KnowledgeBundleImportError, import_knowledge_bundle
 from ai.services.knowledge_export_service import knowledge_export_service
@@ -83,7 +85,7 @@ def _tamper_bundle(bundle: bytes) -> bytes:
     return output.getvalue()
 
 
-def test_host_a_export_host_b_import_reconciles_and_tamper_rolls_back(pg_host_databases) -> None:
+def test_host_a_export_host_b_import_reconciles_and_tamper_rolls_back(pg_host_databases, caplog, monkeypatch) -> None:
     switch, names = pg_host_databases
     switch(names[0])
     kb_a = knowledge_service.create_knowledge_base("Host A", tenant_id="tenant-portable")
@@ -107,7 +109,31 @@ def test_host_a_export_host_b_import_reconciles_and_tamper_rolls_back(pg_host_da
     assert exported["manifest"]["document_count"] == 1
 
     switch(names[1])
+    vector_probes = []
+    original_vector_probe = knowledge_service_module.assert_pgvector_column_compatible
+
+    def record_vector_probe(cursor, **kwargs):
+        vector_probes.append(dict(kwargs))
+        return original_vector_probe(cursor, **kwargs)
+
+    monkeypatch.setattr(knowledge_service_module, "assert_pgvector_column_compatible", record_vector_probe)
+    caplog.set_level(logging.DEBUG, logger="ai.services.knowledge_bundle_import_service")
     imported = import_knowledge_bundle(exported["content"], tenant_id="tenant-portable")
+    import_events = []
+    prefix = "knowledge_bundle_import "
+    for record in caplog.records:
+        message = record.getMessage()
+        if message.startswith(prefix):
+            import_events.append(json.loads(message[len(prefix):]))
+    assert any(event["stage"] == "chunk" and event["status"] == "completed" for event in import_events)
+    assert any(event["stage"] == "embedding" and event["status"] == "completed" for event in import_events)
+    assert any(
+        event["stage"] == "database"
+        and event["status"] == "committed"
+        and event["transaction_state"] == "committed"
+        for event in import_events
+    )
+    assert any(probe.get("column") == "embedding_vector" for probe in vector_probes)
     report = imported["reconciliation"]
     assert report == {
         "manifest_document_count": 1,

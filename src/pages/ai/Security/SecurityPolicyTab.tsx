@@ -353,8 +353,7 @@ export const SecurityPolicyTab: React.FC = () => {
   }
 
   return (
-    <div className="min-h-full bg-gradient-to-br from-slate-50 via-white to-cyan-50/40 px-4 py-5 dark:from-slate-950 dark:via-slate-950 dark:to-cyan-950/20 sm:px-6 lg:px-8">
-      <div className="mx-auto w-full max-w-[1500px] space-y-6">
+    <div className="w-full space-y-6 pb-8">
         <header className="flex flex-col justify-between gap-4 lg:flex-row lg:items-end">
           <div>
             <div className="mb-2 flex items-center gap-2 text-[11px] font-bold uppercase tracking-[0.2em] text-cyan-700 dark:text-cyan-300">
@@ -574,7 +573,6 @@ export const SecurityPolicyTab: React.FC = () => {
         </section>
 
         <div className="flex items-center gap-2 pb-2 text-xs text-slate-400"><Save className="h-3.5 w-3.5" />策略保存后立即对新的 AI 请求生效；已存在的请求不会被重新放行。</div>
-      </div>
     </div>
   );
 };

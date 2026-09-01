@@ -1,228 +1,492 @@
-# Nexora NetOps AI 知识库单轨化 Handoff
+# Nexora NetOps 知识库 Docker 迁移问题交接
 
-更新时间：2026-08-30（Asia/Shanghai）
+> 交接日期：2026-08-31（Asia/Shanghai）
+> 下一次跟进：2026-09-01
+> 当前状态：问题已定位到 Docker 端知识库导入链路，尚未修改业务代码或线上数据
 
-## 结论
+## 1. 用户目标
 
-AI 知识库已从“V1 在线文档/分块 + V2 来源治理/版本表 + 影子索引”的双轨结构收敛为单一 V1 运行时：
+将本机知识库迁移到 Docker 部署环境，并确保：
 
-- PostgreSQL 当前只使用 `ai_knowledge_base`、`ai_document`、`ai_document_revision`、`ai_document_chunk` 作为知识主数据、历史事实和在线检索载体。
-- 后端、前端和 CI 的知识库入口统一为 `/api/knowledge`；`/api/v2/kb`、`/api/knowledge-v2` 及 alias middleware 已移除。
-- V2 source/document/lifecycle/change 表、shadow generation/chunk 和 rollout flag 已从实际 PostgreSQL 删除。
-- V2 feature flag 与 shadow retrieval 运行时服务已删除，RAG 只查询 V1 文档和分块。
-- 历史迁移文件继续保留，用于已有 PostgreSQL 顺序升级；它们不代表仍有 V2 运行时。
+- 本机已有的知识文档不会因为 Docker 新建数据库而丢失。
+- 文档可以按厂商、平台、目录和 Metadata 正确迁移。
+- 文档能够在 Docker 端重新切片并生成向量。
+- 不重复导入 Docker 已经初始化的官方知识。
+- 导入失败时可以定位到具体文档和具体阶段，而不是只显示统一的 500 错误。
 
-## PostgreSQL 单轨切换快照（2026-08-29 历史记录）
+## 2. 已确认的部署与数据事实
 
-该切换快照的最新迁移为 `192 knowledge_v1_current_version_projection`；当前工作区在此基础上已顺序增加 m0193—m0196，最高 schema 为 196。下表数字保留为切换快照，不能与当前最终验证数字混用。
+### Docker 数据库是独立数据卷
 
-| 对象/指标 | 结果 |
-| --- | ---: |
-| `ai_knowledge_base` | 1 |
-| `ai_document` | 283 |
-| `ai_document_revision` | 605 |
-| `ai_document_chunk` | 2613 |
-| 有 `current_version_id` 的文档 | 271 |
-| `source_identity` 修订事实 | 39 |
-| `source_observation` 修订事实 | 265 |
-| `document_revision` | 272 |
-| `document_source_link` | 26 |
-| `site_alert` | 3 |
+Docker Compose 使用独立 PostgreSQL 服务和命名卷：
 
-上表保留 2026-08-29 单轨切换快照，便于和切换前后对比。本轮全部验证结束后的只读复核为：`ai_knowledge_base=1`、`ai_document=283`、`ai_document_revision=781`、`ai_document_chunk=2613`、有 `current_version_id` 的文档 271；修订事实分类为 `document_revision=272`、`document_source_link=26`、`site_alert=3`、`source_identity=39`、`source_observation=432`、`source_version=9`。2026-08-30 时间窗内新增的 176 条修订和 9 篇文档更新时间均由 `scheduler:knowledge-source-freshness` 标记，符合现行来源新鲜度调度器的写入者；这部分是当前目标库中观察到的调度刷新活动，不归因于测试临时库，也没有在本轮被删除或回滚。所有测试和恢复临时库均使用独立名称，最终残留为 0。
+- 服务：`db`
+- 容器：`nexora-db`
+- 数据卷：`nexora-pgdata:/var/lib/postgresql/data`
+- 应用容器：`nexora-netops`
 
-下列旧对象经 `to_regclass` 复核均不存在：
+本机 PostgreSQL 数据不会随着以下操作进入 Docker：
 
-- `kb_source_registry`、`kb_source_version`
-- `kb_document`、`kb_document_version`、`kb_document_source`
-- `kb_document_lifecycle_event`
-- `kb_source_refresh_observation`、`kb_source_change_action`、`kb_site_anomaly_alert`
-- `ai_retrieval_index_shadow_chunk`、`ai_retrieval_index_generation`、`ai_retrieval_rollout_flag`
+- `git push`
+- Docker 镜像构建
+- `docker compose up -d`
+- 前端构建
 
-`current_version_id` 为空的 12 篇文档没有正文型 `document_revision`，不是迁移丢失；运行时不会为它们伪造修订。
+数据库迁移需要使用 PostgreSQL 备份恢复，或者使用项目的知识库导出 ZIP。
 
-## 迁移链
+### Docker 当前知识库数量
 
-- `backend/database/migrations/m0189_knowledge_v1_provenance.py`：给 V1 文档补齐来源/生命周期字段，创建 `ai_document_revision`，迁移 V2 文档与来源事实。
-- `backend/database/migrations/m0190_knowledge_v1_source_observations.py`：把来源刷新观测归并进 V1 修订审计。
-- `backend/database/migrations/m0191_knowledge_v1_finalize_cleanup.py`：迁移剩余来源关系、生命周期、变更和站点告警，执行数量/映射闸门后删除旧表和专用函数。
-- `backend/database/migrations/m0192_knowledge_v1_current_version_projection.py`：修复曾提前记录 191 的数据库，补齐当前修订投影。
+用户在 Docker 服务器执行了只读 SQL，结果为：
 
-历史迁移 `m0116`—`m0188` 不删除、不重写；全新库和旧库均通过顺序迁移到最终 V1 schema。
+```text
+knowledge_source_type | documents
+----------------------+----------
+official_template     | 63
+official_url          | 41
+----------------------+----------
+合计                   | 104
+```
 
-## 当前运行时文件
+此前还确认：
 
-- 数据契约：`docs/knowledge-base-v1-data-contract.md`
-- V1 来源服务：`backend/services/knowledge_v1_source_service.py`
-- 兼容导入名：`backend/services/source_registry_service.py`（只转发 V1 实现，不读写旧表）
-- API 契约：`backend/api/knowledge_contract.py`、`knowledge_contracts.py`、`knowledge_response.py`
-- V1 基线：`scripts/knowledge_baseline_pg.py`
-- 评估入口：`scripts/knowledge_eval_ci_gate_check.py`、`scripts/knowledge_eval_offline.py`
-- 测试环境校验：`scripts/validate_knowledge_test_config.py`
-- 执行清单：`docs/plans/plan_20260829_1000_01_AI知识库V2回迁V1与单轨化清理.md`
+```text
+status | documents | chunks
+-------+-----------+-------
+active | 104       | 104
+```
 
-已删除的运行时文件包括 `backend/ai/services/feature_flag_service.py`、`backend/ai/services/retrieval_index_service.py` 和 `backend/api/knowledge_v2_*.py`。
+并且：
 
-## 已完成验证（V1 单轨历史快照）
+```text
+tenant         | documents | chunks
+---------------+-----------+-------
+tenant-default | 104       | 104
+```
 
-| 验证 | 结果 |
-| --- | --- |
-| V1 导入/API/来源/生命周期/评估 focused regression | 72 passed |
-| Agent、passthrough、ingestion pipeline | 20 passed |
-| `m0191`、`m0192` fresh-schema、投影、重复执行 | 3 passed |
-| 中性命名 eval 测试 | 11 passed in 2.61s |
-| CAT-001 本地官方文件与 collection ops | 16 passed |
-| 全量运行中暴露的知识库失败修复回归 | 39 passed in 86.02s |
-| PostgreSQL V1 固定基线 | 10/10；retrieval/citation accuracy 1.0，wrong vendor/version conflict 0，p95 5.4921 ms |
-| `python scripts/knowledge_eval_ci_gate_check.py` | PASS |
-| `python scripts/validate_knowledge_test_config.py ...` | PASS |
-| Python `py_compile` | PASS |
-| `python scripts/validate_postgresql_only.py` | PASS，0 violations |
-| `python -m compileall -q backend scripts tests` | PASS |
-| `pytest backend/tests --collect-only -q -p no:cacheprovider` | PASS，1963 tests collected |
-| `npm run lint` | PASS |
-| `npm run test:frontend -- --run src/api/http.test.ts` | 2 passed |
-| `npm run build` | PASS，4258 modules，19.23s |
-| 隔离 PostgreSQL 恢复并升级 189→192 | PASS；旧表残留 0，临时库已删除 |
-| 现行运行时 V2/旧表/API 引用扫描 | 0 命中 |
-| `git diff --check` | 无空白错误，仅 Windows LF/CRLF 提示 |
+以及：
 
-全量 `pytest backend/tests -q -p no:cacheprovider` 的历史快照为 1963 passed、0 failed、0 errors、1 warning、26 subtests，耗时 2677.46 秒（44 分 37 秒）。本次 AI 管理增强后的当前最终结果见文末“当前交付基线”。原始 1924 passed、39 failed 的真实 PostgreSQL 回归已全部处理，没有用 SQLite 替代。
+```text
+total_chunks | vector_ready_chunks
+-------------+--------------------
+104          | 104
+```
 
-关键顺序复跑使用同一批 544 个已收集 node ID，结果如下；每轮均为 544 passed、0 failed、0 errors、1 warning：
+结论：Docker 当前只有初始化的官方知识，不是本机完整知识库；当前没有 `internal_sop`、`internal_standard`、`case` 或 `user_document` 数据。
 
-| 顺序 | 结果 | 耗时 |
-| --- | --- | ---: |
-| 正序 | 544 passed | 818.64 秒（13 分 38 秒） |
-| 倒序 | 544 passed | 823.00 秒（13 分 43 秒） |
-| 随机，seed=`20260830` | 544 passed | 837.39 秒（13 分 57 秒） |
+### 页面上的向量统计存在实现限制
 
-三轮复跑后的只读检查显示 `nexora_pytest_*` 临时数据库为 0；恢复演练临时库 `nexora_knowledge_restore_*` 也为 0。测试执行过程中没有发现测试数据库、事务或模块顺序泄漏。
+当前 `ready_indexes` 统计值使用文档总数，并不是真正的 `embedding_vector IS NOT NULL` 切片数。因此页面显示 104/100% 不能单独证明所有向量都已经正确生成，需要使用 SQL 查询真实向量数量。
 
-PostgreSQL 门禁矩阵已实际执行：fresh 临时库初始化后关闭连接池并重复初始化，两次快照均为 schema 192、192 条迁移记录、核心空库计数一致、退役对象 0；`pre_190` 备份恢复后从 schema 189 顺序升级到 192，得到 282 文档、2613 分块、601 修订、退役表 0；`pre_189` 备份恢复后从 schema 188 顺序升级到 192，得到相同的 282/2613/601，退役表 0，两个临时库均已删除。连接池矩阵覆盖有界 overflow、池耗尽（`PoolError`）、注入失效连接后的恢复和 50 个并发查询，全部通过。数据库矩阵测试批次为 31 passed。
+## 3. 本机知识库与导出 ZIP 事实
 
-## 备份与回滚
+本机当前导出范围为 269 篇文档，截图显示：
 
-迁移前 PostgreSQL 备份：
+- 文件队列：269 个文件。
+- 文件总大小：约 2.7 MB。
+- 文档名称主要类似：
+  - `huawei.ce16800.product_registry.series-doc...`
+  - `huawei.cloudengine-16800...`
+  - `huawei.cloudengine-5800...`
+- 文档来源看起来是厂商产品目录/官方资料，不是企业内部 SOP。
 
-- `data/backups/knowledge_v1_pre_189_20260829_101155.dump`（约 69.7 MB）
-- `data/backups/knowledge_v1_pre_190_20260829.dump`（约 72.3 MB）
+在本机代码和数据库上做过只读导出包校验，当前导出服务重新生成的 269 篇包结果为：
 
-`m0191`/`m0192` 的 downgrade 有意不重建旧表。若必须回滚：
+```text
+document_count：269
+parsed：269
+metadata_mismatches：0
+vendors：
+  Cisco：46
+  H3C：41
+  Huawei：174
+  Ruijie：8
+source_types：
+  official_template
+  official_url
+```
 
-1. 停止应用写入并记录当前数据库连接目标。
-2. 新建隔离 PostgreSQL 数据库，先恢复 `pre_190`（必要时使用 `pre_189`）备份并完成校验。
-3. 验证文档、分块、V2 来源和版本表数量后，再切换连接；不要在现库手工重建旧表。
-4. 修正迁移代码后，从已批准版本重新顺序运行迁移。
+因此当前已排除：
 
-备份属于可恢复工件，不应提交到 Git，也不要在未完成恢复校验前删除。
+- ZIP 缺少文档。
+- ZIP manifest 数量与文件数量不一致。
+- 当前导出器生成的 manifest 与文档 Metadata 存在已知不一致。
+- 单纯因为 ZIP 中包含多个厂商而无法通过导出器生成。
 
-已用 `pre_190` 完成真实隔离恢复演练：恢复后 schema 189、270 文档/2613 分块；顺序应用 190—192 后为 282 文档/2613 分块/601 修订，退役表 0，临时数据库已自动删除。演练工具为 `scripts/knowledge_restore_rehearsal_pg.py`。
+## 4. 当前 ZIP 导入行为
 
-## 官方来源与受控阻塞
+### 入口位置
 
-官方来源清单共 48 条，均有可审计终态：27 个 `active_valid_existing`、12 个 `discovery_only`、4 个 `blocked_robots_policy`、3 个 `blocked_robots_unavailable`、2 个 `blocked_vendor_access`。这些状态继续由 YAML catalog 管理，不再写入独立 V2 registry。
+知识库管理页面为：
 
-不得通过忽略 robots、放宽 SSRF、允许私网跳转或伪造厂商版本来解除阻塞。Cisco PDF 超时来源优先换成官方 HTML 章节；Huawei robots 阻塞项等待厂商访问条件变化。
+```text
+/ai/knowledge
+```
 
-## 已知剩余风险
+不是：
 
-- 全量后端测试和本轮 PostgreSQL fresh/upgrade/restore/并发/连接池矩阵已经全绿；历史单轨验证曾有一个 Starlette/httpx `TestClient` 弃用警告，当前最终全量输出无 warning。浏览器登录后的页面冒烟仍需认证态，见文末“浏览器验收状态”。
-- 历史迁移、旧 POC/审计脚本及其测试中仍可能出现 `v2`/`shadow` 名称。这些内容不被现行应用、CI 或正式 eval 入口引用，保留用于已部署数据库升级和审计追溯。
-- 当前目标库存在调度器来源新鲜度任务写入的当天观测（见上方只读复核）；本轮未对其做破坏性清理。后续若要核对业务数据基线，应把调度刷新时间窗与切换快照分开比较。
-- 当前工作树包含本轮 AI 管理增强及此前工作区改动；发布前按交付记录核对后统一提交，不能使用 `git reset --hard` 覆盖既有改动。
+```text
+/ai/copilot
+```
 
-详细实施与验证记录：`docs/walkthrough/20260829_knowledge_engine_v1_cutover_cleanup.md`。
+当前界面没有独立的“导入 Nexora ZIP”按钮。入口是：
 
-工作树包含本轮知识库改动及此前 Agent 外键修复，不要使用 `git reset --hard`，也不要覆盖 `.codex/config.toml`、`.codex_kb_refs.txt` 等用户文件。
+```text
+知识库管理
+→ 文档与版本
+→ 右上角“上传”
+→ 批量上传
+→ 选择 .zip
+```
 
-## 2026-08-30 PostgreSQL 单轨化最终收尾
+当前通用批量上传文件选择器允许 `.zip`，但“上传企业 SOP”专用入口不允许 `.zip`。
 
-本轮在上述知识库 V1 单轨化基础上，已完成后端数据库运行时与测试基础设施的 PostgreSQL-only 改造，并完成原先剩余的四项发布验收；当前最终验证数字以文末“当前交付基线”为准：
+### ZIP 内部结构
 
-- `backend/database/core.py`、schema、backup、capacity、consistency、reset、迁移执行器和业务服务不再提供 SQLite 运行分支；非 PostgreSQL `DATABASE_URL` 会被拒绝。
-- 测试统一使用临时 PostgreSQL 数据库与隔离 fixture；测试规范、CI 和仓库扫描器均明确禁止新增 `sqlite3`、内存 SQLite、`.db` fallback、`PRAGMA`、`sqlite_master` 等实现。
-- 已修复 PostgreSQL 参数适配中的字面 `%`、DictRow catalog 重名列、事务失败后查询、布尔值、JSONB、外键和 metadata 探测差异。
-- Agent `troubleshooting_agent` 外键故障通过内置 Agent seed 迁移与运行前确保记录解决，focused 回归为 2 passed。
-- 删除 52 个旧 `knowledge_engine_v2_*` 脚本、33 个 `tests/knowledge_engine_v2` 测试及 V2 文档/状态/CI 残留；正式入口全部使用中性 `knowledge_*` 名称和 V1 数据契约。
-- 删除本轮生成的 193 个 SQLite 兼容迁移临时备份文件及 2 个一次性重写脚本；这些不是产品数据。迁移源码和历史改动仍可由 Git 恢复。
+当前导出服务将所有文件放到扁平的：
 
-最终门禁结果：
+```text
+documents/
+```
 
-| 门禁 | 结果 |
-| --- | --- |
-| `python scripts/validate_postgresql_only.py` | PASS，0 violations |
-| `python -m compileall -q backend scripts tests` | PASS |
-| `pytest backend/tests --collect-only -q -p no:cacheprovider` | PASS，1974 tests collected |
-| `pytest backend/tests -q -p no:cacheprovider` | PASS，1974 passed、0 failed、0 errors、无 warning、26 subtests |
-| 本轮 TestClient 正序/倒序/随机复跑 | PASS，12/12/12 passed；随机 seed=`20260830` |
-| fresh、旧库升级、恢复、失败回滚、并发和连接池矩阵 | PASS；数据库矩阵 31 passed，临时库 0 残留；当前最高 schema 196 |
-| 知识目录投影与前端回归 | PASS；全局 269 篇、`02_commands/h3c` 为 1 篇，前端 49 files / 181 tests |
-| 本轮转换测试批次 | PASS，92 passed |
-| Agent runner | PASS，2 passed |
-| RAG/数据库可观测性 focused | PASS，15 passed |
-| 数据一致性 focused | PASS，12 passed |
-| PostgreSQL 临时测试库泄漏检查 | PASS，0 残留 |
-| `git diff --check` | PASS；仅 Git 的 LF/CRLF 转换提示 |
-| 显式 test 配置校验 | PASS；使用瞬时安全环境变量，`.env` 未修改 |
+目录下，例如：
 
-四项 PostgreSQL 单轨化剩余任务已闭环：全量 1974 项通过；原始真实 PostgreSQL 回归清单已收敛为 0 failed/0 errors；关键 TestClient 正序、倒序和固定种子随机复跑通过；fresh/upgrade/backup-restore/failure-rollback/concurrency/pool exception 矩阵通过。知识目录空列表问题和 AI 管理增强也已完成代码及自动化验收。全程没有重新引入 SQLite，也没有把当前目标库作为测试库；浏览器登录态冒烟、提交和推送状态单独记录在文末。
+```text
+manifest.json
+documents/huawei.xxx.md
+documents/cisco.xxx.md
+```
 
-## 2026-08-30 知识目录空列表修复与最终复核
+真实的厂商、平台、目录、型号和版本主要放在每篇 Markdown 的 JSON/YAML Front Matter 与 `manifest.json` 中，而不是 ZIP 的物理目录层级中。
 
-此前页面在选中具体目录后显示“0 篇”的根因是：历史 `ai_document.metadata_json` 中只有部分文档带有 `knowledge_directory_path`，官方文档发布流程也没有持续写入目录投影；同时“全部目录”徽标错误复用了当前选中目录的数量。
+因此当前上传弹窗中展示的：
 
-- 新增 `backend/ai/services/knowledge_metadata.py` 的统一目录投影函数，按文档类别、厂商生成稳定的 `knowledge_directory_path`。
-- 新增 `m0195_knowledge_directory_projection`，为历史文档补齐缺失投影；保留已有自定义路径，不修改正文、分块或修订事实。
-- 新增 `m0196_knowledge_catalog_master_data_repair`，兼容当前数据库已经把旧目录投影记录为 193、而目录主数据迁移仍需要补跑的状态。
-- 官方文档发布流程写入目录元数据；知识库前端分别展示全局总数和当前目录匹配数。
-- 当前目标库只读核对：269 篇活动文档，缺失目录路径 0；`01_product=182`、`02_commands=4`、`03_configuration=72`、`05_troubleshooting=11`；`02_commands/h3c=1`。
-- 浏览器页面验证：全部目录显示 269 篇，选中 `02_commands/h3c` 显示 1 篇，列表出现 H3C 命令参考文档。
-- 受影响后端 focused 19/19 通过，正序/倒序/随机各 19/19 通过；知识目录与 Prompt Center 前端回归 4/4 通过；完整前端套件 49/49 files、181/181 tests 通过。
-- 当前全量后端结果为 1974 passed、0 failed、0 errors、26 subtests、无 warning；旧记录中的 1963/1969 是历史计数，不是当前基线。
+- 知识分类目录
+- 资料来源
+- 目标网络厂商
+- 目标平台
 
-## 2026-08-31 AI 管理中心后续增强
+并不能用一个全局值代表 ZIP 内全部 269 篇文档。ZIP 迁移模式应该显示 manifest 汇总，而不是继续显示普通文件批量上传字段。
 
-本轮完成用户指定的七项增强，当前代码、自动化验证和登录后浏览器冒烟均已通过：
+### 导入不会复制旧 Embedding
 
-- Prompt：支持服务端搜索/场景筛选/启停筛选/分页、复制、不可变版本历史、版本对比、追加式恢复、修改原因、乐观并发校验和分页审计。审计快照只保存哈希/长度等摘要，不返回 Prompt 正文。
-- Provider：支持 `search`、`data_region`、`health_status`、`enabled`、`provider_type`、`tag` 以及 `page/page_size` 服务端参数，返回 `facets`；标签按 JSON token 精确匹配；无参数请求保留数组兼容格式。
-- 产品目录：增加租户自定义 Model 主数据新增、编辑、软删除接口；官方审核种子只读。写操作受租户范围、RBAC、必填/重复校验、审计和 `expected_updated_at` 乐观并发保护。
-- 国际化：Prompt、Provider、产品目录、模型路由和知识库管理页面文案集中在 `src/i18n/aiAdmin.ts`，覆盖中英文预览样例、状态、版本、审计、分页、解析结果、错误反馈和下载文件名；当前引用键已完成中英文成对检查。
+当前设计是：
 
-新增或涉及的关键迁移为 `m0193_knowledge_catalog_master_data.py` 和 `m0194_ai_prompt_lifecycle.py`；m0195/m0196 为同一工作区此前的知识目录投影与迁移修复记录。官方目录与 Security Vault/API Key 脱敏边界没有被放宽。
+```text
+读取正文和 Metadata
+→ Docker 端重新解析
+→ Docker 端重新切片
+→ Docker 端重新生成 Embedding
+→ 写入 Docker PostgreSQL
+```
 
-### 当前交付基线
+ZIP 不携带本机旧向量、租户身份、ACL、服务端主键和完整版本历史。
 
-| 验证 | 结果 |
-| --- | --- |
-| 后端收集 | 1974 tests collected |
-| 后端全量 | 1974 passed、0 failed、0 errors、26 subtests、无 warning；2674.95 秒（44 分 34 秒） |
-| TestClient 顺序隔离 | 正序/倒序/seed=20260830 随机：12/12/12 passed |
-| PostgreSQL-only scanner | 0 violation(s)，PASS |
-| Python compileall | PASS |
-| 前端完整测试 | 49 files / 181 tests passed |
-| TypeScript/lint | PASS |
-| 生产构建 | PASS，4259 modules，18.95 秒 |
-| `git diff --check` | PASS；仅 Windows LF/CRLF 转换提示 |
-| 临时测试库 | 测试前后 `nexora_pytest_*` 为 0 |
-| 开发服务 | 浏览器验收后已停止；5310/5400 无监听 |
+### 当前导入不会自动去重
 
-### 浏览器验收状态
+`add_document_and_chunk()` 会生成新的 `doc_xxx` ID 并执行 INSERT。当前没有基于 `content_hash` 的跨环境去重、跳过或更新逻辑。
 
-已启动项目现有 `npm run dev`，并使用用户提供的管理员账号登录后完成五个目标 URL 的只读冒烟：
+因此完整导入本机 269 篇时，Docker 可能从：
 
-- `/ai/knowledge`：全部目录显示 269 篇；选择 `02_commands/h3c` 后显示 1 篇匹配文档，同时出现 H3C / H3C Switches / Comware facet。
-- `/ai/catalog`：Vendor → Family → Series → Model 层级可见；选择 Huawei 后显示 CloudEngine 6800 下的 3 个型号。
-- `/ai/prompts`：显示 10 个模板，搜索框、场景/状态筛选、版本、审计、预览和编辑入口均可见。
-- `/ai/models`：Model Route 标题、路由用途、Provider、默认/生效模型、健康状态和 Fallback 信息均可见。
-- `/ai/providers`：区域、健康、启用状态、类型、标签等高级筛选可见；当前实例详情按需展开，API Key 保持脱敏。当前租户实际返回 1 个实例，多实例主从布局由页面结构和自动化测试覆盖。
+```text
+104 篇
+```
 
-浏览器运行日志未发现 error-level、5xx、重复 React key 或阻断性可访问性警告；登录后的相关接口返回 200。登录前的 `/api/tags/definitions` 401 属于未认证阶段的预期响应。冒烟完成后已停止开发服务，确认 5310/5400 均无监听。
+增加到：
 
-### 发布状态
+```text
+104 + 269 = 373 篇
+```
 
-- 当前分支：`main`。
-- 提交和 push 已获用户明确授权；功能代码基线 `e1a0f8bbe0272bd6ef3f9536cc5735f3017a8ee6` 已成功推送到 `origin/main`（从 `257b1070` 更新）。本次交接记录的最终状态由后续文档收口提交随即推送。
-- 本次提交共包含 939 个文件，涵盖当前工作区中已授权的代码、测试、迁移和交付文档改动；不是只提交 AI 页面局部文件。
-- `data/backups/`、`.codex/`、`.codex_kb_refs.txt` 等本地/备份工件不作为代码提交内容；提交时显式排除，不使用无差别的 `git add -A`。
+其中可能包含 Docker 已有的 104 篇官方资料重复副本。
+
+此外，ZIP 导入会将官方来源声明降级为未复核的用户导入文档，这是当前安全策略，不应直接绕过。
+
+## 5. 已发生的失败
+
+用户在 Docker 上提交 269 篇 ZIP 后，页面中 269 篇全部显示失败，并提示：
+
+```text
+知识库导出包导入失败，已回滚全部变更
+Request ID: web_...
+```
+
+Docker 后端日志：
+
+```text
+2026-08-31 23:48:29,917 [ERROR] (PID:7) [req:web_b22ef6b5-48ea-4b3f-bf9d-9b347a112aa8, user:admin] backend.main: Route: POST /api/ai/assistant/documents/import-bundle | Status: 500 | Duration: 13739.73ms | Auth: 1.88ms | Handler: 13737.60ms
+
+2026-08-31 23:51:39,516 [ERROR] (PID:7) [req:web_1a5c4195-b41c-43b0-86fe-97c304f38d46, user:admin] backend.main: Route: POST /api/ai/assistant/documents/import-bundle | Status: 500 | Duration: 13538.66ms | Auth: 3.53ms | Handler: 13535.07ms
+```
+
+### 从日志可以排除的方向
+
+- 不是登录失败：用户 `admin` 登录成功。
+- 不是权限失败：请求已经进入导入接口并执行了约 13.5 秒。
+- 不是 Nginx 300 秒超时。
+- 不是 ZIP 超过 64 MB：上传包约 2.7 MB。
+- 不是部分提交：接口设计为原子事务，失败后应全部回滚。
+
+### 当前最可能的失败阶段
+
+```text
+ZIP 校验通过
+→ 某篇文档重新解析/切片/生成向量/写入 PostgreSQL 时抛出普通异常
+→ 接口捕获异常
+→ 统一返回 HTTP 500
+→ 所有文档回滚
+```
+
+当前接口在 [backend/ai/api/assistant.py](D:/netops/netsops-main/backend/ai/api/assistant.py) 中捕获未知异常后，只返回：
+
+```text
+KNOWLEDGE_BUNDLE_IMPORT_FAILED
+知识库导出包导入失败，已回滚全部变更
+```
+
+没有记录失败文档路径、失败阶段或安全的异常类型，因此用户提供的路由日志不足以直接判断根因。
+
+## 6. 当前待确认假设
+
+按优先级排序：
+
+1. Docker 后端在某篇官方文档的重新切片、Embedding 或数据库写入阶段抛出异常。
+2. Docker 使用的后端代码和本机生成 ZIP 的代码版本不一致。
+3. Docker 端 Embedding 模式、维度或运行时配置与本机不一致。
+4. 269 篇同步导入在单个请求/事务中规模过大，触发某个运行时边界。
+5. 某个具体文档在 Docker 当前解析器或 PostgreSQL schema 下触发特殊异常。
+6. 如果 Docker 端没有最新导入接口，前后端版本可能来自不同 Release 分支。
+
+目前没有证据支持“顶部 Huawei VRPv5 选择导致 500”。在 ZIP 分支中，服务端应使用每篇文档自身 Metadata；顶部字段主要是普通文件批量导入字段，当前 UI 展示方式容易造成误解。
+
+## 7. 明天第一步：保留现场并获取可定位错误
+
+### 7.1 先确认失败后数据库没有新增
+
+在 Docker 服务器执行：
+
+```bash
+docker compose exec -T db sh -lc '
+psql -U "$POSTGRES_USER" -d "$POSTGRES_DB" -v ON_ERROR_STOP=1 -c "
+SELECT status, COUNT(*) AS documents
+FROM ai_document
+GROUP BY status
+ORDER BY status;
+"
+'
+```
+
+预期仍然是 active 104，证明原子回滚生效。
+
+### 7.2 查看导入接口是否在目标代码中
+
+在 Docker 部署目录确认当前仓库来源和提交：
+
+```bash
+git remote -v
+git log -1 --oneline
+```
+
+注意：项目默认 Docker 部署脚本使用：
+
+```text
+https://github.com/libing28390-sketch/Release-netops.git
+```
+
+而此前代码推送到的是私有 `netsops` 仓库。若使用默认 `scripts/deploy-docker.sh`，私有仓库中的最新修改不会自动进入 Docker。
+
+### 7.3 查看当前容器的错误日志
+
+现有接口会吞掉原始异常，所以先查是否有同一时间段的其他 Embedding/数据库错误：
+
+```bash
+docker logs --since 30m nexora-netops 2>&1 | grep -C 40 -E 'import-bundle|KNOWLEDGE_BUNDLE|Embedding|embedding|Traceback|dimension|timeout|429|ERROR'
+```
+
+如果没有原始 traceback，不要继续重复上传整包；需要在代码中增加安全的结构化异常日志，至少记录：
+
+- request_id
+- 阶段：read_bundle / parse / reconcile / chunk / embedding / database
+- 文档路径或稳定哈希
+- 错误类别和安全错误摘要
+- 已处理数量
+- 当前事务状态
+
+不得记录正文、密码、Token、API Key 或原始敏感 Metadata。
+
+## 8. 明天的最小验证方案
+
+不要再次上传 269 篇整包。按以下顺序验证：
+
+1. 从本机导出 1 篇官方文档。
+2. 导入 Docker。
+3. 如果 1 篇失败，优先查后端版本、Embedding 配置、pgvector 维度和单篇文档错误。
+4. 如果 1 篇成功，继续测试 5 篇。
+5. 如果 5 篇成功，再按 20～50 篇拆包。
+6. 每批成功后检查文档数、切片数和真实向量数。
+
+建议第一批选择单一厂商、单一目录、单一平台的文档，便于定位 Metadata 差异。
+
+成功后的统计预期不是“文档数等于切片数”。应检查：
+
+```text
+vector_missing_chunks = 0
+vector_ready_chunks = total_chunks
+```
+
+## 9. 迁移方案决策
+
+### 方案 A：完整 PostgreSQL 迁移
+
+适用场景：要求 Docker 和本机完全一致，包括原文档、切片、向量、官方类型、版本关系和数据库关联。
+
+基本流程：
+
+```text
+本机 pg_dump
+→ 安全传输
+→ 备份 Docker 当前数据库
+→ 在维护窗口恢复
+→ 执行迁移检查
+→ 验收知识库和业务数据
+```
+
+风险：会迁移整个数据库，可能包含用户、设备、任务、凭据、审计等非知识库数据；不得直接覆盖生产数据库而不先备份。
+
+### 方案 B：知识库 ZIP 迁移
+
+适用场景：只迁移知识正文和 Metadata，让目标环境重新切片和生成向量。
+
+当前限制：
+
+- 不自动去重。
+- 不自动更新已有文档。
+- 不完整迁移目录树、版本历史和 ACL。
+- 官方来源会降级为待复核用户导入。
+- 269 篇同步导入可能使单请求/单事务过大。
+
+如果继续使用，必须：
+
+- 先排除 Docker 已有的 104 篇官方资料。
+- 先按 1、5、20～50 篇小批量验证。
+- 记录每批导入清单。
+- 导入前备份 Docker 数据库。
+
+### 方案 C：实现真正的知识库迁移任务
+
+长期推荐增加独立迁移模式：
+
+```text
+上传 ZIP
+→ 校验 manifest
+→ 展示厂商/平台/目录/状态汇总
+→ 按 content_hash 与目标库比对
+→ 只导入新增文档
+→ 已存在文档可选择跳过或更新
+→ 分批后台切片和生成向量
+→ 提供进度、失败文档和迁移报告
+```
+
+前端应：
+
+- 增加明确的“导入 Nexora 知识库 ZIP”按钮。
+- 检测到 `knowledge-export-v1` 后切换到迁移模式。
+- 隐藏普通上传的全局目录、来源、厂商和平台字段。
+- 显示 manifest 汇总，而不是仅显示 `documents/` 文件路径。
+- 显示“旧向量不迁移，目标机重新生成”。
+- 显示已存在文档数量、将新增数量和重复数量。
+
+后端应：
+
+- 将导入转换为后台任务或可恢复批次。
+- 为每篇文档记录阶段状态。
+- 将失败文档和安全错误摘要写入迁移报告。
+- 增加幂等键/正文哈希去重。
+- 明确是否保留官方来源类型，并要求管理员确认。
+- 保持租户隔离和权限边界。
+
+## 10. 不能做的操作
+
+- 不要把 PostgreSQL 数据目录提交到 Git。
+- 不要把 `.dump` 文件提交到 Git。
+- 不要把真实 `.env`、API Key、凭据或用户数据写入交接文档。
+- 不要重复导入同一个 269 篇 ZIP。
+- 不要在没有备份的情况下执行 `docker compose down -v`。
+- 不要直接删除 `nexora-pgdata` 以“重新试一下”。
+- 不要为了保留官方状态而绕过当前的来源信任策略。
+
+## 11. 关键代码位置
+
+- Docker PostgreSQL 数据卷：[docker-compose.yml](D:/netops/netsops-main/docker-compose.yml:25)
+- Docker 镜像构建和前端同步：[Dockerfile](D:/netops/netsops-main/Dockerfile:52)
+- Docker 默认 Release 仓库：[scripts/deploy-docker.sh](D:/netops/netsops-main/scripts/deploy-docker.sh:7)
+- 知识库导出格式：[backend/ai/services/knowledge_export_service.py](D:/netops/netsops-main/backend/ai/services/knowledge_export_service.py:1)
+- ZIP 原子导入：[backend/ai/services/knowledge_bundle_import_service.py](D:/netops/netsops-main/backend/ai/services/knowledge_bundle_import_service.py:222)
+- ZIP HTTP 接口与通用 500 包装：[backend/ai/api/assistant.py](D:/netops/netsops-main/backend/ai/api/assistant.py:921)
+- 文档切片、Embedding 和 PostgreSQL 写入：[backend/ai/services/knowledge_service.py](D:/netops/netsops-main/backend/ai/services/knowledge_service.py:1450)
+- 前端上传和 ZIP 检测：[src/pages/ai/Knowledge/KnowledgeManagementTab.tsx](D:/netops/netsops-main/src/pages/ai/Knowledge/KnowledgeManagementTab.tsx:807)
+- 前端 ZIP 文件选择器：[src/pages/ai/Knowledge/KnowledgeManagementTab.tsx](D:/netops/netsops-main/src/pages/ai/Knowledge/KnowledgeManagementTab.tsx:2613)
+- API 请求 ID 处理：[src/api/http.ts](D:/netops/netsops-main/src/api/http.ts:40)
+- Nginx API 超时：[nginx/nginx.conf](D:/netops/netsops-main/nginx/nginx.conf:115)
+
+## 12. 明天建议的执行顺序
+
+```text
+1. 只读确认失败后仍为 104 篇
+2. 确认 Docker 当前仓库、提交和前后端版本
+3. 增加或临时启用安全的导入阶段日志
+4. 用 1 篇文档做最小导入测试
+5. 根据日志判断 Metadata / Embedding / DB / 版本问题
+6. 修复根因并补充失败路径测试
+7. 再决定使用小批量 ZIP，还是 PostgreSQL 迁移
+8. 最后再改造独立的 ZIP 迁移 UI 和后台任务
+```
+
+### 交接结论
+
+Docker 当前的 104 篇是独立 PostgreSQL 数据卷中的官方初始化知识；本机 269 篇是更完整的官方知识集合。当前 ZIP 包本身通过本机解析和 Metadata 校验，但 Docker 的 269 篇原子导入在约 13.5 秒后返回 500，原始异常被接口隐藏，尚未确认具体失败文档和失败阶段。
+
+明天应先获取可定位的后端异常，再决定是修复当前 ZIP 导入链路、拆批迁移，还是采用 PostgreSQL 备份恢复。不要把这次问题直接归因于目录或平台下拉框，也不要继续重复提交完整 269 篇 ZIP。
+
+## 13. 2026-09-01 执行更新
+
+> 本节覆盖本次 AI 对话能力整改执行状态；上文 Docker ZIP 迁移问题仍需在实际 Docker 环境中单独验证，不以本节结果替代。
+
+- 已生成并持续更新 `docs/AI对话能力整改任务清单_20260901.md`，按 P0/P1 正式范围和 P2 Instructor 隔离预研记录阶段证据。
+- 已完成并复测意图结构化、主动澄清、多轮槽位、RAG 查询计划/权限过滤、工具调用安全、前端状态展示、Provider 网关韧性和 PostgreSQL 发布门禁。
+- IP/MAC 定位现为本地确定性只读路径：不向外部 Provider 发送运维标识符；查询优先使用租户隔离的 `arp_table`/`mac_table`，旧无租户 `arp_cache` 仅保留默认租户兼容回退。
+- 当前已配置的 DeepSeek 连通性和模型探测通过；Qwen/Ollama 按用户决定暂不部署、不纳入本轮验收。
+- 最终代码状态下已通过浏览器完成不少于 10 个独立 Copilot 会话，包含普通问答、资产统计、IP/MAC、本地告警、知识澄清、OSPF 排查和高风险 `shutdown` 确认；无设备变更。
+- 最终门禁证据：AI 测试 `409 passed`；后端全量 `1639 passed, 1 warning, 26 subtests passed`；前端 `192 passed`；TypeScript 检查、Vite 生产构建、离线 strict 评测和 CI 评测配置检查均通过。
+- 已复跑离线检索/实体解析、产品/系统/版本/引用质量、安全出站与敏感信息策略评测脚本，全部 `PASS`；这些结果只代表固定夹具/策略契约，不替代真实 Provider 质量指标。
+- 尚未勾选项保持诚实：真实 Provider 结构化成功率/纠正成功率、带标注意图准确率、生产语料 Top-5 召回率，以及 Instructor 与内部 Pydantic 的真实 Provider 对比，均需后续批准的独立实验或真实标注数据；不以离线契约测试冒充实测。
+
+## 14. 2026-09-01 任务进度总结与推送记录
+
+### 当前完成情况
+
+- 本轮正式范围为 P0/P1 AI 对话整改：意图结构化、主动澄清、多轮槽位、知识查询计划与权限过滤、混合检索/引用、工具计划、高风险确认、Provider 网关韧性、Security Vault 脱敏及 AI 中心前端状态展示均已实现。
+- IP/MAC 等 `CONFIDENTIAL` 运维标识符已改为租户隔离的本地确定性只读定位；不会把原始标识符送到当前云端 DeepSeek，也不会因为云端分类拒绝而进入错误的普通问答路径。
+- Instructor 仅完成隔离边界验证，生产继续使用内部 Pydantic 结构化方案；没有新增未评审依赖，也没有绕过 Nexora AI Gateway 的调用链。
+- Qwen/Ollama 当前未配置，按用户决定暂不部署、不纳入本轮验收；不伪造跨 Provider 实测结果。
+
+### 验证证据
+
+- 后端全量：`1639 passed, 1 warning, 26 subtests passed`。
+- AI 专项：`409 passed`；AI/Knowledge 聚焦门禁：`616 passed, 1010 deselected, 1 warning`。
+- 前端：`52 test files passed, 192 tests passed`；`npm run lint` 通过；`npm run build` 通过，Vite 转换 `4263 modules`。
+- 离线 strict 评测、CI 配置检查、检索/实体解析、产品/系统/版本/引用质量、安全出站与敏感信息策略脚本均为 `PASS`；这些仅证明固定夹具和代码策略契约，不替代真实 Provider 质量指标。
+- 浏览器 Copilot 已完成修复后最终 10 个独立会话：普通问答、资产统计、IP/MAC 定位、告警/知识澄清、OSPF 排查和 `shutdown` 高风险确认均有终态；未执行设备变更，未出现 `ASSISTANT_CONTEXT_ERROR` 或“只读数据准备失败”。
+- DeepSeek 已完成最小连通性与模型探测；开发服务当前保持运行，前端地址为 `http://192.168.56.1:5400/`，后端为 `http://127.0.0.1:5310`。
+
+### 仍明确保留的后续项
+
+- `ai-dialog-remediation-v1-baseline.json` 保持 `measured_with_gaps`：真实 Provider 结构化首轮成功率/纠正成功率、带标注意图准确率、生产语料 Top-5 召回率尚未完成批准的专项测量，不能用契约测试冒充目标达成。
+- Instructor 与内部方案的真实 Provider 成功率、延迟、Token 对比，以及安全评审版本范围和真实适配器专项验证，待未来有批准的实验 Provider 后再做。
+- Docker ZIP 知识库迁移失败仍是独立部署环境问题；本轮 AI 对话整改不替代 Docker 现场的单篇/分批导入验证。
+- 本次额外尝试的 24 条浏览器评测批次因测试页面句柄失效被中断，未将其结果计入证据；最终 10 会话业务验收仍以已完成的修复后记录为准。
+
+### Git 状态
+
+- 当前分支：`main`；远端：`origin`，目标分支：`origin/main`。
+- 本次推送前已完成工作区审计；未提交真实密码、Token、API Key 或其他敏感凭据。
+- 本节记录完成后，将把本轮整改源码、迁移、测试、评测产物、前端变更和文档作为一个提交推送到 `origin/main`。推送提交号以 Git 实际结果为准。

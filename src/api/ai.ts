@@ -760,7 +760,7 @@ export interface AssistantStreamDoneMeta {
   token_source?: AITokenSource;
 }
 
-export type AIExecutionMode = 'local_knowledge' | 'local_operation' | 'local_clarification' | 'provider_generated' | 'local_fallback' | 'legacy_unknown';
+export type AIExecutionMode = 'local_knowledge' | 'local_operation' | 'local_clarification' | 'local_sensitive_identifier' | 'provider_generated' | 'local_fallback' | 'legacy_unknown';
 export type AITokenSource = 'provider_reported' | 'estimated' | 'local_zero';
 
 export interface AssistantStreamCitation {
@@ -815,6 +815,9 @@ export interface AssistantClarification {
   revision?: number;
   request_kind?: string;
   risk?: string;
+  risk_level?: 'R0' | 'R1' | 'R2' | 'R3' | 'R4' | string;
+  intent?: string;
+  requires_confirmation?: boolean;
   reason_code?: string | null;
   missing_fields?: string[];
   recognized_fields?: Record<string, string>;
@@ -1218,6 +1221,10 @@ export interface RetrievalTestResult {
     chunk_id?: string;
     document_id?: string;
     document_name?: string;
+    source?: string;
+    knowledge_source_type?: string;
+    vendor?: string;
+    product_series?: string;
     section?: string;
     platform?: string;
     score?: number;
@@ -1655,6 +1662,8 @@ export interface KnowledgeDocument {
   verification_level?: string | null;
   rag_priority?: number | null;
   metadata_parse_status?: string | null;
+  metadata_governance_status?: string | null;
+  metadata_governance_reason?: string | null;
   exclude_from_rag?: boolean;
   status: string;
   knowledge_source_type: string;
@@ -1922,6 +1931,7 @@ export interface KnowledgeDocumentFacets {
   vendors: KnowledgeDocumentFacet[];
   families: KnowledgeDocumentFacet[];
   series: KnowledgeDocumentFacet[];
+  unknown_count?: number;
 }
 
 export interface KnowledgeDocumentsQuery {
@@ -1942,6 +1952,7 @@ export interface KnowledgeDocumentsQuery {
   featureDomain?: string;
   status?: string;
   sourceTrustLevel?: string;
+  metadataGovernanceStatus?: string;
   page?: number;
   pageSize?: number;
   signal?: AbortSignal;
@@ -1979,6 +1990,7 @@ export async function getKnowledgeDocuments({
   featureDomain,
   status,
   sourceTrustLevel,
+  metadataGovernanceStatus,
   page = 1,
   pageSize = 20,
   signal,
@@ -2005,6 +2017,7 @@ export async function getKnowledgeDocuments({
     ['feature_domain', featureDomain],
     ['status', status],
     ['source_trust_level', sourceTrustLevel],
+    ['metadata_governance_status', metadataGovernanceStatus],
   ];
   filterParams.forEach(([key, value]) => {
     if (value?.trim()) params.set(key, value.trim());
@@ -2032,6 +2045,7 @@ export async function exportKnowledgeDocuments(query: Omit<KnowledgeDocumentsQue
     ['feature_domain', query.featureDomain],
     ['status', query.status],
     ['source_trust_level', query.sourceTrustLevel],
+    ['metadata_governance_status', query.metadataGovernanceStatus],
   ];
   filterParams.forEach(([key, value]) => {
     if (value?.trim()) params.set(key, value.trim());
@@ -2069,12 +2083,20 @@ export async function getKnowledgeDocumentFacets({
   knowledgeScope,
   directoryPath,
   status = 'active',
+  vendor,
+  productFamily,
+  productSeries,
+  metadataGovernanceStatus,
   signal,
 }: {
   sourceType?: string;
   knowledgeScope?: 'all' | 'official' | 'enterprise';
   directoryPath?: string;
   status?: string;
+  vendor?: string;
+  productFamily?: string;
+  productSeries?: string;
+  metadataGovernanceStatus?: string;
   signal?: AbortSignal;
 } = {}): Promise<KnowledgeDocumentFacets> {
   const params = new URLSearchParams();
@@ -2082,6 +2104,10 @@ export async function getKnowledgeDocumentFacets({
   if (knowledgeScope && knowledgeScope !== 'all') params.set('knowledge_scope', knowledgeScope);
   if (directoryPath?.trim()) params.set('directory_path', directoryPath.trim());
   if (status) params.set('status', status);
+  if (vendor?.trim()) params.set('vendor', vendor.trim());
+  if (productFamily?.trim()) params.set('product_family', productFamily.trim());
+  if (productSeries?.trim()) params.set('product_series', productSeries.trim());
+  if (metadataGovernanceStatus?.trim()) params.set('metadata_governance_status', metadataGovernanceStatus.trim());
   return apiRequest<KnowledgeDocumentFacets>(`/api/ai/assistant/documents/facets?${params.toString()}`, { signal });
 }
 
@@ -2122,6 +2148,29 @@ export interface KnowledgeOfficialUrlImportPayload {
   name?: string;
   description?: string;
   idempotency_key?: string;
+}
+
+export interface KnowledgeOfficialSeedBatchResult {
+  batch_id: string;
+  tenant_id?: string;
+  item_count: number;
+  succeeded_count: number;
+  failed_count: number;
+  rate_limit_per_minute?: number;
+  concurrency?: number;
+  elapsed_ms?: number;
+  items: Array<{
+    index: number;
+    url: string;
+    success: boolean;
+    replayed?: boolean;
+    continuation_required?: boolean;
+    source_id?: string;
+    source_version_id?: string;
+    job?: { id?: string; execution_state?: string; phase?: string; progress_percent?: number };
+    error?: { code?: string; retryable?: boolean } | null;
+  }>;
+  alerts?: Array<Record<string, unknown>>;
 }
 
 export interface KnowledgeMetadataPreviewRequest {
@@ -2286,6 +2335,23 @@ export async function importKnowledgeOfficialUrl(payload: KnowledgeOfficialUrlIm
     method: 'POST',
     body: JSON.stringify(payload),
   });
+}
+
+export async function importKnowledgeOfficialSeedBatch(
+  items: KnowledgeOfficialUrlImportPayload[],
+  options: { rateLimitPerMinute?: number; concurrency?: number; backoffBaseSeconds?: number; requestId?: string } = {},
+): Promise<KnowledgeOfficialSeedBatchResult> {
+  const response = await apiRequest<{ data: KnowledgeOfficialSeedBatchResult }>('/api/knowledge/ingestion/official-seed-batch', {
+    method: 'POST',
+    body: JSON.stringify({
+      items,
+      rate_limit_per_minute: options.rateLimitPerMinute ?? 6,
+      concurrency: options.concurrency ?? 2,
+      backoff_base_seconds: options.backoffBaseSeconds ?? 0.25,
+      ...(options.requestId ? { request_id: options.requestId } : {}),
+    }),
+  });
+  return response.data;
 }
 
 export async function previewKnowledgeDocumentMetadata(payload: KnowledgeMetadataPreviewRequest): Promise<KnowledgeMetadataPreview> {

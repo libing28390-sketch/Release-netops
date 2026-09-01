@@ -29,6 +29,19 @@ def _decode_clarification_state(value: Any) -> dict[str, Any]:
     return {}
 
 
+def _clarification_state_expired(state: Mapping[str, Any] | None) -> bool:
+    """Return whether a persisted clarification can still be resumed."""
+
+    expires_at = str((state or {}).get("expires_at") or "").strip()
+    if not expires_at:
+        return False
+    try:
+        return datetime.fromisoformat(expires_at.replace("Z", "+00:00")) <= datetime.now(timezone.utc)
+    except ValueError:
+        # Invalid server state is treated as expired rather than resumed.
+        return True
+
+
 def _safe_clarification_state(value: Mapping[str, Any] | None) -> dict[str, Any]:
     """Keep only bounded, policy-generated clarification metadata at rest."""
 
@@ -36,7 +49,8 @@ def _safe_clarification_state(value: Mapping[str, Any] | None) -> dict[str, Any]
     allowed = {
         "required", "state_id", "revision", "request_kind", "risk", "reason_code", "missing_fields",
         "recognized_fields", "question", "options", "allow_free_text",
-        "allow_generic_reference", "retrieval_allowed", "expires_at",
+        "allow_generic_reference", "retrieval_allowed", "expires_at", "intent",
+        "risk_level", "requires_confirmation",
     }
     state: dict[str, Any] = {}
     for key in allowed:
@@ -64,7 +78,7 @@ def _safe_clarification_state(value: Mapping[str, Any] | None) -> dict[str, Any]
                     for option in list(item)[:12]
                     if isinstance(option, Mapping) and str(option.get("value") or "").strip()
                 ]
-        elif key in {"required"}:
+        elif key in {"required", "requires_confirmation"}:
             state[key] = bool(item)
         elif key in {"revision"}:
             try:
@@ -178,14 +192,7 @@ def _conversation_result(row: Any) -> dict[str, Any]:
     }
     if _row_has(row, "clarification_state_json"):
         state = _decode_clarification_state(row["clarification_state_json"])
-        expires_at = str(state.get("expires_at") or "").strip()
-        expired = False
-        if expires_at:
-            try:
-                expired = datetime.fromisoformat(expires_at.replace("Z", "+00:00")) <= datetime.now(timezone.utc)
-            except ValueError:
-                expired = False
-        if state.get("required") and not expired:
+        if state.get("required") and not _clarification_state_expired(state):
             result["pending_clarification"] = state
         else:
             result["pending_clarification"] = None
@@ -253,6 +260,11 @@ def set_clarification_state(
 
         current_state = _decode_clarification_state(conversation["clarification_state_json"])
         current_revision = int(conversation["clarification_state_version"] or 0)
+        if _clarification_state_expired(current_state):
+            # Do not carry an expired state_id or slots into a new task. Keep
+            # the monotonically increasing database revision for concurrency,
+            # but allocate a fresh logical clarification identity below.
+            current_state = {}
         current_state_id = str(current_state.get("state_id") or "")
         if expected_revision is not None and current_revision != int(expected_revision):
             raise RuntimeError("clarification state revision conflict")

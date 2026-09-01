@@ -27,20 +27,22 @@ export const AiCenterPage: React.FC<AiCenterPageProps> = ({ activeSubTab }) => {
   const isCopilot = activeTab === 'copilot';
 
   return (
-    <div className={`box-border flex w-full h-full min-h-0 flex-1 flex-col p-3 sm:p-6 ${isCopilot ? 'overflow-hidden' : 'overflow-y-auto'}`}>
-      <Suspense fallback={aiPanelFallback}>
-        {activeTab === 'providers' && <ProviderManagementTab />}
-        {activeTab === 'models' && <ModelManagementTab />}
-        {activeTab === 'prompts' && <PromptCenterTab />}
-        {activeTab === 'copilot' && <AssistantTab />}
-        {activeTab === 'agents' && <AgentManagementTab />}
-        {activeTab === 'knowledge' && <KnowledgeManagementTab />}
-        {activeTab === 'retrieval-test' && <RetrievalTestTab />}
-        {activeTab === 'catalog' && <ProductCatalogManagementTab />}
-        {activeTab === 'governance' && <GovernanceTab />}
-        {activeTab === 'usage' && <UsageDashboardTab />}
-        {activeTab === 'security' && <SecurityPolicyTab />}
-      </Suspense>
+    <div className={`box-border flex h-full min-h-0 w-full min-w-0 flex-1 flex-col p-3 sm:p-6 ${isCopilot ? 'overflow-hidden' : 'overflow-y-auto'}`}>
+      <div className="mx-auto flex min-h-0 w-full max-w-[1680px] flex-1 flex-col">
+        <Suspense fallback={aiPanelFallback}>
+          {activeTab === 'providers' && <ProviderManagementTab />}
+          {activeTab === 'models' && <ModelManagementTab />}
+          {activeTab === 'prompts' && <PromptCenterTab />}
+          {activeTab === 'copilot' && <AssistantTab />}
+          {activeTab === 'agents' && <AgentManagementTab />}
+          {activeTab === 'knowledge' && <KnowledgeManagementTab />}
+          {activeTab === 'retrieval-test' && <RetrievalTestTab />}
+          {activeTab === 'catalog' && <ProductCatalogManagementTab />}
+          {activeTab === 'governance' && <GovernanceTab />}
+          {activeTab === 'usage' && <UsageDashboardTab />}
+          {activeTab === 'security' && <SecurityPolicyTab />}
+        </Suspense>
+      </div>
     </div>
   );
 };

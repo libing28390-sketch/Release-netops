@@ -5,11 +5,22 @@ AI Intent Parser for Natural Language Query Recognition
 from __future__ import annotations
 
 import json
+import logging
 import re
 from typing import Any, Dict, Optional
+from pydantic import ValidationError
 from ai.gateway.llm_gateway import llm_gateway
-from ai.services.knowledge_metadata import canonical_vendor
+from ai.services.metrics import ai_metrics
 from ai.services.query_normalizer import normalize_query
+from ai.schemas.intent import IntentDecision, IntentRiskLevel, IntentType
+
+
+# Keep the internal prompt version in a format that cannot be mistaken for a
+# network hostname by the pre-egress security classifier.  A hyphenated value
+# such as ``intent-v1`` matches the classifier's legacy short-hostname pattern
+# and incorrectly upgrades even a generic prompt to CONFIDENTIAL.
+INTENT_PROMPT_VERSION = "intent.v1"
+logger = logging.getLogger(__name__)
 
 
 _ASSET_ANALYSIS_AGGREGATION_MARKERS = (
@@ -27,6 +38,120 @@ _ASSET_ANALYSIS_DIMENSION_MARKERS = (
     ("site", "\u533a\u57df", "\u673a\u623f", "\u5730\u57df"),
     ("health", "\u5065\u5eb7", "\u5728\u7ebf", "\u544a\u8b66"),
 )
+
+_INTENT_RESPONSE_SCHEMA = json.dumps(
+    IntentDecision.model_json_schema(),
+    ensure_ascii=False,
+    separators=(",", ":"),
+)
+
+_INTENT_FILTER_KEYS = frozenset({
+    "ip", "mac", "device_id", "device_identifier", "device_name", "interface",
+    "vendor", "product_family", "product_series", "product_model", "role",
+    "device_category", "site", "status", "keyword", "query", "protocol",
+    "metric", "time_range", "alarm_id", "command", "action", "platform", "os",
+    "os_family", "os_generation", "software_train", "software_release",
+    "cli_platform", "document_category", "knowledge_type", "request_type",
+    "feature_domain", "feature", "subfeature", "filters",
+})
+
+_KNOWLEDGE_METADATA_KEYS = frozenset({
+    "request_type", "knowledge_type", "vendor", "product_family",
+    "product_series", "product_model", "os_family", "os_generation",
+    "software_train", "software_release", "cli_platform", "document_category",
+    "feature_domain", "feature", "subfeature", "device_identifier",
+    "query_normalization",
+})
+
+_DANGEROUS_INTENT_MARKERS = (
+    "shutdown", "reload", "reboot", "reset", "erase", "delete config",
+    "下发配置", "修改配置", "变更配置", "删除配置", "清空配置", "重启设备", "重载设备",
+)
+
+_EXECUTION_INTENT_MARKERS = (
+    "execute", "apply", "commit", "下发", "修改", "变更", "执行命令", "执行配置",
+)
+_IP_LITERAL_RE = re.compile(
+    r"(?<![\w.])(?:25[0-5]|2[0-4]\d|1?\d?\d)(?:\.(?:25[0-5]|2[0-4]\d|1?\d?\d)){3}(?![\w.])"
+)
+_MAC_LITERAL_RE = re.compile(r"(?i)(?<![\w])(?:[0-9a-f]{2}[:-]){5}[0-9a-f]{2}(?![\w])")
+
+
+def _bounded_json_value(value: Any, *, depth: int = 0) -> Any:
+    """Keep model-controlled filter data bounded and JSON-compatible."""
+
+    if depth >= 2:
+        return str(value)[:512]
+    if value is None or isinstance(value, (bool, int, float)):
+        return value
+    if isinstance(value, str):
+        return value[:512]
+    if isinstance(value, list):
+        return [_bounded_json_value(item, depth=depth + 1) for item in value[:32]]
+    if isinstance(value, dict):
+        return {
+            str(key)[:64]: _bounded_json_value(item, depth=depth + 1)
+            for key, item in list(value.items())[:32]
+        }
+    return str(value)[:512]
+
+
+def _safe_mapping(value: Any, allowed_keys: frozenset[str]) -> Dict[str, Any]:
+    if not isinstance(value, dict):
+        return {}
+    return {
+        str(key): _bounded_json_value(item)
+        for key, item in value.items()
+        if str(key).strip() in allowed_keys
+    }
+
+
+def _deterministic_identifier_intent(query: str) -> IntentDecision | None:
+    """Recognize read-only IP/MAC location requests without cloud parsing.
+
+    IP and MAC values are intentionally classified as confidential by the
+    security gateway.  These requests already have an unambiguous local
+    operation, so asking a cloud model to identify the intent only creates an
+    avoidable classification failure and a misleading generic fallback.
+    """
+
+    normalized = " ".join((query or "").strip().split())
+    lower = normalized.lower()
+    ip_match = _IP_LITERAL_RE.search(normalized)
+    mac_match = _MAC_LITERAL_RE.search(normalized)
+    ip_markers = ("定位", "追踪", "查找", "ip location", "trace ip", "locate ip", "where is ip")
+    mac_markers = ("定位", "追踪", "查找", "mac location", "trace mac", "locate mac", "where is mac")
+
+    if ip_match and ("ip" in lower or any(marker in lower for marker in ip_markers)):
+        return IntentDecision(
+            intent=IntentType.IP_LOCATION,
+            filters={"ip": ip_match.group(0)},
+            confidence=1.0,
+        )
+    if mac_match and ("mac" in lower or any(marker in lower for marker in mac_markers)):
+        return IntentDecision(
+            intent=IntentType.MAC_LOCATION,
+            filters={"mac": mac_match.group(0).lower()},
+            confidence=1.0,
+        )
+
+    if any(marker in lower for marker in ip_markers) and re.search(r"\bip\b|ip地址|ip address", lower):
+        return IntentDecision(
+            intent=IntentType.IP_LOCATION,
+            confidence=1.0,
+            needs_clarification=True,
+            missing_fields=["ip"],
+            clarification_question="请提供需要定位的 IP 地址。",
+        )
+    if any(marker in lower for marker in mac_markers) and re.search(r"\bmac\b|mac地址|mac address", lower):
+        return IntentDecision(
+            intent=IntentType.MAC_LOCATION,
+            confidence=1.0,
+            needs_clarification=True,
+            missing_fields=["mac"],
+            clarification_question="请提供需要定位的 MAC 地址。",
+        )
+    return None
 
 
 def is_asset_analysis_query(query: str) -> bool:
@@ -341,52 +466,365 @@ class IntentParser:
             or any(token in (query or "").lower() for token in ("配置", "命令", "回显", "故障", "ospf", "vlan", "arp", "access", "trunk", "lacp", "loopback", "ntp", "snmp", "vrrp", "static route", "静态路由", "acl", "ssh", "stelnet", "hardware"))
         )
 
+    @staticmethod
+    def _json_candidate(content: Any) -> str:
+        """Extract a model-shaped JSON object without trusting prose/fences.
+
+        The gateway requests JSON mode, but compatible providers can still
+        return a code fence or a short preamble.  Candidate selection is kept
+        bounded and the candidate is validated by Pydantic before it is
+        accepted.  We deliberately do not deserialize into an untyped dict.
+        """
+
+        text = str(content or "").strip()[:12_000]
+        if not text:
+            raise ValueError("intent response is empty")
+
+        decoder = json.JSONDecoder()
+        parseable_candidate: Optional[str] = None
+        valid_candidate: Optional[str] = None
+        for offset, character in enumerate(text):
+            if character != "{":
+                continue
+            try:
+                _value, end = decoder.raw_decode(text[offset:])
+            except json.JSONDecodeError:
+                continue
+            candidate = text[offset:offset + end]
+            parseable_candidate = candidate
+            try:
+                IntentDecision.model_validate_json(candidate)
+            except ValidationError:
+                continue
+            valid_candidate = candidate
+
+        if valid_candidate:
+            return valid_candidate
+        if parseable_candidate:
+            return parseable_candidate
+        raise ValueError("intent response does not contain a JSON object")
+
+    @classmethod
+    def _parse_decision(cls, content: Any) -> IntentDecision:
+        return IntentDecision.model_validate_json(cls._json_candidate(content))
+
+    @staticmethod
+    def _validation_feedback(error: Exception) -> str:
+        """Return bounded, value-free feedback for one schema correction."""
+
+        if isinstance(error, ValidationError):
+            issues = []
+            for item in error.errors()[:8]:
+                location = ".".join(str(part) for part in item.get("loc", ())) or "response"
+                issue_type = str(item.get("type") or "invalid")[:64]
+                issues.append(f"{location}: {issue_type}")
+            details = "; ".join(issues) or "invalid structured response"
+        else:
+            details = "response is not a valid JSON object"
+        return (
+            "Your previous intent response failed schema validation. "
+            "Return one JSON object only, with no Markdown or explanation. "
+            f"Validation issues: {details}."
+        )
+
+    @staticmethod
+    def _error_code(error: Exception) -> str:
+        code = getattr(error, "code", None)
+        if isinstance(code, str) and re.fullmatch(r"[A-Z0-9_]{1,64}", code):
+            return code
+        if isinstance(error, (ValidationError, ValueError, TypeError)):
+            return "AI_INTENT_SCHEMA_INVALID"
+        return "AI_INTENT_PROVIDER_ERROR"
+
+    @staticmethod
+    def _infer_risk_level(query: str) -> IntentRiskLevel:
+        normalized = " ".join((query or "").lower().split())
+        if any(marker in normalized for marker in _DANGEROUS_INTENT_MARKERS):
+            return IntentRiskLevel.R3
+        if any(marker in normalized for marker in _EXECUTION_INTENT_MARKERS):
+            return IntentRiskLevel.R2
+        return IntentRiskLevel.R0
+
+    @staticmethod
+    def _structured_fields(decision: IntentDecision) -> Dict[str, Any]:
+        return {
+            "confidence": decision.confidence,
+            "needs_clarification": decision.needs_clarification,
+            "missing_fields": list(decision.missing_fields),
+            "clarification_question": decision.clarification_question,
+            "risk_level": decision.risk_level.value,
+            "requires_confirmation": decision.requires_confirmation,
+        }
+
+    @staticmethod
+    def _has_field(values: Dict[str, Any], *names: str) -> bool:
+        return any(values.get(name) not in (None, "", [], {}) for name in names)
+
+    @classmethod
+    def _apply_clarification_policy(cls, query: str, decision: IntentDecision) -> IntentDecision:
+        """Add deterministic missing-slot guards after model classification.
+
+        The model may classify a request correctly while omitting the one
+        entity needed by the local operation.  These guards are deliberately
+        conservative and only add a missing slot; they never invent a device,
+        interface, time range, or protocol.
+        """
+
+        values = {}
+        values.update(decision.metadata or {})
+        values.update(decision.filters or {})
+        normalized = " ".join(str(query or "").lower().split())
+        missing = [str(item)[:64] for item in decision.missing_fields[:12] if str(item).strip()]
+
+        def add(name: str) -> None:
+            if name not in missing:
+                missing.append(name)
+
+        intent = decision.intent.value
+        if intent == IntentType.IP_LOCATION.value and not cls._has_field(values, "ip"):
+            add("ip")
+        elif intent == IntentType.MAC_LOCATION.value and not cls._has_field(values, "mac"):
+            add("mac")
+        elif intent == IntentType.DEVICE_SEARCH.value:
+            if not cls._has_field(values, "device_id", "device_identifier", "device_name", "site", "role", "vendor") and any(
+                marker in normalized for marker in ("查询", "查找", "哪台", "search", "find")
+            ):
+                add("device_or_scope")
+        elif intent == IntentType.ALARM_SEARCH.value:
+            if not cls._has_field(values, "alarm_id", "device_id", "device_identifier", "site", "time_range"):
+                add("device_or_time_range")
+            if any(marker in normalized for marker in ("告警", "报警", "alarm", "今天", "昨天", "最近", "过去", "时间")) and not cls._has_field(values, "time_range"):
+                add("time_range")
+        elif intent in {IntentType.CONFIG_SEARCH.value, IntentType.TROUBLESHOOTING.value}:
+            if not cls._has_field(values, "device_id", "device_identifier", "device_name", "site"):
+                add("device_id")
+            if any(marker in normalized for marker in ("接口", "端口", "interface", "port")) and not cls._has_field(values, "interface"):
+                add("interface")
+            if any(marker in normalized for marker in ("协议", "protocol", "ospf", "bgp", "vlan", "stp", "lldp", "lacp")) and not cls._has_field(values, "protocol", "feature"):
+                add("protocol")
+            if intent == IntentType.TROUBLESHOOTING.value and any(
+                marker in normalized for marker in ("指标", "丢包", "延迟", "时延", "利用率", "cpu", "内存", "带宽", "metric", "latency", "packet loss")
+            ) and not cls._has_field(values, "metric", "feature", "symptom", "problem"):
+                add("metric")
+            if intent == IntentType.TROUBLESHOOTING.value and not cls._has_field(
+                values, "symptom", "problem", "feature", "metric", "protocol"
+            ) and not any(marker in normalized for marker in ("故障", "异常", "告警", "down", "error", "timeout", "失败")):
+                add("symptom_or_metric")
+        if any(marker in normalized for marker in ("执行", "下发", "修改", "变更", "apply", "execute", "commit")) and not cls._has_field(values, "action", "command", "request_type"):
+            add("action")
+
+        # Preserve a model-supplied question only when it is already specific
+        # enough. Otherwise ask one primary question at a time; the full
+        # bounded missing_fields list remains available to the UI.
+        question_by_field = {
+            "ip": "请提供需要定位的 IP 地址。",
+            "mac": "请提供需要定位的 MAC 地址。",
+            "device_id": "请提供目标设备名称或设备 ID。",
+            "interface": "请提供要检查的接口名称，例如 GigabitEthernet0/0/1。",
+            "device_or_scope": "请提供设备名称、站点或角色范围。",
+            "device_or_time_range": "请提供目标设备、站点或告警时间范围。",
+            "time_range": "请提供需要查询的时间范围，例如最近 24 小时或今天。",
+            "protocol": "请说明要查询或排查的协议，例如 OSPF、BGP 或 VLAN。",
+            "metric": "请说明要关注的指标，例如延迟、丢包、CPU 或接口利用率。",
+            "action": "请明确希望执行的动作或命令，并说明目标范围。",
+            "symptom_or_metric": "请说明要排查的现象或指标，例如接口 down、丢包或延迟。",
+            "confirmation": "该请求可能涉及高风险操作，请明确目标设备、变更内容，并确认是否继续。",
+        }
+        question = str(decision.clarification_question or "").strip()[:1000] or None
+        if missing:
+            question = question_by_field.get(missing[0], question or "请补充继续处理所需的信息。")
+        if not missing and not decision.needs_clarification:
+            return decision
+        return decision.model_copy(
+            update={
+                "missing_fields": missing[:12],
+                "needs_clarification": bool(missing) or decision.needs_clarification,
+                "clarification_question": question,
+            }
+        )
+
+    @staticmethod
+    def _failure_message(parse_status: str) -> str:
+        return {
+            "provider_error": "意图识别服务暂时不可用，未执行任何设备操作。请稍后重试。",
+            "schema_retry_failed": "意图识别结果格式异常，未执行任何设备操作。请重新描述问题或稍后重试。",
+            "schema_retry_provider_error": "意图识别纠正服务暂时不可用，未执行任何设备操作。请稍后重试。",
+        }.get(parse_status, "意图识别未完成，未执行任何设备操作。请稍后重试。")
+
+    def _legacy_result(
+        self,
+        query: str,
+        decision: IntentDecision,
+        *,
+        parse_status: str,
+        parse_error_code: Optional[str] = None,
+    ) -> Dict[str, Any]:
+        """Project the validated decision into the existing Assistant shape."""
+
+        intent = decision.intent.value
+        result: Dict[str, Any] = {
+            "intent": intent,
+            "filters": _safe_mapping(decision.filters, _INTENT_FILTER_KEYS),
+            "parse_status": parse_status,
+            "intent_prompt_version": INTENT_PROMPT_VERSION,
+            **self._structured_fields(decision),
+        }
+        if parse_error_code:
+            result["parse_error_code"] = parse_error_code
+
+        if intent == IntentType.KNOWLEDGE.value:
+            deterministic = self.parse_knowledge_metadata(query)
+            llm_metadata = decision.metadata or decision.filters
+            for key, value in _safe_mapping(llm_metadata, _KNOWLEDGE_METADATA_KEYS).items():
+                if value not in (None, "", [], {}):
+                    deterministic[key] = value
+            result.update({
+                "knowledge_intent": deterministic,
+                "metadata": deterministic,
+                "filters": deterministic,
+                **deterministic,
+            })
+        elif decision.metadata:
+            result["metadata"] = _safe_mapping(decision.metadata, _KNOWLEDGE_METADATA_KEYS)
+        return result
+
+    def _safe_fallback(
+        self,
+        query: str,
+        *,
+        parse_status: str,
+        error_code: Optional[str] = None,
+    ) -> Dict[str, Any]:
+        risk_level = self._infer_risk_level(query)
+        requires_clarification = risk_level == IntentRiskLevel.R3
+        decision = IntentDecision(
+            intent=IntentType.GENERAL_QA,
+            filters={"keyword": query},
+            confidence=0.0,
+            needs_clarification=requires_clarification,
+            missing_fields=["confirmation"] if requires_clarification else [],
+            clarification_question=(
+                "为避免误操作，请明确目标设备、变更内容，并确认是否需要执行。"
+                if requires_clarification else None
+            ),
+            risk_level=risk_level,
+        )
+        result = self._legacy_result(
+            query,
+            decision,
+            parse_status=parse_status,
+            parse_error_code=error_code,
+        )
+        result["parse_failure"] = {
+            "status": parse_status,
+            "message": self._failure_message(parse_status),
+            "error_code": str(error_code or "AI_INTENT_PARSE_FAILED")[:64],
+        }
+        logger.warning(
+            "Intent parsing degraded status=%s code=%s",
+            str(parse_status)[:48],
+            str(error_code or "AI_INTENT_PARSE_FAILED")[:64],
+        )
+        return result
+
+    async def _chat_intent(
+        self,
+        messages: list[Dict[str, str]],
+        *,
+        user_id: Optional[str],
+    ) -> Dict[str, Any]:
+        return await llm_gateway.chat(
+            scene="natural_query",
+            messages=messages,
+            max_tokens=512,
+            response_format={"type": "json_object"},
+            user_id=user_id,
+        )
+
     async def parse_intent(self, query: str, user_id: Optional[str] = None) -> Dict[str, Any]:
+        identifier_decision = _deterministic_identifier_intent(query)
+        if identifier_decision is not None:
+            ai_metrics.intent_observed("deterministic", identifier_decision.intent.value)
+            return self._legacy_result(query, identifier_decision, parse_status="deterministic")
+
         if is_asset_analysis_query(query):
-            return {"intent": "asset_analysis", "filters": extract_asset_filters(query)}
+            decision = IntentDecision(
+                intent=IntentType.ASSET_ANALYSIS,
+                filters=extract_asset_filters(query),
+                confidence=1.0,
+            )
+            ai_metrics.intent_observed("deterministic", decision.intent.value)
+            return self._legacy_result(query, decision, parse_status="deterministic")
 
         if self.is_knowledge_query(query):
             metadata = self.parse_knowledge_metadata(query)
-            return {"intent": "knowledge", "knowledge_intent": metadata, "metadata": metadata, "filters": metadata, **metadata}
+            decision = IntentDecision(
+                intent=IntentType.KNOWLEDGE,
+                filters=metadata,
+                metadata=metadata,
+                confidence=1.0,
+            )
+            ai_metrics.intent_observed("deterministic", decision.intent.value)
+            return self._legacy_result(query, decision, parse_status="deterministic")
 
         sys_prompt = (
             "You are an intent parser for Nexora Network Operations. "
-            "Analyze the user's natural language question and extract structured JSON intent.\n"
-            "Allowed intent types: 'device_search', 'ip_location', 'mac_location', 'alarm_search', "
-            "'config_search', 'troubleshooting', 'general_qa', 'knowledge'.\n"
-            "For knowledge return metadata fields request_type, knowledge_type, vendor, product_family, "
-            "product_series, product_model, os_family, os_generation, software_train, software_release, "
-            "cli_platform, document_category, feature_domain, feature, subfeature, device_identifier.\n"
-            "Never infer cli_platform solely from software_train; use null when not explicit.\n"
-            "Return JSON: {\"intent\": \"knowledge\", \"metadata\": { ... }}"
+            "Analyze the user's natural language question and extract one structured JSON intent.\n"
+            f"Prompt version: {INTENT_PROMPT_VERSION}.\n"
+            # Never infer cli_platform solely from software_train; keep this
+            # boundary visible to source audits as well as to the model.
+            "Allowed intent types: asset_analysis, device_search, ip_location, mac_location, "
+            "alarm_search, config_search, troubleshooting, general_qa, knowledge.\n"
+            "For knowledge, put the RAG fields in metadata. Never infer cli_platform solely "
+            "from software_train; use null when not explicit.\n"
+            "Use R0 for read-only, R1/R2 for low or medium impact, and R3/R4 for high-risk "
+            "actions. Set needs_clarification and missing_fields when required.\n"
+            "Return JSON only matching this schema:\n"
+            f"{_INTENT_RESPONSE_SCHEMA}"
         )
-        user_prompt = f"User Query: {query}"
-        messages = [
+        messages: list[Dict[str, str]] = [
             {"role": "system", "content": sys_prompt},
-            {"role": "user", "content": user_prompt}
+            {"role": "user", "content": f"User Query: {query}"},
         ]
 
         try:
-            res = await llm_gateway.chat(
-                scene="natural_query",
-                messages=messages,
-                response_format={"type": "json_object"},
-                user_id=user_id
-            )
-            content = res.get("content", "")
-            clean_json = content.strip()
-            if clean_json.startswith("```json"): clean_json = clean_json[7:]
-            if clean_json.startswith("```"): clean_json = clean_json[3:]
-            if clean_json.endswith("```"): clean_json = clean_json[:-3]
-            parsed = json.loads(clean_json.strip())
-            metadata = parsed.get("metadata") if isinstance(parsed.get("metadata"), dict) else parsed.get("filters", {})
-            if parsed.get("intent") == "knowledge":
-                deterministic = self.parse_knowledge_metadata(query)
-                deterministic.update({key: value for key, value in metadata.items() if value not in (None, "", [], {})})
-                return {"intent": "knowledge", "knowledge_intent": deterministic, "metadata": deterministic, "filters": deterministic, **deterministic}
-            return {"intent": parsed.get("intent", "general_qa"), "filters": parsed.get("filters", {})}
-        except Exception:
-            return {"intent": "general_qa", "filters": {"keyword": query}}
+            response = await self._chat_intent(messages, user_id=user_id)
+        except Exception as error:
+            code = self._error_code(error)
+            ai_metrics.intent_observed("provider_error", "general_qa")
+            return self._safe_fallback(query, parse_status="provider_error", error_code=code)
+
+        try:
+            content = response.get("content", "") if isinstance(response, dict) else ""
+            decision = self._parse_decision(content)
+        except (ValidationError, ValueError, TypeError) as error:
+            ai_metrics.intent_observed("schema_retry_started", "unknown")
+            retry_messages = [dict(message) for message in messages]
+            retry_messages.append({"role": "user", "content": self._validation_feedback(error)})
+            try:
+                retry_response = await self._chat_intent(retry_messages, user_id=user_id)
+                retry_content = retry_response.get("content", "") if isinstance(retry_response, dict) else ""
+                decision = self._apply_clarification_policy(query, self._parse_decision(retry_content))
+            except (ValidationError, ValueError, TypeError) as retry_error:
+                ai_metrics.intent_observed("schema_retry_failed", "general_qa")
+                return self._safe_fallback(
+                    query,
+                    parse_status="schema_retry_failed",
+                    error_code=self._error_code(retry_error),
+                )
+            except Exception as retry_error:
+                ai_metrics.intent_observed("provider_error", "general_qa")
+                return self._safe_fallback(
+                    query,
+                    parse_status="schema_retry_provider_error",
+                    error_code=self._error_code(retry_error),
+                )
+            ai_metrics.intent_observed("schema_retry_succeeded", decision.intent.value)
+            return self._legacy_result(query, decision, parse_status="schema_retry_succeeded")
+
+        decision = self._apply_clarification_policy(query, decision)
+        ai_metrics.intent_observed("llm_success", decision.intent.value)
+        return self._legacy_result(query, decision, parse_status="llm_success")
 
 
 intent_parser = IntentParser()

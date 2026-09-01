@@ -35,13 +35,14 @@ import {
   Pencil,
   Info,
 } from 'lucide-react';
-import { getKnowledgeStats, getKnowledgeDocuments, exportKnowledgeDocuments, importKnowledgeBundle, getKnowledgeDocument, getKnowledgeDocumentFacets, getKnowledgeAssetOptions, getKnowledgeDirectories, createKnowledgeDirectory, renameKnowledgeDirectory, deleteKnowledgeDirectory, addKnowledgeDocument, importKnowledgeOfficialUrl, importKnowledgeEnterpriseSop, importKnowledgeEnterpriseSopBatch, previewKnowledgeDocumentMetadata, clearSampleKnowledge, getKnowledgeDocumentActionImpact, deleteKnowledgeDocument, disableKnowledgeDocument, enableKnowledgeDocument, reparseKnowledgeDocument, rechunkKnowledgeDocument, reindexKnowledgeDocument, batchDeleteKnowledgeDocuments, compareKnowledgeDocumentVersions, publishKnowledgeDocumentVersion, supersedeKnowledgeDocumentVersion, rollbackKnowledgeDocumentVersion, type KnowledgeAssetOptionsResponse, type KnowledgeDirectoryNode, type KnowledgeDocument, type KnowledgeDocumentDetail, type KnowledgeDocumentFacets, type KnowledgeDocumentAction, type KnowledgeDocumentActionImpact, type KnowledgeDocumentVersionComparison, type KnowledgeMetadataPreview } from '../../../api/ai';
+import { getKnowledgeStats, getKnowledgeDocuments, exportKnowledgeDocuments, importKnowledgeBundle, getKnowledgeDocument, getKnowledgeDocumentFacets, getKnowledgeAssetOptions, getKnowledgeDirectories, createKnowledgeDirectory, renameKnowledgeDirectory, deleteKnowledgeDirectory, addKnowledgeDocument, importKnowledgeEnterpriseSop, importKnowledgeEnterpriseSopBatch, previewKnowledgeDocumentMetadata, clearSampleKnowledge, getKnowledgeDocumentActionImpact, deleteKnowledgeDocument, disableKnowledgeDocument, enableKnowledgeDocument, reparseKnowledgeDocument, rechunkKnowledgeDocument, reindexKnowledgeDocument, batchDeleteKnowledgeDocuments, compareKnowledgeDocumentVersions, publishKnowledgeDocumentVersion, supersedeKnowledgeDocumentVersion, rollbackKnowledgeDocumentVersion, type KnowledgeAssetOptionsResponse, type KnowledgeDirectoryNode, type KnowledgeDocument, type KnowledgeDocumentDetail, type KnowledgeDocumentFacets, type KnowledgeDocumentAction, type KnowledgeDocumentActionImpact, type KnowledgeDocumentVersionComparison, type KnowledgeMetadataPreview } from '../../../api/ai';
 import Pagination from '../../../components/Pagination';
 import { VENDOR_PLATFORMS } from '../../AssetManagement/constants';
 import SourceRegistryPanel from './SourceRegistryPanel';
 import RagEvaluationPanel from './RagEvaluationPanel';
 import RetrievalTracePanel from './RetrievalTracePanel';
 import IngestionJobsPanel from './IngestionJobsPanel';
+import OfficialSeedPanel from './OfficialSeedPanel';
 import KnowledgeAdminNavigation, { type KnowledgeAdminView } from './KnowledgeAdminNavigation';
 import { ActionButton, ActionIconButton, ActionIconGroup } from '../../../components/ui/ActionIconButton';
 import { useCoreApp } from '../../../contexts/AppDomainContext';
@@ -220,10 +221,14 @@ export const DirectoryTreePicker: React.FC<DirectoryTreePickerProps> = ({
   useEffect(() => {
     setExpandedIds((previous) => {
       const next = new Set(previous);
-      nodes.forEach((node) => next.add(node.id));
+      if (previous.size === 0 && selectedPath) {
+        flattenDirectoryNodes(nodes).forEach((node) => {
+          if (selectedPath === node.path || selectedPath.startsWith(`${node.path}/`)) next.add(node.id);
+        });
+      }
       return next;
     });
-  }, [nodes]);
+  }, [nodes, selectedPath]);
 
   const beginCreate = (parentId: string | null) => {
     if (!canManage) return;
@@ -388,7 +393,7 @@ export const DirectoryTreePicker: React.FC<DirectoryTreePickerProps> = ({
             </form>
           )}
           {(error || actionError) && <div className="mt-2 rounded-lg bg-red-50 px-2 py-1.5 text-[10px] text-red-600 dark:bg-red-950/30 dark:text-red-300">{actionError || error}</div>}
-          <div className={`mt-2 overflow-y-auto pr-1 ${inline ? 'max-h-[430px]' : 'max-h-72'}`}>
+           <div className={`mt-2 overflow-y-auto pr-1 ${inline ? 'max-h-[320px]' : 'max-h-72'}`}>
             {loading ? <div className="flex items-center gap-2 px-2 py-5 text-xs text-gray-400"><Loader2 className="h-4 w-4 animate-spin" />{tx('ai.knowledge.directory.loading')}</div> : nodes.length === 0 ? <div className="px-2 py-5 text-center text-xs text-gray-400">{tx('ai.knowledge.directory.empty')}</div> : nodes.map(renderNode)}
           </div>
         </div>
@@ -418,6 +423,18 @@ export const KnowledgeManagementTab: React.FC = () => {
   const { currentUser, language } = useCoreApp();
   const tx = (key: string, variables: Record<string, string | number> = {}) => aiAdminText(key, language, variables);
   const canManageDirectories = currentUser.role === 'Administrator';
+
+  function getKnowledgeLifecycleStatusLabel(status?: string | null): string {
+    const statusKey: Record<string, string> = {
+      active: 'ai.knowledge.status.active',
+      published: 'ai.knowledge.status.published',
+      draft: 'ai.knowledge.status.draft',
+      quarantined: 'ai.knowledge.status.quarantined',
+      disabled: 'ai.knowledge.status.disabled',
+    };
+    return status && statusKey[status] ? tx(statusKey[status]) : status || tx('ai.knowledge.status.pending');
+  }
+
   const [stats, setStats] = useState({
     total_documents: 0,
     total_chunks: 0,
@@ -430,6 +447,7 @@ export const KnowledgeManagementTab: React.FC = () => {
   const [selectedDirectoryPath, setSelectedDirectoryPath] = useState('');
   const [documents, setDocuments] = useState<KnowledgeDocument[]>([]);
   const [documentFacets, setDocumentFacets] = useState<KnowledgeDocumentFacets>({ vendors: [], families: [], series: [] });
+  const [expandedFacetGroups, setExpandedFacetGroups] = useState<Record<string, boolean>>({});
   const [totalDocuments, setTotalDocuments] = useState(0);
   const [allDirectoryDocuments, setAllDirectoryDocuments] = useState(0);
   const [currentPage, setCurrentPage] = useState(1);
@@ -450,21 +468,15 @@ export const KnowledgeManagementTab: React.FC = () => {
     featureDomain: '',
     documentCategory: '',
     status: 'active',
+    metadataGovernanceStatus: '',
   });
 
   // Modal & File Upload State
   const [showModal, setShowModal] = useState(false);
-  const [ingestionMode, setIngestionMode] = useState<'official_url' | 'enterprise_sop' | null>(null);
+  const [ingestionMode, setIngestionMode] = useState<'enterprise_sop' | null>(null);
   const [ingestionSubmitting, setIngestionSubmitting] = useState(false);
   const [ingestionError, setIngestionError] = useState('');
   const [ingestionMessage, setIngestionMessage] = useState('');
-  const [officialUrl, setOfficialUrl] = useState('');
-  const [officialVendor, setOfficialVendor] = useState('Huawei');
-  const [officialFamily, setOfficialFamily] = useState('');
-  const [officialVersion, setOfficialVersion] = useState('');
-  const [officialCompatibilityVersion, setOfficialCompatibilityVersion] = useState('');
-  const [officialName, setOfficialName] = useState('');
-  const [officialTerms, setOfficialTerms] = useState('pending');
   const [enterpriseSopFile, setEnterpriseSopFile] = useState<File | null>(null);
   const [enterpriseTitle, setEnterpriseTitle] = useState('');
   const [enterpriseOwner, setEnterpriseOwner] = useState('');
@@ -523,6 +535,8 @@ export const KnowledgeManagementTab: React.FC = () => {
   const [versionAdminNotice, setVersionAdminNotice] = useState('');
   const [versionCompareResult, setVersionCompareResult] = useState<KnowledgeDocumentVersionComparison | null>(null);
   const [knowledgeAdminView, setKnowledgeAdminView] = useState<KnowledgeAdminView>('documents');
+  const [operationsOpen, setOperationsOpen] = useState(false);
+  const [advancedFiltersOpen, setAdvancedFiltersOpen] = useState(false);
 
   const fileInputRef = useRef<HTMLInputElement>(null);
   const quickUploadInputRef = useRef<HTMLInputElement>(null);
@@ -530,6 +544,8 @@ export const KnowledgeManagementTab: React.FC = () => {
   const documentsRequestIdRef = useRef(0);
   const documentDetailRequestIdRef = useRef(0);
   const documentsAbortRef = useRef<AbortController | null>(null);
+  const documentTableRef = useRef<HTMLDivElement>(null);
+  const filtersSectionRef = useRef<HTMLElement>(null);
 
   const folders: FolderCategory[] = [
     { id: 'all', name: tx('ai.knowledge.scope.all.label'), icon: '📂', description: tx('ai.knowledge.scope.all.description') },
@@ -549,6 +565,39 @@ export const KnowledgeManagementTab: React.FC = () => {
     () => (documentFacets?.vendors || []).filter((item) => item.value && item.value !== 'UNKNOWN'),
     [documentFacets?.vendors],
   );
+
+  const unknownFacetCount = documentFacets.unknown_count ?? Math.max(
+    ...[documentFacets.vendors, documentFacets.families, documentFacets.series].map((items) => (
+      items.find((item) => item.value.trim().toUpperCase() === 'UNKNOWN')?.count || 0
+    )),
+    0,
+  );
+  const selectedClassification = [semanticFilters.vendor, semanticFilters.productFamily, semanticFilters.productSeries]
+    .filter(Boolean)
+    .join(' / ');
+  const activeFilterChips = [
+    knowledgeScope !== 'all'
+      ? tx(knowledgeScope === 'official' ? 'ai.knowledge.filter.scopeOfficial' : 'ai.knowledge.filter.scopeEnterprise')
+      : '',
+    selectedFolder !== 'all'
+      ? `${tx('ai.knowledge.filter.sourceLabel')}: ${folders.find((folder) => folder.id === selectedFolder)?.name || selectedFolder}`
+      : '',
+    searchQuery ? `${tx('ai.knowledge.search.label')}: ${searchQuery}` : '',
+    selectedClassification ? `${tx('ai.knowledge.product.title')}: ${selectedClassification}` : '',
+    semanticFilters.productModel ? `${tx('ai.knowledge.filter.modelPlaceholder')}: ${semanticFilters.productModel}` : '',
+    semanticFilters.osFamily ? `${tx('ai.knowledge.filter.osPlaceholder')}: ${semanticFilters.osFamily}` : '',
+    semanticFilters.softwareRelease ? `${tx('ai.knowledge.filter.versionPlaceholder')}: ${semanticFilters.softwareRelease}` : '',
+    semanticFilters.featureDomain ? `${tx('ai.knowledge.filter.featurePlaceholder')}: ${semanticFilters.featureDomain}` : '',
+    semanticFilters.documentCategory
+      ? `${tx('ai.knowledge.filter.typeLabel')}: ${KNOWLEDGE_DIRECTORY_DISPLAY_LABELS[semanticFilters.documentCategory] ? tx(KNOWLEDGE_DIRECTORY_DISPLAY_LABELS[semanticFilters.documentCategory]) : semanticFilters.documentCategory}`
+      : '',
+    semanticFilters.status !== 'active'
+      ? `${tx('ai.knowledge.filter.lifecycleLabel')}: ${getKnowledgeLifecycleStatusLabel(semanticFilters.status)}`
+      : '',
+    semanticFilters.metadataGovernanceStatus
+      ? `${tx('ai.knowledge.governance.filterLabel')}: ${semanticFilters.metadataGovernanceStatus === 'pending_review' ? tx('ai.knowledge.governance.pending') : tx('ai.knowledge.governance.ready')}`
+      : '',
+  ].filter(Boolean);
 
   const fetchStatsAndDocs = useCallback(async () => {
     const requestId = ++documentsRequestIdRef.current;
@@ -588,6 +637,10 @@ export const KnowledgeManagementTab: React.FC = () => {
           knowledgeScope,
           directoryPath: selectedDirectoryPath || undefined,
           status: semanticFilters.status,
+          vendor: semanticFilters.vendor,
+          productFamily: semanticFilters.productFamily,
+          productSeries: semanticFilters.productSeries,
+          metadataGovernanceStatus: semanticFilters.metadataGovernanceStatus,
           signal: controller.signal,
         }),
         allDirectoryPageRequest,
@@ -638,6 +691,7 @@ export const KnowledgeManagementTab: React.FC = () => {
         documentCategory: semanticFilters.documentCategory,
         featureDomain: semanticFilters.featureDomain,
         status: semanticFilters.status,
+        metadataGovernanceStatus: semanticFilters.metadataGovernanceStatus,
       });
       const url = URL.createObjectURL(exported.blob);
       const link = document.createElement('a');
@@ -997,43 +1051,6 @@ export const KnowledgeManagementTab: React.FC = () => {
     setIngestionMode(null);
     setIngestionError('');
     setIngestionMessage('');
-  };
-
-  const handleOfficialUrlImport = async (event: React.FormEvent) => {
-    event.preventDefault();
-    setIngestionError('');
-    setIngestionMessage('');
-    if (!officialUrl.trim().toLowerCase().startsWith('https://')) {
-      setIngestionError(tx('ai.knowledge.ingestion.httpsRequired'));
-      return;
-    }
-    if (!officialFamily.trim() || !officialVersion.trim() || !officialCompatibilityVersion.trim() || officialTerms !== 'approved') {
-      setIngestionError(tx('ai.knowledge.ingestion.requiredFields'));
-      return;
-    }
-    setIngestionSubmitting(true);
-    try {
-      await importKnowledgeOfficialUrl({
-        url: officialUrl.trim(),
-        source_kind: 'product_page',
-        vendor: officialVendor,
-        product_family: officialFamily.trim(),
-        version_scope: { primary: officialVersion.trim(), compatibility: officialCompatibilityVersion.trim() },
-        terms_review_status: 'approved',
-        publish_to_knowledge_base: true,
-        name: officialName.trim(),
-      });
-      setIngestionMessage(tx('ai.knowledge.message.ingestionSubmitted'));
-      setOfficialUrl('');
-      setOfficialFamily('');
-      setOfficialVersion('');
-      setOfficialCompatibilityVersion('');
-      await fetchStatsAndDocs();
-    } catch (error: any) {
-      setIngestionError(error?.message || tx('ai.knowledge.ingestion.officialFailed'));
-    } finally {
-      setIngestionSubmitting(false);
-    }
   };
 
   const handleEnterpriseSopImport = async (event: React.FormEvent) => {
@@ -1598,6 +1615,7 @@ export const KnowledgeManagementTab: React.FC = () => {
       featureDomain: '',
       documentCategory: '',
       status: 'active',
+      metadataGovernanceStatus: '',
     });
     setCurrentPage(1);
     setSelectedDocIds(new Set());
@@ -1790,25 +1808,17 @@ export const KnowledgeManagementTab: React.FC = () => {
     }
   };
 
-  const getKnowledgeLifecycleStatusLabel = (status?: string | null): string => {
-    const statusKey: Record<string, string> = {
-      active: 'ai.knowledge.status.active',
-      published: 'ai.knowledge.status.published',
-      draft: 'ai.knowledge.status.draft',
-      quarantined: 'ai.knowledge.status.quarantined',
-      disabled: 'ai.knowledge.status.disabled',
-    };
-    return status && statusKey[status] ? tx(statusKey[status]) : status || tx('ai.knowledge.status.pending');
-  };
-
   const getDocumentStatusLabel = (document: KnowledgeDocument): string => {
+    if (document.metadata_governance_status === 'pending_review') {
+      return `${tx('ai.knowledge.governance.pending')}${tx('ai.knowledge.table.excludedRag')}`;
+    }
     if (document.status === 'active' && !document.exclude_from_rag) return tx('ai.knowledge.status.ready');
     const translatedStatus = getKnowledgeLifecycleStatusLabel(document.status);
     return `${translatedStatus}${document.exclude_from_rag ? tx('ai.knowledge.table.excludedRag') : ''}`;
   };
 
   return (
-    <div className="space-y-6 font-sans">
+    <div className="w-full space-y-3 pb-8 font-sans">
       <KnowledgeAdminNavigation activeView={knowledgeAdminView} onChange={setKnowledgeAdminView} />
       {knowledgeAdminView === 'sources' ? <SourceRegistryPanel /> : knowledgeAdminView === 'evaluation' ? <RagEvaluationPanel /> : knowledgeAdminView === 'traces' ? <RetrievalTracePanel /> : <React.Fragment>
       <input
@@ -1842,90 +1852,62 @@ export const KnowledgeManagementTab: React.FC = () => {
         </button>
       </div>
 
-      <section className="rounded-2xl border border-slate-200/80 bg-white p-4 shadow-xs dark:border-slate-700/80 dark:bg-slate-800" aria-label={tx('ai.knowledge.ingestion.aria')}>
-        <div className="flex flex-wrap items-center justify-between gap-3">
-          <div>
-            <h3 className="text-sm font-bold text-slate-900 dark:text-white">{tx('ai.knowledge.ingestion.title')}</h3>
-            <p className="mt-1 text-[10px] text-slate-500 dark:text-slate-400">{tx('ai.knowledge.ingestion.body')}</p>
-          </div>
-          <div className="flex flex-wrap gap-2">
-            <button type="button" onClick={() => { setIngestionMode('official_url'); setIngestionError(''); setIngestionMessage(''); }} className={`rounded-xl px-3 py-2 text-xs font-semibold transition ${ingestionMode === 'official_url' ? 'bg-blue-600 text-white' : 'border border-blue-200 bg-blue-50 text-blue-700 hover:bg-blue-100 dark:border-blue-900 dark:bg-blue-950/30 dark:text-blue-200'}`}>
-              <span className="mr-1.5">🌐</span>{tx('ai.knowledge.ingestion.official')}
-            </button>
-            <button type="button" onClick={() => { setIngestionMode('enterprise_sop'); setIngestionError(''); setIngestionMessage(''); }} className={`rounded-xl px-3 py-2 text-xs font-semibold transition ${ingestionMode === 'enterprise_sop' ? 'bg-emerald-600 text-white' : 'border border-emerald-200 bg-emerald-50 text-emerald-700 hover:bg-emerald-100 dark:border-emerald-900 dark:bg-emerald-950/30 dark:text-emerald-200'}`}>
-              <span className="mr-1.5">📄</span>{tx('ai.knowledge.ingestion.enterprise')}
-            </button>
-            {ingestionMode && <button type="button" onClick={closeIngestionPanel} disabled={ingestionSubmitting} className="rounded-xl px-2.5 py-2 text-xs text-slate-400 hover:bg-slate-100 dark:hover:bg-slate-700" aria-label={tx('ai.knowledge.ingestion.close')}><X className="h-3.5 w-3.5" /></button>}
-          </div>
+      <details
+        className="rounded-xl border border-slate-200/80 bg-white px-3 py-2 shadow-xs dark:border-slate-700/80 dark:bg-slate-800"
+        open={operationsOpen}
+        onToggle={(event) => setOperationsOpen(event.currentTarget.open)}
+      >
+        <summary className="flex cursor-pointer list-none items-center justify-between gap-3 rounded-lg py-1 [&::-webkit-details-marker]:hidden">
+          <span className="flex min-w-0 items-center gap-2">
+            <UploadCloud className="h-4 w-4 shrink-0 text-indigo-500" />
+            <span className="min-w-0">
+              <span className="block text-xs font-bold text-slate-900 dark:text-white">{tx('ai.knowledge.ingestion.groupTitle')}</span>
+              <span className="mt-0.5 block truncate text-[10px] text-slate-500 dark:text-slate-400">{tx('ai.knowledge.ingestion.groupBody')}</span>
+            </span>
+          </span>
+          <span className="shrink-0 text-[10px] font-semibold text-indigo-600 dark:text-indigo-300">{operationsOpen ? tx('ai.knowledge.ingestion.groupCollapse') : tx('ai.knowledge.ingestion.groupExpand')}</span>
+        </summary>
+        <div className="mt-3 space-y-3 border-t border-slate-100 pt-3 dark:border-slate-700">
+          <section className="rounded-xl border border-slate-200/80 bg-slate-50/70 p-3 dark:border-slate-700 dark:bg-slate-900/40" aria-label={tx('ai.knowledge.ingestion.aria')}>
+            <div className="flex flex-wrap items-center justify-between gap-3">
+              <div>
+                <h3 className="text-sm font-bold text-slate-900 dark:text-white">{tx('ai.knowledge.ingestion.title')}</h3>
+                <p className="mt-1 text-[10px] text-slate-500 dark:text-slate-400">{tx('ai.knowledge.ingestion.body')}</p>
+              </div>
+              <div className="flex flex-wrap gap-2">
+                <button type="button" onClick={() => { setIngestionMode('enterprise_sop'); setIngestionError(''); setIngestionMessage(''); }} className={`rounded-xl px-3 py-2 text-xs font-semibold transition ${ingestionMode === 'enterprise_sop' ? 'bg-emerald-600 text-white' : 'border border-emerald-200 bg-emerald-50 text-emerald-700 hover:bg-emerald-100 dark:border-emerald-900 dark:bg-emerald-950/30 dark:text-emerald-200'}`}>
+                  <span className="mr-1.5">📄</span>{tx('ai.knowledge.ingestion.enterprise')}
+                </button>
+                {ingestionMode && <button type="button" onClick={closeIngestionPanel} disabled={ingestionSubmitting} className="rounded-xl px-2.5 py-2 text-xs text-slate-400 hover:bg-slate-100 dark:hover:bg-slate-700" aria-label={tx('ai.knowledge.ingestion.close')}><X className="h-3.5 w-3.5" /></button>}
+              </div>
+            </div>
+            {ingestionMode === 'enterprise_sop' && (
+              <form onSubmit={handleEnterpriseSopImport} className="mt-4 grid gap-3 border-t border-emerald-100 pt-4 dark:border-emerald-900/50 md:grid-cols-2 xl:grid-cols-4">
+                <label className="text-[11px] text-slate-600 dark:text-slate-300 md:col-span-2">{tx('ai.knowledge.ingestion.file')}<input type="file" accept=".md,.markdown,.txt,.log,.html,.htm,.docx,.pdf,.json,.yaml,.yml,.csv,.xml,.conf,.cfg,.ini" onChange={(event) => setEnterpriseSopFile(event.target.files?.[0] || null)} className="mt-1 block w-full rounded-xl border border-slate-200 bg-white px-3 py-2 text-xs dark:border-slate-700 dark:bg-slate-900 dark:text-white" required /></label>
+                <label className="text-[11px] text-slate-600 dark:text-slate-300">{tx('ai.knowledge.ingestion.titleField')}<input value={enterpriseTitle} onChange={(event) => setEnterpriseTitle(event.target.value)} placeholder={tx('ai.knowledge.ingestion.titlePlaceholder')} className="mt-1 w-full rounded-xl border border-slate-200 bg-white px-3 py-2 text-xs dark:border-slate-700 dark:bg-slate-900 dark:text-white" required /></label>
+                <label className="text-[11px] text-slate-600 dark:text-slate-300">{tx('ai.knowledge.ingestion.owner')}<input value={enterpriseOwner} onChange={(event) => setEnterpriseOwner(event.target.value)} placeholder={tx('ai.knowledge.ingestion.ownerPlaceholder')} className="mt-1 w-full rounded-xl border border-slate-200 bg-white px-3 py-2 text-xs dark:border-slate-700 dark:bg-slate-900 dark:text-white" required /></label>
+                <label className="text-[11px] text-slate-600 dark:text-slate-300">{tx('ai.knowledge.ingestion.department')}<input value={enterpriseDepartment} onChange={(event) => setEnterpriseDepartment(event.target.value)} placeholder={tx('ai.knowledge.ingestion.departmentPlaceholder')} className="mt-1 w-full rounded-xl border border-slate-200 bg-white px-3 py-2 text-xs dark:border-slate-700 dark:bg-slate-900 dark:text-white" required /></label>
+                <div className="flex items-end gap-2"><span className="flex-1 rounded-xl bg-emerald-50 px-3 py-2 text-[10px] text-emerald-700 dark:bg-emerald-950/30 dark:text-emerald-200">{tx('ai.knowledge.ingestion.internalFixed')}</span><button type="submit" disabled={ingestionSubmitting} className="rounded-xl bg-emerald-600 px-3 py-2 text-xs font-semibold text-white hover:bg-emerald-700 disabled:opacity-50">{ingestionSubmitting ? tx('ai.knowledge.ingestion.submitting') : tx('ai.knowledge.ingestion.submitEnterprise')}</button></div>
+              </form>
+            )}
+            {(ingestionError || ingestionMessage) && <div className={`mt-3 rounded-xl px-3 py-2 text-[11px] ${ingestionError ? 'bg-rose-50 text-rose-700 dark:bg-rose-950/30 dark:text-rose-300' : 'bg-emerald-50 text-emerald-700 dark:bg-emerald-950/30 dark:text-emerald-300'}`}>{ingestionError || ingestionMessage}</div>}
+          </section>
+          {operationsOpen && <OfficialSeedPanel language={language} onCompleted={() => void fetchStatsAndDocs()} />}
+          {operationsOpen && <IngestionJobsPanel />}
         </div>
-        {ingestionMode === 'official_url' && (
-          <form onSubmit={handleOfficialUrlImport} className="mt-4 grid gap-3 border-t border-blue-100 pt-4 dark:border-blue-900/50 md:grid-cols-2 xl:grid-cols-4">
-            <label className="text-[11px] text-slate-600 dark:text-slate-300 md:col-span-2 xl:col-span-2">{tx('ai.knowledge.ingestion.officialUrl')}<input value={officialUrl} onChange={(event) => setOfficialUrl(event.target.value)} placeholder={tx('ai.knowledge.ingestion.officialUrlPlaceholder')} className="mt-1 w-full rounded-xl border border-slate-200 bg-slate-50 px-3 py-2 text-xs dark:border-slate-700 dark:bg-slate-900 dark:text-white" required /></label>
-            <label className="text-[11px] text-slate-600 dark:text-slate-300">{tx('ai.knowledge.ingestion.vendor')}<select value={officialVendor} onChange={(event) => setOfficialVendor(event.target.value)} className="mt-1 w-full rounded-xl border border-slate-200 bg-slate-50 px-3 py-2 text-xs dark:border-slate-700 dark:bg-slate-900 dark:text-white"><option>Huawei</option><option>Cisco</option><option>H3C</option><option>Ruijie</option></select></label>
-            <label className="text-[11px] text-slate-600 dark:text-slate-300">{tx('ai.knowledge.ingestion.family')}<input value={officialFamily} onChange={(event) => setOfficialFamily(event.target.value)} placeholder={tx('ai.knowledge.ingestion.familyPlaceholder')} className="mt-1 w-full rounded-xl border border-slate-200 bg-slate-50 px-3 py-2 text-xs dark:border-slate-700 dark:bg-slate-900 dark:text-white" required /></label>
-            <label className="text-[11px] text-slate-600 dark:text-slate-300">{tx('ai.knowledge.ingestion.versionRange')}<input value={officialVersion} onChange={(event) => setOfficialVersion(event.target.value)} placeholder={tx('ai.knowledge.ingestion.versionPlaceholder')} className="mt-1 w-full rounded-xl border border-slate-200 bg-slate-50 px-3 py-2 text-xs dark:border-slate-700 dark:bg-slate-900 dark:text-white" required /></label>
-            <label className="text-[11px] text-slate-600 dark:text-slate-300">{tx('ai.knowledge.ingestion.compatibleVersion')}<input value={officialCompatibilityVersion} onChange={(event) => setOfficialCompatibilityVersion(event.target.value)} placeholder={tx('ai.knowledge.ingestion.compatiblePlaceholder')} className="mt-1 w-full rounded-xl border border-slate-200 bg-slate-50 px-3 py-2 text-xs dark:border-slate-700 dark:bg-slate-900 dark:text-white" required /></label>
-            <label className="text-[11px] text-slate-600 dark:text-slate-300">{tx('ai.knowledge.ingestion.optionalName')}<input value={officialName} onChange={(event) => setOfficialName(event.target.value)} placeholder={tx('ai.knowledge.ingestion.officialNamePlaceholder')} className="mt-1 w-full rounded-xl border border-slate-200 bg-slate-50 px-3 py-2 text-xs dark:border-slate-700 dark:bg-slate-900 dark:text-white" /></label>
-            <label className="text-[11px] text-slate-600 dark:text-slate-300">{tx('ai.knowledge.ingestion.terms')}<select value={officialTerms} onChange={(event) => setOfficialTerms(event.target.value)} className="mt-1 w-full rounded-xl border border-slate-200 bg-slate-50 px-3 py-2 text-xs dark:border-slate-700 dark:bg-slate-900 dark:text-white"><option value="pending">{tx('ai.knowledge.ingestion.termsPending')}</option><option value="approved">{tx('ai.knowledge.ingestion.termsApproved')}</option></select></label>
-            <div className="flex items-end"><button type="submit" disabled={ingestionSubmitting} className="w-full rounded-xl bg-blue-600 px-3 py-2 text-xs font-semibold text-white hover:bg-blue-700 disabled:opacity-50">{ingestionSubmitting ? tx('ai.knowledge.ingestion.submitting') : tx('ai.knowledge.ingestion.submitOfficial')}</button></div>
-          </form>
-        )}
-        {ingestionMode === 'enterprise_sop' && (
-          <form onSubmit={handleEnterpriseSopImport} className="mt-4 grid gap-3 border-t border-emerald-100 pt-4 dark:border-emerald-900/50 md:grid-cols-2 xl:grid-cols-4">
-            <label className="text-[11px] text-slate-600 dark:text-slate-300 md:col-span-2">{tx('ai.knowledge.ingestion.file')}<input type="file" accept=".md,.markdown,.txt,.log,.html,.htm,.docx,.pdf,.json,.yaml,.yml,.csv,.xml,.conf,.cfg,.ini" onChange={(event) => setEnterpriseSopFile(event.target.files?.[0] || null)} className="mt-1 block w-full rounded-xl border border-slate-200 bg-slate-50 px-3 py-2 text-xs dark:border-slate-700 dark:bg-slate-900 dark:text-white" required /></label>
-            <label className="text-[11px] text-slate-600 dark:text-slate-300">{tx('ai.knowledge.ingestion.titleField')}<input value={enterpriseTitle} onChange={(event) => setEnterpriseTitle(event.target.value)} placeholder={tx('ai.knowledge.ingestion.titlePlaceholder')} className="mt-1 w-full rounded-xl border border-slate-200 bg-slate-50 px-3 py-2 text-xs dark:border-slate-700 dark:bg-slate-900 dark:text-white" required /></label>
-            <label className="text-[11px] text-slate-600 dark:text-slate-300">{tx('ai.knowledge.ingestion.owner')}<input value={enterpriseOwner} onChange={(event) => setEnterpriseOwner(event.target.value)} placeholder={tx('ai.knowledge.ingestion.ownerPlaceholder')} className="mt-1 w-full rounded-xl border border-slate-200 bg-slate-50 px-3 py-2 text-xs dark:border-slate-700 dark:bg-slate-900 dark:text-white" required /></label>
-            <label className="text-[11px] text-slate-600 dark:text-slate-300">{tx('ai.knowledge.ingestion.department')}<input value={enterpriseDepartment} onChange={(event) => setEnterpriseDepartment(event.target.value)} placeholder={tx('ai.knowledge.ingestion.departmentPlaceholder')} className="mt-1 w-full rounded-xl border border-slate-200 bg-slate-50 px-3 py-2 text-xs dark:border-slate-700 dark:bg-slate-900 dark:text-white" required /></label>
-            <div className="flex items-end gap-2"><span className="flex-1 rounded-xl bg-emerald-50 px-3 py-2 text-[10px] text-emerald-700 dark:bg-emerald-950/30 dark:text-emerald-200">{tx('ai.knowledge.ingestion.internalFixed')}</span><button type="submit" disabled={ingestionSubmitting} className="rounded-xl bg-emerald-600 px-3 py-2 text-xs font-semibold text-white hover:bg-emerald-700 disabled:opacity-50">{ingestionSubmitting ? tx('ai.knowledge.ingestion.submitting') : tx('ai.knowledge.ingestion.submitEnterprise')}</button></div>
-          </form>
-        )}
-        {(ingestionError || ingestionMessage) && <div className={`mt-3 rounded-xl px-3 py-2 text-[11px] ${ingestionError ? 'bg-rose-50 text-rose-700 dark:bg-rose-950/30 dark:text-rose-300' : 'bg-emerald-50 text-emerald-700 dark:bg-emerald-950/30 dark:text-emerald-300'}`}>{ingestionError || ingestionMessage}</div>}
-      </section>
+      </details>
 
-      <IngestionJobsPanel />
-
-      {/* Top Metrics Cards */}
-      <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4">
-        <div className="p-4 bg-white dark:bg-gray-800 rounded-2xl border border-gray-200/80 dark:border-gray-700/80 shadow-xs space-y-1">
-          <div className="flex items-center justify-between text-xs text-gray-500 dark:text-gray-400">
-            <span>{tx('ai.knowledge.stat.documents')}</span>
-            <FileText className="w-4 h-4 text-indigo-500" />
-          </div>
-          <div className="text-2xl font-bold text-gray-900 dark:text-white font-mono">{stats.total_documents}</div>
-          <div className="text-[11px] text-gray-400">{tx('ai.knowledge.stat.documentsHelp')}</div>
-        </div>
-
-        <div className="p-4 bg-white dark:bg-gray-800 rounded-2xl border border-gray-200/80 dark:border-gray-700/80 shadow-xs space-y-1">
-          <div className="flex items-center justify-between text-xs text-gray-500 dark:text-gray-400">
-            <span>{tx('ai.knowledge.stat.chunks')}</span>
-            <Layers className="w-4 h-4 text-emerald-500" />
-          </div>
-          <div className="text-2xl font-bold text-gray-900 dark:text-white font-mono">{stats.total_chunks}</div>
-          <div className="text-[11px] text-gray-400">{tx('ai.knowledge.stat.chunksHelp')}</div>
-        </div>
-
-        <div className="p-4 bg-white dark:bg-gray-800 rounded-2xl border border-gray-200/80 dark:border-gray-700/80 shadow-xs space-y-1">
-          <div className="flex items-center justify-between text-xs text-gray-500 dark:text-gray-400">
-            <span>{tx('ai.knowledge.stat.vendors')}</span>
-            <Server className="w-4 h-4 text-blue-500" />
-          </div>
-          <div className="text-2xl font-bold text-gray-900 dark:text-white font-mono">{stats.total_vendors || 4}</div>
-          <div className="text-[11px] text-gray-400">Cisco / Huawei / H3C / Ruijie</div>
-        </div>
-
-        <div className="p-4 bg-white dark:bg-gray-800 rounded-2xl border border-gray-200/80 dark:border-gray-700/80 shadow-xs space-y-1">
-          <div className="flex items-center justify-between text-xs text-gray-500 dark:text-gray-400">
-            <span>{tx('ai.knowledge.stat.index')}</span>
-            <ShieldCheck className="w-4 h-4 text-amber-500" />
-          </div>
-          <div className="text-2xl font-bold text-emerald-600 dark:text-emerald-400 font-mono">{stats.ready_indexes}</div>
-          <div className="text-[11px] text-gray-400">{tx('ai.knowledge.stat.indexHelp')}</div>
-        </div>
+      <div className="flex flex-wrap items-center gap-x-5 gap-y-2 rounded-xl border border-slate-200/80 bg-white px-3 py-2 text-xs shadow-xs dark:border-slate-700/80 dark:bg-slate-800">
+        <div className="inline-flex items-center gap-1.5 text-slate-600 dark:text-slate-300" title={tx('ai.knowledge.stat.documentsHelp')}><FileText className="h-3.5 w-3.5 text-indigo-500" /><span>{tx('ai.knowledge.stat.documents')}</span><strong className="font-mono text-slate-900 dark:text-white">{stats.total_documents}</strong></div>
+        <div className="inline-flex items-center gap-1.5 text-slate-600 dark:text-slate-300" title={tx('ai.knowledge.stat.chunksHelp')}><Layers className="h-3.5 w-3.5 text-emerald-500" /><span>{tx('ai.knowledge.stat.chunks')}</span><strong className="font-mono text-slate-900 dark:text-white">{stats.total_chunks}</strong></div>
+        <div className="inline-flex items-center gap-1.5 text-slate-600 dark:text-slate-300" title="Cisco / Huawei / H3C / Ruijie"><Server className="h-3.5 w-3.5 text-blue-500" /><span>{tx('ai.knowledge.stat.vendors')}</span><strong className="font-mono text-slate-900 dark:text-white">{stats.total_vendors || 4}</strong></div>
+        <div className="inline-flex items-center gap-1.5 text-slate-600 dark:text-slate-300" title={tx('ai.knowledge.stat.indexHelp')}><ShieldCheck className="h-3.5 w-3.5 text-amber-500" /><span>{tx('ai.knowledge.stat.index')}</span><strong className="font-mono text-emerald-600 dark:text-emerald-400">{stats.ready_indexes}</strong></div>
       </div>
 
       {/* Full-Width Document Management Section */}
-      <div className="space-y-4 w-full">
-        <div className="grid gap-3 md:grid-cols-3" aria-label={tx('ai.knowledge.filter.scopeAria')}>
+      <div className="w-full space-y-3">
+        <div className="flex flex-wrap items-center gap-2" aria-label={tx('ai.knowledge.filter.scopeAria')}>
+          <span className="mr-1 text-[10px] font-semibold uppercase tracking-wide text-slate-500 dark:text-slate-400">{tx('ai.knowledge.filter.scopeAria')}</span>
             {([
               ['all', 'ai.knowledge.filter.scopeAll', 'ai.knowledge.filter.scopeAllBody', 'bg-slate-50 border-slate-200 text-slate-700 dark:bg-slate-900/50 dark:border-slate-700 dark:text-slate-200'],
               ['official', 'ai.knowledge.filter.scopeOfficial', 'ai.knowledge.filter.scopeOfficialBody', 'bg-blue-50 border-blue-200 text-blue-800 dark:bg-blue-950/30 dark:border-blue-900 dark:text-blue-200'],
@@ -1935,18 +1917,16 @@ export const KnowledgeManagementTab: React.FC = () => {
                 key={scope}
                 type="button"
                 onClick={() => handleKnowledgeScopeChange(scope)}
-                className={`rounded-2xl border p-4 text-left transition hover:-translate-y-0.5 hover:shadow-sm ${tone} ${knowledgeScope === scope ? 'ring-2 ring-indigo-400 ring-offset-1 dark:ring-offset-gray-900' : ''}`}
+                className={`inline-flex items-center gap-1.5 rounded-xl border px-3 py-2 text-xs font-semibold transition hover:border-indigo-300 hover:shadow-sm ${tone} ${knowledgeScope === scope ? 'ring-2 ring-indigo-400 ring-offset-1 dark:ring-offset-gray-900' : ''}`}
                 aria-pressed={knowledgeScope === scope}
+                title={tx(descriptionKey)}
               >
-                <div className="flex items-center justify-between gap-2">
-                  <span className="text-sm font-bold">{tx(titleKey)}</span>
-                  {knowledgeScope === scope && <CheckCircle2 className="h-4 w-4 text-indigo-500" />}
-                </div>
-                <span className="mt-1 block text-[10px] leading-4 opacity-75">{tx(descriptionKey)}</span>
+                <span>{tx(titleKey)}</span>
+                {knowledgeScope === scope && <CheckCircle2 className="h-3.5 w-3.5 text-indigo-500" />}
               </button>
             ))}
-          </div>
-          <section className="grid gap-4 rounded-2xl border border-indigo-100 bg-indigo-50/40 p-3 shadow-xs dark:border-indigo-900/60 dark:bg-indigo-950/15 lg:grid-cols-[minmax(260px,360px)_minmax(0,1fr)]" aria-label={tx('ai.knowledge.directory.sectionAria')}>
+        </div>
+          <section className="grid items-start gap-3 rounded-2xl border border-indigo-100 bg-indigo-50/40 p-3 shadow-xs dark:border-indigo-900/60 dark:bg-indigo-950/15 lg:grid-cols-[minmax(240px,320px)_minmax(0,1fr)]" aria-label={tx('ai.knowledge.directory.sectionAria')}>
             <div className="min-w-0">
               <div className="mb-2 flex items-center justify-between gap-2">
                 <div>
@@ -1981,7 +1961,7 @@ export const KnowledgeManagementTab: React.FC = () => {
                 onDelete={handleDeleteDirectory}
               />
             </div>
-            <div className="flex min-w-0 flex-col justify-between gap-3 rounded-xl border border-white/80 bg-white/70 p-4 dark:border-indigo-900/40 dark:bg-slate-900/35">
+            <div className="min-w-0 self-start rounded-xl border border-white/80 bg-white/70 p-3 dark:border-indigo-900/40 dark:bg-slate-900/35">
               <div>
                 <div className="flex items-center gap-2 text-[10px] font-bold uppercase tracking-[0.14em] text-indigo-500"><Filter className="h-3.5 w-3.5" />{tx('ai.knowledge.directory.currentFilter')}</div>
                 <div className="mt-2 break-all font-mono text-base font-bold text-slate-900 dark:text-white">{selectedDirectoryPath || tx('ai.knowledge.directory.all')}</div>
@@ -1989,24 +1969,128 @@ export const KnowledgeManagementTab: React.FC = () => {
                   {tx('ai.knowledge.directory.filterBody')}
                 </p>
               </div>
-              <div className="flex flex-wrap items-center gap-2 text-[10px] text-slate-500 dark:text-slate-400">
-                <span className="rounded-full bg-indigo-100 px-2 py-1 font-semibold text-indigo-700 dark:bg-indigo-950/60 dark:text-indigo-300">{tx('ai.knowledge.directory.rootCount', { count: directoryTree.length })}</span>
-                <span className="rounded-full bg-slate-100 px-2 py-1 dark:bg-slate-800">{tx('ai.knowledge.directory.nodeCount', { count: flattenDirectoryNodes(directoryTree).length })}</span>
-                <span className="rounded-full bg-emerald-100 px-2 py-1 font-semibold text-emerald-700 dark:bg-emerald-950/40 dark:text-emerald-300">{tx('ai.knowledge.directory.documentCount', { count: totalDocuments })}</span>
+              <div className="mt-4 flex flex-wrap items-center gap-x-5 gap-y-2 border-t border-indigo-100 pt-3 text-xs text-slate-600 dark:border-indigo-900/50 dark:text-slate-300">
+                <span>{tx('ai.knowledge.directory.overviewDocuments')} <strong className="font-mono text-slate-900 dark:text-white">{totalDocuments}</strong></span>
+                <span>{tx('ai.knowledge.directory.overviewNodes')} <strong className="font-mono text-slate-900 dark:text-white">{flattenDirectoryNodes(directoryTree).length}</strong></span>
+                <span>{tx('ai.knowledge.directory.overviewVendors')} <strong className="font-mono text-slate-900 dark:text-white">{knowledgeVendorOptions.length}</strong></span>
               </div>
+              <div className="mt-3 flex flex-wrap items-center gap-2 text-[10px] text-slate-500 dark:text-slate-400">
+                <span className="rounded-full bg-indigo-100 px-2 py-1 font-semibold text-indigo-700 dark:bg-indigo-950/60 dark:text-indigo-300">{tx('ai.knowledge.directory.rootCount', { count: directoryTree.length })}</span>
+                {!selectedDirectoryPath && <span className="rounded-full bg-slate-100 px-2 py-1 dark:bg-slate-800">{tx('ai.knowledge.directory.documentCount', { count: allDirectoryDocuments })}</span>}
+                <button type="button" onClick={() => handleKnowledgeScopeChange('official')} className="rounded-full border border-blue-200 bg-blue-50 px-2 py-1 font-semibold text-blue-700 hover:bg-blue-100 dark:border-blue-900 dark:bg-blue-950/30 dark:text-blue-200">{tx('ai.knowledge.directory.officialShortcut')}</button>
+                {selectedDirectoryPath && <button type="button" onClick={clearDirectorySelection} className="rounded-full border border-slate-200 bg-white px-2 py-1 font-semibold text-slate-600 hover:bg-slate-50 dark:border-slate-700 dark:bg-slate-900 dark:text-slate-300">{tx('ai.knowledge.directory.clearShortcut')}</button>}
+              </div>
+              {!selectedDirectoryPath && (
+                <div className="mt-4 flex min-h-[170px] items-center justify-center rounded-xl border border-dashed border-indigo-200 bg-white/55 px-6 py-8 text-center dark:border-indigo-800 dark:bg-slate-950/20">
+                  <div className="max-w-sm">
+                    <FolderOpen className="mx-auto h-7 w-7 text-indigo-300 dark:text-indigo-600" />
+                    <div className="mt-2 text-xs font-semibold text-slate-700 dark:text-slate-200">{tx('ai.knowledge.directory.selectHintTitle')}</div>
+                    <p className="mt-1 text-[10px] leading-5 text-slate-500 dark:text-slate-400">{tx('ai.knowledge.directory.selectHintBody')}</p>
+                  </div>
+                </div>
+              )}
+              {selectedDirectoryPath && activeFilterChips.length > 0 && (
+                <div className="mt-3 rounded-xl border border-indigo-100 bg-indigo-50/60 px-3 py-2.5 dark:border-indigo-900/60 dark:bg-indigo-950/25">
+                  <span className="text-[10px] font-semibold uppercase tracking-wide text-indigo-700 dark:text-indigo-300">{tx('ai.knowledge.directory.activeFilters')}</span>
+                  <div className="mt-2 flex flex-wrap gap-1.5">
+                    {activeFilterChips.map((filter, index) => (
+                      <span key={`${filter}-${index}`} className="max-w-full truncate rounded-full bg-white px-2 py-1 text-[10px] text-indigo-800 shadow-xs dark:bg-slate-900/70 dark:text-indigo-200">{filter}</span>
+                    ))}
+                  </div>
+                </div>
+              )}
+              {!selectedDirectoryPath && (
+                <div className="mt-3 flex justify-end">
+                  <button type="button" onClick={() => filtersSectionRef.current?.scrollIntoView({ behavior: 'smooth', block: 'start' })} className="rounded-full border border-indigo-200 bg-white px-2.5 py-1 text-[10px] font-semibold text-indigo-600 transition hover:border-indigo-400 hover:text-indigo-900 dark:border-indigo-800 dark:bg-slate-900 dark:text-indigo-300 dark:hover:text-indigo-100">
+                    {tx('ai.knowledge.directory.manageFilters')}
+                  </button>
+                </div>
+              )}
+              {selectedDirectoryPath && (
+                <div className="mt-4 border-t border-indigo-100 pt-3 dark:border-indigo-900/50">
+                  <div className="flex items-center justify-between gap-2">
+                    <div className="flex min-w-0 items-center gap-2 text-[11px] font-semibold text-indigo-950 dark:text-indigo-100">
+                      <FileText className="h-3.5 w-3.5 shrink-0 text-indigo-500" />
+                      <span className="truncate">{tx('ai.knowledge.directory.resultsTitle')}</span>
+                    </div>
+                    <span className="shrink-0 rounded-full bg-indigo-100 px-2 py-1 text-[10px] font-semibold text-indigo-700 dark:bg-indigo-950/60 dark:text-indigo-300">
+                      {tx('ai.knowledge.directory.documentCount', { count: totalDocuments })}
+                    </span>
+                  </div>
+                  <div className="mt-2 max-h-[280px] overflow-y-auto rounded-xl border border-indigo-100 bg-white/80 dark:border-indigo-900/60 dark:bg-slate-950/30">
+                    {loading ? (
+                      <div className="flex items-center gap-2 px-3 py-4 text-xs text-slate-400"><Loader2 className="h-3.5 w-3.5 animate-spin" />{tx('ai.common.loading')}</div>
+                    ) : loadError ? (
+                      <div className="px-3 py-4 text-xs text-rose-600 dark:text-rose-300">{loadError}</div>
+                    ) : documents.length === 0 ? (
+                      <div className="flex items-center gap-2 px-3 py-4 text-xs text-slate-400"><BookOpen className="h-3.5 w-3.5 shrink-0" />{tx('ai.knowledge.empty.filtered')}</div>
+                    ) : (
+                      <div className="divide-y divide-indigo-100 dark:divide-indigo-900/50">
+                        {documents.map((doc) => {
+                          const badge = sourceBadges[doc.knowledge_source_type] || sourceBadges.user_document;
+                          const classification = [
+                            doc.vendor ? getVendorDisplayLabel(doc.vendor, language) : '',
+                            doc.product_family || doc.product_model || doc.document_category || '',
+                          ].filter(Boolean).join(' · ');
+                          return (
+                            <button
+                              key={`directory-preview-${doc.id}`}
+                              type="button"
+                              onClick={() => void openDocument(doc)}
+                              className="group flex w-full items-center gap-2 px-3 py-2.5 text-left transition hover:bg-indigo-50/70 dark:hover:bg-indigo-950/30"
+                              title={tx('ai.knowledge.action.viewDocument')}
+                            >
+                              <FileCode className="h-4 w-4 shrink-0 text-indigo-500" />
+                              <span className="min-w-0 flex-1">
+                                <span className="block truncate text-xs font-semibold text-slate-800 group-hover:text-indigo-700 dark:text-slate-100 dark:group-hover:text-indigo-300">{doc.name}</span>
+                                <span className="mt-0.5 block truncate text-[10px] text-slate-400 dark:text-slate-500">{classification || badge.label}</span>
+                              </span>
+                              <span className={`hidden shrink-0 rounded-full px-1.5 py-0.5 text-[9px] font-semibold sm:inline-flex ${badge.bg} ${badge.color}`}>{badge.label}</span>
+                              <ChevronRight className="h-3.5 w-3.5 shrink-0 text-slate-300 transition group-hover:translate-x-0.5 group-hover:text-indigo-500" />
+                            </button>
+                          );
+                        })}
+                      </div>
+                    )}
+                  </div>
+                  <div className="mt-2 flex items-center justify-between gap-2 text-[10px] text-slate-400 dark:text-slate-500">
+                    <span className="min-w-0 truncate">{tx('ai.knowledge.directory.resultsHint')}</span>
+                    <div className="flex shrink-0 items-center gap-2">
+                      <button type="button" onClick={() => filtersSectionRef.current?.scrollIntoView({ behavior: 'smooth', block: 'start' })} className="font-semibold text-indigo-600 hover:text-indigo-800 dark:text-indigo-300 dark:hover:text-indigo-100">
+                        {tx('ai.knowledge.directory.manageFilters')}
+                      </button>
+                      {totalDocuments > documents.length && <button type="button" onClick={() => documentTableRef.current?.scrollIntoView({ behavior: 'smooth', block: 'start' })} className="font-semibold text-indigo-600 hover:text-indigo-800 dark:text-indigo-300 dark:hover:text-indigo-100">
+                        {tx('ai.knowledge.directory.fullList')}
+                      </button>}
+                    </div>
+                  </div>
+                </div>
+              )}
             </div>
           </section>
-          {/* Action Bar & Search */}
-          <div className="flex items-center justify-between gap-4 bg-white dark:bg-gray-800 p-3 rounded-2xl border border-gray-200/80 dark:border-gray-700/80 shadow-xs">
+          {/* Search, classification, and advanced filters share one query surface. */}
+          <section ref={filtersSectionRef} className="scroll-mt-4 rounded-2xl border border-gray-200/80 bg-white p-3 shadow-xs dark:border-gray-700/80 dark:bg-gray-800" aria-label={tx('ai.knowledge.directory.manageFilters')}>
+          <div className="mb-3 flex flex-wrap items-start justify-between gap-2 border-b border-gray-100 pb-3 dark:border-gray-700/80">
+            <div>
+              <h3 className="text-sm font-bold text-slate-900 dark:text-white">{tx('ai.knowledge.directory.manageFilters')}</h3>
+              <p className="mt-1 text-[10px] text-slate-500 dark:text-slate-400">{tx('ai.knowledge.directory.manageFiltersHint')}</p>
+            </div>
+            {selectedDirectoryPath && <span className="max-w-full truncate rounded-full bg-indigo-50 px-2 py-1 font-mono text-[10px] text-indigo-700 dark:bg-indigo-950/40 dark:text-indigo-300">{selectedDirectoryPath}</span>}
+          </div>
+          <div className="flex items-end justify-between gap-4">
             <div className="relative flex-1 max-w-md">
-              <Search className="w-4 h-4 absolute left-3 top-2.5 text-gray-400" />
-              <input
-                type="text"
-                placeholder={tx('ai.knowledge.search.placeholder')}
-                value={searchInput}
-                onChange={(e) => setSearchInput(e.target.value)}
-                className="w-full pl-9 pr-3 py-1.5 text-xs bg-gray-50 dark:bg-gray-900 border border-gray-200 dark:border-gray-700 rounded-xl focus:outline-none focus:border-indigo-500 dark:text-white"
-              />
+              <label htmlFor="knowledge-full-text-search" className="mb-1 block text-[10px] font-semibold uppercase tracking-wide text-gray-500 dark:text-gray-400">{tx('ai.knowledge.search.label')}</label>
+              <div className="relative">
+                <Search className="w-4 h-4 absolute left-3 top-2.5 text-gray-400" />
+                <input
+                  id="knowledge-full-text-search"
+                  type="text"
+                  placeholder={tx('ai.knowledge.search.placeholder')}
+                  value={searchInput}
+                  onChange={(e) => setSearchInput(e.target.value)}
+                  className="w-full pl-9 pr-3 py-1.5 text-xs bg-gray-50 dark:bg-gray-900 border border-gray-200 dark:border-gray-700 rounded-xl focus:outline-none focus:border-indigo-500 dark:text-white"
+                />
+              </div>
             </div>
 
             <div className="flex items-center gap-3">
@@ -2031,53 +2115,93 @@ export const KnowledgeManagementTab: React.FC = () => {
             </div>
           </div>
           {documentActionNotice && (
-            <div className="rounded-xl border border-emerald-200 bg-emerald-50 px-3 py-2 text-xs text-emerald-800 dark:border-emerald-900/60 dark:bg-emerald-950/25 dark:text-emerald-200" role="status">
+            <div className="mt-3 rounded-xl border border-emerald-200 bg-emerald-50 px-3 py-2 text-xs text-emerald-800 dark:border-emerald-900/60 dark:bg-emerald-950/25 dark:text-emerald-200" role="status">
               {documentActionNotice}
             </div>
           )}
 
-          <div className="rounded-2xl border border-indigo-100 bg-indigo-50/50 p-3 shadow-xs dark:border-indigo-900/60 dark:bg-indigo-950/20" aria-label={tx('ai.knowledge.product.title')}>
-            <div className="mb-2 flex items-center justify-between gap-2">
+          <div className="mt-3 border-t border-indigo-100 pt-3 dark:border-indigo-900/60" aria-label={tx('ai.knowledge.product.title')}>
+            <div className="mb-3 flex flex-wrap items-start justify-between gap-2">
               <div>
-                <span className="text-[11px] font-semibold text-indigo-900 dark:text-indigo-200">{tx('ai.knowledge.product.title')}</span>
-                <span className="ml-2 text-[10px] text-indigo-700/70 dark:text-indigo-300/70">Vendor / Product Family / Series</span>
+                <div className="flex items-center gap-2">
+                  <span className="text-[11px] font-semibold text-indigo-900 dark:text-indigo-200">{tx('ai.knowledge.product.title')}</span>
+                  {selectedClassification && <span className="rounded-full bg-indigo-600 px-2 py-0.5 text-[10px] font-semibold text-white">{tx('ai.knowledge.product.selected', { value: selectedClassification })}</span>}
+                </div>
+                <p className="mt-1 text-[10px] text-indigo-700/70 dark:text-indigo-300/70">{tx('ai.knowledge.product.body')}</p>
               </div>
-              <span className="text-[10px] text-indigo-700/70 dark:text-indigo-300/70">{tx('ai.knowledge.product.body')}</span>
+              {selectedClassification && (
+                <button type="button" onClick={() => { setSemanticFilter('vendor', ''); setSemanticFilter('productFamily', ''); setSemanticFilter('productSeries', ''); }} className="text-[10px] font-semibold text-indigo-700 hover:text-indigo-900 dark:text-indigo-300 dark:hover:text-indigo-100">
+                  {tx('ai.knowledge.product.clear')}
+                </button>
+              )}
             </div>
+            {unknownFacetCount > 0 && (
+              <div className="mb-3 flex items-start justify-between gap-3 rounded-xl border border-amber-200 bg-amber-50 px-3 py-2 text-[10px] leading-4 text-amber-800 dark:border-amber-900/60 dark:bg-amber-950/30 dark:text-amber-200" role="status">
+                <div className="flex min-w-0 items-start gap-2">
+                <AlertTriangle className="mt-0.5 h-3.5 w-3.5 shrink-0" />
+                <span>{tx('ai.knowledge.product.unknown', { count: unknownFacetCount })}</span>
+                </div>
+                <button
+                  type="button"
+                  onClick={() => setSemanticFilter('metadataGovernanceStatus', semanticFilters.metadataGovernanceStatus === 'pending_review' ? '' : 'pending_review')}
+                  className="shrink-0 font-semibold text-amber-900 underline underline-offset-2 hover:text-amber-700 dark:text-amber-100 dark:hover:text-white"
+                >
+                  {semanticFilters.metadataGovernanceStatus === 'pending_review' ? tx('ai.knowledge.governance.showAll') : tx('ai.knowledge.governance.viewPending')}
+                </button>
+              </div>
+            )}
             <div className="grid gap-3 md:grid-cols-3">
               {([
-                ['Vendor', documentFacets.vendors, 'vendor'],
-                ['Product Family', documentFacets.families, 'productFamily'],
-                ['Series', documentFacets.series, 'productSeries'],
-              ] as const).map(([label, items, filterKey]) => (
-                <div key={label} className="min-w-0">
-                  <div className="mb-1 text-[10px] font-semibold uppercase tracking-wide text-indigo-700/70 dark:text-indigo-300/70">{label}</div>
-                  <div className="flex min-h-8 flex-wrap gap-1.5">
-                    {items.slice(0, 12).map((item) => (
-                      <button
-                        key={`${label}-${item.value}`}
-                        type="button"
-                        onClick={() => setSemanticFilter(filterKey, item.value === 'UNKNOWN' ? '' : item.value)}
-                        className={`rounded-full border px-2 py-1 text-[10px] font-medium transition ${semanticFilters[filterKey] === item.value ? 'border-indigo-500 bg-indigo-600 text-white' : 'border-indigo-200 bg-white text-indigo-800 hover:border-indigo-400 dark:border-indigo-800 dark:bg-indigo-950/40 dark:text-indigo-200'}`}
-                        title={tx('ai.knowledge.product.filter', { value: item.value })}
-                      >
-                        {item.value} <span className="opacity-60">{item.count}</span>
+                ['vendor', tx('ai.knowledge.product.vendor'), documentFacets.vendors],
+                ['productFamily', tx('ai.knowledge.product.family'), documentFacets.families],
+                ['productSeries', tx('ai.knowledge.product.series'), documentFacets.series],
+              ] as const).map(([filterKey, label, items]) => {
+                const knownItems = items.filter((item) => item.value.trim() && item.value.trim().toUpperCase() !== 'UNKNOWN');
+                const expanded = Boolean(expandedFacetGroups[filterKey]);
+                const visibleItems = expanded ? knownItems : knownItems.slice(0, 12);
+                return (
+                  <div key={filterKey} className="min-w-0 rounded-xl border border-indigo-100/80 bg-white/60 p-2 dark:border-indigo-900/50 dark:bg-indigo-950/20">
+                    <div className="mb-2 flex items-center justify-between gap-2">
+                      <div className="text-[10px] font-semibold uppercase tracking-wide text-indigo-700/70 dark:text-indigo-300/70">{label}</div>
+                      <span className="text-[10px] text-indigo-700/50 dark:text-indigo-300/50">{knownItems.length}</span>
+                    </div>
+                    <div className="flex min-h-8 flex-wrap gap-1.5">
+                      {visibleItems.map((item) => (
+                        <button
+                          key={`${filterKey}-${item.value}`}
+                          type="button"
+                          onClick={() => setSemanticFilter(filterKey, semanticFilters[filterKey] === item.value ? '' : item.value)}
+                          className={`rounded-full border px-2 py-1 text-[10px] font-medium transition ${semanticFilters[filterKey] === item.value ? 'border-indigo-500 bg-indigo-600 text-white' : 'border-indigo-200 bg-white text-indigo-800 hover:border-indigo-400 dark:border-indigo-800 dark:bg-indigo-950/40 dark:text-indigo-200'}`}
+                          title={tx('ai.knowledge.product.filter', { value: item.value })}
+                        >
+                          {item.value} <span className="opacity-60">{item.count}</span>
+                        </button>
+                      ))}
+                      {knownItems.length === 0 && <span className="text-[10px] text-indigo-700/50 dark:text-indigo-300/50">{tx('ai.knowledge.product.empty')}</span>}
+                    </div>
+                    {knownItems.length > 12 && (
+                      <button type="button" onClick={() => setExpandedFacetGroups((current) => ({ ...current, [filterKey]: !expanded }))} className="mt-2 text-[10px] font-semibold text-indigo-600 hover:text-indigo-800 dark:text-indigo-300 dark:hover:text-indigo-100">
+                        {expanded ? tx('ai.knowledge.product.collapse') : tx('ai.knowledge.product.showAll', { count: knownItems.length })}
                       </button>
-                    ))}
-                    {items.length === 0 && <span className="text-[10px] text-indigo-700/50 dark:text-indigo-300/50">{tx('ai.knowledge.product.empty')}</span>}
-                    {items.length > 12 && <span className="self-center text-[10px] text-indigo-700/60 dark:text-indigo-300/60">+{items.length - 12}</span>}
+                    )}
                   </div>
-                </div>
-              ))}
+                );
+              })}
             </div>
           </div>
 
-          <div className="rounded-2xl border border-gray-200/80 bg-white p-3 shadow-xs dark:border-gray-700/80 dark:bg-gray-800" aria-label={tx('ai.knowledge.filter.semantic')}>
-            <div className="mb-2 flex items-center justify-between gap-2">
-              <span className="text-[11px] font-semibold text-gray-600 dark:text-gray-300">{tx('ai.knowledge.filter.semantic')}</span>
+          <details className="mt-3 border-t border-gray-200/80 pt-3 dark:border-gray-700/80" open={advancedFiltersOpen} onToggle={(event) => setAdvancedFiltersOpen(event.currentTarget.open)} aria-label={tx('ai.knowledge.filter.semantic')}>
+            <summary className="flex cursor-pointer list-none items-start justify-between gap-2 rounded-lg [&::-webkit-details-marker]:hidden">
+              <div>
+                <span className="text-[11px] font-semibold text-gray-600 dark:text-gray-300">{tx('ai.knowledge.filter.semantic')}</span>
+                <p className="mt-1 text-[10px] text-gray-500 dark:text-gray-400">{tx('ai.knowledge.filter.semanticBody')}</p>
+              </div>
+              <span className="shrink-0 text-[10px] font-semibold text-indigo-600 dark:text-indigo-300">{advancedFiltersOpen ? tx('ai.knowledge.filter.collapse') : tx('ai.knowledge.filter.expand')}</span>
+            </summary>
+            <div className="mt-3 flex justify-end">
               <button
                 type="button"
-                onClick={clearSemanticFilters}
+                onClick={(event) => { event.preventDefault(); clearSemanticFilters(); }}
                 disabled={!Object.entries(semanticFilters).some(([key, value]) => key === 'status' ? value !== 'active' : Boolean(value))}
                 className="text-[10px] font-medium text-indigo-600 hover:text-indigo-700 disabled:cursor-not-allowed disabled:opacity-40 dark:text-indigo-300"
               >
@@ -2093,35 +2217,12 @@ export const KnowledgeManagementTab: React.FC = () => {
               >
                 {folders.map((folder) => <option key={folder.id} value={folder.id}>{folder.name}</option>)}
               </select>
-              <select
-                value={semanticFilters.vendor}
-                onChange={(event) => setSemanticFilter('vendor', event.target.value)}
-                className="rounded-xl border border-gray-200 bg-gray-50 px-2.5 py-2 text-[11px] text-gray-700 dark:border-gray-700 dark:bg-gray-900 dark:text-gray-200"
-                aria-label={tx('ai.knowledge.filter.vendorLabel')}
-              >
-                <option value="">{tx('ai.knowledge.filter.allVendors')}</option>
-                {knowledgeVendorOptions.map((item) => <option key={item.value} value={item.value}>{getVendorDisplayLabel(item.value, language)}</option>)}
-              </select>
-              <input
-                value={semanticFilters.productFamily}
-                onChange={(event) => setSemanticFilter('productFamily', event.target.value)}
-                placeholder={tx('ai.knowledge.filter.familyPlaceholder')}
-                className="rounded-xl border border-gray-200 bg-gray-50 px-2.5 py-2 text-[11px] text-gray-700 placeholder:text-gray-400 dark:border-gray-700 dark:bg-gray-900 dark:text-gray-200"
-                aria-label={tx('ai.knowledge.filter.familyLabel')}
-              />
               <input
                 value={semanticFilters.productModel}
                 onChange={(event) => setSemanticFilter('productModel', event.target.value)}
                 placeholder={tx('ai.knowledge.filter.modelPlaceholder')}
                 className="rounded-xl border border-gray-200 bg-gray-50 px-2.5 py-2 text-[11px] text-gray-700 placeholder:text-gray-400 dark:border-gray-700 dark:bg-gray-900 dark:text-gray-200"
                 aria-label={tx('ai.knowledge.filter.modelLabel')}
-              />
-              <input
-                value={semanticFilters.productSeries}
-                onChange={(event) => setSemanticFilter('productSeries', event.target.value)}
-                placeholder={tx('ai.knowledge.filter.seriesPlaceholder')}
-                className="rounded-xl border border-gray-200 bg-gray-50 px-2.5 py-2 text-[11px] text-gray-700 placeholder:text-gray-400 dark:border-gray-700 dark:bg-gray-900 dark:text-gray-200"
-                aria-label={tx('ai.knowledge.filter.seriesLabel')}
               />
               <input
                 value={semanticFilters.osFamily}
@@ -2166,11 +2267,23 @@ export const KnowledgeManagementTab: React.FC = () => {
                 <option value="quarantined">{tx('ai.knowledge.status.quarantined')}</option>
                 <option value="disabled">{tx('ai.knowledge.status.disabled')}</option>
               </select>
+              <select
+                value={semanticFilters.metadataGovernanceStatus}
+                onChange={(event) => setSemanticFilter('metadataGovernanceStatus', event.target.value)}
+                className="rounded-xl border border-gray-200 bg-gray-50 px-2.5 py-2 text-[11px] text-gray-700 dark:border-gray-700 dark:bg-gray-900 dark:text-gray-200"
+                aria-label={tx('ai.knowledge.governance.filterLabel')}
+              >
+                <option value="">{tx('ai.knowledge.governance.filterAll')}</option>
+                <option value="ready">{tx('ai.knowledge.governance.ready')}</option>
+                <option value="pending_review">{tx('ai.knowledge.governance.pending')}</option>
+              </select>
             </div>
-          </div>
+          </details>
+
+          </section>
 
           {/* Table Container */}
-          <div className="bg-white dark:bg-gray-800 border border-gray-200/80 dark:border-gray-700/80 rounded-2xl overflow-hidden shadow-xs">
+          <div ref={documentTableRef} className="bg-white dark:bg-gray-800 border border-gray-200/80 dark:border-gray-700/80 rounded-2xl overflow-hidden shadow-xs">
             {loading ? (
               <div className="p-8 text-center text-xs text-gray-400">{tx('ai.common.loading')}</div>
             ) : loadError ? (

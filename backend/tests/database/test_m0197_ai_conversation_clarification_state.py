@@ -111,3 +111,44 @@ def test_clarification_state_rejects_secret_markers(isolated_db) -> None:
                 "question": "请提供 password=...",
             },
         )
+
+
+def test_expired_clarification_is_hidden_and_cannot_reuse_old_slots(isolated_db) -> None:
+    del isolated_db
+    conversation = create_conversation(tenant_id="tenant-default", user_id="expiry-owner")
+    expired = set_clarification_state(
+        conversation_id=conversation["id"],
+        tenant_id="tenant-default",
+        user_id="expiry-owner",
+        state={
+            "required": True,
+            "request_kind": "intent_classification",
+            "intent": "device_search",
+            "missing_fields": ["device_or_scope"],
+            "recognized_fields": {"site": "old-site"},
+            "question": "请补充设备范围。",
+            "expires_at": "2000-01-01T00:00:00+00:00",
+        },
+    )
+
+    context = get_context(
+        conversation_id=conversation["id"],
+        tenant_id="tenant-default",
+        user_id="expiry-owner",
+    )
+    assert context["conversation"]["pending_clarification"] is None
+
+    fresh = set_clarification_state(
+        conversation_id=conversation["id"],
+        tenant_id="tenant-default",
+        user_id="expiry-owner",
+        state={
+            "required": True,
+            "request_kind": "intent_classification",
+            "intent": "ip_location",
+            "missing_fields": ["ip"],
+            "question": "请提供 IP 地址。",
+        },
+    )
+    assert fresh["state_id"] != expired["state_id"]
+    assert "recognized_fields" not in fresh

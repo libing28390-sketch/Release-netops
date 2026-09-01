@@ -285,7 +285,7 @@ export const ProductCatalogManagementTab: React.FC = () => {
   };
 
   return (
-    <div className="mx-auto w-full max-w-[1500px] space-y-4">
+    <div className="w-full space-y-5 pb-8">
       <header className="flex flex-wrap items-start justify-between gap-3">
         <div>
           <div className="mb-1 flex items-center gap-2 text-xs font-semibold uppercase tracking-[0.18em] text-indigo-500"><Layers className="h-4 w-4" />{tx('ai.catalog.eyebrow')}</div>
