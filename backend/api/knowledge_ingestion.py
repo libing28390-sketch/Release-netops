@@ -51,6 +51,10 @@ class OfficialUrlImportRequest(BaseModel):
     reviewed_at: str = Field(default="", max_length=128)
     name: str = Field(default="", max_length=256)
     description: str = Field(default="", max_length=4000)
+    # Feature is an optional reviewed binding.  It is deliberately not
+    # inferred from an entire broad command-reference page.
+    feature: str = Field(default="", max_length=128)
+    feature_domain: str = Field(default="", max_length=128)
     idempotency_key: str = Field(default="", max_length=256)
     request_id: str = Field(default="", max_length=256)
     max_retries: int = Field(default=1, ge=0, le=5)

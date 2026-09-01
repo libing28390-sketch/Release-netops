@@ -77,6 +77,39 @@ def test_llm_intent_is_pydantic_validated_and_filter_keys_are_bounded(monkeypatc
     assert result["risk_level"] == "R0"
 
 
+def test_structured_intent_uses_a_bounded_budget_for_the_full_schema(monkeypatch: pytest.MonkeyPatch) -> None:
+    captured: dict[str, object] = {}
+
+    async def fake_chat(*args, **kwargs):
+        captured.update(kwargs)
+        return {"content": '{"intent":"general_qa","confidence":0.8}'}
+
+    monkeypatch.setattr(intent_parser_module.llm_gateway, "chat", fake_chat)
+
+    result = _run(IntentParser(), "解释网络抖动的常见原因")
+
+    assert result["parse_status"] == "llm_success"
+    assert captured["max_tokens"] == intent_parser_module.INTENT_MAX_OUTPUT_TOKENS
+    assert captured["max_tokens"] == 1024
+
+
+def test_structured_intent_prompt_defines_specific_operational_boundaries(monkeypatch: pytest.MonkeyPatch) -> None:
+    captured: dict[str, object] = {}
+
+    async def fake_chat(*args, **kwargs):
+        captured["messages"] = kwargs["messages"]
+        return {"content": '{"intent":"general_qa","confidence":0.8}'}
+
+    monkeypatch.setattr(intent_parser_module.llm_gateway, "chat", fake_chat)
+
+    result = _run(IntentParser(), "请介绍一下网络运维助手的能力")
+
+    assert result["parse_status"] == "llm_success"
+    system_prompt = captured["messages"][0]["content"]
+    assert "Prefer the most specific operational intent" in system_prompt
+    assert "alarm_search reviews alerts or notifications" in system_prompt
+
+
 def test_invalid_schema_gets_one_gateway_correction_without_mutating_messages(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:

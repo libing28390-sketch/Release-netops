@@ -312,6 +312,29 @@ V600 display ospf peer > 验证状态
     assert "验证状态" not in answer
 
 
+def test_grounded_fallback_does_not_render_unrelated_chunk_from_broad_official_doc():
+    service = AIAssistantService()
+    answer = service._knowledge_fallback_answer(
+        [
+            {
+                "platform": "cisco_iosxe",
+                "document_category": "command",
+                "feature": "vlan",
+                "source_kind": "command_reference",
+                "knowledge_source_type": "official_url",
+                "document_name": "Catalyst System Management Command Reference",
+                "official_source": "https://www.cisco.com/c/en/system_management_commands.html",
+                "section": "show flow monitor FLOW-MONITOR-1",
+                "content": "show license tech support\nSmartAgentIndividualRUMEncrypt: 2",
+            }
+        ],
+        request=SimpleNamespace(document_category="command", feature="vlan"),
+    )
+
+    assert "SmartAgentIndividualRUMEncrypt" not in answer
+    assert "没有可展示的用户级命令或说明" in answer
+
+
 def test_chat_stream_parses_intent_before_knowledge_retrieval(monkeypatch):
     """Knowledge streaming must not access intent locals before parsing them."""
 
@@ -391,6 +414,56 @@ def test_grounded_knowledge_stream_is_marked_not_external(monkeypatch):
     events = asyncio.run(collect())
     assert any('"external_egress": false' in event for event in events)
     assert any("system-view" in event for event in events)
+
+
+def test_grounded_knowledge_chat_uses_local_template_fallback_after_scope_repair(monkeypatch):
+    async def fake_parse_intent(message, user_id=None):
+        return {"intent": "knowledge", "filters": {}, "knowledge_intent": {}}
+
+    class _Resolution:
+        def to_dict(self):
+            return {"ambiguous": False, "metadata": {}}
+
+    result = {
+        "request": SimpleNamespace(
+            document_category="configuration",
+            vendor="Cisco",
+            feature="vlan",
+            cli_platform="cisco_iosxe",
+        ),
+        "resolution": _Resolution(),
+        "results": [],
+        "debug": {"candidate_count": 0},
+    }
+    template = {
+        "content": "interface <INTERFACE>\n switchport mode access\n switchport access vlan <VLAN_ID>",
+        "document_name": "Cisco VLAN Access Template",
+        "source": "https://www.cisco.com/c/en/vlan_access_template.html",
+        "section": "VLAN access",
+        "platform": "cisco_iosxe",
+        "cli_platform": "cisco_iosxe",
+        "document_category": "configuration",
+        "knowledge_source_type": "official_template",
+        "feature": "vlan",
+    }
+    monkeypatch.setattr(assistant_module.intent_parser, "parse_intent", fake_parse_intent)
+    monkeypatch.setattr(assistant_module, "search_official_templates", lambda request, limit=5: [template])
+
+    async def unexpected_chat(**kwargs):
+        raise AssertionError("scoped official template fallback should remain local")
+
+    monkeypatch.setattr(assistant_module.llm_gateway, "chat", unexpected_chat)
+    service = AIAssistantService()
+    monkeypatch.setattr(service, "retrieve_knowledge", lambda *args, **kwargs: result)
+
+    import asyncio
+
+    answer = asyncio.run(service.chat("Cisco VLAN config"))
+
+    assert answer["execution_mode"] == "local_knowledge"
+    assert answer["external_egress"] is False
+    assert answer["retrieval"]["source"] == "local_official_template"
+    assert "switchport mode access" in answer["answer"]
 
 
 def test_configuration_clarification_stops_chat_and_stream_before_provider(monkeypatch):

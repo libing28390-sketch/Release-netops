@@ -480,13 +480,39 @@ Docker 当前的 104 篇是独立 PostgreSQL 数据卷中的官方初始化知�
 
 ### 仍明确保留的后续项
 
-- `ai-dialog-remediation-v1-baseline.json` 保持 `measured_with_gaps`：真实 Provider 结构化首轮成功率/纠正成功率、带标注意图准确率、生产语料 Top-5 召回率尚未完成批准的专项测量，不能用契约测试冒充目标达成。
-- Instructor 与内部方案的真实 Provider 成功率、延迟、Token 对比，以及安全评审版本范围和真实适配器专项验证，待未来有批准的实验 Provider 后再做。
-- Docker ZIP 知识库迁移失败仍是独立部署环境问题；本轮 AI 对话整改不替代 Docker 现场的单篇/分批导入验证。
+- `ai-dialog-remediation-v1-baseline.json` 已补充真实 Provider 小样本结果：8/8 首轮结构化成功，Provider 错误 0；`intent.v1` 带标注意图准确率 4/8，`intent.v2` 为 5/8。schema correction 本轮没有触发，纠正成功率保持 `null/not_observed`；生产语料 Top-5 召回率仍需专项标注语料评测。
+- Instructor 与内部方案的真实 Provider 成功率、延迟、Token 对比，以及安全评审版本范围和真实适配器专项验证，仍待未来有批准的实验 Provider 后再做；本轮只完成 Gateway-only 隔离测试和 ADR。
+- Docker ZIP 导入已在本机通过 8 项阶段诊断、脱敏、回滚和跨主机 PostgreSQL/pgvector 回归；目标 Docker 主机的真实容器部署、单篇/1/5/20–50 篇导入仍待现场执行。本机没有 Docker CLI，也没有待导入 ZIP。
 - 本次额外尝试的 24 条浏览器评测批次因测试页面句柄失效被中断，未将其结果计入证据；最终 10 会话业务验收仍以已完成的修复后记录为准。
 
 ### Git 状态
 
 - 当前分支：`main`；远端：`origin`，目标分支：`origin/main`。
-- 本次推送前已完成工作区审计；未提交真实密码、Token、API Key 或其他敏感凭据。
-- 本节记录完成后，将把本轮整改源码、迁移、测试、评测产物、前端变更和文档作为一个提交推送到 `origin/main`。推送提交号以 Git 实际结果为准。
+- 本次执行前已完成工作区审计；未提交真实密码、Token、API Key 或其他敏感凭据。
+- 本轮新增源码、测试、评测产物和文档当前仍在本地工作区，尚未提交或推送；如需写入 `origin/main`，下一步需先由操作者明确授权提交/推送，并在提交前复核工作区中的既有删除项、`.codex` 配置和 `data/backups/` 未跟踪内容。
+
+## 15. 2026-09-01 余项执行记录
+
+### 实时 Provider 评测
+
+- 新增审核样例与显式联网评测器：`docs/knowledge-engine/eval/ai-dialog-live-provider-v1.json`、`scripts/ai_live_provider_eval.py`。未传 `--allow-live-provider` 时脚本直接退出，不访问 Provider；输出不包含模型原文、Prompt 正文或凭据。
+- 通过 PostgreSQL 持久化安全策略加载后，真实 DeepSeek `deepseek-v4-flash` 评测完成两轮，每轮 8 条样例、8 次 Provider 请求、0 次 Provider 错误。
+- 输出预算根因已修复：完整 `IntentDecision` 在原 `max_tokens=512` 下出现 `finish_reason=length`；现改为有界 `INTENT_MAX_OUTPUT_TOKENS=1024`，并升级意图边界 Prompt 到 `intent.v2`。
+- `intent.v1`：首轮结构化成功率 `8/8`，带标注意图准确率 `4/8`，平均延迟 `6772.62 ms`，输入/输出 Token `4846/5753`。
+- `intent.v2`：首轮结构化成功率 `8/8`，带标注意图准确率 `5/8`，平均延迟 `5099.88 ms`，输入/输出 Token `5534/3912`；没有 schema correction，因此纠正成功率为未观测而不是 0。
+- 完整结果见 `docs/knowledge-engine/eval/ai-dialog-live-provider-report-20260901.json`；Qwen/Ollama 未配置，不声明跨 Provider 结果，生产 Top-5 召回未测。
+
+### Docker ZIP 导入与 Instructor
+
+- `_ImportDiagnostics` 详情改为明确白名单，阶段和状态也限制为低基数枚举；异常摘要额外屏蔽文档路径，新增任意回调字段、正文、路径和口令回归。
+- 导入测试：`backend/tests/ai/test_knowledge_bundle_import.py` 与 `backend/tests/ai/test_knowledge_bundle_cross_host_integration.py` 共 `8 passed`。
+- Instructor 隔离与评测器纯函数测试共 `5 passed`；未安装 Instructor、未新增生产依赖、未建立直连 Provider 路径。
+- 新增并补齐 `docs/knowledge-engine/architecture/ADR-001-INSTRUCTOR-STRUCTURED-OUTPUT.md`，结论为继续使用内部 Pydantic，未来仅在批准的 Gateway adapter 和独立量化实验下复审。
+
+### 本轮代码与验证状态
+
+- PostgreSQL-only 门禁：`0 violation(s)`，PASS。
+- AST/JSON 产物校验：PASS。
+- 后端全量门禁：`2046 passed, 26 subtests passed`，无失败。
+- 相关意图结构化与评测器测试：`25 passed`；导入/跨主机测试：`8 passed`；Instructor 隔离与评测器测试：`5 passed`。
+- 本机未安装 Docker CLI；没有在未授权的目标环境执行容器重建、停止卷或真实 ZIP 导入。

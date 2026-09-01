@@ -18,7 +18,7 @@ from ai.services.intent_parser import intent_parser
 from ai.services.natural_query import natural_query_service
 from ai.services.ip_troubleshooting import ip_troubleshooting_service
 from ai.services.mac_troubleshooting import mac_troubleshooting_service
-from ai.services.rag_retriever import rag_retriever, RetrievalRequest
+from ai.services.rag_retriever import RAGRetriever, rag_retriever, RetrievalRequest
 from ai.schemas.knowledge import KnowledgeQueryPlan
 from ai.services.product_resolver import product_resolver, EntityResolution
 from ai.services.retrieval_contract import build_retrieval_explanation
@@ -806,7 +806,24 @@ class AIAssistantService:
             return "当前没有可展示的知识库结果。"
 
         grouped: Dict[str, List[str]] = {}
+        requested_feature = str(getattr(request, "feature", "") or "").strip()
         for item in chunks:
+            if requested_feature:
+                metadata = item.get("metadata") if isinstance(item.get("metadata"), dict) else {}
+                metadata = dict(metadata)
+                for key in ("feature", "feature_source", "source_kind", "source_type"):
+                    if key not in metadata and item.get(key) is not None:
+                        metadata[key] = item.get(key)
+                if not RAGRetriever._feature_scope_is_eligible(
+                    requested_feature,
+                    metadata,
+                    content=item.get("content"),
+                    section=item.get("section"),
+                    document_name=item.get("document_name") or item.get("source"),
+                    document_source=item.get("official_source") or item.get("official_reference"),
+                    knowledge_source_type=item.get("knowledge_source_type"),
+                ):
+                    continue
             platform, rendered = cls._render_knowledge_chunk(item)
             if rendered:
                 grouped.setdefault(platform, [])
@@ -1669,6 +1686,43 @@ class AIAssistantService:
             )
         else:
             rag_chunks = []
+        # Keep the non-streaming endpoint aligned with the streaming path:
+        # when exact RAG has no eligible chunk, a scoped configuration request
+        # may use only the reviewed local official template catalog.  This is
+        # especially important after an unsafe broad-document feature tag has
+        # been removed; an empty exact hit must not send the client back to a
+        # contaminated raw document or an ungrounded provider answer.
+        if (
+            intent == "knowledge"
+            and not rag_chunks
+            and knowledge_result is not None
+        ):
+            template_request = knowledge_result.get("request")
+            clarification_payload = knowledge_result.get("clarification")
+            clarification_required = bool(
+                isinstance(clarification_payload, dict)
+                and clarification_payload.get("required")
+            )
+            if not clarification_required:
+                template_chunks = search_official_templates(template_request, limit=5)
+                if template_chunks:
+                    rag_chunks = template_chunks
+                    knowledge_result["results"] = template_chunks
+                    debug = knowledge_result.setdefault("debug", {})
+                    debug.update({
+                        "template_fallback": True,
+                        "template_fallback_count": len(template_chunks),
+                        "template_fallback_source": "official_config_template_catalog",
+                    })
+                    context_facts["retrieval_debug"] = debug
+                    if knowledge_trace is not None:
+                        knowledge_trace["source"] = "local_official_template"
+                        knowledge_trace["status"] = "template_fallback"
+                        knowledge_trace["final_document_count"] = len(template_chunks)
+                        quality = knowledge_trace.get("runtime", {}).get("quality")
+                        if isinstance(quality, dict):
+                            quality["no_match"] = False
+                            quality["template_fallback"] = True
         if rag_chunks:
             context_facts["knowledge_chunks"] = [
                 {
@@ -1685,6 +1739,9 @@ class AIAssistantService:
                     "software_release": c.get("software_release") or (c.get("metadata") or {}).get("software_release"),
                     "official_reference": c.get("source") or (c.get("metadata") or {}).get("official_reference"),
                     "official_source": c.get("source") or (c.get("metadata") or {}).get("official_reference"),
+                    "feature": c.get("feature") or (c.get("metadata") or {}).get("feature"),
+                    "feature_source": c.get("feature_source") or (c.get("metadata") or {}).get("feature_source"),
+                    "source_kind": c.get("source_kind") or (c.get("metadata") or {}).get("source_kind"),
                     "untrusted_data": True,
                 }
                 for c in rag_chunks
@@ -2330,6 +2387,9 @@ class AIAssistantService:
                         "software_release": c.get("software_release") or (c.get("metadata") or {}).get("software_release"),
                         "official_reference": c.get("source") or (c.get("metadata") or {}).get("official_reference"),
                         "official_source": c.get("source") or (c.get("metadata") or {}).get("official_reference"),
+                        "feature": c.get("feature") or (c.get("metadata") or {}).get("feature"),
+                        "feature_source": c.get("feature_source") or (c.get("metadata") or {}).get("feature_source"),
+                        "source_kind": c.get("source_kind") or (c.get("metadata") or {}).get("source_kind"),
                         "untrusted_data": True,
                     }
                     for c in rag_chunks

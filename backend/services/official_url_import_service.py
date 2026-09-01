@@ -89,6 +89,11 @@ def _metadata(payload: dict[str, Any], *, actor: str) -> dict[str, Any]:
         "platform_code": _text(payload.get("platform_code"), field="platform_code", maximum=128),
         "os_family": _text(payload.get("os_family"), field="os_family", maximum=128),
         "os_generation": _text(payload.get("os_generation"), field="os_generation", maximum=128),
+        # A reviewed source may carry an explicit feature scope.  Keep it
+        # optional: broad vendor command references must remain unscoped
+        # unless the reviewer has supplied a real feature binding.
+        "feature": _text(payload.get("feature"), field="feature", maximum=128),
+        "feature_domain": _text(payload.get("feature_domain"), field="feature_domain", maximum=128),
         "document_category": _text(payload.get("document_category"), field="document_category", maximum=64),
         "ingestion": {"boundary": "ING-002_single_official_url", "actor": actor},
     }

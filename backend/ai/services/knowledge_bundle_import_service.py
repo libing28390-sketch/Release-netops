@@ -1,4 +1,4 @@
-"""Atomic PostgreSQL/SQLite import for Nexora knowledge export bundles."""
+"""Atomic PostgreSQL import for Nexora knowledge export bundles."""
 
 from __future__ import annotations
 
@@ -37,6 +37,29 @@ _PRIVATE_KEY_RE = re.compile(
     r"(?is)-----BEGIN [A-Z0-9 ]*PRIVATE KEY-----.*?-----END [A-Z0-9 ]*PRIVATE KEY-----"
 )
 _URI_CREDENTIAL_RE = re.compile(r"(?i)([a-z][a-z0-9+.-]*://)[^/@\s]+@")
+_DOCUMENT_PATH_RE = re.compile(r"(?i)(?<![\w-])documents[\\/][^\s,;}]+'?\b")
+_IMPORT_DIAGNOSTIC_STAGES = frozenset(
+    {"read_bundle", "parse", "reconcile", "chunk", "embedding", "database", "cache_invalidation"}
+)
+_IMPORT_DIAGNOSTIC_STATUSES = frozenset(
+    {"started", "completed", "document_completed", "committed", "failed", "rolled_back", "rollback_failed"}
+)
+_IMPORT_DIAGNOSTIC_DETAIL_KEYS = frozenset(
+    {
+        "bundle_bytes",
+        "manifest_document_count",
+        "parser_version",
+        "metadata_parse_status",
+        "chunk_count",
+        "vector_count",
+        "embedding_dimensions",
+        "embedding_model",
+        "mismatch_count",
+        "error_type",
+        "error_code",
+        "error_summary",
+    }
+)
 
 
 def _stable_document_ref(path: str, content_sha256: str = "") -> str:
@@ -57,6 +80,7 @@ def _safe_error_summary(exc: BaseException) -> str:
     text = " ".join(str(exc or "").split())
     text = _PRIVATE_KEY_RE.sub("<REDACTED_PRIVATE_KEY>", text)
     text = _URI_CREDENTIAL_RE.sub(r"\1<REDACTED>@", text)
+    text = _DOCUMENT_PATH_RE.sub("<REDACTED_DOCUMENT_PATH>", text)
     text = _SENSITIVE_ERROR_VALUE_RE.sub(
         lambda match: f"{match.group(1)}=***",
         text,
@@ -98,7 +122,9 @@ class _ImportDiagnostics:
         document_ref: str | None = None,
         **details: Any,
     ) -> None:
-        self.current_stage = str(stage)
+        safe_stage = str(stage) if str(stage) in _IMPORT_DIAGNOSTIC_STAGES else "unknown"
+        safe_status = str(status) if str(status) in _IMPORT_DIAGNOSTIC_STATUSES else "unknown"
+        self.current_stage = safe_stage
         if document_index is not None:
             self.current_document_index = int(document_index)
         if document_ref is not None:
@@ -108,8 +134,8 @@ class _ImportDiagnostics:
             "event": "knowledge_bundle_import",
             "request_id": self.request_id,
             "bundle_ref": self.bundle_ref,
-            "stage": str(stage),
-            "status": str(status),
+            "stage": safe_stage,
+            "status": safe_status,
             "transaction_state": self.transaction_state,
             "document_count": int(self.document_count),
             "prepared_count": int(self.prepared_count),
@@ -117,20 +143,27 @@ class _ImportDiagnostics:
         }
         if self.current_document_index is not None:
             payload["document_index"] = self.current_document_index
-        if self.current_document_ref:
+        if self.current_document_ref and re.fullmatch(r"[0-9a-f]{16}", self.current_document_ref):
             payload["document_ref"] = self.current_document_ref
 
         # Only explicitly supplied, bounded scalar diagnostics are included.
         # In particular, never pass metadata, document content, or exception
         # objects through to the logger.
         for key, value in details.items():
-            if key in {"content", "metadata", "text", "raw", "password", "token", "secret"}:
+            if key not in _IMPORT_DIAGNOSTIC_DETAIL_KEYS:
                 continue
-            if isinstance(value, (str, int, float, bool)) or value is None:
-                payload[str(key)] = value
+            if key == "error_summary":
+                value = _safe_error_summary(RuntimeError(str(value)))
+            elif key == "error_code":
+                code = str(value or "")[:64]
+                value = code if re.fullmatch(r"[A-Za-z0-9_.-]+", code) else "UNSAFE_ERROR_CODE"
+            if isinstance(value, str):
+                payload[key] = value[:240]
+            elif isinstance(value, (int, float, bool)) or value is None:
+                payload[key] = value
 
-        level = logging.ERROR if status in {"failed", "rollback_failed"} else logging.WARNING if status == "rolled_back" else logging.INFO
-        if status in {"started", "completed"} and self.current_document_index is not None and stage in {"parse", "chunk", "embedding", "database"}:
+        level = logging.ERROR if safe_status in {"failed", "rollback_failed"} else logging.WARNING if safe_status == "rolled_back" else logging.INFO
+        if safe_status in {"started", "completed"} and self.current_document_index is not None and safe_stage in {"parse", "chunk", "embedding", "database"}:
             level = logging.DEBUG
         try:
             logger.log(

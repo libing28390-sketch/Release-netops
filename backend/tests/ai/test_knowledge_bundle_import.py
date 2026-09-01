@@ -202,3 +202,35 @@ def test_bundle_validation_log_uses_stable_document_ref(caplog: pytest.LogCaptur
     assert len(str(failed["document_ref"])) == 16
     assert failed["error_summary"] == "bundle_validation:KNOWLEDGE_BUNDLE_HASH_MISMATCH"
     assert "documents/example.md" not in json.dumps(failed, ensure_ascii=False)
+
+
+def test_import_diagnostics_whitelist_details_and_redact_document_paths(caplog: pytest.LogCaptureFixture):
+    diagnostics = bundle_module._ImportDiagnostics(b"fixture-bundle", request_id="web_diagnostic_003")
+    caplog.set_level(logging.DEBUG, logger=bundle_module.logger.name)
+
+    diagnostics.emit(
+        stage="embedding",
+        status="started",
+        document_index=1,
+        document_ref="0123456789abcdef",
+        chunk_count=2,
+        document_path="documents/secret.md",
+        content="must-not-be-logged",
+        arbitrary="must-not-be-logged",
+    )
+    diagnostics.failure(
+        stage="embedding",
+        exc=RuntimeError("failed documents/secret.md; password=supersecret"),
+        document_index=1,
+        document_ref="0123456789abcdef",
+    )
+
+    events = _diagnostic_events(caplog)
+    started = next(event for event in events if event.get("status") == "started")
+    failed = next(event for event in events if event.get("status") == "failed")
+    assert started["chunk_count"] == 2
+    assert "document_path" not in started
+    assert "content" not in started
+    assert "arbitrary" not in started
+    assert "documents/secret.md" not in json.dumps(failed, ensure_ascii=False)
+    assert "supersecret" not in json.dumps(failed, ensure_ascii=False)

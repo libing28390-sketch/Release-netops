@@ -7,6 +7,7 @@ import httpx
 import pytest
 
 from services.ingestion_pipeline_service import ingestion_pipeline
+from services.official_document_publisher import _feature_for
 from services.official_url_import_service import OfficialUrlImportError, import_single_official_url
 
 
@@ -88,6 +89,41 @@ def test_ing002_explicit_publish_completes_local_projection(isolated_db, make_us
             "SELECT source, knowledge_source_type, status FROM ai_document WHERE knowledge_source_type = 'official_url'"
         ).fetchone()
     assert row and row[0] == OFFICIAL_URL and row[1] == "official_url" and row[2] == "active"
+
+
+def test_ing002_reviewed_feature_scope_is_preserved_for_a_broad_source(isolated_db, make_user):
+    user = make_user("ing002-explicit-feature", role="Operator")
+    result = import_single_official_url(
+        user,
+        _payload(
+            idempotency_key="ing002-explicit-feature",
+            name="Reviewed VLAN commands",
+            feature="vlan",
+            feature_domain="switching",
+            publish_to_knowledge_base=True,
+        ),
+        transport=_transport(
+            lambda request: httpx.Response(
+                200,
+                headers={"content-type": "text/plain"},
+                content=b"show license tech support\nSmartAgent status",
+                request=request,
+            )
+        ),
+        resolver=_public,
+    )
+    assert result["success"] is True and result["published"] is True
+    with isolated_db["module"].get_db_connection() as conn:
+        row = conn.execute(
+            """
+            SELECT feature, feature_domain, metadata_json
+            FROM ai_document
+            WHERE source = ? AND metadata_json->>'feature_source' = 'explicit'
+            """,
+            (OFFICIAL_URL,),
+        ).fetchone()
+    assert row and row[0] == "vlan" and row[1] == "switching"
+    assert row[2]["feature_source"] == "explicit"
 
 
 def test_ing002_troubleshooting_source_publishes_allowlisted_document_kind(isolated_db, make_user):
@@ -263,3 +299,14 @@ def test_ing002_api_contract_exposes_single_url_job_route():
 
     paths = {(route.path, tuple(sorted(route.methods or ()))) for route in router.routes}
     assert any(path == "/knowledge/ingestion/official-url" and "POST" in methods for path, methods in paths)
+
+
+def test_official_feature_inference_uses_source_identity_not_document_body():
+    assert _feature_for(
+        "Catalyst System Management Command Reference",
+        "https://www.cisco.com/c/en/system_management_commands.html",
+    ) == ("", "general")
+    assert _feature_for(
+        "OSPF Command Reference",
+        "https://docs.example.test/routing/ospf_commands.html",
+    ) == ("ospf", "routing")

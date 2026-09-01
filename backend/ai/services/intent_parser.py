@@ -19,7 +19,14 @@ from ai.schemas.intent import IntentDecision, IntentRiskLevel, IntentType
 # network hostname by the pre-egress security classifier.  A hyphenated value
 # such as ``intent-v1`` matches the classifier's legacy short-hostname pattern
 # and incorrectly upgrades even a generic prompt to CONFIDENTIAL.
-INTENT_PROMPT_VERSION = "intent.v1"
+INTENT_PROMPT_VERSION = "intent.v2"
+# The full IntentDecision schema is intentionally sent to the provider so the
+# boundary stays strict.  DeepSeek can spend several hundred output tokens
+# reproducing that shape; 512 tokens truncates otherwise valid JSON before the
+# closing fields, which incorrectly turns a provider success into a schema
+# retry/failure.  Keep this budget explicit and above the observed full-schema
+# response while remaining bounded for the structured parsing path.
+INTENT_MAX_OUTPUT_TOKENS = 1024
 logger = logging.getLogger(__name__)
 
 
@@ -736,7 +743,7 @@ class IntentParser:
         return await llm_gateway.chat(
             scene="natural_query",
             messages=messages,
-            max_tokens=512,
+            max_tokens=INTENT_MAX_OUTPUT_TOKENS,
             response_format={"type": "json_object"},
             user_id=user_id,
         )
@@ -775,6 +782,13 @@ class IntentParser:
             # boundary visible to source audits as well as to the model.
             "Allowed intent types: asset_analysis, device_search, ip_location, mac_location, "
             "alarm_search, config_search, troubleshooting, general_qa, knowledge.\n"
+            "Use these boundaries: knowledge is only an explicit document/citation or named "
+            "vendor/product/feature lookup; general_qa is explanatory or capability guidance "
+            "without current-system evidence; alarm_search reviews alerts or notifications; "
+            "troubleshooting diagnoses a stated symptom or interruption; config_search reviews "
+            "current or proposed configuration scope without applying a change; device_search "
+            "looks up an inventory or managed-resource record. Prefer the most specific "
+            "operational intent over the generic knowledge label.\n"
             "For knowledge, put the RAG fields in metadata. Never infer cli_platform solely "
             "from software_train; use null when not explicit.\n"
             "Use R0 for read-only, R1/R2 for low or medium impact, and R3/R4 for high-risk "

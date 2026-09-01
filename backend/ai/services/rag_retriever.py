@@ -18,7 +18,7 @@ from database.core import get_db_connection
 from ai.providers.embedding import embedding_provider
 from ai.security.sanitizer import sanitize_text
 from ai.services.rag_policy import document_is_visible, trust_rank
-from ai.services.knowledge_metadata import canonical_vendor
+from ai.services.knowledge_metadata import canonical_feature, canonical_vendor
 from ai.schemas.knowledge import KnowledgeQueryPlan
 from ai.services.knowledge_service import _directory_filter_sql
 from ai.services.product_resolver import product_resolver
@@ -87,6 +87,59 @@ class RAGRetriever:
         "什么", "如何", "怎么", "请问", "一下", "这个", "那个", "是否", "可以",
         "华为", "交换机", "设备", "命令", "配置", "查看", "查询", "含义", "结果",
         "huawei", "command", "config", "configuration", "switch", "device",
+    }
+    # These are content-level signals, not metadata labels.  They are used
+    # only when an official broad document has a legacy/inferred feature tag;
+    # an explicit reviewed feature binding remains authoritative.
+    _FEATURE_CONTENT_PATTERNS = {
+        "vlan": (
+            r"(?<![a-z0-9])vlan(?![a-z0-9])",
+            r"\bswitchport\s+(?:mode\s+)?(?:access|trunk)\b",
+            r"\b(?:allowed|native|private[- ]?)\s*vlan\b",
+            r"\binterface\s+vlan\d*\b",
+            r"\bport\s+(?:link-type\s+)?(?:access|trunk)\b",
+            r"\bport\s+(?:trunk\s+)?(?:allow-pass|permit)\s+vlan\b",
+            r"虚拟局域网",
+        ),
+        "access_port": (
+            r"\bswitchport\s+(?:mode\s+)?access\b",
+            r"\bswitchport\s+access\s+vlan\b",
+            r"\bport\s+(?:link-type\s+)?access\b",
+            r"\bport\s+(?:default|access)\s+vlan\b",
+            r"\baccess[- ]port\b",
+            r"接入口|接入端口",
+        ),
+        "trunk": (
+            r"\bswitchport\s+(?:mode\s+)?trunk\b",
+            r"\bport\s+link-type\s+trunk\b",
+            r"\bport\s+trunk\s+(?:allow-pass|permit)\s+vlan\b",
+            r"\btrunk(?:ing)?\b",
+            r"\ballowed\s+vlan\b",
+            r"中继端口|trunk端口",
+        ),
+        "ospf": (r"(?<![a-z0-9])ospf(?![a-z0-9])",),
+        "bgp": (r"(?<![a-z0-9])bgp(?![a-z0-9])",),
+        "isis": (r"(?<![a-z0-9])isis(?![a-z0-9])",),
+        "arp": (r"(?<![a-z0-9])arp(?![a-z0-9])",),
+        "stp": (r"(?<![a-z0-9])stp(?![a-z0-9])", r"\bspanning[- ]tree\b"),
+        "mstp": (r"(?<![a-z0-9])mstp(?![a-z0-9])",),
+        "lacp": (
+            r"(?<![a-z0-9])lacp(?![a-z0-9])",
+            r"\beth[- ]trunk\b",
+            r"\betherchannel\b",
+            r"\bbridge[- ]aggregation\b",
+        ),
+        "lldp": (r"(?<![a-z0-9])lldp(?![a-z0-9])",),
+        "vrrp": (r"(?<![a-z0-9])vrrp(?![a-z0-9])",),
+        "evpn": (r"(?<![a-z0-9])evpn(?![a-z0-9])",),
+        "vxlan": (r"(?<![a-z0-9])vxlan(?![a-z0-9])",),
+        "snmp": (r"(?<![a-z0-9])snmp(?:v3)?(?![a-z0-9])",),
+        "ntp": (r"(?<![a-z0-9])ntp(?![a-z0-9])",),
+        "ssh": (r"(?<![a-z0-9])(?:ssh|stelnet)(?![a-z0-9])",),
+        "acl": (r"(?<![a-z0-9])acl(?![a-z0-9])", r"\baccess[- ]control list\b"),
+        "loopback": (r"(?<![a-z0-9])loopback(?![a-z0-9])", r"环回接口|环回口"),
+        "static_route": (r"static[- ]route", r"ip\s+route-static", r"静态路由"),
+        "qos": (r"(?<![a-z0-9])qos(?![a-z0-9])", r"服务质量"),
     }
 
     def __init__(self, *, reranker: Any = None, cache_enabled: bool | None = None) -> None:
@@ -161,6 +214,82 @@ class RAGRetriever:
                 return min(1.0, 0.65 * coverage + 0.55)
             return 0.10 * coverage
         return min(1.0, 0.65 * coverage)
+
+    @classmethod
+    def _feature_content_matches(cls, feature: Any, text: Any) -> bool:
+        """Return whether *text* contains evidence for a canonical feature.
+
+        The document's ``feature`` column is deliberately not included here:
+        this helper exists to detect a bad document-level label, so reusing the
+        same label would make the guard circular.  Unknown features fall back
+        to a conservative word-boundary match.
+        """
+
+        canonical = canonical_feature(feature)
+        value = str(text or "")
+        if not canonical or not value:
+            return False
+        patterns = cls._FEATURE_CONTENT_PATTERNS.get(canonical)
+        if patterns:
+            return any(re.search(pattern, value, flags=re.IGNORECASE) for pattern in patterns)
+        escaped = re.escape(canonical.replace("_", " "))
+        return bool(re.search(rf"(?<![a-z0-9]){escaped}(?![a-z0-9])", value, flags=re.IGNORECASE))
+
+    @classmethod
+    def _feature_scope_is_eligible(
+        cls,
+        requested_feature: Any,
+        metadata: Dict[str, Any] | None,
+        *,
+        content: Any = "",
+        section: Any = "",
+        document_name: Any = "",
+        document_source: Any = "",
+        knowledge_source_type: Any = "",
+    ) -> bool:
+        """Reject legacy broad-source labels with no local feature evidence.
+
+        SQL still owns the normal metadata hard filter.  This second boundary
+        is intentionally narrow: it applies to official command/configuration
+        sources whose feature tag was inferred or predates the provenance
+        marker.  A reviewer-provided ``feature_source=explicit`` binding is
+        accepted even when the command text is terse.
+        """
+
+        requested = canonical_feature(requested_feature)
+        if not requested:
+            return True
+        metadata = metadata if isinstance(metadata, dict) else {}
+        actual = canonical_feature(metadata.get("feature"))
+        if actual and actual != requested:
+            return False
+        # A missing chunk projection is a legacy compatibility case.  The
+        # parent document's SQL feature predicate has already been applied.
+        if not actual:
+            return True
+
+        source_kind = str(metadata.get("source_kind") or "").strip().lower()
+        source_type = str(
+            metadata.get("source_type")
+            or knowledge_source_type
+            or ""
+        ).strip().lower()
+        broad_source = source_kind in {"command_reference", "configuration_guide"}
+        broad_source = broad_source or source_type in {"official_url", "official_local", "official_vendor"}
+        if not broad_source:
+            return True
+        if str(metadata.get("feature_source") or "").strip().lower() == "explicit":
+            return True
+
+        # A title/URL binding can justify retaining a document-level label in
+        # the migration, but it cannot make every chunk in that document
+        # eligible.  Require evidence in the chunk's section/body so a
+        # multi-feature troubleshooting or command-reference page cannot leak
+        # an unrelated section into a narrow answer.
+        return cls._feature_content_matches(
+            requested,
+            " ".join(str(value or "") for value in (section, content)),
+        )
 
     @staticmethod
     def _cosine(left: Sequence[float], right: Sequence[float]) -> float:
@@ -522,7 +651,10 @@ class RAGRetriever:
         candidate_hint = max(top_k * 30, 100)
         cache_key = retrieval_cache_key(
             request,
-            index_version="retrieval-v1",
+            # The feature-evidence guard changes eligibility.  A new cache
+            # namespace prevents a process-local pre-fix result from being
+            # served after a rolling code update.
+            index_version="retrieval-v2",
         )
         if self.cache_enabled:
             cached = retrieval_cache.get(cache_key)
@@ -547,6 +679,7 @@ class RAGRetriever:
             incompatible_vectors = 0
             version_conflicts = 0
             wrong_vendor_rows = 0
+            feature_scope_filtered = 0
             current_model = str(getattr(embedding_provider, "model_id", "") or "")
             for row in rows:
                 (
@@ -565,6 +698,17 @@ class RAGRetriever:
                 actual_vendor = str(metadata.get("vendor") or d_vendor or "").strip().lower()
                 if requested_vendor and actual_vendor and requested_vendor != actual_vendor:
                     wrong_vendor_rows += 1
+                if not self._feature_scope_is_eligible(
+                    getattr(request, "feature", None),
+                    metadata,
+                    content=content,
+                    section=section,
+                    document_name=doc_name,
+                    document_source=document_source,
+                    knowledge_source_type=knowledge_source_type,
+                ):
+                    feature_scope_filtered += 1
+                    continue
                 keyword_score = self._calc_keyword_relevance(
                     request.query,
                     str(content or ""),
@@ -667,6 +811,9 @@ class RAGRetriever:
                     "source_trust_rank": trust_rank(trust_level),
                     "untrusted_data": True,
                     "metadata": metadata,
+                    "feature": metadata.get("feature"),
+                    "feature_source": metadata.get("feature_source"),
+                    "source_kind": metadata.get("source_kind"),
                     "chunk_role": chunk_role or "standalone",
                     "parent_chunk_id": parent_chunk_id,
                     "ordinal": int(ordinal or 0),
@@ -705,6 +852,8 @@ class RAGRetriever:
                 "incompatible_embedding_chunks": incompatible_vectors,
                 "version_conflict_count": version_conflicts,
                 "wrong_vendor_count": wrong_vendor_rows,
+                "feature_scope_filtered": feature_scope_filtered,
+                "feature_scope_guard": "content_evidence_v1",
                 "expanded_context_chunks": sum(int(item.get("context_chunk_count") or 0) for item in final_results),
                 "final_document_ids": [item["document_id"] for item in final_results],
                 "reranker": reranker_debug,

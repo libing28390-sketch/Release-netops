@@ -13,7 +13,7 @@ import re
 from typing import Any
 from urllib.parse import urlsplit
 
-from ai.services.knowledge_metadata import directory_metadata_for_document
+from ai.services.knowledge_metadata import canonical_feature, directory_metadata_for_document
 from ai.services.knowledge_service import knowledge_service
 from database import get_db_connection
 from services.document_content_cleaning import CleanedDocument, parse_and_clean_document
@@ -60,11 +60,23 @@ def _filename_for(url: str, content_type: str) -> str:
 
 
 def _feature_for(*values: Any) -> tuple[str, str]:
+    """Infer a feature from source identity fields, never from full body text.
+
+    A vendor command-reference page commonly contains commands for many
+    unrelated features.  Looking through the first part of that page and
+    assigning the first keyword found made the whole document appear to be a
+    VLAN/OSPF/etc. document.  Callers should pass only reviewed identity
+    fields such as title, description, source name, and URL.
+    """
     haystack = " ".join(str(value or "") for value in values).lower()
     for feature, domain in _FEATURES:
         if re.search(rf"(?<![a-z0-9]){re.escape(feature)}(?![a-z0-9])", haystack):
             return feature, domain
     return "", "general"
+
+
+def _feature_domain(feature: str) -> str:
+    return dict(_FEATURES).get(str(feature or "").strip().lower(), "general")
 
 
 def _category_for(source_kind: str, feature: str) -> str:
@@ -148,13 +160,26 @@ def publish_official_document(
     product_family = str(payload.get("product_family") or source_meta.get("product_family") or "").strip()
     if not vendor or not product_family:
         raise OfficialDocumentPublicationError("PUBLISH_METADATA_INVALID", "Official source vendor and product family are required")
-    feature, feature_domain = _feature_for(
-        payload.get("name"),
-        payload.get("description"),
-        source.get("name"),
-        canonical_url,
-        normalized_content[:20_000],
-    )
+    explicit_feature = str(payload.get("feature") or source_meta.get("feature") or "").strip()
+    if explicit_feature:
+        feature = canonical_feature(explicit_feature)
+        feature_domain = str(
+            payload.get("feature_domain")
+            or source_meta.get("feature_domain")
+            or _feature_domain(feature)
+        ).strip() or _feature_domain(feature)
+        feature_source = "explicit"
+    else:
+        # Broad source bodies are intentionally excluded.  The title/URL
+        # binding is still useful for a reviewed feature-specific page such as
+        # an OSPF command reference.
+        feature, feature_domain = _feature_for(
+            payload.get("name"),
+            payload.get("description"),
+            source.get("name"),
+            canonical_url,
+        )
+        feature_source = "title_or_url" if feature else "unclassified"
     category = _category_for(source_kind, feature)
     document_id = f"official-{str(source_version.get('id') or hashlib.sha256(canonical_url.encode('utf-8')).hexdigest()[:24])}"
     content_hash = hashlib.sha256(normalized_content.encode("utf-8")).hexdigest()
@@ -192,6 +217,7 @@ def publish_official_document(
         "product_type": "network_switch",
         "document_category": category,
         "source_type": "official_url",
+        "source_kind": source_kind,
         "official_only": True,
         "status": "active",
         "product_family": product_family,
@@ -204,6 +230,7 @@ def publish_official_document(
         "cli_platform": str(source_meta.get("platform_code") or payload.get("platform_code") or ""),
         "feature_domain": feature_domain,
         "feature": feature,
+        "feature_source": feature_source,
         "risk_level": "low",
         "verification_level": "official",
         "rag_priority": 100,
@@ -232,6 +259,11 @@ def publish_official_document(
     metadata["source_type"] = "official_url"
     metadata["official_only"] = True
     metadata["status"] = "active"
+    # Source metadata may contain legacy hints.  The reviewed/identity-based
+    # decision above is the publication authority and must win the merge.
+    metadata["feature_domain"] = feature_domain
+    metadata["feature"] = feature
+    metadata["feature_source"] = feature_source
     metadata.update(directory_metadata_for_document(category, vendor))
 
     kb = knowledge_service.get_or_create_default_knowledge_base(tenant_id=tenant_id, created_by=str(user.get("id") or user.get("username") or "system"))

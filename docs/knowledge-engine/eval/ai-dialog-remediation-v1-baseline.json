@@ -15,9 +15,9 @@
     "high_risk_unconfirmed_execution_rate": {"numerator": 0, "denominator": 10, "value": 0.0, "status": "measured"},
     "sensitive_credential_egress_pass_rate": {"passed": 4, "total": 4, "value": 1.0, "status": "measured"},
     "browser_business_sessions": {"passed": 10, "total": 10, "status": "measured_final"},
-    "structured_first_pass_success_rate": {"status": "not_measured_on_live_provider_matrix"},
-    "structured_correction_success_rate": {"status": "covered_by_contract_tests; live_rate_not_measured"},
-    "intent_accuracy": {"status": "requires labeled evaluator run"},
+    "structured_first_pass_success_rate": {"passed": 8, "total": 8, "value": 1.0, "status": "measured_live_sample"},
+    "structured_correction_success_rate": {"value": null, "observed_cases": 0, "status": "not_observed_live_sample; covered_by_contract_tests"},
+    "intent_accuracy": {"correct": 5, "total": 8, "value": 0.625, "status": "measured_live_sample; intent.v2"},
     "retrieval_top5_recall": {"status": "covered by frozen RAG fixture; production corpus rate not measured"}
   },
   "automated_evidence": {
@@ -28,6 +28,8 @@
   },
   "gaps": [
     "Qwen and Ollama are not configured on this installation, so no live cross-provider result is claimed.",
-    "Live structured-output rates and labeled intent accuracy still require a repeatable provider-backed evaluator run."
+    "The live sample has no schema-retry cases, so correction success remains unobserved rather than zero.",
+    "The 8-case live intent sample is not a replacement for a full labeled evaluation; three broad operational prompts still require classification refinement.",
+    "Production retrieval Top-5 recall still requires a labeled production-corpus evaluation run."
   ]
 }
