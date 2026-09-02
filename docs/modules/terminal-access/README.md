@@ -3,20 +3,22 @@
 - 模块 ID：`terminal-access`
 - 英文名称：TERMINAL ACCESS
 - 导航来源：`src/components/AppSidebar/navConfig.ts`
-- 子功能数量：2
+- 子功能数量：4
 - 数据库约束：仅使用 PostgreSQL；缓存只作为辅助，不能覆盖数据库事实。
 - 状态约束：正常、异常、未知、未配置、无数据必须分别表达。
 
 ## 模块目标
 
-终端接入用于承载 操作工作台、受控审计 等能力。页面、API、权限和审计必须围绕同一业务对象，任何写操作均需经过角色校验，任何无证据状态均不得默认显示为正常。
+终端接入用于承载 操作工作台、我的收藏、我的历史记录、受控审计 等能力。页面、API、权限和审计必须围绕同一业务对象，任何写操作均需经过角色校验，任何无证据状态均不得默认显示为正常。
 
 ## 子功能目录
 
 | # | 子功能 | 路由 | 功能介绍 | 使用指南 |
 |---:|---|---|---|---|
 | 1 | 操作工作台 | `/access/workspace` | [功能介绍](./features/access-center/功能介绍.md) | [使用指南](./features/access-center/使用指南.md) |
-| 2 | 受控审计 | `/access/pam-audit` | [功能介绍](./features/pam-audit/功能介绍.md) | [使用指南](./features/pam-audit/使用指南.md) |
+| 2 | 我的收藏 | `/access/favorites` | [功能介绍](./features/access-favorites/功能介绍.md) | — |
+| 3 | 我的历史记录 | `/access/history` | [功能介绍](./features/access-history/功能介绍.md) | — |
+| 4 | 受控审计 | `/access/pam-audit` | [功能介绍](./features/pam-audit/功能介绍.md) | [使用指南](./features/pam-audit/使用指南.md) |
 
 ## 通用验收口径
 

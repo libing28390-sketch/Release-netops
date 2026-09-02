@@ -22,6 +22,7 @@ from core.config import settings
 from core.scheduler_manager import scheduler
 from apscheduler.triggers.cron import CronTrigger
 from services import config_backup_policy_service
+from services.config_search_service import redact_config_line
 
 logger = logging.getLogger(__name__)
 
@@ -108,12 +109,23 @@ def _normalize_config_content(content: str) -> str:
     volatile_patterns = (
         re.compile(r'^\s*!?\s*(last configuration change|current configuration|time source is)', re.I),
         re.compile(r'^\s*#\s*(last commit|generated at)', re.I),
+        re.compile(r'^\s*(?:return|end)\s*$', re.I),
+        re.compile(r'^\s*(?:<[A-Za-z0-9_.:-]{1,128}>?|\[[A-Za-z0-9_.:-]{1,128}\]?)\s*$', re.I),
+        re.compile(r'^\s*[A-Za-z0-9_.:-]+(?:\([^)]*\))?[#>]\s*$', re.I),
     )
     for raw_line in str(content or '').replace('\r\n', '\n').replace('\r', '\n').split('\n'):
         line = raw_line.rstrip()
         if any(pattern.search(line) for pattern in volatile_patterns):
             continue
-        normalized_lines.append(line)
+        # Blank lines are CLI formatting noise and must not create a new
+        # snapshot when the device configuration itself is unchanged.
+        if not line.strip():
+            continue
+        # Secret presentation can vary between collectors (for example
+        # ``password cipher`` vs ``password <redacted>``); compare the safe
+        # representation so that credential formatting is not reported as a
+        # configuration change.
+        normalized_lines.append(redact_config_line(line))
     return '\n'.join(normalized_lines).strip() + '\n'
 
 
@@ -148,7 +160,7 @@ def _config_snapshot_metadata(content: str) -> dict:
         'section_count': section_count,
         'integrity_status': integrity_status,
         'lifecycle_status': 'fingerprinted' if integrity_status == 'verified' else 'stored_raw',
-        'normalizer_version': 'ncm-v1',
+        'normalizer_version': 'ncm-v3',
         'truncation_reason': truncation_reason,
     }
 

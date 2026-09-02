@@ -13,6 +13,8 @@ import {
   Hash,
   History,
   Loader2,
+  Maximize2,
+  Minimize2,
   Network,
   RefreshCw,
   Save,
@@ -256,6 +258,7 @@ const ConfigSearchTab: React.FC<ConfigSearchTabProps> = ({ t, language = 'zh' })
   const [suggestions, setSuggestions] = useState<Array<{ value: string; category: string }>>([]);
   const [showSuggestions, setShowSuggestions] = useState(false);
   const [expandedResults, setExpandedResults] = useState<Set<string>>(new Set());
+  const [isResultsFullscreen, setIsResultsFullscreen] = useState(false);
   const [wrapLines, setWrapLines] = useState(false);
   const [saveName, setSaveName] = useState('');
   const [saving, setSaving] = useState(false);
@@ -294,6 +297,16 @@ const ConfigSearchTab: React.FC<ConfigSearchTabProps> = ({ t, language = 'zh' })
   useEffect(() => {
     void loadLibrary();
   }, [loadLibrary]);
+
+  useEffect(() => {
+    const handleKeyDown = (event: KeyboardEvent) => {
+      if (event.key === 'Escape' && isResultsFullscreen) {
+        setIsResultsFullscreen(false);
+      }
+    };
+    window.addEventListener('keydown', handleKeyDown);
+    return () => window.removeEventListener('keydown', handleKeyDown);
+  }, [isResultsFullscreen]);
 
   useEffect(() => {
     if (!query.trim()) {
@@ -453,10 +466,7 @@ const ConfigSearchTab: React.FC<ConfigSearchTabProps> = ({ t, language = 'zh' })
 
   const toggleExpanded = useCallback((id: string) => {
     setExpandedResults((current) => {
-      const next = new Set(current);
-      if (next.has(id)) next.delete(id);
-      else next.add(id);
-      return next;
+      return current.has(id) ? new Set() : new Set([id]);
     });
   }, []);
 
@@ -718,7 +728,6 @@ const ConfigSearchTab: React.FC<ConfigSearchTabProps> = ({ t, language = 'zh' })
                 { icon: Hash, label: zh ? '命中行' : 'Matches', value: response.summary.matches, tone: 'text-violet-700 bg-violet-50' },
                 { icon: Clock3, label: zh ? '耗时' : 'Duration', value: `${response.summary.duration_ms} ms`, tone: 'text-amber-700 bg-amber-50' },
                 { icon: Network, label: zh ? '扫描快照' : 'Scanned', value: response.summary.searched_snapshots, tone: 'text-emerald-700 bg-emerald-50' },
-                { icon: Braces, label: zh ? '检索类型' : 'Search type', value: response.interpretation.search_type, tone: 'text-slate-700 bg-slate-100' },
               ].map((metric) => (
                 <div key={metric.label} className="rounded-xl border border-slate-200 bg-white px-3 py-2.5 shadow-sm">
                   <div className="flex items-center gap-2">
@@ -732,7 +741,10 @@ const ConfigSearchTab: React.FC<ConfigSearchTabProps> = ({ t, language = 'zh' })
               ))}
             </section>
 
-            <div className="flex min-h-0 flex-1 gap-4 overflow-hidden">
+            <div className={`flex min-h-0 gap-4 overflow-hidden ${isResultsFullscreen
+              ? 'fixed inset-3 z-50 rounded-2xl bg-slate-50 p-3 shadow-2xl ring-1 ring-slate-200'
+              : 'flex-1'
+            }`}>
               <aside className="hidden w-56 shrink-0 overflow-y-auto rounded-2xl border border-slate-200 bg-white p-3 shadow-sm lg:block">
                 <div className="mb-3 flex items-center gap-2 border-b border-slate-100 pb-2">
                   <SlidersHorizontal size={14} className="text-cyan-600" />
@@ -776,6 +788,9 @@ const ConfigSearchTab: React.FC<ConfigSearchTabProps> = ({ t, language = 'zh' })
                       <span className="rounded-full bg-emerald-50 px-2 py-0.5 text-[9px] font-bold text-emerald-700">
                         {SCOPE_OPTIONS.find((item) => item.value === response.scope)?.[zh ? 'zh' : 'en']}
                       </span>
+                      <span className="rounded-full bg-slate-100 px-2 py-0.5 text-[9px] font-bold text-slate-600">
+                        {zh ? `类型：${response.interpretation.search_type}` : response.interpretation.search_type}
+                      </span>
                       {response.summary.truncated && (
                         <span className="rounded-full bg-amber-50 px-2 py-0.5 text-[9px] font-bold text-amber-700">{zh ? '已达到扫描上限' : 'Scan limit reached'}</span>
                       )}
@@ -783,6 +798,14 @@ const ConfigSearchTab: React.FC<ConfigSearchTabProps> = ({ t, language = 'zh' })
                     <p className="mt-0.5 truncate text-[10px] text-slate-500">{response.interpretation.description}</p>
                   </div>
                   <div className="flex items-center gap-1">
+                    <ActionIconButton
+                      icon={isResultsFullscreen ? Minimize2 : Maximize2}
+                      label={isResultsFullscreen ? (zh ? '退出沉浸查看' : 'Exit focus view') : (zh ? '沉浸查看结果' : 'Focus results')}
+                      variant={isResultsFullscreen ? 'accent' : 'default'}
+                      size="sm"
+                      aria-pressed={isResultsFullscreen}
+                      onClick={() => setIsResultsFullscreen((value) => !value)}
+                    />
                     <button
                       type="button"
                       onClick={() => setWrapLines((value) => !value)}
@@ -857,7 +880,7 @@ const ConfigSearchTab: React.FC<ConfigSearchTabProps> = ({ t, language = 'zh' })
                           <ChevronDown size={15} className={`text-slate-400 transition ${expanded ? 'rotate-180' : ''}`} />
                         </button>
 
-                        <div className="bg-[#0b1220] font-mono text-[11px] leading-5 text-slate-300">
+                        <div className={`bg-[#0b1220] font-mono text-[11px] leading-5 text-slate-300 ${expanded ? 'max-h-[min(60vh,560px)] overflow-y-auto' : ''}`}>
                           {visibleMatches.map((match, matchIndex) => (
                             <div key={`${match.line}-${matchIndex}`} className="border-b border-white/5 last:border-0">
                               <div className="flex items-center gap-2 bg-white/[0.025] px-3 py-1 text-[9px] text-slate-500">

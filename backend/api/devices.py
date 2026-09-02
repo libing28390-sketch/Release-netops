@@ -812,9 +812,14 @@ def read_devices(
 
         # Plan-A: LEFT JOIN physical_assets to surface asset metadata
         asset_cols = (
-            ', pa.asset_tag, pa.site_id AS asset_site_id, pa.rack, pa.rack_unit, '
+            ', pa.asset_tag, pa.serial_number AS asset_serial_number, '
+            'pa.hostname AS asset_hostname, pa.vendor AS asset_vendor, '
+            'pa.model AS asset_model, pa.asset_type, '
+            'pa.management_ip AS asset_management_ip, pa.business_ip AS asset_business_ip, '
+            'pa.business_ip, '
+            'pa.site_id AS asset_site_id, pa.rack, pa.rack_unit, '
             'pa.department, pa.warranty_expiry, pa.purchase_date, '
-            'pa.business_ip, pa.vlan, pa.uplink_switch, pa.uplink_port, '
+            'pa.vlan, pa.uplink_switch, pa.uplink_port, '
             'pa.lifecycle_status AS asset_lifecycle_status, pa.status AS asset_status, '
             'COALESCE(NULLIF(pa.site_id, \'\'), NULLIF(d.site_id, \'\'), \'\') AS canonical_site_id, '
             's.site_name, s.site_code, s.country AS site_country, '

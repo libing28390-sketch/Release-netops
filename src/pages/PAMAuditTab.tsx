@@ -15,7 +15,6 @@ import {
   RefreshCw,
   MoreVertical,
   History,
-  Wifi,
   WifiOff,
   AlertCircle,
   Timer,
@@ -73,11 +72,27 @@ const STATUS_CONFIG = {
   timeout:    { dot: 'bg-orange-400',               text: 'text-orange-700',  bg: 'bg-orange-50',  label: '超时',   labelEn: 'Timeout' },
 };
 
-const PAMAuditTab: React.FC<{ language: string; showToast: (msg: string, type?: 'success'|'error'|'info') => void }> = ({ language, showToast }) => {
+interface PAMAuditTabProps {
+  language: string;
+  showToast: (msg: string, type?: 'success'|'error'|'info') => void;
+  /** Render only the authenticated user's historical sessions. */
+  scope?: 'all' | 'mine';
+  currentUsername?: string;
+}
+
+const PAMAuditTab: React.FC<PAMAuditTabProps> = ({
+  language,
+  showToast,
+  scope = 'all',
+  currentUsername = '',
+}) => {
   const isZh = language === 'zh';
+  const isMine = scope === 'mine';
+  // The split navigation gives each audience a dedicated page: controlled
+  // audit is the live-session view, while My History is history-only.
+  const activeTab: 'active' | 'history' = isMine ? 'history' : 'active';
   const [sessions, setSessions] = useState<PAMSession[]>([]);
   const [loading, setLoading] = useState(false);
-  const [activeTab, setActiveTab] = useState<'active' | 'history'>('active');
   const [searchQuery, setSearchQuery] = useState('');
   const [debouncedSearch, setDebouncedSearch] = useState('');
   const [accessFilter, setAccessFilter] = useState('');
@@ -95,11 +110,6 @@ const PAMAuditTab: React.FC<{ language: string; showToast: (msg: string, type?: 
   const [page, setPage] = useState(1);
   const [pageSize, setPageSize] = useState(10);
   const [totalItems, setTotalItems] = useState(0);
-  // Counts for the tab badges. Fetched independently with page_size=1 so a
-  // 5k-row history table does not have to ship to the client just to show "n".
-  const [activeCnt, setActiveCnt] = useState(0);
-  const [historyCnt, setHistoryCnt] = useState(0);
-
   const authHeaders = useCallback(() => {
     const token = localStorage.getItem('netops_token');
     return token ? { Authorization: `Bearer ${token}` } : {};
@@ -112,6 +122,11 @@ const PAMAuditTab: React.FC<{ language: string; showToast: (msg: string, type?: 
   }, [searchQuery]);
 
   const fetchSessions = useCallback(async () => {
+    if (isMine && !currentUsername.trim()) {
+      setSessions([]);
+      setTotalItems(0);
+      return;
+    }
     setLoading(true);
     try {
       const statusFilter = activeTab === 'active' ? 'active' : 'history';
@@ -120,6 +135,7 @@ const PAMAuditTab: React.FC<{ language: string; showToast: (msg: string, type?: 
         page: String(page),
         page_size: String(pageSize),
       });
+      if (isMine) params.set('requester_username', currentUsername.trim());
       if (debouncedSearch) params.set('search', debouncedSearch);
       if (accessFilter) params.set('access_level', accessFilter);
       if (methodFilter) params.set('connect_method', methodFilter);
@@ -136,39 +152,19 @@ const PAMAuditTab: React.FC<{ language: string; showToast: (msg: string, type?: 
     } finally {
       setLoading(false);
     }
-  }, [accessFilter, activeTab, authHeaders, debouncedSearch, isZh, methodFilter, page, pageSize, riskFilter, showToast]);
-
-  // Cheap badge counts — one tiny request each, parallel with the main list.
-  const fetchCounts = useCallback(async () => {
-    try {
-      const [activeRes, historyRes] = await Promise.all([
-        fetch('/api/pam/sessions?status=active&page=1&page_size=1', { headers: authHeaders() }),
-        fetch('/api/pam/sessions?status=history&page=1&page_size=1', { headers: authHeaders() }),
-      ]);
-      if (activeRes.ok) {
-        const j = await activeRes.json();
-        setActiveCnt(typeof j.total === 'number' ? j.total : 0);
-      }
-      if (historyRes.ok) {
-        const j = await historyRes.json();
-        setHistoryCnt(typeof j.total === 'number' ? j.total : 0);
-      }
-    } catch { /* ignore — badges are best-effort */ }
-  }, [authHeaders]);
+  }, [accessFilter, activeTab, authHeaders, currentUsername, debouncedSearch, isMine, isZh, methodFilter, page, pageSize, riskFilter, showToast]);
 
   useEffect(() => {
     fetchSessions();
-    fetchCounts();
     // Auto-refresh active sessions every 15 seconds. (Was 8 s; raised to
     // reduce backend pressure now that paging is server-side.)
     if (activeTab === 'active') {
       const timer = setInterval(() => {
         fetchSessions();
-        fetchCounts();
       }, 15000);
       return () => clearInterval(timer);
     }
-  }, [activeTab, fetchSessions, fetchCounts]);
+  }, [activeTab, fetchSessions]);
 
   // ESC to dismiss kill confirmation modal
   useEffect(() => {
@@ -244,10 +240,15 @@ const PAMAuditTab: React.FC<{ language: string; showToast: (msg: string, type?: 
   };
 
   const handleExport = async () => {
+    if (isMine && !currentUsername.trim()) {
+      showToast(isZh ? '当前用户信息尚未就绪' : 'Current user is not ready', 'error');
+      return;
+    }
     try {
       const params = new URLSearchParams({
         status: activeTab === 'active' ? 'active' : 'history',
       });
+      if (isMine) params.set('requester_username', currentUsername.trim());
       if (debouncedSearch) params.set('search', debouncedSearch);
       if (accessFilter) params.set('access_level', accessFilter);
       if (methodFilter) params.set('connect_method', methodFilter);
@@ -290,8 +291,8 @@ const PAMAuditTab: React.FC<{ language: string; showToast: (msg: string, type?: 
   const filteredSessions = sessions;
   const paginatedSessions = sessions;
 
-  // Reset to first page whenever filter or tab changes (so the user is not
-  // stranded on a page that no longer exists).
+  // Reset to first page whenever the scope or a filter changes (so the user
+  // is not stranded on a page that no longer exists).
   useEffect(() => {
     setPage(1);
   }, [accessFilter, activeTab, debouncedSearch, methodFilter, riskFilter]);
@@ -306,8 +307,10 @@ const PAMAuditTab: React.FC<{ language: string; showToast: (msg: string, type?: 
     <div className="flex flex-col h-full overflow-hidden">
       <PageHero
         icon={ShieldCheck}
-        title={isZh ? 'PAM 受控会话审计' : 'PAM Session Audit'}
-        subtitle={isZh ? '实时监控、强制断开及录制回放' : 'Real-time monitoring, termination & playback'}
+        title={isMine ? (isZh ? '我的历史记录' : 'My History') : (isZh ? 'PAM 受控会话审计' : 'PAM Session Audit')}
+        subtitle={isMine
+          ? (isZh ? '查看本人终端会话、风险与回放记录' : 'Review your terminal sessions, risks, and recordings')
+          : (isZh ? '实时监控、强制断开及录制回放' : 'Real-time monitoring, termination & playback')}
         actions={
           <div className="flex items-center gap-2">
             <ActionButton
@@ -321,70 +324,32 @@ const PAMAuditTab: React.FC<{ language: string; showToast: (msg: string, type?: 
           </div>
         }
         extras={
-          /* Tabs + Search */
-          <div className="flex flex-wrap items-center justify-between gap-3">
-            <div className="flex p-1 bg-slate-100 rounded-lg gap-1">
-              <button
-                onClick={() => setActiveTab('active')}
-                className={`flex items-center gap-2 px-4 py-1.5 text-sm font-medium rounded-md transition-all ${
-                  activeTab === 'active'
-                    ? 'bg-white text-cyan-600 shadow-sm'
-                    : 'text-slate-500 hover:text-slate-800'
-                }`}
-              >
-                <Wifi className="w-3.5 h-3.5" />
-                {isZh ? '活跃会话' : 'Active Sessions'}
-                {activeCnt > 0 && (
-                  <span className="ml-1 px-1.5 py-0.5 bg-emerald-100 text-emerald-700 text-[10px] font-bold rounded-full">
-                    {activeCnt}
-                  </span>
-                )}
-              </button>
-              <button
-                onClick={() => setActiveTab('history')}
-                className={`flex items-center gap-2 px-4 py-1.5 text-sm font-medium rounded-md transition-all ${
-                  activeTab === 'history'
-                    ? 'bg-white text-cyan-600 shadow-sm'
-                    : 'text-slate-500 hover:text-slate-800'
-                }`}
-              >
-                <History className="w-3.5 h-3.5" />
-                {isZh ? '历史记录' : 'Session History'}
-                {activeTab === 'history' && historyCnt > 0 && (
-                  <span className="ml-1 px-1.5 py-0.5 bg-slate-200 text-slate-600 text-[10px] font-bold rounded-full">
-                    {historyCnt}
-                  </span>
-                )}
-              </button>
+          <div className="flex flex-wrap items-center justify-end gap-2">
+            <div className="relative">
+              <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-slate-400" />
+              <input
+                type="text"
+                placeholder={isZh ? '搜索设备、用户、IP...' : 'Search device, user, IP...'}
+                value={searchQuery}
+                onChange={(e) => setSearchQuery(e.target.value)}
+                className="pl-10 pr-4 py-2 bg-slate-100 border-none rounded-lg text-sm focus:ring-2 focus:ring-cyan-500 w-64 transition-all outline-none"
+              />
             </div>
-
-            <div className="flex flex-wrap items-center gap-2">
-              <div className="relative">
-                <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-slate-400" />
-                <input
-                  type="text"
-                  placeholder={isZh ? '搜索设备、用户、IP...' : 'Search device, user, IP...'}
-                  value={searchQuery}
-                  onChange={(e) => setSearchQuery(e.target.value)}
-                  className="pl-10 pr-4 py-2 bg-slate-100 border-none rounded-lg text-sm focus:ring-2 focus:ring-cyan-500 w-64 transition-all outline-none"
-                />
-              </div>
-              <select value={accessFilter} onChange={event => setAccessFilter(event.target.value)} className="rounded-lg border border-slate-200 bg-white px-2.5 py-2 text-xs text-slate-600 outline-none">
-                <option value="">{isZh ? '全部权限' : 'All access'}</option>
-                <option value="normal">{isZh ? '普通' : 'Normal'}</option>
-                <option value="admin">{isZh ? '特权' : 'Privileged'}</option>
-              </select>
-              <select value={methodFilter} onChange={event => setMethodFilter(event.target.value)} className="rounded-lg border border-slate-200 bg-white px-2.5 py-2 text-xs text-slate-600 outline-none">
-                <option value="">{isZh ? '全部方式' : 'All methods'}</option>
-                <option value="web">{isZh ? '浏览器终端' : 'Browser'}</option>
-                <option value="local">{isZh ? '本地终端' : 'Local'}</option>
-              </select>
-              <select value={riskFilter} onChange={event => setRiskFilter(event.target.value)} className="rounded-lg border border-slate-200 bg-white px-2.5 py-2 text-xs text-slate-600 outline-none">
-                <option value="">{isZh ? '全部风险' : 'All risk'}</option>
-                <option value="risky">{isZh ? '存在风险' : 'Risky'}</option>
-                <option value="safe">{isZh ? '安全/未命中' : 'Safe'}</option>
-              </select>
-            </div>
+            <select value={accessFilter} onChange={event => setAccessFilter(event.target.value)} className="rounded-lg border border-slate-200 bg-white px-2.5 py-2 text-xs text-slate-600 outline-none">
+              <option value="">{isZh ? '全部权限' : 'All access'}</option>
+              <option value="normal">{isZh ? '普通' : 'Normal'}</option>
+              <option value="admin">{isZh ? '特权' : 'Privileged'}</option>
+            </select>
+            <select value={methodFilter} onChange={event => setMethodFilter(event.target.value)} className="rounded-lg border border-slate-200 bg-white px-2.5 py-2 text-xs text-slate-600 outline-none">
+              <option value="">{isZh ? '全部方式' : 'All methods'}</option>
+              <option value="web">{isZh ? '浏览器终端' : 'Browser'}</option>
+              <option value="local">{isZh ? '本地终端' : 'Local'}</option>
+            </select>
+            <select value={riskFilter} onChange={event => setRiskFilter(event.target.value)} className="rounded-lg border border-slate-200 bg-white px-2.5 py-2 text-xs text-slate-600 outline-none">
+              <option value="">{isZh ? '全部风险' : 'All risk'}</option>
+              <option value="risky">{isZh ? '存在风险' : 'Risky'}</option>
+              <option value="safe">{isZh ? '安全/未命中' : 'Safe'}</option>
+            </select>
           </div>
         }
       />
@@ -425,7 +390,7 @@ const PAMAuditTab: React.FC<{ language: string; showToast: (msg: string, type?: 
                   <th className="px-6 py-4 text-xs font-semibold text-slate-500 uppercase tracking-wider">{isZh ? '权限级别' : 'Access Level'}</th>
                   <th className="px-6 py-4 text-xs font-semibold text-slate-500 uppercase tracking-wider">{isZh ? '开始 / 完成时间' : 'Started / Completed'}</th>
                   <th className="px-6 py-4 text-xs font-semibold text-slate-500 uppercase tracking-wider">{isZh ? '时长' : 'Duration'}</th>
-                  <th className="px-6 py-4 text-xs font-semibold text-slate-500 uppercase tracking-wider text-right">{isZh ? '操作' : 'Actions'}</th>
+                  <th className="px-6 py-4 text-xs font-semibold text-slate-500 uppercase tracking-wider text-right" style={{ textAlign: 'right' }}>{isZh ? '操作' : 'Actions'}</th>
                 </tr>
               </thead>
               <tbody className="divide-y divide-slate-100">

@@ -14,7 +14,7 @@ from typing import Any
 from services.config_search_service import redact_config_line
 
 
-NORMALIZATION_VERSION = "ncm-normalize-v2"
+NORMALIZATION_VERSION = "ncm-normalize-v4"
 PARSER_VERSION = "ncm-object-v2"
 RISK_RULE_VERSION = "risk-v2"
 SEVERITY_ORDER = {"info": 0, "low": 1, "medium": 2, "high": 3, "critical": 4}
@@ -66,9 +66,13 @@ def normalize_config(content: str, *, vendor: str = "") -> str:
         re.compile(r"^\s*(?:generated at|last commit)\b", re.I),
     )
     prompt = re.compile(r"^\s*[<\[].+[>\]]\s*(?:display|show)\s+(?:current|running).*$", re.I)
+    device_prompt = re.compile(r"^\s*(?:<[A-Za-z0-9_.:-]{1,128}>?|\[[A-Za-z0-9_.:-]{1,128}\]?)\s*$", re.I)
     for raw in str(content or "").replace("\r\n", "\n").replace("\r", "\n").split("\n"):
         line = raw.replace("\t", "    ").rstrip()
-        if any(pattern.search(line) for pattern in volatile) or prompt.search(line):
+        if any(pattern.search(line) for pattern in volatile) or prompt.search(line) or device_prompt.search(line):
+            continue
+        # Blank lines are CLI formatting noise, not configuration state.
+        if not line.strip():
             continue
         if vendor_key in {"cisco", "cisco_ios", "cisco_iosxe"} and line.strip().lower() == "end":
             continue

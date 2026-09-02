@@ -39,11 +39,11 @@ import hashlib
 import json
 import math
 import re
+import socket
 from dataclasses import dataclass
 from datetime import datetime, timezone
 from services.network_access_limiter import get_network_access_limiter
 import logging
-import sys
 import time as _time
 from collections.abc import Mapping
 from typing import Any, Optional
@@ -56,44 +56,6 @@ from services.snmp_counter_service import (
 
 logger = logging.getLogger(__name__)
 
-
-def _install_snmp_error_filter() -> None:
-    """Suppress puresnmp ProactorDatagramTransport errors on Windows.
-
-    Windows ProactorEventLoop + puresnmp triggers harmless
-    WinError 1234 / InvalidStateError in _loop_reading callbacks
-    when SNMP targets are unreachable. These are not actionable and
-    are purely noise in the logs.
-    """
-    if sys.platform != 'win32':
-        return
-
-    _original_handler = None
-
-    def _filter_handler(loop: asyncio.AbstractEventLoop, context: dict) -> None:
-        msg = context.get('message', '')
-        # Suppress harmless puresnmp transport errors on Windows
-        if '_loop_reading' in msg or '_SelectorDatagramTransport' in msg:
-            return  # suppress
-        
-        # Also suppress InvalidStateError from puresnmp futures
-        exception = context.get('exception')
-        if exception and 'InvalidStateError' in str(type(exception)):
-            return # suppress
-        if _original_handler:
-            _original_handler(loop, context)
-        else:
-            loop.default_exception_handler(context)
-
-    try:
-        loop = asyncio.get_event_loop()
-        _original_handler = getattr(loop, '_exception_handler', None)
-        loop.set_exception_handler(_filter_handler)
-    except RuntimeError:
-        pass  # no event loop yet
-
-
-_install_snmp_error_filter()
 
 # ═══════════════════════════════════════════════════════════════
 # SNMP 并发控制 — 限制全局同时进行的 SNMP 操作数
@@ -744,7 +706,87 @@ def _val_to_str(val) -> str:
     return str(val).strip()
 
 
-async def _safe_send_udp(endpoint, packet: bytes, timeout: int = 1, loop=None, retries: int = 10) -> bytes:
+_SNMP_TRANSPORT_TIMEOUT_SECONDS = 1
+_SNMP_TRANSPORT_RETRIES = 2
+
+
+class _SafeSNMPClientProtocol(asyncio.DatagramProtocol):
+    """Cancellation-safe UDP protocol for puresnmp requests.
+
+    puresnmp 2.0.1 unconditionally calls ``Future.set_result`` when a
+    datagram arrives.  A response can arrive after an outer timeout has
+    cancelled that Future, especially on Windows' Proactor event loop.  The
+    guards below make late packets and transport callbacks harmless while
+    preserving the original cancellation/timeout semantics.
+    """
+
+    def __init__(self, packet: bytes) -> None:
+        self.packet = packet
+        self.transport = None
+        self.future = asyncio.get_running_loop().create_future()
+
+    def connection_made(self, transport) -> None:
+        self.transport = transport
+        transport.sendto(self.packet)
+
+    def _close_transport(self) -> None:
+        if self.transport is not None:
+            self.transport.close()
+
+    def connection_lost(self, exc) -> None:
+        if exc is not None and not self.future.done():
+            self.future.set_exception(exc)
+
+    def datagram_received(self, data, addr) -> None:
+        if self.future.done():
+            self._close_transport()
+            return
+        self.future.set_result(data)
+        self._close_transport()
+
+    def error_received(self, exc) -> None:
+        if not self.future.done():
+            self.future.set_exception(exc)
+
+    async def get_data(self, timeout):
+        from puresnmp.exc import Timeout
+
+        try:
+            return await asyncio.wait_for(self.future, timeout)
+        except (asyncio.TimeoutError, socket.timeout) as exc:
+            if self.transport is not None:
+                self.transport.abort()
+            raise Timeout(
+                f'{timeout} second timeout exceeded on UDP transport.'
+            ) from exc
+        except asyncio.CancelledError:
+            if self.transport is not None:
+                self.transport.abort()
+            raise
+
+
+def _build_snmp_client(ip: str, auth, port: int):
+    """Build a client whose internal deadline fits the collector deadline."""
+    from puresnmp import Client
+
+    client = Client(ip, auth, port=port, sender=_safe_send_udp)
+    # puresnmp defaults to 6 seconds and 10 retries.  The collectors wrap
+    # requests in 3-5 second application deadlines, so those defaults cause
+    # outer cancellation before the library cleans up its UDP Future.
+    client.configure(
+        timeout=_SNMP_TRANSPORT_TIMEOUT_SECONDS,
+        retries=_SNMP_TRANSPORT_RETRIES,
+    )
+    return client
+
+
+async def _safe_send_udp(
+    endpoint,
+    packet: bytes,
+    timeout: int = _SNMP_TRANSPORT_TIMEOUT_SECONDS,
+    loop=None,
+    retries: int = _SNMP_TRANSPORT_RETRIES,
+) -> bytes:
     """Send one SNMP datagram and always close its asyncio UDP transport.
 
     puresnmp's default sender leaves the transport open when the protocol
@@ -752,7 +794,6 @@ async def _safe_send_udp(endpoint, packet: bytes, timeout: int = 1, loop=None, r
     frequently, so make cleanup unconditional for success, timeout, error,
     and task cancellation paths.
     """
-    from puresnmp import transport
     from puresnmp.exc import Timeout
 
     if loop is None:
@@ -764,7 +805,7 @@ async def _safe_send_udp(endpoint, packet: bytes, timeout: int = 1, loop=None, r
         datagram_transport = None
         try:
             datagram_transport, protocol = await loop.create_datagram_endpoint(
-                lambda: transport.SNMPClientProtocol(packet),
+                lambda: _SafeSNMPClientProtocol(packet),
                 remote_addr=(str(endpoint.ip), endpoint.port),
             )
             return await protocol.get_data(timeout)
@@ -794,10 +835,10 @@ async def _snmp_get(
     """GET a single OID value via puresnmp (SNMPv1/v2c)."""
     async with get_network_access_limiter().async_snmp():
       try:
-        from puresnmp import Client, V1, V2C, PyWrapper
+        from puresnmp import V1, V2C, PyWrapper
         version_key = str(version or '2c').strip().lower()
         auth = V1(community) if version_key in {'v1', '1'} else V2C(community)
-        client = PyWrapper(Client(ip, auth, port=port, sender=_safe_send_udp))
+        client = PyWrapper(_build_snmp_client(ip, auth, port))
         result = await asyncio.wait_for(client.get(oid), timeout=timeout)
         if result is None:
             return None
@@ -835,9 +876,9 @@ async def _snmp_walk(
         raise ValueError('Unsupported SNMP version; use 1 or 2c')
 
     async def _collect():
-        from puresnmp import Client, PyWrapper, V1, V2C
+        from puresnmp import PyWrapper, V1, V2C
         auth = V1(community) if version_key == '1' else V2C(community)
-        client = PyWrapper(Client(ip, auth, port=port, sender=_safe_send_udp))
+        client = PyWrapper(_build_snmp_client(ip, auth, port))
         async for varbind in client.walk(base_oid):
             oid_str = str(varbind.oid)
             suffix = oid_str[len(base_oid) + 1:] if oid_str.startswith(base_oid + '.') else oid_str
@@ -895,11 +936,11 @@ async def _snmp_get_typed(
     """GET one OID while preserving its puresnmp ASN.1 type."""
     async with get_network_access_limiter().async_snmp():
         try:
-            from puresnmp import Client, ObjectIdentifier, V1, V2C
+            from puresnmp import ObjectIdentifier, V1, V2C
 
             version_key = str(version or '2c').strip().lower()
             auth = V1(community) if version_key in {'v1', '1'} else V2C(community)
-            client = Client(ip, auth, port=port, sender=_safe_send_udp)
+            client = _build_snmp_client(ip, auth, port)
             result = await asyncio.wait_for(
                 client.get(ObjectIdentifier(oid)),
                 timeout=timeout,
@@ -926,11 +967,11 @@ async def _snmp_walk_typed(
     base_oid = oid.rstrip(".")
 
     async def _collect():
-        from puresnmp import Client, ObjectIdentifier, V1, V2C
+        from puresnmp import ObjectIdentifier, V1, V2C
 
         version_key = str(version or '2c').strip().lower()
         auth = V1(community) if version_key in {'v1', '1'} else V2C(community)
-        client = Client(ip, auth, port=port, sender=_safe_send_udp)
+        client = _build_snmp_client(ip, auth, port)
         async for varbind in client.walk(ObjectIdentifier(base_oid)):
             oid_str = str(varbind.oid)
             suffix = oid_str[len(base_oid) + 1:] if oid_str.startswith(base_oid + ".") else oid_str
@@ -965,11 +1006,11 @@ async def _snmp_bulk_walk_typed(
     base_oid = oid.rstrip(".")
 
     async def _collect():
-        from puresnmp import Client, ObjectIdentifier, V1, V2C
+        from puresnmp import ObjectIdentifier, V1, V2C
 
         version_key = str(version or '2c').strip().lower()
         auth = V1(community) if version_key in {'v1', '1'} else V2C(community)
-        client = Client(ip, auth, port=port, sender=_safe_send_udp)
+        client = _build_snmp_client(ip, auth, port)
         async for varbind in client.bulkwalk([ObjectIdentifier(base_oid)], bulk_size=max_repetitions):
             oid_str = str(varbind.oid)
             suffix = oid_str[len(base_oid) + 1:] if oid_str.startswith(base_oid + ".") else oid_str
@@ -1013,10 +1054,10 @@ async def _snmp_bulk_walk(
     base_oid = oid.rstrip('.')
 
     async def _collect():
-        from puresnmp import Client, V1, V2C, PyWrapper
+        from puresnmp import V1, V2C, PyWrapper
         version_key = str(version or '2c').strip().lower()
         auth = V1(community) if version_key in {'v1', '1'} else V2C(community)
-        client = PyWrapper(Client(ip, auth, port=port, sender=_safe_send_udp))
+        client = PyWrapper(_build_snmp_client(ip, auth, port))
         # bulkwalk significantly reduces UDP round-trips
         async for varbind in client.bulkwalk([base_oid], bulk_size=max_repetitions):
             oid_str = str(varbind.oid)

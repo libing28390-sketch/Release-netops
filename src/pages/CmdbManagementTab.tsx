@@ -22,6 +22,15 @@ interface Props {
 
 type EntityKey = 'credentials' | 'devices' | 'interfaces' | 'sites' | 'vrfs' | 'vlans' | 'vlan-business' | 'tenants';
 
+/**
+ * Interface descriptions are supplied by the dedicated interface-description
+ * collector. Keep the explicit alias for newer API responses, while retaining
+ * the legacy `description` field during the contract transition.
+ */
+function interfaceDescription(row: Record<string, unknown>): string {
+  return String(row.interface_description ?? row.description ?? '').trim();
+}
+
 function authHeaders(): Record<string, string> {
   const token = localStorage.getItem('netops_token') || '';
   return { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` };
@@ -1615,19 +1624,26 @@ const CmdbManagementTab: React.FC<Props> = ({ language, cmdbPage, currentUser })
   const [credentialTemplateDownloading, setCredentialTemplateDownloading] = useState(false);
   const [vlanDetailRow, setVlanDetailRow] = useState<any | null>(null);
   const [expandedVlans, setExpandedVlans] = useState<Record<string, boolean>>({});
-  const [interfaceDeviceFilter, setInterfaceDeviceFilter] = useState<string>('');
-  const [expandedInterfaceDevices, setExpandedInterfaceDevices] = useState<Record<string, boolean>>({});
+  const [interfaceSearchInput, setInterfaceSearchInput] = useState('');
+  const [interfaceSearchQuery, setInterfaceSearchQuery] = useState('');
   const [interfacePage, setInterfacePage] = useState(1);
   const [interfacePageSize, setInterfacePageSize] = useState(20);
   const [interfaceListMeta, setInterfaceListMeta] = useState({
     total: 0,
     summary: { total: 0, with_ip: 0, oper_up: 0, with_links: 0 },
-    device_options: [] as Array<{ value: string; label: string }>,
   });
   const [genericListMeta, setGenericListMeta] = useState({ total: 0, page: 1, page_size: 20 });
   const readOnlyTabs = useMemo(() => new Set<EntityKey>(['devices', 'interfaces']), []);
   const isReadOnlyTab = readOnlyTabs.has(tab);
   const isAdministrator = currentUser?.role === 'Administrator';
+  const appliedSearch = tab === 'interfaces' ? interfaceSearchQuery : search;
+
+  const applyInterfaceSearch = useCallback(() => {
+    const normalized = interfaceSearchInput.trim();
+    setInterfaceSearchInput(normalized);
+    setInterfaceSearchQuery(normalized);
+    setInterfacePage(1);
+  }, [interfaceSearchInput]);
 
   const interfaceStats = useMemo(() => {
     if (tab !== 'interfaces') return { total: 0, withIp: 0, operUp: 0, withLinks: 0 };
@@ -1651,18 +1667,6 @@ const CmdbManagementTab: React.FC<Props> = ({ language, cmdbPage, currentUser })
     });
     return { total, withIp, operUp, withLinks };
   }, [interfaceListMeta, rows, tab]);
-
-  const interfaceDeviceOptions = useMemo(() => {
-    if (tab !== 'interfaces') return [];
-    if (interfaceListMeta.device_options.length > 0) return interfaceListMeta.device_options;
-    const deviceMap = new Map<string, string>();
-    rows.forEach(r => {
-      if (r.device_id && r.device_hostname) {
-        deviceMap.set(r.device_id, r.device_hostname);
-      }
-    });
-    return Array.from(deviceMap.entries()).map(([id, name]) => ({ value: id, label: name }));
-  }, [interfaceListMeta.device_options, rows, tab]);
 
   // Pagination states
   const [page, setPage] = useState(1);
@@ -1935,11 +1939,11 @@ const CmdbManagementTab: React.FC<Props> = ({ language, cmdbPage, currentUser })
       { key: 'link_count', label: '链路数', labelEn: 'Links', hideInForm: true },
     ],
     interfaces: [
-      { key: 'description', label: 'Description', labelEn: 'Description', hideInForm: true },
+      { key: 'device_hostname', label: '所属设备', labelEn: 'Device', hideInForm: true },
       { key: 'device_ip', label: '设备IP', labelEn: 'Device IP', hideInForm: true },
       { key: 'interface_ip', label: '接口IP', labelEn: 'Interface IP', hideInForm: true },
+      { key: 'description', label: '接口描述', labelEn: 'Interface description', hideInForm: true },
       { key: 'interface_name', label: '接口名称', labelEn: 'Interface', hideInForm: true },
-      { key: 'device_hostname', label: '所属设备', labelEn: 'Device', hideInForm: true },
       { key: 'oper_status', label: '运行状态', labelEn: 'Oper Status', hideInForm: true },
       { key: 'admin_status', label: '管理状态', labelEn: 'Admin Status', hideInForm: true },
       { key: 'mac_address', label: 'MAC', labelEn: 'MAC', hideInForm: true },
@@ -2037,8 +2041,7 @@ const CmdbManagementTab: React.FC<Props> = ({ language, cmdbPage, currentUser })
         // inventory contract.  Topology maintains physical endpoint rows
         // independently when it needs them for link identity.
         const params = new URLSearchParams({ has_ip: 'true' });
-        if (search.trim()) params.set('search', search.trim());
-        if (interfaceDeviceFilter) params.set('device_id', interfaceDeviceFilter);
+        if (appliedSearch.trim()) params.set('search', appliedSearch.trim());
         params.set('page', String(interfacePage));
         params.set('page_size', String(interfacePageSize));
         endpoint = `${endpoint}?${params.toString()}`;
@@ -2055,7 +2058,6 @@ const CmdbManagementTab: React.FC<Props> = ({ language, cmdbPage, currentUser })
             oper_up: Number(pageData.summary?.oper_up || 0),
             with_links: Number(pageData.summary?.with_links || 0),
           },
-          device_options: pageData.device_options || [],
         });
       } else if (tab === 'vlans') {
         const params = new URLSearchParams({
@@ -2111,7 +2113,7 @@ const CmdbManagementTab: React.FC<Props> = ({ language, cmdbPage, currentUser })
     } finally {
       if (requestId === loadRequestRef.current) setLoading(false);
     }
-  }, [tab, search, interfaceDeviceFilter, interfacePage, interfacePageSize, page, pageSize, vlanSiteFilter, vlanStatusFilter, vlanTreeBranch]); // eslint-disable-line react-hooks/exhaustive-deps
+  }, [tab, appliedSearch, interfacePage, interfacePageSize, page, pageSize, vlanSiteFilter, vlanStatusFilter, vlanTreeBranch]); // eslint-disable-line react-hooks/exhaustive-deps
 
   useEffect(() => { load(); }, [load]);
 
@@ -2567,11 +2569,11 @@ const CmdbManagementTab: React.FC<Props> = ({ language, cmdbPage, currentUser })
     return () => { cancelled = true; };
   }, []);
 
-  // Reset page number on tab or search change
+  // Reset page number on tab or the active (submitted for interfaces) search query change.
   useEffect(() => {
     setPage(1);
     if (tab === 'interfaces') setInterfacePage(1);
-  }, [tab, search]);
+  }, [tab, appliedSearch]);
 
   // Do not keep the previous entity's rows visible while the new tab is
   // loading.  Otherwise a slow VRF/site/VLAN request can temporarily render
@@ -2973,6 +2975,17 @@ const CmdbManagementTab: React.FC<Props> = ({ language, cmdbPage, currentUser })
         </button>
       );
     }
+    if (tab === 'interfaces' && fd.key === 'description') {
+      const value = interfaceDescription(row);
+      if (!value || ['—', '--', '-', 'n/a', 'none', 'null'].includes(value.toLowerCase())) {
+        return <span className="text-black/30 dark:text-white/30">—</span>;
+      }
+      return (
+        <span className="inline-block max-w-[15rem] truncate text-sm font-medium text-black/75 dark:text-white/85" title={value}>
+          {value}
+        </span>
+      );
+    }
     if (['interface_count', 'ip_count', 'link_count'].includes(fd.key)) {
       const val = Number(row[fd.key] || 0);
       return (
@@ -3214,6 +3227,10 @@ const CmdbManagementTab: React.FC<Props> = ({ language, cmdbPage, currentUser })
     return filteredRows.slice(start, start + pageSize);
   }, [filteredRows, page, pageSize, tab]);
 
+  // Interface results are already paginated and filtered by the API. Keep the
+  // draft search text from hiding the last response before the user submits it.
+  const visibleRows = tab === 'interfaces' ? rows : paginatedRows;
+
   const vlanFilteredRows = useMemo(() => tab === 'vlans' ? rows : [], [rows, tab]);
 
   const vlanScopeLabel = useCallback((node: any) => {
@@ -3280,22 +3297,13 @@ const CmdbManagementTab: React.FC<Props> = ({ language, cmdbPage, currentUser })
     if (tab === 'vlans' && page > vlanTotalPages) setPage(vlanTotalPages);
   }, [page, tab, vlanTotalPages]);
 
-  const interfaceGroups = useMemo(() => {
-    if (tab !== 'interfaces') return [] as Array<{ key: string; hostname: string; deviceIp: string; rows: any[] }>;
-    const grouped = new Map<string, { key: string; hostname: string; deviceIp: string; rows: any[] }>();
-    (tab === 'interfaces' ? rows : paginatedRows).forEach(row => {
-      const key = String(row.device_id || row.device_ip || row.device_hostname || 'unknown-device');
-      const current = grouped.get(key) || {
-        key,
-        hostname: String(row.device_hostname || 'Unknown device'),
-        deviceIp: String(row.device_ip || ''),
-        rows: [],
-      };
-      current.rows.push(row);
-      grouped.set(key, current);
-    });
-    return Array.from(grouped.values());
-  }, [paginatedRows, rows, tab]);
+  const interfaceDeviceCount = useMemo(() => {
+    if (tab !== 'interfaces') return 0;
+    const deviceKeys = new Set(
+      rows.map(row => String(row.device_id || row.device_ip || row.device_hostname || 'unknown-device')),
+    );
+    return deviceKeys.size;
+  }, [rows, tab]);
 
   const renderDataRow = (row: any, index: number | string) => (
     <tr key={idOf(row) || index} className="hover:bg-slate-50/80 transition-colors group">
@@ -3391,7 +3399,7 @@ const CmdbManagementTab: React.FC<Props> = ({ language, cmdbPage, currentUser })
             </button>
           </>
         }
-        extras={
+        extras={tab === 'interfaces' ? undefined : (
           <div className="flex items-center justify-end gap-4 mt-3 flex-wrap">
             {tab === 'vlans' && (
               <select
@@ -3409,23 +3417,26 @@ const CmdbManagementTab: React.FC<Props> = ({ language, cmdbPage, currentUser })
               <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-slate-400" />
               <input
                 type="text"
-                placeholder={tab === 'interfaces'
-                  ? (zh ? '搜索设备名、设备 IP、接口名或接口 IP...' : 'Search device name/IP, interface name/IP...')
-                  : tab === 'vlans'
-                    ? (zh ? '搜索 VLAN、网段、网关、设备或业务...' : 'Search VLAN, prefix, gateway, device or business...')
+                placeholder={tab === 'vlans'
+                  ? (zh ? '搜索 VLAN、网段、网关、设备或业务...' : 'Search VLAN, prefix, gateway, device or business...')
                   : (zh ? '搜索当前列表...' : 'Search current list...')}
                 value={search}
                 onChange={e => setSearch(e.target.value)}
                 className="pl-10 pr-9 py-2 bg-slate-100 border-none rounded-lg text-sm focus:ring-2 focus:ring-cyan-500 w-64 transition-all outline-none"
               />
               {search && (
-                <button onClick={() => setSearch('')} className="absolute right-3 top-1/2 -translate-y-1/2 text-black/30 hover:text-black/60">
+                <button
+                  type="button"
+                  onClick={() => setSearch('')}
+                  aria-label={zh ? '清除搜索' : 'Clear search'}
+                  className="absolute right-3 top-1/2 -translate-y-1/2 text-black/30 hover:text-black/60"
+                >
                   <X size={14} />
                 </button>
               )}
             </div>
           </div>
-        }
+        )}
       />
 
       <div className="flex-1 overflow-auto px-6 py-5" style={{ background: 'rgba(248, 250, 252, 0.5)' }}>
@@ -3588,46 +3599,62 @@ const CmdbManagementTab: React.FC<Props> = ({ language, cmdbPage, currentUser })
         })()}
 
         {tab === 'interfaces' && (
-          <div className="mb-5 space-y-4">
-            <div className="grid grid-cols-2 sm:grid-cols-4 gap-4">
-              <div className="rounded-2xl border border-slate-200/80 bg-white p-4 shadow-sm dark:border-slate-800 dark:bg-slate-900">
-                <div className="text-xs font-medium text-slate-500">{zh ? '接口总数' : 'Total Interfaces'}</div>
-                <div className="mt-1 text-2xl font-bold text-slate-800 dark:text-slate-100">{interfaceStats.total}</div>
-              </div>
-              <div className="rounded-2xl border border-emerald-200/80 bg-emerald-50/40 p-4 shadow-sm dark:border-emerald-900/30 dark:bg-emerald-950/20">
-                <div className="text-xs font-medium text-emerald-700 dark:text-emerald-400">{zh ? '配置 IP 接口数' : 'Configured IP Interfaces'}</div>
-                <div className="mt-1 text-2xl font-bold text-emerald-800 dark:text-emerald-300">{interfaceStats.withIp}</div>
-              </div>
-              <div className="rounded-2xl border border-cyan-200/80 bg-cyan-50/40 p-4 shadow-sm dark:border-cyan-900/30 dark:bg-cyan-950/20">
-                <div className="text-xs font-medium text-cyan-700 dark:text-cyan-400">{zh ? 'Up 状态接口' : 'Oper Status Up'}</div>
-                <div className="mt-1 text-2xl font-bold text-cyan-800 dark:text-cyan-300">{interfaceStats.operUp}</div>
-              </div>
-              <div className="rounded-2xl border border-purple-200/80 bg-purple-50/40 p-4 shadow-sm dark:border-purple-900/30 dark:bg-purple-950/20">
-                <div className="text-xs font-medium text-purple-700 dark:text-purple-400">{zh ? '关联拓扑接口' : 'Linked Interfaces'}</div>
-                <div className="mt-1 text-2xl font-bold text-purple-800 dark:text-purple-300">{interfaceStats.withLinks}</div>
-              </div>
-            </div>
-
+          <div className="mb-5">
             <div className="flex items-center justify-between gap-4 flex-wrap bg-white dark:bg-slate-900 p-3 rounded-2xl border border-black/5 shadow-sm">
-              <div className="flex items-center gap-2">
+              <div className="flex min-w-0 flex-wrap items-center gap-x-2 gap-y-1">
                 <span className="text-xs font-semibold text-cyan-700 pl-1">{zh ? `仅展示已配置 IP 的三层接口 (${interfaceStats.withIp})；状态来自接口采集` : `L3 interfaces with IP only (${interfaceStats.withIp}); status comes from interface collection`}</span>
+                <span className="text-xs text-slate-400" aria-live="polite">
+                  {zh
+                    ? `本页 ${interfaceDeviceCount} 台设备 / ${rows.length} 个接口 · 共 ${interfaceStats.total} 个接口，分页按接口计算`
+                    : `${interfaceDeviceCount} devices / ${rows.length} interfaces on this page · ${interfaceStats.total} interfaces total, paginated by interface`}
+                </span>
               </div>
 
-              {interfaceDeviceOptions.length > 0 && (
-                <div className="flex items-center gap-2">
-                  <span className="text-xs font-medium text-slate-500">{zh ? '所属设备：' : 'Device:'}</span>
-                  <select
-                    value={interfaceDeviceFilter}
-                    onChange={e => { setInterfaceDeviceFilter(e.target.value); setInterfacePage(1); }}
-                    className="px-3 py-1.5 rounded-xl border border-slate-200 dark:border-slate-700 bg-slate-50 dark:bg-slate-800 text-xs font-medium text-slate-700 dark:text-slate-200 outline-none focus:ring-2 focus:ring-cyan-500"
-                  >
-                    <option value="">{zh ? '全部设备' : 'All Devices'}</option>
-                    {interfaceDeviceOptions.map(opt => (
-                      <option key={opt.value} value={opt.value}>{opt.label}</option>
-                    ))}
-                  </select>
+              <div className="flex items-center gap-2">
+                <label htmlFor="cmdb-interface-search" className="whitespace-nowrap text-xs font-medium text-slate-500">
+                  {zh ? '搜索设备：' : 'Search device:'}
+                </label>
+                <div className="relative">
+                  <Search className="pointer-events-none absolute left-3 top-1/2 h-3.5 w-3.5 -translate-y-1/2 text-slate-400" />
+                  <input
+                    id="cmdb-interface-search"
+                    type="text"
+                    value={interfaceSearchInput}
+                    placeholder={zh ? '设备名称或 IP' : 'Device name or IP'}
+                    onChange={event => setInterfaceSearchInput(event.target.value)}
+                    onKeyDown={event => {
+                      if (event.key === 'Enter') {
+                        event.preventDefault();
+                        applyInterfaceSearch();
+                      }
+                    }}
+                    className="w-52 rounded-xl border border-slate-200 bg-slate-50 py-1.5 pl-9 pr-8 text-xs text-slate-700 outline-none transition focus:border-cyan-400 focus:ring-2 focus:ring-cyan-500/30 dark:border-slate-700 dark:bg-slate-800 dark:text-slate-200"
+                    aria-label={zh ? '按设备名称或 IP 搜索接口' : 'Search interfaces by device name or IP'}
+                  />
+                  {interfaceSearchInput && (
+                    <button
+                      type="button"
+                      onClick={() => {
+                        setInterfaceSearchInput('');
+                        setInterfaceSearchQuery('');
+                        setInterfacePage(1);
+                      }}
+                      aria-label={zh ? '清除设备搜索' : 'Clear device search'}
+                      className="absolute right-2 top-1/2 -translate-y-1/2 text-slate-400 transition hover:text-slate-700 dark:hover:text-slate-200"
+                    >
+                      <X size={13} />
+                    </button>
+                  )}
                 </div>
-              )}
+                <button
+                  type="button"
+                  onClick={applyInterfaceSearch}
+                  className="inline-flex items-center gap-1.5 rounded-xl bg-cyan-600 px-3 py-1.5 text-xs font-semibold text-white shadow-sm transition hover:bg-cyan-700 focus:outline-none focus:ring-2 focus:ring-cyan-500/30"
+                >
+                  <Search size={13} />
+                  {zh ? '搜索' : 'Search'}
+                </button>
+              </div>
             </div>
           </div>
         )}
@@ -4174,14 +4201,14 @@ const CmdbManagementTab: React.FC<Props> = ({ language, cmdbPage, currentUser })
                 </tr>
               </thead>
               <tbody className="divide-y divide-slate-100">
-                {filteredRows.length === 0 && !loading && (
+                {visibleRows.length === 0 && !loading && (
                   <tr>
                     <td colSpan={tableColumns.length + (isReadOnlyTab ? 0 : 1)} className="text-center py-16 text-black/40">
                       {zh ? '无匹配的数据记录' : 'No matching records found'}
                     </td>
                   </tr>
                 )}
-                {loading && filteredRows.length === 0 && (
+                {loading && visibleRows.length === 0 && (
                   <tr>
                     <td colSpan={tableColumns.length + (isReadOnlyTab ? 0 : 1)} className="text-center py-16 text-black/40">
                       <RefreshCw size={18} className="animate-spin inline mr-2 text-cyan-600" />
@@ -4189,34 +4216,7 @@ const CmdbManagementTab: React.FC<Props> = ({ language, cmdbPage, currentUser })
                     </td>
                   </tr>
                 )}
-                {tab === 'interfaces'
-                  ? interfaceGroups.flatMap(group => {
-                    const expanded = Boolean(expandedInterfaceDevices[group.key]);
-                    return [
-                      <tr
-                        key={`device-${group.key}`}
-                        onClick={() => setExpandedInterfaceDevices(previous => ({ ...previous, [group.key]: !expanded }))}
-                        className="cursor-pointer bg-cyan-50/45 hover:bg-cyan-50 transition-colors"
-                      >
-                        <td colSpan={tableColumns.length} className="px-6 py-3">
-                          <div className="flex items-center justify-between gap-3">
-                            <div className="flex min-w-0 items-center gap-3">
-                              {expanded ? <ChevronUp size={15} className="shrink-0 text-cyan-600" /> : <ChevronDown size={15} className="shrink-0 text-cyan-600" />}
-                              <div className="min-w-0">
-                                <div className="truncate text-sm font-semibold text-[#164e63]">{group.hostname}</div>
-                                {group.deviceIp && <div className="font-mono text-[11px] text-slate-400">{group.deviceIp}</div>}
-                              </div>
-                            </div>
-                            <span className="shrink-0 rounded-full bg-white px-2.5 py-1 text-[11px] font-semibold text-cyan-700 shadow-sm">
-                              {group.rows.length} {zh ? '个三层接口' : 'L3 interfaces'}
-                            </span>
-                          </div>
-                        </td>
-                      </tr>,
-                      ...(expanded ? group.rows.map((row, index) => renderDataRow(row, `${group.key}-${index}`)) : []),
-                    ];
-                  })
-                  : paginatedRows.map((row, i) => renderDataRow(row, i))}
+                {visibleRows.map((row, i) => renderDataRow(row, i))}
               </tbody>
             </DataTable>
           </div>
@@ -4235,6 +4235,8 @@ const CmdbManagementTab: React.FC<Props> = ({ language, cmdbPage, currentUser })
                 setPage(1);
               }
             }}
+            itemLabel={tab === 'interfaces' ? (zh ? '个接口' : 'interfaces') : undefined}
+            pageUnitLabel={tab === 'interfaces' ? (zh ? '接口/页' : 'interfaces/page') : undefined}
             language={zh ? 'zh' : 'en'}
           />
         </div>

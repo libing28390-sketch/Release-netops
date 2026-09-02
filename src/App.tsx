@@ -183,7 +183,7 @@ const App: React.FC = () => {
     if (activeTab === 'automation') return 'full';
     if (activeTab === 'config') return 'full';
     if (activeTab === 'topology') return 'full';
-    if (activeTab === 'access') return 'full';
+    if (activeTab === 'access' || activeTab === 'access-favorites' || activeTab === 'access-history') return 'full';
     return 'light';
   }, [activeTab]);
 

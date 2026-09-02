@@ -281,7 +281,7 @@ const ConfigDiffViewTab: React.FC<ConfigDiffViewTabProps> = ({
   const [devicesTotal, setDevicesTotal] = useState(0);
   const [devicesLoading, setDevicesLoading] = useState(false);
   const [devPage, setDevPage] = useState(1);
-  const [devPageSize, setDevPageSize] = useState(15);
+  const [devPageSize, setDevPageSize] = useState(10);
   const [selectedDevice, setSelectedDevice] = useState<BackupDevice | null>(null);
   const [deviceScopeTree, setDeviceScopeTree] = useState<DeviceScopeTreeNode[]>([]);
   const [expandedDeviceTree, setExpandedDeviceTree] = useState<Set<string>>(new Set(['root']));
@@ -836,9 +836,9 @@ const ConfigDiffViewTab: React.FC<ConfigDiffViewTabProps> = ({
                       )}
                     </div>
 
-                    {devicesTotal > devPageSize && (
+                    {devicesTotal > 0 && (
                       <div className="border-t border-slate-100 bg-white px-3 py-2 shrink-0">
-                        <Pagination currentPage={devPage} totalItems={devicesTotal} itemsPerPage={devPageSize} onPageChange={setDevPage} onItemsPerPageChange={(v) => { setDevPage(1); setDevPageSize(v); }} language={language} />
+                        <Pagination currentPage={devPage} totalItems={devicesTotal} itemsPerPage={devPageSize} onPageChange={setDevPage} onItemsPerPageChange={(v) => { setDevPage(1); setDevPageSize(v); }} language={language} alwaysVisible itemLabel={zh ? '台设备' : 'devices'} />
                       </div>
                     )}
                   </div>

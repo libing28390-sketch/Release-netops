@@ -24,3 +24,10 @@ describe('getRouteContext platform management routes', () => {
     expect(getRouteContext('/management/snmp-metric-templates').activeTab).toBe('snmp-metric-templates');
   });
 });
+
+describe('getRouteContext terminal access routes', () => {
+  it('keeps favorites and personal history as peer access tabs', () => {
+    expect(getRouteContext('/access/favorites').activeTab).toBe('access-favorites');
+    expect(getRouteContext('/access/history').activeTab).toBe('access-history');
+  });
+});

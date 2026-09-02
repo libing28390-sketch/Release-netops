@@ -36,6 +36,21 @@ def _seed_asset(asset_id: str = "asset-bmc-1") -> None:
         conn.commit()
 
 
+def test_pam_requester_filter_cannot_cross_user_scope():
+    with pytest.raises(HTTPException) as denied:
+        pam_api.list_sessions(
+            requester_username='bob',
+            user={
+                'id': 'user-alice',
+                'username': 'alice',
+                'role': 'Viewer',
+                'tenant_id': 'tenant-default',
+            },
+        )
+    assert denied.value.status_code == 403
+    assert denied.value.detail['code'] == 'PAM_REQUESTER_SCOPE_DENIED'
+
+
 def test_web_profile_validation_normalizes_path_and_rejects_bad_port():
     profile = WebAccessProfileInput(profile_name="BMC", scheme="http", port="8080", path="ui")
     assert profile.path == "/ui"

@@ -90,6 +90,30 @@ _active_sessions: dict[str, dict] = {}
 mfa_store: dict[str, dict] = {}
 
 
+def _enforce_requester_scope(requester_username: str, user: dict) -> None:
+    """Keep personal history queries bound to the authenticated requester.
+
+    Administrators retain the existing ability to inspect another user's
+    sessions for controlled audit work. Other roles may only pass their own
+    username when using the optional requester filter.
+    """
+    requested = str(requester_username or '').strip()
+    if not requested:
+        return
+    current = str(user.get('username') or '').strip() if isinstance(user, dict) else ''
+    role = str(user.get('role') or '').strip() if isinstance(user, dict) else ''
+    role_profile = str(user.get('role_profile') or '').strip() if isinstance(user, dict) else ''
+    is_admin = role == 'Administrator' or role_profile == 'System Administrator'
+    if not is_admin and requested != current:
+        raise HTTPException(
+            status_code=403,
+            detail={
+                'code': 'PAM_REQUESTER_SCOPE_DENIED',
+                'message': 'Only administrators can query another requester',
+            },
+        )
+
+
 def _pam_session_columns(conn) -> set[str]:
     """Return the available PAM session columns from PostgreSQL metadata.
 
@@ -513,6 +537,7 @@ def list_sessions(
     user=require_permission('pam', 'view'),
 ):
     """List PAM sessions for admin monitoring."""
+    _enforce_requester_scope(requester_username, user)
     conn = get_db_connection()
     try:
         # NOTE: Stale-session recovery has been moved to server startup

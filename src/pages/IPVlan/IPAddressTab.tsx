@@ -28,8 +28,10 @@ interface IPAddress {
   interface_name: string;
   mac_address: string;
   device_type: string;
+  purpose?: string;
   status: string;
   description: string;
+  expires_at?: string;
   last_seen: string;
   created_at: string;
   updated_at: string;
@@ -37,12 +39,38 @@ interface IPAddress {
   site_name?: string;
   subnet_prefix?: string;
   subnet_name?: string;
+  network_type?: string;
   source?: 'manual' | 'manual+discovered' | 'discovered';
   is_discovered?: boolean;
   discovered_last_seen?: string;
+  available_after?: string;
   switch_name?: string;
   switch_port?: string;
   vlan?: string;
+  bound_device_hostname?: string;
+  linked_asset_id?: string;
+  asset_tag?: string;
+  asset_serial_number?: string;
+  asset_hostname?: string;
+  asset_vendor?: string;
+  asset_model?: string;
+  asset_management_ip?: string;
+  asset_business_ip?: string;
+}
+
+interface DeviceCandidate {
+  id: string;
+  hostname?: string;
+  ip_address?: string;
+  asset_id?: string;
+  asset_tag?: string;
+  asset_serial_number?: string;
+  asset_hostname?: string;
+  asset_vendor?: string;
+  asset_model?: string;
+  asset_management_ip?: string;
+  asset_business_ip?: string;
+  asset_type?: string;
 }
 
 interface SiteSummary {
@@ -60,6 +88,10 @@ interface Prefix {
   site_id?: string;
   parent_prefix_id?: string | null;
   status?: string;
+  network_type?: string;
+  gateway?: string;
+  vrf_id?: string;
+  vlan_id?: string;
 }
 
 interface IPAddressTabProps {
@@ -88,6 +120,56 @@ const STATUS_OPTIONS: { value: string; zh: string; en: string }[] = [
   { value: 'reserved', zh: '已保留', en: 'Reserved' },
   { value: 'deprecated', zh: '已弃用', en: 'Deprecated' },
 ];
+
+const IP_PURPOSE_OPTIONS: { value: string; zh: string; en: string }[] = [
+  { value: 'management', zh: '管理地址', en: 'Management' },
+  { value: 'business', zh: '业务地址', en: 'Business' },
+  { value: 'infrastructure', zh: '基础设施', en: 'Infrastructure' },
+  { value: 'transit', zh: '设备互联', en: 'Transit' },
+  { value: 'loopback', zh: 'Loopback', en: 'Loopback' },
+  { value: 'vip', zh: 'VIP / 服务地址', en: 'VIP / Service' },
+  { value: 'dhcp', zh: 'DHCP 动态地址', en: 'DHCP' },
+  { value: 'temporary', zh: '临时 / 测试', en: 'Temporary / Test' },
+  { value: 'other', zh: '其他', en: 'Other' },
+];
+
+const PREFIX_PURPOSE_MAP: Record<string, string> = {
+  management: 'management',
+  server: 'business',
+  user: 'business',
+  user_access: 'business',
+  dmz: 'business',
+  wireless: 'business',
+  voice: 'business',
+  storage: 'business',
+  container: 'business',
+  network_service: 'infrastructure',
+  transit: 'transit',
+  p2p: 'transit',
+  wan: 'transit',
+  loopback: 'loopback',
+  vip: 'vip',
+  vpn: 'business',
+};
+
+const inferIpPurpose = (networkType?: string): string => PREFIX_PURPOSE_MAP[String(networkType || '').trim().toLowerCase()] || 'business';
+
+const defaultRoleForPurpose = (purpose: string): string => ({
+  management: 'device',
+  business: 'server',
+  infrastructure: 'gateway',
+  transit: 'transit',
+  loopback: 'loopback',
+  vip: 'vip',
+  dhcp: 'host',
+  temporary: 'host',
+  other: 'host',
+}[purpose] || 'host');
+
+const purposeLabel = (value: string | undefined, zh: boolean): string => {
+  const option = IP_PURPOSE_OPTIONS.find((item) => item.value === value);
+  return option ? (zh ? option.zh : option.en) : (value || (zh ? '未分类' : 'Unclassified'));
+};
 
 // 可搜索的绑定设备下拉
 const roleLabel = (v: string, zh: boolean): string => {
@@ -220,8 +302,20 @@ const PrefixSearchSelect: React.FC<{
   );
 };
 
+const deviceHostLabel = (device: DeviceCandidate): string =>
+  device.hostname || device.asset_hostname || device.ip_address || device.id;
+
+const deviceAssetLabel = (device: DeviceCandidate): string =>
+  device.asset_tag || device.asset_hostname || '';
+
+const deviceDisplayLabel = (device: DeviceCandidate): string => {
+  const host = deviceHostLabel(device);
+  const asset = deviceAssetLabel(device);
+  return asset && asset !== host ? `${asset} · ${host}` : host;
+};
+
 const DeviceSearchSelect: React.FC<{
-  devices: any[];
+  devices: DeviceCandidate[];
   value: string;
   onChange: (id: string) => void;
   zh: boolean;
@@ -231,7 +325,9 @@ const DeviceSearchSelect: React.FC<{
   const wrapRef = useRef<HTMLDivElement>(null);
 
   const selected = devices.find((d) => d.id === value);
-  const display = selected ? `${selected.hostname} (${selected.ip_address})` : '';
+  const display = selected
+    ? `${deviceDisplayLabel(selected)}${selected.ip_address && selected.hostname ? ` (${selected.ip_address})` : ''}`
+    : '';
 
   useEffect(() => {
     const onDoc = (e: MouseEvent) => {
@@ -247,10 +343,11 @@ const DeviceSearchSelect: React.FC<{
   const filtered = query.trim()
     ? devices.filter((d) => {
         const q = query.toLowerCase();
-        return (
-          (d.hostname || '').toLowerCase().includes(q) ||
-          (d.ip_address || '').toLowerCase().includes(q)
-        );
+        return [
+          d.hostname, d.ip_address, d.asset_tag, d.asset_serial_number,
+          d.asset_hostname, d.asset_vendor, d.asset_model,
+          d.asset_management_ip, d.asset_business_ip,
+        ].some(value => String(value || '').toLowerCase().includes(q));
       })
     : devices;
 
@@ -267,7 +364,7 @@ const DeviceSearchSelect: React.FC<{
           setOpen(true);
           setQuery('');
         }}
-        placeholder={zh ? '搜索主机名 / IP 选择设备...' : 'Search device by name / IP...'}
+        placeholder={zh ? '搜索资产编号 / 序列号 / 主机名 / IP...' : 'Search asset tag / serial / hostname / IP...'}
         className="w-full px-4 py-2.5 text-xs rounded-xl border border-gray-150 outline-none focus:border-cyan-400 focus:bg-white transition-all font-medium bg-gray-50/50"
       />
       {open && (
@@ -294,7 +391,12 @@ const DeviceSearchSelect: React.FC<{
                 d.id === value ? 'bg-cyan-50/60 font-bold text-cyan-700' : 'text-gray-700'
               }`}
             >
-              {d.hostname} <span className="text-gray-400">({d.ip_address})</span>
+              <div className="truncate font-semibold">{deviceDisplayLabel(d)}</div>
+              <div className="mt-0.5 truncate text-[10px] text-gray-400">
+                {d.ip_address || (zh ? '未填写管理IP' : 'No management IP')}
+                {d.asset_serial_number ? ` · SN ${d.asset_serial_number}` : ''}
+                {!d.asset_tag && d.asset_id ? ` · ${zh ? '已关联资产' : 'Linked asset'}` : ''}
+              </div>
             </div>
           ))}
           {filtered.length === 0 && (
@@ -325,13 +427,14 @@ const IPAddressTab: React.FC<IPAddressTabProps> = ({ language, t }) => {
   const [search, setSearch] = useState('');
   const [statusFilter, setStatusFilter] = useState('all');
   const [typeFilter, setTypeFilter] = useState('all');
+  const [purposeFilter, setPurposeFilter] = useState('all');
   const [isMatrixView, setIsMatrixView] = useState(false);
   const [page, setPage] = useState(1);
   const [pageSize, setPageSize] = useState(20);
   const [totalItems, setTotalItems] = useState(0);
 
   // Lookup data
-  const [devices, setDevices] = useState<any[]>([]);
+  const [devices, setDevices] = useState<DeviceCandidate[]>([]);
   const [selectedPrefixId, setSelectedPrefixId] = useState(prefixIdParam);
   const [selectedSiteId, setSelectedSiteId] = useState('all');
   const [activePrefix, setActivePrefix] = useState<Prefix | null>(null);
@@ -339,6 +442,8 @@ const IPAddressTab: React.FC<IPAddressTabProps> = ({ language, t }) => {
   // Modals
   const [showAddEdit, setShowAddEdit] = useState(false);
   const [editingIP, setEditingIP] = useState<IPAddress | null>(null);
+  const [isQuickAllocation, setIsQuickAllocation] = useState(false);
+  const [showAdvancedFields, setShowAdvancedFields] = useState(false);
   const [showDeleteConfirm, setShowDeleteConfirm] = useState<string | null>(null);
 
   // Form State
@@ -350,8 +455,10 @@ const IPAddressTab: React.FC<IPAddressTabProps> = ({ language, t }) => {
     interface_name: '',
     mac_address: '',
     device_type: 'server',
+    purpose: 'business',
     status: 'active',
     description: '',
+    expires_at: '',
   });
   const [errorMsg, setErrorMsg] = useState('');
 
@@ -376,7 +483,7 @@ const IPAddressTab: React.FC<IPAddressTabProps> = ({ language, t }) => {
       }
 
       // Fetch Network Devices
-      const devRes = await fetch('/api/devices?mode=light', { headers: hdrs });
+      const devRes = await fetch('/api/devices?mode=light&page=1&page_size=1000', { headers: hdrs });
       if (devRes.ok) {
         const raw = await devRes.json();
         setDevices(Array.isArray(raw) ? raw : (raw.items || []));
@@ -398,7 +505,8 @@ const IPAddressTab: React.FC<IPAddressTabProps> = ({ language, t }) => {
       if (selectedPrefixId) query.set('prefix_id', selectedPrefixId);
       if (search.trim()) query.set('q', search.trim());
       if (statusFilter !== 'all' && (!isMatrixView || statusFilter !== 'available')) query.set('status', statusFilter);
-      if (typeFilter !== 'all') query.set('device_type', typeFilter);
+      if (typeFilter !== 'all' && (!isMatrixView || statusFilter !== 'available')) query.set('device_type', typeFilter);
+      if (purposeFilter !== 'all' && (!isMatrixView || statusFilter !== 'available')) query.set('purpose', purposeFilter);
       const res = await fetch(`/api/ipam/addresses?${query.toString()}`, { headers: hdrs });
       if (res.ok) {
         const data = await res.json();
@@ -414,7 +522,7 @@ const IPAddressTab: React.FC<IPAddressTabProps> = ({ language, t }) => {
     } finally {
       setLoading(false);
     }
-  }, [selectedPrefixId, selectedSiteId, search, statusFilter, typeFilter, page, isMatrixView, authHeaders]);
+  }, [selectedPrefixId, selectedSiteId, search, statusFilter, typeFilter, purposeFilter, page, isMatrixView, authHeaders]);
 
   useEffect(() => {
     fetchLookups();
@@ -485,10 +593,12 @@ const IPAddressTab: React.FC<IPAddressTabProps> = ({ language, t }) => {
     const ipParts = ipPart.split('.').map(Number);
     if (ipParts.length !== 4 || ipParts.some(isNaN)) return [];
     
-    const baseInt = ipParts[0] * 16777216 + ipParts[1] * 65536 + ipParts[2] * 256 + ipParts[3];
+    const rawBaseInt = ipParts[0] * 16777216 + ipParts[1] * 65536 + ipParts[2] * 256 + ipParts[3];
     const numHosts = Math.pow(2, 32 - mask);
+    const baseInt = rawBaseInt - (rawBaseInt % numHosts);
+    const gateway = activePrefix.gateway || '';
 
-    const hasActiveFilters = statusFilter !== 'all' || typeFilter !== 'all' || Boolean(search.trim());
+    const hasActiveFilters = statusFilter !== 'all' || typeFilter !== 'all' || purposeFilter !== 'all' || Boolean(search.trim());
     const allRegisteredMap = new Map<string, IPAddress>();
     addresses.forEach((addr) => {
       allRegisteredMap.set(addr.address, addr);
@@ -498,7 +608,13 @@ const IPAddressTab: React.FC<IPAddressTabProps> = ({ language, t }) => {
       registeredMap.set(addr.address, addr);
     });
 
-    const list: Array<{ ip: string; data: IPAddress | null; status: string }> = [];
+    const list: Array<{ ip: string; data: IPAddress | null; status: string; systemReason?: string }> = [];
+    const isReusableRecord = (item: IPAddress | undefined) => {
+      if (!item || !['available', 'released'].includes(item.status)) return false;
+      if (!item.available_after) return true;
+      const availableAt = new Date(item.available_after).getTime();
+      return Number.isNaN(availableAt) || availableAt <= Date.now();
+    };
     for (let i = 0; i < numHosts; i++) {
       const currentVal = baseInt + i;
       const p1 = Math.floor(currentVal / 16777216) % 256;
@@ -506,33 +622,51 @@ const IPAddressTab: React.FC<IPAddressTabProps> = ({ language, t }) => {
       const p3 = Math.floor(currentVal / 256) % 256;
       const p4 = currentVal % 256;
       const ipStr = `${p1}.${p2}.${p3}.${p4}`;
-      const occupiedData = allRegisteredMap.get(ipStr) || null;
+      const registeredData = allRegisteredMap.get(ipStr);
+      const occupiedData = isReusableRecord(registeredData) ? null : (registeredData || null);
+      const isNetworkOrBroadcast = mask < 31 && (i === 0 || i === numHosts - 1);
+      const isGateway = Boolean(gateway && gateway === ipStr);
+      const systemReason = isNetworkOrBroadcast
+        ? (i === 0 ? (zh ? '网络地址' : 'Network address') : (zh ? '广播地址' : 'Broadcast address'))
+        : isGateway
+        ? (zh ? '网关地址' : 'Gateway address')
+        : '';
+      const systemReserved = !occupiedData && Boolean(systemReason);
       if (statusFilter === 'available') {
-        if (occupiedData || (search.trim() && !ipStr.includes(search.trim()))) continue;
+        if (occupiedData || systemReserved || (search.trim() && !ipStr.includes(search.trim()))) continue;
       }
-      const matchedData = statusFilter === 'available' ? null : (registeredMap.get(ipStr) || null);
+      const filteredData = registeredMap.get(ipStr);
+      const matchedData = statusFilter === 'available' || isReusableRecord(filteredData)
+        ? null
+        : (filteredData || null);
       if (hasActiveFilters && statusFilter !== 'available' && !matchedData) continue;
       
       let status = 'available';
       if (matchedData) {
         status = matchedData.status;
+      } else if (systemReserved) {
+        status = 'system';
       }
       
       list.push({
         ip: ipStr,
         data: matchedData,
         status,
+        systemReason,
       });
     }
     return list;
-  }, [isMatrixView, canUseMatrix, activePrefix, addresses, filteredAddresses, search, statusFilter, typeFilter]);
+  }, [isMatrixView, canUseMatrix, activePrefix, addresses, filteredAddresses, search, statusFilter, typeFilter, purposeFilter, zh]);
 
   const paginatedAddresses = filteredAddresses;
 
   // Form handling
-  const openForm = (ipItem: IPAddress | null = null) => {
+  const openForm = (ipItem: IPAddress | null = null, quickAllocation = false) => {
     setErrorMsg('');
-    if (ipItem) {
+    setIsQuickAllocation(quickAllocation && !ipItem?.id);
+    setShowAdvancedFields(false);
+    const inheritedPurpose = inferIpPurpose(ipItem?.network_type || activePrefix?.network_type);
+    if (ipItem?.id) {
       setEditingIP(ipItem);
       setForm({
         subnet_id: ipItem.subnet_id || selectedPrefixId,
@@ -541,22 +675,26 @@ const IPAddressTab: React.FC<IPAddressTabProps> = ({ language, t }) => {
         device_id: ipItem.device_id || '',
         interface_name: ipItem.interface_name || '',
         mac_address: ipItem.mac_address || '',
-        device_type: ipItem.device_type || 'server',
+        device_type: ipItem.device_type || defaultRoleForPurpose(inheritedPurpose),
+        purpose: ipItem.purpose || inheritedPurpose,
         status: ipItem.status || 'active',
         description: ipItem.description || '',
+        expires_at: ipItem.expires_at || '',
       });
     } else {
       setEditingIP(null);
       setForm({
-        subnet_id: selectedPrefixId,
-        address: '',
-        hostname: '',
-        device_id: '',
-        interface_name: '',
-        mac_address: '',
-        device_type: 'server',
-        status: 'active',
-        description: '',
+        subnet_id: ipItem?.subnet_id || selectedPrefixId,
+        address: ipItem?.address || '',
+        hostname: ipItem?.hostname || '',
+        device_id: ipItem?.device_id || '',
+        interface_name: ipItem?.interface_name || '',
+        mac_address: ipItem?.mac_address || '',
+        device_type: ipItem?.device_type || defaultRoleForPurpose(inheritedPurpose),
+        purpose: ipItem?.purpose || inheritedPurpose,
+        status: ipItem?.status && ipItem.status !== 'available' ? ipItem.status : 'active',
+        description: ipItem?.description || '',
+        expires_at: ipItem?.expires_at || '',
       });
     }
     setShowAddEdit(true);
@@ -636,7 +774,7 @@ const IPAddressTab: React.FC<IPAddressTabProps> = ({ language, t }) => {
   // Find hostname for device selection
   const getDeviceName = (devId: string) => {
     const dev = devices.find((d) => d.id === devId);
-    return dev ? dev.hostname : devId;
+    return dev ? deviceHostLabel(dev) : devId;
   };
 
   return (
@@ -644,7 +782,7 @@ const IPAddressTab: React.FC<IPAddressTabProps> = ({ language, t }) => {
       <PageHero
         icon={MapPin}
         title={zh ? 'IP地址分配管理' : 'IP Address Management'}
-        subtitle={zh ? '精细管理每一个网段内的IP分配，登记设备绑定接口、类型、MAC与历史状态' : 'Track individual host allocations, interface attachments, and MAC mappings.'}
+        subtitle={zh ? '精细管理每一个网段内的IP分配，区分网段用途、IP用途、设备角色与生命周期' : 'Manage prefix and IP purposes separately from device roles and lifecycle.'}
         actions={
           <button
             onClick={() => openForm(null)}
@@ -695,7 +833,7 @@ const IPAddressTab: React.FC<IPAddressTabProps> = ({ language, t }) => {
             {/* Filters */}
             <select
               value={statusFilter}
-              onChange={(e) => setStatusFilter(e.target.value)}
+              onChange={(e) => { setStatusFilter(e.target.value); setPage(1); }}
               className="px-3 py-1.5 rounded-xl border border-black/5 bg-white text-xs font-semibold text-gray-500 outline-none transition-all"
             >
               <option value="all">{zh ? '所有状态' : 'All Status'}</option>
@@ -706,11 +844,22 @@ const IPAddressTab: React.FC<IPAddressTabProps> = ({ language, t }) => {
 
             <select
               value={typeFilter}
-              onChange={(e) => setTypeFilter(e.target.value)}
+              onChange={(e) => { setTypeFilter(e.target.value); setPage(1); }}
               className="px-3 py-1.5 rounded-xl border border-black/5 bg-white text-xs font-semibold text-gray-500 outline-none transition-all"
             >
               <option value="all">{zh ? '所有类型' : 'All Types'}</option>
               {ROLE_OPTIONS.map((o) => (
+                <option key={o.value} value={o.value}>{zh ? o.zh : o.en}</option>
+              ))}
+            </select>
+
+            <select
+              value={purposeFilter}
+              onChange={(e) => { setPurposeFilter(e.target.value); setPage(1); }}
+              className="px-3 py-1.5 rounded-xl border border-black/5 bg-white text-xs font-semibold text-gray-500 outline-none transition-all"
+            >
+              <option value="all">{zh ? '所有用途' : 'All Purposes'}</option>
+              {IP_PURPOSE_OPTIONS.map((o) => (
                 <option key={o.value} value={o.value}>{zh ? o.zh : o.en}</option>
               ))}
             </select>
@@ -786,6 +935,10 @@ const IPAddressTab: React.FC<IPAddressTabProps> = ({ language, t }) => {
                     <span className="w-3.5 h-3.5 rounded-lg bg-rose-500" />
                     <span>{zh ? '已弃用 (Deprecated)' : 'Deprecated'}</span>
                   </div>
+                  <div className="flex items-center gap-1.5">
+                    <span className="w-3.5 h-3.5 rounded-lg bg-slate-200 border border-slate-300" />
+                    <span>{zh ? '系统保留 (不可分配)' : 'System reserved'}</span>
+                  </div>
                 </div>
                 <div className="font-semibold text-gray-400">
                   {zh ? '点击已使用 IP 查看定位详情，点击空闲地址进行分配' : 'Click an occupied IP to view locator details, or an available address to allocate it'}
@@ -795,7 +948,9 @@ const IPAddressTab: React.FC<IPAddressTabProps> = ({ language, t }) => {
               <div className="flex flex-wrap gap-2">
                 {matrixData.map((cell) => {
                   let bgClass = "bg-gray-50 hover:bg-cyan-50 text-gray-400 border-gray-150";
-                  if (cell.status === 'active') {
+                  if (cell.status === 'system') {
+                    bgClass = "bg-slate-200 text-slate-400 border-slate-300 cursor-not-allowed";
+                  } else if (cell.status === 'active') {
                     bgClass = "bg-emerald-500 text-white hover:bg-emerald-600 border-emerald-600 shadow-sm";
                   } else if (cell.status === 'reserved') {
                     bgClass = "bg-amber-500 text-white hover:bg-amber-600 border-amber-600 shadow-sm";
@@ -804,7 +959,9 @@ const IPAddressTab: React.FC<IPAddressTabProps> = ({ language, t }) => {
                   }
                   
                   const lastOctet = cell.ip.split('.').pop() || '';
-                  const tooltip = cell.data 
+                  const tooltip = cell.status === 'system'
+                    ? `${cell.ip} (${cell.systemReason})`
+                    : cell.data
                     ? `${cell.ip} (${cell.data.hostname || (zh ? '无域名' : 'No Hostname')}) - ${roleLabel(cell.data.device_type, zh)} [${statusLabel(cell.data.status, zh)}]`
                     : `${cell.ip} (${zh ? '空闲' : 'Available'})`;
                   
@@ -812,6 +969,7 @@ const IPAddressTab: React.FC<IPAddressTabProps> = ({ language, t }) => {
                     <div
                       key={cell.ip}
                       onClick={() => {
+                        if (cell.status === 'system') return;
                         if (cell.data) {
                           navigate(`/ipam/locate?ip=${encodeURIComponent(cell.ip)}`);
                         } else {
@@ -824,12 +982,13 @@ const IPAddressTab: React.FC<IPAddressTabProps> = ({ language, t }) => {
                             interface_name: '',
                             mac_address: '',
                             device_type: 'host',
+                            purpose: inferIpPurpose(activePrefix?.network_type),
                             status: 'active',
                             description: '',
                             last_seen: '',
                             created_at: '',
                             updated_at: '',
-                          });
+                          }, true);
                         }
                       }}
                       title={tooltip}
@@ -847,9 +1006,10 @@ const IPAddressTab: React.FC<IPAddressTabProps> = ({ language, t }) => {
                 <tr className="border-b border-gray-100 bg-gray-50/40 text-[10px] font-bold text-gray-400 uppercase tracking-wider select-none">
                   <th className="pl-6 py-4">{zh ? '站点 / 网段' : 'Site / Prefix'}</th>
                   <th className="pl-6 py-4">{zh ? 'IP地址' : 'IP Address'}</th>
+                  <th className="px-4 py-4">{zh ? '用途' : 'Purpose'}</th>
                   <th className="px-4 py-4">{zh ? '类型' : 'Role Type'}</th>
                   <th className="px-4 py-4">{zh ? '主机名 / 域名' : 'DNS Hostname'}</th>
-                  <th className="px-4 py-4">{zh ? '绑定设备' : 'Bound Device'}</th>
+                  <th className="px-4 py-4">{zh ? '关联资产 / 设备' : 'Linked Asset / Device'}</th>
                   <th className="px-4 py-4">{zh ? '接口' : 'Interface'}</th>
                   <th className="px-4 py-4">{zh ? 'MAC地址' : 'MAC Address'}</th>
                   <th className="px-4 py-4">{zh ? '状态' : 'Status'}</th>
@@ -889,6 +1049,11 @@ const IPAddressTab: React.FC<IPAddressTabProps> = ({ language, t }) => {
                         </span>
                       </td>
                       <td className="px-4 py-4">
+                        <span className="inline-flex rounded-full border border-cyan-500/10 bg-cyan-50 px-2.5 py-0.5 text-[10px] font-bold text-cyan-700">
+                          {purposeLabel(node.purpose || inferIpPurpose(node.network_type), zh)}
+                        </span>
+                      </td>
+                      <td className="px-4 py-4">
                         <span className={`px-2.5 py-0.5 rounded-full text-[10px] font-bold ${
                           node.device_type === 'gateway' 
                             ? 'bg-amber-50 text-amber-600 border border-amber-500/10' 
@@ -907,7 +1072,13 @@ const IPAddressTab: React.FC<IPAddressTabProps> = ({ language, t }) => {
                       </td>
                       <td className="px-4 py-4 text-xs font-semibold text-gray-500">{node.hostname || '-'}</td>
                       <td className="px-4 py-4 text-xs text-cyan-600 font-bold hover:underline cursor-pointer">
-                        {node.switch_name || (node.device_id ? getDeviceName(node.device_id) : '-')}
+                        <div>{node.switch_name || node.bound_device_hostname || (node.device_id ? getDeviceName(node.device_id) : '-')}</div>
+                        {node.asset_tag && (
+                          <div className="mt-1 text-[10px] font-semibold text-slate-400">
+                            {zh ? '资产' : 'Asset'} · {node.asset_tag}
+                            {node.asset_serial_number ? ` · SN ${node.asset_serial_number}` : ''}
+                          </div>
+                        )}
                       </td>
                       <td className="px-4 py-4 text-xs text-gray-600 font-semibold">{node.switch_port || node.interface_name || '-'}</td>
                       <td className="px-4 py-4 font-mono text-xs text-gray-500">{formatMacAddress(node.mac_address) || '-'}</td>
@@ -948,7 +1119,7 @@ const IPAddressTab: React.FC<IPAddressTabProps> = ({ language, t }) => {
                   ))
                 ) : (
                   <tr>
-                    <td colSpan={11} className="py-12 text-center text-xs text-gray-400 font-medium">
+                    <td colSpan={12} className="py-12 text-center text-xs text-gray-400 font-medium">
                       {zh ? '当前筛选范围暂无 IP 记录' : 'No IP record in the current scope'}
                     </td>
                   </tr>
@@ -991,8 +1162,8 @@ const IPAddressTab: React.FC<IPAddressTabProps> = ({ language, t }) => {
                     <PlusCircle size={20} />
                   </div>
                   <div>
-                    <h3 className="font-bold text-gray-900">{editingIP ? (zh ? '编辑IP记录' : 'Edit IP Address') : (zh ? '分配IP地址' : 'Allocate IP Address')}</h3>
-                    <p className="text-xs text-gray-500 mt-0.5">{zh ? '在此登记一个网段IP，并可与资产、机柜设备进行绑定' : 'Register an IP allocation and bind with hardware assets.'}</p>
+                    <h3 className="font-bold text-gray-900">{editingIP ? (zh ? '编辑IP记录' : 'Edit IP Address') : isQuickAllocation ? (zh ? '快速分配 IP' : 'Quick Allocate IP') : (zh ? '分配IP地址' : 'Allocate IP Address')}</h3>
+                    <p className="text-xs text-gray-500 mt-0.5">{isQuickAllocation ? (zh ? '矩阵已选定 IP，仅填写常用信息即可完成分配' : 'The matrix already selected the IP. Fill in the essentials to allocate it.') : (zh ? '登记 IP 用途与生命周期，并可与资产、网络设备及接口绑定' : 'Register IP purpose and lifecycle, then bind it to an asset, device, or interface.')}</p>
                   </div>
                 </div>
                 <button onClick={() => setShowAddEdit(false)} className="p-1.5 rounded-lg hover:bg-gray-50 transition-colors text-gray-400">
@@ -1011,17 +1182,51 @@ const IPAddressTab: React.FC<IPAddressTabProps> = ({ language, t }) => {
                 <div className="grid grid-cols-2 gap-4">
                   {/* Selected Prefix info */}
                   <div className="col-span-2 p-3 bg-cyan-50/50 rounded-2xl border border-cyan-500/10 flex justify-between items-center text-xs">
-                    <span className="font-bold text-gray-400">{zh ? '归属前缀网段' : 'Allocating Under Prefix'}</span>
-                    <span className="font-mono font-bold text-cyan-700 bg-cyan-500/10 px-2 py-0.5 rounded-md">
-                      {activePrefix ? activePrefix.prefix : ''}
-                    </span>
+                    <div>
+                      <span className="font-bold text-gray-400">{zh ? '归属前缀网段' : 'Allocating Under Prefix'}</span>
+                      {activePrefix?.network_type && (
+                        <p className="mt-1 text-[10px] font-semibold text-cyan-700">
+                          {zh ? `网段用途：${purposeLabel(inferIpPurpose(activePrefix.network_type), true)}` : `Prefix purpose: ${purposeLabel(inferIpPurpose(activePrefix.network_type), false)}`}
+                        </p>
+                      )}
+                    </div>
+                    <div className="text-right">
+                      <span className="font-mono font-bold text-cyan-700 bg-cyan-500/10 px-2 py-0.5 rounded-md">
+                        {activePrefix ? activePrefix.prefix : ''}
+                      </span>
+                      {activePrefix?.gateway && (
+                        <p className="mt-1 text-[10px] font-semibold text-gray-400">
+                          {zh ? `网关：${activePrefix.gateway}` : `Gateway: ${activePrefix.gateway}`}
+                        </p>
+                      )}
+                    </div>
+                  </div>
+
+                  {/* IP Purpose */}
+                  <div className="space-y-1.5 col-span-2">
+                    <div className="flex items-center justify-between">
+                      <label className="text-[10px] font-bold uppercase tracking-wider text-gray-400 ml-1">{zh ? 'IP用途分类' : 'IP Purpose'}</label>
+                      <span className="text-[9px] font-semibold text-cyan-600">{zh ? '默认继承网段用途；用途与角色独立' : 'Inherited from prefix; purpose and role are independent'}</span>
+                    </div>
+                    <select
+                      value={form.purpose}
+                      onChange={(e) => {
+                        const purpose = e.target.value;
+                        setForm({ ...form, purpose });
+                      }}
+                      className="w-full px-4 py-2.5 text-xs rounded-xl border border-gray-150 outline-none focus:border-cyan-400 focus:bg-white transition-all font-medium bg-gray-50/50"
+                    >
+                      {IP_PURPOSE_OPTIONS.map((option) => (
+                        <option key={option.value} value={option.value}>{zh ? option.zh : option.en}</option>
+                      ))}
+                    </select>
                   </div>
 
                   {/* IP Address */}
                   <div className="space-y-1.5 col-span-2">
                     <div className="flex justify-between items-center">
                       <label className="text-[10px] font-bold uppercase tracking-wider text-gray-400 ml-1">{zh ? 'IP地址 *' : 'IP Address *'}</label>
-                      {!editingIP && (
+                      {!editingIP && !isQuickAllocation && (
                         <button
                           type="button"
                           onClick={handleGetSuggestedIP}
@@ -1037,7 +1242,7 @@ const IPAddressTab: React.FC<IPAddressTabProps> = ({ language, t }) => {
                       onChange={(e) => setForm({ ...form, address: e.target.value })}
                       placeholder="e.g. 10.1.1.10"
                       className="w-full px-4 py-2.5 text-xs rounded-xl border border-gray-150 outline-none focus:border-cyan-400 focus:bg-white transition-all font-medium bg-gray-50/50"
-                      disabled={editingIP !== null}
+                      disabled={editingIP !== null || isQuickAllocation}
                     />
                   </div>
 
@@ -1055,13 +1260,16 @@ const IPAddressTab: React.FC<IPAddressTabProps> = ({ language, t }) => {
 
                   {/* Bound Device (searchable) */}
                   <div className="space-y-1.5">
-                    <label className="text-[10px] font-bold uppercase tracking-wider text-gray-400 ml-1">{zh ? '绑定网络设备' : 'Bound Device'}</label>
+                    <label className="text-[10px] font-bold uppercase tracking-wider text-gray-400 ml-1">{zh ? '关联资产 / 设备' : 'Linked Asset / Device'}</label>
                     <DeviceSearchSelect
                       devices={devices}
                       value={form.device_id}
                       onChange={(id) => setForm({ ...form, device_id: id })}
                       zh={zh}
                     />
+                    <p className="ml-1 text-[10px] font-medium text-gray-400">
+                      {zh ? '资产管理新增的网络设备/服务器会自动出现在这里，保存后通过设备关联回资产。' : 'New network devices and servers from Asset Management appear here automatically.'}
+                    </p>
                   </div>
 
                   {/* Interface Name */}
@@ -1076,6 +1284,8 @@ const IPAddressTab: React.FC<IPAddressTabProps> = ({ language, t }) => {
                     />
                   </div>
 
+                  {(!isQuickAllocation || showAdvancedFields) && (
+                    <>
                   {/* MAC Address */}
                   <div className="space-y-1.5">
                     <label className="text-[10px] font-bold uppercase tracking-wider text-gray-400 ml-1">{zh ? 'MAC地址' : 'MAC Address'}</label>
@@ -1087,6 +1297,8 @@ const IPAddressTab: React.FC<IPAddressTabProps> = ({ language, t }) => {
                       className="w-full px-4 py-2.5 text-xs rounded-xl border border-gray-150 outline-none focus:border-cyan-400 focus:bg-white transition-all font-medium bg-gray-50/50"
                     />
                   </div>
+                    </>
+                  )}
 
                   {/* Device Type Select */}
                   <div className="space-y-1.5">
@@ -1102,6 +1314,8 @@ const IPAddressTab: React.FC<IPAddressTabProps> = ({ language, t }) => {
                     </select>
                   </div>
 
+                  {(!isQuickAllocation || showAdvancedFields) && (
+                    <>
                   {/* Status Select */}
                   <div className="space-y-1.5">
                     <label className="text-[10px] font-bold uppercase tracking-wider text-gray-400 ml-1">{zh ? 'IP 地址状态' : 'IP Status'}</label>
@@ -1110,11 +1324,23 @@ const IPAddressTab: React.FC<IPAddressTabProps> = ({ language, t }) => {
                       onChange={(e) => setForm({ ...form, status: e.target.value })}
                       className="w-full px-4 py-2.5 text-xs rounded-xl border border-gray-150 outline-none focus:border-cyan-400 focus:bg-white transition-all font-medium bg-gray-50/50"
                     >
-                      {STATUS_OPTIONS.map((opt) => (
+                      {STATUS_OPTIONS.filter((opt) => opt.value !== 'available').map((opt) => (
                         <option key={opt.value} value={opt.value}>{zh ? opt.zh : opt.en}</option>
                       ))}
                     </select>
                   </div>
+
+                  {(form.status === 'reserved' || form.purpose === 'temporary') && (
+                    <div className="space-y-1.5">
+                      <label className="text-[10px] font-bold uppercase tracking-wider text-gray-400 ml-1">{zh ? '预留到期时间（可选）' : 'Reservation expiry (optional)'}</label>
+                      <input
+                        type="datetime-local"
+                        value={form.expires_at}
+                        onChange={(e) => setForm({ ...form, expires_at: e.target.value })}
+                        className="w-full px-4 py-2.5 text-xs rounded-xl border border-gray-150 outline-none focus:border-cyan-400 focus:bg-white transition-all font-medium bg-gray-50/50"
+                      />
+                    </div>
+                  )}
 
                   {/* Description */}
                   <div className="space-y-1.5 col-span-2">
@@ -1127,7 +1353,19 @@ const IPAddressTab: React.FC<IPAddressTabProps> = ({ language, t }) => {
                       className="w-full px-4 py-2.5 text-xs rounded-xl border border-gray-150 outline-none focus:border-cyan-400 focus:bg-white transition-all font-medium bg-gray-50/50 resize-none"
                     />
                   </div>
+                    </>
+                  )}
                 </div>
+
+                {isQuickAllocation && (
+                  <button
+                    type="button"
+                    onClick={() => setShowAdvancedFields((current) => !current)}
+                    className="w-full rounded-xl border border-dashed border-cyan-200 bg-cyan-50/40 px-3 py-2 text-[10px] font-bold text-cyan-700 hover:bg-cyan-50 transition-colors"
+                  >
+                    {showAdvancedFields ? (zh ? '收起高级字段' : 'Hide advanced fields') : (zh ? '展开高级字段（MAC、状态、到期时间、备注）' : 'Show advanced fields (MAC, status, expiry, notes)')}
+                  </button>
+                )}
               </div>
 
               {/* Actions */}
@@ -1142,7 +1380,7 @@ const IPAddressTab: React.FC<IPAddressTabProps> = ({ language, t }) => {
                   onClick={handleSave}
                   className="px-6 py-2 bg-gradient-to-r from-cyan-500 to-blue-600 hover:from-cyan-600 hover:to-blue-700 text-white text-xs font-extrabold rounded-xl shadow-md transition-all active:scale-95"
                 >
-                  {zh ? '确定保存' : 'Save'}
+                  {isQuickAllocation ? (zh ? '确认分配' : 'Allocate') : zh ? '确定保存' : 'Save'}
                 </button>
               </div>
             </motion.div>

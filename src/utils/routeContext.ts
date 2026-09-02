@@ -49,6 +49,10 @@ export function getRouteContext(pathname: string): RouteContext {
   else if (first === 'access') {
     if (second === 'workspace') {
       activeTab = 'access';
+    } else if (second === 'favorites') {
+      activeTab = 'access-favorites';
+    } else if (second === 'history') {
+      activeTab = 'access-history';
     } else if (second === 'pam-audit') {
       activeTab = 'pam-audit';
     } else {

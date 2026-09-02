@@ -86,3 +86,66 @@ ip route-static 0.0.0.0 0.0.0.0 10.0.0.254
     )
     assert compliance["noncompliant_count"] == 1
     assert compliance["compliance_rate"] == 0
+
+
+def test_structured_diff_ignores_cli_blank_line_noise():
+    before = """interface GigabitEthernet0/0/1
+ description TO-PEER
+ port link-type trunk
+!
+router bgp 65000
+ router-id 10.0.0.1
+ peer 10.0.0.2 as-number 65001
+!
+"""
+    after = """interface GigabitEthernet0/0/1
+ description TO-PEER
+ port link-type trunk
+
+!
+
+router bgp 65000
+ router-id 10.0.0.1
+ peer 10.0.0.2 as-number 65001
+
+!
+"""
+
+    result = compare_structured_configs(
+        before,
+        after,
+        vendor="H3C",
+        device={"id": "d1", "vendor": "H3C", "role": "core"},
+    )
+
+    assert result["has_changes"] is False
+    assert result["summary"]["added_lines"] == 0
+    assert result["summary"]["removed_lines"] == 0
+    assert result["summary"]["changed_objects"] == 0
+    assert result["objects"] == []
+
+
+def test_structured_diff_ignores_h3c_cli_prompt_noise():
+    before = """interface GigabitEthernet0/0/1
+ description TO-PEER
+!
+return
+"""
+    after = """interface GigabitEthernet0/0/1
+ description TO-PEER
+!
+
+return
+<S6850-2
+"""
+
+    result = compare_structured_configs(
+        before,
+        after,
+        vendor="H3C",
+        device={"id": "d1", "vendor": "H3C", "role": "core"},
+    )
+
+    assert result["has_changes"] is False
+    assert result["summary"]["changed_objects"] == 0
+    assert result["objects"] == []

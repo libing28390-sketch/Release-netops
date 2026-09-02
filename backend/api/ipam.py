@@ -65,6 +65,7 @@ class AllocationRequest(BaseModel):
     interface_id: str = ''
     interface_name: str = ''
     mac_address: str = ''
+    device_type: str = ''
     purpose: str = ''
     requested_by: str = ''
     expires_at: str = ''
@@ -278,6 +279,7 @@ def api_list_ip_inventory(
     q: str = '',
     status: str = 'all',
     device_type: str = 'all',
+    purpose: str = 'all',
     page: int = 1,
     page_size: int = 20,
     _user=require_role("Viewer"),
@@ -289,15 +291,17 @@ def api_list_ip_inventory(
         q=q,
         status=status,
         device_type=device_type,
+        purpose=purpose,
         page=page,
         page_size=page_size,
     )
 
 @router.get('/ipam/subnets/{subnet_id}/addresses')
 def api_list_addresses(subnet_id: str, q: str = '', status: str = 'all', device_type: str = 'all',
+                       purpose: str = 'all',
                        page: int | None = Query(None, ge=1), page_size: int = Query(20, ge=1, le=100),
                        _user=require_role("Viewer")):
-    return list_addresses(subnet_id, q=q, status=status, device_type=device_type, page=page, page_size=page_size)
+    return list_addresses(subnet_id, q=q, status=status, device_type=device_type, purpose=purpose, page=page, page_size=page_size)
 
 
 @router.post('/ipam/subnets/{subnet_id}/addresses', status_code=201)
@@ -313,8 +317,11 @@ def api_create_address(subnet_id: str, body: IPAddressCreate, user=require_permi
             interface_id=getattr(body, 'interface_id', ''),
             mac_address=body.mac_address,
             device_type=body.device_type,
+            purpose=body.purpose,
             description=body.description,
             status=body.status,
+            requested_by=user.get('username', ''),
+            expires_at=body.expires_at,
         )
     except ValueError as e:
         raise HTTPException(status_code=409, detail=str(e))
@@ -343,7 +350,7 @@ def api_allocate_next_address(subnet_id: str, body: AllocationRequest, user=requ
             subnet_id,
             hostname=values['hostname'], device_id=values['device_id'],
             interface_id=values['interface_id'], interface_name=values['interface_name'],
-            mac_address=values['mac_address'], purpose=values['purpose'],
+            mac_address=values['mac_address'], device_type=values['device_type'], purpose=values['purpose'],
             requested_by=values['requested_by'] or user.get('username', ''),
             status=values['status'], expires_at=values['expires_at'],
         )
@@ -376,6 +383,7 @@ def api_reserve_address(subnet_id: str, body: ReservationRequest, user=require_p
             address=values['address'], hostname=values['hostname'],
             device_id=values['device_id'], interface_id=values['interface_id'],
             interface_name=values['interface_name'], mac_address=values['mac_address'],
+            device_type=values['device_type'],
             purpose=values['purpose'], requested_by=values['requested_by'] or user.get('username', ''),
             expires_at=values['expires_at'],
         )

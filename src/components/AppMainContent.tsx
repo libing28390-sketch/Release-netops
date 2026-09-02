@@ -7,6 +7,7 @@ import { useAutomationContext } from '../contexts/AutomationContext';
 import { useConfigContext } from '../contexts/ConfigContext';
 import { useManagementContext } from '../contexts/ManagementContext';
 import { useTopologyContext } from '../contexts/TopologyContext';
+import { useAccessFavorites } from '../hooks/useAccessFavorites';
 import { sectionHeaderRowClass } from './shared';
 
 const MonitoringCenter = lazy(() => import('./MonitoringCenter.tsx'));
@@ -57,6 +58,7 @@ const TagManagementTab = lazy(() => import('../pages/TagManagementTab'));
 const ScriptManagementTab = lazy(() => import('../pages/ScriptManagementTab'));
 const ConfigScheduleTab = lazy(() => import('../pages/ConfigScheduleTab'));
 const AccessCenterTab = lazy(() => import('../pages/AccessCenterTab'));
+const AccessFavoritesTab = lazy(() => import('../pages/AccessFavoritesTab'));
 const PAMAuditTab = lazy(() => import('../pages/PAMAuditTab'));
 const AiCenterPage = lazy(() => import('../pages/ai/AiCenterPage'));
 
@@ -99,6 +101,13 @@ const AppMainContent: React.FC = () => {
     currentUser,
     devices,
   } = coreApp;
+
+  const { favoriteDeviceIds, toggleFavorite } = useAccessFavorites(currentUser?.username);
+  const handleFavoriteToggle = (device: { id: string }) => toggleFavorite(device.id);
+  const openAccessWorkspace = (device?: { hostname?: string }) => {
+    const query = device?.hostname ? `?q=${encodeURIComponent(device.hostname)}` : '';
+    navigate(`/access/workspace${query}`);
+  };
   
   const {
     jobs,
@@ -421,6 +430,9 @@ const AppMainContent: React.FC = () => {
     activeTab === 'maintenance' || 
     activeTab === 'platform-registry' ||
     activeTab === 'snmp-metric-templates' ||
+    activeTab === 'access' ||
+    activeTab === 'access-favorites' ||
+    activeTab === 'access-history' ||
     (activeTab === 'automation' && automationPage === 'metrics');
   const isAiTab = activeTab === 'ai-center' || activeTab.startsWith('ai-');
 
@@ -429,7 +441,7 @@ const AppMainContent: React.FC = () => {
     if (activeTab === 'automation') return 'full';
     if (activeTab === 'config') return 'full';
     if (activeTab === 'topology') return 'full';
-    if (activeTab === 'access') return 'full';
+    if (activeTab === 'access' || activeTab === 'access-favorites' || activeTab === 'access-history') return 'full';
     return 'light';
   };
 
@@ -537,7 +549,37 @@ const AppMainContent: React.FC = () => {
 
       {activeTab === 'access' && (
         <Suspense fallback={lazyPanelFallback}>
-          <AccessCenterTab devices={devices} language={language} showToast={showToast} />
+          <AccessCenterTab
+            devices={devices}
+            language={language}
+            showToast={showToast}
+            favoriteDeviceIds={favoriteDeviceIds}
+            onToggleFavorite={handleFavoriteToggle}
+          />
+        </Suspense>
+      )}
+
+      {activeTab === 'access-favorites' && (
+        <Suspense fallback={lazyPanelFallback}>
+          <AccessFavoritesTab
+            devices={devices}
+            language={language}
+            favoriteDeviceIds={favoriteDeviceIds}
+            onToggleFavorite={handleFavoriteToggle}
+            onOpenWorkspace={openAccessWorkspace}
+            showToast={showToast}
+          />
+        </Suspense>
+      )}
+
+      {activeTab === 'access-history' && (
+        <Suspense fallback={lazyPanelFallback}>
+          <PAMAuditTab
+            language={language}
+            showToast={showToast}
+            scope="mine"
+            currentUsername={currentUser?.username}
+          />
         </Suspense>
       )}
 

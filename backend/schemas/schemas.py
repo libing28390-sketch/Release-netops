@@ -109,11 +109,14 @@ class IPAddressCreate(BaseModel):
     address: str
     hostname: str = ''
     device_id: str = ''
+    interface_id: str = ''
     interface_name: str = ''
     mac_address: str = ''
     device_type: str = ''
+    purpose: str = ''
     description: str = ''
     status: str = 'active'
+    expires_at: str = ''
 
     @field_validator('address')
     @classmethod
@@ -137,11 +140,14 @@ class IPAddressCreate(BaseModel):
 class IPAddressUpdate(BaseModel):
     hostname: Optional[str] = None
     device_id: Optional[str] = None
+    interface_id: Optional[str] = None
     interface_name: Optional[str] = None
     mac_address: Optional[str] = None
     device_type: Optional[str] = None
+    purpose: Optional[str] = None
     description: Optional[str] = None
     status: Optional[str] = None
+    expires_at: Optional[str] = None
 
     @field_validator('mac_address')
     @classmethod

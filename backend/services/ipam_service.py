@@ -36,6 +36,29 @@ ADDRESS_TRANSITIONS = {
     'quarantine': {'available', 'released'},
 }
 
+PREFIX_TO_IP_PURPOSE = {
+    'management': 'management',
+    'server': 'business',
+    'user': 'business',
+    'user_access': 'business',
+    'dmz': 'business',
+    'wireless': 'business',
+    'voice': 'business',
+    'storage': 'business',
+    'container': 'business',
+    'network_service': 'infrastructure',
+    'transit': 'transit',
+    'p2p': 'transit',
+    'wan': 'transit',
+    'loopback': 'loopback',
+    'vip': 'vip',
+    'vpn': 'business',
+}
+
+
+def _infer_ip_purpose(network_type: str | None) -> str:
+    return PREFIX_TO_IP_PURPOSE.get(str(network_type or '').strip().lower(), 'business')
+
 
 def _utc_now() -> str:
     return datetime.now(timezone.utc).replace(microsecond=0).isoformat()
@@ -118,6 +141,57 @@ def _normalize_address(address: str) -> str:
         return str(ipaddress.ip_address(str(address).split('/')[0].strip()))
     except ValueError as exc:
         raise ValueError(f"Invalid IP address: {exc}") from exc
+
+
+def _validate_address_policy(subnet, address: str, *, device_type: str = '', purpose: str = '') -> None:
+    """Reject addresses that are structurally or administratively unavailable.
+
+    Standard IPv4 network and broadcast addresses are not host allocations.  A
+    prefix gateway is also protected from ordinary allocations, but it may be
+    registered explicitly as a gateway address so the IPAM record can carry
+    its device/interface ownership.
+    """
+    net = ipaddress.ip_network(subnet['prefix'], strict=False)
+    ip_obj = ipaddress.ip_address(address)
+    if net.version == 4 and net.prefixlen < 31:
+        if ip_obj == net.network_address:
+            raise ValueError(f"Network address {address} cannot be allocated")
+        if ip_obj == net.broadcast_address:
+            raise ValueError(f"Broadcast address {address} cannot be allocated")
+
+    gateway = str(subnet['gateway'] or '').strip()
+    if gateway:
+        try:
+            gateway = _normalize_address(gateway)
+        except ValueError:
+            gateway = ''
+    gateway_role = str(device_type or '').strip().lower() == 'gateway' or str(purpose or '').strip().lower() == 'gateway'
+    if gateway and gateway == address and not gateway_role:
+        raise ValueError(f"Gateway address {address} is reserved; use the gateway role to register it")
+
+
+def _active_discovered_addresses(conn, network: ipaddress._BaseNetwork) -> set[str]:
+    """Return active discovery facts that fall inside *network*.
+
+    Discovery data is an occupancy signal even when an operator has not yet
+    created a manual IPAM record. Suggestions and automatic allocation must
+    therefore treat these addresses as unavailable.
+    """
+    if not _table_exists(conn, 'network_endpoints'):
+        return set()
+    rows = conn.execute(
+        "SELECT ip FROM network_endpoints "
+        "WHERE is_active = 1 AND COALESCE(ip, '') <> ''"
+    ).fetchall()
+    occupied: set[str] = set()
+    for row in rows:
+        try:
+            candidate = ipaddress.ip_address(str(row['ip']).strip())
+        except (TypeError, ValueError):
+            continue
+        if candidate.version == network.version and candidate in network:
+            occupied.add(str(candidate))
+    return occupied
 
 
 def _prefix_scope(row_or_fields: dict) -> tuple[str, str, str]:
@@ -913,7 +987,7 @@ def delete_subnet(subnet_id: str) -> bool:
 # IP Addresses
 # ══════════════════════════════════════════════════════════
 
-def list_addresses(subnet_id: str, *, q: str = '', status: str = 'all', device_type: str = 'all', page: int | None = None, page_size: int = 20) -> list[dict] | dict:
+def list_addresses(subnet_id: str, *, q: str = '', status: str = 'all', device_type: str = 'all', purpose: str = 'all', page: int | None = None, page_size: int = 20) -> list[dict] | dict:
     conn = get_db_connection()
     try:
         where = f'WHERE subnet_id = {_PH}'
@@ -921,13 +995,16 @@ def list_addresses(subnet_id: str, *, q: str = '', status: str = 'all', device_t
         if status and status != 'all':
             where += f" AND COALESCE(status, 'active') = {_PH}"
             params.append(status)
-        if device_type:
+        if device_type and device_type != 'all':
             where += f" AND COALESCE(device_type, '') = {_PH}"
             params.append(device_type)
+        if purpose and purpose != 'all':
+            where += f" AND COALESCE(purpose, '') = {_PH}"
+            params.append(purpose)
         if q and q.strip():
             fuzzy = f'%{q.strip().lower()}%'
-            where += f" AND (LOWER(COALESCE(address, '')) LIKE {_PH} OR LOWER(COALESCE(hostname, '')) LIKE {_PH} OR LOWER(COALESCE(interface_name, '')) LIKE {_PH} OR LOWER(COALESCE(mac_address, '')) LIKE {_PH})"
-            params.extend([fuzzy, fuzzy, fuzzy, fuzzy])
+            where += f" AND (LOWER(COALESCE(address, '')) LIKE {_PH} OR LOWER(COALESCE(hostname, '')) LIKE {_PH} OR LOWER(COALESCE(interface_name, '')) LIKE {_PH} OR LOWER(COALESCE(mac_address, '')) LIKE {_PH} OR LOWER(COALESCE(purpose, '')) LIKE {_PH})"
+            params.extend([fuzzy, fuzzy, fuzzy, fuzzy, fuzzy])
         count_row = conn.execute(f'SELECT COUNT(*) AS cnt FROM ip_addresses {where}', tuple(params)).fetchone()
         total = int(count_row['cnt'] if count_row else 0)
         sql = f'SELECT * FROM ip_addresses {where} ORDER BY address'
@@ -946,7 +1023,7 @@ def list_addresses(subnet_id: str, *, q: str = '', status: str = 'all', device_t
         conn.close()
 
 
-def list_ip_inventory(*, site_id: str = 'all', prefix_id: str = '', q: str = '', status: str = 'all', device_type: str = 'all', page: int = 1, page_size: int = 20) -> dict:
+def list_ip_inventory(*, site_id: str = 'all', prefix_id: str = '', q: str = '', status: str = 'all', device_type: str = 'all', purpose: str = 'all', page: int = 1, page_size: int = 20) -> dict:
     """Return manual IPAM records merged with active discovered endpoints.
 
     Manual records remain the authoritative editable record.  Discovery facts
@@ -986,18 +1063,31 @@ def list_ip_inventory(*, site_id: str = 'all', prefix_id: str = '', q: str = '',
         manual_rows = conn.execute(
             '''SELECT ip.*, p.prefix AS subnet_prefix, p.name AS subnet_name,
                       p.site_id AS prefix_site_id, p.network_type,
-                      s.site_name AS prefix_site_name, s.site_code AS prefix_site_code
+                      s.site_name AS prefix_site_name, s.site_code AS prefix_site_code,
+                      d.hostname AS bound_device_hostname, d.asset_id AS linked_asset_id,
+                      pa.asset_tag, pa.serial_number AS asset_serial_number,
+                      pa.hostname AS asset_hostname, pa.vendor AS asset_vendor,
+                      pa.model AS asset_model, pa.management_ip AS asset_management_ip,
+                      pa.business_ip AS asset_business_ip
                FROM ip_addresses ip
                LEFT JOIN prefixes p ON p.id = ip.subnet_id
                LEFT JOIN sites s ON s.id = p.site_id
+               LEFT JOIN devices d ON d.id = ip.device_id
+               LEFT JOIN physical_assets pa ON pa.id = d.asset_id
                ORDER BY ip.address'''
         ).fetchall()
         endpoint_rows = conn.execute(
             '''SELECT ne.ip, ne.mac, ne.hostname, ne.switch_id, ne.switch_port,
                       ne.vlan, ne.vrf, ne.site, ne.last_seen, ne.source_type,
-                      ne.confidence, d.hostname AS switch_name, d.site AS device_site
+                      ne.confidence, d.hostname AS switch_name, d.site AS device_site,
+                      d.asset_id AS linked_asset_id, pa.asset_tag,
+                      pa.serial_number AS asset_serial_number,
+                      pa.hostname AS asset_hostname, pa.vendor AS asset_vendor,
+                      pa.model AS asset_model, pa.management_ip AS asset_management_ip,
+                      pa.business_ip AS asset_business_ip
                FROM network_endpoints ne
                LEFT JOIN devices d ON d.id = ne.switch_id
+               LEFT JOIN physical_assets pa ON pa.id = d.asset_id
                WHERE ne.is_active = 1 AND COALESCE(ne.ip, '') <> ''
                ORDER BY ne.last_seen DESC'''
         ).fetchall()
@@ -1026,6 +1116,7 @@ def list_ip_inventory(*, site_id: str = 'all', prefix_id: str = '', q: str = '',
             item.update({
                 'site_id': item.get('prefix_site_id') or item.get('site_id') or '',
                 'site_name': item.get('prefix_site_name') or item.get('prefix_site_code') or '未分配站点',
+                'purpose': item.get('purpose') or _infer_ip_purpose(item.get('network_type')),
                 'source': 'manual', 'is_discovered': False,
                 'discovered_last_seen': '', 'switch_name': '', 'switch_port': '', 'vlan': '',
             })
@@ -1061,6 +1152,12 @@ def list_ip_inventory(*, site_id: str = 'all', prefix_id: str = '', q: str = '',
                     manual['device_id'] = endpoint.get('switch_id') or ''
                 if not manual.get('interface_name'):
                     manual['interface_name'] = endpoint.get('switch_port') or ''
+                for key in (
+                    'linked_asset_id', 'asset_tag', 'asset_serial_number', 'asset_hostname',
+                    'asset_vendor', 'asset_model', 'asset_management_ip', 'asset_business_ip',
+                ):
+                    if not manual.get(key):
+                        manual[key] = endpoint.get(key) or ''
                 continue
 
             item = {
@@ -1069,6 +1166,7 @@ def list_ip_inventory(*, site_id: str = 'all', prefix_id: str = '', q: str = '',
                 'device_id': endpoint.get('switch_id') or '',
                 'interface_name': endpoint.get('switch_port') or '',
                 'mac_address': endpoint.get('mac') or '', 'device_type': 'host',
+                'purpose': _infer_ip_purpose((prefix or {}).get('network_type')),
                 'status': 'active', 'description': '', 'last_seen': endpoint.get('last_seen') or '',
                 'created_at': '', 'updated_at': endpoint.get('last_seen') or '',
                 'subnet_prefix': (prefix or {}).get('prefix') or '',
@@ -1081,6 +1179,14 @@ def list_ip_inventory(*, site_id: str = 'all', prefix_id: str = '', q: str = '',
                 'switch_port': endpoint.get('switch_port') or '',
                 'vlan': endpoint.get('vlan') or '', 'discovered_vrf': endpoint.get('vrf') or '',
                 'discovered_confidence': endpoint.get('confidence') or '',
+                'linked_asset_id': endpoint.get('linked_asset_id') or '',
+                'asset_tag': endpoint.get('asset_tag') or '',
+                'asset_serial_number': endpoint.get('asset_serial_number') or '',
+                'asset_hostname': endpoint.get('asset_hostname') or '',
+                'asset_vendor': endpoint.get('asset_vendor') or '',
+                'asset_model': endpoint.get('asset_model') or '',
+                'asset_management_ip': endpoint.get('asset_management_ip') or '',
+                'asset_business_ip': endpoint.get('asset_business_ip') or '',
             }
             items_by_ip[address] = item
 
@@ -1102,10 +1208,15 @@ def list_ip_inventory(*, site_id: str = 'all', prefix_id: str = '', q: str = '',
                 continue
             if device_type and device_type != 'all' and str(item.get('device_type') or '') != device_type:
                 continue
+            if purpose and purpose != 'all' and str(item.get('purpose') or '') != purpose:
+                continue
             if normalized_query:
                 haystack = ' '.join(str(item.get(key) or '') for key in (
                     'address', 'hostname', 'interface_name', 'description', 'site_name',
                     'subnet_prefix', 'subnet_name', 'mac_address', 'switch_name', 'vlan',
+                    'purpose', 'bound_device_hostname', 'asset_tag', 'asset_serial_number',
+                    'asset_hostname', 'asset_vendor', 'asset_model', 'asset_management_ip',
+                    'asset_business_ip',
                 )).lower()
                 if normalized_query not in haystack:
                     continue
@@ -1205,6 +1316,7 @@ def _create_address_with_conn(conn, subnet_id: str, *, address: str, hostname: s
     if ipaddress.ip_address(address) not in net:
         raise ValueError(f"Address {address} is not within subnet {net}")
     status = _validate_address_status(status)
+    _validate_address_policy(subnet, address, device_type=device_type, purpose=purpose)
     _validate_address_conflicts(conn, subnet, address)
     address_columns = _table_columns(conn, 'ip_addresses')
     existing_fields = 'id, status' + (', available_after' if 'available_after' in address_columns else '')
@@ -1313,7 +1425,7 @@ def delete_address(address_id: str) -> bool:
 
 
 def allocate_next_address(subnet_id: str, *, hostname: str = '', device_id: str = '',
-                          interface_id: str = '', interface_name: str = '',
+                          interface_id: str = '', interface_name: str = '', device_type: str = '',
                           mac_address: str = '', purpose: str = '',
                           requested_by: str = '', status: str = 'allocated',
                           expires_at: str = '') -> dict:
@@ -1324,6 +1436,11 @@ def allocate_next_address(subnet_id: str, *, hostname: str = '', device_id: str 
             raise ValueError('Subnet not found')
         net = ipaddress.ip_network(subnet['prefix'], strict=False)
         now = _utc_now()
+        gateway = str(subnet['gateway'] or '').strip()
+        try:
+            gateway = _normalize_address(gateway) if gateway else ''
+        except ValueError:
+            gateway = ''
         if 'available_after' in _table_columns(conn, 'ip_addresses'):
             used_rows = conn.execute(
                 f"""SELECT address FROM ip_addresses
@@ -1339,10 +1456,13 @@ def allocate_next_address(subnet_id: str, *, hostname: str = '', device_id: str 
                 (subnet_id,),
             ).fetchall()
         used = {str(ipaddress.ip_address(r['address'])) for r in used_rows if r['address']}
+        used.update(_active_discovered_addresses(conn, net))
         candidates = net.hosts() if net.version == 4 and net.prefixlen < 31 else iter(net)
         selected = None
         for candidate in candidates:
             cand = str(candidate)
+            if cand == gateway:
+                continue
             if cand not in used:
                 selected = cand
                 break
@@ -1357,7 +1477,7 @@ def allocate_next_address(subnet_id: str, *, hostname: str = '', device_id: str 
             interface_name=interface_name,
             interface_id=interface_id,
             mac_address=mac_address,
-            device_type=purpose,
+            device_type=device_type,
             description=f"Allocated by {requested_by}" if requested_by else '',
             status=status,
             purpose=purpose,
@@ -1372,6 +1492,7 @@ def allocate_next_address(subnet_id: str, *, hostname: str = '', device_id: str 
 
 def reserve_address(subnet_id: str, *, address: str, hostname: str = '', device_id: str = '',
                     interface_id: str = '', interface_name: str = '', mac_address: str = '',
+                    device_type: str = '',
                     purpose: str = '', requested_by: str = '', expires_at: str = '') -> dict:
     return create_address(
         subnet_id,
@@ -1381,7 +1502,7 @@ def reserve_address(subnet_id: str, *, address: str, hostname: str = '', device_
         interface_id=interface_id,
         interface_name=interface_name,
         mac_address=mac_address,
-        device_type=purpose,
+        device_type=device_type,
         description=f"Reserved by {requested_by}" if requested_by else '',
         status='reserved',
         purpose=purpose,
@@ -2102,7 +2223,7 @@ def delete_lease(lease_id: str) -> bool:
 
 
 def get_next_available_ip(subnet_id: str) -> Optional[str]:
-    """Calculate the first unused IP address in the subnet CIDR range."""
+    """Return the first free IP not allocated manually or seen in discovery."""
     conn = get_db_connection()
     try:
         subnet = conn.execute(
@@ -2112,7 +2233,11 @@ def get_next_available_ip(subnet_id: str) -> Optional[str]:
             return None
         
         prefix_str = subnet['prefix']
-        gateway_ip = subnet['gateway']
+        gateway_ip = str(subnet['gateway'] or '').strip()
+        try:
+            gateway_ip = _normalize_address(gateway_ip) if gateway_ip else ''
+        except ValueError:
+            gateway_ip = ''
         
         try:
             net = ipaddress.ip_network(prefix_str, strict=False)
@@ -2132,7 +2257,13 @@ def get_next_available_ip(subnet_id: str) -> Optional[str]:
                     AND COALESCE(status, 'active') NOT IN ('released', 'available')""",
                 (subnet_id,),
             ).fetchall()
-        allocated_ips = {r['address'] for r in allocated_rows}
+        allocated_ips = set()
+        for row in allocated_rows:
+            try:
+                allocated_ips.add(_normalize_address(row['address']))
+            except ValueError:
+                continue
+        occupied_ips = allocated_ips | _active_discovered_addresses(conn, net)
         
         limit = 10000
         count = 0
@@ -2143,7 +2274,7 @@ def get_next_available_ip(subnet_id: str) -> Optional[str]:
             ip_str = str(ip_obj)
             if ip_str == gateway_ip:
                 continue
-            if ip_str in allocated_ips:
+            if ip_str in occupied_ips:
                 continue
             return ip_str
             

@@ -2,7 +2,7 @@ import React, { useState, useMemo, useEffect, useRef } from 'react';
 import { 
   Search, Terminal, Monitor, Lock, Info, 
   Copy, ShieldCheck, RefreshCw, ChevronLeft, ChevronRight, Send, ChevronDown, UserCheck,
-  Database, Server, Cpu, Key, FolderTree, Globe, X, Eye, EyeOff, MapPin, Activity, Wifi
+  Database, Server, Cpu, Key, FolderTree, Globe, X, Eye, EyeOff, MapPin, Activity, Wifi, Star
 } from 'lucide-react';
 import { motion, AnimatePresence } from 'framer-motion';
 import TerminalWindow from '../components/access/TerminalWindow';
@@ -110,9 +110,17 @@ interface AccessCenterTabProps {
   devices: Device[];
   language: string;
   showToast: (msg: string, type: 'success' | 'error' | 'info') => void;
+  favoriteDeviceIds?: string[];
+  onToggleFavorite?: (device: Device) => void;
 }
 
-export default function AccessCenterTab({ devices, language, showToast }: AccessCenterTabProps) {
+export default function AccessCenterTab({
+  devices,
+  language,
+  showToast,
+  favoriteDeviceIds = [],
+  onToggleFavorite,
+}: AccessCenterTabProps) {
   const isZh = language === 'zh';
   const [searchQuery, setSearchQuery] = useState('');
 
@@ -783,6 +791,22 @@ export default function AccessCenterTab({ devices, language, showToast }: Access
             <span className={`shrink-0 rounded-full px-1.5 py-0.5 text-[9px] font-bold ${dev.status === 'online' ? 'bg-emerald-50 text-emerald-700' : 'bg-slate-100 text-slate-400'}`}>
               {dev.status === 'online' ? (isZh ? '在线' : 'Online') : (isZh ? '离线' : 'Offline')}
             </span>
+            <button
+              type="button"
+              aria-label={favoriteDeviceIds.includes(dev.id)
+                ? (isZh ? `取消收藏 ${dev.hostname}` : `Remove ${dev.hostname} from favorites`)
+                : (isZh ? `收藏 ${dev.hostname}` : `Add ${dev.hostname} to favorites`)}
+              title={favoriteDeviceIds.includes(dev.id)
+                ? (isZh ? '取消收藏' : 'Remove from favorites')
+                : (isZh ? '加入收藏' : 'Add to favorites')}
+              onClick={(event) => {
+                event.stopPropagation();
+                onToggleFavorite?.(dev);
+              }}
+              className={`rounded-md p-1 transition-colors ${favoriteDeviceIds.includes(dev.id) ? 'text-amber-500 hover:bg-amber-50' : 'text-slate-300 hover:bg-amber-50 hover:text-amber-500'}`}
+            >
+              <Star size={13} fill={favoriteDeviceIds.includes(dev.id) ? 'currentColor' : 'none'} />
+            </button>
           </div>
           <div className="mt-1 flex flex-wrap items-center gap-1.5 text-[10px] font-semibold text-slate-400">
             <span className="rounded-md bg-slate-100 px-1.5 py-0.5 uppercase tracking-tight">{dev.platform || 'General Linux'}</span>

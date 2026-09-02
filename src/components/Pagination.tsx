@@ -9,6 +9,10 @@ interface PaginationProps {
   onItemsPerPageChange?: (size: number) => void;
   language: string;
   alwaysVisible?: boolean;
+  /** Optional noun used to make totals unambiguous on grouped/resource-specific lists. */
+  itemLabel?: string;
+  /** Optional page-size suffix for grouped/resource-specific lists. */
+  pageUnitLabel?: string;
 }
 
 const Pagination: React.FC<PaginationProps> = ({
@@ -19,6 +23,8 @@ const Pagination: React.FC<PaginationProps> = ({
   onItemsPerPageChange,
   language,
   alwaysVisible,
+  itemLabel,
+  pageUnitLabel,
 }) => {
   const totalPages = Math.max(1, Math.ceil(totalItems / itemsPerPage));
   if (totalItems === 0 && !alwaysVisible) return null;
@@ -30,7 +36,7 @@ const Pagination: React.FC<PaginationProps> = ({
 
   return (
     <div className="nx-table-pagination flex flex-wrap items-center justify-between gap-3 border-t px-3 py-2.5 text-xs">
-      <span className="whitespace-nowrap">{zh ? `共 ${totalItems} 条` : `${totalItems} items`}</span>
+      <span className="whitespace-nowrap">{zh ? `共 ${totalItems} ${itemLabel || '条'}` : `${totalItems} ${itemLabel || 'items'}`}</span>
 
       <div className="flex items-center gap-2">
         {onItemsPerPageChange && (
@@ -43,7 +49,7 @@ const Pagination: React.FC<PaginationProps> = ({
             >
               {[10, 20, 50, 100].map(size => <option key={size} value={size}>{size}</option>)}
             </select>
-            <span>{zh ? '条/页' : 'per page'}</span>
+            <span>{pageUnitLabel || (zh ? '条/页' : 'per page')}</span>
           </label>
         )}
 

@@ -30,8 +30,10 @@ export const navConfig: NavGroup[] = [
     labelEn: 'TERMINAL ACCESS',
     icon: 'Terminal',
     children: [
-      { id: 'access-center', label: '操作工作台', labelEn: 'Operation Workspace', path: '/access/workspace',     icon: 'Terminal' },
-      { id: 'pam-audit',     label: '受控审计',   labelEn: 'PAM Audit',           path: '/access/pam-audit',  icon: 'ShieldCheck', requiredRole: 'Administrator' },
+      { id: 'access-center',    label: '操作工作台',   labelEn: 'Operation Workspace', path: '/access/workspace',  icon: 'Terminal' },
+      { id: 'access-favorites', label: '我的收藏',     labelEn: 'My Favorites',         path: '/access/favorites',  icon: 'Star' },
+      { id: 'access-history',   label: '我的历史记录', labelEn: 'My History',           path: '/access/history',    icon: 'History' },
+      { id: 'pam-audit',        label: '受控审计',     labelEn: 'PAM Audit',             path: '/access/pam-audit',   icon: 'ShieldCheck', requiredRole: 'Administrator' },
     ],
   },
   {

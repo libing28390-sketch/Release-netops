@@ -4,13 +4,19 @@ export function normalizeConfigForDiff(content: string): string {
   const volatilePatterns = [
     /^\s*!?\s*(last configuration change|current configuration|time source is)/i,
     /^\s*#\s*(last commit|generated at)/i,
+    /^\s*(return|end)\s*$/i,
+    /^\s*(?:<[A-Za-z0-9_.:-]{1,128}>?|\[[A-Za-z0-9_.:-]{1,128}\]?)\s*$/i,
+    /^\s*[A-Za-z0-9_.:-]+(?:\([^)]*\))?[#>]\s*$/i,
   ];
   const lines = String(content || '')
     .replace(/\r\n/g, '\n')
     .replace(/\r/g, '\n')
     .split('\n')
     .map((line) => line.replace(/\s+$/, ''))
-    .filter((line) => !volatilePatterns.some((pattern) => pattern.test(line)));
+    .filter((line) => !volatilePatterns.some((pattern) => pattern.test(line)))
+    // CLI output frequently inserts blank lines between otherwise identical
+    // configuration blocks; they are formatting noise in normalized mode.
+    .filter((line) => line.trim().length > 0);
   return `${lines.join('\n').trim()}\n`;
 }
 
