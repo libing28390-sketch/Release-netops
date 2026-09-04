@@ -168,6 +168,15 @@ def _safe_key(value: str) -> str:
     return re.sub(r"[^a-z0-9]+", "-", value.lower()).strip("-")
 
 
+def _reviewed_os_family(vendor: str, platform: str) -> str:
+    """Return the reviewed OS family used by the model catalog boundary."""
+    if vendor == "Huawei":
+        return "VRP"
+    if vendor == "H3C":
+        return "Comware 7"
+    return "NX-OS" if platform == "cisco_nxos" else "IOS-XE"
+
+
 def _existing_registry_ids(tenant_id: str) -> set[str]:
     ids: set[str] = set()
     with get_db_connection() as conn:
@@ -247,20 +256,34 @@ def _refresh_existing_registry_document(
             existing_metadata = {}
         merged = dict(existing_metadata)
         merged.update(metadata)
+        assignments = [
+            "source = ?",
+            "vendor = ?",
+            "platform = ?",
+            "knowledge_source_type = ?",
+            "source_trust_level = ?",
+            "metadata_json = ?",
+        ]
+        values: list[Any] = [
+            reference,
+            vendor,
+            platform,
+            "official_url",
+            "official",
+            _json_db_value(merged),
+        ]
+        # Older registry rows may have generic or stale semantic columns even
+        # after their JSON metadata is refreshed.  Reconcile the indexed
+        # columns as well so query resolution sees the same reviewed contract.
+        for column in ("product_series", "product_model", "os_family", "os_generation", "cli_platform"):
+            if column in metadata:
+                assignments.append(f"{column} = ?")
+                values.append(metadata[column])
+        values.extend((row_id, tenant_id))
         conn.execute(
-            "UPDATE ai_document SET source = ?, vendor = ?, platform = ?, "
-            "knowledge_source_type = ?, source_trust_level = ?, metadata_json = ? "
+            f"UPDATE ai_document SET {', '.join(assignments)} "
             "WHERE id = ? AND tenant_id = ?",
-            (
-                reference,
-                vendor,
-                platform,
-                "official_url",
-                "official",
-                _json_db_value(merged),
-                row_id,
-                tenant_id,
-            ),
+            values,
         )
         return True
 
@@ -292,6 +315,7 @@ def ensure_official_product_registry_documents(
                     "product_model": model,
                     "applicable_product_models": aliases,
                     "applicable_product_series": [item["series"]],
+                    "os_family": _reviewed_os_family(vendor, item["platform"]),
                     "cli_platform": item["platform"],
                     "scope": item["scope"],
                     "official_reference": reference,
@@ -330,7 +354,7 @@ def ensure_official_product_registry_documents(
                 "product_model": model,
                 "applicable_product_models": aliases,
                 "applicable_product_series": [item["series"]],
-                "os_family": "VRP" if vendor == "Huawei" else "Comware 7" if vendor == "H3C" else "NX-OS" if item["platform"] == "cisco_nxos" else "IOS-XE",
+                "os_family": _reviewed_os_family(vendor, item["platform"]),
                 "cli_platform": item["platform"],
                 "scope": item["scope"],
                 "verification_level": item.get("verification_level") or "official_model_or_series_catalog",

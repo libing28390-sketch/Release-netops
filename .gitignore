@@ -44,6 +44,7 @@ license.json
 backend/tests/*.py
 !backend/tests/pg_test_utils.py
 !backend/tests/pg_catalog_assertions.py
+!backend/tests/conftest.py
 
 tools/license_issuer/issued/registry.json
 
@@ -140,6 +141,7 @@ tools/node/
 !**/docs/modules/**/*.md
 !**/docs/fixes/**/*.md
 !**/docs/knowledge-engine/governance/official-document-source-catalog.md
+!**/docs/knowledge-engine/architecture/*.md
 !handoff.md
 !**/docs/introduction.md
 !**/docs/cmdb_development.md

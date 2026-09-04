@@ -59,6 +59,20 @@ class ProductResolver:
         "c9300": ("c9300", "catalyst93", "catalyst 9300", "catalyst9300"),
         "s5735-l-v2": ("s5735-l-v2", "s5735 l v2"),
         "s6520x": ("s6520x", "s6520 x"),
+        # S6850 is an explicitly reviewed H3C data-center model.  Keep it in
+        # the shadow resolver so product resolution remains deterministic even
+        # before the runtime product-registry projection has been refreshed.
+        "s6850": ("s6850",),
+    }
+
+    _REVIEWED_MODEL_METADATA = {
+        "s6850": {
+            "vendor": "H3C",
+            "os_family": "Comware 7",
+            "os_generation": "COMWARE-7",
+            "cli_platform": "h3c_comware",
+            "document_type": "product_registry",
+        },
     }
 
     @classmethod
@@ -178,6 +192,7 @@ class ProductResolver:
                     "alias": query,
                     "match_method": "exact" if normalized == normalize_alias(aliases[0]) else "canonical",
                     "match_score": 1.0,
+                    **cls._REVIEWED_MODEL_METADATA.get(model, {}),
                 })
                 continue
             if any(alias.startswith(normalized) or normalized.startswith(alias) for alias in normalized_aliases if len(normalized) >= 2):
@@ -188,6 +203,7 @@ class ProductResolver:
                     "alias": query,
                     "match_method": "prefix",
                     "match_score": 0.80,
+                    **cls._REVIEWED_MODEL_METADATA.get(model, {}),
                 })
                 continue
             score = max((trigram_similarity(normalized, alias) for alias in normalized_aliases), default=0.0)
@@ -199,6 +215,7 @@ class ProductResolver:
                     "alias": query,
                     "match_method": "trigram",
                     "match_score": score,
+                    **cls._REVIEWED_MODEL_METADATA.get(model, {}),
                 })
         return sorted(candidates, key=lambda item: (-float(item["match_score"]), str(item["product_model"])))[:20]
 
@@ -255,6 +272,14 @@ class ProductResolver:
             winner = candidates[0]
             merged["product_series"] = winner.get("product_series")
             merged["product_model"] = winner.get("product_model")
+        if len(identity_models) == 1 and not merged.get("cli_platform"):
+            winner = candidates[0]
+            if winner.get("cli_platform"):
+                # A reviewed shadow row may provide the parser family while
+                # the durable product-registry projection is being refreshed.
+                # This is still advisory metadata and never authorizes a
+                # driver or write operation.
+                merged["cli_platform"] = winner["cli_platform"]
         if identity_models and next(iter(identity_models), "").lower().startswith("s") and match_method == "exact":
             # S-series identifiers are hierarchy scopes in the reviewed
             # catalog; an exact series alias is still candidate-only until a
