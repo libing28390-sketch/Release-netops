@@ -15,11 +15,15 @@ from typing import Any
 
 
 ROOT = Path(__file__).resolve().parents[1]
+DOCKERFILE_PATH = ROOT / "Dockerfile"
 WORKFLOW_PATH = ROOT / ".github" / "workflows" / "knowledge-engine-eval.yml"
 BACKEND_WORKFLOW_PATH = ROOT / ".github" / "workflows" / "backend-pytest-check.yml"
+FRONTEND_WORKFLOW_PATH = ROOT / ".github" / "workflows" / "frontend-build-check.yml"
 RELEASE_WORKFLOW_PATH = ROOT / ".github" / "workflows" / "release.yml"
 PROMPTFOO_WORKFLOW_PATH = ROOT / ".github" / "workflows" / "knowledge-engine-promptfoo.yml"
+POSTGRES_ACTION_PATH = ROOT / ".github" / "actions" / "postgres" / "action.yml"
 REPORT_PATH = ROOT / "docs" / "knowledge-engine" / "eval" / "eval-ci-gate-v1.manifest.json"
+CI_NODE_VERSION = "22.22.2"
 
 
 def _read(path: Path) -> str:
@@ -32,17 +36,33 @@ def _require(text: str, marker: str, label: str) -> None:
     assert marker in text, f"{label} is missing required marker: {marker}"
 
 
+def _forbid(text: str, marker: str, label: str) -> None:
+    assert marker not in text, f"{label} contains forbidden marker: {marker}"
+
+
 def validate_ci_gate() -> dict[str, Any]:
+    dockerfile = _read(DOCKERFILE_PATH)
     small_ci = _read(WORKFLOW_PATH)
     backend_ci = _read(BACKEND_WORKFLOW_PATH)
+    frontend_ci = _read(FRONTEND_WORKFLOW_PATH)
     release_ci = _read(RELEASE_WORKFLOW_PATH)
     promptfoo_ci = _read(PROMPTFOO_WORKFLOW_PATH)
+    postgres_action = _read(POSTGRES_ACTION_PATH)
 
     for label, text in (("EVAL-010 workflow", small_ci), ("backend workflow", backend_ci)):
         _require(text, "DATABASE_URL: postgresql://", label)
+        _require(text, "uses: ./.github/actions/postgres", label)
+        _forbid(text, "image: postgres:16", label)
 
-    _require(small_ci, "postgres:", "EVAL-010 workflow")
-    _require(small_ci, "pg_isready", "EVAL-010 workflow")
+    for label, text in (("release workflow", release_ci), ("Promptfoo workflow", promptfoo_ci)):
+        _require(text, "DATABASE_URL: postgresql://", label)
+        _require(text, "uses: ./.github/actions/postgres", label)
+        _forbid(text, "image: postgres:16", label)
+
+    _require(postgres_action, "docker/postgres/Dockerfile", "PostgreSQL CI action")
+    _require(postgres_action, "pg_available_extensions", "PostgreSQL CI action")
+    _require(dockerfile, f"FROM node:{CI_NODE_VERSION}-alpine AS frontend-build", "Docker frontend build runtime")
+    _require(small_ci, "pgvector", "EVAL-010 PostgreSQL service")
     _require(small_ci, "--profile small", "EVAL-010 workflow")
     _require(small_ci, "--strict", "EVAL-010 workflow")
     _require(small_ci, "knowledge_eval_ci_gate_check.py", "EVAL-010 workflow")
@@ -56,11 +76,13 @@ def validate_ci_gate() -> dict[str, Any]:
     _require(release_ci, "knowledge_eval_gold_400_check.py", "release 400-case dataset gate")
     _require(release_ci, "DATABASE_URL: postgresql://", "release workflow")
     _require(release_ci, "ai_rag_release_config_check.py", "release-safe configuration gate")
-    _require(release_ci, "node-version: '20.11.1'", "release frontend runtime")
+    _require(release_ci, f'node-version: "{CI_NODE_VERSION}"', "release frontend runtime")
     _require(release_ci, "npm run test:frontend -- --run", "release frontend regression gate")
-    _require(promptfoo_ci, 'node-version: "20.11.1"', "Promptfoo workflow")
+    _require(promptfoo_ci, f'node-version: "{CI_NODE_VERSION}"', "Promptfoo workflow")
     _require(promptfoo_ci, 'PROMPTFOO_VERSION: "0.118.0"', "Promptfoo workflow")
     _require(promptfoo_ci, "ai_rag_release_config_check.py", "Promptfoo release-safe configuration gate")
+    _require(frontend_ci, f'node-version: "{CI_NODE_VERSION}"', "frontend workflow")
+    _require(frontend_ci, "npm ci --include=dev", "frontend workflow")
 
     output: dict[str, Any] = {
         "status": "PASS",
@@ -70,6 +92,8 @@ def validate_ci_gate() -> dict[str, Any]:
         "database_url_scheme": "postgresql",
         "postgres_service": True,
         "database_contract": "postgresql_only",
+        "postgres_ci_image": "repository_dockerfile_with_pgvector_and_pg_trgm",
+        "ci_node_version": CI_NODE_VERSION,
         "external_network": "not_used_by_offline_runner",
         "production_write": False,
         "workflow_sha256": {

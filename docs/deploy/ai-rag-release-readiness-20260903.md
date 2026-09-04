@@ -10,7 +10,7 @@
 - 50 条锚点评测已经从“业务状态通过”改为安全门禁与质量门禁分离，并纳入 Gold 命中、Recall、MRR、NDCG、引用身份代理、延迟和错误率。
 - Reranker、Docling、Langfuse 的边界适配、超时、白名单、降级和 metadata-only 契约已接入；默认仍为 legacy/off，Shadow 不覆盖生产 baseline。
 - 迁移 0202 增加实验运行、案例结果、灰度指针和 Shadow 观察的 PostgreSQL-only 持久化；OBS-002 API/UI 只展示脱敏摘要。
-- Promptfoo 已固定 Node 20.11.1 / Promptfoo 0.118.0 的独立 CI 工作流；本机 Node 24 启动失败不替代固定 Node 20 CI 证据。
+- Promptfoo 已固定 Node 22.22.2 / Promptfoo 0.118.0 的独立 CI 工作流，并复用仓库内带 pgvector/pg_trgm 的 PostgreSQL CI 镜像；本机验证不替代 GitHub Actions 实跑证据。
 
 ## 当前验证证据
 

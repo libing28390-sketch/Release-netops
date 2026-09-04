@@ -17,20 +17,6 @@ on:
 jobs:
   test:
     runs-on: ubuntu-latest
-    services:
-      postgres:
-        image: postgres:16
-        env:
-          POSTGRES_DB: nexora_knowledge_ci
-          POSTGRES_USER: postgres
-          POSTGRES_PASSWORD: postgres
-        ports:
-          - 5432:5432
-        options: >-
-          --health-cmd "pg_isready -U postgres -d nexora_knowledge_ci"
-          --health-interval 10s
-          --health-timeout 5s
-          --health-retries 5
     # CI must never inherit a production dotenv.  These values are isolated,
     # non-secret test defaults; provider/device credentials stay in fixtures.
     env:
@@ -50,6 +36,14 @@ jobs:
     steps:
       - name: Checkout
         uses: actions/checkout@v4
+
+      - name: Start PostgreSQL with pgvector
+        uses: ./.github/actions/postgres
+        with:
+          database: nexora_knowledge_ci
+          user: postgres
+          password: postgres
+          container-name: nexora-postgres-backend-ci
 
       - name: Setup Python
         uses: actions/setup-python@v5

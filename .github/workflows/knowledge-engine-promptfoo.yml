@@ -41,20 +41,6 @@ jobs:
   promptfoo:
     name: Promptfoo ${{ (github.event_name == 'pull_request' && 'smoke') || 'full' }} (isolated PostgreSQL)
     runs-on: ubuntu-latest
-    services:
-      postgres:
-        image: postgres:16
-        env:
-          POSTGRES_DB: nexora_promptfoo_ci
-          POSTGRES_USER: postgres
-          POSTGRES_PASSWORD: postgres
-        ports:
-          - 5432:5432
-        options: >-
-          --health-cmd "pg_isready -U postgres -d nexora_promptfoo_ci"
-          --health-interval 10s
-          --health-timeout 5s
-          --health-retries 5
     env:
       ENVIRONMENT: test
       DATABASE_URL: postgresql://postgres:postgres@127.0.0.1:5432/nexora_promptfoo_ci
@@ -73,10 +59,18 @@ jobs:
       - name: Checkout
         uses: actions/checkout@v4
 
-      - name: Setup Node 20
+      - name: Start PostgreSQL with pgvector
+        uses: ./.github/actions/postgres
+        with:
+          database: nexora_promptfoo_ci
+          user: postgres
+          password: postgres
+          container-name: nexora-postgres-promptfoo-ci
+
+      - name: Setup Node 22
         uses: actions/setup-node@v4
         with:
-          node-version: "20.11.1"
+          node-version: "22.22.2"
           cache: npm
 
       - name: Setup Python 3.11

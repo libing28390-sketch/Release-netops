@@ -15,20 +15,6 @@ jobs:
   release-ubuntu:
     name: Release Ubuntu / Linux (main branch)
     runs-on: ubuntu-latest
-    services:
-      postgres:
-        image: postgres:16
-        env:
-          POSTGRES_DB: nexora_knowledge_eval
-          POSTGRES_USER: postgres
-          POSTGRES_PASSWORD: postgres
-        ports:
-          - 5432:5432
-        options: >-
-          --health-cmd "pg_isready -U postgres -d nexora_knowledge_eval"
-          --health-interval 10s
-          --health-timeout 5s
-          --health-retries 5
     env:
       ENVIRONMENT: test
       DATABASE_URL: postgresql://postgres:postgres@127.0.0.1:5432/nexora_knowledge_eval
@@ -41,6 +27,14 @@ jobs:
       - name: Checkout source repository
         uses: actions/checkout@v4
 
+      - name: Start PostgreSQL with pgvector
+        uses: ./.github/actions/postgres
+        with:
+          database: nexora_knowledge_eval
+          user: postgres
+          password: postgres
+          container-name: nexora-postgres-release-ci
+
       - name: Set up Python
         uses: actions/setup-python@v5
         with:
@@ -49,7 +43,7 @@ jobs:
       - name: Set up Node
         uses: actions/setup-node@v4
         with:
-          node-version: '20.11.1'
+          node-version: "22.22.2"
           cache: npm
 
       - name: Cache uploader script
@@ -61,7 +55,7 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
-          required=(Dockerfile docker-compose.yml .dockerignore .env.example package.json package-lock.json deploy-ubuntu.sh backend/requirements.txt backend/main.py NexoraTerminalAgent.exe data/textfsm_templates nginx/Dockerfile nginx/.dockerignore nginx/nginx.conf nginx/docker-entrypoint.d/05-ensure-tls-certificate.sh scripts/deploy-docker.sh scripts/terminal_agent.py scripts/install-terminal-agent.sh scripts/install-terminal-agent.ps1 scripts/sync-frontend-dist.sh src)
+          required=(Dockerfile docker-compose.yml docker/postgres/Dockerfile .dockerignore .env.example package.json package-lock.json deploy-ubuntu.sh backend/requirements.txt backend/main.py NexoraTerminalAgent.exe data/textfsm_templates nginx/Dockerfile nginx/.dockerignore nginx/nginx.conf nginx/docker-entrypoint.d/05-ensure-tls-certificate.sh scripts/deploy-docker.sh scripts/terminal_agent.py scripts/install-terminal-agent.sh scripts/install-terminal-agent.ps1 scripts/sync-frontend-dist.sh src)
           for path in "${required[@]}"; do
             test -e "$path" || { echo "[FAIL] Missing release input: $path"; exit 1; }
           done

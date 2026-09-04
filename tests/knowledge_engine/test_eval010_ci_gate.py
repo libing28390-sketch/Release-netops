@@ -22,6 +22,8 @@ def test_eval010_ci_and_release_use_postgresql_and_profiles() -> None:
     assert report["database_url_scheme"] == "postgresql"
     assert report["postgres_service"] is True
     assert report["database_contract"] == "postgresql_only"
+    assert report["postgres_ci_image"] == "repository_dockerfile_with_pgvector_and_pg_trgm"
+    assert report["ci_node_version"] == "22.22.2"
 
 
 def test_eval010_small_profile_is_fixed_and_deterministic() -> None:

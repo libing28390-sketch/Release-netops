@@ -42,6 +42,8 @@ backend/tests/_out/
 license.json
 
 backend/tests/*.py
+!backend/tests/pg_test_utils.py
+!backend/tests/pg_catalog_assertions.py
 
 tools/license_issuer/issued/registry.json
 

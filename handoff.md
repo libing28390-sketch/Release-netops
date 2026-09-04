@@ -14,7 +14,7 @@
 - 结束动作：已停止本轮继续执行，保留当前代码、评测产物、浏览器 UAT 元数据和任务清单；未创建 commit、未删除文件、未执行设备操作。
 - 最后核验日期：`2026-09-04`。开发服务和本地浏览器登录会话可由接手人按需复用；凭据不写入交接文件，也不在此重复记录。
 - 质量结论：AI 全量 `534 passed`，后端全量 `1802 passed`，前端 `53 files / 195 passed`，lint/build、PostgreSQL-only 和静态 CI 门禁通过；但 50-anchor 为 `38/50`、Recall@5/10=`0.7143`、`quality=FAIL`、`overall=FAIL`。
-- 评测/验收结论：50 条人工审核仍为 `PENDING_HUMAN_REVIEW`，400 Gold Dataset 为 `NOT_READY`，完整 UAT-001、真实 BGE/Docling/Langfuse、固定 Node 20 Promptfoo、Provider live matrix、生产迁移/回滚和 RC 提交均未完成。
+- 评测/验收结论：50 条人工审核仍为 `PENDING_HUMAN_REVIEW`，400 Gold Dataset 为 `NOT_READY`，完整 UAT-001、真实 BGE/Docling/Langfuse、Node 22.22.2 Promptfoo CI 实跑、Provider live matrix、生产迁移/回滚和 RC 提交均未完成。
 - 最新浏览器增量：`UAT-HUA-VLAN-LOCAL-01` 已完成平台澄清并保持本地、低风险、无外发、无 CLI，但混合语言 `Access` 仍被识别为广义 `vlan`，返回 VLAN/VLANIF 文档而非 Access-port 专用模板，已记录为 `PARTIAL`，不能计入完整 UAT 通过。
 - 接手第一步：先阅读主任务清单的当前执行记录和“当前发布阻塞项”，再处理人工 Gold/50-anchor 审核与 Access feature 解析回归；完成证据后才重新评估 DOD-001～DOD-010。
 
@@ -49,7 +49,7 @@
 - 前端生产构建：通过，构建转换 `4265` 个模块。
 - PostgreSQL-only policy：`0 violation(s)`。
 - AI/RAG release config check：通过，检查 `25` 个配置键。
-- CI gate 静态检查：通过；已验证 PostgreSQL-only 合同、生产写入关闭和 Node `20.11.1`/前端全量测试标记。
+- CI gate 静态检查：通过；已验证 PostgreSQL-only 合同、生产写入关闭、Node `22.22.2`、仓库 PostgreSQL 镜像和前端全量测试标记。
 - 评测产物隐私扫描：通过；未将原始问题、完整回答、凭据或 API key 写入评测报告。
 - 基线 manifest：已按最新数据集、评测脚本、审计脚本和 `38/50` 评测结果重新生成；当前仍明确记录 `safety=PASS`、`quality=FAIL`、`overall=FAIL` 与 dirty worktree，不能被解读为发布通过。[eval-baseline-manifest.json](docs/knowledge-engine/eval/eval-baseline-manifest.json)
 - `git diff --check`：通过。

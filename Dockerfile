@@ -1,5 +1,5 @@
 # ── Stage 1: Frontend Build ──────────────────────────────────────────
-FROM node:20-alpine AS frontend-build
+FROM node:22.22.2-alpine AS frontend-build
 WORKDIR /app
 COPY package.json package-lock.json* ./
 # The frontend build uses devDependencies such as Vite and cross-env.
