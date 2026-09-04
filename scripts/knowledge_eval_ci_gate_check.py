@@ -59,11 +59,13 @@ def validate_ci_gate() -> dict[str, Any]:
 
     for label, text in (("EVAL-010 workflow", small_ci), ("backend workflow", backend_ci)):
         _require(text, "DATABASE_URL: postgresql://", label)
+        _require(text, "CREDENTIAL_ENCRYPTION_KEY:", label)
         _require(text, "uses: ./.github/actions/postgres", label)
         _forbid(text, "image: postgres:16", label)
 
     for label, text in (("release workflow", release_ci), ("Promptfoo workflow", promptfoo_ci)):
         _require(text, "DATABASE_URL: postgresql://", label)
+        _require(text, "CREDENTIAL_ENCRYPTION_KEY:", label)
         _require(text, "uses: ./.github/actions/postgres", label)
         _forbid(text, "image: postgres:16", label)
 

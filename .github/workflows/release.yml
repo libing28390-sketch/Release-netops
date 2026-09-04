@@ -19,6 +19,8 @@ jobs:
       ENVIRONMENT: test
       DATABASE_URL: postgresql://postgres:postgres@127.0.0.1:5432/nexora_knowledge_eval
       PYTHONPATH: backend
+      SECRET_KEY: test-only-secret-placeholder
+      CREDENTIAL_ENCRYPTION_KEY: test-only-credential-placeholder
       AI_ENABLED: "false"
       EXTERNAL_AI_ENABLED: "false"
       NETWORK_WRITE_ENABLED: "false"
