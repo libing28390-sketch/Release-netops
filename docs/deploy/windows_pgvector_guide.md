@@ -1,5 +1,10 @@
 # Windows 环境下 PostgreSQL 安装与配置 pgvector 扩展操作手册
 
+> 对于 Nexora Windows 一键发布包，优先直接运行 `NetOps.exe`：向导会自动
+> 检测本机 PostgreSQL、下载并校验匹配的 pgvector 资产、请求 UAC 权限完成
+> 文件安装，然后再验证数据库迁移所需的扩展。本手册用于自动流程失败、
+> 远程 PostgreSQL 或需要人工审计安装文件时的兜底处理。
+
 本手册适用于在 Windows 环境下部署或运行 Nexora / NetOps 时，因数据库缺少 `pgvector` 扩展导致服务启动失败、数据库迁移中断（报错如 `MissingPostgreSQLExtension: PostgreSQL extension 'vector' is unavailable` 或 `RuntimeError: Database migrations are incomplete; pending versions: (138, ...)`）的处理指南。
 
 ---
@@ -17,7 +22,7 @@ PostgreSQL 官方 Windows 安装包（EnterpriseDB）自带了 `pg_trgm`，但**
 ### 2.1 确认 PostgreSQL 版本与安装路径
 - 默认安装路径通常为：
   - PostgreSQL 18: `C:\Program Files\PostgreSQL\18\`
-  - PostgreSQL 17: `C:\Program Files\PostgreSQL\17\`
+  - PostgreSQL 17: `C:\Program Files\PostgreSQL\17\`（新安装向导使用 17.6）
 - 服务名称通常为：`postgresql-x64-18` 或 `postgresql-x64-17`。
 
 ---
@@ -26,11 +31,14 @@ PostgreSQL 官方 Windows 安装包（EnterpriseDB）自带了 `pg_trgm`，但**
 
 ### 方法一：下载预编译二进制包（推荐，简单快速）
 
-由于 pgvector 官方仓库未直接打包 Windows Release，推荐使用 GitHub 社区维护的预编译包：
+Nexora 向导使用与 PostgreSQL 主版本匹配的 `pgvector 0.8.6` Windows 预编译包。官方 pgvector 项目在 Windows 章节记录的是源码编译流程；预编译资产来自社区维护的 GitHub 项目，向导对固定 URL 和 SHA-256 做校验。
+
+手工安装时：
 
 1. **下载预编译包**：
    - 访问 GitHub Releases：[https://github.com/andreiramani/pgvector_pgsql_windows/releases](https://github.com/andreiramani/pgvector_pgsql_windows/releases)
-   - 根据本地 PostgreSQL 版本下载对应的压缩包（例如 `pgvector_v0.8.6_pg18_x64.zip` 或 `pg17` 版本）。
+   - 根据本地 PostgreSQL 主版本下载对应的 `vector.v0.8.6-pgXX.zip`。当前向导支持 PG13、14、15、16、17、18；PG17 文件名为 `vector.v0.8.6-pg17.zip`。
+   - PG17 资产的 SHA-256 为 `420388e9e9f05d92f06d6967ce8772483629b27a66ca9255925fa0fdd445438e`。其他主版本的固定摘要记录在 `desktop/pgvector_windows.py` 中。
 
 2. **解压并复制文件**：
    解压后将文件分别复制到 PostgreSQL 的对应目录中（需要管理员权限）：
@@ -41,7 +49,7 @@ PostgreSQL 官方 Windows 安装包（EnterpriseDB）自带了 `pg_trgm`，但**
    | `vector.control` | `C:\Program Files\PostgreSQL\18\share\extension\` |
    | `vector--*.sql`（所有 SQL 脚本） | `C:\Program Files\PostgreSQL\18\share\extension\` |
 
-   *(注：若使用 PostgreSQL 17，请将上述路径中的 `18` 替换为 `17`)*
+   *(注：若使用 PostgreSQL 17，请将上述路径中的 `18` 替换为 `17`；必须使用与 PostgreSQL 主版本一致的 ZIP。)*
 
 3. **重启 PostgreSQL 服务**（见后文第 4 节）。
 
@@ -56,7 +64,7 @@ PostgreSQL 官方 Windows 安装包（EnterpriseDB）自带了 `pg_trgm`，但**
    ```cmd
    set "PGROOT=C:\Program Files\PostgreSQL\18"
    ```
-   *(若为 PG17 请设置为 `C:\Program Files\PostgreSQL\17`)*
+   *(若为 PG17 请设置为 `C:\Program Files\PostgreSQL\17`；新装 PostgreSQL 17.0–17.2 不建议用于当前 pgvector，先升级到 17.3+。)*
 3. 克隆源码并编译安装：
    ```cmd
    cd %TEMP%
@@ -107,7 +115,7 @@ WHERE name IN ('vector', 'pg_trgm');
 ```bash
 npm run dev
 ```
-后端启动时 `init_db()` 会自动检测并顺序执行剩余的数据库迁移（如 138 ~ 144），迁移完成后各服务即可正常提供服务。
+后端启动时 `init_db()` 会自动检测并顺序执行剩余的数据库迁移；如果扩展文件已安装但数据库中尚未启用，向导会先执行 `CREATE EXTENSION IF NOT EXISTS`，再由迁移继续完成初始化。
 
 ---
 

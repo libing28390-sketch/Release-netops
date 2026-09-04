@@ -19,7 +19,7 @@ import urllib.request
 import urllib.error
 from urllib.parse import quote, unquote, urlparse
 import ssl
-import zipfile
+import tempfile
 import winreg
 
 SOURCE_DESKTOP_DIR = os.path.dirname(os.path.abspath(__file__))
@@ -29,6 +29,7 @@ if SOURCE_PROJECT_ROOT not in sys.path:
 
 from desktop.ui.feedback import show_message
 from desktop.ui.launcher_theme import build_launcher_stylesheet
+from desktop.pgvector_windows import install_pgvector_windows, sha256_file
 
 if getattr(sys, 'frozen', False):
     # Running as the bundled Nexora launcher (published as NetOps.exe for
@@ -96,7 +97,18 @@ def sync_bundled_textfsm_templates():
 SUPPORTED_PY_MIN = (3, 10)          # inclusive
 SUPPORTED_PY_MAX = (3, 12)          # inclusive
 PY_FALLBACK_VERSION = "3.11.9"      # installed only when no compatible Python exists
-NODE_MIN_MAJOR = 20                 # cross-env@10 requires Node.js 20+
+NODE_MIN_MAJOR = 22                 # Keep Windows builds aligned with CI Node 22.
+NODE_INSTALL_VERSION = "22.22.2"
+NODE_INSTALL_URL = (
+    "https://nodejs.org/dist/22.22.2/node-v22.22.2-x64.msi"
+)
+NODE_INSTALL_SHA256 = (
+    "57456aa33fcd6fb6a9418e09227de0b0ca604f7b2123566acc66b555cb2f42e5"
+)
+POSTGRES_INSTALL_VERSION = "17.6"
+POSTGRES_INSTALL_URL = (
+    "https://get.enterprisedb.com/postgresql/postgresql-17.6-1-windows-x64.exe"
+)
 
 # Setup logging
 def log_message(message):
@@ -173,9 +185,9 @@ class SetupWorker(QObject):
         self.log_signal.emit(text)
         log_message(text.strip())
 
-    def run_command(self, cmd, cwd=None, env=None):
+    def run_command(self, cmd, cwd=None, env=None, shell=None, display_cmd=None):
         cmd_str = ' '.join(cmd) if isinstance(cmd, list) else cmd
-        self.write_log(f"> Executing: {cmd_str}\n")
+        self.write_log(f"> Executing: {display_cmd or cmd_str}\n")
         
         # Clean PyInstaller environment to avoid DLL/import conflicts in subprocesses
         run_env = dict(env) if env is not None else dict(os.environ)
@@ -199,9 +211,9 @@ class SetupWorker(QObject):
             paths = path_val.split(os.pathsep)
             cleaned_paths = [p for p in paths if "_mei" not in p.lower()]
             run_env["PATH"] = os.pathsep.join(cleaned_paths)
-            
+
         try:
-            use_shell = sys.platform == "win32"
+            use_shell = sys.platform == "win32" if shell is None else shell
             p = subprocess.Popen(
                 cmd,
                 cwd=cwd,
@@ -231,6 +243,52 @@ class SetupWorker(QObject):
         except Exception as e:
             self.write_log(f"Error executing command: {e}\n")
             raise e
+
+    @staticmethod
+    def _powershell_quote(value):
+        """Quote one value for a PowerShell single-quoted string."""
+        return "'" + str(value).replace("'", "''") + "'"
+
+    def run_elevated(self, executable, arguments, description):
+        """Run a Windows installer through UAC without logging secrets."""
+        powershell = os.path.join(
+            os.environ.get("WINDIR", r"C:\Windows"),
+            "System32",
+            "WindowsPowerShell",
+            "v1.0",
+            "powershell.exe",
+        )
+        if not os.path.isfile(powershell):
+            powershell = "powershell.exe"
+
+        values = tuple(str(value) for value in arguments)
+        # Start-Process joins an array-valued -ArgumentList before invoking the
+        # child process and does not preserve PowerShell's outer quotes. Build a
+        # Windows command-line string first so installer paths/passwords that
+        # contain spaces remain one argument.
+        argument_list = subprocess.list2cmdline(values)
+        command = (
+            f"$process = Start-Process -FilePath {self._powershell_quote(executable)} "
+            f"-ArgumentList {self._powershell_quote(argument_list)} -Verb RunAs -Wait -PassThru; "
+            "exit $process.ExitCode"
+        )
+        self.run_command(
+            [powershell, "-NoProfile", "-ExecutionPolicy", "Bypass", "-Command", command],
+            shell=False,
+            display_cmd=f"elevated {description} (installer arguments redacted)",
+        )
+
+    @staticmethod
+    def wait_for_tcp_port(host, port, timeout=60):
+        """Wait for a newly-installed local service to accept connections."""
+        deadline = time.monotonic() + timeout
+        while time.monotonic() < deadline:
+            try:
+                with socket.create_connection((host, port), timeout=2.0):
+                    return True
+            except OSError:
+                time.sleep(1)
+        return False
 
     def _build_ssl_context(self, verify=True):
         """Build a TLS context. Prefer the certifi CA bundle (frozen apps and
@@ -432,7 +490,7 @@ class SetupWorker(QObject):
                 port = int(self.db_config.get("port", "5432"))
                 password = self.db_config.get("password", "netops")
                 
-                is_local = host in ("127.0.0.1", "localhost")
+                is_local = str(host).lower() in ("127.0.0.1", "localhost", "::1")
                 pg_running = False
                 
                 # Check connection port
@@ -446,41 +504,64 @@ class SetupWorker(QObject):
                     self.write_log(f"检测到 PostgreSQL 端口 {port} 已打开，跳过本地静默安装。\n")
                 else:
                     if is_local:
-                        self.write_log(f"检测到本地 PostgreSQL 端口 {port} 未响应，开始下载并静默部署 PostgreSQL 17...\n")
-                        pg_url = "https://get.enterprisedb.com/postgresql/postgresql-17.2-1-windows-x64.exe"
-                        pg_installer_path = os.path.join(PROJECT_ROOT, "postgresql-installer.exe")
+                        self.write_log(
+                            f"检测到本地 PostgreSQL 端口 {port} 未响应，开始下载并静默部署 "
+                            f"PostgreSQL {POSTGRES_INSTALL_VERSION}...\n"
+                        )
+                        pg_url = POSTGRES_INSTALL_URL
+                        pg_installer_path = os.path.join(
+                            tempfile.gettempdir(),
+                            f"nexora-postgresql-{os.getpid()}.exe",
+                        )
                         
-                        self.progress_signal.emit("正在下载 PostgreSQL 17...", 0.65)
-                        self.download_file(pg_url, pg_installer_path, "PostgreSQL 17")
+                        self.progress_signal.emit(
+                            f"正在下载 PostgreSQL {POSTGRES_INSTALL_VERSION}...",
+                            0.65,
+                        )
+                        self.download_file(
+                            pg_url,
+                            pg_installer_path,
+                            f"PostgreSQL {POSTGRES_INSTALL_VERSION}",
+                        )
                         
                         self.progress_signal.emit("正在安装 PostgreSQL (请在 UAC 提权提示中允许运行)...", 0.75)
                         self.write_log("正在执行静默安装数据库。系统将弹出 UAC 提权请求，请在弹出的窗口中允许运行。\n")
-                        
-                        powershell_cmd = f"Start-Process '{pg_installer_path}' -ArgumentList '--mode unattended --unattendedmodeui none --superpassword \"{password}\" --serverport {port}' -Verb RunAs -Wait"
-                        self.run_command(["powershell", "-Command", powershell_cmd])
+
+                        self.run_elevated(
+                            pg_installer_path,
+                            [
+                                "--mode",
+                                "unattended",
+                                "--unattendedmodeui",
+                                "none",
+                                "--superpassword",
+                                password,
+                                "--serverport",
+                                str(port),
+                            ],
+                            f"PostgreSQL {POSTGRES_INSTALL_VERSION}",
+                        )
                         
                         try:
                             os.remove(pg_installer_path)
                         except Exception:
                             pass
                         
-                        # Verify
-                        pg_installed = False
-                        try:
-                            with socket.create_connection(("127.0.0.1", port), timeout=2.0) as s:
-                                pg_installed = True
-                        except Exception:
-                            pass
+                        # Verify, allowing the freshly-created Windows service
+                        # time to finish bootstrapping before database login.
+                        pg_installed = self.wait_for_tcp_port("127.0.0.1", port, timeout=60)
                             
                         if pg_installed:
-                            self.write_log("PostgreSQL 17 本地服务安装完成并正常运行！\n")
+                            self.write_log(
+                                f"PostgreSQL {POSTGRES_INSTALL_VERSION} 本地服务安装完成并正常运行！\n"
+                            )
                         else:
                             self.write_log("[警告] PostgreSQL 静默安装完毕，但本地端口仍未响应。请检查系统服务。\n")
                     else:
                         self.write_log(f"[提示] 检测到配置了远程数据库 {host}:{port}。跳过本地静默安装。\n")
 
-                    self.progress_signal.emit("验证 PostgreSQL 数据库与 AI 扩展...", 0.78)
-                    self.ensure_postgres_ready()
+                self.progress_signal.emit("验证 PostgreSQL 数据库与 AI 扩展...", 0.78)
+                self.ensure_postgres_ready()
 
             # 5. Compile Frontend static files if dist is missing
             dist_path = os.path.join(PROJECT_ROOT, "dist")
@@ -488,88 +569,31 @@ class SetupWorker(QObject):
                 self.progress_signal.emit("正在准备编译前端界面...", 0.8)
                 self.write_log("未检测到前端 dist 编译输出目录。准备编译前端资产...\n")
                 
-                npm_available = False
-                npm_cmd = "npm"
-                # Reuse a system Node.js only when it meets the minimum major
-                # version (Node 20+). An older system Node falls back to the
-                # bundled/portable Node so the frontend build stays reliable.
-                try:
-                    rn = subprocess.run(
-                        ["node", "--version"],
-                        capture_output=True, text=True, shell=True,
-                        creationflags=0x08000000
+                node_installation = self.find_compatible_node()
+                if node_installation:
+                    node_exe, npm_cmd, node_version = node_installation
+                    self.write_log(
+                        f"检测到兼容的完整 Node.js {node_version[0]}.{node_version[1]}.{node_version[2]}，"
+                        f"直接复用：{node_exe}\n"
                     )
-                    if rn.returncode == 0:
-                        try:
-                            node_major = int(rn.stdout.strip().lstrip("vV").split(".")[0])
-                        except Exception:
-                            node_major = 0
-                        if node_major >= NODE_MIN_MAJOR:
-                            r = subprocess.run(
-                                [npm_cmd, "--version"],
-                                capture_output=True, text=True, shell=True,
-                                creationflags=0x08000000
-                            )
-                            if r.returncode == 0:
-                                npm_available = True
-                                self.write_log(f"检测到兼容的 Node.js {rn.stdout.strip()}，直接复用。\n")
-                        else:
-                            self.write_log(
-                                f"系统 Node.js {rn.stdout.strip()} 低于最低要求 v{NODE_MIN_MAJOR}，将改用便携版。\n"
-                            )
-                except Exception:
-                    pass
-
-                local_node_dir = os.path.join(PROJECT_ROOT, "tools", "node")
-                local_npm_path = os.path.join(local_node_dir, "npm.cmd")
-                
-                if not npm_available and os.path.exists(local_npm_path):
-                    npm_available = True
-                    npm_cmd = local_npm_path
-
-                if not npm_available:
-                    self.write_log("未检测到系统 Node.js。开始下载便携版 Node.js v20 (免安装)...\n")
-                    node_url = "https://nodejs.org/dist/v20.12.2/node-v20.12.2-win-x64.zip"
-                    node_zip_path = os.path.join(PROJECT_ROOT, "node.zip")
-                    
-                    self.progress_signal.emit("正在下载 Node.js v20...", 0.82)
-                    self.download_file(node_url, node_zip_path, "Node.js Portable")
-                    
-                    self.progress_signal.emit("正在解压 Node.js...", 0.85)
-                    tools_dir = os.path.join(PROJECT_ROOT, "tools")
-                    os.makedirs(tools_dir, exist_ok=True)
-                    
-                    with zipfile.ZipFile(node_zip_path, 'r') as zip_ref:
-                        zip_ref.extractall(tools_dir)
-                    try:
-                        os.remove(node_zip_path)
-                    except Exception:
-                        pass
-                    
-                    for name in os.listdir(tools_dir):
-                        if name.startswith("node-v"):
-                            src = os.path.join(tools_dir, name)
-                            if os.path.exists(local_node_dir):
-                                shutil.rmtree(local_node_dir)
-                            os.rename(src, local_node_dir)
-                            break
-                    
-                    if os.path.exists(local_npm_path):
-                        npm_available = True
-                        npm_cmd = local_npm_path
-
-                if npm_available:
-                    self.progress_signal.emit("正在安装前端依赖包 (npm install --include=dev)...", 0.88)
-                    run_env = dict(os.environ)
-                    if os.path.exists(local_node_dir):
-                        run_env["PATH"] = local_node_dir + os.pathsep + run_env.get("PATH", "")
-                    
-                    self.run_command([npm_cmd, "install", "--include=dev"], cwd=PROJECT_ROOT, env=run_env)
-                    
-                    self.progress_signal.emit("正在编译静态资源 (npm run build)...", 0.92)
-                    self.run_command([npm_cmd, "run", "build"], cwd=PROJECT_ROOT, env=run_env)
                 else:
-                    raise Exception("未找到 Node.js/npm 编译环境，且自动下载便携版失败。无法编译前端静态界面！")
+                    self.progress_signal.emit(
+                        f"正在下载并安装完整 Node.js {NODE_INSTALL_VERSION}...",
+                        0.82,
+                    )
+                    node_exe, npm_cmd, node_version = self.install_node_runtime()
+
+                self.progress_signal.emit("正在安装前端依赖包 (npm ci --include=dev)...", 0.88)
+                run_env = dict(os.environ)
+                run_env["PATH"] = os.path.dirname(node_exe) + os.pathsep + run_env.get("PATH", "")
+                self.run_command(
+                    [npm_cmd, "ci", "--include=dev"],
+                    cwd=PROJECT_ROOT,
+                    env=run_env,
+                )
+
+                self.progress_signal.emit("正在编译静态资源 (npm run build)...", 0.92)
+                self.run_command([npm_cmd, "run", "build"], cwd=PROJECT_ROOT, env=run_env)
             else:
                 self.write_log("前端编译文件目录已存在，跳过前端编译步骤。\n")
 
@@ -678,27 +702,64 @@ class SetupWorker(QObject):
                 server_version = str(cursor.fetchone()[0])
                 cursor.execute("SHOW server_version_num")
                 server_version_num = int(cursor.fetchone()[0])
-                major_version = server_version_num // 10000
-                if major_version != 17:
-                    self.write_log(
-                        f"[警告] 当前 PostgreSQL 为 {server_version}，Docker 基线为 PostgreSQL 17；"
-                        "建议新 Windows 部署使用 PostgreSQL 17。\n"
-                    )
-
-                required_extensions = ("vector", "pg_trgm")
-                cursor.execute(
-                    "SELECT name FROM pg_available_extensions WHERE name IN (%s, %s)",
-                    required_extensions,
+            major_version = server_version_num // 10000
+            if major_version != 17:
+                self.write_log(
+                    f"[警告] 当前 PostgreSQL 为 {server_version}，Docker 基线为 PostgreSQL 17；"
+                    "建议新 Windows 部署使用 PostgreSQL 17。\n"
                 )
-                available = {row[0] for row in cursor.fetchall()}
-                unavailable = [name for name in required_extensions if name not in available]
-                if unavailable:
+
+            required_extensions = ("vector", "pg_trgm")
+
+            def available_extensions(connection):
+                with connection.cursor() as cursor:
+                    cursor.execute(
+                        "SELECT name FROM pg_available_extensions WHERE name IN (%s, %s)",
+                        required_extensions,
+                    )
+                    return {row[0] for row in cursor.fetchall()}
+
+            available = available_extensions(target_conn)
+            unavailable = [name for name in required_extensions if name not in available]
+            if "vector" in unavailable:
+                is_local = str(host).lower() in ("127.0.0.1", "localhost", "::1")
+                if not is_local:
                     missing = ", ".join(unavailable)
                     raise RuntimeError(
-                        f"PostgreSQL 缺少扩展 {missing}。请安装与 PostgreSQL {major_version} 匹配的 "
-                        "pgvector，并确认 pg_trgm/contrib 可用后重试。"
+                        f"远程 PostgreSQL 缺少扩展 {missing}。Windows 向导不会修改远程服务器；"
+                        f"请在 PostgreSQL {major_version} 服务器安装匹配的 pgvector 后重试。"
+                    )
+                if major_version == 17 and server_version_num < 170300:
+                    raise RuntimeError(
+                        f"当前 PostgreSQL 为 {server_version}。pgvector Windows 二进制要求 "
+                        "PostgreSQL 17.3 或更高版本；请先升级 PostgreSQL，再重新运行向导。"
+                    )
+                if sys.platform != "win32":
+                    raise RuntimeError(
+                        "当前 PostgreSQL 缺少 vector 扩展；自动安装 Windows pgvector 仅适用于 Windows。"
                     )
 
+                self.progress_signal.emit("正在自动安装匹配的 Windows pgvector 扩展...", 0.80)
+                target_conn.close()
+                target_conn = None
+                install_pgvector_windows(
+                    major_version,
+                    project_root=PROJECT_ROOT,
+                    download_file=self.download_file,
+                    log=self.write_log,
+                )
+                target_conn = connect(db_name)
+                available = available_extensions(target_conn)
+                unavailable = [name for name in required_extensions if name not in available]
+
+            if unavailable:
+                missing = ", ".join(unavailable)
+                raise RuntimeError(
+                    f"PostgreSQL 缺少扩展 {missing}。请安装与 PostgreSQL {major_version} 匹配的 "
+                    "扩展，并确认 pg_trgm/contrib 可用后重试。"
+                )
+
+            with target_conn.cursor() as cursor:
                 cursor.execute(
                     "SELECT extname FROM pg_extension WHERE extname IN (%s, %s)",
                     required_extensions,
@@ -816,6 +877,137 @@ class SetupWorker(QObject):
                 return exe
 
         return None
+
+    def _node_version(self, executable):
+        """Return the installed Node.js version tuple, or None on failure."""
+        try:
+            result = subprocess.run(
+                [executable, "--version"],
+                capture_output=True,
+                text=True,
+                timeout=8,
+                creationflags=0x08000000,
+                shell=False,
+            )
+            if result.returncode != 0:
+                return None
+            value = result.stdout.strip().lstrip("vV")
+            parts = value.split(".")
+            if len(parts) < 2:
+                return None
+            parts.extend(["0"] * (3 - len(parts)))
+            return tuple(int(part) for part in parts[:3])
+        except (OSError, ValueError, subprocess.SubprocessError):
+            return None
+
+    def find_compatible_node(self):
+        """Find a full Node.js installation compatible with the CI runtime."""
+        candidates = []
+        for command in ("node.exe", "node"):
+            resolved = shutil.which(command)
+            if resolved:
+                candidates.append(resolved)
+
+        program_files = os.environ.get("ProgramFiles", r"C:\Program Files")
+        local_app_data = os.environ.get("LOCALAPPDATA", "")
+        candidates.extend(
+            [
+                os.path.join(program_files, "nodejs", "node.exe"),
+                os.path.join(local_app_data, "Programs", "nodejs", "node.exe"),
+            ]
+        )
+
+        seen = set()
+        for executable in candidates:
+            if not executable:
+                continue
+            normalized = os.path.normcase(os.path.abspath(executable))
+            if normalized in seen:
+                continue
+            seen.add(normalized)
+            version = self._node_version(executable)
+            if not version or version[0] < NODE_MIN_MAJOR:
+                continue
+
+            npm_candidates = [
+                os.path.join(os.path.dirname(executable), "npm.cmd"),
+                shutil.which("npm.cmd") or "",
+                shutil.which("npm") or "",
+            ]
+            npm = next((candidate for candidate in npm_candidates if candidate and os.path.exists(candidate)), None)
+            if npm:
+                return executable, npm, version
+        return None
+
+    def refresh_windows_path(self):
+        """Refresh PATH after a system-wide MSI installation."""
+        values = []
+        for hive, key_path in (
+            (winreg.HKEY_CURRENT_USER, r"Environment"),
+            (winreg.HKEY_LOCAL_MACHINE, r"SYSTEM\CurrentControlSet\Control\Session Manager\Environment"),
+        ):
+            try:
+                with winreg.OpenKey(hive, key_path) as key:
+                    value = winreg.QueryValueEx(key, "Path")[0]
+                    if value:
+                        values.append(str(value))
+            except OSError:
+                pass
+        if values:
+            current_path = os.environ.get("PATH", "")
+            for path_value in (current_path,):
+                if path_value and path_value not in values:
+                    values.append(path_value)
+            os.environ["PATH"] = os.pathsep.join(values)
+
+    def install_node_runtime(self):
+        """Install the full official Node.js MSI used by the CI/build contract."""
+        temporary_root = tempfile.mkdtemp(prefix="nexora-node-")
+        msi_path = os.path.join(temporary_root, f"node-v{NODE_INSTALL_VERSION}-x64.msi")
+        try:
+            self.write_log(
+                f"未检测到兼容的完整 Node.js，开始下载官方 Node.js {NODE_INSTALL_VERSION} MSI...\n"
+            )
+            self.download_file(
+                NODE_INSTALL_URL,
+                msi_path,
+                f"Node.js {NODE_INSTALL_VERSION} MSI",
+            )
+            actual_sha256 = sha256_file(msi_path)
+            if actual_sha256.lower() != NODE_INSTALL_SHA256:
+                raise RuntimeError(
+                    f"Node.js MSI 校验失败：期望 SHA-256 {NODE_INSTALL_SHA256}，实际 {actual_sha256}。"
+                )
+
+            msiexec = os.path.join(
+                os.environ.get("WINDIR", r"C:\Windows"),
+                "System32",
+                "msiexec.exe",
+            )
+            if not os.path.isfile(msiexec):
+                msiexec = "msiexec.exe"
+            self.progress_signal.emit(
+                "正在安装完整 Node.js（请在 UAC 提权提示中允许运行）...",
+                0.82,
+            )
+            self.run_elevated(
+                msiexec,
+                ["/i", msi_path, "/qn", "/norestart", "ALLUSERS=1"],
+                f"Node.js {NODE_INSTALL_VERSION} MSI",
+            )
+            self.refresh_windows_path()
+            installed = self.find_compatible_node()
+            if not installed:
+                raise RuntimeError(
+                    f"Node.js {NODE_INSTALL_VERSION} 安装完成后仍无法定位 node/npm，请重新打开向导重试。"
+                )
+            self.write_log(
+                f"完整 Node.js 安装完成：{installed[2][0]}.{installed[2][1]}.{installed[2][2]}，"
+                f"npm={installed[1]}\n"
+            )
+            return installed
+        finally:
+            shutil.rmtree(temporary_root, ignore_errors=True)
 
     def verify_venv(self, venv_path):
         python_exe = os.path.join(venv_path, "Scripts", "python.exe")

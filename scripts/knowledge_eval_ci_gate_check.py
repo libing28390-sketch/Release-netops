@@ -22,8 +22,12 @@ FRONTEND_WORKFLOW_PATH = ROOT / ".github" / "workflows" / "frontend-build-check.
 RELEASE_WORKFLOW_PATH = ROOT / ".github" / "workflows" / "release.yml"
 PROMPTFOO_WORKFLOW_PATH = ROOT / ".github" / "workflows" / "knowledge-engine-promptfoo.yml"
 POSTGRES_ACTION_PATH = ROOT / ".github" / "actions" / "postgres" / "action.yml"
+WINDOWS_LAUNCHER_PATH = ROOT / "desktop" / "launcher.py"
+WINDOWS_PGVECTOR_PATH = ROOT / "desktop" / "pgvector_windows.py"
 REPORT_PATH = ROOT / "docs" / "knowledge-engine" / "eval" / "eval-ci-gate-v1.manifest.json"
 CI_NODE_VERSION = "22.22.2"
+WINDOWS_PGVECTOR_VERSION = "0.8.6"
+WINDOWS_NODE_INSTALL_SHA256 = "57456aa33fcd6fb6a9418e09227de0b0ca604f7b2123566acc66b555cb2f42e5"
 
 
 def _read(path: Path) -> str:
@@ -48,6 +52,8 @@ def validate_ci_gate() -> dict[str, Any]:
     release_ci = _read(RELEASE_WORKFLOW_PATH)
     promptfoo_ci = _read(PROMPTFOO_WORKFLOW_PATH)
     postgres_action = _read(POSTGRES_ACTION_PATH)
+    windows_launcher = _read(WINDOWS_LAUNCHER_PATH)
+    windows_pgvector = _read(WINDOWS_PGVECTOR_PATH)
 
     for label, text in (("EVAL-010 workflow", small_ci), ("backend workflow", backend_ci)):
         _require(text, "DATABASE_URL: postgresql://", label)
@@ -61,6 +67,14 @@ def validate_ci_gate() -> dict[str, Any]:
 
     _require(postgres_action, "docker/postgres/Dockerfile", "PostgreSQL CI action")
     _require(postgres_action, "pg_available_extensions", "PostgreSQL CI action")
+    _require(windows_pgvector, f"PGVECTOR_WINDOWS_VERSION = \"{WINDOWS_PGVECTOR_VERSION}\"", "Windows pgvector installer")
+    _require(windows_pgvector, "vector.v0.8.6-pg17.zip", "Windows pgvector installer")
+    _require(windows_pgvector, "420388e9e9f05d92f06d6967ce8772483629b27a66ca9255925fa0fdd445438e", "Windows pgvector installer")
+    _require(windows_launcher, "install_pgvector_windows", "Windows deployment wizard")
+    _require(windows_launcher, "node-v22.22.2-x64.msi", "Windows deployment wizard")
+    _require(windows_launcher, WINDOWS_NODE_INSTALL_SHA256, "Windows Node.js installer")
+    _require(windows_launcher, "npm ci --include=dev", "Windows deployment wizard")
+    _require(windows_launcher, "POSTGRES_INSTALL_VERSION = \"17.6\"", "Windows deployment wizard")
     _require(dockerfile, f"FROM node:{CI_NODE_VERSION}-alpine AS frontend-build", "Docker frontend build runtime")
     _require(small_ci, "pgvector", "EVAL-010 PostgreSQL service")
     _require(small_ci, "--profile small", "EVAL-010 workflow")
@@ -78,6 +92,8 @@ def validate_ci_gate() -> dict[str, Any]:
     _require(release_ci, "ai_rag_release_config_check.py", "release-safe configuration gate")
     _require(release_ci, f'node-version: "{CI_NODE_VERSION}"', "release frontend runtime")
     _require(release_ci, "npm run test:frontend -- --run", "release frontend regression gate")
+    _require(release_ci, "Bundle PostgreSQL 17 pgvector runtime for Windows", "Windows release packaging")
+    _require(release_ci, "third_party/pgvector/vector.v0.8.6-pg17.zip", "Windows release packaging")
     _require(promptfoo_ci, f'node-version: "{CI_NODE_VERSION}"', "Promptfoo workflow")
     _require(promptfoo_ci, 'PROMPTFOO_VERSION: "0.118.0"', "Promptfoo workflow")
     _require(promptfoo_ci, "ai_rag_release_config_check.py", "Promptfoo release-safe configuration gate")
@@ -94,6 +110,8 @@ def validate_ci_gate() -> dict[str, Any]:
         "database_contract": "postgresql_only",
         "postgres_ci_image": "repository_dockerfile_with_pgvector_and_pg_trgm",
         "ci_node_version": CI_NODE_VERSION,
+        "windows_pgvector_version": WINDOWS_PGVECTOR_VERSION,
+        "windows_node_install": "official_msi",
         "external_network": "not_used_by_offline_runner",
         "production_write": False,
         "workflow_sha256": {

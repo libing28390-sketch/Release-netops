@@ -233,6 +233,21 @@ jobs:
       - name: Checkout source repository
         uses: actions/checkout@v4
 
+      - name: Bundle PostgreSQL 17 pgvector runtime for Windows
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = "Stop"
+          $destination = Join-Path $PWD "third_party\pgvector\vector.v0.8.6-pg17.zip"
+          New-Item -ItemType Directory -Path (Split-Path -Parent $destination) -Force | Out-Null
+          $url = "https://github.com/andreiramani/pgvector_pgsql_windows/releases/download/0.8.6_17/vector.v0.8.6-pg17.zip"
+          Invoke-WebRequest -Uri $url -OutFile $destination
+          $expected = "420388e9e9f05d92f06d6967ce8772483629b27a66ca9255925fa0fdd445438e"
+          $actual = (Get-FileHash -Algorithm SHA256 -LiteralPath $destination).Hash.ToLowerInvariant()
+          if ($actual -ne $expected) {
+            throw "pgvector Windows asset digest mismatch. Expected $expected, got $actual."
+          }
+          Write-Host "Bundled verified pgvector asset: $destination"
+
       - name: Set up Python
         uses: actions/setup-python@v5
         with:
@@ -315,7 +330,7 @@ jobs:
           git init
           git add .
 
-          required=(.env.example package.json package-lock.json backend/requirements.txt backend/main.py release-textfsm-templates desktop/launcher.py desktop/desktop_tray.py desktop/update_service.py NetOps.exe NexoraTerminalAgent.exe start.bat src)
+          required=(.env.example package.json package-lock.json backend/requirements.txt backend/main.py release-textfsm-templates third_party/pgvector/README.md third_party/pgvector/vector.v0.8.6-pg17.zip desktop/launcher.py desktop/desktop_tray.py desktop/update_service.py NetOps.exe NexoraTerminalAgent.exe start.bat src)
           for path in "${required[@]}"; do
             test -n "$(git ls-files -- "$path" | head -n 1)" || { echo "[FAIL] Required Windows release path missing: $path"; exit 1; }
           done

@@ -2,26 +2,28 @@
 
 适合 Windows x64 本地部署。产品界面、托盘和向导统一使用 **Nexora** 品牌；现有 Windows 发布包仍使用 `NetOps.exe` 作为兼容启动文件名，`start.bat` 也会继续识别它。
 
-Windows 客户端不需要预装 Docker。向导可以准备 Python、Python 依赖和前端构建工具，但当前 AI 数据库迁移依赖的 PostgreSQL 扩展和业务数据库需要提前准备或手工确认。
+Windows 客户端不需要预装 Docker。向导会准备 Python、完整 Node.js、Python 依赖和前端构建工具；本机 PostgreSQL 缺少 `pgvector` 时，还会自动下载匹配版本的预编译扩展、请求 UAC 管理员权限完成安装并重启 PostgreSQL 服务。
 
 ## 新机器要求
 
 - Windows 10/11 64 位。
 - 将发布目录放在当前用户可写的位置，例如 `C:\Nexora`，不要直接放到受限的 `Program Files` 目录。
 - 首次部署需要网络访问 Python、Node.js、PyPI 和 PostgreSQL 下载地址，并允许 PostgreSQL 安装时的 UAC 提权。
-- PostgreSQL 17.x（推荐与当前 Windows 向导一致的 17.2）。
-- 与 PostgreSQL 17 匹配的 `pgvector`，以及 `pg_trgm` 扩展。
+- PostgreSQL 17.x（新安装由向导使用 PostgreSQL 17.6；已有 PostgreSQL 13–18 也可被识别）。
+- 本机 PostgreSQL 不要求预先手工安装 `pgvector`；向导会按 PostgreSQL 主版本自动处理 `pgvector 0.8.6`，并检查 `pg_trgm`。
 - 一个已创建的业务数据库（默认名称 `netops`）和可登录账号，或一个有 `CREATEDB` 权限、可以连接维护库 `postgres` 的账号。
 
 Python 和 Node.js 可以由向导自动处理：
 
 - Python：复用 3.10–3.12；没有兼容版本时下载 3.11.9。
-- Node.js：仅在前端 `dist/` 不存在时使用系统 Node.js 20+，否则下载便携版 Node.js 20.12.2。
+- Node.js：仅在前端 `dist/` 不存在时复用系统 Node.js 22+；没有兼容版本时，向导会安装完整的官方 Node.js 22.22.2 x64 MSI，不再使用便携版 ZIP。
 - Python 后端依赖以及 PySide6、Pillow、pystray 会安装到项目的 `.venv`，不会写入系统 Python 环境。
 
 ## PostgreSQL 初始化
 
-当前向导安装的是普通 PostgreSQL 17.2，不会自动安装 `pgvector`。它会真实登录目标库；目标库不存在时，会在账号有 `CREATEDB` 权限且能连接维护库 `postgres` 的情况下创建目标库；扩展文件可用时会尝试创建 `vector` 和 `pg_trgm`，否则会阻止部署并给出错误。
+当前向导新装的是 PostgreSQL 17.6，并会在本机 PostgreSQL 缺少 `vector` 时自动下载与主版本匹配的 `pgvector 0.8.6` Windows 资产。向导会在下载后校验固定 SHA-256，使用 UAC 管理员权限将 `vector.dll`、`vector.control` 和全部 `vector--*.sql` 复制到 PostgreSQL 安装目录，并重启对应服务。目标库不存在时，会在账号有 `CREATEDB` 权限且能连接维护库 `postgres` 的情况下创建目标库，然后自动创建 `vector` 和 `pg_trgm`。
+
+Windows Release ZIP 会预置 PostgreSQL 17 的 pgvector 资产；如果是源码目录或使用单独的 `NetOps.exe`，向导会按 PostgreSQL 主版本从固定的 GitHub Release 地址下载。PostgreSQL 17.0–17.2 不适合当前 Windows pgvector 二进制，应先升级到 17.3 或更高版本；新装流程默认使用 17.6。
 
 在 PostgreSQL 17 中按实际账号执行以下操作（可以使用 pgAdmin 或 `psql`）：
 
@@ -63,7 +65,7 @@ ORDER BY name;
    git clone -b windows https://gitee.com/leerbon/netops.git nexora-automation
    ```
 
-2. 确认 PostgreSQL 服务已运行，并安装与 PG17 匹配的 pgvector；`pg_trgm` 文件应随 PostgreSQL contrib 可用。向导会验证并尝试创建数据库扩展。
+2. 如果是本机 PostgreSQL，直接继续即可：向导会检查服务，必要时安装 PostgreSQL 17.6，并自动安装匹配的 pgvector；如果是远程 PostgreSQL，请先由数据库管理员准备 `vector` 和 `pg_trgm`。
 3. 双击根目录的 `NetOps.exe`，或运行 `start.bat`。
 4. 在向导中选择 PostgreSQL，填写主机、端口、用户名、密码和数据库名。默认本机参数是 `127.0.0.1:5432 / netops`。
 5. 向导会创建 `.venv`、安装依赖；如果 `dist/` 不存在，还会安装前端依赖并执行构建。
@@ -74,7 +76,7 @@ ORDER BY name;
 
 ## 远程 PostgreSQL
 
-如果 Windows 只运行客户端、数据库在 Docker 或 Linux 服务器上，请在向导中填写远程 PostgreSQL 地址。向导检测到远程主机时不会在本机安装 PostgreSQL，但远程数据库仍必须具备 PostgreSQL 17、`vector`、`pg_trgm`，并已创建目标数据库。
+如果 Windows 只运行客户端、数据库在 Docker 或 Linux 服务器上，请在向导中填写远程 PostgreSQL 地址。向导检测到远程主机时不会在本机安装或修改 PostgreSQL；远程数据库仍必须具备受支持的 PostgreSQL、`vector`、`pg_trgm`，并已创建目标数据库。若扩展缺失，向导会明确提示数据库管理员处理。
 
 ## 验收检查
 
