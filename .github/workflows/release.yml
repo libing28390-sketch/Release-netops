@@ -81,7 +81,7 @@ jobs:
           python -m pytest -q backend/tests -k "ai or knowledge" --tb=short
           python -m pytest -q backend/tests --tb=short
           python scripts/validate_postgresql_only.py
-          python -c "from database import init_db; init_db()"
+          python scripts/knowledge_eval_bootstrap.py
           python scripts/knowledge_eval_anchors_50_runner.py
           python scripts/knowledge_eval_anchor_review_check.py --database
           python scripts/knowledge_eval_gold_400_check.py

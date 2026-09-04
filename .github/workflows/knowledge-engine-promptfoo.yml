@@ -91,9 +91,9 @@ jobs:
           npm install --global --ignore-scripts --no-audit --no-fund "promptfoo@${PROMPTFOO_VERSION}"
           test "$(promptfoo --version | tr -d '[:space:]')" = "${PROMPTFOO_VERSION}"
 
-      - name: Initialize isolated PostgreSQL schema
+      - name: Bootstrap isolated PostgreSQL Knowledge Engine corpus
         shell: bash
-        run: python -c "from database import init_db; init_db()"
+        run: python scripts/knowledge_eval_bootstrap.py
 
       - name: Validate release-safe AI/RAG configuration
         shell: bash

@@ -11,6 +11,7 @@ from __future__ import annotations
 import json
 import uuid
 from datetime import datetime, timezone
+from urllib.parse import unquote, urlparse
 
 import pytest
 
@@ -92,7 +93,14 @@ def _postgres_schema_template():
         # CREATE DATABASE ... TEMPLATE requires the source database to have no
         # active sessions.  Clone only after the complete migration history has
         # been committed; every isolated test then starts from the same schema.
-        template = create_test_database(source_url, purpose="schema_template")
+        source_name = unquote(urlparse(source_url).path.lstrip("/"))
+        if not source_name:
+            pytest.fail("Backend tests require a named PostgreSQL DATABASE_URL database")
+        template = create_test_database(
+            source_url,
+            purpose="schema_template",
+            template_name=source_name,
+        )
         yield template
     finally:
         close_temporary_test_connections()

@@ -73,8 +73,8 @@ jobs:
           pip install -r backend/requirements.txt
           pip install pytest
 
-      - name: Initialize isolated PostgreSQL application schema
-        run: python -c "from database import init_db; init_db()"
+      - name: Bootstrap isolated PostgreSQL Knowledge Engine corpus
+        run: python scripts/knowledge_eval_bootstrap.py
 
       - name: Validate PostgreSQL-only gate wiring
         run: |

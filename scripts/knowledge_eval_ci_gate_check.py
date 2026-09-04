@@ -22,6 +22,7 @@ FRONTEND_WORKFLOW_PATH = ROOT / ".github" / "workflows" / "frontend-build-check.
 RELEASE_WORKFLOW_PATH = ROOT / ".github" / "workflows" / "release.yml"
 PROMPTFOO_WORKFLOW_PATH = ROOT / ".github" / "workflows" / "knowledge-engine-promptfoo.yml"
 POSTGRES_ACTION_PATH = ROOT / ".github" / "actions" / "postgres" / "action.yml"
+BOOTSTRAP_PATH = ROOT / "scripts" / "knowledge_eval_bootstrap.py"
 WINDOWS_LAUNCHER_PATH = ROOT / "desktop" / "launcher.py"
 WINDOWS_PGVECTOR_PATH = ROOT / "desktop" / "pgvector_windows.py"
 REPORT_PATH = ROOT / "docs" / "knowledge-engine" / "eval" / "eval-ci-gate-v1.manifest.json"
@@ -52,6 +53,7 @@ def validate_ci_gate() -> dict[str, Any]:
     release_ci = _read(RELEASE_WORKFLOW_PATH)
     promptfoo_ci = _read(PROMPTFOO_WORKFLOW_PATH)
     postgres_action = _read(POSTGRES_ACTION_PATH)
+    bootstrap = _read(BOOTSTRAP_PATH)
     windows_launcher = _read(WINDOWS_LAUNCHER_PATH)
     windows_pgvector = _read(WINDOWS_PGVECTOR_PATH)
 
@@ -64,6 +66,26 @@ def validate_ci_gate() -> dict[str, Any]:
         _require(text, "DATABASE_URL: postgresql://", label)
         _require(text, "uses: ./.github/actions/postgres", label)
         _forbid(text, "image: postgres:16", label)
+
+    for label, text in (
+        ("EVAL-010 workflow", small_ci),
+        ("release workflow", release_ci),
+        ("Promptfoo workflow", promptfoo_ci),
+    ):
+        _require(text, "scripts/knowledge_eval_bootstrap.py", label)
+
+    _require(bootstrap, "init_db()", "Knowledge Engine PostgreSQL bootstrap")
+    _require(
+        bootstrap,
+        "project_official_templates_to_knowledge",
+        "Knowledge Engine PostgreSQL bootstrap",
+    )
+    _require(
+        bootstrap,
+        "ensure_official_product_registry_documents",
+        "Knowledge Engine PostgreSQL bootstrap",
+    )
+    _require(bootstrap, "pg_extension", "Knowledge Engine PostgreSQL bootstrap")
 
     _require(postgres_action, "docker/postgres/Dockerfile", "PostgreSQL CI action")
     _require(postgres_action, "pg_available_extensions", "PostgreSQL CI action")
