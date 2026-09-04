@@ -11,15 +11,23 @@ from __future__ import annotations
 
 import json
 import statistics
+import sys
 import time
+from pathlib import Path
 from typing import Any
 
 import yaml
 
+# Keep the acceptance runner executable both from the repository root and
+# from CI shells that do not pre-populate PYTHONPATH.
+ROOT = Path(__file__).resolve().parents[1]
+BACKEND_ROOT = ROOT / "backend"
+if str(BACKEND_ROOT) not in sys.path:
+    sys.path.insert(0, str(BACKEND_ROOT))
+
 from database.core import _USE_PG, get_db_connection
 
 
-ROOT = __import__("pathlib").Path(__file__).resolve().parents[1]
 CASE_FILE = ROOT / "docs" / "knowledge-engine" / "eval" / "v1-baseline-cases.yaml"
 
 

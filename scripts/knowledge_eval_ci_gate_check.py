@@ -18,6 +18,7 @@ ROOT = Path(__file__).resolve().parents[1]
 WORKFLOW_PATH = ROOT / ".github" / "workflows" / "knowledge-engine-eval.yml"
 BACKEND_WORKFLOW_PATH = ROOT / ".github" / "workflows" / "backend-pytest-check.yml"
 RELEASE_WORKFLOW_PATH = ROOT / ".github" / "workflows" / "release.yml"
+PROMPTFOO_WORKFLOW_PATH = ROOT / ".github" / "workflows" / "knowledge-engine-promptfoo.yml"
 REPORT_PATH = ROOT / "docs" / "knowledge-engine" / "eval" / "eval-ci-gate-v1.manifest.json"
 
 
@@ -35,6 +36,7 @@ def validate_ci_gate() -> dict[str, Any]:
     small_ci = _read(WORKFLOW_PATH)
     backend_ci = _read(BACKEND_WORKFLOW_PATH)
     release_ci = _read(RELEASE_WORKFLOW_PATH)
+    promptfoo_ci = _read(PROMPTFOO_WORKFLOW_PATH)
 
     for label, text in (("EVAL-010 workflow", small_ci), ("backend workflow", backend_ci)):
         _require(text, "DATABASE_URL: postgresql://", label)
@@ -44,10 +46,21 @@ def validate_ci_gate() -> dict[str, Any]:
     _require(small_ci, "--profile small", "EVAL-010 workflow")
     _require(small_ci, "--strict", "EVAL-010 workflow")
     _require(small_ci, "knowledge_eval_ci_gate_check.py", "EVAL-010 workflow")
+    _require(small_ci, "ai_rag_release_config_check.py", "release-safe configuration gate")
+    _require(small_ci, "knowledge_eval_anchors_50_runner.py", "deterministic anchor quality gate")
+    _require(small_ci, "knowledge_eval_gold_400_check.py", "400-case dataset readiness gate")
     _require(release_ci, "--profile full", "release workflow")
     _require(release_ci, "--strict", "release workflow")
     _require(release_ci, "knowledge_eval_offline.py", "release workflow")
+    _require(release_ci, "knowledge_eval_anchors_50_runner.py", "release deterministic quality gate")
+    _require(release_ci, "knowledge_eval_gold_400_check.py", "release 400-case dataset gate")
     _require(release_ci, "DATABASE_URL: postgresql://", "release workflow")
+    _require(release_ci, "ai_rag_release_config_check.py", "release-safe configuration gate")
+    _require(release_ci, "node-version: '20.11.1'", "release frontend runtime")
+    _require(release_ci, "npm run test:frontend -- --run", "release frontend regression gate")
+    _require(promptfoo_ci, 'node-version: "20.11.1"', "Promptfoo workflow")
+    _require(promptfoo_ci, 'PROMPTFOO_VERSION: "0.118.0"', "Promptfoo workflow")
+    _require(promptfoo_ci, "ai_rag_release_config_check.py", "Promptfoo release-safe configuration gate")
 
     output: dict[str, Any] = {
         "status": "PASS",
@@ -63,6 +76,7 @@ def validate_ci_gate() -> dict[str, Any]:
             "knowledge_engine_eval": hashlib.sha256(small_ci.encode("utf-8")).hexdigest(),
             "backend_pytest": hashlib.sha256(backend_ci.encode("utf-8")).hexdigest(),
             "release": hashlib.sha256(release_ci.encode("utf-8")).hexdigest(),
+            "promptfoo": hashlib.sha256(promptfoo_ci.encode("utf-8")).hexdigest(),
         },
     }
     REPORT_PATH.write_text(json.dumps(output, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")

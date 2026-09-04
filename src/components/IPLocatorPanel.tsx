@@ -17,6 +17,14 @@ interface LocationEntry {
   uplink_port?: string;
 }
 
+interface TraceHop {
+  switch_id?: string;
+  switch_name?: string;
+  port?: string;
+  is_aggregation?: boolean;
+  is_trunk?: boolean;
+}
+
 interface LocateResult {
   target_ip: string;
   found: boolean;
@@ -27,6 +35,8 @@ interface LocateResult {
   searched_devices: { arp: string[]; mac: string[]; lldp: string[] };
   timestamp: string;
   errors: string[];
+  trace_status?: string;
+  trace_hops?: TraceHop[];
 }
 
 const IPLocatorPanel: React.FC<IPLocatorProps> = ({ language }) => {
@@ -222,6 +232,34 @@ const IPLocatorPanel: React.FC<IPLocatorProps> = ({ language }) => {
                     </div>
                   </div>
                 )}
+              </div>
+            </div>
+          ) : result.trace_status === 'incomplete' ? (
+            <div className="bg-amber-50 border border-amber-200 rounded-xl px-4 py-3">
+              <div className="flex items-start gap-2.5">
+                <AlertCircle size={16} className="text-amber-500 mt-0.5 flex-shrink-0" />
+                <div className="min-w-0">
+                  <p className="text-sm font-medium text-amber-800">{zh ? '链路追踪未完成' : 'Path Trace Incomplete'}</p>
+                  <p className="text-xs text-amber-600 mt-0.5">
+                    {zh ? 'MAC 已从 ARP 获取，但当前路径证据不足，未判定中间接口为主机端口。' : 'The MAC was resolved from ARP, but the path evidence is incomplete, so an intermediate interface is not marked as a host port.'}
+                  </p>
+                  {result.errors?.map((err, i) => (
+                    <p key={i} className="text-xs text-amber-600 mt-1">{err}</p>
+                  ))}
+                  {(result.trace_hops?.length ?? 0) > 0 && (
+                    <div className="mt-2 flex flex-wrap items-center gap-1 text-[10px] text-amber-800">
+                      {result.trace_hops?.map((hop, i) => (
+                        <React.Fragment key={`${hop.switch_id || hop.switch_name}-${hop.port}-${i}`}>
+                          {i > 0 && <ArrowRight size={10} className="text-amber-400" />}
+                          <span className="rounded bg-white/70 px-1.5 py-0.5 font-mono">
+                            {hop.switch_name || hop.switch_id || '-'}:{hop.port || '-'}
+                            {hop.is_aggregation ? ' · LAG' : hop.is_trunk ? ' · Trunk' : ''}
+                          </span>
+                        </React.Fragment>
+                      ))}
+                    </div>
+                  )}
+                </div>
               </div>
             </div>
           ) : !result.found ? (

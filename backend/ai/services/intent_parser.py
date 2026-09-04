@@ -31,9 +31,12 @@ logger = logging.getLogger(__name__)
 
 
 _ASSET_ANALYSIS_AGGREGATION_MARKERS = (
-    "\u7edf\u8ba1", "\u5206\u5e03", "\u5360\u6bd4", "\u805a\u5408", "\u6c47\u603b",
+    # Bare "聚合" is also the standard Chinese name for link aggregation
+    # (LACP/Bridge-Aggregation).  Treating it as an inventory aggregation
+    # marker routes configuration questions into the CMDB report path.
+    "\u7edf\u8ba1", "\u5206\u5e03", "\u5360\u6bd4", "\u6c47\u603b",
     "\u6982\u89c8", "\u5206\u6790", "\u6458\u8981", "\u6e05\u5355", "\u7eb3\u7ba1",
-    "\u591a\u5c11\u53f0", "\u51e0\u53f0", "\u6570\u91cf", "aggregation", "breakdown", "distribution", "inventory overview",
+    "\u591a\u5c11\u53f0", "\u51e0\u53f0", "\u6570\u91cf", "asset aggregation", "inventory breakdown", "distribution", "inventory overview",
     "how many", "count",
 )
 
@@ -173,6 +176,20 @@ def is_asset_analysis_query(query: str) -> bool:
     if not normalized:
         return False
 
+    # A configuration/knowledge request can mention both ``设备`` and two
+    # inventory dimensions incidentally.  For example, ``H3C S6850 接入口``
+    # contains the asset-scope word from ``不要执行设备操作`` plus the role and
+    # type words ``接入``/``交换机``.  Do not let those incidental words route a
+    # feature-scoped RAG request into the deterministic CMDB report path.
+    configuration_markers = (
+        "本地知识库", "知识库", "配置", "命令", "回滚", "验证命令",
+        "configuration", "config", "cli", "access-port", "access port",
+        "接入口", "接入端口", "链路聚合", "lacp", "ospf", "vlan", "bgp",
+        "hsrp", "vrrp", "vxlan", "evpn", "acl", "trunk", "lldp",
+    )
+    if any(marker in normalized for marker in configuration_markers):
+        return False
+
     inventory_markers = ("\u8bbe\u5907", "\u8d44\u4ea7", "cmdb", "\u7eb3\u7ba1")
     has_inventory_scope = any(marker in normalized for marker in inventory_markers)
     has_aggregation = any(marker in normalized for marker in _ASSET_ANALYSIS_AGGREGATION_MARKERS)
@@ -191,7 +208,7 @@ def extract_asset_filters(query: str) -> Dict[str, str]:
     vendor_aliases = {
         "huawei": ("huawei", "\u534e\u4e3a"),
         "cisco": ("cisco", "\u601d\u79d1"),
-        "h3c": ("h3c",),
+        "h3c": ("h3c", "\u65b0\u534e\u4e09", "\u534e\u4e09"),
         "juniper": ("juniper",),
     }
     for canonical, aliases in vendor_aliases.items():
@@ -258,10 +275,16 @@ class IntentParser:
         "loopback": ("loopback", "环回接口", "环回口"),
         "ntp": ("ntp", "网络时间协议"),
         "snmp": ("snmp", "snmpv3", "简单网络管理协议"),
+        "hsrp": ("hsrp", "hot standby router protocol", "热备份路由器协议"),
         "vrrp": ("vrrp", "虚拟路由器冗余"),
         "vxlan": ("vxlan",),
         "evpn": ("evpn",),
-        "acl": ("acl", "访问控制列表"),
+        # H3C/Comware commonly names the interface binding command
+        # ``packet-filter``.  It is an ACL query signal, not a separate
+        # feature; keeping the alias here lets the metadata hard filter select
+        # the reviewed ACL corpus instead of ranking unrelated management
+        # templates by vector similarity.
+        "acl": ("acl", "packet-filter", "traffic-filter", "access-list", "访问控制列表"),
         "static_route": ("static route", "static-route", "static routing", "静态路由", "ip route-static"),
         "ssh": ("ssh", "stelnet", "secure shell", "安全登录"),
         "lldp": ("lldp", "链路层发现"),
@@ -299,13 +322,19 @@ class IntentParser:
                 token = exact.group(0)
                 return series, (None if token == prefix else token)
         catalyst_match = re.search(
-            r"(?<![A-Z0-9])(?:CATALYST\s*)?C?(9200|9300|9400|9500|9600)(?:[A-Z0-9-]*)?(?![A-Z0-9])",
+            r"(?<![A-Z0-9])(?:CATALYST\s*)?C?(3850|9200|9300|9400|9500|9600)(?:[A-Z0-9-]*)?(?![A-Z0-9])",
             upper,
         )
         if catalyst_match:
             number = catalyst_match.group(1)
             series = f"Catalyst {number}"
             token = catalyst_match.group(0).replace(" ", "")
+            # ``Cisco 9300`` is a common shorthand for the reviewed C9300
+            # family.  Keep the canonical model token so the RAG hard filter
+            # can match C9300 applicability metadata instead of querying the
+            # impossible literal model ``9300``.
+            if token == number:
+                token = f"C{number}"
             return series, (None if token in {f"C{number}", f"CATALYST{number}"} else token)
         nexus_sku = re.search(r"(?<![A-Z0-9])N([39])K-[A-Z0-9-]+(?![A-Z0-9])", upper)
         if nexus_sku:
@@ -403,19 +432,94 @@ class IntentParser:
         explicit_platforms = (
             ("huawei_yunshan_v600", ("huawei_yunshan_v600", "yunshan v600", "yunshan os v600")),
             ("huawei_yunshan_v300", ("huawei_yunshan_v300", "yunshan v300", "yunshan os v300")),
-            ("huawei_vrp5_v200", ("huawei_vrp5_v200", "vrp5 v200", "vrp v200")),
+            # The importer stores VRP V200 applicability as
+            # ``huawei_vrp_v200``. Keep the legacy VRP5 wording as a query
+            # alias, but emit the same version-qualified taxonomy used by the
+            # reviewed document metadata.
+            ("huawei_vrp_v200", ("huawei_vrp_v200", "huawei_vrp5_v200", "vrp5 v200", "vrp v200")),
         )
+        if result.get("vendor") == "H3C":
+            explicit_platforms += (
+                (
+                    "h3c_comware",
+                    (
+                        "h3c_comware",
+                        "h3c comware",
+                        "comware v5",
+                        "comware 5",
+                        "comware v7",
+                        "comware 7",
+                        "comware v9",
+                        "comware 9",
+                    ),
+                ),
+            )
+        elif result.get("vendor") == "Cisco":
+            # Cisco's IOS XE and NX-OS labels are explicit CLI/platform
+            # evidence.  Keep the mapping vendor-scoped so a generic
+            # ``ios`` token cannot silently select a Cisco driver or
+            # broaden a non-Cisco query.  The resolver still validates the
+            # resulting platform against the reviewed Product Registry.
+            explicit_platforms += (
+                (
+                    "cisco_iosxe",
+                    (
+                        "cisco_iosxe",
+                        "cisco_ios_xe",
+                        "cisco ios-xe",
+                        "cisco ios xe",
+                        "ios-xe",
+                        "ios xe",
+                        "iosxe",
+                    ),
+                ),
+                (
+                    "cisco_nxos",
+                    (
+                        "cisco_nxos",
+                        "cisco_nx_os",
+                        "cisco nx-os",
+                        "cisco nx os",
+                        "nx-os",
+                        "nx os",
+                        "nxos",
+                    ),
+                ),
+            )
         for platform, aliases in explicit_platforms:
             if any(alias in lower for alias in aliases):
                 result["cli_platform"] = platform
-                result["os_family"] = "YunShan OS" if "yunshan" in platform else "VRP"
-                result["os_generation"] = "VRP5" if "vrp5" in platform else None
+                if platform == "h3c_comware":
+                    result["os_family"] = "Comware"
+                    comware_generation = re.search(r"comware(?:[\s_-]*v?)([579])\b", lower)
+                    result["os_generation"] = (
+                        f"COMWARE-{comware_generation.group(1)}" if comware_generation else None
+                    )
+                elif platform == "cisco_iosxe":
+                    result["os_family"] = "IOS XE"
+                    result["os_generation"] = None
+                elif platform == "cisco_nxos":
+                    result["os_family"] = "NX-OS"
+                    result["os_generation"] = None
+                else:
+                    result["os_family"] = "YunShan OS" if "yunshan" in platform else "VRP"
+                    # V200 is a software train, while the reviewed corpus
+                    # stores the platform family as VRP. Do not manufacture a
+                    # VRP5 generation filter that the document metadata does
+                    # not carry.
+                    result["os_generation"] = "VRP5" if "vrp5" in platform else None
                 break
 
         if any(token in lower for token in ("故障", "排障", "排查", "邻居down", "neighbor down", "troubleshoot")):
             result["knowledge_type"] = "troubleshooting"
             result["document_category"] = "troubleshooting"
-        elif any(token in lower for token in ("配置", "config", "configuration", "命令行配置")):
+        elif any(token in lower for token in ("配置", "config", "configuration", "命令行配置")) or (
+            any(token in lower for token in (
+                "ip route ", "ssh server", "crypto key generate", "rsa local key-pair",
+                "ntp-service", "ntp server", "router ospf", "switchport ",
+            ))
+            and not re.search(r"\b(?:show|display)\b", lower)
+        ):
             result["knowledge_type"] = "configuration"
             result["document_category"] = "configuration"
         elif any(token in lower for token in ("回显", "输出", "含义", "meaning", "output", "peer brief")):
@@ -428,15 +532,32 @@ class IntentParser:
             result["knowledge_type"] = "example"
             result["document_category"] = "example"
 
-        for feature, aliases in self._FEATURE_ALIASES.items():
-            if any(alias in lower for alias in aliases):
+        # Prefer the most specific textual alias. Without this ordering,
+        # ``Eth-Trunk`` was classified as the generic ``trunk`` feature before
+        # the intended LACP/aggregation alias was considered.
+        feature_matches = [
+            (feature, alias)
+            for feature, aliases in self._FEATURE_ALIASES.items()
+            for alias in aliases
+            if alias in lower
+        ]
+        # Prefer a feature-specific interface scope over a generic VLAN word:
+        # ``VLAN 接入口`` is an access-port request, not a broad VLAN report.
+        # Keep the longest-alias rule as the tie-breaker for cases such as
+        # Eth-Trunk versus the generic trunk alias.
+        feature_priority = {"access_port": 2, "lacp": 2}
+        for feature, _alias in sorted(
+            feature_matches,
+            key=lambda item: (feature_priority.get(item[0], 0), len(item[1])),
+            reverse=True,
+        ):
                 result["feature"] = feature
                 result["feature_domain"] = (
                     "routing" if feature in {"ospf", "bgp", "arp", "loopback", "static_route"}
                     else "switching" if feature in {"vlan", "stp", "lldp", "access_port", "trunk", "lacp"}
                     else "security" if feature in {"acl"}
                     else "management" if feature in {"ntp", "snmp", "ssh"}
-                    else "reliability" if feature in {"vrrp"}
+                    else "reliability" if feature in {"hsrp", "vrrp"}
                     else "overlay" if feature in {"vxlan", "evpn"}
                     else "addressing"
                 )
@@ -453,7 +574,12 @@ class IntentParser:
         ):
             result["product_series"] = "Nexus 3000/9000"
         device_match = re.search(r"\b(?:[A-Za-z][A-Za-z0-9_-]{2,}|\d{1,3}(?:\.\d{1,3}){3})\b", normalized)
-        if device_match and device_match.group(0).lower() not in {"huawei", "cisco", "display", "ospf", "vlan", "arp"}:
+        if (
+            device_match
+            and not result.get("product_series")
+            and device_match.group(0).lower()
+            not in {"huawei", "cisco", "h3c", "hp", "hpcomware", "comware", "display", "ospf", "vlan", "arp"}
+        ):
             result["device_identifier"] = device_match.group(0)
         if any(token in lower for token in ("下发", "修改", "变更", "apply", "execute")):
             result["request_type"] = "configuration_change"
@@ -470,7 +596,7 @@ class IntentParser:
             metadata.get("vendor")
             or metadata.get("product_series")
             or metadata.get("feature")
-            or any(token in (query or "").lower() for token in ("配置", "命令", "回显", "故障", "ospf", "vlan", "arp", "access", "trunk", "lacp", "loopback", "ntp", "snmp", "vrrp", "static route", "静态路由", "acl", "ssh", "stelnet", "hardware"))
+            or any(token in (query or "").lower() for token in ("配置", "命令", "回显", "故障", "ospf", "vlan", "arp", "access", "trunk", "lacp", "loopback", "ntp", "snmp", "hsrp", "vrrp", "static route", "静态路由", "acl", "ssh", "stelnet", "hardware"))
         )
 
     @staticmethod

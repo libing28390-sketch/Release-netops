@@ -51,6 +51,7 @@ _FEATURE_IDENTITY_PATTERNS = {
         r"链路聚合",
     ),
     "vrrp": (r"(?<![a-z0-9])vrrp(?![a-z0-9])", r"虚拟路由器冗余"),
+    "hsrp": (r"(?<![a-z0-9])hsrp(?![a-z0-9])", r"hot standby router protocol"),
     "vxlan": (r"(?<![a-z0-9])vxlan(?![a-z0-9])",),
     "evpn": (r"(?<![a-z0-9])evpn(?![a-z0-9])",),
     "snmp": (r"(?<![a-z0-9])snmp(?:v3)?(?![a-z0-9])", r"简单网络管理协议"),

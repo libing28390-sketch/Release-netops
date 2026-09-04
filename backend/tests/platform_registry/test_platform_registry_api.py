@@ -74,6 +74,34 @@ def test_operator_cannot_approve_publish_or_rollback_resources():
     assert not authorize_resource(operator, "platform", "rollback", tenant_id="tenant-1")
 
 
+@pytest.mark.parametrize(
+    ("resource_type", "action"),
+    [
+        ("knowledge_source", "update"),
+        ("knowledge_source", "delete"),
+        ("knowledge_catalog", "import"),
+        ("knowledge_catalog", "rollback"),
+        ("platform", "update"),
+        ("platform", "delete"),
+        ("platform", "bind_device"),
+        ("command", "execute"),
+        ("playbook", "execute"),
+    ],
+)
+def test_viewer_cannot_use_administrator_knowledge_device_or_tool_actions(resource_type: str, action: str):
+    viewer = {"id": "viewer-1", "username": "viewer", "role": "Viewer", "tenant_id": "tenant-1"}
+
+    assert not authorize_resource(viewer, resource_type, action, tenant_id="tenant-1")
+
+
+def test_viewer_retains_read_only_visibility_without_write_or_execution_access():
+    viewer = {"id": "viewer-1", "username": "viewer", "role": "Viewer", "tenant_id": "tenant-1"}
+
+    assert authorize_resource(viewer, "knowledge_source", "read", tenant_id="tenant-1")
+    assert authorize_resource(viewer, "platform", "view", tenant_id="tenant-1")
+    assert authorize_resource(viewer, "command", "view", tenant_id="tenant-1")
+
+
 def test_permission_catalog_exposes_reviewed_resource_actions_and_roles():
     catalog = permission_catalog()
     assert catalog["platform"] == ["approve", "bind_device", "create", "delete", "edit_draft", "publish", "rollback", "submit", "update", "view"]

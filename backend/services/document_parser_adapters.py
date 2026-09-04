@@ -8,10 +8,15 @@ owned by later ING-007/ING-008 stages.  Every adapter returns the same bounded
 
 from __future__ import annotations
 
+import base64
+from concurrent.futures import TimeoutError as FutureTimeout
 import io
 import csv
 import json
+import os
 import re
+import time
+import urllib.request
 import zlib
 import zipfile
 import xml.etree.ElementTree as ET
@@ -20,6 +25,7 @@ from html.parser import HTMLParser
 from typing import Any, Callable, Mapping, Protocol
 
 from ai.services.knowledge_metadata import parse_markdown_document
+from core.bounded_executor import BoundedDaemonExecutor, BoundedExecutorSaturated
 
 
 MAX_PARSE_BYTES = 20_000_000
@@ -592,6 +598,263 @@ def _format_from_inputs(content: bytes, filename: str, content_type: str) -> str
     return detected
 
 
+_DOCLING_SHADOW_POOL = BoundedDaemonExecutor(
+    max_workers=max(1, min(int(os.environ.get("AI_DOCLING_SHADOW_WORKERS", "2")), 8)),
+    max_queue=max(1, min(int(os.environ.get("AI_DOCLING_SHADOW_QUEUE_SIZE", "4")), 32)),
+    thread_name_prefix="docling-shadow",
+)
+_DOCLING_MAX_RESPONSE_BYTES = max(
+    64_000,
+    min(int(os.environ.get("AI_DOCLING_MAX_RESPONSE_BYTES", "2000000")), 20_000_000),
+)
+
+
+class DoclingParserAdapter:
+    """Invokes external Docling microservice for deep multi-column and table parsing."""
+
+    format_name = "docling"
+    parser_name = "docling-microservice"
+    parser_version = "v1"
+
+    def __init__(
+        self,
+        base_url: str | None = None,
+        *,
+        timeout_seconds: float = 10.0,
+        ocr_enabled: bool | None = None,
+    ) -> None:
+        self.base_url = (
+            base_url or os.environ.get("AI_DOCLING_BASE_URL", "")
+        ).rstrip("/")
+        self.timeout_seconds = float(os.environ.get("AI_DOCLING_TIMEOUT_SECONDS", timeout_seconds))
+        self.ocr_enabled = (
+            bool(ocr_enabled)
+            if ocr_enabled is not None
+            else str(os.environ.get("AI_DOCLING_OCR", "0")).lower()
+            in {"1", "true", "yes"}
+        )
+        self.max_pages = max(1, min(int(os.environ.get("AI_DOCLING_MAX_PAGES", "50")), 10_000))
+        if self.base_url:
+            from urllib.parse import urlparse
+            parsed = urlparse(self.base_url)
+            try:
+                host = (parsed.hostname or "").lower()
+                _ = parsed.port
+            except ValueError as exc:
+                raise DocumentParserError("DOCLING_INVALID_ENDPOINT", "Docling endpoint is malformed") from exc
+            if (
+                parsed.scheme not in {"http", "https"}
+                or not host
+                or parsed.username
+                or parsed.password
+                or parsed.query
+                or parsed.fragment
+            ):
+                raise DocumentParserError(
+                    "DOCLING_INVALID_ENDPOINT",
+                    "Docling endpoint must be an HTTP(S) URL without credentials or query parameters",
+                )
+            allowed_hosts = {"127.0.0.1", "localhost", "::1", "docling", "docling-service", "netops"}
+            extra = {h.strip().lower() for h in os.environ.get("AI_DOCLING_ALLOWED_HOSTS", "").split(",") if h.strip()}
+            allowed_hosts.update(extra)
+            if host not in allowed_hosts:
+                raise DocumentParserError(
+                    "DOCLING_INVALID_ENDPOINT",
+                    "Docling endpoint host is not in the configured allowlist",
+                )
+
+    @staticmethod
+    def _canonical_format(filename: str, content_type: str) -> str:
+        fn = (filename or "").lower()
+        ct = (content_type or "").lower()
+        if fn.endswith(".pdf") or "pdf" in ct:
+            return "pdf"
+        if fn.endswith(".docx") or "word" in ct or "officedocument" in ct:
+            return "docx"
+        if fn.endswith(".json") or "json" in ct:
+            return "json"
+        if fn.endswith(".md") or fn.endswith(".markdown") or "markdown" in ct:
+            return "markdown"
+        if fn.endswith(".txt") or "text" in ct:
+            return "txt"
+        return "markdown"
+
+    def parse(self, content: bytes, *, filename: str = "", content_type: str = "") -> ParsedDocument:
+        if not self.base_url:
+            raise DocumentParserError("DOCLING_NOT_CONFIGURED", "AI_DOCLING_BASE_URL is not configured")
+
+        req_url = f"{self.base_url}/v1/convert"
+        req_body = {
+            "filename": filename,
+            "content_base64": base64.b64encode(content).decode("ascii"),
+            "ocr_enabled": self.ocr_enabled,
+        }
+        data = json.dumps(req_body).encode("utf-8")
+        req = urllib.request.Request(
+            req_url,
+            data=data,
+            headers={"Content-Type": "application/json", "Accept": "application/json"},
+            method="POST",
+        )
+        try:
+            with urllib.request.urlopen(req, timeout=self.timeout_seconds) as resp:
+                raw_body = resp.read(_DOCLING_MAX_RESPONSE_BYTES + 1)
+            if len(raw_body) > _DOCLING_MAX_RESPONSE_BYTES:
+                raise DocumentParserError("DOCLING_RESPONSE_TOO_LARGE", "Docling response exceeds the size limit")
+            resp_data = json.loads(raw_body.decode("utf-8"))
+            if not isinstance(resp_data, dict):
+                raise DocumentParserError("DOCLING_RESPONSE_INVALID", "Docling response must be a JSON object")
+        except DocumentParserError:
+            raise
+        except Exception as exc:
+            raise DocumentParserError("DOCLING_CONVERSION_FAILED", "Docling request failed") from exc
+
+        raw_page_count = resp_data.get("page_count", 1)
+        if isinstance(raw_page_count, bool):
+            raise DocumentParserError("DOCLING_RESPONSE_INVALID", "Docling page_count is invalid")
+        try:
+            page_count = int(raw_page_count)
+        except (TypeError, ValueError) as exc:
+            raise DocumentParserError("DOCLING_RESPONSE_INVALID", "Docling page_count is invalid") from exc
+        if page_count < 0:
+            raise DocumentParserError("DOCLING_RESPONSE_INVALID", "Docling page_count is invalid")
+        if page_count > self.max_pages:
+            raise DocumentParserError(
+                "DOCLING_PAGE_LIMIT_EXCEEDED",
+                f"Document has {page_count} pages, exceeding AI_DOCLING_MAX_PAGES limit of {self.max_pages}",
+            )
+
+        raw_markdown = resp_data.get("markdown")
+        if raw_markdown is None:
+            raw_markdown = resp_data.get("text")
+        if raw_markdown is not None and not isinstance(raw_markdown, str):
+            raise DocumentParserError("DOCLING_RESPONSE_INVALID", "Docling markdown is invalid")
+        markdown_text = raw_markdown or ""
+        raw_version = resp_data.get("version", "1.0")
+        if raw_version is not None and not isinstance(raw_version, (str, int, float)):
+            raise DocumentParserError("DOCLING_RESPONSE_INVALID", "Docling version is invalid")
+        blocks = _blocks_from_lines(markdown_text, block_type="docling_markdown")
+        canonical_fmt = self._canonical_format(filename, content_type)
+        return ParsedDocument(
+            format=canonical_fmt,
+            text=markdown_text,
+            blocks=blocks,
+            metadata={"page_count": page_count, "docling_version": str(raw_version or "1.0")[:64]},
+            parser_name=self.parser_name,
+            parser_version=self.parser_version,
+            parse_status="parsed" if markdown_text else "degraded",
+            warnings=(),
+        )
+
+
+class DualTrackParserAdapter:
+    """Wraps a primary native parser adapter and an optional Docling adapter.
+
+    Modes:
+    - 'legacy': Executes only the primary native adapter (default).
+    - 'shadow': Executes the primary adapter for production output, and safely
+                runs Docling comparison asynchronously with bounded best-effort overhead.
+    - 'docling' / 'active': Attempts Docling parsing first, falling back 100% to primary adapter on error.
+    """
+
+    def __init__(
+        self,
+        primary: DocumentParserAdapter,
+        docling: DoclingParserAdapter | None = None,
+        *,
+        mode: str | None = None,
+    ) -> None:
+        self.primary = primary
+        self.docling = docling or DoclingParserAdapter()
+        raw_mode = mode if mode is not None else (
+            os.environ.get("AI_PARSER_MODE") or os.environ.get("AI_DOCUMENT_PARSER_MODE") or "legacy"
+        )
+        mode_str = str(raw_mode).lower().strip()
+        self.mode = "docling" if mode_str in ("docling", "active") else mode_str
+        self.format_name = primary.format_name
+        self.parser_name = primary.parser_name
+        self.parser_version = primary.parser_version
+
+    def parse(self, content: bytes, *, filename: str = "", content_type: str = "") -> ParsedDocument:
+        if self.mode == "docling":
+            try:
+                docling_res = self.docling.parse(content, filename=filename, content_type=content_type)
+                if docling_res.parse_status == "parsed" and docling_res.text:
+                    return docling_res
+            except Exception:
+                pass  # Fall back 100% to primary
+
+        # Primary parsing (legacy or shadow mode)
+        primary_res = self.primary.parse(content, filename=filename, content_type=content_type)
+
+        if self.mode == "shadow":
+            shadow_meta: dict[str, Any] = {
+                "shadow_status": "skipped",
+                "mode": "shadow",
+            }
+            try:
+                shadow_timeout = max(0.01, min(float(os.environ.get("AI_DOCLING_SHADOW_TIMEOUT_SECONDS", "0.20")), 5.0))
+            except (TypeError, ValueError):
+                shadow_timeout = 0.20
+            started = time.perf_counter()
+            try:
+                future = _DOCLING_SHADOW_POOL.submit(
+                    self.docling.parse,
+                    content,
+                    filename=filename,
+                    content_type=content_type,
+                )
+            except BoundedExecutorSaturated:
+                shadow_meta.update({
+                    "shadow_status": "degraded",
+                    "docling_error": "executor_saturated",
+                })
+            else:
+                try:
+                    docling_res = future.result(timeout=shadow_timeout)
+                except FutureTimeout:
+                    future.cancel()
+                    shadow_meta.update({
+                        "shadow_status": "timeout",
+                        "docling_latency_ms": int((time.perf_counter() - started) * 1000),
+                    })
+                except Exception as exc:
+                    shadow_meta.update({
+                        "shadow_status": "degraded",
+                        "docling_error": type(exc).__name__,
+                    })
+                else:
+                    latency = int((time.perf_counter() - started) * 1000)
+                    shadow_meta.update({
+                        "shadow_status": "observed",
+                        "docling_char_count": len(docling_res.text),
+                        "docling_block_count": len(docling_res.blocks),
+                        "docling_parse_status": docling_res.parse_status,
+                        "docling_latency_ms": latency,
+                    })
+
+            if shadow_meta.get("shadow_status") == "timeout":
+                shadow_meta.update({
+                    "docling_latency_ms": int((time.perf_counter() - started) * 1000),
+                })
+
+            combined_metadata = dict(primary_res.metadata)
+            combined_metadata["shadow_docling"] = shadow_meta
+            combined_metadata["shadow"] = shadow_meta
+            return ParsedDocument(
+                format=primary_res.format,
+                text=primary_res.text,
+                blocks=primary_res.blocks,
+                metadata=combined_metadata,
+                parser_name=primary_res.parser_name,
+                parser_version=primary_res.parser_version,
+                parse_status=primary_res.parse_status,
+                warnings=primary_res.warnings,
+            )
+
+        return primary_res
+
+
 class DocumentParserRegistry:
     def __init__(self, adapters: Mapping[str, DocumentParserAdapter] | None = None) -> None:
         self._adapters: dict[str, DocumentParserAdapter] = dict(adapters or {
@@ -603,8 +866,8 @@ class DocumentParserRegistry:
             "csv": CsvParserAdapter(),
             "xml": XmlParserAdapter(),
             "config": ConfigParserAdapter(),
-            "pdf": PdfParserAdapter(),
-            "docx": DocxParserAdapter(),
+            "pdf": DualTrackParserAdapter(PdfParserAdapter()),
+            "docx": DualTrackParserAdapter(DocxParserAdapter()),
         })
         if set(self._adapters) != set(SUPPORTED_FORMATS):
             raise DocumentParserError("PARSER_REGISTRY_INVALID", "Parser registry must provide one adapter per supported format")
@@ -644,6 +907,8 @@ __all__ = [
     "ConfigParserAdapter",
     "CsvParserAdapter",
     "DocxParserAdapter",
+    "DoclingParserAdapter",
+    "DualTrackParserAdapter",
     "HtmlParserAdapter",
     "JsonParserAdapter",
     "MarkdownParserAdapter",

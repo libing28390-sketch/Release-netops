@@ -7,7 +7,7 @@ export const AgentManagementTab: React.FC = () => {
   const [loadingTools, setLoadingTools] = useState(true);
 
   // Agent Run
-  const [question, setQuestion] = useState('为什么 192.168.10.20 访问核心交换机掉包？');
+  const [question, setQuestion] = useState('为什么测试设备访问核心交换机掉包？');
   const [running, setRunning] = useState(false);
   const [agentRunResult, setAgentRunResult] = useState<AgentRunResponse | null>(null);
 

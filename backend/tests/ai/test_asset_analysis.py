@@ -29,6 +29,33 @@ def test_inventory_count_query_does_not_depend_on_llm_intent_parsing():
     assert intent["intent"] == "asset_analysis"
 
 
+def test_link_aggregation_configuration_is_not_asset_analysis():
+    query = (
+        "请仅基于本地知识库回答：H3C Comware 7、S5130 的链路聚合 "
+        "link-aggregation group 1 mode dynamic 配置、验证和回滚；不要执行设备操作。"
+    )
+
+    assert is_asset_analysis_query(query) is False
+    intent = asyncio.run(intent_parser.parse_intent(query))
+    assert intent["intent"] == "knowledge"
+    assert intent["feature"] == "lacp"
+    assert intent["knowledge_type"] == "configuration"
+
+
+def test_feature_scoped_h3c_s6850_configuration_is_not_asset_analysis():
+    query = (
+        "请仅基于本地知识库回答：H3C S6850 Comware 数据中心交换机 VLAN "
+        "接入口配置、验证命令和回滚注意事项；不要执行设备操作。"
+    )
+
+    assert is_asset_analysis_query(query) is False
+    intent = asyncio.run(intent_parser.parse_intent(query))
+    assert intent["intent"] == "knowledge"
+    assert intent["product_series"] == "S6850"
+    assert intent["feature"] == "access_port"
+    assert intent["knowledge_type"] == "configuration"
+
+
 def test_asset_analysis_extracts_only_unambiguous_filters():
     filters = extract_asset_filters("\u7edf\u8ba1 Huawei \u6838\u5fc3\u4ea4\u6362\u673a WH-DC-02 \u7684\u7248\u672c")
 
@@ -38,6 +65,15 @@ def test_asset_analysis_extracts_only_unambiguous_filters():
         "device_category": "switch",
         "site": "WH-DC-02",
     }
+
+
+def test_asset_analysis_accepts_h3c_chinese_vendor_aliases():
+    assert extract_asset_filters("\u7edf\u8ba1\u534e\u4e09\u8bbe\u5907\u6570\u91cf") == {"vendor": "h3c"}
+    assert extract_asset_filters("\u7edf\u8ba1\u65b0\u534e\u4e09\u8bbe\u5907\u6570\u91cf") == {"vendor": "h3c"}
+
+    intent = asyncio.run(intent_parser.parse_intent("统计华三设备数量"))
+    assert intent["intent"] == "asset_analysis"
+    assert intent["filters"] == {"vendor": "h3c"}
 
 
 def test_rendered_report_does_not_turn_missing_eol_into_a_fact():

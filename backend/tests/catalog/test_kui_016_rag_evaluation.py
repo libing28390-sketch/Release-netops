@@ -59,6 +59,8 @@ def test_kui016_projection_redacts_ids_and_debug(monkeypatch):
     assert report["database"] == "PostgreSQL"
     assert report["rollback"] == "transaction_rollback"
     assert report["cases"][0]["id"] == "Q01"
+    assert "query" not in report["cases"][0]
+    assert "show ospf peer" not in str(report)
     assert "secret-document-id" not in str(report)
     assert "SELECT secret" not in str(report)
     assert "debug" not in str(report).lower()
@@ -83,6 +85,7 @@ def test_kui016_api_contract_and_suite_validation():
     paths = {(route.path, tuple(sorted(route.methods or ()))) for route in router.routes}
     assert any(path.endswith("/knowledge/evaluation") and "GET" in methods for path, methods in paths)
     assert any(path.endswith("/knowledge/evaluation/run") and "POST" in methods for path, methods in paths)
+    assert any(path.endswith("/knowledge/evaluation/observability") and "GET" in methods for path, methods in paths)
     with pytest.raises(Exception):
         EvaluationRunRequest.model_validate({"suite": "v1_baseline_postgresql", "raw_sql": "SELECT 1"})
     assert api_get_evaluation(user=_user())["success"] is True

@@ -3,8 +3,9 @@ IP Locator Service — 根据 IP 地址定位设备所在交换机端口。
 
 流程：
 1. 从所有具备 L3 能力的设备采集 ARP → 获取 IP→MAC 映射（access 路由器也包含在内）
-2. 用 MAC 去接入交换机采集 MAC 地址表 → 获取 MAC→Port 映射
-3. 结合 LLDP 邻居信息拼出完整路径：IP → MAC → Switch → Port → Uplink
+2. 用 MAC 去当前设备采集 MAC 地址表 → 获取 MAC→Port 映射
+3. 只有拿到明确 Access/Edge/Untagged 或 Access VLAN 证据的普通物理端口才结束；
+   聚合/Trunk 或接口证据不完整时结合拓扑与 LLDP 找下游，在下游继续查询同一 MAC
 
 性能优化：
 - 使用设备端过滤命令（如 show ip arp <ip>）减少数据传输量
@@ -757,7 +758,12 @@ def _send_command(device_info: dict, command: str, force_refresh: bool = False) 
 
 # ── 精确 ARP 查询 ─────────────────────────────────────
 
-def _targeted_arp_query(device_info: dict, target_ip: str, vrf: str = None) -> dict | None:
+def _targeted_arp_query(
+    device_info: dict,
+    target_ip: str,
+    vrf: str = None,
+    force_refresh: bool = False,
+) -> dict | None:
     """
     向设备发送精确 ARP 查询命令，仅返回目标 IP 的记录。
     数据量：1 条记录 vs 全表可能上万条。
@@ -824,7 +830,7 @@ def _targeted_arp_query(device_info: dict, target_ip: str, vrf: str = None) -> d
                 cmd = cmd_template.format(ip=target_ip, vrf=vrf)
             else:
                 cmd = cmd_template.format(ip=target_ip)
-            output = _send_command(device_info, cmd)
+            output = _send_command(device_info, cmd, force_refresh=force_refresh)
             for normalized in _parse_arp_output_fallback(output, device_info):
                 if normalized['ip'] == target_ip:
                     return {
@@ -856,10 +862,14 @@ def _targeted_arp_query(device_info: dict, target_ip: str, vrf: str = None) -> d
             logger.debug(f"[IPLocator] Targeted ARP query failed on {device_info.get('ip_address')}: {exc}")
 
     # 回退：全表采集 + 搜索
-    return _collect_arp_from_device_for_ip(device_info, target_ip)
+    return _collect_arp_from_device_for_ip(device_info, target_ip, force_refresh=force_refresh)
 
 
-def _collect_arp_from_device_for_ip(device_info: dict, target_ip: str) -> dict | None:
+def _collect_arp_from_device_for_ip(
+    device_info: dict,
+    target_ip: str,
+    force_refresh: bool = False,
+) -> dict | None:
     """全表采集 ARP 并搜索目标 IP（回退路径），找到即返回，不继续解析剩余记录。"""
     try:
         payload = collect_operational_data(
@@ -909,7 +919,11 @@ def _collect_arp_from_device_for_ip(device_info: dict, target_ip: str) -> dict |
 
 # ── 精确 MAC 查询 ─────────────────────────────────────
 
-def _targeted_mac_query(device_info: dict, target_mac: str) -> list[dict]:
+def _targeted_mac_query(
+    device_info: dict,
+    target_mac: str,
+    force_refresh: bool = False,
+) -> list[dict]:
     """
     向设备发送精确 MAC 地址表查询命令。
     target_mac 为 12 位 hex（无分隔符），函数内部转为设备所需格式。
@@ -977,13 +991,13 @@ def _targeted_mac_query(device_info: dict, target_mac: str) -> list[dict]:
                 mac_formatted = ':'.join(target_mac[i:i+2] for i in range(0, 12, 2))
 
             cmd = cmd_template.format(mac=mac_formatted)
-            output = _send_command(device_info, cmd)
+            output = _send_command(device_info, cmd, force_refresh=force_refresh)
             return _parse_mac_output(output, target_mac, device_info)
         except Exception as exc:
             logger.debug(f"[IPLocator] Targeted MAC query failed on {device_info.get('ip_address')}: {exc}")
 
     # 回退：全表采集 + 过滤
-    return _collect_mac_from_device_for_mac(device_info, target_mac)
+    return _collect_mac_from_device_for_mac(device_info, target_mac, force_refresh=force_refresh)
 
 
 def _parse_mac_output(output: str, target_mac: str, device_info: dict) -> list[dict]:
@@ -1005,7 +1019,11 @@ def _parse_mac_output(output: str, target_mac: str, device_info: dict) -> list[d
     return records
 
 
-def _collect_mac_from_device_for_mac(device_info: dict, target_mac: str) -> list[dict]:
+def _collect_mac_from_device_for_mac(
+    device_info: dict,
+    target_mac: str,
+    force_refresh: bool = False,
+) -> list[dict]:
     """全表采集 MAC 地址表并过滤目标 MAC（回退路径）。"""
     try:
         payload = collect_operational_data(device_info, categories=['mac_table'])
@@ -1068,6 +1086,340 @@ def _collect_lldp_from_device(device_info: dict) -> list[dict]:
                         'neighbor_port': str(neighbor_port).strip(),
                     })
     return records
+
+
+_TRACE_AGGREGATION_TYPES = frozenset({
+    'port_channel', 'port-channel', 'lag', 'aggregation', 'eth_trunk', 'eth-trunk',
+})
+_TRACE_AGGREGATION_NAME_RE = re.compile(r'^(?:bagg|ragg|po|be|eth-trunk)\d*$')
+_TRACE_ACCESS_MODES = frozenset({'access', 'edge', 'untagged'})
+_TRACE_PHYSICAL_TYPES = frozenset({'physical', 'ethernet', 'ethernet_port', 'port', 'access'})
+
+
+def _trace_interface_is_aggregation(interface_row: dict[str, Any]) -> bool:
+    """Return whether an inventory interface represents a logical bundle."""
+    interface_type = str(interface_row.get('interface_type') or '').strip().lower()
+    if interface_type in _TRACE_AGGREGATION_TYPES:
+        return True
+    return bool(_TRACE_AGGREGATION_NAME_RE.fullmatch(
+        normalize_interface_name(interface_row.get('interface_name') or '').lower()
+    ))
+
+
+def _trace_aggregation_number(value: Any) -> str:
+    """Extract the numeric bundle id from a normalized interface name."""
+    match = re.search(r'(\d+)$', normalize_interface_name(str(value or '')).lower())
+    return match.group(1) if match else ''
+
+
+def _trace_access_evidence(interface_row: dict[str, Any]) -> list[str]:
+    """Return positive evidence that a physical interface is an access port.
+
+    ``interfaces.switchport_mode`` defaults to ``access`` and several
+    collectors use that value as a placeholder until VLAN discovery runs.
+    Therefore the mode alone is not enough to terminate a path trace.  A
+    configured access VLAN is authoritative; ``edge``/``untagged`` are
+    explicit non-default modes and are also safe positive evidence.
+    """
+    interface_type = str(interface_row.get('interface_type') or '').strip().lower()
+    if interface_type not in _TRACE_PHYSICAL_TYPES or _trace_interface_is_aggregation(interface_row):
+        return []
+
+    mode = str(interface_row.get('switchport_mode') or '').strip().lower()
+    if mode not in _TRACE_ACCESS_MODES:
+        return []
+
+    evidence: list[str] = []
+    access_vlan = interface_row.get('access_vlan')
+    if _parse_vlan_id(access_vlan) is not None:
+        evidence.append('access_vlan')
+
+    if mode in {'edge', 'untagged'}:
+        evidence.append(f'switchport_mode:{mode}')
+    return evidence
+
+
+def _trace_identity_confirms_access_terminal(identity: dict[str, Any]) -> bool:
+    """Return whether an interface identity is safe to use as a terminal port."""
+    return bool(
+        identity.get('has_interface_record')
+        and identity.get('is_physical')
+        and identity.get('is_access')
+        and not identity.get('is_aggregation')
+        and not identity.get('is_trunk')
+    )
+
+
+def _load_trace_port_identity(conn, device_id: str, port: str) -> dict[str, Any]:
+    """Expand a MAC-table port into its logical bundle and physical members.
+
+    The MAC table may report ``BAGG15`` while topology discovery persists the
+    link with the aggregation interface id, the raw ``Bridge-Aggregation15``
+    name, or only the physical member in ``members_json``.  A trace must use
+    all of those identities when joining the two evidence sources.
+    """
+    requested_name = str(port or '').strip()
+    requested_norm = normalize_interface_name(requested_name).lower()
+    identity: dict[str, Any] = {
+        'requested_port': requested_name,
+        'requested_norm': requested_norm,
+        'port_norms': {requested_norm} if requested_norm else set(),
+        'port_names': {requested_name.lower()} if requested_name else set(),
+        'interface_ids': set(),
+        'has_interface_record': False,
+        'is_aggregation': bool(_TRACE_AGGREGATION_NAME_RE.fullmatch(requested_norm)),
+        'is_trunk': False,
+        'is_physical': False,
+        'is_access': False,
+        'access_evidence': [],
+        'logical_interface_ids': set(),
+        'member_interface_ids': set(),
+    }
+
+    try:
+        rows = [dict(row) for row in conn.execute(
+            '''SELECT id, device_id, interface_name, interface_type,
+                      parent_interface_id, channel_group, switchport_mode,
+                      access_vlan
+               FROM interfaces WHERE device_id = ?''',
+            (device_id,),
+        ).fetchall()]
+    except Exception as exc:
+        logger.debug('[IPLocator] trace interface inventory lookup failed for %s/%s: %s', device_id, port, exc)
+        return identity
+
+    by_id = {str(row.get('id')): row for row in rows if row.get('id')}
+    direct_rows = [
+        row for row in rows
+        if requested_norm and normalize_interface_name(row.get('interface_name') or '').lower() == requested_norm
+    ]
+    identity['has_interface_record'] = bool(direct_rows)
+
+    logical_ids: set[str] = set()
+    parent_ids: set[str] = set()
+    for row in direct_rows:
+        row_id = str(row.get('id') or '')
+        if row_id and _trace_interface_is_aggregation(row):
+            logical_ids.add(row_id)
+        parent_id = str(row.get('parent_interface_id') or '')
+        if parent_id:
+            parent_ids.add(parent_id)
+
+        # Some older inventories retained channel_group on the member but did
+        # not backfill parent_interface_id.  Recover the logical interface by
+        # its bundle number when the parent row is present.
+        channel_group = str(row.get('channel_group') or '').strip()
+        if channel_group and not parent_id:
+            for candidate in rows:
+                if not _trace_interface_is_aggregation(candidate):
+                    continue
+                if _trace_aggregation_number(candidate.get('interface_name')) == channel_group:
+                    candidate_id = str(candidate.get('id') or '')
+                    if candidate_id:
+                        parent_ids.add(candidate_id)
+
+    logical_ids.update(parent_ids)
+    for logical_id in list(logical_ids):
+        parent_row = by_id.get(logical_id)
+        if parent_row and _trace_interface_is_aggregation(parent_row):
+            identity['is_aggregation'] = True
+
+    member_rows = [
+        row for row in rows
+        if str(row.get('parent_interface_id') or '') in logical_ids
+    ]
+    candidate_rows = direct_rows + [
+        by_id[parent_id] for parent_id in logical_ids
+        if parent_id in by_id and by_id[parent_id] not in direct_rows
+    ] + member_rows
+
+    for row in candidate_rows:
+        row_id = str(row.get('id') or '')
+        if row_id:
+            identity['interface_ids'].add(row_id)
+        if row_id in logical_ids:
+            identity['logical_interface_ids'].add(row_id)
+        elif str(row.get('parent_interface_id') or '') in logical_ids:
+            identity['member_interface_ids'].add(row_id)
+
+        raw_name = str(row.get('interface_name') or '').strip()
+        normalized = normalize_interface_name(raw_name).lower()
+        if raw_name:
+            identity['port_names'].add(raw_name.lower())
+        if normalized:
+            identity['port_norms'].add(normalized)
+        if _trace_interface_is_aggregation(row):
+            identity['is_aggregation'] = True
+        if str(row.get('switchport_mode') or '').strip().lower() in {'trunk', 'hybrid', 'tagged'}:
+            identity['is_trunk'] = True
+
+    # Only a directly matched physical row can prove that the MAC-table port
+    # is a host-facing access port.  Do not infer this from the absence of
+    # LLDP/topology: synthetic topology rows and the schema default both use
+    # ``access`` without carrying a VLAN fact.
+    access_evidence: set[str] = set()
+    for row in direct_rows:
+        interface_type = str(row.get('interface_type') or '').strip().lower()
+        if interface_type not in _TRACE_PHYSICAL_TYPES or _trace_interface_is_aggregation(row):
+            continue
+        identity['is_physical'] = True
+        access_evidence.update(_trace_access_evidence(row))
+    identity['access_evidence'] = sorted(access_evidence)
+    identity['is_access'] = bool(identity['is_physical'] and access_evidence)
+
+    # A direct MAC-table bundle name is authoritative enough to prevent a
+    # false terminal classification even if interface inventory is incomplete.
+    if requested_norm and _TRACE_AGGREGATION_NAME_RE.fullmatch(requested_norm):
+        identity['is_aggregation'] = True
+    return identity
+
+
+def _decode_trace_members(row: dict[str, Any]) -> list[dict[str, Any]]:
+    """Read aggregation members from the dedicated column or legacy metadata."""
+    raw = row.get('members_json')
+    if not raw:
+        try:
+            metadata = _json.loads(row.get('metadata_json') or '{}')
+            raw = metadata.get('members') if isinstance(metadata, dict) else None
+        except (TypeError, ValueError):
+            raw = None
+    if isinstance(raw, str):
+        try:
+            raw = _json.loads(raw)
+        except (TypeError, ValueError):
+            return []
+    return [item for item in (raw or []) if isinstance(item, dict)]
+
+
+def _find_topology_trace_neighbor(
+    conn,
+    device_id: str,
+    port: str,
+    identity: dict[str, Any] | None = None,
+) -> dict[str, Any] | None:
+    """Find a downstream neighbor using physical, logical, and member evidence."""
+    identity = identity or _load_trace_port_identity(conn, device_id, port)
+    try:
+        rows = [dict(row) for row in conn.execute(
+            '''SELECT * FROM topology_links
+               WHERE source_device_id = ? OR target_device_id = ?''',
+            (device_id, device_id),
+        ).fetchall()]
+    except Exception as exc:
+        logger.debug('[IPLocator] topology trace lookup failed for %s/%s: %s', device_id, port, exc)
+        return None
+
+    matches: list[dict[str, Any]] = []
+    interface_ids = {str(item) for item in identity.get('interface_ids') or set()}
+    port_norms = {str(item).lower() for item in identity.get('port_norms') or set() if item}
+    port_names = {str(item).lower() for item in identity.get('port_names') or set() if item}
+
+    for row in rows:
+        status = str(row.get('status') or '').strip().lower()
+        if status in {'down', 'stale', 'inactive', 'deleted'}:
+            continue
+
+        for side, other_side in (('source', 'target'), ('target', 'source')):
+            if str(row.get(f'{side}_device_id') or '') != str(device_id):
+                continue
+            neighbor_id = str(row.get(f'{other_side}_device_id') or '')
+            if not neighbor_id or neighbor_id == str(device_id):
+                continue
+
+            score = 0
+            match_kind = ''
+            current_interface_id = str(row.get(f'{side}_interface_id') or '')
+            if current_interface_id and current_interface_id in interface_ids:
+                score = max(score, 100)
+                match_kind = 'interface_id'
+
+            current_raw = str(row.get(f'{side}_port') or '').strip()
+            current_normalized = str(row.get(f'{side}_port_normalized') or '').strip().lower()
+            for candidate in (current_normalized, normalize_interface_name(current_raw).lower()):
+                if candidate and candidate in port_norms:
+                    score = max(score, 90)
+                    match_kind = match_kind or 'port_normalized'
+            aggregation_name = str(row.get(f'{side}_aggregation_name') or '').strip()
+            if aggregation_name and (
+                aggregation_name.lower() in port_names
+                or normalize_interface_name(aggregation_name).lower() in port_norms
+            ):
+                score = max(score, 90)
+                match_kind = match_kind or 'aggregation_name'
+
+            # Logical aggregation links can intentionally leave the
+            # normalized endpoint blank.  Their member records still carry
+            # the physical interface identities, so match those as well.
+            for member in _decode_trace_members(row):
+                for endpoint_key in ('source', 'target'):
+                    endpoint = member.get(endpoint_key)
+                    if not isinstance(endpoint, dict):
+                        continue
+                    if str(endpoint.get('device_id') or '') != str(device_id):
+                        continue
+                    member_values = {
+                        str(endpoint.get('name') or '').strip().lower(),
+                        str(endpoint.get('normalized') or '').strip().lower(),
+                    }
+                    member_norms = {
+                        normalize_interface_name(value).lower()
+                        for value in member_values if value
+                    }
+                    if member_values & port_names or member_norms & port_norms:
+                        score = max(score, 85)
+                        match_kind = match_kind or 'aggregation_member'
+
+            if score <= 0:
+                continue
+            matches.append({
+                'neighbor_id': neighbor_id,
+                'neighbor_name': str(row.get(f'{other_side}_hostname') or '').strip(),
+                'neighbor_port': str(
+                    row.get(f'{other_side}_port')
+                    or row.get(f'{other_side}_port_normalized')
+                    or ''
+                ).strip(),
+                'match_kind': match_kind or 'topology',
+                'link_kind': str(row.get('link_kind') or '').strip().lower(),
+                'score': score,
+                'confidence': float(row.get('confidence') or 0),
+                'last_seen': str(row.get('last_seen') or ''),
+                'updated_at': str(row.get('updated_at') or ''),
+            })
+
+    if not matches:
+        return None
+    # Stable multi-pass ordering keeps the highest-quality evidence first,
+    # then prefers recent observations and finally a stable neighbour id.
+    matches.sort(key=lambda item: item['neighbor_id'])
+    matches.sort(key=lambda item: (item['last_seen'], item['updated_at']), reverse=True)
+    matches.sort(key=lambda item: float(item['confidence']), reverse=True)
+    matches.sort(key=lambda item: int(item['score']), reverse=True)
+    return matches[0]
+
+
+def _cached_endpoint_needs_retrace(endpoint: dict[str, Any]) -> bool:
+    """Reject unverified cached ports so a historical false terminal is not reused."""
+    port = str(endpoint.get('switch_port') or endpoint.get('port') or '').strip()
+    normalized = normalize_interface_name(port).lower()
+    if not port:
+        return True
+    if _TRACE_AGGREGATION_NAME_RE.fullmatch(normalized):
+        return True
+
+    device_id = endpoint.get('switch_id') or endpoint.get('device_id')
+    if not device_id:
+        return True
+    try:
+        conn = get_db_connection()
+        try:
+            identity = _load_trace_port_identity(conn, str(device_id), port)
+        finally:
+            conn.close()
+        return not _trace_identity_confirms_access_terminal(identity)
+    except Exception as exc:
+        logger.debug('[IPLocator] cached endpoint validation failed for %s/%s: %s', device_id, port, exc)
+        return True
 
 
 def _check_local_device_ip(device_info: dict, target_ip: str, vrf: str = None) -> dict | None:
@@ -1320,7 +1672,8 @@ def _get_ip_locator_context(target_ip: str, result: dict[str, Any] | None = None
             'allowed_vlans': '', 'last_seen': '',
         },
         'l3': {
-            'gateway': '', 'gateway_device': '', 'gateway_interface': '', 'vrf': '',
+            'gateway': '', 'gateway_device': '', 'gateway_device_id': '',
+            'gateway_interface': '', 'vrf': '',
             'next_hop': '', 'route_source': '', 'route_interface': '', 'route_last_updated': '',
             'upstream_devices': [], 'downstream_devices': [], 'adjacent_devices': [],
         },
@@ -1391,6 +1744,7 @@ def _get_ip_locator_context(target_ip: str, result: dict[str, Any] | None = None
                 context['l3'].update({
                     'gateway': best_prefix['gateway'] or '',
                     'gateway_device': best_prefix['gateway_device_name'] or best_prefix['gateway_device_id'] or '',
+                    'gateway_device_id': best_prefix['gateway_device_id'] or '',
                     'gateway_interface': best_prefix['gateway_interface_name'] or best_prefix['gateway_interface_id'] or '',
                     'vrf': best_prefix['vrf_name'] or best_prefix['vrf_id'] or '',
                 })
@@ -1442,13 +1796,49 @@ def _get_ip_locator_context(target_ip: str, result: dict[str, Any] | None = None
                    ORDER BY ne.last_seen DESC LIMIT 1''',
                 (target_ip,),
             ).fetchone()
+            endpoint_needs_retrace = False
+            if endpoint:
+                endpoint_port = str(endpoint['switch_port'] or '').strip()
+                endpoint_normalized = normalize_interface_name(endpoint_port).lower()
+                if _TRACE_AGGREGATION_NAME_RE.fullmatch(endpoint_normalized):
+                    endpoint_needs_retrace = True
+                elif endpoint['switch_id'] and endpoint_port:
+                    endpoint_identity = _load_trace_port_identity(
+                        conn,
+                        str(endpoint['switch_id']),
+                        endpoint_port,
+                    )
+                    # The context view may retain a physical endpoint as a
+                    # historical L2 hint when VLAN discovery has not populated
+                    # the access VLAN yet.  It must still reject logical,
+                    # Trunk, and known non-physical endpoints.  The locate
+                    # result itself uses the stricter terminal predicate and
+                    # will never fast-path an unverified endpoint cache.
+                    endpoint_needs_retrace = bool(
+                        endpoint_identity.get('is_aggregation')
+                        or endpoint_identity.get('is_trunk')
+                        or (
+                            endpoint_identity.get('has_interface_record')
+                            and not endpoint_identity.get('is_physical')
+                        )
+                    )
 
             location = None
             if result:
                 location = next((item for item in (result.get('locations') or []) if not item.get('is_uplink')), None)
+                if location is None and result.get('trace_status') == 'incomplete':
+                    # Prefer the last live evidence over a historical
+                    # network_endpoints row, which may contain the exact
+                    # logical or otherwise unverified port that triggered
+                    # this re-trace.
+                    location = next(iter(result.get('locations') or []), None)
 
             l2 = context['l2']
-            if endpoint:
+            if (
+                endpoint
+                and not endpoint_needs_retrace
+                and not (result and result.get('trace_status') == 'incomplete')
+            ):
                 l2.update({
                     'mac': endpoint['mac'] or l2['mac'],
                     'vlan': endpoint['vlan'] or l2['vlan'],
@@ -1950,6 +2340,7 @@ def locate_ip(target_ip: str, force_refresh: bool = False) -> dict[str, Any]:
     - L1 级事实库缓存：优先查询 network_endpoints 表，0 连接数据库毫秒返回。
     - L2 级 IP 资产库：查询 ip_inventory（Loopback/VIP等无 ARP 设备 IP）与 IPAM / 设备管理 IP。
     - L3 级 拓扑跳步追踪（Path-Tracing）：缓存未命中时，使用数据库 links 拓扑库寻找邻居交换机，消除实时的 show lldp neighbors 命令行连接。
+    - ARP 记录中的接口仅作为来源证据；最终转发端口必须来自该设备的 MAC 表，避免把 SVI/LAG 直接当成主机端口。
     """
     result: dict[str, Any] = {
         'target_ip': target_ip,
@@ -1968,6 +2359,8 @@ def locate_ip(target_ip: str, force_refresh: bool = False) -> dict[str, Any]:
         },
         'timestamp': _beijing_now_iso(),
         'errors': [],
+        'trace_status': 'not_started',
+        'trace_hops': [],
     }
     # Return the IPAM/L2/L3/business facts even when live ARP lookup is unavailable.
     result['context'] = _get_ip_locator_context(target_ip)
@@ -2026,6 +2419,7 @@ def locate_ip(target_ip: str, force_refresh: bool = False) -> dict[str, Any]:
         except Exception as exc:
             logger.debug(f"[IPLocator] transit device lookup error: {exc}")
         result['locations'] = [loc]
+        result['trace_status'] = 'transit'
         return result
 
     # ── Step 0: 预检查缓存与 IP 资产库 ──
@@ -2033,7 +2427,15 @@ def locate_ip(target_ip: str, force_refresh: bool = False) -> dict[str, Any]:
         # 1. 查找 network_endpoints 事实缓存
         cached_ep = _get_cached_endpoint(target_ip)
         cached_age = _age_seconds(cached_ep.get('last_seen')) if cached_ep else None
-        if cached_ep and cached_age is not None and cached_age <= ENDPOINT_CACHE_TTL_SECONDS:
+        cached_endpoint_needs_retrace = (
+            _cached_endpoint_needs_retrace(cached_ep) if cached_ep else False
+        )
+        if (
+            cached_ep
+            and not cached_endpoint_needs_retrace
+            and cached_age is not None
+            and cached_age <= ENDPOINT_CACHE_TTL_SECONDS
+        ):
             result['found'] = True
             result['mac'] = cached_ep['mac']
             result['mac_display'] = _format_mac(cached_ep['mac'])
@@ -2048,8 +2450,14 @@ def locate_ip(target_ip: str, force_refresh: bool = False) -> dict[str, Any]:
             }]
             result['cache']['cached_at'] = cached_ep.get('last_seen')
             result['cache']['arp_cache_hit'] = True
+            result['trace_status'] = 'cached'
             return result
-        if cached_ep:
+        if cached_endpoint_needs_retrace:
+            result['cache']['endpoint_cache_invalidated'] = True
+            result['cache']['endpoint_cache_reason'] = (
+                '历史缓存端口未通过已确认的物理 Access 接入口校验，必须重新执行 MAC + 拓扑追踪'
+            )
+        elif cached_ep:
             result['cache']['endpoint_cache_stale'] = True
             result['cache']['endpoint_cache_age_seconds'] = cached_age
 
@@ -2077,6 +2485,7 @@ def locate_ip(target_ip: str, force_refresh: bool = False) -> dict[str, Any]:
                         'is_uplink': False,
                         'note': f"该 IP 为网络设备登记资产，接口: {row['interface']}, 类型: {row['type']}",
                     }]
+                    result['trace_status'] = 'inventory'
                     return result
             finally:
                 conn.close()
@@ -2102,21 +2511,39 @@ def locate_ip(target_ip: str, force_refresh: bool = False) -> dict[str, Any]:
     if not force_refresh:
         cached_arp = _get_cached_arp(target_ip)
         if cached_arp:
-            target_mac = str(cached_arp.get('mac') or '')
-            arp_source_info = dict(cached_arp.get('arp_source') or {}) or None
-            if arp_source_info is not None and cached_arp.get('vlan'):
-                arp_source_info.setdefault('vlan', cached_arp['vlan'])
-            result['cache']['arp_cache_hit'] = True
-            result['cache']['cached_at'] = cached_arp.get('cached_at')
+            preferred_gateway_id = (
+                ((result.get('context') or {}).get('l3') or {}).get('gateway_device_id')
+            )
+            cached_source = dict(cached_arp.get('arp_source') or {}) or None
+            cached_source_id = str((cached_source or {}).get('device_id') or '')
+            if preferred_gateway_id and cached_source_id and cached_source_id != str(preferred_gateway_id):
+                result['cache']['arp_cache_gateway_mismatch'] = True
+                result['cache']['arp_cache_expected_gateway'] = str(preferred_gateway_id)
+            else:
+                target_mac = str(cached_arp.get('mac') or '')
+                arp_source_info = cached_source
+                if arp_source_info is not None and cached_arp.get('vlan'):
+                    arp_source_info.setdefault('vlan', cached_arp['vlan'])
+                result['cache']['arp_cache_hit'] = True
+                result['cache']['cached_at'] = cached_arp.get('cached_at')
 
-    # ── Step 1.5: 未命中缓存则并发 ARP 实时查询（找到即终止） ──
+    # ── Step 1.5: 未命中缓存则并发 ARP 实时查询 ──
+    # Do not let the first SSH future to finish decide the ARP source.  A
+    # prefix-bound gateway is authoritative, while completion order is not.
     if not target_mac:
         if gateway_devices:
             workers = _calc_ssh_workers(len(gateway_devices))
+            arp_hits: list[tuple[dict[str, Any], dict[str, Any]]] = []
             with ThreadPoolExecutor(max_workers=workers) as executor:
                 future_map: dict[Future, dict] = {}
                 for dev in gateway_devices:
-                    f = executor.submit(_targeted_arp_query, dev, target_ip)
+                    f = executor.submit(
+                        _targeted_arp_query,
+                        dev,
+                        target_ip,
+                        None,
+                        force_refresh,
+                    )
                     future_map[f] = dev
 
                 for future in as_completed(future_map):
@@ -2131,18 +2558,21 @@ def locate_ip(target_ip: str, force_refresh: bool = False) -> dict[str, Any]:
                         continue
 
                     if arp_hit:
-                        target_mac = arp_hit['mac']
-                        arp_source_info = {
-                            'device_id': arp_hit['source_device_id'],
-                            'device': arp_hit['source_device'],
-                            'interface': arp_hit['interface'],
-                            'vlan': arp_hit.get('vlan', ''),
-                        }
-                        # 早期终止：取消尚未开始的任务
-                        for pending_f in future_map:
-                            if not pending_f.done():
-                                pending_f.cancel()
-                        break
+                        arp_hits.append((dev, arp_hit))
+
+            preferred_gateway_id = (
+                ((result.get('context') or {}).get('l3') or {}).get('gateway_device_id')
+            )
+            selected_arp_hit = _select_realtime_arp_hit(arp_hits, preferred_gateway_id)
+            if selected_arp_hit:
+                _selected_device, arp_hit = selected_arp_hit
+                target_mac = arp_hit['mac']
+                arp_source_info = {
+                    'device_id': arp_hit['source_device_id'],
+                    'device': arp_hit['source_device'],
+                    'interface': arp_hit['interface'],
+                    'vlan': arp_hit.get('vlan', ''),
+                }
 
         if target_mac:
             _set_cached_arp(target_ip, target_mac, arp_source_info)
@@ -2178,6 +2608,7 @@ def locate_ip(target_ip: str, force_refresh: bool = False) -> dict[str, Any]:
                             'is_uplink': False,
                             'note': '该 IP 为网络设备自身的接口/环回口地址',
                         }]
+                        result['trace_status'] = 'local_interface'
                         for pending_f in future_map_local:
                             if not pending_f.done():
                                 pending_f.cancel()
@@ -2194,116 +2625,291 @@ def locate_ip(target_ip: str, force_refresh: bool = False) -> dict[str, Any]:
     result['arp_source'] = arp_source_info
 
     # ── Step 2: 拓扑追踪定位 (Path Tracing) ──
+    arp_source_info = arp_source_info or {}
     curr_device_id = arp_source_info.get('device_id')
-    visited_switches = {curr_device_id}
+    visited_switches = {curr_device_id} if curr_device_id else set()
     trace_notes = []
+    trace_hops: list[dict[str, Any]] = []
     terminal_switch_id = None
     terminal_port = None
     terminal_vlan = ''
     terminal_vlan_source = 'unknown'
     terminal_type = 'DYNAMIC'
+    trace_incomplete = False
+    trace_error = ''
+    source_port_identity: dict[str, Any] | None = None
 
-    trace_notes.append(f"开始追踪：源 ARP 学习自网关 {arp_source_info.get('device')} ({arp_source_info.get('interface')})")
-
-    _SWITCH_ROLES = frozenset({'switch', 'access', 'distribution', 'core', 'aggregation', 'l2', 'l3switch'})
-    _MAC_EXCLUDED_ROLES = frozenset({'router', 'firewall', 'gateway', 'server', 'linux', 'windows'})
-    switch_devices = [
-        d for d in all_eligible
-        if (d.get('role') or '').lower().strip() not in _MAC_EXCLUDED_ROLES
-    ]
+    trace_notes.append(
+        f"开始追踪：源 ARP 学习自网关 {arp_source_info.get('device')} "
+        f"({arp_source_info.get('interface')})"
+    )
+    if not curr_device_id:
+        trace_incomplete = True
+        trace_error = 'ARP 记录缺少来源设备，无法开始 MAC 表和拓扑追踪。'
 
     try:
         conn = get_db_connection()
         try:
-            while True:
+            while curr_device_id and len(trace_hops) < 64:
                 dev_dict = next((d for d in all_eligible if d.get('id') == curr_device_id), None)
                 if not dev_dict:
                     trace_notes.append(f"设备 ID {curr_device_id} 不在管理资产中或未在线，追踪终止。")
+                    trace_incomplete = True
+                    trace_error = '拓扑追踪到的下游设备不在当前可管理资产中，无法确认终端接入口。'
+                    terminal_switch_id = None
+                    terminal_port = None
                     break
 
                 dev_label = dev_dict.get('hostname') or dev_dict.get('ip_address')
                 result['searched_devices']['mac'].append(dev_label)
 
                 try:
-                    mac_records = _targeted_mac_query(dev_dict, target_mac)
+                    mac_records = _targeted_mac_query(dev_dict, target_mac, force_refresh=force_refresh)
                 except Exception as e:
                     trace_notes.append(f"查询设备 {dev_label} MAC 表出错: {e}")
+                    trace_incomplete = True
+                    trace_error = f'设备 {dev_label} 的 MAC 表查询失败，无法确认终端接入口。'
+                    terminal_switch_id = None
+                    terminal_port = None
                     break
 
                 if not mac_records:
                     trace_notes.append(f"在设备 {dev_label} 上未匹配到 MAC {target_mac}。")
+                    if trace_hops:
+                        trace_incomplete = True
+                        trace_error = f'已追踪到上联设备 {dev_label}，但下游 MAC 表未找到目标 MAC，链路未完成。'
+                        terminal_switch_id = None
+                        terminal_port = None
+                    else:
+                        # ARP may legitimately be learned on a router or on
+                        # a device whose bridge table is unavailable.  It is
+                        # still safe to expose this as ARP-only unless the
+                        # source interface itself is a bundle/trunk.
+                        source_port_identity = _load_trace_port_identity(
+                            conn, curr_device_id, arp_source_info.get('interface') or ''
+                        )
+                        if source_port_identity.get('is_aggregation') or source_port_identity.get('is_trunk'):
+                            trace_incomplete = True
+                            trace_error = (
+                                f'设备 {dev_label} 的 ARP 来源接口 '
+                                f"{arp_source_info.get('interface') or 'N/A'} 是聚合/Trunk 接口，"
+                                '但没有足够的 MAC/拓扑证据确认终端端口。'
+                            )
+                            trace_hops.append({
+                                'switch_id': curr_device_id,
+                                'switch_name': dev_label,
+                                'port': arp_source_info.get('interface') or '',
+                                'vlan': arp_source_info.get('vlan') or '',
+                                'vlan_source': 'arp',
+                                'type': 'ARP_SOURCE',
+                                'is_uplink': True,
+                                'is_aggregation': bool(source_port_identity.get('is_aggregation')),
+                                'is_trunk': bool(source_port_identity.get('is_trunk')),
+                            })
                     break
 
                 mac_rec = mac_records[0]
-                curr_port = mac_rec['port']
+                curr_port = str(mac_rec.get('port') or '').strip()
+                if not curr_port:
+                    trace_incomplete = True
+                    trace_error = f'设备 {dev_label} 的 MAC 表记录缺少端口，无法确认终端接入口。'
+                    trace_notes.append(f'设备 {dev_label} 命中目标 MAC，但 MAC 表记录没有端口字段。')
+                    terminal_switch_id = None
+                    terminal_port = None
+                    trace_hops.append({
+                        'switch_id': curr_device_id,
+                        'switch_name': dev_label,
+                        'port': '',
+                        'vlan': str(mac_rec.get('vlan') or ''),
+                        'vlan_source': mac_rec.get('vlan_source') or 'mac_table',
+                        'type': 'MAC_TABLE_NO_PORT',
+                        'is_uplink': True,
+                    })
+                    break
                 terminal_vlan = mac_rec.get('vlan', '')
                 terminal_vlan_source = mac_rec.get('vlan_source', 'mac_table') if terminal_vlan else 'unknown'
                 terminal_type = mac_rec.get('type', 'DYNAMIC')
-                
+
+                port_identity = _load_trace_port_identity(conn, curr_device_id, curr_port)
+                current_hop = {
+                    'switch_id': curr_device_id,
+                    'switch_name': dev_label,
+                    'port': curr_port,
+                    'vlan': terminal_vlan,
+                    'vlan_source': terminal_vlan_source,
+                    'type': terminal_type,
+                    'is_uplink': False,
+                    'has_interface_record': bool(port_identity.get('has_interface_record')),
+                    'is_physical': bool(port_identity.get('is_physical')),
+                    'is_access': bool(port_identity.get('is_access')),
+                    'access_evidence': port_identity.get('access_evidence') or [],
+                    'is_aggregation': bool(port_identity.get('is_aggregation')),
+                    'is_trunk': bool(port_identity.get('is_trunk')),
+                }
+                trace_hops.append(current_hop)
+
                 terminal_switch_id = curr_device_id
                 terminal_port = curr_port
 
                 # 判断是否为上联端口
-                neighbor_id = None
-                neighbor_name = None
-                port_norm = normalize_interface_name(curr_port).lower()
+                neighbor = _find_topology_trace_neighbor(
+                    conn, curr_device_id, curr_port, port_identity
+                )
+                if neighbor:
+                    neighbor_id = neighbor['neighbor_id']
+                    neighbor_name = neighbor.get('neighbor_name') or neighbor_id
+                    current_hop.update({
+                        'is_uplink': True,
+                        'neighbor_id': neighbor_id,
+                        'neighbor_name': neighbor_name,
+                        'neighbor_port': neighbor.get('neighbor_port') or '',
+                        'evidence': neighbor.get('match_kind') or 'topology',
+                    })
+                    trace_notes.append(
+                        f"[拓扑缓存命中/{neighbor.get('match_kind') or 'topology'}] "
+                        f"接口 {curr_port} 连接了下游邻居 {neighbor_name}"
+                    )
+                    if neighbor_id in visited_switches:
+                        trace_incomplete = True
+                        trace_error = f'拓扑在设备 {dev_label} 的接口 {curr_port} 形成环路，无法确认终端接入口。'
+                        terminal_switch_id = None
+                        terminal_port = None
+                        break
+                    if not any(d.get('id') == neighbor_id for d in all_eligible):
+                        trace_incomplete = True
+                        trace_error = f'下游设备 {neighbor_name} 不在当前可管理资产中，无法继续追踪。'
+                        terminal_switch_id = None
+                        terminal_port = None
+                        break
+                    curr_device_id = neighbor_id
+                    visited_switches.add(curr_device_id)
+                    terminal_switch_id = None
+                    terminal_port = None
+                    continue
 
-                # [Topology Cache 优化]：优先查本地 links 数据库，避免 SSH 收集 lldp neighbors
-                row_link = conn.execute(
-                    "SELECT target_device_id AS neighbor_id, target_hostname AS neighbor_name "
-                    "FROM topology_links WHERE source_device_id = ? AND LOWER(source_port_normalized) = ?",
-                    (curr_device_id, port_norm)
-                ).fetchone()
-                if not row_link:
-                    row_link = conn.execute(
-                        "SELECT source_device_id AS neighbor_id, source_hostname AS neighbor_name "
-                        "FROM topology_links WHERE target_device_id = ? AND LOWER(target_port_normalized) = ?",
-                        (curr_device_id, port_norm)
-                    ).fetchone()
+                result['searched_devices']['lldp'].append(dev_label)
+                try:
+                    lldp_records = _collect_lldp_from_device(dev_dict)
+                except Exception as e:
+                    logger.debug(f"[IPLocator] Error querying LLDP neighbors on {dev_label}: {e}")
+                    lldp_records = []
 
-                if row_link:
-                    neighbor_name = row_link['neighbor_name']
-                    neighbor_id = row_link['neighbor_id']
-                    trace_notes.append(f"[拓扑缓存命中] 接口 {curr_port} 连接了下游邻居 {neighbor_name}")
-                    if neighbor_id not in visited_switches:
-                        curr_device_id = neighbor_id
+                lldp_match = next(
+                    (
+                        lrec for lrec in lldp_records
+                        if normalize_interface_name(lrec.get('local_interface') or '').lower()
+                        in port_identity.get('port_norms', set())
+                    ),
+                    None,
+                )
+                if lldp_match and lldp_match.get('neighbor'):
+                    neighbor_name = lldp_match['neighbor']
+                    neighbor_dev = lookup_neighbor_device(conn, neighbor_name, "")
+                    current_hop.update({
+                        'is_uplink': True,
+                        'neighbor_name': neighbor_name,
+                        'neighbor_port': lldp_match.get('neighbor_port') or '',
+                        'evidence': 'lldp',
+                    })
+                    if neighbor_dev and neighbor_dev['id'] not in visited_switches:
+                        curr_device_id = neighbor_dev['id']
                         visited_switches.add(curr_device_id)
+                        terminal_switch_id = None
+                        terminal_port = None
+                        trace_notes.append(
+                            f"设备 {dev_label} 接口 {curr_port} 连接了下游邻居 "
+                            f"{neighbor_name}，继续追踪。"
+                        )
                         continue
-                    else:
-                        break
-                else:
-                    result['searched_devices']['lldp'].append(dev_label)
-                    try:
-                        lldp_records = _collect_lldp_from_device(dev_dict)
-                    except Exception as e:
-                        logger.debug(f"[IPLocator] Error querying LLDP neighbors on {dev_label}: {e}")
-                        lldp_records = []
 
-                    for lrec in lldp_records:
-                        if normalize_interface_name(lrec['local_interface']).lower() == port_norm:
-                            neighbor_name = lrec['neighbor']
-                            break
+                    trace_incomplete = True
+                    trace_error = (
+                        f"发现接口 {curr_port} 存在邻居 {neighbor_name}，"
+                        '但邻居不在管理资产中或已访问过，无法确认终端接入口。'
+                    )
+                    terminal_switch_id = None
+                    terminal_port = None
+                    trace_notes.append(
+                        f"发现接口 {curr_port} 存在邻居 {neighbor_name}，"
+                        '但其不在管理资产中或已访问过，追踪终止。'
+                    )
+                    break
 
-                    if neighbor_name:
-                        neighbor_dev = lookup_neighbor_device(conn, neighbor_name, "")
-                        if neighbor_dev and neighbor_dev['id'] not in visited_switches:
-                            curr_device_id = neighbor_dev['id']
-                            visited_switches.add(curr_device_id)
-                            trace_notes.append(f"设备 {dev_label} 接口 {curr_port} 连接了下游邻居 {neighbor_name}，继续追踪。")
-                            continue
-                        else:
-                            trace_notes.append(f"发现接口 {curr_port} 存在邻居 {neighbor_name}，但其不在管理资产中或已访问过，追踪终止。")
-                            break
+                if port_identity.get('is_aggregation') or port_identity.get('is_trunk'):
+                    trace_incomplete = True
+                    trace_error = (
+                        f"设备 {dev_label} 接口 {curr_port} 是聚合/Trunk 接口，"
+                        '未找到对应的下挂拓扑或 LLDP 邻居，不能判定为主机接入口。'
+                    )
+                    current_hop['is_uplink'] = True
+                    terminal_switch_id = None
+                    terminal_port = None
+                    trace_notes.append(
+                        f"设备 {dev_label} 接口 {curr_port} 是聚合/Trunk 接口但未找到下挂邻居，"
+                        '追踪未完成，不能判定为直连主机。'
+                    )
+                    break
+
+                if not _trace_identity_confirms_access_terminal(port_identity):
+                    trace_incomplete = True
+                    if not port_identity.get('is_physical'):
+                        trace_error = (
+                            f'设备 {dev_label} 接口 {curr_port} 没有已确认的普通物理接口记录，'
+                            '不能判定为主机接入口。'
+                        )
                     else:
-                        trace_notes.append(f"设备 {dev_label} 接口 {curr_port} 无下挂邻居设备，判定为直连主机的接入端口。")
-                        break
+                        trace_error = (
+                            f'设备 {dev_label} 接口 {curr_port} 无下挂拓扑/LLDP 邻居，'
+                            '但没有明确的 Access/Edge/Untagged 或 Access VLAN 证据，'
+                            '不能仅凭“无邻居”判定为主机接入口。'
+                        )
+                    terminal_switch_id = None
+                    terminal_port = None
+                    trace_notes.append(
+                        f"设备 {dev_label} 接口 {curr_port} 无下挂邻居，但接口缺少明确的主机接入口证据，"
+                        '追踪未完成。'
+                    )
+                    break
+
+                trace_notes.append(
+                    f"设备 {dev_label} 接口 {curr_port} 无下挂邻居，且接口具有明确的 Access/Edge/Untagged 或 Access VLAN 证据，"
+                    '判定为直连主机的接入端口。'
+                )
+                break
+
+            if len(trace_hops) >= 64 and not terminal_switch_id:
+                trace_incomplete = True
+                trace_error = '拓扑追踪超过最大跳数，无法确认终端接入口。'
         finally:
             conn.close()
     except Exception as exc:
         logger.error(f"[IPLocator] Path tracing database error: {exc}")
+        trace_incomplete = True
+        trace_error = '拓扑追踪读取数据库失败，无法确认终端接入口。'
+        terminal_switch_id = None
+        terminal_port = None
 
     # ── Step 3: 构造最终结果与缓存 ──
-    if terminal_switch_id and terminal_port:
+    result['trace_hops'] = trace_hops
+    if trace_incomplete:
+        result['trace_status'] = 'incomplete'
+        result['found'] = False
+        if trace_error and trace_error not in result['errors']:
+            result['errors'].append(trace_error)
+        last_hop = trace_hops[-1] if trace_hops else None
+        if last_hop:
+            result['locations'] = [{
+                'switch_id': last_hop.get('switch_id'),
+                'switch_name': last_hop.get('switch_name') or '',
+                'port': last_hop.get('port') or '',
+                'vlan': last_hop.get('vlan') or '',
+                'vlan_source': last_hop.get('vlan_source') or 'unknown',
+                'type': 'TRACE_INCOMPLETE',
+                'is_uplink': True,
+                'note': ' -> '.join(trace_notes),
+            }]
+    elif terminal_switch_id and terminal_port:
+        result['trace_status'] = 'terminal'
         term_dev = next((d for d in all_eligible if d.get('id') == terminal_switch_id), None)
         term_label = term_dev.get('hostname') or term_dev.get('ip_address') if term_dev else ''
         
@@ -2331,6 +2937,7 @@ def locate_ip(target_ip: str, force_refresh: bool = False) -> dict[str, Any]:
             source_type='path_traced'
         )
     elif arp_source_info:
+        result['trace_status'] = 'arp_only'
         result['found'] = True
         result['locations'] = [{
             'switch_id': arp_source_info.get('device_id'),
@@ -2540,6 +3147,46 @@ def _load_realtime_arp_devices(all_eligible: list[dict]) -> list[dict]:
     ]
     candidates.sort(key=lambda item: str(item.get('id') or item.get('ip_address') or ''))
     return candidates
+
+
+_ARP_SOURCE_ROLE_PRIORITY = {
+    'gateway': 0,
+    'core': 1,
+    'router': 2,
+    'firewall': 3,
+    'distribution': 4,
+    'dist': 4,
+    'aggregation': 5,
+    'l3switch': 6,
+    'switch': 7,
+    'access': 8,
+}
+
+
+def _select_realtime_arp_hit(
+    hits: list[tuple[dict[str, Any], dict[str, Any]]],
+    preferred_gateway_id: Any = '',
+) -> tuple[dict[str, Any], dict[str, Any]] | None:
+    """Select an ARP source deterministically, honoring the IPAM gateway.
+
+    Concurrent SSH completion order is not a routing decision.  If the
+    matched prefix names a gateway device, that device wins; otherwise the
+    role and stable device id provide a repeatable fallback.
+    """
+    if not hits:
+        return None
+    preferred = str(preferred_gateway_id or '')
+    return min(
+        hits,
+        key=lambda item: (
+            0 if preferred and str(item[0].get('id') or '') == preferred else 1,
+            _ARP_SOURCE_ROLE_PRIORITY.get(
+                str(item[0].get('role') or '').strip().lower(),
+                99,
+            ),
+            str(item[0].get('id') or item[0].get('ip_address') or ''),
+        ),
+    )
 
 
 def _load_arp_sweep_devices(run_id: str = '') -> tuple[list[dict], int, int]:

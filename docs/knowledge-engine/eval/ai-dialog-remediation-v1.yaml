@@ -161,6 +161,99 @@ cases:
     prompt: "定位 MAC 00:11:22:33:44:55"
     expected_outcome: clarify
     expected_execution: false
+dialogue_matrix:
+  - id: DLG-SCOPE-001
+    description: "Huawei OSPF to Cisco follow-up preserves feature and replaces vendor"
+    turns:
+      - role: user
+        prompt: "我想查下华为交换机的 ospf 配置示例"
+      - role: user
+        prompt: "那可以提供思科的吗"
+    expected_scope:
+      vendor: Cisco
+      feature: ospf
+      document_category: configuration
+      cli_platform: null
+  - id: DLG-SCOPE-002
+    description: "Huawei OSPF to H3C follow-up preserves feature and replaces vendor"
+    turns:
+      - role: user
+        prompt: "我想查下华为交换机的 ospf 配置示例"
+      - role: user
+        prompt: "华三的呢"
+    expected_scope:
+      vendor: H3C
+      feature: ospf
+      document_category: configuration
+      cli_platform: null
+  - id: DLG-SCOPE-003
+    description: "H3C BGP to Cisco follow-up preserves BGP only"
+    turns:
+      - role: user
+        prompt: "H3C Comware 7 BGP 邻居配置"
+      - role: user
+        prompt: "Cisco 的呢"
+    expected_scope:
+      vendor: Cisco
+      feature: bgp
+      document_category: configuration
+      cli_platform: null
+  - id: DLG-SCOPE-004
+    description: "H3C aliases normalize to one canonical vendor"
+    turns:
+      - role: user
+        prompt: "华三交换机 OSPF 配置"
+      - role: user
+        prompt: "新华三交换机 OSPF 配置"
+      - role: user
+        prompt: "H3C Comware OSPF 配置"
+    expected_canonical_vendor: H3C
+  - id: DLG-SCOPE-005
+    description: "An explicit new feature overrides the previous feature"
+    turns:
+      - role: user
+        prompt: "华为交换机 OSPF 配置"
+      - role: user
+        prompt: "那换成 Cisco 的 BGP 配置吧"
+    expected_scope:
+      vendor: Cisco
+      feature: bgp
+      document_category: configuration
+  - id: DLG-SCOPE-006
+    description: "An explicit platform overrides history without copying old platform"
+    turns:
+      - role: user
+        prompt: "华为交换机 OSPF 配置"
+      - role: user
+        prompt: "那换成 H3C Comware v7 吧"
+    expected_scope:
+      vendor: H3C
+      feature: ospf
+      cli_platform: h3c_comware
+      document_category: configuration
+  - id: DLG-SCOPE-007
+    description: "A full configuration request remains a clarification"
+    turns:
+      - role: user
+        prompt: "华为交换机 OSPF 配置"
+      - role: user
+        prompt: "那给我思科的全部配置"
+    expected_scope:
+      vendor: Cisco
+      feature: null
+      clarification_required: true
+  - id: DLG-SCOPE-008
+    description: "Cancellation and stale state are terminal and cannot resume old scope"
+    state_transition:
+      - pending: true
+        action: cancel
+        expected: cleared
+      - pending: expired
+        action: free_text_new_topic
+        expected: fresh_scope
+      - pending: true
+        action: replay_old_revision
+        expected: revision_conflict
 provider_matrix:
   - provider_type: deepseek
     required_status: enabled_and_healthy

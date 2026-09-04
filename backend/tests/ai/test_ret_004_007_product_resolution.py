@@ -40,3 +40,11 @@ def test_full_huawei_sku_alias_remains_matchable_to_hardware_registry():
     assert resolution.match_method == "canonical"
     assert resolution.metadata["product_series"] == "CloudEngine 6800"
     assert resolution.metadata["product_model"] == "ce6885-48ys8cq"
+
+
+def test_registry_binds_generic_h3c_os_family_to_reviewed_concrete_family():
+    resolution = product_resolver.resolve_query("H3C S6850 Comware VLAN配置")
+
+    assert resolution.metadata["os_family"] == "Comware 7"
+    assert resolution.metadata["cli_platform"] == "h3c_comware"
+    assert resolution.candidates[0]["document_type"] == "product_registry"

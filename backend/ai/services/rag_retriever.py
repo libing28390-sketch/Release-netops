@@ -18,12 +18,14 @@ from database.core import get_db_connection
 from ai.providers.embedding import embedding_provider
 from ai.security.sanitizer import sanitize_text
 from ai.services.rag_policy import document_is_visible, trust_rank
-from ai.services.knowledge_metadata import canonical_feature, canonical_vendor
+from ai.services.knowledge_metadata import canonical_cli_platform, canonical_feature, canonical_vendor
 from ai.schemas.knowledge import KnowledgeQueryPlan
 from ai.services.knowledge_service import _directory_filter_sql
 from ai.services.product_resolver import product_resolver
 from ai.services.retrieval_contract import (
     BoundedReranker,
+    Reranker,
+    UnavailableReranker,
     build_minimal_context,
     build_retrieval_explanation,
     retrieval_cache,
@@ -70,6 +72,8 @@ class RetrievalRequest:
         values.update(kwargs)
         if values.get("platform") and not values.get("cli_platform"):
             values["cli_platform"] = values.pop("platform")
+        if values.get("cli_platform"):
+            values["cli_platform"] = canonical_cli_platform(values["cli_platform"])
         return cls(query=query, **{key: value for key, value in values.items() if key in cls.__dataclass_fields__})
 
 
@@ -131,6 +135,10 @@ class RAGRetriever:
         ),
         "lldp": (r"(?<![a-z0-9])lldp(?![a-z0-9])",),
         "vrrp": (r"(?<![a-z0-9])vrrp(?![a-z0-9])",),
+        "hsrp": (
+            r"(?<![a-z0-9])hsrp(?![a-z0-9])",
+            r"\bstandby\s+\d+\s+(?:ip|priority|preempt)\b",
+        ),
         "evpn": (r"(?<![a-z0-9])evpn(?![a-z0-9])",),
         "vxlan": (r"(?<![a-z0-9])vxlan(?![a-z0-9])",),
         "snmp": (r"(?<![a-z0-9])snmp(?:v3)?(?![a-z0-9])",),
@@ -142,9 +150,59 @@ class RAGRetriever:
         "qos": (r"(?<![a-z0-9])qos(?![a-z0-9])", r"服务质量"),
     }
 
-    def __init__(self, *, reranker: Any = None, cache_enabled: bool | None = None) -> None:
+    def __init__(self, *, reranker: Any = None, cache_enabled: bool | None = None, candidate_pool_size: int | None = None) -> None:
         self.last_debug: Dict[str, Any] = {}
-        self.reranker = BoundedReranker(reranker)
+        pool_size = int(
+            candidate_pool_size
+            if candidate_pool_size is not None
+            else os.environ.get("AI_RETRIEVAL_CANDIDATE_POOL_SIZE", "30")
+        )
+        self.candidate_pool_size = max(5, min(pool_size, 100))
+        requested_reranker_mode = str(os.environ.get("AI_RERANKER_MODE") or ("active" if reranker else "legacy")).lower().strip()
+        reranker_mode = requested_reranker_mode
+        self.reranker_config: Dict[str, Any] = {
+            "requested_mode": requested_reranker_mode,
+            "effective_mode": requested_reranker_mode,
+            "status": "ready",
+            "error_code": None,
+        }
+        if reranker_mode not in {"legacy", "shadow", "active"}:
+            reranker_mode = "legacy"
+            self.reranker_config.update({
+                "effective_mode": reranker_mode,
+                "status": "degraded",
+                "error_code": "RERANKER_MODE_INVALID",
+            })
+        if reranker is None:
+            if reranker_mode in ("shadow", "active"):
+                try:
+                    from ai.services.retrieval_contract import RemoteSidecarReranker
+                    endpoint = os.environ.get("AI_RERANKER_ENDPOINT", "http://127.0.0.1:8004/v1/rerank")
+                    timeout_ms = int(os.environ.get("AI_RERANKER_TIMEOUT_MS", "300"))
+                    reranker = RemoteSidecarReranker(endpoint=endpoint, timeout_seconds=timeout_ms / 1000.0)
+                except Exception:
+                    reranker = UnavailableReranker()
+                    self.reranker_config.update({
+                        "status": "degraded",
+                        "error_code": "RERANKER_ENDPOINT_INVALID",
+                    })
+            else:
+                reranker = Reranker()
+
+        if isinstance(reranker, BoundedReranker):
+            self.reranker = reranker
+            self.reranker.max_candidates = max(self.reranker.max_candidates, self.candidate_pool_size)
+        else:
+            self.reranker = BoundedReranker(
+                reranker,
+                max_candidates=self.candidate_pool_size,
+                timeout_ms=int(os.environ.get("AI_RERANKER_TIMEOUT_MS", "300")),
+                mode=reranker_mode,
+            )
+        self.reranker_config.update({
+            "effective_mode": str(getattr(self.reranker, "mode", reranker_mode)),
+            "name": str(getattr(getattr(self.reranker, "reranker", self.reranker), "name", type(self.reranker).__name__)),
+        })
         # Native caching is a release-safe feature flag.  Tests and legacy
         # deployments can keep it off while still using the exact key and
         # invalidation contract; PostgreSQL deployments may enable it with
@@ -320,8 +378,27 @@ class RAGRetriever:
         cursor.execute(f"SELECT * FROM {table} WHERE 1 = 0")
         return {str(description[0]) for description in (cursor.description or [])}
 
+    @staticmethod
+    def _normalise_os_family(value: Any) -> str:
+        """Compare OS-family aliases without weakening platform boundaries."""
+
+        return re.sub(r"[\s_-]+", "", str(value or "").strip().lower())
+
     def _filter_sql(self, request: RetrievalRequest, columns: set[str]) -> tuple[str, list[Any]]:
-        where = ["d.status = ?", "(d.tenant_id = ? OR d.tenant_id = 'tenant-default')"]
+        # ``tenant-default`` is the owner of the shared official corpus, not a
+        # wildcard for private documents.  Keep the shared branch explicit so
+        # another tenant's internal/user documents never enter the candidate
+        # query in the first place.
+        if "knowledge_source_type" in columns:
+            shared_scope = (
+                "LOWER(COALESCE(d.knowledge_source_type, '')) IN "
+                "('official_vendor', 'official_url', 'official_local', 'official_template')"
+            )
+        elif "source_trust_level" in columns:
+            shared_scope = "LOWER(COALESCE(d.source_trust_level, '')) = 'official'"
+        else:
+            shared_scope = "0 = 1"
+        where = ["d.status = ?", f"(d.tenant_id = ? OR (d.tenant_id = 'tenant-default' AND {shared_scope}))"]
         params: list[Any] = [request.status, request.tenant_id]
         if "exclude_from_rag" in columns:
             where.append("COALESCE(d.exclude_from_rag, 0) = 0")
@@ -341,8 +418,25 @@ class RAGRetriever:
             where.append("LOWER(d.vendor) = LOWER(?)")
             params.append(canonical_vendor(request.vendor))
         if request.document_category and "document_category" in columns:
-            where.append("LOWER(d.document_category) = LOWER(?)")
-            params.append(request.document_category)
+            category_val = str(request.document_category).strip().lower()
+            if category_val == "command":
+                # Official command references are currently projected as
+                # configuration documents because executable snippets are
+                # published together with configuration semantics. Keep a
+                # dedicated command category preferred when present, while
+                # allowing the reviewed configuration projection to satisfy
+                # a command-reference query.
+                where.append("LOWER(d.document_category) IN (?, ?)")
+                params.extend(["command", "configuration"])
+            elif category_val == "cli_output":
+                where.append("LOWER(d.document_category) IN (?, ?, ?)")
+                params.extend(["cli_output", "configuration", "command"])
+            elif category_val == "configuration":
+                where.append("LOWER(d.document_category) IN (?, ?)")
+                params.extend(["configuration", "command"])
+            else:
+                where.append("LOWER(d.document_category) = LOWER(?)")
+                params.append(request.document_category)
 
         scope_types = {
             "official": ("official_vendor", "official_url", "official_local", "official_template"),
@@ -368,8 +462,88 @@ class RAGRetriever:
             params.extend(directory_params)
         for column, value in scalar_filters:
             if value is not None and column in columns:
-                where.append(f"LOWER(COALESCE(d.{column}, '')) = LOWER(?)")
-                params.append(str(value))
+                if column == "os_family":
+                    # Catalog imports use both ``IOS XE`` and ``IOS-XE``.
+                    # Separator normalization preserves the exact family
+                    # match while avoiding a false no-match on formatting.
+                    family_value = self._normalise_os_family(value)
+                    generation = self._normalise_os_family(request.os_generation)
+                    generation_suffix = "".join(re.findall(r"\d+", generation))
+                    if generation_suffix and family_value and not family_value.endswith(generation_suffix):
+                        # Some legacy imports put the generation in
+                        # ``os_family`` (for example ``Comware 7``) while the
+                        # request contract carries it in ``os_generation``.
+                        # Match that explicit combined value without treating
+                        # an unknown family/version as compatible.
+                        where.append(
+                            "REPLACE(REPLACE(REPLACE(LOWER(COALESCE(d.os_family, '')), '-', ''), ' ', ''), '_', '') IN (?, ?)"
+                        )
+                        params.extend([family_value, f"{family_value}{generation_suffix}"])
+                    else:
+                        where.append(
+                            "REPLACE(REPLACE(REPLACE(LOWER(COALESCE(d.os_family, '')), '-', ''), ' ', ''), '_', '') = ?"
+                        )
+                        params.append(family_value)
+                elif column == "os_generation":
+                    generation_value = str(value)
+                    family_value = self._normalise_os_family(request.os_family)
+                    generation = self._normalise_os_family(value)
+                    generation_suffix = "".join(re.findall(r"\d+", generation))
+                    if family_value and generation_suffix:
+                        # Legacy official rows may encode the generation in
+                        # ``os_family`` (Comware 7 / VRP8) and leave the
+                        # dedicated generation column empty. Keep the
+                        # explicit version boundary in force while accepting
+                        # that storage shape.
+                        where.append(
+                            "(LOWER(COALESCE(d.os_generation, '')) = LOWER(?) OR "
+                            "REPLACE(REPLACE(REPLACE(LOWER(COALESCE(d.os_family, '')), '-', ''), ' ', ''), '_', '') = ?)"
+                        )
+                        params.extend([generation_value, f"{family_value}{generation_suffix}"])
+                    else:
+                        where.append(f"LOWER(COALESCE(d.{column}, '')) = LOWER(?)")
+                        params.append(generation_value)
+                elif column == "software_train" and re.fullmatch(r"V[236]\d{2}", str(value).strip(), re.IGNORECASE):
+                    # A bare Huawei-style train token (for example V200) is
+                    # often projected from reviewed documents as
+                    # ``V200R023 / V300R024``. Keep the train boundary hard,
+                    # but allow the documented release-qualified form rather
+                    # than requiring a lossy exact-string match. The R-suffix
+                    # and separator guards prevent V200 from matching V2000
+                    # or a different train such as V300.
+                    train_value = str(value).strip().lower()
+                    if "metadata_json" in columns:
+                        where.append(
+                            "(LOWER(COALESCE(d.software_train, '')) = LOWER(?) OR "
+                            "LOWER(COALESCE(d.software_train, '')) LIKE LOWER(?) OR "
+                            "LOWER(COALESCE(d.software_train, '')) LIKE LOWER(?) OR "
+                            "LOWER(COALESCE(d.software_train, '')) LIKE LOWER(?) OR "
+                            "COALESCE(d.metadata_json -> 'applicable_software_trains', '[]'::jsonb) "
+                            "@> jsonb_build_array(?))"
+                        )
+                        params.extend([
+                            train_value,
+                            f"{train_value}r%",
+                            f"{train_value}/%",
+                            f"{train_value} /%",
+                            str(value),
+                        ])
+                    else:
+                        where.append(
+                            "(LOWER(COALESCE(d.software_train, '')) = LOWER(?) OR "
+                            "LOWER(COALESCE(d.software_train, '')) LIKE LOWER(?) OR "
+                            "LOWER(COALESCE(d.software_train, '')) LIKE LOWER(?) OR "
+                            "LOWER(COALESCE(d.software_train, '')) LIKE LOWER(?))"
+                        )
+                        params.extend([
+                            train_value,
+                            f"{train_value}r%",
+                            f"{train_value}/%",
+                            f"{train_value} /%",
+                        ])
+                else:
+                    where.append(f"LOWER(COALESCE(d.{column}, '')) = LOWER(?)")
+                    params.append(str(value))
 
         if request.software_release and "software_release" in columns:
             release = str(request.software_release)
@@ -431,11 +605,18 @@ class RAGRetriever:
                         if model_prefix and column in columns
                         else ""
                     )
-                    where.append(f"({scalar}{prefix_clause} OR ({array_expr}))")
+                    prefix_meta_clause = (
+                        f" OR LOWER(CAST(d.metadata_json AS TEXT)) LIKE LOWER(?)"
+                        if model_prefix
+                        else ""
+                    )
+                    where.append(f"({scalar}{prefix_clause} OR ({array_expr}){prefix_meta_clause})")
                     params.append(scalar_value)
                     if model_prefix and column in columns:
                         params.append(f"{value_text}-%")
                     params.extend([scalar_value] * len(array_keys))
+                    if model_prefix:
+                        params.append(f"%{value_text}%")
             else:
                 where.append(scalar)
                 if column in columns:
@@ -445,7 +626,7 @@ class RAGRetriever:
             # Never allow platform=all to satisfy a concrete command,
             # configuration, or CLI-output request.  Neutral documents are
             # represented by NULL, not the string all.
-            platform_value = str(request.cli_platform)
+            platform_value = canonical_cli_platform(request.cli_platform)
             if "metadata_json" in columns:
                 # Product registries use a specific train (for example
                 # huawei_vrp_v200), while a reviewed command skeleton may be
@@ -629,7 +810,11 @@ class RAGRetriever:
 
         category = str(primary.get("document_category") or "")
         max_chars = 12_000 if category == "configuration" else 10_000 if category == "cli_output" else 8_000
-        context = build_minimal_context(primary, chunks, max_chars=max_chars)
+        try:
+            max_chunks = int(os.environ.get("AI_RAG_MAX_CONTEXT_CHUNKS_PER_DOCUMENT", "4"))
+        except (TypeError, ValueError):
+            max_chunks = 4
+        context = build_minimal_context(primary, chunks, max_chars=max_chars, max_chunks=max_chunks)
         expanded = dict(primary)
         expanded["content"] = context["content"]
         selected_ids = set(context["context_chunk_ids"])
@@ -837,17 +1022,19 @@ class RAGRetriever:
                 previous = best_by_document.get(key)
                 if previous is None or (item["relevance_score"], item["source_trust_rank"]) > (previous["relevance_score"], previous["source_trust_rank"]):
                     best_by_document[key] = item
-            ranked_documents = sorted(
+            pool_limit = max(top_k, self.candidate_pool_size)
+            candidate_documents = sorted(
                 best_by_document.values(),
                 key=lambda item: (item["relevance_score"], item["source_trust_rank"]),
                 reverse=True,
-            )[:top_k]
-            reranked_documents, reranker_debug = self.reranker.apply(request.query, ranked_documents)
+            )[:pool_limit]
+            reranked_documents, reranker_debug = self.reranker.apply(request.query, candidate_documents)
             final_results = [
                 self._expand_document_context(item, chunks_by_document.get(str(item["storage_document_id"]), [item]))
                 for item in reranked_documents[:top_k]
             ]
             debug.update({
+                "candidate_pool_size": len(candidate_documents),
                 "dedup_document_count": len(best_by_document),
                 "incompatible_embedding_chunks": incompatible_vectors,
                 "version_conflict_count": version_conflicts,
@@ -857,6 +1044,8 @@ class RAGRetriever:
                 "expanded_context_chunks": sum(int(item.get("context_chunk_count") or 0) for item in final_results),
                 "final_document_ids": [item["document_id"] for item in final_results],
                 "reranker": reranker_debug,
+                "reranker_config": dict(self.reranker_config),
+                "shadow": reranker_debug if reranker_debug.get("mode") == "shadow" else {},
                 "cache": {"hit": False, "key": cache_key, "enabled": self.cache_enabled},
                 "outcome": "matched" if final_results else "no_match",
             })

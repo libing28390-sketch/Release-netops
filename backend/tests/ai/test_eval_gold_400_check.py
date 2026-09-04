@@ -1,0 +1,105 @@
+from __future__ import annotations
+
+import sys
+from pathlib import Path
+
+import yaml
+
+scripts_dir = str(Path(__file__).resolve().parents[3] / "scripts")
+if scripts_dir not in sys.path:
+    sys.path.insert(0, scripts_dir)
+
+from knowledge_eval_gold_400_check import validate_dataset
+
+
+def _case(case_id: int, *, category: str, vendor: str, split: str, secondary: bool = False) -> dict:
+    value = {
+        "id": f"GOLD400-{case_id:03d}",
+        "query": f"synthetic network query {case_id}",
+        "category": category,
+        "vendor": vendor,
+        "platform": "synthetic_platform",
+        "feature": "vlan",
+        "expected_outcome": "answer",
+        "gold_document_ids": [f"official-doc-{case_id:03d}"],
+        "acceptable_document_ids": [],
+        "citation_required": True,
+        "risk_level": "low",
+        "split": split,
+        "golden_answer": "Use the reviewed synthetic evidence and verify the result.",
+        "source_evidence": [{"document_id": f"official-doc-{case_id:03d}", "locator": "fixture/synthetic"}],
+        "annotator": "annotator-a",
+        "reviewer": "reviewer-a",
+        "reviewed_at": "2026-09-03T00:00:00Z",
+        "annotation_status": "approved",
+    }
+    if secondary:
+        value["secondary_reviewer"] = "reviewer-b"
+    if category in {"knowledge_config_reference", "troubleshooting", "configuration_validation_diagnostic", "tool_call_dangerous_operation"}:
+        value.update({"domain_reviewed": True, "domain_reviewer": "domain-reviewer", "domain_reviewed_at": "2026-09-03T00:00:00Z"})
+    return value
+
+
+def _write_dataset(tmp_path: Path, cases: list[dict]) -> Path:
+    path = tmp_path / "eval-golden-400.yaml"
+    path.write_text(
+        yaml.safe_dump(
+            {
+                "schema_version": 1,
+                "dataset_id": "nexora-kb-eval-gold-400-v1-20260903",
+                "status": "frozen",
+                "case_count": len(cases),
+                "synthetic_data": True,
+                "source_policy": {
+                    "database": "PostgreSQL",
+                    "sqlite": "not_used",
+                    "external_network": "forbidden",
+                    "secrets": "forbidden",
+                    "production_data": "forbidden",
+                },
+                "coverage": {"train_debug_hidden": {"train": 240, "debug": 80, "hidden": 80}},
+                "review_policy": {"minimum_double_review_cases": 80},
+                "cases": cases,
+            },
+            allow_unicode=True,
+            sort_keys=False,
+        ),
+        encoding="utf-8",
+    )
+    return path
+
+
+def test_gold_400_contract_accepts_complete_distribution(tmp_path: Path) -> None:
+    categories = (
+        ["knowledge_config_reference"] * 140
+        + ["troubleshooting"] * 70
+        + ["configuration_validation_diagnostic"] * 50
+        + ["asset_alarm_query"] * 40
+        + ["intent_clarification_missing_parameter"] * 40
+        + ["tool_call_dangerous_operation"] * 30
+        + ["negative_security_no_match"] * 30
+    )
+    vendors = (["Huawei"] * 100 + ["Cisco"] * 100 + ["H3C"] * 80 + ["Ruijie"] * 60 + ["cross_vendor_or_unknown"] * 60)
+    splits = ["train"] * 240 + ["debug"] * 80 + ["hidden"] * 80
+    cases = [_case(i + 1, category=categories[i], vendor=vendors[i], split=splits[i], secondary=i < 80) for i in range(400)]
+    report = validate_dataset(_write_dataset(tmp_path, cases))
+    assert report["status"] == "PASS", report
+    assert report["case_count"] == 400
+    assert report["double_review_count"] == 80
+
+
+def test_gold_400_contract_rejects_missing_review_and_secret(tmp_path: Path) -> None:
+    case = _case(1, category="negative_security_no_match", vendor="cross_vendor_or_unknown", split="hidden")
+    case.pop("reviewer")
+    case["risk_level"] = "unclassified"
+    case["query"] = "api_key=fixture-secret"
+    report = validate_dataset(_write_dataset(tmp_path, [case]))
+    assert report["status"] == "FAIL"
+    assert report["error_count"] > 0
+    assert any("human-approved" in error or "secret-like" in error for error in report["errors"])
+    assert any("risk_level is invalid" in error for error in report["errors"])
+
+
+def test_gold_400_contract_is_not_ready_without_real_dataset(tmp_path: Path) -> None:
+    report = validate_dataset(tmp_path / "missing.yaml")
+    assert report["status"] == "NOT_READY"

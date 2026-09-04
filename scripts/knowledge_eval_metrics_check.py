@@ -5,7 +5,13 @@ from __future__ import annotations
 import hashlib
 import json
 import math
+import sys
 from pathlib import Path
+
+ROOT = Path(__file__).resolve().parents[1]
+BACKEND_ROOT = ROOT / "backend"
+if str(BACKEND_ROOT) not in sys.path:
+    sys.path.insert(0, str(BACKEND_ROOT))
 
 from ai.services.evaluation_metrics import (
     entity_resolution_accuracy,
@@ -17,7 +23,6 @@ from ai.services.evaluation_metrics import (
 )
 
 
-ROOT = Path(__file__).resolve().parents[1]
 MODULE_PATH = ROOT / "backend" / "ai" / "services" / "evaluation_metrics.py"
 REPORT_PATH = ROOT / "docs" / "knowledge-engine" / "eval" / "eval-metrics-v1.manifest.json"
 

@@ -3,14 +3,16 @@ import { cleanup, render, screen } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import RagEvaluationPanel from './RagEvaluationPanel';
-import { getKnowledgeEvaluation, runKnowledgeEvaluation } from '../../../api/ai';
+import { getKnowledgeEvaluation, getKnowledgeExperimentObservability, runKnowledgeEvaluation } from '../../../api/ai';
 
 vi.mock('../../../api/ai', () => ({
   getKnowledgeEvaluation: vi.fn(),
+  getKnowledgeExperimentObservability: vi.fn(),
   runKnowledgeEvaluation: vi.fn(),
 }));
 
 const getEvaluation = vi.mocked(getKnowledgeEvaluation);
+const getObservability = vi.mocked(getKnowledgeExperimentObservability);
 const runEvaluation = vi.mocked(runKnowledgeEvaluation);
 
 const emptyReport = {
@@ -46,12 +48,13 @@ const passReport = {
     { metric: 'retrieval_accuracy', actual: 1, operator: '>=', threshold: 0.95, passed: true },
     { metric: 'wrong_vendor_rate', actual: 0, operator: '<=', threshold: 0.01, passed: true },
   ],
-  cases: [{ id: 'Q01', query: 'show ospf peer', retrieval_correct: true, citation_precision: 1, vendor_mismatch: false, version_conflict: false, latency_ms: 1 }],
+  cases: [{ id: 'Q01', retrieval_correct: true, citation_precision: 1, vendor_mismatch: false, version_conflict: false, latency_ms: 1 }],
 };
 
 describe('RagEvaluationPanel', () => {
   beforeEach(() => {
     getEvaluation.mockResolvedValue(emptyReport as any);
+    getObservability.mockResolvedValue({ schema_version: 'obs-002-v1', tenant_id: 'tenant-a', database: 'PostgreSQL', redacted: true, contains_prompt_or_answer: false, contains_document_or_chunk_identity: false, runs: [], rollouts: [], shadow_observations: [] });
     runEvaluation.mockResolvedValue(passReport as any);
   });
 

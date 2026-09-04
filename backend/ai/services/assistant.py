@@ -48,6 +48,22 @@ from core.context import request_id_var, resolve_request_id
 # document because a broad lexical search happened to find a weak match.
 _RAG_CONTEXT_INTENTS = {"knowledge", "config_search", "troubleshooting", "alarm_search"}
 
+_EXPLICIT_READ_ONLY_KNOWLEDGE_MARKERS = (
+    "仅基于本地知识库",
+    "仅基于知识库",
+    "只基于本地知识库",
+    "只读",
+    "不要执行",
+    "不执行",
+    "无需执行",
+    "无须执行",
+    "禁止执行",
+    "严禁执行",
+    "不要实际执行",
+    "仅供参考",
+    "仅作参考",
+)
+
 logger = logging.getLogger(__name__)
 
 SSE_EVENT_VERSION = "nxa.sse.v1"
@@ -414,7 +430,7 @@ class AIAssistantService:
                 },
                 "candidates": [*(resolution.candidates or []), *(retrieval.get("results") or [])],
                 "final_chunks": retrieval.get("results") or [],
-                "shadow": (retrieval.get("debug") or {}).get("shadow") or {},
+                "shadow": (retrieval.get("debug") or {}).get("shadow") or (retrieval.get("debug") or {}).get("reranker") or {},
             },
             request_id=request_id,
         )
@@ -433,6 +449,22 @@ class AIAssistantService:
                 # closed and never pretends that a source was imported.
                 pass
         retrieval["request_id"] = request_id
+        try:
+            from ai.services.langfuse_exporter import langfuse_metadata_exporter
+            langfuse_metadata_exporter.export({
+                "request_id": request_id,
+                "tenant_id": tenant_id or "tenant-default",
+                "vendor": getattr(request, "vendor", None),
+                "platform": getattr(request, "cli_platform", None),
+                "intent": getattr(request, "document_category", None),
+                "candidate_count": len(retrieval.get("results") or []),
+                "quality_flags": {
+                    "no_match": bool(quality.get("no_match")),
+                    "wrong_vendor_count": int(quality.get("wrong_vendor_count") or 0),
+                },
+            })
+        except Exception:
+            pass
         return {
             "request": request,
             "resolution": resolution,
@@ -970,7 +1002,7 @@ class AIAssistantService:
                     "retrieval_ms": as_int(debug.get("retrieval_latency_ms")),
                 },
                 "quality": debug.get("quality") or {},
-                "shadow": debug.get("shadow") or {},
+                "shadow": debug.get("shadow") or debug.get("reranker") or {},
             },
             "citations": knowledge_result.get("citations") or [],
             "explanation": knowledge_result.get("explanation") or {},
@@ -1109,6 +1141,91 @@ class AIAssistantService:
         return result
 
     @staticmethod
+    def _merge_history_scope_continuation(
+        message: str,
+        intent_info: Dict[str, Any],
+        history: Optional[List[Dict[str, str]]],
+    ) -> Dict[str, Any]:
+        """Carry the last bounded knowledge feature into a vendor follow-up.
+
+        A follow-up such as ``那可以提供思科的吗`` changes the vendor but not
+        the subject.  Intent parsing is deliberately request-local, so without
+        this small conversation rule the query becomes a vendor-only ``command``
+        search and returns every Cisco configuration family.  Only the feature
+        and request category are inherited from a previous *user* knowledge
+        turn; product/platform identity is never copied across vendors.
+        """
+
+        if str(intent_info.get("intent") or "").strip().lower() != "knowledge":
+            return intent_info
+
+        current = dict(
+            intent_info.get("knowledge_intent")
+            or intent_info.get("metadata")
+            or intent_info.get("filters")
+            or {}
+        )
+        current_feature = str(current.get("feature") or "").strip()
+        if current_feature:
+            return intent_info
+
+        # Scope inheritance is only for a short vendor-switch continuation. A
+        # request explicitly asking for a full/all configuration remains a
+        # clarification instead of silently broadening the retrieval scope.
+        normalized = " ".join(str(message or "").strip().split())
+        lower_message = normalized.casefold()
+        if not normalized or len(normalized) > 80:
+            return intent_info
+        if any(marker in lower_message for marker in ("全部", "所有", "全套", "完整", "all config", "full config", "entire config")):
+            return intent_info
+        if not any(marker in normalized for marker in ("那", "也", "同样", "换", "改", "提供", "给", "能", "可以", "呢", "吗")):
+            return intent_info
+        if not str(current.get("vendor") or intent_info.get("vendor") or "").strip():
+            return intent_info
+        previous_scope: Dict[str, Any] = {}
+        supported_categories = {"configuration", "command", "cli_output", "troubleshooting"}
+        for item in reversed(history or []):
+            if not isinstance(item, dict) or str(item.get("role") or "").strip().lower() != "user":
+                continue
+            previous_message = str(item.get("content") or "").strip()
+            if not previous_message:
+                continue
+            candidate = intent_parser.parse_knowledge_metadata(previous_message)
+            if str(candidate.get("feature") or "").strip() and str(candidate.get("document_category") or "").lower() in supported_categories:
+                previous_scope = candidate
+                break
+        if not previous_scope:
+            return intent_info
+
+        merged = dict(current)
+        inherited_fields: list[str] = []
+        for field in ("feature", "feature_domain", "subfeature"):
+            value = previous_scope.get(field)
+            if merged.get(field) in (None, "", [], {}) and value not in (None, "", [], {}):
+                merged[field] = str(value)[:160]
+                inherited_fields.append(field)
+
+        current_category = str(merged.get("document_category") or "").strip().lower()
+        previous_category = str(previous_scope.get("document_category") or "").strip().lower()
+        if current_category in {"", "command"} and previous_category in supported_categories:
+            merged["document_category"] = previous_category
+            merged["knowledge_type"] = str(previous_scope.get("knowledge_type") or previous_category)[:64]
+            inherited_fields.extend(["document_category", "knowledge_type"])
+        merged["request_type"] = "knowledge"
+
+        result = dict(intent_info)
+        for key in ("knowledge_intent", "metadata", "filters"):
+            result[key] = {**(intent_info.get(key) or {}), **merged}
+        for key in ("request_type", "knowledge_type", "document_category", "feature_domain", "feature", "subfeature"):
+            if key in merged:
+                result[key] = merged[key]
+        result["conversation_scope"] = {
+            "source": "previous_user_knowledge_turn",
+            "inherited_fields": sorted(set(inherited_fields)),
+        }
+        return result
+
+    @staticmethod
     def _merge_pending_clarification_intent(
         message: str,
         intent_info: Dict[str, Any],
@@ -1123,6 +1240,16 @@ class AIAssistantService:
         current_intent = str(intent_info.get("intent") or "general_qa")
         pending_kind = str(pending.get("request_kind") or "")
         if pending_kind == "intent_classification":
+            # A clearly scoped, read-only knowledge question starts a new
+            # topic. Do not let an earlier generic/high-risk clarification
+            # card (for example from a previous change request) block local
+            # knowledge retrieval for this independent question.
+            normalized = " ".join(str(message or "").strip().split()).casefold()
+            if (
+                current_intent == "knowledge"
+                and any(marker.casefold() in normalized for marker in _EXPLICIT_READ_ONLY_KNOWLEDGE_MARKERS)
+            ):
+                return intent_info
             return AIAssistantService._merge_generic_pending_clarification(
                 message,
                 intent_info,
@@ -1560,6 +1687,7 @@ class AIAssistantService:
             pending_clarification,
             clarification_response,
         )
+        intent_info = self._merge_history_scope_continuation(message, intent_info, history)
         intent = intent_info.get("intent", "general_qa")
         filters = intent_info.get("filters", {})
 
@@ -1658,6 +1786,8 @@ class AIAssistantService:
         
         # 3. Retrieve RAG only for intents that explicitly need internal
         # evidence; general chat remains a clean, non-tenant-context request.
+        knowledge_result: Optional[Dict[str, Any]] = None
+        knowledge_trace: Optional[Dict[str, Any]] = None
         if intent == "knowledge":
             knowledge_result = self.retrieve_knowledge(
                 message,
@@ -2009,6 +2139,7 @@ class AIAssistantService:
                 pending_clarification,
                 clarification_response,
             )
+            intent_info = self._merge_history_scope_continuation(message, intent_info, history)
             intent = intent_info.get("intent", "general_qa")
             filters = intent_info.get("filters", {})
             yield _progress_event(

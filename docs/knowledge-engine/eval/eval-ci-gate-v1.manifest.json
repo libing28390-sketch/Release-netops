@@ -9,8 +9,9 @@
   "external_network": "not_used_by_offline_runner",
   "production_write": false,
   "workflow_sha256": {
-    "knowledge_engine_eval": "cee2f232527abd17c600dd770d61b49607931432099ae10d8d3012ad823a6fbe",
+    "knowledge_engine_eval": "293bede85c6e8acc46c9e6f0371e1fd787f8a0132e4b747b03c49bce02f622b5",
     "backend_pytest": "02d5e7e3d4704c408bbeec10612db5fa26acd0ba780858f89e93b2f95b0d21c7",
-    "release": "5eda4561cdc1b577cbdf9963f76f8a650ae0002c2b2a646f2f9b15cef6642568"
+    "release": "2087bf7fbc9aa7cfa23df4b8509722dd864ec8333e94af69361d50d420dbc9a5",
+    "promptfoo": "4932eb297a3b3a0241152720658e932add50ba728b877a4b1d585b989c1ae38a"
   }
 }

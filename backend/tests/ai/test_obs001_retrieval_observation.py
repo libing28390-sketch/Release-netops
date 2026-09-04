@@ -133,3 +133,34 @@ def test_obs003_trace_projection_and_log_sanitizer_drop_raw_secrets_before_write
     record = logging.LogRecord("obs003", logging.ERROR, __file__, 1, "provider failed %s", ("api_key=provider-secret",), None)
     assert SanitizeFilter().filter(record) is True
     assert "provider-secret" not in record.getMessage()
+
+
+def test_obs004_shadow_rank_delta_is_hashed_and_retained():
+    from ai.services.retrieval_trace_store import clear_retrieval_traces, get_retrieval_trace, record_retrieval_trace
+
+    clear_retrieval_traces()
+    trace_id = record_retrieval_trace(
+        tenant_id="tenant-obs004",
+        user_id="alice",
+        query="show ospf",
+        trace={
+            "runtime": {
+                "shadow": {
+                    "stage": "shadow_observed",
+                    "name": "mock-reranker",
+                    "mode": "shadow",
+                    "baseline_top_ids": ["doc-a", "doc-b"],
+                    "shadow_top_ids": ["doc-b", "doc-a"],
+                    "order_changed": True,
+                    "latency_ms": 12,
+                },
+            },
+        },
+    )
+    item = get_retrieval_trace(tenant_id="tenant-obs004", trace_id=trace_id)
+    shadow = item["runtime"]["shadow"]
+    assert shadow["stage"] == "shadow_observed"
+    assert shadow["order_changed"] is True
+    assert shadow["baseline_top_hashes"][0] != "doc-a"
+    assert shadow["rank_deltas"]
+    assert "doc-a" not in str(shadow)

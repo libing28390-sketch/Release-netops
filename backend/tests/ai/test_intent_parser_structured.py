@@ -377,6 +377,36 @@ def test_generic_clarification_follow_up_fills_and_overrides_slots() -> None:
     assert result["missing_fields"] == []
 
 
+def test_new_read_only_knowledge_question_supersedes_stale_generic_clarification() -> None:
+    from ai.services.assistant import AIAssistantService
+
+    query = "请仅基于本地知识库回答：Cisco IOS XE HSRP 基础配置和验证命令；不要执行设备操作。"
+    current = asyncio.run(intent_parser_module.intent_parser.parse_intent(query))
+    pending = {
+        "required": True,
+        "request_kind": "intent_classification",
+        "intent": "general_qa",
+        "risk": "high",
+        "risk_level": "R3",
+        "missing_fields": ["confirmation", "target_device", "action_context"],
+        "recognized_fields": {"vendor": "Cisco", "cli_platform": "cisco_iosxe", "feature": "hsrp"},
+        "state_id": "clar_stale_generic",
+        "revision": 1,
+    }
+
+    result = AIAssistantService._merge_pending_clarification_intent(
+        query,
+        current,
+        pending,
+        {},
+    )
+
+    assert result["intent"] == "knowledge"
+    assert result["needs_clarification"] is False
+    assert result["missing_fields"] == []
+    assert result["requires_confirmation"] is False
+
+
 def test_parser_failure_returns_local_user_facing_reason_without_synthesis_provider(monkeypatch: pytest.MonkeyPatch) -> None:
     from ai.services.assistant import AIAssistantService
 

@@ -1,5 +1,6 @@
 from pathlib import Path
 import ipaddress
+import json
 
 import services.ip_locator_service as ip_locator_service
 
@@ -65,6 +66,19 @@ def test_realtime_arp_lookup_uses_capability_rules_and_never_builds_zero_workers
     assert [device["id"] for device in selected] == ["access-1", "router-1"]
     assert all(device["_arp_policy_override"] is True for device in selected)
     assert ip_locator_service._calc_ssh_workers(0) == 1
+
+
+def test_realtime_arp_hit_selection_prefers_prefix_gateway_over_completion_order():
+    gateway = {"id": "gateway-1", "role": "gateway"}
+    core = {"id": "core-1", "role": "core"}
+    hits = [
+        (core, {"mac": "001122334455"}),
+        (gateway, {"mac": "00aabbccddee"}),
+    ]
+
+    selected = ip_locator_service._select_realtime_arp_hit(hits, "gateway-1")
+
+    assert selected == (gateway, {"mac": "00aabbccddee"})
 
 
 def test_route_selection_accepts_l3_roles_explicit_policy_and_interface_evidence(monkeypatch):
@@ -317,6 +331,267 @@ def test_locator_uses_lldp_uplink_when_gateway_is_on_the_access_switch(isolated_
         "peer_port": "Ten-GigabitEthernet1/0/49",
     }]
     conn.close()
+
+
+def test_locator_topology_join_expands_lag_identity_to_parent_and_members(isolated_db):
+    conn = isolated_db["module"].get_db_connection()
+    conn.execute(
+        "INSERT INTO devices (id, hostname, status, role) VALUES (?, ?, ?, ?)",
+        ("device-lag-core", "CORE-1", "online", "core"),
+    )
+    conn.execute(
+        "INSERT INTO devices (id, hostname, status, role) VALUES (?, ?, ?, ?)",
+        ("device-lag-access", "ACCESS-1", "online", "access"),
+    )
+    conn.execute(
+        """INSERT INTO interfaces
+           (id, device_id, interface_name, interface_type, switchport_mode)
+           VALUES (?, ?, ?, ?, ?)""",
+        ("interface-lag-parent", "device-lag-core", "Bridge-Aggregation15", "port_channel", "trunk"),
+    )
+    conn.execute(
+        """INSERT INTO interfaces
+           (id, device_id, interface_name, interface_type, parent_interface_id, channel_group, switchport_mode)
+           VALUES (?, ?, ?, ?, ?, ?, ?)""",
+        (
+            "interface-lag-member", "device-lag-core", "XGE1/0/49", "physical",
+            "interface-lag-parent", 15, "trunk",
+        ),
+    )
+    conn.execute(
+        """INSERT INTO interfaces
+           (id, device_id, interface_name, interface_type, switchport_mode)
+           VALUES (?, ?, ?, ?, ?)""",
+        ("interface-lag-access-peer", "device-lag-access", "XGE1/0/49", "physical", "trunk"),
+    )
+    conn.execute(
+        """INSERT INTO topology_links
+           (id, source_device_id, source_interface_id, source_hostname, source_port,
+            source_port_normalized, target_device_id, target_interface_id, target_hostname,
+            target_port, target_port_normalized, status, metadata_json)
+           VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
+        (
+            "link-lag-parent", "device-lag-core", "interface-lag-parent", "CORE-1",
+            "Bridge-Aggregation15", "", "device-lag-access", "interface-lag-access-peer",
+            "ACCESS-1", "XGE1/0/49", "te1/0/49", "up",
+            json.dumps({
+                "members": [{
+                    "source": {"device_id": "device-lag-core", "name": "XGE1/0/49", "normalized": "te1/0/49"},
+                    "target": {"device_id": "device-lag-access", "name": "XGE1/0/49", "normalized": "te1/0/49"},
+                }]
+            }),
+        ),
+    )
+    conn.commit()
+
+    neighbor = ip_locator_service._find_topology_trace_neighbor(
+        conn, "device-lag-core", "BAGG15"
+    )
+
+    assert neighbor is not None
+    assert neighbor["neighbor_id"] == "device-lag-access"
+    assert neighbor["match_kind"] == "interface_id"
+
+    member_neighbor = ip_locator_service._find_topology_trace_neighbor(
+        conn, "device-lag-core", "XGE1/0/49"
+    )
+    assert member_neighbor is not None
+    assert member_neighbor["neighbor_id"] == "device-lag-access"
+    conn.close()
+
+
+def test_locator_only_reuses_cached_confirmed_access_port(isolated_db):
+    conn = isolated_db["module"].get_db_connection()
+    conn.execute(
+        "INSERT INTO devices (id, hostname, status, role) VALUES (?, ?, ?, ?)",
+        ("device-cache-validation", "CACHE-VALIDATION", "online", "access"),
+    )
+    conn.execute(
+        """INSERT INTO interfaces
+           (id, device_id, interface_name, interface_type, switchport_mode, access_vlan)
+           VALUES (?, ?, ?, ?, ?, ?)""",
+        (
+            "interface-cache-confirmed", "device-cache-validation", "GigabitEthernet1/0/10",
+            "physical", "access", 4,
+        ),
+    )
+    conn.execute(
+        """INSERT INTO interfaces
+           (id, device_id, interface_name, interface_type, switchport_mode)
+           VALUES (?, ?, ?, ?, ?)""",
+        (
+            "interface-cache-unverified", "device-cache-validation", "GigabitEthernet1/0/11",
+            "physical", "access",
+        ),
+    )
+    conn.commit()
+    conn.close()
+
+    assert ip_locator_service._cached_endpoint_needs_retrace({"switch_port": "BAGG15"}) is True
+    assert ip_locator_service._cached_endpoint_needs_retrace({
+        "switch_id": "device-cache-validation",
+        "switch_port": "GigabitEthernet1/0/10",
+    }) is False
+    assert ip_locator_service._cached_endpoint_needs_retrace({
+        "switch_id": "device-cache-validation",
+        "switch_port": "GigabitEthernet1/0/11",
+    }) is True
+
+
+def test_locator_does_not_report_lag_as_host_port_when_trace_is_incomplete(monkeypatch, isolated_db):
+    conn = isolated_db["module"].get_db_connection()
+    conn.execute(
+        "INSERT INTO devices (id, hostname, status, role) VALUES (?, ?, ?, ?)",
+        ("device-trace-core", "CORE-TRACE", "online", "core"),
+    )
+    conn.execute(
+        "INSERT INTO devices (id, hostname, status, role) VALUES (?, ?, ?, ?)",
+        ("device-trace-access", "ACCESS-TRACE", "online", "access"),
+    )
+    conn.execute(
+        """INSERT INTO interfaces
+           (id, device_id, interface_name, interface_type, switchport_mode)
+           VALUES (?, ?, ?, ?, ?)""",
+        ("interface-trace-parent", "device-trace-core", "Bridge-Aggregation15", "port_channel", "trunk"),
+    )
+    conn.execute(
+        """INSERT INTO interfaces
+           (id, device_id, interface_name, interface_type, parent_interface_id, channel_group, switchport_mode)
+           VALUES (?, ?, ?, ?, ?, ?, ?)""",
+        (
+            "interface-trace-member", "device-trace-core", "XGE1/0/49", "physical",
+            "interface-trace-parent", 15, "trunk",
+        ),
+    )
+    conn.execute(
+        """INSERT INTO interfaces
+           (id, device_id, interface_name, interface_type, switchport_mode)
+           VALUES (?, ?, ?, ?, ?)""",
+        ("interface-trace-access-uplink", "device-trace-access", "XGE1/0/49", "physical", "trunk"),
+    )
+    conn.execute(
+        """INSERT INTO interfaces
+           (id, device_id, interface_name, interface_type, switchport_mode, access_vlan)
+           VALUES (?, ?, ?, ?, ?, ?)""",
+        ("interface-trace-host-port", "device-trace-access", "GigabitEthernet1/0/10", "physical", "access", 4),
+    )
+    conn.execute(
+        """INSERT INTO interfaces
+           (id, device_id, interface_name, interface_type, switchport_mode)
+           VALUES (?, ?, ?, ?, ?)""",
+        ("interface-trace-unknown-physical", "device-trace-core", "Ten-GigabitEthernet1/0/48", "physical", "access"),
+    )
+    conn.execute(
+        """INSERT INTO topology_links
+           (id, source_device_id, source_interface_id, source_hostname, source_port,
+            source_port_normalized, target_device_id, target_interface_id, target_hostname,
+            target_port, target_port_normalized, status)
+           VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
+        (
+            "link-trace-core-access", "device-trace-core", "interface-trace-parent", "CORE-TRACE",
+            "Bridge-Aggregation15", "", "device-trace-access", "interface-trace-access-uplink",
+            "ACCESS-TRACE", "XGE1/0/49", "te1/0/49", "up",
+        ),
+    )
+    conn.commit()
+    conn.close()
+
+    devices = [
+        {"id": "device-trace-core", "hostname": "CORE-TRACE", "ip_address": "192.0.2.1", "role": "core"},
+        {"id": "device-trace-access", "hostname": "ACCESS-TRACE", "ip_address": "192.0.2.2", "role": "access"},
+    ]
+    cached_endpoint_writes: list[dict] = []
+
+    monkeypatch.setattr(ip_locator_service, "_get_ip_locator_context", lambda *_args: {})
+    monkeypatch.setattr(ip_locator_service, "_get_ip_network_role", lambda *_args: None)
+    monkeypatch.setattr(ip_locator_service, "_load_eligible_devices", lambda: devices)
+    monkeypatch.setattr(ip_locator_service, "_load_realtime_arp_devices", lambda _devices: [devices[0]])
+    monkeypatch.setattr(ip_locator_service, "_get_cached_arp", lambda _ip: None)
+    monkeypatch.setattr(ip_locator_service, "_get_cached_endpoint", lambda _ip: None)
+    monkeypatch.setattr(ip_locator_service, "_set_cached_arp", lambda *_args, **_kwargs: None)
+    monkeypatch.setattr(
+        ip_locator_service,
+        "_set_cached_endpoint",
+        lambda **kwargs: cached_endpoint_writes.append(kwargs),
+    )
+    monkeypatch.setattr(ip_locator_service, "_collect_lldp_from_device", lambda _device: [])
+
+    def fake_arp(_device, _target_ip, _vrf=None, _force_refresh=False):
+        return {
+            "mac": "64c6d26475ae",
+            "interface": "BAGG15",
+            "source_device_id": "device-trace-core",
+            "source_device": "CORE-TRACE",
+            "vlan": "4",
+        }
+
+    def fake_mac(device, _target_mac, force_refresh=False):
+        del force_refresh
+        if device["id"] == "device-trace-core":
+            return [{
+                "mac": "64c6d26475ae", "port": "BAGG15", "vlan": "4",
+                "vlan_source": "mac_table", "type": "dynamic",
+            }]
+        return [{
+            "mac": "64c6d26475ae", "port": "GigabitEthernet1/0/10", "vlan": "4",
+            "vlan_source": "mac_table", "type": "dynamic",
+        }]
+
+    monkeypatch.setattr(ip_locator_service, "_targeted_arp_query", fake_arp)
+    monkeypatch.setattr(ip_locator_service, "_targeted_mac_query", fake_mac)
+
+    traced = ip_locator_service.locate_ip("192.168.4.58", force_refresh=True)
+
+    assert traced["found"] is True
+    assert traced["trace_status"] == "terminal"
+    assert traced["locations"][0]["switch_id"] == "device-trace-access"
+    assert traced["locations"][0]["port"] == "GigabitEthernet1/0/10"
+    assert [hop["port"] for hop in traced["trace_hops"]] == ["BAGG15", "GigabitEthernet1/0/10"]
+    assert len(cached_endpoint_writes) == 1
+
+    conn = isolated_db["module"].get_db_connection()
+    conn.execute("DELETE FROM topology_links WHERE id = ?", ("link-trace-core-access",))
+    conn.commit()
+    conn.close()
+
+    incomplete = ip_locator_service.locate_ip("192.168.4.58", force_refresh=True)
+
+    assert incomplete["found"] is False
+    assert incomplete["trace_status"] == "incomplete"
+    assert incomplete["locations"][0]["type"] == "TRACE_INCOMPLETE"
+    assert incomplete["locations"][0]["port"] == "BAGG15"
+    assert "不能判定为主机接入口" in " ".join(incomplete["errors"] + [incomplete["locations"][0]["note"]])
+    assert len(cached_endpoint_writes) == 1
+
+    monkeypatch.setattr(
+        ip_locator_service,
+        "_targeted_mac_query",
+        lambda _device, _target_mac, force_refresh=False: [{
+            "mac": "64c6d26475ae", "port": "Ten-GigabitEthernet1/0/48", "vlan": "4",
+            "vlan_source": "mac_table", "type": "dynamic",
+        }],
+    )
+    unknown_physical = ip_locator_service.locate_ip("192.168.4.58", force_refresh=True)
+
+    assert unknown_physical["found"] is False
+    assert unknown_physical["trace_status"] == "incomplete"
+    assert unknown_physical["locations"][0]["port"] == "Ten-GigabitEthernet1/0/48"
+    assert "Access VLAN 证据" in " ".join(unknown_physical["errors"] + [unknown_physical["locations"][0]["note"]])
+    assert len(cached_endpoint_writes) == 1
+
+    monkeypatch.setattr(
+        ip_locator_service,
+        "_targeted_mac_query",
+        lambda _device, _target_mac, force_refresh=False: [{
+            "mac": "64c6d26475ae", "port": "", "vlan": "4",
+            "vlan_source": "mac_table", "type": "dynamic",
+        }],
+    )
+    no_port = ip_locator_service.locate_ip("192.168.4.58", force_refresh=True)
+
+    assert no_port["found"] is False
+    assert no_port["trace_status"] == "incomplete"
+    assert no_port["trace_hops"][0]["type"] == "MAC_TABLE_NO_PORT"
 
 
 def test_locator_lldp_lookup_overrides_background_plan_for_interactive_trace(monkeypatch):

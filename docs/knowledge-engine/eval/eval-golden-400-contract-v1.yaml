@@ -1,0 +1,68 @@
+schema_version: 1
+contract_id: nexora-kb-eval-golden-400-contract-v1
+purpose: Contract for the human-reviewed 400-case production Gold Dataset.
+dataset:
+  required_fields:
+    - schema_version
+    - dataset_id
+    - status
+    - case_count
+    - synthetic_data
+    - source_policy
+    - coverage
+    - review_policy
+    - cases
+  status: frozen
+  case_count: 400
+  immutable_id_rule: A changed frozen dataset must use a new dataset_id.
+  categories:
+    knowledge_config_reference: 140
+    troubleshooting: 70
+    configuration_validation_diagnostic: 50
+    asset_alarm_query: 40
+    intent_clarification_missing_parameter: 40
+    tool_call_dangerous_operation: 30
+    negative_security_no_match: 30
+  vendors:
+    Huawei: {min: 90, max: 110}
+    Cisco: {min: 90, max: 110}
+    H3C: {min: 72, max: 88}
+    Ruijie: {min: 54, max: 66}
+    cross_vendor_or_unknown: {min: 54, max: 66}
+  splits:
+    train: 240
+    debug: 80
+    hidden: 80
+  required_case_fields:
+    - id
+    - query
+    - category
+    - vendor
+    - platform
+    - feature
+    - expected_outcome
+    - gold_document_ids
+    - acceptable_document_ids
+    - citation_required
+    - risk_level
+    - split
+    - golden_answer
+    - source_evidence
+    - annotator
+    - reviewer
+    - reviewed_at
+    - annotation_status
+  expected_outcomes: [answer, clarify, no_match]
+  risk_levels: [low, medium, high, critical]
+review_policy:
+  annotation_status: approved
+  minimum_double_review_cases: 80
+  primary_reviewer_must_differ_from_reviewer: true
+  domain_review_required_for: [knowledge_config_reference, troubleshooting, configuration_validation_diagnostic, tool_call_dangerous_operation]
+  domain_review_fields: [domain_reviewed, domain_reviewer, domain_reviewed_at]
+source_policy:
+  database: PostgreSQL
+  sqlite: not_used
+  external_network: forbidden
+  secrets: forbidden
+  production_data: forbidden

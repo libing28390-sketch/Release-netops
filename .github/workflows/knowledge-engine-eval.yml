@@ -9,6 +9,9 @@ on:
       - "docs/knowledge-engine/eval/**"
       - "docs/knowledge-engine/architecture/EVAL-*.yaml"
       - "scripts/knowledge_eval_*.py"
+      - "scripts/promptfoo_*.py"
+      - "backend/ai/**"
+      - "backend/database/**"
       - "tests/knowledge_engine/test_eval*.py"
       - ".github/workflows/knowledge-engine-eval.yml"
   pull_request:
@@ -19,6 +22,9 @@ on:
       - "docs/knowledge-engine/eval/**"
       - "docs/knowledge-engine/architecture/EVAL-*.yaml"
       - "scripts/knowledge_eval_*.py"
+      - "scripts/promptfoo_*.py"
+      - "backend/ai/**"
+      - "backend/database/**"
       - "tests/knowledge_engine/test_eval*.py"
       - ".github/workflows/knowledge-engine-eval.yml"
   workflow_dispatch:
@@ -73,8 +79,13 @@ jobs:
           pip install -r backend/requirements.txt
           pip install pytest
 
+      - name: Initialize isolated PostgreSQL application schema
+        run: python -c "from database import init_db; init_db()"
+
       - name: Validate PostgreSQL-only gate wiring
-        run: python scripts/knowledge_eval_ci_gate_check.py
+        run: |
+          python scripts/knowledge_eval_ci_gate_check.py
+          python scripts/ai_rag_release_config_check.py
 
       - name: Run small fixed evaluation set
         run: |
@@ -91,3 +102,32 @@ jobs:
           tests/knowledge_engine/test_eval005_metrics.py
           tests/knowledge_engine/test_eval007_security_metrics.py
           tests/knowledge_engine/test_eval010_ci_gate.py
+
+      - name: Run 50-anchor deterministic quality gate
+        shell: bash
+        run: |
+          set -euo pipefail
+          gate_status=0
+
+          # The evaluator is intentionally allowed to fail the job when the
+          # retrieval threshold is not met; a safety-only 50/50 result is not
+          # a release pass.  Continue long enough to emit the companion
+          # metadata-only evidence files and explicit NOT_READY status.
+          python scripts/knowledge_eval_anchors_50_runner.py || gate_status=1
+          python scripts/knowledge_eval_baseline_manifest.py \
+            --output "$RUNNER_TEMP/eval-baseline-manifest.json" || gate_status=1
+          python scripts/knowledge_eval_anchor_review_check.py --database || gate_status=1
+          python scripts/knowledge_eval_gold_400_check.py \
+            --output "$RUNNER_TEMP/eval-golden-400-check.json" || gate_status=1
+
+          exit "$gate_status"
+
+      - name: Upload redacted evaluation evidence
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: knowledge-eval-${{ github.run_id }}
+          path: |
+            ${{ runner.temp }}/eval-baseline-manifest.json
+            ${{ runner.temp }}/eval-golden-400-check.json
+          if-no-files-found: warn

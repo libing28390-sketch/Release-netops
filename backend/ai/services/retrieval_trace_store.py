@@ -147,6 +147,28 @@ def _shadow_hash_list(value: Any) -> list[str]:
     return [_opaque_hash(entry) for entry in list(value)[:MAX_SHADOW_ROWS] if entry not in (None, "")]
 
 
+def _shadow_rank_deltas(value: Mapping[str, Any]) -> list[dict[str, Any]]:
+    """Project rank changes without persisting document/chunk identifiers."""
+
+    baseline = _shadow_hash_list(value.get("baseline_top_ids"))
+    shadow = _shadow_hash_list(value.get("shadow_top_ids"))
+    baseline_rank = {candidate_hash: index for index, candidate_hash in enumerate(baseline, 1)}
+    shadow_rank = {candidate_hash: index for index, candidate_hash in enumerate(shadow, 1)}
+    deltas: list[dict[str, Any]] = []
+    for candidate_hash in list(dict.fromkeys([*baseline, *shadow]))[:MAX_SHADOW_ROWS]:
+        left = baseline_rank.get(candidate_hash)
+        right = shadow_rank.get(candidate_hash)
+        if left == right:
+            continue
+        deltas.append({
+            "candidate_hash": candidate_hash,
+            "baseline_rank": left,
+            "shadow_rank": right,
+            "rank_delta": (right - left) if left is not None and right is not None else None,
+        })
+    return deltas
+
+
 def _shadow_difference_projection(value: Any) -> dict[str, Any]:
     value = value if isinstance(value, Mapping) else {}
     score_deltas: list[dict[str, Any]] = []
@@ -196,8 +218,19 @@ def _shadow_projection(value: Any) -> dict[str, Any]:
         if (projected := _shadow_final_projection(row, index)) is not None
     ][:MAX_SHADOW_ROWS]
     return {
+        "stage": _text(value.get("stage"), 32),
         "mode": _text(value.get("mode"), 64),
+        "name": _text(value.get("name"), 64),
         "status": _text(value.get("status"), 32),
+        "reason": _text(value.get("reason"), 64),
+        "candidate_count": _nonnegative_int(value.get("candidate_count")),
+        "timeout_ms": _nonnegative_int(value.get("timeout_ms")),
+        "cost_units": _nonnegative_int(value.get("cost_units")),
+        "latency_ms": _nonnegative_int(value.get("latency_ms")),
+        "order_changed": bool(value.get("order_changed")),
+        "baseline_top_hashes": _shadow_hash_list(value.get("baseline_top_ids")),
+        "shadow_top_hashes": _shadow_hash_list(value.get("shadow_top_ids")),
+        "rank_deltas": _shadow_rank_deltas(value),
         "user_answer_source": _text(value.get("user_answer_source"), 16),
         "v1_result_count": _nonnegative_int(value.get("v1_result_count")),
         "v2_result_count": _nonnegative_int(value.get("v2_result_count")),
@@ -222,6 +255,7 @@ def _shadow_projection(value: Any) -> dict[str, Any]:
 def _runtime_projection(runtime: Any) -> dict[str, Any]:
     runtime = runtime if isinstance(runtime, Mapping) else {}
     reranker = runtime.get("reranker") if isinstance(runtime.get("reranker"), Mapping) else {}
+    reranker_config = runtime.get("reranker_config") if isinstance(runtime.get("reranker_config"), Mapping) else {}
     latency = runtime.get("latency") if isinstance(runtime.get("latency"), Mapping) else {}
     tokens = runtime.get("tokens") if isinstance(runtime.get("tokens"), Mapping) else {}
     security = runtime.get("security") if isinstance(runtime.get("security"), Mapping) else {}
@@ -243,6 +277,13 @@ def _runtime_projection(runtime: Any) -> dict[str, Any]:
             "timeout_ms": _nonnegative_int(reranker.get("timeout_ms")),
             "cost_units": _nonnegative_int(reranker.get("cost_units")),
             "reason": _text(reranker.get("reason"), 64),
+            "config": {
+                "requested_mode": _text(reranker_config.get("requested_mode"), 32),
+                "effective_mode": _text(reranker_config.get("effective_mode"), 32),
+                "status": _text(reranker_config.get("status"), 32),
+                "error_code": _text(reranker_config.get("error_code"), 64),
+                "name": _text(reranker_config.get("name"), 64),
+            },
         },
         "citation": {
             "count": _nonnegative_int(citation.get("count")),

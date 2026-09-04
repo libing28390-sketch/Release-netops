@@ -4,11 +4,17 @@ from types import SimpleNamespace
 
 from services.document_entity_resolution import (
     EntityResolutionOutcome,
+    _canonical_vendor,
     resolve_document_entities,
 )
 
 
 TENANT = "tenant-a"
+
+
+def test_chinese_h3c_aliases_are_canonicalized_before_catalog_matching():
+    assert _canonical_vendor("华三") == "h3c"
+    assert _canonical_vendor("新华三") == "h3c"
 
 
 def _catalog(*, tenant_id: str = TENANT, is_seed: bool = False) -> dict:

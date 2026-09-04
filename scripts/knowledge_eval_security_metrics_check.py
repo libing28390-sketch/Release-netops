@@ -4,16 +4,21 @@ from __future__ import annotations
 
 import hashlib
 import json
+import sys
 from collections import Counter
 from pathlib import Path
 from typing import Any
 
 import yaml
 
+ROOT = Path(__file__).resolve().parents[1]
+BACKEND_ROOT = ROOT / "backend"
+if str(BACKEND_ROOT) not in sys.path:
+    sys.path.insert(0, str(BACKEND_ROOT))
+
 from ai.services.security_evaluation_metrics import evaluate_security_cases
 
 
-ROOT = Path(__file__).resolve().parents[1]
 FIXTURE_PATH = ROOT / "docs" / "knowledge-engine" / "eval" / "eval-security-cases-v1.yaml"
 MODULE_PATH = ROOT / "backend" / "ai" / "services" / "security_evaluation_metrics.py"
 REPORT_PATH = ROOT / "docs" / "knowledge-engine" / "eval" / "eval-security-metrics-v1.manifest.json"

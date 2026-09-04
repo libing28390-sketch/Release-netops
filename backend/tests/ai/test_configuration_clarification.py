@@ -18,6 +18,49 @@ def test_vendor_only_configuration_returns_bounded_feature_and_platform_choices(
     assert all(set(option) >= {"field", "value", "label"} for option in decision.options)
 
 
+def test_cisco_configuration_scope_offers_bounded_cli_platform_choices():
+    decision = assess_configuration_request(
+        message="那可以提供思科的吗",
+        metadata={
+            "vendor": "Cisco",
+            "feature": "ospf",
+            "document_category": "configuration",
+        },
+        resolution={"ambiguous": True, "platform_candidates": []},
+    )
+
+    assert decision is not None
+    assert decision.required is True
+    assert decision.missing_fields == ("platform_or_model",)
+    assert [option["value"] for option in decision.options[:3]] == [
+        "cisco_iosxe",
+        "cisco_ios",
+        "cisco_nxos",
+    ]
+    assert all(option["field"] == "cli_platform" for option in decision.options)
+
+
+def test_h3c_configuration_scope_offers_comware_platform_choice():
+    decision = assess_configuration_request(
+        message="华三交换机 OSPF 配置",
+        metadata={
+            "vendor": "H3C",
+            "feature": "ospf",
+            "document_category": "configuration",
+        },
+        resolution={"ambiguous": True, "platform_candidates": []},
+    )
+
+    assert decision is not None
+    assert decision.required is True
+    assert decision.missing_fields == ("platform_or_model",)
+    assert decision.options[0] == {
+        "field": "cli_platform",
+        "value": "h3c_comware",
+        "label": "H3C Comware",
+    }
+
+
 def test_exact_configuration_scope_can_retrieve_without_clarification():
     decision = assess_configuration_request(
         message="Huawei S5735-L-V2 V600 VLAN config",
@@ -67,4 +110,24 @@ def test_read_only_cli_command_keeps_cross_platform_explanation_available():
     assert decision is not None
     assert decision.required is False
     assert decision.allow_generic_reference is True
+    assert decision.retrieval_allowed is True
+
+
+def test_explicit_non_execution_guard_is_not_classified_as_configuration_change():
+    decision = assess_configuration_request(
+        message="请仅基于本地知识库回答：Cisco IOS XE HSRP 基础配置和验证命令；不要执行设备操作。",
+        metadata={
+            "vendor": "Cisco",
+            "cli_platform": "cisco_iosxe",
+            "feature_domain": "reliability",
+            "feature": "hsrp",
+            "document_category": "configuration",
+        },
+        resolution={"ambiguous": False},
+    )
+
+    assert decision is not None
+    assert decision.request_kind == "configuration_reference"
+    assert decision.risk == "medium"
+    assert decision.required is False
     assert decision.retrieval_allowed is True

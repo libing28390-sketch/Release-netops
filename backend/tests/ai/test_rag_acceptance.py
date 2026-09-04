@@ -466,6 +466,113 @@ def test_grounded_knowledge_chat_uses_local_template_fallback_after_scope_repair
     assert "switchport mode access" in answer["answer"]
 
 
+def test_vendor_follow_up_inherits_feature_without_copying_previous_vendor_scope():
+    current_metadata = intent_parser.parse_knowledge_metadata("那可以提供思科的吗")
+    current = {
+        "intent": "knowledge",
+        "filters": current_metadata,
+        "metadata": current_metadata,
+        "knowledge_intent": current_metadata,
+    }
+    history = [
+        {"role": "user", "content": "我想查下华为交换机的ospf配置示例"},
+        {"role": "assistant", "content": "请补充设备平台。"},
+        {"role": "user", "content": "Huawei VRP"},
+        {"role": "assistant", "content": "已按 Huawei VRP 给出 OSPF 配置。"},
+    ]
+
+    merged = AIAssistantService._merge_history_scope_continuation(
+        "那可以提供思科的吗",
+        current,
+        history,
+    )
+    scope = merged["knowledge_intent"]
+
+    assert scope["vendor"] == "Cisco"
+    assert scope["feature"] == "ospf"
+    assert scope["feature_domain"] == "routing"
+    assert scope["document_category"] == "configuration"
+    assert scope["cli_platform"] is None
+    assert scope["product_series"] is None
+    assert merged["conversation_scope"]["source"] == "previous_user_knowledge_turn"
+
+
+def test_vendor_follow_up_scope_reaches_chat_and_stream_retrieval(monkeypatch):
+    async def fake_parse_intent(message, user_id=None):
+        metadata = intent_parser.parse_knowledge_metadata(message)
+        return {
+            "intent": "knowledge",
+            "filters": metadata,
+            "metadata": metadata,
+            "knowledge_intent": metadata,
+        }
+
+    class _Resolution:
+        def to_dict(self):
+            return {"ambiguous": False, "metadata": {"vendor": "Cisco"}}
+
+    retrieval_calls = []
+
+    def fake_retrieve(message, intent_info, **kwargs):
+        scope = intent_info["knowledge_intent"]
+        retrieval_calls.append({
+            "vendor": scope.get("vendor"),
+            "feature": scope.get("feature"),
+            "document_category": scope.get("document_category"),
+            "cli_platform": scope.get("cli_platform"),
+        })
+        return {
+            "request": SimpleNamespace(
+                vendor=scope.get("vendor"),
+                document_category=scope.get("document_category"),
+                feature=scope.get("feature"),
+                cli_platform=scope.get("cli_platform"),
+                feature_domain=scope.get("feature_domain"),
+            ),
+            "resolution": _Resolution(),
+            "results": [{
+                "content": "router ospf 1\n network <NETWORK> area <AREA_ID>",
+                "document_name": "Cisco IOS XE OSPF configuration",
+                "section": "OSPF configuration",
+                "source": "https://www.cisco.com/c/en/us/ospf.html",
+                "platform": "cisco_iosxe",
+                "cli_platform": "cisco_iosxe",
+                "document_category": "configuration",
+                "feature": "ospf",
+            }],
+            "debug": {"candidate_count": 1},
+        }
+
+    monkeypatch.setattr(assistant_module.intent_parser, "parse_intent", fake_parse_intent)
+    service = AIAssistantService()
+    monkeypatch.setattr(service, "retrieve_knowledge", fake_retrieve)
+    history = [
+        {"role": "user", "content": "我想查下华为交换机的ospf配置示例"},
+        {"role": "assistant", "content": "请补充设备平台。"},
+        {"role": "user", "content": "Huawei VRP"},
+        {"role": "assistant", "content": "已按 Huawei VRP 给出 OSPF 配置。"},
+    ]
+
+    import asyncio
+
+    answer = asyncio.run(service.chat("那可以提供思科的吗", history=history))
+
+    async def collect():
+        return [event async for event in service.chat_stream("那可以提供思科的吗", history=history)]
+
+    events = asyncio.run(collect())
+
+    assert len(retrieval_calls) == 2
+    assert all(call["vendor"] == "Cisco" for call in retrieval_calls)
+    assert all(call["feature"] == "ospf" for call in retrieval_calls)
+    assert all(call["document_category"] == "configuration" for call in retrieval_calls)
+    assert all(call["cli_platform"] is None for call in retrieval_calls)
+    assert "OSPF" in answer["answer"]
+    assert "router ospf 1" in answer["answer"]
+    assert any("router ospf 1" in event for event in events)
+    assert not any("AAA" in event or "BGP" in event or "VLAN" in event for event in events)
+
+
 def test_configuration_clarification_stops_chat_and_stream_before_provider(monkeypatch):
     async def fake_parse_intent(message, user_id=None):
         return {

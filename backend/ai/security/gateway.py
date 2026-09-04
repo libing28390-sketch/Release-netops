@@ -15,9 +15,9 @@ from ai.security.classification import (
     SecurityAction,
     action_for,
     classify,
-    classify_text,
     classification_for_level,
     normalize_classification,
+    request_policy_findings,
     separate_data_and_instructions,
 )
 from ai.security.dev_passthrough import dev_passthrough
@@ -121,6 +121,34 @@ def _walk_transform(value: Any, transform) -> Any:
     return value
 
 
+_SENSITIVE_FIELD_MARKERS = frozenset({
+    "password", "passwd", "secret", "community", "token", "apikey",
+    "accesstoken", "privatekey", "credential", "authorization", "cookie",
+    "rawoutput", "rawconfig", "runningconfig", "currentconfiguration",
+    "toolargs", "requestbody",
+})
+
+
+def _has_sensitive_field(value: Any) -> bool:
+    """Detect secret-bearing field names even when the value is opaque.
+
+    A key such as ``api_key`` is sensitive by contract even if its test value
+    does not match a token regex.  This closes the nested dict/list gap before
+    minimization or tokenization can build an outbound provider body.
+    """
+
+    if isinstance(value, dict):
+        for key, item in value.items():
+            normalized = "".join(char for char in str(key).casefold() if char.isalnum())
+            if any(marker in normalized for marker in _SENSITIVE_FIELD_MARKERS):
+                return True
+            if _has_sensitive_field(item):
+                return True
+    elif isinstance(value, (list, tuple, set)):
+        return any(_has_sensitive_field(item) for item in value)
+    return False
+
+
 def _tool_is_unsafe(tool: dict[str, Any]) -> bool:
     text = json.dumps(tool, ensure_ascii=False, default=str).lower()
     forbidden = (
@@ -215,6 +243,13 @@ class AISecurityGateway:
 
         combined = {"messages": messages, "tools": tools or [], "provider_options": provider_options or {}}
         level, findings = self._classify(combined)
+        if _has_sensitive_field(combined):
+            findings.append(Finding(DataLevel.L4_PROHIBITED, "sensitive_field"))
+            level = max(level, DataLevel.L4_PROHIBITED)
+        request_findings = request_policy_findings(messages, tenant_id=tenant_id)
+        if request_findings:
+            findings.extend(request_findings)
+            level = max(level, max((item.level for item in request_findings), default=level))
         _, instruction_findings = separate_data_and_instructions(messages)
         if instruction_findings:
             findings.extend(Finding(DataLevel.L3_SENSITIVE, category) for category in instruction_findings)
@@ -240,6 +275,18 @@ class AISecurityGateway:
         has_injection = any(item.category == "prompt_injection" for item in findings)
         if tools and any(_tool_is_unsafe(tool) for tool in tools):
             raise SecurityBlocked("raw write-capable or unrestricted tool is not allowed", findings=findings, reason_code="AI_SECURITY_UNSAFE_TOOL")
+
+        # A user asking the model to retrieve credentials or another tenant's
+        # private scope is prohibited even when the prompt contains no secret
+        # value yet.  Keep this check outside the passthrough branch: test
+        # passthrough may relax minimization, but it can never authorize secret
+        # retrieval or cross-tenant access.
+        if request_findings:
+            raise SecurityBlocked(
+                "credential retrieval or cross-tenant scope request is not allowed",
+                findings=findings,
+                reason_code="AI_SECURITY_SENSITIVE_DATA",
+            )
 
         if passthrough_active:
             # Temporary testing mode: keep the external/provider controls

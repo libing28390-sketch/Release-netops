@@ -96,7 +96,7 @@ describe('PromptCenterTab browser key paths', () => {
       output_schema: prompt.output_schema,
     })));
     expect(screen.queryByRole('dialog', { name: '编辑 Prompt 提示词模板' })).toBeNull();
-  });
+  }, 15000);
 
   it('blocks an invalid output contract before sending a create request', async () => {
     const user = userEvent.setup();

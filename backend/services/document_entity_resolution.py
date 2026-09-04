@@ -175,6 +175,8 @@ def _canonical_vendor(value: Any) -> str:
         "cisco": "cisco",
         "思科": "cisco",
         "h3c": "h3c",
+        "华三": "h3c",
+        "新华三": "h3c",
         "hpcomware": "h3c",
         "ruijie": "ruijie",
         "锐捷": "ruijie",

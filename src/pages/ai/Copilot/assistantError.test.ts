@@ -14,7 +14,7 @@ describe('formatAssistantStreamError', () => {
     expect(formatAssistantStreamError({ code: 'RETRIEVAL_NO_MATCH' })).toContain('补充厂商');
   });
 
-  it('keeps unknown diagnostic details visible', () => {
-    expect(formatAssistantStreamError({ code: 'SOME_NEW_CODE', message: 'backend detail' })).toBe('[Copilot 处理失败] backend detail');
+  it('keeps unknown diagnostic codes without echoing raw backend details', () => {
+    expect(formatAssistantStreamError({ code: 'SOME_NEW_CODE', message: 'backend detail' })).toBe('[Copilot 处理失败] SOME_NEW_CODE');
   });
 });

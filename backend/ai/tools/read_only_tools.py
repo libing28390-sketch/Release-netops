@@ -280,7 +280,7 @@ def tool_get_running_config(device_id: str, tenant_id: str = "tenant-default") -
                        s.raw_hash, s.normalized_hash, s.line_count, s.section_count,
                        s.integrity_status, s.config_type
                 FROM config_snapshots s JOIN devices d ON d.id = s.device_id
-                WHERE s.device_id = ? AND (d.tenant_id = ? OR d.tenant_id IS NULL)
+                WHERE s.device_id = ? AND d.tenant_id = ?
                 ORDER BY s.timestamp DESC LIMIT 20
                 """,
                 (device_id, tenant_id),

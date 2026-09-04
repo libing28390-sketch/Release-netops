@@ -46,6 +46,12 @@ jobs:
         with:
           python-version: '3.11'
 
+      - name: Set up Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: '20.11.1'
+          cache: npm
+
       - name: Cache uploader script
         shell: bash
         run: |
@@ -60,8 +66,11 @@ jobs:
             test -e "$path" || { echo "[FAIL] Missing release input: $path"; exit 1; }
           done
           npm ci --include=dev --ignore-scripts
+          npm run lint
+          npm run test:frontend -- --run
           npm run build
           python -m compileall -q backend
+          python scripts/ai_rag_release_config_check.py
 
       - name: Run complete Knowledge Engine evaluation release gate
         shell: bash
@@ -77,6 +86,11 @@ jobs:
             --output "$RUNNER_TEMP/eval-offline-full-report-v1.json"
           python -m pytest -q backend/tests -k "ai or knowledge" --tb=short
           python -m pytest -q backend/tests --tb=short
+          python scripts/validate_postgresql_only.py
+          python -c "from database import init_db; init_db()"
+          python scripts/knowledge_eval_anchors_50_runner.py
+          python scripts/knowledge_eval_anchor_review_check.py --database
+          python scripts/knowledge_eval_gold_400_check.py
 
       - name: Remove private and development-only files
         shell: bash

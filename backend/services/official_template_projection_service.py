@@ -28,6 +28,7 @@ _FEATURES: tuple[tuple[str, tuple[str, ...], str], ...] = (
     ("vrrp", ("vrrp",), "reliability"),
     ("lacp", ("lacp", "eth-trunk", "bridge-aggregation", "port-channel"), "switching"),
     ("stp", ("stp", "mstp", "rstp", "spanning-tree"), "switching"),
+    ("hsrp", ("hsrp", "hot standby router protocol"), "reliability"),
     ("access_port", ("access-port", "access port", "接入口"), "switching"),
     ("trunk", ("trunk",), "switching"),
     ("vlan", ("vlan", "vlanif", "svi"), "switching"),
@@ -65,9 +66,18 @@ def _render(content: str) -> str:
 
 
 def _feature(row: dict[str, Any]) -> tuple[str, str]:
-    haystack = " ".join(_text(row.get(key)) for key in ("id", "name", "category", "description", "content")).lower()
+    # Prefer the reviewed template identity and description over the command
+    # body.  A legitimate access-port template often contains a rollback
+    # command such as ``no spanning-tree portfast``; scanning the whole body
+    # first incorrectly classified that template as STP and made the access
+    # Gold anchor fail the feature hard filter.
+    identity = " ".join(_text(row.get(key)) for key in ("id", "name", "category", "description")).lower()
     for feature, aliases, domain in _FEATURES:
-        if any(alias in haystack for alias in aliases):
+        if any(alias in identity for alias in aliases):
+            return feature, domain
+    content = _text(row.get("content")).lower()
+    for feature, aliases, domain in _FEATURES:
+        if any(alias in content for alias in aliases):
             return feature, domain
     return "", _text(row.get("category")) or "general"
 

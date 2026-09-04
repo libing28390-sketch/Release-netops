@@ -747,7 +747,13 @@ class LLMGateway:
             used_tokens = max_tokens if max_tokens is not None else model_info["default_max_tokens"]
             
             # Retry loop with exponential backoff
-            max_retries = provider_inst.max_retries
+            try:
+                # Provider configuration is operator-controlled data; keep a
+                # malformed or excessive retry budget from becoming an
+                # unbounded outage amplifier.
+                max_retries = max(0, min(int(provider_inst.max_retries or 0), 3))
+            except (TypeError, ValueError):
+                max_retries = 0
             last_err = None
             
             for attempt in range(max_retries + 1):
@@ -1120,52 +1126,75 @@ class LLMGateway:
                 reasoning_effort=secure_payload.provider_options.get("reasoning_effort"),
             )
             try:
-                async with ai_limits.slot(provider_id=candidate_info["provider_id"], tenant_id=tenant, user_id=user_id):
-                    if route_meta is not None:
-                        # This flag means a provider adapter call actually
-                        # started; model selection and security preparation
-                        # alone are not external egress.
-                        route_meta.update({
-                            "external_egress": True,
-                            "model_id": candidate_info.get("id"),
-                            "provider_id": candidate_info.get("provider_id"),
-                        })
-                    if hasattr(provider_inst, "chat_stream"):
-                        usage_sink: Dict[str, int] = {}
-                        stream_usage_by_model[str(candidate_info["id"])] = usage_sink
-                        async for chunk in provider_inst.chat_stream(
-                            processed_messages,
-                            model=candidate_info["model_code"],
-                            temperature=used_temp,
-                            max_tokens=used_tokens,
-                            tools=call_tools,
-                            response_format=call_response_format,
-                            thinking=call_thinking,
-                            reasoning_effort=call_reasoning,
-                            user_id=secure_payload.user_id,
-                            request_id=request_id,
-                            usage_sink=usage_sink,
-                        ):
-                            yield chunk
-                    else:
-                        result = await provider_inst.chat(
-                            processed_messages,
-                            model=candidate_info["model_code"],
-                            temperature=used_temp,
-                            max_tokens=used_tokens,
-                            tools=call_tools,
-                            response_format=call_response_format,
-                            thinking=call_thinking,
-                            reasoning_effort=call_reasoning,
-                            user_id=secure_payload.user_id,
-                            request_id=request_id,
-                        )
-                        if result.get("content"):
-                            yield str(result["content"])
-                ai_limits.record_success(candidate_info["provider_id"])
-            except Exception:
-                ai_limits.record_failure(candidate_info["provider_id"])
-                raise
+                max_retries = max(0, min(int(provider_inst.max_retries or 0), 3))
+            except (TypeError, ValueError):
+                max_retries = 0
+
+            for attempt in range(max_retries + 1):
+                emitted = False
+                try:
+                    async with ai_limits.slot(provider_id=candidate_info["provider_id"], tenant_id=tenant, user_id=user_id):
+                        if route_meta is not None:
+                            # This flag means a provider adapter call actually
+                            # started; model selection and security preparation
+                            # alone are not external egress.
+                            route_meta.update({
+                                "external_egress": True,
+                                "model_id": candidate_info.get("id"),
+                                "provider_id": candidate_info.get("provider_id"),
+                            })
+                        if hasattr(provider_inst, "chat_stream"):
+                            usage_sink: Dict[str, int] = {}
+                            stream_usage_by_model[str(candidate_info["id"])] = usage_sink
+                            async for chunk in provider_inst.chat_stream(
+                                processed_messages,
+                                model=candidate_info["model_code"],
+                                temperature=used_temp,
+                                max_tokens=used_tokens,
+                                tools=call_tools,
+                                response_format=call_response_format,
+                                thinking=call_thinking,
+                                reasoning_effort=call_reasoning,
+                                user_id=secure_payload.user_id,
+                                request_id=request_id,
+                                usage_sink=usage_sink,
+                            ):
+                                emitted = True
+                                yield chunk
+                        else:
+                            result = await provider_inst.chat(
+                                processed_messages,
+                                model=candidate_info["model_code"],
+                                temperature=used_temp,
+                                max_tokens=used_tokens,
+                                tools=call_tools,
+                                response_format=call_response_format,
+                                thinking=call_thinking,
+                                reasoning_effort=call_reasoning,
+                                user_id=secure_payload.user_id,
+                                request_id=request_id,
+                            )
+                            if result.get("content"):
+                                emitted = True
+                                yield str(result["content"])
+                    ai_limits.record_success(candidate_info["provider_id"])
+                    return
+                except AIException as exc:
+                    if isinstance(exc, (AICircuitOpenException, AIQuotaExceededException, AIBudgetExceededException)):
+                        raise
+                    if isinstance(exc, (AIAuthFailedException, AIInvalidRequestException, AIModelNotFoundException)):
+                        raise
+                    ai_limits.record_failure(candidate_info["provider_id"])
+                    if attempt < max_retries and not emitted:
+                        await asyncio.sleep(0.5 * (2 ** attempt))
+                        continue
+                    raise
+                except Exception as exc:
+                    ai_limits.record_failure(candidate_info["provider_id"])
+                    if attempt < max_retries and not emitted:
+                        await asyncio.sleep(0.5 * (2 ** attempt))
+                        continue
+                    raise AINetworkException("Unexpected streaming provider error") from exc
 
         try:
             async for chunk in _stream_candidate(model_info):

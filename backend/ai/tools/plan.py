@@ -4,12 +4,15 @@ from __future__ import annotations
 
 import hashlib
 import json
+import re
 import secrets
 import threading
 import time
+from collections.abc import Mapping
 from typing import Any, Iterable
 
 from ai.schemas.tool import ToolCallPlan, ToolPlanStatus
+from ai.security.classification import classify_text
 from ai.tools.risk import ToolRiskLevel
 
 
@@ -26,6 +29,21 @@ _DANGEROUS_MARKERS = (
     "下发", "修改", "变更", "删除", "清空", "重启", "重载", "批量",
 )
 _ACTION_MARKERS = ("action", "operation", "command", "cmd")
+_SENSITIVE_ARGUMENT_KEY_MARKERS = frozenset({
+    "password", "passwd", "secret", "community", "token", "apikey",
+    "accesstoken", "privatekey", "credential", "authorization", "cookie",
+    "rawoutput", "rawconfig", "runningconfig", "currentconfiguration",
+    "toolargs", "requestbody",
+})
+_SENSITIVE_VALUE_CATEGORIES = frozenset({
+    "credential", "snmp_community", "radius_or_tacacs_key", "private_key",
+    "jwt", "cookie",
+})
+_SENSITIVE_VALUE_MARKER_RE = re.compile(
+    r"(?i)(?:password|passwd|secret|community|api[_ -]?key|access[_ -]?token|"
+    r"private[_ -]?key|credential|authorization\s*[:=]|bearer\s+|"
+    r"snmp(?:-agent|-server)?\s+community)"
+)
 
 
 class ToolPlanError(ValueError):
@@ -38,6 +56,26 @@ class ToolPlanError(ValueError):
 
 def _text(value: Any, limit: int = 256) -> str:
     return str(value or "").strip()[:limit]
+
+
+def _sensitive_argument_key(key: Any) -> bool:
+    normalized = re.sub(r"[^a-z0-9]", "", str(key or "").casefold())
+    return any(marker in normalized for marker in _SENSITIVE_ARGUMENT_KEY_MARKERS)
+
+
+def _contains_sensitive_arguments(value: Any) -> bool:
+    if isinstance(value, Mapping):
+        return any(
+            _sensitive_argument_key(key) or _contains_sensitive_arguments(item)
+            for key, item in value.items()
+        )
+    if isinstance(value, (list, tuple, set)):
+        return any(_contains_sensitive_arguments(item) for item in value)
+    if isinstance(value, str):
+        if _SENSITIVE_VALUE_MARKER_RE.search(value):
+            return True
+        return any(item.category in _SENSITIVE_VALUE_CATEGORIES for item in classify_text(value))
+    return False
 
 
 def _max_risk(left: ToolRiskLevel, right: ToolRiskLevel) -> ToolRiskLevel:
@@ -146,6 +184,10 @@ def build_tool_call_plan(
     del tenant_id, user_id
     if not isinstance(arguments, dict):
         raise ToolPlanError("TOOL_ARGUMENTS_INVALID")
+    if _contains_sensitive_arguments(arguments):
+        # Do not include the offending key/value in a plan, error, audit row,
+        # or UI response.
+        raise ToolPlanError("TOOL_SENSITIVE_ARGUMENTS_BLOCKED")
     try:
         validated = spec.input_model.model_validate(arguments)
     except Exception:
@@ -195,6 +237,11 @@ def build_tool_call_plan(
     )
     if requires_confirmation and not change_order_id and not bool(getattr(spec, "read_only", True)):
         raise ToolPlanError("TOOL_CHANGE_ORDER_REQUIRED")
+    if requires_confirmation and confirmation_token and not bool(getattr(spec, "read_only", True)):
+        if not plan.device_state:
+            raise ToolPlanError("TOOL_DEVICE_STATE_REQUIRED")
+        if not plan.impact_scope:
+            raise ToolPlanError("TOOL_IMPACT_SCOPE_REQUIRED")
     return plan, safe_arguments
 
 

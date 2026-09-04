@@ -1,0 +1,13 @@
+{
+  "status": "NOT_READY",
+  "dataset_path": "docs\\knowledge-engine\\eval\\eval-golden-400.yaml",
+  "required_case_count": 400,
+  "case_count": 0,
+  "errors": [
+    "human-reviewed 400-case dataset is not present"
+  ],
+  "database": "PostgreSQL",
+  "sqlite": "not_used",
+  "external_network": "forbidden",
+  "secrets": false
+}

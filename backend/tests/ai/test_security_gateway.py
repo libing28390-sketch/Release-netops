@@ -77,6 +77,57 @@ def test_provider_output_dlp_redacts_credentials_and_dangerous_markup():
     assert "<script>" not in result
 
 
+def test_provider_output_dlp_redacts_vrp_cipher_password_syntax():
+    gateway = enabled_gateway()
+    result = gateway.resolve_output(
+        "aaa local-user admin password irreversible-cipher Huawei@123 local-user admin service-type ssh",
+        tenant_id="tenant-a",
+        task_id="task-1",
+    )
+    assert "Huawei@123" not in result
+
+
+def test_streaming_output_dlp_redacts_credential_directive_split_across_chunks():
+    resolver = StreamingOutputResolver(
+        tenant_id="tenant-a",
+        task_id="task-1",
+        vault=ScopedTokenVault(ttl_seconds=120),
+    )
+
+    first = resolver.push("aaa local-user admin password irreversible-cipher ")
+    second = resolver.push("Huawei@123 local-user admin service-type ssh")
+    tail = resolver.flush()
+
+    combined = first + second + tail
+    assert "Huawei@123" not in combined
+
+
+def test_streaming_output_dlp_retains_split_vrp_modifier_before_value():
+    resolver = StreamingOutputResolver(
+        tenant_id="tenant-a",
+        task_id="task-1",
+        vault=ScopedTokenVault(ttl_seconds=120),
+    )
+
+    first = resolver.push("aaa local-user admin password irreversible")
+    second = resolver.push("-cipher Huawei@123 local-user admin service-type ssh")
+    tail = resolver.flush()
+
+    combined = first + second + tail
+    assert "Huawei@123" not in combined
+
+
+def test_streaming_output_dlp_does_not_split_harmless_word_suffix():
+    resolver = StreamingOutputResolver(
+        tenant_id="tenant-a",
+        task_id="task-1",
+        vault=ScopedTokenVault(ttl_seconds=120),
+    )
+
+    assert resolver.push("stream-ok") == "stream-ok"
+    assert resolver.flush() == ""
+
+
 def test_streaming_output_resolves_tokens_split_across_provider_chunks():
     vault = ScopedTokenVault(ttl_seconds=120)
     token = vault.put("192.0.2.10", kind="IP", tenant_id="tenant-a", task_id="task-1")

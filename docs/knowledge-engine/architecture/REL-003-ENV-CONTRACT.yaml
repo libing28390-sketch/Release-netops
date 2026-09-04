@@ -40,6 +40,18 @@ required_sections:
     - KNOWLEDGE_V2_WRITE_ENABLED
     - NETWORK_WRITE_ENABLED
     - PRODUCTION_CREDENTIALS_ALLOWED
+  retrieval_sidecars_observability:
+    - AI_RERANKER_MODE
+    - AI_RERANKER_ENDPOINT
+    - AI_RERANKER_TIMEOUT_MS
+    - AI_PARSER_MODE
+    - AI_DOCUMENT_PARSER_MODE
+    - AI_DOCLING_BASE_URL
+    - AI_DOCLING_TIMEOUT_SECONDS
+    - AI_DOCLING_MAX_PAGES
+    - AI_OBSERVABILITY_MODE
+    - LANGFUSE_METADATA_ENDPOINT
+    - LANGFUSE_TIMEOUT_SECONDS
 
 safe_defaults:
   disabled_or_zero: [AI_ENABLED, EXTERNAL_AI_ENABLED, AI_KILL_SWITCH, AI_DEBUG_PAYLOAD, AI_RETRIEVAL_CACHE_ENABLED, KNOWLEDGE_V2_ENABLED, KNOWLEDGE_V2_SHADOW_READ, KNOWLEDGE_V2_ROLLOUT_PERCENT, KNOWLEDGE_V2_WRITE_ENABLED, NETWORK_WRITE_ENABLED, PRODUCTION_CREDENTIALS_ALLOWED]
@@ -50,6 +62,10 @@ safe_defaults:
   gateway_mode: offline
   data_classification: synthetic
   credential_source: fixture
+  reranker_mode: legacy
+  parser_mode: legacy
+  docling_base_url: ""
+  observability_mode: off
 
 secret_rules:
   forbidden_keys: [OPENAI_API_KEY, DEEPSEEK_API_KEY, ANTHROPIC_API_KEY, API_KEY, PROVIDER_API_KEY, VAULT_TOKEN]

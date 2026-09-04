@@ -82,6 +82,45 @@ class ProductResolver:
         return bool(re.fullmatch(r"s\d{2,4}", requested_text) and candidate_text.startswith(requested_text))
 
     @staticmethod
+    def _normalise_os_family(value: Any) -> str:
+        return re.sub(r"[\s_-]+", "", str(value or "").strip().casefold())
+
+    @classmethod
+    def _os_family_compatible(cls, requested: Any, candidate: Any) -> bool:
+        """Allow only reviewed base-family to concrete-family inheritance."""
+        requested_token = cls._normalise_os_family(requested)
+        candidate_token = cls._normalise_os_family(candidate)
+        if not requested_token or not candidate_token:
+            return False
+        if requested_token == candidate_token:
+            return True
+        # A generic Comware/VRP token may bind to a reviewed numeric family,
+        # but arbitrary families must still match exactly.
+        if requested_token not in {"comware", "vrp"}:
+            return False
+        suffix = candidate_token[len(requested_token):] if candidate_token.startswith(requested_token) else ""
+        return bool(suffix and suffix.isdigit())
+
+    @classmethod
+    def _reviewed_registry_os_family(cls, resolution: EntityResolution) -> Optional[str]:
+        """Return one concrete OS family supplied by a unique registry row."""
+        requested = resolution.metadata.get("os_family")
+        registry_candidates = [
+            item
+            for item in resolution.candidates
+            if str(item.get("document_type") or "").casefold() == "product_registry"
+        ]
+        families = {
+            str(item.get("os_family") or "").strip()
+            for item in registry_candidates
+            if item.get("os_family")
+        }
+        if len(registry_candidates) != 1 or len(families) != 1:
+            return None
+        candidate = next(iter(families))
+        return candidate if cls._os_family_compatible(requested, candidate) else None
+
+    @staticmethod
     def _json(value: Any) -> dict[str, Any]:
         if isinstance(value, dict):
             return value
@@ -228,6 +267,11 @@ class ProductResolver:
         result.match_method = match_method if candidates else result.evidence
         result.match_score = match_score
         result.normalized_query = normalized.normalized_text
+        reviewed_os_family = self._reviewed_registry_os_family(result)
+        if reviewed_os_family:
+            # This enriches retrieval metadata from the exact product registry
+            # row only; it does not authorize a driver or device operation.
+            result.metadata["os_family"] = reviewed_os_family
         if candidates and match_method in {"prefix", "trigram"}:
             result.outcome = "candidates"
             result.retrieval_eligible = result.retrieval_eligible and len(identity_models) <= 1
@@ -287,6 +331,9 @@ class ProductResolver:
                         row_model = item.get("product_model") or (row_models[0] if isinstance(row_models, list) and len(row_models) == 1 else None)
                         row_platform = item.get("cli_platform") or raw_meta.get("cli_platform")
                         row_train = item.get("software_train") or raw_meta.get("software_train")
+                        row_os_family = item.get("os_family") or raw_meta.get("os_family")
+                        row_os_generation = item.get("os_generation") or raw_meta.get("os_generation")
+                        document_type = str(raw_meta.get("document_type") or "").strip().casefold()
                         if not row_series:
                             try:
                                 parsed = parse_markdown_document(item.get("normalized_content") or "")
@@ -294,6 +341,9 @@ class ProductResolver:
                                 row_series = row_meta.get("product_series") or row_meta.get("technical_series")
                                 row_platform = row_platform or row_meta.get("cli_platform")
                                 row_train = row_train or row_meta.get("software_train")
+                                row_os_family = row_os_family or row_meta.get("os_family")
+                                row_os_generation = row_os_generation or row_meta.get("os_generation")
+                                document_type = document_type or str(row_meta.get("document_type") or "").strip().casefold()
                             except Exception:
                                 pass
                         canonical_row_series = self._canonical_series(row_series)
@@ -310,6 +360,9 @@ class ProductResolver:
                             "product_model": row_model,
                             "software_train": row_train,
                             "cli_platform": row_platform,
+                            "os_family": row_os_family,
+                            "os_generation": row_os_generation,
+                            "document_type": "product_registry" if "product_registry" in str(item.get("name") or "").lower() else document_type,
                         }
                         candidates.append(candidate)
                         if row_platform:

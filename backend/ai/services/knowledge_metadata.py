@@ -275,6 +275,32 @@ def canonical_vendor(value: Any) -> str:
     }.get(normalized, str(value or "").strip())
 
 
+def canonical_cli_platform(value: Any) -> str:
+    """Normalize version-qualified CLI aliases to the storage taxonomy.
+
+    The document projection stores a stable CLI family (for example
+    ``h3c_comware``), while callers may include an OS generation in the
+    platform token. Generation evidence remains available in
+    ``os_generation``; collapsing only the platform alias keeps SQL joins
+    deterministic without treating a version-qualified request as a
+    different vendor dialect.
+    """
+
+    normalized = str(value or "").strip().lower().replace("-", "_")
+    return {
+        "cisco_ios_xe": "cisco_iosxe",
+        "cisco_iosxe": "cisco_iosxe",
+        "h3c_comware_v5": "h3c_comware",
+        "h3c_comware_v7": "h3c_comware",
+        "h3c_comware_v9": "h3c_comware",
+        "h3c_comware5": "h3c_comware",
+        "h3c_comware7": "h3c_comware",
+        "h3c_comware9": "h3c_comware",
+        "huawei_vrpv8": "huawei_vrp",
+        "huawei_vrp_v8": "huawei_vrp",
+    }.get(normalized, str(value or "").strip())
+
+
 _FEATURE_ALIASES = {
     "ospf": {"ospf", "tospf", "开放式最短路径优先"},
     "bgp": {"bgp", "边界网关协议"},
@@ -289,11 +315,12 @@ _FEATURE_ALIASES = {
     "ntp": {"ntp", "网络时间协议"},
     "snmp": {"snmp", "snmpv3", "简单网络管理协议"},
     "ssh": {"ssh", "stelnet", "secure shell", "安全登录"},
+    "hsrp": {"hsrp", "hot standby router protocol", "热备份路由器协议"},
     "vrrp": {"vrrp", "虚拟路由器冗余"},
     "lldp": {"lldp", "链路层发现"},
     "evpn": {"evpn"},
     "vxlan": {"vxlan"},
-    "acl": {"acl", "访问控制列表"},
+    "acl": {"acl", "packet-filter", "traffic-filter", "access-list", "访问控制列表"},
 }
 
 

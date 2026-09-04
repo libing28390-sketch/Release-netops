@@ -1052,8 +1052,27 @@ export async function chatAssistantStream(
 
   if (!response.ok) {
     const errText = await response.text();
-    const responseRequestId = response.headers?.get?.('X-Request-ID') || headers['X-Request-ID'];
-    throw new Error(`HTTP ${response.status}: ${errText}${responseRequestId ? ` (Request ID: ${responseRequestId})` : ''}`);
+    let parsed: any = null;
+    try {
+      parsed = JSON.parse(errText);
+    } catch {
+      // Keep the response body out of the UI; provider/database errors can
+      // contain sensitive connection details or untrusted upstream text.
+    }
+    const detail = parsed?.detail;
+    const detailObject = detail && typeof detail === 'object' ? detail : parsed?.error;
+    const detailText = typeof detail === 'string' ? detail : typeof parsed?.message === 'string' ? parsed.message : '';
+    const code = String(
+      detailObject?.code
+      || detailObject?.error?.code
+      || (detailText.toLowerCase().includes('cannot be stored safely') ? 'AI_SECURITY_SENSITIVE_DATA' : '')
+      || (response.status >= 500 ? 'AI_INTERNAL_ERROR' : 'AI_REQUEST_REJECTED')
+    ).trim().toUpperCase();
+    const error = new Error(code) as Error & { code?: string; status?: number; requestId?: string };
+    error.code = code;
+    error.status = response.status;
+    error.requestId = response.headers?.get?.('X-Request-ID') || headers['X-Request-ID'];
+    throw error;
   }
 
   const reader = response.body?.getReader();
@@ -1254,7 +1273,6 @@ export interface KnowledgeEvaluationGate {
 
 export interface KnowledgeEvaluationCase {
   id: string;
-  query: string;
   retrieval_correct: boolean;
   citation_precision: number;
   vendor_mismatch: boolean;
@@ -1302,6 +1320,75 @@ export async function runKnowledgeEvaluation(suite = 'v1_baseline_postgresql'): 
     method: 'POST',
     body: JSON.stringify({ suite }),
   });
+  return payload.data;
+}
+
+export interface KnowledgeExperimentRunSummary {
+  run_id: string;
+  dataset_id: string;
+  git_sha: string;
+  prompt_version: string;
+  parser_version: string;
+  chunker_config_hash: string;
+  embedding_model: string;
+  embedding_dimensions: number;
+  distance_algorithm: string;
+  reranker_version: string;
+  provider_model: string;
+  status: string;
+  metrics: Record<string, number | null>;
+  version: number;
+  created_at?: string | null;
+  updated_at?: string | null;
+  started_at?: string | null;
+  finished_at?: string | null;
+}
+
+export interface KnowledgeExperimentRolloutSummary {
+  rollout_id: string;
+  component: string;
+  mode: string;
+  rollout_percent: number;
+  baseline_version: string;
+  candidate_version: string;
+  kill_switch: boolean;
+  version: number;
+  updated_at?: string | null;
+}
+
+export interface KnowledgeShadowObservationSummary {
+  observation_id: string;
+  experiment_run_id?: string | null;
+  component: string;
+  request_hash: string;
+  baseline_count: number;
+  candidate_count: number;
+  order_changed: boolean;
+  rank_deltas: Array<{ candidate_hash: string; baseline_rank?: number | null; candidate_rank?: number | null; rank_delta?: number | null }>;
+  baseline_latency_ms?: number | null;
+  candidate_latency_ms?: number | null;
+  status: string;
+  reason_code?: string | null;
+  metrics: Record<string, number | null>;
+  retention_days: number;
+  observed_at?: string | null;
+  expires_at?: string | null;
+}
+
+export interface KnowledgeExperimentObservability {
+  schema_version: string;
+  tenant_id: string;
+  database: 'PostgreSQL' | string;
+  redacted: boolean;
+  contains_prompt_or_answer: boolean;
+  contains_document_or_chunk_identity: boolean;
+  runs: KnowledgeExperimentRunSummary[];
+  rollouts: KnowledgeExperimentRolloutSummary[];
+  shadow_observations: KnowledgeShadowObservationSummary[];
+}
+
+export async function getKnowledgeExperimentObservability(limit = 50): Promise<KnowledgeExperimentObservability> {
+  const payload = await apiRequest<KnowledgeSourceEnvelope<KnowledgeExperimentObservability>>(`/api/knowledge/evaluation/observability?limit=${limit}`);
   return payload.data;
 }
 

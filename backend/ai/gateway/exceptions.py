@@ -72,6 +72,13 @@ class AIInvalidResponseException(AIException):
         super().__init__("AI_INVALID_RESPONSE", message, request_id, status.HTTP_502_BAD_GATEWAY)
 
 
+class AIOutputTruncatedException(AIException):
+    """The provider stopped at its output-token limit before completion."""
+
+    def __init__(self, message: str = "AI provider output was truncated", request_id: Optional[str] = None):
+        super().__init__("AI_OUTPUT_TRUNCATED", message, request_id, status.HTTP_502_BAD_GATEWAY)
+
+
 class AIInvalidRequestException(AIException):
     def __init__(self, message: str = "AI provider rejected the request", request_id: Optional[str] = None):
         super().__init__("AI_INVALID_REQUEST", message, request_id, status.HTTP_400_BAD_REQUEST)

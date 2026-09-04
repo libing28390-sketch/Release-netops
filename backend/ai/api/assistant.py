@@ -5,11 +5,21 @@ FastAPI Router for AI Assistant Copilot, Natural Query, IP/MAC Location, and Kno
 from __future__ import annotations
 
 import json
+import time
 from typing import Any, Dict, List, Literal, Optional
 from fastapi import APIRouter, Depends, HTTPException, Query, UploadFile, File
 from pydantic import BaseModel, ConfigDict, Field
+from ai.gateway.exceptions import AISecurityBlockedException
+from ai.security.classification import request_policy_findings
+from ai.security.gateway import ai_security_gateway
 from ai.security.permissions import require_ai_permission
-from ai.services.assistant import ai_assistant_service
+from ai.services.assistant import (
+    _SSE_CONTEXT as _ASSISTANT_SSE_CONTEXT,
+    _SSEEventContext as _AssistantSSEEventContext,
+    _done_event as _assistant_done_event,
+    _sse_event as _assistant_sse_event,
+    ai_assistant_service,
+)
 from ai.services.sse_stream_registry import (
     SSEStreamConflict,
     SSEStreamReplayExpired,
@@ -40,13 +50,20 @@ from ai.services.metadata_confirmation_service import (
 )
 from ai.services.knowledge_reindex_service import knowledge_reindex_service
 from ai.services.conversation_service import (
+    ConversationSecurityError,
     append_message,
     clear_clarification_state,
     get_context,
     set_clarification_state,
     set_conversation_model,
 )
-from ai.security.security_service import create_diagnostic_case, handoff_case, record_feedback
+from ai.security.security_service import (
+    create_diagnostic_case,
+    create_security_incident,
+    handoff_case,
+    record_feedback,
+    record_security_event,
+)
 from api.knowledge_contracts import (
     ChatHistoryMessage,
     CopilotContext,
@@ -62,6 +79,138 @@ from api.knowledge_contracts import (
 from api.knowledge_response import DOCUMENT_SUMMARY_FIELDS, PaginationMeta, attach_pagination, project_summary_items
 
 router = APIRouter(prefix="/assistant", tags=["AI Copilot & Knowledge"])
+
+
+_SECURITY_BLOCK_MESSAGE = "请求被安全策略拦截，未执行任何设备操作。请减少敏感内容后重试。"
+
+
+def _security_block_result(*, request_id: str, code: str = "AI_SECURITY_SENSITIVE_DATA") -> dict[str, Any]:
+    """Return a safe, stable response when history retention rejects user input."""
+
+    return {
+        "answer": _SECURITY_BLOCK_MESSAGE,
+        "intent": "security_violation",
+        "facts_retrieved": False,
+        "citations": [],
+        "request_id": request_id,
+        "security_result": "blocked",
+        "security": {"decision": "block", "result_code": code},
+        "error_code": code,
+        "execution_mode": "local_security_block",
+        "external_egress": False,
+        "input_tokens": 0,
+        "output_tokens": 0,
+        "token_source": "local_zero",
+        "fallback_used": False,
+    }
+
+
+async def _security_block_events(*, stream_state: Any, request_id: str, code: str) -> Any:
+    """Emit a versioned SSE security decision without storing raw user input."""
+
+    context_token = _ASSISTANT_SSE_CONTEXT.set(
+        _AssistantSSEEventContext(stream_state.stream_id, request_id)
+    )
+    started_at = time.perf_counter()
+    try:
+        events = (
+            _assistant_sse_event(
+                "error",
+                {
+                    "code": code,
+                    "message": _SECURITY_BLOCK_MESSAGE,
+                    "retryable": False,
+                },
+            ),
+            _assistant_done_event(
+                started_at,
+                extra={
+                    "finish_reason": "security_blocked",
+                    "security_result": "blocked",
+                    "external_egress": False,
+                    "execution_mode": "local_security_block",
+                    "input_tokens": 0,
+                    "output_tokens": 0,
+                    "token_source": "local_zero",
+                },
+            ),
+        )
+        for event in events:
+            if sse_stream_registry.record(stream_state, event):
+                yield event
+        sse_stream_registry.complete(stream_state)
+    finally:
+        if stream_state.active:
+            sse_stream_registry.close(stream_state)
+        _ASSISTANT_SSE_CONTEXT.reset(context_token)
+
+
+def _security_block_stream_response(*, stream_state: Any, request_id: str, code: str) -> StreamingResponse:
+    return StreamingResponse(
+        _security_block_events(stream_state=stream_state, request_id=request_id, code=code),
+        media_type="text/event-stream",
+        headers={
+            "Cache-Control": "no-cache, no-transform",
+            "X-Accel-Buffering": "no",
+            "X-Stream-ID": stream_state.stream_id,
+        },
+    )
+
+
+def _request_security_block(*, message: str, tenant_id: str) -> tuple[str, list[str]] | None:
+    """Return a stable block decision before local action or provider routing."""
+
+    findings = request_policy_findings(
+        [{"role": "user", "content": message}],
+        tenant_id=tenant_id,
+    )
+    if not findings:
+        return None
+    return "AI_SECURITY_SENSITIVE_DATA", sorted({item.category for item in findings})
+
+
+def _record_preflight_security_block(
+    *,
+    request_id: str,
+    tenant_id: str,
+    user_id: str,
+    code: str,
+    categories: list[str],
+) -> None:
+    """Persist metadata-only evidence for blocks made before model routing."""
+
+    try:
+        record_security_event(
+            request_id=request_id or "-",
+            tenant_id=tenant_id,
+            user_id=user_id,
+            policy_version=ai_security_gateway.policy.policy_version,
+            classification="SECRET",
+            data_region="unknown",
+            decision="BLOCK",
+            disposition="blocked",
+            finding_categories=categories,
+            error_code=code,
+        )
+        create_security_incident(
+            tenant_id=tenant_id,
+            incident_type="policy_violation",
+            severity="high",
+            category="gateway",
+            task_id=request_id or "-",
+            request_id=request_id or "-",
+            evidence={
+                "request_id": request_id or "-",
+                "classification": "SECRET",
+                "decision": "BLOCK",
+                "error_code": code,
+                "finding_categories": categories,
+            },
+        )
+    except Exception:
+        # The user-facing block is fail-closed even if a legacy deployment does
+        # not yet have the extended audit tables.
+        return
 
 
 class ClarificationAnswer(BaseModel):
@@ -200,12 +349,24 @@ async def chat_assistant(req: ChatRequest, user=Depends(require_ai_permission("a
     """AI Assistant Copilot Chat Endpoint."""
     user_id = user.get("username", "user")
     tenant_id = user.get("tenant_id") or "tenant-default"
+    request_id = request_id_var.get("-")
     history = [item.model_dump() for item in req.history] if req.history else None
     pending_clarification: Optional[Dict[str, Any]] = None
     clarification_response = req.clarification.model_dump(exclude_none=True) if req.clarification else None
     cancel_requested = bool(req.clarification and req.clarification.action == "cancel")
     requested_model_id = req.model_id
     model_selection_source = "message_explicit_model" if req.model_id else None
+    request_security_block = _request_security_block(message=req.message, tenant_id=tenant_id)
+    if request_security_block:
+        request_security_code, categories = request_security_block
+        _record_preflight_security_block(
+            request_id=request_id,
+            tenant_id=tenant_id,
+            user_id=str(user_id),
+            code=request_security_code,
+            categories=categories,
+        )
+        return _security_block_result(request_id=request_id, code=request_security_code)
     if req.conversation_id:
         try:
             context = get_context(conversation_id=req.conversation_id, tenant_id=tenant_id, user_id=user_id)
@@ -214,31 +375,42 @@ async def chat_assistant(req: ChatRequest, user=Depends(require_ai_permission("a
             if not requested_model_id and context.get("conversation", {}).get("selected_model_id"):
                 requested_model_id = context["conversation"]["selected_model_id"]
                 model_selection_source = "session_model"
+            append_message(conversation_id=req.conversation_id, tenant_id=tenant_id, user_id=user_id, role="user", content=req.message, requested_model_id=requested_model_id)
             if req.model_id:
                 try:
                     set_conversation_model(conversation_id=req.conversation_id, tenant_id=tenant_id, user_id=user_id, model_id=req.model_id, locked=True)
                 except (RuntimeError, LookupError):
                     pass
-            append_message(conversation_id=req.conversation_id, tenant_id=tenant_id, user_id=user_id, role="user", content=req.message, requested_model_id=requested_model_id)
         except LookupError as exc:
             raise HTTPException(status_code=404, detail="conversation not found") from exc
+        except ConversationSecurityError as exc:
+            return _security_block_result(
+                request_id=request_id,
+                code=getattr(exc, "code", "AI_SECURITY_SENSITIVE_DATA"),
+            )
         except ValueError as exc:
             raise HTTPException(status_code=400, detail="message cannot be stored safely") from exc
 
-    result = await ai_assistant_service.chat(
-        req.message,
-        history=history,
-        user_id=user_id,
-        tenant_id=tenant_id,
-        roles=[str(user.get("role"))] if user.get("role") else [],
-        site_ids=user.get("site_ids") or [],
-        model_id=requested_model_id,
-        model_selection_source=model_selection_source,
-        context=req.context.model_dump(exclude_none=True),
-        request_id=request_id_var.get("-"),
-        pending_clarification=pending_clarification,
-        clarification_response=clarification_response,
-    )
+    try:
+        result = await ai_assistant_service.chat(
+            req.message,
+            history=history,
+            user_id=user_id,
+            tenant_id=tenant_id,
+            roles=[str(user.get("role"))] if user.get("role") else [],
+            site_ids=user.get("site_ids") or [],
+            model_id=requested_model_id,
+            model_selection_source=model_selection_source,
+            context=req.context.model_dump(exclude_none=True),
+            request_id=request_id_var.get("-"),
+            pending_clarification=pending_clarification,
+            clarification_response=clarification_response,
+        )
+    except AISecurityBlockedException as exc:
+        return _security_block_result(
+            request_id=exc.request_id or request_id,
+            code=exc.code,
+        )
     if req.conversation_id:
         _sync_clarification_state(
             conversation_id=req.conversation_id,
@@ -313,6 +485,23 @@ async def chat_assistant_stream(req: ChatRequest, user=Depends(require_ai_permis
             detail={"code": SSEStreamReplayExpired.code, "message": "stream 重连位置已超出保留窗口，请重新发起请求"},
         ) from exc
 
+    if not stream_state.completed:
+        request_security_block = _request_security_block(message=req.message, tenant_id=tenant_id)
+        if request_security_block:
+            request_security_code, categories = request_security_block
+            _record_preflight_security_block(
+                request_id=request_id_var.get("-") or "-",
+                tenant_id=tenant_id,
+                user_id=user_id,
+                code=request_security_code,
+                categories=categories,
+            )
+            return _security_block_stream_response(
+                stream_state=stream_state,
+                request_id=request_id_var.get("-") or "-",
+                code=request_security_code,
+            )
+
     if req.conversation_id and not stream_state.completed:
         try:
             context = get_context(conversation_id=req.conversation_id, tenant_id=tenant_id, user_id=user_id)
@@ -326,17 +515,23 @@ async def chat_assistant_stream(req: ChatRequest, user=Depends(require_ai_permis
             if not requested_model_id and context.get("conversation", {}).get("selected_model_id"):
                 requested_model_id = context["conversation"]["selected_model_id"]
                 model_selection_source = "session_model"
-            if req.model_id and not stream_state.user_message_persisted:
-                try:
-                    set_conversation_model(conversation_id=req.conversation_id, tenant_id=tenant_id, user_id=user_id, model_id=req.model_id, locked=True)
-                except (RuntimeError, LookupError):
-                    pass
             if not stream_state.user_message_persisted:
                 append_message(conversation_id=req.conversation_id, tenant_id=tenant_id, user_id=user_id, role="user", content=req.message, requested_model_id=requested_model_id)
                 stream_state.user_message_persisted = True
+                if req.model_id:
+                    try:
+                        set_conversation_model(conversation_id=req.conversation_id, tenant_id=tenant_id, user_id=user_id, model_id=req.model_id, locked=True)
+                    except (RuntimeError, LookupError):
+                        pass
         except LookupError as exc:
             sse_stream_registry.close(stream_state)
             raise HTTPException(status_code=404, detail="conversation not found") from exc
+        except ConversationSecurityError as exc:
+            return _security_block_stream_response(
+                stream_state=stream_state,
+                request_id=request_id_var.get("-") or "-",
+                code=getattr(exc, "code", "AI_SECURITY_SENSITIVE_DATA"),
+            )
         except ValueError as exc:
             sse_stream_registry.close(stream_state)
             raise HTTPException(status_code=400, detail="message cannot be stored safely") from exc

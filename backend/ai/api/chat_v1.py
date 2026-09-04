@@ -11,8 +11,11 @@ from pydantic import BaseModel, Field
 
 from ai.gateway.exceptions import AIException, AISecurityBlockedException
 from ai.gateway.llm_gateway import llm_gateway
+from ai.security.classification import request_policy_findings
 from ai.security.permissions import require_ai_permission
+from ai.security.security_service import create_security_incident, record_security_event
 from ai.services.conversation_service import (
+    ConversationSecurityError,
     append_message,
     archive_conversation,
     clear_messages,
@@ -30,6 +33,9 @@ from core.context import request_id_var
 
 
 router = APIRouter(prefix="/api/v1/ai", tags=["AI V1 Chat"])
+
+
+_SECURITY_BLOCK_MESSAGE = "请求被安全策略拦截，未执行任何设备操作。请减少敏感内容后重试。"
 
 
 class ChatMessage(BaseModel):
@@ -55,18 +61,106 @@ def _event(name: str, data: dict[str, Any]) -> str:
     return f"event: {name}\ndata: {json.dumps(data, ensure_ascii=False, separators=(',', ':'))}\n\n"
 
 
+def _request_security_categories(messages: list[dict[str, Any]], *, tenant_id: str) -> list[str]:
+    findings = request_policy_findings(messages, tenant_id=tenant_id)
+    return sorted({item.category for item in findings})
+
+
+def _record_preflight_security_block(
+    *, request_id: str, tenant_id: str, user_id: str, categories: list[str]
+) -> None:
+    """Record only bounded policy metadata; never persist the blocked prompt."""
+
+    try:
+        record_security_event(
+            request_id=request_id or "-",
+            tenant_id=tenant_id,
+            user_id=user_id,
+            policy_version="nxa-security-preflight.v1",
+            classification="SECRET",
+            data_region="unknown",
+            decision="BLOCK",
+            disposition="blocked",
+            finding_categories=categories,
+            error_code="AI_SECURITY_SENSITIVE_DATA",
+        )
+        create_security_incident(
+            tenant_id=tenant_id,
+            incident_type="policy_violation",
+            severity="high",
+            category="gateway",
+            task_id=request_id or "-",
+            request_id=request_id or "-",
+            evidence={
+                "request_id": request_id or "-",
+                "classification": "SECRET",
+                "decision": "BLOCK",
+                "error_code": "AI_SECURITY_SENSITIVE_DATA",
+                "finding_categories": categories,
+            },
+        )
+    except Exception:
+        # A legacy deployment without the optional audit tables must still
+        # fail closed for the user request.
+        return
+
+
+async def _security_block_events(*, request_id: str):
+    yield _event(
+        "error",
+        {
+            "code": "AI_SECURITY_SENSITIVE_DATA",
+            "message": _SECURITY_BLOCK_MESSAGE,
+            "request_id": request_id,
+            "retryable": False,
+        },
+    )
+    yield _event(
+        "done",
+        {
+            "finish_reason": "security_blocked",
+            "security_result": "blocked",
+            "external_egress": False,
+        },
+    )
+
+
+def _security_block_stream_response(*, request_id: str) -> StreamingResponse:
+    return StreamingResponse(
+        _security_block_events(request_id=request_id),
+        media_type="text/event-stream",
+        headers={"Cache-Control": "no-cache, no-transform", "X-Accel-Buffering": "no"},
+    )
+
+
 @router.post("/chat/stream")
 async def chat_stream(payload: ChatRequest, user=Depends(require_ai_permission("ai.assistant"))):
     user_id = str(user.get("username") or "anonymous")
     tenant_id = str(user.get("tenant_id") or "tenant-default")
     request_id = request_id_var.get("-")
     messages = [item.model_dump(exclude_none=True) for item in payload.messages]
+    security_categories = _request_security_categories(messages, tenant_id=tenant_id)
+    if security_categories:
+        _record_preflight_security_block(
+            request_id=request_id,
+            tenant_id=tenant_id,
+            user_id=user_id,
+            categories=security_categories,
+        )
+        return _security_block_stream_response(request_id=request_id)
     if payload.conversation_id:
         try:
             context = get_context(conversation_id=payload.conversation_id, tenant_id=tenant_id, user_id=user_id)
             messages = [{"role": item["role"], "content": item["content"]} for item in context["messages"]] + messages
             append_message(conversation_id=payload.conversation_id, tenant_id=tenant_id, user_id=user_id, role="user", content=payload.messages[-1].content)
-        except (LookupError, ValueError) as exc:
+        except LookupError as exc:
+            raise HTTPException(status_code=400, detail="conversation context is not available") from exc
+        except ConversationSecurityError as exc:
+            raise HTTPException(
+                status_code=403,
+                detail={"code": getattr(exc, "code", "AI_SECURITY_SENSITIVE_DATA"), "message": _SECURITY_BLOCK_MESSAGE},
+            ) from exc
+        except ValueError as exc:
             raise HTTPException(status_code=400, detail="conversation context is not available") from exc
 
     async def events():
@@ -122,28 +216,53 @@ async def chat(payload: ChatRequest, user=Depends(require_ai_permission("ai.assi
     tenant_id = str(user.get("tenant_id") or "tenant-default")
     request_id = request_id_var.get("-")
     messages = [item.model_dump(exclude_none=True) for item in payload.messages]
+    security_categories = _request_security_categories(messages, tenant_id=tenant_id)
+    if security_categories:
+        _record_preflight_security_block(
+            request_id=request_id,
+            tenant_id=tenant_id,
+            user_id=user_id,
+            categories=security_categories,
+        )
+        raise HTTPException(
+            status_code=403,
+            detail={"code": "AI_SECURITY_SENSITIVE_DATA", "message": _SECURITY_BLOCK_MESSAGE},
+        )
     if payload.conversation_id:
         try:
             context = get_context(conversation_id=payload.conversation_id, tenant_id=tenant_id, user_id=user_id)
             messages = [{"role": item["role"], "content": item["content"]} for item in context["messages"]] + messages
             append_message(conversation_id=payload.conversation_id, tenant_id=tenant_id, user_id=user_id, role="user", content=payload.messages[-1].content)
-        except (LookupError, ValueError) as exc:
+        except LookupError as exc:
             raise HTTPException(status_code=400, detail="conversation context is not available") from exc
-    result = await llm_gateway.chat(
-        scene="chat",
-        messages=messages,
-        model_id=payload.model,
-        temperature=payload.temperature,
-        max_tokens=payload.max_tokens,
-        tools=payload.tools,
-        response_format=payload.response_format,
-        thinking=payload.thinking,
-        reasoning_effort=payload.reasoning_effort,
-        roles=[str(user.get("role"))] if user.get("role") else [],
-        user_id=user_id,
-        tenant_id=tenant_id,
-        request_id=request_id,
-    )
+        except ConversationSecurityError as exc:
+            raise HTTPException(
+                status_code=403,
+                detail={"code": getattr(exc, "code", "AI_SECURITY_SENSITIVE_DATA"), "message": _SECURITY_BLOCK_MESSAGE},
+            ) from exc
+        except ValueError as exc:
+            raise HTTPException(status_code=400, detail="conversation context is not available") from exc
+    try:
+        result = await llm_gateway.chat(
+            scene="chat",
+            messages=messages,
+            model_id=payload.model,
+            temperature=payload.temperature,
+            max_tokens=payload.max_tokens,
+            tools=payload.tools,
+            response_format=payload.response_format,
+            thinking=payload.thinking,
+            reasoning_effort=payload.reasoning_effort,
+            roles=[str(user.get("role"))] if user.get("role") else [],
+            user_id=user_id,
+            tenant_id=tenant_id,
+            request_id=request_id,
+        )
+    except AISecurityBlockedException as exc:
+        raise HTTPException(
+            status_code=403,
+            detail={"code": exc.code, "message": _SECURITY_BLOCK_MESSAGE},
+        ) from exc
     if payload.conversation_id:
         try:
             append_message(conversation_id=payload.conversation_id, tenant_id=tenant_id, user_id=user_id, role="assistant", content=result.get("content", ""), requested_model_id=result.get("requested_model_id") or payload.model, actual_model_id=result.get("model_id"), provider_id=result.get("provider_id"), route_reason=result.get("route_reason"), fallback_used=bool(result.get("fallback_used")))

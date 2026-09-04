@@ -55,6 +55,64 @@ def test_metadata_hard_filter_and_document_dedup(monkeypatch):
     assert result["debug"]["dedup_document_count"] == 1
 
 
+def test_bare_software_train_matches_release_qualified_document(monkeypatch):
+    connection = postgresql_test_driver.connect()
+    connection.executescript(
+        """
+        CREATE TABLE ai_document (
+            id TEXT PRIMARY KEY, name TEXT, vendor TEXT, platform TEXT,
+            tenant_id TEXT, status TEXT, acl_json TEXT, source_trust_level TEXT,
+            document_id TEXT, document_category TEXT, product_series TEXT,
+            product_model TEXT, software_train TEXT, cli_platform TEXT,
+            feature_domain TEXT, feature TEXT, exclude_from_rag INTEGER DEFAULT 0,
+            metadata_json JSONB
+        );
+        CREATE TABLE ai_document_chunk (
+            id TEXT PRIMARY KEY, document_id TEXT, content TEXT, embedding TEXT,
+            metadata_json JSONB, section TEXT, created_at TEXT,
+            is_retrieval_candidate INTEGER, chunk_role TEXT, parent_chunk_id TEXT
+        );
+        """
+    )
+    connection.execute(
+        """
+        INSERT INTO ai_document VALUES (
+            'ssh-v200', 'Huawei VRP V200 SSH', 'Huawei', 'huawei_vrp',
+            'tenant-default', 'active', '{}', 'official',
+            'huawei.vrp.v200.ssh', 'configuration', 'S5700/S6700', NULL,
+            'V200R023 / V300R024', 'huawei_vrp', 'management', 'ssh', 0,
+            '{"applicable_cli_platforms":["huawei_vrp_v200"]}'
+        )
+        """
+    )
+    connection.execute(
+        """
+        INSERT INTO ai_document_chunk VALUES (
+            'chunk-ssh-v200', 'ssh-v200', 'SSH configuration and verification',
+            '[1.0, 0.0]', '{}', 'SSH', '2026-01-01', 1, 'standalone', NULL
+        )
+        """
+    )
+    monkeypatch.setattr(module, "get_db_connection", lambda: connection)
+    monkeypatch.setattr(module.embedding_provider, "embed_text", lambda text: [1.0, 0.0])
+
+    result = RAGRetriever().search(
+        RetrievalRequest(
+            query="Huawei VRP V200 SSH configuration",
+            vendor="Huawei",
+            software_train="V200",
+            cli_platform="huawei_vrp_v200",
+            document_category="configuration",
+            feature_domain="management",
+            feature="ssh",
+            top_k=3,
+        ),
+        min_relevance=0.0,
+    )
+
+    assert [item["document_id"] for item in result["results"]] == ["huawei.vrp.v200.ssh"]
+
+
 def test_cosine_does_not_give_orthogonal_vectors_false_relevance():
     assert RAGRetriever._cosine([1.0, 0.0], [0.0, 1.0]) == 0.0
     assert RAGRetriever._cosine([1.0, 0.0], [1.0, 0.0]) == 1.0
@@ -262,3 +320,69 @@ def test_official_broad_document_requires_chunk_feature_evidence(monkeypatch):
         content="show license tech support",
         section="System management",
     )
+
+
+def test_candidate_pool_expansion_allows_reranker_to_promote_subtop5_document(monkeypatch):
+    """
+    验证检索链路重构成果：
+    当候选池从原先的硬截断 top_k 扩充至 Top-N (如 20~30) 时，
+    原本在初排中位列第 6 名的文档能够被送入 Reranker，并通过重排打分逆袭进入最终的 Top-3 结果。
+    """
+    connection = postgresql_test_driver.connect()
+    connection.executescript(
+        """
+        CREATE TABLE ai_document (
+            id TEXT PRIMARY KEY, name TEXT, vendor TEXT, platform TEXT,
+            tenant_id TEXT, status TEXT, acl_json TEXT, source_trust_level TEXT,
+            document_id TEXT, document_category TEXT, product_series TEXT,
+            product_model TEXT, software_train TEXT, cli_platform TEXT,
+            feature_domain TEXT, feature TEXT, exclude_from_rag INTEGER DEFAULT 0,
+            metadata_json JSONB
+        );
+        CREATE TABLE ai_document_chunk (
+            id TEXT PRIMARY KEY, document_id TEXT, content TEXT, embedding TEXT,
+            metadata_json JSONB, section TEXT, created_at TEXT,
+            is_retrieval_candidate INTEGER, chunk_role TEXT, parent_chunk_id TEXT,
+            ordinal INTEGER, embedding_model TEXT
+        );
+        """
+    )
+    # 插入 8 篇文档，doc-1 到 doc-5 初排分较高，doc-6 初排分排第 6
+    for i in range(1, 9):
+        connection.execute(
+            "INSERT INTO ai_document VALUES (?, ?, 'Huawei', 'huawei_vrp', 'tenant-default', 'active', '{}', 'official', ?, 'command', NULL, NULL, 'V200', 'huawei_vrp', 'switching', 'vlan', 0, '{}')",
+            (f"doc-{i}", f"Huawei Doc {i}", f"huawei.doc.{i}"),
+        )
+        # 通过关键词词频制造差异：doc-1 到 doc-5 包含大量重复关键词，doc-6 包含不同表述
+        content = ("vlan config " * (10 - i)) if i != 6 else "vlan configuration optimal architecture guide"
+        connection.execute(
+            "INSERT INTO ai_document_chunk VALUES (?, ?, ?, ?, '{}', 'VLAN', '2026-01-01', 1, 'child', NULL, 1, NULL)",
+            (f"c-{i}", f"doc-{i}", content, json.dumps([0.5, 0.5])),
+        )
+
+    monkeypatch.setattr(module, "get_db_connection", lambda: connection)
+    monkeypatch.setattr(module.embedding_provider, "embed_text", lambda text: [0.5, 0.5])
+
+    class SemanticReranker:
+        name = "mock-semantic-reranker"
+        def rank(self, query, candidates):
+            # 模拟智能重排器：发现 doc-6 是架构权威文档，给予最高评分 1.0，其他仅给 0.1
+            scores = []
+            for item in candidates:
+                if item["storage_document_id"] == "doc-6":
+                    scores.append(1.0)
+                else:
+                    scores.append(0.1)
+            return scores
+
+    # 配置 top_k = 3, candidate_pool_size = 20
+    retriever = RAGRetriever(reranker=SemanticReranker(), candidate_pool_size=20)
+    request = RetrievalRequest(query="vlan config", vendor="Huawei", top_k=3)
+    result = retriever.search(request, min_relevance=0.0)
+
+    returned_doc_ids = [item["document_id"] for item in result["results"]]
+
+    # 验证 doc-6 成功逆袭进入前 3 甚至排到第一名！
+    assert "huawei.doc.6" in returned_doc_ids
+    assert returned_doc_ids[0] == "huawei.doc.6"
+    assert result["debug"]["candidate_pool_size"] >= 8

@@ -16,6 +16,7 @@ from ai.gateway.exceptions import (
     AIInvalidResponseException,
     AIModelNotFoundException,
     AINetworkException,
+    AIOutputTruncatedException,
     AIRateLimitException,
     AIProviderTimeoutException,
 )
@@ -116,13 +117,26 @@ class OpenAICompatibleProvider(BaseLLMProvider):
                     raise AINetworkException("AI provider redirect refused")
                 if response.status_code >= 400:
                     raise AINetworkException(f"AI provider returned HTTP {response.status_code}")
-                data = response.json()
+                try:
+                    data = response.json()
+                except (TypeError, ValueError) as exc:
+                    raise AIInvalidResponseException("AI provider returned invalid JSON") from exc
+                if not isinstance(data, dict):
+                    raise AIInvalidResponseException("AI provider response must be an object")
                 choices = data.get("choices") or []
-                if not choices:
+                if not isinstance(choices, list) or not choices:
                     raise AIInvalidResponseException("AI provider returned no choices")
                 first_choice = choices[0] or {}
+                if not isinstance(first_choice, dict):
+                    raise AIInvalidResponseException("AI provider choice is invalid")
+                if first_choice.get("finish_reason") == "length":
+                    raise AIOutputTruncatedException()
                 message = first_choice.get("message") or {}
+                if not isinstance(message, dict):
+                    raise AIInvalidResponseException("AI provider message is invalid")
                 usage = data.get("usage") or {}
+                if not isinstance(usage, dict):
+                    usage = {}
                 return {
                     "content": message.get("content") or "",
                     "reasoning_content": message.get("reasoning_content") or message.get("reasoning") or "",
@@ -137,7 +151,7 @@ class OpenAICompatibleProvider(BaseLLMProvider):
                 }
         except httpx.TimeoutException as exc:
             raise AIProviderTimeoutException("AI provider request timed out") from exc
-        except (AIAuthFailedException, AIInvalidRequestException, AIModelNotFoundException, AIRateLimitException, AINetworkException, AIInvalidResponseException, AIProviderTimeoutException):
+        except (AIAuthFailedException, AIInvalidRequestException, AIModelNotFoundException, AIRateLimitException, AINetworkException, AIInvalidResponseException, AIOutputTruncatedException, AIProviderTimeoutException):
             raise
         except Exception as exc:
             raise AINetworkException("Network error calling AI provider") from exc
@@ -214,21 +228,32 @@ class OpenAICompatibleProvider(BaseLLMProvider):
                             break
                         try:
                             chunk = json.loads(data_text)
-                        except (TypeError, ValueError):
-                            continue
+                        except (TypeError, ValueError) as exc:
+                            raise AIInvalidResponseException("AI provider stream returned invalid JSON") from exc
+                        if not isinstance(chunk, dict):
+                            raise AIInvalidResponseException("AI provider stream chunk is invalid")
+                        choices = chunk.get("choices") or []
+                        if not isinstance(choices, list):
+                            raise AIInvalidResponseException("AI provider stream choices are invalid")
                         usage = chunk.get("usage")
                         if usage_sink is not None and isinstance(usage, dict):
                             usage_sink.update({
                                 "input_tokens": max(0, int(usage.get("prompt_tokens") or 0)),
                                 "output_tokens": max(0, int(usage.get("completion_tokens") or 0)),
                             })
-                        choices = chunk.get("choices") or []
                         if choices:
-                            delta = choices[0].get("delta") or {}
+                            first_choice = choices[0]
+                            if not isinstance(first_choice, dict):
+                                raise AIInvalidResponseException("AI provider stream choice is invalid")
+                            if first_choice.get("finish_reason") == "length":
+                                raise AIOutputTruncatedException()
+                            delta = first_choice.get("delta") or {}
+                            if not isinstance(delta, dict):
+                                raise AIInvalidResponseException("AI provider stream delta is invalid")
                             content = delta.get("content")
                             if content:
                                 yield str(content)
-        except (AIAuthFailedException, AIInvalidRequestException, AIModelNotFoundException, AIRateLimitException, AINetworkException, AIInvalidResponseException, AIProviderTimeoutException):
+        except (AIAuthFailedException, AIInvalidRequestException, AIModelNotFoundException, AIRateLimitException, AINetworkException, AIInvalidResponseException, AIOutputTruncatedException, AIProviderTimeoutException):
             raise
         except httpx.TimeoutException as exc:
             raise AIProviderTimeoutException("AI provider stream timed out") from exc

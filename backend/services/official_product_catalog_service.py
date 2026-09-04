@@ -43,6 +43,10 @@ MODEL_CATALOG: dict[str, tuple[dict[str, str], ...]] = {
         {"model": "S7506E", "series": "S7500E", "scope": "campus", "platform": "h3c_comware"},
         {"model": "S6800-54QF", "series": "S6800", "scope": "datacenter", "platform": "h3c_comware"},
         {"model": "S6860-54HF", "series": "S6860", "scope": "datacenter", "platform": "h3c_comware"},
+        # H3C's official S6850 support catalog is a distinct data-center
+        # series; it must not be silently treated as S6800 or as a generic
+        # Comware model when a query names S6850 explicitly.
+        {"model": "S6850", "series": "S6850", "scope": "datacenter", "platform": "h3c_comware", "source_checked_at": "2026-09-04"},
         {"model": "S9825-64D", "series": "S9825", "scope": "datacenter", "platform": "h3c_comware"},
         {"model": "S9855", "series": "S9855", "scope": "datacenter", "platform": "h3c_comware"},
         {"model": "S10508X", "series": "S10500", "scope": "datacenter", "platform": "h3c_comware"},
@@ -50,6 +54,11 @@ MODEL_CATALOG: dict[str, tuple[dict[str, str], ...]] = {
     "Cisco": (
         {"model": "C9200L-24P-4G", "series": "Catalyst 9200", "scope": "campus", "platform": "cisco_iosxe"},
         {"model": "C9200-48P", "series": "Catalyst 9200", "scope": "campus", "platform": "cisco_iosxe"},
+        # Cisco's official Catalyst 3850 data sheet lists the C3850 family
+        # and its WS-C3850 hardware variants.  C3850 is the canonical
+        # shorthand used by the query normalizer, while the series field
+        # preserves the human-readable product family.
+        {"model": "C3850", "series": "Catalyst 3850", "scope": "campus", "platform": "cisco_iosxe", "source_checked_at": "2026-09-04"},
         {"model": "C9300-24T", "series": "Catalyst 9300", "scope": "campus", "platform": "cisco_iosxe"},
         {"model": "C9300-48U", "series": "Catalyst 9300", "scope": "campus", "platform": "cisco_iosxe"},
         {"model": "C9350", "series": "C9350", "scope": "campus", "platform": "cisco_iosxe"},
@@ -98,6 +107,7 @@ _OFFICIAL_MODEL_URL_OVERRIDES: dict[tuple[str, str], str] = {
     ("H3C", "S6520X-54XC-UPWR-SI"): "https://www.h3c.com/en/Products_and_Solutions/InterConnect/Switches/Products/Campus_Network/Aggregation/S6500/H3C_S6520X-SI/",
     ("H3C", "S7506E"): "https://www.h3c.com/en/d_202502/2356236_294551_0.htm",
     ("H3C", "S6800-54QF"): "https://www.h3c.com/en/Support/Resource_Center/EN/Switches/Catalog/S6800/S6800/Technical_Documents/Product_Literature/Hardware_Information___Specifications/H3C_S6800_HIS/?CHID=1002659",
+    ("H3C", "S6850"): "https://www.h3c.com/en/Support/Resource_Center/EN/Switches/Catalog/S6850/S6850/Default.htm?category=315791",
     ("H3C", "S6860-54HF"): "https://www.h3c.com/en/Support/Resource_Center/EN/Home/Switches/00-Public/Product_Literature/Hardware_Information___Specifications/H3C_Data_Center_Fixed_Port_Swi-17390/202403/2059464_294551_0.htm",
     ("H3C", "S9825-64D"): "https://www.h3c.com/en/Support/Resource_Center/EN/Home/Public/00-Public/Technical_Documents/Product_Literature/Hardware_Information___Specifications/H3C_S9825_S9-14512/?CHID=1123124",
     ("H3C", "S9855"): "https://www.h3c.com/en/Products_and_Solutions/InterConnect/Switches/Products/Data_Center/Aggregation/S9800/H3C_S9855/",
@@ -105,6 +115,7 @@ _OFFICIAL_MODEL_URL_OVERRIDES: dict[tuple[str, str], str] = {
     # Cisco official model/series pages and public datasheets.
     ("Cisco", "C9200L-24P-4G"): "https://www.cisco.com/c/en/us/td/docs/switches/lan/catalyst9200/hardware/install/b-c9200-hig/product_overview.html",
     ("Cisco", "C9200-48P"): "https://www.cisco.com/c/en/us/products/collateral/switches/catalyst-9200-series-switches/nb-06-cat9200-ser-data-sheet-cte-en.html",
+    ("Cisco", "C3850"): "https://www.cisco.com/c/en/us/products/collateral/switches/catalyst-3850-series-switches/data_sheet_c78-720918.html",
     ("Cisco", "C9300-24T"): "https://www.cisco.com/site/us/en/products/networking/switches/catalyst-9300-series-switches/index.html",
     ("Cisco", "C9300-48U"): "https://www.cisco.com/c/en/us/products/collateral/switches/catalyst-9300-series-switches/nb-06-cat9300-ser-data-sheet-cte-en.html",
     ("Cisco", "N3K-C3172PQ-10GE"): "https://www.cisco.com/c/en/us/products/collateral/switches/nexus-3000-series-switches/data_sheet_c78-729483.html",

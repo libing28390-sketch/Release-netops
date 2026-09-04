@@ -1,0 +1,146 @@
+name: Knowledge Engine Promptfoo Gate
+
+on:
+  pull_request:
+    branches: [main]
+    paths:
+      - "backend/ai/**"
+      - "backend/database/**"
+      - "docs/knowledge-engine/eval/**"
+      - "scripts/promptfoo_*.py"
+      - "scripts/knowledge_eval_*.py"
+      - "package.json"
+      - "package-lock.json"
+      - ".github/workflows/knowledge-engine-promptfoo.yml"
+  schedule:
+    - cron: "17 2 * * *"
+  push:
+    tags: ["v*"]
+    paths:
+      - "backend/ai/**"
+      - "backend/database/**"
+      - "docs/knowledge-engine/eval/**"
+      - "scripts/promptfoo_*.py"
+      - "scripts/knowledge_eval_*.py"
+      - "package.json"
+      - "package-lock.json"
+      - ".github/workflows/knowledge-engine-promptfoo.yml"
+  workflow_dispatch:
+    inputs:
+      profile:
+        description: "Promptfoo profile"
+        required: false
+        default: "full"
+        type: choice
+        options: [smoke, full]
+
+permissions:
+  contents: read
+
+jobs:
+  promptfoo:
+    name: Promptfoo ${{ (github.event_name == 'pull_request' && 'smoke') || 'full' }} (isolated PostgreSQL)
+    runs-on: ubuntu-latest
+    services:
+      postgres:
+        image: postgres:16
+        env:
+          POSTGRES_DB: nexora_promptfoo_ci
+          POSTGRES_USER: postgres
+          POSTGRES_PASSWORD: postgres
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U postgres -d nexora_promptfoo_ci"
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 5
+    env:
+      ENVIRONMENT: test
+      DATABASE_URL: postgresql://postgres:postgres@127.0.0.1:5432/nexora_promptfoo_ci
+      PYTHONPATH: backend
+      SECRET_KEY: test-only-secret-placeholder
+      CREDENTIAL_ENCRYPTION_KEY: test-only-credential-placeholder
+      AI_ENABLED: "false"
+      EXTERNAL_AI_ENABLED: "false"
+      NETWORK_WRITE_ENABLED: "false"
+      PRODUCTION_CREDENTIALS_ALLOWED: "false"
+      AI_GATEWAY_MODE: mock
+      DATA_CLASSIFICATION: synthetic
+      PROMPTFOO_VERSION: "0.118.0"
+      PROMPTFOO_INTEGRITY: "sha512-TK9PCVTdZ93UFuhvZ3CrhvXTnXUpUxHtooT234xEuQ+TVK3f/G82JW30/f5ZHSbreSUpPIboqA1636h3VwZSpA=="
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Node 20
+        uses: actions/setup-node@v4
+        with:
+          node-version: "20.11.1"
+          cache: npm
+
+      - name: Setup Python 3.11
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+          cache: pip
+          cache-dependency-path: backend/requirements.txt
+
+      - name: Install isolated test dependencies
+        shell: bash
+        run: |
+          set -euo pipefail
+          python -m pip install --upgrade pip
+          pip install -r backend/requirements.txt pytest
+          npm ci --ignore-scripts
+          test "$(npm view promptfoo@${PROMPTFOO_VERSION} dist.integrity)" = "${PROMPTFOO_INTEGRITY}"
+          npm install --global --ignore-scripts --no-audit --no-fund "promptfoo@${PROMPTFOO_VERSION}"
+          test "$(promptfoo --version | tr -d '[:space:]')" = "${PROMPTFOO_VERSION}"
+
+      - name: Initialize isolated PostgreSQL schema
+        shell: bash
+        run: python -c "from database import init_db; init_db()"
+
+      - name: Validate release-safe AI/RAG configuration
+        shell: bash
+        run: python scripts/ai_rag_release_config_check.py
+
+      - name: Run Promptfoo gate
+        shell: bash
+        run: |
+          set -euo pipefail
+          profile="${{ github.event_name == 'pull_request' && 'smoke' || (inputs.profile || 'full') }}"
+          filter=""
+          if [ "$profile" = "smoke" ]; then
+            filter='ANCHOR-(04[1-9]|050)'
+          fi
+          args=(eval -c docs/knowledge-engine/eval/promptfoo-rag-gate.yaml --no-cache --no-table --no-progress-bar -o "$RUNNER_TEMP/promptfoo-raw.json")
+          if [ -n "$filter" ]; then args+=(--filter-pattern "$filter"); fi
+          promptfoo "${args[@]}"
+
+      - name: Build redacted JSON and JUnit artifacts
+        if: always()
+        shell: bash
+        run: |
+          set -euo pipefail
+          if [ -f "$RUNNER_TEMP/promptfoo-raw.json" ]; then
+            python scripts/promptfoo_gate_report.py \
+              --input "$RUNNER_TEMP/promptfoo-raw.json" \
+              --json "$RUNNER_TEMP/promptfoo-redacted.json" \
+              --junit "$RUNNER_TEMP/promptfoo.xml" \
+              --strict
+          else
+            echo '{"schema_version":1,"status":"NOT_RUN","reason":"promptfoo_output_missing"}' > "$RUNNER_TEMP/promptfoo-redacted.json"
+            printf '%s\n' '<?xml version="1.0" encoding="utf-8"?><testsuite name="nexora-promptfoo-gate" tests="0" failures="1"><failure type="not_run">Promptfoo output missing.</failure></testsuite>' > "$RUNNER_TEMP/promptfoo.xml"
+            exit 1
+          fi
+
+      - name: Upload redacted Promptfoo artifacts
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: promptfoo-${{ github.run_id }}
+          path: |
+            ${{ runner.temp }}/promptfoo-redacted.json
+            ${{ runner.temp }}/promptfoo.xml
+          if-no-files-found: error

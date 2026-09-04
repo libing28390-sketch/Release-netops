@@ -30,6 +30,9 @@ export const formatAssistantStreamError = ({ code: rawCode, message: rawMessage 
   if (hasCode(code, 'AI_RETRIEVAL_NO_MATCH', 'RETRIEVAL_NO_MATCH', 'KNOWLEDGE_NO_MATCH')) {
     return '知识库没有找到匹配资料，建议补充厂商、型号、版本或目录范围后重试。';
   }
+  if (hasCode(code, 'AI_INTERNAL_ERROR', 'AI_REQUEST_REJECTED', 'AI_HTTP_ERROR')) {
+    return 'AI 对话服务暂时不可用，未执行任何设备操作，请稍后重试。';
+  }
 
-  return `[Copilot 处理失败] ${detail || code || '服务返回错误'}`;
+  return `[Copilot 处理失败] ${code || '服务返回错误'}`;
 };

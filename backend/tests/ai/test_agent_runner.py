@@ -56,3 +56,36 @@ def test_agent_runner_rejects_unregistered_agent_before_persisting_run(isolated_
 
     with database.get_db_connection() as conn:
         assert conn.execute("SELECT COUNT(*) FROM ai_agent_run").fetchone()[0] == 0
+
+
+def test_agent_runner_reserves_final_step_when_model_keeps_planning_tools(isolated_db, monkeypatch) -> None:
+    from ai.agents.runner import agent_runner
+    from ai.gateway.llm_gateway import llm_gateway
+
+    responses = iter(
+        [
+            {"content": json.dumps({"action": "tool_call", "tool_name": "get_active_alarms", "arguments": {}})},
+            {"content": json.dumps({"action": "final_answer", "result": "已有告警证据，未发现可归因的丢包告警。"})},
+        ]
+    )
+
+    async def fake_chat(**kwargs):
+        return next(responses)
+
+    monkeypatch.setattr(llm_gateway, "chat", fake_chat)
+
+    result = asyncio.run(
+        agent_runner.run(
+            agent_code="troubleshooting_agent",
+            question="请检查当前租户是否有活动告警。",
+            max_steps=2,
+            user_id="alice",
+            tenant_id="tenant-default",
+        )
+    )
+
+    assert result["status"] == "finished"
+    assert result["final_result"].startswith("已有告警证据")
+    assert result["steps"][0]["step_type"] == "tool_call"
+    assert result["steps"][0]["tool_name"] == "get_active_alarms"
+    assert result["steps"][1]["step_type"] == "final_answer"

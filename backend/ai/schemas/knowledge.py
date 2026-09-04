@@ -9,7 +9,12 @@ from typing import Any, Mapping
 from pydantic import BaseModel, ConfigDict, Field, field_validator
 
 from ai.security.sanitizer import sanitize_text
-from ai.services.knowledge_metadata import canonical_document_category, canonical_feature, canonical_vendor
+from ai.services.knowledge_metadata import (
+    canonical_cli_platform,
+    canonical_document_category,
+    canonical_feature,
+    canonical_vendor,
+)
 
 
 class KnowledgeScope(str, Enum):
@@ -118,6 +123,11 @@ class KnowledgeQueryPlan(BaseModel):
     @classmethod
     def _normalise_vendor(cls, value: str | None) -> str | None:
         return canonical_vendor(value) if value else None
+
+    @field_validator("cli_platform")
+    @classmethod
+    def _normalise_cli_platform(cls, value: str | None) -> str | None:
+        return canonical_cli_platform(value) if value else None
 
     @field_validator("document_category")
     @classmethod

@@ -154,6 +154,7 @@ _VENDOR_ALIASES: tuple[tuple[str, str], ...] = (
     ("hpcomware", "h3c"),
     ("hp", "h3c"),
     ("华三", "h3c"),
+    ("新华三", "h3c"),
     ("cisco", "cisco"),
     ("思科", "cisco"),
     ("juniper", "juniper"),

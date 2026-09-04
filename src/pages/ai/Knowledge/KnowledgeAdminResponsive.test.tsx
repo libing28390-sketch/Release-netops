@@ -5,16 +5,18 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import Pagination from '../../../components/Pagination';
 import RagEvaluationPanel from './RagEvaluationPanel';
 import RetrievalTracePanel from './RetrievalTracePanel';
-import { getKnowledgeEvaluation, listKnowledgeRetrievalTraces } from '../../../api/ai';
+import { getKnowledgeEvaluation, getKnowledgeExperimentObservability, listKnowledgeRetrievalTraces } from '../../../api/ai';
 
 vi.mock('../../../api/ai', () => ({
   getKnowledgeEvaluation: vi.fn(),
+  getKnowledgeExperimentObservability: vi.fn(),
   runKnowledgeEvaluation: vi.fn(),
   listKnowledgeRetrievalTraces: vi.fn(),
   getKnowledgeRetrievalTrace: vi.fn(),
 }));
 
 const getEvaluation = vi.mocked(getKnowledgeEvaluation);
+const getObservability = vi.mocked(getKnowledgeExperimentObservability);
 const listTraces = vi.mocked(listKnowledgeRetrievalTraces);
 
 const report = {
@@ -32,12 +34,13 @@ const report = {
   case_count: 1,
   metrics: { retrieval_accuracy: 1, wrong_vendor_rate: 0, version_conflict_rate: 0, citation_accuracy: 1, citation_recall: 1, latency_ms: { average: 1, p50: 1, p95: 2, max: 3 } },
   gates: [{ metric: 'retrieval_accuracy', actual: 1, operator: '>=', threshold: 0.95, passed: true }],
-  cases: [{ id: 'Q01', query: 'show ospf peer', retrieval_correct: true, citation_precision: 1, vendor_mismatch: false, version_conflict: false, latency_ms: 1 }],
+  cases: [{ id: 'Q01', retrieval_correct: true, citation_precision: 1, vendor_mismatch: false, version_conflict: false, latency_ms: 1 }],
 };
 
 describe('KUI-018 knowledge administration responsive gates', () => {
   beforeEach(() => {
     getEvaluation.mockResolvedValue(report as any);
+    getObservability.mockResolvedValue({ schema_version: 'obs-002-v1', tenant_id: 'tenant-a', database: 'PostgreSQL', redacted: true, contains_prompt_or_answer: false, contains_document_or_chunk_identity: false, runs: [], rollouts: [], shadow_observations: [] });
     listTraces.mockResolvedValue({ items: [], limit: 50, status: 'all', redacted: true });
     document.documentElement.setAttribute('data-theme', 'dark');
   });

@@ -266,6 +266,10 @@ class ToolRegistry:
         assert plan is not None
         if not plan.requires_confirmation:
             return {"success": False, "error_code": "TOOL_CONFIRMATION_NOT_REQUIRED"}
+        if not plan.device_state:
+            return {"success": False, "error_code": "TOOL_DEVICE_STATE_REQUIRED"}
+        if not plan.impact_scope:
+            return {"success": False, "error_code": "TOOL_IMPACT_SCOPE_REQUIRED"}
         try:
             token = tool_confirmation_store.issue(plan, tenant_id=tenant_id, user_id=user_id)
         except ToolPlanError as error:

@@ -26,6 +26,14 @@ def test_projection_classifies_basic_features_before_broad_aliases():
     assert _feature(_row("official-cisco-stp-basic", "spanning-tree mode rapid-pvst"))[0] == "stp"
 
 
+def test_projection_uses_template_identity_before_rollback_content():
+    assert _feature(_row("official-cisco-access-port", "no spanning-tree portfast"))[0] == "access_port"
+
+
+def test_projection_keeps_hsrp_separate_from_vrrp():
+    assert _feature(_row("official-cisco-hsrp-basic", "standby 1 ip 192.0.2.1"))[0] == "hsrp"
+
+
 def test_projection_renders_secret_inputs_as_vault_references():
     rendered = _render(
         "snmp-server user nms auth sha {{ snmp_auth_key }} priv aes 128 {{ snmp_priv_key }}"
@@ -57,6 +65,16 @@ def test_catalog_platforms_keep_campus_and_data_center_cli_families_separate():
     assert {row["platform"] for row in MODEL_CATALOG["Cisco"] if row["scope"] == "datacenter"} == {"cisco_nxos"}
 
 
+def test_catalog_contains_official_catalyst_3850_and_h3c_s6850_scopes():
+    c3850 = next(row for row in MODEL_CATALOG["Cisco"] if row["model"] == "C3850")
+    s6850 = next(row for row in MODEL_CATALOG["H3C"] if row["model"] == "S6850")
+
+    assert c3850["series"] == "Catalyst 3850"
+    assert c3850["platform"] == "cisco_iosxe"
+    assert s6850["series"] == "S6850"
+    assert s6850["platform"] == "h3c_comware"
+
+
 def test_every_catalog_model_has_vendor_official_provenance():
     allowed_hosts = {
         "Huawei": {"support.huawei.com", "info.support.huawei.com"},
@@ -69,4 +87,5 @@ def test_every_catalog_model_has_vendor_official_provenance():
             assert row["official_url"].startswith("https://")
             assert urlsplit(row["official_url"]).hostname in allowed_hosts[vendor]
             assert row["verification_level"] == "official_model_or_series_catalog"
-            assert row["source_checked_at"] == "2026-08-23"
+            expected_date = "2026-09-04" if row["model"] in {"C3850", "S6850"} else "2026-08-23"
+            assert row["source_checked_at"] == expected_date

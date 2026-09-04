@@ -26,6 +26,20 @@ interface LocationEntry {
   note?: string;
 }
 
+interface TraceHop {
+  switch_id?: string;
+  switch_name?: string;
+  port?: string;
+  vlan?: string;
+  type?: string;
+  is_uplink?: boolean;
+  is_aggregation?: boolean;
+  is_trunk?: boolean;
+  neighbor_name?: string;
+  neighbor_port?: string;
+  evidence?: string;
+}
+
 interface LocatorContext {
   address: {
     ip: string;
@@ -57,6 +71,7 @@ interface LocatorContext {
   l3: {
     gateway: string;
     gateway_device: string;
+    gateway_device_id?: string;
     gateway_interface: string;
     vrf: string;
     next_hop: string;
@@ -110,6 +125,8 @@ interface LocateResult {
   };
   timestamp: string;
   errors: string[];
+  trace_status?: string;
+  trace_hops?: TraceHop[];
   context?: LocatorContext;
 }
 
@@ -1451,6 +1468,34 @@ ${rep.repair_commands}
                     </div>
                   </div>
                 )}
+              </div>
+            </div>
+          ) : result.trace_status === 'incomplete' ? (
+            <div className="bg-amber-50 dark:bg-amber-500/10 border border-amber-200 dark:border-amber-500/20 rounded-2xl px-5 py-4">
+              <div className="flex items-start gap-3">
+                <AlertCircle size={18} className="text-amber-500 mt-0.5 flex-shrink-0" />
+                <div className="min-w-0">
+                  <p className="text-sm font-semibold text-amber-800 dark:text-amber-300">{zh ? '链路追踪未完成' : 'Path Trace Incomplete'}</p>
+                  <p className="text-xs text-amber-700 dark:text-amber-400 mt-0.5">
+                    {zh ? '已从 ARP 获取 MAC，但当前路径证据不足，系统未把中间接口判定为主机接入口。' : 'The MAC was resolved from ARP, but the path evidence is incomplete, so an intermediate interface is not marked as a host port.'}
+                  </p>
+                  {result.errors?.map((err, i) => (
+                    <p key={i} className="text-xs text-amber-600 dark:text-amber-400 mt-1">{err}</p>
+                  ))}
+                  {(result.trace_hops?.length ?? 0) > 0 && (
+                    <div className="mt-2 flex flex-wrap items-center gap-1.5 text-[10px] text-amber-800 dark:text-amber-300">
+                      {result.trace_hops?.map((hop, i) => (
+                        <React.Fragment key={`${hop.switch_id || hop.switch_name}-${hop.port}-${i}`}>
+                          {i > 0 && <ArrowRight size={11} className="text-amber-400" />}
+                          <span className="rounded bg-white/70 dark:bg-white/10 px-2 py-1 font-mono">
+                            {hop.switch_name || hop.switch_id || '-'}:{hop.port || '-'}
+                            {hop.is_aggregation ? ' · LAG' : hop.is_trunk ? ' · Trunk' : ''}
+                          </span>
+                        </React.Fragment>
+                      ))}
+                    </div>
+                  )}
+                </div>
               </div>
             </div>
           ) : !result.found ? (

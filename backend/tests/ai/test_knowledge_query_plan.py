@@ -45,6 +45,7 @@ def test_shared_facet_normalization_and_unknown_governance() -> None:
     assert canonical_vendor("新华三") == "H3C"
     assert canonical_vendor("思科系统") == "Cisco"
     assert canonical_feature("链路聚合") == "lacp"
+    assert canonical_feature("packet-filter") == "acl"
     assert normalize_facet_value("UNKNOWN") == ""
     assert normalize_facet_value("华为") == "Huawei"
 

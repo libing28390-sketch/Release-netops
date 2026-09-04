@@ -2,6 +2,7 @@ import pytest
 
 from services.config_vendor_platform_service import (
     allowed_platforms,
+    canonical_vendor,
     match_platform_profile,
     platform_profiles,
     validate_vendor_platform,
@@ -30,6 +31,8 @@ def test_vendor_platform_is_normalized_and_aliases_are_supported() -> None:
 
     vendor, platform = validate_vendor_platform("", "")
     assert (vendor, platform) == ("Custom", "custom")
+    assert canonical_vendor("华三") == "H3C"
+    assert canonical_vendor("新华三") == "H3C"
 
 
 def test_mismatched_known_vendor_platform_is_rejected() -> None:

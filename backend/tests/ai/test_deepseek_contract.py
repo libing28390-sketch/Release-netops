@@ -2,7 +2,11 @@ import asyncio
 
 import pytest
 
-from ai.gateway.exceptions import AINetworkException
+from ai.gateway.exceptions import (
+    AINetworkException,
+    AIInvalidResponseException,
+    AIOutputTruncatedException,
+)
 from ai.providers.deepseek import DeepSeekProvider
 from ai.providers.openai_compatible import OpenAICompatibleProvider
 
@@ -79,3 +83,54 @@ def test_openai_compatible_payload_carries_v1_contract(monkeypatch):
     assert _Client.last_json["thinking"] == {"type": "enabled"}
     assert _Client.last_json["reasoning_effort"] == "high"
     assert _Client.last_json["user"] == "nxa_user_opaque"
+
+
+@pytest.mark.parametrize(
+    ("payload", "expected_exception"),
+    [
+        (ValueError("not-json"), AIInvalidResponseException),
+        ({"choices": [{"message": {"content": "partial"}, "finish_reason": "length"}]}, AIOutputTruncatedException),
+        ({"choices": "not-a-list"}, AIInvalidResponseException),
+    ],
+)
+def test_openai_compatible_provider_maps_invalid_and_truncated_responses(monkeypatch, payload, expected_exception):
+    class Response:
+        status_code = 200
+
+        def json(self):
+            if isinstance(payload, Exception):
+                raise payload
+            return payload
+
+    class Client(_Client):
+        def __init__(self, **kwargs):
+            self.kwargs = kwargs
+
+        async def post(self, url, *, headers, json):
+            return Response()
+
+    import httpx
+    monkeypatch.setattr(httpx, "AsyncClient", Client)
+    provider = OpenAICompatibleProvider({"base_url": "https://provider.example", "provider_type": "openai"})
+    with pytest.raises(expected_exception) as exc_info:
+        asyncio.run(provider.chat([{"role": "user", "content": "hello"}], model="model-1"))
+    assert exc_info.value.code in {"AI_INVALID_RESPONSE", "AI_OUTPUT_TRUNCATED"}
+    assert "provider.example" not in str(exc_info.value)
+
+
+def test_openai_compatible_provider_maps_server_error_without_body(monkeypatch):
+    import httpx
+
+    class ErrorResponse:
+        status_code = 503
+
+    class ErrorClient(_Client):
+        async def post(self, url, *, headers, json):
+            return ErrorResponse()
+
+    monkeypatch.setattr(httpx, "AsyncClient", ErrorClient)
+    provider = OpenAICompatibleProvider({"base_url": "https://provider.example", "provider_type": "openai"})
+    with pytest.raises(AINetworkException) as exc_info:
+        asyncio.run(provider.chat([{"role": "user", "content": "hello"}], model="model-1"))
+    assert exc_info.value.code == "AI_NETWORK_ERROR"
+    assert "provider.example" not in str(exc_info.value)

@@ -980,7 +980,12 @@ export const AssistantTab: React.FC = () => {
               if (m.id === assistantMsgId) {
                 return {
                   ...m,
-                  content: aborted ? '[已停止生成，可重试、修改问题或继续排查]' : `[网络或大模型响应失败] ${err.message || '请求超时'}`,
+                  content: aborted
+                    ? '[已停止生成，可重试、修改问题或继续排查]'
+                    : formatAssistantStreamError({
+                      code: err?.code,
+                      message: err?.message,
+                    }),
                   latency_ms: elapsed,
                   stream_status: aborted ? 'aborted' : 'error',
                 };

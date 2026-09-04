@@ -108,11 +108,17 @@ TASK_TERMINAL_STATES = frozenset({"completed", "failed", "cancelled", "timeout",
 TASK_ACTIVE_STATES = frozenset({"queued", "running", "cancelling"})
 
 
+class ConversationSecurityError(ValueError):
+    """Raised when user content cannot be retained in conversation history."""
+
+    code = "AI_SECURITY_SENSITIVE_DATA"
+
+
 def _safe_message_content(content: str, *, tenant_id: str, scope_id: str, role: str = "user") -> str:
     text = str(content or "")[:200_000]
     findings = classify_text(text)
     if any(item.level >= DataLevel.L4_PROHIBITED for item in findings):
-        raise ValueError("message contains prohibited secret or full configuration data")
+        raise ConversationSecurityError("message contains prohibited secret or full configuration data")
     if any(item.level >= DataLevel.L3_SENSITIVE for item in findings):
         text = str(minimize(text, max_text_chars=8000))
     # Assistant output has already passed the outbound security gateway. Keep

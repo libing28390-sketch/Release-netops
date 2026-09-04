@@ -8,6 +8,7 @@ import pytest
 
 from ai.gateway import llm_gateway as gateway_module
 from ai.gateway.exceptions import (
+    AICircuitOpenException,
     AINetworkException,
     AIRateLimitException,
     AIProviderTimeoutException,
@@ -148,3 +149,82 @@ async def test_gateway_limits_nested_provider_slot_by_user_and_tenant() -> None:
         with pytest.raises(AIQuotaExceededException):
             async with limits.slot(provider_id="provider-a", tenant_id="tenant-a", user_id="alice"):
                 raise AssertionError("nested slot should not be acquired")
+
+
+@pytest.mark.anyio
+async def test_gateway_stream_retries_bounded_transient_failure_before_first_chunk(monkeypatch: pytest.MonkeyPatch) -> None:
+    calls = 0
+
+    async def chat_stream(*_args, **_kwargs):
+        nonlocal calls
+        calls += 1
+        if calls < 4:
+            raise AIProviderTimeoutException()
+        yield "stream-ok"
+
+    provider = SimpleNamespace(max_retries=99, chat_stream=chat_stream)
+    gateway = _gateway(monkeypatch, {"model-primary": _model("model-primary")}, {"provider-primary": provider})
+    monkeypatch.setattr(gateway_module.asyncio, "sleep", AsyncMock())
+
+    chunks = [
+        chunk
+        async for chunk in gateway.chat_stream(
+            scene="provider_stream_test",
+            model_id="model-primary",
+            messages=[{"role": "user", "content": "Reply with ok"}],
+            user_id="admin",
+            tenant_id="tenant-default",
+            data_classification="PUBLIC",
+        )
+    ]
+
+    assert chunks == ["stream-ok"]
+    assert calls == 4  # max_retries is capped at three
+
+
+@pytest.mark.anyio
+async def test_gateway_stream_does_not_retry_after_partial_output(monkeypatch: pytest.MonkeyPatch) -> None:
+    calls = 0
+
+    async def chat_stream(*_args, **_kwargs):
+        nonlocal calls
+        calls += 1
+        yield "partial"
+        raise AIProviderTimeoutException()
+
+    provider = SimpleNamespace(max_retries=3, chat_stream=chat_stream)
+    gateway = _gateway(monkeypatch, {"model-primary": _model("model-primary")}, {"provider-primary": provider})
+    monkeypatch.setattr(gateway_module.asyncio, "sleep", AsyncMock())
+
+    chunks = []
+    with pytest.raises(AIProviderTimeoutException):
+        async for chunk in gateway.chat_stream(
+            scene="provider_stream_test",
+            model_id="model-primary",
+            messages=[{"role": "user", "content": "Reply with ok"}],
+            user_id="admin",
+            tenant_id="tenant-default",
+            data_classification="PUBLIC",
+        ):
+            chunks.append(chunk)
+
+    assert chunks == ["partial"]
+    assert calls == 1
+
+
+@pytest.mark.anyio
+async def test_provider_circuit_opens_after_consecutive_failures_and_resets_on_success(monkeypatch: pytest.MonkeyPatch) -> None:
+    limits = AILimitManager()
+    limits.failure_threshold = 2
+    limits.cooldown_seconds = 60
+    limits.record_failure("provider-a")
+    limits.record_failure("provider-a")
+
+    with pytest.raises(AICircuitOpenException) as opened:
+        async with limits.slot(provider_id="provider-a", tenant_id="tenant-a", user_id="alice"):
+            raise AssertionError("an open circuit must not acquire a provider slot")
+    assert opened.value.code == "AI_PROVIDER_CIRCUIT_OPEN"
+
+    limits.record_success("provider-a")
+    async with limits.slot(provider_id="provider-a", tenant_id="tenant-a", user_id="alice"):
+        pass

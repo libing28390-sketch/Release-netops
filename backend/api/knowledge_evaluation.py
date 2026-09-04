@@ -13,6 +13,7 @@ from services.knowledge_evaluation_service import (
     get_evaluation_report,
     run_evaluation,
 )
+from ai.services.ai_experiment_service import ExperimentPersistenceError, get_experiment_observability
 
 
 router = APIRouter(prefix="/knowledge/evaluation", tags=["knowledge-evaluation"])
@@ -29,6 +30,10 @@ def _call(fn, *args, **kwargs):
         return fn(*args, **kwargs)
     except KnowledgeEvaluationError as exc:
         raise HTTPException(status_code=exc.status_code, detail={"code": exc.code, "message": exc.message}) from exc
+    except ExperimentPersistenceError as exc:
+        raise HTTPException(status_code=503, detail={"code": "EVAL_OBSERVABILITY_UNAVAILABLE", "message": "Experiment observability is unavailable"}) from exc
+    except LookupError as exc:
+        raise HTTPException(status_code=404, detail={"code": "EVAL_OBSERVABILITY_NOT_FOUND", "message": "Experiment observability was not found"}) from exc
     except Exception as exc:  # pragma: no cover - defensive API boundary
         raise HTTPException(status_code=500, detail={"code": "EVAL_API_ERROR", "message": "Evaluation operation failed"}) from exc
 
@@ -50,3 +55,16 @@ def api_run_evaluation(
     if payload.suite != "v1_baseline_postgresql":
         raise HTTPException(status_code=422, detail={"code": "EVAL_SUITE_NOT_SUPPORTED", "message": "Evaluation suite is not supported"})
     return {"success": True, "data": _call(run_evaluation, user), "message": "PostgreSQL evaluation completed"}
+
+
+@router.get("/observability")
+def api_get_experiment_observability(
+    limit: int = Query(default=50, ge=1, le=100),
+    user=require_permission("knowledge_source", "read"),
+):
+    tenant_id = str(user.get("tenant_id") or "tenant-default")[:128]
+    return {
+        "success": True,
+        "data": _call(get_experiment_observability, tenant_id=tenant_id, limit=limit),
+        "message": "",
+    }

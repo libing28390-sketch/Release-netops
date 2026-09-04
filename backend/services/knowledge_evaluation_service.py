@@ -87,10 +87,8 @@ def _load_case_catalog() -> dict[str, Any]:
 def _project_case(row: Mapping[str, Any]) -> dict[str, Any]:
     """Project a runner row without exposing ids, SQL, bodies, or debug data."""
 
-    query = str(row.get("query") or "")[:256]
     return {
         "id": str(row.get("id") or "")[:128],
-        "query": query,
         "retrieval_correct": bool(row.get("retrieval_correct")),
         "citation_precision": _finite_number(row.get("citation_precision")),
         "vendor_mismatch": bool(row.get("vendor_mismatch")),
@@ -219,9 +217,11 @@ def _run_postgresql_baseline() -> dict[str, Any]:
     import ai.services.rag_retriever as retriever_module
 
     had_embed_query = hasattr(retriever_module.embedding_provider, "embed_query")
+    missing = object()
+    original_use_pg = getattr(retriever_module, "_USE_PG", missing)
     original = {
         "get_db_connection": retriever_module.get_db_connection,
-        "use_pg": retriever_module._USE_PG,
+        "use_pg": original_use_pg,
         "embed_text": retriever_module.embedding_provider.embed_text,
         "embed_query": getattr(retriever_module.embedding_provider, "embed_query", None),
     }
@@ -235,7 +235,13 @@ def _run_postgresql_baseline() -> dict[str, Any]:
         raise KnowledgeEvaluationError("EVAL_RUN_FAILED", "PostgreSQL evaluation failed", 503) from exc
     finally:
         retriever_module.get_db_connection = original["get_db_connection"]
-        retriever_module._USE_PG = original["use_pg"]
+        if original["use_pg"] is missing:
+            try:
+                delattr(retriever_module, "_USE_PG")
+            except AttributeError:
+                pass
+        else:
+            retriever_module._USE_PG = original["use_pg"]
         retriever_module.embedding_provider.embed_text = original["embed_text"]
         if had_embed_query:
             retriever_module.embedding_provider.embed_query = original["embed_query"]

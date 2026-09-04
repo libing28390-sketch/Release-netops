@@ -112,7 +112,13 @@ _MODEL_RE = re.compile(
     r"CE\s*\d{2,5}[A-Z0-9-]*|Catalyst\s*\d{2,5}[A-Z0-9-]*|C\s*\d{3,4}[A-Z0-9-]*|"
     r"S\d{2,5}[A-Z]?(?:[-_][A-Z0-9]+)*|RG-[A-Z0-9-]+)(?![A-Z0-9])"
 )
-_VERSION_RE = re.compile(r"(?i)\b(?:V\d{3,4}(?:R\d+[A-Z]?\d*)?|\d+\.\d+(?:\.\d+){0,2})\b")
+# A dotted IPv4 literal is an entity, not a software release.  Numeric
+# releases are intentionally limited to two or three components and bounded
+# by non-dot characters, so ``0.0.0.0`` in a default-route query cannot become
+# a release filter and silently eliminate otherwise valid Cisco documents.
+_VERSION_RE = re.compile(
+    r"(?i)(?:\bV\d{3,4}(?:R\d+[A-Z]?\d*)?|\b(?<![\w.])\d+\.\d+(?:\.\d+)?(?![\d.]))"
+)
 _COMMAND_RE = re.compile(
     r"(?im)(?<![A-Za-z])(?:display|show|system-view|configure\s+terminal|conf\s+t|"
     r"interface|undo|no|router\s+(?:ospf|bgp)|ip\s+route)\b[^\n;]{0,180}"
@@ -275,7 +281,11 @@ def normalize_query(query: str, *, tenant_id: str = "tenant-default", access_sco
 
     os_family = _first_alias(text, dict(_OS_ALIASES))
     generation = None
-    generation_match = re.search(r"(?i)\b(?:VRP\s*[58]|IOS\s*(?:XE|XR)|COMWARE\s*7)\b", text)
+    # IOS-XE/IOS-XR are OS families, not a narrower software-generation
+    # boundary.  Treating them as ``os_generation`` made the SQL gate require
+    # a column value that many reviewed documents intentionally leave NULL.
+    # Keep only explicit VRP/Comware generation markers here.
+    generation_match = re.search(r"(?i)\b(?:VRP\s*[58]|COMWARE\s*7)\b", text)
     if generation_match:
         generation = generation_match.group(0).upper().replace(" ", "-")
     version_match = _VERSION_RE.search(text)

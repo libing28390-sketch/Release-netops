@@ -15,6 +15,11 @@ def test_version_compatibility_is_fail_closed_on_conflict_and_explicit_on_match(
     assert version_compatibility(requested_release="V300R019", actual_release="V300R019")[0] == 1.0
     score, evidence = version_compatibility(requested_train="V300", actual_train="V600")
     assert score == 0.0 and evidence == "train_conflict"
+    score, evidence = version_compatibility(
+        requested_train="V200",
+        actual_train="V200R023 / V300R024",
+    )
+    assert score == 0.82 and evidence == "same_train"
     score, evidence = version_compatibility(requested_release="V300R019", actual_release="", applicable_versions=["V300R019"])
     assert score == 0.95 and evidence == "applicable_release"
 

@@ -17,14 +17,18 @@ _VENDOR_ALIASES = {
     "华为": "Huawei",
     "h3c": "H3C",
     "华三": "H3C",
+    "新华三": "H3C",
     "cisco": "Cisco",
     "思科": "Cisco",
+    "ruijie": "Ruijie",
+    "锐捷": "Ruijie",
 }
 
 _VENDOR_ENTRY_POINTS = {
     "Huawei": "https://support.huawei.com/enterprise/en/index.html",
     "H3C": "https://www.h3c.com/en/Support/Resource_Center/",
     "Cisco": "https://www.cisco.com/c/en/us/support/switches/index.html",
+    "Ruijie": "https://www.ruijie.com.cn/fw/wd/",
 }
 
 _FEATURE_URLS = {
@@ -48,6 +52,13 @@ _FEATURE_URLS = {
         "qos": "https://www.cisco.com/c/en/us/td/docs/switches/lan/catalyst9300/software/release/26-x/configuration_guide/qos/b_26x_qos_9300_cg/configuring_qos.html",
         "aaa": "https://www.cisco.com/c/en/us/td/docs/switches/lan/catalyst9300/software/release/26-x/configuration_guide/sec/b_26x_sec_9300_cg/configuring_local_authentication_and_authorization.html",
         "mlag": "https://www.cisco.com/c/en/us/td/docs/dcn/nx-os/nexus9000/106x/configuration/interfaces/cisco-nexus-9000-series-nx-os-interfaces-configuration-guide-release-106x/m_configuring_vpcs_9x.html",
+    },
+    "Ruijie": {
+        "vlan": "https://www.ruijie.com.cn/fw/wt/35635/",
+        "lacp": "https://www.ruijie.com.cn/fw/wt/90880/",
+        "ospf": "https://www.ruijie.com.cn/fw/wt/32518/",
+        "static_route": "https://www.ruijie.com.cn/fw/wt/37267/",
+        "acl": "https://www.ruijie.com.cn/fw/wt/37269/",
     },
 }
 
