@@ -1,8 +1,8 @@
 # 400 条 Gold 用例审核接收单
 
-状态：`NOT_READY`；本文件是填报模板，不是 `eval-golden-400.yaml`，不会被 CI 当成通过证据。
+状态：生产 Gold `NOT_READY`；本文件是填报模板，不是生产数据集。当前另有用户授权生成的 `test_only=true` 合成 CI 夹具，不能被当成人工审核证据。
 
-目标数据集必须满足 [eval-golden-400-contract-v1.yaml](eval-golden-400-contract-v1.yaml)。当前仓库没有 400 条可追溯的人工案例、答案和来源证据，因此这里保留接收入口，不自动复制 50 条、扩展旧的 120 条，或把机器生成内容标记为已审核。
+目标生产数据集必须满足 [eval-golden-400-contract-v1.yaml](eval-golden-400-contract-v1.yaml)。当前仓库没有 400 条可追溯的人工案例、答案和真实来源证据；`eval-golden-400.yaml` 中的合成夹具只用于测试合同校验，不能替代生产数据。这里保留正式接收入口，不复制 50 条、不扩展旧的 120 条，也不把合成内容标记为生产人工审核。
 
 ## 提交包必须包含
 
@@ -63,7 +63,7 @@
 
 ## 交付前命令
 
-数据集完成人工审核并保存为 `docs/knowledge-engine/eval/eval-golden-400.yaml` 后，才执行：
+生产数据集完成人工审核并保存为新的 Dataset ID 后，才执行普通校验；当前合成夹具也可以用来验证 CI 合同链路：
 
 ```powershell
 $env:PYTHONPATH = "backend"
@@ -73,4 +73,14 @@ python scripts/knowledge_eval_gold_400_check.py `
   --output docs/knowledge-engine/eval/eval-golden-400-check.json
 ```
 
-只有输出同时满足 `status=PASS`、`case_count=400`、`errors=[]`、`secrets=false`、`external_network=forbidden`，并且 50-anchor 复核、真实 PostgreSQL 投影、CI 和 UAT 也通过，才可进入 Release Candidate。当前 400 检查继续保持 `NOT_READY`。
+生产 Release 还必须使用 `--require-production`：
+
+```powershell
+python scripts/knowledge_eval_gold_400_check.py `
+  --dataset docs/knowledge-engine/eval/eval-golden-400.yaml `
+  --contract docs/knowledge-engine/eval/eval-golden-400-contract-v1.yaml `
+  --require-production `
+  --output docs/knowledge-engine/eval/eval-golden-400-production-check.json
+```
+
+只有生产模式输出满足 `status=PASS`、`case_count=400`、`errors=[]`、`test_only=false`、`secrets=false`、`external_network=forbidden`，并且 50-anchor 复核、真实 PostgreSQL 投影、CI 和 UAT 也通过，才可进入 Release Candidate。当前合成夹具的普通检查为 `PASS`，生产检查为 `FAIL`，真实人工 Gold 仍为 `NOT_READY`。

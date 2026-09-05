@@ -6,22 +6,22 @@
 - 当前结论：`HOLD — NOT A RELEASE CANDIDATE`
 - 当前状态：工程修复继续保留，当前优先处理 50 条 Gold 人工审核和 400 条 Gold Dataset 接收；剩余项仍明确列为阻断，不代表生产完成或已发布。
 - 清单勾选快照：当前记录为 `96/164 = 58.5%`；本轮新增的是代码/证据修复，未将尚无验收证据的条目提前勾选。
-- 工作区状态：本轮任务改动已提交并推送到 `origin/main`（`66653732`）；当前仅保留用户原有的 `dist/index.html` 未提交变更，接续工作必须保留它，不要执行 reset、checkout 或清理操作。
+- 工作区状态：本轮任务改动已提交并推送到 `origin/main`（最新 `be532ea5`）；当前仅保留用户原有的 `dist/index.html` 未提交变更，接续工作必须保留它，不要执行 reset、checkout 或清理操作。
 - 当前接手点：代码修复和自动化闭环已完成一轮，真实 V200 浏览器回归已通过，Cisco HSRP 官方模板已通过 m0203 迁移并投影到 PostgreSQL，Cisco Catalyst 3850/H3C S6850 官方产品范围已补齐，DLP 流式边界与锐捷官方来源建议已补测；本轮同时修复了 H3C S6850 配置误路由到资产分析、泛化 `Comware` 过滤排除官方 `Comware 7` 文档，以及 Cisco 显式 IOS-XE/NX-OS 平台未映射的问题，实时 S6850 复测已返回 1 个官方本地知识文档且未外发。随后新增并记录 R3 高风险澄清与未登记平台澄清两条浏览器边界证据，均未执行设备操作、未外发；并新增 PostgreSQL 迁移失败事务回滚与 Kill Switch 恢复 legacy 的隔离回归证据。最新增量修复了旧通用高风险澄清状态拦截显式只读知识请求、以及“不要执行”被误判为配置变更的问题；同时将 `port-security/端口安全` 独立为 `port_security/security`，避免端口安全查询被无关的 MAC/ARP、STP、BGP 或 Trunk 文档污染。当前已生成 [50 条 Gold 人工审核工作表](docs/knowledge-engine/eval/eval-golden-anchors-50-review-worksheet.md) 和 [400 条 Gold 接收模板](docs/knowledge-engine/eval/eval-golden-400-review-intake.md)，两者都明确保留人工签核与真实来源证据要求。部分 UAT 仅元数据证据已落盘；评测审计与基线 manifest 已按本轮最新结果重生成，下一步是收集审核人签核、真实锐捷官方来源和 400 条案例。
 
 ## 2026-09-05 Gold 优先工作包
 
 - 50 条审核当前机器状态：`review=PENDING_HUMAN_REVIEW`、`gold=FAIL`；50 条缺 `reviewer/reviewed_at/annotation_status`，42 条缺显式 Feature，6 个锐捷 Gold ID 未解析。
 - 50 条工作表：[eval-golden-anchors-50-review-worksheet.md](docs/knowledge-engine/eval/eval-golden-anchors-50-review-worksheet.md)。`candidate_feature`、当前 Gold 和机器推断均是待审核输入，不能直接当作人工结论。
-- 400 条接收模板：[eval-golden-400-review-intake.md](docs/knowledge-engine/eval/eval-golden-400-review-intake.md)。当前没有真实 400 条人工案例，因此 `eval-golden-400.yaml` 必须继续缺省，门禁保持 `NOT_READY`。
+- 400 条接收模板：[eval-golden-400-review-intake.md](docs/knowledge-engine/eval/eval-golden-400-review-intake.md)。已按用户授权生成 `test_only=true` 的合成 400 条测试夹具，普通合同校验为 `PASS`；它不是真实人工 Gold，生产模式校验必须拒绝，真实生产数据集仍为 `NOT_READY`。
 - 本轮新增审核边界回归：Gold 审核器 `8 passed`；端口安全无对应官方文档时隔离 PostgreSQL 检索返回空集合，不以无关文档凑数。
 
 ## 本次结束时的最终快照
 
 - 交付动作：已保留当前代码、评测产物、浏览器 UAT 元数据和任务清单；Gold 审核工作包已提交并推送到 `origin/main` 的 `66653732`；未删除文件、未执行设备操作。
 - 最后核验日期：`2026-09-05`。开发服务和本地浏览器登录会话可由接手人按需复用；凭据不写入交接文件，也不在此重复记录。
-- 质量结论：AI 全量 `534 passed`，后端全量 `1802 passed`，前端 `53 files / 195 passed`，lint/build、PostgreSQL-only 和静态 CI 门禁通过；但 50-anchor 为 `38/50`、Recall@5/10=`0.7143`、`quality=FAIL`、`overall=FAIL`。
-- 评测/验收结论：50 条人工审核仍为 `PENDING_HUMAN_REVIEW`，400 Gold Dataset 为 `NOT_READY`，完整 UAT-001、真实 BGE/Docling/Langfuse、Node 22.22.2 Promptfoo CI 实跑、Provider live matrix、生产迁移/回滚和 RC 提交均未完成。
+- 质量结论：AI 全量 `535 passed`，后端本次完整 PostgreSQL 复核 `1744 passed`，另有 `26` 个 subtests 通过，前端 `53 files / 195 passed`，lint/build、PostgreSQL-only 和静态 CI 门禁通过；但 50-anchor 为 `38/50`、Recall@5/10=`0.7143`、`quality=FAIL`、`overall=FAIL`。
+- 评测/验收结论：50 条人工审核仍为 `PENDING_HUMAN_REVIEW`，400 条合成测试夹具普通校验为 `PASS` 但生产模式为 `FAIL`，真实人工 Gold 仍为 `NOT_READY`；完整 UAT-001、真实 BGE/Docling/Langfuse、Node 22.22.2 Promptfoo CI 实跑、Provider live matrix、生产迁移/回滚和 RC 提交均未完成。
 - 最新浏览器增量：`UAT-HUA-VLAN-LOCAL-01` 已完成平台澄清并保持本地、低风险、无外发、无 CLI，但混合语言 `Access` 仍被识别为广义 `vlan`，返回 VLAN/VLANIF 文档而非 Access-port 专用模板，已记录为 `PARTIAL`，不能计入完整 UAT 通过。
 - 接手第一步：先阅读主任务清单的当前执行记录和“当前发布阻塞项”，再处理人工 Gold/50-anchor 审核与 Access feature 解析回归；完成证据后才重新评估 DOD-001～DOD-010。
 
@@ -44,8 +44,8 @@
 
 ### 自动化验证
 
-- AI 测试：本次 Cisco 平台解析改动后的聚焦回归为 `23 passed`；加入 acceptable-set、审计、PG 会话夹具、Sidecar fail-closed 鉴权和只读澄清边界回归后，AI 全量最新结果为 `534 passed in 159.01s`。此前两次异常结果已确认由并行旧 pytest 进程造成的 PostgreSQL 隔离库清理冲突，已重新取得干净全量证据。S6850 解析器/资产路由/查询归一化聚焦回归为 `27 passed`，此前意图路由修复聚焦回归为 `22 passed`、锐捷官方来源建议聚焦回归为 `38 passed`。
-- 后端测试：最新完整 `backend/tests` 结果为 `1802 passed in 415.26s`，另有 `26` 个子测试通过；已包含本轮新增的 2 个 AI 回归测试；仅有 1 个已知的 Starlette/httpx 兼容性弃用警告。
+- AI 测试：本次 Cisco 平台解析改动后的聚焦回归为 `23 passed`；加入 acceptable-set、审计、PG 会话夹具、Sidecar fail-closed 鉴权、只读澄清边界和端口安全回归后，AI 全量最新结果为 `535 passed`。此前两次异常结果已确认由并行旧 pytest 进程造成的 PostgreSQL 隔离库清理冲突，已重新取得干净全量证据。S6850 解析器/资产路由/查询归一化聚焦回归为 `27 passed`，此前意图路由修复聚焦回归为 `22 passed`、锐捷官方来源建议聚焦回归为 `38 passed`。
+- 后端测试：本次完整 `backend/tests` 复核结果为 `1744 passed`，另有 `26` 个子测试通过；退出码为 0，使用隔离 PostgreSQL 数据库并在结束时清理；仅有历史记录中的 1 个已知 Starlette/httpx 兼容性弃用警告。
 - REL-002 增量聚焦回归：`backend/tests/database/test_m0202_ai_experiment_observability.py` 为 `8 passed in 32.07s`；已验证失败迁移不会残留部分 DDL，Kill Switch 后恢复 `legacy-v1` 且不删除既有 Shadow 证据。真实旧生产库/目标环境迁移、恢复与正式回滚仍未执行。
 - Reranker Sidecar 鉴权聚焦回归：`backend/tests/ai/test_bge_reranker_shadow.py` 为 `8 passed in 1.38s`；缺少内部 Token 时拒绝请求，错误 Token 返回 401，正确 Token 才放行。FlagEmbedding/torch 未安装，真实 BGE ready 仍未验证。
 - 本轮检索、版本兼容、资产分析和安全网关聚焦测试：`51 passed`；安全网关最新聚焦结果：`10 passed`。
@@ -87,7 +87,7 @@
 - 新增 `UAT-RUIJIE-OSPF-FALLBACK-01`：锐捷 OSPF 只读排障请求在平台未明确且本地无文档时记录为 `no_match`/平台歧义，Provider 兜底明确标注为未经本地验证的通用参考；风险为 low、未执行 CLI，平台特定验证仍待人工/真实环境完成。脱敏 request/trace 元数据已追加到 [eval-browser-uat-live-20260904.md](docs/knowledge-engine/eval/eval-browser-uat-live-20260904.md)。
 - 新增 `UAT-CISCO-OSPF-FALLBACK-01`：Cisco IOS XE OSPF 只读排障请求在本地无已验证文档时明确显示 `no_match`，Provider 兜底经 Security Gateway 生成并标注为未经本地验证的通用参考；风险为 low、未执行 CLI。脱敏 request/trace 元数据已追加到 [eval-browser-uat-live-20260904.md](docs/knowledge-engine/eval/eval-browser-uat-live-20260904.md)。
 - 新增 `UAT-HUA-VLAN-LOCAL-01`：混合中英文的 Huawei VRP VLAN + Access 只读请求先完成本地平台澄清并命中 2 个官方文档，风险为 low、未外发、未执行 CLI；但 trace 仍将 feature 识别为 `vlan`，未返回 Access-port 专用模板，已按 `PARTIAL` 记录为后续 intent/retrieval 修复项。脱敏 request/trace 元数据已追加到 [eval-browser-uat-live-20260904.md](docs/knowledge-engine/eval/eval-browser-uat-live-20260904.md)。
-- 同日门禁复核：在与 CI 一致的 `PYTHONPATH=backend` 环境下，EVAL-005 metrics、EVAL-006 quality metrics、EVAL-007 security metrics、EVAL-001 数据集、EVAL-008 标注、意图/查询类型/版本覆盖脚本均通过；50-anchor 仍为 `38/50` 质量 FAIL，anchor review 仍为 `PENDING_HUMAN_REVIEW`，400 Gold 检查仍为 `NOT_READY`。仅刷新机器可读 manifest，未扩大解释为生产放行。
+- 同日门禁复核：在与 CI 一致的 `PYTHONPATH=backend` 环境下，EVAL-005 metrics、EVAL-006 quality metrics、EVAL-007 security metrics、EVAL-001 数据集、EVAL-008 标注、意图/查询类型/版本覆盖脚本均通过；50-anchor 仍为 `38/50` 质量 FAIL，anchor review 仍为 `PENDING_HUMAN_REVIEW`。400 条合成测试夹具普通校验为 `PASS`，生产模式明确为 `FAIL`；未扩大解释为生产放行。
 - 同日工具链修复：EVAL-005/006/007 独立脚本自行定位仓库内 `backend`，不再依赖外部 `PYTHONPATH`；新增无 `PYTHONPATH` 子进程回归，相关 4 个测试通过。该修复不改变评测阈值或发布结论。
 
 当前会话复核：2026-09-04 本地浏览器已登录为 `admin` 并完成上述实时复测，另新增 R3 高风险澄清和未登记平台澄清用例；“历史证据”中的旧登录页观察仅保留作时间线，不作为本轮状态。完整 UAT-001 仍未完成。
@@ -106,20 +106,20 @@
 - 50 条 Gold 审核仍待人工完成：最近一次审计为 `review=PENDING_HUMAN_REVIEW`，缺少人工审核记录 `50` 条，缺少 feature 标注 `42` 条，另有 `6` 条锐捷 Gold 尚未解析；HSRP Gold 已恢复可解析，Cisco Nexus BGP 已记录为单独 acceptable set 并通过元数据审计。
 - 锐捷官方来源建议已限定在 `www.ruijie.com.cn` 并通过聚焦回归，但仍处于建议/人工审核阶段，未改变默认导入或生产白名单状态。
 - 人工审核的 reviewer、reviewed_at、annotation_status 和 accepted 集合尚未闭环。
-- 400 条人工审核数据集尚未提供；400 条检查结果为 `NOT_READY`，因此 DOD、CI full profile 和最终生产门禁不能宣称完成。
+- 400 条人工审核数据集尚未提供；当前 `eval-golden-400.yaml` 是明确标记的测试合成夹具，普通检查为 `PASS` 但 `--require-production` 为 `FAIL`，因此 DOD、CI full profile 和最终生产门禁不能宣称完成。
 - Docker CLI 当前不可用，无法完成容器化验收。
 - BGE reranker、Qwen/Ollama、真实 rerank/Docling/Langfuse sidecar 和 Provider resilience 的运行态验收尚未完成。
 - CI workflow 已写入仓库，但尚未证明远端 CI 实际执行成功。
 - 生产迁移/回滚、release candidate Git SHA、回滚目标和正式审批尚未完成。
 - Ruijie 相关本地知识覆盖仍不足；已发现官方 `www.ruijie.com.cn` 候选来源，但尚未完成白名单/条款审核和正式导入，当前只能证明澄清和安全兜底行为。
-- H3C S6850 已完成一次 `Comware 7` 官方本地命中复核；仍需在完整 UAT 中复核更多版本/特征组合，并在人工 Gold、400 条数据集、部署与审批门禁闭环前保持 HOLD。
+- H3C S6850 已完成一次 `Comware 7` 官方本地命中复核；仍需在完整 UAT 中复核更多版本/特征组合，并在人工 Gold、真实 400 条数据集、部署与审批门禁闭环前保持 HOLD。
 - 工作区仍为 dirty，不能作为已签署的 release candidate。
 
 ## 接续执行顺序
 
 1. 继续扩展并签署完整 UAT-001；已登录实时批次已落盘，H3C S6850 的先前失败与修复后本地命中、以及 HSRP 只读边界复测均须保留为可追溯证据，其他场景仍需逐案例记录和人工签署。
 2. 已将 50-anchor 最新结果、anchor review、baseline manifest 和计划清单中的最新评测结果同步完成；后续继续保留质量 FAIL 状态，待人工审核后再更新 accepted 集合。
-3. 已重新执行 AI 全量并取得干净结果 `534 passed in 159.01s`；后端最新完整全量为 `1802 passed in 415.26s`（`26` 个子测试，1 个已知弃用警告），已包含本轮新增回归。此前 PG 异常已定位为并行旧 pytest 进程造成的隔离库清理冲突，本轮同时将测试夹具收紧为仅清理本会话数据库，后续测试不得并行启动不同 Python 环境的 pytest。release 配置、CI 静态合同、PostgreSQL-only、diff 检查及前端全量/lint/build 均已复核通过，后续若修改前端需重新执行。
+3. 已重新执行 AI 全量并取得干净结果 `535 passed`；本次后端最新完整全量为 `1744 passed`（`26` 个子测试，退出码 0；使用隔离 PostgreSQL 数据库），已包含本轮新增回归。此前 PG 异常已定位为并行旧 pytest 进程造成的隔离库清理冲突，本轮同时将测试夹具收紧为仅清理本会话数据库，后续测试不得并行启动不同 Python 环境的 pytest。release 配置、CI 静态合同、PostgreSQL-only、diff 检查及前端全量/lint/build 均已复核通过，后续若修改前端需重新执行。
 4. 补齐 50 条人工审核与 400 条 Gold 数据集；没有人工审核证据时不要勾选对应 DOD/AIGATE 项。
 5. 在依赖和环境可用后完成 reranker、Docling、Langfuse、Provider resilience、Docker/部署和迁移回滚验收。
 6. 只有所有 release blockers、DOD、UAT 和正式审批闭环后，才可将 readiness 从 HOLD 改为可发布。
@@ -150,4 +150,4 @@ git diff --check
 - 评测和 UAT 证据只记录状态、指标、路由、调用类型、风险等级、trace/request 标识及脱敏后的摘要。
 - 不记录凭据、API key、原始 prompt、完整模型回答或设备敏感数据。
 - 任何高风险设备操作都必须在独立确认后才允许进入执行链路；本轮没有确认或执行生产设备变更。
-- 本轮任务改动已创建 commit `66653732` 并推送到 `origin/main`；没有删除用户已有文件或变更，`dist/index.html` 的用户改动未进入提交。
+- 本轮任务改动已创建 commit `be532ea5`（含前序 `66653732`）并推送到 `origin/main`；没有删除用户已有文件或变更，`dist/index.html` 的用户改动未进入提交。

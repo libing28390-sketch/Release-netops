@@ -1,10 +1,10 @@
 #!/usr/bin/env python3
 """Validate the human-reviewed 400-case Knowledge Engine Gold Dataset.
 
-This is a completeness and safety gate, not an annotation generator.  The
-repository intentionally contains the contract but no fabricated 400-case
-dataset; the command returns ``NOT_READY`` until a real reviewed file is
-provided.  It never connects to a database or writes production data.
+This is a completeness and safety gate, not an annotation generator.  A
+user-authorized synthetic fixture may satisfy the ordinary test contract, but
+``--require-production`` rejects any dataset marked ``test_only``.  The
+command never connects to a database or writes production data.
 """
 
 from __future__ import annotations
@@ -77,7 +77,12 @@ def _source_evidence_valid(value: Any) -> bool:
     return True
 
 
-def validate_dataset(dataset_path: Path = DEFAULT_DATASET, contract_path: Path = DEFAULT_CONTRACT) -> dict[str, Any]:
+def validate_dataset(
+    dataset_path: Path = DEFAULT_DATASET,
+    contract_path: Path = DEFAULT_CONTRACT,
+    *,
+    require_production: bool = False,
+) -> dict[str, Any]:
     errors: list[str] = []
     dataset: Any = None
     contract: Any = None
@@ -117,6 +122,8 @@ def validate_dataset(dataset_path: Path = DEFAULT_DATASET, contract_path: Path =
         errors.append("dataset_id must match nexora-kb-eval-gold-400-vN-YYYYMMDD")
     if dataset.get("status") != "frozen":
         errors.append("status must be frozen")
+    if require_production and dataset.get("test_only") is True:
+        errors.append("test-only synthetic dataset cannot satisfy the production gate")
     if dataset.get("case_count") != 400 or len(cases) != 400:
         errors.append(f"case_count must be 400 (declared={dataset.get('case_count')!r}, actual={len(cases)})")
     if dataset.get("synthetic_data") is not True:
@@ -218,6 +225,8 @@ def validate_dataset(dataset_path: Path = DEFAULT_DATASET, contract_path: Path =
     report = {
         "status": "PASS" if not errors else "FAIL",
         "dataset_id": _text(dataset.get("dataset_id")),
+        "test_only": dataset.get("test_only") is True,
+        "production_gate": require_production,
         "case_count": len(cases),
         "dataset_sha256": hashlib.sha256(dataset_path.read_bytes()).hexdigest(),
         "category_counts": dict(sorted(category_counts.items())),
@@ -240,8 +249,17 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--dataset", type=Path, default=DEFAULT_DATASET)
     parser.add_argument("--contract", type=Path, default=DEFAULT_CONTRACT)
     parser.add_argument("--output", type=Path, default=DEFAULT_OUTPUT)
+    parser.add_argument(
+        "--require-production",
+        action="store_true",
+        help="reject datasets explicitly marked as test_only",
+    )
     args = parser.parse_args(argv)
-    report = validate_dataset(args.dataset, args.contract)
+    report = validate_dataset(
+        args.dataset,
+        args.contract,
+        require_production=args.require_production,
+    )
     args.output.parent.mkdir(parents=True, exist_ok=True)
     args.output.write_text(json.dumps(report, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
     print(json.dumps(report, ensure_ascii=False))

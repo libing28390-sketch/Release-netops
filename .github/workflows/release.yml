@@ -86,7 +86,9 @@ jobs:
           python scripts/knowledge_eval_bootstrap.py
           python scripts/knowledge_eval_anchors_50_runner.py
           python scripts/knowledge_eval_anchor_review_check.py --database
-          python scripts/knowledge_eval_gold_400_check.py
+          # The default repository fixture is test-only; release must require
+          # a separately reviewed, production-eligible dataset.
+          python scripts/knowledge_eval_gold_400_check.py --require-production
 
       - name: Remove private and development-only files
         shell: bash

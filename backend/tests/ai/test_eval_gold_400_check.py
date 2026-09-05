@@ -103,3 +103,21 @@ def test_gold_400_contract_rejects_missing_review_and_secret(tmp_path: Path) -> 
 def test_gold_400_contract_is_not_ready_without_real_dataset(tmp_path: Path) -> None:
     report = validate_dataset(tmp_path / "missing.yaml")
     assert report["status"] == "NOT_READY"
+
+
+def test_gold_400_test_fixture_is_rejected_by_production_gate(tmp_path: Path) -> None:
+    case = _case(
+        1,
+        category="negative_security_no_match",
+        vendor="cross_vendor_or_unknown",
+        split="hidden",
+    )
+    path = _write_dataset(tmp_path, [case])
+    dataset = yaml.safe_load(path.read_text(encoding="utf-8"))
+    dataset["test_only"] = True
+    path.write_text(yaml.safe_dump(dataset, allow_unicode=True, sort_keys=False), encoding="utf-8")
+
+    report = validate_dataset(path, require_production=True)
+
+    assert report["status"] == "FAIL"
+    assert any("test-only synthetic dataset" in error for error in report["errors"])

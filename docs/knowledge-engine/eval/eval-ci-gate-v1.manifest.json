@@ -15,7 +15,7 @@
   "workflow_sha256": {
     "knowledge_engine_eval": "229f811f286dc008cd1bbdf0ab6a826f40cea91b997cb9cee2d532237b2f12c0",
     "backend_pytest": "0ee55a77f23afa9252d3b7d06db49b017f590af4db68a726c7de2eb6f2d9a6c2",
-    "release": "edde4a7d805f2acafdf47c7d519669943107e5f1126f9190226903d9cdbdb0b1",
+    "release": "7599ff348d7ecfc6ad0e6d0bf26a7c0f3b4ebf1e0bdf29b3ee145946f7c4427c",
     "promptfoo": "ce009d084ed8b5be85882fc84b6bd6a8e9e708400de68fdd4b790398ca8b0bf9"
   }
 }

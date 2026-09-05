@@ -1,13 +1,37 @@
 {
-  "status": "NOT_READY",
-  "dataset_path": "docs\\knowledge-engine\\eval\\eval-golden-400.yaml",
-  "required_case_count": 400,
-  "case_count": 0,
-  "errors": [
-    "human-reviewed 400-case dataset is not present"
-  ],
+  "status": "PASS",
+  "dataset_id": "nexora-kb-eval-gold-400-v1-20260905",
+  "test_only": true,
+  "production_gate": false,
+  "case_count": 400,
+  "dataset_sha256": "076e22d703a1b746db69b6ba9ec8952a0290f28a5adb55ec4f1aa237f3164f6c",
+  "category_counts": {
+    "asset_alarm_query": 40,
+    "configuration_validation_diagnostic": 50,
+    "intent_clarification_missing_parameter": 40,
+    "knowledge_config_reference": 140,
+    "negative_security_no_match": 30,
+    "tool_call_dangerous_operation": 30,
+    "troubleshooting": 70
+  },
+  "vendor_counts": {
+    "Cisco": 100,
+    "H3C": 80,
+    "Huawei": 100,
+    "Ruijie": 60,
+    "cross_vendor_or_unknown": 60
+  },
+  "split_counts": {
+    "debug": 80,
+    "hidden": 80,
+    "train": 240
+  },
+  "double_review_count": 80,
+  "errors": [],
+  "error_count": 0,
   "database": "PostgreSQL",
   "sqlite": "not_used",
   "external_network": "forbidden",
-  "secrets": false
+  "secrets": false,
+  "customer_identifiers": false
 }

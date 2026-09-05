@@ -3,7 +3,7 @@
 日期：2026-09-03（最后复核：2026-09-04）  
 状态：`HOLD — NOT A RELEASE CANDIDATE`
 
-本说明与 [AI/RAG 配置、Kill Switch 与回滚清单](../knowledge-engine/runbooks/AI-RAG-RELEASE-CONFIG-AND-ROLLBACK-20260903.md) 配套。当前工作区完成了主要代码和自动化门禁，但 400 条人工 Gold、真实 sidecar、CI 实跑、Provider live sample、浏览器 UAT、生产迁移/回滚和 Git 发布提交尚未完成，禁止将本说明解释为生产放行。
+本说明与 [AI/RAG 配置、Kill Switch 与回滚清单](../knowledge-engine/runbooks/AI-RAG-RELEASE-CONFIG-AND-ROLLBACK-20260903.md) 配套。当前工作区完成了主要代码和自动化门禁；按测试环境授权，仓库已包含明确标记为 `test_only=true` 的合成 400 条 CI 夹具，但真实人工 Gold、真实 sidecar、CI 实跑、Provider live sample、浏览器 UAT、生产迁移/回滚和 Git 发布提交尚未完成，禁止将测试夹具或本说明解释为生产放行。
 
 ## 已交付的代码范围
 
@@ -16,8 +16,8 @@
 
 | 门禁 | 结果 |
 | --- | --- |
-| `pytest backend/tests/ai -q` | `534 passed in 159.01s` |
-| `pytest backend/tests -q` | `1802 passed, 1 warning, 26 subtests passed in 415.26s` |
+| `pytest backend/tests/ai -q` | `535 passed`（当前代码既有回归证据） |
+| `pytest backend/tests -q` | `1744 passed, 26 subtests passed，退出码 0；隔离 PostgreSQL 本次复核` |
 | 前端全量 Vitest | `53 files / 195 passed` |
 | 前端 KUI/OBS-002 定向测试 | `5 passed` |
 | `npm run lint` | `PASS` |
@@ -25,7 +25,7 @@
 | PostgreSQL-only 扫描 | `0 violation(s) PASS` |
 | CI 配置静态检查 | `PASS` |
 | 50 条真实锚点评测 | `safety=PASS, quality=FAIL, overall=FAIL`；38/50，Recall@5/10=`0.7143` |
-| 400 条 Gold 检查 | `NOT_READY`；数据集不存在，case_count=`0` |
+| 400 条 Gold 检查 | 普通合同检查 `PASS`，`case_count=400`；数据集为 `test_only=true` 合成夹具，生产模式 `--require-production` 为 `FAIL`，真实人工 Gold `NOT_READY` |
 
 ## 迁移说明
 
@@ -48,7 +48,7 @@
 ## 已知限制与发布阻断
 
 - 50 条案例仍有 50 条待人工 reviewer/reviewed_at/annotation_status，42 条缺显式 Feature 标注，6 个 Ruijie Gold ID 在隔离 PostgreSQL 中未解析；当前召回未达阈值。
-- 400 条人工审核 Gold Dataset 尚未提供，Feature Pollution、Version Conflict 和真实 Citation 指标尚未完成全量测量。
+- 400 条真实人工审核 Gold Dataset 尚未提供；当前 `eval-golden-400.yaml` 仅是用户授权的 `test_only=true` 合成 CI 夹具，普通字段/分布合同检查可通过，但生产模式明确拒绝。Feature Pollution、Version Conflict 和真实 Citation 指标尚未完成全量测量。
 - 当前机器无 Docker CLI，BGE、Docling、Langfuse 真实服务、模型加载和资源验收尚未完成。
 - Qwen/Ollama 未配置；DeepSeek 真实业务会话和 Provider 错误矩阵尚未授权/执行。
 - 浏览器已登录会话完成部分只读 UAT（含本地命中、澄清、no-match、Provider 兜底和高风险确认边界）；逐案例元数据见 [eval-browser-uat-live-20260904.md](../knowledge-engine/eval/eval-browser-uat-live-20260904.md)，但完整 UAT-001、5%→20%→50% 灰度观察、旧库升级/失败回滚演练和可追溯 Git Commit/RC 标签尚未完成。
