@@ -3,13 +3,13 @@
 日期：2026-09-03（最后复核：2026-09-05）
 状态：`HOLD — NOT A RELEASE CANDIDATE`
 
-本说明与 [AI/RAG 配置、Kill Switch 与回滚清单](../knowledge-engine/runbooks/AI-RAG-RELEASE-CONFIG-AND-ROLLBACK-20260903.md) 配套。当前工作区完成了主要代码和自动化门禁；400 条评测集已按用户确认切换为 `official_url_backed_local_summary` 官方来源自动校验策略，不要求人工 Gold 审核；50-anchor 已由用户明确授权完成批次签字并切换到新的冻结 v3，但仍受来源反查、脱敏、PostgreSQL-only 和检索质量门禁约束。真实 sidecar、CI 实跑、Provider live sample、浏览器 UAT、生产迁移/回滚和 Git 发布提交尚未完成，禁止将数据来源门禁或本说明解释为生产放行。
+本说明与 [AI/RAG 配置、Kill Switch 与回滚清单](../knowledge-engine/runbooks/AI-RAG-RELEASE-CONFIG-AND-ROLLBACK-20260903.md) 配套。当前工作区完成了主要代码和自动化门禁；400 条评测集已按用户确认切换为 `official_url_backed_local_summary` 官方来源自动校验策略，不要求人工 Gold 审核；50-anchor 已由用户明确授权完成批次签字并切换到新的冻结 v3，但仍受来源反查、脱敏、PostgreSQL-only 和检索质量门禁约束。m0204～m0208 已合入本地 `main`，本地严格迁移与开发启动已通过。真实 sidecar、CI 实跑、Provider live sample、浏览器 UAT、生产迁移/回滚和 Release Candidate 尚未完成，禁止将数据来源门禁或本说明解释为生产放行。
 
 ## 已交付的代码范围
 
 - 50 条锚点评测已经从“业务状态通过”改为安全门禁与质量门禁分离，并纳入 Gold 命中、Recall、MRR、NDCG、引用身份代理、延迟和错误率。
 - Reranker、Docling、Langfuse 的边界适配、超时、白名单、降级和 metadata-only 契约已接入；默认仍为 legacy/off，Shadow 不覆盖生产 baseline。
-- 迁移 0202 增加实验运行、案例结果、灰度指针和 Shadow 观察的 PostgreSQL-only 持久化；OBS-002 API/UI 只展示脱敏摘要。
+- 迁移 0202 增加实验运行、案例结果、灰度指针和 Shadow 观察的 PostgreSQL-only 持久化；m0204～m0208 已补齐官方模板并与配套投影链路一起进入本地 `main`；OBS-002 API/UI 只展示脱敏摘要。
 - Promptfoo 已固定 Node 22.22.2 / Promptfoo 0.118.0 的独立 CI 工作流，并复用仓库内带 pgvector/pg_trgm 的 PostgreSQL CI 镜像；本机验证不替代 GitHub Actions 实跑证据。
 
 ## 当前验证证据
@@ -51,8 +51,8 @@
 
 - 当前严格 50-anchor 输入为签字冻结 v3：[eval-golden-anchors-50-v3-signed-20260905.yaml](../knowledge-engine/eval/eval-golden-anchors-50-v3-signed-20260905.yaml)。只读审核报告为 `review=PASS/gold=PASS`，50 条审核字段齐全，所有 acceptable Gold ID 均在 PostgreSQL 官方投影中解析；标准/隔离 runner 均为 `50/50 PASS`。旧 v1 的 39/50、候选 v2 和签字 v3 均保留，签字动作由用户明确授权执行，不表示独立第二审核人复核。
 - 400 条数据不以人工审核作为门槛；当前 `eval-golden-400.yaml` 是官方 URL 支撑的自动生成 Dataset，answer 用例的来源证据必须反查到 `data/kb_import/manifest.json`，普通模式和 `--require-production` 均通过。隔离 runner 已对 300 条 answer 完成真实 PostgreSQL + RAGRetriever 直连测量并通过；100 条 guard、完整 Assistant/Citation 链路、真实版本冲突和生产语料仍未由该 runner 覆盖。
-- 当前机器无 Docker CLI，BGE、Docling、Langfuse 真实服务、模型加载和资源验收尚未完成。
-- Qwen/Ollama 未配置；DeepSeek 真实业务会话和 Provider 错误矩阵尚未授权/执行。
+- BGE、Docling、Langfuse 真实服务、模型加载和资源验收尚未完成；Docker/Windows/pgvector 运行态及迁移 104 已按用户要求暂记完成，后续由用户独立验证。
+- Qwen/Ollama 已移出本轮任务和发布门禁；本轮不部署、不配置、不验证，后续如需纳入另建独立任务。纳入本轮范围的 Provider 真实业务会话和错误矩阵尚未授权/执行。
 - 浏览器已登录会话完成部分只读 UAT（含本地命中、澄清、no-match、Provider 兜底和高风险确认边界）；逐案例元数据见 [eval-browser-uat-live-20260904.md](../knowledge-engine/eval/eval-browser-uat-live-20260904.md)，但完整 UAT-001、5%→20%→50% 灰度观察、旧库升级/失败回滚演练和可追溯 Git Commit/RC 标签尚未完成。
 
-因此当前发布结论为 `HOLD`。完成上述阻断后，必须重新生成评测报告、baseline manifest、迁移/回滚记录和发布候选，再按主任务清单 DOD-001 至 DOD-010 逐项签核。
+因此当前发布结论为 `HOLD`。完成上述阻断后，必须重新生成评测报告、baseline manifest、迁移/回滚记录和发布候选，再按[当前 AI/RAG 发布剩余任务清单](../plans/plan_20260905_2257_01_AI发布剩余任务清单.md)逐项签核。

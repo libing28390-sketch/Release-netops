@@ -2,7 +2,7 @@
 
 - 更新时间：2026-09-05（50-anchor 用户授权签字已完成，远端门禁与发布仍保持 HOLD）
 - 交接状态：`IN PROGRESS — 50-ANCHOR SIGNED / RELEASE HOLD`
-- 主任务清单：[plan_20260903_AI剩余整改与生产验收任务清单.md](docs/plans/plan_20260903_AI剩余整改与生产验收任务清单.md)
+- 主任务清单：[plan_20260905_2257_01_AI发布剩余任务清单.md](docs/plans/plan_20260905_2257_01_AI发布剩余任务清单.md)
 - 当前结论：`HOLD — NOT A RELEASE CANDIDATE`
 - 当前状态：50-anchor 已完成用户明确授权的批次签字并切换到新的冻结 v3，标准/隔离质量门禁均通过；400 条官方来源自动评测也已通过。真实 Sidecar、完整 UAT、远端 Actions、生产迁移/回滚、提交与 Release Candidate 等剩余项仍明确列为阻断，不代表生产完成或已发布。
 - 清单勾选快照：原记录为 `96/164 = 58.5%`；本轮新增的是代码/证据修复，未将尚无验收证据的条目提前勾选，不能把该历史比例当作本轮完成率。
@@ -20,7 +20,7 @@
 - **400 条知识库评测：** [eval-golden-400.yaml](docs/knowledge-engine/eval/eval-golden-400.yaml) 为四厂商官方来源自动评测集，`case_count=400`、`synthetic_data=false`、`production_eligible=true`、`human_review_required=false`；生产合同检查通过，300 条 answer 的隔离 PostgreSQL 检索通过（Recall@5/10=`1.0`、MRR=`1.0`、厂商/Feature 污染为 `0`），100 条 clarify/no-match 由独立 runner 验证未调用低层检索。400 条不需要人工签字，但这也不替代完整 Assistant/Citation 生产链路 UAT。
 - **已处理的关键问题：** `npm ci` lock 同步、CI pgvector 镜像、Node `22.22.2`、Windows pgvector `0.8.6` 安装/校验、测试专用 `CREDENTIAL_ENCRYPTION_KEY`、接受任一 `acceptable_document_ids` 的 Citation Recall 计算、400 条数据集与 `manifest.json` 的 SHA-256 契约均已修复并有本地证据。
 - **已完成的质量证据：** AI 测试 `553 passed`；完整 PostgreSQL 后端 `1764 passed`、`26` 个 subtests 通过；前端 `53 files / 195 passed`；`npm ci`、lint、production build、PostgreSQL-only、release config、CI 静态契约和编译检查通过。
-- **接手后第一件事：** 在用户授权 push/触发远端 workflow 后，先让 GitHub Actions 使用 v3 signed 数据集重新跑完 small/release/隔离 PostgreSQL 门禁；远端成功后再继续真实 Sidecar、完整 UAT、生产迁移/回滚和 RC 评审。不要因为本地 `50/50` 或 `400/400` 通过而跳过这些步骤。
+- **接手后第一件事：** 在用户授权 push/触发远端 workflow 后，先让 GitHub Actions 使用 v3 signed 数据集重新跑完 small/release/隔离 PostgreSQL 门禁；远端成功后再继续真实 Sidecar、完整 UAT、生产迁移/回滚和 RC 评审。不要因为本地 `50/50` 或 `400/400` 通过而跳过这些步骤。Qwen/Ollama 已按用户决定移出本轮范围；Docker/Windows/pgvector 运行态按用户要求暂记完成，后续由用户独立验证。
 
 ## 2026-09-05 用户授权签字与 50-anchor 放行输入（最新）
 
@@ -153,7 +153,7 @@
 50-anchor 的本地数据/审核/检索门禁已经完成，当前阻塞不再是“等待 Gold 签字”或“等待 400 条人工评审”，而是发布级别的环境与审批闭环：
 
 - **远端 Actions 尚未重新执行成功：** workflow 已接入 v3 signed 数据集、PostgreSQL/pgvector、Node `22.22.2` 和 CI 契约检查，但本轮没有 push/dispatch，因此尚未取得 GitHub Actions 的新运行结论。需要用户授权推送后再验证 small、release 和隔离 PostgreSQL workflow。
-- **真实运行依赖尚未全部验收：** BGE reranker、Qwen/Ollama、Docling、Langfuse、Provider resilience 和 Docker/容器化运行态仍未完成；本地单元/集成测试不能替代真实 Sidecar ready、鉴权、超时、降级和观测证据。
+- **真实运行依赖尚未全部验收：** BGE reranker、Docling、Langfuse 和纳入本轮范围的 Provider resilience 仍未完成；本地单元/集成测试不能替代真实 Sidecar ready、鉴权、超时、降级和观测证据。Qwen/Ollama 已移出本轮范围，不再作为当前阻断项；Docker/Windows/pgvector 运行态按用户要求暂记完成，后续由用户独立验证。
 - **完整 UAT-001 尚未完成：** 已有多组脱敏浏览器证据，但仍缺完整场景矩阵的逐案例人工签署；`UAT-HUA-VLAN-LOCAL-01` 仍是 `PARTIAL`，混合语言 `Access` 意图未稳定落到 Access-port 专用模板。
 - **生产迁移与回滚尚未执行：** 尚未在目标生产环境完成迁移、备份/恢复、回滚目标确认、Kill Switch 演练和数据一致性复核。
 - **Release Candidate 尚未形成：** 工作区仍 dirty，未生成经审查的 release candidate Git SHA、变更清单、回滚方案和正式审批记录；本地四厂商 ZIP 仍明确为 `test_only=true`、`production_eligible=false`，不能直接当生产知识包。
@@ -165,7 +165,7 @@
 1. 本地合入已完成。待明确授权 push/dispatch 后，从本地 `main` 推送并触发 GitHub Actions；确认所有 workflow 使用 v3 signed 数据集，并逐项保存 run URL、commit SHA、环境版本和最终结果。
 2. 以当前 [v3 signed review](docs/knowledge-engine/eval/eval-anchors-50-v3-signed-review.json) 和标准/隔离 `50/50 PASS` 为 50-anchor 输入，不重新退回 v1，也不把 v2 当作默认门禁输入；400 条数据集继续按官方来源自动评测契约处理，不新增无必要人工签字要求。
 3. 继续补齐完整 UAT-001：保留已完成的脱敏证据，修复并复测 `UAT-HUA-VLAN-LOCAL-01` 的 `Access` feature 识别，并逐案例记录本地命中、外发、CLI、风险和人工验收状态。
-4. 在依赖可用的环境中完成 BGE reranker、Qwen/Ollama、Docling、Langfuse、Provider resilience 和 Docker/Windows 发布运行态验收，特别检查 Windows PostgreSQL 的 pgvector 安装、版本匹配、`vector.dll`/control/SQL 文件落位和迁移 104。
+4. 在依赖可用的环境中完成 BGE reranker、Docling、Langfuse 和纳入本轮范围的 Provider resilience 运行态验收；Docker/Windows/pgvector 及迁移 104 已按用户要求暂记完成，后续由用户独立验证，不在本轮重复执行。Qwen/Ollama 不属于本轮范围。
 5. 完成目标生产环境的备份、迁移、健康检查、回滚/恢复和 Kill Switch 演练，生成可审计的 release candidate SHA、变更清单、回滚目标和正式审批记录。
 6. 只有远端 CI、真实依赖、完整 UAT、生产迁移/回滚、RC 和审批全部通过，才可将 readiness 从 HOLD 改为可发布。
 
