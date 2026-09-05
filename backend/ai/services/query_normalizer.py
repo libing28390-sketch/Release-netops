@@ -78,7 +78,10 @@ _FEATURE_ALIASES: dict[str, tuple[str, ...]] = {
     "stp": ("stp", "生成树"),
     # Do not use a bare ``acces`` prefix: it also matches ``access-list`` and
     # turns ACL queries into access-port queries.
-    "access_port": ("access port", "access-port", "acces port", "接入口", "接入端口"),
+    "access_port": (
+        "access port", "access-port", "acces port", "vlan + access", "vlan+access",
+        "接入口", "接入端口",
+    ),
     "port_security": ("port security", "port-security", "端口安全"),
     "trunk": ("trunk", "中继端口", "trunk端口"),
     "lacp": ("lacp", "eth-trunk", "etherchannel", "bridge-aggregation", "aggregateport", "port-group", "链路聚合", "聚合口"),
@@ -97,6 +100,11 @@ _FEATURE_ALIASES: dict[str, tuple[str, ...]] = {
     "vxlan": ("vxlan",),
     "acl": ("acl", "access-list", "standard access-list", "packet-filter", "访问控制列表"),
 }
+
+_COMPOSITE_ACCESS_PORT_RE = re.compile(
+    r"(?<![a-z0-9])vlan\s*\+\s*access(?![a-z0-9])",
+    re.IGNORECASE,
+)
 
 _OS_ALIASES: tuple[tuple[str, tuple[str, ...]], ...] = (
     ("IOS XE", ("ios-xe", "ios xe", "iosxe")),
@@ -300,7 +308,14 @@ def normalize_query(query: str, *, tenant_id: str = "tenant-default", access_sco
     version_match = _VERSION_RE.search(text)
     version = version_match.group(0).upper() if version_match else None
 
-    topic = _first_alias(text, _FEATURE_ALIASES)
+    # ``VLAN + Access`` contains the generic VLAN alias at the same position
+    # as the more specific access-port phrase.  Give the composite intent an
+    # explicit priority so normalization agrees with the metadata parser.
+    topic = (
+        "access_port"
+        if _COMPOSITE_ACCESS_PORT_RE.search(lower)
+        else _first_alias(text, _FEATURE_ALIASES)
+    )
     command_match = _COMMAND_RE.search(text)
     command = _clean(command_match.group(0)) if command_match else None
     error_match = _ERROR_RE.search(text)

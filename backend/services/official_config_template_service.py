@@ -23,7 +23,9 @@ _FEATURE_ALIASES = {
     "vrrp": {"vrrp", "网关冗余"},
     "vxlan": {"vxlan", "evpn"},
     "lacp": {"lacp", "链路聚合", "eth-trunk", "bridge-aggregation"},
-    "access_port": {"access port", "access-port", "接入口", "接入端口"},
+    "access_port": {
+        "access port", "access-port", "vlan + access", "vlan+access", "接入口", "接入端口",
+    },
     "port_security": {"port security", "port-security", "端口安全"},
     "trunk": {"trunk", "中继端口", "trunk端口"},
     "loopback": {"loopback", "环回接口", "环回口"},
@@ -51,6 +53,8 @@ def _feature(request: Any) -> str:
         _text(getattr(request, field, ""))
         for field in ("query", "feature", "subfeature", "document_category")
     ).lower()
+    if re.search(r"(?<![a-z0-9])vlan\s*\+\s*access(?![a-z0-9])", haystack):
+        return "access_port"
     for name, aliases in _FEATURE_ALIASES.items():
         if any(alias in haystack for alias in aliases):
             return name
@@ -215,7 +219,11 @@ def search_official_templates(request: Any, *, limit: int = 5) -> list[dict[str,
             continue
         if requested_platform and requested_platform not in _text(platform_family).lower():
             continue
-        feature_hit = bool(feature and re.search(rf"(?<![a-z0-9]){re.escape(feature)}(?![a-z0-9])", searchable.lower()))
+        feature_aliases = _FEATURE_ALIASES.get(feature, {feature})
+        feature_hit = bool(
+            feature
+            and any(alias.casefold() in searchable.casefold() for alias in feature_aliases if _text(alias))
+        )
         if feature and not feature_hit:
             continue
         score = 20
@@ -277,6 +285,8 @@ def search_official_templates(request: Any, *, limit: int = 5) -> list[dict[str,
                     "product_series": _text(getattr(request, "product_series", "")),
                     "product_model": _text(getattr(request, "product_model", "")),
                     "software_release": _text(software_version),
+                    "feature": feature,
+                    "feature_domain": feature_domain or _text(template_category),
                     "knowledge_source_type": "official_template",
                     "source_trust_level": "official",
                     "metadata": metadata,

@@ -58,6 +58,26 @@ def test_official_template_fallback_covers_h3c_and_cisco_nexus(isolated_db):
     assert nexus and nexus[0]["platform"] == "cisco_nxos"
 
 
+def test_official_template_fallback_matches_access_port_aliases(isolated_db):
+    from ai.services.rag_retriever import RetrievalRequest
+    from services.official_config_template_service import search_official_templates
+
+    chunks = search_official_templates(
+        RetrievalRequest(
+            query="华为 VRP VLAN + Access 配置",
+            vendor="Huawei",
+            cli_platform="huawei_vrp",
+            document_category="configuration",
+            feature="access_port",
+        )
+    )
+
+    assert chunks
+    assert chunks[0]["template_id"] == "official-huawei-access-port"
+    assert chunks[0]["feature"] == "access_port"
+    assert "port link-type access" in chunks[0]["content"]
+
+
 def test_official_template_fallback_covers_data_center_vxlan_and_parser_scope(isolated_db):
     from ai.services.intent_parser import intent_parser
     from ai.services.rag_retriever import RetrievalRequest

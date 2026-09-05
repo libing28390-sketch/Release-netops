@@ -307,7 +307,9 @@ _FEATURE_ALIASES = {
     "arp": {"arp", "地址解析"},
     "vlan": {"vlan", "虚拟局域网"},
     "stp": {"stp", "生成树"},
-    "access_port": {"access port", "access-port", "接入口", "接入端口"},
+    "access_port": {
+        "access port", "access-port", "vlan + access", "vlan+access", "接入口", "接入端口",
+    },
     "port_security": {"port security", "port-security", "端口安全"},
     "trunk": {"trunk", "中继端口", "trunk端口"},
     "lacp": {"lacp", "eth-trunk", "etherchannel", "bridge-aggregation", "链路聚合"},

@@ -9,19 +9,20 @@ if SCRIPTS_DIR not in sys.path:
 from knowledge_eval_anchor_review_check import validate_anchor_review
 
 
-def test_current_anchor_set_is_not_claimed_as_human_reviewed():
+def test_current_anchor_set_is_claimed_as_human_reviewed():
     report = validate_anchor_review()
 
     assert report["case_count"] == 50
-    assert report["status"] == "FAIL"
-    assert report["review_status"] == "PENDING_HUMAN_REVIEW"
-    assert report["gold_status"] == "FAIL"
+    assert report["status"] == "PASS"
+    assert report["review_status"] == "PASS"
+    assert report["gold_status"] == "PASS"
     assert report["database_validation"] == "not_run_source_scan_only"
-    assert len(report["missing_review_field_cases"]) == 50
+    assert report["missing_review_field_cases"] == []
+    assert report["missing_annotation_field_cases"] == []
     # Bare Ruijie IDs are a supported legacy semantic namespace and are now
     # resolved from the official migration source scan.  The frozen dataset
-    # still fails for its missing human/feature annotations, not because the
-    # six Ruijie identities are unknowable.
+    # is now fully reviewed; this assertion protects the source-scan contract
+    # from regressing to an unresolved-document state.
     assert report["unresolved_gold_document_ids"] == []
 
 

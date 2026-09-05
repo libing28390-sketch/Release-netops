@@ -272,7 +272,10 @@ class IntentParser:
         # Keep the typo correction scoped to the two-word phrase.  A bare
         # ``acces`` is a prefix of ``access-list`` and misclassifies ACL
         # queries as access-port requests.
-        "access_port": ("access port", "access-port", "acces port", "接入口", "接入端口"),
+        "access_port": (
+            "access port", "access-port", "acces port", "vlan + access", "vlan+access",
+            "接入口", "接入端口",
+        ),
         "port_security": ("port security", "port-security", "端口安全"),
         "trunk": ("trunk", "中继端口", "trunk端口"),
         "lacp": ("lacp", "eth-trunk", "etherchannel", "bridge-aggregation", "链路聚合"),

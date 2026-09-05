@@ -20,7 +20,10 @@ def test_baseline_manifest_is_reproducible_metadata_only() -> None:
     assert payload["reproducibility"]["dataset"]["sha256"]
     assert payload["components"]["chunker"]["config_sha256"]
     assert payload["components"]["embedding"]["distance_algorithm"] == "cosine"
-    assert payload["evaluation"]["overall_status"] == "FAIL"
+    assert payload["evaluation"]["overall_status"] == "PASS"
+    assert payload["evaluation"]["status"] == "PASS"
+    assert payload["evaluation"]["safety_status"] == "PASS"
+    assert payload["evaluation"]["quality_status"] == "PASS"
     assert payload["redaction"] == {
         "contains_prompt_or_answer": False,
         "contains_document_or_cli_content": False,

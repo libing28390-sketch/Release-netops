@@ -144,6 +144,18 @@ def test_specific_eth_trunk_alias_wins_over_generic_trunk():
     assert metadata["feature"] == "lacp"
 
 
+def test_mixed_vlan_plus_access_is_scoped_to_access_port():
+    parser = IntentParser()
+    query = "华为 VRP VLAN + Access 配置"
+
+    metadata = parser.parse_knowledge_metadata(query)
+    normalized = normalize_query(query)
+
+    assert metadata["feature"] == "access_port"
+    assert metadata["feature_domain"] == "switching"
+    assert normalized.topic == "access_port"
+
+
 def test_h3c_packet_filter_alias_projects_to_acl_feature():
     metadata = IntentParser().parse_knowledge_metadata(
         "H3C Comware 7 packet-filter 3000 inbound"
