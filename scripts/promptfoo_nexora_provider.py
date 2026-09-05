@@ -78,6 +78,31 @@ def call_api(prompt: str, options: dict[str, Any] | None = None, context: dict[s
     if platform:
         meta["cli_platform"] = platform
 
+    # The evaluation provider must keep the same intent boundary as the
+    # interactive assistant.  Without this guard, a general/out-of-domain
+    # request such as a cooking question is sent straight to tenant RAG and
+    # can accidentally retrieve an unrelated network document.  Do not use
+    # ``expected_outcome`` here: the provider must derive the safety result
+    # from the request itself rather than from the fixture's answer.
+    if not vendor and not platform and not intent_parser.is_knowledge_query(query):
+        output_summary = {
+            "vendor": vendor,
+            "platform": platform,
+            "returned_document_ids": [],
+            "returned_vendors": [],
+            "returned_platforms": [],
+            "returned_features": [],
+            "wrong_vendor_count": 0,
+            "version_conflict_count": 0,
+            "clarification_required": False,
+            "outcome": "no_match",
+            "reason_code": "OUT_OF_DOMAIN_NO_MATCH",
+        }
+        return {
+            "output": json.dumps(output_summary, ensure_ascii=False),
+            "metadata": output_summary,
+        }
+
     try:
         results = ai_assistant_service.retrieve_knowledge(
             query,

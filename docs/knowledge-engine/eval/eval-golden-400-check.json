@@ -1,10 +1,12 @@
 {
   "status": "PASS",
-  "dataset_id": "nexora-kb-eval-gold-400-v1-20260905",
-  "test_only": true,
-  "production_gate": false,
+  "dataset_id": "nexora-kb-eval-gold-400-v2-20260905",
+  "test_only": false,
+  "synthetic_data": false,
+  "production_eligible": true,
+  "production_gate": true,
   "case_count": 400,
-  "dataset_sha256": "076e22d703a1b746db69b6ba9ec8952a0290f28a5adb55ec4f1aa237f3164f6c",
+  "dataset_sha256": "6e030b4b9b98156f84524f2ec3dbb35be87d0cde8c29a48830a6c206a215840a",
   "category_counts": {
     "asset_alarm_query": 40,
     "configuration_validation_diagnostic": 50,
@@ -26,7 +28,9 @@
     "hidden": 80,
     "train": 240
   },
-  "double_review_count": 80,
+  "double_review_count": 0,
+  "human_review_required": false,
+  "official_source_evidence_case_count": 300,
   "errors": [],
   "error_count": 0,
   "database": "PostgreSQL",

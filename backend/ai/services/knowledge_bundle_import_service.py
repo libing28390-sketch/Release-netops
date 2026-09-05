@@ -386,11 +386,25 @@ def _read_bundle(bundle: bytes) -> tuple[dict[str, Any], list[dict[str, Any]]]:
             if not isinstance(item, Mapping):
                 raise KnowledgeBundleImportError("manifest 文档项必须是对象", code="KNOWLEDGE_BUNDLE_DOCUMENT_INVALID")
             raw_path = str(item.get("path") or "")
-            expected_hash = str(item.get("content_sha256") or "").lower()
+            declared_hash = item.get("content_sha256")
+            declared_bytes = item.get("content_bytes")
+            expected_hash = declared_hash.lower() if isinstance(declared_hash, str) else ""
             diagnostic = {
                 "document_index": document_index,
                 "document_ref": _stable_document_ref(raw_path, expected_hash),
             }
+            if not re.fullmatch(r"[0-9a-fA-F]{64}", expected_hash):
+                raise KnowledgeBundleImportError(
+                    "manifest 文档 content_sha256 必须是 64 位十六进制字符串",
+                    code="KNOWLEDGE_BUNDLE_CONTENT_HASH_INVALID",
+                    diagnostic=diagnostic,
+                )
+            if isinstance(declared_bytes, bool) or not isinstance(declared_bytes, int) or declared_bytes < 0:
+                raise KnowledgeBundleImportError(
+                    "manifest 文档 content_bytes 必须是非负整数",
+                    code="KNOWLEDGE_BUNDLE_CONTENT_SIZE_INVALID",
+                    diagnostic=diagnostic,
+                )
             try:
                 path = _safe_member_path(raw_path)
             except KnowledgeBundleImportError as exc:
@@ -411,7 +425,7 @@ def _read_bundle(bundle: bytes) -> tuple[dict[str, Any], list[dict[str, Any]]]:
                     code="KNOWLEDGE_BUNDLE_HASH_MISMATCH",
                     diagnostic=diagnostic,
                 )
-            expected_bytes = int(item.get("content_bytes") or len(raw))
+            expected_bytes = declared_bytes
             if expected_bytes != len(raw):
                 raise KnowledgeBundleImportError(
                     f"文档大小校验失败：{path}",
@@ -528,6 +542,13 @@ def import_knowledge_bundle(
                 "source_type": "user_document",
                 "original_source_type": original_source_type,
                 "official_only": False,
+                # The source document can contain an official-looking
+                # Front Matter claim, but an imported ZIP is an untrusted
+                # transport boundary.  Keep the downgraded trust level in
+                # the portable metadata as well as in the indexed column;
+                # otherwise citations/trace consumers could still observe a
+                # stale ``official`` claim after import.
+                "source_trust_level": "internal",
                 "verification_status": "unverified_bundle",
                 "imported_from_bundle": True,
                 "source_bundle_schema": SUPPORTED_SCHEMA,

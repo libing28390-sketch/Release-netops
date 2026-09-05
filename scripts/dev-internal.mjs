@@ -33,7 +33,13 @@ function requestText(url) {
 
 async function isBackendRunning() {
   const response = await requestText(`http://127.0.0.1:${backendPort}/api/health`);
-  return response.statusCode === 200;
+  if (response.statusCode !== 200) return false;
+  try {
+    const payload = JSON.parse(response.body);
+    return payload?.status === 'healthy' && payload?.database === 'connected';
+  } catch {
+    return false;
+  }
 }
 
 async function isFrontendRunning() {

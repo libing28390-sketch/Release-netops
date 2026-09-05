@@ -84,11 +84,25 @@ jobs:
           python -m pytest -q backend/tests --tb=short
           python scripts/validate_postgresql_only.py
           python scripts/knowledge_eval_bootstrap.py
-          python scripts/knowledge_eval_anchors_50_runner.py
-          python scripts/knowledge_eval_anchor_review_check.py --database
-          # The default repository fixture is test-only; release must require
-          # a separately reviewed, production-eligible dataset.
+          python scripts/knowledge_eval_anchors_50_runner.py \
+            --dataset docs/knowledge-engine/eval/eval-golden-anchors-50-v3-signed-20260905.yaml \
+            --output "$RUNNER_TEMP/eval-anchors-50-v3-signed-report.json"
+          python scripts/knowledge_eval_anchor_review_check.py \
+            --database \
+            --dataset docs/knowledge-engine/eval/eval-golden-anchors-50-v3-signed-20260905.yaml \
+            --output "$RUNNER_TEMP/eval-anchors-50-v3-signed-review.json"
+          # Release must require the frozen, officially sourced, signed
+          # 50-anchor dataset; its review metadata is checked above.
           python scripts/knowledge_eval_gold_400_check.py --require-production
+          # Measure retrieval separately in a disposable PostgreSQL corpus;
+          # this does not read or mutate the release database corpus.
+          python scripts/knowledge_eval_gold_400_retrieval.py
+          # Keep a second, reproducible 50-anchor evidence run on a fresh
+          # PostgreSQL corpus. The normal application-corpus 50-anchor gate
+          # above remains strict and is not replaced by this run.
+          python scripts/knowledge_eval_anchors_50_isolated.py \
+            --dataset docs/knowledge-engine/eval/eval-golden-anchors-50-v3-signed-20260905.yaml \
+            --output "$RUNNER_TEMP/eval-anchors-50-isolated-report.json"
 
       - name: Remove private and development-only files
         shell: bash

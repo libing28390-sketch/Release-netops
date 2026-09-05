@@ -432,14 +432,40 @@ class RAGRetriever:
                 # dedicated command category preferred when present, while
                 # allowing the reviewed configuration projection to satisfy
                 # a command-reference query.
-                where.append("LOWER(d.document_category) IN (?, ?)")
-                params.extend(["command", "configuration"])
+                where.append("LOWER(d.document_category) IN (?, ?, ?)")
+                params.extend(["command", "configuration", "cli_output"])
             elif category_val == "cli_output":
                 where.append("LOWER(d.document_category) IN (?, ?, ?)")
                 params.extend(["cli_output", "configuration", "command"])
             elif category_val == "configuration":
                 where.append("LOWER(d.document_category) IN (?, ?)")
                 params.extend(["configuration", "command"])
+            elif category_val == "troubleshooting":
+                # A troubleshooting request may use a read-only CLI output
+                # as evidence, but only after the query identifies a vendor,
+                # product, OS or CLI family.  Without any identity, returning
+                # every platform's output turns an ambiguous request into a
+                # misleading answer (and defeats the no-match boundary).
+                identity_scoped = any(
+                    getattr(request, field, None)
+                    for field in (
+                        "vendor",
+                        "product_family",
+                        "product_series",
+                        "product_model",
+                        "os_family",
+                        "os_generation",
+                        "software_train",
+                        "software_release",
+                        "cli_platform",
+                    )
+                )
+                if identity_scoped:
+                    where.append("LOWER(d.document_category) IN (?, ?)")
+                    params.extend(["troubleshooting", "cli_output"])
+                else:
+                    where.append("LOWER(d.document_category) = LOWER(?)")
+                    params.append(request.document_category)
             else:
                 where.append("LOWER(d.document_category) = LOWER(?)")
                 params.append(request.document_category)

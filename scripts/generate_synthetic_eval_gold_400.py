@@ -1,10 +1,12 @@
 #!/usr/bin/env python3
-"""Generate the explicitly test-only 400-case Gold contract fixture.
+"""Generate a legacy explicitly test-only 400-case fixture.
 
 This generator is intentionally limited to CI/test data.  The generated file
 contains synthetic queries, synthetic source locators and synthetic reviewer
 identities; it is not production evidence and must be rejected by the release
-validator's ``--require-production`` mode.
+validator's ``--require-production`` mode.  Its default output is separate
+from the official-source-backed dataset so it cannot overwrite that dataset
+accidentally.
 """
 
 from __future__ import annotations
@@ -16,7 +18,7 @@ import yaml
 
 
 ROOT = Path(__file__).resolve().parents[1]
-DEFAULT_OUTPUT = ROOT / "docs" / "knowledge-engine" / "eval" / "eval-golden-400.yaml"
+DEFAULT_OUTPUT = ROOT / "docs" / "knowledge-engine" / "eval" / "eval-golden-400-synthetic-fixture.yaml"
 
 CATEGORY_COUNTS = {
     "knowledge_config_reference": 140,

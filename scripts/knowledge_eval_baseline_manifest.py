@@ -25,8 +25,8 @@ BACKEND_ROOT = ROOT / "backend"
 if str(BACKEND_ROOT) not in sys.path:
     sys.path.insert(0, str(BACKEND_ROOT))
 
-DEFAULT_DATASET = ROOT / "docs" / "knowledge-engine" / "eval" / "eval-golden-anchors-50.yaml"
-DEFAULT_REPORT = ROOT / "docs" / "knowledge-engine" / "eval" / "eval-anchors-50-report.json"
+DEFAULT_DATASET = ROOT / "docs" / "knowledge-engine" / "eval" / "eval-golden-anchors-50-v3-signed-20260905.yaml"
+DEFAULT_REPORT = ROOT / "docs" / "knowledge-engine" / "eval" / "eval-anchors-50-v3-signed-report.json"
 DEFAULT_OUTPUT = ROOT / "docs" / "knowledge-engine" / "eval" / "eval-baseline-manifest.json"
 MANIFEST_SCHEMA_VERSION = 1
 
@@ -214,7 +214,7 @@ def build_manifest(*, dataset_path: Path = DEFAULT_DATASET, report_path: Path = 
             "contains_tenant_or_user_identifiers": False,
         },
         "limitations": [
-            "The current manifest records the measured 50-anchor run; it does not claim the 400-case human Gold Dataset is complete.",
+            "The current manifest records the measured 50-anchor run; it does not claim the 400-case retrieval-quality evaluation is complete. The 400-case source-provenance gate is tracked separately.",
             "A dirty worktree or a not_run database validation is a reproducibility warning, not a quality pass.",
             "Provider and sidecar fields report configured contracts only; no live external request is made by this generator.",
         ],

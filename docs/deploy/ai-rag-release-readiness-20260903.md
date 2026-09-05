@@ -1,9 +1,9 @@
 # AI/RAG 整改预发布说明与迁移/回滚须知
 
-日期：2026-09-03（最后复核：2026-09-04）  
+日期：2026-09-03（最后复核：2026-09-05）
 状态：`HOLD — NOT A RELEASE CANDIDATE`
 
-本说明与 [AI/RAG 配置、Kill Switch 与回滚清单](../knowledge-engine/runbooks/AI-RAG-RELEASE-CONFIG-AND-ROLLBACK-20260903.md) 配套。当前工作区完成了主要代码和自动化门禁；按测试环境授权，仓库已包含明确标记为 `test_only=true` 的合成 400 条 CI 夹具，但真实人工 Gold、真实 sidecar、CI 实跑、Provider live sample、浏览器 UAT、生产迁移/回滚和 Git 发布提交尚未完成，禁止将测试夹具或本说明解释为生产放行。
+本说明与 [AI/RAG 配置、Kill Switch 与回滚清单](../knowledge-engine/runbooks/AI-RAG-RELEASE-CONFIG-AND-ROLLBACK-20260903.md) 配套。当前工作区完成了主要代码和自动化门禁；400 条评测集已按用户确认切换为 `official_url_backed_local_summary` 官方来源自动校验策略，不要求人工 Gold 审核；50-anchor 已由用户明确授权完成批次签字并切换到新的冻结 v3，但仍受来源反查、脱敏、PostgreSQL-only 和检索质量门禁约束。真实 sidecar、CI 实跑、Provider live sample、浏览器 UAT、生产迁移/回滚和 Git 发布提交尚未完成，禁止将数据来源门禁或本说明解释为生产放行。
 
 ## 已交付的代码范围
 
@@ -16,16 +16,18 @@
 
 | 门禁 | 结果 |
 | --- | --- |
-| `pytest backend/tests/ai -q` | `535 passed`（当前代码既有回归证据） |
-| `pytest backend/tests -q` | `1744 passed, 26 subtests passed，退出码 0；隔离 PostgreSQL 本次复核` |
+| `pytest backend/tests/ai -q` | `553 passed`（当前代码最新回归证据） |
+| `pytest backend/tests -q` | `1764 passed, 26 subtests passed，退出码 0；隔离 PostgreSQL 本次复核` |
 | 前端全量 Vitest | `53 files / 195 passed` |
 | 前端 KUI/OBS-002 定向测试 | `5 passed` |
 | `npm run lint` | `PASS` |
 | `npm run build` | `PASS`，`4265 modules transformed` |
 | PostgreSQL-only 扫描 | `0 violation(s) PASS` |
 | CI 配置静态检查 | `PASS` |
-| 50 条真实锚点评测 | `safety=PASS, quality=FAIL, overall=FAIL`；38/50，Recall@5/10=`0.7143` |
-| 400 条 Gold 检查 | 普通合同检查 `PASS`，`case_count=400`；数据集为 `test_only=true` 合成夹具，生产模式 `--require-production` 为 `FAIL`，真实人工 Gold `NOT_READY` |
+| 50 条真实锚点评测 | 当前签字冻结 v3：标准/隔离均 `safety=PASS, quality=PASS, overall=PASS`；50/50，Recall@5/10=`1.0`，Citation Precision=`0.9643`、Citation Recall=`1.0`。旧 v1 的 39/50 与候选 v2 均保留作对比 |
+| 50 条 Gold 审核 | 签字 v3：`review=PASS`、`gold=PASS`、50/50 `annotation_status=approved`、`missing_review=0`、`unresolved_gold=0`；审核人为 `libing28390-sketch` |
+| 400 条官方来源自动检查 | 普通合同检查和 `--require-production` 均 `PASS`，`case_count=400`，answer 来源证据 `300/300`；`human_review_required=false` |
+| 400 条隔离 PostgreSQL 直连检索 | `300` 条 answer：Recall@5/10=`1.0`、MRR=`1.0`、厂商/Feature 污染 `0`；100 条 clarify/no-match 未调用低层检索 |
 
 ## 迁移说明
 
@@ -47,8 +49,8 @@
 
 ## 已知限制与发布阻断
 
-- 50 条案例仍有 50 条待人工 reviewer/reviewed_at/annotation_status，42 条缺显式 Feature 标注，6 个 Ruijie Gold ID 在隔离 PostgreSQL 中未解析；当前召回未达阈值。
-- 400 条真实人工审核 Gold Dataset 尚未提供；当前 `eval-golden-400.yaml` 仅是用户授权的 `test_only=true` 合成 CI 夹具，普通字段/分布合同检查可通过，但生产模式明确拒绝。Feature Pollution、Version Conflict 和真实 Citation 指标尚未完成全量测量。
+- 当前严格 50-anchor 输入为签字冻结 v3：[eval-golden-anchors-50-v3-signed-20260905.yaml](../knowledge-engine/eval/eval-golden-anchors-50-v3-signed-20260905.yaml)。只读审核报告为 `review=PASS/gold=PASS`，50 条审核字段齐全，所有 acceptable Gold ID 均在 PostgreSQL 官方投影中解析；标准/隔离 runner 均为 `50/50 PASS`。旧 v1 的 39/50、候选 v2 和签字 v3 均保留，签字动作由用户明确授权执行，不表示独立第二审核人复核。
+- 400 条数据不以人工审核作为门槛；当前 `eval-golden-400.yaml` 是官方 URL 支撑的自动生成 Dataset，answer 用例的来源证据必须反查到 `data/kb_import/manifest.json`，普通模式和 `--require-production` 均通过。隔离 runner 已对 300 条 answer 完成真实 PostgreSQL + RAGRetriever 直连测量并通过；100 条 guard、完整 Assistant/Citation 链路、真实版本冲突和生产语料仍未由该 runner 覆盖。
 - 当前机器无 Docker CLI，BGE、Docling、Langfuse 真实服务、模型加载和资源验收尚未完成。
 - Qwen/Ollama 未配置；DeepSeek 真实业务会话和 Provider 错误矩阵尚未授权/执行。
 - 浏览器已登录会话完成部分只读 UAT（含本地命中、澄清、no-match、Provider 兜底和高风险确认边界）；逐案例元数据见 [eval-browser-uat-live-20260904.md](../knowledge-engine/eval/eval-browser-uat-live-20260904.md)，但完整 UAT-001、5%→20%→50% 灰度观察、旧库升级/失败回滚演练和可追溯 Git Commit/RC 标签尚未完成。

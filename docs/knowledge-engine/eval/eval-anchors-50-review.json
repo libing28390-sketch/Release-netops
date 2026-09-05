@@ -4,7 +4,7 @@
   "status": "FAIL",
   "review_status": "PENDING_HUMAN_REVIEW",
   "gold_status": "FAIL",
-  "database_validation": "read_only_postgresql",
+  "database_validation": "not_run_source_scan_only",
   "database_error": null,
   "human_review_required": true,
   "case_count": 50,
@@ -156,14 +156,7 @@
     "ANCHOR-041",
     "ANCHOR-049"
   ],
-  "unresolved_gold_document_ids": [
-    "ruijie-rgos-acl",
-    "ruijie-rgos-aggregateport",
-    "ruijie-rgos-ospf",
-    "ruijie-rgos-show-lldp",
-    "ruijie-rgos-show-route",
-    "ruijie-rgos-vlan-access"
-  ],
+  "unresolved_gold_document_ids": [],
   "inferred_feature_cases": [
     "ANCHOR-001",
     "ANCHOR-002",
@@ -208,16 +201,10 @@
     "ANCHOR-041",
     "ANCHOR-049"
   ],
+  "explicit_feature_scope_cases": [],
   "metadata_mismatch_cases": [],
-  "metadata_insufficient_cases": [
-    "ANCHOR-035",
-    "ANCHOR-036",
-    "ANCHOR-037",
-    "ANCHOR-038",
-    "ANCHOR-039",
-    "ANCHOR-040"
-  ],
-  "known_projected_document_id_count": 107,
+  "metadata_insufficient_cases": [],
+  "known_projected_document_id_count": 91,
   "records": [
     {
       "id": "ANCHOR-001",
@@ -225,6 +212,7 @@
       "vendor": "Huawei",
       "platform": "huawei_vrp",
       "feature": "vlan",
+      "feature_scope": [],
       "feature_source": "query_inference",
       "gold_document_ids": [
         "official-template-official-huawei-vlan-basic",
@@ -249,13 +237,10 @@
         "annotation_status"
       ],
       "metadata_validation": {
-        "status": "pass",
+        "status": "not_run",
         "mismatch_document_ids": [],
         "insufficient_document_ids": [],
-        "checked_fields": [
-          "vendor",
-          "cli_platform"
-        ]
+        "checked_fields": []
       }
     },
     {
@@ -264,6 +249,7 @@
       "vendor": "Cisco",
       "platform": "cisco_iosxe",
       "feature": "vlan",
+      "feature_scope": [],
       "feature_source": "query_inference",
       "gold_document_ids": [
         "official-template-official-cisco-vlan-basic",
@@ -288,13 +274,10 @@
         "annotation_status"
       ],
       "metadata_validation": {
-        "status": "pass",
+        "status": "not_run",
         "mismatch_document_ids": [],
         "insufficient_document_ids": [],
-        "checked_fields": [
-          "vendor",
-          "cli_platform"
-        ]
+        "checked_fields": []
       }
     },
     {
@@ -303,6 +286,7 @@
       "vendor": "Huawei",
       "platform": "huawei_vrp",
       "feature": "interface",
+      "feature_scope": [],
       "feature_source": "intent_inference",
       "gold_document_ids": [
         "official-template-official-huawei-access-port",
@@ -327,13 +311,10 @@
         "annotation_status"
       ],
       "metadata_validation": {
-        "status": "pass",
+        "status": "not_run",
         "mismatch_document_ids": [],
         "insufficient_document_ids": [],
-        "checked_fields": [
-          "vendor",
-          "cli_platform"
-        ]
+        "checked_fields": []
       }
     },
     {
@@ -342,6 +323,7 @@
       "vendor": "Cisco",
       "platform": "cisco_iosxe",
       "feature": "interface",
+      "feature_scope": [],
       "feature_source": "intent_inference",
       "gold_document_ids": [
         "official-template-official-cisco-access-port",
@@ -366,13 +348,10 @@
         "annotation_status"
       ],
       "metadata_validation": {
-        "status": "pass",
+        "status": "not_run",
         "mismatch_document_ids": [],
         "insufficient_document_ids": [],
-        "checked_fields": [
-          "vendor",
-          "cli_platform"
-        ]
+        "checked_fields": []
       }
     },
     {
@@ -381,6 +360,7 @@
       "vendor": "Huawei",
       "platform": "huawei_vrp",
       "feature": "ospf",
+      "feature_scope": [],
       "feature_source": "query_inference",
       "gold_document_ids": [
         "official-template-official-huawei-s5700-ospf-basic"
@@ -403,13 +383,10 @@
         "annotation_status"
       ],
       "metadata_validation": {
-        "status": "pass",
+        "status": "not_run",
         "mismatch_document_ids": [],
         "insufficient_document_ids": [],
-        "checked_fields": [
-          "vendor",
-          "cli_platform"
-        ]
+        "checked_fields": []
       }
     },
     {
@@ -418,6 +395,7 @@
       "vendor": "Cisco",
       "platform": "cisco_iosxe",
       "feature": "ospf",
+      "feature_scope": [],
       "feature_source": "query_inference",
       "gold_document_ids": [
         "official-template-official-cisco-c9300-ospf-basic"
@@ -440,13 +418,10 @@
         "annotation_status"
       ],
       "metadata_validation": {
-        "status": "pass",
+        "status": "not_run",
         "mismatch_document_ids": [],
         "insufficient_document_ids": [],
-        "checked_fields": [
-          "vendor",
-          "cli_platform"
-        ]
+        "checked_fields": []
       }
     },
     {
@@ -455,6 +430,7 @@
       "vendor": "Huawei",
       "platform": "huawei_vrp",
       "feature": "ssh",
+      "feature_scope": [],
       "feature_source": "query_inference",
       "gold_document_ids": [
         "official-template-official-huawei-ssh-basic",
@@ -479,13 +455,10 @@
         "annotation_status"
       ],
       "metadata_validation": {
-        "status": "pass",
+        "status": "not_run",
         "mismatch_document_ids": [],
         "insufficient_document_ids": [],
-        "checked_fields": [
-          "vendor",
-          "cli_platform"
-        ]
+        "checked_fields": []
       }
     },
     {
@@ -494,6 +467,7 @@
       "vendor": "Cisco",
       "platform": "cisco_iosxe",
       "feature": "ssh",
+      "feature_scope": [],
       "feature_source": "query_inference",
       "gold_document_ids": [
         "official-template-official-cisco-ssh-basic",
@@ -518,13 +492,10 @@
         "annotation_status"
       ],
       "metadata_validation": {
-        "status": "pass",
+        "status": "not_run",
         "mismatch_document_ids": [],
         "insufficient_document_ids": [],
-        "checked_fields": [
-          "vendor",
-          "cli_platform"
-        ]
+        "checked_fields": []
       }
     },
     {
@@ -533,6 +504,7 @@
       "vendor": "Huawei",
       "platform": "huawei_vrp",
       "feature": "ntp",
+      "feature_scope": [],
       "feature_source": "query_inference",
       "gold_document_ids": [
         "official-template-official-huawei-ntp-client-basic"
@@ -555,13 +527,10 @@
         "annotation_status"
       ],
       "metadata_validation": {
-        "status": "pass",
+        "status": "not_run",
         "mismatch_document_ids": [],
         "insufficient_document_ids": [],
-        "checked_fields": [
-          "vendor",
-          "cli_platform"
-        ]
+        "checked_fields": []
       }
     },
     {
@@ -570,6 +539,7 @@
       "vendor": "Cisco",
       "platform": "cisco_iosxe",
       "feature": "ntp",
+      "feature_scope": [],
       "feature_source": "query_inference",
       "gold_document_ids": [
         "official-template-official-cisco-ntp-client-basic"
@@ -592,13 +562,10 @@
         "annotation_status"
       ],
       "metadata_validation": {
-        "status": "pass",
+        "status": "not_run",
         "mismatch_document_ids": [],
         "insufficient_document_ids": [],
-        "checked_fields": [
-          "vendor",
-          "cli_platform"
-        ]
+        "checked_fields": []
       }
     },
     {
@@ -607,6 +574,7 @@
       "vendor": "Huawei",
       "platform": "huawei_vrp",
       "feature": "static_route",
+      "feature_scope": [],
       "feature_source": "query_inference",
       "gold_document_ids": [
         "official-template-official-huawei-static-route-basic"
@@ -629,13 +597,10 @@
         "annotation_status"
       ],
       "metadata_validation": {
-        "status": "pass",
+        "status": "not_run",
         "mismatch_document_ids": [],
         "insufficient_document_ids": [],
-        "checked_fields": [
-          "vendor",
-          "cli_platform"
-        ]
+        "checked_fields": []
       }
     },
     {
@@ -644,6 +609,7 @@
       "vendor": "Cisco",
       "platform": "cisco_iosxe",
       "feature": "static_route",
+      "feature_scope": [],
       "feature_source": "query_inference",
       "gold_document_ids": [
         "official-template-official-cisco-static-route-basic"
@@ -666,13 +632,10 @@
         "annotation_status"
       ],
       "metadata_validation": {
-        "status": "pass",
+        "status": "not_run",
         "mismatch_document_ids": [],
         "insufficient_document_ids": [],
-        "checked_fields": [
-          "vendor",
-          "cli_platform"
-        ]
+        "checked_fields": []
       }
     },
     {
@@ -681,6 +644,7 @@
       "vendor": "Huawei",
       "platform": "huawei_vrp",
       "feature": "bgp",
+      "feature_scope": [],
       "feature_source": "query_inference",
       "gold_document_ids": [
         "official-template-official-huawei-bgp-basic",
@@ -705,13 +669,10 @@
         "annotation_status"
       ],
       "metadata_validation": {
-        "status": "pass",
+        "status": "not_run",
         "mismatch_document_ids": [],
         "insufficient_document_ids": [],
-        "checked_fields": [
-          "vendor",
-          "cli_platform"
-        ]
+        "checked_fields": []
       }
     },
     {
@@ -720,6 +681,7 @@
       "vendor": "Huawei",
       "platform": "huawei_vrp",
       "feature": "trunk",
+      "feature_scope": [],
       "feature_source": "query_inference",
       "gold_document_ids": [
         "official-template-official-huawei-eth-trunk"
@@ -742,13 +704,10 @@
         "annotation_status"
       ],
       "metadata_validation": {
-        "status": "pass",
+        "status": "not_run",
         "mismatch_document_ids": [],
         "insufficient_document_ids": [],
-        "checked_fields": [
-          "vendor",
-          "cli_platform"
-        ]
+        "checked_fields": []
       }
     },
     {
@@ -757,6 +716,7 @@
       "vendor": "Huawei",
       "platform": "huawei_vrp",
       "feature": "acl",
+      "feature_scope": [],
       "feature_source": "query_inference",
       "gold_document_ids": [
         "official-template-official-huawei-acl-basic"
@@ -779,13 +739,10 @@
         "annotation_status"
       ],
       "metadata_validation": {
-        "status": "pass",
+        "status": "not_run",
         "mismatch_document_ids": [],
         "insufficient_document_ids": [],
-        "checked_fields": [
-          "vendor",
-          "cli_platform"
-        ]
+        "checked_fields": []
       }
     },
     {
@@ -794,6 +751,7 @@
       "vendor": "Huawei",
       "platform": "huawei_vrp",
       "feature": "ospf",
+      "feature_scope": [],
       "feature_source": "query_inference",
       "gold_document_ids": [
         "official-template-official-huawei-s5700-ospf-basic"
@@ -816,13 +774,10 @@
         "annotation_status"
       ],
       "metadata_validation": {
-        "status": "pass",
+        "status": "not_run",
         "mismatch_document_ids": [],
         "insufficient_document_ids": [],
-        "checked_fields": [
-          "vendor",
-          "cli_platform"
-        ]
+        "checked_fields": []
       }
     },
     {
@@ -831,6 +786,7 @@
       "vendor": "Huawei",
       "platform": "huawei_vrpv8",
       "feature": "vxlan",
+      "feature_scope": [],
       "feature_source": "query_inference",
       "gold_document_ids": [
         "official-template-official-huawei-ce6800-vxlan-evpn-basic"
@@ -853,13 +809,10 @@
         "annotation_status"
       ],
       "metadata_validation": {
-        "status": "pass",
+        "status": "not_run",
         "mismatch_document_ids": [],
         "insufficient_document_ids": [],
-        "checked_fields": [
-          "vendor",
-          "cli_platform"
-        ]
+        "checked_fields": []
       }
     },
     {
@@ -868,6 +821,7 @@
       "vendor": "Huawei",
       "platform": "huawei_vrp",
       "feature": "port_security",
+      "feature_scope": [],
       "feature_source": "query_inference",
       "gold_document_ids": [
         "official-template-official-huawei-access-port"
@@ -890,13 +844,10 @@
         "annotation_status"
       ],
       "metadata_validation": {
-        "status": "pass",
+        "status": "not_run",
         "mismatch_document_ids": [],
         "insufficient_document_ids": [],
-        "checked_fields": [
-          "vendor",
-          "cli_platform"
-        ]
+        "checked_fields": []
       }
     },
     {
@@ -905,6 +856,7 @@
       "vendor": "Huawei",
       "platform": "huawei_vrp",
       "feature": null,
+      "feature_scope": [],
       "feature_source": "not_applicable_or_unresolved",
       "gold_document_ids": [
         "official-template-official-huawei-trunk-port"
@@ -927,13 +879,10 @@
         "annotation_status"
       ],
       "metadata_validation": {
-        "status": "pass",
+        "status": "not_run",
         "mismatch_document_ids": [],
         "insufficient_document_ids": [],
-        "checked_fields": [
-          "vendor",
-          "cli_platform"
-        ]
+        "checked_fields": []
       }
     },
     {
@@ -942,6 +891,7 @@
       "vendor": "Huawei",
       "platform": "huawei_vrp",
       "feature": null,
+      "feature_scope": [],
       "feature_source": "not_applicable_or_unresolved",
       "gold_document_ids": [
         "official-template-official-huawei-aaa-local"
@@ -964,13 +914,10 @@
         "annotation_status"
       ],
       "metadata_validation": {
-        "status": "pass",
+        "status": "not_run",
         "mismatch_document_ids": [],
         "insufficient_document_ids": [],
-        "checked_fields": [
-          "vendor",
-          "cli_platform"
-        ]
+        "checked_fields": []
       }
     },
     {
@@ -979,6 +926,7 @@
       "vendor": "Cisco",
       "platform": "cisco_iosxe",
       "feature": "vlan",
+      "feature_scope": [],
       "feature_source": "query_inference",
       "gold_document_ids": [
         "official-template-official-cisco-trunk-port"
@@ -1001,13 +949,10 @@
         "annotation_status"
       ],
       "metadata_validation": {
-        "status": "pass",
+        "status": "not_run",
         "mismatch_document_ids": [],
         "insufficient_document_ids": [],
-        "checked_fields": [
-          "vendor",
-          "cli_platform"
-        ]
+        "checked_fields": []
       }
     },
     {
@@ -1016,6 +961,7 @@
       "vendor": "Cisco",
       "platform": "cisco_nxos",
       "feature": "bgp",
+      "feature_scope": [],
       "feature_source": "query_inference",
       "gold_document_ids": [
         "official-template-official-cisco-bgp-basic",
@@ -1039,13 +985,10 @@
         "annotation_status"
       ],
       "metadata_validation": {
-        "status": "pass",
+        "status": "not_run",
         "mismatch_document_ids": [],
         "insufficient_document_ids": [],
-        "checked_fields": [
-          "vendor",
-          "cli_platform"
-        ]
+        "checked_fields": []
       }
     },
     {
@@ -1054,6 +997,7 @@
       "vendor": "Cisco",
       "platform": "cisco_iosxe",
       "feature": "lacp",
+      "feature_scope": [],
       "feature_source": "query_inference",
       "gold_document_ids": [
         "official-template-official-cisco-lacp-port-channel"
@@ -1076,13 +1020,10 @@
         "annotation_status"
       ],
       "metadata_validation": {
-        "status": "pass",
+        "status": "not_run",
         "mismatch_document_ids": [],
         "insufficient_document_ids": [],
-        "checked_fields": [
-          "vendor",
-          "cli_platform"
-        ]
+        "checked_fields": []
       }
     },
     {
@@ -1091,6 +1032,7 @@
       "vendor": "Cisco",
       "platform": "cisco_iosxe",
       "feature": "acl",
+      "feature_scope": [],
       "feature_source": "query_inference",
       "gold_document_ids": [
         "official-template-official-cisco-acl-basic"
@@ -1113,13 +1055,10 @@
         "annotation_status"
       ],
       "metadata_validation": {
-        "status": "pass",
+        "status": "not_run",
         "mismatch_document_ids": [],
         "insufficient_document_ids": [],
-        "checked_fields": [
-          "vendor",
-          "cli_platform"
-        ]
+        "checked_fields": []
       }
     },
     {
@@ -1128,6 +1067,7 @@
       "vendor": "Cisco",
       "platform": "cisco_iosxe",
       "feature": "ospf",
+      "feature_scope": [],
       "feature_source": "query_inference",
       "gold_document_ids": [
         "official-template-official-cisco-c9300-ospf-basic"
@@ -1150,13 +1090,10 @@
         "annotation_status"
       ],
       "metadata_validation": {
-        "status": "pass",
+        "status": "not_run",
         "mismatch_document_ids": [],
         "insufficient_document_ids": [],
-        "checked_fields": [
-          "vendor",
-          "cli_platform"
-        ]
+        "checked_fields": []
       }
     },
     {
@@ -1165,6 +1102,7 @@
       "vendor": "Cisco",
       "platform": "cisco_iosxe",
       "feature": "arp",
+      "feature_scope": [],
       "feature_source": "query_inference",
       "gold_document_ids": [
         "official-template-official-cisco-access-port"
@@ -1187,13 +1125,10 @@
         "annotation_status"
       ],
       "metadata_validation": {
-        "status": "pass",
+        "status": "not_run",
         "mismatch_document_ids": [],
         "insufficient_document_ids": [],
-        "checked_fields": [
-          "vendor",
-          "cli_platform"
-        ]
+        "checked_fields": []
       }
     },
     {
@@ -1202,6 +1137,7 @@
       "vendor": "Cisco",
       "platform": "cisco_iosxe",
       "feature": "hsrp",
+      "feature_scope": [],
       "feature_source": "query_inference",
       "gold_document_ids": [
         "official-template-official-cisco-hsrp-basic"
@@ -1224,13 +1160,10 @@
         "annotation_status"
       ],
       "metadata_validation": {
-        "status": "pass",
+        "status": "not_run",
         "mismatch_document_ids": [],
         "insufficient_document_ids": [],
-        "checked_fields": [
-          "vendor",
-          "cli_platform"
-        ]
+        "checked_fields": []
       }
     },
     {
@@ -1239,6 +1172,7 @@
       "vendor": "Cisco",
       "platform": "cisco_iosxe",
       "feature": null,
+      "feature_scope": [],
       "feature_source": "not_applicable_or_unresolved",
       "gold_document_ids": [
         "official-template-official-cisco-aaa-local"
@@ -1261,13 +1195,10 @@
         "annotation_status"
       ],
       "metadata_validation": {
-        "status": "pass",
+        "status": "not_run",
         "mismatch_document_ids": [],
         "insufficient_document_ids": [],
-        "checked_fields": [
-          "vendor",
-          "cli_platform"
-        ]
+        "checked_fields": []
       }
     },
     {
@@ -1276,6 +1207,7 @@
       "vendor": "H3C",
       "platform": "h3c_comware_v7",
       "feature": "vlan",
+      "feature_scope": [],
       "feature_source": "query_inference",
       "gold_document_ids": [
         "official-template-official-h3c-vlan-basic",
@@ -1300,13 +1232,10 @@
         "annotation_status"
       ],
       "metadata_validation": {
-        "status": "pass",
+        "status": "not_run",
         "mismatch_document_ids": [],
         "insufficient_document_ids": [],
-        "checked_fields": [
-          "vendor",
-          "cli_platform"
-        ]
+        "checked_fields": []
       }
     },
     {
@@ -1315,6 +1244,7 @@
       "vendor": "H3C",
       "platform": "h3c_comware_v7",
       "feature": null,
+      "feature_scope": [],
       "feature_source": "not_applicable_or_unresolved",
       "gold_document_ids": [
         "official-template-official-h3c-access-port"
@@ -1337,13 +1267,10 @@
         "annotation_status"
       ],
       "metadata_validation": {
-        "status": "pass",
+        "status": "not_run",
         "mismatch_document_ids": [],
         "insufficient_document_ids": [],
-        "checked_fields": [
-          "vendor",
-          "cli_platform"
-        ]
+        "checked_fields": []
       }
     },
     {
@@ -1352,6 +1279,7 @@
       "vendor": "H3C",
       "platform": "h3c_comware_v7",
       "feature": "lacp",
+      "feature_scope": [],
       "feature_source": "query_inference",
       "gold_document_ids": [
         "official-template-official-h3c-lacp-bridge-aggregation"
@@ -1374,13 +1302,10 @@
         "annotation_status"
       ],
       "metadata_validation": {
-        "status": "pass",
+        "status": "not_run",
         "mismatch_document_ids": [],
         "insufficient_document_ids": [],
-        "checked_fields": [
-          "vendor",
-          "cli_platform"
-        ]
+        "checked_fields": []
       }
     },
     {
@@ -1389,6 +1314,7 @@
       "vendor": "H3C",
       "platform": "h3c_comware_v7",
       "feature": "bgp",
+      "feature_scope": [],
       "feature_source": "query_inference",
       "gold_document_ids": [
         "official-template-official-h3c-bgp-basic",
@@ -1413,13 +1339,10 @@
         "annotation_status"
       ],
       "metadata_validation": {
-        "status": "pass",
+        "status": "not_run",
         "mismatch_document_ids": [],
         "insufficient_document_ids": [],
-        "checked_fields": [
-          "vendor",
-          "cli_platform"
-        ]
+        "checked_fields": []
       }
     },
     {
@@ -1428,6 +1351,7 @@
       "vendor": "H3C",
       "platform": "h3c_comware_v7",
       "feature": "acl",
+      "feature_scope": [],
       "feature_source": "intent_inference",
       "gold_document_ids": [
         "official-template-official-h3c-acl-basic"
@@ -1450,13 +1374,10 @@
         "annotation_status"
       ],
       "metadata_validation": {
-        "status": "pass",
+        "status": "not_run",
         "mismatch_document_ids": [],
         "insufficient_document_ids": [],
-        "checked_fields": [
-          "vendor",
-          "cli_platform"
-        ]
+        "checked_fields": []
       }
     },
     {
@@ -1465,6 +1386,7 @@
       "vendor": "H3C",
       "platform": "h3c_comware_v7",
       "feature": "arp",
+      "feature_scope": [],
       "feature_source": "query_inference",
       "gold_document_ids": [
         "official-template-official-h3c-access-port"
@@ -1487,13 +1409,10 @@
         "annotation_status"
       ],
       "metadata_validation": {
-        "status": "pass",
+        "status": "not_run",
         "mismatch_document_ids": [],
         "insufficient_document_ids": [],
-        "checked_fields": [
-          "vendor",
-          "cli_platform"
-        ]
+        "checked_fields": []
       }
     },
     {
@@ -1502,6 +1421,7 @@
       "vendor": "Ruijie",
       "platform": "ruijie_rgos",
       "feature": "vlan",
+      "feature_scope": [],
       "feature_source": "query_inference",
       "gold_document_ids": [
         "ruijie-rgos-vlan-access"
@@ -1513,10 +1433,8 @@
       "missing_annotation_fields": [
         "feature"
       ],
-      "gold_id_source_status": "unresolved_source_evidence",
-      "unresolved_gold_document_ids": [
-        "ruijie-rgos-vlan-access"
-      ],
+      "gold_id_source_status": "source_evidence_found",
+      "unresolved_gold_document_ids": [],
       "reviewer": null,
       "reviewed_at": null,
       "annotation_status": "pending_human_review",
@@ -1526,13 +1444,10 @@
         "annotation_status"
       ],
       "metadata_validation": {
-        "status": "not_available",
+        "status": "not_run",
         "mismatch_document_ids": [],
         "insufficient_document_ids": [],
-        "checked_fields": [
-          "vendor",
-          "cli_platform"
-        ]
+        "checked_fields": []
       }
     },
     {
@@ -1541,6 +1456,7 @@
       "vendor": "Ruijie",
       "platform": "ruijie_rgos",
       "feature": "lacp",
+      "feature_scope": [],
       "feature_source": "query_inference",
       "gold_document_ids": [
         "ruijie-rgos-aggregateport"
@@ -1552,10 +1468,8 @@
       "missing_annotation_fields": [
         "feature"
       ],
-      "gold_id_source_status": "unresolved_source_evidence",
-      "unresolved_gold_document_ids": [
-        "ruijie-rgos-aggregateport"
-      ],
+      "gold_id_source_status": "source_evidence_found",
+      "unresolved_gold_document_ids": [],
       "reviewer": null,
       "reviewed_at": null,
       "annotation_status": "pending_human_review",
@@ -1565,13 +1479,10 @@
         "annotation_status"
       ],
       "metadata_validation": {
-        "status": "not_available",
+        "status": "not_run",
         "mismatch_document_ids": [],
         "insufficient_document_ids": [],
-        "checked_fields": [
-          "vendor",
-          "cli_platform"
-        ]
+        "checked_fields": []
       }
     },
     {
@@ -1580,6 +1491,7 @@
       "vendor": "Ruijie",
       "platform": "ruijie_rgos",
       "feature": "static_route",
+      "feature_scope": [],
       "feature_source": "query_inference",
       "gold_document_ids": [
         "ruijie-rgos-show-route"
@@ -1591,10 +1503,8 @@
       "missing_annotation_fields": [
         "feature"
       ],
-      "gold_id_source_status": "unresolved_source_evidence",
-      "unresolved_gold_document_ids": [
-        "ruijie-rgos-show-route"
-      ],
+      "gold_id_source_status": "source_evidence_found",
+      "unresolved_gold_document_ids": [],
       "reviewer": null,
       "reviewed_at": null,
       "annotation_status": "pending_human_review",
@@ -1604,13 +1514,10 @@
         "annotation_status"
       ],
       "metadata_validation": {
-        "status": "not_available",
+        "status": "not_run",
         "mismatch_document_ids": [],
         "insufficient_document_ids": [],
-        "checked_fields": [
-          "vendor",
-          "cli_platform"
-        ]
+        "checked_fields": []
       }
     },
     {
@@ -1619,6 +1526,7 @@
       "vendor": "Ruijie",
       "platform": "ruijie_rgos",
       "feature": "ospf",
+      "feature_scope": [],
       "feature_source": "query_inference",
       "gold_document_ids": [
         "ruijie-rgos-ospf"
@@ -1630,10 +1538,8 @@
       "missing_annotation_fields": [
         "feature"
       ],
-      "gold_id_source_status": "unresolved_source_evidence",
-      "unresolved_gold_document_ids": [
-        "ruijie-rgos-ospf"
-      ],
+      "gold_id_source_status": "source_evidence_found",
+      "unresolved_gold_document_ids": [],
       "reviewer": null,
       "reviewed_at": null,
       "annotation_status": "pending_human_review",
@@ -1643,13 +1549,10 @@
         "annotation_status"
       ],
       "metadata_validation": {
-        "status": "not_available",
+        "status": "not_run",
         "mismatch_document_ids": [],
         "insufficient_document_ids": [],
-        "checked_fields": [
-          "vendor",
-          "cli_platform"
-        ]
+        "checked_fields": []
       }
     },
     {
@@ -1658,6 +1561,7 @@
       "vendor": "Ruijie",
       "platform": "ruijie_rgos",
       "feature": "lldp",
+      "feature_scope": [],
       "feature_source": "query_inference",
       "gold_document_ids": [
         "ruijie-rgos-show-lldp"
@@ -1669,10 +1573,8 @@
       "missing_annotation_fields": [
         "feature"
       ],
-      "gold_id_source_status": "unresolved_source_evidence",
-      "unresolved_gold_document_ids": [
-        "ruijie-rgos-show-lldp"
-      ],
+      "gold_id_source_status": "source_evidence_found",
+      "unresolved_gold_document_ids": [],
       "reviewer": null,
       "reviewed_at": null,
       "annotation_status": "pending_human_review",
@@ -1682,13 +1584,10 @@
         "annotation_status"
       ],
       "metadata_validation": {
-        "status": "not_available",
+        "status": "not_run",
         "mismatch_document_ids": [],
         "insufficient_document_ids": [],
-        "checked_fields": [
-          "vendor",
-          "cli_platform"
-        ]
+        "checked_fields": []
       }
     },
     {
@@ -1697,6 +1596,7 @@
       "vendor": "Ruijie",
       "platform": "ruijie_rgos",
       "feature": "acl",
+      "feature_scope": [],
       "feature_source": "query_inference",
       "gold_document_ids": [
         "ruijie-rgos-acl"
@@ -1708,10 +1608,8 @@
       "missing_annotation_fields": [
         "feature"
       ],
-      "gold_id_source_status": "unresolved_source_evidence",
-      "unresolved_gold_document_ids": [
-        "ruijie-rgos-acl"
-      ],
+      "gold_id_source_status": "source_evidence_found",
+      "unresolved_gold_document_ids": [],
       "reviewer": null,
       "reviewed_at": null,
       "annotation_status": "pending_human_review",
@@ -1721,13 +1619,10 @@
         "annotation_status"
       ],
       "metadata_validation": {
-        "status": "not_available",
+        "status": "not_run",
         "mismatch_document_ids": [],
         "insufficient_document_ids": [],
-        "checked_fields": [
-          "vendor",
-          "cli_platform"
-        ]
+        "checked_fields": []
       }
     },
     {
@@ -1736,6 +1631,7 @@
       "vendor": "Cisco",
       "platform": "cisco_iosxe",
       "feature": "vlan",
+      "feature_scope": [],
       "feature_source": "query_inference",
       "gold_document_ids": [
         "official-template-official-cisco-vlan-basic"
@@ -1758,13 +1654,10 @@
         "annotation_status"
       ],
       "metadata_validation": {
-        "status": "pass",
+        "status": "not_run",
         "mismatch_document_ids": [],
         "insufficient_document_ids": [],
-        "checked_fields": [
-          "vendor",
-          "cli_platform"
-        ]
+        "checked_fields": []
       }
     },
     {
@@ -1773,6 +1666,7 @@
       "vendor": "Cisco",
       "platform": "cisco_iosxe",
       "feature": null,
+      "feature_scope": [],
       "feature_source": "not_applicable_or_unresolved",
       "gold_document_ids": [],
       "acceptable_document_ids": [],
@@ -1801,6 +1695,7 @@
       "vendor": "Huawei",
       "platform": "huawei_vrp",
       "feature": null,
+      "feature_scope": [],
       "feature_source": "not_applicable_or_unresolved",
       "gold_document_ids": [],
       "acceptable_document_ids": [],
@@ -1829,6 +1724,7 @@
       "vendor": "Cisco",
       "platform": "cisco_iosxe",
       "feature": null,
+      "feature_scope": [],
       "feature_source": "not_applicable_or_unresolved",
       "gold_document_ids": [],
       "acceptable_document_ids": [],
@@ -1857,6 +1753,7 @@
       "vendor": "Cisco",
       "platform": "cisco_iosxe",
       "feature": null,
+      "feature_scope": [],
       "feature_source": "not_applicable_or_unresolved",
       "gold_document_ids": [],
       "acceptable_document_ids": [],
@@ -1885,6 +1782,7 @@
       "vendor": null,
       "platform": null,
       "feature": null,
+      "feature_scope": [],
       "feature_source": "not_applicable_or_unresolved",
       "gold_document_ids": [],
       "acceptable_document_ids": [],
@@ -1913,6 +1811,7 @@
       "vendor": null,
       "platform": null,
       "feature": "ssh",
+      "feature_scope": [],
       "feature_source": "query_inference",
       "gold_document_ids": [],
       "acceptable_document_ids": [],
@@ -1941,6 +1840,7 @@
       "vendor": null,
       "platform": null,
       "feature": "lacp",
+      "feature_scope": [],
       "feature_source": "query_inference",
       "gold_document_ids": [],
       "acceptable_document_ids": [],
@@ -1969,6 +1869,7 @@
       "vendor": "Huawei",
       "platform": "huawei_vrp",
       "feature": "vlan",
+      "feature_scope": [],
       "feature_source": "intent_inference",
       "gold_document_ids": [
         "official-template-official-huawei-access-port",
@@ -1993,13 +1894,10 @@
         "annotation_status"
       ],
       "metadata_validation": {
-        "status": "pass",
+        "status": "not_run",
         "mismatch_document_ids": [],
         "insufficient_document_ids": [],
-        "checked_fields": [
-          "vendor",
-          "cli_platform"
-        ]
+        "checked_fields": []
       }
     },
     {
@@ -2008,6 +1906,7 @@
       "vendor": null,
       "platform": null,
       "feature": null,
+      "feature_scope": [],
       "feature_source": "not_applicable_or_unresolved",
       "gold_document_ids": [],
       "acceptable_document_ids": [],
@@ -2030,6 +1929,5 @@
         "checked_fields": []
       }
     }
-  ],
-  "source_scan_known_projected_document_id_count": 74
+  ]
 }

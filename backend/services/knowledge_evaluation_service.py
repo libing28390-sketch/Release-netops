@@ -28,9 +28,12 @@ class KnowledgeEvaluationError(Exception):
 
 ROOT = Path(__file__).resolve().parents[2]
 CASE_FILE = ROOT / "docs" / "knowledge-engine" / "eval" / "v1-baseline-cases.yaml"
+GOLD_400_CASE_FILE = ROOT / "docs" / "knowledge-engine" / "eval" / "eval-golden-400.yaml"
 SUITE_ID = "v1_baseline_postgresql"
 CONTRACT_VERSION = "kui-016-v1"
 MAX_CASES = 200
+GOLD_400_CASE_COUNT = 400
+MAX_FIXTURE_FILE_BYTES = 2 * 1024 * 1024
 
 # These are deliberately hard-coded release gates.  Changing a threshold is
 # an architecture/release decision, not a frontend setting.
@@ -81,6 +84,104 @@ def _load_case_catalog() -> dict[str, Any]:
         "case_count": len(cases),
         "domains": sorted(domains)[:32],
         "database": "PostgreSQL",
+    }
+
+
+def _fixture_bucket_counts(cases: list[Mapping[str, Any]], field: str, *, unknown_key: str) -> list[dict[str, Any]]:
+    counts: dict[str, int] = {}
+    for item in cases:
+        raw_value = item.get(field)
+        value = str(raw_value).strip()[:64] if isinstance(raw_value, str) and raw_value.strip() else unknown_key
+        counts[value] = counts.get(value, 0) + 1
+    return [
+        {"key": key, "count": count}
+        for key, count in sorted(counts.items(), key=lambda pair: (-pair[1], pair[0]))
+    ]
+
+
+def get_gold_400_fixture_summary(user: Mapping[str, Any]) -> dict[str, Any]:
+    """Return only safe aggregate metadata for the official-source 400-case fixture.
+
+    This endpoint is deliberately not a case browser.  The fixture contains
+    generated prompts, answers, expected document identities, and review
+    metadata; none of those fields may be exposed to the tenant UI.  The
+    summary reports source provenance and coverage, not retrieval quality.
+    """
+
+    del user  # Permission is enforced by the API dependency; the file is not tenant data.
+    if not GOLD_400_CASE_FILE.exists():
+        raise KnowledgeEvaluationError("EVAL_GOLD_400_NOT_CONFIGURED", "400-case evaluation fixture is not configured", 503)
+    try:
+        if GOLD_400_CASE_FILE.stat().st_size > MAX_FIXTURE_FILE_BYTES:
+            raise KnowledgeEvaluationError("EVAL_GOLD_400_TOO_LARGE", "400-case evaluation fixture exceeds the supported limit", 503)
+        import yaml
+
+        payload = yaml.safe_load(GOLD_400_CASE_FILE.read_text(encoding="utf-8")) or {}
+    except KnowledgeEvaluationError:
+        raise
+    except Exception as exc:  # pragma: no cover - dependency/filesystem failure
+        raise KnowledgeEvaluationError("EVAL_GOLD_400_UNAVAILABLE", "400-case evaluation fixture is unavailable", 503) from exc
+
+    if not isinstance(payload, Mapping) or not isinstance(payload.get("cases"), list):
+        raise KnowledgeEvaluationError("EVAL_GOLD_400_INVALID", "400-case evaluation fixture is invalid", 503)
+    cases = [item for item in payload["cases"] if isinstance(item, Mapping)]
+    if len(cases) != len(payload["cases"]) or len(cases) != GOLD_400_CASE_COUNT:
+        raise KnowledgeEvaluationError("EVAL_GOLD_400_INVALID", "400-case evaluation fixture does not contain exactly 400 cases", 503)
+    if payload.get("case_count") != GOLD_400_CASE_COUNT:
+        raise KnowledgeEvaluationError("EVAL_GOLD_400_INVALID", "400-case evaluation fixture count metadata is invalid", 503)
+    if not isinstance(payload.get("test_only"), bool) or not isinstance(payload.get("synthetic_data"), bool):
+        raise KnowledgeEvaluationError("EVAL_GOLD_400_POLICY_INVALID", "400-case dataset policy flags are invalid", 503)
+
+    source_policy = payload.get("source_policy") if isinstance(payload.get("source_policy"), Mapping) else {}
+    if source_policy.get("official_sources") != "required" or source_policy.get("source_collection") != "official_url_backed_local_summary":
+        raise KnowledgeEvaluationError("EVAL_GOLD_400_POLICY_INVALID", "400-case dataset is not official-source-backed", 503)
+    collection = payload.get("collection") if isinstance(payload.get("collection"), Mapping) else {}
+    if (
+        collection.get("mode") != "official_url_backed_local_summary"
+        or not str(collection.get("source_manifest") or "").strip()
+        or not str(collection.get("source_manifest_sha256") or "").strip()
+    ):
+        raise KnowledgeEvaluationError("EVAL_GOLD_400_POLICY_INVALID", "400-case source manifest metadata is invalid", 503)
+    review_policy = payload.get("review_policy") if isinstance(payload.get("review_policy"), Mapping) else {}
+    return {
+        "dataset_id": str(payload.get("dataset_id") or "nexora-kb-eval-gold-400")[:128],
+        "status": str(payload.get("status") or "unknown")[:32],
+        "purpose": str(payload.get("purpose") or "Official-source-backed automated evaluation dataset")[:160],
+        "test_only": bool(payload.get("test_only")),
+        "synthetic_data": bool(payload.get("synthetic_data")),
+        "production_eligible": bool(payload.get("production_eligible")),
+        "production_gate": "READY" if payload.get("production_eligible") is True else "NOT_READY",
+        "case_count": GOLD_400_CASE_COUNT,
+        "database": "PostgreSQL",
+        "collection": {
+            "mode": str(collection.get("mode") or "unknown")[:96],
+            "source_manifest": str(collection.get("source_manifest") or "")[:160],
+            "source_manifest_sha256": str(collection.get("source_manifest_sha256") or "")[:128],
+            "collected_at": str(collection.get("collected_at") or "")[:32],
+            "content_origin": str(collection.get("content_origin") or "")[:128],
+        },
+        "source_policy": {
+            "database": str(source_policy.get("database") or "PostgreSQL")[:32],
+            "sqlite": str(source_policy.get("sqlite") or "not_used")[:32],
+            "external_network": str(source_policy.get("external_network") or "forbidden")[:32],
+            "secrets": str(source_policy.get("secrets") or "forbidden")[:32],
+            "production_data": str(source_policy.get("production_data") or "forbidden")[:32],
+            "official_sources": str(source_policy.get("official_sources") or "required")[:32],
+            "source_collection": str(source_policy.get("source_collection") or "official_url_backed_local_summary")[:64],
+        },
+        "coverage": {
+            "categories": _fixture_bucket_counts(cases, "category", unknown_key="unknown"),
+            "vendors": _fixture_bucket_counts(cases, "vendor", unknown_key="cross_vendor_or_unknown"),
+            "splits": _fixture_bucket_counts(cases, "split", unknown_key="unspecified"),
+        },
+        "review": {
+            "mode": str(review_policy.get("review_mode") or "unknown")[:96],
+            "minimum_double_review_cases": int(review_policy.get("minimum_double_review_cases") or 0),
+            "human_review_required": bool(review_policy.get("human_review_required")),
+            "human_review_ready": not bool(review_policy.get("human_review_required")),
+        },
+        "redacted": True,
+        "contains_case_content": False,
     }
 
 
@@ -264,8 +365,10 @@ def run_evaluation(user: Mapping[str, Any]) -> dict[str, Any]:
 
 __all__ = [
     "CONTRACT_VERSION",
+    "GOLD_400_CASE_COUNT",
     "KnowledgeEvaluationError",
     "SUITE_ID",
+    "get_gold_400_fixture_summary",
     "get_evaluation_report",
     "run_evaluation",
 ]

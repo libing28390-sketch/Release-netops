@@ -1,6 +1,6 @@
 import React, { useCallback, useEffect, useMemo, useState } from 'react';
-import { Activity, CheckCircle2, CircleAlert, Database, Gauge, Play, ShieldCheck } from 'lucide-react';
-import { getKnowledgeEvaluation, getKnowledgeExperimentObservability, runKnowledgeEvaluation, type KnowledgeEvaluationReport, type KnowledgeExperimentObservability } from '../../../api/ai';
+import { Activity, CheckCircle2, CircleAlert, Database, Gauge, ListChecks, Play, ShieldCheck } from 'lucide-react';
+import { getKnowledgeEvaluation, getKnowledgeExperimentObservability, getKnowledgeGold400FixtureSummary, runKnowledgeEvaluation, type KnowledgeEvaluationReport, type KnowledgeExperimentObservability, type KnowledgeGold400FixtureSummary } from '../../../api/ai';
 
 const metricLabels: Record<string, string> = {
   retrieval_accuracy: '检索准确率',
@@ -35,6 +35,25 @@ const observabilityMetricLabels: Record<string, string> = {
   error_rate: '错误率',
 };
 
+const fixtureLabels: Record<string, string> = {
+  knowledge_config_reference: '知识配置参考',
+  troubleshooting: '故障排查',
+  configuration_validation_diagnostic: '配置验证诊断',
+  asset_alarm_query: '资产与告警查询',
+  intent_clarification_missing_parameter: '意图澄清 / 缺少参数',
+  tool_call_dangerous_operation: '工具调用 / 危险操作',
+  negative_security_no_match: '安全负例 / 不应命中',
+  train: '训练集',
+  debug: '调试集',
+  hidden: '隐藏集',
+  unspecified: '未指定',
+  cross_vendor_or_unknown: '跨厂商或未指定',
+};
+
+function fixtureBucketLabel(key: string): string {
+  return fixtureLabels[key] || key;
+}
+
 function formatObservabilityMetric(key: string, value: number | null): string {
   if (value === null || value === undefined) return '未测量';
   if (key.endsWith('_rate') || key.includes('precision') || key.includes('recall') || key === 'mrr' || key === 'ndcg') {
@@ -55,6 +74,9 @@ export const RagEvaluationPanel: React.FC = () => {
   const [error, setError] = useState('');
   const [observability, setObservability] = useState<KnowledgeExperimentObservability | null>(null);
   const [observabilityLoading, setObservabilityLoading] = useState(true);
+  const [fixture, setFixture] = useState<KnowledgeGold400FixtureSummary | null>(null);
+  const [fixtureLoading, setFixtureLoading] = useState(true);
+  const [fixtureError, setFixtureError] = useState('');
 
   const load = useCallback(async () => {
     setLoading(true);
@@ -80,8 +102,22 @@ export const RagEvaluationPanel: React.FC = () => {
     }
   }, []);
 
+  const loadFixture = useCallback(async () => {
+    setFixtureLoading(true);
+    setFixtureError('');
+    try {
+      setFixture(await getKnowledgeGold400FixtureSummary());
+    } catch (cause) {
+      setFixture(null);
+      setFixtureError(errorMessage(cause));
+    } finally {
+      setFixtureLoading(false);
+    }
+  }, []);
+
   useEffect(() => { void load(); }, [load]);
   useEffect(() => { void loadObservability(); }, [loadObservability]);
+  useEffect(() => { void loadFixture(); }, [loadFixture]);
 
   const run = async () => {
     setRunning(true);
@@ -133,6 +169,45 @@ export const RagEvaluationPanel: React.FC = () => {
           {observability.rollouts.length > 0 && <div><h3 className="mb-2 text-xs font-bold text-slate-700 dark:text-slate-200">灰度状态</h3><div className="grid gap-2 md:grid-cols-2">{observability.rollouts.map((item) => <div key={item.rollout_id} className="flex flex-wrap items-center justify-between gap-2 rounded-xl border border-slate-100 px-3 py-2 text-[11px] dark:border-slate-800"><span className="font-semibold text-slate-700 dark:text-slate-200">{item.component}</span><span className="rounded-full bg-slate-100 px-2 py-0.5 font-semibold text-slate-600 dark:bg-slate-800 dark:text-slate-300">{observabilityStatusLabel(item.mode)} · {item.rollout_percent}%</span><span className={item.kill_switch ? 'font-semibold text-rose-600' : 'text-slate-500'}>{item.kill_switch ? 'Kill Switch ON' : `${item.baseline_version} → ${item.candidate_version}`}</span></div>)}</div></div>}
           {observability.shadow_observations.length > 0 && <div><h3 className="mb-2 text-xs font-bold text-slate-700 dark:text-slate-200">Shadow 排名差异（候选哈希）</h3><div className="grid gap-2 md:grid-cols-2">{observability.shadow_observations.map((item) => <div key={item.observation_id} className="rounded-xl border border-slate-100 p-3 text-[11px] dark:border-slate-800"><div className="flex flex-wrap items-center justify-between gap-2"><span className="font-semibold text-slate-700 dark:text-slate-200">{item.component}</span><span className="rounded-full bg-slate-100 px-2 py-0.5 font-semibold text-slate-600 dark:bg-slate-800 dark:text-slate-300">{observabilityStatusLabel(item.status)}</span></div><div className="mt-2 flex flex-wrap gap-3 text-slate-500"><span>baseline {item.baseline_count}</span><span>candidate {item.candidate_count}</span><span>{item.order_changed ? `变化 ${item.rank_deltas.length} 项` : '顺序未变'}</span><span>{item.candidate_latency_ms == null ? '候选延迟未测量' : `${item.candidate_latency_ms} ms`}</span></div></div>)}</div></div>}
         </div>}
+      </section>
+      <section aria-labelledby="gold400-fixture-title" className="rounded-2xl border border-amber-200 bg-amber-50/60 p-5 shadow-sm dark:border-amber-900/60 dark:bg-amber-950/20">
+        <div className="mb-4 flex flex-wrap items-start justify-between gap-3">
+          <div>
+            <div className="mb-1 flex items-center gap-2 text-xs font-bold uppercase tracking-[0.16em] text-amber-700 dark:text-amber-300"><ListChecks className="h-4 w-4" /> Official Source · 400</div>
+            <h2 id="gold400-fixture-title" className="text-sm font-bold text-slate-900 dark:text-white">400 条官方来源自动评测集概览</h2>
+            <p className="mt-1 max-w-3xl text-xs leading-5 text-slate-600 dark:text-slate-300">这里可以确认 400 条数据的数量、类别、厂商和 train/debug/hidden 切分。当前策略不要求人工评审；每个 answer 用例必须绑定允许域名下的官方 HTTPS 来源。页面不会下发题目、标准答案、Gold 文档 ID 或文档正文。</p>
+          </div>
+          <span className="rounded-full border border-amber-300 bg-white px-2.5 py-1 text-[11px] font-semibold text-amber-700 dark:border-amber-800 dark:bg-slate-900 dark:text-amber-300">Official URL-backed · no human review</span>
+        </div>
+        {fixtureLoading ? <p role="status" className="rounded-xl bg-white/70 p-5 text-center text-xs text-slate-500 dark:bg-slate-900/60 dark:text-slate-300">加载 400 条夹具概览…</p> : fixtureError ? <p role="alert" className="rounded-xl border border-amber-300 bg-white/70 p-5 text-center text-xs text-amber-800 dark:border-amber-800 dark:bg-slate-900/60 dark:text-amber-200">暂时无法读取 400 条测试夹具：{fixtureError}</p> : !fixture ? <p role="status" className="rounded-xl bg-white/70 p-5 text-center text-xs text-slate-500 dark:bg-slate-900/60 dark:text-slate-300">暂无夹具概览。</p> : <>
+          <div className="grid gap-3 sm:grid-cols-2 xl:grid-cols-4">
+            <div className="rounded-xl border border-amber-100 bg-white p-4 dark:border-amber-900/50 dark:bg-slate-900"><div className="text-[10px] font-semibold uppercase tracking-wide text-slate-500">用例总数</div><div className="mt-1 text-2xl font-bold text-slate-900 dark:text-white">{fixture.case_count}</div><div className="mt-1 text-[11px] text-slate-500">固定测试夹具</div></div>
+            <div className="rounded-xl border border-amber-100 bg-white p-4 dark:border-amber-900/50 dark:bg-slate-900"><div className="text-[10px] font-semibold uppercase tracking-wide text-slate-500">数据状态</div><div className="mt-1 text-lg font-bold text-slate-900 dark:text-white">{fixture.status}</div><div className="mt-1 truncate text-[11px] text-slate-500" title={fixture.dataset_id}>{fixture.dataset_id}</div></div>
+            <div className="rounded-xl border border-amber-100 bg-white p-4 dark:border-amber-900/50 dark:bg-slate-900"><div className="text-[10px] font-semibold uppercase tracking-wide text-slate-500">数据库契约</div><div className="mt-1 text-lg font-bold text-slate-900 dark:text-white">{fixture.database}</div><div className="mt-1 text-[11px] text-slate-500">SQLite：{fixture.source_policy.sqlite}</div></div>
+            <div className={`rounded-xl border p-4 ${fixture.production_eligible ? 'border-emerald-200 bg-emerald-50 dark:border-emerald-900/60 dark:bg-emerald-950/30' : 'border-rose-200 bg-rose-50 dark:border-rose-900/60 dark:bg-rose-950/30'}`}><div className={`text-[10px] font-semibold uppercase tracking-wide ${fixture.production_eligible ? 'text-emerald-600 dark:text-emerald-300' : 'text-rose-600 dark:text-rose-300'}`}>来源门禁</div><div className={`mt-1 text-lg font-bold ${fixture.production_eligible ? 'text-emerald-700 dark:text-emerald-200' : 'text-rose-700 dark:text-rose-200'}`}>{fixture.production_gate}</div><div className={`mt-1 text-[11px] ${fixture.production_eligible ? 'text-emerald-700/80 dark:text-emerald-300/80' : 'text-rose-700/80 dark:text-rose-300/80'}`}>{fixture.synthetic_data ? '合成数据，不可作为正式来源' : '已绑定官方 URL；仍需看检索质量门禁'}</div></div>
+          </div>
+          <div className="mt-4 grid gap-4 lg:grid-cols-3">
+            {([
+              ['按类别', fixture.coverage.categories],
+              ['按厂商', fixture.coverage.vendors],
+              ['按切分', fixture.coverage.splits],
+            ] as Array<[string, KnowledgeGold400FixtureSummary['coverage']['categories']]>).map(([title, items]) => (
+              <div key={title} className="rounded-xl border border-amber-100 bg-white p-4 dark:border-amber-900/50 dark:bg-slate-900">
+                <h3 className="mb-3 text-xs font-bold text-slate-700 dark:text-slate-200">{title}</h3>
+                <ul className="space-y-2 text-xs">
+                  {items.map((item) => <li key={item.key} className="flex items-center justify-between gap-3"><span className="truncate text-slate-600 dark:text-slate-300" title={item.key}>{fixtureBucketLabel(item.key)}</span><span className="font-bold text-slate-900 dark:text-white">{item.count}</span></li>)}
+                </ul>
+              </div>
+            ))}
+          </div>
+          <div className="mt-4 flex flex-wrap items-center justify-between gap-2 rounded-xl border border-amber-200 bg-white/70 px-3 py-2 text-[11px] text-slate-600 dark:border-amber-900/60 dark:bg-slate-900/60 dark:text-slate-300">
+            <span>来源策略：{fixture.source_policy.official_sources} · {fixture.source_policy.source_collection} · PostgreSQL · 外网 {fixture.source_policy.external_network} · secrets {fixture.source_policy.secrets} · 生产数据 {fixture.source_policy.production_data}</span>
+            <span className="font-semibold text-amber-700 dark:text-amber-300">人工评审：{fixture.review.human_review_required ? (fixture.review.human_review_ready ? '已就绪' : '仍需完成') : '不要求'}（双审要求 {fixture.review.minimum_double_review_cases} 条）</span>
+            <span className="basis-full truncate text-slate-500 dark:text-slate-400" title={`${fixture.collection.source_manifest} · ${fixture.collection.source_manifest_sha256}`}>
+              来源清单：{fixture.collection.source_manifest} · SHA-256 {fixture.collection.source_manifest_sha256.slice(0, 12)}… · {fixture.collection.collected_at}
+            </span>
+          </div>
+        </>}
       </section>
       {report && <>
         <section className="grid gap-3 sm:grid-cols-2 xl:grid-cols-5">

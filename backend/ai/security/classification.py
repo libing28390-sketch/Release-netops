@@ -57,7 +57,11 @@ PRIVATE_KEY_RE = re.compile(
 SECRET_ASSIGNMENT_RE = re.compile(
     r"(?im)\b(?:password|passwd|secret|community|token|api[_ -]?key|access[_ -]?token|"
     r"private[_ -]?key|pre-shared-key|key-string|shared-key)\b\s*"
-    r"(?:(?:[:=])|(?:irreversible[-_ ]?cipher|cipher|simple|hash|7|8|9|read|write)\s+)?"
+    # Huawei VRP permits an optional privilege-level selector before the
+    # cipher/simple modifier (for example ``password level 3 cipher``). Keep
+    # the selector in the command grammar so a redacted value is not mistaken
+    # for live credential material while real values remain detectable.
+    r"(?:(?:[:=])|(?:(?:level\s+\d+\s+)?(?:irreversible[-_ ]?cipher|cipher|simple|hash|7|8|9|read|write)\s+)|(?:level\s+\d+\s+))?"
     # Do not backtrack and treat a standalone CLI modifier such as
     # ``password irreversible-cipher`` as the credential value.  If the
     # actual value arrives in a later stream chunk, the output resolver keeps

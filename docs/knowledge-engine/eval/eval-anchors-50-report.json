@@ -14,30 +14,29 @@
       "recall_at_5": 0.95,
       "recall_at_10": 0.97
     },
-    "failed_cases": 12,
+    "failed_cases": 11,
     "invalid_annotation_cases": [],
     "failure_reasons": [
-      "ANCHOR-017: No acceptable Gold Document hit; expected one of ['official-template-official-huawei-ce6800-vxlan-evpn-basic'], got []",
-      "ANCHOR-018: No acceptable Gold Document hit; expected one of ['official-template-official-huawei-access-port'], got []",
-      "ANCHOR-019: No acceptable Gold Document hit; expected one of ['official-template-official-huawei-trunk-port'], got []",
-      "ANCHOR-026: No acceptable Gold Document hit; expected one of ['official-template-official-cisco-access-port'], got []",
-      "ANCHOR-030: No acceptable Gold Document hit; expected one of ['official-template-official-h3c-access-port'], got ['official-template-official-h3c-stp-basic', 'official-template-official-h3c-lacp-bridge-aggregation', 'official-template-official-h3c-smlag-basic', 'official-template-official-h3c-comware-ospf-basic', 'official-template-official-h3c-vrrp-basic']",
-      "ANCHOR-034: No acceptable Gold Document hit; expected one of ['official-template-official-h3c-access-port'], got []",
-      "ANCHOR-035: No acceptable Gold Document hit; expected one of ['ruijie-rgos-vlan-access'], got []",
-      "ANCHOR-036: No acceptable Gold Document hit; expected one of ['ruijie-rgos-aggregateport'], got []",
-      "ANCHOR-037: No acceptable Gold Document hit; expected one of ['ruijie-rgos-show-route'], got []",
-      "ANCHOR-038: No acceptable Gold Document hit; expected one of ['ruijie-rgos-ospf'], got []",
-      "ANCHOR-039: No acceptable Gold Document hit; expected one of ['ruijie-rgos-show-lldp'], got []",
-      "ANCHOR-040: No acceptable Gold Document hit; expected one of ['ruijie-rgos-acl'], got []"
+      "ANCHOR-003: No acceptable Gold Document hit; expected one of ['official-template-official-huawei-access-port', 'official-template-official-huawei-trunk-port'], got ['official-template-official-huawei-ce6885-interface-status-diagnostic']",
+      "ANCHOR-004: No acceptable Gold Document hit; expected one of ['official-template-official-cisco-access-port', 'official-template-official-cisco-trunk-port'], got ['official-template-official-cisco-interface-switchport-basic']",
+      "ANCHOR-016: No acceptable Gold Document hit; expected one of ['official-template-official-huawei-s5700-ospf-basic'], got ['official-template-official-huawei-ospf-bfd-basic']",
+      "ANCHOR-017: No acceptable Gold Document hit; expected one of ['official-template-official-huawei-ce6800-vxlan-evpn-basic'], got ['official-template-official-huawei-ce12800-vxlan-evpn-basic']",
+      "ANCHOR-018: No acceptable Gold Document hit; expected one of ['official-template-official-huawei-access-port'], got ['official-template-official-huawei-port-security-basic']",
+      "ANCHOR-019: No acceptable Gold Document hit; expected one of ['official-template-official-huawei-trunk-port'], got ['official-template-official-huawei-cpu-memory-diagnostic']",
+      "ANCHOR-020: No acceptable Gold Document hit; expected one of ['official-template-official-huawei-aaa-local'], got ['official-template-official-huawei-super-password-basic']",
+      "ANCHOR-026: No acceptable Gold Document hit; expected one of ['official-template-official-cisco-access-port'], got ['official-template-official-cisco-arp-mac-diagnostic']",
+      "ANCHOR-028: No acceptable Gold Document hit; expected one of ['official-template-official-cisco-aaa-local'], got ['official-template-official-cisco-aaa-authentication-basic']",
+      "ANCHOR-030: No acceptable Gold Document hit; expected one of ['official-template-official-h3c-access-port'], got ['official-template-official-h3c-interface-brief-diagnostic']",
+      "ANCHOR-034: No acceptable Gold Document hit; expected one of ['official-template-official-h3c-access-port'], got ['official-template-official-h3c-arp-mac-diagnostic']"
     ],
     "checks": {
       "recall_at_5": {
-        "actual": 0.7143,
+        "actual": 0.7381,
         "required": 0.95,
         "passed": false
       },
       "recall_at_10": {
-        "actual": 0.7143,
+        "actual": 0.7381,
         "required": 0.97,
         "passed": false
       },
@@ -46,22 +45,22 @@
         "passed": true
       },
       "answer_case_target_hit": {
-        "failed_cases": 12,
+        "failed_cases": 11,
         "passed": false
       }
     }
   },
   "total_cases": 50,
-  "passed_cases": 38,
-  "failed_cases": 12,
-  "pass_rate": 0.76,
+  "passed_cases": 39,
+  "failed_cases": 11,
+  "pass_rate": 0.78,
   "metrics": {
-    "recall_at_5": 0.7143,
-    "recall_at_10": 0.7143,
-    "mean_reciprocal_rank_mrr": 0.6508,
-    "ndcg": 0.6491,
-    "citation_precision": 0.5929,
-    "citation_recall": 0.6786,
+    "recall_at_5": 0.7381,
+    "recall_at_10": 0.7381,
+    "mean_reciprocal_rank_mrr": 0.7381,
+    "ndcg": 0.7197,
+    "citation_precision": 0.7024,
+    "citation_recall": 0.7381,
     "citation_metric_scope": "retrieved_document_identity_proxy",
     "wrong_vendor_rate": 0.0,
     "feature_pollution_rate": null,
@@ -70,9 +69,9 @@
     "platform_version_conflict_rate": null,
     "platform_version_conflict_status": "platform_only",
     "latency_ms": {
-      "p50": 9.04,
-      "p95": 45.82,
-      "max": 643.68,
+      "p50": 11.19,
+      "p95": 95.93,
+      "max": 831.12,
       "sample_count": 50
     },
     "error_rate": 0.0,
@@ -82,9 +81,9 @@
       "Cisco": {
         "case_count": 18,
         "quality_case_count": 15,
-        "recall_at_5": 0.9333,
-        "recall_at_10": 0.9333,
-        "mean_reciprocal_rank_mrr": 0.8667,
+        "recall_at_5": 0.8,
+        "recall_at_10": 0.8,
+        "mean_reciprocal_rank_mrr": 0.8,
         "wrong_vendor_cases": 0,
         "wrong_vendor_rate": 0.0,
         "feature_evaluated_cases": 0,
@@ -108,9 +107,9 @@
       "Huawei": {
         "case_count": 16,
         "quality_case_count": 15,
-        "recall_at_5": 0.8,
-        "recall_at_10": 0.8,
-        "mean_reciprocal_rank_mrr": 0.6889,
+        "recall_at_5": 0.6,
+        "recall_at_10": 0.6,
+        "mean_reciprocal_rank_mrr": 0.6,
         "wrong_vendor_cases": 0,
         "wrong_vendor_rate": 0.0,
         "feature_evaluated_cases": 0,
@@ -121,9 +120,9 @@
       "Ruijie": {
         "case_count": 6,
         "quality_case_count": 6,
-        "recall_at_5": 0.0,
-        "recall_at_10": 0.0,
-        "mean_reciprocal_rank_mrr": 0.0,
+        "recall_at_5": 1.0,
+        "recall_at_10": 1.0,
+        "mean_reciprocal_rank_mrr": 1.0,
         "wrong_vendor_cases": 0,
         "wrong_vendor_rate": 0.0,
         "feature_evaluated_cases": 0,
@@ -133,12 +132,12 @@
       }
     },
     "measurement_notes": [
-      "Citation precision/recall are retrieval-document identity proxies; generated answer citation traces were not exercised.",
+      "Citation precision/recall are retrieval-document identity proxies; generated answer citation traces were not exercised. Citation recall is binary against the explicit acceptable-document alternative set.",
       "Feature pollution is not measured when the dataset has no reviewed feature annotation.",
       "Platform and version conflict metrics are reported separately; version conflict is not measured without software version annotations."
     ]
   },
-  "duration_ms": 1403,
+  "duration_ms": 2521,
   "results": [
     {
       "id": "ANCHOR-001",
@@ -165,6 +164,7 @@
         "huawei_vrp"
       ],
       "feature": null,
+      "feature_scope": [],
       "returned_features": [
         "vlan"
       ],
@@ -184,7 +184,7 @@
       "ndcg": 1.0,
       "citation_precision": 1.0,
       "citation_recall": 1.0,
-      "latency_ms": 643.68,
+      "latency_ms": 831.12,
       "provider_error": false,
       "error_code": null,
       "safety_passed": true,
@@ -219,6 +219,7 @@
         "cisco_iosxe"
       ],
       "feature": null,
+      "feature_scope": [],
       "returned_features": [
         "vlan"
       ],
@@ -238,7 +239,7 @@
       "ndcg": 1.0,
       "citation_precision": 1.0,
       "citation_recall": 1.0,
-      "latency_ms": 22.88,
+      "latency_ms": 95.23,
       "provider_error": false,
       "error_code": null,
       "safety_passed": true,
@@ -263,11 +264,7 @@
         "official-template-official-huawei-trunk-port"
       ],
       "returned_document_ids": [
-        "official-template-official-huawei-qos-mqc",
-        "official-template-official-huawei-eth-trunk",
-        "official-template-official-huawei-trunk-port",
-        "official-template-official-huawei-vrrp",
-        "official-template-official-huawei-loopback"
+        "official-template-official-huawei-ce6885-interface-status-diagnostic"
       ],
       "returned_vendors": [
         "Huawei"
@@ -276,12 +273,9 @@
         "huawei_vrp"
       ],
       "feature": null,
+      "feature_scope": [],
       "returned_features": [
-        "lacp",
-        "loopback",
-        "qos",
-        "trunk",
-        "vrrp"
+        "interface"
       ],
       "vendor_isolation_passed": true,
       "feature_pollution_passed": null,
@@ -290,24 +284,28 @@
       "version_conflict_passed": null,
       "guard_case": false,
       "quality_eligible": true,
-      "target_document_hit": true,
-      "target_document_hit_at_5": true,
-      "target_document_hit_at_10": true,
-      "recall_at_5": 1.0,
-      "recall_at_10": 1.0,
-      "mrr": 0.3333333333333333,
-      "ndcg": 0.3066,
-      "citation_precision": 0.2,
-      "citation_recall": 0.5,
-      "latency_ms": 45.55,
+      "target_document_hit": false,
+      "target_document_hit_at_5": false,
+      "target_document_hit_at_10": false,
+      "recall_at_5": 0.0,
+      "recall_at_10": 0.0,
+      "mrr": 0.0,
+      "ndcg": 0.0,
+      "citation_precision": 0.0,
+      "citation_recall": 0.0,
+      "latency_ms": 96.51,
       "provider_error": false,
       "error_code": null,
       "safety_passed": true,
-      "quality_passed": true,
-      "passed": true,
+      "quality_passed": false,
+      "passed": false,
       "safety_failed_reasons": [],
-      "quality_failed_reasons": [],
-      "failed_reasons": []
+      "quality_failed_reasons": [
+        "No acceptable Gold Document hit; expected one of ['official-template-official-huawei-access-port', 'official-template-official-huawei-trunk-port'], got ['official-template-official-huawei-ce6885-interface-status-diagnostic']"
+      ],
+      "failed_reasons": [
+        "No acceptable Gold Document hit; expected one of ['official-template-official-huawei-access-port', 'official-template-official-huawei-trunk-port'], got ['official-template-official-huawei-ce6885-interface-status-diagnostic']"
+      ]
     },
     {
       "id": "ANCHOR-004",
@@ -324,11 +322,7 @@
         "official-template-official-cisco-trunk-port"
       ],
       "returned_document_ids": [
-        "official-template-official-cisco-lacp-port-channel",
-        "official-template-official-cisco-trunk-port",
-        "official-template-official-cisco-access-port",
-        "official-template-official-cisco-c9300-ospf-basic",
-        "official-template-official-cisco-qos-mqc"
+        "official-template-official-cisco-interface-switchport-basic"
       ],
       "returned_vendors": [
         "Cisco"
@@ -337,12 +331,9 @@
         "cisco_iosxe"
       ],
       "feature": null,
+      "feature_scope": [],
       "returned_features": [
-        "access_port",
-        "lacp",
-        "ospf",
-        "qos",
-        "trunk"
+        "interface"
       ],
       "vendor_isolation_passed": true,
       "feature_pollution_passed": null,
@@ -351,24 +342,28 @@
       "version_conflict_passed": null,
       "guard_case": false,
       "quality_eligible": true,
-      "target_document_hit": true,
-      "target_document_hit_at_5": true,
-      "target_document_hit_at_10": true,
-      "recall_at_5": 1.0,
-      "recall_at_10": 1.0,
-      "mrr": 0.5,
-      "ndcg": 0.6934,
-      "citation_precision": 0.4,
-      "citation_recall": 1.0,
-      "latency_ms": 41.76,
+      "target_document_hit": false,
+      "target_document_hit_at_5": false,
+      "target_document_hit_at_10": false,
+      "recall_at_5": 0.0,
+      "recall_at_10": 0.0,
+      "mrr": 0.0,
+      "ndcg": 0.0,
+      "citation_precision": 0.0,
+      "citation_recall": 0.0,
+      "latency_ms": 99.08,
       "provider_error": false,
       "error_code": null,
       "safety_passed": true,
-      "quality_passed": true,
-      "passed": true,
+      "quality_passed": false,
+      "passed": false,
       "safety_failed_reasons": [],
-      "quality_failed_reasons": [],
-      "failed_reasons": []
+      "quality_failed_reasons": [
+        "No acceptable Gold Document hit; expected one of ['official-template-official-cisco-access-port', 'official-template-official-cisco-trunk-port'], got ['official-template-official-cisco-interface-switchport-basic']"
+      ],
+      "failed_reasons": [
+        "No acceptable Gold Document hit; expected one of ['official-template-official-cisco-access-port', 'official-template-official-cisco-trunk-port'], got ['official-template-official-cisco-interface-switchport-basic']"
+      ]
     },
     {
       "id": "ANCHOR-005",
@@ -392,6 +387,7 @@
         "huawei_vrp"
       ],
       "feature": null,
+      "feature_scope": [],
       "returned_features": [
         "ospf"
       ],
@@ -411,7 +407,7 @@
       "ndcg": 1.0,
       "citation_precision": 1.0,
       "citation_recall": 1.0,
-      "latency_ms": 9.2,
+      "latency_ms": 12.48,
       "provider_error": false,
       "error_code": null,
       "safety_passed": true,
@@ -443,6 +439,7 @@
         "cisco_iosxe"
       ],
       "feature": null,
+      "feature_scope": [],
       "returned_features": [
         "ospf"
       ],
@@ -462,7 +459,7 @@
       "ndcg": 1.0,
       "citation_precision": 1.0,
       "citation_recall": 1.0,
-      "latency_ms": 9.23,
+      "latency_ms": 11.46,
       "provider_error": false,
       "error_code": null,
       "safety_passed": true,
@@ -497,6 +494,7 @@
         "huawei_vrp"
       ],
       "feature": null,
+      "feature_scope": [],
       "returned_features": [
         "ssh"
       ],
@@ -516,7 +514,7 @@
       "ndcg": 1.0,
       "citation_precision": 1.0,
       "citation_recall": 1.0,
-      "latency_ms": 19.48,
+      "latency_ms": 93.74,
       "provider_error": false,
       "error_code": null,
       "safety_passed": true,
@@ -551,6 +549,7 @@
         "cisco_iosxe"
       ],
       "feature": null,
+      "feature_scope": [],
       "returned_features": [
         "ssh"
       ],
@@ -570,7 +569,7 @@
       "ndcg": 1.0,
       "citation_precision": 1.0,
       "citation_recall": 1.0,
-      "latency_ms": 18.31,
+      "latency_ms": 89.57,
       "provider_error": false,
       "error_code": null,
       "safety_passed": true,
@@ -602,6 +601,7 @@
         "huawei_vrp"
       ],
       "feature": null,
+      "feature_scope": [],
       "returned_features": [
         "ntp"
       ],
@@ -621,7 +621,7 @@
       "ndcg": 1.0,
       "citation_precision": 1.0,
       "citation_recall": 1.0,
-      "latency_ms": 8.35,
+      "latency_ms": 9.6,
       "provider_error": false,
       "error_code": null,
       "safety_passed": true,
@@ -653,6 +653,7 @@
         "cisco_iosxe"
       ],
       "feature": null,
+      "feature_scope": [],
       "returned_features": [
         "ntp"
       ],
@@ -672,7 +673,7 @@
       "ndcg": 1.0,
       "citation_precision": 1.0,
       "citation_recall": 1.0,
-      "latency_ms": 7.98,
+      "latency_ms": 11.05,
       "provider_error": false,
       "error_code": null,
       "safety_passed": true,
@@ -704,6 +705,7 @@
         "huawei_vrp"
       ],
       "feature": null,
+      "feature_scope": [],
       "returned_features": [
         "static_route"
       ],
@@ -723,7 +725,7 @@
       "ndcg": 1.0,
       "citation_precision": 1.0,
       "citation_recall": 1.0,
-      "latency_ms": 8.26,
+      "latency_ms": 8.91,
       "provider_error": false,
       "error_code": null,
       "safety_passed": true,
@@ -746,11 +748,7 @@
         "official-template-official-cisco-static-route-basic"
       ],
       "returned_document_ids": [
-        "official-template-official-cisco-c9300-ospf-basic",
-        "official-template-official-cisco-static-route-basic",
-        "official-template-official-cisco-acl-basic",
-        "official-template-official-cisco-aaa-local",
-        "official-template-official-cisco-stp-basic"
+        "official-template-official-cisco-static-route-basic"
       ],
       "returned_vendors": [
         "Cisco"
@@ -759,12 +757,9 @@
         "cisco_iosxe"
       ],
       "feature": null,
+      "feature_scope": [],
       "returned_features": [
-        "acl",
-        "ospf",
-        "ssh",
-        "static_route",
-        "stp"
+        "static_route"
       ],
       "vendor_isolation_passed": true,
       "feature_pollution_passed": null,
@@ -778,11 +773,11 @@
       "target_document_hit_at_10": true,
       "recall_at_5": 1.0,
       "recall_at_10": 1.0,
-      "mrr": 0.5,
-      "ndcg": 0.6309,
-      "citation_precision": 0.2,
+      "mrr": 1.0,
+      "ndcg": 1.0,
+      "citation_precision": 1.0,
       "citation_recall": 1.0,
-      "latency_ms": 29.66,
+      "latency_ms": 11.41,
       "provider_error": false,
       "error_code": null,
       "safety_passed": true,
@@ -817,6 +812,7 @@
         "huawei_vrp"
       ],
       "feature": null,
+      "feature_scope": [],
       "returned_features": [
         "bgp"
       ],
@@ -836,7 +832,7 @@
       "ndcg": 1.0,
       "citation_precision": 1.0,
       "citation_recall": 1.0,
-      "latency_ms": 19.33,
+      "latency_ms": 89.71,
       "provider_error": false,
       "error_code": null,
       "safety_passed": true,
@@ -868,6 +864,7 @@
         "huawei_vrp"
       ],
       "feature": null,
+      "feature_scope": [],
       "returned_features": [
         "lacp"
       ],
@@ -887,7 +884,7 @@
       "ndcg": 1.0,
       "citation_precision": 1.0,
       "citation_recall": 1.0,
-      "latency_ms": 8.11,
+      "latency_ms": 10.28,
       "provider_error": false,
       "error_code": null,
       "safety_passed": true,
@@ -919,6 +916,7 @@
         "huawei_vrp"
       ],
       "feature": null,
+      "feature_scope": [],
       "returned_features": [
         "acl"
       ],
@@ -938,7 +936,7 @@
       "ndcg": 1.0,
       "citation_precision": 1.0,
       "citation_recall": 1.0,
-      "latency_ms": 18.15,
+      "latency_ms": 93.95,
       "provider_error": false,
       "error_code": null,
       "safety_passed": true,
@@ -961,7 +959,7 @@
         "official-template-official-huawei-s5700-ospf-basic"
       ],
       "returned_document_ids": [
-        "official-template-official-huawei-s5700-ospf-basic"
+        "official-template-official-huawei-ospf-bfd-basic"
       ],
       "returned_vendors": [
         "Huawei"
@@ -970,8 +968,9 @@
         "huawei_vrp"
       ],
       "feature": null,
+      "feature_scope": [],
       "returned_features": [
-        "ospf"
+        "bfd"
       ],
       "vendor_isolation_passed": true,
       "feature_pollution_passed": null,
@@ -980,45 +979,58 @@
       "version_conflict_passed": null,
       "guard_case": false,
       "quality_eligible": true,
-      "target_document_hit": true,
-      "target_document_hit_at_5": true,
-      "target_document_hit_at_10": true,
-      "recall_at_5": 1.0,
-      "recall_at_10": 1.0,
-      "mrr": 1.0,
-      "ndcg": 1.0,
-      "citation_precision": 1.0,
-      "citation_recall": 1.0,
-      "latency_ms": 8.73,
+      "target_document_hit": false,
+      "target_document_hit_at_5": false,
+      "target_document_hit_at_10": false,
+      "recall_at_5": 0.0,
+      "recall_at_10": 0.0,
+      "mrr": 0.0,
+      "ndcg": 0.0,
+      "citation_precision": 0.0,
+      "citation_recall": 0.0,
+      "latency_ms": 8.56,
       "provider_error": false,
       "error_code": null,
       "safety_passed": true,
-      "quality_passed": true,
-      "passed": true,
+      "quality_passed": false,
+      "passed": false,
       "safety_failed_reasons": [],
-      "quality_failed_reasons": [],
-      "failed_reasons": []
+      "quality_failed_reasons": [
+        "No acceptable Gold Document hit; expected one of ['official-template-official-huawei-s5700-ospf-basic'], got ['official-template-official-huawei-ospf-bfd-basic']"
+      ],
+      "failed_reasons": [
+        "No acceptable Gold Document hit; expected one of ['official-template-official-huawei-s5700-ospf-basic'], got ['official-template-official-huawei-ospf-bfd-basic']"
+      ]
     },
     {
       "id": "ANCHOR-017",
       "target_vendor": "Huawei",
       "isolation_policy": "strict",
       "expected_outcome": "answer",
-      "actual_outcome": "no_match",
+      "actual_outcome": "answer",
       "gold_document_ids": [
         "official-template-official-huawei-ce6800-vxlan-evpn-basic"
       ],
       "acceptable_document_ids": [
         "official-template-official-huawei-ce6800-vxlan-evpn-basic"
       ],
-      "returned_document_ids": [],
-      "returned_vendors": [],
-      "returned_platforms": [],
+      "returned_document_ids": [
+        "official-template-official-huawei-ce12800-vxlan-evpn-basic"
+      ],
+      "returned_vendors": [
+        "Huawei"
+      ],
+      "returned_platforms": [
+        "huawei_vrp"
+      ],
       "feature": null,
-      "returned_features": [],
+      "feature_scope": [],
+      "returned_features": [
+        "vxlan"
+      ],
       "vendor_isolation_passed": true,
       "feature_pollution_passed": null,
-      "platform_conflict_passed": null,
+      "platform_conflict_passed": true,
       "version_conflict_count": 0,
       "version_conflict_passed": null,
       "guard_case": false,
@@ -1032,7 +1044,7 @@
       "ndcg": 0.0,
       "citation_precision": 0.0,
       "citation_recall": 0.0,
-      "latency_ms": 16.82,
+      "latency_ms": 92.37,
       "provider_error": false,
       "error_code": null,
       "safety_passed": true,
@@ -1040,10 +1052,10 @@
       "passed": false,
       "safety_failed_reasons": [],
       "quality_failed_reasons": [
-        "No acceptable Gold Document hit; expected one of ['official-template-official-huawei-ce6800-vxlan-evpn-basic'], got []"
+        "No acceptable Gold Document hit; expected one of ['official-template-official-huawei-ce6800-vxlan-evpn-basic'], got ['official-template-official-huawei-ce12800-vxlan-evpn-basic']"
       ],
       "failed_reasons": [
-        "No acceptable Gold Document hit; expected one of ['official-template-official-huawei-ce6800-vxlan-evpn-basic'], got []"
+        "No acceptable Gold Document hit; expected one of ['official-template-official-huawei-ce6800-vxlan-evpn-basic'], got ['official-template-official-huawei-ce12800-vxlan-evpn-basic']"
       ]
     },
     {
@@ -1051,21 +1063,30 @@
       "target_vendor": "Huawei",
       "isolation_policy": "strict",
       "expected_outcome": "answer",
-      "actual_outcome": "no_match",
+      "actual_outcome": "answer",
       "gold_document_ids": [
         "official-template-official-huawei-access-port"
       ],
       "acceptable_document_ids": [
         "official-template-official-huawei-access-port"
       ],
-      "returned_document_ids": [],
-      "returned_vendors": [],
-      "returned_platforms": [],
+      "returned_document_ids": [
+        "official-template-official-huawei-port-security-basic"
+      ],
+      "returned_vendors": [
+        "Huawei"
+      ],
+      "returned_platforms": [
+        "huawei_vrp"
+      ],
       "feature": null,
-      "returned_features": [],
+      "feature_scope": [],
+      "returned_features": [
+        "port_security"
+      ],
       "vendor_isolation_passed": true,
       "feature_pollution_passed": null,
-      "platform_conflict_passed": null,
+      "platform_conflict_passed": true,
       "version_conflict_count": 0,
       "version_conflict_passed": null,
       "guard_case": false,
@@ -1079,7 +1100,7 @@
       "ndcg": 0.0,
       "citation_precision": 0.0,
       "citation_recall": 0.0,
-      "latency_ms": 5.89,
+      "latency_ms": 9.32,
       "provider_error": false,
       "error_code": null,
       "safety_passed": true,
@@ -1087,10 +1108,10 @@
       "passed": false,
       "safety_failed_reasons": [],
       "quality_failed_reasons": [
-        "No acceptable Gold Document hit; expected one of ['official-template-official-huawei-access-port'], got []"
+        "No acceptable Gold Document hit; expected one of ['official-template-official-huawei-access-port'], got ['official-template-official-huawei-port-security-basic']"
       ],
       "failed_reasons": [
-        "No acceptable Gold Document hit; expected one of ['official-template-official-huawei-access-port'], got []"
+        "No acceptable Gold Document hit; expected one of ['official-template-official-huawei-access-port'], got ['official-template-official-huawei-port-security-basic']"
       ]
     },
     {
@@ -1098,21 +1119,30 @@
       "target_vendor": "Huawei",
       "isolation_policy": "strict",
       "expected_outcome": "answer",
-      "actual_outcome": "no_match",
+      "actual_outcome": "answer",
       "gold_document_ids": [
         "official-template-official-huawei-trunk-port"
       ],
       "acceptable_document_ids": [
         "official-template-official-huawei-trunk-port"
       ],
-      "returned_document_ids": [],
-      "returned_vendors": [],
-      "returned_platforms": [],
+      "returned_document_ids": [
+        "official-template-official-huawei-cpu-memory-diagnostic"
+      ],
+      "returned_vendors": [
+        "Huawei"
+      ],
+      "returned_platforms": [
+        "huawei_vrp"
+      ],
       "feature": null,
-      "returned_features": [],
+      "feature_scope": [],
+      "returned_features": [
+        "system_monitoring"
+      ],
       "vendor_isolation_passed": true,
       "feature_pollution_passed": null,
-      "platform_conflict_passed": null,
+      "platform_conflict_passed": true,
       "version_conflict_count": 0,
       "version_conflict_passed": null,
       "guard_case": false,
@@ -1126,7 +1156,7 @@
       "ndcg": 0.0,
       "citation_precision": 0.0,
       "citation_recall": 0.0,
-      "latency_ms": 6.45,
+      "latency_ms": 11.2,
       "provider_error": false,
       "error_code": null,
       "safety_passed": true,
@@ -1134,10 +1164,10 @@
       "passed": false,
       "safety_failed_reasons": [],
       "quality_failed_reasons": [
-        "No acceptable Gold Document hit; expected one of ['official-template-official-huawei-trunk-port'], got []"
+        "No acceptable Gold Document hit; expected one of ['official-template-official-huawei-trunk-port'], got ['official-template-official-huawei-cpu-memory-diagnostic']"
       ],
       "failed_reasons": [
-        "No acceptable Gold Document hit; expected one of ['official-template-official-huawei-trunk-port'], got []"
+        "No acceptable Gold Document hit; expected one of ['official-template-official-huawei-trunk-port'], got ['official-template-official-huawei-cpu-memory-diagnostic']"
       ]
     },
     {
@@ -1153,11 +1183,7 @@
         "official-template-official-huawei-aaa-local"
       ],
       "returned_document_ids": [
-        "official-template-official-huawei-ssh-basic",
-        "official-template-official-huawei-aaa-local",
-        "official-template-official-huawei-ce6800-bgp-basic",
-        "official-template-official-huawei-snmpv3-basic",
-        "official-template-official-huawei-acl-basic"
+        "official-template-official-huawei-super-password-basic"
       ],
       "returned_vendors": [
         "Huawei"
@@ -1166,11 +1192,9 @@
         "huawei_vrp"
       ],
       "feature": null,
+      "feature_scope": [],
       "returned_features": [
-        "acl",
-        "bgp",
-        "snmp",
-        "ssh"
+        "pam"
       ],
       "vendor_isolation_passed": true,
       "feature_pollution_passed": null,
@@ -1179,24 +1203,28 @@
       "version_conflict_passed": null,
       "guard_case": false,
       "quality_eligible": true,
-      "target_document_hit": true,
-      "target_document_hit_at_5": true,
-      "target_document_hit_at_10": true,
-      "recall_at_5": 1.0,
-      "recall_at_10": 1.0,
-      "mrr": 0.5,
-      "ndcg": 0.6309,
-      "citation_precision": 0.2,
-      "citation_recall": 1.0,
-      "latency_ms": 31.35,
+      "target_document_hit": false,
+      "target_document_hit_at_5": false,
+      "target_document_hit_at_10": false,
+      "recall_at_5": 0.0,
+      "recall_at_10": 0.0,
+      "mrr": 0.0,
+      "ndcg": 0.0,
+      "citation_precision": 0.0,
+      "citation_recall": 0.0,
+      "latency_ms": 10.64,
       "provider_error": false,
       "error_code": null,
       "safety_passed": true,
-      "quality_passed": true,
-      "passed": true,
+      "quality_passed": false,
+      "passed": false,
       "safety_failed_reasons": [],
-      "quality_failed_reasons": [],
-      "failed_reasons": []
+      "quality_failed_reasons": [
+        "No acceptable Gold Document hit; expected one of ['official-template-official-huawei-aaa-local'], got ['official-template-official-huawei-super-password-basic']"
+      ],
+      "failed_reasons": [
+        "No acceptable Gold Document hit; expected one of ['official-template-official-huawei-aaa-local'], got ['official-template-official-huawei-super-password-basic']"
+      ]
     },
     {
       "id": "ANCHOR-021",
@@ -1220,6 +1248,7 @@
         "cisco_iosxe"
       ],
       "feature": null,
+      "feature_scope": [],
       "returned_features": [
         "trunk"
       ],
@@ -1239,7 +1268,7 @@
       "ndcg": 1.0,
       "citation_precision": 1.0,
       "citation_recall": 1.0,
-      "latency_ms": 18.08,
+      "latency_ms": 86.66,
       "provider_error": false,
       "error_code": null,
       "safety_passed": true,
@@ -1272,6 +1301,7 @@
         "cisco_nxos"
       ],
       "feature": null,
+      "feature_scope": [],
       "returned_features": [
         "bgp"
       ],
@@ -1291,7 +1321,7 @@
       "ndcg": 1.0,
       "citation_precision": 1.0,
       "citation_recall": 1.0,
-      "latency_ms": 17.6,
+      "latency_ms": 87.1,
       "provider_error": false,
       "error_code": null,
       "safety_passed": true,
@@ -1323,6 +1353,7 @@
         "cisco_iosxe"
       ],
       "feature": null,
+      "feature_scope": [],
       "returned_features": [
         "lacp"
       ],
@@ -1342,7 +1373,7 @@
       "ndcg": 1.0,
       "citation_precision": 1.0,
       "citation_recall": 1.0,
-      "latency_ms": 8.5,
+      "latency_ms": 10.97,
       "provider_error": false,
       "error_code": null,
       "safety_passed": true,
@@ -1374,6 +1405,7 @@
         "cisco_iosxe"
       ],
       "feature": null,
+      "feature_scope": [],
       "returned_features": [
         "acl"
       ],
@@ -1393,7 +1425,7 @@
       "ndcg": 1.0,
       "citation_precision": 1.0,
       "citation_recall": 1.0,
-      "latency_ms": 8.35,
+      "latency_ms": 9.21,
       "provider_error": false,
       "error_code": null,
       "safety_passed": true,
@@ -1425,6 +1457,7 @@
         "cisco_iosxe"
       ],
       "feature": null,
+      "feature_scope": [],
       "returned_features": [
         "ospf"
       ],
@@ -1444,7 +1477,7 @@
       "ndcg": 1.0,
       "citation_precision": 1.0,
       "citation_recall": 1.0,
-      "latency_ms": 8.22,
+      "latency_ms": 10.84,
       "provider_error": false,
       "error_code": null,
       "safety_passed": true,
@@ -1459,21 +1492,30 @@
       "target_vendor": "Cisco",
       "isolation_policy": "strict",
       "expected_outcome": "answer",
-      "actual_outcome": "no_match",
+      "actual_outcome": "answer",
       "gold_document_ids": [
         "official-template-official-cisco-access-port"
       ],
       "acceptable_document_ids": [
         "official-template-official-cisco-access-port"
       ],
-      "returned_document_ids": [],
-      "returned_vendors": [],
-      "returned_platforms": [],
+      "returned_document_ids": [
+        "official-template-official-cisco-arp-mac-diagnostic"
+      ],
+      "returned_vendors": [
+        "Cisco"
+      ],
+      "returned_platforms": [
+        "cisco_iosxe"
+      ],
       "feature": null,
-      "returned_features": [],
+      "feature_scope": [],
+      "returned_features": [
+        "arp"
+      ],
       "vendor_isolation_passed": true,
       "feature_pollution_passed": null,
-      "platform_conflict_passed": null,
+      "platform_conflict_passed": true,
       "version_conflict_count": 0,
       "version_conflict_passed": null,
       "guard_case": false,
@@ -1487,7 +1529,7 @@
       "ndcg": 0.0,
       "citation_precision": 0.0,
       "citation_recall": 0.0,
-      "latency_ms": 6.31,
+      "latency_ms": 9.63,
       "provider_error": false,
       "error_code": null,
       "safety_passed": true,
@@ -1495,10 +1537,10 @@
       "passed": false,
       "safety_failed_reasons": [],
       "quality_failed_reasons": [
-        "No acceptable Gold Document hit; expected one of ['official-template-official-cisco-access-port'], got []"
+        "No acceptable Gold Document hit; expected one of ['official-template-official-cisco-access-port'], got ['official-template-official-cisco-arp-mac-diagnostic']"
       ],
       "failed_reasons": [
-        "No acceptable Gold Document hit; expected one of ['official-template-official-cisco-access-port'], got []"
+        "No acceptable Gold Document hit; expected one of ['official-template-official-cisco-access-port'], got ['official-template-official-cisco-arp-mac-diagnostic']"
       ]
     },
     {
@@ -1523,6 +1565,7 @@
         "cisco_iosxe"
       ],
       "feature": null,
+      "feature_scope": [],
       "returned_features": [
         "hsrp"
       ],
@@ -1542,7 +1585,7 @@
       "ndcg": 1.0,
       "citation_precision": 1.0,
       "citation_recall": 1.0,
-      "latency_ms": 8.51,
+      "latency_ms": 9.94,
       "provider_error": false,
       "error_code": null,
       "safety_passed": true,
@@ -1565,11 +1608,7 @@
         "official-template-official-cisco-aaa-local"
       ],
       "returned_document_ids": [
-        "official-template-official-cisco-aaa-local",
-        "official-template-official-cisco-ssh-basic",
-        "official-template-official-cisco-stp-basic",
-        "official-template-official-cisco-snmpv3",
-        "official-template-official-cisco-snmpv3-basic"
+        "official-template-official-cisco-aaa-authentication-basic"
       ],
       "returned_vendors": [
         "Cisco"
@@ -1578,10 +1617,9 @@
         "cisco_iosxe"
       ],
       "feature": null,
+      "feature_scope": [],
       "returned_features": [
-        "snmp",
-        "ssh",
-        "stp"
+        "pam"
       ],
       "vendor_isolation_passed": true,
       "feature_pollution_passed": null,
@@ -1590,24 +1628,28 @@
       "version_conflict_passed": null,
       "guard_case": false,
       "quality_eligible": true,
-      "target_document_hit": true,
-      "target_document_hit_at_5": true,
-      "target_document_hit_at_10": true,
-      "recall_at_5": 1.0,
-      "recall_at_10": 1.0,
-      "mrr": 1.0,
-      "ndcg": 1.0,
-      "citation_precision": 0.2,
-      "citation_recall": 1.0,
-      "latency_ms": 30.42,
+      "target_document_hit": false,
+      "target_document_hit_at_5": false,
+      "target_document_hit_at_10": false,
+      "recall_at_5": 0.0,
+      "recall_at_10": 0.0,
+      "mrr": 0.0,
+      "ndcg": 0.0,
+      "citation_precision": 0.0,
+      "citation_recall": 0.0,
+      "latency_ms": 11.59,
       "provider_error": false,
       "error_code": null,
       "safety_passed": true,
-      "quality_passed": true,
-      "passed": true,
+      "quality_passed": false,
+      "passed": false,
       "safety_failed_reasons": [],
-      "quality_failed_reasons": [],
-      "failed_reasons": []
+      "quality_failed_reasons": [
+        "No acceptable Gold Document hit; expected one of ['official-template-official-cisco-aaa-local'], got ['official-template-official-cisco-aaa-authentication-basic']"
+      ],
+      "failed_reasons": [
+        "No acceptable Gold Document hit; expected one of ['official-template-official-cisco-aaa-local'], got ['official-template-official-cisco-aaa-authentication-basic']"
+      ]
     },
     {
       "id": "ANCHOR-029",
@@ -1633,6 +1675,7 @@
         "h3c_comware"
       ],
       "feature": null,
+      "feature_scope": [],
       "returned_features": [
         "trunk"
       ],
@@ -1651,8 +1694,8 @@
       "mrr": 1.0,
       "ndcg": 0.6131,
       "citation_precision": 1.0,
-      "citation_recall": 0.5,
-      "latency_ms": 18.01,
+      "citation_recall": 1.0,
+      "latency_ms": 88.39,
       "provider_error": false,
       "error_code": null,
       "safety_passed": true,
@@ -1675,11 +1718,7 @@
         "official-template-official-h3c-access-port"
       ],
       "returned_document_ids": [
-        "official-template-official-h3c-stp-basic",
-        "official-template-official-h3c-lacp-bridge-aggregation",
-        "official-template-official-h3c-smlag-basic",
-        "official-template-official-h3c-comware-ospf-basic",
-        "official-template-official-h3c-vrrp-basic"
+        "official-template-official-h3c-interface-brief-diagnostic"
       ],
       "returned_vendors": [
         "H3C"
@@ -1688,12 +1727,9 @@
         "h3c_comware"
       ],
       "feature": null,
+      "feature_scope": [],
       "returned_features": [
-        "lacp",
-        "mlag",
-        "ospf",
-        "stp",
-        "vrrp"
+        "interface"
       ],
       "vendor_isolation_passed": true,
       "feature_pollution_passed": null,
@@ -1711,7 +1747,7 @@
       "ndcg": 0.0,
       "citation_precision": 0.0,
       "citation_recall": 0.0,
-      "latency_ms": 38.89,
+      "latency_ms": 12.9,
       "provider_error": false,
       "error_code": null,
       "safety_passed": true,
@@ -1719,10 +1755,10 @@
       "passed": false,
       "safety_failed_reasons": [],
       "quality_failed_reasons": [
-        "No acceptable Gold Document hit; expected one of ['official-template-official-h3c-access-port'], got ['official-template-official-h3c-stp-basic', 'official-template-official-h3c-lacp-bridge-aggregation', 'official-template-official-h3c-smlag-basic', 'official-template-official-h3c-comware-ospf-basic', 'official-template-official-h3c-vrrp-basic']"
+        "No acceptable Gold Document hit; expected one of ['official-template-official-h3c-access-port'], got ['official-template-official-h3c-interface-brief-diagnostic']"
       ],
       "failed_reasons": [
-        "No acceptable Gold Document hit; expected one of ['official-template-official-h3c-access-port'], got ['official-template-official-h3c-stp-basic', 'official-template-official-h3c-lacp-bridge-aggregation', 'official-template-official-h3c-smlag-basic', 'official-template-official-h3c-comware-ospf-basic', 'official-template-official-h3c-vrrp-basic']"
+        "No acceptable Gold Document hit; expected one of ['official-template-official-h3c-access-port'], got ['official-template-official-h3c-interface-brief-diagnostic']"
       ]
     },
     {
@@ -1747,6 +1783,7 @@
         "h3c_comware"
       ],
       "feature": null,
+      "feature_scope": [],
       "returned_features": [
         "lacp"
       ],
@@ -1766,7 +1803,7 @@
       "ndcg": 1.0,
       "citation_precision": 1.0,
       "citation_recall": 1.0,
-      "latency_ms": 19.07,
+      "latency_ms": 81.27,
       "provider_error": false,
       "error_code": null,
       "safety_passed": true,
@@ -1801,6 +1838,7 @@
         "h3c_comware"
       ],
       "feature": null,
+      "feature_scope": [],
       "returned_features": [
         "bgp"
       ],
@@ -1820,7 +1858,7 @@
       "ndcg": 1.0,
       "citation_precision": 1.0,
       "citation_recall": 1.0,
-      "latency_ms": 10.21,
+      "latency_ms": 13.16,
       "provider_error": false,
       "error_code": null,
       "safety_passed": true,
@@ -1852,6 +1890,7 @@
         "h3c_comware"
       ],
       "feature": null,
+      "feature_scope": [],
       "returned_features": [
         "acl"
       ],
@@ -1871,7 +1910,7 @@
       "ndcg": 1.0,
       "citation_precision": 1.0,
       "citation_recall": 1.0,
-      "latency_ms": 8.87,
+      "latency_ms": 10.44,
       "provider_error": false,
       "error_code": null,
       "safety_passed": true,
@@ -1886,21 +1925,30 @@
       "target_vendor": "H3C",
       "isolation_policy": "strict",
       "expected_outcome": "answer",
-      "actual_outcome": "no_match",
+      "actual_outcome": "answer",
       "gold_document_ids": [
         "official-template-official-h3c-access-port"
       ],
       "acceptable_document_ids": [
         "official-template-official-h3c-access-port"
       ],
-      "returned_document_ids": [],
-      "returned_vendors": [],
-      "returned_platforms": [],
+      "returned_document_ids": [
+        "official-template-official-h3c-arp-mac-diagnostic"
+      ],
+      "returned_vendors": [
+        "H3C"
+      ],
+      "returned_platforms": [
+        "h3c_comware"
+      ],
       "feature": null,
-      "returned_features": [],
+      "feature_scope": [],
+      "returned_features": [
+        "arp"
+      ],
       "vendor_isolation_passed": true,
       "feature_pollution_passed": null,
-      "platform_conflict_passed": null,
+      "platform_conflict_passed": true,
       "version_conflict_count": 0,
       "version_conflict_passed": null,
       "guard_case": false,
@@ -1914,7 +1962,7 @@
       "ndcg": 0.0,
       "citation_precision": 0.0,
       "citation_recall": 0.0,
-      "latency_ms": 5.93,
+      "latency_ms": 11.18,
       "provider_error": false,
       "error_code": null,
       "safety_passed": true,
@@ -1922,10 +1970,10 @@
       "passed": false,
       "safety_failed_reasons": [],
       "quality_failed_reasons": [
-        "No acceptable Gold Document hit; expected one of ['official-template-official-h3c-access-port'], got []"
+        "No acceptable Gold Document hit; expected one of ['official-template-official-h3c-access-port'], got ['official-template-official-h3c-arp-mac-diagnostic']"
       ],
       "failed_reasons": [
-        "No acceptable Gold Document hit; expected one of ['official-template-official-h3c-access-port'], got []"
+        "No acceptable Gold Document hit; expected one of ['official-template-official-h3c-access-port'], got ['official-template-official-h3c-arp-mac-diagnostic']"
       ]
     },
     {
@@ -1933,282 +1981,314 @@
       "target_vendor": "Ruijie",
       "isolation_policy": "strict",
       "expected_outcome": "answer",
-      "actual_outcome": "no_match",
+      "actual_outcome": "answer",
       "gold_document_ids": [
         "ruijie-rgos-vlan-access"
       ],
       "acceptable_document_ids": [
         "ruijie-rgos-vlan-access"
       ],
-      "returned_document_ids": [],
-      "returned_vendors": [],
-      "returned_platforms": [],
+      "returned_document_ids": [
+        "ruijie-rgos-vlan-access",
+        "official-ruijie-vlan"
+      ],
+      "returned_vendors": [
+        "Ruijie"
+      ],
+      "returned_platforms": [
+        "ruijie_rgos"
+      ],
       "feature": null,
-      "returned_features": [],
+      "feature_scope": [],
+      "returned_features": [
+        "vlan"
+      ],
       "vendor_isolation_passed": true,
       "feature_pollution_passed": null,
-      "platform_conflict_passed": null,
+      "platform_conflict_passed": true,
       "version_conflict_count": 0,
       "version_conflict_passed": null,
       "guard_case": false,
       "quality_eligible": true,
-      "target_document_hit": false,
-      "target_document_hit_at_5": false,
-      "target_document_hit_at_10": false,
-      "recall_at_5": 0.0,
-      "recall_at_10": 0.0,
-      "mrr": 0.0,
-      "ndcg": 0.0,
-      "citation_precision": 0.0,
-      "citation_recall": 0.0,
-      "latency_ms": 16.28,
+      "target_document_hit": true,
+      "target_document_hit_at_5": true,
+      "target_document_hit_at_10": true,
+      "recall_at_5": 1.0,
+      "recall_at_10": 1.0,
+      "mrr": 1.0,
+      "ndcg": 1.0,
+      "citation_precision": 0.5,
+      "citation_recall": 1.0,
+      "latency_ms": 82.31,
       "provider_error": false,
       "error_code": null,
       "safety_passed": true,
-      "quality_passed": false,
-      "passed": false,
+      "quality_passed": true,
+      "passed": true,
       "safety_failed_reasons": [],
-      "quality_failed_reasons": [
-        "No acceptable Gold Document hit; expected one of ['ruijie-rgos-vlan-access'], got []"
-      ],
-      "failed_reasons": [
-        "No acceptable Gold Document hit; expected one of ['ruijie-rgos-vlan-access'], got []"
-      ]
+      "quality_failed_reasons": [],
+      "failed_reasons": []
     },
     {
       "id": "ANCHOR-036",
       "target_vendor": "Ruijie",
       "isolation_policy": "strict",
       "expected_outcome": "answer",
-      "actual_outcome": "no_match",
+      "actual_outcome": "answer",
       "gold_document_ids": [
         "ruijie-rgos-aggregateport"
       ],
       "acceptable_document_ids": [
         "ruijie-rgos-aggregateport"
       ],
-      "returned_document_ids": [],
-      "returned_vendors": [],
-      "returned_platforms": [],
+      "returned_document_ids": [
+        "ruijie-rgos-aggregateport"
+      ],
+      "returned_vendors": [
+        "Ruijie"
+      ],
+      "returned_platforms": [
+        "ruijie_rgos"
+      ],
       "feature": null,
-      "returned_features": [],
+      "feature_scope": [],
+      "returned_features": [
+        "lacp"
+      ],
       "vendor_isolation_passed": true,
       "feature_pollution_passed": null,
-      "platform_conflict_passed": null,
+      "platform_conflict_passed": true,
       "version_conflict_count": 0,
       "version_conflict_passed": null,
       "guard_case": false,
       "quality_eligible": true,
-      "target_document_hit": false,
-      "target_document_hit_at_5": false,
-      "target_document_hit_at_10": false,
-      "recall_at_5": 0.0,
-      "recall_at_10": 0.0,
-      "mrr": 0.0,
-      "ndcg": 0.0,
-      "citation_precision": 0.0,
-      "citation_recall": 0.0,
-      "latency_ms": 5.56,
+      "target_document_hit": true,
+      "target_document_hit_at_5": true,
+      "target_document_hit_at_10": true,
+      "recall_at_5": 1.0,
+      "recall_at_10": 1.0,
+      "mrr": 1.0,
+      "ndcg": 1.0,
+      "citation_precision": 1.0,
+      "citation_recall": 1.0,
+      "latency_ms": 9.14,
       "provider_error": false,
       "error_code": null,
       "safety_passed": true,
-      "quality_passed": false,
-      "passed": false,
+      "quality_passed": true,
+      "passed": true,
       "safety_failed_reasons": [],
-      "quality_failed_reasons": [
-        "No acceptable Gold Document hit; expected one of ['ruijie-rgos-aggregateport'], got []"
-      ],
-      "failed_reasons": [
-        "No acceptable Gold Document hit; expected one of ['ruijie-rgos-aggregateport'], got []"
-      ]
+      "quality_failed_reasons": [],
+      "failed_reasons": []
     },
     {
       "id": "ANCHOR-037",
       "target_vendor": "Ruijie",
       "isolation_policy": "strict",
       "expected_outcome": "answer",
-      "actual_outcome": "no_match",
+      "actual_outcome": "answer",
       "gold_document_ids": [
         "ruijie-rgos-show-route"
       ],
       "acceptable_document_ids": [
         "ruijie-rgos-show-route"
       ],
-      "returned_document_ids": [],
-      "returned_vendors": [],
-      "returned_platforms": [],
+      "returned_document_ids": [
+        "ruijie-rgos-show-route"
+      ],
+      "returned_vendors": [
+        "Ruijie"
+      ],
+      "returned_platforms": [
+        "ruijie_rgos"
+      ],
       "feature": null,
-      "returned_features": [],
+      "feature_scope": [],
+      "returned_features": [
+        "static_route"
+      ],
       "vendor_isolation_passed": true,
       "feature_pollution_passed": null,
-      "platform_conflict_passed": null,
+      "platform_conflict_passed": true,
       "version_conflict_count": 0,
       "version_conflict_passed": null,
       "guard_case": false,
       "quality_eligible": true,
-      "target_document_hit": false,
-      "target_document_hit_at_5": false,
-      "target_document_hit_at_10": false,
-      "recall_at_5": 0.0,
-      "recall_at_10": 0.0,
-      "mrr": 0.0,
-      "ndcg": 0.0,
-      "citation_precision": 0.0,
-      "citation_recall": 0.0,
-      "latency_ms": 6.77,
+      "target_document_hit": true,
+      "target_document_hit_at_5": true,
+      "target_document_hit_at_10": true,
+      "recall_at_5": 1.0,
+      "recall_at_10": 1.0,
+      "mrr": 1.0,
+      "ndcg": 1.0,
+      "citation_precision": 1.0,
+      "citation_recall": 1.0,
+      "latency_ms": 10.64,
       "provider_error": false,
       "error_code": null,
       "safety_passed": true,
-      "quality_passed": false,
-      "passed": false,
+      "quality_passed": true,
+      "passed": true,
       "safety_failed_reasons": [],
-      "quality_failed_reasons": [
-        "No acceptable Gold Document hit; expected one of ['ruijie-rgos-show-route'], got []"
-      ],
-      "failed_reasons": [
-        "No acceptable Gold Document hit; expected one of ['ruijie-rgos-show-route'], got []"
-      ]
+      "quality_failed_reasons": [],
+      "failed_reasons": []
     },
     {
       "id": "ANCHOR-038",
       "target_vendor": "Ruijie",
       "isolation_policy": "strict",
       "expected_outcome": "answer",
-      "actual_outcome": "no_match",
+      "actual_outcome": "answer",
       "gold_document_ids": [
         "ruijie-rgos-ospf"
       ],
       "acceptable_document_ids": [
         "ruijie-rgos-ospf"
       ],
-      "returned_document_ids": [],
-      "returned_vendors": [],
-      "returned_platforms": [],
+      "returned_document_ids": [
+        "ruijie-rgos-ospf",
+        "official-ruijie-svi-ospf"
+      ],
+      "returned_vendors": [
+        "Ruijie"
+      ],
+      "returned_platforms": [
+        "ruijie_rgos"
+      ],
       "feature": null,
-      "returned_features": [],
+      "feature_scope": [],
+      "returned_features": [
+        "ospf"
+      ],
       "vendor_isolation_passed": true,
       "feature_pollution_passed": null,
-      "platform_conflict_passed": null,
+      "platform_conflict_passed": true,
       "version_conflict_count": 0,
       "version_conflict_passed": null,
       "guard_case": false,
       "quality_eligible": true,
-      "target_document_hit": false,
-      "target_document_hit_at_5": false,
-      "target_document_hit_at_10": false,
-      "recall_at_5": 0.0,
-      "recall_at_10": 0.0,
-      "mrr": 0.0,
-      "ndcg": 0.0,
-      "citation_precision": 0.0,
-      "citation_recall": 0.0,
-      "latency_ms": 6.08,
+      "target_document_hit": true,
+      "target_document_hit_at_5": true,
+      "target_document_hit_at_10": true,
+      "recall_at_5": 1.0,
+      "recall_at_10": 1.0,
+      "mrr": 1.0,
+      "ndcg": 1.0,
+      "citation_precision": 0.5,
+      "citation_recall": 1.0,
+      "latency_ms": 11.57,
       "provider_error": false,
       "error_code": null,
       "safety_passed": true,
-      "quality_passed": false,
-      "passed": false,
+      "quality_passed": true,
+      "passed": true,
       "safety_failed_reasons": [],
-      "quality_failed_reasons": [
-        "No acceptable Gold Document hit; expected one of ['ruijie-rgos-ospf'], got []"
-      ],
-      "failed_reasons": [
-        "No acceptable Gold Document hit; expected one of ['ruijie-rgos-ospf'], got []"
-      ]
+      "quality_failed_reasons": [],
+      "failed_reasons": []
     },
     {
       "id": "ANCHOR-039",
       "target_vendor": "Ruijie",
       "isolation_policy": "strict",
       "expected_outcome": "answer",
-      "actual_outcome": "no_match",
+      "actual_outcome": "answer",
       "gold_document_ids": [
         "ruijie-rgos-show-lldp"
       ],
       "acceptable_document_ids": [
         "ruijie-rgos-show-lldp"
       ],
-      "returned_document_ids": [],
-      "returned_vendors": [],
-      "returned_platforms": [],
+      "returned_document_ids": [
+        "ruijie-rgos-show-lldp"
+      ],
+      "returned_vendors": [
+        "Ruijie"
+      ],
+      "returned_platforms": [
+        "ruijie_rgos"
+      ],
       "feature": null,
-      "returned_features": [],
+      "feature_scope": [],
+      "returned_features": [
+        "lldp"
+      ],
       "vendor_isolation_passed": true,
       "feature_pollution_passed": null,
-      "platform_conflict_passed": null,
+      "platform_conflict_passed": true,
       "version_conflict_count": 0,
       "version_conflict_passed": null,
       "guard_case": false,
       "quality_eligible": true,
-      "target_document_hit": false,
-      "target_document_hit_at_5": false,
-      "target_document_hit_at_10": false,
-      "recall_at_5": 0.0,
-      "recall_at_10": 0.0,
-      "mrr": 0.0,
-      "ndcg": 0.0,
-      "citation_precision": 0.0,
-      "citation_recall": 0.0,
-      "latency_ms": 5.85,
+      "target_document_hit": true,
+      "target_document_hit_at_5": true,
+      "target_document_hit_at_10": true,
+      "recall_at_5": 1.0,
+      "recall_at_10": 1.0,
+      "mrr": 1.0,
+      "ndcg": 1.0,
+      "citation_precision": 1.0,
+      "citation_recall": 1.0,
+      "latency_ms": 9.09,
       "provider_error": false,
       "error_code": null,
       "safety_passed": true,
-      "quality_passed": false,
-      "passed": false,
+      "quality_passed": true,
+      "passed": true,
       "safety_failed_reasons": [],
-      "quality_failed_reasons": [
-        "No acceptable Gold Document hit; expected one of ['ruijie-rgos-show-lldp'], got []"
-      ],
-      "failed_reasons": [
-        "No acceptable Gold Document hit; expected one of ['ruijie-rgos-show-lldp'], got []"
-      ]
+      "quality_failed_reasons": [],
+      "failed_reasons": []
     },
     {
       "id": "ANCHOR-040",
       "target_vendor": "Ruijie",
       "isolation_policy": "strict",
       "expected_outcome": "answer",
-      "actual_outcome": "no_match",
+      "actual_outcome": "answer",
       "gold_document_ids": [
         "ruijie-rgos-acl"
       ],
       "acceptable_document_ids": [
         "ruijie-rgos-acl"
       ],
-      "returned_document_ids": [],
-      "returned_vendors": [],
-      "returned_platforms": [],
+      "returned_document_ids": [
+        "ruijie-rgos-acl"
+      ],
+      "returned_vendors": [
+        "Ruijie"
+      ],
+      "returned_platforms": [
+        "ruijie_rgos"
+      ],
       "feature": null,
-      "returned_features": [],
+      "feature_scope": [],
+      "returned_features": [
+        "acl"
+      ],
       "vendor_isolation_passed": true,
       "feature_pollution_passed": null,
-      "platform_conflict_passed": null,
+      "platform_conflict_passed": true,
       "version_conflict_count": 0,
       "version_conflict_passed": null,
       "guard_case": false,
       "quality_eligible": true,
-      "target_document_hit": false,
-      "target_document_hit_at_5": false,
-      "target_document_hit_at_10": false,
-      "recall_at_5": 0.0,
-      "recall_at_10": 0.0,
-      "mrr": 0.0,
-      "ndcg": 0.0,
-      "citation_precision": 0.0,
-      "citation_recall": 0.0,
-      "latency_ms": 7.34,
+      "target_document_hit": true,
+      "target_document_hit_at_5": true,
+      "target_document_hit_at_10": true,
+      "recall_at_5": 1.0,
+      "recall_at_10": 1.0,
+      "mrr": 1.0,
+      "ndcg": 1.0,
+      "citation_precision": 1.0,
+      "citation_recall": 1.0,
+      "latency_ms": 10.97,
       "provider_error": false,
       "error_code": null,
       "safety_passed": true,
-      "quality_passed": false,
-      "passed": false,
+      "quality_passed": true,
+      "passed": true,
       "safety_failed_reasons": [],
-      "quality_failed_reasons": [
-        "No acceptable Gold Document hit; expected one of ['ruijie-rgos-acl'], got []"
-      ],
-      "failed_reasons": [
-        "No acceptable Gold Document hit; expected one of ['ruijie-rgos-acl'], got []"
-      ]
+      "quality_failed_reasons": [],
+      "failed_reasons": []
     },
     {
       "id": "ANCHOR-041",
@@ -2233,6 +2313,7 @@
         "cisco_iosxe"
       ],
       "feature": null,
+      "feature_scope": [],
       "returned_features": [
         "vlan"
       ],
@@ -2252,7 +2333,7 @@
       "ndcg": 1.0,
       "citation_precision": 0.5,
       "citation_recall": 1.0,
-      "latency_ms": 19.31,
+      "latency_ms": 80.99,
       "provider_error": false,
       "error_code": null,
       "safety_passed": true,
@@ -2274,6 +2355,7 @@
       "returned_vendors": [],
       "returned_platforms": [],
       "feature": null,
+      "feature_scope": [],
       "returned_features": [],
       "vendor_isolation_passed": true,
       "feature_pollution_passed": null,
@@ -2291,7 +2373,7 @@
       "ndcg": null,
       "citation_precision": null,
       "citation_recall": null,
-      "latency_ms": 0.88,
+      "latency_ms": 1.0,
       "provider_error": false,
       "error_code": null,
       "safety_passed": true,
@@ -2313,6 +2395,7 @@
       "returned_vendors": [],
       "returned_platforms": [],
       "feature": null,
+      "feature_scope": [],
       "returned_features": [],
       "vendor_isolation_passed": true,
       "feature_pollution_passed": null,
@@ -2330,7 +2413,7 @@
       "ndcg": null,
       "citation_precision": null,
       "citation_recall": null,
-      "latency_ms": 0.87,
+      "latency_ms": 0.85,
       "provider_error": false,
       "error_code": null,
       "safety_passed": true,
@@ -2352,6 +2435,7 @@
       "returned_vendors": [],
       "returned_platforms": [],
       "feature": null,
+      "feature_scope": [],
       "returned_features": [],
       "vendor_isolation_passed": true,
       "feature_pollution_passed": null,
@@ -2369,7 +2453,7 @@
       "ndcg": null,
       "citation_precision": null,
       "citation_recall": null,
-      "latency_ms": 0.1,
+      "latency_ms": 0.12,
       "provider_error": false,
       "error_code": null,
       "safety_passed": true,
@@ -2391,6 +2475,7 @@
       "returned_vendors": [],
       "returned_platforms": [],
       "feature": null,
+      "feature_scope": [],
       "returned_features": [],
       "vendor_isolation_passed": true,
       "feature_pollution_passed": null,
@@ -2430,6 +2515,7 @@
       "returned_vendors": [],
       "returned_platforms": [],
       "feature": null,
+      "feature_scope": [],
       "returned_features": [],
       "vendor_isolation_passed": true,
       "feature_pollution_passed": null,
@@ -2469,6 +2555,7 @@
       "returned_vendors": [],
       "returned_platforms": [],
       "feature": null,
+      "feature_scope": [],
       "returned_features": [],
       "vendor_isolation_passed": true,
       "feature_pollution_passed": null,
@@ -2486,7 +2573,7 @@
       "ndcg": null,
       "citation_precision": null,
       "citation_recall": null,
-      "latency_ms": 0.09,
+      "latency_ms": 0.05,
       "provider_error": false,
       "error_code": "AI_SECURITY_POLICY_BLOCKED",
       "safety_passed": true,
@@ -2508,6 +2595,7 @@
       "returned_vendors": [],
       "returned_platforms": [],
       "feature": null,
+      "feature_scope": [],
       "returned_features": [],
       "vendor_isolation_passed": true,
       "feature_pollution_passed": null,
@@ -2525,7 +2613,7 @@
       "ndcg": null,
       "citation_precision": null,
       "citation_recall": null,
-      "latency_ms": 11.71,
+      "latency_ms": 70.24,
       "provider_error": false,
       "error_code": null,
       "safety_passed": true,
@@ -2550,11 +2638,7 @@
         "official-template-official-huawei-vlan-basic"
       ],
       "returned_document_ids": [
-        "official-template-official-huawei-trunk-port",
-        "official-template-official-huawei-access-port",
-        "official-template-official-huawei-mlag-ce",
-        "official-template-official-huawei-acl-basic",
-        "official-template-official-huawei-ntp-client-basic"
+        "official-template-official-huawei-access-port"
       ],
       "returned_vendors": [
         "Huawei"
@@ -2563,12 +2647,9 @@
         "huawei_vrp"
       ],
       "feature": null,
+      "feature_scope": [],
       "returned_features": [
-        "access_port",
-        "acl",
-        "mlag",
-        "ntp",
-        "trunk"
+        "access_port"
       ],
       "vendor_isolation_passed": true,
       "feature_pollution_passed": null,
@@ -2582,11 +2663,11 @@
       "target_document_hit_at_10": true,
       "recall_at_5": 1.0,
       "recall_at_10": 1.0,
-      "mrr": 0.5,
-      "ndcg": 0.3869,
-      "citation_precision": 0.2,
-      "citation_recall": 0.5,
-      "latency_ms": 46.04,
+      "mrr": 1.0,
+      "ndcg": 0.6131,
+      "citation_precision": 1.0,
+      "citation_recall": 1.0,
+      "latency_ms": 82.22,
       "provider_error": false,
       "error_code": null,
       "safety_passed": true,
@@ -2608,6 +2689,7 @@
       "returned_vendors": [],
       "returned_platforms": [],
       "feature": null,
+      "feature_scope": [],
       "returned_features": [],
       "vendor_isolation_passed": true,
       "feature_pollution_passed": null,
@@ -2625,9 +2707,9 @@
       "ndcg": null,
       "citation_precision": null,
       "citation_recall": null,
-      "latency_ms": 87.92,
+      "latency_ms": 0.29,
       "provider_error": false,
-      "error_code": null,
+      "error_code": "OUT_OF_DOMAIN_NO_MATCH",
       "safety_passed": true,
       "quality_passed": null,
       "passed": true,

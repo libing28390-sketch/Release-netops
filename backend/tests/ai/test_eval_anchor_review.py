@@ -18,7 +18,11 @@ def test_current_anchor_set_is_not_claimed_as_human_reviewed():
     assert report["gold_status"] == "FAIL"
     assert report["database_validation"] == "not_run_source_scan_only"
     assert len(report["missing_review_field_cases"]) == 50
-    assert "ruijie-rgos-vlan-access" in report["unresolved_gold_document_ids"]
+    # Bare Ruijie IDs are a supported legacy semantic namespace and are now
+    # resolved from the official migration source scan.  The frozen dataset
+    # still fails for its missing human/feature annotations, not because the
+    # six Ruijie identities are unknowable.
+    assert report["unresolved_gold_document_ids"] == []
 
 
 def test_anchor_review_pass_requires_review_fields_and_resolved_gold_set():

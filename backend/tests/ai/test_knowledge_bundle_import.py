@@ -77,6 +77,48 @@ def test_export_bundle_rejects_hash_tampering_before_database_work():
     assert exc.value.code == "KNOWLEDGE_BUNDLE_HASH_MISMATCH"
 
 
+def test_export_bundle_requires_exact_content_hash_and_size_fields():
+    raw = b"---\n{\"vendor\": \"Huawei\"}\n---\n\nshow version\n"
+    path = "documents/example.md"
+
+    def build_manifest(document: dict[str, object]) -> bytes:
+        manifest = {
+            "schema_version": "knowledge-export-v1",
+            "document_count": 1,
+            "embeddings_exported": False,
+            "reindex_required_on_import": True,
+            "documents": [document],
+        }
+        output = io.BytesIO()
+        with zipfile.ZipFile(output, "w", zipfile.ZIP_DEFLATED) as archive:
+            archive.writestr("manifest.json", json.dumps(manifest))
+            archive.writestr(path, raw)
+        return output.getvalue()
+
+    with pytest.raises(KnowledgeBundleImportError) as missing_size:
+        _read_bundle(
+            build_manifest(
+                {
+                    "path": path,
+                    "content_sha256": hashlib.sha256(raw).hexdigest(),
+                }
+            )
+        )
+    assert missing_size.value.code == "KNOWLEDGE_BUNDLE_CONTENT_SIZE_INVALID"
+
+    with pytest.raises(KnowledgeBundleImportError) as legacy_names:
+        _read_bundle(
+            build_manifest(
+                {
+                    "path": path,
+                    "sha256": hashlib.sha256(raw).hexdigest(),
+                    "bytes": len(raw),
+                }
+            )
+        )
+    assert legacy_names.value.code == "KNOWLEDGE_BUNDLE_CONTENT_HASH_INVALID"
+
+
 def test_export_bundle_rejects_path_traversal():
     raw = b"content"
     manifest = {
@@ -234,3 +276,51 @@ def test_import_diagnostics_whitelist_details_and_redact_document_paths(caplog: 
     assert "arbitrary" not in started
     assert "documents/secret.md" not in json.dumps(failed, ensure_ascii=False)
     assert "supersecret" not in json.dumps(failed, ensure_ascii=False)
+
+
+def test_import_downgrades_official_claim_in_portable_metadata(monkeypatch: pytest.MonkeyPatch):
+    class FakeConnection:
+        def __enter__(self):
+            return self
+
+        def __exit__(self, *_args):
+            return False
+
+        def commit(self):
+            return None
+
+        def rollback(self):
+            return None
+
+    captured: list[dict[str, object]] = []
+    monkeypatch.setattr(bundle_module, "get_db_connection", lambda: FakeConnection())
+    monkeypatch.setattr(
+        bundle_module.knowledge_service,
+        "add_document_and_chunk",
+        lambda **kwargs: captured.append(kwargs) or {"document_id": "doc-imported"},
+    )
+    monkeypatch.setattr(bundle_module.retrieval_cache, "invalidate_documents", lambda _ids: None)
+
+    official_claim = (
+        "---\n"
+        '{"vendor":"Huawei","source_type":"official_local",'
+        '"source_trust_level":"official","official_only":true}\n'
+        "---\n\n"
+        "# Candidate summary\n\nshow version\n"
+    )
+    result = import_knowledge_bundle(
+        _bundle(official_claim),
+        tenant_id="tenant-portable",
+        knowledge_base_id="kb-portable",
+    )
+
+    assert result["official_claims"] == "downgraded_to_user_document"
+    assert len(captured) == 1
+    assert captured[0]["knowledge_source_type"] == "user_document"
+    assert captured[0]["source_trust_level"] == "internal"
+    imported_metadata = captured[0]["metadata"]
+    assert isinstance(imported_metadata, dict)
+    assert imported_metadata["source_type"] == "user_document"
+    assert imported_metadata["source_trust_level"] == "internal"
+    assert imported_metadata["official_only"] is False
+    assert imported_metadata["original_source_type"] == "official_local"

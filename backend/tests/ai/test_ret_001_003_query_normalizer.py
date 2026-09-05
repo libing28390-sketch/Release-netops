@@ -77,7 +77,7 @@ def test_vendor_model_tokens_cover_h3c_cisco_campus_and_data_center_skus():
         ("H3C S5130S-28P-EI VLAN配置", "S5130S", "S5130S-28P-EI"),
         ("H3C S6850 VLAN配置", "S6850", None),
         ("H3C S9825-64D BGP配置", "S9825", "S9825-64D"),
-        ("Cisco Catalyst 3850 trunk配置", "CATALYST3850", None),
+        ("Cisco Catalyst 3850 trunk配置", "Catalyst 3850", None),
         ("Cisco C9200L-24P-4G VLAN配置", "Catalyst 9200", "C9200L-24P-4G"),
         ("Cisco N9K-C93180YC-FX VXLAN配置", "Nexus 9000", "N9K-C93180YC-FX"),
         ("Huawei CE8851-32CQ8DQ-K VXLAN配置", "CloudEngine 8800", "CE8851-32CQ8DQ-K"),
@@ -193,3 +193,40 @@ def test_explicit_cisco_nxos_platform_is_scoped_to_cisco_vendor():
     assert metadata["vendor"] == "Cisco"
     assert metadata["cli_platform"] == "cisco_nxos"
     assert metadata["os_family"] == "NX-OS"
+
+
+def test_anchor_management_and_diagnostic_aliases_are_feature_scoped():
+    parser = IntentParser()
+    cases = (
+        ("Huawei OSPF BFD bfd all-interfaces enable 配置", "bfd"),
+        ("Huawei super password level 3 cipher 权限配置", "pam"),
+        ("Cisco IOS-XE aaa authentication login default group tacacs+ local", "pam"),
+        ("Huawei display cpu-usage memory-usage 设备状态", "system_monitoring"),
+        ("H3C Comware 7 display interface brief", "interface"),
+        ("Cisco IOS-XE ip route 192.0.2.0 255.255.255.0 192.0.2.1", "static_route"),
+    )
+
+    for query, expected_feature in cases:
+        assert parser.parse_knowledge_metadata(query)["feature"] == expected_feature
+
+
+def test_composite_switchport_and_acl_queries_keep_their_specific_feature():
+    parser = IntentParser()
+
+    # ``switchport`` is a generic interface signal; an explicit trunk or
+    # VLAN signal must win when the query names the more specific operation.
+    assert parser.parse_knowledge_metadata(
+        "Cisco Catalyst 3850 switchport mode trunk allowed vlan 配置"
+    )["feature"] == "trunk"
+    assert parser.parse_knowledge_metadata(
+        "锐捷 RG-S6220 交换机配置 VLAN access 端口 switchport access vlan 10"
+    )["feature"] == "vlan"
+
+    # A typo-tolerant access-port alias must never be a bare prefix: ``acces``
+    # also occurs at the beginning of ``access-list``.
+    assert parser.parse_knowledge_metadata(
+        "Cisco Extended ACL ip access-list extended 101 permit tcp any any eq 443"
+    )["feature"] == "acl"
+    assert parser.parse_knowledge_metadata(
+        "锐捷 RGOS standard access-list 1 permit ip any any"
+    )["feature"] == "acl"

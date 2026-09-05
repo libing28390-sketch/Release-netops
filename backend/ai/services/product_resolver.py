@@ -57,6 +57,11 @@ class ProductResolver:
     _MODEL_ALIASES = {
         "ce6885": ("ce6885", "ce6885-48ys8cq", "ce6885 48ys8cq"),
         "c9300": ("c9300", "catalyst93", "catalyst 9300", "catalyst9300"),
+        # Catalyst 3850 is a reviewed IOS-XE catalog family.  Keep the
+        # hardware token and the common WS-C spelling together so a C3850
+        # query does not fall through to a fuzzy C9300 candidate.
+        "c3850": ("c3850", "catalyst 3850", "catalyst3850", "ws-c3850"),
+        "rg-s6220": ("rg-s6220", "rg s6220", "rg-s6220-48xs4qxs", "rg-s6220-48xt4qxs"),
         "s5735-l-v2": ("s5735-l-v2", "s5735 l v2"),
         "s6520x": ("s6520x", "s6520 x"),
         # S6850 is an explicitly reviewed H3C data-center model.  Keep it in
@@ -71,6 +76,13 @@ class ProductResolver:
             "os_family": "Comware 7",
             "os_generation": "COMWARE-7",
             "cli_platform": "h3c_comware",
+            "document_type": "product_registry",
+        },
+        "rg-s6220": {
+            "vendor": "Ruijie",
+            "os_family": "RGOS",
+            "os_generation": "RGOS-10/11",
+            "cli_platform": "ruijie_rgos",
             "document_type": "product_registry",
         },
     }
@@ -159,6 +171,10 @@ class ProductResolver:
                 return "CloudEngine 6800"
             if model.lower().startswith("c9300"):
                 return "Catalyst 9300"
+            if model.lower().startswith("c3850"):
+                return "Catalyst 3850"
+            if model.lower().startswith("rg-s6220"):
+                return "RG-S6220"
             return cls._canonical_series(model) or model
         for model, aliases in cls._MODEL_ALIASES.items():
             normalized_aliases = {normalize_alias(alias) for alias in aliases}
@@ -264,7 +280,18 @@ class ProductResolver:
             normalized.product if normalized.product != "CloudEngine 6800" else None
         )
         candidates = self._query_alias_candidates(identity_query or query, tenant_id=tenant_id) if identity_query else []
-        identity_models = {str(item.get("product_model")) for item in candidates}
+        # An exact/canonical identity must not become ambiguous merely because
+        # a neighbouring product happens to clear the fuzzy trigram threshold
+        # (for example Catalyst 3850 versus Catalyst 9300).  Preserve the full
+        # candidate list for diagnostics, but use same-strength candidates for
+        # the identity decision.
+        identity_candidates = candidates
+        if candidates and str(candidates[0].get("match_method") or "") in {"exact", "canonical"}:
+            identity_candidates = [
+                item for item in candidates
+                if str(item.get("match_method") or "") in {"exact", "canonical"}
+            ]
+        identity_models = {str(item.get("product_model")) for item in identity_candidates}
         match_method = str(candidates[0].get("match_method") or "none") if candidates else "none"
         match_score = float(candidates[0].get("match_score")) if candidates else None
         ambiguous = len(identity_models) > 1 or match_method in {"prefix", "trigram"}
@@ -300,13 +327,11 @@ class ProductResolver:
         if candidates and match_method in {"prefix", "trigram"}:
             result.outcome = "candidates"
             result.retrieval_eligible = result.retrieval_eligible and len(identity_models) <= 1
-            # A fuzzy/short model alias can map to several hardware SKUs, but
-            # it is not a cross-platform ambiguity when the official registry
-            # proves a single CLI family.  Keep the vendor/platform hard gate
-            # and allow the RAG model applicability arrays to rank the exact
-            # SKU instead of dropping all inferred filters.
-            if len(result.platform_candidates) == 1:
-                result.ambiguous = False
+            # A short/fuzzy model alias is still ambiguous even when every
+            # current candidate happens to share one CLI platform.  Platform
+            # agreement prevents cross-dialect mixing, but it does not prove
+            # that a concrete hardware SKU was selected; S57 must not silently
+            # become S5735 (or another future S57 variant).
         return result
 
     def resolve(self, metadata: Dict[str, Any], *, tenant_id: str = "tenant-default") -> EntityResolution:

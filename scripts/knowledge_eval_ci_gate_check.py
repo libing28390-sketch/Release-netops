@@ -106,11 +106,25 @@ def validate_ci_gate() -> dict[str, Any]:
     _require(small_ci, "knowledge_eval_ci_gate_check.py", "EVAL-010 workflow")
     _require(small_ci, "ai_rag_release_config_check.py", "release-safe configuration gate")
     _require(small_ci, "knowledge_eval_anchors_50_runner.py", "deterministic anchor quality gate")
+    _require(small_ci, "knowledge_eval_anchors_50_isolated.py", "isolated anchor evidence gate")
+    _require(
+        small_ci,
+        "eval-golden-anchors-50-v3-signed-20260905.yaml",
+        "signed frozen 50-anchor dataset gate",
+    )
+    _require(small_ci, "knowledge_eval_anchor_source_review.py", "automated official-source review evidence")
+    _require(small_ci, "eval-golden-anchors-50-source-reviewed-v2.yaml", "source-reviewed candidate dataset evidence")
     _require(small_ci, "knowledge_eval_gold_400_check.py", "400-case dataset readiness gate")
     _require(release_ci, "--profile full", "release workflow")
     _require(release_ci, "--strict", "release workflow")
     _require(release_ci, "knowledge_eval_offline.py", "release workflow")
     _require(release_ci, "knowledge_eval_anchors_50_runner.py", "release deterministic quality gate")
+    _require(release_ci, "knowledge_eval_anchors_50_isolated.py", "release isolated anchor evidence gate")
+    _require(
+        release_ci,
+        "eval-golden-anchors-50-v3-signed-20260905.yaml",
+        "release signed frozen 50-anchor dataset gate",
+    )
     _require(release_ci, "knowledge_eval_gold_400_check.py", "release 400-case dataset gate")
     _require(release_ci, "DATABASE_URL: postgresql://", "release workflow")
     _require(release_ci, "ai_rag_release_config_check.py", "release-safe configuration gate")
@@ -138,6 +152,9 @@ def validate_ci_gate() -> dict[str, Any]:
         "windows_node_install": "official_msi",
         "external_network": "not_used_by_offline_runner",
         "production_write": False,
+        "isolated_anchor_evidence": True,
+        "automated_source_review_evidence": True,
+        "signed_anchor_dataset_evidence": True,
         "workflow_sha256": {
             "knowledge_engine_eval": hashlib.sha256(small_ci.encode("utf-8")).hexdigest(),
             "backend_pytest": hashlib.sha256(backend_ci.encode("utf-8")).hexdigest(),

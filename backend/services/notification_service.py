@@ -23,6 +23,26 @@ from urllib.parse import quote
 
 logger = logging.getLogger(__name__)
 
+_AUTOMATIC_NOTIFICATIONS_ENV = "NEXORA_AUTOMATIC_NOTIFICATIONS_ENABLED"
+_TRUE_VALUES = frozenset({"1", "true", "yes", "on"})
+
+
+def automatic_notifications_enabled() -> bool:
+    """Return whether background/tenant notification dispatch is allowed.
+
+    Production keeps the historical default (enabled when the variable is not
+    set). The development launcher sets this variable to ``0`` so starting a
+    local service cannot replay existing alert state into real webhooks. An
+    operator can explicitly opt in by setting it to a true value. Explicit
+    user-triggered webhook test functions call ``send_*`` directly and are not
+    silently disabled by this automatic-dispatch guard.
+    """
+
+    configured = os.environ.get(_AUTOMATIC_NOTIFICATIONS_ENV)
+    if configured is None:
+        return True
+    return configured.strip().lower() in _TRUE_VALUES
+
 # ── 级别映射 ──────────────────────────────────────────────
 _SEVERITY_EMOJI = {
     'critical': '🔴',
@@ -607,6 +627,10 @@ def send_all_channels(channels: dict, alert: dict) -> list[dict]:
 
 def _dispatch_to_users(alert: dict, tenant_id: str | None = None) -> list[dict]:
     """Dispatch through configured channels without crossing tenant scope."""
+    if not automatic_notifications_enabled():
+        logger.info("[Notify] Automatic notification dispatch disabled by runtime policy")
+        return []
+
     from database import get_db_connection
     tenant_id = str(tenant_id or '').strip()
     conn = get_db_connection()

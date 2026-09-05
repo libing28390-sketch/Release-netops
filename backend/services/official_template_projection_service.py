@@ -18,7 +18,7 @@ from database import _USE_PG, get_db_connection
 from services.official_product_catalog_service import model_aliases, vendor_models
 
 
-TARGET_VENDORS = ("Huawei", "H3C", "Cisco")
+TARGET_VENDORS = ("Huawei", "H3C", "Cisco", "Ruijie")
 
 _FEATURES: tuple[tuple[str, tuple[str, ...], str], ...] = (
     ("vxlan", ("vxlan", "evpn"), "overlay"),
@@ -27,6 +27,7 @@ _FEATURES: tuple[tuple[str, tuple[str, ...], str], ...] = (
     ("static_route", ("static route", "static-route", "static routing", "静态路由", "ip route-static"), "routing"),
     ("vrrp", ("vrrp",), "reliability"),
     ("lacp", ("lacp", "eth-trunk", "bridge-aggregation", "port-channel"), "switching"),
+    ("lldp", ("lldp", "link layer discovery", "链路层发现"), "switching"),
     ("stp", ("stp", "mstp", "rstp", "spanning-tree"), "switching"),
     ("hsrp", ("hsrp", "hot standby router protocol"), "reliability"),
     ("access_port", ("access-port", "access port", "接入口"), "switching"),
@@ -43,9 +44,61 @@ _FEATURES: tuple[tuple[str, tuple[str, ...], str], ...] = (
     ("mlag", ("mlag", "m-lag", "s-mlag", "smlag", "vpc", "多机箱", "跨设备链路聚合"), "reliability"),
 )
 
+# These six rows are the reviewed identities used by the current Ruijie
+# anchors.  Identity-based classification is deliberately explicit here:
+# command bodies contain both configuration and verification commands, and a
+# broad substring scan would otherwise classify VLAN/access or show-route
+# entries under the wrong feature.
+_EXPLICIT_FEATURES: dict[str, tuple[str, str]] = {
+    "official-huawei-ce12800-vxlan-evpn-basic": ("vxlan", "overlay"),
+    "official-huawei-port-security-basic": ("port_security", "security"),
+    "official-huawei-cpu-memory-diagnostic": ("system_monitoring", "operations"),
+    "official-huawei-ospf-bfd-basic": ("bfd", "routing"),
+    "official-huawei-super-password-basic": ("pam", "security"),
+    "official-huawei-ce6885-interface-status-diagnostic": ("interface", "operations"),
+    # Interface status/switchport evidence belongs to the operations facet,
+    # matching the parser's interface intent.  The command body still carries
+    # the access/trunk configuration details in its explicit feature scope.
+    "official-cisco-interface-switchport-basic": ("interface", "operations"),
+    "official-cisco-arp-mac-diagnostic": ("arp", "routing"),
+    "official-cisco-aaa-authentication-basic": ("pam", "security"),
+    "official-h3c-interface-brief-diagnostic": ("interface", "operations"),
+    "official-h3c-arp-mac-diagnostic": ("arp", "routing"),
+    "ruijie-rgos-vlan-access": ("vlan", "switching"),
+    "ruijie-rgos-aggregateport": ("lacp", "switching"),
+    "ruijie-rgos-show-route": ("static_route", "routing"),
+    "ruijie-rgos-ospf": ("ospf", "routing"),
+    "ruijie-rgos-show-lldp": ("lldp", "switching"),
+    "ruijie-rgos-acl": ("acl", "security"),
+}
+
+_CLI_OUTPUT_TEMPLATES = {
+    "official-huawei-cpu-memory-diagnostic",
+    "official-cisco-arp-mac-diagnostic",
+    "official-h3c-interface-brief-diagnostic",
+    "official-h3c-arp-mac-diagnostic",
+    "ruijie-rgos-show-route",
+    "ruijie-rgos-show-lldp",
+}
+
 
 def _text(value: Any) -> str:
     return str(value or "").strip()
+
+
+def _projection_document_id(row: dict[str, Any]) -> str:
+    """Return the semantic ID exposed to retrieval/evaluation consumers.
+
+    The existing Huawei/H3C/Cisco template IDs historically carry the
+    ``official-template-`` namespace.  Ruijie Gold IDs were established from
+    the official-source corpus before template projection and intentionally
+    use the bare template ID.  Preserve both contracts explicitly instead of
+    making the evaluator guess how a source was ingested.
+    """
+
+    template_id = _text(row.get("id"))
+    vendor = _text(row.get("vendor"))
+    return template_id if vendor == "Ruijie" else f"official-template-{template_id}"
 
 
 def _render(content: str) -> str:
@@ -72,6 +125,9 @@ def _feature(row: dict[str, Any]) -> tuple[str, str]:
     # command such as ``no spanning-tree portfast``; scanning the whole body
     # first incorrectly classified that template as STP and made the access
     # Gold anchor fail the feature hard filter.
+    template_id = _text(row.get("id")).lower()
+    if template_id in _EXPLICIT_FEATURES:
+        return _EXPLICIT_FEATURES[template_id]
     identity = " ".join(_text(row.get(key)) for key in ("id", "name", "category", "description")).lower()
     for feature, aliases, domain in _FEATURES:
         if any(alias in identity for alias in aliases):
@@ -88,6 +144,10 @@ def _product_scope(row: dict[str, Any]) -> tuple[str, str, str]:
     vendor = _text(row.get("vendor"))
     platform = _text(row.get("platform_family"))
     if vendor == "Huawei":
+        if "ce6885" in template_id:
+            return "CloudEngine 6800", "CE6885-48YS8CQ", "VRP8"
+        if "ce12800" in template_id:
+            return "CloudEngine 12800", "CE12800", "VRP8"
         if "ce6800" in template_id:
             return "CloudEngine 6800", "CE6800", "VRP8"
         return "S5700/S6700", "S5700/S6700", "VRP"
@@ -99,6 +159,8 @@ def _product_scope(row: dict[str, Any]) -> tuple[str, str, str]:
         if "nexus" in template_id:
             return "Nexus 3000/9000", "Nexus 3000/9000", "NX-OS"
         return "Catalyst 9300", "Catalyst 9300", "IOS-XE"
+    if vendor == "Ruijie":
+        return "RGOS switches", "RG-S/RGOS", "RGOS"
     return platform or vendor, platform, ""
 
 
@@ -117,11 +179,23 @@ def _catalog_applicability(row: dict[str, Any], vendor: str) -> tuple[list[str],
     scope: str | None = None
     if vendor == "Huawei" and "ce6800" in template_id:
         scope = "datacenter"
+    elif vendor == "Huawei" and "ce12800" in template_id:
+        scope = "datacenter"
     elif vendor == "H3C" and any(token in template_id for token in ("s6800", "s9825")):
         scope = "datacenter"
     elif vendor == "Cisco" and "nexus" in template_id:
         scope = "datacenter"
     rows = vendor_models(vendor, scope=scope)
+    if vendor == "Ruijie":
+        # RG-S6220 is the concrete family covered by the official Ruijie
+        # document-center evidence used for these anchors.  Keep the generic
+        # RG-S/RGOS aliases as applicability values, not as additional SKUs.
+        return (
+            ["RG-S6220", "RG-S", "rg-s6220", "rg-s"],
+            ["RG-S/RGOS", "RG-S", "RG-S6220", "RGOS"],
+            ["ruijie_rgos"],
+            "datacenter",
+        )
     platform_rows = rows
     if vendor == "Cisco":
         # Catalyst IOS-XE and Nexus NX-OS are different CLI families.  A
@@ -188,7 +262,7 @@ def _metadata(row: dict[str, Any], *, document_id: str) -> dict[str, Any]:
         "title": _text(row.get("name")),
         "vendor": vendor,
         "product_type": "network_switch",
-        "document_category": "configuration",
+        "document_category": "cli_output" if _text(row.get("id")).lower() in _CLI_OUTPUT_TEMPLATES else "configuration",
         "source_type": "official_template",
         "official_only": True,
         # ``templates.status`` is the catalog lifecycle state.  RAG parent
@@ -278,7 +352,7 @@ def _refresh_existing_template_projection(tenant_id: str) -> int:
             FROM templates
             WHERE COALESCE(is_official, 0) = 1
               AND LOWER(COALESCE(status, 'published')) = 'published'
-              AND LOWER(COALESCE(vendor, '')) IN ('huawei', 'h3c', 'cisco')
+              AND LOWER(COALESCE(vendor, '')) IN ('huawei', 'h3c', 'cisco', 'ruijie')
             """
         ).fetchall()
         templates = {_text((_row_dict(row)).get("id")): _row_dict(row) for row in template_rows}
@@ -299,14 +373,14 @@ def _refresh_existing_template_projection(tenant_id: str) -> int:
             row = templates.get(template_id)
             if not row:
                 continue
-            metadata = _metadata(row, document_id=_text(old_metadata.get("document_id")) or _text(doc_id))
+            metadata = _metadata(row, document_id=_projection_document_id(row))
             metadata_json = json.dumps(metadata, ensure_ascii=False, separators=(",", ":"), default=str)
             json_expression = "CAST(? AS JSONB)" if _USE_PG else "?"
             now = metadata.get("updated_at") or row.get("updated_at") or ""
             conn.execute(
                 f"""
                 UPDATE ai_document
-                SET name = ?, source = ?, platform = ?, version = ?,
+                SET document_id = ?, name = ?, source = ?, platform = ?, version = ?,
                     status = 'active', source_trust_level = 'official', knowledge_source_type = 'official_template',
                     metadata_json = {json_expression}, document_category = ?,
                     product_family = ?, product_series = ?, product_model = ?, os_family = ?,
@@ -316,7 +390,7 @@ def _refresh_existing_template_projection(tenant_id: str) -> int:
                 WHERE id = ? AND tenant_id = ?
                 """,
                 (
-                    _text(row.get("name")) or template_id,
+                    metadata.get("document_id"), _text(row.get("name")) or template_id,
                     _text(row.get("official_reference")) or None,
                     _text(row.get("platform_family")) or None,
                     _text(row.get("software_version")) or None,
@@ -408,7 +482,7 @@ def project_official_templates_to_knowledge(
         if not content:
             skipped.append(template_id)
             continue
-        document_id = f"official-template-{template_id}"
+        document_id = _projection_document_id(row)
         metadata = _metadata(row, document_id=document_id)
         result = knowledge_service.add_document_and_chunk(
             knowledge_base_id=str(knowledge_base["id"]),

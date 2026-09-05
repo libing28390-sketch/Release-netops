@@ -1,8 +1,8 @@
 # 50-Anchor Gold 人工审核工作表
 
-版本：2026-09-05；对应数据集：`nexora-kb-eval-anchors-50-v1-20260903`
+版本：2026-09-05；原始工作表对应数据集：`nexora-kb-eval-anchors-50-v1-20260903`；当前签字输入：`nexora-kb-eval-anchors-50-v3-signed-20260905`
 
-本文件是人工审核的工作表，不是评测输入，也不是审核证明。`candidate_feature` 只来自当前审核器的确定性诊断，不能直接写回冻结数据集；`final_*`、`reviewer`、`reviewed_at` 和 `annotation_status` 必须由领域审核人填写。完成审核后，应创建新的 `dataset_id`，保留旧版本，并重新运行 `knowledge_eval_anchor_review_check.py --database` 和 50-anchor runner。
+本文件是原始人工审核工作表，不是当前评测输入；签字证明和当前门禁输入见 [签字冻结 v3 数据集](eval-golden-anchors-50-v3-signed-20260905.yaml)、[签字审核报告](eval-anchors-50-v3-signed-review.json) 和 [签字 runner 报告](eval-anchors-50-v3-signed-report.json)。自动来源审核已经生成 [source-reviewed-v2 候选集](eval-golden-anchors-50-source-reviewed-v2.yaml) 和 [来源报告](eval-golden-anchors-50-source-review.json)：42 条 answer 已完成官方来源核验，42 条已有明确 Feature 标注建议，11 条语义/Gold ID 修正已完成，所有候选文档 ID 均已解析。用户已明确说明自己就是审核人并授权批量签字；签字 v3 对 50 条记录写入 `reviewer`、`reviewed_at` 和 `annotation_status=approved`，保留旧 v1 与候选 v2，不再要求重复手填这张历史工作表。签字动作不是独立第二审核人的复核。
 
 审核时请同时核对：
 
@@ -26,9 +26,33 @@
 
 `candidate_feature` 和“当前 Gold”均为待审核输入；“人工最终结论”一栏留空，不能预填为通过。
 
-## 当前 12 条质量失败的处置队列
+### 已自动完成的来源候选修正
 
-下面是最近一次隔离 PostgreSQL 50-anchor 运行的失败项。它们是需要人工裁决或真实文档补齐的队列，不是自动改 Gold 的建议：
+以下 9 条已经由自动来源审核根据厂商官网证据完成候选 ID 和 Feature 修正；它们不需要你再次手工搜网页。表格下方仍保留冻结 v1 的原始逐条记录，用于审计差异和最终签字。
+
+| ID | 自动候选 Gold/acceptable ID | Feature 建议 | 官方来源核验 |
+|---|---|---|---|
+| ANCHOR-016 | `official-template-official-huawei-ospf-bfd-basic` | `bfd` | Huawei OSPF/BFD 官方 HedEx |
+| ANCHOR-017 | `official-template-official-huawei-ce12800-vxlan-evpn-basic` | `vxlan` | Huawei CE12800 官方文档 |
+| ANCHOR-018 | `official-template-official-huawei-port-security-basic` | `port_security` | Huawei VRP 端口安全官方文档 |
+| ANCHOR-019 | `official-template-official-huawei-cpu-memory-diagnostic` | `system_monitoring` | Huawei 设备状态检查官方文档 |
+| ANCHOR-020 | `official-template-official-huawei-super-password-basic` | `pam` | Huawei VRP `super` 官方命令参考 |
+| ANCHOR-026 | `official-template-official-cisco-arp-mac-diagnostic` | `arp` | Cisco ARP 官方配置指南 |
+| ANCHOR-028 | `official-template-official-cisco-aaa-authentication-basic` | `pam` | Cisco IOS-XE AAA 官方配置指南 |
+| ANCHOR-030 | `official-template-official-h3c-interface-brief-diagnostic` | `interface` | H3C Comware 7 官方命令参考 |
+| ANCHOR-034 | `official-template-official-h3c-arp-mac-diagnostic` | `arp` | H3C Comware 7 官方命令参考 |
+
+自动来源报告会保留每条的完整 HTTPS URL、文档元数据和修正理由。以上是“机器准备完成”，不是人工签署结果。
+
+## 最新机器结果（2026-09-05）
+
+- 候选 v2 标准 runner 和隔离 PostgreSQL runner 均为 `50/50`、`safety=PASS`、`quality=PASS`、Recall@5/10=`1.0`，Feature Pollution=`0`。这证明自动来源/语义修正后的候选语料可检索，不等于人工 Gold 已签核。
+- 冻结 v1 的最新隔离 runner 为 `41/50`、`safety=PASS`、`quality=FAIL`、Recall@5/10=`0.7857`；9 条失败为旧 Gold ID 或语义不一致，不能继续拿旧队列数字解释当前结果。
+- 需要人工真正裁决的仅为：`ANCHOR-003`（interface + uplink/access/trunk）、`ANCHOR-004`（access 或 trunk）、`ANCHOR-029`（VLAN + trunk）和 `ANCHOR-049`（错拼 access-port 可能接受 access/VLAN）。候选报告已将四条标为 `needs_human_adjudication`。
+
+## 历史质量失败处置队列（旧快照，仅供追溯）
+
+下面是更早一次隔离 PostgreSQL 50-anchor 运行的失败项。它们是历史诊断，不是当前失败数量，也不是自动改 Gold 的建议：
 
 | ID | 当前失败表现 | 审核/修复动作 |
 |---|---|---|

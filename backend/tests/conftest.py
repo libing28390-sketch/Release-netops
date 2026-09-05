@@ -1,19 +1,28 @@
 """Shared PostgreSQL fixtures for the backend test suite.
 
 The backend test suite runs against PostgreSQL in every environment.  A
-session-level schema template keeps the full bootstrap/migration cost bounded;
-each test receives a disposable database cloned from that template so tests
-can still mutate their database without sharing state.
+session-level, data-free schema template keeps the full bootstrap/migration
+cost bounded; each test receives a disposable database cloned from that
+template so tests can still mutate their database without sharing state.
 """
 
 from __future__ import annotations
 
 import json
+import os
 import uuid
 from datetime import datetime, timezone
-from urllib.parse import unquote, urlparse
 
 import pytest
+
+# CI supplies this synthetic key at the job boundary.  Provide the same
+# non-production default for local pytest runs when a developer has not
+# exported one, without overriding an explicitly configured local key.  The
+# application itself still fails closed for an unconfigured production key.
+os.environ.setdefault(
+    "CREDENTIAL_ENCRYPTION_KEY",
+    "test-only-credential-placeholder",
+)
 
 import database
 import database.core as database_core
@@ -72,7 +81,16 @@ def _insert_user(
 
 @pytest.fixture(scope="session", autouse=True)
 def _postgres_schema_template():
-    """Initialize the source DB and a disposable template for this session."""
+    """Initialize the source DB and build a disposable, data-free template.
+
+    The configured ``DATABASE_URL`` may point at a developer's real local
+    application database.  Cloning it would leak application rows (for
+    example AI providers) into every supposedly isolated test and make local
+    results differ from the empty PostgreSQL service used by CI.  The source
+    database is still initialized for tests that intentionally use the normal
+    application connection, but the per-test template is created empty and
+    bootstrapped independently.
+    """
     original_state = capture_database_state()
     source_url = database_core._DATABASE_URL
     if not database_core._USE_PG or not database_schema._USE_PG:
@@ -90,17 +108,17 @@ def _postgres_schema_template():
         database.init_db()
         close_database_pool()
 
-        # CREATE DATABASE ... TEMPLATE requires the source database to have no
-        # active sessions.  Clone only after the complete migration history has
-        # been committed; every isolated test then starts from the same schema.
-        source_name = unquote(urlparse(source_url).path.lstrip("/"))
-        if not source_name:
-            pytest.fail("Backend tests require a named PostgreSQL DATABASE_URL database")
+        # Never clone the configured application database: it may contain
+        # developer data.  Create an empty database and initialize the complete
+        # schema once; every isolated test then starts from this data-free
+        # template while retaining the normal bootstrap seeds.
         template = create_test_database(
             source_url,
             purpose="schema_template",
-            template_name=source_name,
         )
+        switch_database(template.url, initialized=False)
+        database.init_db()
+        close_database_pool()
         yield template
     finally:
         close_temporary_test_connections()

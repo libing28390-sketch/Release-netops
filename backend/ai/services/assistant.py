@@ -20,6 +20,7 @@ from ai.services.ip_troubleshooting import ip_troubleshooting_service
 from ai.services.mac_troubleshooting import mac_troubleshooting_service
 from ai.services.rag_retriever import RAGRetriever, rag_retriever, RetrievalRequest
 from ai.schemas.knowledge import KnowledgeQueryPlan
+from ai.services.knowledge_metadata import canonical_cli_platform
 from ai.services.product_resolver import product_resolver, EntityResolution
 from ai.services.retrieval_contract import build_retrieval_explanation
 from ai.services.citation_service import (
@@ -282,11 +283,25 @@ class AIAssistantService:
         retrieval_values = plan.to_retrieval_values()
         # Product Registry evidence is authoritative for identity. Retain its
         # resolved values while keeping non-plan keys out of RetrievalRequest.
-        retrieval_values.update({
+        resolved_values = {
             key: value
             for key, value in resolution.metadata.items()
             if key in RetrievalRequest.__dataclass_fields__ and value not in (None, "", [], {})
-        })
+        }
+        # A resolver may receive a version-qualified alias (for example
+        # ``huawei_vrpv8``) from a legacy registry row.  The retrieval store
+        # uses the canonical CLI family, and an explicit plan value must not
+        # be overwritten by the raw alias returned by the resolver.
+        if resolved_values.get("cli_platform"):
+            resolved_values["cli_platform"] = canonical_cli_platform(resolved_values["cli_platform"])
+        if not retrieval_values.get("cli_platform"):
+            retrieval_values.update(resolved_values)
+        else:
+            retrieval_values.update({
+                key: value
+                for key, value in resolved_values.items()
+                if key != "cli_platform"
+            })
         request = RetrievalRequest.from_mapping(
             message,
             retrieval_values,

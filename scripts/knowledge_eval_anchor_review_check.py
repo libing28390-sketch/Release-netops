@@ -23,8 +23,8 @@ ROOT = Path(__file__).resolve().parents[1]
 BACKEND_ROOT = ROOT / "backend"
 if str(BACKEND_ROOT) not in sys.path:
     sys.path.insert(0, str(BACKEND_ROOT))
-DATASET_PATH = ROOT / "docs" / "knowledge-engine" / "eval" / "eval-golden-anchors-50.yaml"
-REPORT_PATH = ROOT / "docs" / "knowledge-engine" / "eval" / "eval-anchors-50-review.json"
+DATASET_PATH = ROOT / "docs" / "knowledge-engine" / "eval" / "eval-golden-anchors-50-v3-signed-20260905.yaml"
+REPORT_PATH = ROOT / "docs" / "knowledge-engine" / "eval" / "eval-anchors-50-v3-signed-review.json"
 MIGRATIONS_PATH = ROOT / "backend" / "database" / "migrations"
 
 REQUIRED_REVIEW_FIELDS = ("reviewer", "reviewed_at", "annotation_status")
@@ -54,6 +54,13 @@ def _known_projected_document_ids() -> set[str]:
             template_id = match.group(1).strip()
             if template_id.startswith("official-"):
                 known.add(f"official-template-{template_id}")
+            elif template_id.startswith("ruijie-rgos-"):
+                # Ruijie Gold IDs predate the generic official-template
+                # projection namespace and are intentionally exposed as the
+                # bare semantic ID.  Keep the source-scan contract aligned
+                # with _projection_document_id instead of reporting all six
+                # reviewed Ruijie entries as unresolved.
+                known.add(template_id)
         # Older seed migrations keep template IDs in tuples passed to the
         # INSERT/UPDATE helper rather than in an ``{"id": ...}`` mapping.
         # Capture only the stable official-ID namespace; URLs and free-form
@@ -188,6 +195,24 @@ def _infer_feature(case: dict[str, Any]) -> tuple[str | None, str]:
     return None, "not_applicable_or_unresolved"
 
 
+def _explicit_feature_scope(case: Mapping[str, Any]) -> list[str]:
+    """Return an explicit multi-feature annotation, if present.
+
+    Most anchors have one primary feature.  A small number of legitimate
+    queries combine VLAN membership with port mode, or interface state with
+    access/trunk configuration.  ``feature_scope`` makes those accepted
+    labels explicit instead of forcing the reviewer to discard a valid
+    supporting document or to call it pollution.
+    """
+
+    raw = case.get("feature_scope")
+    if isinstance(raw, (list, tuple, set)):
+        return [str(item).strip() for item in raw if str(item).strip()]
+    if isinstance(raw, str) and raw.strip():
+        return [item.strip() for item in raw.split(",") if item.strip()]
+    return []
+
+
 def _review_record(
     case: dict[str, Any],
     known_ids: set[str],
@@ -206,6 +231,7 @@ def _review_record(
         if str(item).strip()
     ]
     feature, feature_source = _infer_feature(case)
+    explicit_feature_scope = _explicit_feature_scope(case)
     unresolved_ids = sorted(set(acceptable_ids) - known_ids)
     missing_fields = [
         field for field in REQUIRED_REVIEW_FIELDS
@@ -224,6 +250,11 @@ def _review_record(
         # inference is useful diagnostic context, but it is not an annotation
         # that can authorize feature-pollution or metadata consistency gates.
         for field in ("vendor", "platform", "feature"):
+            if field == "feature":
+                has_feature_annotation = bool(str(case.get(field) or "").strip()) or bool(explicit_feature_scope)
+                if not has_feature_annotation:
+                    missing_annotation_fields.append(field)
+                continue
             if not str(case.get(field) or "").strip():
                 missing_annotation_fields.append(field)
 
@@ -243,11 +274,19 @@ def _review_record(
         expected_vendor = canonical_vendor(vendor) if vendor else ""
         expected_platform = canonical_cli_platform(platform) if platform else ""
         expected_feature = canonical_feature(case.get("feature")) if case.get("feature") else ""
+        expected_feature_scope = {
+            canonical_feature(value)
+            for value in explicit_feature_scope
+            if canonical_feature(value)
+        }
+        if expected_feature:
+            expected_feature_scope.add(expected_feature)
         expected_fields = {
             "vendor": expected_vendor,
             "cli_platform": expected_platform,
-            "feature": expected_feature,
         }
+        if expected_feature_scope:
+            expected_fields["feature"] = expected_feature_scope
         checked_fields = [key for key, value in expected_fields.items() if value]
         metadata_validation["checked_fields"] = checked_fields
         mismatch_ids: list[str] = []
@@ -263,14 +302,18 @@ def _review_record(
             if missing_metadata_fields:
                 insufficient_ids.append(document_id)
                 continue
-            mismatched = [
-                key for key in checked_fields
-                if (
+            mismatched = []
+            for key in checked_fields:
+                actual_value = (
                     canonical_vendor(document.get(key)) if key == "vendor"
                     else canonical_cli_platform(document.get(key)) if key == "cli_platform"
                     else canonical_feature(document.get(key))
-                ) != expected_fields[key]
-            ]
+                )
+                if key == "feature":
+                    if actual_value not in expected_fields[key]:
+                        mismatched.append(key)
+                elif actual_value != expected_fields[key]:
+                    mismatched.append(key)
             if mismatched:
                 mismatch_ids.append(document_id)
         if acceptable_ids and not any(document_id in known_metadata for document_id in acceptable_ids):
@@ -290,6 +333,7 @@ def _review_record(
         "vendor": vendor,
         "platform": platform,
         "feature": feature,
+        "feature_scope": explicit_feature_scope,
         "feature_source": feature_source,
         "gold_document_ids": gold_ids,
         "acceptable_document_ids": acceptable_ids,
@@ -390,6 +434,9 @@ def validate_anchor_review(
         "missing_feature_annotation_cases": missing_feature_annotation_cases,
         "unresolved_gold_document_ids": sorted(unresolved_gold),
         "inferred_feature_cases": inferred_feature_cases,
+        "explicit_feature_scope_cases": [
+            record["id"] for record in records if record.get("feature_scope")
+        ],
         "metadata_mismatch_cases": metadata_mismatch_cases,
         "metadata_insufficient_cases": metadata_insufficient_cases,
         "known_projected_document_id_count": len(resolved_ids),
@@ -403,6 +450,18 @@ def main() -> int:
 
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument(
+        "--dataset",
+        type=Path,
+        default=DATASET_PATH,
+        help="anchor dataset to audit; defaults to the current frozen signed dataset",
+    )
+    parser.add_argument(
+        "--output",
+        type=Path,
+        default=REPORT_PATH,
+        help="JSON audit output path; defaults to the canonical v1 report",
+    )
+    parser.add_argument(
         "--database",
         action="store_true",
         help="perform a read-only official-document identity lookup in PostgreSQL",
@@ -411,6 +470,7 @@ def main() -> int:
     if args.database:
         database_metadata, validation, database_error = _known_postgresql_document_metadata()
         report = validate_anchor_review(
+            dataset=_load(args.dataset),
             known_ids=set(database_metadata),
             known_metadata=database_metadata,
             database_validation=validation,
@@ -418,8 +478,9 @@ def main() -> int:
         )
         report["source_scan_known_projected_document_id_count"] = len(_known_projected_document_ids())
     else:
-        report = validate_anchor_review()
-    REPORT_PATH.write_text(json.dumps(report, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
+        report = validate_anchor_review(dataset=_load(args.dataset))
+    args.output.parent.mkdir(parents=True, exist_ok=True)
+    args.output.write_text(json.dumps(report, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
     print(
         "50-anchor review audit: "
         f"status={report['status']} "

@@ -86,6 +86,36 @@ def test_assistant_builds_scope_and_directory_into_retrieval_request(monkeypatch
     assert request.roles == ["Operator"]
 
 
+def test_assistant_keeps_explicit_canonical_cli_platform_when_resolver_returns_alias(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setattr(
+        assistant_module.product_resolver,
+        "resolve_query",
+        lambda *args, **kwargs: assistant_module.EntityResolution(
+            metadata={
+                "vendor": "Huawei",
+                "cli_platform": "huawei_vrpv8",
+                "document_category": "configuration",
+            }
+        ),
+    )
+
+    request, _resolution = AIAssistantService.build_knowledge_request(
+        "华为 VRP VLAN 配置",
+        {
+            "knowledge_intent": {
+                "vendor": "Huawei",
+                "platform": "huawei_vrpv8",
+                "feature": "vlan",
+                "document_scope": "official",
+            }
+        },
+    )
+
+    assert request.cli_platform == "huawei_vrp"
+
+
 def test_retrieval_applies_scope_directory_tenant_and_acl_in_postgresql(monkeypatch: pytest.MonkeyPatch) -> None:
     connection = postgresql_test_driver.connect()
     connection.executescript(

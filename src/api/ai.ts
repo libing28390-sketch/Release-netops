@@ -1323,6 +1323,57 @@ export async function runKnowledgeEvaluation(suite = 'v1_baseline_postgresql'): 
   return payload.data;
 }
 
+export interface KnowledgeGold400FixtureBucket {
+  key: string;
+  count: number;
+}
+
+export interface KnowledgeGold400FixtureSummary {
+  dataset_id: string;
+  status: string;
+  purpose: string;
+  test_only: boolean;
+  synthetic_data: boolean;
+  production_eligible: boolean;
+  production_gate: string;
+  case_count: number;
+  database: 'PostgreSQL' | string;
+  collection: {
+    mode: string;
+    source_manifest: string;
+    source_manifest_sha256: string;
+    collected_at: string;
+    content_origin: string;
+  };
+  source_policy: {
+    database: string;
+    sqlite: string;
+    external_network: string;
+    secrets: string;
+    production_data: string;
+    official_sources: string;
+    source_collection: string;
+  };
+  coverage: {
+    categories: KnowledgeGold400FixtureBucket[];
+    vendors: KnowledgeGold400FixtureBucket[];
+    splits: KnowledgeGold400FixtureBucket[];
+  };
+  review: {
+    mode: string;
+    minimum_double_review_cases: number;
+    human_review_required: boolean;
+    human_review_ready: boolean;
+  };
+  redacted: boolean;
+  contains_case_content: boolean;
+}
+
+export async function getKnowledgeGold400FixtureSummary(): Promise<KnowledgeGold400FixtureSummary> {
+  const payload = await apiRequest<KnowledgeSourceEnvelope<KnowledgeGold400FixtureSummary>>('/api/knowledge/evaluation/fixtures/gold-400');
+  return payload.data;
+}
+
 export interface KnowledgeExperimentRunSummary {
   run_id: string;
   dataset_id: string;

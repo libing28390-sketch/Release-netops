@@ -42,6 +42,19 @@ def test_full_huawei_sku_alias_remains_matchable_to_hardware_registry():
     assert resolution.metadata["product_model"] == "ce6885-48ys8cq"
 
 
+def test_catalyst_3850_resolves_to_its_reviewed_iosxe_family():
+    resolution = product_resolver.resolve_query(
+        "Cisco Catalyst 3850 switchport mode trunk",
+        metadata={"vendor": "Cisco", "cli_platform": "cisco_iosxe"},
+    )
+
+    assert resolution.match_method in {"exact", "canonical"}
+    assert resolution.match_score == 1.0
+    assert resolution.metadata["product_series"] == "Catalyst 3850"
+    assert resolution.metadata["product_model"] == "c3850"
+    assert resolution.ambiguous is False
+
+
 def test_registry_binds_generic_h3c_os_family_to_reviewed_concrete_family():
     resolution = product_resolver.resolve_query("H3C S6850 Comware VLAN配置")
 

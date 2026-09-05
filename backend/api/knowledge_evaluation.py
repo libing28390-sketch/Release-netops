@@ -10,6 +10,7 @@ from pydantic import BaseModel, ConfigDict, Field
 from core.rbac import require_permission
 from services.knowledge_evaluation_service import (
     KnowledgeEvaluationError,
+    get_gold_400_fixture_summary,
     get_evaluation_report,
     run_evaluation,
 )
@@ -55,6 +56,15 @@ def api_run_evaluation(
     if payload.suite != "v1_baseline_postgresql":
         raise HTTPException(status_code=422, detail={"code": "EVAL_SUITE_NOT_SUPPORTED", "message": "Evaluation suite is not supported"})
     return {"success": True, "data": _call(run_evaluation, user), "message": "PostgreSQL evaluation completed"}
+
+
+@router.get("/fixtures/gold-400")
+def api_get_gold_400_fixture_summary(
+    user=require_permission("knowledge_source", "read"),
+):
+    """Expose aggregate fixture metadata without exposing evaluation answers."""
+
+    return {"success": True, "data": _call(get_gold_400_fixture_summary, user), "message": ""}
 
 
 @router.get("/observability")

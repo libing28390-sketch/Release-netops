@@ -1,0 +1,4555 @@
+{
+  "status": "PASS",
+  "quality_status": "PASS",
+  "dataset_id": "nexora-kb-eval-gold-400-v2-20260905",
+  "dataset_sha256": "6e030b4b9b98156f84524f2ec3dbb35be87d0cde8c29a48830a6c206a215840a",
+  "source_manifest_sha256": "b7225b3e07385ebfb2ef3e37661041e49029ceb9437b4857f80775a05c0fba3d",
+  "database": "PostgreSQL",
+  "sqlite": "not_used",
+  "external_network": "forbidden",
+  "production_database_write": false,
+  "corpus": {
+    "mode": "isolated_postgresql_local_source_summary",
+    "document_count": 94,
+    "tenant_scope": "ephemeral_test_tenant",
+    "pack_test_only": true,
+    "pack_production_eligible": false,
+    "official_claims": "downgraded_to_user_document_on_import"
+  },
+  "thresholds": {
+    "recall_at_5": 0.95,
+    "recall_at_10": 0.97
+  },
+  "source_gate": {
+    "status": "PASS",
+    "human_review_required": false,
+    "official_source_evidence_case_count": 300
+  },
+  "metrics": {
+    "answer_case_count": 300,
+    "guard_case_count": 100,
+    "retrieval_evaluated_case_count": 300,
+    "recall_at_5": 1.0,
+    "recall_at_10": 1.0,
+    "mean_reciprocal_rank": 1.0,
+    "vendor_isolation_failures": 0,
+    "feature_scope_failures": 0,
+    "latency_ms": {
+      "average": 18.9239,
+      "p50": 17.6084,
+      "p95": 20.5106,
+      "max": 281.7687
+    }
+  },
+  "guard_policy": {
+    "evaluated_by": "assistant_security_gateway_required",
+    "low_level_retrieval_called": false,
+    "expected_outcome_counts": {
+      "clarify": 70,
+      "no_match": 30
+    }
+  },
+  "cases": [
+    {
+      "id": "GOLD400-OFFICIAL-001",
+      "expected_document_ids": [
+        "local.huawei.huawei_vrp.vlan.v1"
+      ],
+      "returned_document_ids": [
+        "local.huawei.huawei_vrp.vlan.v1"
+      ],
+      "hit_at_5": true,
+      "hit_at_10": true,
+      "mrr": 1.0,
+      "vendor_isolation_passed": true,
+      "feature_scope_passed": true,
+      "latency_ms": 281.7687
+    },
+    {
+      "id": "GOLD400-OFFICIAL-002",
+      "expected_document_ids": [
+        "local.huawei.huawei_vrp.access_port.v1"
+      ],
+      "returned_document_ids": [
+        "local.huawei.huawei_vrp.access_port.v1"
+      ],
+      "hit_at_5": true,
+      "hit_at_10": true,
+      "mrr": 1.0,
+      "vendor_isolation_passed": true,
+      "feature_scope_passed": true,
+      "latency_ms": 16.8327
+    },
+    {
+      "id": "GOLD400-OFFICIAL-003",
+      "expected_document_ids": [
+        "local.huawei.huawei_vrp.trunk.v1"
+      ],
+      "returned_document_ids": [
+        "local.huawei.huawei_vrp.trunk.v1"
+      ],
+      "hit_at_5": true,
+      "hit_at_10": true,
+      "mrr": 1.0,
+      "vendor_isolation_passed": true,
+      "feature_scope_passed": true,
+      "latency_ms": 18.7073
+    },
+    {
+      "id": "GOLD400-OFFICIAL-004",
+      "expected_document_ids": [
+        "local.huawei.huawei_vrp.ospf.v1"
+      ],
+      "returned_document_ids": [
+        "local.huawei.huawei_vrp.ospf.v1"
+      ],
+      "hit_at_5": true,
+      "hit_at_10": true,
+      "mrr": 1.0,
+      "vendor_isolation_passed": true,
+      "feature_scope_passed": true,
+      "latency_ms": 17.0558
+    },
+    {
+      "id": "GOLD400-OFFICIAL-005",
+      "expected_document_ids": [
+        "local.huawei.huawei_vrp.bgp.v1"
+      ],
+      "returned_document_ids": [
+        "local.huawei.huawei_vrp.bgp.v1"
+      ],
+      "hit_at_5": true,
+      "hit_at_10": true,
+      "mrr": 1.0,
+      "vendor_isolation_passed": true,
+      "feature_scope_passed": true,
+      "latency_ms": 17.0154
+    },
+    {
+      "id": "GOLD400-OFFICIAL-006",
+      "expected_document_ids": [
+        "local.huawei.huawei_vrp.lacp.v1"
+      ],
+      "returned_document_ids": [
+        "local.huawei.huawei_vrp.lacp.v1"
+      ],
+      "hit_at_5": true,
+      "hit_at_10": true,
+      "mrr": 1.0,
+      "vendor_isolation_passed": true,
+      "feature_scope_passed": true,
+      "latency_ms": 16.7112
+    },
+    {
+      "id": "GOLD400-OFFICIAL-007",
+      "expected_document_ids": [
+        "local.huawei.huawei_vrp.acl.v1"
+      ],
+      "returned_document_ids": [
+        "local.huawei.huawei_vrp.acl.v1"
+      ],
+      "hit_at_5": true,
+      "hit_at_10": true,
+      "mrr": 1.0,
+      "vendor_isolation_passed": true,
+      "feature_scope_passed": true,
+      "latency_ms": 17.0554
+    },
+    {
+      "id": "GOLD400-OFFICIAL-008",
+      "expected_document_ids": [
+        "local.huawei.huawei_vrp.ssh.v1"
+      ],
+      "returned_document_ids": [
+        "local.huawei.huawei_vrp.ssh.v1"
+      ],
+      "hit_at_5": true,
+      "hit_at_10": true,
+      "mrr": 1.0,
+      "vendor_isolation_passed": true,
+      "feature_scope_passed": true,
+      "latency_ms": 17.7588
+    },
+    {
+      "id": "GOLD400-OFFICIAL-009",
+      "expected_document_ids": [
+        "local.huawei.huawei_vrp.ntp.v1"
+      ],
+      "returned_document_ids": [
+        "local.huawei.huawei_vrp.ntp.v1"
+      ],
+      "hit_at_5": true,
+      "hit_at_10": true,
+      "mrr": 1.0,
+      "vendor_isolation_passed": true,
+      "feature_scope_passed": true,
+      "latency_ms": 17.5163
+    },
+    {
+      "id": "GOLD400-OFFICIAL-010",
+      "expected_document_ids": [
+        "local.huawei.huawei_vrp.static_route.v1"
+      ],
+      "returned_document_ids": [
+        "local.huawei.huawei_vrp.static_route.v1"
+      ],
+      "hit_at_5": true,
+      "hit_at_10": true,
+      "mrr": 1.0,
+      "vendor_isolation_passed": true,
+      "feature_scope_passed": true,
+      "latency_ms": 17.9641
+    },
+    {
+      "id": "GOLD400-OFFICIAL-011",
+      "expected_document_ids": [
+        "local.huawei.huawei_vrp.vlan.v1"
+      ],
+      "returned_document_ids": [
+        "local.huawei.huawei_vrp.vlan.v1"
+      ],
+      "hit_at_5": true,
+      "hit_at_10": true,
+      "mrr": 1.0,
+      "vendor_isolation_passed": true,
+      "feature_scope_passed": true,
+      "latency_ms": 17.1818
+    },
+    {
+      "id": "GOLD400-OFFICIAL-012",
+      "expected_document_ids": [
+        "local.huawei.huawei_vrp.access_port.v1"
+      ],
+      "returned_document_ids": [
+        "local.huawei.huawei_vrp.access_port.v1"
+      ],
+      "hit_at_5": true,
+      "hit_at_10": true,
+      "mrr": 1.0,
+      "vendor_isolation_passed": true,
+      "feature_scope_passed": true,
+      "latency_ms": 17.6095
+    },
+    {
+      "id": "GOLD400-OFFICIAL-013",
+      "expected_document_ids": [
+        "local.huawei.huawei_vrp.trunk.v1"
+      ],
+      "returned_document_ids": [
+        "local.huawei.huawei_vrp.trunk.v1"
+      ],
+      "hit_at_5": true,
+      "hit_at_10": true,
+      "mrr": 1.0,
+      "vendor_isolation_passed": true,
+      "feature_scope_passed": true,
+      "latency_ms": 21.4078
+    },
+    {
+      "id": "GOLD400-OFFICIAL-014",
+      "expected_document_ids": [
+        "local.huawei.huawei_vrp.ospf.v1"
+      ],
+      "returned_document_ids": [
+        "local.huawei.huawei_vrp.ospf.v1"
+      ],
+      "hit_at_5": true,
+      "hit_at_10": true,
+      "mrr": 1.0,
+      "vendor_isolation_passed": true,
+      "feature_scope_passed": true,
+      "latency_ms": 17.4284
+    },
+    {
+      "id": "GOLD400-OFFICIAL-015",
+      "expected_document_ids": [
+        "local.huawei.huawei_vrp.bgp.v1"
+      ],
+      "returned_document_ids": [
+        "local.huawei.huawei_vrp.bgp.v1"
+      ],
+      "hit_at_5": true,
+      "hit_at_10": true,
+      "mrr": 1.0,
+      "vendor_isolation_passed": true,
+      "feature_scope_passed": true,
+      "latency_ms": 17.5693
+    },
+    {
+      "id": "GOLD400-OFFICIAL-016",
+      "expected_document_ids": [
+        "local.huawei.huawei_vrp.lacp.v1"
+      ],
+      "returned_document_ids": [
+        "local.huawei.huawei_vrp.lacp.v1"
+      ],
+      "hit_at_5": true,
+      "hit_at_10": true,
+      "mrr": 1.0,
+      "vendor_isolation_passed": true,
+      "feature_scope_passed": true,
+      "latency_ms": 17.7436
+    },
+    {
+      "id": "GOLD400-OFFICIAL-017",
+      "expected_document_ids": [
+        "local.huawei.huawei_vrp.acl.v1"
+      ],
+      "returned_document_ids": [
+        "local.huawei.huawei_vrp.acl.v1"
+      ],
+      "hit_at_5": true,
+      "hit_at_10": true,
+      "mrr": 1.0,
+      "vendor_isolation_passed": true,
+      "feature_scope_passed": true,
+      "latency_ms": 18.2737
+    },
+    {
+      "id": "GOLD400-OFFICIAL-018",
+      "expected_document_ids": [
+        "local.huawei.huawei_vrp.ssh.v1"
+      ],
+      "returned_document_ids": [
+        "local.huawei.huawei_vrp.ssh.v1"
+      ],
+      "hit_at_5": true,
+      "hit_at_10": true,
+      "mrr": 1.0,
+      "vendor_isolation_passed": true,
+      "feature_scope_passed": true,
+      "latency_ms": 18.3018
+    },
+    {
+      "id": "GOLD400-OFFICIAL-019",
+      "expected_document_ids": [
+        "local.huawei.huawei_vrp.ntp.v1"
+      ],
+      "returned_document_ids": [
+        "local.huawei.huawei_vrp.ntp.v1"
+      ],
+      "hit_at_5": true,
+      "hit_at_10": true,
+      "mrr": 1.0,
+      "vendor_isolation_passed": true,
+      "feature_scope_passed": true,
+      "latency_ms": 18.0949
+    },
+    {
+      "id": "GOLD400-OFFICIAL-020",
+      "expected_document_ids": [
+        "local.huawei.huawei_vrp.static_route.v1"
+      ],
+      "returned_document_ids": [
+        "local.huawei.huawei_vrp.static_route.v1"
+      ],
+      "hit_at_5": true,
+      "hit_at_10": true,
+      "mrr": 1.0,
+      "vendor_isolation_passed": true,
+      "feature_scope_passed": true,
+      "latency_ms": 17.9638
+    },
+    {
+      "id": "GOLD400-OFFICIAL-021",
+      "expected_document_ids": [
+        "local.huawei.huawei_vrp.vlan.v1"
+      ],
+      "returned_document_ids": [
+        "local.huawei.huawei_vrp.vlan.v1"
+      ],
+      "hit_at_5": true,
+      "hit_at_10": true,
+      "mrr": 1.0,
+      "vendor_isolation_passed": true,
+      "feature_scope_passed": true,
+      "latency_ms": 17.2102
+    },
+    {
+      "id": "GOLD400-OFFICIAL-022",
+      "expected_document_ids": [
+        "local.huawei.huawei_vrp.access_port.v1"
+      ],
+      "returned_document_ids": [
+        "local.huawei.huawei_vrp.access_port.v1"
+      ],
+      "hit_at_5": true,
+      "hit_at_10": true,
+      "mrr": 1.0,
+      "vendor_isolation_passed": true,
+      "feature_scope_passed": true,
+      "latency_ms": 18.2353
+    },
+    {
+      "id": "GOLD400-OFFICIAL-023",
+      "expected_document_ids": [
+        "local.huawei.huawei_vrp.trunk.v1"
+      ],
+      "returned_document_ids": [
+        "local.huawei.huawei_vrp.trunk.v1"
+      ],
+      "hit_at_5": true,
+      "hit_at_10": true,
+      "mrr": 1.0,
+      "vendor_isolation_passed": true,
+      "feature_scope_passed": true,
+      "latency_ms": 17.1473
+    },
+    {
+      "id": "GOLD400-OFFICIAL-024",
+      "expected_document_ids": [
+        "local.huawei.huawei_vrp.ospf.v1"
+      ],
+      "returned_document_ids": [
+        "local.huawei.huawei_vrp.ospf.v1"
+      ],
+      "hit_at_5": true,
+      "hit_at_10": true,
+      "mrr": 1.0,
+      "vendor_isolation_passed": true,
+      "feature_scope_passed": true,
+      "latency_ms": 17.7461
+    },
+    {
+      "id": "GOLD400-OFFICIAL-025",
+      "expected_document_ids": [
+        "local.huawei.huawei_vrp.bgp.v1"
+      ],
+      "returned_document_ids": [
+        "local.huawei.huawei_vrp.bgp.v1"
+      ],
+      "hit_at_5": true,
+      "hit_at_10": true,
+      "mrr": 1.0,
+      "vendor_isolation_passed": true,
+      "feature_scope_passed": true,
+      "latency_ms": 18.0422
+    },
+    {
+      "id": "GOLD400-OFFICIAL-026",
+      "expected_document_ids": [
+        "local.huawei.huawei_vrp.lacp.v1"
+      ],
+      "returned_document_ids": [
+        "local.huawei.huawei_vrp.lacp.v1"
+      ],
+      "hit_at_5": true,
+      "hit_at_10": true,
+      "mrr": 1.0,
+      "vendor_isolation_passed": true,
+      "feature_scope_passed": true,
+      "latency_ms": 18.0854
+    },
+    {
+      "id": "GOLD400-OFFICIAL-027",
+      "expected_document_ids": [
+        "local.huawei.huawei_vrp.acl.v1"
+      ],
+      "returned_document_ids": [
+        "local.huawei.huawei_vrp.acl.v1"
+      ],
+      "hit_at_5": true,
+      "hit_at_10": true,
+      "mrr": 1.0,
+      "vendor_isolation_passed": true,
+      "feature_scope_passed": true,
+      "latency_ms": 18.0418
+    },
+    {
+      "id": "GOLD400-OFFICIAL-028",
+      "expected_document_ids": [
+        "local.huawei.huawei_vrp.ssh.v1"
+      ],
+      "returned_document_ids": [
+        "local.huawei.huawei_vrp.ssh.v1"
+      ],
+      "hit_at_5": true,
+      "hit_at_10": true,
+      "mrr": 1.0,
+      "vendor_isolation_passed": true,
+      "feature_scope_passed": true,
+      "latency_ms": 17.4589
+    },
+    {
+      "id": "GOLD400-OFFICIAL-029",
+      "expected_document_ids": [
+        "local.huawei.huawei_vrp.ntp.v1"
+      ],
+      "returned_document_ids": [
+        "local.huawei.huawei_vrp.ntp.v1"
+      ],
+      "hit_at_5": true,
+      "hit_at_10": true,
+      "mrr": 1.0,
+      "vendor_isolation_passed": true,
+      "feature_scope_passed": true,
+      "latency_ms": 17.9525
+    },
+    {
+      "id": "GOLD400-OFFICIAL-030",
+      "expected_document_ids": [
+        "local.huawei.huawei_vrp.static_route.v1"
+      ],
+      "returned_document_ids": [
+        "local.huawei.huawei_vrp.static_route.v1"
+      ],
+      "hit_at_5": true,
+      "hit_at_10": true,
+      "mrr": 1.0,
+      "vendor_isolation_passed": true,
+      "feature_scope_passed": true,
+      "latency_ms": 17.6779
+    },
+    {
+      "id": "GOLD400-OFFICIAL-031",
+      "expected_document_ids": [
+        "local.huawei.huawei_vrp.vlan.v1"
+      ],
+      "returned_document_ids": [
+        "local.huawei.huawei_vrp.vlan.v1"
+      ],
+      "hit_at_5": true,
+      "hit_at_10": true,
+      "mrr": 1.0,
+      "vendor_isolation_passed": true,
+      "feature_scope_passed": true,
+      "latency_ms": 17.3465
+    },
+    {
+      "id": "GOLD400-OFFICIAL-032",
+      "expected_document_ids": [
+        "local.huawei.huawei_vrp.access_port.v1"
+      ],
+      "returned_document_ids": [
+        "local.huawei.huawei_vrp.access_port.v1"
+      ],
+      "hit_at_5": true,
+      "hit_at_10": true,
+      "mrr": 1.0,
+      "vendor_isolation_passed": true,
+      "feature_scope_passed": true,
+      "latency_ms": 17.8777
+    },
+    {
+      "id": "GOLD400-OFFICIAL-033",
+      "expected_document_ids": [
+        "local.huawei.huawei_vrp.trunk.v1"
+      ],
+      "returned_document_ids": [
+        "local.huawei.huawei_vrp.trunk.v1"
+      ],
+      "hit_at_5": true,
+      "hit_at_10": true,
+      "mrr": 1.0,
+      "vendor_isolation_passed": true,
+      "feature_scope_passed": true,
+      "latency_ms": 18.0631
+    },
+    {
+      "id": "GOLD400-OFFICIAL-034",
+      "expected_document_ids": [
+        "local.huawei.huawei_vrp.ospf.v1"
+      ],
+      "returned_document_ids": [
+        "local.huawei.huawei_vrp.ospf.v1"
+      ],
+      "hit_at_5": true,
+      "hit_at_10": true,
+      "mrr": 1.0,
+      "vendor_isolation_passed": true,
+      "feature_scope_passed": true,
+      "latency_ms": 18.4536
+    },
+    {
+      "id": "GOLD400-OFFICIAL-035",
+      "expected_document_ids": [
+        "local.huawei.huawei_vrp.bgp.v1"
+      ],
+      "returned_document_ids": [
+        "local.huawei.huawei_vrp.bgp.v1"
+      ],
+      "hit_at_5": true,
+      "hit_at_10": true,
+      "mrr": 1.0,
+      "vendor_isolation_passed": true,
+      "feature_scope_passed": true,
+      "latency_ms": 17.6555
+    },
+    {
+      "id": "GOLD400-OFFICIAL-036",
+      "expected_document_ids": [
+        "local.huawei.huawei_vrp.lacp.v1"
+      ],
+      "returned_document_ids": [
+        "local.huawei.huawei_vrp.lacp.v1"
+      ],
+      "hit_at_5": true,
+      "hit_at_10": true,
+      "mrr": 1.0,
+      "vendor_isolation_passed": true,
+      "feature_scope_passed": true,
+      "latency_ms": 17.4911
+    },
+    {
+      "id": "GOLD400-OFFICIAL-037",
+      "expected_document_ids": [
+        "local.huawei.huawei_vrp.acl.v1"
+      ],
+      "returned_document_ids": [
+        "local.huawei.huawei_vrp.acl.v1"
+      ],
+      "hit_at_5": true,
+      "hit_at_10": true,
+      "mrr": 1.0,
+      "vendor_isolation_passed": true,
+      "feature_scope_passed": true,
+      "latency_ms": 18.3475
+    },
+    {
+      "id": "GOLD400-OFFICIAL-038",
+      "expected_document_ids": [
+        "local.huawei.huawei_vrp.ssh.v1"
+      ],
+      "returned_document_ids": [
+        "local.huawei.huawei_vrp.ssh.v1"
+      ],
+      "hit_at_5": true,
+      "hit_at_10": true,
+      "mrr": 1.0,
+      "vendor_isolation_passed": true,
+      "feature_scope_passed": true,
+      "latency_ms": 17.6559
+    },
+    {
+      "id": "GOLD400-OFFICIAL-039",
+      "expected_document_ids": [
+        "local.huawei.huawei_vrp.ntp.v1"
+      ],
+      "returned_document_ids": [
+        "local.huawei.huawei_vrp.ntp.v1"
+      ],
+      "hit_at_5": true,
+      "hit_at_10": true,
+      "mrr": 1.0,
+      "vendor_isolation_passed": true,
+      "feature_scope_passed": true,
+      "latency_ms": 17.9844
+    },
+    {
+      "id": "GOLD400-OFFICIAL-040",
+      "expected_document_ids": [
+        "local.huawei.huawei_vrp.static_route.v1"
+      ],
+      "returned_document_ids": [
+        "local.huawei.huawei_vrp.static_route.v1"
+      ],
+      "hit_at_5": true,
+      "hit_at_10": true,
+      "mrr": 1.0,
+      "vendor_isolation_passed": true,
+      "feature_scope_passed": true,
+      "latency_ms": 17.695
+    },
+    {
+      "id": "GOLD400-OFFICIAL-041",
+      "expected_document_ids": [
+        "local.huawei.huawei_vrp.vlan.v1"
+      ],
+      "returned_document_ids": [
+        "local.huawei.huawei_vrp.vlan.v1"
+      ],
+      "hit_at_5": true,
+      "hit_at_10": true,
+      "mrr": 1.0,
+      "vendor_isolation_passed": true,
+      "feature_scope_passed": true,
+      "latency_ms": 17.1853
+    },
+    {
+      "id": "GOLD400-OFFICIAL-042",
+      "expected_document_ids": [
+        "local.huawei.huawei_vrp.access_port.v1"
+      ],
+      "returned_document_ids": [
+        "local.huawei.huawei_vrp.access_port.v1"
+      ],
+      "hit_at_5": true,
+      "hit_at_10": true,
+      "mrr": 1.0,
+      "vendor_isolation_passed": true,
+      "feature_scope_passed": true,
+      "latency_ms": 18.006
+    },
+    {
+      "id": "GOLD400-OFFICIAL-043",
+      "expected_document_ids": [
+        "local.huawei.huawei_vrp.trunk.v1"
+      ],
+      "returned_document_ids": [
+        "local.huawei.huawei_vrp.trunk.v1"
+      ],
+      "hit_at_5": true,
+      "hit_at_10": true,
+      "mrr": 1.0,
+      "vendor_isolation_passed": true,
+      "feature_scope_passed": true,
+      "latency_ms": 17.4089
+    },
+    {
+      "id": "GOLD400-OFFICIAL-044",
+      "expected_document_ids": [
+        "local.huawei.huawei_vrp.ospf.v1"
+      ],
+      "returned_document_ids": [
+        "local.huawei.huawei_vrp.ospf.v1"
+      ],
+      "hit_at_5": true,
+      "hit_at_10": true,
+      "mrr": 1.0,
+      "vendor_isolation_passed": true,
+      "feature_scope_passed": true,
+      "latency_ms": 17.1688
+    },
+    {
+      "id": "GOLD400-OFFICIAL-045",
+      "expected_document_ids": [
+        "local.huawei.huawei_vrp.bgp.v1"
+      ],
+      "returned_document_ids": [
+        "local.huawei.huawei_vrp.bgp.v1"
+      ],
+      "hit_at_5": true,
+      "hit_at_10": true,
+      "mrr": 1.0,
+      "vendor_isolation_passed": true,
+      "feature_scope_passed": true,
+      "latency_ms": 17.7482
+    },
+    {
+      "id": "GOLD400-OFFICIAL-046",
+      "expected_document_ids": [
+        "local.huawei.huawei_vrp.lacp.v1"
+      ],
+      "returned_document_ids": [
+        "local.huawei.huawei_vrp.lacp.v1"
+      ],
+      "hit_at_5": true,
+      "hit_at_10": true,
+      "mrr": 1.0,
+      "vendor_isolation_passed": true,
+      "feature_scope_passed": true,
+      "latency_ms": 17.7394
+    },
+    {
+      "id": "GOLD400-OFFICIAL-047",
+      "expected_document_ids": [
+        "local.huawei.huawei_vrp.acl.v1"
+      ],
+      "returned_document_ids": [
+        "local.huawei.huawei_vrp.acl.v1"
+      ],
+      "hit_at_5": true,
+      "hit_at_10": true,
+      "mrr": 1.0,
+      "vendor_isolation_passed": true,
+      "feature_scope_passed": true,
+      "latency_ms": 17.0296
+    },
+    {
+      "id": "GOLD400-OFFICIAL-048",
+      "expected_document_ids": [
+        "local.huawei.huawei_vrp.ssh.v1"
+      ],
+      "returned_document_ids": [
+        "local.huawei.huawei_vrp.ssh.v1"
+      ],
+      "hit_at_5": true,
+      "hit_at_10": true,
+      "mrr": 1.0,
+      "vendor_isolation_passed": true,
+      "feature_scope_passed": true,
+      "latency_ms": 17.5201
+    },
+    {
+      "id": "GOLD400-OFFICIAL-049",
+      "expected_document_ids": [
+        "local.huawei.huawei_vrp.ntp.v1"
+      ],
+      "returned_document_ids": [
+        "local.huawei.huawei_vrp.ntp.v1"
+      ],
+      "hit_at_5": true,
+      "hit_at_10": true,
+      "mrr": 1.0,
+      "vendor_isolation_passed": true,
+      "feature_scope_passed": true,
+      "latency_ms": 17.1295
+    },
+    {
+      "id": "GOLD400-OFFICIAL-050",
+      "expected_document_ids": [
+        "local.huawei.huawei_vrp.static_route.v1"
+      ],
+      "returned_document_ids": [
+        "local.huawei.huawei_vrp.static_route.v1"
+      ],
+      "hit_at_5": true,
+      "hit_at_10": true,
+      "mrr": 1.0,
+      "vendor_isolation_passed": true,
+      "feature_scope_passed": true,
+      "latency_ms": 17.1456
+    },
+    {
+      "id": "GOLD400-OFFICIAL-051",
+      "expected_document_ids": [
+        "local.huawei.huawei_vrp.vlan.v1"
+      ],
+      "returned_document_ids": [
+        "local.huawei.huawei_vrp.vlan.v1"
+      ],
+      "hit_at_5": true,
+      "hit_at_10": true,
+      "mrr": 1.0,
+      "vendor_isolation_passed": true,
+      "feature_scope_passed": true,
+      "latency_ms": 16.9635
+    },
+    {
+      "id": "GOLD400-OFFICIAL-052",
+      "expected_document_ids": [
+        "local.huawei.huawei_vrp.access_port.v1"
+      ],
+      "returned_document_ids": [
+        "local.huawei.huawei_vrp.access_port.v1"
+      ],
+      "hit_at_5": true,
+      "hit_at_10": true,
+      "mrr": 1.0,
+      "vendor_isolation_passed": true,
+      "feature_scope_passed": true,
+      "latency_ms": 17.1102
+    },
+    {
+      "id": "GOLD400-OFFICIAL-053",
+      "expected_document_ids": [
+        "local.huawei.huawei_vrp.trunk.v1"
+      ],
+      "returned_document_ids": [
+        "local.huawei.huawei_vrp.trunk.v1"
+      ],
+      "hit_at_5": true,
+      "hit_at_10": true,
+      "mrr": 1.0,
+      "vendor_isolation_passed": true,
+      "feature_scope_passed": true,
+      "latency_ms": 17.3839
+    },
+    {
+      "id": "GOLD400-OFFICIAL-054",
+      "expected_document_ids": [
+        "local.huawei.huawei_vrp.ospf.v1"
+      ],
+      "returned_document_ids": [
+        "local.huawei.huawei_vrp.ospf.v1"
+      ],
+      "hit_at_5": true,
+      "hit_at_10": true,
+      "mrr": 1.0,
+      "vendor_isolation_passed": true,
+      "feature_scope_passed": true,
+      "latency_ms": 16.7555
+    },
+    {
+      "id": "GOLD400-OFFICIAL-055",
+      "expected_document_ids": [
+        "local.huawei.huawei_vrp.bgp.v1"
+      ],
+      "returned_document_ids": [
+        "local.huawei.huawei_vrp.bgp.v1"
+      ],
+      "hit_at_5": true,
+      "hit_at_10": true,
+      "mrr": 1.0,
+      "vendor_isolation_passed": true,
+      "feature_scope_passed": true,
+      "latency_ms": 16.6531
+    },
+    {
+      "id": "GOLD400-OFFICIAL-056",
+      "expected_document_ids": [
+        "local.huawei.huawei_vrp.lacp.v1"
+      ],
+      "returned_document_ids": [
+        "local.huawei.huawei_vrp.lacp.v1"
+      ],
+      "hit_at_5": true,
+      "hit_at_10": true,
+      "mrr": 1.0,
+      "vendor_isolation_passed": true,
+      "feature_scope_passed": true,
+      "latency_ms": 16.6481
+    },
+    {
+      "id": "GOLD400-OFFICIAL-057",
+      "expected_document_ids": [
+        "local.huawei.huawei_vrp.acl.v1"
+      ],
+      "returned_document_ids": [
+        "local.huawei.huawei_vrp.acl.v1"
+      ],
+      "hit_at_5": true,
+      "hit_at_10": true,
+      "mrr": 1.0,
+      "vendor_isolation_passed": true,
+      "feature_scope_passed": true,
+      "latency_ms": 17.8861
+    },
+    {
+      "id": "GOLD400-OFFICIAL-058",
+      "expected_document_ids": [
+        "local.huawei.huawei_vrp.ssh.v1"
+      ],
+      "returned_document_ids": [
+        "local.huawei.huawei_vrp.ssh.v1"
+      ],
+      "hit_at_5": true,
+      "hit_at_10": true,
+      "mrr": 1.0,
+      "vendor_isolation_passed": true,
+      "feature_scope_passed": true,
+      "latency_ms": 18.3056
+    },
+    {
+      "id": "GOLD400-OFFICIAL-059",
+      "expected_document_ids": [
+        "local.huawei.huawei_vrp.ntp.v1"
+      ],
+      "returned_document_ids": [
+        "local.huawei.huawei_vrp.ntp.v1"
+      ],
+      "hit_at_5": true,
+      "hit_at_10": true,
+      "mrr": 1.0,
+      "vendor_isolation_passed": true,
+      "feature_scope_passed": true,
+      "latency_ms": 17.8427
+    },
+    {
+      "id": "GOLD400-OFFICIAL-060",
+      "expected_document_ids": [
+        "local.huawei.huawei_vrp.static_route.v1"
+      ],
+      "returned_document_ids": [
+        "local.huawei.huawei_vrp.static_route.v1"
+      ],
+      "hit_at_5": true,
+      "hit_at_10": true,
+      "mrr": 1.0,
+      "vendor_isolation_passed": true,
+      "feature_scope_passed": true,
+      "latency_ms": 19.0483
+    },
+    {
+      "id": "GOLD400-OFFICIAL-061",
+      "expected_document_ids": [
+        "local.huawei.huawei_vrp.vlan.v1"
+      ],
+      "returned_document_ids": [
+        "local.huawei.huawei_vrp.vlan.v1"
+      ],
+      "hit_at_5": true,
+      "hit_at_10": true,
+      "mrr": 1.0,
+      "vendor_isolation_passed": true,
+      "feature_scope_passed": true,
+      "latency_ms": 17.0196
+    },
+    {
+      "id": "GOLD400-OFFICIAL-062",
+      "expected_document_ids": [
+        "local.huawei.huawei_vrp.access_port.v1"
+      ],
+      "returned_document_ids": [
+        "local.huawei.huawei_vrp.access_port.v1"
+      ],
+      "hit_at_5": true,
+      "hit_at_10": true,
+      "mrr": 1.0,
+      "vendor_isolation_passed": true,
+      "feature_scope_passed": true,
+      "latency_ms": 16.731
+    },
+    {
+      "id": "GOLD400-OFFICIAL-063",
+      "expected_document_ids": [
+        "local.huawei.huawei_vrp.trunk.v1"
+      ],
+      "returned_document_ids": [
+        "local.huawei.huawei_vrp.trunk.v1"
+      ],
+      "hit_at_5": true,
+      "hit_at_10": true,
+      "mrr": 1.0,
+      "vendor_isolation_passed": true,
+      "feature_scope_passed": true,
+      "latency_ms": 16.3769
+    },
+    {
+      "id": "GOLD400-OFFICIAL-064",
+      "expected_document_ids": [
+        "local.huawei.huawei_vrp.ospf.v1"
+      ],
+      "returned_document_ids": [
+        "local.huawei.huawei_vrp.ospf.v1"
+      ],
+      "hit_at_5": true,
+      "hit_at_10": true,
+      "mrr": 1.0,
+      "vendor_isolation_passed": true,
+      "feature_scope_passed": true,
+      "latency_ms": 16.5222
+    },
+    {
+      "id": "GOLD400-OFFICIAL-065",
+      "expected_document_ids": [
+        "local.huawei.huawei_vrp.bgp.v1"
+      ],
+      "returned_document_ids": [
+        "local.huawei.huawei_vrp.bgp.v1"
+      ],
+      "hit_at_5": true,
+      "hit_at_10": true,
+      "mrr": 1.0,
+      "vendor_isolation_passed": true,
+      "feature_scope_passed": true,
+      "latency_ms": 16.9864
+    },
+    {
+      "id": "GOLD400-OFFICIAL-066",
+      "expected_document_ids": [
+        "local.huawei.huawei_vrp.lacp.v1"
+      ],
+      "returned_document_ids": [
+        "local.huawei.huawei_vrp.lacp.v1"
+      ],
+      "hit_at_5": true,
+      "hit_at_10": true,
+      "mrr": 1.0,
+      "vendor_isolation_passed": true,
+      "feature_scope_passed": true,
+      "latency_ms": 16.5037
+    },
+    {
+      "id": "GOLD400-OFFICIAL-067",
+      "expected_document_ids": [
+        "local.huawei.huawei_vrp.acl.v1"
+      ],
+      "returned_document_ids": [
+        "local.huawei.huawei_vrp.acl.v1"
+      ],
+      "hit_at_5": true,
+      "hit_at_10": true,
+      "mrr": 1.0,
+      "vendor_isolation_passed": true,
+      "feature_scope_passed": true,
+      "latency_ms": 17.0493
+    },
+    {
+      "id": "GOLD400-OFFICIAL-068",
+      "expected_document_ids": [
+        "local.huawei.huawei_vrp.ssh.v1"
+      ],
+      "returned_document_ids": [
+        "local.huawei.huawei_vrp.ssh.v1"
+      ],
+      "hit_at_5": true,
+      "hit_at_10": true,
+      "mrr": 1.0,
+      "vendor_isolation_passed": true,
+      "feature_scope_passed": true,
+      "latency_ms": 17.6152
+    },
+    {
+      "id": "GOLD400-OFFICIAL-069",
+      "expected_document_ids": [
+        "local.huawei.huawei_vrp.ntp.v1"
+      ],
+      "returned_document_ids": [
+        "local.huawei.huawei_vrp.ntp.v1"
+      ],
+      "hit_at_5": true,
+      "hit_at_10": true,
+      "mrr": 1.0,
+      "vendor_isolation_passed": true,
+      "feature_scope_passed": true,
+      "latency_ms": 17.9485
+    },
+    {
+      "id": "GOLD400-OFFICIAL-070",
+      "expected_document_ids": [
+        "local.huawei.huawei_vrp.static_route.v1"
+      ],
+      "returned_document_ids": [
+        "local.huawei.huawei_vrp.static_route.v1"
+      ],
+      "hit_at_5": true,
+      "hit_at_10": true,
+      "mrr": 1.0,
+      "vendor_isolation_passed": true,
+      "feature_scope_passed": true,
+      "latency_ms": 21.1029
+    },
+    {
+      "id": "GOLD400-OFFICIAL-071",
+      "expected_document_ids": [
+        "local.huawei.huawei_vrp.vlan.v1"
+      ],
+      "returned_document_ids": [
+        "local.huawei.huawei_vrp.vlan.v1"
+      ],
+      "hit_at_5": true,
+      "hit_at_10": true,
+      "mrr": 1.0,
+      "vendor_isolation_passed": true,
+      "feature_scope_passed": true,
+      "latency_ms": 19.3503
+    },
+    {
+      "id": "GOLD400-OFFICIAL-072",
+      "expected_document_ids": [
+        "local.huawei.huawei_vrp.access_port.v1"
+      ],
+      "returned_document_ids": [
+        "local.huawei.huawei_vrp.access_port.v1"
+      ],
+      "hit_at_5": true,
+      "hit_at_10": true,
+      "mrr": 1.0,
+      "vendor_isolation_passed": true,
+      "feature_scope_passed": true,
+      "latency_ms": 22.3317
+    },
+    {
+      "id": "GOLD400-OFFICIAL-073",
+      "expected_document_ids": [
+        "local.huawei.huawei_vrp.trunk.v1"
+      ],
+      "returned_document_ids": [
+        "local.huawei.huawei_vrp.trunk.v1"
+      ],
+      "hit_at_5": true,
+      "hit_at_10": true,
+      "mrr": 1.0,
+      "vendor_isolation_passed": true,
+      "feature_scope_passed": true,
+      "latency_ms": 17.3314
+    },
+    {
+      "id": "GOLD400-OFFICIAL-074",
+      "expected_document_ids": [
+        "local.huawei.huawei_vrp.ospf.v1"
+      ],
+      "returned_document_ids": [
+        "local.huawei.huawei_vrp.ospf.v1"
+      ],
+      "hit_at_5": true,
+      "hit_at_10": true,
+      "mrr": 1.0,
+      "vendor_isolation_passed": true,
+      "feature_scope_passed": true,
+      "latency_ms": 17.5105
+    },
+    {
+      "id": "GOLD400-OFFICIAL-075",
+      "expected_document_ids": [
+        "local.huawei.huawei_vrp.bgp.v1"
+      ],
+      "returned_document_ids": [
+        "local.huawei.huawei_vrp.bgp.v1"
+      ],
+      "hit_at_5": true,
+      "hit_at_10": true,
+      "mrr": 1.0,
+      "vendor_isolation_passed": true,
+      "feature_scope_passed": true,
+      "latency_ms": 17.42
+    },
+    {
+      "id": "GOLD400-OFFICIAL-076",
+      "expected_document_ids": [
+        "local.huawei.huawei_vrp.lacp.v1"
+      ],
+      "returned_document_ids": [
+        "local.huawei.huawei_vrp.lacp.v1"
+      ],
+      "hit_at_5": true,
+      "hit_at_10": true,
+      "mrr": 1.0,
+      "vendor_isolation_passed": true,
+      "feature_scope_passed": true,
+      "latency_ms": 16.8652
+    },
+    {
+      "id": "GOLD400-OFFICIAL-077",
+      "expected_document_ids": [
+        "local.huawei.huawei_vrp.acl.v1"
+      ],
+      "returned_document_ids": [
+        "local.huawei.huawei_vrp.acl.v1"
+      ],
+      "hit_at_5": true,
+      "hit_at_10": true,
+      "mrr": 1.0,
+      "vendor_isolation_passed": true,
+      "feature_scope_passed": true,
+      "latency_ms": 16.9589
+    },
+    {
+      "id": "GOLD400-OFFICIAL-078",
+      "expected_document_ids": [
+        "local.huawei.huawei_vrp.ssh.v1"
+      ],
+      "returned_document_ids": [
+        "local.huawei.huawei_vrp.ssh.v1"
+      ],
+      "hit_at_5": true,
+      "hit_at_10": true,
+      "mrr": 1.0,
+      "vendor_isolation_passed": true,
+      "feature_scope_passed": true,
+      "latency_ms": 17.2483
+    },
+    {
+      "id": "GOLD400-OFFICIAL-079",
+      "expected_document_ids": [
+        "local.huawei.huawei_vrp.ntp.v1"
+      ],
+      "returned_document_ids": [
+        "local.huawei.huawei_vrp.ntp.v1"
+      ],
+      "hit_at_5": true,
+      "hit_at_10": true,
+      "mrr": 1.0,
+      "vendor_isolation_passed": true,
+      "feature_scope_passed": true,
+      "latency_ms": 17.1657
+    },
+    {
+      "id": "GOLD400-OFFICIAL-080",
+      "expected_document_ids": [
+        "local.huawei.huawei_vrp.static_route.v1"
+      ],
+      "returned_document_ids": [
+        "local.huawei.huawei_vrp.static_route.v1"
+      ],
+      "hit_at_5": true,
+      "hit_at_10": true,
+      "mrr": 1.0,
+      "vendor_isolation_passed": true,
+      "feature_scope_passed": true,
+      "latency_ms": 17.482
+    },
+    {
+      "id": "GOLD400-OFFICIAL-081",
+      "expected_document_ids": [
+        "local.huawei.huawei_vrp.vlan.v1"
+      ],
+      "returned_document_ids": [
+        "local.huawei.huawei_vrp.vlan.v1"
+      ],
+      "hit_at_5": true,
+      "hit_at_10": true,
+      "mrr": 1.0,
+      "vendor_isolation_passed": true,
+      "feature_scope_passed": true,
+      "latency_ms": 17.2497
+    },
+    {
+      "id": "GOLD400-OFFICIAL-082",
+      "expected_document_ids": [
+        "local.huawei.huawei_vrp.access_port.v1"
+      ],
+      "returned_document_ids": [
+        "local.huawei.huawei_vrp.access_port.v1"
+      ],
+      "hit_at_5": true,
+      "hit_at_10": true,
+      "mrr": 1.0,
+      "vendor_isolation_passed": true,
+      "feature_scope_passed": true,
+      "latency_ms": 17.4863
+    },
+    {
+      "id": "GOLD400-OFFICIAL-083",
+      "expected_document_ids": [
+        "local.huawei.huawei_vrp.trunk.v1"
+      ],
+      "returned_document_ids": [
+        "local.huawei.huawei_vrp.trunk.v1"
+      ],
+      "hit_at_5": true,
+      "hit_at_10": true,
+      "mrr": 1.0,
+      "vendor_isolation_passed": true,
+      "feature_scope_passed": true,
+      "latency_ms": 17.4273
+    },
+    {
+      "id": "GOLD400-OFFICIAL-084",
+      "expected_document_ids": [
+        "local.huawei.huawei_vrp.ospf.v1"
+      ],
+      "returned_document_ids": [
+        "local.huawei.huawei_vrp.ospf.v1"
+      ],
+      "hit_at_5": true,
+      "hit_at_10": true,
+      "mrr": 1.0,
+      "vendor_isolation_passed": true,
+      "feature_scope_passed": true,
+      "latency_ms": 19.6706
+    },
+    {
+      "id": "GOLD400-OFFICIAL-085",
+      "expected_document_ids": [
+        "local.huawei.huawei_vrp.bgp.v1"
+      ],
+      "returned_document_ids": [
+        "local.huawei.huawei_vrp.bgp.v1"
+      ],
+      "hit_at_5": true,
+      "hit_at_10": true,
+      "mrr": 1.0,
+      "vendor_isolation_passed": true,
+      "feature_scope_passed": true,
+      "latency_ms": 19.7377
+    },
+    {
+      "id": "GOLD400-OFFICIAL-086",
+      "expected_document_ids": [
+        "local.huawei.huawei_vrp.lacp.v1"
+      ],
+      "returned_document_ids": [
+        "local.huawei.huawei_vrp.lacp.v1"
+      ],
+      "hit_at_5": true,
+      "hit_at_10": true,
+      "mrr": 1.0,
+      "vendor_isolation_passed": true,
+      "feature_scope_passed": true,
+      "latency_ms": 17.6221
+    },
+    {
+      "id": "GOLD400-OFFICIAL-087",
+      "expected_document_ids": [
+        "local.huawei.huawei_vrp.acl.v1"
+      ],
+      "returned_document_ids": [
+        "local.huawei.huawei_vrp.acl.v1"
+      ],
+      "hit_at_5": true,
+      "hit_at_10": true,
+      "mrr": 1.0,
+      "vendor_isolation_passed": true,
+      "feature_scope_passed": true,
+      "latency_ms": 18.3155
+    },
+    {
+      "id": "GOLD400-OFFICIAL-088",
+      "expected_document_ids": [
+        "local.huawei.huawei_vrp.ssh.v1"
+      ],
+      "returned_document_ids": [
+        "local.huawei.huawei_vrp.ssh.v1"
+      ],
+      "hit_at_5": true,
+      "hit_at_10": true,
+      "mrr": 1.0,
+      "vendor_isolation_passed": true,
+      "feature_scope_passed": true,
+      "latency_ms": 19.0998
+    },
+    {
+      "id": "GOLD400-OFFICIAL-089",
+      "expected_document_ids": [
+        "local.huawei.huawei_vrp.ntp.v1"
+      ],
+      "returned_document_ids": [
+        "local.huawei.huawei_vrp.ntp.v1"
+      ],
+      "hit_at_5": true,
+      "hit_at_10": true,
+      "mrr": 1.0,
+      "vendor_isolation_passed": true,
+      "feature_scope_passed": true,
+      "latency_ms": 19.8603
+    },
+    {
+      "id": "GOLD400-OFFICIAL-090",
+      "expected_document_ids": [
+        "local.huawei.huawei_vrp.static_route.v1"
+      ],
+      "returned_document_ids": [
+        "local.huawei.huawei_vrp.static_route.v1"
+      ],
+      "hit_at_5": true,
+      "hit_at_10": true,
+      "mrr": 1.0,
+      "vendor_isolation_passed": true,
+      "feature_scope_passed": true,
+      "latency_ms": 17.8438
+    },
+    {
+      "id": "GOLD400-OFFICIAL-091",
+      "expected_document_ids": [
+        "local.huawei.huawei_vrp.vlan.v1"
+      ],
+      "returned_document_ids": [
+        "local.huawei.huawei_vrp.vlan.v1"
+      ],
+      "hit_at_5": true,
+      "hit_at_10": true,
+      "mrr": 1.0,
+      "vendor_isolation_passed": true,
+      "feature_scope_passed": true,
+      "latency_ms": 16.9564
+    },
+    {
+      "id": "GOLD400-OFFICIAL-092",
+      "expected_document_ids": [
+        "local.huawei.huawei_vrp.access_port.v1"
+      ],
+      "returned_document_ids": [
+        "local.huawei.huawei_vrp.access_port.v1"
+      ],
+      "hit_at_5": true,
+      "hit_at_10": true,
+      "mrr": 1.0,
+      "vendor_isolation_passed": true,
+      "feature_scope_passed": true,
+      "latency_ms": 16.8273
+    },
+    {
+      "id": "GOLD400-OFFICIAL-093",
+      "expected_document_ids": [
+        "local.huawei.huawei_vrp.trunk.v1"
+      ],
+      "returned_document_ids": [
+        "local.huawei.huawei_vrp.trunk.v1"
+      ],
+      "hit_at_5": true,
+      "hit_at_10": true,
+      "mrr": 1.0,
+      "vendor_isolation_passed": true,
+      "feature_scope_passed": true,
+      "latency_ms": 17.1987
+    },
+    {
+      "id": "GOLD400-OFFICIAL-094",
+      "expected_document_ids": [
+        "local.huawei.huawei_vrp.ospf.v1"
+      ],
+      "returned_document_ids": [
+        "local.huawei.huawei_vrp.ospf.v1"
+      ],
+      "hit_at_5": true,
+      "hit_at_10": true,
+      "mrr": 1.0,
+      "vendor_isolation_passed": true,
+      "feature_scope_passed": true,
+      "latency_ms": 17.2943
+    },
+    {
+      "id": "GOLD400-OFFICIAL-095",
+      "expected_document_ids": [
+        "local.huawei.huawei_vrp.bgp.v1"
+      ],
+      "returned_document_ids": [
+        "local.huawei.huawei_vrp.bgp.v1"
+      ],
+      "hit_at_5": true,
+      "hit_at_10": true,
+      "mrr": 1.0,
+      "vendor_isolation_passed": true,
+      "feature_scope_passed": true,
+      "latency_ms": 17.5436
+    },
+    {
+      "id": "GOLD400-OFFICIAL-096",
+      "expected_document_ids": [
+        "local.huawei.huawei_vrp.lacp.v1"
+      ],
+      "returned_document_ids": [
+        "local.huawei.huawei_vrp.lacp.v1"
+      ],
+      "hit_at_5": true,
+      "hit_at_10": true,
+      "mrr": 1.0,
+      "vendor_isolation_passed": true,
+      "feature_scope_passed": true,
+      "latency_ms": 17.3874
+    },
+    {
+      "id": "GOLD400-OFFICIAL-097",
+      "expected_document_ids": [
+        "local.huawei.huawei_vrp.acl.v1"
+      ],
+      "returned_document_ids": [
+        "local.huawei.huawei_vrp.acl.v1"
+      ],
+      "hit_at_5": true,
+      "hit_at_10": true,
+      "mrr": 1.0,
+      "vendor_isolation_passed": true,
+      "feature_scope_passed": true,
+      "latency_ms": 17.0323
+    },
+    {
+      "id": "GOLD400-OFFICIAL-098",
+      "expected_document_ids": [
+        "local.huawei.huawei_vrp.ssh.v1"
+      ],
+      "returned_document_ids": [
+        "local.huawei.huawei_vrp.ssh.v1"
+      ],
+      "hit_at_5": true,
+      "hit_at_10": true,
+      "mrr": 1.0,
+      "vendor_isolation_passed": true,
+      "feature_scope_passed": true,
+      "latency_ms": 17.6119
+    },
+    {
+      "id": "GOLD400-OFFICIAL-099",
+      "expected_document_ids": [
+        "local.huawei.huawei_vrp.ntp.v1"
+      ],
+      "returned_document_ids": [
+        "local.huawei.huawei_vrp.ntp.v1"
+      ],
+      "hit_at_5": true,
+      "hit_at_10": true,
+      "mrr": 1.0,
+      "vendor_isolation_passed": true,
+      "feature_scope_passed": true,
+      "latency_ms": 18.8435
+    },
+    {
+      "id": "GOLD400-OFFICIAL-100",
+      "expected_document_ids": [
+        "local.huawei.huawei_vrp.static_route.v1"
+      ],
+      "returned_document_ids": [
+        "local.huawei.huawei_vrp.static_route.v1"
+      ],
+      "hit_at_5": true,
+      "hit_at_10": true,
+      "mrr": 1.0,
+      "vendor_isolation_passed": true,
+      "feature_scope_passed": true,
+      "latency_ms": 17.4826
+    },
+    {
+      "id": "GOLD400-OFFICIAL-101",
+      "expected_document_ids": [
+        "local.cisco.cisco_iosxe.vlan.v1"
+      ],
+      "returned_document_ids": [
+        "local.cisco.cisco_iosxe.vlan.v1"
+      ],
+      "hit_at_5": true,
+      "hit_at_10": true,
+      "mrr": 1.0,
+      "vendor_isolation_passed": true,
+      "feature_scope_passed": true,
+      "latency_ms": 17.323
+    },
+    {
+      "id": "GOLD400-OFFICIAL-102",
+      "expected_document_ids": [
+        "local.cisco.cisco_iosxe.access_port.v1"
+      ],
+      "returned_document_ids": [
+        "local.cisco.cisco_iosxe.access_port.v1"
+      ],
+      "hit_at_5": true,
+      "hit_at_10": true,
+      "mrr": 1.0,
+      "vendor_isolation_passed": true,
+      "feature_scope_passed": true,
+      "latency_ms": 18.1046
+    },
+    {
+      "id": "GOLD400-OFFICIAL-103",
+      "expected_document_ids": [
+        "local.cisco.cisco_iosxe.trunk.v1"
+      ],
+      "returned_document_ids": [
+        "local.cisco.cisco_iosxe.trunk.v1"
+      ],
+      "hit_at_5": true,
+      "hit_at_10": true,
+      "mrr": 1.0,
+      "vendor_isolation_passed": true,
+      "feature_scope_passed": true,
+      "latency_ms": 17.8254
+    },
+    {
+      "id": "GOLD400-OFFICIAL-104",
+      "expected_document_ids": [
+        "local.cisco.cisco_iosxe.ospf.v1"
+      ],
+      "returned_document_ids": [
+        "local.cisco.cisco_iosxe.ospf.v1"
+      ],
+      "hit_at_5": true,
+      "hit_at_10": true,
+      "mrr": 1.0,
+      "vendor_isolation_passed": true,
+      "feature_scope_passed": true,
+      "latency_ms": 17.6993
+    },
+    {
+      "id": "GOLD400-OFFICIAL-105",
+      "expected_document_ids": [
+        "local.cisco.cisco_iosxe.bgp.v1"
+      ],
+      "returned_document_ids": [
+        "local.cisco.cisco_iosxe.bgp.v1"
+      ],
+      "hit_at_5": true,
+      "hit_at_10": true,
+      "mrr": 1.0,
+      "vendor_isolation_passed": true,
+      "feature_scope_passed": true,
+      "latency_ms": 18.7681
+    },
+    {
+      "id": "GOLD400-OFFICIAL-106",
+      "expected_document_ids": [
+        "local.cisco.cisco_iosxe.lacp.v1"
+      ],
+      "returned_document_ids": [
+        "local.cisco.cisco_iosxe.lacp.v1"
+      ],
+      "hit_at_5": true,
+      "hit_at_10": true,
+      "mrr": 1.0,
+      "vendor_isolation_passed": true,
+      "feature_scope_passed": true,
+      "latency_ms": 19.6802
+    },
+    {
+      "id": "GOLD400-OFFICIAL-107",
+      "expected_document_ids": [
+        "local.cisco.cisco_iosxe.acl.v1"
+      ],
+      "returned_document_ids": [
+        "local.cisco.cisco_iosxe.acl.v1"
+      ],
+      "hit_at_5": true,
+      "hit_at_10": true,
+      "mrr": 1.0,
+      "vendor_isolation_passed": true,
+      "feature_scope_passed": true,
+      "latency_ms": 21.2625
+    },
+    {
+      "id": "GOLD400-OFFICIAL-108",
+      "expected_document_ids": [
+        "local.cisco.cisco_iosxe.ssh.v1"
+      ],
+      "returned_document_ids": [
+        "local.cisco.cisco_iosxe.ssh.v1"
+      ],
+      "hit_at_5": true,
+      "hit_at_10": true,
+      "mrr": 1.0,
+      "vendor_isolation_passed": true,
+      "feature_scope_passed": true,
+      "latency_ms": 20.1427
+    },
+    {
+      "id": "GOLD400-OFFICIAL-109",
+      "expected_document_ids": [
+        "local.cisco.cisco_iosxe.ntp.v1"
+      ],
+      "returned_document_ids": [
+        "local.cisco.cisco_iosxe.ntp.v1"
+      ],
+      "hit_at_5": true,
+      "hit_at_10": true,
+      "mrr": 1.0,
+      "vendor_isolation_passed": true,
+      "feature_scope_passed": true,
+      "latency_ms": 18.8669
+    },
+    {
+      "id": "GOLD400-OFFICIAL-110",
+      "expected_document_ids": [
+        "local.cisco.cisco_iosxe.static_route.v1"
+      ],
+      "returned_document_ids": [
+        "local.cisco.cisco_iosxe.static_route.v1"
+      ],
+      "hit_at_5": true,
+      "hit_at_10": true,
+      "mrr": 1.0,
+      "vendor_isolation_passed": true,
+      "feature_scope_passed": true,
+      "latency_ms": 16.2437
+    },
+    {
+      "id": "GOLD400-OFFICIAL-111",
+      "expected_document_ids": [
+        "local.cisco.cisco_iosxe.vlan.v1"
+      ],
+      "returned_document_ids": [
+        "local.cisco.cisco_iosxe.vlan.v1"
+      ],
+      "hit_at_5": true,
+      "hit_at_10": true,
+      "mrr": 1.0,
+      "vendor_isolation_passed": true,
+      "feature_scope_passed": true,
+      "latency_ms": 16.3953
+    },
+    {
+      "id": "GOLD400-OFFICIAL-112",
+      "expected_document_ids": [
+        "local.cisco.cisco_iosxe.access_port.v1"
+      ],
+      "returned_document_ids": [
+        "local.cisco.cisco_iosxe.access_port.v1"
+      ],
+      "hit_at_5": true,
+      "hit_at_10": true,
+      "mrr": 1.0,
+      "vendor_isolation_passed": true,
+      "feature_scope_passed": true,
+      "latency_ms": 17.2427
+    },
+    {
+      "id": "GOLD400-OFFICIAL-113",
+      "expected_document_ids": [
+        "local.cisco.cisco_iosxe.trunk.v1"
+      ],
+      "returned_document_ids": [
+        "local.cisco.cisco_iosxe.trunk.v1"
+      ],
+      "hit_at_5": true,
+      "hit_at_10": true,
+      "mrr": 1.0,
+      "vendor_isolation_passed": true,
+      "feature_scope_passed": true,
+      "latency_ms": 16.8744
+    },
+    {
+      "id": "GOLD400-OFFICIAL-114",
+      "expected_document_ids": [
+        "local.cisco.cisco_iosxe.ospf.v1"
+      ],
+      "returned_document_ids": [
+        "local.cisco.cisco_iosxe.ospf.v1"
+      ],
+      "hit_at_5": true,
+      "hit_at_10": true,
+      "mrr": 1.0,
+      "vendor_isolation_passed": true,
+      "feature_scope_passed": true,
+      "latency_ms": 17.0631
+    },
+    {
+      "id": "GOLD400-OFFICIAL-115",
+      "expected_document_ids": [
+        "local.cisco.cisco_iosxe.bgp.v1"
+      ],
+      "returned_document_ids": [
+        "local.cisco.cisco_iosxe.bgp.v1"
+      ],
+      "hit_at_5": true,
+      "hit_at_10": true,
+      "mrr": 1.0,
+      "vendor_isolation_passed": true,
+      "feature_scope_passed": true,
+      "latency_ms": 16.7396
+    },
+    {
+      "id": "GOLD400-OFFICIAL-116",
+      "expected_document_ids": [
+        "local.cisco.cisco_iosxe.lacp.v1"
+      ],
+      "returned_document_ids": [
+        "local.cisco.cisco_iosxe.lacp.v1"
+      ],
+      "hit_at_5": true,
+      "hit_at_10": true,
+      "mrr": 1.0,
+      "vendor_isolation_passed": true,
+      "feature_scope_passed": true,
+      "latency_ms": 18.1323
+    },
+    {
+      "id": "GOLD400-OFFICIAL-117",
+      "expected_document_ids": [
+        "local.cisco.cisco_iosxe.acl.v1"
+      ],
+      "returned_document_ids": [
+        "local.cisco.cisco_iosxe.acl.v1"
+      ],
+      "hit_at_5": true,
+      "hit_at_10": true,
+      "mrr": 1.0,
+      "vendor_isolation_passed": true,
+      "feature_scope_passed": true,
+      "latency_ms": 17.4769
+    },
+    {
+      "id": "GOLD400-OFFICIAL-118",
+      "expected_document_ids": [
+        "local.cisco.cisco_iosxe.ssh.v1"
+      ],
+      "returned_document_ids": [
+        "local.cisco.cisco_iosxe.ssh.v1"
+      ],
+      "hit_at_5": true,
+      "hit_at_10": true,
+      "mrr": 1.0,
+      "vendor_isolation_passed": true,
+      "feature_scope_passed": true,
+      "latency_ms": 16.8819
+    },
+    {
+      "id": "GOLD400-OFFICIAL-119",
+      "expected_document_ids": [
+        "local.cisco.cisco_iosxe.ntp.v1"
+      ],
+      "returned_document_ids": [
+        "local.cisco.cisco_iosxe.ntp.v1"
+      ],
+      "hit_at_5": true,
+      "hit_at_10": true,
+      "mrr": 1.0,
+      "vendor_isolation_passed": true,
+      "feature_scope_passed": true,
+      "latency_ms": 16.8566
+    },
+    {
+      "id": "GOLD400-OFFICIAL-120",
+      "expected_document_ids": [
+        "local.cisco.cisco_iosxe.static_route.v1"
+      ],
+      "returned_document_ids": [
+        "local.cisco.cisco_iosxe.static_route.v1"
+      ],
+      "hit_at_5": true,
+      "hit_at_10": true,
+      "mrr": 1.0,
+      "vendor_isolation_passed": true,
+      "feature_scope_passed": true,
+      "latency_ms": 16.8355
+    },
+    {
+      "id": "GOLD400-OFFICIAL-121",
+      "expected_document_ids": [
+        "local.cisco.cisco_iosxe.vlan.v1"
+      ],
+      "returned_document_ids": [
+        "local.cisco.cisco_iosxe.vlan.v1"
+      ],
+      "hit_at_5": true,
+      "hit_at_10": true,
+      "mrr": 1.0,
+      "vendor_isolation_passed": true,
+      "feature_scope_passed": true,
+      "latency_ms": 17.0163
+    },
+    {
+      "id": "GOLD400-OFFICIAL-122",
+      "expected_document_ids": [
+        "local.cisco.cisco_iosxe.access_port.v1"
+      ],
+      "returned_document_ids": [
+        "local.cisco.cisco_iosxe.access_port.v1"
+      ],
+      "hit_at_5": true,
+      "hit_at_10": true,
+      "mrr": 1.0,
+      "vendor_isolation_passed": true,
+      "feature_scope_passed": true,
+      "latency_ms": 17.5825
+    },
+    {
+      "id": "GOLD400-OFFICIAL-123",
+      "expected_document_ids": [
+        "local.cisco.cisco_iosxe.trunk.v1"
+      ],
+      "returned_document_ids": [
+        "local.cisco.cisco_iosxe.trunk.v1"
+      ],
+      "hit_at_5": true,
+      "hit_at_10": true,
+      "mrr": 1.0,
+      "vendor_isolation_passed": true,
+      "feature_scope_passed": true,
+      "latency_ms": 17.5937
+    },
+    {
+      "id": "GOLD400-OFFICIAL-124",
+      "expected_document_ids": [
+        "local.cisco.cisco_iosxe.ospf.v1"
+      ],
+      "returned_document_ids": [
+        "local.cisco.cisco_iosxe.ospf.v1"
+      ],
+      "hit_at_5": true,
+      "hit_at_10": true,
+      "mrr": 1.0,
+      "vendor_isolation_passed": true,
+      "feature_scope_passed": true,
+      "latency_ms": 17.4934
+    },
+    {
+      "id": "GOLD400-OFFICIAL-125",
+      "expected_document_ids": [
+        "local.cisco.cisco_iosxe.bgp.v1"
+      ],
+      "returned_document_ids": [
+        "local.cisco.cisco_iosxe.bgp.v1"
+      ],
+      "hit_at_5": true,
+      "hit_at_10": true,
+      "mrr": 1.0,
+      "vendor_isolation_passed": true,
+      "feature_scope_passed": true,
+      "latency_ms": 16.8558
+    },
+    {
+      "id": "GOLD400-OFFICIAL-126",
+      "expected_document_ids": [
+        "local.cisco.cisco_iosxe.lacp.v1"
+      ],
+      "returned_document_ids": [
+        "local.cisco.cisco_iosxe.lacp.v1"
+      ],
+      "hit_at_5": true,
+      "hit_at_10": true,
+      "mrr": 1.0,
+      "vendor_isolation_passed": true,
+      "feature_scope_passed": true,
+      "latency_ms": 17.7981
+    },
+    {
+      "id": "GOLD400-OFFICIAL-127",
+      "expected_document_ids": [
+        "local.cisco.cisco_iosxe.acl.v1"
+      ],
+      "returned_document_ids": [
+        "local.cisco.cisco_iosxe.acl.v1"
+      ],
+      "hit_at_5": true,
+      "hit_at_10": true,
+      "mrr": 1.0,
+      "vendor_isolation_passed": true,
+      "feature_scope_passed": true,
+      "latency_ms": 17.8705
+    },
+    {
+      "id": "GOLD400-OFFICIAL-128",
+      "expected_document_ids": [
+        "local.cisco.cisco_iosxe.ssh.v1"
+      ],
+      "returned_document_ids": [
+        "local.cisco.cisco_iosxe.ssh.v1"
+      ],
+      "hit_at_5": true,
+      "hit_at_10": true,
+      "mrr": 1.0,
+      "vendor_isolation_passed": true,
+      "feature_scope_passed": true,
+      "latency_ms": 16.742
+    },
+    {
+      "id": "GOLD400-OFFICIAL-129",
+      "expected_document_ids": [
+        "local.cisco.cisco_iosxe.ntp.v1"
+      ],
+      "returned_document_ids": [
+        "local.cisco.cisco_iosxe.ntp.v1"
+      ],
+      "hit_at_5": true,
+      "hit_at_10": true,
+      "mrr": 1.0,
+      "vendor_isolation_passed": true,
+      "feature_scope_passed": true,
+      "latency_ms": 17.3569
+    },
+    {
+      "id": "GOLD400-OFFICIAL-130",
+      "expected_document_ids": [
+        "local.cisco.cisco_iosxe.static_route.v1"
+      ],
+      "returned_document_ids": [
+        "local.cisco.cisco_iosxe.static_route.v1"
+      ],
+      "hit_at_5": true,
+      "hit_at_10": true,
+      "mrr": 1.0,
+      "vendor_isolation_passed": true,
+      "feature_scope_passed": true,
+      "latency_ms": 17.1007
+    },
+    {
+      "id": "GOLD400-OFFICIAL-131",
+      "expected_document_ids": [
+        "local.cisco.cisco_iosxe.vlan.v1"
+      ],
+      "returned_document_ids": [
+        "local.cisco.cisco_iosxe.vlan.v1"
+      ],
+      "hit_at_5": true,
+      "hit_at_10": true,
+      "mrr": 1.0,
+      "vendor_isolation_passed": true,
+      "feature_scope_passed": true,
+      "latency_ms": 17.4283
+    },
+    {
+      "id": "GOLD400-OFFICIAL-132",
+      "expected_document_ids": [
+        "local.cisco.cisco_iosxe.access_port.v1"
+      ],
+      "returned_document_ids": [
+        "local.cisco.cisco_iosxe.access_port.v1"
+      ],
+      "hit_at_5": true,
+      "hit_at_10": true,
+      "mrr": 1.0,
+      "vendor_isolation_passed": true,
+      "feature_scope_passed": true,
+      "latency_ms": 17.6832
+    },
+    {
+      "id": "GOLD400-OFFICIAL-133",
+      "expected_document_ids": [
+        "local.cisco.cisco_iosxe.trunk.v1"
+      ],
+      "returned_document_ids": [
+        "local.cisco.cisco_iosxe.trunk.v1"
+      ],
+      "hit_at_5": true,
+      "hit_at_10": true,
+      "mrr": 1.0,
+      "vendor_isolation_passed": true,
+      "feature_scope_passed": true,
+      "latency_ms": 17.8017
+    },
+    {
+      "id": "GOLD400-OFFICIAL-134",
+      "expected_document_ids": [
+        "local.cisco.cisco_iosxe.ospf.v1"
+      ],
+      "returned_document_ids": [
+        "local.cisco.cisco_iosxe.ospf.v1"
+      ],
+      "hit_at_5": true,
+      "hit_at_10": true,
+      "mrr": 1.0,
+      "vendor_isolation_passed": true,
+      "feature_scope_passed": true,
+      "latency_ms": 17.6861
+    },
+    {
+      "id": "GOLD400-OFFICIAL-135",
+      "expected_document_ids": [
+        "local.cisco.cisco_iosxe.bgp.v1"
+      ],
+      "returned_document_ids": [
+        "local.cisco.cisco_iosxe.bgp.v1"
+      ],
+      "hit_at_5": true,
+      "hit_at_10": true,
+      "mrr": 1.0,
+      "vendor_isolation_passed": true,
+      "feature_scope_passed": true,
+      "latency_ms": 20.5355
+    },
+    {
+      "id": "GOLD400-OFFICIAL-136",
+      "expected_document_ids": [
+        "local.cisco.cisco_iosxe.lacp.v1"
+      ],
+      "returned_document_ids": [
+        "local.cisco.cisco_iosxe.lacp.v1"
+      ],
+      "hit_at_5": true,
+      "hit_at_10": true,
+      "mrr": 1.0,
+      "vendor_isolation_passed": true,
+      "feature_scope_passed": true,
+      "latency_ms": 20.0415
+    },
+    {
+      "id": "GOLD400-OFFICIAL-137",
+      "expected_document_ids": [
+        "local.cisco.cisco_iosxe.acl.v1"
+      ],
+      "returned_document_ids": [
+        "local.cisco.cisco_iosxe.acl.v1"
+      ],
+      "hit_at_5": true,
+      "hit_at_10": true,
+      "mrr": 1.0,
+      "vendor_isolation_passed": true,
+      "feature_scope_passed": true,
+      "latency_ms": 19.214
+    },
+    {
+      "id": "GOLD400-OFFICIAL-138",
+      "expected_document_ids": [
+        "local.cisco.cisco_iosxe.ssh.v1"
+      ],
+      "returned_document_ids": [
+        "local.cisco.cisco_iosxe.ssh.v1"
+      ],
+      "hit_at_5": true,
+      "hit_at_10": true,
+      "mrr": 1.0,
+      "vendor_isolation_passed": true,
+      "feature_scope_passed": true,
+      "latency_ms": 19.8888
+    },
+    {
+      "id": "GOLD400-OFFICIAL-139",
+      "expected_document_ids": [
+        "local.cisco.cisco_iosxe.ntp.v1"
+      ],
+      "returned_document_ids": [
+        "local.cisco.cisco_iosxe.ntp.v1"
+      ],
+      "hit_at_5": true,
+      "hit_at_10": true,
+      "mrr": 1.0,
+      "vendor_isolation_passed": true,
+      "feature_scope_passed": true,
+      "latency_ms": 20.762
+    },
+    {
+      "id": "GOLD400-OFFICIAL-140",
+      "expected_document_ids": [
+        "local.cisco.cisco_iosxe.static_route.v1"
+      ],
+      "returned_document_ids": [
+        "local.cisco.cisco_iosxe.static_route.v1"
+      ],
+      "hit_at_5": true,
+      "hit_at_10": true,
+      "mrr": 1.0,
+      "vendor_isolation_passed": true,
+      "feature_scope_passed": true,
+      "latency_ms": 19.5244
+    },
+    {
+      "id": "GOLD400-OFFICIAL-141",
+      "expected_document_ids": [
+        "local.cisco.cisco_iosxe.vlan.v1"
+      ],
+      "returned_document_ids": [
+        "local.cisco.cisco_iosxe.vlan.v1"
+      ],
+      "hit_at_5": true,
+      "hit_at_10": true,
+      "mrr": 1.0,
+      "vendor_isolation_passed": true,
+      "feature_scope_passed": true,
+      "latency_ms": 18.3068
+    },
+    {
+      "id": "GOLD400-OFFICIAL-142",
+      "expected_document_ids": [
+        "local.cisco.cisco_iosxe.access_port.v1"
+      ],
+      "returned_document_ids": [
+        "local.cisco.cisco_iosxe.access_port.v1"
+      ],
+      "hit_at_5": true,
+      "hit_at_10": true,
+      "mrr": 1.0,
+      "vendor_isolation_passed": true,
+      "feature_scope_passed": true,
+      "latency_ms": 17.1751
+    },
+    {
+      "id": "GOLD400-OFFICIAL-143",
+      "expected_document_ids": [
+        "local.cisco.cisco_iosxe.trunk.v1"
+      ],
+      "returned_document_ids": [
+        "local.cisco.cisco_iosxe.trunk.v1"
+      ],
+      "hit_at_5": true,
+      "hit_at_10": true,
+      "mrr": 1.0,
+      "vendor_isolation_passed": true,
+      "feature_scope_passed": true,
+      "latency_ms": 17.4815
+    },
+    {
+      "id": "GOLD400-OFFICIAL-144",
+      "expected_document_ids": [
+        "local.cisco.cisco_iosxe.ospf.v1"
+      ],
+      "returned_document_ids": [
+        "local.cisco.cisco_iosxe.ospf.v1"
+      ],
+      "hit_at_5": true,
+      "hit_at_10": true,
+      "mrr": 1.0,
+      "vendor_isolation_passed": true,
+      "feature_scope_passed": true,
+      "latency_ms": 17.718
+    },
+    {
+      "id": "GOLD400-OFFICIAL-145",
+      "expected_document_ids": [
+        "local.cisco.cisco_iosxe.bgp.v1"
+      ],
+      "returned_document_ids": [
+        "local.cisco.cisco_iosxe.bgp.v1"
+      ],
+      "hit_at_5": true,
+      "hit_at_10": true,
+      "mrr": 1.0,
+      "vendor_isolation_passed": true,
+      "feature_scope_passed": true,
+      "latency_ms": 19.9854
+    },
+    {
+      "id": "GOLD400-OFFICIAL-146",
+      "expected_document_ids": [
+        "local.cisco.cisco_iosxe.lacp.v1"
+      ],
+      "returned_document_ids": [
+        "local.cisco.cisco_iosxe.lacp.v1"
+      ],
+      "hit_at_5": true,
+      "hit_at_10": true,
+      "mrr": 1.0,
+      "vendor_isolation_passed": true,
+      "feature_scope_passed": true,
+      "latency_ms": 20.0634
+    },
+    {
+      "id": "GOLD400-OFFICIAL-147",
+      "expected_document_ids": [
+        "local.cisco.cisco_iosxe.acl.v1"
+      ],
+      "returned_document_ids": [
+        "local.cisco.cisco_iosxe.acl.v1"
+      ],
+      "hit_at_5": true,
+      "hit_at_10": true,
+      "mrr": 1.0,
+      "vendor_isolation_passed": true,
+      "feature_scope_passed": true,
+      "latency_ms": 20.2467
+    },
+    {
+      "id": "GOLD400-OFFICIAL-148",
+      "expected_document_ids": [
+        "local.cisco.cisco_iosxe.ssh.v1"
+      ],
+      "returned_document_ids": [
+        "local.cisco.cisco_iosxe.ssh.v1"
+      ],
+      "hit_at_5": true,
+      "hit_at_10": true,
+      "mrr": 1.0,
+      "vendor_isolation_passed": true,
+      "feature_scope_passed": true,
+      "latency_ms": 17.6691
+    },
+    {
+      "id": "GOLD400-OFFICIAL-149",
+      "expected_document_ids": [
+        "local.cisco.cisco_iosxe.ntp.v1"
+      ],
+      "returned_document_ids": [
+        "local.cisco.cisco_iosxe.ntp.v1"
+      ],
+      "hit_at_5": true,
+      "hit_at_10": true,
+      "mrr": 1.0,
+      "vendor_isolation_passed": true,
+      "feature_scope_passed": true,
+      "latency_ms": 18.2599
+    },
+    {
+      "id": "GOLD400-OFFICIAL-150",
+      "expected_document_ids": [
+        "local.cisco.cisco_iosxe.static_route.v1"
+      ],
+      "returned_document_ids": [
+        "local.cisco.cisco_iosxe.static_route.v1"
+      ],
+      "hit_at_5": true,
+      "hit_at_10": true,
+      "mrr": 1.0,
+      "vendor_isolation_passed": true,
+      "feature_scope_passed": true,
+      "latency_ms": 18.5963
+    },
+    {
+      "id": "GOLD400-OFFICIAL-151",
+      "expected_document_ids": [
+        "local.cisco.cisco_iosxe.vlan.v1"
+      ],
+      "returned_document_ids": [
+        "local.cisco.cisco_iosxe.vlan.v1"
+      ],
+      "hit_at_5": true,
+      "hit_at_10": true,
+      "mrr": 1.0,
+      "vendor_isolation_passed": true,
+      "feature_scope_passed": true,
+      "latency_ms": 17.3941
+    },
+    {
+      "id": "GOLD400-OFFICIAL-152",
+      "expected_document_ids": [
+        "local.cisco.cisco_iosxe.access_port.v1"
+      ],
+      "returned_document_ids": [
+        "local.cisco.cisco_iosxe.access_port.v1"
+      ],
+      "hit_at_5": true,
+      "hit_at_10": true,
+      "mrr": 1.0,
+      "vendor_isolation_passed": true,
+      "feature_scope_passed": true,
+      "latency_ms": 16.8715
+    },
+    {
+      "id": "GOLD400-OFFICIAL-153",
+      "expected_document_ids": [
+        "local.cisco.cisco_iosxe.trunk.v1"
+      ],
+      "returned_document_ids": [
+        "local.cisco.cisco_iosxe.trunk.v1"
+      ],
+      "hit_at_5": true,
+      "hit_at_10": true,
+      "mrr": 1.0,
+      "vendor_isolation_passed": true,
+      "feature_scope_passed": true,
+      "latency_ms": 17.0362
+    },
+    {
+      "id": "GOLD400-OFFICIAL-154",
+      "expected_document_ids": [
+        "local.cisco.cisco_iosxe.ospf.v1"
+      ],
+      "returned_document_ids": [
+        "local.cisco.cisco_iosxe.ospf.v1"
+      ],
+      "hit_at_5": true,
+      "hit_at_10": true,
+      "mrr": 1.0,
+      "vendor_isolation_passed": true,
+      "feature_scope_passed": true,
+      "latency_ms": 16.6511
+    },
+    {
+      "id": "GOLD400-OFFICIAL-155",
+      "expected_document_ids": [
+        "local.cisco.cisco_iosxe.bgp.v1"
+      ],
+      "returned_document_ids": [
+        "local.cisco.cisco_iosxe.bgp.v1"
+      ],
+      "hit_at_5": true,
+      "hit_at_10": true,
+      "mrr": 1.0,
+      "vendor_isolation_passed": true,
+      "feature_scope_passed": true,
+      "latency_ms": 16.6445
+    },
+    {
+      "id": "GOLD400-OFFICIAL-156",
+      "expected_document_ids": [
+        "local.cisco.cisco_iosxe.lacp.v1"
+      ],
+      "returned_document_ids": [
+        "local.cisco.cisco_iosxe.lacp.v1"
+      ],
+      "hit_at_5": true,
+      "hit_at_10": true,
+      "mrr": 1.0,
+      "vendor_isolation_passed": true,
+      "feature_scope_passed": true,
+      "latency_ms": 17.7767
+    },
+    {
+      "id": "GOLD400-OFFICIAL-157",
+      "expected_document_ids": [
+        "local.cisco.cisco_iosxe.acl.v1"
+      ],
+      "returned_document_ids": [
+        "local.cisco.cisco_iosxe.acl.v1"
+      ],
+      "hit_at_5": true,
+      "hit_at_10": true,
+      "mrr": 1.0,
+      "vendor_isolation_passed": true,
+      "feature_scope_passed": true,
+      "latency_ms": 17.0387
+    },
+    {
+      "id": "GOLD400-OFFICIAL-158",
+      "expected_document_ids": [
+        "local.cisco.cisco_iosxe.ssh.v1"
+      ],
+      "returned_document_ids": [
+        "local.cisco.cisco_iosxe.ssh.v1"
+      ],
+      "hit_at_5": true,
+      "hit_at_10": true,
+      "mrr": 1.0,
+      "vendor_isolation_passed": true,
+      "feature_scope_passed": true,
+      "latency_ms": 17.1462
+    },
+    {
+      "id": "GOLD400-OFFICIAL-159",
+      "expected_document_ids": [
+        "local.cisco.cisco_iosxe.ntp.v1"
+      ],
+      "returned_document_ids": [
+        "local.cisco.cisco_iosxe.ntp.v1"
+      ],
+      "hit_at_5": true,
+      "hit_at_10": true,
+      "mrr": 1.0,
+      "vendor_isolation_passed": true,
+      "feature_scope_passed": true,
+      "latency_ms": 17.3937
+    },
+    {
+      "id": "GOLD400-OFFICIAL-160",
+      "expected_document_ids": [
+        "local.cisco.cisco_iosxe.static_route.v1"
+      ],
+      "returned_document_ids": [
+        "local.cisco.cisco_iosxe.static_route.v1"
+      ],
+      "hit_at_5": true,
+      "hit_at_10": true,
+      "mrr": 1.0,
+      "vendor_isolation_passed": true,
+      "feature_scope_passed": true,
+      "latency_ms": 17.8484
+    },
+    {
+      "id": "GOLD400-OFFICIAL-161",
+      "expected_document_ids": [
+        "local.cisco.cisco_iosxe.vlan.v1"
+      ],
+      "returned_document_ids": [
+        "local.cisco.cisco_iosxe.vlan.v1"
+      ],
+      "hit_at_5": true,
+      "hit_at_10": true,
+      "mrr": 1.0,
+      "vendor_isolation_passed": true,
+      "feature_scope_passed": true,
+      "latency_ms": 18.1276
+    },
+    {
+      "id": "GOLD400-OFFICIAL-162",
+      "expected_document_ids": [
+        "local.cisco.cisco_iosxe.access_port.v1"
+      ],
+      "returned_document_ids": [
+        "local.cisco.cisco_iosxe.access_port.v1"
+      ],
+      "hit_at_5": true,
+      "hit_at_10": true,
+      "mrr": 1.0,
+      "vendor_isolation_passed": true,
+      "feature_scope_passed": true,
+      "latency_ms": 17.4967
+    },
+    {
+      "id": "GOLD400-OFFICIAL-163",
+      "expected_document_ids": [
+        "local.cisco.cisco_iosxe.trunk.v1"
+      ],
+      "returned_document_ids": [
+        "local.cisco.cisco_iosxe.trunk.v1"
+      ],
+      "hit_at_5": true,
+      "hit_at_10": true,
+      "mrr": 1.0,
+      "vendor_isolation_passed": true,
+      "feature_scope_passed": true,
+      "latency_ms": 17.4176
+    },
+    {
+      "id": "GOLD400-OFFICIAL-164",
+      "expected_document_ids": [
+        "local.cisco.cisco_iosxe.ospf.v1"
+      ],
+      "returned_document_ids": [
+        "local.cisco.cisco_iosxe.ospf.v1"
+      ],
+      "hit_at_5": true,
+      "hit_at_10": true,
+      "mrr": 1.0,
+      "vendor_isolation_passed": true,
+      "feature_scope_passed": true,
+      "latency_ms": 16.8841
+    },
+    {
+      "id": "GOLD400-OFFICIAL-165",
+      "expected_document_ids": [
+        "local.cisco.cisco_iosxe.bgp.v1"
+      ],
+      "returned_document_ids": [
+        "local.cisco.cisco_iosxe.bgp.v1"
+      ],
+      "hit_at_5": true,
+      "hit_at_10": true,
+      "mrr": 1.0,
+      "vendor_isolation_passed": true,
+      "feature_scope_passed": true,
+      "latency_ms": 18.7152
+    },
+    {
+      "id": "GOLD400-OFFICIAL-166",
+      "expected_document_ids": [
+        "local.cisco.cisco_iosxe.lacp.v1"
+      ],
+      "returned_document_ids": [
+        "local.cisco.cisco_iosxe.lacp.v1"
+      ],
+      "hit_at_5": true,
+      "hit_at_10": true,
+      "mrr": 1.0,
+      "vendor_isolation_passed": true,
+      "feature_scope_passed": true,
+      "latency_ms": 18.6446
+    },
+    {
+      "id": "GOLD400-OFFICIAL-167",
+      "expected_document_ids": [
+        "local.cisco.cisco_iosxe.acl.v1"
+      ],
+      "returned_document_ids": [
+        "local.cisco.cisco_iosxe.acl.v1"
+      ],
+      "hit_at_5": true,
+      "hit_at_10": true,
+      "mrr": 1.0,
+      "vendor_isolation_passed": true,
+      "feature_scope_passed": true,
+      "latency_ms": 17.2897
+    },
+    {
+      "id": "GOLD400-OFFICIAL-168",
+      "expected_document_ids": [
+        "local.cisco.cisco_iosxe.ssh.v1"
+      ],
+      "returned_document_ids": [
+        "local.cisco.cisco_iosxe.ssh.v1"
+      ],
+      "hit_at_5": true,
+      "hit_at_10": true,
+      "mrr": 1.0,
+      "vendor_isolation_passed": true,
+      "feature_scope_passed": true,
+      "latency_ms": 17.1832
+    },
+    {
+      "id": "GOLD400-OFFICIAL-169",
+      "expected_document_ids": [
+        "local.cisco.cisco_iosxe.ntp.v1"
+      ],
+      "returned_document_ids": [
+        "local.cisco.cisco_iosxe.ntp.v1"
+      ],
+      "hit_at_5": true,
+      "hit_at_10": true,
+      "mrr": 1.0,
+      "vendor_isolation_passed": true,
+      "feature_scope_passed": true,
+      "latency_ms": 16.7235
+    },
+    {
+      "id": "GOLD400-OFFICIAL-170",
+      "expected_document_ids": [
+        "local.cisco.cisco_iosxe.static_route.v1"
+      ],
+      "returned_document_ids": [
+        "local.cisco.cisco_iosxe.static_route.v1"
+      ],
+      "hit_at_5": true,
+      "hit_at_10": true,
+      "mrr": 1.0,
+      "vendor_isolation_passed": true,
+      "feature_scope_passed": true,
+      "latency_ms": 17.6361
+    },
+    {
+      "id": "GOLD400-OFFICIAL-171",
+      "expected_document_ids": [
+        "local.cisco.cisco_iosxe.vlan.v1"
+      ],
+      "returned_document_ids": [
+        "local.cisco.cisco_iosxe.vlan.v1"
+      ],
+      "hit_at_5": true,
+      "hit_at_10": true,
+      "mrr": 1.0,
+      "vendor_isolation_passed": true,
+      "feature_scope_passed": true,
+      "latency_ms": 19.8349
+    },
+    {
+      "id": "GOLD400-OFFICIAL-172",
+      "expected_document_ids": [
+        "local.cisco.cisco_iosxe.access_port.v1"
+      ],
+      "returned_document_ids": [
+        "local.cisco.cisco_iosxe.access_port.v1"
+      ],
+      "hit_at_5": true,
+      "hit_at_10": true,
+      "mrr": 1.0,
+      "vendor_isolation_passed": true,
+      "feature_scope_passed": true,
+      "latency_ms": 16.8955
+    },
+    {
+      "id": "GOLD400-OFFICIAL-173",
+      "expected_document_ids": [
+        "local.cisco.cisco_iosxe.trunk.v1"
+      ],
+      "returned_document_ids": [
+        "local.cisco.cisco_iosxe.trunk.v1"
+      ],
+      "hit_at_5": true,
+      "hit_at_10": true,
+      "mrr": 1.0,
+      "vendor_isolation_passed": true,
+      "feature_scope_passed": true,
+      "latency_ms": 17.1333
+    },
+    {
+      "id": "GOLD400-OFFICIAL-174",
+      "expected_document_ids": [
+        "local.cisco.cisco_iosxe.ospf.v1"
+      ],
+      "returned_document_ids": [
+        "local.cisco.cisco_iosxe.ospf.v1"
+      ],
+      "hit_at_5": true,
+      "hit_at_10": true,
+      "mrr": 1.0,
+      "vendor_isolation_passed": true,
+      "feature_scope_passed": true,
+      "latency_ms": 17.6366
+    },
+    {
+      "id": "GOLD400-OFFICIAL-175",
+      "expected_document_ids": [
+        "local.cisco.cisco_iosxe.bgp.v1"
+      ],
+      "returned_document_ids": [
+        "local.cisco.cisco_iosxe.bgp.v1"
+      ],
+      "hit_at_5": true,
+      "hit_at_10": true,
+      "mrr": 1.0,
+      "vendor_isolation_passed": true,
+      "feature_scope_passed": true,
+      "latency_ms": 16.7577
+    },
+    {
+      "id": "GOLD400-OFFICIAL-176",
+      "expected_document_ids": [
+        "local.cisco.cisco_iosxe.lacp.v1"
+      ],
+      "returned_document_ids": [
+        "local.cisco.cisco_iosxe.lacp.v1"
+      ],
+      "hit_at_5": true,
+      "hit_at_10": true,
+      "mrr": 1.0,
+      "vendor_isolation_passed": true,
+      "feature_scope_passed": true,
+      "latency_ms": 17.0888
+    },
+    {
+      "id": "GOLD400-OFFICIAL-177",
+      "expected_document_ids": [
+        "local.cisco.cisco_iosxe.acl.v1"
+      ],
+      "returned_document_ids": [
+        "local.cisco.cisco_iosxe.acl.v1"
+      ],
+      "hit_at_5": true,
+      "hit_at_10": true,
+      "mrr": 1.0,
+      "vendor_isolation_passed": true,
+      "feature_scope_passed": true,
+      "latency_ms": 17.85
+    },
+    {
+      "id": "GOLD400-OFFICIAL-178",
+      "expected_document_ids": [
+        "local.cisco.cisco_iosxe.ssh.v1"
+      ],
+      "returned_document_ids": [
+        "local.cisco.cisco_iosxe.ssh.v1"
+      ],
+      "hit_at_5": true,
+      "hit_at_10": true,
+      "mrr": 1.0,
+      "vendor_isolation_passed": true,
+      "feature_scope_passed": true,
+      "latency_ms": 18.1778
+    },
+    {
+      "id": "GOLD400-OFFICIAL-179",
+      "expected_document_ids": [
+        "local.cisco.cisco_iosxe.ntp.v1"
+      ],
+      "returned_document_ids": [
+        "local.cisco.cisco_iosxe.ntp.v1"
+      ],
+      "hit_at_5": true,
+      "hit_at_10": true,
+      "mrr": 1.0,
+      "vendor_isolation_passed": true,
+      "feature_scope_passed": true,
+      "latency_ms": 17.3552
+    },
+    {
+      "id": "GOLD400-OFFICIAL-180",
+      "expected_document_ids": [
+        "local.cisco.cisco_iosxe.static_route.v1"
+      ],
+      "returned_document_ids": [
+        "local.cisco.cisco_iosxe.static_route.v1"
+      ],
+      "hit_at_5": true,
+      "hit_at_10": true,
+      "mrr": 1.0,
+      "vendor_isolation_passed": true,
+      "feature_scope_passed": true,
+      "latency_ms": 18.0849
+    },
+    {
+      "id": "GOLD400-OFFICIAL-181",
+      "expected_document_ids": [
+        "local.cisco.cisco_iosxe.vlan.v1"
+      ],
+      "returned_document_ids": [
+        "local.cisco.cisco_iosxe.vlan.v1"
+      ],
+      "hit_at_5": true,
+      "hit_at_10": true,
+      "mrr": 1.0,
+      "vendor_isolation_passed": true,
+      "feature_scope_passed": true,
+      "latency_ms": 17.8054
+    },
+    {
+      "id": "GOLD400-OFFICIAL-182",
+      "expected_document_ids": [
+        "local.cisco.cisco_iosxe.access_port.v1"
+      ],
+      "returned_document_ids": [
+        "local.cisco.cisco_iosxe.access_port.v1"
+      ],
+      "hit_at_5": true,
+      "hit_at_10": true,
+      "mrr": 1.0,
+      "vendor_isolation_passed": true,
+      "feature_scope_passed": true,
+      "latency_ms": 18.024
+    },
+    {
+      "id": "GOLD400-OFFICIAL-183",
+      "expected_document_ids": [
+        "local.cisco.cisco_iosxe.trunk.v1"
+      ],
+      "returned_document_ids": [
+        "local.cisco.cisco_iosxe.trunk.v1"
+      ],
+      "hit_at_5": true,
+      "hit_at_10": true,
+      "mrr": 1.0,
+      "vendor_isolation_passed": true,
+      "feature_scope_passed": true,
+      "latency_ms": 18.0054
+    },
+    {
+      "id": "GOLD400-OFFICIAL-184",
+      "expected_document_ids": [
+        "local.cisco.cisco_iosxe.ospf.v1"
+      ],
+      "returned_document_ids": [
+        "local.cisco.cisco_iosxe.ospf.v1"
+      ],
+      "hit_at_5": true,
+      "hit_at_10": true,
+      "mrr": 1.0,
+      "vendor_isolation_passed": true,
+      "feature_scope_passed": true,
+      "latency_ms": 17.7853
+    },
+    {
+      "id": "GOLD400-OFFICIAL-185",
+      "expected_document_ids": [
+        "local.cisco.cisco_iosxe.bgp.v1"
+      ],
+      "returned_document_ids": [
+        "local.cisco.cisco_iosxe.bgp.v1"
+      ],
+      "hit_at_5": true,
+      "hit_at_10": true,
+      "mrr": 1.0,
+      "vendor_isolation_passed": true,
+      "feature_scope_passed": true,
+      "latency_ms": 17.453
+    },
+    {
+      "id": "GOLD400-OFFICIAL-186",
+      "expected_document_ids": [
+        "local.cisco.cisco_iosxe.lacp.v1"
+      ],
+      "returned_document_ids": [
+        "local.cisco.cisco_iosxe.lacp.v1"
+      ],
+      "hit_at_5": true,
+      "hit_at_10": true,
+      "mrr": 1.0,
+      "vendor_isolation_passed": true,
+      "feature_scope_passed": true,
+      "latency_ms": 17.9948
+    },
+    {
+      "id": "GOLD400-OFFICIAL-187",
+      "expected_document_ids": [
+        "local.cisco.cisco_iosxe.acl.v1"
+      ],
+      "returned_document_ids": [
+        "local.cisco.cisco_iosxe.acl.v1"
+      ],
+      "hit_at_5": true,
+      "hit_at_10": true,
+      "mrr": 1.0,
+      "vendor_isolation_passed": true,
+      "feature_scope_passed": true,
+      "latency_ms": 17.4593
+    },
+    {
+      "id": "GOLD400-OFFICIAL-188",
+      "expected_document_ids": [
+        "local.cisco.cisco_iosxe.ssh.v1"
+      ],
+      "returned_document_ids": [
+        "local.cisco.cisco_iosxe.ssh.v1"
+      ],
+      "hit_at_5": true,
+      "hit_at_10": true,
+      "mrr": 1.0,
+      "vendor_isolation_passed": true,
+      "feature_scope_passed": true,
+      "latency_ms": 18.249
+    },
+    {
+      "id": "GOLD400-OFFICIAL-189",
+      "expected_document_ids": [
+        "local.cisco.cisco_iosxe.ntp.v1"
+      ],
+      "returned_document_ids": [
+        "local.cisco.cisco_iosxe.ntp.v1"
+      ],
+      "hit_at_5": true,
+      "hit_at_10": true,
+      "mrr": 1.0,
+      "vendor_isolation_passed": true,
+      "feature_scope_passed": true,
+      "latency_ms": 18.6239
+    },
+    {
+      "id": "GOLD400-OFFICIAL-190",
+      "expected_document_ids": [
+        "local.cisco.cisco_iosxe.static_route.v1"
+      ],
+      "returned_document_ids": [
+        "local.cisco.cisco_iosxe.static_route.v1"
+      ],
+      "hit_at_5": true,
+      "hit_at_10": true,
+      "mrr": 1.0,
+      "vendor_isolation_passed": true,
+      "feature_scope_passed": true,
+      "latency_ms": 18.0708
+    },
+    {
+      "id": "GOLD400-OFFICIAL-191",
+      "expected_document_ids": [
+        "local.cisco.cisco_iosxe.vlan.v1"
+      ],
+      "returned_document_ids": [
+        "local.cisco.cisco_iosxe.vlan.v1"
+      ],
+      "hit_at_5": true,
+      "hit_at_10": true,
+      "mrr": 1.0,
+      "vendor_isolation_passed": true,
+      "feature_scope_passed": true,
+      "latency_ms": 17.6726
+    },
+    {
+      "id": "GOLD400-OFFICIAL-192",
+      "expected_document_ids": [
+        "local.cisco.cisco_iosxe.access_port.v1"
+      ],
+      "returned_document_ids": [
+        "local.cisco.cisco_iosxe.access_port.v1"
+      ],
+      "hit_at_5": true,
+      "hit_at_10": true,
+      "mrr": 1.0,
+      "vendor_isolation_passed": true,
+      "feature_scope_passed": true,
+      "latency_ms": 17.2187
+    },
+    {
+      "id": "GOLD400-OFFICIAL-193",
+      "expected_document_ids": [
+        "local.cisco.cisco_iosxe.trunk.v1"
+      ],
+      "returned_document_ids": [
+        "local.cisco.cisco_iosxe.trunk.v1"
+      ],
+      "hit_at_5": true,
+      "hit_at_10": true,
+      "mrr": 1.0,
+      "vendor_isolation_passed": true,
+      "feature_scope_passed": true,
+      "latency_ms": 18.6976
+    },
+    {
+      "id": "GOLD400-OFFICIAL-194",
+      "expected_document_ids": [
+        "local.cisco.cisco_iosxe.ospf.v1"
+      ],
+      "returned_document_ids": [
+        "local.cisco.cisco_iosxe.ospf.v1"
+      ],
+      "hit_at_5": true,
+      "hit_at_10": true,
+      "mrr": 1.0,
+      "vendor_isolation_passed": true,
+      "feature_scope_passed": true,
+      "latency_ms": 17.2493
+    },
+    {
+      "id": "GOLD400-OFFICIAL-195",
+      "expected_document_ids": [
+        "local.cisco.cisco_iosxe.bgp.v1"
+      ],
+      "returned_document_ids": [
+        "local.cisco.cisco_iosxe.bgp.v1"
+      ],
+      "hit_at_5": true,
+      "hit_at_10": true,
+      "mrr": 1.0,
+      "vendor_isolation_passed": true,
+      "feature_scope_passed": true,
+      "latency_ms": 17.3233
+    },
+    {
+      "id": "GOLD400-OFFICIAL-196",
+      "expected_document_ids": [
+        "local.cisco.cisco_iosxe.lacp.v1"
+      ],
+      "returned_document_ids": [
+        "local.cisco.cisco_iosxe.lacp.v1"
+      ],
+      "hit_at_5": true,
+      "hit_at_10": true,
+      "mrr": 1.0,
+      "vendor_isolation_passed": true,
+      "feature_scope_passed": true,
+      "latency_ms": 17.7698
+    },
+    {
+      "id": "GOLD400-OFFICIAL-197",
+      "expected_document_ids": [
+        "local.cisco.cisco_iosxe.acl.v1"
+      ],
+      "returned_document_ids": [
+        "local.cisco.cisco_iosxe.acl.v1"
+      ],
+      "hit_at_5": true,
+      "hit_at_10": true,
+      "mrr": 1.0,
+      "vendor_isolation_passed": true,
+      "feature_scope_passed": true,
+      "latency_ms": 17.8999
+    },
+    {
+      "id": "GOLD400-OFFICIAL-198",
+      "expected_document_ids": [
+        "local.cisco.cisco_iosxe.ssh.v1"
+      ],
+      "returned_document_ids": [
+        "local.cisco.cisco_iosxe.ssh.v1"
+      ],
+      "hit_at_5": true,
+      "hit_at_10": true,
+      "mrr": 1.0,
+      "vendor_isolation_passed": true,
+      "feature_scope_passed": true,
+      "latency_ms": 17.3136
+    },
+    {
+      "id": "GOLD400-OFFICIAL-199",
+      "expected_document_ids": [
+        "local.cisco.cisco_iosxe.ntp.v1"
+      ],
+      "returned_document_ids": [
+        "local.cisco.cisco_iosxe.ntp.v1"
+      ],
+      "hit_at_5": true,
+      "hit_at_10": true,
+      "mrr": 1.0,
+      "vendor_isolation_passed": true,
+      "feature_scope_passed": true,
+      "latency_ms": 17.6943
+    },
+    {
+      "id": "GOLD400-OFFICIAL-200",
+      "expected_document_ids": [
+        "local.cisco.cisco_iosxe.static_route.v1"
+      ],
+      "returned_document_ids": [
+        "local.cisco.cisco_iosxe.static_route.v1"
+      ],
+      "hit_at_5": true,
+      "hit_at_10": true,
+      "mrr": 1.0,
+      "vendor_isolation_passed": true,
+      "feature_scope_passed": true,
+      "latency_ms": 17.6265
+    },
+    {
+      "id": "GOLD400-OFFICIAL-201",
+      "expected_document_ids": [
+        "local.h3c.h3c_comware.vlan.v1"
+      ],
+      "returned_document_ids": [
+        "local.h3c.h3c_comware.vlan.v1"
+      ],
+      "hit_at_5": true,
+      "hit_at_10": true,
+      "mrr": 1.0,
+      "vendor_isolation_passed": true,
+      "feature_scope_passed": true,
+      "latency_ms": 16.6979
+    },
+    {
+      "id": "GOLD400-OFFICIAL-202",
+      "expected_document_ids": [
+        "local.h3c.h3c_comware.access_port.v1"
+      ],
+      "returned_document_ids": [
+        "local.h3c.h3c_comware.access_port.v1"
+      ],
+      "hit_at_5": true,
+      "hit_at_10": true,
+      "mrr": 1.0,
+      "vendor_isolation_passed": true,
+      "feature_scope_passed": true,
+      "latency_ms": 16.8123
+    },
+    {
+      "id": "GOLD400-OFFICIAL-203",
+      "expected_document_ids": [
+        "local.h3c.h3c_comware.trunk.v1"
+      ],
+      "returned_document_ids": [
+        "local.h3c.h3c_comware.trunk.v1"
+      ],
+      "hit_at_5": true,
+      "hit_at_10": true,
+      "mrr": 1.0,
+      "vendor_isolation_passed": true,
+      "feature_scope_passed": true,
+      "latency_ms": 17.7996
+    },
+    {
+      "id": "GOLD400-OFFICIAL-204",
+      "expected_document_ids": [
+        "local.h3c.h3c_comware.ospf.v1"
+      ],
+      "returned_document_ids": [
+        "local.h3c.h3c_comware.ospf.v1"
+      ],
+      "hit_at_5": true,
+      "hit_at_10": true,
+      "mrr": 1.0,
+      "vendor_isolation_passed": true,
+      "feature_scope_passed": true,
+      "latency_ms": 16.9357
+    },
+    {
+      "id": "GOLD400-OFFICIAL-205",
+      "expected_document_ids": [
+        "local.h3c.h3c_comware.bgp.v1"
+      ],
+      "returned_document_ids": [
+        "local.h3c.h3c_comware.bgp.v1"
+      ],
+      "hit_at_5": true,
+      "hit_at_10": true,
+      "mrr": 1.0,
+      "vendor_isolation_passed": true,
+      "feature_scope_passed": true,
+      "latency_ms": 17.9954
+    },
+    {
+      "id": "GOLD400-OFFICIAL-206",
+      "expected_document_ids": [
+        "local.h3c.h3c_comware.lacp.v1"
+      ],
+      "returned_document_ids": [
+        "local.h3c.h3c_comware.lacp.v1"
+      ],
+      "hit_at_5": true,
+      "hit_at_10": true,
+      "mrr": 1.0,
+      "vendor_isolation_passed": true,
+      "feature_scope_passed": true,
+      "latency_ms": 16.6016
+    },
+    {
+      "id": "GOLD400-OFFICIAL-207",
+      "expected_document_ids": [
+        "local.h3c.h3c_comware.acl.v1"
+      ],
+      "returned_document_ids": [
+        "local.h3c.h3c_comware.acl.v1"
+      ],
+      "hit_at_5": true,
+      "hit_at_10": true,
+      "mrr": 1.0,
+      "vendor_isolation_passed": true,
+      "feature_scope_passed": true,
+      "latency_ms": 17.3786
+    },
+    {
+      "id": "GOLD400-OFFICIAL-208",
+      "expected_document_ids": [
+        "local.h3c.h3c_comware.ssh.v1"
+      ],
+      "returned_document_ids": [
+        "local.h3c.h3c_comware.ssh.v1"
+      ],
+      "hit_at_5": true,
+      "hit_at_10": true,
+      "mrr": 1.0,
+      "vendor_isolation_passed": true,
+      "feature_scope_passed": true,
+      "latency_ms": 17.7568
+    },
+    {
+      "id": "GOLD400-OFFICIAL-209",
+      "expected_document_ids": [
+        "local.h3c.h3c_comware.ntp.v1"
+      ],
+      "returned_document_ids": [
+        "local.h3c.h3c_comware.ntp.v1"
+      ],
+      "hit_at_5": true,
+      "hit_at_10": true,
+      "mrr": 1.0,
+      "vendor_isolation_passed": true,
+      "feature_scope_passed": true,
+      "latency_ms": 17.4509
+    },
+    {
+      "id": "GOLD400-OFFICIAL-210",
+      "expected_document_ids": [
+        "local.h3c.h3c_comware.static_route.v1"
+      ],
+      "returned_document_ids": [
+        "local.h3c.h3c_comware.static_route.v1"
+      ],
+      "hit_at_5": true,
+      "hit_at_10": true,
+      "mrr": 1.0,
+      "vendor_isolation_passed": true,
+      "feature_scope_passed": true,
+      "latency_ms": 17.9508
+    },
+    {
+      "id": "GOLD400-OFFICIAL-211",
+      "expected_document_ids": [
+        "local.h3c.h3c_comware.vlan.v1"
+      ],
+      "returned_document_ids": [
+        "local.h3c.h3c_comware.vlan.v1"
+      ],
+      "hit_at_5": true,
+      "hit_at_10": true,
+      "mrr": 1.0,
+      "vendor_isolation_passed": true,
+      "feature_scope_passed": true,
+      "latency_ms": 17.4727
+    },
+    {
+      "id": "GOLD400-OFFICIAL-212",
+      "expected_document_ids": [
+        "local.h3c.h3c_comware.access_port.v1"
+      ],
+      "returned_document_ids": [
+        "local.h3c.h3c_comware.access_port.v1"
+      ],
+      "hit_at_5": true,
+      "hit_at_10": true,
+      "mrr": 1.0,
+      "vendor_isolation_passed": true,
+      "feature_scope_passed": true,
+      "latency_ms": 17.9194
+    },
+    {
+      "id": "GOLD400-OFFICIAL-213",
+      "expected_document_ids": [
+        "local.h3c.h3c_comware.trunk.v1"
+      ],
+      "returned_document_ids": [
+        "local.h3c.h3c_comware.trunk.v1"
+      ],
+      "hit_at_5": true,
+      "hit_at_10": true,
+      "mrr": 1.0,
+      "vendor_isolation_passed": true,
+      "feature_scope_passed": true,
+      "latency_ms": 16.8027
+    },
+    {
+      "id": "GOLD400-OFFICIAL-214",
+      "expected_document_ids": [
+        "local.h3c.h3c_comware.ospf.v1"
+      ],
+      "returned_document_ids": [
+        "local.h3c.h3c_comware.ospf.v1"
+      ],
+      "hit_at_5": true,
+      "hit_at_10": true,
+      "mrr": 1.0,
+      "vendor_isolation_passed": true,
+      "feature_scope_passed": true,
+      "latency_ms": 17.718
+    },
+    {
+      "id": "GOLD400-OFFICIAL-215",
+      "expected_document_ids": [
+        "local.h3c.h3c_comware.bgp.v1"
+      ],
+      "returned_document_ids": [
+        "local.h3c.h3c_comware.bgp.v1"
+      ],
+      "hit_at_5": true,
+      "hit_at_10": true,
+      "mrr": 1.0,
+      "vendor_isolation_passed": true,
+      "feature_scope_passed": true,
+      "latency_ms": 19.1946
+    },
+    {
+      "id": "GOLD400-OFFICIAL-216",
+      "expected_document_ids": [
+        "local.h3c.h3c_comware.lacp.v1"
+      ],
+      "returned_document_ids": [
+        "local.h3c.h3c_comware.lacp.v1"
+      ],
+      "hit_at_5": true,
+      "hit_at_10": true,
+      "mrr": 1.0,
+      "vendor_isolation_passed": true,
+      "feature_scope_passed": true,
+      "latency_ms": 17.8422
+    },
+    {
+      "id": "GOLD400-OFFICIAL-217",
+      "expected_document_ids": [
+        "local.h3c.h3c_comware.acl.v1"
+      ],
+      "returned_document_ids": [
+        "local.h3c.h3c_comware.acl.v1"
+      ],
+      "hit_at_5": true,
+      "hit_at_10": true,
+      "mrr": 1.0,
+      "vendor_isolation_passed": true,
+      "feature_scope_passed": true,
+      "latency_ms": 17.3421
+    },
+    {
+      "id": "GOLD400-OFFICIAL-218",
+      "expected_document_ids": [
+        "local.h3c.h3c_comware.ssh.v1"
+      ],
+      "returned_document_ids": [
+        "local.h3c.h3c_comware.ssh.v1"
+      ],
+      "hit_at_5": true,
+      "hit_at_10": true,
+      "mrr": 1.0,
+      "vendor_isolation_passed": true,
+      "feature_scope_passed": true,
+      "latency_ms": 18.6105
+    },
+    {
+      "id": "GOLD400-OFFICIAL-219",
+      "expected_document_ids": [
+        "local.h3c.h3c_comware.ntp.v1"
+      ],
+      "returned_document_ids": [
+        "local.h3c.h3c_comware.ntp.v1"
+      ],
+      "hit_at_5": true,
+      "hit_at_10": true,
+      "mrr": 1.0,
+      "vendor_isolation_passed": true,
+      "feature_scope_passed": true,
+      "latency_ms": 16.7813
+    },
+    {
+      "id": "GOLD400-OFFICIAL-220",
+      "expected_document_ids": [
+        "local.h3c.h3c_comware.static_route.v1"
+      ],
+      "returned_document_ids": [
+        "local.h3c.h3c_comware.static_route.v1"
+      ],
+      "hit_at_5": true,
+      "hit_at_10": true,
+      "mrr": 1.0,
+      "vendor_isolation_passed": true,
+      "feature_scope_passed": true,
+      "latency_ms": 17.4775
+    },
+    {
+      "id": "GOLD400-OFFICIAL-221",
+      "expected_document_ids": [
+        "local.h3c.h3c_comware.vlan.v1"
+      ],
+      "returned_document_ids": [
+        "local.h3c.h3c_comware.vlan.v1"
+      ],
+      "hit_at_5": true,
+      "hit_at_10": true,
+      "mrr": 1.0,
+      "vendor_isolation_passed": true,
+      "feature_scope_passed": true,
+      "latency_ms": 17.5498
+    },
+    {
+      "id": "GOLD400-OFFICIAL-222",
+      "expected_document_ids": [
+        "local.h3c.h3c_comware.access_port.v1"
+      ],
+      "returned_document_ids": [
+        "local.h3c.h3c_comware.access_port.v1"
+      ],
+      "hit_at_5": true,
+      "hit_at_10": true,
+      "mrr": 1.0,
+      "vendor_isolation_passed": true,
+      "feature_scope_passed": true,
+      "latency_ms": 16.7797
+    },
+    {
+      "id": "GOLD400-OFFICIAL-223",
+      "expected_document_ids": [
+        "local.h3c.h3c_comware.trunk.v1"
+      ],
+      "returned_document_ids": [
+        "local.h3c.h3c_comware.trunk.v1"
+      ],
+      "hit_at_5": true,
+      "hit_at_10": true,
+      "mrr": 1.0,
+      "vendor_isolation_passed": true,
+      "feature_scope_passed": true,
+      "latency_ms": 17.1359
+    },
+    {
+      "id": "GOLD400-OFFICIAL-224",
+      "expected_document_ids": [
+        "local.h3c.h3c_comware.ospf.v1"
+      ],
+      "returned_document_ids": [
+        "local.h3c.h3c_comware.ospf.v1"
+      ],
+      "hit_at_5": true,
+      "hit_at_10": true,
+      "mrr": 1.0,
+      "vendor_isolation_passed": true,
+      "feature_scope_passed": true,
+      "latency_ms": 16.905
+    },
+    {
+      "id": "GOLD400-OFFICIAL-225",
+      "expected_document_ids": [
+        "local.h3c.h3c_comware.bgp.v1"
+      ],
+      "returned_document_ids": [
+        "local.h3c.h3c_comware.bgp.v1"
+      ],
+      "hit_at_5": true,
+      "hit_at_10": true,
+      "mrr": 1.0,
+      "vendor_isolation_passed": true,
+      "feature_scope_passed": true,
+      "latency_ms": 17.1639
+    },
+    {
+      "id": "GOLD400-OFFICIAL-226",
+      "expected_document_ids": [
+        "local.h3c.h3c_comware.lacp.v1"
+      ],
+      "returned_document_ids": [
+        "local.h3c.h3c_comware.lacp.v1"
+      ],
+      "hit_at_5": true,
+      "hit_at_10": true,
+      "mrr": 1.0,
+      "vendor_isolation_passed": true,
+      "feature_scope_passed": true,
+      "latency_ms": 16.9823
+    },
+    {
+      "id": "GOLD400-OFFICIAL-227",
+      "expected_document_ids": [
+        "local.h3c.h3c_comware.acl.v1"
+      ],
+      "returned_document_ids": [
+        "local.h3c.h3c_comware.acl.v1"
+      ],
+      "hit_at_5": true,
+      "hit_at_10": true,
+      "mrr": 1.0,
+      "vendor_isolation_passed": true,
+      "feature_scope_passed": true,
+      "latency_ms": 16.9097
+    },
+    {
+      "id": "GOLD400-OFFICIAL-228",
+      "expected_document_ids": [
+        "local.h3c.h3c_comware.ssh.v1"
+      ],
+      "returned_document_ids": [
+        "local.h3c.h3c_comware.ssh.v1"
+      ],
+      "hit_at_5": true,
+      "hit_at_10": true,
+      "mrr": 1.0,
+      "vendor_isolation_passed": true,
+      "feature_scope_passed": true,
+      "latency_ms": 19.7684
+    },
+    {
+      "id": "GOLD400-OFFICIAL-229",
+      "expected_document_ids": [
+        "local.h3c.h3c_comware.ntp.v1"
+      ],
+      "returned_document_ids": [
+        "local.h3c.h3c_comware.ntp.v1"
+      ],
+      "hit_at_5": true,
+      "hit_at_10": true,
+      "mrr": 1.0,
+      "vendor_isolation_passed": true,
+      "feature_scope_passed": true,
+      "latency_ms": 18.2189
+    },
+    {
+      "id": "GOLD400-OFFICIAL-230",
+      "expected_document_ids": [
+        "local.h3c.h3c_comware.static_route.v1"
+      ],
+      "returned_document_ids": [
+        "local.h3c.h3c_comware.static_route.v1"
+      ],
+      "hit_at_5": true,
+      "hit_at_10": true,
+      "mrr": 1.0,
+      "vendor_isolation_passed": true,
+      "feature_scope_passed": true,
+      "latency_ms": 17.9393
+    },
+    {
+      "id": "GOLD400-OFFICIAL-231",
+      "expected_document_ids": [
+        "local.h3c.h3c_comware.vlan.v1"
+      ],
+      "returned_document_ids": [
+        "local.h3c.h3c_comware.vlan.v1"
+      ],
+      "hit_at_5": true,
+      "hit_at_10": true,
+      "mrr": 1.0,
+      "vendor_isolation_passed": true,
+      "feature_scope_passed": true,
+      "latency_ms": 19.0425
+    },
+    {
+      "id": "GOLD400-OFFICIAL-232",
+      "expected_document_ids": [
+        "local.h3c.h3c_comware.access_port.v1"
+      ],
+      "returned_document_ids": [
+        "local.h3c.h3c_comware.access_port.v1"
+      ],
+      "hit_at_5": true,
+      "hit_at_10": true,
+      "mrr": 1.0,
+      "vendor_isolation_passed": true,
+      "feature_scope_passed": true,
+      "latency_ms": 18.3613
+    },
+    {
+      "id": "GOLD400-OFFICIAL-233",
+      "expected_document_ids": [
+        "local.h3c.h3c_comware.trunk.v1"
+      ],
+      "returned_document_ids": [
+        "local.h3c.h3c_comware.trunk.v1"
+      ],
+      "hit_at_5": true,
+      "hit_at_10": true,
+      "mrr": 1.0,
+      "vendor_isolation_passed": true,
+      "feature_scope_passed": true,
+      "latency_ms": 17.3264
+    },
+    {
+      "id": "GOLD400-OFFICIAL-234",
+      "expected_document_ids": [
+        "local.h3c.h3c_comware.ospf.v1"
+      ],
+      "returned_document_ids": [
+        "local.h3c.h3c_comware.ospf.v1"
+      ],
+      "hit_at_5": true,
+      "hit_at_10": true,
+      "mrr": 1.0,
+      "vendor_isolation_passed": true,
+      "feature_scope_passed": true,
+      "latency_ms": 16.4269
+    },
+    {
+      "id": "GOLD400-OFFICIAL-235",
+      "expected_document_ids": [
+        "local.h3c.h3c_comware.bgp.v1"
+      ],
+      "returned_document_ids": [
+        "local.h3c.h3c_comware.bgp.v1"
+      ],
+      "hit_at_5": true,
+      "hit_at_10": true,
+      "mrr": 1.0,
+      "vendor_isolation_passed": true,
+      "feature_scope_passed": true,
+      "latency_ms": 17.132
+    },
+    {
+      "id": "GOLD400-OFFICIAL-236",
+      "expected_document_ids": [
+        "local.h3c.h3c_comware.lacp.v1"
+      ],
+      "returned_document_ids": [
+        "local.h3c.h3c_comware.lacp.v1"
+      ],
+      "hit_at_5": true,
+      "hit_at_10": true,
+      "mrr": 1.0,
+      "vendor_isolation_passed": true,
+      "feature_scope_passed": true,
+      "latency_ms": 16.7898
+    },
+    {
+      "id": "GOLD400-OFFICIAL-237",
+      "expected_document_ids": [
+        "local.h3c.h3c_comware.acl.v1"
+      ],
+      "returned_document_ids": [
+        "local.h3c.h3c_comware.acl.v1"
+      ],
+      "hit_at_5": true,
+      "hit_at_10": true,
+      "mrr": 1.0,
+      "vendor_isolation_passed": true,
+      "feature_scope_passed": true,
+      "latency_ms": 16.573
+    },
+    {
+      "id": "GOLD400-OFFICIAL-238",
+      "expected_document_ids": [
+        "local.h3c.h3c_comware.ssh.v1"
+      ],
+      "returned_document_ids": [
+        "local.h3c.h3c_comware.ssh.v1"
+      ],
+      "hit_at_5": true,
+      "hit_at_10": true,
+      "mrr": 1.0,
+      "vendor_isolation_passed": true,
+      "feature_scope_passed": true,
+      "latency_ms": 17.3798
+    },
+    {
+      "id": "GOLD400-OFFICIAL-239",
+      "expected_document_ids": [
+        "local.h3c.h3c_comware.ntp.v1"
+      ],
+      "returned_document_ids": [
+        "local.h3c.h3c_comware.ntp.v1"
+      ],
+      "hit_at_5": true,
+      "hit_at_10": true,
+      "mrr": 1.0,
+      "vendor_isolation_passed": true,
+      "feature_scope_passed": true,
+      "latency_ms": 17.6073
+    },
+    {
+      "id": "GOLD400-OFFICIAL-240",
+      "expected_document_ids": [
+        "local.h3c.h3c_comware.static_route.v1"
+      ],
+      "returned_document_ids": [
+        "local.h3c.h3c_comware.static_route.v1"
+      ],
+      "hit_at_5": true,
+      "hit_at_10": true,
+      "mrr": 1.0,
+      "vendor_isolation_passed": true,
+      "feature_scope_passed": true,
+      "latency_ms": 17.8763
+    },
+    {
+      "id": "GOLD400-OFFICIAL-241",
+      "expected_document_ids": [
+        "local.h3c.h3c_comware.vlan.v1"
+      ],
+      "returned_document_ids": [
+        "local.h3c.h3c_comware.vlan.v1"
+      ],
+      "hit_at_5": true,
+      "hit_at_10": true,
+      "mrr": 1.0,
+      "vendor_isolation_passed": true,
+      "feature_scope_passed": true,
+      "latency_ms": 17.0965
+    },
+    {
+      "id": "GOLD400-OFFICIAL-242",
+      "expected_document_ids": [
+        "local.h3c.h3c_comware.access_port.v1"
+      ],
+      "returned_document_ids": [
+        "local.h3c.h3c_comware.access_port.v1"
+      ],
+      "hit_at_5": true,
+      "hit_at_10": true,
+      "mrr": 1.0,
+      "vendor_isolation_passed": true,
+      "feature_scope_passed": true,
+      "latency_ms": 17.1537
+    },
+    {
+      "id": "GOLD400-OFFICIAL-243",
+      "expected_document_ids": [
+        "local.h3c.h3c_comware.trunk.v1"
+      ],
+      "returned_document_ids": [
+        "local.h3c.h3c_comware.trunk.v1"
+      ],
+      "hit_at_5": true,
+      "hit_at_10": true,
+      "mrr": 1.0,
+      "vendor_isolation_passed": true,
+      "feature_scope_passed": true,
+      "latency_ms": 17.5777
+    },
+    {
+      "id": "GOLD400-OFFICIAL-244",
+      "expected_document_ids": [
+        "local.h3c.h3c_comware.ospf.v1"
+      ],
+      "returned_document_ids": [
+        "local.h3c.h3c_comware.ospf.v1"
+      ],
+      "hit_at_5": true,
+      "hit_at_10": true,
+      "mrr": 1.0,
+      "vendor_isolation_passed": true,
+      "feature_scope_passed": true,
+      "latency_ms": 17.5842
+    },
+    {
+      "id": "GOLD400-OFFICIAL-245",
+      "expected_document_ids": [
+        "local.h3c.h3c_comware.bgp.v1"
+      ],
+      "returned_document_ids": [
+        "local.h3c.h3c_comware.bgp.v1"
+      ],
+      "hit_at_5": true,
+      "hit_at_10": true,
+      "mrr": 1.0,
+      "vendor_isolation_passed": true,
+      "feature_scope_passed": true,
+      "latency_ms": 16.778
+    },
+    {
+      "id": "GOLD400-OFFICIAL-246",
+      "expected_document_ids": [
+        "local.h3c.h3c_comware.lacp.v1"
+      ],
+      "returned_document_ids": [
+        "local.h3c.h3c_comware.lacp.v1"
+      ],
+      "hit_at_5": true,
+      "hit_at_10": true,
+      "mrr": 1.0,
+      "vendor_isolation_passed": true,
+      "feature_scope_passed": true,
+      "latency_ms": 16.6305
+    },
+    {
+      "id": "GOLD400-OFFICIAL-247",
+      "expected_document_ids": [
+        "local.h3c.h3c_comware.acl.v1"
+      ],
+      "returned_document_ids": [
+        "local.h3c.h3c_comware.acl.v1"
+      ],
+      "hit_at_5": true,
+      "hit_at_10": true,
+      "mrr": 1.0,
+      "vendor_isolation_passed": true,
+      "feature_scope_passed": true,
+      "latency_ms": 17.2911
+    },
+    {
+      "id": "GOLD400-OFFICIAL-248",
+      "expected_document_ids": [
+        "local.h3c.h3c_comware.ssh.v1"
+      ],
+      "returned_document_ids": [
+        "local.h3c.h3c_comware.ssh.v1"
+      ],
+      "hit_at_5": true,
+      "hit_at_10": true,
+      "mrr": 1.0,
+      "vendor_isolation_passed": true,
+      "feature_scope_passed": true,
+      "latency_ms": 18.1922
+    },
+    {
+      "id": "GOLD400-OFFICIAL-249",
+      "expected_document_ids": [
+        "local.h3c.h3c_comware.ntp.v1"
+      ],
+      "returned_document_ids": [
+        "local.h3c.h3c_comware.ntp.v1"
+      ],
+      "hit_at_5": true,
+      "hit_at_10": true,
+      "mrr": 1.0,
+      "vendor_isolation_passed": true,
+      "feature_scope_passed": true,
+      "latency_ms": 17.3755
+    },
+    {
+      "id": "GOLD400-OFFICIAL-250",
+      "expected_document_ids": [
+        "local.h3c.h3c_comware.static_route.v1"
+      ],
+      "returned_document_ids": [
+        "local.h3c.h3c_comware.static_route.v1"
+      ],
+      "hit_at_5": true,
+      "hit_at_10": true,
+      "mrr": 1.0,
+      "vendor_isolation_passed": true,
+      "feature_scope_passed": true,
+      "latency_ms": 17.715
+    },
+    {
+      "id": "GOLD400-OFFICIAL-251",
+      "expected_document_ids": [
+        "local.h3c.h3c_comware.vlan.v1"
+      ],
+      "returned_document_ids": [
+        "local.h3c.h3c_comware.vlan.v1"
+      ],
+      "hit_at_5": true,
+      "hit_at_10": true,
+      "mrr": 1.0,
+      "vendor_isolation_passed": true,
+      "feature_scope_passed": true,
+      "latency_ms": 16.882
+    },
+    {
+      "id": "GOLD400-OFFICIAL-252",
+      "expected_document_ids": [
+        "local.h3c.h3c_comware.access_port.v1"
+      ],
+      "returned_document_ids": [
+        "local.h3c.h3c_comware.access_port.v1"
+      ],
+      "hit_at_5": true,
+      "hit_at_10": true,
+      "mrr": 1.0,
+      "vendor_isolation_passed": true,
+      "feature_scope_passed": true,
+      "latency_ms": 16.9885
+    },
+    {
+      "id": "GOLD400-OFFICIAL-253",
+      "expected_document_ids": [
+        "local.h3c.h3c_comware.trunk.v1"
+      ],
+      "returned_document_ids": [
+        "local.h3c.h3c_comware.trunk.v1"
+      ],
+      "hit_at_5": true,
+      "hit_at_10": true,
+      "mrr": 1.0,
+      "vendor_isolation_passed": true,
+      "feature_scope_passed": true,
+      "latency_ms": 17.6742
+    },
+    {
+      "id": "GOLD400-OFFICIAL-254",
+      "expected_document_ids": [
+        "local.h3c.h3c_comware.ospf.v1"
+      ],
+      "returned_document_ids": [
+        "local.h3c.h3c_comware.ospf.v1"
+      ],
+      "hit_at_5": true,
+      "hit_at_10": true,
+      "mrr": 1.0,
+      "vendor_isolation_passed": true,
+      "feature_scope_passed": true,
+      "latency_ms": 17.5104
+    },
+    {
+      "id": "GOLD400-OFFICIAL-255",
+      "expected_document_ids": [
+        "local.h3c.h3c_comware.bgp.v1"
+      ],
+      "returned_document_ids": [
+        "local.h3c.h3c_comware.bgp.v1"
+      ],
+      "hit_at_5": true,
+      "hit_at_10": true,
+      "mrr": 1.0,
+      "vendor_isolation_passed": true,
+      "feature_scope_passed": true,
+      "latency_ms": 17.9379
+    },
+    {
+      "id": "GOLD400-OFFICIAL-256",
+      "expected_document_ids": [
+        "local.h3c.h3c_comware.lacp.v1"
+      ],
+      "returned_document_ids": [
+        "local.h3c.h3c_comware.lacp.v1"
+      ],
+      "hit_at_5": true,
+      "hit_at_10": true,
+      "mrr": 1.0,
+      "vendor_isolation_passed": true,
+      "feature_scope_passed": true,
+      "latency_ms": 17.7399
+    },
+    {
+      "id": "GOLD400-OFFICIAL-257",
+      "expected_document_ids": [
+        "local.h3c.h3c_comware.acl.v1"
+      ],
+      "returned_document_ids": [
+        "local.h3c.h3c_comware.acl.v1"
+      ],
+      "hit_at_5": true,
+      "hit_at_10": true,
+      "mrr": 1.0,
+      "vendor_isolation_passed": true,
+      "feature_scope_passed": true,
+      "latency_ms": 18.1512
+    },
+    {
+      "id": "GOLD400-OFFICIAL-258",
+      "expected_document_ids": [
+        "local.h3c.h3c_comware.ssh.v1"
+      ],
+      "returned_document_ids": [
+        "local.h3c.h3c_comware.ssh.v1"
+      ],
+      "hit_at_5": true,
+      "hit_at_10": true,
+      "mrr": 1.0,
+      "vendor_isolation_passed": true,
+      "feature_scope_passed": true,
+      "latency_ms": 17.7596
+    },
+    {
+      "id": "GOLD400-OFFICIAL-259",
+      "expected_document_ids": [
+        "local.h3c.h3c_comware.ntp.v1"
+      ],
+      "returned_document_ids": [
+        "local.h3c.h3c_comware.ntp.v1"
+      ],
+      "hit_at_5": true,
+      "hit_at_10": true,
+      "mrr": 1.0,
+      "vendor_isolation_passed": true,
+      "feature_scope_passed": true,
+      "latency_ms": 17.5807
+    },
+    {
+      "id": "GOLD400-OFFICIAL-260",
+      "expected_document_ids": [
+        "local.h3c.h3c_comware.static_route.v1"
+      ],
+      "returned_document_ids": [
+        "local.h3c.h3c_comware.static_route.v1"
+      ],
+      "hit_at_5": true,
+      "hit_at_10": true,
+      "mrr": 1.0,
+      "vendor_isolation_passed": true,
+      "feature_scope_passed": true,
+      "latency_ms": 20.2155
+    },
+    {
+      "id": "GOLD400-OFFICIAL-261",
+      "expected_document_ids": [
+        "local.h3c.h3c_comware.vlan.v1"
+      ],
+      "returned_document_ids": [
+        "local.h3c.h3c_comware.vlan.v1"
+      ],
+      "hit_at_5": true,
+      "hit_at_10": true,
+      "mrr": 1.0,
+      "vendor_isolation_passed": true,
+      "feature_scope_passed": true,
+      "latency_ms": 19.5318
+    },
+    {
+      "id": "GOLD400-OFFICIAL-262",
+      "expected_document_ids": [
+        "local.h3c.h3c_comware.access_port.v1"
+      ],
+      "returned_document_ids": [
+        "local.h3c.h3c_comware.access_port.v1"
+      ],
+      "hit_at_5": true,
+      "hit_at_10": true,
+      "mrr": 1.0,
+      "vendor_isolation_passed": true,
+      "feature_scope_passed": true,
+      "latency_ms": 17.9769
+    },
+    {
+      "id": "GOLD400-OFFICIAL-263",
+      "expected_document_ids": [
+        "local.h3c.h3c_comware.trunk.v1"
+      ],
+      "returned_document_ids": [
+        "local.h3c.h3c_comware.trunk.v1"
+      ],
+      "hit_at_5": true,
+      "hit_at_10": true,
+      "mrr": 1.0,
+      "vendor_isolation_passed": true,
+      "feature_scope_passed": true,
+      "latency_ms": 18.1635
+    },
+    {
+      "id": "GOLD400-OFFICIAL-264",
+      "expected_document_ids": [
+        "local.h3c.h3c_comware.ospf.v1"
+      ],
+      "returned_document_ids": [
+        "local.h3c.h3c_comware.ospf.v1"
+      ],
+      "hit_at_5": true,
+      "hit_at_10": true,
+      "mrr": 1.0,
+      "vendor_isolation_passed": true,
+      "feature_scope_passed": true,
+      "latency_ms": 17.9757
+    },
+    {
+      "id": "GOLD400-OFFICIAL-265",
+      "expected_document_ids": [
+        "local.h3c.h3c_comware.bgp.v1"
+      ],
+      "returned_document_ids": [
+        "local.h3c.h3c_comware.bgp.v1"
+      ],
+      "hit_at_5": true,
+      "hit_at_10": true,
+      "mrr": 1.0,
+      "vendor_isolation_passed": true,
+      "feature_scope_passed": true,
+      "latency_ms": 17.7556
+    },
+    {
+      "id": "GOLD400-OFFICIAL-266",
+      "expected_document_ids": [
+        "local.h3c.h3c_comware.lacp.v1"
+      ],
+      "returned_document_ids": [
+        "local.h3c.h3c_comware.lacp.v1"
+      ],
+      "hit_at_5": true,
+      "hit_at_10": true,
+      "mrr": 1.0,
+      "vendor_isolation_passed": true,
+      "feature_scope_passed": true,
+      "latency_ms": 17.7496
+    },
+    {
+      "id": "GOLD400-OFFICIAL-267",
+      "expected_document_ids": [
+        "local.h3c.h3c_comware.acl.v1"
+      ],
+      "returned_document_ids": [
+        "local.h3c.h3c_comware.acl.v1"
+      ],
+      "hit_at_5": true,
+      "hit_at_10": true,
+      "mrr": 1.0,
+      "vendor_isolation_passed": true,
+      "feature_scope_passed": true,
+      "latency_ms": 17.4456
+    },
+    {
+      "id": "GOLD400-OFFICIAL-268",
+      "expected_document_ids": [
+        "local.h3c.h3c_comware.ssh.v1"
+      ],
+      "returned_document_ids": [
+        "local.h3c.h3c_comware.ssh.v1"
+      ],
+      "hit_at_5": true,
+      "hit_at_10": true,
+      "mrr": 1.0,
+      "vendor_isolation_passed": true,
+      "feature_scope_passed": true,
+      "latency_ms": 17.3172
+    },
+    {
+      "id": "GOLD400-OFFICIAL-269",
+      "expected_document_ids": [
+        "local.h3c.h3c_comware.ntp.v1"
+      ],
+      "returned_document_ids": [
+        "local.h3c.h3c_comware.ntp.v1"
+      ],
+      "hit_at_5": true,
+      "hit_at_10": true,
+      "mrr": 1.0,
+      "vendor_isolation_passed": true,
+      "feature_scope_passed": true,
+      "latency_ms": 16.9742
+    },
+    {
+      "id": "GOLD400-OFFICIAL-270",
+      "expected_document_ids": [
+        "local.h3c.h3c_comware.static_route.v1"
+      ],
+      "returned_document_ids": [
+        "local.h3c.h3c_comware.static_route.v1"
+      ],
+      "hit_at_5": true,
+      "hit_at_10": true,
+      "mrr": 1.0,
+      "vendor_isolation_passed": true,
+      "feature_scope_passed": true,
+      "latency_ms": 19.4182
+    },
+    {
+      "id": "GOLD400-OFFICIAL-271",
+      "expected_document_ids": [
+        "local.h3c.h3c_comware.vlan.v1"
+      ],
+      "returned_document_ids": [
+        "local.h3c.h3c_comware.vlan.v1"
+      ],
+      "hit_at_5": true,
+      "hit_at_10": true,
+      "mrr": 1.0,
+      "vendor_isolation_passed": true,
+      "feature_scope_passed": true,
+      "latency_ms": 20.88
+    },
+    {
+      "id": "GOLD400-OFFICIAL-272",
+      "expected_document_ids": [
+        "local.h3c.h3c_comware.access_port.v1"
+      ],
+      "returned_document_ids": [
+        "local.h3c.h3c_comware.access_port.v1"
+      ],
+      "hit_at_5": true,
+      "hit_at_10": true,
+      "mrr": 1.0,
+      "vendor_isolation_passed": true,
+      "feature_scope_passed": true,
+      "latency_ms": 20.4832
+    },
+    {
+      "id": "GOLD400-OFFICIAL-273",
+      "expected_document_ids": [
+        "local.h3c.h3c_comware.trunk.v1"
+      ],
+      "returned_document_ids": [
+        "local.h3c.h3c_comware.trunk.v1"
+      ],
+      "hit_at_5": true,
+      "hit_at_10": true,
+      "mrr": 1.0,
+      "vendor_isolation_passed": true,
+      "feature_scope_passed": true,
+      "latency_ms": 20.3962
+    },
+    {
+      "id": "GOLD400-OFFICIAL-274",
+      "expected_document_ids": [
+        "local.h3c.h3c_comware.ospf.v1"
+      ],
+      "returned_document_ids": [
+        "local.h3c.h3c_comware.ospf.v1"
+      ],
+      "hit_at_5": true,
+      "hit_at_10": true,
+      "mrr": 1.0,
+      "vendor_isolation_passed": true,
+      "feature_scope_passed": true,
+      "latency_ms": 26.634
+    },
+    {
+      "id": "GOLD400-OFFICIAL-275",
+      "expected_document_ids": [
+        "local.h3c.h3c_comware.bgp.v1"
+      ],
+      "returned_document_ids": [
+        "local.h3c.h3c_comware.bgp.v1"
+      ],
+      "hit_at_5": true,
+      "hit_at_10": true,
+      "mrr": 1.0,
+      "vendor_isolation_passed": true,
+      "feature_scope_passed": true,
+      "latency_ms": 43.5125
+    },
+    {
+      "id": "GOLD400-OFFICIAL-276",
+      "expected_document_ids": [
+        "local.h3c.h3c_comware.lacp.v1"
+      ],
+      "returned_document_ids": [
+        "local.h3c.h3c_comware.lacp.v1"
+      ],
+      "hit_at_5": true,
+      "hit_at_10": true,
+      "mrr": 1.0,
+      "vendor_isolation_passed": true,
+      "feature_scope_passed": true,
+      "latency_ms": 29.231
+    },
+    {
+      "id": "GOLD400-OFFICIAL-277",
+      "expected_document_ids": [
+        "local.h3c.h3c_comware.acl.v1"
+      ],
+      "returned_document_ids": [
+        "local.h3c.h3c_comware.acl.v1"
+      ],
+      "hit_at_5": true,
+      "hit_at_10": true,
+      "mrr": 1.0,
+      "vendor_isolation_passed": true,
+      "feature_scope_passed": true,
+      "latency_ms": 27.9726
+    },
+    {
+      "id": "GOLD400-OFFICIAL-278",
+      "expected_document_ids": [
+        "local.h3c.h3c_comware.ssh.v1"
+      ],
+      "returned_document_ids": [
+        "local.h3c.h3c_comware.ssh.v1"
+      ],
+      "hit_at_5": true,
+      "hit_at_10": true,
+      "mrr": 1.0,
+      "vendor_isolation_passed": true,
+      "feature_scope_passed": true,
+      "latency_ms": 24.3414
+    },
+    {
+      "id": "GOLD400-OFFICIAL-279",
+      "expected_document_ids": [
+        "local.h3c.h3c_comware.ntp.v1"
+      ],
+      "returned_document_ids": [
+        "local.h3c.h3c_comware.ntp.v1"
+      ],
+      "hit_at_5": true,
+      "hit_at_10": true,
+      "mrr": 1.0,
+      "vendor_isolation_passed": true,
+      "feature_scope_passed": true,
+      "latency_ms": 29.0694
+    },
+    {
+      "id": "GOLD400-OFFICIAL-280",
+      "expected_document_ids": [
+        "local.h3c.h3c_comware.static_route.v1"
+      ],
+      "returned_document_ids": [
+        "local.h3c.h3c_comware.static_route.v1"
+      ],
+      "hit_at_5": true,
+      "hit_at_10": true,
+      "mrr": 1.0,
+      "vendor_isolation_passed": true,
+      "feature_scope_passed": true,
+      "latency_ms": 18.4661
+    },
+    {
+      "id": "GOLD400-OFFICIAL-281",
+      "expected_document_ids": [
+        "local.ruijie.ruijie_rgos.vlan.v1"
+      ],
+      "returned_document_ids": [
+        "local.ruijie.ruijie_rgos.vlan.v1"
+      ],
+      "hit_at_5": true,
+      "hit_at_10": true,
+      "mrr": 1.0,
+      "vendor_isolation_passed": true,
+      "feature_scope_passed": true,
+      "latency_ms": 15.8108
+    },
+    {
+      "id": "GOLD400-OFFICIAL-282",
+      "expected_document_ids": [
+        "local.ruijie.ruijie_rgos.access_port.v1"
+      ],
+      "returned_document_ids": [
+        "local.ruijie.ruijie_rgos.access_port.v1"
+      ],
+      "hit_at_5": true,
+      "hit_at_10": true,
+      "mrr": 1.0,
+      "vendor_isolation_passed": true,
+      "feature_scope_passed": true,
+      "latency_ms": 16.3579
+    },
+    {
+      "id": "GOLD400-OFFICIAL-283",
+      "expected_document_ids": [
+        "local.ruijie.ruijie_rgos.trunk.v1"
+      ],
+      "returned_document_ids": [
+        "local.ruijie.ruijie_rgos.trunk.v1"
+      ],
+      "hit_at_5": true,
+      "hit_at_10": true,
+      "mrr": 1.0,
+      "vendor_isolation_passed": true,
+      "feature_scope_passed": true,
+      "latency_ms": 17.7027
+    },
+    {
+      "id": "GOLD400-OFFICIAL-284",
+      "expected_document_ids": [
+        "local.ruijie.ruijie_rgos.ospf.v1"
+      ],
+      "returned_document_ids": [
+        "local.ruijie.ruijie_rgos.ospf.v1"
+      ],
+      "hit_at_5": true,
+      "hit_at_10": true,
+      "mrr": 1.0,
+      "vendor_isolation_passed": true,
+      "feature_scope_passed": true,
+      "latency_ms": 17.7007
+    },
+    {
+      "id": "GOLD400-OFFICIAL-285",
+      "expected_document_ids": [
+        "local.ruijie.ruijie_rgos.bgp.v1"
+      ],
+      "returned_document_ids": [
+        "local.ruijie.ruijie_rgos.bgp.v1"
+      ],
+      "hit_at_5": true,
+      "hit_at_10": true,
+      "mrr": 1.0,
+      "vendor_isolation_passed": true,
+      "feature_scope_passed": true,
+      "latency_ms": 18.1483
+    },
+    {
+      "id": "GOLD400-OFFICIAL-286",
+      "expected_document_ids": [
+        "local.ruijie.ruijie_rgos.lacp.v1"
+      ],
+      "returned_document_ids": [
+        "local.ruijie.ruijie_rgos.lacp.v1"
+      ],
+      "hit_at_5": true,
+      "hit_at_10": true,
+      "mrr": 1.0,
+      "vendor_isolation_passed": true,
+      "feature_scope_passed": true,
+      "latency_ms": 17.0948
+    },
+    {
+      "id": "GOLD400-OFFICIAL-287",
+      "expected_document_ids": [
+        "local.ruijie.ruijie_rgos.acl.v1"
+      ],
+      "returned_document_ids": [
+        "local.ruijie.ruijie_rgos.acl.v1"
+      ],
+      "hit_at_5": true,
+      "hit_at_10": true,
+      "mrr": 1.0,
+      "vendor_isolation_passed": true,
+      "feature_scope_passed": true,
+      "latency_ms": 17.4227
+    },
+    {
+      "id": "GOLD400-OFFICIAL-288",
+      "expected_document_ids": [
+        "local.ruijie.ruijie_rgos.ssh.v1"
+      ],
+      "returned_document_ids": [
+        "local.ruijie.ruijie_rgos.ssh.v1"
+      ],
+      "hit_at_5": true,
+      "hit_at_10": true,
+      "mrr": 1.0,
+      "vendor_isolation_passed": true,
+      "feature_scope_passed": true,
+      "latency_ms": 17.1683
+    },
+    {
+      "id": "GOLD400-OFFICIAL-289",
+      "expected_document_ids": [
+        "local.ruijie.ruijie_rgos.ntp.v1"
+      ],
+      "returned_document_ids": [
+        "local.ruijie.ruijie_rgos.ntp.v1"
+      ],
+      "hit_at_5": true,
+      "hit_at_10": true,
+      "mrr": 1.0,
+      "vendor_isolation_passed": true,
+      "feature_scope_passed": true,
+      "latency_ms": 20.3074
+    },
+    {
+      "id": "GOLD400-OFFICIAL-290",
+      "expected_document_ids": [
+        "local.ruijie.ruijie_rgos.static_route.v1"
+      ],
+      "returned_document_ids": [
+        "local.ruijie.ruijie_rgos.static_route.v1"
+      ],
+      "hit_at_5": true,
+      "hit_at_10": true,
+      "mrr": 1.0,
+      "vendor_isolation_passed": true,
+      "feature_scope_passed": true,
+      "latency_ms": 20.3195
+    },
+    {
+      "id": "GOLD400-OFFICIAL-291",
+      "expected_document_ids": [
+        "local.ruijie.ruijie_rgos.vlan.v1"
+      ],
+      "returned_document_ids": [
+        "local.ruijie.ruijie_rgos.vlan.v1"
+      ],
+      "hit_at_5": true,
+      "hit_at_10": true,
+      "mrr": 1.0,
+      "vendor_isolation_passed": true,
+      "feature_scope_passed": true,
+      "latency_ms": 18.6886
+    },
+    {
+      "id": "GOLD400-OFFICIAL-292",
+      "expected_document_ids": [
+        "local.ruijie.ruijie_rgos.access_port.v1"
+      ],
+      "returned_document_ids": [
+        "local.ruijie.ruijie_rgos.access_port.v1"
+      ],
+      "hit_at_5": true,
+      "hit_at_10": true,
+      "mrr": 1.0,
+      "vendor_isolation_passed": true,
+      "feature_scope_passed": true,
+      "latency_ms": 17.8737
+    },
+    {
+      "id": "GOLD400-OFFICIAL-293",
+      "expected_document_ids": [
+        "local.ruijie.ruijie_rgos.trunk.v1"
+      ],
+      "returned_document_ids": [
+        "local.ruijie.ruijie_rgos.trunk.v1"
+      ],
+      "hit_at_5": true,
+      "hit_at_10": true,
+      "mrr": 1.0,
+      "vendor_isolation_passed": true,
+      "feature_scope_passed": true,
+      "latency_ms": 20.5093
+    },
+    {
+      "id": "GOLD400-OFFICIAL-294",
+      "expected_document_ids": [
+        "local.ruijie.ruijie_rgos.ospf.v1"
+      ],
+      "returned_document_ids": [
+        "local.ruijie.ruijie_rgos.ospf.v1"
+      ],
+      "hit_at_5": true,
+      "hit_at_10": true,
+      "mrr": 1.0,
+      "vendor_isolation_passed": true,
+      "feature_scope_passed": true,
+      "latency_ms": 21.0248
+    },
+    {
+      "id": "GOLD400-OFFICIAL-295",
+      "expected_document_ids": [
+        "local.ruijie.ruijie_rgos.bgp.v1"
+      ],
+      "returned_document_ids": [
+        "local.ruijie.ruijie_rgos.bgp.v1"
+      ],
+      "hit_at_5": true,
+      "hit_at_10": true,
+      "mrr": 1.0,
+      "vendor_isolation_passed": true,
+      "feature_scope_passed": true,
+      "latency_ms": 19.4213
+    },
+    {
+      "id": "GOLD400-OFFICIAL-296",
+      "expected_document_ids": [
+        "local.ruijie.ruijie_rgos.lacp.v1"
+      ],
+      "returned_document_ids": [
+        "local.ruijie.ruijie_rgos.lacp.v1"
+      ],
+      "hit_at_5": true,
+      "hit_at_10": true,
+      "mrr": 1.0,
+      "vendor_isolation_passed": true,
+      "feature_scope_passed": true,
+      "latency_ms": 17.454
+    },
+    {
+      "id": "GOLD400-OFFICIAL-297",
+      "expected_document_ids": [
+        "local.ruijie.ruijie_rgos.acl.v1"
+      ],
+      "returned_document_ids": [
+        "local.ruijie.ruijie_rgos.acl.v1"
+      ],
+      "hit_at_5": true,
+      "hit_at_10": true,
+      "mrr": 1.0,
+      "vendor_isolation_passed": true,
+      "feature_scope_passed": true,
+      "latency_ms": 16.6785
+    },
+    {
+      "id": "GOLD400-OFFICIAL-298",
+      "expected_document_ids": [
+        "local.ruijie.ruijie_rgos.ssh.v1"
+      ],
+      "returned_document_ids": [
+        "local.ruijie.ruijie_rgos.ssh.v1"
+      ],
+      "hit_at_5": true,
+      "hit_at_10": true,
+      "mrr": 1.0,
+      "vendor_isolation_passed": true,
+      "feature_scope_passed": true,
+      "latency_ms": 16.7476
+    },
+    {
+      "id": "GOLD400-OFFICIAL-299",
+      "expected_document_ids": [
+        "local.ruijie.ruijie_rgos.ntp.v1"
+      ],
+      "returned_document_ids": [
+        "local.ruijie.ruijie_rgos.ntp.v1"
+      ],
+      "hit_at_5": true,
+      "hit_at_10": true,
+      "mrr": 1.0,
+      "vendor_isolation_passed": true,
+      "feature_scope_passed": true,
+      "latency_ms": 16.8701
+    },
+    {
+      "id": "GOLD400-OFFICIAL-300",
+      "expected_document_ids": [
+        "local.ruijie.ruijie_rgos.static_route.v1"
+      ],
+      "returned_document_ids": [
+        "local.ruijie.ruijie_rgos.static_route.v1"
+      ],
+      "hit_at_5": true,
+      "hit_at_10": true,
+      "mrr": 1.0,
+      "vendor_isolation_passed": true,
+      "feature_scope_passed": true,
+      "latency_ms": 16.9376
+    }
+  ],
+  "errors": []
+}

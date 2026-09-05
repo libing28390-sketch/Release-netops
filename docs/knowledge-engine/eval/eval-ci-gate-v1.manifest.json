@@ -12,10 +12,13 @@
   "windows_node_install": "official_msi",
   "external_network": "not_used_by_offline_runner",
   "production_write": false,
+  "isolated_anchor_evidence": true,
+  "automated_source_review_evidence": true,
+  "signed_anchor_dataset_evidence": true,
   "workflow_sha256": {
-    "knowledge_engine_eval": "229f811f286dc008cd1bbdf0ab6a826f40cea91b997cb9cee2d532237b2f12c0",
+    "knowledge_engine_eval": "368b94767ddd57ecd1b3fe98866c6885e5ec62c10805e675ffdd15d164dfb59a",
     "backend_pytest": "0ee55a77f23afa9252d3b7d06db49b017f590af4db68a726c7de2eb6f2d9a6c2",
-    "release": "7599ff348d7ecfc6ad0e6d0bf26a7c0f3b4ebf1e0bdf29b3ee145946f7c4427c",
+    "release": "159991d7efabf0833b1c72b28963a7a8652d1562c4ce336cb0f07f654c2c9777",
     "promptfoo": "ce009d084ed8b5be85882fc84b6bd6a8e9e708400de68fdd4b790398ca8b0bf9"
   }
 }

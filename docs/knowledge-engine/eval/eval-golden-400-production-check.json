@@ -1,0 +1,41 @@
+{
+  "status": "PASS",
+  "dataset_id": "nexora-kb-eval-gold-400-v2-20260905",
+  "test_only": false,
+  "synthetic_data": false,
+  "production_eligible": true,
+  "production_gate": true,
+  "case_count": 400,
+  "dataset_sha256": "11cdded5b54e6368c6ef631553d43b38516d45eaf9fcdeb748800e6160014168",
+  "category_counts": {
+    "asset_alarm_query": 40,
+    "configuration_validation_diagnostic": 50,
+    "intent_clarification_missing_parameter": 40,
+    "knowledge_config_reference": 140,
+    "negative_security_no_match": 30,
+    "tool_call_dangerous_operation": 30,
+    "troubleshooting": 70
+  },
+  "vendor_counts": {
+    "Cisco": 100,
+    "H3C": 80,
+    "Huawei": 100,
+    "Ruijie": 60,
+    "cross_vendor_or_unknown": 60
+  },
+  "split_counts": {
+    "debug": 80,
+    "hidden": 80,
+    "train": 240
+  },
+  "double_review_count": 0,
+  "human_review_required": false,
+  "official_source_evidence_case_count": 300,
+  "errors": [],
+  "error_count": 0,
+  "database": "PostgreSQL",
+  "sqlite": "not_used",
+  "external_network": "forbidden",
+  "secrets": false,
+  "customer_identifiers": false
+}

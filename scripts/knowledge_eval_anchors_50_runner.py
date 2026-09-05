@@ -36,8 +36,8 @@ except ImportError:
 from ai.services.evaluation_metrics import ndcg_at_k
 from ai.services.knowledge_metadata import canonical_cli_platform
 
-BENCHMARK_YAML = ROOT / "docs" / "knowledge-engine" / "eval" / "eval-golden-anchors-50.yaml"
-REPORT_PATH = ROOT / "docs" / "knowledge-engine" / "eval" / "eval-anchors-50-report.json"
+BENCHMARK_YAML = ROOT / "docs" / "knowledge-engine" / "eval" / "eval-golden-anchors-50-v3-signed-20260905.yaml"
+REPORT_PATH = ROOT / "docs" / "knowledge-engine" / "eval" / "eval-anchors-50-v3-signed-report.json"
 
 # These are the production quality gates from the AI release definition.  Keep
 # them in the evaluator (rather than only in a report checker) so every direct
@@ -166,8 +166,14 @@ def _build_vendor_metrics(results: list[dict[str, Any]]) -> dict[str, dict[str, 
     return metrics
 
 
-def evaluate_anchors() -> dict[str, Any]:
-    with open(BENCHMARK_YAML, "r", encoding="utf-8") as f:
+def evaluate_anchors(
+    *,
+    dataset_path: Path | None = None,
+    report_path: Path | None = None,
+) -> dict[str, Any]:
+    benchmark_path = dataset_path or BENCHMARK_YAML
+    output_path = report_path or REPORT_PATH
+    with open(benchmark_path, "r", encoding="utf-8") as f:
         benchmark_data = yaml.safe_load(f)
 
     cases = benchmark_data.get("cases", [])
@@ -189,6 +195,8 @@ def evaluate_anchors() -> dict[str, Any]:
         is_high_risk = bool(c.get("high_risk"))
         guard_case = _is_guard_case(c)
         target_feature = c.get("feature")
+        feature_scope = _string_list(c.get("feature_scope"))
+        expected_features = feature_scope or ([str(target_feature).strip()] if target_feature else [])
 
         case_started_at = time.perf_counter()
         response = call_api(query, context={"vars": c})
@@ -283,16 +291,16 @@ def evaluate_anchors() -> dict[str, Any]:
         # explicit feature annotation.  Inferred intent labels are not strong
         # enough evidence to call a supporting document polluted; the report
         # marks such vendor slices as not_measured instead of claiming zero.
-        if target_feature and returned_features:
-            requested_feature = _normalise_feature(target_feature)
+        if expected_features and returned_features:
+            requested_features = {_normalise_feature(feature) for feature in expected_features}
             feature_pollution_passed = all(
-                _normalise_feature(feature) == requested_feature
+                _normalise_feature(feature) in requested_features
                 for feature in returned_features
             )
             if not feature_pollution_passed:
                 safety_passed = False
                 safety_failed_reasons.append(
-                    f"Feature pollution: query targets '{target_feature}', but returned feature(s): {returned_features}"
+                    f"Feature pollution: query targets feature scope {sorted(requested_features)}, but returned feature(s): {returned_features}"
                 )
 
         # 3. 安全红线断言
@@ -382,7 +390,11 @@ def evaluate_anchors() -> dict[str, Any]:
             gold_set = set(acceptable_docs)
             relevant_citations = len(set(top_citations).intersection(gold_set))
             citation_precision = round(relevant_citations / len(top_citations), 4) if top_citations else 0.0
-            citation_recall = round(relevant_citations / len(gold_set), 4) if gold_set else 0.0
+            # ``acceptable_document_ids`` is an alternative set: one
+            # semantically valid official document is sufficient for a case.
+            # Citation recall must therefore mirror target-document recall,
+            # rather than requiring every alternative to be returned.
+            citation_recall = 1.0 if relevant_citations else 0.0
             ndcg = round(ndcg_at_k(returned_docs, acceptable_docs, 10), 4)
 
         # A failed ordinary answer is a quality failure; guard cases remain
@@ -410,6 +422,7 @@ def evaluate_anchors() -> dict[str, Any]:
             "returned_vendors": returned_vendors,
             "returned_platforms": returned_platforms,
             "feature": target_feature,
+            "feature_scope": expected_features,
             "returned_features": returned_features,
             "vendor_isolation_passed": vendor_isolation_passed,
             "feature_pollution_passed": feature_pollution_passed,
@@ -560,7 +573,7 @@ def evaluate_anchors() -> dict[str, Any]:
             "evaluated_gold_cases": len(answer_cases),
             "by_vendor": _build_vendor_metrics(results),
             "measurement_notes": [
-                "Citation precision/recall are retrieval-document identity proxies; generated answer citation traces were not exercised.",
+                "Citation precision/recall are retrieval-document identity proxies; generated answer citation traces were not exercised. Citation recall is binary against the explicit acceptable-document alternative set.",
                 "Feature pollution is not measured when the dataset has no reviewed feature annotation.",
                 "Platform and version conflict metrics are reported separately; version conflict is not measured without software version annotations.",
             ],
@@ -569,14 +582,30 @@ def evaluate_anchors() -> dict[str, Any]:
         "results": results,
     }
 
-    with open(REPORT_PATH, "w", encoding="utf-8") as f:
+    with open(output_path, "w", encoding="utf-8") as f:
         json.dump(report, f, ensure_ascii=False, indent=2)
 
     return report
 
 
-def main() -> int:
-    report = evaluate_anchors()
+def main(argv: list[str] | None = None) -> int:
+    import argparse
+
+    parser = argparse.ArgumentParser(description=__doc__)
+    parser.add_argument(
+        "--dataset",
+        type=Path,
+        default=BENCHMARK_YAML,
+        help="benchmark YAML to evaluate; defaults to the frozen 50-anchor dataset",
+    )
+    parser.add_argument(
+        "--output",
+        type=Path,
+        default=REPORT_PATH,
+        help="JSON report path; defaults to the canonical benchmark report",
+    )
+    args = parser.parse_args(argv)
+    report = evaluate_anchors(dataset_path=args.dataset, report_path=args.output)
     print(
         "50-Anchor Benchmark Result: "
         f"overall={report['overall_status']} "

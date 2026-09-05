@@ -80,15 +80,25 @@ def test_kui016_tenant_projection_is_request_scoped(monkeypatch):
 
 
 def test_kui016_api_contract_and_suite_validation():
-    from api.knowledge_evaluation import EvaluationRunRequest, api_get_evaluation, api_run_evaluation, router
+    from api.knowledge_evaluation import EvaluationRunRequest, api_get_evaluation, api_get_gold_400_fixture_summary, api_run_evaluation, router
 
     paths = {(route.path, tuple(sorted(route.methods or ()))) for route in router.routes}
     assert any(path.endswith("/knowledge/evaluation") and "GET" in methods for path, methods in paths)
     assert any(path.endswith("/knowledge/evaluation/run") and "POST" in methods for path, methods in paths)
+    assert any(path.endswith("/knowledge/evaluation/fixtures/gold-400") and "GET" in methods for path, methods in paths)
     assert any(path.endswith("/knowledge/evaluation/observability") and "GET" in methods for path, methods in paths)
     with pytest.raises(Exception):
         EvaluationRunRequest.model_validate({"suite": "v1_baseline_postgresql", "raw_sql": "SELECT 1"})
     assert api_get_evaluation(user=_user())["success"] is True
+    fixture = api_get_gold_400_fixture_summary(user=_user())
+    assert fixture["success"] is True
+    assert fixture["data"]["case_count"] == 400
+    assert fixture["data"]["production_eligible"] is True
+    assert fixture["data"]["review"]["human_review_required"] is False
+    assert fixture["data"]["source_policy"]["official_sources"] == "required"
+    assert fixture["data"]["source_policy"]["source_collection"] == "official_url_backed_local_summary"
+    assert fixture["data"]["collection"]["source_manifest"] == "data/kb_import/manifest.json"
+    assert fixture["data"]["contains_case_content"] is False
     with pytest.raises(Exception) as exc:
         api_run_evaluation(EvaluationRunRequest(suite="unsupported"), user=_user())
     assert getattr(exc.value, "status_code", None) == 422

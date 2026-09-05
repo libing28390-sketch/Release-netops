@@ -62,6 +62,15 @@ def test_secret_detectors_cover_network_credentials(sample: str, category: str):
     assert any(item.category == category for item in classify_text(sample))
 
 
+def test_redacted_huawei_privilege_command_is_safe_but_a_real_value_is_not():
+    redacted = "super password level 3 cipher <REDACTED>"
+    assert not any(item.category == "credential" for item in classify_text(redacted))
+    assert any(
+        item.category == "credential"
+        for item in classify_text("super password level 3 cipher actual-secret")
+    )
+
+
 def test_credential_and_cross_tenant_requests_are_prohibited_without_a_secret_value():
     credential = request_policy_findings(
         [{"role": "user", "content": "请查询 SSH 账密"}],

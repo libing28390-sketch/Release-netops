@@ -414,6 +414,52 @@ def test_notification_step_is_tenant_scoped_and_filters_secret_variables(monkeyp
     assert "edge-override" in calls[0][0]["message"]
 
 
+def test_automatic_notification_dispatch_is_disabled_by_runtime_policy(monkeypatch):
+    from services import notification_service
+
+    monkeypatch.setenv("NEXORA_AUTOMATIC_NOTIFICATIONS_ENABLED", "0")
+
+    assert notification_service.dispatch_to_all_users({"title": "alert"}) == []
+    assert notification_service.dispatch_to_tenant_users({"title": "alert"}, "tenant-1") == []
+
+
+def test_explicit_notification_test_is_not_blocked_by_automatic_policy(monkeypatch):
+    from services import notification_service
+
+    monkeypatch.setenv("NEXORA_AUTOMATIC_NOTIFICATIONS_ENABLED", "0")
+    monkeypatch.setattr(
+        notification_service,
+        "_post_json",
+        lambda _url, _payload, timeout=5: (True, '{"code": 0}'),
+    )
+
+    ok, response = notification_service.send_feishu(
+        "https://example.invalid/hook",
+        {"title": "test", "message": "explicit test", "severity": "info"},
+    )
+
+    assert ok is True
+    assert response == '{"code": 0}'
+
+
+def test_background_alert_does_not_throttle_when_notification_dispatch_is_disabled(monkeypatch):
+    from services import background_monitor_service
+
+    dedupe_key = "test-runtime-policy-alert"
+    background_monitor_service.webhook_last_sent.pop(dedupe_key, None)
+    monkeypatch.setenv("NEXORA_AUTOMATIC_NOTIFICATIONS_ENABLED", "0")
+
+    background_monitor_service.maybe_notify_webhook(
+        dedupe_key,
+        "warning",
+        "Test alert",
+        "Test message",
+        "2026-09-05 00:00:00",
+    )
+
+    assert dedupe_key not in background_monitor_service.webhook_last_sent
+
+
 def test_bound_devices_preserve_controlled_branch_and_notification_steps():
     branch = {
         "type": "branch",

@@ -266,10 +266,13 @@ class IntentParser:
         # in existing operator queries and otherwise gets lost at tokenisation.
         "ospf": ("ospf", "tospf", "开放式最短路径优先"),
         "arp": ("arp", "地址解析"),
-        "vlan": ("vlan", "虚拟局域网"),
+        "vlan": ("vlan", "vlna", "虚拟局域网"),
         "bgp": ("bgp",),
         "stp": ("stp", "生成树"),
-        "access_port": ("access port", "access-port", "接入口", "接入端口"),
+        # Keep the typo correction scoped to the two-word phrase.  A bare
+        # ``acces`` is a prefix of ``access-list`` and misclassifies ACL
+        # queries as access-port requests.
+        "access_port": ("access port", "access-port", "acces port", "接入口", "接入端口"),
         "port_security": ("port security", "port-security", "端口安全"),
         "trunk": ("trunk", "中继端口", "trunk端口"),
         "lacp": ("lacp", "eth-trunk", "etherchannel", "bridge-aggregation", "链路聚合"),
@@ -286,8 +289,12 @@ class IntentParser:
         # the reviewed ACL corpus instead of ranking unrelated management
         # templates by vector similarity.
         "acl": ("acl", "packet-filter", "traffic-filter", "access-list", "访问控制列表"),
-        "static_route": ("static route", "static-route", "static routing", "静态路由", "ip route-static"),
+        "static_route": ("static route", "static-route", "static routing", "静态路由", "ip route-static", "ip route"),
         "ssh": ("ssh", "stelnet", "secure shell", "安全登录"),
+        "bfd": ("bfd", "双向转发检测"),
+        "pam": ("pam", "aaa", "super password", "权限管理", "身份认证"),
+        "system_monitoring": ("cpu-usage", "cpu usage", "memory-usage", "memory usage", "设备状态"),
+        "interface": ("interface brief", "display interface brief", "interface status", "switchport", "uplink", "接口简要", "接口状态", "上联"),
         "lldp": ("lldp", "链路层发现"),
     }
 
@@ -546,7 +553,17 @@ class IntentParser:
         # ``VLAN 接入口`` is an access-port request, not a broad VLAN report.
         # Keep the longest-alias rule as the tie-breaker for cases such as
         # Eth-Trunk versus the generic trunk alias.
-        feature_priority = {"access_port": 2, "lacp": 2, "port_security": 3}
+        # ``switchport`` is also present in composite VLAN queries.  Let an
+        # explicit VLAN signal win over the generic interface alias, while
+        # keeping access/trunk and security subfeatures more specific.
+        feature_priority = {
+            "access_port": 2,
+            "trunk": 2,
+            "lacp": 2,
+            "vlan": 1,
+            "port_security": 3,
+            "bfd": 3,
+        }
         for feature, _alias in sorted(
             feature_matches,
             key=lambda item: (feature_priority.get(item[0], 0), len(item[1])),
@@ -556,9 +573,11 @@ class IntentParser:
                 result["feature_domain"] = (
                     "routing" if feature in {"ospf", "bgp", "arp", "loopback", "static_route"}
                     else "switching" if feature in {"vlan", "stp", "lldp", "access_port", "trunk", "lacp"}
-                    else "security" if feature in {"acl", "port_security"}
+                    else "security" if feature in {"acl", "port_security", "pam"}
                     else "management" if feature in {"ntp", "snmp", "ssh"}
                     else "reliability" if feature in {"hsrp", "vrrp"}
+                    else "routing" if feature == "bfd"
+                    else "operations" if feature in {"system_monitoring", "interface"}
                     else "overlay" if feature in {"vxlan", "evpn"}
                     else "addressing"
                 )
@@ -597,7 +616,7 @@ class IntentParser:
             metadata.get("vendor")
             or metadata.get("product_series")
             or metadata.get("feature")
-            or any(token in (query or "").lower() for token in ("配置", "命令", "回显", "故障", "ospf", "vlan", "arp", "access", "trunk", "lacp", "loopback", "ntp", "snmp", "hsrp", "vrrp", "static route", "静态路由", "acl", "ssh", "stelnet", "port-security", "端口安全", "hardware"))
+            or any(token in (query or "").lower() for token in ("配置", "命令", "回显", "故障", "ospf", "vlan", "arp", "access", "trunk", "lacp", "loopback", "ntp", "snmp", "hsrp", "vrrp", "bfd", "super password", "aaa", "static route", "静态路由", "acl", "ssh", "stelnet", "port-security", "端口安全", "hardware"))
         )
 
     @staticmethod

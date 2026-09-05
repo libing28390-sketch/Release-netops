@@ -157,8 +157,8 @@ def test_quality_gate_fails_when_business_guards_pass_but_recall_is_low(monkeypa
     assert report["results"][0]["quality_passed"] is False
     assert report["passed_cases"] == 2
     runner = _load_anchor_runner()
-    monkeypatch.setattr(runner, "evaluate_anchors", lambda: report)
-    assert runner.main() == 1
+    monkeypatch.setattr(runner, "evaluate_anchors", lambda **_: report)
+    assert runner.main([]) == 1
 
 
 def test_answer_case_without_gold_ids_cannot_vacuously_pass(monkeypatch, tmp_path):
@@ -320,6 +320,39 @@ def test_answer_uses_explicit_acceptable_document_set(monkeypatch, tmp_path):
     assert report["results"][0]["target_document_hit"] is True
 
 
+def test_answer_accepts_explicit_multi_feature_scope_without_pollution(monkeypatch, tmp_path):
+    cases = [
+        {
+            "id": "CASE-MULTI-FEATURE",
+            "query": "Huawei CE6885 interface status and uplink configuration",
+            "vendor": "Huawei",
+            "intent": "interface",
+            "feature": "interface",
+            "feature_scope": ["interface", "access_port", "trunk"],
+            "expected_outcome": "answer",
+            "gold_document_ids": ["gold-interface", "gold-access", "gold-trunk"],
+            "acceptable_document_ids": ["gold-interface", "gold-access", "gold-trunk"],
+            "vendor_isolation": "strict",
+        }
+    ]
+    responses = {
+        "CASE-MULTI-FEATURE": _response(
+            "answer",
+            documents=["gold-interface", "gold-access"],
+            vendors=["Huawei"],
+            features=["interface", "access_port"],
+        )
+    }
+
+    report = _run_synthetic_cases(monkeypatch, tmp_path, cases, responses)
+
+    assert report["safety_status"] == "PASS"
+    assert report["quality_status"] == "PASS"
+    assert report["results"][0]["feature_scope"] == ["interface", "access_port", "trunk"]
+    assert report["results"][0]["feature_pollution_passed"] is True
+    assert report["results"][0]["citation_recall"] == 1.0
+
+
 def test_eval_report_does_not_persist_raw_query_or_provider_output(monkeypatch, tmp_path):
     secret_query = "api_key=fixture-secret raw device configuration"
     secret_output = "provider output with fixture-secret"
@@ -364,3 +397,26 @@ def test_promptfoo_provider_returns_stable_error_without_echoing_exception(monke
     assert result["error"] == "PROVIDER_EXECUTION_FAILED"
     assert result["output"] == "ERROR: PROVIDER_EXECUTION_FAILED"
     assert "internal-host" not in result["output"]
+
+
+def test_promptfoo_provider_does_not_retrieve_out_of_domain_request(monkeypatch):
+    """An unrelated request must not inherit a weak hit from tenant RAG."""
+    import sys
+
+    scripts_dir = str(Path(__file__).resolve().parents[3] / "scripts")
+    if scripts_dir not in sys.path:
+        sys.path.insert(0, scripts_dir)
+    from promptfoo_nexora_provider import call_api
+    from ai.services.assistant import ai_assistant_service
+
+    def fail_retrieval(*args, **kwargs):
+        raise AssertionError("out-of-domain requests must not invoke RAG retrieval")
+
+    monkeypatch.setattr(ai_assistant_service, "retrieve_knowledge", fail_retrieval)
+
+    query = "请教大厨正宗红烧肉的做法和炖煮火候"
+    result = call_api(query, context={"vars": {"query": query}})
+
+    assert result["metadata"]["outcome"] == "no_match"
+    assert result["metadata"]["reason_code"] == "OUT_OF_DOMAIN_NO_MATCH"
+    assert result["metadata"]["returned_document_ids"] == []

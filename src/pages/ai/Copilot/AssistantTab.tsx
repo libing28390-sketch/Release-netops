@@ -1461,17 +1461,15 @@ export const AssistantTab: React.FC = () => {
                           {copyFailedId === `${m.id}:selection` ? '复制失败' : copiedId === `${m.id}:selection` ? '已复制' : '复制选中'}
                         </ActionButton>
                       )}
-                      <ActionButton
+                      <ActionIconButton
                         type="button"
                         icon={copiedId === m.id ? Check : Copy}
+                        label={copyFailedId === m.id ? '复制失败' : copiedId === m.id ? '已复制' : '复制全文'}
                         variant={copiedId === m.id ? 'success' : copyFailedId === m.id ? 'danger' : 'default'}
                         size="sm"
                         onPointerDown={(event) => event.preventDefault()}
                         onClick={() => handleCopyMessage(m.id, m.content)}
-                        className="!h-7 !px-2 !text-[11px]"
-                      >
-                        {copyFailedId === m.id ? '复制失败' : copiedId === m.id ? '已复制' : '复制全文'}
-                      </ActionButton>
+                      />
 
                       <ActionIconButton icon={RotateCcw} label="重试本次问题" onClick={() => handleRetryMessage(m)} disabled={loading} />
                       <ActionIconButton icon={Pencil} label="编辑并发送上一条问题" onClick={() => {

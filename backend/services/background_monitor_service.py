@@ -819,6 +819,14 @@ def maybe_notify_webhook(dedupe_key: str, severity: str, title: str, message: st
                            duration_seconds=None, impact_window=None, alert_count=None,
                            reopened_after_maintenance: bool = False,
                            rule: dict | None = None):
+    # A development/test launcher must not replay existing alert state into a
+    # real webhook while bootstrapping the background monitor. Keep this guard
+    # before throttling state changes so opting back in does not inherit a
+    # stale suppression window from a disabled run.
+    if not notification_service.automatic_notifications_enabled():
+        logger.info("[Alert] Automatic notification dispatch disabled by runtime policy")
+        return
+
     now_ts = datetime.now(timezone.utc)
     repeat_window_seconds = max(0, int((rule or {}).get('notification_repeat_window_seconds', 120) or 0))
     if status == 'active' and not bool((rule or {}).get('notify_on_active', True)):

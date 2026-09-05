@@ -1,24 +1,24 @@
 {
   "schema_version": 1,
   "manifest_id": "nexora-knowledge-eval-baseline-v1",
-  "generated_at": "2026-09-04T15:46:01+00:00",
+  "generated_at": "2026-09-05T12:14:41+00:00",
   "reproducibility": {
     "git": {
-      "sha": "6268ae38feb955d333fb41c4a535540e6e40123d",
+      "sha": "dba331b9855505a9442c39b57c54516b18c8f909",
       "worktree_dirty": true,
-      "status_entry_count": 14
+      "status_entry_count": 89
     },
     "dataset": {
-      "dataset_id": "nexora-kb-eval-anchors-50-v1-20260903",
+      "dataset_id": "nexora-kb-eval-anchors-50-v3-signed-20260905",
       "status": "frozen",
       "case_count": 50,
-      "path": "docs\\knowledge-engine\\eval\\eval-golden-anchors-50.yaml",
-      "sha256": "c64c57636d98a73077aedc7559b6133f32fac9aa8d17ce218c05c22f364631a1"
+      "path": "docs\\knowledge-engine\\eval\\eval-golden-anchors-50-v3-signed-20260905.yaml",
+      "sha256": "babb243e46d37ba9ab412d8bce3ba6a15cf7b57ba472e91f1b22a935c4575a64"
     },
     "source_hashes": {
-      "dataset": "c64c57636d98a73077aedc7559b6133f32fac9aa8d17ce218c05c22f364631a1",
-      "evaluator": "27c4451f1507d755f08feb7a2cff687c5b5babcb994b74a64c980465d03c103e",
-      "review_auditor": "2cac6751b99e9db8f5770d5986a1dda62c9e206cf0aca69c6a7abefc1a3ccad3"
+      "dataset": "babb243e46d37ba9ab412d8bce3ba6a15cf7b57ba472e91f1b22a935c4575a64",
+      "evaluator": "d5d05e237b54737a872e90322f7145c9b32085686584b304c12fa8b6f7db567d",
+      "review_auditor": "aa73ef31aafd9f5244bde412ab46c0bd67a89a069ee346213fc24474929cd878"
     },
     "rerun_command": ".venv\\Scripts\\python.exe scripts\\knowledge_eval_anchors_50_runner.py",
     "database": "PostgreSQL",
@@ -93,25 +93,25 @@
     }
   },
   "evaluation": {
-    "report_path": "docs\\knowledge-engine\\eval\\eval-anchors-50-report.json",
-    "status": "FAIL",
+    "report_path": "docs\\knowledge-engine\\eval\\eval-anchors-50-v3-signed-report.json",
+    "status": "PASS",
     "safety_status": "PASS",
-    "quality_status": "FAIL",
-    "overall_status": "FAIL",
+    "quality_status": "PASS",
+    "overall_status": "PASS",
     "metrics": {
-      "recall_at_5": 0.7143,
-      "recall_at_10": 0.7143,
-      "mrr": 0.6508,
-      "ndcg": 0.6491,
-      "citation_precision": 0.5929,
-      "citation_recall": 0.6786,
+      "recall_at_5": 1.0,
+      "recall_at_10": 1.0,
+      "mrr": 1.0,
+      "ndcg": 0.9563,
+      "citation_precision": 0.9643,
+      "citation_recall": 1.0,
       "wrong_vendor_rate": 0.0,
-      "feature_pollution_rate": null,
+      "feature_pollution_rate": 0.0,
       "platform_version_conflict_rate": null,
       "latency_ms": {
-        "p50": 9.04,
-        "p95": 45.82,
-        "max": 643.68,
+        "p50": 10.25,
+        "p95": 79.41,
+        "max": 583.7,
         "sample_count": 50
       },
       "error_rate": 0.0,
@@ -119,66 +119,66 @@
         "Cisco": {
           "case_count": 18,
           "quality_case_count": 15,
-          "recall_at_5": 0.9333,
-          "recall_at_10": 0.9333,
-          "mean_reciprocal_rank_mrr": 0.8667,
+          "recall_at_5": 1.0,
+          "recall_at_10": 1.0,
+          "mean_reciprocal_rank_mrr": 1.0,
           "wrong_vendor_cases": 0,
           "wrong_vendor_rate": 0.0,
-          "feature_evaluated_cases": 0,
+          "feature_evaluated_cases": 15,
           "feature_pollution_cases": 0,
-          "feature_pollution_rate": null,
-          "feature_pollution_status": "not_measured"
+          "feature_pollution_rate": 0.0,
+          "feature_pollution_status": "measured"
         },
         "H3C": {
           "case_count": 6,
           "quality_case_count": 6,
-          "recall_at_5": 0.6667,
-          "recall_at_10": 0.6667,
-          "mean_reciprocal_rank_mrr": 0.6667,
+          "recall_at_5": 1.0,
+          "recall_at_10": 1.0,
+          "mean_reciprocal_rank_mrr": 1.0,
           "wrong_vendor_cases": 0,
           "wrong_vendor_rate": 0.0,
-          "feature_evaluated_cases": 0,
+          "feature_evaluated_cases": 6,
           "feature_pollution_cases": 0,
-          "feature_pollution_rate": null,
-          "feature_pollution_status": "not_measured"
+          "feature_pollution_rate": 0.0,
+          "feature_pollution_status": "measured"
         },
         "Huawei": {
           "case_count": 16,
           "quality_case_count": 15,
-          "recall_at_5": 0.8,
-          "recall_at_10": 0.8,
-          "mean_reciprocal_rank_mrr": 0.6889,
+          "recall_at_5": 1.0,
+          "recall_at_10": 1.0,
+          "mean_reciprocal_rank_mrr": 1.0,
           "wrong_vendor_cases": 0,
           "wrong_vendor_rate": 0.0,
-          "feature_evaluated_cases": 0,
+          "feature_evaluated_cases": 15,
           "feature_pollution_cases": 0,
-          "feature_pollution_rate": null,
-          "feature_pollution_status": "not_measured"
+          "feature_pollution_rate": 0.0,
+          "feature_pollution_status": "measured"
         },
         "Ruijie": {
           "case_count": 6,
           "quality_case_count": 6,
-          "recall_at_5": 0.0,
-          "recall_at_10": 0.0,
-          "mean_reciprocal_rank_mrr": 0.0,
+          "recall_at_5": 1.0,
+          "recall_at_10": 1.0,
+          "mean_reciprocal_rank_mrr": 1.0,
           "wrong_vendor_cases": 0,
           "wrong_vendor_rate": 0.0,
-          "feature_evaluated_cases": 0,
+          "feature_evaluated_cases": 6,
           "feature_pollution_cases": 0,
-          "feature_pollution_rate": null,
-          "feature_pollution_status": "not_measured"
+          "feature_pollution_rate": 0.0,
+          "feature_pollution_status": "measured"
         }
       },
       "quality_checks": {
         "recall_at_5": {
-          "actual": 0.7143,
+          "actual": 1.0,
           "required": 0.95,
-          "passed": false
+          "passed": true
         },
         "recall_at_10": {
-          "actual": 0.7143,
+          "actual": 1.0,
           "required": 0.97,
-          "passed": false
+          "passed": true
         },
         "answer_case_gold_id_integrity": {
           "actual": null,
@@ -188,7 +188,7 @@
         "answer_case_target_hit": {
           "actual": null,
           "required": null,
-          "passed": false
+          "passed": true
         }
       }
     }
@@ -200,7 +200,7 @@
     "contains_tenant_or_user_identifiers": false
   },
   "limitations": [
-    "The current manifest records the measured 50-anchor run; it does not claim the 400-case human Gold Dataset is complete.",
+    "The current manifest records the measured 50-anchor run; it does not claim the 400-case retrieval-quality evaluation is complete. The 400-case source-provenance gate is tracked separately.",
     "A dirty worktree or a not_run database validation is a reproducibility warning, not a quality pass.",
     "Provider and sidecar fields report configured contracts only; no live external request is made by this generator."
   ]
