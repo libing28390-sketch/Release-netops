@@ -1,26 +1,26 @@
 # Nexora AI/RAG 整改与生产验收交接记录
 
-- 更新时间：2026-09-05（50-anchor 用户授权签字已完成，远端门禁与发布仍保持 HOLD）
+- 更新时间：2026-09-06（远端门禁与 UAT-04 增量已完成，真实运行态/完整 UAT/生产发布仍保持 HOLD）
 - 交接状态：`IN PROGRESS — 50-ANCHOR SIGNED / RELEASE HOLD`
 - 主任务清单：[plan_20260905_2257_01_AI发布剩余任务清单.md](docs/plans/plan_20260905_2257_01_AI发布剩余任务清单.md)
 - 当前结论：`HOLD — NOT A RELEASE CANDIDATE`
-- 当前状态：50-anchor 已完成用户明确授权的批次签字并切换到新的冻结 v3，标准/隔离质量门禁均通过；400 条官方来源自动评测也已通过。真实 Sidecar、完整 UAT、远端 Actions、生产迁移/回滚、提交与 Release Candidate 等剩余项仍明确列为阻断，不代表生产完成或已发布。
+- 当前状态：50-anchor 已完成用户明确授权的批次签字并切换到新的冻结 v3，标准/隔离质量门禁均通过；400 条官方来源自动评测、远端 small/release/隔离 PostgreSQL 门禁和 `UAT-HUA-VLAN-LOCAL-01` 浏览器复测也已通过。真实 Sidecar、完整 UAT、生产迁移/回滚、Release Candidate 与审批等剩余项仍明确列为阻断，不代表生产完成或已发布。
 - 清单勾选快照：原记录为 `96/164 = 58.5%`；本轮新增的是代码/证据修复，未将尚无验收证据的条目提前勾选，不能把该历史比例当作本轮完成率。
-- 工作区状态：上一轮 Gold 工作包已进入 `origin/main`，当前远端 `main` 仍为 `dba331b9855505a9442c39b57c54516b18c8f909`；本轮四厂商本地知识包、导入契约修复、产品解析修复、测试隔离修复及 m0204～m0208 迁移模块已合入本地 `main`，本地提交为 `36d64acf8faee44ea576ece79c52b9216549af18`，尚未 push。临时 `codex/ci-contract-fixes` 分支引用已清理，当前长期分支只有 `main`。用户原有的 `dist/index.html` 及其他未提交变更已保留，接续工作必须保留它们，不要执行 reset、checkout 或清理操作。
-- 当前接手点：代码修复和自动化闭环已完成一轮，真实 V200 浏览器回归已通过，Cisco HSRP 官方模板已通过 m0203 迁移并投影到 PostgreSQL，Cisco Catalyst 3850/H3C S6850 官方产品范围已补齐，DLP 流式边界与锐捷官方来源建议已补测；本轮同时修复了 H3C S6850 配置误路由到资产分析、泛化 `Comware` 过滤排除官方 `Comware 7` 文档，以及 Cisco 显式 IOS-XE/NX-OS 平台未映射的问题，实时 S6850 复测已返回 1 个官方本地知识文档且未外发。随后新增并记录 R3 高风险澄清与未登记平台澄清两条浏览器边界证据，均未执行设备操作、未外发；并新增 PostgreSQL 迁移失败事务回滚与 Kill Switch 恢复 legacy 的隔离回归证据。最新增量修复了旧通用高风险澄清状态拦截显式只读知识请求、以及“不要执行”被误判为配置变更的问题；同时将 `port-security/端口安全` 独立为 `port_security/security`，避免端口安全查询被无关的 MAC/ARP、STP、BGP 或 Trunk 文档污染。当前已生成 [50 条 Gold 人工审核工作表](docs/knowledge-engine/eval/eval-golden-anchors-50-review-worksheet.md) 和 [400 条评测接收模板](docs/knowledge-engine/eval/eval-golden-400-review-intake.md)，400 条数据已切换为官方 URL 支撑的自动评测契约，不要求人工评审。m0204～m0208 已随配套代码进入本地 `main`，严格迁移计划显示已发现并应用至 208，数据库当前 `pending=()`、`unknown=()`、`name_drift=()` 且 `SAFE_STRICT=True`；`init_db()` 与 `npm run dev` 启动验证均通过。部分 UAT 仅元数据证据已落盘；当前 50-anchor 签字版本和评测证据见下方最新章节，旧 v1、候选 v2 仍作为可追溯对比版本保留。
+- 工作区状态：当前本地与远端 `main` 均为 `073c5ea570fc20a6b49a6fe58730beeaa5da2dfd`；本轮代码/测试修复已推送。临时 `codex/ci-contract-fixes` 分支引用已清理，当前长期分支只有 `main`。用户原有的 `dist/index.html`、评测 manifest、开发脚本及其他未提交变更已保留，接续工作必须保留它们，不要执行 reset、checkout 或清理操作。
+- 当前接手点：代码修复和自动化闭环已完成一轮，真实 V200 浏览器回归已通过，Cisco HSRP 官方模板已通过 m0203 迁移并投影到 PostgreSQL，Cisco Catalyst 3850/H3C S6850 官方产品范围已补齐，DLP 流式边界与锐捷官方来源建议已补测；本轮同时修复了 H3C S6850 配置误路由到资产分析、泛化 `Comware` 过滤排除官方 `Comware 7` 文档，以及 Cisco 显式 IOS-XE/NX-OS 平台未映射的问题，实时 S6850 复测已返回 1 个官方本地知识文档且未外发。随后新增并记录 R3 高风险澄清与未登记平台澄清两条浏览器边界证据，均未执行设备操作、未外发；并新增 PostgreSQL 迁移失败事务回滚与 Kill Switch 恢复 legacy 的隔离回归证据。最新增量修复了旧通用高风险澄清状态拦截显式只读知识请求、以及“不要执行”被误判为配置变更的问题；同时将 `port-security/端口安全` 独立为 `port_security/security`，避免端口安全查询被无关的 MAC/ARP、STP、BGP 或 Trunk 文档污染；并将混合 `VLAN + Access` 意图稳定收敛到 `access_port`，真实浏览器复测命中 Huawei VRP Access-port 官方模板。当前已生成 [50 条 Gold 人工审核工作表](docs/knowledge-engine/eval/eval-golden-anchors-50-review-worksheet.md) 和 [400 条评测接收模板](docs/knowledge-engine/eval/eval-golden-400-review-intake.md)，400 条数据已切换为官方 URL 支撑的自动评测契约，不要求人工评审。m0204～m0208 已随配套代码进入本地 `main`，严格迁移计划显示已发现并应用至 208，数据库当前 `pending=()`、`unknown=()`、`name_drift=()` 且 `SAFE_STRICT=True`；`init_db()` 与 `npm run dev` 启动验证均通过。远端门禁与本次浏览器证据见 [AI 发布门禁与 UAT-04 walkthrough](docs/walkthrough/walkthrough_20260905_2357_01_AI发布门禁与UAT复测.md)，旧 v1、候选 v2 仍作为可追溯对比版本保留。
 
 ## 当前交接摘要（权威，2026-09-05）
 
 这份文件供下一位接手人直接判断“现在能否放行”。除明确标为“历史证据”的章节外，以本节和“当前发布阻塞项（以本节为准）”为准。
 
-- **当前结论：`HOLD — NOT A RELEASE CANDIDATE`。** 本地知识库、50-anchor 签字数据和自动化验证已完成一轮闭环，但远端 Actions、真实组件运行态、完整 UAT、生产迁移/回滚和 Release Candidate 尚未闭环，因此当前不能宣称已发布或可生产放行。
-- **工作区边界：** 本轮完整修改已从临时工作树合入 `D:\netops\netsops-main` 的本地 `main`，提交为 `36d64acf`；临时分支引用已删除，后续开发按仓库规范只在 `main` 上进行。主工作区既有修改（尤其 `dist/index.html`、评测 manifest 和开发脚本）已原样保留，未执行 reset、clean 或覆盖式冲突处理。本轮截至本文件生成时没有 push。
+- **当前结论：`HOLD — NOT A RELEASE CANDIDATE`。** 本地知识库、50-anchor 签字数据、自动化验证和本轮远端 Actions 已完成一轮闭环，但真实组件运行态、完整 UAT、生产迁移/回滚和 Release Candidate 尚未闭环，因此当前不能宣称已发布或可生产放行。
+- **工作区边界：** 本轮代码/测试修改已合入 `D:\netops\netsops-main` 的本地 `main` 并推送，提交为 `073c5ea570fc20a6b49a6fe58730beeaa5da2dfd`；临时分支引用已删除，后续开发按仓库规范只在 `main` 上进行。主工作区既有修改（尤其 `dist/index.html`、评测 manifest 和开发脚本）已原样保留，未执行 reset、clean 或覆盖式冲突处理。本轮新增证据文档的提交归属另行记录。
 - **50-anchor 权威输入：** [v3 signed 数据集](docs/knowledge-engine/eval/eval-golden-anchors-50-v3-signed-20260905.yaml) 已按用户明确授权，由审核人 `libing28390-sketch` 在 `2026-09-05T19:53:42+08:00` 批次签字；50 条均为 `annotation_status=approved`。这表示“用户作为本批次审核人授权签字”，不是 Codex 自称审核人，也不是独立第二审核人的复核。
 - **50-anchor 证据：** [review audit](docs/knowledge-engine/eval/eval-anchors-50-v3-signed-review.json) 为 `review=PASS/gold=PASS`、`missing_review=0`、`unresolved_gold=0`；标准 runner 和 [隔离 PostgreSQL runner](docs/knowledge-engine/eval/eval-anchors-50-v3-signed-isolated-report.json) 均为 `50/50 PASS`，`safety=PASS`、`quality=PASS`、Recall@5/10=`1.0`。Citation Precision=`0.9643`、Citation Recall=`1.0` 是当前检索文档身份代理指标，不应扩大解释为完整生成式引用链已完成验证。
 - **400 条知识库评测：** [eval-golden-400.yaml](docs/knowledge-engine/eval/eval-golden-400.yaml) 为四厂商官方来源自动评测集，`case_count=400`、`synthetic_data=false`、`production_eligible=true`、`human_review_required=false`；生产合同检查通过，300 条 answer 的隔离 PostgreSQL 检索通过（Recall@5/10=`1.0`、MRR=`1.0`、厂商/Feature 污染为 `0`），100 条 clarify/no-match 由独立 runner 验证未调用低层检索。400 条不需要人工签字，但这也不替代完整 Assistant/Citation 生产链路 UAT。
 - **已处理的关键问题：** `npm ci` lock 同步、CI pgvector 镜像、Node `22.22.2`、Windows pgvector `0.8.6` 安装/校验、测试专用 `CREDENTIAL_ENCRYPTION_KEY`、接受任一 `acceptable_document_ids` 的 Citation Recall 计算、400 条数据集与 `manifest.json` 的 SHA-256 契约均已修复并有本地证据。
 - **已完成的质量证据：** AI 测试 `553 passed`；完整 PostgreSQL 后端 `1764 passed`、`26` 个 subtests 通过；前端 `53 files / 195 passed`；`npm ci`、lint、production build、PostgreSQL-only、release config、CI 静态契约和编译检查通过。
-- **接手后第一件事：** 在用户授权 push/触发远端 workflow 后，先让 GitHub Actions 使用 v3 signed 数据集重新跑完 small/release/隔离 PostgreSQL 门禁；远端成功后再继续真实 Sidecar、完整 UAT、生产迁移/回滚和 RC 评审。不要因为本地 `50/50` 或 `400/400` 通过而跳过这些步骤。Qwen/Ollama 已按用户决定移出本轮范围；Docker/Windows/pgvector 运行态按用户要求暂记完成，后续由用户独立验证。
+- **接手后的最新进展：** GitHub Actions 已使用 v3 signed 数据集完成 small、release 和隔离 PostgreSQL/pgvector 门禁；已登录本地浏览器也完成 `UAT-HUA-VLAN-LOCAL-01` 的真实复测。下一步仍是补齐真实 Sidecar、完整 UAT、生产迁移/回滚和 RC 评审。不要因为本地 `50/50`、`400/400` 或当前 CI 通过而跳过这些步骤。Qwen/Ollama 已按用户决定移出本轮范围；Docker/Windows/pgvector 运行态按用户要求暂记完成，后续由用户独立验证。
 
 ## 2026-09-05 用户授权签字与 50-anchor 放行输入（最新）
 
@@ -150,21 +150,23 @@
 
 ## 当前发布阻塞项（以本节为准）
 
-50-anchor 的本地数据/审核/检索门禁已经完成，当前阻塞不再是“等待 Gold 签字”或“等待 400 条人工评审”，而是发布级别的环境与审批闭环：
+50-anchor 的本地数据/审核/检索门禁已经完成，当前阻塞不再是“等待 Gold 签字”“等待 400 条人工评审”或“等待本轮远端门禁”，而是发布级别的环境与审批闭环：
 
-- **远端 Actions 尚未重新执行成功：** workflow 已接入 v3 signed 数据集、PostgreSQL/pgvector、Node `22.22.2` 和 CI 契约检查，但本轮没有 push/dispatch，因此尚未取得 GitHub Actions 的新运行结论。需要用户授权推送后再验证 small、release 和隔离 PostgreSQL workflow。
+- **远端 Actions：** 已完成并通过。Knowledge Engine Evaluation #12、Backend Pytest Check #319、Build and Sync to Release Repo #485 均以 `073c5ea570fc20a6b49a6fe58730beeaa5da2dfd` 执行；详细 run URL、Ubuntu/Windows 结果、artifact 摘要和 Node warning 见 walkthrough。
 - **真实运行依赖尚未全部验收：** BGE reranker、Docling、Langfuse 和纳入本轮范围的 Provider resilience 仍未完成；本地单元/集成测试不能替代真实 Sidecar ready、鉴权、超时、降级和观测证据。Qwen/Ollama 已移出本轮范围，不再作为当前阻断项；Docker/Windows/pgvector 运行态按用户要求暂记完成，后续由用户独立验证。
-- **完整 UAT-001 尚未完成：** 已有多组脱敏浏览器证据，但仍缺完整场景矩阵的逐案例人工签署；`UAT-HUA-VLAN-LOCAL-01` 仍是 `PARTIAL`，混合语言 `Access` 意图未稳定落到 Access-port 专用模板。
+- **完整 UAT-001 尚未完成：** 已有多组脱敏浏览器证据，且 `UAT-HUA-VLAN-LOCAL-01` 已修复并通过真实页面复测；仍缺完整场景矩阵的逐案例人工签署以及 UAT-01/02/03/05 的收口。
 - **生产迁移与回滚尚未执行：** 尚未在目标生产环境完成迁移、备份/恢复、回滚目标确认、Kill Switch 演练和数据一致性复核。
 - **Release Candidate 尚未形成：** 工作区仍 dirty，未生成经审查的 release candidate Git SHA、变更清单、回滚方案和正式审批记录；本地四厂商 ZIP 仍明确为 `test_only=true`、`production_eligible=false`，不能直接当生产知识包。
+
+本轮新增的远端门禁与 UAT-04 证据统一见 [AI 发布门禁与 UAT-04 walkthrough](docs/walkthrough/walkthrough_20260905_2357_01_AI发布门禁与UAT复测.md)。旧章节中关于“未 push”“远端未执行”和该案例 `PARTIAL` 的表述均属于生成时的历史快照，不覆盖本节当前结论。
 
 已完成但仅作为当前输入的证据：[50-anchor signed review](docs/knowledge-engine/eval/eval-anchors-50-v3-signed-review.json)、[50-anchor 标准报告](docs/knowledge-engine/eval/eval-anchors-50-v3-signed-report.json)、[50-anchor 隔离报告](docs/knowledge-engine/eval/eval-anchors-50-v3-signed-isolated-report.json)、[400 条生产合同检查](docs/knowledge-engine/eval/eval-golden-400-production-check.json) 和 [400 条隔离检索报告](docs/knowledge-engine/eval/eval-golden-400-retrieval.json)。旧冻结 v1 与候选 v2 的失败/通过数字只在历史章节保留，不得覆盖当前 v3 结论。
 
 ## 接续执行顺序
 
-1. 本地合入已完成。待明确授权 push/dispatch 后，从本地 `main` 推送并触发 GitHub Actions；确认所有 workflow 使用 v3 signed 数据集，并逐项保存 run URL、commit SHA、环境版本和最终结果。
+1. 代码已推送并完成远端门禁；后续新增代码变更仍需按受影响 workflow 重新验证，并继续保存 run URL、commit SHA、环境版本和最终结果。
 2. 以当前 [v3 signed review](docs/knowledge-engine/eval/eval-anchors-50-v3-signed-review.json) 和标准/隔离 `50/50 PASS` 为 50-anchor 输入，不重新退回 v1，也不把 v2 当作默认门禁输入；400 条数据集继续按官方来源自动评测契约处理，不新增无必要人工签字要求。
-3. 继续补齐完整 UAT-001：保留已完成的脱敏证据，修复并复测 `UAT-HUA-VLAN-LOCAL-01` 的 `Access` feature 识别，并逐案例记录本地命中、外发、CLI、风险和人工验收状态。
+3. 继续补齐完整 UAT-001：保留已完成的脱敏证据，`UAT-HUA-VLAN-LOCAL-01` 已通过；继续逐案例记录本地命中、外发、CLI、风险和人工验收状态。
 4. 在依赖可用的环境中完成 BGE reranker、Docling、Langfuse 和纳入本轮范围的 Provider resilience 运行态验收；Docker/Windows/pgvector 及迁移 104 已按用户要求暂记完成，后续由用户独立验证，不在本轮重复执行。Qwen/Ollama 不属于本轮范围。
 5. 完成目标生产环境的备份、迁移、健康检查、回滚/恢复和 Kill Switch 演练，生成可审计的 release candidate SHA、变更清单、回滚目标和正式审批记录。
 6. 只有远端 CI、真实依赖、完整 UAT、生产迁移/回滚、RC 和审批全部通过，才可将 readiness 从 HOLD 改为可发布。
