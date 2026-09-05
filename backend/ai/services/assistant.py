@@ -869,6 +869,7 @@ class AIAssistantService:
             "bgp": "BGP",
             "vlan": "VLAN",
             "arp": "ARP",
+            "port_security": "端口安全",
         }.get(feature.lower(), feature)
         single_platform = len(grouped) == 1
         resolved_platform = next(iter(grouped), "")

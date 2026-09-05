@@ -181,6 +181,35 @@ def test_hsrp_review_inference_preserves_independent_protocol_feature():
     assert record["feature_source"] == "query_inference"
 
 
+def test_port_security_review_inference_precedes_generic_mac_diagnostic():
+    dataset = {
+        "dataset_id": "synthetic-port-security-inference",
+        "cases": [
+            {
+                "id": "SYN-007",
+                "query": "Huawei port-security enable limit MAC count",
+                "expected_outcome": "answer",
+                "vendor": "Huawei",
+                "platform": "huawei_vrp",
+                "intent": "security",
+                "gold_document_ids": ["official-port-security"],
+                "reviewer": "reviewer@example.test",
+                "reviewed_at": "2026-09-03T00:00:00Z",
+                "annotation_status": "approved",
+            }
+        ],
+    }
+
+    report = validate_anchor_review(
+        dataset,
+        known_ids={"official-port-security"},
+    )
+
+    record = report["records"][0]
+    assert record["feature"] == "port_security"
+    assert record["feature_source"] == "query_inference"
+
+
 def test_review_flags_any_incompatible_member_of_acceptable_set():
     dataset = {
         "dataset_id": "synthetic-partial-metadata-mismatch",

@@ -24,6 +24,7 @@ _FEATURE_ALIASES = {
     "vxlan": {"vxlan", "evpn"},
     "lacp": {"lacp", "链路聚合", "eth-trunk", "bridge-aggregation"},
     "access_port": {"access port", "access-port", "接入口", "接入端口"},
+    "port_security": {"port security", "port-security", "端口安全"},
     "trunk": {"trunk", "中继端口", "trunk端口"},
     "loopback": {"loopback", "环回接口", "环回口"},
     "ntp": {"ntp", "网络时间协议"},
@@ -60,7 +61,7 @@ def _feature_domain(feature: str) -> str:
     return {
         "ospf": "routing", "bgp": "routing", "static_route": "routing", "vrrp": "reliability",
         "vlan": "switching", "stp": "switching", "lacp": "switching",
-        "access_port": "switching", "trunk": "switching",
+        "access_port": "switching", "trunk": "switching", "port_security": "security",
         "loopback": "routing", "ntp": "management", "snmp": "management", "ssh": "management", "acl": "security",
         "vxlan": "overlay", "qos": "management", "aaa": "security", "mlag": "reliability",
     }.get(feature, "")

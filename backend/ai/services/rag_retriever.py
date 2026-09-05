@@ -113,6 +113,12 @@ class RAGRetriever:
             r"\baccess[- ]port\b",
             r"接入口|接入端口",
         ),
+        "port_security": (
+            r"\bswitchport\s+port[- ]security\b",
+            r"\bport[- ]security\b",
+            r"\bmax(?:imum)?[- ]mac(?:[- ]count|[- ]num(?:ber)?)?\b",
+            r"端口安全",
+        ),
         "trunk": (
             r"\bswitchport\s+(?:mode\s+)?trunk\b",
             r"\bport\s+link-type\s+trunk\b",

@@ -867,7 +867,7 @@
       "expected_outcome": "answer",
       "vendor": "Huawei",
       "platform": "huawei_vrp",
-      "feature": "arp",
+      "feature": "port_security",
       "feature_source": "query_inference",
       "gold_document_ids": [
         "official-template-official-huawei-access-port"

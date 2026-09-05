@@ -106,3 +106,13 @@ def test_intent_parser_emits_rag_v2_fields_without_platform_guessing():
     assert metadata["document_category"] == "cli_output"
     assert metadata["feature"] == "ospf"
     assert metadata["cli_platform"] is None
+
+
+def test_port_security_is_a_distinct_security_feature():
+    metadata = intent_parser.parse_knowledge_metadata(
+        "华为交换机端口安全 port-security enable 限制 MAC 数量"
+    )
+
+    assert metadata["feature"] == "port_security"
+    assert metadata["feature_domain"] == "security"
+    assert metadata["document_category"] == "command"

@@ -73,6 +73,7 @@ _FEATURE_OPTIONS = (
     {"field": "feature", "value": "stp", "label": "STP"},
     {"field": "feature", "value": "management", "label": "SSH / SNMP / NTP"},
     {"field": "feature", "value": "acl", "label": "ACL"},
+    {"field": "feature", "value": "port_security", "label": "端口安全 / Port Security"},
 )
 
 _PLATFORM_LABELS = {

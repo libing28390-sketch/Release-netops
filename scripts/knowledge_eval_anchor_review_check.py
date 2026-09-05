@@ -148,6 +148,13 @@ def _infer_feature(case: dict[str, Any]) -> tuple[str | None, str]:
     intent = str(case.get("intent") or "").strip().lower()
     query = str(case.get("query") or "").strip().lower()
     query_features = (
+        # Port-security queries often mention a MAC address/count.  Match the
+        # specific security phrase before the generic ARP/MAC diagnostic
+        # markers so the review worksheet cannot suggest an unrelated Gold
+        # feature.
+        ("port-security", "port_security"),
+        ("port security", "port_security"),
+        ("端口安全", "port_security"),
         ("lldp", "lldp"),
         ("arp", "arp"),
         ("mac", "arp"),

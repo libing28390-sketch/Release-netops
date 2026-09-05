@@ -40,6 +40,7 @@ _FEATURES = (
     ("vxlan", "overlay"),
     ("evpn", "overlay"),
     ("lacp", "switching"),
+    ("port_security", "security"),
     ("snmp", "management"),
 )
 

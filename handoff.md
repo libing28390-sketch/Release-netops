@@ -1,13 +1,20 @@
 # Nexora AI/RAG 整改与生产验收交接记录
 
-- 更新时间：2026-09-04（按用户要求收尾前，已完成授权登录会话实时 UAT、最新 AI 全量回归与门禁复核）
-- 交接状态：`READY FOR HANDOFF`
+- 更新时间：2026-09-05（Gold 审核与 400 条数据集接收包优先推进中）
+- 交接状态：`IN PROGRESS — GOLD PRIORITY`
 - 主任务清单：[plan_20260903_AI剩余整改与生产验收任务清单.md](docs/plans/plan_20260903_AI剩余整改与生产验收任务清单.md)
 - 当前结论：`HOLD — NOT A RELEASE CANDIDATE`
-- 当前状态：本轮已按用户要求收尾并停止；剩余项已明确列为交接阻断，不代表生产完成或已发布。
+- 当前状态：工程修复继续保留，当前优先处理 50 条 Gold 人工审核和 400 条 Gold Dataset 接收；剩余项仍明确列为阻断，不代表生产完成或已发布。
 - 清单勾选快照：当前记录为 `96/164 = 58.5%`；本轮新增的是代码/证据修复，未将尚无验收证据的条目提前勾选。
 - 工作区状态：存在未提交变更；接续工作必须保留现有改动，不要执行 reset、checkout 或清理操作。
-- 当前接手点：代码修复和自动化闭环已完成一轮，真实 V200 浏览器回归已通过，Cisco HSRP 官方模板已通过 m0203 迁移并投影到 PostgreSQL，Cisco Catalyst 3850/H3C S6850 官方产品范围已补齐，DLP 流式边界与锐捷官方来源建议已补测；本轮同时修复了 H3C S6850 配置误路由到资产分析、泛化 `Comware` 过滤排除官方 `Comware 7` 文档，以及 Cisco 显式 IOS-XE/NX-OS 平台未映射的问题，实时 S6850 复测已返回 1 个官方本地知识文档且未外发。随后新增并记录 R3 高风险澄清与未登记平台澄清两条浏览器边界证据，均未执行设备操作、未外发；并新增 PostgreSQL 迁移失败事务回滚与 Kill Switch 恢复 legacy 的隔离回归证据。最新增量修复了旧通用高风险澄清状态拦截显式只读知识请求、以及“不要执行”被误判为配置变更的问题；Cisco HSRP 只读浏览器复测已返回 1 个官方本地知识文档，未外发、未执行 CLI。部分 UAT 仅元数据证据已落盘；评测审计与基线 manifest 已按本轮最新结果重生成，下一步是扩展并签署完整 UAT、补齐人工 Gold、处理部署阻塞项。
+- 当前接手点：代码修复和自动化闭环已完成一轮，真实 V200 浏览器回归已通过，Cisco HSRP 官方模板已通过 m0203 迁移并投影到 PostgreSQL，Cisco Catalyst 3850/H3C S6850 官方产品范围已补齐，DLP 流式边界与锐捷官方来源建议已补测；本轮同时修复了 H3C S6850 配置误路由到资产分析、泛化 `Comware` 过滤排除官方 `Comware 7` 文档，以及 Cisco 显式 IOS-XE/NX-OS 平台未映射的问题，实时 S6850 复测已返回 1 个官方本地知识文档且未外发。随后新增并记录 R3 高风险澄清与未登记平台澄清两条浏览器边界证据，均未执行设备操作、未外发；并新增 PostgreSQL 迁移失败事务回滚与 Kill Switch 恢复 legacy 的隔离回归证据。最新增量修复了旧通用高风险澄清状态拦截显式只读知识请求、以及“不要执行”被误判为配置变更的问题；同时将 `port-security/端口安全` 独立为 `port_security/security`，避免端口安全查询被无关的 MAC/ARP、STP、BGP 或 Trunk 文档污染。当前已生成 [50 条 Gold 人工审核工作表](docs/knowledge-engine/eval/eval-golden-anchors-50-review-worksheet.md) 和 [400 条 Gold 接收模板](docs/knowledge-engine/eval/eval-golden-400-review-intake.md)，两者都明确保留人工签核与真实来源证据要求。部分 UAT 仅元数据证据已落盘；评测审计与基线 manifest 已按本轮最新结果重生成，下一步是收集审核人签核、真实锐捷官方来源和 400 条案例。
+
+## 2026-09-05 Gold 优先工作包
+
+- 50 条审核当前机器状态：`review=PENDING_HUMAN_REVIEW`、`gold=FAIL`；50 条缺 `reviewer/reviewed_at/annotation_status`，42 条缺显式 Feature，6 个锐捷 Gold ID 未解析。
+- 50 条工作表：[eval-golden-anchors-50-review-worksheet.md](docs/knowledge-engine/eval/eval-golden-anchors-50-review-worksheet.md)。`candidate_feature`、当前 Gold 和机器推断均是待审核输入，不能直接当作人工结论。
+- 400 条接收模板：[eval-golden-400-review-intake.md](docs/knowledge-engine/eval/eval-golden-400-review-intake.md)。当前没有真实 400 条人工案例，因此 `eval-golden-400.yaml` 必须继续缺省，门禁保持 `NOT_READY`。
+- 本轮新增审核边界回归：Gold 审核器 `8 passed`；端口安全无对应官方文档时隔离 PostgreSQL 检索返回空集合，不以无关文档凑数。
 
 ## 本次结束时的最终快照
 

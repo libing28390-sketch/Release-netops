@@ -30,6 +30,7 @@ _FEATURES: tuple[tuple[str, tuple[str, ...], str], ...] = (
     ("stp", ("stp", "mstp", "rstp", "spanning-tree"), "switching"),
     ("hsrp", ("hsrp", "hot standby router protocol"), "reliability"),
     ("access_port", ("access-port", "access port", "接入口"), "switching"),
+    ("port_security", ("port-security", "port security", "端口安全"), "security"),
     ("trunk", ("trunk",), "switching"),
     ("vlan", ("vlan", "vlanif", "svi"), "switching"),
     ("ntp", ("ntp",), "management"),

@@ -1,24 +1,24 @@
 {
   "schema_version": 1,
   "manifest_id": "nexora-knowledge-eval-baseline-v1",
-  "generated_at": "2026-09-04T07:35:17+00:00",
+  "generated_at": "2026-09-04T15:46:01+00:00",
   "reproducibility": {
     "git": {
-      "sha": "3b6eb0ff9df155c9afd0b5ee8661601fe2fd453b",
+      "sha": "6268ae38feb955d333fb41c4a535540e6e40123d",
       "worktree_dirty": true,
-      "status_entry_count": 122
+      "status_entry_count": 14
     },
     "dataset": {
       "dataset_id": "nexora-kb-eval-anchors-50-v1-20260903",
       "status": "frozen",
       "case_count": 50,
       "path": "docs\\knowledge-engine\\eval\\eval-golden-anchors-50.yaml",
-      "sha256": "65d74c3bb5faaf07c1c7983eb529c2ff11fe86990a5a7bdfd827e96f7fa10769"
+      "sha256": "c64c57636d98a73077aedc7559b6133f32fac9aa8d17ce218c05c22f364631a1"
     },
     "source_hashes": {
-      "dataset": "65d74c3bb5faaf07c1c7983eb529c2ff11fe86990a5a7bdfd827e96f7fa10769",
-      "evaluator": "f4f373067c4c08906d09fc52b5568560d70023dcca82de06056c3403eaa5a19d",
-      "review_auditor": "25c166b27bf0c478e0bc6cf40d724b0f84704ae5d14a809aa6e140ac51f3a8f2"
+      "dataset": "c64c57636d98a73077aedc7559b6133f32fac9aa8d17ce218c05c22f364631a1",
+      "evaluator": "27c4451f1507d755f08feb7a2cff687c5b5babcb994b74a64c980465d03c103e",
+      "review_auditor": "2cac6751b99e9db8f5770d5986a1dda62c9e206cf0aca69c6a7abefc1a3ccad3"
     },
     "rerun_command": ".venv\\Scripts\\python.exe scripts\\knowledge_eval_anchors_50_runner.py",
     "database": "PostgreSQL",
@@ -29,7 +29,7 @@
   "components": {
     "prompt": {
       "intent_prompt_version": "intent.v2",
-      "promptfoo_config_sha256": "c18f4cadec5ad9488f37324d7da3250abe706548c4bc185e816bebb77bdbaf78"
+      "promptfoo_config_sha256": "7584b9c25c31dc677d15960d675cc3a3466fd4ab4b6156410d692de02a86d6f9"
     },
     "parser": {
       "intent_parser_version": "intent.v2",
@@ -109,9 +109,9 @@
       "feature_pollution_rate": null,
       "platform_version_conflict_rate": null,
       "latency_ms": {
-        "p50": 18.0,
-        "p95": 82.65,
-        "max": 1104.07,
+        "p50": 9.04,
+        "p95": 45.82,
+        "max": 643.68,
         "sample_count": 50
       },
       "error_rate": 0.0,

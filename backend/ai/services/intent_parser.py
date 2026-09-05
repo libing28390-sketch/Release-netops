@@ -270,6 +270,7 @@ class IntentParser:
         "bgp": ("bgp",),
         "stp": ("stp", "生成树"),
         "access_port": ("access port", "access-port", "接入口", "接入端口"),
+        "port_security": ("port security", "port-security", "端口安全"),
         "trunk": ("trunk", "中继端口", "trunk端口"),
         "lacp": ("lacp", "eth-trunk", "etherchannel", "bridge-aggregation", "链路聚合"),
         "loopback": ("loopback", "环回接口", "环回口"),
@@ -545,7 +546,7 @@ class IntentParser:
         # ``VLAN 接入口`` is an access-port request, not a broad VLAN report.
         # Keep the longest-alias rule as the tie-breaker for cases such as
         # Eth-Trunk versus the generic trunk alias.
-        feature_priority = {"access_port": 2, "lacp": 2}
+        feature_priority = {"access_port": 2, "lacp": 2, "port_security": 3}
         for feature, _alias in sorted(
             feature_matches,
             key=lambda item: (feature_priority.get(item[0], 0), len(item[1])),
@@ -555,7 +556,7 @@ class IntentParser:
                 result["feature_domain"] = (
                     "routing" if feature in {"ospf", "bgp", "arp", "loopback", "static_route"}
                     else "switching" if feature in {"vlan", "stp", "lldp", "access_port", "trunk", "lacp"}
-                    else "security" if feature in {"acl"}
+                    else "security" if feature in {"acl", "port_security"}
                     else "management" if feature in {"ntp", "snmp", "ssh"}
                     else "reliability" if feature in {"hsrp", "vrrp"}
                     else "overlay" if feature in {"vxlan", "evpn"}
@@ -596,7 +597,7 @@ class IntentParser:
             metadata.get("vendor")
             or metadata.get("product_series")
             or metadata.get("feature")
-            or any(token in (query or "").lower() for token in ("配置", "命令", "回显", "故障", "ospf", "vlan", "arp", "access", "trunk", "lacp", "loopback", "ntp", "snmp", "hsrp", "vrrp", "static route", "静态路由", "acl", "ssh", "stelnet", "hardware"))
+            or any(token in (query or "").lower() for token in ("配置", "命令", "回显", "故障", "ospf", "vlan", "arp", "access", "trunk", "lacp", "loopback", "ntp", "snmp", "hsrp", "vrrp", "static route", "静态路由", "acl", "ssh", "stelnet", "port-security", "端口安全", "hardware"))
         )
 
     @staticmethod
