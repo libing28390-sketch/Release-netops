@@ -6,7 +6,7 @@
 - 当前结论：`HOLD — NOT A RELEASE CANDIDATE`
 - 当前状态：工程修复继续保留，当前优先处理 50 条 Gold 人工审核和 400 条 Gold Dataset 接收；剩余项仍明确列为阻断，不代表生产完成或已发布。
 - 清单勾选快照：当前记录为 `96/164 = 58.5%`；本轮新增的是代码/证据修复，未将尚无验收证据的条目提前勾选。
-- 工作区状态：存在未提交变更；接续工作必须保留现有改动，不要执行 reset、checkout 或清理操作。
+- 工作区状态：本轮任务改动已提交并推送到 `origin/main`（`66653732`）；当前仅保留用户原有的 `dist/index.html` 未提交变更，接续工作必须保留它，不要执行 reset、checkout 或清理操作。
 - 当前接手点：代码修复和自动化闭环已完成一轮，真实 V200 浏览器回归已通过，Cisco HSRP 官方模板已通过 m0203 迁移并投影到 PostgreSQL，Cisco Catalyst 3850/H3C S6850 官方产品范围已补齐，DLP 流式边界与锐捷官方来源建议已补测；本轮同时修复了 H3C S6850 配置误路由到资产分析、泛化 `Comware` 过滤排除官方 `Comware 7` 文档，以及 Cisco 显式 IOS-XE/NX-OS 平台未映射的问题，实时 S6850 复测已返回 1 个官方本地知识文档且未外发。随后新增并记录 R3 高风险澄清与未登记平台澄清两条浏览器边界证据，均未执行设备操作、未外发；并新增 PostgreSQL 迁移失败事务回滚与 Kill Switch 恢复 legacy 的隔离回归证据。最新增量修复了旧通用高风险澄清状态拦截显式只读知识请求、以及“不要执行”被误判为配置变更的问题；同时将 `port-security/端口安全` 独立为 `port_security/security`，避免端口安全查询被无关的 MAC/ARP、STP、BGP 或 Trunk 文档污染。当前已生成 [50 条 Gold 人工审核工作表](docs/knowledge-engine/eval/eval-golden-anchors-50-review-worksheet.md) 和 [400 条 Gold 接收模板](docs/knowledge-engine/eval/eval-golden-400-review-intake.md)，两者都明确保留人工签核与真实来源证据要求。部分 UAT 仅元数据证据已落盘；评测审计与基线 manifest 已按本轮最新结果重生成，下一步是收集审核人签核、真实锐捷官方来源和 400 条案例。
 
 ## 2026-09-05 Gold 优先工作包
@@ -18,8 +18,8 @@
 
 ## 本次结束时的最终快照
 
-- 结束动作：已停止本轮继续执行，保留当前代码、评测产物、浏览器 UAT 元数据和任务清单；未创建 commit、未删除文件、未执行设备操作。
-- 最后核验日期：`2026-09-04`。开发服务和本地浏览器登录会话可由接手人按需复用；凭据不写入交接文件，也不在此重复记录。
+- 交付动作：已保留当前代码、评测产物、浏览器 UAT 元数据和任务清单；Gold 审核工作包已提交并推送到 `origin/main` 的 `66653732`；未删除文件、未执行设备操作。
+- 最后核验日期：`2026-09-05`。开发服务和本地浏览器登录会话可由接手人按需复用；凭据不写入交接文件，也不在此重复记录。
 - 质量结论：AI 全量 `534 passed`，后端全量 `1802 passed`，前端 `53 files / 195 passed`，lint/build、PostgreSQL-only 和静态 CI 门禁通过；但 50-anchor 为 `38/50`、Recall@5/10=`0.7143`、`quality=FAIL`、`overall=FAIL`。
 - 评测/验收结论：50 条人工审核仍为 `PENDING_HUMAN_REVIEW`，400 Gold Dataset 为 `NOT_READY`，完整 UAT-001、真实 BGE/Docling/Langfuse、Node 22.22.2 Promptfoo CI 实跑、Provider live matrix、生产迁移/回滚和 RC 提交均未完成。
 - 最新浏览器增量：`UAT-HUA-VLAN-LOCAL-01` 已完成平台澄清并保持本地、低风险、无外发、无 CLI，但混合语言 `Access` 仍被识别为广义 `vlan`，返回 VLAN/VLANIF 文档而非 Access-port 专用模板，已记录为 `PARTIAL`，不能计入完整 UAT 通过。
@@ -150,4 +150,4 @@ git diff --check
 - 评测和 UAT 证据只记录状态、指标、路由、调用类型、风险等级、trace/request 标识及脱敏后的摘要。
 - 不记录凭据、API key、原始 prompt、完整模型回答或设备敏感数据。
 - 任何高风险设备操作都必须在独立确认后才允许进入执行链路；本轮没有确认或执行生产设备变更。
-- 当前没有创建 commit，也没有删除用户已有文件或变更。
+- 本轮任务改动已创建 commit `66653732` 并推送到 `origin/main`；没有删除用户已有文件或变更，`dist/index.html` 的用户改动未进入提交。
