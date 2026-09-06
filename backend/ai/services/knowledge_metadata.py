@@ -290,6 +290,7 @@ def canonical_cli_platform(value: Any) -> str:
     return {
         "cisco_ios_xe": "cisco_iosxe",
         "cisco_iosxe": "cisco_iosxe",
+        "h3c_comware_v3": "h3c_comware",
         "h3c_comware_v5": "h3c_comware",
         "h3c_comware_v7": "h3c_comware",
         "h3c_comware_v9": "h3c_comware",

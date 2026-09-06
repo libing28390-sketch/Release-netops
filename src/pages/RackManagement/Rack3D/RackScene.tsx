@@ -1,6 +1,6 @@
 import React, { useMemo, useRef } from 'react';
 import { Canvas } from '@react-three/fiber';
-import { OrbitControls, Grid } from '@react-three/drei';
+import { OrbitControls, Grid, Html } from '@react-three/drei';
 import { RackVM, RackDisplayMode, RackDeviceVM } from '../types';
 import { RackFrame } from './RackFrame';
 import { RackDeviceItem } from './RackDeviceItem';
@@ -26,6 +26,69 @@ interface RackSceneProps {
   showULabels: boolean;
   zh: boolean;
 }
+
+interface RackPlacementMarkerProps {
+  device: RackDeviceVM;
+  index: number;
+  rackHeight: number;
+  rackWidth: number;
+  onSelectDevice: (deviceId: string) => void;
+  onHoverDevice?: (device: RackDeviceVM | null) => void;
+  zh: boolean;
+}
+
+/**
+ * Keep malformed and non-U rows visible without pretending they occupy U1.
+ * The marker sits just outside the rack and is still selectable, so data
+ * quality problems remain actionable in the 3D read-only view.
+ */
+const RackPlacementMarker: React.FC<RackPlacementMarkerProps> = ({
+  device,
+  index,
+  rackHeight,
+  rackWidth,
+  onSelectDevice,
+  onHoverDevice,
+  zh,
+}) => {
+  const hasKnownU = device.mountKind === 'u_mount' && device.startKnown !== false && device.heightKnown !== false;
+  const markerY = hasKnownU
+    ? Math.min(rackHeight - 0.3, Math.max(0.3, device.coordinates.centerY))
+    : Math.max(0.45, rackHeight - 0.55 - ((index % 8) * 0.45));
+  const markerX = rackWidth / 2 + 0.85;
+  const label = hasKnownU
+    ? `${device.name} · U${device.startU}`
+    : `${device.name} · ${device.mountKind || 'unknown'}`;
+
+  return (
+    <group
+      position={[markerX, markerY, 0]}
+      onClick={event => {
+        event.stopPropagation();
+        onSelectDevice(device.id);
+      }}
+      onPointerOver={event => {
+        event.stopPropagation();
+        onHoverDevice?.(device);
+      }}
+      onPointerOut={event => {
+        event.stopPropagation();
+        onHoverDevice?.(null);
+      }}
+    >
+      <mesh>
+        <boxGeometry args={[0.45, 0.28, 0.45]} />
+        <meshBasicMaterial color="#f59e0b" transparent opacity={0.82} />
+      </mesh>
+      <Html center distanceFactor={16} position={[0.45, 0, 0]}>
+        <div className="pointer-events-none whitespace-nowrap rounded border border-amber-400/50 bg-slate-950/90 px-1.5 py-1 text-[9px] text-amber-200 shadow-lg">
+          {label}
+          <span className="ml-1 text-amber-400/80">({zh ? '待确认' : 'review'})</span>
+        </div>
+      </Html>
+    </group>
+  );
+};
 
 export const RackScene: React.FC<RackSceneProps> = ({
   rackVM,
@@ -157,6 +220,18 @@ export const RackScene: React.FC<RackSceneProps> = ({
               onSelect={onSelectDevice}
               onDoubleClick={onDoubleClickDevice}
               onHover={onHoverDevice}
+            />
+          ))}
+          {[...rackVM.invalidDevices, ...(rackVM.nonUDevices || [])].map((device, index) => (
+            <RackPlacementMarker
+              key={`placement-marker-${device.id}`}
+              device={device}
+              index={index}
+              rackHeight={rackHeight}
+              rackWidth={rackWidth}
+              onSelectDevice={onSelectDevice}
+              onHoverDevice={onHoverDevice}
+              zh={zh}
             />
           ))}
         </group>

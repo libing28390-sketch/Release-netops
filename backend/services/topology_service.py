@@ -61,6 +61,7 @@ PLATFORM_MAP = {
     'huawei': 'huawei_vrp',
     '\u534e\u4e3avrp': 'huawei_vrp',
     'h3c_comware': 'hp_comware',
+    'h3c_comware_v3': 'hp_comware',
     'ruijie_rgos': 'ruijie_os',
 }
 
@@ -90,6 +91,7 @@ def normalize_topology_platform(platform: str | None) -> str:
         'huawei_vrpv8': 'huawei_vrp',
         'huawei': 'huawei_vrp',
         'hp_comware': 'h3c_comware',
+        'h3c_comware_v3': 'h3c_comware',
         'comware': 'h3c_comware',
         'ruijie_os': 'ruijie_rgos',
         'dptech': 'dptech_ios',
@@ -198,6 +200,18 @@ def _load_site_identity_maps(conn) -> tuple[dict[str, str], dict[str, dict[str, 
 def _canonical_site_id(value: Any, aliases: dict[str, str]) -> str:
     raw = str(value or '').strip()
     return aliases.get(raw.lower(), raw) if raw else ''
+
+
+def _device_id_filter(column: str, device_ids: list[str] | tuple[str, ...] | None) -> tuple[str, list[str]]:
+    """Return a safe SQL predicate for an already-authorized device set."""
+
+    if device_ids is None:
+        return '', []
+    normalized = sorted({str(item).strip() for item in device_ids if str(item).strip()})
+    if not normalized:
+        return '1 = 0', []
+    placeholders = ','.join('?' for _ in normalized)
+    return f'{column} IN ({placeholders})', normalized
 
 
 def _is_ip_address(value: str | None) -> bool:
@@ -1885,6 +1899,7 @@ def select_topology_discovery_devices(
     *,
     site_id: str = '',
     device_ids: list[str] | None = None,
+    allowed_device_ids: list[str] | None = None,
 ) -> dict[str, Any]:
     """Resolve a discovery scope into eligible, unique online devices.
 
@@ -1919,7 +1934,7 @@ def select_topology_discovery_devices(
         if normalized_scope == 'site' and canonical_site_id not in sites_by_id:
             raise ValueError('topology_site_not_found')
 
-        clauses = ["status = 'online'", "COALESCE(ip_address, '') <> ''"]
+        clauses = ["d.status = 'online'", "COALESCE(d.ip_address, '') <> ''"]
         params: list[Any] = []
         if normalized_scope == 'site':
             site = sites_by_id[canonical_site_id]
@@ -1933,19 +1948,33 @@ def select_topology_discovery_devices(
                 if value
             ))
             placeholders = ','.join('?' for _ in site_values)
-            clauses.append(f'site_id IN ({placeholders})')
+            clauses.append(
+                f"COALESCE(NULLIF(d.site_id, ''), NULLIF(pa.site_id, '')) IN ({placeholders})"
+            )
             params.extend(site_values)
         elif normalized_scope == 'devices':
             placeholders = ','.join('?' for _ in requested_device_ids)
-            clauses.append(f'id IN ({placeholders})')
+            clauses.append(f'd.id IN ({placeholders})')
             params.extend(requested_device_ids)
+
+        allowed_filter, allowed_params = _device_id_filter('d.id', allowed_device_ids)
+        if allowed_filter:
+            clauses.append(allowed_filter)
+            params.extend(allowed_params)
+        if allowed_device_ids is not None and not allowed_device_ids:
+            # Keep the discovery response shape but fail closed for an empty
+            # site/tenant grant.
+            clauses.append('1 = 0')
 
         rows = conn.execute(
             f'''
-            SELECT id, hostname, ip_address, platform, site_id
-            FROM devices
+            SELECT d.id, d.hostname, d.ip_address, d.platform,
+                   COALESCE(NULLIF(s.id, ''), NULLIF(d.site_id, ''), NULLIF(pa.site_id, '')) AS site_id
+            FROM devices d
+            LEFT JOIN physical_assets pa ON pa.id = d.asset_id
+            LEFT JOIN sites s ON s.id = COALESCE(NULLIF(pa.site_id, ''), NULLIF(d.site_id, ''))
             WHERE {' AND '.join(clauses)}
-            ORDER BY hostname, id
+            ORDER BY d.hostname, d.id
             ''',
             tuple(params),
         ).fetchall()
@@ -2975,7 +3004,11 @@ def _sync_evidence_graph_from_observations() -> None:
         logger.debug('Evidence graph projection skipped', exc_info=True)
 
 
-def get_topology_node_metadata(site_id: str | None = None) -> dict[str, dict[str, Any]]:
+def get_topology_node_metadata(
+    site_id: str | None = None,
+    *,
+    device_ids: list[str] | tuple[str, ...] | None = None,
+) -> dict[str, dict[str, Any]]:
     """Return evidence-derived node rank/layout metadata for the legacy link API.
 
     The canvas still consumes ``/topology/links`` for backwards compatibility,
@@ -2997,6 +3030,10 @@ def get_topology_node_metadata(site_id: str | None = None) -> dict[str, dict[str
         if site_id:
             clauses.append("(n.site_id = ? OR n.node_type = 'SITE')")
             params.append(site_id)
+        device_filter, device_params = _device_id_filter('n.device_id', device_ids)
+        if device_filter:
+            clauses.append(device_filter)
+            params.extend(device_params)
         rows = conn.execute(
             """
             SELECT n.device_id, n.rank, n.layout_override_json, n.role_identity, n.node_type
@@ -3029,7 +3066,11 @@ def get_topology_node_metadata(site_id: str | None = None) -> dict[str, dict[str
         conn.close()
 
 
-def get_unmanaged_neighbors(site_id: str | None = None) -> dict[str, Any]:
+def get_unmanaged_neighbors(
+    site_id: str | None = None,
+    *,
+    source_device_ids: list[str] | tuple[str, ...] | None = None,
+) -> dict[str, Any]:
     """Aggregate topology observations where the neighbor was not matched to any managed device.
 
     Returns a dict with:
@@ -3038,8 +3079,24 @@ def get_unmanaged_neighbors(site_id: str | None = None) -> dict[str, Any]:
     """
     conn = get_db_connection()
     try:
+        if source_device_ids is not None and not source_device_ids:
+            return {'unmanaged_nodes': [], 'unmanaged_links': []}
+        clauses = [
+            'o.target_device_id IS NULL',
+            "COALESCE(o.neighbor_name_raw, '') <> ''",
+        ]
+        params: list[Any] = []
+        if site_id:
+            clauses.append(
+                "COALESCE(NULLIF(d.site_id, ''), NULLIF(o.source_site_id, ''), '') = ?"
+            )
+            params.append(site_id)
+        source_filter, source_params = _device_id_filter('o.source_device_id', source_device_ids)
+        if source_filter:
+            clauses.append(source_filter)
+            params.extend(source_params)
         rows = conn.execute(
-            '''
+            f'''
             SELECT o.source_device_id, o.source_hostname, o.source_port_raw, o.source_port_normalized,
                    o.neighbor_name_raw, o.neighbor_name_normalized, o.neighbor_ip_address,
                    o.target_port_raw, o.target_port_normalized, o.protocol, o.confidence,
@@ -3049,12 +3106,10 @@ def get_unmanaged_neighbors(site_id: str | None = None) -> dict[str, Any]:
             FROM topology_observations o
             JOIN devices d ON d.id = o.source_device_id
             LEFT JOIN sites s ON s.id = COALESCE(NULLIF(d.site_id, ''), NULLIF(o.source_site_id, ''))
-            WHERE o.target_device_id IS NULL
-              AND COALESCE(o.neighbor_name_raw, '') <> ''
-              AND (? IS NULL OR COALESCE(NULLIF(d.site_id, ''), NULLIF(o.source_site_id, ''), '') = ?)
+            WHERE {' AND '.join(clauses)}
             ORDER BY source_site_name, o.source_hostname, o.neighbor_name_raw
             ''',
-            (site_id, site_id),
+            tuple(params),
         ).fetchall()
 
         # Group by unique unmanaged neighbor identity (normalized name + ip)
@@ -3136,25 +3191,45 @@ def get_unmanaged_neighbors(site_id: str | None = None) -> dict[str, Any]:
         conn.close()
 
 
-def get_topology_site_summaries() -> list[dict[str, Any]]:
-    """Return canonical site cards used by the first-level topology view."""
+def get_topology_site_summaries(
+    *,
+    tenant_id: str | None = None,
+    site_ids: list[str] | tuple[str, ...] | None = None,
+    device_ids: list[str] | tuple[str, ...] | None = None,
+) -> list[dict[str, Any]]:
+    """Return canonical site cards used by the first-level topology view.
+
+    The optional filters are applied before the cards are assembled so a
+    tenant/site-scoped caller cannot infer another scope from device, link,
+    orphan, or discovery-run counts.
+    """
     conn = get_db_connection()
     try:
         site_rows = conn.execute(
-            "SELECT id, site_code, site_name, status FROM sites ORDER BY site_name"
+            "SELECT id, site_code, site_name, status, tenant_id FROM sites ORDER BY site_name"
         ).fetchall()
         device_rows = conn.execute(
-            "SELECT id, site_id, status FROM devices ORDER BY id"
+            """
+            SELECT d.id,
+                   COALESCE(NULLIF(pa.site_id, ''), NULLIF(d.site_id, '')) AS site_id,
+                   d.status, s.tenant_id
+            FROM devices d
+            LEFT JOIN physical_assets pa ON pa.id = d.asset_id
+            LEFT JOIN sites s ON s.id = COALESCE(NULLIF(pa.site_id, ''), NULLIF(d.site_id, ''))
+            ORDER BY d.id
+            """
         ).fetchall()
         link_rows = conn.execute(
             '''
             SELECT l.link_key, l.source_device_id, l.target_device_id,
-                   COALESCE(NULLIF(sd.site_id, ''), NULLIF(l.source_site_id, ''), '') AS source_site_id,
-                   COALESCE(NULLIF(td.site_id, ''), NULLIF(l.target_site_id, ''), '') AS target_site_id,
+                   COALESCE(NULLIF(spa.site_id, ''), NULLIF(sd.site_id, ''), NULLIF(l.source_site_id, ''), '') AS source_site_id,
+                   COALESCE(NULLIF(tpa.site_id, ''), NULLIF(td.site_id, ''), NULLIF(l.target_site_id, ''), '') AS target_site_id,
                    l.status, l.last_seen
             FROM topology_links l
             LEFT JOIN devices sd ON sd.id = l.source_device_id
             LEFT JOIN devices td ON td.id = l.target_device_id
+            LEFT JOIN physical_assets spa ON spa.id = sd.asset_id
+            LEFT JOIN physical_assets tpa ON tpa.id = td.asset_id
             '''
         ).fetchall()
         orphan_rows = conn.execute(
@@ -3177,6 +3252,46 @@ def get_topology_site_summaries() -> list[dict[str, Any]]:
         ).fetchall()
     finally:
         conn.close()
+
+    normalized_site_ids = None if site_ids is None else {
+        str(item).strip() for item in site_ids if str(item).strip()
+    }
+    requested_device_ids = None if device_ids is None else {
+        str(item).strip() for item in device_ids if str(item).strip()
+    }
+    site_rows = [
+        dict(row) for row in site_rows
+        if (not tenant_id or str(row['tenant_id'] or '') == str(tenant_id))
+        and (normalized_site_ids is None or str(row['id'] or '') in normalized_site_ids)
+    ]
+    visible_site_ids = {str(row['id']) for row in site_rows}
+    device_rows = [
+        dict(row) for row in device_rows
+        if (requested_device_ids is None or str(row['id'] or '') in requested_device_ids)
+        and (not tenant_id or str(row['tenant_id'] or '') == str(tenant_id))
+        and (normalized_site_ids is None or str(row['site_id'] or '') in normalized_site_ids)
+    ]
+    visible_device_ids = {str(row['id']) for row in device_rows}
+    if requested_device_ids is not None:
+        # Preserve an explicit empty authorized set as empty, rather than
+        # treating it as an omitted filter.
+        visible_device_ids &= requested_device_ids
+    link_rows = [
+        dict(row) for row in link_rows
+        if str(row['source_device_id'] or '') in visible_device_ids
+        and str(row['target_device_id'] or '') in visible_device_ids
+    ]
+    orphan_rows = [
+        dict(row) for row in orphan_rows
+        if (not visible_device_ids or str(row.get('source_device_id') or '') in visible_device_ids)
+    ]
+    if not visible_device_ids and (requested_device_ids is not None or tenant_id or normalized_site_ids is not None):
+        orphan_rows = []
+    run_rows = [
+        dict(row) for row in run_rows
+        if (not normalized_site_ids or str(row['site_id'] or '') in normalized_site_ids)
+        and (not tenant_id or str(row['site_id'] or '') in visible_site_ids)
+    ]
 
     site_aliases: dict[str, str] = {}
     for row in site_rows:
@@ -3282,39 +3397,67 @@ def get_topology_site_summaries() -> list[dict[str, Any]]:
     return sorted(summaries.values(), key=lambda item: str(item['site_name']).lower())
 
 
-def get_topology_generation_status() -> dict[str, Any]:
+def get_topology_generation_status(
+    *,
+    device_ids: list[str] | tuple[str, ...] | None = None,
+) -> dict[str, Any]:
     """Return an explainable snapshot of how the current graph was generated."""
     conn = get_db_connection()
     try:
+        device_filter, device_params = _device_id_filter('d.id', device_ids)
+        device_where = f'WHERE {device_filter}' if device_filter else ''
         device_metrics = conn.execute(
-            '''
+            f'''
             SELECT COUNT(*) AS managed_devices,
                    SUM(CASE WHEN status = 'online' AND COALESCE(ip_address, '') <> '' THEN 1 ELSE 0 END) AS eligible_devices
-            FROM devices
-            '''
+            FROM devices d
+            {device_where}
+            ''',
+            tuple(device_params),
         ).fetchone()
+        observation_filter, observation_params = _device_id_filter('o.source_device_id', device_ids)
+        observation_where = f'WHERE {observation_filter}' if observation_filter else ''
         observation_metrics = conn.execute(
-            '''
+            f'''
             SELECT COUNT(*) AS total_observations,
                    SUM(CASE WHEN COALESCE(match_status, 'unmatched') = 'matched' THEN 1 ELSE 0 END) AS matched_observations,
                    SUM(CASE WHEN COALESCE(match_status, 'unmatched') = 'ambiguous' THEN 1 ELSE 0 END) AS ambiguous_observations,
                    SUM(CASE WHEN COALESCE(match_status, 'unmatched') = 'unmatched' THEN 1 ELSE 0 END) AS unmatched_observations,
                    MAX(collected_at) AS last_observation_at
-            FROM topology_observations
-            '''
+            FROM topology_observations o
+            {observation_where}
+            ''',
+            tuple(observation_params),
         ).fetchone()
+        link_filter_source, link_source_params = _device_id_filter('source_device_id', device_ids)
+        link_filter_target, link_target_params = _device_id_filter('target_device_id', device_ids)
+        link_where_parts = [item for item in (link_filter_source, link_filter_target) if item]
+        link_where = f"WHERE {' AND '.join(link_where_parts)}" if link_where_parts else ''
         link_rows = conn.execute(
-            'SELECT status, last_seen, evidence_count FROM topology_links'
+            f'SELECT status, last_seen, evidence_count FROM topology_links {link_where}',
+            tuple([*link_source_params, *link_target_params]),
         ).fetchall()
+        if device_ids is None:
+            run_where = ''
+            run_params: list[Any] = []
+        else:
+            run_filter, run_filter_params = _device_id_filter('rd.device_id', device_ids)
+            run_where = (
+                'WHERE EXISTS (SELECT 1 FROM topology_discovery_run_devices rd '
+                f'WHERE rd.run_id = topology_discovery_runs.id AND {run_filter})'
+            )
+            run_params = run_filter_params
         latest_run_row = conn.execute(
-            '''
+            f'''
             SELECT id, scope, site_id, status, requested_by, started_at, completed_at,
                    total_devices, success_devices, failed_devices, total_observations,
                    total_links, last_error_code, summary_json
             FROM topology_discovery_runs
+            {run_where}
             ORDER BY started_at DESC
             LIMIT 1
-            '''
+            ''',
+            tuple(run_params),
         ).fetchone()
     finally:
         conn.close()
@@ -3409,16 +3552,32 @@ def get_topology_generation_status() -> dict[str, Any]:
     }
 
 
-def list_discovery_runs(limit: int = 20) -> list[dict[str, Any]]:
+def list_discovery_runs(
+    limit: int = 20,
+    *,
+    device_ids: list[str] | tuple[str, ...] | None = None,
+) -> list[dict[str, Any]]:
     conn = get_db_connection()
     try:
+        run_filter, run_params = _device_id_filter('rd.device_id', device_ids)
+        run_where = ''
+        params: list[Any] = []
+        if device_ids is not None:
+            run_where = (
+                'WHERE EXISTS (SELECT 1 FROM topology_discovery_run_devices rd '
+                f'WHERE rd.run_id = topology_discovery_runs.id AND {run_filter}) '
+                'AND NOT EXISTS (SELECT 1 FROM topology_discovery_run_devices rd_hidden '
+                f'WHERE rd_hidden.run_id = topology_discovery_runs.id AND NOT ({run_filter.replace("rd.", "rd_hidden.")}))'
+            )
+            params.extend([*run_params, *run_params])
         rows = conn.execute(
-            '''
+            f'''
             SELECT * FROM topology_discovery_runs
+            {run_where}
             ORDER BY started_at DESC
             LIMIT ?
             ''',
-            (limit,),
+            tuple([*params, limit]),
         ).fetchall()
         results = []
         for row in rows:
@@ -3442,10 +3601,26 @@ def get_discovery_run(
     *,
     device_limit: int = 100,
     device_offset: int = 0,
+    device_ids: list[str] | tuple[str, ...] | None = None,
 ) -> dict[str, Any] | None:
     conn = get_db_connection()
     try:
-        run_row = conn.execute('SELECT * FROM topology_discovery_runs WHERE id = ?', (run_id,)).fetchone()
+        run_filter, run_params = _device_id_filter('rd.device_id', device_ids)
+        if device_ids is None:
+            run_sql = 'SELECT * FROM topology_discovery_runs WHERE id = ?'
+            run_query_params: list[Any] = [run_id]
+        else:
+            run_sql = (
+                'SELECT * FROM topology_discovery_runs '
+                'WHERE id = ? AND EXISTS ('
+                'SELECT 1 FROM topology_discovery_run_devices rd '
+                f'WHERE rd.run_id = topology_discovery_runs.id AND {run_filter}) '
+                'AND NOT EXISTS ('
+                'SELECT 1 FROM topology_discovery_run_devices rd_hidden '
+                f'WHERE rd_hidden.run_id = topology_discovery_runs.id AND NOT ({run_filter.replace("rd.", "rd_hidden.")}))'
+            )
+            run_query_params = [run_id, *run_params, *run_params]
+        run_row = conn.execute(run_sql, tuple(run_query_params)).fetchone()
         if not run_row:
             return None
         safe_limit = max(1, min(int(device_limit or 100), 500))
@@ -3502,19 +3677,40 @@ def get_discovery_evidence(
     offset: int = 0,
     match_status: str | None = None,
     include_raw: bool = False,
+    device_ids: list[str] | tuple[str, ...] | None = None,
 ) -> dict[str, Any] | None:
     """Return bounded LLDP evidence without loading a whole run into memory."""
     safe_limit = max(1, min(int(limit or 100), 500))
     safe_offset = max(0, int(offset or 0))
     clauses = ['o.discovery_run_id = ?']
     params: list[Any] = [run_id]
+    device_filter, device_params = _device_id_filter('o.source_device_id', device_ids)
+    if device_ids is not None:
+        clauses.append(device_filter)
+        params.extend(device_params)
     if match_status in {'matched', 'ambiguous', 'unmatched'}:
         clauses.append('COALESCE(o.match_status, \'unmatched\') = ?')
         params.append(match_status)
     where_sql = ' AND '.join(clauses)
     conn = get_db_connection()
     try:
-        run_exists = conn.execute('SELECT id FROM topology_discovery_runs WHERE id = ?', (run_id,)).fetchone()
+        if device_ids is None:
+            run_exists = conn.execute(
+                'SELECT id FROM topology_discovery_runs WHERE id = ?',
+                (run_id,),
+            ).fetchone()
+        else:
+            run_filter, run_params = _device_id_filter('rd.device_id', device_ids)
+            run_exists = conn.execute(
+                'SELECT id FROM topology_discovery_runs '
+                'WHERE id = ? AND EXISTS ('
+                'SELECT 1 FROM topology_discovery_run_devices rd '
+                f'WHERE rd.run_id = topology_discovery_runs.id AND {run_filter}) '
+                'AND NOT EXISTS ('
+                'SELECT 1 FROM topology_discovery_run_devices rd_hidden '
+                f'WHERE rd_hidden.run_id = topology_discovery_runs.id AND NOT ({run_filter.replace("rd.", "rd_hidden.")}))',
+                tuple([run_id, *run_params, *run_params]),
+            ).fetchone()
         if not run_exists:
             return None
         total_row = conn.execute(

@@ -130,7 +130,21 @@ def attach_pagination(payload: dict[str, Any], meta: PaginationMeta, *, filters:
 
 
 def is_stable_api_path(path: str) -> bool:
-    return path.startswith(("/api/knowledge", "/api/v1/ai", "/api/ai"))
+    # RackVision and the related inventory/health/topology surfaces use the
+    # same safe error envelope.  This is intentionally limited to error
+    # handling; successful legacy response shapes remain unchanged for the
+    # existing Rack page during the compatibility window.
+    return path.startswith((
+        "/api/knowledge",
+        "/api/v1/ai",
+        "/api/ai",
+        "/api/racks",
+        "/api/rack-",
+        "/api/device-types",
+        "/api/assets",
+        "/api/device-health",
+        "/api/topology",
+    ))
 
 
 def stable_error_payload(status_code: int, detail: Any, *, request_id: str = "") -> dict[str, Any]:

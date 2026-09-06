@@ -2,6 +2,7 @@ import React, { useCallback, useEffect, useMemo, useState } from 'react';
 import { Activity, AlertTriangle, ArrowRight, CheckCircle2, ChevronRight, ClipboardCheck, Clock, Cpu, Download, Eye, FileText, Loader2, Play, RefreshCw, Search, Server, Shield, Wifi, WifiOff, X, XCircle, Zap, BarChart3, CalendarClock, ExternalLink, HardDrive, Layers } from 'lucide-react';
 import { Bar, CartesianGrid, ComposedChart, Line, ResponsiveContainer, Tooltip, XAxis, YAxis } from 'recharts';
 import type { Device, DeviceHealthHistoryResponse, DeviceHealthOverview } from '../types';
+import { authHeaders as apiAuthHeaders } from '../api/http';
 import { useChartTheme } from '../hooks/useChartTheme';
 import { ActionButton, ActionIconButton, ActionIconGroup } from '../components/ui/ActionIconButton';
 import { useSystem } from '../hooks/useSystem';
@@ -165,7 +166,7 @@ const InspectionTab: React.FC<InspectionTabProps> = ({ language, devices, overvi
   const fetchHistory = useCallback(async () => {
     setHistoryLoading(true);
     try {
-      const resp = await fetch(`/api/device-health/history?range_hours=${rangeHours}`);
+      const resp = await fetch(`/api/device-health/history?range_hours=${rangeHours}`, { headers: apiAuthHeaders() });
       if (resp.ok) {
         const data = await resp.json();
         setHistory(data);

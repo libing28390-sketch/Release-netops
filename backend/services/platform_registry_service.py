@@ -136,9 +136,10 @@ SYSTEM_PROFILES: tuple[dict[str, Any], ...] = (
     {"platform_code": "huawei_vrp5", "name_zh": "华为 VRP V5", "name_en": "Huawei VRP V5", "vendor": "Huawei", "connection_driver": "huawei_vrp", "parser_platform": "huawei_vrp"},
     {"platform_code": "huawei_vrp8", "name_zh": "华为 VRP V8", "name_en": "Huawei VRP V8", "vendor": "Huawei", "connection_driver": "huawei_vrp", "parser_platform": "huawei_vrpv8"},
     {"platform_code": "huawei_vrp_unknown", "name_zh": "华为 VRP 未知版本", "name_en": "Huawei VRP Unknown", "vendor": "Huawei", "connection_driver": "huawei_vrp", "parser_platform": "huawei_vrp"},
-    # The profile IDs/codes remain concrete so V5/V7/V9 can carry different
+    # The profile IDs/codes remain concrete so V3/V5/V7/V9 can carry different
     # commands and template releases.  Their public parser family is one
     # canonical H3C key; ``hp_comware`` remains only the Netmiko driver name.
+    {"platform_code": "h3c_comware_v3", "name_zh": "华三 Comware V3", "name_en": "H3C Comware V3", "vendor": "H3C", "connection_driver": "hp_comware", "parser_platform": "h3c_comware"},
     {"platform_code": "hp_comware", "name_zh": "H3C Comware V5", "name_en": "H3C Comware V5", "vendor": "H3C", "connection_driver": "hp_comware", "parser_platform": "h3c_comware"},
     {"platform_code": "h3c_comware", "name_zh": "H3C Comware V7", "name_en": "H3C Comware V7", "vendor": "H3C", "connection_driver": "hp_comware", "parser_platform": "h3c_comware"},
     {"platform_code": "h3c_comware9", "name_zh": "H3C Comware V9", "name_en": "H3C Comware V9", "vendor": "H3C", "connection_driver": "hp_comware", "parser_platform": "h3c_comware"},
@@ -186,6 +187,7 @@ PLATFORM_CATALOG_METADATA: dict[str, dict[str, str]] = {
     "huawei_vrp5": {"catalog_vendor": "huawei", "platform_family": "huawei_vrp", "version": "v5"},
     "huawei_vrp8": {"catalog_vendor": "huawei", "platform_family": "huawei_vrp", "version": "v8"},
     "huawei_vrp_unknown": {"catalog_vendor": "huawei", "platform_family": "huawei_vrp", "version": "unknown"},
+    "h3c_comware_v3": {"catalog_vendor": "h3c", "platform_family": "h3c_comware", "version": "v3"},
     "h3c_comware_v5": {"catalog_vendor": "h3c", "platform_family": "h3c_comware", "version": "v5"},
     "h3c_comware_v7": {"catalog_vendor": "h3c", "platform_family": "h3c_comware", "version": "v7"},
     "h3c_comware_v9": {"catalog_vendor": "h3c", "platform_family": "h3c_comware", "version": "v9"},
@@ -301,6 +303,10 @@ PROFILE_ACTION_COMMANDS["hp_comware"] = {
     "get_bgp_routes": "display bgp routing-table",
 }
 PROFILE_ACTION_COMMANDS["h3c_comware_v5"] = dict(PROFILE_ACTION_COMMANDS["hp_comware"])
+# Comware V3 is an older CLI generation.  Until a version-specific fixture
+# is available, use the verified legacy V5 command forms rather than the V7
+# address-family variants.
+PROFILE_ACTION_COMMANDS["h3c_comware_v3"] = dict(PROFILE_ACTION_COMMANDS["hp_comware"])
 PROFILE_ACTION_COMMANDS["h3c_comware9"] = dict(PROFILE_ACTION_COMMANDS["h3c_comware"])
 
 
@@ -479,10 +485,10 @@ def platform_codes_match(device_platform: Any, profile_platform: Any, parser_pla
         for value in (profile_code, parser_code)
         if value
     )
-    if device_code in {"h3c", "comware", "h3c_comware", "h3c_comware_v5", "h3c_comware_v7", "h3c_comware_v9"}:
+    if device_code in {"h3c", "comware", "h3c_comware", "h3c_comware_v3", "h3c_comware_v5", "h3c_comware_v7", "h3c_comware_v9"}:
         device_code = "h3c_comware"
     candidates = {
-        "h3c_comware" if value in {"h3c", "comware", "h3c_comware", "h3c_comware_v5", "h3c_comware_v7", "h3c_comware_v9"} else value
+        "h3c_comware" if value in {"h3c", "comware", "h3c_comware", "h3c_comware_v3", "h3c_comware_v5", "h3c_comware_v7", "h3c_comware_v9"} else value
         for value in candidates
     }
     return device_code in candidates or normalize_platform_code(device_code) in candidates

@@ -29,6 +29,7 @@ def _h3c_device(profile_code: str) -> dict[str, str]:
 
 def test_h3c_profiles_share_hp_comware_transport_but_select_concrete_parser_namespace():
     expected = {
+        'h3c_comware_v3': 'h3c_comware_v3',
         'hp_comware': 'h3c_comware_v5',
         'h3c_comware': 'h3c_comware_v7',
         'h3c_comware9': 'h3c_comware_v9',

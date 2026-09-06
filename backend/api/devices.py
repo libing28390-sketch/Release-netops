@@ -86,6 +86,17 @@ def _utc_now() -> str:
     return datetime.now(timezone.utc).strftime('%Y-%m-%dT%H:%M:%S+00:00')
 
 
+def _tenant_id_from_authenticated_user(user: dict) -> str:
+    """Return the non-empty tenant that owns a newly written device."""
+    tenant_id = str(user.get('tenant_id') or '').strip() if isinstance(user, dict) else ''
+    if not tenant_id:
+        raise HTTPException(
+            status_code=403,
+            detail='Authenticated user is not assigned to a tenant',
+        )
+    return tenant_id
+
+
 def _vendor_from_platform(platform: str) -> str:
     """Best-effort vendor from Netmiko platform string."""
     p = (platform or '').lower()
@@ -2289,7 +2300,8 @@ def remove_snmp_mib(mib_id: str, user=require_role("Operator")):
 
 
 @router.post("/devices")
-def create_device(device: dict = Body(...)):
+def create_device(device: dict = Body(...), user=require_role("Operator")):
+    tenant_id = _tenant_id_from_authenticated_user(user)
     conn = get_db_connection()
     device_id = device.get('id') or str(uuid.uuid4())
     try:
@@ -2346,7 +2358,7 @@ def create_device(device: dict = Body(...)):
     try:
         conn.execute('''
             INSERT INTO devices (
-                id, hostname, ip_address, platform, status, compliance, username, password, 
+                id, tenant_id, hostname, ip_address, platform, status, compliance, username, password,
                 sn, model, version, role, site, uptime, connection_method, snmp_community, 
                 snmp_port, lifecycle_status, enable_password, priv_username, credential_source, 
                 vault_path, normal_username, normal_password, admin_username, admin_password, auth_model,
@@ -2354,12 +2366,13 @@ def create_device(device: dict = Body(...)):
                 platform_source, platform_locked
             )
             VALUES (
-                ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?,
+                ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?,
                 ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?,
                 ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?
             )
         ''', (
             device_id,
+            tenant_id,
             device.get('hostname'),
             device.get('ip_address'),
             platform,
@@ -2414,8 +2427,8 @@ def create_device(device: dict = Body(...)):
             severity='medium',
             status='success',
             summary=f"Created device {device.get('hostname')}",
-            actor_username=device.get('actor_username') or 'admin',
-            actor_role=device.get('actor_role') or 'Administrator',
+            actor_username=user.get('username') or 'system',
+            actor_role=user.get('role') or 'Operator',
             target_type='device',
             target_id=device_id,
             target_name=device.get('hostname'),
@@ -3247,7 +3260,8 @@ def test_device_connection(payload: dict = Body(...)):
         return _build_ssh_failure_response(hostname, ip_address, user_message, probe_output, probe_stages, status_code=500, port=port)
 
 @router.post("/devices/import")
-def import_devices(payload: dict = Body(...)):
+def import_devices(payload: dict = Body(...), user=require_role("Operator")):
+    tenant_id = _tenant_id_from_authenticated_user(user)
     devices = payload.get('devices', [])
     if not isinstance(devices, list):
         raise HTTPException(status_code=400, detail="Invalid data format")
@@ -3257,10 +3271,11 @@ def import_devices(payload: dict = Body(...)):
         for device in devices:
             device_id = device.get('id') or str(uuid.uuid4())
             conn.execute('''
-                INSERT INTO devices (id, hostname, ip_address, platform, status, compliance, sn, model, version, role, site, uptime, connection_method) 
-                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                INSERT INTO devices (id, tenant_id, hostname, ip_address, platform, status, compliance, sn, model, version, role, site, uptime, connection_method)
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
             ''', (
                 device_id,
+                tenant_id,
                 device.get('hostname'),
                 device.get('ip_address'),
                 device.get('platform', 'unknown'),
@@ -3282,8 +3297,8 @@ def import_devices(payload: dict = Body(...)):
             severity='medium',
             status='success',
             summary=f"Imported {len(devices)} device(s)",
-            actor_username=payload.get('actor_username') or 'admin',
-            actor_role=payload.get('actor_role') or 'Administrator',
+            actor_username=user.get('username') or 'system',
+            actor_role=user.get('role') or 'Operator',
             target_type='device_batch',
             target_name=f"{len(devices)} devices",
             details={'count': len(devices)},

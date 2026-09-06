@@ -350,10 +350,15 @@ class TagTargetFilter(BaseModel):
 
 # ─── Rack Management 机柜管理 ────────────────────────────
 
-_RACK_POSITIONS = {'front', 'rear'}
+_RACK_POSITIONS = {'front', 'rear', 'full_depth', 'left_side', 'right_side', 'unknown'}
+_RACK_MOUNT_KINDS = {'u_mount', 'zero_u', 'side_mount', 'floor', 'unknown'}
+_RACK_PLACEMENT_STATUSES = {'confirmed', 'estimated', 'unknown', 'invalid'}
+_RACK_PLACEMENT_SOURCES = {'manual', 'asset_import', 'legacy_rack_device', 'legacy_asset', 'discovery', 'migration'}
+_RACK_DIMENSION_STATUSES = {'confirmed', 'estimated', 'unknown', 'pending_verification'}
 _RACK_DEVICE_ROLES = {'switch', 'router', 'firewall', 'server', 'storage', 'pdu', 'ups', 'patch_panel', 'other'}
 _RACK_STATUSES = {'active', 'planned', 'decommissioned'}
 _RACK_DEVICE_STATUSES = {'active', 'offline', 'planned', 'maintenance'}
+_RACK_MOUNT_POLICIES = {'front_only', 'front_rear', 'full_depth'}
 
 
 class RackCreate(BaseModel):
@@ -373,6 +378,7 @@ class RackCreate(BaseModel):
     width_mm: Optional[int] = 600
     depth_mm: Optional[int] = 1000
     allow_front_rear_mount: Optional[bool] = True
+    mount_policy: Optional[str] = None
 
     site_id: Optional[str] = None
     rack_code: Optional[str] = ''
@@ -418,6 +424,13 @@ class RackCreate(BaseModel):
             raise ValueError("placement_strategy must be either 'bottom_first' or 'top_first'")
         return v
 
+    @field_validator('mount_policy')
+    @classmethod
+    def validate_mount_policy(cls, v: Optional[str]) -> Optional[str]:
+        if v is not None and v not in _RACK_MOUNT_POLICIES:
+            raise ValueError(f'mount_policy must be one of {_RACK_MOUNT_POLICIES}')
+        return v
+
 
 class RackUpdate(BaseModel):
     name: Optional[str] = None
@@ -435,6 +448,7 @@ class RackUpdate(BaseModel):
     width_mm: Optional[int] = None
     depth_mm: Optional[int] = None
     allow_front_rear_mount: Optional[bool] = None
+    mount_policy: Optional[str] = None
 
     site_id: Optional[str] = None
     rack_code: Optional[str] = None
@@ -458,6 +472,13 @@ class RackUpdate(BaseModel):
             raise ValueError("placement_strategy must be either 'bottom_first' or 'top_first'")
         return v
 
+    @field_validator('mount_policy')
+    @classmethod
+    def validate_mount_policy(cls, v: Optional[str]) -> Optional[str]:
+        if v is not None and v not in _RACK_MOUNT_POLICIES:
+            raise ValueError(f'mount_policy must be one of {_RACK_MOUNT_POLICIES}')
+        return v
+
 
 class RackTypeCreate(BaseModel):
     name: str
@@ -469,6 +490,7 @@ class RackTypeCreate(BaseModel):
     max_weight_kg: int = 0
     power_capacity_watts: int = 0
     allow_front_rear_mount: bool = True
+    mount_policy: str = 'front_rear'
     description: str = ''
 
     @field_validator('name')
@@ -486,6 +508,13 @@ class RackTypeCreate(BaseModel):
             raise ValueError('total_u must be between 1 and 60')
         return v
 
+    @field_validator('mount_policy')
+    @classmethod
+    def validate_mount_policy(cls, v: str) -> str:
+        if v not in _RACK_MOUNT_POLICIES:
+            raise ValueError(f'mount_policy must be one of {_RACK_MOUNT_POLICIES}')
+        return v
+
 
 class RackTypeUpdate(BaseModel):
     name: Optional[str] = None
@@ -497,7 +526,15 @@ class RackTypeUpdate(BaseModel):
     max_weight_kg: Optional[int] = None
     power_capacity_watts: Optional[int] = None
     allow_front_rear_mount: Optional[bool] = None
+    mount_policy: Optional[str] = None
     description: Optional[str] = None
+
+    @field_validator('mount_policy')
+    @classmethod
+    def validate_mount_policy(cls, v: Optional[str]) -> Optional[str]:
+        if v is not None and v not in _RACK_MOUNT_POLICIES:
+            raise ValueError(f'mount_policy must be one of {_RACK_MOUNT_POLICIES}')
+        return v
 
 
 
@@ -509,6 +546,15 @@ class DeviceTypeCreate(BaseModel):
     is_full_depth: bool = True
     description: str = ''
     power_watts: int = 0
+    depth_class: str = 'unknown'
+    width_mm: Optional[int] = None
+    depth_mm: Optional[int] = None
+    height_mm: Optional[int] = None
+    weight_kg: Optional[float] = None
+    dimension_status: str = 'unknown'
+    default_mount_kind: str = 'u_mount'
+    model_family: str = ''
+    catalog_key: str = ''
 
     @field_validator('model')
     @classmethod
@@ -521,8 +567,8 @@ class DeviceTypeCreate(BaseModel):
     @field_validator('u_height')
     @classmethod
     def validate_u_height(cls, v: int) -> int:
-        if v < 1 or v > 20:
-            raise ValueError('u_height must be between 1 and 20')
+        if v < 0 or v > 20:
+            raise ValueError('u_height must be between 0 and 20')
         return v
 
     @field_validator('device_role')
@@ -530,6 +576,41 @@ class DeviceTypeCreate(BaseModel):
     def validate_device_role(cls, v: str) -> str:
         if v not in _RACK_DEVICE_ROLES:
             raise ValueError(f'device_role must be one of {_RACK_DEVICE_ROLES}')
+        return v
+
+    @field_validator('depth_class')
+    @classmethod
+    def validate_depth_class(cls, v: str) -> str:
+        if v not in {'half', 'full', 'unknown'}:
+            raise ValueError("depth_class must be one of {'half', 'full', 'unknown'}")
+        return v
+
+    @field_validator('dimension_status')
+    @classmethod
+    def validate_dimension_status(cls, v: str) -> str:
+        if v not in _RACK_DIMENSION_STATUSES:
+            raise ValueError(f'dimension_status must be one of {_RACK_DIMENSION_STATUSES}')
+        return v
+
+    @field_validator('default_mount_kind')
+    @classmethod
+    def validate_default_mount_kind(cls, v: str) -> str:
+        if v not in _RACK_MOUNT_KINDS:
+            raise ValueError(f'default_mount_kind must be one of {_RACK_MOUNT_KINDS}')
+        return v
+
+    @field_validator('width_mm', 'depth_mm', 'height_mm')
+    @classmethod
+    def validate_dimension(cls, v: Optional[int]) -> Optional[int]:
+        if v is not None and v <= 0:
+            raise ValueError('dimensions must be positive when provided')
+        return v
+
+    @field_validator('weight_kg')
+    @classmethod
+    def validate_weight(cls, v: Optional[float]) -> Optional[float]:
+        if v is not None and v < 0:
+            raise ValueError('weight_kg must be non-negative')
         return v
 
 
@@ -541,14 +622,51 @@ class DeviceTypeUpdate(BaseModel):
     is_full_depth: Optional[bool] = None
     description: Optional[str] = None
     power_watts: Optional[int] = None
+    depth_class: Optional[str] = None
+    width_mm: Optional[int] = None
+    depth_mm: Optional[int] = None
+    height_mm: Optional[int] = None
+    weight_kg: Optional[float] = None
+    dimension_status: Optional[str] = None
+    default_mount_kind: Optional[str] = None
+    model_family: Optional[str] = None
+    catalog_key: Optional[str] = None
+
+    @field_validator('depth_class')
+    @classmethod
+    def validate_depth_class(cls, v: Optional[str]) -> Optional[str]:
+        if v is not None and v not in {'half', 'full', 'unknown'}:
+            raise ValueError("depth_class must be one of {'half', 'full', 'unknown'}")
+        return v
+
+    @field_validator('dimension_status')
+    @classmethod
+    def validate_dimension_status(cls, v: Optional[str]) -> Optional[str]:
+        if v is not None and v not in _RACK_DIMENSION_STATUSES:
+            raise ValueError(f'dimension_status must be one of {_RACK_DIMENSION_STATUSES}')
+        return v
+
+    @field_validator('default_mount_kind')
+    @classmethod
+    def validate_default_mount_kind(cls, v: Optional[str]) -> Optional[str]:
+        if v is not None and v not in _RACK_MOUNT_KINDS:
+            raise ValueError(f'default_mount_kind must be one of {_RACK_MOUNT_KINDS}')
+        return v
 
 
 class RackDeviceCreate(BaseModel):
     name: str
     rack_id: str
     device_type_id: str
-    start_u: int
+    start_u: Optional[int] = None
     position: str = 'front'
+    mount_kind: Optional[str] = None
+    height_u: Optional[int] = None
+    placement_status: Optional[str] = None
+    placement_source: str = 'manual'
+    dimension_status: Optional[str] = None
+    location_note: str = ''
+    model_key: str = ''
     status: str = 'active'
     serial_number: str = ''
     asset_id: str = ''
@@ -563,8 +681,8 @@ class RackDeviceCreate(BaseModel):
 
     @field_validator('start_u')
     @classmethod
-    def validate_start_u(cls, v: int) -> int:
-        if v < 1:
+    def validate_start_u(cls, v: Optional[int]) -> Optional[int]:
+        if v is not None and v < 1:
             raise ValueError('start_u must be >= 1')
         return v
 
@@ -575,6 +693,127 @@ class RackDeviceCreate(BaseModel):
             raise ValueError(f'position must be one of {_RACK_POSITIONS}')
         return v
 
+    @field_validator('mount_kind')
+    @classmethod
+    def validate_mount_kind(cls, v: Optional[str]) -> Optional[str]:
+        if v is not None and v not in _RACK_MOUNT_KINDS:
+            raise ValueError(f'mount_kind must be one of {_RACK_MOUNT_KINDS}')
+        return v
+
+    @field_validator('height_u')
+    @classmethod
+    def validate_height_u(cls, v: Optional[int]) -> Optional[int]:
+        if v is not None and v < 1:
+            raise ValueError('height_u must be >= 1 when provided')
+        return v
+
+    @field_validator('placement_status')
+    @classmethod
+    def validate_placement_status(cls, v: Optional[str]) -> Optional[str]:
+        if v is not None and v not in _RACK_PLACEMENT_STATUSES:
+            raise ValueError(f'placement_status must be one of {_RACK_PLACEMENT_STATUSES}')
+        return v
+
+    @field_validator('placement_source')
+    @classmethod
+    def validate_placement_source(cls, v: str) -> str:
+        if v not in _RACK_PLACEMENT_SOURCES:
+            raise ValueError(f'placement_source must be one of {_RACK_PLACEMENT_SOURCES}')
+        return v
+
+    @field_validator('dimension_status')
+    @classmethod
+    def validate_dimension_status(cls, v: Optional[str]) -> Optional[str]:
+        if v is not None and v not in _RACK_DIMENSION_STATUSES:
+            raise ValueError(f'dimension_status must be one of {_RACK_DIMENSION_STATUSES}')
+        return v
+
+
+class RackPlacementCreate(RackDeviceCreate):
+    """Canonical placement payload.
+
+    ``rack_id`` is supplied by the URL for the v2 placement endpoint.  It is
+    retained as an optional compatibility field so clients can reuse a
+    serialized rack-device form without accidentally creating a second
+    contract.
+    """
+
+    rack_id: str = ''
+
+
+class RackPlacementValidate(BaseModel):
+    """Inputs accepted by the side-effect-free placement validator."""
+
+    device_type_id: str
+    start_u: Optional[int] = None
+    position: str = 'front'
+    mount_kind: Optional[str] = None
+    height_u: Optional[int] = None
+    placement_status: Optional[str] = None
+    placement_source: str = 'manual'
+    dimension_status: Optional[str] = None
+    location_note: str = ''
+    model_key: str = ''
+    asset_id: str = ''
+    exclude_placement_id: str = ''
+
+    @field_validator('device_type_id')
+    @classmethod
+    def validate_device_type_id(cls, v: str) -> str:
+        value = v.strip()
+        if not value:
+            raise ValueError('device_type_id is required')
+        return value
+
+    @field_validator('start_u')
+    @classmethod
+    def validate_start_u(cls, v: Optional[int]) -> Optional[int]:
+        if v is not None and v < 1:
+            raise ValueError('start_u must be >= 1')
+        return v
+
+    @field_validator('position')
+    @classmethod
+    def validate_position(cls, v: str) -> str:
+        if v not in _RACK_POSITIONS:
+            raise ValueError(f'position must be one of {_RACK_POSITIONS}')
+        return v
+
+    @field_validator('mount_kind')
+    @classmethod
+    def validate_mount_kind(cls, v: Optional[str]) -> Optional[str]:
+        if v is not None and v not in _RACK_MOUNT_KINDS:
+            raise ValueError(f'mount_kind must be one of {_RACK_MOUNT_KINDS}')
+        return v
+
+    @field_validator('height_u')
+    @classmethod
+    def validate_height_u(cls, v: Optional[int]) -> Optional[int]:
+        if v is not None and v < 1:
+            raise ValueError('height_u must be >= 1 when provided')
+        return v
+
+    @field_validator('placement_status')
+    @classmethod
+    def validate_placement_status(cls, v: Optional[str]) -> Optional[str]:
+        if v is not None and v not in _RACK_PLACEMENT_STATUSES:
+            raise ValueError(f'placement_status must be one of {_RACK_PLACEMENT_STATUSES}')
+        return v
+
+    @field_validator('placement_source')
+    @classmethod
+    def validate_placement_source(cls, v: str) -> str:
+        if v not in _RACK_PLACEMENT_SOURCES:
+            raise ValueError(f'placement_source must be one of {_RACK_PLACEMENT_SOURCES}')
+        return v
+
+    @field_validator('dimension_status')
+    @classmethod
+    def validate_dimension_status(cls, v: Optional[str]) -> Optional[str]:
+        if v is not None and v not in _RACK_DIMENSION_STATUSES:
+            raise ValueError(f'dimension_status must be one of {_RACK_DIMENSION_STATUSES}')
+        return v
+
 
 class RackDeviceUpdate(BaseModel):
     name: Optional[str] = None
@@ -582,9 +821,65 @@ class RackDeviceUpdate(BaseModel):
     device_type_id: Optional[str] = None
     start_u: Optional[int] = None
     position: Optional[str] = None
+    mount_kind: Optional[str] = None
+    height_u: Optional[int] = None
+    placement_status: Optional[str] = None
+    placement_source: Optional[str] = None
+    dimension_status: Optional[str] = None
+    location_note: Optional[str] = None
+    model_key: Optional[str] = None
     status: Optional[str] = None
     serial_number: Optional[str] = None
     asset_id: Optional[str] = None
+
+    @field_validator('start_u')
+    @classmethod
+    def validate_start_u(cls, v: Optional[int]) -> Optional[int]:
+        if v is not None and v < 1:
+            raise ValueError('start_u must be >= 1')
+        return v
+
+    @field_validator('position')
+    @classmethod
+    def validate_position(cls, v: Optional[str]) -> Optional[str]:
+        if v is not None and v not in _RACK_POSITIONS:
+            raise ValueError(f'position must be one of {_RACK_POSITIONS}')
+        return v
+
+    @field_validator('mount_kind')
+    @classmethod
+    def validate_mount_kind(cls, v: Optional[str]) -> Optional[str]:
+        if v is not None and v not in _RACK_MOUNT_KINDS:
+            raise ValueError(f'mount_kind must be one of {_RACK_MOUNT_KINDS}')
+        return v
+
+    @field_validator('height_u')
+    @classmethod
+    def validate_height_u(cls, v: Optional[int]) -> Optional[int]:
+        if v is not None and v < 1:
+            raise ValueError('height_u must be >= 1 when provided')
+        return v
+
+    @field_validator('placement_status')
+    @classmethod
+    def validate_placement_status(cls, v: Optional[str]) -> Optional[str]:
+        if v is not None and v not in _RACK_PLACEMENT_STATUSES:
+            raise ValueError(f'placement_status must be one of {_RACK_PLACEMENT_STATUSES}')
+        return v
+
+    @field_validator('placement_source')
+    @classmethod
+    def validate_placement_source(cls, v: Optional[str]) -> Optional[str]:
+        if v is not None and v not in _RACK_PLACEMENT_SOURCES:
+            raise ValueError(f'placement_source must be one of {_RACK_PLACEMENT_SOURCES}')
+        return v
+
+    @field_validator('dimension_status')
+    @classmethod
+    def validate_dimension_status(cls, v: Optional[str]) -> Optional[str]:
+        if v is not None and v not in _RACK_DIMENSION_STATUSES:
+            raise ValueError(f'dimension_status must be one of {_RACK_DIMENSION_STATUSES}')
+        return v
 
 
 class PathDiagnoseRequest(BaseModel):

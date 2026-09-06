@@ -58,7 +58,7 @@ _PACKAGED_TEMPLATES_DIR = _PROJECT_ROOT / "release-textfsm-templates"
 
 # Nexora exposes one H3C/Comware parser family.  Concrete Comware generations
 # are selected by the Platform Profile and, where the grammar really differs,
-# by an explicit template variant such as ``h3c_comware_v5`` or
+# by an explicit template variant such as ``h3c_comware_v3`` or
 # ``h3c_comware_v9``.  ``hp_comware`` is deliberately not a TextFSM alias: it
 # is only the literal Netmiko device_type at the transport adapter boundary.
 TEXTFSM_PLATFORM_MAP = {
@@ -71,6 +71,7 @@ TEXTFSM_PLATFORM_MAP = {
     'h3c': 'h3c_comware',
     'comware': 'h3c_comware',
     'h3c_comware': 'h3c_comware',
+    'h3c_comware_v3': 'h3c_comware',
     'h3c_comware_v5': 'h3c_comware',
     'h3c_comware_v7': 'h3c_comware',
     'h3c_comware_v9': 'h3c_comware',
@@ -108,6 +109,10 @@ _PLANNED_TEMPLATE_PLATFORM_CANDIDATES = {
     'huawei_vrp5': ['huawei_vrp5', 'huawei_vrp'],
     'huawei_vrp8': ['huawei_vrp8', 'huawei_vrpv8', 'huawei_vrp'],
     'huawei_vrp_unknown': ['huawei_vrp_unknown', 'huawei_vrp'],
+    # No V3-specific grammar is shipped yet.  V3 is the legacy Comware
+    # generation closest to V5, so prefer the verified V5 templates before
+    # falling back to the public family namespace.
+    'h3c_comware_v3': ['h3c_comware_v3', 'h3c_comware_v5', 'h3c_comware'],
     'h3c_comware_v5': ['h3c_comware_v5', 'h3c_comware'],
     'h3c_comware_v7': ['h3c_comware_v7', 'h3c_comware'],
     'h3c_comware_v9': ['h3c_comware_v9', 'h3c_comware'],
@@ -131,6 +136,7 @@ _PLANNED_TEMPLATE_PLATFORM_VERSIONS = {
     'huawei_vrp5': 'v5',
     'huawei_vrp8': 'v8',
     'huawei_vrp_unknown': 'unknown',
+    'h3c_comware_v3': 'v3',
     'h3c_comware_v5': 'v5',
     'h3c_comware_v7': 'v7',
     'h3c_comware_v9': 'v9',
@@ -149,6 +155,7 @@ _PLANNED_TEMPLATE_PLATFORM_BY_SELECTION = {
     ('huawei_vrp', 'v5'): 'huawei_vrp5',
     ('huawei_vrp', 'v8'): 'huawei_vrp8',
     ('huawei_vrp', 'unknown'): 'huawei_vrp_unknown',
+    ('h3c_comware', 'v3'): 'h3c_comware_v3',
     ('h3c_comware', 'v5'): 'h3c_comware_v5',
     ('h3c_comware', 'v7'): 'h3c_comware_v7',
     ('h3c_comware', 'v9'): 'h3c_comware_v9',
@@ -173,21 +180,21 @@ def resolve_textfsm_parser_platform(platform: str | None, version: str | None = 
     """Resolve the concrete H3C grammar variant used by inventory detection.
 
     ``h3c_comware`` remains the public parser family stored on a device. The
-    concrete V5/V7/V9 grammar is selected directly from the device profile,
+    concrete V3/V5/V7/V9 grammar is selected directly from the device profile,
     while the Comware major version is the only inventory evidence strong
     enough to select a variant automatically.
     Unknown versions intentionally stay on the family key so the caller can
     require an explicit manual selection.
     """
     raw = str(platform or '').strip().lower()
-    if raw in {'h3c_comware_v5', 'h3c_comware_v7', 'h3c_comware_v9'}:
+    if raw in {'h3c_comware_v3', 'h3c_comware_v5', 'h3c_comware_v7', 'h3c_comware_v9'}:
         return raw
     if raw in {'hp_comware', 'h3c_comware9', 'h3c', 'comware', ''}:
         raw = 'h3c_comware'
     if raw != 'h3c_comware':
         return resolve_textfsm_platform(raw)
 
-    match = re.search(r'(?<!\d)([579])(?:\.|\b)', str(version or '').strip().lower())
+    match = re.search(r'(?<!\d)([3579])(?:\.|\b)', str(version or '').strip().lower())
     if match:
         return f'h3c_comware_v{match.group(1)}'
     return 'h3c_comware'
@@ -212,7 +219,7 @@ def _canonical_template_filename(filename: str) -> str:
     lowered = str(filename or '').strip().lower()
     if lowered.startswith(('hp_comware_', 'h3c_comware9_')):
         raise ValueError(
-            'H3C TextFSM 模板必须使用 h3c_comware[_v5|_v7|_v9] 文件名前缀'
+            'H3C TextFSM 模板必须使用 h3c_comware[_v3|_v5|_v7|_v9] 文件名前缀'
         )
     if (
         lowered.startswith(_LEGACY_HUAWEI_VRP_FILENAME_PREFIX)
@@ -1387,6 +1394,10 @@ def _template_platform_candidates(platform: str) -> list[str]:
         # The family identity is historically VRP V5. Prefer its explicit
         # namespace, then retain the existing VRP8 compatibility fallback.
         return ['huawei_vrp5', 'huawei_vrp', 'huawei_vrpv8']
+    if selected.startswith('h3c_comware_v3'):
+        # V3 has no shipped, version-specific grammar yet.  Its legacy CLI
+        # forms are closest to the verified V5 templates.
+        return ['h3c_comware_v3', 'h3c_comware_v5', 'h3c_comware']
     if selected.startswith('h3c_comware_v5'):
         # V5 has its own command grammars.  Do not downgrade it to the V7
         # grammar when a V5 template is missing.  A versionless template is
@@ -1459,6 +1470,7 @@ def list_template_suggestions(platform: str, query: str, limit: int = 8) -> list
 
     normalized_platform = str(platform or '').strip().lower()
     requested_h3c_variant = normalized_platform if normalized_platform in {
+        'h3c_comware_v3',
         'h3c_comware_v5',
         'h3c_comware_v7',
         'h3c_comware_v9',
@@ -1473,10 +1485,15 @@ def list_template_suggestions(platform: str, query: str, limit: int = 8) -> list
         if str(item.get('platform') or '').lower() in platform_rank
     ]
     if requested_h3c_version:
+        allowed_versions = {requested_h3c_version, 'common'}
+        if requested_h3c_version == 'v3':
+            # Until a real V3 output fixture is registered, expose the
+            # verified legacy V5 grammar as the explicit compatibility path.
+            allowed_versions.add('v5')
         templates = [
             item for item in templates
             if str(item.get('platform') or '').lower() != 'h3c_comware'
-            or str(item.get('version') or '').strip().lower() in {requested_h3c_version, 'common'}
+            or str(item.get('version') or '').strip().lower() in allowed_versions
         ]
 
     ranked: list[tuple[int, int, dict[str, Any]]] = []
@@ -1552,7 +1569,7 @@ def _parse_template_filename(filename: str) -> dict[str, Any] | None:
         'huawei_smartax', 'huawei_ont',
         # H3C uses one public parser family.  Variant prefixes are explicit
         # grammar selectors and are checked before the family prefix.
-        'h3c_comware_unknown', 'h3c_comware_v5', 'h3c_comware_v7', 'h3c_comware_v9', 'h3c_comware',
+        'h3c_comware_unknown', 'h3c_comware_v3', 'h3c_comware_v5', 'h3c_comware_v7', 'h3c_comware_v9', 'h3c_comware',
         'juniper_junos', 'juniper_screenos',
         'arista_eos',
         'paloalto_panos',

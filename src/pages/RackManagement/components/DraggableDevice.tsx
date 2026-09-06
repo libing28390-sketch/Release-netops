@@ -31,8 +31,10 @@ export const DraggableDevice: React.FC<DraggableDeviceProps> = ({
   const hoverTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
 
   const rc = getNormalizedRoleColor(device.device_role, device.name, device.model);
-  const h = device.u_height * U_PX;
-  const topPx = uToY(device.start_u + device.u_height - 1, totalU);
+  const startU = device.start_u ?? 1;
+  const heightU = device.height_u ?? device.u_height ?? 1;
+  const h = heightU * U_PX;
+  const topPx = uToY(startU + heightU - 1, totalU);
 
   const style: React.CSSProperties = isDragOverlay
     ? { width: RACK_W - 4, height: h - 2 }
@@ -48,7 +50,7 @@ export const DraggableDevice: React.FC<DraggableDeviceProps> = ({
         zIndex: isDragging ? 50 : showTooltip ? 40 : 10,
       };
 
-  const endU = device.start_u + device.u_height - 1;
+  const endU = startU + heightU - 1;
   const roleName = zh ? rc.labelZh : rc.label;
   const statusInfo = STATUS_LABEL[device.status] || { zh: device.status, en: device.status };
   const powerColor = device.status === 'active' ? '#4ade80' : device.status === 'planned' ? '#fbbf24' : '#ef4444';
@@ -81,21 +83,21 @@ export const DraggableDevice: React.FC<DraggableDeviceProps> = ({
     >
       {/* Grip handle */}
       <div className="flex-shrink-0 pl-1 opacity-40">
-        <GripVertical size={device.u_height >= 2 ? 14 : 11} />
+        <GripVertical size={heightU >= 2 ? 14 : 11} />
       </div>
 
       {/* Power LED */}
-      <PowerLed status={device.status} size={device.u_height >= 2 ? 8 : 6} />
+      <PowerLed status={device.status} size={heightU >= 2 ? 8 : 6} />
 
       {/* Icon */}
-      <DeviceIcon role={device.device_role} size={device.u_height >= 2 ? 15 : 12} />
+      <DeviceIcon role={device.device_role} size={heightU >= 2 ? 15 : 12} />
 
       {/* Text */}
       <div className="flex-1 min-w-0 flex items-center gap-1.5 overflow-hidden">
-        <span className={`font-bold truncate ${device.u_height >= 2 ? 'text-[12px]' : 'text-[10px]'}`}>
+        <span className={`font-bold truncate ${heightU >= 2 ? 'text-[12px]' : 'text-[10px]'}`}>
           {device.name}
         </span>
-        {device.u_height >= 2 && (
+        {heightU >= 2 && (
           <span className="text-[9px] opacity-60 truncate hidden sm:inline">
             {device.vendor} {device.model}
           </span>
@@ -104,7 +106,7 @@ export const DraggableDevice: React.FC<DraggableDeviceProps> = ({
 
       {/* U badge */}
       <span className="text-[9px] font-mono opacity-60 pr-1.5 flex-shrink-0">
-        {device.u_height}U
+        {heightU}U
       </span>
 
       {/* Hover Tooltip */}
@@ -118,7 +120,7 @@ export const DraggableDevice: React.FC<DraggableDeviceProps> = ({
             <div className="space-y-1">
               <p>{zh ? '型号' : 'Model'}: <span className="font-medium text-cyan-300">{device.vendor} {device.model}</span></p>
               <p>{zh ? '角色' : 'Role'}: <span className="font-medium" style={{ color: rc.bg }}>{roleName}</span></p>
-              <p>U{zh ? '位' : ''}: <span className="font-mono font-medium">U{device.start_u}{endU !== device.start_u ? `–U${endU}` : ''} ({device.u_height}U)</span></p>
+              <p>U{zh ? '位' : ''}: <span className="font-mono font-medium">U{startU}{endU !== startU ? `–U${endU}` : ''} ({heightU}U)</span></p>
               <p>{zh ? '面板' : 'Panel'}: {device.position === 'front' ? (zh ? '前面板' : 'Front') : (zh ? '后面板' : 'Rear')}</p>
               <p>{zh ? '状态' : 'Status'}: {zh ? statusInfo.zh : statusInfo.en}</p>
               {device.serial_number && <p>SN: <span className="font-mono text-[10px]">{device.serial_number}</span></p>}

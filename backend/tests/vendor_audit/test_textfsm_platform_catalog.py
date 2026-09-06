@@ -30,6 +30,7 @@ PLANNED_PLATFORM_METADATA = {
     'huawei_vrp5': ('huawei', 'huawei_vrp', 'v5'),
     'huawei_vrp8': ('huawei', 'huawei_vrp', 'v8'),
     'huawei_vrp_unknown': ('huawei', 'huawei_vrp', 'unknown'),
+    'h3c_comware_v3': ('h3c', 'h3c_comware', 'v3'),
     'h3c_comware_v5': ('h3c', 'h3c_comware', 'v5'),
     'h3c_comware_v7': ('h3c', 'h3c_comware', 'v7'),
     'h3c_comware_v9': ('h3c', 'h3c_comware', 'v9'),
@@ -135,6 +136,7 @@ def test_textfsm_action_options_exclude_configuration_output_actions():
     [
         ('huawei_vrp', 'v5', 'huawei_vrp5'),
         ('huawei_vrp', 'v8', 'huawei_vrp8'),
+        ('h3c_comware', 'v3', 'h3c_comware_v3'),
         ('h3c_comware', 'v9', 'h3c_comware_v9'),
         ('maipu_mypower', 'v8', 'maipu_mypower_v8'),
         ('ruijie_rgos', 'v12', 'ruijie_rgos_v12'),

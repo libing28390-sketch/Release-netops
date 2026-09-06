@@ -129,7 +129,7 @@ def _seed_categories(conn) -> None:
         )
 
 
-def seed_builtin_tags(conn) -> int:
+def seed_builtin_tags(conn, *, commit: bool = True) -> int:
     _seed_categories(conn)
     inserted = 0
     now = _now()
@@ -153,12 +153,13 @@ def seed_builtin_tags(conn) -> int:
         except Exception:
             logger.exception("Failed to seed tag %s", tag.get("code"))
             raise
-    conn.commit()
+    if commit:
+        conn.commit()
     return inserted
 
 
-def _ensure_status_tag_ids(conn) -> dict[str, str]:
-    seed_builtin_tags(conn)
+def _ensure_status_tag_ids(conn, *, commit: bool = True) -> dict[str, str]:
+    seed_builtin_tags(conn, commit=commit)
     rows = conn.execute(
         "SELECT id, code FROM tag_definitions WHERE code IN ('system.status.online', 'system.status.offline')"
     ).fetchall()
@@ -169,8 +170,15 @@ def _system_status_value(device_status: str | None) -> str:
     return "online" if str(device_status or "").lower() == "online" else "offline"
 
 
-def sync_device_status_tag(conn, device_id: str, device_status: str | None, created_by: str = "system") -> bool:
-    tag_ids = _ensure_status_tag_ids(conn)
+def sync_device_status_tag(
+    conn,
+    device_id: str,
+    device_status: str | None,
+    created_by: str = "system",
+    *,
+    commit: bool = True,
+) -> bool:
+    tag_ids = _ensure_status_tag_ids(conn, commit=commit)
     target_id = tag_ids[_system_status_value(device_status)]
     current = conn.execute(
         '''SELECT ta.tag_id FROM tag_assignments ta JOIN tag_definitions td ON td.id = ta.tag_id
@@ -179,6 +187,8 @@ def sync_device_status_tag(conn, device_id: str, device_status: str | None, crea
     ).fetchall()
     current_ids = {str(row["tag_id"]) for row in current}
     if current_ids == {target_id}:
+        if commit:
+            conn.commit()
         return False
     conn.execute(
         '''DELETE FROM tag_assignments WHERE resource_type='device' AND resource_id=?
@@ -192,12 +202,17 @@ def sync_device_status_tag(conn, device_id: str, device_status: str | None, crea
         (device_id, target_id, _now(), created_by),
     )
     _record_history(conn, "device", device_id, target_id, "replace", "system", created_by, reason="device status")
+    if commit:
+        conn.commit()
     return True
 
 
 def sync_all_device_status_tags(conn) -> int:
     rows = conn.execute("SELECT id, status FROM devices").fetchall()
-    changed = sum(sync_device_status_tag(conn, str(row["id"]), row["status"]) for row in rows)
+    changed = sum(
+        sync_device_status_tag(conn, str(row["id"]), row["status"], commit=False)
+        for row in rows
+    )
     conn.commit()
     return changed
 
@@ -339,7 +354,15 @@ def get_device_tags(conn, device_id: str) -> list[dict]:
     return get_resource_tags(conn, "device", device_id)
 
 
-def set_resource_tags(conn, resource_type: str, resource_id: str, tag_ids: list[str], created_by: str = "") -> list[dict]:
+def set_resource_tags(
+    conn,
+    resource_type: str,
+    resource_id: str,
+    tag_ids: list[str],
+    created_by: str = "",
+    *,
+    commit: bool = True,
+) -> list[dict]:
     if resource_type not in _RESOURCE_TYPES:
         raise ValueError(f"Unsupported resource type: {resource_type}")
     tags = _load_assignable_tags(conn, tag_ids)
@@ -363,15 +386,23 @@ def set_resource_tags(conn, resource_type: str, resource_id: str, tag_ids: list[
     if resource_type == "device":
         row = conn.execute("SELECT status FROM devices WHERE id=?", (resource_id,)).fetchone()
         if row:
-            sync_device_status_tag(conn, resource_id, row["status"], "system")
-    conn.commit()
+            sync_device_status_tag(conn, resource_id, row["status"], "system", commit=False)
+    if commit:
+        conn.commit()
     return get_resource_tags(conn, resource_type, resource_id)
 
 
-def set_device_tags(conn, device_id: str, tag_ids: list[str], created_by: str = "") -> list[dict]:
+def set_device_tags(
+    conn,
+    device_id: str,
+    tag_ids: list[str],
+    created_by: str = "",
+    *,
+    commit: bool = True,
+) -> list[dict]:
     if not conn.execute("SELECT 1 FROM devices WHERE id=?", (device_id,)).fetchone():
         raise ValueError("Device not found")
-    return set_resource_tags(conn, "device", device_id, tag_ids, created_by)
+    return set_resource_tags(conn, "device", device_id, tag_ids, created_by, commit=commit)
 
 
 def add_resource_tag(conn, resource_type: str, resource_id: str, tag_id: str, created_by: str = "") -> bool:

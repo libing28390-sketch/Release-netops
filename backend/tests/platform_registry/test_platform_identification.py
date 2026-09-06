@@ -53,6 +53,7 @@ def _insert_rule(conn, profile_id: str, *, pattern: str, confidence: float = 0.9
 @pytest.mark.parametrize(
     ("platform", "version", "vendor", "expected_profile", "expected_parser"),
     [
+        ("h3c_comware", "3.10", "H3C", "h3c_comware_v3", "h3c_comware_v3"),
         ("h3c_comware", "5.20", "H3C", "h3c_comware_v5", "h3c_comware_v5"),
         ("h3c_comware", "7.1.070", "H3C", "h3c_comware_v7", "h3c_comware_v7"),
         ("h3c_comware", "7.1.070", "新华三", "h3c_comware_v7", "h3c_comware_v7"),

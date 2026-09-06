@@ -100,4 +100,29 @@ describe('useRackReadModel', () => {
     expect(result.current.summaryError).toBe('failed');
     expect(result.current.racks).toEqual([]);
   });
+
+  it('does not let an older layout response overwrite the newer rack selection', async () => {
+    let resolveOld: ((value: unknown) => void) | undefined;
+    let resolveNew: ((value: unknown) => void) | undefined;
+    const oldResponse = new Promise(resolve => { resolveOld = resolve; });
+    const newResponse = new Promise(resolve => { resolveNew = resolve; });
+    const fetchMock = vi.fn()
+      .mockResolvedValueOnce(apiResponse(summaryPage))
+      .mockReturnValueOnce(oldResponse)
+      .mockReturnValueOnce(newResponse);
+    vi.stubGlobal('fetch', fetchMock);
+
+    const { result } = renderHook(() => useRackReadModel({ page: 1, pageSize: 50 }));
+    await waitFor(() => expect(result.current.summaryLoading).toBe(false));
+
+    const oldLoad = result.current.loadLayout('rack-old', true);
+    const newLoad = result.current.loadLayout('rack-new', true);
+    resolveNew?.(apiResponse({ ...layout, id: 'rack-new' }));
+    await act(async () => { await newLoad; });
+    expect(result.current.layout?.id).toBe('rack-new');
+
+    resolveOld?.(apiResponse({ ...layout, id: 'rack-old' }));
+    await act(async () => { await oldLoad; });
+    expect(result.current.layout?.id).toBe('rack-new');
+  });
 });

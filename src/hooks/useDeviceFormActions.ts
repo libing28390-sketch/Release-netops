@@ -1,5 +1,6 @@
 import { useCallback, useState } from 'react';
 import type { Device } from '../types';
+import { authHeaders } from '../api/http';
 import { useInventoryStore } from '../store/inventoryStore';
 
 const EMPTY_ADD_FORM: Partial<Device> = {
@@ -92,7 +93,7 @@ export const useDeviceFormActions = ({ devices, setDevices, showToast }: UseDevi
     try {
       const response = await fetch('/api/devices', {
         method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
+        headers: authHeaders(true),
         body: JSON.stringify(addForm),
       });
       const data = await response.json();

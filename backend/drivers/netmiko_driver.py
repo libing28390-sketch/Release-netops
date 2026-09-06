@@ -227,6 +227,7 @@ class NetmikoDriver(BaseDriver):
             'cisco_nxos':   'cisco_nxos',
             'huawei_vrp':   'huawei',
             'h3c_comware':  'hp_comware',
+            'h3c_comware_v3': 'hp_comware',
             # platform_registry_service passes the profile's connection_driver
             # through as ``platform``; the Netmiko device-type name itself must
             # stay recognizable instead of falling back to Cisco.

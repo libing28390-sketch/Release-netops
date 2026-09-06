@@ -9,6 +9,7 @@ describe('TextFSM platform catalog', () => {
   it('covers every planned domestic platform namespace', () => {
     const plannedPlatforms = [
       'huawei_vrp5', 'huawei_vrp8', 'huawei_vrp_unknown',
+      'h3c_comware_v3',
       'h3c_comware_v5', 'h3c_comware_v7', 'h3c_comware_v9', 'h3c_comware_unknown',
       'maipu_mypower_v6', 'maipu_mypower_v8', 'maipu_mypower_v9', 'maipu_mypower_unknown',
       'ruijie_rgos_v10', 'ruijie_rgos_v11', 'ruijie_rgos_v12', 'ruijie_rgos_unknown',
@@ -31,6 +32,9 @@ describe('TextFSM platform catalog', () => {
     });
     expect(getEditorSelection('h3c_comware_unknown')).toEqual({
       vendor: 'h3c', platformFamily: 'h3c_comware', version: 'unknown',
+    });
+    expect(getEditorSelection('h3c_comware_v3')).toEqual({
+      vendor: 'h3c', platformFamily: 'h3c_comware', version: 'v3',
     });
     expect(getEditorSelection('maipu_mypower_v6')).toEqual({
       vendor: 'maipu', platformFamily: 'maipu_mypower', version: 'v6',

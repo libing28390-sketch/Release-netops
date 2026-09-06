@@ -1,5 +1,6 @@
 import { useEffect, useState } from 'react';
 import type { Device } from '../types';
+import { authHeaders } from '../api/http';
 
 interface UseInventoryPageDataParams {
   isAuthenticated: boolean;
@@ -102,7 +103,7 @@ export const useInventoryPageData = ({
     if (!isAuthenticated) return;
     const fetchAssetsTotal = async () => {
       try {
-        const resp = await fetch('/api/assets/summary');
+        const resp = await fetch('/api/assets/summary', { headers: authHeaders() });
         if (resp.ok) {
           const data = await resp.json();
           setAssetsTotal(data.total || 0);

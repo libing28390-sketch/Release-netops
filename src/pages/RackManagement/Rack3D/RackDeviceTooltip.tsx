@@ -83,7 +83,12 @@ export const RackDeviceTooltip: React.FC<RackDeviceTooltipProps> = memo(({
     unknown: zh ? '无遥测' : 'Unknown'
   }[device.healthStatus];
 
-  const uRange = device.heightU > 1 ? `U${device.startU} - U${device.endU}` : `U${device.startU}`;
+  const hasKnownUPlacement = device.mountKind === 'u_mount' && device.startKnown !== false && device.heightKnown !== false;
+  const uRange = device.mountKind === 'u_mount'
+    ? (hasKnownUPlacement
+      ? (device.heightU > 1 ? `U${device.startU} - U${device.endU}` : `U${device.startU}`)
+      : (zh ? 'U 位待确认' : 'U position pending'))
+    : `${device.mountKind || 'unknown'} / ${device.position || 'unknown'}`;
 
   const formatBps = (bps: number = 0) => {
     if (bps >= 1000000000) return `${(bps / 1000000000).toFixed(1)} Gbps`;
@@ -111,10 +116,10 @@ export const RackDeviceTooltip: React.FC<RackDeviceTooltipProps> = memo(({
         </div>
       </div>
 
-      {/* Model & U position */}
+      {/* Model & placement */}
       <div className="flex items-center justify-between text-xs text-slate-400 mb-2">
         <span className="truncate">{device.vendor} {device.model || 'Device'}</span>
-        <span className="text-slate-300 font-semibold">{uRange} ({device.heightU}U)</span>
+        <span className="text-slate-300 font-semibold">{uRange}{hasKnownUPlacement ? ` (${device.heightU}U)` : ''}</span>
       </div>
 
       {/* Embedded Real SNMP Port Matrix */}

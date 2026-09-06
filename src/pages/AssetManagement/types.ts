@@ -21,6 +21,30 @@ export interface WebAccessProfile {
   updated_at?: string;
 }
 
+export interface AssetPlacement {
+  id: string;
+  asset_id: string;
+  rack_id: string;
+  rack_code: string;
+  rack_name: string;
+  rack_site_id: string;
+  rack_site_code: string;
+  rack_site_name: string;
+  device_type_id: string;
+  start_u: number | null;
+  end_u: number | null;
+  height_u: number | null;
+  position: string;
+  mount_kind: string;
+  placement_status: string;
+  placement_source: string;
+  dimension_status: string;
+  location_note: string;
+  model_key: string;
+  status: string;
+  serial_number: string;
+}
+
 export interface Asset {
   id: string;
   asset_type: string;
@@ -79,6 +103,7 @@ export interface Asset {
   function?: string;
   zone?: string;
   power_watts?: number | string;
+  placement?: AssetPlacement | null;
   web_profiles?: WebAccessProfile[];
 }
 

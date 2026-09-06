@@ -9,7 +9,12 @@ template so tests can still mutate their database without sharing state.
 from __future__ import annotations
 
 import json
+import base64
+import hashlib
+import hmac
 import os
+import struct
+import time
 import uuid
 from datetime import datetime, timezone
 
@@ -43,23 +48,43 @@ def _utc_now_iso() -> str:
     return datetime.now(timezone.utc).replace(microsecond=0).isoformat()
 
 
+def current_test_totp(secret: str) -> str:
+    """Return the current six-digit TOTP for lifecycle integration tests.
+
+    This helper intentionally mirrors the application's pure-Python TOTP
+    implementation instead of depending on an optional authenticator package.
+    It is test-only and never used by production request handling.
+    """
+    padded = str(secret).strip().replace(" ", "")
+    padded += "=" * ((8 - len(padded) % 8) % 8)
+    key = base64.b32decode(padded, casefold=True)
+    counter = int(time.time() / 30)
+    digest = hmac.new(key, struct.pack(">Q", counter), hashlib.sha1).digest()
+    offset = digest[-1] & 0x0F
+    value = struct.unpack(">I", digest[offset : offset + 4])[0] & 0x7FFFFFFF
+    return f"{value % 1_000_000:06d}"
+
+
 def _insert_user(
     connection,
     *,
     username: str,
     role: str,
     change_groups: list[str] | None,
+    mfa_enabled: bool = False,
+    mfa_secret: str | None = None,
 ) -> dict:
     user_id = str(uuid.uuid4())
     now = _utc_now_iso()
+    resolved_mfa_secret = mfa_secret or (base64.b32encode(os.urandom(10)).decode("ascii").rstrip("=") if mfa_enabled else "")
     connection.execute(
         """
         INSERT INTO users (
             id, username, password, role, status, created_at,
             group_name, change_groups_json, notification_channels,
-            preferred_language, fixed_pin
+            preferred_language, fixed_pin, mfa_enabled, mfa_secret
         )
-        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
         """,
         (
             user_id,
@@ -73,10 +98,18 @@ def _insert_user(
             "{}",
             "zh",
             "",
+            1 if mfa_enabled else 0,
+            resolved_mfa_secret,
         ),
     )
     connection.commit()
-    return {"user_id": user_id, "username": username, "role": role}
+    return {
+        "user_id": user_id,
+        "username": username,
+        "role": role,
+        "mfa_enabled": bool(mfa_enabled),
+        "mfa_secret": resolved_mfa_secret,
+    }
 
 
 @pytest.fixture(scope="session", autouse=True)
@@ -159,6 +192,8 @@ def make_user(isolated_db):
         *,
         role: str = "Operator",
         change_groups: list[str] | None = None,
+        mfa_enabled: bool = False,
+        mfa_secret: str | None = None,
     ) -> dict:
         connection = database.get_db_connection()
         try:
@@ -167,6 +202,8 @@ def make_user(isolated_db):
                 username=username,
                 role=role,
                 change_groups=change_groups,
+                mfa_enabled=mfa_enabled,
+                mfa_secret=mfa_secret,
             )
         finally:
             connection.close()
@@ -176,7 +213,12 @@ def make_user(isolated_db):
 
 @pytest.fixture()
 def requester(make_user):
-    return make_user("alice_requester", role="Operator", change_groups=["initial_reviewer"])
+    return make_user(
+        "alice_requester",
+        role="Operator",
+        change_groups=["initial_reviewer"],
+        mfa_enabled=True,
+    )
 
 
 @pytest.fixture()

@@ -12,7 +12,9 @@ from services.topology_graph_service import (
     build_graph,
     calculate_dynamic_ranks,
     detect_topology_anchors,
+    get_edge_evidence,
     get_graph,
+    get_topology_history,
     layout_graph,
     normalize_observation,
     normalize_role,
@@ -335,3 +337,47 @@ def test_route_evidence_is_visible_in_l3_but_never_in_physical_view(graph_db):
 
     assert physical_relations == {"PHYSICAL"}
     assert "LOGICAL" in l3_relations
+
+
+def test_graph_evidence_history_and_groups_honor_device_scope(graph_db):
+    graph = build_graph(
+        [{"id": "scoped-a"}, {"id": "scoped-b"}, {"id": "hidden-c"}],
+        [
+            {
+                "source_device_id": "scoped-a", "target_device_id": "scoped-b",
+                "source_type": "lldp", "source_interface": "Gi0/1",
+                "target_interface": "Gi0/2",
+            },
+            {
+                "source_device_id": "hidden-c", "target_device_id": "scoped-b",
+                "source_type": "lldp", "source_interface": "Gi0/3",
+                "target_interface": "Gi0/4",
+            },
+        ],
+    )
+    persist_graph(graph)
+    edge_ids = {
+        str(row["id"]): (str(row["source_node_id"]), str(row["target_node_id"]))
+        for row in graph_db.execute("SELECT id, source_node_id, target_node_id FROM topology_edges").fetchall()
+    }
+    visible_edge_id = next(
+        edge_id for edge_id, endpoints in edge_ids.items()
+        if set(endpoints) == {"scoped-a", "scoped-b"}
+    )
+    hidden_edge_id = next(
+        edge_id for edge_id, endpoints in edge_ids.items()
+        if "hidden-c" in endpoints
+    )
+
+    scoped = get_graph(device_ids=["scoped-a", "scoped-b"])
+    assert {item["device_id"] for item in scoped["nodes"]} == {"scoped-a", "scoped-b"}
+    assert {item["id"] for item in scoped["edges"]} == {visible_edge_id}
+    assert {item["node_id"] for item in scoped["group_members"]} <= {"scoped-a", "scoped-b"}
+
+    assert get_edge_evidence(hidden_edge_id, device_ids=["scoped-a", "scoped-b"]) == []
+    assert get_edge_evidence(visible_edge_id, device_ids=["scoped-a", "scoped-b"])
+    history = get_topology_history(device_ids=["scoped-a", "scoped-b"])
+    assert all(
+        item["entity_id"] != hidden_edge_id
+        for item in history["items"]
+    )

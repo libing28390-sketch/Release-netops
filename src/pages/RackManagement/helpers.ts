@@ -100,6 +100,16 @@ export async function putJson<T>(url: string, body: Record<string, unknown>): Pr
   return json.data;
 }
 
+export async function patchJson<T>(url: string, body: Record<string, unknown>): Promise<T> {
+  const res = await fetch(url, { method: 'PATCH', headers: authHeaders(), body: JSON.stringify(body) });
+  const json = await res.json();
+  if (!res.ok || !json.success) {
+    const detail = formatErrorDetail(json.detail || json.message || 'Request failed');
+    throw new Error(detail);
+  }
+  return json.data;
+}
+
 export async function deleteJson(url: string): Promise<void> {
   const res = await fetch(url, { method: 'DELETE', headers: authHeaders() });
   const json = await res.json();
@@ -161,7 +171,12 @@ export function hasConflict(
   const tTop = targetU + uHeight - 1;
   for (const d of devices) {
     if (d.id === excludeId) continue;
-    const dTop = d.start_u + d.u_height - 1;
+    // Non-U/unknown placements do not participate in standard U-slot
+    // collision checks. The backend applies the same rule transactionally.
+    if ((d.mount_kind || 'u_mount') !== 'u_mount' || d.start_u == null) continue;
+    const dHeight = d.height_u ?? d.u_height ?? 0;
+    if (dHeight < 1) continue;
+    const dTop = d.start_u + dHeight - 1;
     if (targetU <= dTop && tTop >= d.start_u) return true;
   }
   return false;

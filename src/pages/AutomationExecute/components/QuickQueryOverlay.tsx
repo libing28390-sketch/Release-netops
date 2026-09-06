@@ -26,12 +26,13 @@ const resolveSuggestionPlatform = (device: Pick<Device, 'platform' | 'version'>)
   const platform = String(device.platform || '').trim().toLowerCase();
   const version = String(device.version || '').trim().toLowerCase();
 
+  if (platform === 'h3c_comware_v3' || platform.includes('h3c_comware_v3')) return 'h3c_comware_v3';
   if (platform === 'hp_comware' || platform.includes('h3c_comware_v5')) return 'h3c_comware_v5';
   if (platform.includes('h3c_comware_v7')) return 'h3c_comware_v7';
   if (platform === 'h3c_comware9' || platform.includes('h3c_comware_v9')) return 'h3c_comware_v9';
 
   if (platform === 'h3c_comware' || platform === 'h3c' || platform === 'comware') {
-    const majorVersion = version.match(/(?:^|[^\d])([579])(?:\.|\b)/)?.[1];
+    const majorVersion = version.match(/(?:^|[^\d])([3579])(?:\.|\b)/)?.[1];
     return majorVersion ? `h3c_comware_v${majorVersion}` : 'h3c_comware';
   }
 
@@ -39,14 +40,14 @@ const resolveSuggestionPlatform = (device: Pick<Device, 'platform' | 'version'>)
 };
 
 const suggestionVariantFromFilename = (filename: string): string => {
-  const match = String(filename || '').toLowerCase().match(/^(h3c_comware_v[579])_/);
+  const match = String(filename || '').toLowerCase().match(/^(h3c_comware_v[3579])_/);
   return match?.[1] || '';
 };
 
-const isConcreteH3cVariant = (value: string): boolean => /^h3c_comware_v[579]$/.test(value);
+const isConcreteH3cVariant = (value: string): boolean => /^h3c_comware_v[3579]$/.test(value);
 
 const formatSuggestionScope = (platform: string, isZh: boolean): string => {
-  const h3cMatch = platform.match(/^h3c_comware_v([579])$/);
+  const h3cMatch = platform.match(/^h3c_comware_v([3579])$/);
   if (h3cMatch) return `H3C Comware V${h3cMatch[1]}`;
   if (platform === 'h3c_comware') return isZh ? 'H3C Comware 平台族' : 'H3C Comware family';
   return platform.replace(/_/g, ' ') || (isZh ? '当前设备平台' : 'Target platform');
@@ -124,11 +125,19 @@ export const QuickQueryOverlay: React.FC<QuickQueryOverlayProps> = ({
             const itemPlatform = String(item.platform || '').trim().toLowerCase();
             const itemVersion = String(item.version || '').trim().toLowerCase();
             const itemVariant = suggestionVariantFromFilename(item.filename)
-              || (itemPlatform === 'h3c_comware' && /^v[579]$/.test(itemVersion) ? `h3c_comware_${itemVersion}` : itemPlatform);
+              || (itemPlatform === 'h3c_comware' && /^v[3579]$/.test(itemVersion) ? `h3c_comware_${itemVersion}` : itemPlatform);
             const concreteTargetVariants = new Set(platforms.filter(isConcreteH3cVariant));
+            const compatibleFallbackVariants = concreteTargetVariants.has('h3c_comware_v3')
+              ? new Set(['h3c_comware_v5'])
+              : new Set<string>();
             // Never leak a different concrete H3C grammar into the candidate list.
             // A versionless family template remains an explicit, safe fallback.
-            if (concreteTargetVariants.size > 0 && isConcreteH3cVariant(itemVariant) && !concreteTargetVariants.has(itemVariant)) {
+            if (
+              concreteTargetVariants.size > 0
+              && isConcreteH3cVariant(itemVariant)
+              && !concreteTargetVariants.has(itemVariant)
+              && !compatibleFallbackVariants.has(itemVariant)
+            ) {
               return;
             }
             const key = `${item.platform}:${item.filename || item.command}`;

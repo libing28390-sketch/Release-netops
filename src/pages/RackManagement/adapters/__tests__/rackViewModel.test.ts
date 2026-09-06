@@ -198,6 +198,35 @@ describe('RackViewModel Adapter & Quality Validator', () => {
     expect(halfRear.centerZ).toBeLessThan(0);
   });
 
+  it('scales device depth with a non-standard rack depth', () => {
+    const wallRack = normalizeRackToVM({
+      ...baseRack,
+      width_mm: 450,
+      depth_mm: 450,
+      devices: [{
+        id: 'wall-full-depth',
+        name: 'WALL-FULL-DEPTH',
+        rack_id: 'rack-01',
+        device_type_id: 'dt-wall',
+        start_u: 1,
+        position: 'full_depth',
+        status: 'active',
+        serial_number: '',
+        asset_id: '',
+        model: '',
+        vendor: '',
+        u_height: 1,
+        device_role: 'switch',
+        is_full_depth: 0,
+      }],
+    });
+    const device = wallRack.devices[0];
+    expect(device.coordinates.depth).toBeCloseTo(3.375, 5);
+    expect(device.coordinates.depth).toBeLessThan(CHASSIS_DEPTH_FULL);
+    expect(device.coordinates.width).toBeCloseTo(3.5795, 4);
+    expect(device.coordinates.width).toBeLessThan(4.786);
+  });
+
   it('should normalize health telemetry accurately and NOT fake unknown as healthy', () => {
     // Missing health
     expect(normalizeHealthStatus(undefined, 'active')).toBe('unknown');
@@ -246,5 +275,51 @@ describe('RackViewModel Adapter & Quality Validator', () => {
     const dev = vm.devices.find(d => d.id === 'weird-1')!;
     expect(dev.face).toBe('front');
     expect(dev.dataQuality.issues.some(i => i.includes('未知朝向'))).toBe(true);
+  });
+
+  it('does not treat string zero as full-depth and exposes unknown height explicitly', () => {
+    const devices: RackDevice[] = [
+      {
+        id: 'string-zero',
+        name: 'STRING-ZERO',
+        rack_id: 'rack-01',
+        device_type_id: 'dt-1',
+        start_u: 10,
+        position: 'front',
+        status: 'active',
+        serial_number: '',
+        asset_id: '',
+        model: '',
+        vendor: '',
+        u_height: 1,
+        device_role: 'switch',
+        is_full_depth: '0' as unknown as number,
+      },
+      {
+        id: 'unknown-height',
+        name: 'UNKNOWN-HEIGHT',
+        rack_id: 'rack-01',
+        device_type_id: 'dt-2',
+        start_u: 12,
+        position: 'front',
+        height_u: null,
+        status: 'active',
+        serial_number: '',
+        asset_id: '',
+        model: '',
+        vendor: '',
+        u_height: 0,
+        device_role: 'switch',
+        is_full_depth: 0,
+      },
+    ];
+
+    const vm = normalizeRackToVM({ ...baseRack, devices });
+    const halfDepth = vm.devices.find(device => device.id === 'string-zero')!;
+    const unknownHeight = vm.devices.find(device => device.id === 'unknown-height')!;
+    expect(halfDepth.isFullDepth).toBe(false);
+    expect(unknownHeight.heightKnown).toBe(false);
+    expect(unknownHeight.dataQuality.valid).toBe(false);
+    expect(unknownHeight.heightU).toBe(1); // bounded render placeholder, not a data claim
   });
 });

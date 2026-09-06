@@ -36,7 +36,34 @@ export const RackReadonlyInspector: React.FC<RackReadonlyInspectorProps> = ({
   rackUpdatedAt,
   zh,
 }) => {
-  const uRange = device.heightU > 1 ? `U${device.startU}–U${device.endU}` : `U${device.startU}`;
+  const isUMount = device.mountKind === 'u_mount';
+  const hasKnownUPlacement = isUMount && device.startKnown !== false && device.heightKnown !== false;
+  const uRange = isUMount
+    ? (hasKnownUPlacement
+      ? (device.heightU > 1 ? `U${device.startU}–U${device.endU}` : `U${device.startU}`)
+      : (zh ? 'U 位待确认' : 'U position pending'))
+    : (zh ? '非标准 U 位' : 'Non-U placement');
+  const mountKindLabel: Record<string, string> = {
+    u_mount: zh ? '标准 U 位' : 'Standard U mount',
+    zero_u: '0U',
+    side_mount: zh ? '侧挂' : 'Side mount',
+    floor: zh ? '落地' : 'Floor-standing',
+    unknown: zh ? '待确认' : 'Unknown',
+  };
+  const positionLabel: Record<string, string> = {
+    front: zh ? '前面板' : 'Front',
+    rear: zh ? '后面板' : 'Rear',
+    full_depth: zh ? '全深度' : 'Full depth',
+    left_side: zh ? '左侧挂' : 'Left side',
+    right_side: zh ? '右侧挂' : 'Right side',
+    unknown: zh ? '待确认' : 'Unknown',
+  };
+  const fidelityLabel: Record<string, string> = {
+    exact: zh ? '精确模型' : 'Exact model',
+    family: zh ? '系列模型' : 'Family model',
+    vendor: zh ? '厂商通用模型' : 'Vendor generic',
+    generic: zh ? '全局通用模型' : 'Global generic',
+  };
   const healthLabel: Record<RackDeviceVM['healthStatus'], string> = {
     healthy: zh ? '正常' : 'Healthy',
     warning: zh ? '警告' : 'Warning',
@@ -46,12 +73,17 @@ export const RackReadonlyInspector: React.FC<RackReadonlyInspectorProps> = ({
   };
 
   const fields = [
-    [zh ? 'U 位' : 'Rack unit', `${uRange} · ${device.heightU}U`],
+    [zh ? '位置' : 'Placement', `${uRange}${hasKnownUPlacement ? ` · ${device.heightU}U` : ''}`],
+    [zh ? '安装方式' : 'Mount kind', mountKindLabel[device.mountKind || 'unknown'] || device.mountKind || '—'],
+    [zh ? '安装位置' : 'Position', positionLabel[device.position || 'unknown'] || device.position || '—'],
     [zh ? '安装面' : 'Face', device.face === 'front' ? (zh ? '前面板' : 'Front') : (zh ? '后面板' : 'Rear')],
+    [zh ? '位置状态' : 'Placement status', device.placementStatus || (zh ? '未提供' : 'Not provided')],
+    [zh ? '位置说明' : 'Location note', device.locationNote || '—'],
     [zh ? '厂商 / 型号' : 'Vendor / model', `${device.vendor || '—'} / ${device.model || '—'}`],
     [zh ? '序列号' : 'Serial number', device.serialNumber || '—'],
     [zh ? '资产关联' : 'Asset link', device.assetId || (zh ? '未关联' : 'Not linked')],
     [zh ? '监控对象' : 'Monitoring target', device.networkDeviceId || (zh ? '未关联' : 'Not linked')],
+    ...(device.assetKey ? [[zh ? '3D 资产' : '3D asset', `${fidelityLabel[device.assetFidelity || 'generic'] || device.assetFidelity || '—'} · ${device.assetKey}`]] : []),
   ];
 
   return (

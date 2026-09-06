@@ -18,6 +18,7 @@ import {
 } from 'lucide-react';
 import { Area, AreaChart, CartesianGrid, ResponsiveContainer, Tooltip, XAxis, YAxis } from 'recharts';
 import type { Device, DeviceHealthHistoryResponse, DeviceHealthOverview } from '../types';
+import { authHeaders } from '../api/http';
 
 interface DeviceHealthTabProps {
   devices: Device[];
@@ -74,9 +75,10 @@ const DeviceHealthTab: React.FC<DeviceHealthTabProps> = ({ devices, overview, la
   const loadOverview = React.useCallback(async () => {
     setOverviewLoading(true);
     try {
-      const response = await fetch('/api/device-health/overview');
+      const response = await fetch('/api/device-health/overview', { headers: authHeaders() });
       if (!response.ok) throw new Error(`HTTP ${response.status}`);
-      setLiveOverview(await response.json() as DeviceHealthOverview);
+      const payload = await response.json() as { data?: DeviceHealthOverview } & DeviceHealthOverview;
+      setLiveOverview(payload.data || payload);
       setLoadError('');
     } catch (error) {
       console.error('Failed to load device health overview:', error);
@@ -89,7 +91,7 @@ const DeviceHealthTab: React.FC<DeviceHealthTabProps> = ({ devices, overview, la
   const loadHistory = React.useCallback(async () => {
     setHistoryLoading(true);
     try {
-      const response = await fetch(`/api/device-health/history?range_hours=${rangeHours}`);
+      const response = await fetch(`/api/device-health/history?range_hours=${rangeHours}`, { headers: authHeaders() });
       if (!response.ok) throw new Error(`HTTP ${response.status}`);
       setHistory(await response.json() as DeviceHealthHistoryResponse);
     } catch (error) {

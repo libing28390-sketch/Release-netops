@@ -21,6 +21,7 @@ import {
 import { AssetTagPicker } from './AssetTagPicker';
 import { ActionIconButton } from '../../../components/ui/ActionIconButton';
 import { isReservedSystemSite } from '../../../utils/siteIdentity';
+import { authHeaders } from '../../../api/http';
 
 interface AssetModalProps {
   isOpen: boolean;
@@ -613,7 +614,7 @@ export const AssetModal: React.FC<AssetModalProps> = ({
                               setModalError(null);
                               setFeedbackMsg({ type: 'info', text: zh ? '正在验证连通性...' : 'Verifying connectivity...' });
                               try {
-                                const r = await fetch(`/api/assets/${editingAsset.id}/verify`);
+                                const r = await fetch(`/api/assets/${editingAsset.id}/verify`, { headers: authHeaders() });
                                 const d = await r.json();
                                 if (d.success || d.ssh) {
                                   setFeedbackMsg({ type: 'success', text: zh ? '✅ 验证通过！' : '✅ Verification success!' });

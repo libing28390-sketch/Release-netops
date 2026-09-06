@@ -1,6 +1,7 @@
 import React, { useState, useRef } from 'react';
 import * as THREE from 'three';
 import { ThreeEvent, useFrame } from '@react-three/fiber';
+import { useGLTF } from '@react-three/drei';
 import { RackDeviceVM, RackDisplayMode } from '../types';
 import { ProceduralChassis } from './models/ProceduralChassis';
 import { SwitchFaceplate } from './models/SwitchFaceplate';
@@ -8,6 +9,58 @@ import { ServerFaceplate } from './models/ServerFaceplate';
 import { GenericFaceplate } from './models/GenericFaceplate';
 
 import { TopologyLinkItem } from './RackCableLayer';
+
+interface RackGlbDeviceProps {
+  url: string;
+  height: number;
+  depth: number;
+}
+
+const RackGlbDevice: React.FC<RackGlbDeviceProps> = ({ url, height, depth }) => {
+  const { scene } = useGLTF(url);
+  const clonedScene = React.useMemo(() => scene.clone(true), [scene]);
+  // Blender assets use meters and X/Y/Z = left-right/front-back/vertical;
+  // the viewer uses X/Y/Z = left-right/vertical/front-back.  The negative
+  // local Z scale preserves the positive vertical direction after the X
+  // quarter-turn, while local +Y remains viewer-front (+Z).
+  return (
+    <primitive
+      object={clonedScene}
+      position={[0, -height / 2, depth / 2]}
+      rotation={[Math.PI / 2, 0, 0]}
+      scale={[10, 10, -10]}
+    />
+  );
+};
+
+interface RackGlbErrorBoundaryProps {
+  resetKey: string;
+  fallback: React.ReactNode;
+  children: React.ReactNode;
+}
+
+interface RackGlbErrorBoundaryState {
+  hasError: boolean;
+}
+
+/** A bad optional GLB must not take down the complete rack scene. */
+class RackGlbErrorBoundary extends React.Component<RackGlbErrorBoundaryProps, RackGlbErrorBoundaryState> {
+  state: RackGlbErrorBoundaryState = { hasError: false };
+
+  static getDerivedStateFromError(): RackGlbErrorBoundaryState {
+    return { hasError: true };
+  }
+
+  componentDidUpdate(previousProps: RackGlbErrorBoundaryProps) {
+    if (previousProps.resetKey !== this.props.resetKey && this.state.hasError) {
+      this.setState({ hasError: false });
+    }
+  }
+
+  render() {
+    return this.state.hasError ? this.props.fallback : this.props.children;
+  }
+}
 
 interface RackDeviceItemProps {
   device: RackDeviceVM;
@@ -94,7 +147,7 @@ export const RackDeviceItem: React.FC<RackDeviceItemProps> = ({
     document.body.style.cursor = 'auto';
   };
 
-  const renderFaceplate = () => {
+  const renderProceduralFaceplate = () => {
     const normRole = (role || '').toLowerCase();
     if (normRole === 'switch') {
       return (
@@ -142,6 +195,20 @@ export const RackDeviceItem: React.FC<RackDeviceItemProps> = ({
         healthStatus={healthStatus}
       />
     );
+  };
+
+  const renderFaceplate = () => {
+    if (device.assetAvailable && device.assetUrl && device.face === 'front') {
+      const fallback = renderProceduralFaceplate();
+      return (
+        <RackGlbErrorBoundary resetKey={device.assetUrl} fallback={fallback}>
+          <React.Suspense fallback={fallback}>
+            <RackGlbDevice url={device.assetUrl} height={coordinates.height} depth={coordinates.depth} />
+          </React.Suspense>
+        </RackGlbErrorBoundary>
+      );
+    }
+    return renderProceduralFaceplate();
   };
 
   return (

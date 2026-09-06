@@ -1,6 +1,7 @@
 import { useCallback } from 'react';
 import * as XLSX from 'xlsx';
 import type { Device } from '../types';
+import { authHeaders } from '../api/http';
 import { exportInventoryToExcel } from '../utils/inventoryExport';
 import { useInventoryStore } from '../store/inventoryStore';
 
@@ -77,7 +78,7 @@ export const useInventoryImportExport = ({
           if (newDevices.length > 0) {
             fetch('/api/devices/import', {
               method: 'POST',
-              headers: { 'Content-Type': 'application/json' },
+              headers: authHeaders(true),
               body: JSON.stringify({ devices: newDevices }),
             })
               .then((res) => res.json())

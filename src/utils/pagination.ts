@@ -1,3 +1,5 @@
+import { authHeaders } from '../api/http';
+
 export async function fetchAllPaginatedItems<T>(endpoint: string, params: URLSearchParams, pageSize = 100): Promise<T[]> {
   const allItems: T[] = [];
   let page = 1;
@@ -8,7 +10,7 @@ export async function fetchAllPaginatedItems<T>(endpoint: string, params: URLSea
     requestParams.set('page', String(page));
     requestParams.set('page_size', String(pageSize));
 
-    const resp = await fetch(`${endpoint}?${requestParams.toString()}`);
+    const resp = await fetch(`${endpoint}?${requestParams.toString()}`, { headers: authHeaders() });
     if (!resp.ok) {
       throw new Error(`Failed to fetch paginated items from ${endpoint}`);
     }

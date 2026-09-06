@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useRef } from 'react';
 import { useMonitoringStore } from '../store/monitoringStore';
+import { authHeaders } from '../api/http';
 import type { OutboundTarget } from '../types/outbound';
 import type { DeviceHealthHistoryResponse, MonitoringHealthDevicesResponse, MonitoringIncident, MonitoringIncidentImpact, MonitoringIncidentListResponse, MonitoringPlaybookRecommendationsResponse } from '../types';
 
@@ -124,7 +125,7 @@ export const useMonitoring = ({ isAuthenticated, activeTab, pollOutbound = true,
 
   const fetchMonitoringHealthHistory = useCallback(async (rangeHours = 24, signal?: AbortSignal) => {
     try {
-      const resp = await fetch(`/api/device-health/history?range_hours=${rangeHours}`, { signal });
+      const resp = await fetch(`/api/device-health/history?range_hours=${rangeHours}`, { signal, headers: authHeaders() });
       if (!resp.ok) return null;
       const payload = await resp.json() as DeviceHealthHistoryResponse;
       setMonitorHealthHistory(payload);

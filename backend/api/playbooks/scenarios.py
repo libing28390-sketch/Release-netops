@@ -36,6 +36,7 @@ _PLAYBOOK_PLATFORM_ALIASES: dict[str, str] = {
     'ce_vrp': 'huawei_vrp',
     'ne': 'huawei_vrp',
     'h3c': 'h3c_comware',
+    'h3c_comware_v3': 'h3c_comware',
     'comware': 'h3c_comware',
     'juniper': 'juniper_junos',
     'junos': 'juniper_junos',

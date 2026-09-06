@@ -105,6 +105,9 @@ export const Rack3DContainer: React.FC<Rack3DContainerProps> = ({
   const [showSearchDropdown, setShowSearchDropdown] = useState(false);
   const [showDataIssues, setShowDataIssues] = useState(false);
   const [showLayerMenu, setShowLayerMenu] = useState(false);
+  const nonUDevices = rackVM.nonUDevices || [];
+  const placementIssueDevices = [...rackVM.invalidDevices, ...nonUDevices];
+  const hasPlacementIssues = placementIssueDevices.length > 0 || !rackVM.dataQuality.valid;
 
   const handlePresetChange = (preset: CameraPreset) => {
     setFocusTarget(null);
@@ -174,7 +177,7 @@ export const Rack3DContainer: React.FC<Rack3DContainerProps> = ({
   const filteredDevices = React.useMemo(() => {
     if (!searchQuery.trim()) return [];
     const q = searchQuery.toLowerCase().trim();
-    return rackVM.validDevices.filter(
+    return rackVM.devices.filter(
       d =>
         d.name.toLowerCase().includes(q) ||
         d.vendor.toLowerCase().includes(q) ||
@@ -182,7 +185,7 @@ export const Rack3DContainer: React.FC<Rack3DContainerProps> = ({
         d.serialNumber.toLowerCase().includes(q) ||
         d.role.toLowerCase().includes(q)
     );
-  }, [rackVM.validDevices, searchQuery]);
+  }, [rackVM.devices, searchQuery]);
 
   // Active device for tooltip
   const activeTooltipDevice = React.useMemo(() => {
@@ -523,7 +526,10 @@ export const Rack3DContainer: React.FC<Rack3DContainerProps> = ({
                   >
                     <div className="truncate">
                       <div className="text-xs font-semibold text-cyan-300 truncate">{d.name}</div>
-                      <div className="text-[10px] text-slate-400">U{d.startU}-U{d.endU} · {d.vendor} {d.model}</div>
+                      <div className="text-[10px] text-slate-400">
+                        {d.mountKind === 'u_mount' ? `U${d.startU}-U${d.endU}` : `${d.mountKind || 'unknown'} / ${d.position || 'unknown'}`}
+                        {' · '}{d.vendor} {d.model}
+                      </div>
                     </div>
                     <span className="text-[10px] font-semibold uppercase px-1.5 py-0.5 rounded bg-slate-800 text-slate-300 flex-shrink-0">
                       {d.role}
@@ -556,13 +562,13 @@ export const Rack3DContainer: React.FC<Rack3DContainerProps> = ({
               </>
             )}
 
-            {!rackVM.dataQuality.valid && (
+            {hasPlacementIssues && (
               <button
                 onClick={() => setShowDataIssues(!showDataIssues)}
                 className="flex items-center gap-1 px-2 py-0.5 rounded-lg bg-amber-500/20 text-amber-300 border border-amber-500/40 hover:bg-amber-500/30 transition-colors text-[11px]"
               >
                 <AlertTriangle size={11} />
-                {rackVM.invalidDevices.length} {zh ? '异常' : 'Issues'}
+                {placementIssueDevices.length} {zh ? '位置待确认' : 'Placement issues'}
               </button>
             )}
           </div>
@@ -699,7 +705,7 @@ export const Rack3DContainer: React.FC<Rack3DContainerProps> = ({
         )}
 
         {/* Data Quality Issues Panel */}
-        {showDataIssues && !rackVM.dataQuality.valid && (
+        {showDataIssues && hasPlacementIssues && (
           <div className="absolute bottom-12 left-4 z-20 w-96 rounded-xl shadow-2xl backdrop-blur-xl bg-slate-950/95 border border-amber-500/50 p-4 text-slate-100">
             <div className="flex items-center justify-between border-b border-slate-800 pb-2 mb-3">
               <div className="flex items-center gap-2 text-amber-400 font-bold text-xs">
@@ -714,16 +720,25 @@ export const Rack3DContainer: React.FC<Rack3DContainerProps> = ({
               </button>
             </div>
             <div className="max-h-48 overflow-y-auto space-y-2 text-xs">
-              {rackVM.invalidDevices.map(dev => (
+              {placementIssueDevices.map(dev => {
+                const isUMount = dev.mountKind === 'u_mount';
+                const hasKnownUPlacement = isUMount && dev.startKnown !== false && dev.heightKnown !== false;
+                const placement = isUMount
+                  ? (hasKnownUPlacement
+                    ? (dev.heightU > 1 ? `U${dev.startU}–U${dev.endU}` : `U${dev.startU}`)
+                    : (zh ? 'U 位待确认' : 'U position pending'))
+                  : `${dev.mountKind || 'unknown'} / ${dev.position || 'unknown'}`;
+                return (
                 <div key={dev.id} className="p-2 rounded-lg bg-slate-900/90 border border-slate-800">
-                  <div className="font-semibold text-slate-200">{dev.name} (U{dev.startU})</div>
+                  <div className="font-semibold text-slate-200">{dev.name} · {placement}</div>
                   <ul className="list-disc list-inside text-[11px] text-amber-300/90 mt-1 space-y-0.5">
-                    {dev.dataQuality.issues.map((issue, idx) => (
+                    {(dev.dataQuality.issues.length > 0 ? dev.dataQuality.issues : [zh ? '非 U 设备不参与标准 U 位占用计算，请按位置说明管理。' : 'Non-U equipment is excluded from standard U occupancy; use the placement note for its physical location.']).map((issue, idx) => (
                       <li key={idx}>{issue}</li>
                     ))}
                   </ul>
                 </div>
-              ))}
+                );
+              })}
             </div>
           </div>
         )}

@@ -185,6 +185,7 @@ def _netmiko_platform_type(platform: str) -> str:
         'huawei_vrpv8': 'huawei_vrpv8',
         'huawei': 'huawei',
         'h3c_comware': 'hp_comware',
+        'h3c_comware_v3': 'hp_comware',
         'juniper_junos': 'juniper_junos',
         'juniper': 'juniper_junos',
         'arista_eos': 'arista_eos',

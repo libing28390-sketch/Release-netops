@@ -45,6 +45,7 @@ export function useRackReadModel(filters: RackSummaryFilters) {
 
   const summaryAbortRef = useRef<AbortController | null>(null);
   const layoutAbortRef = useRef<AbortController | null>(null);
+  const layoutRequestSeqRef = useRef(0);
   const layoutCacheRef = useRef<Map<string, CachedLayout>>(new Map());
 
   useEffect(() => {
@@ -110,10 +111,13 @@ export function useRackReadModel(filters: RackSummaryFilters) {
   }, []);
 
   const loadLayout = useCallback(async (rackId: string, force = false) => {
+    const requestSeq = ++layoutRequestSeqRef.current;
+    layoutAbortRef.current?.abort();
+
     if (!rackId) {
-      layoutAbortRef.current?.abort();
       setLayout(null);
       setLayoutRackId('');
+      setLayoutLoading(false);
       setLayoutError('');
       return null;
     }
@@ -124,12 +128,12 @@ export function useRackReadModel(filters: RackSummaryFilters) {
       layoutCacheRef.current.set(rackId, cached);
       setLayout(cached.data);
       setLayoutRackId(rackId);
+      setLayoutLoading(false);
       setLayoutError('');
       return cached.data;
     }
 
     const controller = new AbortController();
-    layoutAbortRef.current?.abort();
     layoutAbortRef.current = controller;
     setLayoutLoading(true);
     setLayoutError('');
@@ -141,7 +145,7 @@ export function useRackReadModel(filters: RackSummaryFilters) {
         signal: controller.signal,
       });
       const nextLayout = await parseApiResponse<RackLayout>(response);
-      if (controller.signal.aborted) return null;
+      if (controller.signal.aborted || requestSeq !== layoutRequestSeqRef.current) return null;
 
       layoutCacheRef.current.delete(rackId);
       layoutCacheRef.current.set(rackId, {
@@ -157,13 +161,13 @@ export function useRackReadModel(filters: RackSummaryFilters) {
       setLayoutRackId(rackId);
       return nextLayout;
     } catch (error: any) {
-      if (controller.signal.aborted || error?.name === 'AbortError') return null;
+      if (controller.signal.aborted || requestSeq !== layoutRequestSeqRef.current || error?.name === 'AbortError') return null;
       setLayout(null);
       setLayoutRackId(rackId);
       setLayoutError(error instanceof Error ? error.message : String(error));
       return null;
     } finally {
-      if (!controller.signal.aborted) setLayoutLoading(false);
+      if (!controller.signal.aborted && requestSeq === layoutRequestSeqRef.current) setLayoutLoading(false);
     }
   }, [layoutRackId]);
 

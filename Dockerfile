@@ -41,6 +41,11 @@ RUN pip install --no-cache-dir --upgrade pip && \
 # Copy backend source
 COPY backend/ /app/backend/
 
+# Copy the reviewed, read-only RackVision visual registry. GLB files are
+# published through the frontend build under public/assets/3d; the backend
+# needs this catalog to resolve exact/family/generic metadata consistently.
+COPY assets/catalog/ /app/assets/catalog/
+
 # Copy environment template
 COPY .env.example /app/.env.example
 

@@ -15,6 +15,7 @@ FIXTURES = Path(__file__).parents[1] / "fixtures" / "cli"
 
 def fixture_platform(path: Path) -> str:
     for platform in (
+        "h3c_comware_v3",
         "h3c_comware_v5",
         "h3c_comware_v9",
         "h3c_comware",
@@ -75,6 +76,13 @@ def test_every_official_h3c_and_cisco_fixture_has_a_working_parser(metadata_path
 
 
 def test_platform_catalog_keeps_h3c_and_cisco_command_families_separate():
+    assert _resolve_commands("h3c_comware_v3", ["bgp", "bgp_routes"]) == {
+        "bgp": ["display bgp peer"],
+        "bgp_routes": ["display bgp routing-table"],
+    }
+    assert _resolve_commands("h3c_comware_v3", ["interface_description"]) == {
+        "interface_description": ["display interface brief description"],
+    }
     assert _resolve_commands("h3c_comware_v5", ["bgp", "bgp_routes"]) == {
         "bgp": ["display bgp peer"],
         "bgp_routes": ["display bgp routing-table"],
@@ -121,10 +129,19 @@ def test_platform_catalog_keeps_h3c_and_cisco_command_families_separate():
     }
 
     assert NTC_PLATFORM_MAP["cisco_xe"] == "cisco_ios"
+    assert NTC_PLATFORM_MAP["h3c_comware_v3"] == "h3c_comware"
     assert NTC_PLATFORM_MAP["h3c_comware_v9"] == "h3c_comware"
 
 
 def test_comware_suggestions_keep_abbreviated_query_in_the_selected_version():
+    v3_suggestions = list_template_suggestions("h3c_comware_v3", "dis ver", 8)
+    assert any(
+        item["command"] == "display version"
+        and item["filename"].startswith("h3c_comware_v5_")
+        for item in v3_suggestions
+    )
+    assert not any(item["filename"].startswith("h3c_comware_v7_") for item in v3_suggestions)
+
     v7_suggestions = list_template_suggestions("h3c_comware_v7", "display ver", 8)
     assert any(
         item["command"] == "display version"

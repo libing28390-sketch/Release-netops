@@ -34,11 +34,11 @@ def normalize_device_platform(vendor: str, platform: str) -> str:
         v_key = ''
 
     # The persisted parser/transport family is one H3C Comware key.  Concrete
-    # V5/V7/V9 command differences belong to Platform Profile releases, not to
+    # V3/V5/V7/V9 command differences belong to Platform Profile releases, not to
     # another device platform string.
     explicit_platforms = {
         'huawei_vrp', 'huawei_vrpv8', 'vrp5', 'vrpv5', 'vrp8', 'vrpv8',
-        'h3c_comware', 'h3c_comware_v5', 'h3c_comware_v7', 'h3c_comware_v9',
+        'h3c_comware', 'h3c_comware_v3', 'h3c_comware_v5', 'h3c_comware_v7', 'h3c_comware_v9',
         'ruijie_rgos', 'ruijie_os', 'zte_zxros', 'maipu', 'maipu_network', 'maipu_mypower',
         'dptech_ios', 'dptech', 'dptech_conplat', 'dptech_conplat_fw',
         'raisecom_ros', 'raisecom_ros5', 'raisecom_ros_5',
@@ -48,7 +48,7 @@ def normalize_device_platform(vendor: str, platform: str) -> str:
             return 'huawei_vrpv8'
         if p in {'vrp5', 'vrpv5'}:
             return 'huawei_vrp'
-        if p in {'h3c_comware', 'h3c_comware_v5', 'h3c_comware_v7', 'h3c_comware_v9'}:
+        if p in {'h3c_comware', 'h3c_comware_v3', 'h3c_comware_v5', 'h3c_comware_v7', 'h3c_comware_v9'}:
             return 'h3c_comware'
         if p in {'ruijie_os', 'ruijie_rgos'}:
             return 'ruijie_rgos'

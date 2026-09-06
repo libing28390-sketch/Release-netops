@@ -36,6 +36,7 @@ import {
   fetchJson,
   postJson,
   putJson,
+  patchJson,
   deleteJson,
   matchDeviceTypeId,
   pickStartUForAsset,
@@ -64,6 +65,12 @@ interface Asset {
   u_height?: number;
   planned_start_u?: number | null;
   rack_unit?: string;
+  rack_id?: string | null;
+  rack_position?: string | null;
+  rack_mount_kind?: string | null;
+  rack_height_u?: number | null;
+  rack_placement_status?: string | null;
+  rack_location_note?: string | null;
 }
 
 interface SiteOption {
@@ -127,6 +134,8 @@ export const RackManagementTab: React.FC<Props> = ({ language }) => {
   const rackScrollRef = useRef<HTMLDivElement>(null);
   const fileInputRef = useRef<HTMLInputElement>(null);
   const rackWorkspaceRef = useRef<HTMLDivElement>(null);
+  const installAssetsAbortRef = useRef<AbortController | null>(null);
+  const installAssetsRequestSeqRef = useRef(0);
   const [isRackFullscreen, setIsRackFullscreen] = useState(false);
 
   const [confirmDeleteRack, setConfirmDeleteRack] = useState<{ rackId: string; rackName: string } | null>(null);
@@ -155,8 +164,18 @@ export const RackManagementTab: React.FC<Props> = ({ language }) => {
     allow_front_rear_mount: true,
     placement_strategy: 'bottom_first'
   });
-  const [deviceForm, setDeviceForm] = useState({ name: '', device_type_id: '', start_u: 1, position: 'front' as string, status: 'active', serial_number: '', asset_id: '' });
-  const [dtForm, setDtForm] = useState({ model: '', vendor: '', u_height: 1, device_role: 'switch', description: '', power_watts: 0 });
+  const [deviceForm, setDeviceForm] = useState({
+    name: '',
+    device_type_id: '',
+    start_u: 1,
+    mount_kind: 'u_mount' as string,
+    position: 'front' as string,
+    location_note: '',
+    status: 'active',
+    serial_number: '',
+    asset_id: '',
+  });
+  const [dtForm, setDtForm] = useState({ model: '', vendor: '', u_height: 1, device_role: 'switch', default_mount_kind: 'u_mount', dimension_status: 'unknown', description: '', power_watts: 0 });
   const [formError, setFormError] = useState('');
 
   // Asset selection for device installation
@@ -282,6 +301,10 @@ export const RackManagementTab: React.FC<Props> = ({ language }) => {
 
 
   const fetchInstallAssets = useCallback(async (q: string, page: number, append: boolean) => {
+    const requestSeq = ++installAssetsRequestSeqRef.current;
+    installAssetsAbortRef.current?.abort();
+    const controller = new AbortController();
+    installAssetsAbortRef.current = controller;
     try {
       setAssetsLoading(true);
       const params = new URLSearchParams({
@@ -290,9 +313,13 @@ export const RackManagementTab: React.FC<Props> = ({ language }) => {
       });
       const t = q.trim();
       if (t) params.set('q', t);
-      const res = await fetch(`${API}/assets?${params.toString()}`, { headers: authHeaders() });
+      const res = await fetch(`${API}/assets?${params.toString()}`, {
+        headers: authHeaders(),
+        signal: controller.signal,
+      });
       if (!res.ok) throw new Error(`HTTP ${res.status}`);
       const json = await res.json();
+      if (controller.signal.aborted || requestSeq !== installAssetsRequestSeqRef.current) return;
       const items = json.items || [];
       const total = typeof json.total === 'number' ? json.total : items.length;
       if (append) {
@@ -303,14 +330,22 @@ export const RackManagementTab: React.FC<Props> = ({ language }) => {
       setAssetTotal(total);
       setAssetPage(page);
     } catch (e: any) {
+      if (controller.signal.aborted || requestSeq !== installAssetsRequestSeqRef.current || e?.name === 'AbortError') return;
       console.error('Failed to load assets:', e.message);
       if (!append) {
         setAssets([]);
         setAssetTotal(0);
       }
     } finally {
-      setAssetsLoading(false);
+      if (!controller.signal.aborted && requestSeq === installAssetsRequestSeqRef.current) {
+        setAssetsLoading(false);
+      }
     }
+  }, []);
+
+  useEffect(() => () => {
+    installAssetsRequestSeqRef.current += 1;
+    installAssetsAbortRef.current?.abort();
   }, []);
 
   useEffect(() => { loadDeviceTypes(); loadRackTypes(); loadStats(); loadSites(); }, []);
@@ -755,7 +790,7 @@ export const RackManagementTab: React.FC<Props> = ({ language }) => {
     setAssetSearch('');
     setAssetTotal(0);
     setAssetPage(1);
-    setDeviceForm({ name: '', device_type_id: '', start_u: 1, position: 'front', status: 'active', serial_number: '', asset_id: '' });
+    setDeviceForm({ name: '', device_type_id: '', start_u: 1, mount_kind: 'u_mount', position: 'front', location_note: '', status: 'active', serial_number: '', asset_id: '' });
     setFormError('');
     setShowDeviceModal(true);
   };
@@ -769,7 +804,9 @@ export const RackManagementTab: React.FC<Props> = ({ language }) => {
       name: '',
       device_type_id: '',
       start_u: uNumber,
+      mount_kind: 'u_mount',
       position: viewSide,
+      location_note: '',
       status: 'active',
       serial_number: '',
       asset_id: ''
@@ -778,30 +815,54 @@ export const RackManagementTab: React.FC<Props> = ({ language }) => {
     setShowDeviceModal(true);
   };
 
+  const defaultPositionForMountKind = (mountKind: string): string => {
+    switch (mountKind) {
+      case 'side_mount': return 'left_side';
+      case 'zero_u': return 'rear';
+      case 'floor':
+      case 'unknown': return 'unknown';
+      default: return 'front';
+    }
+  };
+
+  const devicesForPosition = (position: string): RackDevice[] => {
+    if (position === 'full_depth') {
+      return layout?.devices.filter(d => ['front', 'rear', 'full_depth'].includes(d.position)) || [];
+    }
+    return layout?.devices.filter(d => d.position === position || d.position === 'full_depth') || [];
+  };
+
   const resolveStartUForInstall = (deviceTypeId: string, position: string): number => {
-    const uH = deviceTypes.find(dt => dt.id === deviceTypeId)?.u_height ?? 1;
+    const uH = deviceTypes.find(dt => dt.id === deviceTypeId)?.u_height ?? 0;
+    if (uH < 1) return 1;
     if (!layout || !selectedRackId) return 1;
     if (selectedAsset) {
       return pickStartUForAsset(layout, position, uH, selectedAsset);
     }
-    const sideDevices = layout.devices.filter(d => d.position === position);
+    const sideDevices = devicesForPosition(position);
     return findFirstFreeStartU(layout.total_u, uH, sideDevices, layout.placement_strategy) ?? 1;
   };
 
   const handleAssetSelect = (asset: Asset) => {
     setSelectedAsset(asset);
     const matchedId = matchDeviceTypeId(asset, deviceTypes);
-    const position = 'front';
-    const uH = matchedId
-      ? (deviceTypes.find(dt => dt.id === matchedId)?.u_height ?? 1)
-      : Math.max(1, asset.u_height ?? 1);
+    const matchedType = matchedId ? deviceTypes.find(dt => dt.id === matchedId) : undefined;
+    const mount_kind = asset.rack_mount_kind || matchedType?.default_mount_kind || 'u_mount';
+    const position = asset.rack_position || defaultPositionForMountKind(mount_kind);
+    const uH = matchedType
+      ? (matchedType.u_height ?? 0)
+      : (asset.u_height != null && asset.u_height > 0 ? asset.u_height : 0);
     const startU =
-      layout && selectedRackId ? pickStartUForAsset(layout, position, uH, asset) : 1;
+      mount_kind === 'u_mount'
+        ? (asset.planned_start_u ?? (layout && selectedRackId ? pickStartUForAsset(layout, position, uH, asset) : 1))
+        : 1;
     setDeviceForm({
       name: asset.hostname || asset.asset_tag || '',
       device_type_id: matchedId,
       start_u: startU,
+      mount_kind,
       position,
+      location_note: asset.rack_location_note || '',
       status: asset.status === 'in_storage' ? 'offline' : asset.status === 'active' ? 'active' : 'planned',
       serial_number: asset.serial_number || '',
       asset_id: asset.id || '',
@@ -823,9 +884,14 @@ export const RackManagementTab: React.FC<Props> = ({ language }) => {
       return;
     }
     const dt = deviceTypes.find(x => x.id === deviceForm.device_type_id);
-    const uH = dt?.u_height ?? 1;
-    if (layout) {
-      const sideDevices = layout.devices.filter(d => d.position === deviceForm.position);
+    const uH = dt?.u_height ?? 0;
+    const isUMount = deviceForm.mount_kind === 'u_mount';
+    if (isUMount && uH < 1) {
+      setFormError(zh ? '该设备类型未提供有效 U 高度，不能按标准 U 位安装；请先补齐型号尺寸或选择非标准安装方式。' : 'This device type has no valid U height. Add the verified height or choose a non-U mount kind.');
+      return;
+    }
+    if (isUMount && layout) {
+      const sideDevices = devicesForPosition(deviceForm.position);
       if (hasConflict(deviceForm.start_u, uH, layout.total_u, sideDevices)) {
         const sugg = findFirstFreeStartU(layout.total_u, uH, sideDevices, layout.placement_strategy);
         setFormError(
@@ -836,13 +902,34 @@ export const RackManagementTab: React.FC<Props> = ({ language }) => {
         return;
       }
     }
+    if (deviceForm.mount_kind === 'side_mount' && !['left_side', 'right_side'].includes(deviceForm.position)) {
+      setFormError(zh ? '侧挂设备必须选择左侧或右侧' : 'Side-mounted equipment must use the left or right side');
+      return;
+    }
+    if (isUMount && !['front', 'rear', 'full_depth'].includes(deviceForm.position)) {
+      setFormError(zh ? '标准 U 位设备必须选择前面板、后面板或全深度' : 'Standard U equipment must use front, rear, or full-depth position');
+      return;
+    }
+    if (deviceForm.mount_kind === 'zero_u' && !['rear', 'left_side', 'right_side', 'unknown'].includes(deviceForm.position)) {
+      setFormError(zh ? '0U 设备只能放在后部、左右侧或待确认位置' : '0U equipment must use rear, left/right side, or unknown position');
+      return;
+    }
+    if (deviceForm.mount_kind === 'floor' && !deviceForm.location_note.trim()) {
+      setFormError(zh ? '落地设备必须填写位置说明' : 'Floor-standing equipment requires a location note');
+      return;
+    }
     try {
-      await postJson(`${API}/rack-devices`, {
+      await postJson(`${API}/racks/${encodeURIComponent(selectedRackId)}/placements`, {
         name: deviceForm.name,
         rack_id: selectedRackId,
         device_type_id: deviceForm.device_type_id,
-        start_u: deviceForm.start_u,
+        start_u: isUMount ? deviceForm.start_u : null,
+        mount_kind: deviceForm.mount_kind,
+        height_u: isUMount ? uH : null,
         position: deviceForm.position,
+        placement_status: isUMount ? 'confirmed' : 'estimated',
+        placement_source: 'manual',
+        location_note: deviceForm.location_note || '',
         status: deviceForm.status,
         serial_number: deviceForm.serial_number || '',
         asset_id: deviceForm.asset_id || '',
@@ -865,7 +952,7 @@ export const RackManagementTab: React.FC<Props> = ({ language }) => {
     setConfirmRemoveDevice(null);
     setError('');
     try {
-      await deleteJson(`${API}/rack-devices/${deviceId}`);
+      await deleteJson(`${API}/rack-placements/${deviceId}`);
       if (selectedDeviceId === deviceId) {
         setSelectedDeviceId(null);
         setDrawerVisible(false);
@@ -884,7 +971,7 @@ export const RackManagementTab: React.FC<Props> = ({ language }) => {
   /* -- Device Type -- */
 
   const openNewDeviceType = () => {
-    setDtForm({ model: '', vendor: '', u_height: 1, device_role: 'switch', description: '', power_watts: 0 });
+    setDtForm({ model: '', vendor: '', u_height: 1, device_role: 'switch', default_mount_kind: 'u_mount', dimension_status: 'unknown', description: '', power_watts: 0 });
     setFormError(''); setShowDeviceTypeModal(true);
   };
 
@@ -914,7 +1001,7 @@ export const RackManagementTab: React.FC<Props> = ({ language }) => {
     if (!confirmMoveDevice) return;
     const { deviceId, newU } = confirmMoveDevice;
     try {
-      await putJson(`${API}/rack-devices/${deviceId}`, { start_u: newU });
+      await patchJson(`${API}/rack-placements/${deviceId}`, { start_u: newU });
       invalidateLayout(selectedRackId);
       await loadLayout(selectedRackId, true);
       reloadSummaries();
@@ -944,7 +1031,12 @@ export const RackManagementTab: React.FC<Props> = ({ language }) => {
     if (!layout) return;
     const totalU = layout.total_u;
     const side = viewSide;
-    const devices = layout.devices.filter(d => d.position === side);
+    const devices = layout.devices.filter(d =>
+      (d.position === side || d.position === 'full_depth')
+      && (d.mount_kind || 'u_mount') === 'u_mount'
+      && d.start_u != null
+      && (d.height_u ?? d.u_height ?? 0) >= 1
+    );
 
     const scale = 4;
     const uH = 32; 
@@ -992,8 +1084,10 @@ export const RackManagementTab: React.FC<Props> = ({ language }) => {
     const devMap = new Map<number, (typeof devices)[0]>();
     const spanned = new Set<number>();
     for (const d of devices) {
-      devMap.set(d.start_u, d);
-      for (let u = d.start_u + 1; u < d.start_u + d.u_height; u++) spanned.add(u);
+      const startU = d.start_u ?? 1;
+      const heightU = d.height_u ?? d.u_height ?? 1;
+      devMap.set(startU, d);
+      for (let u = startU + 1; u < startU + heightU; u++) spanned.add(u);
     }
 
     for (let i = 0; i < totalU; i++) {
@@ -1674,7 +1768,13 @@ export const RackManagementTab: React.FC<Props> = ({ language }) => {
                 const rackDeviceVM = rackVM?.devices.find(item => item.id === selectedDeviceId);
                 const rc = getNormalizedRoleColor(device.device_role, device.name, device.model);
                 const statusInfo = STATUS_LABEL[device.status] || { zh: device.status, en: device.status };
-                const endU = device.start_u + device.u_height - 1;
+                const isUMount = (device.mount_kind || 'u_mount') === 'u_mount';
+                const startU = device.start_u ?? 1;
+                const heightU = device.height_u ?? device.u_height ?? 1;
+                const endU = startU + heightU - 1;
+                const placementLabel = isUMount
+                  ? `U${startU}${endU !== startU ? `–U${endU}` : ''}`
+                  : `${device.mount_kind || 'unknown'} / ${device.position || 'unknown'}`;
                 return (
                   <AnimatePresence>
                     <motion.div
@@ -1746,18 +1846,18 @@ export const RackManagementTab: React.FC<Props> = ({ language }) => {
                                   {zh ? '快速迁移 U 位' : 'Quick Move U Position'}
                                 </label>
                                 <span className="text-[10px] font-mono" style={{ color: 'var(--muted-text)' }}>
-                                  {device.u_height}U {zh ? '高度' : 'Height'}
+                                  {isUMount ? `${heightU}U ${zh ? '高度' : 'Height'}` : (zh ? '非标准 U 位' : 'Non-U placement')}
                                 </span>
                               </div>
                               <div className="flex items-center gap-2">
                                 <button
                                   type="button"
                                   onClick={() => {
-                                    if (device.start_u > 1) {
-                                      handleDeviceMove(device.id, device.start_u - 1);
+                                    if (isUMount && startU > 1) {
+                                      handleDeviceMove(device.id, startU - 1);
                                     }
                                   }}
-                                  disabled={device.start_u <= 1}
+                                  disabled={!isUMount || startU <= 1}
                                   className="px-2.5 py-1.5 rounded-lg text-xs font-bold border disabled:opacity-35 hover:bg-cyan-500/10 transition-colors"
                                   style={{ borderColor: 'var(--card-border)', color: 'var(--body-text)' }}
                                   title={zh ? '下移 1U (向 U1 方向)' : 'Move Down 1U'}
@@ -1765,16 +1865,16 @@ export const RackManagementTab: React.FC<Props> = ({ language }) => {
                                   -1U (下移)
                                 </button>
                                 <div className="flex-1 text-center py-1 rounded-lg font-mono font-bold text-xs bg-black/5" style={{ color: 'var(--heading-text)' }}>
-                                  U{device.start_u} {endU !== device.start_u ? `~ U${endU}` : ''}
+                                  {placementLabel}
                                 </div>
                                 <button
                                   type="button"
                                   onClick={() => {
-                                    if (layout && device.start_u + device.u_height - 1 < layout.total_u) {
-                                      handleDeviceMove(device.id, device.start_u + 1);
+                                    if (isUMount && layout && endU < layout.total_u) {
+                                      handleDeviceMove(device.id, startU + 1);
                                     }
                                   }}
-                                  disabled={!layout || device.start_u + device.u_height - 1 >= layout.total_u}
+                                  disabled={!isUMount || !layout || endU >= layout.total_u}
                                   className="px-2.5 py-1.5 rounded-lg text-xs font-bold border disabled:opacity-35 hover:bg-cyan-500/10 transition-colors"
                                   style={{ borderColor: 'var(--card-border)', color: 'var(--body-text)' }}
                                   title={zh ? '上移 1U (向顶部方向)' : 'Move Up 1U'}
@@ -1800,8 +1900,8 @@ export const RackManagementTab: React.FC<Props> = ({ language }) => {
                                 </div>
                               </div>
                               <div>
-                                <label className="block text-[10px] font-semibold mb-0.5" style={{ color: 'var(--muted-text)' }}>{zh ? 'U位' : 'Unit'}</label>
-                                <div className="px-2.5 py-1.5 rounded border" style={{ background: 'var(--app-hover-bg)', borderColor: 'var(--card-border)', color: 'var(--body-text)' }}>U{device.start_u}{endU !== device.start_u ? `-U${endU}` : ''}</div>
+                                <label className="block text-[10px] font-semibold mb-0.5" style={{ color: 'var(--muted-text)' }}>{zh ? '位置' : 'Placement'}</label>
+                                <div className="px-2.5 py-1.5 rounded border" style={{ background: 'var(--app-hover-bg)', borderColor: 'var(--card-border)', color: 'var(--body-text)' }}>{placementLabel}</div>
                               </div>
                               <div>
                                 <label className="block text-[10px] font-semibold mb-0.5" style={{ color: 'var(--muted-text)' }}>{zh ? '序列号' : 'Serial No.'}</label>
@@ -1812,8 +1912,12 @@ export const RackManagementTab: React.FC<Props> = ({ language }) => {
                                 <div className="px-2.5 py-1.5 rounded border font-mono text-[10px]" style={{ background: 'var(--app-hover-bg)', borderColor: 'var(--card-border)', color: 'var(--body-text)' }}>{device.asset_id || '—'}</div>
                               </div>
                               <div>
-                                <label className="block text-[10px] font-semibold mb-0.5" style={{ color: 'var(--muted-text)' }}>{zh ? '位置' : 'Side'}</label>
-                                <div className="px-2.5 py-1.5 rounded border" style={{ background: 'var(--app-hover-bg)', borderColor: 'var(--card-border)', color: 'var(--body-text)' }}>{device.position === 'front' ? (zh ? '前面板' : 'Front') : (zh ? '后面板' : 'Rear')}</div>
+                                <label className="block text-[10px] font-semibold mb-0.5" style={{ color: 'var(--muted-text)' }}>{zh ? '安装方式' : 'Mount kind'}</label>
+                                <div className="px-2.5 py-1.5 rounded border" style={{ background: 'var(--app-hover-bg)', borderColor: 'var(--card-border)', color: 'var(--body-text)' }}>{device.mount_kind || 'u_mount'}</div>
+                              </div>
+                              <div className="col-span-2">
+                                <label className="block text-[10px] font-semibold mb-0.5" style={{ color: 'var(--muted-text)' }}>{zh ? '位置说明' : 'Location note'}</label>
+                                <div className="px-2.5 py-1.5 rounded border" style={{ background: 'var(--app-hover-bg)', borderColor: 'var(--card-border)', color: 'var(--body-text)' }}>{device.location_note || '—'}</div>
                               </div>
                             </div>
 
@@ -1880,6 +1984,10 @@ export const RackManagementTab: React.FC<Props> = ({ language }) => {
                   ) : layout.devices.map(d => {
                     const rc = getNormalizedRoleColor(d.device_role, d.name, d.model);
                     const isSelected = selectedDeviceId === d.id;
+                    const isUMount = (d.mount_kind || 'u_mount') === 'u_mount';
+                    const placement = isUMount
+                      ? `U${d.start_u ?? '—'}${(d.height_u ?? d.u_height ?? 1) > 1 && d.start_u != null ? `–U${d.start_u + (d.height_u ?? d.u_height ?? 1) - 1}` : ''}`
+                      : `${d.mount_kind || 'unknown'} / ${d.position || 'unknown'}`;
                     return (
                       <button
                         key={d.id}
@@ -1892,7 +2000,7 @@ export const RackManagementTab: React.FC<Props> = ({ language }) => {
                         <div className="flex-1 min-w-0">
                           <p className="font-semibold truncate" style={{ color: 'var(--heading-text)' }}>{d.name}</p>
                           <div className="flex items-center gap-2 text-[10px]" style={{ color: 'var(--muted-text)' }}>
-                            <span>U{d.start_u}</span>
+                            <span className={!isUMount ? 'text-amber-600 font-semibold' : undefined}>{placement}</span>
                             <span>•</span>
                             <span className="font-mono text-amber-500 flex items-center gap-0.5 font-semibold">
                               <Zap size={10} /> {d.power_watts ?? 0}W
@@ -2321,8 +2429,13 @@ export const RackManagementTab: React.FC<Props> = ({ language }) => {
                         value={deviceForm.device_type_id}
                         onChange={e => {
                           const device_type_id = e.target.value;
-                          const start_u = resolveStartUForInstall(device_type_id, deviceForm.position);
-                          setDeviceForm({ ...deviceForm, device_type_id, start_u });
+                          const selectedType = deviceTypes.find(dt => dt.id === device_type_id);
+                          const mount_kind = selectedType?.default_mount_kind || 'u_mount';
+                          const position = defaultPositionForMountKind(mount_kind);
+                          const start_u = mount_kind === 'u_mount'
+                            ? resolveStartUForInstall(device_type_id, position)
+                            : 1;
+                          setDeviceForm({ ...deviceForm, device_type_id, mount_kind, position, start_u });
                         }}
                         className="mt-1 w-full rounded-lg px-3 py-2 text-sm outline-none focus:ring-2 ring-cyan-500/30"
                         style={{ background: 'var(--app-hover-bg)', color: 'var(--body-text)', border: '1px solid var(--card-border)' }}
@@ -2341,26 +2454,51 @@ export const RackManagementTab: React.FC<Props> = ({ language }) => {
                       )}
                     </div>
 
-                    <div className="grid grid-cols-3 gap-3">
+                    <div className="grid grid-cols-4 gap-3">
                       <div>
-                        <label className="text-[11px] font-semibold" style={{ color: 'var(--muted-text)' }}>{zh ? '起始U位' : 'Start U'} *</label>
+                        <label className="text-[11px] font-semibold" style={{ color: 'var(--muted-text)' }}>{zh ? '安装方式' : 'Mount kind'}</label>
+                        <select
+                          value={deviceForm.mount_kind}
+                          onChange={e => {
+                            const mount_kind = e.target.value;
+                            const position = defaultPositionForMountKind(mount_kind);
+                            const start_u = mount_kind === 'u_mount'
+                              ? resolveStartUForInstall(deviceForm.device_type_id, position)
+                              : 1;
+                            setDeviceForm({ ...deviceForm, mount_kind, position, start_u });
+                          }}
+                          className="mt-1 w-full rounded-lg px-3 py-2 text-sm outline-none focus:ring-2 ring-cyan-500/30"
+                          style={{ background: 'var(--app-hover-bg)', color: 'var(--body-text)', border: '1px solid var(--card-border)' }}
+                        >
+                          <option value="u_mount">{zh ? '标准 U 位' : 'Standard U'}</option>
+                          <option value="zero_u">0U</option>
+                          <option value="side_mount">{zh ? '侧挂' : 'Side mount'}</option>
+                          <option value="floor">{zh ? '落地' : 'Floor-standing'}</option>
+                          <option value="unknown">{zh ? '待确认' : 'Unknown'}</option>
+                        </select>
+                      </div>
+                      <div>
+                        <label className="text-[11px] font-semibold" style={{ color: 'var(--muted-text)' }}>{zh ? '起始U位' : 'Start U'}{deviceForm.mount_kind === 'u_mount' ? ' *' : ''}</label>
                         <input
                           type="number"
                           min={1}
                           max={layout?.total_u || 60}
                           value={deviceForm.start_u}
                           onChange={e => setDeviceForm({ ...deviceForm, start_u: parseInt(e.target.value) || 1 })}
+                          disabled={deviceForm.mount_kind !== 'u_mount'}
                           className="mt-1 w-full rounded-lg px-3 py-2 text-sm outline-none focus:ring-2 ring-cyan-500/30"
                           style={{ background: 'var(--app-hover-bg)', color: 'var(--body-text)', border: '1px solid var(--card-border)' }}
                         />
                       </div>
                       <div>
-                        <label className="text-[11px] font-semibold" style={{ color: 'var(--muted-text)' }}>{zh ? '面板' : 'Side'}</label>
+                        <label className="text-[11px] font-semibold" style={{ color: 'var(--muted-text)' }}>{zh ? '位置' : 'Position'}</label>
                         <select
                           value={deviceForm.position}
                           onChange={e => {
                             const position = e.target.value;
-                            const start_u = resolveStartUForInstall(deviceForm.device_type_id, position);
+                            const start_u = deviceForm.mount_kind === 'u_mount'
+                              ? resolveStartUForInstall(deviceForm.device_type_id, position)
+                              : deviceForm.start_u;
                             setDeviceForm({ ...deviceForm, position, start_u });
                           }}
                           className="mt-1 w-full rounded-lg px-3 py-2 text-sm outline-none focus:ring-2 ring-cyan-500/30"
@@ -2368,6 +2506,10 @@ export const RackManagementTab: React.FC<Props> = ({ language }) => {
                         >
                           <option value="front">{zh ? '前面板' : 'Front'}</option>
                           <option value="rear">{zh ? '后面板' : 'Rear'}</option>
+                          <option value="full_depth">{zh ? '全深度' : 'Full depth'}</option>
+                          <option value="left_side">{zh ? '左侧挂' : 'Left side'}</option>
+                          <option value="right_side">{zh ? '右侧挂' : 'Right side'}</option>
+                          <option value="unknown">{zh ? '待确认' : 'Unknown'}</option>
                         </select>
                       </div>
                       <div>
@@ -2384,6 +2526,23 @@ export const RackManagementTab: React.FC<Props> = ({ language }) => {
                         </select>
                       </div>
                     </div>
+                    {deviceForm.mount_kind !== 'u_mount' && (
+                      <div>
+                        <label className="text-[11px] font-semibold" style={{ color: 'var(--muted-text)' }}>
+                          {zh ? '位置说明' : 'Location note'}{deviceForm.mount_kind === 'floor' ? ' *' : ''}
+                        </label>
+                        <input
+                          value={deviceForm.location_note}
+                          onChange={e => setDeviceForm({ ...deviceForm, location_note: e.target.value })}
+                          placeholder={zh ? '例如：机柜底部左侧 / 后门 PDU 导轨' : 'e.g. lower-left floor area / rear-door PDU rail'}
+                          className="mt-1 w-full rounded-lg px-3 py-2 text-sm outline-none focus:ring-2 ring-cyan-500/30"
+                          style={{ background: 'var(--app-hover-bg)', color: 'var(--body-text)', border: '1px solid var(--card-border)' }}
+                        />
+                        <p className="mt-1 text-[10px] text-amber-600 dark:text-amber-400">
+                          {zh ? '非标准 U 位不会占用 U 容量，也不会被强行绘制到 U1。' : 'Non-U equipment does not consume U capacity or get coerced into U1.'}
+                        </p>
+                      </div>
+                    )}
                   </div>
                 )}
 
@@ -2397,7 +2556,7 @@ export const RackManagementTab: React.FC<Props> = ({ language }) => {
                       setFormError('');
                       setSelectedAsset(null);
                       setAssetSearch('');
-                      setDeviceForm({ name: '', device_type_id: '', start_u: 1, position: 'front', status: 'active', serial_number: '', asset_id: '' });
+                      setDeviceForm({ name: '', device_type_id: '', start_u: 1, mount_kind: 'u_mount', position: 'front', location_note: '', status: 'active', serial_number: '', asset_id: '' });
                     }}
                     className="px-4 py-1.5 rounded-lg text-xs font-medium"
                     style={{ color: 'var(--muted-text)' }}
@@ -2475,7 +2634,7 @@ export const RackManagementTab: React.FC<Props> = ({ language }) => {
                   <input value={dtForm.vendor} onChange={e => setDtForm({ ...dtForm, vendor: e.target.value })} placeholder={zh ? '厂商' : 'Vendor'} className="rounded-lg px-3 py-1.5 text-xs outline-none" style={{ background: 'var(--app-hover-bg)', color: 'var(--body-text)', border: '1px solid var(--card-border)' }} />
                   <div className="flex items-center gap-2">
                     <label className="text-[10px] flex-shrink-0" style={{ color: 'var(--muted-text)' }}>U{zh ? '高度' : ' Height'}:</label>
-                    <input type="number" min={1} max={20} value={dtForm.u_height} onChange={e => setDtForm({ ...dtForm, u_height: parseInt(e.target.value) || 1 })} className="w-16 rounded-lg px-2 py-1.5 text-xs outline-none" style={{ background: 'var(--app-hover-bg)', color: 'var(--body-text)', border: '1px solid var(--card-border)' }} />
+                    <input type="number" min={0} max={20} value={dtForm.u_height} onChange={e => setDtForm({ ...dtForm, u_height: Math.max(0, parseInt(e.target.value) || 0) })} className="w-16 rounded-lg px-2 py-1.5 text-xs outline-none" style={{ background: 'var(--app-hover-bg)', color: 'var(--body-text)', border: '1px solid var(--card-border)' }} />
                   </div>
                   <div className="flex items-center gap-2">
                     <label className="text-[10px] flex-shrink-0" style={{ color: 'var(--muted-text)' }}>{zh ? '功率(W)' : 'Power(W)'}:</label>
@@ -2485,6 +2644,13 @@ export const RackManagementTab: React.FC<Props> = ({ language }) => {
                     {Object.entries(ROLE_COLORS).map(([key, rc]) => (
                       <option key={key} value={key}>{zh ? rc.labelZh : rc.label}</option>
                     ))}
+                  </select>
+                  <select value={dtForm.default_mount_kind} onChange={e => setDtForm({ ...dtForm, default_mount_kind: e.target.value })} className="rounded-lg px-2 py-1.5 text-xs outline-none" style={{ background: 'var(--app-hover-bg)', color: 'var(--body-text)', border: '1px solid var(--card-border)' }}>
+                    <option value="u_mount">{zh ? '默认：标准 U 位' : 'Default: standard U'}</option>
+                    <option value="zero_u">{zh ? '默认：0U' : 'Default: 0U'}</option>
+                    <option value="side_mount">{zh ? '默认：侧挂' : 'Default: side mount'}</option>
+                    <option value="floor">{zh ? '默认：落地' : 'Default: floor-standing'}</option>
+                    <option value="unknown">{zh ? '默认：待确认' : 'Default: unknown'}</option>
                   </select>
                 </div>
               </div>

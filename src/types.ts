@@ -858,6 +858,7 @@ export const PLATFORM_LABELS: Record<string, string> = {
   huawei_vrp: 'Huawei VRP',
   huawei_vrpv8: 'Huawei VRP8',
   h3c_comware: 'H3C Comware',
+  h3c_comware_v3: 'H3C Comware V3',
   arista_eos: 'Arista EOS',
   juniper_junos: 'Juniper Junos',
   ruijie_rgos: 'Ruijie RGOS',

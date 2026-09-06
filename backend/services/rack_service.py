@@ -10,6 +10,9 @@ import logging
 from datetime import datetime, timezone
 from decimal import Decimal
 
+from services import rack_asset_resolver
+from services import rack_placement_service
+
 logger = logging.getLogger(__name__)
 
 
@@ -136,18 +139,25 @@ def get_rack_type(conn, rack_type_id: str) -> dict:
 def create_rack_type(conn, *, name: str, vendor: str = '', model: str = '',
                      total_u: int = 42, width_mm: int = 600, depth_mm: int = 1000,
                      max_weight_kg: int = 0, power_capacity_watts: int = 0,
-                     allow_front_rear_mount: bool = True, description: str = '') -> dict:
+                     allow_front_rear_mount: bool = True, mount_policy: str = 'front_rear',
+                     description: str = '') -> dict:
+    mount_policy = str(mount_policy or '').strip().lower()
+    if mount_policy not in {'front_only', 'front_rear', 'full_depth'}:
+        raise ValueError("mount_policy must be one of 'front_only', 'front_rear', or 'full_depth'")
+    if mount_policy == 'front_only':
+        allow_front_rear_mount = False
     rack_type_id = str(uuid.uuid4())
     now = _utc_now()
     conn.execute(
         """INSERT INTO rack_types (
             id, name, vendor, model, total_u, width_mm, depth_mm, max_weight_kg,
-            power_capacity_watts, allow_front_rear_mount, description, created_at, updated_at
-        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
+            power_capacity_watts, allow_front_rear_mount, mount_policy, description,
+            created_at, updated_at
+        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
         (
             rack_type_id, name.strip(), vendor, model, total_u, width_mm, depth_mm,
             max_weight_kg, power_capacity_watts, 1 if allow_front_rear_mount else 0,
-            description, now, now,
+            mount_policy, description, now, now,
         )
     )
     conn.commit()
@@ -160,12 +170,19 @@ def update_rack_type(conn, rack_type_id: str, **fields) -> dict:
     params = []
     for key in (
         'name', 'vendor', 'model', 'total_u', 'width_mm', 'depth_mm',
-        'max_weight_kg', 'power_capacity_watts', 'allow_front_rear_mount', 'description'
+        'max_weight_kg', 'power_capacity_watts', 'allow_front_rear_mount', 'mount_policy', 'description'
     ):
         if key in fields and fields[key] is not None:
             val = fields[key]
             if key == 'allow_front_rear_mount':
                 val = 1 if val else 0
+            elif key == 'mount_policy':
+                val = str(val or '').strip().lower()
+                if val not in {'front_only', 'front_rear', 'full_depth'}:
+                    raise ValueError("mount_policy must be one of 'front_only', 'front_rear', or 'full_depth'")
+                if val == 'front_only':
+                    updates.append("allow_front_rear_mount = ?")
+                    params.append(0)
             updates.append(f"{key} = ?")
             params.append(val)
     if not updates:
@@ -194,18 +211,36 @@ def delete_rack_type(conn, rack_type_id: str) -> None:
 # Rack CRUD
 # ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 
-def list_racks(conn, site_id: str = '', datacenter: str = '') -> list[dict]:
-    query = """SELECT r.*, s.site_code, s.site_name
+def list_racks(
+    conn,
+    site_id: str = '',
+    datacenter: str = '',
+    *,
+    tenant_id: str | None = None,
+    allowed_site_ids: tuple[str, ...] | None = None,
+) -> list[dict]:
+    query = """SELECT r.*, s.site_code, s.site_name, s.tenant_id AS site_tenant_id
                FROM racks r LEFT JOIN sites s ON s.id = r.site_id"""
+    filters: list[str] = []
+    params: list[object] = []
     if site_id:
-        rows = conn.execute(query + " WHERE r.site_id = ? ORDER BY r.name", (site_id,)).fetchall()
+        filters.append("r.site_id = ?")
+        params.append(site_id)
     elif datacenter:
-        rows = conn.execute(
-            query + " WHERE r.datacenter = ? OR s.site_code = ? OR s.site_name = ? ORDER BY r.name",
-            (datacenter, datacenter, datacenter),
-        ).fetchall()
-    else:
-        rows = conn.execute(query + " ORDER BY s.site_code, r.name").fetchall()
+        filters.append("(r.datacenter = ? OR s.site_code = ? OR s.site_name = ?)")
+        params.extend((datacenter, datacenter, datacenter))
+    if tenant_id is not None:
+        filters.append("COALESCE(s.tenant_id, 'tenant-default') = ?")
+        params.append(tenant_id)
+    if allowed_site_ids is not None:
+        if not allowed_site_ids:
+            return []
+        placeholders = ','.join('?' for _ in allowed_site_ids)
+        filters.append(f"r.site_id IN ({placeholders})")
+        params.extend(allowed_site_ids)
+    where_sql = f" WHERE {' AND '.join(filters)}" if filters else ''
+    order_sql = " ORDER BY r.name" if site_id or datacenter else " ORDER BY s.site_code, r.name"
+    rows = conn.execute(query + where_sql + order_sql, tuple(params)).fetchall()
     return [_row_to_dict(r) for r in rows]
 
 
@@ -221,6 +256,8 @@ def list_rack_summaries(
     row: str = '',
     status: str = '',
     health: str = '',
+    tenant_id: str | None = None,
+    allowed_site_ids: tuple[str, ...] | None = None,
 ) -> dict:
     """Return a paged rack read model without loading full layouts.
 
@@ -236,6 +273,15 @@ def list_rack_summaries(
     if site_id:
         filters.append("r.site_id = ?")
         params.append(site_id)
+    if tenant_id is not None:
+        filters.append("COALESCE(s.tenant_id, 'tenant-default') = ?")
+        params.append(tenant_id)
+    if allowed_site_ids is not None:
+        if not allowed_site_ids:
+            return {'items': [], 'total': 0, 'page': page, 'page_size': page_size}
+        placeholders = ','.join('?' for _ in allowed_site_ids)
+        filters.append(f"r.site_id IN ({placeholders})")
+        params.extend(allowed_site_ids)
     if floor:
         filters.append("r.floor = ?")
         params.append(floor)
@@ -331,7 +377,8 @@ def list_rack_summaries(
                 r.power_capacity_w, r.power_capacity_watts,
                 r.max_weight_kg, r.cooling_zone, r.remarks, r.description,
                 r.placement_strategy, r.rack_type_id, r.width_mm, r.depth_mm,
-                r.allow_front_rear_mount, r.created_at, r.updated_at
+                r.allow_front_rear_mount, r.mount_policy, r.layout_revision,
+                r.created_at, r.updated_at
             FROM racks r LEFT JOIN sites s ON s.id = r.site_id
             {where_sql}
             ORDER BY COALESCE(s.site_code, ''), COALESCE(r.floor, ''),
@@ -347,11 +394,14 @@ def list_rack_summaries(
     placeholders = ','.join('?' for _ in rack_ids)
     device_rows = conn.execute(
         f"""SELECT rd.id, rd.rack_id, rd.asset_id, rd.start_u, rd.position,
-                   rd.status, dt.u_height, dt.power_watts
+                   rd.mount_kind, rd.height_u, rd.placement_status,
+                   rd.location_note, rd.status, dt.u_height, dt.power_watts
             FROM rack_devices rd
             JOIN device_types dt ON dt.id = rd.device_type_id
             WHERE rd.rack_id IN ({placeholders})
-            ORDER BY rd.rack_id, rd.start_u""",
+            ORDER BY rd.rack_id,
+                     CASE WHEN rd.start_u IS NULL THEN 1 ELSE 0 END,
+                     rd.start_u""",
         tuple(rack_ids),
     ).fetchall()
     devices_by_rack: dict[str, list[dict]] = {rack_id: [] for rack_id in rack_ids}
@@ -393,17 +443,38 @@ def list_rack_summaries(
         healthy_device_count = 0
         unknown_monitoring_device_count = 0
         unlinked_asset_count = 0
+        non_u_device_count = 0
+        unknown_placement_device_count = 0
 
         for device in devices:
-            start_u = int(device.get('start_u') or 0)
-            height_u = max(1, int(device.get('u_height') or 1))
-            end_u = start_u + height_u - 1
-            position = str(device.get('position') or '')
-            if start_u < 1 or end_u > int(rack.get('total_u') or 0) or position not in {'front', 'rear'}:
-                invalid_device_count += 1
+            mount_kind = str(device.get('mount_kind') or 'u_mount').strip().lower()
+            position = str(device.get('position') or 'unknown').strip().lower()
+            if mount_kind == 'u_mount':
+                try:
+                    start_u = int(device.get('start_u')) if device.get('start_u') is not None else 0
+                    height_u = int(device.get('height_u') or device.get('u_height') or 0)
+                except (TypeError, ValueError):
+                    start_u, height_u = 0, 0
+                end_u = start_u + height_u - 1
+                if start_u < 1 or height_u < 1 or end_u > int(rack.get('total_u') or 0) or position not in {'front', 'rear', 'full_depth'}:
+                    invalid_device_count += 1
+                else:
+                    occupied_range = range(start_u, end_u + 1)
+                    if position in {'front', 'full_depth'}:
+                        front_occupied.update(occupied_range)
+                    if position in {'rear', 'full_depth'}:
+                        rear_occupied.update(occupied_range)
+            elif mount_kind in {'zero_u', 'side_mount', 'floor'}:
+                non_u_device_count += 1
+                if mount_kind == 'side_mount' and position not in {'left_side', 'right_side'}:
+                    invalid_device_count += 1
+                elif mount_kind == 'zero_u' and position not in {'rear', 'left_side', 'right_side', 'unknown'}:
+                    invalid_device_count += 1
+                elif mount_kind == 'floor' and not str(device.get('location_note') or '').strip():
+                    invalid_device_count += 1
             else:
-                target = front_occupied if position == 'front' else rear_occupied
-                target.update(range(start_u, end_u + 1))
+                non_u_device_count += 1
+                unknown_placement_device_count += 1
             power_used_watts += int(device.get('power_watts') or 0)
 
             asset_id_value = _normalize_asset_id(device.get('asset_id'))
@@ -451,6 +522,8 @@ def list_rack_summaries(
             'unknown_monitoring_device_count': unknown_monitoring_device_count,
             'unlinked_asset_count': unlinked_asset_count,
             'unmonitored_device_count': unmonitored_device_count,
+            'non_u_device_count': non_u_device_count,
+            'unknown_placement_device_count': unknown_placement_device_count,
             'invalid_device_count': invalid_device_count,
             'health_status': health_status,
             'data_quality_status': data_quality_status,
@@ -461,7 +534,10 @@ def list_rack_summaries(
 
 def get_rack(conn, rack_id: str) -> dict:
     row = conn.execute(
-        "SELECT r.*, s.site_code, s.site_name FROM racks r LEFT JOIN sites s ON s.id = r.site_id WHERE r.id = ?",
+        """SELECT r.*, s.site_code, s.site_name,
+                  s.tenant_id AS site_tenant_id
+             FROM racks r LEFT JOIN sites s ON s.id = r.site_id
+            WHERE r.id = ?""",
         (rack_id,),
     ).fetchone()
     if not row:
@@ -469,19 +545,109 @@ def get_rack(conn, rack_id: str) -> dict:
     return _row_to_dict(row)
 
 
+def resolve_rack_reference(conn, reference: str) -> dict | None:
+    """Resolve a rack by stable ID/code or by a legacy display name.
+
+    IDs and rack codes are authoritative.  Legacy asset forms may still send
+    ``name``/``rack_name``; when that value is shared by more than one rack,
+    returning an arbitrary ``LIMIT 1`` row would move an asset silently, so
+    expose a stable 409 domain failure instead.
+    """
+
+    normalized = str(reference or '').strip()
+    if not normalized:
+        return None
+
+    for column in ('id', 'rack_code'):
+        row = conn.execute(
+            f"""SELECT r.*, s.site_code, s.site_name,
+                              s.tenant_id AS site_tenant_id
+                   FROM racks r LEFT JOIN sites s ON s.id = r.site_id
+                  WHERE r.{column} = ?
+                  LIMIT 1""",
+            (normalized,),
+        ).fetchone()
+        if row:
+            return _row_to_dict(row)
+
+    rows = conn.execute(
+        """SELECT r.*, s.site_code, s.site_name,
+                         s.tenant_id AS site_tenant_id
+                  FROM racks r LEFT JOIN sites s ON s.id = r.site_id
+                 WHERE r.name = ? OR r.rack_name = ?
+                 ORDER BY r.id""",
+        (normalized, normalized),
+    ).fetchall()
+    unique_rows: dict[str, dict] = {}
+    for row in rows:
+        item = _row_to_dict(row)
+        unique_rows[str(item.get('id') or '')] = item
+    if len(unique_rows) > 1:
+        raise rack_placement_service.RackPlacementError(
+            'RACK_NOT_UNIQUE',
+            'Rack name matches more than one rack; use rack_id or rack_code',
+            status_code=409,
+            details={
+                'reference': normalized,
+                'rack_ids': sorted(unique_rows),
+            },
+        )
+    return next(iter(unique_rows.values()), None)
+
+
 def create_rack(conn, *, name: str, datacenter: str = '', floor: str = '', room: str = '',
                 row: str = '', total_u: int = 42, description: str = '',
-                status: str = 'active', power_capacity_watts: int = 0,
+                status: str = 'active', power_capacity_watts: int | None = None,
                 site_id: str = 'site-default', rack_code: str = '',
                 placement_strategy: str = 'bottom_first', rack_type_id: str = '',
                 width_mm: int = 600, depth_mm: int = 1000,
-                allow_front_rear_mount: bool = True, commit: bool = True, **kwargs) -> dict:
+                allow_front_rear_mount: bool | None = True, mount_policy: str | None = None,
+                commit: bool = True, **kwargs) -> dict:
     rack_id = str(uuid.uuid4())
     if not rack_code:
         rack_code = f"RACK_{uuid.uuid4().hex[:12].upper()}"
 
+    # Give callers a stable domain conflict before PostgreSQL's unique
+    # constraint raises a driver-specific IntegrityError.  This is important
+    # for atomic batch creation, where a duplicate row must be reported as a
+    # validation/conflict response rather than an opaque 500.
+    existing_code = conn.execute(
+        "SELECT id FROM racks WHERE rack_code = ? LIMIT 1",
+        (rack_code,),
+    ).fetchone()
+    if existing_code:
+        raise rack_placement_service.RackPlacementError(
+            "RACK_CODE_CONFLICT",
+            "Rack code already exists",
+            status_code=409,
+            details={"rack_code": rack_code, "existing_rack_id": existing_code["id"]},
+        )
+
+    legacy_power_capacity = kwargs.get('power_capacity_w')
+    if power_capacity_watts is not None and legacy_power_capacity is not None:
+        try:
+            canonical_power = int(power_capacity_watts)
+            legacy_power = int(legacy_power_capacity)
+        except (TypeError, ValueError) as exc:
+            raise ValueError("power capacity fields must be integers") from exc
+        if canonical_power != legacy_power:
+            raise rack_placement_service.RackPlacementError(
+                "POWER_FIELD_CONFLICT",
+                "power_capacity_watts and power_capacity_w must have the same value",
+                status_code=422,
+                details={
+                    "power_capacity_watts": canonical_power,
+                    "power_capacity_w": legacy_power,
+                },
+            )
+    elif power_capacity_watts is None:
+        power_capacity_watts = legacy_power_capacity if legacy_power_capacity is not None else 5000
+    if power_capacity_watts is not None and int(power_capacity_watts) < 0:
+        raise ValueError("power capacity must be >= 0")
+
     site_id, site_code, _site_name = _resolve_site(conn, site_id, datacenter)
 
+    rack_type = None
     if rack_type_id:
         rack_type = get_rack_type(conn, rack_type_id)
         total_u = kwargs.get('total_u') or total_u or rack_type.get('total_u') or 42
@@ -491,14 +657,28 @@ def create_rack(conn, *, name: str, datacenter: str = '', floor: str = '', room:
             power_capacity_watts = int(rack_type.get('power_capacity_watts') or 0)
         if kwargs.get('max_weight_kg') is None:
             kwargs['max_weight_kg'] = rack_type.get('max_weight_kg')
-        allow_front_rear_mount = bool(rack_type.get('allow_front_rear_mount')) if allow_front_rear_mount is None else allow_front_rear_mount
+        if allow_front_rear_mount is None:
+            allow_front_rear_mount = bool(rack_type.get('allow_front_rear_mount'))
+
+    if mount_policy is None:
+        if rack_type and rack_type.get('mount_policy'):
+            mount_policy = str(rack_type['mount_policy']).strip().lower()
+        else:
+            mount_policy = 'front_rear' if allow_front_rear_mount is not False else 'front_only'
+    mount_policy = str(mount_policy).strip().lower()
+    if mount_policy not in {'front_only', 'front_rear', 'full_depth'}:
+        raise ValueError("mount_policy must be one of 'front_only', 'front_rear', or 'full_depth'")
+    if mount_policy == 'front_only':
+        allow_front_rear_mount = False
+    elif allow_front_rear_mount is None:
+        allow_front_rear_mount = True
     
     # Synchronize old and new fields
     rack_name = kwargs.get('rack_name') or name
     room_name = kwargs.get('room_name') or room
     row_name = kwargs.get('row_name') or row
     remarks = kwargs.get('remarks') or description
-    power_capacity_w = kwargs.get('power_capacity_w') or power_capacity_watts or 5000
+    power_capacity_w = int(power_capacity_watts or 0)
     used_u = kwargs.get('used_u', 0)
     available_u = kwargs.get('available_u')
     if available_u is None:
@@ -516,14 +696,16 @@ def create_rack(conn, *, name: str, datacenter: str = '', floor: str = '', room:
             id, site_id, rack_code, rack_name, name, datacenter, floor, room, row, room_name, row_name,
             total_u, used_u, available_u, power_capacity_w, power_capacity_watts, status, remarks, description,
             current_power_w, power_utilization, max_weight_kg, current_weight_kg, cooling_zone,
-            placement_strategy, rack_type_id, width_mm, depth_mm, allow_front_rear_mount, created_at, updated_at
+            placement_strategy, rack_type_id, width_mm, depth_mm, allow_front_rear_mount,
+            mount_policy, layout_revision, created_at, updated_at
            )
-           VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
+           VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
         (
             rack_id, site_id, rack_code, rack_name, name, site_code, floor, room, row, room_name, row_name,
             total_u, used_u, available_u, power_capacity_w, power_capacity_watts, status, remarks, description,
             current_power_w, power_utilization, max_weight_kg, current_weight_kg, cooling_zone,
-            placement_strategy, rack_type_id, width_mm, depth_mm, 1 if allow_front_rear_mount else 0, now, now
+            placement_strategy, rack_type_id, width_mm, depth_mm, 1 if allow_front_rear_mount else 0,
+            mount_policy, 1, now, now
         )
     )
     if commit:
@@ -536,6 +718,76 @@ def update_rack(conn, rack_id: str, **fields) -> dict:
     existing = get_rack(conn, rack_id)
     updates = []
     params = []
+
+    canonical_power = fields.get('power_capacity_watts')
+    legacy_power = fields.get('power_capacity_w')
+    if canonical_power is not None or legacy_power is not None:
+        if canonical_power is not None and legacy_power is not None:
+            try:
+                canonical_power = int(canonical_power)
+                legacy_power = int(legacy_power)
+            except (TypeError, ValueError) as exc:
+                raise ValueError("power capacity fields must be integers") from exc
+            if canonical_power != legacy_power:
+                raise rack_placement_service.RackPlacementError(
+                    "POWER_FIELD_CONFLICT",
+                    "power_capacity_watts and power_capacity_w must have the same value",
+                    status_code=422,
+                    details={
+                        "power_capacity_watts": canonical_power,
+                        "power_capacity_w": legacy_power,
+                    },
+                )
+        else:
+            effective_power = canonical_power if canonical_power is not None else legacy_power
+            fields['power_capacity_watts'] = effective_power
+            fields['power_capacity_w'] = effective_power
+        if int(fields['power_capacity_watts']) < 0:
+            raise ValueError("power capacity must be >= 0")
+
+    if 'total_u' in fields and fields['total_u'] is not None:
+        try:
+            requested_total_u = int(fields['total_u'])
+        except (TypeError, ValueError) as exc:
+            raise ValueError("total_u must be an integer") from exc
+        if requested_total_u < 1:
+            raise ValueError("total_u must be >= 1")
+        current_total_u = int(existing.get('total_u') or 0)
+        if requested_total_u < current_total_u:
+            affected: list[dict] = []
+            rows = conn.execute(
+                """SELECT rd.id, rd.name, rd.start_u, rd.height_u,
+                          rd.mount_kind, dt.u_height
+                     FROM rack_devices rd
+                     JOIN device_types dt ON dt.id = rd.device_type_id
+                    WHERE rd.rack_id = ?""",
+                (rack_id,),
+            ).fetchall()
+            for raw in rows:
+                device = _row_to_dict(raw)
+                if str(device.get('mount_kind') or 'u_mount').strip().lower() != 'u_mount':
+                    continue
+                try:
+                    start_u = int(device.get('start_u'))
+                    height_u = int(device.get('height_u') or device.get('u_height') or 0)
+                except (TypeError, ValueError):
+                    affected.append({"id": device.get('id'), "name": device.get('name'), "reason": "invalid U geometry"})
+                    continue
+                end_u = start_u + height_u - 1
+                if start_u < 1 or height_u < 1 or end_u > requested_total_u:
+                    affected.append({
+                        "id": device.get('id'),
+                        "name": device.get('name') or device.get('id'),
+                        "start_u": start_u,
+                        "end_u": end_u,
+                    })
+            if affected:
+                raise rack_placement_service.RackPlacementError(
+                    "RACK_RESIZE_CONFLICT",
+                    "Cannot reduce rack height while installed U placements would be out of bounds",
+                    status_code=409,
+                    details={"rack_id": rack_id, "requested_total_u": requested_total_u, "placements": affected},
+                )
 
     if 'site_id' in fields and fields['site_id'] is not None:
         resolved_id, site_code, _site_name = _resolve_site(conn, fields['site_id'])
@@ -552,7 +804,7 @@ def update_rack(conn, rack_id: str, **fields) -> dict:
         'site_id', 'rack_code', 'rack_name', 'room_name', 'row_name', 'used_u', 'available_u',
         'power_capacity_w', 'current_power_w', 'power_utilization', 'max_weight_kg', 'current_weight_kg',
         'cooling_zone', 'remarks', 'placement_strategy', 'rack_type_id', 'width_mm', 'depth_mm',
-        'allow_front_rear_mount'
+        'allow_front_rear_mount', 'mount_policy'
     )
     
     # Align values if one of the duplicates is modified
@@ -585,12 +837,25 @@ def update_rack(conn, rack_id: str, **fields) -> dict:
         if key in fields and fields[key] is not None:
             if key == 'allow_front_rear_mount':
                 fields[key] = 1 if fields[key] else 0
+            elif key == 'mount_policy':
+                fields[key] = str(fields[key] or '').strip().lower()
+                if fields[key] not in {'front_only', 'front_rear', 'full_depth'}:
+                    raise ValueError("mount_policy must be one of 'front_only', 'front_rear', or 'full_depth'")
+                if fields[key] == 'front_only' and 'allow_front_rear_mount' not in fields:
+                    updates.append("allow_front_rear_mount = ?")
+                    params.append(0)
             updates.append(f"{key} = ?")
             params.append(fields[key])
             
     if not updates:
         return existing
         
+    layout_fields = {
+        'total_u', 'width_mm', 'depth_mm', 'allow_front_rear_mount',
+        'mount_policy', 'rack_type_id',
+    }
+    if any(key in fields for key in layout_fields):
+        updates.append("layout_revision = COALESCE(layout_revision, 0) + 1")
     updates.append("updated_at = ?")
     params.append(_utc_now())
     params.append(rack_id)
@@ -633,13 +898,34 @@ def get_device_type(conn, dt_id: str) -> dict:
 
 def create_device_type(conn, *, model: str, vendor: str = '', u_height: int = 1,
                        device_role: str = 'switch', is_full_depth: bool = True,
-                       description: str = '', power_watts: int = 0) -> dict:
+                       description: str = '', power_watts: int = 0,
+                       depth_class: str = 'unknown', width_mm: int | None = None,
+                       depth_mm: int | None = None, height_mm: int | None = None,
+                       weight_kg: float | None = None, dimension_status: str = 'unknown',
+                       default_mount_kind: str = 'u_mount', model_family: str = '',
+                       catalog_key: str = '') -> dict:
+    depth_class = str(depth_class or 'unknown').strip().lower()
+    dimension_status = str(dimension_status or 'unknown').strip().lower()
+    default_mount_kind = str(default_mount_kind or 'u_mount').strip().lower()
+    if depth_class not in {'half', 'full', 'unknown'}:
+        raise ValueError("depth_class must be one of 'half', 'full', or 'unknown'")
+    if dimension_status not in rack_placement_service.DIMENSION_STATUSES:
+        raise ValueError(f"dimension_status must be one of {sorted(rack_placement_service.DIMENSION_STATUSES)}")
+    if default_mount_kind not in rack_placement_service.MOUNT_KINDS:
+        raise ValueError(f"default_mount_kind must be one of {sorted(rack_placement_service.MOUNT_KINDS)}")
     dt_id = str(uuid.uuid4())
     now = _utc_now()
     conn.execute(
-        """INSERT INTO device_types (id, model, vendor, u_height, device_role, is_full_depth, description, power_watts, created_at, updated_at)
-           VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
-        (dt_id, model, vendor, u_height, device_role, 1 if is_full_depth else 0, description, power_watts, now, now)
+        """INSERT INTO device_types (
+               id, model, vendor, u_height, device_role, is_full_depth, description, power_watts,
+               depth_class, width_mm, depth_mm, height_mm, weight_kg, dimension_status,
+               default_mount_kind, model_family, catalog_key, created_at, updated_at
+           ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
+        (
+            dt_id, model, vendor, u_height, device_role, 1 if is_full_depth else 0,
+            description, power_watts, depth_class, width_mm, depth_mm, height_mm,
+            weight_kg, dimension_status, default_mount_kind, model_family, catalog_key, now, now,
+        )
     )
     conn.commit()
     logger.info(f"[RackService] Created device type '{vendor} {model}' ({u_height}U, {power_watts}W)")
@@ -650,11 +936,92 @@ def update_device_type(conn, dt_id: str, **fields) -> dict:
     existing = get_device_type(conn, dt_id)
     updates = []
     params = []
-    for key in ('model', 'vendor', 'u_height', 'device_role', 'is_full_depth', 'description', 'power_watts'):
+    supported_keys = (
+        'model', 'vendor', 'u_height', 'device_role', 'is_full_depth', 'description', 'power_watts',
+        'depth_class', 'width_mm', 'depth_mm', 'height_mm', 'weight_kg', 'dimension_status',
+        'default_mount_kind', 'model_family', 'catalog_key',
+    )
+
+    if 'u_height' in fields and fields['u_height'] is not None:
+        try:
+            requested_height = int(fields['u_height'])
+        except (TypeError, ValueError) as exc:
+            raise ValueError("u_height must be an integer") from exc
+        if requested_height < 0:
+            raise ValueError("u_height must be >= 0")
+        current_height = int(existing.get('u_height') or 0)
+        if requested_height != current_height:
+            affected: list[dict] = []
+            rows = conn.execute(
+                """SELECT rd.id, rd.name, rd.rack_id, rd.start_u,
+                          rd.position, rd.mount_kind, rd.height_u,
+                          rd.placement_status, rd.placement_source,
+                          rd.dimension_status, rd.location_note,
+                          rd.asset_id
+                     FROM rack_devices rd
+                    WHERE rd.device_type_id = ?""",
+                (dt_id,),
+            ).fetchall()
+            for raw in rows:
+                placement = _row_to_dict(raw)
+                if str(placement.get('mount_kind') or 'u_mount').strip().lower() != 'u_mount':
+                    continue
+                # An explicit placement height is an operator override and is
+                # not changed by a template edit.  Only inherited rows need
+                # to be checked against the new device-type height.
+                if (
+                    placement.get('height_u') not in (None, '')
+                    and str(placement.get('placement_status') or '').strip().lower() != 'estimated'
+                ):
+                    continue
+                result = rack_placement_service.validate(
+                    conn,
+                    rack_id=str(placement.get('rack_id') or ''),
+                    device_type_id=dt_id,
+                    start_u=placement.get('start_u'),
+                    position=placement.get('position'),
+                    mount_kind=placement.get('mount_kind'),
+                    height_u=requested_height,
+                    asset_id=placement.get('asset_id') or '',
+                    exclude_device_id=placement.get('id') or '',
+                    location_note=placement.get('location_note') or '',
+                    placement_status=placement.get('placement_status'),
+                    placement_source=placement.get('placement_source'),
+                    dimension_status=placement.get('dimension_status'),
+                    check_asset=False,
+                )
+                if not result.get('valid'):
+                    affected.append({
+                        "id": placement.get('id'),
+                        "name": placement.get('name') or placement.get('id'),
+                        "rack_id": placement.get('rack_id'),
+                        "errors": result.get('errors') or [],
+                    })
+            if affected:
+                raise rack_placement_service.RackPlacementError(
+                    "DEVICE_TYPE_UPDATE_CONFLICT",
+                    "Cannot change device type height while inherited rack placements would become invalid",
+                    status_code=409,
+                    details={"device_type_id": dt_id, "requested_u_height": requested_height, "placements": affected},
+                )
+        fields['u_height'] = requested_height
+    for key in supported_keys:
         if key in fields and fields[key] is not None:
             val = fields[key]
             if key == 'is_full_depth':
                 val = 1 if val else 0
+            elif key == 'depth_class':
+                val = str(val or 'unknown').strip().lower()
+                if val not in {'half', 'full', 'unknown'}:
+                    raise ValueError("depth_class must be one of 'half', 'full', or 'unknown'")
+            elif key == 'dimension_status':
+                val = str(val or 'unknown').strip().lower()
+                if val not in rack_placement_service.DIMENSION_STATUSES:
+                    raise ValueError(f"dimension_status must be one of {sorted(rack_placement_service.DIMENSION_STATUSES)}")
+            elif key == 'default_mount_kind':
+                val = str(val or 'u_mount').strip().lower()
+                if val not in rack_placement_service.MOUNT_KINDS:
+                    raise ValueError(f"default_mount_kind must be one of {sorted(rack_placement_service.MOUNT_KINDS)}")
             updates.append(f"{key} = ?")
             params.append(val)
     if not updates:
@@ -673,7 +1040,12 @@ def delete_device_type(conn, dt_id: str) -> None:
         "SELECT COUNT(*) as cnt FROM rack_devices WHERE device_type_id = ?", (dt_id,)
     ).fetchone()
     if usage and (usage['cnt'] if hasattr(usage, '__getitem__') else usage[0]) > 0:
-        raise ValueError("Cannot delete device type in use by rack devices.")
+        raise rack_placement_service.RackPlacementError(
+            "DEVICE_TYPE_IN_USE",
+            "Cannot delete device type in use by rack devices.",
+            status_code=409,
+            details={"device_type_id": dt_id},
+        )
     conn.execute("DELETE FROM device_types WHERE id = ?", (dt_id,))
     conn.commit()
 
@@ -684,192 +1056,178 @@ def delete_device_type(conn, dt_id: str) -> None:
 
 def _check_u_constraints(conn, rack_id: str, start_u: int, u_height: int,
                          position: str, exclude_device_id: str = ''):
-    """Enforce: start_u >= 1, end_u <= total_u, no overlap with existing devices."""
+    """Compatibility wrapper around the canonical placement validator."""
     from database import _USE_PG
+
     if _USE_PG:
-        # Row-level lock on parent rack row to prevent race conditions during concurrent inserts
+        # Preserve the legacy helper's explicit parent lock for callers that
+        # still use it directly; the placement service also locks during a
+        # real install/move transaction.
         conn.execute("SELECT 1 FROM racks WHERE id = ? FOR UPDATE", (rack_id,))
 
-    rack = get_rack(conn, rack_id)
-    total_u = rack['total_u']
-    end_u = start_u + u_height - 1
-
-    if start_u < 1:
-        raise ValueError(f"起始 U 位必须大于或等于 1 (当前: {start_u})")
-    if end_u > total_u:
-        raise ValueError(
-            f"设备超出机柜高度范围：占用 U{start_u}-U{end_u}，但机柜总高度仅有 {total_u}U"
-        )
-
-    # Check overlap with other devices on the same position (front/rear)
-    query = """
-        SELECT rd.id, rd.name, rd.start_u, dt.u_height
-        FROM rack_devices rd
-        JOIN device_types dt ON rd.device_type_id = dt.id
-        WHERE rd.rack_id = ? AND rd.position = ?
-    """
-    params = [rack_id, position]
-    if exclude_device_id:
-        query += " AND rd.id != ?"
-        params.append(exclude_device_id)
-
-    existing = conn.execute(query, params).fetchall()
-    for dev in existing:
-        d = _row_to_dict(dev)
-        existing_start = d['start_u']
-        existing_end = existing_start + d['u_height'] - 1
-        if start_u <= existing_end and end_u >= existing_start:
-            raise ValueError(
-                f"U位冲突：U{start_u}-U{end_u} 与已上架设备 '{d['name']}' (U{existing_start}-U{existing_end}) 空间重叠。"
-            )
+    result = rack_placement_service.validate(
+        conn,
+        rack_id=rack_id,
+        device_type_id='',
+        start_u=start_u,
+        position=position,
+        mount_kind='u_mount',
+        height_u=u_height,
+        exclude_device_id=exclude_device_id,
+        check_asset=False,
+    )
+    if not result.get('valid'):
+        raise ValueError('; '.join(result.get('errors') or ['invalid rack placement']))
 
 
 def _check_asset_installation(conn, asset_id: str, exclude_device_id: str = '') -> None:
-    """Prevent one asset identity from being installed in multiple rack slots.
-
-    PostgreSQL advisory locks cover legacy/unlinked asset IDs for which there
-    is no ``physical_assets`` row to lock.  The physical-asset row lock is kept
-    as an additional guard for canonical CMDB assets.  Both locks are
-    transaction-scoped and therefore released automatically on commit/rollback.
-    """
-    normalized_asset_id = _normalize_asset_id(asset_id)
-    if not normalized_asset_id:
-        return
-
-    from database import _USE_PG
-    if _USE_PG:
-        # ``rack_devices.asset_id`` is historically nullable/free-text, so a
-        # row lock alone is insufficient when the referenced physical asset is
-        # missing.  A stable advisory lock serializes all service writes for
-        # the same normalized identity, including that legacy case.
-        conn.execute(
-            "SELECT pg_advisory_xact_lock(hashtext(?))",
-            (normalized_asset_id,),
-        )
-        # Valid assets share this row lock across racks, serializing concurrent
-        # installation attempts before the duplicate check.
-        conn.execute(
-            "SELECT 1 FROM physical_assets WHERE id = ? FOR UPDATE",
-            (normalized_asset_id,),
-        )
-
-    query = "SELECT id, name, rack_id FROM rack_devices WHERE asset_id = ?"
-    params: list[object] = [normalized_asset_id]
-    if exclude_device_id:
-        query += " AND id != ?"
-        params.append(exclude_device_id)
-    existing = conn.execute(query + " LIMIT 1", tuple(params)).fetchone()
-    if existing:
-        existing_row = _row_to_dict(existing)
-        raise ValueError(
-            "资产已上架："
-            f"'{normalized_asset_id}' 当前位于设备 '{existing_row.get('name') or existing_row.get('id')}'，"
-            "不能重复安装到其他机柜。"
-        )
+    """Compatibility wrapper around the canonical asset identity lock/check."""
+    rack_placement_service.ensure_asset_available(
+        conn,
+        asset_id,
+        exclude_device_id=exclude_device_id,
+    )
 
 
 def list_rack_devices(conn, rack_id: str) -> list[dict]:
     """Return all devices in a rack with device type info, sorted by start_u."""
     rows = conn.execute("""
-        SELECT rd.*, dt.model, dt.vendor, dt.u_height, dt.device_role, dt.is_full_depth, dt.power_watts
+        SELECT rd.*, dt.model, dt.vendor, dt.u_height, dt.device_role, dt.is_full_depth, dt.power_watts,
+               dt.depth_class, dt.width_mm, dt.depth_mm, dt.height_mm, dt.weight_kg,
+               dt.dimension_status AS type_dimension_status, dt.default_mount_kind,
+               dt.model_family, dt.catalog_key,
+               pa.asset_tag AS physical_asset_tag,
+               pa.serial_number AS physical_serial_number,
+               pa.hostname AS physical_hostname,
+               (SELECT d.id FROM devices d
+                 WHERE d.asset_id = rd.asset_id
+                 ORDER BY d.id LIMIT 1) AS network_device_id,
+               (SELECT d.hostname FROM devices d
+                 WHERE d.asset_id = rd.asset_id
+                 ORDER BY d.id LIMIT 1) AS network_hostname,
+               (SELECT d.sn FROM devices d
+                 WHERE d.asset_id = rd.asset_id
+                 ORDER BY d.id LIMIT 1) AS network_sn
         FROM rack_devices rd
         JOIN device_types dt ON rd.device_type_id = dt.id
+        LEFT JOIN physical_assets pa ON pa.id = rd.asset_id
         WHERE rd.rack_id = ?
-        ORDER BY rd.start_u ASC
+        ORDER BY CASE WHEN rd.start_u IS NULL THEN 1 ELSE 0 END, rd.start_u ASC, rd.position ASC
     """, (rack_id,)).fetchall()
-    return [_row_to_dict(r) for r in rows]
+    devices: list[dict] = []
+    for row in rows:
+        device = _row_to_dict(row)
+        visual = rack_asset_resolver.resolve_asset_for_device(device)
+        device.update({
+            'resolved_asset_key': visual['asset_key'],
+            'asset_resolution_level': visual['resolution_level'],
+            'asset_fidelity': visual['fidelity'],
+            'asset_path': visual['glb_path'],
+            'asset_url': visual.get('asset_url'),
+            'asset_available': visual['available'],
+            'asset_render_strategy': visual['render_strategy'],
+        })
+        devices.append(device)
+    return devices
 
 
 def get_rack_device(conn, device_id: str) -> dict:
-    row = conn.execute("""
-        SELECT rd.*, dt.model, dt.vendor, dt.u_height, dt.device_role, dt.is_full_depth, dt.power_watts
-        FROM rack_devices rd
-        JOIN device_types dt ON rd.device_type_id = dt.id
-        WHERE rd.id = ?
-    """, (device_id,)).fetchone()
-    if not row:
-        raise ValueError(f"Rack device not found: {device_id}")
-    return _row_to_dict(row)
+    device = rack_placement_service.get_placement(conn, device_id)
+    visual = rack_asset_resolver.resolve_asset_for_device(device)
+    device.update({
+        'resolved_asset_key': visual['asset_key'],
+        'asset_resolution_level': visual['resolution_level'],
+        'asset_fidelity': visual['fidelity'],
+        'asset_path': visual['glb_path'],
+        'asset_url': visual.get('asset_url'),
+        'asset_available': visual['available'],
+        'asset_render_strategy': visual['render_strategy'],
+    })
+    return device
 
 
 def create_rack_device(conn, *, name: str, rack_id: str, device_type_id: str,
-                       start_u: int, position: str = 'front', status: str = 'active',
-                       serial_number: str = '', asset_id: str = '') -> dict:
-    # Get device type for u_height
-    dt = get_device_type(conn, device_type_id)
-    u_height = dt['u_height']
-
-    # Enforce cross-rack asset uniqueness and rack-local U constraints.
-    normalized_asset_id = _normalize_asset_id(asset_id)
-    _check_asset_installation(conn, normalized_asset_id)
-    _check_u_constraints(conn, rack_id, start_u, u_height, position)
-
-    device_id = str(uuid.uuid4())
-    now = _utc_now()
-    conn.execute(
-        """INSERT INTO rack_devices
-           (id, name, rack_id, device_type_id, start_u, position, status, serial_number, asset_id, created_at, updated_at)
-           VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
-        (device_id, name, rack_id, device_type_id, start_u, position, status,
-         serial_number, normalized_asset_id, now, now)
+                       start_u: int | None = None, position: str = 'front', status: str = 'active',
+                       serial_number: str = '', asset_id: str = '', mount_kind: str | None = None,
+                       height_u: int | None = None, placement_status: str | None = None,
+                       placement_source: str = 'manual', dimension_status: str | None = None,
+                       location_note: str = '', model_key: str = '',
+                       require_asset_record: bool = False, commit: bool = True) -> dict:
+    return rack_placement_service.install(
+        conn,
+        name=name,
+        rack_id=rack_id,
+        device_type_id=device_type_id,
+        start_u=start_u,
+        position=position,
+        mount_kind=mount_kind,
+        height_u=height_u,
+        placement_status=placement_status,
+        placement_source=placement_source,
+        dimension_status=dimension_status,
+        location_note=location_note,
+        model_key=model_key,
+        status=status,
+        serial_number=serial_number,
+        asset_id=asset_id,
+        require_asset_record=require_asset_record,
+        commit=commit,
     )
-    conn.commit()
-    logger.info(f"[RackService] Added '{name}' to rack at U{start_u} ({position})")
-    return get_rack_device(conn, device_id)
 
 
 def update_rack_device(conn, device_id: str, **fields) -> dict:
-    existing = get_rack_device(conn, device_id)
-
-    # Resolve new values
-    rack_id = fields.get('rack_id') or existing['rack_id']
-    device_type_id = fields.get('device_type_id') or existing['device_type_id']
-    start_u = fields.get('start_u') if fields.get('start_u') is not None else existing['start_u']
-    position = fields.get('position') or existing['position']
-    asset_id = fields.get('asset_id') if fields.get('asset_id') is not None else existing.get('asset_id', '')
-    normalized_asset_id = _normalize_asset_id(asset_id)
-
-    dt = get_device_type(conn, device_type_id)
-    _check_asset_installation(conn, normalized_asset_id, exclude_device_id=device_id)
-    _check_u_constraints(conn, rack_id, start_u, dt['u_height'], position, exclude_device_id=device_id)
-
-    updates = []
-    params = []
-    for key in ('name', 'rack_id', 'device_type_id', 'start_u', 'position', 'status', 'serial_number', 'asset_id'):
-        if key in fields and fields[key] is not None:
-            updates.append(f"{key} = ?")
-            params.append(normalized_asset_id if key == 'asset_id' else fields[key])
-    if not updates:
-        return existing
-    updates.append("updated_at = ?")
-    params.append(_utc_now())
-    params.append(device_id)
-    conn.execute(f"UPDATE rack_devices SET {', '.join(updates)} WHERE id = ?", params)
-
-    # Reverse-sync: if start_u changed and device is linked to an asset, update physical_assets
-    if 'start_u' in fields and fields['start_u'] is not None:
-        asset_id = existing.get('asset_id')
-        if asset_id:
-            conn.execute(
-                "UPDATE physical_assets SET planned_start_u = ?, updated_at = ? WHERE id = ?",
-                (fields['start_u'], _utc_now(), asset_id)
-            )
-            logger.info(f"[RackService] Reverse-synced planned_start_u={fields['start_u']} to asset {asset_id}")
-
-    conn.commit()
-    return get_rack_device(conn, device_id)
+    commit = bool(fields.pop('commit', True))
+    return rack_placement_service.update(conn, device_id, commit=commit, **fields)
 
 
-def delete_rack_device(conn, device_id: str) -> None:
-    get_rack_device(conn, device_id)
-    conn.execute("DELETE FROM rack_devices WHERE id = ?", (device_id,))
-    conn.commit()
+def delete_rack_device(conn, device_id: str, *, commit: bool = True) -> None:
+    rack_placement_service.uninstall(conn, device_id, commit=commit)
     logger.info(f"[RackService] Removed rack device {device_id}")
 
 
 # ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 # Rack Layout — full visualization payload
 # ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+def _placement_occupancy(device: dict, total_u: int) -> tuple[set[int], set[int], str, bool]:
+    """Return front/rear occupancy plus placement class and validity.
+
+    ``rack_devices`` is allowed to contain non-U rows.  Keeping this helper
+    shared by layout and aggregate statistics prevents a 0U/side/floor row
+    from being coerced into U1 and accidentally consuming cabinet capacity.
+    """
+    mount_kind = str(device.get('mount_kind') or 'u_mount').strip().lower()
+    position = str(device.get('position') or 'unknown').strip().lower()
+    if mount_kind != 'u_mount':
+        if mount_kind == 'side_mount':
+            valid = position in {'left_side', 'right_side'}
+        elif mount_kind == 'zero_u':
+            valid = position in {'rear', 'left_side', 'right_side', 'unknown'}
+        elif mount_kind == 'floor':
+            valid = bool(str(device.get('location_note') or '').strip())
+        else:
+            valid = mount_kind == 'unknown'
+        return set(), set(), mount_kind, valid
+
+    try:
+        start_u = int(device.get('start_u')) if device.get('start_u') is not None else 0
+        height_u = int(device.get('height_u') or device.get('u_height') or 0)
+    except (TypeError, ValueError):
+        return set(), set(), mount_kind, False
+    end_u = start_u + height_u - 1
+    if (
+        start_u < 1 or height_u < 1 or end_u > int(total_u or 0)
+        or position not in {'front', 'rear', 'full_depth'}
+    ):
+        return set(), set(), mount_kind, False
+    occupied = set(range(start_u, end_u + 1))
+    return (
+        occupied if position in {'front', 'full_depth'} else set(),
+        occupied if position in {'rear', 'full_depth'} else set(),
+        mount_kind,
+        True,
+    )
+
 
 def get_rack_layout(conn, rack_id: str) -> dict:
     """Return rack info + all devices for rendering a rack diagram."""
@@ -879,14 +1237,25 @@ def get_rack_layout(conn, rack_id: str) -> dict:
     # Compute occupancy
     front_occupied = set()
     rear_occupied = set()
+    non_u_device_count = 0
+    unknown_placement_device_count = 0
+    invalid_device_count = 0
+    total_u = int(rack.get('total_u') or 0)
     for d in devices:
-        u_range = set(range(d['start_u'], d['start_u'] + d['u_height']))
-        if d['position'] == 'front':
-            front_occupied |= u_range
+        front, rear, mount_kind, valid = _placement_occupancy(d, total_u)
+        if mount_kind == 'u_mount':
+            if valid:
+                front_occupied |= front
+                rear_occupied |= rear
+            else:
+                invalid_device_count += 1
         else:
-            rear_occupied |= u_range
+            non_u_device_count += 1
+            if mount_kind == 'unknown':
+                unknown_placement_device_count += 1
+            if not valid:
+                invalid_device_count += 1
 
-    total_u = rack['total_u']
     # Compute power usage: sum power_watts from device_types of installed devices
     power_used = 0
     for d in devices:
@@ -896,6 +1265,27 @@ def get_rack_layout(conn, rack_id: str) -> dict:
     return {
         **rack,
         'devices': devices,
+        # Canonical aliases for new consumers.  ``devices`` and the flat
+        # summary fields remain for the existing 2D page during the migration
+        # window; 3D/exports can consume the explicit read-model sections.
+        'placements': devices,
+        'occupancy': {
+            'front': sorted(front_occupied),
+            'rear': sorted(rear_occupied),
+            'used_u': len(front_occupied | rear_occupied),
+            'available_u': max(0, total_u - len(front_occupied | rear_occupied)),
+        },
+        'data_quality': {
+            'non_u_device_count': non_u_device_count,
+            'unknown_placement_device_count': unknown_placement_device_count,
+            'invalid_device_count': invalid_device_count,
+            'status': 'invalid' if invalid_device_count else ('partial' if unknown_placement_device_count else 'complete'),
+        },
+        'meta': {
+            'schema_version': 'rack-layout-v1',
+            'layout_revision': int(rack.get('layout_revision') or 0),
+            'generated_at': _utc_now(),
+        },
         'front_used': len(front_occupied),
         'rear_used': len(rear_occupied),
         'total_used': len(front_occupied | rear_occupied),
@@ -903,22 +1293,42 @@ def get_rack_layout(conn, rack_id: str) -> dict:
         'power_used_watts': power_used,
         'power_capacity_watts': power_capacity,
         'power_utilization_pct': round(power_used / power_capacity * 100, 1) if power_capacity > 0 else None,
+        'non_u_device_count': non_u_device_count,
+        'unknown_placement_device_count': unknown_placement_device_count,
+        'invalid_device_count': invalid_device_count,
     }
 
 
-def get_rack_stats(conn) -> dict:
+def get_rack_stats(
+    conn,
+    *,
+    tenant_id: str | None = None,
+    allowed_site_ids: tuple[str, ...] | None = None,
+) -> dict:
     """Return aggregated rack statistics."""
-    racks = list_racks(conn)
+    racks = list_racks(
+        conn,
+        tenant_id=tenant_id,
+        allowed_site_ids=allowed_site_ids,
+    )
     total_racks = len(racks)
     total_u = sum(r['total_u'] for r in racks)
     total_power_capacity = sum(int(r.get('power_capacity_watts') or 0) for r in racks)
-    device_rows = conn.execute(
-        """
-        SELECT rd.rack_id, rd.start_u, dt.u_height, dt.power_watts
-        FROM rack_devices rd
-        JOIN device_types dt ON dt.id = rd.device_type_id
-        """
-    ).fetchall()
+    if not racks:
+        device_rows = []
+    else:
+        rack_ids = [str(r['id']) for r in racks]
+        placeholders = ','.join('?' for _ in rack_ids)
+        device_rows = conn.execute(
+            f"""
+            SELECT rd.rack_id, rd.start_u, rd.position, rd.mount_kind, rd.height_u,
+                   rd.location_note, dt.u_height, dt.power_watts
+            FROM rack_devices rd
+            JOIN device_types dt ON dt.id = rd.device_type_id
+            WHERE rd.rack_id IN ({placeholders})
+            """,
+            tuple(rack_ids),
+        ).fetchall()
     devices_by_rack: dict[str, list] = {}
     for row in device_rows:
         devices_by_rack.setdefault(str(row['rack_id']), []).append(row)
@@ -926,10 +1336,20 @@ def get_rack_stats(conn) -> dict:
     total_devices = len(device_rows)
     total_used_u = 0
     total_power_used = 0
+    total_non_u_devices = 0
+    total_unknown_placements = 0
+    total_invalid_placements = 0
     for r in racks:
         occupied = set()
         for d in devices_by_rack.get(str(r['id']), []):
-            occupied |= set(range(d['start_u'], d['start_u'] + d['u_height']))
+            front, rear, mount_kind, valid = _placement_occupancy(_row_to_dict(d), int(r.get('total_u') or 0))
+            if mount_kind != 'u_mount':
+                total_non_u_devices += 1
+                if mount_kind == 'unknown':
+                    total_unknown_placements += 1
+            if not valid:
+                total_invalid_placements += 1
+            occupied |= front | rear
             total_power_used += int(d['power_watts'] or 0)
         total_used_u += len(occupied)
 
@@ -942,4 +1362,7 @@ def get_rack_stats(conn) -> dict:
         'total_power_capacity_watts': total_power_capacity,
         'total_power_used_watts': total_power_used,
         'power_utilization_pct': round(total_power_used / total_power_capacity * 100, 1) if total_power_capacity > 0 else None,
+        'total_non_u_devices': total_non_u_devices,
+        'total_unknown_placements': total_unknown_placements,
+        'total_invalid_placements': total_invalid_placements,
     }

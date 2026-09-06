@@ -50,7 +50,7 @@ const API_BASE = import.meta.env.VITE_API_BASE || '';
 const platformLabel = (p: string): string => {
   const map: Record<string, string> = {
     cisco_ios: 'Cisco IOS', cisco_nxos: 'Cisco NX-OS', cisco_xe: 'Cisco IOS-XE',
-    huawei_vrp: 'Huawei VRP', h3c_comware: 'H3C Comware',
+    huawei_vrp: 'Huawei VRP', h3c_comware: 'H3C Comware', h3c_comware_v3: 'H3C Comware V3',
     arista_eos: 'Arista EOS', juniper_junos: 'Juniper JunOS',
     linux: 'Linux', ubuntu: 'Ubuntu', centos: 'CentOS', debian: 'Debian',
     esxi: 'VMware ESXi',

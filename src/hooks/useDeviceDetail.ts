@@ -6,6 +6,7 @@ import type {
   DeviceHealthTrendResponse,
 } from '../types';
 import type { Language } from '../i18n.tsx';
+import { authHeaders } from '../api/http';
 
 interface UseDeviceDetailArgs {
   language: Language;
@@ -34,7 +35,7 @@ export const useDeviceDetail = ({
     setShowDetailsModal(true);
     setDeviceDetailLoading(true);
 
-    fetch(`/api/device-health/device/${device.id}`)
+    fetch(`/api/device-health/device/${device.id}`, { headers: authHeaders() })
       .then(async (resp) => {
         if (!resp.ok) throw new Error('Failed to load device health detail');
         const data = (await resp.json()) as DeviceHealthDetailResponse;
@@ -62,6 +63,7 @@ export const useDeviceDetail = ({
       try {
         const resp = await fetch(
           `/api/device-health/device/${viewingDevice.id}/trend?range_hours=${deviceTrendRangeHours}`,
+          { headers: authHeaders() },
         );
         if (!resp.ok) throw new Error('Failed to load device trend');
         const data = (await resp.json()) as DeviceHealthTrendResponse;

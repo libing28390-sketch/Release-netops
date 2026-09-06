@@ -75,6 +75,7 @@ COMMAND_PROFILES = {
 PLATFORM_ALIASES = {
     'huawei': 'huawei_vrp', 'vrp': 'huawei_vrp', 'huawei_v8': 'huawei_vrpv8',
     'h3c': 'h3c_comware', 'comware': 'h3c_comware', 'hp_comware': 'h3c_comware',
+    'h3c_comware_v3': 'h3c_comware',
     'cisco': 'cisco_ios', 'ios': 'cisco_ios',
     'juniper': 'juniper_junos', 'junos': 'juniper_junos',
     'arista': 'arista_eos', 'eos': 'arista_eos',

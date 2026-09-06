@@ -3,7 +3,7 @@ import {
   DndContext, DragOverlay, PointerSensor, useSensor, useSensors,
   type DragStartEvent, type DragEndEvent, type DragMoveEvent,
 } from '@dnd-kit/core';
-import { ChevronsUpDown } from 'lucide-react';
+import { AlertTriangle, ChevronsUpDown } from 'lucide-react';
 import { RackLayout, RackDevice } from '../types';
 import { U_PX, RACK_W, LABEL_W } from '../constants';
 import { yToU, hasConflict, getNormalizedRoleColor } from '../helpers';
@@ -24,6 +24,22 @@ interface RackElevationProps {
   onEmptySlotClick?: (uNumber: number) => void;
 }
 
+/**
+ * Only confirmed/estimated U geometry may block an editable U slot.  Unknown
+ * and invalid rows stay visible in the review strip below the elevation but
+ * must never be turned into occupancy or drag targets.
+ */
+export function isStandardElevationPlacement(device: RackDevice): boolean {
+  const mountKind = (device.mount_kind || 'u_mount').toLowerCase();
+  const placementStatus = (device.placement_status || '').toLowerCase();
+  const heightU = device.height_u ?? device.u_height ?? 0;
+  return mountKind === 'u_mount'
+    && device.start_u != null
+    && heightU >= 1
+    && placementStatus !== 'unknown'
+    && placementStatus !== 'invalid';
+}
+
 export const RackElevation: React.FC<RackElevationProps> = ({
   layout,
   viewSide,
@@ -36,8 +52,27 @@ export const RackElevation: React.FC<RackElevationProps> = ({
   onEmptySlotClick,
 }) => {
   const totalU = layout.total_u;
+  const nonStandardDevices = useMemo(
+    () => layout.devices.filter(d => {
+      const mountKind = (d.mount_kind || 'u_mount').toLowerCase();
+      const placementStatus = (d.placement_status || '').toLowerCase();
+      const hasKnownUGeometry = mountKind === 'u_mount'
+        && d.start_u != null
+        && (d.height_u ?? d.u_height ?? 0) >= 1;
+      // Keep non-U, unknown and invalid rows visible without inventing a U1
+      // rectangle. They are presented as clickable placement records below
+      // the elevation and remain available to the inspector.
+      if (mountKind !== 'u_mount') return true;
+      if (!hasKnownUGeometry) return true;
+      return placementStatus === 'unknown' || placementStatus === 'invalid';
+    }),
+    [layout.devices],
+  );
   const sideDevices = useMemo(
-    () => layout.devices.filter(d => d.position === viewSide),
+    () => layout.devices.filter(d => {
+      if (!isStandardElevationPlacement(d)) return false;
+      return d.position === viewSide || d.position === 'full_depth';
+    }),
     [layout.devices, viewSide],
   );
 
@@ -45,7 +80,9 @@ export const RackElevation: React.FC<RackElevationProps> = ({
   const occupiedUs = useMemo(() => {
     const s = new Set<number>();
     for (const d of sideDevices) {
-      for (let u = d.start_u; u < d.start_u + d.u_height; u++) s.add(u);
+      const startU = d.start_u ?? 1;
+      const heightU = d.height_u ?? d.u_height ?? 1;
+      for (let u = startU; u < startU + heightU; u++) s.add(u);
     }
     return s;
   }, [sideDevices]);
@@ -74,10 +111,16 @@ export const RackElevation: React.FC<RackElevationProps> = ({
           }
           emptyRunStart = null;
         }
-        const dev = sideDevices.find(d => u >= d.start_u && u < d.start_u + d.u_height);
+        const dev = sideDevices.find(d => {
+          const startU = d.start_u ?? 1;
+          const heightU = d.height_u ?? d.u_height ?? 1;
+          return u >= startU && u < startU + heightU;
+        });
         if (dev) {
-          const devTop = dev.start_u + dev.u_height - 1;
-          const devBot = dev.start_u;
+          const devStartU = dev.start_u ?? 1;
+          const devHeightU = dev.height_u ?? dev.u_height ?? 1;
+          const devTop = devStartU + devHeightU - 1;
+          const devBot = devStartU;
           segs.push({ type: 'normal', uStart: devBot, uEnd: devTop });
           u = devBot;
         } else {
@@ -157,14 +200,14 @@ export const RackElevation: React.FC<RackElevationProps> = ({
 
   const ghostConflict = useMemo(() => {
     if (!activeDevice || ghostU === null) return true;
-    return hasConflict(ghostU, activeDevice.u_height, totalU, sideDevices, activeDevice.id);
+    return hasConflict(ghostU, activeDevice.height_u ?? activeDevice.u_height ?? 1, totalU, sideDevices, activeDevice.id);
   }, [activeDevice, ghostU, totalU, sideDevices]);
 
   const handleDragStart = useCallback((e: DragStartEvent) => {
     const dev = e.active.data.current?.device as RackDevice | undefined;
     if (dev) {
       setActiveDevice(dev);
-      setGhostU(dev.start_u);
+      setGhostU(dev.start_u ?? 1);
     }
   }, []);
 
@@ -192,15 +235,17 @@ export const RackElevation: React.FC<RackElevationProps> = ({
     // Scale-normalized relative Y position inside rack
     const relY = (pointerY - rackRect.top) / currentScale;
     const topU = yToU(relY, totalU);
-    const startU = topU - activeDevice.u_height + 1;
-    const clamped = Math.max(1, Math.min(totalU - activeDevice.u_height + 1, startU));
+    const deviceHeightU = activeDevice.height_u ?? activeDevice.u_height ?? 1;
+    const startU = topU - deviceHeightU + 1;
+    const clamped = Math.max(1, Math.min(totalU - deviceHeightU + 1, startU));
     setGhostU(clamped);
   }, [activeDevice, totalU, rackScale, scrollContainerRef, startAutoScroll, stopAutoScroll]);
 
   const handleDragEnd = useCallback(async (e: DragEndEvent) => {
     stopAutoScroll();
-    if (activeDevice && ghostU !== null && !hasConflict(ghostU, activeDevice.u_height, totalU, sideDevices, activeDevice.id)) {
-      if (ghostU !== activeDevice.start_u) {
+    const activeHeightU = activeDevice?.height_u ?? activeDevice?.u_height ?? 1;
+    if (activeDevice && ghostU !== null && !hasConflict(ghostU, activeHeightU, totalU, sideDevices, activeDevice.id)) {
+      if (ghostU !== (activeDevice.start_u ?? 1)) {
         await onDeviceMove(activeDevice.id, ghostU);
       }
     }
@@ -217,7 +262,8 @@ export const RackElevation: React.FC<RackElevationProps> = ({
   const ghostUSet = useMemo(() => {
     if (!activeDevice || ghostU === null) return new Set<number>();
     const s = new Set<number>();
-    for (let u = ghostU; u < ghostU + activeDevice.u_height; u++) s.add(u);
+    const deviceHeightU = activeDevice.height_u ?? activeDevice.u_height ?? 1;
+    for (let u = ghostU; u < ghostU + deviceHeightU; u++) s.add(u);
     return s;
   }, [activeDevice, ghostU]);
 
@@ -303,7 +349,7 @@ export const RackElevation: React.FC<RackElevationProps> = ({
                       uNumber={u}
                       isGhostHere={isGhost}
                       ghostConflict={ghostConflict}
-                      ghostHeight={activeDevice?.u_height ?? 1}
+                      ghostHeight={activeDevice?.height_u ?? activeDevice?.u_height ?? 1}
                       ghostIsStart={ghostU === u}
                     />
                     {!occupiedUs.has(u) && !isGhost && (
@@ -355,8 +401,10 @@ export const RackElevation: React.FC<RackElevationProps> = ({
                   const y0 = yOffset;
                   yOffset += segHeight;
                   const segDevices = sideDevices.filter(d => {
-                    const dTop = d.start_u + d.u_height - 1;
-                    return d.start_u <= seg.uEnd && dTop >= seg.uStart;
+                    const startU = d.start_u ?? 1;
+                    const heightU = d.height_u ?? d.u_height ?? 1;
+                    const dTop = startU + heightU - 1;
+                    return startU <= seg.uEnd && dTop >= seg.uStart;
                   });
                   return (
                     <div key={si} className="absolute left-0 right-0" style={{ top: y0, height: segHeight }}>
@@ -369,7 +417,11 @@ export const RackElevation: React.FC<RackElevationProps> = ({
                             className="absolute left-0 right-0"
                             style={{ top: localY, height: U_PX, borderBottom: '1px solid rgba(30,41,59,0.5)' }}
                           >
-                            {!sideDevices.some(d => u >= d.start_u && u < d.start_u + d.u_height) && (
+                            {!sideDevices.some(d => {
+                              const startU = d.start_u ?? 1;
+                              const heightU = d.height_u ?? d.u_height ?? 1;
+                              return u >= startU && u < startU + heightU;
+                            }) && (
                               <span className="absolute inset-0 flex items-center justify-center text-[8px] font-mono text-slate-700 pointer-events-none">
                                 U{u}
                               </span>
@@ -379,8 +431,10 @@ export const RackElevation: React.FC<RackElevationProps> = ({
                       })}
                       {segDevices.map(d => {
                         const rc = getNormalizedRoleColor(d.device_role, d.name, d.model);
-                        const devH = d.u_height * U_PX;
-                        const devTop = (seg.uEnd - (d.start_u + d.u_height - 1)) * U_PX;
+                        const startU = d.start_u ?? 1;
+                        const heightU = d.height_u ?? d.u_height ?? 1;
+                        const devH = heightU * U_PX;
+                        const devTop = (seg.uEnd - (startU + heightU - 1)) * U_PX;
                         return (
                           <div
                             key={d.id}
@@ -395,10 +449,10 @@ export const RackElevation: React.FC<RackElevationProps> = ({
                               zIndex: 10,
                             }}
                           >
-                            <PowerLed status={d.status} size={d.u_height >= 2 ? 8 : 6} />
-                            <DeviceIcon role={d.device_role} name={d.name} model={d.model} size={d.u_height >= 2 ? 15 : 12} />
-                            <span className={`font-bold truncate ${d.u_height >= 2 ? 'text-[12px]' : 'text-[10px]'}`}>{d.name}</span>
-                            <span className="text-[9px] font-mono opacity-60 pr-1.5 flex-shrink-0 ml-auto">{d.u_height}U</span>
+                            <PowerLed status={d.status} size={heightU >= 2 ? 8 : 6} />
+                            <DeviceIcon role={d.device_role} name={d.name} model={d.model} size={heightU >= 2 ? 15 : 12} />
+                            <span className={`font-bold truncate ${heightU >= 2 ? 'text-[12px]' : 'text-[10px]'}`}>{d.name}</span>
+                            <span className="text-[9px] font-mono opacity-60 pr-1.5 flex-shrink-0 ml-auto">{heightU}U</span>
                           </div>
                         );
                       })}
@@ -439,6 +493,43 @@ export const RackElevation: React.FC<RackElevationProps> = ({
             </div>
           )}
         </div>
+
+        {nonStandardDevices.length > 0 && (
+          <div
+            className="mt-3 rounded-lg border p-2"
+            style={{ width: RACK_W + LABEL_W * 2, borderColor: 'rgba(245,158,11,0.35)', background: 'rgba(245,158,11,0.06)' }}
+          >
+            <div className="mb-1.5 flex items-center gap-1.5 text-[10px] font-semibold text-amber-500">
+              <AlertTriangle size={12} />
+              {zh ? '非标准位置 / 待确认设备（不占用标准 U 位）' : 'Non-standard / pending placements (excluded from standard U occupancy)'}
+            </div>
+            <div className="flex flex-wrap gap-1.5">
+              {nonStandardDevices.map(device => {
+                const mountKind = (device.mount_kind || 'u_mount').toLowerCase();
+                const position = device.position || 'unknown';
+                const status = (device.placement_status || '').toLowerCase();
+                const detail = status === 'invalid'
+                  ? (zh ? '数据异常' : 'Invalid')
+                  : mountKind === 'u_mount'
+                    ? (zh ? 'U 位待确认' : 'U position pending')
+                    : `${mountKind} · ${position}`;
+                return (
+                  <button
+                    key={device.id}
+                    type="button"
+                    onClick={() => onDeviceSelect?.(device.id)}
+                    className="inline-flex max-w-full items-center gap-1 rounded border px-2 py-1 text-left text-[10px] transition-colors hover:border-amber-400 hover:bg-amber-500/10"
+                    style={{ borderColor: 'rgba(245,158,11,0.28)', color: 'var(--body-text)' }}
+                    title={device.location_note || detail}
+                  >
+                    <span className="truncate font-medium">{device.name}</span>
+                    <span className="shrink-0 text-[9px] text-amber-500">{detail}</span>
+                  </button>
+                );
+              })}
+            </div>
+          </div>
+        )}
       </div>
 
       <DragOverlay dropAnimation={null}>

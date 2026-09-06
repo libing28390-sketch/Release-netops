@@ -156,6 +156,7 @@ export const VENDOR_PLATFORMS: Record<string, { value: string; label: string }[]
   Cisco:      [{ value: 'cisco_ios', label: 'Cisco IOS' }, { value: 'cisco_nxos', label: 'Cisco NX-OS' }, { value: 'cisco_xe', label: 'Cisco IOS-XE' }, { value: 'cisco_iosxr', label: 'Cisco IOS-XR' }, { value: 'cisco_asa', label: 'Cisco ASA/Firepower' }],
   Huawei:     [{ value: 'huawei_vrp', label: 'Huawei VRPv5' }, { value: 'huawei_vrpv8', label: 'Huawei VRPv8' }, { value: 'huawei_smartax', label: 'Huawei SmartAX' }, { value: 'huawei_usg', label: 'Huawei USG' }],
   H3C:        [
+    { value: 'h3c_comware_v3', label: 'H3C Comware V3' },
     { value: 'h3c_comware', label: 'H3C Comware' },
   ],
   Arista:     [{ value: 'arista_eos', label: 'Arista EOS' }],
@@ -358,7 +359,7 @@ export const IMPORT_VALUE_MAP: Record<string, Record<string, string>> = {
   platform: {
     '思科 IOS': 'cisco_ios', '思科 NX-OS': 'cisco_nxos', '思科 IOS-XE': 'cisco_xe',
     '华为 VRPv5': 'huawei_vrp', '华为 VRPv8': 'huawei_vrpv8',
-    '华三 Comware V5': 'h3c_comware', '华三 Comware V7': 'h3c_comware', '华三 Comware V9': 'h3c_comware',
+    '华三 Comware V3': 'h3c_comware_v3', '华三 Comware V5': 'h3c_comware', '华三 Comware V7': 'h3c_comware', '华三 Comware V9': 'h3c_comware',
     '阿里斯塔 EOS': 'arista_eos', '瞻博 JunOS': 'juniper_junos', '锐捷 RGOS': 'ruijie_rgos',
     '飞塔 FortiOS': 'fortinet', '帕洛阿尔托 PAN-OS': 'paloalto_panos', '中兴 ZXROS': 'zte_zxros', '瑞斯康达 ROS': 'raisecom_ros', '迈普网络系统': 'maipu',
     '迪普 Conplat': 'dptech_conplat', '迪普 Conplat FW': 'dptech_conplat_fw',
@@ -370,7 +371,7 @@ export const IMPORT_VALUE_MAP: Record<string, Record<string, string>> = {
     Ubuntu: 'ubuntu', CentOS: 'centos', Debian: 'debian',
     'Cisco IOS': 'cisco_ios', 'Cisco NX-OS': 'cisco_nxos', 'Cisco IOS-XE': 'cisco_xe',
     'Huawei VRPv5': 'huawei_vrp', 'Huawei VRPv8': 'huawei_vrpv8',
-    'H3C Comware': 'h3c_comware', 'H3C Comware V5': 'h3c_comware', 'H3C Comware V7': 'h3c_comware', 'H3C Comware V9': 'h3c_comware',
+    'H3C Comware': 'h3c_comware', 'H3C Comware V3': 'h3c_comware_v3', 'H3C Comware V5': 'h3c_comware', 'H3C Comware V7': 'h3c_comware', 'H3C Comware V9': 'h3c_comware',
     'Juniper JunOS': 'juniper_junos', 'Arista EOS': 'arista_eos', 'Ruijie RGOS': 'ruijie_rgos',
     FortiOS: 'fortinet', 'ZTE ZXROS': 'zte_zxros', 'Raisecom ROS': 'raisecom_ros', 'Maipu Network OS': 'maipu',
     'Windows Server': 'windows', 'VMware ESXi': 'esxi',

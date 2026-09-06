@@ -5,6 +5,7 @@ from fastapi import APIRouter, BackgroundTasks, Body, Header, HTTPException, Que
 from pydantic import BaseModel, Field
 
 from api.users import validate_session_token
+from core.rbac import require_role
 from database import get_db_connection
 from core.read_cache import (
     TOPOLOGY_CACHE_TTL_SECONDS,
@@ -36,8 +37,12 @@ from services.topology_graph_service import (
     record_manual_layout_override,
     record_manual_relation_override,
 )
+from services import rack_scope_service
 
-router = APIRouter()
+# All topology data is tenant-scoped operational data.  Require an
+# authenticated viewer at the router boundary and make state-changing or
+# device-affecting operations declare their stronger role below.
+router = APIRouter(dependencies=[require_role("Viewer")])
 
 
 class TopologyDiscoveryRequest(BaseModel):
@@ -77,20 +82,78 @@ def _resolve_graph_tenant(session: dict, requested_tenant: object = None) -> str
     return session_tenant
 
 
+def _topology_asset_scope(conn, user):
+    """Topology inventory follows the same site-owned asset boundary."""
+
+    if not isinstance(user, dict):
+        return None
+    return rack_scope_service.allowed_resource_scope(conn, user, 'asset', 'view')
+
+
+def _authorized_topology_device_ids(conn, scope) -> list[str] | None:
+    """Resolve one bounded device set for all legacy topology read models."""
+
+    if scope is None:
+        return None
+    if scope.site_ids is not None and not scope.site_ids:
+        return []
+    clauses: list[str] = []
+    params: list[str] = []
+    if scope.site_ids is not None:
+        placeholders = ','.join('?' for _ in scope.site_ids)
+        clauses.append(f's.id IN ({placeholders})')
+        params.extend(scope.site_ids)
+    if scope.tenant_id:
+        clauses.append('s.tenant_id = ?')
+        params.append(scope.tenant_id)
+    where = f"WHERE {' AND '.join(clauses)}" if clauses else ''
+    rows = conn.execute(
+        f'''SELECT d.id
+              FROM devices d
+              LEFT JOIN physical_assets pa ON pa.id = d.asset_id
+              LEFT JOIN sites s ON s.id = COALESCE(NULLIF(pa.site_id, ''), NULLIF(d.site_id, ''))
+              {where}
+             ORDER BY d.id''',
+        tuple(params),
+    ).fetchall()
+    return [str(row['id']) for row in rows if str(row['id'] or '').strip()]
+
+
+def _enforce_topology_site_scope(conn, user, site_id: str) -> None:
+    if isinstance(user, dict) and str(site_id or '').strip():
+        rack_scope_service.enforce_site(
+            conn,
+            user,
+            site_id,
+            'view',
+            resource_type='asset',
+        )
+
+
 @router.post('/topology/discover')
 async def trigger_discovery(
     request: Request,
     background_tasks: BackgroundTasks,
     payload: TopologyDiscoveryRequest | None = Body(default=None),
     idempotency_key: str | None = Header(default=None, alias='Idempotency-Key'),
+    _user=require_role("Operator"),
 ):
     session = _get_authenticated_session(request)
     request_payload = payload or TopologyDiscoveryRequest()
+    scope_conn = get_db_connection()
+    try:
+        topology_scope = _topology_asset_scope(scope_conn, _user)
+        if request_payload.site_id:
+            _enforce_topology_site_scope(scope_conn, _user, request_payload.site_id)
+        allowed_device_ids = _authorized_topology_device_ids(scope_conn, topology_scope)
+    finally:
+        scope_conn.close()
     try:
         selection = select_topology_discovery_devices(
             request_payload.scope,
             site_id=request_payload.site_id,
             device_ids=request_payload.device_ids,
+            allowed_device_ids=allowed_device_ids,
         )
     except ValueError as exc:
         code = str(exc)
@@ -151,6 +214,7 @@ def get_links(
     site_id: str | None = Query(default=None),
     rack_id: str | None = Query(default=None, max_length=128),
     include_stale: bool = Query(default=False),
+    _user=require_role("Viewer"),
 ):
     """Return current topology links, optionally including stale evidence.
 
@@ -162,9 +226,25 @@ def get_links(
     # started carrying aggregation parent/member fields.
     normalized_rack_id = str(rack_id or '').strip()
     device_ids: list[str] | None = None
-    if normalized_rack_id:
-        conn = get_db_connection()
-        try:
+    conn = get_db_connection()
+    try:
+        scope = _topology_asset_scope(conn, _user)
+        authorized_device_ids = _authorized_topology_device_ids(conn, scope)
+        if site_id:
+            _enforce_topology_site_scope(conn, _user, str(site_id))
+        if normalized_rack_id:
+            rack = conn.execute(
+                '''SELECT r.*, s.tenant_id AS site_tenant_id
+                     FROM racks r LEFT JOIN sites s ON s.id = r.site_id
+                    WHERE r.id = ? OR r.rack_code = ?
+                    LIMIT 1''',
+                (normalized_rack_id, normalized_rack_id),
+            ).fetchone()
+            if not rack:
+                raise HTTPException(status_code=404, detail='Rack not found')
+            if isinstance(_user, dict):
+                rack_scope_service.enforce_loaded_rack(_user, dict(rack), 'view')
+            resolved_rack_id = str(rack['id'])
             device_ids = [
                 str(row['id'])
                 for row in conn.execute(
@@ -173,13 +253,19 @@ def get_links(
                        JOIN devices d ON d.asset_id = rd.asset_id
                        WHERE rd.rack_id = ?
                        ORDER BY d.id''',
-                    (normalized_rack_id,),
+                    (resolved_rack_id,),
                 ).fetchall()
             ]
-        finally:
-            conn.close()
+            if authorized_device_ids is not None:
+                allowed_set = set(authorized_device_ids)
+                device_ids = [item for item in device_ids if item in allowed_set]
+        elif authorized_device_ids is not None:
+            device_ids = authorized_device_ids
+    finally:
+        conn.close()
 
-    cache_key = f'links:v4:{limit}:{site_id or ""}:{normalized_rack_id}:{int(include_stale)}'
+    scope_key = scope.cache_key if scope is not None else 'legacy'
+    cache_key = f'links:v5:{limit}:{site_id or ""}:{normalized_rack_id}:{int(include_stale)}:{scope_key}'
     cache_hit, cached = read_cache.get('topology', cache_key)
     if cache_hit:
         return cached
@@ -199,7 +285,7 @@ def get_links(
         graph_read_model = 'legacy_topology_links_aggregation'
     except Exception:
         managed_links = get_physical_links(
-            tenant_id='tenant-default',
+            tenant_id=(scope.tenant_id if scope and scope.tenant_id else 'tenant-default'),
             site_id=site_id,
             limit=limit,
             include_stale=include_stale,
@@ -216,8 +302,16 @@ def get_links(
         if legacy_links:
             managed_links = legacy_links
             graph_read_model = 'legacy_topology_links_fallback'
-    unmanaged = {'unmanaged_nodes': [], 'unmanaged_links': []} if device_ids is not None else get_unmanaged_neighbors(site_id=site_id)
-    node_metadata = get_topology_node_metadata(site_id=site_id)
+    unmanaged = (
+        # A rack selector is already a closed managed-device scope.  The
+        # unmanaged-neighbor table is site/global evidence and must not be
+        # queried for a rack-only response, otherwise unrelated neighbors can
+        # be reintroduced through this auxiliary read model.
+        {'unmanaged_nodes': [], 'unmanaged_links': []}
+        if normalized_rack_id or (device_ids is not None and not device_ids)
+        else get_unmanaged_neighbors(site_id=site_id, source_device_ids=device_ids)
+    )
+    node_metadata = get_topology_node_metadata(site_id=site_id, device_ids=device_ids)
     if device_ids is not None:
         scoped_ids = set(device_ids)
         node_metadata = {key: value for key, value in node_metadata.items() if key in scoped_ids}
@@ -235,18 +329,37 @@ def get_links(
 
 
 @router.get('/topology/sites')
-def get_topology_sites():
-    cache_hit, cached = read_cache.get('topology', 'sites:v2')
+def get_topology_sites(_user=require_role("Viewer")):
+    conn = get_db_connection()
+    try:
+        scope = _topology_asset_scope(conn, _user)
+        device_ids = _authorized_topology_device_ids(conn, scope)
+    finally:
+        conn.close()
+    scope_key = scope.cache_key if scope is not None else 'legacy'
+    cache_hit, cached = read_cache.get('topology', f'sites:v3:{scope_key}')
     if cache_hit:
         return cached
-    response = {'items': get_topology_site_summaries()}
-    read_cache.set('topology', 'sites:v2', response, TOPOLOGY_CACHE_TTL_SECONDS)
+    response = {
+        'items': get_topology_site_summaries(
+            tenant_id=scope.tenant_id if scope else None,
+            site_ids=scope.site_ids if scope else None,
+            device_ids=device_ids,
+        )
+    }
+    read_cache.set('topology', f'sites:v3:{scope_key}', response, TOPOLOGY_CACHE_TTL_SECONDS)
     return response
 
 
 @router.get('/topology/generation-status')
-def get_generation_status():
-    return get_topology_generation_status()
+def get_generation_status(_user=require_role("Viewer")):
+    conn = get_db_connection()
+    try:
+        scope = _topology_asset_scope(conn, _user)
+        device_ids = _authorized_topology_device_ids(conn, scope)
+    finally:
+        conn.close()
+    return get_topology_generation_status(device_ids=device_ids)
 
 
 @router.get('/topology/layout')
@@ -270,7 +383,7 @@ def get_topology_layout(request: Request):
 
 
 @router.put('/topology/layout')
-def save_topology_layout(request: Request, payload: dict = Body(...)):
+def save_topology_layout(request: Request, payload: dict = Body(...), _user=require_role("Operator")):
     sess = _get_authenticated_session(request)
     layout = payload.get('layout') if isinstance(payload, dict) else None
     if layout is None:
@@ -299,9 +412,15 @@ def save_topology_layout(request: Request, payload: dict = Body(...)):
 
 
 @router.get('/topology/discovery-runs')
-def get_topology_discovery_runs(limit: int = 20):
+def get_topology_discovery_runs(limit: int = 20, _user=require_role("Viewer")):
     safe_limit = max(1, min(limit, 100))
-    return list_discovery_runs(limit=safe_limit)
+    conn = get_db_connection()
+    try:
+        scope = _topology_asset_scope(conn, _user)
+        device_ids = _authorized_topology_device_ids(conn, scope)
+    finally:
+        conn.close()
+    return list_discovery_runs(limit=safe_limit, device_ids=device_ids)
 
 
 @router.get('/topology/discovery-runs/{run_id}')
@@ -309,8 +428,20 @@ def get_topology_discovery_run(
     run_id: str,
     device_limit: int = Query(default=100, ge=1, le=500),
     device_offset: int = Query(default=0, ge=0),
+    _user=require_role("Viewer"),
 ):
-    payload = get_discovery_run(run_id, device_limit=device_limit, device_offset=device_offset)
+    conn = get_db_connection()
+    try:
+        scope = _topology_asset_scope(conn, _user)
+        device_ids = _authorized_topology_device_ids(conn, scope)
+    finally:
+        conn.close()
+    payload = get_discovery_run(
+        run_id,
+        device_limit=device_limit,
+        device_offset=device_offset,
+        device_ids=device_ids,
+    )
     if not payload:
         raise HTTPException(status_code=404, detail='Topology discovery run not found')
     return payload
@@ -325,13 +456,20 @@ def get_topology_discovery_evidence(
     match_status: str | None = Query(default=None),
     include_raw: bool = Query(default=False),
 ):
-    _get_authenticated_session(request)
+    session = _get_authenticated_session(request)
+    conn = get_db_connection()
+    try:
+        scope = _topology_asset_scope(conn, session)
+        device_ids = _authorized_topology_device_ids(conn, scope)
+    finally:
+        conn.close()
     payload = get_discovery_evidence(
         run_id,
         limit=limit,
         offset=offset,
         match_status=match_status,
         include_raw=include_raw,
+        device_ids=device_ids,
     )
     if not payload:
         raise HTTPException(status_code=404, detail='Topology discovery run not found')
@@ -339,8 +477,16 @@ def get_topology_discovery_evidence(
 
 
 @router.post('/topology/discovery-runs/{run_id}/cancel')
-def cancel_topology_discovery_run(run_id: str, request: Request):
-    _get_authenticated_session(request)
+def cancel_topology_discovery_run(run_id: str, request: Request, _user=require_role("Operator")):
+    session = _get_authenticated_session(request)
+    conn = get_db_connection()
+    try:
+        scope = _topology_asset_scope(conn, session)
+        device_ids = _authorized_topology_device_ids(conn, scope)
+    finally:
+        conn.close()
+    if not get_discovery_run(run_id, device_limit=1, device_ids=device_ids):
+        raise HTTPException(status_code=404, detail='Topology discovery run not found')
     if not request_cancel_discovery_run(run_id):
         raise HTTPException(status_code=404, detail='Topology discovery run not found')
     return {'success': True, 'run_id': run_id, 'status': 'cancelling'}
@@ -358,6 +504,14 @@ def get_evidence_graph(
     """Return a paged graph read model with evidence-derived layout ranks."""
     session = _get_authenticated_session(request)
     tenant_id = _resolve_graph_tenant(session, tenant_id)
+    scope_conn = get_db_connection()
+    try:
+        topology_scope = _topology_asset_scope(scope_conn, session)
+        if site_id:
+            _enforce_topology_site_scope(scope_conn, session, site_id)
+        allowed_device_ids = _authorized_topology_device_ids(scope_conn, topology_scope)
+    finally:
+        scope_conn.close()
     # Routing neighbors are collected by a separate inventory job.  Project
     # the current routing table before every graph read so the L3/logical view
     # reflects already-collected data immediately instead of waiting for the
@@ -370,11 +524,12 @@ def get_evidence_graph(
     return get_graph(
         tenant_id=tenant_id, view=view, site_id=site_id, limit=limit,
         include_stale=include_stale,
+        device_ids=allowed_device_ids,
     )
 
 
 @router.post('/topology/graph/rebuild')
-def rebuild_evidence_graph(request: Request, payload: dict = Body(...)):
+def rebuild_evidence_graph(request: Request, payload: dict = Body(...), _user=require_role("Operator")):
     """Normalize a discovery batch and persist nodes/edges/evidence.
 
     This endpoint accepts observation metadata only. Raw device output belongs
@@ -398,7 +553,21 @@ def get_graph_edge_evidence(
 ):
     session = _get_authenticated_session(request)
     tenant_id = _resolve_graph_tenant(session, tenant_id)
-    return {"edge_id": edge_id, "items": get_edge_evidence(edge_id, tenant_id=tenant_id, limit=limit)}
+    conn = get_db_connection()
+    try:
+        topology_scope = _topology_asset_scope(conn, session)
+        allowed_device_ids = _authorized_topology_device_ids(conn, topology_scope)
+    finally:
+        conn.close()
+    return {
+        "edge_id": edge_id,
+        "items": get_edge_evidence(
+            edge_id,
+            tenant_id=tenant_id,
+            limit=limit,
+            device_ids=allowed_device_ids,
+        ),
+    }
 
 
 @router.get('/topology/graph/history')
@@ -413,6 +582,12 @@ def get_graph_history(
 ):
     session = _get_authenticated_session(request)
     tenant_id = _resolve_graph_tenant(session, tenant_id)
+    conn = get_db_connection()
+    try:
+        topology_scope = _topology_asset_scope(conn, session)
+        allowed_device_ids = _authorized_topology_device_ids(conn, topology_scope)
+    finally:
+        conn.close()
     return get_topology_history(
         tenant_id=tenant_id,
         edge_id=edge_id,
@@ -420,11 +595,12 @@ def get_graph_history(
         event_type=event_type,
         limit=limit,
         offset=offset,
+        device_ids=allowed_device_ids,
     )
 
 
 @router.put('/topology/graph/edges/{edge_id}/relation')
-def override_graph_relation(edge_id: str, request: Request, payload: dict = Body(...)):
+def override_graph_relation(edge_id: str, request: Request, payload: dict = Body(...), _user=require_role("Operator")):
     session = _get_authenticated_session(request)
     relation = str(payload.get('relation_type') or '').upper()
     tenant_id = _resolve_graph_tenant(session, payload.get('tenant_id'))
@@ -507,7 +683,7 @@ def override_graph_relation(edge_id: str, request: Request, payload: dict = Body
 
 
 @router.put('/topology/graph/nodes/{node_id}/layout')
-def override_graph_layout(node_id: str, request: Request, payload: dict = Body(...)):
+def override_graph_layout(node_id: str, request: Request, payload: dict = Body(...), _user=require_role("Operator")):
     session = _get_authenticated_session(request)
     tenant_id = _resolve_graph_tenant(session, payload.get('tenant_id'))
     try:

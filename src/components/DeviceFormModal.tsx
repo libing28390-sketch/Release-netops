@@ -39,6 +39,7 @@ const PLATFORM_OPTIONS = [
   { value: 'fortinet_fortios', label: 'Fortinet FortiOS' },
   { value: 'huawei_vrp', label: 'Huawei VRPv5' },
   { value: 'huawei_vrpv8', label: 'Huawei VRPv8' },
+  { value: 'h3c_comware_v3', label: 'H3C Comware V3' },
   { value: 'h3c_comware', label: 'H3C Comware' },
   { value: 'ruijie_rgos', label: 'Ruijie RGOS' },
   { value: 'zte_zxros', label: 'ZTE ZXROS' },

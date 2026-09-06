@@ -12,7 +12,9 @@ DEVICE_HEALTH_RETENTION_DAYS = 30
 # 这些平台不具备 fan/psu/interface 等网络设备专有指标
 _SERVER_PLATFORMS = {'linux', 'ubuntu', 'centos', 'debian', 'redhat'}
 DEVICE_HEALTH_SELECT = (
-    'd.id, d.hostname, d.ip_address, d.platform, d.status, d.compliance, d.role, '
+    "d.id, d.asset_id, d.sn, "
+    "COALESCE(NULLIF(d.hostname, ''), NULLIF(pa.hostname, ''), '') AS hostname, "
+    "pa.serial_number AS serial_number, d.ip_address, d.platform, d.status, d.compliance, d.role, "
     "COALESCE(NULLIF(s.site_name, ''), CASE WHEN SUBSTR(COALESCE(d.site, ''), 1, 5) = 'site-' THEN '' ELSE COALESCE(d.site, '') END, '') AS site, "
     'd.cpu_usage, d.memory_usage, d.temp, d.fan_status, d.psu_status, d.device_category'
 )
@@ -27,6 +29,39 @@ HEALTH_STATUS_RANK = {
 
 _COLLECTION_SUCCESS_STATUSES = {'success', 'no_neighbors'}
 _EXPECTED_COLLECTORS = ('reachability', 'snmp_metrics', 'snmp_interfaces')
+
+
+def _health_scope_sql(
+    tenant_id: str | None = None,
+    site_ids: tuple[str, ...] | list[str] | None = None,
+    *,
+    site_alias: str = 's',
+) -> tuple[list[str], list[str]]:
+    """Build a site/tenant predicate for health reads and snapshots."""
+
+    clauses: list[str] = []
+    params: list[str] = []
+    if site_ids is not None:
+        if not site_ids:
+            return ['1 = 0'], []
+        placeholders = ','.join('?' for _ in site_ids)
+        clauses.append(f'{site_alias}.id IN ({placeholders})')
+        params.extend(str(item) for item in site_ids)
+    if tenant_id:
+        clauses.append(f'{site_alias}.tenant_id = ?')
+        params.append(str(tenant_id))
+    return clauses, params
+
+
+def _table_has_column(conn, table: str, column: str) -> bool:
+    """Portable, read-only schema probe for legacy health test/install shapes."""
+
+    try:
+        cursor = conn.execute(f'SELECT * FROM {table} LIMIT 0')
+        description = getattr(cursor, 'description', None) or []
+        return column in {str(item[0]) for item in description}
+    except Exception:
+        return False
 
 
 def normalize_hardware_status(value: Any) -> bool | None:
@@ -550,26 +585,39 @@ def load_devices_for_health(
     device_id: str | None = None,
     *,
     rack_id: str | None = None,
+    tenant_id: str | None = None,
+    site_ids: tuple[str, ...] | list[str] | None = None,
 ) -> list[dict[str, Any]]:
+    conditions: list[str] = []
+    params: list[str] = []
+    scope_clauses, scope_params = _health_scope_sql(tenant_id, site_ids)
+    conditions.extend(scope_clauses)
+    params.extend(scope_params)
     if device_id:
-        rows = conn.execute(
-            f'SELECT {DEVICE_HEALTH_SELECT} FROM devices d LEFT JOIN sites s ON s.id = d.site_id WHERE d.id = ? ORDER BY d.hostname ASC',
-            (device_id,),
-        ).fetchall()
+        conditions.append('d.id = ?')
+        params.append(device_id)
     elif rack_id:
-        rows = conn.execute(
-            f'''SELECT {DEVICE_HEALTH_SELECT}
-                FROM devices d
-                JOIN rack_devices rd ON rd.asset_id = d.asset_id
-                LEFT JOIN sites s ON s.id = d.site_id
-                WHERE rd.rack_id = ?
-                ORDER BY d.hostname ASC''',
-            (rack_id,),
-        ).fetchall()
-    else:
-        rows = conn.execute(
-            f'SELECT {DEVICE_HEALTH_SELECT} FROM devices d LEFT JOIN sites s ON s.id = d.site_id ORDER BY d.hostname ASC'
-        ).fetchall()
+        conditions.append('rd.rack_id = ?')
+        params.append(rack_id)
+    joins = (
+        "FROM devices d "
+        "LEFT JOIN physical_assets pa ON pa.id = d.asset_id "
+        "LEFT JOIN sites s ON s.id = COALESCE(NULLIF(pa.site_id, ''), NULLIF(d.site_id, '')) "
+    )
+    if rack_id:
+        joins = (
+            "FROM devices d JOIN rack_devices rd ON rd.asset_id = d.asset_id "
+            "LEFT JOIN physical_assets pa ON pa.id = d.asset_id "
+            "LEFT JOIN sites s ON s.id = COALESCE(NULLIF(pa.site_id, ''), NULLIF(d.site_id, ''))"
+        )
+    where = f"WHERE {' AND '.join(conditions)}" if conditions else ''
+    rows = conn.execute(
+        f'''SELECT {DEVICE_HEALTH_SELECT}
+            {joins}
+            {where}
+            ORDER BY d.hostname ASC''',
+        tuple(params),
+    ).fetchall()
     res = []
     for row in rows:
         item = dict(row)
@@ -578,10 +626,17 @@ def load_devices_for_health(
     return res
 
 
-def record_device_health_snapshot() -> dict[str, Any]:
+def record_device_health_snapshot(
+    *,
+    tenant_id: str | None = None,
+    site_ids: tuple[str, ...] | list[str] | None = None,
+) -> dict[str, Any]:
     conn = get_db_connection()
     try:
-        devices = annotate_devices_with_health(conn, load_devices_for_health(conn))
+        devices = annotate_devices_with_health(
+            conn,
+            load_devices_for_health(conn, tenant_id=tenant_id, site_ids=site_ids),
+        )
         ts = datetime.now(timezone.utc).replace(microsecond=0).isoformat()
         if devices:
             conn.executemany(
@@ -645,34 +700,87 @@ def record_device_health_snapshot() -> dict[str, Any]:
         conn.close()
 
 
-def fetch_device_health_history(conn, range_hours: int = 24) -> dict[str, Any]:
+def fetch_device_health_history(
+    conn,
+    range_hours: int = 24,
+    *,
+    tenant_id: str | None = None,
+    site_ids: tuple[str, ...] | list[str] | None = None,
+) -> dict[str, Any]:
     cutoff = (datetime.now(timezone.utc) - timedelta(hours=max(1, range_hours))).replace(microsecond=0).isoformat()
-    rows = conn.execute(
-        '''
-        SELECT
-            ts,
-            ROUND(AVG(CASE WHEN health_score_available = 1 THEN health_score END), 1) AS average_score,
-            COUNT(*) AS total_devices,
-            SUM(CASE WHEN health_status = 'healthy' THEN 1 ELSE 0 END) AS healthy,
-            SUM(CASE WHEN health_status = 'warning' THEN 1 ELSE 0 END) AS warning,
-            SUM(CASE WHEN health_status = 'critical' THEN 1 ELSE 0 END) AS critical,
-            SUM(CASE WHEN health_status = 'unknown' THEN 1 ELSE 0 END) AS unknown,
-            SUM(CASE WHEN availability_status = 'online' THEN 1 ELSE 0 END) AS online_devices,
-            SUM(CASE WHEN collection_status = 'healthy' THEN 1 ELSE 0 END) AS collection_healthy_devices,
-            SUM(CASE WHEN collection_status IN ('failed', 'partial_failed', 'stale', 'unconfigured') THEN 1 ELSE 0 END) AS collection_anomaly_devices,
-            COALESCE(SUM(open_alert_count), 0) AS open_alerts,
-            COALESCE(SUM(critical_open_alerts), 0) AS critical_open_alerts
-        FROM device_health_samples
-        WHERE ts >= ?
-        GROUP BY ts
-        ORDER BY ts ASC
-        ''',
-        (cutoff,),
-    ).fetchall()
-    alert_rows = conn.execute(
-        "SELECT created_at, resolved_at FROM alert_events WHERE created_at >= ? OR resolved_at >= ?",
-        (cutoff, cutoff),
-    ).fetchall()
+    scope_clauses, scope_params = _health_scope_sql(tenant_id, site_ids)
+    scope_where = ' AND ' + ' AND '.join(scope_clauses) if scope_clauses else ''
+    if _table_has_column(conn, 'device_health_samples', 'device_id'):
+        rows = conn.execute(
+            f'''
+            SELECT
+                hs.ts,
+                ROUND(AVG(CASE WHEN hs.health_score_available = 1 THEN hs.health_score END), 1) AS average_score,
+                COUNT(*) AS total_devices,
+                SUM(CASE WHEN hs.health_status = 'healthy' THEN 1 ELSE 0 END) AS healthy,
+                SUM(CASE WHEN hs.health_status = 'warning' THEN 1 ELSE 0 END) AS warning,
+                SUM(CASE WHEN hs.health_status = 'critical' THEN 1 ELSE 0 END) AS critical,
+                SUM(CASE WHEN hs.health_status = 'unknown' THEN 1 ELSE 0 END) AS unknown,
+                SUM(CASE WHEN hs.availability_status = 'online' THEN 1 ELSE 0 END) AS online_devices,
+                SUM(CASE WHEN hs.collection_status = 'healthy' THEN 1 ELSE 0 END) AS collection_healthy_devices,
+                SUM(CASE WHEN hs.collection_status IN ('failed', 'partial_failed', 'stale', 'unconfigured') THEN 1 ELSE 0 END) AS collection_anomaly_devices,
+                COALESCE(SUM(hs.open_alert_count), 0) AS open_alerts,
+                COALESCE(SUM(hs.critical_open_alerts), 0) AS critical_open_alerts
+            FROM device_health_samples hs
+            JOIN devices hd ON hd.id = hs.device_id
+            LEFT JOIN physical_assets hpa ON hpa.id = hd.asset_id
+            LEFT JOIN sites s ON s.id = COALESCE(NULLIF(hpa.site_id, ''), NULLIF(hd.site_id, ''))
+            WHERE hs.ts >= ?{scope_where}
+            GROUP BY hs.ts
+            ORDER BY hs.ts ASC
+            ''',
+            tuple([cutoff, *scope_params]),
+        ).fetchall()
+    elif scope_clauses:
+        # A legacy sample table without device identity cannot be scoped
+        # safely; fail closed rather than aggregate another tenant's history.
+        rows = []
+    else:
+        rows = conn.execute(
+            '''
+            SELECT
+                ts,
+                ROUND(AVG(CASE WHEN health_score_available = 1 THEN health_score END), 1) AS average_score,
+                COUNT(*) AS total_devices,
+                SUM(CASE WHEN health_status = 'healthy' THEN 1 ELSE 0 END) AS healthy,
+                SUM(CASE WHEN health_status = 'warning' THEN 1 ELSE 0 END) AS warning,
+                SUM(CASE WHEN health_status = 'critical' THEN 1 ELSE 0 END) AS critical,
+                SUM(CASE WHEN health_status = 'unknown' THEN 1 ELSE 0 END) AS unknown,
+                SUM(CASE WHEN availability_status = 'online' THEN 1 ELSE 0 END) AS online_devices,
+                SUM(CASE WHEN collection_status = 'healthy' THEN 1 ELSE 0 END) AS collection_healthy_devices,
+                SUM(CASE WHEN collection_status IN ('failed', 'partial_failed', 'stale', 'unconfigured') THEN 1 ELSE 0 END) AS collection_anomaly_devices,
+                COALESCE(SUM(open_alert_count), 0) AS open_alerts,
+                COALESCE(SUM(critical_open_alerts), 0) AS critical_open_alerts
+            FROM device_health_samples
+            WHERE ts >= ?
+            GROUP BY ts
+            ORDER BY ts ASC
+            ''',
+            (cutoff,),
+        ).fetchall()
+
+    if _table_has_column(conn, 'alert_events', 'device_id'):
+        alert_rows = conn.execute(
+            f'''SELECT ae.created_at, ae.resolved_at
+                  FROM alert_events ae
+                  JOIN devices ad ON ad.id = ae.device_id
+                  LEFT JOIN physical_assets apa ON apa.id = ad.asset_id
+                  LEFT JOIN sites s ON s.id = COALESCE(NULLIF(apa.site_id, ''), NULLIF(ad.site_id, ''))
+                 WHERE (ae.created_at >= ? OR ae.resolved_at >= ?){scope_where}''',
+            tuple([cutoff, cutoff, *scope_params]),
+        ).fetchall()
+    elif scope_clauses:
+        alert_rows = []
+    else:
+        alert_rows = conn.execute(
+            "SELECT created_at, resolved_at FROM alert_events WHERE created_at >= ? OR resolved_at >= ?",
+            (cutoff, cutoff),
+        ).fetchall()
     new_alerts = 0
     recovered_alerts = 0
     mttr_seconds: list[float] = []
@@ -718,10 +826,29 @@ def fetch_device_health_history(conn, range_hours: int = 24) -> dict[str, Any]:
     }
 
 
-def fetch_device_health_trend(conn, device_id: str, range_hours: int = 24) -> dict[str, Any]:
+def fetch_device_health_trend(
+    conn,
+    device_id: str,
+    range_hours: int = 24,
+    *,
+    tenant_id: str | None = None,
+    site_ids: tuple[str, ...] | list[str] | None = None,
+) -> dict[str, Any]:
+    scope_clauses, scope_params = _health_scope_sql(tenant_id, site_ids)
+    scope_where = ' AND ' + ' AND '.join(scope_clauses) if scope_clauses else ''
     device_row = conn.execute(
-        "SELECT d.id, d.hostname, d.ip_address, d.platform, d.role, COALESCE(NULLIF(s.site_name, ''), CASE WHEN SUBSTR(COALESCE(d.site, ''), 1, 5) = 'site-' THEN '' ELSE COALESCE(d.site, '') END, '') AS site FROM devices d LEFT JOIN sites s ON s.id = d.site_id WHERE d.id = ?",
-        (device_id,),
+        f'''SELECT d.id, d.asset_id, d.sn,
+                   COALESCE(NULLIF(d.hostname, ''), NULLIF(pa.hostname, ''), '') AS hostname,
+                   pa.serial_number AS serial_number,
+                   d.ip_address, d.platform, d.role,
+                   COALESCE(NULLIF(s.site_name, ''),
+                            CASE WHEN SUBSTR(COALESCE(d.site, ''), 1, 5) = 'site-' THEN '' ELSE COALESCE(d.site, '') END,
+                            '') AS site
+              FROM devices d
+              LEFT JOIN physical_assets pa ON pa.id = d.asset_id
+              LEFT JOIN sites s ON s.id = COALESCE(NULLIF(pa.site_id, ''), NULLIF(d.site_id, ''))
+             WHERE d.id = ?{scope_where}''',
+        tuple([device_id, *scope_params]),
     ).fetchone()
     if not device_row:
         return {

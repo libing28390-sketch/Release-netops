@@ -101,6 +101,18 @@ def _json_load(value: Any, default: Any) -> Any:
         return default
 
 
+def _normalize_device_ids(device_ids: list[str] | None) -> list[str] | None:
+    """Normalize an optional device scope without widening an empty scope."""
+
+    if device_ids is None:
+        return None
+    return sorted({
+        str(device_id).strip()
+        for device_id in device_ids
+        if device_id is not None and str(device_id).strip()
+    })
+
+
 def _table_exists(conn: Any, table_name: str) -> bool:
     return bool(
         conn.execute(
@@ -1371,11 +1383,7 @@ def _graph_rows(
         node_where.append("(site_id = ? OR id = ? OR node_type = 'SITE')")
         node_params.extend([site_id, f"site:{site_id}"])
     if device_ids is not None:
-        normalized_device_ids = sorted({
-            str(device_id).strip()
-            for device_id in device_ids
-            if device_id is not None and str(device_id).strip()
-        })
+        normalized_device_ids = _normalize_device_ids(device_ids) or []
         if not normalized_device_ids:
             return [], []
         device_placeholders = ",".join("?" for _ in normalized_device_ids)
@@ -1453,23 +1461,52 @@ def get_graph(
         groups: list[dict[str, Any]] = []
         group_members: list[dict[str, Any]] = []
         try:
+            normalized_device_ids = _normalize_device_ids(device_ids)
+            group_where = "tenant_id = ? AND status = 'active'"
+            group_params: list[Any] = [tenant_id]
+            member_scope_sql = ""
+            member_scope_params: list[Any] = []
+            if normalized_device_ids is not None:
+                if not normalized_device_ids:
+                    normalized_device_ids = []
+                    group_where = "1 = 0"
+                else:
+                    device_placeholders = ",".join("?" for _ in normalized_device_ids)
+                    group_where += (
+                        " AND EXISTS ("
+                        "SELECT 1 FROM topology_group_members gm_scope "
+                        "JOIN topology_nodes gn_scope "
+                        "ON gn_scope.id = gm_scope.node_id "
+                        "AND gn_scope.tenant_id = gm_scope.tenant_id "
+                        "WHERE gm_scope.group_id = topology_groups.id "
+                        "AND gm_scope.tenant_id = topology_groups.tenant_id "
+                        f"AND gn_scope.device_id IN ({device_placeholders})"
+                        ")"
+                    )
+                    group_params.extend(normalized_device_ids)
+                    member_scope_sql = f" AND n_scope.device_id IN ({device_placeholders})"
+                    member_scope_params.extend(normalized_device_ids)
             group_rows = conn.execute(
-                "SELECT id, node_id, group_type, display_name, status, metadata_json FROM topology_groups WHERE tenant_id = ? AND status = 'active' LIMIT ?",
-                (tenant_id, safe_limit),
+                "SELECT id, node_id, group_type, display_name, status, metadata_json "
+                f"FROM topology_groups WHERE {group_where} LIMIT ?",
+                (*group_params, safe_limit),
             ).fetchall()
             for row in group_rows:
                 item = dict(row)
                 item["metadata"] = _json_load(item.pop("metadata_json", None), {}) or {}
                 groups.append(item)
             member_rows = conn.execute(
-                """
+                f"""
                 SELECT m.group_id, m.node_id, m.member_role, m.status, m.metadata_json
                 FROM topology_group_members m
                 JOIN topology_groups g ON g.id = m.group_id AND g.tenant_id = m.tenant_id
+                LEFT JOIN topology_nodes n_scope
+                  ON n_scope.id = m.node_id AND n_scope.tenant_id = m.tenant_id
                 WHERE m.tenant_id = ? AND m.status = 'active' AND g.status = 'active'
+                {member_scope_sql}
                 LIMIT ?
                 """,
-                (tenant_id, safe_limit),
+                (tenant_id, *member_scope_params, safe_limit),
             ).fetchall()
             for row in member_rows:
                 item = dict(row)
@@ -1489,10 +1526,39 @@ def get_graph(
         }
 
 
-def get_edge_evidence(edge_id: str, *, tenant_id: str = "tenant-default", limit: int = 200) -> list[dict[str, Any]]:
+def get_edge_evidence(
+    edge_id: str,
+    *,
+    tenant_id: str = "tenant-default",
+    limit: int = 200,
+    device_ids: list[str] | None = None,
+) -> list[dict[str, Any]]:
+    normalized_device_ids = _normalize_device_ids(device_ids)
+    if normalized_device_ids is not None and not normalized_device_ids:
+        return []
     with get_db_connection() as conn:
-        rows = conn.execute(
+        scope_sql = ""
+        scope_params: list[Any] = []
+        if normalized_device_ids is not None:
+            placeholders = ",".join("?" for _ in normalized_device_ids)
+            scope_sql = f"""
+              AND EXISTS (
+                    SELECT 1 FROM topology_nodes source_node
+                     WHERE source_node.id = g.source_node_id
+                       AND source_node.tenant_id = g.tenant_id
+                       AND source_node.device_id IN ({placeholders})
+              )
+              AND EXISTS (
+                    SELECT 1 FROM topology_nodes target_node
+                     WHERE target_node.id = g.target_node_id
+                       AND target_node.tenant_id = g.tenant_id
+                       AND target_node.device_id IN ({placeholders})
+              )
             """
+            scope_params.extend(normalized_device_ids)
+            scope_params.extend(normalized_device_ids)
+        rows = conn.execute(
+            f"""
             SELECT e.id, e.edge_id, e.source_type, e.source_id, e.protocol,
                    e.observation_json, e.priority, e.confidence, e.observed_at,
                    e.evidence_type, e.source_device_id, e.source_interface,
@@ -1500,9 +1566,10 @@ def get_edge_evidence(edge_id: str, *, tenant_id: str = "tenant-default", limit:
             FROM topology_edge_evidence e
             JOIN topology_edges g ON g.id = e.edge_id AND g.tenant_id = ?
             WHERE e.edge_id = ?
+            {scope_sql}
             ORDER BY e.priority DESC, e.observed_at DESC LIMIT ?
             """,
-            (tenant_id, edge_id, max(1, min(int(limit), 1000))),
+            (tenant_id, edge_id, *scope_params, max(1, min(int(limit), 1000))),
         ).fetchall()
         result = []
         for row in rows:
@@ -1520,22 +1587,53 @@ def get_topology_history(
     event_type: str | None = None,
     limit: int = 100,
     offset: int = 0,
+    device_ids: list[str] | None = None,
 ) -> dict[str, Any]:
-    clauses = ["tenant_id = ?"]
+    normalized_device_ids = _normalize_device_ids(device_ids)
+    if normalized_device_ids is not None and not normalized_device_ids:
+        safe_limit = max(1, min(int(limit), 1000))
+        return {"items": [], "limit": safe_limit, "offset": max(0, int(offset))}
+    clauses = ["h.tenant_id = ?"]
     params: list[Any] = [tenant_id]
     if edge_id:
-        clauses.append("(entity_id = ? OR entity_type = 'edge' AND entity_id = ?)")
+        clauses.append("(h.entity_id = ? OR h.entity_type = 'edge' AND h.entity_id = ?)")
         params.extend([edge_id, edge_id])
     if node_id:
-        clauses.append("entity_id = ?")
+        clauses.append("h.entity_id = ?")
         params.append(node_id)
     if event_type:
-        clauses.append("event_type = ?")
+        clauses.append("h.event_type = ?")
         params.append(event_type)
+    if normalized_device_ids is not None:
+        placeholders = ",".join("?" for _ in normalized_device_ids)
+        clauses.append(
+            "("
+            "(h.entity_type = 'edge' AND EXISTS ("
+            "SELECT 1 FROM topology_edges history_edge "
+            "JOIN topology_nodes history_source "
+            "ON history_source.id = history_edge.source_node_id "
+            "AND history_source.tenant_id = history_edge.tenant_id "
+            "JOIN topology_nodes history_target "
+            "ON history_target.id = history_edge.target_node_id "
+            "AND history_target.tenant_id = history_edge.tenant_id "
+            "WHERE history_edge.id = h.entity_id "
+            "AND history_edge.tenant_id = h.tenant_id "
+            f"AND history_source.device_id IN ({placeholders}) "
+            f"AND history_target.device_id IN ({placeholders})"
+            ")) OR (h.entity_type = 'node' AND EXISTS ("
+            "SELECT 1 FROM topology_nodes history_node "
+            "WHERE history_node.id = h.entity_id "
+            "AND history_node.tenant_id = h.tenant_id "
+            f"AND history_node.device_id IN ({placeholders})"
+            ")))"
+        )
+        params.extend(normalized_device_ids)
+        params.extend(normalized_device_ids)
+        params.extend(normalized_device_ids)
     safe_limit = max(1, min(int(limit), 1000))
     with get_db_connection() as conn:
         rows = conn.execute(
-            "SELECT id, tenant_id, entity_type, entity_id, event_type, before_json, after_json, source, actor, created_at FROM topology_history WHERE "
+            "SELECT h.id, h.tenant_id, h.entity_type, h.entity_id, h.event_type, h.before_json, h.after_json, h.source, h.actor, h.created_at FROM topology_history h WHERE "
             + " AND ".join(clauses) + " ORDER BY created_at DESC LIMIT ? OFFSET ?",
             (*params, safe_limit, max(0, int(offset))),
         ).fetchall()

@@ -16,6 +16,9 @@ def test_parser_platform_families_allow_only_safe_compatibility_fallbacks():
     # Versionless templates are the explicit common grammar and may be used
     # only after the concrete H3C version has been tried.
     assert _template_platform_candidates('h3c_comware') == ['h3c_comware_v7', 'h3c_comware']
+    assert _template_platform_candidates('h3c_comware_v3') == [
+        'h3c_comware_v3', 'h3c_comware_v5', 'h3c_comware',
+    ]
     assert _template_platform_candidates('h3c_comware_v5') == ['h3c_comware_v5', 'h3c_comware']
     assert _template_platform_candidates('h3c_comware_v9') == ['h3c_comware_v9', 'h3c_comware']
     assert not set(_template_platform_candidates('huawei_vrp')).intersection(

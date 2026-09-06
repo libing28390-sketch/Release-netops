@@ -266,3 +266,78 @@ git diff --check
 - `scripts/knowledge_eval_gold_400_check.py` 已改为官方来源/安全/分布门禁，并将每个 `document_id + URL` 反查 `data/kb_import/manifest.json` 及其 SHA-256；在重新生成本地知识包后已同步 Dataset manifest 引用，普通检查和 `--require-production` 均为 `PASS`，`official_source_evidence_case_count=300`，`human_review_required=false`。当前 400 条 Dataset SHA-256 为 `6e030b4b9b98156f84524f2ec3dbb35be87d0cde8c29a48830a6c206a215840a`，对应 manifest SHA-256 为 `b7225b3e07385ebfb2ef3e37661041e49029ceb9437b4857f80775a05c0fba3d`。
 - 知识库“基线自检”页面新增只读 400 条概览 API/UI，只显示数量、类别、厂商、切分和来源门禁，不下发题目、答案、Gold 文档 ID 或正文。
 - 该策略仍不等于 400 条整体生产放行；400 条来源门禁和 300 条 answer 的隔离 PostgreSQL 检索均通过，冻结 v1 50-anchor 当前标准/隔离复跑为 `39/50 quality=FAIL` 且 `safety=PASS`，真实组件、UAT、远端 Actions 和 Release Candidate 仍保持阻断。以上改动已进入本地 `main` 的 `36d64acf`，尚未 push。
+
+## 2026-09-06 RackVision 3D 机柜管理交接更新
+
+更新时间：2026-09-06  
+分支：`main`  
+目标远端：`origin/main`  
+交付范围：用户已明确要求把当前工作区的全部代码变更推送到 `main`。`m0211`、`m0212` 虽然是逻辑上独立的任务，本次按用户要求随当前代码一并交付；后续仍按独立任务维护。
+
+### 今日已完成
+
+#### 后端、数据与接口
+
+- 建立资产到机柜设备的标准化 `placement` 返回契约，资产列表和详情同时返回机柜、站点、U 位、安装方式、尺寸状态、来源与位置备注；未安装资产返回 `null`。
+- 补齐资产批量导入的事务边界：批量流程内部的标签同步不再提前提交，保证逐行失败时能够按原子事务回滚。
+- 增加机柜引用解析器，优先稳定 ID，其次 `rack_code`，最后名称；名称不唯一时返回明确的 `RACK_NOT_UNIQUE` 和冲突机柜 ID。
+- 增加机柜数据质量审计：支持全量或授权范围审计，覆盖孤儿引用、重复安装、投影不一致、站点/类型缺失、U 位冲突、重复资产和电源字段冲突；审计只写质量问题表，不修改业务主表。
+- 增加 `POST /api/rack-data-quality/audit` 接口，支持全量审计或指定机柜审计，并复用租户与资源授权范围。
+- 完成机柜放置校验错误分类：未知资产、U 位越界、U 位重叠、全深度冲突、零 U 设备缺少位置说明、设备类型仍被使用等场景返回稳定错误码和状态码。
+- 增加 `m0213_rackvision_power_reconciliation`：以 PostgreSQL 为权威来源同步新旧电源字段，并在存在非零冲突时保留质量问题证据；迁移设计为可重复执行。
+- 保留并纳入 `m0210_rackvision_canonical_placement`、RackVision 目录导入、回填、范围控制、资产解析与数据质量相关代码和测试。
+
+#### 前端与 3D 视图
+
+- 3D 机柜设备坐标改为按真实机柜 `depth_mm`、`width_mm` 计算，不再固定使用单一深度/宽度常量。
+- 机柜 3D 框架导轨横向位置随实际机柜宽度缩放。
+- 立面图对未知或无效 U 位设备不再参与占位和拖拽目标计算，但仍保留在审查区域，避免错误数据阻塞合法设备操作。
+- 资产管理类型补充标准化 `AssetPlacement` 类型，前后端字段保持一致。
+- 补充 RackVision 适配器、立面图、3D 机柜、布局、拓扑、只读检查与 API 契约测试。
+
+#### 任务清单与资料
+
+- 更新 `docs/Nexora_RackVision_MASTER_TASKS.md`。
+- 更新 `docs/Nexora_RackVision_Backend_Data_API_TASKS.md`。
+- 更新 `docs/walkthrough/walkthrough_20260906_rackvision_execution.md`。
+- 本节作为今天继续开发、测试和上线交接的事实基线。
+
+### 已验证结果
+
+- 前端生产构建：`npm run build` 通过，Vite 构建完成。
+- 前端代码检查：`npm run lint` 通过。
+- 前端 RackVision 定向测试：20 个测试通过。
+- 资产导入、安全与事务回归：23 个测试通过。
+- 机柜放置、布局与资产 placement 契约组合测试：10 个测试通过。
+- 数据变更保护测试：6 个测试通过。
+- 数据质量 API：2 个测试通过。
+- `m0213` 电源迁移测试：2 个测试通过。
+- 后端修改文件已完成 Python 编译检查。
+
+### 尚未关闭的门禁
+
+- 全量后端测试历史基线为 `2304 passed, 2 failed`。其中 RackVision 资产导入事务失败已经修复并由 23 个定向回归覆盖；剩余失败是独立 IPAM 测试使用临时 `ip_addresses` 表但查询 `ip.device_id`，不是本次 RackVision 变更，尚未修复或重新跑完整后端套件。
+- 尚未在真实 PostgreSQL 生产/预生产库执行迁移备份、dry-run、应用和回滚演练。
+- 尚未完成浏览器端 `/cmdb/racks` 全流程人工验收，包括真实资产导入、拖拽、移动、删除、只读权限、批量操作和 3D/立面联动。
+- 尚未完成真实 Blender/GLB 资产产线、在线资源 MIME、缓存和大规模机柜性能验收。
+- 尚未把全量后端测试恢复到完全绿色；交接后应先确认独立 IPAM 失败是否已被其他任务处理，再决定是否单独修复。
+
+### 任务边界
+
+- `m0211`（设备租户范围）已作为独立任务完成；本次因用户明确要求“全部代码都 push”而一并推送，但它不属于 RackVision 业务范围。
+- `m0212`（H3C Comware v3 平台支持）同样作为独立任务随本次全量代码推送；后续发布说明应按独立变更记录。
+- 本次交接不把历史测试失败包装为全部通过；部署前仍需补齐全量后端回归和数据库演练。
+
+### 交接后的建议顺序
+
+1. 在干净环境重新执行完整后端测试，并单独处理或记录 IPAM 临时表字段问题。
+2. 在预生产 PostgreSQL 执行 `m0210`、`m0213` 的备份、dry-run、应用、校验和回滚演练。
+3. 对 `/cmdb/racks` 做浏览器人工验收，重点检查 2D/3D 坐标、非法 U 位、资产 placement、权限边界和质量审计。
+4. 完成线上 3D 资源与静态资源缓存/MIME 检查后，再进行生产发布。
+
+### 本次交付记录
+
+- handoff 文件：`handoff.md`（本节为新增 RackVision 交接内容，保留此前 AI/RAG 交接历史）。
+- 提交：本次交付提交（amend 后以最终 `git log -1` 为准）。
+- 推送：目标为 `origin/main`，仅推送 `main` 分支。
+- 本地运行时状态、知识库引用和数据库备份文件不作为代码交付内容；其余当前工作区代码、测试、迁移、文档、前端构建相关变更按用户要求纳入本次提交。

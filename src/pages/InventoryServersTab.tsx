@@ -8,6 +8,7 @@ import { AnimatePresence, motion } from 'motion/react';
 import Pagination from '../components/Pagination';
 import PageHero from '../components/PageHero';
 import { ActionButton } from '../components/ui/ActionIconButton';
+import { authHeaders } from '../api/http';
 
 /* ═══════════════════════════════════════════════════════
    Types
@@ -217,7 +218,7 @@ const InventoryServersTab: React.FC<Props> = ({ language, t, setActiveTab, setSe
         page: page.toString(),
         page_size: pageSize.toString(),
       });
-      const r = await fetch(`/api/assets?${p}`);
+      const r = await fetch(`/api/assets?${p}`, { headers: authHeaders() });
       if (r.ok) {
         const data = await r.json();
         setServers(data.items || []);
@@ -267,7 +268,7 @@ const InventoryServersTab: React.FC<Props> = ({ language, t, setActiveTab, setSe
   const handleDelete = async (server: ServerAsset) => {
     setDeleting(true);
     try {
-      const r = await fetch(`/api/assets/${server.id}`, { method: 'DELETE' });
+      const r = await fetch(`/api/assets/${server.id}`, { method: 'DELETE', headers: authHeaders() });
       if (r.ok) {
         fetchServers();
         setDeleteTarget(null);
@@ -279,7 +280,7 @@ const InventoryServersTab: React.FC<Props> = ({ language, t, setActiveTab, setSe
   const handleDeleteSelected = async () => {
     for (const id of selectedIds) {
       try {
-        await fetch(`/api/assets/${id}`, { method: 'DELETE' });
+        await fetch(`/api/assets/${id}`, { method: 'DELETE', headers: authHeaders() });
       } catch { /* noop */ }
     }
     setSelectedIds(new Set());
@@ -289,7 +290,7 @@ const InventoryServersTab: React.FC<Props> = ({ language, t, setActiveTab, setSe
   const handleVerify = async (server: ServerAsset) => {
     setVerifyingIds(prev => new Set(prev).add(server.id));
     try {
-      const r = await fetch(`/api/assets/${server.id}/verify`);
+      const r = await fetch(`/api/assets/${server.id}/verify`, { headers: authHeaders() });
       if (r.ok) {
         const data = await r.json();
         setVerifyResults(prev => ({ ...prev, [server.id]: data }));

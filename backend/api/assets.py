@@ -10,17 +10,24 @@ import os
 import uuid
 import logging
 import threading
+import time
+import ipaddress
+from collections import deque
 from datetime import datetime, timedelta, timezone
 from typing import Optional
 from fastapi import APIRouter, HTTPException, Query
 from pydantic import BaseModel, Field, field_validator
 from database import get_db_connection
 from core.crypto import encrypt_credential, decrypt_credential
+from core.rbac import enforce_resource_scope, require_role
+from core.context import request_id_var
 from drivers.ssh_compat import get_ssh_error_code, build_ssh_error_guidance
 from services import tag_service
+from services import rack_scope_service
 from services.vault_service import credential_is_shared, resolve_collector_credentials
 from services.site_identity_service import resolve_canonical_site_id
 from services.pam_web_service import replace_asset_web_profiles
+from services.audit_service import log_audit_event
 from schemas.web import WebAccessProfileInput
 
 import ping3
@@ -29,7 +36,11 @@ from scrapli import Scrapli
 
 logger = logging.getLogger(__name__)
 
-router = APIRouter()
+# Asset inventory is a CMDB surface.  Keep reads available to authenticated
+# viewers, while write/external-action routes below declare their stronger
+# role requirements explicitly.  This also prevents newly added asset routes
+# from accidentally becoming anonymous endpoints.
+router = APIRouter(dependencies=[require_role("Viewer")])
 
 _ASSET_IDENTITY_FIELDS = ('hostname', 'asset_tag', 'serial_number', 'management_ip')
 _ASSET_IDENTITY_LABELS = {
@@ -38,6 +49,165 @@ _ASSET_IDENTITY_LABELS = {
     'serial_number': '序列号',
     'management_ip': '管理IP',
 }
+
+# The inventory tables contain operational, credential-governance and
+# migration-only columns that are not part of the public asset contract.  Keep
+# the compatibility SQL joins for now, but make the response projection
+# explicit so a future schema column cannot silently become an API field.
+_PUBLIC_ASSET_FIELDS = frozenset({
+    'id', 'asset_type', 'asset_tag', 'serial_number', 'vendor', 'model',
+    'hostname', 'site_id', 'site_name', 'site_code',
+    'rack', 'rack_unit', 'rack_id', 'rack_position', 'rack_mount_kind',
+    'rack_height_u', 'rack_placement_status', 'rack_placement_source',
+    'rack_dimension_status', 'rack_location_note', 'rack_model_key',
+    'u_height', 'planned_start_u', 'management_ip', 'business_ip',
+    'device_role', 'vlan', 'uplink_switch', 'uplink_port', 'status',
+    'online_status', 'lifecycle_status', 'asset_origin', 'purchase_date',
+    'warranty_expiry', 'department', 'notes', 'platform',
+    'connection_method', 'username', 'normal_username', 'admin_username',
+    'password', 'normal_password', 'admin_password', 'enable_password',
+    'snmp_community',
+    'snmp_port', 'management_port', 'device_category', 'function', 'zone',
+    'power_watts', 'device_id', 'is_managed', 'takeover_error',
+    'credential_id', 'admin_credential_id', 'snmp_credential_id',
+    'password_set', 'normal_password_set', 'admin_password_set',
+    'enable_password_set', 'snmp_community_set', 'created_at', 'updated_at',
+})
+
+# Connectivity verification is an outbound network capability.  Keep the
+# safety limits process-local for the current deployment, while making the
+# defaults conservative enough that a single worker cannot be used as an
+# unbounded scanner.  A shared rate limiter can be added later without
+# changing the endpoint contract.
+_CONNECTIVITY_MAX_CONCURRENT = max(
+    1, min(int(os.environ.get('ASSET_VERIFY_MAX_CONCURRENCY', '4')), 32)
+)
+_CONNECTIVITY_TIMEOUT_SECONDS = max(
+    0.2, min(float(os.environ.get('ASSET_VERIFY_TIMEOUT_SECONDS', '1')), 5.0)
+)
+_CONNECTIVITY_SSH_TIMEOUT_SECONDS = max(
+    1.0, min(float(os.environ.get('ASSET_VERIFY_SSH_TIMEOUT_SECONDS', '5')), 10.0)
+)
+_CONNECTIVITY_RATE_LIMIT = max(
+    1, min(int(os.environ.get('ASSET_VERIFY_RATE_LIMIT', '10')), 60)
+)
+_CONNECTIVITY_RATE_WINDOW_SECONDS = max(
+    10.0, min(float(os.environ.get('ASSET_VERIFY_RATE_WINDOW_SECONDS', '60')), 600.0)
+)
+_CONNECTIVITY_SEMAPHORE = threading.BoundedSemaphore(_CONNECTIVITY_MAX_CONCURRENT)
+_CONNECTIVITY_RATE_LOCK = threading.Lock()
+_CONNECTIVITY_RATE_BUCKETS: dict[str, deque[float]] = {}
+
+_ALLOWED_PRIVATE_NETWORKS = (
+    ipaddress.ip_network('10.0.0.0/8'),
+    ipaddress.ip_network('172.16.0.0/12'),
+    ipaddress.ip_network('192.168.0.0/16'),
+    ipaddress.ip_network('fc00::/7'),
+)
+_CLOUD_METADATA_NETWORKS = (
+    ipaddress.ip_network('169.254.169.254/32'),  # AWS/Azure/GCP/OCI
+    ipaddress.ip_network('100.100.100.200/32'),  # Alibaba Cloud
+)
+
+
+def _connectivity_http_error(code: str, message: str, *, status_code: int = 422) -> HTTPException:
+    return HTTPException(
+        status_code=status_code,
+        detail={'code': code, 'message': message},
+    )
+
+
+def _validate_connectivity_target(value: object) -> str:
+    """Validate an asset management IP before any outbound network call.
+
+    Only literal IP addresses are accepted.  RFC1918/ULA addresses remain
+    valid because they are normal data-centre management targets; link-local,
+    loopback, multicast, unspecified, documentation/reserved, shared/CGNAT
+    and cloud-metadata ranges are rejected.
+    """
+
+    raw = str(value or '').strip()
+    try:
+        address = ipaddress.ip_address(raw)
+    except ValueError as exc:
+        raise _connectivity_http_error(
+            'CONNECTIVITY_TARGET_INVALID',
+            '资产管理地址必须是有效的 IP 地址。',
+        ) from exc
+
+    mapped = getattr(address, 'ipv4_mapped', None)
+    metadata_address = mapped or address
+    if any(metadata_address in network for network in _CLOUD_METADATA_NETWORKS):
+        raise _connectivity_http_error(
+            'CONNECTIVITY_TARGET_NOT_ALLOWED',
+            '云元数据地址不允许进行连通性验证。',
+        )
+    if (
+        address.is_loopback
+        or address.is_link_local
+        or address.is_unspecified
+        or address.is_multicast
+        or address.is_reserved
+    ):
+        raise _connectivity_http_error(
+            'CONNECTIVITY_TARGET_NOT_ALLOWED',
+            '环回、链路本地、组播、未指定或保留地址不允许进行连通性验证。',
+        )
+
+    if address.is_private:
+        if not any(address in network for network in _ALLOWED_PRIVATE_NETWORKS):
+            raise _connectivity_http_error(
+                'CONNECTIVITY_TARGET_NOT_ALLOWED',
+                '该私有或共享地址段不在允许的机房管理地址范围内。',
+            )
+    elif not address.is_global:
+        raise _connectivity_http_error(
+            'CONNECTIVITY_TARGET_NOT_ALLOWED',
+            '该地址段不允许进行连通性验证。',
+        )
+    return str(address)
+
+
+def _validate_connectivity_port(value: object) -> int:
+    try:
+        port = int(value)
+    except (TypeError, ValueError) as exc:
+        raise _connectivity_http_error(
+            'CONNECTIVITY_PORT_INVALID',
+            'SSH 管理端口必须是 1 到 65535 之间的整数。',
+        ) from exc
+    if not 1 <= port <= 65535:
+        raise _connectivity_http_error(
+            'CONNECTIVITY_PORT_INVALID',
+            'SSH 管理端口必须是 1 到 65535 之间的整数。',
+        )
+    return port
+
+
+def _acquire_connectivity_slot(asset_id: str) -> None:
+    if not _CONNECTIVITY_SEMAPHORE.acquire(blocking=False):
+        raise _connectivity_http_error(
+            'CONNECTIVITY_BUSY',
+            '当前连通性验证请求过多，请稍后重试。',
+            status_code=429,
+        )
+    now = time.monotonic()
+    try:
+        with _CONNECTIVITY_RATE_LOCK:
+            bucket = _CONNECTIVITY_RATE_BUCKETS.setdefault(str(asset_id), deque())
+            cutoff = now - _CONNECTIVITY_RATE_WINDOW_SECONDS
+            while bucket and bucket[0] <= cutoff:
+                bucket.popleft()
+            if len(bucket) >= _CONNECTIVITY_RATE_LIMIT:
+                raise _connectivity_http_error(
+                    'CONNECTIVITY_RATE_LIMITED',
+                    '该资产的连通性验证次数已达到限制，请稍后重试。',
+                    status_code=429,
+                )
+            bucket.append(now)
+    except Exception:
+        _CONNECTIVITY_SEMAPHORE.release()
+        raise
 
 
 def _find_asset_identity_duplicates(conn, values: dict, exclude_asset_id: str = '') -> list[dict]:
@@ -76,6 +246,29 @@ def _utc_now() -> str:
     return datetime.now(timezone.utc).strftime('%Y-%m-%dT%H:%M:%S+00:00')
 
 
+def _tenant_id_from_authenticated_user(user: dict) -> str:
+    """Return the non-empty tenant that owns a linked device row."""
+    # Direct service-level callers do not pass through FastAPI dependency
+    # resolution. Keep those legacy calls on the built-in tenant; HTTP routes
+    # always receive a session dictionary from require_role below.
+    if not isinstance(user, dict):
+        return 'tenant-default'
+    tenant_id = str(user.get('tenant_id') or '').strip()
+    if not tenant_id:
+        # A few legacy service-level callers invoke the endpoint function
+        # directly, so FastAPI's Depends placeholder (or a role-only test
+        # stub) has no session identity.  Preserve the built-in tenant for
+        # that compatibility path; a real authenticated session always has a
+        # user id and is rejected closed when tenant assignment is missing.
+        if not str(user.get('user_id') or user.get('id') or '').strip():
+            return 'tenant-default'
+        raise HTTPException(
+            status_code=403,
+            detail='Authenticated user is not assigned to a tenant',
+        )
+    return tenant_id
+
+
 def _management_port_for_storage(body) -> int:
     method = str(getattr(body, 'connection_method', '') or 'ssh').lower()
     if method in {'web', 'none'}:
@@ -103,6 +296,325 @@ def _sanitize_web_profile(item: dict) -> dict:
         item[f'{field}_set'] = bool(item.get(field))
         item[field] = ''
     return item
+
+
+def _sanitize_asset_item(item: dict) -> dict:
+    """Return the explicit public asset projection without secret columns.
+
+    Asset list/detail endpoints historically selected ``physical_assets.*``
+    for convenience.  Keep the compatibility query during the migration
+    window, but allow only the stable UI/CMDB fields below to leave the API
+    boundary.  Encrypted/secret values become presence flags.
+    """
+
+    source = dict(item)
+    for sensitive in ('password', 'normal_password', 'admin_password', 'enable_password'):
+        if sensitive in source:
+            source[f'{sensitive}_set'] = bool(source.get(sensitive))
+    if 'snmp_community' in source:
+        source['snmp_community_set'] = bool(source.get('snmp_community'))
+
+    # A Vault path and credential-governance internals are deliberately not
+    # represented in this allowlist, even when they are present in a joined
+    # row.  Do not echo empty placeholders that clients might persist.
+    projected = {
+        key: source[key]
+        for key in _PUBLIC_ASSET_FIELDS
+        if key in source
+    }
+    for key in ('password', 'normal_password', 'admin_password', 'enable_password', 'snmp_community'):
+        if key in projected:
+            projected[key] = ''
+
+    item.clear()
+    item.update(projected)
+    return item
+
+
+def _asset_placement_map(
+    conn,
+    asset_ids: list[str],
+    user: object = None,
+) -> dict[str, dict]:
+    """Return canonical placement DTOs keyed by physical asset ID.
+
+    ``physical_assets`` keeps a denormalized compatibility projection for the
+    existing inventory UI. RackVision consumers must be able to distinguish
+    that projection from the authoritative ``rack_devices`` row, so asset
+    list/detail responses expose a nested ``placement`` object built from the
+    canonical row. The query is batched to avoid one placement lookup per
+    asset and applies both asset and rack visibility scopes before returning
+    rack identity fields.
+    """
+
+    normalized_ids = sorted({str(asset_id).strip() for asset_id in asset_ids if str(asset_id).strip()})
+    if not normalized_ids:
+        return {}
+
+    asset_placeholders = ','.join('?' for _ in normalized_ids)
+    clauses = [f'rd.asset_id IN ({asset_placeholders})']
+    params: list[str] = list(normalized_ids)
+
+    if isinstance(user, dict):
+        asset_scope = rack_scope_service.allowed_resource_scope(conn, user, 'asset', 'view')
+        if asset_scope.site_ids is not None:
+            if not asset_scope.site_ids:
+                return {}
+            site_placeholders = ','.join('?' for _ in asset_scope.site_ids)
+            clauses.append(f'pa.site_id IN ({site_placeholders})')
+            params.extend(asset_scope.site_ids)
+            if asset_scope.tenant_id:
+                clauses.append(
+                    '''EXISTS (
+                           SELECT 1 FROM sites placement_asset_scope_site
+                            WHERE placement_asset_scope_site.id = pa.site_id
+                              AND placement_asset_scope_site.tenant_id = ?
+                       )'''
+                )
+                params.append(asset_scope.tenant_id)
+        elif asset_scope.tenant_id:
+            clauses.append(
+                '''EXISTS (
+                       SELECT 1 FROM sites placement_asset_scope_site
+                        WHERE placement_asset_scope_site.id = pa.site_id
+                          AND placement_asset_scope_site.tenant_id = ?
+                   )'''
+            )
+            params.append(asset_scope.tenant_id)
+
+        rack_scope = rack_scope_service.allowed_rack_scope(conn, user, 'view')
+        if rack_scope.site_ids is not None:
+            if not rack_scope.site_ids:
+                return {}
+            site_placeholders = ','.join('?' for _ in rack_scope.site_ids)
+            clauses.append(f'r.site_id IN ({site_placeholders})')
+            params.extend(rack_scope.site_ids)
+            if rack_scope.tenant_id:
+                clauses.append(
+                    '''EXISTS (
+                           SELECT 1 FROM sites placement_rack_scope_site
+                            WHERE placement_rack_scope_site.id = r.site_id
+                              AND placement_rack_scope_site.tenant_id = ?
+                       )'''
+                )
+                params.append(rack_scope.tenant_id)
+        elif rack_scope.tenant_id:
+            clauses.append(
+                '''EXISTS (
+                       SELECT 1 FROM sites placement_rack_scope_site
+                        WHERE placement_rack_scope_site.id = r.site_id
+                          AND placement_rack_scope_site.tenant_id = ?
+                   )'''
+            )
+            params.append(rack_scope.tenant_id)
+
+    rows = conn.execute(
+        f'''SELECT rd.id AS placement_id, rd.asset_id, rd.rack_id,
+                   r.rack_code, r.rack_name, r.name AS rack_display_name,
+                   r.site_id AS rack_site_id,
+                   rs.site_code AS rack_site_code,
+                   rs.site_name AS rack_site_name,
+                   rd.device_type_id, rd.start_u, rd.position, rd.mount_kind,
+                   rd.height_u, rd.placement_status, rd.placement_source,
+                   rd.dimension_status, rd.location_note, rd.model_key,
+                   rd.status, rd.serial_number, rd.updated_at
+              FROM rack_devices rd
+              JOIN physical_assets pa ON pa.id = rd.asset_id
+              JOIN racks r ON r.id = rd.rack_id
+              LEFT JOIN sites rs ON rs.id = r.site_id
+             WHERE {' AND '.join(clauses)}
+             ORDER BY rd.asset_id, rd.updated_at DESC, rd.id''',
+        params,
+    ).fetchall()
+
+    placements: dict[str, dict] = {}
+    for row in rows:
+        source = dict(row)
+        asset_id = str(source.get('asset_id') or '').strip()
+        if not asset_id or asset_id in placements:
+            # The canonical uniqueness index prevents this in clean data. A
+            # legacy duplicate must not make the API return nondeterministic
+            # placement data, so keep the newest row selected by the query.
+            continue
+        start_u = source.get('start_u')
+        height_u = source.get('height_u')
+        try:
+            end_u = int(start_u) + int(height_u) - 1 if start_u is not None and height_u is not None else None
+        except (TypeError, ValueError):
+            end_u = None
+        placements[asset_id] = {
+            'id': source.get('placement_id'),
+            'asset_id': asset_id,
+            'rack_id': source.get('rack_id'),
+            'rack_code': source.get('rack_code') or '',
+            'rack_name': source.get('rack_display_name') or source.get('rack_name') or '',
+            'rack_site_id': source.get('rack_site_id') or '',
+            'rack_site_code': source.get('rack_site_code') or '',
+            'rack_site_name': source.get('rack_site_name') or '',
+            'device_type_id': source.get('device_type_id'),
+            'start_u': start_u,
+            'end_u': end_u,
+            'height_u': height_u,
+            'position': source.get('position') or 'unknown',
+            'mount_kind': source.get('mount_kind') or 'unknown',
+            'placement_status': source.get('placement_status') or 'unknown',
+            'placement_source': source.get('placement_source') or 'legacy_rack_device',
+            'dimension_status': source.get('dimension_status') or 'unknown',
+            'location_note': source.get('location_note') or '',
+            'model_key': source.get('model_key') or '',
+            'status': source.get('status') or 'active',
+            'serial_number': source.get('serial_number') or '',
+        }
+    return placements
+
+
+_ASSET_AUDIT_FIELDS = frozenset({
+    'id', 'asset_type', 'asset_tag', 'serial_number', 'vendor', 'model',
+    'hostname', 'site_id', 'rack_id', 'rack_position', 'rack_mount_kind',
+    'rack_height_u', 'rack_placement_status', 'rack_placement_source',
+    'rack_dimension_status', 'rack_location_note', 'rack_model_key',
+    'u_height', 'planned_start_u', 'management_ip', 'business_ip',
+    'device_role', 'status', 'lifecycle_status', 'asset_origin',
+    'platform', 'connection_method', 'device_id', 'is_managed',
+    'credential_id', 'admin_credential_id', 'snmp_credential_id',
+})
+
+
+def _asset_audit_projection(value: object) -> dict:
+    """Project an asset row for audit without persisting credential material."""
+
+    if value is None:
+        return {}
+    source = dict(value) if hasattr(value, 'keys') else dict(value or {})
+    return {
+        key: source.get(key)
+        for key in _ASSET_AUDIT_FIELDS
+        if key in source
+    }
+
+
+def _audit_asset_event(
+    conn,
+    *,
+    event_type: str,
+    summary: str,
+    user: object,
+    asset_id: str | None = None,
+    target_name: str | None = None,
+    status: str = 'success',
+    before: object = None,
+    after: object = None,
+    details: dict | None = None,
+) -> None:
+    """Write a redacted asset audit event in the caller's transaction."""
+
+    actor = user if isinstance(user, dict) else {}
+    request_id = request_id_var.get('-')
+    log_audit_event(
+        event_type=event_type,
+        category='asset',
+        severity='info' if status == 'success' else 'warning',
+        status=status,
+        summary=summary,
+        actor_id=actor.get('user_id') or actor.get('id'),
+        actor_username=actor.get('username'),
+        actor_role=actor.get('role'),
+        target_type='physical_asset',
+        target_id=asset_id,
+        target_name=target_name,
+        request_id='' if request_id == '-' else request_id,
+        before=_asset_audit_projection(before),
+        after=_asset_audit_projection(after),
+        details=details or {},
+        conn=conn,
+    )
+
+
+def _asset_scope_clauses(
+    conn,
+    user,
+    *,
+    action: str = 'view',
+    alias: str = 'pa',
+) -> tuple[list[str], list[str]]:
+    """Build one SQL visibility filter for physical assets.
+
+    ``physical_assets`` is site-owned in the current schema, so tenant scope
+    is resolved through ``sites.tenant_id``.  A site-scoped grant is always
+    additionally constrained to the session tenant when the session has one;
+    this prevents a malformed cross-tenant scope row from widening access.
+    Direct service-level tests intentionally omit the FastAPI dependency and
+    therefore keep the legacy unfiltered behavior when ``user`` is not a
+    resolved session dictionary.
+    """
+
+    if not isinstance(user, dict):
+        return [], []
+
+    scope = rack_scope_service.allowed_resource_scope(conn, user, 'asset', action)
+    clauses: list[str] = []
+    params: list[str] = []
+    if scope.site_ids is not None:
+        if not scope.site_ids:
+            return ['1 = 0'], []
+        placeholders = ','.join('?' for _ in scope.site_ids)
+        clauses.append(f'{alias}.site_id IN ({placeholders})')
+        params.extend(scope.site_ids)
+        if scope.tenant_id:
+            clauses.append(
+                f'''EXISTS (
+                       SELECT 1 FROM sites asset_scope_site
+                        WHERE asset_scope_site.id = {alias}.site_id
+                          AND asset_scope_site.tenant_id = ?
+                   )'''
+            )
+            params.append(scope.tenant_id)
+    elif scope.tenant_id:
+        clauses.append(
+            f'''EXISTS (
+                   SELECT 1 FROM sites asset_scope_site
+                    WHERE asset_scope_site.id = {alias}.site_id
+                      AND asset_scope_site.tenant_id = ?
+               )'''
+        )
+        params.append(scope.tenant_id)
+    return clauses, params
+
+
+def _enforce_asset_row_scope(user, row, action: str = 'view') -> None:
+    if isinstance(user, dict):
+        rack_scope_service.enforce_loaded_resource(user, dict(row), 'asset', action)
+
+
+def _enforce_asset_site_scope(conn, user, site_id: str, action: str = 'create') -> None:
+    """Check the target site's tenant/site grant before an asset write."""
+
+    if not isinstance(user, dict):
+        return
+    requested = str(site_id or '').strip()
+    if requested:
+        rack_scope_service.enforce_site(
+            conn,
+            user,
+            requested,
+            action,
+            resource_type='asset',
+        )
+        return
+
+    # An asset without a site cannot be assigned to a tenant-scoped user.
+    # Keep legacy unscoped service calls and tenant-less operators compatible,
+    # while preventing a real session from creating an orphaned cross-scope
+    # record that it could not subsequently read or manage.
+    enforce_resource_scope(user, 'asset', action)
+    if user.get('role') != 'Administrator' and str(user.get('tenant_id') or '').strip():
+        raise HTTPException(
+            status_code=422,
+            detail={
+                'code': 'ASSET_SITE_REQUIRED',
+                'message': '租户范围内的资产必须绑定有效站点后才能保存。',
+            },
+        )
 
 
 # ── helpers: devices ↔ physical_assets sync ──────────────────────────
@@ -343,9 +855,10 @@ def _pre_resolve_credential(conn, body) -> None:
         body.enable_password = dec_enable
 
 
-def _create_linked_device(conn, asset_id: str, body) -> str:
+def _create_linked_device(conn, asset_id: str, body, user: dict) -> str:
     """Create a devices row linked to a physical_assets row."""
     device_id = str(uuid.uuid4())
+    tenant_id = _tenant_id_from_authenticated_user(user)
     platform = _normalize_asset_platform(
         body.vendor,
         getattr(body, 'platform', ''),
@@ -471,19 +984,19 @@ def _create_linked_device(conn, asset_id: str, body) -> str:
 
     conn.execute('''
         INSERT INTO devices (
-            id, asset_id, hostname, ip_address, platform, status, compliance,
+            id, tenant_id, asset_id, hostname, ip_address, platform, status, compliance,
             username, password, sn, model, version, role, site, uptime,
             connection_method, vendor, snmp_community, snmp_port,
             normal_username, normal_password, admin_username, admin_password,
             enable_password, auth_model, device_category, function, zone, power_watts,
             onboarding_status, credential_id, admin_credential_id, management_port
         ) VALUES (
-            ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?,
+            ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?,
             ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?,
             ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?
         )
     ''', (
-        device_id, asset_id,
+        device_id, tenant_id, asset_id,
         body.hostname, body.management_ip,
         platform, 'pending', 'unknown',
         uname, '', # password column empty
@@ -512,7 +1025,10 @@ def _create_linked_device(conn, asset_id: str, body) -> str:
         'UPDATE physical_assets SET credential_id = ?, admin_credential_id = ?, snmp_credential_id = ? WHERE id = ?',
         (credential_id or '', admin_credential_id or '', getattr(body, 'snmp_credential_id', '') or '', asset_id),
     )
-    tag_service.sync_device_status_tag(conn, device_id, 'pending')
+    # Asset create/import owns the surrounding transaction.  Do not let the
+    # automatic status tag seed or commit release a row SAVEPOINT used by
+    # detailed batch import.
+    tag_service.sync_device_status_tag(conn, device_id, 'pending', commit=False)
     return device_id
 
 
@@ -539,7 +1055,13 @@ def _sync_asset_tags(conn, asset_id: str, tag_ids: list[str] | None) -> None:
     if not device_row:
         raise HTTPException(status_code=422, detail='资产尚未关联设备，无法绑定标签')
     try:
-        tag_service.set_device_tags(conn, str(device_row['id']), tag_ids, created_by='asset-management')
+        tag_service.set_device_tags(
+            conn,
+            str(device_row['id']),
+            tag_ids,
+            created_by='asset-management',
+            commit=False,
+        )
     except ValueError as exc:
         raise HTTPException(status_code=422, detail=str(exc))
 
@@ -753,7 +1275,7 @@ def _sync_device_from_asset(conn, asset_id: str, body) -> None:
 
 
 
-def _sync_rack_device_from_asset(conn, asset_id: str, obj) -> None:
+def _sync_rack_device_from_asset(conn, asset_id: str, obj, user: dict | None = None) -> None:
     # obj can be a dict, DictRow, or a Pydantic model
     def get_val(key, default=None):
         if hasattr(obj, key):
@@ -770,6 +1292,14 @@ def _sync_rack_device_from_asset(conn, asset_id: str, obj) -> None:
 
     hostname = get_val('hostname')
     rack = get_val('rack')
+    rack_id = get_val('rack_id')
+    rack_position = get_val('rack_position')
+    rack_mount_kind = get_val('rack_mount_kind')
+    rack_height_u = get_val('rack_height_u')
+    rack_placement_status = get_val('rack_placement_status')
+    rack_dimension_status = get_val('rack_dimension_status')
+    rack_location_note = get_val('rack_location_note', '')
+    rack_model_key = get_val('rack_model_key', '')
     u_height = get_val('u_height', 1)
     planned_start_u = get_val('planned_start_u')
     serial_number = get_val('serial_number', '')
@@ -791,25 +1321,76 @@ def _sync_rack_device_from_asset(conn, asset_id: str, obj) -> None:
     except (ValueError, TypeError):
         u_height = 1
 
-    existing = conn.execute("SELECT id FROM rack_devices WHERE asset_id = ?", (asset_id,)).fetchone()
+    existing = conn.execute("SELECT id FROM rack_devices WHERE asset_id = ? LIMIT 1", (asset_id,)).fetchone()
 
-    if not rack or planned_start_u is None:
+    from services import rack_service
+    rack_reference = rack_id or rack
+    resolved_rack = rack_service.resolve_rack_reference(conn, rack_reference)
+    rack_row = (
+        {'id': resolved_rack['id'], 'total_u': resolved_rack['total_u']}
+        if resolved_rack
+        else None
+    )
+
+    if not rack_row:
         if existing:
-            from services import rack_service
-            rack_service.delete_rack_device(conn, existing['id'])
+            if isinstance(user, dict):
+                old_rack_row = conn.execute(
+                    """SELECT r.*, s.tenant_id AS site_tenant_id
+                         FROM racks r LEFT JOIN sites s ON s.id = r.site_id
+                        WHERE r.id = (SELECT rack_id FROM rack_devices WHERE id = ?)""",
+                    (existing['id'],),
+                ).fetchone()
+                if old_rack_row:
+                    rack_scope_service.enforce_loaded_rack(user, dict(old_rack_row), "update")
+            rack_service.delete_rack_device(conn, existing['id'], commit=False)
+        if rack or rack_id:
+            raise ValueError(f"Rack '{rack_id or rack}' does not exist")
         return
 
-    rack_row = conn.execute("SELECT id, total_u FROM racks WHERE name = ? OR rack_name = ?", (rack, rack)).fetchone()
-    if not rack_row:
-        raise ValueError(f"Rack '{rack}' does not exist")
+    if isinstance(user, dict):
+        scope_row = conn.execute(
+            """SELECT r.*, s.tenant_id AS site_tenant_id
+                 FROM racks r LEFT JOIN sites s ON s.id = r.site_id
+                WHERE r.id = ?""",
+            (rack_row['id'],),
+        ).fetchone()
+        if scope_row:
+            rack_scope_service.enforce_loaded_rack(user, dict(scope_row), "update")
 
+    # Resolve the device type before deciding whether a missing start_u means
+    # "uninstalled" (legacy asset form) or an explicit non-U placement.
     _sync_device_type_power(conn, vendor, model, power_watts, device_role, u_height)
-    dt_row = conn.execute("SELECT id FROM device_types WHERE model = ? AND vendor = ?", (model, vendor)).fetchone()
+    dt_row = conn.execute(
+        "SELECT id, default_mount_kind, dimension_status FROM device_types WHERE model = ? AND vendor = ?",
+        (model, vendor),
+    ).fetchone()
     if not dt_row:
         raise ValueError(f"Failed to resolve device type for vendor '{vendor}' model '{model}'")
     device_type_id = dt_row['id']
 
-    from services import rack_service
+    explicit_mount_kind = rack_mount_kind not in (None, '')
+    mount_kind = str(rack_mount_kind or dt_row['default_mount_kind'] or 'u_mount').strip().lower()
+    if planned_start_u is None and not explicit_mount_kind and not rack_position and not rack_location_note:
+        if existing:
+            from services import rack_service
+            rack_service.delete_rack_device(conn, existing['id'], commit=False)
+        return
+
+    if rack_height_u in (None, '', 'null'):
+        rack_height_u = u_height if mount_kind == 'u_mount' else None
+    else:
+        try:
+            rack_height_u = int(rack_height_u)
+        except (ValueError, TypeError):
+            rack_height_u = None
+    position = rack_position or ('front' if mount_kind == 'u_mount' else 'unknown')
+    placement_source = get_val('rack_placement_source') or get_val('placement_source') or (
+        'legacy_asset' if str(get_val('asset_origin', '')).lower() == 'legacy' else 'asset_import'
+    )
+    placement_status = rack_placement_status or ('estimated' if mount_kind == 'u_mount' else 'unknown')
+    dimension_status = rack_dimension_status or dt_row['dimension_status'] or 'unknown'
+
     if existing:
         rack_service.update_rack_device(
             conn,
@@ -818,8 +1399,17 @@ def _sync_rack_device_from_asset(conn, asset_id: str, obj) -> None:
             rack_id=rack_row['id'],
             device_type_id=device_type_id,
             start_u=planned_start_u,
+            position=position,
+            mount_kind=mount_kind,
+            height_u=rack_height_u,
+            placement_status=placement_status,
+            placement_source=placement_source,
+            dimension_status=dimension_status,
+            location_note=rack_location_note,
+            model_key=rack_model_key,
             serial_number=serial_number,
-            asset_id=asset_id
+            asset_id=asset_id,
+            commit=False,
         )
     else:
         rack_service.create_rack_device(
@@ -828,8 +1418,17 @@ def _sync_rack_device_from_asset(conn, asset_id: str, obj) -> None:
             rack_id=rack_row['id'],
             device_type_id=device_type_id,
             start_u=planned_start_u,
+            position=position,
+            mount_kind=mount_kind,
+            height_u=rack_height_u,
+            placement_status=placement_status,
+            placement_source=placement_source,
+            dimension_status=dimension_status,
+            location_note=rack_location_note,
+            model_key=rack_model_key,
             serial_number=serial_number,
-            asset_id=asset_id
+            asset_id=asset_id,
+            commit=False,
         )
 
 
@@ -916,6 +1515,18 @@ class AssetCreate(BaseModel):
     site_id: str = ''
     rack: str = ''
     rack_unit: str = ''
+    # Canonical rack placement inputs. Legacy rack/rack_unit/planned_start_u
+    # remain accepted during the migration window; rack_devices is the write
+    # model and these fields are projected back to physical_assets.
+    rack_id: Optional[str] = None
+    rack_position: Optional[str] = None
+    rack_mount_kind: Optional[str] = None
+    rack_height_u: Optional[int] = None
+    rack_placement_status: Optional[str] = None
+    rack_placement_source: Optional[str] = None
+    rack_dimension_status: Optional[str] = None
+    rack_location_note: str = ''
+    rack_model_key: str = ''
     u_height: int = 1
     planned_start_u: Optional[int] = None
     management_ip: str = ''
@@ -1036,6 +1647,15 @@ class AssetUpdate(BaseModel):
     site_id: Optional[str] = None
     rack: Optional[str] = None
     rack_unit: Optional[str] = None
+    rack_id: Optional[str] = None
+    rack_position: Optional[str] = None
+    rack_mount_kind: Optional[str] = None
+    rack_height_u: Optional[int] = None
+    rack_placement_status: Optional[str] = None
+    rack_placement_source: Optional[str] = None
+    rack_dimension_status: Optional[str] = None
+    rack_location_note: Optional[str] = None
+    rack_model_key: Optional[str] = None
     u_height: Optional[int] = None
     planned_start_u: Optional[int] = None
     management_ip: Optional[str] = None
@@ -1116,46 +1736,81 @@ class BatchTakeoverRequest(BaseModel):
 # ── Summary ──────────────────────────────────────────────────────────
 
 @router.get('/assets/summary')
-def asset_summary():
+def asset_summary(_user=require_role("Viewer")):
     conn = get_db_connection()
     try:
-        total = conn.execute('SELECT COUNT(*) FROM physical_assets').fetchone()[0]
-        servers = conn.execute("SELECT COUNT(*) FROM physical_assets WHERE asset_type = 'server'").fetchone()[0]
-        network = conn.execute("SELECT COUNT(*) FROM physical_assets WHERE asset_type = 'network_device'").fetchone()[0]
+        scope_clauses, scope_params = _asset_scope_clauses(conn, _user)
+        scope_where = (' WHERE ' + ' AND '.join(scope_clauses)) if scope_clauses else ''
+        total = conn.execute(
+            f'SELECT COUNT(*) FROM physical_assets pa{scope_where}',
+            scope_params,
+        ).fetchone()[0]
+        servers = conn.execute(
+            f"SELECT COUNT(*) FROM physical_assets pa{scope_where}"
+            " AND pa.asset_type = 'server'" if scope_where else
+            "SELECT COUNT(*) FROM physical_assets pa WHERE pa.asset_type = 'server'",
+            scope_params,
+        ).fetchone()[0]
+        network = conn.execute(
+            f"SELECT COUNT(*) FROM physical_assets pa{scope_where}"
+            " AND pa.asset_type = 'network_device'" if scope_where else
+            "SELECT COUNT(*) FROM physical_assets pa WHERE pa.asset_type = 'network_device'",
+            scope_params,
+        ).fetchone()[0]
 
         # Warranty expiring within 90 days
         now_str = _utc_now()[:10]
         future_str = (datetime.now(timezone.utc) + timedelta(days=90)).strftime('%Y-%m-%d')
         warranty_soon = conn.execute(
-            "SELECT COUNT(*) FROM physical_assets WHERE warranty_expiry != '' AND warranty_expiry <= ? AND warranty_expiry >= ?",
-            (future_str, now_str)
+            f"SELECT COUNT(*) FROM physical_assets pa{scope_where}"
+            " AND pa.warranty_expiry != '' AND pa.warranty_expiry <= ? AND pa.warranty_expiry >= ?"
+            if scope_where else
+            "SELECT COUNT(*) FROM physical_assets pa WHERE pa.warranty_expiry != '' AND pa.warranty_expiry <= ? AND pa.warranty_expiry >= ?",
+            [*scope_params, future_str, now_str],
         ).fetchone()[0]
 
         # By status
         by_status = {}
-        for row in conn.execute('SELECT status, COUNT(*) as cnt FROM physical_assets GROUP BY status'):
+        for row in conn.execute(
+            f'SELECT pa.status, COUNT(*) as cnt FROM physical_assets pa{scope_where} GROUP BY pa.status',
+            scope_params,
+        ):
             by_status[row['status']] = row['cnt']
 
         # By vendor (top 10)
         by_vendor = {}
-        for row in conn.execute("SELECT vendor, COUNT(*) as cnt FROM physical_assets WHERE vendor != '' GROUP BY vendor ORDER BY cnt DESC LIMIT 10"):
+        for row in conn.execute(
+            f"SELECT pa.vendor, COUNT(*) as cnt FROM physical_assets pa{scope_where}"
+            " AND pa.vendor != '' GROUP BY pa.vendor ORDER BY cnt DESC LIMIT 10"
+            if scope_where else
+            "SELECT pa.vendor, COUNT(*) as cnt FROM physical_assets pa WHERE pa.vendor != '' GROUP BY pa.vendor ORDER BY cnt DESC LIMIT 10",
+            scope_params,
+        ):
             by_vendor[row['vendor']] = row['cnt']
 
         # By CMDB site
         by_site = {}
         for row in conn.execute(
-            """SELECT COALESCE(NULLIF(s.site_name, ''), NULLIF(s.site_code, ''), 'unassigned') AS site_name,
+            f"""SELECT COALESCE(NULLIF(s.site_name, ''), NULLIF(s.site_code, ''), 'unassigned') AS site_name,
                       COUNT(*) AS cnt
                FROM physical_assets pa
                LEFT JOIN sites s ON s.id = pa.site_id
+               {('WHERE ' + ' AND '.join(scope_clauses)) if scope_clauses else ''}
                GROUP BY s.site_name, s.site_code
-               ORDER BY cnt DESC"""
+               ORDER BY cnt DESC""",
+            scope_params,
         ):
             by_site[row['site_name']] = row['cnt']
 
         # By department
         by_department = {}
-        for row in conn.execute("SELECT department, COUNT(*) as cnt FROM physical_assets WHERE department != '' GROUP BY department ORDER BY cnt DESC"):
+        for row in conn.execute(
+            f"SELECT pa.department, COUNT(*) as cnt FROM physical_assets pa{scope_where}"
+            " AND pa.department != '' GROUP BY pa.department ORDER BY cnt DESC"
+            if scope_where else
+            "SELECT pa.department, COUNT(*) as cnt FROM physical_assets pa WHERE pa.department != '' GROUP BY pa.department ORDER BY cnt DESC",
+            scope_params,
+        ):
             by_department[row['department']] = row['cnt']
 
         return {
@@ -1188,11 +1843,15 @@ def list_assets(
     q: str = '',
     page: int = Query(1, ge=1),
     page_size: int = Query(50, ge=1, le=1000),
+    _user=require_role("Viewer"),
 ):
     conn = get_db_connection()
     try:
         conditions = []
         params = []
+        scope_clauses, scope_params = _asset_scope_clauses(conn, _user)
+        conditions.extend(scope_clauses)
+        params.extend(scope_params)
 
         if asset_type != 'all':
             conditions.append('pa.asset_type = ?')
@@ -1259,6 +1918,7 @@ def list_assets(
                 d.id AS device_id,
                 s.site_name,
                 s.site_code,
+                s.tenant_id AS site_tenant_id,
                 d.lifecycle_status AS device_lifecycle_status,
                 COALESCE(NULLIF(d.status, ''), CASE WHEN pa.status = 'active' THEN 'online' WHEN pa.status IN ('inactive', 'maintenance', 'decommissioned') THEN 'offline' ELSE 'pending' END) AS online_status,
                 COALESCE(NULLIF(pa.normal_username,''), d.normal_username, '') AS normal_username,
@@ -1280,15 +1940,16 @@ def list_assets(
             if item.get('device_lifecycle_status'):
                 item['lifecycle_status'] = item['device_lifecycle_status']
             item.pop('device_lifecycle_status', None)
-            for sensitive in ('password', 'normal_password', 'admin_password', 'enable_password'):
-                if sensitive in item:
-                    item[f'{sensitive}_set'] = bool(item.get(sensitive))
-                    # Keep the ciphertext out of the response payload
-                    item[sensitive] = ''
-            if 'snmp_community' in item:
-                item['snmp_community_set'] = bool(item.get('snmp_community'))
-                item['snmp_community'] = ''
+            _sanitize_asset_item(item)
             items.append(item)
+
+        placement_map = _asset_placement_map(
+            conn,
+            [str(item.get('id') or '') for item in items],
+            _user,
+        )
+        for item in items:
+            item['placement'] = placement_map.get(str(item.get('id') or ''))
 
         # Return tag definitions alongside assets so the asset inventory can
         # filter and display the same tags managed under /assets/tags.
@@ -1345,12 +2006,13 @@ def list_assets(
 
 
 @router.get('/assets/tree')
-def asset_tree():
+def asset_tree(_user=require_role("Viewer")):
     """Return a compact, server-side asset classification tree source."""
     conn = get_db_connection()
     try:
+        scope_clauses, scope_params = _asset_scope_clauses(conn, _user)
         rows = conn.execute(
-            '''SELECT
+            f'''SELECT
                  COALESCE(NULLIF(pa.asset_type, ''), 'other') AS asset_type,
                  COALESCE(NULLIF(pa.device_category, ''), 'other') AS device_category,
                  COALESCE(NULLIF(pa.site_id, ''), 'unassigned') AS site_id,
@@ -1366,9 +2028,11 @@ def asset_tree():
                FROM physical_assets pa
                LEFT JOIN sites s ON s.id = pa.site_id
                LEFT JOIN devices d ON d.asset_id = pa.id
+               {('WHERE ' + ' AND '.join(scope_clauses)) if scope_clauses else ''}
                GROUP BY pa.site_id, s.site_name, s.site_code, pa.asset_type,
                         pa.device_category, pa.device_role, pa.status, d.status
-               ORDER BY site_name, pa.asset_type, pa.device_category, pa.device_role, online_status'''
+               ORDER BY site_name, pa.asset_type, pa.device_category, pa.device_role, online_status''',
+            scope_params,
         ).fetchall()
         return {'items': [dict(row) for row in rows]}
     finally:
@@ -1376,31 +2040,27 @@ def asset_tree():
 
 
 @router.get('/assets/{asset_id}')
-def get_asset(asset_id: str):
+def get_asset(asset_id: str, _user=require_role("Viewer")):
     """Single asset row (same fields as list items) for rack drawer / cross-module detail."""
     conn = get_db_connection()
     try:
         row = conn.execute(
-            '''SELECT pa.*,
+            '''SELECT pa.*, s.tenant_id AS site_tenant_id,
                COALESCE(NULLIF(pa.normal_username,''), d.normal_username, '') AS normal_username,
                COALESCE(NULLIF(pa.admin_username,''),  d.admin_username,  '') AS admin_username,
                COALESCE(NULLIF(pa.username,''),        d.username,        '') AS username
             FROM physical_assets pa
             LEFT JOIN devices d ON d.asset_id = pa.id
+            LEFT JOIN sites s ON s.id = pa.site_id
             WHERE pa.id = ?''',
             (asset_id,)
         ).fetchone()
         if not row:
             raise HTTPException(status_code=404, detail='Asset not found')
+        _enforce_asset_row_scope(_user, row, 'view')
         item = dict(row)
-        # Sanitise sensitive password fields
-        for sensitive in ('password', 'normal_password', 'admin_password', 'enable_password'):
-            if sensitive in item:
-                item[f'{sensitive}_set'] = bool(item.get(sensitive))
-                item[sensitive] = ''
-        if 'snmp_community' in item:
-            item['snmp_community_set'] = bool(item.get('snmp_community'))
-            item['snmp_community'] = ''
+        _sanitize_asset_item(item)
+        item['placement'] = _asset_placement_map(conn, [asset_id], _user).get(asset_id)
         item['web_profiles'] = _get_asset_web_profiles(conn, asset_id)
         return item
     finally:
@@ -1408,24 +2068,36 @@ def get_asset(asset_id: str):
 
 
 @router.get('/assets/{asset_id}/web-profiles')
-def list_asset_web_profiles(asset_id: str):
+def list_asset_web_profiles(asset_id: str, _user=require_role("Viewer")):
     conn = get_db_connection()
     try:
-        asset = conn.execute('SELECT id FROM physical_assets WHERE id = ?', (asset_id,)).fetchone()
+        asset = conn.execute(
+            '''SELECT pa.id, pa.site_id, s.tenant_id AS site_tenant_id
+               FROM physical_assets pa LEFT JOIN sites s ON s.id = pa.site_id
+              WHERE pa.id = ?''',
+            (asset_id,),
+        ).fetchone()
         if not asset:
             raise HTTPException(status_code=404, detail='Asset not found')
+        _enforce_asset_row_scope(_user, asset, 'view')
         return {'items': _get_asset_web_profiles(conn, asset_id)}
     finally:
         conn.close()
 
 
 @router.post('/assets/{asset_id}/web-profiles')
-def create_asset_web_profile(asset_id: str, body: WebAccessProfileInput):
+def create_asset_web_profile(asset_id: str, body: WebAccessProfileInput, _user=require_role("Operator")):
     conn = get_db_connection()
     try:
-        asset = conn.execute('SELECT id FROM physical_assets WHERE id = ?', (asset_id,)).fetchone()
+        asset = conn.execute(
+            '''SELECT pa.id, pa.site_id, s.tenant_id AS site_tenant_id
+               FROM physical_assets pa LEFT JOIN sites s ON s.id = pa.site_id
+              WHERE pa.id = ?''',
+            (asset_id,),
+        ).fetchone()
         if not asset:
             raise HTTPException(status_code=404, detail='Asset not found')
+        _enforce_asset_row_scope(_user, asset, 'update')
         existing = _get_asset_web_profiles(conn, asset_id)
         body.id = None
         try:
@@ -1440,9 +2112,18 @@ def create_asset_web_profile(asset_id: str, body: WebAccessProfileInput):
 
 
 @router.put('/assets/{asset_id}/web-profiles/{profile_id}')
-def update_asset_web_profile(asset_id: str, profile_id: str, body: WebAccessProfileInput):
+def update_asset_web_profile(asset_id: str, profile_id: str, body: WebAccessProfileInput, _user=require_role("Operator")):
     conn = get_db_connection()
     try:
+        asset = conn.execute(
+            '''SELECT pa.id, pa.site_id, s.tenant_id AS site_tenant_id
+               FROM physical_assets pa LEFT JOIN sites s ON s.id = pa.site_id
+              WHERE pa.id = ?''',
+            (asset_id,),
+        ).fetchone()
+        if not asset:
+            raise HTTPException(status_code=404, detail='Asset not found')
+        _enforce_asset_row_scope(_user, asset, 'update')
         existing = _get_asset_web_profiles(conn, asset_id)
         if not any(str(item['id']) == profile_id for item in existing):
             raise HTTPException(status_code=404, detail='Web profile not found')
@@ -1460,9 +2141,18 @@ def update_asset_web_profile(asset_id: str, profile_id: str, body: WebAccessProf
 
 
 @router.delete('/assets/{asset_id}/web-profiles/{profile_id}')
-def delete_asset_web_profile(asset_id: str, profile_id: str):
+def delete_asset_web_profile(asset_id: str, profile_id: str, _user=require_role("Administrator")):
     conn = get_db_connection()
     try:
+        asset = conn.execute(
+            '''SELECT pa.id, pa.site_id, s.tenant_id AS site_tenant_id
+               FROM physical_assets pa LEFT JOIN sites s ON s.id = pa.site_id
+              WHERE pa.id = ?''',
+            (asset_id,),
+        ).fetchone()
+        if not asset:
+            raise HTTPException(status_code=404, detail='Asset not found')
+        _enforce_asset_row_scope(_user, asset, 'update')
         row = conn.execute(
             'SELECT id FROM asset_web_access_profiles WHERE id = ? AND asset_id = ?',
             (profile_id, asset_id),
@@ -1482,7 +2172,7 @@ def delete_asset_web_profile(asset_id: str, profile_id: str):
 # ── Create ───────────────────────────────────────────────────────────
 
 @router.post('/assets')
-def create_asset(body: AssetCreate):
+def create_asset(body: AssetCreate, _user=require_role("Operator")):
     conn = get_db_connection()
     try:
         _pre_resolve_credential(conn, body)
@@ -1491,6 +2181,7 @@ def create_asset(body: AssetCreate):
             body.site_id = resolve_canonical_site_id(conn, body.site_id)
         except ValueError as exc:
             raise HTTPException(status_code=422, detail=str(exc))
+        _enforce_asset_site_scope(conn, _user, body.site_id, 'create')
         asset_id = f"asset-{uuid.uuid4().hex[:12]}"
         body.snmp_credential_id = _resolve_snmp_credential_id(conn, body.snmp_credential_id)
         now = _utc_now()
@@ -1558,7 +2249,7 @@ def create_asset(body: AssetCreate):
         # Plan-A: auto-create linked device for managed assets
         device_id = None
         if body.asset_type in ('network_device', 'server'):
-            device_id = _create_linked_device(conn, asset_id, body)
+            device_id = _create_linked_device(conn, asset_id, body, _user)
             _sync_asset_tags(conn, asset_id, requested_tag_ids)
             if legacy_production:
                 conn.execute(
@@ -1576,7 +2267,7 @@ def create_asset(body: AssetCreate):
             )
 
         try:
-            _sync_rack_device_from_asset(conn, asset_id, body)
+            _sync_rack_device_from_asset(conn, asset_id, body, _user)
         except ValueError as e:
             conn.rollback()
             raise HTTPException(status_code=400, detail=str(e))
@@ -1589,6 +2280,19 @@ def create_asset(body: AssetCreate):
             conn.rollback()
             raise HTTPException(status_code=422, detail=str(exc)) from exc
 
+        created_row = conn.execute(
+            'SELECT * FROM physical_assets WHERE id = ?', (asset_id,)
+        ).fetchone()
+        _audit_asset_event(
+            conn,
+            event_type='asset.create',
+            summary='Physical asset created',
+            user=_user,
+            asset_id=asset_id,
+            target_name=body.hostname or body.asset_tag,
+            after=created_row,
+            details={'asset_type': body.asset_type, 'source': 'api'},
+        )
         conn.commit()
         return {'id': asset_id, 'device_id': device_id, 'legacy_exempt': legacy_production}
     finally:
@@ -1598,12 +2302,18 @@ def create_asset(body: AssetCreate):
 # ── Update ───────────────────────────────────────────────────────────
 
 @router.put('/assets/{asset_id}')
-def update_asset(asset_id: str, body: AssetUpdate, run_bg_rotate: bool = True):
+def update_asset(asset_id: str, body: AssetUpdate, run_bg_rotate: bool = True, _user=require_role("Operator")):
     conn = get_db_connection()
     try:
-        row = conn.execute('SELECT * FROM physical_assets WHERE id = ?', (asset_id,)).fetchone()
+        row = conn.execute(
+            '''SELECT pa.*, s.tenant_id AS site_tenant_id
+               FROM physical_assets pa LEFT JOIN sites s ON s.id = pa.site_id
+              WHERE pa.id = ?''',
+            (asset_id,),
+        ).fetchone()
         if not row:
             raise HTTPException(status_code=404, detail='Asset not found')
+        _enforce_asset_row_scope(_user, row, 'update')
 
         requested_tag_ids = _resolve_asset_tag_ids(conn, body)
 
@@ -1612,6 +2322,7 @@ def update_asset(asset_id: str, body: AssetUpdate, run_bg_rotate: bool = True):
                 body.site_id = resolve_canonical_site_id(conn, body.site_id)
             except ValueError as exc:
                 raise HTTPException(status_code=422, detail=str(exc))
+            _enforce_asset_site_scope(conn, _user, body.site_id, 'update')
 
         # Normalize and validate bound credential references before any
         # lifecycle checks or asset writes. This also refreshes the local
@@ -1776,7 +2487,8 @@ def update_asset(asset_id: str, body: AssetUpdate, run_bg_rotate: bool = True):
                 conn.execute(f"UPDATE physical_assets SET {', '.join(updates)} WHERE id = ?", tuple(params))
                 updated_row = conn.execute("SELECT * FROM physical_assets WHERE id = ?", (asset_id,)).fetchone()
                 try:
-                    _sync_rack_device_from_asset(conn, asset_id, updated_row)
+                    merged_row = {**dict(updated_row), **body.model_dump(exclude_unset=True)}
+                    _sync_rack_device_from_asset(conn, asset_id, merged_row, _user)
                 except ValueError as exc:
                     conn.rollback()
                     raise HTTPException(status_code=400, detail=str(exc))
@@ -1799,6 +2511,20 @@ def update_asset(asset_id: str, body: AssetUpdate, run_bg_rotate: bool = True):
                     conn.rollback()
                     raise HTTPException(status_code=422, detail=str(exc)) from exc
             _sync_asset_tags(conn, asset_id, requested_tag_ids)
+            updated_row = conn.execute(
+                'SELECT * FROM physical_assets WHERE id = ?', (asset_id,)
+            ).fetchone()
+            _audit_asset_event(
+                conn,
+                event_type='asset.update',
+                summary='Physical asset updated',
+                user=_user,
+                asset_id=asset_id,
+                target_name=updated_row['hostname'] if updated_row else asset_id,
+                before=row,
+                after=updated_row,
+                details={'source': 'api', 'legacy_exempt': True},
+            )
             conn.commit()
             return {
                 'ok': True,
@@ -1819,7 +2545,8 @@ def update_asset(asset_id: str, body: AssetUpdate, run_bg_rotate: bool = True):
             # Sync and validate rack device placement
             updated_row = conn.execute("SELECT * FROM physical_assets WHERE id = ?", (asset_id,)).fetchone()
             try:
-                _sync_rack_device_from_asset(conn, asset_id, updated_row)
+                merged_row = {**dict(updated_row), **body.model_dump(exclude_unset=True)}
+                _sync_rack_device_from_asset(conn, asset_id, merged_row, _user)
             except ValueError as e:
                 conn.rollback()
                 raise HTTPException(status_code=400, detail=str(e))
@@ -1946,6 +2673,24 @@ def update_asset(asset_id: str, body: AssetUpdate, run_bg_rotate: bool = True):
                 raise HTTPException(status_code=422, detail=str(exc)) from exc
             conn.commit()
 
+        updated_row = conn.execute(
+            'SELECT * FROM physical_assets WHERE id = ?', (asset_id,)
+        ).fetchone()
+        _audit_asset_event(
+            conn,
+            event_type='asset.update',
+            summary='Physical asset updated',
+            user=_user,
+            asset_id=asset_id,
+            target_name=updated_row['hostname'] if updated_row else asset_id,
+            before=row,
+            after=updated_row,
+            details={'source': 'api', 'production_transition': transitioning_to_production},
+        )
+        # If no earlier branch committed this update, the audit row and all
+        # asset mutations are committed together.  A second commit is safe
+        # for the legacy path and keeps the function's existing contract.
+        conn.commit()
         return {
             'ok': True,
             'password_rotated': rotation_result is not None and rotation_result.get('success', False),
@@ -1960,17 +2705,31 @@ def update_asset(asset_id: str, body: AssetUpdate, run_bg_rotate: bool = True):
 # ── Delete ───────────────────────────────────────────────────────────
 
 @router.delete('/assets/{asset_id}')
-def delete_asset(asset_id: str):
+def delete_asset(asset_id: str, _user=require_role("Administrator")):
     conn = get_db_connection()
     try:
-        row = conn.execute('SELECT id FROM physical_assets WHERE id = ?', (asset_id,)).fetchone()
+        row = conn.execute(
+            '''SELECT pa.id, pa.site_id, s.tenant_id AS site_tenant_id
+               FROM physical_assets pa LEFT JOIN sites s ON s.id = pa.site_id
+              WHERE pa.id = ?''',
+            (asset_id,),
+        ).fetchone()
         if not row:
             raise HTTPException(status_code=404, detail='Asset not found')
+        _enforce_asset_row_scope(_user, row, 'delete')
         # Plan-A: cascade-delete linked device first
         _delete_linked_device(conn, asset_id)
 
-        # Cascade-delete linked rack device if exists
-        conn.execute('DELETE FROM rack_devices WHERE asset_id = ?', (asset_id,))
+        # Cascade-delete linked rack device through the canonical placement
+        # service so the asset projection is cleared and rack layout_revision
+        # is bumped in the same transaction.
+        rack_device_rows = conn.execute(
+            'SELECT id FROM rack_devices WHERE asset_id = ?', (asset_id,)
+        ).fetchall()
+        if rack_device_rows:
+            from services import rack_service
+            for rack_device_row in rack_device_rows:
+                rack_service.delete_rack_device(conn, rack_device_row['id'], commit=False)
 
         # PAM: archive (don't delete) sessions and access requests so the audit
         # trail survives asset removal. We mark `archived = 1` here; the FK on
@@ -1990,6 +2749,16 @@ def delete_asset(asset_id: str):
         conn.execute('DELETE FROM pam_session_tokens WHERE asset_id = ?', (asset_id,))
 
         conn.execute('DELETE FROM physical_assets WHERE id = ?', (asset_id,))
+        _audit_asset_event(
+            conn,
+            event_type='asset.delete',
+            summary='Physical asset deleted',
+            user=_user,
+            asset_id=asset_id,
+            target_name=asset_id,
+            before=row,
+            details={'source': 'api'},
+        )
         conn.commit()
         return {'ok': True}
     finally:
@@ -1999,10 +2768,19 @@ def delete_asset(asset_id: str):
 # ── Rotation status polling ──────────────────────────────────────────
 
 @router.get('/assets/{asset_id}/rotation-status')
-def get_rotation_status(asset_id: str):
+def get_rotation_status(asset_id: str, _user=require_role("Viewer")):
     """Poll rotation progress after async production transition."""
     conn = get_db_connection()
     try:
+        asset = conn.execute(
+            '''SELECT pa.id, pa.site_id, s.tenant_id AS site_tenant_id
+               FROM physical_assets pa LEFT JOIN sites s ON s.id = pa.site_id
+              WHERE pa.id = ?''',
+            (asset_id,),
+        ).fetchone()
+        if not asset:
+            raise HTTPException(status_code=404, detail='Asset not found')
+        _enforce_asset_row_scope(_user, asset, 'view')
         row = conn.execute(
             'SELECT d.rotation_status, d.lifecycle_status, d.password_last_rotated, d.takeover_error '
             'FROM devices d WHERE d.asset_id = ?', (asset_id,)
@@ -2022,39 +2800,72 @@ def get_rotation_status(asset_id: str):
 # ── Import (batch) ───────────────────────────────────────────────────
 
 @router.post('/assets/import')
-def import_assets(items: list[AssetCreate]):
+def import_assets(
+    items: list[AssetCreate],
+    atomic: bool = False,
+    detailed: bool = False,
+    _user=require_role("Operator"),
+):
     conn = get_db_connection()
+    batch_id = f"asset-import-{uuid.uuid4().hex[:12]}"
     try:
         now = _utc_now()
         created = 0
         skipped = 0
         skipped_items = []
-        for body in items:
+        failed_items: list[dict] = []
+        row_results: list[dict] = []
+
+        def _safe_import_error(exc: Exception) -> dict:
+            detail = exc.detail if isinstance(exc, HTTPException) else None
+            if isinstance(detail, dict):
+                return {
+                    'code': str(detail.get('code') or 'ASSET_IMPORT_ROW_FAILED'),
+                    'message': str(detail.get('message') or '资产导入失败'),
+                }
+            if isinstance(exc, ValueError):
+                return {'code': 'ASSET_IMPORT_VALIDATION_FAILED', 'message': str(exc)}
+            logger.exception('Asset import row failed')
+            return {'code': 'ASSET_IMPORT_ROW_FAILED', 'message': '资产导入行处理失败，请检查数据后重试。'}
+
+        def _import_one(body: AssetCreate, row_number: int) -> dict:
             _pre_resolve_credential(conn, body)
             requested_tag_ids = _resolve_asset_tag_ids(conn, body)
             try:
                 body.site_id = resolve_canonical_site_id(conn, body.site_id)
             except ValueError as exc:
-                raise HTTPException(status_code=422, detail=str(exc))
+                raise HTTPException(status_code=422, detail={
+                    'code': 'ASSET_SITE_INVALID', 'message': str(exc),
+                }) from exc
+            _enforce_asset_site_scope(conn, _user, body.site_id, 'create')
             asset_id = f"asset-{uuid.uuid4().hex[:12]}"
             body.platform = _normalize_asset_platform(body.vendor, body.platform, body.asset_type)
             asset_origin = body.asset_origin if body.asset_origin in ('new', 'legacy') else 'new'
             legacy_production = asset_origin == 'legacy' and body.lifecycle_status == 'production'
             initial_lifecycle = 'production' if legacy_production else 'staging'
             if not (body.hostname or '').strip() and not (body.asset_tag or '').strip():
-                raise HTTPException(status_code=422, detail='导入资产必须至少填写主机名或资产编号')
+                raise HTTPException(status_code=422, detail={
+                    'code': 'ASSET_IDENTITY_REQUIRED',
+                    'message': '导入资产必须至少填写主机名或资产编号',
+                })
             if legacy_production:
                 reason = (body.takeover_exempt_reason or '').strip()
                 normal_username = (body.normal_username or body.username or '').strip()
                 normal_password = (body.normal_password or body.password or '').strip()
                 if len(reason) < 5:
-                    raise HTTPException(status_code=422, detail='存量设备直接投产必须填写至少 5 个字符的免上收原因')
+                    raise HTTPException(status_code=422, detail={
+                        'code': 'LEGACY_EXEMPT_REASON_REQUIRED',
+                        'message': '存量设备直接投产必须填写至少 5 个字符的免上收原因',
+                    })
                 if not normal_username or not normal_password:
-                    raise HTTPException(status_code=422, detail='存量设备直接投产必须配置普通账号用户名和密码')
+                    raise HTTPException(status_code=422, detail={
+                        'code': 'LEGACY_CREDENTIAL_REQUIRED',
+                        'message': '存量设备直接投产必须配置普通账号用户名和密码',
+                    })
             duplicates = _find_asset_identity_duplicates(conn, body.model_dump())
             if duplicates:
-                skipped += 1
-                skipped_items.append({
+                skipped_item = {
+                    'row': row_number,
                     'asset_tag': body.asset_tag,
                     'hostname': body.hostname,
                     'reason': 'duplicate_identity',
@@ -2065,8 +2876,9 @@ def import_assets(items: list[AssetCreate]):
                         (item['existing_hostname'] for item in duplicates if item['existing_hostname']),
                         '',
                     ),
-                })
-                continue
+                }
+                skipped_items.append(skipped_item)
+                return {'status': 'skipped', **skipped_item}
 
             conn.execute('''
                 INSERT INTO physical_assets (
@@ -2118,39 +2930,111 @@ def import_assets(items: list[AssetCreate]):
                 'UPDATE physical_assets SET snmp_credential_id = ?, management_port = ? WHERE id = ?',
                 (body.snmp_credential_id or '', _management_port_for_storage(body), asset_id),
             )
-            # Plan-A: auto-create linked device for managed assets
+            device_id = None
             if body.asset_type in ('network_device', 'server'):
-                device_id = _create_linked_device(conn, asset_id, body)
+                device_id = _create_linked_device(conn, asset_id, body, _user)
                 _sync_asset_tags(conn, asset_id, requested_tag_ids)
                 if legacy_production:
                     conn.execute(
                         "UPDATE devices SET lifecycle_status = 'production', rotation_status = 'exempt', is_managed = 0 WHERE id = ?",
                         (device_id,),
                     )
-            
-            try:
-                _sync_rack_device_from_asset(conn, asset_id, body)
-            except ValueError as e:
-                logger.warning("Failed to sync rack device during import for asset %s: %s", asset_id, e)
 
+            # A placement failure is a failed row, never a successful import
+            # with a warning in the server log.
+            _sync_rack_device_from_asset(conn, asset_id, body, _user)
             try:
                 replace_asset_web_profiles(conn, asset_id, body.web_profiles)
             except ValueError as exc:
-                conn.rollback()
-                raise HTTPException(status_code=422, detail=str(exc)) from exc
+                raise HTTPException(status_code=422, detail={
+                    'code': 'ASSET_WEB_PROFILE_INVALID', 'message': str(exc),
+                }) from exc
 
-            created += 1
+            imported_row = conn.execute(
+                'SELECT * FROM physical_assets WHERE id = ?', (asset_id,)
+            ).fetchone()
+            _audit_asset_event(
+                conn,
+                event_type='asset.import',
+                summary='Physical asset imported',
+                user=_user,
+                asset_id=asset_id,
+                target_name=body.hostname or body.asset_tag,
+                after=imported_row,
+                details={
+                    'asset_type': body.asset_type,
+                    'source': 'batch_import',
+                    'batch_id': batch_id,
+                    'row': row_number,
+                },
+            )
+            return {
+                'status': 'created',
+                'row': row_number,
+                'asset_id': asset_id,
+                'device_id': device_id,
+                'hostname': body.hostname,
+                'asset_tag': body.asset_tag,
+            }
+
+        for row_number, body in enumerate(items, start=1):
+            savepoint = f"asset_import_row_{row_number}"
+            if detailed and not atomic:
+                conn.execute(f'SAVEPOINT {savepoint}')
+            try:
+                result = _import_one(body, row_number)
+                if result['status'] == 'created':
+                    created += 1
+                else:
+                    skipped += 1
+                row_results.append(result)
+                if detailed and not atomic:
+                    conn.execute(f'RELEASE SAVEPOINT {savepoint}')
+            except Exception as exc:
+                if atomic:
+                    conn.rollback()
+                    error = _safe_import_error(exc)
+                    raise HTTPException(status_code=422, detail={
+                        'code': 'ASSET_IMPORT_ATOMIC_FAILED',
+                        'message': '资产批量导入已回滚，未提交任何行。',
+                        'details': {'batch_id': batch_id, 'row': row_number, **error},
+                    }) from exc
+                if detailed:
+                    conn.execute(f'ROLLBACK TO SAVEPOINT {savepoint}')
+                    conn.execute(f'RELEASE SAVEPOINT {savepoint}')
+                    error = _safe_import_error(exc)
+                    item = {
+                        'status': 'failed',
+                        'row': row_number,
+                        'asset_tag': body.asset_tag,
+                        'hostname': body.hostname,
+                        **error,
+                    }
+                    failed_items.append(item)
+                    row_results.append(item)
+                    continue
+                conn.rollback()
+                raise
         conn.commit()
-        return {
+        response = {
             'created': created,
             'skipped': skipped,
             'skipped_items': skipped_items,
         }
+        if detailed or atomic:
+            response.update({
+                'batch_id': batch_id,
+                'atomic': atomic,
+                'failed': len(failed_items),
+                'failed_items': failed_items,
+                'results': row_results,
+            })
+        return response
     finally:
         conn.close()
 
 @router.get("/assets/{asset_id}/verify")
-async def verify_asset_connectivity(asset_id: str):
+def verify_asset_connectivity(asset_id: str, _user=require_role("Operator")):
     """
     Perform a quick connectivity check:
     1. Ping management IP
@@ -2158,15 +3042,50 @@ async def verify_asset_connectivity(asset_id: str):
     3. If credentials exist, try SSH login (fast)
     """
     conn = get_db_connection()
+    connectivity_slot_acquired = False
     try:
-        asset = conn.execute('SELECT * FROM physical_assets WHERE id = ?', (asset_id,)).fetchone()
+        asset = conn.execute(
+            '''SELECT pa.*, s.tenant_id AS site_tenant_id
+               FROM physical_assets pa LEFT JOIN sites s ON s.id = pa.site_id
+              WHERE pa.id = ?''',
+            (asset_id,),
+        ).fetchone()
         if not asset:
             raise HTTPException(status_code=404, detail="Asset not found")
+        _enforce_asset_row_scope(_user, asset, 'verify')
         
         asset = dict(asset)
         ip = asset.get('management_ip')
         if not ip:
+            _audit_asset_event(
+                conn,
+                event_type='asset.connectivity_verify',
+                summary='Asset connectivity verification rejected: no management IP',
+                user=_user,
+                asset_id=asset_id,
+                target_name=asset.get('hostname') or asset_id,
+                status='failure',
+                details={'reason': 'missing_management_ip'},
+            )
+            conn.commit()
             return {"success": False, "error": "No management IP configured", "ping": False, "ssh": False}
+
+        # The target is always loaded from the already-authorized asset row;
+        # validate it again at the network boundary so legacy rows cannot turn
+        # this endpoint into a hostname/metadata/loopback probe.
+        ip = _validate_connectivity_target(ip)
+        from services.connection_profile import resolve_ssh_port
+        try:
+            ssh_port = _validate_connectivity_port(resolve_ssh_port(asset))
+        except HTTPException:
+            raise
+        except Exception as exc:
+            raise _connectivity_http_error(
+                'CONNECTIVITY_PORT_INVALID',
+                '资产的 SSH 管理端口配置无效。',
+            ) from exc
+        _acquire_connectivity_slot(asset_id)
+        connectivity_slot_acquired = True
 
         results = {
             "ping": False,
@@ -2178,24 +3097,39 @@ async def verify_asset_connectivity(asset_id: str):
 
         # 1. Ping Test
         try:
-            latency = ping3.ping(ip, timeout=1)
+            latency = ping3.ping(ip, timeout=_CONNECTIVITY_TIMEOUT_SECONDS)
             if latency is not None and latency is not False:
                 results["ping"] = True
                 results["latency"] = round(latency * 1000, 2)
             else:
                 results["ping_error"] = "Ping timeout"
-        except Exception as e:
-            results["ping_error"] = str(e)
+        except Exception:
+            # Keep network/library details in server logs only.
+            results["ping_error"] = "Ping failed or timed out"
 
         # 2. SSH Port Test (Quick check)
-        from services.connection_profile import resolve_ssh_port
-        ssh_port = resolve_ssh_port(asset)
         try:
-            with socket.create_connection((ip, ssh_port), timeout=1):
+            with socket.create_connection((ip, ssh_port), timeout=_CONNECTIVITY_TIMEOUT_SECONDS):
                 results["ssh_port_open"] = True
         except Exception:
             results["ssh_port_open"] = False
             results["ssh_error"] = "SSH port closed or unreachable"
+            _audit_asset_event(
+                conn,
+                event_type='asset.connectivity_verify',
+                summary='Asset connectivity verification completed',
+                user=_user,
+                asset_id=asset_id,
+                target_name=asset.get('hostname') or asset_id,
+                status='failure',
+                details={
+                    'target': ip,
+                    'port': ssh_port,
+                    'ping': bool(results.get('ping')),
+                    'ssh_port_open': False,
+                },
+            )
+            conn.commit()
             return results
 
         # 3. SSH Login Test (if credentials found)
@@ -2237,8 +3171,8 @@ async def verify_asset_connectivity(asset_id: str):
                     "auth_password": password,
                     "platform": platform or "linux",
                     "auth_strict_key": False,
-                    "timeout_socket": 5,
-                    "timeout_transport": 10,
+                    "timeout_socket": _CONNECTIVITY_SSH_TIMEOUT_SECONDS,
+                    "timeout_transport": _CONNECTIVITY_SSH_TIMEOUT_SECONDS,
                 }
                 
                 # Windows compatibility (same as ScrapliDriver)
@@ -2262,7 +3196,7 @@ async def verify_asset_connectivity(asset_id: str):
                             username=username,
                             password=password,
                             port=ssh_port,
-                            timeout=10,
+                            timeout=_CONNECTIVITY_SSH_TIMEOUT_SECONDS,
                             allow_agent=False,
                             look_for_keys=False,
                             disabled_algorithms={}
@@ -2293,9 +3227,27 @@ async def verify_asset_connectivity(asset_id: str):
         else:
             results["ssh_error"] = "No credentials provided for login test"
 
+        _audit_asset_event(
+            conn,
+            event_type='asset.connectivity_verify',
+            summary='Asset connectivity verification completed',
+            user=_user,
+            asset_id=asset_id,
+            target_name=asset.get('hostname') or asset_id,
+            status='success' if results.get('ping') or results.get('ssh_port_open') else 'failure',
+            details={
+                'target': ip,
+                'port': ssh_port,
+                'ping': bool(results.get('ping')),
+                'ssh_port_open': bool(results.get('ssh_port_open')),
+                'ssh': bool(results.get('ssh')),
+            },
+        )
         return results
     finally:
         conn.close()
+        if connectivity_slot_acquired:
+            _CONNECTIVITY_SEMAPHORE.release()
 
 
 TAKEOVER_CONCURRENCY = int(os.environ.get('TAKEOVER_CONCURRENCY', '10'))
@@ -2391,7 +3343,7 @@ def _run_batch_takeover(tasks: list[dict]):
 
 
 @router.post('/assets/takeover/batch')
-def batch_takeover(body: BatchTakeoverRequest):
+def batch_takeover(body: BatchTakeoverRequest, _user=require_role("Administrator")):
     """
     Batch transition multiple assets to production state, triggering atomic takeover.
     """
@@ -2406,9 +3358,16 @@ def batch_takeover(body: BatchTakeoverRequest):
         for asset_id in body.asset_ids:
             try:
                 # First check old lifecycle
-                row = conn.execute('SELECT lifecycle_status FROM physical_assets WHERE id = ?', (asset_id,)).fetchone()
+                row = conn.execute(
+                    '''SELECT pa.id, pa.lifecycle_status, pa.site_id,
+                              s.tenant_id AS site_tenant_id
+                         FROM physical_assets pa LEFT JOIN sites s ON s.id = pa.site_id
+                        WHERE pa.id = ?''',
+                    (asset_id,),
+                ).fetchone()
                 if not row:
                     raise HTTPException(status_code=404, detail='Asset not found')
+                _enforce_asset_row_scope(_user, row, 'update')
                 old_lc = row['lifecycle_status']
                 
                 # Check linked device
@@ -2456,7 +3415,12 @@ def batch_takeover(body: BatchTakeoverRequest):
                     continue
                 
                 # Run update_asset with run_bg_rotate=False
-                update_asset(asset_id, AssetUpdate(lifecycle_status='production'), run_bg_rotate=False)
+                update_asset(
+                    asset_id,
+                    AssetUpdate(lifecycle_status='production'),
+                    run_bg_rotate=False,
+                    _user=_user,
+                )
                 
                 tasks.append({
                     'dev_id': dev_id,

@@ -1,6 +1,7 @@
 import { create } from 'zustand';
 import type { Device } from '../types';
 import { displaySiteLabel } from '../utils/deviceUtils';
+import { authHeaders } from '../api/http';
 
 // ─── Inline normalizer (mirrors useInventory.normalizeDeviceRecord) ───────────
 // Keeping this in the store means fetchInventory() needs no external argument,
@@ -269,7 +270,7 @@ export const useInventoryStore = create<InventoryState>((set, get) => ({
 
   fetchAssetsTotal: async () => {
     try {
-      const resp = await fetch('/api/assets/summary');
+      const resp = await fetch('/api/assets/summary', { headers: authHeaders() });
       if (resp.ok) {
         const data = await resp.json();
         set({ assetsTotal: data.total || 0 });

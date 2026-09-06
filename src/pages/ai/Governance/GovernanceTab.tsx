@@ -82,6 +82,7 @@ export const GovernanceTab: React.FC = () => {
             >
               <option value="huawei_vrp">Huawei VRP</option>
               <option value="h3c_comware">H3C Comware</option>
+              <option value="h3c_comware_v3">H3C Comware V3</option>
               <option value="cisco_ios">Cisco IOS</option>
             </select>
           </div>

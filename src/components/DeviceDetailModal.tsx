@@ -120,6 +120,7 @@ const formatPlatformLabel = (value: unknown, language: string) => {
   if (language !== 'zh') return raw;
   const labels: Record<string, string> = {
     h3c_comware: '华三 Comware',
+    h3c_comware_v3: '华三 Comware V3',
     hp_comware: '华三 Comware',
     huawei_vrp: '华为 VRP',
     cisco_ios: 'Cisco IOS',

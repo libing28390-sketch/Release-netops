@@ -70,8 +70,9 @@ PLATFORM_DEVICE_TYPE_MAP = {
     'huawei_vrp': 'huawei',
     'huawei_vrpv8': 'huawei',
     # These are private Profile-release selectors used only when a collector
-    # already knows the concrete V5/V7/V9 grammar. Persisted devices still use
+    # already knows the concrete V3/V5/V7/V9 grammar. Persisted devices still use
     # the public ``h3c_comware`` platform plus a concrete Platform Profile.
+    'h3c_comware_v3': 'hp_comware',
     'h3c_comware_v5': 'hp_comware',
     'h3c_comware_v7': 'hp_comware',
     'h3c_comware_v9': 'hp_comware',
@@ -119,8 +120,9 @@ NTC_PLATFORM_MAP = {
     'eos': 'arista_eos',
     'huawei_vrp': 'huawei_vrp',
     'huawei_vrpv8': 'huawei_vrp',
-    # H3C/Comware is one parser family.  V5/V7/V9 grammar selection is owned
+    # H3C/Comware is one parser family.  V3/V5/V7/V9 grammar selection is owned
     # by the platform profile and its registered template version.
+    'h3c_comware_v3': 'h3c_comware',
     'h3c_comware_v5': 'h3c_comware',
     'h3c_comware_v7': 'h3c_comware',
     'h3c_comware_v9': 'h3c_comware',
@@ -189,6 +191,7 @@ def _normalize_platform(raw: str) -> str:
 
 _H3C_PROFILE_VARIANTS = {
     'hp_comware': 'h3c_comware_v5',
+    'h3c_comware_v3': 'h3c_comware_v3',
     'h3c_comware': 'h3c_comware_v7',
     'h3c_comware9': 'h3c_comware_v9',
     'h3c_comware_v5': 'h3c_comware_v5',
@@ -223,7 +226,7 @@ def _load_platform_profile_context(device_info: dict[str, Any]) -> dict[str, Any
 
     Device records intentionally keep the public platform family (for example
     ``h3c_comware``).  The bound profile is the authoritative source for the
-    concrete V5/V7/V9 grammar.  This lookup is best-effort so old/unbound
+    concrete V3/V5/V7/V9 grammar.  This lookup is best-effort so old/unbound
     devices and fixture callers keep working without a registry schema.
     """
     profile = {
@@ -264,7 +267,7 @@ def resolve_device_platform_context(device_info: dict[str, Any]) -> dict[str, An
     ``public_platform`` is the value exposed by inventory.  ``catalog_platform``
     selects the command catalog and ``parser_platform`` selects the concrete
     TextFSM namespace.  In particular, all three H3C profiles use Netmiko's
-    ``hp_comware`` driver but select independent V5/V7/V9 template namespaces.
+    ``hp_comware`` driver but select independent V3/V5/V7/V9 template namespaces.
     """
     from core.platform_utils import normalize_device_platform
     from core.textfsm import resolve_textfsm_parser_platform, resolve_textfsm_platform
@@ -695,6 +698,10 @@ COMMAND_CATALOG: dict[str, dict[str, list[str]]] = {
     },
 }
 
+# Comware V3 is an older CLI generation. Keep its operational catalog on the
+# verified legacy V5 command forms until a real V3 output fixture is added.
+COMMAND_CATALOG['h3c_comware_v3'] = dict(COMMAND_CATALOG['h3c_comware_v5'])
+
 # STP/MSTP is a separate operational category. Its records become
 # L2_NEIGHBOR evidence with state/role/instance metadata; it never creates a
 # PHYSICAL relation by itself.
@@ -705,6 +712,7 @@ _STP_COMMANDS = {
     'huawei_vrp': ['display stp brief'],
     'huawei_vrpv8': ['display stp brief'],
     'h3c_comware': ['display stp brief'],
+    'h3c_comware_v3': ['display stp brief'],
     'h3c_comware_v5': ['display stp brief'],
     'h3c_comware_v7': ['display stp brief'],
     'h3c_comware_v9': ['display stp brief'],
@@ -1119,7 +1127,7 @@ def _parse_with_ntc(platform: str, command: str, output: str) -> list[dict[str, 
     parser_platform = resolve_textfsm_platform(platform) or platform
     # Pass the selected profile/variant through the parser.  The parser
     # returns the canonical public family in its result, but needs the
-    # concrete variant while choosing V5/V7/V9 template files.
+    # concrete variant while choosing V3/V5/V7/V9 template files.
     res = smart_parse_cli(output=output, command=command, platform=platform)
     if res.get('success') and res.get('data'):
         return _normalize_records(res['data'])
@@ -1806,7 +1814,7 @@ def collect_operational_data(
     # and parser lookup while the returned device identity stays canonical.
     parser_platform = (
         raw_platform
-        if raw_platform in {'h3c_comware_v5', 'h3c_comware_v7', 'h3c_comware_v9'}
+        if raw_platform in {'h3c_comware_v3', 'h3c_comware_v5', 'h3c_comware_v7', 'h3c_comware_v9'}
         else platform
     )
     commands_by_category = _resolve_commands(parser_platform, selected_categories)

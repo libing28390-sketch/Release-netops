@@ -154,6 +154,10 @@ tools/node/
 !**/docs/introduction.md
 !**/docs/cmdb_development.md
 !**/docs/blog/**/*.md
+!docs/Nexora_RackVision_MASTER_TASKS.md
+!docs/Nexora_RackVision_Backend_Data_API_TASKS.md
+!docs/rackvision/
+!docs/rackvision/**/*.md
 
 # Exclude compiled agent binaries and backup data
 scripts/nexora.exe

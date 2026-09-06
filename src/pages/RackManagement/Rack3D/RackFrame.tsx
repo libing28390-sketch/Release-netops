@@ -4,6 +4,7 @@ import { Html } from '@react-three/drei';
 import {
   U_HEIGHT_3D,
   RACK_OUTER_WIDTH_DEFAULT,
+  RACK_INNER_WIDTH,
   RACK_TOTAL_DEPTH_DEFAULT
 } from '../adapters/rackViewModel';
 import {
@@ -59,7 +60,10 @@ export const RackFrame: React.FC<RackFrameProps> = ({
   ], [postOffsetW, postOffsetD, rackHeight]);
 
   const railWidth = 0.22;
-  const railXOffset = 2.413; // 19 inch / 2 = 4.826 / 2
+  // Keep the mounting rails inside the actual rack width.  A fixed 19-inch
+  // offset makes 450mm/non-standard cabinets render their rails outside the
+  // enclosure even when the read model supplies a different width_mm.
+  const railXOffset = (rackWidth * (RACK_INNER_WIDTH / RACK_OUTER_WIDTH_DEFAULT)) / 2;
   const railZOffset = (rackDepth * 0.72) / 2;
 
   // Geometry for edge highlights

@@ -522,6 +522,8 @@ class IntentParser:
                     (
                         "h3c_comware",
                         "h3c comware",
+                        "comware v3",
+                        "comware 3",
                         "comware v5",
                         "comware 5",
                         "comware v7",
@@ -568,7 +570,7 @@ class IntentParser:
                 result["cli_platform"] = platform
                 if platform == "h3c_comware":
                     result["os_family"] = "Comware"
-                    comware_generation = re.search(r"comware(?:[\s_-]*v?)([579])\b", lower)
+                    comware_generation = re.search(r"comware(?:[\s_-]*v?)([3579])\b", lower)
                     result["os_generation"] = (
                         f"COMWARE-{comware_generation.group(1)}" if comware_generation else None
                     )

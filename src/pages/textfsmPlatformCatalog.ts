@@ -39,7 +39,7 @@ export const TEXTFSM_PLATFORM_FAMILIES: TextFSMPlatformFamilyOption[] = [
     vendor: 'h3c',
     label: 'Comware',
     labelEn: 'Comware',
-    versions: ['common', 'v5', 'v7', 'v9', 'unknown'],
+    versions: ['common', 'v3', 'v5', 'v7', 'v9', 'unknown'],
   },
   { value: 'juniper_junos', vendor: 'juniper', label: 'JunOS', labelEn: 'JunOS', versions: ['common'] },
   { value: 'arista_eos', vendor: 'arista', label: 'EOS', labelEn: 'EOS', versions: ['common'] },
@@ -76,6 +76,7 @@ export const TEXTFSM_PLATFORM_FAMILIES: TextFSMPlatformFamilyOption[] = [
 export const TEXTFSM_VERSION_LABELS: Record<string, { label: string; labelEn: string }> = {
   common: { label: '通用', labelEn: 'Common' },
   v5: { label: 'V5', labelEn: 'V5' },
+  v3: { label: 'V3', labelEn: 'V3' },
   v6: { label: 'V6', labelEn: 'V6' },
   v7: { label: 'V7', labelEn: 'V7' },
   v8: { label: 'V8', labelEn: 'V8' },
@@ -91,6 +92,7 @@ const CONCRETE_PLATFORM_BY_SELECTION: Record<string, string> = {
   'huawei_vrp:v8': 'huawei_vrp8',
   'huawei_vrp:unknown': 'huawei_vrp_unknown',
   'h3c_comware:v5': 'h3c_comware_v5',
+  'h3c_comware:v3': 'h3c_comware_v3',
   'h3c_comware:v7': 'h3c_comware_v7',
   'h3c_comware:v9': 'h3c_comware_v9',
   'h3c_comware:unknown': 'h3c_comware_unknown',
@@ -111,6 +113,7 @@ const LEGACY_PLATFORM_SELECTIONS: Record<string, { platformFamily: string; versi
   huawei_vrp8: { platformFamily: 'huawei_vrp', version: 'v8' },
   huawei_vrp_unknown: { platformFamily: 'huawei_vrp', version: 'unknown' },
   hp_comware: { platformFamily: 'h3c_comware', version: 'v5' },
+  h3c_comware_v3: { platformFamily: 'h3c_comware', version: 'v3' },
   h3c_comware: { platformFamily: 'h3c_comware', version: 'v7' },
   h3c_comware9: { platformFamily: 'h3c_comware', version: 'v9' },
   h3c_comware_v5: { platformFamily: 'h3c_comware', version: 'v5' },
@@ -176,5 +179,5 @@ export const getEditorSelection = (platform: string, versionHint?: string) => {
 };
 
 export const TEXTFSM_VERSION_ORDER = [
-  'common', 'v5', 'v6', 'v7', 'v8', 'v9', 'v10', 'v11', 'v12', 'unknown',
+  'common', 'v3', 'v5', 'v6', 'v7', 'v8', 'v9', 'v10', 'v11', 'v12', 'unknown',
 ];

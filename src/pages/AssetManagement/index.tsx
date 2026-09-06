@@ -18,6 +18,7 @@ import { DataTable, DataTableFrame } from '../../components/DataTable';
 import PageHero from '../../components/PageHero';
 import TagFilterDropdown from '../../components/TagFilterDropdown';
 import { fetchAllPaginatedItems } from '../../utils/pagination';
+import { authHeaders } from '../../api/http';
 import { useSystem } from '../../hooks/useSystem';
 import { formatTerminalAgentError, getLocalTerminalConfig, TERMINAL_APP_LABELS } from '../../utils/localTerminal';
 import type { TagDefinition } from '../../types';
@@ -307,7 +308,7 @@ const AssetManagementTab: React.FC<AssetManagementTabProps> = ({ language, setAc
   }, []);
 
   const fetchSummary = useCallback(async () => {
-    try { const r = await fetch('/api/assets/summary'); if (r.ok) setSummary(await r.json()); } catch { /* noop */ }
+    try { const r = await fetch('/api/assets/summary', { headers: authHeaders() }); if (r.ok) setSummary(await r.json()); } catch { /* noop */ }
   }, []);
 
   const fetchSites = useCallback(async () => {
@@ -336,7 +337,7 @@ const AssetManagementTab: React.FC<AssetManagementTabProps> = ({ language, setAc
       if (deviceCategoryFilter)   p.set('device_category', deviceCategoryFilter);
       if (lifecycleFilter !== 'all') p.set('lifecycle_status', lifecycleFilter);
       if (tagFilter.length > 0)   p.set('tag_ids', tagFilter.join(','));
-      const r = await fetch(`/api/assets?${p}`);
+      const r = await fetch(`/api/assets?${p}`, { headers: authHeaders() });
       if (r.ok) { const d = await r.json(); setAssets(d.items); setTotal(d.total); }
     } catch { /* noop */ }
     setLoading(false);
@@ -478,7 +479,7 @@ const AssetManagementTab: React.FC<AssetManagementTabProps> = ({ language, setAc
     rotationPollRef.current = setInterval(async () => {
       attempts++;
       try {
-        const r = await fetch(`/api/assets/${assetId}/rotation-status`);
+        const r = await fetch(`/api/assets/${assetId}/rotation-status`, { headers: authHeaders() });
         if (!r.ok) return;
         const d = await r.json();
         if (d.rotation_status === 'completed') {
@@ -552,7 +553,7 @@ const AssetManagementTab: React.FC<AssetManagementTabProps> = ({ language, setAc
           admin_credential_id: String(profile.admin_credential_id || '').trim(),
         })),
       };
-      const r = await fetch(url, { method: editingAsset ? 'PUT' : 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(payload) });
+      const r = await fetch(url, { method: editingAsset ? 'PUT' : 'POST', headers: authHeaders(true), body: JSON.stringify(payload) });
       if (r.ok) {
         const data = await r.json().catch(() => null);
         setShowModal(false);
@@ -662,7 +663,7 @@ const AssetManagementTab: React.FC<AssetManagementTabProps> = ({ language, setAc
   const handleDelete = async () => {
     if (!deleteTarget) return;
     try {
-      const r = await fetch(`/api/assets/${deleteTarget.id}`, { method: 'DELETE' });
+      const r = await fetch(`/api/assets/${deleteTarget.id}`, { method: 'DELETE', headers: authHeaders() });
       if (r.ok) { setDeleteTarget(null); fetchAssets(); fetchSummary(); if (drawerAsset?.id === deleteTarget.id) setDrawerAsset(null); }
     } catch { /* noop */ }
   };
@@ -675,7 +676,7 @@ const AssetManagementTab: React.FC<AssetManagementTabProps> = ({ language, setAc
     if (selectedIds.size === 0) return;
     if (!confirm(zh ? '确定删除选中的资产吗？' : 'Delete selected assets?')) return;
     const promises = Array.from(selectedIds).map(id =>
-      fetch(`/api/assets/${id}`, { method: 'DELETE' })
+      fetch(`/api/assets/${id}`, { method: 'DELETE', headers: authHeaders() })
     );
     await Promise.allSettled(promises);
     clearSel();
@@ -690,7 +691,7 @@ const AssetManagementTab: React.FC<AssetManagementTabProps> = ({ language, setAc
     try {
       const r = await fetch('/api/assets/takeover/batch', {
         method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
+        headers: authHeaders(true),
         body: JSON.stringify({ asset_ids: Array.from(selectedIds) })
       });
       if (r.ok) {
@@ -712,7 +713,7 @@ const AssetManagementTab: React.FC<AssetManagementTabProps> = ({ language, setAc
           batchTakeoverPollRef.current = setInterval(async () => {
             const snapshots = await Promise.all(triggered.map(async item => {
               try {
-                const response = await fetch(`/api/assets/${encodeURIComponent(item.id)}/rotation-status`);
+                const response = await fetch(`/api/assets/${encodeURIComponent(item.id)}/rotation-status`, { headers: authHeaders() });
                 const statusData = await response.json().catch(() => ({}));
                 const rotationStatus = String(statusData.rotation_status || '').toLowerCase();
                 if (rotationStatus === 'completed') return { ...item, status: 'completed', message: zh ? '口令上收成功，设备已投产' : 'Takeover completed; device is in production', rotation_status: rotationStatus };
@@ -782,7 +783,7 @@ const AssetManagementTab: React.FC<AssetManagementTabProps> = ({ language, setAc
       const requester = localStorage.getItem('netops_user') || 'unknown';
       const r = await fetch('/api/pam/access-request', {
         method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
+        headers: authHeaders(true),
         body: JSON.stringify({
           asset_id: terminalTarget.id,
           access_level: terminalAccessLevel,
@@ -959,7 +960,7 @@ const AssetManagementTab: React.FC<AssetManagementTabProps> = ({ language, setAc
     try {
       const r = await fetch('/api/assets/import', {
         method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
+        headers: authHeaders(true),
         body: JSON.stringify(payload),
       });
       if (r.ok) {

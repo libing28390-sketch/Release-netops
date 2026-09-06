@@ -451,6 +451,7 @@ const InventoryDevicesTab: React.FC<InventoryDevicesTabProps> = ({
               <option value="huawei_vrp">Huawei VRP</option>
               <option value="huawei_vrpv8">Huawei VRPv8</option>
               <option value="h3c_comware">H3C Comware</option>
+              <option value="h3c_comware_v3">H3C Comware V3</option>
               <option value="ruijie_rgos">Ruijie RGOS</option>
               <option value="zte_zxros">ZTE ZXROS</option>
               <option value="maipu">Maipu Network OS</option>

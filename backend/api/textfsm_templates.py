@@ -41,7 +41,7 @@ def api_list_templates(
     platform: str = Query('', description='按平台过滤'),
     vendor: str = Query('', description='按厂商过滤'),
     platform_family: str = Query('', description='按平台族过滤，例如 h3c_comware'),
-    version: str = Query('', description='按模板版本过滤，例如 v5|v7|v9|common'),
+    version: str = Query('', description='按模板版本过滤，例如 v3|v5|v7|v9|common'),
     exact_platform: bool = Query(False, description='是否仅匹配该平台值，不合并兼容别名'),
     search: str = Query('', description='关键字搜索'),
     source: str = Query('', description='按来源过滤：builtin|custom'),
@@ -89,6 +89,7 @@ def api_list_platforms(_user=require_permission('textfsm', 'view')):
 
 
 _H3C_ACTION_PROFILE_ALIASES = {
+    'h3c_comware_v3': 'h3c_comware_v3',
     'h3c_comware_v5': 'hp_comware',
     'h3c_comware_v7': 'h3c_comware',
     'h3c_comware_v9': 'h3c_comware9',

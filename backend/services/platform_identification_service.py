@@ -485,6 +485,7 @@ def identify_device(
 
 _INVENTORY_PROFILE_BY_PARSER_VARIANT = {
     "huawei_vrpv8": "huawei_vrp8",
+    "h3c_comware_v3": "h3c_comware_v3",
     "h3c_comware_v5": "h3c_comware_v5",
     "h3c_comware_v7": "h3c_comware_v7",
     "h3c_comware_v9": "h3c_comware_v9",

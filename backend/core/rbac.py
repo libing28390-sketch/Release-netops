@@ -42,6 +42,8 @@ ADMIN_ONLY_PATHS = {
 }
 
 RESOURCE_ACTION_CATALOG = {
+    'rack': {'read', 'view', 'create', 'update', 'delete'},
+    'asset': {'read', 'view', 'create', 'update', 'delete', 'verify', 'import'},
     'platform': {'view', 'create', 'update', 'delete', 'edit_draft', 'submit', 'approve', 'publish', 'rollback', 'bind_device'},
     'knowledge_source': {'read', 'view', 'create', 'update', 'delete', 'validate', 'enable', 'disable'},
     'knowledge_uat': {'read', 'view', 'sign'},
@@ -64,6 +66,8 @@ RESOURCE_ACTION_CATALOG = {
 # narrower profile when one is assigned.
 RECOMMENDED_ROLE_PROFILES = {
     'Platform Viewer': {
+        'rack': {'read', 'view'},
+        'asset': {'read', 'view'},
         'platform': {'view'}, 'knowledge_source': {'read', 'view'}, 'knowledge_import': {'read', 'view'}, 'knowledge_catalog': {'read', 'view', 'resolve'}, 'knowledge_collection': {'read', 'view'}, 'command': {'view'}, 'textfsm': {'view'},
         'sample_output': {'view'}, 'playbook': {'view'}, 'knowledge_uat': {'read', 'view'},
     },
@@ -73,6 +77,8 @@ RECOMMENDED_ROLE_PROFILES = {
         'sample_output': {'upload', 'view', 'delete'}, 'playbook': {'view'},
     },
     'Platform Maintainer': {
+        'rack': {'read', 'view', 'create', 'update', 'delete'},
+        'asset': {'read', 'view', 'create', 'update', 'delete', 'verify', 'import'},
         'platform': {'view', 'create', 'update', 'delete', 'edit_draft', 'submit', 'bind_device'},
         'knowledge_source': {'read', 'view', 'create', 'update', 'delete', 'validate', 'enable', 'disable'},
         'knowledge_import': {'read', 'view', 'create', 'manage', 'cancel', 'retry'},
@@ -190,6 +196,32 @@ def _action_allowed(user: dict, resource_type: str, action: str) -> bool:
     return '*' in allowed or action in allowed
 
 
+def resource_action_allowed(user: dict, resource_type: str, action: str) -> bool:
+    """Expose the role/profile portion of resource authorization to filters.
+
+    Object-level scope checks still belong to :func:`authorize_resource`.  A
+    list endpoint, however, must build one SQL filter instead of opening a
+    database connection for every returned row, so the RackVision scope
+    service needs this small, read-only adapter.
+    """
+
+    return _action_allowed(user, resource_type, action)
+
+
+def _scope_action_matches(actions: set[str], action: str) -> bool:
+    """Match the read/view aliases used by older scope rows."""
+
+    normalized = str(action or '').strip().lower()
+    normalized_actions = {str(item).strip().lower() for item in actions}
+    if '*' in normalized_actions or normalized in normalized_actions:
+        return True
+    if normalized == 'view':
+        return 'read' in normalized_actions
+    if normalized == 'read':
+        return 'view' in normalized_actions
+    return False
+
+
 def authorize_resource(
     user: dict,
     resource_type: str,
@@ -215,7 +247,7 @@ def authorize_resource(
     if user_tenant and tenant_id and user_tenant != str(tenant_id):
         return False
 
-    user_id = str(user.get('id') or '')
+    user_id = str(user.get('id') or user.get('user_id') or '')
     if not user_id:
         return True
     try:
@@ -252,7 +284,7 @@ def authorize_resource(
             actions = set(json.loads(row['actions_json'] or '[]'))
         except Exception:
             actions = set()
-        if '*' in actions or action in actions:
+        if _scope_action_matches(actions, action):
             return True
     return False
 

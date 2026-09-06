@@ -81,6 +81,13 @@ export function normalizeHealthStatus(
   return 'unknown';
 }
 
+function parseBooleanFlag(value: unknown): boolean {
+  if (typeof value === 'boolean') return value;
+  if (typeof value === 'number') return value === 1;
+  const normalized = String(value ?? '').trim().toLowerCase();
+  return normalized === '1' || normalized === 'true' || normalized === 'yes';
+}
+
 /**
  * Compute 3D spatial coordinates from U position and chassis depth.
  */
@@ -88,16 +95,25 @@ export function calculateDeviceCoordinates(
   startU: number,
   heightU: number,
   face: 'front' | 'rear',
-  isFullDepth: boolean
+  isFullDepth: boolean,
+  rackDepth: number = RACK_TOTAL_DEPTH_DEFAULT,
+  rackWidth: number = RACK_OUTER_WIDTH_DEFAULT,
 ): RackDeviceCoordinates {
   const h = Math.max(0.01, heightU * U_HEIGHT_3D - 0.02);
   const centerY = (startU - 1 + heightU / 2) * U_HEIGHT_3D;
-  const width = RACK_INNER_WIDTH - 0.04;
-  const depth = isFullDepth ? CHASSIS_DEPTH_FULL : CHASSIS_DEPTH_HALF;
+  const safeRackWidth = Math.max(0.1, rackWidth);
+  const width = Math.max(
+    0.1,
+    safeRackWidth * (RACK_INNER_WIDTH / RACK_OUTER_WIDTH_DEFAULT) - 0.04,
+  );
+  const safeRackDepth = Math.max(0.1, rackDepth);
+  const fullDepth = safeRackDepth * (CHASSIS_DEPTH_FULL / RACK_TOTAL_DEPTH_DEFAULT);
+  const halfDepth = safeRackDepth * (CHASSIS_DEPTH_HALF / RACK_TOTAL_DEPTH_DEFAULT);
+  const depth = isFullDepth ? fullDepth : halfDepth;
 
   let centerZ = 0;
   if (!isFullDepth) {
-    const offset = (CHASSIS_DEPTH_FULL - CHASSIS_DEPTH_HALF) / 2;
+    const offset = (fullDepth - halfDepth) / 2;
     centerZ = face === 'front' ? offset : -offset;
   }
 
@@ -122,6 +138,8 @@ export function normalizeRackToVM(
   const widthMm = Math.max(300, parseInt(String(rackData.width_mm), 10) || 600);
   const depthMm = Math.max(400, parseInt(String(rackData.depth_mm), 10) || 1000);
   const heightMm = Math.round(totalU * 44.45);
+  const rackDepthScene = (depthMm / 1000) * RACK_TOTAL_DEPTH_DEFAULT;
+  const rackWidthScene = (widthMm / 600) * RACK_OUTER_WIDTH_DEFAULT;
 
   const rawDevices: RackDevice[] = (rackData as RackLayout).devices || [];
   const globalIssues: string[] = [];
@@ -135,49 +153,88 @@ export function normalizeRackToVM(
 
   for (const raw of rawDevices) {
     const issues: string[] = [];
-    const startU = parseInt(String(raw.start_u), 10);
-    const heightU = Math.max(1, parseInt(String(raw.u_height), 10) || 1);
+    const mountKind = String(raw.mount_kind || raw.default_mount_kind || 'u_mount').trim().toLowerCase();
+    const isUMount = mountKind === 'u_mount';
+    const rawPosition = String(raw.position || '').trim().toLowerCase();
+    const position = rawPosition || (isUMount ? 'front' : 'unknown');
+    const parsedStartU = raw.start_u == null ? Number.NaN : parseInt(String(raw.start_u), 10);
+    const parsedHeightU = raw.height_u == null
+      ? parseInt(String(raw.u_height), 10)
+      : parseInt(String(raw.height_u), 10);
+    const heightKnown = Number.isFinite(parsedHeightU) && parsedHeightU >= 1;
+    const startKnown = Number.isFinite(parsedStartU) && parsedStartU >= 1;
+    // Geometry needs a bounded placeholder so a malformed row cannot crash
+    // Three.js.  The explicit flags below prevent that placeholder from being
+    // presented as a real 1U/U1 placement in the UI.
+    const heightU = heightKnown ? parsedHeightU : 1;
+    const startU = startKnown ? parsedStartU : 1;
     const endU = startU + heightU - 1;
 
     // Check face orientation
     let face: 'front' | 'rear' = 'front';
-    const rawPos = (raw.position || '').trim().toLowerCase();
-    if (rawPos === 'rear') {
+    if (position === 'rear') {
       face = 'rear';
-    } else if (rawPos !== 'front' && rawPos !== '') {
+    } else if (isUMount && !['front', 'full_depth'].includes(position)) {
       issues.push(`未知朝向 '${raw.position}'，已默认按前面板处理`);
     }
 
-    // Check U bounds
-    if (Number.isNaN(startU) || startU < 1) {
-      issues.push(`起始U位非法 (start_u=${raw.start_u})，必须 >= 1`);
-    }
-    if (startU > totalU) {
-      issues.push(`起始U位超出机柜高度 (U${startU} > ${totalU}U)`);
-    }
-    if (endU > totalU) {
-      issues.push(`设备顶部超出机柜高度 (U${startU}-U${endU} > ${totalU}U)`);
+    const isFullDepth = position === 'full_depth'
+      || String(raw.depth_class || '').trim().toLowerCase() === 'full'
+      || parseBooleanFlag(raw.is_full_depth);
+
+    if (isUMount) {
+      // Check U bounds only for standard U-mounted devices. Non-U equipment
+      // must not be coerced into U1 or consume cabinet capacity.
+      if (!Number.isFinite(parsedStartU) || parsedStartU < 1) {
+        issues.push(`起始U位非法 (start_u=${raw.start_u})，必须 >= 1`);
+      }
+      if (!Number.isFinite(parsedHeightU) || parsedHeightU < 1) {
+        issues.push(`设备高度非法 (height_u=${raw.height_u ?? raw.u_height})，必须 >= 1U`);
+      }
+      if (startU > totalU) {
+        issues.push(`起始U位超出机柜高度 (U${startU} > ${totalU}U)`);
+      }
+      if (endU > totalU) {
+        issues.push(`设备顶部超出机柜高度 (U${startU}-U${endU} > ${totalU}U)`);
+      }
+
+      // Check overlap only after the row is a valid standard placement.
+      if (issues.length === 0) {
+        for (let u = startU; u <= endU; u++) {
+          if (face === 'front' || isFullDepth) {
+            const conflictName = frontOccupancy.get(u);
+            if (conflictName) {
+              issues.push(`前面板 U${u} 与已上架设备 '${conflictName}' 空间重叠`);
+            } else {
+              frontOccupancy.set(u, raw.name);
+            }
+          }
+          if (face === 'rear' || isFullDepth) {
+            const conflictName = rearOccupancy.get(u);
+            if (conflictName) {
+              issues.push(`后面板 U${u} 与已上架设备 '${conflictName}' 空间重叠`);
+            } else {
+              rearOccupancy.set(u, raw.name);
+            }
+          }
+        }
+      }
+    } else {
+      // Known non-U placement classes remain visible in the read model, but
+      // are intentionally excluded from the elevation/3D U-slot renderer.
+      if (!['zero_u', 'side_mount', 'floor', 'unknown'].includes(mountKind)) {
+        issues.push(`未知安装方式 '${raw.mount_kind}'，需要人工确认`);
+      } else if (mountKind === 'side_mount' && !['left_side', 'right_side'].includes(position)) {
+        issues.push('侧挂设备必须指定 left_side 或 right_side');
+      } else if (mountKind === 'zero_u' && !['rear', 'left_side', 'right_side', 'unknown'].includes(position)) {
+        issues.push('0U 设备位置必须是 rear、left_side、right_side 或 unknown');
+      } else if (mountKind === 'floor' && !raw.location_note?.trim()) {
+        issues.push('落地设备必须填写位置说明');
+      }
     }
 
-    // Check overlap
-    const isFullDepth = raw.is_full_depth === 1 || Boolean(raw.is_full_depth);
-    for (let u = startU; u <= endU; u++) {
-      if (face === 'front' || isFullDepth) {
-        const conflictName = frontOccupancy.get(u);
-        if (conflictName) {
-          issues.push(`前面板 U${u} 与已上架设备 '${conflictName}' 空间重叠`);
-        } else {
-          frontOccupancy.set(u, raw.name);
-        }
-      }
-      if (face === 'rear' || isFullDepth) {
-        const conflictName = rearOccupancy.get(u);
-        if (conflictName) {
-          issues.push(`后面板 U${u} 与已上架设备 '${conflictName}' 空间重叠`);
-        } else {
-          rearOccupancy.set(u, raw.name);
-        }
-      }
+    if (raw.placement_status === 'invalid') {
+      issues.push('placement_status=invalid，需要先完成数据修复');
     }
 
     // Power
@@ -186,12 +243,16 @@ export function normalizeRackToVM(
 
     // Health lookup
     const assetId = (raw.asset_id || '').trim();
-    const sn = (raw.serial_number || '').trim().toLowerCase();
+    const networkDeviceId = (raw.network_device_id || '').trim();
+    const sn = (raw.serial_number || raw.physical_serial_number || raw.network_sn || '').trim().toLowerCase();
     const nameNorm = (raw.name || '').trim().toLowerCase();
+    const networkHostname = (raw.network_hostname || raw.physical_hostname || '').trim().toLowerCase();
 
     const health =
       (assetId && healthMap[assetId]) ||
+      (networkDeviceId && healthMap[networkDeviceId]) ||
       (sn && healthMap[sn]) ||
+      (networkHostname && healthMap[networkHostname]) ||
       (nameNorm && healthMap[nameNorm]) ||
       healthMap[raw.id];
 
@@ -208,10 +269,19 @@ export function normalizeRackToVM(
       powerSource: ratedPowerWatts > 0 ? 'RATED' : 'NONE'
     };
 
-    // Calculate 3D coordinates
+    // Calculate 3D coordinates for standard U devices. Non-U rows receive a
+    // harmless placeholder coordinate for tooltips/cable lookup but are not
+    // included in validDevices and therefore cannot crash the renderer.
     const clampedStartU = Math.max(1, Math.min(totalU, startU || 1));
     const clampedHeightU = Math.max(1, Math.min(totalU - clampedStartU + 1, heightU));
-    const coordinates = calculateDeviceCoordinates(clampedStartU, clampedHeightU, face, isFullDepth);
+    const coordinates = calculateDeviceCoordinates(
+      clampedStartU,
+      clampedHeightU,
+      face,
+      isFullDepth,
+      rackDepthScene,
+      rackWidthScene,
+    );
 
     const isValid = issues.length === 0;
 
@@ -220,7 +290,7 @@ export function normalizeRackToVM(
       rackId: raw.rack_id || rackData.id,
       name: raw.name || '未命名设备',
       assetId,
-      networkDeviceId: health?.network_device_id,
+      networkDeviceId: health?.network_device_id || networkDeviceId || undefined,
       deviceTypeId: raw.device_type_id || '',
       vendor: raw.vendor || '',
       model: raw.model || '',
@@ -228,9 +298,23 @@ export function normalizeRackToVM(
       startU,
       heightU,
       endU,
+      startKnown,
+      heightKnown,
       face,
+      mountKind,
+      position,
+      locationNote: raw.location_note || '',
+      placementStatus: raw.placement_status || (isUMount ? 'estimated' : 'unknown'),
+      renderable: isUMount && isValid,
+      assetKey: raw.resolved_asset_key || raw.model_key || undefined,
+      assetResolutionLevel: raw.asset_resolution_level || undefined,
+      assetFidelity: raw.asset_fidelity || undefined,
+      assetPath: raw.asset_path || null,
+      assetUrl: raw.asset_url || null,
+      assetAvailable: raw.asset_available,
+      assetRenderStrategy: raw.asset_render_strategy || undefined,
       isFullDepth,
-      serialNumber: raw.serial_number || '',
+      serialNumber: raw.serial_number || raw.physical_serial_number || raw.network_sn || '',
       lifecycleStatus: raw.status || 'active',
       healthStatus,
       metrics,
@@ -242,11 +326,16 @@ export function normalizeRackToVM(
     });
   }
 
-  const validDevices = normalizedDevices.filter(d => d.dataQuality.valid);
-  const invalidDevices = normalizedDevices.filter(d => !d.dataQuality.valid);
+  const validDevices = normalizedDevices.filter(d => d.renderable);
+  const invalidDevices = normalizedDevices.filter(d => d.mountKind === 'u_mount' && !d.renderable);
+  const nonUDevices = normalizedDevices.filter(d => d.mountKind !== 'u_mount');
 
   if (invalidDevices.length > 0) {
     globalIssues.push(`机柜内存在 ${invalidDevices.length} 台数据异常设备`);
+  }
+  const unknownNonUDevices = nonUDevices.filter(d => !d.dataQuality.valid);
+  if (unknownNonUDevices.length > 0) {
+    globalIssues.push(`机柜内存在 ${unknownNonUDevices.length} 台非U位设备需要确认`);
   }
 
   // Calculate used U (union of front and rear)
@@ -279,6 +368,7 @@ export function normalizeRackToVM(
     devices: normalizedDevices,
     validDevices,
     invalidDevices,
+    nonUDevices,
     dataQuality: {
       valid: globalIssues.length === 0,
       issues: globalIssues
