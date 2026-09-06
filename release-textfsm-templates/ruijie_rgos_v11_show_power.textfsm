@@ -1,0 +1,31 @@
+# nexora-action-code: get_power
+Value Required POWER_ID (\d+)
+Value MODEL (\S+)
+Value VERSION (\S+)
+Value SERIAL_NUMBER (\S+)
+Value MANUFACTURE_DATE (\S+)
+Value OUTPUT_VOLTAGE ([0-9\.]+)
+Value OUTPUT_CURRENT ([0-9\.]+)
+Value TEMP1 ([0-9\.]+)
+Value TEMP2 ([0-9\.]+)
+Value FAN_SPEED (\d+)
+
+Start
+  ^.*#\s*show\s+ -> Next
+  ^POWER\s+${POWER_ID}: -> PowerBlock
+  ^\s*$$
+  ^. -> Next
+
+PowerBlock
+  ^\s*(?:电源型号|Model)\s*:\s*${MODEL}\s*$$
+  ^\s*(?:版本号|Version)\s*:\s*${VERSION}\s*$$
+  ^\s*(?:序列号|Serial\s+Number)\s*:\s*${SERIAL_NUMBER}\s*$$
+  ^\s*(?:生产日期|Date)\s*:\s*${MANUFACTURE_DATE}\s*$$
+  ^\s*(?:输出电压|Voltage)\s*:\s*${OUTPUT_VOLTAGE}\(V\)\s*$$
+  ^\s*(?:输出电流|Current)\s*:\s*${OUTPUT_CURRENT}\(A\)\s*$$
+  ^\s*(?:温度点1|Temp1)\s*:\s*${TEMP1}\(摄氏度\)\s*$$
+  ^\s*(?:温度点2|Temp2)\s*:\s*${TEMP2}\(摄氏度\)\s*$$
+  ^\s*(?:风扇转速|Fan\s+Speed)\s*:\s*${FAN_SPEED}\s*$$ -> Record Start
+  ^POWER\s+${POWER_ID}: -> PowerBlock
+  ^\s*$$
+  ^. -> Next

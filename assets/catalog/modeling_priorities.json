@@ -1,0 +1,272 @@
+[
+  {
+    "stage": "M0",
+    "asset_or_model": "42U 600×1200标准机柜",
+    "category": "机柜",
+    "asset_hierarchy": "Exact/Generic",
+    "rationale": "所有设备定位的基础坐标系",
+    "acceptance_criteria": "尺寸/U位/立柱/门/前后方向标准化",
+    "source_row": 4
+  },
+  {
+    "stage": "M0",
+    "asset_or_model": "Generic Switch 1U 24P",
+    "category": "通用交换机",
+    "asset_hierarchy": "Generic",
+    "rationale": "未知型号Fallback",
+    "acceptance_criteria": "1U尺寸正确，支持前面板贴图",
+    "source_row": 5
+  },
+  {
+    "stage": "M0",
+    "asset_or_model": "Generic Switch 1U 48P",
+    "category": "通用交换机",
+    "asset_hierarchy": "Generic",
+    "rationale": "大量园区设备可直接复用",
+    "acceptance_criteria": "48口布局+4上联",
+    "source_row": 6
+  },
+  {
+    "stage": "M0",
+    "asset_or_model": "Generic DC Switch 1U SFP/QSFP",
+    "category": "通用交换机",
+    "asset_hierarchy": "Generic",
+    "rationale": "DC未知型号Fallback",
+    "acceptance_criteria": "全光端口模板",
+    "source_row": 7
+  },
+  {
+    "stage": "M0",
+    "asset_or_model": "0U 24/32位 PDU",
+    "category": "PDU",
+    "asset_hierarchy": "Generic",
+    "rationale": "机柜必备且视觉明显",
+    "acceptance_criteria": "可竖装、插座实例化",
+    "source_row": 8
+  },
+  {
+    "stage": "M0",
+    "asset_or_model": "Cat6 24口配线架",
+    "category": "配线架",
+    "asset_hierarchy": "Generic",
+    "rationale": "园区机柜高频",
+    "acceptance_criteria": "1U/24口/标签区",
+    "source_row": 9
+  },
+  {
+    "stage": "M0",
+    "asset_or_model": "LC 48口光纤配线架",
+    "category": "ODF",
+    "asset_hierarchy": "Generic",
+    "rationale": "数据中心高频",
+    "acceptance_criteria": "1U/LC阵列",
+    "source_row": 10
+  },
+  {
+    "stage": "M0",
+    "asset_or_model": "1U水平理线器",
+    "category": "理线",
+    "asset_hierarchy": "Generic",
+    "rationale": "提升机柜真实感",
+    "acceptance_criteria": "低模可复用",
+    "source_row": 11
+  },
+  {
+    "stage": "M0",
+    "asset_or_model": "通用2U UPS + 2U Battery",
+    "category": "电源",
+    "asset_hierarchy": "Generic",
+    "rationale": "机柜电力设备基础",
+    "acceptance_criteria": "LCD/前面板/电池包",
+    "source_row": 12
+  },
+  {
+    "stage": "M1",
+    "asset_or_model": "Huawei S5755-H family",
+    "category": "园区交换机",
+    "asset_hierarchy": "Family",
+    "rationale": "华为园区代表",
+    "acceptance_criteria": "至少覆盖24/48口外观差异",
+    "source_row": 13
+  },
+  {
+    "stage": "M1",
+    "asset_or_model": "H3C S5130S-EI family",
+    "category": "园区交换机",
+    "asset_hierarchy": "Family",
+    "rationale": "典型园区接入",
+    "acceptance_criteria": "24/48口+SFP上联变体",
+    "source_row": 14
+  },
+  {
+    "stage": "M1",
+    "asset_or_model": "Ruijie RG-S6160 family",
+    "category": "园区交换机",
+    "asset_hierarchy": "Family",
+    "rationale": "新一代25G/100G园区汇聚",
+    "acceptance_criteria": "光口矩阵+上联布局",
+    "source_row": 15
+  },
+  {
+    "stage": "M1",
+    "asset_or_model": "ZTE ZXR10 5950-E family",
+    "category": "园区交换机",
+    "asset_hierarchy": "Family",
+    "rationale": "中兴园区典型汇聚",
+    "acceptance_criteria": "24/48电口、48光口变体",
+    "source_row": 16
+  },
+  {
+    "stage": "M1",
+    "asset_or_model": "Maipu NSS5810 family",
+    "category": "园区交换机",
+    "asset_hierarchy": "Family",
+    "rationale": "麦普高性能园区汇聚",
+    "acceptance_criteria": "10G/25G混合端口",
+    "source_row": 17
+  },
+  {
+    "stage": "M1",
+    "asset_or_model": "DPtech LSW3620 family",
+    "category": "园区交换机",
+    "asset_hierarchy": "Family",
+    "rationale": "迪普园区代表",
+    "acceptance_criteria": "24/48电口、PoE变体",
+    "source_row": 18
+  },
+  {
+    "stage": "M1",
+    "asset_or_model": "Huawei CE6885/CE6800 family",
+    "category": "DC交换机",
+    "asset_hierarchy": "Family",
+    "rationale": "华为DC高频形态",
+    "acceptance_criteria": "25/100/200G前面板",
+    "source_row": 19
+  },
+  {
+    "stage": "M1",
+    "asset_or_model": "H3C S6850 family",
+    "category": "DC交换机",
+    "asset_hierarchy": "Family",
+    "rationale": "典型25G Leaf/ToR",
+    "acceptance_criteria": "48×25G+8×100G",
+    "source_row": 20
+  },
+  {
+    "stage": "M1",
+    "asset_or_model": "Ruijie RG-S6990 family",
+    "category": "AI/DC交换机",
+    "asset_hierarchy": "Exact/Family",
+    "rationale": "400G/800G AI交换机视觉差异大",
+    "acceptance_criteria": "2U/4U高密端口精确化",
+    "source_row": 21
+  },
+  {
+    "stage": "M1",
+    "asset_or_model": "ZTE ZXR10 5960 family",
+    "category": "DC交换机",
+    "asset_hierarchy": "Family",
+    "rationale": "中兴ToR系列",
+    "acceptance_criteria": "1U/2U变体",
+    "source_row": 22
+  },
+  {
+    "stage": "M1",
+    "asset_or_model": "Maipu NSS5930/NSS7810 family",
+    "category": "DC交换机",
+    "asset_hierarchy": "Family",
+    "rationale": "25/100G与AI 200/400G",
+    "acceptance_criteria": "两个高速代际模板",
+    "source_row": 23
+  },
+  {
+    "stage": "M1",
+    "asset_or_model": "DPtech LSW6600 family",
+    "category": "DC交换机",
+    "asset_hierarchy": "Family",
+    "rationale": "10/25/100/400G覆盖广",
+    "acceptance_criteria": "1U与2U变体",
+    "source_row": 24
+  },
+  {
+    "stage": "M2",
+    "asset_or_model": "Generic 1U/2U Server",
+    "category": "服务器",
+    "asset_hierarchy": "Generic",
+    "rationale": "实际机柜中出现频率极高",
+    "acceptance_criteria": "支持前面板盘位变化",
+    "source_row": 25
+  },
+  {
+    "stage": "M2",
+    "asset_or_model": "Generic 2U/4U Storage",
+    "category": "存储",
+    "asset_hierarchy": "Generic",
+    "rationale": "数据中心补全",
+    "acceptance_criteria": "盘位阵列实例化",
+    "source_row": 26
+  },
+  {
+    "stage": "M2",
+    "asset_or_model": "Generic 1U/2U Firewall",
+    "category": "安全设备",
+    "asset_hierarchy": "Generic",
+    "rationale": "园区/数据中心出口常见",
+    "acceptance_criteria": "RJ45/SFP混合前面板",
+    "source_row": 27
+  },
+  {
+    "stage": "M2",
+    "asset_or_model": "MPO/MTP 1U配线箱",
+    "category": "光配",
+    "asset_hierarchy": "Generic",
+    "rationale": "100/400G布线",
+    "acceptance_criteria": "cassette可重复",
+    "source_row": 28
+  },
+  {
+    "stage": "M2",
+    "asset_or_model": "DAC/AOC连接器Prefab",
+    "category": "线缆",
+    "asset_hierarchy": "Generic",
+    "rationale": "避免为每根线做GLB",
+    "acceptance_criteria": "SFP+/SFP28/QSFP28/QSFP-DD/OSFP",
+    "source_row": 29
+  },
+  {
+    "stage": "M2",
+    "asset_or_model": "程序化跳线Curve生成器",
+    "category": "前端功能",
+    "asset_hierarchy": "Runtime",
+    "rationale": "和2D端口连接数据直接同步",
+    "acceptance_criteria": "支持隐藏/显示、按类型过滤",
+    "source_row": 30
+  },
+  {
+    "stage": "M3",
+    "asset_or_model": "端口级LED/Link状态",
+    "category": "互动",
+    "asset_hierarchy": "Exact/Runtime",
+    "rationale": "提高Nexora 3D价值",
+    "acceptance_criteria": "port object命名+状态材质联动",
+    "source_row": 31
+  },
+  {
+    "stage": "M3",
+    "asset_or_model": "PDU插座状态/LCD",
+    "category": "互动",
+    "asset_hierarchy": "Runtime",
+    "rationale": "电力数据可视化",
+    "acceptance_criteria": "插座状态与监控数据联动",
+    "source_row": 32
+  },
+  {
+    "stage": "M3",
+    "asset_or_model": "物理链路3D追踪",
+    "category": "互动",
+    "asset_hierarchy": "Runtime",
+    "rationale": "与LLDP/拓扑结合",
+    "acceptance_criteria": "点击链路显示A/B端口与流量",
+    "source_row": 33
+  }
+]

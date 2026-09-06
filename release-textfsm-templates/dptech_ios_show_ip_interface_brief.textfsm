@@ -1,0 +1,19 @@
+Value Required INTERFACE ([\w/.-]+|\S+)
+Value STATUS (up|down|administratively down|unassigned|\S+)
+Value PROTOCOL (up|down|\S+)
+Value IP_ADDRESS (--|\d{1,3}\.\d{1,3}\.\d{1,3}\.\d{1,3}(?:/\d+)?|unassigned|\S+)
+Value DESCRIPTION (.*)
+
+Start
+  ^Interface\s+Physical\s+Protocol\s+IP\s+Address\s+Description -> HeaderPhysicalFirst
+  ^Interface\s+IP\s+Address\s+Physical\s+Protocol\s+Description -> HeaderIPFirst
+  ^${INTERFACE}\s+${STATUS}\s+${PROTOCOL}\s+${IP_ADDRESS}\s+${DESCRIPTION}\s*$$ -> Record HeaderPhysicalFirst
+  ^${INTERFACE}\s+${IP_ADDRESS}\s+${STATUS}\s+${PROTOCOL}\s+${DESCRIPTION}\s*$$ -> Record HeaderIPFirst
+
+HeaderPhysicalFirst
+  ^${INTERFACE}\s+${STATUS}\s+${PROTOCOL}\s+${IP_ADDRESS}\s+${DESCRIPTION}\s*$$ -> Record
+  ^${INTERFACE}\s+${STATUS}\s+${PROTOCOL}\s+${IP_ADDRESS}\s*$$ -> Record
+
+HeaderIPFirst
+  ^${INTERFACE}\s+${IP_ADDRESS}\s+${STATUS}\s+${PROTOCOL}\s+${DESCRIPTION}\s*$$ -> Record
+  ^${INTERFACE}\s+${IP_ADDRESS}\s+${STATUS}\s+${PROTOCOL}\s*$$ -> Record

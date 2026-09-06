@@ -1,0 +1,19 @@
+# nexora-action-code: get_interface_brief
+Value Required INTERFACE (\S+\s+[0-9\/\.\:\-_]+|\S+)
+Value STATUS (connected|notconnect|disabled|err-disabled|administratively down|admin down|down|up|Down|Up|\S+)
+Value VLAN (\d+|routed|trunk|unassigned|\S*)
+Value DUPLEX (full|half|auto|a-full|a-half|Full|Half|Auto|Unknown|unknown|--|\S+)
+Value SPEED (\S+)
+Value TYPE (.+?)
+
+Start
+  ^.*#\s*show\s+ -> Next
+  ^(?:Interface|Port)\s+Status\s+Vlan\s+Duplex\s+Speed\s+Type -> Begin
+  ^\s*$$
+  ^. -> Next
+
+Begin
+  ^-+ -> Next
+  ^\s*${INTERFACE}\s+${STATUS}\s+${VLAN}\s+${DUPLEX}\s+${SPEED}\s+${TYPE}\s*$$ -> Record
+  ^\s*$$
+  ^. -> Next

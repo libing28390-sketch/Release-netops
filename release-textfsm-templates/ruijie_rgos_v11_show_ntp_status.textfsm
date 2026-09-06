@@ -1,0 +1,26 @@
+Value Filldown SYNCHRONIZED (synchronized|unsynchronized|\S+)
+Value Filldown STRATUM (\d+)
+Value Filldown REFERENCE (\S+)
+Value Filldown NOMINAL_FREQ (\S+)
+Value Filldown ACTUAL_FREQ (\S+)
+Value Filldown PRECISION (\S+)
+Value Filldown REFERENCE_TIME (.+?)
+Value Filldown CLOCK_OFFSET (\S+)
+Value Filldown ROOT_DELAY (\S+)
+Value Filldown ROOT_DISPERSION (\S+)
+Value Filldown PEER_DISPERSION (\S+)
+Value Filldown POLL_INTERVAL (\d+)
+Value Filldown LAST_UPDATE (\d+)
+Value Filldown SYSTEM_TIME (.+?)
+
+Start
+  ^.*#\s*show\s+ -> Next
+  ^Clock\s+is\s+${SYNCHRONIZED},\s+stratum\s+${STRATUM},\s+reference\s+is\s+${REFERENCE}
+  ^nominal\s+freq\s+is\s+${NOMINAL_FREQ}\s+Hz,\s+actual\s+freq\s+is\s+${ACTUAL_FREQ}\s+Hz,\s+precision\s+is\s+${PRECISION}
+  ^reference\s+time\s+is\s+${REFERENCE_TIME}\s*$$
+  ^clock\s+offset\s+is\s+${CLOCK_OFFSET}\s+sec,\s+root\s+delay\s+is\s+${ROOT_DELAY}\s+sec
+  ^root\s+dispersion\s+is\s+${ROOT_DISPERSION}\s+(?:msec|sec),\s+peer\s+dispersion\s+is\s+${PEER_DISPERSION}\s+(?:msec|sec)
+  ^system\s+poll\s+interval\s+is\s+${POLL_INTERVAL},\s+last\s+update\s+was\s+${LAST_UPDATE}\s+sec\s+ago
+  ^system\s+time(?:\(GMT\))?\s+is\s+${SYSTEM_TIME}\s*$$ -> Record End
+  ^\s*$$
+  ^. -> Next

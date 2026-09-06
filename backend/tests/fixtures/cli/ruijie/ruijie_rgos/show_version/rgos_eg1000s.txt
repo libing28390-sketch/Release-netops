@@ -1,0 +1,7 @@
+Ruijie#show version
+System description      : Ruijie EASY GATEWAY(EG1000S) by Ruijie Networks.
+System start time        : 2010-05-28 17:52:9
+System uptime            : 0:0:3:6
+System hardware version  : 1.0
+System software version  : RGOS 10.3(4b7), Release(83522)
+System BOOT version      : 10.3.83522

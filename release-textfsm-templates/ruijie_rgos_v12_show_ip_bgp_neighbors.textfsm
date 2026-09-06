@@ -1,0 +1,49 @@
+# nexora-action-code: get_bgp_neighbors
+Value Required BGP_NEIGHBOR (\d{1,3}\.\d{1,3}\.\d{1,3}\.\d{1,3}|[0-9a-fA-F:]+)
+Value REMOTE_AS (\d+)
+Value LOCAL_AS (\d+)
+Value LINK_TYPE (.+?)
+Value BGP_VERSION (\d+)
+Value REMOTE_ROUTER_ID (\d{1,3}\.\d{1,3}\.\d{1,3}\.\d{1,3}|\S+)
+Value BGP_STATE (\w+)
+Value UP_DOWN_TIME (\S+)
+Value HOLD_TIME (\d+)
+Value KEEPALIVE_INTERVAL (\d+)
+Value MSG_RECEIVED (\d+)
+Value MSG_SENT (\d+)
+Value MSG_IN_QUEUE (\d+)
+Value PREFIXES_ACCEPTED (\d+)
+Value PREFIXES_ANNOUNCED (\d+)
+Value CONNECTIONS_ESTABLISHED (\d+)
+Value CONNECTIONS_DROPPED (\d+)
+Value LOCAL_HOST (\d{1,3}\.\d{1,3}\.\d{1,3}\.\d{1,3}|[0-9a-fA-F:]+|\S+)
+Value LOCAL_PORT (\d+)
+Value FOREIGN_HOST (\d{1,3}\.\d{1,3}\.\d{1,3}\.\d{1,3}|[0-9a-fA-F:]+|\S+)
+Value FOREIGN_PORT (\d+)
+Value NEXTHOP (\d{1,3}\.\d{1,3}\.\d{1,3}\.\d{1,3}|[0-9a-fA-F:]+|\S+)
+Value LAST_RESET (\S+)
+Value RESET_REASON (.+?)
+Value LAST_NOTIFICATION_ERROR (.+?)
+
+Start
+  ^.*#\s*show\s+ -> Next
+  # 遇到下一个邻居时保存上一条记录，支持多邻居连续解析
+  ^BGP\s+neighbor\s+is\s+ -> Continue.Record
+  ^BGP\s+neighbor\s+is\s+${BGP_NEIGHBOR},\s+remote\s+AS\s+${REMOTE_AS}(?:,\s+local\s+AS\s+${LOCAL_AS})?(?:,\s+${LINK_TYPE})?\s*$$
+  ^BGP\s+version\s+${BGP_VERSION},\s+remote\s+router\s+ID\s+${REMOTE_ROUTER_ID}
+  ^BGP\s+state\s+=\s+${BGP_STATE}(?:,\s+up\s+for\s+${UP_DOWN_TIME})?
+  ^BGP\s+state\s+=\s+${BGP_STATE}(?:,\s+down\s+for\s+${UP_DOWN_TIME})?
+  ^Last\s+read\s*,?\s*hold\s+time\s+is\s+${HOLD_TIME},\s+keepalive\s+interval\s+is\s+${KEEPALIVE_INTERVAL}\s+seconds
+  ^Received\s+${MSG_RECEIVED}\s+messages,\s+\d+\s+notifications,\s+${MSG_IN_QUEUE}\s+in\s+queue
+  ^Sent\s+${MSG_SENT}\s+messages,\s+\d+\s+notifications,\s+${MSG_IN_QUEUE}\s+in\s+queue
+  ^\s*${PREFIXES_ACCEPTED}\s+accepted\s+prefixes
+  ^\s*${PREFIXES_ANNOUNCED}\s+announced\s+prefixes
+  ^Connections\s+established\s+${CONNECTIONS_ESTABLISHED};\s+dropped\s+${CONNECTIONS_DROPPED}
+  ^Local\s+host:\s*${LOCAL_HOST},\s*Local\s+port:\s*${LOCAL_PORT}
+  ^Foreign\s+host:\s*${FOREIGN_HOST},\s*Foreign\s+port:\s*${FOREIGN_PORT}
+  ^Nexthop:\s*${NEXTHOP}
+  ^Last\s+Reset:\s*${LAST_RESET},\s*${RESET_REASON}\s*$$
+  ^Last\s+Reset:\s*${LAST_RESET}\s*$$
+  ^Notification\s+Error\s+Message:\s*${LAST_NOTIFICATION_ERROR}\s*$$
+  ^\s*$$
+  ^. -> Next
