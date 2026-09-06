@@ -14,6 +14,10 @@ on:
       - "pytest.ini"
       - ".github/workflows/backend-pytest-check.yml"
 
+concurrency:
+  group: backend-pytest-${{ github.ref }}
+  cancel-in-progress: true
+
 jobs:
   test:
     runs-on: ubuntu-latest
@@ -63,9 +67,6 @@ jobs:
 
       - name: Enforce PostgreSQL-only policy
         run: python scripts/validate_postgresql_only.py
-
-      - name: Run AI and Knowledge focused regression gate
-        run: pytest -q backend/tests -k "ai or knowledge" --tb=short
 
       - name: Run pytest (strict)
         run: pytest

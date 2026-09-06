@@ -9,9 +9,6 @@ on:
       - "docs/knowledge-engine/eval/**"
       - "docs/knowledge-engine/architecture/EVAL-*.yaml"
       - "scripts/knowledge_eval_*.py"
-      - "scripts/promptfoo_*.py"
-      - "backend/ai/**"
-      - "backend/database/**"
       - "tests/knowledge_engine/test_eval*.py"
       - ".github/workflows/knowledge-engine-eval.yml"
   pull_request:
@@ -28,6 +25,10 @@ on:
       - "tests/knowledge_engine/test_eval*.py"
       - ".github/workflows/knowledge-engine-eval.yml"
   workflow_dispatch:
+
+concurrency:
+  group: knowledge-engine-eval-${{ github.ref }}
+  cancel-in-progress: true
 
 permissions:
   contents: read

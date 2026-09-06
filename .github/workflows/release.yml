@@ -2,18 +2,23 @@ name: Build and Sync to Release Repo
 
 on:
   push:
-    branches:
-      - main
     tags:
       - 'v*'
   workflow_dispatch:
+
+# Release packaging is intentionally opt-in. Ordinary main pushes keep the
+# fast backend/frontend quality checks, while Ubuntu/Windows packaging and
+# release-repository synchronization run only for a version tag or manually.
+concurrency:
+  group: release-${{ github.ref }}
+  cancel-in-progress: false
 
 permissions:
   contents: write
 
 jobs:
   release-ubuntu:
-    name: Release Ubuntu / Linux (main branch)
+    name: Release Ubuntu / Linux (tag/manual)
     runs-on: ubuntu-latest
     env:
       ENVIRONMENT: test
