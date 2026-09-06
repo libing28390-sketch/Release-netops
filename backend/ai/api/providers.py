@@ -272,7 +272,7 @@ def create_provider(payload: AIProviderCreate, user=Depends(require_ai_permissio
                 tags_json, health_status, data_region, allowed_data_classification,
                 no_training_confirmed, retention_days, data_processing_agreement_ref,
                 agreement_reviewed_at, approved_endpoint_patterns_json
-            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'unknown', ?, ?, ?, ?, ?, ?)
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'unknown', ?, ?, ?, ?, ?, ?, ?)
             """,
             (
                 p_id, payload.name, payload.provider_type, payload.base_url, enc_key, masked_key,
@@ -441,7 +441,17 @@ def delete_provider(provider_id: str, user=Depends(require_ai_permission("ai.pro
         cursor = conn.cursor()
         refs = cursor.execute("SELECT COUNT(*) FROM ai_model WHERE provider_id = ?", (provider_id,)).fetchone()[0]
         if refs:
-            raise HTTPException(status_code=409, detail="Provider still owns models; disable it or remove models first")
+            raise HTTPException(
+                status_code=409,
+                detail={
+                    "code": "AI_PROVIDER_HAS_MODELS",
+                    "message": "该 Provider 仍关联模型，暂时不能删除。请先处理关联模型；如果只是暂时不用，可以直接停用 Provider。",
+                    "details": {
+                        "model_count": int(refs),
+                        "next_action": "disable_provider_or_remove_models",
+                    },
+                },
+            )
         cursor.execute("DELETE FROM ai_provider WHERE id = ?", (provider_id,))
         if cursor.rowcount == 0:
             raise HTTPException(status_code=404, detail="Provider not found")
@@ -561,7 +571,11 @@ async def test_provider_connection(provider_id: str, user=Depends(require_ai_per
             messages=[{"role": "user", "content": "Reply with one short word: ok"}],
             user_id=str(user.get("username") or "provider-test"),
             tenant_id=str(user.get("tenant_id") or "tenant-default"),
-            max_tokens=16,
+            # A short probe still needs enough output budget for providers
+            # that spend tokens on structured/reasoning metadata.  A budget
+            # of 16 can produce HTTP 200 + finish_reason=length, which is a
+            # valid transport response but not a successful health probe.
+            max_tokens=64,
             # The probe is a fixed, business-data-free public message.  Mark
             # it explicitly so a Provider limited to PUBLIC does not get
             # rejected merely because the generic classifier maps text with

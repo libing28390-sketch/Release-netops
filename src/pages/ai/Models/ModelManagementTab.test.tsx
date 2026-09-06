@@ -5,6 +5,8 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { ModelManagementTab } from './ModelManagementTab';
 import {
   createAIModel,
+  deleteAIModel,
+  getAIModelDeletePreview,
   getAIModelRoutes,
   getAIModels,
   getAIProviders,
@@ -14,12 +16,13 @@ import {
 } from '../../../api/ai';
 
 vi.mock('../../../contexts/AppDomainContext', () => ({
-  useCoreApp: () => ({ language: 'zh', currentUser: { role: 'Administrator' } }),
+  useCoreApp: vi.fn(),
 }));
 
 vi.mock('../../../api/ai', () => ({
   createAIModel: vi.fn(),
   deleteAIModel: vi.fn(),
+  getAIModelDeletePreview: vi.fn(),
   getAIModelRoutes: vi.fn(),
   getAIModels: vi.fn(),
   getAIProviders: vi.fn(),
@@ -56,12 +59,21 @@ const getModels = vi.mocked(getAIModels);
 const getRoutes = vi.mocked(getAIModelRoutes);
 const getProviders = vi.mocked(getAIProviders);
 const createModel = vi.mocked(createAIModel);
+const deleteModel = vi.mocked(deleteAIModel);
+const getDeletePreview = vi.mocked(getAIModelDeletePreview);
 const updateModel = vi.mocked(updateAIModel);
 const setDefault = vi.mocked(setAIUserDefaultModel);
 const upsertRoute = vi.mocked(upsertAIModelRoute);
+const showToast = vi.fn();
 
 describe('ModelManagementTab browser key paths', () => {
-  beforeEach(() => {
+  beforeEach(async () => {
+    const { useCoreApp } = await import('../../../contexts/AppDomainContext');
+    showToast.mockClear();
+    deleteModel.mockClear();
+    getDeletePreview.mockReset();
+    getDeletePreview.mockResolvedValue({ route_count: 0, message_count: 0, can_delete: true } as any);
+    vi.mocked(useCoreApp).mockReturnValue({ language: 'zh', currentUser: { role: 'Administrator' }, showToast } as never);
     getModels.mockResolvedValue([model as any]);
     getRoutes.mockResolvedValue([]);
     getProviders.mockResolvedValue([provider as any]);
@@ -97,5 +109,35 @@ describe('ModelManagementTab browser key paths', () => {
     await user.type(screen.getByPlaceholderText('deepseek-v4-flash'), 'backup-model');
     await user.click(screen.getByRole('button', { name: '确认添加' }));
     await waitFor(() => expect(createModel).toHaveBeenCalledWith(expect.objectContaining({ name: '备用模型', model_code: 'backup-model', provider_id: provider.id })));
+  });
+
+  it('explains historical provenance before sending an impossible model delete request', async () => {
+    getDeletePreview.mockResolvedValueOnce({ route_count: 0, message_count: 23, can_delete: false } as any);
+    const user = userEvent.setup();
+    render(<ModelManagementTab />);
+
+    await screen.findAllByText('DeepSeek V4 Flash');
+    await user.click(screen.getByRole('button', { name: '删除' }));
+
+    await waitFor(() => expect(showToast).toHaveBeenCalledWith(
+      '暂时不能删除“DeepSeek V4 Flash”：已有 23 条历史对话保留了它的模型溯源。历史溯源不能物理删除；如果只是暂时不用，请直接禁用模型。',
+      'error',
+    ));
+    expect(deleteModel).not.toHaveBeenCalled();
+  });
+
+  it('cancels deletion safely when the usage preview is unavailable', async () => {
+    getDeletePreview.mockRejectedValueOnce(new Error('preview unavailable'));
+    const user = userEvent.setup();
+    render(<ModelManagementTab />);
+
+    await screen.findAllByText('DeepSeek V4 Flash');
+    await user.click(screen.getByRole('button', { name: '删除' }));
+
+    await waitFor(() => expect(showToast).toHaveBeenCalledWith(
+      '暂时无法确认模型是否仍在使用，已取消删除以保护历史记录。请刷新页面后重试。',
+      'error',
+    ));
+    expect(deleteModel).not.toHaveBeenCalled();
   });
 });

@@ -191,20 +191,67 @@ def test_schema_failure_returns_explicit_safe_fallback(monkeypatch: pytest.Monke
     assert result["filters"] == {"keyword": "帮我总结今天的网络情况"}
 
 
-def test_provider_failure_marks_dangerous_request_for_confirmation(monkeypatch: pytest.MonkeyPatch) -> None:
-    class ProviderFailure(Exception):
-        code = "AI_PROVIDER_UNSUPPORTED"
-
+def test_provider_failure_preserves_actual_egress_metadata(monkeypatch: pytest.MonkeyPatch) -> None:
     async def fake_chat(*args, **kwargs):
-        raise ProviderFailure("provider unavailable")
+        kwargs["route_meta"].update({
+            "external_egress": True,
+            "status": "error",
+            "provider_id": "provider-local",
+            "model_id": "model-local",
+            "route_reason": "user_default_model",
+        })
+        raise RuntimeError("provider detail must not escape")
+
+    monkeypatch.setattr(intent_parser_module.llm_gateway, "chat", fake_chat)
+
+    result = _run(IntentParser(), "解释网络抖动的常见原因")
+
+    assert result["parse_status"] == "provider_error"
+    assert result["provider_attempted"] is True
+    assert result["provider_route"]["provider_id"] == "provider-local"
+    assert "provider detail" not in str(result)
+
+
+def test_provider_failure_marks_dangerous_request_for_confirmation(monkeypatch: pytest.MonkeyPatch) -> None:
+    async def fake_chat(*args, **kwargs):
+        raise AssertionError("dangerous intent must be classified locally before provider egress")
 
     monkeypatch.setattr(intent_parser_module.llm_gateway, "chat", fake_chat)
 
     result = _run(IntentParser(), "执行 shutdown 10.0.0.1")
 
     assert result["intent"] == "general_qa"
-    assert result["parse_status"] == "provider_error"
-    assert result["parse_error_code"] == "AI_PROVIDER_UNSUPPORTED"
+    assert result["parse_status"] == "deterministic"
+    assert result["risk_level"] == "R3"
+    assert result["requires_confirmation"] is True
+    assert result["needs_clarification"] is True
+    assert result["missing_fields"] == ["confirmation"]
+
+
+def test_provider_failure_marks_chinese_batch_port_operation_for_confirmation(monkeypatch: pytest.MonkeyPatch) -> None:
+    async def fake_chat(*args, **kwargs):
+        raise AssertionError("dangerous intent must be classified locally before provider egress")
+
+    monkeypatch.setattr(intent_parser_module.llm_gateway, "chat", fake_chat)
+
+    result = _run(IntentParser(), "批量关闭全网所有万兆端口")
+
+    assert result["parse_status"] == "deterministic"
+    assert result["risk_level"] == "R3"
+    assert result["requires_confirmation"] is True
+    assert result["needs_clarification"] is True
+    assert result["missing_fields"] == ["confirmation"]
+
+
+def test_dangerous_phrase_overrides_low_risk_provider_classification(monkeypatch: pytest.MonkeyPatch) -> None:
+    async def fake_chat(*args, **kwargs):
+        raise AssertionError("dangerous intent must not ask a provider for a low-risk classification")
+
+    monkeypatch.setattr(intent_parser_module.llm_gateway, "chat", fake_chat)
+
+    result = _run(IntentParser(), "批量关闭全网所有万兆端口")
+
+    assert result["parse_status"] == "deterministic"
     assert result["risk_level"] == "R3"
     assert result["requires_confirmation"] is True
     assert result["needs_clarification"] is True
@@ -434,6 +481,38 @@ def test_parser_failure_returns_local_user_facing_reason_without_synthesis_provi
     assert result["external_egress"] is False
     assert "格式异常" in result["answer"]
     assert result["intent_parse"]["error_code"] == "AI_INTENT_SCHEMA_INVALID"
+
+
+def test_parser_provider_failure_exposes_attempt_without_claiming_generated_answer() -> None:
+    from ai.services.assistant import AIAssistantService
+
+    result = AIAssistantService()._intent_failure_response(
+        message="解释网络抖动的常见原因",
+        intent_info={
+            "intent": "general_qa",
+            "filters": {},
+            "needs_clarification": False,
+            "parse_failure": {
+                "status": "provider_error",
+                "message": "意图识别服务暂时不可用，未执行任何设备操作。请稍后重试。",
+                "error_code": "AI_PROVIDER_CIRCUIT_OPEN",
+            },
+            "provider_attempted": True,
+            "provider_route": {
+                "external_egress": True,
+                "status": "error",
+                "provider_id": "provider-local",
+                "model_id": "model-local",
+            },
+        },
+        context={},
+        request_id="req-test-provider-failure",
+    )
+
+    assert result["execution_mode"] == "local_fallback"
+    assert result["external_egress"] is True
+    assert result["intent_parse"]["provider_attempted"] is True
+    assert result["copilot"]["runtime"]["external_egress"] is True
 
 
 def test_streaming_assistant_short_circuits_dangerous_intent_clarification(

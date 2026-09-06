@@ -191,6 +191,39 @@ def set_default_model(payload: DefaultModelRequest, user=Depends(require_ai_perm
     return {"model_id": model_id, "tenant_id": tenant_id, "updated_at": now_iso}
 
 
+@router.get("/{model_id}/delete-preview")
+def model_delete_preview(model_id: str, user=Depends(require_ai_permission("ai.model.manage"))):
+    """Return safe, non-destructive dependency information for model deletion."""
+    with get_db_connection() as conn:
+        model = conn.execute(
+            "SELECT id, name, model_code FROM ai_model WHERE id = ?",
+            (model_id,),
+        ).fetchone()
+        if not model:
+            raise HTTPException(status_code=404, detail="Model not found")
+        routes = conn.execute(
+            "SELECT scene, model_id, fallback_model_id FROM ai_model_route "
+            "WHERE model_id = ? OR fallback_model_id = ? ORDER BY scene",
+            (model_id, model_id),
+        ).fetchall()
+        message_count = conn.execute(
+            "SELECT COUNT(*) FROM ai_messages WHERE requested_model_id = ? OR actual_model_id = ?",
+            (model_id, model_id),
+        ).fetchone()[0]
+    return {
+        "model_id": model[0],
+        "model_name": model[1],
+        "model_code": model[2],
+        "route_count": len(routes),
+        "routes": [
+            {"scene": row[0], "model_id": row[1], "fallback_model_id": row[2]}
+            for row in routes
+        ],
+        "message_count": int(message_count),
+        "can_delete": not routes and not message_count,
+    }
+
+
 @router.delete("/{model_id}", status_code=status.HTTP_204_NO_CONTENT)
 def delete_model(model_id: str, user=Depends(require_ai_permission("ai.model.manage"))):
     """Delete an AI Model."""
@@ -198,10 +231,30 @@ def delete_model(model_id: str, user=Depends(require_ai_permission("ai.model.man
         cursor = conn.cursor()
         refs = cursor.execute("SELECT COUNT(*) FROM ai_model_route WHERE model_id = ? OR fallback_model_id = ?", (model_id, model_id)).fetchone()[0]
         if refs:
-            raise HTTPException(status_code=409, detail='Model is referenced by a scene route; update the route first')
+            raise HTTPException(
+                status_code=409,
+                detail={
+                    "code": "AI_MODEL_HAS_ROUTES",
+                    "message": "该模型仍被业务场景路由使用，暂时不能删除。请先修改或移除这些路由；如果只是暂时不用，可以直接禁用模型。",
+                    "details": {
+                        "route_count": int(refs),
+                        "next_action": "update_or_remove_model_routes",
+                    },
+                },
+            )
         msg_refs = cursor.execute("SELECT COUNT(*) FROM ai_messages WHERE requested_model_id = ? OR actual_model_id = ?", (model_id, model_id)).fetchone()[0]
         if msg_refs:
-            raise HTTPException(status_code=409, detail='Model has message provenance and cannot be deleted; disable it instead')
+            raise HTTPException(
+                status_code=409,
+                detail={
+                    "code": "AI_MODEL_HAS_PROVENANCE",
+                    "message": "该模型已被历史对话引用，不能物理删除。为保留历史溯源，请直接禁用模型。",
+                    "details": {
+                        "message_count": int(msg_refs),
+                        "next_action": "disable_model",
+                    },
+                },
+            )
         cursor.execute("DELETE FROM ai_model WHERE id = ?", (model_id,))
         if cursor.rowcount == 0:
             raise HTTPException(status_code=404, detail='Model not found')

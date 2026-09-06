@@ -40,6 +40,42 @@ def test_cisco_configuration_scope_offers_bounded_cli_platform_choices():
     assert all(option["field"] == "cli_platform" for option in decision.options)
 
 
+def test_platform_options_project_only_safe_scalar_from_rich_candidates():
+    decision = assess_configuration_request(
+        message="请给我思科交换机配置",
+        metadata={"vendor": "Cisco", "feature": "ospf", "document_category": "configuration"},
+        resolution={
+            "ambiguous": True,
+            "platform_candidates": [],
+            "candidates": [
+                {
+                    "tenant_id": "tenant-secret",
+                    "product_model": "C9300-48P",
+                    "product_series": "Catalyst 9300",
+                    "cli_platform": "cisco_ios_xe",
+                },
+                {
+                    "tenant_id": "tenant-secret-2",
+                    "product_model": "S6850",
+                    "product_series": "S6850",
+                },
+            ],
+        },
+    )
+
+    assert decision is not None
+    assert decision.options[0] == {
+        "field": "cli_platform",
+        "value": "cisco_iosxe",
+        "label": "Cisco IOS XE",
+    }
+    rendered = str(decision.to_dict())
+    assert "tenant-secret" not in rendered
+    assert "C9300-48P" not in rendered
+    assert "Catalyst 9300" not in rendered
+    assert "S6850" not in rendered
+
+
 def test_h3c_configuration_scope_offers_comware_platform_choice():
     decision = assess_configuration_request(
         message="华三交换机 OSPF 配置",

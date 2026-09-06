@@ -47,7 +47,7 @@ from core.context import request_id_var, resolve_request_id
 # Only explicit knowledge/configuration/troubleshooting intents opt into
 # tenant RAG context. General conversation must not inherit an internal
 # document because a broad lexical search happened to find a weak match.
-_RAG_CONTEXT_INTENTS = {"knowledge", "config_search", "troubleshooting", "alarm_search"}
+_RAG_CONTEXT_INTENTS = {"knowledge", "config_search", "troubleshooting"}
 
 _EXPLICIT_READ_ONLY_KNOWLEDGE_MARKERS = (
     "仅基于本地知识库",
@@ -1400,10 +1400,15 @@ class AIAssistantService:
 
         failure = intent_info.get("parse_failure") if isinstance(intent_info.get("parse_failure"), dict) else {}
         answer = str(failure.get("message") or "意图识别未完成，未执行任何设备操作。请稍后重试。")[:1000]
+        provider_route = intent_info.get("provider_route") if isinstance(intent_info.get("provider_route"), dict) else {}
+        external_egress = bool(intent_info.get("provider_attempted") or provider_route.get("external_egress"))
         safe_failure = {
             "status": str(failure.get("status") or "unknown")[:64],
             "error_code": str(failure.get("error_code") or "AI_INTENT_PARSE_FAILED")[:64],
+            "provider_attempted": external_egress,
         }
+        if provider_route:
+            safe_failure["provider_route"] = provider_route
         return {
             "answer": answer,
             "intent": "general_qa",
@@ -1412,7 +1417,12 @@ class AIAssistantService:
             "answer_contract": answer_contract(intent="general_qa", citations=[], grounded=False, no_match=False),
             "request_id": request_id,
             "execution_mode": "local_fallback",
-            "external_egress": False,
+            "external_egress": external_egress,
+            "provider_id": provider_route.get("provider_id"),
+            "model_id": provider_route.get("model_id"),
+            "requested_model_id": provider_route.get("requested_model_id"),
+            "route_reason": provider_route.get("route_reason"),
+            "fallback_used": bool(provider_route.get("fallback_used")),
             "input_tokens": 0,
             "output_tokens": 0,
             "token_source": "local_zero",
@@ -1424,12 +1434,15 @@ class AIAssistantService:
                 runtime={
                     "device_connected": False,
                     "cli_executed": False,
-                    "external_egress": False,
+                    "external_egress": external_egress,
                     "execution_mode": "local_fallback",
                     "input_tokens": 0,
                     "output_tokens": 0,
+                    "provider_id": provider_route.get("provider_id"),
+                    "model_id": provider_route.get("model_id"),
                 },
             ),
+            "provider_route": provider_route,
         }
 
     @staticmethod
@@ -1679,6 +1692,53 @@ class AIAssistantService:
             ),
         }
 
+    @staticmethod
+    def _local_alert_analysis_response(
+        *,
+        message: str,
+        report: Dict[str, Any],
+        context: Dict[str, Any],
+        request_id: str,
+    ) -> Dict[str, Any]:
+        """Return a deterministic alert aggregate without provider egress."""
+        citations = report.get("citations", []) if isinstance(report, dict) else []
+        if not isinstance(citations, list):
+            citations = []
+        analysis = report.get("analysis") if isinstance(report, dict) else None
+        grounded = isinstance(analysis, dict) and not report.get("error")
+        matched_count = int(report.get("matched_count", 0) or 0) if isinstance(report, dict) else 0
+        intent = "alarm_search"
+        return {
+            "answer": report.get("summary", "") if isinstance(report, dict) else "",
+            "intent": intent,
+            "facts_retrieved": grounded,
+            "citations": citations,
+            "answer_contract": answer_contract(
+                intent=intent,
+                citations=citations,
+                grounded=grounded,
+                no_match=not matched_count,
+            ),
+            "request_id": request_id,
+            "execution_mode": "local_operation",
+            "external_egress": False,
+            "input_tokens": 0,
+            "output_tokens": 0,
+            "token_source": "local_zero",
+            "copilot": build_copilot_contract(
+                intent=intent,
+                message=message,
+                context=context,
+                citations=citations,
+                runtime={
+                    "execution_mode": "local_operation",
+                    "external_egress": False,
+                    "input_tokens": 0,
+                    "output_tokens": 0,
+                },
+            ),
+        }
+
     async def chat(
         self,
         message: str,
@@ -1742,6 +1802,18 @@ class AIAssistantService:
             )
 
         # 2. Dispatch to specialized intent handler
+        if intent == "alarm_search":
+            report = await natural_query_service.execute_alert_analysis(
+                message,
+                filters,
+                tenant_id=tenant_id,
+            )
+            return self._local_alert_analysis_response(
+                message=message,
+                report=report,
+                context=copilot_context,
+                request_id=request_id,
+            )
         if intent == "asset_analysis":
             report = await natural_query_service.execute_asset_analysis(
                 message,
@@ -2220,7 +2292,12 @@ class AIAssistantService:
                     "answer_contract": failure_result["answer_contract"],
                     "clarification": None,
                     "execution_mode": failure_result["execution_mode"],
-                    "external_egress": False,
+                    "external_egress": bool(failure_result.get("external_egress")),
+                    "provider_id": failure_result.get("provider_id"),
+                    "model_id": failure_result.get("model_id"),
+                    "requested_model_id": failure_result.get("requested_model_id"),
+                    "route_reason": failure_result.get("route_reason"),
+                    "fallback_used": bool(failure_result.get("fallback_used")),
                     "input_tokens": 0,
                     "output_tokens": 0,
                     "token_source": "local_zero",
@@ -2234,12 +2311,20 @@ class AIAssistantService:
                     failure_step[0],
                     failure_step[1],
                     "completed",
-                    detail="未执行设备操作，等待重试",
+                    detail=(
+                        "已尝试供应商调用但未生成回答，未执行设备操作"
+                        if failure_result.get("external_egress")
+                        else "未执行设备操作，等待重试"
+                    ),
                     operation=failure_step[2],
                 )
                 yield _done_event(started_at, extra={
                     "execution_mode": "local_fallback",
-                    "external_egress": False,
+                    "external_egress": bool(failure_result.get("external_egress")),
+                    "provider_id": failure_result.get("provider_id"),
+                    "model_id": failure_result.get("model_id"),
+                    "route_reason": failure_result.get("route_reason"),
+                    "fallback_used": bool(failure_result.get("fallback_used")),
                     "input_tokens": 0,
                     "output_tokens": 0,
                     "token_source": "local_zero",
@@ -2288,6 +2373,62 @@ class AIAssistantService:
                 )
                 yield _done_event(started_at, extra={
                     "execution_mode": "local_clarification",
+                    "external_egress": False,
+                    "input_tokens": 0,
+                    "output_tokens": 0,
+                    "token_source": "local_zero",
+                })
+                return
+
+            if intent == "alarm_search":
+                active_step = ("alert_analysis", "聚合告警（只读）", "natural_query_service.execute_alert_analysis")
+                yield _progress_event(active_step[0], active_step[1], "running", operation=active_step[2])
+                report = await natural_query_service.execute_alert_analysis(
+                    message,
+                    filters,
+                    tenant_id=tenant_id,
+                )
+                analysis = report.get("analysis") if isinstance(report, dict) else {}
+                alerts = analysis.get("alerts") if isinstance(analysis, dict) else {}
+                active_count = int(alerts.get("active_count", 0) or 0) if isinstance(alerts, dict) else 0
+                recent_count = int(alerts.get("recent_24h_count", 0) or 0) if isinstance(alerts, dict) else 0
+                yield _progress_event(
+                    active_step[0],
+                    active_step[1],
+                    "completed",
+                    detail=f"按 PostgreSQL 实际记录聚合：未恢复 {active_count} 条，最近 24 小时新增 {recent_count} 条",
+                    operation=active_step[2],
+                )
+                citations = report.get("citations", []) if isinstance(report, dict) else []
+                grounded = isinstance(analysis, dict) and not report.get("error")
+                yield _meta_event({
+                    "intent": intent,
+                    "facts_retrieved": grounded,
+                    "citations": citations,
+                    "answer_contract": answer_contract(
+                        intent=intent,
+                        citations=citations,
+                        grounded=grounded,
+                        no_match=not bool(report.get("matched_count", 0)),
+                    ),
+                    "execution_mode": "local_operation",
+                    "external_egress": False,
+                    "input_tokens": 0,
+                    "output_tokens": 0,
+                    "token_source": "local_zero",
+                })
+                report_step = ("report", "生成确定性告警统计", "natural_query_service.render_alert_analysis")
+                yield _progress_event(report_step[0], report_step[1], "running", operation=report_step[2])
+                yield _token_event(report.get("summary", "") if isinstance(report, dict) else "")
+                yield _progress_event(
+                    report_step[0],
+                    report_step[1],
+                    "completed",
+                    detail="未调用大模型改写告警事实",
+                    operation=report_step[2],
+                )
+                yield _done_event(started_at, extra={
+                    "execution_mode": "local_operation",
                     "external_egress": False,
                     "input_tokens": 0,
                     "output_tokens": 0,

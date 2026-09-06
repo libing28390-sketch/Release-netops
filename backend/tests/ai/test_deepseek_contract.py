@@ -85,6 +85,18 @@ def test_openai_compatible_payload_carries_v1_contract(monkeypatch):
     assert _Client.last_json["user"] == "nxa_user_opaque"
 
 
+def test_openai_compatible_health_probe_has_room_for_short_provider_metadata(monkeypatch):
+    import httpx
+
+    monkeypatch.setattr(httpx, "AsyncClient", _Client)
+    provider = OpenAICompatibleProvider({"base_url": "https://provider.example", "provider_type": "openai"})
+
+    result = asyncio.run(provider.test_connection(test_model="model-1"))
+
+    assert result["success"] is True
+    assert _Client.last_json["max_tokens"] == 64
+
+
 @pytest.mark.parametrize(
     ("payload", "expected_exception"),
     [

@@ -1,6 +1,6 @@
 import React, { useEffect, useMemo, useState } from 'react';
 import { Cpu, Plus, RefreshCw, Trash2, GitBranch, Star, Power, Search, AlertTriangle, Info, ShieldCheck } from 'lucide-react';
-import { getAIModels, createAIModel, updateAIModel, setAIUserDefaultModel, deleteAIModel, getAIModelRoutes, upsertAIModelRoute, getAIProviders, AIModel, AIModelRoute, AIProvider } from '../../../api/ai';
+import { getAIModels, createAIModel, updateAIModel, setAIUserDefaultModel, deleteAIModel, getAIModelDeletePreview, getAIModelRoutes, upsertAIModelRoute, getAIProviders, AIModel, AIModelDeletePreview, AIModelRoute, AIProvider } from '../../../api/ai';
 import Pagination from '../../../components/Pagination';
 import { ActionIconButton, ActionIconGroup } from '../../../components/ui/ActionIconButton';
 import { useCoreApp } from '../../../contexts/AppDomainContext';
@@ -22,7 +22,7 @@ const SCENES = [
 ];
 
 export const ModelManagementTab: React.FC = () => {
-  const { language } = useCoreApp();
+  const { language, showToast } = useCoreApp();
   const tx = (key: string, variables: Record<string, string | number> = {}) => aiAdminText(key, language, variables);
   const [models, setModels] = useState<AIModel[]>([]);
   const [routes, setRoutes] = useState<AIModelRoute[]>([]);
@@ -108,13 +108,55 @@ export const ModelManagementTab: React.FC = () => {
     }
   };
 
+  const getModelDeleteBlockedMessage = (modelName: string, preview: Pick<AIModelDeletePreview, 'route_count' | 'message_count'>) => {
+    const routeCount = Number(preview.route_count) || 0;
+    const messageCount = Number(preview.message_count) || 0;
+    if (routeCount > 0 && messageCount > 0) {
+      return tx('ai.model.delete.blocked.both', { name: modelName, routes: routeCount, messages: messageCount });
+    }
+    if (routeCount > 0) {
+      return tx('ai.model.delete.blocked.routes', { name: modelName, routes: routeCount });
+    }
+    return tx('ai.model.delete.blocked.provenance', { name: modelName, messages: messageCount || 1 });
+  };
+
+  const getModelDeleteErrorMessage = (error: unknown, modelName: string) => {
+    if (error && typeof error === 'object' && 'code' in error) {
+      const code = error.code;
+      const detail = 'detail' in error && error.detail && typeof error.detail === 'object' ? error.detail : null;
+      const details = detail && 'details' in detail && detail.details && typeof detail.details === 'object' ? detail.details : null;
+      if (code === 'AI_MODEL_HAS_ROUTES') {
+        const routeCount = details && 'route_count' in details && typeof details.route_count === 'number' ? details.route_count : 1;
+        return tx('ai.model.delete.blocked.routes', { name: modelName, routes: routeCount });
+      }
+      if (code === 'AI_MODEL_HAS_PROVENANCE') {
+        const messageCount = details && 'message_count' in details && typeof details.message_count === 'number' ? details.message_count : 1;
+        return tx('ai.model.delete.blocked.provenance', { name: modelName, messages: messageCount });
+      }
+    }
+    return error instanceof Error && error.message ? error.message : tx('ai.model.error.delete');
+  };
+
   const handleDelete = async (id: string) => {
-    if (!window.confirm(tx('ai.model.confirm.delete'))) return;
+    const model = models.find((item) => item.id === id);
+    const modelName = model?.name || 'Model';
+    let preview: AIModelDeletePreview;
+    try {
+      preview = await getAIModelDeletePreview(id);
+    } catch {
+      showToast(tx('ai.model.error.deletePreview'), 'error');
+      return;
+    }
+    if (!preview.can_delete || preview.route_count > 0 || preview.message_count > 0) {
+      showToast(getModelDeleteBlockedMessage(modelName, preview), 'error');
+      return;
+    }
+    if (!window.confirm(tx('ai.model.confirm.delete', { name: modelName }))) return;
     try {
       await deleteAIModel(id);
-      fetchData();
+      await fetchData();
     } catch (err: any) {
-      alert(err.message || tx('ai.model.error.delete'));
+      showToast(getModelDeleteErrorMessage(err, modelName), 'error');
     }
   };
 

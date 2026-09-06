@@ -266,7 +266,11 @@ class OpenAICompatibleProvider(BaseLLMProvider):
         target_model = test_model or "deepseek-v4-flash"
         test_messages = [{"role": "user", "content": "Reply with one short word: ok"}]
         try:
-            result = await self.chat(test_messages, model=target_model, max_tokens=16)
+            # Keep the probe short while leaving enough room for providers
+            # that may emit a small amount of reasoning/metadata before the
+            # requested answer.  Too small a budget is reported as a
+            # truncated response even when the endpoint is healthy.
+            result = await self.chat(test_messages, model=target_model, max_tokens=64)
             return {
                 "success": True,
                 "latency_ms": int((time.perf_counter() - start_time) * 1000),

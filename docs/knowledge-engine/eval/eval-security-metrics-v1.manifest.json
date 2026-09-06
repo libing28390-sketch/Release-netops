@@ -18,6 +18,6 @@
   "sqlite": "not_used",
   "external_network": "not_used",
   "secrets": false,
-  "fixture_sha256": "38c763824b95ce56857bbf46cba278e791ca34744c96955b398ff2521bdbb345",
-  "module_sha256": "700508c01d5fc32e1540f74191e3128638c177616b65058796bdd977681dabfa"
+  "fixture_sha256": "dfc5c5e8e91e62c72de764666f658aa7ce6299a77ee3aa58bc083667c68f3714",
+  "module_sha256": "72f284beec4ae6f88c74516c29bcf46357c2efe2cf5ab6848ea7cbd9ee788f7e"
 }

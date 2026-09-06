@@ -12,11 +12,13 @@ describe('KnowledgeAdminNavigation', () => {
 
     expect(screen.getByText('文档与版本')).toBeTruthy();
     expect(screen.getByText('来源与更新')).toBeTruthy();
+    expect(screen.getByText('UAT 签署')).toBeTruthy();
     expect(screen.getByText('基线自检')).toBeTruthy();
     expect(screen.getByText('检索诊断')).toBeTruthy();
     expect(screen.getByRole('button', { name: /来源与更新/ }).getAttribute('title')).toContain('校验厂商官网并监控来源更新');
     expect(screen.getByRole('button', { name: /基线自检/ }).getAttribute('title')).toContain('用固定夹具检查检索规则是否回退');
     expect(screen.getByRole('button', { name: /检索诊断/ }).getAttribute('title')).toContain('查看一次检索为何命中或未命中');
+    expect(screen.getByRole('button', { name: /UAT 签署/ }).getAttribute('title')).toContain('逐案例记录浏览器验收结论并签署');
   });
 
   it('announces the selected function and requests a view change', async () => {

@@ -728,13 +728,13 @@ else
 fi
 
 # ============================================================
-# 8. 生产环境安全与精简清理
+# 8. 生产环境安全提示
 # ============================================================
-info "清理生产环境冗余测试与开发文档文件..."
-rm -rf "$PROJECT_DIR/backend/tests" "$PROJECT_DIR/brain" "$PROJECT_DIR/scratch" "$PROJECT_DIR/skills" "$PROJECT_DIR/reports" "$PROJECT_DIR/docs" 2>/dev/null || true
-ok "已安全移除后端单元测试及各类排障草稿目录"
-find "$PROJECT_DIR" -maxdepth 2 -type f -name "*.md" ! -name "README.md" ! -name "DEPLOY.md" -exec rm -f {} + 2>/dev/null || true
-ok "已安全清理冗余架构与规划文档 (保留 README.md 与 DEPLOY.md)"
+# A deployment must not mutate the checked-out source tree.  In particular,
+# do not remove tests, docs, scratch directories, or Git metadata: the target
+# may be a shared clone and those paths may belong to another local workflow.
+info "保留项目源码、测试、文档及 Git 元数据，不执行目录清理"
+ok "已跳过源码目录删除；如需精简请使用独立、明确的打包目录"
 
 # ============================================================
 # 完成

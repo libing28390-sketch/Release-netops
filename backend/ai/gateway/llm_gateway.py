@@ -29,6 +29,7 @@ from ai.gateway.exceptions import (
     AIInvalidRequestException,
     AIModelNotFoundException,
     AINetworkException,
+    AIOutputTruncatedException,
     AIProviderUnsupportedException,
     AIQuotaExceededException,
     AISecurityBlockedException,
@@ -610,6 +611,16 @@ class LLMGateway:
 
         target_info = self._get_model_details(target_model_id)
         self._authorize_model(target_info, tenant_id=tenant_id or "tenant-default", user_id=user_id, roles=roles)
+        if route_meta is not None:
+            route_meta.update({
+                "requested_model_id": requested_model_id,
+                "model_id": target_info.get("id"),
+                "provider_id": target_info.get("provider_id"),
+                "route_reason": route_reason,
+                "fallback_used": False,
+                "external_egress": False,
+                "request_id": request_id,
+            })
         tools, response_format, thinking, reasoning_effort = self._apply_model_capabilities(
             target_info, tools=tools, response_format=response_format, thinking=thinking, reasoning_effort=reasoning_effort
         )
@@ -759,6 +770,17 @@ class LLMGateway:
             for attempt in range(max_retries + 1):
                 try:
                     async with ai_limits.slot(provider_id=model_info["provider_id"], tenant_id=tenant, user_id=user_id):
+                        if route_meta is not None:
+                            # Model selection and security preparation are not
+                            # egress. Set this only immediately before the
+                            # provider adapter call so a circuit-open decision
+                            # remains distinguishable from an attempted call.
+                            route_meta.update({
+                                "external_egress": True,
+                                "status": "provider_attempted",
+                                "model_id": model_info.get("id"),
+                                "provider_id": model_info.get("provider_id"),
+                            })
                         res = await provider_inst.chat(
                             processed_messages,
                             model=model_info["model_code"],
@@ -783,7 +805,7 @@ class LLMGateway:
                     # surfaced immediately. Retrying a bad API key or an
                     # invalid model only turns a useful code into a circuit
                     # breaker result and needlessly delays the operator.
-                    if isinstance(exc, (AIAuthFailedException, AIInvalidRequestException, AIModelNotFoundException)):
+                    if isinstance(exc, (AIAuthFailedException, AIInvalidRequestException, AIModelNotFoundException, AIOutputTruncatedException)):
                         break
                     ai_limits.record_failure(model_info["provider_id"])
                     if attempt < max_retries:
@@ -822,6 +844,17 @@ class LLMGateway:
             result["route_reason"] = route_reason
             result["fallback_used"] = False
             result["token_source"] = "provider_reported" if int(result.get("input_tokens") or 0) > 0 else None
+            if route_meta is not None:
+                route_meta.update({
+                    "model_id": result.get("model_id"),
+                    "provider_id": result.get("provider_id"),
+                    "status": "success",
+                    "security_result": str(secure_payload.action.value),
+                    "latency_ms": latency_ms,
+                    "input_tokens": max(0, int(result.get("input_tokens") or 0)),
+                    "output_tokens": max(0, int(result.get("output_tokens") or 0)),
+                    "token_source": result.get("token_source"),
+                })
             if result.get("content"):
                 result["content"] = self.security_gateway.resolve_output(
                     result["content"], tenant_id=tenant, task_id=task
@@ -876,6 +909,19 @@ class LLMGateway:
                     result["route_reason"] = "scene_route_fallback"
                     result["fallback_used"] = True
                     result["token_source"] = "provider_reported" if int(result.get("input_tokens") or 0) > 0 else None
+                    if route_meta is not None:
+                        route_meta.update({
+                            "model_id": result.get("model_id"),
+                            "provider_id": result.get("provider_id"),
+                            "route_reason": "scene_route_fallback",
+                            "fallback_used": True,
+                            "status": "success",
+                            "security_result": str(secure_payload.action.value),
+                            "latency_ms": latency_ms,
+                            "input_tokens": max(0, int(result.get("input_tokens") or 0)),
+                            "output_tokens": max(0, int(result.get("output_tokens") or 0)),
+                            "token_source": result.get("token_source"),
+                        })
                     if result.get("content"):
                         result["content"] = self.security_gateway.resolve_output(
                             result["content"], tenant_id=tenant, task_id=task
@@ -914,6 +960,16 @@ class LLMGateway:
                 error_code=err_code,
                 error_message=err_msg
             )
+
+            if route_meta is not None:
+                route_meta.update({
+                    "status": "error",
+                    "security_result": str(secure_payload.action.value),
+                    "latency_ms": latency_ms,
+                    "input_tokens": 0,
+                    "output_tokens": 0,
+                    "error_code": str(err_code)[:64],
+                })
             
             if isinstance(primary_exc, AIException):
                 primary_exc.request_id = request_id
@@ -1182,7 +1238,7 @@ class LLMGateway:
                 except AIException as exc:
                     if isinstance(exc, (AICircuitOpenException, AIQuotaExceededException, AIBudgetExceededException)):
                         raise
-                    if isinstance(exc, (AIAuthFailedException, AIInvalidRequestException, AIModelNotFoundException)):
+                    if isinstance(exc, (AIAuthFailedException, AIInvalidRequestException, AIModelNotFoundException, AIOutputTruncatedException)):
                         raise
                     ai_limits.record_failure(candidate_info["provider_id"])
                     if attempt < max_retries and not emitted:

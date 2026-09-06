@@ -49,6 +49,13 @@ _ASSET_ANALYSIS_DIMENSION_MARKERS = (
     ("health", "\u5065\u5eb7", "\u5728\u7ebf", "\u544a\u8b66"),
 )
 
+_ALERT_MARKERS = ("告警", "报警", "alarm", "alert", "alerts", "notification")
+_ALERT_AGGREGATION_MARKERS = (
+    "数量", "多少", "统计", "汇总", "总数", "未恢复", "活动",
+    "新增", "最近24", "最近 24", "过去24", "过去 24", "last 24", "recent 24",
+    "unresolved", "active", "count", "how many",
+)
+
 _INTENT_RESPONSE_SCHEMA = json.dumps(
     IntentDecision.model_json_schema(),
     ensure_ascii=False,
@@ -75,7 +82,11 @@ _KNOWLEDGE_METADATA_KEYS = frozenset({
 
 _DANGEROUS_INTENT_MARKERS = (
     "shutdown", "reload", "reboot", "reset", "erase", "delete config",
+    "shutdown all", "bulk shutdown", "mass shutdown", "disable interface", "disable port",
+    "bulk change", "full network change",
     "下发配置", "修改配置", "变更配置", "删除配置", "清空配置", "重启设备", "重载设备",
+    "批量关闭", "批量启用", "批量开启", "批量变更", "批量操作", "批量下发",
+    "关闭端口", "关闭接口", "禁用端口", "禁用接口", "全网变更", "全网操作",
 )
 
 _EXECUTION_INTENT_MARKERS = (
@@ -114,6 +125,45 @@ def _safe_mapping(value: Any, allowed_keys: frozenset[str]) -> Dict[str, Any]:
         for key, item in value.items()
         if str(key).strip() in allowed_keys
     }
+
+
+_ROUTE_METADATA_KEYS = frozenset({
+    "request_id", "status", "security_result", "external_egress",
+    "provider_id", "model_id", "requested_model_id", "route_reason",
+    "fallback_used", "latency_ms", "input_tokens", "output_tokens",
+    "token_source", "error_code",
+})
+
+
+def _safe_route_metadata(value: Any) -> Dict[str, Any]:
+    """Project gateway routing state into a bounded, non-sensitive shape."""
+
+    if not isinstance(value, dict):
+        return {}
+    result: Dict[str, Any] = {}
+    for key in _ROUTE_METADATA_KEYS:
+        if key not in value:
+            continue
+        item = value[key]
+        if key in {"external_egress", "fallback_used"}:
+            result[key] = bool(item)
+        elif key in {"latency_ms", "input_tokens", "output_tokens"}:
+            try:
+                result[key] = max(0, int(item or 0))
+            except (TypeError, ValueError):
+                result[key] = 0
+        elif item not in (None, ""):
+            result[key] = str(item)[:128]
+    security = value.get("security")
+    if isinstance(security, dict):
+        safe_security = {
+            key: str(security[key])[:64]
+            for key in ("decision", "result_code")
+            if security.get(key) not in (None, "")
+        }
+        if safe_security:
+            result["security"] = safe_security
+    return result
 
 
 def _deterministic_identifier_intent(query: str) -> IntentDecision | None:
@@ -199,6 +249,22 @@ def is_asset_analysis_query(query: str) -> bool:
     )
 
     return has_inventory_scope and (has_aggregation or dimension_hits >= 2)
+
+
+def is_alert_aggregation_query(query: str) -> bool:
+    """Return whether an alert question asks for a local aggregate.
+
+    Aggregate alert counts are factual tenant data and do not need an LLM to
+    choose an operational scope.  Keep a plain "查询最近的告警" request on the
+    existing clarification path; it asks for records without identifying a
+    device, site, alert ID, or explicit aggregate.
+    """
+    normalized = " ".join((query or "").lower().split())
+    return bool(
+        normalized
+        and any(marker in normalized for marker in _ALERT_MARKERS)
+        and any(marker in normalized for marker in _ALERT_AGGREGATION_MARKERS)
+    )
 
 
 def extract_asset_filters(query: str) -> Dict[str, str]:
@@ -701,6 +767,32 @@ class IntentParser:
             return IntentRiskLevel.R2
         return IntentRiskLevel.R0
 
+    @classmethod
+    def _deterministic_high_risk_decision(cls, query: str) -> IntentDecision | None:
+        """Create a local confirmation decision before any provider call.
+
+        A dangerous operation must not be sent to a model merely to discover
+        that it needs confirmation.  Keep the semantic intent conservative
+        (``general_qa`` is the established safe fallback) while making the
+        safety class and confirmation boundary deterministic and local.
+        Explicit knowledge/configuration questions are checked first by
+        ``is_knowledge_query`` so a read-only request for documented syntax is
+        not mistaken for an execution request.
+        """
+
+        risk_level = cls._infer_risk_level(query)
+        if risk_level not in {IntentRiskLevel.R3, IntentRiskLevel.R4}:
+            return None
+        return IntentDecision(
+            intent=IntentType.GENERAL_QA,
+            filters={"keyword": str(query or "")[:512]},
+            confidence=1.0,
+            needs_clarification=True,
+            missing_fields=["confirmation"],
+            clarification_question="为避免误操作，请明确目标设备、变更内容，并确认是否需要执行。",
+            risk_level=risk_level,
+        )
+
     @staticmethod
     def _structured_fields(decision: IntentDecision) -> Dict[str, Any]:
         return {
@@ -768,6 +860,17 @@ class IntentParser:
                 add("symptom_or_metric")
         if any(marker in normalized for marker in ("执行", "下发", "修改", "变更", "apply", "execute", "commit")) and not cls._has_field(values, "action", "command", "request_type"):
             add("action")
+
+        # The model is not authoritative for the safety class.  A dangerous
+        # phrase must stay behind the local confirmation boundary even when a
+        # provider returns a generic intent or incorrectly labels it R0/R1.
+        inferred_risk = cls._infer_risk_level(query)
+        if inferred_risk in {IntentRiskLevel.R3, IntentRiskLevel.R4}:
+            add("confirmation")
+            decision = decision.model_copy(update={
+                "risk_level": inferred_risk,
+                "requires_confirmation": True,
+            })
 
         # Preserve a model-supplied question only when it is already specific
         # enough. Otherwise ask one primary question at a time; the full
@@ -850,6 +953,7 @@ class IntentParser:
         *,
         parse_status: str,
         error_code: Optional[str] = None,
+        route_meta: Optional[Dict[str, Any]] = None,
     ) -> Dict[str, Any]:
         risk_level = self._infer_risk_level(query)
         requires_clarification = risk_level == IntentRiskLevel.R3
@@ -876,6 +980,10 @@ class IntentParser:
             "message": self._failure_message(parse_status),
             "error_code": str(error_code or "AI_INTENT_PARSE_FAILED")[:64],
         }
+        safe_route = _safe_route_metadata(route_meta)
+        if safe_route:
+            result["provider_route"] = safe_route
+            result["provider_attempted"] = bool(safe_route.get("external_egress"))
         logger.warning(
             "Intent parsing degraded status=%s code=%s",
             str(parse_status)[:48],
@@ -888,6 +996,7 @@ class IntentParser:
         messages: list[Dict[str, str]],
         *,
         user_id: Optional[str],
+        route_meta: Optional[Dict[str, Any]] = None,
     ) -> Dict[str, Any]:
         return await llm_gateway.chat(
             scene="natural_query",
@@ -895,6 +1004,7 @@ class IntentParser:
             max_tokens=INTENT_MAX_OUTPUT_TOKENS,
             response_format={"type": "json_object"},
             user_id=user_id,
+            route_meta=route_meta,
         )
 
     async def parse_intent(self, query: str, user_id: Optional[str] = None) -> Dict[str, Any]:
@@ -902,6 +1012,14 @@ class IntentParser:
         if identifier_decision is not None:
             ai_metrics.intent_observed("deterministic", identifier_decision.intent.value)
             return self._legacy_result(query, identifier_decision, parse_status="deterministic")
+
+        if is_alert_aggregation_query(query):
+            decision = IntentDecision(
+                intent=IntentType.ALARM_SEARCH,
+                confidence=1.0,
+            )
+            ai_metrics.intent_observed("deterministic", decision.intent.value)
+            return self._legacy_result(query, decision, parse_status="deterministic")
 
         if is_asset_analysis_query(query):
             decision = IntentDecision(
@@ -922,6 +1040,14 @@ class IntentParser:
             )
             ai_metrics.intent_observed("deterministic", decision.intent.value)
             return self._legacy_result(query, decision, parse_status="deterministic")
+
+        # Never ask a provider to classify an explicit dangerous operation.
+        # The local policy gate is authoritative until the user completes an
+        # independent confirmation flow.
+        high_risk_decision = self._deterministic_high_risk_decision(query)
+        if high_risk_decision is not None:
+            ai_metrics.intent_observed("deterministic", high_risk_decision.intent.value)
+            return self._legacy_result(query, high_risk_decision, parse_status="deterministic")
 
         sys_prompt = (
             "You are an intent parser for Nexora Network Operations. "
@@ -949,13 +1075,19 @@ class IntentParser:
             {"role": "system", "content": sys_prompt},
             {"role": "user", "content": f"User Query: {query}"},
         ]
+        route_meta: Dict[str, Any] = {}
 
         try:
-            response = await self._chat_intent(messages, user_id=user_id)
+            response = await self._chat_intent(messages, user_id=user_id, route_meta=route_meta)
         except Exception as error:
             code = self._error_code(error)
             ai_metrics.intent_observed("provider_error", "general_qa")
-            return self._safe_fallback(query, parse_status="provider_error", error_code=code)
+            return self._safe_fallback(
+                query,
+                parse_status="provider_error",
+                error_code=code,
+                route_meta=route_meta,
+            )
 
         try:
             content = response.get("content", "") if isinstance(response, dict) else ""
@@ -965,7 +1097,7 @@ class IntentParser:
             retry_messages = [dict(message) for message in messages]
             retry_messages.append({"role": "user", "content": self._validation_feedback(error)})
             try:
-                retry_response = await self._chat_intent(retry_messages, user_id=user_id)
+                retry_response = await self._chat_intent(retry_messages, user_id=user_id, route_meta=route_meta)
                 retry_content = retry_response.get("content", "") if isinstance(retry_response, dict) else ""
                 decision = self._apply_clarification_policy(query, self._parse_decision(retry_content))
             except (ValidationError, ValueError, TypeError) as retry_error:
@@ -974,6 +1106,7 @@ class IntentParser:
                     query,
                     parse_status="schema_retry_failed",
                     error_code=self._error_code(retry_error),
+                    route_meta=route_meta,
                 )
             except Exception as retry_error:
                 ai_metrics.intent_observed("provider_error", "general_qa")
@@ -981,6 +1114,7 @@ class IntentParser:
                     query,
                     parse_status="schema_retry_provider_error",
                     error_code=self._error_code(retry_error),
+                    route_meta=route_meta,
                 )
             ai_metrics.intent_observed("schema_retry_succeeded", decision.intent.value)
             return self._legacy_result(query, decision, parse_status="schema_retry_succeeded")

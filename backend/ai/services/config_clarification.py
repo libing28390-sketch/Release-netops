@@ -16,6 +16,7 @@ import re
 from typing import Any, Mapping
 
 from ai.security.sanitizer import sanitize_text
+from ai.services.knowledge_metadata import canonical_cli_platform
 
 
 _CHANGE_MARKERS = (
@@ -165,7 +166,14 @@ def _platform_options(*, vendor: str, resolution: Mapping[str, Any]) -> list[dic
     options: list[dict[str, str]] = []
     seen: set[str] = set()
     for candidate in candidates:
-        value = _text(candidate, 96)
+        # Product resolver candidates are rich internal records.  Only the
+        # reviewed platform scalar may cross into a user-visible option; never
+        # stringify the whole mapping (it can contain tenant/model metadata).
+        if isinstance(candidate, Mapping):
+            candidate = candidate.get("cli_platform")
+        if not isinstance(candidate, str):
+            continue
+        value = canonical_cli_platform(_text(candidate, 96))
         if not value or value in seen:
             continue
         seen.add(value)

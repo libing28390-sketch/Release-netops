@@ -6,9 +6,15 @@ PG runtime.
 """
 
 import asyncio
+from datetime import datetime, timedelta, timezone
 
-from ai.services.intent_parser import extract_asset_filters, intent_parser, is_asset_analysis_query
-from ai.services.natural_query import render_asset_analysis
+from ai.services.intent_parser import (
+    extract_asset_filters,
+    intent_parser,
+    is_alert_aggregation_query,
+    is_asset_analysis_query,
+)
+from ai.services.natural_query import natural_query_service, render_alert_analysis, render_asset_analysis
 
 
 def test_inventory_distribution_query_uses_deterministic_intent():
@@ -27,6 +33,97 @@ def test_inventory_count_query_does_not_depend_on_llm_intent_parsing():
     assert is_asset_analysis_query(query) is True
     intent = asyncio.run(intent_parser.parse_intent(query))
     assert intent["intent"] == "asset_analysis"
+
+
+def test_alert_aggregate_query_uses_deterministic_intent(monkeypatch):
+    query = "当前未恢复告警数量和最近24小时新增告警"
+
+    async def forbidden_chat(*args, **kwargs):
+        raise AssertionError("alert aggregate intent must not call the cloud parser")
+
+    monkeypatch.setattr("ai.services.intent_parser.llm_gateway.chat", forbidden_chat)
+
+    assert is_alert_aggregation_query(query) is True
+    intent = asyncio.run(intent_parser.parse_intent(query))
+    assert intent["intent"] == "alarm_search"
+    assert intent["parse_status"] == "deterministic"
+    assert intent["needs_clarification"] is False
+
+
+def test_plain_recent_alert_request_still_requires_scope():
+    assert is_alert_aggregation_query("查询最近的告警") is False
+
+
+def test_rendered_alert_report_is_metadata_only():
+    report = render_alert_analysis(
+        "password=NeverEchoThis 查询告警",
+        {
+            "alerts": {
+                "total_count": 2,
+                "active_count": 1,
+                "recent_24h_count": 2,
+                "active_by_severity": {"critical": 1},
+                "recent_24h_by_severity": {"critical": 1, "warning": 1},
+            },
+        },
+    )
+
+    assert "当前未恢复告警：**1** 条" in report
+    assert "最近 24 小时新增告警：**2** 条" in report
+    assert "NeverEchoThis" not in report
+    assert "password" not in report
+
+
+def test_alert_aggregation_is_tenant_scoped_and_keeps_records_out_of_result(isolated_db):
+    from database import get_db_connection
+
+    connection = get_db_connection()
+    now = datetime.now(timezone.utc).replace(microsecond=0)
+    recent = now - timedelta(hours=2)
+    old = now - timedelta(days=3)
+    try:
+        connection.executemany(
+            "INSERT INTO devices (id, hostname, tenant_id, site) VALUES (?, ?, ?, ?)",
+            [
+                ("alert-device-a", "edge-a", "tenant-a", "HQ"),
+                ("alert-device-b", "edge-b", "tenant-b", "HQ"),
+            ],
+        )
+        connection.executemany(
+            """
+            INSERT INTO alert_events
+                (id, dedupe_key, source, severity, title, message, device_id,
+                 created_at, resolved_at, workflow_status)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            """,
+            [
+                ("alert-a-active", "key-a-active", "test", "critical", "down", "x", "alert-device-a", recent.isoformat(), None, "open"),
+                ("alert-a-resolved", "key-a-resolved", "test", "warning", "recovered", "x", "alert-device-a", recent.isoformat(), (recent + timedelta(minutes=10)).isoformat(), "resolved"),
+                ("alert-a-old", "key-a-old", "test", "major", "old", "x", "alert-device-a", old.isoformat(), None, "open"),
+                ("alert-b-active", "key-b-active", "test", "critical", "other", "x", "alert-device-b", recent.isoformat(), None, "open"),
+            ],
+        )
+        connection.commit()
+    finally:
+        connection.close()
+
+    result = asyncio.run(
+        natural_query_service.execute_alert_analysis(
+            "当前未恢复告警数量和最近24小时新增告警",
+            tenant_id="tenant-a",
+        )
+    )
+
+    assert result["matched_count"] == 3
+    assert result["data"] == []
+    assert result["analysis"]["alerts"] == {
+        "total_count": 3,
+        "active_count": 2,
+        "recent_24h_count": 2,
+        "active_by_severity": {"critical": 1, "major": 1},
+        "recent_24h_by_severity": {"critical": 1, "warning": 1},
+    }
+    assert "alert-device-b" not in result["summary"]
 
 
 def test_link_aggregation_configuration_is_not_asset_analysis():

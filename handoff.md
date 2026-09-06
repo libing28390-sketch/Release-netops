@@ -1,15 +1,74 @@
 # Nexora AI/RAG 整改与生产验收交接记录
 
-- 更新时间：2026-09-06（远端门禁与 UAT-04 增量已完成，真实运行态/完整 UAT/生产发布仍保持 HOLD）
-- 交接状态：`IN PROGRESS — 50-ANCHOR SIGNED / RELEASE HOLD`
+- 更新时间：2026-09-06（已继续本地修复、前端交互调整与当前工作区运行态复测；完整浏览器 UAT 已完成 38/38 条逐案例签署，真实依赖与生产发布仍保持 HOLD）
+- 交接状态：`IN PROGRESS — LOCAL FIXES VALIDATED / CURRENT WORKSPACE UAT INCREMENTAL PASS / RELEASE HOLD`
 - 主任务清单：[plan_20260905_2257_01_AI发布剩余任务清单.md](docs/plans/plan_20260905_2257_01_AI发布剩余任务清单.md)
 - 当前结论：`HOLD — NOT A RELEASE CANDIDATE`
-- 当前状态：50-anchor 已完成用户明确授权的批次签字并切换到新的冻结 v3，标准/隔离质量门禁均通过；400 条官方来源自动评测、远端 small/release/隔离 PostgreSQL 门禁和 `UAT-HUA-VLAN-LOCAL-01` 浏览器复测也已通过。真实 Sidecar、完整 UAT、生产迁移/回滚、Release Candidate 与审批等剩余项仍明确列为阻断，不代表生产完成或已发布。
+- 当前状态：50-anchor 已完成用户明确授权的批次签字并切换到新的冻结 v3，标准/隔离质量门禁均通过；400 条官方来源自动评测、远端 small/release/隔离 PostgreSQL 门禁、`UAT-HUA-VLAN-LOCAL-01` 浏览器复测以及完整浏览器 UAT-01/02/03 共 38/38 条人工签署均已完成，UAT-05 字段已收口。真实 Sidecar、Provider live failure、生产迁移/回滚、Release Candidate 与审批等剩余项仍明确列为阻断，不代表生产完成或已发布。
 - 清单勾选快照：原记录为 `96/164 = 58.5%`；本轮新增的是代码/证据修复，未将尚无验收证据的条目提前勾选，不能把该历史比例当作本轮完成率。
-- 工作区状态：当前本地与远端 `main` 均为 `073c5ea570fc20a6b49a6fe58730beeaa5da2dfd`；本轮代码/测试修复已推送。临时 `codex/ci-contract-fixes` 分支引用已清理，当前长期分支只有 `main`。用户原有的 `dist/index.html`、评测 manifest、开发脚本及其他未提交变更已保留，接续工作必须保留它们，不要执行 reset、checkout 或清理操作。
+- 工作区状态：当前本地与远端 `main` 均为 `94c32c423f771d7ca6deae4aeef41c5a6c5702a7`；2026-09-06 平台候选脱敏、告警本地聚合、Ubuntu 源码清理和 Copilot 前端时间/操作栏调整仍是本地未提交变更，未 push；此前已批准的代码/测试修复仍在该基线。临时 `codex/ci-contract-fixes` 分支引用已清理，当前长期分支只有 `main`。用户原有的 `dist/index.html`、评测 manifest、开发脚本及其他未提交变更已保留，接续工作必须保留它们，不要执行 reset、checkout 或清理操作。
 - 当前接手点：代码修复和自动化闭环已完成一轮，真实 V200 浏览器回归已通过，Cisco HSRP 官方模板已通过 m0203 迁移并投影到 PostgreSQL，Cisco Catalyst 3850/H3C S6850 官方产品范围已补齐，DLP 流式边界与锐捷官方来源建议已补测；本轮同时修复了 H3C S6850 配置误路由到资产分析、泛化 `Comware` 过滤排除官方 `Comware 7` 文档，以及 Cisco 显式 IOS-XE/NX-OS 平台未映射的问题，实时 S6850 复测已返回 1 个官方本地知识文档且未外发。随后新增并记录 R3 高风险澄清与未登记平台澄清两条浏览器边界证据，均未执行设备操作、未外发；并新增 PostgreSQL 迁移失败事务回滚与 Kill Switch 恢复 legacy 的隔离回归证据。最新增量修复了旧通用高风险澄清状态拦截显式只读知识请求、以及“不要执行”被误判为配置变更的问题；同时将 `port-security/端口安全` 独立为 `port_security/security`，避免端口安全查询被无关的 MAC/ARP、STP、BGP 或 Trunk 文档污染；并将混合 `VLAN + Access` 意图稳定收敛到 `access_port`，真实浏览器复测命中 Huawei VRP Access-port 官方模板。当前已生成 [50 条 Gold 人工审核工作表](docs/knowledge-engine/eval/eval-golden-anchors-50-review-worksheet.md) 和 [400 条评测接收模板](docs/knowledge-engine/eval/eval-golden-400-review-intake.md)，400 条数据已切换为官方 URL 支撑的自动评测契约，不要求人工评审。m0204～m0208 已随配套代码进入本地 `main`，严格迁移计划显示已发现并应用至 208，数据库当前 `pending=()`、`unknown=()`、`name_drift=()` 且 `SAFE_STRICT=True`；`init_db()` 与 `npm run dev` 启动验证均通过。远端门禁与本次浏览器证据见 [AI 发布门禁与 UAT-04 walkthrough](docs/walkthrough/walkthrough_20260905_2357_01_AI发布门禁与UAT复测.md)，旧 v1、候选 v2 仍作为可追溯对比版本保留。
+- **最新操作记录（2026-09-06）：** 用户已恢复任务。本节记录本次本地修复、自动化验证和运行实例复测，优先于下面较早的 2026-09-05 快照和历史段落。
 
-## 当前交接摘要（权威，2026-09-05）
+## 2026-09-06 四厂商 UAT 签署闭环（16:26–16:29）
+
+- 已把原来只有 Markdown 字段、没有前端入口的 UAT 人工签署缺口补成可用流程：新增 m0209 `ai_uat_case_signoffs` 与 `ai_uat_case_signoff_events`，服务端保存审核人、签署时间、结论、备注、证据引用和每次变更历史。
+- 新增 `knowledge_uat` 读/看/签权限；签署接口只接受当前认证账号作为 reviewer，不接受客户端冒充审核人。`Release Manager` 和 `Administrator` 可签署，普通 Viewer/Operator 只能查看；租户范围由服务端约束。
+- 正确地址 `http://192.168.56.1:5400/ai/knowledge` 已在当前工作区运行态复测：知识库工作台出现“UAT 签署”入口，默认 UAT-01 显示 Huawei、Cisco、H3C、锐捷各 5 个，共 20 个案例；入口完成时的摘要为 `20 total / 0 signed / 20 pending`、门禁 `HOLD`，用户随后已在该页面完成 UAT-01 全部 20 条签署，最新结果见下一节。机器观察事实与人工结论分栏展示，页面没有一键全通过。
+- UAT-02 流程/边界和 UAT-03 安全负向案例也已纳入同一活动的可筛选目录；完整活动目录共 38 个案例。入口完成时所有案例初始保持 `pending`，本轮没有替用户伪造签署；UAT-01 的实际人工签署结果见下一节。
+- 后端 UAT/迁移/官方来源回归 `7 passed`；Knowledge 前端回归 `9 files / 18 passed`，`npm run lint` 与 `npm run build` 通过。旧的 5310/5400 直接启动进程已换成按项目标准的 `dev-backend`/Vite 运行方式，5310 路由已实际加载 m0209 和 UAT API。
+- 本轮未 push；当前发布结论仍为 `HOLD — NOT A RELEASE CANDIDATE`。完整浏览器 UAT 已收口，下一步转入真实组件、Provider live failure、生产迁移/回滚和 Release Candidate 门禁。
+
+## 2026-09-06 UAT-01 人工签署结果（16:35）
+
+- 用户已在 `http://192.168.56.1:5400/ai/knowledge` → “UAT 签署”中完成 UAT-01 全部 20 个案例的人工签署；页面复核摘要为 `20 total / 20 signed / 0 pending / 20 PASS`，门禁为 `PASS`。
+- 20 个签署记录均显示当前认证账号 `admin`，每条案例审计次数为 `1`；签署时间由服务端记录，未由客户端填写或伪造。UAT-HUA、UAT-CISCO、UAT-H3C、UAT-RUIJIE 各 5 条均为 `approved`。
+- 在本节记录时 UAT-02 已复核为 `13` 条待签署、UAT-03 已复核为 `5` 条待签署；随后用户已完成这两组案例的逐案例签署，最终状态见下方“完整浏览器 UAT 人工签署结果”。UAT-01 的完成不等于完整 UAT-001 或生产放行。
+- 本轮只改变 UAT 签署数据库中的人工结论和本地审计记录，未 push、未部署、未连接设备、未执行 CLI、未调用 Provider；发布结论仍为 `HOLD`。
+
+## 2026-09-06 完整浏览器 UAT 人工签署结果（16:46–16:47）
+
+- 用户已在 `http://192.168.56.1:5400/ai/knowledge` → “UAT 签署”中完成剩余 UAT-02 和 UAT-03 的逐案例签署；服务端页面复核结果为：UAT-02 `13 total / 13 signed / 0 pending / 13 PASS`，UAT-03 `5 total / 5 signed / 0 pending / 5 PASS`。
+- 加上前一阶段已完成的 UAT-01 `20/20 PASS`，当前浏览器活动共 `38/38` 条已签署、`38 PASS / 0 pending`；每条案例页面均显示当前认证账号 `admin` 和服务端生成的审计时间，审计次数为 `1`。
+- UAT-03 的五条安全负向案例均保持机器观察事实：未发生外部调用、未连接设备、未执行 CLI。该结果完成完整浏览器 UAT-001/UAT-05 的当前案例签署闭环，但不替代 RUNTIME-04 的真实 Provider 故障注入矩阵。
+- 本次只更新本地 UAT 签署数据库和本地交接/评测记录，未 push、未部署、未执行设备操作；发布结论仍为 `HOLD`。
+
+## 2026-09-06 Provider 故障矩阵与意图元数据复测（13:41–13:49）
+
+- 已在已登录 Chrome 的 `http://192.168.56.1:5400/ai/copilot` 完成隔离 Provider 故障矩阵：429、HTTP 408 连接超时合约、客户端读取超时、熔断开放和恢复后正常 Provider 回答均已观察。
+- 429/连接超时/读取超时请求均显示已通过安全网关调用、随后安全回退且未执行设备操作；熔断窗口内的下一请求显示未发生外部调用，后台没有新的 Provider HTTP 请求；恢复请求显示实际临时模型、Provider 生成内容和 Token `3/4`。
+- 修复了意图解析失败路径固定输出 `external_egress=false` 的展示/审计元数据缺陷：现在只在 Provider adapter 调用即将开始时标记外发，并限制为有界路由字段，不回传错误原文、Provider 响应体或凭据。聚焦回归 `39 passed in 22.49s`。
+- 详细脱敏记录见 [Provider 故障与恢复矩阵现场观测](docs/knowledge-engine/eval/eval-browser-provider-fault-matrix-20260906.md)，四厂商 20 案例仍见 [浏览器 UAT 脱敏矩阵](docs/knowledge-engine/eval/eval-browser-uat-live-20260906.md)。
+- 以上是 `reviewer_type=automated_observation`、`observed_by=Codex` 的 Provider 现场证据，不能冒充用户或发布负责人的人工签名；该 Provider 复测发生在完整 UAT 签署之前，最终 UAT 状态以本文件“完整浏览器 UAT 人工签署结果”为准：38/38 已完成，发布结论仍为 `HOLD`。
+- 本轮未 push、未部署、未连接真实设备、未执行 CLI、未改动外部 Provider；收尾已禁用临时故障 Provider/模型、移除临时用户模型偏好、恢复安全策略白名单为 `deepseek` 并停止本机故障桩，原有会话和消息 provenance 未删除。
+
+## 最新交接更新（2026-09-06，恢复后增量修复与复测）
+
+- **当前结论仍为：`HOLD — NOT A RELEASE CANDIDATE`。** 本轮没有 push、部署、生产写入、数据库迁移、设备连接或 CLI 执行。
+- **Git 状态：** 本地 `main` 与 `origin/main` 均指向 `94c32c423f771d7ca6deae4aeef41c5a6c5702a7`；本轮新增/修改的 UAT 证据仍是本地工作区变更，未提交、未推送。用户已明确要求后续只有在其明确同意后才能 push；接手时不得自行 push。
+- **浏览器 UAT-01：** Huawei、Cisco、H3C、锐捷各 5 个，共 20 个案例已在已登录 Chrome 会话完成终态观察。18 个本地知识命中，2 个在明确暴露本地无精确文档后经 Security Gateway 生成通用参考；20 个案例均未执行 CLI。
+- **浏览器 UAT-02（历史旧实例观察）：** 已触达厂商/平台切换、澄清、修改、取消、显式 no-match、知识引用、资产、告警、IP/MAC、接口 Down 排障和平台冲突；上一实例的告警与平台候选缺陷已在本节后面的当前工作区复测中重新验证，历史问题不再作为当前运行态结论。
+- **本地增量修复：** `config_clarification` 现在只把候选记录中的规范化 `cli_platform` 标量投影到用户界面；告警数量/未恢复/最近 24 小时新增请求新增 PostgreSQL 租户范围内的确定性只读聚合，非流式和流式 Assistant 路径均强制 `local_operation`、`external_egress=false`，不把告警明细放入模型上下文；`deploy-ubuntu.sh` 已移除删除源码、测试、文档和草稿目录的清理动作。
+- **源码保留审计：** 未发现应用运行路径会按日或按任务删除 Git clone 源；LibreNMS 集成只在受控目录执行 clone/pull，临时文件清理由临时目录范围限制。已确认此前 Ubuntu 部署脚本的源码清理才是会影响目标 checkout 的实际风险，现已移除；脚本中 `git reset --hard origin/main` 仍可能覆盖同一 checkout 的未提交改动，尚未改动，需单独审批。
+- **本地验证结果：** 定向修复回归 `22 passed`；修复后 AI 全量复跑 `563 passed in 243.19s`；PostgreSQL-only 为 `0 violation(s)`；`npm run lint`/`tsc --noEmit` 通过；Git Bash `bash -n deploy-ubuntu.sh` 通过；`git diff --check` 通过。上述结果均为本地工作区证据，不代表远端运行实例已更新。
+- **运行实例复测（历史）：** 在当前工作区服务重启前，已登录浏览器连接的实例仍返回旧的序列化平台候选对象，告警聚合仍返回旧的“意图识别服务不可用”回退；该观察确认当时版本不一致，当前结果见下面“当前工作区运行态复测”。
+- **运行态诊断补充：** 最近一次 Copilot Trace 是正常 SSE 回包，不是前端网络错误；其元数据为 `Intent=GENERAL_QA`、`Scene=chat`、`route_model=null`、Provider/模型未上报，随后进入本地安全回退。健康接口返回 200、数据库为 connected，但页面当前路由模型显示 `unhealthy`。这与旧后端先调用意图 Provider 的路径一致；当前工作区版本对明确告警聚合请求应在意图解析前确定性路由到本地 PostgreSQL。
+- **Copilot 前端交互增量：** 消息列表现在为每条用户消息和助手消息显示本地化的完整日期、星期与时间（例如 `2026年9月6日星期日 12:10`）；新建消息保存完整 ISO `created_at`，旧版仅有时分的本地会话仍兼容显示。助手回答区已移除截图红框中的“重试本次问题”“编辑并发送上一条问题”“继续排查”三个操作；用户消息区已有的复制、编辑并发送、重新发送能力保留。新增时间格式与渲染回归测试，定向 `9 passed`，完整前端 `54 files / 198 passed`，`npm run lint`、`npm run build` 通过。
+- **正确地址浏览器复核：** 已在已登录 Chrome 的 `http://192.168.56.1:5400/ai/copilot` 重新检查工作区前端，页面实际显示消息日期时间，助手回答操作栏不再出现上述三个按钮；此前 `https://192.168.204.128/ai/copilot` 属于误用的另一运行实例，不能作为本次前端改动的验证地址。该复核只验证 UI 和本地开发运行态；UAT 后续已完成的签署状态见本文件较新的完整 UAT 记录。
+- **浏览器 UAT-03：** Prompt Injection、跨租户私有资产/拓扑/账密、凭据请求、未授权设备命令和高风险 R3 请求均在本地拦截或澄清；这些负向用例均未外发、未连接设备、未执行 CLI。该条是 Provider live failure 注入前的历史观察，当前 5/5 已由 `admin` 逐案例签署为 `PASS`；Provider 429、连接/读取超时、熔断/恢复仍由 RUNTIME-04 单独验收。
+- **浏览器 UAT-05：** 已新增 [2026-09-06 浏览器 UAT 脱敏矩阵](docs/knowledge-engine/eval/eval-browser-uat-live-20260906.md)，并在 [AI 发布门禁与 UAT walkthrough](docs/walkthrough/walkthrough_20260905_2357_01_AI发布门禁与UAT复测.md) 增加索引。记录包含逐案例终态、来源、风险/澄清、外发、CLI 和签署字段，不含原始问题、完整回答、凭据、API key、设备敏感标识；UAT-01/02/03 共 38/38 已落库完成。
+- **尚未关闭：** 真实 BGE/Docling/Langfuse、Provider resilience live failure、Citation trace/质量门槛、生产迁移/恢复/Kill Switch、Release Candidate 和正式审批。平台候选与告警已在当前工作区实例复测通过，完整浏览器 UAT 已收口，但不等于生产放行。
+- **用户操作约束：** 当前允许继续本地验证，但不自动部署、提交或 push；用户已明确要求只有其明确同意后才能 push。平台候选与告警两项已在当前工作区服务复测，若后续切换其他运行实例仍需重新观察；不把旧运行实例的失败静默改写为通过。
+
+### 当前工作区运行态复测（2026-09-06 13:01–13:03）
+
+- **服务与边界：** 使用当前工作区 `npm run dev`，已登录浏览器入口为 `http://192.168.56.1:5400/ai/copilot`；没有部署、生产写入、设备连接、CLI 执行或 push。
+- **平台冲突：** 新会话中的候选按钮只显示规范化 `Huawei VRP`、`Huawei YunShan V300`、`Huawei YunShan V600` 和 `display version` 标签；未出现租户、型号、产品对象或内部序列化字段。
+- **告警聚合：** 新会话中得到未恢复 `23` 条、最近 24 小时新增 `72` 条、范围总数 `412` 条；Trace 为 `Intent=alarm_search`、`execution_mode=local_operation`、`external_egress=false`、Token `0/0`、约 `7 ms`，并明确记录 PostgreSQL 聚合、未调用大模型改写。
+- **未确认 R3：** 新会话中得到“执行前安全确认 / 高风险 · 需确认 R3”；Trace 为 `execution_mode=local_clarification`、`external_egress=false`、`cli_executed=false`、Token `0/0`、约 `4 ms`。新增确定性高风险前置策略后，危险请求不再先调用意图 Provider；结构化意图回归 `25 passed`，四文件聚焦回归 `29 passed`，完整 `backend/tests/ai` 为 `565 passed in 232.34s`。
+- **状态解释：** 以上是当前工作区的增量 PASS 证据；随后完整浏览器 UAT-01/02/03 共 38/38 条已完成签署，UAT-05 字段已收口。Provider 429/超时/熔断恢复的真实外部验收、真实组件、生产迁移/回滚和 Release Candidate 仍是发布阻断。
+
+## 当前交接摘要（历史权威快照，2026-09-05；最新状态见上方 2026-09-06 更新）
 
 这份文件供下一位接手人直接判断“现在能否放行”。除明确标为“历史证据”的章节外，以本节和“当前发布阻塞项（以本节为准）”为准。
 
@@ -154,7 +213,7 @@
 
 - **远端 Actions：** 已完成并通过。Knowledge Engine Evaluation #12、Backend Pytest Check #319、Build and Sync to Release Repo #485 均以 `073c5ea570fc20a6b49a6fe58730beeaa5da2dfd` 执行；详细 run URL、Ubuntu/Windows 结果、artifact 摘要和 Node warning 见 walkthrough。
 - **真实运行依赖尚未全部验收：** BGE reranker、Docling、Langfuse 和纳入本轮范围的 Provider resilience 仍未完成；本地单元/集成测试不能替代真实 Sidecar ready、鉴权、超时、降级和观测证据。Qwen/Ollama 已移出本轮范围，不再作为当前阻断项；Docker/Windows/pgvector 运行态按用户要求暂记完成，后续由用户独立验证。
-- **完整 UAT-001 尚未完成：** 已有多组脱敏浏览器证据，且 `UAT-HUA-VLAN-LOCAL-01` 已修复并通过真实页面复测；仍缺完整场景矩阵的逐案例人工签署以及 UAT-01/02/03/05 的收口。
+- **完整浏览器 UAT-001：** 已完成。UAT-01/02/03 共 38/38 条案例均已逐案例签署为 `PASS`，UAT-04 的 `UAT-HUA-VLAN-LOCAL-01` 已通过真实页面复测，UAT-05 所需的终态、来源、风险、澄清、外发、CLI、命中文档和人工签署字段已收口；Provider 429/超时/熔断/恢复的真实外部验收仍归属于 RUNTIME-04，不能由 UAT 签署替代。
 - **生产迁移与回滚尚未执行：** 尚未在目标生产环境完成迁移、备份/恢复、回滚目标确认、Kill Switch 演练和数据一致性复核。
 - **Release Candidate 尚未形成：** 工作区仍 dirty，未生成经审查的 release candidate Git SHA、变更清单、回滚方案和正式审批记录；本地四厂商 ZIP 仍明确为 `test_only=true`、`production_eligible=false`，不能直接当生产知识包。
 
@@ -166,7 +225,7 @@
 
 1. 代码已推送并完成远端门禁；后续新增代码变更仍需按受影响 workflow 重新验证，并继续保存 run URL、commit SHA、环境版本和最终结果。
 2. 以当前 [v3 signed review](docs/knowledge-engine/eval/eval-anchors-50-v3-signed-review.json) 和标准/隔离 `50/50 PASS` 为 50-anchor 输入，不重新退回 v1，也不把 v2 当作默认门禁输入；400 条数据集继续按官方来源自动评测契约处理，不新增无必要人工签字要求。
-3. 继续补齐完整 UAT-001：保留已完成的脱敏证据，`UAT-HUA-VLAN-LOCAL-01` 已通过；继续逐案例记录本地命中、外发、CLI、风险和人工验收状态。
+3. 完整浏览器 UAT-001/UAT-05 已收口：保留 38/38 条逐案例签署、`UAT-HUA-VLAN-LOCAL-01` 和脱敏矩阵证据；不重复签署，转入真实运行依赖和 Provider live failure 证据。
 4. 在依赖可用的环境中完成 BGE reranker、Docling、Langfuse 和纳入本轮范围的 Provider resilience 运行态验收；Docker/Windows/pgvector 及迁移 104 已按用户要求暂记完成，后续由用户独立验证，不在本轮重复执行。Qwen/Ollama 不属于本轮范围。
 5. 完成目标生产环境的备份、迁移、健康检查、回滚/恢复和 Kill Switch 演练，生成可审计的 release candidate SHA、变更清单、回滚目标和正式审批记录。
 6. 只有远端 CI、真实依赖、完整 UAT、生产迁移/回滚、RC 和审批全部通过，才可将 readiness 从 HOLD 改为可发布。

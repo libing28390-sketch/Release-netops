@@ -125,6 +125,48 @@ def render_asset_analysis(query: str, analysis: Dict[str, Any]) -> str:
     return "\n".join(lines)
 
 
+def render_alert_analysis(query: str, analysis: Dict[str, Any]) -> str:
+    """Render tenant-scoped alert aggregates without exposing alert records."""
+    del query  # The raw question is not needed in the factual local report.
+    alerts = analysis.get("alerts") if isinstance(analysis.get("alerts"), dict) else {}
+    total = int(alerts.get("total_count", 0) or 0)
+    active = int(alerts.get("active_count", 0) or 0)
+    recent = int(alerts.get("recent_24h_count", 0) or 0)
+    lines = [
+        "## Nexora 告警查询结果",
+        "",
+        "> 数据来源：PostgreSQL `alert_events` 与租户范围内的 `devices` 只读快照；不调用外部模型。",
+        "",
+        f"- 当前未恢复告警：**{active}** 条。",
+        f"- 最近 24 小时新增告警：**{recent}** 条。",
+        f"- 当前查询范围内告警总数：**{total}** 条。",
+    ]
+
+    active_by_severity = alerts.get("active_by_severity") if isinstance(alerts.get("active_by_severity"), dict) else {}
+    recent_by_severity = alerts.get("recent_24h_by_severity") if isinstance(alerts.get("recent_24h_by_severity"), dict) else {}
+    if active_by_severity:
+        lines.extend(["", *_bucket_table("当前未恢复告警严重级别", "严重级别", active_by_severity, active)])
+    if recent_by_severity:
+        lines.extend(["", *_bucket_table("最近 24 小时新增告警严重级别", "严重级别", recent_by_severity, recent)])
+    if not total:
+        lines.extend(["", "当前租户和请求范围内没有匹配的告警记录。"])
+    lines.extend([
+        "",
+        "> 以上为系统按实际告警字段聚合的只读统计；未查询到的告警不会被补写或推断。",
+    ])
+    return "\n".join(lines)
+
+
+def _relative_alert_start(value: Any) -> Optional[datetime]:
+    """Parse only an unambiguous bounded relative alert window."""
+    normalized = " ".join(str(value or "").lower().split())
+    if not normalized:
+        return None
+    if normalized in {"24h", "last_24h", "recent_24h", "最近24小时", "最近 24 小时", "过去24小时", "过去 24 小时"}:
+        return datetime.now(timezone.utc) - timedelta(hours=24)
+    return None
+
+
 class NaturalQueryService:
     """Safely executes structured asset queries based on natural language intent."""
 
@@ -329,6 +371,124 @@ class NaturalQueryService:
             "citations": [
                 {"document": "Nexora CMDB devices", "document_id": "devices", "section": "asset aggregation", "trust": "system"},
                 {"document": "Nexora alert events", "document_id": "alert_events", "section": "health and alerts", "trust": "system"},
+            ],
+        }
+
+    async def execute_alert_analysis(
+        self,
+        query: str,
+        filters: Optional[Dict[str, Any]] = None,
+        tenant_id: Optional[str] = None,
+    ) -> Dict[str, Any]:
+        """Build a deterministic, tenant-scoped alert aggregate from PostgreSQL facts."""
+        filters = filters or {}
+        effective_tenant = tenant_id or "tenant-default"
+        conditions = ["(d.tenant_id = ? OR d.tenant_id IS NULL)"]
+        params: List[Any] = [effective_tenant]
+
+        alarm_id = _text(filters.get("alarm_id"))
+        if alarm_id:
+            conditions.append("a.id = ?")
+            params.append(alarm_id)
+
+        device_id = _text(filters.get("device_id"))
+        if device_id:
+            conditions.append("a.device_id = ?")
+            params.append(device_id)
+
+        device_identifier = _text(filters.get("device_identifier") or filters.get("device_name"))
+        if device_identifier and not device_id:
+            conditions.append("(d.id = ? OR LOWER(COALESCE(d.hostname, '')) = ?)")
+            params.extend([device_identifier, device_identifier.lower()])
+
+        vendor = _text(filters.get("vendor"))
+        if vendor:
+            conditions.append("LOWER(COALESCE(d.vendor, '')) LIKE ?")
+            params.append(f"%{vendor.lower()}%")
+
+        site_filter = _text(filters.get("site"))
+        if site_filter:
+            conditions.append("LOWER(COALESCE(s.site_name, s.site_code, d.site, d.site_id, '')) LIKE ?")
+            params.append(f"%{site_filter.lower()}%")
+
+        range_start = _relative_alert_start(filters.get("time_range"))
+        if range_start is not None:
+            conditions.append("a.created_at >= ?")
+            params.append(range_start.isoformat())
+
+        where_clause = " AND ".join(conditions)
+        alert_rows: List[Any] = []
+        try:
+            with get_db_connection() as conn:
+                alert_rows = conn.execute(
+                    f"""
+                    SELECT a.created_at, a.resolved_at, a.severity, a.device_id,
+                           a.workflow_status
+                    FROM alert_events a
+                    JOIN devices d ON d.id = a.device_id
+                    LEFT JOIN sites s ON s.id = d.site_id OR s.id = d.site
+                    WHERE {where_clause}
+                    ORDER BY a.created_at DESC
+                    """,
+                    tuple(params),
+                ).fetchall()
+        except Exception as exc:
+            logger.exception("Deterministic alert analysis failed")
+            error_analysis = {
+                "alerts": {
+                    "total_count": 0,
+                    "active_count": 0,
+                    "recent_24h_count": 0,
+                    "active_by_severity": {},
+                    "recent_24h_by_severity": {},
+                },
+                "error": "alert_read_failed",
+                "evidence": [],
+            }
+            return {
+                "query": query,
+                "matched_count": 0,
+                "data": [],
+                "analysis": error_analysis,
+                "summary": "## Nexora 告警查询失败\n\n只读告警数据读取失败，本次未生成告警统计。",
+                "error": str(exc),
+            }
+
+        recent_cutoff = datetime.now(timezone.utc) - timedelta(hours=24)
+        active_alerts = [row for row in alert_rows if not _text(_row_value(row, "resolved_at"))]
+        recent_alerts = [
+            row
+            for row in alert_rows
+            if (created_at := _parse_timestamp(_row_value(row, "created_at"))) is not None
+            and created_at >= recent_cutoff
+        ]
+        analysis = {
+            "alerts": {
+                "total_count": len(alert_rows),
+                "active_count": len(active_alerts),
+                "recent_24h_count": len(recent_alerts),
+                "active_by_severity": _count_values([
+                    _text(_row_value(row, "severity"), "(empty)") for row in active_alerts
+                ]),
+                "recent_24h_by_severity": _count_values([
+                    _text(_row_value(row, "severity"), "(empty)") for row in recent_alerts
+                ]),
+            },
+            "evidence": [
+                {"source_type": "alert_events", "source_id": "alert_events", "record_count": len(alert_rows)},
+            ],
+        }
+        safe_analysis = sanitize_data(analysis)
+        return {
+            "query": query,
+            "matched_count": len(alert_rows),
+            # The alert route is aggregate-only; do not return alert/device
+            # records to the Assistant or to a provider context.
+            "data": [],
+            "analysis": safe_analysis,
+            "summary": render_alert_analysis(query, safe_analysis),
+            "citations": [
+                {"document": "Nexora alert events", "document_id": "alert_events", "section": "alert aggregation", "trust": "system"},
             ],
         }
 

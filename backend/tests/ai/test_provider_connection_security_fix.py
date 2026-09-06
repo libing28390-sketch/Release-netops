@@ -60,6 +60,7 @@ async def test_provider_probe_declares_public_classification(monkeypatch):
     assert result.success is True
     assert result.model_tested == "deepseek-v4-flash"
     assert probe.call_args.kwargs["data_classification"] == "PUBLIC"
+    assert probe.call_args.kwargs["max_tokens"] == 64
     assert probe.call_args.kwargs["messages"] == [{"role": "user", "content": "Reply with one short word: ok"}]
 
 

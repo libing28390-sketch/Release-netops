@@ -70,6 +70,7 @@ from api.platform_registry import router as platform_registry_router, device_reg
 from api.knowledge_sources import router as knowledge_sources_router
 from api.knowledge_contract import router as knowledge_contract_router
 from api.knowledge_evaluation import router as knowledge_evaluation_router
+from api.knowledge_uat import router as knowledge_uat_router
 from api.knowledge_traces import router as knowledge_traces_router
 from api.knowledge_documents import router as knowledge_documents_router
 from api.knowledge_catalog import router as knowledge_catalog_router
@@ -650,6 +651,7 @@ app.include_router(platform_registry_router, prefix="/api")
 app.include_router(knowledge_sources_router, prefix="/api")
 app.include_router(knowledge_contract_router, prefix="/api")
 app.include_router(knowledge_evaluation_router, prefix="/api")
+app.include_router(knowledge_uat_router, prefix="/api")
 app.include_router(knowledge_traces_router, prefix="/api")
 app.include_router(knowledge_documents_router, prefix="/api")
 app.include_router(knowledge_catalog_router, prefix="/api")

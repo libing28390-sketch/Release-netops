@@ -41,6 +41,17 @@ export interface AIProviderPage {
   };
 }
 
+export interface AIProviderDeletePreview {
+  provider_id: string;
+  provider_name: string;
+  enabled: boolean;
+  model_count: number;
+  models: Array<{ id: string; name: string; enabled: boolean }>;
+  route_count: number;
+  routes: Array<{ scene: string; model_id: string; fallback_model_id?: string | null }>;
+  can_delete: boolean;
+}
+
 export interface AIModel {
   id: string;
   provider_id: string;
@@ -67,6 +78,16 @@ export interface AIModel {
   last_latency_ms?: number | null;
   last_success_at?: string | null;
   last_error_code?: string | null;
+}
+
+export interface AIModelDeletePreview {
+  model_id: string;
+  model_name: string;
+  model_code: string;
+  route_count: number;
+  routes: Array<{ scene: string; model_id: string; fallback_model_id?: string | null }>;
+  message_count: number;
+  can_delete: boolean;
 }
 
 export interface AIModelRoute {
@@ -313,8 +334,8 @@ export async function invalidateAIProviderKey(id: string, reason?: string): Prom
   return apiRequest<AIProvider>(`/api/ai/providers/${id}/invalidate-key`, { method: 'POST', body: JSON.stringify({ reason }) });
 }
 
-export async function getAIProviderDeletePreview(id: string): Promise<any> {
-  return apiRequest(`/api/ai/providers/${id}/delete-preview`);
+export async function getAIProviderDeletePreview(id: string): Promise<AIProviderDeletePreview> {
+  return apiRequest<AIProviderDeletePreview>(`/api/ai/providers/${id}/delete-preview`);
 }
 
 export interface AIPlatformMetrics {
@@ -527,6 +548,10 @@ export async function deleteAIModel(id: string): Promise<void> {
   return apiRequest<void>(`/api/ai/models/${id}`, {
     method: 'DELETE',
   });
+}
+
+export async function getAIModelDeletePreview(id: string): Promise<AIModelDeletePreview> {
+  return apiRequest<AIModelDeletePreview>(`/api/ai/models/${id}/delete-preview`);
 }
 
 export async function getAIModelRoutes(): Promise<AIModelRoute[]> {
@@ -1321,6 +1346,110 @@ export async function runKnowledgeEvaluation(suite = 'v1_baseline_postgresql'): 
     body: JSON.stringify({ suite }),
   });
   return payload.data;
+}
+
+export type KnowledgeUATSignoffStatus = 'pending' | 'approved' | 'partial' | 'rejected';
+export type KnowledgeUATDecision = Exclude<KnowledgeUATSignoffStatus, 'pending'>;
+
+export interface KnowledgeUATCase {
+  case_id: string;
+  suite: 'UAT-01' | 'UAT-02' | 'UAT-03' | string;
+  vendor: string;
+  scope_summary: string;
+  observed_status: string;
+  source_summary: string;
+  risk_level: string;
+  clarification_required: boolean;
+  external_egress: boolean;
+  cli_executed: boolean;
+  observation_note?: string;
+  evidence_ref: string;
+  signoff_status: KnowledgeUATSignoffStatus;
+  reviewer_id?: string | null;
+  reviewer_name?: string | null;
+  signed_at?: string | null;
+  comment: string;
+  signoff_evidence_ref: string;
+  history_count: number;
+}
+
+export interface KnowledgeUATSummary {
+  total: number;
+  signed: number;
+  pending: number;
+  approved: number;
+  partial: number;
+  rejected: number;
+  overall_status: 'PASS' | 'PARTIAL' | 'FAIL' | 'PENDING_HUMAN_REVIEW' | 'NOT_READY' | string;
+  release_gate: 'PASS' | 'HOLD' | string;
+}
+
+export interface KnowledgeUATCampaign {
+  campaign_id: string;
+  campaign_label: string;
+  evidence_ref: string;
+  items: KnowledgeUATCase[];
+  total: number;
+  summary: KnowledgeUATSummary;
+  campaign_summary: KnowledgeUATSummary;
+  suites: Array<{ id: string; label: string; summary: KnowledgeUATSummary }>;
+  vendors: string[];
+  can_sign: boolean;
+  current_reviewer: { id: string; name: string };
+}
+
+export interface KnowledgeUATSignoffResult {
+  item: KnowledgeUATCase;
+  summary: KnowledgeUATSummary;
+  campaign_summary: KnowledgeUATSummary;
+  audit_event_id: string;
+}
+
+export interface KnowledgeUATSignoffEvent {
+  id: string;
+  case_id: string;
+  previous_status: KnowledgeUATSignoffStatus;
+  new_status: KnowledgeUATSignoffStatus;
+  reviewer_id: string;
+  reviewer_name: string;
+  comment: string;
+  evidence_ref: string;
+  created_at: string;
+}
+
+export async function getKnowledgeUATCampaign(query: {
+  campaignId?: string;
+  suite?: string;
+  vendor?: string;
+  status?: KnowledgeUATSignoffStatus | 'all';
+  search?: string;
+} = {}): Promise<KnowledgeUATCampaign> {
+  const params = new URLSearchParams({ campaign_id: query.campaignId || 'browser-uat-20260906' });
+  if (query.suite) params.set('suite', query.suite);
+  if (query.vendor) params.set('vendor', query.vendor);
+  if (query.status && query.status !== 'all') params.set('status', query.status);
+  if (query.search?.trim()) params.set('search', query.search.trim());
+  const payload = await apiRequest<KnowledgeSourceEnvelope<KnowledgeUATCampaign>>(`/api/knowledge/uat?${params.toString()}`);
+  return payload.data;
+}
+
+export async function signKnowledgeUATCase(
+  campaignId: string,
+  caseId: string,
+  payload: { decision: KnowledgeUATDecision; comment?: string; evidence_ref?: string },
+): Promise<KnowledgeUATSignoffResult> {
+  const response = await apiRequest<KnowledgeSourceEnvelope<KnowledgeUATSignoffResult>>(
+    `/api/knowledge/uat/${encodeURIComponent(campaignId)}/cases/${encodeURIComponent(caseId)}/signoff`,
+    { method: 'POST', body: JSON.stringify(payload) },
+  );
+  return response.data;
+}
+
+export async function getKnowledgeUATCaseHistory(campaignId: string, caseId: string): Promise<KnowledgeUATSignoffEvent[]> {
+  const response = await apiRequest<KnowledgeSourceEnvelope<KnowledgeUATSignoffEvent[]>>(
+    `/api/knowledge/uat/${encodeURIComponent(campaignId)}/cases/${encodeURIComponent(caseId)}/history`,
+  );
+  return response.data || [];
 }
 
 export interface KnowledgeGold400FixtureBucket {

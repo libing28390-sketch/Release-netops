@@ -41,6 +41,7 @@ import { VENDOR_PLATFORMS } from '../../AssetManagement/constants';
 import SourceRegistryPanel from './SourceRegistryPanel';
 import RagEvaluationPanel from './RagEvaluationPanel';
 import RetrievalTracePanel from './RetrievalTracePanel';
+import UATSignoffPanel from './UATSignoffPanel';
 import IngestionJobsPanel from './IngestionJobsPanel';
 import OfficialSeedPanel from './OfficialSeedPanel';
 import KnowledgeAdminNavigation, { type KnowledgeAdminView } from './KnowledgeAdminNavigation';
@@ -1820,7 +1821,7 @@ export const KnowledgeManagementTab: React.FC = () => {
   return (
     <div className="w-full space-y-3 pb-8 font-sans">
       <KnowledgeAdminNavigation activeView={knowledgeAdminView} onChange={setKnowledgeAdminView} />
-      {knowledgeAdminView === 'sources' ? <SourceRegistryPanel /> : knowledgeAdminView === 'evaluation' ? <RagEvaluationPanel /> : knowledgeAdminView === 'traces' ? <RetrievalTracePanel /> : <React.Fragment>
+      {knowledgeAdminView === 'sources' ? <SourceRegistryPanel /> : knowledgeAdminView === 'uat' ? <UATSignoffPanel /> : knowledgeAdminView === 'evaluation' ? <RagEvaluationPanel /> : knowledgeAdminView === 'traces' ? <RetrievalTracePanel /> : <React.Fragment>
       <input
         ref={quickUploadInputRef}
         type="file"

@@ -1,7 +1,7 @@
 import React from 'react';
-import { Activity, BookOpen, Gauge, ShieldCheck, type LucideIcon } from 'lucide-react';
+import { Activity, BookOpen, ClipboardCheck, Gauge, ShieldCheck, type LucideIcon } from 'lucide-react';
 
-export type KnowledgeAdminView = 'documents' | 'sources' | 'evaluation' | 'traces';
+export type KnowledgeAdminView = 'documents' | 'sources' | 'uat' | 'evaluation' | 'traces';
 
 interface KnowledgeAdminNavigationProps {
   activeView: KnowledgeAdminView;
@@ -12,7 +12,7 @@ interface KnowledgeAdminViewOption {
   id: KnowledgeAdminView;
   title: string;
   englishTitle: string;
-  category: '日常管理' | '高级诊断';
+  category: '日常管理' | '发布验收' | '高级诊断';
   description: string;
   whenToUse: string;
   icon: LucideIcon;
@@ -36,6 +36,15 @@ const VIEW_OPTIONS: KnowledgeAdminViewOption[] = [
     description: '校验厂商官网并监控来源更新',
     whenToUse: '确认官方 URL 是否可信、手动刷新官网资料，或处理 Copilot 未命中的来源补充任务时使用。',
     icon: ShieldCheck,
+  },
+  {
+    id: 'uat',
+    title: 'UAT 签署',
+    englishTitle: 'Browser UAT',
+    category: '发布验收',
+    description: '逐案例记录浏览器验收结论并签署',
+    whenToUse: '完成四厂商和安全边界浏览器案例后，在当前登录账号下保存可审计的验收结论。',
+    icon: ClipboardCheck,
   },
   {
     id: 'evaluation',
@@ -86,7 +95,7 @@ export const KnowledgeAdminNavigation: React.FC<KnowledgeAdminNavigationProps> =
             >
               <span className={`inline-flex h-5 w-5 shrink-0 items-center justify-center rounded-md ${active ? 'bg-indigo-600 text-white' : 'bg-white text-slate-500 shadow-xs group-hover:text-indigo-600 dark:bg-slate-800 dark:text-slate-400'}`}><Icon className="h-3 w-3" /></span>
               <span className="truncate text-[11px]">{item.title}</span>
-              <span className={`hidden rounded-full px-1.5 py-0.5 text-[8px] font-semibold md:inline-flex ${item.category === '日常管理' ? 'bg-emerald-50 text-emerald-700 dark:bg-emerald-950/40 dark:text-emerald-300' : 'bg-violet-50 text-violet-700 dark:bg-violet-950/40 dark:text-violet-300'}`}>{item.category}</span>
+              <span className={`hidden rounded-full px-1.5 py-0.5 text-[8px] font-semibold md:inline-flex ${item.category === '日常管理' ? 'bg-emerald-50 text-emerald-700 dark:bg-emerald-950/40 dark:text-emerald-300' : item.category === '发布验收' ? 'bg-amber-50 text-amber-700 dark:bg-amber-950/40 dark:text-amber-300' : 'bg-violet-50 text-violet-700 dark:bg-violet-950/40 dark:text-violet-300'}`}>{item.category}</span>
             </button>
           );
         })}

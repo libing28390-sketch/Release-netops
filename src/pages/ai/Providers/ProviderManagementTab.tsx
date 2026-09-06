@@ -21,7 +21,7 @@ import {
   XCircle,
   type LucideIcon,
 } from 'lucide-react';
-import { getAIProvidersPage, createAIProvider, updateAIProvider, deleteAIProvider, getAIProviderDeletePreview, testAIProvider, AIProvider } from '../../../api/ai';
+import { getAIProvidersPage, createAIProvider, updateAIProvider, deleteAIProvider, getAIProviderDeletePreview, testAIProvider, AIProvider, AIProviderDeletePreview } from '../../../api/ai';
 import { useCoreApp } from '../../../contexts/AppDomainContext';
 import { ActionButton, ActionIconButton, ActionIconGroup, ActionLink } from '../../../components/ui/ActionIconButton';
 import Pagination from '../../../components/Pagination';
@@ -81,6 +81,16 @@ const MetricCard: React.FC<MetricCardProps> = ({ icon: Icon, label, value, helpe
 const getErrorMessage = (error: unknown, fallback: string) => (
   error instanceof Error && error.message ? error.message : fallback
 );
+
+const getProviderDeleteErrorMessage = (error: unknown, providerName: string, tx: AIAdminText) => {
+  if (error && typeof error === 'object' && 'code' in error && error.code === 'AI_PROVIDER_HAS_MODELS') {
+    const detail = 'detail' in error && error.detail && typeof error.detail === 'object' ? error.detail : null;
+    const details = detail && 'details' in detail && detail.details && typeof detail.details === 'object' ? detail.details : null;
+    const modelCount = details && 'model_count' in details && typeof details.model_count === 'number' ? details.model_count : 1;
+    return tx('ai.provider.delete.blocked', { name: providerName, models: modelCount, routes: 0 });
+  }
+  return getErrorMessage(error, tx('ai.provider.error.delete'));
+};
 
 const getTestTitle = (result: ProviderTestResult, tx: AIAdminText) => (
   tx(result.success ? 'ai.provider.test.passed' : 'ai.provider.test.failed')
@@ -323,9 +333,14 @@ export const ProviderManagementTab: React.FC = () => {
   const handleDelete = async (id: string) => {
     const provider = providers.find((item) => item.id === id);
     try {
-      const preview = await getAIProviderDeletePreview(id);
-      const summary = tx('ai.provider.delete.preview', { name: provider?.name || 'Provider', models: preview.model_count || 0, routes: preview.route_count || 0 });
-      if (!window.confirm(summary)) return;
+      const preview: AIProviderDeletePreview = await getAIProviderDeletePreview(id);
+      const modelCount = Number(preview.model_count) || 0;
+      const routeCount = Number(preview.route_count) || 0;
+      if (!preview.can_delete || modelCount > 0 || routeCount > 0) {
+        showToast(tx('ai.provider.delete.blocked', { name: provider?.name || 'Provider', models: modelCount, routes: routeCount }), 'error');
+        return;
+      }
+      if (!window.confirm(tx('ai.provider.delete.preview', { name: provider?.name || 'Provider' }))) return;
     } catch {
       if (!window.confirm(tx('ai.provider.delete.previewFailed'))) return;
     }
@@ -338,7 +353,7 @@ export const ProviderManagementTab: React.FC = () => {
       if (testResult?.id === id) setTestResult(null);
       showToast(tx('ai.provider.toast.deleted', { name: provider?.name || 'Provider' }), 'success');
     } catch (err: unknown) {
-      showToast(getErrorMessage(err, tx('ai.provider.error.delete')), 'error');
+      showToast(getProviderDeleteErrorMessage(err, provider?.name || 'Provider', tx), 'error');
     } finally {
       setDeletingId(null);
     }

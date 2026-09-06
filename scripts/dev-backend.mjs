@@ -64,16 +64,7 @@ if (await isPortReachable()) {
   process.exit(1);
 }
 
-// Allow a worktree or CI harness to point at its own interpreter.  The
-// default remains the repository-local venv used by normal development, but
-// hard-coding that relative path makes an otherwise healthy checkout fail
-// before the backend can report a useful configuration error.
-const python = process.env.NEXORA_PYTHON
-  || (process.platform === 'win32' ? '.venv/Scripts/python.exe' : '.venv/bin/python');
-// A local database can contain real notification channel webhooks. Do not
-// replay existing alert state merely by starting the dev server; opt in
-// explicitly with NEXORA_AUTOMATIC_NOTIFICATIONS_ENABLED=1 when needed.
-const automaticNotifications = process.env.NEXORA_AUTOMATIC_NOTIFICATIONS_ENABLED ?? '0';
+const python = process.platform === 'win32' ? '.venv/Scripts/python.exe' : '.venv/bin/python';
 const child = spawn(python, ['backend/main.py'], {
   cwd: process.cwd(),
   stdio: 'inherit',
@@ -83,7 +74,6 @@ const child = spawn(python, ['backend/main.py'], {
     NODE_ENV: 'development',
     PORT: String(port),
     PYTHONPATH: 'backend',
-    NEXORA_AUTOMATIC_NOTIFICATIONS_ENABLED: automaticNotifications,
   },
 });
 

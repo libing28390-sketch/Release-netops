@@ -108,6 +108,27 @@ describe('AssistantTab streaming render', () => {
     });
   });
 
+  it('shows timestamps for both sides and omits prompt-backed assistant actions', async () => {
+    primeBackendMocks();
+    apiMocks.chatAssistantStream.mockImplementation(
+      async (_message: string, _history: unknown, onToken: (t: string) => void) => {
+        onToken('带时间的回答');
+      },
+    );
+
+    const user = userEvent.setup();
+    render(<AssistantTab />);
+    await user.type(screen.getByPlaceholderText('询问 Nexora AI，或输入 / 使用快捷指令...'), '请回答并显示时间');
+    await user.click(screen.getByRole('button', { name: '发送' }));
+
+    await waitFor(() => expect(screen.getByText('带时间的回答')).toBeTruthy());
+    expect(document.querySelectorAll('[data-copilot-message-time="true"]')).toHaveLength(2);
+    expect(screen.queryByRole('button', { name: '重试本次问题' })).toBeNull();
+    expect(screen.queryByRole('button', { name: '编辑并发送上一条问题' })).toBeNull();
+    expect(screen.queryByRole('button', { name: '继续排查' })).toBeNull();
+    expect(screen.getByRole('button', { name: '复制全文' })).toBeTruthy();
+  });
+
   it('labels a grounded answer as local with zero model tokens', async () => {
     primeBackendMocks();
     apiMocks.chatAssistantStream.mockImplementation(

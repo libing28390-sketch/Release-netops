@@ -10,6 +10,7 @@ from ai.gateway import llm_gateway as gateway_module
 from ai.gateway.exceptions import (
     AICircuitOpenException,
     AINetworkException,
+    AIOutputTruncatedException,
     AIRateLimitException,
     AIProviderTimeoutException,
     AIQuotaExceededException,
@@ -102,6 +103,30 @@ async def test_gateway_retries_provider_timeout_once_and_keeps_stable_error_if_e
 
     assert exc_info.value.code == "AI_PROVIDER_TIMEOUT"
     assert provider.chat.await_count == 2
+
+
+@pytest.mark.anyio
+async def test_gateway_does_not_retry_or_open_circuit_on_output_truncation(monkeypatch: pytest.MonkeyPatch) -> None:
+    provider = SimpleNamespace(
+        max_retries=3,
+        chat=AsyncMock(side_effect=AIOutputTruncatedException()),
+    )
+    gateway = _gateway(monkeypatch, {"model-primary": _model("model-primary")}, {"provider-primary": provider})
+    monkeypatch.setattr(gateway_module.asyncio, "sleep", AsyncMock())
+
+    with pytest.raises(AIOutputTruncatedException) as exc_info:
+        await gateway.chat(
+            scene="provider_test",
+            model_id="model-primary",
+            messages=[{"role": "user", "content": "Reply with ok"}],
+            user_id="admin",
+            tenant_id="tenant-default",
+            data_classification="PUBLIC",
+        )
+
+    assert exc_info.value.code == "AI_OUTPUT_TRUNCATED"
+    assert provider.chat.await_count == 1
+    assert gateway_module.ai_limits._circuits == {}
 
 
 @pytest.mark.anyio

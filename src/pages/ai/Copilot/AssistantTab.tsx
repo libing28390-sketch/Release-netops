@@ -1,5 +1,5 @@
 import React, { useState, useEffect, useRef } from 'react';
-import { Sparkles, BookOpen, ThumbsUp, ThumbsDown, Copy, SlidersHorizontal, Check, Clock3, ChevronDown, ChevronUp, ListChecks, Loader2, CheckCircle2, AlertCircle, ExternalLink, AlertTriangle, Terminal, RotateCcw, Pencil, Play } from 'lucide-react';
+import { Sparkles, BookOpen, ThumbsUp, ThumbsDown, Copy, SlidersHorizontal, Check, Clock3, ChevronDown, ChevronUp, ListChecks, Loader2, CheckCircle2, AlertCircle, ExternalLink, AlertTriangle, Terminal, RotateCcw, Pencil } from 'lucide-react';
 import {
   AIConversationMessage,
   AIExecutionMode,
@@ -39,6 +39,7 @@ import { CopilotInspectorDrawer } from './CopilotInspectorDrawer';
 import { ClarificationCard } from './ClarificationCard';
 import { formatCopilotDuration, upsertCopilotProcessStep } from './progress';
 import { formatAssistantStreamError } from './assistantError';
+import { formatMessageDateTime } from './messageTime';
 import { ActionButton, ActionIconButton, ActionIconGroup } from '../../../components/ui/ActionIconButton';
 
 interface CopilotSelectionSnapshot {
@@ -675,19 +676,6 @@ export const AssistantTab: React.FC = () => {
     void handleSend(message.content);
   };
 
-  const handleRetryMessage = (message: ChatMessage) => {
-    const index = messages.findIndex((item) => item.id === message.id);
-    const previousUser = index >= 0
-      ? [...messages.slice(0, index)].reverse().find((item) => item.role === 'user')
-      : undefined;
-    if (previousUser) handleResendMessage(previousUser);
-  };
-
-  const handleContinueMessage = (message: ChatMessage) => {
-    const continuation = `请基于上一条回答继续排查：只推进下一项有信息增益的检查，不重复已完成检查；保持只读并说明依据。\n上一条回答：${message.content.slice(0, 6000)}`;
-    void handleSend(continuation);
-  };
-
   const handleSend = async (userMsg: string, clarificationAnswer?: AssistantClarificationAnswer) => {
     if (!userMsg.trim() || loading || !activeSession) return;
 
@@ -706,7 +694,8 @@ export const AssistantTab: React.FC = () => {
       }
     }
 
-    const nowTime = new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
+    const createdAt = new Date().toISOString();
+    const nowTime = formatSessionTime(createdAt);
     const isFirstMsg = messages.length === 0;
     const newTitle = isFirstMsg ? (userMsg.length > 16 ? userMsg.slice(0, 16) + '...' : userMsg) : activeSession.title;
 
@@ -720,7 +709,7 @@ export const AssistantTab: React.FC = () => {
       id: 'msg_' + Date.now(),
       role: 'user',
       content: userMsg,
-      created_at: nowTime,
+      created_at: createdAt,
     };
 
     const assistantMsgId = 'msg_ast_' + (Date.now() + 1);
@@ -728,7 +717,7 @@ export const AssistantTab: React.FC = () => {
       id: assistantMsgId,
       role: 'assistant',
       content: '',
-      created_at: nowTime,
+      created_at: createdAt,
       processing_steps: [],
     };
 
@@ -1184,9 +1173,19 @@ export const AssistantTab: React.FC = () => {
           ) : (
             <div className="max-w-[820px] mx-auto w-full px-4 py-8 space-y-8">
               {messages.map((m) => {
+                const messageDateTime = formatMessageDateTime(m.created_at);
                 if (m.role === 'user') {
                   return (
                     <div key={m.id} data-copilot-message-id={m.id} className="flex flex-col items-end gap-1 select-text">
+                      {messageDateTime && (
+                        <time
+                          dateTime={m.created_at}
+                          data-copilot-message-time="true"
+                          className="text-[11px] leading-4 text-gray-400 dark:text-gray-500"
+                        >
+                          {messageDateTime}
+                        </time>
+                      )}
                       <div
                         className="max-w-[78%] cursor-text rounded-[20px] rounded-tr-none bg-[#f4f4f5] px-4 py-3 font-sans text-sm leading-relaxed text-gray-900 selection:bg-indigo-200 selection:text-gray-900 dark:bg-gray-800 dark:text-gray-100 dark:selection:bg-indigo-700/70 dark:selection:text-white"
                         data-copilot-message-content="true"
@@ -1298,6 +1297,15 @@ export const AssistantTab: React.FC = () => {
                           <span className={`rounded-full border px-2 py-0.5 text-[11px] font-semibold ${executionBadgeClass}`}>
                             {executionLabel}
                           </span>
+                          {messageDateTime && (
+                            <time
+                              dateTime={m.created_at}
+                              data-copilot-message-time="true"
+                              className="text-[11px] leading-4 text-gray-400 dark:text-gray-500"
+                            >
+                              {messageDateTime}
+                            </time>
+                          )}
                         </div>
                         <div className="flex flex-wrap items-center gap-x-2 gap-y-1 pl-8 text-[11px] text-gray-500 dark:text-gray-400">
                           <span>{m.external_egress === true ? '已通过安全网关调用外部模型' : m.external_egress === false ? '未发生外部调用' : isMessageStreaming ? '外部调用状态确认中' : '外部调用状态未记录'}</span>
@@ -1440,7 +1448,7 @@ export const AssistantTab: React.FC = () => {
                       );
                     })()}
 
-                    {/* Assistant Action Bar (Copy, Like, Regenerate, Inspector Toggle) */}
+                    {/* Assistant Action Bar (Copy, Feedback, Case, Inspector Toggle) */}
                     <div className="flex items-center gap-3 pt-1 text-gray-400 select-none text-xs">
                       {selectedText?.messageId === m.id && (
                         <ActionButton
@@ -1470,13 +1478,6 @@ export const AssistantTab: React.FC = () => {
                         onPointerDown={(event) => event.preventDefault()}
                         onClick={() => handleCopyMessage(m.id, m.content)}
                       />
-
-                      <ActionIconButton icon={RotateCcw} label="重试本次问题" onClick={() => handleRetryMessage(m)} disabled={loading} />
-                      <ActionIconButton icon={Pencil} label="编辑并发送上一条问题" onClick={() => {
-                        const previousUser = messages.slice(0, messages.findIndex((item) => item.id === m.id)).reverse().find((item) => item.role === 'user');
-                        if (previousUser) handleEditMessage(previousUser);
-                      }} disabled={loading} />
-                      <ActionIconButton icon={Play} label="继续排查" onClick={() => handleContinueMessage(m)} disabled={loading} />
 
                       <button
                         onClick={() => void handleFeedback(m, 'positive')}

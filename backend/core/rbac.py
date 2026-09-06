@@ -44,6 +44,7 @@ ADMIN_ONLY_PATHS = {
 RESOURCE_ACTION_CATALOG = {
     'platform': {'view', 'create', 'update', 'delete', 'edit_draft', 'submit', 'approve', 'publish', 'rollback', 'bind_device'},
     'knowledge_source': {'read', 'view', 'create', 'update', 'delete', 'validate', 'enable', 'disable'},
+    'knowledge_uat': {'read', 'view', 'sign'},
     # Import jobs are a separate control-plane resource.  Keeping these
     # actions distinct from source CRUD prevents a source editor from silently
     # cancelling or replaying a tenant's ingestion work.
@@ -64,7 +65,7 @@ RESOURCE_ACTION_CATALOG = {
 RECOMMENDED_ROLE_PROFILES = {
     'Platform Viewer': {
         'platform': {'view'}, 'knowledge_source': {'read', 'view'}, 'knowledge_import': {'read', 'view'}, 'knowledge_catalog': {'read', 'view', 'resolve'}, 'knowledge_collection': {'read', 'view'}, 'command': {'view'}, 'textfsm': {'view'},
-        'sample_output': {'view'}, 'playbook': {'view'},
+        'sample_output': {'view'}, 'playbook': {'view'}, 'knowledge_uat': {'read', 'view'},
     },
     'Template Developer': {
         'platform': {'view'}, 'command': {'view', 'test'},
@@ -78,7 +79,7 @@ RECOMMENDED_ROLE_PROFILES = {
         'knowledge_catalog': {'read', 'view', 'create', 'update', 'delete', 'resolve', 'review', 'import', 'rollback'},
         'knowledge_collection': {'read', 'view', 'create', 'update', 'archive'},
         'command': {'view', 'edit_draft', 'test'}, 'textfsm': {'view'},
-        'sample_output': {'view'}, 'playbook': {'view'},
+        'sample_output': {'view'}, 'playbook': {'view'}, 'knowledge_uat': {'read', 'view'},
     },
     'Playbook Author': {
         'platform': {'view'}, 'command': {'view', 'test'}, 'textfsm': {'view'},
@@ -90,7 +91,7 @@ RECOMMENDED_ROLE_PROFILES = {
         'command': {'view'}, 'textfsm': {'view', 'approve', 'publish', 'rollback', 'deprecate'},
         'pam': {'view', 'approve'},
         'sample_output': {'view'},
-        'playbook': {'view', 'approve', 'publish', 'rollback'},
+        'playbook': {'view', 'approve', 'publish', 'rollback'}, 'knowledge_uat': {'read', 'view', 'sign'},
     },
     'Scheduler Administrator': {
         'platform': {'view'}, 'command': {'view'}, 'textfsm': {'view'},

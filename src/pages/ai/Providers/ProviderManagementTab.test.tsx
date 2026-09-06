@@ -3,7 +3,7 @@ import { cleanup, render, screen, waitFor } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { ProviderManagementTab } from './ProviderManagementTab';
-import { createAIProvider, getAIProvidersPage, testAIProvider, updateAIProvider } from '../../../api/ai';
+import { createAIProvider, deleteAIProvider, getAIProviderDeletePreview, getAIProvidersPage, testAIProvider, updateAIProvider } from '../../../api/ai';
 
 vi.mock('../../../contexts/AppDomainContext', () => ({
   useCoreApp: vi.fn(),
@@ -38,12 +38,19 @@ const provider = {
 const getProviders = vi.mocked(getAIProvidersPage);
 const createProvider = vi.mocked(createAIProvider);
 const updateProvider = vi.mocked(updateAIProvider);
+const deleteProvider = vi.mocked(deleteAIProvider);
+const getDeletePreview = vi.mocked(getAIProviderDeletePreview);
 const testProvider = vi.mocked(testAIProvider);
+const showToast = vi.fn();
 
 describe('ProviderManagementTab browser key paths', () => {
   beforeEach(async () => {
     const { useCoreApp } = await import('../../../contexts/AppDomainContext');
-    vi.mocked(useCoreApp).mockReturnValue({ language: 'zh', showToast: vi.fn() } as never);
+    showToast.mockClear();
+    deleteProvider.mockClear();
+    getDeletePreview.mockReset();
+    getDeletePreview.mockResolvedValue({ model_count: 0, route_count: 0, can_delete: true } as any);
+    vi.mocked(useCoreApp).mockReturnValue({ language: 'zh', showToast } as never);
     getProviders.mockResolvedValue({
       items: [provider as any],
       total: 1,
@@ -193,5 +200,20 @@ describe('ProviderManagementTab browser key paths', () => {
     await user.click(screen.getByRole('button', { name: '测试连通性' }));
     expect(await screen.findByText(/安全网关未批准该 Provider 类型或端点/)).toBeTruthy();
     expect(screen.getByText('错误标识：AI_PROVIDER_UNSUPPORTED')).toBeTruthy();
+  });
+
+  it('explains Provider dependencies before sending an impossible delete request', async () => {
+    getDeletePreview.mockResolvedValueOnce({ model_count: 1, route_count: 2, can_delete: false } as any);
+    const user = userEvent.setup();
+    render(<ProviderManagementTab />);
+
+    await screen.findAllByText('DeepSeek 主供应商');
+    await user.click(screen.getAllByRole('button', { name: '删除 DeepSeek 主供应商' })[0]);
+
+    await waitFor(() => expect(showToast).toHaveBeenCalledWith(
+      '暂时不能删除“DeepSeek 主供应商”：仍关联 1 个模型、2 条业务路由。请先在模型管理中处理这些关联；如果只是暂时不用，可以直接停用 Provider。',
+      'error',
+    ));
+    expect(deleteProvider).not.toHaveBeenCalled();
   });
 });
