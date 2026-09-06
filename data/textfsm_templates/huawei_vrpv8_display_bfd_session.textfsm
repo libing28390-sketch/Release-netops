@@ -1,0 +1,14 @@
+Value LOCAL_DISCRIMINATOR (\d+)
+Value REMOTE_DISCRIMINATOR (\d+)
+Value PEER_IP (\d+\.\d+\.\d+\.\d+)
+Value STATUS (\S+)
+Value SESSION_TYPE (\S+)
+Value INTERFACE (\S+)
+
+Start
+  ^\s*${LOCAL_DISCRIMINATOR}\s+${REMOTE_DISCRIMINATOR}\s+${PEER_IP}\s+${STATUS}\s+${SESSION_TYPE}\s+${INTERFACE}\s*$$ -> Record
+  ^\s*Local\s+Remote\s+PeerIpAddr
+  ^\s*Total\s+UP/DOWN\s+Session\s+Number
+  ^\s*-+
+  ^\s*\(w\):
+  ^\s*\(\*\):

@@ -1,0 +1,212 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>{% if report_type == 'playbook' %}{{ system_name }} 自动化执行报告{% else %}{{ system_name }} 网络巡检报告{% endif %} - {{ run_info.get('started_at', '')[:10] }}</title>
+<script src="https://cdn.jsdelivr.net/npm/echarts@5/dist/echarts.min.js"></script>
+<style>
+* { margin: 0; padding: 0; box-sizing: border-box; }
+body { font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif; background: #0a1628; color: #e2e8f0; line-height: 1.6; padding: 40px; }
+.container { max-width: 1200px; margin: 0 auto; }
+.header { text-align: center; padding: 40px 0; border-bottom: 1px solid #1e3a5f; margin-bottom: 30px; }
+.header h1 { font-size: 28px; color: #00bceb; margin-bottom: 8px; font-weight: bold; }
+.header .meta { color: #64748b; font-size: 14px; }
+.section { margin-bottom: 35px; }
+.section-title { font-size: 18px; color: #00bceb; border-left: 4px solid #00bceb; padding-left: 12px; margin-bottom: 20px; font-weight: bold; }
+.stats-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(200px, 1fr)); gap: 16px; margin-bottom: 24px; }
+.stat-card { background: #1e293b; border-radius: 12px; padding: 20px; text-align: center; border: 1px solid #334155; }
+.stat-card .value { font-size: 32px; font-weight: bold; }
+.stat-card .label { font-size: 12px; color: #94a3b8; margin-top: 4px; }
+.healthy { color: #10b981; }
+.warning { color: #f59e0b; }
+.critical { color: #ef4444; }
+.completed { color: #38bdf8; }
+table { width: 100%; border-collapse: collapse; margin-bottom: 16px; table-layout: fixed; word-wrap: break-word; }
+th { background: #1e3a5f; color: #00bceb; padding: 12px 14px; text-align: left; font-size: 13px; text-transform: uppercase; letter-spacing: 0.5px; font-weight: bold; }
+td { padding: 12px 14px; border-bottom: 1px solid #1e293b; font-size: 13px; vertical-align: middle; }
+tr:hover { background: #1e293b; }
+.badge { display: inline-block; padding: 4px 10px; border-radius: 6px; font-size: 11px; font-weight: bold; text-transform: uppercase; }
+.badge-critical { background: #7f1d1d; color: #fca5a5; border: 1px solid #991b1b; }
+.badge-warning { background: #78350f; color: #fcd34d; border: 1px solid #92400e; }
+.badge-healthy { background: #064e3b; color: #6ee7b7; border: 1px solid #065f46; }
+.badge-completed { background: #0c4a6e; color: #7dd3fc; border: 1px solid #0369a1; }
+.risk-card { background: #1e293b; border: 1px solid #ef4444; border-radius: 8px; padding: 16px; margin-bottom: 12px; }
+.risk-card h4 { color: #ef4444; margin-bottom: 8px; }
+#chart-health { width: 100%; height: 300px; }
+.footer { text-align: center; color: #475569; font-size: 12px; padding-top: 30px; border-top: 1px solid #1e3a5f; margin-top: 40px; }
+</style>
+</head>
+<body>
+<div class="container">
+  <!-- 1. 报告头部 -->
+  <div class="header">
+    {% if report_type == 'playbook' %}
+        <h1>{{ system_name }} 自动化执行报告</h1>
+    {% else %}
+        <h1>{{ system_name }} 网络巡检报告</h1>
+    {% endif %}
+    <div class="meta">
+      {% if customer_name %}客户: {{ customer_name }} | {% endif %}
+      {% if engineer_name %}工程师: {{ engineer_name }} | {% endif %}
+      作业时间: {{ run_info.get('started_at', 'N/A') }} |
+      设备总数: {{ run_info.get('total_devices', total_devices) }}
+    </div>
+  </div>
+
+  <!-- 2. 摘要与统计 -->
+  <div class="section">
+    <h2 class="section-title">{% if report_type == 'playbook' %}作业执行摘要{% else %}巡检摘要{% endif %}</h2>
+    <div class="stats-grid">
+      <div class="stat-card"><div class="value">{{ total_devices }}</div><div class="label">设备总数</div></div>
+      <div class="stat-card"><div class="value healthy">{{ healthy_count }}</div><div class="label">{% if report_type == 'playbook' %}成功完成{% else %}健康{% endif %}</div></div>
+      <div class="stat-card"><div class="value warning">{{ warning_count }}</div><div class="label">{% if report_type == 'playbook' %}异常告警{% else %}告警{% endif %}</div></div>
+      <div class="stat-card"><div class="value critical">{{ critical_count }}</div><div class="label">{% if report_type == 'playbook' %}失败/错误{% else %}严重{% endif %}</div></div>
+      <div class="stat-card"><div class="value" style="color:#00bceb">{{ avg_score }}</div><div class="label">平均健康评分</div></div>
+    </div>
+    <div id="chart-health"></div>
+  </div>
+
+  {% if report_type == 'playbook' %}
+      <!-- Playbook 专属执行异常概览 -->
+      <div class="section">
+        <h2 class="section-title">作业异常详情</h2>
+        {% if abnormal_devices %}
+        <table>
+          <thead><tr><th width="25%">设备名称</th><th width="25%">管理 IP</th><th width="15%">状态</th><th width="35%">异常原因 / 输出概览</th></tr></thead>
+          <tbody>
+          {% for dev in abnormal_devices %}
+          <tr>
+            <td>{{ dev.hostname }}</td>
+            <td>{{ dev.ip_address }}</td>
+            <td><span class="badge badge-{{ dev.health_status }}">{{ dev.health_status }}</span></td>
+            <td>{{ dev.top_finding or '执行过程出现丢包或返回异常码' }}</td>
+          </tr>
+          {% endfor %}
+          </tbody>
+        </table>
+        {% else %}
+        <div style="background: #1e293b; padding: 24px; border-radius: 8px; color: #94a3b8; text-align: center; border: 1px solid #334155;">
+          🎉 所有覆盖设备均已成功完成既定自动化执行计划，未捕获异常。
+        </div>
+        {% endif %}
+      </div>
+
+      <!-- Playbook 专属执行明细列表 -->
+      <div class="section">
+        <h2 class="section-title">作业执行明细表</h2>
+        <table>
+          <thead><tr><th width="30%">设备名称</th><th width="30%">管理 IP</th><th width="20%">执行状态</th><th width="20%">健康评分</th></tr></thead>
+          <tbody>
+          {% for dev in all_devices %}
+          <tr>
+            <td>{{ dev.hostname }}</td>
+            <td>{{ dev.ip_address }}</td>
+            <td><span class="badge badge-{{ dev.status or 'completed' }}">{{ (dev.status or 'completed') }}</span></td>
+            <td>{{ dev.health_score }} 分</td>
+          </tr>
+          {% endfor %}
+          </tbody>
+        </table>
+      </div>
+
+  {% else %}
+      <!-- 3. 关联风险 -->
+      {% if all_risks %}
+      <div class="section">
+        <h2 class="section-title">关联风险预警</h2>
+        {% for risk in all_risks %}
+        <div class="risk-card">
+          <h4>⚠️ {{ risk.rule_name }} ({{ risk.device }})</h4>
+          <p>{{ risk.description }}</p>
+          <p style="color:#94a3b8; margin-top:8px;">建议: {{ risk.suggestion }}</p>
+        </div>
+        {% endfor %}
+      </div>
+      {% endif %}
+
+      <!-- 4. 异常设备列表 -->
+      {% if abnormal_devices %}
+      <div class="section">
+        <h2 class="section-title">异常设备列表</h2>
+        <table>
+          <thead><tr><th width="25%">设备名称</th><th width="25%">管理 IP</th><th width="15%">健康评分</th><th width="15%">状态</th><th width="20%">主要异常</th></tr></thead>
+          <tbody>
+          {% for dev in abnormal_devices %}
+          <tr>
+            <td>{{ dev.hostname }}</td>
+            <td>{{ dev.ip_address }}</td>
+            <td>{{ dev.health_score }}</td>
+            <td><span class="badge badge-{{ dev.health_status }}">{{ dev.health_status }}</span></td>
+            <td>{{ dev.top_finding }}</td>
+          </tr>
+          {% endfor %}
+          </tbody>
+        </table>
+      </div>
+      {% endif %}
+
+      <!-- 5. 设备指标汇总表 -->
+      <div class="section">
+        <h2 class="section-title">资产健康指标汇总</h2>
+        <table>
+          <thead><tr><th width="25%">设备名称</th><th width="25%">管理 IP</th><th width="20%">硬件平台</th><th width="15%">健康评分</th><th width="15%">合规状态</th></tr></thead>
+          <tbody>
+          {% for dev in all_devices %}
+          <tr>
+            <td>{{ dev.hostname }}</td>
+            <td>{{ dev.ip_address }}</td>
+            <td>{{ dev.platform or '-' }}</td>
+            <td>{{ dev.health_score }}</td>
+            <td>{{ dev.compliance_status }}</td>
+          </tr>
+          {% endfor %}
+          </tbody>
+        </table>
+      </div>
+
+      <!-- 6. 整改建议 -->
+      {% if suggestions %}
+      <div class="section">
+        <h2 class="section-title">系统整改建议</h2>
+        <table>
+          <thead><tr><th width="20%">设备</th><th width="20%">异常指标</th><th width="15%">严重度</th><th width="25%">诊断结论</th><th width="20%">整改建议</th></tr></thead>
+          <tbody>
+          {% for s in suggestions %}
+          <tr>
+            <td>{{ s.hostname }}</td>
+            <td>{{ s.metric }}</td>
+            <td><span class="badge badge-{{ s.status }}">{{ s.status }}</span></td>
+            <td>{{ s.conclusion }}</td>
+            <td>{{ s.suggestion }}</td>
+          </tr>
+          {% endfor %}
+          </tbody>
+        </table>
+      </div>
+      {% endif %}
+  {% endif %}
+
+  <div class="footer">
+    <p>{{ system_name }} NetOps 智能网络运维系统 | 报告自动生成于: {{ generated_at }}</p>
+  </div>
+</div>
+
+<script>
+var chart = echarts.init(document.getElementById('chart-health'));
+chart.setOption({
+  tooltip: { trigger: 'item' },
+  series: [{
+    type: 'pie', radius: ['40%', '70%'],
+    data: [
+      { value: {{ healthy_count }}, name: '{% if report_type == 'playbook' %}成功{% else %}健康{% endif %}', itemStyle: { color: '#10b981' } },
+      { value: {{ warning_count }}, name: '{% if report_type == 'playbook' %}告警{% else %}告警{% endif %}', itemStyle: { color: '#f59e0b' } },
+      { value: {{ critical_count }}, name: '{% if report_type == 'playbook' %}失败{% else %}严重{% endif %}', itemStyle: { color: '#ef4444' } }
+    ],
+    label: { color: '#e2e8f0' }
+  }]
+});
+window.addEventListener('resize', () => chart.resize());
+</script>
+</body>
+</html>

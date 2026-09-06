@@ -1,0 +1,36 @@
+# nexora-action-code: get_version
+Value Filldown SYSTEM_DESCRIPTION (.+?)
+Value Filldown UPTIME (.+?)
+Value Filldown HARDWARE_VERSION (.+?)
+Value Filldown SOFTWARE_VERSION (.+?)
+Value Filldown SERIAL_NUMBER (\S+)
+Value Filldown BOOT_VERSION (\S+)
+Value Filldown MODEL (.+?)
+
+Start
+  ^.*#\s*show\s+ -> Next
+  ^Maipu\s+MyPowerOS\s+Software,\s+Version\s+${SOFTWARE_VERSION}
+  ^\s*MyPower\s+.*system\s+image\s+file.+version\s+${SOFTWARE_VERSION},
+  ^\s*System\s+description\s*:\s*${SYSTEM_DESCRIPTION}\s*$$
+  ^\s*System\s+[Uu]ptime\s*:\s*${UPTIME}\s*$$
+  ^\s*System\s+[Uu]ptime\s+is\s+${UPTIME}\s*$$
+  ^\s*[Uu]ptime\s+is\s+${UPTIME}\s*$$
+  ^\s*System\s+hardware\s+version\s*:\s*${HARDWARE_VERSION}\s*$$
+  ^\s*Hardware\s+[Vv]ersion\s*:\s*${HARDWARE_VERSION}\s*$$
+  ^\s*System\s+software\s+version\s*:\s*${SOFTWARE_VERSION}\s*$$
+  ^\s*Software\s+[Vv]ersion\s*:\s*${SOFTWARE_VERSION}\s*$$
+  ^\s*System\s+serial\s+number\s*:\s*${SERIAL_NUMBER}\s*$$
+  ^\s*System\s+ID\s*:\s*${SERIAL_NUMBER}\s*$$
+  ^\s*Serial\s+[Nn]umber\s*:\s*${SERIAL_NUMBER}\s*$$
+  ^\s*Device\s+serial\s+number\s*:\s*${SERIAL_NUMBER}\s*$$
+  ^\s*System\s+boot\s+version\s*:\s*${BOOT_VERSION}\s*$$
+  ^\s*Bootloader\s+[Vv]ersion\s*:\s*${BOOT_VERSION}\s*$$
+  ^\s*Boot\s+[Vv]ersion\s*:\s*${BOOT_VERSION}\s*$$
+  ^\s*ROM\s+[Vv]ersion\s*:\s*${BOOT_VERSION}\s*$$
+  ^\s*Device\s+model\s*:\s*${MODEL}\s*$$
+  ^\s*Model\s+Name\s*:\s*${MODEL}\s*$$
+  ^\s*Hardware\s+Model\s*:\s*${MODEL}\s*$$
+  ^\s*Product\s+Model\s*:\s*${MODEL}\s*$$
+  ^\s*MyPower\s+${MODEL}\s+Version\s+Information\s*$$
+  ^\s*$$
+  ^. -> Next

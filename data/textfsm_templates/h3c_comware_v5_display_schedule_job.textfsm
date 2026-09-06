@@ -1,0 +1,12 @@
+# Comware V5 one-shot scheduled command.
+Value Required SPECIFIED_COMMAND (.+?)
+Value Required SPECIFIED_VIEW (.+?)
+Value Required EXECUTED_TIME (.+?)
+Value Required REMAINING_TIME ([^)]+)
+
+Start
+  ^\s*Specified\s+command:\s*${SPECIFIED_COMMAND}\s*$$
+  ^\s*Specified\s+view:\s*${SPECIFIED_VIEW}\s*$$
+  ^\s*Executed\s+time:\s+${EXECUTED_TIME}\s+\(in\s+${REMAINING_TIME}\)\s*$$ -> Record
+  ^.*$$
+

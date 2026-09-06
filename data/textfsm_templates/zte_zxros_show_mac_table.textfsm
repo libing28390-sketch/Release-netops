@@ -1,0 +1,12 @@
+Value Required MAC ([0-9a-fA-F]{4}\.[0-9a-fA-F]{4}\.[0-9a-fA-F]{4})
+Value Required VLAN (\d+)
+Value DESTINATION_PORT (\S+)
+Value TYPE (\S+)
+Value FROM (\d+)
+Value TIME (.*)
+
+Start
+  ^MAC\s+VLAN\s+Outgoing
+  ^--------------------------------------------------------------------------------
+  ^${MAC}\s+${VLAN}\s+${DESTINATION_PORT}\s+${TYPE}\s+${FROM}\s+${TIME}\s*$$ -> Record
+  ^${MAC}\s+${VLAN}\s+${DESTINATION_PORT}\s+${TYPE}\s*$$ -> Record

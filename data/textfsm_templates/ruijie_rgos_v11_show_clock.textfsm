@@ -1,0 +1,14 @@
+# nexora-action-code: get_clock
+Value TIME (\d+:\d+:\d+)
+Value TIMEZONE (\S+)
+Value DAY_OF_WEEK (\w+)
+Value MONTH (\w+)
+Value DAY (\d+)
+Value YEAR (\d{4})
+
+Start
+  ^.*#\s*show\s+ -> Next
+  ^${TIME}\s+${TIMEZONE}\s+${DAY_OF_WEEK},\s+${MONTH}\s+${DAY},\s+${YEAR} -> Record
+  ^${TIME}\s+${TIMEZONE}\s+${DAY_OF_WEEK}\s+${MONTH}\s+${DAY}\s+${YEAR} -> Record
+  ^\s*$$
+  ^. -> Next
