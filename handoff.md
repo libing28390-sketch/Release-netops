@@ -350,3 +350,10 @@ git diff --check
 - 本地验证：`release.yml` YAML 解析通过，`knowledge_eval_ci_gate_check.py` 通过，`ai_rag_release_config_check.py` 通过，`git diff --check` 通过。
 - `knowledge_eval_ci_gate_check.py` 同步刷新了 `docs/knowledge-engine/eval/eval-ci-gate-v1.manifest.json` 中的工作流 SHA-256，随本次 CI 修复一并提交。
 - 另一个本地启动提示 `Port 5400 is already in use` 与 GitHub Actions 无关，表示已有 Vite 进程占用 5400；结束旧进程后再启动即可。
+
+## 2026-09-07 Docker/Nginx 首页下载问题
+
+- 现场请求 `https://192.168.204.128/` 返回了正确的 `index.html` 内容，但响应头为 `Content-Type: application/octet-stream`，因此浏览器将 1,101 字节的 SPA 入口当作文件下载，而不是渲染页面。
+- 根因是 `nginx/nginx.conf` 在 `server` 级别定义了只包含 GLB/GLTF/KTX2/Basis 的 `types {}`，覆盖了官方 Nginx 镜像继承的标准 MIME 映射，导致 `index.html`、JS 和 CSS 都可能失去正确的 MIME 类型。
+- 修复是移除覆盖全局映射的 `types {}`，保留官方 Nginx 的标准 MIME 表；GLB、GLTF、KTX2、Basis 改用独立 location 的 `default_type`，不会再影响 HTML/CSS/JS。
+- 本机已完成 `git diff --check` 和配置文本检查；当前 Windows 环境没有 Docker/Nginx CLI，部署后需要在目标机执行 `nginx -t` 并重建/重启 Nginx 容器，再用 `curl -k -I https://<host>/` 确认 `Content-Type: text/html`。
