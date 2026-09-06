@@ -341,3 +341,11 @@ git diff --check
 - 提交：本次交付提交（amend 后以最终 `git log -1` 为准）。
 - 推送：目标为 `origin/main`，仅推送 `main` 分支。
 - 本地运行时状态、知识库引用和数据库备份文件不作为代码交付内容；其余当前工作区代码、测试、迁移、文档、前端构建相关变更按用户要求纳入本次提交。
+
+## 2026-09-06 GitHub Actions 发布门禁修复
+
+- 失败任务：Ubuntu release job 在 `Commit sanitized Ubuntu release tree` 步骤失败，错误为 `Required release path missing: tools/blender`。
+- 根因：前面的公开发布树清理步骤按设计执行了 `rm -rf tools/`，但后面的清理树必需路径列表仍然要求 `tools/blender`，形成自相矛盾的检查。
+- 修复：保留源码完整性检查阶段对 `tools/blender` 的校验；从清理后的公开发布树必需路径列表移除 `tools/blender`，因为该目录已被明确清理，不应进入公开发布仓库。
+- 本地验证：`release.yml` YAML 解析通过，`knowledge_eval_ci_gate_check.py` 通过，`ai_rag_release_config_check.py` 通过，`git diff --check` 通过。
+- 另一个本地启动提示 `Port 5400 is already in use` 与 GitHub Actions 无关，表示已有 Vite 进程占用 5400；结束旧进程后再启动即可。

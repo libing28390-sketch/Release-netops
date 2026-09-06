@@ -183,7 +183,9 @@ jobs:
           git init
           git add .
 
-          required=(Dockerfile docker-compose.yml .dockerignore .env.example package.json package-lock.json deploy-ubuntu.sh backend/requirements.txt backend/main.py NexoraTerminalAgent.exe assets/catalog tools/blender public/assets/3d nginx/Dockerfile nginx/.dockerignore nginx/nginx.conf nginx/docker-entrypoint.d/05-ensure-tls-certificate.sh scripts/deploy-docker.sh scripts/terminal_agent.py scripts/install-terminal-agent.sh scripts/install-terminal-agent.ps1 scripts/sync-frontend-dist.sh src)
+          # tools/ is intentionally removed above from the sanitized public
+          # release tree.  Validate the release-owned paths that remain.
+          required=(Dockerfile docker-compose.yml .dockerignore .env.example package.json package-lock.json deploy-ubuntu.sh backend/requirements.txt backend/main.py NexoraTerminalAgent.exe assets/catalog public/assets/3d nginx/Dockerfile nginx/.dockerignore nginx/nginx.conf nginx/docker-entrypoint.d/05-ensure-tls-certificate.sh scripts/deploy-docker.sh scripts/terminal_agent.py scripts/install-terminal-agent.sh scripts/install-terminal-agent.ps1 scripts/sync-frontend-dist.sh src)
           for path in "${required[@]}"; do
             test -n "$(git ls-files -- "$path" | head -n 1)" || { echo "[FAIL] Required release path missing: $path"; exit 1; }
           done
