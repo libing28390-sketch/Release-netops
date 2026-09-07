@@ -730,6 +730,22 @@ def _resolve_snmp_credential_id(conn, value: str | None) -> str:
     return str(row['id'])
 
 
+def _resolve_snmp_credential_binding(conn, body) -> None:
+    """Resolve the import-friendly SNMP credential name/id into its id.
+
+    ``snmp_credential_id`` is the established API field and already accepts
+    either a credential id or its unique name.  ``snmp_credential_name`` is a
+    compatibility alias for spreadsheet/import clients that expose a name as
+    a separate column.  Keep the established field authoritative when both
+    are supplied, so existing callers cannot be silently redirected by the
+    alias.
+    """
+    requested_id = str(getattr(body, 'snmp_credential_id', '') or '').strip()
+    requested_name = str(getattr(body, 'snmp_credential_name', '') or '').strip()
+    requested = requested_id or requested_name
+    body.snmp_credential_id = _resolve_snmp_credential_id(conn, requested)
+
+
 def _create_device_local_credential(
     conn,
     *,
@@ -1565,6 +1581,9 @@ class AssetCreate(BaseModel):
     credential_id: Optional[str] = ''
     admin_credential_id: Optional[str] = ''
     snmp_credential_id: Optional[str] = ''
+    # Import clients may expose a dedicated name column.  The established
+    # ``snmp_credential_id`` field remains the canonical output/binding field.
+    snmp_credential_name: Optional[str] = ''
     tag_ids: list[str] = []
     tag_codes: str = ''
     web_profiles: list[WebAccessProfileInput] = Field(default_factory=list)
@@ -1695,6 +1714,7 @@ class AssetUpdate(BaseModel):
     credential_id: Optional[str] = None
     admin_credential_id: Optional[str] = None
     snmp_credential_id: Optional[str] = None
+    snmp_credential_name: Optional[str] = None
     tag_ids: Optional[list[str]] = None
     tag_codes: Optional[str] = None
     web_profiles: Optional[list[WebAccessProfileInput]] = None
@@ -2183,7 +2203,7 @@ def create_asset(body: AssetCreate, _user=require_role("Operator")):
             raise HTTPException(status_code=422, detail=str(exc))
         _enforce_asset_site_scope(conn, _user, body.site_id, 'create')
         asset_id = f"asset-{uuid.uuid4().hex[:12]}"
-        body.snmp_credential_id = _resolve_snmp_credential_id(conn, body.snmp_credential_id)
+        _resolve_snmp_credential_binding(conn, body)
         now = _utc_now()
         asset_origin = body.asset_origin if body.asset_origin in ('new', 'legacy') else 'new'
         body.platform = _normalize_asset_platform(body.vendor, body.platform, body.asset_type)
@@ -2314,6 +2334,16 @@ def update_asset(asset_id: str, body: AssetUpdate, run_bg_rotate: bool = True, _
         if not row:
             raise HTTPException(status_code=404, detail='Asset not found')
         _enforce_asset_row_scope(_user, row, 'update')
+
+        # Resolve the import/client compatibility alias only after the target
+        # asset has passed the resource-scope check.  This prevents callers
+        # without access to the asset from probing credential names through
+        # validation errors.
+        if (
+            getattr(body, 'snmp_credential_name', None) is not None
+            or getattr(body, 'snmp_credential_id', None) is not None
+        ):
+            _resolve_snmp_credential_binding(conn, body)
 
         requested_tag_ids = _resolve_asset_tag_ids(conn, body)
 
@@ -2830,6 +2860,7 @@ def import_assets(
 
         def _import_one(body: AssetCreate, row_number: int) -> dict:
             _pre_resolve_credential(conn, body)
+            _resolve_snmp_credential_binding(conn, body)
             requested_tag_ids = _resolve_asset_tag_ids(conn, body)
             try:
                 body.site_id = resolve_canonical_site_id(conn, body.site_id)

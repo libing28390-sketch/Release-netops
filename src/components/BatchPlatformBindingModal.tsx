@@ -4,6 +4,9 @@ import type { Device } from '../types';
 import { apiRequest } from '../api/http';
 import PlatformProfileSelector, { type PlatformProfileOption } from './PlatformProfileSelector';
 import { inferPlatformVendor, platformVendorLabel } from '../utils/platformVendor';
+import { extractSoftwareMajorVersion, getProfileAdaptationMajorVersion } from '../utils/platformVersion';
+
+export { extractSoftwareMajorVersion, getProfileAdaptationMajorVersion } from '../utils/platformVersion';
 
 type BatchPlatformOperation = 'add' | 'modify' | 'remove';
 
@@ -30,6 +33,7 @@ const BatchPlatformBindingModal: React.FC<BatchPlatformBindingModalProps> = ({
   const [submitting, setSubmitting] = useState(false);
   const [error, setError] = useState('');
   const [message, setMessage] = useState('');
+  const [versionMismatchOverride, setVersionMismatchOverride] = useState(false);
 
   const selectedDevices = useMemo(
     () => devices.filter((device) => deviceIds.includes(device.id)),
@@ -45,6 +49,19 @@ const BatchPlatformBindingModal: React.FC<BatchPlatformBindingModalProps> = ({
   const allowedVendor = sameVendor ? vendorValues[0] : '';
   const hasExistingBinding = selectedDevices.some((device) => Boolean(device.platform_profile_id));
   const existingDeviceCount = selectedDevices.filter((device) => Boolean(device.platform_profile_id)).length;
+  const selectedProfile = useMemo(
+    () => profiles.find((profile) => profile.id === selectedProfileId) || null,
+    [profiles, selectedProfileId],
+  );
+  const profileAdaptationMajor = selectedProfile ? getProfileAdaptationMajorVersion(selectedProfile) : null;
+  const versionConflictDevices = useMemo(
+    () => selectedDevices.filter((device) => {
+      const deviceMajor = extractSoftwareMajorVersion(device.version);
+      return profileAdaptationMajor !== null && deviceMajor !== null && deviceMajor !== profileAdaptationMajor;
+    }),
+    [profileAdaptationMajor, selectedDevices],
+  );
+  const hasVersionConflict = operation !== 'remove' && versionConflictDevices.length > 0;
 
   useEffect(() => {
     let active = true;
@@ -67,10 +84,13 @@ const BatchPlatformBindingModal: React.FC<BatchPlatformBindingModalProps> = ({
     setSelectedProfileId('');
     setError('');
     setMessage('');
+    setVersionMismatchOverride(false);
   }, [deviceIds.join(','), hasExistingBinding]);
 
   const canBind = sameVendor && selectedProfileId && !profilesLoading && (operation === 'modify' || !hasExistingBinding);
-  const canSubmit = operation === 'remove' ? !submitting : Boolean(canBind) && !submitting;
+  const canSubmit = operation === 'remove'
+    ? !submitting
+    : Boolean(canBind) && (!hasVersionConflict || versionMismatchOverride) && !submitting;
 
   const submit = async () => {
     setError('');
@@ -81,6 +101,12 @@ const BatchPlatformBindingModal: React.FC<BatchPlatformBindingModalProps> = ({
     }
     if (operation !== 'remove' && !selectedProfileId) {
       setError(zh ? '请选择目标平台。' : 'Select a target platform.');
+      return;
+    }
+    if (operation !== 'remove' && hasVersionConflict && !versionMismatchOverride) {
+      setError(zh
+        ? '目标平台的命令/解析适配版本与所选设备的软件主版本不一致；如确需人工覆盖，请先勾选确认。'
+        : 'The target command/parser adaptation version does not match the selected devices\' software major version. Confirm the explicit override before submitting.');
       return;
     }
     const force = (operation === 'modify' || operation === 'remove') && hasExistingBinding;
@@ -107,6 +133,7 @@ const BatchPlatformBindingModal: React.FC<BatchPlatformBindingModalProps> = ({
             platform_profile_id: selectedProfileId,
             lock: true,
             force,
+            allow_version_mismatch: hasVersionConflict && versionMismatchOverride,
           }),
         });
         setMessage(zh ? `已为 ${deviceIds.length} 台设备保存平台绑定。` : `Saved platform bindings for ${deviceIds.length} devices.`);
@@ -145,7 +172,7 @@ const BatchPlatformBindingModal: React.FC<BatchPlatformBindingModalProps> = ({
               <button
                 key={value}
                 type="button"
-                onClick={() => { setOperation(value); setError(''); setMessage(''); }}
+                onClick={() => { setOperation(value); setError(''); setMessage(''); setVersionMismatchOverride(false); }}
                 className={`rounded-lg px-3 py-2 text-xs font-semibold transition-colors ${operation === value ? 'bg-white text-cyan-700 shadow-sm dark:bg-zinc-700 dark:text-cyan-300' : 'text-slate-500 hover:text-slate-800 dark:text-zinc-400 dark:hover:text-zinc-200'}`}
               >
                 {value === 'remove' && <Unlink size={13} className="mr-1 inline" />}
@@ -161,23 +188,47 @@ const BatchPlatformBindingModal: React.FC<BatchPlatformBindingModalProps> = ({
                 {sameVendor
                   ? (zh ? `厂商范围：${platformVendorLabel(allowedVendor, language)}，批量绑定只展示该厂商的平台。` : `Vendor scope: ${platformVendorLabel(allowedVendor, language)}. Only this vendor's platforms are available.`)
                   : (zh ? '当前选择包含多个厂商或存在未知厂商，不能批量新增/修改平台；请按同厂商重新选择。解除绑定仍可执行。' : 'The selection contains multiple or unknown vendors. Add/modify is disabled; select devices from one vendor. Remove remains available.')}
-                {hasExistingBinding && <span className="ml-1">{zh ? `已有 ${existingDeviceCount} 台存在绑定，修改/解除需要管理员权限。` : `${existingDeviceCount} devices already have bindings; modifying/removing them requires Administrator permission.`}</span>}
+                {hasExistingBinding && <span className="ml-1">{zh ? `已有 ${existingDeviceCount} 台存在绑定，修改/解除需要管理员权限；如需修正错误绑定，请选择与设备实际软件版本一致的适配版本。` : `${existingDeviceCount} devices already have bindings; modifying/removing them requires Administrator permission. To correct a wrong binding, select the adaptation version matching the device software.`}</span>}
               </div>
             </div>
           </div>
 
           {operation !== 'remove' && (
             <div>
-              <label className="mb-1.5 block text-xs font-semibold text-slate-700 dark:text-zinc-200">{zh ? '目标平台（厂商 / 平台 / 版本）' : 'Target platform (vendor / platform / version)'}</label>
+              <label className="mb-1.5 block text-xs font-semibold text-slate-700 dark:text-zinc-200">{zh ? '目标平台（厂商 / 平台 / 命令/解析适配版本）' : 'Target platform (vendor / platform / command/parser adaptation version)'}</label>
               <PlatformProfileSelector
                 profiles={profiles}
                 value={selectedProfileId}
                 language={language}
                 allowedVendor={allowedVendor}
                 disabled={!sameVendor || profilesLoading || submitting}
-                onChange={(profile) => setSelectedProfileId(profile?.id || '')}
+                onChange={(profile) => { setSelectedProfileId(profile?.id || ''); setVersionMismatchOverride(false); }}
               />
+              <p className="mt-1.5 text-[11px] text-slate-500 dark:text-zinc-400">
+                {zh ? '此版本用于选择命令和解析模板，不代表设备当前运行的软件版本。' : 'This version selects command and parser templates; it is not the device\'s current software version.'}
+              </p>
               {profilesLoading && <p className="mt-2 flex items-center gap-1 text-[11px] text-slate-500"><Loader2 size={12} className="animate-spin" />{zh ? '正在加载平台目录…' : 'Loading platform catalog…'}</p>}
+              {hasVersionConflict && selectedProfile && (
+                <div className="mt-2 flex items-start gap-2 rounded-lg border border-rose-200 bg-rose-50 px-3 py-2 text-[11px] text-rose-700" role="alert">
+                  <ShieldAlert size={14} className="mt-0.5 shrink-0" />
+                  <div className="space-y-1.5">
+                    <span className="block">
+                      {zh
+                        ? `版本冲突：所选设备的软件主版本为 ${Array.from(new Set(versionConflictDevices.map((device) => extractSoftwareMajorVersion(device.version)))).filter((version): version is number => version !== null).map((version) => `v${version}`).join('、')}，但目标命令/解析适配版本为 v${profileAdaptationMajor}。默认阻止提交。`
+                        : `Version conflict: selected device software major version ${Array.from(new Set(versionConflictDevices.map((device) => extractSoftwareMajorVersion(device.version)))).filter((version): version is number => version !== null).map((version) => `v${version}`).join(', ')} does not match target command/parser adaptation version v${profileAdaptationMajor}. Submission is blocked by default.`}
+                    </span>
+                    <label className="flex items-start gap-1.5 font-semibold">
+                      <input
+                        type="checkbox"
+                        checked={versionMismatchOverride}
+                        onChange={(event) => setVersionMismatchOverride(event.target.checked)}
+                        className="mt-0.5 h-3 w-3 accent-rose-600"
+                      />
+                      <span>{zh ? '管理员确认：我明确要使用该不一致的命令/解析适配版本。' : 'Administrator confirmation: use this mismatched command/parser adaptation version intentionally.'}</span>
+                    </label>
+                  </div>
+                </div>
+              )}
             </div>
           )}
 

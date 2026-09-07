@@ -47,3 +47,40 @@ def test_unknown_model_never_returns_null_and_reports_generic_fallback():
     assert resolved["resolution_level"] == "global_generic"
     assert resolved["fidelity"] == "generic"
     assert resolved["render_strategy"] in {"procedural", "procedural_until_glb_approved"}
+
+
+def test_registry_model_alias_precedes_alphabetical_h3c_family_fallback():
+    resolved = rack_asset_resolver.resolve_asset(
+        vendor="H3C",
+        model="S6800",
+        device_type="switch",
+        height_u=1,
+    )
+    assert resolved["asset_key"] == "h3c_s6800_family"
+    assert resolved["resolution_level"] == "family"
+    assert resolved["available"] is True
+    assert resolved["render_strategy"] == "glb"
+
+
+def test_generic_patch_panel_resolves_to_approved_glb():
+    resolved = rack_asset_resolver.resolve_asset(
+        vendor="Generic",
+        model="Patch Panel 24P",
+        device_type="patch_panel",
+        height_u=1,
+    )
+    assert resolved["asset_key"] == "generic_patch_panel_cat6_24p"
+    assert resolved["available"] is True
+    assert resolved["render_strategy"] == "glb"
+
+
+def test_chinese_patch_panel_label_resolves_to_same_approved_glb():
+    resolved = rack_asset_resolver.resolve_asset(
+        vendor="Generic",
+        model="Cat6 24口 RJ45 配线架",
+        device_type="配线架",
+        height_u=1,
+    )
+    assert resolved["asset_key"] == "generic_patch_panel_cat6_24p"
+    assert resolved["available"] is True
+    assert resolved["render_strategy"] == "glb"

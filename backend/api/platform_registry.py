@@ -125,6 +125,7 @@ class PlatformBindingRequest(BaseModel):
     platform_profile_id: str = Field(..., min_length=1, max_length=128)
     lock: bool = False
     force: bool = False
+    allow_version_mismatch: bool = False
 
     model_config = ConfigDict(extra="forbid")
 
@@ -134,6 +135,7 @@ class PlatformBatchBindingRequest(BaseModel):
     platform_profile_id: str = Field(..., min_length=1, max_length=128)
     lock: bool = False
     force: bool = False
+    allow_version_mismatch: bool = False
 
     model_config = ConfigDict(extra="forbid")
 
@@ -373,6 +375,7 @@ def api_bind_device(device_id: str, payload: PlatformBindingRequest, user=requir
             user,
             lock=payload.lock,
             force=payload.force,
+            allow_version_mismatch=payload.allow_version_mismatch,
         ),
         "message": "Device platform binding saved",
     }
@@ -428,6 +431,7 @@ def api_device_platform_binding(
             user,
             lock=payload.lock,
             force=payload.force,
+            allow_version_mismatch=payload.allow_version_mismatch,
         ),
         "message": "Device platform binding saved",
     }
@@ -447,6 +451,7 @@ def api_device_platform_binding_batch(
             user,
             lock=payload.lock,
             force=payload.force,
+            allow_version_mismatch=payload.allow_version_mismatch,
         ),
         "message": "Batch device platform binding saved",
     }

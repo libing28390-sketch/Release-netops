@@ -13,7 +13,7 @@ import {
   getNameplateTexture
 } from './utils/textures';
 
-interface RackFrameProps {
+export interface RackFrameProps {
   name: string;
   totalU: number;
   widthMm?: number;
@@ -24,6 +24,8 @@ interface RackFrameProps {
   occupiedUs?: Set<number>;
   onHoverEmptyU?: (u: number | null) => void;
   zh?: boolean;
+  /** Render the structural fallback mesh, or only the interactive overlays. */
+  renderStructure?: boolean;
 }
 
 export const RackFrame: React.FC<RackFrameProps> = ({
@@ -36,7 +38,8 @@ export const RackFrame: React.FC<RackFrameProps> = ({
   showULabels = true,
   occupiedUs = new Set(),
   onHoverEmptyU,
-  zh = true
+  zh = true,
+  renderStructure = true
 }) => {
   const [hoveredEmptyU, setHoveredEmptyU] = useState<number | null>(null);
   const rackHeight = totalU * U_HEIGHT_3D;
@@ -90,6 +93,8 @@ export const RackFrame: React.FC<RackFrameProps> = ({
 
   return (
     <group>
+      {renderStructure && (
+        <>
       {/* 4 Vertical Corner Structural Posts */}
       {postPositions.map((pos, i) => (
         <group key={`post-${i}`} position={pos}>
@@ -146,7 +151,7 @@ export const RackFrame: React.FC<RackFrameProps> = ({
             <planeGeometry args={[railWidth, rackHeight]} />
             <meshStandardMaterial map={railTexture} roughness={0.5} metalness={0.25} />
           </mesh>
-          <mesh position={[railXOffset, rackHeight / 2, railZOffset]} scale={[-1, 1, 1]}>
+          <mesh position={[railXOffset, rackHeight / 2, railZOffset]}>
             <planeGeometry args={[railWidth, rackHeight]} />
             <meshStandardMaterial map={railTexture} roughness={0.5} metalness={0.25} />
           </mesh>
@@ -158,7 +163,7 @@ export const RackFrame: React.FC<RackFrameProps> = ({
         <planeGeometry args={[railWidth, rackHeight]} />
         <meshStandardMaterial map={railTexture} roughness={0.5} metalness={0.25} />
       </mesh>
-      <mesh position={[railXOffset, rackHeight / 2, -railZOffset]} rotation={[0, Math.PI, 0]} scale={[-1, 1, 1]}>
+      <mesh position={[railXOffset, rackHeight / 2, -railZOffset]} rotation={[0, Math.PI, 0]}>
         <planeGeometry args={[railWidth, rackHeight]} />
         <meshStandardMaterial map={railTexture} roughness={0.5} metalness={0.25} />
       </mesh>
@@ -171,6 +176,70 @@ export const RackFrame: React.FC<RackFrameProps> = ({
         </mesh>
         <pointLight position={[0, -0.15, 0]} intensity={1.5} color="#bae6fd" distance={18} />
       </group>
+        </>
+      )}
+
+      {/* The GLB carries the physical rails; this lightweight overlay keeps
+          the viewer's U-number ruler available without duplicating posts or
+          the cabinet shell. */}
+      {showULabels && !renderStructure && (
+        <>
+          <mesh
+            position={[-railXOffset, rackHeight / 2, railZOffset + 0.04]}
+            renderOrder={20}
+          >
+            <planeGeometry args={[railWidth, rackHeight]} />
+            <meshBasicMaterial
+              map={railTexture}
+              transparent
+              opacity={0.98}
+              depthTest={false}
+              depthWrite={false}
+            />
+          </mesh>
+          <mesh
+            position={[railXOffset, rackHeight / 2, railZOffset + 0.04]}
+            renderOrder={20}
+          >
+            <planeGeometry args={[railWidth, rackHeight]} />
+            <meshBasicMaterial
+              map={railTexture}
+              transparent
+              opacity={0.98}
+              depthTest={false}
+              depthWrite={false}
+            />
+          </mesh>
+          <mesh
+            position={[-railXOffset, rackHeight / 2, -railZOffset - 0.04]}
+            rotation={[0, Math.PI, 0]}
+            renderOrder={20}
+          >
+            <planeGeometry args={[railWidth, rackHeight]} />
+            <meshBasicMaterial
+              map={railTexture}
+              transparent
+              opacity={0.98}
+              depthTest={false}
+              depthWrite={false}
+            />
+          </mesh>
+          <mesh
+            position={[railXOffset, rackHeight / 2, -railZOffset - 0.04]}
+            rotation={[0, Math.PI, 0]}
+            renderOrder={20}
+          >
+            <planeGeometry args={[railWidth, rackHeight]} />
+            <meshBasicMaterial
+              map={railTexture}
+              transparent
+              opacity={0.98}
+              depthTest={false}
+              depthWrite={false}
+            />
+          </mesh>
+        </>
+      )}
 
       {/* Informative Empty U Slots (Read-only Spatial Indicators) */}
       <group>
@@ -226,11 +295,11 @@ export const RackFrame: React.FC<RackFrameProps> = ({
         })}
       </group>
 
-      {/* Lightweight Honeycomb Mesh Front Door (100° Open by default) */}
+      {/* Lightweight Honeycomb Mesh Front Door (shown as a compact open leaf) */}
       {showDoor && (
         <group
           position={[-rackWidth / 2, 0, (rackDepth / 2) + 0.05]}
-          rotation={[0, isDoorOpen ? -Math.PI / 1.75 : 0, 0]}
+          rotation={[0, isDoorOpen ? -Math.PI / 5.2 : 0, 0]}
         >
           {/* Door Mesh Panel */}
           <mesh position={[rackWidth / 2, rackHeight / 2, 0]}>

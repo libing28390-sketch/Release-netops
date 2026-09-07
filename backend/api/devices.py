@@ -14,6 +14,7 @@ from services.device_health_service import annotate_devices_with_health, normali
 from services.site_identity_service import canonical_site_name
 from services.operational_data_service import collect_operational_data, collect_custom_command_data
 from services.platform_identification_service import _canonical_vendor
+from services.platform_registry_service import PLATFORM_CATALOG_METADATA
 from services import tag_service
 from core.crypto import encrypt_credential, decrypt_credential
 from core.config import settings
@@ -762,6 +763,60 @@ def _annotate_devices_with_tags(conn, items: list) -> list:
     return items
 
 
+def _annotate_devices_with_platform_binding(conn, items: list) -> list:
+    """Attach the concrete command/parser binding without changing device facts.
+
+    ``devices.version`` is the software version collected from SNMP/CLI and
+    must remain the source of truth for the device itself.  The registry
+    profile is a separate automation concern (driver, command catalog and
+    TextFSM/parser generation), so expose its display metadata as a nested
+    object rather than overloading ``platform`` or ``version``.  The query is
+    batched for the current page to avoid an N+1 lookup in the inventory UI.
+    """
+    if not items:
+        return items
+    profile_ids = list(dict.fromkeys(
+        str(item.get('platform_profile_id') or '').strip()
+        for item in items
+        if str(item.get('platform_profile_id') or '').strip()
+    ))
+    profile_map: dict[str, dict[str, Any]] = {}
+    if profile_ids:
+        placeholders = ','.join('?' for _ in profile_ids)
+        try:
+            rows = conn.execute(
+                f'''SELECT id, platform_code, name_zh, name_en, vendor,
+                           parser_platform, source, status
+                    FROM platform_profiles
+                    WHERE id IN ({placeholders})''',
+                tuple(profile_ids),
+            ).fetchall()
+            for row in rows:
+                profile = dict(row)
+                code = str(profile.get('platform_code') or '').strip().lower()
+                metadata = PLATFORM_CATALOG_METADATA.get(code) or {}
+                profile_map[str(profile.get('id') or '')] = {
+                    'id': profile.get('id'),
+                    'platform_code': profile.get('platform_code'),
+                    'name_zh': profile.get('name_zh'),
+                    'name_en': profile.get('name_en'),
+                    'vendor': profile.get('vendor'),
+                    'parser_platform': profile.get('parser_platform'),
+                    'source': profile.get('source'),
+                    'adaptation_version': metadata.get('version', 'common'),
+                }
+        except Exception as exc:
+            # The registry migration is optional for a few legacy/read-only
+            # fixtures.  Keep the device list usable and let the UI fall back
+            # to the profile id when metadata is unavailable.
+            _logger.warning('Failed to annotate platform binding metadata: %s', exc)
+
+    for item in items:
+        profile_id = str(item.get('platform_profile_id') or '').strip()
+        item['platform_binding'] = profile_map.get(profile_id) if profile_id else None
+    return items
+
+
 @router.get("/devices")
 def read_devices(
     search: Optional[str] = Query(default=None),
@@ -887,6 +942,7 @@ def read_devices(
             else:
                 interface_data = _fetch_interface_data_by_device_ids(conn, [str(d['id']) for d in devices])
                 items = [_normalize_device_row(d, conn, interface_data.get(str(d['id']), [])) for d in devices]
+            items = _annotate_devices_with_platform_binding(conn, items)
             items = annotate_devices_with_snmp_profile(_annotate_devices_with_tags(conn, items))
             return annotate_devices_with_health(conn, items)
 
@@ -915,6 +971,7 @@ def read_devices(
             interface_data = _fetch_interface_data_by_device_ids(conn, [str(d['id']) for d in devices])
             items = [_normalize_device_row(d, conn, interface_data.get(str(d['id']), [])) for d in devices]
 
+        items = _annotate_devices_with_platform_binding(conn, items)
         items = annotate_devices_with_snmp_profile(_annotate_devices_with_tags(conn, items))
         return {
             'items': annotate_devices_with_health(conn, items),

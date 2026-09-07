@@ -212,6 +212,14 @@ export const SERVER_PLATFORMS = [
   { value: 'esxi',    label: 'VMware ESXi' },
 ];
 
+// These values are intentionally kept separate from the network vendor
+// catalogue.  A few names (for example Huawei and Dell) can be valid in both
+// domains, so the asset type remains the source of truth when filtering or
+// validating an import row.
+export const SERVER_ONLY_VENDOR_VALUES = [
+  'Linux', 'Dell', 'HP', 'Lenovo', 'Inspur', 'Generic Server', 'generic',
+] as const;
+
 export const uniquePlatforms = (items: { value: string; label: string }[]) => {
   const seen = new Set<string>();
   return items.filter(item => {
@@ -228,13 +236,19 @@ export const NETWORK_PLATFORM_PLATFORMS = uniquePlatforms(
 );
 
 export const getPlatformsForVendor = (vendor?: string) => {
-  if (!vendor) return ALL_PLATFORMS;
-  const v = vendor.trim().toLowerCase();
+  // This helper is used by the network-device editor.  Never expose server
+  // platforms from the empty/unknown-vendor state.
+  if (!vendor) return NETWORK_PLATFORM_PLATFORMS;
+  const rawVendor = vendor.trim();
+  const canonicalVendor = VENDOR_IMPORT_ALIASES[rawVendor]
+    || Object.entries(VENDOR_IMPORT_ALIASES).find(([alias]) => alias.toLowerCase() === rawVendor.toLowerCase())?.[1]
+    || rawVendor;
+  const v = canonicalVendor.toLowerCase();
   const matchedKey = Object.keys(VENDOR_PLATFORMS).find(k => k.toLowerCase() === v || (v === '迪普' && k.toLowerCase() === 'dptech'));
   if (matchedKey && VENDOR_PLATFORMS[matchedKey]) {
     return uniquePlatforms(VENDOR_PLATFORMS[matchedKey]);
   }
-  return ALL_PLATFORMS;
+  return NETWORK_PLATFORM_PLATFORMS;
 };
 
 export const COL_MAP: Record<string, string> = {
@@ -269,6 +283,14 @@ export const COL_MAP: Record<string, string> = {
   '连接方式': 'connection_method', 'Connection': 'connection_method', 'connection_method': 'connection_method',
   'SNMP社区名': 'snmp_community', 'SNMP Community': 'snmp_community', 'snmp_community': 'snmp_community',
   'SNMP端口': 'snmp_port', 'SNMP Port': 'snmp_port', 'snmp_port': 'snmp_port',
+  // SNMP credentials are referenced by vault name (or ID for compatibility),
+  // never by a community string in the template. Keep generic Credential
+  // mapped to SSH above so existing imports remain unambiguous.
+  'SNMP凭据': 'snmp_credential_name', 'SNMP凭据名称': 'snmp_credential_name', 'SNMP凭据（推荐）': 'snmp_credential_name',
+  'SNMP Credential': 'snmp_credential_name', 'SNMP Credential Name': 'snmp_credential_name', 'SNMP Credential (recommended)': 'snmp_credential_name',
+  'snmp_credential_name': 'snmp_credential_name',
+  'SNMP凭据ID': 'snmp_credential_id', 'SNMP Credential ID': 'snmp_credential_id',
+  'snmp_credential_id': 'snmp_credential_id',
   'U高度': 'u_height', 'U Height': 'u_height', 'u_height': 'u_height',
   '规划起始U': 'planned_start_u', 'Planned Start U': 'planned_start_u', 'planned_start_u': 'planned_start_u',
   '功耗(W)': 'power_watts', 'Power(W)': 'power_watts', 'power_watts': 'power_watts',
@@ -353,7 +375,7 @@ export const IMPORT_VALUE_MAP: Record<string, Record<string, string>> = {
   connection_method: {
     'SSH（安全外壳）': 'ssh', SSH: 'ssh', ssh: 'ssh',
     'NETCONF（网络配置协议）': 'netconf', NETCONF: 'netconf', netconf: 'netconf',
-    '仅 Web（HTTP/HTTPS）': 'web', 'Web only': 'web', web: 'web',
+    '仅 Web（HTTP/HTTPS）': 'web', 'Web管理': 'web', 'Web管理入口': 'web', 'Web管理（HTTP/HTTPS）': 'web', 'Web Management': 'web', 'Web only': 'web', web: 'web',
     '无登录通道': 'none', 'No login channel': 'none', none: 'none',
   },
   platform: {
@@ -406,6 +428,36 @@ export const NETWORK_IMPORT_PLATFORM_VALUES = Array.from(new Set([
     .filter(([, value]) => networkPlatformCodes.has(value))
     .map(([label]) => label),
 ]));
+
+export const normalizeImportedVendor = (vendor: string): string => {
+  const trimmed = vendor.trim();
+  if (!trimmed) return '';
+  const lower = trimmed.toLowerCase();
+  const canonicalName = [...NETWORK_VENDOR_NAMES, ...SECURITY_VENDOR_NAMES]
+    .find(name => name.toLowerCase() === lower);
+  if (canonicalName) return canonicalName;
+  const alias = Object.entries(VENDOR_IMPORT_ALIASES)
+    .find(([value]) => value.toLowerCase() === lower);
+  return alias?.[1] || trimmed;
+};
+
+export const isNetworkVendor = (vendor: string): boolean => {
+  const normalized = normalizeImportedVendor(vendor).toLowerCase();
+  return [...NETWORK_VENDOR_NAMES, ...SECURITY_VENDOR_NAMES]
+    .some(name => name.toLowerCase() === normalized);
+};
+
+export const getValidPlatformsForAsset = (assetType: string, vendor?: string) => {
+  if (assetType === 'server') return SERVER_PLATFORMS;
+  return getPlatformsForVendor(vendor);
+};
+
+export const isValidVendorPlatform = (assetType: string, vendor: string, platform: string): boolean => {
+  const normalizedPlatform = platform.trim();
+  if (!normalizedPlatform) return true;
+  const allowed = getValidPlatformsForAsset(assetType, vendor);
+  return allowed.some(option => option.value === normalizedPlatform);
+};
 
 export const isValidIpAddress = (ip: string): boolean => {
   if (!ip || !ip.trim()) return false;

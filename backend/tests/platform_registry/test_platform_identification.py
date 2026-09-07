@@ -6,8 +6,11 @@ import pytest
 
 from services.platform_identification_service import (
     _assert_device_profile_platform,
+    _assert_version_override_permission,
     _binding_compatibility,
+    _extract_version_from_text,
     _inventory_profile_code,
+    _prefer_version_evidence,
     bind_device,
     bind_devices_batch,
     identify_device,
@@ -60,9 +63,15 @@ def _insert_rule(conn, profile_id: str, *, pattern: str, confidence: float = 0.9
         ("unknown", "9.1", "H3C", "h3c_comware_v9", "h3c_comware_v9"),
         ("h3c_comware", "Comware custom", "H3C", "", "h3c_comware"),
         ("unknown", "7.1.070", "", "", ""),
+        ("", "11.9(6)B13P1", "锐捷", "ruijie_rgos_v11", "ruijie_rgos_v11"),
+        ("", "S211C011D007P08", "迪普", "dptech_fw_s211", "dptech_conplat"),
+        ("", "9.7.1.25(integrity)", "迈普", "maipu_mypower_v9", "maipu"),
+        ("", "5900 V6.00.04.20P01", "中兴", "zte_5900_v6", "zte_zxros"),
+        ("ruijie_rgos", "11.9(6)B13P1", "Ruijie", "ruijie_rgos_v11", "ruijie_rgos_v11"),
+        ("ruijie_os", "RGOS 12.5(1)", "锐捷", "ruijie_rgos_v12", "ruijie_rgos_v12"),
     ],
 )
-def test_inventory_resolution_requires_h3c_evidence_and_known_major_version(
+def test_inventory_resolution_requires_vendor_evidence_and_known_major_version(
     platform, version, vendor, expected_profile, expected_parser,
 ):
     assert _inventory_profile_code(platform, version, vendor) == (expected_profile, expected_parser)
@@ -78,6 +87,96 @@ def test_binding_compatibility_blocks_high_risk_execution_for_unverified_platfor
     assert {item["code"] for item in result["warnings"]} == {
         "VENDOR_PLATFORM_MISMATCH", "PLATFORM_ADAPTATION_UNVERIFIED",
     }
+
+
+def test_ruijie_system_software_version_extracts_numeric_release():
+    output = """show version
+System description      : Ruijie EASY GATEWAY(EG3000UE) by Ruijie Networks.
+System software version : EG_RGOS 11.9(6)B13P1
+System patch number     : NA
+"""
+    assert _extract_version_from_text(output) == "11.9(6)B13P1"
+
+
+@pytest.mark.parametrize(
+    ("output", "expected"),
+    [
+        ("Software Release S211C011D007P08", "S211C011D007P08"),
+        ("MyPower S3330 Software Version 9.7.1.25(integrity)", "9.7.1.25(integrity)"),
+        ("ZTE ZXR10 Software, Version: 5900 V6.00.04.20P01, Release software", "5900 V6.00.04.20P01"),
+        ("ZTE ZXR10 Software, Version: ZSRV2 V3.00.30(1.2.9), Release software", "ZSRV2 V3.00.30(1.2.9)"),
+    ],
+)
+def test_domestic_vendor_version_formats_are_extracted_without_truncation(output, expected):
+    assert _extract_version_from_text(output) == expected
+
+
+@pytest.mark.parametrize(
+    ("platform", "version", "vendor", "expected_profile", "expected_parser"),
+    [
+        ("dptech_ios", "S211C011D007P08", "DPtech", "dptech_fw_s211", "dptech_conplat"),
+        ("maipu", "9.7.1.25", "Maipu", "maipu_mypower_v9", "maipu"),
+        ("zte_zxros", "5900 V6.00.04.20P01", "ZTE", "zte_5900_v6", "zte_zxros"),
+        ("zte_zxros", "ZSRV2 V3.00.30(1.2.9)", "ZTE", "zte_zsrv2_v3", "zte_zxros"),
+    ],
+)
+def test_domestic_vendor_inventory_versions_resolve_concrete_profiles(
+    platform, version, vendor, expected_profile, expected_parser,
+):
+    assert _inventory_profile_code(platform, version, vendor) == (expected_profile, expected_parser)
+
+
+def test_ruijie_version_evidence_overrides_a_contradictory_model_rule():
+    result = {
+        "success": True,
+        "status": "MATCHED",
+        "suggestions": [{"platform_profile_id": "eg-v11", "platform_code": "ruijie_eg_rgos11"}],
+        "selected": {"platform_profile_id": "eg-v11", "platform_code": "ruijie_eg_rgos11"},
+    }
+    candidate = {
+        "platform_profile_id": "generic-v12",
+        "platform_code": "ruijie_rgos_v12",
+        "score": 1.0,
+        "evidence": "software_version",
+    }
+    corrected = _prefer_version_evidence(result, candidate)
+    assert corrected["status"] == "MATCHED"
+    assert corrected["selected"]["platform_code"] == "ruijie_rgos_v12"
+
+    matching = {**candidate, "platform_code": "ruijie_rgos_v11"}
+    assert _prefer_version_evidence(result, matching)["selected"]["platform_code"] == "ruijie_eg_rgos11"
+
+
+def test_manual_binding_rejects_known_generation_mismatch():
+    with pytest.raises(PlatformRegistryError) as mismatch:
+        _assert_device_profile_platform(
+            {"vendor": "H3C", "platform": "h3c_comware", "version": "7.1.064"},
+            {"vendor": "H3C", "platform_code": "h3c_comware_v5", "parser_platform": "h3c_comware"},
+        )
+    assert mismatch.value.code == "PLATFORM_VERSION_MISMATCH"
+
+    _assert_device_profile_platform(
+        {"vendor": "H3C", "platform": "h3c_comware", "version": "7.1.064"},
+        {"vendor": "H3C", "platform_code": "h3c_comware_v7", "parser_platform": "h3c_comware"},
+    )
+    _assert_device_profile_platform(
+        {"vendor": "H3C", "platform": "h3c_comware", "version": "7.1.064"},
+        {"vendor": "H3C", "platform_code": "h3c_comware_v5", "parser_platform": "h3c_comware"},
+        allow_version_mismatch=True,
+    )
+    _assert_device_profile_platform(
+        {"vendor": "H3C", "platform": "h3c_comware", "version": ""},
+        {"vendor": "H3C", "platform_code": "h3c_comware_v5", "parser_platform": "h3c_comware"},
+    )
+
+
+def test_version_override_is_restricted_to_administrators():
+    with pytest.raises(PlatformRegistryError) as denied:
+        _assert_version_override_permission(True, _user("tenant-1", "Operator"))
+    assert denied.value.code == "PLATFORM_VERSION_OVERRIDE_FORBIDDEN"
+
+    _assert_version_override_permission(True, _user("tenant-1", "Administrator"))
+    _assert_version_override_permission(False, _user("tenant-1", "Operator"))
 
 
 def test_manual_binding_rejects_cross_vendor_and_accepts_same_vendor_family():
@@ -128,6 +227,54 @@ def test_concrete_catalog_batch_binding_and_unbinding(isolated_db):
             tuple(device_ids),
         ).fetchall()
         assert all(row[0] == "huawei_vrpv8" and row[1] is None and row[2] == 0 for row in rows)
+    finally:
+        conn.close()
+
+
+def test_batch_binding_version_mismatch_is_atomic(isolated_db):
+    user = _user("tenant-1", "Administrator")
+    device_ids = ["batch-version-1", "batch-version-2"]
+    conn = isolated_db["module"].get_db_connection()
+    try:
+        for device_id in device_ids:
+            _insert_device(conn, "tenant-1", device_id=device_id)
+        conn.execute(
+            "UPDATE devices SET platform = ?, version = ? WHERE id IN (?, ?)",
+            ("h3c_comware", "7.1.064", *device_ids),
+        )
+        conn.commit()
+    finally:
+        conn.close()
+
+    with pytest.raises(PlatformRegistryError) as mismatch:
+        bind_devices_batch(device_ids, "system-profile-h3c_comware_v5", user, lock=True)
+    assert mismatch.value.code == "PLATFORM_VERSION_MISMATCH"
+
+    conn = isolated_db["module"].get_db_connection()
+    try:
+        rows = conn.execute(
+            "SELECT platform_profile_id FROM devices WHERE id IN (?, ?) ORDER BY id",
+            tuple(device_ids),
+        ).fetchall()
+        assert all(row[0] is None for row in rows)
+    finally:
+        conn.close()
+
+    overridden = bind_devices_batch(
+        device_ids,
+        "system-profile-h3c_comware_v5",
+        user,
+        lock=True,
+        allow_version_mismatch=True,
+    )
+    assert overridden["device_count"] == 2
+    conn = isolated_db["module"].get_db_connection()
+    try:
+        rows = conn.execute(
+            "SELECT platform_profile_id FROM devices WHERE id IN (?, ?) ORDER BY id",
+            tuple(device_ids),
+        ).fetchall()
+        assert all(row[0] == "system-profile-h3c_comware_v5" for row in rows)
     finally:
         conn.close()
 

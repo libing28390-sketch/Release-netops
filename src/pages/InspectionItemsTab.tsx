@@ -39,6 +39,12 @@ interface InspectionItem {
   enabled?: number;             // 是否启用
 }
 
+interface InspectionItemFacets {
+  all: number;
+  categories: Record<string, number>;
+  methods: Record<string, number>;
+}
+
 
 const VENDORS = [
   'Generic',
@@ -91,6 +97,11 @@ const InspectionItemsTab: React.FC<InspectionItemsTabProps> = ({ language, showT
   const zh = language === 'zh';
 
   const [items, setItems] = useState<InspectionItem[]>([]);
+  const [facets, setFacets] = useState<InspectionItemFacets>({
+    all: 0,
+    categories: {},
+    methods: {},
+  });
   const [loading, setLoading] = useState(false);
   const [showAdd, setShowAdd] = useState(false);
   const [editingId, setEditingId] = useState<string | null>(null);
@@ -164,9 +175,27 @@ const InspectionItemsTab: React.FC<InspectionItemsTabProps> = ({ language, showT
         if (Array.isArray(data)) {
           setItems(data);
           setTotalItems(data.length);
+          setFacets({
+            all: data.length,
+            categories: data.reduce<Record<string, number>>((counts, item) => {
+              counts[item.category] = (counts[item.category] || 0) + 1;
+              return counts;
+            }, {}),
+            methods: data.reduce<Record<string, number>>((counts, item) => {
+              const method = (item.method || '').toUpperCase();
+              if (method) counts[method] = (counts[method] || 0) + 1;
+              return counts;
+            }, {}),
+          });
         } else {
           setItems(Array.isArray(data.items) ? data.items : []);
           setTotalItems(Number(data.total || 0));
+          const nextFacets = data.facets || {};
+          setFacets({
+            all: Number(nextFacets.all || 0),
+            categories: nextFacets.categories || {},
+            methods: nextFacets.methods || {},
+          });
         }
       }
     } finally {
@@ -340,73 +369,24 @@ const InspectionItemsTab: React.FC<InspectionItemsTabProps> = ({ language, showT
     return Array.from(set).sort();
   }, [items, categoryFilter]);
 
-  // 当前展示数据涉及的方法列表 — 类似厂商
+  // 方法列表由后端 facet 提供，避免当前页没有某种方式时把它隐藏。
   const availableMethods = useMemo(() => {
-    const pool = categoryFilter === 'All' ? items : items.filter(i => i.category === categoryFilter);
-    const set = new Set<string>();
-    pool.forEach(i => { if (i.method) set.add(i.method.toUpperCase()); });
-    return Array.from(set).sort();
-  }, [items, categoryFilter]);
+    return Object.keys(facets.methods).filter(method => facets.methods[method] > 0).sort();
+  }, [facets.methods]);
 
-  // Counts for each category tab (dynamic based on method, vendor, and search query)
+  // Counts come from server-side facets so they describe the full catalog,
+  // rather than only the current paginated page.
   const categoryCounts = useMemo(() => {
-    let base = items;
-    if (methodFilter !== 'All') {
-      base = base.filter(i => (i.method || '').toUpperCase() === methodFilter);
-    }
-    if (vendorFilter !== 'All') {
-      base = base.filter(i => getFriendlyVendor(i.vendor) === vendorFilter);
-    }
-    if (searchQuery) {
-      const q = searchQuery.toLowerCase();
-      base = base.filter(i =>
-        (i.name || '').toLowerCase().includes(q) ||
-        (i.name_zh || '').toLowerCase().includes(q) ||
-        (i.category || '').toLowerCase().includes(q) ||
-        (i.check_key || '').toLowerCase().includes(q) ||
-        (i.oid || '').toLowerCase().includes(q) ||
-        (i.command || '').toLowerCase().includes(q) ||
-        (i.description || '').toLowerCase().includes(q) ||
-        (i.vendor || '').toLowerCase().includes(q)
-      );
-    }
-
-    const counts: Record<string, number> = { All: base.length };
+    const counts: Record<string, number> = { All: facets.all };
     CATEGORIES.forEach(cat => {
-      counts[cat.id] = base.filter(i => i.category === cat.id).length;
+      counts[cat.id] = Number(facets.categories[cat.id] || 0);
     });
     return counts;
-  }, [items, methodFilter, vendorFilter, searchQuery]);
+  }, [facets]);
 
-  // Counts for each method button (dynamic based on category, vendor, and search query)
-  const methodCounts = useMemo(() => {
-    let base = items;
-    if (categoryFilter !== 'All') {
-      base = base.filter(i => i.category === categoryFilter);
-    }
-    if (vendorFilter !== 'All') {
-      base = base.filter(i => getFriendlyVendor(i.vendor) === vendorFilter);
-    }
-    if (searchQuery) {
-      const q = searchQuery.toLowerCase();
-      base = base.filter(i =>
-        (i.name || '').toLowerCase().includes(q) ||
-        (i.name_zh || '').toLowerCase().includes(q) ||
-        (i.category || '').toLowerCase().includes(q) ||
-        (i.check_key || '').toLowerCase().includes(q) ||
-        (i.oid || '').toLowerCase().includes(q) ||
-        (i.command || '').toLowerCase().includes(q) ||
-        (i.description || '').toLowerCase().includes(q) ||
-        (i.vendor || '').toLowerCase().includes(q)
-      );
-    }
-
-    const counts: Record<string, number> = {};
-    availableMethods.forEach(m => {
-      counts[m] = base.filter(i => (i.method || '').toUpperCase() === m).length;
-    });
-    return counts;
-  }, [items, categoryFilter, vendorFilter, searchQuery, availableMethods]);
+  // Method facets ignore only the selected method while keeping the other
+  // filters on the backend.
+  const methodCounts = useMemo(() => facets.methods, [facets.methods]);
 
   // 切换 category 时重置 method/vendor，避免遗留无效过滤值
   useEffect(() => {

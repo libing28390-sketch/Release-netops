@@ -288,6 +288,152 @@ echo "MISSING_COUNT: $missing"
 """,
      '检查进程存活状态，返回未运行的进程数', 'Linux', 'standard'),
 
+    ('std_linux_oom_events', 'Linux OOM Killer 事件数',
+     r"""#!/bin/bash
+dmesg 2>/dev/null | grep -iE "oom-killer|killed process" | wc -l
+""",
+     '统计内核日志中 OOM-killer 和 killed process 事件数量', 'Linux', 'standard'),
+
+    ('std_linux_ro_mounts', 'Linux 只读挂载数',
+     r"""#!/bin/bash
+mount 2>/dev/null | grep -E '\(ro[,$]|\(,ro,' | wc -l
+""",
+     '统计当前处于只读状态的挂载文件系统数量', 'Linux', 'standard'),
+
+    ('std_linux_kernel_errs', 'Linux 内核错误日志数',
+     r"""#!/bin/bash
+dmesg 2>/dev/null | tail -n 200 | grep -iE "critical|error|corrupt" | wc -l
+""",
+     '统计最近 200 行内核日志中的严重错误数量', 'Linux', 'standard'),
+
+    ('std_linux_zombie_procs', 'Linux 僵尸进程数',
+     r"""#!/bin/bash
+ps -eo stat= 2>/dev/null | awk '$1 ~ /^Z/ {n++} END {print n+0}'
+""",
+     '统计当前处于僵尸状态的进程数量', 'Linux', 'standard'),
+
+    ('std_linux_fd_util', 'Linux 文件句柄使用率',
+     r"""#!/bin/bash
+awk '{if ($3 > 0) printf "%.2f\n", ($1/$3)*100; else print 0}' /proc/sys/fs/file-nr 2>/dev/null
+""",
+     '计算已分配文件句柄数占系统上限的比例', 'Linux', 'standard'),
+
+    ('std_linux_net_errs', 'Linux 网卡错误与丢包数',
+     r"""#!/bin/bash
+awk 'NR>2 {err+=$4+$5+$12+$13} END {print err+0}' /proc/net/dev 2>/dev/null
+""",
+     '统计所有网卡接收/发送 errors 和 dropped 的累计数量', 'Linux', 'standard'),
+
+    ('std_linux_ntp_desync', 'Linux NTP 失步状态',
+     r"""#!/bin/bash
+ntp_desync=1
+if chronyc tracking >/dev/null 2>&1; then
+  chronyc tracking | grep -q "Reference ID" && ntp_desync=0
+elif ntpq -p >/dev/null 2>&1; then
+  ntpq -p | grep -q '^\*' && ntp_desync=0
+fi
+echo "$ntp_desync"
+""",
+     '检查本机 NTP 是否存在已同步的参考时钟（0=同步，1=失步/失败）', 'Linux', 'standard'),
+
+    ('std_linux_dns_latency', 'Linux DNS 解析延迟',
+     r"""#!/bin/bash
+start_t=$(date +%s%3N 2>/dev/null || date +%s)
+if getent hosts www.baidu.com >/dev/null 2>&1; then
+  end_t=$(date +%s%3N 2>/dev/null || date +%s)
+  diff=$((end_t - start_t))
+  [ "$diff" -le 0 ] && diff=5
+  echo "$diff"
+else
+  echo 9999
+fi
+""",
+     '测量 DNS 解析延迟（毫秒），解析失败返回 9999', 'Linux', 'standard'),
+
+    ('std_linux_recent_reboot', 'Linux 最近重启状态',
+     r"""#!/bin/bash
+awk '{print ($1 < 900) ? 1 : 0}' /proc/uptime 2>/dev/null
+""",
+     '检查系统是否在最近 15 分钟内重启（0=否，1=是）', 'Linux', 'standard'),
+
+    ('std_linux_core_dumps_count', 'Linux Core Dump 文件数',
+     r"""#!/bin/bash
+crash_count=$(find /var/crash/ -type f 2>/dev/null | wc -l)
+core_count=$(find /tmp/ -name "core.[0-9]*" 2>/dev/null | wc -l)
+echo $((crash_count + core_count))
+""",
+     '统计 /var/crash 和 /tmp 中的 Core Dump 文件数量', 'Linux', 'standard'),
+
+    ('std_linux_disk_io_await', 'Linux 磁盘 I/O Await 延迟',
+     r"""#!/bin/bash
+iostat -dx 1 2 2>/dev/null | awk '
+  /^Device/ {
+    for (i = 1; i <= NF; i++) {
+      if ($i == "r_await") r = i
+      if ($i == "w_await") w = i
+    }
+    next
+  }
+  r && w && $1 !~ /^(Linux|avg-cpu|Device)$/ && $1 ~ /^[[:alnum:]_.:-]+$/ {
+    if ($r ~ /^[0-9.]+$/ && $w ~ /^[0-9.]+$/) {
+      sum += ($r + $w) / 2
+      count++
+    }
+  }
+  END { if (count > 0) printf "%.2f\n", sum / count; else print 0 }
+'
+""",
+     '计算设备平均读写 I/O await 延迟（毫秒）', 'Linux', 'standard'),
+
+    ('std_linux_tcp_close_wait', 'Linux TCP CLOSE_WAIT 数',
+     r"""#!/bin/bash
+ss -ant 2>/dev/null | awk 'tolower($0) ~ /close-wait/ {n++} END {print n+0}'
+""",
+     '统计当前处于 CLOSE_WAIT 状态的 TCP 连接数量', 'Linux', 'standard'),
+
+    ('std_linux_tcp_retrans_pct', 'Linux TCP 重传率',
+     r"""#!/bin/bash
+# TCP retransmission ratio over a one-second counter delta.
+read_tcp_counters() {
+  if command -v nstat >/dev/null 2>&1; then
+    _nstat=$(nstat -az 2>/dev/null | awk '$1 == "TcpOutSegs" {out=$2} $1 == "TcpRetransSegs" {retr=$2} END {if (out ~ /^[0-9]+$/ && retr ~ /^[0-9]+$/) print out, retr}')
+    if [ -n "$_nstat" ]; then
+      echo "$_nstat"
+      return
+    fi
+  fi
+  awk '
+    $1 == "Tcp:" {
+      if (!header_seen) {
+        header_seen = 1
+        for (i = 2; i <= NF; i++) header[$i] = i
+      } else {
+        out = $(header["OutSegs"])
+        retr = $(header["RetransSegs"])
+      }
+    }
+    END {
+      if (out ~ /^[0-9]+$/ && retr ~ /^[0-9]+$/) print out, retr
+      else print 0, 0
+    }
+  ' /proc/net/snmp 2>/dev/null
+}
+
+read -r out_before retr_before < <(read_tcp_counters)
+sleep 1
+read -r out_after retr_after < <(read_tcp_counters)
+
+delta_out=$((out_after - out_before))
+delta_retr=$((retr_after - retr_before))
+if [ "$delta_out" -gt 0 ] && [ "$delta_retr" -ge 0 ]; then
+  tcp_retrans_pct=$(awk -v retrans="$delta_retr" -v out="$delta_out" 'BEGIN { printf "%.2f", (retrans / out) * 100 }')
+else
+  tcp_retrans_pct=0
+fi
+echo "tcp_retrans_pct:${tcp_retrans_pct:-0}"
+""",
+     '按一秒 TCP 计数器增量计算重传段比例（百分比）', 'Linux', 'standard'),
+
     ('std_linux_integrated', 'Linux 集成巡检脚本',
      r"""#!/bin/bash
 # Linux 集成巡检脚本
@@ -369,7 +515,47 @@ disk_io_await=$(iostat -dx 1 2 2>/dev/null | awk '/^[a-zA-Z0-9]/ {if ($10 ~ /^[0
 echo "disk_io_await:${disk_io_await:-0}"
 tcp_close_wait=$(ss -ant 2>/dev/null | grep -i "close-wait" | wc -l)
 echo "tcp_close_wait:$tcp_close_wait"
-tcp_retrans_pct=$(awk '/^Tcp:/ {if ($13 != "") {out=$12; retrans=$13}} END {if (out > 0) printf "%.2f", (retrans/out)*100; else print 0}' /proc/net/snmp 2>/dev/null)
+# Use a short counter delta rather than the boot-time cumulative ratio.
+read_tcp_counters() {
+    if command -v nstat >/dev/null 2>&1; then
+        _nstat=$(nstat -az 2>/dev/null | awk '$1 == "TcpOutSegs" {out=$2} $1 == "TcpRetransSegs" {retr=$2} END {if (out ~ /^[0-9]+$/ && retr ~ /^[0-9]+$/) print out, retr}')
+        if [ -n "$_nstat" ]; then
+            echo "$_nstat"
+            return
+        fi
+    fi
+    awk '
+        $1 == "Tcp:" {
+            if (!header_seen) {
+                header_seen = 1
+                for (i = 2; i <= NF; i++) header[$i] = i
+            } else {
+                out = $(header["OutSegs"])
+                retr = $(header["RetransSegs"])
+            }
+        }
+        END {
+            if (out ~ /^[0-9]+$/ && retr ~ /^[0-9]+$/) print out, retr
+            else print 0, 0
+        }
+    ' /proc/net/snmp 2>/dev/null
+}
+_tcp_before=$(read_tcp_counters)
+sleep 1
+_tcp_after=$(read_tcp_counters)
+set -- $_tcp_before
+_out_before=${1:-0}
+_retr_before=${2:-0}
+set -- $_tcp_after
+_out_after=${1:-0}
+_retr_after=${2:-0}
+_delta_out=$((_out_after - _out_before))
+_delta_retr=$((_retr_after - _retr_before))
+if [ "$_delta_out" -gt 0 ] 2>/dev/null && [ "$_delta_retr" -ge 0 ] 2>/dev/null; then
+    tcp_retrans_pct=$(awk -v r="$_delta_retr" -v o="$_delta_out" 'BEGIN { printf "%.2f", (r/o)*100 }')
+else
+    tcp_retrans_pct=0
+fi
 echo "tcp_retrans_pct:${tcp_retrans_pct:-0}"
 """,
      '集成巡检脚本，采集 CPU负载、CPU使用率、内存使用率、交换分区、IOWait、磁盘空间、Inode、TCP连接、关键进程、OOM事件、只读文件系统、内核错误日志、僵尸进程、文件句柄、网络报错、NTP同步状态、DNS延迟、最近重启、CoreDump奔溃、磁盘IO await延迟、TCP CLOSE_WAIT泄漏、TCP重传率', 'Linux', 'standard'),
@@ -656,20 +842,47 @@ tcp_status="SUCCESS"
 tcp_estab_level="OK"
 tcp_tw_level="OK"
 
-# TCP 重传率 (RetransSegs / OutSegs * 100)，优先用 nstat，回退到 /proc/net/snmp
+# TCP 重传率：按一秒计数器增量计算，避免启动以来累计值掩盖当前异常。
 tcp_retrans_pct=0
-if type nstat >/dev/null 2>&1; then
-    _out_segs=$(nstat -az 2>/dev/null | awk '/TcpOutSegs/{print $2; exit}')
-    _retr_segs=$(nstat -az 2>/dev/null | awk '/TcpRetransSegs/{print $2; exit}')
-fi
-if [ -z "$_out_segs" ] || [ -z "$_retr_segs" ]; then
-    # /proc/net/snmp: 取 Tcp: 行，OutSegs 与 RetransSegs 列
-    _snmp=$(awk '/^Tcp:/{if(h==""){h=$0}else{d=$0}} END{print h"\n"d}' /proc/net/snmp 2>/dev/null)
-    _out_segs=$(echo "$_snmp" | awk 'NR==1{for(i=1;i<=NF;i++)if($i=="OutSegs")c=i} NR==2{print $c}')
-    _retr_segs=$(echo "$_snmp" | awk 'NR==1{for(i=1;i<=NF;i++)if($i=="RetransSegs")c=i} NR==2{print $c}')
-fi
-if [[ "$_out_segs" =~ ^[0-9]+$ ]] && [ "$_out_segs" -gt 0 ] && [[ "$_retr_segs" =~ ^[0-9]+$ ]]; then
-    tcp_retrans_pct=$(awk -v r="$_retr_segs" -v o="$_out_segs" 'BEGIN { printf "%.2f", (r/o)*100 }')
+read_tcp_counters() {
+    if command -v nstat >/dev/null 2>&1; then
+        _nstat=$(nstat -az 2>/dev/null | awk '$1 == "TcpOutSegs" {out=$2} $1 == "TcpRetransSegs" {retr=$2} END {if (out ~ /^[0-9]+$/ && retr ~ /^[0-9]+$/) print out, retr}')
+        if [ -n "$_nstat" ]; then
+            echo "$_nstat"
+            return
+        fi
+    fi
+    awk '
+        $1 == "Tcp:" {
+            if (!header_seen) {
+                header_seen = 1
+                for (i = 2; i <= NF; i++) header[$i] = i
+            } else {
+                out = $(header["OutSegs"])
+                retr = $(header["RetransSegs"])
+            }
+        }
+        END {
+            if (out ~ /^[0-9]+$/ && retr ~ /^[0-9]+$/) print out, retr
+            else print 0, 0
+        }
+    ' /proc/net/snmp 2>/dev/null
+}
+_tcp_before=$(read_tcp_counters)
+sleep 1
+_tcp_after=$(read_tcp_counters)
+set -- $_tcp_before
+_out_before=${1:-0}
+_retr_before=${2:-0}
+set -- $_tcp_after
+_out_after=${1:-0}
+_retr_after=${2:-0}
+_delta_out=$((_out_after - _out_before))
+_delta_retr=$((_retr_after - _retr_before))
+if [ "$_delta_out" -gt 0 ] 2>/dev/null && [ "$_delta_retr" -ge 0 ] 2>/dev/null; then
+    tcp_retrans_pct=$(awk -v r="$_delta_retr" -v o="$_delta_out" 'BEGIN { printf "%.2f", (r/o)*100 }')
+else
+    tcp_retrans_pct=0
 fi
 
 if [ "$tcp_total" -ge "$TCP_CONN_CRIT" ] || [ "$tcp_close_wait" -ge 100 ]; then
@@ -850,6 +1063,8 @@ echo "io_latency: ${io_latency_ms:-0}"
 echo "disk_util: ${max_usage:-0}"
 echo "inode_util: ${max_inode:-0}"
 echo "tcp_conns: ${tcp_total}"
+echo "tcp_retrans_pct: ${tcp_retrans_pct:-0}"
+# Legacy telemetry consumers use tcp_retrans; keep it as an alias.
 echo "tcp_retrans: ${tcp_retrans_pct:-0}"
 echo "tcp_estab: ${tcp_estab}"
 echo "tcp_time_wait: ${tcp_time_wait}"
@@ -874,28 +1089,28 @@ def get_default_items(now: str) -> list[tuple]:
         ('net_mem', 'Memory Utilization', '内存利用率 (SNMP)', 'Network', 'memory', '监控网络设备内存消耗', 'SNMP', 'OID: 1.3.6.1.4.1.9.9.48.1.1.1.5.1', '', 90, 98, 'Cisco', '1.3.6.1.4.1.9.9.48.1.1.1.5.1', now, now),
         ('net_bgp', 'BGP Peer Status', 'BGP 邻居状态', 'Network', 'bgp_neighbor', '监控 BGP 状态机', 'SSH', 'show ip bgp summary', '', 0, 1, 'Generic', '', now, now),
 
-        ('srv_cpu_load', 'CPU Load Average', 'CPU 系统负载', 'Server', 'cpu_load', '监控 1min 负载相对于核心数的比例', 'Shell', 'std_linux_integrated', 'std_linux_integrated', 80, 150, 'Linux', '', now, now),
-        ('srv_cpu_util', 'CPU Utilization', 'CPU 使用率', 'Server', 'cpu_util', '监控整体 CPU 使用率 (0-100)', 'Shell', 'std_linux_integrated', 'std_linux_integrated', 90, 95, 'Linux', '', now, now),
-        ('srv_mem_avail', 'Available Memory', '可用内存', 'Server', 'mem_avail', '监控系统内存使用百分比 (0-100)', 'Shell', 'std_linux_integrated', 'std_linux_integrated', 85, 95, 'Linux', '', now, now),
-        ('srv_swap', 'Swap Usage', '交换分区使用率', 'Server', 'swap_util', '监控交换分区使用百分比 (0-100)', 'Shell', 'std_linux_integrated', 'std_linux_integrated', 70, 90, 'Linux', '', now, now),
-        ('srv_iowait', 'Disk IO Wait', '磁盘 IO 等待 (IOWait)', 'Server', 'io_wait', '监控 CPU 等待 IO 时间占比 (阈值: >15% 告警)', 'Shell', 'std_linux_integrated', 'std_linux_integrated', 15, 30, 'Linux', '', now, now),
-        ('srv_disk_util', 'Disk Space Usage', '磁盘空间利用率', 'Server', 'disk_util', '监控根分区空间占用 (0-100)', 'Shell', 'std_linux_integrated', 'std_linux_integrated', 90, 95, 'Linux', '', now, now),
-        ('srv_disk_inode', 'Inode Utilization', 'Inode 使用率', 'Server', 'inode_util', '监控根分区 Inode 占用 (0-100)', 'Shell', 'std_linux_integrated', 'std_linux_integrated', 90, 95, 'Linux', '', now, now),
-        ('srv_net_conns', 'Established Connections', '并发连接数', 'Server', 'tcp_conns', '监控 TCP Established 状态连接数', 'Shell', 'std_linux_integrated', 'std_linux_integrated', 5000, 10000, 'Linux', '', now, now),
-        ('srv_process', 'Critical Processes', '核心进程监控', 'Server', 'process_health', '监控指定进程是否存在', 'Shell', 'std_linux_integrated', 'std_linux_integrated', None, 1, 'Linux', '', now, now),
-        ('srv_oom_events', 'OOM Killer Events', 'OOM 杀进程事件数', 'Server', 'oom_events', '监控系统最近是否触发过 OOM-killer 强制杀死过进程', 'Shell', 'std_linux_integrated', 'std_linux_integrated', 1, 5, 'Linux', '', now, now),
-        ('srv_ro_mounts', 'Read-only Mounts', '只读挂载文件系统数', 'Server', 'ro_mounts', '监控是否存在只读挂载的文件系统，防止硬盘故障', 'Shell', 'std_linux_integrated', 'std_linux_integrated', 1, 1, 'Linux', '', now, now),
-        ('srv_kernel_errs', 'Kernel Error Log Count', '内核严重报错日志数', 'Server', 'kernel_errs', '监控系统内核报错日志数量 (dmesg)', 'Shell', 'std_linux_integrated', 'std_linux_integrated', 1, 10, 'Linux', '', now, now),
-        ('srv_zombie_procs', 'Zombie Processes', '僵尸进程数', 'Server', 'zombie_procs', '监控未能被正常回收的僵尸进程占用量', 'Shell', 'std_linux_integrated', 'std_linux_integrated', 2, 5, 'Linux', '', now, now),
-        ('srv_fd_util', 'File Descriptor Utilization %', '文件句柄使用率', 'Server', 'fd_util', '监控系统已开启文件句柄数占上限的比例', 'Shell', 'std_linux_integrated', 'std_linux_integrated', 80, 90, 'Linux', '', now, now),
-        ('srv_net_errs', 'Network Interface Errors/Drops', '网卡丢包与报错数', 'Server', 'net_errs', '监测系统所有网卡接口 errors 和 dropped 的总计数', 'Shell', 'std_linux_integrated', 'std_linux_integrated', 10, 100, 'Linux', '', now, now),
-        ('srv_ntp_desync', 'NTP Desync Status', 'NTP 时间失步状态', 'Server', 'ntp_desync', '监控 NTP 本地时钟是否同步 (0=同步, 1=失步/失败)', 'Shell', 'std_linux_integrated', 'std_linux_integrated', 1, 1, 'Linux', '', now, now),
-        ('srv_dns_latency', 'DNS Resolution Latency', 'DNS 解析延迟 (ms)', 'Server', 'dns_latency', '监控域名解析延迟 (单位: 毫秒，超时失败为 9999)', 'Shell', 'std_linux_integrated', 'std_linux_integrated', 1000, 5000, 'Linux', '', now, now),
-        ('srv_recent_reboot', 'Recent Reboot Alert', '系统最近重启告警', 'Server', 'recent_reboot', '监控系统最近 15 分钟内是否重启过 (0=否, 1=是)', 'Shell', 'std_linux_integrated', 'std_linux_integrated', 1, 1, 'Linux', '', now, now),
-        ('srv_core_dumps_count', 'Core Dump Files', 'CoreDump 崩溃文件数', 'Server', 'core_dumps_count', '监控系统关键目录和临时目录下崩溃文件数', 'Shell', 'std_linux_integrated', 'std_linux_integrated', 1, 5, 'Linux', '', now, now),
-        ('srv_disk_io_await', 'Disk I/O Await Latency', '磁盘 I/O 等待延迟 (ms)', 'Server', 'disk_io_await', '监控系统磁盘平均读写响应等待耗时 (毫秒)', 'Shell', 'std_linux_integrated', 'std_linux_integrated', 20, 50, 'Linux', '', now, now),
-        ('srv_tcp_close_wait', 'TCP CLOSE_WAIT Connections', 'TCP CLOSE_WAIT 异常连接数', 'Server', 'tcp_close_wait', '监控系统处于 CLOSE_WAIT 异常未关闭状态的 TCP 连接数', 'Shell', 'std_linux_integrated', 'std_linux_integrated', 50, 200, 'Linux', '', now, now),
-        ('srv_tcp_retrans_pct', 'TCP Retransmission Ratio %', 'TCP 协议栈重传段比例', 'Server', 'tcp_retrans_pct', '监控 TCP 协议栈中重传的报文比例 (%)', 'Shell', 'std_linux_integrated', 'std_linux_integrated', 2, 5, 'Linux', '', now, now),
+        ('srv_cpu_load', 'CPU Load Average', 'CPU 系统负载', 'Server', 'cpu_load', '监控 1min 负载相对于核心数的比例', 'Shell', 'std_linux_load', 'std_linux_load', 80, 150, 'Linux', '', now, now),
+        ('srv_cpu_util', 'CPU Utilization', 'CPU 使用率', 'Server', 'cpu_util', '监控整体 CPU 使用率 (0-100)', 'Shell', 'std_linux_cpu', 'std_linux_cpu', 90, 95, 'Linux', '', now, now),
+        ('srv_mem_avail', 'Available Memory', '可用内存', 'Server', 'mem_avail', '监控系统内存使用百分比 (0-100)', 'Shell', 'std_linux_mem', 'std_linux_mem', 85, 95, 'Linux', '', now, now),
+        ('srv_swap', 'Swap Usage', '交换分区使用率', 'Server', 'swap_util', '监控交换分区使用百分比 (0-100)', 'Shell', 'std_linux_swap', 'std_linux_swap', 70, 90, 'Linux', '', now, now),
+        ('srv_iowait', 'Disk IO Wait', '磁盘 IO 等待 (IOWait)', 'Server', 'io_wait', '监控 CPU 等待 IO 时间占比 (阈值: >15% 告警)', 'Shell', 'std_linux_iowait', 'std_linux_iowait', 15, 30, 'Linux', '', now, now),
+        ('srv_disk_util', 'Disk Space Usage', '磁盘空间利用率', 'Server', 'disk_util', '监控根分区空间占用 (0-100)', 'Shell', 'std_linux_disk', 'std_linux_disk', 90, 95, 'Linux', '', now, now),
+        ('srv_disk_inode', 'Inode Utilization', 'Inode 使用率', 'Server', 'inode_util', '监控根分区 Inode 占用 (0-100)', 'Shell', 'std_linux_inode', 'std_linux_inode', 90, 95, 'Linux', '', now, now),
+        ('srv_net_conns', 'Established Connections', '并发连接数', 'Server', 'tcp_conns', '监控 TCP Established 状态连接数', 'Shell', 'std_linux_conns', 'std_linux_conns', 5000, 10000, 'Linux', '', now, now),
+        ('srv_process', 'Critical Processes', '核心进程监控', 'Server', 'process_health', '监控指定进程是否存在', 'Shell', 'std_linux_proc', 'std_linux_proc', None, 1, 'Linux', '', now, now),
+        ('srv_oom_events', 'OOM Killer Events', 'OOM 杀进程事件数', 'Server', 'oom_events', '监控系统最近是否触发过 OOM-killer 强制杀死过进程', 'Shell', 'std_linux_oom_events', 'std_linux_oom_events', 1, 5, 'Linux', '', now, now),
+        ('srv_ro_mounts', 'Read-only Mounts', '只读挂载文件系统数', 'Server', 'ro_mounts', '监控是否存在只读挂载的文件系统，防止硬盘故障', 'Shell', 'std_linux_ro_mounts', 'std_linux_ro_mounts', 1, 1, 'Linux', '', now, now),
+        ('srv_kernel_errs', 'Kernel Error Log Count', '内核严重报错日志数', 'Server', 'kernel_errs', '监控系统内核报错日志数量 (dmesg)', 'Shell', 'std_linux_kernel_errs', 'std_linux_kernel_errs', 1, 10, 'Linux', '', now, now),
+        ('srv_zombie_procs', 'Zombie Processes', '僵尸进程数', 'Server', 'zombie_procs', '监控未能被正常回收的僵尸进程占用量', 'Shell', 'std_linux_zombie_procs', 'std_linux_zombie_procs', 2, 5, 'Linux', '', now, now),
+        ('srv_fd_util', 'File Descriptor Utilization %', '文件句柄使用率', 'Server', 'fd_util', '监控系统已开启文件句柄数占上限的比例', 'Shell', 'std_linux_fd_util', 'std_linux_fd_util', 80, 90, 'Linux', '', now, now),
+        ('srv_net_errs', 'Network Interface Errors/Drops', '网卡丢包与报错数', 'Server', 'net_errs', '监测系统所有网卡接口 errors 和 dropped 的总计数', 'Shell', 'std_linux_net_errs', 'std_linux_net_errs', 10, 100, 'Linux', '', now, now),
+        ('srv_ntp_desync', 'NTP Desync Status', 'NTP 时间失步状态', 'Server', 'ntp_desync', '监控 NTP 本地时钟是否同步 (0=同步, 1=失步/失败)', 'Shell', 'std_linux_ntp_desync', 'std_linux_ntp_desync', 1, 1, 'Linux', '', now, now),
+        ('srv_dns_latency', 'DNS Resolution Latency', 'DNS 解析延迟 (ms)', 'Server', 'dns_latency', '监控域名解析延迟 (单位: 毫秒，超时失败为 9999)', 'Shell', 'std_linux_dns_latency', 'std_linux_dns_latency', 1000, 5000, 'Linux', '', now, now),
+        ('srv_recent_reboot', 'Recent Reboot Alert', '系统最近重启告警', 'Server', 'recent_reboot', '监控系统最近 15 分钟内是否重启过 (0=否, 1=是)', 'Shell', 'std_linux_recent_reboot', 'std_linux_recent_reboot', 1, 1, 'Linux', '', now, now),
+        ('srv_core_dumps_count', 'Core Dump Files', 'CoreDump 崩溃文件数', 'Server', 'core_dumps_count', '监控系统关键目录和临时目录下崩溃文件数', 'Shell', 'std_linux_core_dumps_count', 'std_linux_core_dumps_count', 1, 5, 'Linux', '', now, now),
+        ('srv_disk_io_await', 'Disk I/O Await Latency', '磁盘 I/O 等待延迟 (ms)', 'Server', 'disk_io_await', '监控系统磁盘平均读写响应等待耗时 (毫秒)', 'Shell', 'std_linux_disk_io_await', 'std_linux_disk_io_await', 20, 50, 'Linux', '', now, now),
+        ('srv_tcp_close_wait', 'TCP CLOSE_WAIT Connections', 'TCP CLOSE_WAIT 异常连接数', 'Server', 'tcp_close_wait', '监控系统处于 CLOSE_WAIT 异常未关闭状态的 TCP 连接数', 'Shell', 'std_linux_tcp_close_wait', 'std_linux_tcp_close_wait', 50, 200, 'Linux', '', now, now),
+        ('srv_tcp_retrans_pct', 'TCP Retransmission Ratio %', 'TCP 协议栈重传段比例', 'Server', 'tcp_retrans_pct', '监控 TCP 协议栈中重传的报文比例 (%)', 'Shell', 'std_linux_tcp_retrans_pct', 'std_linux_tcp_retrans_pct', 2, 5, 'Linux', '', now, now),
     ]
 
 

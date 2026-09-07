@@ -9,10 +9,10 @@
   device_type: "switch"
   deployment_domain: "园区网"
   height_u: 1
-  width_mm: null
-  depth_mm: null
-  height_mm: null
-  dimension_status: "pending_verification"
+  width_mm: 440.0
+  depth_mm: 400.0
+  height_mm: 44.45
+  dimension_status: "generic_standard"
   front_orientation: "front"
   lod: "['LOD0', 'LOD1', 'LOD2']"
   glb_path: "assets/build/glb/huawei_s5755_h_family.glb"
@@ -162,6 +162,29 @@
   version: "1.0.0"
   status: "draft"
   render_strategy: "procedural_until_glb_approved"
+-
+  asset_key: "h3c_s6800_family"
+  vendor: "h3c"
+  family: "S6800"
+  exact_models: "['S6800', 'S6800-54QF', 'S6800-54QT', 'S6800-32Q', 'LS-6800-54QF']"
+  device_type: "switch"
+  deployment_domain: "数据中心"
+  height_u: 1
+  width_mm: 440.0
+  depth_mm: 460.0
+  height_mm: 43.6
+  dimension_status: "verified_official"
+  front_orientation: "front"
+  lod: "['LOD0', 'LOD1', 'LOD2']"
+  glb_path: "assets/build/glb/h3c_s6800_family.glb"
+  public_path: "/assets/3d/h3c_s6800_family.glb"
+  thumbnail_path: null
+  source_blend: "assets/source/blender/h3c_s6800_family.blend"
+  source_refs: "['https://www.h3c.com/en/Support/Resource_Center/EN/Switches/Catalog/S6800/S6800/Technical_Documents/Product_Literature/Hardware_Information___Specifications/H3C_S6800_HIS/']"
+  data_confidence: "verified_official"
+  version: "1.0.0"
+  status: "approved"
+  render_strategy: "glb"
 -
   asset_key: "ruijie_campus_family"
   vendor: "ruijie"
@@ -388,10 +411,10 @@
   thumbnail_path: null
   source_blend: "assets/source/blender/generic_switch_1u_24p.blend"
   source_refs: "[]"
-  data_confidence: "tbd"
-  version: "1.0.0"
-  status: "draft"
-  render_strategy: "procedural_until_glb_approved"
+  data_confidence: "verified_manual"
+  version: "1.1.0"
+  status: "approved"
+  render_strategy: "glb"
 -
   asset_key: "generic_switch_1u_48p"
   vendor: "generic"
@@ -400,10 +423,10 @@
   device_type: "switch"
   deployment_domain: "unknown"
   height_u: 1
-  width_mm: null
-  depth_mm: null
-  height_mm: null
-  dimension_status: "pending_verification"
+  width_mm: 440.0
+  depth_mm: 400.0
+  height_mm: 44.45
+  dimension_status: "generic_standard"
   front_orientation: "front"
   lod: "['LOD0', 'LOD1']"
   glb_path: "assets/build/glb/generic_switch_1u_48p.glb"
@@ -411,10 +434,10 @@
   thumbnail_path: null
   source_blend: "assets/source/blender/generic_switch_1u_48p.blend"
   source_refs: "[]"
-  data_confidence: "tbd"
-  version: "1.0.0"
-  status: "draft"
-  render_strategy: "procedural_until_glb_approved"
+  data_confidence: "verified_manual"
+  version: "1.1.0"
+  status: "approved"
+  render_strategy: "glb"
 -
   asset_key: "generic_switch_1u_sfp"
   vendor: "generic"
@@ -423,10 +446,10 @@
   device_type: "switch"
   deployment_domain: "unknown"
   height_u: 1
-  width_mm: null
-  depth_mm: null
-  height_mm: null
-  dimension_status: "pending_verification"
+  width_mm: 440.0
+  depth_mm: 400.0
+  height_mm: 44.45
+  dimension_status: "generic_standard"
   front_orientation: "front"
   lod: "['LOD0', 'LOD1']"
   glb_path: "assets/build/glb/generic_switch_1u_sfp.glb"
@@ -434,10 +457,10 @@
   thumbnail_path: null
   source_blend: "assets/source/blender/generic_switch_1u_sfp.blend"
   source_refs: "[]"
-  data_confidence: "tbd"
-  version: "1.0.0"
-  status: "draft"
-  render_strategy: "procedural_until_glb_approved"
+  data_confidence: "verified_manual"
+  version: "1.1.0"
+  status: "approved"
+  render_strategy: "glb"
 -
   asset_key: "generic_switch_dc_1u"
   vendor: "generic"
@@ -446,10 +469,10 @@
   device_type: "switch"
   deployment_domain: "unknown"
   height_u: 1
-  width_mm: null
-  depth_mm: null
-  height_mm: null
-  dimension_status: "pending_verification"
+  width_mm: 440.0
+  depth_mm: 400.0
+  height_mm: 44.45
+  dimension_status: "generic_standard"
   front_orientation: "front"
   lod: "['LOD0', 'LOD1']"
   glb_path: "assets/build/glb/generic_switch_dc_1u.glb"
@@ -457,10 +480,58 @@
   thumbnail_path: null
   source_blend: "assets/source/blender/generic_switch_dc_1u.blend"
   source_refs: "[]"
-  data_confidence: "tbd"
+  data_confidence: "verified_manual"
+  version: "1.1.0"
+  status: "approved"
+  render_strategy: "glb"
+-
+  asset_key: "rack_42u_600x1000"
+  vendor: "generic"
+  family: "rack_42u"
+  exact_models: "[]"
+  device_type: "rack"
+  deployment_domain: "数据中心"
+  height_u: 42
+  width_mm: 600.0
+  depth_mm: 1000.0
+  height_mm: 1866.9
+  dimension_status: "generic_standard"
+  front_orientation: "front"
+  lod: "['LOD0', 'LOD1']"
+  glb_path: "assets/build/glb/rack_42u_600x1000.glb"
+  public_path: "/assets/3d/rack_42u_600x1000.glb"
+  thumbnail_path: null
+  source_blend: "assets/source/blender/rack_42u_600x1000.blend"
+  source_refs: "[]"
+  data_confidence: "verified_manual"
   version: "1.0.0"
-  status: "draft"
-  render_strategy: "procedural_until_glb_approved"
+  status: "approved"
+  render_strategy: "glb"
+  asset_kind: "rack"
+-
+  asset_key: "generic_patch_panel_cat6_24p"
+  vendor: "generic"
+  family: "patch_panel_cat6"
+  exact_models: "[]"
+  device_type: "patch_panel"
+  deployment_domain: "园区网"
+  height_u: 1
+  width_mm: 482.6
+  depth_mm: 100.0
+  height_mm: 44.45
+  dimension_status: "generic_standard"
+  front_orientation: "front"
+  lod: "['LOD0', 'LOD1']"
+  glb_path: "assets/build/glb/generic_patch_panel_cat6_24p.glb"
+  public_path: "/assets/3d/generic_patch_panel_cat6_24p.glb"
+  thumbnail_path: null
+  source_blend: "assets/source/blender/generic_patch_panel_cat6_24p.blend"
+  source_refs: "[]"
+  data_confidence: "verified_manual"
+  version: "1.0.0"
+  status: "approved"
+  render_strategy: "glb"
+  asset_kind: "patch_panel"
 -
   asset_key: "generic_server_1u"
   vendor: "generic"

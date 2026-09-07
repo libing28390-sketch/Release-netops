@@ -232,7 +232,17 @@ export const AssetModal: React.FC<AssetModalProps> = ({
                 <label className="block text-[10px] text-black/30 mb-0.5">{zh ? '资产类型' : 'Asset Type'}</label>
                 <select
                   value={form.asset_type}
-                  onChange={e => setForm(f => ({ ...f, asset_type: e.target.value }))}
+                  onChange={e => {
+                    const assetType = e.target.value;
+                    setForm(f => ({
+                      ...f,
+                      asset_type: assetType,
+                      // Do not carry a server vendor/platform into a network
+                      // row (or a network platform into a server row).
+                      vendor: '',
+                      platform: assetType === 'server' ? SERVER_PLATFORMS[0]?.value || 'linux' : '',
+                    }));
+                  }}
                   className="w-full bg-white border border-black/8 rounded-lg px-2.5 py-1.5 text-xs text-black/65 focus:outline-none focus:border-[#00bceb]/25"
                   title="Asset Type"
                 >
@@ -275,7 +285,21 @@ export const AssetModal: React.FC<AssetModalProps> = ({
                 ) : (
                   <select
                     value={form.vendor}
-                    onChange={e => setForm(f => withTechnologyTag({ ...f, vendor: e.target.value }, e.target.value, f.platform))}
+                    onChange={e => {
+                      const vendor = e.target.value;
+                      const platformOptions = getPlatformsForVendor(vendor);
+                      setForm(f => {
+                        const nextPlatform = platformOptions.some(option => option.value === f.platform)
+                          ? f.platform
+                          : (platformOptions[0]?.value || '');
+                        return withTechnologyTag({
+                          ...f,
+                          vendor,
+                          model: f.vendor === vendor ? f.model : '',
+                          platform: nextPlatform,
+                        }, vendor, nextPlatform);
+                      });
+                    }}
                     className="w-full bg-white border border-black/8 rounded-lg px-2.5 py-1.5 text-xs text-black/65 focus:outline-none focus:border-[#00bceb]/25"
                     title="Vendor"
                   >

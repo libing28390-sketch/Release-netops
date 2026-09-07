@@ -9,6 +9,7 @@ import { ActionIconButton, ActionIconGroup } from '../ui/ActionIconButton';
 import StatusBadge from './StatusBadge';
 import CpuMemBar from './CpuMemBar';
 import DeviceRowExpand from './DeviceRowExpand';
+import { extractSoftwareMajorVersion, getDevicePlatformAdaptation, getProfileAdaptationMajorVersion } from '../../utils/platformVersion';
 
 /* ─── Helpers ─── */
 const clampPercent = (value?: number) => {
@@ -27,6 +28,28 @@ const vendorOf = (platform: string): string => {
   if (p.includes('h3c') || p.includes('comware')) return 'H3C';
   if (p.includes('ruijie')) return 'Ruijie';
   return platform.split('_')[0] || 'Other';
+};
+
+const adaptationVersionLabel = (device: Device): string => {
+  const version = getDevicePlatformAdaptation(device, 'zh').version;
+  return version && !['common', 'unknown'].includes(version.toLowerCase())
+    ? version.toUpperCase()
+    : '';
+};
+
+const platformBindingName = (device: Device, zh: boolean): string => {
+  return getDevicePlatformAdaptation(device, zh ? 'zh' : 'en').label;
+};
+
+const hasVersionMismatch = (device: Device): boolean => {
+  if (!device.platform_profile_id && !device.platform_binding) return false;
+  const softwareMajor = extractSoftwareMajorVersion(device.version);
+  const adaptationMajor = device.platform_binding
+    ? getProfileAdaptationMajorVersion(device.platform_binding)
+    : device.platform_profile_id
+      ? getProfileAdaptationMajorVersion({ id: device.platform_profile_id, platform_code: '' })
+      : null;
+  return softwareMajor !== null && adaptationMajor !== null && softwareMajor !== adaptationMajor;
 };
 
 /* ─── Column Def ─── */
@@ -260,10 +283,20 @@ const DeviceTable: React.FC<DeviceTableProps> = ({
                       <span className="text-xs font-semibold text-gray-700 dark:text-zinc-300">{device.vendor || vendorOf(device.platform)}</span>
                       <span className="block text-[11px] text-gray-500 dark:text-zinc-400 mt-0.5">{device.platform || 'unknown'}</span>
                       {device.version && (
-                        <span className="block text-[10px] font-mono text-gray-400 dark:text-zinc-500 mt-0.5 truncate max-w-[120px]" title={device.version}>
-                          {device.version}
+                        <span className="block text-[10px] font-mono text-gray-500 dark:text-zinc-400 mt-0.5 truncate max-w-[180px]" title={device.version}>
+                          {zh ? '设备软件：' : 'Device software: '}{device.version}
+                          {extractSoftwareMajorVersion(device.version) !== null ? ` (V${extractSoftwareMajorVersion(device.version)})` : ''}
                         </span>
                       )}
+                      <div className={`mt-1 rounded-md border px-1.5 py-1 text-[10px] leading-4 ${hasVersionMismatch(device)
+                          ? 'border-amber-200 bg-amber-50 text-amber-800 dark:border-amber-900/60 dark:bg-amber-950/30 dark:text-amber-300'
+                          : 'border-cyan-100 bg-cyan-50/70 text-cyan-800 dark:border-cyan-900/50 dark:bg-cyan-950/30 dark:text-cyan-300'
+                        }`} title={platformBindingName(device, zh) || (zh ? '待自动识别' : 'Awaiting detection')}>
+                          <span className="font-semibold">{device.platform_profile_id || device.platform_binding ? (zh ? '命令/解析适配：' : 'Command/parser: ') : (zh ? '默认命令/解析适配：' : 'Default command/parser: ')}</span>
+                          <span>{platformBindingName(device, zh) || (zh ? '待自动识别' : 'Awaiting detection')}</span>
+                          {adaptationVersionLabel(device) && <span className="ml-1 font-bold">({adaptationVersionLabel(device)})</span>}
+                          {hasVersionMismatch(device) && <span className="ml-1 font-semibold">· {zh ? '版本不一致' : 'Mismatch'}</span>}
+                        </div>
                     </td>
                   )}
                   {/* Site */}

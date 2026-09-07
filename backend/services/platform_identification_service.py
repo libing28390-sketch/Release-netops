@@ -11,6 +11,7 @@ from typing import Any
 from database import get_db_connection
 from core.rbac import authorize_resource
 from services.platform_registry_service import (
+    PLATFORM_CATALOG_METADATA,
     PlatformRegistryError,
     _assert_profile_access,
     _assert_profile_active,
@@ -54,6 +55,12 @@ _IDENTIFICATION_DRIVER_ALIASES = {
 
 def _scope_denied(code: str = "DEVICE_SCOPE_DENIED") -> PlatformRegistryError:
     return PlatformRegistryError(code, "Device or platform is outside the current resource scope", status_code=403)
+
+
+def _assert_version_override_permission(allow_version_mismatch: bool, user: dict[str, Any]) -> None:
+    """Only an Administrator may deliberately bind a mismatched adaptation profile."""
+    if allow_version_mismatch and user.get("role") != "Administrator":
+        raise _scope_denied("PLATFORM_VERSION_OVERRIDE_FORBIDDEN")
 
 
 def _table_columns(conn, table_name: str) -> set[str]:
@@ -133,6 +140,12 @@ def _binding_compatibility(device: dict[str, Any], profile: dict[str, Any]) -> d
             "code": "VENDOR_PLATFORM_MISMATCH",
             "message": "Device vendor and target platform vendor differ",
         })
+    device_generation, profile_generation = _binding_generations(device, profile)
+    if device_generation and profile_generation and device_generation != profile_generation:
+        warnings.append({
+            "code": "PLATFORM_VERSION_MISMATCH",
+            "message": f"Device software V{device_generation} does not match target platform V{profile_generation}",
+        })
     adaptation_status = str(profile.get("adaptation_status") or "").upper()
     sample_status = str(profile.get("sample_status") or "").upper()
     if adaptation_status in {"UNVERIFIED", "MISSING"} or sample_status == "MISSING":
@@ -145,6 +158,46 @@ def _binding_compatibility(device: dict[str, Any], profile: dict[str, Any]) -> d
         "warnings": warnings,
         "high_risk_execution_blocked": bool(warnings),
     }
+
+
+_VERSIONED_FAMILY_GENERATIONS: dict[str, tuple[str, ...]] = {
+    "h3c_comware": ("3", "5", "7", "9"),
+    "ruijie_rgos": ("10", "11", "12"),
+    "maipu_mypower": ("6", "8", "9"),
+}
+
+
+def _binding_generations(device: dict[str, Any], profile: dict[str, Any]) -> tuple[str, str]:
+    """Return comparable device/Profile generations, or blanks when uncertain."""
+    platform_code = str(profile.get("platform_code") or "").strip().lower()
+    metadata = PLATFORM_CATALOG_METADATA.get(platform_code) or {}
+    family = str(metadata.get("platform_family") or "").strip().lower()
+    profile_version = str(metadata.get("version") or "").strip().lower()
+    if family not in _VERSIONED_FAMILY_GENERATIONS or not re.fullmatch(r"v\d+", profile_version):
+        return "", ""
+    profile_generation = profile_version[1:]
+    allowed = "|".join(sorted(_VERSIONED_FAMILY_GENERATIONS[family], key=len, reverse=True))
+    version_text = str(device.get("version") or device.get("os_version") or "").strip().lower()
+    match = re.search(rf"(?<!\d)({allowed})(?:\.|\b)", version_text)
+    return (match.group(1) if match else ""), profile_generation
+
+
+def _assert_device_profile_version(
+    device: dict[str, Any],
+    profile: dict[str, Any],
+    *,
+    allow_version_mismatch: bool = False,
+) -> None:
+    """Reject a binding only when both sides expose a reliable major generation."""
+    device_generation, profile_generation = _binding_generations(device, profile)
+    if device_generation and profile_generation and device_generation != profile_generation:
+        if allow_version_mismatch:
+            return
+        raise PlatformRegistryError(
+            "PLATFORM_VERSION_MISMATCH",
+            f"设备实际软件版本为 V{device_generation}，不能绑定 V{profile_generation} 命令/解析模板",
+            status_code=409,
+        )
 
 
 _VENDOR_ALIASES: tuple[tuple[str, str], ...] = (
@@ -218,7 +271,12 @@ def _assert_device_profile_vendor(device: dict[str, Any], profile: dict[str, Any
         )
 
 
-def _assert_device_profile_platform(device: dict[str, Any], profile: dict[str, Any]) -> None:
+def _assert_device_profile_platform(
+    device: dict[str, Any],
+    profile: dict[str, Any],
+    *,
+    allow_version_mismatch: bool = False,
+) -> None:
     """Require an explicit device platform to match the target Profile.
 
     Legacy imports may have no platform identity yet; those devices can be
@@ -237,6 +295,11 @@ def _assert_device_profile_platform(device: dict[str, Any], profile: dict[str, A
             status_code=409,
         )
     _assert_device_profile_vendor(device, profile)
+    _assert_device_profile_version(
+        device,
+        profile,
+        allow_version_mismatch=allow_version_mismatch,
+    )
 
 
 def _match(rule: dict[str, Any], output: str) -> bool:
@@ -489,6 +552,9 @@ _INVENTORY_PROFILE_BY_PARSER_VARIANT = {
     "h3c_comware_v5": "h3c_comware_v5",
     "h3c_comware_v7": "h3c_comware_v7",
     "h3c_comware_v9": "h3c_comware_v9",
+    "ruijie_rgos_v10": "ruijie_rgos_v10",
+    "ruijie_rgos_v11": "ruijie_rgos_v11",
+    "ruijie_rgos_v12": "ruijie_rgos_v12",
 }
 
 
@@ -498,6 +564,9 @@ def _extract_version_from_text(value: str) -> str:
     if not text:
         return ""
     patterns = (
+        r"\bSoftware\s+Release\s*[:：]?\s*([A-Za-z0-9][\w.()/-]*)",
+        r"\bZ(?:TE\s+)?ZXR10\s+Software\s*,\s*Version\s*:\s*([A-Za-z0-9][\w.()/-]*\s+V[0-9][\w.()/-]*)",
+        r"\b(?:System\s+)?[Ss]oftware\s+[Vv]ersion\s*[:：]?\s*(?:[A-Za-z][A-Za-z0-9_.-]*\s+)?([0-9][\w.()/-]*)",
         r"\b[Ss]oftware\s+[Vv]ersion\s*[:：]?\s*([0-9][\w.()/-]*)",
         r"\b[Vv]ersion\s*[:：]?\s*([0-9][\w.()/-]*)",
         r"\b[Vv]\s*([0-9][\w.()/-]*)",
@@ -562,24 +631,49 @@ def _inventory_device(conn, device_id: str, user: dict[str, Any]) -> dict[str, A
 
 def _inventory_profile_code(platform: str, version: str, vendor: str) -> tuple[str, str]:
     """Resolve an inventory platform to a concrete registry profile code."""
-    from core.textfsm import resolve_textfsm_parser_platform
+    from core.textfsm import resolve_textfsm_parser_platform, resolve_textfsm_platform
 
     raw_platform = str(platform or "").strip().lower()
-    normalized_vendor = str(vendor or "").strip().lower()
+    normalized_vendor = _canonical_vendor(vendor)
     if raw_platform in {"unknown", "generic"}:
         raw_platform = ""
     # ``hp_comware`` and ``h3c_comware9`` are legacy/public profile values;
     # TextFSM should still resolve them through the canonical H3C family.
     if raw_platform in {"hp_comware", "h3c_comware9"}:
         raw_platform = "h3c_comware"
-    if not raw_platform and normalized_vendor in {"h3c", "华三", "h3c.com"}:
-        raw_platform = "h3c_comware"
+    if not raw_platform:
+        raw_platform = {
+            "h3c": "h3c_comware",
+            "ruijie": "ruijie_rgos",
+            "dptech": "dptech_ios",
+            "maipu": "maipu",
+            "zte": "zte_zxros",
+        }.get(normalized_vendor, "")
     # A version number alone is not vendor evidence. In particular, the
     # generic resolver must not turn an unclassified device running e.g. 7.x
     # into an H3C V7 suggestion. Keep the result unbound so the operator can
     # choose a profile or provide an explicit CLI identification context.
     if not raw_platform:
         return "", ""
+    canonical_platform = resolve_textfsm_platform(raw_platform) or raw_platform
+    normalized_version = str(version or "").strip().lower()
+    if canonical_platform == "dptech_ios":
+        if re.search(r"\bs211(?:[a-z0-9._/-]*)", normalized_version, re.IGNORECASE):
+            return "dptech_fw_s211", "dptech_conplat"
+        return "dptech_conplat_unknown", "dptech_conplat"
+    if canonical_platform == "maipu":
+        match = re.search(r"(?<!\d)(6|8|9)(?:\.|\b)", normalized_version)
+        if match:
+            generation = match.group(1)
+            profile = {"6": "maipu_mypower_v6", "8": "maipu_mypower_v8", "9": "maipu_mypower_v9"}[generation]
+            return profile, "maipu"
+        return "maipu_mypower_unknown", "maipu"
+    if canonical_platform == "zte_zxros":
+        if re.search(r"\b(?:5900|5960)\s+v6(?:\.|\b)", normalized_version, re.IGNORECASE):
+            return "zte_5900_v6", "zte_zxros"
+        if re.search(r"\bzsrv2\s+v3(?:\.|\b)", normalized_version, re.IGNORECASE):
+            return "zte_zsrv2_v3", "zte_zxros"
+        return "zte_os_unknown", "zte_zxros"
     parser_platform = resolve_textfsm_parser_platform(raw_platform, version)
     profile_code = _INVENTORY_PROFILE_BY_PARSER_VARIANT.get(parser_platform or "")
     # ``h3c_comware`` is a parser family, not a concrete V5/V7/V9 profile.
@@ -609,6 +703,73 @@ def _find_inventory_profile(conn, profile_code: str, user: dict[str, Any]) -> di
         params,
     ).fetchone()
     return _row_dict(row) if row else None
+
+
+def _version_evidence_candidate(
+    device: dict[str, Any],
+    version: str,
+    user: dict[str, Any],
+) -> dict[str, Any] | None:
+    """Resolve a strong inventory-version candidate without retaining CLI output."""
+    profile_code, _parser_platform = _inventory_profile_code(
+        str(device.get("platform") or device.get("device_type") or ""),
+        version,
+        str(device.get("vendor") or ""),
+    )
+    if not profile_code:
+        return None
+    conn = get_db_connection()
+    try:
+        profile = _find_inventory_profile(conn, profile_code, user)
+    finally:
+        conn.close()
+    if not profile:
+        return None
+    return {
+        "platform_profile_id": profile.get("id"),
+        "platform_code": profile.get("platform_code"),
+        "name_zh": profile.get("name_zh"),
+        "name_en": profile.get("name_en"),
+        "source": profile.get("source"),
+        "score": 1.0,
+        "matched_rule_count": 0,
+        "matched_rules": [],
+        "evidence": "software_version",
+    }
+
+
+def _prefer_version_evidence(
+    result: dict[str, Any],
+    candidate: dict[str, Any] | None,
+) -> dict[str, Any]:
+    """Prefer a reliable version candidate when rules are absent or contradictory."""
+    if not candidate:
+        return result
+    selected = result.get("selected") if isinstance(result.get("selected"), dict) else None
+    candidate_code = str(candidate.get("platform_code") or "").strip().lower()
+    selected_code = str((selected or {}).get("platform_code") or "").strip().lower()
+    candidate_version = str((PLATFORM_CATALOG_METADATA.get(candidate_code) or {}).get("version") or "")
+    selected_version = str((PLATFORM_CATALOG_METADATA.get(selected_code) or {}).get("version") or "")
+    selected_conflicts = bool(
+        selected
+        and re.fullmatch(r"v\d+", candidate_version)
+        and re.fullmatch(r"v\d+", selected_version)
+        and candidate_version != selected_version
+    )
+    if selected and not selected_conflicts:
+        return result
+    suggestions = [candidate]
+    suggestions.extend(
+        item for item in (result.get("suggestions") or [])
+        if str(item.get("platform_profile_id") or "") != str(candidate.get("platform_profile_id") or "")
+    )
+    return {
+        **result,
+        "success": True,
+        "status": "MATCHED",
+        "suggestions": suggestions,
+        "selected": candidate,
+    }
 
 
 def identify_device_from_inventory(device_id: str, user: dict[str, Any]) -> dict[str, Any] | None:
@@ -800,6 +961,10 @@ def identify_device_live(device_id: str, user: dict[str, Any]) -> dict[str, Any]
     discovered_version = _extract_version_from_text("\n".join(observations.values()))
     if discovered_version:
         _persist_discovered_version(device_id, discovered_version)
+        result = _prefer_version_evidence(
+            result,
+            _version_evidence_candidate(device, discovered_version, user),
+        )
     _persist_identification_conflict(
         device_id,
         observations,
@@ -818,11 +983,20 @@ def identify_device_live(device_id: str, user: dict[str, Any]) -> dict[str, Any]
     }
 
 
-def bind_device(device_id: str, platform_profile_id: str, user: dict[str, Any], *, lock: bool = False, force: bool = False) -> dict[str, Any]:
+def bind_device(
+    device_id: str,
+    platform_profile_id: str,
+    user: dict[str, Any],
+    *,
+    lock: bool = False,
+    force: bool = False,
+    allow_version_mismatch: bool = False,
+) -> dict[str, Any]:
     if not platform_profile_id:
         raise PlatformRegistryError("PLATFORM_REQUIRED", "platform_profile_id is required")
     if force and user.get("role") != "Administrator":
         raise _scope_denied("PLATFORM_BIND_FORCE_FORBIDDEN")
+    _assert_version_override_permission(allow_version_mismatch, user)
     conn = get_db_connection()
     try:
         conn.execute(
@@ -870,7 +1044,11 @@ def bind_device(device_id: str, platform_profile_id: str, user: dict[str, Any], 
             }
             conn.commit()
             return result
-        _assert_device_profile_platform(device, profile)
+        _assert_device_profile_platform(
+            device,
+            profile,
+            allow_version_mismatch=allow_version_mismatch,
+        )
         effective_lock = True if not existing_profile_id else bool(lock)
         conn.execute(
             """UPDATE devices SET platform_profile_id = ?, platform = ?, platform_source = ?,
@@ -922,6 +1100,7 @@ def bind_devices_batch(
     *,
     lock: bool = False,
     force: bool = False,
+    allow_version_mismatch: bool = False,
 ) -> dict[str, Any]:
     """Atomically bind a bounded device batch and return old/new scope details."""
     normalized_ids = [str(item or "").strip() for item in device_ids or []]
@@ -931,6 +1110,7 @@ def bind_devices_batch(
         raise PlatformRegistryError("DUPLICATE_DEVICE_BATCH", "device_ids must not contain duplicates")
     if force and user.get("role") != "Administrator":
         raise _scope_denied("PLATFORM_BIND_FORCE_FORBIDDEN")
+    _assert_version_override_permission(allow_version_mismatch, user)
 
     conn = get_db_connection()
     try:
@@ -946,7 +1126,11 @@ def bind_devices_batch(
                     f"Device {device_id} platform binding is immutable after first assignment",
                     status_code=409,
                 )
-            _assert_device_profile_platform(device, profile)
+            _assert_device_profile_platform(
+                device,
+                profile,
+                allow_version_mismatch=allow_version_mismatch,
+            )
             old_and_new.append({
                 "device": device,
                 "compatibility": _binding_compatibility(device, profile),

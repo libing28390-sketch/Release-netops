@@ -80,6 +80,8 @@ export interface Asset {
   snmp_community: string;
   snmp_port: string;
   snmp_credential_id?: string;
+  /** Vault credential name accepted by asset import; IDs remain supported via snmp_credential_id. */
+  snmp_credential_name?: string;
   snmp_community_set?: boolean;
   created_at: string;
   updated_at: string;

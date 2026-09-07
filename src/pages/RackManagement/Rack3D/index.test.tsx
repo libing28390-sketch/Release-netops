@@ -162,7 +162,7 @@ describe('Rack3DContainer read-only workbench', () => {
     expect(screen.getByTestId('rack-scene').getAttribute('data-selected')).toBe('rack-device-1');
   });
 
-  it('keeps secondary layers behind a compact menu', () => {
+  it('keeps secondary layers in a side panel', () => {
     render(
       <Rack3DContainer
         rackVM={rackVM}
@@ -178,8 +178,10 @@ describe('Rack3DContainer read-only workbench', () => {
     expect(screen.queryByTitle('显示全部走线')).toBeNull();
     fireEvent.click(screen.getByText('更多图层'));
     expect(screen.getByTitle('显示全部走线')).toBeTruthy();
-    expect(screen.getByText('门体显示')).toBeTruthy();
+    expect(screen.getByText('门体隐藏')).toBeTruthy();
     expect(screen.getByText('U 标尺')).toBeTruthy();
+    expect(screen.getByTestId('rack-layer-panel').className).toContain('right-3');
+    expect(screen.getByTestId('rack-layer-panel').className).toContain('overflow-y-auto');
   });
 
   it('falls back to 2D when WebGL is unavailable', async () => {
@@ -227,6 +229,6 @@ describe('Rack3DContainer read-only workbench', () => {
     await waitFor(() => expect(screen.getByText('拓扑不可用')).toBeTruthy());
     fireEvent.click(screen.getByTitle('重新请求拓扑数据'));
     await waitFor(() => expect(fetchMock).toHaveBeenCalledTimes(2));
-    await waitFor(() => expect(screen.getByText('无已验证链路')).toBeTruthy());
+    await waitFor(() => expect(screen.getByText('预览线缆 · 未关联')).toBeTruthy());
   });
 });

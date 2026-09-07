@@ -80,7 +80,7 @@ RackVision focused suite 和兼容回归的具体通过数量见上表；完整 
 - 数据质量审计接口和功率字段迁移已完成代码与隔离库回归；真实生产库的审计报告、备份校验和审批仍是上线前置条件，本轮没有对生产库执行审计写入或回填。
 - links/graph 当前有安全上限和 discovery limit/offset；完整 cursor 分页及拓扑 legacy `asset_id` 补齐仍待完成。
 - Redis/多 worker/缓存头需要真实部署环境验证；进程内频率限制不能替代共享限流。
-- 当前环境没有 Blender 可执行文件，GLB 生成、尺寸/端口官方证据、人工几何验收和线上 MIME/缓存头尚未完成。
+- 本记录创建时环境没有 Blender 可执行文件；2026-09-07 已发现本机 Blender 5.2.1 并完成首批 GLB 生成。剩余完整资产覆盖、尺寸/端口官方证据、人工几何验收和线上 MIME/缓存头仍未完成。
 - 生产数据库回填必须在备份、审计报告和审批窗口后执行；本轮未对生产库执行 apply。
 
 ## 回滚与安全说明
@@ -89,3 +89,14 @@ RackVision focused suite 和兼容回归的具体通过数量见上表；完整 
 - 回填脚本默认 dry-run，只有显式 `--apply` 才写业务表。
 - `m0211_device_tenant_scope.py` 是共享工作区另一任务，专项测试已通过并按已完成基线计入；本轮未改动其文件。当前 PostgreSQL-only 扫描剩余的 1 个 `PRAGMA` 命中来自该独立迁移的兼容分支，不归入 RackVision 代码门禁。
 - 任何生产回填前应保存数据库备份、dry-run 报告和校验值，并保留原始位置字段用于前向修复。
+
+## 2026-09-07 Blender 首批 GLB 生成
+
+- 输入：`D:/data/downloads/Nexora_3D_Asset_Base_Catalog_v1.xlsx`；未修改或覆盖原始工作簿。
+- 工具：本机 `D:/blender/blender.exe`，版本 Blender 5.2.1 LTS。
+- 精确尺寸原型：`zte_zxr10_9904_s`，Excel 明确尺寸 `445×681×352.8 mm`、8U；生成的 `BODY` 为 `0.445×0.681×0.3528 m`。
+- Generic M0：`generic_switch_1u_24p`、`generic_switch_1u_48p`、`generic_switch_1u_sfp`、`generic_switch_dc_1u`；通用尺寸为 `440×400×44.45 mm`，端口数分别为 24、48、24、12。
+- 输出：5 个 `.blend` 源文件、5 个离线构建 GLB 和 5 个 `public/assets/3d` 公共 GLB；build 与 public 文件 SHA-256 一致。
+- 校验：5 个 Blender 场景通过 `validate_scene.py`；5 个 GLB 均为 glTF 2.0、JSON chunk 长度一致、包含 `BODY`，非空且可解析。
+- 生成器修复：补齐 Blender 脚本目录导入路径，允许 `batch_build.py` 直接接收命令行参数，并按铜口/SFP/QSFP 使用不同端口几何。
+- 限制：5 个文件仍是 draft/原型；未将 registry 全量型号标为 approved，未完成真实产品外观、端口和人工几何验收；其余待核尺寸型号未使用默认值冒充精确尺寸。

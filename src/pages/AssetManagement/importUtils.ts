@@ -4,7 +4,7 @@ export type ManagementMethodImportRow = {
   rowNumber: number;
   assetTag: string;
   hostname: string;
-  method: 'ssh' | 'netconf' | 'http' | 'https' | 'none';
+  method: 'ssh' | 'netconf' | 'web' | 'http' | 'https' | 'none';
   profileName: string;
   port: string;
   path: string;
@@ -51,6 +51,7 @@ const normalizeMethod = (value: string): ManagementMethodImportRow['method'] | n
   if (normalized === 'netconf') return 'netconf';
   if (normalized === 'http') return 'http';
   if (normalized === 'https') return 'https';
+  if (['web', 'web管理', 'web管理入口', 'web management', 'web only', '仅 web（http/https）', '仅web（http/https）'].includes(normalized)) return 'web';
   if (['none', '无', '不启用'].includes(normalized)) return 'none';
   return null;
 };
@@ -165,28 +166,34 @@ export function mergeManagementMethods(
       if (terminal.credentialId) asset.credential_id = terminal.credentialId;
       if (terminal.adminCredentialId) asset.admin_credential_id = terminal.adminCredentialId;
     } else {
-      asset.connection_method = assetMethods.some(item => item.enabled && (item.method === 'http' || item.method === 'https'))
+      asset.connection_method = assetMethods.some(item => item.enabled && (item.method === 'web' || item.method === 'http' || item.method === 'https'))
         ? 'web'
         : 'none';
       asset.management_port = 0;
     }
 
     const webProfiles = assetMethods
-      .filter(item => item.method === 'http' || item.method === 'https')
-      .map(item => ({
-        profile_name: item.profileName || (item.method === 'https' ? 'HTTPS管理' : 'HTTP管理'),
-        scheme: item.method,
-        port: Number.parseInt(item.port, 10) || (item.method === 'https' ? 443 : 80),
-        path: item.path || '/',
-        enabled: item.enabled,
-        credential_mode: item.credentialMode,
-        normal_username: item.normalUsername,
-        normal_password: item.normalPassword,
-        admin_username: item.adminUsername,
-        admin_password: item.adminPassword,
-        credential_id: item.credentialId,
-        admin_credential_id: item.adminCredentialId,
-      }));
+      .filter(item => item.method === 'web' || item.method === 'http' || item.method === 'https')
+      .map(item => {
+        const enteredPort = Number.parseInt(item.port, 10);
+        const scheme = item.method === 'web'
+          ? (enteredPort === 80 ? 'http' : 'https')
+          : item.method;
+        return {
+          profile_name: item.profileName || (item.method === 'web' ? 'Web管理' : scheme === 'https' ? 'HTTPS管理' : 'HTTP管理'),
+          scheme,
+          port: enteredPort || (scheme === 'https' ? 443 : 80),
+          path: item.path || '/',
+          enabled: item.enabled,
+          credential_mode: item.credentialMode,
+          normal_username: item.normalUsername,
+          normal_password: item.normalPassword,
+          admin_username: item.adminUsername,
+          admin_password: item.adminPassword,
+          credential_id: item.credentialId,
+          admin_credential_id: item.adminCredentialId,
+        };
+      });
     const duplicateKeys = new Set<string>();
     for (const profile of webProfiles) {
       const key = `${profile.scheme}:${profile.port}:${profile.path}`;

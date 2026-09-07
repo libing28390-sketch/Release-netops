@@ -6,6 +6,10 @@ import argparse
 import sys
 from pathlib import Path
 
+SCRIPT_DIR = Path(__file__).resolve().parent
+if str(SCRIPT_DIR) not in sys.path:
+    sys.path.insert(0, str(SCRIPT_DIR))
+
 from validate_scene import validate_scene
 
 
@@ -31,6 +35,13 @@ def main(argv: list[str] | None = None) -> int:
         export_format="GLB",
         use_selection=False,
         export_apply=True,
+        # Keep the RackVision Blender contract (X=left/right, Y=front/back,
+        # Z=vertical).  RackDeviceItem performs the single runtime conversion
+        # to the viewer's axes, so the exporter must not add another one.
+        export_yup=False,
+        export_extras=True,
+        export_cameras=False,
+        export_lights=False,
     )
     if not options.output.is_file() or options.output.stat().st_size == 0:
         print("ERROR: Blender did not produce a non-empty GLB")
@@ -41,4 +52,3 @@ def main(argv: list[str] | None = None) -> int:
 
 if __name__ == "__main__":
     raise SystemExit(main())
-

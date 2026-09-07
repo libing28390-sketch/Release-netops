@@ -28,6 +28,7 @@ import { useChartTheme } from '../hooks/useChartTheme';
 import { apiRequest } from '../api/http';
 import PlatformProfileSelector, { type PlatformProfileOption } from './PlatformProfileSelector';
 import { inferPlatformVendor, platformVendorLabel } from '../utils/platformVendor';
+import { extractSoftwareMajorVersion, getDevicePlatformAdaptation, getPlatformProfileDisplayLabel, getProfileAdaptationMajorVersion, getProfileAdaptationVersion } from '../utils/platformVersion';
 
 interface PlatformIdentificationResult {
   status?: string;
@@ -56,7 +57,7 @@ interface DeviceDetailModalProps {
   snmpTestingId: string | null;
   onSnmpSyncNow: (deviceId: string) => void;
   snmpSyncingId: string | null;
-  onPlatformBindingSaved?: (binding: Pick<Device, 'platform' | 'platform_profile_id' | 'platform_locked'>) => void;
+  onPlatformBindingSaved?: (binding: Pick<Device, 'platform' | 'platform_profile_id' | 'platform_locked' | 'platform_binding'>) => void;
   onGoToAutomation: (device: Device) => void;
 }
 
@@ -264,6 +265,29 @@ const DeviceDetailModal: React.FC<DeviceDetailModalProps> = ({
   const identificationVersion = String(platformResult?.version || viewingDevice.version || '').trim();
   const platformAlreadyBound = Boolean(viewingDevice.platform_profile_id);
   const deviceVendor = inferPlatformVendor(viewingDevice.vendor, viewingDevice.platform);
+  const selectedPlatformProfile = platformProfiles.find((profile) => profile.id === selectedPlatformProfileId) || null;
+  const boundPlatformProfile = platformProfiles.find((profile) => profile.id === viewingDevice.platform_profile_id)
+    || viewingDevice.platform_binding
+    || (viewingDevice.platform_profile_id ? { id: viewingDevice.platform_profile_id, platform_code: '' } : null)
+    || null;
+  const deviceAdaptation = getDevicePlatformAdaptation(viewingDevice, language === 'zh' ? 'zh' : 'en');
+  const boundPlatformProfileName = getPlatformProfileDisplayLabel(
+    boundPlatformProfile,
+    viewingDevice.platform_profile_id,
+    language === 'zh' ? 'zh' : 'en',
+  ) || deviceAdaptation.label;
+  const boundPlatformAdaptationVersion = boundPlatformProfile
+    ? getProfileAdaptationVersion(boundPlatformProfile)
+    : deviceAdaptation.version;
+  const deviceSoftwareMajor = extractSoftwareMajorVersion(viewingDevice.version);
+  const profileAdaptationMajor = selectedPlatformProfile ? getProfileAdaptationMajorVersion(selectedPlatformProfile) : null;
+  const boundProfileAdaptationMajor = boundPlatformProfile ? getProfileAdaptationMajorVersion(boundPlatformProfile) : null;
+  const boundVersionConflict = deviceSoftwareMajor !== null
+    && boundProfileAdaptationMajor !== null
+    && deviceSoftwareMajor !== boundProfileAdaptationMajor;
+  const hasVersionConflict = deviceSoftwareMajor !== null
+    && profileAdaptationMajor !== null
+    && deviceSoftwareMajor !== profileAdaptationMajor;
 
   useEffect(() => {
     let active = true;
@@ -332,10 +356,15 @@ const DeviceDetailModal: React.FC<DeviceDetailModalProps> = ({
     }
     const platformChanged = Boolean(viewingDevice.platform_profile_id)
       && String(viewingDevice.platform_profile_id) !== String(selectedPlatformProfileId);
-    if (platformChanged) {
+    if (platformChanged || hasVersionConflict) {
+      const versionWarning = hasVersionConflict
+        ? (language === 'zh'
+          ? `设备实际软件主版本为 v${deviceSoftwareMajor}，目标命令/解析适配版本为 v${profileAdaptationMajor}。这属于管理员明确覆盖，保存后仍会保留版本不一致风险提示。`
+          : `The device software major is v${deviceSoftwareMajor}, while the target command/parser adaptation is v${profileAdaptationMajor}. This is an explicit Administrator override and the mismatch warning will remain after saving.`)
+        : '';
       const confirmed = window.confirm(language === 'zh'
-        ? `平台绑定会影响自动化执行所使用的驱动、命令和解析模板。\n\n当前平台：${currentProfileName}\n切换为：${selectedProfileName}\n\n确认切换平台吗？`
-        : `Platform binding controls the driver, command catalog, and parser used by automation.\n\nCurrent platform: ${currentProfileName}\nSwitch to: ${selectedProfileName}\n\nConfirm the platform change?`);
+        ? `平台绑定会影响自动化执行所使用的驱动、命令和解析模板。${platformChanged ? `\n\n当前平台：${currentProfileName}\n切换为：${selectedProfileName}` : ''}${versionWarning ? `\n\n${versionWarning}` : ''}\n\n确认保存绑定吗？`
+        : `Platform binding controls the driver, command catalog, and parser used by automation.${platformChanged ? `\n\nCurrent platform: ${currentProfileName}\nSwitch to: ${selectedProfileName}` : ''}${versionWarning ? `\n\n${versionWarning}` : ''}\n\nConfirm saving the binding?`);
       if (!confirmed) return;
     }
     const bindingLock = platformAlreadyBound ? lockPlatformBinding : true;
@@ -345,15 +374,31 @@ const DeviceDetailModal: React.FC<DeviceDetailModalProps> = ({
     try {
       const response = await apiRequest<{ data?: Device & { binding_unchanged?: boolean } }>(`/api/devices/${encodeURIComponent(viewingDevice.id)}/platform-binding`, {
         method: 'PUT',
-        body: JSON.stringify({ platform_profile_id: selectedPlatformProfileId, lock: bindingLock, force: platformChanged }),
+        body: JSON.stringify({
+          platform_profile_id: selectedPlatformProfileId,
+          lock: bindingLock,
+          force: platformChanged,
+          allow_version_mismatch: hasVersionConflict,
+        }),
       });
       const saved = response.data;
       const bindingUnchanged = Boolean(saved?.binding_unchanged);
       if (saved) {
+        const savedBinding = saved.platform_binding || (selectedProfile ? {
+          id: selectedProfile.id,
+          platform_code: selectedProfile.platform_code,
+          name_zh: selectedProfile.name_zh,
+          name_en: selectedProfile.name_en,
+          vendor: selectedProfile.vendor,
+          parser_platform: selectedProfile.parser_platform,
+          source: selectedProfile.source,
+          adaptation_version: getProfileAdaptationVersion(selectedProfile),
+        } : undefined);
         onPlatformBindingSaved?.({
           platform: saved.platform || viewingDevice.platform,
           platform_profile_id: saved.platform_profile_id || selectedPlatformProfileId,
           platform_locked: saved.platform_locked ?? bindingLock,
+          platform_binding: savedBinding,
         });
       }
       setPlatformError('');
@@ -546,6 +591,13 @@ const DeviceDetailModal: React.FC<DeviceDetailModalProps> = ({
                     onChange={(profile) => setSelectedPlatformProfileId(profile?.id || '')}
                   />
                   {deviceVendor && <p className="mt-1 text-[10px] text-cyan-800/70">{language === 'zh' ? `设备厂商：${platformVendorLabel(deviceVendor, language)}；只能选择同厂商平台。` : `Device vendor: ${platformVendorLabel(deviceVendor, language)}; only same-vendor platforms are available.`}</p>}
+                  {hasVersionConflict && selectedPlatformProfile && (
+                    <div className="mt-2 rounded-lg border border-rose-200 bg-rose-50 px-3 py-2 text-[11px] leading-5 text-rose-700" role="alert">
+                      {language === 'zh'
+                        ? `版本提示：设备软件主版本为 v${deviceSoftwareMajor}，目标命令/解析适配版本为 v${profileAdaptationMajor}。保存时会要求管理员明确确认，且不会修改设备实际软件版本。`
+                        : `Version notice: device software major is v${deviceSoftwareMajor}, while the target command/parser adaptation is v${profileAdaptationMajor}. Saving requires explicit Administrator confirmation and does not change the device software version.`}
+                    </div>
+                  )}
                   <div className="flex justify-end">
                     <button type="button" onClick={() => void bindPlatform()} disabled={platformBindingLoading || !selectedPlatformProfileId} className="rounded-lg border border-cyan-300 bg-white px-2.5 py-1.5 text-[11px] font-semibold text-cyan-800 disabled:opacity-50">{platformBindingLoading ? (language === 'zh' ? '保存中…' : 'Saving…') : (language === 'zh' ? '保存绑定' : 'Save binding')}</button>
                   </div>
@@ -560,7 +612,8 @@ const DeviceDetailModal: React.FC<DeviceDetailModalProps> = ({
                 <div className="space-y-3">
                   <div className="flex justify-between text-sm"><span className="text-black/40">{language === 'zh' ? '硬件型号' : t('model')}</span><span className="font-medium">{viewingDevice.model || '—'}</span></div>
                   <div className="flex justify-between text-sm"><span className="text-black/40">{language === 'zh' ? '序列号' : t('serialNumber')}</span><span className="font-mono">{viewingDevice.sn || '—'}</span></div>
-                  <div className="flex justify-between text-sm"><span className="text-black/40">{language === 'zh' ? '系统版本' : t('version')}</span><span className="font-medium">{viewingDevice.version || '—'}</span></div>
+                  <div className="flex justify-between gap-3 text-sm"><span className="text-black/40">{language === 'zh' ? '设备软件版本（SNMP/采集）' : 'Device software (SNMP/collected)'}</span><span className="font-medium text-right">{viewingDevice.version || '—'}{deviceSoftwareMajor !== null ? <span className="ml-1 text-black/40">(V{deviceSoftwareMajor})</span> : null}</span></div>
+                  <div className="flex justify-between gap-3 text-sm"><span className="text-black/40">{boundPlatformProfile ? (language === 'zh' ? '命令/解析适配' : 'Command/parser adaptation') : (language === 'zh' ? '默认命令/解析适配' : 'Default command/parser adaptation')}</span><span className={`max-w-[220px] text-right font-medium ${boundVersionConflict ? 'text-amber-700' : 'text-cyan-800'}`} title={boundPlatformProfileName || deviceAdaptation.label || (language === 'zh' ? '待自动识别' : 'Awaiting detection')}>{boundPlatformProfileName || (language === 'zh' ? '待自动识别' : 'Awaiting detection')}{boundPlatformAdaptationVersion && !['common', 'unknown'].includes(boundPlatformAdaptationVersion.toLowerCase()) ? ` (${boundPlatformAdaptationVersion.toUpperCase()})` : ''}{boundVersionConflict ? (language === 'zh' ? ' · 版本不一致' : ' · Mismatch') : ''}</span></div>
                   <div className="flex justify-between text-sm"><span className="text-black/40">{language === 'zh' ? '运行时间' : t('uptime')}</span><span className="font-medium">{formatUptime(viewingDevice.uptime, language)}</span></div>
                 </div>
               </div>

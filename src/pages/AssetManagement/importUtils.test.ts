@@ -64,6 +64,21 @@ describe('asset management method import', () => {
     });
   });
 
+  it('accepts the generic Web管理 entry and defaults it to HTTPS', () => {
+    const sheet = XLSX.utils.aoa_to_sheet([
+      ['资产编号', '主机名', '管理方式', '端口', '是否启用'],
+      ['WEB-002', 'web-02', 'Web管理', '', '是'],
+    ]);
+
+    const parsed = parseManagementMethodSheet(sheet);
+    expect(parsed.errors).toEqual([]);
+    expect(parsed.rows[0].method).toBe('web');
+    const merged = mergeManagementMethods([{ asset_tag: 'WEB-002', hostname: 'web-02' }], parsed.rows);
+    expect(merged.errors).toEqual([]);
+    expect(merged.assets[0]).toMatchObject({ connection_method: 'web', management_port: 0 });
+    expect(merged.assets[0].web_profiles[0]).toMatchObject({ scheme: 'https', port: 443, profile_name: 'Web管理' });
+  });
+
   it('requires an explicit management entry for every asset in the unified template', () => {
     const assets: Record<string, any>[] = [
       { asset_tag: 'A-001', hostname: 'a' },

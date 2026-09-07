@@ -177,7 +177,7 @@ def resolve_textfsm_platform(platform: str | None) -> str | None:
 
 
 def resolve_textfsm_parser_platform(platform: str | None, version: str | None = None) -> str | None:
-    """Resolve the concrete H3C grammar variant used by inventory detection.
+    """Resolve a concrete versioned grammar variant from inventory evidence.
 
     ``h3c_comware`` remains the public parser family stored on a device. The
     concrete V3/V5/V7/V9 grammar is selected directly from the device profile,
@@ -187,6 +187,13 @@ def resolve_textfsm_parser_platform(platform: str | None, version: str | None = 
     require an explicit manual selection.
     """
     raw = str(platform or '').strip().lower()
+    if raw in {'ruijie_rgos_v10', 'ruijie_rgos_v11', 'ruijie_rgos_v12'}:
+        return raw
+    if raw in {'ruijie', 'ruijie_os'}:
+        raw = 'ruijie_rgos'
+    if raw == 'ruijie_rgos':
+        match = re.search(r'(?<!\d)(10|11|12)(?:\.|\b)', str(version or '').strip().lower())
+        return f'ruijie_rgos_v{match.group(1)}' if match else 'ruijie_rgos'
     if raw in {'h3c_comware_v3', 'h3c_comware_v5', 'h3c_comware_v7', 'h3c_comware_v9'}:
         return raw
     if raw in {'hp_comware', 'h3c_comware9', 'h3c', 'comware', ''}:

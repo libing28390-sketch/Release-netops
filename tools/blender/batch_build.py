@@ -17,7 +17,7 @@ from pathlib import Path
 
 def blender_args() -> list[str]:
     args = sys.argv
-    return args[args.index("--") + 1 :] if "--" in args else []
+    return args[args.index("--") + 1 :] if "--" in args else args[1:]
 
 
 def main(argv: list[str] | None = None) -> int:
@@ -44,7 +44,20 @@ def main(argv: list[str] | None = None) -> int:
         blend_output = options.output_root / "source" / "blender" / f"{key}.blend"
         glb_output = options.output_root / "build" / "glb" / f"{key}.glb"
         input_path.parent.mkdir(parents=True, exist_ok=True)
-        input_path.write_text(json.dumps(entry, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
+        # Keep reviewed build overrides (port groups, product profile, labels,
+        # power layout, etc.) when a spec already exists.  Registry metadata
+        # remains the baseline and still fills any missing fields.
+        reviewed_spec = {}
+        if input_path.is_file():
+            try:
+                candidate = json.loads(input_path.read_text(encoding="utf-8"))
+                if isinstance(candidate, dict):
+                    reviewed_spec = candidate
+            except (OSError, json.JSONDecodeError):
+                reviewed_spec = {}
+        build_spec = dict(entry)
+        build_spec.update(reviewed_spec)
+        input_path.write_text(json.dumps(build_spec, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
         generate = [
             options.blender, "--background", "--python", str(script_dir / "generate_device.py"),
             "--", "--input", str(input_path), "--blend-output", str(blend_output),

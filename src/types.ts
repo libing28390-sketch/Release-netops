@@ -25,12 +25,30 @@ export interface SnmpMetricProfileAssociation {
   collection_mode?: string;
 }
 
+/** Concrete command/parser profile selected for automation.
+ *
+ * This is intentionally separate from ``Device.version``: the latter is the
+ * software release reported by SNMP/CLI, while this profile describes the
+ * command catalog and TextFSM/parser adaptation used by NetOps.
+ */
+export interface DevicePlatformBinding {
+  id: string;
+  platform_code: string;
+  name_zh?: string;
+  name_en?: string;
+  vendor?: string;
+  parser_platform?: string;
+  source?: string;
+  adaptation_version?: string;
+}
+
 export interface Device {
   id: string;
   hostname: string;
   ip_address: string;
   platform: string;
   platform_profile_id?: string | null;
+  platform_binding?: DevicePlatformBinding | null;
   platform_source?: string;
   platform_locked?: number | boolean;
   status: 'online' | 'offline' | 'pending';

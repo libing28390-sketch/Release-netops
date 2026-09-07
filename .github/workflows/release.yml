@@ -154,6 +154,9 @@ jobs:
           rm -f patch-vmware.sh patch-*.sh hotfix-*.sh
           rm -f task.md task_progress.md task-*.md task_*.md
           rm -f implementation_plan.md walkthrough.md refactor.cjs refactor2.cjs
+          # handoff.md is private coordination material and must stay in the
+          # source repository, not the public release repository.
+          rm -f handoff.md
 
           # Runtime data and backups must never enter the public repository.
           rm -f netops.db backend/netops.db backend/netsops.db data/netops.db.bak
@@ -189,7 +192,7 @@ jobs:
           for path in "${required[@]}"; do
             test -n "$(git ls-files -- "$path" | head -n 1)" || { echo "[FAIL] Required release path missing: $path"; exit 1; }
           done
-          for path in data/netops.db.bak data/backups data/pam_recordings nginx/ssl/netops.crt nginx/ssl/netops.key blog; do
+          for path in data/netops.db.bak data/backups data/pam_recordings nginx/ssl/netops.crt nginx/ssl/netops.key blog handoff.md; do
             test -z "$(git ls-files -- "$path")" || { echo "[FAIL] Forbidden path staged: $path"; exit 1; }
           done
 
@@ -334,6 +337,9 @@ jobs:
           rm -f patch-vmware.sh patch-*.sh hotfix-*.sh
           rm -f task.md task_progress.md task-*.md task_*.md
           rm -f implementation_plan.md walkthrough.md refactor.cjs refactor2.cjs
+          # handoff.md is private coordination material and must stay in the
+          # source repository, not the public release repository.
+          rm -f handoff.md
           rm -f netops.db backend/netops.db backend/netsops.db data/netops.db.bak
           rm -rf data/backups/ data/pam_recordings/ data/logs/
           rm -rf data/change_order_attachments/ backup/
@@ -365,7 +371,7 @@ jobs:
           for path in "${required[@]}"; do
             test -n "$(git ls-files -- "$path" | head -n 1)" || { echo "[FAIL] Required Windows release path missing: $path"; exit 1; }
           done
-          for path in data/netops.db.bak data/backups data/pam_recordings nginx/ssl/netops.crt nginx/ssl/netops.key blog; do
+          for path in data/netops.db.bak data/backups data/pam_recordings nginx/ssl/netops.crt nginx/ssl/netops.key blog handoff.md; do
             test -z "$(git ls-files -- "$path")" || { echo "[FAIL] Forbidden path staged: $path"; exit 1; }
           done
 

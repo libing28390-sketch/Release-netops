@@ -2,6 +2,7 @@ import React from 'react';
 import type { Device, DeviceConnectionCheckSummary } from '../../types';
 import { HEALTH_CFG, CHECK_BADGE, formatCheckTime } from './StatusBadge';
 import Sparkline from '../Sparkline';
+import { extractSoftwareMajorVersion, getDevicePlatformAdaptation } from '../../utils/platformVersion';
 
 const localizeHealthSummary = (value: unknown, zh: boolean) => {
   const raw = String(value ?? '').trim();
@@ -53,6 +54,12 @@ const DeviceRowExpand: React.FC<DeviceRowExpandProps> = ({
   const profileName = snmpProfile?.id
     ? [snmpProfile.vendor, snmpProfile.model].filter(Boolean).join(' · ') || snmpProfile.id
     : (zh ? '未关联型号模板' : 'No model template');
+  const actualSoftwareMajor = extractSoftwareMajorVersion(device.version);
+  const adaptation = getDevicePlatformAdaptation(device, zh ? 'zh' : 'en');
+  const bindingMismatch = adaptation.explicit
+    && actualSoftwareMajor !== null
+    && adaptation.major !== null
+    && actualSoftwareMajor !== adaptation.major;
 
   return (
     <div className="grid grid-cols-2 lg:grid-cols-5 gap-x-6 gap-y-3 px-6 py-4
@@ -83,7 +90,13 @@ const DeviceRowExpand: React.FC<DeviceRowExpandProps> = ({
         </span>
         <div className="space-y-0.5">
           <p className="text-black/65 dark:text-white/65">
-            {zh ? '版本' : 'Version'}: <span className="font-medium">{device.version || 'N/A'}</span>
+            {zh ? '设备软件' : 'Device software'}: <span className="font-medium">{device.version || 'N/A'}</span>
+            {actualSoftwareMajor !== null && <span className="ml-1 text-black/40 dark:text-white/35">(V{actualSoftwareMajor})</span>}
+          </p>
+          <p className={`truncate ${bindingMismatch ? 'text-amber-700 dark:text-amber-300' : 'text-cyan-700 dark:text-cyan-300'}`} title={adaptation.label || (zh ? '待自动识别' : 'Awaiting detection')}>
+              {adaptation.explicit ? (zh ? '命令/解析适配' : 'Command/parser') : (zh ? '默认命令/解析适配' : 'Default command/parser')}: <span className="font-medium">{adaptation.label || (zh ? '待自动识别' : 'Awaiting detection')}</span>
+              {adaptation.version && !['common', 'unknown'].includes(adaptation.version.toLowerCase()) && <span className="ml-1 font-semibold">({adaptation.version.toUpperCase()})</span>}
+              {bindingMismatch && <span className="ml-1 font-semibold">· {zh ? '版本不一致' : 'Mismatch'}</span>}
           </p>
           <p className="text-black/65 dark:text-white/65">
             {zh ? '协议' : 'Method'}: <span className="font-medium uppercase">{device.connection_method || 'ssh'}</span>

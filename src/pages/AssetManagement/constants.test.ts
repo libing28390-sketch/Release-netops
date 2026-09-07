@@ -10,6 +10,10 @@ import {
   TOPOLOGY_ZONE_OPTIONS,
   NETWORK_VENDOR_GROUPS,
   VENDOR_PLATFORMS,
+  getPlatformsForVendor,
+  isNetworkVendor,
+  isValidVendorPlatform,
+  SERVER_ONLY_VENDOR_VALUES,
 } from './constants';
 
 describe('asset vendor catalog', () => {
@@ -22,6 +26,10 @@ describe('asset vendor catalog', () => {
     expect(ALL_VENDOR_NAMES).toContain('Check Point');
     expect(NETWORK_IMPORT_VENDOR_VALUES).toContain('山石');
     expect(NETWORK_IMPORT_VENDOR_VALUES).toContain('Hillstone');
+    expect(NETWORK_IMPORT_VENDOR_VALUES).not.toContain('HP');
+    expect(NETWORK_IMPORT_VENDOR_VALUES).not.toContain('Lenovo');
+    expect(NETWORK_IMPORT_VENDOR_VALUES).not.toContain('Inspur');
+    expect(NETWORK_IMPORT_VENDOR_VALUES).not.toContain('Generic Server');
   });
 
   it('provides a platform identity for the newly catalogued vendors', () => {
@@ -36,6 +44,18 @@ describe('asset vendor catalog', () => {
     expect(IMPORT_VALUE_MAP.platform['瑞斯康达 ROS']).toBe('raisecom_ros');
     expect(IMPORT_VALUE_MAP.platform['Hillstone StoneOS']).toBe('hillstone_stoneos');
   });
+
+  it('keeps network platform options scoped to the selected vendor', () => {
+    expect(getPlatformsForVendor('山石').map(option => option.value)).toEqual(['hillstone_stoneos']);
+    expect(getPlatformsForVendor('Cisco').map(option => option.value)).toContain('cisco_ios');
+    expect(getPlatformsForVendor('Cisco').map(option => option.value)).not.toContain('linux');
+    expect(isNetworkVendor('山石')).toBe(true);
+    expect(isNetworkVendor('HP')).toBe(false);
+    expect(SERVER_ONLY_VENDOR_VALUES).toContain('HP');
+    expect(isValidVendorPlatform('network_device', 'Cisco', 'cisco_ios')).toBe(true);
+    expect(isValidVendorPlatform('network_device', 'Cisco', 'linux')).toBe(false);
+    expect(isValidVendorPlatform('server', 'HP', 'linux')).toBe(true);
+  });
 });
 
 describe('asset import role header contract', () => {
@@ -44,6 +64,18 @@ describe('asset import role header contract', () => {
     expect(COL_MAP['拓扑角色']).toBe('device_role');
     expect(COL_MAP.role).toBe('device_role');
     expect(COL_MAP.device_role).toBe('device_role');
+  });
+
+  it('accepts named SNMP credential headers without colliding with SSH credentials', () => {
+    expect(COL_MAP['SNMP凭据']).toBe('snmp_credential_name');
+    expect(COL_MAP['SNMP凭据（推荐）']).toBe('snmp_credential_name');
+    expect(COL_MAP['SNMP Credential']).toBe('snmp_credential_name');
+    expect(COL_MAP['SNMP Credential (recommended)']).toBe('snmp_credential_name');
+    expect(COL_MAP.snmp_credential_name).toBe('snmp_credential_name');
+    expect(COL_MAP['SNMP凭据ID']).toBe('snmp_credential_id');
+    expect(COL_MAP['绑定凭据']).toBe('credential_id');
+    expect(IMPORT_VALUE_MAP.connection_method['Web管理']).toBe('web');
+    expect(IMPORT_VALUE_MAP.connection_method['Web Management']).toBe('web');
   });
 
   it('uses one role vocabulary across import, editing, and topology filters', () => {

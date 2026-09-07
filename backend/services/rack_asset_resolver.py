@@ -26,8 +26,35 @@ def _norm(value: Any) -> str:
     return re.sub(r"\s+", " ", str(value or "").strip().casefold())
 
 
+def _norm_vendor(value: Any) -> str:
+    normalized = _norm(value)
+    return {
+        "通用": "generic",
+        "通用厂商": "generic",
+    }.get(normalized, normalized)
+
+
 def _norm_model(value: Any) -> str:
     return _norm(value).replace(" - ", "-").replace("_", "-")
+
+
+def _norm_device_type(value: Any) -> str:
+    """Normalize UI/CMDB labels to the registry's stable device-type tokens."""
+
+    normalized = _norm(value).replace("-", "_")
+    aliases = {
+        "交换机": "switch",
+        "路由器": "router",
+        "防火墙": "firewall",
+        "服务器": "server",
+        "存储": "storage",
+        "配线架": "patch_panel",
+        "配线箱": "patch_panel",
+        "patch panel": "patch_panel",
+        "patch_panel": "patch_panel",
+        "patchpanel": "patch_panel",
+    }
+    return aliases.get(normalized, normalized)
 
 
 def _fallback_registry() -> list[dict[str, Any]]:
@@ -201,9 +228,9 @@ def resolve_asset(
     caller receives a procedural fallback plus an explicit fidelity level.
     """
 
-    requested_vendor = _norm(vendor) or "generic"
+    requested_vendor = _norm_vendor(vendor) or "generic"
     requested_model = _norm_model(model)
-    requested_kind = _norm(device_type) or "other"
+    requested_kind = _norm_device_type(device_type) or "other"
     registry, mapping = _catalog()
     by_key = {str(item.get("asset_key")): item for item in registry if item.get("asset_key")}
 
@@ -218,7 +245,7 @@ def resolve_asset(
     mapping_match = next(
         (
             item for item in mapping
-            if _norm(item.get("vendor")) == requested_vendor
+            if _norm_vendor(item.get("vendor")) == requested_vendor
             and _norm_model(item.get("exact_model")) == requested_model
         ),
         None,
@@ -234,9 +261,32 @@ def resolve_asset(
                 requested_model=requested_model,
             )
 
+    # A runtime device type can carry a family/model label that was not part
+    # of the workbook's exact-SKU mapping (for example the seeded H3C S6800
+    # display model).  Honor an explicit registry family alias before the
+    # alphabetical family fallback, which otherwise could select an unrelated
+    # H3C family such as S5130S.
+    registry_model_match = next(
+        (
+            item for item in registry
+            if _norm_vendor(item.get("vendor")) == requested_vendor
+            and _norm(item.get("device_type")) == requested_kind
+            and _height_matches(item, height_u)
+            and any(_norm_model(model_name) == requested_model for model_name in (item.get("exact_models") or []))
+        ),
+        None,
+    )
+    if registry_model_match:
+        return _result(
+            registry_model_match,
+            level="family",
+            requested_vendor=requested_vendor,
+            requested_model=requested_model,
+        )
+
     family_candidates = [
         item for item in registry
-        if _norm(item.get("vendor")) == requested_vendor
+        if _norm_vendor(item.get("vendor")) == requested_vendor
         and _norm(item.get("device_type")) == requested_kind
         and _height_matches(item, height_u)
         and bool(item.get("exact_models"))
@@ -254,7 +304,7 @@ def resolve_asset(
     vendor_generic = next(
         (
             item for item in registry
-            if _norm(item.get("vendor")) == requested_vendor
+            if _norm_vendor(item.get("vendor")) == requested_vendor
             and _norm(item.get("device_type")) == requested_kind
             and _height_matches(item, height_u)
             and not item.get("exact_models")

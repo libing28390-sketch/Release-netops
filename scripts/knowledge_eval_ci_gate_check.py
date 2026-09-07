@@ -132,6 +132,12 @@ def validate_ci_gate() -> dict[str, Any]:
     _require(release_ci, "npm run test:frontend -- --run", "release frontend regression gate")
     _require(release_ci, "Bundle PostgreSQL 17 pgvector runtime for Windows", "Windows release packaging")
     _require(release_ci, "third_party/pgvector/vector.v0.8.6-pg17.zip", "Windows release packaging")
+    assert release_ci.count("rm -f handoff.md") == 2, (
+        "release workflow must remove private handoff.md in both release jobs"
+    )
+    assert release_ci.count("nginx/ssl/netops.key blog handoff.md") == 2, (
+        "release workflow must forbid staging private handoff.md in both release jobs"
+    )
     _require(promptfoo_ci, f'node-version: "{CI_NODE_VERSION}"', "Promptfoo workflow")
     _require(promptfoo_ci, 'PROMPTFOO_VERSION: "0.118.0"', "Promptfoo workflow")
     _require(promptfoo_ci, "ai_rag_release_config_check.py", "Promptfoo release-safe configuration gate")

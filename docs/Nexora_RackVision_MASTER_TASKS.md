@@ -1,8 +1,8 @@
 # Nexora RackVision 主任务开发清单
 
 - 文档类型：RackVision 完整实施主清单
-- 当前状态：代码收口与验收中（P0 认证/范围/严格 DTO/核心资产审计/探测边界、P1 数据模型/目录/前端联调已落地；实际 GLB 资产和生产环境验收仍待外部条件）
-- 基线日期：2026-09-06
+- 当前状态：代码收口与验收中（P0 认证/范围/严格 DTO/核心资产审计/探测边界、P1 数据模型/目录/前端联调已落地；5 个生产展示基线 GLB 已生成并通过离线校验，4 个 Generic 条目已接入 `public/assets/3d` 并在浏览器 3D 页面完成冒烟验证；完整资产覆盖、OEM 校准和线上发布验收仍待外部条件）
+- 基线日期：2026-09-07
 - 适用页面：/cmdb/racks
 - 产品需求来源：[Nexora_RackVision_Detailed_TASKS.md](D:/data/downloads/Nexora_RackVision_Detailed_TASKS.md)
 - 资产目录来源：[Nexora_3D_Asset_Base_Catalog_v1.xlsx](D:/data/downloads/Nexora_3D_Asset_Base_Catalog_v1.xlsx)
@@ -21,7 +21,7 @@
 - P0：现状基线、资产/健康/拓扑路由认证与 site/tenant 范围、健康稳定 envelope、资产严格 DTO 与敏感字段脱敏、资产核心写入/导入/验证审计、连通性探测边界、GLB 静态资源发布配置。
 - P1：`m0210` canonical placement 与 `m0213` 功率字段 reconciliation 迁移、`RackPlacementService`、数据质量审计与回填 CLI、0U/侧挂/落地/unknown 语义、布局 read model、2D/3D 共享适配、机柜缩容/类型高度变更保护、拓扑读取范围过滤。
 - 目录：Excel 五个工作表的只读解析、120 条网络设备/59 条机柜配套/34 条线缆/30 条优先级记录导出、71 条待核尺寸保留、88 个可复用 registry 条目、120 条 exact SKU 映射、dry-run-first `device_types` 导入工具。
-- 3D：坐标/单位/命名规范、Blender headless 脚本骨架、resolver 的 exact/family/vendor/global fallback、无 GLB 时的程序化兜底和待确认标记。
+- 3D：坐标/单位/命名规范、Blender headless 生产基线流水线、resolver 的 exact/family/vendor/global fallback、无 GLB 时的程序化兜底和待确认标记；5 个 GLB 已生成并通过场景/结构校验，4 个 Generic registry 条目已切换为 `approved/glb`，本地浏览器正面/背面/45° 3D 冒烟通过。
 
 仍未关闭的外部/发布门禁：真实 Blender 构建机生成并人工验收 GLB、官方尺寸/端口证据补齐、真实部署库回填审批、Nginx 线上 MIME/缓存头验证、多 worker/性能基准和拓扑线缆增强。
 
@@ -702,8 +702,8 @@ DPtech：
 
 - [x] RV-P1-951 运行时格式统一为 GLB。
 - [x] RV-P1-952 源文件格式保留为 BLEND。
-- [!] RV-P1-953 所有模型通过 GLB validation（当前 registry 尚无 approved GLB，需外部 Blender 构建后执行）。
-- [~] RV-P1-954 记录模型版本、来源和变更说明（registry/manifest 已预留；实际模型变更记录待首批 GLB 生成）。
+- [!] RV-P1-953 所有模型通过 GLB validation（首批 5 个 GLB 已通过结构和场景校验，其中 4 个 Generic 已登记为 `approved/glb` 并进入生产静态目录；registry 其余模型仍需分批构建和人工验收）。
+- [~] RV-P1-954 记录模型版本、来源和变更说明（首批 5 个模型已有输入 spec、BLEND、build/public GLB、SHA-256 和 registry 路径；全量 manifest/变更记录仍待补齐）。
 
 ## 十四、P1：资产目录、仓库结构和 Blender 主模板
 
@@ -736,10 +736,10 @@ DPtech：
 
 ### 14.3 通用网络设备
 
-- [ ] RV-P1-1031 1U 24-port copper switch。
-- [ ] RV-P1-1032 1U 48-port copper switch。
-- [ ] RV-P1-1033 1U SFP/SFP+ switch。
-- [ ] RV-P1-1034 1U high-speed data-center switch。
+- [x] RV-P1-1031 1U 24-port copper switch（生产展示基线 GLB 已生成、校验并登记为 `approved/glb`）。
+- [x] RV-P1-1032 1U 48-port copper switch（生产展示基线 GLB 已生成、校验并登记为 `approved/glb`）。
+- [x] RV-P1-1033 1U SFP/SFP+ switch（生产展示基线 GLB 已生成、校验并登记为 `approved/glb`）。
+- [x] RV-P1-1034 1U high-speed data-center switch（生产展示基线 GLB 已生成、校验并登记为 `approved/glb`）。
 - [ ] RV-P1-1035 2U modular switch/router。
 - [ ] RV-P1-1036 generic 1U firewall。
 - [ ] RV-P1-1037 generic 2U firewall。
@@ -1290,15 +1290,15 @@ DPtech：
 ### Gate 3：3D 资产
 
 - [x] RV-GATE-3-001 资产规范完成。
-- [x] RV-GATE-3-002 产品族映射完成（120 条 exact SKU 映射，GLB 文件本身仍待生成）。
+- [x] RV-GATE-3-002 产品族映射完成（120 条 exact SKU 映射；首批 5 个生产展示基线 GLB 已生成，未覆盖的 SKU 仍按 fallback 规则处理）。
 - [x] RV-GATE-3-003 Registry 和 Resolver 完成。
-- [!] RV-GATE-3-004 M0 Foundation 模型通过 QA（等待外部 Blender 构建并人工验收 GLB）。
+- [!] RV-GATE-3-004 M0 Foundation 模型通过 QA（5 个选定 GLB 已通过 Blender 场景/GLB 结构校验并完成本地浏览器 3D 冒烟；机柜模板、真实产品外观/端口证据和人工几何签署仍待完成）。
 - [x] RV-GATE-3-005 不存在 null 模型结果或不可见 unknown 设备（无 GLB 时使用程序化 fallback/问题标记）。
 
 ### Gate 4：发布
 
-- [!] RV-GATE-4-001 Blender 离线流水线通过（脚本和校验器已提交，当前环境无 Blender 二进制且尚无 GLB）。
-- [~] RV-GATE-4-002 GLB、静态资源和 Nginx 验证通过（目录/配置已完成，线上 MIME/缓存和真实 GLB 待验证）。
+- [~] RV-GATE-4-001 Blender 离线流水线通过（本机 Blender 5.2.1 已生成并校验 5 个选定 GLB，源 BLEND 与 build/public 文件保留；完整 M0 资产矩阵仍待构建）。
+- [~] RV-GATE-4-002 GLB、静态资源和 Nginx 验证通过（5 个 GLB 已同步到 `public/assets/3d` 且与 build 产物 SHA-256 一致；本地浏览器 3D 正面/背面/45° 冒烟通过，线上 MIME/缓存、404 和真实部署仍待验证）。
 - [~] RV-GATE-4-003 后端 RackVision focused pytest 通过（扩展 focused suite 61 passed，另有生命周期/MFA/控制表 35 passed、导入/安全/事务 23 passed、placement API 4 passed；上一轮完整 `backend/tests` 为 2304 passed/2 failed，其中批量导入失败已修复，剩余 1 个独立 IPAM 临时表兼容失败）。
 - [x] RV-GATE-4-004 前端 `npm run lint` 和 `npm run build` 通过（本轮最终代码收口后已重跑）。
 - [~] RV-GATE-4-005 生产发布、监控和回滚说明完成（发布路径已更新，线上发布说明和回滚演练待补）。
@@ -1310,5 +1310,5 @@ DPtech：
 
 - [x] 已完成：认证基础门禁、canonical placement、迁移、数据质量接口、dry-run 回填、Excel 目录、registry/resolver、2D/3D 共享 read model。
 - [~] 进行中：统一异常码、全量资产审计、跨资产事务收口、批量导入数据质量/文件摘要、拓扑稳定 asset_id、cursor 分页和 summary 缓存。
-- [!] 外部条件：真实部署库备份/审批后执行 apply；Blender 离线生成和人工验收 GLB；线上 MIME/缓存头、多 worker、性能和浏览器现场验收。
+- [!] 外部条件：真实部署库备份/审批后执行 apply；剩余资产的 Blender 生成和人工验收；线上 MIME/缓存头、404、多 worker、性能和生产浏览器验收。
 - [ ] 暂不启动：120 个 SKU 的大批量精确建模，直到 Gate 0–2 的阻断项和 GLB 生产条件满足。

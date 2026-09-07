@@ -1,3 +1,4 @@
+import logging
 import re
 import time
 from typing import List, Dict, Any
@@ -10,6 +11,8 @@ except ImportError:
     HAS_NETMIKO = False
 from .base import BaseDriver, CommandResult
 from .ssh_compat import build_netmiko_compatibility_kwargs, drain_paged_output
+
+logger = logging.getLogger(__name__)
 
 # ── CLI 错误特征（通用），用于在 success=True 时二次检测配置失败 ──────────────
 # 注意：
@@ -148,6 +151,15 @@ def _sanitize_command(cmd: str) -> str:
     return cmd
 
 
+def _safe_command_for_log(command: Any, max_length: int = 240) -> str:
+    """Return a bounded, credential-redacted command representation for logs."""
+    value = _sanitize_command(str(command or ""))
+    value = value.replace("\r", "\\r").replace("\n", "\\n")
+    if len(value) > max_length:
+        return value[:max_length] + "...<truncated>"
+    return value
+
+
 def _redact_sensitive_text(value: Any, secrets: List[Any] | None = None) -> str:
     """Redact credential values before an error is written to logs or returned."""
     text = str(value or '')
@@ -260,9 +272,6 @@ class NetmikoDriver(BaseDriver):
         return mapping.get(p, 'cisco_ios')
 
     def connect(self):
-        import logging
-        logger = logging.getLogger(__name__)
-
         requested_timeout = self.device_info.get('conn_timeout') or self.device_info.get('timeout') or 60
         try:
             connection_timeout = max(60, int(float(requested_timeout)))
@@ -309,9 +318,53 @@ class NetmikoDriver(BaseDriver):
             self.device_info.get('admin_password'),
         ]
 
+        logger.info(
+            "[netops-cli] event=connect_start host=%s port=%s platform=%s "
+            "device_type=%s username_configured=%s secret_configured=%s "
+            "ruijie_session_auto_enable=%s timeout=%ss fast_cli=%s",
+            self.host,
+            self.port,
+            self.platform,
+            self.device_type,
+            bool(self.username),
+            bool(secret),
+            self.device_type == 'ruijie_os',
+            connection_timeout,
+            device_params['fast_cli'],
+        )
+
         try:
-            logger.debug(f"Connecting to {self.host}:{self.port} type={self.device_type} fast_cli={device_params['fast_cli']}")
+            logger.info(
+                "[netops-cli] event=connect_handler_start host=%s device_type=%s "
+                "secret_configured=%s",
+                self.host,
+                self.device_type,
+                bool(secret),
+            )
             self.conn = ConnectHandler(**device_params)
+
+            try:
+                connected_prompt = str(self.conn.find_prompt())
+            except Exception as prompt_err:
+                connected_prompt = '<unavailable>'
+                logger.warning(
+                    "[netops-cli] event=post_connect_prompt_failed host=%s "
+                    "platform=%s device_type=%s error_type=%s error=%s",
+                    self.host,
+                    self.platform,
+                    self.device_type,
+                    type(prompt_err).__name__,
+                    _redact_sensitive_text(prompt_err, auth_secrets),
+                )
+            logger.info(
+                "[netops-cli] event=connect_handler_success host=%s platform=%s "
+                "device_type=%s prompt=%r secret_configured=%s",
+                self.host,
+                self.platform,
+                self.device_type,
+                connected_prompt,
+                bool(secret),
+            )
 
             # For Cisco: check prompt after login and elevate only if needed.
             if self.device_type in ('cisco_ios', 'cisco_nxos', 'cisco_iosxr'):
@@ -365,16 +418,49 @@ class NetmikoDriver(BaseDriver):
                         logger.info(f"Already privilege exec on {self.host}")
                 except Exception as en_err:
                     safe_error = _redact_sensitive_text(en_err, auth_secrets)
-                    logger.warning(f"Privilege elevation failed on {self.host}: {safe_error}")
+                    logger.warning(
+                        "[netops-cli] event=enable_failed host=%s platform=%s "
+                        "device_type=%s secret_configured=%s error_type=%s error=%s",
+                        self.host,
+                        self.platform,
+                        self.device_type,
+                        bool(secret),
+                        type(en_err).__name__,
+                        safe_error,
+                    )
 
-            logger.info(f"Connected to {self.host} (type={self.device_type})")
+            logger.info(
+                "[netops-cli] event=connect_ready host=%s platform=%s device_type=%s",
+                self.host,
+                self.platform,
+                self.device_type,
+            )
         except (NetmikoTimeoutException, NetmikoAuthenticationException) as e:
             safe_error = _redact_sensitive_text(e, auth_secrets)
-            logger.error(f"Netmiko connection failed to {self.host}: {safe_error}")
+            logger.error(
+                "[netops-cli] event=connect_failed phase=connect_handler host=%s "
+                "platform=%s device_type=%s secret_configured=%s error_type=%s error=%s",
+                self.host,
+                self.platform,
+                self.device_type,
+                bool(secret),
+                type(e).__name__,
+                safe_error,
+            )
             raise Exception(f"Netmiko connection failed: {safe_error}")
         except Exception as e:
             safe_error = _redact_sensitive_text(e, auth_secrets)
-            logger.error(f"Unexpected error connecting to {self.host}: {safe_error}")
+            logger.error(
+                "[netops-cli] event=connect_failed phase=connect_or_session_preparation "
+                "host=%s platform=%s device_type=%s secret_configured=%s "
+                "error_type=%s error=%s",
+                self.host,
+                self.platform,
+                self.device_type,
+                bool(secret),
+                type(e).__name__,
+                safe_error,
+            )
             raise Exception(f"Connection failed: {safe_error}")
 
 
@@ -407,16 +493,15 @@ class NetmikoDriver(BaseDriver):
         return line or None
 
     def send_command(self, command: str, **kwargs) -> CommandResult:
-        import logging
-        logger = logging.getLogger(__name__)
         start_time = time.time()
         sanitized_cmd = _sanitize_command(command)
+        command_for_log = _safe_command_for_log(command)
+        raw_command = str(command or '')
+        command_has_double_quote = '"' in raw_command
+        command_has_single_quote = "'" in raw_command
         try:
             if not self.conn:
                 raise Exception("Not connected")
-            logger.debug(f"[send_command] {self.host} | {sanitized_cmd[:60]}")
-            
-            # Default params
             params = {
                 'cmd_verify': False,
                 'strip_prompt': True,
@@ -428,14 +513,39 @@ class NetmikoDriver(BaseDriver):
                 ),
                 'delay_factor': 2
             }
-            # Override with kwargs (e.g. expect_string)
+            # Override with kwargs (e.g. expect_string), but keep the
+            # effective timeout visible in the diagnostic event.
             params.update(kwargs)
+            logger.info(
+                "[netops-cli] event=command_start host=%s platform=%s "
+                "device_type=%s command=%r command_length=%s "
+                "contains_double_quote=%s contains_single_quote=%s "
+                "cmd_verify=%s read_timeout=%s",
+                self.host,
+                self.platform,
+                self.device_type,
+                command_for_log,
+                len(raw_command),
+                command_has_double_quote,
+                command_has_single_quote,
+                params.get('cmd_verify'),
+                params.get('read_timeout'),
+            )
             
             try:
                 output = self.conn.send_command(command, **params)
             except Exception as e:
                 if "Pattern not detected" in str(e) or "Timeout" in str(e):
-                    logger.warning(f"[send_command] strict prompt failed on {self.host}, falling back to timing mode")
+                    logger.warning(
+                        "[netops-cli] event=command_timing_fallback host=%s "
+                        "platform=%s device_type=%s command=%r error_type=%s error=%s",
+                        self.host,
+                        self.platform,
+                        self.device_type,
+                        command_for_log,
+                        type(e).__name__,
+                        _sanitize_command(str(e)),
+                    )
                     output = self.conn.send_command_timing(command, read_timeout=params['read_timeout'])
                 else:
                     raise e
@@ -448,8 +558,21 @@ class NetmikoDriver(BaseDriver):
             
             if err_line:
                 logger.warning(
-                    f"[send_command] CLI error on {self.host}: "
-                    f"cmd={sanitized_cmd!r} | {sanitized_err_line}"
+                    "[netops-cli] event=command_cli_error host=%s platform=%s "
+                    "device_type=%s command=%r command_length=%s "
+                    "contains_double_quote=%s contains_single_quote=%s "
+                    "output_bytes=%s output_lines=%s elapsed=%.2fs error_line=%r",
+                    self.host,
+                    self.platform,
+                    self.device_type,
+                    command_for_log,
+                    len(raw_command),
+                    command_has_double_quote,
+                    command_has_single_quote,
+                    len(str(output or '').encode('utf-8', errors='ignore')),
+                    len(str(output or '').splitlines()),
+                    elapsed,
+                    sanitized_err_line,
                 )
                 return CommandResult(
                     success=False,
@@ -459,7 +582,17 @@ class NetmikoDriver(BaseDriver):
                     command=sanitized_cmd,
                     execution_time=elapsed,
                 )
-            logger.info(f"[send_command] {self.host} | {sanitized_cmd[:50]} | {elapsed:.2f}s | {len(output)} chars")
+            logger.info(
+                "[netops-cli] event=command_success host=%s platform=%s "
+                "device_type=%s command=%r output_bytes=%s output_lines=%s elapsed=%.2fs",
+                self.host,
+                self.platform,
+                self.device_type,
+                command_for_log,
+                len(str(output or '').encode('utf-8', errors='ignore')),
+                len(str(output or '').splitlines()),
+                elapsed,
+            )
             return CommandResult(
                 success=True,
                 output=sanitized_output,
@@ -470,7 +603,22 @@ class NetmikoDriver(BaseDriver):
         except Exception as e:
             elapsed = time.time() - start_time
             sanitized_e = _sanitize_command(str(e))
-            logger.error(f"[send_command ERROR] {self.host} | {sanitized_cmd[:50]} | {elapsed:.2f}s | {sanitized_e}")
+            logger.error(
+                "[netops-cli] event=command_exception host=%s platform=%s "
+                "device_type=%s command=%r command_length=%s "
+                "contains_double_quote=%s contains_single_quote=%s "
+                "elapsed=%.2fs error_type=%s error=%s",
+                self.host,
+                self.platform,
+                self.device_type,
+                command_for_log,
+                len(raw_command),
+                command_has_double_quote,
+                command_has_single_quote,
+                elapsed,
+                type(e).__name__,
+                sanitized_e,
+            )
             return CommandResult(
                 success=False,
                 output="",

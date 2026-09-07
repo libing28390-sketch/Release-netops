@@ -17,6 +17,11 @@ export interface TopologyLinkItem {
   speed_mbps?: number;
   status: 'up' | 'down' | 'degraded' | 'stale' | 'unknown';
   cable_type?: 'fiber' | 'dac' | 'copper';
+  /**
+   * A visual-only fallback used when a rack has no topology rows yet. It is
+   * deliberately marked so the UI can explain that these are not CMDB links.
+   */
+  is_preview?: boolean;
 }
 
 interface RackCableLayerProps {
@@ -24,6 +29,7 @@ interface RackCableLayerProps {
   selectedDeviceId?: string | null;
   cableMode: CableMode;
   links?: TopologyLinkItem[];
+  showPreviewWhenEmpty?: boolean;
 }
 
 /**
@@ -88,8 +94,41 @@ const RackCableTube: React.FC<{
  * Calculate precise 3D physical port X and Y coordinates on the switch faceplate
  * based on authentic 3-module enterprise panel layout.
  */
-function getPortPhysicalCoordinates(interfaceName: string, is48Port = true): { x: number; yOffset: number } {
+function getPortPhysicalCoordinates(
+  interfaceName: string,
+  is48Port = true,
+  isS6800 = false,
+): { x: number; yOffset: number } {
   const name = (interfaceName || '').toLowerCase().trim();
+  const trailingNumber = name.match(/(\d+)$/);
+
+  // The supplied S6800 front reference has three 16-port SFP+ banks followed
+  // by two 3-port QSFP28 banks. Keep cable endpoints on those real bank
+  // positions instead of using the older generic 48-port approximation.
+  if (isS6800) {
+    const isQsfp = name.includes('qsfp') || name.includes('100g') || name.includes('40g');
+    const rawPort = trailingNumber ? parseInt(trailingNumber[1], 10) : 1;
+    const portNumber = isQsfp
+      ? 49 + Math.max(0, Math.min(5, rawPort - 1))
+      : Math.max(1, Math.min(48, rawPort));
+    const bankWidths = [0.7524, 0.7524, 0.7524, 0.5814, 0.5814];
+    const bankGap = 0.06;
+    let bankIndex = 0;
+    let offset = 0;
+    if (portNumber <= 48) {
+      bankIndex = Math.floor((portNumber - 1) / 16);
+      offset = (portNumber - 1) % 16;
+    } else {
+      bankIndex = portNumber <= 51 ? 3 : 4;
+      offset = (portNumber - (bankIndex === 3 ? 49 : 52));
+    }
+    const bankLeft = -1.60 + bankWidths.slice(0, bankIndex).reduce((sum, width) => sum + width + bankGap, 0);
+    const bankWidth = bankWidths[bankIndex];
+    const columns: number = bankIndex < 3 ? 8 : 3;
+    const column = columns === 1 ? 0 : offset % columns;
+    const x = bankLeft + (columns === 1 ? bankWidth / 2 : column * (bankWidth / (columns - 1)));
+    return { x, yOffset: bankIndex < 3 ? (offset < columns ? 0.048 : -0.048) : 0 };
+  }
 
   // Management / Console Ports (Left Zone)
   if (name.includes('mgmt') || name.includes('m-eth')) {
@@ -126,15 +165,18 @@ function getPortPhysicalCoordinates(interfaceName: string, is48Port = true): { x
   return { x, yOffset };
 }
 
+function isS6800Device(device: RackDeviceVM): boolean {
+  const identity = `${device.assetKey || ''} ${device.vendor || ''} ${device.model || ''}`.toLowerCase();
+  return identity.includes('s6800') || identity.includes('s6850');
+}
 
 export const RackCableLayer: React.FC<RackCableLayerProps> = ({
   rackVM,
   selectedDeviceId,
   cableMode = 'select',
-  links = []
+  links = [],
+  showPreviewWhenEmpty = false,
 }) => {
-  if (cableMode === 'off') return null;
-
   // Build device lookup map by ID and Name
   const deviceMap = useMemo(() => {
     const map = new Map<string, RackDeviceVM>();
@@ -147,9 +189,48 @@ export const RackCableLayer: React.FC<RackCableLayerProps> = ({
     return map;
   }, [rackVM.devices]);
 
+  const previewLinks = useMemo<TopologyLinkItem[]>(() => {
+    if (!showPreviewWhenEmpty || links.length > 0) return [];
+    const devices = rackVM.validDevices
+      .filter(device => device.face === 'front')
+      .sort((left, right) => left.startU - right.startU || left.name.localeCompare(right.name));
+    if (devices.length === 0) return [];
+    if (devices.length === 1) {
+      const device = devices[0];
+      return [{
+        id: `preview-cable-${device.id}-uplink`,
+        local_device_id: device.id,
+        local_device_name: device.name,
+        local_interface: 'SFP+1',
+        remote_device_name: 'UPLINK PREVIEW',
+        remote_interface: 'SFP+1',
+        status: 'unknown',
+        cable_type: 'fiber',
+        is_preview: true,
+      }];
+    }
+    return devices.slice(0, Math.min(6, devices.length)).slice(0, -1).map((device, index) => {
+      const remote = devices[index + 1];
+      return {
+        id: `preview-cable-${device.id}-${remote.id}`,
+        local_device_id: device.id,
+        local_device_name: device.name,
+        local_interface: `SFP+${index + 1}`,
+        remote_device_id: remote.id,
+        remote_device_name: remote.name,
+        remote_interface: `SFP+${index + 2}`,
+        status: 'unknown',
+        cable_type: index % 2 === 0 ? 'fiber' : 'copper',
+        is_preview: true,
+      };
+    });
+  }, [links.length, rackVM.validDevices, showPreviewWhenEmpty]);
+
+  const effectiveLinks = links.length > 0 ? links : previewLinks;
+
   // Compute cables
   const activeCables = useMemo(() => {
-    return links
+    return effectiveLinks
       .map(link => {
         const srcDev =
           deviceMap.get(link.local_device_id) ||
@@ -169,7 +250,7 @@ export const RackCableLayer: React.FC<RackCableLayerProps> = ({
           Boolean(selectedDeviceId) &&
           (srcDev.id === selectedDeviceId || (dstDev && dstDev.id === selectedDeviceId));
 
-        if (cableMode === 'select' && !isConnectedToSelected) {
+        if (cableMode === 'select' && !isConnectedToSelected && !link.is_preview) {
           return null;
         }
 
@@ -180,13 +261,13 @@ export const RackCableLayer: React.FC<RackCableLayerProps> = ({
         const dstPullOffset = dstDev && dstDev.id === selectedDeviceId ? 0.6 : 0;
 
         // Exact Physical Port Coordinate for Source
-        const srcCoords = getPortPhysicalCoordinates(link.local_interface);
+        const srcCoords = getPortPhysicalCoordinates(link.local_interface, true, isS6800Device(srcDev));
         const startX = srcCoords.x;
         const startY = srcDev.coordinates.centerY + srcCoords.yOffset;
         const startZ = srcDev.coordinates.centerZ + srcDev.coordinates.depth / 2 + 0.05 + srcPullOffset;
 
         // Exact Physical Port Coordinate for Destination
-        const dstCoords = getPortPhysicalCoordinates(link.remote_interface);
+        const dstCoords = getPortPhysicalCoordinates(link.remote_interface, true, Boolean(dstDev && isS6800Device(dstDev)));
         const endX = dstDev ? dstCoords.x : -1.8;
         const endY = dstDev ? (dstDev.coordinates.centerY + dstCoords.yOffset) : (rackVM.totalU * 0.4445);
         const endZ = dstDev
@@ -232,18 +313,24 @@ export const RackCableLayer: React.FC<RackCableLayerProps> = ({
         srcDev: RackDeviceVM;
         dstDev?: RackDeviceVM;
       }>;
-  }, [links, deviceMap, selectedDeviceId, cableMode, rackVM.totalU]);
+  }, [effectiveLinks, deviceMap, selectedDeviceId, cableMode, rackVM.totalU]);
 
   // If in 'select' mode, highlight the primary connection
   const highlightedCables = activeCables.filter(c => c.isHighlighted);
   const primaryCable = highlightedCables[0] || null;
+
+  // Keep all hooks above unconditional; hide the rendered layer only after
+  // React has completed hook evaluation for both cable modes.
+  if (cableMode === 'off') return null;
 
   return (
     <group>
       {activeCables.map((item, idx) => {
         const { link, curve, isHighlighted } = item;
         const isFiber = link.cable_type === 'fiber';
-        const cableColor = link.status === 'down'
+        const cableColor = link.is_preview
+          ? (isFiber ? '#0ea5e9' : '#f59e0b')
+          : link.status === 'down'
           ? '#ef4444'
           : link.status === 'degraded'
             ? '#f59e0b'
@@ -253,7 +340,7 @@ export const RackCableLayer: React.FC<RackCableLayerProps> = ({
                 ? '#06b6d4'
                 : isHighlighted ? '#38bdf8' : '#475569';
         const emissiveColor = isHighlighted ? (isFiber ? '#06b6d4' : '#0ea5e9') : '#000000';
-        const emissiveIntensity = isHighlighted ? 1.4 : 0;
+        const emissiveIntensity = isHighlighted ? 1.4 : (link.is_preview ? 0.35 : 0);
         // Slender professional cabling (Fiber 2.5mm, Cat6 5mm)
         const radius = isHighlighted ? (isFiber ? 0.013 : 0.017) : (isFiber ? 0.009 : 0.013);
 
@@ -300,13 +387,16 @@ export const RackCableLayer: React.FC<RackCableLayerProps> = ({
         >
           <div className="px-2.5 py-1.5 rounded-lg text-[10px] font-mono whitespace-nowrap shadow-2xl backdrop-blur-md bg-slate-950/95 border border-cyan-400 text-cyan-200 pointer-events-none animate-in fade-in zoom-in-95">
             <div className="font-bold text-white flex items-center gap-1.5">
-              <span className="w-2 h-2 rounded-full bg-emerald-400 shadow-[0_0_6px_#34d399]" />
+              <span className={`w-2 h-2 rounded-full ${primaryCable.link.is_preview ? 'bg-amber-400 shadow-[0_0_6px_#fbbf24]' : 'bg-emerald-400 shadow-[0_0_6px_#34d399]'}`} />
               <span>
+                {primaryCable.link.is_preview ? '示例布线 · ' : ''}
                 {primaryCable.srcDev.name}:{primaryCable.link.local_interface} ⇄ {primaryCable.dstDev?.name || primaryCable.link.remote_device_name}:{primaryCable.link.remote_interface}
               </span>
             </div>
             <div className="text-[9px] text-amber-300 mt-0.5">
-              {primaryCable.link.cable_type === 'fiber'
+              {primaryCable.link.is_preview
+                ? '仅视觉预览，不写入 CMDB'
+                : primaryCable.link.cable_type === 'fiber'
                 ? '光纤链路'
                 : primaryCable.link.cable_type === 'dac'
                   ? 'DAC 链路'

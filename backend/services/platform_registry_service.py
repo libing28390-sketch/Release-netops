@@ -184,10 +184,14 @@ PLATFORM_ALIASES = {
 }
 
 PLATFORM_CATALOG_METADATA: dict[str, dict[str, str]] = {
+    "huawei_vrp": {"catalog_vendor": "huawei", "platform_family": "huawei_vrp", "version": "v5"},
     "huawei_vrp5": {"catalog_vendor": "huawei", "platform_family": "huawei_vrp", "version": "v5"},
     "huawei_vrp8": {"catalog_vendor": "huawei", "platform_family": "huawei_vrp", "version": "v8"},
     "huawei_vrp_unknown": {"catalog_vendor": "huawei", "platform_family": "huawei_vrp", "version": "unknown"},
     "h3c_comware_v3": {"catalog_vendor": "h3c", "platform_family": "h3c_comware", "version": "v3"},
+    "hp_comware": {"catalog_vendor": "h3c", "platform_family": "h3c_comware", "version": "v5"},
+    "h3c_comware": {"catalog_vendor": "h3c", "platform_family": "h3c_comware", "version": "v7"},
+    "h3c_comware9": {"catalog_vendor": "h3c", "platform_family": "h3c_comware", "version": "v9"},
     "h3c_comware_v5": {"catalog_vendor": "h3c", "platform_family": "h3c_comware", "version": "v5"},
     "h3c_comware_v7": {"catalog_vendor": "h3c", "platform_family": "h3c_comware", "version": "v7"},
     "h3c_comware_v9": {"catalog_vendor": "h3c", "platform_family": "h3c_comware", "version": "v9"},
@@ -199,12 +203,18 @@ PLATFORM_CATALOG_METADATA: dict[str, dict[str, str]] = {
     "ruijie_rgos_v10": {"catalog_vendor": "ruijie", "platform_family": "ruijie_rgos", "version": "v10"},
     "ruijie_rgos_v11": {"catalog_vendor": "ruijie", "platform_family": "ruijie_rgos", "version": "v11"},
     "ruijie_rgos_v12": {"catalog_vendor": "ruijie", "platform_family": "ruijie_rgos", "version": "v12"},
+    "ruijie_eg_rgos11": {"catalog_vendor": "ruijie", "platform_family": "ruijie_rgos", "version": "v11"},
+    "ruijie_s6k_rgos12": {"catalog_vendor": "ruijie", "platform_family": "ruijie_rgos", "version": "v12"},
     "ruijie_rgos_unknown": {"catalog_vendor": "ruijie", "platform_family": "ruijie_rgos", "version": "unknown"},
     "zte_zxros": {"catalog_vendor": "zte", "platform_family": "zte_zxros", "version": "common"},
+    "zte_5900_v6": {"catalog_vendor": "zte", "platform_family": "zte_zxros", "version": "common"},
+    "zte_zsrv2_v3": {"catalog_vendor": "zte", "platform_family": "zte_rosng", "version": "common"},
     "zte_rosng": {"catalog_vendor": "zte", "platform_family": "zte_rosng", "version": "common"},
     "zte_os_unknown": {"catalog_vendor": "zte", "platform_family": "zte_os_unknown", "version": "common"},
+    "dptech_fw_s211": {"catalog_vendor": "dptech", "platform_family": "dptech_conplat", "version": "common"},
     "dptech_conplat": {"catalog_vendor": "dptech", "platform_family": "dptech_conplat", "version": "common"},
     "dptech_conplat_unknown": {"catalog_vendor": "dptech", "platform_family": "dptech_conplat_unknown", "version": "common"},
+    "maipu_s3330_v9": {"catalog_vendor": "maipu", "platform_family": "maipu_mypower", "version": "v9"},
 }
 
 PLATFORM_FAMILY_ALIASES: dict[str, tuple[str, ...]] = {
@@ -1858,6 +1868,7 @@ def execute_platform_action(
         row = conn.execute(
             """SELECT d.*, p.id AS profile_id, p.platform_code, p.connection_driver, p.parser_platform, p.current_release_id, r.checksum AS release_checksum,
                       r.release_number, a.command, a.field_contract_json, a.command_checksum,
+                      a.parser_template_version_id,
                       def.required_fields_json, def.optional_fields_json, def.field_types_json,
                       def.max_output_bytes, def.max_records, def.timeout_seconds, def.sensitive_level
                FROM devices d LEFT JOIN platform_profiles p ON p.id = d.platform_profile_id
@@ -1900,6 +1911,22 @@ def execute_platform_action(
         resolved_command = _render_action_command(device["command"], parameters)
         if not is_safe_read_command(resolved_command, device.get("connection_driver") or ""):
             raise PlatformRegistryError("UNSAFE_COMMAND", "Release contains an unsafe command")
+        logger.info(
+            "[netops-cli] event=platform_action_start device_id=%s action_code=%s "
+            "public_platform=%s profile_platform=%s connection_driver=%s "
+            "parser_platform=%s release_id=%s release_number=%s "
+            "parser_template_version_id=%s command=%r",
+            device_id,
+            action_code,
+            device.get("platform"),
+            device.get("platform_code"),
+            device.get("connection_driver"),
+            device.get("parser_platform"),
+            device.get("current_release_id"),
+            device.get("release_number"),
+            device.get("parser_template_version_id"),
+            resolved_command,
+        )
         if _session is not None:
             if not _session.matches(device):
                 raise PlatformRegistryError("ACTION_SESSION_STALE", "Platform action session no longer matches the current release")
@@ -1944,13 +1971,42 @@ def execute_platform_action(
                     if value is not None:
                         device[key] = int(value)
             driver = driver_factory.get_driver(driver_type, device)
+            logger.info(
+                "[netops-cli] event=platform_action_dispatch device_id=%s action_code=%s "
+                "driver_type=%s connection_driver=%s command=%r",
+                device_id,
+                action_code,
+                driver_type,
+                device.get("connection_driver"),
+                resolved_command,
+            )
             with driver:
                 result = driver.send_command(resolved_command)
         output = str(getattr(result, "output", "") or "")
         if not getattr(result, "success", False):
+            logger.warning(
+                "[netops-cli] event=platform_action_failed device_id=%s action_code=%s "
+                "release_id=%s command=%r result_command=%r result_type=%s error=%s",
+                device_id,
+                action_code,
+                device.get("current_release_id"),
+                resolved_command,
+                getattr(result, "command", ""),
+                type(result).__name__,
+                getattr(result, "error", "Command execution failed"),
+            )
             response = {"success": False, "error_code": "CONNECTION_OR_COMMAND_FAILED", "error": getattr(result, "error", "Command execution failed"), "action_code": action_code, "platform_release_id": device["current_release_id"], "release_number": device["release_number"], "command": resolved_command, "resolved_command_checksum": _checksum(resolved_command), "parser": _parser_label(None)}
             _audit("ACTION_EXECUTED", {"platform_release_id": device["current_release_id"], "device_id": device_id, "action_code": action_code, "success": False, "failure_stage": "connection", "error_code": response["error_code"], "command": resolved_command, "command_checksum": device.get("command_checksum"), "resolved_command_checksum": _checksum(resolved_command)})
             return response
+        logger.info(
+            "[netops-cli] event=platform_action_command_success device_id=%s "
+            "action_code=%s command=%r output_bytes=%s output_lines=%s",
+            device_id,
+            action_code,
+            resolved_command,
+            len(output.encode("utf-8", errors="ignore")),
+            len(output.splitlines()),
+        )
         max_bytes = int(device.get("max_output_bytes") or 2_000_000)
         if len(output.encode("utf-8", errors="ignore")) > max_bytes:
             response = {"success": False, "error_code": "OUTPUT_LIMIT_EXCEEDED", "error": "Command output exceeds the action limit", "action_code": action_code, "platform_release_id": device["current_release_id"], "parser": _parser_label(None)}
@@ -1988,11 +2044,28 @@ def execute_platform_action(
                 expected_fields=expected_fields,
             )
             _coerce_field_types(normalized_records, contract)
+            logger.info(
+                "[netops-cli] event=platform_action_parse_result device_id=%s "
+                "action_code=%s parser=%s parser_platform=%s template=%s "
+                "template_source=%s parse_status=%s record_count=%s",
+                device_id,
+                action_code,
+                parser_label,
+                auto_parse.get("parser_platform"),
+                auto_parse.get("template"),
+                auto_parse.get("template_source"),
+                auto_parse.get("parse_status"),
+                len(normalized_records),
+            )
         except Exception as parse_exc:
             logger.warning(
-                "Automatic action parser failed action=%s device=%s: %s",
+                "[netops-cli] event=platform_action_parse_failed action=%s device=%s "
+                "parser_platform=%s parser_template_version_id=%s error_type=%s error=%s",
                 action_code,
                 device_id,
+                device.get("parser_platform"),
+                device.get("parser_template_version_id"),
+                type(parse_exc).__name__,
                 parse_exc,
             )
             auto_parse = {

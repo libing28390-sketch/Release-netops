@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from datetime import datetime, timezone
+import logging
 import os
 import re
 from typing import Any
@@ -19,6 +20,22 @@ from drivers.ssh_compat import build_netmiko_compatibility_kwargs
 from services.network_access_limiter import limited_connect_handler
 from services.neighbor_collection_contract import assert_lldp_command
 from services.collection_plan_service import resolve_collection_plan
+
+logger = logging.getLogger(__name__)
+
+_LOG_SENSITIVE_COMMAND_RE = re.compile(
+    r"(?i)\b(password|secret|community)\s+(?:0\s+)?\S+"
+)
+
+
+def _safe_command_for_log(command: Any, max_length: int = 240) -> str:
+    """Return a bounded command string without common inline credentials."""
+    value = str(command or '').strip()
+    value = _LOG_SENSITIVE_COMMAND_RE.sub(r"\1 ********", value)
+    value = value.replace('\r', '\\r').replace('\n', '\\n')
+    if len(value) > max_length:
+        return value[:max_length] + '...<truncated>'
+    return value
 
 
 SUPPORTED_CATEGORIES = (
@@ -339,6 +356,24 @@ def parse_device_cli_output(
     selected_context = context or resolve_device_platform_context(device_info)
     from core.textfsm import get_template_content, smart_parse_cli, template_action_code
 
+    device_id = device_info.get('id') or device_info.get('hostname') or '<unknown>'
+    command_for_log = _safe_command_for_log(command)
+    output_bytes = len(str(output or '').encode('utf-8', errors='ignore'))
+    logger.info(
+        '[netops-cli] event=parser_start device_id=%s command=%r output_bytes=%s '
+        'raw_platform=%s public_platform=%s profile_platform=%s '
+        'parser_platform=%s parser_family=%s parser_template_version_id=%s',
+        device_id,
+        command_for_log,
+        output_bytes,
+        selected_context.get('raw_platform'),
+        selected_context.get('public_platform'),
+        selected_context.get('profile_platform_code'),
+        selected_context.get('parser_platform'),
+        selected_context.get('parser_family'),
+        device_info.get('parser_template_version_id'),
+    )
+
     try:
         result = smart_parse_cli(
             output=str(output or ''),
@@ -364,6 +399,23 @@ def parse_device_cli_output(
         else:
             parse_status = 'matched' if records else 'unmatched'
         parser = f"textfsm:{template}" if template else 'platform-parser'
+        logger.info(
+            '[netops-cli] event=parser_result device_id=%s command=%r parser=%s '
+            'parser_platform=%s template=%s template_source=%s '
+            'template_action_code=%s parse_status=%s record_count=%s confidence=%s '
+            'device_message=%r',
+            device_id,
+            command_for_log,
+            parser,
+            selected_context['parser_platform'],
+            template or '<none>',
+            result.get('template_source') or '<none>',
+            associated_action or '<none>',
+            parse_status,
+            len(records),
+            result.get('confidence', 0.0),
+            device_message,
+        )
         return {
             'records': records,
             'count': len(records),
@@ -379,8 +431,14 @@ def parse_device_cli_output(
         }
     except Exception as exc:
         logger.warning(
-            'Automatic TextFSM parse failed platform=%s command=%s: %s',
-            selected_context.get('parser_platform'), command, exc,
+            '[netops-cli] event=parser_failed device_id=%s platform=%s '
+            'parser_platform=%s command=%r error_type=%s error=%s',
+            device_id,
+            selected_context.get('public_platform'),
+            selected_context.get('parser_platform'),
+            command_for_log,
+            type(exc).__name__,
+            exc,
         )
         return {
             'records': [],
@@ -1954,6 +2012,21 @@ def collect_custom_command_data(device_info: dict[str, Any], command: str, auth_
     if not commands:
         raise ValueError('Command cannot be empty')
 
+    logger.info(
+        '[netops-cli] event=custom_command_prepare device_id=%s raw_platform=%s '
+        'public_platform=%s parser_platform=%s connection_driver=%s '
+        'device_type=%s secret_configured=%s command_count=%s commands=%r',
+        device_info.get('id') or device_info.get('hostname') or '<unknown>',
+        device_info.get('platform') or '<empty>',
+        context.get('public_platform'),
+        context.get('parser_platform'),
+        context.get('connection_driver'),
+        conn_params.get('device_type'),
+        bool(conn_params.get('secret')),
+        len(commands),
+        [_safe_command_for_log(item) for item in commands],
+    )
+
     payload: dict[str, Any] = _build_base_payload(device_info, platform)
     category_result: dict[str, Any] = {
         'key': 'custom_command',
@@ -1968,52 +2041,168 @@ def collect_custom_command_data(device_info: dict[str, Any], command: str, auth_
         'parse_status': 'unmatched',
     }
 
-    with limited_connect_handler(device_info, ConnectHandler, **conn_params) as client:
-        if conn_params.get('secret'):
+    try:
+        with limited_connect_handler(device_info, ConnectHandler, **conn_params) as client:
             try:
-                client.enable()
-            except Exception:
-                pass
-
-        try:
-            for item in commands:
-                output = client.send_command(
-                    item,
-                    cmd_verify=False,
-                    strip_prompt=True,
-                    strip_command=True,
-                    read_timeout=45,
+                prompt = str(client.find_prompt())
+            except Exception as prompt_exc:
+                prompt = '<unavailable>'
+                logger.warning(
+                    '[netops-cli] event=custom_prompt_failed device_id=%s '
+                    'device_type=%s error_type=%s error=%s',
+                    device_info.get('id') or device_info.get('hostname') or '<unknown>',
+                    conn_params.get('device_type'),
+                    type(prompt_exc).__name__,
+                    prompt_exc,
                 )
-                category_result['raw_outputs'].append({'command': item, 'output': output})
+            logger.info(
+                '[netops-cli] event=custom_session_ready device_id=%s '
+                'device_type=%s prompt=%r secret_configured=%s '
+                'ruijie_session_auto_enable=%s',
+                device_info.get('id') or device_info.get('hostname') or '<unknown>',
+                conn_params.get('device_type'),
+                prompt,
+                bool(conn_params.get('secret')),
+                conn_params.get('device_type') == 'ruijie_os',
+            )
+
+            if conn_params.get('secret'):
+                logger.info(
+                    '[netops-cli] event=custom_enable_start device_id=%s '
+                    'device_type=%s secret_configured=true',
+                    device_info.get('id') or device_info.get('hostname') or '<unknown>',
+                    conn_params.get('device_type'),
+                )
                 try:
-                    parse_result = parse_device_cli_output(
-                        device_info,
-                        item,
-                        output,
-                        context=context,
+                    client.enable()
+                    logger.info(
+                        '[netops-cli] event=custom_enable_success device_id=%s device_type=%s',
+                        device_info.get('id') or device_info.get('hostname') or '<unknown>',
+                        conn_params.get('device_type'),
                     )
-                    records = parse_result['records']
-                    category_result['parser'] = parse_result['parser']
-                    category_result['parser_platform'] = parse_result['parser_platform']
-                    if parse_result.get('template') and parse_result['template'] not in category_result['templates']:
-                        category_result['templates'].append(parse_result['template'])
-                    if parse_result['parse_status'] == 'failed' and category_result['parse_status'] != 'matched':
-                        category_result['parse_status'] = 'failed'
-                    if records:
-                        category_result['records'].extend(records)
-                        category_result['count'] = len(category_result['records'])
-                        category_result['parse_status'] = 'matched'
-                except Exception as parse_exc:
-                    category_result.setdefault('parse_errors', []).append({
-                        'command': item,
-                        'error': str(parse_exc),
-                    })
-                    if category_result['parse_status'] != 'matched':
-                        category_result['parse_status'] = 'failed'
-        except Exception as exc:
-            category_result['success'] = False
-            category_result['error'] = str(exc)
-            category_result['parse_status'] = 'failed'
+                except Exception as enable_exc:
+                    logger.warning(
+                        '[netops-cli] event=custom_enable_failed device_id=%s '
+                        'device_type=%s error_type=%s error=%s',
+                        device_info.get('id') or device_info.get('hostname') or '<unknown>',
+                        conn_params.get('device_type'),
+                        type(enable_exc).__name__,
+                        enable_exc,
+                    )
+            else:
+                logger.info(
+                    '[netops-cli] event=custom_enable_not_requested device_id=%s '
+                    'device_type=%s ruijie_session_auto_enable=%s',
+                    device_info.get('id') or device_info.get('hostname') or '<unknown>',
+                    conn_params.get('device_type'),
+                    conn_params.get('device_type') == 'ruijie_os',
+                )
+
+            try:
+                for item in commands:
+                    command_for_log = _safe_command_for_log(item)
+                    raw_command = str(item or '')
+                    logger.info(
+                        '[netops-cli] event=custom_command_start device_id=%s '
+                        'device_type=%s command=%r command_length=%s '
+                        'contains_double_quote=%s contains_single_quote=%s',
+                        device_info.get('id') or device_info.get('hostname') or '<unknown>',
+                        conn_params.get('device_type'),
+                        command_for_log,
+                        len(raw_command),
+                        '"' in raw_command,
+                        "'" in raw_command,
+                    )
+                    output = client.send_command(
+                        item,
+                        cmd_verify=False,
+                        strip_prompt=True,
+                        strip_command=True,
+                        read_timeout=45,
+                    )
+                    output_bytes = len(str(output or '').encode('utf-8', errors='ignore'))
+                    logger.info(
+                        '[netops-cli] event=custom_command_response device_id=%s '
+                        'command=%r output_bytes=%s output_lines=%s',
+                        device_info.get('id') or device_info.get('hostname') or '<unknown>',
+                        command_for_log,
+                        output_bytes,
+                        len(str(output or '').splitlines()),
+                    )
+                    category_result['raw_outputs'].append({'command': item, 'output': output})
+                    try:
+                        parse_result = parse_device_cli_output(
+                            device_info,
+                            item,
+                            output,
+                            context=context,
+                        )
+                        records = parse_result['records']
+                        category_result['parser'] = parse_result['parser']
+                        category_result['parser_platform'] = parse_result['parser_platform']
+                        logger.info(
+                            '[netops-cli] event=custom_parse_result device_id=%s '
+                            'command=%r parser=%s parser_platform=%s template=%s '
+                            'template_source=%s parse_status=%s record_count=%s',
+                            device_info.get('id') or device_info.get('hostname') or '<unknown>',
+                            command_for_log,
+                            parse_result.get('parser'),
+                            parse_result.get('parser_platform'),
+                            parse_result.get('template') or '<none>',
+                            parse_result.get('template_source') or '<none>',
+                            parse_result.get('parse_status'),
+                            len(records),
+                        )
+                        if parse_result.get('template') and parse_result['template'] not in category_result['templates']:
+                            category_result['templates'].append(parse_result['template'])
+                        if parse_result['parse_status'] == 'failed' and category_result['parse_status'] != 'matched':
+                            category_result['parse_status'] = 'failed'
+                        if records:
+                            category_result['records'].extend(records)
+                            category_result['count'] = len(category_result['records'])
+                            category_result['parse_status'] = 'matched'
+                    except Exception as parse_exc:
+                        logger.warning(
+                            '[netops-cli] event=custom_parse_failed device_id=%s '
+                            'command=%r error_type=%s error=%s',
+                            device_info.get('id') or device_info.get('hostname') or '<unknown>',
+                            command_for_log,
+                            type(parse_exc).__name__,
+                            parse_exc,
+                        )
+                        category_result.setdefault('parse_errors', []).append({
+                            'command': item,
+                            'error': str(parse_exc),
+                        })
+                        if category_result['parse_status'] != 'matched':
+                            category_result['parse_status'] = 'failed'
+            except Exception as exc:
+                logger.error(
+                    '[netops-cli] event=custom_command_failed device_id=%s '
+                    'device_type=%s error_type=%s error=%s',
+                    device_info.get('id') or device_info.get('hostname') or '<unknown>',
+                    conn_params.get('device_type'),
+                    type(exc).__name__,
+                    exc,
+                )
+                category_result['success'] = False
+                category_result['error'] = str(exc)
+                category_result['parse_status'] = 'failed'
+    except Exception as exc:
+        logger.error(
+            '[netops-cli] event=custom_session_failed device_id=%s raw_platform=%s '
+            'public_platform=%s parser_platform=%s device_type=%s '
+            'secret_configured=%s error_type=%s error=%s',
+            device_info.get('id') or device_info.get('hostname') or '<unknown>',
+            device_info.get('platform') or '<empty>',
+            context.get('public_platform'),
+            context.get('parser_platform'),
+            conn_params.get('device_type'),
+            bool(conn_params.get('secret')),
+            type(exc).__name__,
+            exc,
+        )
+        raise
 
     if category_result.get('parse_status') == 'failed' and category_result.get('records'):
         category_result['parse_status'] = 'matched'

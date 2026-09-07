@@ -39,6 +39,9 @@ import {
   NETWORK_TOPOLOGY_ROLE_OPTIONS,
   TOPOLOGY_FUNCTION_OPTIONS,
   TOPOLOGY_ZONE_OPTIONS,
+  isNetworkVendor,
+  isValidVendorPlatform,
+  normalizeImportedVendor,
   isValidIpAddress,
 } from './constants';
 import { statusMeta, typeMeta, severityOf } from './helpers';
@@ -890,6 +893,7 @@ const AssetManagementTab: React.FC<AssetManagementTabProps> = ({ language, setAc
         [zh ? '功耗(W)' : 'Power(W)']: (a as any).power_watts ?? '',
         [zh ? 'SNMP社区名' : 'SNMP Community']: (a as any).snmp_community || '',
         [zh ? 'SNMP端口' : 'SNMP Port']: (a as any).snmp_port || '161',
+        [zh ? 'SNMP凭据' : 'SNMP Credential']: (a as any).snmp_credential_name || (a as any).snmp_credential_id || '',
         [zh ? '普通用户' : 'Normal User']: (a as any).normal_username || '',
         [zh ? '特权用户' : 'Admin User']: (a as any).admin_username || '',
         [zh ? '部门' : 'Department']: a.department,
@@ -915,6 +919,17 @@ const AssetManagementTab: React.FC<AssetManagementTabProps> = ({ language, setAc
             [zh ? '凭据模式（默认继承资产）' : 'Credential Mode (default: inherit asset)']: zh ? '继承资产凭据' : 'inherit_asset',
             [zh ? '普通用户（可选）' : 'Normal User (optional)']: a.normal_username || '',
             [zh ? '特权用户（可选）' : 'Admin User (optional)']: a.admin_username || '',
+          });
+        } else if (String(a.connection_method || '').toLowerCase() === 'web' && !(a.web_profiles || []).length) {
+          rowsForAsset.push({
+            [zh ? '资产编号（手工填写）' : 'Asset Tag (manual)']: a.asset_tag,
+            [zh ? '主机名（手工填写/核对）' : 'Hostname (manual/check)']: a.hostname,
+            [zh ? '管理协议（每行一个）' : 'Management Protocol (one per row)']: zh ? 'Web管理' : 'Web Management',
+            [zh ? '入口显示名称（仅展示）' : 'Entry Display Name (label only)']: zh ? 'Web管理' : 'Web management',
+            [zh ? '端口（可留空自动默认）' : 'Port (blank = default)']: 443,
+            [zh ? '登录路径（Web填写，如 /login）' : 'Login Path (Web only)']: '/',
+            [zh ? '是否启用' : 'Enabled']: zh ? '是' : 'yes',
+            [zh ? '凭据模式（默认继承资产）' : 'Credential Mode (default: inherit asset)']: zh ? '继承资产凭据' : 'inherit_asset',
           });
         } else if (String(a.connection_method || '').toLowerCase() === 'none') {
           rowsForAsset.push({
@@ -1131,6 +1146,7 @@ const AssetManagementTab: React.FC<AssetManagementTabProps> = ({ language, setAc
         const managementMethods: ManagementMethodImportRow[] = [];
         const managementMethodErrors: string[] = [];
         const templateMismatchRows: string[] = [];
+        const snmpPreflightErrors: string[] = [];
         let hasUnifiedAssetSheet = false;
         for (const name of wb.SheetNames) {
           const ws = wb.Sheets[name];
@@ -1160,6 +1176,11 @@ const AssetManagementTab: React.FC<AssetManagementTabProps> = ({ language, setAc
                   else if (v.includes('network') || v.includes('网络') || v.includes('switch') || v.includes('router')) mappedVal = 'network_device';
                 } else if (key === 'purchase_date' || key === 'warranty_expiry') {
                   mappedVal = formatExcelDate(val);
+                } else if (key === 'snmp_port' && mappedVal) {
+                  const port = Number(mappedVal);
+                  if (!Number.isInteger(port) || port < 1 || port > 65535) {
+                    snmpPreflightErrors.push(`${name} 第${rowIndex + 2}行：SNMP端口必须是 1 到 65535 的整数`);
+                  }
                 }
                 obj[key] = mappedVal;
               }
@@ -1173,6 +1194,17 @@ const AssetManagementTab: React.FC<AssetManagementTabProps> = ({ language, setAc
                 obj.asset_type = isNet ? 'network_device' : 'server';
               }
               const rowIsNet = obj.asset_type === 'network_device';
+              if (rowIsNet && obj.vendor && !isNetworkVendor(obj.vendor)) {
+                templateMismatchRows.push(`${name} 第${rowIndex + 2}行：网络设备厂商“${obj.vendor}”不在网络/安全设备厂商列表中`);
+                continue;
+              }
+              if (rowIsNet && obj.vendor) {
+                obj.vendor = normalizeImportedVendor(obj.vendor);
+              }
+              if (obj.platform && !isValidVendorPlatform(obj.asset_type, obj.vendor || '', obj.platform)) {
+                templateMismatchRows.push(`${name} 第${rowIndex + 2}行：平台“${obj.platform}”不属于厂商“${obj.vendor || '当前选择'}”，请按厂商下拉选项填写`);
+                continue;
+              }
               const allowedRoles = rowIsNet ? NETWORK_TEMPLATE_ROLES : SERVER_TEMPLATE_ROLES;
               const allowedCategories = rowIsNet ? NETWORK_TEMPLATE_CATEGORIES : SERVER_TEMPLATE_CATEGORIES;
               if (obj.device_role && !allowedRoles.has(obj.device_role)) {
@@ -1183,9 +1215,25 @@ const AssetManagementTab: React.FC<AssetManagementTabProps> = ({ language, setAc
                 templateMismatchRows.push(`${name} 第${rowIndex + 2}行：设备分类“${obj.device_category}”不属于${rowIsNet ? '网络设备' : '服务器'}`);
                 continue;
               }
+              if (obj.snmp_credential_name && obj.snmp_credential_id) {
+                snmpPreflightErrors.push(`${name} 第${rowIndex + 2}行：SNMP凭据名称与SNMP凭据ID不能同时填写，请只保留一个`);
+                continue;
+              }
+              if ((obj.snmp_credential_name || obj.snmp_credential_id) && obj.snmp_community) {
+                snmpPreflightErrors.push(`${name} 第${rowIndex + 2}行：已指定SNMP凭据，请清空SNMP社区名，避免导入明文社区字串`);
+                continue;
+              }
               mapped.push(obj);
             }
           }
+        }
+        if (snmpPreflightErrors.length > 0) {
+          setFeedbackMsg({
+            type: 'error',
+            text: zh ? 'SNMP 凭据预检失败，请修正后重新导入' : 'SNMP credential preflight failed; fix the rows and retry',
+            details: snmpPreflightErrors.slice(0, 8),
+          });
+          return;
         }
         if (templateMismatchRows.length > 0) {
           setFeedbackMsg({
@@ -1266,9 +1314,10 @@ const AssetManagementTab: React.FC<AssetManagementTabProps> = ({ language, setAc
       ['字段', '是否必填', '填写规则'],
       ['资产信息', '每台资产一行', '服务器和网络设备统一填写；不要因存在多个管理入口而重复资产行'],
       ['资产类型', '必填', '填写“服务器”或“网络设备”'],
-      ['管理入口', '每个协议一行', 'A、B列都从“资产信息”手工复制；支持 SSH、NETCONF、HTTP、HTTPS；同一设备同时支持 HTTP+HTTPS 时填写两行；没有登录入口时填写 NONE'],
-      ['入口协议与路径', '按协议填写', 'SSH/NETCONF 不填路径；HTTP/HTTPS 填 Web 路径，如 /login。端口可留空，系统默认 SSH 22、NETCONF 830、HTTP 80、HTTPS 443'],
+      ['管理入口', '每个协议一行', 'A、B列都从“资产信息”手工复制；支持 SSH、Web管理、NETCONF、HTTP、HTTPS；同一设备同时支持 HTTP+HTTPS 时填写两行；没有登录入口时填写 NONE'],
+      ['入口协议与路径', '按协议填写', 'SSH/NETCONF 不填路径；Web管理可按端口选择 HTTP/HTTPS（默认 HTTPS/443）；HTTP/HTTPS 填 Web 路径，如 /login。端口可留空，系统默认 SSH 22、NETCONF 830、HTTP 80、HTTPS 443'],
       ['管理入口凭据', '可选', '默认继承资产信息中的凭据；账号不同时选择“独立凭据”。优先填写绑定凭据，不建议在表格中填写密码'],
+      ['SNMP凭据', '可选', '填写凭据库中已有 SNMP 凭据的名称或 ID；不要填写社区字串。已填写 SNMP 凭据时请清空 SNMP社区名，避免明文凭据进入导入文件'],
       ['录入来源', '必填', '填写“新设备”或“存量设备”'],
       ['投产状态', '必填', '新设备填写“待投产”；存量设备可填写“待投产”或“已投产”'],
       ['主机名/资产编号', 'A、B列手工填写', '从“资产信息”复制资产编号和主机名；A、B两列都是人工核对信息，不使用自动填充'],
@@ -1285,9 +1334,10 @@ const AssetManagementTab: React.FC<AssetManagementTabProps> = ({ language, setAc
       ['Field', 'Required', 'Rule'],
       ['Asset Information', 'One row per asset', 'Servers and network devices share one sheet; do not duplicate assets for multiple management entries'],
       ['Asset Type', 'Yes', 'Use server or network_device'],
-      ['Management Entries', 'One row per protocol', 'Copy Asset Tag and Hostname manually from Asset Information. Supports SSH, NETCONF, HTTP and HTTPS. Use two rows for HTTP + HTTPS, or NONE when there is no login entry'],
-      ['Protocol / Path', 'By protocol', 'Leave path blank for SSH/NETCONF; fill a Web path such as /login for HTTP/HTTPS. Blank port uses protocol defaults: 22/830/80/443'],
+      ['Management Entries', 'One row per protocol', 'Copy Asset Tag and Hostname manually from Asset Information. Supports SSH, Web Management, NETCONF, HTTP and HTTPS. Use two rows for HTTP + HTTPS, or NONE when there is no login entry'],
+      ['Protocol / Path', 'By protocol', 'Leave path blank for SSH/NETCONF; Web Management defaults to HTTPS/443 and uses HTTP when port 80 is entered; fill a Web path such as /login for HTTP/HTTPS. Blank port uses protocol defaults: 22/830/80/443'],
       ['Entry Credentials', 'Optional', 'Entries inherit asset credentials by default; choose independent credentials only when the account differs. Prefer credential IDs and avoid passwords in the sheet'],
+      ['SNMP Credential', 'Optional', 'Enter an existing SNMP credential name or ID from the vault. Do not enter a community string. Clear SNMP Community when using this field'],
       ['Role', 'Optional', 'Use the canonical device role value; both Role and role headers are accepted on import'],
       ['Asset Origin', 'Yes', 'Use new (new device) or legacy (existing device)'],
       ['Lifecycle', 'Yes', 'Use staging for new devices; legacy devices may use staging or production'],
@@ -1306,18 +1356,31 @@ const AssetManagementTab: React.FC<AssetManagementTabProps> = ({ language, setAc
     XLSX.utils.book_append_sheet(wb, wsGuide, zh ? '填写说明' : 'Instructions');
 
     const assetHeaders = zh
-      ? ['资产类型', '主机名', '资产编号', '序列号', '厂商', '型号', '平台', '管理IP', '业务IP', '状态', '角色', '设备分类', '录入来源（必填：新设备或存量设备）', 'VLAN', '上联交换机', '上联端口', '站点', '机柜', 'U位', 'U高度', '规划起始U', '功耗(W)', 'SNMP社区名', 'SNMP端口', '普通用户', '特权用户', '普通密码', '特权密码', 'Enable密码', '绑定凭据', '绑定特权凭据', '标签代码', '部门', '购买日期', '投产状态', '免上收投产原因', '保修到期', '备注', '功能', '区域']
-      : ['Asset Type', 'Hostname', 'Asset Tag', 'Serial Number', 'Vendor', 'Model', 'Platform', 'Mgmt IP', 'Business IP', 'Status', 'Role', 'Device Category', 'Asset Origin (Required: new or legacy)', 'VLAN', 'Uplink Switch', 'Uplink Port', 'Site', 'Rack', 'Rack Unit', 'U Height', 'Planned Start U', 'Power(W)', 'SNMP Community', 'SNMP Port', 'Normal User', 'Admin User', 'Normal Password', 'Admin Password', 'Enable Secret', 'Credential', 'Admin Credential', 'Tags', 'Department', 'Purchase Date', 'Lifecycle', 'Takeover Exemption Reason', 'Warranty Expiry', 'Notes', 'Function', 'Zone'];
+      ? ['资产类型', '主机名', '资产编号', '序列号', '厂商', '型号', '平台', '管理IP', '业务IP', '状态', '角色', '设备分类', '录入来源（必填：新设备或存量设备）', 'VLAN', '上联交换机', '上联端口', '站点', '机柜', 'U位', 'U高度', '规划起始U', '功耗(W)', 'SNMP社区名', 'SNMP端口', '普通用户', '特权用户', '普通密码', '特权密码', 'Enable密码', '绑定凭据', '绑定特权凭据', 'SNMP凭据（推荐）', '标签代码', '部门', '购买日期', '投产状态', '免上收投产原因', '保修到期', '备注', '功能', '区域']
+      : ['Asset Type', 'Hostname', 'Asset Tag', 'Serial Number', 'Vendor', 'Model', 'Platform', 'Mgmt IP', 'Business IP', 'Status', 'Role', 'Device Category', 'Asset Origin (Required: new or legacy)', 'VLAN', 'Uplink Switch', 'Uplink Port', 'Site', 'Rack', 'Rack Unit', 'U Height', 'Planned Start U', 'Power(W)', 'SNMP Community', 'SNMP Port', 'Normal User', 'Admin User', 'Normal Password', 'Admin Password', 'Enable Secret', 'Credential', 'Admin Credential', 'SNMP Credential (recommended)', 'Tags', 'Department', 'Purchase Date', 'Lifecycle', 'Takeover Exemption Reason', 'Warranty Expiry', 'Notes', 'Function', 'Zone'];
     const assetExamples = zh ? [
-      ['网络设备', 'core-sw-01', 'NET-BJ-001', 'FCW2345L0AB', '思科', 'C9300-48P', '思科 IOS', '10.0.0.1', '', '在用', '核心层', '交换机', '存量设备', '', '', '', 'BJ-DC1', 'A-02', '40', '1', '40', '', 'public', '161', 'user', 'admin', '', '', '', 'cred-cisco-core', 'cred-cisco-admin', 'vendor.cisco,platform.cisco_ios', 'IT部', '2023-06-01', '已投产', '存量设备已在线运行', '2027-06-01', 'A：只支持 SSH', '园区核心', '生产区'],
-      ['网络设备', 'web-fw-01', 'NET-BJ-002', 'HS20260813A1', '山石', 'Hillstone E-Series', 'Hillstone StoneOS', '10.0.0.2', '', '在用', '防火墙', '防火墙', '新设备', '', '', '', 'BJ-DC1', 'A-02', '38', '2', '38', '', 'public', '161', '', '', '', '', '', '', '', 'vendor.hillstone', 'IT部', '2026-08-13', '待投产', '', '2029-08-13', 'B：同时支持 HTTP 和 HTTPS', '互联网边界', 'DMZ 区'],
-      ['服务器', 'web-srv-01', 'SRV-BJ-001', 'CZJ2345G0HN', '戴尔', 'PowerEdge R750', 'Linux（通用）', '10.0.1.10', '192.168.1.10', '在用', '业务服务器', '机架式服务器', '新设备', 'VLAN100', 'core-sw-01', 'Gi0/1', 'BJ-DC1', 'A-01', '12', '1', '12', '200', '', '', 'ops', 'root', '', '', '', 'cred-server-ops', '', 'platform.linux', 'IT部', '2026-08-13', '待投产', '', '2029-08-13', 'C：SSH + HTTPS（管理入口需两行）', '服务器接入', '生产区'],
+      ['网络设备', 'core-sw-01', 'NET-BJ-001', 'FCW2345L0AB', 'Cisco', 'C9300-48P', 'Cisco IOS', '10.0.0.1', '', '在用', '核心层', '交换机', '存量设备', '', '', '', 'BJ-DC1', 'A-02', '40', '1', '40', '', '', '161', '', 'user', 'admin', '', '', '', 'cred-cisco-core', 'cred-cisco-admin', 'vendor.cisco,platform.cisco_ios', 'IT部', '2023-06-01', '已投产', '存量设备已在线运行', '2027-06-01', 'A：只支持 SSH', '园区核心', '生产区'],
+      ['网络设备', 'web-fw-01', 'NET-BJ-002', 'HS20260813A1', 'Hillstone', 'Hillstone E-Series', 'Hillstone StoneOS', '10.0.0.2', '', '在用', '防火墙', '防火墙', '新设备', '', '', '', 'BJ-DC1', 'A-02', '38', '2', '38', '', '', '161', '', '', '', '', '', '', '', 'vendor.hillstone', 'IT部', '2026-08-13', '待投产', '', '2029-08-13', 'B：同时支持 HTTP 和 HTTPS', '互联网边界', 'DMZ 区'],
+      ['服务器', 'web-srv-01', 'SRV-BJ-001', 'CZJ2345G0HN', 'Dell', 'PowerEdge R750', 'Linux (Generic)', '10.0.1.10', '192.168.1.10', '在用', '业务服务器', '机架式服务器', '新设备', 'VLAN100', 'core-sw-01', 'Gi0/1', 'BJ-DC1', 'A-01', '12', '1', '12', '200', '', '', 'ops', 'root', '', '', '', 'cred-server-ops', '', 'platform.linux', 'IT部', '2026-08-13', '待投产', '', '2029-08-13', 'C：SSH + HTTPS（管理入口需两行）', '服务器接入', '生产区'],
     ] : [
-      ['network_device', 'core-sw-01', 'NET-BJ-001', 'FCW2345L0AB', 'Cisco', 'C9300-48P', 'cisco_ios', '10.0.0.1', '', 'active', 'core', 'switch', 'legacy', '', '', '', 'BJ-DC1', 'A-02', '40', '1', '40', '', 'public', '161', 'user', 'admin', '', '', '', 'cred-cisco-core', 'cred-cisco-admin', 'vendor.cisco,platform.cisco_ios', 'IT Dept', '2023-06-01', 'production', 'Existing production device', '2027-06-01', 'A: SSH only', 'Campus Core', 'Production'],
-      ['network_device', 'web-fw-01', 'NET-BJ-002', 'HS20260813A1', 'Hillstone', 'Hillstone E-Series', 'hillstone_stoneos', '10.0.0.2', '', 'active', 'firewall', 'firewall', 'new', '', '', '', 'BJ-DC1', 'A-02', '38', '2', '38', '', 'public', '161', '', '', '', '', '', '', '', 'vendor.hillstone', 'IT Dept', '2026-08-13', 'staging', '', '2029-08-13', 'B: HTTP + HTTPS', 'Internet Edge', 'DMZ'],
+      ['network_device', 'core-sw-01', 'NET-BJ-001', 'FCW2345L0AB', 'Cisco', 'C9300-48P', 'cisco_ios', '10.0.0.1', '', 'active', 'core', 'switch', 'legacy', '', '', '', 'BJ-DC1', 'A-02', '40', '1', '40', '', '', '161', '', 'user', 'admin', '', '', '', 'cred-cisco-core', 'cred-cisco-admin', 'vendor.cisco,platform.cisco_ios', 'IT Dept', '2023-06-01', 'production', 'Existing production device', '2027-06-01', 'A: SSH only', 'Campus Core', 'Production'],
+      ['network_device', 'web-fw-01', 'NET-BJ-002', 'HS20260813A1', 'Hillstone', 'Hillstone E-Series', 'hillstone_stoneos', '10.0.0.2', '', 'active', 'firewall', 'firewall', 'new', '', '', '', 'BJ-DC1', 'A-02', '38', '2', '38', '', '', '161', '', '', '', '', '', '', '', 'vendor.hillstone', 'IT Dept', '2026-08-13', 'staging', '', '2029-08-13', 'B: HTTP + HTTPS', 'Internet Edge', 'DMZ'],
       ['server', 'web-srv-01', 'SRV-BJ-001', 'CZJ2345G0HN', 'Dell', 'PowerEdge R750', 'linux', '10.0.1.10', '192.168.1.10', 'active', 'application_server', 'rack_server', 'new', 'VLAN100', 'core-sw-01', 'Gi0/1', 'BJ-DC1', 'A-01', '12', '1', '12', '200', '', '', 'ops', 'root', '', '', '', 'cred-server-ops', '', 'platform.linux', 'IT Dept', '2026-08-13', 'staging', '', '2029-08-13', 'C: SSH + HTTPS (two entry rows)', 'Server Access', 'Production'],
     ];
-    const wsAssets = XLSX.utils.aoa_to_sheet([assetHeaders, ...assetExamples]);
+    // Keep the three credential references together in the requested order:
+    // binding credential, privileged binding credential, then SNMP credential.
+    // Older examples carry an empty placeholder at the original SNMP position;
+    // move that value with the header instead of shifting the sample row.
+    const moveSnmpCredentialNextToSshCredential = (row: unknown[]) => {
+      const next = [...row];
+      const [snmpCredential] = next.splice(24, 1);
+      next.splice(31, 0, snmpCredential);
+      return next;
+    };
+    const wsAssets = XLSX.utils.aoa_to_sheet([
+      assetHeaders,
+      ...assetExamples.map(moveSnmpCredentialNextToSshCredential),
+    ]);
     wsAssets['!cols'] = assetHeaders.map((_, index) => ({ wch: index === 0 || index === 2 ? 18 : 16 }));
     XLSX.utils.book_append_sheet(wb, wsAssets, zh ? '资产信息' : 'Asset Information');
 
@@ -1326,12 +1389,14 @@ const AssetManagementTab: React.FC<AssetManagementTabProps> = ({ language, setAc
       : ['Asset Tag (manual)', 'Hostname (manual/check)', 'Management Protocol (one per row)', 'Entry Display Name (label only)', 'Port (blank = default)', 'Login Path (Web only)', 'Enabled', 'Credential Mode (default: inherit asset)', 'Normal User (optional)', 'Normal Password (avoid)', 'Admin User (optional)', 'Admin Password (avoid)', 'Credential ID (recommended)', 'Admin Credential ID (recommended)', 'Notes (scenario)'];
     const methodExamples = zh ? [
       ['NET-BJ-001', 'core-sw-01', 'SSH', '命令行管理', 22, '', '是', '继承资产凭据', '', '', '', '', '', '', 'A：只支持 SSH；一行一个协议'],
+      ['NET-BJ-002', 'web-fw-01', 'Web管理', 'Web管理入口', 443, '/', '是', '继承资产凭据', '', '', '', '', '', '', 'B：Web管理默认 HTTPS/443；端口 80 表示 HTTP'],
       ['NET-BJ-002', 'web-fw-01', 'HTTP', 'HTTP管理', 80, '/', '是', '独立凭据', 'web-user', '', 'web-admin', '', '', '', 'B：HTTP + HTTPS 需要两行'],
       ['NET-BJ-002', 'web-fw-01', 'HTTPS', 'HTTPS管理', 443, '/login', '是', '独立凭据', 'web-user', '', 'web-admin', '', '', '', 'B：HTTP + HTTPS 需要两行'],
       ['SRV-BJ-001', 'web-srv-01', 'SSH', '命令行管理', 22, '', '是', '继承资产凭据', '', '', '', '', '', '', 'C：SSH 主通道；HTTPS 另加一行'],
       ['SRV-BJ-001', 'web-srv-01', 'HTTPS', 'HTTPS管理', 443, '/login', '是', '继承资产凭据', '', '', '', '', '', '', 'C：SSH + HTTPS'],
     ] : [
       ['NET-BJ-001', 'core-sw-01', 'SSH', 'CLI management', 22, '', 'yes', 'inherit_asset', '', '', '', '', '', '', 'A: SSH only; one protocol per row'],
+      ['NET-BJ-002', 'web-fw-01', 'Web Management', 'Web management entry', 443, '/', 'yes', 'inherit_asset', '', '', '', '', '', '', 'B: Web Management defaults to HTTPS/443; port 80 means HTTP'],
       ['NET-BJ-002', 'web-fw-01', 'HTTP', 'HTTP management', 80, '/', 'yes', 'independent', 'web-user', '', 'web-admin', '', '', '', 'B: HTTP + HTTPS uses two rows'],
       ['NET-BJ-002', 'web-fw-01', 'HTTPS', 'HTTPS management', 443, '/login', 'yes', 'independent', 'web-user', '', 'web-admin', '', '', '', 'B: HTTP + HTTPS uses two rows'],
       ['SRV-BJ-001', 'web-srv-01', 'SSH', 'CLI management', 22, '', 'yes', 'inherit_asset', '', '', '', '', '', '', 'C: SSH channel; add HTTPS row'],
@@ -1381,6 +1446,7 @@ const AssetManagementTab: React.FC<AssetManagementTabProps> = ({ language, setAc
       ['通用', '资产状态', '闲置', '资产当前未使用'],
       ['通用', '资产状态', '库存中', '资产位于库存'],
       ['通用', '连接方式', 'SSH', '通过 SSH 管理设备'],
+      ['管理入口', '管理方式', 'Web管理', 'Web 管理入口；默认 HTTPS/443，端口填写 80 时按 HTTP 处理'],
       ['服务器', '厂商 (Vendor)', 'Linux', '通用 Linux 服务器'],
       ['服务器', '厂商 (Vendor)', 'Dell', '戴尔'],
       ['服务器', '厂商 (Vendor)', 'HP', '惠普'],
@@ -1410,6 +1476,8 @@ const AssetManagementTab: React.FC<AssetManagementTabProps> = ({ language, setAc
       ['网络/安全设备', '设备分类', '负载均衡', '负载均衡设备'],
       ['网络/安全设备', '设备分类', '无线AP', '无线接入点'],
     ] : [
+      ['Common', 'Connection Method', 'SSH', 'Manage the device over SSH'],
+      ['Management Entry', 'Management Method', 'Web Management', 'Web entry; defaults to HTTPS/443, or HTTP when port 80 is entered'],
       ['Common', 'Asset Origin', 'new', 'New device; always imported as staging'],
       ['Common', 'Asset Origin', 'legacy', 'Legacy device; may be imported as production with an exemption reason'],
       ['Server', 'Vendor', 'Linux', 'Linux Server'],

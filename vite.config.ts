@@ -113,6 +113,7 @@ export default defineConfig(({ mode }) => {
           '**/data/**',
           '**/dist/**',
           '**/.codex-build-validation*/**',
+          '**/.codex-tmp/**',
         ],
       },
       proxy: {

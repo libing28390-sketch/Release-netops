@@ -120,12 +120,19 @@ def create_device(spec: dict[str, Any]) -> list[Any]:
 
     port_count = _port_count(spec)
     columns = min(24, max(1, int(spec.get("port_columns") or 24)))
+    media_type = str(spec.get("port_media_type") or "copper").casefold()
+    if "qsfp" in media_type or "osfp" in media_type:
+        port_dimensions = (0.018, 0.014, 0.016)
+    elif "sfp" in media_type or "optical" in media_type:
+        port_dimensions = (0.010, 0.014, 0.012)
+    else:
+        port_dimensions = (0.012, 0.012, 0.014)
     for index in range(port_count):
         column = index % columns
         row = index // columns
         x = -width / 2.0 + 0.025 + column * ((width - 0.05) / max(1, columns - 1))
         z = height * 0.43 + (row % 2) * min(0.014, height * 0.16)
-        objects.append(add_box(f"PORT_GE_{index + 1:02d}", (0.012, 0.012, 0.014), (x, 0.010, z), port))
+        objects.append(add_box(f"PORT_GE_{index + 1:02d}", port_dimensions, (x, 0.010, z), port))
 
     objects.append(add_box("LED_POWER", (0.008, 0.004, 0.008), (width / 2.0 - 0.035, 0.010, height * 0.72), led))
     objects.append(add_box("LED_SYSTEM", (0.008, 0.004, 0.008), (width / 2.0 - 0.055, 0.010, height * 0.72), led))
@@ -155,4 +162,3 @@ __all__ = [
     "require_blender",
     "reset_scene",
 ]
-

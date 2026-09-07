@@ -2,7 +2,7 @@ import React, { useMemo, useRef } from 'react';
 import { Canvas } from '@react-three/fiber';
 import { OrbitControls, Grid, Html } from '@react-three/drei';
 import { RackVM, RackDisplayMode, RackDeviceVM } from '../types';
-import { RackFrame } from './RackFrame';
+import { RackAssetFrame } from './RackAssetFrame';
 import { RackDeviceItem } from './RackDeviceItem';
 import { CameraController, CameraPreset, DeviceFocusTarget } from './CameraController';
 import { RackCableLayer, CableMode, TopologyLinkItem } from './RackCableLayer';
@@ -15,6 +15,7 @@ interface RackSceneProps {
   displayMode?: RackDisplayMode;
   cableMode?: CableMode;
   topologyLinks?: TopologyLinkItem[];
+  showPreviewCables?: boolean;
   zoomAction?: { type: 'in' | 'out'; timestamp: number } | null;
   focusTarget?: DeviceFocusTarget | null;
   onSelectDevice: (deviceId: string) => void;
@@ -97,6 +98,7 @@ export const RackScene: React.FC<RackSceneProps> = ({
   displayMode = 'physical',
   cableMode = 'select',
   topologyLinks = [],
+  showPreviewCables = false,
   zoomAction,
   focusTarget,
   onSelectDevice,
@@ -153,7 +155,7 @@ export const RackScene: React.FC<RackSceneProps> = ({
         <directionalLight position={[-16, centerY + 12, 18]} intensity={1.6} color="#e0f2fe" />
         <directionalLight position={[0, centerY + 15, -24]} intensity={1.8} color="#93c5fd" />
         <pointLight position={[0, rackHeight + 6, 0]} intensity={1.2} color="#ffffff" distance={40} />
-        <pointLight position={[0, centerY, 14]} intensity={0.9} color="#e2e8f0" distance={30} />
+        <pointLight position={[0, centerY, 14]} intensity={1.8} color="#e2e8f0" distance={30} />
         <pointLight position={[0, -1.5, 12]} intensity={0.7} color="#38bdf8" distance={25} />
 
         {/* Camera Transition Controller */}
@@ -194,7 +196,7 @@ export const RackScene: React.FC<RackSceneProps> = ({
         />
 
         {/* Main Parametric Rack Enclosure */}
-        <RackFrame
+        <RackAssetFrame
           name={rackVM.name}
           totalU={rackVM.totalU}
           widthMm={rackVM.widthMm}
@@ -243,6 +245,7 @@ export const RackScene: React.FC<RackSceneProps> = ({
           selectedDeviceId={selectedDeviceId}
           cableMode={cableMode}
           links={topologyLinks}
+          showPreviewWhenEmpty={showPreviewCables}
         />
       </Canvas>
     </div>

@@ -1177,7 +1177,7 @@ def _inspect_single_device(device: dict[str, Any], alert_stats: dict[str, int], 
 
 
 def _inspect_server_device(device: dict[str, Any], alert_stats: dict[str, int], shell_items: list[dict]) -> dict[str, Any]:
-    """服务器巡检（Shell 脚本方式），整合优化后只执行一次集成脚本。"""
+    """服务器巡检（Shell 脚本方式），按指标绑定脚本分组执行并兼容旧配置。"""
     device_id = str(device.get('id') or '')
     ip = device.get('ip_address') or ''
     hostname = device.get('hostname') or ip
@@ -1225,11 +1225,17 @@ def _inspect_server_device(device: dict[str, Any], alert_stats: dict[str, int], 
 
     conn = get_db_connection()
     try:
-        # 综合巡检脚本优先：只要存在 insp_linux_full 就用它一次性采集所有指标。
-        # 不再要求 platform 严格等于 'linux'（兼容被误标为 cisco_ios 的服务器）。
+        # Use the explicitly bound metric scripts when definitions provide
+        # them.  The comprehensive script remains a compatibility fallback
+        # for legacy/custom items without a script_id and for telemetry, but it
+        # must not silently override the script shown for each built-in metric.
         use_single_script = False
         script_row = conn.execute("SELECT content FROM scripts WHERE id = ?", ("insp_linux_full",)).fetchone()
-        if script_row and script_row['content']:
+        bound_script_items = [
+            item for item in shell_items
+            if str(item.get('script_id') or '').strip()
+        ]
+        if script_row and script_row['content'] and shell_items and len(bound_script_items) != len(shell_items):
             use_single_script = True
             script_content = script_row['content']
 
@@ -2112,27 +2118,61 @@ def list_inspection_items(
 ) -> list[dict[str, Any]] | dict[str, Any]:
     conn = get_db_connection()
     try:
-        clauses: list[str] = []
-        params: list[str] = []
-        if q.strip():
-            clauses.append("(LOWER(name) LIKE ? OR LOWER(COALESCE(name_zh, '')) LIKE ? OR LOWER(COALESCE(check_key, '')) LIKE ? OR LOWER(COALESCE(command, '')) LIKE ? OR LOWER(COALESCE(description, '')) LIKE ? OR LOWER(COALESCE(vendor, '')) LIKE ?)")
-            fuzzy = f"%{q.strip().lower()}%"
-            params.extend([fuzzy] * 6)
-        if category and category.lower() != 'all':
-            clauses.append("LOWER(COALESCE(category, '')) = ?")
-            params.append(category.lower())
-        if method and method.lower() != 'all':
-            clauses.append("LOWER(COALESCE(method, '')) = ?")
-            params.append(method.lower())
-        if vendor and vendor.lower() != 'all':
-            clauses.append("LOWER(COALESCE(vendor, '')) LIKE ?")
-            params.append(f"%{vendor.lower()}%")
+        def _filter_parts(*, include_category: bool, include_method: bool) -> tuple[list[str], list[str]]:
+            clauses: list[str] = []
+            params: list[str] = []
+            if q.strip():
+                clauses.append("(LOWER(name) LIKE ? OR LOWER(COALESCE(name_zh, '')) LIKE ? OR LOWER(COALESCE(check_key, '')) LIKE ? OR LOWER(COALESCE(command, '')) LIKE ? OR LOWER(COALESCE(description, '')) LIKE ? OR LOWER(COALESCE(vendor, '')) LIKE ?)")
+                fuzzy = f"%{q.strip().lower()}%"
+                params.extend([fuzzy] * 6)
+            if include_category and category and category.lower() != 'all':
+                clauses.append("LOWER(COALESCE(category, '')) = ?")
+                params.append(category.lower())
+            if include_method and method and method.lower() != 'all':
+                clauses.append("LOWER(COALESCE(method, '')) = ?")
+                params.append(method.lower())
+            if vendor and vendor.lower() != 'all':
+                clauses.append("LOWER(COALESCE(vendor, '')) LIKE ?")
+                params.append(f"%{vendor.lower()}%")
+            return clauses, params
+
+        clauses, params = _filter_parts(include_category=True, include_method=True)
         where = f" WHERE {' AND '.join(clauses)}" if clauses else ''
         if page is None:
             rows = conn.execute(f'SELECT * FROM inspection_items{where} ORDER BY category ASC, name ASC', tuple(params)).fetchall()
             return [dict(r) for r in rows]
         count_row = conn.execute(f'SELECT COUNT(*) AS total FROM inspection_items{where}', tuple(params)).fetchone()
         total = int(count_row['total'] or 0) if count_row else 0
+
+        # Facets must be computed from the filtered catalog, not from the
+        # current page.  The UI shows category/method counts next to tabs, so
+        # applying pagination to these aggregates makes a category appear as
+        # zero until the user clicks it and loads that page.
+        category_clauses, category_params = _filter_parts(include_category=False, include_method=True)
+        category_where = f" WHERE {' AND '.join(category_clauses)}" if category_clauses else ''
+        category_rows = conn.execute(
+            f"SELECT COALESCE(category, '') AS facet_value, COUNT(*) AS total "
+            f"FROM inspection_items{category_where} GROUP BY category",
+            tuple(category_params),
+        ).fetchall()
+        category_counts = {
+            str(row['facet_value'] or ''): int(row['total'] or 0)
+            for row in category_rows
+        }
+
+        method_clauses, method_params = _filter_parts(include_category=True, include_method=False)
+        method_where = f" WHERE {' AND '.join(method_clauses)}" if method_clauses else ''
+        method_rows = conn.execute(
+            f"SELECT COALESCE(method, '') AS facet_value, COUNT(*) AS total "
+            f"FROM inspection_items{method_where} GROUP BY method",
+            tuple(method_params),
+        ).fetchall()
+        method_counts = {
+            str(row['facet_value'] or '').strip().upper(): int(row['total'] or 0)
+            for row in method_rows
+            if str(row['facet_value'] or '').strip()
+        }
+
         safe_page_size = min(max(int(page_size or 20), 1), 100)
         offset = (max(int(page or 1), 1) - 1) * safe_page_size
         rows = conn.execute(
@@ -2145,6 +2185,11 @@ def list_inspection_items(
             'page': max(int(page or 1), 1),
             'page_size': safe_page_size,
             'total_pages': max(1, (total + safe_page_size - 1) // safe_page_size),
+            'facets': {
+                'all': sum(category_counts.values()),
+                'categories': category_counts,
+                'methods': method_counts,
+            },
         }
     finally:
         conn.close()

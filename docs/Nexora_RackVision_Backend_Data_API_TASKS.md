@@ -1,8 +1,8 @@
 # Nexora RackVision 底层数据与接口专项开发清单
 
 - 文档类型：后端、数据模型、迁移、接口和质量门禁专项清单
-- 当前状态：代码收口与验收中（Rack/asset/health/topology 的认证与主要范围过滤、canonical placement、全量/授权范围数据质量审计、功率字段迁移、严格资产 DTO、资产核心审计、前端竞态保护已落地；统一异常体系、生产回填和线上缓存验证仍未关闭）
-- 基线日期：2026-09-06
+- 当前状态：代码收口与验收中（Rack/asset/health/topology 的认证与主要范围过滤、canonical placement、全量/授权范围数据质量审计、功率字段迁移、严格资产 DTO、资产核心审计、前端竞态保护已落地；5 个生产展示基线 GLB 已生成，4 个 Generic 条目已接入生产静态目录并完成本地浏览器 3D 冒烟；统一异常体系、生产回填和线上缓存验证仍未关闭）
+- 基线日期：2026-09-07
 - 适用页面：/cmdb/racks
 - 关联产品任务：[Nexora_RackVision_Detailed_TASKS.md](D:/data/downloads/Nexora_RackVision_Detailed_TASKS.md)
 - 关联资产目录：[Nexora_3D_Asset_Base_Catalog_v1.xlsx](D:/data/downloads/Nexora_3D_Asset_Base_Catalog_v1.xlsx)
@@ -35,7 +35,7 @@
 - 敏感数据与探测：资产普通响应使用显式最小 DTO allowlist，密码/SNMP/Web Profile 只返回 set 标志；资产创建、更新、删除、批量导入和连通性验证通过脱敏审计事件关联 request_id；连通性验证已加入 IP/元数据/端口/超时/进程内并发/频率边界，并改为线程池执行阻塞网络调用。
 - 拓扑补充读模型：graph 的分组、边缘证据和历史查询随授权设备范围过滤，避免从辅助接口绕过主图范围。
 
-未标记为完成的内容仍需真实环境或进一步实现：资产读取/接管/凭据操作的全量审计、统一异常类型和 409/422/500/502 映射、批量导入的数据质量状态与文件摘要持久化、cursor 分页、Redis/多 worker 线上验证、实际 Blender/GLB 资产和线上 MIME/缓存头验证。批量导入的 `atomic=true` 全量回滚和 `detailed=true` 逐行失败结果、全量/授权范围质量审计和功率字段 reconciliation 已实现并有契约测试；完整后端回归剩余的独立失败来自 IPAM 临时表缺少 `ip_addresses.device_id`，不属于 RackVision。
+未标记为完成的内容仍需真实环境或进一步实现：资产读取/接管/凭据操作的全量审计、统一异常类型和 409/422/500/502 映射、批量导入的数据质量状态与文件摘要持久化、cursor 分页、Redis/多 worker 线上验证、剩余资产矩阵与 OEM 外观校准、线上 MIME/缓存头验证。批量导入的 `atomic=true` 全量回滚和 `detailed=true` 逐行失败结果、全量/授权范围质量审计和功率字段 reconciliation 已实现并有契约测试；完整后端回归剩余的独立失败来自 IPAM 临时表缺少 `ip_addresses.device_id`，不属于 RackVision。
 
 ## 一、改造目标和架构决策
 
@@ -705,7 +705,7 @@ M6 完成标准：
 
 目标：数据底座通过验收后，才进入 3D 资产接入。
 
-- [~] RD-M8-001 统一 3D 坐标和单位（规范、转换层和 Blender 脚本已完成；真实 GLB 校准待外部 Blender）
+- [~] RD-M8-001 统一 3D 坐标和单位（规范、转换层和 Blender 生产脚本已完成；本机 Blender 5.2.1 已生成 5 个校验通过的 GLB，4 个 Generic 已登记为 `approved/glb`，真实 OEM 产品校准仍待补）
   - 明确后端 U 位、2D 坐标和 3D 坐标的转换层。
   - 将任务清单的 1U = 0.04445m 与现有程序化模型比例进行校准。
   - 不允许模型文件直接假设当前前端的旧坐标含义。
@@ -720,16 +720,16 @@ M6 完成标准：
   - 不因无法计算正常坐标而从场景中静默消失。
   - 2D、3D 的设备数量和 placement_id 可对账。
 
-- [~] RD-M8-004 修复 front/rear 3D 方向（GLB 转换层已定义；真实模型和线缆端点仍待验收）
+- [~] RD-M8-004 修复 front/rear 3D 方向（GLB 转换层已定义，5 个资产已完成正面/背面/45° 浏览器冒烟；真实模型和线缆端点仍待验收）
   - rear 设备拉出方向为负 Z 或统一坐标系下的后方。
   - rear 线缆端点连接到后侧面。
   - full_depth 设备的连接面和占用范围正确。
 
-- [~] RD-M8-005 支持非标准机柜几何参数（3D 设备深度/宽度和导轨已按 width_mm/depth_mm 缩放；450mm 墙挂柜模板、真实 GLB 和浏览器现场校准仍待外部验收）
+- [~] RD-M8-005 支持非标准机柜几何参数（3D 设备深度/宽度和导轨已按 width_mm/depth_mm 缩放；本地浏览器已完成当前 600×1000mm 机柜 3D 冒烟，450mm 墙挂柜模板、真实 GLB 和现场校准仍待外部验收）
   - 450mm 墙挂柜、非标准宽度和深度不再在设备坐标或导轨位置上套用固定 19 英寸偏移。
   - 导轨、设备宽度和深度从 rack/device geometry 读取。
 
-- [~] RD-M8-006 生产静态资源验证（Nginx/Docker 目录配置已完成；线上 MIME、缓存头和 404 验证待执行）
+- [~] RD-M8-006 生产静态资源验证（Nginx/Docker 目录配置已完成，5 个 GLB 已复制到 `public/assets/3d` 且与 build 产物 SHA-256 一致，本地浏览器 3D 冒烟通过；线上 MIME、缓存头和 404 验证待执行）
   - Nginx 支持 glb、gltf、bin、ktx2、basis 等资源。
   - 验证 MIME、缓存头、压缩和 404 行为。
   - Blender 只作为离线资产生产工具，不进入生产运行时。

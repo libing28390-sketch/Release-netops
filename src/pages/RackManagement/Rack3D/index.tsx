@@ -40,6 +40,165 @@ interface Rack3DContainerProps {
   zh: boolean;
 }
 
+interface RackLayerMenuPanelProps {
+  zh: boolean;
+  showDoor: boolean;
+  isDoorOpen: boolean;
+  showULabels: boolean;
+  cableMode: CableMode;
+  showPreviewCables: boolean;
+  displayMode: RackDisplayMode;
+  onToggleDoor: () => void;
+  onToggleDoorOpen: () => void;
+  onToggleULabels: () => void;
+  onCableModeChange: (mode: CableMode) => void;
+  onDisplayModeChange: (mode: RackDisplayMode) => void;
+}
+
+const RackLayerMenuPanel: React.FC<RackLayerMenuPanelProps> = ({
+  zh,
+  showDoor,
+  isDoorOpen,
+  showULabels,
+  cableMode,
+  showPreviewCables,
+  displayMode,
+  onToggleDoor,
+  onToggleDoorOpen,
+  onToggleULabels,
+  onCableModeChange,
+  onDisplayModeChange
+}) => (
+  <div
+    data-testid="rack-layer-panel"
+    className="absolute right-3 top-16 z-20 w-72 max-w-[calc(100%-1.5rem)] max-h-[calc(100%-7rem)] overflow-y-auto space-y-2 rounded-xl border border-slate-700 bg-slate-950/95 p-2.5 shadow-2xl backdrop-blur-xl"
+  >
+    <div className="flex items-center justify-between gap-2">
+      <span className="text-[10px] font-semibold uppercase tracking-wide text-slate-500">{zh ? '机柜辅助' : 'Rack helpers'}</span>
+      <span className="rounded-md border border-cyan-500/30 bg-cyan-500/10 px-1.5 py-0.5 text-[9px] text-cyan-300">{zh ? '侧边面板' : 'Side panel'}</span>
+    </div>
+
+    <div className="flex items-center justify-between gap-2">
+      <span className="text-[10px] font-semibold uppercase tracking-wide text-slate-500">{zh ? '显示' : 'Display'}</span>
+      <div className="flex items-center gap-1">
+        <button
+          type="button"
+          onClick={onToggleDoor}
+          className={`rounded-md px-2 py-1 text-[10px] font-medium ${showDoor ? 'bg-cyan-600/20 text-cyan-300' : 'bg-slate-800 text-slate-400'}`}
+        >
+          {showDoor ? (zh ? '门体显示' : 'Door shown') : (zh ? '门体隐藏' : 'Door hidden')}
+        </button>
+        <button
+          type="button"
+          onClick={onToggleDoorOpen}
+          disabled={!showDoor}
+          className={`rounded-md px-2 py-1 text-[10px] font-medium disabled:cursor-not-allowed disabled:opacity-40 ${
+            isDoorOpen ? 'bg-emerald-600/20 text-emerald-300' : 'bg-slate-800 text-slate-300'
+          }`}
+        >
+          {isDoorOpen ? (zh ? '开门' : 'Open') : (zh ? '关门' : 'Closed')}
+        </button>
+        <button
+          type="button"
+          onClick={onToggleULabels}
+          className={`rounded-md px-2 py-1 text-[10px] font-medium ${showULabels ? 'bg-cyan-600/20 text-cyan-300' : 'bg-slate-800 text-slate-400'}`}
+        >
+          {zh ? 'U 标尺' : 'U labels'}
+        </button>
+      </div>
+    </div>
+
+    <div className="flex items-center justify-between gap-2">
+      <span className="text-[10px] font-semibold uppercase tracking-wide text-slate-500">{zh ? '线缆' : 'Cables'}</span>
+      <div className="flex items-center rounded-lg border border-slate-800 bg-slate-900 p-0.5 text-xs">
+        <button
+          type="button"
+          onClick={() => onCableModeChange('select')}
+          className={`flex items-center gap-1 rounded-md px-2 py-0.5 font-medium transition-all ${
+            cableMode === 'select' ? 'bg-cyan-600 text-white shadow-sm' : 'text-slate-400 hover:text-slate-200'
+          }`}
+          title={zh ? '按需点亮选中跳线' : 'Cables On Select'}
+        >
+          <Cable size={11} />
+          <span>{zh ? '按需' : 'Select'}</span>
+        </button>
+        <button
+          type="button"
+          onClick={() => onCableModeChange('all')}
+          className={`rounded-md px-1.5 py-0.5 font-medium transition-all ${
+            cableMode === 'all' ? 'bg-cyan-600 text-white shadow-sm' : 'text-slate-400 hover:text-slate-200'
+          }`}
+          title={zh ? '显示全部走线' : 'All Cables'}
+        >
+          {zh ? '全线' : 'All'}
+        </button>
+        <button
+          type="button"
+          onClick={() => onCableModeChange('off')}
+          className={`rounded-md px-1.5 py-0.5 font-medium transition-all ${
+            cableMode === 'off' ? 'bg-slate-700 text-slate-200' : 'text-slate-400 hover:text-slate-200'
+          }`}
+          title={zh ? '隐藏全部跳线' : 'Hide Cables'}
+        >
+          {zh ? '关' : 'Off'}
+        </button>
+      </div>
+    </div>
+    {showPreviewCables && (
+      <div className="rounded-md border border-amber-500/30 bg-amber-500/10 px-2 py-1 text-[10px] leading-4 text-amber-200">
+        {zh ? '当前没有已验证拓扑，画面显示预览线缆；不会写入 CMDB。点击“关”可隐藏。' : 'No verified topology is available. Preview cables are visual-only and never written to CMDB. Click Off to hide them.'}
+      </div>
+    )}
+
+    <div className="flex items-center justify-between gap-2">
+      <span className="text-[10px] font-semibold uppercase tracking-wide text-slate-500">{zh ? '着色' : 'Coloring'}</span>
+      <div className="flex items-center rounded-lg border border-slate-800 bg-slate-900 p-0.5 text-xs">
+        <button
+          type="button"
+          onClick={() => onDisplayModeChange('physical')}
+          className={`rounded-md px-2 py-0.5 font-medium transition-all ${
+            displayMode === 'physical' ? 'bg-cyan-600 text-white shadow-sm' : 'text-slate-400 hover:text-slate-200'
+          }`}
+          title={zh ? '物理真实外观' : 'Physical View'}
+        >
+          {zh ? '真容' : 'Real'}
+        </button>
+        <button
+          type="button"
+          onClick={() => onDisplayModeChange('health')}
+          className={`flex items-center gap-1 rounded-md px-1.5 py-0.5 font-medium transition-all ${
+            displayMode === 'health' ? 'bg-emerald-600 text-white' : 'text-slate-400 hover:text-slate-200'
+          }`}
+          title={zh ? '告警健康热力' : 'Health Heatmap'}
+        >
+          <Activity size={11} />
+          <span>{zh ? '健康' : 'Health'}</span>
+        </button>
+        <button
+          type="button"
+          onClick={() => onDisplayModeChange('role')}
+          className={`flex items-center gap-1 rounded-md px-1.5 py-0.5 font-medium transition-all ${
+            displayMode === 'role' ? 'bg-purple-600 text-white' : 'text-slate-400 hover:text-slate-200'
+          }`}
+          title={zh ? '设备角色分类' : 'Role Classification'}
+        >
+          <Tag size={11} />
+        </button>
+        <button
+          type="button"
+          onClick={() => onDisplayModeChange('power')}
+          className={`flex items-center gap-1 rounded-md px-1.5 py-0.5 font-medium transition-all ${
+            displayMode === 'power' ? 'bg-amber-600 text-white' : 'text-slate-400 hover:text-slate-200'
+          }`}
+          title={zh ? '额定功耗热力' : 'Power Heatmap'}
+        >
+          <Zap size={11} />
+        </button>
+      </div>
+    </div>
+  </div>
+);
+
 class ThreeErrorBoundary extends React.Component<
   { children: React.ReactNode; onFallback: () => void; zh: boolean },
   { hasError: boolean; errorMsg: string }
@@ -91,8 +250,11 @@ export const Rack3DContainer: React.FC<Rack3DContainerProps> = ({
   const [focusTarget, setFocusTarget] = useState<DeviceFocusTarget | null>(null);
   const [pulledOutDeviceId, setPulledOutDeviceId] = useState<string | null>(null);
   const [zoomAction, setZoomAction] = useState<{ type: 'in' | 'out'; timestamp: number } | null>(null);
-  const [isDoorOpen, setIsDoorOpen] = useState(true); // Default open 100°
-  const [showDoor, setShowDoor] = useState(true);
+  // Keep the equipment face unobstructed in the first 3D frame.  The door is
+  // still available from More layers when a closed-cabinet presentation is
+  // needed.
+  const [isDoorOpen, setIsDoorOpen] = useState(false);
+  const [showDoor, setShowDoor] = useState(false);
   const [showULabels, setShowULabels] = useState(true);
   const [displayMode, setDisplayMode] = useState<RackDisplayMode>('physical');
   const [cableMode, setCableMode] = useState<CableMode>('select');
@@ -172,6 +334,7 @@ export const Rack3DContainer: React.FC<Rack3DContainerProps> = ({
     () => normalizeRackTopologyLinks(rawTopologyLinks, rackVM),
     [rawTopologyLinks, rackVM],
   );
+  const showPreviewCables = topologyStatus === 'ready' && topologyLinks.length === 0;
 
   // Search filtered devices
   const filteredDevices = React.useMemo(() => {
@@ -345,119 +508,6 @@ export const Rack3DContainer: React.FC<Rack3DContainerProps> = ({
               <ChevronDown size={11} className={showLayerMenu ? 'rotate-180 transition-transform' : 'transition-transform'} />
             </button>
 
-            {showLayerMenu && (
-              <div className="absolute left-0 top-[calc(100%+0.5rem)] z-30 w-64 space-y-2 rounded-xl border border-slate-700 bg-slate-950/95 p-2.5 shadow-2xl backdrop-blur-xl">
-                <div className="flex items-center justify-between gap-2">
-                  <span className="text-[10px] font-semibold uppercase tracking-wide text-slate-500">{zh ? '机柜辅助' : 'Rack helpers'}</span>
-                  <div className="flex items-center gap-1">
-                    <button
-                      type="button"
-                      onClick={() => setShowDoor(value => !value)}
-                      className={`rounded-md px-2 py-1 text-[10px] font-medium ${showDoor ? 'bg-cyan-600/20 text-cyan-300' : 'bg-slate-800 text-slate-400'}`}
-                    >
-                      {showDoor ? (zh ? '门体显示' : 'Door shown') : (zh ? '门体隐藏' : 'Door hidden')}
-                    </button>
-                    <button
-                      type="button"
-                      onClick={() => setIsDoorOpen(value => !value)}
-                      disabled={!showDoor}
-                      className={`flex items-center gap-1 rounded-md px-2 py-1 text-[10px] font-medium disabled:cursor-not-allowed disabled:opacity-40 ${
-                        isDoorOpen ? 'bg-emerald-600/20 text-emerald-300' : 'bg-slate-800 text-slate-300'
-                      }`}
-                    >
-                      {isDoorOpen ? <DoorOpen size={11} /> : <DoorClosed size={11} />}
-                      {isDoorOpen ? (zh ? '开门' : 'Open') : (zh ? '关门' : 'Closed')}
-                    </button>
-                    <button
-                      type="button"
-                      onClick={() => setShowULabels(value => !value)}
-                      className={`rounded-md px-2 py-1 text-[10px] font-medium ${showULabels ? 'bg-cyan-600/20 text-cyan-300' : 'bg-slate-800 text-slate-400'}`}
-                    >
-                      {zh ? 'U 标尺' : 'U labels'}
-                    </button>
-                  </div>
-                </div>
-
-                <div className="flex items-center justify-between gap-2">
-                  <span className="text-[10px] font-semibold uppercase tracking-wide text-slate-500">{zh ? '线缆' : 'Cables'}</span>
-                  {/* Cable Mode Selector */}
-                  <div className="flex items-center rounded-lg p-0.5 bg-slate-900 border border-slate-800 text-xs">
-            <button
-              onClick={() => setCableMode('select')}
-              className={`flex items-center gap-1 px-2 py-0.5 rounded-md font-medium transition-all ${
-                cableMode === 'select' ? 'bg-cyan-600 text-white shadow-sm' : 'text-slate-400 hover:text-slate-200'
-              }`}
-              title={zh ? '按需点亮选中跳线' : 'Cables On Select'}
-            >
-              <Cable size={11} />
-              <span>{zh ? '按需' : 'Select'}</span>
-            </button>
-            <button
-              onClick={() => setCableMode('all')}
-              className={`px-1.5 py-0.5 rounded-md font-medium transition-all ${
-                cableMode === 'all' ? 'bg-cyan-600 text-white shadow-sm' : 'text-slate-400 hover:text-slate-200'
-              }`}
-              title={zh ? '显示全部走线' : 'All Cables'}
-            >
-              {zh ? '全线' : 'All'}
-            </button>
-            <button
-              onClick={() => setCableMode('off')}
-              className={`px-1.5 py-0.5 rounded-md font-medium transition-all ${
-                cableMode === 'off' ? 'bg-slate-700 text-slate-200' : 'text-slate-400 hover:text-slate-200'
-              }`}
-              title={zh ? '隐藏全部跳线' : 'Hide Cables'}
-            >
-              {zh ? '关' : 'Off'}
-            </button>
-                  </div>
-                </div>
-
-                <div className="flex items-center justify-between gap-2">
-                  <span className="text-[10px] font-semibold uppercase tracking-wide text-slate-500">{zh ? '着色' : 'Coloring'}</span>
-                  {/* Display Mode Switcher */}
-                  <div className="flex items-center rounded-lg p-0.5 bg-slate-900 border border-slate-800 text-xs">
-            <button
-              onClick={() => setDisplayMode('physical')}
-              className={`px-2 py-0.5 rounded-md font-medium transition-all ${
-                displayMode === 'physical' ? 'bg-cyan-600 text-white shadow-sm' : 'text-slate-400 hover:text-slate-200'
-              }`}
-              title={zh ? '物理真实外观' : 'Physical View'}
-            >
-              {zh ? '真容' : 'Real'}
-            </button>
-            <button
-              onClick={() => setDisplayMode('health')}
-              className={`flex items-center gap-1 px-1.5 py-0.5 rounded-md font-medium transition-all ${
-                displayMode === 'health' ? 'bg-emerald-600 text-white shadow-sm' : 'text-slate-400 hover:text-slate-200'
-              }`}
-              title={zh ? '告警健康热力' : 'Health Heatmap'}
-            >
-              <Activity size={11} />
-              <span>{zh ? '健康' : 'Health'}</span>
-            </button>
-            <button
-              onClick={() => setDisplayMode('role')}
-              className={`flex items-center gap-1 px-1.5 py-0.5 rounded-md font-medium transition-all ${
-                displayMode === 'role' ? 'bg-purple-600 text-white shadow-sm' : 'text-slate-400 hover:text-slate-200'
-              }`}
-              title={zh ? '设备角色分类' : 'Role Classification'}
-            >
-              <Tag size={11} />
-            </button>
-            <button
-              onClick={() => setDisplayMode('power')}
-              className={`flex items-center gap-1 px-1.5 py-0.5 rounded-md font-medium transition-all ${
-                displayMode === 'power' ? 'bg-amber-600 text-white shadow-sm' : 'text-slate-400 hover:text-slate-200'
-              }`}
-              title={zh ? '额定功耗热力' : 'Power Heatmap'}
-            >
-              <Zap size={11} />
-            </button>
-                  </div>
-                </div>
-              </div>
-            )}
           </div>
 
           <div className="w-[1px] h-3.5 bg-slate-700/80" />
@@ -574,6 +624,23 @@ export const Rack3DContainer: React.FC<Rack3DContainerProps> = ({
           </div>
         </div>
 
+        {showLayerMenu && (
+          <RackLayerMenuPanel
+            zh={zh}
+            showDoor={showDoor}
+            isDoorOpen={isDoorOpen}
+            showULabels={showULabels}
+            cableMode={cableMode}
+            showPreviewCables={showPreviewCables}
+            displayMode={displayMode}
+            onToggleDoor={() => setShowDoor(value => !value)}
+            onToggleDoorOpen={() => setIsDoorOpen(value => !value)}
+            onToggleULabels={() => setShowULabels(value => !value)}
+            onCableModeChange={setCableMode}
+            onDisplayModeChange={setDisplayMode}
+          />
+        )}
+
         {/* Close-up Focus Mode Floating Badge */}
         {focusTarget && (
           <div className="absolute top-16 left-1/2 -translate-x-1/2 z-20 flex items-center gap-2.5 px-3.5 py-1.5 rounded-full shadow-2xl backdrop-blur-xl bg-slate-950/95 border border-cyan-500/70 text-xs text-cyan-200 animate-in fade-in slide-in-from-top-2">
@@ -589,7 +656,7 @@ export const Rack3DContainer: React.FC<Rack3DContainerProps> = ({
         )}
 
         {/* 3D Scene Viewport */}
-        <div className="flex-1 w-full h-full">
+        <div className={`flex-1 w-full h-full pt-16 transition-[padding] duration-200 ${showLayerMenu ? 'pr-72' : ''}`}>
           <RackScene
             rackVM={rackVM}
             selectedDeviceId={selectedDeviceId}
@@ -597,6 +664,7 @@ export const Rack3DContainer: React.FC<Rack3DContainerProps> = ({
             displayMode={displayMode}
             cableMode={cableMode}
             topologyLinks={topologyLinks}
+            showPreviewCables={showPreviewCables}
             zoomAction={zoomAction}
             focusTarget={focusTarget}
             onSelectDevice={onSelectDevice}
@@ -666,19 +734,21 @@ export const Rack3DContainer: React.FC<Rack3DContainerProps> = ({
           )}
           <div className="w-[1px] h-3 bg-slate-700" />
           <div
-            className={`flex items-center gap-1 ${topologyStatus === 'error' || topologyTruncated ? 'text-amber-400' : 'text-cyan-300'}`}
-            title={topologyTruncated
-              ? (zh ? '拓扑接口仅返回前 500 条；当前机柜可能仍有未展示链路' : 'The topology API returned only the first 500 rows; this rack may have undisplayed links.')
-              : undefined}
+            className={`flex items-center gap-1 ${topologyStatus === 'error' || topologyTruncated || showPreviewCables ? 'text-amber-400' : 'text-cyan-300'}`}
+            title={showPreviewCables
+              ? (zh ? '当前机柜没有已验证拓扑；画面中的线缆是视觉预览，不代表 CMDB 连接' : 'This rack has no verified topology; visible cables are a visual preview and do not represent CMDB connections.')
+              : topologyTruncated
+                ? (zh ? '拓扑接口仅返回前 500 条；当前机柜可能仍有未展示链路' : 'The topology API returned only the first 500 rows; this rack may have undisplayed links.')
+                : undefined}
           >
             <Cable size={11} />
             <span>
               {topologyStatus === 'loading'
                 ? (zh ? '拓扑加载中' : 'Loading topology')
-                : topologyStatus === 'error'
+                  : topologyStatus === 'error'
                   ? (zh ? '拓扑不可用' : 'Topology unavailable')
                   : topologyLinks.length === 0
-                    ? (zh ? '无已验证链路' : 'No verified links')
+                    ? (showPreviewCables ? (zh ? '预览线缆 · 未关联' : 'Preview cables · unlinked') : (zh ? '无已验证链路' : 'No verified links'))
                     : `${zh ? '已验证链路' : 'Verified links'} ${topologyLinks.length}`}
               {topologyTruncated ? (zh ? '（结果已截断）' : ' (truncated)') : ''}
             </span>
