@@ -2,7 +2,7 @@ import React, { useState, useMemo, useEffect, useRef } from 'react';
 import { 
   Search, Terminal, Monitor, Lock, Info, 
   Copy, ShieldCheck, RefreshCw, ChevronLeft, ChevronRight, Send, ChevronDown, UserCheck,
-  Database, Server, Cpu, Key, FolderTree, Globe, X, Eye, EyeOff, MapPin, Activity, Wifi, Star
+  Database, Server, Cpu, Key, FolderTree, Globe, X, Eye, EyeOff, MapPin, Activity, Wifi, Star, Settings
 } from 'lucide-react';
 import { motion, AnimatePresence } from 'framer-motion';
 import TerminalWindow from '../components/access/TerminalWindow';
@@ -13,6 +13,7 @@ import DeviceMfaModal from './AccessCenterTab/components/DeviceMfaModal';
 import { createPamWebSession, enabledWebProfiles, ensurePamWebAgent, launchPamWebSession, type WebAccessLevel } from '../api/pamWeb';
 import type { WebAccessProfile } from './AssetManagement/types';
 import { WebAccessRequestModal } from './AssetManagement/components/WebAccessRequestModal';
+import WindowsServiceModal from './AccessCenterTab/components/WindowsServiceModal';
 import { formatTerminalAgentError, getLocalTerminalConfig, TERMINAL_APP_LABELS } from '../utils/localTerminal';
 
 interface Device {
@@ -36,6 +37,7 @@ interface Device {
   web_access_enabled?: boolean;
   web_http_enabled?: boolean;
   web_https_enabled?: boolean;
+  winrm_enabled?: boolean;
 }
 
 type WebScheme = 'http' | 'https';
@@ -164,6 +166,7 @@ export default function AccessCenterTab({
   const [webAccessLevel, setWebAccessLevel] = useState<WebAccessLevel>('normal');
   const [webAccessReason, setWebAccessReason] = useState('');
   const [webAccessRequesting, setWebAccessRequesting] = useState(false);
+  const [windowsServiceTarget, setWindowsServiceTarget] = useState<Device | null>(null);
 
   // Real current username from session
   const [currentUsername, setCurrentUsername] = useState<string>('');
@@ -446,6 +449,18 @@ export default function AccessCenterTab({
     setWebAccessProfiles([]);
     setWebAccessProfileId('');
     setWebAccessReason('');
+  };
+
+  const openWindowsServiceManagement = (dev: Device) => {
+    if (!String(dev.asset_id || '').trim()) {
+      showToast(isZh ? '该设备尚未关联物理资产，无法管理 Windows 服务' : 'This device is not linked to a physical asset, so Windows services cannot be managed', 'info');
+      return;
+    }
+    setWindowsServiceTarget(dev);
+  };
+
+  const handleUnavailableRdpAccess = () => {
+    showToast(isZh ? '当前版本未配置 RDP 网关' : 'The RDP gateway is not configured in this version', 'info');
   };
 
   const closeMFAModal = () => {
@@ -858,21 +873,32 @@ export default function AccessCenterTab({
   const renderTerminalActions = (dev: Device, protocol: 'SSH' | 'RDP') => (
     <div className="flex flex-nowrap items-center justify-center gap-2.5 whitespace-nowrap">
       <button
-        onClick={() => handleAccessRequest(dev, 'xshell', 'normal')}
+        onClick={() => protocol === 'RDP' ? handleUnavailableRdpAccess() : handleAccessRequest(dev, 'xshell', 'normal')}
         className="flex items-center gap-2 rounded-xl border border-slate-200 bg-white px-3.5 py-2 text-[10px] font-black text-slate-600 transition-all hover:border-emerald-500 hover:bg-emerald-50 hover:text-emerald-600"
-        title={protocol === 'RDP' ? (isZh ? '使用当前本地终端配置发起 RDP 访问' : 'Launch RDP access with the configured local client') : undefined}
+        title={protocol === 'RDP' ? (isZh ? 'RDP 网关未配置' : 'RDP gateway is not configured') : undefined}
       >
         {protocol === 'RDP' ? <Monitor className="h-3.5 w-3.5" /> : <Terminal className="h-3.5 w-3.5" />}
         {dev.normal_username || (isZh ? '普通' : 'user')}
       </button>
       <button
-        onClick={() => handleAccessRequest(dev, 'xshell', 'privileged')}
+        onClick={() => protocol === 'RDP' ? handleUnavailableRdpAccess() : handleAccessRequest(dev, 'xshell', 'privileged')}
         className="flex items-center gap-2 rounded-xl border border-slate-200 bg-white px-3.5 py-2 text-[10px] font-black text-slate-600 transition-all hover:border-orange-500 hover:bg-orange-50 hover:text-orange-600"
-        title={protocol === 'RDP' ? (isZh ? '使用当前本地终端配置发起 RDP 特权访问' : 'Launch privileged RDP access with the configured local client') : undefined}
+        title={protocol === 'RDP' ? (isZh ? 'RDP 网关未配置' : 'RDP gateway is not configured') : undefined}
       >
         <Lock className="h-3.5 w-3.5" />
         {dev.admin_username || (isZh ? '特权' : 'admin')}
       </button>
+      {protocol === 'RDP' && (
+        <button
+          type="button"
+          onClick={() => openWindowsServiceManagement(dev)}
+          className="flex items-center gap-2 rounded-xl border border-cyan-200 bg-cyan-50 px-3.5 py-2 text-[10px] font-black text-cyan-700 transition-all hover:border-cyan-500 hover:bg-cyan-100"
+          title={isZh ? '管理 Windows 服务' : 'Manage Windows services'}
+        >
+          <Settings className="h-3.5 w-3.5" />
+          {isZh ? '服务管理' : 'Services'}
+        </button>
+      )}
     </div>
   );
 
@@ -1295,6 +1321,15 @@ export default function AccessCenterTab({
         onReasonChange={setWebAccessReason}
         onClose={closeWebAccess}
         onSubmit={() => void requestWebAccess()}
+      />
+
+      <WindowsServiceModal
+        isOpen={Boolean(windowsServiceTarget)}
+        assetId={windowsServiceTarget?.asset_id || null}
+        hostname={windowsServiceTarget?.hostname}
+        language={language}
+        showToast={showToast}
+        onClose={() => setWindowsServiceTarget(null)}
       />
 
       {/* Legacy webhook approval dialog kept unreachable for old state recovery. */}

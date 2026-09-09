@@ -3,6 +3,7 @@ import { cleanup, render, screen, waitFor } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import DeviceFormModal from './DeviceFormModal';
+import type { Device } from '../types';
 
 const profiles = [
   { id: 'profile-zte-5900', platform_code: 'zte_5900_v6', name_zh: '中兴 5900 V6', name_en: 'ZTE 5900 V6', vendor: 'ZTE', status: 'ACTIVE' },
@@ -53,5 +54,43 @@ describe('DeviceFormModal platform registry selector', () => {
       platform_source: 'MANUAL',
     }));
     expect(screen.getByRole('link', { name: 'Manage platforms' }).getAttribute('href')).toBe('/automation/platforms');
+  });
+
+  it('defaults SSH algorithm policy to auto and gates break-glass submission behind acknowledgement', async () => {
+    const user = userEvent.setup();
+    const onFormChange = vi.fn();
+    const onSubmit = vi.fn();
+    const Harness = () => {
+      const [form, setForm] = React.useState<Partial<Device>>({ platform: 'cisco_ios', connection_method: 'ssh' });
+      return (
+        <DeviceFormModal
+          mode="add"
+          language="en"
+          form={form}
+          passwordVisible={false}
+          onFormChange={(nextForm) => { onFormChange(nextForm); setForm(nextForm); }}
+          onTogglePasswordVisibility={vi.fn()}
+          onClose={vi.fn()}
+          onSubmit={onSubmit}
+        />
+      );
+    };
+    render(
+      <Harness />,
+    );
+
+    const algorithmSelect = screen.getByTitle('SSH algorithm profile');
+    expect((algorithmSelect as HTMLSelectElement).value).toBe('auto');
+    await user.selectOptions(algorithmSelect, 'legacy_break_glass');
+
+    const submitButton = screen.getByRole('button', { name: 'Create Device' });
+    expect((submitButton as HTMLButtonElement).disabled).toBe(true);
+    expect(screen.getByText('Acknowledge high-risk compatibility')).toBeTruthy();
+
+    await user.click(screen.getByRole('checkbox'));
+    expect((submitButton as HTMLButtonElement).disabled).toBe(false);
+    await user.click(submitButton);
+    expect(onSubmit).toHaveBeenCalledTimes(1);
+    expect(onFormChange).toHaveBeenLastCalledWith(expect.objectContaining({ ssh_algorithm_profile: 'legacy_break_glass' }));
   });
 });

@@ -39,6 +39,8 @@ import {
   NETWORK_TOPOLOGY_ROLE_OPTIONS,
   TOPOLOGY_FUNCTION_OPTIONS,
   TOPOLOGY_ZONE_OPTIONS,
+  SSH_ALGORITHM_PROFILE_OPTIONS,
+  SSH_ALGORITHM_PROFILE_VALUES,
   isNetworkVendor,
   isValidVendorPlatform,
   normalizeImportedVendor,
@@ -89,6 +91,7 @@ type AssetColumnKey =
   | 'model'
   | 'serial_number'
   | 'management_ip'
+  | 'ssh_algorithm_profile'
   | 'lifecycle'
   | 'created_at'
   | 'updated_at';
@@ -110,6 +113,7 @@ const ASSET_COLUMN_DEFS: AssetColumnDefinition[] = [
   { key: 'model', zh: '型号', en: 'Model', width: 'min-w-[110px]' },
   { key: 'serial_number', zh: '序列号', en: 'Serial', width: 'min-w-[130px]' },
   { key: 'management_ip', zh: '管理IP', en: 'Management IP', width: 'w-[120px]' },
+  { key: 'ssh_algorithm_profile', zh: 'SSH算法策略', en: 'SSH algorithm', width: 'min-w-[150px]' },
   { key: 'lifecycle', zh: '资产状态', en: 'Asset status', width: 'w-[90px]' },
   { key: 'created_at', zh: '创建时间', en: 'Created', width: 'min-w-[145px]' },
   { key: 'updated_at', zh: '更新时间', en: 'Updated', width: 'min-w-[145px]' },
@@ -125,6 +129,7 @@ const DEFAULT_ASSET_COLUMNS: Record<AssetColumnKey, boolean> = {
   model: true,
   serial_number: true,
   management_ip: true,
+  ssh_algorithm_profile: false,
   lifecycle: true,
   created_at: true,
   updated_at: true,
@@ -449,6 +454,7 @@ const AssetManagementTab: React.FC<AssetManagementTabProps> = ({ language, setAc
       department: a.department, notes: a.notes,
       platform: (a as any).platform || (a.asset_type === 'server' ? 'linux' : 'cisco_ios'),
       connection_method: (a as any).connection_method || 'ssh',
+      ssh_algorithm_profile: a.ssh_algorithm_profile || 'auto',
       username: (a as any).username || '',
       password: '',
       normal_username: (a as any).normal_username || '',
@@ -462,6 +468,11 @@ const AssetManagementTab: React.FC<AssetManagementTabProps> = ({ language, setAc
       snmp_credential_id: (a as any).snmp_credential_id || '',
       snmp_community_set: Boolean((a as any).snmp_community_set),
       management_port: String(a.management_port ?? '22'),
+      winrm_enabled: Boolean(a.winrm_enabled),
+      winrm_port: String(a.winrm_port ?? 5986),
+      winrm_auth_mode: a.winrm_auth_mode || 'ntlm',
+      winrm_tls_mode: a.winrm_tls_mode || 'pin_fingerprint',
+      winrm_cert_fingerprint: a.winrm_cert_fingerprint || '',
       device_category: a.device_category || '',
       function: a.function || '',
       zone: a.zone || 'Unknown',
@@ -532,13 +543,19 @@ const AssetManagementTab: React.FC<AssetManagementTabProps> = ({ language, setAc
           normalizedPlatform = vendorPlatforms[0].value;
         }
       }
+      const requestedSshProfile = String(overrides.ssh_algorithm_profile ?? form.ssh_algorithm_profile ?? 'auto');
+      const normalizedSshProfile = SSH_ALGORITHM_PROFILE_VALUES.includes(requestedSshProfile as typeof SSH_ALGORITHM_PROFILE_VALUES[number])
+        ? requestedSshProfile
+        : 'auto';
       const payload = {
         ...form,
         ...overrides,
         platform: normalizedPlatform,
+        ssh_algorithm_profile: normalizedSshProfile,
         u_height: Math.max(1, Math.min(60, parseInt(String(form.u_height), 10) || 1)),
         planned_start_u,
         power_watts: parseInt(String(form.power_watts), 10) || 0,
+        winrm_port: parseInt(String(form.winrm_port), 10) || 5986,
         enable_password: (form.enable_password || '').trim(),
         web_profiles: (form.web_profiles || []).map((profile: any) => ({
           ...(profile.id ? { id: profile.id } : {}),
@@ -624,6 +641,7 @@ const AssetManagementTab: React.FC<AssetManagementTabProps> = ({ language, setAc
       department: a.department, notes: a.notes,
       platform: a.platform || (a.asset_type === 'server' ? 'linux' : 'cisco_ios'),
       connection_method: a.connection_method || 'ssh',
+      ssh_algorithm_profile: a.ssh_algorithm_profile || 'auto',
       username: a.username || '',
       password: '',
       normal_username: (a as any).normal_username || '',
@@ -637,6 +655,11 @@ const AssetManagementTab: React.FC<AssetManagementTabProps> = ({ language, setAc
       snmp_credential_id: (a as any).snmp_credential_id || '',
       snmp_community_set: Boolean((a as any).snmp_community_set),
       management_port: String(a.management_port ?? '22'),
+      winrm_enabled: Boolean(a.winrm_enabled),
+      winrm_port: String(a.winrm_port ?? 5986),
+      winrm_auth_mode: a.winrm_auth_mode || 'ntlm',
+      winrm_tls_mode: a.winrm_tls_mode || 'pin_fingerprint',
+      winrm_cert_fingerprint: a.winrm_cert_fingerprint || '',
       device_category: a.device_category || '',
       function: a.function || '',
       zone: a.zone || 'Unknown',
@@ -875,6 +898,7 @@ const AssetManagementTab: React.FC<AssetManagementTabProps> = ({ language, setAc
         [zh ? '厂商' : 'Vendor']: a.vendor,
         [zh ? '型号' : 'Model']: a.model,
         [zh ? '平台' : 'Platform']: (a as any).platform || '',
+        [zh ? 'SSH算法策略' : 'SSH Algorithm Profile']: a.ssh_algorithm_profile || 'auto',
         [zh ? '管理IP' : 'Mgmt IP']: a.management_ip,
         [zh ? '业务IP' : 'Business IP']: a.business_ip,
         [zh ? '状态' : 'Status']: a.status,
@@ -1147,6 +1171,7 @@ const AssetManagementTab: React.FC<AssetManagementTabProps> = ({ language, setAc
         const managementMethodErrors: string[] = [];
         const templateMismatchRows: string[] = [];
         const snmpPreflightErrors: string[] = [];
+        const sshProfilePreflightErrors: string[] = [];
         let hasUnifiedAssetSheet = false;
         for (const name of wb.SheetNames) {
           const ws = wb.Sheets[name];
@@ -1181,6 +1206,8 @@ const AssetManagementTab: React.FC<AssetManagementTabProps> = ({ language, setAc
                   if (!Number.isInteger(port) || port < 1 || port > 65535) {
                     snmpPreflightErrors.push(`${name} 第${rowIndex + 2}行：SNMP端口必须是 1 到 65535 的整数`);
                   }
+                } else if (key === 'ssh_algorithm_profile' && mappedVal && !SSH_ALGORITHM_PROFILE_VALUES.includes(mappedVal as typeof SSH_ALGORITHM_PROFILE_VALUES[number])) {
+                  sshProfilePreflightErrors.push(`${name} 第${rowIndex + 2}行：SSH算法策略“${mappedVal}”不受支持，请使用 auto、modern、legacy_compat 或 legacy_break_glass`);
                 }
                 obj[key] = mappedVal;
               }
@@ -1223,6 +1250,7 @@ const AssetManagementTab: React.FC<AssetManagementTabProps> = ({ language, setAc
                 snmpPreflightErrors.push(`${name} 第${rowIndex + 2}行：已指定SNMP凭据，请清空SNMP社区名，避免导入明文社区字串`);
                 continue;
               }
+              obj.ssh_algorithm_profile = obj.ssh_algorithm_profile || 'auto';
               mapped.push(obj);
             }
           }
@@ -1232,6 +1260,14 @@ const AssetManagementTab: React.FC<AssetManagementTabProps> = ({ language, setAc
             type: 'error',
             text: zh ? 'SNMP 凭据预检失败，请修正后重新导入' : 'SNMP credential preflight failed; fix the rows and retry',
             details: snmpPreflightErrors.slice(0, 8),
+          });
+          return;
+        }
+        if (sshProfilePreflightErrors.length > 0) {
+          setFeedbackMsg({
+            type: 'error',
+            text: zh ? 'SSH 算法策略预检失败，请修正后重新导入' : 'SSH algorithm profile preflight failed; fix the rows and retry',
+            details: sshProfilePreflightErrors.slice(0, 8),
           });
           return;
         }
@@ -1317,6 +1353,7 @@ const AssetManagementTab: React.FC<AssetManagementTabProps> = ({ language, setAc
       ['管理入口', '每个协议一行', 'A、B列都从“资产信息”手工复制；支持 SSH、Web管理、NETCONF、HTTP、HTTPS；同一设备同时支持 HTTP+HTTPS 时填写两行；没有登录入口时填写 NONE'],
       ['入口协议与路径', '按协议填写', 'SSH/NETCONF 不填路径；Web管理可按端口选择 HTTP/HTTPS（默认 HTTPS/443）；HTTP/HTTPS 填 Web 路径，如 /login。端口可留空，系统默认 SSH 22、NETCONF 830、HTTP 80、HTTPS 443'],
       ['管理入口凭据', '可选', '默认继承资产信息中的凭据；账号不同时选择“独立凭据”。优先填写绑定凭据，不建议在表格中填写密码'],
+      ['SSH算法策略', 'SSH设备可选', '默认 auto（现代算法优先并兼容安全旧算法）；仅在确认设备没有更安全共同算法时使用 legacy_break_glass，该选项会启用高风险旧算法并应纳入审计'],
       ['SNMP凭据', '可选', '填写凭据库中已有 SNMP 凭据的名称或 ID；不要填写社区字串。已填写 SNMP 凭据时请清空 SNMP社区名，避免明文凭据进入导入文件'],
       ['录入来源', '必填', '填写“新设备”或“存量设备”'],
       ['投产状态', '必填', '新设备填写“待投产”；存量设备可填写“待投产”或“已投产”'],
@@ -1337,6 +1374,7 @@ const AssetManagementTab: React.FC<AssetManagementTabProps> = ({ language, setAc
       ['Management Entries', 'One row per protocol', 'Copy Asset Tag and Hostname manually from Asset Information. Supports SSH, Web Management, NETCONF, HTTP and HTTPS. Use two rows for HTTP + HTTPS, or NONE when there is no login entry'],
       ['Protocol / Path', 'By protocol', 'Leave path blank for SSH/NETCONF; Web Management defaults to HTTPS/443 and uses HTTP when port 80 is entered; fill a Web path such as /login for HTTP/HTTPS. Blank port uses protocol defaults: 22/830/80/443'],
       ['Entry Credentials', 'Optional', 'Entries inherit asset credentials by default; choose independent credentials only when the account differs. Prefer credential IDs and avoid passwords in the sheet'],
+      ['SSH Algorithm Profile', 'SSH devices', 'Defaults to auto. Use modern for strict policy, legacy_compat for safe legacy fallback, and legacy_break_glass only for confirmed very old devices; the latter enables high-risk algorithms and should be audited'],
       ['SNMP Credential', 'Optional', 'Enter an existing SNMP credential name or ID from the vault. Do not enter a community string. Clear SNMP Community when using this field'],
       ['Role', 'Optional', 'Use the canonical device role value; both Role and role headers are accepted on import'],
       ['Asset Origin', 'Yes', 'Use new (new device) or legacy (existing device)'],
@@ -1356,16 +1394,16 @@ const AssetManagementTab: React.FC<AssetManagementTabProps> = ({ language, setAc
     XLSX.utils.book_append_sheet(wb, wsGuide, zh ? '填写说明' : 'Instructions');
 
     const assetHeaders = zh
-      ? ['资产类型', '主机名', '资产编号', '序列号', '厂商', '型号', '平台', '管理IP', '业务IP', '状态', '角色', '设备分类', '录入来源（必填：新设备或存量设备）', 'VLAN', '上联交换机', '上联端口', '站点', '机柜', 'U位', 'U高度', '规划起始U', '功耗(W)', 'SNMP社区名', 'SNMP端口', '普通用户', '特权用户', '普通密码', '特权密码', 'Enable密码', '绑定凭据', '绑定特权凭据', 'SNMP凭据（推荐）', '标签代码', '部门', '购买日期', '投产状态', '免上收投产原因', '保修到期', '备注', '功能', '区域']
-      : ['Asset Type', 'Hostname', 'Asset Tag', 'Serial Number', 'Vendor', 'Model', 'Platform', 'Mgmt IP', 'Business IP', 'Status', 'Role', 'Device Category', 'Asset Origin (Required: new or legacy)', 'VLAN', 'Uplink Switch', 'Uplink Port', 'Site', 'Rack', 'Rack Unit', 'U Height', 'Planned Start U', 'Power(W)', 'SNMP Community', 'SNMP Port', 'Normal User', 'Admin User', 'Normal Password', 'Admin Password', 'Enable Secret', 'Credential', 'Admin Credential', 'SNMP Credential (recommended)', 'Tags', 'Department', 'Purchase Date', 'Lifecycle', 'Takeover Exemption Reason', 'Warranty Expiry', 'Notes', 'Function', 'Zone'];
+      ? ['资产类型', '主机名', '资产编号', '序列号', '厂商', '型号', '平台', 'SSH算法策略', '管理IP', '业务IP', '状态', '角色', '设备分类', '录入来源（必填：新设备或存量设备）', 'VLAN', '上联交换机', '上联端口', '站点', '机柜', 'U位', 'U高度', '规划起始U', '功耗(W)', 'SNMP社区名', 'SNMP端口', '普通用户', '特权用户', '普通密码', '特权密码', 'Enable密码', '绑定凭据', '绑定特权凭据', 'SNMP凭据（推荐）', '标签代码', '部门', '购买日期', '投产状态', '免上收投产原因', '保修到期', '备注', '功能', '区域']
+      : ['Asset Type', 'Hostname', 'Asset Tag', 'Serial Number', 'Vendor', 'Model', 'Platform', 'SSH Algorithm Profile', 'Mgmt IP', 'Business IP', 'Status', 'Role', 'Device Category', 'Asset Origin (Required: new or legacy)', 'VLAN', 'Uplink Switch', 'Uplink Port', 'Site', 'Rack', 'Rack Unit', 'U Height', 'Planned Start U', 'Power(W)', 'SNMP Community', 'SNMP Port', 'Normal User', 'Admin User', 'Normal Password', 'Admin Password', 'Enable Secret', 'Credential', 'Admin Credential', 'SNMP Credential (recommended)', 'Tags', 'Department', 'Purchase Date', 'Lifecycle', 'Takeover Exemption Reason', 'Warranty Expiry', 'Notes', 'Function', 'Zone'];
     const assetExamples = zh ? [
-      ['网络设备', 'core-sw-01', 'NET-BJ-001', 'FCW2345L0AB', 'Cisco', 'C9300-48P', 'Cisco IOS', '10.0.0.1', '', '在用', '核心层', '交换机', '存量设备', '', '', '', 'BJ-DC1', 'A-02', '40', '1', '40', '', '', '161', '', 'user', 'admin', '', '', '', 'cred-cisco-core', 'cred-cisco-admin', 'vendor.cisco,platform.cisco_ios', 'IT部', '2023-06-01', '已投产', '存量设备已在线运行', '2027-06-01', 'A：只支持 SSH', '园区核心', '生产区'],
-      ['网络设备', 'web-fw-01', 'NET-BJ-002', 'HS20260813A1', 'Hillstone', 'Hillstone E-Series', 'Hillstone StoneOS', '10.0.0.2', '', '在用', '防火墙', '防火墙', '新设备', '', '', '', 'BJ-DC1', 'A-02', '38', '2', '38', '', '', '161', '', '', '', '', '', '', '', 'vendor.hillstone', 'IT部', '2026-08-13', '待投产', '', '2029-08-13', 'B：同时支持 HTTP 和 HTTPS', '互联网边界', 'DMZ 区'],
-      ['服务器', 'web-srv-01', 'SRV-BJ-001', 'CZJ2345G0HN', 'Dell', 'PowerEdge R750', 'Linux (Generic)', '10.0.1.10', '192.168.1.10', '在用', '业务服务器', '机架式服务器', '新设备', 'VLAN100', 'core-sw-01', 'Gi0/1', 'BJ-DC1', 'A-01', '12', '1', '12', '200', '', '', 'ops', 'root', '', '', '', 'cred-server-ops', '', 'platform.linux', 'IT部', '2026-08-13', '待投产', '', '2029-08-13', 'C：SSH + HTTPS（管理入口需两行）', '服务器接入', '生产区'],
+      ['网络设备', 'core-sw-01', 'NET-BJ-001', 'FCW2345L0AB', 'Cisco', 'C9300-48P', 'Cisco IOS', 'auto', '10.0.0.1', '', '在用', '核心层', '交换机', '存量设备', '', '', '', 'BJ-DC1', 'A-02', '40', '1', '40', '', '', '161', '', 'user', 'admin', '', '', '', 'cred-cisco-core', 'cred-cisco-admin', 'vendor.cisco,platform.cisco_ios', 'IT部', '2023-06-01', '已投产', '存量设备已在线运行', '2027-06-01', 'A：只支持 SSH', '园区核心', '生产区'],
+      ['网络设备', 'web-fw-01', 'NET-BJ-002', 'HS20260813A1', 'Hillstone', 'Hillstone E-Series', 'Hillstone StoneOS', 'auto', '10.0.0.2', '', '在用', '防火墙', '防火墙', '新设备', '', '', '', 'BJ-DC1', 'A-02', '38', '2', '38', '', '', '161', '', '', '', '', '', '', '', 'vendor.hillstone', 'IT部', '2026-08-13', '待投产', '', '2029-08-13', 'B：同时支持 HTTP 和 HTTPS', '互联网边界', 'DMZ 区'],
+      ['服务器', 'web-srv-01', 'SRV-BJ-001', 'CZJ2345G0HN', 'Dell', 'PowerEdge R750', 'Linux (Generic)', 'auto', '10.0.1.10', '192.168.1.10', '在用', '业务服务器', '机架式服务器', '新设备', 'VLAN100', 'core-sw-01', 'Gi0/1', 'BJ-DC1', 'A-01', '12', '1', '12', '200', '', '', 'ops', 'root', '', '', '', 'cred-server-ops', '', 'platform.linux', 'IT部', '2026-08-13', '待投产', '', '2029-08-13', 'C：SSH + HTTPS（管理入口需两行）', '服务器接入', '生产区'],
     ] : [
-      ['network_device', 'core-sw-01', 'NET-BJ-001', 'FCW2345L0AB', 'Cisco', 'C9300-48P', 'cisco_ios', '10.0.0.1', '', 'active', 'core', 'switch', 'legacy', '', '', '', 'BJ-DC1', 'A-02', '40', '1', '40', '', '', '161', '', 'user', 'admin', '', '', '', 'cred-cisco-core', 'cred-cisco-admin', 'vendor.cisco,platform.cisco_ios', 'IT Dept', '2023-06-01', 'production', 'Existing production device', '2027-06-01', 'A: SSH only', 'Campus Core', 'Production'],
-      ['network_device', 'web-fw-01', 'NET-BJ-002', 'HS20260813A1', 'Hillstone', 'Hillstone E-Series', 'hillstone_stoneos', '10.0.0.2', '', 'active', 'firewall', 'firewall', 'new', '', '', '', 'BJ-DC1', 'A-02', '38', '2', '38', '', '', '161', '', '', '', '', '', '', '', 'vendor.hillstone', 'IT Dept', '2026-08-13', 'staging', '', '2029-08-13', 'B: HTTP + HTTPS', 'Internet Edge', 'DMZ'],
-      ['server', 'web-srv-01', 'SRV-BJ-001', 'CZJ2345G0HN', 'Dell', 'PowerEdge R750', 'linux', '10.0.1.10', '192.168.1.10', 'active', 'application_server', 'rack_server', 'new', 'VLAN100', 'core-sw-01', 'Gi0/1', 'BJ-DC1', 'A-01', '12', '1', '12', '200', '', '', 'ops', 'root', '', '', '', 'cred-server-ops', '', 'platform.linux', 'IT Dept', '2026-08-13', 'staging', '', '2029-08-13', 'C: SSH + HTTPS (two entry rows)', 'Server Access', 'Production'],
+      ['network_device', 'core-sw-01', 'NET-BJ-001', 'FCW2345L0AB', 'Cisco', 'C9300-48P', 'cisco_ios', 'auto', '10.0.0.1', '', 'active', 'core', 'switch', 'legacy', '', '', '', 'BJ-DC1', 'A-02', '40', '1', '40', '', '', '161', '', 'user', 'admin', '', '', '', 'cred-cisco-core', 'cred-cisco-admin', 'vendor.cisco,platform.cisco_ios', 'IT Dept', '2023-06-01', 'production', 'Existing production device', '2027-06-01', 'A: SSH only', 'Campus Core', 'Production'],
+      ['network_device', 'web-fw-01', 'NET-BJ-002', 'HS20260813A1', 'Hillstone', 'Hillstone E-Series', 'hillstone_stoneos', 'auto', '10.0.0.2', '', 'active', 'firewall', 'firewall', 'new', '', '', '', 'BJ-DC1', 'A-02', '38', '2', '38', '', '', '161', '', '', '', '', '', '', 'vendor.hillstone', 'IT Dept', '2026-08-13', 'staging', '', '2029-08-13', 'B: HTTP + HTTPS', 'Internet Edge', 'DMZ'],
+      ['server', 'web-srv-01', 'SRV-BJ-001', 'CZJ2345G0HN', 'Dell', 'PowerEdge R750', 'linux', 'auto', '10.0.1.10', '192.168.1.10', 'active', 'application_server', 'rack_server', 'new', 'VLAN100', 'core-sw-01', 'Gi0/1', 'BJ-DC1', 'A-01', '12', '1', '12', '200', '', '', 'ops', 'root', '', '', '', 'cred-server-ops', '', 'platform.linux', 'IT Dept', '2026-08-13', 'staging', '', '2029-08-13', 'C: SSH + HTTPS (two entry rows)', 'Server Access', 'Production'],
     ];
     // Keep the three credential references together in the requested order:
     // binding credential, privileged binding credential, then SNMP credential.
@@ -1373,8 +1411,8 @@ const AssetManagementTab: React.FC<AssetManagementTabProps> = ({ language, setAc
     // move that value with the header instead of shifting the sample row.
     const moveSnmpCredentialNextToSshCredential = (row: unknown[]) => {
       const next = [...row];
-      const [snmpCredential] = next.splice(24, 1);
-      next.splice(31, 0, snmpCredential);
+      const [snmpCredential] = next.splice(25, 1);
+      next.splice(32, 0, snmpCredential);
       return next;
     };
     const wsAssets = XLSX.utils.aoa_to_sheet([
@@ -1447,6 +1485,10 @@ const AssetManagementTab: React.FC<AssetManagementTabProps> = ({ language, setAc
       ['通用', '资产状态', '库存中', '资产位于库存'],
       ['通用', '连接方式', 'SSH', '通过 SSH 管理设备'],
       ['管理入口', '管理方式', 'Web管理', 'Web 管理入口；默认 HTTPS/443，端口填写 80 时按 HTTP 处理'],
+      ['管理入口', 'SSH算法策略', '自动', '默认策略：现代算法优先，并兼容安全的旧算法'],
+      ['管理入口', 'SSH算法策略', '现代算法', '严格限制为现代算法；设备较旧时可能无法连接'],
+      ['管理入口', 'SSH算法策略', '兼容旧算法', '受控启用 group14-sha1、ssh-rsa、AES-CBC、HMAC-SHA1 等安全旧算法'],
+      ['管理入口', 'SSH算法策略', '极旧设备兼容', '紧急 break-glass 模式；可能启用 group1、ssh-dss、MD5、RC4 等高风险算法，必须审计'],
       ['服务器', '厂商 (Vendor)', 'Linux', '通用 Linux 服务器'],
       ['服务器', '厂商 (Vendor)', 'Dell', '戴尔'],
       ['服务器', '厂商 (Vendor)', 'HP', '惠普'],
@@ -1478,6 +1520,10 @@ const AssetManagementTab: React.FC<AssetManagementTabProps> = ({ language, setAc
     ] : [
       ['Common', 'Connection Method', 'SSH', 'Manage the device over SSH'],
       ['Management Entry', 'Management Method', 'Web Management', 'Web entry; defaults to HTTPS/443, or HTTP when port 80 is entered'],
+      ['Management Entry', 'SSH Algorithm Profile', 'auto', 'Modern algorithms first with the safe legacy fallback set'],
+      ['Management Entry', 'SSH Algorithm Profile', 'modern', 'Strict modern-only policy; older devices may fail to connect'],
+      ['Management Entry', 'SSH Algorithm Profile', 'legacy_compat', 'Controlled fallback for group14-sha1, ssh-rsa, AES-CBC and HMAC-SHA1'],
+      ['Management Entry', 'SSH Algorithm Profile', 'legacy_break_glass', 'Emergency break-glass mode; may enable group1, ssh-dss, MD5 and RC4. Audit every use'],
       ['Common', 'Asset Origin', 'new', 'New device; always imported as staging'],
       ['Common', 'Asset Origin', 'legacy', 'Legacy device; may be imported as production with an exemption reason'],
       ['Server', 'Vendor', 'Linux', 'Linux Server'],
@@ -1580,6 +1626,17 @@ const AssetManagementTab: React.FC<AssetManagementTabProps> = ({ language, setAc
       case 'model': return <span className="text-xs text-gray-600 dark:text-zinc-400">{a.model || '—'}</span>;
       case 'serial_number': return <span className="font-mono text-xs text-gray-600 dark:text-zinc-400">{a.serial_number || '—'}</span>;
       case 'management_ip': return <span className="font-mono text-xs font-semibold text-gray-800 dark:text-zinc-200">{a.management_ip || '—'}</span>;
+      case 'ssh_algorithm_profile': {
+        const profile = a.ssh_algorithm_profile || 'auto';
+        const option = SSH_ALGORITHM_PROFILE_OPTIONS.find(item => item.value === profile);
+        const risky = profile === 'legacy_break_glass';
+        return (
+          <span className={`inline-flex items-center gap-1 rounded-full px-2 py-0.5 text-[10px] font-semibold ${risky ? 'bg-rose-50 text-rose-700 dark:bg-rose-950/40 dark:text-rose-300' : profile === 'legacy_compat' ? 'bg-amber-50 text-amber-700 dark:bg-amber-950/40 dark:text-amber-300' : 'bg-slate-100 text-slate-600 dark:bg-zinc-800 dark:text-zinc-300'}`}>
+            {risky && <AlertTriangle size={10} />}
+            {option ? option.label[zh ? 'zh' : 'en'] : profile}
+          </span>
+        );
+      }
       case 'lifecycle': return rotatingAssetId === a.id ? (
         <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full bg-blue-50 text-blue-700 text-[10px] font-semibold">
           <Loader2 size={10} className="animate-spin" />{zh ? '上收中' : 'Rotating'}

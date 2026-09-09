@@ -8,7 +8,7 @@ description: Prepare and review Nexora NetOps releases across Vite builds, FastA
 ## Workflow
 
 1. Identify the target: Windows desktop, native Ubuntu, Docker Compose, or CI release artifact.
-2. Inspect `package.json`, `vite.config.ts`, backend startup, `.env.example`, Docker/Nginx files, desktop launchers, and relevant workflow.
+2. Inspect the relevant workflow and its actual inputs. Read package/Vite, backend startup, environment, Docker/Nginx or desktop configuration only when the selected release path depends on them.
 3. Confirm frontend assets, API base paths, WebSockets, static-file serving, database migration order, and writable data paths.
 4. Run the quality gate before packaging.
 5. Validate secrets are placeholders in tracked examples and real secrets are not committed.
@@ -24,4 +24,4 @@ description: Prepare and review Nexora NetOps releases across Vite builds, FastA
 
 ## Verification
 
-Run `npm run lint`, `npm run build`, relevant backend tests, and configuration syntax checks. For packaging changes, validate the target artifact or provide the precise unverified constraint.
+Choose checks using netops-quality-gate and the actual affected release path. Run lint/build when frontend output or deployment assets are affected; for filtering-only changes, verify configuration syntax, cleanup and forbidden-path behavior for each target, and relevant release contracts. Formal release candidates still require the full release gate. For packaging changes, validate the target artifact or provide the precise unverified constraint. Avoid duplicate checks by assigning shared verification to one executor.

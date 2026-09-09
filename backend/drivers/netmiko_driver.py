@@ -292,7 +292,12 @@ class NetmikoDriver(BaseDriver):
             'global_delay_factor':1.5 if is_slow else 0.5,
             'blocking_timeout':   max(60, int(self.device_info.get('blocking_timeout') or 60)),
         }
-        device_params.update(build_netmiko_compatibility_kwargs(timeout=connection_timeout))
+        device_params.update(
+            build_netmiko_compatibility_kwargs(
+                timeout=connection_timeout,
+                profile=self.device_info.get('ssh_algorithm_profile'),
+            )
+        )
         
         # Override connection timeout if specified in device_info
         custom_timeout = self.device_info.get('conn_timeout') or self.device_info.get('timeout')

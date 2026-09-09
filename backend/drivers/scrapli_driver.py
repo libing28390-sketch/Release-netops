@@ -6,7 +6,11 @@ try:
 except ImportError:
     HAS_SCRAPLI = False
 from .base import BaseDriver, CommandResult
-from .ssh_compat import build_system_ssh_open_cmd
+from .ssh_compat import (
+    build_paramiko_compatibility_kwargs,
+    build_system_ssh_open_cmd,
+    normalize_ssh_algorithm_profile,
+)
 
 class ScrapliDriver(BaseDriver):
     """基于 Scrapli (同步) 的驱动实现"""
@@ -40,6 +44,9 @@ class ScrapliDriver(BaseDriver):
         import platform as platform_module
         logger = logging.getLogger(__name__)
         
+        ssh_profile = normalize_ssh_algorithm_profile(
+            self.device_info.get('ssh_algorithm_profile')
+        )
         # 基础设备参数
         device_params = {
             'host': self.host,
@@ -61,17 +68,17 @@ class ScrapliDriver(BaseDriver):
         if platform_module.system() == 'Windows':
             logger.debug(f"Windows detected, using paramiko transport")
             device_params['transport'] = 'paramiko'
-            # Paramiko transport 通过 monkey-patch 自动支持 legacy SSH 算法
+            # Paramiko transport 使用共享的跨厂商算法 profile。
             device_params['transport_options'] = {
                 'paramiko_open_options': {
-                    'look_for_keys': False,
-                    'allow_agent': False,
+                    **build_paramiko_compatibility_kwargs(ssh_profile),
                 }
             }
         else:
-            # Linux/Mac 上使用 system transport，并支持较老的 SSH 算法
+            # Linux/Mac 上使用 system transport，并以现代算法为优先，
+            # 在 auto/legacy 档案中追加设备所需的旧算法。
             device_params['transport_options'] = {
-                'open_cmd': build_system_ssh_open_cmd()
+                'open_cmd': build_system_ssh_open_cmd(ssh_profile)
             }
         
         try:

@@ -20,6 +20,14 @@ const STATUSES = [
   { value: 'decommissioned', label: { zh: '已退役', en: 'Retired' }, dot: 'bg-slate-400', badge: 'bg-slate-100 text-slate-500' },
 ] as const;
 
+const SSH_ALGORITHM_PROFILES = new Set(['auto', 'modern', 'legacy_compat', 'legacy_break_glass']);
+const SSH_ALGORITHM_PROFILE_LABELS: Record<string, { zh: string; en: string }> = {
+  auto: { zh: '自动（现代优先）', en: 'Auto (modern first)' },
+  modern: { zh: '现代算法（严格）', en: 'Modern (strict)' },
+  legacy_compat: { zh: '旧算法兼容（受控）', en: 'Legacy compatibility' },
+  legacy_break_glass: { zh: '极旧设备紧急兼容（高风险）', en: 'Legacy break-glass (high risk)' },
+};
+
 export interface AssetRecord {
   id: string;
   asset_type: string;
@@ -37,6 +45,7 @@ export interface AssetRecord {
   planned_start_u?: number | null;
   management_ip: string;
   connection_method?: string;
+  ssh_algorithm_profile?: 'auto' | 'modern' | 'legacy_compat' | 'legacy_break_glass';
   management_port?: number;
   web_profiles?: Array<{ scheme: 'http' | 'https'; port: number | string; enabled: boolean }>;
   business_ip: string;
@@ -145,6 +154,11 @@ export function AssetReadonlyDetailInner({ asset: a, zh }: { asset: AssetRecord;
         <ReadonlyField label={zh ? '额定功率' : 'Power (W)'} value={a.power_watts != null && String(a.power_watts) !== '0' && String(a.power_watts) !== '' ? `${a.power_watts} W` : '—'} />
         <ReadonlyField label={zh ? '管理IP' : 'Mgmt IP'} value={a.management_ip || '—'} mono />
         <ReadonlyField label={zh ? '管理方式' : 'Management methods'} value={managementMethods.join('、') || (zh ? '无登录通道' : 'No login channel')} mono />
+        <ReadonlyField
+          label={zh ? 'SSH算法策略' : 'SSH algorithm profile'}
+          value={SSH_ALGORITHM_PROFILE_LABELS[a.ssh_algorithm_profile || 'auto']?.[zh ? 'zh' : 'en'] || a.ssh_algorithm_profile || 'auto'}
+          warn={a.ssh_algorithm_profile === 'legacy_break_glass'}
+        />
         {a.asset_type === 'server' && (
           <ReadonlyField label={zh ? '业务IP' : 'Biz IP'} value={a.business_ip || '—'} mono />
         )}
@@ -209,6 +223,9 @@ export function normalizeAssetApiRow(row: Record<string, unknown>): AssetRecord 
     planned_start_u: ni('planned_start_u') as number | null | undefined,
     management_ip: s('management_ip'),
     connection_method: s('connection_method', 'ssh'),
+    ssh_algorithm_profile: (SSH_ALGORITHM_PROFILES.has(s('ssh_algorithm_profile', 'auto'))
+      ? s('ssh_algorithm_profile', 'auto')
+      : 'auto') as AssetRecord['ssh_algorithm_profile'],
     management_port: n('management_port'),
     web_profiles: Array.isArray(row['web_profiles']) ? row['web_profiles'] as AssetRecord['web_profiles'] : [],
     business_ip: s('business_ip'),

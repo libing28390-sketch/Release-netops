@@ -8,10 +8,10 @@ description: Validate Nexora NetOps changes with risk-based tests, TypeScript ch
 ## Risk-Based Gate
 
 1. Inspect the diff and map each changed behavior to existing or new tests.
-2. Run focused tests first for fast feedback.
-3. Run `pytest backend/tests` for backend, database, workflow, or network-service changes.
-4. Run `npm run lint` for frontend or API contract changes.
-5. Run `npm run build` for frontend, routing, packaging, or release changes.
+2. Run focused tests first. For local backend, database, or network changes, select affected modules and contract tests; expand when failures or shared dependencies justify it.
+3. Run `pytest backend/tests` for formal release candidates, explicit full-regression requests, or changes to shared authentication, database/test infrastructure, or broad cross-module behavior. A workflow-only change does not by itself require the full backend suite.
+4. Run `npm run lint` for frontend or API contract changes. Run `npm run build` when frontend output, routing, bundling, or deployment asset behavior is affected; use an isolated output directory if existing build artifacts must be preserved.
+5. For release filtering and CI wiring, check configuration syntax, affected platform paths, relevant release contracts, and the changed artifact behavior. For agent/skill instructions, validate format, discovery and relevant behavior instead of unrelated application tests.
 6. Check secrets, authorization, audit logging, concurrency, error handling, and backward compatibility.
 
 ## Test Expectations
@@ -30,4 +30,6 @@ description: Validate Nexora NetOps changes with risk-based tests, TypeScript ch
 
 Report exact commands, pass/fail counts, skipped checks, and remaining risk. Store a requested walkthrough under `docs/walkthrough/` per workspace rules.
 
-Before delivery, run the repository PostgreSQL-only policy scanner. Any active SQLite code or test is a blocking quality-gate failure; do not allowlist new violations.
+Run the repository PostgreSQL-only policy scanner for backend, database or persistence-related changes and formal release candidates. Any active SQLite code or test remains a release blocker; do not allowlist new violations. Pure agent/skill instruction edits do not require this scanner.
+
+The coordinator owns the combined verification plan. Workers run their assigned checks; run shared checks once after integration and reuse evidence while the relevant code remains unchanged. Report existing failures accurately without repairing unrelated code or claiming overall release readiness.

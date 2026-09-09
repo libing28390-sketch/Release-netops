@@ -1074,7 +1074,11 @@ def _build_connection_params(device_info: dict[str, Any], auth_role: str = 'auto
         'global_delay_factor': 1.5 if device_type in {'huawei', 'hp_comware', 'huawei_vrp', 'ruijie_os', 'zte_zxros', 'maipu'} else 0.5,
         'blocking_timeout': 30,
     }
-    params.update(build_netmiko_compatibility_kwargs())
+    params.update(
+        build_netmiko_compatibility_kwargs(
+            profile=device_info.get('ssh_algorithm_profile')
+        )
+    )
     secret = creds.get('enable_password') or device_info.get('secret') or ''
     if secret:
         params['secret'] = secret

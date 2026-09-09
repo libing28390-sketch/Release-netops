@@ -74,6 +74,7 @@ class AutomationService:
             "username": device_info.get("username"),
             "password": device_info.get("password"),
             "platform": platform,
+            "ssh_algorithm_profile": device_info.get("ssh_algorithm_profile"),
             "port": resolve_ssh_port(device_info),
             "driver_type": self.driver_type,
             "use_pool": False

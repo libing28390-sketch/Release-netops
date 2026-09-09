@@ -1,16 +1,6 @@
 name: Frontend Build Check
 
 on:
-  push:
-    branches: [main]
-    paths:
-      - "src/**"
-      - "package.json"
-      - "package-lock.json"
-      - "tsconfig.json"
-      - "vite.config.ts"
-      - "index.html"
-      - ".github/workflows/frontend-build-check.yml"
   pull_request:
     branches: [main]
     paths:

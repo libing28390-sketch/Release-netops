@@ -3080,6 +3080,12 @@ def _init_db_logic(conn, *, allow_legacy_import: bool = True):
     ensure_column('physical_assets', 'function', "TEXT DEFAULT ''")
     ensure_column('physical_assets', 'zone', "TEXT DEFAULT 'Unknown'")
     ensure_column('physical_assets', 'power_watts', "INTEGER DEFAULT 0")
+    ensure_column('physical_assets', 'winrm_enabled', 'BOOLEAN NOT NULL DEFAULT FALSE')
+    ensure_column('physical_assets', 'winrm_port', 'INTEGER NOT NULL DEFAULT 5986')
+    ensure_column('physical_assets', 'winrm_auth_mode', "TEXT NOT NULL DEFAULT 'ntlm'")
+    ensure_column('physical_assets', 'winrm_tls_mode', "TEXT NOT NULL DEFAULT 'pin_fingerprint'")
+    ensure_column('physical_assets', 'winrm_cert_fingerprint', "TEXT NOT NULL DEFAULT ''")
+    ensure_column('physical_assets', 'ssh_algorithm_profile', "TEXT NOT NULL DEFAULT 'auto'")
 
     # Generic Web management entry points.  These belong to physical assets
     # rather than only linked network-device rows so server BMC/iLO/iDRAC
@@ -3139,6 +3145,7 @@ def _init_db_logic(conn, *, allow_legacy_import: bool = True):
     ensure_column('devices', 'function', "TEXT DEFAULT ''")
     ensure_column('devices', 'zone', "TEXT DEFAULT 'Unknown'")
     ensure_column('devices', 'power_watts', "INTEGER DEFAULT 0")
+    ensure_column('devices', 'ssh_algorithm_profile', "TEXT NOT NULL DEFAULT 'auto'")
 
     cursor.execute(
         '''

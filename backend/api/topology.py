@@ -293,15 +293,24 @@ def get_links(
         )
         graph_read_model = 'evidence_graph_fallback'
     if not managed_links:
-        legacy_links = get_current_links(
-            limit=limit,
-            site_id=site_id,
-            device_ids=device_ids,
-            include_stale=include_stale,
-        )
-        if legacy_links:
-            managed_links = legacy_links
-            graph_read_model = 'legacy_topology_links_fallback'
+        # Discovery writes normalized LLDP facts to the evidence graph before
+        # the compatibility ``topology_links`` projection is rebuilt. During
+        # that window the old code called get_current_links() a second time,
+        # returning an empty rack even though verified physical edges existed.
+        # Read the physical graph as a safe, read-only fallback so cascade
+        # members remain available to the rack renderer.
+        try:
+            managed_links = get_physical_links(
+                tenant_id=(scope.tenant_id if scope and scope.tenant_id else 'tenant-default'),
+                site_id=site_id,
+                limit=limit,
+                include_stale=include_stale,
+                device_ids=device_ids,
+            )
+            if managed_links:
+                graph_read_model = 'evidence_graph_physical_fallback'
+        except Exception:
+            managed_links = []
     unmanaged = (
         # A rack selector is already a closed managed-device scope.  The
         # unmanaged-neighbor table is site/global evidence and must not be

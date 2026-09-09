@@ -29,6 +29,7 @@ import { CableMode, TopologyLinkItem } from './RackCableLayer';
 import { API } from '../constants';
 import { authHeaders } from '../helpers';
 import { normalizeRackTopologyLinks, RawTopologyLinkItem } from './topology';
+import { inferRackProfile } from '../rackProfiles';
 
 interface Rack3DContainerProps {
   rackVM: RackVM;
@@ -279,6 +280,10 @@ export const Rack3DContainer: React.FC<Rack3DContainerProps> = ({
   const handleDoubleClickDevice = (device: RackDeviceVM) => {
     setFocusTarget({
       centerY: device.coordinates.centerY,
+      centerZ: device.coordinates.centerZ,
+      width: device.coordinates.width,
+      height: device.coordinates.height,
+      depth: device.coordinates.depth,
       face: device.face,
       timestamp: Date.now()
     });
@@ -290,6 +295,10 @@ export const Rack3DContainer: React.FC<Rack3DContainerProps> = ({
     if (!device) return;
     setFocusTarget({
       centerY: device.coordinates.centerY,
+      centerZ: device.coordinates.centerZ,
+      width: device.coordinates.width,
+      height: device.coordinates.height,
+      depth: device.coordinates.depth,
       face: device.face,
       timestamp: Date.now()
     });
@@ -334,7 +343,22 @@ export const Rack3DContainer: React.FC<Rack3DContainerProps> = ({
     () => normalizeRackTopologyLinks(rawTopologyLinks, rackVM),
     [rawTopologyLinks, rackVM],
   );
-  const showPreviewCables = topologyStatus === 'ready' && topologyLinks.length === 0;
+  // A rack view must never present an ordinal demo cable as if it were an
+  // observed connection. Only verified topology rows (normally LLDP-backed)
+  // are passed to the 3D line layer; an empty response stays visibly empty.
+  const showPreviewCables = false;
+  const topologySourceLabel = React.useMemo(() => {
+    const sources = Array.from(new Set(
+      topologyLinks
+        .map(link => link.discovery_source?.trim().toUpperCase())
+        .filter(Boolean),
+    ));
+    return sources.length > 0 ? sources.join(' / ') : '';
+  }, [topologyLinks]);
+  const rackProfile = React.useMemo(
+    () => inferRackProfile(rackVM.devices),
+    [rackVM.devices],
+  );
 
   // Search filtered devices
   const filteredDevices = React.useMemo(() => {
@@ -399,6 +423,12 @@ export const Rack3DContainer: React.FC<Rack3DContainerProps> = ({
           <span className="flex items-center gap-1 rounded-lg border border-cyan-500/40 bg-cyan-500/10 px-2 py-1 text-[10px] font-bold text-cyan-300">
             <Eye size={11} />
             {zh ? '只读' : 'Read-only'}
+          </span>
+          <span
+            className="max-w-[13rem] truncate rounded-lg border border-slate-600/70 bg-slate-900/80 px-2 py-1 text-[10px] font-semibold text-slate-200"
+            title={zh ? rackProfile.descriptionZh : rackProfile.descriptionEn}
+          >
+            {zh ? rackProfile.labelZh : rackProfile.labelEn}
           </span>
           <button
             type="button"
@@ -749,7 +779,7 @@ export const Rack3DContainer: React.FC<Rack3DContainerProps> = ({
                   ? (zh ? '拓扑不可用' : 'Topology unavailable')
                   : topologyLinks.length === 0
                     ? (showPreviewCables ? (zh ? '预览线缆 · 未关联' : 'Preview cables · unlinked') : (zh ? '无已验证链路' : 'No verified links'))
-                    : `${zh ? '已验证链路' : 'Verified links'} ${topologyLinks.length}`}
+                    : `${zh ? '已验证链路' : 'Verified links'} ${topologyLinks.length}${topologySourceLabel ? ` · ${topologySourceLabel}` : ''}`}
               {topologyTruncated ? (zh ? '（结果已截断）' : ' (truncated)') : ''}
             </span>
             {topologyStatus === 'error' && (

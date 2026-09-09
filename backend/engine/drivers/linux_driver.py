@@ -6,6 +6,7 @@ from .base_driver import BaseDriver
 from ..base import Capability, ExecutionMode
 from ..pool import ConnectionPool
 from ..registry import DriverRegistry
+from drivers.ssh_compat import build_paramiko_compatibility_kwargs
 
 @DriverRegistry.register("server")
 class LinuxDriver(BaseDriver):
@@ -34,8 +35,11 @@ class LinuxDriver(BaseDriver):
         self.ssh.set_missing_host_key_policy(paramiko.AutoAddPolicy())
         self.ssh.connect(
             hostname=self.ip, port=self.port, username=self.username,
-            password=self.password, timeout=10, allow_agent=False, look_for_keys=False,
-            disabled_algorithms={},
+            password=self.password,
+            timeout=10,
+            **build_paramiko_compatibility_kwargs(
+                self.device_info.get('ssh_algorithm_profile') or 'modern'
+            ),
         )
         if use_pool:
             pool.set_connection(self.device_info, self.ssh)

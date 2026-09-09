@@ -148,7 +148,7 @@ def _load_device(device_id: str | int) -> dict | None:
     conn = get_db_connection()
     try:
         row = conn.execute(
-            "SELECT id, asset_id, hostname, ip_address, platform, username, password, enable_password, priv_username, management_port AS port, credential_source, vault_path, cpu_usage, memory_usage, "
+            "SELECT id, asset_id, hostname, ip_address, platform, ssh_algorithm_profile, username, password, enable_password, priv_username, management_port AS port, credential_source, vault_path, cpu_usage, memory_usage, "
             "platform_profile_id, platform_source, platform_locked, tenant_id, site_id, site, device_group_id "
             "FROM devices WHERE id = ?", (device_id,)
         ).fetchone()
@@ -173,6 +173,7 @@ def _build_device_info(dev: dict) -> dict:
         'ip_address': dev['ip_address'],
         'device_type': dev.get('device_type', 'cisco_ios'),
         'platform': dev.get('platform') or dev.get('device_type') or 'cisco_ios',
+        'ssh_algorithm_profile': dev.get('ssh_algorithm_profile'),
         'username': dev.get('username', ''),
         'password': dev.get('password', ''),
         'enable_password': dev.get('enable_password', ''),

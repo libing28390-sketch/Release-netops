@@ -229,6 +229,6 @@ describe('Rack3DContainer read-only workbench', () => {
     await waitFor(() => expect(screen.getByText('拓扑不可用')).toBeTruthy());
     fireEvent.click(screen.getByTitle('重新请求拓扑数据'));
     await waitFor(() => expect(fetchMock).toHaveBeenCalledTimes(2));
-    await waitFor(() => expect(screen.getByText('预览线缆 · 未关联')).toBeTruthy());
+    await waitFor(() => expect(screen.getByText('无已验证链路')).toBeTruthy());
   });
 });

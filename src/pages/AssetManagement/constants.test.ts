@@ -14,6 +14,7 @@ import {
   isNetworkVendor,
   isValidVendorPlatform,
   SERVER_ONLY_VENDOR_VALUES,
+  SSH_ALGORITHM_PROFILE_OPTIONS,
 } from './constants';
 
 describe('asset vendor catalog', () => {
@@ -92,5 +93,15 @@ describe('asset import role header contract', () => {
     expect(IMPORT_VALUE_MAP.zone['生产区']).toBe('Production');
     expect(TOPOLOGY_FUNCTION_OPTIONS.some(option => option.value === 'Campus Core')).toBe(true);
     expect(TOPOLOGY_ZONE_OPTIONS.some(option => option.value === 'Production')).toBe(true);
+  });
+
+  it('keeps SSH algorithm profiles vendor-neutral and importable', () => {
+    expect(SSH_ALGORITHM_PROFILE_OPTIONS.map(option => option.value)).toEqual([
+      'auto', 'modern', 'legacy_compat', 'legacy_break_glass',
+    ]);
+    expect(COL_MAP['SSH算法策略']).toBe('ssh_algorithm_profile');
+    expect(COL_MAP['SSH Algorithm Profile']).toBe('ssh_algorithm_profile');
+    expect(IMPORT_VALUE_MAP.ssh_algorithm_profile['兼容旧算法']).toBe('legacy_compat');
+    expect(IMPORT_VALUE_MAP.ssh_algorithm_profile['Legacy Break Glass']).toBe('legacy_break_glass');
   });
 });

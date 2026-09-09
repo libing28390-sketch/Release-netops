@@ -25,6 +25,7 @@ paramiko>=3.4.0,<5.0.0
 scrapli>=2024.1.30
 scrapli-community>=2024.1.30
 asyncssh>=2.14.0
+pywinrm>=0.5.0,<0.6.0
 
 # SNMP & Telemetry
 puresnmp>=2.0.0,<3.0.0

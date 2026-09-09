@@ -16,16 +16,14 @@ DEFAULT_TENANT_ID = "tenant-default"
 
 
 def _columns(cursor, table_name: str, use_pg: bool) -> set[str]:
-    if use_pg:
-        cursor.execute(
-            "SELECT column_name FROM information_schema.columns "
-            "WHERE table_schema = current_schema() AND table_name = %s",
-            (table_name,),
-        )
-        return {str(row[0]) for row in cursor.fetchall()}
-
-    cursor.execute(f"PRAGMA table_info({table_name})")
-    return {str(row[1]) for row in cursor.fetchall()}
+    if not use_pg:
+        raise RuntimeError("m0211_device_tenant_scope requires PostgreSQL")
+    cursor.execute(
+        "SELECT column_name FROM information_schema.columns "
+        "WHERE table_schema = current_schema() AND table_name = %s",
+        (table_name,),
+    )
+    return {str(row[0]) for row in cursor.fetchall()}
 
 
 def upgrade(cursor, use_pg: bool) -> None:

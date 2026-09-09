@@ -16,6 +16,7 @@ import {
   NETWORK_TOPOLOGY_ROLE_OPTIONS,
   TOPOLOGY_FUNCTION_OPTIONS,
   TOPOLOGY_ZONE_OPTIONS,
+  SSH_ALGORITHM_PROFILE_OPTIONS,
   isValidIpAddress,
 } from '../constants';
 import { AssetTagPicker } from './AssetTagPicker';
@@ -72,6 +73,7 @@ export const AssetModal: React.FC<AssetModalProps> = ({
   const [legacyExemptReason, setLegacyExemptReason] = React.useState('');
   const [credentials, setCredentials] = React.useState<any[]>([]);
   const [credMode, setCredMode] = React.useState<'manual' | 'existing'>('manual');
+  const [breakGlassAcknowledged, setBreakGlassAcknowledged] = React.useState(false);
 
   const mgmtIpError = React.useMemo(() => {
     const ip = String(form.management_ip || '').trim();
@@ -82,6 +84,7 @@ export const AssetModal: React.FC<AssetModalProps> = ({
   React.useEffect(() => {
     if (isOpen) {
       setCredMode(form.credential_id ? 'existing' : 'manual');
+      setBreakGlassAcknowledged(false);
     }
   }, [isOpen, form.credential_id]);
 
@@ -588,7 +591,17 @@ export const AssetModal: React.FC<AssetModalProps> = ({
                     <label className="block text-[10px] text-black/30 mb-0.5">{zh ? '平台' : 'Platform'}</label>
                     <select
                       value={form.platform}
-                      onChange={e => setForm(f => withTechnologyTag({ ...f, platform: e.target.value }, f.vendor, e.target.value))}
+                      onChange={e => setForm(f => {
+                        const platform = e.target.value;
+                        const windows = platform === 'windows' || platform === 'windows_server';
+                        return withTechnologyTag({
+                          ...f,
+                          platform,
+                          connection_method: windows ? 'winrm' : f.connection_method === 'winrm' ? 'ssh' : f.connection_method,
+                          management_port: windows ? '5986' : f.connection_method === 'winrm' ? '22' : f.management_port,
+                          winrm_enabled: windows ? true : f.winrm_enabled,
+                        }, f.vendor, platform);
+                      })}
                       className="w-full bg-white border border-black/8 rounded-lg px-2.5 py-1.5 text-xs text-black/65 focus:outline-none focus:border-[#00bceb]/25"
                       title="Platform"
                     >
@@ -613,11 +626,95 @@ export const AssetModal: React.FC<AssetModalProps> = ({
                     >
                       <option value="ssh">SSH</option>
                       <option value="netconf">NETCONF</option>
+                      {(form.platform === 'windows' || form.platform === 'windows_server') && (
+                        <option value="winrm">WinRM HTTPS</option>
+                      )}
                       <option value="web">{zh ? '仅 Web（HTTP/HTTPS）' : 'Web only (HTTP/HTTPS)'}</option>
                       <option value="none">{zh ? '无登录通道' : 'No login channel'}</option>
                     </select>
                   </div>
                 </div>
+
+                {(form.connection_method === 'ssh' || form.connection_method === 'netconf') && (
+                  <div className="rounded-xl border border-slate-200 bg-slate-50/70 p-3">
+                    <label className="block text-[10px] font-semibold text-slate-700 mb-1">
+                      {zh ? 'SSH 算法策略' : 'SSH algorithm profile'}
+                    </label>
+                    <select
+                      value={form.ssh_algorithm_profile || 'auto'}
+                      onChange={event => {
+                        const value = event.target.value;
+                        setBreakGlassAcknowledged(false);
+                        setForm(f => ({ ...f, ssh_algorithm_profile: value }));
+                      }}
+                      className="w-full bg-white border border-black/8 rounded-lg px-2.5 py-1.5 text-xs text-black/65 focus:outline-none focus:border-[#00bceb]/25"
+                      title={zh ? 'SSH算法策略' : 'SSH algorithm profile'}
+                    >
+                      {SSH_ALGORITHM_PROFILE_OPTIONS.map(option => (
+                        <option key={option.value} value={option.value}>{option.label[zh ? 'zh' : 'en']}</option>
+                      ))}
+                    </select>
+                    <p className="mt-1 text-[9px] leading-4 text-slate-500">
+                      {zh ? '策略与厂商无关；auto 默认现代算法优先，必要时兼容安全旧算法。' : 'Vendor-neutral policy; auto prefers modern algorithms and allows safe legacy fallback when needed.'}
+                    </p>
+                    {form.ssh_algorithm_profile === 'legacy_break_glass' && (
+                      <label className="mt-2 flex cursor-pointer items-start gap-2 rounded-lg border border-rose-200 bg-rose-50 px-2.5 py-2 text-[10px] leading-4 text-rose-800">
+                        <input
+                          type="checkbox"
+                          checked={breakGlassAcknowledged}
+                          onChange={event => setBreakGlassAcknowledged(event.target.checked)}
+                          className="mt-0.5 h-3.5 w-3.5 shrink-0 accent-rose-600"
+                        />
+                        <span>
+                          <span className="font-bold">{zh ? '高风险兼容确认' : 'Acknowledge high-risk compatibility'}</span>
+                          <span className="block mt-0.5 text-rose-700/80">
+                            {zh ? '此模式可能启用 group1、ssh-dss、MD5、RC4 等已淘汰算法，仅用于确认没有更安全共同算法的极旧设备，并应纳入审计。' : 'This mode may enable deprecated algorithms such as group1, ssh-dss, MD5 and RC4. Use only for confirmed very old devices with no safer common algorithms and audit the exception.'}
+                          </span>
+                        </span>
+                      </label>
+                    )}
+                  </div>
+                )}
+
+                {(form.platform === 'windows' || form.platform === 'windows_server') && (
+                  <div className="rounded-xl border border-blue-200 bg-blue-50/40 p-3">
+                    <div className="mb-2 flex items-center justify-between gap-3">
+                      <div>
+                        <p className="text-[11px] font-bold text-slate-700">Windows HTTPS</p>
+                        <p className="text-[9px] text-slate-500">{zh ? '使用本地 Windows 账号通过 WinRM HTTPS 纳管；无需 AD 域。' : 'Manage with a local Windows account over WinRM HTTPS; no AD domain required.'}</p>
+                      </div>
+                      <button
+                        type="button"
+                        onClick={() => setForm(f => ({ ...f, winrm_enabled: !f.winrm_enabled }))}
+                        className={`rounded-full px-2.5 py-1 text-[9px] font-bold ${form.winrm_enabled ? 'bg-blue-600 text-white' : 'bg-white text-slate-500 ring-1 ring-slate-200'}`}
+                      >
+                        {form.winrm_enabled ? (zh ? '已启用' : 'Enabled') : (zh ? '未启用' : 'Disabled')}
+                      </button>
+                    </div>
+                    <div className="grid grid-cols-2 gap-2">
+                      <Field label="WinRM HTTPS Port" value={String(form.winrm_port || '5986')} onChange={v => setForm(f => ({ ...f, winrm_port: v, management_port: v }))} placeholder="5986" />
+                      <div>
+                        <label className="mb-0.5 block text-[10px] text-black/30">{zh ? '认证方式' : 'Authentication'}</label>
+                        <select value={form.winrm_auth_mode || 'ntlm'} onChange={e => setForm(f => ({ ...f, winrm_auth_mode: e.target.value }))} className="w-full rounded-lg border border-black/8 bg-white px-2.5 py-1.5 text-xs text-black/65 outline-none">
+                          <option value="ntlm">NTLM</option>
+                          <option value="basic">Basic over HTTPS</option>
+                        </select>
+                      </div>
+                      <div>
+                        <label className="mb-0.5 block text-[10px] text-black/30">{zh ? 'TLS 校验' : 'TLS validation'}</label>
+                        <select value={form.winrm_tls_mode || 'pin_fingerprint'} onChange={e => setForm(f => ({ ...f, winrm_tls_mode: e.target.value }))} className="w-full rounded-lg border border-black/8 bg-white px-2.5 py-1.5 text-xs text-black/65 outline-none">
+                          <option value="pin_fingerprint">{zh ? '固定证书指纹' : 'Pin fingerprint'}</option>
+                          <option value="verify_ca">{zh ? '系统 CA 校验' : 'Verify system CA'}</option>
+                          <option value="insecure_lab">{zh ? '测试环境跳过校验' : 'Skip verification (lab)'}</option>
+                        </select>
+                      </div>
+                      <Field label={zh ? 'SHA-256 证书指纹' : 'SHA-256 fingerprint'} value={form.winrm_cert_fingerprint || ''} onChange={v => setForm(f => ({ ...f, winrm_cert_fingerprint: v }))} placeholder="AA:BB:CC:..." />
+                    </div>
+                    {form.winrm_tls_mode === 'insecure_lab' && (
+                      <p className="mt-2 text-[9px] font-medium text-amber-600">{zh ? '仅用于可信测试网络；正式环境建议保存证书指纹。' : 'Use only on a trusted lab network; pin the certificate in production.'}</p>
+                    )}
+                  </div>
+                )}
 
                 <AssetTagPicker tags={allTags} selectedIds={form.tag_ids || []} onChange={ids => setForm(f => ({ ...f, tag_ids: ids }))} onSave={handleSave} language={language} assetType={form.asset_type} />
 
@@ -968,7 +1065,7 @@ export const AssetModal: React.FC<AssetModalProps> = ({
               <button onClick={onClose} className="px-3 py-1.5 rounded-lg bg-black/[0.01] border border-black/5 text-black/40 text-xs hover:bg-black/[0.02]">{zh ? '取消' : 'Cancel'}</button>
               <button
                 onClick={handleSave}
-                disabled={saving || (!form.hostname.trim() && !form.asset_tag.trim()) || !!uValidationError || (!isEditMode && form.asset_origin === 'legacy' && form.lifecycle_status === 'production' && String(form.takeover_exempt_reason || '').trim().length < 5)}
+                disabled={saving || (!form.hostname.trim() && !form.asset_tag.trim()) || !!uValidationError || (!isEditMode && form.asset_origin === 'legacy' && form.lifecycle_status === 'production' && String(form.takeover_exempt_reason || '').trim().length < 5) || (form.ssh_algorithm_profile === 'legacy_break_glass' && !breakGlassAcknowledged)}
                 className="px-4 py-1.5 rounded-lg bg-[#00bceb] text-white text-xs font-bold hover:bg-[#00a5d0] disabled:opacity-50 shadow-sm shadow-[#00bceb]/20"
               >
                 {saving ? (zh ? '保存中...' : 'Saving...') : (zh ? '保存' : 'Save')}

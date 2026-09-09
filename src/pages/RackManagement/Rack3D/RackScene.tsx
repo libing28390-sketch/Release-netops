@@ -184,7 +184,10 @@ export const RackScene: React.FC<RackSceneProps> = ({
 
         {/* Datacenter Floor Grid */}
         <Grid
-          position={[0, -0.46, 0]}
+          // Leave room below the plinth for the visible caster wheels and
+          // their leveling feet; the old floor plane intersected the wheel
+          // rings and made them disappear in the GLB view.
+          position={[0, -1.08, 0]}
           args={[60, 60]}
           cellSize={1}
           cellThickness={0.6}

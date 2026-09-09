@@ -682,7 +682,11 @@ def _build_ssh_params(device_info: dict) -> dict[str, Any]:
         'global_delay_factor': 1.2 if platform in {'huawei_vrp', 'h3c_comware'} else 0.3,
         'blocking_timeout': 15,
     }
-    params.update(build_netmiko_compatibility_kwargs())
+    params.update(
+        build_netmiko_compatibility_kwargs(
+            profile=device_info.get('ssh_algorithm_profile')
+        )
+    )
     if enable:
         params['secret'] = enable
     return params

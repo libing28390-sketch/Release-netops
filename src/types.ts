@@ -77,6 +77,8 @@ export interface Device {
   topology_node_id?: string;
   uptime: string;
   connection_method: 'ssh' | 'netconf' | 'web' | 'none';
+  /** Device-specific SSH compatibility policy; defaults to auto. */
+  ssh_algorithm_profile?: 'auto' | 'modern' | 'legacy_compat' | 'legacy_break_glass';
   current_config?: string;
   config_history: ConfigVersion[];
   device_category?: string;

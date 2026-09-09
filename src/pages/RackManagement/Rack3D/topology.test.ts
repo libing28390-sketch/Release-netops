@@ -75,6 +75,23 @@ describe('normalizeRackTopologyLinks', () => {
     });
   });
 
+  it('treats an S6800/S6850 GE endpoint on ports 1-48 as an SFP fiber port', () => {
+    const [link] = normalizeRackTopologyLinks([
+      {
+        id: 'sfp-link',
+        source_device_id: 'network-device-1',
+        target_device_id: 'network-device-2',
+        source_hostname: 'SW-CORE-01',
+        target_hostname: 'EDGE-01',
+        source_port: 'GE1/0/1',
+        target_port: 'GE1/0/0',
+        status: 'up',
+      },
+    ], rackVM);
+
+    expect(link.cable_type).toBe('fiber');
+  });
+
   it('reverses a link when the rack device is the target endpoint', () => {
     const [link] = normalizeRackTopologyLinks([
       {
@@ -106,5 +123,42 @@ describe('normalizeRackTopologyLinks', () => {
         target_hostname: 'Y',
       },
     ], rackVM)).toEqual([]);
+  });
+
+  it('expands an LLDP-backed aggregation edge onto physical cascade ports', () => {
+    const links = normalizeRackTopologyLinks([
+      {
+        id: 'lag-1',
+        link_kind: 'aggregation',
+        source_device_id: 'network-device-1',
+        target_device_id: 'network-device-2',
+        source_hostname: 'SW-CORE-01',
+        target_hostname: 'SW-DIST-01',
+        source_aggregation_name: 'Bridge-Aggregation1',
+        target_aggregation_name: 'Bridge-Aggregation1',
+        source_port: 'Bridge-Aggregation1',
+        target_port: 'Bridge-Aggregation1',
+        members: [
+          {
+            source: { device_id: 'network-device-1', name: 'XGE1/0/49', normalized: 'te1/0/49', up: true, speed_mbps: 10000 },
+            target: { device_id: 'network-device-2', name: 'XGE1/0/49', normalized: 'te1/0/49', up: true, speed_mbps: 10000 },
+            protocol: 'lldp',
+          },
+          {
+            source: { device_id: 'network-device-1', name: 'XGE1/0/50', normalized: 'te1/0/50', up: true, speed_mbps: 10000 },
+            target: { device_id: 'network-device-2', name: 'XGE1/0/50', normalized: 'te1/0/50', up: true, speed_mbps: 10000 },
+            protocol: 'lldp',
+          },
+        ],
+        status: 'up',
+      },
+    ], rackVM);
+
+    expect(links).toHaveLength(2);
+    expect(links.map(link => link.local_interface)).toEqual(['XGE1/0/49', 'XGE1/0/50']);
+    expect(links.map(link => link.remote_interface)).toEqual(['XGE1/0/49', 'XGE1/0/50']);
+    expect(links.every(link => link.link_kind === 'aggregation')).toBe(true);
+    expect(links.every(link => link.member_count === 2)).toBe(true);
+    expect(links.every(link => link.cable_type === 'fiber')).toBe(true);
   });
 });

@@ -2,6 +2,14 @@ import { useCallback, useState } from 'react';
 import type { Device } from '../types';
 import { authHeaders } from '../api/http';
 import { useInventoryStore } from '../store/inventoryStore';
+import { SSH_ALGORITHM_PROFILE_VALUES } from '../pages/AssetManagement/constants';
+
+const normalizeSshAlgorithmProfile = (value: unknown): Device['ssh_algorithm_profile'] => {
+  const normalized = String(value || 'auto').trim().toLowerCase().replace(/-/g, '_');
+  return SSH_ALGORITHM_PROFILE_VALUES.includes(normalized as typeof SSH_ALGORITHM_PROFILE_VALUES[number])
+    ? normalized as Device['ssh_algorithm_profile']
+    : 'auto';
+};
 
 const EMPTY_ADD_FORM: Partial<Device> = {
   hostname: '',
@@ -10,6 +18,7 @@ const EMPTY_ADD_FORM: Partial<Device> = {
   role: 'Access',
   site: '',
   connection_method: 'ssh',
+  ssh_algorithm_profile: 'auto',
   username: '',
   password: '',
   snmp_community: 'public',
@@ -52,10 +61,14 @@ export const useDeviceFormActions = ({ devices, setDevices, showToast }: UseDevi
       return;
     }
     try {
+      const payload = {
+        ...editForm,
+        ssh_algorithm_profile: normalizeSshAlgorithmProfile(editForm.ssh_algorithm_profile),
+      };
       const response = await fetch(`/api/devices/${editingDevice.id}`, {
         method: 'PUT',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify(editForm),
+        body: JSON.stringify(payload),
       });
       if (response.ok) {
         if (editForm.tag_ids) {
@@ -66,7 +79,7 @@ export const useDeviceFormActions = ({ devices, setDevices, showToast }: UseDevi
             body: JSON.stringify({ tag_ids: editForm.tag_ids }),
           }).catch(() => {});
         }
-        setDevices((prev) => prev.map((d) => (d.id === editingDevice.id ? { ...d, ...editForm } as Device : d)));
+        setDevices((prev) => prev.map((d) => (d.id === editingDevice.id ? { ...d, ...payload } as Device : d)));
         setInventoryRefreshTick((v) => v + 1);
         setShowEditModal(false);
         setShowLifecycleConfirm(null);
@@ -91,10 +104,14 @@ export const useDeviceFormActions = ({ devices, setDevices, showToast }: UseDevi
       return;
     }
     try {
+      const payload = {
+        ...addForm,
+        ssh_algorithm_profile: normalizeSshAlgorithmProfile(addForm.ssh_algorithm_profile),
+      };
       const response = await fetch('/api/devices', {
         method: 'POST',
         headers: authHeaders(true),
-        body: JSON.stringify(addForm),
+        body: JSON.stringify(payload),
       });
       const data = await response.json();
       if (response.ok) {
@@ -106,7 +123,7 @@ export const useDeviceFormActions = ({ devices, setDevices, showToast }: UseDevi
             body: JSON.stringify({ tag_ids: addForm.tag_ids }),
           }).catch(() => {});
         }
-        setDevices((prev) => [...prev, data]);
+        setDevices((prev) => [...prev, { ...data, ssh_algorithm_profile: normalizeSshAlgorithmProfile(data.ssh_algorithm_profile || payload.ssh_algorithm_profile) }]);
         setInventoryRefreshTick((v) => v + 1);
         setInventoryPage(1);
         setShowAddModal(false);

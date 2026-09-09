@@ -26,7 +26,9 @@ class ConnectionPool:
     @staticmethod
     def _get_key(device_info: Dict[str, Any]) -> str:
         ip = device_info.get("ip_address") or device_info.get("ip")
-        return f"{ip}:{resolve_ssh_port(device_info)}@{device_info.get('username')}"
+        from drivers.ssh_compat import normalize_ssh_algorithm_profile
+        profile = normalize_ssh_algorithm_profile(device_info.get("ssh_algorithm_profile"))
+        return f"{ip}:{resolve_ssh_port(device_info)}@{device_info.get('username')}#{profile}"
 
     def get_connection(self, device_info: Dict[str, Any]) -> Any:
         key = self._get_key(device_info)

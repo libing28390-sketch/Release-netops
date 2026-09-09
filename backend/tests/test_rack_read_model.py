@@ -276,6 +276,51 @@ def test_topology_route_passes_rack_scope_and_filters_metadata(isolated_db, monk
     assert response['unmanaged_nodes'] == []
 
 
+def test_topology_route_uses_physical_graph_when_compatibility_links_are_empty(isolated_db, monkeypatch: pytest.MonkeyPatch) -> None:
+    conn = isolated_db['module'].get_db_connection()
+    seed = _seed_rack_fixtures(conn)
+    rack_id = _new_id('rack')
+    _insert_rack(conn, seed['site_id'], rack_id, 'A-LLDP')
+    asset_one = _new_id('asset')
+    asset_two = _new_id('asset')
+    device_one = _new_id('dev')
+    device_two = _new_id('dev')
+    _insert_device(conn, device_one, asset_one, 'online')
+    _insert_device(conn, device_two, asset_two, 'online')
+    _insert_rack_device(conn, _new_id('rd'), rack_id, seed['dt_one'], 1, asset_id=asset_one)
+    _insert_rack_device(conn, _new_id('rd'), rack_id, seed['dt_one'], 2, asset_id=asset_two)
+
+    monkeypatch.setattr(topology_api, 'get_db_connection', lambda: conn)
+    monkeypatch.setattr(topology_api.read_cache, 'get', lambda _namespace, _key: (False, None))
+    monkeypatch.setattr(topology_api.read_cache, 'set', lambda *_args: None)
+    monkeypatch.setattr(topology_api, 'get_current_links', lambda **_kwargs: [])
+    fallback_calls: dict[str, Any] = {}
+    monkeypatch.setattr(
+        topology_api,
+        'get_physical_links',
+        lambda **kwargs: fallback_calls.update(kwargs) or [{
+            'id': 'lldp-link',
+            'source_device_id': device_one,
+            'target_device_id': device_two,
+            'source_port': 'XGE1/0/49',
+            'target_port': 'XGE1/0/49',
+            'discovery_source': 'lldp',
+        }],
+    )
+    monkeypatch.setattr(topology_api, 'get_topology_node_metadata', lambda **_kwargs: {})
+    monkeypatch.setattr(
+        topology_api,
+        'get_unmanaged_neighbors',
+        lambda **_kwargs: pytest.fail('rack-scoped topology must not load global unmanaged neighbors'),
+    )
+
+    response = topology_api.get_links(limit=500, site_id=seed['site_id'], rack_id=rack_id, include_stale=False)
+
+    assert response['links'][0]['id'] == 'lldp-link'
+    assert response['graph_read_model'] == 'evidence_graph_physical_fallback'
+    assert fallback_calls['device_ids'] == sorted([device_one, device_two])
+
+
 def test_health_route_returns_scoped_devices_as_items(isolated_db, monkeypatch: pytest.MonkeyPatch) -> None:
     conn = isolated_db['module'].get_db_connection()
     devices = [{'id': _new_id('dev'), 'asset_id': _new_id('asset')}]

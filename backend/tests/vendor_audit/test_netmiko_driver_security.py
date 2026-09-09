@@ -135,6 +135,31 @@ def test_engine_driver_does_not_call_enable_without_explicit_secret(monkeypatch)
     assert "secret" not in captured
 
 
+def test_engine_driver_passes_explicit_ssh_algorithm_profile(monkeypatch) -> None:
+    connection = FakeEngineConnection()
+    captured: dict = {}
+
+    def fake_connect_handler(**kwargs):
+        captured.update(kwargs)
+        return connection
+
+    monkeypatch.setattr(engine_netmiko_driver, "ConnectHandler", fake_connect_handler)
+    driver = engine_netmiko_driver.NetmikoDriver(
+        {
+            "ip_address": "10.255.0.6",
+            "platform": "huawei_vrp",
+            "username": "user",
+            "password": "login-password",
+            "ssh_algorithm_profile": "legacy_break_glass",
+            "use_pool": False,
+        }
+    )
+    driver.connect()
+
+    assert captured["disabled_algorithms"] == {}
+    assert captured["disable_sha2_fix"] is False
+
+
 def test_connect_failure_log_identifies_ruijie_session_preparation_without_secret(monkeypatch, caplog) -> None:
     def fail_connect_handler(**_kwargs):
         raise RuntimeError(

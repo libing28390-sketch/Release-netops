@@ -48,3 +48,13 @@ def test_pool_enforces_process_limit(monkeypatch):
     assert first.closed == 1
     assert second.closed == 0
     pool.close_all()
+
+
+def test_pool_separates_ssh_algorithm_profiles():
+    pool = ConnectionPool()
+    auto = _device("13")
+    strict = {**auto, "ssh_algorithm_profile": "modern"}
+    break_glass = {**auto, "ssh_algorithm_profile": "legacy_break_glass"}
+
+    assert pool._get_key(auto) != pool._get_key(strict)
+    assert pool._get_key(strict) != pool._get_key(break_glass)

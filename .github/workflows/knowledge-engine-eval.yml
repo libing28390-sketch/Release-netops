@@ -1,16 +1,6 @@
 name: Knowledge Engine Evaluation
 
 on:
-  push:
-    branches: [main]
-    paths:
-      - "backend/ai/services/evaluation_metrics.py"
-      - "backend/ai/services/security_evaluation_metrics.py"
-      - "docs/knowledge-engine/eval/**"
-      - "docs/knowledge-engine/architecture/EVAL-*.yaml"
-      - "scripts/knowledge_eval_*.py"
-      - "tests/knowledge_engine/test_eval*.py"
-      - ".github/workflows/knowledge-engine-eval.yml"
   pull_request:
     branches: [main]
     paths:

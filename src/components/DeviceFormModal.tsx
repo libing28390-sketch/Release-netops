@@ -1,10 +1,11 @@
 import React, { useState, useEffect } from 'react';
 import { motion } from 'motion/react';
-import { ChevronDown, ChevronRight, Eye, EyeOff, Pencil, Plus, Search, X } from 'lucide-react';
+import { AlertTriangle, ChevronDown, ChevronRight, Eye, EyeOff, Pencil, Plus, Search, X } from 'lucide-react';
 import type { Device, TagDefinition } from '../types';
 import { TAG_CATEGORY_LABELS } from '../types';
 import { apiRequest } from '../api/http';
 import { inferPlatformVendor, platformVendorLabel } from '../utils/platformVendor';
+import { SSH_ALGORITHM_PROFILE_OPTIONS, SSH_ALGORITHM_PROFILE_VALUES } from '../pages/AssetManagement/constants';
 
 type DeviceFormMode = 'add' | 'edit';
 
@@ -84,6 +85,7 @@ const DeviceFormModal: React.FC<DeviceFormModalProps> = ({
 }) => {
   const isAdd = mode === 'add';
   const [enablePwdVisible, setEnablePwdVisible] = useState(false);
+  const [breakGlassAcknowledged, setBreakGlassAcknowledged] = useState(false);
   const [showAdvancedCred, setShowAdvancedCred] = useState(
     !!(form.enable_password || form.priv_username || (form.credential_source && form.credential_source !== 'local') || form.vault_path || form.auth_model === 'dual')
   );
@@ -190,6 +192,10 @@ const DeviceFormModal: React.FC<DeviceFormModalProps> = ({
   const handleFieldChange = <K extends keyof Device>(key: K, value: Device[K] | string | number | undefined) => {
     onFormChange({ ...form, [key]: value });
   };
+
+  const sshAlgorithmProfile = SSH_ALGORITHM_PROFILE_VALUES.includes(
+    form.ssh_algorithm_profile as typeof SSH_ALGORITHM_PROFILE_VALUES[number],
+  ) ? form.ssh_algorithm_profile || 'auto' : 'auto';
 
   const title = isAdd
     ? (language === 'zh' ? '新增设备' : 'Add New Device')
@@ -321,6 +327,47 @@ const DeviceFormModal: React.FC<DeviceFormModalProps> = ({
                 <option value="ssh">SSH</option>
                 <option value="netconf">NETCONF</option>
               </select>
+            </div>
+            <div>
+              <label className="mb-1.5 block text-xs font-medium uppercase tracking-wider text-black/60">
+                {language === 'zh' ? 'SSH 算法策略' : 'SSH Algorithm Profile'}
+              </label>
+              <select
+                value={sshAlgorithmProfile}
+                title={language === 'zh' ? 'SSH算法策略' : 'SSH algorithm profile'}
+                onChange={(event) => {
+                  setBreakGlassAcknowledged(false);
+                  handleFieldChange('ssh_algorithm_profile', event.target.value as Device['ssh_algorithm_profile']);
+                }}
+                className="w-full rounded-xl border border-black/5 bg-black/[0.02] px-4 py-2.5 text-sm outline-none transition-colors focus:border-black/20 focus:bg-white"
+              >
+                {SSH_ALGORITHM_PROFILE_OPTIONS.map((option) => (
+                  <option key={option.value} value={option.value}>{option.label[language === 'zh' ? 'zh' : 'en']}</option>
+                ))}
+              </select>
+              <p className="mt-1 text-[10px] text-black/40">
+                {language === 'zh' ? '策略与厂商无关；auto 默认现代算法优先。' : 'Vendor-neutral policy; auto prefers modern algorithms by default.'}
+              </p>
+              {sshAlgorithmProfile === 'legacy_break_glass' && (
+                <label className="mt-2 flex cursor-pointer items-start gap-2 rounded-lg border border-rose-200 bg-rose-50 px-2.5 py-2 text-[10px] leading-4 text-rose-800">
+                  <AlertTriangle size={13} className="mt-0.5 shrink-0 text-rose-600" />
+                  <span>
+                    <span className="font-bold">{language === 'zh' ? '高风险兼容确认' : 'Acknowledge high-risk compatibility'}</span>
+                    <span className="block text-rose-700/80">
+                      {language === 'zh' ? '可能启用 group1、ssh-dss、MD5、RC4 等已淘汰算法，仅用于极旧设备，并应纳入审计。' : 'May enable deprecated group1, ssh-dss, MD5 and RC4. Use only for very old devices and audit the exception.'}
+                    </span>
+                    <span className="mt-1 flex items-center gap-1.5 font-medium">
+                      <input
+                        type="checkbox"
+                        checked={breakGlassAcknowledged}
+                        onChange={(event) => setBreakGlassAcknowledged(event.target.checked)}
+                        className="h-3.5 w-3.5 accent-rose-600"
+                      />
+                      {language === 'zh' ? '我确认该设备没有更安全的共同算法' : 'I confirm this device has no safer common algorithms'}
+                    </span>
+                  </span>
+                </label>
+              )}
             </div>
             <div>
               <label className="mb-1.5 block text-xs font-medium uppercase tracking-wider text-black/60">Site</label>
@@ -715,9 +762,10 @@ const DeviceFormModal: React.FC<DeviceFormModalProps> = ({
           </button>
           <button
             onClick={onSubmit}
+            disabled={sshAlgorithmProfile === 'legacy_break_glass' && !breakGlassAcknowledged}
             className={isAdd
-              ? 'flex-1 rounded-xl bg-black px-4 py-2.5 text-[10px] font-bold uppercase tracking-widest text-white shadow-lg shadow-black/20 transition-all hover:bg-black/80'
-              : 'rounded-xl bg-black px-8 py-2 text-sm font-medium text-white shadow-lg shadow-black/10 transition-all hover:bg-black/80'}
+              ? 'flex-1 rounded-xl bg-black px-4 py-2.5 text-[10px] font-bold uppercase tracking-widest text-white shadow-lg shadow-black/20 transition-all hover:bg-black/80 disabled:cursor-not-allowed disabled:opacity-40'
+              : 'rounded-xl bg-black px-8 py-2 text-sm font-medium text-white shadow-lg shadow-black/10 transition-all hover:bg-black/80 disabled:cursor-not-allowed disabled:opacity-40'}
           >
             {submitLabel}
           </button>

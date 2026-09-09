@@ -161,11 +161,85 @@ def _parse_iso(value: Any) -> datetime | None:
 def _link_operational_state(link: dict[str, Any], now: datetime | None = None) -> tuple[str, str]:
     """Apply one server-side TTL policy so APIs and site cards agree with the UI."""
     status = str(link.get('status') or 'unknown').lower()
+    observed_status = str(link.get('operational_state') or '').lower()
+    if status not in {'up', 'down', 'degraded', 'stale'} and observed_status in {'up', 'down', 'degraded'}:
+        status = observed_status
     last_seen = _parse_iso(link.get('last_seen'))
     age_seconds = None if last_seen is None else max(0, int(((now or datetime.now(timezone.utc)) - last_seen).total_seconds()))
     if status == 'stale' or last_seen is None or (age_seconds is not None and age_seconds > TOPOLOGY_LINK_TTL_SECONDS):
         return 'stale', 'missing_or_expired_discovery_evidence'
     return status if status in {'up', 'down', 'degraded', 'unknown'} else 'unknown', ''
+
+
+def _normalize_interface_oper_status(value: Any, admin_status: Any = None) -> str:
+    """Normalize vendor interface state strings for physical-link coloring."""
+    status = str(value or '').strip().lower().replace('_', ' ')
+    admin = str(admin_status or '').strip().lower().replace('_', ' ')
+    if status in {'up', 'up/up', 'online', 'active', 'connected', 'forwarding', '1', 'true'}:
+        return 'up'
+    if status in {
+        'down', 'down/down', 'offline', 'inactive', 'disabled', 'notconnect',
+        'not connected', 'lowerlayerdown', '0', 'false',
+    } or admin in {'down', 'disabled', 'shutdown', '0', 'false'}:
+        return 'down'
+    if status in {'degraded', 'testing', 'dormant', 'err-disabled'}:
+        return 'degraded'
+    return 'unknown'
+
+
+def _load_interface_oper_status(conn) -> tuple[dict[str, str], dict[tuple[str, str], str]]:
+    """Build ID and canonical-name indexes without mutating interface inventory."""
+    by_id: dict[str, str] = {}
+    by_key: dict[tuple[str, str], str] = {}
+    try:
+        rows = conn.execute(
+            'SELECT id, device_id, interface_name, oper_status, admin_status FROM interfaces'
+        ).fetchall()
+    except Exception:
+        return by_id, by_key
+    for row in rows:
+        item = dict(row)
+        state = _normalize_interface_oper_status(item.get('oper_status'), item.get('admin_status'))
+        interface_id = str(item.get('id') or '').strip()
+        device_id = str(item.get('device_id') or '').strip()
+        interface_name = normalize_interface_name(item.get('interface_name') or '').lower()
+        if interface_id:
+            by_id[interface_id] = state
+        if device_id and interface_name:
+            key = (device_id, interface_name)
+            # Prefer a concrete state when an inventory contains both a
+            # placeholder alias and a populated native-name row.
+            previous = by_key.get(key)
+            if previous is None or (previous == 'unknown' and state != 'unknown'):
+                by_key[key] = state
+    return by_id, by_key
+
+
+def _lookup_interface_oper_status(
+    status_by_id: dict[str, str],
+    status_by_key: dict[tuple[str, str], str],
+    *,
+    device_id: Any,
+    interface_id: Any = None,
+    interface_name: Any = None,
+) -> str:
+    interface_key = str(interface_id or '').strip()
+    if interface_key and interface_key in status_by_id:
+        return status_by_id[interface_key]
+    device_key = str(device_id or '').strip()
+    name_key = normalize_interface_name(interface_name or '').lower()
+    return status_by_key.get((device_key, name_key), 'unknown') if device_key and name_key else 'unknown'
+
+
+def _combine_interface_oper_status(left: str, right: str) -> str:
+    states = {left, right}
+    if 'down' in states:
+        return 'down'
+    if 'degraded' in states:
+        return 'degraded'
+    if states == {'up'}:
+        return 'up'
+    return 'unknown'
 
 
 def normalize_hostname(value: str | None) -> str:
@@ -1343,7 +1417,11 @@ async def _collect_neighbors_with_netmiko(
         'port': int(device.get('management_port') or device.get('port') or 22),
         'fast_cli': True,
     }
-    netmiko_device.update(build_netmiko_compatibility_kwargs())
+    netmiko_device.update(
+        build_netmiko_compatibility_kwargs(
+            profile=device.get('ssh_algorithm_profile')
+        )
+    )
 
     def _run_commands() -> list[dict[str, Any]]:
         collected: list[dict[str, Any]] = []
@@ -2657,6 +2735,7 @@ def get_current_links(
         ).fetchall()
         now = datetime.now(timezone.utc)
         aggregation_map = _load_interface_aggregation_map(conn)
+        interface_status_by_id, interface_status_by_key = _load_interface_oper_status(conn)
         result = []
         for row in rows:
             item = dict(row)
@@ -2703,6 +2782,78 @@ def get_current_links(
                 item['source_aggregation_name'] = item.get('source_aggregation_name') or source_aggregation.get('aggregation_name') or ''
             if target_aggregation:
                 item['target_aggregation_name'] = item.get('target_aggregation_name') or target_aggregation.get('aggregation_name') or ''
+
+            if item.get('link_kind') == 'aggregation' and isinstance(item.get('members'), list):
+                member_rows = item['members']
+                for member in member_rows:
+                    if not isinstance(member, dict):
+                        continue
+                    source_endpoint = member.get('source') if isinstance(member.get('source'), dict) else {}
+                    target_endpoint = member.get('target') if isinstance(member.get('target'), dict) else {}
+                    source_state = _lookup_interface_oper_status(
+                        interface_status_by_id,
+                        interface_status_by_key,
+                        device_id=source_endpoint.get('device_id'),
+                        interface_name=source_endpoint.get('normalized') or source_endpoint.get('name'),
+                    )
+                    target_state = _lookup_interface_oper_status(
+                        interface_status_by_id,
+                        interface_status_by_key,
+                        device_id=target_endpoint.get('device_id'),
+                        interface_name=target_endpoint.get('normalized') or target_endpoint.get('name'),
+                    )
+                    source_endpoint['oper_status'] = source_state
+                    target_endpoint['oper_status'] = target_state
+                    if source_state != 'unknown':
+                        source_endpoint['up'] = source_state == 'up'
+                    if target_state != 'unknown':
+                        target_endpoint['up'] = target_state == 'up'
+                concrete_members = [
+                    member for member in member_rows
+                    if isinstance(member, dict)
+                    and isinstance(member.get('source'), dict)
+                    and isinstance(member.get('target'), dict)
+                    and member['source'].get('oper_status') != 'unknown'
+                    and member['target'].get('oper_status') != 'unknown'
+                ]
+                if member_rows and len(concrete_members) == len(member_rows):
+                    item['member_count'] = len(member_rows)
+                    item['active_member_count'] = sum(
+                        1
+                        for member in member_rows
+                        if isinstance(member, dict)
+                        and isinstance(member.get('source'), dict)
+                        and isinstance(member.get('target'), dict)
+                        and member['source'].get('up') is True
+                        and member['target'].get('up') is True
+                    )
+                    if item['active_member_count'] == item['member_count']:
+                        item['operational_state'] = 'up'
+                        item['status'] = 'up'
+                    elif item['active_member_count'] > 0:
+                        item['operational_state'] = 'degraded'
+                        item['status'] = 'degraded'
+                    else:
+                        item['operational_state'] = 'down'
+                        item['status'] = 'down'
+            else:
+                source_state = _lookup_interface_oper_status(
+                    interface_status_by_id,
+                    interface_status_by_key,
+                    device_id=item.get('source_device_id'),
+                    interface_id=item.get('source_interface_id'),
+                    interface_name=item.get('source_port_normalized') or item.get('source_port'),
+                )
+                target_state = _lookup_interface_oper_status(
+                    interface_status_by_id,
+                    interface_status_by_key,
+                    device_id=item.get('target_device_id'),
+                    interface_id=item.get('target_interface_id'),
+                    interface_name=item.get('target_port_normalized') or item.get('target_port'),
+                )
+                item_state = _combine_interface_oper_status(source_state, target_state)
+                if item_state != 'unknown':
+                    item['operational_state'] = item_state
             effective_state, stale_reason = _link_operational_state(item, now)
             item['operational_state'] = effective_state
             item['stale_reason'] = stale_reason

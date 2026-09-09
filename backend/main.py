@@ -86,6 +86,7 @@ from api.discovery import router as discovery_router
 from api.graph import router as graph_router
 from api.system import router as system_router
 from api.access import router as access_router
+from api.windows_management import router as windows_management_router
 from ai.api import ai_router
 from ai.gateway.exceptions import AIException
 from ai.api.chat_v1 import router as ai_v1_chat_router
@@ -625,6 +626,7 @@ app.include_router(cmdb_router,          prefix="/api")
 app.include_router(ip_locator_router,    prefix="/api")
 app.include_router(device_health_router, prefix="/api")
 app.include_router(access_router,        prefix="/api")
+app.include_router(windows_management_router, prefix="/api")
 
 app.include_router(automation_router,     prefix="/api")
 app.include_router(playbooks_router,      prefix="/api")
@@ -1002,7 +1004,12 @@ if __name__ == "__main__":
             reload_kwargs = {
                 'reload': True,
                 'reload_dirs': [str(os.path.dirname(os.path.abspath(__file__)))],
-                'reload_excludes': ['*.pyc', '__pycache__', '*.db', '*.log'],
+                # Test fixtures live under backend/tests but are not runtime
+                # modules. Watching them makes an ordinary pytest edit
+                # restart Uvicorn in the middle of PostgreSQL initialization,
+                # which can leave the reloader child with a misleading
+                # KeyboardInterrupt traceback on Windows.
+                'reload_excludes': ['*.pyc', '__pycache__', '*.db', '*.log', 'tests/*', 'tests/**'],
             }
         except ImportError:
             # watchfiles 未安装，回退到禁用 reload（安全模式）

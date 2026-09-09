@@ -341,6 +341,8 @@ async def launch_terminal(payload: Dict[str, Any], request: Request) -> Dict[str
     if auth_header.startswith('Bearer '):
         from api.users import validate_session_token
         auth_session = validate_session_token(auth_header[7:].strip())
+    if not auth_session or not auth_session.get('username'):
+        return {"success": False, "error": "需要有效的登录会话"}
     if auth_session and auth_session.get('username'):
         requester_username = auth_session['username']
 

@@ -133,9 +133,16 @@ def _execute_shell_script(ip: str, script_content: str, device: dict) -> str:
 
         ssh = paramiko.SSHClient()
         ssh.set_missing_host_key_policy(paramiko.AutoAddPolicy())
+        from drivers.ssh_compat import build_paramiko_compatibility_kwargs
         ssh.connect(
-            ip, port=port, username=username, password=password, timeout=10,
-            allow_agent=False, look_for_keys=False, disabled_algorithms={}
+            ip,
+            port=port,
+            username=username,
+            password=password,
+            timeout=10,
+            **build_paramiko_compatibility_kwargs(
+                device.get('ssh_algorithm_profile')
+            ),
         )
         try:
             # timeout 限制 stdout/stderr 的阻塞读取，避免命令挂死导致采集线程
@@ -275,7 +282,11 @@ def _netmiko_collect(device: dict[str, Any], commands: list[str], use_admin_cred
         'global_delay_factor': 1.5 if is_slow else 0.5,
         'blocking_timeout': 30,
     }
-    params.update(build_netmiko_compatibility_kwargs())
+    params.update(
+        build_netmiko_compatibility_kwargs(
+            profile=device.get('ssh_algorithm_profile')
+        )
+    )
 
     secret = creds.get('enable_password') or ''
     if secret:

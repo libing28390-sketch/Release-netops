@@ -1,5 +1,7 @@
 import type { SessionUser } from '../../types';
 
+export type SshAlgorithmProfile = 'auto' | 'modern' | 'legacy_compat' | 'legacy_break_glass';
+
 export interface WebAccessProfile {
   id?: string;
   asset_id?: string;
@@ -76,6 +78,7 @@ export interface Asset {
   notes: string;
   platform: string;
   connection_method: string;
+  ssh_algorithm_profile?: SshAlgorithmProfile;
   username: string;
   snmp_community: string;
   snmp_port: string;
@@ -99,6 +102,11 @@ export interface Asset {
   admin_username?: string;
   normal_username?: string;
   management_port?: number;
+  winrm_enabled?: boolean;
+  winrm_port?: number;
+  winrm_auth_mode?: 'ntlm' | 'basic';
+  winrm_tls_mode?: 'verify_ca' | 'pin_fingerprint' | 'insecure_lab';
+  winrm_cert_fingerprint?: string;
   is_managed?: number;
   takeover_error?: string;
   device_category?: string;

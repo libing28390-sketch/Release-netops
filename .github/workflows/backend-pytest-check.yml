@@ -1,12 +1,6 @@
 name: Backend Pytest Check
 
 on:
-  push:
-    branches: [main]
-    paths:
-      - "backend/**"
-      - "pytest.ini"
-      - ".github/workflows/backend-pytest-check.yml"
   pull_request:
     branches: [main]
     paths:

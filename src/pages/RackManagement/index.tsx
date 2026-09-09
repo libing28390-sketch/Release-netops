@@ -1983,6 +1983,7 @@ export const RackManagementTab: React.FC<Props> = ({ language }) => {
                     </p>
                   ) : layout.devices.map(d => {
                     const rc = getNormalizedRoleColor(d.device_role, d.name, d.model);
+                    const rackDevice = rackVM?.devices.find(item => item.id === d.id);
                     const isSelected = selectedDeviceId === d.id;
                     const isUMount = (d.mount_kind || 'u_mount') === 'u_mount';
                     const placement = isUMount
@@ -2007,7 +2008,36 @@ export const RackManagementTab: React.FC<Props> = ({ language }) => {
                             </span>
                           </div>
                         </div>
-                        <span className="w-2 h-2 rounded-full flex-shrink-0" style={{ background: d.status === 'active' ? '#4ade80' : d.status === 'planned' ? '#fbbf24' : '#ef4444' }} />
+                        <span
+                          className="relative flex h-3.5 w-3.5 flex-shrink-0 items-center justify-center"
+                          title={rackDevice
+                            ? `${d.status === 'active' ? (zh ? '电源：通电' : 'Power: on') : d.status === 'planned' ? (zh ? '电源：规划' : 'Power: planned') : (zh ? '电源：断电' : 'Power: off')} · ${rackDevice.healthStatus === 'healthy' ? (zh ? '健康：正常' : 'Health: normal') : rackDevice.healthStatus === 'warning' ? (zh ? '健康：警告' : 'Health: warning') : rackDevice.healthStatus === 'critical' ? (zh ? '健康：严重' : 'Health: critical') : rackDevice.healthStatus === 'offline' ? (zh ? '健康：离线' : 'Health: offline') : (zh ? '健康：无遥测' : 'Health: unknown')}`
+                            : undefined}
+                        >
+                          <span
+                            className="h-2 w-2 rounded-full"
+                            style={{
+                              background: d.status === 'active' ? '#4ade80' : d.status === 'planned' ? '#fbbf24' : '#ef4444',
+                              boxShadow: d.status === 'active' ? '0 0 5px rgba(74, 222, 128, 0.75)' : undefined,
+                            }}
+                          />
+                          {rackDevice && (
+                            <span
+                              className="absolute bottom-0 right-0 h-1.5 w-1.5 rounded-full border border-white/80"
+                              style={{
+                                background: rackDevice.healthStatus === 'healthy'
+                                  ? '#34d399'
+                                  : rackDevice.healthStatus === 'warning'
+                                    ? '#fbbf24'
+                                    : rackDevice.healthStatus === 'critical'
+                                      ? '#f87171'
+                                      : rackDevice.healthStatus === 'offline'
+                                        ? '#64748b'
+                                        : '#94a3b8',
+                              }}
+                            />
+                          )}
+                        </span>
                       </button>
                     );
                   })}

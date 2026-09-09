@@ -25,7 +25,7 @@ export const EMPTY_FORM = {
   hostname: '', site_id: '', rack: '', rack_unit: '', u_height: '1', planned_start_u: '', management_ip: '',
   business_ip: '', device_role: '', vlan: '', uplink_switch: '', uplink_port: '',
   status: 'active', lifecycle_status: 'staging', asset_origin: 'new', takeover_exempt_reason: '', purchase_date: '', warranty_expiry: '', department: '', notes: '',
-  platform: '', connection_method: 'ssh', 
+  platform: '', connection_method: 'ssh', ssh_algorithm_profile: 'auto',
   username: '', password: '',
   normal_username: '', normal_password: '',
   admin_username: '', admin_password: '',
@@ -33,6 +33,11 @@ export const EMPTY_FORM = {
   auth_model: 'dual',
   snmp_community: '', snmp_community_set: false, snmp_port: '161',
   management_port: '22',
+  winrm_enabled: false,
+  winrm_port: '5986',
+  winrm_auth_mode: 'ntlm',
+  winrm_tls_mode: 'pin_fingerprint',
+  winrm_cert_fingerprint: '',
   device_category: '',
   function: '',
   zone: 'Unknown',
@@ -220,6 +225,15 @@ export const SERVER_ONLY_VENDOR_VALUES = [
   'Linux', 'Dell', 'HP', 'Lenovo', 'Inspur', 'Generic Server', 'generic',
 ] as const;
 
+export const SSH_ALGORITHM_PROFILE_OPTIONS = [
+  { value: 'auto', label: { zh: '自动（现代优先，兼容安全旧算法）', en: 'Auto (modern first, safe legacy fallback)' } },
+  { value: 'modern', label: { zh: '现代算法（严格）', en: 'Modern algorithms (strict)' } },
+  { value: 'legacy_compat', label: { zh: '旧算法兼容（受控）', en: 'Legacy compatibility (controlled)' } },
+  { value: 'legacy_break_glass', label: { zh: '极旧设备紧急兼容（高风险）', en: 'Legacy break-glass (high risk)' } },
+] as const;
+
+export const SSH_ALGORITHM_PROFILE_VALUES = SSH_ALGORITHM_PROFILE_OPTIONS.map(option => option.value);
+
 export const uniquePlatforms = (items: { value: string; label: string }[]) => {
   const seen = new Set<string>();
   return items.filter(item => {
@@ -281,6 +295,8 @@ export const COL_MAP: Record<string, string> = {
   'Mgmt Port': 'management_port', 'SSH Port': 'management_port', 'management_port': 'management_port', 'ssh_port': 'management_port',
   '设备分类': 'device_category', 'Device Category': 'device_category', 'device_category': 'device_category',
   '连接方式': 'connection_method', 'Connection': 'connection_method', 'connection_method': 'connection_method',
+  'SSH算法策略': 'ssh_algorithm_profile', 'SSH 算法策略': 'ssh_algorithm_profile', 'SSH算法配置': 'ssh_algorithm_profile',
+  'SSH Algorithm Profile': 'ssh_algorithm_profile', 'SSH Algorithm Policy': 'ssh_algorithm_profile', 'ssh_algorithm_profile': 'ssh_algorithm_profile',
   'SNMP社区名': 'snmp_community', 'SNMP Community': 'snmp_community', 'snmp_community': 'snmp_community',
   'SNMP端口': 'snmp_port', 'SNMP Port': 'snmp_port', 'snmp_port': 'snmp_port',
   // SNMP credentials are referenced by vault name (or ID for compatibility),
@@ -375,8 +391,15 @@ export const IMPORT_VALUE_MAP: Record<string, Record<string, string>> = {
   connection_method: {
     'SSH（安全外壳）': 'ssh', SSH: 'ssh', ssh: 'ssh',
     'NETCONF（网络配置协议）': 'netconf', NETCONF: 'netconf', netconf: 'netconf',
+    'WinRM HTTPS': 'winrm', WinRM: 'winrm', winrm: 'winrm',
     '仅 Web（HTTP/HTTPS）': 'web', 'Web管理': 'web', 'Web管理入口': 'web', 'Web管理（HTTP/HTTPS）': 'web', 'Web Management': 'web', 'Web only': 'web', web: 'web',
     '无登录通道': 'none', 'No login channel': 'none', none: 'none',
+  },
+  ssh_algorithm_profile: {
+    auto: 'auto', '自动': 'auto', '默认': 'auto', 'Auto': 'auto', 'Default': 'auto',
+    modern: 'modern', '现代': 'modern', '严格': 'modern', 'Modern': 'modern', 'Strict': 'modern',
+    legacy_compat: 'legacy_compat', '兼容旧算法': 'legacy_compat', '旧算法兼容': 'legacy_compat', 'Legacy Compatible': 'legacy_compat', 'Legacy Compat': 'legacy_compat',
+    legacy_break_glass: 'legacy_break_glass', '极旧设备兼容': 'legacy_break_glass', '紧急兼容': 'legacy_break_glass', 'Break Glass': 'legacy_break_glass', 'Legacy Break Glass': 'legacy_break_glass',
   },
   platform: {
     '思科 IOS': 'cisco_ios', '思科 NX-OS': 'cisco_nxos', '思科 IOS-XE': 'cisco_xe',

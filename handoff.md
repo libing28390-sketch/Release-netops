@@ -357,3 +357,68 @@ git diff --check
 - 根因是 `nginx/nginx.conf` 在 `server` 级别定义了只包含 GLB/GLTF/KTX2/Basis 的 `types {}`，覆盖了官方 Nginx 镜像继承的标准 MIME 映射，导致 `index.html`、JS 和 CSS 都可能失去正确的 MIME 类型。
 - 修复是移除覆盖全局映射的 `types {}`，保留官方 Nginx 的标准 MIME 表；GLB、GLTF、KTX2、Basis 改用独立 location 的 `default_type`，不会再影响 HTML/CSS/JS。
 - 本机已完成 `git diff --check` 和配置文本检查；当前 Windows 环境没有 Docker/Nginx CLI，部署后需要在目标机执行 `nginx -t` 并重建/重启 Nginx 容器，再用 `curl -k -I https://<host>/` 确认 `Content-Type: text/html`。
+
+## 2026-09-07 本地 Blender 首批 GLB 生成
+
+- 输入附件：`D:\data\downloads\Nexora_3D_Asset_Base_Catalog_v1.xlsx`；原始 Excel 只读使用，未修改。
+- 本机 Blender：`D:\blender\blender.exe`，Blender 5.2.1 LTS。
+- 已生成并发布 5 个 GLB：`zte_zxr10_9904_s`（Excel 明确尺寸 445×681×352.8 mm、8U）以及 `generic_switch_1u_24p`、`generic_switch_1u_48p`、`generic_switch_1u_sfp`、`generic_switch_dc_1u` 四个 Generic M0 网络设备。
+- 5 个文件已复制到 `public/assets/3d`，对应的离线源文件保存在 `assets/source/blender`；所有源场景通过 `validate_scene.py`，GLB 头、JSON chunk、BODY 节点和端口数量已通过自动检查。
+- 生成器补齐 Blender 脚本目录导入路径和直接命令行参数解析，并按铜口/SFP/QSFP 生成不同端口几何。
+- 这些资产仍保持 draft/原型状态；未完成全量型号 GLB、真实产品外观与端口证据、人工几何验收、浏览器联调及线上 MIME/缓存/404 验证。
+- 本次只在本地工作区生成文件，未执行 commit、push 或生产部署。
+
+## 2026-09-07 RackVision 生产级 GLB 资产重建与浏览器验证
+
+- 本轮已将原先仅用于尺寸/导出链路验证的低多边形设备，替换为可用于实时展示的生产基线资产：补充倒角机箱、前后面板、安装耳与孔位、端口笼/插槽/触点/LED、PSU、风扇、散热和语义连接锚点；Blender 坐标契约保持 `X=左右、Y=前后（+Y=front）、Z=垂直`，单位为米。
+- 已生成 5 个 BLEND 和 GLB，并直接复制到生产静态目录 `public/assets/3d`：`generic_switch_1u_24p`、`generic_switch_1u_48p`、`generic_switch_1u_sfp`、`generic_switch_dc_1u`、`zte_zxr10_9904_s`。`assets/build/glb` 与 `public/assets/3d` 的 5 个文件 SHA-256 已逐一比对一致。
+- 四个 Generic 条目已经在 `assets/catalog/asset_registry.json` 与 YAML 中登记为 `status=approved`、`render_strategy=glb`，因此交换机设备会通过 Resolver 使用生产静态 GLB。ZTE 8U 条目仍为 `draft`：虽然已有尺寸输入和展示基线，但缺少足够的官方外观/端口布局证据，不能冒充 OEM 精确模型。
+- 自动验证已通过：Blender 5.2.1 headless 构建、`validate_scene.py` 场景校验、GLB glTF 2.0/JSON chunk/buffer/节点/材质/端口语义解析、Python `py_compile` 和 `git diff --check`。5 个 GLB 的生产目录文件大小约为 1.9–4.3 MB。
+- 浏览器验证已完成：刷新 `http://192.168.56.1:5400/cmdb/racks`，进入 `3D 孪生`，实际检查正面、背面和 45° 视角，机柜与设备场景正常渲染，控制台没有 GLTF/GLB 错误。仅观察到既有 Recharts 容器尺寸 warning 和 Three.js `THREE.Clock` 弃用 warning，与本轮资产加载无关。
+- `handoff.md`、`.codex/`、`.agents/` 仍属于内部协作材料；本轮只把 GLB 放入 `public/assets/3d`，没有把交接文件同步到公开资源目录，也没有执行 commit、push、Docker/Nginx 部署。
+
+### 接续工作
+
+1. 为需要 OEM 级真实外观的型号补充官方 CAD/尺寸图/正反面照片和端口布局证据，再逐个由 `draft` 转为 `approved`。
+2. 继续生成 firewall、server、router、机柜模板等剩余资产，并补齐全量 manifest、缩略图和人工几何签署。
+3. 在目标 Nginx/Docker 环境验证 GLB MIME、缓存头、404、压缩和回滚；当前浏览器验证属于本地运行实例冒烟，不等同于线上发布验收。
+
+## 2026-09-07 RackVision S6800 字体与线缆修复（最新）
+
+- 针对用户近景截图中的倒置/镜像字体，修正 Blender 3D 文本的局部朝向和负缩放，并在导出前应用变换。浏览器近景已确认 `H3C`、`S6800`、`SFP+ BANK`、`QSFP28 BANK` 及端口编号按正常阅读方向显示。
+- 根据用户澄清，两张参考图均属于同一台 H3C S6800 的不同面板：正面为三组 16 口 SFP+ 与两组 3 口 QSFP28（共 54 个端口）；背面为管理/服务接口、5 个风扇模块和 2 个电源模块，未再按防火墙建模。
+- 已用最新生成器重导并同步到 `public/assets/3d` 的 8 个资源：4 个 Generic 交换机、`zte_zxr10_9904_s`、`h3c_s6800_family`、`rack_42u_600x1000`、`generic_patch_panel_cat6_24p`。每个 build/public SHA-256 均一致；`handoff.md`、`.codex/`、`.agents/` 未复制到公开资源目录。
+- GLB 语义抽检结果：S6800 含 56 个端口笼（54 个正面端口加 2 个后部管理口）、224 个 slot 框、112 个端口灯、56 个端口标签、5 个风扇模块、10 个红色拉手、2 个电源模块和 2 个电源拉手；配线架含 24 个端口笼、96 个 slot 框、48 个灯、24 个标签、端口导轨、7 个理线件、6 个线缆夹和接地柱。
+- 当前 PostgreSQL `topology_links` 为 0 条，因此没有把虚构连接写进 CMDB。运行时新增“预览线缆”：没有已验证拓扑时显示青色/橙色视觉线缆并标注“预览线缆 · 未关联”，真实拓扑出现后自动以真实链路替换；“关”按钮已在浏览器中验证可以隐藏线缆，再切回“全线”可以恢复预览。
+- 针对近景中 U 位数字被遮挡/右侧镜像的问题，U 标尺改为最外层只读叠加、关闭深度遮挡，并移除右侧水平镜像；浏览器放大视图已确认左右两侧 U 数字均可正常阅读。
+- 机柜 GLB 后板由整块实体改为周边框架式开口，避免挡住 S6800 后部风扇、电源和管理口；背面视角已重新确认设备后部可见。
+- 本轮验证：Blender 5.2.1 headless 场景校验通过（S6800、配线架、机柜、ZTE 9904-S 8U）；GLB glTF JSON/节点/材质/组件解析通过；`npm run lint` 通过；RackVision topology 定向测试 3/3 通过；`git diff --check` 无 whitespace error；已登录浏览器 `/cmdb/racks` 的 3D 正面近景确认设备、字体和预览线缆正常渲染。
+
+### 当前接续工作
+
+1. 等待真实 LLDP/人工链路数据进入后，复核端口锚点到真实线缆的映射；没有链路时继续保留“未关联”标识，不将预览误报为生产拓扑。
+2. 为剩余需要 OEM 级还原的型号补充官方正反面证据，并继续保持没有证据的条目为 `draft`。
+3. 在目标 Nginx/Docker 环境完成 GLB MIME、缓存、404、压缩和回滚验收；本轮只完成本地浏览器与本地生产静态目录验证。
+
+## 2026-09-07 RackVision 近远景可见性与状态灯动画（最新）
+
+- 针对近景截图中过于拥挤的问题，`更多图层` 已从工具条下方的设备覆盖层移到 3D 视口右侧独立面板；打开时视口同步让出宽度，面板带滚动边界，不再压住机柜和设备。
+- 为避免 Vite 误监视内部资产临时目录导致 Windows `EBUSY`，`vite.config.ts` 已将 `.codex-tmp` 加入 watch ignore；前端服务已重启并在 `5400` 端口恢复。
+- `RackDeviceItem` 对每个 GLB 实例单独克隆 LED 材质，仅动画化 `status_led` / `port_led` 及 `MAT_LED_*` 材质；状态/电源灯使用较明显的呼吸脉冲，端口灯使用较平稳的活动脉冲。关闭 tone mapping 并略微放大灯体几何，保证远景仍能看到亮点、近景仍保留端口细节。
+- 动画只修改浏览器内存中的 GLB 材质，不修改资产文件、CMDB 或拓扑数据；当前机柜 `topology_links=0`，线缆仍是带“预览线缆 · 未关联”标识的视觉预览。
+- 浏览器已重新进入 `3D 孪生`，检查远景正面、聚焦底部近景、侧边图层面板以及连续截图帧；S6800 端口灯/状态灯可见，页面无 GLTF/GLB 加载错误。
+- 本次新增验证：RackVision 定向测试 2 文件/9 测试通过、目标文件 `git diff --check` 无 whitespace error。此前针对本轮 3D 改动的 TypeScript 检查曾通过；最终全量 `npm run lint` 被工作区既有的 `src/components/BatchPlatformBindingModal.tsx:136` 类型比较错误阻断（与本轮 3D 文件无关，未擅自改动该用户文件）。未执行生产构建、提交、推送或 Docker/Nginx 发布。
+
+### 当前接续工作
+
+1. 在有真实 LLDP/人工链路数据后复核真实端口到线缆锚点映射；无链路时不得把预览线缆当作 CMDB 关系。
+2. 继续补充剩余 OEM 型号的官方正反面证据，并保持无证据资产为 `draft`。
+3. 在目标 Nginx/Docker 环境完成 GLB MIME、缓存、404、压缩和回滚验收。
+
+## 2026-09-09 RackVision 模块化交换机 Demo 归一化（最新）
+
+- 已评估外部 `nexora_modular_switch_glb_demo.zip`：源文件可被 Three.js 加载，但没有 glTF 材质/纹理/法线/UV/动画，且坐标轴与 Nexora 约定相反，不能直接当作生产 OEM 资产。
+- 新增 `tools/gltf/normalize_modular_demo.py` 与 `tools/gltf/validate_modular_demo.py`，将 8 个 GLB 转为 Nexora 坐标、底部/前插入面/水平中心原点，补齐法线、UV、统一材质和端口/插槽/灯效语义 metadata。
+- 输出隔离在 `assets/build/glb/modular_demo` 和 `public/assets/3d/modular_demo`，附带 `slot_manifest.json`、`validation_report.json` 和源/输出 SHA-256；未覆盖原压缩包、现有生产 GLB 或 asset registry，状态保持 `draft`。
+- 验证：8/8 GLB validator PASS，Three.js GLTFLoader 逐个加载通过；RackVision 前端 26 个测试、`npm run lint`、`npm run build` 和拓扑/机柜后端 37 个测试通过。当前本地 5310/5400 服务可启动，后端健康检查为 connected。
+- 剩余工作：需要可编辑 `.blend` 源文件、官方尺寸/端口资料和人工近景验收后，才能把模块化资产升级为 approved 并接入生产 Resolver。

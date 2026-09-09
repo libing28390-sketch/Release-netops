@@ -29,3 +29,11 @@ blender --background assets/source/blender/generic_switch_1u_24p.blend \
 3. 导出 GLB 并执行 validator。
 4. 导入浏览器测试；通过后把 registry 状态从 `draft` 改为 `review`，由审核人确认后才可 `approved`。
 
+## 外部模块化 Demo 归一化
+
+没有 `.blend` 源文件的外部 GLB 只能先作为 draft hand-off。使用
+`tools/gltf/normalize_modular_demo.py` 生成隔离的
+`assets/build/glb/modular_demo` 与 `public/assets/3d/modular_demo`，再用
+`tools/gltf/validate_modular_demo.py` 检查坐标、origin、法线、UV、材质和语义锚点。
+该流程不会覆盖现有生产 GLB，也不会自动把 Demo 注册为 approved；通过官方尺寸/端口
+资料和浏览器人工验收后，才可以建立正式的 `.blend` 源资产并进入 registry。

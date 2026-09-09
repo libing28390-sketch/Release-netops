@@ -21,7 +21,13 @@ from database import get_db_connection
 from core.crypto import encrypt_credential, decrypt_credential
 from core.rbac import enforce_resource_scope, require_role
 from core.context import request_id_var
-from drivers.ssh_compat import get_ssh_error_code, build_ssh_error_guidance
+from drivers.ssh_compat import (
+    build_paramiko_compatibility_kwargs,
+    build_ssh_error_guidance,
+    build_system_ssh_open_cmd,
+    get_ssh_error_code,
+    normalize_ssh_algorithm_profile,
+)
 from services import tag_service
 from services import rack_scope_service
 from services.vault_service import credential_is_shared, resolve_collector_credentials
@@ -65,9 +71,12 @@ _PUBLIC_ASSET_FIELDS = frozenset({
     'online_status', 'lifecycle_status', 'asset_origin', 'purchase_date',
     'warranty_expiry', 'department', 'notes', 'platform',
     'connection_method', 'username', 'normal_username', 'admin_username',
+    'ssh_algorithm_profile',
     'password', 'normal_password', 'admin_password', 'enable_password',
     'snmp_community',
     'snmp_port', 'management_port', 'device_category', 'function', 'zone',
+    'winrm_enabled', 'winrm_port', 'winrm_auth_mode', 'winrm_tls_mode',
+    'winrm_cert_fingerprint',
     'power_watts', 'device_id', 'is_managed', 'takeover_error',
     'credential_id', 'admin_credential_id', 'snmp_credential_id',
     'password_set', 'normal_password_set', 'admin_password_set',
@@ -274,6 +283,8 @@ def _management_port_for_storage(body) -> int:
     if method in {'web', 'none'}:
         return 0
     value = getattr(body, 'management_port', None)
+    if method == 'winrm':
+        return int(getattr(body, 'winrm_port', None) or value or 5986)
     return int(value or (830 if method == 'netconf' else 22))
 
 
@@ -313,6 +324,9 @@ def _sanitize_asset_item(item: dict) -> dict:
             source[f'{sensitive}_set'] = bool(source.get(sensitive))
     if 'snmp_community' in source:
         source['snmp_community_set'] = bool(source.get('snmp_community'))
+    source['ssh_algorithm_profile'] = normalize_ssh_algorithm_profile(
+        source.get('ssh_algorithm_profile')
+    )
 
     # A Vault path and credential-governance internals are deliberately not
     # represented in this allowlist, even when they are present in a joined
@@ -476,6 +490,9 @@ _ASSET_AUDIT_FIELDS = frozenset({
     'u_height', 'planned_start_u', 'management_ip', 'business_ip',
     'device_role', 'status', 'lifecycle_status', 'asset_origin',
     'platform', 'connection_method', 'device_id', 'is_managed',
+    'ssh_algorithm_profile',
+    'winrm_enabled', 'winrm_port', 'winrm_auth_mode', 'winrm_tls_mode',
+    'winrm_cert_fingerprint',
     'credential_id', 'admin_credential_id', 'snmp_credential_id',
 })
 
@@ -1030,8 +1047,12 @@ def _create_linked_device(conn, asset_id: str, body, user: dict) -> str:
         onboarding,
         credential_id or '',
         admin_credential_id or '',
-        mgmt_port
+         mgmt_port
     ))
+    conn.execute(
+        'UPDATE devices SET ssh_algorithm_profile = ? WHERE id = ?',
+        (normalize_ssh_algorithm_profile(getattr(body, 'ssh_algorithm_profile', None)), device_id),
+    )
     # The physical asset is the canonical source for CMDB location. Keep the
     # normalized foreign-key-style field populated for device inventory and
     # topology consumers; ``site`` remains only as a legacy display field.
@@ -1257,6 +1278,11 @@ def _sync_device_from_asset(conn, asset_id: str, body) -> None:
             getattr(body, 'asset_type', None) or 'network_device',
         ) if getattr(body, 'platform', None) is not None else None,
         'connection_method': getattr(body, 'connection_method', None),
+        'ssh_algorithm_profile': (
+            normalize_ssh_algorithm_profile(getattr(body, 'ssh_algorithm_profile'))
+            if getattr(body, 'ssh_algorithm_profile', None) is not None
+            else None
+        ),
         'snmp_port': getattr(body, 'snmp_port', None),
         'snmp_credential_id': getattr(body, 'snmp_credential_id', None),
         'auth_model': getattr(body, 'auth_model', None),
@@ -1562,6 +1588,7 @@ class AssetCreate(BaseModel):
     # Network-device-only fields (forwarded to devices table)
     platform: str = ''
     connection_method: str = 'ssh'
+    ssh_algorithm_profile: str = 'auto'
     username: str = ''
     password: str = ''
     # PAM fields
@@ -1574,6 +1601,11 @@ class AssetCreate(BaseModel):
     snmp_community: str = ''
     snmp_port: int = 161
     management_port: int = 22
+    winrm_enabled: bool = False
+    winrm_port: int = 5986
+    winrm_auth_mode: str = 'ntlm'
+    winrm_tls_mode: str = 'pin_fingerprint'
+    winrm_cert_fingerprint: str = ''
     device_category: str = ''
     function: str = ''
     zone: str = 'Unknown'
@@ -1598,9 +1630,38 @@ class AssetCreate(BaseModel):
     @classmethod
     def validate_connection_method(cls, v):
         method = str(v or 'ssh').strip().lower()
-        if method not in {'ssh', 'netconf', 'web', 'none'}:
-            raise ValueError('Connection method must be ssh, netconf, web or none')
+        if method not in {'ssh', 'netconf', 'winrm', 'web', 'none'}:
+            raise ValueError('Connection method must be ssh, netconf, winrm, web or none')
         return method
+
+    @field_validator('ssh_algorithm_profile', mode='before')
+    @classmethod
+    def validate_ssh_algorithm_profile(cls, v):
+        return normalize_ssh_algorithm_profile(v)
+
+    @field_validator('winrm_auth_mode', mode='before')
+    @classmethod
+    def validate_winrm_auth_mode(cls, v):
+        value = str(v or 'ntlm').strip().lower()
+        if value not in {'ntlm', 'basic'}:
+            raise ValueError('WinRM authentication mode must be ntlm or basic')
+        return value
+
+    @field_validator('winrm_tls_mode', mode='before')
+    @classmethod
+    def validate_winrm_tls_mode(cls, v):
+        value = str(v or 'pin_fingerprint').strip().lower()
+        if value not in {'verify_ca', 'pin_fingerprint', 'insecure_lab'}:
+            raise ValueError('WinRM TLS mode must be verify_ca, pin_fingerprint or insecure_lab')
+        return value
+
+    @field_validator('winrm_port', mode='before')
+    @classmethod
+    def validate_windows_ports(cls, v):
+        value = int(v)
+        if value < 1 or value > 65535:
+            raise ValueError('Windows management port must be between 1 and 65535')
+        return value
 
     @field_validator('u_height', mode='before')
     @classmethod
@@ -1693,6 +1754,7 @@ class AssetUpdate(BaseModel):
     # Network-device-only fields (forwarded to devices table)
     platform: Optional[str] = None
     connection_method: Optional[str] = None
+    ssh_algorithm_profile: Optional[str] = None
     username: Optional[str] = None
     password: Optional[str] = None
     # PAM fields
@@ -1705,6 +1767,11 @@ class AssetUpdate(BaseModel):
     snmp_community: Optional[str] = None
     snmp_port: Optional[int] = None
     management_port: Optional[int] = None
+    winrm_enabled: Optional[bool] = None
+    winrm_port: Optional[int] = None
+    winrm_auth_mode: Optional[str] = None
+    winrm_tls_mode: Optional[str] = None
+    winrm_cert_fingerprint: Optional[str] = None
     device_category: Optional[str] = None
     function: Optional[str] = None
     zone: Optional[str] = None
@@ -1733,9 +1800,46 @@ class AssetUpdate(BaseModel):
         if v is None:
             return None
         method = str(v).strip().lower()
-        if method not in {'ssh', 'netconf', 'web', 'none'}:
-            raise ValueError('Connection method must be ssh, netconf, web or none')
+        if method not in {'ssh', 'netconf', 'winrm', 'web', 'none'}:
+            raise ValueError('Connection method must be ssh, netconf, winrm, web or none')
         return method
+
+    @field_validator('ssh_algorithm_profile', mode='before')
+    @classmethod
+    def validate_ssh_algorithm_profile(cls, v):
+        if v is None:
+            return None
+        return normalize_ssh_algorithm_profile(v)
+
+    @field_validator('winrm_auth_mode', mode='before')
+    @classmethod
+    def validate_winrm_auth_mode(cls, v):
+        if v is None:
+            return None
+        value = str(v).strip().lower()
+        if value not in {'ntlm', 'basic'}:
+            raise ValueError('WinRM authentication mode must be ntlm or basic')
+        return value
+
+    @field_validator('winrm_tls_mode', mode='before')
+    @classmethod
+    def validate_winrm_tls_mode(cls, v):
+        if v is None:
+            return None
+        value = str(v).strip().lower()
+        if value not in {'verify_ca', 'pin_fingerprint', 'insecure_lab'}:
+            raise ValueError('WinRM TLS mode must be verify_ca, pin_fingerprint or insecure_lab')
+        return value
+
+    @field_validator('winrm_port', mode='before')
+    @classmethod
+    def validate_windows_ports(cls, v):
+        if v is None:
+            return None
+        value = int(v)
+        if value < 1 or value > 65535:
+            raise ValueError('Windows management port must be between 1 and 65535')
+        return value
 
     @field_validator('power_watts', mode='before')
     @classmethod
@@ -2265,6 +2369,18 @@ def create_asset(body: AssetCreate, _user=require_role("Operator")):
             'UPDATE physical_assets SET snmp_credential_id = ?, management_port = ? WHERE id = ?',
             (body.snmp_credential_id or '', _management_port_for_storage(body), asset_id),
         )
+        conn.execute(
+            '''UPDATE physical_assets SET
+                      winrm_enabled = ?, winrm_port = ?, winrm_auth_mode = ?, winrm_tls_mode = ?,
+                      winrm_cert_fingerprint = ?
+               WHERE id = ?''',
+            (body.winrm_enabled, body.winrm_port, body.winrm_auth_mode, body.winrm_tls_mode,
+             body.winrm_cert_fingerprint, asset_id),
+        )
+        conn.execute(
+            'UPDATE physical_assets SET ssh_algorithm_profile = ? WHERE id = ?',
+            (normalize_ssh_algorithm_profile(body.ssh_algorithm_profile), asset_id),
+        )
 
         # Plan-A: auto-create linked device for managed assets
         device_id = None
@@ -2490,7 +2606,9 @@ def update_asset(asset_id: str, body: AssetUpdate, run_bg_rotate: bool = True, _
             'status', 'lifecycle_status', 'asset_origin', 'purchase_date', 'warranty_expiry', 'department', 'notes',
             'platform', 'connection_method', 'username', 'password',
             'normal_username', 'normal_password', 'admin_username', 'admin_password', 'enable_password', 'auth_model',
-            'snmp_community', 'snmp_port', 'management_port', 'device_category', 'function', 'zone', 'power_watts', 'credential_id', 'admin_credential_id', 'snmp_credential_id'
+            'snmp_community', 'snmp_port', 'management_port', 'device_category', 'function', 'zone', 'power_watts', 'credential_id', 'admin_credential_id', 'snmp_credential_id',
+            'ssh_algorithm_profile',
+            'winrm_enabled', 'winrm_port', 'winrm_auth_mode', 'winrm_tls_mode', 'winrm_cert_fingerprint'
         ]
         for field in updatable:
             val = getattr(body, field, None)
@@ -2961,6 +3079,18 @@ def import_assets(
                 'UPDATE physical_assets SET snmp_credential_id = ?, management_port = ? WHERE id = ?',
                 (body.snmp_credential_id or '', _management_port_for_storage(body), asset_id),
             )
+            conn.execute(
+                '''UPDATE physical_assets SET
+                          winrm_enabled = ?, winrm_port = ?, winrm_auth_mode = ?, winrm_tls_mode = ?,
+                          winrm_cert_fingerprint = ?
+                   WHERE id = ?''',
+                (body.winrm_enabled, body.winrm_port, body.winrm_auth_mode, body.winrm_tls_mode,
+                 body.winrm_cert_fingerprint, asset_id),
+            )
+            conn.execute(
+                'UPDATE physical_assets SET ssh_algorithm_profile = ? WHERE id = ?',
+                (normalize_ssh_algorithm_profile(body.ssh_algorithm_profile), asset_id),
+            )
             device_id = None
             if body.asset_type in ('network_device', 'server'):
                 device_id = _create_linked_device(conn, asset_id, body, _user)
@@ -3165,6 +3295,7 @@ def verify_asset_connectivity(asset_id: str, _user=require_role("Operator")):
 
         # 3. SSH Login Test (if credentials found)
         # Check physical_assets first, then linked device
+        ssh_profile = normalize_ssh_algorithm_profile(asset.get('ssh_algorithm_profile'))
         username = asset.get('username')
         password_enc = asset.get('password')
         password = decrypt_credential(password_enc) if password_enc else ''
@@ -3173,6 +3304,9 @@ def verify_asset_connectivity(asset_id: str, _user=require_role("Operator")):
             dev = conn.execute('SELECT * FROM devices WHERE asset_id = ?', (asset_id,)).fetchone()
             if dev:
                 device = dict(dev)
+                ssh_profile = normalize_ssh_algorithm_profile(
+                    device.get('ssh_algorithm_profile') or ssh_profile
+                )
                 collector_credentials = resolve_collector_credentials(device, ssh_role='normal')
                 ssh_credentials = collector_credentials['ssh']
                 username = str(ssh_credentials['username'] or '')
@@ -3206,14 +3340,18 @@ def verify_asset_connectivity(asset_id: str, _user=require_role("Operator")):
                     "timeout_transport": _CONNECTIVITY_SSH_TIMEOUT_SECONDS,
                 }
                 
-                # Windows compatibility (same as ScrapliDriver)
+                # Keep the onboarding probe on the same cross-vendor SSH
+                # algorithm profile as the normal drivers.
                 if platform_module.system() == 'Windows':
                     device_config['transport'] = 'paramiko'
                     device_config['transport_options'] = {
                         'paramiko_open_options': {
-                            'look_for_keys': False,
-                            'allow_agent': False,
+                            **build_paramiko_compatibility_kwargs(ssh_profile),
                         }
+                    }
+                else:
+                    device_config['transport_options'] = {
+                        'open_cmd': build_system_ssh_open_cmd(ssh_profile),
                     }
 
                 if asset['asset_type'] == 'server':
@@ -3228,9 +3366,7 @@ def verify_asset_connectivity(asset_id: str, _user=require_role("Operator")):
                             password=password,
                             port=ssh_port,
                             timeout=_CONNECTIVITY_SSH_TIMEOUT_SECONDS,
-                            allow_agent=False,
-                            look_for_keys=False,
-                            disabled_algorithms={}
+                            **build_paramiko_compatibility_kwargs(ssh_profile),
                         )
                         results["ssh"] = True
                         results["ssh_summary"] = "SSH 登录验证成功 (直接认证通过)"

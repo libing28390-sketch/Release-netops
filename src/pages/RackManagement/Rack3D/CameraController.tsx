@@ -6,6 +6,10 @@ export type CameraPreset = 'front' | 'rear' | 'iso' | 'top' | 'focus_top' | 'foc
 
 export interface DeviceFocusTarget {
   centerY: number;
+  centerZ?: number;
+  width?: number;
+  height?: number;
+  depth?: number;
   face?: 'front' | 'rear';
   timestamp: number;
 }
@@ -57,11 +61,21 @@ export const CameraController: React.FC<CameraControllerProps> = ({
   useEffect(() => {
     if (!focusTarget) return;
     const isRear = focusTarget.face === 'rear';
-    const distZ = isRear ? -8.5 : 8.5;
-    targetPos.current.set(0, focusTarget.centerY + 0.15, distZ);
-    targetLook.current.set(0, focusTarget.centerY, 0);
+    const perspectiveFov = camera instanceof THREE.PerspectiveCamera ? camera.fov : 45;
+    const aspect = Math.max(0.1, size.width / Math.max(1, size.height));
+    const focusHeight = Math.max(0.75, (focusTarget.height || 0.9) + 0.45);
+    const focusWidth = Math.max(2.8, (focusTarget.width || Math.min(rackWidth, 4.8)) + 0.4);
+    const focusDistance = THREE.MathUtils.clamp(
+      calculateRackFitDistance(focusHeight, focusWidth, perspectiveFov, aspect, 1.18),
+      3.1,
+      7,
+    );
+    const direction = isRear ? -1 : 1;
+    const deviceFaceZ = (focusTarget.centerZ || 0) + direction * ((focusTarget.depth || Math.min(rackDepth * 0.75, 3.8)) / 2);
+    targetPos.current.set(0, focusTarget.centerY + 0.15, deviceFaceZ + direction * focusDistance);
+    targetLook.current.set(0, focusTarget.centerY, deviceFaceZ);
     isTransitioning.current = true;
-  }, [focusTarget]);
+  }, [camera, focusTarget, rackDepth, rackWidth, size.height, size.width]);
 
   // When user drags, stop programmatic animation
   useEffect(() => {
@@ -95,6 +109,11 @@ export const CameraController: React.FC<CameraControllerProps> = ({
 
   // Handle Camera Presets
   useEffect(() => {
+    // A selected device owns the camera until the user explicitly resets the
+    // view. This guard is important when the Inspector opens: its drawer
+    // changes the Canvas aspect ratio and must not snap the camera back to the
+    // rack-wide preset while the close-up is in progress.
+    if (focusTarget) return;
     const centerY = rackHeight / 2;
     const perspectiveFov = camera instanceof THREE.PerspectiveCamera ? camera.fov : 45;
     const aspect = Math.max(0.1, size.width / Math.max(1, size.height));
@@ -136,7 +155,7 @@ export const CameraController: React.FC<CameraControllerProps> = ({
     }
     isTransitioning.current = true;
     if (onPresetApplied) onPresetApplied();
-  }, [preset, rackHeight, rackWidth, rackDepth, size.width, size.height, camera, onPresetApplied]);
+  }, [preset, rackHeight, rackWidth, rackDepth, size.width, size.height, camera, onPresetApplied, focusTarget]);
 
   useFrame((_, delta) => {
     if (!isTransitioning.current) return;

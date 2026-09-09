@@ -1082,7 +1082,11 @@ def sync_topology_and_interfaces_job():
             'port': int(device.get('management_port') or device.get('port') or 22),
             'fast_cli': True,
         }
-        netmiko_device.update(build_netmiko_compatibility_kwargs())
+        netmiko_device.update(
+            build_netmiko_compatibility_kwargs(
+                profile=device.get('ssh_algorithm_profile')
+            )
+        )
         if enable_pw:
             netmiko_device['secret'] = enable_pw
 
@@ -1451,7 +1455,11 @@ def poll_endpoints_job():
             'port': int(device.get('management_port') or device.get('port') or 22),
             'fast_cli': True,
         }
-        netmiko_device.update(build_netmiko_compatibility_kwargs())
+        netmiko_device.update(
+            build_netmiko_compatibility_kwargs(
+                profile=device.get('ssh_algorithm_profile')
+            )
+        )
         if enable_pw:
             netmiko_device['secret'] = enable_pw
             
@@ -1499,7 +1507,11 @@ def poll_endpoints_job():
             'port': int(device.get('management_port') or device.get('port') or 22),
             'fast_cli': True,
         }
-        netmiko_device.update(build_netmiko_compatibility_kwargs())
+        netmiko_device.update(
+            build_netmiko_compatibility_kwargs(
+                profile=device.get('ssh_algorithm_profile')
+            )
+        )
         if enable_pw:
             netmiko_device['secret'] = enable_pw
             

@@ -1,4 +1,5 @@
 import React from 'react';
+import * as THREE from 'three';
 import { useGLTF } from '@react-three/drei';
 import { RackFrame, RackFrameProps } from './RackFrame';
 
@@ -12,7 +13,29 @@ interface RackGlbAssetProps {
 
 const RackGlbAsset: React.FC<RackGlbAssetProps> = ({ widthMm, depthMm, totalU }) => {
   const { scene } = useGLTF(RACK_ASSET_URL);
-  const clonedScene = React.useMemo(() => scene.clone(true), [scene]);
+  const clonedScene = React.useMemo(() => {
+    const clone = scene.clone(true);
+
+    // The production cabinet header is a solid front cap whose lower bevel
+    // overlaps the top two U positions by a few millimetres.  Keep the cap
+    // visible, but do not let it depth-occlude a real device mounted in U41/U42
+    // (or its cable endpoint).  Cloning the materials is important because
+    // drei shares GLTF materials between instances.
+    clone.traverse(object => {
+      if (!(object instanceof THREE.Mesh)) return;
+      const name = String(object.name || '').toUpperCase();
+      if (!/^(RACK_DOOR_TOP|RACK_FRONT_HEADER|RACK_LABEL|RACK_MODEL_LABEL|RACK_TOP_CAP|RACK_STATUS_STRIP)$/.test(name)) return;
+      object.renderOrder = -10;
+      const materials = Array.isArray(object.material) ? object.material : [object.material];
+      const clonedMaterials = materials.map(material => {
+        const cloned = material.clone();
+        cloned.depthWrite = false;
+        return cloned;
+      });
+      object.material = Array.isArray(object.material) ? clonedMaterials : clonedMaterials[0];
+    });
+    return clone;
+  }, [scene]);
   const widthScale = Math.max(0.1, widthMm / 600);
   const depthScale = Math.max(0.1, depthMm / 1000);
   const heightScale = Math.max(0.1, totalU / 42);

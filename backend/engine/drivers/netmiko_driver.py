@@ -120,7 +120,12 @@ class NetmikoDriver(BaseDriver):
         }
         if enable_pwd:
             device_params['secret'] = enable_pwd
-        device_params.update(build_netmiko_compatibility_kwargs(timeout=conn_timeout))
+        device_params.update(
+            build_netmiko_compatibility_kwargs(
+                timeout=conn_timeout,
+                profile=self.device_info.get('ssh_algorithm_profile'),
+            )
+        )
         self.conn = ConnectHandler(**device_params)
         # Only attempt privilege escalation when an explicit Enable secret is
         # configured. Without one, sending ``enable`` would trigger a device

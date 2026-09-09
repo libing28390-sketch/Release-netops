@@ -37,7 +37,12 @@ from core.config import settings
 from services.vault_service import resolve_device_credentials
 from services.audit_service import log_audit_event
 from services.connection_profile import resolve_ssh_port
-from drivers.ssh_compat import build_ssh_error_guidance, get_ssh_error_code
+from drivers.ssh_compat import (
+    build_ssh_error_guidance,
+    filter_ssh_algorithm_names,
+    get_ssh_error_code,
+    normalize_ssh_algorithm_profile,
+)
 from services.pam_audit_service import (
     CommandAssembler,
     PromptParser,
@@ -143,14 +148,13 @@ def _utc_now() -> str:
     return datetime.now(timezone.utc).strftime('%Y-%m-%dT%H:%M:%S+00:00')
 
 
-def get_asyncssh_compatible_algorithms() -> dict[str, list[str]]:
+def get_asyncssh_compatible_algorithms(profile: object = None) -> dict[str, list[str]]:
     """Return comprehensive algorithm suites supported by AsyncSSH.
 
-    Modern and secure algorithms are prioritized first in negotiation order,
-    while all supported legacy algorithms (such as hmac-md5, hmac-sha1,
-    diffie-hellman-group1-sha1, CBC ciphers, ssh-rsa, ssh-dss) are retained
-    so that multi-vendor legacy hardware (Cisco, Huawei, H3C, Ruijie, etc.)
-    can be accessed smoothly without algorithm mismatch errors.
+    Modern algorithms remain first.  The default ``auto`` profile appends the
+    safe legacy subset needed by older multi-vendor hardware; high-risk names
+    such as group1/ssh-dss/MD5 are only returned for the explicit
+    ``legacy_break_glass`` profile.
     """
     try:
         import asyncssh.encryption
@@ -158,14 +162,19 @@ def get_asyncssh_compatible_algorithms() -> dict[str, list[str]]:
         import asyncssh.mac
         import asyncssh.public_key
 
-        def _decode_algs(items) -> list[str]:
-            return [item.decode('ascii') if isinstance(item, bytes) else str(item) for item in items]
-
         return {
-            'encryption_algs': _decode_algs(asyncssh.encryption.get_encryption_algs()),
-            'kex_algs': _decode_algs(asyncssh.kex.get_kex_algs()),
-            'mac_algs': _decode_algs(asyncssh.mac.get_mac_algs()),
-            'server_host_key_algs': _decode_algs(asyncssh.public_key.get_public_key_algs()),
+            'encryption_algs': filter_ssh_algorithm_names(
+                asyncssh.encryption.get_encryption_algs(), 'encryption', profile
+            ),
+            'kex_algs': filter_ssh_algorithm_names(
+                asyncssh.kex.get_kex_algs(), 'kex', profile
+            ),
+            'mac_algs': filter_ssh_algorithm_names(
+                asyncssh.mac.get_mac_algs(), 'mac', profile
+            ),
+            'server_host_key_algs': filter_ssh_algorithm_names(
+                asyncssh.public_key.get_public_key_algs(), 'server_host_key', profile
+            ),
         }
     except Exception:
         return {}
@@ -501,6 +510,9 @@ def create_session(payload: SessionCreateIn, request: Request):
                 'access_level': level,
                 'connect_method': payload.connect_method,
                 'target_port': target_port,
+                'ssh_algorithm_profile': normalize_ssh_algorithm_profile(
+                    device.get('ssh_algorithm_profile') or asset.get('ssh_algorithm_profile')
+                ),
                 'reason': payload.reason,
             },
         )
@@ -970,7 +982,9 @@ async def pam_terminal_ws(websocket: WebSocket, session_token: str):
             return client
 
         logger.info(f"[PAM] Attempting SSH connection to {ip}:{port} as {username}...")
-        ssh_algs = get_asyncssh_compatible_algorithms()
+        ssh_algs = get_asyncssh_compatible_algorithms(
+            device.get('ssh_algorithm_profile') or asset.get('ssh_algorithm_profile')
+        )
         ssh_conn = await asyncssh.connect(
             ip, port=port, username=username, password=password,
             # PAM Web login intentionally does not require per-asset host-key

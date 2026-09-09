@@ -1,5 +1,8 @@
 import re
+import shutil
+import subprocess
 import time
+from functools import lru_cache
 from typing import Any, Dict, List
 
 
@@ -43,6 +46,212 @@ LEGACY_MAC_ALGORITHMS: List[str] = [
     "hmac-sha1-96",
     "hmac-md5-96",
 ]
+
+# Algorithm names are transport capabilities, not vendor capabilities.  Keep
+# the policy here so Netmiko, Scrapli and AsyncSSH do not grow separate
+# vendor-specific legacy branches.
+MODERN_KEX_ALGORITHMS: List[str] = [
+    "curve25519-sha256",
+    "curve25519-sha256@libssh.org",
+    "ecdh-sha2-nistp256",
+    "ecdh-sha2-nistp384",
+    "ecdh-sha2-nistp521",
+    "diffie-hellman-group-exchange-sha256",
+    "diffie-hellman-group16-sha512",
+    "diffie-hellman-group18-sha512",
+    "diffie-hellman-group14-sha256",
+]
+
+MODERN_HOST_KEY_ALGORITHMS: List[str] = [
+    "ssh-ed25519",
+    "ecdsa-sha2-nistp256",
+    "ecdsa-sha2-nistp384",
+    "ecdsa-sha2-nistp521",
+    "rsa-sha2-512",
+    "rsa-sha2-256",
+]
+
+MODERN_CIPHERS: List[str] = [
+    "chacha20-poly1305@openssh.com",
+    "aes128-gcm@openssh.com",
+    "aes256-gcm@openssh.com",
+    "aes128-ctr",
+    "aes192-ctr",
+    "aes256-ctr",
+]
+
+MODERN_MAC_ALGORITHMS: List[str] = [
+    "umac-128-etm@openssh.com",
+    "umac-64-etm@openssh.com",
+    "hmac-sha2-256-etm@openssh.com",
+    "hmac-sha2-512-etm@openssh.com",
+    "hmac-sha2-256",
+    "hmac-sha2-512",
+]
+
+# These are the minimum legacy algorithms needed by the devices in the
+# supplied capture and by many older Cisco/Huawei/H3C/Juniper releases.  They
+# remain available in the normal ``auto`` profile, but are appended after the
+# modern defaults for system OpenSSH and are not used to disable modern
+# choices.
+SAFE_LEGACY_KEX_ALGORITHMS: List[str] = [
+    "diffie-hellman-group14-sha1",
+    "diffie-hellman-group-exchange-sha1",
+]
+SAFE_LEGACY_HOST_KEY_ALGORITHMS: List[str] = ["ssh-rsa"]
+SAFE_LEGACY_CIPHERS: List[str] = [
+    "aes128-cbc",
+    "aes192-cbc",
+    "aes256-cbc",
+]
+SAFE_LEGACY_MAC_ALGORITHMS: List[str] = [
+    "hmac-sha1-etm@openssh.com",
+    "hmac-sha1",
+]
+
+# Algorithms below this line are only enabled by the explicit
+# ``legacy_break_glass`` profile.  In particular, group1 is a 1024-bit DH
+# group, ssh-dss is obsolete DSA/SHA-1, and MD5/RC4/DES/Blowfish/CBC-3DES are
+# not acceptable defaults for a management plane.
+SSH_ALGORITHM_PROFILE_AUTO = "auto"
+SSH_ALGORITHM_PROFILE_MODERN = "modern"
+SSH_ALGORITHM_PROFILE_LEGACY = "legacy_compat"
+SSH_ALGORITHM_PROFILE_BREAK_GLASS = "legacy_break_glass"
+
+
+def normalize_ssh_algorithm_profile(profile: object = None) -> str:
+    """Normalize a device's optional SSH algorithm profile.
+
+    Unknown or missing values fail closed to ``auto``.  The profile is kept
+    independent of vendor/platform so the same policy works for Cisco,
+    Huawei, H3C, Ruijie, Juniper and other network drivers.
+    """
+
+    value = str(profile or "").strip().lower().replace("-", "_")
+    aliases = {
+        "": SSH_ALGORITHM_PROFILE_AUTO,
+        "default": SSH_ALGORITHM_PROFILE_AUTO,
+        "auto": SSH_ALGORITHM_PROFILE_AUTO,
+        "modern": SSH_ALGORITHM_PROFILE_MODERN,
+        "strict": SSH_ALGORITHM_PROFILE_MODERN,
+        "legacy": SSH_ALGORITHM_PROFILE_LEGACY,
+        "compat": SSH_ALGORITHM_PROFILE_LEGACY,
+        "legacy_compat": SSH_ALGORITHM_PROFILE_LEGACY,
+        "break_glass": SSH_ALGORITHM_PROFILE_BREAK_GLASS,
+        "legacy_all": SSH_ALGORITHM_PROFILE_BREAK_GLASS,
+        "legacy_break_glass": SSH_ALGORITHM_PROFILE_BREAK_GLASS,
+    }
+    return aliases.get(value, SSH_ALGORITHM_PROFILE_AUTO)
+
+
+def _dedupe(values: List[str]) -> List[str]:
+    seen: set[str] = set()
+    result: List[str] = []
+    for value in values:
+        if value and value not in seen:
+            seen.add(value)
+            result.append(value)
+    return result
+
+
+def get_ssh_algorithm_lists(profile: object = None) -> Dict[str, List[str]]:
+    """Return ordered algorithm proposals for a transport profile.
+
+    ``auto`` is modern-first plus the safe legacy subset required by the
+    attached captures.  ``legacy_break_glass`` adds every legacy name already
+    understood by the project for devices that have no safer common option.
+    """
+
+    normalized = normalize_ssh_algorithm_profile(profile)
+    lists = {
+        "kex": list(MODERN_KEX_ALGORITHMS),
+        "host_key": list(MODERN_HOST_KEY_ALGORITHMS),
+        "cipher": list(MODERN_CIPHERS),
+        "mac": list(MODERN_MAC_ALGORITHMS),
+    }
+    if normalized in {SSH_ALGORITHM_PROFILE_AUTO, SSH_ALGORITHM_PROFILE_LEGACY}:
+        lists["kex"] = _dedupe(lists["kex"] + SAFE_LEGACY_KEX_ALGORITHMS)
+        lists["host_key"] = _dedupe(lists["host_key"] + SAFE_LEGACY_HOST_KEY_ALGORITHMS)
+        lists["cipher"] = _dedupe(lists["cipher"] + SAFE_LEGACY_CIPHERS)
+        lists["mac"] = _dedupe(lists["mac"] + SAFE_LEGACY_MAC_ALGORITHMS)
+    elif normalized == SSH_ALGORITHM_PROFILE_BREAK_GLASS:
+        lists["kex"] = _dedupe(lists["kex"] + LEGACY_KEX_ALGORITHMS)
+        lists["host_key"] = _dedupe(lists["host_key"] + LEGACY_HOST_KEY_ALGORITHMS)
+        lists["cipher"] = _dedupe(lists["cipher"] + LEGACY_CIPHERS)
+        lists["mac"] = _dedupe(lists["mac"] + LEGACY_MAC_ALGORITHMS)
+    return lists
+
+
+def filter_ssh_algorithm_names(
+    values: object,
+    category: str,
+    profile: object = None,
+) -> List[str]:
+    """Filter a library's available names against the selected profile."""
+
+    if not values:
+        return []
+    key = {
+        "kex": "kex",
+        "host": "host_key",
+        "host_key": "host_key",
+        "server_host_key": "host_key",
+        "cipher": "cipher",
+        "encryption": "cipher",
+        "mac": "mac",
+    }.get(str(category).strip().lower())
+    if key is None:
+        return []
+    allowed = set(get_ssh_algorithm_lists(profile)[key])
+    result: List[str] = []
+    for value in values:  # type: ignore[union-attr]
+        name = value.decode("ascii") if isinstance(value, bytes) else str(value)
+        if name in allowed:
+            result.append(name)
+            continue
+        # AsyncSSH/OpenSSH may expose certificate variants alongside the base
+        # host-key algorithm.  A profile allowing the base key also allows its
+        # certificate form; this does not enable ssh-dss unless explicitly
+        # present in the break-glass profile.
+        base = name.split("-cert-v01@", 1)[0] if "-cert-v01@" in name else name
+        if base in allowed:
+            result.append(name)
+    return result
+
+
+def _disabled_algorithms_for_profile(profile: object = None) -> Dict[str, List[str]]:
+    """Build Paramiko's per-category deny list for the selected profile."""
+
+    normalized = normalize_ssh_algorithm_profile(profile)
+    if normalized == SSH_ALGORITHM_PROFILE_BREAK_GLASS:
+        return {}
+
+    allowed = get_ssh_algorithm_lists(normalized)
+    legacy_by_category = {
+        "kex": LEGACY_KEX_ALGORITHMS,
+        "keys": LEGACY_HOST_KEY_ALGORITHMS,
+        "ciphers": LEGACY_CIPHERS,
+        "macs": LEGACY_MAC_ALGORITHMS,
+    }
+    category_to_profile_key = {
+        "kex": "kex",
+        "keys": "host_key",
+        "ciphers": "cipher",
+        "macs": "mac",
+    }
+    disabled: Dict[str, List[str]] = {}
+    for category, candidates in legacy_by_category.items():
+        profile_key = category_to_profile_key[category]
+        values = [name for name in candidates if name not in set(allowed[profile_key])]
+        if values:
+            disabled[category] = _dedupe(values)
+
+    # ``pubkeys`` controls client user-auth signatures rather than the server
+    # host key list.  Keep rsa-sha1 out of strict mode while leaving password
+    # authentication unaffected in the normal auto profile.
+    if normalized == SSH_ALGORITHM_PROFILE_MODERN:
+        disabled["pubkeys"] = ["ssh-rsa"]
+    return disabled
 
 LEGACY_SSH_ERROR_CODE = "legacy_ssh_algorithms"
 SSH_AUTH_ERROR_CODE = "ssh_authentication_failed"
@@ -97,29 +306,43 @@ def ensure_netmiko_custom_platforms() -> None:
 ensure_netmiko_custom_platforms()
 
 
-def build_netmiko_compatibility_kwargs(timeout: int | float | None = None) -> Dict[str, Any]:
+def build_paramiko_compatibility_kwargs(profile: object = None) -> Dict[str, Any]:
+    """Return safe Paramiko options for direct and Scrapli Paramiko opens."""
+
+    return {
+        "look_for_keys": False,
+        "allow_agent": False,
+        "disabled_algorithms": _disabled_algorithms_for_profile(profile),
+    }
+
+
+def build_netmiko_compatibility_kwargs(
+    timeout: int | float | None = None,
+    profile: object = None,
+) -> Dict[str, Any]:
     """
     Netmiko/Paramiko 兼容老设备的连接参数。
 
-    - disabled_algorithms={} 告诉 Paramiko 不禁用任何算法，
-      从而保留 diffie-hellman-group14-sha1、ssh-rsa 等 legacy 算法
+    - ``disabled_algorithms`` 按 profile 保留附件所需的安全 legacy 子集，
+      同时默认阻止 group1/ssh-dss/MD5/RC4 等高风险算法
     - use_keys/allow_agent 关闭本地 SSH agent 干扰
-    - disable_sha2_fix 打开旧 Cisco/旧 Paramiko 兼容路径
+    - 不关闭 Netmiko 的 SHA-2 兼容修复，避免现代 RSA-SHA2 设备被全局降级
     - conn/banner/auth/blocking: 使用一致的 60 秒预算，避免只放宽 TCP
       连接却在 SSH Banner 或 channel 阶段仍按 Netmiko 短默认值失败
     - session_timeout: 给慢速设备保留更长的已建立会话生命周期
     """
     ensure_netmiko_custom_platforms()
+    normalized_profile = normalize_ssh_algorithm_profile(profile)
     try:
         requested_timeout = int(float(timeout)) if timeout is not None else DEFAULT_SSH_TIMEOUT_SECONDS
     except (TypeError, ValueError):
         requested_timeout = DEFAULT_SSH_TIMEOUT_SECONDS
     transport_timeout = max(DEFAULT_SSH_TIMEOUT_SECONDS, requested_timeout)
     return {
-        "disabled_algorithms": {},
+        "disabled_algorithms": _disabled_algorithms_for_profile(normalized_profile),
         "use_keys": False,
         "allow_agent": False,
-        "disable_sha2_fix": True,
+        "disable_sha2_fix": False,
         "conn_timeout": transport_timeout,
         "banner_timeout": transport_timeout,
         "auth_timeout": transport_timeout,
@@ -178,53 +401,98 @@ def drain_paged_output(conn: Any, output: str, *, read_timeout: int = 30, max_pa
     return '\n'.join(clean_lines)
 
 
-def build_system_ssh_open_cmd() -> List[str]:
+@lru_cache(maxsize=8)
+def _system_ssh_algorithms(query: str) -> set[str] | None:
+    """Return algorithms implemented by the local OpenSSH, when available."""
+
+    ssh_path = shutil.which("ssh")
+    if not ssh_path:
+        return None
+    try:
+        result = subprocess.run(
+            [ssh_path, "-Q", query],
+            capture_output=True,
+            text=True,
+            timeout=2,
+            check=True,
+        )
+    except (OSError, subprocess.SubprocessError):
+        return None
+    values = {line.strip() for line in result.stdout.splitlines() if line.strip()}
+    return values or None
+
+
+def _filter_system_ssh_algorithms(query: str, values: List[str]) -> List[str]:
+    available = _system_ssh_algorithms(query)
+    if available is None:
+        return _dedupe(values)
+    return _dedupe([value for value in values if value in available])
+
+
+@lru_cache(maxsize=1)
+def _system_pubkey_accepted_option() -> str | None:
+    """Pick the public-key option name supported by the local OpenSSH.
+
+    OpenSSH 8.2 (used by the supplied capture) calls this option
+    ``PubkeyAcceptedKeyTypes``; newer releases prefer
+    ``PubkeyAcceptedAlgorithms`` but retain the former alias.  Probe with
+    ``ssh -G`` so the generated Scrapli command is accepted on both families.
+    """
+
+    ssh_path = shutil.which("ssh")
+    if not ssh_path:
+        return None
+    for option in ("PubkeyAcceptedAlgorithms", "PubkeyAcceptedKeyTypes"):
+        try:
+            result = subprocess.run(
+                [ssh_path, "-G", "127.0.0.1", "-o", f"{option}=+ssh-rsa"],
+                capture_output=True,
+                text=True,
+                timeout=2,
+            )
+        except (OSError, subprocess.SubprocessError):
+            continue
+        if result.returncode == 0:
+            return option
+    return None
+
+
+def build_system_ssh_open_cmd(profile: object = None) -> List[str]:
     """为 OpenSSH/system transport 生成兼容老设备的额外参数。
     
-    使用直接覆盖（=）而非追加（+=），因为现代OpenSSH可能在编译时禁用了legacy算法。
-    优先列出legacy算法以确保兼容性。
+    使用 ``+`` 追加 legacy 算法，保留现代 OpenSSH 默认优先级；只在
+    ``legacy_break_glass`` 档案中附加 group1/ssh-dss/MD5/RC4 等高风险算法。
     """
-    # 现代算法用作fallback（若设备支持）
-    modern_kex = [
-        "curve25519-sha256",
-        "curve25519-sha256@libssh.org",
-        "ecdh-sha2-nistp256",
-        "ecdh-sha2-nistp384",
-        "ecdh-sha2-nistp521",
-        "diffie-hellman-group-exchange-sha256",
+    normalized_profile = normalize_ssh_algorithm_profile(profile)
+    if normalized_profile == SSH_ALGORITHM_PROFILE_MODERN:
+        return []
+
+    lists = get_ssh_algorithm_lists(normalized_profile)
+    modern = get_ssh_algorithm_lists(SSH_ALGORITHM_PROFILE_MODERN)
+    legacy_only = {
+        key: [name for name in values if name not in set(modern[key])]
+        for key, values in lists.items()
+    }
+    candidates = {
+        "kex": _filter_system_ssh_algorithms("kex", legacy_only["kex"]),
+        "host_key": _filter_system_ssh_algorithms("key", legacy_only["host_key"]),
+        "cipher": _filter_system_ssh_algorithms("cipher", legacy_only["cipher"]),
+        "mac": _filter_system_ssh_algorithms("mac", legacy_only["mac"]),
+    }
+    options = [
+        ("KexAlgorithms", candidates["kex"]),
+        ("HostKeyAlgorithms", candidates["host_key"]),
+        ("Ciphers", candidates["cipher"]),
+        ("MACs", candidates["mac"]),
     ]
-    
-    modern_host_keys = [
-        "ecdsa-sha2-nistp256",
-        "ecdsa-sha2-nistp384",
-        "ecdsa-sha2-nistp521",
-        "rsa-sha2-512",
-        "rsa-sha2-256",
-    ]
-    
-    modern_ciphers = [
-        "aes128-gcm@openssh.com",
-        "aes256-gcm@openssh.com",
-        "aes128-ctr",
-        "aes256-ctr",
-    ]
-    
-    modern_macs = [
-        "umac-64-etm@openssh.com",
-        "umac-128-etm@openssh.com",
-        "hmac-sha2-256-etm@openssh.com",
-        "hmac-sha2-512-etm@openssh.com",
-        "hmac-sha2-256",
-        "hmac-sha2-512",
-    ]
-    
-    return [
-        "-o", f"KexAlgorithms={','.join(LEGACY_KEX_ALGORITHMS + modern_kex)}",
-        "-o", f"HostKeyAlgorithms={','.join(LEGACY_HOST_KEY_ALGORITHMS + modern_host_keys)}",
-        "-o", f"PubkeyAcceptedAlgorithms={','.join(LEGACY_HOST_KEY_ALGORITHMS + modern_host_keys)}",
-        "-o", f"Ciphers={','.join(LEGACY_CIPHERS + modern_ciphers)}",
-        "-o", f"MACs={','.join(LEGACY_MAC_ALGORITHMS + modern_macs)}",
-    ]
+    pubkey_option = _system_pubkey_accepted_option()
+    if pubkey_option:
+        options.insert(2, (pubkey_option, candidates["host_key"]))
+    command: List[str] = []
+    for option, values in options:
+        if values:
+            command.extend(["-o", f"{option}=+{','.join(values)}"])
+    return command
 
 
 def is_legacy_ssh_negotiation_error(error_text: str) -> bool:

@@ -1,6 +1,71 @@
 import * as THREE from 'three';
+import type { DeviceHealthStatus } from '../../types';
 
 const textureCache = new Map<string, THREE.CanvasTexture>();
+
+/** Draw a small recessed lens with a controlled halo. The glow is deliberately
+ * subtle so a dense port bank still reads as hardware instead of neon art. */
+function drawLedLens(
+  ctx: CanvasRenderingContext2D,
+  x: number,
+  y: number,
+  color: string,
+  active: boolean,
+  radius = 5,
+) {
+  ctx.save();
+  if (active) {
+    ctx.shadowColor = color;
+    ctx.shadowBlur = radius * 2.5;
+  }
+  const lens = ctx.createRadialGradient(x - radius * 0.35, y - radius * 0.35, radius * 0.1, x, y, radius);
+  lens.addColorStop(0, active ? '#f8fffb' : '#40515a');
+  lens.addColorStop(0.22, color);
+  lens.addColorStop(1, active ? '#0b5a43' : '#101b24');
+  ctx.fillStyle = lens;
+  ctx.beginPath();
+  ctx.arc(x, y, radius, 0, Math.PI * 2);
+  ctx.fill();
+  ctx.shadowBlur = 0;
+  ctx.strokeStyle = active ? `${color}cc` : '#334155';
+  ctx.lineWidth = 1;
+  ctx.stroke();
+  ctx.restore();
+}
+
+function drawPortCage(
+  ctx: CanvasRenderingContext2D,
+  x: number,
+  y: number,
+  width: number,
+  height: number,
+  active: boolean,
+  ledY: number,
+) {
+  const cavity = ctx.createLinearGradient(x, y, x, y + height);
+  cavity.addColorStop(0, '#02050a');
+  cavity.addColorStop(0.5, '#111d28');
+  cavity.addColorStop(1, '#03070d');
+  ctx.fillStyle = cavity;
+  ctx.fillRect(x, y, width, height);
+  ctx.strokeStyle = active ? '#3e6d67' : '#475569';
+  ctx.lineWidth = active ? 1.6 : 1.1;
+  ctx.strokeRect(x, y, width, height);
+
+  // SFP cage contacts / transceiver mouth.
+  ctx.fillStyle = '#0a1119';
+  ctx.fillRect(x + 2, y + 5, Math.max(2, width - 4), Math.max(4, height - 10));
+  ctx.strokeStyle = '#263746';
+  ctx.lineWidth = 0.7;
+  ctx.beginPath();
+  for (let contact = 1; contact < 4; contact++) {
+    const contactX = x + (width * contact) / 4;
+    ctx.moveTo(contactX, y + 8);
+    ctx.lineTo(contactX, y + height - 8);
+  }
+  ctx.stroke();
+  drawLedLens(ctx, x + width / 2, ledY, active ? '#41f1a6' : '#1e3a3a', active, Math.max(2.5, Math.min(4.5, width * 0.13)));
+}
 
 /**
  * EIA-310-D compliant vertical mounting rail texture with U markings and square cage nut holes.
@@ -185,10 +250,11 @@ export function getSwitchFrontTexture(
   vendor = 'Huawei',
   model = 'CE6885',
   heightU = 1,
-  connectedPortNumbers: number[] = []
+  connectedPortNumbers: number[] = [],
+  healthStatus: DeviceHealthStatus = 'unknown',
 ): THREE.CanvasTexture {
   const portsKey = connectedPortNumbers.slice().sort((a, b) => a - b).join('_');
-  const cacheKey = `switch_front_${deviceName}_${vendor}_${model}_${heightU}_${portsKey}`;
+  const cacheKey = `switch_front_${deviceName}_${vendor}_${model}_${heightU}_${healthStatus}_${portsKey}`;
   if (textureCache.has(cacheKey)) {
     return textureCache.get(cacheKey)!;
   }
@@ -231,22 +297,28 @@ export function getSwitchFrontTexture(
   ctx.font = 'bold 18px system-ui, -apple-system, sans-serif';
   ctx.fillText(`${vendor.toUpperCase()} ${model.toUpperCase().slice(0, 10)}`, 48, height / 2 + 24);
 
-  // Silkscreen PWR & SYS LEDs
-  ctx.fillStyle = '#94a3b8';
-  ctx.font = 'bold 12px monospace';
-  ctx.textAlign = 'right';
-  ctx.fillText('PWR', 280, height / 2 - 16);
-  ctx.fillStyle = '#22c55e'; // Green Power LED
-  ctx.beginPath();
-  ctx.arc(292, height / 2 - 16, 5, 0, Math.PI * 2);
-  ctx.fill();
+  // Recessed status cluster. The procedural 3D lenses are animated separately;
+  // these silkscreen marks keep the faceplate legible at full-rack distance.
+  ctx.fillStyle = '#060b12';
+  ctx.fillRect(238, 20, 76, height - 40);
+  ctx.strokeStyle = '#263746';
+  ctx.lineWidth = 1.5;
+  ctx.strokeRect(238, 20, 76, height - 40);
 
   ctx.fillStyle = '#94a3b8';
-  ctx.fillText('SYS', 280, height / 2 + 16);
-  ctx.fillStyle = '#22c55e'; // Green System Run LED
-  ctx.beginPath();
-  ctx.arc(292, height / 2 + 16, 5, 0, Math.PI * 2);
-  ctx.fill();
+  ctx.font = 'bold 11px monospace';
+  ctx.textAlign = 'right';
+  const statusRows = [
+    { label: 'PWR', color: healthStatus === 'offline' ? '#1e293b' : '#38d996', active: healthStatus !== 'offline' },
+    { label: 'SYS', color: healthStatus === 'critical' ? '#ef4444' : healthStatus === 'healthy' || healthStatus === 'warning' ? '#38d996' : '#416274', active: healthStatus !== 'offline' },
+    { label: 'ALM', color: healthStatus === 'critical' ? '#ef4444' : healthStatus === 'warning' ? '#f59e0b' : '#1e293b', active: healthStatus === 'critical' || healthStatus === 'warning' },
+  ];
+  statusRows.forEach((row, index) => {
+    const y = height / 2 + (index - 1) * 32;
+    ctx.fillStyle = '#94a3b8';
+    ctx.fillText(row.label, 274, y + 3);
+    drawLedLens(ctx, 295, y, row.color, row.active, 4.5);
+  });
 
   // Zone 1: Dedicated Management, Console & USB Section (X: 316 ~ 476)
   ctx.fillStyle = '#0b111e';
@@ -300,29 +372,13 @@ export function getSwitchFrontTexture(
     const topPortNum = c * 2;
     const isTopConnected = connectedPortNumbers.includes(topPortNum);
     const pyTop = height / 2 - portH - 6;
-    ctx.fillStyle = '#020617';
-    ctx.fillRect(px, pyTop, portW, portH);
-    ctx.strokeStyle = '#475569';
-    ctx.lineWidth = 1.2;
-    ctx.strokeRect(px, pyTop, portW, portH);
-
-    // Top port LED: ONLY GREEN IF AN ACTIVE CABLE IS PLUGGED IN!
-    ctx.fillStyle = isTopConnected ? '#22c55e' : '#18202c';
-    ctx.fillRect(px + (is48Port ? 6 : 12), pyTop - 7, (is48Port ? 16 : 16), 4);
+    drawPortCage(ctx, px, pyTop, portW, portH, isTopConnected, pyTop - 7);
 
     // Bottom port
     const bottomPortNum = c * 2 + 1;
     const isBottomConnected = connectedPortNumbers.includes(bottomPortNum);
     const pyBottom = height / 2 + 6;
-    ctx.fillStyle = '#020617';
-    ctx.fillRect(px, pyBottom, portW, portH);
-    ctx.strokeStyle = '#475569';
-    ctx.lineWidth = 1.2;
-    ctx.strokeRect(px, pyBottom, portW, portH);
-
-    // Bottom port LED: ONLY GREEN IF AN ACTIVE CABLE IS PLUGGED IN!
-    ctx.fillStyle = isBottomConnected ? '#22c55e' : '#18202c';
-    ctx.fillRect(px + (is48Port ? 6 : 12), pyBottom + portH + 3, (is48Port ? 16 : 16), 4);
+    drawPortCage(ctx, px, pyBottom, portW, portH, isBottomConnected, pyBottom + portH + 7);
   }
 
   // Zone 3: High-Speed 40G/100G QSFP28 Uplink Area
@@ -333,15 +389,13 @@ export function getSwitchFrontTexture(
 
   for (let q = 0; q < qsfpCols; q++) {
     const qx = qsfpStartX + q * (qsfpW + 10);
-    ctx.fillStyle = '#020617';
-    ctx.fillRect(qx, height / 2 - qsfpH / 2, qsfpW, qsfpH);
-    ctx.strokeStyle = '#0284c7';
-    ctx.lineWidth = 1.8;
-    ctx.strokeRect(qx, height / 2 - qsfpH / 2, qsfpW, qsfpH);
+    const qsfpConnected = connectedPortNumbers.includes(49 + q);
+    drawPortCage(ctx, qx, height / 2 - qsfpH / 2, qsfpW, qsfpH, qsfpConnected, height / 2 - qsfpH / 2 - 7);
 
     // QSFP Pull-tab & LED
-    ctx.fillStyle = '#0284c7';
+    ctx.fillStyle = qsfpConnected ? '#22c55e' : '#1e3a46';
     ctx.fillRect(qx + 12, height / 2 - qsfpH / 2 - 6, 28, 4);
+    drawLedLens(ctx, qx + qsfpW - 12, height / 2 - qsfpH / 2 - 7, qsfpConnected ? '#41f1a6' : '#1e3a3a', qsfpConnected, 3.5);
     ctx.fillStyle = '#cbd5e1';
     ctx.font = 'bold 9px monospace';
     ctx.textAlign = 'center';

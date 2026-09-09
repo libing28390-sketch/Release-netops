@@ -28,6 +28,51 @@ export interface RackFrameProps {
   renderStructure?: boolean;
 }
 
+interface RackCasterAssemblyProps {
+  x: number;
+  y: number;
+  z: number;
+  front: boolean;
+}
+
+/**
+ * Mobile rack base detail.  The production cabinet GLB contains the shell,
+ * but its caster geometry is deliberately kept lightweight here so the same
+ * wheels remain visible when the procedural fallback or the GLB is used.
+ */
+const RackCasterAssembly: React.FC<RackCasterAssemblyProps> = ({ x, y, z, front }) => (
+  <group position={[x, y, z]} renderOrder={24}>
+    <mesh position={[0, 0.11, 0]} castShadow renderOrder={24}>
+      <boxGeometry args={[0.11, 0.18, 0.11]} />
+      <meshStandardMaterial color="#4b5563" roughness={0.32} metalness={0.82} />
+    </mesh>
+    {/* Wheel plane faces the viewer (+Z); the dark hub keeps the silver ring
+        readable without looking like a glowing UI marker. */}
+    <mesh rotation={[0, 0, 0]} castShadow renderOrder={40}>
+      <torusGeometry args={[0.105, 0.032, 10, 18]} />
+      <meshStandardMaterial
+        color="#d6dde2"
+        emissive="#64748b"
+        emissiveIntensity={0.16}
+        roughness={0.24}
+        metalness={0.78}
+        depthTest={false}
+        depthWrite={false}
+      />
+    </mesh>
+    <mesh rotation={[Math.PI / 2, 0, 0]} renderOrder={41}>
+      <cylinderGeometry args={[0.035, 0.035, 0.07, 12]} />
+      <meshStandardMaterial color="#1b242c" roughness={0.3} metalness={0.75} depthTest={false} depthWrite={false} />
+    </mesh>
+    {front && (
+      <mesh position={[0.07, 0.15, 0.025]} rotation={[0, 0, -Math.PI / 7]} renderOrder={27}>
+        <boxGeometry args={[0.018, 0.08, 0.018]} />
+        <meshStandardMaterial color="#d4d9dd" roughness={0.25} metalness={0.8} />
+      </mesh>
+    )}
+  </group>
+);
+
 export const RackFrame: React.FC<RackFrameProps> = ({
   name,
   totalU,
@@ -178,6 +223,29 @@ export const RackFrame: React.FC<RackFrameProps> = ({
       </group>
         </>
       )}
+
+      {/* Four mobile casters sit below the plinth.  Keep them outside the
+          structural conditional so the production GLB and procedural frame
+          share the same visible base detail. */}
+      {[
+        // Set the front pair just outside the plinth face so the wheel ring
+        // remains visible even when the production GLB has a deep base lip.
+        { x: -postOffsetW, z: postOffsetD + 0.38, front: true },
+        { x: postOffsetW, z: postOffsetD + 0.38, front: true },
+        { x: -postOffsetW, z: -postOffsetD - 0.38, front: false },
+        { x: postOffsetW, z: -postOffsetD - 0.38, front: false },
+      ].map((caster, index) => (
+        <RackCasterAssembly
+          key={`caster-${index}`}
+          x={caster.x}
+          // The GLB's caster bounds extend below the logical plinth to about
+          // y=-1.0; matching that datum keeps the wheel under the base rather
+          // than floating in the lowest empty U slots.
+          y={-0.93}
+          z={caster.z}
+          front={caster.front}
+        />
+      ))}
 
       {/* The GLB carries the physical rails; this lightweight overlay keeps
           the viewer's U-number ruler available without duplicating posts or

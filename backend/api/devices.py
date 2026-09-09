@@ -65,7 +65,11 @@ from services.snmp_metric_profile_service import (
     unbind_model_metric_profile,
     update_model_metric_profile,
 )
-from drivers.ssh_compat import build_ssh_error_guidance, get_ssh_error_code
+from drivers.ssh_compat import (
+    build_ssh_error_guidance,
+    get_ssh_error_code,
+    normalize_ssh_algorithm_profile,
+)
 from datetime import datetime, timezone
 
 _logger = logging.getLogger(__name__)
@@ -330,8 +334,12 @@ def _create_linked_asset_for_device(conn, device_id: str, device: dict) -> str |
             encrypt_credential(admin_password) if admin_password else '',
             device.get('auth_model', 'single'),
             encrypt_credential(device.get('enable_password')) if device.get('enable_password') else '',
-            int(device.get('management_port') or 22),
+             int(device.get('management_port') or 22),
         ))
+        conn.execute(
+            'UPDATE physical_assets SET ssh_algorithm_profile = ? WHERE id = ?',
+            (normalize_ssh_algorithm_profile(device.get('ssh_algorithm_profile')), asset_id),
+        )
         conn.execute('UPDATE devices SET asset_id = ?, vendor = ? WHERE id = ?', (asset_id, vendor, device_id))
         return asset_id
     except Exception as exc:
@@ -362,6 +370,9 @@ def _build_probe_stage(stage: str, ok: bool, summary: str, detail: str, latency_
 
 def _sanitize_device_item(item: dict) -> dict:
     sanitized = dict(item)
+    sanitized['ssh_algorithm_profile'] = normalize_ssh_algorithm_profile(
+        sanitized.get('ssh_algorithm_profile')
+    )
     if 'web_access_enabled' in sanitized:
         sanitized['web_access_enabled'] = bool(sanitized.get('web_access_enabled'))
     for scheme_key in ('web_http_enabled', 'web_https_enabled'):
@@ -547,6 +558,7 @@ def _resolve_connection_target(payload: dict) -> dict:
         'password': payload.get('password'),
         'method': payload.get('method', 'ssh'),
         'platform': payload.get('platform', 'cisco_ios'),
+        'ssh_algorithm_profile': payload.get('ssh_algorithm_profile'),
         'check_mode': str(payload.get('check_mode') or 'quick').lower(),
         'port': payload.get('port') or payload.get('management_port'),
     }
@@ -573,6 +585,10 @@ def _resolve_connection_target(payload: dict) -> dict:
     resolved['username'] = resolved['username'] or creds['username'] or ''
     resolved['method'] = payload.get('method') or stored.get('connection_method') or 'ssh'
     resolved['platform'] = payload.get('platform') or stored.get('platform') or 'cisco_ios'
+    resolved['ssh_algorithm_profile'] = (
+        payload.get('ssh_algorithm_profile')
+        or stored.get('ssh_algorithm_profile')
+    )
     payload_plain_password = _resolve_payload_password(payload_password)
     resolved['password'] = payload_plain_password or creds['password']
     resolved['enable_password'] = creds['enable_password']
@@ -693,6 +709,9 @@ def _fetch_interface_data_by_device_ids(conn, device_ids: list[str]) -> dict[str
 
 def _normalize_device_row(row, conn=None, interface_data=None):
     item = dict(row)
+    item['ssh_algorithm_profile'] = normalize_ssh_algorithm_profile(
+        item.get('ssh_algorithm_profile')
+    )
     from core.platform_utils import normalize_device_platform
     item['platform'] = normalize_device_platform(item.get('vendor'), item.get('platform'))
     try:
@@ -904,6 +923,7 @@ def read_devices(
             '        WHERE awp.asset_id = pa.id AND awp.enabled = 1 AND LOWER(awp.scheme) = \'http\') AS web_http_enabled, '
             'EXISTS (SELECT 1 FROM asset_web_access_profiles awp '
             '        WHERE awp.asset_id = pa.id AND awp.enabled = 1 AND LOWER(awp.scheme) = \'https\') AS web_https_enabled'
+            ', COALESCE(pa.winrm_enabled, FALSE) AS winrm_enabled'
         )
         from_clause = (
             'FROM devices d '
@@ -925,7 +945,7 @@ def read_devices(
                 'd.snmp_cpu_oid, d.snmp_memory_oid, '
                 'd.snmp_metric_profile_id, '
                 'd.site_id, d.fan_status, d.psu_status, d.sys_name, d.sys_location, d.sys_contact, d.asset_id, d.vendor, '
-                'd.device_category, d.management_port, d.lifecycle_status, '
+                'd.device_category, d.management_port, d.lifecycle_status, d.ssh_algorithm_profile, '
                 'd.platform_profile_id, d.platform_source, d.platform_locked'
                 + asset_cols
             )
@@ -2470,6 +2490,10 @@ def create_device(device: dict = Body(...), user=require_role("Operator")):
             (_resolve_device_site_id(conn, device.get('site_id'), device.get('site')), device_id),
         )
         conn.execute(
+            'UPDATE devices SET ssh_algorithm_profile = ? WHERE id = ?',
+            (normalize_ssh_algorithm_profile(device.get('ssh_algorithm_profile')), device_id),
+        )
+        conn.execute(
             'UPDATE devices SET snmp_cpu_oid = ?, snmp_memory_oid = ? WHERE id = ?',
             (snmp_cpu_oid, snmp_memory_oid, device_id),
         )
@@ -2490,7 +2514,14 @@ def create_device(device: dict = Body(...), user=require_role("Operator")):
             target_id=device_id,
             target_name=device.get('hostname'),
             device_id=device_id,
-            details={'ip_address': device.get('ip_address'), 'platform': platform, 'platform_profile_id': platform_profile_id or None},
+            details={
+                'ip_address': device.get('ip_address'),
+                'platform': platform,
+                'platform_profile_id': platform_profile_id or None,
+                'ssh_algorithm_profile': normalize_ssh_algorithm_profile(
+                    device.get('ssh_algorithm_profile')
+                ),
+            },
         )
         return _sanitize_device_item(dict(new_device))
     except Exception as e:
@@ -2701,6 +2732,17 @@ def update_device(device_id: str, device: dict = Body(...)):
                WHERE id = ?''',
             (platform_profile_id or None, platform_source, platform_locked, device_id),
         )
+        if 'ssh_algorithm_profile' in device:
+            profile = normalize_ssh_algorithm_profile(device.get('ssh_algorithm_profile'))
+            conn.execute(
+                'UPDATE devices SET ssh_algorithm_profile = ? WHERE id = ?',
+                (profile, device_id),
+            )
+            if existing_device.get('asset_id'):
+                conn.execute(
+                    'UPDATE physical_assets SET ssh_algorithm_profile = ? WHERE id = ?',
+                    (profile, existing_device['asset_id']),
+                )
         conn.execute(
             'UPDATE devices SET site_id = ? WHERE id = ?',
             (_resolve_device_site_id(conn, device.get('site_id'), device.get('site')), device_id),
@@ -2727,6 +2769,11 @@ def update_device(device_id: str, device: dict = Body(...)):
             'ip_address': device.get('ip_address'),
             'platform': platform,
             'platform_profile_id': platform_profile_id or None,
+            'ssh_algorithm_profile': normalize_ssh_algorithm_profile(
+                device.get('ssh_algorithm_profile')
+                if 'ssh_algorithm_profile' in device
+                else existing_device.get('ssh_algorithm_profile')
+            ),
         }
         if old_lifecycle != new_lifecycle:
             audit_details['lifecycle_transition'] = f"{old_lifecycle} → {new_lifecycle}"
@@ -3277,6 +3324,7 @@ def test_device_connection(payload: dict = Body(...)):
         'password': password,
         'connection_method': method,
         'platform': platform,
+        'ssh_algorithm_profile': resolved.get('ssh_algorithm_profile'),
         'port': port
     }
     

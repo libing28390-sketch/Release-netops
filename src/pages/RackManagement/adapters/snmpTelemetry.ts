@@ -53,7 +53,11 @@ async function getNetworkDevices(): Promise<any[]> {
   if (networkDevicesCache && now < networkDevicesExpiresAt) {
     return networkDevicesCache;
   }
-  const res = await fetch('/api/monitoring/network-devices?page_size=200', {
+  // The monitoring list contract caps page_size at 100. Rack inspectors only
+  // need a bounded registry page to resolve the selected device; asking for
+  // 200 made every inspector fall into the telemetry-error state with HTTP
+  // 422 before interface lights could be populated.
+  const res = await fetch('/api/monitoring/network-devices?page_size=100', {
     headers: authHeaders(),
   });
   if (!res.ok) throw new Error(`Network device registry request failed (${res.status})`);

@@ -231,7 +231,7 @@ const InventoryDevicesTab: React.FC<InventoryDevicesTabProps> = ({
 
   const handleEditDevice = (device: Device) => {
     setEditingDevice(device);
-    setEditForm({ ...device, password: '' } as Device);
+    setEditForm({ ...device, password: '', ssh_algorithm_profile: device.ssh_algorithm_profile || 'auto' } as Device);
     setShowEditModal(true);
   };
 

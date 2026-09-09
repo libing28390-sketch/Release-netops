@@ -9,6 +9,7 @@ class DeviceBase(BaseModel):
     ip_address: str
     platform: str
     username: str
+    ssh_algorithm_profile: str = 'auto'
 
 class DeviceCreate(DeviceBase):
     password: str
