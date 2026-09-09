@@ -152,15 +152,21 @@ def _height_matches(entry: dict[str, Any], height_u: int | None) -> bool:
 def _available(entry: dict[str, Any]) -> bool:
     if str(entry.get("status") or "draft").strip().lower() != "approved":
         return False
-    glb_path = str(entry.get("glb_path") or "").strip()
-    if not glb_path:
+    public_path = str(entry.get("public_path") or "").strip()
+    if not public_path or not public_path.startswith("/"):
         return False
-    path = (_ROOT / glb_path).resolve()
-    try:
-        path.relative_to(_ROOT)
-    except ValueError:
-        return False
-    return path.is_file()
+
+    relative_path = public_path.lstrip("/")
+    for published_root in (_ROOT / "public", _ROOT / "dist"):
+        published_root = published_root.resolve()
+        path = (published_root / relative_path).resolve()
+        try:
+            path.relative_to(published_root)
+        except ValueError:
+            continue
+        if path.is_file():
+            return True
+    return False
 
 
 def _result(

@@ -1032,7 +1032,7 @@ export const useAutomation = ({
       { key: language === 'zh' ? '设备' : 'Device', value: quickQueryStructured?.device?.hostname || '' },
       { key: language === 'zh' ? '平台' : 'Platform', value: quickQueryStructured?.device?.platform || '' },
       { key: language === 'zh' ? '采集时间' : 'Collected At', value: quickQueryStructured?.collected_at || '' },
-      { key: language === 'zh' ? '解析器' : 'Parser', value: table.category?.parser || 'ntc-templates' },
+      { key: language === 'zh' ? '解析器' : 'Parser', value: table.category?.parser || 'platform-parser' },
       { key: language === 'zh' ? '记录数' : 'Records', value: String(table.records.length) },
       { key: language === 'zh' ? '实际执行命令' : 'Executed Commands', value: commands.join('\n') },
     ];
@@ -1173,7 +1173,7 @@ export const useAutomation = ({
         categories: [
           {
             name: categoryKey,
-            parser: backendParser || (operationalCategory ? 'platform-registry' : 'ntc-templates'),
+            parser: backendParser || (operationalCategory ? 'platform-registry' : 'platform-parser'),
             count: combinedRecords.length,
             records: combinedRecords,
             parse_status: backendParseStatus,

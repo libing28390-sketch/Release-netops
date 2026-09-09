@@ -26,7 +26,7 @@ interface QuickQueryResultOverlayProps {
   onQuickQueryViewChange?: (view: 'terminal' | 'table') => void;
 }
 
-const formatParserLabel = (value: unknown, isZh: boolean): string => {
+export const formatParserLabel = (value: unknown, isZh: boolean): string => {
   const raw = String(value || '').trim();
   if (!raw) return isZh ? '未声明解析器' : 'Parser not reported';
 
@@ -37,8 +37,8 @@ const formatParserLabel = (value: unknown, isZh: boolean): string => {
   if (raw === 'platform-parser' || raw === 'platform-registry') {
     return isZh ? '平台版本自动匹配' : 'Automatic platform-version match';
   }
-  if (raw === 'ntc-templates') {
-    return isZh ? 'NTC Templates（旧目录）' : 'NTC Templates (legacy catalog)';
+  if (raw === 'ntc-templates' || raw === 'ntc_templates') {
+    return isZh ? 'TextFSM 解析（模板未回传）' : 'TextFSM parser (template not reported)';
   }
   return raw;
 };

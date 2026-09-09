@@ -728,6 +728,7 @@ def test_quick_collection_uses_platform_command_and_parses_official_output(
             "ip_address": "192.0.2.10",
             "vendor": "H3C" if "comware" in platform else "Cisco",
             "platform": platform,
+            "version": "7.1.070" if platform == "h3c_comware" else "",
             "role": "distribution",
             "collection_policy_json": '{"collectors":{"interface_status":true,"lldp":true,"arp":true,"mac_table":true,"vlan":true,"routes":true,"bgp":true,"ospf":true,"eigrp":true,"isis":true,"rip":true,"bfd":true}}',
         },
@@ -739,3 +740,12 @@ def test_quick_collection_uses_platform_command_and_parses_official_output(
         assert categories[category]["commands"] == commands
         assert categories[category]["parse_status"] == "matched"
         assert categories[category]["count"] > 0
+
+    if "h3c_comware" == platform:
+        assert categories["interfaces"]["parser"] == (
+            "textfsm:h3c_comware_v7_display_interface_brief.textfsm"
+        )
+        assert categories["interfaces"]["template"] == (
+            "h3c_comware_v7_display_interface_brief.textfsm"
+        )
+        assert categories["interfaces"]["parser_platform"] == "h3c_comware_v7"

@@ -84,3 +84,31 @@ def test_chinese_patch_panel_label_resolves_to_same_approved_glb():
     assert resolved["asset_key"] == "generic_patch_panel_cat6_24p"
     assert resolved["available"] is True
     assert resolved["render_strategy"] == "glb"
+
+
+def test_approved_asset_availability_uses_published_path_not_ignored_build_output(tmp_path, monkeypatch):
+    published_asset = tmp_path / "public" / "assets" / "3d" / "approved.glb"
+    published_asset.parent.mkdir(parents=True)
+    published_asset.write_bytes(b"glTF")
+    monkeypatch.setattr(rack_asset_resolver, "_ROOT", tmp_path)
+
+    assert rack_asset_resolver._available(
+        {
+            "status": "approved",
+            "glb_path": "assets/build/glb/approved.glb",
+            "public_path": "/assets/3d/approved.glb",
+        }
+    ) is True
+
+
+def test_approved_asset_availability_rejects_public_path_escape(tmp_path, monkeypatch):
+    (tmp_path / "outside.glb").write_bytes(b"glTF")
+    monkeypatch.setattr(rack_asset_resolver, "_ROOT", tmp_path)
+
+    assert rack_asset_resolver._available(
+        {
+            "status": "approved",
+            "glb_path": "assets/build/glb/outside.glb",
+            "public_path": "/../outside.glb",
+        }
+    ) is False

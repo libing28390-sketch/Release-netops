@@ -1950,6 +1950,14 @@ def collect_operational_data(
             except Exception:
                 pass
 
+        # Legacy/unbound devices still need the same version-aware parser
+        # context as devices that already carry a published Platform Profile.
+        # The old path called `_parse_command_output` directly and discarded
+        # the selected TextFSM template, which made the UI label every result
+        # as the legacy NTC catalog even when a concrete V7/V9 template had
+        # parsed the output successfully.
+        parser_context = resolve_device_platform_context(device_info)
+
         for category in legacy_categories:
             category_commands = commands_by_category.get(category, [])
             category_result: dict[str, Any] = {
@@ -1959,7 +1967,9 @@ def collect_operational_data(
                 'count': 0,
                 'records': [],
                 'raw_outputs': [],
-                'parser': 'ntc-templates',
+                'parser': 'platform-parser',
+                'parser_platform': parser_context.get('parser_platform') or parser_platform,
+                'templates': [],
                 'parse_status': 'unmatched',
             }
 
@@ -1981,7 +1991,40 @@ def collect_operational_data(
                     )
                     category_result['raw_outputs'].append({'command': command, 'output': output})
                     try:
-                        records = _parse_command_output(parser_platform, category, command, output)
+                        # Use the canonical parser first so the response keeps
+                        # the concrete versioned template identity.  Category
+                        # specific raw fallbacks remain available for output
+                        # formats that do not have a TextFSM grammar.
+                        parse_result = parse_device_cli_output(
+                            device_info,
+                            command,
+                            output,
+                            context=parser_context,
+                        )
+                        records = parse_result.get('records') or []
+                        if records:
+                            category_result['parser'] = parse_result.get('parser') or 'platform-parser'
+                            category_result['parser_platform'] = parse_result.get('parser_platform') or category_result['parser_platform']
+                            category_result['parse_status'] = parse_result.get('parse_status') or 'matched'
+                            for field in ('template', 'template_source', 'template_action_code', 'parser_message'):
+                                if parse_result.get(field):
+                                    category_result[field] = parse_result[field]
+                            template = str(parse_result.get('template') or '').strip()
+                            if template and template not in category_result['templates']:
+                                category_result['templates'].append(template)
+                        else:
+                            records = _parse_command_output(
+                                parser_context.get('parser_platform') or parser_platform,
+                                category,
+                                command,
+                                output,
+                            )
+                            if records:
+                                # These records came from a category-specific
+                                # compatibility parser; do not claim that an
+                                # old NTC catalog was the selected source.
+                                category_result['parser'] = 'platform-parser'
+                                category_result['parse_status'] = 'matched'
                         if records:
                             category_result['records'].extend(records)
                             category_result['count'] = len(category_result['records'])
