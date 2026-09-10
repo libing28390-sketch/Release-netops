@@ -761,6 +761,195 @@ def test_targeted_mac_query_allows_explicit_router_collection_override(monkeypat
     assert ip_locator_service._targeted_mac_query(device, "02e0f1020023")[0]["vlan"] == "12"
 
 
+def test_targeted_mac_query_reports_disabled_without_opening_a_session(monkeypatch):
+    device = {
+        **DEVICE,
+        "role": "access",
+        "platform": "h3c_comware",
+    }
+
+    def fail_if_called(*_args, **_kwargs):
+        raise AssertionError("disabled MAC lookup must not open SSH")
+
+    monkeypatch.setattr(ip_locator_service, "_send_command", fail_if_called)
+
+    result = ip_locator_service._targeted_mac_query(device, "02e0f1020023")
+
+    assert result == []
+    assert result.status["status"] == "disabled"
+    assert result.status["error_code"] == "MAC_TABLE_DISABLED"
+
+
+def test_targeted_mac_query_reports_found_and_preserves_list_contract(monkeypatch):
+    device = {
+        **DEVICE,
+        "role": "access",
+        "platform": "h3c_comware",
+        "collection_policy_json": '{"collectors":{"mac_table":true}}',
+    }
+    monkeypatch.setattr(
+        ip_locator_service,
+        "_send_command",
+        lambda *_args, **_kwargs: (
+            "MAC Address      VLAN ID    State            Port/Nickname            Aging\n"
+            "02e0-f102-0023   12         Learned          GE1/0/1                  Y\n"
+        ),
+    )
+
+    result = ip_locator_service._targeted_mac_query(device, "02e0f1020023")
+
+    assert result == [{
+        "mac": "02e0f1020023",
+        "port": "GE1/0/1",
+        "vlan": "12",
+        "vlan_source": "mac_table",
+        "type": "Learned",
+        "switch_id": "device-1",
+        "switch_name": "sw-01",
+    }]
+    assert result.status == {
+        "status": "found",
+        "device_id": "device-1",
+        "device": "sw-01",
+        "command": "display mac-address 02e0-f102-0023",
+        "record_count": 1,
+        "port": "GE1/0/1",
+        "vlan": "12",
+        "reason": "MAC 表已命中目标地址",
+        "error_code": "",
+    }
+
+
+def test_targeted_mac_query_distinguishes_not_found_and_unsupported_output(monkeypatch):
+    device = {
+        **DEVICE,
+        "role": "access",
+        "platform": "h3c_comware",
+        "collection_policy_json": '{"collectors":{"mac_table":true}}',
+    }
+    monkeypatch.setattr(
+        ip_locator_service,
+        "_send_command",
+        lambda *_args, **_kwargs: "MAC Address      VLAN ID    State            Port/Nickname            Aging\n",
+    )
+
+    not_found = ip_locator_service._targeted_mac_query(device, "02e0f1020023")
+    assert not_found.status["status"] == "not_found"
+    assert not_found.status["error_code"] == "MAC_NOT_FOUND"
+
+    monkeypatch.setattr(
+        ip_locator_service,
+        "_send_command",
+        lambda *_args, **_kwargs: "% Unrecognized command\n",
+    )
+    unsupported = ip_locator_service._targeted_mac_query(device, "02e0f1020023")
+    assert unsupported == []
+    assert unsupported.status["status"] == "unsupported"
+    assert unsupported.status["error_code"] == "MAC_COMMAND_UNSUPPORTED"
+
+
+def test_targeted_mac_query_reports_registry_unsupported_action(monkeypatch):
+    device = {
+        **DEVICE,
+        "role": "router",
+        "platform": "h3c_comware",
+        "platform_profile_id": "system-profile-h3c",
+        "collection_policy_json": '{"collectors":{"mac_table":true}}',
+    }
+    monkeypatch.setattr(
+        "services.platform_registry_service.execute_platform_action",
+        lambda *_args, **_kwargs: {
+            "success": False,
+            "error_code": "UNSUPPORTED_ACTION",
+            "parse_status": "unsupported_by_platform",
+        },
+    )
+
+    result = ip_locator_service._targeted_mac_query(device, "02e0f1020023")
+
+    assert result == []
+    assert result.status["status"] == "unsupported"
+    assert result.status["error_code"] == "UNSUPPORTED_ACTION"
+
+
+def test_full_table_fallback_reports_a_mac_hit_even_when_the_port_field_is_empty(monkeypatch):
+    device = {
+        **DEVICE,
+        "role": "access",
+        "platform": "unknown_platform",
+        "collection_policy_json": '{"collectors":{"mac_table":true}}',
+    }
+    monkeypatch.setattr(
+        ip_locator_service,
+        "collect_operational_data",
+        lambda *_args, **_kwargs: {
+            "categories": [{
+                "key": "mac_table",
+                "success": True,
+                "commands": ["show mac table"],
+                "parse_status": "matched",
+                "records": [{"mac_address": "02e0-f102-0023", "vlan_id": "12", "port": ""}],
+                "raw_outputs": [],
+            }],
+        },
+    )
+
+    result = ip_locator_service._targeted_mac_query(device, "02e0f1020023")
+
+    assert result.status["status"] == "found"
+    assert result[0]["port"] == ""
+
+
+def test_targeted_mac_query_reports_query_failure_after_targeted_and_fallback_errors(monkeypatch):
+    device = {
+        **DEVICE,
+        "role": "access",
+        "platform": "h3c_comware",
+        "collection_policy_json": '{"collectors":{"mac_table":true}}',
+    }
+    monkeypatch.setattr(
+        ip_locator_service,
+        "_send_command",
+        lambda *_args, **_kwargs: (_ for _ in ()).throw(TimeoutError("device timeout")),
+    )
+    monkeypatch.setattr(ip_locator_service, "_collect_mac_from_device_for_mac", lambda *_args, **_kwargs: [])
+
+    result = ip_locator_service._targeted_mac_query(device, "02e0f1020023")
+
+    assert result == []
+    assert result.status["status"] == "query_failed"
+    assert result.status["error_code"] == "MAC_QUERY_FAILED"
+
+
+def test_mac_lookup_status_keeps_an_earlier_match_when_a_downstream_hop_misses():
+    result = {"mac_lookup": ip_locator_service._initial_mac_lookup_status(), "mac_lookup_attempts": []}
+    ip_locator_service._update_mac_lookup_status(
+        result,
+        ip_locator_service._mac_lookup_status(
+            {"id": "switch-1", "hostname": "SW-1"},
+            "found",
+            command="display mac-address 02e0-f102-0023",
+            record_count=1,
+            port="GE1/0/1",
+            vlan="12",
+        ),
+    )
+    ip_locator_service._update_mac_lookup_status(
+        result,
+        ip_locator_service._mac_lookup_status(
+            {"id": "switch-2", "hostname": "SW-2"},
+            "not_found",
+            command="display mac-address 02e0-f102-0023",
+            error_code="MAC_NOT_FOUND",
+        ),
+    )
+
+    assert result["mac_lookup"]["status"] == "found"
+    assert result["mac_lookup"]["port"] == "GE1/0/1"
+    assert result["mac_lookup"]["last_status"] == "not_found"
+    assert len(result["mac_lookup_attempts"]) == 2
+
+
 def test_format_mac_uses_platform_hyphen_style():
     assert ip_locator_service._format_mac("548998106981") == "5489-9810-6981"
 

@@ -134,6 +134,92 @@ _TARGETED_MAC_COMMANDS: dict[str, str] = {
     'ruijie_rgos':  'show mac address-table address {mac}',
 }
 
+# ``_targeted_mac_query`` historically returned only a list.  Keep that
+# list-compatible contract for existing callers while attaching structured
+# lookup metadata for the IP locator response.  A subclass is used instead of
+# changing the return shape so older integrations/tests that compare the
+# result directly with a list continue to work.
+_MAC_LOOKUP_STATUSES = frozenset({
+    'not_attempted', 'disabled', 'unsupported', 'query_failed',
+    'not_found', 'found',
+})
+
+
+class _MacQueryRecords(list[dict[str, Any]]):
+    """List of MAC records with non-sensitive lookup status metadata."""
+
+    def __init__(
+        self,
+        records: list[dict[str, Any]] | None = None,
+        status: dict[str, Any] | None = None,
+    ) -> None:
+        super().__init__(records or [])
+        self.status: dict[str, Any] = dict(status or {})
+
+
+def _mac_lookup_status(
+    device_info: dict,
+    status: str,
+    *,
+    command: str = '',
+    reason: str = '',
+    error_code: str = '',
+    record_count: int = 0,
+    port: str = '',
+    vlan: str = '',
+) -> dict[str, Any]:
+    """Build a stable, credential-free MAC lookup status object."""
+    normalized_status = status if status in _MAC_LOOKUP_STATUSES else 'query_failed'
+    return {
+        'status': normalized_status,
+        'device_id': str(device_info.get('id') or ''),
+        'device': str(device_info.get('hostname') or device_info.get('ip_address') or ''),
+        'command': str(command or ''),
+        'record_count': int(record_count or 0),
+        'port': str(port or ''),
+        'vlan': str(vlan or ''),
+        'reason': str(reason or ''),
+        'error_code': str(error_code or ''),
+    }
+
+
+def _mac_query_result(
+    device_info: dict,
+    records: list[dict[str, Any]] | None,
+    status: str,
+    *,
+    command: str = '',
+    reason: str = '',
+    error_code: str = '',
+) -> _MacQueryRecords:
+    """Return records and status while preserving list semantics."""
+    rows = list(records or [])
+    first = rows[0] if rows else {}
+    metadata = _mac_lookup_status(
+        device_info,
+        status,
+        command=command,
+        reason=reason,
+        error_code=error_code,
+        record_count=len(rows),
+        port=str(first.get('port') or ''),
+        vlan=str(first.get('vlan') or ''),
+    )
+    return _MacQueryRecords(rows, metadata)
+
+
+_MAC_UNSUPPORTED_OUTPUT_MARKERS = (
+    'unrecognized command', 'unknown command', 'command not found',
+    'not supported', 'unsupported', 'invalid input', 'invalid command',
+    'incomplete command', 'wrong parameter', 'too many parameters',
+    '% invalid', '% incomplete', 'does not exist',
+)
+
+
+def _mac_output_is_unsupported(output: str) -> bool:
+    normalized = str(output or '').strip().lower()
+    return bool(normalized and any(marker in normalized for marker in _MAC_UNSUPPORTED_OUTPUT_MARKERS))
+
 # ARP 行正则：匹配 IP、MAC（各种分隔格式）和接口
 _ARP_LINE_RE = re.compile(
     r'(?P<ip>(?:\d{1,3}\.){3}\d{1,3})'          # IP 地址
@@ -941,14 +1027,21 @@ def _targeted_mac_query(
             "[IPLocator] Skip MAC lookup for %s: mac_table is disabled by the device collection plan",
             device_info.get("hostname") or device_info.get("id"),
         )
-        return []
+        return _mac_query_result(
+            device_info,
+            [],
+            'disabled',
+            reason='MAC 表查询未在设备采集策略中开启',
+            error_code='MAC_TABLE_DISABLED',
+        )
     if device_info.get('platform_profile_id'):
+        command = 'get_mac_table'
         try:
             from services.platform_registry_service import execute_platform_action
 
             result = execute_platform_action(
                 str(device_info['id']),
-                'get_mac_table',
+                command,
                 user={
                     'id': f'ip-locator:{device_info.get("id") or "unknown"}',
                     'username': 'ip-locator',
@@ -956,8 +1049,8 @@ def _targeted_mac_query(
                     'tenant_id': device_info.get('tenant_id') or '',
                 },
             )
+            records = []
             if result.get('success'):
-                records = []
                 for record in result.get('records') or []:
                     mac_norm = _normalize_mac(str(_record_value(
                         record, 'mac', 'mac_address', 'destination_address', 'hardware_address'
@@ -975,15 +1068,73 @@ def _targeted_mac_query(
                         'switch_id': device_info.get('id'),
                         'switch_name': device_info.get('hostname') or device_info.get('ip_address'),
                     })
-                return records
+                # A published action may execute successfully while its
+                # versioned template returns no normalized records.  Reuse
+                # the conservative row parser against the retained raw
+                # output before declaring the MAC absent.
+                if not records and result.get('raw_output'):
+                    records = _parse_mac_output(
+                        str(result.get('raw_output') or ''),
+                        target_mac,
+                        device_info,
+                    )
+            if records:
+                return _mac_query_result(
+                    device_info,
+                    records,
+                    'found',
+                    command=str(result.get('command') or command),
+                    reason='MAC 表已命中目标地址',
+                )
+            parse_status = str(result.get('parse_status') or '').strip().lower()
+            error_code = str(result.get('error_code') or '').strip()
+            error_text = str(result.get('error') or '')
+            if (
+                error_code == 'UNSUPPORTED_ACTION'
+                or parse_status == 'unsupported_by_platform'
+                or _mac_output_is_unsupported(error_text)
+            ):
+                return _mac_query_result(
+                    device_info,
+                    [],
+                    'unsupported',
+                    command=str(result.get('command') or command),
+                    reason='当前平台没有可用的 MAC 表查询动作',
+                    error_code=error_code or 'UNSUPPORTED_ACTION',
+                )
+            if not result.get('success') or parse_status in {'failed', 'device_error'}:
+                return _mac_query_result(
+                    device_info,
+                    [],
+                    'query_failed',
+                    command=str(result.get('command') or command),
+                    reason='MAC 表查询或解析失败',
+                    error_code=error_code or 'MAC_QUERY_FAILED',
+                )
+            return _mac_query_result(
+                device_info,
+                [],
+                'not_found',
+                command=str(result.get('command') or command),
+                reason='已查询 MAC 表，但未找到目标地址',
+                error_code='MAC_NOT_FOUND',
+            )
         except Exception as exc:
             logger.debug(f"[IPLocator] Registry MAC query failed on {device_info.get('ip_address')}: {exc}")
-        return []
+            return _mac_query_result(
+                device_info,
+                [],
+                'query_failed',
+                command=command,
+                reason='MAC 表查询执行失败',
+                error_code='MAC_QUERY_FAILED',
+            )
 
     platform = str(device_info.get('platform') or 'cisco_ios').lower()
     cmd_template = _TARGETED_MAC_COMMANDS.get(platform)
 
     if cmd_template:
+        cmd = ''
         try:
             # 转为设备可识别的 MAC 格式
             mac_formatted = _format_mac(target_mac)  # xxxx.xxxx.xxxx (Cisco)
@@ -996,9 +1147,53 @@ def _targeted_mac_query(
 
             cmd = cmd_template.format(mac=mac_formatted)
             output = _send_command(device_info, cmd, force_refresh=force_refresh)
-            return _parse_mac_output(output, target_mac, device_info)
+            records = _parse_mac_output(output, target_mac, device_info)
+            if records:
+                return _mac_query_result(
+                    device_info,
+                    records,
+                    'found',
+                    command=cmd,
+                    reason='MAC 表已命中目标地址',
+                )
+            if _mac_output_is_unsupported(output):
+                return _mac_query_result(
+                    device_info,
+                    [],
+                    'unsupported',
+                    command=cmd,
+                    reason='设备拒绝或不支持该 MAC 表查询命令',
+                    error_code='MAC_COMMAND_UNSUPPORTED',
+                )
+            return _mac_query_result(
+                device_info,
+                [],
+                'not_found',
+                command=cmd,
+                reason='已查询 MAC 表，但未找到目标地址',
+                error_code='MAC_NOT_FOUND',
+            )
         except Exception as exc:
             logger.debug(f"[IPLocator] Targeted MAC query failed on {device_info.get('ip_address')}: {exc}")
+            # Preserve the historical full-table fallback for platforms whose
+            # targeted syntax/transport is unavailable.  If it yields data,
+            # the caller still receives a successful ``found`` status;
+            # otherwise retain the execution failure as the primary reason.
+            fallback = _collect_mac_from_device_for_mac(
+                device_info,
+                target_mac,
+                force_refresh=force_refresh,
+            )
+            if fallback:
+                return fallback
+            return _mac_query_result(
+                device_info,
+                [],
+                'query_failed',
+                command=cmd,
+                reason='MAC 表查询执行失败',
+                error_code='MAC_QUERY_FAILED',
+            )
 
     # 回退：全表采集 + 过滤
     return _collect_mac_from_device_for_mac(device_info, target_mac, force_refresh=force_refresh)
@@ -1033,31 +1228,129 @@ def _collect_mac_from_device_for_mac(
         payload = collect_operational_data(device_info, categories=['mac_table'])
     except Exception as exc:
         logger.debug(f"[IPLocator] MAC collect failed on {device_info.get('ip_address')}: {exc}")
-        return []
+        return _mac_query_result(
+            device_info,
+            [],
+            'query_failed',
+            reason='MAC 表全表采集执行失败',
+            error_code='MAC_QUERY_FAILED',
+        )
 
     records = []
-    for cat in payload.get('categories', []):
-        if cat.get('key') == 'mac_table' and cat.get('success'):
-            for rec in cat.get('records', []):
-                mac_raw = rec.get('destination_address', '') or rec.get('mac_address', '') or rec.get('mac', '')
-                mac_norm = _normalize_mac(mac_raw)
-                if mac_norm != target_mac:
+    mac_category = next(
+        (cat for cat in payload.get('categories', []) if cat.get('key') == 'mac_table'),
+        None,
+    )
+    if mac_category is None:
+        return _mac_query_result(
+            device_info,
+            [],
+            'unsupported',
+            reason='当前平台未配置 MAC 表采集能力',
+            error_code='MAC_TABLE_UNSUPPORTED',
+        )
+
+    if not mac_category.get('success'):
+        parse_status = str(mac_category.get('parse_status') or '').strip().lower()
+        error_code = str(mac_category.get('error_code') or '').strip()
+        status = 'unsupported' if (
+            error_code == 'UNSUPPORTED_ACTION' or parse_status == 'unsupported_by_platform'
+        ) else 'query_failed'
+        return _mac_query_result(
+            device_info,
+            [],
+            status,
+            command=', '.join(mac_category.get('commands') or []),
+            reason='当前平台不支持 MAC 表采集' if status == 'unsupported' else 'MAC 表全表采集失败',
+            error_code=error_code or (
+                'MAC_TABLE_UNSUPPORTED' if status == 'unsupported' else 'MAC_QUERY_FAILED'
+            ),
+        )
+
+    for rec in mac_category.get('records', []):
+        mac_raw = rec.get('destination_address', '') or rec.get('mac_address', '') or rec.get('mac', '')
+        mac_norm = _normalize_mac(mac_raw)
+        if mac_norm != target_mac:
+            continue
+        port_field = rec.get('destination_port', '') or rec.get('port', '') or rec.get('interface', '')
+        if isinstance(port_field, list):
+            port_field = port_field[0] if port_field else ''
+        vlan = rec.get('vlan_id', '') or rec.get('vlan', '')
+        records.append({
+            'mac': mac_norm,
+            'port': str(port_field or '').strip(),
+            'vlan': str(vlan).strip(),
+            'vlan_source': 'mac_table',
+            'type': rec.get('type', ''),
+            'switch_id': device_info.get('id'),
+            'switch_name': device_info.get('hostname') or device_info.get('ip_address'),
+        })
+
+    # TextFSM/parser variants must not erase an otherwise valid MAC row.  The
+    # raw output is already retained by the operational collector, so parsing
+    # it here does not require a second device session.
+    if not records:
+        for raw_item in mac_category.get('raw_outputs') or []:
+            if not isinstance(raw_item, dict):
+                continue
+            for line in str(raw_item.get('output') or '').splitlines():
+                parsed = _parse_mac_table_line(line)
+                if not parsed or parsed['mac'] != target_mac:
                     continue
-                port_field = rec.get('destination_port', '') or rec.get('port', '') or rec.get('interface', '')
-                if isinstance(port_field, list):
-                    port_field = port_field[0] if port_field else ''
-                vlan = rec.get('vlan_id', '') or rec.get('vlan', '')
-                if port_field:
-                    records.append({
-                        'mac': mac_norm,
-                        'port': str(port_field).strip(),
-                        'vlan': str(vlan).strip(),
-                        'vlan_source': 'mac_table',
-                        'type': rec.get('type', ''),
-                        'switch_id': device_info.get('id'),
-                        'switch_name': device_info.get('hostname') or device_info.get('ip_address'),
-                    })
-    return records
+                records.append({
+                    'mac': parsed['mac'],
+                    'port': parsed['port'],
+                    'vlan': parsed['vlan'],
+                    'vlan_source': 'mac_table',
+                    'type': parsed['type'],
+                    'switch_id': device_info.get('id'),
+                    'switch_name': device_info.get('hostname') or device_info.get('ip_address'),
+                })
+                break
+            if records:
+                break
+
+    if records:
+        return _mac_query_result(
+            device_info,
+            records,
+            'found',
+            command=', '.join(mac_category.get('commands') or []),
+            reason='MAC 表已命中目标地址',
+        )
+
+    raw_output = '\n'.join(
+        str(item.get('output') or '')
+        for item in mac_category.get('raw_outputs') or []
+        if isinstance(item, dict)
+    )
+    parse_status = str(mac_category.get('parse_status') or '').strip().lower()
+    if _mac_output_is_unsupported(raw_output) or parse_status == 'unsupported_by_platform':
+        return _mac_query_result(
+            device_info,
+            [],
+            'unsupported',
+            command=', '.join(mac_category.get('commands') or []),
+            reason='设备不支持 MAC 表查询或拒绝该命令',
+            error_code='MAC_TABLE_UNSUPPORTED',
+        )
+    if parse_status in {'failed', 'device_error'}:
+        return _mac_query_result(
+            device_info,
+            [],
+            'query_failed',
+            command=', '.join(mac_category.get('commands') or []),
+            reason='MAC 表解析失败',
+            error_code='MAC_PARSE_FAILED',
+        )
+    return _mac_query_result(
+        device_info,
+        [],
+        'not_found',
+        command=', '.join(mac_category.get('commands') or []),
+        reason='已查询 MAC 表，但未找到目标地址',
+        error_code='MAC_NOT_FOUND',
+    )
 
 
 def _collect_lldp_from_device(device_info: dict) -> list[dict]:
@@ -2336,6 +2629,65 @@ def _get_ip_locator_context(target_ip: str, result: dict[str, Any] | None = None
     return context
 
 
+def _initial_mac_lookup_status() -> dict[str, Any]:
+    """Return the status used before an ARP MAC has been resolved."""
+    return {
+        'status': 'not_attempted',
+        'device_id': '',
+        'device': '',
+        'command': '',
+        'record_count': 0,
+        'port': '',
+        'vlan': '',
+        'reason': '尚未获得 ARP MAC，未执行 MAC 表查询',
+        'error_code': 'MAC_QUERY_NOT_ATTEMPTED',
+    }
+
+
+def _update_mac_lookup_status(
+    result: dict[str, Any],
+    lookup_status: dict[str, Any] | None,
+) -> None:
+    """Attach one MAC query attempt while preserving an earlier match.
+
+    A path trace can query more than one switch.  If an upstream switch
+    matched the MAC but a downstream switch did not, the aggregate result must
+    not regress from ``found`` to ``not_found``; the attempt history retains
+    the downstream reason for diagnostics.
+    """
+    if not isinstance(lookup_status, dict):
+        return
+    status = str(lookup_status.get('status') or '').strip().lower()
+    if status not in _MAC_LOOKUP_STATUSES:
+        return
+
+    attempts = result.setdefault('mac_lookup_attempts', [])
+    attempts.append(dict(lookup_status))
+    current = result.get('mac_lookup') or _initial_mac_lookup_status()
+    current_status = str(current.get('status') or '').strip().lower()
+    if current_status != 'found' or status == 'found':
+        result['mac_lookup'] = dict(lookup_status)
+    else:
+        aggregate = dict(current)
+        aggregate['last_status'] = status
+        aggregate['last_device_id'] = lookup_status.get('device_id') or ''
+        aggregate['last_device'] = lookup_status.get('device') or ''
+        aggregate['last_reason'] = lookup_status.get('reason') or ''
+        aggregate['last_error_code'] = lookup_status.get('error_code') or ''
+        result['mac_lookup'] = aggregate
+    result['mac_lookup']['attempt_count'] = len(attempts)
+
+
+def _mac_lookup_fallback_note(status: str) -> str:
+    """Build a user-facing ARP fallback note from a structured status."""
+    return {
+        'disabled': '该设备未开启 MAC 表查询，当前定位基于 ARP 记录',
+        'unsupported': '该设备不支持 MAC 表查询，当前定位基于 ARP 记录',
+        'query_failed': 'MAC 表查询失败，当前定位基于 ARP 记录',
+        'not_found': '已查询 MAC 表但未找到该 MAC，当前定位基于 ARP 记录',
+    }.get(status, 'MAC 表未提供可用结果，当前定位基于 ARP 记录')
+
+
 def locate_ip(target_ip: str, force_refresh: bool = False) -> dict[str, Any]:
     """
     核心定位逻辑：IP → MAC（ARP） → Port（MAC表 + LLDP 拓扑追踪）
@@ -2365,6 +2717,8 @@ def locate_ip(target_ip: str, force_refresh: bool = False) -> dict[str, Any]:
         'errors': [],
         'trace_status': 'not_started',
         'trace_hops': [],
+        'mac_lookup': _initial_mac_lookup_status(),
+        'mac_lookup_attempts': [],
     }
     # Return the IPAM/L2/L3/business facts even when live ARP lookup is unavailable.
     result['context'] = _get_ip_locator_context(target_ip)
@@ -2668,9 +3022,39 @@ def locate_ip(target_ip: str, force_refresh: bool = False) -> dict[str, Any]:
                 result['searched_devices']['mac'].append(dev_label)
 
                 try:
-                    mac_records = _targeted_mac_query(dev_dict, target_mac, force_refresh=force_refresh)
+                    mac_query_result = _targeted_mac_query(
+                        dev_dict,
+                        target_mac,
+                        force_refresh=force_refresh,
+                    )
+                    mac_records = list(mac_query_result or [])
+                    lookup_status = getattr(mac_query_result, 'status', None)
+                    if not isinstance(lookup_status, dict):
+                        lookup_status = _mac_lookup_status(
+                            dev_dict,
+                            'found' if mac_records else 'not_found',
+                            reason=(
+                                'MAC 表已命中目标地址'
+                                if mac_records
+                                else '已查询 MAC 表，但未找到目标地址'
+                            ),
+                            error_code='' if mac_records else 'MAC_NOT_FOUND',
+                            record_count=len(mac_records),
+                            port=str((mac_records[0] if mac_records else {}).get('port') or ''),
+                            vlan=str((mac_records[0] if mac_records else {}).get('vlan') or ''),
+                        )
+                    _update_mac_lookup_status(result, lookup_status)
                 except Exception as e:
                     trace_notes.append(f"查询设备 {dev_label} MAC 表出错: {e}")
+                    _update_mac_lookup_status(
+                        result,
+                        _mac_lookup_status(
+                            dev_dict,
+                            'query_failed',
+                            reason='MAC 表查询执行失败',
+                            error_code='MAC_QUERY_FAILED',
+                        ),
+                    )
                     trace_incomplete = True
                     trace_error = f'设备 {dev_label} 的 MAC 表查询失败，无法确认终端接入口。'
                     terminal_switch_id = None
@@ -2943,6 +3327,9 @@ def locate_ip(target_ip: str, force_refresh: bool = False) -> dict[str, Any]:
     elif arp_source_info:
         result['trace_status'] = 'arp_only'
         result['found'] = True
+        mac_lookup_status = str(
+            (result.get('mac_lookup') or {}).get('status') or 'not_found'
+        ).strip().lower()
         result['locations'] = [{
             'switch_id': arp_source_info.get('device_id'),
             'switch_name': arp_source_info.get('device'),
@@ -2951,7 +3338,7 @@ def locate_ip(target_ip: str, force_refresh: bool = False) -> dict[str, Any]:
             'vlan_source': arp_source_info.get('vlan_source', 'arp_vid') if arp_source_info.get('vlan') else 'unknown',
             'type': 'ARP_DIRECT',
             'is_uplink': False,
-            'note': '该 MAC 未在交换机 MAC 表中发现，定位基于 ARP 记录',
+            'note': _mac_lookup_fallback_note(mac_lookup_status),
         }]
     
     result['context'] = _get_ip_locator_context(target_ip, result)

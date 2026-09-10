@@ -1,6 +1,12 @@
 import React, { useState, useCallback } from 'react';
 import { Search, MapPin, ArrowRight, Loader2, Server, Monitor, Network, AlertCircle, ChevronDown, ChevronUp, Cable } from 'lucide-react';
 import { formatMacAddress } from '../utils/resourceFormatters';
+import {
+  formatMacLookupMessage,
+  macLookupStatusLabel,
+  type MacLookupInfo,
+} from '../utils/macLookup';
+import { formatLocationType } from '../utils/ipLocator';
 
 interface IPLocatorProps {
   language: string;
@@ -15,6 +21,7 @@ interface LocationEntry {
   is_uplink: boolean;
   uplink_neighbor?: string;
   uplink_port?: string;
+  note?: string;
 }
 
 interface TraceHop {
@@ -37,6 +44,7 @@ interface LocateResult {
   errors: string[];
   trace_status?: string;
   trace_hops?: TraceHop[];
+  mac_lookup?: MacLookupInfo;
 }
 
 const IPLocatorPanel: React.FC<IPLocatorProps> = ({ language }) => {
@@ -93,6 +101,8 @@ const IPLocatorPanel: React.FC<IPLocatorProps> = ({ language }) => {
 
   const accessLocations = result?.locations?.filter(l => !l.is_uplink) || [];
   const uplinkLocations = result?.locations?.filter(l => l.is_uplink) || [];
+  const macLookup = result?.mac_lookup;
+  const macLookupMessage = formatMacLookupMessage(macLookup, zh);
 
   return (
     <div className="space-y-3">
@@ -156,6 +166,11 @@ const IPLocatorPanel: React.FC<IPLocatorProps> = ({ language }) => {
                     <MapPin size={11} className="text-white" />
                   </div>
                   <span className="text-sm font-bold text-emerald-800">{zh ? '定位成功' : 'Located'}</span>
+                  {macLookup && macLookup.status !== 'not_attempted' && (
+                    <span className={`text-[10px] rounded-full px-2 py-0.5 font-medium ${macLookup.status === 'found' ? 'bg-emerald-100 text-emerald-700' : macLookup.status === 'query_failed' ? 'bg-rose-50 text-rose-700' : 'bg-amber-50 text-amber-700'}`}>
+                      {macLookupStatusLabel(macLookup.status, zh)}
+                    </span>
+                  )}
                   <span className="text-xs text-emerald-600 ml-auto font-mono">{result.timestamp?.replace('T', ' ').slice(0, 19)}</span>
                 </div>
               </div>
@@ -205,8 +220,11 @@ const IPLocatorPanel: React.FC<IPLocatorProps> = ({ language }) => {
                           </p>
                           <div className="flex items-center gap-2 mt-0.5">
                             {loc.vlan && <span className="text-[10px] bg-cyan-50 text-cyan-700 rounded px-1.5 py-0.5 font-medium">VLAN {loc.vlan}</span>}
-                            {loc.type && <span className="text-[10px] text-black/35">{loc.type}</span>}
+                            {loc.type && <span className="text-[10px] text-black/35">{formatLocationType(loc.type, zh)}</span>}
                           </div>
+                          {loc.type === 'ARP_DIRECT' && macLookupMessage && (
+                            <p className="text-[10px] text-amber-600 mt-1">{macLookupMessage}</p>
+                          )}
                           {loc.uplink_neighbor && (
                             <p className="text-[10px] text-black/35 mt-0.5 flex items-center gap-1">
                               <Network size={9} />
@@ -243,6 +261,9 @@ const IPLocatorPanel: React.FC<IPLocatorProps> = ({ language }) => {
                   <p className="text-xs text-amber-600 mt-0.5">
                     {zh ? 'MAC 已从 ARP 获取，但当前路径证据不足，未判定中间接口为主机端口。' : 'The MAC was resolved from ARP, but the path evidence is incomplete, so an intermediate interface is not marked as a host port.'}
                   </p>
+                  {macLookupMessage && macLookup?.status !== 'not_attempted' && (
+                    <p className="text-xs text-amber-600 mt-1">{macLookupMessage}</p>
+                  )}
                   {result.errors?.map((err, i) => (
                     <p key={i} className="text-xs text-amber-600 mt-1">{err}</p>
                   ))}
@@ -271,9 +292,9 @@ const IPLocatorPanel: React.FC<IPLocatorProps> = ({ language }) => {
                   {result.errors?.map((err, i) => (
                     <p key={i} className="text-xs text-amber-600 mt-0.5">{err}</p>
                   ))}
-                  {result.mac && (
+                  {result.mac && macLookupMessage && (
                     <p className="text-xs text-amber-600 mt-1">
-                      {zh ? `MAC 地址 ${formatMacAddress(result.mac_display)} 已获取，但未在交换机 MAC 表中匹配到端口` : `MAC ${formatMacAddress(result.mac_display)} resolved but not found in switch MAC tables`}
+                      {macLookupMessage}
                     </p>
                   )}
                 </div>

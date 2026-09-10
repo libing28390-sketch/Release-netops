@@ -5,6 +5,12 @@ import PageHero from '../components/PageHero';
 import { ActionButton } from '../components/ui/ActionIconButton';
 import * as XLSX from 'xlsx';
 import { formatMacAddress } from '../utils/resourceFormatters';
+import {
+  formatMacLookupMessage,
+  macLookupStatusLabel,
+  type MacLookupInfo,
+} from '../utils/macLookup';
+import { formatLocationType } from '../utils/ipLocator';
 import { useSearchParams } from 'react-router-dom';
 
 interface IPLocatorPageProps {
@@ -127,6 +133,8 @@ interface LocateResult {
   errors: string[];
   trace_status?: string;
   trace_hops?: TraceHop[];
+  mac_lookup?: MacLookupInfo;
+  mac_lookup_attempts?: MacLookupInfo[];
   context?: LocatorContext;
 }
 
@@ -1226,6 +1234,13 @@ ${rep.repair_commands}
   const accessLocations = result?.locations?.filter(l => !l.is_uplink) || [];
   const uplinkLocations = result?.locations?.filter(l => l.is_uplink) || [];
   const locatorContext = result?.context;
+  const macLookup = result?.mac_lookup;
+  const macLookupMessage = formatMacLookupMessage(macLookup, zh);
+  const macLookupStatusClass = macLookup?.status === 'found'
+    ? 'bg-emerald-100/70 dark:bg-emerald-500/10 text-emerald-700 dark:text-emerald-300 border-emerald-200/70 dark:border-emerald-500/20'
+    : macLookup?.status === 'query_failed'
+      ? 'bg-rose-50 dark:bg-rose-500/10 text-rose-700 dark:text-rose-300 border-rose-200/70 dark:border-rose-500/20'
+      : 'bg-amber-50 dark:bg-amber-500/10 text-amber-700 dark:text-amber-300 border-amber-200/70 dark:border-amber-500/20';
 
   return (
     <div className="flex flex-col h-full overflow-hidden">
@@ -1308,7 +1323,7 @@ ${rep.repair_commands}
             {loading ? <Loader2 size={15} className="animate-spin" /> : <Search size={15} />}
             {zh ? '定位' : 'Locate'}
           </button>
-          {result?.cache?.arp_cache_hit && (
+          {result?.mac && result.mac !== 'N/A' && (
             <button
               onClick={() => doLocate(undefined, true)}
               disabled={loading}
@@ -1372,6 +1387,12 @@ ${rep.repair_commands}
                     <MapPin size={13} className="text-white" />
                   </div>
                   <span className="text-sm font-bold text-emerald-800 dark:text-emerald-300">{zh ? '定位成功' : 'Located'}</span>
+                  {macLookup && macLookup.status !== 'not_attempted' && (
+                    <span className={`inline-flex items-center gap-1 text-[10px] rounded-full px-2.5 py-0.5 font-medium border ${macLookupStatusClass}`}>
+                      <Cable size={10} />
+                      {macLookupStatusLabel(macLookup.status, zh)}
+                    </span>
+                  )}
                   {result.cache?.arp_cache_hit && result.cache.cached_at ? (
                     <span className="inline-flex items-center gap-1 text-[10px] bg-amber-50 dark:bg-amber-500/10 text-amber-600 dark:text-amber-400 border border-amber-200/60 dark:border-amber-500/20 rounded-full px-2.5 py-0.5 font-medium">
                       <Clock size={10} />
@@ -1438,10 +1459,12 @@ ${rep.repair_commands}
                             {loc.vlan && <span title={loc.vlan_source || 'unknown'} className="text-[10px] bg-cyan-50 dark:bg-cyan-500/10 text-cyan-700 dark:text-cyan-400 rounded px-1.5 py-0.5 font-medium">VLAN {loc.vlan}</span>}
                             {loc.type === 'ARP_DIRECT'
                               ? <span className="text-[10px] bg-amber-50 dark:bg-amber-500/10 text-amber-700 dark:text-amber-400 rounded px-1.5 py-0.5 font-medium">{zh ? '直连/网关' : 'Direct/Gateway'}</span>
-                              : loc.type && <span className="text-[10px] text-black/35">{loc.type}</span>}
+                              : loc.type && <span className="text-[10px] text-black/35">{formatLocationType(loc.type, zh)}</span>}
                           </div>
-                          {loc.note && (
-                            <p className="text-[10px] text-amber-600 mt-1">{loc.note}</p>
+                          {loc.note && loc.type !== 'PATH_TRACED' && (
+                            <p className="text-[10px] text-amber-600 mt-1">
+                              {loc.type === 'ARP_DIRECT' && macLookupMessage ? macLookupMessage : loc.note}
+                            </p>
                           )}
                           {loc.uplink_neighbor && (
                             <p className="text-[10px] text-black/35 mt-1 flex items-center gap-1">
@@ -1475,10 +1498,21 @@ ${rep.repair_commands}
               <div className="flex items-start gap-3">
                 <AlertCircle size={18} className="text-amber-500 mt-0.5 flex-shrink-0" />
                 <div className="min-w-0">
-                  <p className="text-sm font-semibold text-amber-800 dark:text-amber-300">{zh ? '链路追踪未完成' : 'Path Trace Incomplete'}</p>
+                  <div className="flex items-center gap-2 flex-wrap">
+                    <p className="text-sm font-semibold text-amber-800 dark:text-amber-300">{zh ? '链路追踪未完成' : 'Path Trace Incomplete'}</p>
+                    {macLookup && macLookup.status !== 'not_attempted' && (
+                      <span className={`inline-flex items-center gap-1 text-[10px] rounded-full px-2 py-0.5 font-medium border ${macLookupStatusClass}`}>
+                        <Cable size={10} />
+                        {macLookupStatusLabel(macLookup.status, zh)}
+                      </span>
+                    )}
+                  </div>
                   <p className="text-xs text-amber-700 dark:text-amber-400 mt-0.5">
                     {zh ? '已从 ARP 获取 MAC，但当前路径证据不足，系统未把中间接口判定为主机接入口。' : 'The MAC was resolved from ARP, but the path evidence is incomplete, so an intermediate interface is not marked as a host port.'}
                   </p>
+                  {macLookupMessage && macLookup?.status !== 'not_attempted' && (
+                    <p className="text-xs text-amber-600 dark:text-amber-400 mt-1">{macLookupMessage}</p>
+                  )}
                   {result.errors?.map((err, i) => (
                     <p key={i} className="text-xs text-amber-600 dark:text-amber-400 mt-1">{err}</p>
                   ))}
@@ -1507,9 +1541,9 @@ ${rep.repair_commands}
                   {result.errors?.map((err, i) => (
                     <p key={i} className="text-xs text-amber-600 mt-0.5">{err}</p>
                   ))}
-                  {result.mac && (
+                  {result.mac && macLookupMessage && (
                     <p className="text-xs text-amber-600 mt-1.5">
-                      {zh ? `MAC 地址 ${formatMacAddress(result.mac_display)} 已从 ARP 表获取，但未在任何交换机 MAC 表中匹配到端口` : `MAC ${formatMacAddress(result.mac_display)} resolved from ARP but not found in any switch MAC table`}
+                      {macLookupMessage}
                     </p>
                   )}
                 </div>
@@ -1543,6 +1577,10 @@ ${rep.repair_commands}
                   <LocatorContextField label={zh ? 'VLAN 来源' : 'VLAN Source'} value={locatorContext.l2.vlan_source} />
                   <LocatorContextField label={zh ? '接入设备' : 'Switch'} value={locatorContext.l2.switch_name} />
                   <LocatorContextField label={zh ? '接入接口' : 'Port'} value={locatorContext.l2.port} mono />
+                  <LocatorContextField
+                    label={zh ? 'MAC 表查询' : 'MAC Lookup'}
+                    value={macLookup && macLookup.status !== 'not_attempted' ? macLookupStatusLabel(macLookup.status, zh) : ''}
+                  />
                   <LocatorContextField label={zh ? '接口描述' : 'Description'} value={locatorContext.l2.description} />
                   <LocatorContextField label={zh ? '状态 / 模式' : 'State / Mode'} value={[locatorContext.l2.admin_status, locatorContext.l2.oper_status, locatorContext.l2.mode].filter(Boolean).join(' / ')} />
                 </LocatorContextCard>
