@@ -2300,7 +2300,7 @@ def _init_db_logic(conn, *, allow_legacy_import: bool = True):
         service_crond INTEGER DEFAULT 0,
         service_docker INTEGER DEFAULT 0,
         PRIMARY KEY (ts, device_id),
-        FOREIGN KEY (device_id) REFERENCES devices(id)
+        FOREIGN KEY (device_id) REFERENCES devices(id) ON DELETE CASCADE
     )
     ''')
     cursor.execute('CREATE INDEX IF NOT EXISTS idx_device_telemetry_samples_ts ON device_telemetry_samples(ts)')
@@ -2344,7 +2344,7 @@ def _init_db_logic(conn, *, allow_legacy_import: bool = True):
         max_tcp_listen REAL,
         avg_process_health REAL,
         PRIMARY KEY (ts_hour, device_id),
-        FOREIGN KEY (device_id) REFERENCES devices(id)
+        FOREIGN KEY (device_id) REFERENCES devices(id) ON DELETE CASCADE
     )
     ''')
     cursor.execute('CREATE INDEX IF NOT EXISTS idx_device_telemetry_hourly_ts ON device_telemetry_hourly(ts_hour)')

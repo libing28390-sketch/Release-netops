@@ -18,7 +18,7 @@ import { DataTable, DataTableFrame } from '../../components/DataTable';
 import PageHero from '../../components/PageHero';
 import TagFilterDropdown from '../../components/TagFilterDropdown';
 import { fetchAllPaginatedItems } from '../../utils/pagination';
-import { authHeaders } from '../../api/http';
+import { apiRequest, authHeaders } from '../../api/http';
 import { useSystem } from '../../hooks/useSystem';
 import { formatTerminalAgentError, getLocalTerminalConfig, TERMINAL_APP_LABELS } from '../../utils/localTerminal';
 import type { TagDefinition } from '../../types';
@@ -322,6 +322,7 @@ const AssetManagementTab: React.FC<AssetManagementTabProps> = ({ language, setAc
   const [form, setForm]                 = useState({ ...EMPTY_FORM });
   const [saving, setSaving]             = useState(false);
   const [deleteTarget, setDeleteTarget] = useState<Asset | null>(null);
+  const [deleteError, setDeleteError]   = useState<string | null>(null);
   const [showProductionConfirm, setShowProductionConfirm] = useState(false);
   const [showBatchTakeoverConfirm, setShowBatchTakeoverConfirm] = useState(false);
   const [modalError, setModalError] = useState<string | null>(null);
@@ -776,10 +777,16 @@ const AssetManagementTab: React.FC<AssetManagementTabProps> = ({ language, setAc
 
   const handleDelete = async () => {
     if (!deleteTarget) return;
+    setDeleteError(null);
     try {
-      const r = await fetch(`/api/assets/${deleteTarget.id}`, { method: 'DELETE', headers: authHeaders() });
-      if (r.ok) { setDeleteTarget(null); fetchAssets(); fetchSummary(); if (drawerAsset?.id === deleteTarget.id) setDrawerAsset(null); }
-    } catch { /* noop */ }
+      await apiRequest(`/api/assets/${deleteTarget.id}`, { method: 'DELETE' });
+      setDeleteTarget(null);
+      fetchAssets();
+      fetchSummary();
+      if (drawerAsset?.id === deleteTarget.id) setDrawerAsset(null);
+    } catch (error) {
+      setDeleteError(error instanceof Error ? error.message : (zh ? '删除资产失败' : 'Failed to delete asset'));
+    }
   };
 
   const toggle    = (id: string) => setSelectedIds(p => { const n = new Set(p); n.has(id) ? n.delete(id) : n.add(id); return n; });
@@ -790,9 +797,19 @@ const AssetManagementTab: React.FC<AssetManagementTabProps> = ({ language, setAc
     if (selectedIds.size === 0) return;
     if (!confirm(zh ? '确定删除选中的资产吗？' : 'Delete selected assets?')) return;
     const promises = Array.from(selectedIds).map(id =>
-      fetch(`/api/assets/${id}`, { method: 'DELETE', headers: authHeaders() })
+      apiRequest(`/api/assets/${id}`, { method: 'DELETE' })
     );
-    await Promise.allSettled(promises);
+    const results = await Promise.allSettled(promises);
+    const failures = results
+      .filter((result): result is PromiseRejectedResult => result.status === 'rejected')
+      .map(result => result.reason instanceof Error ? result.reason.message : (zh ? '删除资产失败' : 'Failed to delete asset'));
+    if (failures.length > 0) {
+      setFeedbackMsg({
+        type: 'error',
+        text: zh ? `${failures.length} 台资产删除失败` : `${failures.length} asset(s) failed to delete`,
+        details: failures.slice(0, 8),
+      });
+    }
     clearSel();
     fetchAssets();
     fetchSummary();
@@ -2312,7 +2329,7 @@ const AssetManagementTab: React.FC<AssetManagementTabProps> = ({ language, setAc
                           <ActionIconGroup label={zh ? '资产操作' : 'Asset actions'}>
                             <ActionIconButton icon={Copy} label={zh ? '复制' : 'Copy'} variant="accent" onClick={() => openCopy(a)} />
                             <ActionIconButton icon={Pencil} label={zh ? '编辑' : 'Edit'} onClick={() => openEdit(a)} />
-                            <ActionIconButton icon={Trash2} label={zh ? '删除' : 'Delete'} variant="danger" onClick={() => setDeleteTarget(a)} />
+                            <ActionIconButton icon={Trash2} label={zh ? '删除' : 'Delete'} variant="danger" onClick={() => { setDeleteError(null); setDeleteTarget(a); }} />
                           </ActionIconGroup>
                         </td>
                       </tr>
@@ -2503,9 +2520,10 @@ const AssetManagementTab: React.FC<AssetManagementTabProps> = ({ language, setAc
 
       <DeleteConfirmModal
         isOpen={!!deleteTarget}
-        onClose={() => setDeleteTarget(null)}
+        onClose={() => { setDeleteTarget(null); setDeleteError(null); }}
         deleteTarget={deleteTarget}
         handleDelete={handleDelete}
+        error={deleteError}
         language={language}
       />
 

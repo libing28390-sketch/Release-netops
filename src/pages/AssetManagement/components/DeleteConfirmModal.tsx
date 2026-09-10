@@ -1,6 +1,6 @@
 import React from 'react';
 import { AnimatePresence, motion } from 'motion/react';
-import { Trash2, X } from 'lucide-react';
+import { AlertTriangle, Trash2 } from 'lucide-react';
 import { Asset } from '../types';
 
 interface DeleteConfirmModalProps {
@@ -8,6 +8,7 @@ interface DeleteConfirmModalProps {
   onClose: () => void;
   deleteTarget: Asset | null;
   handleDelete: () => void;
+  error?: string | null;
   language: string;
 }
 
@@ -16,6 +17,7 @@ export const DeleteConfirmModal: React.FC<DeleteConfirmModalProps> = ({
   onClose,
   deleteTarget,
   handleDelete,
+  error,
   language,
 }) => {
   const zh = language === 'zh';
@@ -47,6 +49,12 @@ export const DeleteConfirmModal: React.FC<DeleteConfirmModalProps> = ({
               </div>
             </div>
             <p className="text-[11px] text-black/35 mb-4">{zh ? '删除后不可恢复，是否继续？' : 'This action cannot be undone. Continue?'}</p>
+            {error && (
+              <div role="alert" className="mb-4 flex items-start gap-2 rounded-lg border border-red-200 bg-red-50 px-3 py-2 text-[11px] leading-4 text-red-700">
+                <AlertTriangle size={14} className="mt-0.5 shrink-0" />
+                <span>{error}</span>
+              </div>
+            )}
             <div className="flex justify-end gap-2">
               <button
                 onClick={onClose}

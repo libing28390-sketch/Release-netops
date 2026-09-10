@@ -1513,6 +1513,11 @@ def _delete_linked_device(conn, asset_id: str) -> None:
     conn.execute('DELETE FROM topology_observations WHERE source_device_id = ? OR target_device_id = ?', (device_id, device_id))
     conn.execute('DELETE FROM compliance_findings WHERE device_id = ?', (device_id,))
     conn.execute('DELETE FROM device_health_samples WHERE device_id = ?', (device_id,))
+    # Server telemetry tables were introduced with explicit foreign keys but
+    # without cascade rules on older PostgreSQL installations.  Remove both
+    # raw and hourly samples in this transaction before deleting the device.
+    conn.execute('DELETE FROM device_telemetry_samples WHERE device_id = ?', (device_id,))
+    conn.execute('DELETE FROM device_telemetry_hourly WHERE device_id = ?', (device_id,))
     conn.execute('DELETE FROM config_drift_results WHERE device_id = ?', (device_id,))
     conn.execute('DELETE FROM capacity_snapshots WHERE device_id = ?', (device_id,))
     conn.execute('DELETE FROM inspection_results WHERE device_id = ?', (device_id,))
