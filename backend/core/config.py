@@ -84,6 +84,18 @@ class Settings(BaseSettings):
     AI_PROVIDER_ALLOWLIST: str = "deepseek,openai,openai_compatible,azure_openai,ollama,local,qwen"
     AI_DEBUG_PAYLOAD: bool = False
     AI_OUTBOUND_PROXY_URL: str = ""
+    # One provider-agnostic, read-only web retrieval capability.  It is used
+    # for explicitly current/public questions and as a fallback after a
+    # network-knowledge miss; it never grants device write or tenant access.
+    AI_WEB_SEARCH_ENABLED: bool = True
+    AI_WEB_SEARCH_ENDPOINT: str = "https://html.duckduckgo.com/html/"
+    AI_WEB_ALLOWED_HOSTS: str = ""
+    AI_WEB_TIMEOUT_SECONDS: float = 8.0
+    AI_WEB_MAX_RESULTS: int = 5
+    AI_WEB_MAX_PAGE_FETCHES: int = 3
+    AI_WEB_MAX_PAGE_CHARS: int = 6000
+    AI_WEB_MAX_RESPONSE_BYTES: int = 1_000_000
+    AI_WEB_USER_AGENT: str = "NexoraAIWeb/1.0"
     AI_PROVIDER_MAX_CONCURRENCY: int = 8
     AI_TENANT_MAX_CONCURRENCY: int = 4
     AI_USER_MAX_CONCURRENCY: int = 2
@@ -91,6 +103,14 @@ class Settings(BaseSettings):
     AI_CIRCUIT_FAILURE_THRESHOLD: int = 3
     AI_CIRCUIT_COOLDOWN_SECONDS: float = 30.0
     AI_HEALTH_BACKOFF_SECONDS: int = 30
+    # Model probes are intentionally sparse and tiny: one probe per enabled
+    # chat/reasoning model every ten minutes by default.  The gateway still
+    # enforces the normal security, concurrency and circuit-breaker controls.
+    AI_MODEL_HEALTH_MONITOR_ENABLED: bool = True
+    AI_MODEL_HEALTH_INTERVAL_MINUTES: int = 10
+    AI_MODEL_HEALTH_MAX_CONCURRENCY: int = 2
+    AI_MODEL_HEALTH_MAX_TOKENS: int = 64
+    AI_MODEL_HEALTH_RETENTION_DAYS: int = 90
     AI_DAILY_BUDGET_USD: float = 0.0
 
     # PAM Web terminal compatibility control. Host-key registration is not a

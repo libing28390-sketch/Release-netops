@@ -12,6 +12,16 @@ interface CopilotModelOption {
   stream_supported?: boolean;
 }
 
+const getModelHealthLabel = (status?: string) => {
+  switch (String(status || 'unknown').toLowerCase()) {
+    case 'healthy': return '健康';
+    case 'unhealthy': return '异常';
+    case 'disabled': return '未启用';
+    case 'not_supported': return '不适用';
+    default: return '未检查';
+  }
+};
+
 interface CopilotHeaderProps {
   sessionTitle: string;
   selectedModel: string;
@@ -63,7 +73,7 @@ export const CopilotHeader: React.FC<CopilotHeaderProps> = ({
               <optgroup key={providerName} label={providerName}>
                 {modelList.map((m) => (
                   <option key={m.id} value={m.id}>
-                    {m.name || m.model_code} · {m.model_type || 'chat'} · {m.context_length ? `${Math.round(m.context_length / 1000)}k` : 'ctx'} · {m.health_status || 'unknown'}
+                    {m.name || m.model_code} · {m.model_type || 'chat'} · {m.context_length ? `${Math.round(m.context_length / 1000)}k` : 'ctx'} · {getModelHealthLabel(m.health_status)}
                   </option>
                 ))}
               </optgroup>

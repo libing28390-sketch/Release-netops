@@ -130,7 +130,12 @@ FULL_CONFIG_RE = re.compile(
 FULL_CMDB_RE = re.compile(r"(?i)\b(?:full|entire|all)\s+(?:cmdb|asset inventory|device inventory)\b|全量(?:CMDB|资产|设备清单)")
 FULL_LOG_RE = re.compile(r"(?i)\b(?:full|entire|all)\s+(?:logs?|log stream|session logs?)\b|全量日志|完整日志")
 FULL_SESSION_RE = re.compile(r"(?i)\b(?:full|entire|all)\s+(?:sessions?|terminal sessions?)\b|全量会话|完整会话")
-CONFIG_CHANGE_RE = re.compile(r"(?i)\b(?:configure terminal|system-view|commit|write memory|save)\b")
+CONFIG_CHANGE_RE = re.compile(
+    r"(?i)\b(?:configure terminal|system-view|commit|write memory|save)\b|"
+    r"(?:下发|修改|变更|删除|清空|重启|重载|保存)\s*(?:配置|设备|端口|接口|命令|操作|规则|策略)|"
+    r"批量(?:关闭|启用|开启|变更|操作|下发)|"
+    r"(?:关闭|禁用)\s*(?:端口|接口)"
+)
 HIDDEN_INSTRUCTION_RE = re.compile(r"(?is)(?:<!--.*?(?:ignore|system|instruction|override).*?-->|<script\b.*?>.*?</script>|style\s*=\s*['\"][^'\"]*(?:display\s*:\s*none|visibility\s*:\s*hidden))")
 
 # A request to retrieve a credential is prohibited even when the user did not

@@ -170,6 +170,17 @@ def answer_contract(*, intent: str, citations: Sequence[Mapping[str, Any]], grou
         for index, item in enumerate(citations, start=1)
         if item.get("citation_id")
     }
+    citation_source_types = {
+        str(item.get("source_type") or "").strip().lower()
+        for item in citations
+        if isinstance(item, Mapping)
+    }
+    if grounded and "web_search" in citation_source_types:
+        fact_mode = "external_web_evidence"
+    elif grounded:
+        fact_mode = "local_evidence_only"
+    else:
+        fact_mode = "refusal_or_user_supplied_context"
     return {
         "contract_version": "answer-grounding-v1",
         "intent": intent,
@@ -187,7 +198,7 @@ def answer_contract(*, intent: str, citations: Sequence[Mapping[str, Any]], grou
             {"type": "recommendation", "label": "建议", "requires_operator_confirmation": True},
             {"type": "command", "label": "命令", "requires_applicable_version": True},
         ],
-        "fact_mode": "local_evidence_only" if grounded else "refusal_or_user_supplied_context",
+        "fact_mode": fact_mode,
     }
 
 

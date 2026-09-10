@@ -2,6 +2,7 @@ import React, { lazy, Suspense } from 'react';
 
 const ProviderManagementTab = lazy(() => import('./Providers/ProviderManagementTab').then(({ ProviderManagementTab }) => ({ default: ProviderManagementTab })));
 const ModelManagementTab = lazy(() => import('./Models/ModelManagementTab').then(({ ModelManagementTab }) => ({ default: ModelManagementTab })));
+const ModelHealthDashboardTab = lazy(() => import('./Health/ModelHealthDashboardTab').then(({ ModelHealthDashboardTab }) => ({ default: ModelHealthDashboardTab })));
 const PromptCenterTab = lazy(() => import('./PromptCenter/PromptCenterTab').then(({ PromptCenterTab }) => ({ default: PromptCenterTab })));
 const UsageDashboardTab = lazy(() => import('./Usage/UsageDashboardTab').then(({ UsageDashboardTab }) => ({ default: UsageDashboardTab })));
 const SecurityPolicyTab = lazy(() => import('./Security/SecurityPolicyTab').then(({ SecurityPolicyTab }) => ({ default: SecurityPolicyTab })));
@@ -32,6 +33,7 @@ export const AiCenterPage: React.FC<AiCenterPageProps> = ({ activeSubTab }) => {
         <Suspense fallback={aiPanelFallback}>
           {activeTab === 'providers' && <ProviderManagementTab />}
           {activeTab === 'models' && <ModelManagementTab />}
+          {activeTab === 'health' && <ModelHealthDashboardTab />}
           {activeTab === 'prompts' && <PromptCenterTab />}
           {activeTab === 'copilot' && <AssistantTab />}
           {activeTab === 'agents' && <AgentManagementTab />}

@@ -1,6 +1,6 @@
 import React, { useEffect, useMemo, useState } from 'react';
-import { Cpu, Plus, RefreshCw, Trash2, GitBranch, Star, Power, Search, AlertTriangle, Info, ShieldCheck } from 'lucide-react';
-import { getAIModels, createAIModel, updateAIModel, setAIUserDefaultModel, deleteAIModel, getAIModelDeletePreview, getAIModelRoutes, upsertAIModelRoute, getAIProviders, AIModel, AIModelDeletePreview, AIModelRoute, AIProvider } from '../../../api/ai';
+import { Activity, Cpu, Plus, RefreshCw, Trash2, GitBranch, Star, Power, Search, AlertTriangle, Info, ShieldCheck } from 'lucide-react';
+import { getAIModels, createAIModel, updateAIModel, setAIUserDefaultModel, deleteAIModel, getAIModelDeletePreview, checkAIModelHealth, getAIModelRoutes, upsertAIModelRoute, getAIProviders, AIModel, AIModelDeletePreview, AIModelRoute, AIProvider } from '../../../api/ai';
 import Pagination from '../../../components/Pagination';
 import { ActionIconButton, ActionIconGroup } from '../../../components/ui/ActionIconButton';
 import { useCoreApp } from '../../../contexts/AppDomainContext';
@@ -21,6 +21,16 @@ const SCENES = [
   { code: 'capacity_analysis', labelKey: 'ai.prompt.scene.capacity_analysis.label', shortKey: 'ai.prompt.scene.capacity_analysis.short', descriptionKey: 'ai.prompt.scene.capacity_analysis.description' },
 ];
 
+const getModelHealthStatusKey = (status?: string) => {
+  switch (String(status || 'unknown').toLowerCase()) {
+    case 'healthy': return 'ai.model.health.healthy';
+    case 'unhealthy': return 'ai.model.health.unhealthy';
+    case 'disabled': return 'ai.model.health.disabled';
+    case 'not_supported': return 'ai.model.health.notSupported';
+    default: return 'ai.model.health.unknown';
+  }
+};
+
 export const ModelManagementTab: React.FC = () => {
   const { language, showToast } = useCoreApp();
   const tx = (key: string, variables: Record<string, string | number> = {}) => aiAdminText(key, language, variables);
@@ -35,6 +45,11 @@ export const ModelManagementTab: React.FC = () => {
   const [statusFilter, setStatusFilter] = useState('all');
   const [page, setPage] = useState(1);
   const [pageSize, setPageSize] = useState(20);
+  const [selectedScenes, setSelectedScenes] = useState<Set<string>>(new Set());
+  const [bulkPrimaryModelId, setBulkPrimaryModelId] = useState('');
+  const [bulkDataClassification, setBulkDataClassification] = useState('');
+  const [bulkApplying, setBulkApplying] = useState(false);
+  const [checkingModelId, setCheckingModelId] = useState<string | null>(null);
 
   // Modal
   const [showModal, setShowModal] = useState(false);
@@ -44,8 +59,8 @@ export const ModelManagementTab: React.FC = () => {
   const [isDefault, setIsDefault] = useState(false);
   const [modelType, setModelType] = useState('chat');
 
-  const fetchData = async () => {
-    setLoading(true);
+  const fetchData = async (options: { silent?: boolean } = {}) => {
+    if (!options.silent) setLoading(true);
     setError('');
     try {
       const [mList, rList, pList] = await Promise.all([
@@ -60,12 +75,19 @@ export const ModelManagementTab: React.FC = () => {
     } catch (err: any) {
       setError(err?.message || tx('ai.model.error.load'));
     } finally {
-      setLoading(false);
+      if (!options.silent) setLoading(false);
     }
   };
 
   useEffect(() => {
     fetchData();
+  }, []);
+
+  useEffect(() => {
+    const timer = window.setInterval(() => {
+      void fetchData({ silent: true });
+    }, 60_000);
+    return () => window.clearInterval(timer);
   }, []);
 
   const handleCreate = async (e: React.FormEvent) => {
@@ -192,6 +214,89 @@ export const ModelManagementTab: React.FC = () => {
     }
   };
 
+  const handleHealthCheck = async (model: AIModel) => {
+    setCheckingModelId(model.id);
+    try {
+      const result = await checkAIModelHealth(model.id);
+      await fetchData({ silent: true });
+      if (result.success) {
+        showToast(tx('ai.model.health.toast.success', { name: model.name, latency: result.latency_ms }), 'success');
+      } else {
+        showToast(tx('ai.model.health.toast.failure', { name: model.name, code: result.error_code || 'unknown' }), 'error');
+      }
+    } catch (err: any) {
+      showToast(err?.message || tx('ai.model.health.toast.error'), 'error');
+    } finally {
+      setCheckingModelId(null);
+    }
+  };
+
+  const toggleSceneSelection = (sceneCode: string) => {
+    setSelectedScenes((current) => {
+      const next = new Set(current);
+      if (next.has(sceneCode)) next.delete(sceneCode);
+      else next.add(sceneCode);
+      return next;
+    });
+  };
+
+  const toggleAllScenes = () => {
+    setSelectedScenes((current) => (
+      current.size === SCENES.length
+        ? new Set()
+        : new Set(SCENES.map((scene) => scene.code))
+    ));
+  };
+
+  const handleBulkRouteChange = async () => {
+    if ((!bulkPrimaryModelId && !bulkDataClassification) || selectedScenes.size === 0) return;
+    const targetScenes = SCENES.filter((scene) => selectedScenes.has(scene.code));
+    const selectedModel = models.find((model) => model.id === bulkPrimaryModelId);
+
+    setBulkApplying(true);
+    const results = await Promise.allSettled(targetScenes.map((scene) => {
+      const route = routes.find((item) => item.scene === scene.code);
+      const modelId = bulkPrimaryModelId || route?.model_id || defaultModel?.id;
+      if (!modelId) {
+        return Promise.reject(new Error(tx('ai.model.error.noEnabled')));
+      }
+      return upsertAIModelRoute({
+        scene: scene.code,
+        model_id: modelId,
+        fallback_model_id: route?.fallback_model_id || undefined,
+        priority: route?.priority || 10,
+        data_classification: bulkDataClassification || route?.data_classification || 'PUBLIC',
+        enabled: true,
+      });
+    }));
+    const succeeded = results.filter((result) => result.status === 'fulfilled').length;
+    const failed = results.length - succeeded;
+
+    try {
+      if (succeeded > 0) await fetchData();
+      if (failed > 0) {
+        showToast(tx('ai.model.route.bulk.partial', { success: succeeded, failed }), 'error');
+      } else if (bulkPrimaryModelId && bulkDataClassification && selectedModel) {
+        showToast(tx('ai.model.route.bulk.successBoth', { count: succeeded, model: selectedModel.name, classification: bulkDataClassification }), 'success');
+        setSelectedScenes(new Set());
+        setBulkPrimaryModelId('');
+        setBulkDataClassification('');
+      } else if (bulkPrimaryModelId && selectedModel) {
+        showToast(tx('ai.model.route.bulk.success', { count: succeeded, model: selectedModel.name }), 'success');
+        setSelectedScenes(new Set());
+        setBulkPrimaryModelId('');
+        setBulkDataClassification('');
+      } else {
+        showToast(tx('ai.model.route.bulk.successClassification', { count: succeeded, classification: bulkDataClassification }), 'success');
+        setSelectedScenes(new Set());
+        setBulkPrimaryModelId('');
+        setBulkDataClassification('');
+      }
+    } finally {
+      setBulkApplying(false);
+    }
+  };
+
   const filteredModels = useMemo(() => {
     const needle = search.trim().toLowerCase();
     return models.filter((model) => {
@@ -232,7 +337,7 @@ export const ModelManagementTab: React.FC = () => {
           </div>
           <div className="flex gap-3">
             <button
-              onClick={fetchData}
+              onClick={() => void fetchData()}
               className="px-3 py-2 text-sm bg-gray-100 dark:bg-gray-800 hover:bg-gray-200 text-gray-700 dark:text-gray-300 rounded-lg flex items-center gap-1.5 transition"
             >
               <RefreshCw className="w-4 h-4" />
@@ -286,7 +391,7 @@ export const ModelManagementTab: React.FC = () => {
                         {m.tool_call_supported && <span className="rounded bg-sky-50 px-1.5 py-0.5 text-sky-700 dark:bg-sky-950 dark:text-sky-300">tools</span>}
                         {m.json_supported && <span className="rounded bg-amber-50 px-1.5 py-0.5 text-amber-700 dark:bg-amber-950 dark:text-amber-300">JSON</span>}
                       </div>
-                      <div className="mt-1 text-[10px] text-gray-400">{(m.context_length || 0).toLocaleString()} ctx · {m.health_status || 'unknown'} · {m.last_latency_ms ?? '-'} ms · ${(m.cost_input_per_1k || 0).toFixed(4)}/1k in</div>
+                      <div className="mt-1 text-[10px] text-gray-400">{(m.context_length || 0).toLocaleString()} ctx · {tx(getModelHealthStatusKey(m.health_status))} · {m.last_latency_ms ?? '-'} ms · ${(m.cost_input_per_1k || 0).toFixed(4)}/1k in</div>
                     </td>
                     <td className="py-3 px-4">
                       {m.is_default && (
@@ -296,12 +401,28 @@ export const ModelManagementTab: React.FC = () => {
                       )}
                     </td>
                     <td className="py-3 px-4">
-                      <span className={`px-2 py-0.5 text-xs rounded-full font-medium ${m.enabled ? 'bg-emerald-100 text-emerald-800 dark:bg-emerald-950 dark:text-emerald-300' : 'bg-gray-100 text-gray-600'}`}>
-                        {m.enabled ? tx('ai.model.status.enabled') : tx('ai.model.status.disabled')}
-                      </span>
+                      <div className="flex flex-wrap items-center gap-1.5">
+                        <span className={`px-2 py-0.5 text-xs rounded-full font-medium ${m.enabled ? 'bg-emerald-100 text-emerald-800 dark:bg-emerald-950 dark:text-emerald-300' : 'bg-gray-100 text-gray-600'}`}>
+                          {m.enabled ? tx('ai.model.status.enabled') : tx('ai.model.status.disabled')}
+                        </span>
+                        <span className={`inline-flex items-center gap-1 rounded-full px-2 py-0.5 text-[10px] font-semibold ${m.health_status === 'healthy' ? 'bg-emerald-50 text-emerald-700 dark:bg-emerald-950/40 dark:text-emerald-300' : m.health_status === 'unhealthy' ? 'bg-rose-50 text-rose-700 dark:bg-rose-950/40 dark:text-rose-300' : 'bg-slate-100 text-slate-500 dark:bg-slate-800 dark:text-slate-400'}`}>
+                          <span className={`h-1.5 w-1.5 rounded-full ${m.health_status === 'healthy' ? 'bg-emerald-500' : m.health_status === 'unhealthy' ? 'bg-rose-500' : 'bg-slate-400'}`} />
+                          {tx(getModelHealthStatusKey(m.health_status))}
+                        </span>
+                      </div>
+                      <div className="mt-1 text-[10px] text-gray-400">
+                        {tx('ai.model.health.sla', { hours: m.sla_window_hours || 24, value: m.sla_availability_percent == null ? '—' : `${m.sla_availability_percent.toFixed(2)}%` })}
+                        {' · '}{tx('ai.model.health.checks', { success: m.sla_success_count || 0, total: m.sla_check_count || 0 })}
+                        {' · '}{tx('ai.model.health.avgLatency', { value: m.sla_avg_latency_ms == null ? '—' : `${m.sla_avg_latency_ms} ms` })}
+                      </div>
+                      <div className="mt-0.5 text-[10px] text-gray-400">
+                        {tx('ai.model.health.lastCheck', { value: m.last_health_check_at ? new Date(m.last_health_check_at).toLocaleString() : tx('ai.model.health.never') })}
+                        {m.last_error_code && <span className="ml-1 font-mono text-rose-500">· {m.last_error_code}</span>}
+                      </div>
                     </td>
                     <td className="py-3 px-4 text-right">
                       <ActionIconGroup label={tx('ai.model.actionGroup')}>
+                        <ActionIconButton icon={Activity} label={checkingModelId === m.id ? tx('ai.model.health.checking') : tx('ai.model.health.checkAction')} variant="accent" disabled={!m.enabled || checkingModelId !== null} iconClassName={checkingModelId === m.id ? 'animate-spin' : undefined} onClick={() => void handleHealthCheck(m)} />
                         <ActionIconButton icon={Star} label={tx('ai.model.action.setDefault')} variant="accent" onClick={() => void handleSetDefault(m)} />
                         <ActionIconButton icon={Power} label={m.enabled ? tx('ai.model.action.disable') : tx('ai.model.action.enable')} onClick={() => void handleToggle(m)} />
                         <ActionIconButton icon={Trash2} label={tx('ai.model.action.delete')} variant="danger" onClick={() => handleDelete(m.id)} />
@@ -327,6 +448,72 @@ export const ModelManagementTab: React.FC = () => {
           <p className="mt-1 max-w-4xl text-sm leading-6 text-gray-500 dark:text-gray-400">
             {tx('ai.model.route.description')}
           </p>
+        </div>
+
+        <div className="rounded-2xl border border-indigo-100 bg-indigo-50/70 p-3 dark:border-indigo-900/60 dark:bg-indigo-950/20">
+          <div className="flex flex-wrap items-center gap-3">
+            <label className="inline-flex cursor-pointer items-center gap-2 text-xs font-semibold text-indigo-900 dark:text-indigo-100">
+              <input
+                type="checkbox"
+                aria-label={tx('ai.model.route.bulk.selectAll')}
+                checked={selectedScenes.size === SCENES.length}
+                aria-checked={selectedScenes.size > 0 && selectedScenes.size < SCENES.length ? 'mixed' : selectedScenes.size === SCENES.length}
+                onChange={toggleAllScenes}
+                className="h-4 w-4 rounded border-indigo-300 text-indigo-600 focus:ring-indigo-500"
+              />
+              {tx('ai.model.route.bulk.selectAll')}
+            </label>
+            <span className="text-xs text-indigo-700/80 dark:text-indigo-200/80">
+              {tx('ai.model.route.bulk.selected', { count: selectedScenes.size })}
+            </span>
+            <span className="text-[11px] text-indigo-700/70 dark:text-indigo-200/70">
+              {tx('ai.model.route.bulk.description')}
+            </span>
+          </div>
+          <div className="mt-3 flex flex-wrap items-center gap-2">
+            <select
+              aria-label={tx('ai.model.route.bulk.primary')}
+              value={bulkPrimaryModelId}
+              onChange={(event) => setBulkPrimaryModelId(event.target.value)}
+              className="min-w-[260px] rounded-lg border border-indigo-200 bg-white px-2.5 py-2 text-xs font-medium text-gray-800 dark:border-indigo-800 dark:bg-gray-900 dark:text-white"
+              disabled={selectedScenes.size === 0 || bulkApplying}
+            >
+              <option value="">{tx('ai.model.route.bulk.primaryPlaceholder')}</option>
+              {models.filter((model) => model.enabled).map((model) => (
+                <option key={model.id} value={model.id}>{model.name} ({model.model_code})</option>
+              ))}
+            </select>
+            <select
+              aria-label={tx('ai.model.route.bulk.classification')}
+              value={bulkDataClassification}
+              onChange={(event) => setBulkDataClassification(event.target.value)}
+              className="min-w-[190px] rounded-lg border border-indigo-200 bg-white px-2.5 py-2 text-xs font-medium text-gray-800 dark:border-indigo-800 dark:bg-gray-900 dark:text-white"
+              disabled={selectedScenes.size === 0 || bulkApplying}
+            >
+              <option value="">{tx('ai.model.route.bulk.classificationPlaceholder')}</option>
+              <option value="PUBLIC">PUBLIC</option>
+              <option value="INTERNAL">INTERNAL</option>
+              <option value="CONFIDENTIAL">CONFIDENTIAL</option>
+            </select>
+            <button
+              type="button"
+              onClick={() => void handleBulkRouteChange()}
+              disabled={selectedScenes.size === 0 || (!bulkPrimaryModelId && !bulkDataClassification) || bulkApplying}
+              className="rounded-lg bg-indigo-600 px-3 py-2 text-xs font-semibold text-white shadow-sm transition hover:bg-indigo-700 disabled:cursor-not-allowed disabled:opacity-50"
+            >
+              {bulkApplying ? tx('ai.model.route.bulk.applying') : tx('ai.model.route.bulk.apply')}
+            </button>
+            {selectedScenes.size > 0 && (
+              <button
+                type="button"
+                onClick={() => { setSelectedScenes(new Set()); setBulkPrimaryModelId(''); setBulkDataClassification(''); }}
+                disabled={bulkApplying}
+                className="rounded-lg border border-indigo-200 bg-white px-3 py-2 text-xs font-semibold text-indigo-700 transition hover:bg-indigo-100 disabled:cursor-not-allowed disabled:opacity-50 dark:border-indigo-800 dark:bg-gray-900 dark:text-indigo-200 dark:hover:bg-indigo-950/50"
+              >
+                {tx('ai.model.route.bulk.clear')}
+              </button>
+            )}
+          </div>
         </div>
 
         <section className="grid gap-3 rounded-2xl border border-indigo-100 bg-indigo-50/60 p-4 dark:border-indigo-900/60 dark:bg-indigo-950/20" aria-label={tx('ai.model.route.aria')}>
@@ -385,7 +572,19 @@ export const ModelManagementTab: React.FC = () => {
                     <p className="mt-0.5 font-mono text-xs text-indigo-500">{scene.code}</p>
                     <p className="mt-2 text-[11px] leading-5 text-gray-500 dark:text-gray-400">{tx(scene.descriptionKey)}</p>
                   </div>
-                  <span className={`shrink-0 rounded-full px-2 py-1 text-[10px] font-semibold ${routeTargetBlocked ? 'bg-rose-50 text-rose-700 dark:bg-rose-950/40 dark:text-rose-300' : routeHealthWarning ? 'bg-amber-50 text-amber-700 dark:bg-amber-950/40 dark:text-amber-300' : routeConfigured && routeModel ? 'bg-emerald-50 text-emerald-700 dark:bg-emerald-950/40 dark:text-emerald-300' : 'bg-slate-100 text-slate-500 dark:bg-slate-700 dark:text-slate-300'}`}>{routeStatus}</span>
+                  <div className="flex shrink-0 flex-col items-end gap-2">
+                    <label className="inline-flex cursor-pointer items-center gap-1.5 text-[10px] font-semibold text-indigo-700 dark:text-indigo-200">
+                      <input
+                        type="checkbox"
+                        aria-label={tx('ai.model.route.bulk.selectScene', { name: tx(scene.shortKey) })}
+                        checked={selectedScenes.has(scene.code)}
+                        onChange={() => toggleSceneSelection(scene.code)}
+                        className="h-3.5 w-3.5 rounded border-indigo-300 text-indigo-600 focus:ring-indigo-500"
+                      />
+                      {tx('ai.model.route.bulk.select')}
+                    </label>
+                    <span className={`rounded-full px-2 py-1 text-[10px] font-semibold ${routeTargetBlocked ? 'bg-rose-50 text-rose-700 dark:bg-rose-950/40 dark:text-rose-300' : routeHealthWarning ? 'bg-amber-50 text-amber-700 dark:bg-amber-950/40 dark:text-amber-300' : routeConfigured && routeModel ? 'bg-emerald-50 text-emerald-700 dark:bg-emerald-950/40 dark:text-emerald-300' : 'bg-slate-100 text-slate-500 dark:bg-slate-700 dark:text-slate-300'}`}>{routeStatus}</span>
+                  </div>
                 </div>
                 <div className="mt-3 rounded-xl bg-slate-50 p-3 dark:bg-slate-900/70">
                   <div className="text-[10px] font-semibold uppercase tracking-[0.12em] text-slate-400">{tx('ai.model.route.effective')}</div>

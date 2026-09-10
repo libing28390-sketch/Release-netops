@@ -12,6 +12,16 @@ export interface CopilotModelOption {
   stream_supported?: boolean;
 }
 
+const getModelHealthLabel = (status?: string) => {
+  switch (String(status || 'unknown').toLowerCase()) {
+    case 'healthy': return '健康';
+    case 'unhealthy': return '异常';
+    case 'disabled': return '未启用';
+    case 'not_supported': return '不适用';
+    default: return '未检查';
+  }
+};
+
 interface CopilotComposerProps {
   onSend: (message: string) => void;
   selectedModel?: string;
@@ -231,7 +241,7 @@ export const CopilotComposer: React.FC<CopilotComposerProps> = ({
                               : 'text-gray-700 dark:text-gray-200 hover:bg-gray-100 dark:hover:bg-gray-700/60'
                           }`}
                         >
-                          <span className="min-w-0 truncate"><span>{m.name}</span><span className="ml-1 text-[10px] text-gray-400">{m.model_type || 'chat'} · {m.context_length ? `${Math.round(m.context_length / 1000)}k` : 'ctx'} · {m.health_status || 'unknown'}</span></span>
+                          <span className="min-w-0 truncate"><span>{m.name}</span><span className="ml-1 text-[10px] text-gray-400">{m.model_type || 'chat'} · {m.context_length ? `${Math.round(m.context_length / 1000)}k` : 'ctx'} · {getModelHealthLabel(m.health_status)}</span></span>
                           {isSelected && <Check className="w-3.5 h-3.5 text-indigo-600 dark:text-indigo-400 flex-shrink-0" />}
                         </button>
                       );

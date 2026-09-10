@@ -183,7 +183,7 @@ class LLMGateway:
                     "SELECT m.id, m.provider_id, m.model_code, m.default_temperature, m.default_max_tokens, "
                     "m.enabled, p.provider_type, m.model_type, m.thinking_supported, m.tool_call_supported, "
                     "m.json_supported, 1, COALESCE(p.allowed_data_classification, 'CONFIDENTIAL'), 'unknown', "
-                    "0, NULL, NULL, NULL, '[]', 32768, 4096, 0, 0 "
+                    "0, NULL, NULL, NULL, '[]', 131072, 16384, 0, 0 "
                     "FROM ai_model m LEFT JOIN ai_provider p ON p.id = m.provider_id "
                     "WHERE (m.id = ? OR m.model_code = ?) AND m.enabled = 1",
                     (model_id_or_code, model_id_or_code)
@@ -209,8 +209,8 @@ class LLMGateway:
                     "data_processing_agreement_ref": row[16],
                     "agreement_reviewed_at": row[17],
                     "approved_endpoint_patterns": row[18],
-                    "context_length": int(row[19] or 32768),
-                    "max_output_tokens": int(row[20] or 4096),
+                    "context_length": int(row[19] or 131072),
+                    "max_output_tokens": int(row[20] or 16384),
                     "cost_input_per_1k": float(row[21] or 0),
                     "cost_output_per_1k": float(row[22] or 0),
                 }
@@ -230,7 +230,7 @@ class LLMGateway:
                 cursor.execute(
                     "SELECT m.id, m.provider_id, m.model_code, m.default_temperature, m.default_max_tokens, "
                     "p.provider_type, m.model_type, m.thinking_supported, m.tool_call_supported, m.json_supported, 1, 'PUBLIC', 'unknown', "
-                    "0, NULL, NULL, NULL, '[]', 32768, 4096, 0, 0 "
+                    "0, NULL, NULL, NULL, '[]', 131072, 16384, 0, 0 "
                     "FROM ai_model m LEFT JOIN ai_provider p ON p.id = m.provider_id "
                     "WHERE m.enabled = 1 ORDER BY m.is_default DESC, m.priority DESC LIMIT 1"
                 )
@@ -255,8 +255,8 @@ class LLMGateway:
                     "data_processing_agreement_ref": def_row[15],
                     "agreement_reviewed_at": def_row[16],
                     "approved_endpoint_patterns": def_row[17],
-                    "context_length": int(def_row[18] or 32768),
-                    "max_output_tokens": int(def_row[19] or 4096),
+                    "context_length": int(def_row[18] or 131072),
+                    "max_output_tokens": int(def_row[19] or 16384),
                     "cost_input_per_1k": float(def_row[20] or 0),
                     "cost_output_per_1k": float(def_row[21] or 0),
                 }
@@ -1066,7 +1066,7 @@ class LLMGateway:
         )
         
         used_temp = temperature if temperature is not None else model_info.get("default_temperature", 0.7)
-        used_tokens = max_tokens if max_tokens is not None else model_info.get("default_max_tokens", 2048)
+        used_tokens = max_tokens if max_tokens is not None else model_info.get("default_max_tokens", 4096)
 
         tenant = tenant_id or "tenant-default"
         task = task_id or request_id

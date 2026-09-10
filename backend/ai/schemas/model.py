@@ -26,10 +26,10 @@ class AIModelBase(BaseModel):
     thinking_supported: bool = False
     tool_call_supported: bool = True
     json_supported: bool = True
-    context_length: int = Field(32768, ge=1024)
-    max_output_tokens: int = Field(4096, ge=128)
+    context_length: int = Field(131072, ge=1024)
+    max_output_tokens: int = Field(16384, ge=128)
     default_temperature: float = Field(0.7, ge=0.0, le=2.0)
-    default_max_tokens: int = Field(2048, ge=1)
+    default_max_tokens: int = Field(4096, ge=1)
     enabled: bool = True
     is_default: bool = False
     priority: int = Field(10, ge=1)
@@ -101,9 +101,78 @@ class AIModelResponse(AIModelBase):
     cost_input_per_1k: float = 0
     cost_output_per_1k: float = 0
     health_status: str = "unknown"
+    last_health_check_at: Optional[str] = None
     last_latency_ms: Optional[int] = None
     last_success_at: Optional[str] = None
     last_error_code: Optional[str] = None
+    sla_window_hours: int = 24
+    sla_check_count: int = 0
+    sla_success_count: int = 0
+    sla_failure_count: int = 0
+    sla_availability_percent: Optional[float] = None
+    sla_avg_latency_ms: Optional[int] = None
+
+
+class AIModelHealthCheckResponse(BaseModel):
+    model_id: str
+    model_name: Optional[str] = None
+    model_code: Optional[str] = None
+    success: bool
+    health_status: str
+    latency_ms: int = 0
+    last_health_check_at: Optional[str] = None
+    error_code: Optional[str] = None
+    message: str
+    sla_window_hours: int = 24
+    sla_check_count: int = 0
+    sla_success_count: int = 0
+    sla_failure_count: int = 0
+    sla_availability_percent: Optional[float] = None
+    sla_avg_latency_ms: Optional[int] = None
+
+
+class AIModelHealthTimelinePoint(BaseModel):
+    bucket_date: str
+    status: str
+    check_count: int = 0
+    success_count: int = 0
+    failure_count: int = 0
+    availability_percent: Optional[float] = None
+    avg_latency_ms: Optional[int] = None
+
+
+class AIModelHealthServiceResponse(BaseModel):
+    model_id: str
+    provider_id: str
+    provider_name: str
+    model_name: str
+    model_code: str
+    model_type: str
+    enabled: bool
+    health_status: str
+    last_health_check_at: Optional[str] = None
+    window_check_count: int = 0
+    window_success_count: int = 0
+    window_failure_count: int = 0
+    window_availability_percent: Optional[float] = None
+    window_avg_latency_ms: Optional[int] = None
+    timeline: list[AIModelHealthTimelinePoint] = Field(default_factory=list)
+
+
+class AIModelHealthSummaryResponse(BaseModel):
+    window_days: int
+    window_start: str
+    generated_at: str
+    overall_status: str
+    service_count: int = 0
+    monitored_service_count: int = 0
+    checked_service_count: int = 0
+    total_check_count: int = 0
+    total_success_count: int = 0
+    total_failure_count: int = 0
+    availability_percent: Optional[float] = None
+    avg_latency_ms: Optional[int] = None
+    services: list[AIModelHealthServiceResponse] = Field(default_factory=list)
 
 
 class AIModelRouteBase(BaseModel):

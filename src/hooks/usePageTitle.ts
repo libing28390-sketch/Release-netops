@@ -68,6 +68,7 @@ export const usePageTitle = ({
       const map: Record<string, string> = {
         'ai-providers': language === 'zh' ? 'AI Provider 供应商' : 'AI Providers',
         'ai-models': language === 'zh' ? 'AI 模型与路由' : 'AI Models & Routes',
+        'ai-health': language === 'zh' ? 'AI 健康与 SLA' : 'AI Health & SLA',
         'ai-prompts': language === 'zh' ? 'AI Prompt 提示词' : 'AI Prompts',
         'ai-copilot': language === 'zh' ? 'AI Copilot 对话' : 'AI Copilot',
         'ai-agents': language === 'zh' ? 'AI Agent 注册表' : 'AI Agents',

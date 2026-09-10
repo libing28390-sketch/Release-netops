@@ -159,6 +159,94 @@ const normalizeAssetColumns = (columns: Partial<Record<AssetColumnKey, boolean>>
 
 const ASSET_COLUMNS_STORAGE_KEY = 'assets-dashboard-columns-v3';
 
+const FALLBACK_TEMPLATE_DATE_FORMAT = 'yyyy-mm-dd';
+
+const toFallbackTemplateExcelSerial = (value: unknown): number | null => {
+  if (value instanceof Date) {
+    return (Date.UTC(value.getUTCFullYear(), value.getUTCMonth(), value.getUTCDate()) - Date.UTC(1899, 11, 30)) / 86400000;
+  }
+  const match = String(value ?? '').trim().match(/^(\d{4})-(\d{1,2})-(\d{1,2})$/);
+  if (!match) return null;
+  const year = Number(match[1]);
+  const month = Number(match[2]);
+  const day = Number(match[3]);
+  const timestamp = Date.UTC(year, month - 1, day);
+  const parsed = new Date(timestamp);
+  if (parsed.getUTCFullYear() !== year || parsed.getUTCMonth() !== month - 1 || parsed.getUTCDate() !== day) return null;
+  return (timestamp - Date.UTC(1899, 11, 30)) / 86400000;
+};
+
+const formatFallbackTemplateDateColumns = (worksheet: XLSX.WorkSheet, headers: string[]) => {
+  const dateColumns = headers
+    .map((header, index) => ({ header, index }))
+    .filter(({ header }) => ['购买日期', '保修到期', 'Purchase Date', 'Warranty Expiry'].includes(header));
+  const range = worksheet['!ref'] ? XLSX.utils.decode_range(worksheet['!ref']) : null;
+  if (!range || dateColumns.length === 0) return;
+
+  for (const { index } of dateColumns) {
+    for (let rowIndex = range.s.r + 1; rowIndex <= range.e.r; rowIndex += 1) {
+      const address = XLSX.utils.encode_cell({ r: rowIndex, c: index });
+      const cell = worksheet[address];
+      if (!cell || cell.v === '' || cell.v == null) continue;
+      const serial = typeof cell.v === 'number' ? cell.v : toFallbackTemplateExcelSerial(cell.v);
+      if (serial == null || !Number.isFinite(serial)) continue;
+      cell.v = serial;
+      cell.t = 'n';
+      cell.z = FALLBACK_TEMPLATE_DATE_FORMAT;
+    }
+  }
+};
+
+const applyFallbackManagementDefaults = (worksheet: XLSX.WorkSheet, zh: boolean) => {
+  const range = worksheet['!ref'] ? XLSX.utils.decode_range(worksheet['!ref']) : null;
+  if (!range) return;
+
+  const quote = (value: string) => JSON.stringify(value);
+  const webProtocol = zh ? 'Web管理' : 'Web Management';
+  const labels = zh
+    ? { ssh: '命令行管理', web: 'Web管理', netconf: 'NETCONF管理', http: 'HTTP管理', https: 'HTTPS管理', none: '无登录入口' }
+    : { ssh: 'CLI management', web: 'Web management entry', netconf: 'NETCONF management', http: 'HTTP management', https: 'HTTPS management', none: 'No login entry' };
+  const enabled = zh ? '是' : 'yes';
+  const inherited = zh ? '继承资产凭据' : 'inherit_asset';
+  const independent = zh ? '独立凭据' : 'independent';
+
+  for (let rowIndex = range.s.r + 1; rowIndex <= range.e.r; rowIndex += 1) {
+    const rowNumber = rowIndex + 1;
+    const protocolAddress = XLSX.utils.encode_cell({ r: rowIndex, c: 2 });
+    const protocol = String(worksheet[protocolAddress]?.v ?? '').trim();
+    if (!protocol) continue;
+    const protocolRef = `$C${rowNumber}`;
+    const webRef = quote(webProtocol);
+    const formulas = {
+      D: `IF(${protocolRef}="","",IF(${protocolRef}="SSH",${quote(labels.ssh)},IF(${protocolRef}=${webRef},${quote(labels.web)},IF(${protocolRef}="NETCONF",${quote(labels.netconf)},IF(${protocolRef}="HTTP",${quote(labels.http)},IF(${protocolRef}="HTTPS",${quote(labels.https)},IF(${protocolRef}="NONE",${quote(labels.none)},"")))))))`,
+      E: `IF(${protocolRef}="","",IF(${protocolRef}="SSH",22,IF(${protocolRef}="NETCONF",830,IF(${protocolRef}="HTTP",80,IF(OR(${protocolRef}="HTTPS",${protocolRef}=${webRef}),443,"")))))`,
+      F: `IF(${protocolRef}="","",IF(OR(${protocolRef}="SSH",${protocolRef}="NETCONF",${protocolRef}="NONE"),"",IF(OR(${protocolRef}=${webRef},${protocolRef}="HTTP"),"/","/login")))`,
+      G: `IF(${protocolRef}="","",${quote(enabled)})`,
+      H: `IF(${protocolRef}="","",IF(OR(${protocolRef}="HTTP",${protocolRef}="HTTPS"),${quote(independent)},${quote(inherited)}))`,
+      I: `IF($H${rowNumber}=${quote(independent)},IF(OR(${protocolRef}=${webRef},${protocolRef}="HTTP",${protocolRef}="HTTPS"),"web-user",""),"")`,
+      K: `IF($H${rowNumber}=${quote(independent)},IF(OR(${protocolRef}=${webRef},${protocolRef}="HTTP",${protocolRef}="HTTPS"),"web-admin",""),"")`,
+    };
+    const cachedValues = {
+      D: protocol === 'SSH' ? labels.ssh : protocol === webProtocol ? labels.web : protocol === 'NETCONF' ? labels.netconf : protocol === 'HTTP' ? labels.http : protocol === 'HTTPS' ? labels.https : protocol === 'NONE' ? labels.none : '',
+      E: protocol === 'SSH' ? 22 : protocol === 'NETCONF' ? 830 : protocol === 'HTTP' ? 80 : ['HTTPS', webProtocol].includes(protocol) ? 443 : '',
+      F: ['SSH', 'NETCONF', 'NONE'].includes(protocol) ? '' : ['HTTP', webProtocol].includes(protocol) ? '/' : '/login',
+      G: enabled,
+      H: ['HTTP', 'HTTPS'].includes(protocol) ? independent : inherited,
+      I: ['HTTP', 'HTTPS'].includes(protocol) ? 'web-user' : '',
+      K: ['HTTP', 'HTTPS'].includes(protocol) ? 'web-admin' : '',
+    };
+    for (const [column, formula] of Object.entries(formulas)) {
+      const address = `${column}${rowNumber}`;
+      const cell = { ...((worksheet[address] || { t: 's' }) as XLSX.CellObject) };
+      cell.f = formula;
+      cell.v = cachedValues[column as keyof typeof cachedValues];
+      cell.t = typeof cell.v === 'number' ? 'n' : 's';
+      delete cell.w;
+      worksheet[address] = cell;
+    }
+  }
+};
+
 const AssetManagementTab: React.FC<AssetManagementTabProps> = ({ language, setActiveTab }) => {
   const { systemInfo } = useSystem();
   const zh = language === 'zh';
@@ -1419,6 +1507,7 @@ const AssetManagementTab: React.FC<AssetManagementTabProps> = ({ language, setAc
       assetHeaders,
       ...assetExamples.map(moveSnmpCredentialNextToSshCredential),
     ]);
+    formatFallbackTemplateDateColumns(wsAssets, assetHeaders);
     wsAssets['!cols'] = assetHeaders.map((_, index) => ({ wch: index === 0 || index === 2 ? 18 : 16 }));
     XLSX.utils.book_append_sheet(wb, wsAssets, zh ? '资产信息' : 'Asset Information');
 
@@ -1427,20 +1516,23 @@ const AssetManagementTab: React.FC<AssetManagementTabProps> = ({ language, setAc
       : ['Asset Tag (manual)', 'Hostname (manual/check)', 'Management Protocol (one per row)', 'Entry Display Name (label only)', 'Port (blank = default)', 'Login Path (Web only)', 'Enabled', 'Credential Mode (default: inherit asset)', 'Normal User (optional)', 'Normal Password (avoid)', 'Admin User (optional)', 'Admin Password (avoid)', 'Credential ID (recommended)', 'Admin Credential ID (recommended)', 'Notes (scenario)'];
     const methodExamples = zh ? [
       ['NET-BJ-001', 'core-sw-01', 'SSH', '命令行管理', 22, '', '是', '继承资产凭据', '', '', '', '', '', '', 'A：只支持 SSH；一行一个协议'],
-      ['NET-BJ-002', 'web-fw-01', 'Web管理', 'Web管理入口', 443, '/', '是', '继承资产凭据', '', '', '', '', '', '', 'B：Web管理默认 HTTPS/443；端口 80 表示 HTTP'],
+      ['NET-BJ-002', 'web-fw-01', 'SSH', '命令行管理', 22, '', '是', '继承资产凭据', '', '', '', '', '', '', 'B：SSH 管理通道；HTTP + HTTPS 另加两行'],
       ['NET-BJ-002', 'web-fw-01', 'HTTP', 'HTTP管理', 80, '/', '是', '独立凭据', 'web-user', '', 'web-admin', '', '', '', 'B：HTTP + HTTPS 需要两行'],
       ['NET-BJ-002', 'web-fw-01', 'HTTPS', 'HTTPS管理', 443, '/login', '是', '独立凭据', 'web-user', '', 'web-admin', '', '', '', 'B：HTTP + HTTPS 需要两行'],
       ['SRV-BJ-001', 'web-srv-01', 'SSH', '命令行管理', 22, '', '是', '继承资产凭据', '', '', '', '', '', '', 'C：SSH 主通道；HTTPS 另加一行'],
-      ['SRV-BJ-001', 'web-srv-01', 'HTTPS', 'HTTPS管理', 443, '/login', '是', '继承资产凭据', '', '', '', '', '', '', 'C：SSH + HTTPS'],
+      ['SRV-BJ-001', 'web-srv-01', 'HTTPS', 'HTTPS管理', 443, '/login', '是', '独立凭据', 'web-user', '', 'web-admin', '', '', '', 'C：SSH + HTTPS'],
+      ['NET-BJ-002', 'web-fw-01', 'Web管理', 'Web管理', 443, '/', '是', '继承资产凭据', '', '', '', '', '', '', 'B：Web管理默认 HTTPS/443；端口 80 表示 HTTP'],
     ] : [
       ['NET-BJ-001', 'core-sw-01', 'SSH', 'CLI management', 22, '', 'yes', 'inherit_asset', '', '', '', '', '', '', 'A: SSH only; one protocol per row'],
-      ['NET-BJ-002', 'web-fw-01', 'Web Management', 'Web management entry', 443, '/', 'yes', 'inherit_asset', '', '', '', '', '', '', 'B: Web Management defaults to HTTPS/443; port 80 means HTTP'],
+      ['NET-BJ-002', 'web-fw-01', 'SSH', 'CLI management', 22, '', 'yes', 'inherit_asset', '', '', '', '', '', '', 'B: SSH channel; add HTTP + HTTPS rows'],
       ['NET-BJ-002', 'web-fw-01', 'HTTP', 'HTTP management', 80, '/', 'yes', 'independent', 'web-user', '', 'web-admin', '', '', '', 'B: HTTP + HTTPS uses two rows'],
       ['NET-BJ-002', 'web-fw-01', 'HTTPS', 'HTTPS management', 443, '/login', 'yes', 'independent', 'web-user', '', 'web-admin', '', '', '', 'B: HTTP + HTTPS uses two rows'],
       ['SRV-BJ-001', 'web-srv-01', 'SSH', 'CLI management', 22, '', 'yes', 'inherit_asset', '', '', '', '', '', '', 'C: SSH channel; add HTTPS row'],
-      ['SRV-BJ-001', 'web-srv-01', 'HTTPS', 'HTTPS management', 443, '/login', 'yes', 'inherit_asset', '', '', '', '', '', '', 'C: SSH + HTTPS'],
+      ['SRV-BJ-001', 'web-srv-01', 'HTTPS', 'HTTPS management', 443, '/login', 'yes', 'independent', 'web-user', '', 'web-admin', '', '', '', 'C: SSH + HTTPS'],
+      ['NET-BJ-002', 'web-fw-01', 'Web Management', 'Web management entry', 443, '/', 'yes', 'inherit_asset', '', '', '', '', '', '', 'B: Web Management defaults to HTTPS/443; port 80 means HTTP'],
     ];
     const wsMethods = XLSX.utils.aoa_to_sheet([methodHeaders, ...methodExamples]);
+    applyFallbackManagementDefaults(wsMethods, zh);
     wsMethods['!cols'] = [18, 20, 14, 16, 14, 18, 10, 18, 14, 16, 14, 16, 18, 20, 24].map(wch => ({ wch }));
     XLSX.utils.book_append_sheet(wb, wsMethods, zh ? '管理入口' : 'Management Entries');
 

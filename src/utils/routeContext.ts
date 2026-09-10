@@ -222,6 +222,7 @@ export function getRouteContext(pathname: string): RouteContext {
   else if (first === 'ai') {
     if (second === 'providers') activeTab = 'ai-providers';
     else if (second === 'models') activeTab = 'ai-models';
+    else if (second === 'health') activeTab = 'ai-health';
     else if (second === 'prompts') activeTab = 'ai-prompts';
     else if (second === 'copilot') activeTab = 'ai-copilot';
     else if (second === 'agents') activeTab = 'ai-agents';
@@ -239,6 +240,7 @@ export function getRouteContext(pathname: string): RouteContext {
     else if (first === 'ai-center' || first === 'ai') activeTab = 'ai-providers';
     else if (first === 'ai-providers') activeTab = 'ai-providers';
     else if (first === 'ai-models') activeTab = 'ai-models';
+    else if (first === 'ai-health') activeTab = 'ai-health';
     else if (first === 'ai-prompts') activeTab = 'ai-prompts';
     else if (first === 'ai-copilot') activeTab = 'ai-copilot';
     else if (first === 'ai-agents') activeTab = 'ai-agents';

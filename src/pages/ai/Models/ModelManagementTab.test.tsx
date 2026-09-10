@@ -5,6 +5,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { ModelManagementTab } from './ModelManagementTab';
 import {
   createAIModel,
+  checkAIModelHealth,
   deleteAIModel,
   getAIModelDeletePreview,
   getAIModelRoutes,
@@ -20,6 +21,7 @@ vi.mock('../../../contexts/AppDomainContext', () => ({
 }));
 
 vi.mock('../../../api/ai', () => ({
+  checkAIModelHealth: vi.fn(),
   createAIModel: vi.fn(),
   deleteAIModel: vi.fn(),
   getAIModelDeletePreview: vi.fn(),
@@ -59,6 +61,7 @@ const getModels = vi.mocked(getAIModels);
 const getRoutes = vi.mocked(getAIModelRoutes);
 const getProviders = vi.mocked(getAIProviders);
 const createModel = vi.mocked(createAIModel);
+const healthCheck = vi.mocked(checkAIModelHealth);
 const deleteModel = vi.mocked(deleteAIModel);
 const getDeletePreview = vi.mocked(getAIModelDeletePreview);
 const updateModel = vi.mocked(updateAIModel);
@@ -78,6 +81,22 @@ describe('ModelManagementTab browser key paths', () => {
     getRoutes.mockResolvedValue([]);
     getProviders.mockResolvedValue([provider as any]);
     createModel.mockResolvedValue(model as any);
+    healthCheck.mockResolvedValue({
+      model_id: model.id,
+      model_name: model.name,
+      model_code: model.model_code,
+      success: true,
+      health_status: 'healthy',
+      latency_ms: 42,
+      last_health_check_at: '2026-09-10T00:00:00Z',
+      message: 'ok',
+      sla_window_hours: 24,
+      sla_check_count: 1,
+      sla_success_count: 1,
+      sla_failure_count: 0,
+      sla_availability_percent: 100,
+      sla_avg_latency_ms: 42,
+    });
     updateModel.mockResolvedValue(model as any);
     setDefault.mockResolvedValue(undefined as any);
     upsertRoute.mockResolvedValue({ id: 'route-1', scene: 'chat', model_id: model.id, enabled: true } as any);
@@ -96,6 +115,57 @@ describe('ModelManagementTab browser key paths', () => {
 
     await user.selectOptions(screen.getByRole('combobox', { name: '命令解释模型路由' }), model.id);
     await waitFor(() => expect(upsertRoute).toHaveBeenCalledWith({ scene: 'command_explain', model_id: model.id, enabled: true }));
+  });
+
+  it('batch assigns a primary model to all selected scenes', async () => {
+    const user = userEvent.setup();
+    render(<ModelManagementTab />);
+
+    await screen.findAllByText('DeepSeek V4 Flash');
+    await user.click(screen.getByRole('checkbox', { name: '全选场景' }));
+    await user.selectOptions(screen.getByRole('combobox', { name: '批量设置主模型' }), model.id);
+    await user.click(screen.getByRole('button', { name: '应用到选中场景' }));
+
+    await waitFor(() => expect(upsertRoute).toHaveBeenCalledTimes(12));
+    expect(upsertRoute).toHaveBeenCalledWith(expect.objectContaining({
+      scene: 'command_explain',
+      model_id: model.id,
+      enabled: true,
+      priority: 10,
+      data_classification: 'PUBLIC',
+    }));
+    expect(showToast).toHaveBeenCalledWith('已将 DeepSeek V4 Flash 设置到 12 个场景', 'success');
+  });
+
+  it('runs an explicit model health check and reports the result', async () => {
+    const user = userEvent.setup();
+    render(<ModelManagementTab />);
+
+    await screen.findAllByText('DeepSeek V4 Flash');
+    await user.click(screen.getByRole('button', { name: '立即检查模型健康' }));
+
+    await waitFor(() => expect(healthCheck).toHaveBeenCalledWith(model.id));
+    expect(showToast).toHaveBeenCalledWith('“DeepSeek V4 Flash”健康检查通过（42 ms）', 'success');
+  });
+
+  it('batch assigns data classification without requiring a primary model change', async () => {
+    const user = userEvent.setup();
+    render(<ModelManagementTab />);
+
+    await screen.findAllByText('DeepSeek V4 Flash');
+    await user.click(screen.getByRole('checkbox', { name: '全选场景' }));
+    await user.selectOptions(screen.getByRole('combobox', { name: '批量设置数据分类' }), 'INTERNAL');
+    await user.click(screen.getByRole('button', { name: '应用到选中场景' }));
+
+    await waitFor(() => expect(upsertRoute).toHaveBeenCalledTimes(12));
+    expect(upsertRoute).toHaveBeenCalledWith(expect.objectContaining({
+      scene: 'command_explain',
+      model_id: model.id,
+      enabled: true,
+      priority: 10,
+      data_classification: 'INTERNAL',
+    }));
+    expect(showToast).toHaveBeenCalledWith('已将数据分类 INTERNAL 设置到 12 个场景', 'success');
   });
 
   it('opens the model creation path and keeps an empty model list usable', async () => {

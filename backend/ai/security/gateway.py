@@ -121,15 +121,29 @@ def _walk_transform(value: Any, transform) -> Any:
     return value
 
 
-_SENSITIVE_FIELD_MARKERS = frozenset({
+_CREDENTIAL_FIELD_MARKERS = frozenset({
     "password", "passwd", "secret", "community", "token", "apikey",
     "accesstoken", "privatekey", "credential", "authorization", "cookie",
+})
+
+# These fields identify opaque/sensitive context in the normal protection
+# path.  Temporary test mode deliberately does not block the non-credential
+# context markers; its contract is a blacklist of hard controls rather than a
+# second classification policy.
+_SENSITIVE_FIELD_MARKERS = frozenset({
+    *_CREDENTIAL_FIELD_MARKERS,
     "rawoutput", "rawconfig", "runningconfig", "currentconfiguration",
     "toolargs", "requestbody",
 })
 
+_BLACKLIST_DLP_FINDING_CATEGORIES = frozenset({
+    "credential", "snmp_community", "radius_or_tacacs_key", "private_key", "jwt", "cookie",
+    "credential_field",
+})
+_BLACKLIST_WRITE_FINDING_CATEGORIES = frozenset({"change_command"})
 
-def _has_sensitive_field(value: Any) -> bool:
+
+def _has_field_marker(value: Any, markers: frozenset[str]) -> bool:
     """Detect secret-bearing field names even when the value is opaque.
 
     A key such as ``api_key`` is sensitive by contract even if its test value
@@ -140,13 +154,21 @@ def _has_sensitive_field(value: Any) -> bool:
     if isinstance(value, dict):
         for key, item in value.items():
             normalized = "".join(char for char in str(key).casefold() if char.isalnum())
-            if any(marker in normalized for marker in _SENSITIVE_FIELD_MARKERS):
+            if any(marker in normalized for marker in markers):
                 return True
-            if _has_sensitive_field(item):
+            if _has_field_marker(item, markers):
                 return True
     elif isinstance(value, (list, tuple, set)):
-        return any(_has_sensitive_field(item) for item in value)
+        return any(_has_field_marker(item, markers) for item in value)
     return False
+
+
+def _has_sensitive_field(value: Any) -> bool:
+    return _has_field_marker(value, _SENSITIVE_FIELD_MARKERS)
+
+
+def _has_credential_field(value: Any) -> bool:
+    return _has_field_marker(value, _CREDENTIAL_FIELD_MARKERS)
 
 
 def _tool_is_unsafe(tool: dict[str, Any]) -> bool:
@@ -154,6 +176,9 @@ def _tool_is_unsafe(tool: dict[str, Any]) -> bool:
     forbidden = (
         "raw_ssh", "raw ssh", "raw_sql", "raw sql", "snmp set", "snmpset",
         "configure terminal", "system-view", "write memory", "commit", "delete ",
+        "下发配置", "修改配置", "变更配置", "删除配置", "清空配置", "重启设备", "重载设备",
+        "批量关闭", "批量启用", "批量开启", "批量变更", "批量操作", "批量下发",
+        "关闭端口", "关闭接口", "禁用端口", "禁用接口", "全网变更", "全网操作",
     )
     return any(marker in text for marker in forbidden)
 
@@ -228,7 +253,7 @@ class AISecurityGateway:
         if not active_policy.external_ai_enabled:
             raise SecurityBlocked("external AI is disabled by policy", reason_code="AI_SECURITY_POLICY_DISABLED")
         normalized_provider = provider_type.lower().replace("-", "_")
-        if normalized_provider not in {item.lower() for item in active_policy.allowed_provider_types}:
+        if normalized_provider not in {item.lower().replace("-", "_") for item in active_policy.allowed_provider_types}:
             raise SecurityBlocked("provider is not allowed by the AI egress policy", reason_code="AI_SECURITY_PROVIDER_DENIED")
         if active_policy.provider_kill_switches.get(normalized_provider) or (provider_id and active_policy.provider_kill_switches.get(provider_id)):
             raise SecurityBlocked("provider is disabled by its kill switch", reason_code="AI_SECURITY_KILL_SWITCH")
@@ -246,6 +271,14 @@ class AISecurityGateway:
         if _has_sensitive_field(combined):
             findings.append(Finding(DataLevel.L4_PROHIBITED, "sensitive_field"))
             level = max(level, DataLevel.L4_PROHIBITED)
+        passthrough_active = dev_passthrough.is_active()
+        if passthrough_active and _has_credential_field(combined):
+            # A credential-bearing field is itself a DLP signal even when a
+            # caller supplies an opaque value that does not match a secret
+            # regex.  Non-credential context fields remain available in the
+            # temporary blacklist mode.
+            findings.append(Finding(DataLevel.L4_PROHIBITED, "credential_field"))
+            level = max(level, DataLevel.L4_PROHIBITED)
         request_findings = request_policy_findings(messages, tenant_id=tenant_id)
         if request_findings:
             findings.extend(request_findings)
@@ -253,28 +286,41 @@ class AISecurityGateway:
         _, instruction_findings = separate_data_and_instructions(messages)
         if instruction_findings:
             findings.extend(Finding(DataLevel.L3_SENSITIVE, category) for category in instruction_findings)
-        passthrough_active = dev_passthrough.is_active()
         requested_classification = normalize_classification(data_classification) if data_classification is not None else classification_for_level(level)
         if data_classification is not None and requested_classification is None:
-            raise SecurityBlocked("unknown data classification", reason_code="AI_SECURITY_CLASSIFICATION_DENIED", findings=findings)
+            if passthrough_active:
+                # The temporary mode does not trust a caller-supplied
+                # classification string, but it also does not turn a bad
+                # classification label into a hard block.  Keep the audit
+                # metadata stable by deriving the level-based value.
+                requested_classification = classification_for_level(level)
+            else:
+                raise SecurityBlocked("unknown data classification", reason_code="AI_SECURITY_CLASSIFICATION_DENIED", findings=findings)
 
-        # Cloud egress keeps the generic classification boundary.  INTERNAL
-        # context may use a cloud provider when the provider policy allows it;
-        # CONFIDENTIAL/SECRET never leave the local boundary, regardless of
-        # provider settings or passthrough mode.
-        is_local_provider = normalized_provider in {"local", "ollama"}
-        if data_classification is not None and not is_local_provider and requested_classification in {
-            DataClassification.CONFIDENTIAL,
-            DataClassification.SECRET,
-        }:
-            raise SecurityBlocked(
-                "confidential or secret data may only use a local model",
-                reason_code="AI_SECURITY_CLASSIFICATION_DENIED",
-                findings=findings,
-            )
         has_injection = any(item.category == "prompt_injection" for item in findings)
         if tools and any(_tool_is_unsafe(tool) for tool in tools):
             raise SecurityBlocked("raw write-capable or unrestricted tool is not allowed", findings=findings, reason_code="AI_SECURITY_UNSAFE_TOOL")
+
+        # Temporary test mode is an explicit blacklist policy.  It can relax
+        # classification, minimization and identifier tokenization, but it
+        # never allows credential material or credential-bearing fields to
+        # cross the provider boundary.
+        if passthrough_active and any(item.category in _BLACKLIST_DLP_FINDING_CATEGORIES for item in findings):
+            raise SecurityBlocked(
+                "credential DLP blocked the temporary test request",
+                findings=findings,
+                reason_code="AI_SECURITY_DLP_FAILED",
+            )
+
+        # A write command embedded in a user message is still an operation
+        # request even when no structured tool was supplied.  Keep the same
+        # hard stop as the tool-definition check above.
+        if any(item.category in _BLACKLIST_WRITE_FINDING_CATEGORIES for item in findings):
+            raise SecurityBlocked(
+                "write-capable operation is not allowed in temporary test mode",
+                findings=findings,
+                reason_code="AI_SECURITY_UNSAFE_TOOL",
+            )
 
         # A user asking the model to retrieve credentials or another tenant's
         # private scope is prohibited even when the prompt contains no secret
@@ -289,15 +335,28 @@ class AISecurityGateway:
             )
 
         if passthrough_active:
-            # Temporary testing mode: keep the external/provider controls
-            # above, but send non-secret test data as-is. Hard DLP checks
-            # below still reject credentials, private keys, JWTs and cookies;
-            # unsafe write-capable tools remain blocked above.
+            # Temporary testing mode: keep only the blacklist controls above
+            # plus the provider, region, tenant, payload-size and kill-switch
+            # controls already enforced before classification.  Ordinary
+            # context is sent as-is without minimization or tokenization.
             action = SecurityAction.ALLOW
             safe_messages = messages
             safe_tools = tools if tools else None
             safe_options = provider_options or {}
         else:
+            # Normal cloud egress keeps the generic classification boundary.
+            # INTERNAL context may use a cloud provider when its policy allows
+            # it; CONFIDENTIAL/SECRET remain local-only.
+            is_local_provider = normalized_provider in {"local", "ollama"}
+            if data_classification is not None and not is_local_provider and requested_classification in {
+                DataClassification.CONFIDENTIAL,
+                DataClassification.SECRET,
+            }:
+                raise SecurityBlocked(
+                    "confidential or secret data may only use a local model",
+                    reason_code="AI_SECURITY_CLASSIFICATION_DENIED",
+                    findings=findings,
+                )
             if level >= DataLevel.L4_PROHIBITED:
                 raise SecurityBlocked("prohibited data detected before tokenization", findings=findings, reason_code="AI_SECURITY_SENSITIVE_DATA")
             if requested_classification.value not in {str(item).upper() for item in active_policy.allowed_classifications}:
@@ -344,6 +403,7 @@ class AISecurityGateway:
                 "provider_id": provider_id or "",
                 "model_id": model_id or "",
                 "dev_passthrough": passthrough_active,
+                "security_mode": "blacklist" if passthrough_active else "classification",
                 "scope": {key: value for key, value in scope.items() if value},
             },
         )
@@ -392,8 +452,11 @@ class AISecurityGateway:
             raise SecurityBlocked("tenant AI egress is disabled by the kill switch", reason_code="AI_SECURITY_KILL_SWITCH")
         if not active_policy.external_ai_enabled:
             raise SecurityBlocked("external AI is disabled by policy", reason_code="AI_SECURITY_POLICY_DISABLED")
-        if provider_type.lower() not in {item.lower() for item in active_policy.allowed_provider_types}:
+        normalized_provider = provider_type.lower().replace("-", "_")
+        if normalized_provider not in {item.lower().replace("-", "_") for item in active_policy.allowed_provider_types}:
             raise SecurityBlocked("provider is not allowed by the AI egress policy", reason_code="AI_SECURITY_PROVIDER_DENIED")
+        if active_policy.provider_kill_switches.get(normalized_provider) or (provider_id and active_policy.provider_kill_switches.get(provider_id)):
+            raise SecurityBlocked("provider is disabled by its kill switch", reason_code="AI_SECURITY_KILL_SWITCH")
         normalized_region = str(data_region or "unknown").strip().lower()
         if normalized_region not in {str(item).lower() for item in active_policy.allowed_data_regions}:
             raise SecurityBlocked("provider data region is not allowed", reason_code="AI_SECURITY_SCOPE_DENIED")
@@ -406,21 +469,30 @@ class AISecurityGateway:
         passthrough_active = dev_passthrough.is_active()
         requested_classification = normalize_classification(data_classification) if data_classification is not None else classification_for_level(level)
         if data_classification is not None and requested_classification is None:
-            raise SecurityBlocked("unknown data classification", reason_code="AI_SECURITY_CLASSIFICATION_DENIED", findings=findings)
-        is_local_provider = provider_type.lower().replace("-", "_") in {"local", "ollama"}
-        if data_classification is not None and not is_local_provider and requested_classification in {
-            DataClassification.CONFIDENTIAL,
-            DataClassification.SECRET,
-        }:
+            if passthrough_active:
+                requested_classification = classification_for_level(level)
+            else:
+                raise SecurityBlocked("unknown data classification", reason_code="AI_SECURITY_CLASSIFICATION_DENIED", findings=findings)
+        if passthrough_active and any(item.category in _BLACKLIST_DLP_FINDING_CATEGORIES for item in findings):
             raise SecurityBlocked(
-                "confidential or secret embeddings may only use a local model",
-                reason_code="AI_SECURITY_CLASSIFICATION_DENIED",
+                "credential DLP blocked the temporary embedding request",
                 findings=findings,
+                reason_code="AI_SECURITY_DLP_FAILED",
             )
         if passthrough_active:
             action = SecurityAction.ALLOW
             safe_texts = values
         else:
+            is_local_provider = normalized_provider in {"local", "ollama"}
+            if data_classification is not None and not is_local_provider and requested_classification in {
+                DataClassification.CONFIDENTIAL,
+                DataClassification.SECRET,
+            }:
+                raise SecurityBlocked(
+                    "confidential or secret embeddings may only use a local model",
+                    reason_code="AI_SECURITY_CLASSIFICATION_DENIED",
+                    findings=findings,
+                )
             if requested_classification.value not in {str(item).upper() for item in active_policy.allowed_classifications} and level >= DataLevel.L3_SENSITIVE:
                 raise SecurityBlocked("embedding classification is not allowed", reason_code="AI_SECURITY_CLASSIFICATION_DENIED", findings=findings)
             if provider_allowed_classification and _classification_rank(requested_classification) > _classification_rank(provider_allowed_classification):
@@ -450,6 +522,7 @@ class AISecurityGateway:
             "provider_id": provider_id or "",
             "model_id": model_id or "",
             "dev_passthrough": passthrough_active,
+            "security_mode": "blacklist" if passthrough_active else "classification",
         }
         payload = SecureEmbeddingPayload(
             texts=safe_texts,

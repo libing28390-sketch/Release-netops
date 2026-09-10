@@ -16,6 +16,7 @@ from core.config import settings
 
 
 _MAX_TEST_MINUTES = 15
+_MODE = "blacklist"
 
 
 def _now() -> datetime:
@@ -77,6 +78,7 @@ class DevPassthroughController:
                 "remaining_seconds": remaining,
                 "max_minutes": _MAX_TEST_MINUTES,
                 "environment": str(getattr(settings, "ENVIRONMENT", "") or "unknown"),
+                "mode": _MODE,
             }
 
 

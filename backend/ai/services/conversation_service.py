@@ -129,7 +129,7 @@ def _safe_message_content(content: str, *, tenant_id: str, scope_id: str, role: 
     return tokenize_text(text, tenant_id=tenant_id, task_id=scope_id, vault=token_vault)
 
 
-def create_conversation(*, tenant_id: str, user_id: str, title: str | None = None, context_budget: int = 32768, selected_model_id: str | None = None, model_locked: bool = False) -> dict[str, Any]:
+def create_conversation(*, tenant_id: str, user_id: str, title: str | None = None, context_budget: int = 8192, selected_model_id: str | None = None, model_locked: bool = False) -> dict[str, Any]:
     conversation_id = f"conv_{uuid.uuid4().hex[:20]}"
     now = _now()
     with get_db_connection() as conn:
@@ -190,7 +190,7 @@ def _conversation_result(row: Any) -> dict[str, Any]:
         "tenant_id": row["tenant_id"],
         "title": row["title"] or "",
         "status": row["status"],
-        "context_budget": int(row["context_budget"] or 32768),
+        "context_budget": int(row["context_budget"] or 8192),
         "created_at": row["created_at"],
         "updated_at": row["updated_at"],
         "selected_model_id": row["selected_model_id"] if "selected_model_id" in row.keys() else None,
@@ -455,7 +455,7 @@ def append_message(*, conversation_id: str, tenant_id: str, user_id: str, role: 
     return {"id": message_id, "conversation_id": conversation_id, "sequence_no": int(next_seq), "role": role, "content": safe_content, "citations": citations or [], "token_count": token_count, "execution_mode": safe_execution_mode, "external_egress": external_egress, "input_tokens": safe_input_tokens, "output_tokens": safe_output_tokens, "latency_ms": safe_latency_ms, "token_source": safe_token_source, "created_at": now}
 
 
-def get_context(*, conversation_id: str, tenant_id: str, user_id: str, max_messages: int = 20) -> dict[str, Any]:
+def get_context(*, conversation_id: str, tenant_id: str, user_id: str, max_messages: int = 40) -> dict[str, Any]:
     max_messages = max(1, min(int(max_messages), 100))
     with get_db_connection() as conn:
         conversation = _get_conversation(conn, conversation_id, tenant_id=tenant_id, user_id=user_id)

@@ -324,7 +324,7 @@ def create_provider(payload: AIProviderCreate, user=Depends(require_ai_permissio
                     tool_call_supported, json_supported, context_length, max_output_tokens,
                     default_temperature, default_max_tokens, enabled, is_default, priority,
                     created_at, updated_at, stream_supported, display_name
-                ) VALUES (?, ?, ?, ?, ?, ?, 1, 1, 128000, 4096, 0.7, 2048, 1, ?, 10, ?, ?, 1, ?)
+                ) VALUES (?, ?, ?, ?, ?, ?, 1, 1, 131072, 16384, 0.7, 4096, 1, ?, 10, ?, ?, 1, ?)
                 """,
                 (
                     m_id, p_id, m["name"], m["code"], m["type"],

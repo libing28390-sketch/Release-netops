@@ -79,6 +79,35 @@ describe('asset management method import', () => {
     expect(merged.assets[0].web_profiles[0]).toMatchObject({ scheme: 'https', port: 443, profile_name: 'Web管理' });
   });
 
+  it('keeps SSH rows on the CLI label and applies SSH defaults when later fields are blank', () => {
+    const invalidSheet = XLSX.utils.aoa_to_sheet([
+      ['资产编号', '主机名', '管理方式', '入口名称', '端口', '登录路径'],
+      ['SSH-001', 'ssh-01', 'SSH', 'HTTP管理', 443, '/login'],
+    ]);
+    const invalid = parseManagementMethodSheet(invalidSheet);
+    expect(invalid.rows).toEqual([]);
+    expect(invalid.errors[0]).toContain('入口显示名称应为“命令行管理”');
+
+    const invalidPathSheet = XLSX.utils.aoa_to_sheet([
+      ['资产编号', '主机名', '管理方式', '入口名称', '端口', '登录路径'],
+      ['SSH-003', 'ssh-03', 'SSH', '命令行管理', 22, '/login'],
+    ]);
+    const invalidPath = parseManagementMethodSheet(invalidPathSheet);
+    expect(invalidPath.rows).toEqual([]);
+    expect(invalidPath.errors[0]).toContain('不应填写登录路径');
+
+    const validSheet = XLSX.utils.aoa_to_sheet([
+      ['资产编号', '主机名', '管理方式', '入口名称', '端口', '登录路径', '凭据模式'],
+      ['SSH-002', 'ssh-02', 'SSH', '', '', '', ''],
+    ]);
+    const valid = parseManagementMethodSheet(validSheet);
+    expect(valid.errors).toEqual([]);
+    expect(valid.rows[0]).toMatchObject({ method: 'ssh', credentialMode: 'inherit_asset', path: '' });
+    const merged = mergeManagementMethods([{ asset_tag: 'SSH-002', hostname: 'ssh-02' }], valid.rows);
+    expect(merged.errors).toEqual([]);
+    expect(merged.assets[0]).toMatchObject({ connection_method: 'ssh', management_port: '22' });
+  });
+
   it('requires an explicit management entry for every asset in the unified template', () => {
     const assets: Record<string, any>[] = [
       { asset_tag: 'A-001', hostname: 'a' },

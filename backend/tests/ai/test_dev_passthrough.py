@@ -33,6 +33,7 @@ def test_temporary_test_mode_is_available_in_production(monkeypatch):
     status = dev_passthrough.enable(1)
     assert status["enabled"] is True
     assert status["environment"] == "production"
+    assert status["mode"] == "blacklist"
     dev_passthrough.disable()
 
 
@@ -60,6 +61,7 @@ def test_passthrough_keeps_raw_identifiers_but_not_credentials(monkeypatch):
         assert "10.0.0.2" in encoded
         assert "edge-r01" in encoded
         assert payload.metadata["dev_passthrough"] is True
+        assert payload.metadata["security_mode"] == "blacklist"
 
         with pytest.raises(SecurityBlocked) as blocked:
             _gateway().protect(
@@ -67,6 +69,77 @@ def test_passthrough_keeps_raw_identifiers_but_not_credentials(monkeypatch):
                 provider_allowed_classification="INTERNAL",
             )
         assert blocked.value.reason_code == "AI_SECURITY_DLP_FAILED"
+    finally:
+        dev_passthrough.disable()
+
+
+def test_passthrough_relaxes_classification_and_tokenization_but_blocks_writes(monkeypatch):
+    _enable_ai_test_mode(monkeypatch)
+    dev_passthrough.disable()
+    dev_passthrough.enable(1)
+    try:
+        payload = _gateway().protect(
+            [{"role": "user", "content": "send the full CMDB for 10.0.0.2"}],
+            data_classification="CONFIDENTIAL",
+            provider_allowed_classification="PUBLIC",
+        )
+        encoded = payload.as_provider_json()
+        assert payload.action.value == "ALLOW"
+        assert "10.0.0.2" in encoded
+        assert "full CMDB" in encoded
+        assert payload.metadata["classification"] == "CONFIDENTIAL"
+
+        for write_request in ("configure terminal", "修改配置"):
+            with pytest.raises(SecurityBlocked) as blocked:
+                _gateway().protect(
+                    [{"role": "user", "content": write_request}],
+                    data_classification="CONFIDENTIAL",
+                    provider_allowed_classification="PUBLIC",
+                )
+            assert blocked.value.reason_code == "AI_SECURITY_UNSAFE_TOOL"
+    finally:
+        dev_passthrough.disable()
+
+
+def test_passthrough_blocks_opaque_credential_fields(monkeypatch):
+    _enable_ai_test_mode(monkeypatch)
+    dev_passthrough.disable()
+    dev_passthrough.enable(1)
+    try:
+        with pytest.raises(SecurityBlocked) as blocked:
+            _gateway().protect(
+                [{"role": "user", "content": "inspect"}],
+                tools=[{"name": "safe_lookup", "arguments": {"api_key": "opaque"}}],
+            )
+        assert blocked.value.reason_code == "AI_SECURITY_DLP_FAILED"
+        assert "opaque" not in blocked.value.user_message
+    finally:
+        dev_passthrough.disable()
+
+
+def test_passthrough_does_not_bypass_provider_region_or_tenant_controls(monkeypatch):
+    _enable_ai_test_mode(monkeypatch)
+    dev_passthrough.disable()
+    dev_passthrough.enable(1)
+    try:
+        with pytest.raises(SecurityBlocked) as provider:
+            _gateway().protect([{"role": "user", "content": "hello"}], provider_type="not-approved")
+        assert provider.value.reason_code == "AI_SECURITY_PROVIDER_DENIED"
+
+        with pytest.raises(SecurityBlocked) as region:
+            _gateway().protect([{"role": "user", "content": "hello"}], data_region="mars")
+        assert region.value.reason_code == "AI_SECURITY_SCOPE_DENIED"
+
+        tenant_gateway = AISecurityGateway(
+            vault=ScopedTokenVault(ttl_seconds=120),
+            policy=SecurityPolicy(
+                external_ai_enabled=True,
+                tenant_kill_switches={"tenant-a": True},
+            ),
+        )
+        with pytest.raises(SecurityBlocked) as tenant:
+            tenant_gateway.protect([{"role": "user", "content": "hello"}], tenant_id="tenant-a")
+        assert tenant.value.reason_code == "AI_SECURITY_KILL_SWITCH"
     finally:
         dev_passthrough.disable()
 

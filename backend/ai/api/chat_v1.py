@@ -285,7 +285,7 @@ async def chat(payload: ChatRequest, user=Depends(require_ai_permission("ai.assi
 
 class ConversationCreateRequest(BaseModel):
     title: str | None = Field(default=None, max_length=200)
-    context_budget: int = Field(default=32768, ge=4096, le=131072)
+    context_budget: int = Field(default=8192, ge=4096, le=131072)
 
 
 @router.post("/conversations")

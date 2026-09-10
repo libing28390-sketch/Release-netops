@@ -90,24 +90,39 @@ interface GuardrailRowProps {
   label: string;
   description: string;
   enabled: boolean;
+  state?: 'on' | 'bypass' | 'off';
 }
 
-const GuardrailRow: React.FC<GuardrailRowProps> = ({ icon, label, description, enabled }) => (
+const GuardrailRow: React.FC<GuardrailRowProps> = ({ icon, label, description, enabled, state }) => {
+  const effectiveState = state || (enabled ? 'on' : 'off');
+  const stateLabel = effectiveState === 'bypass' ? '测试模式放开' : effectiveState === 'on' ? 'ON' : 'OFF';
+  const stateTone = effectiveState === 'bypass'
+    ? 'bg-amber-100 text-amber-700 dark:bg-amber-950/60 dark:text-amber-300'
+    : effectiveState === 'on'
+      ? 'bg-emerald-100 text-emerald-700 dark:bg-emerald-950/60 dark:text-emerald-300'
+      : 'bg-slate-200 text-slate-500 dark:bg-slate-800 dark:text-slate-400';
+  const iconTone = effectiveState === 'bypass'
+    ? 'bg-amber-100 text-amber-600 dark:bg-amber-950/50 dark:text-amber-300'
+    : effectiveState === 'on'
+      ? 'bg-emerald-100 text-emerald-600 dark:bg-emerald-950/50 dark:text-emerald-300'
+      : 'bg-slate-200 text-slate-500 dark:bg-slate-800 dark:text-slate-400';
+  return (
   <div className="flex items-start gap-3 rounded-2xl border border-slate-200/80 bg-slate-50/80 p-3 dark:border-slate-800 dark:bg-slate-900/60">
-    <span className={`mt-0.5 flex h-8 w-8 shrink-0 items-center justify-center rounded-xl ${enabled ? 'bg-emerald-100 text-emerald-600 dark:bg-emerald-950/50 dark:text-emerald-300' : 'bg-slate-200 text-slate-500 dark:bg-slate-800 dark:text-slate-400'}`}>
+    <span className={`mt-0.5 flex h-8 w-8 shrink-0 items-center justify-center rounded-xl ${iconTone}`}>
       {icon}
     </span>
     <span className="min-w-0 flex-1">
       <span className="flex items-center gap-2 text-sm font-semibold text-slate-800 dark:text-slate-100">
         {label}
-        <span className={`rounded-full px-1.5 py-0.5 text-[10px] font-bold uppercase tracking-wide ${enabled ? 'bg-emerald-100 text-emerald-700 dark:bg-emerald-950/60 dark:text-emerald-300' : 'bg-slate-200 text-slate-500 dark:bg-slate-800 dark:text-slate-400'}`}>
-          {enabled ? 'ON' : 'OFF'}
+        <span className={`rounded-full px-1.5 py-0.5 text-[10px] font-bold uppercase tracking-wide ${stateTone}`}>
+          {stateLabel}
         </span>
       </span>
       <span className="mt-1 block text-xs leading-5 text-slate-500 dark:text-slate-400">{description}</span>
     </span>
   </div>
-);
+  );
+};
 
 export const SecurityPolicyTab: React.FC = () => {
   const [policy, setPolicy] = useState<AISecurityPolicy>(DEFAULT_POLICY);
@@ -254,7 +269,7 @@ export const SecurityPolicyTab: React.FC = () => {
   const toggleTemporaryTestMode = async () => {
     if (!policy.dev_passthrough?.supported) return;
     const enabled = !Boolean(policy.dev_passthrough.enabled);
-    if (enabled && !window.confirm(`AI 临时测试模式会在 ${policy.dev_passthrough.max_minutes} 分钟后自动关闭，并跳过分类与 Token 化，但仍保留凭据 DLP、Provider 白名单、区域、大小和工具安全检查。确定开启吗？`)) return;
+    if (enabled && !window.confirm(`AI 临时测试模式是限时黑名单放行，会在 ${policy.dev_passthrough.max_minutes} 分钟后自动关闭。普通请求不再因数据分类被拦截，也不做最小化和 Token 化，但仍拦截凭据 DLP、Kill Switch、Provider/区域/租户权限、请求大小、危险工具/写入操作以及跨租户和凭据读取请求。确定开启吗？`)) return;
     setSaving(true);
     setError(null);
     setNotice(null);
@@ -323,8 +338,8 @@ export const SecurityPolicyTab: React.FC = () => {
     }
     if (devPassthroughActive) {
       return {
-        label: 'AI 临时测试模式已开启',
-        detail: '当前请求会跳过分类与 Token 化；凭据 DLP、Provider/区域、大小和工具安全检查仍然保留。',
+        label: 'AI 临时黑名单模式已开启',
+        detail: '普通请求不再因数据分类被拦截，也不做最小化和 Token 化；凭据 DLP、Kill Switch、Provider/区域/租户权限、请求大小、危险工具/写入操作以及跨租户和凭据读取拦截仍然保留。',
         icon: AlertTriangle,
         tone: 'amber',
       };
@@ -400,7 +415,7 @@ export const SecurityPolicyTab: React.FC = () => {
             </div>
             <div className="flex shrink-0 items-center gap-2 rounded-full bg-white/70 px-3 py-2 text-xs font-bold uppercase tracking-wider shadow-sm dark:bg-slate-950/40">
               <span className={`h-2 w-2 rounded-full ${gatewayReady ? 'bg-emerald-500' : 'bg-rose-500'}`} />
-              {devPassthroughActive ? 'AI test mode / timed' : gatewayReady ? 'Protected / ready' : 'Blocked by policy'}
+              {devPassthroughActive ? '临时黑名单 · 定时' : gatewayReady ? '安全网关 · 已就绪' : '策略已阻断'}
             </div>
           </div>
         </section>
@@ -445,11 +460,11 @@ export const SecurityPolicyTab: React.FC = () => {
               {policy.dev_passthrough?.supported && (
                 <div className={`rounded-2xl border p-4 transition ${policy.dev_passthrough.enabled ? 'border-amber-200 bg-amber-50/70 dark:border-amber-900/60 dark:bg-amber-950/20' : 'border-slate-200 bg-slate-50/70 dark:border-slate-800 dark:bg-slate-950/50'}`}>
                   <div className="flex items-start justify-between gap-3">
-                    <div className="flex items-center gap-2"><AlertTriangle className={`h-4 w-4 ${policy.dev_passthrough.enabled ? 'text-amber-600' : 'text-slate-500'}`} /><span className="text-sm font-semibold text-slate-800 dark:text-slate-100">AI 临时测试模式</span></div>
+                    <div className="flex items-center gap-2"><AlertTriangle className={`h-4 w-4 ${policy.dev_passthrough.enabled ? 'text-amber-600' : 'text-slate-500'}`} /><span className="text-sm font-semibold text-slate-800 dark:text-slate-100">AI 临时黑名单模式</span></div>
                     <SwitchButton checked={Boolean(policy.dev_passthrough.enabled)} danger disabled={saving} onClick={() => void toggleTemporaryTestMode()} label="切换 AI 临时测试模式" />
                   </div>
                   <div className="mt-4 text-sm font-bold text-slate-900 dark:text-white">{policy.dev_passthrough.enabled ? `已开启 · 剩余 ${Math.ceil(policy.dev_passthrough.remaining_seconds / 60)} 分钟` : '未开启'}</div>
-                  <p className="mt-2 text-xs leading-5 text-slate-500 dark:text-slate-400">管理员临时测试使用，最多 15 分钟，重启自动关闭。跳过分类与 Token 化，但仍保留凭据 DLP、Provider/区域、大小和工具安全检查。</p>
+                  <p className="mt-2 text-xs leading-5 text-slate-500 dark:text-slate-400">管理员临时测试使用，最多 15 分钟，重启自动关闭。普通请求不再因数据分类被拦截，也不做最小化和 Token 化；仅保留凭据 DLP、Kill Switch、Provider/区域/租户权限、请求大小、危险工具/写入操作以及跨租户和凭据读取拦截。</p>
                 </div>
               )}
             </div>
@@ -461,13 +476,46 @@ export const SecurityPolicyTab: React.FC = () => {
                 <div className="flex items-center gap-2 text-sm font-bold text-slate-900 dark:text-white"><ShieldCheck className="h-4 w-4 text-emerald-600" />数据保护基线</div>
                 <p className="mt-1 text-xs leading-5 text-slate-500 dark:text-slate-400">这些约束在网关层执行，Provider 无法绕过。</p>
               </div>
-              <span className="rounded-full bg-emerald-50 px-2.5 py-1 text-[10px] font-bold uppercase tracking-wider text-emerald-700 dark:bg-emerald-950/50 dark:text-emerald-300">Fail closed</span>
+              <span className={`rounded-full px-2.5 py-1 text-[10px] font-bold uppercase tracking-wider ${devPassthroughActive ? 'bg-amber-50 text-amber-700 dark:bg-amber-950/50 dark:text-amber-300' : 'bg-emerald-50 text-emerald-700 dark:bg-emerald-950/50 dark:text-emerald-300'}`}>{devPassthroughActive ? '黑名单基线' : 'Fail closed'}</span>
             </div>
             <div className="mt-5 space-y-3">
-              <GuardrailRow icon={<Fingerprint className="h-4 w-4" />} label="敏感标识符 Token 化" description="设备 IP、用户名、密钥等标识在出站前替换为稳定 Token。" enabled={policy.identifiers_must_be_tokenized} />
-              <GuardrailRow icon={<EyeOff className="h-4 w-4" />} label="敏感内容最小化" description="只保留当前分析所需内容，减少原始配置和凭据暴露。" enabled={policy.allow_sensitive_minimization} />
-              <GuardrailRow icon={<Database className="h-4 w-4" />} label="请求体大小限制" description={`单次 payload 上限 ${formatBytes(policy.max_payload_bytes)}，超过即拒绝。`} enabled={policy.max_payload_bytes > 0} />
-              <GuardrailRow icon={<LockKeyhole className="h-4 w-4" />} label="分类与驻留边界" description={`允许分类 ${policy.allowed_classifications?.join('、') || 'PUBLIC/INTERNAL/CONFIDENTIAL'}；区域 ${policy.allowed_data_regions?.join('、') || 'unknown'}`} enabled={(policy.allowed_classifications || []).length > 0} />
+              <GuardrailRow
+                icon={<Fingerprint className="h-4 w-4" />}
+                label="敏感标识符 Token 化"
+                description={devPassthroughActive ? '临时黑名单模式不再对普通标识符做 Token 化；密码、API Key、Token、私钥和 Cookie 仍由凭据 DLP 拦截。' : '设备 IP、用户名、密钥等标识在出站前替换为稳定 Token。'}
+                enabled={policy.identifiers_must_be_tokenized}
+                state={devPassthroughActive ? 'bypass' : undefined}
+              />
+              <GuardrailRow
+                icon={<EyeOff className="h-4 w-4" />}
+                label="敏感内容最小化"
+                description={devPassthroughActive ? '临时黑名单模式不再对普通内容做最小化，便于联调时保留完整上下文；硬凭据 DLP 不放开。' : '只保留当前分析所需内容，减少原始配置和凭据暴露。'}
+                enabled={policy.allow_sensitive_minimization}
+                state={devPassthroughActive ? 'bypass' : undefined}
+              />
+              <GuardrailRow
+                icon={<LockKeyhole className="h-4 w-4" />}
+                label="数据分类边界"
+                description={devPassthroughActive ? '临时黑名单模式不再因普通数据分类阻断请求；Provider 类型、区域和租户权限仍在网关执行。' : `允许分类 ${policy.allowed_classifications?.join('、') || 'PUBLIC/INTERNAL/CONFIDENTIAL'}。`}
+                enabled={(policy.allowed_classifications || []).length > 0}
+                state={devPassthroughActive ? 'bypass' : undefined}
+              />
+              <GuardrailRow
+                icon={<CloudOff className="h-4 w-4" />}
+                label="Provider / 区域 / 租户权限"
+                description={`只允许已配置 Provider 类型和区域（${policy.allowed_data_regions?.join('、') || 'unknown'}），并继续执行当前租户授权与租户开关。`}
+                enabled={(policy.allowed_provider_types || []).length > 0 && (policy.allowed_data_regions || []).length > 0}
+              />
+              <GuardrailRow
+                icon={<Database className="h-4 w-4" />}
+                label="请求体大小限制"
+                description={`单次 payload 上限 ${formatBytes(policy.max_payload_bytes)}，超过即拒绝。`}
+                enabled={policy.max_payload_bytes > 0}
+              />
+              <GuardrailRow icon={<ShieldCheck className="h-4 w-4" />} label="凭据 DLP" description="密码、API Key、Token、私钥、Cookie、JWT 以及凭据字段始终禁止出站。" enabled />
+              <GuardrailRow icon={<Skull className="h-4 w-4" />} label="危险工具与写入操作拦截" description="raw SSH/SQL、设备写入命令、配置变更、提交、删除和重启等操作始终拦截。" enabled />
+              <GuardrailRow icon={<LockKeyhole className="h-4 w-4" />} label="跨租户与凭据读取拦截" description="跨租户私有数据访问、凭据查询、导出和读取请求始终拦截。" enabled />
+              <GuardrailRow icon={<AlertTriangle className="h-4 w-4" />} label="Kill Switch" description="全局、Provider 和租户 Kill Switch 一旦触发，立即阻断全部外部 AI 出口。" enabled />
             </div>
           </section>
         </div>
@@ -557,7 +605,7 @@ export const SecurityPolicyTab: React.FC = () => {
               {dryRun ? (
                 <div className="mt-4 space-y-3">
                   <div role="status" aria-label="策略检查结果" className={`rounded-xl border px-3 py-2.5 text-sm font-bold ${decisionClass(dryRun.decision)}`}>
-                    {dryRun.decision} <span className="ml-1 text-xs font-normal opacity-80">/ {dryRun.max_data_level}</span>
+                    {dryRun.decision} <span className="ml-1 text-xs font-normal opacity-80">/ {dryRun.max_data_level}{dryRun.security_mode === 'blacklist' ? ' · 临时黑名单' : ''}</span>
                   </div>
                   <div className="grid grid-cols-2 gap-2 text-xs">
                     <div className="rounded-xl bg-white p-3 dark:bg-slate-900"><div className="text-slate-400">Payload</div><div className="mt-1 font-mono font-semibold text-slate-700 dark:text-slate-200">{dryRun.payload_bytes?.toLocaleString() || '—'} B</div></div>

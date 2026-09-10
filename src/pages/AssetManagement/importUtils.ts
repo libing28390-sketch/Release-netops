@@ -56,6 +56,38 @@ const normalizeMethod = (value: string): ManagementMethodImportRow['method'] | n
   return null;
 };
 
+const normalizeProfileLabel = (value: string): string => value.trim().toLowerCase().replace(/\s+/g, '');
+
+// The entry label is display-only, but it still needs to describe the
+// selected protocol. Keep the generic Web label accepted for older files;
+// the downloadable template now narrows the Excel list to the matching label.
+const MANAGEMENT_PROFILE_LABELS: Record<ManagementMethodImportRow['method'], string[]> = {
+  ssh: ['命令行管理', 'cli management', 'cli management entry'],
+  netconf: ['netconf管理', 'netconf management'],
+  web: ['web管理', 'web管理入口', 'web management', 'web management entry'],
+  http: ['http管理', 'web管理', 'web管理入口', 'http management', 'web management', 'web management entry'],
+  https: ['https管理', 'web管理', 'web管理入口', 'https management', 'web management', 'web management entry'],
+  none: ['无登录入口', 'no login entry'],
+};
+
+const MANAGEMENT_PROFILE_DEFAULT_LABEL: Record<ManagementMethodImportRow['method'], string> = {
+  ssh: '命令行管理',
+  netconf: 'NETCONF管理',
+  web: 'Web管理',
+  http: 'HTTP管理',
+  https: 'HTTPS管理',
+  none: '无登录入口',
+};
+
+const isCompatibleManagementProfile = (
+  method: ManagementMethodImportRow['method'],
+  profileName: string,
+): boolean => {
+  if (!profileName) return true;
+  const accepted = MANAGEMENT_PROFILE_LABELS[method].map(normalizeProfileLabel);
+  return accepted.includes(normalizeProfileLabel(profileName));
+};
+
 const normalizeEnabled = (value: string): boolean => {
   if (!value) return true;
   return !['0', 'false', 'no', 'n', '否', '禁用'].includes(value.trim().toLowerCase());
@@ -90,14 +122,24 @@ export function parseManagementMethodSheet(
       errors.push(`管理入口第 ${rowNumber} 行：不支持的管理方式“${methodValue || '空'}”`);
       return;
     }
+    const profileName = cellValue(raw, 'profileName');
+    if (!isCompatibleManagementProfile(method, profileName)) {
+      errors.push(`管理入口第 ${rowNumber} 行：协议“${methodValue}”的入口显示名称应为“${MANAGEMENT_PROFILE_DEFAULT_LABEL[method]}”，当前为“${profileName}”`);
+      return;
+    }
+    const path = cellValue(raw, 'path');
+    if (path && ['ssh', 'netconf', 'none'].includes(method)) {
+      errors.push(`管理入口第 ${rowNumber} 行：协议“${methodValue}”不应填写登录路径“${path}”，请留空`);
+      return;
+    }
     rows.push({
       rowNumber,
       assetTag,
       hostname,
       method,
-      profileName: cellValue(raw, 'profileName'),
+      profileName,
       port: cellValue(raw, 'port'),
-      path: cellValue(raw, 'path'),
+      path,
       enabled: normalizeEnabled(cellValue(raw, 'enabled')),
       credentialMode: normalizeCredentialMode(cellValue(raw, 'credentialMode')),
       normalUsername: cellValue(raw, 'normalUsername'),

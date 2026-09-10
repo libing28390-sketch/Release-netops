@@ -79,7 +79,8 @@ describe('ProviderManagementTab browser key paths', () => {
 
     await user.click(screen.getByRole('button', { name: '测试连通性' }));
     expect(await screen.findByText('连接测试通过')).toBeTruthy();
-    expect(screen.getByText('健康: healthy')).toBeTruthy();
+    expect(screen.getByText('健康:')).toBeTruthy();
+    expect(screen.getAllByText('健康').length).toBeGreaterThan(0);
     expect(screen.queryByText('AI_SECURITY_BLOCKED')).toBeNull();
     expect(testProvider).toHaveBeenCalledWith(provider.id);
 
@@ -123,6 +124,29 @@ describe('ProviderManagementTab browser key paths', () => {
       allowed_data_classification: 'INTERNAL',
       api_key: undefined,
     })));
+  });
+
+  it('renders the persisted connectivity result after the page is reopened', async () => {
+    const testedProvider = {
+      ...provider,
+      health_status: 'healthy',
+      last_error_code: null,
+      last_health_check_at: '2026-09-10T00:00:00Z',
+      last_success_at: '2026-09-10T00:00:00Z',
+    };
+    getProviders.mockResolvedValueOnce({
+      items: [testedProvider as any],
+      total: 1,
+      page: 1,
+      page_size: 20,
+      total_pages: 1,
+      facets: { data_regions: ['unknown'], health_statuses: ['healthy'], provider_types: ['deepseek'], tags: [] },
+    });
+
+    render(<ProviderManagementTab />);
+
+    expect(await screen.findByText('连接测试通过')).toBeTruthy();
+    expect(screen.queryByText('尚未进行连通性测试')).toBeNull();
   });
 
   it('shows the empty state and a recoverable request error', async () => {

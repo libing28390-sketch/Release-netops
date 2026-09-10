@@ -10,6 +10,10 @@ describe('getRouteContext AI routes', () => {
     expect(getRouteContext('/ai/providers').activeTab).toBe('ai-providers');
   });
 
+  it('maps the model health route to the health tab', () => {
+    expect(getRouteContext('/ai/health').activeTab).toBe('ai-health');
+  });
+
   it('maps the product catalog route to the catalog tab', () => {
     expect(getRouteContext('/ai/catalog').activeTab).toBe('ai-catalog');
   });

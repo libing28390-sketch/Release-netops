@@ -75,9 +75,78 @@ export interface AIModel {
   cost_input_per_1k?: number;
   cost_output_per_1k?: number;
   health_status?: string;
+  last_health_check_at?: string | null;
   last_latency_ms?: number | null;
   last_success_at?: string | null;
   last_error_code?: string | null;
+  sla_window_hours?: number;
+  sla_check_count?: number;
+  sla_success_count?: number;
+  sla_failure_count?: number;
+  sla_availability_percent?: number | null;
+  sla_avg_latency_ms?: number | null;
+}
+
+export interface AIModelHealthCheckResponse {
+  model_id: string;
+  model_name?: string | null;
+  model_code?: string | null;
+  success: boolean;
+  health_status: string;
+  latency_ms: number;
+  last_health_check_at?: string | null;
+  error_code?: string | null;
+  message: string;
+  sla_window_hours: number;
+  sla_check_count: number;
+  sla_success_count: number;
+  sla_failure_count: number;
+  sla_availability_percent?: number | null;
+  sla_avg_latency_ms?: number | null;
+}
+
+export interface AIModelHealthTimelinePoint {
+  bucket_date: string;
+  status: string;
+  check_count: number;
+  success_count: number;
+  failure_count: number;
+  availability_percent?: number | null;
+  avg_latency_ms?: number | null;
+}
+
+export interface AIModelHealthService {
+  model_id: string;
+  provider_id: string;
+  provider_name: string;
+  model_name: string;
+  model_code: string;
+  model_type: string;
+  enabled: boolean;
+  health_status: string;
+  last_health_check_at?: string | null;
+  window_check_count: number;
+  window_success_count: number;
+  window_failure_count: number;
+  window_availability_percent?: number | null;
+  window_avg_latency_ms?: number | null;
+  timeline: AIModelHealthTimelinePoint[];
+}
+
+export interface AIModelHealthSummary {
+  window_days: number;
+  window_start: string;
+  generated_at: string;
+  overall_status: string;
+  service_count: number;
+  monitored_service_count: number;
+  checked_service_count: number;
+  total_check_count: number;
+  total_success_count: number;
+  total_failure_count: number;
+  availability_percent?: number | null;
+  avg_latency_ms?: number | null;
+  services: AIModelHealthService[];
 }
 
 export interface AIModelDeletePreview {
@@ -129,6 +198,7 @@ export interface AISecurityPolicy {
     remaining_seconds: number;
     max_minutes: number;
     environment: string;
+    mode?: 'blacklist' | string;
   };
 }
 
@@ -139,6 +209,7 @@ export interface AISecurityDryRunResult {
   payload_bytes?: number;
   reason?: string;
   external_call_made: false;
+  security_mode?: 'blacklist' | 'classification' | string;
 }
 
 export interface AIPrompt {
@@ -552,6 +623,14 @@ export async function deleteAIModel(id: string): Promise<void> {
 
 export async function getAIModelDeletePreview(id: string): Promise<AIModelDeletePreview> {
   return apiRequest<AIModelDeletePreview>(`/api/ai/models/${id}/delete-preview`);
+}
+
+export async function checkAIModelHealth(id: string): Promise<AIModelHealthCheckResponse> {
+  return apiRequest<AIModelHealthCheckResponse>(`/api/ai/models/${id}/health-check`, { method: 'POST' });
+}
+
+export async function getAIModelHealthSummary(windowDays = 90): Promise<AIModelHealthSummary> {
+  return apiRequest<AIModelHealthSummary>(`/api/ai/models/health-summary?window_days=${encodeURIComponent(windowDays)}`);
 }
 
 export async function getAIModelRoutes(): Promise<AIModelRoute[]> {

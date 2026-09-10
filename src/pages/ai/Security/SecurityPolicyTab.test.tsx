@@ -120,6 +120,7 @@ describe('SecurityPolicyTab browser key paths', () => {
     await user.click(switchButton);
 
     await waitFor(() => expect(setDevPassthrough).toHaveBeenCalledWith(true, 15));
-    expect(await screen.findByText('AI 临时测试模式已开启')).toBeTruthy();
+    expect(await screen.findByText('AI 临时黑名单模式已开启')).toBeTruthy();
+    expect(await screen.findByText('凭据 DLP')).toBeTruthy();
   });
 });

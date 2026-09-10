@@ -104,6 +104,17 @@ const FEEDBACK_REASONS: Array<{ code: string; label: string }> = [
   { code: 'irrelevant', label: '内容无关' },
 ];
 
+const sourceTypeLabel = (sourceType: string | undefined): string => {
+  const labels: Record<string, string> = {
+    web_search: '外部网页（未验证）',
+    official_document: '官方文档',
+    official_vendor_documentation: '厂商官方文档',
+    internal_sop: '内部知识库',
+    cmdb_system: 'CMDB',
+  };
+  return labels[String(sourceType || '').trim().toLowerCase()] || String(sourceType || '来源');
+};
+
 const formatSessionTime = (value: string | undefined): string => {
   if (!value) return '';
   const date = new Date(value);
@@ -242,7 +253,7 @@ const AssistantProcessPanel: React.FC<{
             </div>
           ))}
           <div className="border-t border-gray-200/80 dark:border-gray-700 px-1 pt-2 text-[11px] text-gray-400 dark:text-gray-500 select-text">
-            本次 Copilot 对话仅执行只读查询、知识检索和模型生成，未执行设备 CLI 命令。
+            本次 Copilot 对话仅执行只读查询、知识库检索和必要的公开网页检索，未执行设备 CLI 命令；外部网页内容仅作参考。
           </div>
         </div>
       )}
@@ -1394,15 +1405,23 @@ export const AssistantTab: React.FC = () => {
                             className="inline-flex items-center gap-1.5 px-3 py-1 bg-indigo-50/70 dark:bg-indigo-950/40 hover:bg-indigo-100 dark:hover:bg-indigo-900/60 text-indigo-700 dark:text-indigo-300 rounded-full text-xs font-medium border border-indigo-200/60 dark:border-indigo-800/60 transition cursor-pointer"
                           >
                             <BookOpen className="w-3.5 h-3.5" />
-                            <span>已参考 {uniqueSources.length} 个 Nexora 知识库来源</span>
+                            <span>
+                              {(() => {
+                                const webCount = uniqueSources.filter((source) => source.source_type === 'web_search').length;
+                                const localCount = uniqueSources.length - webCount;
+                                if (webCount && localCount) return `已参考 ${localCount} 个本地来源、${webCount} 个外部网页来源`;
+                                if (webCount) return `已参考 ${webCount} 个外部网页来源`;
+                                return `已参考 ${localCount} 个 Nexora 知识库来源`;
+                              })()}
+                            </span>
                             <span className="text-[10px] opacity-70 ml-0.5">{isExpanded ? '▲ 收起' : '▼ 展开'}</span>
                           </button>
 
                           {isExpanded && (
                             <div className="mt-2 p-3 bg-gray-50 dark:bg-gray-800/60 rounded-xl border border-gray-200/70 dark:border-gray-700 text-xs space-y-1.5 max-w-md shadow-xs transition-all">
                               <div className="font-semibold text-gray-800 dark:text-gray-200 mb-1 flex items-center justify-between">
-                                <span>参考文档清单</span>
-                                <span className="text-[10px] text-gray-400 font-normal">点击任意条目可查全篇</span>
+                                <span>参考来源清单</span>
+                                <span className="text-[10px] text-gray-400 font-normal">点击条目打开来源</span>
                               </div>
                               {uniqueSources.map((src, sIdx) => (
                                 <div key={src.citation_id || sIdx} className="rounded-lg p-2 hover:bg-gray-100 dark:hover:bg-gray-700/50 text-gray-700 dark:text-gray-300 space-y-1.5">
@@ -1415,7 +1434,7 @@ export const AssistantTab: React.FC = () => {
                                     <span className="text-[11px] text-gray-400 font-mono flex-shrink-0 ml-2">{src.section || '未标注章节'}</span>
                                   </div>
                                   <div className="flex flex-wrap gap-1 text-[10px] text-gray-500">
-                                    {src.source_type && <span className="rounded bg-white dark:bg-gray-900 px-1.5 py-0.5">{src.source_type}</span>}
+                                    {src.source_type && <span className="rounded bg-white dark:bg-gray-900 px-1.5 py-0.5">{sourceTypeLabel(src.source_type)}</span>}
                                     {src.product && <span className="rounded bg-white dark:bg-gray-900 px-1.5 py-0.5">{src.product}</span>}
                                     {src.os_family && <span className="rounded bg-white dark:bg-gray-900 px-1.5 py-0.5">{src.os_family}</span>}
                                     {src.software_version && <span className="rounded bg-white dark:bg-gray-900 px-1.5 py-0.5">{src.software_version}</span>}

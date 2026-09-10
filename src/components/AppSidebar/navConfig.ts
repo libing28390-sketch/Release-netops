@@ -160,6 +160,7 @@ export const navConfig: NavGroup[] = [
     children: [
       { id: 'ai-providers',  label: 'Provider 供应商', labelEn: 'Providers',    path: '/ai/providers', activeMatch: '/ai/center,/ai/providers', icon: 'Server', requiredRole: 'Administrator' },
       { id: 'ai-models',     label: 'Model & 路由',   labelEn: 'Models',       path: '/ai/models',     icon: 'Cpu', requiredRole: 'Administrator' },
+      { id: 'ai-health',     label: '健康与 SLA',     labelEn: 'Health & SLA', path: '/ai/health',      icon: 'Activity', requiredRole: 'Administrator' },
       { id: 'ai-prompts',    label: 'Prompt 提示词',   labelEn: 'Prompts',      path: '/ai/prompts',    icon: 'FileCode2', requiredRole: 'Administrator' },
       { id: 'ai-copilot',    label: 'AI Copilot 对话', labelEn: 'AI Copilot',   path: '/ai/copilot',    icon: 'MessageSquare' },
       { id: 'ai-agents',     label: 'Agent 注册表',    labelEn: 'Agents',       path: '/ai/agents',     icon: 'Layers3', requiredRole: 'Administrator' },

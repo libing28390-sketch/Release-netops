@@ -218,9 +218,11 @@ def set_dev_passthrough(
     """Enable a short-lived AI test mode from the security page.
 
     The mode is intentionally not persisted: restarting the process disables
-    it. Provider allowlists, external-AI policy, kill switches, payload size,
-    unsafe tools, and hard credential DLP checks remain enforced by the
-    gateway.
+    it. It is a short-lived blacklist policy: ordinary classification,
+    minimization, and identifier tokenization are relaxed, while Provider /
+    region / tenant permissions, kill switches, payload size, dangerous
+    tools and write operations, cross-tenant or credential retrieval, and
+    hard credential DLP remain enforced by the gateway.
     """
     # `require_ai_permission` intentionally keeps a development fallback for
     # legacy internal endpoints. Do not let that fallback operate this
@@ -277,6 +279,7 @@ def test_payload(payload: SecurityTestPayloadRequest, user=Depends(require_ai_pe
             "external_call_made": False,
             "policy_version": result.metadata.get("policy_version"),
             "classification": result.metadata.get("classification"),
+            "security_mode": result.metadata.get("security_mode"),
         }
     except SecurityBlocked as exc:
         return {

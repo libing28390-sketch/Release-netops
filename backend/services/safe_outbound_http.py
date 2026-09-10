@@ -11,12 +11,13 @@ from __future__ import annotations
 
 import ipaddress
 import copy
+import re
 import socket
 import time
 from dataclasses import dataclass
 from typing import Any, Callable, Iterable, Mapping
 from urllib import robotparser
-from urllib.parse import urljoin, urlsplit
+from urllib.parse import urljoin, urlsplit, urlunsplit
 
 import httpx
 
@@ -115,6 +116,173 @@ class UrlSecurityDecision:
             "path": self.path,
             "resolved_addresses": list(self.resolved_addresses),
         }
+
+
+_EXTERNAL_QUERY_SECRET_RE = re.compile(
+    r"(?i)(?:^|[&;])(?:password|passwd|secret|token|api[_-]?key|access[_-]?token|"
+    r"private[_-]?key|credential|authorization|cookie)\s*="
+)
+
+
+def _canonicalize_external_url(value: Any) -> tuple[str, str, int, str]:
+    """Canonicalize a public read-only URL while retaining safe query text.
+
+    Source Registry URLs intentionally forbid query parameters because they
+    are immutable document identities.  Generic web search/fetch URLs need a
+    bounded query for the search term, so they use this narrower companion
+    boundary instead.  Credentials in query parameters remain forbidden.
+    """
+
+    raw = str(value or "").strip()
+    if not raw or len(raw) > 4096 or any(ord(char) < 32 or ord(char) == 127 for char in raw):
+        raise OutboundCollectionError("OUTBOUND_URL_INVALID", "Outbound URL is invalid", status_code=400)
+    try:
+        parsed = urlsplit(raw)
+        host = parsed.hostname or ""
+        port = parsed.port
+    except ValueError as exc:
+        raise OutboundCollectionError("OUTBOUND_URL_INVALID", "Outbound URL is invalid", status_code=400) from exc
+    if parsed.scheme.lower() != "https":
+        raise OutboundCollectionError("OUTBOUND_PROTOCOL_FORBIDDEN", "Outbound web requests require HTTPS", status_code=403)
+    if parsed.username is not None or parsed.password is not None or parsed.fragment:
+        raise OutboundCollectionError("OUTBOUND_URL_INVALID", "Outbound URL contains forbidden components", status_code=400)
+    if not host or port not in (None, 443):
+        raise OutboundCollectionError("OUTBOUND_URL_INVALID", "Outbound URL host or port is invalid", status_code=400)
+    try:
+        host = host.rstrip(".").encode("idna").decode("ascii").lower()
+    except UnicodeError as exc:
+        raise OutboundCollectionError("OUTBOUND_URL_INVALID", "Outbound URL host is invalid", status_code=400) from exc
+    if "*" in host or host.startswith("."):
+        raise OutboundCollectionError("OUTBOUND_URL_INVALID", "Outbound URL host is invalid", status_code=400)
+    if _EXTERNAL_QUERY_SECRET_RE.search(parsed.query):
+        raise OutboundCollectionError("OUTBOUND_QUERY_CREDENTIAL_FORBIDDEN", "Outbound URL query cannot contain credentials", status_code=403)
+    path = parsed.path or "/"
+    if "\\" in path or re.search(r"(?i)%2e|%2f|%5c", path):
+        raise OutboundCollectionError("OUTBOUND_URL_INVALID", "Outbound URL path is invalid", status_code=400)
+    canonical = urlunsplit(("https", host, path, parsed.query, ""))
+    return canonical, host, 443, path
+
+
+def _external_host_allowed(host: str, allowed_hosts: Iterable[str]) -> bool:
+    candidates = {
+        str(item).strip().lower().rstrip(".").removeprefix("*.")
+        for item in allowed_hosts
+        if str(item).strip()
+    }
+    if not candidates:
+        return True
+    normalized = str(host or "").strip().lower().rstrip(".")
+    return any(normalized == candidate or normalized.endswith("." + candidate) for candidate in candidates)
+
+
+def safe_fetch_url(
+    target: str,
+    *,
+    method: str = "GET",
+    allowed_hosts: Iterable[str] = (),
+    timeout_seconds: float = 8.0,
+    max_bytes: int = 1_000_000,
+    allowed_content_types: Iterable[str] = ALLOWED_CONTENT_TYPES,
+    user_agent: str = "NexoraAIWeb/1.0",
+    proxy_url: str | None = None,
+    transport: httpx.BaseTransport | None = None,
+    resolver: Resolver | None = None,
+    client_factory: Callable[..., httpx.Client] | None = None,
+) -> SafeFetchResult:
+    """Fetch one public web URL through the CAT-004 outbound boundary.
+
+    This is deliberately read-only and non-redirecting.  The caller can
+    provide a fixed host allowlist for a search endpoint, while page fetches
+    may use the empty allowlist to permit any public HTTPS site.  DNS/SSRF,
+    response-size, content-type, timeout and redirect checks are applied
+    before any body is returned.
+    """
+
+    method = str(method or "GET").strip().upper()
+    if method not in ALLOWED_METHODS:
+        raise OutboundCollectionError("OUTBOUND_METHOD_FORBIDDEN", "Only GET or HEAD web requests are allowed", status_code=403)
+    try:
+        timeout = float(timeout_seconds)
+        bounded_max_bytes = int(max_bytes)
+    except (TypeError, ValueError) as exc:
+        raise OutboundCollectionError("OUTBOUND_POLICY_INVALID", "Web request limits are invalid", status_code=400) from exc
+    if not 1.0 <= timeout <= 30.0 or not 1_024 <= bounded_max_bytes <= 5_000_000:
+        raise OutboundCollectionError("OUTBOUND_POLICY_INVALID", "Web request limits are outside the safe bounds", status_code=400)
+
+    current_url, host, port, _path = _canonicalize_external_url(target)
+    if not _external_host_allowed(host, allowed_hosts):
+        raise OutboundCollectionError("OUTBOUND_HOST_FORBIDDEN", "Outbound web host is not allowlisted", status_code=403)
+    content_types = {
+        str(item).split(";", 1)[0].strip().lower()
+        for item in (allowed_content_types or ALLOWED_CONTENT_TYPES)
+    } & ALLOWED_CONTENT_TYPES
+    if not content_types:
+        raise OutboundCollectionError("OUTBOUND_POLICY_INVALID", "Web response content type allowlist is empty", status_code=400)
+
+    started = time.monotonic()
+    resolved = resolve_public_addresses(host, port, resolver=resolver)
+    factory = client_factory or httpx.Client
+    client_kwargs: dict[str, Any] = {
+        "transport": transport,
+        "follow_redirects": False,
+        "timeout": httpx.Timeout(timeout),
+        "verify": True,
+        "trust_env": False,
+        "headers": {"User-Agent": str(user_agent or "NexoraAIWeb/1.0")[:256]},
+    }
+    if proxy_url:
+        client_kwargs["proxy"] = str(proxy_url).strip()
+    response: httpx.Response | None = None
+    try:
+        with factory(**client_kwargs) as client:
+            request = client.build_request(method, current_url)
+            response = client.send(request, follow_redirects=False, stream=True)
+            status = int(response.status_code)
+            if 300 <= status < 400:
+                raise OutboundCollectionError("OUTBOUND_REDIRECT_FORBIDDEN", "Web redirects are not followed", status_code=403)
+            if 400 <= status < 500:
+                raise OutboundCollectionError("OUTBOUND_HTTP_4XX", "Web source returned a client error", status_code=502, details={"http_status": status})
+            if status >= 500:
+                raise OutboundCollectionError("OUTBOUND_HTTP_5XX", "Web source returned a server error", status_code=502, details={"http_status": status})
+            content_type = _content_type(response.headers)
+            if content_type not in content_types:
+                raise OutboundCollectionError("OUTBOUND_CONTENT_TYPE_FORBIDDEN", "Web response content type is not allowlisted", status_code=403, details={"content_type": content_type or "missing"})
+            length_header = response.headers.get("content-length")
+            if length_header:
+                try:
+                    declared_length = int(length_header)
+                except ValueError as exc:
+                    raise OutboundCollectionError("OUTBOUND_CONTENT_LENGTH_INVALID", "Web response content length is invalid", status_code=502) from exc
+                if declared_length < 0 or declared_length > bounded_max_bytes:
+                    raise OutboundCollectionError("OUTBOUND_RESPONSE_TOO_LARGE", "Web response exceeds the configured size limit", status_code=413)
+            content = bytearray()
+            for chunk in response.iter_bytes():
+                if time.monotonic() - started >= timeout:
+                    raise OutboundCollectionError("OUTBOUND_TIMEOUT", "Web request timed out", status_code=504)
+                if len(content) + len(chunk) > bounded_max_bytes:
+                    raise OutboundCollectionError("OUTBOUND_RESPONSE_TOO_LARGE", "Web response exceeds the configured size limit", status_code=413)
+                content.extend(chunk)
+            if method == "HEAD":
+                content = bytearray()
+            return SafeFetchResult(
+                content=bytes(content),
+                final_url=current_url,
+                status_code=status,
+                content_type=content_type,
+                redirect_chain=(current_url,),
+                resolved_addresses=tuple(resolved),
+                bytes_read=len(content),
+                elapsed_ms=max(0, int((time.monotonic() - started) * 1000)),
+            )
+    except OutboundCollectionError:
+        raise
+    except httpx.TimeoutException as exc:
+        raise OutboundCollectionError("OUTBOUND_TIMEOUT", "Web request timed out", status_code=504) from exc
+    except httpx.TransportError as exc:
+        raise OutboundCollectionError("OUTBOUND_TRANSPORT_FAILED", "Web request transport failed", status_code=502) from exc
+    finally:
+        if response is not None:
+            response.close()
 
 
 Resolver = Callable[[str, int], Iterable[Any]]

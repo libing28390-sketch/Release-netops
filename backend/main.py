@@ -232,6 +232,20 @@ async def lifespan(app: FastAPI):
         'interval', minutes=1, id='device_health_sampler', replace_existing=True
     )
 
+    # AI model health is intentionally a low-frequency, bounded-cost probe.
+    # Each enabled chat/reasoning model gets a tiny request through the normal
+    # gateway so the UI can show model-specific health and a 24h SLA window.
+    from ai.services.model_health import run_scheduled_model_health_checks
+    model_health_interval = max(1, int(getattr(settings, "AI_MODEL_HEALTH_INTERVAL_MINUTES", 10)))
+    scheduler.add_job(
+        synchronized_scheduler_job(
+            'ai_model_health_monitor',
+            expire_seconds=max(300, model_health_interval * 60),
+        )(run_scheduled_model_health_checks),
+        'interval', minutes=model_health_interval, id='ai_model_health_monitor',
+        replace_existing=True, max_instances=1, coalesce=True,
+    )
+
     # ING-018: periodically revalidate active Knowledge Engine sources using
     # server-owned ETag/Last-Modified validators.  The scheduler lock keeps
     # multiple application instances from refreshing the same batch; the
