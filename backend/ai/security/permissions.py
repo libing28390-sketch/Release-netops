@@ -45,10 +45,10 @@ ROLE_AI_PERMISSIONS: Dict[str, Set[str]] = {
 
 
 def get_current_user(request: Request) -> dict:
-    """Extract authenticated user or fallback to admin context for dev/internal calls."""
+    """Require an authenticated session, including in development."""
     user = _get_current_user(request)
     if not user:
-        return {"username": "admin", "role": "Administrator", "permissions": list(AI_PERMISSION_CODES.keys())}
+        raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Authentication required")
     return user
 
 

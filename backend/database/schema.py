@@ -15,6 +15,33 @@ from .seed import (
 
 _db_initialized = False
 
+def _validated_initial_admin_password() -> str:
+    password = os.environ.get('INITIAL_ADMIN_PASSWORD', '')
+    if (len(password) < 12 or len(password.encode('utf-8')) > 72
+            or not any(c.isupper() for c in password)
+            or not any(c.islower() for c in password)
+            or not any(c.isdigit() for c in password)
+            or not any(not c.isalnum() for c in password)):
+        raise RuntimeError(
+            'An empty database requires INITIAL_ADMIN_PASSWORD: at least 12 characters, '
+            'uppercase, lowercase, digit and special character, at most 72 UTF-8 bytes'
+        )
+    return password
+
+
+def _ensure_initial_administrator(cursor, now: str) -> None:
+    """Bootstrap only an empty user table using an operator-supplied secret."""
+    if cursor.execute('SELECT 1 FROM users LIMIT 1').fetchone():
+        return
+    password = _validated_initial_admin_password()
+    hashed = bcrypt.hashpw(password.encode('utf-8'), bcrypt.gensalt()).decode()
+    cursor.execute(
+        'INSERT INTO users (id, username, password, role, status, created_at) '
+        'VALUES (%s, %s, %s, %s, %s, %s) ON CONFLICT (username) DO NOTHING',
+        (str(uuid.uuid4()), 'admin', hashed, 'Administrator', 'active', now),
+    )
+    logger.info('[Database] Initial administrator created with configured credentials')
+
 def _table_columns(cursor, table_name: str) -> set[str]:
     """Return PostgreSQL column names for *table_name*."""
     # The application and PostgreSQL test driver both use search_path-scoped
@@ -5362,26 +5389,4 @@ def _init_db_logic(conn, *, allow_legacy_import: bool = True):
         logger.error(f"[migration] Failed Phase 6 Supporting Engines migration: {exc_p6}", exc_info=True)
 
 
-    admin_row = cursor.execute("SELECT id, password FROM users WHERE username = 'admin'").fetchone()
-    if not admin_row:
-        hashed = bcrypt.hashpw(b"admin", bcrypt.gensalt()).decode()
-        if _USE_PG:
-            cursor.execute(
-                "INSERT INTO users (id, username, password, role, status, created_at) VALUES (%s, %s, %s, %s, %s, %s) ON CONFLICT (username) DO NOTHING",
-                (str(uuid.uuid4()), "admin", hashed, "Administrator", "active", now)
-            )
-        else:
-            cursor.execute(
-                "INSERT OR IGNORE INTO users (id, username, password, role, status, created_at) VALUES (?, ?, ?, ?, ?, ?)",
-                (str(uuid.uuid4()), "admin", hashed, "Administrator", "active", now)
-            )
-        logger.info("[Database] Default admin user created (admin/admin)")
-    else:
-        pwd = admin_row['password'] if hasattr(admin_row, '__getitem__') else admin_row[1]
-        if not pwd or (not pwd.startswith('$2b$') and not pwd.startswith('$2a$') and pwd != 'admin'):
-            hashed = bcrypt.hashpw(b"admin", bcrypt.gensalt()).decode()
-            if _USE_PG:
-                cursor.execute("UPDATE users SET password = %s WHERE username = 'admin'", (hashed,))
-            else:
-                cursor.execute("UPDATE users SET password = ? WHERE username = 'admin'", (hashed,))
-            logger.info("[Database] Corrupted admin password auto-repaired to default (admin/admin)")
+    _ensure_initial_administrator(cursor, now)

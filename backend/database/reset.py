@@ -181,6 +181,11 @@ def reset_database(confirm_database: str, backup: bool = True) -> dict[str, Any]
     target = inspect_target()
     if confirm_database != target.database:
         raise DatabaseResetError("The confirmation database name does not match the active database")
+    # Validate provisioning before backing up or clearing the existing schema.
+    try:
+        schema._validated_initial_admin_password()
+    except RuntimeError as exc:
+        raise DatabaseResetError(str(exc)) from exc
 
     backup_path: Path | None = None
     terminated_connections = 0

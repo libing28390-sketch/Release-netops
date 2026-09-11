@@ -1969,7 +1969,7 @@ def _update_session_status(session_id: str, status: str, close_reason: str = Non
 # ══════════════════════════════════════════════════════════════════════
 
 @router.post('/pam/access-request')
-def create_access_request(payload: AccessRequestIn):
+def create_access_request(payload: AccessRequestIn, user=require_permission('pam', 'request_approval')):
     level = (payload.access_level or 'normal').strip().lower()
     if level not in ('normal', 'admin'):
         raise HTTPException(status_code=400, detail='Invalid access_level')
@@ -1994,8 +1994,8 @@ def create_access_request(payload: AccessRequestIn):
                 access_level, reason, status, expires_at, created_at, updated_at
             ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
         ''', (
-            request_id, payload.asset_id, payload.requester_user_id,
-            payload.requester_username, level, payload.reason,
+            request_id, payload.asset_id, user.get('user_id') or user.get('id') or '',
+            user['username'], level, payload.reason,
             status, expires_at, now, now,
         ))
         conn.commit()
@@ -2011,7 +2011,10 @@ def create_access_request(payload: AccessRequestIn):
 
 
 @router.get('/pam/access-requests')
-def list_access_requests(status: str = '', requester_username: str = '', limit: int = 50):
+def list_access_requests(status: str = '', requester_username: str = '', limit: int = 50, user=require_permission('pam', 'view')):
+    _enforce_requester_scope(requester_username, user)
+    if user.get('role') != 'Administrator':
+        requester_username = user['username']
     conn = get_db_connection()
     try:
         conditions, params = [], []
@@ -2032,12 +2035,15 @@ def list_access_requests(status: str = '', requester_username: str = '', limit: 
 
 
 @router.post('/pam/access-requests/{request_id}/approve')
-def approve_access_request(request_id: str, payload: AccessReviewIn):
+def approve_access_request(request_id: str, payload: AccessReviewIn, user=require_permission('pam', 'approve')):
     conn = get_db_connection()
     try:
-        row = conn.execute('SELECT * FROM pam_access_requests WHERE id = ?', (request_id,)).fetchone()
+        row = conn.execute('SELECT * FROM pam_access_requests WHERE id = ? FOR UPDATE', (request_id,)).fetchone()
         if not row:
             raise HTTPException(status_code=404, detail='Request not found')
+        actor_id = str(user.get('user_id') or user.get('id') or '')
+        if (actor_id and str(row['requester_user_id'] or '') == actor_id) or row['requester_username'] == user['username']:
+            raise HTTPException(status_code=403, detail='Cannot approve your own access request')
         if row['status'] != 'pending':
             return {'ok': True, 'status': row['status'], 'message': 'Already finalized'}
         now = _utc_now()
@@ -2045,7 +2051,7 @@ def approve_access_request(request_id: str, payload: AccessReviewIn):
         expires_at = (datetime.now(timezone.utc) + timedelta(minutes=ttl)).strftime('%Y-%m-%dT%H:%M:%S+00:00')
         conn.execute(
             "UPDATE pam_access_requests SET status='approved', reviewer_username=?, review_comment=?, expires_at=?, updated_at=? WHERE id=?",
-            (payload.reviewer_username, payload.comment, expires_at, now, request_id),
+            (user['username'], payload.comment, expires_at, now, request_id),
         )
         conn.commit()
         return {'ok': True, 'status': 'approved', 'request_id': request_id, 'expires_at': expires_at}
@@ -2054,10 +2060,10 @@ def approve_access_request(request_id: str, payload: AccessReviewIn):
 
 
 @router.post('/pam/access-requests/{request_id}/reject')
-def reject_access_request(request_id: str, payload: AccessReviewIn):
+def reject_access_request(request_id: str, payload: AccessReviewIn, user=require_permission('pam', 'approve')):
     conn = get_db_connection()
     try:
-        row = conn.execute('SELECT * FROM pam_access_requests WHERE id = ?', (request_id,)).fetchone()
+        row = conn.execute('SELECT * FROM pam_access_requests WHERE id = ? FOR UPDATE', (request_id,)).fetchone()
         if not row:
             raise HTTPException(status_code=404, detail='Request not found')
         if row['status'] != 'pending':
@@ -2065,7 +2071,7 @@ def reject_access_request(request_id: str, payload: AccessReviewIn):
         now = _utc_now()
         conn.execute(
             "UPDATE pam_access_requests SET status='rejected', reviewer_username=?, review_comment=?, updated_at=? WHERE id=?",
-            (payload.reviewer_username, payload.comment, now, request_id),
+            (user['username'], payload.comment, now, request_id),
         )
         conn.commit()
         return {'ok': True, 'status': 'rejected', 'request_id': request_id}

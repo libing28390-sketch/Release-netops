@@ -132,7 +132,9 @@ def _json_bytes(value: dict[str, Any]) -> bytes:
 
 def _allowed_origins() -> set[str]:
     raw = os.environ.get("NEXORA_AGENT_ALLOWED_ORIGINS", "")
-    return {item.strip().rstrip("/") for item in raw.split(",") if item.strip()}
+    return {item.strip().rstrip("/") for item in raw.split(",") if item.strip()} or {
+        'http://localhost:5010', 'http://127.0.0.1:5010',
+    }
 
 
 def _backend_origin(backend_url: str) -> str:
@@ -144,7 +146,7 @@ def _backend_origin(backend_url: str) -> str:
 
     origin = f"{parsed.scheme}://{parsed.netloc}"
     allowed = _allowed_origins()
-    if allowed and origin.rstrip("/") not in allowed:
+    if origin.rstrip("/") not in allowed:
         raise PermissionError("backend origin is not allowed by NEXORA_AGENT_ALLOWED_ORIGINS")
     return origin
 
@@ -200,6 +202,7 @@ def _web_browser_available() -> bool:
 def _resolve_executable(client: str, configured_path: str) -> str | None:
     configured_path = (configured_path or "").strip().strip('"').strip("'")
     names = {
+        "standard": "ssh.exe" if sys.platform == "win32" else "ssh",
         "xshell": "Xshell.exe",
         "putty": "putty.exe",
         "securecrt": "SecureCRT.exe",
@@ -211,6 +214,9 @@ def _resolve_executable(client: str, configured_path: str) -> str | None:
         if candidate.is_dir() and client in names:
             candidate = candidate / names[client]
         if candidate.is_file():
+            candidate = candidate.resolve()
+            if candidate.name.lower() != names.get(client, '').lower():
+                raise PermissionError('Configured executable does not match the selected terminal client')
             return str(candidate)
 
     if client == "standard":
@@ -247,7 +253,7 @@ def _exchange_token(backend_url: str, token: str) -> dict[str, Any]:
 
     url = f"{origin}/api/system/exchange-token?token={quote(token, safe='')}"
     request = Request(url, headers={"Accept": "application/json", "User-Agent": f"NexoraTerminalAgent/{AGENT_VERSION}"})
-    tls_verify = os.environ.get("NEXORA_AGENT_TLS_VERIFY", "0") == "1"
+    tls_verify = os.environ.get("NEXORA_AGENT_TLS_VERIFY", "1") == "1"
     context = ssl.create_default_context() if tls_verify else ssl._create_unverified_context()
     with urlopen(request, timeout=8, context=context) as response:
         result = json.loads(response.read().decode("utf-8"))
@@ -268,7 +274,7 @@ def _web_json_request(url: str, payload: dict[str, Any], timeout: float = 8.0) -
             "User-Agent": f"NexoraWebAgent/{AGENT_VERSION}",
         },
     )
-    tls_verify = os.environ.get("NEXORA_AGENT_TLS_VERIFY", "0") == "1"
+    tls_verify = os.environ.get("NEXORA_AGENT_TLS_VERIFY", "1") == "1"
     context = ssl.create_default_context() if tls_verify else ssl._create_unverified_context()
     with urlopen(request, timeout=timeout, context=context) as response:
         result = json.loads(response.read().decode("utf-8"))
@@ -362,7 +368,7 @@ def _upload_web_recording(backend_url: str, details: dict[str, Any], agent_id: s
         method="POST",
         headers={"Accept": "application/json", "Content-Type": content_type, "User-Agent": f"NexoraWebAgent/{AGENT_VERSION}"},
     )
-    tls_verify = os.environ.get("NEXORA_AGENT_TLS_VERIFY", "0") == "1"
+    tls_verify = os.environ.get("NEXORA_AGENT_TLS_VERIFY", "1") == "1"
     context = ssl.create_default_context() if tls_verify else ssl._create_unverified_context()
     with urlopen(request, timeout=20, context=context) as response:
         result = json.loads(response.read().decode("utf-8"))
@@ -683,6 +689,10 @@ def _launch_client(client: str, executable: str, details: dict[str, Any]) -> Non
     password = str(details.get("password") or "")
     if not host or not user:
         raise ValueError("Token exchange returned incomplete connection details")
+    if not 1 <= port <= 65535 or host.startswith('-') or user.startswith('-') or any(
+        ord(char) < 32 for char in host + user
+    ):
+        raise ValueError('Token exchange returned invalid connection details')
 
     if client == "standard":
         args = [executable, "-p", str(port), f"{user}@{host}"]
@@ -723,7 +733,7 @@ class AgentHandler(BaseHTTPRequestHandler):
         self.send_header("Content-Length", str(len(body)))
         self.send_header("Cache-Control", "no-store")
         origin = self._origin()
-        if origin and (not _allowed_origins() or origin.rstrip("/") in _allowed_origins()):
+        if origin and origin.rstrip("/") in _allowed_origins():
             self.send_header("Access-Control-Allow-Origin", origin)
             self.send_header("Vary", "Origin")
         self.send_header("Access-Control-Allow-Private-Network", "true")
@@ -735,7 +745,7 @@ class AgentHandler(BaseHTTPRequestHandler):
         self.send_header("Access-Control-Allow-Headers", "Content-Type")
         self.send_header("Access-Control-Allow-Methods", "GET, POST, OPTIONS")
         origin = self._origin()
-        if origin and (not _allowed_origins() or origin.rstrip("/") in _allowed_origins()):
+        if origin and origin.rstrip("/") in _allowed_origins():
             self.send_header("Access-Control-Allow-Origin", origin)
             self.send_header("Vary", "Origin")
         self.send_header("Access-Control-Allow-Private-Network", "true")
@@ -765,19 +775,21 @@ class AgentHandler(BaseHTTPRequestHandler):
             self._send(404, {"success": False, "error": "Not found"})
             return
         try:
+            request_origin = self._origin().rstrip('/')
+            if request_origin and request_origin not in _allowed_origins():
+                raise PermissionError('Request origin is not trusted by the Terminal Agent')
             length = int(self.headers.get("Content-Length", "0"))
             if length <= 0 or length > MAX_BODY_BYTES:
                 raise ValueError("Invalid request size")
             payload = json.loads(self.rfile.read(length).decode("utf-8"))
             backend_url = str(payload.get("backend_url") or "")
             token = str(payload.get("session_token") or "")
+            requested_origin = _backend_origin(backend_url)
+            if request_origin and request_origin != requested_origin.rstrip('/'):
+                raise PermissionError('Launch origin does not match backend_url')
             if path == "/v1/web/launch":
                 if not token:
                     raise ValueError("session_token is required")
-                requested_origin = _backend_origin(backend_url)
-                request_origin = self._origin().rstrip("/")
-                if request_origin and request_origin != requested_origin.rstrip("/"):
-                    raise PermissionError("Web launch origin does not match backend_url")
                 _launch_web_window(backend_url, token, AGENT_ID)
                 self._send(
                     200,

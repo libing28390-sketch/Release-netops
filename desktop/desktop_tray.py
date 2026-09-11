@@ -1471,14 +1471,14 @@ class NetOpsAgentUI(QMainWindow):
             table_count = verification.get("table_count", 0)
             status_message = (
                 "数据库已成功备份并恢复出厂状态！\n"
-                "管理员账户：admin / admin（请登录后立即修改密码）\n"
+                "管理员账户：admin，密码为配置的 INITIAL_ADMIN_PASSWORD\n"
                 f"已重建 {table_count} 张表。\n"
                 f"备份文件：{backup_path}\n"
                 "正在重新启动后端服务。"
                 if self.lang == "zh"
                 else (
                     "Database backup and factory reset completed successfully!\n"
-                    "Administrator: admin / admin (change it immediately after login)\n"
+                    "Administrator: admin; use the configured INITIAL_ADMIN_PASSWORD\n"
                     f"Rebuilt {table_count} tables.\n"
                     f"Backup: {backup_path}\n"
                     "The backend service is restarting."

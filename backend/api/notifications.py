@@ -1,6 +1,7 @@
 from datetime import datetime
 from fastapi import APIRouter, Query, Body, HTTPException
 from database import get_db_connection
+from core.rbac import require_role
 
 router = APIRouter()
 
@@ -9,8 +10,13 @@ router = APIRouter()
 def list_notifications(
     limit: int = Query(default=30, ge=1, le=200),
     user_id: str | None = Query(default=None),
+    user=require_role('Viewer'),
 ):
     """Build notification feed from recent jobs and playbook executions."""
+    actor_id = str(user.get('user_id') or user.get('id') or '')
+    if user_id and user_id != actor_id:
+        raise HTTPException(status_code=403, detail='Cannot read another user notification state')
+    user_id = actor_id
     conn = get_db_connection()
     try:
         notifications = []
@@ -93,8 +99,10 @@ def list_notifications(
 
 
 @router.post('/notifications/read')
-def mark_notifications_read(payload: dict = Body(...)):
-    user_id = (payload.get('user_id') or '').strip()
+def mark_notifications_read(payload: dict = Body(...), user=require_role('Viewer')):
+    user_id = str(user.get('user_id') or user.get('id') or '')
+    if payload.get('user_id') and str(payload['user_id']) != user_id:
+        raise HTTPException(status_code=403, detail='Cannot update another user notification state')
     notification_ids = payload.get('notification_ids') or []
     if not user_id:
         raise HTTPException(status_code=400, detail='user_id is required')

@@ -19,6 +19,7 @@ terminal_agent = _load_script("terminal_agent_web_runtime", ROOT / "scripts" / "
 
 
 def test_web_launch_exchanges_token_and_opens_system_browser(monkeypatch):
+    monkeypatch.setenv('NEXORA_AGENT_ALLOWED_ORIGINS', 'https://netops.example.test')
     monkeypatch.setattr(terminal_agent, "_WEB_BROWSER_AVAILABLE", True)
     exchanged = {
         "session_id": "session-1",
@@ -44,6 +45,7 @@ def test_web_launch_exchanges_token_and_opens_system_browser(monkeypatch):
 
 
 def test_web_launch_requires_a_system_browser(monkeypatch):
+    monkeypatch.setenv('NEXORA_AGENT_ALLOWED_ORIGINS', 'https://netops.example.test')
     monkeypatch.setattr(terminal_agent, "_WEB_BROWSER_AVAILABLE", False)
     monkeypatch.setattr(
         terminal_agent,

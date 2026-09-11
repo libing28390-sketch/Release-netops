@@ -24,7 +24,8 @@ mimetypes.add_type('application/javascript', '.js')
 mimetypes.add_type('text/css', '.css')
 # ----------------------------
 from contextlib import asynccontextmanager
-from fastapi import FastAPI, BackgroundTasks, Request, HTTPException
+from fastapi import FastAPI, BackgroundTasks, Request, HTTPException, Depends
+from core.api_security import enforce_api_access
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.staticfiles import StaticFiles
 from core.config import settings, validate_production_security
@@ -406,6 +407,7 @@ import time
 from fastapi.responses import RedirectResponse
 
 app = FastAPI(
+    dependencies=[Depends(enforce_api_access)],
     title=settings.PROJECT_NAME,
     version="2.0.0",
     lifespan=lifespan,
@@ -783,13 +785,8 @@ def seed_data():
         # Check if devices table is empty
         # Mock device seeding removed per user request
         
-        # Check if users table is empty - only insert default admin if no users exist
-        count = conn.execute('SELECT COUNT(*) as count FROM users').fetchone()['count']
-        if count == 0:
-            import bcrypt as _bcrypt
-            _hashed_default = _bcrypt.hashpw('admin'.encode('utf-8'), _bcrypt.gensalt()).decode('utf-8')
-            conn.execute('INSERT INTO users (id, username, password, role, status, last_login) VALUES (?, ?, ?, ?, ?, ?)',
-                         ('1', 'admin', _hashed_default, 'Administrator', 'active', 'Never'))
+        # Initial administrator provisioning is owned by database bootstrap.
+        # Never recreate a known-password account during application seeding.
         
         # Check if templates table is empty (we will sync all templates instead of skipping when count != 0)
         import uuid

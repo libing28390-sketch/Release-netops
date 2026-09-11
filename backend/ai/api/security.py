@@ -224,9 +224,7 @@ def set_dev_passthrough(
     tools and write operations, cross-tenant or credential retrieval, and
     hard credential DLP remain enforced by the gateway.
     """
-    # `require_ai_permission` intentionally keeps a development fallback for
-    # legacy internal endpoints. Do not let that fallback operate this
-    # high-impact control: it must have a real, valid Administrator session.
+    # Revalidate the Administrator session for this high-impact control.
     authenticated_user = _get_current_user(request)
     if not authenticated_user:
         raise HTTPException(status_code=401, detail="Authentication is required to change AI temporary test mode")

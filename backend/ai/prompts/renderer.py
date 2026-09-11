@@ -5,7 +5,7 @@ Prompt Template Renderer supporting variable substitution and string formatting
 from __future__ import annotations
 
 from typing import Any, Dict
-from jinja2 import Template
+from jinja2.sandbox import SandboxedEnvironment
 
 
 class PromptRenderer:
@@ -17,7 +17,7 @@ class PromptRenderer:
             return ""
         try:
             # First try Jinja2 template rendering
-            tmpl = Template(template_str)
+            tmpl = SandboxedEnvironment(autoescape=False).from_string(template_str)
             return tmpl.render(**variables)
         except Exception:
             # Fallback to simple string replace

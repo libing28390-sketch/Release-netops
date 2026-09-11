@@ -1,4 +1,4 @@
-from fastapi import APIRouter, Depends, BackgroundTasks, Request
+from fastapi import APIRouter, Depends, BackgroundTasks, Request, HTTPException
 from typing import Dict, Any, Optional
 import os
 import sys
@@ -12,6 +12,7 @@ import time
 from database import get_db_connection
 from services.connection_profile import resolve_ssh_port
 from services.vault_service import resolve_device_credentials
+from services.rack_scope_service import enforce_loaded_resource
 
 router = APIRouter(prefix="/system", tags=["System"])
 
@@ -233,7 +234,7 @@ async def exchange_token(token: str) -> Dict[str, Any]:
     try:
         res = conn.execute(
             "SELECT * FROM pam_sessions WHERE session_token = ? "
-            "AND COALESCE(session_kind, 'ssh_terminal') != 'device_web' LIMIT 1",
+            "AND COALESCE(session_kind, 'ssh_terminal') != 'device_web' LIMIT 1 FOR UPDATE",
             (token,),
         ).fetchone()
 
@@ -318,7 +319,6 @@ async def exchange_token(token: str) -> Dict[str, Any]:
 
 @router.post("/launch-terminal")
 async def launch_terminal(payload: Dict[str, Any], request: Request) -> Dict[str, Any]:
-    import subprocess
     import logging
     import uuid
     from datetime import datetime, timezone, timedelta
@@ -343,8 +343,14 @@ async def launch_terminal(payload: Dict[str, Any], request: Request) -> Dict[str
         auth_session = validate_session_token(auth_header[7:].strip())
     if not auth_session or not auth_session.get('username'):
         return {"success": False, "error": "需要有效的登录会话"}
-    if auth_session and auth_session.get('username'):
-        requester_username = auth_session['username']
+    requester_username = auth_session['username']
+    if access_level not in {'normal', 'admin'}:
+        raise HTTPException(status_code=400, detail='Invalid terminal access level')
+    if app_type not in {'standard', 'xshell', 'putty', 'securecrt', 'mobaxterm'}:
+        raise HTTPException(status_code=400, detail='Unsupported terminal client')
+    # A read-only session must never mint a credential exchange token.
+    if auth_session.get('role') not in {'Operator', 'Administrator'}:
+        raise HTTPException(status_code=403, detail='Terminal execution permission required')
 
     if access_level == "admin":
         if not auth_session or not auth_session.get('username'):
@@ -363,7 +369,6 @@ async def launch_terminal(payload: Dict[str, Any], request: Request) -> Dict[str
 
     # 1. Fetch the password from DB
     conn = get_db_connection()
-    plain_password = ""
     try:
         device_row = conn.execute("SELECT * FROM devices WHERE ip_address = ? LIMIT 1", (host,)).fetchone()
         asset_row = None
@@ -381,6 +386,14 @@ async def launch_terminal(payload: Dict[str, Any], request: Request) -> Dict[str
         device_data = dict(device_row or asset_row)
         if asset_row:
             device_data['asset_id'] = asset_row['id']
+        scope_data = dict(asset_row or device_row)
+        if scope_data.get('site_id'):
+            site = conn.execute('SELECT tenant_id FROM sites WHERE id = ?', (scope_data['site_id'],)).fetchone()
+            if site:
+                scope_data['site_tenant_id'] = site['tenant_id']
+        enforce_loaded_resource(auth_session, scope_data, 'command', 'execute')
+        if asset_row:
+            enforce_loaded_resource(auth_session, scope_data, 'asset', 'view')
         target_port = resolve_ssh_port(device_data)
         resolved = resolve_device_credentials(device_data)
         role_prefix = 'admin' if access_level == 'admin' else 'normal'
@@ -393,11 +406,6 @@ async def launch_terminal(payload: Dict[str, Any], request: Request) -> Dict[str
         # The asset role is authoritative. Ignore a stale generic username
         # sent by an older client and launch the selected role account.
         user = login_user
-
-        # Decrypt password so it can be returned
-        plain_password = decrypt_credential(password)
-        if not plain_password:
-            plain_password = password
 
         # ── PAM audit record for local terminal ──────────────────────
         # We cannot intercept or record local terminal traffic, but we
@@ -412,7 +420,7 @@ async def launch_terminal(payload: Dict[str, Any], request: Request) -> Dict[str
         now_str = now.strftime('%Y-%m-%dT%H:%M:%S+00:00')
         expires_at = (now + timedelta(seconds=LOCAL_TERMINAL_TOKEN_TTL_SECONDS)).strftime('%Y-%m-%dT%H:%M:%S+00:00')
 
-        session_token = f"local-{uuid.uuid4().hex[:16]}"
+        session_token = f"local-{uuid.uuid4().hex}"
         try:
             conn.execute('''
                 INSERT INTO pam_sessions (
@@ -461,31 +469,13 @@ async def launch_terminal(payload: Dict[str, Any], request: Request) -> Dict[str
     finally:
         conn.close()
 
-    if not path or not os.path.exists(path):
-        # 后端不在用户 Windows 主机上时，返回令牌并让浏览器端助手接管启动。
-        return {
-            "success": True,
-            "session_id": session_id,
-            "client_side": True,
-            "session_token": session_token,
-            "port": target_port,
-            "path_unavailable": bool(path),
-        }
-
-    try:
-        if app_type == "xshell":
-            cmd = f'"{path}" -url "ssh://{user}:{plain_password}@{host}:{target_port}"'
-        elif app_type == "putty":
-            cmd = f'"{path}" -ssh {user}@{host} -P {target_port} -pw "{plain_password}"' if plain_password else f'"{path}" -ssh {user}@{host} -P {target_port}'
-        elif app_type == "securecrt":
-            cmd = f'"{path}" /SSH2 /L {user} /P {target_port} /PASSWORD "{plain_password}" {host}' if plain_password else f'"{path}" /SSH2 /L {user} /P {target_port} {host}'
-        else:
-            cmd = f'"{path}" "{user}@{host}:{target_port}"'
-
-        logger.info(f"[System] Launching terminal: {app_type} on {host}")
-        creation_flags = getattr(subprocess, "CREATE_NEW_CONSOLE", 0)
-        subprocess.Popen(cmd, shell=True, creationflags=creation_flags)
-        return {"success": True, "session_id": session_id}
-    except Exception as e:
-        logger.error(f"[System] Launch failed: {str(e)}")
-        return {"success": False, "error": "终端启动失败，请检查程序路径是否正确。此功能仅支持本地部署。"}
+    # Executable paths belong to the workstation Agent. Never execute a
+    # client-selected program (or shell command) on the API host.
+    return {
+        "success": True,
+        "session_id": session_id,
+        "client_side": True,
+        "session_token": session_token,
+        "port": target_port,
+        "path_unavailable": bool(path),
+    }

@@ -167,7 +167,7 @@ def require_role(minimum_role: str):
 
 def _profile_for_user(user: dict) -> str:
     profile = str(user.get('role_profile') or '').strip()
-    if profile in RECOMMENDED_ROLE_PROFILES:
+    if profile:
         return profile
     user_id = str(user.get('id') or user.get('user_id') or '').strip()
     if not user_id:
@@ -180,16 +180,16 @@ def _profile_for_user(user: dict) -> str:
         finally:
             conn.close()
         profile = str(row[0] or '').strip() if row else ''
-        return profile if profile in RECOMMENDED_ROLE_PROFILES else ''
+        return profile
     except Exception:
-        logger.debug('Role profile lookup unavailable', exc_info=True)
-        return ''
+        logger.warning('Role profile lookup unavailable; denying access', exc_info=True)
+        return '__unavailable__'
 
 
 def _action_allowed(user: dict, resource_type: str, action: str) -> bool:
     profile = _profile_for_user(user)
     if profile:
-        permissions = RECOMMENDED_ROLE_PROFILES[profile]
+        permissions = RECOMMENDED_ROLE_PROFILES.get(profile, {})
         allowed = permissions.get(resource_type, set()) | permissions.get('*', set())
         return '*' in allowed or action in allowed
     allowed = RESOURCE_ACTIONS.get(user.get('role', ''), set())
@@ -263,8 +263,8 @@ def authorize_resource(
         finally:
             conn.close()
     except Exception:
-        logger.debug("Resource scope lookup unavailable", exc_info=True)
-        rows = []
+        logger.warning("Resource scope lookup unavailable; denying access", exc_info=True)
+        return False
     if not rows:
         return True
 
@@ -316,9 +316,9 @@ def require_permission(resource_type: str, action: str):
 
 def require_admin(request: Request):
     """Shorthand dependency for Administrator-only endpoints."""
-    return require_role("Administrator")
+    return require_role("Administrator").dependency(request)
 
 
 def require_operator(request: Request):
     """Shorthand dependency for Operator+ endpoints."""
-    return require_role("Operator")
+    return require_role("Operator").dependency(request)

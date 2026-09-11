@@ -151,6 +151,10 @@ def setup_change_password(
         conn.execute(
             "UPDATE users SET password = ? WHERE id = ?", (hashed, row["id"])
         )
+        conn.execute(
+            "DELETE FROM sessions WHERE user_id = ? AND token != ?",
+            (row["id"], user["token"]),
+        )
         conn.commit()
         logger.info("Password changed via setup wizard for user %s", user["username"])
         return {"success": True}

@@ -462,13 +462,15 @@ def _get_session(token: str) -> dict | None:
     conn = get_db_connection()
     try:
         row = conn.execute(
-            "SELECT s.*, COALESCE(u.role_profile, '') AS role_profile, "
+            "SELECT s.token, s.user_id, s.created_at, u.username, u.role, "
+            "COALESCE(u.role_profile, '') AS role_profile, "
             "COALESCE(u.tenant_id, '') AS tenant_id "
-            "FROM sessions s LEFT JOIN users u ON u.id = s.user_id WHERE s.token = ?",
+            "FROM sessions s JOIN users u ON u.id = s.user_id "
+            "WHERE s.token = ? AND u.status = 'active'",
             (token,),
         ).fetchone()
         if not row:
-            logger.debug("[Auth Session] Token '%s...' not found in sessions table", token[:10])
+            logger.debug("[Auth Session] Session unavailable or user inactive")
             return None
         created_at = row['created_at']
         try:
@@ -480,8 +482,8 @@ def _get_session(token: str) -> dict | None:
         elapsed = time.time() - created_at_float
         if elapsed > _SESSION_TTL:
             logger.debug(
-                "[Auth Session] Token '%s...' expired. elapsed=%.2fs TTL=%ss",
-                token[:10], elapsed, _SESSION_TTL,
+                "[Auth Session] Session expired. elapsed=%.2fs TTL=%ss",
+                elapsed, _SESSION_TTL,
             )
             conn.execute('DELETE FROM sessions WHERE token = ?', (token,))
             conn.commit()
@@ -1226,20 +1228,20 @@ async def update_user(user_id: str, request: Request, user: dict = Body(...)):
         existing = conn.execute('SELECT * FROM users WHERE id = ?', (user_id,)).fetchone()
         if not existing:
             raise HTTPException(status_code=404, detail="User not found")
-        username = user.get('username', existing['username'])
         is_admin = session.get('role') == 'Administrator' or session.get('role_profile') == 'System Administrator'
+        username = user.get('username', existing['username']) if is_admin else existing['username']
         role = user.get('role', existing['role']) if is_admin else existing['role']
         requested_profile = user.get('role_profile', existing['role_profile'] if 'role_profile' in existing.keys() else '')
         role_profile = _validate_role_profile(requested_profile) if is_admin else str(existing['role_profile'] or '')
         if is_admin and str(requested_profile or '').strip() and role_profile is None:
             raise HTTPException(status_code=400, detail='Invalid resource role profile')
         avatar_url = user.get('avatar_url', existing['avatar_url'])
-        group_name = str(user.get('group_name', existing['group_name'] if 'group_name' in existing.keys() else '') or '').strip()
+        group_name = str((user.get('group_name', existing['group_name']) if is_admin else existing['group_name']) or '').strip()
         try:
             existing_change_groups = json.loads(existing['change_groups_json'] or '[]') if 'change_groups_json' in existing.keys() else []
         except Exception:
             existing_change_groups = []
-        change_groups = _normalize_change_groups(user.get('change_groups', existing_change_groups))
+        change_groups = _normalize_change_groups(user.get('change_groups', existing_change_groups) if is_admin else existing_change_groups)
         preferred_language = user.get('preferred_language', existing['preferred_language'] if 'preferred_language' in (existing.keys() if existing else []) else 'zh')
         if preferred_language not in ('zh', 'en'):
             preferred_language = 'zh'
@@ -1250,7 +1252,7 @@ async def update_user(user_id: str, request: Request, user: dict = Body(...)):
                     continue
                 
                 existing_global = conn.execute(
-                    'SELECT webhook_url, secret, creator_username FROM global_notification_channels WHERE platform = ?',
+                    'SELECT webhook_url, secret, creator_username, enabled FROM global_notification_channels WHERE platform = ?',
                     (platform,)
                 ).fetchone()
                 
@@ -1261,7 +1263,7 @@ async def update_user(user_id: str, request: Request, user: dict = Body(...)):
                 final_url = ''
                 final_secret = ''
                 
-                auth_username = existing['username']
+                auth_username = session['username']
                 
                 if not existing_global:
                     final_url = new_url
@@ -1270,7 +1272,7 @@ async def update_user(user_id: str, request: Request, user: dict = Body(...)):
                     creator = auth_username
                 else:
                     creator = existing_global['creator_username'] or auth_username
-                    if auth_username == creator or existing['role'] == 'Administrator':
+                    if auth_username == creator or is_admin:
                         if '***' not in new_url and '****' not in new_url and new_url != '':
                             final_url = new_url
                         else:
@@ -1331,6 +1333,8 @@ async def update_user(user_id: str, request: Request, user: dict = Body(...)):
                 'UPDATE users SET username = ?, role = ?, role_profile = ?, avatar_url = ?, group_name = ?, change_groups_json = ?, notification_channels = ?, preferred_language = ?, fixed_pin = ?, display_name = ?, phone = ?, email = ? WHERE id = ?',
                 (username, role, role_profile or '', avatar_url, group_name, change_groups_str, notification_channels_str, preferred_language, hashed_pin, display_name, phone, email, user_id)
             )
+        if password:
+            conn.execute('DELETE FROM sessions WHERE user_id = ? AND token != ?', (user_id, session_token))
         conn.commit()
         result = conn.execute(
             'SELECT id, username, role, role_profile, status, last_login as lastLogin, avatar_url, group_name, change_groups_json, notification_channels, preferred_language, display_name, phone, email, mfa_enabled FROM users WHERE id = ?',
@@ -1342,8 +1346,8 @@ async def update_user(user_id: str, request: Request, user: dict = Body(...)):
             severity='medium',
             status='success',
             summary=f"Updated user {username}",
-            actor_username=user.get('actor_username') or 'admin',
-            actor_role=user.get('actor_role') or 'Administrator',
+            actor_username=session['username'],
+            actor_role=session['role'],
             source_ip=request.client.host if request and request.client else None,
             target_type='user',
             target_id=user_id,
@@ -1487,9 +1491,11 @@ def mfa_setup(request: Request):
     sess = _get_session_user(request)
     conn = get_db_connection()
     try:
-        user = conn.execute('SELECT username, mfa_secret FROM users WHERE id = ?', (sess['user_id'],)).fetchone()
+        user = conn.execute('SELECT username, mfa_secret, mfa_enabled FROM users WHERE id = ?', (sess['user_id'],)).fetchone()
         if not user:
             raise HTTPException(status_code=404, detail="User not found")
+        if user['mfa_enabled']:
+            raise HTTPException(status_code=409, detail="MFA is already enabled; disable it before enrolling again")
         
         # Use existing secret if already configured, otherwise generate new one
         secret = user['mfa_secret'] or generate_totp_secret()
@@ -1516,7 +1522,12 @@ def mfa_enable(request: Request, payload: dict = Body(...)):
 
     conn = get_db_connection()
     try:
-        conn.execute('UPDATE users SET mfa_secret = ?, mfa_enabled = 1 WHERE id = ?', (secret, sess['user_id']))
+        updated = conn.execute(
+            'UPDATE users SET mfa_secret = ?, mfa_enabled = 1 WHERE id = ? AND COALESCE(mfa_enabled, 0) = 0',
+            (secret, sess['user_id']),
+        )
+        if updated.rowcount != 1:
+            raise HTTPException(status_code=409, detail="MFA is already enabled or user is unavailable")
         conn.commit()
         return {"success": True, "message": "MFA 开启成功"}
     finally:
@@ -1558,12 +1569,16 @@ async def mfa_verify(request: Request, payload: dict = Body(...)):
     token_info = _temp_mfa_tokens.get(temp_token)
     if not token_info:
         raise HTTPException(status_code=400, detail="验证链接已失效或已过期，请重新登录")
+    # Bound guesses for each password-verified ticket, independent of IP.
+    token_info['attempts'] = token_info.get('attempts', 0) + 1
+    if token_info['attempts'] >= 5:
+        _temp_mfa_tokens.pop(temp_token, None)
 
     username = token_info["username"]
     conn = get_db_connection()
     try:
         user = conn.execute('SELECT * FROM users WHERE username = ?', (username,)).fetchone()
-        if not user or not user['mfa_enabled'] or not user['mfa_secret']:
+        if not user or user['status'] != 'active' or not user['mfa_enabled'] or not user['mfa_secret']:
             raise HTTPException(status_code=400, detail="未启用 MFA 二次认证或用户不存在")
 
         if not verify_totp(user['mfa_secret'], code, window=1):
