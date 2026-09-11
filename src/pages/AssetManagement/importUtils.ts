@@ -26,10 +26,10 @@ export const MANAGEMENT_METHOD_SHEET_RE = MANAGEMENT_ENTRY_SHEET_RE;
 const HEADER_ALIASES: Record<string, string[]> = {
   assetTag: ['资产编号（手工填写）', '资产编号（关联键）', '资产编号', 'Asset Tag (manual)', 'Asset Tag (link key)', 'Asset Tag', 'asset_tag'],
   hostname: ['主机名（手工填写/核对）', '主机名（自动带出/仅核对）', '主机名（仅核对）', '主机名（核对）', '主机名', 'Hostname (manual/check)', 'Hostname (auto/check)', 'Hostname (check)', 'Hostname', 'hostname'],
-  method: ['管理协议（每行一个）', '管理方式', '协议', 'Management Protocol (one per row)', 'Management Method', 'Method', 'Protocol'],
-  profileName: ['入口显示名称（仅展示）', '入口名称', '名称', 'Entry Display Name (label only)', 'Entry Name', 'Profile Name', 'Name'],
-  port: ['端口（可留空自动默认）', '端口', 'Port (blank = default)', 'Port'],
-  path: ['登录路径（Web填写，如 /login）', '登录路径', '路径', 'Login Path (Web only)', 'Login Path', 'Path'],
+  method: ['管理协议（每行一个）', '管理协议（SSH/HTTP/HTTPS/NONE）', '管理方式', '协议', 'Management Protocol (one per row)', 'Management Protocol (SSH/HTTP/HTTPS/NONE)', 'Management Method', 'Method', 'Protocol'],
+  profileName: ['入口显示名称（仅展示）', '登录方式（可不填）', '入口名称', '名称', 'Entry Display Name (label only)', 'Login Method (optional)', 'Entry Name', 'Profile Name', 'Name'],
+  port: ['端口（可留空自动默认）', '端口（可留空）', '端口', 'Port (blank = default)', 'Port'],
+  path: ['登录路径（Web填写，如 /login）', '登录路径（仅 HTTP/HTTPS）', '登录路径', '路径', 'Login Path (Web only)', 'Login Path', 'Path'],
   enabled: ['是否启用', '启用', 'Enabled'],
   credentialMode: ['凭据模式（默认继承资产）', '凭据模式', 'Credential Mode (default: inherit asset)', 'Credential Mode'],
   normalUsername: ['普通用户（可选）', '普通用户', 'Normal User (optional)', 'Normal User', 'normal_username'],
@@ -62,7 +62,15 @@ const normalizeProfileLabel = (value: string): string => value.trim().toLowerCas
 // selected protocol. Keep the generic Web label accepted for older files;
 // the downloadable template now narrows the Excel list to the matching label.
 const MANAGEMENT_PROFILE_LABELS: Record<ManagementMethodImportRow['method'], string[]> = {
-  ssh: ['命令行管理', 'cli management', 'cli management entry'],
+  ssh: [
+    '命令行管理',
+    'ssh终端 + web ssh',
+    'ssh终端/web ssh',
+    'web ssh',
+    'cli management',
+    'cli management entry',
+    'ssh terminal + web ssh',
+  ],
   netconf: ['netconf管理', 'netconf management'],
   web: ['web管理', 'web管理入口', 'web management', 'web management entry'],
   http: ['http管理', 'web管理', 'web管理入口', 'http management', 'web management', 'web management entry'],

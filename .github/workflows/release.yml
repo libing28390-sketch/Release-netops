@@ -157,6 +157,20 @@ jobs:
           if [ -d docs ]; then
             find docs -mindepth 1 -maxdepth 1 ! -name deploy -exec rm -rf {} +
           fi
+          if [ -d docs/deploy ]; then
+            # Only keep the deployment documents linked by the public README.
+            # Internal readiness notes and unreferenced operational notes must
+            # never enter the public release tree by accident.
+            find docs/deploy -mindepth 1 -maxdepth 1 \
+              ! -name 'README.md' \
+              ! -name 'docker.md' \
+              ! -name 'docker-release-manual.md' \
+              ! -name 'ubuntu.md' \
+              ! -name 'windows.md' \
+              ! -name 'windows_pgvector_guide.md' \
+              ! -name 'terminal-agent.md' \
+              -exec rm -rf {} +
+          fi
           rm -rf brain/ skills/ .github/skills/ .agents/ blog/
 
           rm -rf scratch/ backend/scratch/
@@ -202,6 +216,25 @@ jobs:
           rm -rf .git
           git init
           git add .
+
+          public_deploy_docs=(
+            docs/deploy/README.md
+            docs/deploy/docker.md
+            docs/deploy/docker-release-manual.md
+            docs/deploy/ubuntu.md
+            docs/deploy/windows.md
+            docs/deploy/windows_pgvector_guide.md
+            docs/deploy/terminal-agent.md
+          )
+          for path in "${public_deploy_docs[@]}"; do
+            test -f "$path" || { echo "[FAIL] Required public deployment document missing: $path"; exit 1; }
+          done
+          while IFS= read -r path; do
+            case "$path" in
+              docs/deploy/README.md|docs/deploy/docker.md|docs/deploy/docker-release-manual.md|docs/deploy/ubuntu.md|docs/deploy/windows.md|docs/deploy/windows_pgvector_guide.md|docs/deploy/terminal-agent.md) ;;
+              *) echo "[FAIL] Unexpected deployment document staged: $path"; exit 1 ;;
+            esac
+          done < <(git ls-files 'docs/deploy/*')
 
           # tools/ is intentionally removed above from the sanitized public
           # release tree.  Validate the release-owned paths that remain.
@@ -342,6 +375,18 @@ jobs:
           if [ -d docs ]; then
             find docs -mindepth 1 -maxdepth 1 ! -name deploy -exec rm -rf {} +
           fi
+          if [ -d docs/deploy ]; then
+            # Keep the same public README allowlist as the Ubuntu release.
+            find docs/deploy -mindepth 1 -maxdepth 1 \
+              ! -name 'README.md' \
+              ! -name 'docker.md' \
+              ! -name 'docker-release-manual.md' \
+              ! -name 'ubuntu.md' \
+              ! -name 'windows.md' \
+              ! -name 'windows_pgvector_guide.md' \
+              ! -name 'terminal-agent.md' \
+              -exec rm -rf {} +
+          fi
           rm -rf brain/ skills/ .github/skills/ .agents/ blog/
           rm -rf scratch/ backend/scratch/
           if [ -d backend/tests ]; then
@@ -383,6 +428,25 @@ jobs:
           rm -rf .git
           git init
           git add .
+
+          public_deploy_docs=(
+            docs/deploy/README.md
+            docs/deploy/docker.md
+            docs/deploy/docker-release-manual.md
+            docs/deploy/ubuntu.md
+            docs/deploy/windows.md
+            docs/deploy/windows_pgvector_guide.md
+            docs/deploy/terminal-agent.md
+          )
+          for path in "${public_deploy_docs[@]}"; do
+            test -f "$path" || { echo "[FAIL] Required public deployment document missing: $path"; exit 1; }
+          done
+          while IFS= read -r path; do
+            case "$path" in
+              docs/deploy/README.md|docs/deploy/docker.md|docs/deploy/docker-release-manual.md|docs/deploy/ubuntu.md|docs/deploy/windows.md|docs/deploy/windows_pgvector_guide.md|docs/deploy/terminal-agent.md) ;;
+              *) echo "[FAIL] Unexpected deployment document staged: $path"; exit 1 ;;
+            esac
+          done < <(git ls-files 'docs/deploy/*')
 
           required=(.env.example package.json package-lock.json backend/requirements.txt backend/main.py release-textfsm-templates third_party/pgvector/README.md third_party/pgvector/vector.v0.8.6-pg17.zip desktop/launcher.py desktop/desktop_tray.py desktop/update_service.py NetOps.exe NexoraTerminalAgent.exe start.bat src)
           for path in "${required[@]}"; do

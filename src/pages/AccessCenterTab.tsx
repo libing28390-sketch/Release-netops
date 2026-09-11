@@ -225,12 +225,10 @@ export default function AccessCenterTab({
     const methods: AllAccessMethod[] = [];
     const terminalProtocol = getTerminalProtocol(dev);
     if (terminalProtocol === 'SSH') {
-      // A device with only SSH configured should not suggest a second login
-      // surface that has not been configured for the asset. Keep Web SSH for
-      // the combined SSH + HTTP(S) case, where the operator has an explicit
-      // browser-access entry to choose from as well.
-      methods.push('ssh-terminal');
-      if (hasHttpWebAccess(dev)) methods.push('ssh-web');
+      // Web SSH renders the same SSH transport in a browser terminal. It is
+      // independent of device HTTP(S) management pages, so an SSH-only asset
+      // must expose both the native-terminal and browser-terminal actions.
+      methods.push('ssh-terminal', 'ssh-web');
     } else if (terminalProtocol === 'RDP') {
       methods.push('rdp');
     }

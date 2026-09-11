@@ -197,56 +197,6 @@ const formatFallbackTemplateDateColumns = (worksheet: XLSX.WorkSheet, headers: s
   }
 };
 
-const applyFallbackManagementDefaults = (worksheet: XLSX.WorkSheet, zh: boolean) => {
-  const range = worksheet['!ref'] ? XLSX.utils.decode_range(worksheet['!ref']) : null;
-  if (!range) return;
-
-  const quote = (value: string) => JSON.stringify(value);
-  const webProtocol = zh ? 'Web管理' : 'Web Management';
-  const labels = zh
-    ? { ssh: '命令行管理', web: 'Web管理', netconf: 'NETCONF管理', http: 'HTTP管理', https: 'HTTPS管理', none: '无登录入口' }
-    : { ssh: 'CLI management', web: 'Web management entry', netconf: 'NETCONF management', http: 'HTTP management', https: 'HTTPS management', none: 'No login entry' };
-  const enabled = zh ? '是' : 'yes';
-  const inherited = zh ? '继承资产凭据' : 'inherit_asset';
-  const independent = zh ? '独立凭据' : 'independent';
-
-  for (let rowIndex = range.s.r + 1; rowIndex <= range.e.r; rowIndex += 1) {
-    const rowNumber = rowIndex + 1;
-    const protocolAddress = XLSX.utils.encode_cell({ r: rowIndex, c: 2 });
-    const protocol = String(worksheet[protocolAddress]?.v ?? '').trim();
-    if (!protocol) continue;
-    const protocolRef = `$C${rowNumber}`;
-    const webRef = quote(webProtocol);
-    const formulas = {
-      D: `IF(${protocolRef}="","",IF(${protocolRef}="SSH",${quote(labels.ssh)},IF(${protocolRef}=${webRef},${quote(labels.web)},IF(${protocolRef}="NETCONF",${quote(labels.netconf)},IF(${protocolRef}="HTTP",${quote(labels.http)},IF(${protocolRef}="HTTPS",${quote(labels.https)},IF(${protocolRef}="NONE",${quote(labels.none)},"")))))))`,
-      E: `IF(${protocolRef}="","",IF(${protocolRef}="SSH",22,IF(${protocolRef}="NETCONF",830,IF(${protocolRef}="HTTP",80,IF(OR(${protocolRef}="HTTPS",${protocolRef}=${webRef}),443,"")))))`,
-      F: `IF(${protocolRef}="","",IF(OR(${protocolRef}="SSH",${protocolRef}="NETCONF",${protocolRef}="NONE"),"",IF(OR(${protocolRef}=${webRef},${protocolRef}="HTTP"),"/","/login")))`,
-      G: `IF(${protocolRef}="","",${quote(enabled)})`,
-      H: `IF(${protocolRef}="","",IF(OR(${protocolRef}="HTTP",${protocolRef}="HTTPS"),${quote(independent)},${quote(inherited)}))`,
-      I: `IF($H${rowNumber}=${quote(independent)},IF(OR(${protocolRef}=${webRef},${protocolRef}="HTTP",${protocolRef}="HTTPS"),"web-user",""),"")`,
-      K: `IF($H${rowNumber}=${quote(independent)},IF(OR(${protocolRef}=${webRef},${protocolRef}="HTTP",${protocolRef}="HTTPS"),"web-admin",""),"")`,
-    };
-    const cachedValues = {
-      D: protocol === 'SSH' ? labels.ssh : protocol === webProtocol ? labels.web : protocol === 'NETCONF' ? labels.netconf : protocol === 'HTTP' ? labels.http : protocol === 'HTTPS' ? labels.https : protocol === 'NONE' ? labels.none : '',
-      E: protocol === 'SSH' ? 22 : protocol === 'NETCONF' ? 830 : protocol === 'HTTP' ? 80 : ['HTTPS', webProtocol].includes(protocol) ? 443 : '',
-      F: ['SSH', 'NETCONF', 'NONE'].includes(protocol) ? '' : ['HTTP', webProtocol].includes(protocol) ? '/' : '/login',
-      G: enabled,
-      H: ['HTTP', 'HTTPS'].includes(protocol) ? independent : inherited,
-      I: ['HTTP', 'HTTPS'].includes(protocol) ? 'web-user' : '',
-      K: ['HTTP', 'HTTPS'].includes(protocol) ? 'web-admin' : '',
-    };
-    for (const [column, formula] of Object.entries(formulas)) {
-      const address = `${column}${rowNumber}`;
-      const cell = { ...((worksheet[address] || { t: 's' }) as XLSX.CellObject) };
-      cell.f = formula;
-      cell.v = cachedValues[column as keyof typeof cachedValues];
-      cell.t = typeof cell.v === 'number' ? 'n' : 's';
-      delete cell.w;
-      worksheet[address] = cell;
-    }
-  }
-};
-
 const AssetManagementTab: React.FC<AssetManagementTabProps> = ({ language, setActiveTab }) => {
   const { systemInfo } = useSystem();
   const zh = language === 'zh';
@@ -1452,56 +1402,43 @@ const AssetManagementTab: React.FC<AssetManagementTabProps> = ({ language, setAc
 
     const guideRows = zh ? [
       ['资产导入填写说明'],
-      ['字段', '是否必填', '填写规则'],
-      ['资产信息', '每台资产一行', '服务器和网络设备统一填写；不要因存在多个管理入口而重复资产行'],
-      ['资产类型', '必填', '填写“服务器”或“网络设备”'],
-      ['管理入口', '每个协议一行', 'A、B列都从“资产信息”手工复制；支持 SSH、Web管理、NETCONF、HTTP、HTTPS；同一设备同时支持 HTTP+HTTPS 时填写两行；没有登录入口时填写 NONE'],
-      ['入口协议与路径', '按协议填写', 'SSH/NETCONF 不填路径；Web管理可按端口选择 HTTP/HTTPS（默认 HTTPS/443）；HTTP/HTTPS 填 Web 路径，如 /login。端口可留空，系统默认 SSH 22、NETCONF 830、HTTP 80、HTTPS 443'],
-      ['管理入口凭据', '可选', '默认继承资产信息中的凭据；账号不同时选择“独立凭据”。优先填写绑定凭据，不建议在表格中填写密码'],
-      ['SSH算法策略', 'SSH设备可选', '默认 auto（现代算法优先并兼容安全旧算法）；仅在确认设备没有更安全共同算法时使用 legacy_break_glass，该选项会启用高风险旧算法并应纳入审计'],
-      ['SNMP凭据', '可选', '填写凭据库中已有 SNMP 凭据的名称或 ID；不要填写社区字串。已填写 SNMP 凭据时请清空 SNMP社区名，避免明文凭据进入导入文件'],
-      ['录入来源', '必填', '填写“新设备”或“存量设备”'],
-      ['投产状态', '必填', '新设备填写“待投产”；存量设备可填写“待投产”或“已投产”'],
-      ['主机名/资产编号', 'A、B列手工填写', '从“资产信息”复制资产编号和主机名；A、B两列都是人工核对信息，不使用自动填充'],
-      ['普通用户/普通密码', '条件必填', '存量设备直接填写“已投产”时必须填写（若绑定已存凭据则可选填）'],
-      ['特权用户/特权密码', '标准投产必填', '标准口令上收和改密使用'],
-      ['免上收投产原因', '条件必填', '录入来源为“存量设备”且投产状态为“已投产”时至少填写 5 个字符'],
-      ['绑定凭据', '可选', '普通/登录凭据名称或 ID，如：cred-cisco-core'],
-      ['绑定特权凭据', '可选', '特权/管理员凭据名称或 ID，如：cred-cisco-admin'],
-      ['标签代码', '可选', '多个标签代码用英文逗号分隔，例如：vendor.cisco,platform.cisco_ios'],
-      ['拓扑角色', '网络设备必填', '使用统一下拉值；核心/汇聚/接入用于拓扑视觉分层，链路关系证据仍保留用于关系语义。'],
-      ['功能/区域', '推荐填写', '使用统一下拉值，便于拓扑筛选与语义展示。'],
+      ['项目', '怎么填', '只需要填写“资产信息”和“管理入口”；其它工作表仅供参考，不用修改。'],
+      ['资产信息', '每台设备一行', '填写设备基本信息；一台设备不要重复多行。'],
+      ['资产类型', '必填', '选择“服务器”或“网络设备”。'],
+      ['主机名/资产编号', '至少填一个', '从“资产信息”复制到“管理入口”对应列。'],
+      ['录入来源', '必填', '填写“新设备”或“存量设备”。'],
+      ['投产状态', '必填', '新设备填“待投产”；存量设备按实际状态填写。'],
+      ['管理入口', '最少一行', 'SSH 设备只填一行：协议填 SSH；导入后自动提供“SSH 终端”和“Web SSH”。'],
+      ['网页管理', '有网页才填', '只有设备自带 HTTP/HTTPS 管理页面才另填 HTTP 或 HTTPS；这不是 Web SSH。'],
+      ['没有登录入口', '填 NONE', '协议填 NONE，其它入口信息留空。'],
+      ['端口/路径', '可留空', 'SSH 默认 22；HTTP 默认 80；HTTPS 默认 443。SSH 和 Web SSH 不填路径。'],
+      ['凭据', '可选', '默认使用资产凭据；没有特殊账号就留空。'],
+      ['其它列', '可选', '不需要的字段全部留空。'],
+      ['安全提示', '注意', '优先填写绑定凭据，不要在表格中填写密码。'],
     ] : [
       ['Asset Import Instructions'],
-      ['Field', 'Required', 'Rule'],
-      ['Asset Information', 'One row per asset', 'Servers and network devices share one sheet; do not duplicate assets for multiple management entries'],
-      ['Asset Type', 'Yes', 'Use server or network_device'],
-      ['Management Entries', 'One row per protocol', 'Copy Asset Tag and Hostname manually from Asset Information. Supports SSH, Web Management, NETCONF, HTTP and HTTPS. Use two rows for HTTP + HTTPS, or NONE when there is no login entry'],
-      ['Protocol / Path', 'By protocol', 'Leave path blank for SSH/NETCONF; Web Management defaults to HTTPS/443 and uses HTTP when port 80 is entered; fill a Web path such as /login for HTTP/HTTPS. Blank port uses protocol defaults: 22/830/80/443'],
-      ['Entry Credentials', 'Optional', 'Entries inherit asset credentials by default; choose independent credentials only when the account differs. Prefer credential IDs and avoid passwords in the sheet'],
-      ['SSH Algorithm Profile', 'SSH devices', 'Defaults to auto. Use modern for strict policy, legacy_compat for safe legacy fallback, and legacy_break_glass only for confirmed very old devices; the latter enables high-risk algorithms and should be audited'],
-      ['SNMP Credential', 'Optional', 'Enter an existing SNMP credential name or ID from the vault. Do not enter a community string. Clear SNMP Community when using this field'],
-      ['Role', 'Optional', 'Use the canonical device role value; both Role and role headers are accepted on import'],
-      ['Asset Origin', 'Yes', 'Use new (new device) or legacy (existing device)'],
-      ['Lifecycle', 'Yes', 'Use staging for new devices; legacy devices may use staging or production'],
-      ['Hostname / Asset Tag', 'Manual entry', 'Copy both values from Asset Information; both columns are manual association/check fields'],
-      ['Normal User / Password', 'Conditional', 'Required for legacy devices imported as production (optional if credential is bound)'],
-      ['Admin User / Password', 'Standard production', 'Required for managed password takeover'],
-      ['Takeover Exemption Reason', 'Conditional', 'Minimum 5 characters for legacy + production'],
-      ['Credential', 'Optional', 'Existing normal credential name or ID from the vault, e.g. cred-cisco-core'],
-      ['Admin Credential', 'Optional', 'Existing admin credential name or ID from the vault, e.g. cred-cisco-admin'],
-      ['Tags', 'Optional', 'Comma-separated stable tag codes, e.g. vendor.cisco,platform.cisco_ios'],
-      ['Topology Role', 'Network devices', 'Use the unified list; Core/Distribution/Access drive the visual tiers while relationship evidence remains semantic.'],
-      ['Function / Zone', 'Recommended', 'Use the unified lists for topology filtering and semantics.'],
+      ['Item', 'How to fill', 'Only complete Asset Information and Management Entries; other sheets are reference-only.'],
+      ['Asset Information', 'One row per device', 'Enter basic device information; do not repeat a device.'],
+      ['Asset Type', 'Required', 'Choose server or network_device.'],
+      ['Hostname / Asset Tag', 'At least one', 'Copy the same values into the Management Entries sheet.'],
+      ['Asset Origin', 'Required', 'Use new or legacy.'],
+      ['Lifecycle', 'Required', 'Use staging for new devices; use the actual state for legacy devices.'],
+      ['Management Entries', 'At least one row', 'For SSH, enter one row only; the imported asset automatically provides SSH terminal and Web SSH.'],
+      ['Device Web Page', 'Only when present', 'Use HTTP or HTTPS only for the device\'s own web page; this is not Web SSH.'],
+      ['No Login', 'Use NONE', 'Set the protocol to NONE and leave the remaining entry fields blank.'],
+      ['Port / Path', 'Optional', 'Defaults are SSH 22, HTTP 80 and HTTPS 443. Leave SSH and Web SSH paths blank.'],
+      ['Credentials', 'Optional', 'Asset credentials are inherited by default; leave blank when there is no special account.'],
+      ['Other columns', 'Optional', 'Leave fields you do not need blank.'],
+      ['Security', 'Important', 'Prefer credential bindings and avoid putting passwords in the sheet.'],
     ];
     const wsGuide = XLSX.utils.aoa_to_sheet(guideRows);
     wsGuide['!cols'] = [{ wch: 28 }, { wch: 18 }, { wch: 72 }];
     XLSX.utils.book_append_sheet(wb, wsGuide, zh ? '填写说明' : 'Instructions');
 
     const assetHeaders = zh
-      ? ['资产类型', '主机名', '资产编号', '序列号', '厂商', '型号', '平台', 'SSH算法策略', '管理IP', '业务IP', '状态', '角色', '设备分类', '录入来源（必填：新设备或存量设备）', 'VLAN', '上联交换机', '上联端口', '站点', '机柜', 'U位', 'U高度', '规划起始U', '功耗(W)', 'SNMP社区名', 'SNMP端口', '普通用户', '特权用户', '普通密码', '特权密码', 'Enable密码', '绑定凭据', '绑定特权凭据', 'SNMP凭据（推荐）', '标签代码', '部门', '购买日期', '投产状态', '免上收投产原因', '保修到期', '备注', '功能', '区域']
-      : ['Asset Type', 'Hostname', 'Asset Tag', 'Serial Number', 'Vendor', 'Model', 'Platform', 'SSH Algorithm Profile', 'Mgmt IP', 'Business IP', 'Status', 'Role', 'Device Category', 'Asset Origin (Required: new or legacy)', 'VLAN', 'Uplink Switch', 'Uplink Port', 'Site', 'Rack', 'Rack Unit', 'U Height', 'Planned Start U', 'Power(W)', 'SNMP Community', 'SNMP Port', 'Normal User', 'Admin User', 'Normal Password', 'Admin Password', 'Enable Secret', 'Credential', 'Admin Credential', 'SNMP Credential (recommended)', 'Tags', 'Department', 'Purchase Date', 'Lifecycle', 'Takeover Exemption Reason', 'Warranty Expiry', 'Notes', 'Function', 'Zone'];
-    const assetExamples = zh ? [
+      ? ['资产类型', '主机名', '资产编号', '序列号', '管理IP', '厂商', '型号', '平台', '录入来源', '投产状态', '普通用户', '普通密码', '特权用户', '特权密码', '绑定凭据', '绑定特权凭据', '备注']
+      : ['Asset Type', 'Hostname', 'Asset Tag', 'Serial Number', 'Mgmt IP', 'Vendor', 'Model', 'Platform', 'Asset Origin', 'Lifecycle', 'Normal User', 'Normal Password', 'Admin User', 'Admin Password', 'Credential', 'Admin Credential', 'Notes'];
+    const legacyAssetExamples = zh ? [
       ['网络设备', 'core-sw-01', 'NET-BJ-001', 'FCW2345L0AB', 'Cisco', 'C9300-48P', 'Cisco IOS', 'auto', '10.0.0.1', '', '在用', '核心层', '交换机', '存量设备', '', '', '', 'BJ-DC1', 'A-02', '40', '1', '40', '', '', '161', '', 'user', 'admin', '', '', '', 'cred-cisco-core', 'cred-cisco-admin', 'vendor.cisco,platform.cisco_ios', 'IT部', '2023-06-01', '已投产', '存量设备已在线运行', '2027-06-01', 'A：只支持 SSH', '园区核心', '生产区'],
       ['网络设备', 'web-fw-01', 'NET-BJ-002', 'HS20260813A1', 'Hillstone', 'Hillstone E-Series', 'Hillstone StoneOS', 'auto', '10.0.0.2', '', '在用', '防火墙', '防火墙', '新设备', '', '', '', 'BJ-DC1', 'A-02', '38', '2', '38', '', '', '161', '', '', '', '', '', '', '', 'vendor.hillstone', 'IT部', '2026-08-13', '待投产', '', '2029-08-13', 'B：同时支持 HTTP 和 HTTPS', '互联网边界', 'DMZ 区'],
       ['服务器', 'web-srv-01', 'SRV-BJ-001', 'CZJ2345G0HN', 'Dell', 'PowerEdge R750', 'Linux (Generic)', 'auto', '10.0.1.10', '192.168.1.10', '在用', '业务服务器', '机架式服务器', '新设备', 'VLAN100', 'core-sw-01', 'Gi0/1', 'BJ-DC1', 'A-01', '12', '1', '12', '200', '', '', 'ops', 'root', '', '', '', 'cred-server-ops', '', 'platform.linux', 'IT部', '2026-08-13', '待投产', '', '2029-08-13', 'C：SSH + HTTPS（管理入口需两行）', '服务器接入', '生产区'],
@@ -1510,47 +1447,33 @@ const AssetManagementTab: React.FC<AssetManagementTabProps> = ({ language, setAc
       ['network_device', 'web-fw-01', 'NET-BJ-002', 'HS20260813A1', 'Hillstone', 'Hillstone E-Series', 'hillstone_stoneos', 'auto', '10.0.0.2', '', 'active', 'firewall', 'firewall', 'new', '', '', '', 'BJ-DC1', 'A-02', '38', '2', '38', '', '', '161', '', '', '', '', '', '', 'vendor.hillstone', 'IT Dept', '2026-08-13', 'staging', '', '2029-08-13', 'B: HTTP + HTTPS', 'Internet Edge', 'DMZ'],
       ['server', 'web-srv-01', 'SRV-BJ-001', 'CZJ2345G0HN', 'Dell', 'PowerEdge R750', 'linux', 'auto', '10.0.1.10', '192.168.1.10', 'active', 'application_server', 'rack_server', 'new', 'VLAN100', 'core-sw-01', 'Gi0/1', 'BJ-DC1', 'A-01', '12', '1', '12', '200', '', '', 'ops', 'root', '', '', '', 'cred-server-ops', '', 'platform.linux', 'IT Dept', '2026-08-13', 'staging', '', '2029-08-13', 'C: SSH + HTTPS (two entry rows)', 'Server Access', 'Production'],
     ];
-    // Keep the three credential references together in the requested order:
-    // binding credential, privileged binding credential, then SNMP credential.
-    // Older examples carry an empty placeholder at the original SNMP position;
-    // move that value with the header instead of shifting the sample row.
-    const moveSnmpCredentialNextToSshCredential = (row: unknown[]) => {
-      const next = [...row];
-      const [snmpCredential] = next.splice(25, 1);
-      next.splice(32, 0, snmpCredential);
-      return next;
-    };
-    const wsAssets = XLSX.utils.aoa_to_sheet([
-      assetHeaders,
-      ...assetExamples.map(moveSnmpCredentialNextToSshCredential),
-    ]);
+    const assetExamples = zh ? [
+      ['网络设备', 'core-sw-01', 'NET-BJ-001', 'FCW2345L0AB', '10.0.0.1', 'Cisco', 'C9300-48P', 'Cisco IOS', '存量设备', '已投产', 'user', '', 'admin', '', 'cred-cisco-core', 'cred-cisco-admin', '基本示例'],
+      ['服务器', 'web-srv-01', 'SRV-BJ-001', 'CZJ2345G0HN', '10.0.1.10', 'Dell', 'PowerEdge R750', 'Linux (Generic)', '新设备', '待投产', 'ops', '', 'root', '', 'cred-server-ops', '', '基本示例'],
+    ] : [
+      ['network_device', 'core-sw-01', 'NET-BJ-001', 'FCW2345L0AB', '10.0.0.1', 'Cisco', 'C9300-48P', 'cisco_ios', 'legacy', 'production', 'user', '', 'admin', '', 'cred-cisco-core', 'cred-cisco-admin', 'Basic example'],
+      ['server', 'web-srv-01', 'SRV-BJ-001', 'CZJ2345G0HN', '10.0.1.10', 'Dell', 'PowerEdge R750', 'linux', 'new', 'staging', 'ops', '', 'root', '', 'cred-server-ops', '', 'Basic example'],
+    ];
+    void legacyAssetExamples;
+    const wsAssets = XLSX.utils.aoa_to_sheet([assetHeaders, ...assetExamples]);
     formatFallbackTemplateDateColumns(wsAssets, assetHeaders);
     wsAssets['!cols'] = assetHeaders.map((_, index) => ({ wch: index === 0 || index === 2 ? 18 : 16 }));
     XLSX.utils.book_append_sheet(wb, wsAssets, zh ? '资产信息' : 'Asset Information');
 
     const methodHeaders = zh
-      ? ['资产编号（手工填写）', '主机名（手工填写/核对）', '管理协议（每行一个）', '入口显示名称（仅展示）', '端口（可留空自动默认）', '登录路径（Web填写，如 /login）', '是否启用', '凭据模式（默认继承资产）', '普通用户（可选）', '普通密码（不建议填写）', '特权用户（可选）', '特权密码（不建议填写）', '绑定凭据（推荐）', '绑定特权凭据（推荐）', '备注（填写场景）']
-      : ['Asset Tag (manual)', 'Hostname (manual/check)', 'Management Protocol (one per row)', 'Entry Display Name (label only)', 'Port (blank = default)', 'Login Path (Web only)', 'Enabled', 'Credential Mode (default: inherit asset)', 'Normal User (optional)', 'Normal Password (avoid)', 'Admin User (optional)', 'Admin Password (avoid)', 'Credential ID (recommended)', 'Admin Credential ID (recommended)', 'Notes (scenario)'];
+      ? ['资产编号', '主机名', '管理协议（SSH/HTTP/HTTPS/NONE）', '登录方式（可不填）', '端口（可留空）', '登录路径（仅 HTTP/HTTPS）', '说明（可不填）']
+      : ['Asset Tag', 'Hostname', 'Management Protocol (SSH/HTTP/HTTPS/NONE)', 'Login Method (optional)', 'Port (blank = default)', 'Login Path (HTTP/HTTPS only)', 'Notes (optional)'];
     const methodExamples = zh ? [
-      ['NET-BJ-001', 'core-sw-01', 'SSH', '命令行管理', 22, '', '是', '继承资产凭据', '', '', '', '', '', '', 'A：只支持 SSH；一行一个协议'],
-      ['NET-BJ-002', 'web-fw-01', 'SSH', '命令行管理', 22, '', '是', '继承资产凭据', '', '', '', '', '', '', 'B：SSH 管理通道；HTTP + HTTPS 另加两行'],
-      ['NET-BJ-002', 'web-fw-01', 'HTTP', 'HTTP管理', 80, '/', '是', '独立凭据', 'web-user', '', 'web-admin', '', '', '', 'B：HTTP + HTTPS 需要两行'],
-      ['NET-BJ-002', 'web-fw-01', 'HTTPS', 'HTTPS管理', 443, '/login', '是', '独立凭据', 'web-user', '', 'web-admin', '', '', '', 'B：HTTP + HTTPS 需要两行'],
-      ['SRV-BJ-001', 'web-srv-01', 'SSH', '命令行管理', 22, '', '是', '继承资产凭据', '', '', '', '', '', '', 'C：SSH 主通道；HTTPS 另加一行'],
-      ['SRV-BJ-001', 'web-srv-01', 'HTTPS', 'HTTPS管理', 443, '/login', '是', '独立凭据', 'web-user', '', 'web-admin', '', '', '', 'C：SSH + HTTPS'],
-      ['NET-BJ-002', 'web-fw-01', 'Web管理', 'Web管理', 443, '/', '是', '继承资产凭据', '', '', '', '', '', '', 'B：Web管理默认 HTTPS/443；端口 80 表示 HTTP'],
+      ['NET-BJ-001', 'core-sw-01', 'SSH', 'SSH终端 + Web SSH', 22, '', 'SSH 一行即可；自动提供两种登录方式'],
+      ['NET-BJ-002', 'web-fw-01', 'HTTPS', 'HTTPS管理', 443, '/login', '设备有网页管理时才填写'],
+      ['SRV-BJ-001', 'web-srv-01', 'NONE', '无登录入口', '', '', '没有登录入口时填写 NONE'],
     ] : [
-      ['NET-BJ-001', 'core-sw-01', 'SSH', 'CLI management', 22, '', 'yes', 'inherit_asset', '', '', '', '', '', '', 'A: SSH only; one protocol per row'],
-      ['NET-BJ-002', 'web-fw-01', 'SSH', 'CLI management', 22, '', 'yes', 'inherit_asset', '', '', '', '', '', '', 'B: SSH channel; add HTTP + HTTPS rows'],
-      ['NET-BJ-002', 'web-fw-01', 'HTTP', 'HTTP management', 80, '/', 'yes', 'independent', 'web-user', '', 'web-admin', '', '', '', 'B: HTTP + HTTPS uses two rows'],
-      ['NET-BJ-002', 'web-fw-01', 'HTTPS', 'HTTPS management', 443, '/login', 'yes', 'independent', 'web-user', '', 'web-admin', '', '', '', 'B: HTTP + HTTPS uses two rows'],
-      ['SRV-BJ-001', 'web-srv-01', 'SSH', 'CLI management', 22, '', 'yes', 'inherit_asset', '', '', '', '', '', '', 'C: SSH channel; add HTTPS row'],
-      ['SRV-BJ-001', 'web-srv-01', 'HTTPS', 'HTTPS management', 443, '/login', 'yes', 'independent', 'web-user', '', 'web-admin', '', '', '', 'C: SSH + HTTPS'],
-      ['NET-BJ-002', 'web-fw-01', 'Web Management', 'Web management entry', 443, '/', 'yes', 'inherit_asset', '', '', '', '', '', '', 'B: Web Management defaults to HTTPS/443; port 80 means HTTP'],
+      ['NET-BJ-001', 'core-sw-01', 'SSH', 'SSH terminal + Web SSH', 22, '', 'One SSH row automatically provides both methods'],
+      ['NET-BJ-002', 'web-fw-01', 'HTTPS', 'HTTPS management', 443, '/login', 'Use only when the device has a web page'],
+      ['SRV-BJ-001', 'web-srv-01', 'NONE', 'No login entry', '', '', 'Use NONE when the device has no login entry'],
     ];
     const wsMethods = XLSX.utils.aoa_to_sheet([methodHeaders, ...methodExamples]);
-    applyFallbackManagementDefaults(wsMethods, zh);
-    wsMethods['!cols'] = [18, 20, 14, 16, 14, 18, 10, 18, 14, 16, 14, 16, 18, 20, 24].map(wch => ({ wch }));
+    wsMethods['!cols'] = [18, 20, 28, 22, 14, 24, 32].map(wch => ({ wch }));
     XLSX.utils.book_append_sheet(wb, wsMethods, zh ? '管理入口' : 'Management Entries');
 
     const optHeaders = zh
@@ -1655,7 +1578,17 @@ const AssetManagementTab: React.FC<AssetManagementTabProps> = ({ language, setAc
       ['Network/Security', 'Device Category', 'network_device', 'Network Device'],
     ];
 
-    const wsOpt = XLSX.utils.aoa_to_sheet([optHeaders, ...optRows]);
+    const visibleOptRows = zh
+      ? [
+        ...optRows.slice(0, 8),
+        ['管理入口', '浏览器终端', 'Web SSH', 'SSH 只需填一行；导入后同时提供 SSH 终端和 Web SSH，不要另填一行'],
+      ]
+      : [
+        ...optRows.slice(0, 2),
+        ['Management Entry', 'Browser Terminal', 'Web SSH', 'One SSH row automatically provides both SSH terminal and Web SSH; do not add another row'],
+        ...optRows.slice(2, 8),
+      ];
+    const wsOpt = XLSX.utils.aoa_to_sheet([optHeaders, ...visibleOptRows]);
     wsOpt['!cols'] = optHeaders.map(() => ({ wch: 25 }));
     XLSX.utils.book_append_sheet(wb, wsOpt, zh ? '参数可选值参考' : 'Option Reference');
 

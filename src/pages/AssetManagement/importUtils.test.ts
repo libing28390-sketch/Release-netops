@@ -64,6 +64,25 @@ describe('asset management method import', () => {
     });
   });
 
+  it('accepts the compact template and treats Web SSH as an SSH display label', () => {
+    const sheet = XLSX.utils.aoa_to_sheet([
+      ['资产编号', '主机名', '管理协议（SSH/HTTP/HTTPS/NONE）', '登录方式（可不填）', '端口（可留空）', '登录路径（仅 HTTP/HTTPS）', '说明（可不填）'],
+      ['SSH-004', 'ssh-04', 'SSH', 'SSH终端 + Web SSH', 22, '', 'SSH 一行即可'],
+    ]);
+
+    const parsed = parseManagementMethodSheet(sheet);
+    expect(parsed.errors).toEqual([]);
+    expect(parsed.rows[0]).toMatchObject({
+      method: 'ssh',
+      profileName: 'SSH终端 + Web SSH',
+      port: '22',
+      path: '',
+    });
+    const merged = mergeManagementMethods([{ asset_tag: 'SSH-004', hostname: 'ssh-04' }], parsed.rows);
+    expect(merged.errors).toEqual([]);
+    expect(merged.assets[0]).toMatchObject({ connection_method: 'ssh', management_port: '22' });
+  });
+
   it('accepts the generic Web管理 entry and defaults it to HTTPS', () => {
     const sheet = XLSX.utils.aoa_to_sheet([
       ['资产编号', '主机名', '管理方式', '端口', '是否启用'],
