@@ -138,6 +138,7 @@ interface InventoryState {
   inventoryTotal: number;
   inventoryStatusCounts: Record<string, number>;
   inventoryLoading: boolean;
+  inventoryError: string | null;
   inventoryRefreshTick: number;
   assetsTotal: number;
 
@@ -184,6 +185,7 @@ export const useInventoryStore = create<InventoryState>((set, get) => ({
   inventoryTotal: 0,
   inventoryStatusCounts: {},
   inventoryLoading: false,
+  inventoryError: null,
   inventoryRefreshTick: 0,
   assetsTotal: 0,
   deviceToDelete: null,
@@ -219,7 +221,7 @@ export const useInventoryStore = create<InventoryState>((set, get) => ({
 
   fetchInventory: async () => {
     const state = get();
-    set({ inventoryLoading: true });
+    set({ inventoryLoading: true, inventoryError: null });
     try {
       const params = new URLSearchParams({
         mode: 'light',
@@ -234,8 +236,16 @@ export const useInventoryStore = create<InventoryState>((set, get) => ({
         asset_type: 'network_device',
       });
 
-      const resp = await fetch(`/api/devices?${params.toString()}`);
-      if (!resp.ok) throw new Error('Failed to fetch inventory data');
+      const resp = await fetch(`/api/devices?${params.toString()}`, { headers: authHeaders() });
+      if (!resp.ok) {
+        const errorBody = await resp.json().catch(() => null);
+        const detail = typeof errorBody?.detail === 'string' ? errorBody.detail : '';
+        throw new Error(detail || (resp.status === 401
+          ? '登录已过期，请重新登录后重试'
+          : resp.status === 403
+            ? '当前账号无权查看网络设备'
+            : `加载网络设备失败（${resp.status}）`));
+      }
       const data = await resp.json();
 
       if (Array.isArray(data)) {
@@ -243,6 +253,7 @@ export const useInventoryStore = create<InventoryState>((set, get) => ({
           inventoryRows: data.map(normalizeDeviceRecord),
           inventoryTotal: data.length,
           inventoryStatusCounts: {},
+          inventoryError: null,
           inventoryLoading: false,
         });
       } else {
@@ -255,14 +266,13 @@ export const useInventoryStore = create<InventoryState>((set, get) => ({
             data.status_counts && typeof data.status_counts === 'object'
               ? data.status_counts
               : {},
+          inventoryError: null,
           inventoryLoading: false,
         });
       }
-    } catch {
+    } catch (error) {
       set({
-        inventoryRows: [],
-        inventoryTotal: 0,
-        inventoryStatusCounts: {},
+        inventoryError: error instanceof Error ? error.message : '加载网络设备失败',
         inventoryLoading: false,
       });
     }

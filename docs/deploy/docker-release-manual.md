@@ -9,6 +9,7 @@
 | `db` | `nexora-postgres:latest` | PostgreSQL 17、pgvector、pg_trgm | 不直接暴露 |
 | `netops` | `nexora-netops:latest` | FastAPI 后端和前端静态资源 | 内部 8003 |
 | `nginx` | `nexora-nginx:latest` | HTTPS、静态文件、API/WebSocket 代理 | 80、443 |
+| `redis`（可选） | `redis:7.4.2-alpine` | IP 定位共享缓存 | 内部 6379 |
 
 后端镜像已经包含 Python 依赖、系统运行库和前端构建产物。目标服务器不需要安装 Node.js、Python、pip 或 npm。
 
@@ -67,25 +68,20 @@ CREDENTIAL_ENCRYPTION_KEY=替换为随机密钥
 bash scripts/deploy-docker.sh install
 ```
 
-等价原生命令：
-
-```bash
-docker compose build
-docker compose up -d
-```
+脚本默认将 `docker-compose.redis.yml` 合并进同一 Compose 项目，因此会一并校验和启动 Redis；首次安装在使用 sidecar 默认地址时会生成 URL-safe 密码。设置 `NETOPS_REDIS_ENABLED=0` 可关闭 sidecar。
 
 检查状态：
 
 ```bash
-docker compose ps
-docker compose logs -f netops
+bash scripts/deploy-docker.sh redis-status
+bash scripts/deploy-docker.sh redis-logs
 ```
 
 ## 4. 制作离线镜像包
 
 ### 4.1 当前镜像已经准备好
 
-如果本机已经存在目标版本的三个镜像，不需要重新执行 `docker compose build`：
+如果本机已经存在目标版本的所需镜像，不需要重新执行 `docker compose build`：
 
 ```bash
 bash scripts/deploy-docker.sh save-images \
@@ -98,6 +94,7 @@ bash scripts/deploy-docker.sh save-images \
 nexora-netops:latest
 nexora-nginx:latest
 nexora-postgres:latest
+redis:7.4.2-alpine
 ```
 
 然后生成镜像包和校验文件：
@@ -129,6 +126,7 @@ bash scripts/deploy-docker.sh save-images \
 nexora-images-*.tar.gz
 nexora-images-*.tar.gz.sha256
 docker-compose.yml
+docker-compose.redis.yml
 scripts/deploy-docker.sh
 .env.example
 nginx/nginx.conf
@@ -154,7 +152,7 @@ bash scripts/deploy-docker.sh load-images \
 如果 `.sha256` 与镜像包在同一目录，脚本会先校验，再执行 `docker load`：
 
 ```bash
-docker images nexora-netops nexora-nginx nexora-postgres
+docker images nexora-netops nexora-nginx nexora-postgres redis:7.4.2-alpine
 ```
 
 ### 5.3 仅使用本地镜像启动
@@ -163,11 +161,7 @@ docker images nexora-netops nexora-nginx nexora-postgres
 bash scripts/deploy-docker.sh start-offline
 ```
 
-该命令等价于：
-
-```bash
-docker compose up -d --no-build --pull never --remove-orphans
-```
+该命令会自动合并 Redis sidecar，并使用 `--no-build --pull never` 启动所有已启用服务。
 
 离线服务器不要执行以下命令：
 
@@ -245,7 +239,7 @@ bash scripts/deploy-docker.sh start-offline
 
 ```bash
 bash scripts/deploy-docker.sh load-images /data/packages/nexora-images.tar.gz
-docker images nexora-netops nexora-nginx nexora-postgres
+docker images nexora-netops nexora-nginx nexora-postgres redis:7.4.2-alpine
 ```
 
 ### 离线启动仍尝试拉取镜像
@@ -279,4 +273,3 @@ bash scripts/deploy-docker.sh load-images \
 bash scripts/deploy-docker.sh start-offline
 docker compose ps
 ```
-

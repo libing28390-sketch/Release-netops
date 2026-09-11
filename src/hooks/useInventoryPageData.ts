@@ -34,6 +34,7 @@ export const useInventoryPageData = ({
   const [inventoryTotal, setInventoryTotal] = useState(0);
   const [inventoryStatusCounts, setInventoryStatusCounts] = useState<Record<string, number>>({});
   const [inventoryLoading, setInventoryLoading] = useState(false);
+  const [inventoryError, setInventoryError] = useState<string | null>(null);
   const [assetsTotal, setAssetsTotal] = useState(0);
 
   useEffect(() => {
@@ -42,6 +43,7 @@ export const useInventoryPageData = ({
     let cancelled = false;
     const fetchInventoryPage = async () => {
       setInventoryLoading(true);
+      setInventoryError(null);
       try {
         const params = new URLSearchParams({
           mode: 'light',
@@ -56,8 +58,16 @@ export const useInventoryPageData = ({
           asset_type: 'network_device',
         });
 
-        const resp = await fetch(`/api/devices?${params.toString()}`);
-        if (!resp.ok) throw new Error('Failed to fetch inventory data');
+        const resp = await fetch(`/api/devices?${params.toString()}`, { headers: authHeaders() });
+        if (!resp.ok) {
+          const errorBody = await resp.json().catch(() => null);
+          const detail = typeof errorBody?.detail === 'string' ? errorBody.detail : '';
+          throw new Error(detail || (resp.status === 401
+            ? '登录已过期，请重新登录后重试'
+            : resp.status === 403
+              ? '当前账号无权查看网络设备'
+              : `加载网络设备失败（${resp.status}）`));
+        }
         const data = await resp.json();
         if (cancelled) return;
 
@@ -70,11 +80,10 @@ export const useInventoryPageData = ({
           setInventoryTotal(typeof data.total === 'number' ? data.total : 0);
           setInventoryStatusCounts(data.status_counts && typeof data.status_counts === 'object' ? data.status_counts : {});
         }
-      } catch {
+        setInventoryError(null);
+      } catch (error) {
         if (cancelled) return;
-        setInventoryRows([]);
-        setInventoryTotal(0);
-        setInventoryStatusCounts({});
+        setInventoryError(error instanceof Error ? error.message : '加载网络设备失败');
       } finally {
         if (!cancelled) setInventoryLoading(false);
       }
@@ -122,6 +131,7 @@ export const useInventoryPageData = ({
     inventoryTotal,
     inventoryStatusCounts,
     inventoryLoading,
+    inventoryError,
     assetsTotal,
   };
 };

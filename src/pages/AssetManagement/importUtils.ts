@@ -19,17 +19,30 @@ export type ManagementMethodImportRow = {
 };
 
 export const ASSET_INFO_SHEET_RE = /^(资产信息|asset[ _-]?(information|info|inventory|master))$/i;
+export const NETWORK_ASSET_SHEET_RE = /^(网络设备|网络设备信息|network[ _-]?(devices?|equipment|assets?))$/i;
+export const SERVER_ASSET_SHEET_RE = /^(服务器|服务器信息|servers?|server[ _-]?(information|assets?))$/i;
 export const MANAGEMENT_ENTRY_SHEET_RE = /^(管理入口|管理方式|management[ _-]?(entries|entry|methods?)|access[ _-]?entries)$/i;
 // Backward-compatible export for older callers and imported workbooks.
 export const MANAGEMENT_METHOD_SHEET_RE = MANAGEMENT_ENTRY_SHEET_RE;
 
+export type AssetSheetType = 'network_device' | 'server';
+
+export const assetTypeForSheetName = (name: string): AssetSheetType | null => {
+  const normalized = name.trim();
+  if (NETWORK_ASSET_SHEET_RE.test(normalized)) return 'network_device';
+  if (SERVER_ASSET_SHEET_RE.test(normalized)) return 'server';
+  return null;
+};
+
+export const normalizeImportHeader = (header: string): string => header.trim().replace(/\s*\*+\s*$/, '').trim();
+
 const HEADER_ALIASES: Record<string, string[]> = {
   assetTag: ['资产编号（手工填写）', '资产编号（关联键）', '资产编号', 'Asset Tag (manual)', 'Asset Tag (link key)', 'Asset Tag', 'asset_tag'],
   hostname: ['主机名（手工填写/核对）', '主机名（自动带出/仅核对）', '主机名（仅核对）', '主机名（核对）', '主机名', 'Hostname (manual/check)', 'Hostname (auto/check)', 'Hostname (check)', 'Hostname', 'hostname'],
-  method: ['管理协议（每行一个）', '管理协议（SSH/HTTP/HTTPS/NONE）', '管理方式', '协议', 'Management Protocol (one per row)', 'Management Protocol (SSH/HTTP/HTTPS/NONE)', 'Management Method', 'Method', 'Protocol'],
+  method: ['管理协议（每行一个）', '管理协议（SSH/NETCONF/HTTP/HTTPS/NONE）', '管理协议（SSH/HTTP/HTTPS/NONE）', '管理方式', '协议', 'Management Protocol (one per row)', 'Management Protocol (SSH/NETCONF/HTTP/HTTPS/NONE)', 'Management Protocol (SSH/HTTP/HTTPS/NONE)', 'Management Method', 'Method', 'Protocol'],
   profileName: ['入口显示名称（仅展示）', '登录方式（可不填）', '入口名称', '名称', 'Entry Display Name (label only)', 'Login Method (optional)', 'Entry Name', 'Profile Name', 'Name'],
   port: ['端口（可留空自动默认）', '端口（可留空）', '端口', 'Port (blank = default)', 'Port'],
-  path: ['登录路径（Web填写，如 /login）', '登录路径（仅 HTTP/HTTPS）', '登录路径', '路径', 'Login Path (Web only)', 'Login Path', 'Path'],
+  path: ['登录路径（Web填写，如 /login）', '登录路径（仅 HTTP/HTTPS）', '登录路径', '路径', 'Login Path (Web only)', 'Login Path (HTTP/HTTPS only)', 'Login Path', 'Path'],
   enabled: ['是否启用', '启用', 'Enabled'],
   credentialMode: ['凭据模式（默认继承资产）', '凭据模式', 'Credential Mode (default: inherit asset)', 'Credential Mode'],
   normalUsername: ['普通用户（可选）', '普通用户', 'Normal User (optional)', 'Normal User', 'normal_username'],

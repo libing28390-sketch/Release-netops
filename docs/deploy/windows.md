@@ -74,6 +74,31 @@ ORDER BY name;
 
 向导会把数据库配置写入项目根目录的 `.env`。生产或小团队环境还必须替换 `SECRET_KEY` 和 `CREDENTIAL_ENCRYPTION_KEY`，不要保留模板中的占位值。
 
+## IP 定位的 Redis（可选）
+
+IP 定位 V2 的路由、ARP、MAC 和链路证据采集使用 SSH/CLI。Redis 只保存可重建的共享缓存，PostgreSQL 仍是事实和任务状态的存储；该功能不使用 SNMP。
+
+Windows Nexora 可以连接同机或局域网内 Docker Redis。将仓库中的 `docker-compose.redis.yml` 复制/保留在部署目录，在 PowerShell 中启动 Redis：
+
+```powershell
+docker compose -f docker-compose.redis.yml up -d
+docker compose -f docker-compose.redis.yml ps
+```
+
+同机运行时，在根目录 `.env` 设置：
+
+```dotenv
+REDIS_URL=redis://127.0.0.1:6379/0
+IP_LOCATOR_V2_ENABLED=1
+IP_LOCATOR_CACHE_BACKEND=redis
+```
+
+如果 Redis 在局域网另一台主机，将 `127.0.0.1` 改为 Redis 主机的局域网 IP，例如 `192.168.10.20`；Redis 主机只应在防火墙中允许 Nexora Windows 主机访问 6379。启用密码时，使用 URL 编码后的账号/密码，例如 `redis://default:URL_ENCODED_PASSWORD@192.168.10.20:6379/0`。密码、完整连接串和密钥不要写入日志或提交到仓库。
+
+修改 `.env` 后重启托盘中的后端。健康接口会显示 Redis 主机、端口、数据库、延迟和降级状态，不显示密码或完整 URL。Redis 不可用时，定位继续使用 PostgreSQL 的有效事实并进入既有任务队列；不会由每个请求直接扩散 SSH 连接。
+
+初始定位缓存策略为：路由/ARP 新鲜 5 分钟、最多保留 30 分钟；MAC 和完整结果新鲜 2 分钟、最多保留 15 分钟；网段归属新鲜 15 分钟、最多保留 24 小时；拓扑新鲜 10 分钟、最多保留 24 小时；成功但未命中保留 15 秒。时间从原始采集时间计算，读取缓存不会续期。
+
 ## 远程 PostgreSQL
 
 如果 Windows 只运行客户端、数据库在 Docker 或 Linux 服务器上，请在向导中填写远程 PostgreSQL 地址。向导检测到远程主机时不会在本机安装或修改 PostgreSQL；远程数据库仍必须具备受支持的 PostgreSQL、`vector`、`pg_trgm`，并已创建目标数据库。若扩展缺失，向导会明确提示数据库管理员处理。

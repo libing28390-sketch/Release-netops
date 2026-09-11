@@ -1,0 +1,56 @@
+# Optional Redis sidecar for Nexora.  Use this file alone for a Windows
+# workstation running Nexora natively, or together with docker-compose.yml for
+# an all-container deployment:
+#
+#   docker compose -f docker-compose.redis.yml up -d
+#   docker compose -f docker-compose.yml -f docker-compose.redis.yml up -d --build
+#
+# REDIS_PASSWORD is intentionally supplied by the operator through .env.  A
+# blank password is useful only for a localhost development instance.  For a
+# LAN deployment set a strong password and restrict the published port by
+# firewall to the Nexora host.
+
+name: nexora-redis
+
+services:
+  redis:
+    image: redis:7.4.2-alpine
+    container_name: nexora-redis
+    restart: unless-stopped
+    environment:
+      REDIS_PASSWORD: ${REDIS_PASSWORD:-}
+    command:
+      - /bin/sh
+      - -c
+      - >-
+        if [ -n "$${REDIS_PASSWORD}" ]; then
+        exec redis-server --appendonly yes --maxmemory 512mb
+        --maxmemory-policy allkeys-lru --protected-mode yes
+        --requirepass "$${REDIS_PASSWORD}";
+        else
+        exec redis-server --appendonly yes --maxmemory 512mb
+        --maxmemory-policy allkeys-lru --protected-mode yes;
+        fi
+    ports:
+      - "${REDIS_BIND_ADDRESS:-127.0.0.1}:6379:6379"
+    volumes:
+      - nexora-redis-data:/data
+    healthcheck:
+      test:
+        - CMD-SHELL
+        - >-
+          if [ -n "$${REDIS_PASSWORD}" ]; then
+          redis-cli -a "$${REDIS_PASSWORD}" ping | grep -q PONG;
+          else redis-cli ping | grep -q PONG; fi
+      interval: 10s
+      timeout: 3s
+      retries: 5
+    logging:
+      driver: local
+      options:
+        max-size: "10m"
+        max-file: "3"
+
+volumes:
+  nexora-redis-data:
+    name: nexora-redis-data

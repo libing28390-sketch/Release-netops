@@ -1,6 +1,7 @@
 import React, { useState, useCallback, useRef } from 'react';
 import type { Device } from '../types';
 import { displaySiteLabel } from '../utils/deviceUtils';
+import { authHeaders } from '../api/http';
 
 export type DeviceFetchMode = 'light' | 'full' | 'paged-light';
 
@@ -8,6 +9,7 @@ export const useInventory = (deviceFetchMode: DeviceFetchMode = 'full') => {
   const [devices, setDevices] = useState<Device[]>([]);
   const [selectedDevice, setSelectedDevice] = useState<Device | null>(null);
   const [devicesLastUpdatedAt, setDevicesLastUpdatedAt] = useState<number>(0);
+  const [devicesError, setDevicesError] = useState<string | null>(null);
 
   const safeJsonArray = (value: any) => {
     if (Array.isArray(value)) return value;
@@ -91,6 +93,7 @@ export const useInventory = (deviceFetchMode: DeviceFetchMode = 'full') => {
 
   const fetchDevicesData = useCallback(async (assetType: string = 'all') => {
     const fetchId = ++lastFetchId.current;
+    setDevicesError(null);
     try {
       const requestMode = deviceFetchMode === 'paged-light' ? 'light' : deviceFetchMode;
       const params = new URLSearchParams({ mode: requestMode });
@@ -104,8 +107,16 @@ export const useInventory = (deviceFetchMode: DeviceFetchMode = 'full') => {
         params.set('asset_type', 'network_device');
       }
       
-      const devicesRes = await fetch(`/api/devices?${params.toString()}`);
-      if (!devicesRes.ok) return;
+      const devicesRes = await fetch(`/api/devices?${params.toString()}`, { headers: authHeaders() });
+      if (!devicesRes.ok) {
+        const errorBody = await devicesRes.json().catch(() => null);
+        const detail = typeof errorBody?.detail === 'string' ? errorBody.detail : '';
+        throw new Error(detail || (devicesRes.status === 401
+          ? '登录已过期，请重新登录后重试'
+          : devicesRes.status === 403
+            ? '当前账号无权查看网络设备'
+            : `加载网络设备失败（${devicesRes.status}）`));
+      }
       const devs = await devicesRes.json();
       
       // Safety Check: Prevent older or mismatched mode requests from overwriting state
@@ -124,6 +135,7 @@ export const useInventory = (deviceFetchMode: DeviceFetchMode = 'full') => {
       setDevicesLastUpdatedAt(Date.now());
     } catch (error) {
       if (fetchId === lastFetchId.current) {
+        setDevicesError(error instanceof Error ? error.message : '加载网络设备失败');
         console.error('Failed to fetch devices data:', error);
       }
     }
@@ -135,6 +147,7 @@ export const useInventory = (deviceFetchMode: DeviceFetchMode = 'full') => {
     selectedDevice,
     setSelectedDevice,
     devicesLastUpdatedAt,
+    devicesError,
     fetchDevicesData,
     normalizeDeviceRecord
   };

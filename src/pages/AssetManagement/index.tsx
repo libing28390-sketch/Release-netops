@@ -50,6 +50,8 @@ import { statusMeta, typeMeta, severityOf } from './helpers';
 import {
   ASSET_INFO_SHEET_RE,
   MANAGEMENT_ENTRY_SHEET_RE,
+  assetTypeForSheetName,
+  normalizeImportHeader,
   mergeManagementMethods,
   parseManagementMethodSheet,
   type ManagementMethodImportRow,
@@ -159,7 +161,7 @@ const normalizeAssetColumns = (columns: Partial<Record<AssetColumnKey, boolean>>
 
 const ASSET_COLUMNS_STORAGE_KEY = 'assets-dashboard-columns-v3';
 
-const FALLBACK_TEMPLATE_DATE_FORMAT = 'yyyy-mm-dd';
+const FALLBACK_TEMPLATE_DATE_FORMAT = 'yyyy/mm/dd';
 
 const toFallbackTemplateExcelSerial = (value: unknown): number | null => {
   if (value instanceof Date) {
@@ -1220,14 +1222,13 @@ const AssetManagementTab: React.FC<AssetManagementTabProps> = ({ language, setAc
       try {
         const data = new Uint8Array(ev.target?.result as ArrayBuffer);
         const wb = XLSX.read(data, { type: 'array' });
-        const NET_SHEET = /网络设备|network.?device/i;
         const mapped: Record<string, string>[] = [];
         const managementMethods: ManagementMethodImportRow[] = [];
         const managementMethodErrors: string[] = [];
         const templateMismatchRows: string[] = [];
         const snmpPreflightErrors: string[] = [];
         const sshProfilePreflightErrors: string[] = [];
-        let hasUnifiedAssetSheet = false;
+        let hasAssetSheet = false;
         for (const name of wb.SheetNames) {
           const ws = wb.Sheets[name];
           if (MANAGEMENT_ENTRY_SHEET_RE.test(name.trim())) {
@@ -1237,13 +1238,13 @@ const AssetManagementTab: React.FC<AssetManagementTabProps> = ({ language, setAc
             continue;
           }
           const raw = XLSX.utils.sheet_to_json<Record<string, string>>(ws, { defval: '' });
-          const isNet = NET_SHEET.test(name);
+          const sheetAssetType = assetTypeForSheetName(name);
           const isUnifiedAssetSheet = ASSET_INFO_SHEET_RE.test(name.trim());
-          if (isUnifiedAssetSheet) hasUnifiedAssetSheet = true;
+          if (isUnifiedAssetSheet || sheetAssetType) hasAssetSheet = true;
           for (const [rowIndex, row] of raw.entries()) {
             const obj: Record<string, string> = {};
             for (const [col, val] of Object.entries(row)) {
-              const key = COL_MAP[col.trim()];
+              const key = COL_MAP[normalizeImportHeader(col)];
               if (key) {
                 let mappedVal = String(val).trim();
                 const valueMap = IMPORT_VALUE_MAP[key];
@@ -1273,9 +1274,13 @@ const AssetManagementTab: React.FC<AssetManagementTabProps> = ({ language, setAc
                   templateMismatchRows.push(`${name} 第${rowIndex + 2}行：资产类型必填，请选择“服务器”或“网络设备”`);
                   continue;
                 }
-                obj.asset_type = isNet ? 'network_device' : 'server';
+                obj.asset_type = sheetAssetType || 'server';
               }
               const rowIsNet = obj.asset_type === 'network_device';
+              if (sheetAssetType && obj.asset_type !== sheetAssetType) {
+                templateMismatchRows.push(`${name} 第${rowIndex + 2}行：该工作表只允许导入${sheetAssetType === 'network_device' ? '网络设备' : '服务器'}，当前资产类型不匹配`);
+                continue;
+              }
               if (rowIsNet && obj.vendor && !isNetworkVendor(obj.vendor)) {
                 templateMismatchRows.push(`${name} 第${rowIndex + 2}行：网络设备厂商“${obj.vendor}”不在网络/安全设备厂商列表中`);
                 continue;
@@ -1334,7 +1339,7 @@ const AssetManagementTab: React.FC<AssetManagementTabProps> = ({ language, setAc
           return;
         }
         const merged = mergeManagementMethods(mapped, managementMethods, {
-          requireEntryForAllAssets: hasUnifiedAssetSheet,
+          requireEntryForAllAssets: hasAssetSheet,
         });
         const methodErrors = [...managementMethodErrors, ...merged.errors];
         if (methodErrors.length > 0) {
@@ -1402,13 +1407,14 @@ const AssetManagementTab: React.FC<AssetManagementTabProps> = ({ language, setAc
 
     const guideRows = zh ? [
       ['资产导入填写说明'],
-      ['项目', '怎么填', '只需要填写“资产信息”和“管理入口”；其它工作表仅供参考，不用修改。'],
-      ['资产信息', '每台设备一行', '填写设备基本信息；一台设备不要重复多行。'],
-      ['资产类型', '必填', '选择“服务器”或“网络设备”。'],
-      ['主机名/资产编号', '至少填一个', '从“资产信息”复制到“管理入口”对应列。'],
+      ['项目', '怎么填', '只需要填写“网络设备”“服务器”和“管理入口”；红色 * 表示必填；其它工作表仅供参考，不用修改。'],
+      ['网络设备', '每台设备一行', '只填写网络设备；资产类型固定填写“网络设备”，不要混入服务器。'],
+      ['服务器', '每台设备一行', '只填写服务器；资产类型固定填写“服务器”，不要混入网络设备。'],
+      ['资产类型', '必填', '按当前工作表填写对应值：“网络设备”或“服务器”。'],
+      ['主机名/资产编号', '至少填一个', '资产表中两者至少填写一个；“管理入口”的资产编号和主机名会自动读取，不要手工修改。'],
       ['录入来源', '必填', '填写“新设备”或“存量设备”。'],
       ['投产状态', '必填', '新设备填“待投产”；存量设备按实际状态填写。'],
-      ['管理入口', '最少一行', 'SSH 设备只填一行：协议填 SSH；导入后自动提供“SSH 终端”和“Web SSH”。'],
+      ['管理入口', '每个资产一行', '资产编号和主机名会从两张资产表自动带出；SSH 只填一行，导入后自动提供“SSH 终端”和“Web SSH”。'],
       ['网页管理', '有网页才填', '只有设备自带 HTTP/HTTPS 管理页面才另填 HTTP 或 HTTPS；这不是 Web SSH。'],
       ['没有登录入口', '填 NONE', '协议填 NONE，其它入口信息留空。'],
       ['端口/路径', '可留空', 'SSH 默认 22；HTTP 默认 80；HTTPS 默认 443。SSH 和 Web SSH 不填路径。'],
@@ -1417,13 +1423,14 @@ const AssetManagementTab: React.FC<AssetManagementTabProps> = ({ language, setAc
       ['安全提示', '注意', '优先填写绑定凭据，不要在表格中填写密码。'],
     ] : [
       ['Asset Import Instructions'],
-      ['Item', 'How to fill', 'Only complete Asset Information and Management Entries; other sheets are reference-only.'],
-      ['Asset Information', 'One row per device', 'Enter basic device information; do not repeat a device.'],
-      ['Asset Type', 'Required', 'Choose server or network_device.'],
-      ['Hostname / Asset Tag', 'At least one', 'Copy the same values into the Management Entries sheet.'],
+      ['Item', 'How to fill', 'Only complete Network Devices, Servers and Management Entries; a red * means required; other sheets are reference-only.'],
+      ['Network Devices', 'One row per device', 'Enter network devices only; keep Asset Type as network_device.'],
+      ['Servers', 'One row per device', 'Enter servers only; keep Asset Type as server.'],
+      ['Asset Type', 'Required', 'Use the value matching the current sheet: network_device or server.'],
+      ['Hostname / Asset Tag', 'At least one', 'Provide at least one in the asset sheet; Management Entries fills both columns automatically.'],
       ['Asset Origin', 'Required', 'Use new or legacy.'],
       ['Lifecycle', 'Required', 'Use staging for new devices; use the actual state for legacy devices.'],
-      ['Management Entries', 'At least one row', 'For SSH, enter one row only; the imported asset automatically provides SSH terminal and Web SSH.'],
+      ['Management Entries', 'One row per asset', 'Asset Tag and Hostname are read from Network Devices and Servers. For SSH, enter one row only; the imported asset automatically provides SSH terminal and Web SSH.'],
       ['Device Web Page', 'Only when present', 'Use HTTP or HTTPS only for the device\'s own web page; this is not Web SSH.'],
       ['No Login', 'Use NONE', 'Set the protocol to NONE and leave the remaining entry fields blank.'],
       ['Port / Path', 'Optional', 'Defaults are SSH 22, HTTP 80 and HTTPS 443. Leave SSH and Web SSH paths blank.'],
@@ -1435,45 +1442,85 @@ const AssetManagementTab: React.FC<AssetManagementTabProps> = ({ language, setAc
     wsGuide['!cols'] = [{ wch: 28 }, { wch: 18 }, { wch: 72 }];
     XLSX.utils.book_append_sheet(wb, wsGuide, zh ? '填写说明' : 'Instructions');
 
-    const assetHeaders = zh
-      ? ['资产类型', '主机名', '资产编号', '序列号', '管理IP', '厂商', '型号', '平台', '录入来源', '投产状态', '普通用户', '普通密码', '特权用户', '特权密码', '绑定凭据', '绑定特权凭据', '备注']
-      : ['Asset Type', 'Hostname', 'Asset Tag', 'Serial Number', 'Mgmt IP', 'Vendor', 'Model', 'Platform', 'Asset Origin', 'Lifecycle', 'Normal User', 'Normal Password', 'Admin User', 'Admin Password', 'Credential', 'Admin Credential', 'Notes'];
+    // Keep the fallback workbook on the same named-column contract as the
+    // full legacy workbook. Old 41-column files remain valid because parsing
+    // is header based; this version additionally exposes SSH policy.
+    const rawAssetHeaders = zh
+      ? ['资产类型', '主机名', '资产编号', '序列号', '厂商', '型号', '平台', 'SSH算法策略', '管理IP', '业务IP', '状态', '角色', '设备分类', '录入来源（必填：新设备或存量设备）', 'VLAN', '上联交换机', '上联端口', '站点', '机柜', 'U位', 'U高度', '规划起始U', '功耗(W)', 'SNMP社区名', 'SNMP端口', '普通用户', '特权用户', '普通密码', '特权密码', 'Enable密码', '绑定凭据', '绑定特权凭据', 'SNMP凭据（推荐）', '标签代码', '部门', '购买日期', '投产状态', '免上收投产原因', '保修到期', '备注', '功能', '区域']
+      : ['Asset Type', 'Hostname', 'Asset Tag', 'Serial Number', 'Vendor', 'Model', 'Platform', 'SSH Algorithm Profile', 'Mgmt IP', 'Business IP', 'Status', 'Role', 'Device Category', 'Asset Origin (Required: new or legacy)', 'VLAN', 'Uplink Switch', 'Uplink Port', 'Site', 'Rack', 'Rack Unit', 'U Height', 'Planned Start U', 'Power(W)', 'SNMP Community', 'SNMP Port', 'Normal User', 'Admin User', 'Normal Password', 'Admin Password', 'Enable Secret', 'Credential', 'Admin Credential', 'SNMP Credential (recommended)', 'Tags', 'Department', 'Purchase Date', 'Lifecycle', 'Takeover Exemption Reason', 'Warranty Expiry', 'Notes', 'Function', 'Zone'];
+    const requiredHeaders = zh
+      ? new Set(['资产类型', '主机名', '资产编号', '录入来源（必填：新设备或存量设备）', '投产状态', '免上收投产原因'])
+      : new Set(['Asset Type', 'Hostname', 'Asset Tag', 'Asset Origin (Required: new or legacy)', 'Lifecycle', 'Takeover Exemption Reason']);
+    // Keep the fallback on the same field order as the user-supplied split
+    // workbook. Network sheets omit Business IP; server sheets omit the SNMP
+    // community/port, Enable password and SNMP credential fields.
+    const networkAssetIndexes = [0, 1, 2, 3, 4, 5, 6, 8, 10, 11, 12, 13, 17, 18, 19, 20, 21, 22, 23, 24, 25, 26, 27, 28, 29, 30, 31, 32, 33, 34, 35, 36, 37, 38, 39, 40, 41];
+    const serverAssetIndexes = [0, 1, 2, 3, 4, 5, 6, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18, 19, 20, 21, 22, 25, 26, 27, 28, 30, 31, 33, 34, 35, 36, 37, 38, 39, 40, 41];
+    const networkAssetHeaders = networkAssetIndexes.map(index => rawAssetHeaders[index]);
+    networkAssetHeaders[28] = '绑定特权凭据';
+    const serverAssetHeaders = serverAssetIndexes.map(index => rawAssetHeaders[index]);
+    const markRequiredHeaders = (headers: string[]) => headers.map(header => requiredHeaders.has(header) ? `${header} *` : header);
+    const markedNetworkAssetHeaders = markRequiredHeaders(networkAssetHeaders);
+    const markedServerAssetHeaders = markRequiredHeaders(serverAssetHeaders);
+    const projectRows = (rows: (string | number)[][], indexes: number[]) => rows.map(row => indexes.map(index => row[index] ?? ''));
     const legacyAssetExamples = zh ? [
-      ['网络设备', 'core-sw-01', 'NET-BJ-001', 'FCW2345L0AB', 'Cisco', 'C9300-48P', 'Cisco IOS', 'auto', '10.0.0.1', '', '在用', '核心层', '交换机', '存量设备', '', '', '', 'BJ-DC1', 'A-02', '40', '1', '40', '', '', '161', '', 'user', 'admin', '', '', '', 'cred-cisco-core', 'cred-cisco-admin', 'vendor.cisco,platform.cisco_ios', 'IT部', '2023-06-01', '已投产', '存量设备已在线运行', '2027-06-01', 'A：只支持 SSH', '园区核心', '生产区'],
-      ['网络设备', 'web-fw-01', 'NET-BJ-002', 'HS20260813A1', 'Hillstone', 'Hillstone E-Series', 'Hillstone StoneOS', 'auto', '10.0.0.2', '', '在用', '防火墙', '防火墙', '新设备', '', '', '', 'BJ-DC1', 'A-02', '38', '2', '38', '', '', '161', '', '', '', '', '', '', '', 'vendor.hillstone', 'IT部', '2026-08-13', '待投产', '', '2029-08-13', 'B：同时支持 HTTP 和 HTTPS', '互联网边界', 'DMZ 区'],
-      ['服务器', 'web-srv-01', 'SRV-BJ-001', 'CZJ2345G0HN', 'Dell', 'PowerEdge R750', 'Linux (Generic)', 'auto', '10.0.1.10', '192.168.1.10', '在用', '业务服务器', '机架式服务器', '新设备', 'VLAN100', 'core-sw-01', 'Gi0/1', 'BJ-DC1', 'A-01', '12', '1', '12', '200', '', '', 'ops', 'root', '', '', '', 'cred-server-ops', '', 'platform.linux', 'IT部', '2026-08-13', '待投产', '', '2029-08-13', 'C：SSH + HTTPS（管理入口需两行）', '服务器接入', '生产区'],
+      ['网络设备', 'core-sw-01', 'NET-BJ-001', 'FCW2345L0AB', 'Cisco', 'C9300-48P', 'Cisco IOS', 'auto', '10.0.0.1', '', '在用', '核心层', '交换机', '存量设备', '', '', '', 'BJ-DC1', 'A-02', '40', '1', '40', '', '', '161', 'user', 'admin', '', '', '', 'cred-cisco-core', 'cred-cisco-admin', '', 'vendor.cisco,platform.cisco_ios', 'IT部', '2023-06-01', '已投产', '存量设备已在线运行', '2027-06-01', 'A：只支持 SSH', '园区核心', '生产区'],
+      ['网络设备', 'web-fw-01', 'NET-BJ-002', 'HS20260813A1', 'Hillstone', 'Hillstone E-Series', 'Hillstone StoneOS', 'auto', '10.0.0.2', '', '在用', '防火墙', '防火墙', '新设备', '', '', '', 'BJ-DC1', 'A-02', '38', '2', '38', '', '', '161', '', '', '', '', '', '', '', 'cred-snmp-edge', 'vendor.hillstone', 'IT部', '2026-08-13', '待投产', '', '2029-08-13', 'B：同时支持 HTTP 和 HTTPS', '互联网边界', 'DMZ 区'],
+      ['服务器', 'web-srv-01', 'SRV-BJ-001', 'CZJ2345G0HN', 'Dell', 'PowerEdge R750', 'Linux (Generic)', 'auto', '10.0.1.10', '192.168.1.10', '在用', '业务服务器', '机架式服务器', '新设备', 'VLAN100', 'core-sw-01', 'Gi0/1', 'BJ-DC1', 'A-01', '12', '1', '12', '200', '', '', 'ops', 'root', '', '', '', 'cred-server-ops', '', '', 'platform.linux', 'IT部', '2026-08-13', '待投产', '', '2029-08-13', 'C：SSH + HTTPS（管理入口需两行）', '服务器接入', '生产区'],
     ] : [
-      ['network_device', 'core-sw-01', 'NET-BJ-001', 'FCW2345L0AB', 'Cisco', 'C9300-48P', 'cisco_ios', 'auto', '10.0.0.1', '', 'active', 'core', 'switch', 'legacy', '', '', '', 'BJ-DC1', 'A-02', '40', '1', '40', '', '', '161', '', 'user', 'admin', '', '', '', 'cred-cisco-core', 'cred-cisco-admin', 'vendor.cisco,platform.cisco_ios', 'IT Dept', '2023-06-01', 'production', 'Existing production device', '2027-06-01', 'A: SSH only', 'Campus Core', 'Production'],
-      ['network_device', 'web-fw-01', 'NET-BJ-002', 'HS20260813A1', 'Hillstone', 'Hillstone E-Series', 'hillstone_stoneos', 'auto', '10.0.0.2', '', 'active', 'firewall', 'firewall', 'new', '', '', '', 'BJ-DC1', 'A-02', '38', '2', '38', '', '', '161', '', '', '', '', '', '', 'vendor.hillstone', 'IT Dept', '2026-08-13', 'staging', '', '2029-08-13', 'B: HTTP + HTTPS', 'Internet Edge', 'DMZ'],
-      ['server', 'web-srv-01', 'SRV-BJ-001', 'CZJ2345G0HN', 'Dell', 'PowerEdge R750', 'linux', 'auto', '10.0.1.10', '192.168.1.10', 'active', 'application_server', 'rack_server', 'new', 'VLAN100', 'core-sw-01', 'Gi0/1', 'BJ-DC1', 'A-01', '12', '1', '12', '200', '', '', 'ops', 'root', '', '', '', 'cred-server-ops', '', 'platform.linux', 'IT Dept', '2026-08-13', 'staging', '', '2029-08-13', 'C: SSH + HTTPS (two entry rows)', 'Server Access', 'Production'],
+      ['network_device', 'core-sw-01', 'NET-BJ-001', 'FCW2345L0AB', 'Cisco', 'C9300-48P', 'cisco_ios', 'auto', '10.0.0.1', '', 'active', 'core', 'switch', 'legacy', '', '', '', 'BJ-DC1', 'A-02', '40', '1', '40', '', '', '161', 'user', 'admin', '', '', '', 'cred-cisco-core', 'cred-cisco-admin', '', 'vendor.cisco,platform.cisco_ios', 'IT Dept', '2023-06-01', 'production', 'Existing production device', '2027-06-01', 'A: SSH only', 'Campus Core', 'Production'],
+      ['network_device', 'web-fw-01', 'NET-BJ-002', 'HS20260813A1', 'Hillstone', 'Hillstone E-Series', 'hillstone_stoneos', 'auto', '10.0.0.2', '', 'active', 'firewall', 'firewall', 'new', '', '', '', 'BJ-DC1', 'A-02', '38', '2', '38', '', '', '161', '', '', '', '', '', '', '', 'cred-snmp-edge', 'vendor.hillstone', 'IT Dept', '2026-08-13', 'staging', '', '2029-08-13', 'B: HTTP + HTTPS', 'Internet Edge', 'DMZ'],
+      ['server', 'web-srv-01', 'SRV-BJ-001', 'CZJ2345G0HN', 'Dell', 'PowerEdge R750', 'linux', 'auto', '10.0.1.10', '192.168.1.10', 'active', 'application_server', 'rack_server', 'new', 'VLAN100', 'core-sw-01', 'Gi0/1', 'BJ-DC1', 'A-01', '12', '1', '12', '200', '', '', 'ops', 'root', '', '', '', 'cred-server-ops', '', '', 'platform.linux', 'IT Dept', '2026-08-13', 'staging', '', '2029-08-13', 'C: SSH + HTTPS (two entry rows)', 'Server Access', 'Production'],
     ];
-    const assetExamples = zh ? [
-      ['网络设备', 'core-sw-01', 'NET-BJ-001', 'FCW2345L0AB', '10.0.0.1', 'Cisco', 'C9300-48P', 'Cisco IOS', '存量设备', '已投产', 'user', '', 'admin', '', 'cred-cisco-core', 'cred-cisco-admin', '基本示例'],
-      ['服务器', 'web-srv-01', 'SRV-BJ-001', 'CZJ2345G0HN', '10.0.1.10', 'Dell', 'PowerEdge R750', 'Linux (Generic)', '新设备', '待投产', 'ops', '', 'root', '', 'cred-server-ops', '', '基本示例'],
-    ] : [
-      ['network_device', 'core-sw-01', 'NET-BJ-001', 'FCW2345L0AB', '10.0.0.1', 'Cisco', 'C9300-48P', 'cisco_ios', 'legacy', 'production', 'user', '', 'admin', '', 'cred-cisco-core', 'cred-cisco-admin', 'Basic example'],
-      ['server', 'web-srv-01', 'SRV-BJ-001', 'CZJ2345G0HN', '10.0.1.10', 'Dell', 'PowerEdge R750', 'linux', 'new', 'staging', 'ops', '', 'root', '', 'cred-server-ops', '', 'Basic example'],
-    ];
-    void legacyAssetExamples;
-    const wsAssets = XLSX.utils.aoa_to_sheet([assetHeaders, ...assetExamples]);
-    formatFallbackTemplateDateColumns(wsAssets, assetHeaders);
-    wsAssets['!cols'] = assetHeaders.map((_, index) => ({ wch: index === 0 || index === 2 ? 18 : 16 }));
-    XLSX.utils.book_append_sheet(wb, wsAssets, zh ? '资产信息' : 'Asset Information');
+    const networkAssetExamples = projectRows(legacyAssetExamples.filter(row => row[0] === (zh ? '网络设备' : 'network_device')), networkAssetIndexes);
+    const serverAssetExamples = projectRows(legacyAssetExamples.filter(row => row[0] === (zh ? '服务器' : 'server')), serverAssetIndexes);
+    const appendAssetSheet = (sheetName: string, headers: string[], examples: (string | number)[][]) => {
+      const sheet = XLSX.utils.aoa_to_sheet([headers, ...examples]);
+      formatFallbackTemplateDateColumns(sheet, headers);
+      sheet['!cols'] = headers.map((_, index) => ({ wch: index === 0 || index === 2 ? 18 : 16 }));
+      XLSX.utils.book_append_sheet(wb, sheet, sheetName);
+    };
+    appendAssetSheet(zh ? '网络设备' : 'Network Devices', markedNetworkAssetHeaders, networkAssetExamples);
+    appendAssetSheet(zh ? '服务器' : 'Servers', markedServerAssetHeaders, serverAssetExamples);
 
     const methodHeaders = zh
-      ? ['资产编号', '主机名', '管理协议（SSH/HTTP/HTTPS/NONE）', '登录方式（可不填）', '端口（可留空）', '登录路径（仅 HTTP/HTTPS）', '说明（可不填）']
-      : ['Asset Tag', 'Hostname', 'Management Protocol (SSH/HTTP/HTTPS/NONE)', 'Login Method (optional)', 'Port (blank = default)', 'Login Path (HTTP/HTTPS only)', 'Notes (optional)'];
+      ? ['资产编号', '主机名', '管理协议（SSH/NETCONF/HTTP/HTTPS/NONE）', '端口（可留空自动默认）', '登录路径（Web填写，如 /login）', '是否启用', '凭据模式（默认继承资产）', '绑定凭据（推荐）', '绑定特权凭据（推荐）', '备注（填写场景）']
+      : ['Asset Tag', 'Hostname', 'Management Protocol (SSH/NETCONF/HTTP/HTTPS/NONE)', 'Port (blank = default)', 'Login Path (Web only)', 'Enabled', 'Credential Mode (default: inherit asset)', 'Credential ID (recommended)', 'Admin Credential ID (recommended)', 'Notes (scenario)'];
     const methodExamples = zh ? [
-      ['NET-BJ-001', 'core-sw-01', 'SSH', 'SSH终端 + Web SSH', 22, '', 'SSH 一行即可；自动提供两种登录方式'],
-      ['NET-BJ-002', 'web-fw-01', 'HTTPS', 'HTTPS管理', 443, '/login', '设备有网页管理时才填写'],
-      ['SRV-BJ-001', 'web-srv-01', 'NONE', '无登录入口', '', '', '没有登录入口时填写 NONE'],
+      ['', '', 'SSH', 22, '', '是', '继承资产凭据', '', '', 'SSH 一行即可；自动提供 SSH 终端和 Web SSH'],
+      ['', '', 'SSH', 22, '', '是', '继承资产凭据', '', '', 'SSH 一行即可；自动提供 SSH 终端和 Web SSH'],
+      ['', '', 'SSH', 22, '', '是', '继承资产凭据', '', '', 'SSH 一行即可；自动提供 SSH 终端和 Web SSH'],
+      ['', '', 'HTTP', 80, '/login', '是', '继承资产凭据', '', '', 'HTTP 示例：填写设备 Web 登录路径'],
+      ['', '', 'HTTPS', 443, '/admin/login', '是', '继承资产凭据', '', '', 'HTTPS 示例：填写设备 Web 登录路径'],
     ] : [
-      ['NET-BJ-001', 'core-sw-01', 'SSH', 'SSH terminal + Web SSH', 22, '', 'One SSH row automatically provides both methods'],
-      ['NET-BJ-002', 'web-fw-01', 'HTTPS', 'HTTPS management', 443, '/login', 'Use only when the device has a web page'],
-      ['SRV-BJ-001', 'web-srv-01', 'NONE', 'No login entry', '', '', 'Use NONE when the device has no login entry'],
+      ['', '', 'SSH', 22, '', 'yes', 'inherit_asset', '', '', 'One SSH row automatically provides both SSH terminal and Web SSH'],
+      ['', '', 'SSH', 22, '', 'yes', 'inherit_asset', '', '', 'One SSH row automatically provides both SSH terminal and Web SSH'],
+      ['', '', 'SSH', 22, '', 'yes', 'inherit_asset', '', '', 'One SSH row automatically provides both SSH terminal and Web SSH'],
+      ['', '', 'HTTP', 80, '/login', 'yes', 'inherit_asset', '', '', 'HTTP example: enter the device Web login path'],
+      ['', '', 'HTTPS', 443, '/admin/login', 'yes', 'inherit_asset', '', '', 'HTTPS example: enter the device Web login path'],
     ];
     const wsMethods = XLSX.utils.aoa_to_sheet([methodHeaders, ...methodExamples]);
-    wsMethods['!cols'] = [18, 20, 28, 22, 14, 24, 32].map(wch => ({ wch }));
+    wsMethods['!cols'] = [18, 20, 34, 16, 24, 10, 22, 22, 26, 42].map(wch => ({ wch }));
+    wsMethods['!rows'] = [{ hpt: 54 }, ...methodExamples.map(() => ({ hpt: 36 }))];
+    const networkSheetName = zh ? '网络设备' : 'Network Devices';
+    const serverSheetName = zh ? '服务器' : 'Servers';
+    const networkAssetCount = `MAX(COUNTA('${networkSheetName}'!$B$2:$B$2000),COUNTA('${networkSheetName}'!$C$2:$C$2000))`;
+    const serverAssetCount = `MAX(COUNTA('${serverSheetName}'!$B$2:$B$2000),COUNTA('${serverSheetName}'!$C$2:$C$2000))`;
+    const managementIdentityFormula = (column: 'B' | 'C') => `IF(ROW()-1<=${networkAssetCount},INDEX('${networkSheetName}'!$${column}$2:$${column}$2000,ROW()-1),IF(ROW()-1-${networkAssetCount}<=${serverAssetCount},INDEX('${serverSheetName}'!$${column}$2:$${column}$2000,ROW()-1-${networkAssetCount}),""))`;
+    const identityExamples = zh
+      ? [['NET-BJ-001', 'core-sw-01'], ['NET-BJ-002', 'web-fw-01'], ['SRV-BJ-001', 'web-srv-01']]
+      : [['NET-BJ-001', 'core-sw-01'], ['NET-BJ-002', 'web-fw-01'], ['SRV-BJ-001', 'web-srv-01']];
+    for (let rowNumber = 2; rowNumber <= identityExamples.length + 1; rowNumber += 1) {
+      const example = identityExamples[rowNumber - 2];
+      wsMethods[`A${rowNumber}`] = { t: 'str', f: managementIdentityFormula('C'), v: example?.[0] || '' };
+      wsMethods[`B${rowNumber}`] = { t: 'str', f: managementIdentityFormula('B'), v: example?.[1] || '' };
+    }
+    const sampleEntryFormula = (column: 'B' | 'C') => `='${networkSheetName}'!$${column}$2`;
+    wsMethods['A5'] = { t: 'str', f: sampleEntryFormula('C'), v: identityExamples[0]?.[0] || '' };
+    wsMethods['B5'] = { t: 'str', f: sampleEntryFormula('B'), v: identityExamples[0]?.[1] || '' };
+    wsMethods['A6'] = { t: 'str', f: sampleEntryFormula('C'), v: identityExamples[0]?.[0] || '' };
+    wsMethods['B6'] = { t: 'str', f: sampleEntryFormula('B'), v: identityExamples[0]?.[1] || '' };
+    wsMethods['!ref'] = 'A1:J6';
     XLSX.utils.book_append_sheet(wb, wsMethods, zh ? '管理入口' : 'Management Entries');
 
     const optHeaders = zh

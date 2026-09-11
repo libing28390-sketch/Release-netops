@@ -222,7 +222,7 @@ const AlertMaintenanceTab: React.FC<AlertPageCommonProps> = ({ language, current
         sort_direction: 'asc',
         search: target,
       });
-      const resp = await fetch(`/api/devices?${params.toString()}`);
+      const resp = await fetch(`/api/devices?${params.toString()}`, { headers: authHeaders() });
       if (!resp.ok) throw new Error('Failed to load device');
       const data = await resp.json();
       const items = Array.isArray(data) ? data : (Array.isArray(data.items) ? data.items : []);
@@ -258,7 +258,7 @@ const AlertMaintenanceTab: React.FC<AlertPageCommonProps> = ({ language, current
         sort_direction: 'asc',
         search: keyword,
       });
-      const resp = await fetch(`/api/devices?${params.toString()}`);
+      const resp = await fetch(`/api/devices?${params.toString()}`, { headers: authHeaders() });
       if (!resp.ok) throw new Error('Failed to load devices');
       const data = await resp.json();
       const items = Array.isArray(data) ? data : (Array.isArray(data.items) ? data.items : []);

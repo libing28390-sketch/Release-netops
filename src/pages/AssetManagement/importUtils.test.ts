@@ -3,6 +3,10 @@ import * as XLSX from 'xlsx';
 
 import {
   ASSET_INFO_SHEET_RE,
+  NETWORK_ASSET_SHEET_RE,
+  SERVER_ASSET_SHEET_RE,
+  assetTypeForSheetName,
+  normalizeImportHeader,
   MANAGEMENT_ENTRY_SHEET_RE,
   mergeManagementMethods,
   parseManagementMethodSheet,
@@ -11,6 +15,11 @@ import {
 describe('asset management method import', () => {
   it('recognizes the new sheet names and keeps the old management sheet compatible', () => {
     expect(ASSET_INFO_SHEET_RE.test('资产信息')).toBe(true);
+    expect(NETWORK_ASSET_SHEET_RE.test('网络设备')).toBe(true);
+    expect(SERVER_ASSET_SHEET_RE.test('服务器')).toBe(true);
+    expect(assetTypeForSheetName('Network Devices')).toBe('network_device');
+    expect(assetTypeForSheetName('Servers')).toBe('server');
+    expect(normalizeImportHeader('资产编号 *')).toBe('资产编号');
     expect(MANAGEMENT_ENTRY_SHEET_RE.test('管理入口')).toBe(true);
     expect(MANAGEMENT_ENTRY_SHEET_RE.test('管理方式')).toBe(true);
     expect(MANAGEMENT_ENTRY_SHEET_RE.test('Management Entries')).toBe(true);
@@ -81,6 +90,34 @@ describe('asset management method import', () => {
     const merged = mergeManagementMethods([{ asset_tag: 'SSH-004', hostname: 'ssh-04' }], parsed.rows);
     expect(merged.errors).toEqual([]);
     expect(merged.assets[0]).toMatchObject({ connection_method: 'ssh', management_port: '22' });
+  });
+
+  it('keeps a single SSH management row for the split asset sheets', () => {
+    const sheet = XLSX.utils.aoa_to_sheet([
+      ['资产编号', '主机名', '管理协议（SSH/NETCONF/HTTP/HTTPS/NONE）', '入口显示名称（仅展示）'],
+      ['NET-SPLIT-001', 'core-split-01', 'SSH', '命令行管理'],
+    ]);
+    const parsed = parseManagementMethodSheet(sheet);
+    expect(parsed.errors).toEqual([]);
+    const merged = mergeManagementMethods([
+      { asset_tag: 'NET-SPLIT-001', hostname: 'core-split-01', asset_type: 'network_device' },
+    ], parsed.rows, { requireEntryForAllAssets: true });
+    expect(merged.errors).toEqual([]);
+    expect(merged.assets[0]).toMatchObject({ connection_method: 'ssh', management_port: '22' });
+  });
+
+  it('accepts the full English protocol/path headers and preserves NETCONF paths', () => {
+    const sheet = XLSX.utils.aoa_to_sheet([
+      ['Asset Tag (manual)', 'Hostname (manual/check)', 'Management Protocol (SSH/NETCONF/HTTP/HTTPS/NONE)', 'Entry Display Name (label only)', 'Port (blank = default)', 'Login Path (HTTP/HTTPS only)', 'Enabled'],
+      ['WEB-003', 'web-03', 'HTTPS', 'HTTPS management', 443, '/custom', 'yes'],
+      ['NET-003', 'net-03', 'NETCONF', 'NETCONF management', 830, '', 'yes'],
+    ]);
+
+    const parsed = parseManagementMethodSheet(sheet);
+    expect(parsed.errors).toEqual([]);
+    expect(parsed.rows).toHaveLength(2);
+    expect(parsed.rows[0]).toMatchObject({ method: 'https', path: '/custom', port: '443' });
+    expect(parsed.rows[1]).toMatchObject({ method: 'netconf', path: '', port: '830' });
   });
 
   it('accepts the generic Web管理 entry and defaults it to HTTPS', () => {

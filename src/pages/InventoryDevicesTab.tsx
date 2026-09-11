@@ -116,7 +116,7 @@ const InventoryDevicesTab: React.FC<InventoryDevicesTabProps> = ({
     inventoryRoleFilter, setInventoryRoleFilter,
     inventoryStatusFilter, setInventoryStatusFilter,
     inventoryLifecycleFilter, setInventoryLifecycleFilter,
-    inventorySortConfig, inventoryLoading,
+    inventorySortConfig, inventoryLoading, inventoryError,
     selectedDeviceIds, setSelectedDeviceIds,
     fetchInventory, inventoryRefreshTick
   } = useInventoryStore();
@@ -653,6 +653,11 @@ const InventoryDevicesTab: React.FC<InventoryDevicesTabProps> = ({
 
         {/* ════ Table Container ════ */}
         <div className="rounded-2xl border border-gray-100 dark:border-zinc-800/80 bg-white dark:bg-zinc-900/90 shadow-2xs overflow-hidden">
+          {inventoryError && (
+            <div className="mx-4 mt-4 rounded-xl border border-rose-200 bg-rose-50 px-3 py-2 text-xs font-medium text-rose-700 dark:border-rose-900/60 dark:bg-rose-950/30 dark:text-rose-300" role="alert">
+              {inventoryError}
+            </div>
+          )}
           <DeviceTable
             rows={displayRows}
             loading={inventoryLoading}

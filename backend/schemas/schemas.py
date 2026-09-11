@@ -182,6 +182,32 @@ class IPLocateRequest(BaseModel):
         return v
 
 
+class IPLocatorRunRequest(BaseModel):
+    """Request contract for the bounded four-stage CLI locator."""
+
+    ip: str
+    start_device_id: str = ""
+    site_id: str = ""
+    network_domain_id: str = ""
+    vrf: str = "default"
+    force_refresh: bool = False
+
+    @field_validator('ip')
+    @classmethod
+    def validate_ip(cls, v: str) -> str:
+        v = v.strip()
+        try:
+            _ipaddress.ip_address(v)
+        except ValueError:
+            raise ValueError(f'Invalid IP address: {v}')
+        return v
+
+    @field_validator('start_device_id', 'site_id', 'network_domain_id', 'vrf')
+    @classmethod
+    def normalize_locator_context(cls, v: str) -> str:
+        return str(v or '').strip()
+
+
 class ConnectivityProbeRequest(BaseModel):
     target: str
     tests: list[str] = ['ping', 'tcp', 'traceroute']

@@ -25,6 +25,8 @@ Usage:
   bash scripts/deploy-docker.sh load-images <archive-path>
   bash scripts/deploy-docker.sh backup-release [deployment-directory]
   bash scripts/deploy-docker.sh start-offline
+  bash scripts/deploy-docker.sh redis-status [deployment-directory]
+  bash scripts/deploy-docker.sh redis-logs [deployment-directory]
   bash scripts/deploy-docker.sh reset-data [deployment-directory] [--yes]
 
 Commands:
@@ -32,15 +34,17 @@ Commands:
   update     Preserve .env, Docker volumes, and nginx/ssl; sync the public
              release history, show source changes, and rebuild only when the
              release content changed. Use --force to rebuild unconditionally.
-  save-images Save the three already-built Compose images to a gzip-compressed
-             archive and write a SHA-256 checksum alongside it. This command
-             does not build images or access a registry.
+  save-images Save the Compose images (including Redis when enabled) to a
+             gzip-compressed archive and write a SHA-256 checksum alongside
+             it. This command does not build images or access a registry.
   load-images Load a previously saved image archive and verify all required
              Compose image tags are available locally.
   backup-release Create a PostgreSQL custom dump, redacted Source Manifest,
              and private configuration/config-snapshot archives before release.
-  start-offline Start the stack using only local images, without building or
-                 pulling any image.
+  start-offline Start the stack, including the Redis sidecar when enabled,
+                 using only local images, without building or pulling images.
+  redis-status Show the Redis sidecar status through the same Compose project.
+  redis-logs   Follow the Redis sidecar logs (use Ctrl-C to stop following).
   reset-data Stop the stack and delete this Compose project's volumes, local
              build images, and generated TLS files. It does not affect other
              Docker projects. Use --yes or NETOPS_CONFIRM=YES for automation.
@@ -53,6 +57,10 @@ Environment:
   NETOPS_BUILD_PULL       Set to 1 to always pull newer base images while
                           building. By default local base images are reused and
                           the registry is only contacted for missing images.
+  NETOPS_REDIS_ENABLED    Set to 0 to deploy the original three-service stack
+                          without the optional Redis sidecar. Default: 1.
+                          With the sidecar default URL, install generates a
+                          URL-safe REDIS_PASSWORD and updates REDIS_URL.
 EOF
 }
 
@@ -65,6 +73,21 @@ require_command() {
 require_docker() {
     require_command docker
     docker compose version >/dev/null 2>&1 || die "Docker Compose v2 is required"
+}
+
+COMPOSE_FILES=()
+
+configure_compose_files() {
+    COMPOSE_FILES=(-f docker-compose.yml)
+    if [[ "${NETOPS_REDIS_ENABLED:-1}" != "0" ]]; then
+        [[ -f docker-compose.redis.yml ]] || die "docker-compose.redis.yml is missing; set NETOPS_REDIS_ENABLED=0 to omit Redis"
+        COMPOSE_FILES+=(-f docker-compose.redis.yml)
+    fi
+}
+
+compose() {
+    [[ ${#COMPOSE_FILES[@]} -gt 0 ]] || configure_compose_files
+    docker compose "${COMPOSE_FILES[@]}" "$@"
 }
 
 set_env_value() {
@@ -101,7 +124,7 @@ initialize_env() {
     fi
 
     require_command openssl
-    local db_user db_name db_password server_name
+    local db_user db_name db_password server_name redis_password redis_url
     db_user="$(env_value POSTGRES_USER)"
     db_name="$(env_value POSTGRES_DB)"
     db_user="${db_user:-postgres}"
@@ -127,6 +150,19 @@ initialize_env() {
         server_name="$(hostname -I 2>/dev/null | awk '{print $1}')"
         server_name="${server_name:-localhost}"
         set_env_value TLS_COMMON_NAME "$server_name"
+    fi
+
+    # The optional Redis sidecar is part of the standard Compose deployment.
+    # Generate a URL-safe password only for the untouched local service URL;
+    # an explicitly configured LAN/external Redis endpoint is preserved.
+    if [[ "${NETOPS_REDIS_ENABLED:-1}" != "0" ]]; then
+        redis_password="$(env_value REDIS_PASSWORD)"
+        redis_url="$(env_value REDIS_URL)"
+        if [[ -z "$redis_password" && "$redis_url" == "redis://redis:6379/0" ]]; then
+            redis_password="$(openssl rand -hex 24)"
+            set_env_value REDIS_PASSWORD "$redis_password"
+            set_env_value REDIS_URL "redis://nexora:${redis_password}@redis:6379/0"
+        fi
     fi
     chmod 600 .env
 }
@@ -220,7 +256,7 @@ backup_release_state() {
 
     # The database service supplies its own local credentials; the password is
     # never interpolated into the command line or written to a log.
-    if docker compose exec -T db pg_dump \
+    if compose exec -T db pg_dump \
         --format=custom --no-owner \
         --username="${postgres_user:-postgres}" \
         --dbname="${postgres_db:-netops}" > "$dump_partial"; then
@@ -233,7 +269,7 @@ backup_release_state() {
 
     # Export the manifest through the running application so it uses the same
     # PostgreSQL connection and metadata authority as production.
-    if docker compose exec -T netops sh -c \
+    if compose exec -T netops sh -c \
         'set -eu; rm -f /tmp/nexora-source-manifest.json; PYTHONPATH=/app/backend python -m database.backup manifest --output /tmp/nexora-source-manifest.json >/dev/null; cat /tmp/nexora-source-manifest.json' \
         > "$manifest_partial"; then
         [[ -s "$manifest_partial" ]] || die "Release backup failed: empty Source Manifest"
@@ -261,7 +297,7 @@ backup_release_state() {
     # The Docker backup volume contains device configuration snapshots. Keep a
     # separate private archive so a database restore is never mistaken for a
     # device-config restore.
-    if docker compose exec -T netops tar -czf - -C /app/backup . > "$snapshot_partial"; then
+    if compose exec -T netops tar -czf - -C /app/backup . > "$snapshot_partial"; then
         [[ -s "$snapshot_partial" ]] || die "Release backup failed: empty configuration snapshot archive"
         chmod 600 "$snapshot_partial"
         mv -f "$snapshot_partial" "$snapshot_path"
@@ -276,7 +312,8 @@ backup_release_state() {
 }
 
 validate_compose() {
-    docker compose config --quiet || die "Docker Compose configuration is invalid"
+    configure_compose_files
+    compose config --quiet || die "Docker Compose configuration is invalid"
 }
 
 build_and_start() {
@@ -289,9 +326,9 @@ build_and_start() {
     [[ "${NETOPS_BUILD_PULL:-0}" == "1" ]] && build_args=(--pull "${build_args[@]}")
     # Build the database image first so pgvector and pg_trgm are present before
     # the application container starts its migrations.
-    docker compose build "${build_args[@]}"
-    docker compose up -d --force-recreate --remove-orphans
-    docker compose ps
+    compose build "${build_args[@]}"
+    compose up -d --force-recreate --remove-orphans
+    compose ps
 }
 
 required_images() {
@@ -299,6 +336,9 @@ required_images() {
         "nexora-netops:latest" \
         "nexora-nginx:latest" \
         "nexora-postgres:latest"
+    if [[ "${NETOPS_REDIS_ENABLED:-1}" != "0" ]]; then
+        printf '%s\n' "redis:7.4.2-alpine"
+    fi
 }
 
 verify_required_images() {
@@ -342,10 +382,27 @@ load_images() {
 }
 
 start_offline() {
+    cd "$DEPLOYMENT_DIR"
     validate_compose
     verify_required_images
-    docker compose up -d --no-build --pull never --remove-orphans
-    docker compose ps
+    compose up -d --no-build --pull never --remove-orphans
+    compose ps
+}
+
+redis_status() {
+    cd "$DEPLOYMENT_DIR"
+    [[ "${NETOPS_REDIS_ENABLED:-1}" != "0" ]] || die "Redis sidecar is disabled by NETOPS_REDIS_ENABLED=0"
+    [[ -f docker-compose.redis.yml ]] || die "docker-compose.redis.yml is missing"
+    configure_compose_files
+    compose ps redis
+}
+
+redis_logs() {
+    cd "$DEPLOYMENT_DIR"
+    [[ "${NETOPS_REDIS_ENABLED:-1}" != "0" ]] || die "Redis sidecar is disabled by NETOPS_REDIS_ENABLED=0"
+    [[ -f docker-compose.redis.yml ]] || die "docker-compose.redis.yml is missing"
+    configure_compose_files
+    compose logs -f --tail=200 redis
 }
 
 reset_data() {
@@ -356,9 +413,12 @@ reset_data() {
         read -r -p "Delete NetOps containers, volumes, local images, and TLS files? [y/N] " answer
         [[ "$answer" == "y" || "$answer" == "Y" ]] || { log "Cancelled"; exit 0; }
     fi
-    docker compose down -v --remove-orphans --rmi local
+    configure_compose_files
+    compose down -v --remove-orphans --rmi local
     # Explicit image tags are not always covered by --rmi local.
-    docker image rm -f nexora-netops nexora-nginx nexora-postgres >/dev/null 2>&1 || true
+    local local_images=(nexora-netops nexora-nginx nexora-postgres)
+    [[ "${NETOPS_REDIS_ENABLED:-1}" != "0" ]] && local_images+=(redis:7.4.2-alpine)
+    docker image rm -f "${local_images[@]}" >/dev/null 2>&1 || true
     rm -f nginx/ssl/netops.crt nginx/ssl/netops.key
     log "NetOps Docker data reset complete"
 }
@@ -404,7 +464,8 @@ case "$COMMAND" in
         sync_release
         initialize_env
         if [[ "${FORCE_UPDATE:-}" != "--force" && "$RELEASE_CHANGED" != "1" ]]; then
-            docker compose ps
+            configure_compose_files
+            compose ps
             log "No release content changes; skipped image pull, build, and container recreation"
             log "Docker update check complete; .env, volumes, and nginx/ssl were preserved"
         else
@@ -430,6 +491,14 @@ case "$COMMAND" in
     start-offline)
         require_docker
         start_offline
+        ;;
+    redis-status)
+        require_docker
+        redis_status
+        ;;
+    redis-logs)
+        require_docker
+        redis_logs
         ;;
     reset-data)
         require_docker
