@@ -1,0 +1,57 @@
+# Optional Redis sidecar for Nexora.  Use this file alone for a Windows
+# workstation running Nexora natively, or together with docker-compose.yml for
+# an all-container deployment:
+#
+#   docker compose -f docker-compose.redis.yml up -d
+#   docker compose -f docker-compose.yml -f docker-compose.redis.yml up -d --build
+#
+# REDIS_PASSWORD is intentionally supplied by the operator through .env. The
+# sidecar disables Redis' default user and exposes only a Nexora ACL user,
+# limited to the Nexora key prefix and the commands used by the cache adapter.
+
+name: nexora-redis
+
+services:
+  redis:
+    image: redis:7.4.2-alpine
+    container_name: nexora-redis
+    restart: unless-stopped
+    environment:
+      TZ: ${TZ:-Asia/Shanghai}
+      REDIS_PASSWORD: ${REDIS_PASSWORD:-}
+    entrypoint:
+      - /bin/sh
+      - -ec
+    command: |
+      umask 077
+      if [ -n "$$REDIS_PASSWORD" ]; then
+        password_hash="$(printf '%s' "$$REDIS_PASSWORD" | sha256sum | awk '{print $$1}')"
+        printf 'user default off\nuser nexora on #%s ~nexora:* ~ai:ratelimit:* +ping +get +set +incr +del +eval +scan\n' "$$password_hash" > /data/nexora-users.acl
+      else
+        printf 'user default off\nuser nexora on nopass ~nexora:* ~ai:ratelimit:* +ping +get +set +incr +del +eval +scan\n' > /data/nexora-users.acl
+      fi
+      exec /usr/local/bin/docker-entrypoint.sh redis-server --appendonly yes --maxmemory 512mb \
+        --maxmemory-policy allkeys-lru --protected-mode yes --aclfile /data/nexora-users.acl
+    ports:
+      - "${REDIS_BIND_ADDRESS:-127.0.0.1}:6379:6379"
+    volumes:
+      - nexora-redis-data:/data
+    healthcheck:
+      test:
+        - CMD-SHELL
+        - >-
+          if [ -n "$${REDIS_PASSWORD}" ]; then
+          redis-cli --user nexora -a "$${REDIS_PASSWORD}" ping | grep -q PONG;
+          else redis-cli --user nexora ping | grep -q PONG; fi
+      interval: 10s
+      timeout: 3s
+      retries: 5
+    logging:
+      driver: local
+      options:
+        max-size: "10m"
+        max-file: "3"
+
+volumes:
+  nexora-redis-data:
+    name: nexora-redis-data

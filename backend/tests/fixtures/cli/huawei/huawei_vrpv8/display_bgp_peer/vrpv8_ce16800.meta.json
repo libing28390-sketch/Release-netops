@@ -1,0 +1,9 @@
+{
+  "source_type": "official_vendor_documentation",
+  "source_url": "https://support.huawei.com/enterprise/en/doc/EDOC1100313446/5829dca4/bgp-peer-relationship-fails-to-be-established",
+  "vendor": "Huawei",
+  "platform": "VRP8",
+  "model_family": "CloudEngine 16800/9800/8800/6800",
+  "command": "display bgp peer",
+  "source_note": "Official BGP troubleshooting output showing established IPv4 peers."
+}

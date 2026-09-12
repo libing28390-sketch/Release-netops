@@ -1,0 +1,10 @@
+Value MEMBER_ID (\d+)
+Value ROLE (\S+)
+Value MAC_ADDRESS ([0-9A-Fa-f-]+)
+Value PRIORITY (\d+)
+Value DEVICE_TYPE (\S+)
+
+Start
+  ^\s*[+*]*${MEMBER_ID}\s+${ROLE}\s+${MAC_ADDRESS}\s+${PRIORITY}\s+${DEVICE_TYPE}\s*$$ -> Record
+  ^\s*MemberID\s+Role\s+MAC
+  ^\s*-+

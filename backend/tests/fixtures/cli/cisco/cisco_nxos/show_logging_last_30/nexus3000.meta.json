@@ -1,0 +1,9 @@
+{
+  "source_type": "official_vendor_documentation",
+  "source_url": "https://www.cisco.com/c/en/us/td/docs/switches/datacenter/nexus/openflow/b_openflow_agent_nxos_1_3/Cisco_Plug_in_for_OpenFlow.html",
+  "vendor": "Cisco",
+  "platform": "NX-OS",
+  "model_family": "Nexus 3000",
+  "command": "show logging last 30",
+  "source_note": "Official Cisco NX-OS logging output; source example uses show logging last 14 with the same grammar."
+}

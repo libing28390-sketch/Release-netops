@@ -1,0 +1,9 @@
+Value TIME (\d{2}:\d{2}:\d{2})
+Value TIMEZONE (\S+)
+Value DAYWEEK (\S+)
+Value MONTH (\S+)
+Value DAY (\d+)
+Value YEAR (\d{4})
+
+Start
+  ^${TIME}\s+${TIMEZONE}\s+${DAYWEEK}\s+${MONTH}\s+${DAY}\s+${YEAR}\s*$$ -> Record

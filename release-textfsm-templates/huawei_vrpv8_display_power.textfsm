@@ -1,0 +1,11 @@
+Value SLOT (\d+)
+Value POWER_ID (\S+)
+Value ONLINE (\S+)
+Value MODE (\S+)
+Value STATUS (\S+)
+Value POWER_W (\S+)
+
+Start
+  ^\s*${SLOT}\s+${POWER_ID}\s+${ONLINE}\s+${MODE}\s+${STATUS}\s+${POWER_W}\s*$$ -> Record
+  ^\s*Slot\s+PowerID\s+Online
+  ^\s*-+

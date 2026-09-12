@@ -1,0 +1,17 @@
+<HUAWEI> display eth-trunk
+Eth-Trunk10's state information is:
+(h): high priority
+(r): reference port
+Local:
+LAG ID: 10                  WorkingMode: STATIC
+Preempt Delay Time: 10      Hash arithmetic: According to flow
+System Priority: 120        System ID: 00e0-fc12-3456
+Least Active-linknumber: 1  Max Active-linknumber: 8
+Operate status: up          Number Of Up Ports In Trunk: 2
+Timeout Period: Slow
+PortKeyMode: Auto
+------------------------------------------------------------------------------------
+ActorPortName              Status   PortType PortPri PortNo PortKey PortState Weight
+10GE 1/0/2(hr)              Selected 1GE      10      262    2609    10111100  1
+10GE 1/0/3(h)               Selected 1GE      10      263    2609    10111100  1
+10GE 1/0/4(h)               Unselect 1GE      32768   264    2609    10100000  1

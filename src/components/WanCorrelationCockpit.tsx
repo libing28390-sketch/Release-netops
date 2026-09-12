@@ -1,0 +1,24 @@
+import { useCallback, useEffect, useState } from 'react';
+import { Gauge, Loader2, RefreshCw, ShieldAlert } from 'lucide-react';
+
+type CockpitEvent = { id: string; root_cause_code: string; severity: string; status: string; confidence?: number; title: string; summary?: string; starts_at: string; scope?: Record<string, any> };
+type Cockpit = { summary?: Record<string, number>; correlations?: Array<{ root_cause_code: string; count: number }>; recommendations?: Array<{ status: string; count: number }>; active_events?: CockpitEvent[]; latest_capacity?: Array<Record<string, any>> };
+const tokenHeaders = () => { const token = localStorage.getItem('netops_token'); return token ? { Authorization: `Bearer ${token}` } : {}; };
+
+const WanCorrelationCockpit: React.FC = () => {
+  const [data, setData] = useState<Cockpit | null>(null);
+  const [loading, setLoading] = useState(true);
+  const [error, setError] = useState('');
+  const load = useCallback(async (signal?: AbortSignal) => {
+    setLoading(true); setError('');
+    try {
+      const response = await fetch('/api/monitoring/wan-cockpit', { headers: tokenHeaders(), signal });
+      if (!response.ok) throw new Error(response.status === 403 ? '权限不足' : '驾驶舱加载失败');
+      if (!signal?.aborted) setData(await response.json());
+    } catch (cause) { if ((cause as Error)?.name !== 'AbortError') setError(cause instanceof Error ? cause.message : String(cause)); } finally { if (!signal?.aborted) setLoading(false); }
+  }, []);
+  useEffect(() => { const controller = new AbortController(); void load(controller.signal); return () => controller.abort(); }, [load]);
+  return <section className="rounded-2xl border border-[var(--card-border)] bg-[var(--card-bg)] p-4 shadow-sm md:p-5"><div className="flex items-center justify-between gap-3"><div><p className="text-[10px] font-bold uppercase tracking-[0.18em] text-violet-600">WAN correlation cockpit</p><h2 className="mt-1 text-xl font-extrabold text-[var(--app-text)]">出口故障与容量驾驶舱</h2><p className="mt-1 text-xs text-[var(--muted-text)]">确定性规则、证据链和容量建议；默认仅加载摘要与分页事件</p></div><button type="button" onClick={() => void load()} className="rounded-lg border border-[var(--card-border)] p-2 text-[var(--muted-text)]" aria-label="刷新"><RefreshCw size={14} /></button></div>{loading ? <div className="flex min-h-32 items-center justify-center text-sm text-[var(--muted-text)]"><Loader2 className="mr-2 animate-spin" size={16} />加载中…</div> : error ? <div className="mt-4 rounded-xl border border-rose-200 bg-rose-50 px-4 py-5 text-sm text-rose-700">{error}</div> : <><div className="mt-4 grid grid-cols-2 gap-3 md:grid-cols-4">{[['链路总数', data?.summary?.total || 0], ['正常链路', data?.summary?.healthy || 0], ['风险链路', data?.summary?.risky || 0], ['活动告警', data?.summary?.active_alerts || 0]].map(([label, value]) => <div key={String(label)} className="rounded-xl border border-[var(--card-border)] px-3 py-3"><p className="text-[10px] font-bold text-[var(--muted-text)]">{label}</p><p className="mt-1 text-xl font-extrabold text-[var(--app-text)]">{value}</p></div>)}</div><div className="mt-4 grid gap-3 lg:grid-cols-2"><div className="rounded-xl border border-[var(--card-border)] p-3"><p className="flex items-center gap-2 text-xs font-bold text-[var(--app-text)]"><ShieldAlert size={14} className="text-rose-600" />活动关联根因</p>{data?.active_events?.length ? <div className="mt-2 space-y-2">{data.active_events.map((item) => <article key={item.id} className="rounded-lg bg-black/[0.03] px-3 py-2 text-xs"><div className="flex justify-between gap-2"><b>{item.title}</b><span>{item.status} · {Math.round(Number(item.confidence || 0) * 100)}%</span></div><p className="mt-1 text-[10px] text-[var(--muted-text)]">{item.root_cause_code} · {item.summary || '--'}</p><p className="mt-1 text-[10px] text-[var(--muted-text)]">证据范围：{Object.keys(item.scope || {}).length ? JSON.stringify(item.scope) : '不足'}</p></article>)}</div> : <p className="mt-3 text-xs text-[var(--muted-text)]">暂无活动关联</p>}</div><div className="rounded-xl border border-[var(--card-border)] p-3"><p className="flex items-center gap-2 text-xs font-bold text-[var(--app-text)]"><Gauge size={14} className="text-violet-600" />容量建议状态</p>{data?.latest_capacity?.length ? <div className="mt-2 space-y-2">{data.latest_capacity.slice(0, 8).map((item) => <div key={item.id} className="rounded-lg bg-black/[0.03] px-3 py-2 text-xs"><div className="flex justify-between gap-2"><b>{item.recommendation}</b><span>{item.status}</span></div><p className="mt-1 text-[10px] text-[var(--muted-text)]">{item.evidence?.window_days || '--'}天 · P95 {item.evidence?.p95_utilization_pct ?? '--'}% · 高负载 {item.evidence?.high85_hours ?? '--'}小时</p></div>)}</div> : <p className="mt-3 text-xs text-[var(--muted-text)]">暂无容量建议</p>}</div></div></>}</section>;
+};
+
+export default WanCorrelationCockpit;

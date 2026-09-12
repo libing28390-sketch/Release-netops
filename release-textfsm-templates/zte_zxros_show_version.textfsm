@@ -1,0 +1,17 @@
+Value Filldown MODEL ([A-Za-z0-9_-]+)
+Value Filldown VERSION ([^\r\n,]+)
+Value UPTIME (.*?)
+Value BOARD_NAME (.*?)
+Value MAIN_PROCESSOR (\S+)
+Value BOOTROM (\S+)
+Value MEMORY (.*?)
+
+Start
+  ^ZXR10\s+${MODEL}\s*$$
+  ^ZTE ZXR10 Software,\s+Version:\s+${VERSION}
+  ^System uptime is\s+${UPTIME}\s*$$
+  ^Board Name\s+:\s+${BOARD_NAME}\s*$$
+  ^Main Processor\s+:\s+${MAIN_PROCESSOR}\s*$$
+  ^Bootrom Version\s+:\s+${BOOTROM}\s*$$
+  ^System Memory\s+:\s+${MEMORY}\s*$$
+  ^CPU Core Num -> Record End

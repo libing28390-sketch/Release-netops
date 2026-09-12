@@ -1,0 +1,9 @@
+{
+  "source_type": "official_vendor_documentation",
+  "source_url": "https://support.huawei.com/enterprise/en/doc/EDOC1100333649/e1d83431/display-mac-address--ap-id--ap-name-",
+  "vendor": "Huawei",
+  "platform": "VRP8",
+  "model_family": "S7700",
+  "command": "display mac-address ap-id 1 ethernet 0",
+  "source_note": "Official MAC address table command reference example."
+}

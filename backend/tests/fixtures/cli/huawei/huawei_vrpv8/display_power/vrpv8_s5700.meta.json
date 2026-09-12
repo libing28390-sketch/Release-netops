@@ -1,0 +1,9 @@
+{
+  "source_type": "official_vendor_documentation",
+  "source_url": "https://support.huawei.com/enterprise/en/doc/EDOC1100365019/63fa786f/displaying-power-supply-information",
+  "vendor": "Huawei",
+  "platform": "VRP8",
+  "model_family": "S300/S500/S2700/S5700/S6700",
+  "command": "display power",
+  "source_note": "Official power supply status example, including Supply and NotSupply states."
+}

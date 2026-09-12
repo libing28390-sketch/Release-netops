@@ -1,0 +1,14 @@
+Value SYSTEM_ID (\S+)
+Value HARDWARE_MODEL (\S+.*?\S+|\S+)
+Value HARDWARE_VERSION (.*)
+Value BOOTLOADER_VERSION (\S+)
+Value SOFTWARE_VERSION (\S+)
+Value UPTIME (.*)
+
+Start
+  ^\s*System ID\s+:\s+${SYSTEM_ID}\s*$$
+  ^\s*Hardware Model\s+:\s+${HARDWARE_MODEL}\s*$$
+  ^\s*Hardware Version\s+:\s+${HARDWARE_VERSION}\s*$$
+  ^\s*Bootloader Version\s+:\s+${BOOTLOADER_VERSION}\s*$$
+  ^\s*Software Version\s+:\s+${SOFTWARE_VERSION}\s*$$
+  ^\s*System Uptime is\s+${UPTIME}\s*$$ -> Record

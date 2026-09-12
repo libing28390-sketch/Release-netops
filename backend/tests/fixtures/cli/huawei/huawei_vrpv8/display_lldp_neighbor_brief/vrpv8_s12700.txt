@@ -1,0 +1,5 @@
+<acc-huawei-sw1>DIS lldp neighbor brief
+Local Interface         Exptime(s) Neighbor Interface      Neighbor Device
+-------------------------------------------------------------------------------
+GE1/0/1                       105  GigabitEthernet3/0      acc-h3c-sw2
+<acc-huawei-sw1>

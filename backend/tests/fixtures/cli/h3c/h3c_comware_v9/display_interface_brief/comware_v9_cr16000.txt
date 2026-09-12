@@ -1,0 +1,15 @@
+<Sysname> display interface brief
+Brief information on interfaces in route mode:
+Link: ADM - administratively down; Stby - standby
+Protocol: (s) - spoofing
+Interface            Link Protocol Primary IP      Description
+InLoop0              UP   UP(s)    --
+MGE0/0/0             DOWN DOWN     --
+NULL0                UP   UP(s)    --
+REG0                 UP   --       --
+Brief information on interfaces in bridge mode:
+Link: ADM - administratively down; Stby - standby
+Speed or Duplex: (a)/A - auto; H - half; F - full
+Type: A - access; T - trunk; H - hybrid
+Interface            Link Speed   Duplex Type PVID Description
+GE1/0/1              ADM  auto    A      A    1

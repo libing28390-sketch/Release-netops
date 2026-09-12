@@ -1,0 +1,11 @@
+Value Required INDEX (\d+)
+Value VLAN_ID (\d+)
+Value VLAN_NAME (\S+)
+Value OWNER (\S+)
+Value MODE (\S+)
+Value PORTS (.*)
+
+Start
+  ^NO\.\s+VID\s+VLAN-Name
+  ^-+
+  ^${INDEX}\s+${VLAN_ID}\s+${VLAN_NAME}\s+${OWNER}\s+${MODE}\s+${PORTS}\s*$$ -> Record

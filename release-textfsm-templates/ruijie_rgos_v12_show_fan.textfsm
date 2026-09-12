@@ -1,0 +1,30 @@
+# nexora-action-code: get_fans
+Value Filldown SLOT (\d+)
+Value Required FAN_ID (\w+)
+Value FAN_TYPE (.+?)
+Value STATUS (ok|OK|normal|Normal|fault|Fault|fail|Fail|Not Installed|\S+)
+Value HARDWARE_VERSION (\S+)
+Value SERIAL_NUMBER (\S+)
+Value SPEED (\S+)
+
+Start
+  ^.*#\s*show\s+ -> Next
+  ^Slot\s+${SLOT}: -> TableOld
+  ^\s*Fan\s+(?:id|ID)\s+Type\s+Status\s+Hardware\s+Version\s+Serial\s+Number -> TableNew
+  ^\s*Fan\s+Status\s+Speed\(RPM\) -> TableOld
+  ^\s*$$
+  ^. -> Next
+
+TableNew
+  ^\s*[-+\s]+$$ -> Next
+  ^\s*${FAN_ID}\s+${FAN_TYPE}\s+${STATUS}\s+${HARDWARE_VERSION}\s+${SERIAL_NUMBER}\s*$$ -> Record
+  ^\s*$$
+  ^. -> Next
+
+TableOld
+  ^\s*Fan\s+Status\s+Speed\(RPM\) -> Next
+  ^\s*[-+\s]+$$ -> Next
+  ^\s*${FAN_ID}\s+${STATUS}\s+${SPEED}\s*$$ -> Record
+  ^Slot\s+${SLOT}: -> Next
+  ^\s*$$
+  ^. -> Next

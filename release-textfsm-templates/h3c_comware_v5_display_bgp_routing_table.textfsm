@@ -1,0 +1,11 @@
+# nexora-action-code: get_bgp_routes
+# Comware V5's global table command is ``display bgp routing-table``.
+Value Required FLAGS ([*><^dehisS?\s]+)
+Value Required NETWORK ((?:\d{1,3}\.){3}\d{1,3}(?:/\d+)?|[0-9a-fA-F:]+/\d+)
+Value Required NEXT_HOP ((?:\d{1,3}\.){3}\d{1,3}|[0-9a-fA-F:]+)
+Value ATTRIBUTES (.+)
+
+Start
+  ^\s*${FLAGS}\s+${NETWORK}\s+${NEXT_HOP}\s+${ATTRIBUTES}\s*$$ -> Record
+  ^\s*$$
+  ^.*$$

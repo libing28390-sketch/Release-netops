@@ -1,0 +1,12 @@
+Value MODEL (.+)
+Value HARDWARE_VERSION (\S+)
+Value SOFTWARE_VERSION ([^\r\n(]+)
+Value ROS_VERSION (\S+)
+Value BOOTROM_VERSION (\S+)
+
+Start
+  ^Product Name:\s+${MODEL}
+  ^Hardware Version:\s+${HARDWARE_VERSION}
+  ^Software Version:\s+${SOFTWARE_VERSION}
+  ^ROS Version:\s*${ROS_VERSION}
+  ^Bootrom Version:\s*${BOOTROM_VERSION} -> Record

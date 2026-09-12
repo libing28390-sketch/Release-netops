@@ -1,0 +1,8 @@
+<HUAWEI> display cpu-usage
+Slot: 1    CPU:0
+CPU utilization statistics at 2024-04-19 07:43:06 366 ms
+System CPU Using Percentage :   9%
+Dataplane CPU Using Percentage :   0%
+CPU utilization for five seconds: 39%, one minute: 38%, five minutes: 39%.
+Max CPU Usage :                91%
+

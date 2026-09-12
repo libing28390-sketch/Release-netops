@@ -1,0 +1,13 @@
+{
+  "vendor": "H3C",
+  "platform": "h3c_comware",
+  "software_family": "Comware7/9",
+  "model": "IRF/summary example",
+  "command": "display cpu-usage",
+  "source_type": "official_vendor_documentation",
+  "source_url": "https://www.h3c.com/en/Support/Resource_Center/EN/Home/Public/00-Public/Technical_Documents/Reference_Guides/Command_References/H3C_CR-26719/03/202506/2513814_294551_0.htm",
+  "source_title": "03-Hardware resource management commands - H3C",
+  "source_section": "display cpu-usage examples",
+  "expected_record_count": 2,
+  "expected_fields": ["SLOT", "CPU_ID", "CPU_5_SEC", "CPU_1_MIN", "CPU_5_MIN"]
+}
