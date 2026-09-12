@@ -54,6 +54,9 @@ Environment:
   NETOPS_RELEASE_BRANCH  Override the release branch (default: main).
   NETOPS_DIR              Default deployment directory (default: current dir).
   RELEASE_BACKUP_DIR      Backup destination (default: ../netops-release-backups).
+  COMPOSE_PROJECT_NAME    Explicit Compose project name. When unset, reuse the
+                          existing nexora-db container's project label, then
+                          fall back to nexora for a new installation.
   NETOPS_BUILD_PULL       Set to 1 to always pull newer base images while
                           building. By default local base images are reused and
                           the registry is only contacted for missing images.
@@ -85,14 +88,33 @@ configure_compose_files() {
     fi
 }
 
-compose() {
-    [[ ${#COMPOSE_FILES[@]} -gt 0 ]] || configure_compose_files
+resolve_compose_project_name() {
     local project_name="${COMPOSE_PROJECT_NAME:-}"
     if [[ -z "$project_name" && -f .env ]]; then
         project_name="$(env_value COMPOSE_PROJECT_NAME)"
     fi
+
+    # Releases created before the project name was pinned can have a legacy
+    # Compose label (for example `nexora-redis` from the last overlay file).
+    # Reuse that label so update can back up the running database before any
+    # containers are recreated. Explicit shell/.env configuration still wins.
+    if [[ -z "$project_name" ]]; then
+        project_name="$(
+            docker inspect \
+                --format '{{with index .Config.Labels "com.docker.compose.project"}}{{.}}{{end}}' \
+                nexora-db 2>/dev/null || true
+        )"
+    fi
+
     project_name="${project_name:-nexora}"
     [[ "$project_name" =~ ^[a-z0-9][a-z0-9_-]*$ ]] || die "Invalid COMPOSE_PROJECT_NAME"
+    printf '%s' "$project_name"
+}
+
+compose() {
+    [[ ${#COMPOSE_FILES[@]} -gt 0 ]] || configure_compose_files
+    local project_name
+    project_name="$(resolve_compose_project_name)"
     docker compose --project-name "$project_name" "${COMPOSE_FILES[@]}" "$@"
 }
 

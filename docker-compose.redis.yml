@@ -17,6 +17,7 @@ services:
     container_name: nexora-redis
     restart: unless-stopped
     environment:
+      TZ: ${TZ:-Asia/Shanghai}
       REDIS_PASSWORD: ${REDIS_PASSWORD:-}
     entrypoint:
       - /bin/sh

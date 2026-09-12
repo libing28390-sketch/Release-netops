@@ -23,6 +23,10 @@ def test_deploy_script_includes_redis_compose_overlay_and_offline_image():
     assert 'set_env_value REDIS_PASSWORD' in source
     assert 'set_env_value REDIS_URL "redis://nexora:' in source
     assert 'docker compose --project-name "$project_name"' in source
+    assert "resolve_compose_project_name()" in source
+    assert 'index .Config.Labels "com.docker.compose.project"' in source
+    assert "nexora-db 2>/dev/null || true" in source
+    assert 'project_name="${project_name:-nexora}"' in source
     assert 'Reset removes any sidecar volume left by an earlier Redis-enabled run' in source
 
 
@@ -46,4 +50,5 @@ def test_redis_sidecar_uses_a_restricted_acl_user_and_keeps_ai_rate_limits_worki
     assert "/usr/local/bin/docker-entrypoint.sh redis-server" in source
     assert "--aclfile /data/nexora-users.acl" in source
     assert "redis-cli --user nexora" in source
+    assert "TZ: ${TZ:-Asia/Shanghai}" in source
     assert "REDIS_URL=redis://nexora@redis:6379/0" in env_example

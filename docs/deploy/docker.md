@@ -12,7 +12,7 @@
 | `.dockerignore` | 构建上下文忽略规则（必须在根目录才生效） |
 | `nginx/` | Nginx 配置与 SSL 证书目录 |
 
-`docker-compose.redis.yml` 提供 Redis 7.4.2 Alpine sidecar。Redis 仅用于 IP 定位等可重建缓存，不能替代 PostgreSQL 的任务状态或事实数据。设置 `NETOPS_REDIS_ENABLED=0` 可显式关闭 sidecar。
+`docker-compose.redis.yml` 提供 Redis 7.4.2 Alpine sidecar。该文件既可单独启动，也会由部署脚本默认与主 Compose 合并；Redis 容器和主应用统一读取 `TZ`，未设置时使用 `Asia/Shanghai`。Redis 仅用于 IP 定位等可重建缓存，不能替代 PostgreSQL 的任务状态或事实数据。设置 `NETOPS_REDIS_ENABLED=0` 可显式关闭 sidecar。
 
 数据库镜像固定基于 `pgvector/pgvector:0.8.6-pg17-bookworm`，并额外安装
 `postgresql-contrib-17`，因此迁移 `0104_ai_pgvector_rag` 所需的 `vector` 和
@@ -78,6 +78,14 @@ bash scripts/deploy-docker.sh update
 bash scripts/deploy-docker.sh redis-status
 bash scripts/deploy-docker.sh redis-logs
 ```
+
+部署脚本会固定使用 Compose 项目名，避免目录名变化影响容器识别。对于旧版脚本已创建的部署，如果 `.env` 未显式设置 `COMPOSE_PROJECT_NAME`，新版脚本会从现有 `nexora-db` 容器的 `com.docker.compose.project` 标签自动沿用历史项目名，再执行数据库备份和更新。需要人工核对时可运行：
+
+```bash
+docker inspect --format '{{ index .Config.Labels "com.docker.compose.project" }}' nexora-db
+```
+
+如果显式设置 `COMPOSE_PROJECT_NAME`，其值必须与现有容器标签一致；不要为了绕过 `service "db" is not running` 而跳过发布备份或删除数据库容器。
 
 ## 完全离线部署
 
