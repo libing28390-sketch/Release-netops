@@ -1,0 +1,5 @@
+<HUAWEI> display fan
+-----------------------------------------------------------------------------------------
+ Slot  FanID   Online    Status    Speed     Mode     Airflow      Auto Min-Speed
+-----------------------------------------------------------------------------------------
+ 0     1       Present   Normal    30%       Auto     Side-to-Side 20%

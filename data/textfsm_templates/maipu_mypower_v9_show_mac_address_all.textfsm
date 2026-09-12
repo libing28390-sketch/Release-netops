@@ -1,0 +1,50 @@
+# nexora-action-code: get_mac_table
+Value Required VLAN (\d+|ALL)
+Value Required MAC_ADDRESS ([0-9a-fA-F]{4}\.[0-9a-fA-F]{4}\.[0-9a-fA-F]{4}|[0-9a-fA-F]{2}(?:[:-][0-9a-fA-F]{2}){5}|[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4})
+Value TYPE (\S+)
+Value INTERFACE (\S+)
+Value AGE (-|\d+)
+Value STATUS (\S+)
+Value FLAG (\[\S+\]|\S+)
+
+Start
+  ^.*#\s*show\s+ -> Next
+  ^\s*Flags?: -> Next
+  ^\s*FLAG\s+Codes: -> Next
+  ^\s*Total\s+ -> Next
+  ^\s*Mac\s+Address\s+Table -> Next
+  ^\s*VLAN\s+MAC\s+TYPE\s+INTERFACE\s+STATE\s+FLAG -> TableStateFlag
+  ^\s*VLAN\s+MAC\s+Type\s+Port\s+Age\(s\)\s+Status -> TableAgeStatus
+  ^\s*VLAN\s+MAC\s+Address\s+ -> TableGeneral
+  ^\s*Vlan\s+Mac\s+Address\s+ -> TableGeneral
+  # Direct match without header
+  ^\s*${VLAN}\s+${MAC_ADDRESS}\s+${TYPE}\s+${INTERFACE}\s+${STATUS}\s+${FLAG}\s*$$ -> Record
+  ^\s*${VLAN}\s+${MAC_ADDRESS}\s+${TYPE}\s+${INTERFACE}\s+${AGE}\s+${STATUS}\s*$$ -> Record
+  ^\s*${VLAN}\s+${MAC_ADDRESS}\s+${TYPE}\s+${INTERFACE}\s*$$ -> Record
+  ^\s*$$
+  ^. -> Next
+
+TableStateFlag
+  ^\s*[-=\s]+$$ -> Next
+  ^\s*${VLAN}\s+${MAC_ADDRESS}\s+${TYPE}\s+${INTERFACE}\s+${STATUS}\s+${FLAG}\s*$$ -> Record
+  ^\s*${VLAN}\s+${MAC_ADDRESS}\s+${TYPE}\s+${INTERFACE}\s+${STATUS}\s*$$ -> Record
+  ^Total\s+ -> Next
+  ^\s*$$
+  ^. -> Next
+
+TableAgeStatus
+  ^\s*[-=\s]+$$ -> Next
+  ^\s*${VLAN}\s+${MAC_ADDRESS}\s+${TYPE}\s+${INTERFACE}\s+${AGE}\s+${STATUS}\s*$$ -> Record
+  ^\s*${VLAN}\s+${MAC_ADDRESS}\s+${TYPE}\s+${INTERFACE}\s*$$ -> Record
+  ^Total\s+ -> Next
+  ^\s*$$
+  ^. -> Next
+
+TableGeneral
+  ^\s*[-=\s]+$$ -> Next
+  ^\s*${VLAN}\s+${MAC_ADDRESS}\s+${TYPE}\s+${INTERFACE}\s+${STATUS}\s+${FLAG}\s*$$ -> Record
+  ^\s*${VLAN}\s+${MAC_ADDRESS}\s+${TYPE}\s+${INTERFACE}\s+${AGE}\s+${STATUS}\s*$$ -> Record
+  ^\s*${VLAN}\s+${MAC_ADDRESS}\s+${TYPE}\s+${INTERFACE}\s*$$ -> Record
+  ^Total\s+ -> Next
+  ^\s*$$
+  ^. -> Next

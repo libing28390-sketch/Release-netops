@@ -1,0 +1,9 @@
+<H3C> display transceiver interface GigabitEthernet 1/1/1
+GigabitEthernet1/1/1 transceiver information:
+  Transceiver Type                    : 1000_BASE_LX_SFP
+  Connector Type                      : LC
+  Wavelength(nm)                     : 1310
+  Transfer Distance                  : 10km(9um)
+  Digital Diagnostic Monitoring      : YES
+  Vendor Name                        : H3C
+  Ordering Name                      : SFP-GE-LX10-SM1310

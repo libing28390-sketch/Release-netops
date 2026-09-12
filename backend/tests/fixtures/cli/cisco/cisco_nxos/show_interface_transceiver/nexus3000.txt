@@ -1,0 +1,14 @@
+switch# show interface transceiver
+Ethernet1/1
+    transceiver is present
+    type is 10Gbase-SR
+    name is CISCO-AVAGO
+    part number is SFBR-7700SDZ
+    revision is B4
+    serial number is AGD121220VN
+    nominal bitrate is 10300 MBit/sec
+    Link length supported for 50/125um fiber is 80 m
+    Link length supported for 50/125um fiber is 300 m
+    Link length supported for 62.5/125um fiber is 20 m
+    cisco id is --
+    cisco extended id number is 4

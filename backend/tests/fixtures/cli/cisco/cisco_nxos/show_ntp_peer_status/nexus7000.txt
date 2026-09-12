@@ -1,0 +1,9 @@
+Nexus_7000# show ntp peer-status
+Total peers : 3
+* - selected for sync, + - peer mode(active),
+- - peer mode(passive), = - polled in client mode
+    remote               local                 st   poll   reach delay   vrf
+-------------------------------------------------------------------------------
+=127.127.1.0            172.20.100.34           1   64       0   0.00000
+*129.6.15.28            172.20.100.34           1   64     377   0.03938 default
+=129.6.15.29            172.20.100.34           1   64     377   0.01804 default

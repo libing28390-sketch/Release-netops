@@ -1,0 +1,15 @@
+Value Required LOCAL_INTERFACE ((?:GE|XGE|Eth-Trunk|GigabitEthernet|XGigabitEthernet|Ten-GigabitEthernet)\s*\S+)
+Value Required NEIGHBOR_NAME (\S+)
+Value Required NEIGHBOR_INTERFACE ((?:GE|XGE|Eth-Trunk|GigabitEthernet|XGigabitEthernet|Ten-GigabitEthernet)\s*\S+)
+Value EXPIRED_TIME (\d+)
+
+Start
+  ^<[^>]+>.*$$
+  ^Local\s+Interface\s+Exptime\(s\)\s+Neighbor\s+Interface\s+Neighbor\s+Device\s*$$
+  ^Local\s+Intf\s+Neighbor\s+Dev\s+Neighbor\s+Intf\s+Exptime\(s\)\s*$$
+  ^Local\s+Intf\s+Neighbor\s+Dev\s+Neighbor\s+Intf\s+Exptime\s*$$
+  ^${LOCAL_INTERFACE}\s+${EXPIRED_TIME}\s+${NEIGHBOR_INTERFACE}\s+${NEIGHBOR_NAME}\s*$$ -> Record
+  ^${LOCAL_INTERFACE}\s+${NEIGHBOR_NAME}\s+${NEIGHBOR_INTERFACE}\s+${EXPIRED_TIME}\s*$$ -> Record
+  ^\s*-+\s*$$
+  ^\s*$$
+  ^. -> Error

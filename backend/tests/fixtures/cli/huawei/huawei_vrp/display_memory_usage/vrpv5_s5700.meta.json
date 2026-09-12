@@ -1,0 +1,13 @@
+{
+  "vendor": "Huawei",
+  "platform": "huawei_vrp",
+  "software_family": "VRP5",
+  "model": "S2300/S3300/S5300/S5700 family example",
+  "command": "display memory-usage",
+  "source_type": "official_vendor_documentation",
+  "source_url": "https://info.support.huawei.com/network/ptmngsys/Web/tsrev_s/en/content/s/35_edesk_the_cpu_usage_is_high/edesk_the_cpu_usage_is_higher_desk001.html",
+  "source_title": "Checking Whether High Memory Usage Occurs - Huawei",
+  "source_section": "Procedure",
+  "expected_record_count": 1,
+  "expected_fields": ["SYSTEM_TOTAL_MEMORY", "TOTAL_MEMORY_USED", "MEMORY_USING_PERCENTAGE"]
+}

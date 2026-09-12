@@ -1,0 +1,11 @@
+Value Required INTERFACE (\S+)
+Value IN_PKTS (\d+)
+Value IN_MCAST_PKTS (\d+)
+Value IN_BCAST_PKTS (\d+)
+Value IN_BPS (\d+)
+Value IN_PPS (\d+)
+Value IN_CRC_ERR_PKTS (\d+)
+
+Start
+  ^Interface\s+InPkts\s+InMcastPkts
+  ^${INTERFACE}\s+${IN_PKTS}\s+${IN_MCAST_PKTS}\s+${IN_BCAST_PKTS}\s+${IN_BPS}\s+${IN_PPS}\s+${IN_CRC_ERR_PKTS}\s*$$ -> Record

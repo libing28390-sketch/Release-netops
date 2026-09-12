@@ -1,0 +1,6 @@
+[HUAWEI] display environment 
+Environment information:
+Temperature information:
+SlotID   CurrentTemperature  LowLimit  HighLimit
+         (deg c )            (deg c)   (deg c ) 
+1        40                  0         55

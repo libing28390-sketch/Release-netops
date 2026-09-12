@@ -1,0 +1,13 @@
+# nexora-action-code: get_cpu
+Value CPU_5S (\d+(?:\.\d+)?%)
+Value CPU_1M (\d+(?:\.\d+)?%)
+Value CPU_5M (\d+(?:\.\d+)?%)
+
+Start
+  ^.*#\s*show\s+ -> Next
+  ^\s*CPU\s+(?:core\s+\d+\s+)?utilization\s+(?:for|in)\s+five\s+seconds:\s*${CPU_5S}\s*[;,]?\s*one\s+minute:\s*${CPU_1M}\s*[;,]?\s*five\s+minutes:\s*${CPU_5M}\s*$$ -> Record
+  ^\s*CPU\s+(?:core\s+\d+\s+)?utilization\s*:\s*five\s+seconds:\s*${CPU_5S}\s*[;,]?\s*one\s+minute:\s*${CPU_1M}\s*[;,]?\s*five\s+minutes:\s*${CPU_5M}\s*$$ -> Record
+  ^\s*Current\s+CPU\s+using\s+percentage\s+is\s+${CPU_5S}\s*$$ -> Record
+  ^\s*CPU\s+utilization\s+is\s+${CPU_5S}\s*$$ -> Record
+  ^\s*$$
+  ^. -> Next

@@ -1,0 +1,18 @@
+# nexora-action-code: get_vlan_table
+Value Required VLAN_ID (\d+)
+Value VLAN_NAME (\S+)
+Value STATUS (\S+)
+Value PORTS (.*)
+
+Start
+  ^VLAN\s+Name\s+Status\s+Ports -> Table
+  ^.*#\s*show\s+ -> Next
+  ^\s*$$
+  ^. -> Next
+
+Table
+  ^-+ -> Next
+  ^\s*${VLAN_ID}\s+${VLAN_NAME}\s+${STATUS}\s*$$ -> Record
+  ^\s*${VLAN_ID}\s+${VLAN_NAME}\s+${STATUS}\s+${PORTS}\s*$$ -> Record
+  ^\s*$$
+  ^. -> Next

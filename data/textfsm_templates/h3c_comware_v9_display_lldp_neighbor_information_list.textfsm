@@ -1,0 +1,20 @@
+Value Required NEIGHBOR_NAME (\S+)
+Value Required LOCAL_INTERFACE (\S+)
+Value Required CHASSIS_ID (\S+)
+Value Required NEIGHBOR_INTERFACE (\S+|Port\s+\d+)
+
+Start
+  ^\s*System\s+Name\s+Local\s+Interface\s+Chassis\s+ID\s+Port\s+ID\s*$$ -> SystemFirst
+  ^\s*Local\s+Interface\s+Chassis\s+ID\s+Port\s+ID\s+System\s+Name\s*$$ -> InterfaceFirst
+  ^\s*$$
+  ^.*
+
+SystemFirst
+  ^\s*${NEIGHBOR_NAME}\s+${LOCAL_INTERFACE}\s+${CHASSIS_ID}\s+${NEIGHBOR_INTERFACE}\s*$$ -> Record
+  ^\s*$$
+  ^.*
+
+InterfaceFirst
+  ^\s*${LOCAL_INTERFACE}\s+${CHASSIS_ID}\s+${NEIGHBOR_INTERFACE}\s+${NEIGHBOR_NAME}\s*$$ -> Record
+  ^\s*$$
+  ^.*

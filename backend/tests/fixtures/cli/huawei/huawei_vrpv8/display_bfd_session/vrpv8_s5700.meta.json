@@ -1,0 +1,9 @@
+{
+  "source_type": "official_vendor_documentation",
+  "source_url": "https://support.huawei.com/enterprise/en/doc/EDOC1100306155/81d122bb/bfd-configuration-commands",
+  "vendor": "Huawei",
+  "platform": "VRP8",
+  "model_family": "S310/S5700 switch series",
+  "command": "display bfd session all",
+  "source_note": "Official BFD command reference example and output field definitions."
+}

@@ -1,0 +1,7 @@
+<HUAWEI> display bgp peer
+ BGP local router ID : 1.1.1.1
+ Local AS number : 65001
+ Total number of peers : 2                Peers in established state : 2
+ Peer            V          AS  MsgRcvd  MsgSent  OutQ  Up/Down       State PrefRcv
+  10.9.0.8        4          100 1601     1443     0     23:21:56      Established 10000
+  10.10.0.10      4          200 1565     1799     0     23:15:30      Established 9999

@@ -1,0 +1,13 @@
+<Huawei> display ip routing-table statistics
+Summary Prefixes: 9
+Proto   total   active  added      deleted     freed
+        routes  routes  routes     routes      routes
+DIRECT  6       6       42         36          36
+STATIC  3       3       21         18          18
+RIP     0       0       0          0           0
+OSPF    0       0       0          0           0
+IS-IS   0       0       0          0           0
+BGP     0       0       0          0           0
+UNR     0       0       0          0           0
+Total   9       9       63         54          54
+

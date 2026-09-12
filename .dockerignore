@@ -1,0 +1,37 @@
+# Git files
+.git
+.github
+.gitignore
+
+# Python cache
+**/__pycache__
+**/*.pyc
+**/*.pyo
+**/*.pyd
+
+# Node modules
+node_modules
+dist-ssr
+
+# Local environment files
+.venv
+.vscode
+.idea
+.pytest_cache
+.env
+
+# Build artifacts
+*.so
+build/
+dist/
+
+# Agent / IDE Artifacts
+task.md
+implementation_plan.md
+walkthrough.md
+refactor.cjs
+refactor2.cjs
+test_dragon.mp3
+
+# Keys
+*.pem

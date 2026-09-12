@@ -1,0 +1,277 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+    <meta charset="UTF-8">
+    <style>
+        @page {
+            size: A4;
+            margin: 1.5cm;
+        }
+        body {
+            font-family: simhei, SimHei, STHeiti, SimSun;
+            color: #333;
+            line-height: 1.6;
+            font-size: 10pt;
+        }
+        h1 { color: #00bceb; text-align: center; font-size: 22pt; margin-bottom: 20pt; font-family: simhei; font-weight: bold; }
+        h2 { color: #00bceb; border-bottom: 2px solid #00bceb; padding-bottom: 4pt; margin-top: 18pt; margin-bottom: 10pt; font-size: 14pt; font-family: simhei; font-weight: bold; }
+        .summary-box {
+            background-color: #f0faff;
+            border: 1px solid #cceeff;
+            padding: 14pt 16pt;
+            margin-bottom: 20pt;
+            border-radius: 4px;
+        }
+        .summary-grid {
+            width: 100%;
+            margin-bottom: 10pt;
+        }
+        .summary-label {
+            font-weight: bold;
+            color: #555;
+            width: 18%;
+        }
+        .summary-val {
+            width: 32%;
+            color: #111;
+        }
+        table {
+            width: 100%;
+            border-collapse: collapse;
+            margin-bottom: 15pt;
+            table-layout: fixed;
+            word-wrap: break-word;
+        }
+        th {
+            background-color: #00bceb;
+            color: white;
+            font-weight: bold;
+            text-align: left;
+            padding: 8pt 6pt;
+            border: 1px solid #00bceb;
+            font-size: 9.5pt;
+            font-family: simhei;
+            word-break: break-all;
+        }
+        td {
+            padding: 8pt 6pt;
+            border: 1px solid #e0e0e0;
+            vertical-align: middle;
+            font-size: 9pt;
+            font-family: simhei;
+            word-break: break-all;
+        }
+        .status-critical { color: #d32f2f; font-weight: bold; }
+        .status-warning { color: #f57c00; font-weight: bold; }
+        .status-healthy { color: #388e3c; font-weight: bold; }
+        .status-completed { color: #0288d1; font-weight: bold; }
+        .status-failed { color: #c62828; font-weight: bold; }
+        
+        .footer {
+            margin-top: 40pt;
+            text-align: center;
+            font-size: 8.5pt;
+            color: #888;
+            border-top: 1px solid #eee;
+            padding-top: 12pt;
+            font-family: simhei;
+        }
+    </style>
+</head>
+<body>
+    {% if report_type == 'playbook' %}
+        <h1>{{ system_name }} NetOps 自动化执行报告</h1>
+    {% else %}
+        <h1>{{ system_name }} NetOps 巡检报告</h1>
+    {% endif %}
+
+    <div class="summary-box">
+        <table class="summary-grid">
+            <tr>
+                <td class="summary-label">项目名称:</td>
+                <td class="summary-val">{{ run_info.name or '自动化作业流' }}</td>
+                <td class="summary-label">生成时间:</td>
+                <td class="summary-val">{{ generated_at }}</td>
+            </tr>
+            <tr>
+                <td class="summary-label">客户名称:</td>
+                <td class="summary-val">{{ customer_name or '-' }}</td>
+                <td class="summary-label">负责工程师:</td>
+                <td class="summary-val">{{ engineer_name or '-' }}</td>
+            </tr>
+        </table>
+        
+        <div style="margin-top: 12pt; line-height: 1.8; font-size: 10.5pt; border-top: 1px dashed #bfe8ff; padding-top: 10pt;">
+            {% if report_type == 'playbook' %}
+                <strong>执行概览:</strong> 本次自动化作业共覆盖设备 <strong>{{ total_devices }}</strong> 台。
+                执行状态统计：<span class="status-healthy">成功 {{ healthy_count }} 台</span>，
+                <span class="status-warning">异常/失败 {{ warning_count + critical_count }} 台</span>。
+                平均执行得分：<strong>{{ avg_score }}</strong> 分。
+            {% else %}
+                <strong>巡检概览:</strong> 本次巡检共覆盖设备 <strong>{{ total_devices }}</strong> 台。
+                健康状态统计：<span class="status-healthy">健康 {{ healthy_count }}</span>，
+                <span class="status-warning">告警 {{ warning_count }}</span>，
+                <span class="status-critical">严重 {{ critical_count }}</span>。
+                平均网络健康度：<strong>{{ avg_score }}</strong> 分。
+            {% endif %}
+        </div>
+    </div>
+
+    {% if report_type == 'playbook' %}
+        <h2>一、 作业异常摘要</h2>
+        {% if abnormal_devices %}
+        <table>
+            <thead>
+                <tr>
+                    <th width="25%">设备名称</th>
+                    <th width="25%">IP 地址</th>
+                    <th width="15%">状态</th>
+                    <th width="35%">核心输出/异常原因</th>
+                </tr>
+            </thead>
+            <tbody>
+                {% for dev in abnormal_devices %}
+                <tr>
+                    <td>{{ dev.hostname }}</td>
+                    <td>{{ dev.ip_address }}</td>
+                    <td class="status-{{ dev.health_status }}">{{ dev.health_status.upper() }}</td>
+                    <td>{{ dev.top_finding or '执行过程发现丢包或输出异常' }}</td>
+                </tr>
+                {% endfor %}
+            </tbody>
+        </table>
+        {% else %}
+        <p style="color:#666; margin-bottom: 20pt;">所有设备均成功完成既定阶段作业任务，未捕获运行异常。</p>
+        {% endif %}
+
+        <h2>二、 执行结果详情表</h2>
+        <table>
+            <thead>
+                <tr>
+                    <th width="30%">设备名称</th>
+                    <th width="30%">管理 IP 地址</th>
+                    <th width="20%">执行状态</th>
+                    <th width="20%">健康评分</th>
+                </tr>
+            </thead>
+            <tbody>
+                {% for dev in all_devices %}
+                <tr>
+                    <td>{{ dev.hostname }}</td>
+                    <td>{{ dev.ip_address }}</td>
+                    <td class="status-{{ dev.health_status }}">{{ (dev.status or 'completed').upper() }}</td>
+                    <td>{{ dev.health_score }} 分</td>
+                </tr>
+                {% endfor %}
+            </tbody>
+        </table>
+
+    {% else %}
+        <h2>一、 严重异常摘要</h2>
+        {% if abnormal_devices %}
+        <table>
+            <thead>
+                <tr>
+                    <th width="25%">设备名称</th>
+                    <th width="25%">IP 地址</th>
+                    <th width="15%">状态</th>
+                    <th width="35%">核心发现</th>
+                </tr>
+            </thead>
+            <tbody>
+                {% for dev in abnormal_devices %}
+                <tr>
+                    <td>{{ dev.hostname }}</td>
+                    <td>{{ dev.ip_address }}</td>
+                    <td class="status-{{ dev.health_status }}">{{ dev.health_status.upper() }}</td>
+                    <td>{{ dev.top_finding }}</td>
+                </tr>
+                {% endfor %}
+            </tbody>
+        </table>
+        {% else %}
+        <p style="color:#666; margin-bottom: 20pt;">未发现严重异常设备。</p>
+        {% endif %}
+
+        <h2>二、 关联风险分析</h2>
+        {% if all_risks %}
+        <table>
+            <thead>
+                <tr>
+                    <th width="20%">设备</th>
+                    <th width="30%">风险规则</th>
+                    <th width="15%">严重程度</th>
+                    <th width="35%">详细描述</th>
+                </tr>
+            </thead>
+            <tbody>
+                {% for risk in all_risks %}
+                <tr>
+                    <td>{{ risk.device }}</td>
+                    <td>{{ risk.rule_name }}</td>
+                    <td class="status-{{ risk.severity }}">{{ risk.severity.upper() }}</td>
+                    <td>{{ risk.description }}</td>
+                </tr>
+                {% endfor %}
+            </tbody>
+        </table>
+        {% else %}
+        <p style="color:#666; margin-bottom: 20pt;">未检测到复合关联网络风险。</p>
+        {% endif %}
+
+        <h2>三、 整改建议</h2>
+        {% if suggestions %}
+        <table>
+            <thead>
+                <tr>
+                    <th width="20%">设备</th>
+                    <th width="20%">指标</th>
+                    <th width="30%">诊断结论</th>
+                    <th width="30%">整改建议</th>
+                </tr>
+            </thead>
+            <tbody>
+                {% for sug in suggestions %}
+                <tr>
+                    <td>{{ sug.hostname }}</td>
+                    <td>{{ sug.metric }}</td>
+                    <td>{{ sug.conclusion }}</td>
+                    <td>{{ sug.suggestion }}</td>
+                </tr>
+                {% endfor %}
+            </tbody>
+        </table>
+        {% else %}
+        <p style="color:#666; margin-bottom: 20pt;">所有网络指标均在健康基线内，暂无整改建议。</p>
+        {% endif %}
+
+        <h2>四、 资产汇总列表</h2>
+        <table>
+            <thead>
+                <tr>
+                    <th width="25%">设备名称</th>
+                    <th width="25%">管理 IP 地址</th>
+                    <th width="20%">硬件平台</th>
+                    <th width="15%">健康分</th>
+                    <th width="15%">合规性</th>
+                </tr>
+            </thead>
+            <tbody>
+                {% for dev in all_devices %}
+                <tr>
+                    <td>{{ dev.hostname }}</td>
+                    <td>{{ dev.ip_address }}</td>
+                    <td>{{ dev.platform or '-' }}</td>
+                    <td>{{ dev.health_score }}</td>
+                    <td>{{ dev.compliance_status }}</td>
+                </tr>
+                {% endfor %}
+            </tbody>
+        </table>
+    {% endif %}
+
+    <div class="footer">
+        {{ system_name }} NetOps Automation System. 智能网络运维系统自动生成报告。
+    </div>
+</body>
+</html>
