@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from contextlib import nullcontext
 from datetime import datetime, timezone
 import logging
 import os
@@ -1859,6 +1860,7 @@ def collect_operational_data(
     auth_role: str = 'auto',
     policy_override_categories: set[str] | None = None,
     _platform_action_session=None,
+    _connection_session=None,
 ) -> dict[str, Any]:
     role = str(device_info.get('role') or '').strip()
     selected_categories = _resolve_categories(
@@ -1943,7 +1945,12 @@ def collect_operational_data(
         }
         return payload
 
-    with limited_connect_handler(device_info, ConnectHandler, **conn_params) as client:
+    connection_context = (
+        nullcontext(_connection_session)
+        if _connection_session is not None
+        else limited_connect_handler(device_info, ConnectHandler, **conn_params)
+    )
+    with connection_context as client:
         if conn_params.get('secret'):
             try:
                 client.enable()

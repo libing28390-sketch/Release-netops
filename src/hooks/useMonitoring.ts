@@ -102,7 +102,7 @@ export const useMonitoring = ({ isAuthenticated, activeTab, pollOutbound = true,
     const reqEpoch = monitorRequestEpochRef.current;
     try {
       const suffix = forceRefresh ? '?force_refresh=1' : '';
-      const resp = await fetch(`/api/monitoring/overview${suffix}`, { signal });
+      const resp = await fetch(`/api/monitoring/overview${suffix}`, { signal, headers: authHeaders() });
       if (!resp.ok) return;
       const payload = await resp.json();
       if (reqEpoch !== monitorRequestEpochRef.current) return;
@@ -114,7 +114,7 @@ export const useMonitoring = ({ isAuthenticated, activeTab, pollOutbound = true,
 
   const fetchHostResources = useCallback(async (signal?: AbortSignal) => {
     try {
-      const resp = await fetch('/api/health/resources', { signal });
+      const resp = await fetch('/api/health/resources', { signal, headers: authHeaders() });
       if (!resp.ok) return;
       const payload = await resp.json();
       setHostResources(payload);
@@ -388,7 +388,7 @@ export const useMonitoring = ({ isAuthenticated, activeTab, pollOutbound = true,
 
   const fetchMonitoringRealtime = useCallback(async (deviceId: string, signal?: AbortSignal) => {
     const reqEpoch = monitorRequestEpochRef.current;
-    const resp = await fetch(`/api/monitoring/device/${deviceId}/realtime?window_minutes=15&limit=1000`, { signal });
+    const resp = await fetch(`/api/monitoring/device/${deviceId}/realtime?window_minutes=15&limit=1000`, { signal, headers: authHeaders() });
     if (!resp.ok) throw new Error('realtime fetch failed');
     const payload = await resp.json();
     if (reqEpoch !== monitorRequestEpochRef.current) throw new Error('stale monitoring realtime response');
@@ -408,7 +408,7 @@ export const useMonitoring = ({ isAuthenticated, activeTab, pollOutbound = true,
     if (name) params.set('interface_name', name);
     if (range?.start_time) params.set('start_time', range.start_time);
     if (range?.end_time) params.set('end_time', range.end_time);
-    const resp = await fetch(`/api/monitoring/device/${deviceId}/trend?${params.toString()}`, { signal });
+    const resp = await fetch(`/api/monitoring/device/${deviceId}/trend?${params.toString()}`, { signal, headers: authHeaders() });
     if (!resp.ok) throw new Error('trend fetch failed');
     const payload = await resp.json();
     if (reqEpoch !== monitorRequestEpochRef.current) throw new Error('stale monitoring trend response');
@@ -565,7 +565,7 @@ export const useMonitoring = ({ isAuthenticated, activeTab, pollOutbound = true,
     const timer = window.setTimeout(async () => {
       try {
         searchController = new AbortController();
-        const resp = await fetch(`/api/monitoring/search-devices?q=${encodeURIComponent(q)}&limit=20`, { signal: searchController.signal });
+        const resp = await fetch(`/api/monitoring/search-devices?q=${encodeURIComponent(q)}&limit=20`, { signal: searchController.signal, headers: authHeaders() });
         if (!resp.ok) return;
         const data = await resp.json();
         if (!cancelled) {

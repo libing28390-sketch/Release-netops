@@ -37,8 +37,11 @@ def test_operational_neighbor_catalog_is_lldp_only(isolated_db) -> None:
 
 def test_lldp_status_distinguishes_empty_disabled_and_parse_failure() -> None:
     assert classify_lldp_status(raw_output='') == 'no_neighbors'
+    assert classify_lldp_status(raw_output='Total entries displayed: 0') == 'no_neighbors'
     assert classify_lldp_status(raw_output='% LLDP is not enabled') == 'lldp_disabled'
     assert classify_lldp_status(raw_output='unexpected output') == 'parse_failed'
+    assert classify_lldp_status(raw_output='--More--') == 'truncated'
+    assert classify_lldp_status(raw_output='Unrecognized command') == 'unsupported_command'
     assert classify_lldp_status(parsed_count=1, raw_output='neighbor') == 'success'
 
 

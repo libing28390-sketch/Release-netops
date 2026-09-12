@@ -76,7 +76,7 @@ ORDER BY name;
 
 ## IP 定位的 Redis（可选）
 
-IP 定位 V2 的路由、ARP、MAC 和链路证据采集使用 SSH/CLI。Redis 只保存可重建的共享缓存，PostgreSQL 仍是事实和任务状态的存储；该功能不使用 SNMP。
+IP 定位默认使用新的四阶段流程，路由、ARP、MAC 和链路证据采集使用 SSH/CLI。Redis 只保存可重建的共享缓存，PostgreSQL 仍是事实和任务状态的存储；该功能不使用 SNMP。部署时只需配置 `REDIS_URL`，无需额外启用开关；Redis 不可用时按现有设计回退到 PostgreSQL 缓存。
 
 Windows Nexora 可以连接同机或局域网内 Docker Redis。将仓库中的 `docker-compose.redis.yml` 复制/保留在部署目录，在 PowerShell 中启动 Redis：
 
@@ -85,15 +85,13 @@ docker compose -f docker-compose.redis.yml up -d
 docker compose -f docker-compose.redis.yml ps
 ```
 
-同机运行时，在根目录 `.env` 设置：
+同机运行且使用本仓库 Redis Compose sidecar 时，在根目录 `.env` 设置：
 
 ```dotenv
-REDIS_URL=redis://127.0.0.1:6379/0
-IP_LOCATOR_V2_ENABLED=1
-IP_LOCATOR_CACHE_BACKEND=redis
+REDIS_URL=redis://nexora@127.0.0.1:6379/0
 ```
 
-如果 Redis 在局域网另一台主机，将 `127.0.0.1` 改为 Redis 主机的局域网 IP，例如 `192.168.10.20`；Redis 主机只应在防火墙中允许 Nexora Windows 主机访问 6379。启用密码时，使用 URL 编码后的账号/密码，例如 `redis://default:URL_ENCODED_PASSWORD@192.168.10.20:6379/0`。密码、完整连接串和密钥不要写入日志或提交到仓库。
+如果 Redis 在局域网另一台主机，将 `127.0.0.1` 改为 Redis 主机的局域网 IP，例如 `192.168.10.20`；Redis 主机只应在防火墙中允许 Nexora Windows 主机访问 6379。本仓库 sidecar 关闭 default 用户并只开放 `nexora` ACL 用户，启用密码时使用 URL 编码后的用户名/密码，例如 `redis://nexora:URL_ENCODED_PASSWORD@192.168.10.20:6379/0`。连接由其他方式维护的 Redis 时，用户名按该 Redis 的 ACL 配置填写。密码、完整连接串和密钥不要写入日志或提交到仓库。
 
 修改 `.env` 后重启托盘中的后端。健康接口会显示 Redis 主机、端口、数据库、延迟和降级状态，不显示密码或完整 URL。Redis 不可用时，定位继续使用 PostgreSQL 的有效事实并进入既有任务队列；不会由每个请求直接扩散 SSH 连接。
 

@@ -97,6 +97,8 @@ https://<服务器IP>
 
 首次启动会使用自签名 HTTPS 证书，浏览器可能提示证书不受信任；生产环境请替换为受信任的 CA 证书。完整步骤、离线镜像交付和升级说明见 [Docker Compose 部署](docs/deploy/docker.md) 与 [Docker 离线交付手册](docs/deploy/docker-release-manual.md)。
 
+首次登录使用 `admin / admin`，登录后请立即修改密码。
+
 ### Ubuntu 原生部署
 
 支持 Ubuntu 20.04 / 22.04 / 24.04（x86_64 / arm64）：

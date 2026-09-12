@@ -11,6 +11,7 @@ import Pagination from '../components/Pagination';
 import PageHero from '../components/PageHero';
 import { DataTable } from '../components/DataTable';
 import BackupPolicyManager from './ConfigSchedule/BackupPolicyManager';
+import { authHeaders } from '../api/http';
 
 /* ═══════════════════════════════════════════════════════ */
 /*  Constants                                              */
@@ -180,14 +181,14 @@ const ConfigScheduleTab: React.FC<ConfigScheduleTabProps> = ({
 
   const loadPreview = useCallback(async () => {
     setPreviewLoading(true);
-    try { const r = await fetch('/api/configs/schedule/preview?n=10'); if (r.ok) setPreview(await r.json()); }
+    try { const r = await fetch('/api/configs/schedule/preview?n=10', { headers: authHeaders() }); if (r.ok) setPreview(await r.json()); }
     catch { /* ignore */ } finally { setPreviewLoading(false); }
   }, []);
 
   const [backupStats, setBackupStats] = useState<BackupStats | null>(null);
   const fetchBackupStats = useCallback(async () => {
     try {
-      const r = await fetch('/api/configs/backup-stats');
+      const r = await fetch('/api/configs/backup-stats', { headers: authHeaders() });
       if (r.ok) { const j = await r.json(); if (j.success) setBackupStats(j.data); }
     } catch { /* ignore */ }
   }, []);

@@ -224,6 +224,32 @@ async def lifespan(app: FastAPI):
     scheduler.start()
     
     # Register periodic jobs
+    from services.ip_locator_invalidation_service import process_pending_locator_invalidations
+    from services.ip_locator_run_worker_service import process_pending_locator_runs
+    from services.ip_locator_task_service import cleanup_locator_tasks
+
+    scheduler.add_job(
+        synchronized_scheduler_job('ip_locator_cache_invalidation', expire_seconds=60)(
+            process_pending_locator_invalidations
+        ),
+        'interval', seconds=2, id='ip_locator_cache_invalidation',
+        replace_existing=True, max_instances=1, coalesce=True,
+    )
+    scheduler.add_job(
+        synchronized_scheduler_job('ip_locator_run_worker', expire_seconds=60)(
+            process_pending_locator_runs
+        ),
+        'interval', seconds=2, id='ip_locator_run_worker',
+        replace_existing=True, max_instances=1, coalesce=True,
+    )
+    scheduler.add_job(
+        synchronized_scheduler_job('ip_locator_task_retention', expire_seconds=55)(
+            cleanup_locator_tasks
+        ),
+        'interval', minutes=1, id='ip_locator_task_retention',
+        replace_existing=True, max_instances=1, coalesce=True,
+    )
+
     scheduler.add_job(
         synchronized_scheduler_job('host_resource_sampler', expire_seconds=55)(record_host_resource_snapshot),
         'interval', minutes=1, id='host_resource_sampler', replace_existing=True
@@ -395,6 +421,14 @@ async def lifespan(app: FastAPI):
         logger.info("[Background] Telemetry loops stopped")
     except Exception as e:
         logger.warning(f"[Background] Failed to stop telemetry loops: {e}")
+
+    try:
+        from services.ip_locator_session_pool import close_ip_locator_sessions
+
+        close_ip_locator_sessions()
+        logger.info("[IPLocator] Retained SSH sessions closed")
+    except Exception as e:
+        logger.warning(f"[IPLocator] Failed to close retained SSH sessions: {type(e).__name__}")
 
     scheduler.shutdown(wait=False)
     logger.info("[Scheduler] APScheduler stopped")

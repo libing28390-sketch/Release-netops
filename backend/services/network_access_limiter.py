@@ -16,6 +16,10 @@ import threading
 from typing import Any, Callable, Iterator
 
 from core.config import settings
+from services.network_access_lease_service import (
+    NetworkAccessLeaseError,
+    acquire_network_ssh_lease,
+)
 
 
 class NetworkAccessLimitError(TimeoutError):
@@ -47,6 +51,38 @@ def _device_key(device: Any, username: str | None = None, port: int | None = Non
     return f"id:{device_id}" if device_id else f"host:{host}:{resolved_port}:{resolved_user}"
 
 
+def _managed_device_id(device: Any) -> str | None:
+    """Return only an explicit canonical DB id; never derive one from a host."""
+    if isinstance(device, dict):
+        value = device.get("id") or device.get("device_id")
+    else:
+        value = getattr(device, "id", None) or getattr(device, "device_id", None)
+    normalized = str(value).strip() if value is not None else ""
+    return normalized or None
+
+
+_SAFE_OPERATION_LABELS = {
+    "arp",
+    "cli",
+    "config_backup",
+    "inspection",
+    "ip_locator_command",
+    "ip_locator_connect",
+    "mac",
+    "neighbor",
+    "route",
+    "topology",
+}
+
+
+def _safe_operation_label(operation: Any) -> str:
+    candidate = str(operation or "").strip().lower()
+    return candidate if candidate in _SAFE_OPERATION_LABELS else "ssh"
+
+
+_DEFAULT_LEASE_FACTORY = object()
+
+
 @dataclass
 class _Counters:
     ssh: int = 0
@@ -70,6 +106,7 @@ class NetworkAccessLimiter:
         snmp_global_limit: int | None = None,
         probe_global_limit: int | None = None,
         acquire_timeout: float | None = None,
+        ssh_lease_factory: Callable[..., Any] | None | object = _DEFAULT_LEASE_FACTORY,
     ) -> None:
         self.ssh_global_limit = _positive_int(
             ssh_global_limit if ssh_global_limit is not None
@@ -94,6 +131,11 @@ class NetworkAccessLimiter:
         self.acquire_timeout = float(
             acquire_timeout if acquire_timeout is not None
             else getattr(settings, "NETWORK_ACCESS_ACQUIRE_TIMEOUT", 120)
+        )
+        self._ssh_lease_factory = (
+            acquire_network_ssh_lease
+            if ssh_lease_factory is _DEFAULT_LEASE_FACTORY
+            else ssh_lease_factory
         )
 
         self._ssh_global = threading.BoundedSemaphore(self.ssh_global_limit)
@@ -129,22 +171,35 @@ class NetworkAccessLimiter:
         port: int | None = None,
         operation: str = "cli",
         timeout: float | None = None,
+        coordinated: bool = True,
     ) -> Iterator[None]:
-        """Reserve one SSH/CLI slot for the complete connection operation."""
+        """Reserve local and, by default, PostgreSQL-shared SSH capacity."""
         wait_timeout = self.acquire_timeout if timeout is None else timeout
         key = _device_key(device, username=username, port=port)
         device_lock = self._device_lock(key)
         if not self._acquire(device_lock, wait_timeout):
             raise NetworkAccessLimitError(
-                f"device concurrency limit reached for {key} (operation={operation})"
+                f"device concurrency limit reached for {key} "
+                f"(operation={_safe_operation_label(operation)})"
             )
         global_acquired = False
+        shared_lease = None
         try:
             if not self._acquire(self._ssh_global, wait_timeout):
                 raise NetworkAccessLimitError(
                     f"global SSH concurrency limit reached ({self.ssh_global_limit})"
                 )
             global_acquired = True
+            if coordinated and self._ssh_lease_factory is not None:
+                try:
+                    shared_lease = self._ssh_lease_factory(
+                        device_id=_managed_device_id(device),
+                        global_capacity=self.ssh_global_limit,
+                        device_capacity=self.ssh_per_device_limit,
+                        wait_timeout=wait_timeout,
+                    )
+                except NetworkAccessLeaseError as exc:
+                    raise NetworkAccessLimitError(str(exc)) from None
             with self._counter_guard:
                 self._counters.ssh += 1
             try:
@@ -152,13 +207,16 @@ class NetworkAccessLimiter:
             finally:
                 with self._counter_guard:
                     self._counters.ssh = max(0, self._counters.ssh - 1)
-                self._ssh_global.release()
         finally:
-            if global_acquired is False:
-                # Nothing to release from the global semaphore; the device
-                # semaphore is still released below.
-                pass
-            device_lock.release()
+            try:
+                if shared_lease is not None:
+                    shared_lease.release()
+            finally:
+                try:
+                    if global_acquired:
+                        self._ssh_global.release()
+                finally:
+                    device_lock.release()
 
     @contextmanager
     def snmp(self, *, timeout: float | None = None) -> Iterator[None]:
@@ -201,6 +259,7 @@ class NetworkAccessLimiter:
         port: int | None = None,
         operation: str = "cli",
         timeout: float | None = None,
+        coordinated: bool = True,
     ) -> Iterator[None]:
         """Async adapter for scrapli/asyncssh collectors."""
         lease = self.ssh(
@@ -209,6 +268,7 @@ class NetworkAccessLimiter:
             port=port,
             operation=operation,
             timeout=timeout,
+            coordinated=coordinated,
         )
         await asyncio.to_thread(lease.__enter__)
         try:

@@ -48,9 +48,17 @@ class _FakeRedis:
         self.ttls[key] = ex
         return True
 
-    def delete(self, key):
-        self.values.pop(key, None)
-        return 1
+    def delete(self, *keys):
+        removed = 0
+        for key in keys:
+            if key in self.values:
+                self.values.pop(key, None)
+                removed += 1
+        return removed
+
+    def scan_iter(self, *, match, count):
+        prefix = str(match).removesuffix("*")
+        return iter([key for key in self.values if key.startswith(prefix)])
 
     def ping(self):
         return True
@@ -128,3 +136,19 @@ def test_single_flight_lock_is_owner_checked():
     assert second is None
     assert service.release_lock(key, "second") is False
     assert service.release_lock(key, "first") is True
+
+
+def test_delete_prefix_uses_only_the_service_namespace_and_scans_in_batches():
+    fake = _FakeRedis()
+    service = IPLocatorCacheService(_settings(), client=fake)
+    first = service.build_key("result", "scope-a", "192.0.2.1", "default", "core")
+    second = service.build_key("result", "scope-a", "192.0.2.1", "default", "access")
+    outside = "other-app:result:scope-a:192.0.2.1"
+    fake.values.update({first: "1", second: "2", outside: "keep"})
+
+    assert service.delete_prefix("other-app:result:") is None
+    assert fake.values[outside] == "keep"
+    assert service.delete_prefix(service.build_key("result", "scope-a", "192.0.2.1") + ":") == 2
+    assert outside in fake.values
+    assert first not in fake.values
+    assert second not in fake.values

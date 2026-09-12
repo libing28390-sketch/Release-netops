@@ -3,6 +3,7 @@ import type { ConfigSnapshot, Device, SessionUser, User as UserType } from '../t
 import { getVendorFromPlatform } from '../types';
 import type { Language } from '../i18n.tsx';
 import { useConfigStore } from '../store/configStore';
+import { authHeaders } from '../api/http';
 
 const MOCK_IPS = ['127.0.0.1', '0.0.0.0', 'localhost'];
 const NETWORK_PLATFORM_KEYWORDS = ['cisco', 'arista', 'rgos', 'ruijie', 'juniper', 'junos', 'huawei', 'vrp', 'h3c', 'comware'];
@@ -78,7 +79,7 @@ export const useConfigSnapshots = ({
       if (q) params.set('q', q);
       const qs = params.toString();
       const url = qs ? `/api/configs/snapshots?${qs}` : '/api/configs/snapshots';
-      const resp = await fetch(url);
+      const resp = await fetch(url, { headers: authHeaders() });
       if (resp.ok) {
         const data = (await resp.json()) as ConfigSnapshot[];
         setConfigSnapshots(data);
@@ -93,7 +94,7 @@ export const useConfigSnapshots = ({
   const loadSnapshotContent = useCallback(async (snap: ConfigSnapshot): Promise<string> => {
     if (snap.content) return snap.content;
     try {
-      const resp = await fetch(`/api/configs/snapshots/${snap.id}/content`);
+      const resp = await fetch(`/api/configs/snapshots/${snap.id}/content`, { headers: authHeaders() });
       if (resp.ok) {
         const data = await resp.json();
         return data.content as string;
@@ -106,7 +107,7 @@ export const useConfigSnapshots = ({
 
   const loadScheduleConfig = useCallback(async () => {
     try {
-      const resp = await fetch('/api/configs/schedule');
+      const resp = await fetch('/api/configs/schedule', { headers: authHeaders() });
       if (resp.ok) {
         const cfg = await resp.json();
         setScheduleEnabled(cfg.enabled ?? true);
@@ -119,7 +120,7 @@ export const useConfigSnapshots = ({
 
   const loadRetentionConfig = useCallback(async () => {
     try {
-      const resp = await fetch('/api/configs/retention');
+      const resp = await fetch('/api/configs/retention', { headers: authHeaders() });
       if (resp.ok) {
         const cfg = await resp.json();
         setRetentionDays(Number(cfg.max_days) || 90);
@@ -183,10 +184,9 @@ export const useConfigSnapshots = ({
           : _p.includes('juniper') || _p.includes('junos')
             ? 'show configuration'
             : 'display current-configuration';
-        const _token = localStorage.getItem('netops_token');
         const execResp = await fetch('/api/execute', {
           method: 'POST',
-          headers: { 'Content-Type': 'application/json', ...(_token ? { Authorization: `Bearer ${_token}` } : {}) },
+          headers: authHeaders(true),
           body: JSON.stringify({
             device_id: device.id,
             command: _cmd,
@@ -231,7 +231,7 @@ export const useConfigSnapshots = ({
 
       const saveResp = await fetch('/api/configs/snapshots', {
         method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
+        headers: authHeaders(true),
         body: JSON.stringify({
           device_id: device.id,
           hostname: device.hostname,
@@ -272,7 +272,7 @@ export const useConfigSnapshots = ({
     try {
       const resp = await fetch('/api/configs/schedule', {
         method: 'PUT',
-        headers: { 'Content-Type': 'application/json' },
+        headers: authHeaders(true),
         body: JSON.stringify({ enabled: scheduleEnabled, cron: scheduleCron }),
       });
       if (!resp.ok) {
@@ -282,7 +282,7 @@ export const useConfigSnapshots = ({
       }
       const retentionResp = await fetch('/api/configs/retention', {
         method: 'PUT',
-        headers: { 'Content-Type': 'application/json' },
+        headers: authHeaders(true),
         body: JSON.stringify({
           max_days: Math.max(1, Math.round(retentionDays)),
           max_per_device: Math.max(1, Math.round(retentionMaxPerDevice)),
@@ -329,13 +329,9 @@ export const useConfigSnapshots = ({
 
     setIsTakingSnapshot(true);
     try {
-      const token = localStorage.getItem('netops_token');
       const resp = await fetch('/api/configs/run-now', {
         method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-          ...(token ? { Authorization: `Bearer ${token}` } : {}),
-        },
+        headers: authHeaders(true),
       });
       if (!resp.ok) {
         const err = await resp.json().catch(() => ({}));
@@ -354,7 +350,7 @@ export const useConfigSnapshots = ({
         const pollInterval = window.setInterval(async () => {
           try {
             const pr = await fetch(`/api/configs/run-now/${run_id}/progress`, {
-              headers: token ? { Authorization: `Bearer ${token}` } : {},
+              headers: authHeaders(),
             });
             if (!pr.ok) {
               window.clearInterval(pollInterval);

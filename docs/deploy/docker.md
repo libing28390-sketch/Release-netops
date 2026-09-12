@@ -34,6 +34,8 @@
    ```
 3. 访问 `http://localhost`。
 
+首次登录使用默认账号 `admin`、密码 `admin`。登录后请立即在用户设置中修改密码；已有数据库中的管理员密码会保留，不会因更新或重启而自动改回默认值。
+
 脚本默认会校验并启动 Redis；如果 `.env` 仍使用 sidecar 默认地址，首次安装会生成 URL-safe 的 Redis 密码并同步写入 `REDIS_PASSWORD`/`REDIS_URL`。已部署环境可以使用以下命令检查或查看 Redis：
 
 ```bash
@@ -41,14 +43,22 @@ bash scripts/deploy-docker.sh redis-status
 bash scripts/deploy-docker.sh redis-logs
 ```
 
-## 启用 Redis 缓存
+`redis-logs` 显示 Docker 容器 stdout/stderr，并附带 Docker 时间戳。若通过 `redis-cli MONITOR` 查看逐命令流，首列是 Redis 原生 Unix epoch（秒及小数秒），不是 Compose 时区或 `logging` driver 能修改的格式。先按部署需要为 `redis-cli` 配置目标地址和获授权的诊断身份（不要把明文密码写在命令行），再把该流交给格式化器：
 
-将 `.env` 中的 `REDIS_URL` 保持为 Compose 网络内的服务名，并设置定位缓存开关：
+```bash
+redis-cli MONITOR | python3 scripts/format_redis_monitor.py --timezone=+08:00
+```
+
+也可传 IANA 时区，例如 `--timezone=Asia/Shanghai`。格式化器只转换时间列，不连接 Redis；`MONITOR` 需要有权限的诊断连接，并会增加 Redis 开销，排查后应 Ctrl-C 结束。不要为方便长期监控而扩大应用 ACL 权限。
+
+当前 Redis sidecar 的 `nexora` ACL 用户刻意没有 `MONITOR` 权限；如需短时诊断，只能按运维策略使用独立且受控的管理员诊断身份，不要给运行时应用用户增加该权限。参见 [Redis MONITOR 文档](https://redis.io/docs/latest/commands/monitor/)。
+
+## Redis 缓存
+
+IP 定位新流程默认启用，不需要设置额外开关。将 `.env` 中现有的 `REDIS_URL` 保持为 Compose 网络内的服务名即可；Redis 缓存不可用时仍使用 PostgreSQL 事实和任务队列：
 
 ```dotenv
-REDIS_URL=redis://redis:6379/0
-IP_LOCATOR_V2_ENABLED=1
-IP_LOCATOR_CACHE_BACKEND=redis
+REDIS_URL=redis://nexora@redis:6379/0
 ```
 
 通过部署脚本启动 Nexora 和 Redis（同一 Compose 网络内服务名为 `redis`）：
@@ -57,9 +67,9 @@ IP_LOCATOR_CACHE_BACKEND=redis
 bash scripts/deploy-docker.sh update --force
 ```
 
-设置 `REDIS_PASSWORD` 后，sidecar 会启用 Redis 密码认证；同步更新 `REDIS_URL`，并对密码中的特殊字符进行 URL 编码。独立部署时默认只绑定 `127.0.0.1`，需要跨主机访问时设置 `REDIS_BIND_ADDRESS=0.0.0.0`，并在 Redis 主机防火墙中只允许 Nexora 主机访问 6379。跨不可信网络使用 `rediss://` 和证书校验。
+sidecar 会关闭 Redis 默认用户，只开放 ACL 用户 `nexora`；其 key 范围限制为 IP 定位缓存 `nexora:*` 和现有 AI 限流键 `ai:ratelimit:*`，命令权限仅包含两个功能当前需要的缓存/计数操作。设置 `REDIS_PASSWORD` 后，sidecar 以密码哈希配置 ACL；同步把用户名和密码写入 `REDIS_URL`，并对密码中的特殊字符进行 URL 编码。独立部署时默认只绑定 `127.0.0.1`，需要跨主机访问时设置 `REDIS_BIND_ADDRESS=0.0.0.0`，并在 Redis 主机防火墙中只允许 Nexora 主机访问 6379。跨不可信网络使用 `rediss://` 和证书校验。
 
-定位缓存 TTL 从原始 `collected_at` 计算：路由/ARP 300 秒新鲜、1800 秒保留；MAC/完整结果 120 秒新鲜、900 秒保留；网段 900 秒新鲜、86400 秒保留；拓扑 600 秒新鲜、86400 秒保留；正向未命中 15 秒。Redis 重启、淘汰或短时不可用都不会影响 PostgreSQL 事实；应用会报告降级并按任务队列重新建立缓存。
+定位缓存 TTL 从原始 `collected_at` 计算：路由/ARP 300 秒新鲜、1800 秒保留；MAC/完整结果 120 秒新鲜、900 秒保留；网段 900 秒新鲜、86400 秒保留；拓扑/LLDP 172800 秒（48 小时）新鲜、259200 秒（72 小时）物理保留；负向定位未命中 15 秒。LLDP 逻辑 freshness 与拓扑图默认证据有效期对齐；过了 48 小时的值即使仍被 Redis 保留，也不会作为新鲜拓扑读取。Redis 重启、淘汰或短时不可用都不会影响 PostgreSQL 事实；定位器会从 PostgreSQL 的完整设备快照重建 Redis 投影。
 
 ## 常用命令
 

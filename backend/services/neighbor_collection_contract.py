@@ -77,8 +77,28 @@ def classify_lldp_status(*, raw_output: str = "", parsed_count: int | None = Non
     lowered = str(raw_output or "").lower()
     if "lldp" in lowered and ("not enabled" in lowered or "disabled" in lowered):
         return "lldp_disabled"
+    if any(marker in lowered for marker in (
+        "--more--", "---- more ----", "press any key", "output truncated",
+        "output has been truncated", "more: <", "<more>",
+    )):
+        return "truncated"
+    if any(marker in lowered for marker in (
+        "unrecognized command", "unknown command", "command not found",
+        "not supported", "unsupported command", "invalid input",
+        "invalid command", "incomplete command", "wrong parameter",
+        "too many parameters", "error: invalid", "命令错误", "不支持该命令",
+    )):
+        return "unsupported_command"
     if parsed_count is not None and parsed_count > 0:
         return "success"
+    if any(marker in lowered for marker in (
+        "no neighbor", "no lldp neighbor", "no neighbors", "no lldp neighbors",
+        "no neighbor information", "no entry", "no entries", "total entries: 0",
+        "total entries : 0", "total entries displayed: 0",
+        "number of neighbors: 0", "no entries displayed", "没有邻居", "无邻居",
+        "邻居信息不存在", "未发现邻居",
+    )):
+        return "no_neighbors"
     return "parse_failed" if str(raw_output or "").strip() else "no_neighbors"
 
 

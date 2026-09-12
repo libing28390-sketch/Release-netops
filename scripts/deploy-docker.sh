@@ -87,7 +87,13 @@ configure_compose_files() {
 
 compose() {
     [[ ${#COMPOSE_FILES[@]} -gt 0 ]] || configure_compose_files
-    docker compose "${COMPOSE_FILES[@]}" "$@"
+    local project_name="${COMPOSE_PROJECT_NAME:-}"
+    if [[ -z "$project_name" && -f .env ]]; then
+        project_name="$(env_value COMPOSE_PROJECT_NAME)"
+    fi
+    project_name="${project_name:-nexora}"
+    [[ "$project_name" =~ ^[a-z0-9][a-z0-9_-]*$ ]] || die "Invalid COMPOSE_PROJECT_NAME"
+    docker compose --project-name "$project_name" "${COMPOSE_FILES[@]}" "$@"
 }
 
 set_env_value() {
@@ -158,9 +164,11 @@ initialize_env() {
     if [[ "${NETOPS_REDIS_ENABLED:-1}" != "0" ]]; then
         redis_password="$(env_value REDIS_PASSWORD)"
         redis_url="$(env_value REDIS_URL)"
-        if [[ -z "$redis_password" && "$redis_url" == "redis://redis:6379/0" ]]; then
-            redis_password="$(openssl rand -hex 24)"
-            set_env_value REDIS_PASSWORD "$redis_password"
+        if [[ "$redis_url" == "redis://redis:6379/0" || "$redis_url" == "redis://nexora@redis:6379/0" ]]; then
+            if [[ -z "$redis_password" ]]; then
+                redis_password="$(openssl rand -hex 24)"
+                set_env_value REDIS_PASSWORD "$redis_password"
+            fi
             set_env_value REDIS_URL "redis://nexora:${redis_password}@redis:6379/0"
         fi
     fi
@@ -402,7 +410,7 @@ redis_logs() {
     [[ "${NETOPS_REDIS_ENABLED:-1}" != "0" ]] || die "Redis sidecar is disabled by NETOPS_REDIS_ENABLED=0"
     [[ -f docker-compose.redis.yml ]] || die "docker-compose.redis.yml is missing"
     configure_compose_files
-    compose logs -f --tail=200 redis
+    compose logs --timestamps -f --tail=200 redis
 }
 
 reset_data() {
@@ -413,11 +421,14 @@ reset_data() {
         read -r -p "Delete NetOps containers, volumes, local images, and TLS files? [y/N] " answer
         [[ "$answer" == "y" || "$answer" == "Y" ]] || { log "Cancelled"; exit 0; }
     fi
-    configure_compose_files
+    # Reset removes any sidecar volume left by an earlier Redis-enabled run,
+    # even when this invocation opts out of Redis for normal deployments.
+    COMPOSE_FILES=(-f docker-compose.yml)
+    [[ -f docker-compose.redis.yml ]] && COMPOSE_FILES+=(-f docker-compose.redis.yml)
     compose down -v --remove-orphans --rmi local
     # Explicit image tags are not always covered by --rmi local.
     local local_images=(nexora-netops nexora-nginx nexora-postgres)
-    [[ "${NETOPS_REDIS_ENABLED:-1}" != "0" ]] && local_images+=(redis:7.4.2-alpine)
+    [[ -f docker-compose.redis.yml ]] && local_images+=(redis:7.4.2-alpine)
     docker image rm -f "${local_images[@]}" >/dev/null 2>&1 || true
     rm -f nginx/ssl/netops.crt nginx/ssl/netops.key
     log "NetOps Docker data reset complete"

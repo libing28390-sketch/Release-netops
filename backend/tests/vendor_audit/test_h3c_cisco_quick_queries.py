@@ -8,6 +8,7 @@ import pytest
 import services.operational_data_service as operational_service
 from core.textfsm import list_template_suggestions, smart_parse_cli
 from services.operational_data_service import NTC_PLATFORM_MAP, _resolve_commands
+from services.network_access_limiter import NetworkAccessLimiter
 
 
 FIXTURES = Path(__file__).parents[1] / "fixtures" / "cli"
@@ -695,6 +696,13 @@ def test_quick_collection_uses_platform_command_and_parses_official_output(
     category_fixtures: dict[str, tuple[str, str, str, str]],
     expected_commands: dict[str, list[str]],
 ):
+    # This test verifies vendor command selection and parsing with fake
+    # sessions. PostgreSQL shared lease behavior is covered separately by
+    # lease integration tests, so keep only the local concurrency guard here.
+    monkeypatch.setattr(
+        "services.network_access_limiter._LIMITER",
+        NetworkAccessLimiter(ssh_lease_factory=None),
+    )
     outputs: dict[str, str] = {}
     for category, fixture in category_fixtures.items():
         output, metadata = load_official_fixture(*fixture[:3], name=fixture[3])

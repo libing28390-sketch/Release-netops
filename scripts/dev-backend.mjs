@@ -72,6 +72,10 @@ const child = spawn(python, ['backend/main.py'], {
     ...process.env,
     PYTHONUNBUFFERED: '1',
     NODE_ENV: 'development',
+    // A local service startup must not replay persisted alert state into real
+    // webhooks. Operators can explicitly opt in via the inherited value.
+    NEXORA_AUTOMATIC_NOTIFICATIONS_ENABLED:
+      process.env.NEXORA_AUTOMATIC_NOTIFICATIONS_ENABLED ?? '0',
     PORT: String(port),
     PYTHONPATH: 'backend',
   },

@@ -148,7 +148,7 @@ chmod +x deploy-ubuntu.sh
 | Item | Value |
 |------|-------|
 | Access URL | `http://<server-ip>:<nginx-port>` |
-| Initial credentials | `admin` / your `INITIAL_ADMIN_PASSWORD` |
+| Initial credentials | `admin` / `admin` |
 | Backend port | 8003 (internal, not exposed) |
 | Nginx port | User selected (default: 80) |
 | Backend logs (systemd) | `sudo journalctl -u netops -f` |
@@ -270,8 +270,8 @@ docker compose up -d
 ```
 
 **2. Web UI Login Incorrect (Forgot default admin password)**
-*Cause:* Fresh databases require `INITIAL_ADMIN_PASSWORD` in `.env`; there is no built-in password. Use at least 12 characters with uppercase, lowercase, a digit and a special character (at most 72 UTF-8 bytes).
-*Fix:* Use the password configured for the first initialization, or the account recovery flow if it was changed. Changing `INITIAL_ADMIN_PASSWORD` does not reset existing accounts, and startup never recreates a deleted administrator while other users exist.
+*Cause:* A fresh database starts with `admin / admin`. Existing installations preserve the administrator password already stored in PostgreSQL.
+*Fix:* If the password was changed and forgotten, use the account recovery flow. A missing administrator is recreated as `admin / admin` during startup; a valid existing password is never overwritten.
 
 **3. Website shows "502 Bad Gateway"**
 *Cause:* The `netops` backend container failed to start or is still initializing.
@@ -466,7 +466,7 @@ chmod +x deploy-ubuntu.sh
 | 项目 | 值 |
 |------|-----|
 | 访问地址 | `http://<服务器IP>:<Nginx访问端口>` |
-| 初始账号 | `admin` / 自行设置的 `INITIAL_ADMIN_PASSWORD` |
+| 初始账号 | `admin / admin` |
 | 后端端口 | 8003（内部，不对外暴露） |
 | Nginx 端口 | 用户自定义（默认：80） |
 | 后端日志（systemd） | `sudo journalctl -u netops -f` |
@@ -588,8 +588,8 @@ docker compose up -d
 ```
 
 **2. Web 界面登录提示密码错误 (忘记 admin 密码)**
-*原因*：空数据库首次初始化必须在 `.env` 配置 `INITIAL_ADMIN_PASSWORD`，没有内置默认密码。密码至少 12 字符，包含大小写字母、数字和特殊字符，UTF-8 不超过 72 字节。
-*解决办法*：使用首次初始化时配置的密码；修改后忘记密码请使用账号找回流程。修改此环境变量不会重置已有账号；存在其他用户时，启动也不会重新创建已删除的管理员。
+*原因*：全新数据库的默认账号密码为 `admin / admin`；已有安装会保留 PostgreSQL 中当前的管理员密码。
+*解决办法*：密码修改后忘记请使用账号找回流程。缺失的管理员会在启动时以 `admin / admin` 重建；有效的现有密码不会被自动覆盖。
 
 **3. 访问页面提示 502 Bad Gateway**
 *原因*：后端的 `netops` 容器没有成功启动，或者还在启动加载中。
@@ -727,7 +727,7 @@ cd nexora-automation
 
 Prepare PostgreSQL 17, `pgvector`, and `pg_trgm` before starting the client. The Nexora wizard can create the `netops` database when the selected account can connect to `postgres` and has `CREATEDB`; otherwise create it first. Then double-click `NetOps.exe` or run `start.bat`, enter the database connection, and click “启动平台客户端” on the completion page.
 
-Before the first startup, configure `INITIAL_ADMIN_PASSWORD` in `.env` (at least 12 characters with uppercase, lowercase, a digit and a special character; at most 72 UTF-8 bytes). Open `http://127.0.0.1:5010` and sign in as `admin` with that password. Existing accounts are never reset by this setting. The backend binds to `0.0.0.0:5010`, so restrict Windows Firewall to localhost unless LAN access is intentional.
+Open `http://127.0.0.1:5010` and sign in as `admin / admin` on a fresh database; change the password immediately. Existing accounts keep their stored passwords. The backend binds to `0.0.0.0:5010`, so restrict Windows Firewall to localhost unless LAN access is intentional.
 
 #### 2. Existing installations and upgrades
 
@@ -758,7 +758,7 @@ cd nexora-automation
 
 先准备 PostgreSQL 17、pgvector 和 `pg_trgm`。如果账号有连接维护库 `postgres` 和 `CREATEDB` 权限，Nexora 向导可以创建 `netops` 数据库；否则先手工创建，再双击 `NetOps.exe` 或运行 `start.bat`，填写数据库连接并点击“启动平台客户端”。
 
-首次启动前，在 `.env` 配置 `INITIAL_ADMIN_PASSWORD`（至少 12 字符，包含大小写字母、数字、特殊字符，UTF-8 不超过 72 字节）。浏览器访问 `http://127.0.0.1:5010`，使用 `admin` 和该密码登录；此配置不会重置已有账号。后端实际监听 `0.0.0.0:5010`，只允许本机使用时应限制 Windows 防火墙入站规则。
+新数据库首次启动后，浏览器访问 `http://127.0.0.1:5010` 并使用 `admin / admin` 登录，随后立即修改密码。已有账号保留当前密码。后端实际监听 `0.0.0.0:5010`，只允许本机使用时应限制 Windows 防火墙入站规则。
 
 #### 2. 已有安装升级
 

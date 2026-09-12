@@ -2,6 +2,8 @@ from pathlib import Path
 import ipaddress
 import json
 
+import pytest
+
 import services.ip_locator_service as ip_locator_service
 
 
@@ -209,7 +211,7 @@ def test_eligible_device_diagnostics_explain_pre_route_exclusions(monkeypatch):
 
     class Connection:
         def execute(self, sql):
-            assert sql == "SELECT * FROM devices"
+            assert "FROM devices d LEFT JOIN platform_profiles p" in sql
             return self
 
         def fetchall(self):
@@ -282,6 +284,51 @@ def test_locator_context_falls_back_to_latest_interface_telemetry(isolated_db):
     assert context["address"]["status"] == "active"
     assert context["freshness"]["interface_last_seen"] == "2026-08-02T21:55:00+00:00"
     conn.close()
+
+
+def test_v2_locator_context_skips_unqueued_live_interface_probe(isolated_db, monkeypatch):
+    conn = isolated_db["module"].get_db_connection()
+    conn.execute(
+        "INSERT INTO devices (id, hostname, status, site_id, site) VALUES (?, ?, ?, ?, ?)",
+        ("device-locator-v2-context", "LSW-V2", "online", "", ""),
+    )
+    conn.execute(
+        """INSERT INTO network_endpoints
+           (id, ip, mac, hostname, switch_id, switch_port, vlan, first_seen, last_seen)
+           VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)""",
+        (
+            "endpoint-locator-v2-context", "10.253.10.11", "5489985666e3", "endpoint-v2",
+            "device-locator-v2-context", "GE0/0/5", "10", "2026-08-02T21:50:00+08:00",
+            "2026-08-02T21:54:00+08:00",
+        ),
+    )
+    conn.execute(
+        """INSERT INTO interfaces
+           (id, device_id, interface_name, admin_status, oper_status, switchport_mode, last_seen)
+           VALUES (?, ?, ?, ?, ?, ?, ?)""",
+        (
+            "interface-locator-v2-context", "device-locator-v2-context", "GigabitEthernet0/0/5",
+            "unknown", "unknown", "access", "2026-08-02T21:54:00+00:00",
+        ),
+    )
+    conn.commit()
+    conn.close()
+
+    live_probes: list[tuple[str, str]] = []
+    monkeypatch.setattr(
+        ip_locator_service,
+        "_collect_live_interface_status",
+        lambda device_id, port: live_probes.append((device_id, port)) or ("up", "up"),
+    )
+
+    context = ip_locator_service._get_ip_locator_context(
+        "10.253.10.11",
+        allow_live_interface_status=False,
+    )
+
+    assert context["l2"]["switch_name"] == "LSW-V2"
+    assert context["l2"]["vlan"] == "10"
+    assert live_probes == []
 
 
 def test_locator_uses_lldp_uplink_when_gateway_is_on_the_access_switch(isolated_db):
@@ -597,9 +644,18 @@ def test_locator_does_not_report_lag_as_host_port_when_trace_is_incomplete(monke
 def test_locator_lldp_lookup_overrides_background_plan_for_interactive_trace(monkeypatch):
     calls = {}
 
-    def fake_collect(_device, *, categories, policy_override_categories=None):
+    def fake_collect(
+        _device,
+        *,
+        categories,
+        policy_override_categories=None,
+        _connection_session=None,
+        _platform_action_session=None,
+    ):
         calls["categories"] = categories
         calls["policy_override_categories"] = policy_override_categories
+        calls["connection_session"] = _connection_session
+        calls["platform_action_session"] = _platform_action_session
         return {
             "categories": [{
                 "key": "neighbors",
@@ -622,10 +678,13 @@ def test_locator_lldp_lookup_overrides_background_plan_for_interactive_trace(mon
         "local_interface": "XGE1/0/49",
         "neighbor": "S6850-3",
         "neighbor_port": "Ten-GigabitEthernet1/0/49",
+        "neighbor_ip": "",
     }]
     assert calls == {
         "categories": ["neighbors"],
         "policy_override_categories": {"neighbors"},
+        "connection_session": None,
+        "platform_action_session": None,
     }
 
 
@@ -1212,3 +1271,175 @@ def test_arp_dispatch_queues_only_device_ids_and_policy_metadata(monkeypatch):
     assert result["queued_devices"] == 1
     assert captured["device_ids"] == ["device-1"]
     assert captured["payload_by_device"]["device-1"]["arp_policy_override"] is True
+
+
+def test_targeted_arp_status_distinguishes_no_match_from_query_failure(monkeypatch):
+    device = {
+        "id": "arp-status-device",
+        "hostname": "ARP-STATUS",
+        "ip_address": "192.0.2.10",
+        "platform": "cisco_ios",
+    }
+    monkeypatch.setattr(
+        ip_locator_service,
+        "_collect_arp_from_device_for_ip",
+        lambda *args, **kwargs: (_ for _ in ()).throw(AssertionError("must not fall back to an unbounded full table")),
+    )
+
+    monkeypatch.setattr(ip_locator_service, "_send_command", lambda *args, **kwargs: "No matching ARP entry found")
+    assert ip_locator_service._targeted_arp_query_status(device, "192.0.2.99")["status"] == "not_found"
+
+    monkeypatch.setattr(ip_locator_service, "_send_command", lambda *args, **kwargs: "% Invalid input detected")
+    assert ip_locator_service._targeted_arp_query_status(device, "192.0.2.99")["status"] == "unsupported"
+
+    def fail_query(*args, **kwargs):
+        raise TimeoutError("device did not answer")
+
+    monkeypatch.setattr(ip_locator_service, "_send_command", fail_query)
+    assert ip_locator_service._targeted_arp_query_status(device, "192.0.2.99")["status"] == "query_failed"
+
+    monkeypatch.setattr(ip_locator_service, "_send_command", lambda *args, **kwargs: "unrecognized vendor output")
+    assert ip_locator_service._targeted_arp_query_status(device, "192.0.2.99")["status"] == "parse_incomplete"
+
+
+def test_arp_normalizer_retains_proxy_and_entry_flags():
+    record = ip_locator_service._normalize_arp_record(
+        {
+            "ip": "192.0.2.99",
+            "mac": "0000.5e00.0107",
+            "interface": "Vlan10",
+            "type": "proxy",
+            "flags": "P",
+        },
+        {"id": "gateway", "hostname": "GW"},
+    )
+
+    assert record is not None
+    assert record["type"] == "proxy"
+    assert record["flags"] == "P"
+    assert record["is_proxy"] is True
+
+
+def test_v2_mac_exact_query_does_not_trigger_a_per_target_full_table_scan(monkeypatch):
+    device = {
+        **DEVICE,
+        "role": "access",
+        "platform": "unknown_os",
+        "collection_policy_json": '{"collectors":{"mac_table":true}}',
+    }
+    monkeypatch.setattr(ip_locator_service, "should_collect", lambda *_args: True)
+    monkeypatch.setattr(
+        ip_locator_service,
+        "_collect_mac_from_device_for_mac",
+        lambda *_args, **_kwargs: (_ for _ in ()).throw(AssertionError("V2 must share one full snapshot")),
+    )
+
+    result = ip_locator_service._targeted_mac_query(
+        device,
+        "001122334455",
+        force_refresh=True,
+        allow_full_table_fallback=False,
+    )
+
+    assert result == []
+    assert result.status["status"] == "unsupported"
+
+
+def test_mac_full_snapshot_is_bounded_and_normalized(monkeypatch):
+    device = {**DEVICE, "role": "access", "platform": "cisco_ios"}
+    monkeypatch.setattr(ip_locator_service, "should_collect", lambda *_args: True)
+    monkeypatch.setattr(
+        "services.ip_locator_session_pool.get_active_locator_session",
+        lambda _device: None,
+    )
+    monkeypatch.setattr(
+        ip_locator_service,
+        "collect_operational_data",
+        lambda *_args, **_kwargs: {
+            "categories": [{
+                "key": "mac_table",
+                "success": True,
+                "parse_status": "matched",
+                "records": [
+                    {"mac_address": "0011.2233.4455", "port": "Gi1/0/1", "vlan": "10", "type": "dynamic"},
+                    {"mac_address": "0066.7788.99aa", "port": "Gi1/0/2", "vlan": "20", "type": "dynamic"},
+                ],
+                "raw_outputs": [],
+            }],
+        },
+    )
+
+    snapshot = ip_locator_service._collect_mac_table_snapshot(device)
+
+    assert snapshot.status["status"] == "found"
+    assert snapshot.status["coverage"] == "full"
+    assert [item["mac"] for item in snapshot] == ["001122334455", "0066778899aa"]
+
+
+def test_arp_full_snapshot_is_normalized_and_preserves_proxy_metadata(monkeypatch):
+    device = {**DEVICE, "role": "router", "platform": "cisco_ios"}
+    monkeypatch.setattr(
+        "services.ip_locator_session_pool.get_active_locator_session",
+        lambda _device: None,
+    )
+    monkeypatch.setattr(
+        ip_locator_service,
+        "collect_operational_data",
+        lambda *_args, **_kwargs: {
+            "categories": [{
+                "key": "arp",
+                "success": True,
+                "parse_status": "matched",
+                "records": [{
+                    "ip_address": "192.0.2.77",
+                    "mac_address": "0000.5e00.0107",
+                    "interface": "Vlan10",
+                    "entry_type": "proxy",
+                    "flags": "P",
+                }],
+                "raw_outputs": [],
+            }],
+        },
+    )
+
+    snapshot = ip_locator_service._collect_arp_snapshot(device)
+
+    assert snapshot.status["status"] == "found"
+    assert snapshot.status["coverage"] == "full"
+    assert snapshot[0]["ip"] == "192.0.2.77"
+    assert snapshot[0]["is_proxy"] is True
+
+
+@pytest.mark.parametrize("kind", ["arp", "mac"])
+def test_empty_snapshot_is_explicitly_complete_but_truncated_output_is_not(monkeypatch, kind):
+    device = {**DEVICE, "role": "access", "platform": "cisco_ios"}
+    if kind == "mac":
+        monkeypatch.setattr(ip_locator_service, "should_collect", lambda *_args: True)
+    monkeypatch.setattr(
+        "services.ip_locator_session_pool.get_active_locator_session",
+        lambda _device: None,
+    )
+
+    def collect(parse_status, raw_output):
+        monkeypatch.setattr(
+            ip_locator_service,
+            "collect_operational_data",
+            lambda *_args, **_kwargs: {
+                "categories": [{
+                    "key": "arp" if kind == "arp" else "mac_table",
+                    "success": True,
+                    "parse_status": parse_status,
+                    "records": [],
+                    "raw_outputs": [{"output": raw_output}] if raw_output else [],
+                }],
+            },
+        )
+        if kind == "arp":
+            return ip_locator_service._collect_arp_snapshot(device)
+        return ip_locator_service._collect_mac_table_snapshot(device)
+
+    empty = collect("no_records", "")
+    assert empty.status == {"status": "not_found", "coverage": "full"}
+    truncated = collect("matched", "output truncated")
+    assert truncated.status["status"] == "parse_incomplete"
+    assert truncated.status.get("coverage") != "full"

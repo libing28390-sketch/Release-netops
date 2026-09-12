@@ -278,6 +278,37 @@ class IPLocatorCacheService:
             self._record_failure(exc)
             return None
 
+    def delete_prefix(self, prefix: str, *, batch_size: int = 100) -> int | None:
+        """Delete namespaced keys under a prefix using bounded Redis SCAN batches."""
+        client = self._get_client()
+        selected = str(prefix or "")
+        if (
+            client is None
+            or not selected
+            or not self.namespace
+            or not selected.startswith(f"{self.namespace}:")
+        ):
+            return None
+        scanner = getattr(client, "scan_iter", None)
+        if not callable(scanner):
+            return None
+        count = max(1, min(1000, int(batch_size)))
+        removed = 0
+        batch: list[Any] = []
+        try:
+            for key in scanner(match=f"{selected}*", count=count):
+                batch.append(key)
+                if len(batch) >= count:
+                    removed += int(client.delete(*batch) or 0)
+                    batch.clear()
+            if batch:
+                removed += int(client.delete(*batch) or 0)
+            self._record_success()
+            return removed
+        except Exception as exc:
+            self._record_failure(exc)
+            return None
+
     def acquire_lock(self, key: str, *, ttl: int = 20, token: str | None = None) -> str | None:
         """Acquire a short single-flight lock without exposing lock contents."""
         client = self._get_client()

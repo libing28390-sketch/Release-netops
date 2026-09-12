@@ -22,6 +22,169 @@ from services.inspection_service import run_inspection
 
 logger = logging.getLogger(__name__)
 
+_SAFE_TOPOLOGY_ERROR_CODES = frozenset({
+    'collection_policy_disabled',
+    'device_not_found',
+    'device_offline',
+    'credentials_incomplete',
+    'platform_unsupported',
+    'ssh_authentication_failed',
+    'ssh_unreachable',
+    'neighbor_parse_failed',
+    'topology_discovery_failed',
+    'discovery_cancelled',
+    'discovery_skipped',
+    'redis_publish_unconfirmed',
+})
+
+
+def _safe_topology_error_code(value: object, fallback: str = 'topology_discovery_failed') -> str:
+    code = str(value or '').strip().lower()
+    return code if code in _SAFE_TOPOLOGY_ERROR_CODES else fallback
+
+
+def _normalize_topology_device_result(device_id: str, result: object) -> dict:
+    """Reduce a collector result to a secret-free per-device completion record."""
+    from services.topology_service import topology_error_code
+
+    if isinstance(result, BaseException):
+        code = (
+            topology_error_code(result)
+            if isinstance(result, Exception)
+            else 'discovery_cancelled'
+        )
+        return {'device_id': device_id, 'status': 'failed', 'error_code': _safe_topology_error_code(code)}
+
+    if result is None:
+        return {
+            'device_id': device_id,
+            'status': 'skipped',
+            'error_code': 'discovery_skipped',
+        }
+    if not isinstance(result, dict):
+        return {
+            'device_id': device_id,
+            'status': 'failed',
+            'error_code': 'topology_discovery_failed',
+        }
+
+    reported_status = str(result.get('status') or '').strip().lower()
+    if reported_status in {'failed', 'skipped'}:
+        item = {'device_id': device_id, 'status': reported_status}
+        error_code = _safe_topology_error_code(result.get('error_code'), fallback='')
+        if error_code:
+            item['error_code'] = error_code
+        return item
+
+    collection_status = str(
+        result.get('collection_status')
+        or (reported_status if reported_status in {'success', 'no_neighbors'} else '')
+    ).strip().lower()
+    if collection_status not in {'success', 'no_neighbors'}:
+        return {
+            'device_id': device_id,
+            'status': 'failed',
+            'error_code': _safe_topology_error_code(result.get('error_code')),
+        }
+
+    redis_confirmed = result.get('redis_publish_confirmed') is True
+    item = {
+        'device_id': device_id,
+        'status': collection_status if redis_confirmed else 'partial',
+        'collection_status': collection_status,
+        'redis_publish_confirmed': redis_confirmed,
+    }
+    if not redis_confirmed:
+        item['error_code'] = 'redis_publish_unconfirmed'
+    return item
+
+
+def _aggregate_topology_device_results(
+    device_results: list[dict],
+    *,
+    link_rebuild_error_code: str | None = None,
+) -> dict:
+    complete_statuses = {'success', 'no_neighbors'}
+    complete = sum(item.get('status') in complete_statuses for item in device_results)
+    failed = sum(item.get('status') == 'failed' for item in device_results)
+    skipped = sum(item.get('status') == 'skipped' for item in device_results)
+    partial = sum(item.get('status') == 'partial' for item in device_results)
+    redis_unconfirmed = sum(item.get('error_code') == 'redis_publish_unconfirmed' for item in device_results)
+    is_complete = complete == len(device_results) and not link_rebuild_error_code
+    summary = {
+        'status': 'complete' if is_complete else 'partial',
+        'devices_total': len(device_results),
+        'devices_complete': complete,
+        'devices_failed': failed,
+        'devices_skipped': skipped,
+        'devices_partial': partial,
+        'redis_publish_unconfirmed': redis_unconfirmed,
+        'device_results': device_results,
+    }
+    if link_rebuild_error_code:
+        summary['link_rebuild_error_code'] = _safe_topology_error_code(link_rebuild_error_code)
+    return summary
+
+
+def _pending_topology_summary(topology_devices: list[dict], skipped_devices: list[dict]) -> dict:
+    results = [
+        {
+            'device_id': str(device.get('id') or ''),
+            'status': 'skipped',
+            'error_code': 'collection_policy_disabled',
+        }
+        for device in skipped_devices
+    ]
+    results.extend(
+        {'device_id': str(device.get('id') or ''), 'status': 'pending'}
+        for device in topology_devices
+    )
+    return {
+        'status': 'pending',
+        'devices_total': len(results),
+        'devices_complete': 0,
+        'devices_failed': 0,
+        'devices_skipped': len(skipped_devices),
+        'devices_partial': 0,
+        'devices_pending': len(topology_devices),
+        'redis_publish_unconfirmed': 0,
+        'device_results': results,
+    }
+
+
+async def _run_topology_discovery_batch(
+    topology_devices: list[dict],
+    skipped_devices: list[dict],
+    discover_device,
+    rebuild_links,
+) -> dict:
+    tasks = [discover_device(str(device['id'])) for device in topology_devices]
+    gathered = await asyncio.gather(*tasks, return_exceptions=True) if tasks else []
+    by_device_id = {
+        str(device.get('id') or ''): _normalize_topology_device_result(str(device.get('id') or ''), result)
+        for device, result in zip(topology_devices, gathered)
+    }
+    device_results = []
+    for device in skipped_devices:
+        device_results.append({
+            'device_id': str(device.get('id') or ''),
+            'status': 'skipped',
+            'error_code': 'collection_policy_disabled',
+        })
+    device_results.extend(by_device_id.values())
+
+    rebuild_error_code = None
+    try:
+        await asyncio.to_thread(rebuild_links)
+    except Exception as exc:
+        from services.topology_service import topology_error_code
+
+        rebuild_error_code = _safe_topology_error_code(topology_error_code(exc))
+        logger.error('Topology link rebuild failed (%s)', rebuild_error_code)
+    summary = _aggregate_topology_device_results(device_results, link_rebuild_error_code=rebuild_error_code)
+    logger.info('[Scheduler Job] Topology discovery summary: %s', summary)
+    return summary
+
 async def run_scheduled_automation_job(job_id: str):
     """
     核心执行逻辑：
@@ -49,16 +212,23 @@ async def run_scheduled_automation_job(job_id: str):
                 from services.ip_locator_service import run_unified_nsot_sync
 
                 result = await asyncio.to_thread(run_unified_nsot_sync)
+                topology_summary = result.get('topology') if isinstance(result, dict) else None
+                run_status = (
+                    'success'
+                    if isinstance(topology_summary, dict) and topology_summary.get('status') == 'complete'
+                    else 'partial'
+                )
                 now = datetime.now().isoformat()
                 conn.execute(
                     "UPDATE scheduled_jobs SET last_run_at = ?, last_run_status = ?, run_count = run_count + 1 WHERE id = ?",
-                    (now, 'success', job_id),
+                    (now, run_status, job_id),
                 )
                 conn.commit()
                 logger.info(
-                    "[Scheduler] NSOT scheduled collection completed: %s (%s), phases=%s",
+                    "[Scheduler] NSOT scheduled collection completed: %s (%s), status=%s, phases=%s",
                     job['name'],
                     job_id,
+                    run_status,
                     ','.join(sorted(result)) if isinstance(result, dict) else 'completed',
                 )
             except Exception as exc:
@@ -1045,10 +1215,15 @@ def sync_topology_and_interfaces_job():
 
     if not devices:
         logger.info("[Scheduler Job] No online devices found for interface and topology sync.")
-        return
+        return _aggregate_topology_device_results([])
 
     interface_devices = filter_devices(devices, "interface_ip")
     topology_devices = filter_devices(devices, "lldp")
+    topology_device_ids = {str(device.get('id') or '') for device in topology_devices}
+    skipped_topology_devices = [
+        device for device in devices
+        if str(device.get('id') or '') not in topology_device_ids
+    ]
 
     from concurrent.futures import ThreadPoolExecutor, as_completed
     from services.topology_service import PLATFORM_MAP
@@ -1375,24 +1550,28 @@ def sync_topology_and_interfaces_job():
     # Collect topology neighbors
     from services.topology_service import discover_lldp_neighbors, rebuild_links_from_observations
     async def run_discovery():
-        tasks = [discover_lldp_neighbors(dev['id']) for dev in topology_devices]
-        if tasks:
-            await asyncio.gather(*tasks, return_exceptions=True)
         # Every device replaces only its observations. Rebuild the canonical
         # graph exactly once after the batch to avoid concurrent delete/insert
         # races and transient partial topologies.
-        await asyncio.to_thread(rebuild_links_from_observations)
+        return await _run_topology_discovery_batch(
+            topology_devices,
+            skipped_topology_devices,
+            discover_lldp_neighbors,
+            rebuild_links_from_observations,
+        )
         
     try:
         loop = asyncio.get_running_loop()
         loop.create_task(run_discovery())
+        summary = _pending_topology_summary(topology_devices, skipped_topology_devices)
     except RuntimeError:
         loop = asyncio.new_event_loop()
         asyncio.set_event_loop(loop)
-        loop.run_until_complete(run_discovery())
+        summary = loop.run_until_complete(run_discovery())
         loop.close()
     
     logger.info("[Scheduler Job] sync_topology_and_interfaces_job completed.")
+    return summary
 
 def poll_endpoints_job():
     """Re-index cached ARP/MAC data without opening another device session.

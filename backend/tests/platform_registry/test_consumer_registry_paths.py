@@ -48,6 +48,42 @@ def test_topology_uses_registry_lldp_for_bound_device(monkeypatch):
     assert observations[0]["source_port_raw"] == "Gi1/0/1"
 
 
+@pytest.mark.parametrize(
+    ("raw_output", "expected_status"),
+    [
+        ("Total entries displayed: 0", "no_neighbors"),
+        ("unexpected parser output", "parse_failed"),
+        ("--More--", "truncated"),
+    ],
+)
+def test_topology_registry_empty_snapshot_requires_explicit_complete_output(
+    monkeypatch,
+    raw_output,
+    expected_status,
+):
+    from services import topology_service
+
+    monkeypatch.setattr(
+        "services.platform_registry_service.execute_platform_action",
+        lambda *_args, **_kwargs: {
+            "success": True,
+            "records": [],
+            "raw_output": raw_output,
+            "parse_status": "unmatched",
+        },
+    )
+
+    observations, _method = asyncio.run(
+        topology_service._collect_neighbors_with_netmiko(
+            {"id": "device-empty", "platform_profile_id": "profile-1", "tenant_id": "tenant-1"},
+            [],
+        )
+    )
+
+    assert observations == []
+    assert observations.collection_status == expected_status
+
+
 def test_ip_locator_uses_registry_interface_action(monkeypatch):
     from services import ip_locator_service
 

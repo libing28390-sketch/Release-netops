@@ -2,6 +2,7 @@ import React, { useState, useEffect } from 'react';
 import { motion, AnimatePresence } from 'motion/react';
 import { Sparkles, X, ArrowUpCircle, Info } from 'lucide-react';
 import { useSystem } from '../hooks/useSystem';
+import { authHeaders } from '../api/http';
 
 interface UpdateInfo {
   update_available: boolean;
@@ -20,7 +21,7 @@ const VersionUpdateNotifier: React.FC<{ language: string }> = ({ language }) => 
   useEffect(() => {
     const checkUpdate = async () => {
       try {
-        const res = await fetch('/api/system/check-update');
+        const res = await fetch('/api/system/check-update', { headers: authHeaders() });
         if (res.ok) {
           const data = await res.json();
           if (data.update_available) {

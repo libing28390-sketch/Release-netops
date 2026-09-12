@@ -1,5 +1,6 @@
 import os
 
+from pydantic import model_validator
 from pydantic_settings import BaseSettings
 
 
@@ -12,6 +13,28 @@ class Settings(BaseSettings):
     PROJECT_NAME: str = "NetOps Automation Platform"
     DATABASE_URL: str = ""
     REDIS_URL: str = "redis://localhost:6379/0"
+    IP_LOCATOR_CACHE_BACKEND: str = "redis"
+    IP_LOCATOR_REDIS_NAMESPACE: str = "nexora:production:locator:v1"
+    IP_LOCATOR_REDIS_CONNECT_TIMEOUT_SECONDS: float = 1.0
+    IP_LOCATOR_REDIS_SOCKET_TIMEOUT_SECONDS: float = 1.0
+    IP_LOCATOR_REDIS_FAILURE_COOLDOWN_SECONDS: float = 30.0
+    IP_LOCATOR_ROUTE_FRESH_SECONDS: int = 300
+    IP_LOCATOR_ROUTE_RETAIN_SECONDS: int = 1800
+    IP_LOCATOR_ARP_FRESH_SECONDS: int = 300
+    IP_LOCATOR_ARP_RETAIN_SECONDS: int = 1800
+    IP_LOCATOR_MAC_FRESH_SECONDS: int = 120
+    IP_LOCATOR_MAC_RETAIN_SECONDS: int = 900
+    IP_LOCATOR_RESULT_FRESH_SECONDS: int = 120
+    IP_LOCATOR_RESULT_RETAIN_SECONDS: int = 900
+    IP_LOCATOR_SUBNET_FRESH_SECONDS: int = 900
+    IP_LOCATOR_SUBNET_RETAIN_SECONDS: int = 86400
+    IP_LOCATOR_TOPOLOGY_FRESH_SECONDS: int = 172800
+    IP_LOCATOR_TOPOLOGY_RETAIN_SECONDS: int = 259200
+    IP_LOCATOR_NEGATIVE_CACHE_SECONDS: int = 15
+    IP_LOCATOR_CLI_GLOBAL_CONCURRENCY: int = 5
+    IP_LOCATOR_CLI_PER_DEVICE_CONCURRENCY: int = 1
+    IP_LOCATOR_CLI_IDLE_SECONDS: int = 15
+    IP_LOCATOR_TASK_DEADLINE_SECONDS: int = 180
     SECRET_KEY: str = "supersecret"
     CREDENTIAL_ENCRYPTION_KEY: str = "change-me-to-a-random-secret"
     ENVIRONMENT: str = "development"
@@ -138,6 +161,45 @@ class Settings(BaseSettings):
         env_file = (_ENV_FILE, _ENV_LOCAL_FILE)
         env_file_encoding = 'utf-8'
         extra = "ignore"
+
+    @model_validator(mode="after")
+    def validate_ip_locator_configuration(self) -> "Settings":
+        backend = str(self.IP_LOCATOR_CACHE_BACKEND or "").strip().lower()
+        if backend not in {"redis", "postgres"}:
+            raise ValueError("IP_LOCATOR_CACHE_BACKEND must be redis or postgres")
+        namespace = str(self.IP_LOCATOR_REDIS_NAMESPACE or "").strip()
+        if not namespace or any(char.isspace() for char in namespace):
+            raise ValueError("IP_LOCATOR_REDIS_NAMESPACE must be non-empty and contain no whitespace")
+        if len(namespace) > 128:
+            raise ValueError("IP_LOCATOR_REDIS_NAMESPACE must be at most 128 characters")
+        if self.IP_LOCATOR_REDIS_CONNECT_TIMEOUT_SECONDS <= 0:
+            raise ValueError("IP_LOCATOR_REDIS_CONNECT_TIMEOUT_SECONDS must be positive")
+        if self.IP_LOCATOR_REDIS_SOCKET_TIMEOUT_SECONDS <= 0:
+            raise ValueError("IP_LOCATOR_REDIS_SOCKET_TIMEOUT_SECONDS must be positive")
+        if self.IP_LOCATOR_REDIS_FAILURE_COOLDOWN_SECONDS <= 0:
+            raise ValueError("IP_LOCATOR_REDIS_FAILURE_COOLDOWN_SECONDS must be positive")
+        policies = (
+            ("ROUTE", self.IP_LOCATOR_ROUTE_FRESH_SECONDS, self.IP_LOCATOR_ROUTE_RETAIN_SECONDS),
+            ("ARP", self.IP_LOCATOR_ARP_FRESH_SECONDS, self.IP_LOCATOR_ARP_RETAIN_SECONDS),
+            ("MAC", self.IP_LOCATOR_MAC_FRESH_SECONDS, self.IP_LOCATOR_MAC_RETAIN_SECONDS),
+            ("RESULT", self.IP_LOCATOR_RESULT_FRESH_SECONDS, self.IP_LOCATOR_RESULT_RETAIN_SECONDS),
+            ("SUBNET", self.IP_LOCATOR_SUBNET_FRESH_SECONDS, self.IP_LOCATOR_SUBNET_RETAIN_SECONDS),
+            ("TOPOLOGY", self.IP_LOCATOR_TOPOLOGY_FRESH_SECONDS, self.IP_LOCATOR_TOPOLOGY_RETAIN_SECONDS),
+        )
+        for name, fresh, retain in policies:
+            if int(fresh) <= 0 or int(retain) < int(fresh):
+                raise ValueError(f"IP_LOCATOR_{name}_RETAIN_SECONDS must be >= positive FRESH_SECONDS")
+        if int(self.IP_LOCATOR_NEGATIVE_CACHE_SECONDS) <= 0:
+            raise ValueError("IP_LOCATOR_NEGATIVE_CACHE_SECONDS must be positive")
+        if int(self.IP_LOCATOR_CLI_GLOBAL_CONCURRENCY) <= 0:
+            raise ValueError("IP_LOCATOR_CLI_GLOBAL_CONCURRENCY must be positive")
+        if int(self.IP_LOCATOR_CLI_PER_DEVICE_CONCURRENCY) <= 0:
+            raise ValueError("IP_LOCATOR_CLI_PER_DEVICE_CONCURRENCY must be positive")
+        if int(self.IP_LOCATOR_CLI_IDLE_SECONDS) <= 0:
+            raise ValueError("IP_LOCATOR_CLI_IDLE_SECONDS must be positive")
+        if int(self.IP_LOCATOR_TASK_DEADLINE_SECONDS) <= 0:
+            raise ValueError("IP_LOCATOR_TASK_DEADLINE_SECONDS must be positive")
+        return self
 
 settings = Settings()
 

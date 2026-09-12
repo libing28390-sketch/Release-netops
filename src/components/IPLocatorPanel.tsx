@@ -7,6 +7,7 @@ import {
   type MacLookupInfo,
 } from '../utils/macLookup';
 import { formatLocationType } from '../utils/ipLocator';
+import { locateIpWithRun, type LocatorRunStage } from '../utils/ipLocatorRuns';
 
 interface IPLocatorProps {
   language: string;
@@ -51,6 +52,7 @@ const IPLocatorPanel: React.FC<IPLocatorProps> = ({ language }) => {
   const zh = language === 'zh';
   const [ip, setIp] = useState('');
   const [loading, setLoading] = useState(false);
+  const [locateStage, setLocateStage] = useState<LocatorRunStage | 'idle'>('idle');
   const [result, setResult] = useState<LocateResult | null>(null);
   const [error, setError] = useState('');
   const [showDetails, setShowDetails] = useState(false);
@@ -62,20 +64,16 @@ const IPLocatorPanel: React.FC<IPLocatorProps> = ({ language }) => {
     const trimmed = ip.trim();
     if (!trimmed) return;
     setLoading(true);
+    setLocateStage('queued');
     setError('');
     setResult(null);
 
     try {
-      const resp = await fetch('/api/ip-locator/locate', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${token}` },
-        body: JSON.stringify({ ip: trimmed }),
+      const data = await locateIpWithRun<LocateResult>({
+        ip: trimmed,
+        token,
+        onStage: setLocateStage,
       });
-      if (!resp.ok) {
-        const errData = await resp.json().catch(() => ({}));
-        throw new Error(errData.detail || `HTTP ${resp.status}`);
-      }
-      const data: LocateResult = await resp.json();
       setResult(data);
 
       // 追加历史
@@ -92,6 +90,7 @@ const IPLocatorPanel: React.FC<IPLocatorProps> = ({ language }) => {
       setError(e instanceof Error ? e.message : String(e));
     } finally {
       setLoading(false);
+      setLocateStage('idle');
     }
   }, [ip, token]);
 
@@ -136,7 +135,11 @@ const IPLocatorPanel: React.FC<IPLocatorProps> = ({ language }) => {
             <Loader2 size={18} className="animate-spin text-[#0891b2]" />
             <div>
               <p className="text-sm font-medium text-[#164e63]">{zh ? '正在定位...' : 'Locating...'}</p>
-              <p className="text-[11px] text-[#0891b2] mt-0.5">{zh ? '正在查询网关 ARP 表和交换机 MAC 地址表，请稍候' : 'Querying gateway ARP tables and switch MAC tables, please wait'}</p>
+              <p className="text-[11px] text-[#0891b2] mt-0.5">{locateStage === 'queued'
+                ? (zh ? '定位任务已排队，等待设备采集配额…' : 'Locator queued, waiting for a device collection slot…')
+                : locateStage === 'legacy'
+                  ? (zh ? '正在使用兼容定位接口…' : 'Using the compatible locator endpoint…')
+                  : (zh ? '正在按路由、ARP、MAC 和拓扑逐跳追踪…' : 'Tracing route, ARP, MAC and topology hop by hop…')}</p>
             </div>
           </div>
         </div>

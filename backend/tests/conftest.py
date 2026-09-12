@@ -28,7 +28,6 @@ os.environ.setdefault(
     "CREDENTIAL_ENCRYPTION_KEY",
     "test-only-credential-placeholder",
 )
-os.environ.setdefault("INITIAL_ADMIN_PASSWORD", "TestOnly!Bootstrap234")
 
 import database
 import database.core as database_core

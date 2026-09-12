@@ -157,6 +157,51 @@ class _MacQueryRecords(list[dict[str, Any]]):
         self.status: dict[str, Any] = dict(status or {})
 
 
+class _NeighborQueryRecords(list[dict[str, Any]]):
+    """List-compatible neighbor result with non-sensitive collection status."""
+
+    def __init__(
+        self,
+        records: list[dict[str, Any]] | None = None,
+        status: dict[str, Any] | None = None,
+    ) -> None:
+        super().__init__(records or [])
+        self.status: dict[str, Any] = dict(status or {})
+
+
+class _LocatorSnapshotRecords(list[dict[str, Any]]):
+    """Bounded full-table snapshot rows plus their completeness status."""
+
+    def __init__(
+        self,
+        records: list[dict[str, Any]] | None = None,
+        status: dict[str, Any] | None = None,
+    ) -> None:
+        super().__init__(records or [])
+        self.status: dict[str, Any] = dict(status or {})
+
+
+_LOCATOR_SNAPSHOT_MAX_BYTES = 2_000_000
+_LOCATOR_SNAPSHOT_MAX_RECORDS = 20_000
+_LOCATOR_SNAPSHOT_TRUNCATION_MARKERS = (
+    "--more--",
+    "--- more ---",
+    "press any key",
+    "output truncated",
+    "result truncated",
+)
+
+
+def _snapshot_output_size(category: dict[str, Any]) -> tuple[int, str]:
+    outputs = [
+        str(item.get("output") or "")
+        for item in category.get("raw_outputs") or []
+        if isinstance(item, dict)
+    ]
+    text = "\n".join(outputs)
+    return len(text.encode("utf-8", errors="replace")), text
+
+
 def _mac_lookup_status(
     device_info: dict,
     status: str,
@@ -219,6 +264,29 @@ _MAC_UNSUPPORTED_OUTPUT_MARKERS = (
 def _mac_output_is_unsupported(output: str) -> bool:
     normalized = str(output or '').strip().lower()
     return bool(normalized and any(marker in normalized for marker in _MAC_UNSUPPORTED_OUTPUT_MARKERS))
+
+
+_MAC_NOT_FOUND_MARKERS = (
+    'no matching', 'no entry', 'no records', 'table is empty',
+    'total entries: 0', 'no mac address found',
+)
+_MAC_TABLE_HEADER_MARKERS = (
+    'mac address', 'mac-address', 'destination address', 'vlan id',
+    'port/nickname', 'aging',
+)
+
+
+def _mac_output_status(output: str) -> str:
+    normalized = str(output or '').strip().lower()
+    if not normalized:
+        return 'query_failed'
+    if _mac_output_is_unsupported(normalized):
+        return 'unsupported'
+    if any(marker in normalized for marker in _LOCATOR_SNAPSHOT_TRUNCATION_MARKERS):
+        return 'parse_incomplete'
+    if any(marker in normalized for marker in _MAC_NOT_FOUND_MARKERS + _MAC_TABLE_HEADER_MARKERS):
+        return 'not_found'
+    return 'parse_incomplete'
 
 # ARP 行正则：匹配 IP、MAC（各种分隔格式）和接口
 _ARP_LINE_RE = re.compile(
@@ -407,6 +475,29 @@ def _normalize_arp_record(record: dict[str, Any], device_info: dict[str, Any]) -
         'source_device_id': device_info.get('id'),
         'source_device': device_info.get('hostname') or device_info.get('ip_address'),
     }
+    entry_type = _record_value(record, 'type', 'entry_type', 'arp_type', 'kind')
+    flags = _record_value(record, 'flags', 'flag', 'arp_flags')
+    if entry_type not in (None, ''):
+        normalized['type'] = str(entry_type).strip()
+    if flags not in (None, ''):
+        normalized['flags'] = str(flags).strip()
+    proxy_value = _record_value(record, 'is_proxy', 'proxy_arp', 'proxy')
+    local_value = _record_value(record, 'is_local', 'is_self', 'local')
+    is_proxy = (
+        str(proxy_value).strip().lower() in {'1', 'true', 'yes', 'proxy'}
+        or 'proxy' in str(entry_type or '').strip().lower()
+        or 'proxy' in str(flags or '').strip().lower()
+        or bool(re.search(r'(?<![a-z])p(?![a-z])', str(flags or '').strip().lower()))
+    )
+    if is_proxy:
+        normalized['is_proxy'] = True
+    is_local = (
+        str(local_value).strip().lower() in {'1', 'true', 'yes', 'local', 'self'}
+        or str(entry_type or '').strip().lower() in {'local', 'self', 'receive', 'device'}
+        or bool(re.search(r'(?<![a-z])l(?![a-z])', str(flags or '').strip().lower()))
+    )
+    if is_local:
+        normalized['is_local'] = True
     vlan_raw = _record_value(record, 'vlan_id', 'vlan', 'vid', 'vlanid')
     try:
         vlan_id = int(str(vlan_raw).strip())
@@ -488,6 +579,21 @@ def _parse_arp_output_fallback(output: str, device_info: dict[str, Any]) -> list
             'mac': mac_match.group(0),
             'interface': interface,
             'vlan': vlan,
+            'type': next(
+                (
+                    token.strip('(),[]')
+                    for token in line[mac_match.end():].split()
+                    if token.strip('(),[]').lower() in {'dynamic', 'static', 'proxy', 'local', 'self', 'permanent'}
+                ),
+                '',
+            ),
+            'flags': ''.join(
+                flag for flag, pattern in (
+                    ('P', r'(?<![a-z])p(?![a-z])'),
+                    ('L', r'(?<![a-z])l(?![a-z])'),
+                )
+                if re.search(pattern, line.lower())
+            ),
         }
     flush_pending()
     return records
@@ -675,6 +781,10 @@ def _prune_memory_cache(now_ts: float):
 def _load_eligible_devices(
     role_filter: list[str] | None = None,
     diagnostics: dict[str, int] | None = None,
+    *,
+    tenant_id: str | None = None,
+    site_id: str | None = None,
+    device_ids: list[str] | None = None,
 ) -> list[dict]:
     """加载在线且有 SSH 凭据的设备列表，可按 role 过滤。
 
@@ -683,8 +793,35 @@ def _load_eligible_devices(
     """
     conn = get_db_connection()
     try:
-        sql = "SELECT * FROM devices" if diagnostics is not None else "SELECT * FROM devices WHERE status = 'online'"
-        rows = conn.execute(sql).fetchall()
+        conditions: list[str] = []
+        parameters: list[Any] = []
+        if diagnostics is None:
+            conditions.append("d.status = 'online'")
+        if tenant_id is not None:
+            conditions.append("d.tenant_id = ?")
+            parameters.append(str(tenant_id))
+        if site_id is not None:
+            conditions.append("(d.site_id = ? OR (COALESCE(d.site_id, '') = '' AND d.site = ?))")
+            parameters.extend((str(site_id), str(site_id)))
+        if device_ids is not None:
+            selected_ids = sorted({str(item) for item in device_ids if item})
+            if not selected_ids:
+                return []
+            conditions.append(f"d.id IN ({','.join('?' for _ in selected_ids)})")
+            parameters.extend(selected_ids)
+        where = f" WHERE {' AND '.join(conditions)}" if conditions else ""
+        query = (
+            "SELECT d.*, p.connection_driver AS profile_connection_driver, "
+            "p.platform_code AS profile_platform_code, "
+            "p.parser_platform AS profile_parser_platform "
+            "FROM devices d LEFT JOIN platform_profiles p ON p.id = d.platform_profile_id"
+            f"{where}"
+        )
+        rows = (
+            conn.execute(query, tuple(parameters)).fetchall()
+            if parameters
+            else conn.execute(query).fetchall()
+        )
     finally:
         conn.close()
 
@@ -698,6 +835,9 @@ def _load_eligible_devices(
     devices = []
     for r in rows:
         d = dict(r)
+        d["connection_driver"] = d.pop("profile_connection_driver", None) or ""
+        d["platform_code"] = d.pop("profile_platform_code", None) or ""
+        d["parser_platform"] = d.pop("profile_parser_platform", None) or ""
         if str(d.get('status') or '').strip().lower() != 'online':
             counters['not_online'] += 1
             continue
@@ -790,6 +930,21 @@ def _send_command(device_info: dict, command: str, force_refresh: bool = False) 
         if cached is not None:
             return cached
 
+    # The four-stage locator holds an exclusive, PostgreSQL-budgeted session
+    # for one device stage. Reuse it at this shared command boundary rather
+    # than opening a Netmiko connection for each route/ARP/MAC command.
+    try:
+        from services.ip_locator_session_pool import get_active_locator_session
+
+        active_session = get_active_locator_session(device_info)
+    except Exception:
+        active_session = None
+    if active_session is not None:
+        output = active_session.send_command_text(command, read_timeout=30)
+        if not force_refresh:
+            set_cached_command(device_ip, command, output)
+        return output
+
     port = int(device_info.get('port') or device_info.get('management_port') or 22)
     from drivers.ssh_compat import is_ssh_port_open
     if not is_ssh_port_open(device_ip, port):
@@ -867,6 +1022,9 @@ def _targeted_arp_query(
     if device_info.get('platform_profile_id'):
         try:
             from services.platform_registry_service import execute_platform_action
+            from services.ip_locator_session_pool import get_active_locator_session
+
+            active_session = get_active_locator_session(device_info)
 
             result = execute_platform_action(
                 str(device_info['id']),
@@ -878,6 +1036,7 @@ def _targeted_arp_query(
                     'tenant_id': device_info.get('tenant_id') or '',
                 },
                 parameters={'vrf': vrf} if vrf else None,
+                _session=active_session,
             )
             if result.get('success'):
                 for record in result.get('records') or []:
@@ -955,6 +1114,279 @@ def _targeted_arp_query(
     return _collect_arp_from_device_for_ip(device_info, target_ip, force_refresh=force_refresh)
 
 
+_ARP_UNSUPPORTED_OUTPUT_MARKERS = (
+    'unrecognized command', 'unknown command', 'command not found',
+    'not supported', 'unsupported', 'invalid input', 'invalid command',
+    'incomplete command', 'wrong parameter', 'too many parameters',
+    '% invalid', '% incomplete',
+)
+_ARP_NOT_FOUND_MARKERS = (
+    'no matching arp', 'no arp entry', 'no matching entry',
+    'no entry found', 'arp entry not found', 'not found',
+    'no matching records', 'table is empty',
+)
+_ARP_TABLE_HEADER_MARKERS = (
+    'internet address', 'ip address', 'protocol address', 'hardware address',
+    'arp table', 'address         age',
+)
+
+
+def _arp_output_status(output: Any) -> str:
+    normalized = str(output or '').strip().lower()
+    if not normalized:
+        return 'query_failed'
+    if any(marker in normalized for marker in _ARP_UNSUPPORTED_OUTPUT_MARKERS):
+        return 'unsupported'
+    if any(marker in normalized for marker in _ARP_NOT_FOUND_MARKERS):
+        return 'not_found'
+    if any(marker in normalized for marker in _ARP_TABLE_HEADER_MARKERS):
+        return 'not_found'
+    return 'parse_incomplete'
+
+
+def _targeted_arp_query_status(
+    device_info: dict,
+    target_ip: str,
+    vrf: str | None = None,
+    force_refresh: bool = True,
+) -> dict[str, Any]:
+    """Return a structured targeted ARP outcome without broad-table fallback.
+
+    Only a successful targeted command with an explicit empty-table/no-match
+    response is eligible for negative caching. Unsupported syntax, failed
+    actions, and unrecognized output remain distinct outcomes.
+    """
+    if device_info.get('platform_profile_id'):
+        try:
+            from services.platform_registry_service import execute_platform_action
+            from services.ip_locator_session_pool import get_active_locator_session
+
+            active_session = get_active_locator_session(device_info)
+            action = 'get_arp_table_vrf' if vrf else 'get_arp_table'
+            result = execute_platform_action(
+                str(device_info.get('id') or ''),
+                action,
+                user={
+                    'id': f'ip-locator:{device_info.get("id") or "unknown"}',
+                    'username': 'ip-locator',
+                    'role': 'Operator',
+                    'tenant_id': device_info.get('tenant_id') or '',
+                },
+                parameters={'vrf': vrf} if vrf else None,
+                _session=active_session,
+            )
+        except Exception as exc:
+            logger.debug(
+                "[IPLocator] Registry ARP query failed (%s)",
+                type(exc).__name__,
+            )
+            return {'status': 'query_failed', 'record': None, 'error_code': 'ARP_QUERY_FAILED'}
+
+        error_code = str(result.get('error_code') or '').strip().upper()
+        parse_status = str(result.get('parse_status') or '').strip().lower()
+        raw_output = str(result.get('raw_output') or '')
+        if (
+            error_code in {'UNSUPPORTED_ACTION', 'UNSUPPORTED_PLATFORM', 'COMMAND_UNSUPPORTED'}
+            or parse_status in {'unsupported', 'unsupported_by_platform'}
+            or _arp_output_status(raw_output) == 'unsupported'
+        ):
+            return {'status': 'unsupported', 'record': None, 'error_code': error_code or 'ARP_UNSUPPORTED'}
+        if not result.get('success') or parse_status in {'failed', 'device_error', 'parse_failed', 'timeout'}:
+            return {'status': 'query_failed', 'record': None, 'error_code': error_code or 'ARP_QUERY_FAILED'}
+        matches = []
+        for record in result.get('records') or []:
+            normalized = _normalize_arp_record(record, device_info)
+            if normalized and normalized['ip'] == target_ip:
+                matches.append(normalized)
+        unique_matches = {
+            (item.get('mac'), item.get('interface'), item.get('vlan')): item
+            for item in matches
+        }
+        if len(unique_matches) > 1:
+            return {'status': 'ambiguous', 'record': None, 'records': list(unique_matches.values())}
+        if unique_matches:
+            return {'status': 'found', 'record': next(iter(unique_matches.values())), 'command': result.get('command') or action}
+        output_status = _arp_output_status(raw_output)
+        if output_status == 'not_found' or parse_status in {'success', 'complete', 'completed', 'no_records', 'not_found'}:
+            return {'status': 'not_found', 'record': None, 'command': result.get('command') or action}
+        return {
+            'status': 'parse_incomplete',
+            'record': None,
+            'error_code': error_code or 'ARP_PARSE_INCOMPLETE',
+        }
+
+    platform = str(device_info.get('platform') or '').strip().lower()
+    if vrf:
+        if platform in ('cisco_ios', 'cisco_nxos', 'arista_eos', 'ruijie_rgos'):
+            command = 'show ip arp vrf {vrf} {ip}'.format(vrf=vrf, ip=target_ip)
+        elif platform in ('huawei_vrp', 'h3c_comware'):
+            command = 'display arp vpn-instance {vrf} | include {ip}'.format(vrf=vrf, ip=target_ip)
+        elif platform == 'juniper_junos':
+            command = 'show arp table {vrf} no-resolve | match {ip}'.format(vrf=vrf, ip=target_ip)
+        else:
+            template = _TARGETED_ARP_COMMANDS.get(platform)
+            command = template.format(ip=target_ip) if template else ''
+    else:
+        template = _TARGETED_ARP_COMMANDS.get(platform)
+        command = template.format(ip=target_ip) if template else ''
+    if not command:
+        return {'status': 'unsupported', 'record': None, 'error_code': 'ARP_COMMAND_UNSUPPORTED'}
+    try:
+        output = _send_command(device_info, command, force_refresh=force_refresh)
+    except Exception as exc:
+        logger.debug("[IPLocator] Targeted ARP query failed (%s)", type(exc).__name__)
+        return {'status': 'query_failed', 'record': None, 'error_code': 'ARP_QUERY_FAILED', 'command': command}
+    matches = [
+        normalized
+        for normalized in _parse_arp_output_fallback(str(output or ''), device_info)
+        if normalized['ip'] == target_ip
+    ]
+    unique_matches = {
+        (item.get('mac'), item.get('interface'), item.get('vlan')): item
+        for item in matches
+    }
+    if len(unique_matches) > 1:
+        return {'status': 'ambiguous', 'record': None, 'records': list(unique_matches.values())}
+    if unique_matches:
+        return {'status': 'found', 'record': next(iter(unique_matches.values())), 'command': command}
+    for line in str(output or '').splitlines():
+        match = _ARP_LINE_RE.search(line) if target_ip in line else None
+        if match and match.group('ip') == target_ip:
+            mac = _normalize_mac(match.group('mac'))
+            if mac:
+                return {
+                    'status': 'found',
+                    'record': {
+                        'ip': target_ip,
+                        'mac': mac,
+                        'interface': match.group('intf'),
+                        'source_device_id': device_info.get('id'),
+                        'source_device': device_info.get('hostname') or device_info.get('ip_address'),
+                    },
+                    'command': command,
+                }
+    output_status = _arp_output_status(output)
+    return {
+        'status': output_status,
+        'record': None,
+        'error_code': '' if output_status == 'not_found' else f'ARP_{output_status.upper()}',
+        'command': command,
+    }
+
+
+def _collect_arp_snapshot(
+    device_info: dict,
+    vrf: str | None = None,
+) -> _LocatorSnapshotRecords:
+    """Collect one bounded device-wide ARP snapshot for unsupported filters."""
+    selected_vrf = str(vrf or "").strip()
+    if selected_vrf and selected_vrf.lower() != "default" and not device_info.get("platform_profile_id"):
+        return _LocatorSnapshotRecords(
+            [],
+            {"status": "unsupported", "error_code": "ARP_VRF_SNAPSHOT_UNSUPPORTED"},
+        )
+    try:
+        from services.ip_locator_session_pool import get_active_locator_session
+
+        active_session = get_active_locator_session(device_info)
+        if selected_vrf and selected_vrf.lower() != "default":
+            from services.platform_registry_service import execute_platform_action
+
+            action_result = execute_platform_action(
+                str(device_info.get("id") or ""),
+                "get_arp_table_vrf",
+                user={
+                    "id": f'ip-locator:{device_info.get("id") or "unknown"}',
+                    "username": "ip-locator",
+                    "role": "Operator",
+                    "tenant_id": device_info.get("tenant_id") or "",
+                },
+                parameters={"vrf": selected_vrf},
+                _session=active_session,
+            )
+            category = {
+                "success": bool(action_result.get("success")),
+                "error_code": action_result.get("error_code") or "",
+                "parse_status": action_result.get("parse_status") or "",
+                "records": action_result.get("records") or [],
+                "raw_outputs": [{"output": action_result.get("raw_output") or ""}],
+            }
+        else:
+            payload = collect_operational_data(
+                device_info,
+                categories=["arp"],
+                policy_override_categories={"arp"},
+                _connection_session=active_session.legacy_client() if active_session else None,
+                _platform_action_session=active_session,
+            )
+            category = next(
+                (item for item in payload.get("categories", []) if item.get("key") == "arp"),
+                None,
+            )
+            if category is None:
+                return _LocatorSnapshotRecords(
+                    [],
+                    {"status": "unsupported", "error_code": "ARP_TABLE_UNSUPPORTED"},
+                )
+    except Exception as exc:
+        logger.debug("[IPLocator] ARP snapshot collection failed (%s)", type(exc).__name__)
+        return _LocatorSnapshotRecords(
+            [],
+            {"status": "query_failed", "error_code": "ARP_SNAPSHOT_FAILED"},
+        )
+
+    error_code = str(category.get("error_code") or "").strip().upper()
+    parse_status = str(category.get("parse_status") or "").strip().lower()
+    raw_size, raw_output = _snapshot_output_size(category)
+    if (
+        error_code in {"UNSUPPORTED_ACTION", "UNSUPPORTED_PLATFORM"}
+        or parse_status == "unsupported_by_platform"
+        or _arp_output_status(raw_output) == "unsupported"
+    ):
+        return _LocatorSnapshotRecords(
+            [],
+            {"status": "unsupported", "error_code": error_code or "ARP_TABLE_UNSUPPORTED"},
+        )
+    if not category.get("success") or parse_status in {"failed", "device_error", "timeout"}:
+        return _LocatorSnapshotRecords(
+            [],
+            {"status": "query_failed", "error_code": error_code or "ARP_SNAPSHOT_FAILED"},
+        )
+    if raw_size > _LOCATOR_SNAPSHOT_MAX_BYTES or any(
+        marker in raw_output.lower() for marker in _LOCATOR_SNAPSHOT_TRUNCATION_MARKERS
+    ):
+        return _LocatorSnapshotRecords(
+            [],
+            {"status": "parse_incomplete", "error_code": "ARP_SNAPSHOT_TRUNCATED"},
+        )
+
+    records: list[dict[str, Any]] = []
+    for record in category.get("records") or []:
+        normalized = _normalize_arp_record(record, device_info)
+        if normalized:
+            records.append(normalized)
+    if not records and raw_output:
+        records = _parse_arp_output_fallback(raw_output, device_info)
+    if len(records) > _LOCATOR_SNAPSHOT_MAX_RECORDS:
+        return _LocatorSnapshotRecords(
+            [],
+            {"status": "parse_incomplete", "error_code": "ARP_SNAPSHOT_RECORD_LIMIT"},
+        )
+    if records:
+        return _LocatorSnapshotRecords(
+            records,
+            {"status": "found", "record_count": len(records), "coverage": "full"},
+        )
+    if _arp_output_status(raw_output) == "not_found" or parse_status in {
+        "success", "matched", "complete", "completed", "no_records",
+    }:
+        return _LocatorSnapshotRecords([], {"status": "not_found", "coverage": "full"})
+    return _LocatorSnapshotRecords(
+        [],
+        {"status": "parse_incomplete", "error_code": "ARP_SNAPSHOT_PARSE_INCOMPLETE"},
+    )
+
+
 def _collect_arp_from_device_for_ip(
     device_info: dict,
     target_ip: str,
@@ -962,10 +1394,15 @@ def _collect_arp_from_device_for_ip(
 ) -> dict | None:
     """全表采集 ARP 并搜索目标 IP（回退路径），找到即返回，不继续解析剩余记录。"""
     try:
+        from services.ip_locator_session_pool import get_active_locator_session
+
+        active_session = get_active_locator_session(device_info)
         payload = collect_operational_data(
             device_info,
             categories=['arp'],
             policy_override_categories={'arp'} if device_info.get('_arp_policy_override') else None,
+            _connection_session=active_session.legacy_client() if active_session else None,
+            _platform_action_session=active_session,
         )
     except Exception as exc:
         logger.debug(f"[IPLocator] ARP collect failed on {device_info.get('ip_address')}: {exc}")
@@ -1013,6 +1450,7 @@ def _targeted_mac_query(
     device_info: dict,
     target_mac: str,
     force_refresh: bool = False,
+    allow_full_table_fallback: bool = True,
 ) -> list[dict]:
     """
     向设备发送精确 MAC 地址表查询命令。
@@ -1038,6 +1476,9 @@ def _targeted_mac_query(
         command = 'get_mac_table'
         try:
             from services.platform_registry_service import execute_platform_action
+            from services.ip_locator_session_pool import get_active_locator_session
+
+            active_session = get_active_locator_session(device_info)
 
             result = execute_platform_action(
                 str(device_info['id']),
@@ -1048,6 +1489,7 @@ def _targeted_mac_query(
                     'role': 'Operator',
                     'tenant_id': device_info.get('tenant_id') or '',
                 },
+                _session=active_session,
             )
             records = []
             if result.get('success'):
@@ -1111,13 +1553,32 @@ def _targeted_mac_query(
                     reason='MAC 表查询或解析失败',
                     error_code=error_code or 'MAC_QUERY_FAILED',
                 )
+            empty_status = _mac_output_status(str(result.get('raw_output') or error_text))
+            if empty_status == 'unsupported':
+                return _mac_query_result(
+                    device_info,
+                    [],
+                    'unsupported',
+                    command=str(result.get('command') or command),
+                    reason='设备拒绝或不支持 MAC 表查询',
+                    error_code=error_code or 'MAC_COMMAND_UNSUPPORTED',
+                )
+            if empty_status == 'not_found' or parse_status in {'matched', 'success', 'complete', 'completed', 'no_records'}:
+                return _mac_query_result(
+                    device_info,
+                    [],
+                    'not_found',
+                    command=str(result.get('command') or command),
+                    reason='已查询 MAC 表，但未找到目标地址',
+                    error_code='MAC_NOT_FOUND',
+                )
             return _mac_query_result(
                 device_info,
                 [],
-                'not_found',
+                'parse_incomplete' if empty_status == 'parse_incomplete' else 'query_failed',
                 command=str(result.get('command') or command),
-                reason='已查询 MAC 表，但未找到目标地址',
-                error_code='MAC_NOT_FOUND',
+                reason='MAC 表输出无法确认目标状态',
+                error_code='MAC_PARSE_INCOMPLETE' if empty_status == 'parse_incomplete' else 'MAC_QUERY_FAILED',
             )
         except Exception as exc:
             logger.debug(f"[IPLocator] Registry MAC query failed on {device_info.get('ip_address')}: {exc}")
@@ -1156,7 +1617,8 @@ def _targeted_mac_query(
                     command=cmd,
                     reason='MAC 表已命中目标地址',
                 )
-            if _mac_output_is_unsupported(output):
+            output_status = _mac_output_status(output)
+            if output_status == "unsupported":
                 return _mac_query_result(
                     device_info,
                     [],
@@ -1165,16 +1627,34 @@ def _targeted_mac_query(
                     reason='设备拒绝或不支持该 MAC 表查询命令',
                     error_code='MAC_COMMAND_UNSUPPORTED',
                 )
+            if output_status == "not_found":
+                return _mac_query_result(
+                    device_info,
+                    [],
+                    'not_found',
+                    command=cmd,
+                    reason='已查询 MAC 表，但未找到目标地址',
+                    error_code='MAC_NOT_FOUND',
+                )
             return _mac_query_result(
                 device_info,
                 [],
-                'not_found',
+                'parse_incomplete' if output_status == 'parse_incomplete' else 'query_failed',
                 command=cmd,
-                reason='已查询 MAC 表，但未找到目标地址',
-                error_code='MAC_NOT_FOUND',
+                reason='MAC 表输出无法确认目标状态',
+                error_code='MAC_PARSE_INCOMPLETE' if output_status == 'parse_incomplete' else 'MAC_QUERY_FAILED',
             )
         except Exception as exc:
             logger.debug(f"[IPLocator] Targeted MAC query failed on {device_info.get('ip_address')}: {exc}")
+            if not allow_full_table_fallback:
+                return _mac_query_result(
+                    device_info,
+                    [],
+                    'query_failed',
+                    command=cmd,
+                    reason='MAC 表精确查询执行失败',
+                    error_code='MAC_QUERY_FAILED',
+                )
             # Preserve the historical full-table fallback for platforms whose
             # targeted syntax/transport is unavailable.  If it yields data,
             # the caller still receives a successful ``found`` status;
@@ -1195,7 +1675,16 @@ def _targeted_mac_query(
                 error_code='MAC_QUERY_FAILED',
             )
 
-    # 回退：全表采集 + 过滤
+    if not allow_full_table_fallback:
+        return _mac_query_result(
+            device_info,
+            [],
+            'unsupported',
+            reason='平台没有目标 MAC 精确查询命令',
+            error_code='MAC_COMMAND_UNSUPPORTED',
+        )
+    # Legacy callers retain their historical full-table fallback. The V2
+    # trace uses a shared, bounded full snapshot task instead.
     return _collect_mac_from_device_for_mac(device_info, target_mac, force_refresh=force_refresh)
 
 
@@ -1225,7 +1714,15 @@ def _collect_mac_from_device_for_mac(
 ) -> list[dict]:
     """全表采集 MAC 地址表并过滤目标 MAC（回退路径）。"""
     try:
-        payload = collect_operational_data(device_info, categories=['mac_table'])
+        from services.ip_locator_session_pool import get_active_locator_session
+
+        active_session = get_active_locator_session(device_info)
+        payload = collect_operational_data(
+            device_info,
+            categories=['mac_table'],
+            _connection_session=active_session.legacy_client() if active_session else None,
+            _platform_action_session=active_session,
+        )
     except Exception as exc:
         logger.debug(f"[IPLocator] MAC collect failed on {device_info.get('ip_address')}: {exc}")
         return _mac_query_result(
@@ -1353,9 +1850,129 @@ def _collect_mac_from_device_for_mac(
     )
 
 
+def _collect_mac_table_snapshot(device_info: dict) -> _LocatorSnapshotRecords:
+    """Collect one bounded full MAC table for V2 snapshot sharing."""
+    if not should_collect(device_info, "mac_table"):
+        return _LocatorSnapshotRecords(
+            [],
+            {"status": "disabled", "error_code": "MAC_TABLE_DISABLED"},
+        )
+    try:
+        from services.ip_locator_session_pool import get_active_locator_session
+
+        active_session = get_active_locator_session(device_info)
+        payload = collect_operational_data(
+            device_info,
+            categories=["mac_table"],
+            _connection_session=active_session.legacy_client() if active_session else None,
+            _platform_action_session=active_session,
+        )
+    except Exception as exc:
+        logger.debug("[IPLocator] MAC snapshot collection failed (%s)", type(exc).__name__)
+        return _LocatorSnapshotRecords(
+            [],
+            {"status": "query_failed", "error_code": "MAC_SNAPSHOT_FAILED"},
+        )
+
+    category = next(
+        (item for item in payload.get("categories", []) if item.get("key") == "mac_table"),
+        None,
+    )
+    if category is None:
+        return _LocatorSnapshotRecords(
+            [],
+            {"status": "unsupported", "error_code": "MAC_TABLE_UNSUPPORTED"},
+        )
+    error_code = str(category.get("error_code") or "").strip().upper()
+    parse_status = str(category.get("parse_status") or "").strip().lower()
+    raw_size, raw_output = _snapshot_output_size(category)
+    if (
+        error_code in {"UNSUPPORTED_ACTION", "UNSUPPORTED_PLATFORM"}
+        or parse_status == "unsupported_by_platform"
+        or _mac_output_is_unsupported(raw_output)
+    ):
+        return _LocatorSnapshotRecords(
+            [],
+            {"status": "unsupported", "error_code": error_code or "MAC_TABLE_UNSUPPORTED"},
+        )
+    if not category.get("success") or parse_status in {"failed", "device_error", "timeout"}:
+        return _LocatorSnapshotRecords(
+            [],
+            {"status": "query_failed", "error_code": error_code or "MAC_SNAPSHOT_FAILED"},
+        )
+    if raw_size > _LOCATOR_SNAPSHOT_MAX_BYTES or any(
+        marker in raw_output.lower() for marker in _LOCATOR_SNAPSHOT_TRUNCATION_MARKERS
+    ):
+        return _LocatorSnapshotRecords(
+            [],
+            {"status": "parse_incomplete", "error_code": "MAC_SNAPSHOT_TRUNCATED"},
+        )
+
+    records: list[dict[str, Any]] = []
+    for item in category.get("records") or []:
+        mac = _normalize_mac(str(
+            item.get("destination_address")
+            or item.get("mac_address")
+            or item.get("mac")
+            or ""
+        ))
+        if not mac:
+            continue
+        port = item.get("destination_port") or item.get("port") or item.get("interface") or ""
+        if isinstance(port, (list, tuple)):
+            port = port[0] if port else ""
+        records.append({
+            "mac": mac,
+            "port": str(port or "").strip(),
+            "vlan": str(item.get("vlan_id") or item.get("vlan") or "").strip(),
+            "vlan_source": "mac_table",
+            "type": str(item.get("type") or item.get("entry_type") or "").strip(),
+            "switch_id": device_info.get("id"),
+            "switch_name": device_info.get("hostname") or device_info.get("ip_address"),
+        })
+    if not records and raw_output:
+        for line in raw_output.splitlines():
+            parsed = _parse_mac_table_line(line)
+            if not parsed:
+                continue
+            records.append({
+                "mac": parsed["mac"],
+                "port": parsed["port"],
+                "vlan": parsed["vlan"],
+                "vlan_source": "mac_table",
+                "type": parsed["type"],
+                "switch_id": device_info.get("id"),
+                "switch_name": device_info.get("hostname") or device_info.get("ip_address"),
+            })
+    if len(records) > _LOCATOR_SNAPSHOT_MAX_RECORDS:
+        return _LocatorSnapshotRecords(
+            [],
+            {"status": "parse_incomplete", "error_code": "MAC_SNAPSHOT_RECORD_LIMIT"},
+        )
+    if records:
+        return _LocatorSnapshotRecords(
+            records,
+            {"status": "found", "record_count": len(records), "coverage": "full"},
+        )
+    lowered = raw_output.lower()
+    if _mac_output_status(raw_output) == "not_found" or any(marker in lowered for marker in (
+        "no matching", "no entry", "no records", "table is empty", "total entries: 0",
+    )):
+        return _LocatorSnapshotRecords([], {"status": "not_found", "coverage": "full"})
+    if parse_status in {"matched", "success", "complete", "completed", "no_records"}:
+        return _LocatorSnapshotRecords([], {"status": "not_found", "coverage": "full"})
+    return _LocatorSnapshotRecords(
+        [],
+        {"status": "parse_incomplete", "error_code": "MAC_SNAPSHOT_PARSE_INCOMPLETE"},
+    )
+
+
 def _collect_lldp_from_device(device_info: dict) -> list[dict]:
     """Collect LLDP neighbor evidence from one device."""
     try:
+        from services.ip_locator_session_pool import get_active_locator_session
+
+        active_session = get_active_locator_session(device_info)
         # IP Locator is an explicit, user-triggered path lookup. It must be
         # able to validate a live uplink even when the background collection
         # plan leaves LLDP disabled for an access-role switch. This does not
@@ -1364,25 +1981,56 @@ def _collect_lldp_from_device(device_info: dict) -> list[dict]:
             device_info,
             categories=['neighbors'],
             policy_override_categories={'neighbors'},
+            _connection_session=active_session.legacy_client() if active_session else None,
+            _platform_action_session=active_session,
         )
     except Exception as exc:
         logger.debug(f"[IPLocator] LLDP collect failed on {device_info.get('ip_address')}: {exc}")
-        return []
+        return _NeighborQueryRecords([], {"status": "query_failed", "error_code": "NEIGHBOR_QUERY_FAILED"})
 
     records = []
-    for cat in payload.get('categories', []):
-        if cat.get('key') == 'neighbors' and cat.get('success'):
-            for rec in cat.get('records', []):
-                local_intf = rec.get('local_interface', '') or rec.get('interface', '')
-                neighbor = rec.get('neighbor', '') or rec.get('neighbor_name', '') or rec.get('system_name', '')
-                neighbor_port = rec.get('neighbor_interface', '') or rec.get('neighbor_port', '') or rec.get('port_id', '')
-                if local_intf:
-                    records.append({
-                        'local_interface': str(local_intf).strip(),
-                        'neighbor': str(neighbor).strip(),
-                        'neighbor_port': str(neighbor_port).strip(),
-                    })
-    return records
+    category = next(
+        (cat for cat in payload.get('categories', []) if cat.get('key') == 'neighbors'),
+        None,
+    )
+    if category is None:
+        return _NeighborQueryRecords([], {"status": "unsupported", "error_code": "NEIGHBOR_ACTION_UNSUPPORTED"})
+    parse_status = str(category.get('parse_status') or '').strip().lower()
+    error_code = str(category.get('error_code') or '').strip().upper()
+    if not category.get('success'):
+        status = (
+            'unsupported'
+            if error_code in {'UNSUPPORTED_ACTION', 'UNSUPPORTED_PLATFORM'}
+            or parse_status == 'unsupported_by_platform'
+            else 'query_failed'
+        )
+        return _NeighborQueryRecords(
+            [],
+            {
+                "status": status,
+                "error_code": error_code or ("NEIGHBOR_UNSUPPORTED" if status == "unsupported" else "NEIGHBOR_QUERY_FAILED"),
+            },
+        )
+    for rec in category.get('records', []):
+        local_intf = rec.get('local_interface', '') or rec.get('interface', '')
+        neighbor = rec.get('neighbor', '') or rec.get('neighbor_name', '') or rec.get('system_name', '')
+        neighbor_port = rec.get('neighbor_interface', '') or rec.get('neighbor_port', '') or rec.get('port_id', '')
+        neighbor_ip = rec.get('neighbor_ip', '') or rec.get('management_address', '') or rec.get('management_ip', '')
+        if local_intf:
+            normalized_neighbor = {
+                'local_interface': str(local_intf).strip(),
+                'neighbor': str(neighbor).strip(),
+                'neighbor_port': str(neighbor_port).strip(),
+                'neighbor_ip': str(neighbor_ip).strip(),
+            }
+            protocol = str(rec.get('protocol') or rec.get('source') or '').strip()
+            if protocol:
+                normalized_neighbor['protocol'] = protocol
+            records.append(normalized_neighbor)
+    return _NeighborQueryRecords(
+        records,
+        {"status": "found" if records else "not_found", "record_count": len(records)},
+    )
 
 
 _TRACE_AGGREGATION_TYPES = frozenset({
@@ -1955,8 +2603,18 @@ def _collect_live_interface_status(device_id: str, port: str) -> tuple[str, str]
     return '', ''
 
 
-def _get_ip_locator_context(target_ip: str, result: dict[str, Any] | None = None) -> dict[str, Any]:
-    """Aggregate existing IPAM, endpoint, interface and route facts for one IP."""
+def _get_ip_locator_context(
+    target_ip: str,
+    result: dict[str, Any] | None = None,
+    *,
+    allow_live_interface_status: bool = True,
+) -> dict[str, Any]:
+    """Aggregate existing IPAM, endpoint, interface and route facts for one IP.
+
+    V2 queued runs pass ``allow_live_interface_status=False`` so this
+    supplemental projection cannot issue an unqueued device CLI request.
+    Legacy synchronous callers retain the historical read-only enrichment.
+    """
     context: dict[str, Any] = {
         'address': {
             'ip': target_ip, 'type': 'unknown', 'prefix': '', 'prefix_length': None,
@@ -2305,7 +2963,10 @@ def _get_ip_locator_context(target_ip: str, result: dict[str, Any] | None = None
                 # IP-bearing interface collector.  If no telemetry snapshot is
                 # available, enrich this one locator response from the live
                 # device while keeping the CMDB collection contract intact.
-                if _interface_status_is_unknown(l2.get('admin_status')) or _interface_status_is_unknown(l2.get('oper_status')):
+                if allow_live_interface_status and (
+                    _interface_status_is_unknown(l2.get('admin_status'))
+                    or _interface_status_is_unknown(l2.get('oper_status'))
+                ):
                     live_admin, live_oper = _collect_live_interface_status(switch_id, port)
                     if not _interface_status_is_unknown(live_admin):
                         l2['admin_status'] = live_admin

@@ -21,12 +21,26 @@ from database import get_db_connection
 from services.vault_service import resolve_collector_credentials
 from services.network_access_limiter import limited_connect_handler
 from services.collection_status_service import record_collection_result
-from services.neighbor_collection_contract import assert_lldp_command, normalize_neighbor_record
+from services.neighbor_collection_contract import (
+    assert_lldp_command,
+    classify_lldp_status,
+    normalize_neighbor_record,
+)
 from drivers.ssh_compat import build_netmiko_compatibility_kwargs
 
 logger = logging.getLogger(__name__)
 configure_ntc_templates()
 _topology_rebuild_lock = threading.Lock()
+
+
+class _NeighborCollectionBatch(list[dict[str, Any]]):
+    """List-compatible LLDP output with an explicit full-snapshot status."""
+
+    def __init__(self, records: list[dict[str, Any]], collection_status: str) -> None:
+        super().__init__(records)
+        self.collection_status = str(collection_status or "parse_failed")
+
+
 TOPOLOGY_LINK_TTL_SECONDS = max(60, int(os.environ.get('TOPOLOGY_LINK_TTL_SECONDS', '172800')))
 TOPOLOGY_LINK_STALE_RETENTION_SECONDS = max(
     TOPOLOGY_LINK_TTL_SECONDS,
@@ -1371,7 +1385,7 @@ async def _collect_neighbors_with_netmiko(
     device: dict[str, Any],
     commands: list[tuple[str, str]],
     platform_action_session=None,
-) -> tuple[list[dict[str, Any]], str]:
+) -> tuple[_NeighborCollectionBatch, str]:
     if device.get('platform_profile_id'):
         from services.platform_registry_service import PlatformRegistryError, execute_platform_action
 
@@ -1399,11 +1413,22 @@ async def _collect_neighbors_with_netmiko(
         if not result.get('success'):
             raise RuntimeError(f"platform_registry:{result.get('error_code') or 'ACTION_FAILED'}:{result.get('error') or 'LLDP action failed'}")
         observations: list[dict[str, Any]] = []
-        for item in result.get('records') or []:
+        records = result.get('records') or []
+        raw_output = str(result.get('raw_output') or "")
+        parse_status = str(result.get("parse_status") or "").strip().lower()
+        collection_status = classify_lldp_status(
+            raw_output=raw_output,
+            parsed_count=len(records),
+        )
+        if parse_status in {"failed", "parse_failed", "device_error"}:
+            collection_status = "parse_failed"
+        for item in records:
             observation = _extract_observation_fields(item, 'lldp')
             if observation['neighbor_name_raw'] and observation['source_port_raw']:
                 observations.append(observation)
-        return observations, 'platform-registry'
+        if records and len(observations) != len(records):
+            collection_status = "parse_failed"
+        return _NeighborCollectionBatch(observations, collection_status), 'platform-registry'
 
     platform = normalize_topology_platform(device.get('platform'))
     device_type = PLATFORM_MAP.get(platform)
@@ -1423,8 +1448,9 @@ async def _collect_neighbors_with_netmiko(
         )
     )
 
-    def _run_commands() -> list[dict[str, Any]]:
+    def _run_commands() -> _NeighborCollectionBatch:
         collected: list[dict[str, Any]] = []
+        statuses: list[str] = []
         with limited_connect_handler(device, ConnectHandler, **netmiko_device) as client:
             for protocol, command in commands:
                 assert_lldp_command(platform, command, scenario_id='topology_lldp')
@@ -1442,20 +1468,52 @@ async def _collect_neighbors_with_netmiko(
 
                 if isinstance(parsed, list) and parsed:
                     # TextFSM parsed successfully
+                    before = len(collected)
                     for item in parsed:
                         observation = _extract_observation_fields(item, protocol)
                         if observation['neighbor_name_raw'] and observation['source_port_raw']:
                             collected.append(observation)
+                    statuses.append(
+                        "success" if len(collected) - before == len(parsed) else "parse_failed"
+                    )
                 else:
                     # TextFSM template bypassed/missed — try regex fallback for LLDP detail
                     raw_text = raw_text or (parsed if isinstance(parsed, str) else client.send_command(command))
                     logger.info('TextFSM template bypassed/missed for %s %r, using regex parser', device_type, command)
                     regex_entries = _regex_parse_lldp_detail(raw_text)
+                    before = len(collected)
                     for item in regex_entries:
                         observation = _extract_observation_fields(item, protocol)
                         if observation['neighbor_name_raw'] and observation['source_port_raw']:
                             collected.append(observation)
-        return collected
+                    if regex_entries:
+                        statuses.append(
+                            "success" if len(collected) - before == len(regex_entries) else "parse_failed"
+                        )
+                    else:
+                        statuses.append(classify_lldp_status(raw_output=raw_text, parsed_count=0))
+                    if raw_text and classify_lldp_status(
+                        raw_output=raw_text,
+                        parsed_count=len(regex_entries),
+                    ) in {"truncated", "unsupported_command", "lldp_disabled"}:
+                        statuses[-1] = classify_lldp_status(
+                            raw_output=raw_text,
+                            parsed_count=len(regex_entries),
+                        )
+                if raw_text and isinstance(parsed, list) and parsed:
+                    output_status = classify_lldp_status(
+                        raw_output=raw_text,
+                        parsed_count=len(parsed),
+                    )
+                    if output_status in {"truncated", "unsupported_command", "lldp_disabled"}:
+                        statuses[-1] = output_status
+        if not statuses:
+            status = "parse_failed"
+        elif all(item in {"success", "no_neighbors"} for item in statuses):
+            status = "success" if "success" in statuses else "no_neighbors"
+        else:
+            status = next(item for item in statuses if item not in {"success", "no_neighbors"})
+        return _NeighborCollectionBatch(collected, status)
 
     loop = asyncio.get_running_loop()
     collected = await loop.run_in_executor(None, _run_commands)
@@ -1490,6 +1548,8 @@ def _replace_device_observations(
     device: dict[str, Any],
     observations: list[dict[str, Any]],
     run_id: str | None,
+    *,
+    snapshot_generation: int,
 ) -> dict[str, int]:
     now = _utc_now_iso()
     matched = 0
@@ -1650,6 +1710,14 @@ def _replace_device_observations(
                 ''',
                 (next_miss_count, 0 if stale else 1, 'stale' if stale else 'active', now, row['id']),
             )
+        from services.topology_lldp_snapshot_service import complete_lldp_snapshot_in_transaction
+
+        complete_lldp_snapshot_in_transaction(
+            conn,
+            device_id=str(device.get('id') or ''),
+            generation=int(snapshot_generation),
+            observation_count=len(observations),
+        )
         conn.commit()
         return {'matched': matched, 'ambiguous': ambiguous, 'unmatched': unmatched}
     finally:
@@ -2180,6 +2248,7 @@ async def discover_device_neighbors(
     rebuild_links: bool = True,
 ) -> dict[str, Any]:
     started = time.perf_counter()
+    snapshot_attempt: dict[str, Any] | None = None
     try:
         device = _get_device(device_id)
         if not device:
@@ -2188,6 +2257,19 @@ async def discover_device_neighbors(
             raise RuntimeError('device_is_offline')
         if not device.get('ip_address') or not device.get('username') or not device.get('password'):
             raise RuntimeError('device_credentials_incomplete')
+
+        from services.topology_lldp_snapshot_service import (
+            begin_lldp_snapshot_attempt,
+            fail_lldp_snapshot_attempt,
+            lldp_snapshot_versions,
+            publish_completed_lldp_snapshot,
+        )
+
+        snapshot_versions = lldp_snapshot_versions(device)
+        snapshot_attempt = begin_lldp_snapshot_attempt(device, snapshot_versions)
+        snapshot_generation = int(snapshot_attempt.get('generation') or 0)
+        if snapshot_generation <= 0:
+            raise RuntimeError('topology_lldp_snapshot_generation_unavailable')
 
         platform_action_session = None
         if device.get('platform_profile_id'):
@@ -2238,8 +2320,16 @@ async def discover_device_neighbors(
                 'protocols': [],
                 'error': 'protocol_collection_not_started',
             }
-        observations = _deduplicate_observations(observations)
-        match_summary = _replace_device_observations(device, observations, run_id)
+        collection_status = str(getattr(observations, 'collection_status', 'parse_failed') or 'parse_failed')
+        if collection_status not in {'success', 'no_neighbors'}:
+            raise RuntimeError(f'topology_lldp_snapshot_{collection_status}')
+        observations = _deduplicate_observations(list(observations))
+        match_summary = _replace_device_observations(
+            device,
+            observations,
+            run_id,
+            snapshot_generation=snapshot_generation,
+        )
         total_links = rebuild_links_from_observations() if rebuild_links else None
         collection_status = 'success' if observations else 'no_neighbors'
         record_collection_result(
@@ -2262,9 +2352,38 @@ async def discover_device_neighbors(
                 'collection_status': collection_status,
             },
         )
+        redis_publish_confirmed = False
+        try:
+            redis_published = publish_completed_lldp_snapshot(
+                device,
+                generation=snapshot_generation,
+            )
+            redis_publish_confirmed = redis_published is True
+            if redis_published:
+                logger.info(
+                    '[netops-cache] event=lldp_snapshot_publish device_id=%s generation=%s '
+                    'record_count=%s status=confirmed',
+                    device_id,
+                    snapshot_generation,
+                    len(observations),
+                )
+            else:
+                logger.debug(
+                    '[netops-cache] event=lldp_snapshot_publish device_id=%s generation=%s '
+                    'record_count=%s status=unavailable',
+                    device_id,
+                    snapshot_generation,
+                    len(observations),
+                )
+        except Exception as cache_exc:
+            # PostgreSQL observations remain authoritative; a Redis projection
+            # failure is reported separately from collection completion.
+            logger.debug('LLDP Redis snapshot projection skipped (%s)', type(cache_exc).__name__)
         return {
             'device_id': device_id,
             'hostname': device.get('hostname') or '',
+            'collection_status': collection_status,
+            'redis_publish_confirmed': redis_publish_confirmed,
             'discovery_method': method,
             'observations_count': len(observations),
             'matched_links_count': match_summary['matched'],
@@ -2279,6 +2398,13 @@ async def discover_device_neighbors(
             'aggregation': aggregation_summary,
         }
     except Exception as exc:
+        if snapshot_attempt and snapshot_attempt.get('generation'):
+            try:
+                from services.topology_lldp_snapshot_service import fail_lldp_snapshot_attempt
+
+                fail_lldp_snapshot_attempt(device_id, int(snapshot_attempt['generation']))
+            except Exception as state_exc:
+                logger.debug('Failed to fence unsuccessful LLDP snapshot attempt (%s)', type(state_exc).__name__)
         record_collection_result(
             device_id,
             'topology_lldp',
@@ -2298,9 +2424,19 @@ async def discover_lldp_neighbors(device_id: str):
         return await discover_device_neighbors(device_id, None, rebuild_links=False)
     except RuntimeError as exc:
         # 凭据不完整 / 设备不存在等属于预期情况（如新增设备未配凭据），
-        # 周期任务中静默跳过即可，避免 "Task exception was never retrieved" 日志。
-        logger.debug('Periodic LLDP discovery skipped for device %s: %s', device_id, exc)
-        return None
+        # 周期任务中返回脱敏状态，避免隐藏缺失或泄露设备错误细节。
+        error_code = topology_error_code(exc)
+        status = (
+            'skipped'
+            if error_code in {'device_not_found', 'device_offline', 'credentials_incomplete', 'platform_unsupported'}
+            else 'failed'
+        )
+        logger.debug('Periodic LLDP discovery %s for device %s (%s)', status, device_id, error_code)
+        return {
+            'device_id': device_id,
+            'status': status,
+            'error_code': error_code,
+        }
 
 
 def _is_run_cancel_requested(run_id: str) -> bool:

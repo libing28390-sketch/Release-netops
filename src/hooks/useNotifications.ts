@@ -1,5 +1,6 @@
 import { useState, useEffect, useCallback } from 'react';
 import type { NotificationItem, SessionUser } from '../types';
+import { authHeaders } from '../api/http';
 
 interface UseNotificationsProps {
   currentUser: SessionUser;
@@ -21,11 +22,11 @@ export const useNotifications = ({ currentUser, language, isAuthenticated }: Use
   });
 
   const loadNotifications = useCallback(async () => {
-    if (!isAuthenticated) return;
+    if (!isAuthenticated || !localStorage.getItem('netops_token')) return;
     try {
       const userId = currentUser.id ? encodeURIComponent(String(currentUser.id)) : '';
       const url = userId ? `/api/notifications?limit=40&user_id=${userId}` : '/api/notifications?limit=40';
-      const resp = await fetch(url);
+      const resp = await fetch(url, { headers: authHeaders() });
       if (!resp.ok) return;
       const data = await resp.json();
       setNotifications((data || []).map((n: any) => ({
@@ -45,11 +46,11 @@ export const useNotifications = ({ currentUser, language, isAuthenticated }: Use
   }, [currentUser.id, language, notificationReadMap, isAuthenticated]);
 
   const markNotificationsAsRead = useCallback(async (ids: string[]) => {
-    if (!ids.length || !currentUser.id) return;
+    if (!isAuthenticated || !localStorage.getItem('netops_token') || !ids.length || !currentUser.id) return;
     try {
       await fetch('/api/notifications/read', {
         method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
+        headers: authHeaders(true),
         body: JSON.stringify({ user_id: String(currentUser.id), notification_ids: ids }),
       });
       // Optimistically update local map
@@ -62,7 +63,7 @@ export const useNotifications = ({ currentUser, language, isAuthenticated }: Use
     } catch {
       // keep optimistic local UI state even on transient API errors
     }
-  }, [currentUser.id]);
+  }, [currentUser.id, isAuthenticated]);
 
   const markAllNotificationsRead = useCallback(async () => {
     const unreadIds = notifications.filter(n => !n.read).map(n => n.id);

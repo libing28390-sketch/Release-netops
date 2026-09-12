@@ -2,6 +2,7 @@ import os
 import uuid
 import json
 import logging
+import re
 import bcrypt
 from datetime import datetime, timezone
 
@@ -15,32 +16,42 @@ from .seed import (
 
 _db_initialized = False
 
-def _validated_initial_admin_password() -> str:
-    password = os.environ.get('INITIAL_ADMIN_PASSWORD', '')
-    if (len(password) < 12 or len(password.encode('utf-8')) > 72
-            or not any(c.isupper() for c in password)
-            or not any(c.islower() for c in password)
-            or not any(c.isdigit() for c in password)
-            or not any(not c.isalnum() for c in password)):
-        raise RuntimeError(
-            'An empty database requires INITIAL_ADMIN_PASSWORD: at least 12 characters, '
-            'uppercase, lowercase, digit and special character, at most 72 UTF-8 bytes'
-        )
-    return password
-
-
 def _ensure_initial_administrator(cursor, now: str) -> None:
-    """Bootstrap only an empty user table using an operator-supplied secret."""
-    if cursor.execute('SELECT 1 FROM users LIMIT 1').fetchone():
+    """Ensure the default administrator exists without overwriting valid passwords."""
+    admin = cursor.execute(
+        'SELECT id, password FROM users WHERE username = %s', ('admin',)
+    ).fetchone()
+
+    if admin is None:
+        hashed = bcrypt.hashpw(b'admin', bcrypt.gensalt()).decode()
+        cursor.execute(
+            'INSERT INTO users (id, username, password, role, status, created_at) '
+            'VALUES (%s, %s, %s, %s, %s, %s) ON CONFLICT (username) DO NOTHING',
+            (str(uuid.uuid4()), 'admin', hashed, 'Administrator', 'active', now),
+        )
+        logger.info('[Database] Default administrator created')
         return
-    password = _validated_initial_admin_password()
-    hashed = bcrypt.hashpw(password.encode('utf-8'), bcrypt.gensalt()).decode()
+
+    try:
+        admin_id, stored_password = admin['id'], admin['password']
+    except (TypeError, IndexError):
+        admin_id, stored_password = admin[0], admin[1]
+
+    # The login endpoint still accepts legacy plaintext credentials. Preserve
+    # those and valid bcrypt hashes; repair only empty or malformed bcrypt data.
+    is_bcrypt_hash = isinstance(stored_password, str) and re.fullmatch(
+        r'\$2[ab]\$\d{2}\$[./A-Za-z0-9]{53}', stored_password
+    ) is not None
+    has_bcrypt_prefix = isinstance(stored_password, str) and stored_password.startswith(('$2a$', '$2b$'))
+    if stored_password and (not has_bcrypt_prefix or is_bcrypt_hash):
+        return
+
+    hashed = bcrypt.hashpw(b'admin', bcrypt.gensalt()).decode()
     cursor.execute(
-        'INSERT INTO users (id, username, password, role, status, created_at) '
-        'VALUES (%s, %s, %s, %s, %s, %s) ON CONFLICT (username) DO NOTHING',
-        (str(uuid.uuid4()), 'admin', hashed, 'Administrator', 'active', now),
+        'UPDATE users SET password = %s WHERE id = %s',
+        (hashed, admin_id),
     )
-    logger.info('[Database] Initial administrator created with configured credentials')
+    logger.warning('[Database] Repaired the default administrator password')
 
 def _table_columns(cursor, table_name: str) -> set[str]:
     """Return PostgreSQL column names for *table_name*."""

@@ -6,6 +6,8 @@ from datetime import datetime, timedelta, timezone
 from database import get_db_connection
 from database.migrations import m0219_locator_v2_coordination as migration
 from database.migrations import m0220_locator_run_deployment_scope as deployment_scope_migration
+from database.migrations import m0221_locator_global_access_slots as global_slots_migration
+from database.migrations import m0222_locator_run_leases as run_leases_migration
 from services.ip_locator_task_service import (
     acquire_device_access_lease,
     claim_locator_task,
@@ -31,6 +33,10 @@ def test_m0219_creates_coordination_tables_and_is_idempotent(isolated_db):
         migration.upgrade(conn.cursor(), use_pg=True)
         deployment_scope_migration.upgrade(conn.cursor(), use_pg=True)
         deployment_scope_migration.upgrade(conn.cursor(), use_pg=True)
+        global_slots_migration.upgrade(conn.cursor(), use_pg=True)
+        global_slots_migration.upgrade(conn.cursor(), use_pg=True)
+        run_leases_migration.upgrade(conn.cursor(), use_pg=True)
+        run_leases_migration.upgrade(conn.cursor(), use_pg=True)
         tables = {
             str(row[0])
             for row in conn.execute(
@@ -49,6 +55,7 @@ def test_m0219_creates_coordination_tables_and_is_idempotent(isolated_db):
         "locator_observations",
         "locator_history",
         "locator_invalidation_outbox",
+        "locator_global_access_slots",
     } <= tables
     check_conn = get_db_connection()
     try:
@@ -61,6 +68,19 @@ def test_m0219_creates_coordination_tables_and_is_idempotent(isolated_db):
     finally:
         check_conn.close()
     assert deployment_column is not None
+    check_conn = get_db_connection()
+    try:
+        lease_columns = {
+            str(row[0])
+            for row in check_conn.execute(
+                """SELECT column_name FROM information_schema.columns
+                   WHERE table_schema = current_schema() AND table_name = 'locator_runs'
+                     AND column_name IN ('lease_owner', 'lease_token', 'lease_until')"""
+            ).fetchall()
+        }
+    finally:
+        check_conn.close()
+    assert lease_columns == {"lease_owner", "lease_token", "lease_until"}
 
 
 def test_m0219_deduplicates_shared_tasks_and_completes_subscribed_run(isolated_db):

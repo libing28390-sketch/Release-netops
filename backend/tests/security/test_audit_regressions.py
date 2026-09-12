@@ -203,39 +203,61 @@ def test_terminal_respects_explicit_resource_scope(make_user, monkeypatch):
     assert error.value.status_code == 403
 
 
-def test_bootstrap_requires_explicit_strong_password(isolated_db, monkeypatch):
+def test_bootstrap_creates_default_admin_password(isolated_db, monkeypatch):
     from database.schema import _ensure_initial_administrator
     import bcrypt
     with get_db_connection() as conn:
         conn.execute('DELETE FROM users')
-        for password in ['', 'admin', 'a' * 20]:
-            monkeypatch.setenv('INITIAL_ADMIN_PASSWORD', password)
-            with pytest.raises(RuntimeError, match='INITIAL_ADMIN_PASSWORD'):
-                _ensure_initial_administrator(conn.cursor(), '2026-09-11')
-        monkeypatch.setenv('INITIAL_ADMIN_PASSWORD', 'FreshInitial!234')
+        monkeypatch.delenv('INITIAL_ADMIN_PASSWORD', raising=False)
         _ensure_initial_administrator(conn.cursor(), '2026-09-11')
         password_hash = conn.execute("SELECT password FROM users WHERE username = 'admin'").fetchone()['password']
-        assert bcrypt.checkpw(b'FreshInitial!234', password_hash.encode())
-        assert not bcrypt.checkpw(b'admin', password_hash.encode())
+        assert bcrypt.checkpw(b'admin', password_hash.encode())
+        assert asyncio.run(users._verify_password('admin', password_hash))
 
 
-def test_bootstrap_never_resets_or_recreates_admin(isolated_db, monkeypatch):
+def test_bootstrap_preserves_valid_admin_password_and_repairs_invalid_hash(isolated_db):
     from database.schema import _ensure_initial_administrator
+    import bcrypt
     with get_db_connection() as conn:
-        conn.execute("UPDATE users SET password = 'unusable-password' WHERE username = 'admin'")
+        custom_hash = bcrypt.hashpw(b'ChangedByUser!234', bcrypt.gensalt()).decode()
+        conn.execute("UPDATE users SET password = ? WHERE username = 'admin'", (custom_hash,))
         _ensure_initial_administrator(conn.cursor(), '2026-09-11')
-        assert conn.execute("SELECT password FROM users WHERE username = 'admin'").fetchone()['password'] == 'unusable-password'
-        conn.execute("UPDATE users SET username = 'renamed-admin' WHERE username = 'admin'")
+        assert conn.execute("SELECT password FROM users WHERE username = 'admin'").fetchone()['password'] == custom_hash
+
+        conn.execute("UPDATE users SET password = 'legacy-custom-password' WHERE username = 'admin'")
         _ensure_initial_administrator(conn.cursor(), '2026-09-11')
-        assert not conn.execute("SELECT 1 FROM users WHERE username = 'admin'").fetchone()
+        assert conn.execute("SELECT password FROM users WHERE username = 'admin'").fetchone()['password'] == 'legacy-custom-password'
+
+        malformed_hash = '$2b$' + ('!' * 56)
+        conn.execute("UPDATE users SET password = ? WHERE username = 'admin'", (malformed_hash,))
+        _ensure_initial_administrator(conn.cursor(), '2026-09-11')
+        repaired_hash = conn.execute("SELECT password FROM users WHERE username = 'admin'").fetchone()['password']
+        assert bcrypt.checkpw(b'admin', repaired_hash.encode())
 
 
-def test_database_reset_validates_password_before_mutation(monkeypatch):
+def test_bootstrap_creates_admin_when_other_users_exist(isolated_db, monkeypatch):
+    from database.schema import _ensure_initial_administrator
+    import bcrypt
+    with get_db_connection() as conn:
+        conn.execute("DELETE FROM users")
+        conn.execute(
+            "INSERT INTO users (id, username, password, role, status, created_at) "
+            "VALUES ('existing-user', 'existing-user', 'legacy-password', 'Operator', 'active', '2026-09-11')"
+        )
+        monkeypatch.delenv('INITIAL_ADMIN_PASSWORD', raising=False)
+        _ensure_initial_administrator(conn.cursor(), '2026-09-11')
+        password_hash = conn.execute("SELECT password FROM users WHERE username = 'admin'").fetchone()['password']
+        assert bcrypt.checkpw(b'admin', password_hash.encode())
+        assert conn.execute("SELECT 1 FROM users WHERE username = 'existing-user'").fetchone()
+
+
+def test_database_reset_uses_default_admin_without_password_env(monkeypatch):
     from database import reset
     target = reset.DatabaseTarget('postgresql', 'localhost', 5432, 'test-target', 'tester')
     monkeypatch.setattr(reset, 'inspect_target', lambda: target)
-    monkeypatch.setattr(reset, 'create_backup', lambda *args: pytest.fail('Reset began before password validation'))
-    monkeypatch.setattr(reset, '_reset_postgresql_schema', lambda *args: pytest.fail('Schema reset began before password validation'))
+    monkeypatch.setattr(reset, '_reset_postgresql_schema', lambda *args: 0)
+    monkeypatch.setattr(reset, '_initialize_and_verify', lambda _target: {'table_count': 1, 'migration_count': 1})
     monkeypatch.delenv('INITIAL_ADMIN_PASSWORD', raising=False)
-    with pytest.raises(reset.DatabaseResetError, match='INITIAL_ADMIN_PASSWORD'):
-        reset.reset_database('test-target')
+    result = reset.reset_database('test-target', backup=False)
+    assert result['ok'] is True
+    assert result['verification']['migration_count'] == 1

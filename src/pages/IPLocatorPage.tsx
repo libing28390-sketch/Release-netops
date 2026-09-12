@@ -11,6 +11,7 @@ import {
   type MacLookupInfo,
 } from '../utils/macLookup';
 import { formatLocationType } from '../utils/ipLocator';
+import { locateIpWithRun, type LocatorRunStage } from '../utils/ipLocatorRuns';
 import { useSearchParams } from 'react-router-dom';
 
 interface IPLocatorPageProps {
@@ -126,9 +127,24 @@ interface LocateResult {
     ttl_seconds: number;
     force_refresh: boolean;
     cached_at: string | null;
+    route?: string;
+    arp?: string;
+    mac?: string;
+    topology?: string;
+    result?: string;
     endpoint_cache_stale?: boolean;
     endpoint_cache_age_seconds?: number | null;
   };
+  cache_provenance?: Array<{
+    stage: string;
+    device_id: string;
+    device: string;
+    vrf: string;
+    variant: string;
+    source: string;
+    redis_write_attempted?: boolean;
+    redis_write_ack?: boolean;
+  }>;
   timestamp: string;
   errors: string[];
   trace_status?: string;
@@ -171,6 +187,40 @@ const PATH_KIND_LABELS: Record<string, [string, string]> = {
 
 function formatPathKind(kind: string, zhLang: boolean): string {
   const labels = PATH_KIND_LABELS[kind] || [kind, kind];
+  return labels[zhLang ? 0 : 1];
+}
+
+const CACHE_STAGE_LABELS: Record<string, [string, string]> = {
+  route: ['路由', 'Route'],
+  arp: ['ARP', 'ARP'],
+  mac: ['MAC', 'MAC'],
+  topology: ['LLDP/拓扑', 'LLDP/Topology'],
+  result: ['整体结果', 'Whole result'],
+};
+
+const CACHE_SOURCE_LABELS: Record<string, [string, string]> = {
+  redis: ['Redis 命中', 'Redis hit'],
+  miss: ['整体缓存未命中', 'Whole-result cache miss'],
+  postgres: ['PostgreSQL 复用', 'PostgreSQL reuse'],
+  cli: ['CLI 采集来源', 'CLI-sourced evidence'],
+  negative_redis: ['Redis 负缓存命中', 'Redis negative hit'],
+  negative_postgres: ['PostgreSQL 负记录', 'PostgreSQL negative record'],
+  negative_cli: ['CLI 未命中', 'CLI not found'],
+  snapshot_redis: ['Redis 完整快照', 'Redis full snapshot'],
+  snapshot_negative_redis: ['Redis 空快照', 'Redis empty snapshot'],
+  snapshot_postgres: ['PostgreSQL 完整快照', 'PostgreSQL full snapshot'],
+  snapshot_cli: ['CLI 完整采集', 'CLI full collection'],
+  snapshot_negative_cli: ['CLI 完整空结果', 'CLI full empty result'],
+  query_failed: ['查询失败', 'Query failed'],
+};
+
+function cacheStageLabel(stage: string, zhLang: boolean): string {
+  const labels = CACHE_STAGE_LABELS[stage] || [stage, stage];
+  return labels[zhLang ? 0 : 1];
+}
+
+function cacheSourceLabel(source: string, zhLang: boolean): string {
+  const labels = CACHE_SOURCE_LABELS[source] || [source, source];
   return labels[zhLang ? 0 : 1];
 }
 
@@ -540,6 +590,7 @@ const IPLocatorPage: React.FC<IPLocatorPageProps> = ({ language, t, mode }) => {
 
   const [ip, setIp] = useState('');
   const [loading, setLoading] = useState(false);
+  const [locateStage, setLocateStage] = useState<LocatorRunStage | 'idle'>('idle');
   const [result, setResult] = useState<LocateResult | null>(null);
   const [error, setError] = useState('');
   const [showDetails, setShowDetails] = useState(false);
@@ -1137,20 +1188,17 @@ ${rep.repair_commands}
     if (!trimmed) return;
     setIp(trimmed);
     setLoading(true);
+    setLocateStage('queued');
     setError('');
     setResult(null);
 
     try {
-      const resp = await fetch('/api/ip-locator/locate', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${token}` },
-        body: JSON.stringify({ ip: trimmed, force_refresh: forceRefresh }),
+      const data = await locateIpWithRun<LocateResult>({
+        ip: trimmed,
+        token,
+        forceRefresh,
+        onStage: setLocateStage,
       });
-      if (!resp.ok) {
-        const errData = await resp.json().catch(() => ({}));
-        throw new Error(errData.detail || `HTTP ${resp.status}`);
-      }
-      const data: LocateResult = await resp.json();
       setResult(data);
 
       const primary = data.locations?.find(l => !l.is_uplink) || data.locations?.[0];
@@ -1166,6 +1214,7 @@ ${rep.repair_commands}
       setError(e instanceof Error ? e.message : String(e));
     } finally {
       setLoading(false);
+      setLocateStage('idle');
     }
   }, [ip, token]);
 
@@ -1234,6 +1283,15 @@ ${rep.repair_commands}
   const accessLocations = result?.locations?.filter(l => !l.is_uplink) || [];
   const uplinkLocations = result?.locations?.filter(l => l.is_uplink) || [];
   const locatorContext = result?.context;
+  const cacheProvenance = result?.cache_provenance || [];
+  const cacheProvenanceSources = cacheProvenance.map(entry => entry.source.toLowerCase());
+  const hasRedisCacheSource = cacheProvenanceSources.some(source => source.includes('redis'));
+  const hasPostgresCacheSource = cacheProvenanceSources.some(source => source.includes('postgres'));
+  const hasCliCacheSource = cacheProvenanceSources.some(source => source.includes('cli'));
+  const hasResultCacheMiss = cacheProvenance.some(entry => entry.stage === 'result' && entry.source === 'miss');
+  const hasRedisWriteAttempt = cacheProvenance.some(entry => entry.redis_write_attempted);
+  const hasRedisWriteAck = cacheProvenance.some(entry => entry.redis_write_attempted && entry.redis_write_ack);
+  const hasUnconfirmedRedisWrite = cacheProvenance.some(entry => entry.redis_write_attempted && !entry.redis_write_ack);
   const macLookup = result?.mac_lookup;
   const macLookupMessage = formatMacLookupMessage(macLookup, zh);
   const macLookupStatusClass = macLookup?.status === 'found'
@@ -1351,7 +1409,11 @@ ${rep.repair_commands}
             <Loader2 size={20} className="animate-spin text-[#0891b2]" />
             <div>
               <p className="text-sm font-semibold text-[#164e63] dark:text-[var(--app-text)]">{zh ? '正在定位...' : 'Locating...'}</p>
-              <p className="text-xs text-[#0891b2] mt-0.5">{zh ? '正在查询网关 ARP 表和交换机 MAC 地址表，请稍候' : 'Querying gateway ARP tables and switch MAC tables, please wait'}</p>
+              <p className="text-xs text-[#0891b2] mt-0.5">{locateStage === 'queued'
+                ? (zh ? '定位任务已排队，等待设备采集配额…' : 'Locator queued, waiting for a device collection slot…')
+                : locateStage === 'legacy'
+                  ? (zh ? '正在使用兼容定位接口…' : 'Using the compatible locator endpoint…')
+                  : (zh ? '正在按路由、ARP、MAC 和拓扑逐跳追踪…' : 'Tracing route, ARP, MAC and topology hop by hop…')}</p>
             </div>
           </div>
         </div>
@@ -1393,15 +1455,32 @@ ${rep.repair_commands}
                       {macLookupStatusLabel(macLookup.status, zh)}
                     </span>
                   )}
-                  {result.cache?.arp_cache_hit && result.cache.cached_at ? (
+                  {cacheProvenance.length > 0 ? (
+                    <>
+                      {hasRedisCacheSource && <span className="text-[10px] rounded-full bg-cyan-100/70 dark:bg-cyan-500/10 px-2.5 py-0.5 font-medium text-cyan-700 dark:text-cyan-300">{zh ? 'Redis 命中' : 'Redis hit'}</span>}
+                      {hasPostgresCacheSource && <span className="text-[10px] rounded-full bg-sky-100/70 dark:bg-sky-500/10 px-2.5 py-0.5 font-medium text-sky-700 dark:text-sky-300">{zh ? 'PostgreSQL 复用' : 'PostgreSQL reuse'}</span>}
+                      {hasCliCacheSource && <span className="text-[10px] rounded-full bg-emerald-100/60 dark:bg-emerald-500/10 px-2.5 py-0.5 font-medium text-emerald-600 dark:text-emerald-400">{zh ? 'CLI 采集来源' : 'CLI-sourced evidence'}</span>}
+                      {hasResultCacheMiss && <span className="text-[10px] rounded-full bg-slate-100 dark:bg-white/[0.06] px-2.5 py-0.5 font-medium text-slate-500">{zh ? '整体结果缓存未命中' : 'Result cache miss'}</span>}
+                      {hasRedisWriteAttempt && <span className={`text-[10px] rounded-full px-2.5 py-0.5 font-medium ${hasRedisWriteAck && !hasUnconfirmedRedisWrite ? 'bg-emerald-100/60 dark:bg-emerald-500/10 text-emerald-600 dark:text-emerald-400' : 'bg-amber-100/70 dark:bg-amber-500/10 text-amber-700 dark:text-amber-300'}`}>
+                        {hasRedisWriteAck && !hasUnconfirmedRedisWrite
+                          ? (zh ? 'Redis 写入已确认' : 'Redis write confirmed')
+                          : (zh ? 'Redis 写入未确认' : 'Redis write unconfirmed')}
+                      </span>}
+                    </>
+                  ) : result.cache?.arp_cache_hit && result.cache.cached_at ? (
                     <span className="inline-flex items-center gap-1 text-[10px] bg-amber-50 dark:bg-amber-500/10 text-amber-600 dark:text-amber-400 border border-amber-200/60 dark:border-amber-500/20 rounded-full px-2.5 py-0.5 font-medium">
                       <Clock size={10} />
                       {zh ? `ARP 缓存命中 · ${formatRelativeTime(result.cache.cached_at, zh)}采集` : `ARP cached · collected ${formatRelativeTime(result.cache.cached_at, false)}`}
                     </span>
-                  ) : (
+                  ) : result.cache?.force_refresh ? (
                     <span className="inline-flex items-center gap-1 text-[10px] bg-emerald-100/60 dark:bg-emerald-500/10 text-emerald-600 dark:text-emerald-400 border border-emerald-200/60 dark:border-emerald-500/20 rounded-full px-2.5 py-0.5 font-medium">
                       <Zap size={10} />
-                      {zh ? '实时采集' : 'Real-time'}
+                      {zh ? '已请求强制实时刷新' : 'Forced live refresh requested'}
+                    </span>
+                  ) : (
+                    <span className="inline-flex items-center gap-1 text-[10px] bg-slate-100 dark:bg-white/[0.06] text-slate-500 border border-slate-200/60 dark:border-white/10 rounded-full px-2.5 py-0.5 font-medium">
+                      <Clock size={10} />
+                      {zh ? '采集来源未记录' : 'Source not recorded'}
                     </span>
                   )}
                   <span className="text-xs text-emerald-600 dark:text-emerald-400/70 ml-auto font-mono">{result.timestamp?.replace('T', ' ').slice(0, 19)}</span>
@@ -1677,6 +1756,36 @@ ${rep.repair_commands}
 
           {showDetails && result.searched_devices && (
             <div className="bg-black/[0.02] dark:bg-white/[0.03] rounded-xl border border-black/5 dark:border-white/8 px-5 py-3.5 text-xs text-black/50 dark:text-white/50 space-y-2">
+              {cacheProvenance.length > 0 && (
+                <div className="pb-2 border-b border-black/5 dark:border-white/8">
+                  <div className="mb-1 font-semibold text-black/60 dark:text-white/60">
+                    {zh ? '缓存来源与 Redis 写入确认' : 'Cache source and Redis write acknowledgement'}
+                  </div>
+                  <div className="max-h-44 overflow-y-auto space-y-1">
+                    {cacheProvenance.map((entry, index) => (
+                      <div
+                        key={`${entry.stage}:${entry.device_id}:${entry.vrf}:${entry.variant}:${index}`}
+                        className="flex flex-wrap items-center gap-x-2 gap-y-0.5"
+                      >
+                        <span className="font-semibold text-black/60 dark:text-white/60">
+                          {cacheStageLabel(entry.stage, zh)}
+                        </span>
+                        <span>{entry.device || entry.device_id || '-'}</span>
+                        {entry.vrf && entry.vrf !== 'default' && <span>VRF {entry.vrf}</span>}
+                        {entry.variant !== 'target' && <span className="text-black/35 dark:text-white/35">{entry.variant}</span>}
+                        <span>{cacheSourceLabel(entry.source, zh)}</span>
+                        {entry.redis_write_attempted && (
+                          <span className={entry.redis_write_ack ? 'text-emerald-600 dark:text-emerald-400' : 'text-amber-600 dark:text-amber-400'}>
+                            {entry.redis_write_ack
+                              ? (zh ? 'Redis SET 已确认' : 'Redis SET confirmed')
+                              : (zh ? 'Redis SET 未确认' : 'Redis SET unconfirmed')}
+                          </span>
+                        )}
+                      </div>
+                    ))}
+                  </div>
+                </div>
+              )}
               {result.cache?.arp_cache_hit && result.cache.cached_at && (
                 <div className="flex items-center gap-2 pb-2 border-b border-black/5 mb-1">
                   <Clock size={11} className="text-amber-500" />
