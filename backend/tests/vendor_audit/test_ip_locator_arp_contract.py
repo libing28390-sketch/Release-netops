@@ -83,7 +83,7 @@ def test_realtime_arp_hit_selection_prefers_prefix_gateway_over_completion_order
     assert selected == (gateway, {"mac": "00aabbccddee"})
 
 
-def test_route_selection_accepts_l3_roles_explicit_policy_and_interface_evidence(monkeypatch):
+def test_route_selection_follows_effective_plan_even_when_l3_interface_evidence_exists(monkeypatch):
     devices = [
         {"id": "router-1", "role": "router"},
         {"id": "firewall-1", "role": "firewall"},
@@ -105,21 +105,21 @@ def test_route_selection_accepts_l3_roles_explicit_policy_and_interface_evidence
     selected, stats = ip_locator_service._select_route_devices(devices)
 
     assert [device["id"] for device in selected] == [
-        "firewall-1", "router-1", "switch-evidence", "switch-explicit",
+        "firewall-1", "router-1", "switch-explicit",
     ]
     assert stats == {
         "credentialed_online": 6,
-        "selected": 4,
+        "selected": 3,
         "role": 2,
         "explicit": 1,
-        "interface_evidence": 1,
-        "policy_disabled": 1,
+        "interface_evidence": 0,
+        "policy_disabled": 3,
         "policy_ignored": 0,
-        "no_l3_evidence": 1,
+        "no_l3_evidence": 0,
     }
 
 
-def test_nsot_route_selection_is_independent_from_inspection_plan(monkeypatch):
+def test_nsot_route_selection_can_explicitly_ignore_collection_plan(monkeypatch):
     devices = [
         {
             "id": "core-disabled-in-inspection",
@@ -160,10 +160,10 @@ def test_nsot_route_selection_is_independent_from_inspection_plan(monkeypatch):
     }
 
 
-def test_unified_nsot_sync_runs_route_collection_without_inspection_policy(monkeypatch):
+def test_unified_nsot_sync_runs_route_collection_with_collection_policy(monkeypatch):
     calls: list[tuple[str, object]] = []
 
-    monkeypatch.setattr(ip_locator_service, "run_arp_sweep", lambda: calls.append(("arp", None)))
+    monkeypatch.setattr(ip_locator_service, "run_arp_sweep", lambda **kwargs: calls.append(("arp", kwargs)))
     monkeypatch.setattr(
         ip_locator_service,
         "run_endpoint_collector",
@@ -177,28 +177,81 @@ def test_unified_nsot_sync_runs_route_collection_without_inspection_policy(monke
     monkeypatch.setattr(
         ip_locator_service,
         "_sync_prefixes_from_current_interfaces",
-        lambda: {"devices": 0, "created": 0, "updated": 0, "failed": 0},
+        lambda **_kwargs: {"devices": 0, "created": 0, "updated": 0, "failed": 0},
     )
     monkeypatch.setattr(
         "services.scheduler_service.sync_routing_neighbors_job",
-        lambda: calls.append(("neighbors", None)),
+        lambda **kwargs: calls.append(("neighbors", kwargs)),
     )
     monkeypatch.setattr(
         "services.scheduler_service.sync_bgp_routes_job",
-        lambda: calls.append(("bgp", None)),
+        lambda **kwargs: calls.append(("bgp", kwargs)),
     )
     monkeypatch.setattr(
         "services.scheduler_service.sync_topology_and_interfaces_job",
-        lambda: calls.append(("topology", None)) or {},
+        lambda **kwargs: calls.append(("topology", kwargs)) or {},
     )
     monkeypatch.setattr(
         "services.interface_collection_service.collect_interface_status_for_online_devices",
-        lambda: calls.append(("interface_status", None)) or {},
+        lambda **kwargs: calls.append(("interface_status", kwargs)) or {},
     )
 
-    ip_locator_service.run_unified_nsot_sync()
+    ip_locator_service.run_unified_nsot_sync(device_ids=["device-1"])
 
-    assert ("routes", {"respect_collection_policy": False}) in calls
+    assert ("arp", {"device_ids": {"device-1"}}) in calls
+    assert ("endpoint", {"refresh_arp": False, "device_ids": {"device-1"}}) in calls
+    assert ("routes", {"respect_collection_policy": True, "device_ids": {"device-1"}}) in calls
+    assert ("neighbors", {
+        "device_ids": {"device-1"},
+        "disabled_protocols": {"eigrp", "rip"},
+    }) in calls
+    assert ("bgp", {"device_ids": {"device-1"}}) in calls
+    assert ("topology", {"device_ids": {"device-1"}}) in calls
+    assert ("interface_status", {"target_device_ids": {"device-1"}}) in calls
+
+
+def test_route_template_hard_disables_collection_even_with_l3_role_and_evidence(monkeypatch):
+    device = {
+        "id": "core-l2-template",
+        "role": "core",
+        "collection_policy_json": '{"template":"layer2_switch","collectors":{}}',
+    }
+    monkeypatch.setattr(ip_locator_service, "_load_route_l3_evidence", lambda: {"core-l2-template"})
+
+    selected, stats = ip_locator_service._select_route_devices([device])
+
+    assert selected == []
+    assert stats["policy_disabled"] == 1
+
+
+def test_route_template_can_enable_l3_collection_for_non_router_role(monkeypatch):
+    device = {
+        "id": "access-gateway",
+        "role": "access",
+        "collection_policy_json": '{"template":"layer3_gateway","collectors":{}}',
+    }
+    monkeypatch.setattr(ip_locator_service, "_load_route_l3_evidence", lambda: set())
+
+    selected, stats = ip_locator_service._select_route_devices([device])
+
+    assert [item["id"] for item in selected] == ["access-gateway"]
+    assert stats["selected"] == 1
+
+
+def test_background_arp_sweep_honors_l2_template_while_live_locator_keeps_role_fallback(monkeypatch):
+    device = {
+        "id": "gateway-l2-template",
+        "role": "gateway",
+        "collection_policy_json": '{"template":"layer2_switch","collectors":{}}',
+    }
+
+    assert ip_locator_service._prepare_arp_candidate(
+        device, set(), respect_collection_policy=True
+    ) is None
+    # On-demand locator queries retain their explicit-query role fallback; the
+    # scheduled/background sweep must follow the selected per-device template.
+    live = ip_locator_service._prepare_arp_candidate(device, set())
+    assert live is not None
 
 
 def test_eligible_device_diagnostics_explain_pre_route_exclusions(monkeypatch):

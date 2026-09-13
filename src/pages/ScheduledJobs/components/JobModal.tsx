@@ -8,7 +8,7 @@ import {
 } from 'lucide-react';
 import TagConditionPicker, { hasTagFilterConditions, type TagFilterConfig } from '../../../components/TagConditionPicker';
 import { ActionIconButton } from '../../../components/ui/ActionIconButton';
-import { ScheduledJob, EligibleApprover, FormState, ValidatedDevice } from '../types';
+import { ScheduledJob, EligibleApprover, FormState, ValidatedDevice, type CollectionPlanFilters } from '../types';
 import {
   CRON_PRESETS, CRON_FIELD_LABELS_ZH, CRON_FIELD_LABELS_EN,
   CRON_FIELD_HINTS_ZH, CRON_FIELD_HINTS_EN, ACTION_TYPES,
@@ -57,6 +57,9 @@ interface JobModalProps {
   language: string;
   devices?: any[];
 }
+
+const getDeviceCategory = (device: { category?: string | null; device_category?: string | null; role?: string | null }): string =>
+  device.category || device.device_category || (device.role?.toLowerCase().includes('server') ? 'Server' : 'Network');
 
 export const JobModal: React.FC<JobModalProps> = ({
   isOpen,
@@ -149,23 +152,42 @@ export const JobModal: React.FC<JobModalProps> = ({
   const categoryCounts = useMemo(() => {
     const counts: Record<string, number> = {};
     (devices || []).forEach(d => {
-      const c = d.category || (d.role?.toLowerCase().includes('server') ? 'Server' : 'Network');
+      const c = getDeviceCategory(d);
       counts[c] = (counts[c] || 0) + 1;
+    });
+    return counts;
+  }, [devices]);
+
+  const platformCounts = useMemo(() => {
+    const counts: Record<string, number> = {};
+    (devices || []).forEach(d => {
+      const platform = d.platform || '';
+      if (platform) counts[platform] = (counts[platform] || 0) + 1;
     });
     return counts;
   }, [devices]);
 
   // Parse composite filter
   const compositeFilter = useMemo(() => {
-    if (form.device_scope !== 'composite') return { site: '', role: '', category: '' };
+    if (form.device_scope !== 'composite') return {} as CollectionPlanFilters;
     try {
-      return JSON.parse(form.device_filter || '{}');
+      const parsed: unknown = JSON.parse(form.device_filter || '{}');
+      if (!parsed || typeof parsed !== 'object' || Array.isArray(parsed)) return {} as CollectionPlanFilters;
+      const values = parsed as Record<string, unknown>;
+      return {
+        site: typeof values.site === 'string' ? values.site : '',
+        role: typeof values.role === 'string' ? values.role : '',
+        category: typeof values.category === 'string' ? values.category : '',
+        platform: typeof values.platform === 'string' ? values.platform : '',
+      };
     } catch {
-      return { site: '', role: '', category: '' };
+      return {} as CollectionPlanFilters;
     }
   }, [form.device_scope, form.device_filter]);
 
-  const updateCompositeFilter = (key: string, val: string) => {
+  const hasCompositeFilter = Object.values(compositeFilter).some(value => String(value || '').trim());
+
+  const updateCompositeFilter = (key: keyof CollectionPlanFilters, val: string) => {
     const updated = { ...compositeFilter, [key]: val };
     Object.keys(updated).forEach(k => { if (!updated[k as keyof typeof updated]) delete updated[k as keyof typeof updated]; });
     setForm(f => ({ ...f, device_filter: JSON.stringify(updated) }));
@@ -181,7 +203,8 @@ export const JobModal: React.FC<JobModalProps> = ({
       return all.filter(d => {
         if (compositeFilter.site && d.site !== compositeFilter.site) return false;
         if (compositeFilter.role && d.role !== compositeFilter.role) return false;
-        if (compositeFilter.category && (d.category || (d.role?.toLowerCase().includes('server') ? 'Server' : 'Network')) !== compositeFilter.category) return false;
+        if (compositeFilter.category && getDeviceCategory(d) !== compositeFilter.category) return false;
+        if (compositeFilter.platform && (d.platform || '') !== compositeFilter.platform) return false;
         return true;
       });
     }
@@ -272,6 +295,7 @@ export const JobModal: React.FC<JobModalProps> = ({
     if (cronParts.length !== 5 || cronParts.some(p => !p)) return false;
     if (!form.device_scope) return false;
     if (form.device_scope === 'ip' && ipDevices.length === 0) return false;
+    if (form.device_scope === 'composite' && !hasCompositeFilter) return false;
     if (form.device_scope === 'tag') {
       if (!hasTagFilterConditions(tagFilter)) return false;
     }
@@ -584,7 +608,7 @@ export const JobModal: React.FC<JobModalProps> = ({
                 {form.action_type === 'nsot' && (
                   <div className="p-3 rounded-xl bg-cyan-50/50 border border-cyan-100 text-xs text-cyan-800 flex items-center gap-2">
                     <RefreshCw size={15} className="text-cyan-600 shrink-0" />
-                    <span>{zh ? 'NSOT 事实库：按厂商驱动提取 ARP 表、终端 MAC 位置、路由表、OSPF/BGP 邻居与接口事实数据。' : 'Extracts network reality facts (ARP, routes, neighbors, ports) for targeted devices.'}</span>
+                    <span>{zh ? 'NSOT 事实库：只采集上方范围内的在线设备，并遵循各设备的采集模板；只读采集，不执行用户命令或配置变更。' : 'Collects online devices in the selected scope using each device template; read-only, with no user commands or configuration changes.'}</span>
                   </div>
                 )}
 
@@ -798,7 +822,7 @@ export const JobModal: React.FC<JobModalProps> = ({
                   {form.device_scope === 'composite' && (
                     <div className="p-3.5 rounded-xl bg-slate-50 border border-slate-200 space-y-2.5">
                       <p className="text-xs text-slate-600 font-medium">{zh ? '资产多维度复合筛选：' : 'Composite matrix filter:'}</p>
-                      <div className="grid grid-cols-3 gap-2">
+                      <div className="grid grid-cols-2 gap-2 xl:grid-cols-4">
                         <select
                           value={compositeFilter.site || ''}
                           onChange={e => updateCompositeFilter('site', e.target.value)}
@@ -823,7 +847,20 @@ export const JobModal: React.FC<JobModalProps> = ({
                           <option value="">{zh ? '全部类型' : 'All Types'}</option>
                           {Object.entries(categoryCounts).map(([c, count]) => <option key={c} value={c}>{c} ({count})</option>)}
                         </select>
+                        <select
+                          value={compositeFilter.platform || ''}
+                          onChange={e => updateCompositeFilter('platform', e.target.value)}
+                          className="px-2.5 py-2 rounded-xl border border-slate-200 text-xs bg-white focus:ring-2 focus:ring-cyan-500/20 text-slate-700"
+                        >
+                          <option value="">{zh ? '全部平台' : 'All Platforms'}</option>
+                          {Object.entries(platformCounts).map(([platform, count]) => <option key={platform} value={platform}>{platform} ({count})</option>)}
+                        </select>
                       </div>
+                      {!hasCompositeFilter && (
+                        <p className="text-[11px] text-amber-700">
+                          {zh ? '至少选择一个筛选条件；否则可能意外覆盖全部设备。' : 'Choose at least one filter to avoid unintentionally targeting every device.'}
+                        </p>
+                      )}
                     </div>
                   )}
 

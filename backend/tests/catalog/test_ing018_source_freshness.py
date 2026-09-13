@@ -142,42 +142,9 @@ def test_ing018_same_hash_refreshes_validators_and_changed_hash_appends_version(
     assert [row["outcome"] for row in list_source_refresh_observations(source["id"], operator)][:3] == ["changed", "unchanged", "changed"]
 
 
-def test_ing018_refresh_batch_is_bounded_tenant_scoped_and_redacts_failure(isolated_db, make_user):
-    from services.source_freshness_service import refresh_sources
-    from services.source_registry_service import create_source, enable_source, list_source_refresh_observations
-
-    operator = make_user("ing018-batch", role="Operator")
-    source = create_source(_source_payload("https://docs.example/refresh/fail"), operator)
-    enable_source(source["id"], operator)
-    other = make_user("ing018-other", role="Operator")
-    other["tenant_id"] = "tenant-other"
-    other_source = create_source(_source_payload("https://docs.example/refresh/other"), other)
-    enable_source(other_source["id"], other)
-    result = refresh_sources(
-        tenant_id="tenant-default",
-        limit=1,
-        user=operator,
-        transport=_transport(lambda request: httpx.Response(503, headers={"content-type": "text/plain"}, content=b"provider secret should not escape", request=request)),
-        resolver=_public,
-    )
-    assert result["selected"] == 1
-    assert result["checked"] == 1
-    assert result["failed"] == 1
-    assert result["results"][0]["source_id"] == source["id"]
-    assert "provider secret" not in str(result)
-    observation = list_source_refresh_observations(source["id"], operator)[0]
-    assert observation["outcome"] == "failed"
-    assert observation["error"] == {"code": "OUTBOUND_HTTP_5XX"}
-
-
-def test_ing018_api_and_scheduler_contracts(monkeypatch):
+def test_ing018_manual_refresh_history_api_contract():
     from api.knowledge_sources import router
-    from services import source_freshness_service
 
     paths = {(route.path, tuple(sorted(route.methods or ()))) for route in router.routes}
     assert any(path.endswith("/{source_id}/refresh-observations") and "GET" in methods for path, methods in paths)
-    assert source_freshness_service.REFRESH_INTERVAL_MINUTES == 30
-    monkeypatch.setattr(source_freshness_service, "_freshness_schema_ready", lambda: False)
-    blocked = source_freshness_service.run_scheduled_source_freshness_refresh()
-    assert blocked["status"] == "blocked_schema"
-    assert blocked["error_code"] == "SOURCE_FRESHNESS_SCHEMA_UNAVAILABLE"
+    assert any(path.endswith("/{source_id}/fetch") and "POST" in methods for path, methods in paths)

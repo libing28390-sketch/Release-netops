@@ -43,6 +43,7 @@ from core.cmd_cache import get_cached_command, set_cached_command
 from services.collection_plan_service import (
     explicit_collector_override,
     filter_devices,
+    normalize_device_role,
     should_collect,
 )
 from services.collection_status_service import record_collection_results
@@ -4099,13 +4100,7 @@ def _select_route_devices(
     *,
     respect_collection_policy: bool = True,
 ) -> tuple[list[dict], dict[str, int]]:
-    """Select route-capable devices with explicit policy and interface evidence.
-
-    Role and discovered L3/SVI interfaces are capability signals. Device
-    collection-plan overrides are consulted only for plan-aware callers;
-    the explicit NSOT full-sync action is a separate product workflow and
-    deliberately ignores inspection-plan overrides.
-    """
+    """Select route-capable devices, enforcing the resolved plan when requested."""
     l3_evidence = _load_route_l3_evidence()
     stats = {
         'credentialed_online': len(all_eligible),
@@ -4120,22 +4115,32 @@ def _select_route_devices(
     selected: list[dict] = []
     for device in all_eligible:
         explicit = explicit_collector_override(device, 'routes')
-        role = str(device.get('role') or '').strip().lower()
+        role = normalize_device_role(device.get('role'))
         device_id = str(device.get('id') or '').strip()
-        if not respect_collection_policy and explicit is not None:
-            stats['policy_ignored'] += 1
-        if respect_collection_policy and explicit is False:
-            stats['policy_disabled'] += 1
-            continue
-        if respect_collection_policy and explicit is True:
-            stats['explicit'] += 1
-        elif role in _ROUTE_L3_ROLES:
-            stats['role'] += 1
-        elif device_id in l3_evidence:
-            stats['interface_evidence'] += 1
+        if respect_collection_policy:
+            if not should_collect(device, 'routes'):
+                stats['policy_disabled'] += 1
+                continue
+            if explicit is True:
+                stats['explicit'] += 1
+            elif role in _ROUTE_L3_ROLES:
+                stats['role'] += 1
+            elif device_id in l3_evidence:
+                stats['interface_evidence'] += 1
+            else:
+                # A named collection template may explicitly enable RIB for a
+                # device whose inventory role is not one of the legacy L3 keys.
+                stats['explicit'] += 1
         else:
-            stats['no_l3_evidence'] += 1
-            continue
+            if explicit is not None:
+                stats['policy_ignored'] += 1
+            if role in _ROUTE_L3_ROLES:
+                stats['role'] += 1
+            elif device_id in l3_evidence:
+                stats['interface_evidence'] += 1
+            else:
+                stats['no_l3_evidence'] += 1
+                continue
         selected.append(device)
 
     selected.sort(key=lambda item: str(item.get('id') or item.get('ip_address') or ''))
@@ -4156,7 +4161,12 @@ def _arp_device_is_due(state: dict[str, Any], now: datetime) -> bool:
         return True
 
 
-def _prepare_arp_candidate(device: dict, svi_devices: set[str]) -> dict | None:
+def _prepare_arp_candidate(
+    device: dict,
+    svi_devices: set[str],
+    *,
+    respect_collection_policy: bool = False,
+) -> dict | None:
     """Apply the shared ARP capability rules to one eligible device.
 
     The collection-plan defaults intentionally keep SSH-heavy collectors
@@ -4164,10 +4174,18 @@ def _prepare_arp_candidate(device: dict, svi_devices: set[str]) -> dict | None:
     and devices with a discovered SVI/VLANIF are valid ARP candidates unless
     the operator explicitly disabled ARP for that device.
     """
-    role = str(device.get('role') or '').strip().lower()
+    role = normalize_device_role(device.get('role'))
     explicit = explicit_collector_override(device, 'arp')
     if explicit is False:
         return None
+
+    if respect_collection_policy:
+        if not should_collect(device, 'arp'):
+            return None
+        candidate = dict(device)
+        if explicit is None:
+            candidate['_arp_policy_override'] = True
+        return candidate
 
     capable_by_role = role in _ARP_L3_ROLES
     capable_by_svi = (
@@ -4232,18 +4250,20 @@ def _select_realtime_arp_hit(
         hits,
         key=lambda item: (
             0 if preferred and str(item[0].get('id') or '') == preferred else 1,
-            _ARP_SOURCE_ROLE_PRIORITY.get(
-                str(item[0].get('role') or '').strip().lower(),
-                99,
-            ),
+            _ARP_SOURCE_ROLE_PRIORITY.get(normalize_device_role(item[0].get('role')), 99),
             str(item[0].get('id') or item[0].get('ip_address') or ''),
         ),
     )
 
 
-def _load_arp_sweep_devices(run_id: str = '') -> tuple[list[dict], int, int]:
+def _load_arp_sweep_devices(
+    run_id: str = '',
+    device_ids: set[str] | None = None,
+) -> tuple[list[dict], int, int]:
     """Select ARP-capable devices and skip devices in retry backoff."""
     all_eligible = _load_eligible_devices()
+    if device_ids is not None:
+        all_eligible = [device for device in all_eligible if str(device.get('id') or '') in device_ids]
     svi_devices = _load_svi_evidence()
     state_by_device = _load_arp_collection_state()
     now = datetime.now(timezone.utc)
@@ -4251,7 +4271,7 @@ def _load_arp_sweep_devices(run_id: str = '') -> tuple[list[dict], int, int]:
     skipped_backoff = 0
 
     for device in all_eligible:
-        candidate = _prepare_arp_candidate(device, svi_devices)
+        candidate = _prepare_arp_candidate(device, svi_devices, respect_collection_policy=True)
         if candidate is None:
             continue
         state = state_by_device.get(str(candidate.get('id') or ''), {})
@@ -4527,7 +4547,7 @@ def _persist_arp_device_entries(device_info: dict, entries: list[dict]) -> dict[
     return {'entry_count': len(normalized_entries), 'mac_changes': len(mac_changes)}
 
 
-def run_arp_sweep() -> dict[str, Any]:
+def run_arp_sweep(device_ids: set[str] | None = None) -> dict[str, Any]:
     """
     后台全量 ARP 采集：并发 SSH 到所有网关设备，采集完整 ARP 表并写入缓存。
     由 APScheduler 定时调度（每 5 分钟）。
@@ -4536,7 +4556,7 @@ def run_arp_sweep() -> dict[str, Any]:
     t0 = time.time()
 
     collection_run_id = str(uuid.uuid4())
-    gateway_devices, total_eligible, skipped_backoff = _load_arp_sweep_devices(collection_run_id)
+    gateway_devices, total_eligible, skipped_backoff = _load_arp_sweep_devices(collection_run_id, device_ids)
     # ARP 采集不按角色排除——access 路由器同样拥有 ARP 表
     if not gateway_devices:
         logger.info("[ARP Sweep] No eligible devices, skipping")
@@ -5790,14 +5810,26 @@ def _collect_device_interface_ips(device_info: dict) -> list[dict]:
 
 # ── IP Inventory 同步 ────────────────────────────────────
 
-def _sync_prefixes_from_current_interfaces() -> dict[str, int]:
+def _filter_prefix_projection_devices(
+    device_rows: list[dict[str, Any]],
+    device_ids: set[str] | None = None,
+) -> list[dict[str, Any]]:
+    """Keep only device snapshots whose effective policy allows IPAM projection."""
+    return [
+        dict(row) for row in device_rows
+        if (device_ids is None or str(row.get('device_id') or row.get('id') or '') in device_ids)
+        and should_collect(dict(row), 'prefix_projection')
+    ]
+
+
+def _sync_prefixes_from_current_interfaces(device_ids: set[str] | None = None) -> dict[str, int]:
     """Bridge inventory/full-sync results into automatic Prefix discovery."""
     try:
         conn = get_db_connection()
         try:
             device_rows = conn.execute(
                 """
-                SELECT DISTINCT i.device_id
+                SELECT DISTINCT i.device_id, d.role, d.platform, d.collection_policy_json
                 FROM interfaces i
                 JOIN devices d ON d.id = i.device_id
                 WHERE COALESCE(i.primary_ip, '') <> ''
@@ -5811,6 +5843,7 @@ def _sync_prefixes_from_current_interfaces() -> dict[str, int]:
         logger.warning("[Prefix Sync] Unable to load interface snapshots: %s", exc, exc_info=True)
         return {"devices": 0, "created": 0, "updated": 0, "failed": 0}
 
+    device_rows = _filter_prefix_projection_devices([dict(row) for row in device_rows], device_ids)
     from services.prefix_discovery_service import discover_prefixes_from_interface_snapshot
 
     totals = {"devices": len(device_rows), "created": 0, "updated": 0, "failed": 0}
@@ -5987,7 +6020,7 @@ def sync_ip_inventory():
     return result
 
 
-def run_unified_nsot_sync() -> dict[str, Any]:
+def run_unified_nsot_sync(device_ids: list[str] | set[str] | None = None) -> dict[str, Any]:
     """Run the Network Reality refresh as one ordered, auditable workflow.
 
     Prefix projection deliberately runs after topology/interface collection so
@@ -6001,23 +6034,25 @@ def run_unified_nsot_sync() -> dict[str, Any]:
     )
     from services.interface_collection_service import collect_interface_status_for_online_devices
 
+    target_device_ids = None if device_ids is None else {str(device_id) for device_id in device_ids if str(device_id)}
     topology_result: dict[str, Any] = {}
     interface_status_result: dict[str, Any] = {}
     prefix_result: dict[str, int] = {"devices": 0, "created": 0, "updated": 0, "failed": 0}
     try:
-        run_arp_sweep()
-        run_endpoint_collector(refresh_arp=False)
-        # The NSOT page's explicit "Sync All Data" action is independent from
-        # the inspection page's per-device collection plan.
-        run_route_collector(respect_collection_policy=False)
-        sync_routing_neighbors_job()
-        sync_bgp_routes_job()
-        topology_result = sync_topology_and_interfaces_job() or {}
-        interface_status_result = collect_interface_status_for_online_devices()
+        run_arp_sweep(device_ids=target_device_ids)
+        run_endpoint_collector(refresh_arp=False, device_ids=target_device_ids)
+        run_route_collector(respect_collection_policy=True, device_ids=target_device_ids)
+        sync_routing_neighbors_job(
+            device_ids=target_device_ids,
+            disabled_protocols={"eigrp", "rip"},
+        )
+        sync_bgp_routes_job(device_ids=target_device_ids)
+        topology_result = sync_topology_and_interfaces_job(device_ids=target_device_ids) or {}
+        interface_status_result = collect_interface_status_for_online_devices(target_device_ids=target_device_ids)
     finally:
-        # Even if an auxiliary collector fails, the interface/IPAM projection
-        # must run against the newest interface snapshot that is available.
-        prefix_result = _sync_prefixes_from_current_interfaces()
+        # Even if an auxiliary collector fails, project the latest interface
+        # snapshots only for devices whose effective template permits it.
+        prefix_result = _sync_prefixes_from_current_interfaces(device_ids=target_device_ids)
     return {
         "topology": topology_result if isinstance(topology_result, dict) else {},
         "interface_status": interface_status_result,
@@ -6025,7 +6060,24 @@ def run_unified_nsot_sync() -> dict[str, Any]:
     }
 
 
-def run_endpoint_collector(*, refresh_arp: bool = True):
+def _filter_endpoints_for_device_scope(
+    endpoints: list[dict[str, Any]],
+    device_ids: set[str] | None,
+) -> list[dict[str, Any]]:
+    """Keep endpoint writes owned by selected devices for a scoped run."""
+    if device_ids is None:
+        return endpoints
+    return [
+        endpoint for endpoint in endpoints
+        if str(endpoint.get('device_id') or '') in device_ids
+    ]
+
+
+def run_endpoint_collector(
+    *,
+    refresh_arp: bool = True,
+    device_ids: set[str] | None = None,
+):
     """
     后台终端事实库同步任务：
     1. 触发 ARP Sweep 以确保本地 ARP 缓存最新。
@@ -6040,7 +6092,7 @@ def run_endpoint_collector(*, refresh_arp: bool = True):
     # 1. 确保 ARP 缓存最新
     if refresh_arp:
         try:
-            run_arp_sweep()
+            run_arp_sweep(device_ids=device_ids)
         except Exception as e:
             logger.error(f"[Endpoint Collector] ARP sweep failed: {e}")
 
@@ -6051,14 +6103,17 @@ def run_endpoint_collector(*, refresh_arp: bool = True):
 
     # 2. 获取所有在线交换机
     all_eligible = _load_eligible_devices()
+    if device_ids is not None:
+        all_eligible = [device for device in all_eligible if str(device.get('id') or '') in device_ids]
     _MAC_EXCLUDED_ROLES = frozenset({'router', 'firewall', 'gateway', 'server', 'linux', 'windows'})
     switch_devices = [d for d in filter_devices(all_eligible, "mac_table") if should_collect(d, "endpoint_location")]
     if not switch_devices:
         logger.info("[Endpoint Collector] No eligible switch devices found.")
-        try:
-            sync_ip_inventory()
-        except Exception as e:
-            logger.error(f"[Endpoint Collector] Error syncing IP Inventory: {e}")
+        if device_ids is None:
+            try:
+                sync_ip_inventory()
+            except Exception as e:
+                logger.error(f"[Endpoint Collector] Error syncing IP Inventory: {e}")
         return
 
     workers = min(3, len(switch_devices))
@@ -6164,15 +6219,37 @@ def run_endpoint_collector(*, refresh_arp: bool = True):
             'confidence': confidence,
         })
 
+    if device_ids is not None:
+        # A scoped run may use globally cached ARP as evidence, but it must not
+        # reassign or deactivate endpoint rows owned by devices outside scope.
+        endpoints_to_save = _filter_endpoints_for_device_scope(endpoints_to_save, device_ids)
+
     if endpoints_to_save:
         try:
             conn = get_db_connection()
             try:
-                conn.execute("UPDATE network_endpoints SET is_active = 0")
+                if device_ids is None:
+                    conn.execute("UPDATE network_endpoints SET is_active = 0")
+                else:
+                    scope_placeholders = ','.join('?' for _ in device_ids)
+                    conn.execute(
+                        f"UPDATE network_endpoints SET is_active = 0 WHERE switch_id IN ({scope_placeholders})",
+                        tuple(device_ids),
+                    )
 
                 last_seen = _beijing_now_iso()
                 for ep in endpoints_to_save:
                     existing = conn.execute("SELECT first_seen, switch_id, switch_port, vlan FROM network_endpoints WHERE ip = ?", (ep['ip'],)).fetchone()
+                    if (
+                        device_ids is not None
+                        and existing
+                        and str(existing['switch_id'] or '') not in device_ids
+                    ):
+                        logger.debug(
+                            "[Endpoint Collector] Skipping scoped update for IP %s because its current owner is outside the selected device set",
+                            ep['ip'],
+                        )
+                        continue
                     if existing:
                         first_seen = existing['first_seen']
                         old_sw = existing['switch_id']
@@ -6217,11 +6294,14 @@ def run_endpoint_collector(*, refresh_arp: bool = True):
         except Exception as e:
             logger.error(f"[Endpoint Collector] Error writing to network_endpoints table: {e}")
 
-    # 同步 IP Inventory 表
-    try:
-        sync_ip_inventory()
-    except Exception as e:
-        logger.error(f"[Endpoint Collector] Error syncing IP Inventory: {e}")
+    # Inventory reconciliation currently scans the whole CMDB. Keep it limited
+    # to the unscoped full refresh; the scoped NSOT runner performs a scoped
+    # Prefix projection separately.
+    if device_ids is None:
+        try:
+            sync_ip_inventory()
+        except Exception as e:
+            logger.error(f"[Endpoint Collector] Error syncing IP Inventory: {e}")
 
     elapsed = round(time.time() - t0, 1)
     logger.info(f"[Endpoint Collector] Finished endpoint cache sync in {elapsed}s.")
@@ -6513,7 +6593,11 @@ def _collect_device_vrfs(dev: dict) -> list[str]:
     return vrfs
 
 
-def run_route_collector(*, respect_collection_policy: bool = True):
+def run_route_collector(
+    *,
+    respect_collection_policy: bool = True,
+    device_ids: set[str] | None = None,
+):
     """
     后台路由事实库同步任务：
     1. 获取所有支持路由的在线设备。
@@ -6525,6 +6609,8 @@ def run_route_collector(*, respect_collection_policy: bool = True):
 
     inventory_diagnostics: dict[str, int] = {}
     all_eligible = _load_eligible_devices(diagnostics=inventory_diagnostics)
+    if device_ids is not None:
+        all_eligible = [device for device in all_eligible if str(device.get('id') or '') in device_ids]
     route_devices, eligibility = _select_route_devices(
         all_eligible,
         respect_collection_policy=respect_collection_policy,

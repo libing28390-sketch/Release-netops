@@ -273,23 +273,6 @@ async def lifespan(app: FastAPI):
         replace_existing=True, max_instances=1, coalesce=True,
     )
 
-    # ING-018: periodically revalidate active Knowledge Engine sources using
-    # server-owned ETag/Last-Modified validators.  The scheduler lock keeps
-    # multiple application instances from refreshing the same batch; the
-    # service itself remains tenant-scoped and fail-closed per source.
-    from services.source_freshness_service import (
-        REFRESH_INTERVAL_MINUTES,
-        run_scheduled_source_freshness_refresh,
-    )
-    scheduler.add_job(
-        synchronized_scheduler_job('knowledge_source_freshness_refresh', expire_seconds=(REFRESH_INTERVAL_MINUTES * 60) - 5)(
-            run_scheduled_source_freshness_refresh
-        ),
-        'interval', minutes=REFRESH_INTERVAL_MINUTES,
-        id='knowledge_source_freshness_refresh', replace_existing=True,
-        max_instances=1, coalesce=True,
-    )
-
     # Read-only database consistency and orphan patrol.  The job is bounded,
     # never repairs rows, and is protected by the same cross-instance lock as
     # the other maintenance jobs.  Findings are logged as counts/fingerprints

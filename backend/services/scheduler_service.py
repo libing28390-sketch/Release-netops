@@ -14,6 +14,7 @@ from services.network_access_limiter import limited_connect_handler
 from services.collection_plan_service import (
     explicit_collector_override,
     filter_devices,
+    normalize_device_role,
     should_collect,
 )
 from core.interface_utils import normalize_interface_name
@@ -185,6 +186,121 @@ async def _run_topology_discovery_batch(
     logger.info('[Scheduler Job] Topology discovery summary: %s', summary)
     return summary
 
+def _select_nsot_scope_device_ids(
+    job: dict,
+    online_devices: list[dict],
+    tagged_device_ids: set[str] | None = None,
+) -> list[str]:
+    """Apply a saved NSOT job scope to a snapshot of online devices."""
+    online_ids = {str(device.get('id') or '') for device in online_devices if device.get('id')}
+    scope = str(job.get('device_scope') or 'all').strip().lower()
+    raw_filter = job.get('device_filter') or ''
+
+    if scope == 'all':
+        selected_ids = online_ids
+    elif scope in {'site', 'role'}:
+        selected_ids = {
+            str(device.get('id') or '')
+            for device in online_devices
+            if str(device.get(scope) or '') == str(raw_filter).strip()
+        }
+    elif scope == 'composite':
+        try:
+            filters = json.loads(raw_filter) if isinstance(raw_filter, str) else raw_filter
+        except (TypeError, ValueError):
+            logger.warning("Invalid composite filter for NSOT job; refusing to widen its target scope")
+            return []
+        if not isinstance(filters, dict):
+            logger.warning("Composite filter for NSOT job must be an object; refusing to widen its target scope")
+            return []
+        supported_dimensions = {'site', 'role', 'category', 'platform'}
+        if any(key not in supported_dimensions for key in filters):
+            logger.warning("Unsupported composite filter dimension for NSOT job; refusing to widen its target scope")
+            return []
+        filters = {
+            key: str(value).strip()
+            for key, value in filters.items()
+            if value is not None and str(value).strip()
+        }
+        if not filters:
+            logger.warning("Empty composite filter for NSOT job; refusing to target all devices")
+            return []
+        selected_ids = set()
+        for device in online_devices:
+            # Keep this contract in sync with JobModal's category filter,
+            # which falls back to a role-based Server/Network bucket.
+            device_category = device.get('category') or device.get('device_category') or (
+                'Server'
+                if 'server' in str(device.get('role') or '').lower()
+                else 'Network'
+            )
+            dimensions = {
+                'site': device.get('site') or device.get('site_id') or '',
+                'role': device.get('role') or '',
+                'category': device_category,
+                'platform': device.get('platform') or '',
+            }
+            if all(not filters.get(key) or str(dimensions[key]) == str(filters[key]) for key in dimensions):
+                if device.get('id'):
+                    selected_ids.add(str(device['id']))
+    elif scope in {'tag', 'tags'}:
+        selected_ids = tagged_device_ids or set()
+    elif scope == 'ip':
+        target_ips = {item.strip() for item in re.split(r'[,\n;]+', str(raw_filter)) if item.strip()}
+        selected_ids = {
+            str(device.get('id') or '')
+            for device in online_devices
+            if str(device.get('ip_address') or '') in target_ips and device.get('id')
+        }
+    elif scope in {'ids', 'device_ids'}:
+        selected_ids = {item.strip() for item in re.split(r'[,\n;]+', str(raw_filter)) if item.strip()}
+    else:
+        logger.warning("Unknown NSOT Automation device scope '%s'; no devices will be collected", scope)
+        return []
+
+    return sorted(selected_ids & online_ids)
+
+
+def _resolve_nsot_target_device_ids(job: dict, conn) -> list[str]:
+    """Resolve the saved Automation scope to currently online NSOT targets."""
+    rows = conn.execute("SELECT * FROM devices WHERE status = 'online'").fetchall()
+    online_devices = [dict(row) for row in rows]
+    scope = str(job.get('device_scope') or 'all').strip().lower()
+    tagged_device_ids = None
+    if scope in {'tag', 'tags'}:
+        raw_filter = job.get('device_filter') or ''
+        try:
+            config = json.loads(raw_filter) if isinstance(raw_filter, str) else raw_filter
+        except (TypeError, ValueError):
+            config = {}
+        config = config if isinstance(config, dict) else {}
+        from services.tag_service import (
+            resolve_device_ids_by_condition_groups,
+            resolve_device_ids_by_expression,
+            resolve_device_ids_by_filter,
+        )
+
+        if isinstance(config.get('expression'), dict):
+            tagged_device_ids = set(resolve_device_ids_by_expression(conn, config['expression']))
+        elif isinstance(config.get('groups'), list):
+            tagged_device_ids = set(resolve_device_ids_by_condition_groups(
+                conn,
+                config['groups'],
+                config.get('exclude_tag_ids', []),
+            ))
+        else:
+            groups = config.get('include_groups')
+            if groups is None:
+                tag_ids = config.get('tag_ids') or []
+                groups = [[tag_id] for tag_id in tag_ids] if config.get('match_mode') != 'or' else ([tag_ids] if tag_ids else [])
+            tagged_device_ids = set(resolve_device_ids_by_filter(
+                conn,
+                groups or [],
+                config.get('exclude_tag_ids', []),
+            ))
+    return _select_nsot_scope_device_ids(job, online_devices, tagged_device_ids)
+
+
 async def run_scheduled_automation_job(job_id: str):
     """
     核心执行逻辑：
@@ -202,16 +318,34 @@ async def run_scheduled_automation_job(job_id: str):
             return
         job = dict(row)
 
-        # NSOT is a composed read-only collection workflow rather than a
-        # user-supplied command.  Run it before resolving the generic device
-        # scope so the scheduled action always follows the same all-device
-        # rules as the manual NSOT trigger.
+        # NSOT uses the same saved target scope as other Automation tasks, but
+        # its target universe is explicitly the online device inventory. Resolve it
+        # before entering the composed collector; never fall back to all devices
+        # when a saved scope currently matches nothing.
         if job.get('action_type') == 'nsot':
-            logger.info("[Scheduler] Starting NSOT scheduled collection: %s (%s)", job['name'], job_id)
+            device_ids = _resolve_nsot_target_device_ids(job, conn)
+            if not device_ids:
+                now = datetime.now().isoformat()
+                conn.execute(
+                    "UPDATE scheduled_jobs SET last_run_at = ?, last_run_status = ?, run_count = run_count + 1 WHERE id = ?",
+                    (now, 'skipped', job_id),
+                )
+                conn.commit()
+                logger.warning("[Scheduler] NSOT job %s skipped: its saved scope matched no online devices", job_id)
+                return
+
+            # Preserve the existing global full-refresh semantics for an
+            # explicit "all online devices" plan. Other scopes stay isolated.
+            scoped_device_ids = None if str(job.get('device_scope') or 'all').strip().lower() == 'all' else set(device_ids)
+
+            logger.info(
+                "[Scheduler] Starting NSOT scheduled collection: %s (%s), target_devices=%s",
+                job['name'], job_id, len(device_ids),
+            )
             try:
                 from services.ip_locator_service import run_unified_nsot_sync
 
-                result = await asyncio.to_thread(run_unified_nsot_sync)
+                result = await asyncio.to_thread(run_unified_nsot_sync, device_ids=scoped_device_ids)
                 topology_summary = result.get('topology') if isinstance(result, dict) else None
                 run_status = (
                     'success'
@@ -225,10 +359,11 @@ async def run_scheduled_automation_job(job_id: str):
                 )
                 conn.commit()
                 logger.info(
-                    "[Scheduler] NSOT scheduled collection completed: %s (%s), status=%s, phases=%s",
+                    "[Scheduler] NSOT scheduled collection completed: %s (%s), status=%s, target_devices=%s, phases=%s",
                     job['name'],
                     job_id,
                     run_status,
+                    len(device_ids),
                     ','.join(sorted(result)) if isinstance(result, dict) else 'completed',
                 )
             except Exception as exc:
@@ -327,6 +462,13 @@ async def run_scheduled_automation_job(job_id: str):
 
         if not device_ids:
             logger.warning(f"Job {job_id} has no target devices.")
+            if job.get('action_type') == 'nsot':
+                now = datetime.now().isoformat()
+                conn.execute(
+                    "UPDATE scheduled_jobs SET last_run_at = ?, last_run_status = ?, run_count = run_count + 1 WHERE id = ?",
+                    (now, 'skipped', job_id),
+                )
+                conn.commit()
             return
 
         # ── SPECIAL HANDLING FOR INSPECTION JOBS ──
@@ -1209,7 +1351,7 @@ def _collect_registry_interfaces(device: dict) -> list[dict]:
             item['switchport_mode'] = 'access'
     return list(merged.values())
 
-def sync_topology_and_interfaces_job():
+def sync_topology_and_interfaces_job(device_ids: set[str] | None = None):
     """System periodic task: Collect interfaces and topology LLDP neighbors."""
     logger.info("[Scheduler Job] Starting sync_topology_and_interfaces_job...")
     conn = get_db_connection()
@@ -1218,6 +1360,9 @@ def sync_topology_and_interfaces_job():
         devices = [dict(row) for row in rows]
     finally:
         conn.close()
+
+    if device_ids is not None:
+        devices = [device for device in devices if str(device.get('id') or '') in device_ids]
 
     if not devices:
         logger.info("[Scheduler Job] No online devices found for interface and topology sync.")
@@ -1869,7 +2014,11 @@ def _persist_routing_neighbor_results(db_conn, results: list[dict], last_update:
     }
 
 
-def sync_routing_neighbors_job():
+def sync_routing_neighbors_job(
+    device_ids: set[str] | None = None,
+    *,
+    disabled_protocols: set[str] | None = None,
+):
     """Collect dynamic routing neighbors using policy plus route evidence.
 
     Route collection runs immediately before this job in the unified refresh.
@@ -1891,11 +2040,14 @@ def sync_routing_neighbors_job():
     finally:
         conn.close()
 
+    if device_ids is not None:
+        devices = [device for device in devices if str(device.get('id') or '') in device_ids]
+
     if not devices:
         logger.info("[Scheduler Job] No online devices found for routing neighbors sync.")
         return
 
-    _L3_ROLES = {'router', 'gateway', 'core', 'dist', 'distribution', 'aggregation', 'l3switch'}
+    _L3_ROLES = {'router', 'gateway', 'core', 'dist', 'distribution', 'aggregation', 'l3switch', 'firewall', 'load-balancer'}
     protocol_aliases = {
         'o': 'ospf', 'ospf': 'ospf', 'b': 'bgp', 'bgp': 'bgp',
         'ebgp': 'bgp', 'ibgp': 'bgp',
@@ -1915,9 +2067,16 @@ def sync_routing_neighbors_job():
     enabled_categories: dict[str, list[str]] = {}
     policy_override_categories: dict[str, set[str]] = {}
     auto_protocol_devices: dict[str, list[str]] = {}
-    dynamic_protocols = ('bgp', 'ospf', 'eigrp', 'isis', 'rip')
+    disabled = {str(protocol).strip().lower() for protocol in (disabled_protocols or set())}
+    dynamic_protocols = tuple(
+        protocol for protocol in ('bgp', 'ospf', 'eigrp', 'isis', 'rip')
+        if protocol not in disabled
+    )
     for device in devices:
-        if (device.get('role') or '').lower().strip() not in _L3_ROLES:
+        configured_l3_collection = should_collect(device, 'routes') or any(
+            should_collect(device, protocol) for protocol in dynamic_protocols
+        )
+        if normalize_device_role(device.get('role')) not in _L3_ROLES and not configured_l3_collection:
             continue
 
         categories: list[str] = []
@@ -2141,7 +2300,7 @@ def sync_routing_neighbors_job():
     logger.info("[Scheduler Job] sync_routing_neighbors_job completed.")
 
 
-def sync_bgp_routes_job():
+def sync_bgp_routes_job(device_ids: set[str] | None = None):
     """System periodic task: Collect BGP routing tables from L3 devices.
 
     Collects both the global/default BGP table AND per-VRF BGP tables.
@@ -2164,18 +2323,27 @@ def sync_bgp_routes_job():
     finally:
         conn.close()
 
+    if device_ids is not None:
+        devices = [device for device in devices if str(device.get('id') or '') in device_ids]
+
     if not devices:
         logger.info("[Scheduler Job] No online devices found for BGP routes sync.")
         return
 
-    _L3_ROLES = {'router', 'gateway', 'core', 'dist', 'distribution', 'aggregation', 'l3switch'}
+    _L3_ROLES = {'router', 'gateway', 'core', 'dist', 'distribution', 'aggregation', 'l3switch', 'firewall', 'load-balancer'}
     l3_devices = []
     auto_bgp_devices: set[str] = set()
     for device in devices:
-        if (device.get('role') or '').lower().strip() not in _L3_ROLES:
+        if (
+            normalize_device_role(device.get('role')) not in _L3_ROLES
+            and not should_collect(device, 'routes')
+            and not should_collect(device, 'bgp')
+        ):
             continue
         explicit_bgp = explicit_collector_override(device, 'bgp')
         auto_bgp = (
+            should_collect(device, 'routes')
+            and
             not should_collect(device, 'bgp')
             and explicit_bgp is not False
             and str(device.get('id')) in bgp_route_device_ids
@@ -2403,7 +2571,10 @@ def sync_bgp_routes_job():
 
     db_conn = get_db_connection()
     try:
-        db_conn.execute("DELETE FROM bgp_route_table")
+        if device_ids is None:
+            db_conn.execute("DELETE FROM bgp_route_table")
+        # Scoped collection may be partial, so preserve previous routes that
+        # were not returned this time. Full refresh retains its replace semantics.
         last_update = _beijing_now_iso()
         for item in all_routes:
             uid = '_'.join(_bgp_route_identity(item))
@@ -2411,6 +2582,15 @@ def sync_bgp_routes_job():
                 INSERT INTO bgp_route_table (
                     id, device_id, vrf_name, prefix, next_hop, metric, loc_pref, weight, as_path, local_as, is_best, is_active, last_updated
                 ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                ON CONFLICT(id) DO UPDATE SET
+                    metric = excluded.metric,
+                    loc_pref = excluded.loc_pref,
+                    weight = excluded.weight,
+                    as_path = excluded.as_path,
+                    local_as = excluded.local_as,
+                    is_best = excluded.is_best,
+                    is_active = excluded.is_active,
+                    last_updated = excluded.last_updated
             ''', (
                 uid,
                 item['device_id'],

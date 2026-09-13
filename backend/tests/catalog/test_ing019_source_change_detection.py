@@ -177,23 +177,22 @@ def test_ing019_same_hash_and_304_remain_non_destructive(isolated_db, make_user)
 
 @pytest.mark.parametrize("status", [404, 410])
 def test_ing019_removed_official_source_quarantines_linked_published_document_and_preserves_history(isolated_db, make_user, status):
-    from services.source_freshness_service import refresh_sources
-    from services.source_registry_service import get_source, list_source_refresh_observations, list_source_versions
+    from services.source_registry_service import collect_source, get_source, list_source_refresh_observations, list_source_versions
 
     user = make_user(f"ing019-removed-{status}", role="Operator")
     imported = _import_official(user, b"removable body", key=f"ing019-removed-{status}")
     source_id = imported["source"]["id"]
     _publish(imported, user, request_id=f"ing019-publish-{status}")
 
-    refreshed = refresh_sources(
-        tenant_id="tenant-default",
-        limit=10,
-        user=user,
+    refreshed = collect_source(
+        source_id,
+        {"method": "GET", "refresh": True},
+        user,
         transport=_transport(lambda request: httpx.Response(status, request=request)),
         resolver=_public,
     )
 
-    assert refreshed["changed"] == 1
+    assert refreshed["refresh"]["detection_type"] == "removed"
     assert get_source(source_id, user)["status"] == "quarantined"
     assert get_document_lifecycle(imported["document"]["id"], user)["document"]["lifecycle_status"] == "quarantined"
     assert len(list_source_versions(source_id, user)) == 1
@@ -203,30 +202,30 @@ def test_ing019_removed_official_source_quarantines_linked_published_document_an
 
 
 def test_ing019_other_4xx_is_a_failure_and_never_quarantines(isolated_db, make_user):
-    from services.source_freshness_service import refresh_sources
-    from services.source_registry_service import get_source, list_source_refresh_observations
+    from services.source_registry_service import SourceRegistryError, collect_source, get_source, list_source_refresh_observations
 
     user = make_user("ing019-client-error", role="Operator")
     imported = _import_official(user, b"still valid body", key="ing019-client-error")
     source_id = imported["source"]["id"]
     _publish(imported, user, request_id="ing019-client-error-publish")
 
-    refreshed = refresh_sources(
-        tenant_id="tenant-default",
-        user=user,
-        transport=_transport(lambda request: httpx.Response(403, request=request)),
-        resolver=_public,
-    )
+    with pytest.raises(SourceRegistryError) as failed:
+        collect_source(
+            source_id,
+            {"method": "GET", "refresh": True},
+            user,
+            transport=_transport(lambda request: httpx.Response(403, request=request)),
+            resolver=_public,
+        )
 
-    assert refreshed["failed"] == 1
+    assert failed.value.code == "OUTBOUND_HTTP_4XX"
     assert get_source(source_id, user)["status"] == "active"
     assert get_document_lifecycle(imported["document"]["id"], user)["document"]["lifecycle_status"] == "published"
     assert list_source_refresh_observations(source_id, user)[0]["detection_type"] == "none"
 
 
 def test_ing019_safe_replacement_quarantines_but_canonical_equivalent_redirect_does_not(isolated_db, make_user):
-    from services.source_freshness_service import refresh_sources
-    from services.source_registry_service import get_source, list_source_refresh_observations
+    from services.source_registry_service import collect_source, get_source, list_source_refresh_observations
 
     user = make_user("ing019-redirect", role="Operator")
     replacement = _import_official(user, b"replacement body", key="ing019-replacement")
@@ -239,9 +238,10 @@ def test_ing019_safe_replacement_quarantines_but_canonical_equivalent_redirect_d
             return httpx.Response(302, headers={"location": replacement_url}, request=request)
         return httpx.Response(200, headers={"content-type": "text/plain"}, content=b"replacement body", request=request)
 
-    refresh_sources(
-        tenant_id="tenant-default",
-        user=user,
+    collect_source(
+        replacement_source_id,
+        {"method": "GET", "refresh": True},
+        user,
         transport=_transport(replacement_handler),
         resolver=_public,
     )
@@ -263,9 +263,10 @@ def test_ing019_safe_replacement_quarantines_but_canonical_equivalent_redirect_d
             return httpx.Response(302, headers={"location": equivalent_redirect}, request=request)
         return httpx.Response(200, headers={"content-type": "text/plain"}, content=b"equivalent body", request=request)
 
-    refresh_sources(
-        tenant_id="tenant-equivalent",
-        user=equivalent_user,
+    collect_source(
+        equivalent_source_id,
+        {"method": "GET", "refresh": True},
+        equivalent_user,
         transport=_transport(equivalent_handler),
         resolver=_public,
     )

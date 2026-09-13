@@ -15,6 +15,10 @@ from core.read_cache import (
 )
 from services.config_approval_service import verify_code, consume_approval
 from services.audit_service import log_audit_event
+from services.nsot_collection_preview_service import (
+    NSOTPreviewPermissionError,
+    build_nsot_collection_preview,
+)
 
 router = APIRouter()
 logger = logging.getLogger(__name__)
@@ -358,9 +362,9 @@ def create_scheduled_job(
     config_reason = (payload.get("config_reason") or "").strip()
     use_admin_creds = 1 if payload.get("use_admin_creds") else 0
 
-    # NSOT is a composed, read-only workflow.  It always targets the platform's
-    # eligible online devices and does not accept arbitrary commands, scripts,
-    # config mode, or borrowed privileged credentials.
+    # NSOT is a composed, read-only workflow. It keeps the saved Automation
+    # device scope but does not accept arbitrary commands, scripts, config mode,
+    # or borrowed privileged credentials.
     if action_type == "nsot":
         commands = ""
         script_id = ""
@@ -571,6 +575,29 @@ def get_scheduled_job(
         return {"success": True, "data": _format_job_row(row)}
     finally:
         conn.close()
+
+
+@router.get("/scheduled-jobs/{job_id}/nsot-preview")
+def get_scheduled_nsot_collection_preview(
+    job_id: str,
+    user=require_role("Viewer"),
+):
+    """Return a read-only collection plan for this job's current online scope."""
+    conn = get_db_connection()
+    try:
+        row = conn.execute("SELECT * FROM scheduled_jobs WHERE id = ?", (job_id,)).fetchone()
+        if not row:
+            raise HTTPException(status_code=404, detail="作业不存在")
+        job = dict(row)
+        if str(job.get("action_type") or "").strip().lower() != "nsot":
+            raise HTTPException(status_code=400, detail="仅 NSOT 事实库作业支持采集预览")
+        try:
+            preview = build_nsot_collection_preview(conn, job, user)
+        except NSOTPreviewPermissionError as exc:
+            raise HTTPException(status_code=403, detail=str(exc)) from exc
+    finally:
+        conn.close()
+    return {"success": True, "data": preview, "message": ""}
 
 
 # ── Update ──

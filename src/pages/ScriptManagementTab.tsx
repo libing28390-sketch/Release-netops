@@ -6,6 +6,7 @@ import {
 import Pagination from '../components/Pagination';
 import PageHero from '../components/PageHero';
 import { ActionIconButton, ActionIconGroup } from '../components/ui/ActionIconButton';
+import NSOTCollectionOperations from './NSOTCollectionOperations';
 
 interface Script {
   id: string;
@@ -38,6 +39,7 @@ const ScriptManagementTab: React.FC<{ language: string; showToast: (msg: string,
   const [categoryFilter, setCategoryFilter] = useState<'all' | 'inspection' | 'change' | 'system'>('all');
   const [typeFilter, setTypeFilter] = useState('All');
   const [statusFilter, setStatusFilter] = useState('All');
+  const [activeOpsView, setActiveOpsView] = useState<'scripts' | 'nsot-catalog'>('scripts');
   
   const [isModalOpen, setIsModalOpen] = useState(false);
   const [modalMode, setModalMode] = useState<'create' | 'edit'>('create');
@@ -227,9 +229,11 @@ const ScriptManagementTab: React.FC<{ language: string; showToast: (msg: string,
       <PageHero
         icon={Terminal}
         title={zh ? '操作管理' : 'Ops'}
-        subtitle={zh ? '自动化脚本生命周期管理' : 'Script lifecycle management'}
+        subtitle={activeOpsView === 'nsot-catalog'
+          ? (zh ? 'NSOT 采集模板与版本化操作目录' : 'NSOT collection templates and versioned operations')
+          : (zh ? '自动化脚本生命周期管理' : 'Script lifecycle management')}
         accent={BRAND_COLOR}
-        actions={
+        actions={activeOpsView === 'scripts' ? (
           <>
             <div className="relative">
               <Search className="absolute left-4 top-1/2 -translate-y-1/2 text-slate-300 dark:text-slate-600" size={14} />
@@ -250,10 +254,21 @@ const ScriptManagementTab: React.FC<{ language: string; showToast: (msg: string,
               {zh ? '新增脚本' : 'Create'}
             </button>
           </>
-        }
+        ) : null}
       />
 
       <div className="flex-1 overflow-y-auto px-6 py-5 space-y-6 no-scrollbar">
+        <div role="tablist" aria-label={zh ? '操作管理视图' : 'Operation management views'} className="flex w-fit max-w-full flex-wrap items-center gap-1 rounded-xl border border-slate-200 bg-slate-100/80 p-1 dark:border-white/10 dark:bg-slate-900/40">
+          <button type="button" role="tab" aria-selected={activeOpsView === 'scripts'} onClick={() => setActiveOpsView('scripts')} className={`rounded-lg px-4 py-2 text-xs font-bold transition ${activeOpsView === 'scripts' ? 'bg-white text-slate-800 shadow-sm dark:bg-slate-800 dark:text-white' : 'text-slate-500 hover:text-[#00a9ce] dark:text-slate-400'}`}>
+            {zh ? '脚本管理' : 'Scripts'}
+          </button>
+          <button type="button" role="tab" aria-selected={activeOpsView === 'nsot-catalog'} onClick={() => setActiveOpsView('nsot-catalog')} className={`rounded-lg px-4 py-2 text-xs font-bold transition ${activeOpsView === 'nsot-catalog' ? 'bg-white text-slate-800 shadow-sm dark:bg-slate-800 dark:text-white' : 'text-slate-500 hover:text-[#00a9ce] dark:text-slate-400'}`}>
+            {zh ? 'NSOT 采集目录' : 'NSOT catalog'}
+          </button>
+        </div>
+
+        {activeOpsView === 'nsot-catalog' ? <NSOTCollectionOperations language={language} /> : (
+          <>
         <div className="flex flex-col gap-4 bg-slate-50/50 dark:bg-slate-900/10 p-5 rounded-2xl border border-slate-100 dark:border-white/5">
           <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
              <div className="flex flex-col gap-2">
@@ -423,13 +438,16 @@ const ScriptManagementTab: React.FC<{ language: string; showToast: (msg: string,
             </table>
           </div>
         </div>
-
+          </>
+        )}
       </div>
 
 
-      <div className="px-10 py-5 bg-transparent border-t border-slate-200/10">
-        <Pagination currentPage={currentPage} totalItems={totalScripts} itemsPerPage={pageSize} onPageChange={setCurrentPage} onItemsPerPageChange={(size) => { setPageSize(size); setCurrentPage(1); }} language={language} />
-      </div>
+      {activeOpsView === 'scripts' && (
+        <div className="px-10 py-5 bg-transparent border-t border-slate-200/10">
+          <Pagination currentPage={currentPage} totalItems={totalScripts} itemsPerPage={pageSize} onPageChange={setCurrentPage} onItemsPerPageChange={(size) => { setPageSize(size); setCurrentPage(1); }} language={language} />
+        </div>
+      )}
 
       {/* Main Modal */}
       <AnimatePresence>

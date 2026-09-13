@@ -12,6 +12,8 @@ import {
 } from '../utils/macLookup';
 import { formatLocationType } from '../utils/ipLocator';
 import { locateIpWithRun, type LocatorRunStage } from '../utils/ipLocatorRuns';
+import { summarizeLocatorCache } from '../utils/ipLocatorCacheSummary';
+import { isValidIP } from './IPVlan/helpers';
 import { useSearchParams } from 'react-router-dom';
 
 interface IPLocatorPageProps {
@@ -135,6 +137,7 @@ interface LocateResult {
     endpoint_cache_stale?: boolean;
     endpoint_cache_age_seconds?: number | null;
   };
+  evidence_collected_at?: string | null;
   cache_provenance?: Array<{
     stage: string;
     device_id: string;
@@ -174,6 +177,79 @@ interface ProbeResult {
 
 type TabMode = 'locate' | 'probe' | 'arp-table' | 'mac-changes' | 'diagnose' | 'nsot';
 type NsotSubTab = 'endpoints' | 'inventory' | 'routes' | 'neighbors' | 'bgp_routes';
+type NsotCollectionTemplateId = 'role_default' | 'basic' | 'layer2_switch' | 'layer3_gateway' | 'firewall' | 'wireless' | 'custom';
+
+interface NsotPlanDevice {
+  id: string | number;
+  hostname?: string | null;
+  ip_address?: string | null;
+  platform?: string | null;
+  role?: string | null;
+  site?: string | null;
+  site_id?: string | number | null;
+  site_label?: string | null;
+  status?: string | null;
+}
+
+interface NsotPlanRow {
+  device: NsotPlanDevice;
+  plan: Record<string, any> | null;
+}
+
+interface NsotPlanLoadError {
+  message: string;
+  permissionDenied: boolean;
+  retryable?: boolean;
+}
+
+const NSOT_COLLECTION_TEMPLATES: Array<{
+  id: NsotCollectionTemplateId;
+  zh: string;
+  en: string;
+  descriptionZh: string;
+  descriptionEn: string;
+}> = [
+  { id: 'role_default', zh: '按设备角色默认', en: 'Role defaults', descriptionZh: '沿用设备角色的默认采集策略。', descriptionEn: 'Use the default plan for this device role.' },
+  { id: 'basic', zh: '基础监控', en: 'Basic monitoring', descriptionZh: '采集可达性、健康状态和接口事实。', descriptionEn: 'Collect reachability, health, and interface facts.' },
+  { id: 'layer2_switch', zh: '二层交换机', en: 'Layer 2 switch', descriptionZh: '采集 LLDP、MAC、VLAN 和终端接入位置；不采 ARP/路由协议。', descriptionEn: 'Collect LLDP, MAC, VLAN, and endpoint location; skip ARP and routing.' },
+  { id: 'layer3_gateway', zh: '三层 / 网关设备', en: 'Layer 3 / gateway', descriptionZh: '采集 ARP 和路由；动态路由协议按发现证据处理。', descriptionEn: 'Collect ARP and routes; discover dynamic protocols from evidence.' },
+  { id: 'firewall', zh: '防火墙 / 边界设备', en: 'Firewall / edge', descriptionZh: '采集基础接口、ARP 和路由；协议按发现证据处理。', descriptionEn: 'Collect interface facts, ARP, and routes; discover protocols from evidence.' },
+  { id: 'wireless', zh: '无线设备（基础）', en: 'Wireless (basic)', descriptionZh: '采集通用状态、接口和 LLDP；当前不含无线客户端/射频专用数据。', descriptionEn: 'Collect general status, interfaces, and LLDP; no client/radio-specific data yet.' },
+  { id: 'custom', zh: '自定义', en: 'Custom', descriptionZh: '使用设备角色默认值，并在下方高级设置逐项调整。', descriptionEn: 'Start from role defaults and adjust individual collectors below.' },
+];
+
+const isRecord = (value: unknown): value is Record<string, unknown> =>
+  Boolean(value) && typeof value === 'object' && !Array.isArray(value);
+
+const parseNsotPlanLookupResult = (payload: unknown): NsotPlanRow | null => {
+  if (!isRecord(payload) || payload.success !== true || !isRecord(payload.data)) return null;
+  const data = payload.data;
+  if (!isRecord(data.device) || (typeof data.device.id !== 'string' && typeof data.device.id !== 'number')) return null;
+  return {
+    device: data.device as unknown as NsotPlanDevice,
+    plan: isRecord(data.plan) ? data.plan : null,
+  };
+};
+
+const getNsotPlanApiError = (status: number, payload: unknown, zh: boolean): NsotPlanLoadError => {
+  if (status === 401 || status === 403) {
+    return { message: zh ? '当前账号无权查看设备采集模板，或登录状态已失效。' : 'You are not authorized to view device collection templates, or your session has expired.', permissionDenied: true };
+  }
+  if (status === 400 || status === 422) return { message: zh ? 'IP 地址格式无效，请输入 IPv4 或 IPv6 地址。' : 'Invalid IP address. Enter a valid IPv4 or IPv6 address.', permissionDenied: false };
+  if (status === 404) return { message: zh ? '未找到该 IP 对应的设备。请确认地址并重试。' : 'No device was found for this IP. Check the address and retry.', permissionDenied: false };
+  if (status === 409) return { message: zh ? '该 IP 匹配到多台设备，无法安全确定目标；请先在 CMDB 中处理重复地址。' : 'This IP matches multiple devices, so the target is ambiguous. Resolve the duplicate address in CMDB first.', permissionDenied: false };
+  const detail = isRecord(payload) && typeof payload.detail === 'string'
+    ? payload.detail.replace(/[\r\n\t]+/g, ' ').trim()
+    : '';
+  const safeDetail = detail.length > 0 && detail.length <= 240 ? detail : '';
+  return {
+    message: status >= 500
+      ? (zh ? `服务暂时不可用（HTTP ${status}），请重试。` : `The service is temporarily unavailable (HTTP ${status}). Please retry.`)
+      : safeDetail || (zh ? `设备策略查询失败（HTTP ${status}）。` : `The device policy lookup failed (HTTP ${status}).`),
+    permissionDenied: false,
+    retryable: status >= 500,
+  };
+};
 
 const PATH_KIND_LABELS: Record<string, [string, string]> = {
   ip: ['IP 地址', 'IP Address'],
@@ -187,40 +263,6 @@ const PATH_KIND_LABELS: Record<string, [string, string]> = {
 
 function formatPathKind(kind: string, zhLang: boolean): string {
   const labels = PATH_KIND_LABELS[kind] || [kind, kind];
-  return labels[zhLang ? 0 : 1];
-}
-
-const CACHE_STAGE_LABELS: Record<string, [string, string]> = {
-  route: ['路由', 'Route'],
-  arp: ['ARP', 'ARP'],
-  mac: ['MAC', 'MAC'],
-  topology: ['LLDP/拓扑', 'LLDP/Topology'],
-  result: ['整体结果', 'Whole result'],
-};
-
-const CACHE_SOURCE_LABELS: Record<string, [string, string]> = {
-  redis: ['Redis 命中', 'Redis hit'],
-  miss: ['整体缓存未命中', 'Whole-result cache miss'],
-  postgres: ['PostgreSQL 复用', 'PostgreSQL reuse'],
-  cli: ['CLI 采集来源', 'CLI-sourced evidence'],
-  negative_redis: ['Redis 负缓存命中', 'Redis negative hit'],
-  negative_postgres: ['PostgreSQL 负记录', 'PostgreSQL negative record'],
-  negative_cli: ['CLI 未命中', 'CLI not found'],
-  snapshot_redis: ['Redis 完整快照', 'Redis full snapshot'],
-  snapshot_negative_redis: ['Redis 空快照', 'Redis empty snapshot'],
-  snapshot_postgres: ['PostgreSQL 完整快照', 'PostgreSQL full snapshot'],
-  snapshot_cli: ['CLI 完整采集', 'CLI full collection'],
-  snapshot_negative_cli: ['CLI 完整空结果', 'CLI full empty result'],
-  query_failed: ['查询失败', 'Query failed'],
-};
-
-function cacheStageLabel(stage: string, zhLang: boolean): string {
-  const labels = CACHE_STAGE_LABELS[stage] || [stage, stage];
-  return labels[zhLang ? 0 : 1];
-}
-
-function cacheSourceLabel(source: string, zhLang: boolean): string {
-  const labels = CACHE_SOURCE_LABELS[source] || [source, source];
   return labels[zhLang ? 0 : 1];
 }
 
@@ -658,63 +700,184 @@ const IPLocatorPage: React.FC<IPLocatorPageProps> = ({ language, t, mode }) => {
 
   // ── NSOT Collection Policy Modal state ──
   const [nsotPolicyModalOpen, setNsotPolicyModalOpen] = useState(false);
-  const [nsotPlans, setNsotPlans] = useState<any[]>([]);
+  const [nsotPlans, setNsotPlans] = useState<NsotPlanRow[]>([]);
   const [nsotSelectedPlanDeviceId, setNsotSelectedPlanDeviceId] = useState('');
   const [nsotPlansLoading, setNsotPlansLoading] = useState(false);
+  const [nsotPlanLoadError, setNsotPlanLoadError] = useState<NsotPlanLoadError | null>(null);
+  const [nsotPlanLookupStatus, setNsotPlanLookupStatus] = useState<'idle' | 'found' | 'not-found' | 'duplicate' | 'invalid' | 'error'>('idle');
+  const [nsotPlanSaving, setNsotPlanSaving] = useState(false);
   const [nsotPlanMessage, setNsotPlanMessage] = useState('');
-  const [nsotPlanSearch, setNsotPlanSearch] = useState('');
+  const [nsotPlanSearchIp, setNsotPlanSearchIp] = useState('');
+  const [nsotPlanQueryIp, setNsotPlanQueryIp] = useState('');
+  const nsotPlanRequestSequence = useRef(0);
+  const nsotPlanRequestController = useRef<AbortController | null>(null);
 
-  const fetchNsotCollectionPlans = useCallback(async () => {
+  const fetchNsotCollectionPlanByIp = useCallback(async (ip: string) => {
+    nsotPlanRequestController.current?.abort();
+    const controller = new AbortController();
+    nsotPlanRequestController.current = controller;
+    const sequence = ++nsotPlanRequestSequence.current;
     setNsotPlansLoading(true);
+    setNsotPlanLoadError(null);
+    setNsotPlanLookupStatus('idle');
+    setNsotPlans([]);
+    setNsotSelectedPlanDeviceId('');
     try {
-      const resp = await fetch('/api/collection-plans/devices', {
-        headers: { Authorization: `Bearer ${token}` }
+      const resp = await fetch(`/api/collection-plans/devices/by-ip?ip=${encodeURIComponent(ip)}`, {
+        headers: { Authorization: `Bearer ${token}` },
+        signal: controller.signal,
       });
-      if (!resp.ok) return;
-      const json = await resp.json();
-      const rows = Array.isArray(json.data) ? json.data : [];
-      setNsotPlans(rows);
-      setNsotSelectedPlanDeviceId((curr) => curr || rows[0]?.device?.id || '');
+      const payload: unknown = await resp.json().catch(() => null);
+      if (sequence !== nsotPlanRequestSequence.current) return;
+      if (!resp.ok) {
+        const error = getNsotPlanApiError(resp.status, payload, zh);
+        setNsotPlanLoadError(error);
+        setNsotPlanLookupStatus(resp.status === 404 ? 'not-found' : resp.status === 409 ? 'duplicate' : resp.status === 400 || resp.status === 422 ? 'invalid' : 'error');
+        return;
+      }
+      const result = parseNsotPlanLookupResult(payload);
+      if (!result) {
+        setNsotPlanLoadError({
+          message: zh ? '服务器返回的设备策略格式无法识别。' : 'The server returned an unrecognized device policy response.',
+          permissionDenied: false,
+        });
+        setNsotPlanLookupStatus('error');
+        return;
+      }
+      setNsotPlans([result]);
+      setNsotSelectedPlanDeviceId(String(result.device.id));
+      setNsotPlanLookupStatus('found');
     } catch {
-      setNsotPlanMessage(zh ? '采集能力策略加载失败' : 'Failed to load collection policies');
+      if (controller.signal.aborted || sequence !== nsotPlanRequestSequence.current) return;
+      setNsotPlanLoadError({
+        message: zh ? '设备策略查询失败，请检查网络后重试。' : 'Could not load the device policy. Check the connection and retry.',
+        permissionDenied: false,
+        retryable: true,
+      });
+      setNsotPlanLookupStatus('error');
     } finally {
-      setNsotPlansLoading(false);
+      if (sequence === nsotPlanRequestSequence.current) setNsotPlansLoading(false);
     }
   }, [token, zh]);
 
+  useEffect(() => () => {
+    nsotPlanRequestSequence.current += 1;
+    nsotPlanRequestController.current?.abort();
+  }, []);
+
+  const submitNsotPlanLookup = useCallback(() => {
+    const ip = nsotPlanSearchIp.trim();
+    setNsotPlanQueryIp(ip);
+    setNsotPlanMessage('');
+    if (!isValidIP(ip)) {
+      nsotPlanRequestSequence.current += 1;
+      nsotPlanRequestController.current?.abort();
+      setNsotPlansLoading(false);
+      setNsotPlans([]);
+      setNsotSelectedPlanDeviceId('');
+      setNsotPlanLookupStatus('invalid');
+      setNsotPlanLoadError({
+        message: zh ? '请输入有效的 IPv4 或 IPv6 地址。' : 'Enter a valid IPv4 or IPv6 address.',
+        permissionDenied: false,
+      });
+      return;
+    }
+    void fetchNsotCollectionPlanByIp(ip);
+  }, [fetchNsotCollectionPlanByIp, nsotPlanSearchIp, zh]);
+
+  const updateNsotPlanSearchIp = (ip: string) => {
+    nsotPlanRequestSequence.current += 1;
+    nsotPlanRequestController.current?.abort();
+    setNsotPlansLoading(false);
+    setNsotPlanSearchIp(ip);
+    setNsotPlanQueryIp('');
+    setNsotPlanLoadError(null);
+    setNsotPlanLookupStatus('idle');
+    setNsotPlans([]);
+    setNsotSelectedPlanDeviceId('');
+    setNsotPlanMessage('');
+  };
+
+  const openNsotPlanModal = () => {
+    updateNsotPlanSearchIp('');
+    setNsotPolicyModalOpen(true);
+  };
+
+  const closeNsotPlanModal = () => {
+    nsotPlanRequestSequence.current += 1;
+    nsotPlanRequestController.current?.abort();
+    setNsotPlansLoading(false);
+    setNsotPolicyModalOpen(false);
+  };
+
   const updateNsotCollectionPlan = useCallback(async (collector: string, enabled: boolean) => {
-    const current = nsotPlans.find((row) => row.device?.id === nsotSelectedPlanDeviceId);
+    const current = nsotPlans.find((row) => String(row.device?.id) === nsotSelectedPlanDeviceId);
     if (!current) return;
     const overrides = { ...(current.plan?.overrides || {}), [collector]: enabled };
+    setNsotPlanSaving(true);
     try {
       const resp = await fetch(`/api/collection-plans/devices/${nsotSelectedPlanDeviceId}`, {
         method: 'PUT',
         headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` },
-        body: JSON.stringify({ policy: { collectors: overrides } }),
+        body: JSON.stringify({ policy: { template: current.plan?.template_id || 'role_default', collectors: overrides } }),
       });
       const json = await resp.json();
       if (!resp.ok) throw new Error(json.detail || 'Update failed');
       setNsotPlanMessage(zh ? '采集能力策略已更新' : 'Collection policy updated');
-      fetchNsotCollectionPlans();
+      void fetchNsotCollectionPlanByIp(nsotPlanQueryIp);
     } catch {
       setNsotPlanMessage(zh ? '采集能力策略更新失败' : 'Failed to update collection policy');
+    } finally {
+      setNsotPlanSaving(false);
     }
-  }, [fetchNsotCollectionPlans, nsotPlans, nsotSelectedPlanDeviceId, token, zh]);
+  }, [fetchNsotCollectionPlanByIp, nsotPlanQueryIp, nsotPlans, nsotSelectedPlanDeviceId, token, zh]);
+
+  const updateNsotCollectionTemplate = useCallback(async (template: NsotCollectionTemplateId) => {
+    const current = nsotPlans.find((row) => String(row.device?.id) === nsotSelectedPlanDeviceId);
+    if (!current || (current.plan?.template_id || 'role_default') === template) return;
+    const overrideCount = Object.keys(current.plan?.overrides || {}).length;
+    if (overrideCount > 0 && !window.confirm(zh
+      ? '切换采集模板会清除这台设备现有的单项自定义覆盖，确定继续吗？'
+      : 'Switching templates clears this device’s individual collector overrides. Continue?')) return;
+
+    setNsotPlanSaving(true);
+    try {
+      const resp = await fetch(`/api/collection-plans/devices/${nsotSelectedPlanDeviceId}`, {
+        method: 'PUT',
+        headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` },
+        body: JSON.stringify({ policy: { template } }),
+      });
+      const json = await resp.json();
+      if (!resp.ok) throw new Error(json.detail || 'Update failed');
+      const selectedTemplate = NSOT_COLLECTION_TEMPLATES.find((item) => item.id === template);
+      setNsotPlanMessage(zh
+        ? `已应用“${selectedTemplate?.zh || template}”模板`
+        : `Applied the “${selectedTemplate?.en || template}” template`);
+      void fetchNsotCollectionPlanByIp(nsotPlanQueryIp);
+    } catch {
+      setNsotPlanMessage(zh ? '采集模板更新失败' : 'Failed to update collection template');
+    } finally {
+      setNsotPlanSaving(false);
+    }
+  }, [fetchNsotCollectionPlanByIp, nsotPlanQueryIp, nsotPlans, nsotSelectedPlanDeviceId, token, zh]);
 
   const resetNsotCollectionPlan = useCallback(async () => {
     if (!nsotSelectedPlanDeviceId) return;
+    setNsotPlanSaving(true);
     try {
       const resp = await fetch(`/api/collection-plans/devices/${nsotSelectedPlanDeviceId}`, {
         method: 'DELETE',
         headers: { Authorization: `Bearer ${token}` },
       });
       if (!resp.ok) throw new Error('Reset failed');
-      setNsotPlanMessage(zh ? '已恢复角色默认策略' : 'Reset to role default policy');
-      fetchNsotCollectionPlans();
+      setNsotPlanMessage(zh ? '已恢复按设备角色默认' : 'Restored device role defaults');
+      void fetchNsotCollectionPlanByIp(nsotPlanQueryIp);
     } catch {
       setNsotPlanMessage(zh ? '恢复默认策略失败' : 'Failed to reset policy');
+    } finally {
+      setNsotPlanSaving(false);
     }
-  }, [fetchNsotCollectionPlans, nsotSelectedPlanDeviceId, token, zh]);
+  }, [fetchNsotCollectionPlanByIp, nsotPlanQueryIp, nsotSelectedPlanDeviceId, token, zh]);
   // Endpoints tab filters
   const [epFilterIp, setEpFilterIp] = useState('');
   const [epFilterMac, setEpFilterMac] = useState('');
@@ -1283,15 +1446,12 @@ ${rep.repair_commands}
   const accessLocations = result?.locations?.filter(l => !l.is_uplink) || [];
   const uplinkLocations = result?.locations?.filter(l => l.is_uplink) || [];
   const locatorContext = result?.context;
-  const cacheProvenance = result?.cache_provenance || [];
-  const cacheProvenanceSources = cacheProvenance.map(entry => entry.source.toLowerCase());
-  const hasRedisCacheSource = cacheProvenanceSources.some(source => source.includes('redis'));
-  const hasPostgresCacheSource = cacheProvenanceSources.some(source => source.includes('postgres'));
-  const hasCliCacheSource = cacheProvenanceSources.some(source => source.includes('cli'));
-  const hasResultCacheMiss = cacheProvenance.some(entry => entry.stage === 'result' && entry.source === 'miss');
-  const hasRedisWriteAttempt = cacheProvenance.some(entry => entry.redis_write_attempted);
-  const hasRedisWriteAck = cacheProvenance.some(entry => entry.redis_write_attempted && entry.redis_write_ack);
-  const hasUnconfirmedRedisWrite = cacheProvenance.some(entry => entry.redis_write_attempted && !entry.redis_write_ack);
+  const cacheSummary = summarizeLocatorCache(
+    result?.cache_provenance,
+    result?.evidence_collected_at,
+    result?.cache?.cached_at,
+    { cacheEnabled: result?.cache?.enabled, forceRefresh: result?.cache?.force_refresh },
+  );
   const macLookup = result?.mac_lookup;
   const macLookupMessage = formatMacLookupMessage(macLookup, zh);
   const macLookupStatusClass = macLookup?.status === 'found'
@@ -1449,41 +1609,26 @@ ${rep.repair_commands}
                     <MapPin size={13} className="text-white" />
                   </div>
                   <span className="text-sm font-bold text-emerald-800 dark:text-emerald-300">{zh ? '定位成功' : 'Located'}</span>
-                  {macLookup && macLookup.status !== 'not_attempted' && (
-                    <span className={`inline-flex items-center gap-1 text-[10px] rounded-full px-2.5 py-0.5 font-medium border ${macLookupStatusClass}`}>
-                      <Cable size={10} />
-                      {macLookupStatusLabel(macLookup.status, zh)}
-                    </span>
-                  )}
-                  {cacheProvenance.length > 0 ? (
-                    <>
-                      {hasRedisCacheSource && <span className="text-[10px] rounded-full bg-cyan-100/70 dark:bg-cyan-500/10 px-2.5 py-0.5 font-medium text-cyan-700 dark:text-cyan-300">{zh ? 'Redis 命中' : 'Redis hit'}</span>}
-                      {hasPostgresCacheSource && <span className="text-[10px] rounded-full bg-sky-100/70 dark:bg-sky-500/10 px-2.5 py-0.5 font-medium text-sky-700 dark:text-sky-300">{zh ? 'PostgreSQL 复用' : 'PostgreSQL reuse'}</span>}
-                      {hasCliCacheSource && <span className="text-[10px] rounded-full bg-emerald-100/60 dark:bg-emerald-500/10 px-2.5 py-0.5 font-medium text-emerald-600 dark:text-emerald-400">{zh ? 'CLI 采集来源' : 'CLI-sourced evidence'}</span>}
-                      {hasResultCacheMiss && <span className="text-[10px] rounded-full bg-slate-100 dark:bg-white/[0.06] px-2.5 py-0.5 font-medium text-slate-500">{zh ? '整体结果缓存未命中' : 'Result cache miss'}</span>}
-                      {hasRedisWriteAttempt && <span className={`text-[10px] rounded-full px-2.5 py-0.5 font-medium ${hasRedisWriteAck && !hasUnconfirmedRedisWrite ? 'bg-emerald-100/60 dark:bg-emerald-500/10 text-emerald-600 dark:text-emerald-400' : 'bg-amber-100/70 dark:bg-amber-500/10 text-amber-700 dark:text-amber-300'}`}>
-                        {hasRedisWriteAck && !hasUnconfirmedRedisWrite
-                          ? (zh ? 'Redis 写入已确认' : 'Redis write confirmed')
-                          : (zh ? 'Redis 写入未确认' : 'Redis write unconfirmed')}
-                      </span>}
-                    </>
-                  ) : result.cache?.arp_cache_hit && result.cache.cached_at ? (
-                    <span className="inline-flex items-center gap-1 text-[10px] bg-amber-50 dark:bg-amber-500/10 text-amber-600 dark:text-amber-400 border border-amber-200/60 dark:border-amber-500/20 rounded-full px-2.5 py-0.5 font-medium">
-                      <Clock size={10} />
-                      {zh ? `ARP 缓存命中 · ${formatRelativeTime(result.cache.cached_at, zh)}采集` : `ARP cached · collected ${formatRelativeTime(result.cache.cached_at, false)}`}
-                    </span>
-                  ) : result.cache?.force_refresh ? (
-                    <span className="inline-flex items-center gap-1 text-[10px] bg-emerald-100/60 dark:bg-emerald-500/10 text-emerald-600 dark:text-emerald-400 border border-emerald-200/60 dark:border-emerald-500/20 rounded-full px-2.5 py-0.5 font-medium">
-                      <Zap size={10} />
-                      {zh ? '已请求强制实时刷新' : 'Forced live refresh requested'}
-                    </span>
-                  ) : (
-                    <span className="inline-flex items-center gap-1 text-[10px] bg-slate-100 dark:bg-white/[0.06] text-slate-500 border border-slate-200/60 dark:border-white/10 rounded-full px-2.5 py-0.5 font-medium">
-                      <Clock size={10} />
-                      {zh ? '采集来源未记录' : 'Source not recorded'}
-                    </span>
-                  )}
-                  <span className="text-xs text-emerald-600 dark:text-emerald-400/70 ml-auto font-mono">{result.timestamp?.replace('T', ' ').slice(0, 19)}</span>
+                  <span className={`text-[10px] rounded-full px-2.5 py-1 font-medium ${cacheSummary.redisUsage === 'used'
+                    ? 'bg-cyan-100/70 dark:bg-cyan-500/10 text-cyan-700 dark:text-cyan-300'
+                    : cacheSummary.redisUsage === 'not_used'
+                      ? 'bg-slate-100 dark:bg-white/[0.06] text-slate-600 dark:text-slate-300'
+                      : 'bg-amber-100/70 dark:bg-amber-500/10 text-amber-700 dark:text-amber-300'
+                    }`}>
+                    {cacheSummary.redisUsage === 'used'
+                      ? (zh ? '结果含 Redis 缓存数据' : 'Result includes Redis data')
+                      : cacheSummary.redisUsage === 'not_used'
+                        ? (zh ? '结果未使用 Redis 缓存' : 'Redis cache not used')
+                        : (zh ? 'Redis 使用情况未记录' : 'Redis usage not recorded')}
+                  </span>
+                  <span
+                    className="text-[10px] text-emerald-700/70 dark:text-emerald-300/70 ml-auto"
+                    title={cacheSummary.dataUpdatedAt ? (zh ? '按本次定位所用证据中最早的采集时间显示' : 'Shows the oldest collection time among evidence used by this result') : undefined}
+                  >
+                    {zh ? '数据更新时间' : 'Data updated'} · {cacheSummary.dataUpdatedAt
+                      ? `${formatExactTime(cacheSummary.dataUpdatedAt, zh)} (${formatRelativeTime(cacheSummary.dataUpdatedAt, zh)})`
+                      : (zh ? '暂无记录' : 'No timestamp')}
+                  </span>
                 </div>
               </div>
 
@@ -1756,52 +1901,9 @@ ${rep.repair_commands}
 
           {showDetails && result.searched_devices && (
             <div className="bg-black/[0.02] dark:bg-white/[0.03] rounded-xl border border-black/5 dark:border-white/8 px-5 py-3.5 text-xs text-black/50 dark:text-white/50 space-y-2">
-              {cacheProvenance.length > 0 && (
-                <div className="pb-2 border-b border-black/5 dark:border-white/8">
-                  <div className="mb-1 font-semibold text-black/60 dark:text-white/60">
-                    {zh ? '缓存来源与 Redis 写入确认' : 'Cache source and Redis write acknowledgement'}
-                  </div>
-                  <div className="max-h-44 overflow-y-auto space-y-1">
-                    {cacheProvenance.map((entry, index) => (
-                      <div
-                        key={`${entry.stage}:${entry.device_id}:${entry.vrf}:${entry.variant}:${index}`}
-                        className="flex flex-wrap items-center gap-x-2 gap-y-0.5"
-                      >
-                        <span className="font-semibold text-black/60 dark:text-white/60">
-                          {cacheStageLabel(entry.stage, zh)}
-                        </span>
-                        <span>{entry.device || entry.device_id || '-'}</span>
-                        {entry.vrf && entry.vrf !== 'default' && <span>VRF {entry.vrf}</span>}
-                        {entry.variant !== 'target' && <span className="text-black/35 dark:text-white/35">{entry.variant}</span>}
-                        <span>{cacheSourceLabel(entry.source, zh)}</span>
-                        {entry.redis_write_attempted && (
-                          <span className={entry.redis_write_ack ? 'text-emerald-600 dark:text-emerald-400' : 'text-amber-600 dark:text-amber-400'}>
-                            {entry.redis_write_ack
-                              ? (zh ? 'Redis SET 已确认' : 'Redis SET confirmed')
-                              : (zh ? 'Redis SET 未确认' : 'Redis SET unconfirmed')}
-                          </span>
-                        )}
-                      </div>
-                    ))}
-                  </div>
-                </div>
-              )}
-              {result.cache?.arp_cache_hit && result.cache.cached_at && (
-                <div className="flex items-center gap-2 pb-2 border-b border-black/5 mb-1">
-                  <Clock size={11} className="text-amber-500" />
-                  <span className="font-semibold text-amber-600">{zh ? 'ARP 数据来源' : 'ARP Data Source'}:</span>
-                  <span className="text-amber-600">
-                    {zh
-                      ? `缓存命中（${formatRelativeTime(result.cache.cached_at, true)}采集，TTL ${result.cache.ttl_seconds}s）`
-                      : `Cache hit (collected ${formatRelativeTime(result.cache.cached_at, false)}, TTL ${result.cache.ttl_seconds}s)`}
-                  </span>
-                </div>
-              )}
               <div>
                 <span className="font-semibold text-black/60 dark:text-white/60">{zh ? 'ARP 查询设备' : 'ARP Devices'}:</span>{' '}
-                {result.cache?.arp_cache_hit
-                  ? (zh ? '（缓存命中，未查设备）' : '(cache hit, no device queried)')
-                  : (result.searched_devices.arp?.join(', ') || '-')}
+                {result.searched_devices.arp?.join(', ') || '-'}
               </div>
               <div>
                 <span className="font-semibold text-black/60 dark:text-white/60">{zh ? 'MAC 查询设备' : 'MAC Devices'}:</span>{' '}
@@ -2541,12 +2643,12 @@ ${rep.repair_commands}
           {zh ? '高级搜索' : 'Advanced'}
         </button>
         <button
-          onClick={() => { setNsotPolicyModalOpen(true); fetchNsotCollectionPlans(); }}
+          onClick={openNsotPlanModal}
           className="flex items-center gap-1.5 px-3.5 py-2 bg-white dark:bg-[#1f2937]/30 border border-black/5 dark:border-white/5 text-black/70 dark:text-white/70 hover:bg-black/[0.02] dark:hover:bg-white/[0.02] rounded-xl text-sm font-medium transition-colors"
-          title={zh ? '设置各设备的 NSOT 事实库采集能力与策略' : 'Configure NSOT collection capabilities per device'}
+          title={zh ? '为各设备选择 NSOT 采集模板' : 'Choose an NSOT collection template per device'}
         >
           <Sliders size={13} className="text-[#06b6d4]" />
-          {zh ? '采集策略与能力' : 'Collection Policy'}
+          {zh ? '采集模板' : 'Collection Templates'}
         </button>
         <button
           onClick={handleNsotSweep}
@@ -4568,97 +4670,104 @@ ${rep.repair_commands}
                 </div>
                 <div>
                   <h3 className="text-base font-bold text-slate-900 dark:text-white">
-                    {zh ? '网络事实库 (NSOT) 设备采集能力策略' : 'Device NSOT Collection Policies'}
+                    {zh ? 'NSOT 设备采集模板' : 'NSOT Device Collection Templates'}
                   </h3>
                   <p className="text-xs text-slate-500 dark:text-slate-400 mt-0.5">
-                    {zh ? '控制哪些设备参与 NSOT 事实库的转发表项、动态协议与拓扑数据采集' : 'Control which collectors run per device during unified NSOT reality collection'}
+                    {zh ? '单台设备策略编辑；批量套用模板和周期任务请到 Automation。' : 'Edit one device at a time. Use Automation for bulk templates and schedules.'}
                   </p>
                 </div>
               </div>
               <button
-                onClick={() => setNsotPolicyModalOpen(false)}
+                onClick={closeNsotPlanModal}
                 className="p-1.5 rounded-lg text-slate-400 hover:text-slate-600 hover:bg-slate-100 dark:hover:bg-slate-800 transition-colors"
               >
                 <X size={18} />
               </button>
             </div>
 
-            {/* Body (Split Left / Right) */}
-            <div className="flex-1 flex overflow-hidden divide-x divide-black/5 dark:divide-white/10 min-h-[420px]">
-              {/* Left Device List */}
-              <div className="w-1/3 flex flex-col bg-slate-50/30 dark:bg-slate-950/20 min-w-[240px]">
-                <div className="p-3 border-b border-black/5 dark:border-white/10">
-                  <div className="relative">
-                    <Search size={13} className="absolute left-2.5 top-1/2 -translate-y-1/2 text-slate-400" />
-                    <input
-                      type="text"
-                      value={nsotPlanSearch}
-                      onChange={(e) => setNsotPlanSearch(e.target.value)}
-                      placeholder={zh ? '搜索设备...' : 'Search devices...'}
-                      className="w-full pl-8 pr-2.5 py-1.5 rounded-lg text-xs bg-white dark:bg-slate-900 border border-black/10 dark:border-white/10 focus:outline-none focus:ring-1 focus:ring-cyan-500"
-                    />
-                  </div>
-                </div>
-                <div className="flex-1 overflow-y-auto p-2 space-y-1">
-                  {nsotPlansLoading ? (
-                    <div className="flex items-center justify-center py-10 text-xs text-slate-400">
-                      <Loader2 size={16} className="animate-spin mr-2 text-cyan-500" />
-                      {zh ? '加载中...' : 'Loading...'}
+            {/* Body: exact-IP lookup on the left, one-device policy on the right */}
+            <div className="flex-1 flex flex-col md:flex-row overflow-hidden divide-y md:divide-y-0 md:divide-x divide-black/5 dark:divide-white/10 min-h-[420px]">
+              <div className="w-full md:w-1/3 flex flex-col bg-slate-50/30 dark:bg-slate-950/20 md:min-w-[260px]">
+                <form
+                  className="p-4 border-b border-black/5 dark:border-white/10 space-y-3"
+                  onSubmit={(event) => { event.preventDefault(); submitNsotPlanLookup(); }}
+                >
+                  <label htmlFor="nsot-plan-ip" className="block text-xs font-semibold text-slate-700 dark:text-slate-200">
+                    {zh ? '按设备 IP 精确查找' : 'Find one device by exact IP'}
+                  </label>
+                  <input
+                    id="nsot-plan-ip"
+                    type="text"
+                    inputMode="text"
+                    autoComplete="off"
+                    spellCheck={false}
+                    value={nsotPlanSearchIp}
+                    onChange={(event) => updateNsotPlanSearchIp(event.target.value)}
+                    placeholder={zh ? 'IPv4 或 IPv6 地址' : 'IPv4 or IPv6 address'}
+                    aria-describedby="nsot-plan-ip-help"
+                    className="w-full px-3 py-2 rounded-lg text-sm font-mono bg-white dark:bg-slate-900 border border-black/10 dark:border-white/10 focus:outline-none focus:ring-2 focus:ring-cyan-500/25"
+                  />
+                  <button
+                    type="submit"
+                    disabled={nsotPlansLoading || nsotPlanSaving || !nsotPlanSearchIp.trim()}
+                    className="w-full inline-flex items-center justify-center gap-2 px-3 py-2 rounded-lg text-xs font-semibold text-white bg-cyan-600 hover:bg-cyan-700 disabled:opacity-50 disabled:cursor-not-allowed"
+                  >
+                    {nsotPlansLoading ? <Loader2 size={14} className="animate-spin" /> : <Search size={14} />}
+                    {nsotPlansLoading ? (zh ? '正在查找…' : 'Looking up…') : (zh ? '查找设备' : 'Find device')}
+                  </button>
+                  <p id="nsot-plan-ip-help" className="text-[11px] leading-relaxed text-slate-500 dark:text-slate-400">
+                    {zh ? '支持 IPv4 和 IPv6；按 Enter 或点击查找。每次只加载一台设备。' : 'Supports IPv4 and IPv6. Press Enter or click Find; only one device is loaded.'}
+                  </p>
+                </form>
+
+                <div className="flex-1 p-4">
+                  {nsotPlansLoading && (
+                    <div role="status" className="flex items-center gap-2 rounded-xl bg-cyan-50 dark:bg-cyan-950/20 px-3 py-3 text-xs text-cyan-800 dark:text-cyan-200">
+                      <Loader2 size={15} className="animate-spin shrink-0" />
+                      {zh ? `正在查询 ${nsotPlanQueryIp}…` : `Looking up ${nsotPlanQueryIp}…`}
                     </div>
-                  ) : nsotPlans
-                      .filter((row) => {
-                        const q = nsotPlanSearch.trim().toLowerCase();
-                        if (!q) return true;
-                        return (
-                          (row.device?.hostname || '').toLowerCase().includes(q) ||
-                          (row.device?.ip_address || '').toLowerCase().includes(q) ||
-                          (row.device?.platform || '').toLowerCase().includes(q) ||
-                          (row.device?.role || '').toLowerCase().includes(q)
-                        );
-                      })
-                      .map((row) => {
-                        const isSelected = row.device?.id === nsotSelectedPlanDeviceId;
-                        const hasOverrides = row.plan?.overrides && Object.keys(row.plan.overrides).length > 0;
-                        return (
-                          <button
-                            key={row.device?.id}
-                            onClick={() => {
-                              setNsotSelectedPlanDeviceId(row.device?.id);
-                              setNsotPlanMessage('');
-                            }}
-                            className={`w-full text-left p-2.5 rounded-xl text-xs transition-all flex items-center justify-between ${
-                              isSelected
-                                ? 'bg-cyan-500 text-white shadow-md shadow-cyan-500/20'
-                                : 'hover:bg-black/5 dark:hover:bg-white/5 text-slate-700 dark:text-slate-200'
-                            }`}
-                          >
-                            <div className="truncate pr-2">
-                              <div className="font-semibold truncate">{row.device?.hostname || row.device?.ip_address}</div>
-                              <div className={`text-[10px] font-mono truncate ${isSelected ? 'text-white/80' : 'text-slate-400'}`}>
-                                {row.device?.ip_address} · {row.device?.platform || 'generic'}
-                              </div>
-                            </div>
-                            {hasOverrides && (
-                              <span className={`text-[9px] px-1.5 py-0.5 rounded font-medium ${
-                                isSelected ? 'bg-white/20 text-white' : 'bg-amber-100 dark:bg-amber-950 text-amber-700 dark:text-amber-300'
-                              }`}>
-                                {zh ? '自定义' : 'Custom'}
-                              </span>
-                            )}
-                          </button>
-                        );
-                      })}
+                  )}
+                  {!nsotPlansLoading && nsotPlanLookupStatus === 'idle' && (
+                    <div className="rounded-xl border border-dashed border-slate-300 dark:border-slate-700 px-3 py-5 text-center text-xs text-slate-500 dark:text-slate-400">
+                      {zh ? '输入设备管理 IP 后查找其采集策略。' : 'Enter a device management IP to view its collection policy.'}
+                    </div>
+                  )}
+                  {!nsotPlansLoading && nsotPlanLoadError && (
+                    <div role="alert" className={`rounded-xl border p-3 text-xs ${nsotPlanLoadError.permissionDenied ? 'border-amber-200 bg-amber-50 text-amber-900 dark:border-amber-900 dark:bg-amber-950/30 dark:text-amber-200' : 'border-rose-200 bg-rose-50 text-rose-800 dark:border-rose-900 dark:bg-rose-950/30 dark:text-rose-200'}`}>
+                      <div className="flex items-start gap-2">
+                        {nsotPlanLoadError.permissionDenied ? <ShieldAlert size={15} className="mt-0.5 shrink-0" /> : <AlertCircle size={15} className="mt-0.5 shrink-0" />}
+                        <div className="min-w-0 flex-1">
+                          <p className="font-semibold">{nsotPlanLoadError.permissionDenied ? (zh ? '权限不足' : 'Permission required') : nsotPlanLookupStatus === 'not-found' ? (zh ? '未找到设备' : 'Device not found') : nsotPlanLookupStatus === 'duplicate' ? (zh ? 'IP 地址重复' : 'Duplicate IP address') : nsotPlanLookupStatus === 'invalid' ? (zh ? 'IP 地址无效' : 'Invalid IP address') : (zh ? '查询未完成' : 'Lookup failed')}</p>
+                          <p className="mt-1 break-words">{nsotPlanLoadError.message}</p>
+                        </div>
+                      </div>
+                      {nsotPlanLookupStatus === 'error' && nsotPlanLoadError.retryable && isValidIP(nsotPlanQueryIp) && (
+                        <button type="button" onClick={() => void fetchNsotCollectionPlanByIp(nsotPlanQueryIp)} className="mt-3 inline-flex items-center gap-1.5 rounded-lg border border-current/20 px-2.5 py-1.5 font-semibold hover:bg-black/5 dark:hover:bg-white/5">
+                          <RotateCcw size={12} />{zh ? '重试' : 'Retry'}
+                        </button>
+                      )}
+                    </div>
+                  )}
+                  {!nsotPlansLoading && nsotPlanLookupStatus === 'found' && nsotPlans[0] && (
+                    <div className="rounded-xl border border-emerald-200 bg-emerald-50/70 dark:border-emerald-900 dark:bg-emerald-950/20 p-3 text-xs text-emerald-900 dark:text-emerald-200">
+                      <p className="font-semibold">{zh ? '已找到设备' : 'Device found'}</p>
+                      <p className="mt-1 break-all font-mono">{nsotPlanQueryIp}</p>
+                      <p className="mt-1 truncate">{nsotPlans[0].device.hostname || nsotPlans[0].device.ip_address}</p>
+                    </div>
+                  )}
                 </div>
               </div>
 
               {/* Right Policy Detail */}
-              <div className="flex-1 flex flex-col overflow-y-auto p-6 bg-white dark:bg-[#0f172a]">
+              <div className="flex-1 min-w-0 flex flex-col overflow-y-auto p-4 md:p-6 bg-white dark:bg-[#0f172a]">
                 {(() => {
-                  const selected = nsotPlans.find((row) => row.device?.id === nsotSelectedPlanDeviceId);
+                  const selected = nsotPlans.find((row) => String(row.device?.id) === nsotSelectedPlanDeviceId);
                   if (!selected) {
                     return (
-                      <div className="flex-1 flex items-center justify-center text-xs text-slate-400">
-                        {zh ? '请从左侧选择设备以查看其采集策略' : 'Select a device from the left to view its collection policy'}
+                      <div role="status" className="flex-1 flex items-center justify-center text-xs text-slate-400 text-center">
+                        {nsotPlansLoading
+                          ? (zh ? '正在加载设备策略…' : 'Loading device policy…')
+                          : (zh ? '查找单台设备后，这里会显示它当前的模板和采集策略。' : 'Find a device to see its current template and collection policy here.')}
                       </div>
                     );
                   }
@@ -4666,13 +4775,18 @@ ${rep.repair_commands}
                   const effective = selected.plan?.effective || {};
                   const overrides = selected.plan?.overrides || {};
                   const profile = selected.plan?.profile || selected.device?.role || 'default';
+                  const rawTemplateId = selected.plan?.template_id || 'role_default';
+                  const templateId = NSOT_COLLECTION_TEMPLATES.some((item) => item.id === rawTemplateId)
+                    ? rawTemplateId as NsotCollectionTemplateId
+                    : 'role_default';
+                  const templateOption = NSOT_COLLECTION_TEMPLATES.find((item) => item.id === templateId) || NSOT_COLLECTION_TEMPLATES[0];
+                  const hasOverrides = Object.keys(overrides).length > 0;
 
                   const collectorGroups = [
                     {
                       groupTitle: zh ? '基础与接口事实' : 'Basics & Interface Facts',
                       items: [
-                        { key: 'reachability', label: zh ? '连通性测试 (Ping)' : 'Reachability', desc: zh ? '测试管理 IP 可达性' : 'ICMP reachability check' },
-                        { key: 'interface_status', label: zh ? '接口状态与物理层' : 'Interface Status', desc: zh ? '采集接口 Up/Down 与速率' : 'Port oper/admin status and speed' },
+                        { key: 'interface_status', label: zh ? 'NSOT 接口状态事实' : 'NSOT Interface Facts', desc: zh ? '同步接口 Up/Down 快照；SNMP 实时监控周期由监控策略管理' : 'Sync NSOT interface snapshots; live SNMP polling is managed by monitoring policy' },
                         { key: 'interface_ip', label: zh ? '接口 IP 与 SVI' : 'Interface IP / SVI', desc: zh ? '采集接口 IP 地址与子网' : 'Port IPs, masks, and SVI bindings' },
                       ],
                     },
@@ -4716,15 +4830,16 @@ ${rep.repair_commands}
                             </span>
                           </div>
                           <div className="text-xs text-slate-500 dark:text-slate-400 mt-1 font-mono">
-                            IP: {selected.device?.ip_address} · {zh ? '平台' : 'Platform'}: {selected.device?.platform || 'generic'} · {zh ? '状态' : 'Status'}: {selected.device?.status || 'active'}
+                            IP: {selected.device?.ip_address} · {zh ? '站点' : 'Site'}: {selected.device?.site_label || '—'} · {zh ? '平台' : 'Platform'}: {selected.device?.platform || 'generic'} · {zh ? '状态' : 'Status'}: {selected.device?.status || 'active'}
                           </div>
                         </div>
                         <div className="flex items-center gap-2">
                           <button
                             onClick={resetNsotCollectionPlan}
-                            className="px-3 py-1.5 rounded-lg text-xs font-semibold text-slate-600 dark:text-slate-300 bg-white dark:bg-slate-800 border border-slate-200 dark:border-slate-700 hover:bg-slate-100 dark:hover:bg-slate-700 transition-colors"
+                            disabled={nsotPlanSaving}
+                            className="px-3 py-1.5 rounded-lg text-xs font-semibold text-slate-600 dark:text-slate-300 bg-white dark:bg-slate-800 border border-slate-200 dark:border-slate-700 hover:bg-slate-100 dark:hover:bg-slate-700 transition-colors disabled:opacity-50"
                           >
-                            {zh ? '恢复角色默认策略' : 'Reset to Default'}
+                            {zh ? '恢复角色默认' : 'Reset to role default'}
                           </button>
                         </div>
                       </div>
@@ -4735,58 +4850,86 @@ ${rep.repair_commands}
                         </div>
                       )}
 
-                      {/* Grouped collectors list */}
-                      <div className="space-y-5">
-                        {collectorGroups.map((grp) => (
-                          <div key={grp.groupTitle} className="space-y-2">
-                            <div className="text-[11px] font-bold uppercase tracking-wider text-slate-400 dark:text-slate-500">
-                              {grp.groupTitle}
-                            </div>
-                            <div className="grid grid-cols-1 md:grid-cols-2 gap-2.5">
-                              {grp.items.map((it) => {
-                                const isEnabled = Boolean(effective[it.key]);
-                                const hasExplicitOverride = Object.prototype.hasOwnProperty.call(overrides, it.key);
-                                return (
-                                  <div
-                                    key={it.key}
-                                    className={`p-3 rounded-xl border transition-all flex items-start justify-between gap-3 ${
-                                      isEnabled
-                                        ? 'bg-emerald-50/40 dark:bg-emerald-950/10 border-emerald-200/80 dark:border-emerald-800/40'
-                                        : 'bg-slate-50/50 dark:bg-slate-900/30 border-slate-200/60 dark:border-slate-800/60'
-                                    }`}
-                                  >
-                                    <div className="min-w-0">
-                                      <div className="flex items-center gap-2">
-                                        <span className="text-xs font-bold text-slate-800 dark:text-slate-200">
-                                          {it.label}
-                                        </span>
-                                        {hasExplicitOverride && (
-                                          <span className="text-[9px] px-1 py-0.2 rounded font-medium bg-amber-100 dark:bg-amber-950 text-amber-700 dark:text-amber-400">
-                                            {zh ? '覆盖' : 'Override'}
-                                          </span>
-                                        )}
-                                      </div>
-                                      <div className="text-[11px] text-slate-400 dark:text-slate-500 mt-0.5 leading-snug">
-                                        {it.desc}
-                                      </div>
-                                    </div>
-                                    <button
-                                      onClick={() => updateNsotCollectionPlan(it.key, !isEnabled)}
-                                      className={`px-2.5 py-1 rounded-lg text-xs font-semibold shrink-0 transition-colors ${
+                      <div className="p-4 rounded-xl bg-cyan-50/50 dark:bg-cyan-950/10 border border-cyan-200/70 dark:border-cyan-800/40">
+                        <label className="block text-xs font-bold text-slate-800 dark:text-slate-200" htmlFor="nsot-collection-template">
+                          {zh ? '采集模板' : 'Collection template'}
+                        </label>
+                        <select
+                          id="nsot-collection-template"
+                          value={templateId}
+                          onChange={(event) => updateNsotCollectionTemplate(event.target.value as NsotCollectionTemplateId)}
+                          disabled={nsotPlanSaving || nsotPlansLoading}
+                          className="mt-2 w-full max-w-lg px-3 py-2 rounded-lg text-sm bg-white dark:bg-slate-900 border border-black/10 dark:border-white/10 focus:outline-none focus:ring-2 focus:ring-cyan-500 disabled:opacity-60"
+                        >
+                          {NSOT_COLLECTION_TEMPLATES.map((template) => (
+                            <option key={template.id} value={template.id}>{zh ? template.zh : template.en}</option>
+                          ))}
+                        </select>
+                        <p className="mt-2 text-[11px] text-slate-500 dark:text-slate-400">
+                          {zh ? templateOption.descriptionZh : templateOption.descriptionEn}
+                        </p>
+                        <p className="mt-1 text-[10px] text-slate-400 dark:text-slate-500">
+                          {zh
+                            ? '模板只允许采集该设备适用的数据；设备不支持的命令会跳过。切换模板会清除单项自定义覆盖。'
+                            : 'Templates only allow relevant facts; unsupported commands are skipped. Switching templates clears per-collector overrides.'}
+                        </p>
+                      </div>
+
+                      <details open={templateId === 'custom' || hasOverrides} className="group rounded-xl border border-black/5 dark:border-white/10 bg-slate-50/50 dark:bg-slate-900/20">
+                        <summary className="flex cursor-pointer list-none items-center gap-2 px-4 py-3 text-xs font-semibold text-slate-600 dark:text-slate-300">
+                          <ChevronDown size={14} className="transition-transform group-open:rotate-180" />
+                          {zh ? '高级设置：按数据项自定义' : 'Advanced: customize individual facts'}
+                          {hasOverrides && <span className="rounded-full bg-amber-100 dark:bg-amber-950 px-2 py-0.5 text-[9px] text-amber-700 dark:text-amber-300">{zh ? `${Object.keys(overrides).length} 项覆盖` : `${Object.keys(overrides).length} overrides`}</span>}
+                        </summary>
+                        <div className="space-y-5 border-t border-black/5 dark:border-white/10 p-4">
+                          {collectorGroups.map((grp) => (
+                            <div key={grp.groupTitle} className="space-y-2">
+                              <div className="text-[11px] font-bold uppercase tracking-wider text-slate-400 dark:text-slate-500">
+                                {grp.groupTitle}
+                              </div>
+                              <div className="grid grid-cols-1 md:grid-cols-2 gap-2.5">
+                                {grp.items.map((it) => {
+                                  const isEnabled = Boolean(effective[it.key]);
+                                  const hasExplicitOverride = Object.prototype.hasOwnProperty.call(overrides, it.key);
+                                  return (
+                                    <div
+                                      key={it.key}
+                                      className={`p-3 rounded-xl border transition-all flex items-start justify-between gap-3 ${
                                         isEnabled
-                                          ? 'bg-emerald-600 text-white hover:bg-emerald-700 shadow-sm'
-                                          : 'bg-slate-200 dark:bg-slate-800 text-slate-500 hover:bg-slate-300 dark:hover:bg-slate-700'
+                                          ? 'bg-emerald-50/40 dark:bg-emerald-950/10 border-emerald-200/80 dark:border-emerald-800/40'
+                                          : 'bg-white/70 dark:bg-slate-900/40 border-slate-200/60 dark:border-slate-800/60'
                                       }`}
                                     >
-                                      {isEnabled ? (zh ? '已开启' : 'ON') : (zh ? '已关闭' : 'OFF')}
-                                    </button>
-                                  </div>
-                                );
-                              })}
+                                      <div className="min-w-0">
+                                        <div className="flex items-center gap-2">
+                                          <span className="text-xs font-bold text-slate-800 dark:text-slate-200">{it.label}</span>
+                                          {hasExplicitOverride && (
+                                            <span className="text-[9px] px-1 py-0.2 rounded font-medium bg-amber-100 dark:bg-amber-950 text-amber-700 dark:text-amber-400">
+                                              {zh ? '自定义' : 'Custom'}
+                                            </span>
+                                          )}
+                                        </div>
+                                        <div className="text-[11px] text-slate-400 dark:text-slate-500 mt-0.5 leading-snug">{it.desc}</div>
+                                      </div>
+                                      <button
+                                        onClick={() => updateNsotCollectionPlan(it.key, !isEnabled)}
+                                        disabled={nsotPlanSaving}
+                                        className={`px-2.5 py-1 rounded-lg text-xs font-semibold shrink-0 transition-colors disabled:opacity-50 ${
+                                          isEnabled
+                                            ? 'bg-emerald-600 text-white hover:bg-emerald-700 shadow-sm'
+                                            : 'bg-slate-200 dark:bg-slate-800 text-slate-500 hover:bg-slate-300 dark:hover:bg-slate-700'
+                                        }`}
+                                      >
+                                        {isEnabled ? (zh ? '已开启' : 'ON') : (zh ? '已关闭' : 'OFF')}
+                                      </button>
+                                    </div>
+                                  );
+                                })}
+                              </div>
                             </div>
-                          </div>
-                        ))}
-                      </div>
+                          ))}
+                        </div>
+                      </details>
                     </div>
                   );
                 })()}
@@ -4796,7 +4939,7 @@ ${rep.repair_commands}
             {/* Footer */}
             <div className="flex items-center justify-end px-6 py-3.5 border-t border-black/5 dark:border-white/10 bg-slate-50/50 dark:bg-slate-900/50">
               <button
-                onClick={() => setNsotPolicyModalOpen(false)}
+                onClick={closeNsotPlanModal}
                 className="px-5 py-2 rounded-xl text-xs font-bold bg-[#06b6d4] hover:bg-[#0891b2] text-white shadow-md shadow-cyan-500/20 transition-all active:scale-95"
               >
                 {zh ? '完成' : 'Done'}

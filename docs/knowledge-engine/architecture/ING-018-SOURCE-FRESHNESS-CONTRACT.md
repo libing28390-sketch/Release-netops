@@ -2,9 +2,10 @@
 
 ## Scope
 
-ING-018 adds a bounded periodic freshness check for active, validated Source
-Registry entries. The check reuses the CAT-004 outbound security boundary and
-does not change the V1 `ai_document` path.
+ING-018 defines freshness handling for user-initiated Source Registry fetches.
+There is no periodic source refresh: external URLs are accessed only when a
+user explicitly imports or refreshes a source. The fetch reuses the CAT-004
+outbound security boundary and does not change the V1 `ai_document` path.
 
 ## Immutable facts and observations
 
@@ -33,12 +34,10 @@ outcomes are:
 
 ## Operations
 
-APScheduler registers `knowledge_source_freshness_refresh` every 30 minutes,
-with the existing `scheduler_locks` cross-instance lock and a 100-source
-default batch (maximum 500). A source failure does not abort the rest of the
-batch. Operators can inspect bounded history through
+No APScheduler job is registered for source freshness and the backend does not
+poll saved source URLs. Operators can explicitly fetch one source through
+`POST /api/knowledge-v2/sources/{source_id}/fetch` and inspect bounded history through
 `GET /api/knowledge-v2/sources/{source_id}/refresh-observations`.
 
-Rollback disables the scheduler/writer and retains the append-only timeline;
+The append-only observation timeline remains available for explicit fetches;
 no V1 row or immutable source fact is deleted or rewritten.
-

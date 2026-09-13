@@ -1,5 +1,5 @@
 task_id: ING-018
-title: Conditional source freshness refresh
+title: Explicit conditional source refresh
 milestone: M2
 priority: P1
 owner: BE+OPS
@@ -14,7 +14,7 @@ decision:
     - If-Modified-Since
   hash_algorithm: sha256_lowercase_hex
   response_body_policy: hash_only_memory_boundary
-  scheduler_interval_minutes: 30
+  automatic_refresh: false
 
 outcomes:
   not_modified:
@@ -53,11 +53,9 @@ database:
   observation_retention: append_only_audit_timeline
 
 operations:
-  scheduler_job_id: knowledge_source_freshness_refresh
-  lock: scheduler_locks_knowledge_source_freshness_refresh
-  batch_limit_default: 100
-  batch_limit_maximum: 500
-  per_source_failure_isolated: true
+  trigger: user_initiated_single_source_fetch_only
+  scheduler_job_id: null
+  background_url_polling: forbidden
   stable_failure_codes: true
 
 api:
@@ -65,7 +63,7 @@ api:
   existing_fetch_contract_preserved: true
 
 rollback:
-  runtime: disable_scheduler_job_and_refresh_writer
+  runtime: explicit_fetch_contract_remains_available
   data: retain_observations_and_immutable_source_versions
   v1_impact: none
 
@@ -73,4 +71,4 @@ verification:
   focused_tests:
     - backend/tests/catalog/test_ing018_source_freshness.py
     - backend/tests/database/test_m0120_knowledge_v2_source_freshness.py
-  required_gates: [conditional_headers, http_304, same_hash, changed_hash, failure_redaction, tenant_scope, migration, v1, lint, build]
+  required_gates: [conditional_headers, http_304, same_hash, changed_hash, tenant_scope, migration, v1]

@@ -435,12 +435,33 @@ def collect_interface_status_target(device_id: str) -> dict[str, Any]:
     """Collect one device's interface status and project it into IPAM Prefixes."""
     device = _load_device(device_id)
     inventory = _load_ip_inventory(device_id)
+    from services.collection_plan_service import should_collect
+
+    collect_interfaces = should_collect(device, 'interface_status')
+    collect_vlans = should_collect(device, 'vlan')
+    categories = []
+    if collect_interfaces:
+        categories.extend(['interfaces', 'interface_description'])
+    if collect_vlans:
+        categories.append('vlan')
+    if not categories:
+        return {
+            'success': True,
+            'device_id': device_id,
+            'hostname': device.get('hostname') or device_id,
+            'skipped': True,
+            'skip_reason': 'collection_policy_disabled',
+            'interface_count': 0,
+            'updated_count': 0,
+            'vlan_projection': {'vlans': 0, 'interfaces': 0},
+            'prefix_sync': {'ok': True, 'skipped': True},
+        }
     try:
         # Status and description use separate vendor TextFSM grammars. The
         # dedicated description command is authoritative for this field.
         payload = collect_read_only_evidence(
             device,
-            categories=["interfaces", "interface_description", "vlan"],
+            categories=categories,
             auth_role="auto",
         )
     except Exception as exc:
@@ -449,7 +470,7 @@ def collect_interface_status_target(device_id: str) -> dict[str, Any]:
         raise RuntimeError(message) from exc
 
     category = next((item for item in payload.get("categories", []) if item.get("key") == "interfaces"), {})
-    if not category.get("success", False):
+    if collect_interfaces and not category.get("success", False):
         raise RuntimeError(str(category.get("error") or "接口状态采集失败"))
     description_category = next(
         (item for item in payload.get("categories", []) if item.get("key") == "interface_description"),
@@ -469,30 +490,34 @@ def collect_interface_status_target(device_id: str) -> dict[str, Any]:
             logger.warning("VLAN member projection failed for %s: %s", device_id, vlan_exc, exc_info=True)
             vlan_projection = {"vlans": 0, "interfaces": 0, "error": str(vlan_exc)}
 
-    parsed_by_interface, rows = _build_interface_status_rows(
-        category.get("records") or [], inventory, descriptions
+    parsed_by_interface, rows = (
+        _build_interface_status_rows(category.get("records") or [], inventory, descriptions)
+        if collect_interfaces else ({}, [])
     )
 
-    updated = _upsert_interfaces(device, rows)
+    updated = _upsert_interfaces(device, rows) if collect_interfaces else 0
     description_updated = 0
     if description_category.get("success") and description_category.get("parse_status") == "matched":
         description_updated = _upsert_interface_descriptions(device_id, descriptions)
     unknown = sum(1 for row in rows if row["admin_status"] == "unknown" or row["oper_status"] == "unknown")
-    try:
-        from services.prefix_discovery_service import discover_prefixes_from_interface_snapshot
+    if should_collect(device, 'prefix_projection'):
+        try:
+            from services.prefix_discovery_service import discover_prefixes_from_interface_snapshot
 
-        prefix_sync = discover_prefixes_from_interface_snapshot(
-            device_id,
-            collection_run_id=f"interface-collection-{device_id}-{payload.get('collected_at') or _now()}",
-        )
-    except Exception as prefix_exc:
-        logger.warning(
-            "Prefix sync after interface collection failed for %s: %s",
-            device.get("hostname") or device_id,
-            prefix_exc,
-            exc_info=True,
-        )
-        prefix_sync = {"ok": False, "error": str(prefix_exc)}
+            prefix_sync = discover_prefixes_from_interface_snapshot(
+                device_id,
+                collection_run_id=f"interface-collection-{device_id}-{payload.get('collected_at') or _now()}",
+            )
+        except Exception as prefix_exc:
+            logger.warning(
+                "Prefix sync after interface collection failed for %s: %s",
+                device.get("hostname") or device_id,
+                prefix_exc,
+                exc_info=True,
+            )
+            prefix_sync = {"ok": False, "error": str(prefix_exc)}
+    else:
+        prefix_sync = {"ok": True, "skipped": True, "reason": "collection_policy_disabled"}
     try:
         from services.vlan_discovery_service import sync_observed_vlans
         vlan_sync = sync_observed_vlans()
@@ -524,7 +549,19 @@ def collect_interface_status_target(device_id: str) -> dict[str, Any]:
     }
 
 
-def collect_interface_status_for_online_devices() -> dict[str, Any]:
+def _select_interface_collection_devices(device_rows: list[dict[str, Any]]) -> list[str]:
+    """Return online device ids with at least one enabled interface/VLAN fact."""
+    from services.collection_plan_service import should_collect
+
+    return [
+        str(device.get('id')) for device in device_rows
+        if device.get('id') and (
+            should_collect(device, 'interface_status') or should_collect(device, 'vlan')
+        )
+    ]
+
+
+def collect_interface_status_for_online_devices(target_device_ids: set[str] | None = None) -> dict[str, Any]:
     """Refresh CMDB interface status for every online device.
 
     This is the interface-status phase of the unified Network Reality refresh.
@@ -533,14 +570,20 @@ def collect_interface_status_for_online_devices() -> dict[str, Any]:
     """
     conn = get_db_connection()
     try:
-        device_ids = [str(row['id']) for row in conn.execute(
-            "SELECT id FROM devices WHERE status = 'online' ORDER BY hostname, ip_address"
+        device_rows = [dict(row) for row in conn.execute(
+            "SELECT * FROM devices WHERE status = 'online' ORDER BY hostname, ip_address"
         ).fetchall()]
     finally:
         conn.close()
 
+    if target_device_ids is not None:
+        device_rows = [device for device in device_rows if str(device.get('id') or '') in target_device_ids]
+
+    device_ids = _select_interface_collection_devices(device_rows)
+
     result: dict[str, Any] = {
         'devices': len(device_ids),
+        'skipped_by_policy': len(device_rows) - len(device_ids),
         'succeeded': 0,
         'failed': 0,
         'results': [],

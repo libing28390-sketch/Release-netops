@@ -347,6 +347,7 @@ def parse_device_cli_output(
     *,
     max_records: int | None = None,
     context: dict[str, Any] | None = None,
+    template_filename: str | None = None,
 ) -> dict[str, Any]:
     """Parse one device response using its concrete profile and exact command.
 
@@ -376,13 +377,34 @@ def parse_device_cli_output(
     )
 
     try:
-        result = smart_parse_cli(
-            output=str(output or ''),
-            command=str(command or ''),
-            platform=selected_context['parser_platform'],
-            version=str(device_info.get('version') or device_info.get('software_version') or ''),
-            model=str(device_info.get('model') or ''),
-        )
+        if template_filename:
+            # A registry-missing-action fallback has already selected one
+            # exact parser/version template. Keep that selection pinned here;
+            # smart_parse_cli's general compatibility search is intentionally
+            # not used for this path.
+            from core.textfsm import _looks_like_device_error, get_template_content, template_action_code
+            from services.textfsm_sandbox_service import parse_template_in_sandbox
+
+            exact_content, exact_source = get_template_content(template_filename)
+            device_error = _looks_like_device_error(str(output or ""))
+            exact_records = [] if device_error else parse_template_in_sandbox(exact_content, str(output or ""))
+            result = {
+                "data": exact_records,
+                "success": not bool(device_error),
+                "template": template_filename,
+                "template_source": exact_source,
+                "message": f"设备返回错误回显: {device_error}" if device_error else "",
+                "confidence": 1.0 if exact_records else 0.0,
+                "template_action_code": template_action_code(exact_content),
+            }
+        else:
+            result = smart_parse_cli(
+                output=str(output or ''),
+                command=str(command or ''),
+                platform=selected_context['parser_platform'],
+                version=str(device_info.get('version') or device_info.get('software_version') or ''),
+                model=str(device_info.get('model') or ''),
+            )
         records = _normalize_records(result.get('data') or [])
         if max_records is not None:
             records = records[:max(0, int(max_records))]
@@ -931,6 +953,337 @@ _REGISTRY_VRF_ACTION_BY_CATEGORY = {
 }
 
 
+def resolve_textfsm_operation_fallback(
+    device_info: dict[str, Any],
+    *,
+    operational_category: str,
+    action_code: str | None,
+    templates_catalog: list[dict[str, Any]] | None = None,
+) -> dict[str, Any]:
+    """Resolve a missing Registry action only through an exact TextFSM match.
+
+    A template action-code association is preferred. Older templates may lack
+    that optional metadata; for those, the command must exactly match the
+    existing Quick Ops ``COMMAND_CATALOG`` entry for the requested category.
+    The parser namespace/version candidates mirror the concrete profile
+    selection used by :func:`resolve_device_platform_context`; this resolver
+    never uses fuzzy command suggestions or another vendor's catalog.
+    """
+    from core.textfsm import (
+        _template_platform_candidates,
+        list_templates,
+        resolve_textfsm_platform,
+    )
+    from services.platform_registry_service import (
+        PLATFORM_CATALOG_METADATA,
+        is_safe_read_command,
+    )
+
+    category = str(operational_category or "").strip().lower()
+    requested_action = str(action_code or "").strip().lower() or None
+    context = resolve_device_platform_context(device_info)
+    parser_platform = str(context.get("parser_platform") or "").strip().lower()
+    profile_code = str(context.get("profile_platform_code") or "").strip().lower()
+    if not parser_platform:
+        return {
+            "status": "unsupported",
+            "commands": [],
+            "condition": "设备没有可确认的 parser platform",
+        }
+
+    # Concrete parser selectors use the TextFSM catalog's explicit version
+    # compatibility order. A family-only parser has no version evidence, so
+    # inspect only that family namespace (which can contain an explicit common
+    # template) instead of guessing a concrete generation.
+    concrete_parser = parser_platform in {
+        "huawei_vrp5", "huawei_vrpv8", "huawei_vrp_unknown",
+        "h3c_comware_v3", "h3c_comware_v5", "h3c_comware_v7",
+        "h3c_comware_v9", "h3c_comware_unknown",
+        "maipu_mypower_v6", "maipu_mypower_v8", "maipu_mypower_v9",
+        "maipu_mypower_unknown", "ruijie_rgos_v10", "ruijie_rgos_v11",
+        "ruijie_rgos_v12", "ruijie_rgos_unknown", "zte_rosng",
+        "zte_os_unknown", "dptech_conplat_unknown",
+    }
+    profile_metadata = PLATFORM_CATALOG_METADATA.get(profile_code) or {}
+    profile_version = str(profile_metadata.get("version") or "").strip().lower()
+    if concrete_parser:
+        namespaces = _template_platform_candidates(parser_platform)
+    elif profile_version and profile_version not in {"common", "unknown"}:
+        # A concrete system Profile may encode the version even when its parser
+        # namespace is the shared family key (for example Huawei VRP V5).
+        compatible = _template_platform_candidates(profile_code or parser_platform)
+        family = resolve_textfsm_platform(parser_platform) or parser_platform
+        namespaces = [
+            namespace for namespace in compatible
+            if namespace == family
+            or str(namespace).endswith(f"_{profile_version}")
+        ]
+        if not namespaces:
+            namespaces = [parser_platform]
+    else:
+        namespaces = [parser_platform]
+
+    all_templates = templates_catalog if templates_catalog is not None else list_templates()
+    parser_family = resolve_textfsm_platform(parser_platform) or parser_platform
+
+    def _version_for_namespace(namespace: str) -> str:
+        exact = [
+            item for item in all_templates
+            if str(item.get("filename") or "").lower().startswith(f"{namespace.lower()}_")
+        ]
+        if namespace == parser_platform and not concrete_parser and not profile_version:
+            # Family-only devices may use only templates explicitly catalogued
+            # as common; never select the catalog's nearest concrete version.
+            return "common"
+        if namespace == parser_family and not namespace.endswith(("_v3", "_v5", "_v7", "_v8", "_v9", "_v10", "_v11", "_v12")):
+            if profile_version:
+                return profile_version
+            return "common"
+        versioned = [
+            str(item.get("version") or "").strip().lower()
+            for item in exact
+            if str(item.get("version") or "").strip().lower() not in {"", "common"}
+        ]
+        if versioned:
+            return versioned[0]
+        suffix = namespace.rsplit("_", 1)[-1]
+        return f"v{suffix}" if suffix.isdigit() else "common"
+
+    candidates: list[dict[str, Any]] = []
+    for namespace in namespaces:
+        family = resolve_textfsm_platform(namespace) or namespace
+        expected_version = _version_for_namespace(namespace)
+        exact_templates = [
+            item for item in all_templates
+            if str(item.get("platform_family") or item.get("platform") or "").strip().lower() == family
+            and str(item.get("version") or "").strip().lower() == expected_version
+        ]
+        if requested_action:
+            matching_actions = [
+                item for item in exact_templates
+                if str(item.get("action_code") or "").strip().lower() == requested_action
+            ]
+            for item in matching_actions:
+                command = str(item.get("command") or "").strip()
+                if not is_safe_read_command(command, str(context.get("connection_driver") or "")):
+                    continue
+                candidates.append({
+                    "action_code": requested_action,
+                    "command": command,
+                    "command_source": "textfsm_action_metadata",
+                    "textfsm_template": item.get("filename"),
+                    "textfsm_source": item.get("source"),
+                    "status": "supported",
+                    "condition": "当前发布 Registry action 缺失，使用同 parser/version 且绑定相同 action_code 的只读模板",
+                })
+            if candidates:
+                return {"status": "supported", "commands": candidates, "condition": None}
+
+        # Action metadata was optional in older Quick Ops templates. In that
+        # case, accept only an exact command from the matching category's
+        # existing legacy catalog and a same-version parser template.
+        catalog_platform = str(context.get("catalog_platform") or parser_platform).strip().lower()
+        exact_commands = COMMAND_CATALOG.get(_normalize_platform(catalog_platform), {}).get(category, [])
+        normalized_commands = {
+            " ".join(str(command or "").strip().lower().split()): str(command or "").strip()
+            for command in exact_commands if str(command or "").strip()
+        }
+        for item in exact_templates:
+            command = str(item.get("command") or "").strip()
+            normalized = " ".join(command.lower().split())
+            if not command or normalized not in normalized_commands:
+                continue
+            template_action = str(item.get("action_code") or "").strip().lower()
+            if template_action and requested_action and template_action != requested_action:
+                continue
+            if not is_safe_read_command(command, str(context.get("connection_driver") or "")):
+                continue
+            candidates.append({
+                "action_code": requested_action,
+                "command": command,
+                "command_source": "legacy_catalog_textfsm",
+                "textfsm_template": item.get("filename"),
+                "textfsm_source": item.get("source"),
+                "status": "supported",
+                "condition": "当前发布 Registry action 缺失；Quick Ops 类别命令与同 parser/version TextFSM 模板精确匹配",
+            })
+        if candidates:
+            return {"status": "supported", "commands": candidates, "condition": None}
+
+    return {
+        "status": "unsupported",
+        "commands": [],
+        "condition": "当前发布 action 缺失，且没有可精确关联的同 parser/version 安全 TextFSM 命令模板",
+    }
+
+
+def resolve_textfsm_template_for_command(
+    device_info: dict[str, Any],
+    command: str,
+    *,
+    action_code: str | None = None,
+    operational_category: str | None = None,
+    templates_catalog: list[dict[str, Any]] | None = None,
+) -> dict[str, Any] | None:
+    """Return the exact-version TextFSM template for an immutable command.
+
+    This lookup is metadata-only. It never replaces the supplied command and
+    accepts only an exact command match, optionally strengthened by matching
+    the template's action-code association.
+    """
+    from core.textfsm import _template_platform_candidates, list_templates, resolve_textfsm_platform
+    from services.platform_registry_service import PLATFORM_CATALOG_METADATA
+
+    actual_command = " ".join(str(command or "").strip().lower().split())
+    if not actual_command:
+        return None
+    context = resolve_device_platform_context(device_info)
+    parser_platform = str(context.get("parser_platform") or "").strip().lower()
+    profile_code = str(context.get("profile_platform_code") or "").strip().lower()
+    metadata = PLATFORM_CATALOG_METADATA.get(profile_code) or {}
+    profile_version = str(metadata.get("version") or "").strip().lower()
+    concrete = parser_platform in {
+        "huawei_vrp5", "huawei_vrpv8", "huawei_vrp_unknown",
+        "h3c_comware_v3", "h3c_comware_v5", "h3c_comware_v7",
+        "h3c_comware_v9", "h3c_comware_unknown",
+        "maipu_mypower_v6", "maipu_mypower_v8", "maipu_mypower_v9",
+        "maipu_mypower_unknown", "ruijie_rgos_v10", "ruijie_rgos_v11",
+        "ruijie_rgos_v12", "ruijie_rgos_unknown", "zte_rosng",
+        "zte_os_unknown", "dptech_conplat_unknown",
+    }
+    if concrete:
+        namespaces = _template_platform_candidates(parser_platform)
+    elif profile_version and profile_version not in {"common", "unknown"}:
+        compatible = _template_platform_candidates(profile_code or parser_platform)
+        family = resolve_textfsm_platform(parser_platform) or parser_platform
+        namespaces = [
+            item for item in compatible
+            if item == family or str(item).endswith(f"_{profile_version}")
+        ] or [parser_platform]
+    else:
+        namespaces = [parser_platform]
+
+    all_templates = templates_catalog if templates_catalog is not None else list_templates()
+    wanted_action = str(action_code or "").strip().lower()
+    for namespace in namespaces:
+        family = resolve_textfsm_platform(namespace) or namespace
+        if namespace == parser_platform and not concrete and not profile_version:
+            expected_version = "common"
+        elif namespace == family and not namespace.endswith(("_v3", "_v5", "_v7", "_v8", "_v9", "_v10", "_v11", "_v12")):
+            expected_version = profile_version or "common"
+        else:
+            namespace_templates = [
+                item for item in all_templates
+                if str(item.get("filename") or "").lower().startswith(f"{namespace.lower()}_")
+            ]
+            expected_version = next((
+                str(item.get("version") or "").strip().lower()
+                for item in namespace_templates
+                if str(item.get("version") or "").strip().lower() not in {"", "common"}
+            ), "common")
+
+        same_version = [
+            item for item in all_templates
+            if str(item.get("platform_family") or item.get("platform") or "").strip().lower() == family
+            and str(item.get("version") or "").strip().lower() == expected_version
+        ]
+        exact = [
+            item for item in same_version
+            if " ".join(str(item.get("command") or "").strip().lower().split()) == actual_command
+        ]
+        if wanted_action:
+            exact = [
+                item for item in exact
+                if not str(item.get("action_code") or "").strip()
+                or str(item.get("action_code") or "").strip().lower() == wanted_action
+            ]
+            exact.sort(key=lambda item: 0 if str(item.get("action_code") or "").strip().lower() == wanted_action else 1)
+        if exact:
+            item = exact[0]
+            return {
+                "textfsm_template": item.get("filename"),
+                "textfsm_source": item.get("source"),
+                "template_action_code": item.get("action_code") or None,
+            }
+    return None
+
+
+def _execute_textfsm_operation_fallback(
+    device_info: dict[str, Any],
+    fallback: dict[str, Any],
+    *,
+    user: dict[str, Any],
+    platform_action_session=None,
+) -> dict[str, Any]:
+    """Execute one exact, read-only TextFSM fallback via the Registry session."""
+    command = str(fallback.get("command") or "").strip()
+    template_filename = str(fallback.get("textfsm_template") or "").strip()
+    if not command or not template_filename:
+        return {"success": False, "error_code": "UNSUPPORTED_ACTION", "error": "No exact TextFSM fallback"}
+
+    from services.platform_registry_service import PlatformActionSession, is_safe_read_command
+
+    context = resolve_device_platform_context(device_info)
+    if not is_safe_read_command(command, str(context.get("connection_driver") or "")):
+        return {"success": False, "error_code": "UNSAFE_COMMAND", "error": "Fallback command is not a safe read"}
+
+    def _run(session) -> tuple[bool, str, str]:
+        response = session.send_command(command)
+        output = str(getattr(response, "output", response if isinstance(response, str) else "") or "")
+        error = str(getattr(response, "error", "") or "")
+        return bool(getattr(response, "success", True)), output, error
+
+    try:
+        if platform_action_session is not None:
+            succeeded, output, error = _run(platform_action_session)
+        else:
+            with PlatformActionSession(str(device_info.get("id") or ""), user=user) as session:
+                succeeded, output, error = _run(session)
+        if not succeeded:
+            return {
+                "success": False,
+                "error_code": "CONNECTION_OR_COMMAND_FAILED",
+                "error": error or "Read-only fallback command failed",
+                "command": command,
+            }
+
+        parsed = parse_device_cli_output(
+            device_info,
+            command,
+            output,
+            template_filename=template_filename,
+            context=context,
+        )
+        return {
+            "success": True,
+            "action_code": fallback.get("action_code"),
+            "command": command,
+            "command_source": fallback.get("command_source"),
+            "raw_output": output,
+            "records": parsed.get("records") or [],
+            "parse_status": parsed.get("parse_status") or "unmatched",
+            "parser": parsed.get("parser") or "textfsm",
+            "parser_platform": parsed.get("parser_platform") or context.get("parser_platform"),
+            "template": template_filename,
+            "template_source": parsed.get("template_source") or fallback.get("textfsm_source"),
+            "template_action_code": parsed.get("template_action_code"),
+            "fallback_condition": fallback.get("condition"),
+        }
+    except Exception as exc:
+        logger.warning(
+            "[netops-cli] event=textfsm_fallback_failed device_id=%s command=%r error_type=%s",
+            device_info.get("id") or "<unknown>",
+            _safe_command_for_log(command),
+            type(exc).__name__,
+        )
+        return {
+            "success": False,
+            "error_code": "TEXTFSM_FALLBACK_FAILED",
+            "error": str(exc),
+            "command": command,
+        }
+
+
 def _collect_registry_categories(
     device_info: dict[str, Any],
     platform: str,
@@ -950,7 +1303,7 @@ def _collect_registry_categories(
     for category in categories:
         vrf = str(device_info.get('active_vrf') or device_info.get('vrf') or '').strip()
         action_code = _REGISTRY_VRF_ACTION_BY_CATEGORY.get(category) if vrf else None
-        action_code = action_code or _REGISTRY_ACTION_BY_CATEGORY[category]
+        action_code = action_code or _REGISTRY_ACTION_BY_CATEGORY.get(category)
         category_result: dict[str, Any] = {
             'key': category,
             'success': False,
@@ -962,6 +1315,11 @@ def _collect_registry_categories(
             'parse_status': 'failed',
         }
         try:
+            if not action_code:
+                raise PlatformRegistryError(
+                    'UNSUPPORTED_ACTION',
+                    f'Category {category} has no stable Platform Registry action_code',
+                )
             action_kwargs = {
                 'user': user,
                 'parameters': {'vrf': vrf} if vrf and action_code in _REGISTRY_VRF_ACTION_BY_CATEGORY.values() else None,
@@ -977,6 +1335,7 @@ def _collect_registry_categories(
             action_kwargs['include_raw_output'] = True
             result = execute_platform_action(str(device_info['id']), action_code, **action_kwargs)
             category_result['parser'] = result.get('parser') or category_result['parser']
+            category_result['command_source'] = 'platform_registry'
             command = result.get('command')
             if command:
                 category_result['commands'] = [command]
@@ -1011,9 +1370,51 @@ def _collect_registry_categories(
             if result.get('error_code'):
                 category_result['error_code'] = result['error_code']
         except PlatformRegistryError as exc:
-            category_result['error_code'] = exc.code
-            category_result['error'] = exc.message
-            category_result['parse_status'] = 'unsupported_by_platform' if exc.code == 'UNSUPPORTED_ACTION' else 'failed'
+            if exc.code == 'UNSUPPORTED_ACTION':
+                fallback_plan = resolve_textfsm_operation_fallback(
+                    device_info,
+                    operational_category=category,
+                    action_code=action_code,
+                )
+                fallback = (fallback_plan.get('commands') or [None])[0]
+                if fallback:
+                    fallback_result = _execute_textfsm_operation_fallback(
+                        device_info,
+                        fallback,
+                        user=user,
+                        platform_action_session=platform_action_session,
+                    )
+                    category_result['command_source'] = fallback.get('command_source')
+                    category_result['commands'] = [fallback_result.get('command') or fallback.get('command')]
+                    if fallback_result.get('raw_output') is not None:
+                        category_result['raw_outputs'] = [{
+                            'command': fallback_result.get('command') or fallback.get('command'),
+                            'output': fallback_result.get('raw_output'),
+                        }]
+                    category_result['records'] = fallback_result.get('records') or []
+                    category_result['count'] = len(category_result['records'])
+                    category_result['success'] = bool(fallback_result.get('success'))
+                    category_result['parse_status'] = fallback_result.get('parse_status') or (
+                        'matched' if category_result['records'] else 'unmatched'
+                    )
+                    category_result['parser'] = fallback_result.get('parser') or 'textfsm'
+                    category_result['parser_platform'] = fallback_result.get('parser_platform')
+                    category_result['template'] = fallback_result.get('template')
+                    category_result['template_source'] = fallback_result.get('template_source')
+                    category_result['template_action_code'] = fallback_result.get('template_action_code')
+                    category_result['fallback_condition'] = fallback_result.get('fallback_condition')
+                    if fallback_result.get('error_code'):
+                        category_result['error_code'] = fallback_result['error_code']
+                        category_result['error'] = fallback_result.get('error') or exc.message
+                else:
+                    category_result['error_code'] = 'UNSUPPORTED_ACTION'
+                    category_result['error'] = fallback_plan.get('condition') or exc.message
+                    category_result['fallback_condition'] = fallback_plan.get('condition')
+                    category_result['parse_status'] = 'unsupported_by_platform'
+            else:
+                category_result['error_code'] = exc.code
+                category_result['error'] = exc.message
+                category_result['parse_status'] = 'failed'
         except Exception as exc:
             category_result['error'] = str(exc)
         results[category] = category_result
@@ -1900,9 +2301,13 @@ def collect_operational_data(
         return payload
 
     registry_bound = bool(device_info.get('id') and device_info.get('platform_profile_id'))
+    registry_fallback_categories = COMMAND_CATALOG.get(
+        _normalize_platform(parser_platform),
+        {},
+    )
     registry_categories = [
         category for category in selected_categories
-        if category in _REGISTRY_ACTION_BY_CATEGORY
+        if category in _REGISTRY_ACTION_BY_CATEGORY or registry_fallback_categories.get(category)
     ] if registry_bound else []
     if registry_categories:
         payload['categories'].extend(

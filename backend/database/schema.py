@@ -4111,6 +4111,7 @@ def _init_db_logic(conn, *, allow_legacy_import: bool = True):
         'CREATE INDEX IF NOT EXISTS idx_devices_status ON devices(status)',
         'CREATE INDEX IF NOT EXISTS idx_devices_asset_id ON devices(asset_id)',
         'CREATE INDEX IF NOT EXISTS idx_devices_site ON devices(site)',
+        'CREATE INDEX IF NOT EXISTS idx_devices_ip_address ON devices(ip_address)',
         # `scripts` — list endpoint orders by updated_at DESC; UI filters by status.
         'CREATE INDEX IF NOT EXISTS idx_scripts_updated_at ON scripts(updated_at DESC)',
         'CREATE INDEX IF NOT EXISTS idx_scripts_status ON scripts(status)',

@@ -5,7 +5,7 @@ import {
   CalendarClock, Plus, X, Trash2, RotateCcw, Zap, Pencil,
   ChevronDown, Info, Shield, CheckCircle2, AlertTriangle,
   Database, Activity, Power, PowerOff, RefreshCw,
-  Search, FileCode, Eye, Target, FileText, Lock, ArrowUpRight, ChevronUp, Filter, ShieldAlert, User
+  Search, FileCode, Eye, Target, FileText, Lock, ArrowUpRight, ChevronUp, Filter, ShieldAlert, User, Layers
 } from 'lucide-react';
 import { ActionIconButton, ActionIconGroup } from '../../components/ui/ActionIconButton';
 
@@ -14,7 +14,7 @@ import { DataTable } from '../../components/DataTable';
 import PageHero from '../../components/PageHero';
 import { hasTagFilterConditions, parseTagFilter, type TagFilterConfig, EMPTY_TAG_FILTER, serializeTagFilter } from '../../components/TagConditionPicker';
 
-import { ScheduledJob, EligibleApprover, SystemScheduledJob, FormState, ValidatedDevice, ScheduledJobsTabProps } from './types';
+import { ScheduledJob, EligibleApprover, SystemScheduledJob, FormState, ValidatedDevice, ScheduledJobsTabProps, type CollectionPlanFilters, type NsotCollectionPreview } from './types';
 import { INITIAL_FORM, ACTION_TYPES, MAJOR_CATEGORIES } from './constants';
 import { describeCron, describeScope } from './helpers';
 
@@ -22,6 +22,7 @@ import { CandidateModal } from './components/CandidateModal';
 import { DeleteApprovalModal } from './components/DeleteApprovalModal';
 import { JobDetailModal } from './components/JobDetailModal';
 import { JobModal } from './components/JobModal';
+import { BulkCollectionPlanModal } from './components/BulkCollectionPlanModal';
 
 const ScheduledJobsTab: React.FC<ScheduledJobsTabProps> = ({ language, showToast }) => {
   const zh = language === 'zh';
@@ -37,6 +38,7 @@ const ScheduledJobsTab: React.FC<ScheduledJobsTabProps> = ({ language, showToast
 
   // Modal
   const [showAddJob, setShowAddJob] = useState(false);
+  const [bulkCollectionPlanOpen, setBulkCollectionPlanOpen] = useState(false);
   const [detailJob, setDetailJob] = useState<ScheduledJob | null>(null);
   const [editingJob, setEditingJob] = useState<ScheduledJob | null>(null);
   const [viewingScript, setViewingScript] = useState<any>(null);
@@ -145,6 +147,25 @@ const ScheduledJobsTab: React.FC<ScheduledJobsTabProps> = ({ language, showToast
     }
   }, [authHeaders, page, pageSize]);
 
+  const fetchNsotCollectionPreview = useCallback(async (jobId: string, signal: AbortSignal): Promise<NsotCollectionPreview> => {
+    const response = await fetch(`/api/scheduled-jobs/${encodeURIComponent(jobId)}/nsot-preview`, {
+      headers: authHeaders,
+      signal,
+    });
+    const payload = await response.json().catch(() => null) as {
+      data?: NsotCollectionPreview;
+      detail?: string;
+      message?: string;
+    } | null;
+    if (!response.ok) {
+      throw new Error(payload?.detail || payload?.message || (zh ? '无法加载 NSOT 采集预览。' : 'Unable to load the NSOT collection preview.'));
+    }
+    if (!payload?.data || !Array.isArray(payload.data.groups)) {
+      throw new Error(zh ? '服务器返回的 NSOT 预览格式无法识别。' : 'The server returned an invalid NSOT preview.');
+    }
+    return payload.data;
+  }, [authHeaders, zh]);
+
   const fetchSystemJobs = useCallback(async () => {
     try {
       const r = await fetch('/api/scheduled-jobs/system', { headers: authHeaders });
@@ -251,6 +272,24 @@ const ScheduledJobsTab: React.FC<ScheduledJobsTabProps> = ({ language, showToast
       setEditingJob(null);
       setShowAddJob(true);
     }
+  };
+
+  const openScheduledJobForCollectionScope = (filters: CollectionPlanFilters) => {
+    const serializedFilters = JSON.stringify(filters);
+    resetFormState();
+    setForm({
+      ...INITIAL_FORM,
+      name: zh ? 'NSOT 范围周期采集' : 'NSOT scoped collection',
+      action_type: 'nsot',
+      device_scope: 'composite',
+      device_filter: serializedFilters,
+      major_type: 'collection',
+    });
+    setEditingJob(null);
+    setEnablingJobId(null);
+    setPresetOpen(false);
+    setBulkCollectionPlanOpen(false);
+    setShowAddJob(true);
   };
 
   const openEditModal = (job: ScheduledJob) => {
@@ -755,6 +794,16 @@ const ScheduledJobsTab: React.FC<ScheduledJobsTabProps> = ({ language, showToast
               <RotateCcw size={12} className={loading ? 'animate-spin' : ''} />
               {zh ? '刷新' : 'Refresh'}
             </button>
+            {!showAddJob && (
+              <button
+                type="button"
+                onClick={() => setBulkCollectionPlanOpen(true)}
+                className="inline-flex items-center gap-1.5 rounded-xl border border-cyan-200 bg-white px-3.5 py-2.5 text-xs font-bold text-cyan-800 shadow-sm transition hover:border-cyan-300 hover:bg-cyan-50"
+              >
+                <Layers size={15} />
+                {zh ? '批量采集模板' : 'Bulk Collection Templates'}
+              </button>
+            )}
             <button
               onClick={toggleAddJob}
               className={`flex items-center gap-1.5 px-4 py-2.5 rounded-xl text-sm font-bold shadow-sm transition-all active:scale-[0.97] ${
@@ -1085,7 +1134,16 @@ const ScheduledJobsTab: React.FC<ScheduledJobsTabProps> = ({ language, showToast
                       const atInfo = ACTION_TYPES.find(a => a.value === job.action_type);
                       const AtIcon = atInfo?.icon || Database;
                       const isEnabled = !!job.enabled;
-                      const scopeDesc = describeScope(job.device_scope, job.device_filter, zh);
+                      let scopeDesc = describeScope(job.device_scope, job.device_filter, zh);
+                      if (job.device_scope === 'composite') {
+                        try {
+                          const scopeFilters: unknown = JSON.parse(job.device_filter || '{}');
+                          if (scopeFilters && typeof scopeFilters === 'object' && !Array.isArray(scopeFilters)) {
+                            const platform = (scopeFilters as CollectionPlanFilters).platform;
+                            if (platform) scopeDesc = `${scopeDesc} · ${platform}`;
+                          }
+                        } catch { /* Preserve the existing scope label for legacy or malformed filters. */ }
+                      }
                       const isInsp = job.action_type === 'inspection';
                       const isBackup = job.action_type === 'backup';
                       const isNsot = job.action_type === 'nsot';
@@ -1293,6 +1351,7 @@ const ScheduledJobsTab: React.FC<ScheduledJobsTabProps> = ({ language, showToast
         fetchAndShowScriptDetail={fetchAndShowScriptDetail}
         availableScripts={availableScripts}
         openEditModal={openEditModal}
+        fetchNsotCollectionPreview={fetchNsotCollectionPreview}
         language={language}
       />
 
@@ -1328,6 +1387,14 @@ const ScheduledJobsTab: React.FC<ScheduledJobsTabProps> = ({ language, showToast
         confirmAddCandidates={confirmAddCandidates}
         language={language}
       />
+
+      {bulkCollectionPlanOpen && (
+        <BulkCollectionPlanModal
+          language={language}
+          onClose={() => setBulkCollectionPlanOpen(false)}
+          onCreateScheduledJob={openScheduledJobForCollectionScope}
+        />
+      )}
 
       {/* --- Script Preview Modal --- */}
       <AnimatePresence>

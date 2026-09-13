@@ -78,6 +78,8 @@ ORDER BY name;
 
 IP 定位默认使用新的四阶段流程，路由、ARP、MAC 和链路证据采集使用 SSH/CLI。Redis 只保存可重建的共享缓存，PostgreSQL 仍是事实和任务状态的存储；该功能不使用 SNMP。部署时只需配置 `REDIS_URL`，无需额外启用开关；Redis 不可用时按现有设计回退到 PostgreSQL 缓存。
 
+
+
 Windows Nexora 可以连接同机或局域网内 Docker Redis。如果已有仓库部署目录和完整 `.env`（包含 Compose 主服务要求的配置项），在 PowerShell 中使用主 Compose 文件启动内置 Redis：
 
 ```powershell
