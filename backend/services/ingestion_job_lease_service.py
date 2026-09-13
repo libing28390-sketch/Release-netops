@@ -34,10 +34,6 @@ def _now() -> datetime:
     return datetime.now(timezone.utc)
 
 
-def _iso(value: datetime) -> str:
-    return value.replace(microsecond=0).isoformat()
-
-
 def _text(value: Any, *, field: str, maximum: int, required: bool = True) -> str:
     text = str(value or "").strip()
     if required and not text:
@@ -82,30 +78,38 @@ class ImportJobLease:
         if self.held:
             return True
         moment = now or _now()
+        if moment.tzinfo is None:
+            moment = moment.replace(tzinfo=timezone.utc)
         expires = moment + timedelta(seconds=self.lease_seconds)
-        # Persist only an opaque random fence; worker identity remains in the
-        # bounded state-machine audit event and is never embedded in the DB
-        # lock value or public snapshot.
+        # Persist only an opaque random fence in owner_token; worker identity
+        # remains in bounded audit events and never enters the public snapshot.
         token = uuid.uuid4().hex
         with get_db_connection() as conn:
             try:
-                conn.execute("DELETE FROM scheduler_locks WHERE expires_at < ?", (_iso(moment),))
-                conn.execute(
-                    "INSERT INTO scheduler_locks (lock_name, locked_at, expires_at) VALUES (?, ?, ?)",
-                    (self.lock_name, token, _iso(expires)),
+                conn.execute("DELETE FROM scheduler_locks WHERE expires_at <= ?", (moment,))
+                row = conn.execute(
+                    """
+                    INSERT INTO scheduler_locks
+                        (lock_name, owner_token, locked_at, expires_at)
+                    VALUES (?, ?, ?, ?)
+                    ON CONFLICT (lock_name) DO UPDATE
+                       SET owner_token = EXCLUDED.owner_token,
+                           locked_at = EXCLUDED.locked_at,
+                           expires_at = EXCLUDED.expires_at
+                     WHERE scheduler_locks.expires_at <= EXCLUDED.locked_at
+                    RETURNING lock_name
+                    """,
+                    (self.lock_name, token, moment, expires),
                 )
                 conn.commit()
+                if row.fetchone() is None:
+                    ai_metrics.job_event("import", "lease_held")
+                    return False
             except Exception as exc:
                 try:
                     conn.rollback()
                 except Exception:
                     pass
-                # A unique-key collision is the normal duplicate-worker path;
-                # all other database failures fail closed as unavailable.
-                pgcode = str(getattr(exc, "pgcode", "") or "")
-                if pgcode == "23505" or "unique" in str(exc).casefold() or "constraint" in str(exc).casefold() or "duplicate" in str(exc).casefold():
-                    ai_metrics.job_event("import", "lease_held")
-                    return False
                 raise LeaseError("LEASE_STORAGE_UNAVAILABLE", "The Import Job lease store is unavailable") from exc
         self.owner_token = token
         self.held = True
@@ -116,13 +120,15 @@ class ImportJobLease:
         if not self.held or not self.owner_token:
             raise LeaseError("STALE_LEASE", "The worker lease is stale")
         moment = now or _now()
+        if moment.tzinfo is None:
+            moment = moment.replace(tzinfo=timezone.utc)
         expires = moment + timedelta(seconds=self.lease_seconds)
         with get_db_connection() as conn:
             try:
                 cursor = conn.execute(
                     "UPDATE scheduler_locks SET expires_at = ? "
-                    "WHERE lock_name = ? AND locked_at = ? AND expires_at >= ?",
-                    (_iso(expires), self.lock_name, self.owner_token, _iso(moment)),
+                    "WHERE lock_name = ? AND owner_token = ? AND expires_at >= ?",
+                    (expires, self.lock_name, self.owner_token, moment),
                 )
                 conn.commit()
                 if int(getattr(cursor, "rowcount", 0) or 0) != 1:
@@ -147,7 +153,7 @@ class ImportJobLease:
         with get_db_connection() as conn:
             try:
                 cursor = conn.execute(
-                    "DELETE FROM scheduler_locks WHERE lock_name = ? AND locked_at = ?",
+                    "DELETE FROM scheduler_locks WHERE lock_name = ? AND owner_token = ?",
                     (self.lock_name, self.owner_token),
                 )
                 conn.commit()

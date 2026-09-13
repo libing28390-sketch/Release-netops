@@ -38,6 +38,8 @@ def _threshold(name: str, default: int) -> int:
 
 
 def _parse_timestamp(value: Any) -> datetime | None:
+    if isinstance(value, datetime):
+        return value if value.tzinfo else value.replace(tzinfo=timezone.utc)
     text = str(value or "").strip()
     if not text:
         return None

@@ -540,6 +540,12 @@ def read_users(request: Request):
 @router.post("/users")
 async def create_user(request: Request, user: dict = Body(...)):
     actor = _require_user_administrator(request)
+    tenant_id = str(actor.get('tenant_id') or '').strip()
+    if not tenant_id:
+        raise HTTPException(
+            status_code=403,
+            detail='Authenticated user is not assigned to a tenant',
+        )
     user_id = user.get('id') or str(uuid.uuid4())
     raw_password = str(user.get('password') or '')
     username = str(user.get('username') or '').strip()
@@ -562,8 +568,9 @@ async def create_user(request: Request, user: dict = Body(...)):
         if duplicate:
             raise HTTPException(status_code=409, detail='Username already exists')
         conn.execute(
-            'INSERT INTO users (id, username, password, role, role_profile, status, last_login, avatar_url, group_name, change_groups_json, display_name, phone, email) '
-            'VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)',
+            'INSERT INTO users (id, username, password, role, role_profile, status, last_login, '
+            'avatar_url, group_name, change_groups_json, display_name, phone, email, tenant_id) '
+            'VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)',
             (
                 user_id,
                 username,
@@ -578,6 +585,7 @@ async def create_user(request: Request, user: dict = Body(...)):
                 display_name,
                 phone,
                 email,
+                tenant_id,
             ),
         )
         conn.commit()

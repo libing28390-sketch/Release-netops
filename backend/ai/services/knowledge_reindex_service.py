@@ -75,14 +75,14 @@ def _clamp_batch_size(value: Any) -> int:
 class _ReindexLease:
     """A database-backed expiring lease using the existing V1 lock table.
 
-    ``locked_at`` stores an opaque owner token, so a stale worker cannot
+    ``owner_token`` stores an opaque fence, so a stale worker cannot
     heartbeat or release a lease that a replacement worker acquired.  No
     document rows are changed while acquiring, heartbeating, or releasing.
     """
 
     def __init__(self, job_id: str, *, lease_seconds: int = DEFAULT_LEASE_SECONDS):
         self.lock_name = f"knowledge_reindex:{job_id}"
-        self.owner = f"reindex-worker:{uuid.uuid4().hex}"
+        self.owner_token = f"reindex-worker:{uuid.uuid4().hex}"
         self.lease_seconds = max(30, int(lease_seconds))
         self._held = False
 
@@ -91,12 +91,25 @@ class _ReindexLease:
         expires = now + timedelta(seconds=self.lease_seconds)
         with get_db_connection() as conn:
             try:
-                conn.execute("DELETE FROM scheduler_locks WHERE expires_at < ?", (now.isoformat(),))
-                conn.execute(
-                    "INSERT INTO scheduler_locks (lock_name, locked_at, expires_at) VALUES (?, ?, ?)",
-                    (self.lock_name, self.owner, expires.isoformat()),
+                conn.execute("DELETE FROM scheduler_locks WHERE expires_at <= ?", (now,))
+                row = conn.execute(
+                    """
+                    INSERT INTO scheduler_locks
+                        (lock_name, owner_token, locked_at, expires_at)
+                    VALUES (?, ?, ?, ?)
+                    ON CONFLICT (lock_name) DO UPDATE
+                       SET owner_token = EXCLUDED.owner_token,
+                           locked_at = EXCLUDED.locked_at,
+                           expires_at = EXCLUDED.expires_at
+                     WHERE scheduler_locks.expires_at <= EXCLUDED.locked_at
+                    RETURNING lock_name
+                    """,
+                    (self.lock_name, self.owner_token, now, expires),
                 )
                 conn.commit()
+                if row.fetchone() is None:
+                    ai_metrics.job_event("reindex", "lease_held")
+                    return False
                 ai_metrics.job_event("reindex", "lease_acquired")
                 self._held = True
                 return True
@@ -117,8 +130,8 @@ class _ReindexLease:
             try:
                 cursor = conn.execute(
                     "UPDATE scheduler_locks SET expires_at = ? "
-                    "WHERE lock_name = ? AND locked_at = ? AND expires_at >= ?",
-                    (expires.isoformat(), self.lock_name, self.owner, now.isoformat()),
+                    "WHERE lock_name = ? AND owner_token = ? AND expires_at >= ?",
+                    (expires, self.lock_name, self.owner_token, now),
                 )
                 conn.commit()
                 rowcount = getattr(cursor, "rowcount", 0)
@@ -142,8 +155,8 @@ class _ReindexLease:
         with get_db_connection() as conn:
             try:
                 conn.execute(
-                    "DELETE FROM scheduler_locks WHERE lock_name = ? AND locked_at = ?",
-                    (self.lock_name, self.owner),
+                    "DELETE FROM scheduler_locks WHERE lock_name = ? AND owner_token = ?",
+                    (self.lock_name, self.owner_token),
                 )
                 conn.commit()
             except Exception:

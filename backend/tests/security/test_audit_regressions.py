@@ -210,9 +210,14 @@ def test_bootstrap_creates_default_admin_password(isolated_db, monkeypatch):
         conn.execute('DELETE FROM users')
         monkeypatch.delenv('INITIAL_ADMIN_PASSWORD', raising=False)
         _ensure_initial_administrator(conn.cursor(), '2026-09-11')
-        password_hash = conn.execute("SELECT password FROM users WHERE username = 'admin'").fetchone()['password']
+        admin = conn.execute(
+            "SELECT password, tenant_id, role_id FROM users WHERE username = 'admin'"
+        ).fetchone()
+        password_hash = admin['password']
         assert bcrypt.checkpw(b'admin', password_hash.encode())
         assert asyncio.run(users._verify_password('admin', password_hash))
+        assert admin['tenant_id'] == 'tenant-default'
+        assert admin['role_id'] == 'role-admin'
 
 
 def test_bootstrap_preserves_valid_admin_password_and_repairs_invalid_hash(isolated_db):
@@ -220,9 +225,17 @@ def test_bootstrap_preserves_valid_admin_password_and_repairs_invalid_hash(isola
     import bcrypt
     with get_db_connection() as conn:
         custom_hash = bcrypt.hashpw(b'ChangedByUser!234', bcrypt.gensalt()).decode()
-        conn.execute("UPDATE users SET password = ? WHERE username = 'admin'", (custom_hash,))
+        conn.execute(
+            "UPDATE users SET password = ?, tenant_id = '', role_id = '' WHERE username = 'admin'",
+            (custom_hash,),
+        )
         _ensure_initial_administrator(conn.cursor(), '2026-09-11')
-        assert conn.execute("SELECT password FROM users WHERE username = 'admin'").fetchone()['password'] == custom_hash
+        repaired_scope = conn.execute(
+            "SELECT password, tenant_id, role_id FROM users WHERE username = 'admin'"
+        ).fetchone()
+        assert repaired_scope['password'] == custom_hash
+        assert repaired_scope['tenant_id'] == 'tenant-default'
+        assert repaired_scope['role_id'] == 'role-admin'
 
         conn.execute("UPDATE users SET password = 'legacy-custom-password' WHERE username = 'admin'")
         _ensure_initial_administrator(conn.cursor(), '2026-09-11')

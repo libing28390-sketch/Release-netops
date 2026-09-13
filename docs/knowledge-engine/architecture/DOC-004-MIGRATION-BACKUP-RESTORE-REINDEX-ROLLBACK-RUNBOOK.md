@@ -100,12 +100,12 @@ Dump、manifest 或 config 任一失败，backup 状态为 incomplete；删除/�
 
 1. 校验 `ai.knowledge.manage`、tenant scope、job kind、scope fingerprint、idempotency key、V2 flag 和 source/document/index 状态。
 2. 任务初始 `queued`，服务端维护 counters；客户端不能写 counters、cursor、lease owner 或 tenant。
-3. worker 以 `knowledge_reindex:<job_id>` 在 `scheduler_locks` 取得 opaque owner token 和过期时间（默认 900 秒）；第二 worker 只读返回当前快照，不修改任务。
+3. worker 以 `knowledge_reindex:<job_id>` 在 `scheduler_locks` 取得独立的 `owner_token` 和 `TIMESTAMPTZ` 过期时间（默认 900 秒）；第二 worker 只读返回当前快照，不修改任务。正常结束由 finally 释放；存储时刻是绝对时间，在当前 Asia/Shanghai session 中显示为本地时间。
 
 ### 6.2 批处理与租约
 
 - 通过 `WHERE d.id > :last_id ORDER BY d.id LIMIT :batch_size` keyset 读取，batch 1～5000（默认 250），不使用 OFFSET/全量 materialization。
-- 每个 document/batch 前 heartbeat；只有匹配 owner token 才可 renew/release。失去 lease → `retry_wait`，从最近已提交 checkpoint 恢复。
+- 每个 document/batch 前 heartbeat；只有匹配 `owner_token` 才可 renew/release。失去 lease → `retry_wait`，从最近已提交 checkpoint 恢复。
 - 单文档在事务内幂等 replace derived generation；source/document facts 不删除、不改写；batch 只有 terminal outcomes 后才能提交 checkpoint。
 - cancel 请求在安全点确认；重复 cancel 幂等；当前文档完成或重试，不启动新 batch。
 - 错误使用 stable code/phase/item/attempt/retryable/correlation_id；禁止 raw body、DSN、credential、设备输出和依赖异常。

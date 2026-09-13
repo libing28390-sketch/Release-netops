@@ -16,6 +16,12 @@ services:
       context: ./docker/postgres
       dockerfile: Dockerfile
     container_name: nexora-db
+    command:
+      - postgres
+      - -c
+      - timezone=${TZ:-Asia/Shanghai}
+      - -c
+      - log_timezone=${TZ:-Asia/Shanghai}
     environment:
       # These variables can be overridden in the .env file
       - TZ=${TZ:-Asia/Shanghai}

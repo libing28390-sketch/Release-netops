@@ -32,6 +32,9 @@ def test_db022_contract_and_runtime_markers_are_frozen():
     assert data["task_id"] == "DB-022"
     assert data["priority"] == "P1"
     assert data["status"] == "implemented_runtime_coordination"
+    assert data["contract_version"] == "v2.1"
+    assert data["lease"]["owner_token"] == "opaque_worker_uuid_in_owner_token"
+    assert data["concurrency"]["database_lock"] == "scheduler_locks_atomic_expiry_aware_upsert"
     assert data["batch"]["max_batch_size"] == MAX_BATCH_SIZE
     assert data["batch"]["default_batch_size"] == DEFAULT_BATCH_SIZE
     assert data["lease"]["storage"] == "existing_scheduler_locks"
@@ -51,7 +54,9 @@ def test_db022_contract_and_runtime_markers_are_frozen():
 def test_db022_lease_excludes_duplicate_worker_and_fences_owner():
     conn = postgresql_test_driver.connect()
     conn.execute(
-        "CREATE TABLE scheduler_locks (lock_name TEXT PRIMARY KEY, locked_at TEXT NOT NULL, expires_at TEXT NOT NULL)"
+        "CREATE TABLE scheduler_locks ("
+        "lock_name TEXT PRIMARY KEY, owner_token TEXT NOT NULL, "
+        "locked_at TIMESTAMPTZ NOT NULL, expires_at TIMESTAMPTZ NOT NULL)"
     )
     import ai.services.knowledge_reindex_service as module
 
@@ -61,9 +66,17 @@ def test_db022_lease_excludes_duplicate_worker_and_fences_owner():
         first = _ReindexLease("job-1", lease_seconds=30)
         second = _ReindexLease("job-1", lease_seconds=30)
         assert first.acquire() is True
+        persisted = conn.execute(
+            "SELECT owner_token, locked_at, expires_at FROM scheduler_locks WHERE lock_name = ?",
+            (first.lock_name,),
+        ).fetchone()
+        assert persisted["owner_token"] == first.owner_token
+        assert persisted["locked_at"].tzinfo is not None
+        assert persisted["expires_at"].tzinfo is not None
         assert second.acquire() is False
         assert first.heartbeat() is True
-        second.owner = first.owner + "-stale"
+        second.owner_token = first.owner_token + "-stale"
+        second._held = True
         assert second.heartbeat() is False
         first.release()
         assert second.acquire() is True

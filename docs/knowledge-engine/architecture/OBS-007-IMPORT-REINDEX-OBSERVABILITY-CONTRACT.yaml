@@ -43,7 +43,8 @@ security:
 compatibility:
   - import control plane remains process-local until the DB-011 migration gate
   - reindex queue reads the existing PostgreSQL-authoritative ai_knowledge_reindex_job and scheduler_locks tables
-  - no V1 document, chunk, scheduler-lock, or migration semantics are changed
+  - m0229 separates scheduler owner_token from TIMESTAMPTZ fields; aggregate metrics and public API payload stay unchanged
+  - psycopg aware datetime values are normalized for the existing lease-expiry comparison
   - metrics and frontend TypeScript contracts are additive
 verification:
   tests:

@@ -92,7 +92,9 @@ def test_obs007_import_snapshot_counts_backlog_failures_and_expired_leases():
 
 
 def test_obs007_reindex_snapshot_detects_expired_running_lease(monkeypatch):
-    expired = (datetime.now(timezone.utc) - timedelta(minutes=5)).isoformat()
+    expired = (datetime.now(timezone.utc) - timedelta(minutes=5)).astimezone(
+        timezone(timedelta(hours=8))
+    )
     jobs = [
         ("reindex-queued", "queued", 0),
         ("reindex-failed", "failed", 2),

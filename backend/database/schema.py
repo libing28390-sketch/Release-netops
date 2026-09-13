@@ -19,23 +19,44 @@ _db_initialized = False
 def _ensure_initial_administrator(cursor, now: str) -> None:
     """Ensure the default administrator exists without overwriting valid passwords."""
     admin = cursor.execute(
-        'SELECT id, password FROM users WHERE username = %s', ('admin',)
+        'SELECT id, password, tenant_id, role_id FROM users WHERE username = %s', ('admin',)
     ).fetchone()
 
     if admin is None:
         hashed = bcrypt.hashpw(b'admin', bcrypt.gensalt()).decode()
         cursor.execute(
-            'INSERT INTO users (id, username, password, role, status, created_at) '
-            'VALUES (%s, %s, %s, %s, %s, %s) ON CONFLICT (username) DO NOTHING',
-            (str(uuid.uuid4()), 'admin', hashed, 'Administrator', 'active', now),
+            'INSERT INTO users (id, username, password, role, status, created_at, '
+            'tenant_id, role_id) '
+            'VALUES (%s, %s, %s, %s, %s, %s, %s, %s) ON CONFLICT (username) DO NOTHING',
+            (str(uuid.uuid4()), 'admin', hashed, 'Administrator', 'active', now, 'tenant-default', 'role-admin'),
         )
         logger.info('[Database] Default administrator created')
         return
 
     try:
         admin_id, stored_password = admin['id'], admin['password']
+        tenant_id, role_id = admin['tenant_id'], admin['role_id']
     except (TypeError, IndexError):
-        admin_id, stored_password = admin[0], admin[1]
+        admin_id, stored_password, tenant_id, role_id = admin[0], admin[1], admin[2], admin[3]
+
+    # Existing installations can contain a default admin created before tenant
+    # ownership was required. Repair only empty fields; preserve explicit scope.
+    if not str(tenant_id or '').strip() or not str(role_id or '').strip():
+        cursor.execute(
+            """
+            UPDATE users
+               SET tenant_id = CASE
+                       WHEN tenant_id IS NULL OR BTRIM(tenant_id) = '' THEN %s
+                       ELSE tenant_id
+                   END,
+                   role_id = CASE
+                       WHEN role_id IS NULL OR BTRIM(role_id) = '' THEN %s
+                       ELSE role_id
+                   END
+             WHERE id = %s
+            """,
+            ('tenant-default', 'role-admin', admin_id),
+        )
 
     # The login endpoint still accepts legacy plaintext credentials. Preserve
     # those and valid bcrypt hashes; repair only empty or malformed bcrypt data.

@@ -767,18 +767,24 @@ def sync_scheduler_jobs(scheduler):
 def run_scheduled_automation_job_sync_wrapper(job_id: str):
     """同步包装器，用于 APScheduler 调用协程"""
     from core.scheduler_lock import acquire_scheduler_lock
-    if not acquire_scheduler_lock(f"dyn_{job_id}", expire_seconds=300):
+    lease = acquire_scheduler_lock(f"dyn_{job_id}", expire_seconds=300)
+    if lease is None:
         logger.debug(f"Dynamic job {job_id} lock is already held. Skipping.")
         return
     import asyncio
+    loop = None
     try:
-        # 获取当前运行的事件循环
-        loop = asyncio.new_event_loop()
-        asyncio.set_event_loop(loop)
-        loop.run_until_complete(run_scheduled_automation_job(job_id))
-        loop.close()
+        with lease:
+            # 获取当前运行的事件循环
+            loop = asyncio.new_event_loop()
+            asyncio.set_event_loop(loop)
+            loop.run_until_complete(run_scheduled_automation_job(job_id))
     except Exception as e:
         logger.error(f"Error in scheduled job wrapper for {job_id}: {e}")
+    finally:
+        if loop is not None:
+            loop.close()
+            asyncio.set_event_loop(None)
 
 # ──────────────────────────────────────────────────────────────────────
 # System Platform-managed periodic jobs (Interface, Topology & Endpoints)

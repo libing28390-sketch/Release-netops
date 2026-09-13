@@ -48,7 +48,6 @@ def test_redis_sidecar_uses_a_restricted_acl_user_and_keeps_ai_rate_limits_worki
     compose = yaml.safe_load(COMPOSE.read_text(encoding="utf-8"))
     service = compose["services"]["redis"]
     source = COMPOSE.read_text(encoding="utf-8")
-    env_example = ENV_EXAMPLE.read_text(encoding="utf-8")
 
     assert service["image"] == "redis:7.4.2-alpine"
     assert service["container_name"] == "nexora-redis"
@@ -68,4 +67,19 @@ def test_redis_sidecar_uses_a_restricted_acl_user_and_keeps_ai_rate_limits_worki
     assert "--aclfile /data/nexora-users.acl" in source
     assert "redis-cli --user nexora" in source
     assert "TZ: ${TZ:-Asia/Shanghai}" in source
+
+
+def test_postgres_session_and_log_timezone_follow_the_shanghai_default():
+    compose = yaml.safe_load(COMPOSE.read_text(encoding="utf-8"))
+    db_service = compose["services"]["db"]
+    env_example = ENV_EXAMPLE.read_text(encoding="utf-8")
+
+    assert db_service["command"] == [
+        "postgres",
+        "-c",
+        "timezone=${TZ:-Asia/Shanghai}",
+        "-c",
+        "log_timezone=${TZ:-Asia/Shanghai}",
+    ]
+    assert "TZ: ${TZ:-Asia/Shanghai}" in COMPOSE.read_text(encoding="utf-8")
     assert "REDIS_URL=redis://nexora@redis:6379/0" in env_example
