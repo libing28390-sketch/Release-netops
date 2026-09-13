@@ -60,10 +60,10 @@ Environment:
   NETOPS_BUILD_PULL       Set to 1 to always pull newer base images while
                           building. By default local base images are reused and
                           the registry is only contacted for missing images.
-  NETOPS_REDIS_ENABLED    Set to 0 to deploy the original three-service stack
-                          without the optional Redis sidecar. Default: 1.
-                          With the sidecar default URL, install generates a
-                          URL-safe REDIS_PASSWORD and updates REDIS_URL.
+  NETOPS_REDIS_ENABLED    Set to 0 to run db/netops/nginx without Redis.
+                          Default: 1. With the default Redis URL, install
+                          generates a URL-safe REDIS_PASSWORD and updates
+                          REDIS_URL.
 EOF
 }
 
@@ -82,10 +82,6 @@ COMPOSE_FILES=()
 
 configure_compose_files() {
     COMPOSE_FILES=(-f docker-compose.yml)
-    if [[ "${NETOPS_REDIS_ENABLED:-1}" != "0" ]]; then
-        [[ -f docker-compose.redis.yml ]] || die "docker-compose.redis.yml is missing; set NETOPS_REDIS_ENABLED=0 to omit Redis"
-        COMPOSE_FILES+=(-f docker-compose.redis.yml)
-    fi
 }
 
 resolve_compose_project_name() {
@@ -116,6 +112,21 @@ compose() {
     local project_name
     project_name="$(resolve_compose_project_name)"
     docker compose --project-name "$project_name" "${COMPOSE_FILES[@]}" "$@"
+}
+
+compose_service_args() {
+    printf '%s\n' db netops nginx
+    if [[ "${NETOPS_REDIS_ENABLED:-1}" != "0" ]]; then
+        printf '%s\n' redis
+    fi
+}
+
+stop_disabled_redis() {
+    if [[ "${NETOPS_REDIS_ENABLED:-1}" == "0" ]]; then
+        # Redis remains defined in the unified Compose file. Stop an existing
+        # container explicitly when an operator disables it for this run.
+        compose stop redis >/dev/null 2>&1 || true
+    fi
 }
 
 set_env_value() {
@@ -349,6 +360,8 @@ validate_compose() {
 build_and_start() {
     validate_compose
     local build_args=(db netops nginx)
+    local service_args=()
+    mapfile -t service_args < <(compose_service_args)
     # Local images win: without --pull, BuildKit uses locally available FROM
     # images and only contacts the registry when one is missing. Hosts with
     # reliable registry access can set NETOPS_BUILD_PULL=1 to force refreshing
@@ -357,8 +370,9 @@ build_and_start() {
     # Build the database image first so pgvector and pg_trgm are present before
     # the application container starts its migrations.
     compose build "${build_args[@]}"
-    compose up -d --force-recreate --remove-orphans
-    compose ps
+    compose up -d --force-recreate --remove-orphans "${service_args[@]}"
+    stop_disabled_redis
+    compose ps "${service_args[@]}"
 }
 
 required_images() {
@@ -415,14 +429,16 @@ start_offline() {
     cd "$DEPLOYMENT_DIR"
     validate_compose
     verify_required_images
-    compose up -d --no-build --pull never --remove-orphans
-    compose ps
+    local service_args=()
+    mapfile -t service_args < <(compose_service_args)
+    compose up -d --no-build --pull never --remove-orphans "${service_args[@]}"
+    stop_disabled_redis
+    compose ps "${service_args[@]}"
 }
 
 redis_status() {
     cd "$DEPLOYMENT_DIR"
     [[ "${NETOPS_REDIS_ENABLED:-1}" != "0" ]] || die "Redis sidecar is disabled by NETOPS_REDIS_ENABLED=0"
-    [[ -f docker-compose.redis.yml ]] || die "docker-compose.redis.yml is missing"
     configure_compose_files
     compose ps redis
 }
@@ -430,7 +446,6 @@ redis_status() {
 redis_logs() {
     cd "$DEPLOYMENT_DIR"
     [[ "${NETOPS_REDIS_ENABLED:-1}" != "0" ]] || die "Redis sidecar is disabled by NETOPS_REDIS_ENABLED=0"
-    [[ -f docker-compose.redis.yml ]] || die "docker-compose.redis.yml is missing"
     configure_compose_files
     compose logs --timestamps -f --tail=200 redis
 }
@@ -443,14 +458,12 @@ reset_data() {
         read -r -p "Delete NetOps containers, volumes, local images, and TLS files? [y/N] " answer
         [[ "$answer" == "y" || "$answer" == "Y" ]] || { log "Cancelled"; exit 0; }
     fi
-    # Reset removes any sidecar volume left by an earlier Redis-enabled run,
-    # even when this invocation opts out of Redis for normal deployments.
+    # Reset removes the integrated Redis service and volume even when this
+    # invocation opts out of Redis for normal deployments.
     COMPOSE_FILES=(-f docker-compose.yml)
-    [[ -f docker-compose.redis.yml ]] && COMPOSE_FILES+=(-f docker-compose.redis.yml)
     compose down -v --remove-orphans --rmi local
     # Explicit image tags are not always covered by --rmi local.
-    local local_images=(nexora-netops nexora-nginx nexora-postgres)
-    [[ -f docker-compose.redis.yml ]] && local_images+=(redis:7.4.2-alpine)
+    local local_images=(nexora-netops nexora-nginx nexora-postgres redis:7.4.2-alpine)
     docker image rm -f "${local_images[@]}" >/dev/null 2>&1 || true
     rm -f nginx/ssl/netops.crt nginx/ssl/netops.key
     log "NetOps Docker data reset complete"
@@ -498,7 +511,10 @@ case "$COMMAND" in
         initialize_env
         if [[ "${FORCE_UPDATE:-}" != "--force" && "$RELEASE_CHANGED" != "1" ]]; then
             configure_compose_files
-            compose ps
+            service_args=()
+            mapfile -t service_args < <(compose_service_args)
+            stop_disabled_redis
+            compose ps "${service_args[@]}"
             log "No release content changes; skipped image pull, build, and container recreation"
             log "Docker update check complete; .env, volumes, and nginx/ssl were preserved"
         else

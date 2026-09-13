@@ -15,7 +15,7 @@
 ## 一句话速览
 
 - **Windows**：克隆 `windows` 分支或解压发布包 → 双击 `NetOps.exe` → Nexora 向导自动准备 PostgreSQL 17.6、匹配的 `pgvector`、`pg_trgm`、完整 Node.js 和 Python 运行时 → 浏览器开 `http://127.0.0.1:5010`。
-- **Docker 在线**：克隆仓库 → 配好 `.env` → 执行 `bash scripts/deploy-docker.sh install`（默认包含 Redis sidecar）→ 访问 `http://localhost`。
+- **Docker 在线**：克隆仓库 → 配好 `.env` → 执行 `bash scripts/deploy-docker.sh install`（默认包含主 Compose 中的 Redis 服务）→ 访问 `http://localhost`。
 - **Docker 完全离线**：联网机器执行 `bash scripts/deploy-docker.sh save-images <archive-path>`，目标服务器执行 `load-images` 后再执行 `start-offline`；启用 Redis 时脚本会一并保存和校验 Redis 镜像，详见 [Docker Compose 部署](docker.md#完全离线部署)。
 - **Docker 交付手册**：镜像归档、离线升级、数据卷和故障排查详见 [Docker 部署与离线交付手册](docker-release-manual.md)。
 - **Ubuntu**：一条 `curl ... | bash` 或 `./deploy-ubuntu.sh`，自动装依赖 + systemd + Nginx。

@@ -68,7 +68,7 @@ CREDENTIAL_ENCRYPTION_KEY=替换为随机密钥
 bash scripts/deploy-docker.sh install
 ```
 
-脚本默认将 `docker-compose.redis.yml` 合并进同一 Compose 项目，因此会一并校验和启动 Redis；首次安装在使用 sidecar 默认地址时会生成 URL-safe 密码。设置 `NETOPS_REDIS_ENABLED=0` 可关闭 sidecar。
+Redis 服务直接定义在 `docker-compose.yml` 中，部署脚本默认与主栈一同校验和启动；首次安装在使用默认地址时会生成 URL-safe 密码。设置 `NETOPS_REDIS_ENABLED=0` 可让脚本仅启动 PostgreSQL、后端和 Nginx。
 
 检查状态：
 
@@ -126,7 +126,6 @@ bash scripts/deploy-docker.sh save-images \
 nexora-images-*.tar.gz
 nexora-images-*.tar.gz.sha256
 docker-compose.yml
-docker-compose.redis.yml
 scripts/deploy-docker.sh
 .env.example
 nginx/nginx.conf
@@ -161,7 +160,7 @@ docker images nexora-netops nexora-nginx nexora-postgres redis:7.4.2-alpine
 bash scripts/deploy-docker.sh start-offline
 ```
 
-该命令会自动合并 Redis sidecar，并使用 `--no-build --pull never` 启动所有已启用服务。
+该命令会使用 `--no-build --pull never` 启动主服务和 Redis。
 
 离线服务器不要执行以下命令：
 

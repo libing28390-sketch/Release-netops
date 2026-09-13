@@ -12,7 +12,7 @@
 | `.dockerignore` | 构建上下文忽略规则（必须在根目录才生效） |
 | `nginx/` | Nginx 配置与 SSL 证书目录 |
 
-`docker-compose.redis.yml` 提供 Redis 7.4.2 Alpine sidecar。该文件既可单独启动，也会由部署脚本默认与主 Compose 合并；Redis 容器和主应用统一读取 `TZ`，未设置时使用 `Asia/Shanghai`。Redis 仅用于 IP 定位等可重建缓存，不能替代 PostgreSQL 的任务状态或事实数据。设置 `NETOPS_REDIS_ENABLED=0` 可显式关闭 sidecar。
+`docker-compose.yml` 内置 Redis 7.4.2 Alpine 服务，默认随 Docker 栈启动；Redis 容器和主应用统一读取 `TZ`，未设置时使用 `Asia/Shanghai`。Redis 仅用于 IP 定位等可重建缓存，不能替代 PostgreSQL 的任务状态或事实数据。部署脚本可通过 `NETOPS_REDIS_ENABLED=0` 显式关闭 Redis。
 
 数据库镜像固定基于 `pgvector/pgvector:0.8.6-pg17-bookworm`，并额外安装
 `postgresql-contrib-17`，因此迁移 `0104_ai_pgvector_rag` 所需的 `vector` 和
@@ -157,6 +157,6 @@ docker compose up -d --no-build --pull never --remove-orphans
 | `db` | 本地 `docker/postgres/Dockerfile` 构建的 `nexora-postgres:latest`（pgvector + pg_trgm） | 内部 5432 |
 | `netops` | 本地 `Dockerfile` 构建 | 内部 8003 |
 | `nginx` | `nginx:1.27-alpine` | 对外 80 / 443 |
-| `redis`（可选） | `redis:7.4.2-alpine`，由 `docker-compose.redis.yml` 提供 | 内部 6379 |
+| `redis`（可选） | `redis:7.4.2-alpine`，定义在 `docker-compose.yml` | 内部 6379 |
 
 > 生产环境的 HTTPS、密钥加固等见根目录 [DEPLOY.md](../../DEPLOY.md)。

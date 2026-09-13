@@ -172,6 +172,46 @@ services:
       timeout: 5s
       retries: 3
 
+  redis:
+    image: redis:7.4.2-alpine
+    container_name: nexora-redis
+    restart: unless-stopped
+    environment:
+      TZ: ${TZ:-Asia/Shanghai}
+      REDIS_PASSWORD: ${REDIS_PASSWORD:-}
+    entrypoint:
+      - /bin/sh
+      - -ec
+    # Keep the complete shell program in one argv element. A scalar command can
+    # be split into `umask`, `077`, ... by Compose, causing `sh -ec` to execute
+    # only `umask` (which prints 0022) and exit without starting Redis.
+    command:
+      - |
+        umask 077
+        if [ -n "$$REDIS_PASSWORD" ]; then
+          password_hash="$(printf '%s' "$$REDIS_PASSWORD" | sha256sum | awk '{print $$1}')"
+          printf 'user default off\nuser nexora on #%s ~nexora:* ~ai:ratelimit:* +ping +get +set +incr +del +eval +scan\n' "$$password_hash" > /data/nexora-users.acl
+        else
+          printf 'user default off\nuser nexora on nopass ~nexora:* ~ai:ratelimit:* +ping +get +set +incr +del +eval +scan\n' > /data/nexora-users.acl
+        fi
+        exec /usr/local/bin/docker-entrypoint.sh redis-server --appendonly yes --maxmemory 512mb \
+          --maxmemory-policy allkeys-lru --protected-mode yes --aclfile /data/nexora-users.acl
+    ports:
+      - "${REDIS_BIND_ADDRESS:-127.0.0.1}:6379:6379"
+    volumes:
+      - nexora-redis-data:/data
+    healthcheck:
+      test:
+        - CMD-SHELL
+        - >-
+          if [ -n "$${REDIS_PASSWORD}" ]; then
+          redis-cli --user nexora -a "$${REDIS_PASSWORD}" ping | grep -q PONG;
+          else redis-cli --user nexora ping | grep -q PONG; fi
+      interval: 10s
+      timeout: 3s
+      retries: 5
+    logging: *container-logging
+
 volumes:
   nexora-data:
     name: nexora-data
@@ -181,3 +221,5 @@ volumes:
     name: nexora-pgdata
   nexora-dist:
     name: nexora-dist
+  nexora-redis-data:
+    name: nexora-redis-data
