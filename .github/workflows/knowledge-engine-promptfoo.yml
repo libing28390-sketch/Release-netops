@@ -94,7 +94,7 @@ jobs:
           # `promptfoo --version` initializes Promptfoo's own local metadata
           # store before printing the version. Read the lockfile-installed
           # package metadata here so this check does not execute a test DB.
-          test "$(node -p \"require('./node_modules/promptfoo/package.json').version\")" = "${PROMPTFOO_VERSION}"
+          test "$(node -p 'require("./node_modules/promptfoo/package.json").version')" = "${PROMPTFOO_VERSION}"
 
       - name: Bootstrap isolated PostgreSQL Knowledge Engine corpus
         shell: bash
