@@ -384,7 +384,6 @@ def _init_telemetry_state():
     except Exception:
         pass
     current_alert_rules = alert_rule_service.get_runtime_rules()
-_init_telemetry_state()
 def resolve_alert_rule(metric_type: str, *, device_row=None, ip_address: str = '', interface_name: str | None = None):
     context = {
         'device_id': device_row['id'] if device_row else '',

@@ -126,6 +126,12 @@ async def _bg_init():
     Background initialization to avoid blocking startup.
     """
     try:
+        # Database schema/migrations are ready by the time background startup
+        # runs. Initialize telemetry caches here instead of at module import,
+        # so pytest collection and lightweight imports do not query tables
+        # before the PostgreSQL test fixture has initialized them.
+        from services.background_monitor_service import _init_telemetry_state
+        _init_telemetry_state()
         # Sync dynamic scheduled jobs from database
         sync_scheduler_jobs(scheduler)
         # Start status monitor loops (A/B Loops)
