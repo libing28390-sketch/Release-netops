@@ -2,7 +2,7 @@
 
 [English](#english) | [中文](#中文说明)
 
-> Version 1.0.7 · Standard Edition
+> Version 1.0.8 · Standard Edition
 
 Nexora is a full-stack network operations platform covering device inventory, real-time monitoring, automation, configuration backup, compliance auditing, and operational traceability.
 
@@ -151,7 +151,7 @@ The platform runs a background SNMP polling loop (concurrency: 20 devices simult
 
 - **Frontend**: React 19, TypeScript, Vite, TailwindCSS, Recharts
 - **Backend**: Python 3.10+, FastAPI, Uvicorn
-- **Database**: PostgreSQL 17 (production) / SQLite (fallback)
+- **Database**: PostgreSQL 18 (production)
 - **Network Automation**: Netmiko, Scrapli, SNMP telemetry
 - **License**: RSA-signed license file with feature gating and device limits
 
@@ -269,7 +269,7 @@ docker compose restart netops    # Restart backend
 
 #### Option 3 — Manual Setup
 
-**Prerequisites:** Node.js 20+, Python 3.10+, PostgreSQL 17
+**Prerequisites:** Node.js 20+, Python 3.10+, PostgreSQL 18
 
 ```bash
 git clone https://gitee.com/leerbon/netops.git nexora-automation
@@ -372,7 +372,7 @@ nexora-automation/
 
 - **前端**：React 19、TypeScript、Vite、TailwindCSS、Recharts
 - **后端**：Python 3.10+、FastAPI、Uvicorn
-- **数据库**：PostgreSQL 17（生产）/ SQLite（回退）
+- **数据库**：PostgreSQL 18（生产）
 - **网络自动化**：Netmiko、Scrapli、SNMP 遥测采集
 - **授权**：RSA 签名 License 文件，支持功能门控与设备数量限制
 
@@ -494,7 +494,7 @@ docker compose restart netops    # 重启后端
 
 #### 方式三 — 手动部署
 
-**前置条件**：Node.js 20+、Python 3.10+、PostgreSQL 17
+**前置条件**：Node.js 20+、Python 3.10+、PostgreSQL 18
 
 ```bash
 git clone https://gitee.com/leerbon/netops.git nexora-automation

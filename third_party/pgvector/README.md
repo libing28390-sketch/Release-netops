@@ -1,14 +1,14 @@
 # Windows pgvector runtime asset
 
-The Windows release workflow downloads the PostgreSQL 17 asset below into this
-directory before creating the sanitized Windows release tree. The ZIP is not
-stored in the source repository; the release job verifies its SHA-256 digest.
+This directory contains the Windows pgvector asset for the PostgreSQL 18
+baseline. The Windows release workflow downloads the same pinned asset before
+creating the sanitized release tree and verifies its SHA-256 digest.
 
 - Extension: pgvector `0.8.6`
-- PostgreSQL: `17.x` (the asset was tested by its publisher with PostgreSQL 17.6)
-- Asset: `vector.v0.8.6-pg17.zip`
-- Source: <https://github.com/andreiramani/pgvector_pgsql_windows/releases/tag/0.8.6_17>
-- SHA-256: `420388e9e9f05d92f06d6967ce8772483629b27a66ca9255925fa0fdd445438e`
+- PostgreSQL: `18.x`
+- Asset: `vector.v0.8.6-pg18.zip`
+- Source: <https://github.com/andreiramani/pgvector_pgsql_windows/releases/tag/0.8.6_18>
+- SHA-256: `bda17eb97d9e687e3da701adbf4b65a342943b3e0cdc81935ccf0b9833a1ed62`
 
-The Windows launcher also supports PostgreSQL 13–18 and downloads the matching
-pinned asset on demand when a release archive does not contain it.
+The Windows launcher supports PostgreSQL 18 only. If the bundled asset is
+missing, it downloads the same pinned asset on demand.

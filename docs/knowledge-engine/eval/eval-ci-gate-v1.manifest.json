@@ -16,9 +16,9 @@
   "automated_source_review_evidence": true,
   "signed_anchor_dataset_evidence": true,
   "workflow_sha256": {
-    "knowledge_engine_eval": "689d47ccf54ac96825eb85b1c071eb2470643f365cb8dea10272c0f1640ba28d",
-    "backend_pytest": "33209a044eb64ac9a85bf07ec864c3203fa76fdcb03efdc19dab4ed40b7c1094",
-    "release": "77b986a9805c7b2d08a55ca3f72be57d9a2835e78358b21581e0c855328cfc10",
+    "knowledge_engine_eval": "4fb25dc92bd6ea53088cc74822465828b3cf55b8741a4c58b89baad4c1b6e609",
+    "backend_pytest": "5b343139af41f24eb7bd01a12e8fcf468e32d5f3d1bc2943ad869f416c4e142f",
+    "release": "356cf7fa19a4f88225d37a2c354c869031f7634e0c41338739f821b379574a38",
     "promptfoo": "ce009d084ed8b5be85882fc84b6bd6a8e9e708400de68fdd4b790398ca8b0bf9"
   }
 }

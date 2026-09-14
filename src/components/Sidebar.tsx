@@ -776,7 +776,7 @@ const Sidebar: React.FC<SidebarProps> = ({
                 {language === 'zh' ? '当前版本' : 'VERSION'}
               </span>
               <span className="px-1.5 py-0.5 rounded bg-cyan-500/10 text-cyan-400 text-[10px] font-mono font-bold border border-cyan-500/20 shadow-[0_0_8px_rgba(34,211,238,0.1)]">
-                v{systemInfo?.version || '1.0.7'}
+                v{systemInfo?.version || '1.0.8'}
               </span>
             </div>
           </div>

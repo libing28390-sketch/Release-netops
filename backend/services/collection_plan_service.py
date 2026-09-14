@@ -704,7 +704,7 @@ def collection_plan_for_ip(
     # user input and stored canonical IPs.
     rows = _query_matches("d.ip_address IN (?, ?)", (raw_ip, normalized_ip))
     if ipaddress.ip_address(normalized_ip).version == 6:
-        # PostgreSQL 17 is the supported database baseline. This guarded cast
+        # PostgreSQL 18 is the supported database baseline. This guarded cast
         # tolerates malformed historical text values. Always check IPv6's
         # canonical inet form, even after an exact-text hit, so equivalent
         # compressed/expanded addresses cannot hide an ambiguous device match.

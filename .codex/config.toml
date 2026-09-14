@@ -1,0 +1,18 @@
+web_search = "live"
+model = "gpt-6-astra"
+model_context_window = 1_050_000
+model_reasoning_effort = "medium"
+model_verbosity = "low"
+
+approval_policy = "on-request"
+sandbox_mode = "workspace-write"
+personality = "pragmatic"
+
+[features]
+context_management.experimental_mode = true
+
+[agents]
+enabled = true
+default_subagent_model = "gpt-5.6-luna"
+default_subagent_reasoning_effort = "high"
+max_concurrent_threads_per_session = 2

@@ -15,11 +15,17 @@ from desktop.pgvector_windows import (
 
 
 def test_pgvector_windows_assets_are_pinned_for_supported_postgres_versions():
-    assert tuple(sorted(PGVECTOR_WINDOWS_ASSETS)) == (13, 14, 15, 16, 17, 18)
-    asset = asset_for_postgres_major(17)
-    assert asset.filename == "vector.v0.8.6-pg17.zip"
-    assert asset.url.endswith("/0.8.6_17/vector.v0.8.6-pg17.zip")
+    assert tuple(sorted(PGVECTOR_WINDOWS_ASSETS)) == (18,)
+    asset = asset_for_postgres_major(18)
+    assert asset.filename == "vector.v0.8.6-pg18.zip"
+    assert asset.url.endswith("/0.8.6_18/vector.v0.8.6-pg18.zip")
     assert len(asset.sha256) == 64
+
+
+@pytest.mark.parametrize("postgres_major", [13, 14, 15, 16, 17, 19])
+def test_pgvector_windows_rejects_non_baseline_postgres_versions(postgres_major: int):
+    with pytest.raises(RuntimeError, match="支持版本：18"):
+        asset_for_postgres_major(postgres_major)
 
 
 def test_extract_extension_files_only_stages_required_members(tmp_path):

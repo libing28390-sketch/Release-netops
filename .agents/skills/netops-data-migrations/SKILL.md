@@ -1,6 +1,6 @@
 ---
 name: netops-data-migrations
-description: Design and review Nexora NetOps PostgreSQL schemas, migrations, indexes, transactions, locking, repositories, and data backfills. Use whenever changing backend/database, persistent models, SQL queries, constraints, or deployment data compatibility.
+description: Use when changing PostgreSQL schema, migrations, or their rollout, including indexes, transactions, and backfills.
 ---
 
 # NetOps Data Migrations
@@ -10,7 +10,7 @@ description: Design and review Nexora NetOps PostgreSQL schemas, migrations, ind
 1. Inspect `backend/database/schema.py`, migration tracking in `backend/database/migrations/`, database helpers, and every query touching the table.
 2. Make schema changes idempotent and safe for existing installations with real data.
 3. Add a numbered migration when deployed databases need transformation; keep fresh-install schema aligned.
-4. Use PostgreSQL semantics as authoritative. Retain SQLite only where existing tests intentionally support it.
+4. PostgreSQL is the only supported persistence backend for runtime and tests. Use the shared isolated PostgreSQL fixtures; never validate persistence behavior with SQLite.
 5. Plan nullable introduction, backfill, constraint enforcement, indexes, rollback/recovery, and concurrent access.
 
 ## Conventions

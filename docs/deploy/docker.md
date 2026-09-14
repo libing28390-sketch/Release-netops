@@ -6,7 +6,7 @@
 
 | 文件 | 作用 |
 |------|------|
-| `docker-compose.yml` | 编排带 pgvector/pg_trgm 的 PostgreSQL 17 + 后端 + Nginx |
+| `docker-compose.yml` | 编排带 pgvector/pg_trgm 的 PostgreSQL 18 + 后端 + Nginx |
 | `docker/postgres/Dockerfile` | 基于 pgvector 的 PostgreSQL 镜像（包含 pg_trgm） |
 | `Dockerfile` | 后端镜像构建（含前端容器内编译） |
 | `.dockerignore` | 构建上下文忽略规则（必须在根目录才生效） |
@@ -14,9 +14,11 @@
 
 `docker-compose.yml` 内置 Redis 7.4.2 Alpine 服务，默认随 Docker 栈启动；Redis 容器和主应用统一读取 `TZ`，未设置时使用 `Asia/Shanghai`。Redis 仅用于 IP 定位等可重建缓存，不能替代 PostgreSQL 的任务状态或事实数据。部署脚本可通过 `NETOPS_REDIS_ENABLED=0` 显式关闭 Redis。
 
-数据库镜像固定基于 `pgvector/pgvector:0.8.6-pg17-bookworm`，并额外安装
-`postgresql-contrib-17`，因此迁移 `0104_ai_pgvector_rag` 所需的 `vector` 和
+数据库镜像固定基于 `pgvector/pgvector:0.8.6-pg18-bookworm`，并额外安装
+`postgresql-contrib-18`，因此迁移 `0104_ai_pgvector_rag` 所需的 `vector` 和
 `pg_trgm` 都能在数据库启动前使用。
+
+PostgreSQL 18 官方容器将数据目录设为 `/var/lib/postgresql/18/docker`，因此 Compose 将 `nexora-pgdata` 挂载到父目录 `/var/lib/postgresql`，以持久化该目录下的版本化集群数据。PG17 的旧 volume 不能原样交给 PG18；先备份，再使用 `pg_upgrade` 或 `pg_dump`/`pg_restore` 迁移到新 PG18 集群。
 
 > 这些文件**保持在根目录**，所以下面所有命令都直接在仓库根目录执行，无需 `-f` 指定路径。
 

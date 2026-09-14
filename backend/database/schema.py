@@ -15,6 +15,25 @@ from .seed import (
 )
 
 _db_initialized = False
+SUPPORTED_POSTGRES_MAJOR_VERSION = 18
+
+
+def _require_supported_postgres_version(cursor) -> None:
+    """Fail before schema writes when the connected server is off baseline."""
+    cursor.execute("SHOW server_version_num")
+    row = cursor.fetchone()
+    try:
+        version_num = int(row[0])
+    except (TypeError, ValueError, IndexError) as exc:
+        raise RuntimeError("Unable to determine the PostgreSQL server version.") from exc
+
+    major_version = version_num // 10000
+    if major_version != SUPPORTED_POSTGRES_MAJOR_VERSION:
+        raise RuntimeError(
+            "Nexora requires PostgreSQL 18. "
+            f"The connected server is PostgreSQL {major_version}; upgrade the database cluster "
+            "with pg_upgrade or pg_dump/pg_restore before starting this application."
+        )
 
 def _ensure_initial_administrator(cursor, now: str) -> None:
     """Ensure the default administrator exists without overwriting valid passwords."""
@@ -110,6 +129,10 @@ def init_db():
                 if "transaction" not in str(autocommit_error).lower():
                     raise
                 logger.debug("Keeping the existing PostgreSQL transaction for database bootstrap")
+
+        if _USE_PG:
+            with conn.cursor() as cursor:
+                _require_supported_postgres_version(cursor)
         
         os.makedirs(os.path.join(PROJECT_ROOT, 'data', 'pam_recordings'), exist_ok=True)
         os.makedirs(os.path.join(PROJECT_ROOT, 'data', 'change_order_attachments'), exist_ok=True)

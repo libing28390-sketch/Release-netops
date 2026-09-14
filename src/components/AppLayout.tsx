@@ -162,7 +162,7 @@ const AppLayout: React.FC<AppLayoutProps> = ({
 
         <footer className="h-10 px-8 border-t flex items-center justify-between nx-micro-text border-[var(--header-border)] text-[var(--muted-text)] bg-[var(--sidebar-bg)]">
           <span>Copyright (c) {new Date().getFullYear()} {systemInfo?.system_name || 'Nexora'}. All rights reserved.</span>
-          <span className="font-mono">{systemInfo?.version || 'v1.0.7'}</span>
+          <span className="font-mono">{systemInfo?.version || 'v1.0.8'}</span>
         </footer>
       </div>
 

@@ -1,6 +1,6 @@
 ---
 name: netops-monitoring-telemetry
-description: Implement and review network telemetry, SNMP metric collection, background monitors, outbound health probes, alert evaluation rules, maintenance windows, and multi-channel notification dispatchers. Use for changes under backend/services/*monitor*, backend/services/snmp*, backend/services/alert*, backend/services/outbound_probe*, backend/api/monitoring.py, or backend/api/alerts.py.
+description: Use when changing SNMP telemetry, health probes, alert evaluation, maintenance windows, or notification dispatch.
 ---
 
 # NetOps Monitoring, Telemetry & Alerting

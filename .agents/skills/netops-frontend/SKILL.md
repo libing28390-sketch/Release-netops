@@ -1,6 +1,6 @@
 ---
 name: netops-frontend
-description: Implement and review Nexora NetOps React 19 and TypeScript pages, components, hooks, contexts, Zustand stores, routing, dashboards, and API-driven interactions. Use for changes under src or for frontend contracts affected by backend work.
+description: Use when building or changing React and TypeScript pages, components, hooks, stores, routing, or API-driven UI.
 ---
 
 # NetOps Frontend

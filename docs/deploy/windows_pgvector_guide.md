@@ -5,7 +5,7 @@
 > 文件安装，然后再验证数据库迁移所需的扩展。本手册用于自动流程失败、
 > 远程 PostgreSQL 或需要人工审计安装文件时的兜底处理。
 
-本手册适用于在 Windows 环境下部署或运行 Nexora / NetOps 时，因数据库缺少 `pgvector` 扩展导致服务启动失败、数据库迁移中断（报错如 `MissingPostgreSQLExtension: PostgreSQL extension 'vector' is unavailable` 或 `RuntimeError: Database migrations are incomplete; pending versions: (138, ...)`）的处理指南。
+本手册按当前 PostgreSQL 18 基线编写，适用于 Windows 环境因数据库缺少 `pgvector` 扩展导致服务启动失败、数据库迁移中断（报错如 `MissingPostgreSQLExtension: PostgreSQL extension 'vector' is unavailable` 或 `RuntimeError: Database migrations are incomplete; pending versions: (138, ...)`）的处理。
 
 ---
 
@@ -21,9 +21,9 @@ PostgreSQL 官方 Windows 安装包（EnterpriseDB）自带了 `pg_trgm`，但**
 
 ### 2.1 确认 PostgreSQL 版本与安装路径
 - 默认安装路径通常为：
-  - PostgreSQL 18: `C:\Program Files\PostgreSQL\18\`
-  - PostgreSQL 17: `C:\Program Files\PostgreSQL\17\`（新安装向导使用 17.6）
-- 服务名称通常为：`postgresql-x64-18` 或 `postgresql-x64-17`。
+- Windows 默认新装 PostgreSQL 18.6，安装路径通常为 `C:\Program Files\PostgreSQL\18\`。
+- 服务名称通常为 `postgresql-x64-18`。
+- PG17 升级到 PG18 属于主版本升级：旧数据目录不能直接复用。请先备份，再使用 `pg_upgrade` 或将 `pg_dump` 备份恢复到新建的 PG18 集群。
 
 ---
 
@@ -37,19 +37,17 @@ Nexora 向导使用与 PostgreSQL 主版本匹配的 `pgvector 0.8.6` Windows �
 
 1. **下载预编译包**：
    - 访问 GitHub Releases：[https://github.com/andreiramani/pgvector_pgsql_windows/releases](https://github.com/andreiramani/pgvector_pgsql_windows/releases)
-   - 根据本地 PostgreSQL 主版本下载对应的 `vector.v0.8.6-pgXX.zip`。当前向导支持 PG13、14、15、16、17、18；PG17 文件名为 `vector.v0.8.6-pg17.zip`。
-   - PG17 资产的 SHA-256 为 `420388e9e9f05d92f06d6967ce8772483629b27a66ca9255925fa0fdd445438e`。其他主版本的固定摘要记录在 `desktop/pgvector_windows.py` 中。
+   - 当前发布包和 Windows 默认 PostgreSQL 18 使用 `vector.v0.8.6-pg18.zip`。也可从 [pgvector PostgreSQL 18 Release](https://github.com/andreiramani/pgvector_pgsql_windows/releases/download/0.8.6_18/vector.v0.8.6-pg18.zip) 下载。
+   - PG18 资产的 SHA-256 为 `bda17eb97d9e687e3da701adbf4b65a342943b3e0cdc81935ccf0b9833a1ed62`。
 
 2. **解压并复制文件**：
    解压后将文件分别复制到 PostgreSQL 的对应目录中（需要管理员权限）：
 
-   | 文件 | 目标安装路径（以 PG18 为例） |
+   | 文件 | PostgreSQL 18 目标安装路径 |
    | :--- | :--- |
    | `vector.dll` | `C:\Program Files\PostgreSQL\18\lib\` |
    | `vector.control` | `C:\Program Files\PostgreSQL\18\share\extension\` |
    | `vector--*.sql`（所有 SQL 脚本） | `C:\Program Files\PostgreSQL\18\share\extension\` |
-
-   *(注：若使用 PostgreSQL 17，请将上述路径中的 `18` 替换为 `17`；必须使用与 PostgreSQL 主版本一致的 ZIP。)*
 
 3. **重启 PostgreSQL 服务**（见后文第 4 节）。
 
@@ -64,7 +62,6 @@ Nexora 向导使用与 PostgreSQL 主版本匹配的 `pgvector 0.8.6` Windows �
    ```cmd
    set "PGROOT=C:\Program Files\PostgreSQL\18"
    ```
-   *(若为 PG17 请设置为 `C:\Program Files\PostgreSQL\17`；新装 PostgreSQL 17.0–17.2 不建议用于当前 pgvector，先升级到 17.3+。)*
 3. 克隆源码并编译安装：
    ```cmd
    cd %TEMP%
@@ -82,7 +79,7 @@ Nexora 向导使用与 PostgreSQL 主版本匹配的 `pgvector 0.8.6` Windows �
 
 ### 方式 A：通过图形界面（推荐）
 1. 按快捷键 `Win + R` 打开“运行”窗口，输入 `services.msc` 并回车。
-2. 在服务列表中按字母 `P` 找到 `postgresql-x64-18`（或对应版本号）。
+2. 在服务列表中按字母 `P` 找到 `postgresql-x64-18`。
 3. **右键**该服务，点击 **“重新启动”**。
 
 ### 方式 B：通过管理员 PowerShell
@@ -124,7 +121,7 @@ npm run dev
 1. **复制文件时提示“没有权限”**：
    `C:\Program Files` 属于系统保护目录，复制或覆盖文件时请在 UAC 弹窗中点击“继续”，或以管理员身份运行文件管理器/终端。
 2. **`CREATE EXTENSION vector;` 报错找不到模块**：
-   检查 `vector.dll` 是否确实位于 `PostgreSQL\XX\lib\` 目录下，并确保下载的 pgvector 大版本（PG17 / PG18）与当前运行的 PostgreSQL 一致。
+   检查 `vector.dll` 是否确实位于 `C:\Program Files\PostgreSQL\18\lib\` 目录下，并确保使用 PG18 对应的 pgvector 资产。
 3. **不想在 Windows 本机配置 PostgreSQL**：
    可直接使用项目内置的 Docker PostgreSQL 镜像（已预装 pgvector 与 pg_trgm）：
    ```bash

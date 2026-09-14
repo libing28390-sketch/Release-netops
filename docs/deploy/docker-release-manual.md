@@ -6,7 +6,7 @@
 
 | 服务 | 当前镜像标签 | 作用 | 对外端口 |
 |---|---|---|---|
-| `db` | `nexora-postgres:latest` | PostgreSQL 17、pgvector、pg_trgm | 不直接暴露 |
+| `db` | `nexora-postgres:latest` | PostgreSQL 18、pgvector、pg_trgm | 不直接暴露 |
 | `netops` | `nexora-netops:latest` | FastAPI 后端和前端静态资源 | 内部 8003 |
 | `nginx` | `nexora-nginx:latest` | HTTPS、静态文件、API/WebSocket 代理 | 80、443 |
 | `redis`（可选） | `redis:7.4.2-alpine` | IP 定位共享缓存 | 内部 6379 |
@@ -195,6 +195,8 @@ nexora-dist         前端静态文件共享卷
 ```
 
 新服务器首次启动会创建数据库并执行迁移。如果需要迁移既有系统，必须另外恢复 PostgreSQL 备份和应用数据，不能只导入镜像包。
+
+PostgreSQL 18 的官方容器数据目录位于 `/var/lib/postgresql/18/docker`，因此 Compose 把 `nexora-pgdata` 挂载到 `/var/lib/postgresql`。PG17 volume 的旧目录结构不能直接复用；跨主版本迁移前先备份，再迁移到新 PG18 集群。
 
 查看服务和日志：
 

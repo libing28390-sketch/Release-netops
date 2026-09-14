@@ -1,6 +1,6 @@
 ---
 name: netops-pam-automation
-description: Implement and review Privileged Access Management (PAM), web terminal bastion sessions, command auditing, credential rotation, dangerous command interception, change orders, and automated playbook executions. Use for changes under backend/api/pam*, backend/api/change_orders*, backend/services/pam*, backend/services/password_rotation*, or frontend PAM/Access pages.
+description: Use when changing PAM sessions, command auditing, credential rotation, change orders, or privileged playbooks.
 ---
 
 # NetOps PAM, Bastion Web Terminal & Change Automation

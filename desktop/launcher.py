@@ -27,7 +27,7 @@ SOURCE_PROJECT_ROOT = os.path.dirname(SOURCE_DESKTOP_DIR)
 if SOURCE_PROJECT_ROOT not in sys.path:
     sys.path.insert(0, SOURCE_PROJECT_ROOT)
 
-from desktop.ui.feedback import show_message
+from desktop.ui.feedback import ask_confirmation, show_message
 from desktop.ui.launcher_theme import build_launcher_stylesheet
 from desktop.pgvector_windows import install_pgvector_windows, sha256_file
 
@@ -105,10 +105,11 @@ NODE_INSTALL_URL = (
 NODE_INSTALL_SHA256 = (
     "57456aa33fcd6fb6a9418e09227de0b0ca604f7b2123566acc66b555cb2f42e5"
 )
-POSTGRES_INSTALL_VERSION = "17.6"
+POSTGRES_INSTALL_VERSION = "18.6"
 POSTGRES_INSTALL_URL = (
-    "https://get.enterprisedb.com/postgresql/postgresql-17.6-1-windows-x64.exe"
+    "https://get.enterprisedb.com/postgresql/postgresql-18.6-2-windows-x64.exe"
 )
+POSTGRES_BASELINE_MAJOR = 18
 
 # Setup logging
 def log_message(message):
@@ -703,11 +704,7 @@ class SetupWorker(QObject):
                 cursor.execute("SHOW server_version_num")
                 server_version_num = int(cursor.fetchone()[0])
             major_version = server_version_num // 10000
-            if major_version != 17:
-                self.write_log(
-                    f"[警告] 当前 PostgreSQL 为 {server_version}，Docker 基线为 PostgreSQL 17；"
-                    "建议新 Windows 部署使用 PostgreSQL 17。\n"
-                )
+            require_supported_postgres_major(major_version, server_version)
 
             required_extensions = ("vector", "pg_trgm")
 
@@ -728,11 +725,6 @@ class SetupWorker(QObject):
                     raise RuntimeError(
                         f"远程 PostgreSQL 缺少扩展 {missing}。Windows 向导不会修改远程服务器；"
                         f"请在 PostgreSQL {major_version} 服务器安装匹配的 pgvector 后重试。"
-                    )
-                if major_version == 17 and server_version_num < 170300:
-                    raise RuntimeError(
-                        f"当前 PostgreSQL 为 {server_version}。pgvector Windows 二进制要求 "
-                        "PostgreSQL 17.3 或更高版本；请先升级 PostgreSQL，再重新运行向导。"
                     )
                 if sys.platform != "win32":
                     raise RuntimeError(
@@ -1219,6 +1211,36 @@ def load_database_config_from_env():
     return config
 
 
+def build_fast_start_confirmation_message(db_config: dict[str, str]) -> str:
+    """Show the non-secret database target before an installed fast start."""
+    host = str(db_config.get("host") or "127.0.0.1")
+    port = str(db_config.get("port") or "5432")
+    user = str(db_config.get("user") or "postgres")
+    db_name = str(db_config.get("db_name") or "netops")
+    return (
+        "即将按以下连接信息启动 Nexora：\n\n"
+        "数据库版本基线：PostgreSQL 18\n"
+        f"服务器：{host}:{port}\n"
+        f"数据库：{db_name}\n"
+        f"用户名：{user}\n\n"
+        "密码不会显示或修改。确认后将启动本机服务并打开平台客户端。"
+    )
+
+
+def database_passwords_match(password: str, confirmation: str) -> bool:
+    """Return whether the two password entries agree before setup begins."""
+    return password == confirmation
+
+
+def require_supported_postgres_major(major_version: int, server_version: str) -> None:
+    """Stop the Windows setup wizard when its database is not PostgreSQL 18."""
+    if int(major_version) != POSTGRES_BASELINE_MAJOR:
+        raise RuntimeError(
+            f"Nexora 仅支持 PostgreSQL {POSTGRES_BASELINE_MAJOR}；当前连接的是 PostgreSQL "
+            f"{server_version}。请先备份并使用 pg_upgrade 或 pg_dump/pg_restore 完成主版本迁移。"
+        )
+
+
 class LauncherUI(QMainWindow):
     def __init__(self):
         super().__init__()
@@ -1309,14 +1331,17 @@ class LauncherUI(QMainWindow):
         self.input_host = QLineEdit(self.initial_config["host"], self)
         self.input_port = QLineEdit(self.initial_config["port"], self)
         self.input_user = QLineEdit(self.initial_config["user"], self)
-        self.input_pass = QLineEdit(self.initial_config["password"], self)
+        self.input_pass = QLineEdit(self)
         self.input_pass.setEchoMode(QLineEdit.Password)
+        self.input_pass_confirm = QLineEdit(self)
+        self.input_pass_confirm.setEchoMode(QLineEdit.Password)
         self.input_db_name = QLineEdit(self.initial_config["db_name"], self)
         
         form_fields_layout.addRow("数据库主机:", self.input_host)
         form_fields_layout.addRow("端口:", self.input_port)
         form_fields_layout.addRow("用户名:", self.input_user)
         form_fields_layout.addRow("密码:", self.input_pass)
+        form_fields_layout.addRow("再次输入密码:", self.input_pass_confirm)
         form_fields_layout.addRow("数据库名:", self.input_db_name)
         layout.addLayout(form_fields_layout)
         
@@ -1435,6 +1460,23 @@ class LauncherUI(QMainWindow):
         db_config["user"] = self.input_user.text().strip()
         db_config["password"] = self.input_pass.text()
         db_config["db_name"] = self.input_db_name.text().strip()
+
+        if not db_config["password"]:
+            show_message(
+                self,
+                "密码不能为空",
+                "请输入 PostgreSQL 密码，并在确认框中再次输入。",
+                dark=True,
+            )
+            return
+        if not database_passwords_match(db_config["password"], self.input_pass_confirm.text()):
+            show_message(
+                self,
+                "密码不一致",
+                "两次输入的 PostgreSQL 密码不一致，请检查后重新输入。",
+                dark=True,
+            )
+            return
         
         if not db_config["host"] or not db_config["port"] or not db_config["user"] or not db_config["db_name"]:
             show_message(
@@ -1586,6 +1628,19 @@ def main():
             if os.path.exists(os.path.join(venv_path, "pyvenv.cfg")):
                 try:
                     import subprocess
+                    db_config = load_database_config_from_env()
+                    app = QApplication.instance() or QApplication(sys.argv)
+                    if not ask_confirmation(
+                        None,
+                        "确认启动 Nexora",
+                        build_fast_start_confirmation_message(db_config),
+                        dark=True,
+                        confirm_text="启动",
+                        cancel_text="取消",
+                    ):
+                        log_message("Fast-start canceled by user after connection summary confirmation.")
+                        sys.exit(0)
+
                     clean_env = dict(os.environ)
                     clean_env.pop("_MEIPASS", None)
                     clean_env.pop("PYTHONHOME", None)
@@ -1626,7 +1681,7 @@ def main():
     if os.path.exists(plugins_path):
         QCoreApplication.addLibraryPath(plugins_path)
         
-    app = QApplication(sys.argv)
+    app = QApplication.instance() or QApplication(sys.argv)
     window = LauncherUI()
     window.show()
     if smoke_test:

@@ -1,6 +1,6 @@
 ---
 name: netops-release
-description: Prepare and review Nexora NetOps releases across Vite builds, FastAPI runtime, Windows desktop packaging, Docker, Nginx, Ubuntu scripts, environment configuration, and GitHub Actions. Use for deployment, packaging, versioning, CI, and release-readiness work.
+description: Use when preparing deployment-specific runtime changes, packaging, release versions, or CI.
 ---
 
 # NetOps Release

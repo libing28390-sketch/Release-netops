@@ -36,8 +36,8 @@
 
 | 部署方式 | 适合场景 | 关键入口文件/目录 | 数据库选项 | 特点 |
 | :--- | :--- | :--- | :--- | :--- |
-| **Windows 图形化/一键部署** | 个人电脑、本地实验、Windows 裸机、小团队，希望零门槛一键双击运行。 | `NetOps.exe`（兼容入口）, `start.bat`, `desktop/` | PostgreSQL 17 + `pgvector` + `pg_trgm` | **Nexora PySide6 托盘及暗黑模式向导**。自动安装/检测运行依赖；PostgreSQL 扩展需要预先安装，向导负责登录、建库并校验扩展。 |
-| **Docker Compose 容器部署** | Linux 服务器、生产环境、云原生部署，希望隔离服务且易于维护。 | `docker-compose.yml`, `Dockerfile`, `scripts/deploy-docker.sh` | PostgreSQL 17 | **三容器架构一键拉起**。支持在线构建，也支持镜像归档后离线导入，内置 HTTPS 加密和卷级持久化。 |
+| **Windows 图形化/一键部署** | 个人电脑、本地实验、Windows 裸机、小团队，希望零门槛一键双击运行。 | `NetOps.exe`（兼容入口）, `start.bat`, `desktop/` | PostgreSQL 18 + `pgvector` + `pg_trgm` | **Nexora PySide6 托盘及部署向导**。默认安装 PostgreSQL 18.6，并自动准备匹配的 pgvector 与 `pg_trgm`。 |
+| **Docker Compose 容器部署** | Linux 服务器、生产环境、云原生部署，希望隔离服务且易于维护。 | `docker-compose.yml`, `Dockerfile`, `scripts/deploy-docker.sh` | PostgreSQL 18 | **三容器架构一键拉起**。支持在线构建，也支持镜像归档后离线导入，内置 HTTPS 加密和卷级持久化。 |
 | **Ubuntu 一键脚本部署** | Ubuntu 裸机服务器，想要以 Nginx 反向代理 + systemd 原生服务运行。 | `deploy-ubuntu.sh` | PostgreSQL | **Shell 脚本交互式向导**。自动化配置系统包、虚拟环境、SSL、systemd 服务以及 logrotate 等。 |
 
 ---
@@ -69,7 +69,7 @@ Windows 部署支持两种主流模式：**小白用户的图形向导一键部�
 #### ② 自动向导流程（Dark-Mode Setup Wizard）
 如果是首次启动，`NetOps.exe` 将会弹出基于 **PySide6 编写的 premium 精美暗黑风格图形部署向导**：
 1. **运行环境检测**：向导会自动校验本地环境，支持兼容的 Python 版本范围（`3.10` ~ `3.12`，含两端）以及 Node.js 版本（`18+`）。如果检测到未安装，向导会提供一键下载并静默部署 Fallback 包（如 Python 3.11.9）。
-2. **数据库配置**：平台强制绑定 **PostgreSQL 17.x**。若本地 `5432` 未响应，向导可以下载并静默安装官方 PostgreSQL 17.2；该安装包不包含 `pgvector`。用户需要另外安装与 PG17 匹配的 `pgvector`，并确保 `pg_trgm` 可用。向导会实际登录数据库，缺库时尝试建库，再创建/校验这两个扩展。
+2. **数据库配置**：平台强制使用 **PostgreSQL 18.x**。若本地 `5432` 未响应，向导会下载并静默安装 PostgreSQL 18.6，再安装并校验匹配的 `pgvector` 与 `pg_trgm`。向导登录数据库后，会在账号具备相应权限时创建业务库并准备扩展。
 3. **依赖构建**：自动在本地创建 Python 虚拟环境（`.venv`），利用虚拟环境的 `pip` 安装 `backend/requirements.txt`；同时自动调用 `npm ci --include=dev` 并运行前端编译流程（`npm run build`）。
 4. **服务启动与浏览器拉起**：向导环境验证完成后，在完成页点击“启动平台客户端”，系统开启后台托盘并打开默认浏览器访问 `http://127.0.0.1:5010`。
 5. **后续使用**：下次启动 `NetOps.exe` 时，系统会复用已存在的 `.venv` 和 `.env`，重新验证数据库并同步 Nexora 桌面快捷方式，然后启动客户端。
@@ -81,7 +81,7 @@ Windows 部署支持两种主流模式：**小白用户的图形向导一键部�
 如果您是技术栈人员，希望以命令行前台或注册本地托盘运行，可以按照以下步骤手动操作：
 
 #### ① 依赖环境初始化
-1. 确保安装了 Python 3.10-3.12、Node.js 20+、PostgreSQL 17.x，以及与 PG17 匹配的 `pgvector` 和 `pg_trgm`。
+1. 确保安装了 Python 3.10-3.12、Node.js 20+、PostgreSQL 18.x，以及与 PG18 匹配的 `pgvector` 和 `pg_trgm`。
 2. 创建虚拟环境并安装 Python 包：
    ```powershell
    python -m venv .venv

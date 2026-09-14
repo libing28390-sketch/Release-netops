@@ -1,6 +1,6 @@
 ---
 name: netops-backend
-description: Implement and review Nexora NetOps FastAPI endpoints, service-layer business logic, authentication, scheduling, reporting, and backend integrations. Use for changes under backend/api, backend/services, backend/core, backend/engine, backend/repository, or backend/schemas.
+description: Use when implementing or changing FastAPI routes, backend services, authentication, scheduling, or integrations.
 ---
 
 # NetOps Backend

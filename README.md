@@ -60,7 +60,7 @@ flowchart LR
     User[Browser / Desktop] --> Nginx[Nginx HTTP/HTTPS]
     Nginx --> Web[React 19 + TypeScript]
     Nginx --> API[FastAPI API + WebSocket]
-    API --> DB[(PostgreSQL 17<br/>pgvector + pg_trgm)]
+    API --> DB[(PostgreSQL 18<br/>pgvector + pg_trgm)]
     API --> Scheduler[APScheduler / Background Services]
     API --> Drivers[SSH · SNMP · TextFSM]
     API --> AI[AI Gateway · RAG · Security Vault]
@@ -72,10 +72,10 @@ flowchart LR
 | Web 前端 | React 19、TypeScript、Vite、Zustand、Recharts、D3、Three.js、xterm.js | 管理页面、图表、拓扑、3D 机柜和 Web 终端。 |
 | API 与调度 | FastAPI、Pydantic、APScheduler、WebSocket | REST API、RBAC、任务调度、实时执行状态和终端通道。 |
 | 网络接入 | Netmiko、Scrapli、SNMP、TextFSM | 多厂商 SSH/CLI、遥测采集、配置备份和结构化解析。 |
-| 数据层 | PostgreSQL 17、pgvector、pg_trgm | 业务数据、审计、知识向量、全文检索和持久化。 |
+| 数据层 | PostgreSQL 18、pgvector、pg_trgm | 业务数据、审计、知识向量、全文检索和持久化。 |
 | 接入网关 | Nginx | 前端静态资源、API/WebSocket 代理、HTTP/HTTPS 入口。 |
 
-生产和发布环境仅支持 PostgreSQL；AI/知识库迁移还要求数据库具备 `vector` 与 `pg_trgm` 扩展。
+生产和发布基线统一使用 PostgreSQL 18；AI/知识库迁移还要求数据库具备 `vector` 与 `pg_trgm` 扩展。Windows 向导新装 PostgreSQL 18.6。PG17 升级到 PG18 属于主版本升级，旧数据目录或 Docker 数据卷不能直接复用；请先备份，再通过 `pg_upgrade` 或 `pg_dump`/`pg_restore` 完成迁移。
 
 ## 快速开始 / Quick Start
 
@@ -119,7 +119,7 @@ git clone -b windows https://github.com/libing28390-sketch/Release-netops.git ne
 cd nexora-automation
 ```
 
-随后双击 `NetOps.exe`，按向导完成 PostgreSQL、pgvector、Python/Node.js 运行环境和前端资源初始化。默认本地访问地址为 `http://127.0.0.1:5010`。详见 [Windows 部署指南](docs/deploy/windows.md)。
+随后双击 `NetOps.exe`，向导默认准备 PostgreSQL 18.6，并完成 pgvector、Python/Node.js 运行环境和前端资源初始化。默认本地访问地址为 `http://127.0.0.1:5010`。详见 [Windows 部署指南](docs/deploy/windows.md)。
 
 ## 部署后必做 / Security Checklist
 
@@ -181,7 +181,7 @@ Release-netops/
 ├── src/                     # React 19 + TypeScript 前端
 ├── assets/                  # 设备与 3D 资产目录
 ├── data/                    # 运行时目录及可管理的 TextFSM 模板
-├── docker/postgres/         # PostgreSQL 17 + pgvector 镜像
+├── docker/postgres/         # PostgreSQL 18 + pgvector 镜像
 ├── nginx/                   # HTTP/HTTPS、静态资源与 WebSocket 代理
 ├── scripts/                 # Docker 部署、备份、离线交付和终端 Agent 脚本
 ├── docs/deploy/             # 各平台公开部署文档

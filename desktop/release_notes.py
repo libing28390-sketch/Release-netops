@@ -1,10 +1,13 @@
 """Versioned release notes for the Windows desktop client."""
 
-CLIENT_VERSION = "1.0.7"
-CLIENT_BUILD = "20260816.0001"
+CLIENT_VERSION = "1.0.8"
+CLIENT_BUILD = "20260915.0001"
 
 RELEASE_NOTES = {
     "zh": (
+        "• 统一使用 PostgreSQL 18.6，Windows 发布包内置匹配的 pgvector 0.8.6。",
+        "• 修复 Windows 启动器 psycopg2 打包缺失和 Qt ICU DLL 冲突，新增发布后 smoke test。",
+        "• 已配置客户端启动前显示数据库目标，并要求 PostgreSQL 密码双次输入确认。",
         "• Windows 客户端界面与托盘品牌统一为 Nexora，保留 NetOps.exe 作为兼容启动文件名。",
         "• Windows 部署器新增 PostgreSQL 登录、业务库和 pgvector/pg_trgm 就绪检查。",
         "• 明确在线更新与完整 Windows 发布包升级的边界，降低升级不完整风险。",
@@ -15,6 +18,9 @@ RELEASE_NOTES = {
         "• 修复厂商、平台和命令集联动，避免华为/H3C 错用 Cisco 命令。",
     ),
     "en": (
+        "• Standardized on PostgreSQL 18.6 with the matching pgvector 0.8.6 asset in the Windows package.",
+        "• Fixed missing psycopg2 packaging and the Windows Qt ICU DLL collision, with a post-build smoke gate.",
+        "• Added a database-target confirmation and double-entry PostgreSQL password check before setup.",
         "• Unified the Windows client and tray branding under Nexora while keeping NetOps.exe as the compatibility launcher name.",
         "• Added PostgreSQL login, database, and pgvector/pg_trgm readiness checks to the Windows setup wizard.",
         "• Clarified the difference between launcher updates and full Windows package upgrades.",

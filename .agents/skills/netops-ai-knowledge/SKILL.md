@@ -1,6 +1,6 @@
 ---
 name: netops-ai-knowledge
-description: Build, debug, and review Nexora NetOps AI, RAG ingestion pipelines, knowledge base collections, vector embeddings, Security Vault redaction, prompt templates, and multi-provider LLM gateways. Use for changes under backend/ai, backend/api/knowledge_*, knowledge services, or frontend AI views.
+description: Use when changing Nexora knowledge ingestion, RAG retrieval, secret redaction, AI prompts, or provider gateways.
 ---
 
 # NetOps AI & Knowledge Base (RAG)

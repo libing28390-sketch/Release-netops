@@ -35,7 +35,7 @@ PGVECTOR_WINDOWS_REPOSITORY = "andreiramani/pgvector_pgsql_windows"
 PGVECTOR_WINDOWS_RELEASE_BASE = (
     "https://github.com/andreiramani/pgvector_pgsql_windows/releases/download"
 )
-SUPPORTED_POSTGRES_MAJOR_VERSIONS = tuple(range(13, 19))
+SUPPORTED_POSTGRES_MAJOR_VERSIONS = (18,)
 MAX_ARCHIVE_MEMBER_BYTES = 16 * 1024 * 1024
 
 
@@ -54,34 +54,9 @@ class PgvectorWindowsAsset:
 
 
 # SHA-256 digests are the GitHub release-asset digests published for the
-# v0.8.6 Windows builds.  The PG17 package is also copied into the Windows
+# v0.8.6 Windows builds.  The PG18 package is also copied into the Windows
 # release archive by .github/workflows/release.yml.
 PGVECTOR_WINDOWS_ASSETS: dict[int, PgvectorWindowsAsset] = {
-    13: PgvectorWindowsAsset(
-        13,
-        "vector.v0.8.6-pg13.zip",
-        "d80bc89dca13ef25204b551f68daff05ad60f13bb34a4e892d4472b50cc62262",
-    ),
-    14: PgvectorWindowsAsset(
-        14,
-        "vector.v0.8.6-pg14.zip",
-        "b32a743b01e5c178708197f7b8e5fe1da64566b52fefaf3e0f6e26c560ee561c",
-    ),
-    15: PgvectorWindowsAsset(
-        15,
-        "vector.v0.8.6-pg15.zip",
-        "ac109a074654faf03e5b989963ed855f9acb0ceb5953c4ab8a285212800d1c19",
-    ),
-    16: PgvectorWindowsAsset(
-        16,
-        "vector.v0.8.6-pg16.zip",
-        "faeaecb100488397ce5d38424b8c931be0f29e1668be7d4e75c26fe2eb056522",
-    ),
-    17: PgvectorWindowsAsset(
-        17,
-        "vector.v0.8.6-pg17.zip",
-        "420388e9e9f05d92f06d6967ce8772483629b27a66ca9255925fa0fdd445438e",
-    ),
     18: PgvectorWindowsAsset(
         18,
         "vector.v0.8.6-pg18.zip",

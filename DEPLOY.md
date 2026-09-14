@@ -89,7 +89,7 @@ Nginx (:80)
 |-----------|-------|------|
 | Frontend  | React 19 + Vite (built to dist/) | served by Nginx |
 | Backend   | Python FastAPI + Uvicorn | 8003 (internal) |
-| Database  | PostgreSQL 17 | 5432 |
+| Database  | PostgreSQL 18 | 5432 |
 | Proxy     | Nginx | 80 (public) |
 
 ---
@@ -316,7 +316,7 @@ To use your own custom/valid CA certificates:
 
 For custom environments or development.
 
-**Prerequisites:** Node.js 20+, Python 3.10+, PostgreSQL 17
+**Prerequisites:** Node.js 20+, Python 3.10+, PostgreSQL 18
 
 ```bash
 # 1. Clone
@@ -407,7 +407,7 @@ Nginx (:80)
 |------|--------|------|
 | 前端 | React 19 + Vite（构建到 dist/） | 由 Nginx 提供 |
 | 后端 | Python FastAPI + Uvicorn | 8003（内部） |
-| 数据库 | PostgreSQL 17 | 5432 |
+| 数据库 | PostgreSQL 18 | 5432 |
 | 代理 | Nginx | 80（对外） |
 
 ---
@@ -634,7 +634,7 @@ Docker 部署配置中已默认启用 HTTPS。默认情况下，系统要求在 
 
 适用于自定义环境或开发调试。
 
-**前置条件**：Node.js 20+、Python 3.10+、PostgreSQL 17
+**前置条件**：Node.js 20+、Python 3.10+、PostgreSQL 18
 
 ```bash
 # 1. 克隆项目
@@ -713,7 +713,7 @@ The Nexora Windows client runs the platform locally with a system-tray controlle
 #### 0. Requirements
 
 - Windows 10/11 x86_64 and a writable deployment directory.
-- PostgreSQL 17.x with pgvector and the `pg_trgm` extension; provide a target database or an account that can create it. The detailed setup is in [docs/deploy/windows.md](docs/deploy/windows.md).
+- PostgreSQL 18.x with pgvector and the `pg_trgm` extension; provide a target database or an account that can create it. The detailed setup is in [docs/deploy/windows.md](docs/deploy/windows.md).
 - Internet access and UAC permission for the first-time dependency setup.
 
 The launcher can reuse Python 3.10–3.12 or install Python 3.11.9, and can reuse Node.js 20+ or download a portable Node.js 20.12.2 when `dist/` is missing. It also creates `.venv` and installs the backend and tray dependencies.
@@ -725,7 +725,7 @@ git clone -b windows https://github.com/libing28390-sketch/Release-netops.git ne
 cd nexora-automation
 ```
 
-Prepare PostgreSQL 17, `pgvector`, and `pg_trgm` before starting the client. The Nexora wizard can create the `netops` database when the selected account can connect to `postgres` and has `CREATEDB`; otherwise create it first. Then double-click `NetOps.exe` or run `start.bat`, enter the database connection, and click “启动平台客户端” on the completion page.
+Prepare PostgreSQL 18, `pgvector`, and `pg_trgm` before starting the client. The Nexora wizard can create the `netops` database when the selected account can connect to `postgres` and has `CREATEDB`; otherwise create it first. Then double-click `NetOps.exe` or run `start.bat`, enter the database connection, and click “启动平台客户端” on the completion page.
 
 Open `http://127.0.0.1:5010` and sign in as `admin / admin` on a fresh database; change the password immediately. Existing accounts keep their stored passwords. The backend binds to `0.0.0.0:5010`, so restrict Windows Firewall to localhost unless LAN access is intentional.
 
@@ -744,7 +744,7 @@ Nexora Windows 客户端在本机运行后端服务，并通过系统托盘管�
 #### 0. 新机器要求
 
 - Windows 10/11 64 位，以及可写的部署目录。
-- PostgreSQL 17.x、pgvector、`pg_trgm`，以及目标业务数据库或 `CREATEDB` 权限。
+- PostgreSQL 18.x、pgvector、`pg_trgm`，以及目标业务数据库或 `CREATEDB` 权限。
 - 首次运行需要网络下载依赖，并允许 PostgreSQL 安装时的 UAC 提权。
 
 向导可以自动准备兼容的 Python 3.10–3.12（无兼容版本时安装 3.11.9）、Node.js 20+ 或便携版 Node.js 20.12.2，并在 `.venv` 中安装后端和托盘依赖。详细的 PostgreSQL 初始化步骤见 [docs/deploy/windows.md](docs/deploy/windows.md)。
@@ -756,7 +756,7 @@ git clone -b windows https://github.com/libing28390-sketch/Release-netops.git ne
 cd nexora-automation
 ```
 
-先准备 PostgreSQL 17、pgvector 和 `pg_trgm`。如果账号有连接维护库 `postgres` 和 `CREATEDB` 权限，Nexora 向导可以创建 `netops` 数据库；否则先手工创建，再双击 `NetOps.exe` 或运行 `start.bat`，填写数据库连接并点击“启动平台客户端”。
+先准备 PostgreSQL 18、pgvector 和 `pg_trgm`。如果账号有连接维护库 `postgres` 和 `CREATEDB` 权限，Nexora 向导可以创建 `netops` 数据库；否则先手工创建，再双击 `NetOps.exe` 或运行 `start.bat`，填写数据库连接并点击“启动平台客户端”。
 
 新数据库首次启动后，浏览器访问 `http://127.0.0.1:5010` 并使用 `admin / admin` 登录，随后立即修改密码。已有账号保留当前密码。后端实际监听 `0.0.0.0:5010`，只允许本机使用时应限制 Windows 防火墙入站规则。
 

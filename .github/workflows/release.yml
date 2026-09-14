@@ -244,7 +244,7 @@ jobs:
           for path in "${required[@]}"; do
             test -n "$(git ls-files -- "$path" | head -n 1)" || { echo "[FAIL] Required release path missing: $path"; exit 1; }
           done
-          for path in data/netops.db.bak data/backups data/pam_recordings nginx/ssl/netops.crt nginx/ssl/netops.key blog handoff.md; do
+          for path in data/netops.db.bak data/backups data/pam_recordings nginx/ssl/netops.crt nginx/ssl/netops.key blog handoff.md .agents .codex; do
             test -z "$(git ls-files -- "$path")" || { echo "[FAIL] Forbidden path staged: $path"; exit 1; }
           done
 
@@ -319,15 +319,15 @@ jobs:
       - name: Checkout source repository
         uses: actions/checkout@v4
 
-      - name: Bundle PostgreSQL 17 pgvector runtime for Windows
+      - name: Bundle PostgreSQL 18 pgvector runtime for Windows
         shell: pwsh
         run: |
           $ErrorActionPreference = "Stop"
-          $destination = Join-Path $PWD "third_party\pgvector\vector.v0.8.6-pg17.zip"
+          $destination = Join-Path $PWD "third_party\pgvector\vector.v0.8.6-pg18.zip"
           New-Item -ItemType Directory -Path (Split-Path -Parent $destination) -Force | Out-Null
-          $url = "https://github.com/andreiramani/pgvector_pgsql_windows/releases/download/0.8.6_17/vector.v0.8.6-pg17.zip"
+          $url = "https://github.com/andreiramani/pgvector_pgsql_windows/releases/download/0.8.6_18/vector.v0.8.6-pg18.zip"
           Invoke-WebRequest -Uri $url -OutFile $destination
-          $expected = "420388e9e9f05d92f06d6967ce8772483629b27a66ca9255925fa0fdd445438e"
+          $expected = "bda17eb97d9e687e3da701adbf4b65a342943b3e0cdc81935ccf0b9833a1ed62"
           $actual = (Get-FileHash -Algorithm SHA256 -LiteralPath $destination).Hash.ToLowerInvariant()
           if ($actual -ne $expected) {
             throw "pgvector Windows asset digest mismatch. Expected $expected, got $actual."
@@ -348,7 +348,12 @@ jobs:
         shell: bash
         run: |
           python -m pip install --upgrade pip
-          pip install pyinstaller PySide6 pillow pystray certifi
+          pip install \
+            pyinstaller==6.22.1 \
+            pyinstaller-hooks-contrib==2026.6 \
+            PySide6==6.11.1 \
+            pillow pystray certifi \
+            psycopg2-binary==2.9.13
 
       - name: Build NetOps.exe
         shell: bash
@@ -356,6 +361,26 @@ jobs:
           pyinstaller NetOps.spec
           cp dist/NetOps.exe ./NetOps.exe
           rm -rf build/ dist/
+
+      - name: Smoke test Windows launcher
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = "Stop"
+          $exe = Join-Path $PWD "NetOps.exe"
+          $process = Start-Process -FilePath $exe -ArgumentList "--smoke-test" -WorkingDirectory $PWD -WindowStyle Hidden -PassThru
+          if (-not $process.WaitForExit(30000)) {
+            try { $process.Kill($true) } catch { $process.Kill() }
+            throw "NetOps.exe smoke test timed out after 30 seconds."
+          }
+          if ($process.ExitCode -ne 0) {
+            throw "NetOps.exe smoke test failed with exit code $($process.ExitCode)."
+          }
+          $log = Join-Path $PWD "launcher_setup.log"
+          if (-not (Test-Path -LiteralPath $log) -or
+              -not (Select-String -LiteralPath $log -SimpleMatch "SMOKE_TEST_OK" -Quiet)) {
+            throw "NetOps.exe did not write the SMOKE_TEST_OK marker."
+          }
+          Remove-Item -LiteralPath $log -Force
 
       - name: Build NexoraTerminalAgent.exe
         shell: bash
@@ -450,11 +475,11 @@ jobs:
             esac
           done < <(git ls-files 'docs/deploy/*')
 
-          required=(.env.example package.json package-lock.json backend/requirements.txt backend/main.py release-textfsm-templates third_party/pgvector/README.md third_party/pgvector/vector.v0.8.6-pg17.zip desktop/launcher.py desktop/desktop_tray.py desktop/update_service.py NetOps.exe NexoraTerminalAgent.exe start.bat src)
+          required=(.env.example package.json package-lock.json backend/requirements.txt backend/main.py release-textfsm-templates third_party/pgvector/README.md third_party/pgvector/vector.v0.8.6-pg18.zip desktop/launcher.py desktop/desktop_tray.py desktop/update_service.py NetOps.exe NexoraTerminalAgent.exe start.bat src)
           for path in "${required[@]}"; do
             test -n "$(git ls-files -- "$path" | head -n 1)" || { echo "[FAIL] Required Windows release path missing: $path"; exit 1; }
           done
-          for path in data/netops.db.bak data/backups data/pam_recordings nginx/ssl/netops.crt nginx/ssl/netops.key blog handoff.md; do
+          for path in data/netops.db.bak data/backups data/pam_recordings nginx/ssl/netops.crt nginx/ssl/netops.key blog handoff.md .agents .codex; do
             test -z "$(git ls-files -- "$path")" || { echo "[FAIL] Forbidden path staged: $path"; exit 1; }
           done
 

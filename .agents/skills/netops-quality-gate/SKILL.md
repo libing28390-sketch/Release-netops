@@ -1,6 +1,6 @@
 ---
 name: netops-quality-gate
-description: Validate Nexora NetOps changes with risk-based tests, TypeScript checks, production builds, API contract review, regression analysis, and security checks. Use before delivery, after cross-layer changes, or when diagnosing test and build failures.
+description: Use when selecting or running focused tests, builds, contract checks, or security validation for a change.
 ---
 
 # NetOps Quality Gate

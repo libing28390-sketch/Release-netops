@@ -9,8 +9,8 @@ Windows 客户端不需要预装 Docker。向导会准备 Python、完整 Node.j
 - Windows 10/11 64 位。
 - 将发布目录放在当前用户可写的位置，例如 `C:\Nexora`，不要直接放到受限的 `Program Files` 目录。
 - 首次部署需要网络访问 Python、Node.js、PyPI 和 PostgreSQL 下载地址，并允许 PostgreSQL 安装时的 UAC 提权。
-- PostgreSQL 17.x（新安装由向导使用 PostgreSQL 17.6；已有 PostgreSQL 13–18 也可被识别）。
-- 本机 PostgreSQL 不要求预先手工安装 `pgvector`；向导会按 PostgreSQL 主版本自动处理 `pgvector 0.8.6`，并检查 `pg_trgm`。
+- PostgreSQL 18.x（本机新安装由向导使用 PostgreSQL 18.6）。
+- 本机 PostgreSQL 不要求预先手工安装 `pgvector`；Windows 发布包附带 PostgreSQL 18 对应的 `pgvector 0.8.6`，向导也会校验并检查 `pg_trgm`。
 - 一个已创建的业务数据库（默认名称 `netops`）和可登录账号，或一个有 `CREATEDB` 权限、可以连接维护库 `postgres` 的账号。
 
 Python 和 Node.js 可以由向导自动处理：
@@ -21,11 +21,11 @@ Python 和 Node.js 可以由向导自动处理：
 
 ## PostgreSQL 初始化
 
-当前向导新装的是 PostgreSQL 17.6，并会在本机 PostgreSQL 缺少 `vector` 时自动下载与主版本匹配的 `pgvector 0.8.6` Windows 资产。向导会在下载后校验固定 SHA-256，使用 UAC 管理员权限将 `vector.dll`、`vector.control` 和全部 `vector--*.sql` 复制到 PostgreSQL 安装目录，并重启对应服务。目标库不存在时，会在账号有 `CREATEDB` 权限且能连接维护库 `postgres` 的情况下创建目标库，然后自动创建 `vector` 和 `pg_trgm`。
+当前向导新装 PostgreSQL 18.6。Windows 发布 ZIP 预置 PostgreSQL 18 对应的 `vector.v0.8.6-pg18.zip`；如果包内资产缺失，向导会从固定的 GitHub Release 地址下载并校验 SHA-256，再使用 UAC 管理员权限将 `vector.dll`、`vector.control` 和全部 `vector--*.sql` 复制到 PostgreSQL 安装目录，并重启对应服务。目标库不存在时，会在账号有 `CREATEDB` 权限且能连接维护库 `postgres` 的情况下创建目标库，然后自动创建 `vector` 和 `pg_trgm`。
 
-Windows Release ZIP 会预置 PostgreSQL 17 的 pgvector 资产；如果是源码目录或使用单独的 `NetOps.exe`，向导会按 PostgreSQL 主版本从固定的 GitHub Release 地址下载。PostgreSQL 17.0–17.2 不适合当前 Windows pgvector 二进制，应先升级到 17.3 或更高版本；新装流程默认使用 17.6。
+PG17 升级到 PG18 属于 PostgreSQL 主版本升级，数据库不能通过复制旧数据目录或直接复用旧 Docker 数据卷完成。请先备份，再按 PostgreSQL 文档使用 `pg_upgrade`，或将 `pg_dump` 备份恢复到新建的 PG18 集群；保留原 PG17 集群，直到确认新库及扩展工作正常。Windows 客户端只运行应用数据库迁移，不会替你转换 PostgreSQL 主版本。
 
-在 PostgreSQL 17 中按实际账号执行以下操作（可以使用 pgAdmin 或 `psql`）：
+在 PostgreSQL 18 中按实际账号执行以下操作（可以使用 pgAdmin 或 `psql`）：
 
 ```sql
 -- 如果数据库和账号已经存在，或准备让向导自动创建，请不要重复执行对应语句。
@@ -65,7 +65,7 @@ ORDER BY name;
    git clone -b windows https://gitee.com/leerbon/netops.git nexora-automation
    ```
 
-2. 如果是本机 PostgreSQL，直接继续即可：向导会检查服务，必要时安装 PostgreSQL 17.6，并自动安装匹配的 pgvector；如果是远程 PostgreSQL，请先由数据库管理员准备 `vector` 和 `pg_trgm`。
+2. 如果是本机 PostgreSQL，直接继续即可：向导会检查服务，必要时安装 PostgreSQL 18.6，并自动安装匹配的 pgvector；如果是远程 PostgreSQL，请先由数据库管理员准备 PostgreSQL 18、`vector` 和 `pg_trgm`。
 3. 双击根目录的 `NetOps.exe`，或运行 `start.bat`。
 4. 在向导中选择 PostgreSQL，填写主机、端口、用户名、密码和数据库名。默认本机参数是 `127.0.0.1:5432 / netops`。
 5. 向导会创建 `.venv`、安装依赖；如果 `dist/` 不存在，还会安装前端依赖并执行构建。
@@ -103,7 +103,7 @@ REDIS_URL=redis://nexora@127.0.0.1:6379/0
 
 ## 远程 PostgreSQL
 
-如果 Windows 只运行客户端、数据库在 Docker 或 Linux 服务器上，请在向导中填写远程 PostgreSQL 地址。向导检测到远程主机时不会在本机安装或修改 PostgreSQL；远程数据库仍必须具备受支持的 PostgreSQL、`vector`、`pg_trgm`，并已创建目标数据库。若扩展缺失，向导会明确提示数据库管理员处理。
+如果 Windows 只运行客户端、数据库在 Docker 或 Linux 服务器上，请在向导中填写远程 PostgreSQL 地址。向导检测到远程主机时不会在本机安装或修改 PostgreSQL；远程数据库应使用当前基线 PostgreSQL 18，具备 `vector`、`pg_trgm`，并已创建目标数据库。若扩展缺失，向导会明确提示数据库管理员处理。
 
 ## 验收检查
 
@@ -118,7 +118,7 @@ ORDER BY extname;
 SELECT MIN(version), MAX(version), COUNT(*) FROM schema_migrations;
 ```
 
-预期结果是 PostgreSQL 17.x、两个扩展均存在，并且迁移版本达到当前发布版本。若启动日志出现 `POSTGRES_EXTENSION_MISSING`，优先检查 pgvector 是否安装到了 PostgreSQL 17 的目录，以及当前账号是否有 `CREATE EXTENSION` 权限。
+预期结果是 PostgreSQL 18.x、两个扩展均存在，并且迁移版本达到当前发布版本。若启动日志出现 `POSTGRES_EXTENSION_MISSING`，优先检查 pgvector 是否安装到了 PostgreSQL 18 的目录，以及当前账号是否有 `CREATE EXTENSION` 权限。
 
 Windows 后端实际监听 `0.0.0.0:5010`，浏览器默认使用 `127.0.0.1:5010`。只允许本机访问时，应使用 Windows 防火墙限制 5010 入站；需要局域网访问时再按实际网段放行。
 
@@ -130,6 +130,8 @@ Windows 后端实际监听 `0.0.0.0:5010`，浏览器默认使用 `127.0.0.1:501
 - PostgreSQL 模式下清理前必须创建 `pg_dump` 备份；清理完成后会重新执行迁移并恢复默认管理员 `admin / admin`。
 
 ## 已有 Windows 用户升级
+
+若同时将数据库从 PG17 升级到 PG18，先完成 PostgreSQL 主版本迁移：不能把 PostgreSQL 17 的数据目录直接交给 PostgreSQL 18 使用，也不能由 Nexora 客户端升级该数据目录。请先备份，再使用 `pg_upgrade` 或通过 `pg_dump`/`pg_restore` 恢复到新建的 PG18 集群；数据库和扩展验证通过后再升级应用，并保留原 PG17 集群作为回退副本。
 
 ### 推荐：完整发布包升级
 
@@ -161,7 +163,7 @@ git pull origin windows
 
 注意：当前 GitHub Actions 只负责推送 GitHub Release 仓库，并不会自动同步 Gitee。Gitee 分支是否包含最新 Windows 构建，需要发布人员确认；配置了 `BAIDU_PAN_TOKEN` 的发布任务还会上传 Windows ZIP，可用于受限网络下的离线分发。客户端的“自动检查更新”设置目前不改变上述手动检查链路。
 
-当前客户端版本为 `1.0.7`。如果托盘提示没有新版本，请使用最新 Windows ZIP 或执行 `git pull origin windows`；GitHub Release 尚未发布对应构建时，在线更新不会生效。
+当前客户端版本为 `1.0.8`。如果托盘提示没有新版本，请使用最新 Windows ZIP 或执行 `git pull origin windows`；GitHub Release 尚未发布对应构建时，在线更新不会生效。
 
 ## 重新打包
 
