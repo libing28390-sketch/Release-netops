@@ -91,7 +91,10 @@ jobs:
           npm ci --include=dev --ignore-scripts
           test "$(npm view promptfoo@${PROMPTFOO_VERSION} dist.integrity)" = "${PROMPTFOO_INTEGRITY}"
           npm rebuild better-sqlite3 --ignore-scripts=false
-          test "$(./node_modules/.bin/promptfoo --version | tr -d '[:space:]')" = "${PROMPTFOO_VERSION}"
+          # `promptfoo --version` initializes Promptfoo's own local metadata
+          # store before printing the version. Read the lockfile-installed
+          # package metadata here so this check does not execute a test DB.
+          test "$(node -p \"require('./node_modules/promptfoo/package.json').version\")" = "${PROMPTFOO_VERSION}"
 
       - name: Bootstrap isolated PostgreSQL Knowledge Engine corpus
         shell: bash
