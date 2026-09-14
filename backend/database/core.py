@@ -212,6 +212,21 @@ if _USE_PG:
         def __init__(self, cur):
             self._cur = cur
 
+        def __enter__(self):
+            """Preserve psycopg2 cursor context-manager semantics.
+
+            The database adapter wraps psycopg2 cursors to translate the
+            application's ``?`` placeholders.  The wrapper must remain
+            interchangeable with a native cursor, including the common
+            ``with connection.cursor() as cursor`` form used by bootstrap,
+            migrations, and tests.
+            """
+            self._cur.__enter__()
+            return self
+
+        def __exit__(self, exc_type, exc_value, traceback):
+            return self._cur.__exit__(exc_type, exc_value, traceback)
+
         @staticmethod
         def _adapt(sql: str, *, escape_percent: bool = True) -> str:
             sql = _LIKE_RE.sub('ILIKE', sql)

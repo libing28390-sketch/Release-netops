@@ -86,10 +86,12 @@ jobs:
           set -euo pipefail
           python -m pip install --upgrade pip
           pip install -r backend/requirements.txt pytest
-          npm ci --ignore-scripts
+          # Keep the lockfile/integrity checks while allowing the pinned
+          # better-sqlite3 install hook to fetch/build its Node 22 binding.
+          npm ci --include=dev --ignore-scripts
           test "$(npm view promptfoo@${PROMPTFOO_VERSION} dist.integrity)" = "${PROMPTFOO_INTEGRITY}"
-          npm install --global --ignore-scripts --no-audit --no-fund "promptfoo@${PROMPTFOO_VERSION}"
-          test "$(promptfoo --version | tr -d '[:space:]')" = "${PROMPTFOO_VERSION}"
+          npm rebuild better-sqlite3 --ignore-scripts=false
+          test "$(./node_modules/.bin/promptfoo --version | tr -d '[:space:]')" = "${PROMPTFOO_VERSION}"
 
       - name: Bootstrap isolated PostgreSQL Knowledge Engine corpus
         shell: bash
@@ -110,7 +112,7 @@ jobs:
           fi
           args=(eval -c docs/knowledge-engine/eval/promptfoo-rag-gate.yaml --no-cache --no-table --no-progress-bar -o "$RUNNER_TEMP/promptfoo-raw.json")
           if [ -n "$filter" ]; then args+=(--filter-pattern "$filter"); fi
-          promptfoo "${args[@]}"
+          ./node_modules/.bin/promptfoo "${args[@]}"
 
       - name: Build redacted JSON and JUnit artifacts
         if: always()
