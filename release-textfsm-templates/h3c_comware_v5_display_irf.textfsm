@@ -1,0 +1,13 @@
+# nexora-action-code: get_irf
+Value MEMBER_ID (\d+)
+Value ROLE (\S+)
+Value PRIORITY (\d+)
+Value CPU_MAC ([0-9A-Fa-f-]+)
+Value DESCRIPTION (\S+)
+
+Start
+  ^\s*[*+]*${MEMBER_ID}\s+${ROLE}\s+${PRIORITY}\s+${CPU_MAC}\s+${DESCRIPTION}\s*$$ -> Record
+  ^\s*MemberID\s+Role\s+Priority\s+CPU-Mac
+  ^\s*-+
+  ^\s*[*+]\s+indicates
+  ^\s*The\s+(?:Bridge MAC|Domain ID|Auto upgrade|Mac persistent)

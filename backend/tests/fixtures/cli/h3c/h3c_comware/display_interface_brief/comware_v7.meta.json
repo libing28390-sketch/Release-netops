@@ -1,0 +1,13 @@
+{
+  "vendor": "H3C",
+  "platform": "h3c_comware",
+  "software_family": "Comware7/9",
+  "model": "Comware switch example",
+  "command": "display interface brief",
+  "source_type": "official_vendor_documentation",
+  "source_url": "https://www.h3c.com/en/d_202602/2765425_294551_0.htm",
+  "source_title": "02-Ethernet interface commands - H3C",
+  "source_section": "display interface brief",
+  "expected_record_count": 3,
+  "expected_fields": ["INTERFACE", "LINK", "PROTOCOL", "MAIN_IP"]
+}

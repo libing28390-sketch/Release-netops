@@ -1,0 +1,13 @@
+{
+  "vendor": "H3C",
+  "platform": "h3c_comware",
+  "software_family": "Comware7/9",
+  "model": "Comware routing example",
+  "command": "display ip routing-table statistics",
+  "source_type": "official_vendor_documentation",
+  "source_url": "https://www.h3c.com/en/d_202507/2600661_294551_0.htm",
+  "source_title": "01-Basic IP Routing commands - H3C",
+  "source_section": "display ip routing-table statistics",
+  "expected_record_count": 8,
+  "expected_fields": ["TOTAL_PREFIXES", "ACTIVE_PREFIXES", "PROTO", "TOTAL", "ACTIVE", "ADDED", "DELETED"]
+}

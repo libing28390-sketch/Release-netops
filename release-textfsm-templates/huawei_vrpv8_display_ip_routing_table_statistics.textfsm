@@ -1,0 +1,16 @@
+Value SUMMARY_PREFIXES (\d+)
+Value PROTO (\S+)
+Value ROUTE_COUNT (\d+)
+Value ACTIVE_COUNT (\d+)
+Value ADDED_COUNT (\d+)
+Value DELETED_COUNT (\d+)
+Value FREED_COUNT (\d+)
+
+Start
+  ^\s*Summary\s+[Pp]refixes:\s+${SUMMARY_PREFIXES}\s*$$
+  ^\s*Proto\s+total\s+active\s+added\s+deleted\s+freed\s*$$
+  ^\s*routes\s+routes\s+routes\s+routes\s+routes\s*$$
+  ^\s*${PROTO}\s+${ROUTE_COUNT}\s+${ACTIVE_COUNT}\s+${ADDED_COUNT}\s+${DELETED_COUNT}\s+${FREED_COUNT}\s*$$ -> Record
+  ^\s*-+$$
+  ^\s*$$
+

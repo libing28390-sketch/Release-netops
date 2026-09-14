@@ -1,0 +1,21 @@
+# nexora-action-code: get_temperature
+Value Required SLOT (\d+)
+Value CARD_TYPE (\S+)
+Value TEMP_NAME (\S+)
+Value WARNING_TEMP (-?\d+(?:\.\d+)?)
+Value SHUTDOWN_TEMP (-?\d+(?:\.\d+)?)
+Value CURRENT_TEMP (-?\d+(?:\.\d+)?)
+Value STATUS (\S+)
+
+Start
+  ^.*#\s*show\s+ -> Next
+  ^\s*Slot\s+Card_type\s+Temp_name\s+Warning\s+Shutdown\s+Current\s+Status -> Table
+  ^\s*$$
+  ^. -> Next
+
+Table
+  ^[-\s]+$$ -> Next
+  ^\s*\(Celsius\) -> Next
+  ^\s*${SLOT}\s+${CARD_TYPE}\s+${TEMP_NAME}\s+${WARNING_TEMP}\s+${SHUTDOWN_TEMP}\s+${CURRENT_TEMP}\s+${STATUS}\s*$$ -> Record
+  ^\s*$$
+  ^. -> Next

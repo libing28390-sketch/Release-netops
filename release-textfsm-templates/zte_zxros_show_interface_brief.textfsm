@@ -1,0 +1,12 @@
+Value Required INTERFACE (\S+)
+Value ATTRIBUTE (\S+)
+Value MODE (\S+)
+Value BANDWIDTH (\S+)
+Value ADMIN_STATUS (\S+)
+Value PHY_STATUS (\S+)
+Value PROTOCOL_STATUS (\S+)
+Value DESCRIPTION (.*?)
+
+Start
+  ^Interface\s+Attribute\s+Mode
+  ^${INTERFACE}\s+${ATTRIBUTE}\s+${MODE}\s+${BANDWIDTH}\s+${ADMIN_STATUS}\s+${PHY_STATUS}\s+${PROTOCOL_STATUS}(?:\s+${DESCRIPTION})?\s*$$ -> Record

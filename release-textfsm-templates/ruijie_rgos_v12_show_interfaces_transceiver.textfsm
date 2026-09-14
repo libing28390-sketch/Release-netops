@@ -1,0 +1,52 @@
+# nexora-action-code: get_transceivers
+Value Required INTERFACE (\S+\s+[0-9\/\.\:\-_]+|\S+)
+Value TRANSCEIVER_TYPE (.+?)
+Value CONNECTOR_TYPE (\S+)
+Value WAVELENGTH (\d+)
+Value TRANSFER_DISTANCE (.+?)
+Value DDM (YES|NO|\S+)
+Value SERIAL_NUMBER (\S+)
+Value TEMPERATURE (-?\d+(?:\.\d+)?|\S+)
+Value TEMPERATURE_STATUS (\w+)
+Value VOLTAGE (\d+(?:\.\d+)?|\S+)
+Value VOLTAGE_STATUS (\w+)
+Value BIAS (\d+(?:\.\d+)?|\S+)
+Value BIAS_STATUS (\w+)
+Value RX_POWER (-?\d+(?:\.\d+)?|\S+)
+Value RX_POWER_STATUS (\w+)
+Value TX_POWER (-?\d+(?:\.\d+)?|\S+)
+Value TX_POWER_STATUS (\w+)
+
+Start
+  ^.*#\s*show\s+ -> Next
+  ^={3,}\s*Interface\s+${INTERFACE}\s*={3,} -> SectionBlock
+  ^Interface\s+Temp\(C\)\s+Voltage\(V\)\s+Bias\(mA\)\s+TX\s+Power\(dBm\)\s+RX\s+Power\(dBm\) -> TableBlock
+  ^\s*$$
+  ^. -> Next
+
+SectionBlock
+  ^Transceiver\s+Type\s*:\s*${TRANSCEIVER_TYPE}\s*$$
+  ^Connector\s+Type\s*:\s*${CONNECTOR_TYPE}\s*$$
+  ^Wavelength\(nm\)\s*:\s*${WAVELENGTH}\s*$$
+  ^\s*--\s*${TRANSFER_DISTANCE}\s*$$
+  ^Digital\s+Diagnostic\s+Monitoring\s*:\s*${DDM}\s*$$
+  ^Vendor\s+Serial\s+Number\s*:\s*${SERIAL_NUMBER}\s*$$
+  ^Temp\(Celsius\)\s+Voltage\(V\)\s+Bias\(mA\)\s+RX\s+power\(dBm\)\s+TX\s+power\(dBm\) -> DiagnosticValues
+  ^={3,}\s*Interface\s+ -> Continue.Record
+  ^={3,}\s*Interface\s+${INTERFACE}\s*={3,} -> SectionBlock
+  ^\s*$$
+  ^. -> Next
+
+DiagnosticValues
+  ^\s*${TEMPERATURE}\(${TEMPERATURE_STATUS}\)\s+${VOLTAGE}\(${VOLTAGE_STATUS}\)\s+${BIAS}\(${BIAS_STATUS}\)\s+${RX_POWER}\(${RX_POWER_STATUS}\)(?:\[AP\])?\s+${TX_POWER}\(${TX_POWER_STATUS}\) -> Record Start
+  ^\s*${TEMPERATURE}\s+${VOLTAGE}\s+${BIAS}\s+${RX_POWER}\s+${TX_POWER}\s*$$ -> Record Start
+  ^={3,}\s*Interface\s+ -> Continue.Record
+  ^={3,}\s*Interface\s+${INTERFACE}\s*={3,} -> SectionBlock
+  ^\s*$$
+  ^. -> Next
+
+TableBlock
+  ^-+ -> Next
+  ^\s*${INTERFACE}\s+${TEMPERATURE}\s+${VOLTAGE}\s+${BIAS}\s+${TX_POWER}\s+${RX_POWER}\s*$$ -> Record
+  ^\s*$$
+  ^. -> Next
