@@ -10,6 +10,8 @@ interface NavItemProps {
   icon?: React.ComponentType<any>;
   /** Level-2 indented item (smaller text, deeper padding) */
   indent?: boolean;
+  /** Level-3 item nested below an indented navigation item */
+  nested?: boolean;
   /** Optional badge element rendered after label */
   badge?: React.ReactNode;
   /** Mini (collapsed) mode: icon-only with hover tooltip */
@@ -40,6 +42,7 @@ const NavItem: React.FC<NavItemProps> = ({
   active,
   icon: Icon,
   indent = false,
+  nested = false,
   badge,
   mini = false,
   badgeDot = false,
@@ -93,7 +96,7 @@ const NavItem: React.FC<NavItemProps> = ({
       onClick={onClick}
       className={cn(
         'w-full flex items-center gap-2.5 transition-all duration-150 border-l-[3px]',
-        indent ? 'pl-9 pr-3 py-[7px]' : 'pl-3 pr-3 py-2',
+        nested ? 'pl-12 pr-3 py-[6px]' : indent ? 'pl-9 pr-3 py-[7px]' : 'pl-3 pr-3 py-2',
         active
           ? 'border-l-[#0078d4] bg-[rgba(0,120,212,0.08)] text-[#0078d4] font-semibold rounded-r-lg'
           : 'border-l-transparent text-[var(--body-text)] hover:bg-[var(--app-hover-bg)] hover:text-[var(--app-text)] rounded-lg'
@@ -117,7 +120,7 @@ const NavItem: React.FC<NavItemProps> = ({
       <span
         className={cn(
           'flex-1 text-left truncate',
-          indent ? 'text-[13.5px] font-normal' : 'text-[14px] font-medium'
+          nested ? 'text-[13px] font-normal' : indent ? 'text-[13.5px] font-normal' : 'text-[14px] font-medium'
         )}
       >
         {label}

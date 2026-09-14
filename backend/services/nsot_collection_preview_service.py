@@ -283,7 +283,17 @@ def _operation_command(
     }
 
 
-def _template_ids_for_collector(template_id: str, collector_key: str, role: str, platform: str) -> bool:
+def _template_ids_for_collector(
+    template_id: str,
+    collector_key: str,
+    role: str,
+    platform: str,
+    template: dict[str, Any] | None = None,
+) -> bool:
+    if template is not None and not bool(template.get("builtin")) and template_id not in {"role_default", "custom"}:
+        return collector_key in {
+            str(key) for key in (template.get("collector_keys") or [])
+        }
     if template_id in {"role_default", "custom"}:
         # These templates can vary by role/SVI evidence and explicit overrides;
         # the catalog presents the possible operation and labels it dynamic.
@@ -308,16 +318,32 @@ _TEMPLATE_DESCRIPTIONS = {
 }
 
 
-def _operation_template_catalog(role: str, platform: str) -> list[dict[str, Any]]:
+def _operation_template_catalog(
+    role: str,
+    platform: str,
+    templates: list[dict[str, Any]] | None = None,
+) -> list[dict[str, Any]]:
     catalog: list[dict[str, Any]] = []
-    for template in collection_templates():
+    for template in templates or collection_templates():
         template_id = str(template.get("id") or "")
         dynamic = template_id in {"role_default", "custom"}
-        collector_keys = [
-            key for key in _NSOT_POLICY_COLLECTORS
-            if dynamic or _template_ids_for_collector(template_id, key, role, platform)
-        ]
-        description = _TEMPLATE_DESCRIPTIONS.get(template_id, "")
+        persisted_keys = {
+            str(key) for key in (template.get("collector_keys") or [])
+            if str(key) in _NSOT_POLICY_COLLECTORS
+        }
+        collector_keys = (
+            sorted(persisted_keys)
+            if not dynamic and not bool(template.get("builtin"))
+            else [
+                key for key in _NSOT_POLICY_COLLECTORS
+                if dynamic or _template_ids_for_collector(template_id, key, role, platform)
+            ]
+        )
+        description = (
+            template.get("description_zh")
+            or template.get("description_en")
+            or _TEMPLATE_DESCRIPTIONS.get(template_id, "")
+        )
         catalog.append({
             **template,
             "description_zh": description,
@@ -360,6 +386,11 @@ def build_operation_catalog(
     catalog_profile.setdefault("profile_release_id", catalog_profile.get("current_release_id"))
 
     operations_by_collector: dict[str, dict[str, Any]] = {}
+    template_catalog = _operation_template_catalog(
+        role,
+        str(catalog_profile.get("platform") or ""),
+        templates=collection_templates(conn),
+    )
     if selected:
         templates_catalog = list_templates()
         catalog_action_map = (
@@ -369,11 +400,9 @@ def build_operation_catalog(
         )
         template_ids = [
             item["id"]
-            for item in _operation_template_catalog(
-                role,
-                str(catalog_profile.get("platform") or ""),
-            )
+            for item in template_catalog
         ]
+        template_by_id = {str(item["id"]): item for item in template_catalog}
         for spec in _OPERATION_SPECS:
             applicable = [
                 template_id for template_id in template_ids
@@ -382,6 +411,7 @@ def build_operation_catalog(
                     str(spec["collector_key"]),
                     role,
                     str(catalog_profile.get("platform") or ""),
+                    template=template_by_id.get(template_id),
                 )
             ]
             resolved = _operation_command(
@@ -472,6 +502,7 @@ def build_operation_catalog(
         "templates": _operation_template_catalog(
             role,
             str((selected or {}).get("platform_code") or ""),
+            templates=template_catalog,
         ),
         "profiles": profile_summaries,
         "selected_profile": _profile_summary(selected) if selected else None,

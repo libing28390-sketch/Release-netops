@@ -22,6 +22,8 @@ export interface NavChild {
   activeMatch?: string;
   /** If set, only users with this role (or higher) can see this item */
   requiredRole?: string;
+  /** Optional nested navigation items rendered below this item */
+  children?: NavChild[];
 }
 
 /** A top-level navigation group / section */

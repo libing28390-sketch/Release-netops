@@ -14,6 +14,7 @@ import {
   BookOpen,
   Building2,
   CalendarClock,
+  ChevronDown,
   ChevronLeft,
   ChevronRight,
   ClipboardCheck,
@@ -133,6 +134,18 @@ const ModuleSubNav: React.FC<ModuleSubNavProps> = ({ language, userRole, current
     group.children.some(child => checkChildActive(child, pathname))
   ) || (pathname.startsWith('/ai') ? navConfig.find(g => g.id === 'ai-center-group') : undefined);
 
+  const [expandedNestedIds, setExpandedNestedIds] = useState<string[]>([]);
+
+  // Keep the active nested section visible, but collapse it when the user
+  // navigates to another item in the module sidebar.
+  useEffect(() => {
+    const activeNestedParent = currentGroup?.children.find(child =>
+      child.children?.some(nestedChild => checkChildActive(nestedChild, pathname))
+    );
+
+    setExpandedNestedIds(activeNestedParent ? [activeNestedParent.id] : []);
+  }, [currentGroup?.id, pathname]);
+
   useEffect(() => {
     if (currentGroup?.id !== 'tickets' || !currentUser) return;
 
@@ -186,6 +199,10 @@ const ModuleSubNav: React.FC<ModuleSubNavProps> = ({ language, userRole, current
   if (!currentGroup) return null;
 
   const userLvl = ROLE_LEVEL[userRole ?? ''] ?? 0;
+  const canView = (item: any) => {
+    if (!item.requiredRole) return true;
+    return userLvl >= (ROLE_LEVEL[item.requiredRole] ?? 99);
+  };
   const visibleChildren = currentGroup.children.filter(c => {
     if (!c.requiredRole) return true;
     return userLvl >= (ROLE_LEVEL[c.requiredRole] ?? 99);
@@ -245,6 +262,7 @@ const ModuleSubNav: React.FC<ModuleSubNavProps> = ({ language, userRole, current
           const active = isActive(child);
           const label = zh ? child.label : (child.labelEn || child.label);
           const Icon = child.icon ? iconMap[child.icon] : undefined;
+          const nestedChildren = (child.children || []).filter(canView);
 
           if (isCompactNav) {
             return (
@@ -280,6 +298,85 @@ const ModuleSubNav: React.FC<ModuleSubNavProps> = ({ language, userRole, current
                   <span className="absolute top-1 right-1 w-2 h-2 rounded-full bg-indigo-500 animate-pulse" />
                 )}
               </button>
+            );
+          }
+
+          if (nestedChildren.length > 0) {
+            const nestedActive = nestedChildren.some(nestedChild => isActive(nestedChild));
+            const nestedExpanded = expandedNestedIds.includes(child.id);
+
+            return (
+              <div key={child.id} className="mb-1">
+                <button
+                  type="button"
+                  onClick={() => {
+                    setExpandedNestedIds(current =>
+                      current.includes(child.id) ? current.filter(id => id !== child.id) : [child.id]
+                    );
+                  }}
+                  aria-expanded={nestedExpanded}
+                  className="flex items-center gap-2.5 px-3 py-2 rounded-lg text-[13px]"
+                  style={{
+                    color: nestedActive ? ACCENT : 'var(--body-text)',
+                    fontWeight: nestedActive ? 600 : 500,
+                  }}
+                >
+                  {Icon && (
+                    <Icon
+                      size={15}
+                      strokeWidth={nestedActive ? 2 : 1.7}
+                      className="flex-shrink-0"
+                      style={{ color: nestedActive ? ACCENT : 'var(--muted-text)' }}
+                    />
+                  )}
+                  <span className="truncate flex-1 text-left">{label}</span>
+                  {nestedExpanded ? <ChevronDown size={13} /> : <ChevronRight size={13} />}
+                </button>
+
+                {nestedExpanded && (
+                  <div className="ml-5 pl-2 border-l border-slate-200/70 dark:border-white/10">
+                    {nestedChildren.map(nestedChild => {
+                      const nestedIsActive = isActive(nestedChild);
+                      const nestedLabel = zh ? nestedChild.label : (nestedChild.labelEn || nestedChild.label);
+                      const NestedIcon = nestedChild.icon ? iconMap[nestedChild.icon] : undefined;
+
+                      return (
+                        <button
+                          key={nestedChild.id}
+                          onClick={() => navigate(nestedChild.path)}
+                          className="group relative w-full flex items-center gap-2 pl-3 pr-2 py-1.5 rounded-md text-[12px] transition-all mb-0.5"
+                          style={{
+                            color: nestedIsActive ? ACCENT : 'var(--body-text)',
+                            background: nestedIsActive ? 'rgba(0,120,212,0.08)' : 'transparent',
+                            fontWeight: nestedIsActive ? 600 : 400,
+                          }}
+                          onMouseEnter={e => {
+                            if (!nestedIsActive) e.currentTarget.style.background = 'var(--app-hover-bg)';
+                          }}
+                          onMouseLeave={e => {
+                            if (!nestedIsActive) e.currentTarget.style.background = 'transparent';
+                          }}
+                        >
+                          <span
+                            aria-hidden
+                            className="absolute left-0 top-1 bottom-1 w-[2px] rounded-full transition-opacity"
+                            style={{ background: ACCENT, opacity: nestedIsActive ? 1 : 0 }}
+                          />
+                          {NestedIcon && (
+                            <NestedIcon
+                              size={13}
+                              strokeWidth={nestedIsActive ? 2 : 1.7}
+                              className="flex-shrink-0"
+                              style={{ color: nestedIsActive ? ACCENT : 'var(--muted-text)' }}
+                            />
+                          )}
+                          <span className="truncate flex-1 text-left">{nestedLabel}</span>
+                        </button>
+                      );
+                    })}
+                  </div>
+                )}
+              </div>
             );
           }
 

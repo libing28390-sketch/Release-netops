@@ -320,15 +320,35 @@ const AppSidebar: React.FC<AppSidebarProps> = ({
           >
             {visibleChildren.map(child => {
               const CIcon = child.icon ? iconMap[child.icon] : undefined;
+              const nestedChildren = child.children ? filterByRole(child.children) : [];
               return (
-                <NavItem
-                  key={child.id}
-                  label={L(child.label, child.labelEn)}
-                  active={isActive(child)}
-                  icon={CIcon}
-                  indent
-                  onClick={() => handleNav(child.path)}
-                />
+                <React.Fragment key={child.id}>
+                  <NavItem
+                    label={L(child.label, child.labelEn)}
+                    active={isActive(child)}
+                    icon={CIcon}
+                    indent
+                    onClick={() => handleNav(child.path)}
+                  />
+                  {nestedChildren.length > 0 && (
+                    <div className="ml-2 border-l border-slate-200/70 dark:border-white/10">
+                      {nestedChildren.map(nestedChild => {
+                        const NestedIcon = nestedChild.icon ? iconMap[nestedChild.icon] : undefined;
+                        return (
+                          <NavItem
+                            key={nestedChild.id}
+                            label={L(nestedChild.label, nestedChild.labelEn)}
+                            active={isActive(nestedChild)}
+                            icon={NestedIcon}
+                            indent
+                            nested
+                            onClick={() => handleNav(nestedChild.path)}
+                          />
+                        );
+                      })}
+                    </div>
+                  )}
+                </React.Fragment>
               );
             })}
           </NavSection>

@@ -1,12 +1,19 @@
 import React, { useEffect, useState, useCallback, useMemo } from 'react';
 import { AnimatePresence, motion } from 'motion/react';
 import {
-  Plus, X, Trash2, Pencil, Shield, Search, User, FileCode, Terminal, Layout, Maximize2, XCircle, Wand2, ChevronDown, CheckCircle2, MessageSquare, AlertCircle, SearchCode, Copy
+  Plus, X, Trash2, Pencil, Shield, Search, User, FileCode, Terminal, Layout, Maximize2, XCircle, Wand2, ChevronDown, ChevronUp, CheckCircle2, MessageSquare, AlertCircle, SearchCode, Copy, Filter, RotateCcw
 } from 'lucide-react';
 import Pagination from '../components/Pagination';
 import PageHero from '../components/PageHero';
 import { ActionIconButton, ActionIconGroup } from '../components/ui/ActionIconButton';
 import NSOTCollectionOperations from './NSOTCollectionOperations';
+import {
+  TEXTFSM_VENDOR_OPTIONS,
+  getEditorSelection,
+  getPlatformFamilyOption,
+  getVendorOption,
+  TEXTFSM_VERSION_LABELS,
+} from './textfsmPlatformCatalog';
 
 interface Script {
   id: string;
@@ -29,17 +36,18 @@ interface UserInfo {
   username: string;
 }
 
-const ScriptManagementTab: React.FC<{ language: string; showToast: (msg: string, type: 'success' | 'error' | 'info') => void }> = ({ language, showToast }) => {
+const ScriptManagementTab: React.FC<{ language: string; showToast: (msg: string, type: 'success' | 'error' | 'info') => void; view?: 'scripts' | 'nsot' }> = ({ language, showToast, view = 'scripts' }) => {
   const [scripts, setScripts] = useState<Script[]>([]);
   const [users, setUsers] = useState<UserInfo[]>([]);
   const [currentUser, setCurrentUser] = useState<string>('');
   const [loading, setLoading] = useState(true);
   const [searchQuery, setSearchQuery] = useState('');
   const [platformFilter, setPlatformFilter] = useState('All');
+  const [nsotVendorFilter, setNsotVendorFilter] = useState('All');
   const [categoryFilter, setCategoryFilter] = useState<'all' | 'inspection' | 'change' | 'system'>('all');
   const [typeFilter, setTypeFilter] = useState('All');
   const [statusFilter, setStatusFilter] = useState('All');
-  const [activeOpsView, setActiveOpsView] = useState<'scripts' | 'nsot-catalog'>('scripts');
+  const [showAdvancedFilters, setShowAdvancedFilters] = useState(false);
   
   const [isModalOpen, setIsModalOpen] = useState(false);
   const [modalMode, setModalMode] = useState<'create' | 'edit'>('create');
@@ -127,8 +135,14 @@ const ScriptManagementTab: React.FC<{ language: string; showToast: (msg: string,
   };
 
   useEffect(() => {
-    fetchScripts();
-  }, [fetchScripts]);
+    if (view === 'scripts') {
+      fetchScripts();
+    } else {
+      setScripts([]);
+      setTotalScripts(0);
+      setLoading(false);
+    }
+  }, [fetchScripts, view]);
 
   useEffect(() => {
     fetchUsers();
@@ -167,51 +181,47 @@ const ScriptManagementTab: React.FC<{ language: string; showToast: (msg: string,
     users.filter(u => u.username !== currentUser && u.username.toLowerCase().includes(auditorSearch.toLowerCase())), 
   [users, currentUser, auditorSearch]);
 
-  // Platform filter groups: 按厂商族匹配，每个厂商可能对应多个 platform code
-  // Linux → linux/ubuntu/centos…   Cisco → cisco_ios/cisco_nxos/cisco_asa…   华为 → huawei_vrp/huawei_vrpv8…
-  const PLATFORM_GROUPS: Record<string, string[]> = {
-    'All': [],
-    'Linux': ['Linux', 'linux', 'ubuntu', 'centos', 'debian', 'redhat'],
-    'Cisco': ['cisco_ios', 'cisco_nxos', 'cisco_xr', 'cisco_asa', 'cisco_ftd', 'Cisco'],
-    'Huawei': ['huawei_vrp', 'huawei_vrpv8', 'huawei', 'Huawei'],
-    'H3C': ['h3c_comware', 'h3c_comware_v3', 'H3C'],
-    'Juniper': ['juniper_junos', 'juniper', 'Juniper'],
-    'Arista': ['arista_eos', 'Arista'],
-  };
-
-  // 平台选项：value 必须与后端/seed 中的 code 完全一致
+  // The TextFSM catalog is the canonical platform vocabulary used by both
+  // network scripts and NSOT collection operations. Linux remains available
+  // for host-side shell scripts.
   const PLATFORM_OPTIONS: Array<{ value: string; zh: string; en: string }> = [
-    { value: 'Linux',          zh: 'Linux',              en: 'Linux' },
-    { value: 'cisco_ios',      zh: 'Cisco IOS / IOS-XE', en: 'Cisco IOS / IOS-XE' },
-    { value: 'cisco_nxos',     zh: 'Cisco NX-OS',        en: 'Cisco NX-OS' },
-    { value: 'cisco_xr',       zh: 'Cisco IOS-XR',       en: 'Cisco IOS-XR' },
-    { value: 'cisco_asa',      zh: 'Cisco ASA',          en: 'Cisco ASA' },
-    { value: 'huawei_vrp',     zh: '华为 VRPv5',         en: 'Huawei VRPv5' },
-    { value: 'huawei_vrpv8',   zh: '华为 VRPv8',         en: 'Huawei VRPv8' },
-    { value: 'h3c_comware',    zh: 'H3C Comware',        en: 'H3C Comware' },
-    { value: 'h3c_comware_v3', zh: 'H3C Comware V3',     en: 'H3C Comware V3' },
-    { value: 'juniper_junos',  zh: 'Juniper JunOS',      en: 'Juniper JunOS' },
-    { value: 'arista_eos',     zh: 'Arista EOS',         en: 'Arista EOS' },
+    { value: 'All', zh: '全部平台', en: 'All platforms' },
+    { value: 'Linux', zh: 'Linux', en: 'Linux' },
+    ...TEXTFSM_VENDOR_OPTIONS.map((vendor) => ({ value: vendor.value, zh: vendor.label, en: vendor.labelEn })),
   ];
 
-  // 脚本类型选项：cli = 网络设备命令行；shell/python = 主机执行脚本
   const SCRIPT_TYPE_OPTIONS: Array<{ value: string; zh: string; en: string }> = [
-    { value: 'shell',  zh: 'Shell',          en: 'Shell' },
-    { value: 'python', zh: 'Python',         en: 'Python' },
-    { value: 'cli',    zh: 'CLI 网络命令行', en: 'CLI (Network)' },
+    { value: 'shell', zh: 'Shell', en: 'Shell' },
+    { value: 'python', zh: 'Python', en: 'Python' },
+    { value: 'cli', zh: 'CLI 网络命令行', en: 'CLI (Network)' },
   ];
-  const matchesPlatformGroup = (scriptPlatform: string, group: string): boolean => {
-    if (group === 'All') return true;
-    const codes = PLATFORM_GROUPS[group] || [group];
-    if (codes.length === 0) return true;
-    const p = (scriptPlatform || '').toLowerCase();
-    return codes.some(c => c.toLowerCase() === p);
-  };
 
   // Search/filtering and pagination are server-side. The browser keeps only
   // the current page instead of loading the entire script catalog.
   const filteredScripts = scripts;
   const paginatedScripts = scripts;
+
+  const getPlatformLabel = (platform: string): string => {
+    if (!platform) return '—';
+    if (platform.toLowerCase() === 'linux') return 'Linux';
+    const selection = getEditorSelection(platform);
+    const vendor = getVendorOption(selection.vendor);
+    const family = getPlatformFamilyOption(selection.platformFamily);
+    const version = TEXTFSM_VERSION_LABELS[selection.version];
+    const vendorLabel = zh ? vendor?.label : vendor?.labelEn;
+    const familyLabel = zh ? family?.label : family?.labelEn;
+    const versionLabel = selection.version !== 'common' && version ? ` ${zh ? version.label : version.labelEn}` : '';
+    return `${vendorLabel || selection.vendor} ${familyLabel || selection.platformFamily}${versionLabel}`;
+  };
+
+  const resetFilters = () => {
+    setSearchQuery('');
+    setPlatformFilter('All');
+    setCategoryFilter('all');
+    setTypeFilter('All');
+    setStatusFilter('All');
+    setCurrentPage(1);
+  };
 
   useEffect(() => {
     setCurrentPage(1);
@@ -229,114 +239,113 @@ const ScriptManagementTab: React.FC<{ language: string; showToast: (msg: string,
       <PageHero
         icon={Terminal}
         title={zh ? '操作管理' : 'Ops'}
-        subtitle={activeOpsView === 'nsot-catalog'
-          ? (zh ? 'NSOT 采集模板与版本化操作目录' : 'NSOT collection templates and versioned operations')
-          : (zh ? '自动化脚本生命周期管理' : 'Script lifecycle management')}
+        subtitle={zh ? '自动化脚本、系统操作与 NSOT 采集命令' : 'Automation scripts, system operations, and NSOT collection commands'}
         accent={BRAND_COLOR}
-        actions={activeOpsView === 'scripts' ? (
+        compact={view === 'nsot'}
+        actions={(
           <>
             <div className="relative">
               <Search className="absolute left-4 top-1/2 -translate-y-1/2 text-slate-300 dark:text-slate-600" size={14} />
               <input
                 type="text"
-                placeholder={zh ? "搜索脚本..." : "Search..."}
+                placeholder={zh ? "搜索操作名称、命令或描述..." : "Search operation name, command, or description..."}
                 value={searchQuery}
                 onChange={(e) => { setSearchQuery(e.target.value); setCurrentPage(1); }}
-                className="pl-11 pr-4 py-2 bg-slate-100/50 dark:bg-slate-800/40 border border-transparent dark:border-white/5 rounded-xl text-[12px] w-64 focus:w-80 transition-all outline-none text-slate-700 dark:text-white"
+                className="pl-11 pr-4 py-2 bg-slate-100/50 dark:bg-slate-800/40 border border-transparent dark:border-white/5 rounded-xl text-[12px] w-72 focus:w-96 transition-all outline-none text-slate-700 dark:text-white"
               />
             </div>
-            <button
-              onClick={() => { setModalMode('create'); setEditForm({ platform: 'Linux', script_type: 'shell', version: 'v1.0.0', status: 'draft' }); setIsModalOpen(true); }}
-              className="px-6 py-2.5 text-white rounded-xl text-[13px] font-bold shadow-lg shadow-[#00a9ce]/15 active:scale-[0.98] transition-all flex items-center gap-2"
-              style={{ backgroundColor: BRAND_COLOR }}
-            >
-              <Plus size={16} />
-              {zh ? '新增脚本' : 'Create'}
-            </button>
+            {(view === 'scripts' || view === 'nsot') && (
+              <>
+                <button
+                  type="button"
+                  onClick={() => setShowAdvancedFilters((current) => !current)}
+                  className={`px-4 py-2.5 rounded-xl text-[12px] font-bold transition-all flex items-center gap-2 border ${showAdvancedFilters ? 'border-[#00a9ce]/30 bg-[#00a9ce]/10 text-[#008eac]' : 'border-slate-200 dark:border-white/10 text-slate-500 hover:border-[#00a9ce]/40 hover:text-[#00a9ce]'}`}
+                >
+                  <Filter size={15} />
+                  {zh ? '高级搜索' : 'Advanced search'}
+                  {showAdvancedFilters ? <ChevronUp size={14} /> : <ChevronDown size={14} />}
+                </button>
+              </>
+            )}
+            {view === 'scripts' && (
+              <>
+                <button
+                  onClick={() => { setModalMode('create'); setEditForm({ platform: 'Linux', script_type: 'shell', version: 'v1.0.0', status: 'draft' }); setIsModalOpen(true); }}
+                  className="px-6 py-2.5 text-white rounded-xl text-[13px] font-bold shadow-lg shadow-[#00a9ce]/15 active:scale-[0.98] transition-all flex items-center gap-2"
+                  style={{ backgroundColor: BRAND_COLOR }}
+                >
+                  <Plus size={16} />
+                  {zh ? '新增脚本' : 'Create'}
+                </button>
+              </>
+            )}
           </>
-        ) : null}
+        )}
       />
 
-      <div className="flex-1 overflow-y-auto px-6 py-5 space-y-6 no-scrollbar">
-        <div role="tablist" aria-label={zh ? '操作管理视图' : 'Operation management views'} className="flex w-fit max-w-full flex-wrap items-center gap-1 rounded-xl border border-slate-200 bg-slate-100/80 p-1 dark:border-white/10 dark:bg-slate-900/40">
-          <button type="button" role="tab" aria-selected={activeOpsView === 'scripts'} onClick={() => setActiveOpsView('scripts')} className={`rounded-lg px-4 py-2 text-xs font-bold transition ${activeOpsView === 'scripts' ? 'bg-white text-slate-800 shadow-sm dark:bg-slate-800 dark:text-white' : 'text-slate-500 hover:text-[#00a9ce] dark:text-slate-400'}`}>
-            {zh ? '脚本管理' : 'Scripts'}
-          </button>
-          <button type="button" role="tab" aria-selected={activeOpsView === 'nsot-catalog'} onClick={() => setActiveOpsView('nsot-catalog')} className={`rounded-lg px-4 py-2 text-xs font-bold transition ${activeOpsView === 'nsot-catalog' ? 'bg-white text-slate-800 shadow-sm dark:bg-slate-800 dark:text-white' : 'text-slate-500 hover:text-[#00a9ce] dark:text-slate-400'}`}>
-            {zh ? 'NSOT 采集目录' : 'NSOT catalog'}
-          </button>
-        </div>
-
-        {activeOpsView === 'nsot-catalog' ? <NSOTCollectionOperations language={language} /> : (
-          <>
-        <div className="flex flex-col gap-4 bg-slate-50/50 dark:bg-slate-900/10 p-5 rounded-2xl border border-slate-100 dark:border-white/5">
-          <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
-             <div className="flex flex-col gap-2">
-                <span className="text-[10px] font-bold text-slate-400 uppercase tracking-widest">{zh ? '适用平台' : 'Platform'}</span>
-                <div className="flex items-center gap-1.5 p-1 bg-slate-200/20 dark:bg-slate-800/30 rounded-xl border border-slate-100/50 dark:border-white/5 flex-wrap">
-                  {['All', 'Linux', 'Cisco', 'Huawei', 'H3C', 'Juniper', 'Arista'].map(p => (
-                    <button key={p} onClick={() => { setPlatformFilter(p); setCurrentPage(1); }} className={`px-4 py-1.5 rounded-lg text-[11px] font-bold transition-all ${platformFilter === p ? 'bg-[#00a9ce] text-white shadow-sm' : 'text-slate-400 hover:text-[#00a9ce]'}`}>{p}</button>
-                  ))}
-                </div>
-             </div>
-             
-             <div className="flex flex-col gap-2">
-                <span className="text-[10px] font-bold text-slate-400 uppercase tracking-widest">{zh ? '脚本分类' : 'Category'}</span>
-                <div className="flex items-center gap-1.5 p-1 bg-slate-200/20 dark:bg-slate-800/30 rounded-xl border border-slate-100/50 dark:border-white/5 flex-wrap">
-                  {(zh ? [
-                    { key: 'all', label: '全部' },
-                    { key: 'inspection', label: '巡检采集' },
-                    { key: 'change', label: '配置下发' },
-                    { key: 'system', label: '系统内置' }
-                  ] : [
-                    { key: 'all', label: 'All' },
-                    { key: 'inspection', label: 'Inspection / Collect' },
-                    { key: 'change', label: 'Change / Push' },
-                    { key: 'system', label: 'System Built-in' }
-                  ]).map(c => (
-                    <button key={c.key} onClick={() => { setCategoryFilter(c.key as any); setCurrentPage(1); }} className={`px-4 py-1.5 rounded-lg text-[11px] font-bold transition-all ${categoryFilter === c.key ? 'bg-[#00a9ce] text-white shadow-sm' : 'text-slate-400 hover:text-[#00a9ce]'}`}>{c.label}</button>
-                  ))}
-                </div>
-             </div>
+      <div className={`flex-1 overflow-y-auto px-6 no-scrollbar ${view === 'nsot' ? 'py-3 space-y-3' : 'py-5 space-y-6'}`}>
+        {view === 'scripts' && showAdvancedFilters && (
+          <div className="flex flex-col gap-4 rounded-2xl border border-slate-200 bg-slate-50/70 p-4 dark:border-white/10 dark:bg-slate-900/20">
+            <div className="grid grid-cols-1 gap-3 md:grid-cols-2 xl:grid-cols-4">
+              <label className="flex flex-col gap-1.5 text-[11px] font-bold text-slate-500 dark:text-slate-400">
+                <span>{zh ? '平台' : 'Platform'}</span>
+                <select value={platformFilter} onChange={(e) => { setPlatformFilter(e.target.value); setCurrentPage(1); }} className="rounded-xl border border-slate-200 bg-white px-3 py-2 text-xs font-semibold text-slate-700 outline-none focus:border-[#00a9ce] dark:border-white/10 dark:bg-slate-900 dark:text-slate-200">
+                  {PLATFORM_OPTIONS.map((option) => <option key={option.value} value={option.value}>{zh ? option.zh : option.en}</option>)}
+                </select>
+              </label>
+              <label className="flex flex-col gap-1.5 text-[11px] font-bold text-slate-500 dark:text-slate-400">
+                <span>{zh ? '分类' : 'Category'}</span>
+                <select value={categoryFilter} onChange={(e) => { setCategoryFilter(e.target.value as typeof categoryFilter); setCurrentPage(1); }} className="rounded-xl border border-slate-200 bg-white px-3 py-2 text-xs font-semibold text-slate-700 outline-none focus:border-[#00a9ce] dark:border-white/10 dark:bg-slate-900 dark:text-slate-200">
+                  <option value="all">{zh ? '全部分类' : 'All categories'}</option>
+                  <option value="inspection">{zh ? '巡检采集' : 'Inspection / collect'}</option>
+                  <option value="change">{zh ? '配置下发' : 'Change / push'}</option>
+                  <option value="system">{zh ? '系统内置' : 'System built-in'}</option>
+                </select>
+              </label>
+              <label className="flex flex-col gap-1.5 text-[11px] font-bold text-slate-500 dark:text-slate-400">
+                <span>{zh ? '类型' : 'Type'}</span>
+                <select value={typeFilter} onChange={(e) => { setTypeFilter(e.target.value); setCurrentPage(1); }} className="rounded-xl border border-slate-200 bg-white px-3 py-2 text-xs font-semibold text-slate-700 outline-none focus:border-[#00a9ce] dark:border-white/10 dark:bg-slate-900 dark:text-slate-200">
+                  <option value="All">{zh ? '全部类型' : 'All types'}</option>
+                  <option value="shell">Shell</option>
+                  <option value="python">Python</option>
+                  <option value="cli">CLI</option>
+                </select>
+              </label>
+              <label className="flex flex-col gap-1.5 text-[11px] font-bold text-slate-500 dark:text-slate-400">
+                <span>{zh ? '状态' : 'Status'}</span>
+                <select value={statusFilter} onChange={(e) => { setStatusFilter(e.target.value); setCurrentPage(1); }} className="rounded-xl border border-slate-200 bg-white px-3 py-2 text-xs font-semibold text-slate-700 outline-none focus:border-[#00a9ce] dark:border-white/10 dark:bg-slate-900 dark:text-slate-200">
+                  <option value="All">{zh ? '全部状态' : 'All statuses'}</option>
+                  <option value="draft">{zh ? '草稿' : 'Draft'}</option>
+                  <option value="pending_audit">{zh ? '待审核' : 'Pending audit'}</option>
+                  <option value="released">{zh ? '已发布' : 'Released'}</option>
+                  <option value="rejected">{zh ? '已驳回' : 'Rejected'}</option>
+                </select>
+              </label>
+            </div>
+            <div className="flex items-center justify-between gap-3 border-t border-slate-200/70 pt-3 text-xs dark:border-white/10">
+              <span className="text-slate-400">{zh ? '平台名称与版本沿用 TextFSM 平台目录；脚本审核状态仅对脚本来源生效。' : 'Platform names and versions follow the TextFSM catalog; script review status applies only to script sources.'}</span>
+              <button type="button" onClick={resetFilters} className="inline-flex shrink-0 items-center gap-1.5 font-semibold text-slate-500 hover:text-[#00a9ce]"><RotateCcw size={13} />{zh ? '重置筛选' : 'Reset'}</button>
+            </div>
           </div>
+        )}
 
-          <div className="h-px bg-slate-100 dark:bg-white/5 w-full" />
-
-          <div className="flex flex-wrap items-center gap-6">
-             {/* Type Dropdown */}
-             <div className="flex items-center gap-2">
-               <span className="text-[10px] font-bold text-slate-400 dark:text-slate-500 uppercase tracking-wider">{zh ? '语言类型' : 'Type'}:</span>
-               <select
-                 value={typeFilter}
-                 onChange={(e) => { setTypeFilter(e.target.value); setCurrentPage(1); }}
-                 className="bg-white dark:bg-slate-900/60 border border-slate-200 dark:border-white/5 rounded-xl px-3 py-1.5 text-[11.5px] font-bold text-slate-600 dark:text-slate-300 outline-none focus:ring-1 focus:ring-[#00a9ce]"
-               >
-                 <option value="All">{zh ? '全部类型' : 'All Types'}</option>
-                 <option value="shell">Shell</option>
-                 <option value="python">Python</option>
-                 <option value="cli">CLI</option>
-               </select>
-             </div>
-
-             {/* Status Dropdown */}
-             <div className="flex items-center gap-2">
-               <span className="text-[10px] font-bold text-slate-400 dark:text-slate-500 uppercase tracking-wider">{zh ? '审核状态' : 'Status'}:</span>
-               <select
-                 value={statusFilter}
-                 onChange={(e) => { setStatusFilter(e.target.value); setCurrentPage(1); }}
-                 className="bg-white dark:bg-slate-900/60 border border-slate-200 dark:border-white/5 rounded-xl px-3 py-1.5 text-[11.5px] font-bold text-slate-600 dark:text-slate-300 outline-none focus:ring-1 focus:ring-[#00a9ce]"
-               >
-                 <option value="All">{zh ? '全部状态' : 'All Status'}</option>
-                 <option value="draft">{zh ? '草稿' : 'Draft'}</option>
-                 <option value="pending_audit">{zh ? '待审核' : 'Pending Audit'}</option>
-                 <option value="released">{zh ? '已发布' : 'Released'}</option>
-                 <option value="rejected">{zh ? '已驳回' : 'Rejected'}</option>
-               </select>
-             </div>
+        {view === 'nsot' && showAdvancedFilters && (
+          <div className="flex flex-col gap-3 rounded-2xl border border-slate-200 bg-slate-50/70 p-4 dark:border-white/10 dark:bg-slate-900/20 sm:flex-row sm:items-end sm:justify-between">
+            <label className="flex w-full flex-col gap-1.5 text-[11px] font-bold text-slate-500 dark:text-slate-400 sm:max-w-xs">
+              <span>{zh ? '厂商' : 'Vendor'}</span>
+              <select value={nsotVendorFilter} onChange={(e) => setNsotVendorFilter(e.target.value)} className="rounded-xl border border-slate-200 bg-white px-3 py-2 text-xs font-semibold text-slate-700 outline-none focus:border-[#00a9ce] dark:border-white/10 dark:bg-slate-900 dark:text-slate-200">
+                <option value="All">{zh ? '全部厂商' : 'All vendors'}</option>
+                {TEXTFSM_VENDOR_OPTIONS.map((vendor) => <option key={vendor.value} value={vendor.value}>{zh ? vendor.label : vendor.labelEn}</option>)}
+              </select>
+            </label>
+            <div className="flex items-center justify-between gap-3 border-t border-slate-200/70 pt-3 text-xs dark:border-white/10 sm:flex-1 sm:justify-end sm:border-t-0 sm:pt-0">
+              <span className="text-slate-400">{zh ? '厂商筛选会同步限定可选 TextFSM 平台 / 版本。' : 'The vendor filter also limits available TextFSM platforms and versions.'}</span>
+              <button type="button" onClick={() => setNsotVendorFilter('All')} className="inline-flex shrink-0 items-center gap-1.5 font-semibold text-slate-500 hover:text-[#00a9ce]"><RotateCcw size={13} />{zh ? '重置' : 'Reset'}</button>
+            </div>
           </div>
-        </div>
+        )}
 
-        <div className="rounded-[24px] border border-slate-100 dark:border-white/5 overflow-hidden bg-white dark:bg-slate-900/20 shadow-lg">
+        {view === 'scripts' && <div className="rounded-[24px] border border-slate-100 dark:border-white/5 overflow-hidden bg-white dark:bg-slate-900/20 shadow-lg">
           <div className="overflow-x-auto no-scrollbar">
             <table className="nx-data-table text-left text-sm">
               <thead>
@@ -370,7 +379,7 @@ const ScriptManagementTab: React.FC<{ language: string; showToast: (msg: string,
                             <div className="text-[10px] text-slate-400 dark:text-slate-500 font-mono mt-0.5">{script.id}</div>
                           </td>
                           <td className="px-6 py-3.5 text-[12px] font-semibold text-slate-600 dark:text-slate-300">
-                            {script.platform}
+                            {getPlatformLabel(script.platform)}
                           </td>
                           <td className="px-6 py-3.5">
                             <span className={`px-2 py-0.5 rounded text-[11px] font-medium ${script.category === 'change' ? 'bg-amber-500/10 text-amber-500' : 'bg-cyan-500/10 text-[#00a9ce]'}`}>
@@ -437,13 +446,17 @@ const ScriptManagementTab: React.FC<{ language: string; showToast: (msg: string,
               </tbody>
             </table>
           </div>
-        </div>
-          </>
+        </div>}
+
+        {view === 'nsot' && (
+          <div aria-label={zh ? 'NSOT 采集操作' : 'NSOT collection operations'}>
+            <NSOTCollectionOperations language={language} searchText={searchQuery} platformFilter={nsotVendorFilter} />
+          </div>
         )}
       </div>
 
 
-      {activeOpsView === 'scripts' && (
+      {view === 'scripts' && (
         <div className="px-10 py-5 bg-transparent border-t border-slate-200/10">
           <Pagination currentPage={currentPage} totalItems={totalScripts} itemsPerPage={pageSize} onPageChange={setCurrentPage} onItemsPerPageChange={(size) => { setPageSize(size); setCurrentPage(1); }} language={language} />
         </div>

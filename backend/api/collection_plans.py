@@ -4,10 +4,12 @@ from __future__ import annotations
 
 import json
 import logging
+import uuid
+from datetime import datetime, timezone
 from typing import Literal
 
 from fastapi import APIRouter, Body, HTTPException, Query, Request
-from pydantic import BaseModel, ConfigDict
+from pydantic import BaseModel, ConfigDict, Field
 
 from core.rbac import require_role
 from database import get_db_connection
@@ -24,6 +26,7 @@ from services.collection_plan_service import (
     parse_collection_policy,
     preview_bulk_collection_plan,
     resolve_collection_plan,
+    validate_nsot_template_payload,
     validate_policy,
 )
 from services.nsot_collection_preview_service import (
@@ -51,6 +54,16 @@ class BulkCollectionPlanRequest(BaseModel):
     operation: Literal["apply", "reset"]
     template_id: str | None = None
     filters: BulkCollectionPlanFilters
+
+
+class NSOTCollectionTemplateRequest(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    name_zh: str
+    name_en: str
+    description_zh: str = ""
+    description_en: str = ""
+    collector_keys: list[str] = Field(default_factory=list)
 
 
 class BulkCollectionPlanApplyRequest(BulkCollectionPlanRequest):
@@ -134,12 +147,171 @@ def _device_ip_lookup_scope(conn, user: dict) -> tuple[str | None, tuple[str, ..
 
 @router.get("/catalog")
 def get_collection_catalog(_user=require_role("Viewer")):
-    return {
-        "success": True,
-        "data": collection_catalog(),
-        "templates": collection_templates(),
-        "message": "",
-    }
+    conn = get_db_connection()
+    try:
+        templates = collection_templates(conn)
+    finally:
+        conn.close()
+    return {"success": True, "data": collection_catalog(), "templates": templates, "message": ""}
+
+
+def _managed_template_response(conn, template_id: str) -> dict:
+    for template in collection_templates(conn):
+        if str(template.get("id") or "") == template_id:
+            return template
+    raise HTTPException(status_code=404, detail="NSOT 采集模板不存在")
+
+
+@router.get("/templates")
+def list_nsot_collection_templates(_user=require_role("Viewer")):
+    conn = get_db_connection()
+    try:
+        templates = collection_templates(conn)
+    finally:
+        conn.close()
+    return {"success": True, "data": templates, "message": ""}
+
+
+@router.post("/templates")
+def create_nsot_collection_template(
+    body: NSOTCollectionTemplateRequest,
+    request: Request,
+    user=require_role("Operator"),
+):
+    try:
+        payload = validate_nsot_template_payload(body.model_dump())
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+
+    template_id = f"nsot-{uuid.uuid4().hex[:12]}"
+    now = datetime.now(timezone.utc).replace(microsecond=0).isoformat()
+    conn = get_db_connection()
+    try:
+        conn.execute(
+            """INSERT INTO nsot_collection_templates
+              (id, name_zh, name_en, description_zh, description_en,
+               collector_keys, builtin, created_by, created_at, updated_at)
+             VALUES (?, ?, ?, ?, ?, ?, 0, ?, ?, ?)""",
+            (
+                template_id,
+                payload["name_zh"],
+                payload["name_en"],
+                payload["description_zh"],
+                payload["description_en"],
+                json.dumps(payload["collector_keys"], ensure_ascii=False),
+                str(user.get("username") or ""),
+                now,
+                now,
+            ),
+        )
+        conn.commit()
+        created = _managed_template_response(conn, template_id)
+    finally:
+        conn.close()
+    log_audit_event(
+        event_type="NSOT_COLLECTION_TEMPLATE_CREATED",
+        category="automation",
+        severity="info",
+        status="success",
+        summary=f"Created NSOT collection template {template_id}",
+        actor_username=user.get("username", "unknown"),
+        actor_role=user.get("role", "Operator"),
+        source_ip=request.client.host if request.client else None,
+        target_type="nsot_collection_template",
+        target_name=template_id,
+        details={"collector_keys": payload["collector_keys"]},
+    )
+    return {"success": True, "data": created, "message": "NSOT 采集模板已创建"}
+
+
+@router.put("/templates/{template_id}")
+def update_nsot_collection_template(
+    template_id: str,
+    body: NSOTCollectionTemplateRequest,
+    request: Request,
+    user=require_role("Operator"),
+):
+    try:
+        payload = validate_nsot_template_payload(body.model_dump())
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+
+    now = datetime.now(timezone.utc).replace(microsecond=0).isoformat()
+    conn = get_db_connection()
+    try:
+        existing = conn.execute(
+            "SELECT builtin FROM nsot_collection_templates WHERE id = ?",
+            (template_id,),
+        ).fetchone()
+        if not existing:
+            raise HTTPException(status_code=404, detail="NSOT 采集模板不存在")
+        conn.execute(
+            """UPDATE nsot_collection_templates
+                  SET name_zh = ?, name_en = ?, description_zh = ?, description_en = ?,
+                      collector_keys = ?, updated_at = ?
+                WHERE id = ?""",
+            (
+                payload["name_zh"],
+                payload["name_en"],
+                payload["description_zh"],
+                payload["description_en"],
+                json.dumps(payload["collector_keys"], ensure_ascii=False),
+                now,
+                template_id,
+            ),
+        )
+        conn.commit()
+        updated = _managed_template_response(conn, template_id)
+    finally:
+        conn.close()
+    log_audit_event(
+        event_type="NSOT_COLLECTION_TEMPLATE_UPDATED",
+        category="automation",
+        severity="info",
+        status="success",
+        summary=f"Updated NSOT collection template {template_id}",
+        actor_username=user.get("username", "unknown"),
+        actor_role=user.get("role", "Operator"),
+        source_ip=request.client.host if request.client else None,
+        target_type="nsot_collection_template",
+        target_name=template_id,
+        details={"collector_keys": payload["collector_keys"]},
+    )
+    return {"success": True, "data": updated, "message": "NSOT 采集模板已更新"}
+
+
+@router.delete("/templates/{template_id}")
+def delete_nsot_collection_template(
+    template_id: str,
+    request: Request,
+    user=require_role("Operator"),
+):
+    conn = get_db_connection()
+    try:
+        existing = conn.execute(
+            "SELECT builtin FROM nsot_collection_templates WHERE id = ?",
+            (template_id,),
+        ).fetchone()
+        if not existing:
+            raise HTTPException(status_code=404, detail="NSOT 采集模板不存在")
+        conn.execute("DELETE FROM nsot_collection_templates WHERE id = ?", (template_id,))
+        conn.commit()
+    finally:
+        conn.close()
+    log_audit_event(
+        event_type="NSOT_COLLECTION_TEMPLATE_DELETED",
+        category="automation",
+        severity="medium",
+        status="success",
+        summary=f"Deleted NSOT collection template {template_id}",
+        actor_username=user.get("username", "unknown"),
+        actor_role=user.get("role", "Operator"),
+        source_ip=request.client.host if request.client else None,
+        target_type="nsot_collection_template",
+        target_name=template_id,
+        details={"builtin": bool(existing["builtin"])},
+    )
+    return {"success": True, "message": "NSOT 采集模板已删除"}
 
 
 @router.get("/operation-catalog")

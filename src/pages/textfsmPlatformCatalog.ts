@@ -22,6 +22,7 @@ export const TEXTFSM_VENDOR_OPTIONS: TextFSMVendorOption[] = [
   { value: 'zte', label: '中兴', labelEn: 'ZTE' },
   { value: 'dptech', label: '迪普', labelEn: 'DPTech' },
   { value: 'maipu', label: '迈普', labelEn: 'Maipu' },
+  { value: 'raisecom', label: '瑞斯康达', labelEn: 'Raisecom' },
   { value: 'paloalto', label: 'Palo Alto', labelEn: 'Palo Alto' },
   { value: 'fortinet', label: 'Fortinet', labelEn: 'Fortinet' },
   { value: 'hillstone', label: '山石', labelEn: 'Hillstone' },

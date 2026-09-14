@@ -133,6 +133,8 @@ export function getRouteContext(pathname: string): RouteContext {
       activeTab = 'platform-registry';
     } else if (second === 'scripts') {
       automationPage = 'scripts';
+    } else if (second === 'nsot') {
+      automationPage = 'nsot';
     } else {
       automationPage = second || 'execute';
     }

@@ -31,6 +31,8 @@ export interface PageHeroProps {
   actions?: React.ReactNode;
   /** Optional extra row rendered under the main header (tabs, chips...) */
   extras?: React.ReactNode;
+  /** Denser header layout for nested workspaces with their own section heading. */
+  compact?: boolean;
   /** Container className passthrough */
   className?: string;
 }
@@ -45,11 +47,12 @@ const PageHero: React.FC<PageHeroProps> = ({
   accent = DEFAULT_ACCENT,
   actions,
   extras,
+  compact = false,
   className,
 }) => {
   return (
     <div
-      className={`flex-shrink-0 px-6 pt-5 pb-4 border-b ${className ?? ''}`}
+      className={`flex-shrink-0 px-6 ${compact ? 'py-3' : 'pt-5 pb-4'} border-b ${className ?? ''}`}
       style={{
         background: 'var(--header-bg)',
         borderColor: 'var(--header-border)',
@@ -57,9 +60,9 @@ const PageHero: React.FC<PageHeroProps> = ({
     >
       <div className="flex items-start justify-between gap-4">
         {/* Left: icon tile + title block */}
-        <div className="flex items-center gap-3.5 min-w-0">
+        <div className={`flex items-center min-w-0 ${compact ? 'gap-3' : 'gap-3.5'}`}>
           <div
-            className="w-12 h-12 rounded-xl flex items-center justify-center flex-shrink-0 shadow-sm"
+            className={`${compact ? 'w-10 h-10 rounded-lg' : 'w-12 h-12 rounded-xl'} flex items-center justify-center flex-shrink-0 shadow-sm`}
             style={{
               background: accent,
               color: '#ffffff',
@@ -68,7 +71,7 @@ const PageHero: React.FC<PageHeroProps> = ({
                 : `0 6px 16px -6px ${accent}66`,
             }}
           >
-            <Icon className="w-6 h-6" strokeWidth={1.8} />
+            <Icon className={`${compact ? 'w-5 h-5' : 'w-6 h-6'}`} strokeWidth={1.8} />
           </div>
           <div className="min-w-0">
             {eyebrow && (

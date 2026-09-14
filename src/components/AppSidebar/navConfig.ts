@@ -124,7 +124,19 @@ export const navConfig: NavGroup[] = [
       { id: 'scheduled-jobs',      label: '定时作业',   labelEn: 'Scheduled Jobs',       path: '/automation/scheduled-jobs',      icon: 'Timer', requiredRole: 'Operator' },
       { id: 'inspection-metrics',  label: '巡检指标',   labelEn: 'Inspection Metrics',   path: '/automation/metrics',             icon: 'BarChart2' },
       { id: 'textfsm-templates',   label: '解析模板',   labelEn: 'Parse Templates',      path: '/automation/textfsm',             icon: 'FileCode2', requiredRole: 'Operator' },
-      { id: 'scripts',             label: '操作管理',   labelEn: 'Operations',           path: '/automation/scripts',             icon: 'Code2', requiredRole: 'Operator' },
+      {
+        id: 'scripts',
+        label: '操作管理',
+        labelEn: 'Operations',
+        path: '/automation/scripts',
+        activeMatch: '/automation/scripts,/automation/nsot',
+        icon: 'Code2',
+        requiredRole: 'Operator',
+        children: [
+          { id: 'script-operations', label: '脚本 / 系统操作', labelEn: 'Scripts / system operations', path: '/automation/scripts', icon: 'FileCode2', requiredRole: 'Operator' },
+          { id: 'nsot-operations', label: 'NSOT 采集目录', labelEn: 'NSOT collection catalog', path: '/automation/nsot', icon: 'Terminal', requiredRole: 'Operator' },
+        ],
+      },
     ],
   },
   {

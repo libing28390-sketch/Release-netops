@@ -119,6 +119,13 @@ _TEMPLATE_COLLECTORS = {
     "wireless": frozenset(_BASIC_COLLECTORS | {"lldp"}),
 }
 
+# These are the operator-facing NSOT collection dimensions.  Database-derived
+# projections are intentionally excluded from the template editor and command
+# catalog because they are not independent CLI collection operations.
+NSOT_TEMPLATE_COLLECTORS = frozenset(
+    set(COLLECTORS) - {"reachability", "health_metrics", "endpoint_location", "prefix_projection"}
+)
+
 _BULK_PRESET_TEMPLATES = frozenset(
     {"basic", "layer2_switch", "layer3_gateway", "firewall", "wireless"}
 )
@@ -386,12 +393,89 @@ def validate_policy(policy: dict[str, Any]) -> dict[str, Any]:
     return {"template": template, "collectors": normalized, "ignored_keys": unknown}
 
 
-def collection_templates() -> list[dict[str, str]]:
-    """Expose stable template identifiers and localized names to API clients."""
-    return [
-        {"id": template_id, "name_zh": names[0], "name_en": names[1]}
+def collection_templates(conn=None) -> list[dict[str, Any]]:
+    """Expose built-in templates plus persisted operator-created templates.
+
+    Runtime collection planning still treats the built-in identifiers as the
+    stable policy presets.  The optional connection is used by the operation
+    catalog and template-management APIs to include persisted custom entries.
+    """
+    builtins = [
+        {
+            "id": template_id,
+            "name_zh": names[0],
+            "name_en": names[1],
+            "description_zh": "",
+            "description_en": "",
+            "collector_keys": sorted(_TEMPLATE_COLLECTORS.get(template_id, ())),
+            "builtin": True,
+            "editable": False,
+            "deletable": False,
+        }
         for template_id, names in _TEMPLATE_NAMES.items()
     ]
+    if conn is None:
+        return builtins
+
+    try:
+        rows = conn.execute(
+            """SELECT id, name_zh, name_en, description_zh, description_en,
+                      collector_keys, builtin, created_by, created_at, updated_at
+                 FROM nsot_collection_templates
+                ORDER BY builtin DESC, updated_at, id"""
+        ).fetchall()
+    except Exception:
+        # Keep the catalog usable during a rolling deployment before migration
+        # 0231 has been applied to every application database.
+        return builtins
+
+    result: list[dict[str, Any]] = []
+    for row in rows:
+        item = dict(row)
+        try:
+            keys = json.loads(item.get("collector_keys") or "[]")
+        except (TypeError, ValueError, json.JSONDecodeError):
+            keys = []
+        item["collector_keys"] = [
+            str(key) for key in keys
+            if str(key) in NSOT_TEMPLATE_COLLECTORS
+        ] if isinstance(keys, list) else []
+        item["builtin"] = bool(item.get("builtin"))
+        # Persisted system and operator-created templates share the same
+        # management lifecycle. The migration-missing fallback above remains
+        # read-only during rolling deployments.
+        item["editable"] = True
+        item["deletable"] = True
+        result.append(item)
+    # An existing but empty table means templates were intentionally removed;
+    # do not silently resurrect the built-in catalog in that case.
+    return result
+
+
+def validate_nsot_template_payload(payload: dict[str, Any]) -> dict[str, Any]:
+    """Normalize the editable fields for a persisted NSOT template."""
+    if not isinstance(payload, dict):
+        raise ValueError("template payload must be an object")
+    name_zh = str(payload.get("name_zh") or "").strip()
+    name_en = str(payload.get("name_en") or "").strip()
+    if not name_zh or not name_en:
+        raise ValueError("name_zh and name_en are required")
+    if len(name_zh) > 128 or len(name_en) > 128:
+        raise ValueError("template names must be 128 characters or fewer")
+    raw_keys = payload.get("collector_keys")
+    if not isinstance(raw_keys, list):
+        raise ValueError("collector_keys must be an array")
+    collector_keys = list(dict.fromkeys(str(key).strip() for key in raw_keys if str(key).strip()))
+    invalid = sorted(set(collector_keys) - NSOT_TEMPLATE_COLLECTORS)
+    if invalid:
+        raise ValueError(f"unsupported collector keys: {', '.join(invalid)}")
+    return {
+        "name_zh": name_zh,
+        "name_en": name_en,
+        "description_zh": str(payload.get("description_zh") or "").strip()[:500],
+        "description_en": str(payload.get("description_en") or "").strip()[:500],
+        "collector_keys": collector_keys,
+    }
 
 
 def collection_catalog() -> list[dict[str, Any]]:
