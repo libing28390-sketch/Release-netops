@@ -136,7 +136,8 @@ def test_release_notes_are_shown_once_per_version(window, monkeypatch):
     assert window.show_release_notes_if_needed() is True
     assert len(messages) == 1
     assert CLIENT_VERSION in messages[0][0]
-    assert "华为/H3C" in messages[0][1]
+    assert "RackVision" in messages[0][1]
+    assert "H3C/Ruijie/Huawei" in messages[0][1]
     assert window.settings.value("last_seen_release_notes_version", type=str) == CLIENT_VERSION
 
     assert window.show_release_notes_if_needed() is False
@@ -147,7 +148,8 @@ def test_release_notes_support_english():
     title, message, confirm_text = build_release_notes("en")
 
     assert CLIENT_VERSION in title
-    assert "Huawei, H3C, and Cisco" in message
+    assert "RackVision" in message
+    assert "H3C/Ruijie/Huawei" in message
     assert confirm_text == "Got it"
 
 
