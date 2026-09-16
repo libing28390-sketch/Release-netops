@@ -1,0 +1,5 @@
+<Sysname> display arp all
+Type: S-Static   D-Dynamic   O-Openflow R-Rule M-Multiport I-Invalid
+IP Address      MAC Address      VID  Interface/Link ID      Aging Type
+1.1.1.1         02e0-f102-0023   1    GE1/0/1                N/A   S
+1.1.1.2         00e0-fc00-0001   12   GE1/0/2                960   D

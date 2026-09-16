@@ -1,0 +1,15 @@
+Value INTERFACE (\S+)
+Value STATUS (administratively down|admin down|up|down|\S+)
+Value SPEED (\S+)
+Value DUPLEX (\S+)
+Value VLAN (\d+|\S+)
+Value TYPE (\S+)
+Value DESCRIPTION (.*)
+
+Start
+  ^(?:Port|Interface)\s+Link\s+Speed\s+Duplex\s+Vlan\s+Type(?:\s+Description)?
+  ^(?:Port|Interface)\s+Status\s+Speed\s+Duplex\s+Vlan(?:\s+Description)?
+  ^${INTERFACE}\s+${STATUS}\s+${SPEED}\s+${DUPLEX}\s+${VLAN}\s+${TYPE}\s+${DESCRIPTION}\s*$$ -> Record
+  ^${INTERFACE}\s+${STATUS}\s+${SPEED}\s+${DUPLEX}\s+${VLAN}\s+${TYPE}\s*$$ -> Record
+  ^${INTERFACE}\s+${STATUS}\s+${SPEED}\s+${DUPLEX}\s+${VLAN}\s+${DESCRIPTION}\s*$$ -> Record
+  ^${INTERFACE}\s+${STATUS}\s+${SPEED}\s+${DUPLEX}\s+${VLAN}\s*$$ -> Record

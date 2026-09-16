@@ -1,0 +1,9 @@
+<Sysname> display interface brief
+Brief information on interfaces in route mode:
+Link: ADM - administratively down; Stby - standby
+Protocol: (s) - spoofing
+Interface          Link Protocol Primary IP Description
+GE1/0/6            DOWN DOWN     --
+Loop0              UP   UP(s)    2.2.2.9
+Vlan999            UP   UP        192.168.1.42
+

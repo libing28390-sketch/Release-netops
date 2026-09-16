@@ -1,0 +1,30 @@
+/* LoginScreen – extracted animations */
+
+@keyframes auroraShift {
+  0%   { transform: translate(0, 0) scale(1); }
+  33%  { transform: translate(30px, -20px) scale(1.05); }
+  66%  { transform: translate(-20px, 15px) scale(0.97); }
+  100% { transform: translate(0, 0) scale(1); }
+}
+@keyframes gridScroll {
+  0%   { background-position: 0 0; }
+  100% { background-position: 0 40px; }
+}
+@keyframes scanLine {
+  0%   { top: -4px; opacity: 0; }
+  10%  { opacity: 0.12; }
+  90%  { opacity: 0.12; }
+  100% { top: 100%; opacity: 0; }
+}
+@keyframes dashFlow { 0%{stroke-dashoffset:0} 100%{stroke-dashoffset:-24} }
+@keyframes nodePulse { 0%,100%{r:3;opacity:0.5} 50%{r:5;opacity:1} }
+@keyframes ringPulse { 0%,100%{r:8;opacity:0.25} 50%{r:14;opacity:0.08} }
+
+.login-aurora-blob   { animation: auroraShift 12s ease-in-out infinite alternate; }
+.login-aurora-blob-2 { animation: auroraShift 16s ease-in-out infinite alternate-reverse; }
+.login-aurora-blob-3 { animation: auroraShift 20s ease-in-out infinite alternate; }
+.login-grid-flow     { animation: gridScroll 4s linear infinite; }
+.login-scan-line     { animation: scanLine 6s linear infinite; }
+.login-line-flow     { stroke-dasharray: 6 14; animation: dashFlow 2.5s linear infinite; }
+.login-node-p        { animation: nodePulse 3.5s ease-in-out infinite; }
+.login-ring-p        { animation: ringPulse 4.5s ease-in-out infinite; }

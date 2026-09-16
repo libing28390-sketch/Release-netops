@@ -1,0 +1,80 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<svg xmlns="http://www.w3.org/2000/svg" width="106" height="115" viewBox="0 0 106 115" role="img" aria-labelledby="title desc">
+  <title id="title">Firewall icon</title>
+  <desc id="desc">Firewall icon closely matching the supplied reference: red brick block over a cyan-blue network appliance with four white arrows.</desc>
+  <defs>
+    <linearGradient id="brickFront" x1="0" y1="0" x2="0" y2="1">
+      <stop offset="0" stop-color="#ff5a64"/>
+      <stop offset="1" stop-color="#ff4e5b"/>
+    </linearGradient>
+    <linearGradient id="brickTop" x1="0" y1="0" x2="0" y2="1">
+      <stop offset="0" stop-color="#ff8890"/>
+      <stop offset="1" stop-color="#ff6671"/>
+    </linearGradient>
+    <linearGradient id="brickSide" x1="0" y1="0" x2="1" y2="0">
+      <stop offset="0" stop-color="#ff4656"/>
+      <stop offset="1" stop-color="#f62f43"/>
+    </linearGradient>
+    <linearGradient id="blueFront" x1="0" y1="0" x2="0" y2="1">
+      <stop offset="0" stop-color="#0098d8"/>
+      <stop offset="0.86" stop-color="#0498d7"/>
+      <stop offset="1" stop-color="#008dcc"/>
+    </linearGradient>
+    <linearGradient id="blueSide" x1="0" y1="0" x2="1" y2="0">
+      <stop offset="0" stop-color="#047fb5"/>
+      <stop offset="1" stop-color="#0073a7"/>
+    </linearGradient>
+    <linearGradient id="baseFront" x1="0" y1="0" x2="0" y2="1">
+      <stop offset="0" stop-color="#0099d8"/>
+      <stop offset="1" stop-color="#0089c7"/>
+    </linearGradient>
+    <style>
+      .mortar{fill:none;stroke:#ffd9dc;stroke-width:1.15;stroke-linecap:round;stroke-linejoin:round}
+      .softEdge{fill:none;stroke:#9bdef8;stroke-width:1.05;stroke-linecap:round;stroke-linejoin:round}
+      .arrow{fill:#fff;stroke:#26799e;stroke-width:0.9;stroke-linejoin:round}
+    </style>
+  </defs>
+
+  <!-- RED FIREWALL BLOCK: shallow perspective like the reference -->
+  <polygon points="17,18 25,10 97,10 89,18" fill="url(#brickTop)"/>
+  <rect x="17" y="18" width="72" height="34" fill="url(#brickFront)"/>
+  <polygon points="89,18 97,10 97,44 89,52" fill="url(#brickSide)"/>
+
+  <!-- front brick mortar: 3 / 4 / 3 pattern -->
+  <path class="mortar" d="M17 29.4H89 M17 41H89"/>
+  <path class="mortar" d="M41 18V29.4 M65 18V29.4"/>
+  <path class="mortar" d="M29.2 29.4V41 M53 29.4V41 M77 29.4V41"/>
+  <path class="mortar" d="M41 41V52 M65 41V52"/>
+
+  <!-- top face mortar -->
+  <path class="mortar" d="M21.1 14H93"/>
+  <path class="mortar" d="M41 18L49 10 M65 18L73 10"/>
+
+  <!-- right side mortar -->
+  <path class="mortar" d="M89 29.4L97 21.4 M89 41L97 33"/>
+  <path class="mortar" d="M93 14V48"/>
+
+  <!-- BLUE APPLIANCE BODY -->
+  <rect x="17" y="52" width="72" height="51" fill="url(#blueFront)"/>
+  <rect x="17" y="103" width="72" height="7" fill="url(#baseFront)"/>
+  <polygon points="89,52 97,44 97,102 89,110" fill="url(#blueSide)"/>
+
+  <!-- subtle reference-style highlights, no dark external outline -->
+  <path class="softEdge" d="M17 52H89 M17 103H89" opacity="0.85"/>
+  <path class="softEdge" d="M89 52L97 44 M89 110L97 102 M97 44V102" opacity="0.95"/>
+  <path class="softEdge" d="M89 102L97 94" opacity="0.95"/>
+
+  <!-- COMPACT WHITE FOUR-DIRECTION SYMBOL -->
+  <g>
+    <!-- up -->
+    <path class="arrow" d="M49.2 74V67H45.5L53 58.8L60.5 67H56.8V74Z"/>
+    <!-- down -->
+    <path class="arrow" d="M49.2 84V91H45.5L53 99.2L60.5 91H56.8V84Z"/>
+    <!-- left -->
+    <path class="arrow" d="M48 75.2H41V71.5L32.8 79L41 86.5V82.8H48Z"/>
+    <!-- right -->
+    <path class="arrow" d="M58 75.2H65V71.5L73.2 79L65 86.5V82.8H58Z"/>
+    <!-- center opening keeps the reference's separated arrows -->
+    <rect x="49" y="75" width="8" height="8" fill="#0098d8"/>
+  </g>
+</svg>

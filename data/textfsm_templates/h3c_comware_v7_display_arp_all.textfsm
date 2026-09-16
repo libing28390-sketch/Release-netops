@@ -1,0 +1,12 @@
+Value Required IP_ADDRESS (\d+\.\d+\.\d+\.\d+)
+Value Required MAC_ADDRESS (\S+)
+Value Required VLAN_ID (\d+)
+Value Required INTERFACE (\S+)
+Value AGING (\S+)
+Value Required TYPE (\S+)
+
+Start
+  ^\s*Type:\s+S-Static
+  ^\s*IP\s+Address\s+MAC\s+Address\s+VID
+  ^${IP_ADDRESS}\s+${MAC_ADDRESS}\s+${VLAN_ID}\s+${INTERFACE}\s+${AGING}\s+${TYPE}\s* -> Record
+  ^\s*$$
