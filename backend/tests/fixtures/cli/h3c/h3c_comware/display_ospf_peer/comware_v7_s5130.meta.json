@@ -1,0 +1,9 @@
+{
+  "source_type": "official_vendor_documentation",
+  "source_url": "https://www.h3c.com/en/d_200806/607561_294551_0.htm",
+  "vendor": "H3C",
+  "platform": "Comware7",
+  "model_family": "H3C switch",
+  "command": "display ospf peer",
+  "source_note": "Official OSPF command reference, brief neighbor output."
+}

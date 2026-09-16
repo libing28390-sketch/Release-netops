@@ -1,0 +1,8 @@
+Device# show ntp status
+Clock is synchronized, stratum 8, reference is 127.127.1.1
+nominal freq is 250.0000 Hz, actual freq is 250.0000 Hz, precision is 2**10
+reference time is D25AF07C.4B439650 (15:26:04.294 PDT Tue Oct 21 2011)
+clock offset is 0.0000 msec, root delay is 0.00 msec
+root dispersion is 2.31 msec, peer dispersion is 1.20 msec
+loopfilter state is 'CTRL' (Normal Controlled Loop), drift is 0.000000000 s/s
+system poll interval is 16, last update was 10 sec ago.

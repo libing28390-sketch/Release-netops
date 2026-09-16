@@ -1,0 +1,17 @@
+Value Filldown SHELF (\d+)
+Value Filldown GROUP (\d+)
+Value Filldown ONLINE_STATUS (\S+)
+Value Filldown MODE (\S+)
+Value Filldown FAN_NAME (.*?)
+Value Filldown DIRECTION (\S+)
+Value Required INDEX (\d+)
+Value STATUS (.*?)
+Value SPEED (\d+%?)
+
+Start
+  ^\s*\[shelf ${SHELF} LCC\]:
+  ^\s*Group ${GROUP}:\s+${ONLINE_STATUS}
+  ^\s*Fan speed mode:\s+${MODE}
+  ^\s*Fan\s+name:\s+${FAN_NAME}\s*$$
+  ^\s*Fan\s+direction:\s+${DIRECTION}\s*$$
+  ^\s*${INDEX}\s+${STATUS}\s+${SPEED}\s*$$ -> Record
