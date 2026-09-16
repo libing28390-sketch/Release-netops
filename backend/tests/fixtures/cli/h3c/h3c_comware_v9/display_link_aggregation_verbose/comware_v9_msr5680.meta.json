@@ -1,0 +1,9 @@
+{
+  "source_type": "official_vendor_documentation",
+  "source_url": "https://www.h3c.com/en/d_202503/2372923_294551_0.htm",
+  "vendor": "H3C",
+  "platform": "Comware9",
+  "model_family": "MSR5680-X3",
+  "command": "display link-aggregation verbose",
+  "source_note": "Official Comware V9 configuration example verified on an MSR5680-X3 running R9141P16."
+}

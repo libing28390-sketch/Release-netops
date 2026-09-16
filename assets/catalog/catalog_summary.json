@@ -1,0 +1,242 @@
+{
+  "sheet_title": "00_说明与统计",
+  "sheet_index": 0,
+  "rows": [
+    {
+      "source_row": 1,
+      "cells": [
+        "Nexora 3D Asset Base Catalog v1.0",
+        null,
+        null,
+        null,
+        null,
+        null,
+        null,
+        null
+      ]
+    },
+    {
+      "source_row": 2,
+      "cells": [
+        "目标：为 Blender → GLB → Nexora 3D Rack Viewer 建立可持续扩展的资产底库。数据以2026-09-06可访问的厂商官网/官方资料为优先来源。",
+        null,
+        null,
+        null,
+        null,
+        null,
+        null,
+        null
+      ]
+    },
+    {
+      "source_row": 4,
+      "cells": [
+        "KPI",
+        "数量",
+        null,
+        "厂商",
+        "园区网型号数",
+        "数据中心型号数"
+      ]
+    },
+    {
+      "source_row": 5,
+      "cells": [
+        "网络设备精确型号",
+        "120",
+        null,
+        "Huawei",
+        "10",
+        "10"
+      ]
+    },
+    {
+      "source_row": 6,
+      "cells": [
+        "覆盖厂商",
+        "6",
+        null,
+        "H3C",
+        "10",
+        "10"
+      ]
+    },
+    {
+      "source_row": 7,
+      "cells": [
+        "机柜/配套通用模板",
+        "59",
+        null,
+        "Ruijie",
+        "10",
+        "10"
+      ]
+    },
+    {
+      "source_row": 8,
+      "cells": [
+        "线缆/光模块模板",
+        "34",
+        null,
+        "ZTE",
+        "10",
+        "10"
+      ]
+    },
+    {
+      "source_row": 9,
+      "cells": [
+        null,
+        null,
+        null,
+        "Maipu",
+        "10",
+        "10"
+      ]
+    },
+    {
+      "source_row": 10,
+      "cells": [
+        null,
+        null,
+        null,
+        "DPtech",
+        "10",
+        "10"
+      ]
+    },
+    {
+      "source_row": 11,
+      "cells": [
+        "建模策略与边界",
+        null,
+        null,
+        null,
+        null,
+        null,
+        null,
+        null
+      ]
+    },
+    {
+      "source_row": 12,
+      "cells": [
+        "模型层级",
+        "Exact → Family → Vendor Generic → Generic；找不到精确型号时必须Fallback，不能让设备消失。"
+      ]
+    },
+    {
+      "source_row": 13,
+      "cells": [
+        "3D数据源",
+        "3D不保存独立机柜业务数据，只读取2D机柜/CMDB的rack_id、device_id、start_u、height_u、model等字段。"
+      ]
+    },
+    {
+      "source_row": 14,
+      "cells": [
+        "尺寸原则",
+        "只有官方资料明确给出的尺寸进入精确建模；未知尺寸保留“待核”，后续从硬件安装手册/实测补齐。"
+      ]
+    },
+    {
+      "source_row": 15,
+      "cells": [
+        "跳线原则",
+        "连接器头作为复用Prefab，线身由Nexora端口坐标程序生成Curve；不为每根线制作独立GLB。"
+      ]
+    },
+    {
+      "source_row": 16,
+      "cells": [
+        "第一阶段",
+        "先完成42U机柜 + 通用1U交换机 + 6家各1个代表园区型号 + 6家各1个代表DC型号 + PDU + 配线架 + UPS。"
+      ]
+    },
+    {
+      "source_row": 17,
+      "cells": [
+        "LOD建议",
+        "普通设备5K~30K triangles；重点型号<50K；前面板主要靠贴图/法线，避免把每个散热孔都做几何。"
+      ]
+    },
+    {
+      "source_row": 19,
+      "cells": [
+        "来源说明",
+        null,
+        null,
+        null,
+        null,
+        null,
+        null,
+        null
+      ]
+    },
+    {
+      "source_row": 20,
+      "cells": [
+        "1",
+        "网络设备行级来源已放在“01_网络设备清单”的官方外观/产品页与官方规格来源列。",
+        null,
+        null,
+        null,
+        null,
+        null,
+        null
+      ]
+    },
+    {
+      "source_row": 21,
+      "cells": [
+        "2",
+        "华为、H3C、锐捷、中兴、迈普、迪普均优先使用官方产品页/规格页；个别中兴园区型号使用2025官方行业画册补齐。",
+        null,
+        null,
+        null,
+        null,
+        null,
+        null
+      ]
+    },
+    {
+      "source_row": 22,
+      "cells": [
+        "3",
+        "机柜、PDU、理线、配线架等为通用3D模板，尺寸为常见形态而非采购SKU，落地项目需用实际选型覆盖。",
+        null,
+        null,
+        null,
+        null,
+        null,
+        null
+      ]
+    },
+    {
+      "source_row": 23,
+      "cells": [
+        "4",
+        "建议后续新增asset_registry表，记录asset_key、vendor、series、model_match、u_height、width/depth、glb_url、lod、version。",
+        null,
+        null,
+        null,
+        null,
+        null,
+        null
+      ]
+    },
+    {
+      "source_row": 24,
+      "cells": [
+        "5",
+        "产品生命周期会变化；进入建模排期前建议再做一次型号在售/EOM核验。",
+        null,
+        null,
+        null,
+        null,
+        null,
+        null
+      ]
+    }
+  ]
+}
