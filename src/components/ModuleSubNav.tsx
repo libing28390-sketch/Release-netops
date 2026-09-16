@@ -10,6 +10,7 @@ import {
   Archive,
   BarChart2,
   BarChart3,
+  Boxes,
   Bell,
   BookOpen,
   Building2,
@@ -20,6 +21,7 @@ import {
   ClipboardCheck,
   ClipboardList,
   Clock,
+  CloudCog,
   Code2,
   Columns3,
   Database,
@@ -30,6 +32,7 @@ import {
   GitBranch,
   GitCompare,
   Globe,
+  Gauge,
   History,
   Inbox,
   Key,
@@ -76,10 +79,10 @@ const LS_KEY = 'nexora_module_nav';
 
 /** Map icon string keys (from navConfig) → lucide component */
 const iconMap: Record<string, React.ComponentType<any>> = {
-  Activity, Archive, BarChart2, BarChart3, Bell, BookOpen, Bot, Building2, CalendarClock,
-  ClipboardCheck, ClipboardList, Clock, Code2, Columns3, Cpu, Database,
+  Activity, Archive, BarChart2, BarChart3, Bell, BookOpen, Bot, Boxes, Building2, CalendarClock,
+  ClipboardCheck, ClipboardList, Clock, CloudCog, Code2, Columns3, Cpu, Database,
   FileCode2, FileEdit, FileSearch, FileText, GitBranch, GitCompare, Globe,
-  History, Inbox, Key, Layers, Layers3, LayoutDashboard, MapPin, MessageSquare, Network, Package,
+  Gauge, History, Inbox, Key, Layers, Layers3, LayoutDashboard, MapPin, MessageSquare, Network, Package,
   PlusCircle, Router, Search, Server, Shield, ShieldAlert, ShieldCheck,
   SlidersHorizontal, Star, Tag, Terminal, Timer, TrendingUp,
   User, UserCheck, Users, Wrench, Zap,

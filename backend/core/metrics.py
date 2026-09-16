@@ -20,6 +20,14 @@ class MetricsRegistry:
         # IPAM allocation conflicts
         self.ipam_allocation_conflicts = 0
 
+        # Monitoring V1 control-plane and provider observability.
+        self.monitoring_config_compile_total = 0
+        self.monitoring_config_compile_failed_total = 0
+        self.monitoring_assignment_total = 0
+        self.monitoring_collector_online = 0
+        self.monitoring_metric_query_durations = deque(maxlen=1000)
+        self.monitoring_metric_query_errors_total = 0
+
     def record_api_latency(self, latency_ms: float):
         with self._lock:
             self.api_latencies.append(latency_ms)
@@ -43,6 +51,19 @@ class MetricsRegistry:
     def record_ipam_conflict(self):
         with self._lock:
             self.ipam_allocation_conflicts += 1
+
+    def record_monitoring_compile(self, *, success: bool, assignment_count: int = 0):
+        with self._lock:
+            self.monitoring_config_compile_total += 1
+            if not success:
+                self.monitoring_config_compile_failed_total += 1
+            self.monitoring_assignment_total = max(0, int(assignment_count or 0))
+
+    def record_monitoring_query(self, duration_ms: float, *, success: bool):
+        with self._lock:
+            self.monitoring_metric_query_durations.append(float(duration_ms))
+            if not success:
+                self.monitoring_metric_query_errors_total += 1
 
     def get_metrics(self) -> dict:
         with self._lock:
@@ -73,6 +94,11 @@ class MetricsRegistry:
                 "ssh_failure_rate_pct": round(ssh_failure_rate, 2),
                 "ssh_duration_avg_s": round(avg_ssh, 2),
                 "ipam_allocation_conflict_count": self.ipam_allocation_conflicts,
+                "monitoring_config_compile_total": self.monitoring_config_compile_total,
+                "monitoring_config_compile_failed_total": self.monitoring_config_compile_failed_total,
+                "monitoring_assignment_total": self.monitoring_assignment_total,
+                "monitoring_metric_query_duration_avg_ms": round(sum(self.monitoring_metric_query_durations) / len(self.monitoring_metric_query_durations), 2) if self.monitoring_metric_query_durations else 0.0,
+                "monitoring_metric_query_errors_total": self.monitoring_metric_query_errors_total,
             }
 
 metrics_registry = MetricsRegistry()

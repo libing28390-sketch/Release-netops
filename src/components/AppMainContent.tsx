@@ -14,6 +14,7 @@ const MonitoringCenter = lazy(() => import('./MonitoringCenter.tsx'));
 const OutboundHealthPage = lazy(() => import('../pages/OutboundHealthPage'));
 const ServerMonitoring = lazy(() => import('./ServerMonitoring.tsx'));
 const NetworkMonitoring = lazy(() => import('./NetworkMonitoring.tsx'));
+const MonitoringManagementPage = lazy(() => import('./MonitoringManagementPage.tsx'));
 const DeviceHealthTab = lazy(() => import('../pages/DeviceHealthTab'));
 const DashboardTab = lazy(() => import('../pages/DashboardTab'));
 const HomePage = lazy(() => import('../pages/HomePage'));
@@ -556,6 +557,30 @@ const AppMainContent: React.FC = () => {
             favoriteDeviceIds={favoriteDeviceIds}
             onToggleFavorite={handleFavoriteToggle}
           />
+        </Suspense>
+      )}
+
+      {activeTab === 'monitoring-plans' && (
+        <Suspense fallback={lazyPanelFallback}>
+          <MonitoringManagementPage language={language} mode="plans" showToast={showToast} />
+        </Suspense>
+      )}
+
+      {activeTab === 'monitoring-modules' && (
+        <Suspense fallback={lazyPanelFallback}>
+          <MonitoringManagementPage language={language} mode="modules" showToast={showToast} />
+        </Suspense>
+      )}
+
+      {activeTab === 'monitoring-collectors' && (
+        <Suspense fallback={lazyPanelFallback}>
+          <MonitoringManagementPage language={language} mode="collectors" showToast={showToast} />
+        </Suspense>
+      )}
+
+      {activeTab === 'monitoring-health' && (
+        <Suspense fallback={lazyPanelFallback}>
+          <MonitoringManagementPage language={language} mode="health" showToast={showToast} />
         </Suspense>
       )}
 

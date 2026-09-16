@@ -132,6 +132,70 @@ services:
       retries: 3
       start_period: 10s
 
+  victoriametrics:
+    image: victoriametrics/victoria-metrics:v1.103.0
+    container_name: nexora-victoriametrics
+    command:
+      - "-storageDataPath=/storage"
+      - "-retentionPeriod=${VM_RETENTION_PERIOD:-90d}"
+      - "-httpListenAddr=:8428"
+    volumes:
+      - nexora-vmdata:/storage
+    expose:
+      - "8428"
+    restart: unless-stopped
+    logging: *container-logging
+    healthcheck:
+      test: ["CMD", "wget", "-qO-", "http://localhost:8428/health"]
+      interval: 15s
+      timeout: 5s
+      retries: 5
+
+  snmp-exporter:
+    image: prom/snmp-exporter:v0.26.0
+    container_name: nexora-snmp-exporter
+    command:
+      - "--config.file=/etc/snmp_exporter/snmp.yml"
+      - "--web.listen-address=:9116"
+    volumes:
+      - ./monitoring/snmp-exporter:/etc/snmp_exporter:ro
+    expose:
+      - "9116"
+    restart: unless-stopped
+    logging: *container-logging
+    healthcheck:
+      test: ["CMD", "wget", "-qO-", "http://localhost:9116/metrics"]
+      interval: 15s
+      timeout: 5s
+      retries: 5
+
+  vmagent:
+    image: victoriametrics/vmagent:v1.103.0
+    container_name: nexora-vmagent
+    command:
+      - "-promscrape.config=/etc/nexora-collector/scrape.yml"
+      - "-remoteWrite.url=http://victoriametrics:8428/api/v1/write"
+      - "-remoteWrite.tmpDataPath=/var/lib/vmagent"
+      - "-remoteWrite.maxDiskUsagePerURL=${VMAGENT_MAX_DISK_USAGE:-10GB}"
+      - "-httpListenAddr=:8429"
+    volumes:
+      - ./monitoring/vmagent:/etc/nexora-collector:ro
+      - nexora-vmagent-queue:/var/lib/vmagent
+    expose:
+      - "8429"
+    depends_on:
+      victoriametrics:
+        condition: service_healthy
+      snmp-exporter:
+        condition: service_healthy
+    restart: unless-stopped
+    logging: *container-logging
+    healthcheck:
+      test: ["CMD", "wget", "-qO-", "http://localhost:8429/health"]
+      interval: 15s
+      timeout: 5s
+      retries: 5
+
   nginx:
     image: nexora-nginx
     build:
@@ -229,3 +293,7 @@ volumes:
     name: nexora-dist
   nexora-redis-data:
     name: nexora-redis-data
+  nexora-vmdata:
+    name: nexora-vmdata
+  nexora-vmagent-queue:
+    name: nexora-vmagent-queue

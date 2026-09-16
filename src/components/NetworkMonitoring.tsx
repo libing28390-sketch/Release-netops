@@ -54,6 +54,8 @@ interface MonitoringDevicePage {
   site_options?: Array<{ id: string; name: string; device_count?: number }>;
 }
 
+type MetricProvider = 'native' | 'shadow' | 'victoriametrics';
+
 const isServerDevice = (d: any): boolean => {
   if (!d) return false;
   const serverKeywords = ['linux', 'ubuntu', 'centos', 'debian', 'redhat', 'rocky', 'alma', 'server'];
@@ -173,6 +175,7 @@ const NetworkMonitoring: React.FC<NetworkMonitoringProps> = ({ language, devices
   const [refreshing, setRefreshing] = useState(false);
   const [rangeHours, setRangeHours] = useState<number>(24);
   const [autoRefresh, setAutoRefresh] = useState(true);
+  const [metricProvider, setMetricProvider] = useState<MetricProvider>('native');
 
   // Trend plot configuration
   const [trendInterface, setTrendInterface] = useState<string>('');
@@ -305,6 +308,7 @@ const NetworkMonitoring: React.FC<NetworkMonitoringProps> = ({ language, devices
     if (interfaceName) {
       params.set('interface_name', interfaceName);
     }
+    params.set('provider', metricProvider);
     const resp = await fetch(`/api/monitoring/device/${deviceId}/trend?${params.toString()}`, {
       headers: authHeaders(),
       signal,
@@ -312,7 +316,7 @@ const NetworkMonitoring: React.FC<NetworkMonitoringProps> = ({ language, devices
     if (!resp.ok) throw new Error('trend fetch failed');
     const payload = await resp.json();
     return Array.isArray(payload?.series) ? payload.series : [];
-  }, []);
+  }, [metricProvider]);
 
   const fetchAlerts = useCallback(async (deviceId: string, page: number, severity: string, phase: string, signal?: AbortSignal) => {
     const params = new URLSearchParams({
@@ -617,6 +621,20 @@ const NetworkMonitoring: React.FC<NetworkMonitoringProps> = ({ language, devices
         subtitle={zh ? '网络交换机/路由器性能遥测 · 接口 SNMP 流量分析' : 'Network switch/router telemetry · Interface SNMP traffic analysis'}
         actions={
           <div className="flex items-center gap-2">
+            <label className="flex items-center gap-1.5 rounded-xl border border-gray-200/70 bg-white px-2.5 py-1.5 text-xs font-semibold text-gray-600 dark:border-zinc-700 dark:bg-zinc-800 dark:text-zinc-300">
+              <Database size={12} className="text-cyan-600" />
+              <span className="sr-only">{zh ? '指标后端' : 'Metric provider'}</span>
+              <select
+                value={metricProvider}
+                onChange={(event) => setMetricProvider(event.target.value as MetricProvider)}
+                className="bg-transparent text-xs font-semibold outline-none cursor-pointer"
+                aria-label={zh ? '指标后端' : 'Metric provider'}
+              >
+                <option value="native">Native</option>
+                <option value="shadow">Shadow</option>
+                <option value="victoriametrics">VictoriaMetrics</option>
+              </select>
+            </label>
             <div className="flex items-center p-0.5 rounded-xl bg-gray-100 dark:bg-zinc-800">
               {[
                 { h: 1, label: '1h' },

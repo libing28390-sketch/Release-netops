@@ -131,6 +131,12 @@ export const usePageTitle = ({
     }
     if (activeTab === 'compliance') return t('compliance');
     if (activeTab === 'monitoring') return language === 'zh' ? '监控中心' : 'Monitoring Center';
+    if (activeTab === 'server-monitoring') return language === 'zh' ? '服务器监控' : 'Server Monitoring';
+    if (activeTab === 'network-monitoring') return language === 'zh' ? '网络监控' : 'Network Monitoring';
+    if (activeTab === 'monitoring-plans') return language === 'zh' ? '采集计划' : 'Collection Plans';
+    if (activeTab === 'monitoring-modules') return language === 'zh' ? '模块目录' : 'Module Catalog';
+    if (activeTab === 'monitoring-collectors') return language === 'zh' ? '采集器管理' : 'Collectors';
+    if (activeTab === 'monitoring-health') return language === 'zh' ? '采集健康' : 'Collection Health';
     if (activeTab === 'access') return language === 'zh' ? '操作工作台' : 'Operation Workspace';
     if (activeTab === 'access-favorites') return language === 'zh' ? '我的收藏' : 'My Favorites';
     if (activeTab === 'access-history') return language === 'zh' ? '我的历史记录' : 'My History';

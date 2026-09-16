@@ -4,7 +4,8 @@ credential_service.py — 凭据中心服务层 (Credential Vault)
 Provides CRUD for the `credentials` table that backs the CMDB credential vault.
 
 Security:
-  - All secret columns (password, enable_password, private_key, snmp_community)
+  - All secret columns (password, enable_password, private_key, snmp_community,
+    SNMPv3 auth/privacy passwords)
     are encrypted with AES-256-GCM via core.crypto before being written.
   - Secret values are NEVER returned in plaintext from list/get endpoints; instead
     boolean "has_*" flags indicate whether a secret is set.
@@ -21,7 +22,7 @@ from core.crypto import decrypt_credential, encrypt_credential
 logger = logging.getLogger(__name__)
 
 # Secret columns that must be encrypted at rest and masked on read.
-_SECRET_FIELDS = ('encrypted_password', 'enable_password', 'private_key', 'snmp_community')
+_SECRET_FIELDS = ('encrypted_password', 'enable_password', 'private_key', 'snmp_community', 'snmp_auth_password', 'snmp_priv_password')
 
 _ACCOUNT_ROLE_LABELS = {
     'normal': '普通账号',
@@ -60,6 +61,12 @@ def _to_safe_view(row) -> dict:
         'has_enable_password': bool(d.get('enable_password')),
         'has_private_key': bool(d.get('private_key')),
         'has_snmp_community': bool(d.get('snmp_community')),
+        'snmp_security_level': d.get('snmp_security_level') or 'authPriv',
+        'snmp_auth_protocol': d.get('snmp_auth_protocol') or 'SHA',
+        'snmp_priv_protocol': d.get('snmp_priv_protocol') or 'AES',
+        'snmp_context_name': d.get('snmp_context_name') or '',
+        'has_snmp_auth_password': bool(d.get('snmp_auth_password')),
+        'has_snmp_priv_password': bool(d.get('snmp_priv_password')),
         'snmp_server': d.get('snmp_server') or '',
     }
     return safe
@@ -194,19 +201,32 @@ def _name_exists(conn, name: str, exclude_id: str | None = None) -> bool:
 
 def create_credential(conn, *, credential_name: str, credential_type: str = 'ssh_password',
                       username: str = '', account_role: str = 'normal', password: str = '', enable_password: str = '',
-                      private_key: str = '', snmp_community: str = '', snmp_server: str = '') -> dict:
+                      private_key: str = '', snmp_community: str = '', snmp_server: str = '',
+                      snmp_security_level: str = 'authPriv', snmp_auth_protocol: str = 'SHA',
+                      snmp_auth_password: str = '', snmp_priv_protocol: str = 'AES',
+                      snmp_priv_password: str = '', snmp_context_name: str = '') -> dict:
     if _name_exists(conn, credential_name):
         raise ValueError(f"Credential name already exists: {credential_name}")
     if credential_type == 'snmpv2' and not str(snmp_community or '').strip():
         raise ValueError('SNMPv2 credentials require an SNMP Community')
+    if credential_type == 'snmpv3':
+        level = str(snmp_security_level or '').strip().lower()
+        if level not in {'noauthnopriv', 'authnopriv', 'authpriv'}:
+            raise ValueError('SNMPv3 credentials require a valid security level')
+        if level != 'noauthnopriv' and not str(snmp_auth_password or '').strip():
+            raise ValueError('SNMPv3 auth password is required')
+        if level == 'authpriv' and not str(snmp_priv_password or '').strip():
+            raise ValueError('SNMPv3 privacy password is required')
 
     cred_id = f"cred-{uuid.uuid4().hex[:12]}"
     now = _utc_now()
     conn.execute(
         """INSERT INTO credentials
            (id, credential_name, credential_type, username, account_role, encrypted_password,
-            enable_password, private_key, snmp_community, snmp_server, created_at)
-           VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
+            enable_password, private_key, snmp_community, snmp_server,
+            snmp_security_level, snmp_auth_protocol, snmp_auth_password,
+            snmp_priv_protocol, snmp_priv_password, snmp_context_name, created_at)
+           VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
         (
             cred_id, credential_name, credential_type, username, account_role,
             encrypt_credential(password) or '',
@@ -214,6 +234,12 @@ def create_credential(conn, *, credential_name: str, credential_type: str = 'ssh
             encrypt_credential(private_key) or '',
             encrypt_credential(snmp_community) or '',
             str(snmp_server or '').strip(),
+            str(snmp_security_level or 'authPriv').strip(),
+            str(snmp_auth_protocol or 'SHA').strip(),
+            encrypt_credential(snmp_auth_password) or '',
+            str(snmp_priv_protocol or 'AES').strip(),
+            encrypt_credential(snmp_priv_password) or '',
+            str(snmp_context_name or '').strip(),
             now,
         ),
     )
@@ -237,12 +263,27 @@ def update_credential(conn, cred_id: str, **fields) -> dict:
             community = decrypt_credential(_row_to_dict(existing).get('snmp_community')) or ''
         if not str(community or '').strip():
             raise ValueError('SNMPv2 credentials require an SNMP Community')
+    if fields.get('credential_type') == 'snmpv3':
+        existing_dict = _row_to_dict(existing)
+        level = str(fields.get('snmp_security_level') or existing_dict.get('snmp_security_level') or 'authPriv').strip().lower()
+        auth_password = fields.get('snmp_auth_password')
+        if auth_password is None:
+            auth_password = decrypt_credential(existing_dict.get('snmp_auth_password') or '') or ''
+        priv_password = fields.get('snmp_priv_password')
+        if priv_password is None:
+            priv_password = decrypt_credential(existing_dict.get('snmp_priv_password') or '') or ''
+        if level not in {'noauthnopriv', 'authnopriv', 'authpriv'}:
+            raise ValueError('SNMPv3 credentials require a valid security level')
+        if level != 'noauthnopriv' and not str(auth_password or '').strip():
+            raise ValueError('SNMPv3 auth password is required')
+        if level == 'authpriv' and not str(priv_password or '').strip():
+            raise ValueError('SNMPv3 privacy password is required')
 
     updates: list[str] = []
     params: list = []
 
     # Plain (non-secret) columns
-    for key in ('credential_name', 'credential_type', 'username', 'account_role', 'snmp_server'):
+    for key in ('credential_name', 'credential_type', 'username', 'account_role', 'snmp_server', 'snmp_security_level', 'snmp_auth_protocol', 'snmp_priv_protocol', 'snmp_context_name'):
         if key in fields and fields[key] is not None:
             updates.append(f"{key} = ?")
             params.append(fields[key])
@@ -254,6 +295,8 @@ def update_credential(conn, cred_id: str, **fields) -> dict:
         'enable_password': 'enable_password',
         'private_key': 'private_key',
         'snmp_community': 'snmp_community',
+        'snmp_auth_password': 'snmp_auth_password',
+        'snmp_priv_password': 'snmp_priv_password',
     }
     for in_key, col in secret_map.items():
         if in_key in fields and fields[in_key] is not None:

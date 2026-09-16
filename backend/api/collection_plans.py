@@ -556,6 +556,12 @@ def update_device_collection_plan(
             collector_overrides = {}
 
         stored_policy = {"template": template_id, "collectors": collector_overrides}
+        previous_policy = parse_collection_policy(row.get("collection_policy_json"))
+        monitoring = normalized.get("monitoring")
+        if monitoring is None:
+            monitoring = previous_policy.get("monitoring") or previous_policy.get("monitoring_modules")
+        if monitoring is not None:
+            stored_policy["monitoring"] = monitoring
         clauses, scope_params = _device_scope_clauses(tenant_id, site_ids)
         where = ["id = ?", *clauses]
         cursor = conn.execute(

@@ -35,3 +35,16 @@ describe('getRouteContext terminal access routes', () => {
     expect(getRouteContext('/access/history').activeTab).toBe('access-history');
   });
 });
+
+describe('getRouteContext monitoring routes', () => {
+  it('maps monitoring navigation targets to their rendered panels', () => {
+    expect(getRouteContext('/monitor/telemetry').activeTab).toBe('monitoring');
+    expect(getRouteContext('/monitor/servers').activeTab).toBe('server-monitoring');
+    expect(getRouteContext('/monitor/networks').activeTab).toBe('network-monitoring');
+    expect(getRouteContext('/monitor/collection-plans').activeTab).toBe('monitoring-plans');
+    expect(getRouteContext('/monitor/modules').activeTab).toBe('monitoring-modules');
+    expect(getRouteContext('/monitor/collectors').activeTab).toBe('monitoring-collectors');
+    expect(getRouteContext('/monitor/collection-health').activeTab).toBe('monitoring-health');
+    expect(getRouteContext('/monitor/topology').activeTab).toBe('topology');
+  });
+});

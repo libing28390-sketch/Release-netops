@@ -390,7 +390,25 @@ def validate_policy(policy: dict[str, Any]) -> dict[str, Any]:
         if parsed is None:
             raise ValueError(f"collector '{key}' must be enabled/disabled or boolean")
         normalized[key] = parsed
-    return {"template": template, "collectors": normalized, "ignored_keys": unknown}
+    monitoring = policy.get("monitoring", policy.get("monitoring_modules"))
+    normalized_monitoring = None
+    if monitoring is not None:
+        if isinstance(monitoring, dict):
+            monitoring = [monitoring]
+        if not isinstance(monitoring, list):
+            raise ValueError("monitoring must be an array of module assignments")
+        normalized_monitoring = []
+        for entry in monitoring:
+            if not isinstance(entry, dict):
+                raise ValueError("monitoring entries must be objects")
+            forbidden = {"community", "password", "priv_password", "auth_password", "credential"} & {str(key).lower() for key in entry}
+            if forbidden:
+                raise ValueError("monitoring entries cannot contain credentials")
+            normalized_monitoring.append(dict(entry))
+    result = {"template": template, "collectors": normalized, "ignored_keys": unknown}
+    if normalized_monitoring is not None:
+        result["monitoring"] = normalized_monitoring
+    return result
 
 
 def collection_templates(conn=None) -> list[dict[str, Any]]:

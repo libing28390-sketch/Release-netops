@@ -27,6 +27,7 @@ from services.monitoring_incident_service import (
     recommend_incident_playbooks,
     update_incident_status,
 )
+from services.metric_provider import provider_from_environment
 
 router = APIRouter()
 logger = logging.getLogger(__name__)
@@ -39,6 +40,18 @@ def _require_monitoring_session(request: Request) -> dict:
     if not session:
         raise HTTPException(status_code=401, detail='Not authenticated')
     return session
+
+
+def _monitoring_tenant_scope(user: Any) -> tuple[str, tuple[Any, ...]]:
+    """Return an object-level tenant predicate for legacy monitoring routes.
+
+    Direct unit callers from the pre-RBAC API pass no user and retain the
+    historical unrestricted helper behavior; HTTP requests resolve a Viewer
+    or Operator dependency and are filtered before any telemetry is read.
+    """
+    if not isinstance(user, dict) or str(user.get('role') or '') == 'Administrator':
+        return '', ()
+    return " AND COALESCE(tenant_id, 'tenant-default') = ?", (str(user.get('tenant_id') or 'tenant-default'),)
 
 _SERVER_PLATFORMS = {'linux', 'ubuntu', 'centos', 'debian', 'redhat'}
 
@@ -240,6 +253,7 @@ def _downsample_network_series(rows: list[dict], bucket_seconds: int) -> list[di
 def search_online_devices(
     q: str = Query(default='', min_length=0),
     limit: int = Query(default=20, ge=1, le=50),
+    user=require_role('Viewer'),
 ):
     qv = (q or '').strip()
     if not qv:
@@ -248,6 +262,7 @@ def search_online_devices(
     conn = get_db_connection()
     try:
         pattern = f"%{qv}%"
+        tenant_clause, tenant_params = _monitoring_tenant_scope(user)
         rows = conn.execute(
             '''
             SELECT d.id, d.hostname, d.ip_address, d.platform, d.role,
@@ -257,12 +272,12 @@ def search_online_devices(
                    d.status, d.device_category
             FROM devices d
             LEFT JOIN sites s ON s.id = d.site_id
-            WHERE d.status = 'online'
+            WHERE d.status = 'online'""" + tenant_clause + """
               AND (LOWER(d.hostname) LIKE LOWER(?) OR LOWER(d.ip_address) LIKE LOWER(?))
             ORDER BY d.hostname ASC
             LIMIT ?
             ''',
-            (pattern, pattern, limit),
+            (*tenant_params, pattern, pattern, limit),
         ).fetchall()
         return {'items': [dict(r) for r in rows], 'query': qv}
     finally:
@@ -276,6 +291,7 @@ def list_monitoring_network_devices(
     status: Literal['all', 'online', 'offline'] = Query(default='all'),
     page: int = Query(default=1, ge=1, le=100000),
     page_size: int = Query(default=30, ge=10, le=100),
+    user=require_role('Viewer'),
 ):
     """Return a bounded, server-filtered page for the network monitoring list.
 
@@ -305,6 +321,10 @@ def list_monitoring_network_devices(
     site_name_expr = "COALESCE(NULLIF(s.site_name, ''), CASE WHEN SUBSTR(COALESCE(d.site, ''), 1, 5) = 'site-' THEN '' ELSE COALESCE(d.site, '') END, {site_id_expr}, '')".format(site_id_expr=site_id_expr)
     where_parts = [network_predicate]
     where_params: list[Any] = []
+    tenant_id = (user.get('tenant_id') if isinstance(user, dict) and str(user.get('role') or '') != 'Administrator' else None)
+    if isinstance(user, dict):
+        where_parts.append("COALESCE(d.tenant_id, 'tenant-default') = ?")
+        where_params.append(str(tenant_id or 'tenant-default'))
     if qv:
         pattern = f"%{qv}%"
         where_parts.append("(LOWER(COALESCE(d.hostname, '')) LIKE LOWER(?) OR LOWER(COALESCE(d.ip_address, '')) LIKE LOWER(?))")
@@ -680,13 +700,15 @@ def monitoring_device_realtime(
     device_id: str,
     window_minutes: int = Query(default=15, ge=1, le=180),
     limit: int = Query(default=600, ge=50, le=2000),
+    user=require_role('Viewer'),
 ):
     conn = get_db_connection()
     try:
+        tenant_clause, tenant_params = _monitoring_tenant_scope(user)
         device = conn.execute(
             "SELECT id, hostname, ip_address, platform, status, device_category, "
-            "cpu_usage, memory_usage, temp, fan_status, psu_status FROM devices WHERE id = ?",
-            (device_id,),
+            "cpu_usage, memory_usage, temp, fan_status, psu_status FROM devices WHERE id = ?" + tenant_clause,
+            (device_id, *tenant_params),
         ).fetchone()
         if not device:
             raise HTTPException(status_code=404, detail='Device not found')
@@ -893,12 +915,15 @@ def monitoring_device_trend(
     resolution: str = Query(default='auto'),
     start_time: Optional[str] = Query(default=None),
     end_time: Optional[str] = Query(default=None),
+    provider: Optional[str] = Query(default=None),
+    user=require_role('Viewer'),
 ):
     conn = get_db_connection()
     try:
+        tenant_clause, tenant_params = _monitoring_tenant_scope(user)
         device = conn.execute(
-            "SELECT id, hostname, ip_address, platform, status, device_category FROM devices WHERE id = ?",
-            (device_id,),
+            "SELECT id, hostname, ip_address, platform, status, device_category FROM devices WHERE id = ?" + tenant_clause,
+            (device_id, *tenant_params),
         ).fetchone()
         if not device:
             raise HTTPException(status_code=404, detail='Device not found')
@@ -934,6 +959,68 @@ def monitoring_device_trend(
         plat = str(device.get('platform') or '').lower()
         category = str(device.get('device_category') or '').lower()
         is_server = plat in _SERVER_PLATFORMS or 'server' in category
+
+        # V1 providers are opt-in per request so the existing Native response
+        # remains backward compatible.  VM/Shadow results are normalized into
+        # the same ``series`` envelope consumed by NetworkMonitoring.
+        selected_provider = (provider or '').strip().lower()
+        if selected_provider and selected_provider != 'native':
+            if selected_provider not in {'shadow', 'victoriametrics'}:
+                raise HTTPException(status_code=422, detail='Unsupported monitoring metric provider')
+            metric_keys = ['cpu_usage_percent'] if is_server else [
+                'interface_rx_bps', 'interface_tx_bps',
+                'interface_in_errors_rate', 'interface_out_errors_rate',
+                'interface_in_discards_rate', 'interface_out_discards_rate',
+            ]
+            provider_instance = provider_from_environment(mode=selected_provider)
+            points: dict[str, dict[str, Any]] = {}
+            shadow_results: list[dict[str, Any]] = []
+            for metric_key in metric_keys:
+                result = provider_instance.range(
+                    query=metric_key,
+                    metric_key=metric_key,
+                    asset_id=device_id,
+                    start=start_dt,
+                    end=end_dt,
+                    step_seconds=300 if range_hours > 24 else 60,
+                )
+                if result.get('shadow'):
+                    shadow_results.append(result['shadow'])
+                for item in result.get('data') or []:
+                    if not isinstance(item, dict):
+                        continue
+                    if 'metric' in item:
+                        values = item.get('values') or []
+                        for timestamp, value in values:
+                            ts_key = datetime.fromtimestamp(float(timestamp), tz=timezone.utc).isoformat()
+                            point = points.setdefault(ts_key, {'ts_minute': ts_key})
+                            point[metric_key] = _as_float(value)
+                    else:
+                        timestamp = item.get('timestamp') or item.get('ts_minute')
+                        if not timestamp:
+                            continue
+                        point = points.setdefault(str(timestamp), {'ts_minute': str(timestamp)})
+                        value = item.get('value')
+                        point[metric_key] = _as_float(value)
+            series = []
+            for point in sorted(points.values(), key=lambda item: item.get('ts_minute', '')):
+                if not is_server:
+                    point['total_in_bps'] = point.get('interface_rx_bps')
+                    point['total_out_bps'] = point.get('interface_tx_bps')
+                    point['total_errors'] = sum(float(point.get(key) or 0) for key in ('interface_in_errors_rate', 'interface_out_errors_rate')) or None
+                    point['total_drops'] = sum(float(point.get(key) or 0) for key in ('interface_in_discards_rate', 'interface_out_discards_rate')) or None
+                series.append(point)
+            return {
+                'device': {'id': device['id'], 'hostname': device['hostname'], 'ip_address': device.get('ip_address'), 'platform': device.get('platform'), 'status': device['status']},
+                'provider': selected_provider,
+                'range_hours': range_hours,
+                'resolution': '5m' if range_hours > 24 else '1m',
+                'start_time': start_iso,
+                'end_time': end_iso,
+                'interface_name': interface_name.strip() if interface_name and interface_name.strip() else None,
+                'series': series,
+                'shadow': shadow_results or None,
+            }
 
         if is_server:
             use_raw = range_hours <= 24 and target_resolution != '5m'

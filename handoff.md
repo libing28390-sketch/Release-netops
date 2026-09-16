@@ -1,3 +1,82 @@
+# Nexora Monitoring V1 P0 交接记录（2026-09-16）
+
+## 交接结论
+
+- 本日目标：按 `Nexora_Monitoring_V1_详细架构与落地实施方案.md` 完成 P0-T01～P0-T20 的仓库实现、前端入口和 Docker Compose 配置。
+- 当前状态：`REPOSITORY IMPLEMENTATION COMPLETE / RUNTIME POC PENDING`。
+- 生产结论：不能把当前状态宣称为生产可用；真实 Docker runtime、H3C/Huawei/Cisco 设备矩阵和现场 Gate 仍需在验收环境执行。
+- 当前分支：`main`。本次交接记录随本日 Monitoring P0 变更一起提交并推送。
+
+## 已交付范围
+
+### Control Plane / Backend
+
+- `backend/database/migrations/m0232_monitoring_v1_control_plane.py`：新增 Collector、SNMP Module、Module Variant、Monitoring Plan、Assignment、MetricDefinition、Config Version、Target Snapshot、Shadow Compare 表，并补齐 SNMPv3 加密字段。
+- `backend/services/monitoring_compiler.py`：CMDB/Collection Plan → Assignment → Target Snapshot → vmagent/snmp_exporter Artifact；包含 interval/timeout/conflict/duplicate-walk/auth/module 校验、Auth Alias、Generic IF-MIB/System Module、Manifest/checksum/YAML 校验。
+- `backend/services/metric_provider.py`：`native`、`shadow`、`victoriametrics` Provider，Canonical Metrics、Counter Wrap、Shadow Compare 和持久化审计。
+- `backend/services/collector_artifact_service.py`：Collector 侧版本目录、Current/Previous、Last Known Good、原子复制、发布和回滚。
+- `backend/services/monitoring_health_service.py`：Collection Health 与错误分类。
+- `backend/api/monitoring_v1.py`：Module/Variant、Plan、Collector、Assignment、Artifact、Metrics、Collection Health、Shadow Compare API；包含 RBAC、租户范围和审计。
+- `backend/api/monitoring.py`：旧 Monitoring trend/realtime/network list 路径补充 Provider 兼容和租户隔离。
+- `backend/services/collection_plan_service.py` / `backend/api/collection_plans.py`：现有 `collection_policy_json` 支持 `monitoring` 扩展，设备级 Plan 优先于目录默认值。
+
+### Frontend
+
+- 新增 `src/components/MonitoringManagementPage.tsx`，已实现：
+  - `/monitor/collection-plans`：Plan 创建、JSON 配置、编译测试；
+  - `/monitor/modules`：Module/Variant 创建、测试、发布、校验；
+  - `/monitor/collectors`：Collector 创建、测试、编译、校验、发布、回滚；
+  - `/monitor/collection-health`：Assignment 健康率、状态和错误明细。
+- `src/components/AppMainContent.tsx`、`src/utils/routeContext.ts`、`src/components/AppSidebar/navConfig.ts` 已接入路由和导航。
+- `src/components/ModuleSubNav.tsx`、`src/components/AppSidebar/index.tsx` 已补齐 Layers3/Boxes/CloudCog/Gauge 图标映射；中文名称为“采集计划 / 模块目录 / 采集器管理 / 采集健康”。
+- Network Monitoring 页面保留 Native/Shadow/VictoriaMetrics Provider 切换。
+
+### Docker / Collector Stack
+
+`docker-compose.yml` 已加入固定版本服务：
+
+```text
+victoriametrics/victoria-metrics:v1.103.0
+victoriametrics/vmagent:v1.103.0
+prom/snmp-exporter:v0.26.0
+```
+
+已配置 VM 持久化、vmagent disk queue、Remote Write、健康检查、Generic IF-MIB/System Module 和 `/etc/nexora-collector` Target Snapshot 路径。静态配置位于 `monitoring/`。
+
+## 验证证据
+
+```text
+pytest -q backend/tests -k "monitor or snmp or alert or probe" 162 passed
+pytest -q backend/tests/vendor_audit/test_collection_plan_service.py backend/tests/vendor_audit/test_collection_plan_bulk_api.py 46 passed
+pytest -q backend/tests/monitoring 64 passed（随后新增部署合约测试另 2 passed）
+pytest -q backend/tests/database/test_m0232_monitoring_v1.py 1 passed
+npx vitest run --config vitest.config.ts src/utils/routeContext.test.ts 8 passed
+npm run lint PASS
+npm run build PASS
+python scripts/validate_postgresql_only.py PASS / 0 violations
+python scripts/monitoring_poc_preflight.py PASS（静态配置）
+```
+
+`docker compose config` 和真实 `docker compose up` 尚未执行：当前工作主机没有 Docker CLI。强制预检结果为 `Docker CLI not found`，退出码 `2`。
+
+## 下一位接手人的执行顺序
+
+1. 在 Docker 验收机运行 `python scripts/monitoring_poc_preflight.py --require-runtime`。
+2. 运行 `docker compose up -d`，确认 `db`、`redis`、`netops`、`victoriametrics`、`vmagent`、`snmp-exporter`、`nginx` 健康。
+3. 在 CMDB 建立 POC 设备、站点和 SNMPv2c/v3 Credential Binding；创建/确认 Collector、Module Variant 和 Collection Plan。
+4. 调用 Collector compile → validate → publish，确认 Target Snapshot、Artifact Current/Previous 和 VictoriaMetrics 写入。
+5. 按方案执行 GATE-01～GATE-18：H3C/Huawei/Cisco 设备、错误 Community、Nexora/VM 中断、vmagent Queue 补传、Collector Restart、Credential Rotation、ifIndex 变化、Tenant Isolation、Double Poll、Shadow Compare 和 300 台压测。
+6. 现场 Gate 全部通过后，再将 `MONITORING_METRIC_BACKEND` 从 `native` 切换到 `shadow`，最后按迁移计划切到 `victoriametrics`。
+
+## 安全与回滚注意
+
+- Target Snapshot 只保存 opaque `auth_<hash>`，不保存 community/password；Auth Artifact 单独生成并限制权限。
+- 配置编译失败或 Artifact 校验失败不得覆盖 Last Known Good。
+- 任何 VM/Collector 切换都保留 Native Provider 和旧配置版本，现场失败时优先回滚到上一版本。
+- `.env`、真实凭据和 `.tmp/` 临时目录不应加入本次提交。
+
+---
+
 # Nexora AI/RAG 整改与生产验收交接记录
 
 - 更新时间：2026-09-06（已继续本地修复、前端交互调整与当前工作区运行态复测；完整浏览器 UAT 已完成 38/38 条逐案例签署，真实依赖与生产发布仍保持 HOLD）
