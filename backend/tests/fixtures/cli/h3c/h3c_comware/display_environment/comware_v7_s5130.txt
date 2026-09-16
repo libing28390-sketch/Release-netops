@@ -1,0 +1,5 @@
+<Sysname> display environment
+System temperature information (degree centigrade):
+----------------------------------------------------------------------
+ Slot  Sensor    Temperature  Lower  Warning  Alarm  Shutdown
+ 1     hotspot 1 30           0      65       70     NA

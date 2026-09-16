@@ -1,0 +1,9 @@
+{
+  "source_type": "official_vendor_documentation",
+  "source_url": "https://support.huawei.com/enterprise/en/doc/EDOC1100368579/b7014cbe/eth-trunk-configuration-commands",
+  "vendor": "Huawei",
+  "platform": "VRP8",
+  "model_family": "CloudEngine S8700",
+  "command": "display eth-trunk",
+  "source_note": "Official Eth-Trunk command reference example."
+}

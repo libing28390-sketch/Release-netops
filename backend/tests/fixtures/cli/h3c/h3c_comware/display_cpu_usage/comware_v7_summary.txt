@@ -1,0 +1,9 @@
+<Sysname> display cpu-usage
+Slot 1 CPU 0 CPU usage:
+       1% in last 5 seconds
+       1% in last 1 minute
+       1% in last 5 minutes
+
+Slot CPU        Last 5 sec        Last 1 min        Last 5 min
+1    0          17%               29%               28%
+
