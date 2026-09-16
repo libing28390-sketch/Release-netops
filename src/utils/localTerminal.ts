@@ -109,13 +109,19 @@ export function formatTerminalAgentError(error: unknown, isZh: boolean): string 
   const detail = error instanceof Error ? error.message : String(error || 'Unknown error');
   const normalized = detail.toLowerCase();
 
+  if (/backend origin is not allowed|origin is not trusted|launch origin does not match/.test(normalized)) {
+    return isZh
+      ? 'Terminal Agent 已运行，但未允许当前 Nexora 页面来源。请将当前页面地址加入 NEXORA_AGENT_ALLOWED_ORIGINS 后重启 Agent。'
+      : 'Terminal Agent is running, but the current Nexora page origin is not allowed. Add the page origin to NEXORA_AGENT_ALLOWED_ORIGINS and restart the Agent.';
+  }
+
   if (
     error instanceof TypeError
     || /failed to fetch|networkerror|network request failed|load failed/.test(normalized)
   ) {
     return isZh
-      ? '网络问题，请检查网络连接后重试。'
-      : 'Network error. Check your connection and try again.';
+      ? '无法连接 Terminal Agent。请确认本机 Agent 正在运行（http://127.0.0.1:17890），并检查当前页面来源是否已获允许。'
+      : 'Unable to reach the Terminal Agent. Confirm it is running at http://127.0.0.1:17890 and that the current page origin is allowed.';
   }
 
   if (/terminal executable not found|executable not found/.test(normalized)) {
@@ -126,17 +132,17 @@ export function formatTerminalAgentError(error: unknown, isZh: boolean): string 
 
   if (/invalid session token|token already consumed|session token.*(expired|invalid)|session.*expired/.test(normalized)) {
     return isZh
-      ? '网络问题，请重新发起终端连接。'
-      : 'Network error. Start the terminal connection again.';
+      ? 'Terminal Agent 会话已过期，请重新发起连接。'
+      : 'The Terminal Agent session expired. Start the connection again.';
   }
 
-  if (/credential|password.*not found|device\/asset|backend origin|urlopen error|connection refused|timed out|timeout|network is unreachable|name or service not known|getaddrinfo failed/.test(normalized)) {
+  if (/credential|password.*not found|device\/asset|urlopen error|connection refused|timed out|timeout|network is unreachable|name or service not known|getaddrinfo failed/.test(normalized)) {
     return isZh
-      ? '网络问题，请检查网络连接后重试。'
-      : 'Network error. Check your connection and try again.';
+      ? 'Terminal Agent 或后端会话连接失败，请确认 Agent 正在运行并重新发起连接。'
+      : 'The Terminal Agent or backend session failed. Confirm the Agent is running and start the connection again.';
   }
 
   return isZh
-    ? '网络问题，请稍后重试。'
-    : 'Network error. Please try again later.';
+    ? 'Terminal Agent 会话启动失败，请确认 Agent 正在运行后重试。'
+    : 'Terminal Agent session failed to start. Confirm the Agent is running and try again.';
 }

@@ -1308,10 +1308,10 @@ const AssetManagementTab: React.FC<AssetManagementTabProps> = ({ language, setAc
                 snmpPreflightErrors.push(`${name} 第${rowIndex + 2}行：SNMP凭据名称与SNMP凭据ID不能同时填写，请只保留一个`);
                 continue;
               }
-              if ((obj.snmp_credential_name || obj.snmp_credential_id) && obj.snmp_community) {
-                snmpPreflightErrors.push(`${name} 第${rowIndex + 2}行：已指定SNMP凭据，请清空SNMP社区名，避免导入明文社区字串`);
-                continue;
-              }
+              // An explicit SNMP credential takes precedence at runtime, but
+              // a legacy/device-local community remains a valid fallback.
+              // Accept both fields so imports can migrate gradually without
+              // treating SSH credentials as SNMP credentials.
               obj.ssh_algorithm_profile = obj.ssh_algorithm_profile || 'auto';
               mapped.push(obj);
             }

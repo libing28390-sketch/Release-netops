@@ -33,6 +33,7 @@ from services.monitoring_compiler import (
     compile_artifact,
     duration_seconds,
     opaque_auth_alias,
+    plan_target_matches_device,
     validate_assignments,
     validate_artifact,
 )
@@ -568,7 +569,45 @@ def compile_test_monitoring_plan(plan_id: str, _user=require_role("Operator")):
                     errors.append("TIMEOUT_INVALID")
             except CompileError as exc:
                 errors.append(str(exc))
-        return {"plan_id": plan_id, "valid": not errors, "errors": sorted(set(errors)), "module_count": len(entries) if isinstance(entries, list) else 0}
+        target_scope = config.get("target_scope") if isinstance(config, dict) and isinstance(config.get("target_scope"), dict) else {}
+        target_ips = {str(value).strip() for value in (config.get("target_ips") or []) if str(value).strip()} if isinstance(config, dict) else set()
+        target_device_ids = {str(value).strip() for value in (config.get("device_ids") or []) if str(value).strip()} if isinstance(config, dict) else set()
+        matched_targets: list[dict[str, Any]] = []
+        if target_scope or target_ips or target_device_ids:
+            device_rows = conn.execute(
+                "SELECT id, hostname, ip_address, management_address, platform, role, device_role, device_category, site, site_id, status FROM devices WHERE status IS NULL OR LOWER(status) = 'online'"
+            ).fetchall()
+            try:
+                from services.tag_service import get_device_tags
+            except Exception:
+                get_device_tags = None
+            for device_row in device_rows:
+                item = _dict(device_row)
+                if get_device_tags:
+                    try:
+                        item["tag_ids"] = [str(tag.get("id") or "") for tag in get_device_tags(conn, str(item.get("id") or "")) if tag.get("id")]
+                    except Exception:
+                        item["tag_ids"] = []
+                if plan_target_matches_device(item, {"target_scope": target_scope, "target_ips": target_ips, "device_ids": target_device_ids}):
+                    matched_targets.append({
+                        "id": item.get("id"),
+                        "hostname": item.get("hostname") or item.get("id"),
+                        "ip_address": item.get("ip_address") or item.get("management_address"),
+                        "platform": item.get("platform") or "",
+                    })
+            known_ips = {str(item.get("ip_address") or "").strip() for item in matched_targets}
+            missing_ips = sorted(target_ips - known_ips)
+            errors.extend(f"TARGET_IP_NOT_FOUND:{value}" for value in missing_ips)
+            if target_device_ids and not matched_targets:
+                errors.append("TARGET_DEVICE_NOT_FOUND")
+        return {
+            "plan_id": plan_id,
+            "valid": not errors,
+            "errors": sorted(set(errors)),
+            "module_count": len(entries) if isinstance(entries, list) else 0,
+            "target_count": len(matched_targets) if (target_scope or target_ips or target_device_ids) else None,
+            "targets": matched_targets,
+        }
     finally:
         conn.close()
 
@@ -593,6 +632,33 @@ def create_monitoring_plan(body: PlanRequest, _user=require_role("Operator")):
         conn.close()
     _audit(_user, "MONITORING_PLAN_CREATED", f"Created monitoring collection plan {plan_id}", target_type="monitoring_collection_plan", target_id=plan_id, details={"name": body.name, "cli_platform": body.cli_platform, "module_count": len(body.config.get("modules") or [])})
     return {"id": plan_id, "name": body.name, "cli_platform": body.cli_platform, "description": body.description, "config": body.config, "enabled": body.enabled, "created_at": now, "updated_at": now}
+
+
+@router.put("/collection-plans/{plan_id}")
+def update_monitoring_plan(plan_id: str, body: PlanRequest, _user=require_role("Operator")):
+    now = _now()
+    conn = get_db_connection()
+    try:
+        existing = conn.execute("SELECT id FROM monitoring_collection_plans WHERE id = ?", (plan_id,)).fetchone()
+        if not existing:
+            raise HTTPException(status_code=404, detail="Collection plan not found")
+        conn.execute(
+            """UPDATE monitoring_collection_plans
+                  SET name = ?, cli_platform = ?, description = ?, config_json = ?, enabled = ?, updated_at = ?
+                WHERE id = ?""",
+            (body.name, body.cli_platform, body.description, json.dumps(body.config, ensure_ascii=False), int(body.enabled), now, plan_id),
+        )
+        conn.commit()
+    except HTTPException:
+        conn.rollback()
+        raise
+    except Exception as exc:
+        conn.rollback()
+        raise HTTPException(status_code=409, detail=f"Collection plan update failed: {exc}") from exc
+    finally:
+        conn.close()
+    _audit(_user, "MONITORING_PLAN_UPDATED", f"Updated monitoring collection plan {plan_id}", target_type="monitoring_collection_plan", target_id=plan_id, details={"name": body.name, "cli_platform": body.cli_platform, "module_count": len(body.config.get("modules") or [])})
+    return {"id": plan_id, "name": body.name, "cli_platform": body.cli_platform, "description": body.description, "config": body.config, "enabled": body.enabled, "updated_at": now}
 
 
 @router.get("/assignments")
@@ -649,6 +715,13 @@ def _load_compile_inputs(conn, collector_id: str, user: Any = None):
         device_sql += " AND COALESCE(tenant_id, 'tenant-default') = ?"
         device_params = (tenant,)
     devices = [_dict(row) for row in conn.execute(device_sql, device_params).fetchall()]
+    try:
+        from services.tag_service import get_device_tags
+        for device in devices:
+            device["tag_ids"] = [str(item.get("id") or "") for item in get_device_tags(conn, str(device.get("id") or "")) if item.get("id")]
+    except Exception:
+        for device in devices:
+            device.setdefault("tag_ids", [])
     modules = [_dict(row) for row in conn.execute("SELECT * FROM snmp_modules WHERE enabled = 1").fetchall()]
     variants = [_dict(row) for row in conn.execute("SELECT * FROM snmp_module_variants WHERE enabled = 1").fetchall()]
     collectors = [_dict(row) for row in conn.execute("SELECT * FROM monitoring_collectors WHERE enabled = 1").fetchall()]
@@ -686,11 +759,27 @@ def _load_compile_inputs(conn, collector_id: str, user: Any = None):
         # device-local communities directly when a credential binding exists.
         try:
             resolved = resolve_collector_credentials(device)
-            credential_id = str(device.get("snmp_credential_id") or device.get("credential_id") or "")
+            # SNMP credentials are independent from SSH credentials. Never
+            # fall back to the device's management credential here.
+            credential_id = str(device.get("snmp_credential_id") or "")
+            resolved_community = str((resolved.get("snmp") or {}).get("community") or "")
+            if not credential_id and resolved_community:
+                # Legacy/device-local SNMP Community is a valid alternative to
+                # a credential-center binding. Keep it ephemeral and opaque so
+                # the plaintext secret never enters assignments or the DB.
+                asset_key = str(device.get("asset_id") or device.get("id") or "")
+                credential_id = f"inline-snmp-{opaque_auth_alias(asset_key)}"
+                device["snmp_credential_id"] = credential_id
+                credentials.append({
+                    "id": credential_id,
+                    "credential_type": "snmpv2",
+                    "community": resolved_community,
+                })
+                aliases[credential_id] = opaque_auth_alias(credential_id)
             if credential_id:
                 for item in credentials:
                     if str(item.get("id") or "") == credential_id:
-                        item["community"] = str((resolved.get("snmp") or {}).get("community") or "")
+                        item["community"] = resolved_community or str(item.get("community") or "")
                         break
         except Exception:
             # A legacy/incomplete CMDB row is left for the compiler to mark as

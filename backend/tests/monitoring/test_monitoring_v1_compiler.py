@@ -34,7 +34,8 @@ def _device(**overrides):
         "ip_address": "192.0.2.10",
         "platform": "h3c_comware7",
         "collector_id": "collector-local",
-        "credential_id": "cred-1",
+        "credential_id": "ssh-1",
+        "snmp_credential_id": "cred-1",
         "tenant_id": "tenant-a",
         "site_id": "site-a",
     }
@@ -73,6 +74,18 @@ def test_monitoring_extension_reuses_device_collection_policy():
         credential_aliases={"cred-1": "auth_opaque"},
     )
     assert assignments[0]["source_plan_id"].startswith("device-collection-plan:")
+
+
+def test_compiler_never_reuses_ssh_credential_for_snmp():
+    with pytest.raises(ValueError, match="AUTH_NOT_CONFIGURED"):
+        build_assignments(
+            [_device(snmp_credential_id="")],
+            PLANS,
+            MODULES,
+            VARIANTS,
+            COLLECTORS,
+            credential_aliases={"ssh-1": "auth_ssh"},
+        )
 
 
 def test_compiler_rejects_same_asset_variant_conflict():

@@ -184,6 +184,56 @@ def _plan_for_device(device: Mapping[str, Any], plans: Mapping[str, Mapping[str,
     return None
 
 
+def plan_target_matches_device(device: Mapping[str, Any], plan: Mapping[str, Any]) -> bool:
+    """Apply optional CMDB-backed target selectors from a collection plan.
+
+    ``target_ips`` and ``device_ids`` are filters, not arbitrary destinations:
+    the compiler still resolves the final target from the matching CMDB row.
+    When neither selector is present, the plan keeps its existing platform or
+    wildcard semantics.
+    """
+    target_scope = plan.get("target_scope") if isinstance(plan.get("target_scope"), Mapping) else {}
+    mode = str(target_scope.get("mode") or "").strip().lower()
+    if mode in {"ip", "ips"}:
+        values = target_scope.get("values") or target_scope.get("ips") or target_scope.get("device_ips") or []
+        target_ips = {str(value).strip() for value in values if str(value).strip()}
+        current_ip = str(device.get("ip_address") or device.get("management_address") or "").strip()
+        return bool(target_ips) and current_ip in target_ips
+    if mode == "site":
+        value = str(target_scope.get("value") or "").strip()
+        return bool(value) and value in {str(device.get("site") or "").strip(), str(device.get("site_id") or "").strip()}
+    if mode == "role":
+        value = str(target_scope.get("value") or "").strip().lower()
+        return bool(value) and value == str(device.get("role") or device.get("device_role") or "").strip().lower()
+    if mode == "tag":
+        requested = {str(value).strip() for value in (target_scope.get("tag_ids") or target_scope.get("values") or []) if str(value).strip()}
+        actual = {str(value).strip() for value in (device.get("tag_ids") or []) if str(value).strip()}
+        if not requested:
+            return False
+        return requested.issubset(actual) if str(target_scope.get("match_mode") or "all").lower() != "or" else bool(requested & actual)
+    if mode in {"composite", "filters", "filter"}:
+        filters = target_scope.get("filters") if isinstance(target_scope.get("filters"), Mapping) else target_scope
+        comparisons = {
+            "site": {str(device.get("site") or "").strip(), str(device.get("site_id") or "").strip()},
+            "role": {str(device.get("role") or device.get("device_role") or "").strip().lower()},
+            "category": {str(device.get("device_category") or "").strip().lower()},
+            "platform": {str(device.get("platform") or "").strip().lower()},
+        }
+        for key, actual in comparisons.items():
+            expected = str(filters.get(key) or "").strip()
+            if expected and expected.lower() not in {value.lower() for value in actual}:
+                return False
+        return True
+
+    target_ips = {str(value).strip() for value in (plan.get("target_ips") or []) if str(value).strip()}
+    device_ids = {str(value).strip() for value in (plan.get("device_ids") or []) if str(value).strip()}
+    if target_ips and str(device.get("ip_address") or device.get("management_address") or "").strip() not in target_ips:
+        return False
+    if device_ids and str(device.get("id") or device.get("asset_id") or "").strip() not in device_ids:
+        return False
+    return True
+
+
 def build_assignments(
     devices: Iterable[Mapping[str, Any]],
     plans: Iterable[Mapping[str, Any]],
@@ -222,13 +272,18 @@ def build_assignments(
         if plan_result is None:
             continue
         plan_id, plan = plan_result
+        if not plan_target_matches_device(device, plan):
+            continue
         module_entries = plan.get("modules") or plan.get("assignments") or []
         if not isinstance(module_entries, list):
             raise CompileError(f"collection plan {plan_id} modules must be a list")
         collector_id = str(device.get("collector_id") or "collector-local")
         if collector_map and collector_id not in collector_map:
             raise CompileError(f"COLLECTOR_NOT_FOUND: {collector_id}")
-        credential_id = str(device.get("snmp_credential_id") or device.get("credential_id") or "")
+        # SNMP collection must resolve an explicitly bound SNMP credential.
+        # ``credential_id`` belongs to the SSH/management path and must never
+        # be silently reused as an SNMP credential.
+        credential_id = str(device.get("snmp_credential_id") or "")
         explicit_alias = str(device.get("auth_alias") or "")
         if credential_id and aliases_provided and not explicit_alias and credential_id not in aliases:
             raise CompileError(f"AUTH_NOT_FOUND: asset={asset_id} credential={credential_id}")

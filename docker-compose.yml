@@ -146,7 +146,7 @@ services:
     restart: unless-stopped
     logging: *container-logging
     healthcheck:
-      test: ["CMD", "wget", "-qO-", "http://localhost:8428/health"]
+      test: ["CMD", "wget", "-Y", "off", "-qO-", "http://127.0.0.1:8428/health"]
       interval: 15s
       timeout: 5s
       retries: 5
@@ -164,7 +164,7 @@ services:
     restart: unless-stopped
     logging: *container-logging
     healthcheck:
-      test: ["CMD", "wget", "-qO-", "http://localhost:9116/metrics"]
+      test: ["CMD", "wget", "-Y", "off", "-qO-", "http://127.0.0.1:9116/metrics"]
       interval: 15s
       timeout: 5s
       retries: 5
@@ -191,7 +191,7 @@ services:
     restart: unless-stopped
     logging: *container-logging
     healthcheck:
-      test: ["CMD", "wget", "-qO-", "http://localhost:8429/health"]
+      test: ["CMD", "wget", "-Y", "off", "-qO-", "http://127.0.0.1:8429/health"]
       interval: 15s
       timeout: 5s
       retries: 5

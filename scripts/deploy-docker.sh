@@ -34,15 +34,17 @@ Commands:
   update     Preserve .env, Docker volumes, and nginx/ssl; sync the public
              release history, show source changes, and rebuild only when the
              release content changed. Use --force to rebuild unconditionally.
-  save-images Save the Compose images (including Redis when enabled) to a
+  save-images Save the Compose images (including monitoring services and Redis
+             when enabled) to a
              gzip-compressed archive and write a SHA-256 checksum alongside
              it. This command does not build images or access a registry.
   load-images Load a previously saved image archive and verify all required
              Compose image tags are available locally.
   backup-release Create a PostgreSQL custom dump, redacted Source Manifest,
              and private configuration/config-snapshot archives before release.
-  start-offline Start the stack, including the Redis sidecar when enabled,
-                 using only local images, without building or pulling images.
+  start-offline Start the stack, including monitoring services and the Redis
+                 sidecar when enabled, using only local images, without
+                 building or pulling images.
   redis-status Show the Redis sidecar status through the same Compose project.
   redis-logs   Follow the Redis sidecar logs (use Ctrl-C to stop following).
   reset-data Stop the stack and delete this Compose project's volumes, local
@@ -60,7 +62,7 @@ Environment:
   NETOPS_BUILD_PULL       Set to 1 to always pull newer base images while
                           building. By default local base images are reused and
                           the registry is only contacted for missing images.
-  NETOPS_REDIS_ENABLED    Set to 0 to run db/netops/nginx without Redis.
+  NETOPS_REDIS_ENABLED    Set to 0 to run db/netops/monitoring/nginx without Redis.
                           Default: 1. With the default Redis URL, install
                           generates a URL-safe REDIS_PASSWORD and updates
                           REDIS_URL.
@@ -115,7 +117,7 @@ compose() {
 }
 
 compose_service_args() {
-    printf '%s\n' db netops nginx
+    printf '%s\n' db netops victoriametrics snmp-exporter vmagent nginx
     if [[ "${NETOPS_REDIS_ENABLED:-1}" != "0" ]]; then
         printf '%s\n' redis
     fi
@@ -379,7 +381,10 @@ required_images() {
     printf '%s\n' \
         "nexora-netops:latest" \
         "nexora-nginx:latest" \
-        "nexora-postgres:latest"
+        "nexora-postgres:latest" \
+        "victoriametrics/victoria-metrics:v1.103.0" \
+        "victoriametrics/vmagent:v1.103.0" \
+        "prom/snmp-exporter:v0.26.0"
     if [[ "${NETOPS_REDIS_ENABLED:-1}" != "0" ]]; then
         printf '%s\n' "redis:7.4.2-alpine"
     fi

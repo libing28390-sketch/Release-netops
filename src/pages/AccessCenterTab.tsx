@@ -433,7 +433,7 @@ export default function AccessCenterTab({
       showToast(
         message === 'WEB_AGENT_UPGRADE_REQUIRED'
           ? (isZh ? '\u5f53\u524d Agent \u6682\u4e0d\u652f\u6301 Web \u4f1a\u8bdd' : 'The current Agent does not support Web sessions yet')
-          : (isZh ? `Web PAM \u4f1a\u8bdd\u542f\u52a8\u5931\u8d25\uff1a${message}` : `Unable to start Web PAM session: ${message}`),
+          : (isZh ? `Web PAM \u4f1a\u8bdd\u542f\u52a8\u5931\u8d25\uff1a${formatTerminalAgentError(error, true)}` : `Unable to start Web PAM session: ${formatTerminalAgentError(error, false)}`),
         'error',
       );
     } finally {
