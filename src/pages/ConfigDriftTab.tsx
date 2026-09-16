@@ -3,6 +3,7 @@ import { RefreshCw, ShieldAlert, ShieldCheck, GitCompare, RotateCcw, Download, C
 import * as XLSX from 'xlsx';
 import PageHero from '../components/PageHero';
 import { ActionButton } from '../components/ui/ActionIconButton';
+import { authHeaders } from '../api/http';
 
 interface DriftItem {
   device_id: string;
@@ -58,7 +59,7 @@ const ConfigDriftTab: React.FC<ConfigDriftTabProps> = ({ language, t }) => {
   const runScan = useCallback(async () => {
     setScanning(true);
     try {
-      const r = await fetch('/api/config-drift/scan');
+      const r = await fetch('/api/config-drift/scan', { headers: authHeaders() });
       if (r.ok) {
         const data = await r.json();
         setItems(data.items || []);
@@ -80,7 +81,7 @@ const ConfigDriftTab: React.FC<ConfigDriftTabProps> = ({ language, t }) => {
     setDiffLoading(true);
     try {
       const params = new URLSearchParams({ ...(item.baseline_snapshot_id ? { baseline_id: item.baseline_snapshot_id } : {}), ...(item.current_snapshot_id ? { current_id: item.current_snapshot_id } : {}) });
-      const r = await fetch(`/api/config-drift/device/${item.device_id}/diff?${params}`);
+      const r = await fetch(`/api/config-drift/device/${item.device_id}/diff?${params}`, { headers: authHeaders() });
       if (r.ok) {
         const data = await r.json();
         setDiff(data);
@@ -98,7 +99,7 @@ const ConfigDriftTab: React.FC<ConfigDriftTabProps> = ({ language, t }) => {
     try {
       const r = await fetch('/api/config-drift/rollback-preview', {
         method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
+        headers: authHeaders(true),
         body: JSON.stringify({
           device_id: selectedDevice.device_id,
           snapshot_id: baselineId,

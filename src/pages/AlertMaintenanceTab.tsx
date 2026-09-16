@@ -280,7 +280,7 @@ const AlertMaintenanceTab: React.FC<AlertPageCommonProps> = ({ language, current
         status: statusFilter,
         search: searchQuery,
       });
-      const resp = await fetch(`/api/alerts/maintenance-windows?${params.toString()}`);
+      const resp = await fetch(`/api/alerts/maintenance-windows?${params.toString()}`, { headers: authHeaders() });
       if (!resp.ok) throw new Error('Failed to load maintenance windows');
       const data: AlertMaintenanceListResponse = await resp.json();
       const items = data.items || [];
@@ -431,7 +431,7 @@ const AlertMaintenanceTab: React.FC<AlertPageCommonProps> = ({ language, current
     try {
       const resp = await fetch(`/api/alerts/maintenance-windows/${windowId}/cancel`, {
         method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
+        headers: authHeaders(true),
         body: JSON.stringify({ actor_username: currentUsername }),
       });
       const data = await resp.json().catch(() => ({}));
@@ -450,6 +450,7 @@ const AlertMaintenanceTab: React.FC<AlertPageCommonProps> = ({ language, current
     try {
       const resp = await fetch(`/api/alerts/maintenance-windows/${windowId}?actor_username=${encodeURIComponent(currentUsername)}`, {
         method: 'DELETE',
+        headers: authHeaders(),
       });
       const data = await resp.json().catch(() => ({}));
       if (!resp.ok) throw new Error(data.detail || 'Failed to delete maintenance window');

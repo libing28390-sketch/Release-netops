@@ -1,6 +1,7 @@
 import { useState, useEffect, useCallback } from 'react';
 
 import { AuditEvent, ComplianceFinding } from '../types';
+import { authHeaders } from '../api/http';
 
 interface UseHistoryAuditComplianceProps {
   isAuthenticated: boolean;
@@ -63,7 +64,7 @@ export const useHistoryAuditCompliance = ({
       setHistoryLoading(true);
       try {
         const params = new URLSearchParams({ status: historyStatusFilter, time_range: historyTimeFilter, page: String(historyPage), page_size: String(historyPageSize) });
-        const resp = await fetch(`/api/jobs?${params.toString()}`);
+        const resp = await fetch(`/api/jobs?${params.toString()}`, { headers: authHeaders() });
         if (!resp.ok) throw new Error('Failed');
         const data = await resp.json();
         if (cancelled) return;
@@ -86,7 +87,7 @@ export const useHistoryAuditCompliance = ({
       setAuditLoading(true);
       try {
         const params = new URLSearchParams({ category: auditCategoryFilter, severity: auditSeverityFilter, status: auditStatusFilter, time_range: auditTimeFilter, page: String(auditPage), page_size: String(auditPageSize) });
-        const resp = await fetch(`/api/audit/events?${params.toString()}`);
+        const resp = await fetch(`/api/audit/events?${params.toString()}`, { headers: authHeaders() });
         if (!resp.ok) throw new Error('Failed');
         const data = await resp.json();
         if (cancelled) return;
@@ -109,7 +110,8 @@ export const useHistoryAuditCompliance = ({
       setComplianceLoading(true);
       try {
         const params = new URLSearchParams({ severity: complianceSeverityFilter, status: complianceStatusFilter, category: complianceCategoryFilter, page: String(compliancePage), page_size: String(compliancePageSize) });
-        const [overviewResp, findingsResp] = await Promise.all([fetch('/api/compliance/overview'), fetch(`/api/compliance/findings?${params.toString()}`)]);
+        const headers = authHeaders();
+        const [overviewResp, findingsResp] = await Promise.all([fetch('/api/compliance/overview', { headers }), fetch(`/api/compliance/findings?${params.toString()}`, { headers })]);
         if (!overviewResp.ok || !findingsResp.ok) throw new Error('Failed');
         const overviewData = await overviewResp.json();
         const findingsData = await findingsResp.json();
@@ -129,7 +131,7 @@ export const useHistoryAuditCompliance = ({
     setComplianceRunLoading(true);
     try {
       const resp = await fetch('/api/compliance/run', {
-        method: 'POST', headers: { 'Content-Type': 'application/json' },
+        method: 'POST', headers: authHeaders(true),
         body: JSON.stringify({ author: currentUser.username || 'admin', actor_id: currentUser.id, actor_role: currentUser.role || 'Administrator' }),
       });
       const data = await resp.json().catch(() => ({}));
@@ -142,7 +144,7 @@ export const useHistoryAuditCompliance = ({
 
   const updateComplianceFinding = useCallback(async (findingId: string, patch: { status?: string; owner?: string; note?: string }) => {
     try {
-      const resp = await fetch(`/api/compliance/findings/${findingId}`, { method: 'PUT', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(patch) });
+      const resp = await fetch(`/api/compliance/findings/${findingId}`, { method: 'PUT', headers: authHeaders(true), body: JSON.stringify(patch) });
       const data = await resp.json().catch(() => ({}));
       if (!resp.ok) { showToast(`Update failed: ${data.detail || resp.statusText}`, 'error'); return; }
       setSelectedFinding(data);
@@ -153,7 +155,7 @@ export const useHistoryAuditCompliance = ({
 
   const openAuditEventDetail = useCallback(async (event: AuditEvent) => {
     try {
-      const resp = await fetch(`/api/audit/events/${event.id}`);
+      const resp = await fetch(`/api/audit/events/${event.id}`, { headers: authHeaders() });
       const data = await resp.json().catch(() => event);
       if (!resp.ok) throw new Error('Failed');
       setSelectedAuditEvent(data);
@@ -165,7 +167,7 @@ export const useHistoryAuditCompliance = ({
 
   const openComplianceFindingDetail = useCallback(async (finding: ComplianceFinding) => {
     try {
-      const resp = await fetch(`/api/compliance/findings/${finding.id}`);
+      const resp = await fetch(`/api/compliance/findings/${finding.id}`, { headers: authHeaders() });
       const data = await resp.json().catch(() => finding);
       if (!resp.ok) throw new Error('Failed');
       setSelectedFinding(data);

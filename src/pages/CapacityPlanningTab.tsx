@@ -11,6 +11,7 @@ import * as XLSX from 'xlsx';
 import { useChartTheme } from '../hooks/useChartTheme';
 import PageHero from '../components/PageHero';
 import { ActionButton } from '../components/ui/ActionIconButton';
+import { authHeaders } from '../api/http';
 
 /* ───────── Types ───────── */
 
@@ -119,8 +120,8 @@ const CapacityPlanningTab: React.FC<CapacityPlanningTabProps> = ({ language, t }
     setLoading(true);
     try {
       const [ovRes, fcRes] = await Promise.all([
-        fetch('/api/capacity/overview'),
-        fetch('/api/capacity/forecast'),
+        fetch('/api/capacity/overview', { headers: authHeaders() }),
+        fetch('/api/capacity/forecast', { headers: authHeaders() }),
       ]);
       if (ovRes.ok) setOverview(await ovRes.json());
       if (fcRes.ok) {
@@ -142,7 +143,7 @@ const CapacityPlanningTab: React.FC<CapacityPlanningTabProps> = ({ language, t }
     const fetchTrend = async () => {
       setTrendLoading(true);
       try {
-        const res = await fetch(`/api/capacity/device/${selectedRisk.id}/trend`);
+        const res = await fetch(`/api/capacity/device/${selectedRisk.id}/trend`, { headers: authHeaders() });
         if (res.ok) {
           const data = await res.json();
           if (data && data.interfaces && data.interfaces.length > 0) {

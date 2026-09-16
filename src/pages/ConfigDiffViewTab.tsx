@@ -335,7 +335,7 @@ const ConfigDiffViewTab: React.FC<ConfigDiffViewTabProps> = ({
       Object.entries(branch).forEach(([key, value]) => {
         if (value) params.set(key, value);
       });
-      const resp = await fetch(`/api/configs/devices-with-backups?${params}`, { signal: controller.signal });
+      const resp = await fetch(`/api/configs/devices-with-backups?${params}`, { headers: authHeaders(), signal: controller.signal });
       if (resp.ok) {
         const data = await resp.json();
         setDevices(data.items || []);

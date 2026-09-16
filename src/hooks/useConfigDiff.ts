@@ -2,6 +2,7 @@ import { useState, useRef, useCallback } from 'react';
 import { useNavigate } from 'react-router-dom';
 import type { ConfigSnapshot, DiffLine } from '../types';
 import { computeDiff, buildDiffDerivedData, normalizeConfigForDiff } from '../utils/configDiffEngine';
+import { authHeaders } from '../api/http';
 
 export interface UseConfigDiffOptions {
   language: string;
@@ -106,8 +107,8 @@ export function useConfigDiff({
   const handleSelectSnapshotPair = useCallback(async (leftId: string, rightId: string) => {
     try {
       const [leftResp, rightResp] = await Promise.all([
-        fetch(`/api/configs/snapshots/${leftId}/content`),
-        fetch(`/api/configs/snapshots/${rightId}/content`),
+        fetch(`/api/configs/snapshots/${leftId}/content`, { headers: authHeaders() }),
+        fetch(`/api/configs/snapshots/${rightId}/content`, { headers: authHeaders() }),
       ]);
       if (!leftResp.ok || !rightResp.ok) {
         showToast(language === 'zh' ? '快照内容加载失败' : 'Failed to load snapshot content', 'error');

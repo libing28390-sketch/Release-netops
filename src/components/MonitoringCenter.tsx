@@ -15,6 +15,7 @@ import { useChartTheme } from '../hooks/useChartTheme';
 import { useMonitoringStore } from '../store/monitoringStore';
 import { useMonitoring } from '../hooks/useMonitoring';
 import { useSystem } from '../hooks/useSystem';
+import { authHeaders } from '../api/http';
 
 type MonitorDevice = {
   id?: string;
@@ -503,7 +504,7 @@ const MonitoringCenter: React.FC<MonitoringCenterProps> = ({ language, devices: 
   const fetchHostResourceHistory = useCallback(async (rangeHours = hostResourceRange) => {
     setHostResourceHistoryLoading(true);
     try {
-      const resp = await fetch(`/api/health/resources/history?range_hours=${rangeHours}`);
+      const resp = await fetch(`/api/health/resources/history?range_hours=${rangeHours}`, { headers: authHeaders() });
       if (!resp.ok) throw new Error('Failed to fetch host resource history');
       const payload = await resp.json() as HostResourceHistoryPayload;
       setHostResourceHistory(payload);

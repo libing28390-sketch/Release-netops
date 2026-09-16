@@ -67,7 +67,7 @@ export const useDeviceFormActions = ({ devices, setDevices, showToast }: UseDevi
       };
       const response = await fetch(`/api/devices/${editingDevice.id}`, {
         method: 'PUT',
-        headers: { 'Content-Type': 'application/json' },
+        headers: authHeaders(true),
         body: JSON.stringify(payload),
       });
       if (response.ok) {

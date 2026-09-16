@@ -1,5 +1,6 @@
 import { useCallback } from 'react';
 import type { ConfigVersion, Device } from '../types';
+import { authHeaders } from '../api/http';
 
 interface UseConfigRollbackActionParams {
   selectedDevice: Device | null;
@@ -32,7 +33,7 @@ export const useConfigRollbackAction = ({
     try {
       const execRes = await fetch('/api/execute', {
         method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
+        headers: authHeaders(true),
         body: JSON.stringify({
           device_id: device.id,
           command: version.content,
@@ -46,7 +47,7 @@ export const useConfigRollbackAction = ({
 
       const dbRes = await fetch(`/api/devices/${device.id}/config`, {
         method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
+        headers: authHeaders(true),
         body: JSON.stringify({
           current_config: version.content,
           config_history: updatedHistory,

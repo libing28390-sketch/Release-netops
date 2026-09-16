@@ -9,6 +9,7 @@ import PageHero from '../components/PageHero';
 import { ActionButton, ActionIconButton, ActionIconGroup } from '../components/ui/ActionIconButton';
 import { alertWorkflowBadgeClass, severityBadgeClass } from '../components/shared';
 import { fetchAllPaginatedItems } from '../utils/pagination';
+import { authHeaders } from '../api/http';
 import {
   alertInputClass,
   alertPanelClass,
@@ -62,6 +63,13 @@ const AlertDeskTab: React.FC<AlertDeskTabProps> = ({ language, currentUsername, 
   const loadAlerts = async () => {
     setLoading(true);
     try {
+      if (!localStorage.getItem('netops_token')) {
+        setRows([]);
+        setTotal(0);
+        setStatusCounts({});
+        setSelectedIds(new Set());
+        return;
+      }
       const params = new URLSearchParams({
         page: String(page),
         page_size: String(pageSize),
@@ -71,7 +79,7 @@ const AlertDeskTab: React.FC<AlertDeskTabProps> = ({ language, currentUsername, 
         assignee: 'all',
         search,
       });
-      const resp = await fetch(`/api/alerts?${params.toString()}`);
+      const resp = await fetch(`/api/alerts?${params.toString()}`, { headers: authHeaders() });
       if (!resp.ok) throw new Error('Failed to load alerts');
       const data: AlertListResponse = await resp.json();
       const items = data.items || [];
@@ -94,7 +102,7 @@ const AlertDeskTab: React.FC<AlertDeskTabProps> = ({ language, currentUsername, 
   const loadDetail = async (alertId: string) => {
     setDetailLoading(true);
     try {
-      const resp = await fetch(`/api/alerts/${alertId}`);
+      const resp = await fetch(`/api/alerts/${alertId}`, { headers: authHeaders() });
       if (!resp.ok) throw new Error('Failed to load alert detail');
       const data: AlertDetailResponse = await resp.json();
       setSelectedDetail(data);
@@ -116,7 +124,7 @@ const AlertDeskTab: React.FC<AlertDeskTabProps> = ({ language, currentUsername, 
     if (!selectedAlertId) return;
     void loadDetail(selectedAlertId);
     setActivityLoading(true);
-    fetch(`/api/alerts/${encodeURIComponent(selectedAlertId)}/activity?limit=100`)
+    fetch(`/api/alerts/${encodeURIComponent(selectedAlertId)}/activity?limit=100`, { headers: authHeaders() })
       .then((response) => response.ok ? response.json() : Promise.reject(new Error(`HTTP ${response.status}`)))
       .then((payload: { items?: AlertActivityItem[] }) => setActivity(Array.isArray(payload.items) ? payload.items : []))
       .catch(() => setActivity([]))
@@ -150,7 +158,7 @@ const AlertDeskTab: React.FC<AlertDeskTabProps> = ({ language, currentUsername, 
     try {
       const resp = await fetch(`/api/alerts/${selectedDetail.item.id}/ack`, {
         method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
+        headers: authHeaders(true),
         body: JSON.stringify({ actor_username: currentUsername, status: nextStatus }),
       });
       const data = await resp.json().catch(() => ({}));
@@ -171,7 +179,7 @@ const AlertDeskTab: React.FC<AlertDeskTabProps> = ({ language, currentUsername, 
     try {
       const resp = await fetch(`/api/alerts/${selectedDetail.item.id}/assign`, {
         method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
+        headers: authHeaders(true),
         body: JSON.stringify({ actor_username: currentUsername, assignee: assignValue.trim() }),
       });
       const data = await resp.json().catch(() => ({}));
@@ -191,7 +199,7 @@ const AlertDeskTab: React.FC<AlertDeskTabProps> = ({ language, currentUsername, 
     try {
       const resp = await fetch(`/api/alerts/${selectedDetail.item.id}/note`, {
         method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
+        headers: authHeaders(true),
         body: JSON.stringify({ actor_username: currentUsername, note: detailNote }),
       });
       const data = await resp.json().catch(() => ({}));
@@ -252,7 +260,7 @@ const AlertDeskTab: React.FC<AlertDeskTabProps> = ({ language, currentUsername, 
     try {
       const resp = await fetch('/api/alerts/batch-ack', {
         method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
+        headers: authHeaders(true),
         body: JSON.stringify({ alert_ids: Array.from(selectedIds), actor_username: currentUsername, status: nextStatus }),
       });
       const data = await resp.json().catch(() => ({}));
@@ -273,7 +281,7 @@ const AlertDeskTab: React.FC<AlertDeskTabProps> = ({ language, currentUsername, 
     try {
       const resp = await fetch('/api/alerts/batch-assign', {
         method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
+        headers: authHeaders(true),
         body: JSON.stringify({ alert_ids: Array.from(selectedIds), actor_username: currentUsername, assignee: currentUsername }),
       });
       const data = await resp.json().catch(() => ({}));
@@ -292,7 +300,7 @@ const AlertDeskTab: React.FC<AlertDeskTabProps> = ({ language, currentUsername, 
     try {
       const resp = await fetch(`/api/alerts/${alertId}/ack`, {
         method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
+        headers: authHeaders(true),
         body: JSON.stringify({ actor_username: currentUsername, status: 'acknowledged' }),
       });
       if (!resp.ok) throw new Error('Failed');
@@ -307,7 +315,7 @@ const AlertDeskTab: React.FC<AlertDeskTabProps> = ({ language, currentUsername, 
     try {
       const resp = await fetch(`/api/alerts/${alertId}/assign`, {
         method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
+        headers: authHeaders(true),
         body: JSON.stringify({ actor_username: currentUsername, assignee: currentUsername }),
       });
       if (!resp.ok) throw new Error('Failed');

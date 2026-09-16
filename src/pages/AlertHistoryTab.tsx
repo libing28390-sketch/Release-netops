@@ -9,6 +9,7 @@ import { ActionButton } from '../components/ui/ActionIconButton';
 import { severityBadgeClass, alertWorkflowBadgeClass } from '../components/shared';
 import { fetchAllPaginatedItems } from '../utils/pagination';
 import DateTimePicker from '../components/DateTimePicker';
+import { authHeaders } from '../api/http';
 import {
   alertInputClass,
   alertPanelClass,
@@ -51,6 +52,11 @@ const AlertHistoryTab: React.FC<AlertHistoryTabProps> = ({ language, showToast, 
   const loadAlerts = useCallback(async () => {
     setLoading(true);
     try {
+      if (!localStorage.getItem('netops_token')) {
+        setRows([]);
+        setTotal(0);
+        return;
+      }
       const params = new URLSearchParams({
         page: String(page),
         page_size: String(pageSize),
@@ -63,7 +69,7 @@ const AlertHistoryTab: React.FC<AlertHistoryTabProps> = ({ language, showToast, 
       if (createdFrom) params.set('created_from', createdFrom);
       if (createdTo) params.set('created_to', createdTo);
 
-      const resp = await fetch(`/api/alerts?${params.toString()}`);
+      const resp = await fetch(`/api/alerts?${params.toString()}`, { headers: authHeaders() });
       if (!resp.ok) throw new Error('Failed');
       const data: AlertListResponse = await resp.json();
       const items = data.items || [];
@@ -82,7 +88,7 @@ const AlertHistoryTab: React.FC<AlertHistoryTabProps> = ({ language, showToast, 
   const loadDetail = async (alertId: string) => {
     setDetailLoading(true);
     try {
-      const resp = await fetch(`/api/alerts/${alertId}`);
+      const resp = await fetch(`/api/alerts/${alertId}`, { headers: authHeaders() });
       if (!resp.ok) throw new Error('Failed');
       const data: AlertDetailResponse = await resp.json();
       setSelectedDetail(data);

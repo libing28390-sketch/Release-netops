@@ -3,7 +3,7 @@ import { useCallback, useEffect, useMemo, useState } from 'react';
 import type { ConfigTemplate, Device, SessionUser } from '../types';
 import { getVendorFromPlatform } from '../types';
 import type { Language } from '../i18n.tsx';
-import { apiRequest } from '../api/http';
+import { apiRequest, authHeaders } from '../api/http';
 
 interface GlobalVar {
   id?: string;
@@ -246,7 +246,7 @@ export const useConfigWorkspace = ({
         const existing = existingByKey.get(item.key);
         const response = await fetch(existing?.id ? `/api/vars/${existing.id}` : '/api/vars', {
           method: existing?.id ? 'PUT' : 'POST',
-          headers: { 'Content-Type': 'application/json' },
+          headers: authHeaders(true),
           body: JSON.stringify({
             ...item,
             actor_username: currentUser.username || 'admin',
@@ -300,7 +300,7 @@ export const useConfigWorkspace = ({
     try {
       const response = await fetch('/api/vars', {
         method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
+        headers: authHeaders(true),
         body: JSON.stringify({
           key: key.trim(),
           value,
@@ -322,7 +322,7 @@ export const useConfigWorkspace = ({
 
   const handleDeleteVar = useCallback(async (id: string) => {
     try {
-      const response = await fetch(`/api/vars/${id}`, { method: 'DELETE' });
+      const response = await fetch(`/api/vars/${id}`, { method: 'DELETE', headers: authHeaders() });
       const data = await response.json().catch(() => ({}));
       if (!response.ok) {
         throw new Error(data.detail || response.statusText);

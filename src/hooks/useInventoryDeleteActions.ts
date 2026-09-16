@@ -2,6 +2,7 @@ import { useCallback } from 'react';
 import type { Device } from '../types';
 import { deleteDevicesByIds } from '../utils/deviceDelete';
 import { useInventoryStore } from '../store/inventoryStore';
+import { authHeaders } from '../api/http';
 
 export const useInventoryDeleteActions = (
   showToast: (message: string, type?: 'success' | 'error' | 'info') => void,
@@ -38,7 +39,7 @@ export const useInventoryDeleteActions = (
       }
     } else if (deviceToDelete) {
       try {
-        const response = await fetch(`/api/devices/${deviceToDelete}`, { method: 'DELETE' });
+        const response = await fetch(`/api/devices/${deviceToDelete}`, { method: 'DELETE', headers: authHeaders() });
         if (response.ok) {
           if (setDevices) {
             setDevices((prev) => prev.filter((d) => d.id !== deviceToDelete));

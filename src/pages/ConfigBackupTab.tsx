@@ -6,6 +6,7 @@ import Pagination from '../components/Pagination';
 import PageHero from '../components/PageHero';
 import { DataTable } from '../components/DataTable';
 import { ActionButton, ActionIconButton, ActionIconGroup } from '../components/ui/ActionIconButton';
+import { authHeaders } from '../api/http';
 
 interface LatestBackup {
   id: string;
@@ -568,12 +569,17 @@ const ConfigBackupTab: React.FC<ConfigBackupTabProps> = ({
   const loadLatestBackups = useCallback(async () => {
     setLoading(true);
     try {
+      if (!localStorage.getItem('netops_token')) {
+        setRows([]);
+        setTotal(0);
+        return;
+      }
       const params = new URLSearchParams({
         page: String(page),
         page_size: String(pageSize),
       });
       if (search) params.set('search', search);
-      const resp = await fetch(`/api/configs/latest-backups?${params}`);
+      const resp = await fetch(`/api/configs/latest-backups?${params}`, { headers: authHeaders() });
       if (!resp.ok) throw new Error('Failed');
       const data = await resp.json();
       setRows(data.items || []);
@@ -588,6 +594,12 @@ const ConfigBackupTab: React.FC<ConfigBackupTabProps> = ({
   const loadBackupRuns = useCallback(async () => {
     setRunsLoading(true);
     try {
+      if (!localStorage.getItem('netops_token')) {
+        setHistoryRuns([]);
+        setRuns([]);
+        setRunsTotal(0);
+        return;
+      }
       const token = localStorage.getItem('netops_token');
       const headers = token ? { Authorization: `Bearer ${token}` } : {};
       const params = new URLSearchParams({ page: String(runsPage), page_size: String(runsPageSize) });
@@ -818,7 +830,7 @@ const ConfigBackupTab: React.FC<ConfigBackupTabProps> = ({
     setViewContent('');
     setViewLoading(true);
     try {
-      const resp = await fetch(`/api/configs/snapshots/${item.id}/content`);
+      const resp = await fetch(`/api/configs/snapshots/${item.id}/content`, { headers: authHeaders() });
       if (!resp.ok) throw new Error('Failed');
       const data = await resp.json();
       setViewContent(data.content || '');

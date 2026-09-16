@@ -2,6 +2,7 @@ import { useCallback, useState } from 'react';
 import type { Device, DeviceConnectionCheckSummary } from '../types';
 import type { Language } from '../i18n.tsx';
 import { buildConnectionTestMessage, buildConnectionCheckStatus } from '../utils/connectionHelpers';
+import { authHeaders } from '../api/http';
 
 export interface ConnectionTestStage {
   stage: string;
@@ -64,7 +65,7 @@ export const useDeviceConnectionAndSnmp = ({
     try {
       const response = await fetch('/api/devices/connect', {
         method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
+        headers: authHeaders(true),
         body: JSON.stringify({
           device_id: deviceToTest.id,
           hostname: deviceToTest.hostname,
@@ -127,7 +128,7 @@ export const useDeviceConnectionAndSnmp = ({
     setSnmpTestResult(null);
     setShowSnmpTestResult(true);
     try {
-      const resp = await fetch(`/api/devices/${deviceId}/snmp-test`, { method: 'POST' });
+      const resp = await fetch(`/api/devices/${deviceId}/snmp-test`, { method: 'POST', headers: authHeaders() });
       const data = await resp.json();
       setSnmpTestResult(data);
       if (data.success) {
@@ -146,7 +147,7 @@ export const useDeviceConnectionAndSnmp = ({
   const handleSnmpSyncNow = useCallback(async (deviceId: string) => {
     setSnmpSyncingId(deviceId);
     try {
-      const resp = await fetch(`/api/devices/${deviceId}/snmp-test`, { method: 'POST' });
+      const resp = await fetch(`/api/devices/${deviceId}/snmp-test`, { method: 'POST', headers: authHeaders() });
       const data = await resp.json();
       if (!resp.ok || !data.success) {
         showToast(language === 'zh' ? 'SNMP 立即同步失败' : 'SNMP sync failed', 'error');

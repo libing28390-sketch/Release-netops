@@ -21,6 +21,7 @@ RELEASE_NOTES = {
         "• 【修复】修复资产导入 SSH 端口、Web SSH 管理入口、系统默认站点提示，以及 H3C/Ruijie/Huawei 平台别名导致的错误命令回退。",
         "• 【修复】修复 AI 检索范围、官方模板映射、对话幂等、敏感信息脱敏和端口安全边界问题。",
         "• 【修复】修复 SNMP 传输、遥测删除、调度器租约、PostgreSQL 时区和跨租户管理员归属问题。",
+        "• 【修复】修复配置备份、告警、审计/合规、容量规划、配置差异/漂移和监控空数据页面未携带认证头导致 401 错误提示的问题；未登录时不再发起受保护请求。",
         "• 【加固】增强认证、RBAC、凭据审计、终端安全、Redis/Docker 发布链路和 3D 静态资源加载；外部 AI 与网络写入继续默认关闭。",
     ),
     "en": (
@@ -39,6 +40,7 @@ RELEASE_NOTES = {
         "• [Fix] Fixed imported SSH ports, Web SSH entries, system-default-site guidance, and vendor alias handling that could route H3C/Ruijie/Huawei devices to the wrong commands.",
         "• [Fix] Fixed AI retrieval scope, official-template mapping, conversation idempotency, sensitive-data redaction, and port-security boundaries.",
         "• [Fix] Fixed SNMP transport, telemetry cleanup, scheduler leases, PostgreSQL timezone handling, and cross-tenant administrator assignment.",
+        "• [Fix] Fixed 401 error noise on empty backup, alert, audit/compliance, capacity, config-diff/drift, and monitoring views by attaching auth headers to protected requests and skipping them while signed out.",
         "• [Hardening] Strengthened authentication, RBAC, credential auditing, terminal security, Redis/Docker release paths, and 3D static-asset delivery; external AI and network writes remain disabled by default.",
     ),
 }
