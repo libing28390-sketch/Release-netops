@@ -54,6 +54,7 @@ import {
   normalizeImportHeader,
   mergeManagementMethods,
   parseManagementMethodSheet,
+  formatAssetImportError,
   type ManagementMethodImportRow,
 } from './importUtils';
 
@@ -1097,7 +1098,8 @@ const AssetManagementTab: React.FC<AssetManagementTabProps> = ({ language, setAc
         fetchAllRacks();
       } else {
         const error = await r.json().catch(() => null);
-        setFeedbackMsg({ type: 'error', text: error?.detail || (zh ? '导入失败' : 'Import failed') });
+        const formatted = formatAssetImportError(error?.detail, language);
+        setFeedbackMsg({ type: 'error', ...formatted });
       }
     } catch {
       setFeedbackMsg({ type: 'error', text: zh ? '连接失败，导入未完成' : 'Connection failed, import incomplete' });
@@ -1457,7 +1459,8 @@ const AssetManagementTab: React.FC<AssetManagementTabProps> = ({ language, setAc
     const networkAssetIndexes = [0, 1, 2, 3, 4, 5, 6, 8, 10, 11, 12, 13, 17, 18, 19, 20, 21, 22, 23, 24, 25, 26, 27, 28, 29, 30, 31, 32, 33, 34, 35, 36, 37, 38, 39, 40, 41];
     const serverAssetIndexes = [0, 1, 2, 3, 4, 5, 6, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18, 19, 20, 21, 22, 25, 26, 27, 28, 30, 31, 33, 34, 35, 36, 37, 38, 39, 40, 41];
     const networkAssetHeaders = networkAssetIndexes.map(index => rawAssetHeaders[index]);
-    networkAssetHeaders[28] = '绑定特权凭据';
+    networkAssetHeaders[25] = zh ? '绑定普通用户凭据' : 'Normal Credential';
+    networkAssetHeaders[27] = zh ? 'SNMP凭据（推荐）' : 'SNMP Credential (recommended)';
     const serverAssetHeaders = serverAssetIndexes.map(index => rawAssetHeaders[index]);
     const markRequiredHeaders = (headers: string[]) => headers.map(header => requiredHeaders.has(header) ? `${header} *` : header);
     const markedNetworkAssetHeaders = markRequiredHeaders(networkAssetHeaders);

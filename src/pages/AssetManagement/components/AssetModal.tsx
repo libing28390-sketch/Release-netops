@@ -162,6 +162,23 @@ export const AssetModal: React.FC<AssetModalProps> = ({
     return { ...next, platform: targetPlatform, tag_ids: [...withoutTechnology, ...(vendorTag ? [vendorTag.id] : []), ...(platformTag ? [platformTag.id] : [])] };
   };
 
+  // A vendor with exactly one supported platform should always have that
+  // platform selected, including when an older alias is loaded for editing.
+  // Vendors with multiple platforms remain user-selectable.
+  React.useEffect(() => {
+    if (form.asset_type !== 'network_device' || !form.vendor) return;
+    const platformOptions = getPlatformsForVendor(form.vendor);
+    if (platformOptions.length !== 1) return;
+    const defaultPlatform = platformOptions[0].value;
+    if (String(form.platform || '') === defaultPlatform) return;
+    setForm(current => {
+      if (current.asset_type !== 'network_device' || current.vendor !== form.vendor || String(current.platform || '') === defaultPlatform) {
+        return current;
+      }
+      return withTechnologyTag({ ...current, platform: defaultPlatform }, current.vendor, defaultPlatform);
+    });
+  }, [allTags, form.asset_type, form.platform, form.vendor, setForm]);
+
   // Real-time U-position validation
   React.useEffect(() => {
     const rack = form.rack;

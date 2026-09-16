@@ -160,13 +160,14 @@ export const VENDOR_IMPORT_ALIASES: Record<string, string> = {
 export const VENDOR_PLATFORMS: Record<string, { value: string; label: string }[]> = {
   Cisco:      [{ value: 'cisco_ios', label: 'Cisco IOS' }, { value: 'cisco_nxos', label: 'Cisco NX-OS' }, { value: 'cisco_xe', label: 'Cisco IOS-XE' }, { value: 'cisco_iosxr', label: 'Cisco IOS-XR' }, { value: 'cisco_asa', label: 'Cisco ASA/Firepower' }],
   Huawei:     [{ value: 'huawei_vrp', label: 'Huawei VRPv5' }, { value: 'huawei_vrpv8', label: 'Huawei VRPv8' }, { value: 'huawei_smartax', label: 'Huawei SmartAX' }, { value: 'huawei_usg', label: 'Huawei USG' }],
-  H3C:        [
-    { value: 'h3c_comware_v3', label: 'H3C Comware V3' },
-    { value: 'h3c_comware', label: 'H3C Comware' },
-  ],
+  // Keep one canonical H3C platform. V3/V5/V7/V9 labels are accepted as
+  // legacy import aliases and normalized to h3c_comware below.
+  H3C:        [{ value: 'h3c_comware', label: 'H3C Comware' }],
   Arista:     [{ value: 'arista_eos', label: 'Arista EOS' }],
   Juniper:    [{ value: 'juniper_junos', label: 'Juniper JunOS' }, { value: 'juniper_srx', label: 'Juniper SRX' }],
-  Ruijie:     [{ value: 'ruijie_rgos', label: 'Ruijie RGOS' }, { value: 'ruijie_os', label: 'Ruijie OS' }],
+  // `ruijie_os` is a legacy alias of the same RGOS family. Keep one
+  // user-facing selection while retaining the alias in the import map below.
+  Ruijie:     [{ value: 'ruijie_rgos', label: 'Ruijie RGOS' }],
   Fortinet:   [{ value: 'fortinet', label: 'FortiOS' }],
   'Palo Alto':[{ value: 'paloalto_panos', label: 'PAN-OS' }],
   Hillstone:  [{ value: 'hillstone_stoneos', label: 'Hillstone StoneOS' }],
@@ -323,7 +324,7 @@ export const COL_MAP: Record<string, string> = {
   '设备来源（必填：new=新设备，legacy=存量设备）': 'asset_origin',
   '录入来源（必填：新设备或存量设备）': 'asset_origin',
   'Asset Origin (Required: new or legacy)': 'asset_origin',
-  '绑定凭据': 'credential_id', '凭据名称': 'credential_id', '凭据ID': 'credential_id', 'Credential': 'credential_id', 'credential_id': 'credential_id',
+  '绑定凭据': 'credential_id', '绑定普通用户凭据': 'credential_id', '绑定普通用户凭据（推荐）': 'credential_id', '普通用户凭据': 'credential_id', '凭据名称': 'credential_id', '凭据ID': 'credential_id', 'Credential': 'credential_id', 'Normal Credential': 'credential_id', 'Normal Credential ID': 'credential_id', 'credential_id': 'credential_id',
   '绑定特权凭据': 'admin_credential_id', '特权凭据': 'admin_credential_id', 'Admin Credential': 'admin_credential_id', 'admin_credential_id': 'admin_credential_id',
   '标签': 'tag_codes', '标签代码': 'tag_codes', 'Tags': 'tag_codes', 'Tag Codes': 'tag_codes', 'tag_codes': 'tag_codes',
   '免上收投产原因': 'takeover_exempt_reason', 'Takeover Exemption Reason': 'takeover_exempt_reason', 'takeover_exempt_reason': 'takeover_exempt_reason',
@@ -404,8 +405,8 @@ export const IMPORT_VALUE_MAP: Record<string, Record<string, string>> = {
   platform: {
     '思科 IOS': 'cisco_ios', '思科 NX-OS': 'cisco_nxos', '思科 IOS-XE': 'cisco_xe',
     '华为 VRPv5': 'huawei_vrp', '华为 VRPv8': 'huawei_vrpv8',
-    '华三 Comware V3': 'h3c_comware_v3', '华三 Comware V5': 'h3c_comware', '华三 Comware V7': 'h3c_comware', '华三 Comware V9': 'h3c_comware',
-    '阿里斯塔 EOS': 'arista_eos', '瞻博 JunOS': 'juniper_junos', '锐捷 RGOS': 'ruijie_rgos',
+    '华三 Comware V3': 'h3c_comware', '华三 Comware V5': 'h3c_comware', '华三 Comware V7': 'h3c_comware', '华三 Comware V9': 'h3c_comware', 'hp_comware': 'h3c_comware', 'h3c_comware_v3': 'h3c_comware',
+    '阿里斯塔 EOS': 'arista_eos', '瞻博 JunOS': 'juniper_junos', '锐捷 RGOS': 'ruijie_rgos', '锐捷 OS': 'ruijie_rgos', 'Ruijie OS': 'ruijie_rgos', 'ruijie_os': 'ruijie_rgos',
     '飞塔 FortiOS': 'fortinet', '帕洛阿尔托 PAN-OS': 'paloalto_panos', '中兴 ZXROS': 'zte_zxros', '瑞斯康达 ROS': 'raisecom_ros', '迈普网络系统': 'maipu',
     '迪普 Conplat': 'dptech_conplat', '迪普 Conplat FW': 'dptech_conplat_fw',
     '迪普交换机': 'dptech_conplat', '迪普防火墙': 'dptech_conplat_fw',
@@ -416,7 +417,7 @@ export const IMPORT_VALUE_MAP: Record<string, Record<string, string>> = {
     Ubuntu: 'ubuntu', CentOS: 'centos', Debian: 'debian',
     'Cisco IOS': 'cisco_ios', 'Cisco NX-OS': 'cisco_nxos', 'Cisco IOS-XE': 'cisco_xe',
     'Huawei VRPv5': 'huawei_vrp', 'Huawei VRPv8': 'huawei_vrpv8',
-    'H3C Comware': 'h3c_comware', 'H3C Comware V3': 'h3c_comware_v3', 'H3C Comware V5': 'h3c_comware', 'H3C Comware V7': 'h3c_comware', 'H3C Comware V9': 'h3c_comware',
+    'H3C Comware': 'h3c_comware', 'H3C Comware V3': 'h3c_comware', 'H3C Comware V5': 'h3c_comware', 'H3C Comware V7': 'h3c_comware', 'H3C Comware V9': 'h3c_comware', 'h3c_comware9': 'h3c_comware',
     'Juniper JunOS': 'juniper_junos', 'Arista EOS': 'arista_eos', 'Ruijie RGOS': 'ruijie_rgos',
     FortiOS: 'fortinet', 'ZTE ZXROS': 'zte_zxros', 'Raisecom ROS': 'raisecom_ros', 'Maipu Network OS': 'maipu',
     'Windows Server': 'windows', 'VMware ESXi': 'esxi',

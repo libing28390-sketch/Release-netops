@@ -270,3 +270,81 @@ export function mergeManagementMethods(
 
   return { assets, errors };
 }
+
+export type AssetImportFeedback = {
+  text: string;
+  details?: string[];
+};
+
+const isRecord = (value: unknown): value is Record<string, unknown> => (
+  Boolean(value) && typeof value === 'object' && !Array.isArray(value)
+);
+
+const stringValue = (value: unknown): string => (
+  typeof value === 'string' ? value.trim() : String(value ?? '').trim()
+);
+
+const safeSiteLabel = (value: unknown, zh: boolean): string => {
+  const raw = stringValue(value);
+  if (!raw) {
+    return zh ? '未提供' : 'not provided';
+  }
+  if (['site-default', 'default_site', 'default site'].includes(raw.toLowerCase())) {
+    return zh ? '系统默认站点' : 'system default site';
+  }
+  return raw.replace(/\bsite-default\b|\bdefault_site\b/gi, zh ? '系统默认站点' : 'system default site');
+};
+
+/**
+ * Convert the structured import error contract into a localized toast model.
+ * Keep this tolerant of older deployments that returned a string or omitted
+ * the reason fields, while never rendering internal site identifiers.
+ */
+export const formatAssetImportError = (detail: unknown, language: string): AssetImportFeedback => {
+  const zh = language === 'zh';
+  const root = isRecord(detail) ? detail : {};
+  const nested = isRecord(root.details) ? root.details : {};
+  const source = stringValue(nested.reason) ? nested : root;
+  const rawMessage = typeof root.message === 'string'
+    ? root.message
+    : typeof detail === 'string'
+      ? detail
+      : '';
+  const reason = stringValue(source.reason);
+  const looksReserved = reason === 'reserved_system_site'
+    || /system default site|site-default|default_site/i.test(rawMessage);
+  const row = Number(source.row);
+  const rowLabelZh = Number.isInteger(row) && row > 0 ? `第 ${row} 条` : '';
+  const rowLabelEn = Number.isInteger(row) && row > 0 ? `item ${row}` : '';
+  const assetLabel = stringValue(source.asset_label);
+  const siteLabel = safeSiteLabel(source.site_label, zh);
+
+  if (looksReserved) {
+    const subjectZh = assetLabel ? `资产“${assetLabel}”` : '该资产';
+    const subjectEn = assetLabel ? `asset “${assetLabel}”` : 'this asset';
+    return {
+      text: zh
+        ? `导入失败${rowLabelZh ? `：${rowLabelZh}` : ''}${subjectZh}的站点“${siteLabel}”是系统保留站点，不能作为业务资产归属。`
+        : `Import failed${rowLabelEn ? ` (${rowLabelEn})` : ''}: the site “${siteLabel}” for ${subjectEn} is reserved and cannot be assigned to a business asset.`,
+      details: [zh
+        ? '请在 CMDB 站点管理中选择实际业务站点；如果资产暂时没有站点，请清空“站点/数据中心”列。'
+        : 'Choose a real CMDB site, or clear the Site/Datacenter column when the asset is not assigned to a site.'],
+    };
+  }
+
+  if (reason === 'unknown_site') {
+    const subjectZh = assetLabel ? `资产“${assetLabel}”` : '该资产';
+    const subjectEn = assetLabel ? `asset “${assetLabel}”` : 'this asset';
+    return {
+      text: zh
+        ? `导入失败${rowLabelZh ? `：${rowLabelZh}` : ''}${subjectZh}的站点“${siteLabel}”未在 CMDB 中找到。`
+        : `Import failed${rowLabelEn ? ` (${rowLabelEn})` : ''}: the site “${siteLabel}” for ${subjectEn} was not found in CMDB.`,
+      details: [zh
+        ? '请填写已存在的站点 ID、编码或名称；如果资产暂时没有站点，请清空“站点/数据中心”列。'
+        : 'Enter an existing site ID, code or name, or clear the Site/Datacenter column when the asset is not assigned to a site.'],
+    };
+  }
+
+  const fallback = rawMessage.replace(/\bsite-default\b|\bdefault_site\b/gi, zh ? '系统默认站点' : 'system default site');
+  return { text: fallback || (zh ? '资产导入失败，请检查导入数据后重试。' : 'Asset import failed. Check the import data and try again.') };
+};

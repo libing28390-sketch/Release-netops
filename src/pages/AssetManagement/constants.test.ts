@@ -49,6 +49,8 @@ describe('asset vendor catalog', () => {
   it('keeps network platform options scoped to the selected vendor', () => {
     expect(getPlatformsForVendor('山石').map(option => option.value)).toEqual(['hillstone_stoneos']);
     expect(getPlatformsForVendor('Cisco').map(option => option.value)).toContain('cisco_ios');
+    expect(getPlatformsForVendor('H3C').map(option => option.value)).toEqual(['h3c_comware']);
+    expect(getPlatformsForVendor('Ruijie').map(option => option.value)).toEqual(['ruijie_rgos']);
     expect(getPlatformsForVendor('Cisco').map(option => option.value)).not.toContain('linux');
     expect(isNetworkVendor('山石')).toBe(true);
     expect(isNetworkVendor('HP')).toBe(false);
@@ -75,6 +77,11 @@ describe('asset import role header contract', () => {
     expect(COL_MAP.snmp_credential_name).toBe('snmp_credential_name');
     expect(COL_MAP['SNMP凭据ID']).toBe('snmp_credential_id');
     expect(COL_MAP['绑定凭据']).toBe('credential_id');
+    expect(COL_MAP['绑定普通用户凭据']).toBe('credential_id');
+    expect(COL_MAP['绑定普通用户凭据（推荐）']).toBe('credential_id');
+    expect(IMPORT_VALUE_MAP.platform['Ruijie OS']).toBe('ruijie_rgos');
+    expect(IMPORT_VALUE_MAP.platform['H3C Comware V3']).toBe('h3c_comware');
+    expect(IMPORT_VALUE_MAP.platform['h3c_comware9']).toBe('h3c_comware');
     expect(IMPORT_VALUE_MAP.connection_method['Web管理']).toBe('web');
     expect(IMPORT_VALUE_MAP.connection_method['Web Management']).toBe('web');
   });

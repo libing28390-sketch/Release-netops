@@ -10,6 +10,21 @@ _INTERNAL_SITE_ID_RE = re.compile(r'^site-[a-z0-9]+$', re.IGNORECASE)
 _RESERVED_SYSTEM_SITE_VALUES = {'site-default', 'default_site'}
 
 
+class ReservedSystemSiteError(ValueError):
+    """Raised when a legacy system fallback site is used for business data."""
+
+    code = 'reserved_system_site'
+
+    def __init__(self) -> None:
+        # Keep the exception safe for callers that do not have enough context
+        # to render the import-specific, row-aware message.  In particular,
+        # never require users to understand an internal site identifier.
+        super().__init__(
+            'The selected site is reserved for system fallback data and cannot '
+            'be assigned to a business asset.'
+        )
+
+
 def is_reserved_system_site(value: Any) -> bool:
     """Return whether a site value is the legacy system fallback site."""
     return str(value or '').strip().lower() in _RESERVED_SYSTEM_SITE_VALUES
@@ -46,7 +61,7 @@ def resolve_canonical_site_id(conn: Any, value: str | None) -> str:
         raise ValueError(f'Unknown CMDB site: {requested}')
     canonical_id = str(row['id']).strip()
     if is_reserved_system_site(canonical_id):
-        raise ValueError('System default site cannot be assigned to a business asset')
+        raise ReservedSystemSiteError()
     return canonical_id
 
 

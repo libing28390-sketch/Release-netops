@@ -49,3 +49,40 @@ def test_asset_import_detailed_row_failure_and_atomic_rollback(isolated_db, monk
         ).fetchone()[0] == 0
     finally:
         conn.close()
+
+
+def test_asset_import_reserved_site_error_is_actionable(isolated_db):
+    conn = get_db_connection()
+    try:
+        if not conn.execute("SELECT 1 FROM sites WHERE id = ?", ("site-default",)).fetchone():
+            conn.execute(
+                """
+                INSERT INTO sites (id, site_code, site_name, status, tenant_id)
+                VALUES (?, ?, ?, ?, ?)
+                """,
+                ("site-default", "DEFAULT_SITE", "Default Site", "active", "tenant-default"),
+            )
+        conn.commit()
+    finally:
+        conn.close()
+
+    with pytest.raises(HTTPException) as exc_info:
+        assets.import_assets([
+            assets.AssetCreate(
+                asset_type="server",
+                hostname="edge-03",
+                asset_tag="tag-edge-03",
+                site_id="DEFAULT_SITE",
+                management_ip="192.0.2.83",
+            )
+        ])
+
+    assert exc_info.value.status_code == 422
+    detail = exc_info.value.detail
+    assert detail["code"] == "ASSET_SITE_INVALID"
+    assert detail["reason"] == "reserved_system_site"
+    assert detail["row"] == 1
+    assert detail["asset_label"] == "edge-03"
+    assert detail["site_label"] == "系统默认站点"
+    assert "系统保留站点" in detail["message"]
+    assert "site-default" not in detail["message"]

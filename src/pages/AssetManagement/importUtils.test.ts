@@ -10,9 +10,42 @@ import {
   MANAGEMENT_ENTRY_SHEET_RE,
   mergeManagementMethods,
   parseManagementMethodSheet,
+  formatAssetImportError,
 } from './importUtils';
 
 describe('asset management method import', () => {
+  it('turns reserved-site import errors into actionable localized guidance', () => {
+    const result = formatAssetImportError({
+      code: 'ASSET_SITE_INVALID',
+      reason: 'reserved_system_site',
+      row: 3,
+      asset_label: 'edge-03',
+      site_label: 'site-default',
+      message: 'internal message should not be rendered',
+    }, 'zh');
+
+    expect(result.text).toContain('第 3 条');
+    expect(result.text).toContain('edge-03');
+    expect(result.text).toContain('系统保留站点');
+    expect(result.text).not.toContain('site-default');
+    expect(result.details?.[0]).toContain('站点/数据中心');
+  });
+
+  it('keeps English import guidance available for non-Chinese users', () => {
+    const result = formatAssetImportError({
+      code: 'ASSET_SITE_INVALID',
+      reason: 'unknown_site',
+      row: 2,
+      asset_label: 'server-02',
+      site_label: 'missing-site',
+      message: '未在 CMDB 站点中找到',
+    }, 'en');
+
+    expect(result.text).toContain('item 2');
+    expect(result.text).toContain('missing-site');
+    expect(result.details?.[0]).toContain('Site/Datacenter');
+  });
+
   it('recognizes the new sheet names and keeps the old management sheet compatible', () => {
     expect(ASSET_INFO_SHEET_RE.test('资产信息')).toBe(true);
     expect(NETWORK_ASSET_SHEET_RE.test('网络设备')).toBe(true);

@@ -31,7 +31,7 @@ from drivers.ssh_compat import (
 from services import tag_service
 from services import rack_scope_service
 from services.vault_service import credential_is_shared, resolve_collector_credentials
-from services.site_identity_service import resolve_canonical_site_id
+from services.site_identity_service import ReservedSystemSiteError, resolve_canonical_site_id
 from services.pam_web_service import replace_asset_web_profiles
 from services.audit_service import log_audit_event
 from schemas.web import WebAccessProfileInput
@@ -2952,6 +2952,54 @@ def get_rotation_status(asset_id: str, _user=require_role("Viewer")):
 
 # ── Import (batch) ───────────────────────────────────────────────────
 
+def _friendly_import_site_value(value: object) -> str:
+    """Return a user-facing site label without leaking internal fallback IDs."""
+    raw = str(value or '').strip()
+    if raw.casefold() in {'site-default', 'default_site', 'default site'}:
+        return '系统默认站点'
+    return raw or '（空）'
+
+
+def _asset_import_site_error(
+    body: AssetCreate,
+    row_number: int,
+    requested_site: object,
+    *,
+    reason: str,
+) -> dict:
+    """Build a safe, actionable site validation error for import callers."""
+    asset_label = str(body.hostname or body.asset_tag or '').strip()
+    if not asset_label:
+        asset_label = f'第 {row_number} 条资产'
+    site_label = _friendly_import_site_value(requested_site)
+
+    if reason == 'reserved_system_site':
+        message = (
+            f'第 {row_number} 条资产“{asset_label}”的站点“{site_label}”是系统保留站点，'
+            '不能作为业务资产归属。请在 CMDB 站点管理中选择实际业务站点；'
+            '如果资产暂时没有站点，请清空“站点/数据中心”列。'
+        )
+    elif reason == 'unknown_site':
+        message = (
+            f'第 {row_number} 条资产“{asset_label}”的站点“{site_label}”未在 CMDB 站点中找到。'
+            '请填写已存在的站点 ID、编码或名称；如果资产暂时没有站点，请清空“站点/数据中心”列。'
+        )
+    else:
+        message = (
+            f'第 {row_number} 条资产“{asset_label}”的站点“{site_label}”无效，'
+            '请在 CMDB 站点管理中选择实际业务站点，或清空“站点/数据中心”列。'
+        )
+
+    return {
+        'code': 'ASSET_SITE_INVALID',
+        'reason': reason,
+        'row': row_number,
+        'field': 'site_id',
+        'asset_label': asset_label,
+        'site_label': site_label,
+        'message': message,
+    }
+
 @router.post('/assets/import')
 def import_assets(
     items: list[AssetCreate],
@@ -2972,10 +3020,17 @@ def import_assets(
         def _safe_import_error(exc: Exception) -> dict:
             detail = exc.detail if isinstance(exc, HTTPException) else None
             if isinstance(detail, dict):
-                return {
+                safe_detail = {
                     'code': str(detail.get('code') or 'ASSET_IMPORT_ROW_FAILED'),
                     'message': str(detail.get('message') or '资产导入失败'),
                 }
+                # Keep only non-sensitive context that helps the UI identify
+                # the failed import item.  Never pass through arbitrary detail
+                # fields from an exception.
+                for key in ('reason', 'row', 'field', 'asset_label', 'site_label'):
+                    if detail.get(key) is not None:
+                        safe_detail[key] = detail[key]
+                return safe_detail
             if isinstance(exc, ValueError):
                 return {'code': 'ASSET_IMPORT_VALIDATION_FAILED', 'message': str(exc)}
             logger.exception('Asset import row failed')
@@ -2985,12 +3040,30 @@ def import_assets(
             _pre_resolve_credential(conn, body)
             _resolve_snmp_credential_binding(conn, body)
             requested_tag_ids = _resolve_asset_tag_ids(conn, body)
+            requested_site = body.site_id
             try:
                 body.site_id = resolve_canonical_site_id(conn, body.site_id)
+            except ReservedSystemSiteError as exc:
+                raise HTTPException(
+                    status_code=422,
+                    detail=_asset_import_site_error(
+                        body,
+                        row_number,
+                        requested_site,
+                        reason='reserved_system_site',
+                    ),
+                ) from exc
             except ValueError as exc:
-                raise HTTPException(status_code=422, detail={
-                    'code': 'ASSET_SITE_INVALID', 'message': str(exc),
-                }) from exc
+                reason = 'unknown_site' if str(exc).startswith('Unknown CMDB site:') else 'invalid_site'
+                raise HTTPException(
+                    status_code=422,
+                    detail=_asset_import_site_error(
+                        body,
+                        row_number,
+                        requested_site,
+                        reason=reason,
+                    ),
+                ) from exc
             _enforce_asset_site_scope(conn, _user, body.site_id, 'create')
             asset_id = f"asset-{uuid.uuid4().hex[:12]}"
             body.platform = _normalize_asset_platform(body.vendor, body.platform, body.asset_type)
