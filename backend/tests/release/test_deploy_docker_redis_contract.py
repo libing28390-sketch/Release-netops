@@ -41,7 +41,7 @@ def test_deploy_script_keeps_an_explicit_way_to_disable_the_sidecar():
 
     assert '"${NETOPS_REDIS_ENABLED:-1}" != "0"' in source
     assert '"${NETOPS_REDIS_ENABLED:-1}" == "0"' in source
-    assert "Set to 0 to run db/netops/nginx without Redis." in source
+    assert "Set to 0 to run db/netops/monitoring/nginx without Redis." in source
 
 
 def test_redis_sidecar_uses_a_restricted_acl_user_and_keeps_ai_rate_limits_working():

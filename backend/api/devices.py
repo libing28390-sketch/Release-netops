@@ -7,7 +7,7 @@ import re
 import socket
 import time
 import logging
-from typing import Any, Optional
+from typing import Annotated, Any, Optional
 from database import get_db_connection
 from services.audit_service import log_audit_event
 from services.device_health_service import annotate_devices_with_health, normalize_hardware_status
@@ -2148,10 +2148,10 @@ def get_official_model_presets(user=require_role("Viewer")):
 
 @router.get("/platform-registry/mibs/auto-match")
 def auto_match_model_mibs(
-    vendor: str = Query("", max_length=64),
-    model: str = Query("", max_length=128),
-    platform: str = Query("", max_length=128),
-    software_version: str = Query("", max_length=256),
+    vendor: Annotated[str, Query(max_length=64)] = "",
+    model: Annotated[str, Query(max_length=128)] = "",
+    platform: Annotated[str, Query(max_length=128)] = "",
+    software_version: Annotated[str, Query(max_length=256)] = "",
     user=require_role("Viewer"),
 ):
     """Auto-match and recommend OIDs using the full device identity scope."""
