@@ -117,7 +117,7 @@ compose() {
 }
 
 compose_service_args() {
-    printf '%s\n' db netops victoriametrics snmp-exporter vmagent nginx
+  printf '%s\n' db netops victoriametrics snmp-exporter vmagent grafana nginx
     if [[ "${NETOPS_REDIS_ENABLED:-1}" != "0" ]]; then
         printf '%s\n' redis
     fi
@@ -165,7 +165,7 @@ initialize_env() {
     fi
 
     require_command openssl
-    local db_user db_name db_password server_name redis_password redis_url
+    local db_user db_name db_password server_name redis_password redis_url grafana_password
     db_user="$(env_value POSTGRES_USER)"
     db_name="$(env_value POSTGRES_DB)"
     db_user="${db_user:-postgres}"
@@ -179,6 +179,10 @@ initialize_env() {
     fi
     if is_placeholder "$(env_value CREDENTIAL_ENCRYPTION_KEY)"; then
         set_env_value CREDENTIAL_ENCRYPTION_KEY "$(openssl rand -hex 32)"
+    fi
+    if is_placeholder "$(env_value GRAFANA_ADMIN_PASSWORD)"; then
+        grafana_password="$(openssl rand -hex 24)"
+        set_env_value GRAFANA_ADMIN_PASSWORD "$grafana_password"
     fi
 
     db_password="$(env_value POSTGRES_PASSWORD)"
@@ -384,7 +388,8 @@ required_images() {
         "nexora-postgres:latest" \
         "victoriametrics/victoria-metrics:v1.103.0" \
         "victoriametrics/vmagent:v1.103.0" \
-        "prom/snmp-exporter:v0.26.0"
+        "prom/snmp-exporter:v0.26.0" \
+        "grafana/grafana:12.1.0"
     if [[ "${NETOPS_REDIS_ENABLED:-1}" != "0" ]]; then
         printf '%s\n' "redis:7.4.2-alpine"
     fi

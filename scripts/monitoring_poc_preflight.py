@@ -30,6 +30,7 @@ def _check_static() -> tuple[list[str], list[str]]:
             "victoriametrics": "victoriametrics/victoria-metrics:v1.103.0",
             "vmagent": "victoriametrics/vmagent:v1.103.0",
             "snmp-exporter": "prom/snmp-exporter:v0.26.0",
+            "grafana": "grafana/grafana:12.1.0",
         }
         for service, image in expected_images.items():
             if (services.get(service) or {}).get("image") != image:
@@ -41,6 +42,20 @@ def _check_static() -> tuple[list[str], list[str]]:
                 errors.append(f"vmagent queue flag missing: {marker}")
         if not any("nexora-vmagent-queue" in str(item) for item in vmagent.get("volumes") or []):
             errors.append("vmagent queue volume missing")
+        if not any("nexora-monitoring-artifacts:/etc/nexora-collector" in str(item) for item in vmagent.get("volumes") or []):
+            errors.append("vmagent shared monitoring artifact volume missing")
+        exporter = services.get("snmp-exporter") or {}
+        if not any("nexora-monitoring-artifacts:/etc/snmp_exporter" in str(item) for item in exporter.get("volumes") or []):
+            errors.append("snmp-exporter shared monitoring artifact volume missing")
+        if "runtime/vmagent/scrape.yml" not in command:
+            errors.append("vmagent runtime scrape config path missing")
+        if "runtime/snmp_exporter/snmp.yml" not in " ".join(str(item) for item in exporter.get("command") or []):
+            errors.append("snmp-exporter runtime config path missing")
+        grafana = services.get("grafana") or {}
+        if not (grafana.get("volumes") and any("monitoring/grafana/provisioning" in str(item) for item in grafana.get("volumes") or [])):
+            errors.append("grafana provisioning volume missing")
+        if not (grafana.get("volumes") and any("monitoring/grafana/dashboards" in str(item) for item in grafana.get("volumes") or [])):
+            errors.append("grafana dashboard volume missing")
         scrape = yaml.safe_load((ROOT / "monitoring" / "vmagent" / "scrape.yml").read_text(encoding="utf-8")) or {}
         relabel = scrape["scrape_configs"][0]["relabel_configs"]
         labels = {item.get("target_label") for item in relabel}
@@ -49,8 +64,24 @@ def _check_static() -> tuple[list[str], list[str]]:
                 errors.append(f"vmagent relabel missing: {label}")
         exporter = yaml.safe_load((ROOT / "monitoring" / "snmp-exporter" / "snmp.yml").read_text(encoding="utf-8")) or {}
         modules = exporter.get("modules") or {}
-        if "generic_ifmib_interface_std" not in modules or "generic_system_std" not in modules:
-            errors.append("generic SNMP modules missing")
+        required_modules = {
+            "generic_ifmib_interface_std",
+            "generic_system_std",
+            "h3c_common_std",
+            "huawei_common_std",
+            "cisco_common_std",
+        }
+        missing_modules = sorted(required_modules - set(modules))
+        if missing_modules:
+            errors.append(f"SNMP OID modules missing: {','.join(missing_modules)}")
+        for module_key in sorted(required_modules & set(modules)):
+            if not (modules[module_key] or {}).get("metrics"):
+                errors.append(f"SNMP OID module has no metrics: {module_key}")
+        dashboard = json.loads((ROOT / "monitoring" / "grafana" / "dashboards" / "nexora-network-overview.json").read_text(encoding="utf-8"))
+        dashboard_titles = {str(panel.get("title") or "") for panel in dashboard.get("panels") or []}
+        for title in ("设备 CPU 使用率", "设备内存使用率", "设备温度"):
+            if title not in dashboard_titles:
+                errors.append(f"Grafana dashboard panel missing: {title}")
     except (OSError, KeyError, TypeError, yaml.YAMLError) as exc:
         errors.append(f"static configuration unreadable: {exc}")
     if shutil.which("docker") is None:

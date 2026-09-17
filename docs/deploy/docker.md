@@ -1,6 +1,6 @@
 # Docker Compose 部署
 
-适合 Linux 服务器 / 生产环境。一套 compose 拉起 PostgreSQL + 后端 + Nginx，脚本默认同时纳入 Redis sidecar，宿主机无需安装 Node.js / Python。
+适合 Linux 服务器 / 生产环境。一套 compose 拉起 PostgreSQL + 后端 + Nginx + VictoriaMetrics + vmagent + Grafana，脚本默认同时纳入 Redis sidecar，宿主机无需安装 Node.js / Python。
 
 ## 入口文件（仓库根目录）
 
@@ -35,6 +35,35 @@ PostgreSQL 18 官方容器将数据目录设为 `/var/lib/postgresql/18/docker`�
    bash scripts/deploy-docker.sh install
    ```
 3. 访问 `http://localhost`。
+
+Docker Compose 默认启用 Prometheus-compatible 的 VictoriaMetrics 查询路径，
+并把 `netops` 编译发布的采集目标、SNMP 认证和 vmagent 配置通过
+`nexora-monitoring-artifacts` 共享卷交给 `vmagent` 与 `snmp-exporter`。
+如需显式配置，可在 `.env` 中设置：
+
+```dotenv
+MONITORING_METRIC_BACKEND=victoriametrics
+VICTORIAMETRICS_URL=http://victoriametrics:8428
+VICTORIAMETRICS_ALLOWED_HOSTS=victoriametrics
+```
+
+首次启动时 `snmp-exporter` 会等待控制面发布第一份有效采集配置；在页面中
+完成采集计划编译并发布后，vmagent 会读取新的 file-SD 目标，控制面也会请求
+snmp-exporter 热加载认证和模块配置。检查链路可运行：
+
+计划只保留系统基线 `plan-generic-ifmib`（界面显示“SNMP 基线采集计划”）；华三、华为、思科的常用 CPU/内存/温度/状态
+OID 作为同一计划下的 Module/Variant 维护，配置和来源见
+[厂商 OID 目录](../monitoring/vendor_oid_catalog.md)。
+
+```bash
+docker compose ps netops victoriametrics snmp-exporter vmagent nginx
+docker compose logs --tail=200 snmp-exporter vmagent
+```
+
+Nexora 的“监控大盘”通过同源 `/grafana/` 访问 Grafana，Grafana 数据源已自动
+指向 `http://victoriametrics:8428`。默认关闭匿名访问；首次打开大盘时使用
+`GRAFANA_ADMIN_USER` / `GRAFANA_ADMIN_PASSWORD` 登录。需要在 Nexora 内嵌大盘时，
+保持 `GRAFANA_ALLOW_EMBEDDING=1`，不要为了省略登录而把匿名访问开放到不可信网络。
 
 首次登录使用默认账号 `admin`、密码 `admin`。登录后请立即在用户设置中修改密码；已有数据库中的管理员密码会保留，不会因更新或重启而自动改回默认值。
 

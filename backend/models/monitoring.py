@@ -62,6 +62,7 @@ class SnmpModuleVariant(Base):
     retries = Column(Integer, nullable=False, default=2)
     request_timeout_ms = Column(Integer, nullable=False, default=3000)
     scrape_timeout_ms = Column(Integer, nullable=False, default=20000)
+    supported_platforms = Column(JSON, nullable=False, default=list)
     supported_models = Column(JSON, nullable=False, default=list)
     supported_version_scope = Column(JSON, nullable=False, default=list)
     verified_models = Column(JSON, nullable=False, default=list)
@@ -71,6 +72,10 @@ class SnmpModuleVariant(Base):
     generator_version = Column(String, nullable=False, default="")
     generator_config_hash = Column(String, nullable=False, default="")
     generated_output_hash = Column(String, nullable=False, default="")
+    # Versioned snmp_exporter generator payload.  The API exposes this as
+    # ``oid_config`` after JSON parsing; keeping the raw JSON column mirrors
+    # the PostgreSQL/SQLite control-plane schema used by runtime services.
+    oid_config_json = Column(Text, nullable=False, default="{}")
     status = Column(String, nullable=False, default="DRAFT")
     enabled = Column(Boolean, nullable=False, default=True)
     created_at = Column(DateTime(timezone=True))

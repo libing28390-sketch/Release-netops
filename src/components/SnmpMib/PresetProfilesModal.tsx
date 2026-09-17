@@ -27,6 +27,13 @@ export interface ModelPresetItem {
   interface_config?: Record<string, any>;
   source_oids?: Record<string, string[]>;
   source_modules?: string[];
+  platforms?: string[];
+  model_pattern?: string;
+  software_version_scope?: string[];
+  min_version?: string;
+  max_version?: string;
+  excluded_versions?: string[];
+  scope_priority?: number;
   verification_level?: string;
   support_status?: string;
   firmware_scope?: string;

@@ -176,6 +176,33 @@ const NetworkMonitoring: React.FC<NetworkMonitoringProps> = ({ language, devices
   const [rangeHours, setRangeHours] = useState<number>(24);
   const [autoRefresh, setAutoRefresh] = useState(true);
   const [metricProvider, setMetricProvider] = useState<MetricProvider>('native');
+  const [providerStatus, setProviderStatus] = useState<'loading' | 'ready' | 'unavailable'>('loading');
+
+  // Docker advertises the active provider through the backend environment;
+  // resolve it once so the page does not silently keep using Native after a
+  // VictoriaMetrics deployment.
+  useEffect(() => {
+    if (!isAuthenticated) {
+      setProviderStatus('unavailable');
+      return;
+    }
+    const controller = new AbortController();
+    fetch('/api/monitoring/provider', { headers: authHeaders(), signal: controller.signal })
+      .then(async (response) => {
+        const payload = await response.json().catch(() => ({}));
+        if (!response.ok) throw new Error(payload?.detail || 'provider discovery failed');
+        return payload;
+      })
+      .then((payload) => {
+        const provider = String(payload?.provider || '').toLowerCase() as MetricProvider;
+        if (['native', 'shadow', 'victoriametrics'].includes(provider)) setMetricProvider(provider);
+        setProviderStatus('ready');
+      })
+      .catch((error) => {
+        if (!(error instanceof DOMException && error.name === 'AbortError')) setProviderStatus('unavailable');
+      });
+    return () => controller.abort();
+  }, [isAuthenticated]);
 
   // Trend plot configuration
   const [trendInterface, setTrendInterface] = useState<string>('');
@@ -315,6 +342,7 @@ const NetworkMonitoring: React.FC<NetworkMonitoringProps> = ({ language, devices
     });
     if (!resp.ok) throw new Error('trend fetch failed');
     const payload = await resp.json();
+    if (payload?.status === 'error') throw new Error(payload?.error || 'metric provider query failed');
     return Array.isArray(payload?.series) ? payload.series : [];
   }, [metricProvider]);
 
@@ -630,10 +658,11 @@ const NetworkMonitoring: React.FC<NetworkMonitoringProps> = ({ language, devices
                 className="bg-transparent text-xs font-semibold outline-none cursor-pointer"
                 aria-label={zh ? '指标后端' : 'Metric provider'}
               >
-                <option value="native">Native</option>
-                <option value="shadow">Shadow</option>
+                <option value="native">{zh ? '原生遥测' : 'Native'}</option>
+                <option value="shadow">{zh ? '对比模式' : 'Shadow'}</option>
                 <option value="victoriametrics">VictoriaMetrics</option>
               </select>
+              <span className={`hidden text-[10px] font-bold sm:inline ${providerStatus === 'ready' ? 'text-emerald-600' : providerStatus === 'loading' ? 'text-amber-600' : 'text-rose-600'}`} title={zh ? '后端指标数据源状态' : 'Metric provider status'}>{providerStatus === 'loading' ? (zh ? '读取中' : 'Loading') : providerStatus === 'ready' ? (zh ? '已配置' : 'Configured') : (zh ? '不可用' : 'Unavailable')}</span>
             </label>
             <div className="flex items-center p-0.5 rounded-xl bg-gray-100 dark:bg-zinc-800">
               {[

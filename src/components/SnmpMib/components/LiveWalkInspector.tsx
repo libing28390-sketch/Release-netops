@@ -90,6 +90,10 @@ export interface CandidateDevice {
   hostname: string;
   ip_address?: string;
   status?: string;
+  vendor?: string;
+  platform?: string;
+  model?: string;
+  version?: string;
 }
 
 export interface SnmpWalkRow {

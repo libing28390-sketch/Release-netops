@@ -3,6 +3,8 @@ set -eu
 
 readonly SOURCE_DIST=/app/frontend-dist
 readonly SHARED_DIST=/app/dist
+readonly MONITORING_DEFAULTS=/app/monitoring-defaults
+readonly MONITORING_RUNTIME=/app/artifacts/monitoring/runtime
 
 mkdir -p "$SHARED_DIST/assets"
 
@@ -18,6 +20,14 @@ find "$SOURCE_DIST" -mindepth 1 -maxdepth 1 ! -name assets ! -name index.html -e
 index_tmp="$SHARED_DIST/.index.html.$$"
 cp -a "$SOURCE_DIST/index.html" "$index_tmp"
 mv -f "$index_tmp" "$SHARED_DIST/index.html"
+
+# Seed the shared collector runtime on first boot and after upgrades.  A
+# published artifact replaces this directory atomically; never overwrite it
+# when a live configuration already exists.
+if [ ! -f "$MONITORING_RUNTIME/vmagent/scrape.yml" ]; then
+    mkdir -p "$MONITORING_RUNTIME"
+    cp -a "$MONITORING_DEFAULTS/." "$MONITORING_RUNTIME/"
+fi
 
 exec uvicorn backend.main:app \
     --host 0.0.0.0 \

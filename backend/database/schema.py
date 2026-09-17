@@ -302,6 +302,21 @@ def _init_db_logic(conn, *, allow_legacy_import: bool = True):
     ensure_column('snmp_metric_profiles', 'interface_last_test_at', 'TEXT')
     ensure_column('snmp_metric_profiles', 'interface_last_test_device_id', "TEXT NOT NULL DEFAULT ''")
     ensure_column('snmp_metric_profiles', 'interface_last_test_message', "TEXT NOT NULL DEFAULT ''")
+    # Scope metadata used by the vendor/platform/model/version resolver. The
+    # additive migration owns rollout, but bootstrap remains tolerant while a
+    # database is catching up.
+    ensure_column('snmp_metric_profiles', 'platform_key', "TEXT NOT NULL DEFAULT ''")
+    ensure_column('snmp_metric_profiles', 'platform_scope_json', "TEXT NOT NULL DEFAULT '[]'")
+    ensure_column('snmp_metric_profiles', 'model_pattern', "TEXT NOT NULL DEFAULT ''")
+    ensure_column('snmp_metric_profiles', 'software_version_scope_json', "TEXT NOT NULL DEFAULT '[]'")
+    ensure_column('snmp_metric_profiles', 'min_version', "TEXT NOT NULL DEFAULT ''")
+    ensure_column('snmp_metric_profiles', 'max_version', "TEXT NOT NULL DEFAULT ''")
+    ensure_column('snmp_metric_profiles', 'excluded_versions_json', "TEXT NOT NULL DEFAULT '[]'")
+    ensure_column('snmp_metric_profiles', 'scope_priority', "INTEGER NOT NULL DEFAULT 0")
+    cursor.execute(
+        'CREATE INDEX IF NOT EXISTS idx_snmp_metric_profiles_scope '
+        'ON snmp_metric_profiles(vendor_key, platform_key, model_key, scope_priority)'
+    )
 
     # Durable baseline for model-defined SNMP counters.  A process-local cache
     # is not sufficient: a worker restart, multiple workers, or a long poll

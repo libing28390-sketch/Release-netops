@@ -176,6 +176,13 @@ const MetricOidProfilesModal: React.FC<Props> = ({
   const [form, setForm] = useState<ProfileForm>({
     vendor: '',
     model: '',
+    platforms: '',
+    modelPattern: '',
+    softwareVersionScope: '',
+    minVersion: '',
+    maxVersion: '',
+    excludedVersions: '',
+    scopePriority: '0',
     metrics: createDefaultRows(),
     interfaceConfig: { ...DEFAULT_INTERFACE_CONFIG },
   });
@@ -206,6 +213,8 @@ const MetricOidProfilesModal: React.FC<Props> = ({
         const params = new URLSearchParams();
         if (form.vendor.trim()) params.set('vendor', form.vendor.trim());
         if (form.model.trim()) params.set('model', form.model.trim());
+        if (form.platforms.trim()) params.set('platform', form.platforms.trim().split(/[;,\n]/)[0].trim());
+        if (form.softwareVersionScope.trim()) params.set('software_version', form.softwareVersionScope.trim().split(/[;,\n]/)[0].trim());
         const res = await apiRequest<{ success: boolean; matched: boolean; data: any }>(
           `/api/platform-registry/mibs/auto-match?${params.toString()}`,
         );
@@ -219,7 +228,7 @@ const MetricOidProfilesModal: React.FC<Props> = ({
       }
     }, 350);
     return () => clearTimeout(timer);
-  }, [form.vendor, form.model, editorOpen]);
+  }, [form.vendor, form.model, form.platforms, form.softwareVersionScope, editorOpen]);
 
   // Load presets from backend
   const loadPresets = async () => {
@@ -277,6 +286,13 @@ const MetricOidProfilesModal: React.FC<Props> = ({
     setForm({
       vendor: '',
       model: '',
+      platforms: '',
+      modelPattern: '',
+      softwareVersionScope: '',
+      minVersion: '',
+      maxVersion: '',
+      excludedVersions: '',
+      scopePriority: '0',
       metrics: createDefaultRows(),
       interfaceConfig: { ...DEFAULT_INTERFACE_CONFIG },
     });
@@ -308,6 +324,13 @@ const MetricOidProfilesModal: React.FC<Props> = ({
     setForm({
       vendor: profile.vendor,
       model: profile.model,
+      platforms: (profile.platforms?.length ? profile.platforms : profile.platform ? [profile.platform] : []).join(', '),
+      modelPattern: profile.model_pattern || '',
+      softwareVersionScope: (profile.software_version_scope || []).join(', '),
+      minVersion: profile.min_version || '',
+      maxVersion: profile.max_version || '',
+      excludedVersions: (profile.excluded_versions || []).join(', '),
+      scopePriority: String(profile.scope_priority ?? 0),
       metrics: rows,
       interfaceConfig: interfaceConfigFromProfile(profile),
     });
@@ -363,6 +386,13 @@ const MetricOidProfilesModal: React.FC<Props> = ({
     setForm({
       vendor: preset.vendor,
       model: preset.model,
+      platforms: ((preset as ModelPresetItem & { platforms?: string[] }).platforms || []).join(', '),
+      modelPattern: (preset as ModelPresetItem & { model_pattern?: string }).model_pattern || '',
+      softwareVersionScope: preset.firmware_scope || '',
+      minVersion: '',
+      maxVersion: '',
+      excludedVersions: '',
+      scopePriority: '0',
       metrics: rows.length ? rows : createDefaultRows(),
       interfaceConfig: preset.interface_config
         ? ({ ...DEFAULT_INTERFACE_CONFIG, ...preset.interface_config } as InterfaceOidConfig)
@@ -398,8 +428,12 @@ const MetricOidProfilesModal: React.FC<Props> = ({
 
     setInitialInspectorTab('snmpwalk');
     setForm(prev => ({
+      ...prev,
       vendor: preset.vendor || prev.vendor,
       model: preset.model || prev.model,
+      platforms: (preset.platforms || []).join(', ') || prev.platforms,
+      modelPattern: preset.model_pattern || prev.modelPattern,
+      softwareVersionScope: preset.software_version_scope?.join(', ') || preset.firmware_scope || prev.softwareVersionScope,
       metrics: rows.length ? rows : createDefaultRows(),
       interfaceConfig: preset.interface_config
         ? ({ ...DEFAULT_INTERFACE_CONFIG, ...preset.interface_config } as InterfaceOidConfig)
@@ -435,6 +469,13 @@ const MetricOidProfilesModal: React.FC<Props> = ({
       profile_id: profile.profile_id,
       vendor: profile.vendor,
       model: profile.model,
+      platforms: profile.platforms || (profile.platform ? [profile.platform] : []),
+      model_pattern: profile.model_pattern,
+      software_version_scope: profile.software_version_scope,
+      min_version: profile.min_version,
+      max_version: profile.max_version,
+      excluded_versions: profile.excluded_versions,
+      scope_priority: profile.scope_priority,
       category: 'Network Device',
       description: profile.template_name || `${profile.vendor} / ${profile.model}`,
       metric_definitions: profile.metric_definitions || {},
@@ -700,6 +741,13 @@ const MetricOidProfilesModal: React.FC<Props> = ({
           body: JSON.stringify({
             vendor: form.vendor.trim(),
             model: form.model.trim(),
+            platforms: form.platforms.split(/[;,\n]/).map(value => value.trim()).filter(Boolean),
+            model_pattern: form.modelPattern.trim(),
+            software_version_scope: form.softwareVersionScope.split(/[;,\n]/).map(value => value.trim()).filter(Boolean),
+            min_version: form.minVersion.trim(),
+            max_version: form.maxVersion.trim(),
+            excluded_versions: form.excludedVersions.split(/[;,\n]/).map(value => value.trim()).filter(Boolean),
+            scope_priority: Number(form.scopePriority) || 0,
             metric_definitions: metricDefinitions,
             cpu_config: cpuConfig,
             memory_config: memoryConfig,
@@ -729,6 +777,13 @@ const MetricOidProfilesModal: React.FC<Props> = ({
           profile_id: savedProfileId,
           vendor: form.vendor.trim(),
           model: form.model.trim(),
+          platforms: form.platforms.split(/[;,\n]/).map(value => value.trim()).filter(Boolean),
+          model_pattern: form.modelPattern.trim(),
+          software_version_scope: form.softwareVersionScope.split(/[;,\n]/).map(value => value.trim()).filter(Boolean),
+          min_version: form.minVersion.trim(),
+          max_version: form.maxVersion.trim(),
+          excluded_versions: form.excludedVersions.split(/[;,\n]/).map(value => value.trim()).filter(Boolean),
+          scope_priority: Number(form.scopePriority) || 0,
           category: 'Network Device',
           description: `${form.vendor.trim()} / ${form.model.trim()}`,
           metric_definitions: metricDefinitions,

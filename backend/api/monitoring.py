@@ -975,6 +975,7 @@ def monitoring_device_trend(
             provider_instance = provider_from_environment(mode=selected_provider)
             points: dict[str, dict[str, Any]] = {}
             shadow_results: list[dict[str, Any]] = []
+            provider_errors: list[str] = []
             for metric_key in metric_keys:
                 result = provider_instance.range(
                     query=metric_key,
@@ -984,6 +985,8 @@ def monitoring_device_trend(
                     end=end_dt,
                     step_seconds=300 if range_hours > 24 else 60,
                 )
+                if str(result.get('status') or '').lower() == 'error':
+                    provider_errors.append(str(result.get('error') or f'{metric_key} query failed'))
                 if result.get('shadow'):
                     shadow_results.append(result['shadow'])
                 for item in result.get('data') or []:
@@ -1013,6 +1016,8 @@ def monitoring_device_trend(
             return {
                 'device': {'id': device['id'], 'hostname': device['hostname'], 'ip_address': device.get('ip_address'), 'platform': device.get('platform'), 'status': device['status']},
                 'provider': selected_provider,
+                'status': 'error' if provider_errors else 'success',
+                'error': '; '.join(dict.fromkeys(provider_errors)) or None,
                 'range_hours': range_hours,
                 'resolution': '5m' if range_hours > 24 else '1m',
                 'start_time': start_iso,

@@ -29,6 +29,8 @@ def test_collector_artifact_store_keeps_previous_and_rolls_back(tmp_path):
     first = _artifact(root, 1)
     store = CollectorArtifactStore(root)
     assert store.publish(first["artifact_path"], config_version=1)["previous_version"] is None
+    assert (root / "runtime" / "vmagent" / "targets" / "snmp_targets.yml").is_file()
+    assert (root / "runtime" / "snmp_exporter" / "snmp.yml").is_file()
 
     second = _artifact(root, 2)
     applied = store.publish(second["artifact_path"], config_version=2)
@@ -39,6 +41,7 @@ def test_collector_artifact_store_keeps_previous_and_rolls_back(tmp_path):
     assert rolled_back["status"] == "ROLLED_BACK"
     assert rolled_back["config_version"] == 1
     assert store.current_version() == 1
+    assert (root / "runtime" / "current_version.json").read_text(encoding="utf-8").find('"config_version": 1') >= 0
 
 
 def test_collector_artifact_store_rejects_invalid_publish(tmp_path):

@@ -65,14 +65,17 @@ flowchart LR
     API --> Drivers[SSH · SNMP · TextFSM]
     API --> AI[AI Gateway · RAG · Security Vault]
     Drivers --> Devices[Network Devices / Servers]
+    API --> VM[(VictoriaMetrics)]
+    VM --> Grafana[Grafana Dashboards]
+    Nginx --> Grafana
 ```
 
 | 层级 | 主要技术 | 职责 |
 | :--- | :--- | :--- |
-| Web 前端 | React 19、TypeScript、Vite、Zustand、Recharts、D3、Three.js、xterm.js | 管理页面、图表、拓扑、3D 机柜和 Web 终端。 |
+| Web 前端 | React 19、TypeScript、Vite、Zustand、Recharts、D3、Three.js、xterm.js | 管理页面、设备详情、拓扑、3D 机柜和 Web 终端；Grafana 承载全局监控大盘。 |
 | API 与调度 | FastAPI、Pydantic、APScheduler、WebSocket | REST API、RBAC、任务调度、实时执行状态和终端通道。 |
 | 网络接入 | Netmiko、Scrapli、SNMP、TextFSM | 多厂商 SSH/CLI、遥测采集、配置备份和结构化解析。 |
-| 数据层 | PostgreSQL 18、pgvector、pg_trgm | 业务数据、审计、知识向量、全文检索和持久化。 |
+| 指标与数据层 | PostgreSQL 18、pgvector、pg_trgm、VictoriaMetrics | 业务数据、审计、知识向量、全文检索和 Prometheus-compatible 指标时序。 |
 | 接入网关 | Nginx | 前端静态资源、API/WebSocket 代理、HTTP/HTTPS 入口。 |
 
 生产和发布基线统一使用 PostgreSQL 18；AI/知识库迁移还要求数据库具备 `vector` 与 `pg_trgm` 扩展。Windows 向导新装 PostgreSQL 18.6。PG17 升级到 PG18 属于主版本升级，旧数据目录或 Docker 数据卷不能直接复用；请先备份，再通过 `pg_upgrade` 或 `pg_dump`/`pg_restore` 完成迁移。
@@ -89,7 +92,7 @@ cd nexora-automation
 bash scripts/deploy-docker.sh install
 ```
 
-脚本会创建 `.env`、生成初始密钥和数据库密码、构建 PostgreSQL/后端/Nginx 三个镜像并启动服务。完成后访问：
+脚本会创建 `.env`、生成初始密钥和数据库密码、构建 PostgreSQL/后端/Nginx 镜像并启动 PostgreSQL、后端、Nginx、VictoriaMetrics、vmagent、snmp-exporter 和 Grafana。完成后访问：
 
 ```text
 https://<服务器IP>

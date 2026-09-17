@@ -8,6 +8,10 @@
 |---|---|---|---|
 | `db` | `nexora-postgres:latest` | PostgreSQL 18、pgvector、pg_trgm | 不直接暴露 |
 | `netops` | `nexora-netops:latest` | FastAPI 后端和前端静态资源 | 内部 8003 |
+| `victoriametrics` | `victoriametrics/victoria-metrics:v1.103.0` | Prometheus-compatible 指标存储与查询 | 内部 8428 |
+| `vmagent` | `victoriametrics/vmagent:v1.103.0` | SNMP 指标抓取和 remote_write | 内部 8429 |
+| `snmp-exporter` | `prom/snmp-exporter:v0.26.0` | SNMP Exporter | 内部 9116 |
+| `grafana` | `grafana/grafana:12.1.0` | 全局监控大盘 | 同源 `/grafana/` |
 | `nginx` | `nexora-nginx:latest` | HTTPS、静态文件、API/WebSocket 代理 | 80、443 |
 | `redis`（可选） | `redis:7.4.2-alpine` | IP 定位共享缓存 | 内部 6379 |
 
@@ -205,6 +209,7 @@ docker compose ps
 docker compose logs --tail=200 db
 docker compose logs --tail=200 netops
 docker compose logs --tail=200 nginx
+docker compose logs --tail=200 grafana victoriametrics vmagent snmp-exporter
 ```
 
 ## 7. 升级流程

@@ -65,6 +65,16 @@ COPY NexoraTerminalAgent.exe /app/NexoraTerminalAgent.exe
 # receives the latest public-repository templates without overwriting user edits.
 COPY data/textfsm_templates/ /app/release-textfsm-templates/
 
+# Seed the shared monitoring volume with a safe empty configuration.  The
+# control plane replaces these files atomically when a collector configuration
+# is published; vmagent and snmp-exporter read the same named volume.
+COPY monitoring/vmagent/ /app/artifacts/monitoring/runtime/vmagent/
+COPY monitoring/snmp-exporter/ /app/artifacts/monitoring/runtime/snmp_exporter/
+# Keep a copy outside the named volume so an existing volume can be seeded or
+# migrated when the container image is upgraded.
+COPY monitoring/vmagent/ /app/monitoring-defaults/vmagent/
+COPY monitoring/snmp-exporter/ /app/monitoring-defaults/snmp_exporter/
+
 # Keep an immutable copy in the image, then seed the shared frontend volume.
 # The runtime sync copies hashed assets before publishing index.html and keeps
 # old assets available for browsers that still have a previous HTML snapshot.
@@ -72,7 +82,7 @@ COPY --from=frontend-build /app/dist /app/frontend-dist
 RUN mkdir -p /app/dist && cp -a /app/frontend-dist/. /app/dist/
 
 # Create runtime directories
-RUN mkdir -p /app/data /app/backup /app/data/logs
+RUN mkdir -p /app/data /app/backup /app/data/logs /app/artifacts/monitoring/versions /app/artifacts/monitoring/queue
 
 # Runtime environment
 ENV NODE_ENV=production

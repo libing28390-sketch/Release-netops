@@ -8,14 +8,16 @@ returned by this module.
 from __future__ import annotations
 
 import json
+import hashlib
 import logging
 import os
 import time
 import uuid
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
-from typing import Any
+from typing import Any, Mapping
 from urllib.parse import urlparse
+from urllib.request import Request as UrlRequest, ProxyHandler, build_opener
 
 from fastapi import APIRouter, HTTPException, Query
 from pydantic import BaseModel, Field
@@ -33,7 +35,13 @@ from services.monitoring_compiler import (
     compile_artifact,
     duration_seconds,
     opaque_auth_alias,
+    plan_entry_matches_device,
+    plan_entry_match_reason,
+    variant_match_reason,
+    variant_matches_device,
     plan_target_matches_device,
+    render_exporter_modules,
+    validate_oid_config,
     validate_assignments,
     validate_artifact,
 )
@@ -43,6 +51,10 @@ from services.collector_artifact_service import ArtifactStoreError, CollectorArt
 
 router = APIRouter(prefix="/monitoring", tags=["monitoring-v1"])
 logger = logging.getLogger(__name__)
+
+CANONICAL_PLAN_ID = "plan-generic-ifmib"
+CANONICAL_PLAN_NAME = "SNMP 基线采集计划"
+CANONICAL_PLAN_NAME_ALIASES = {CANONICAL_PLAN_NAME, "Generic IF-MIB baseline"}
 
 
 def _now() -> str:
@@ -84,6 +96,27 @@ def _parse_json(value: Any, default: Any) -> Any:
         return json.loads(value) if value else default
     except (TypeError, ValueError):
         return default
+
+
+def _scope_list(value: Any, *, field: str, max_items: int = 128) -> list[str]:
+    """Normalize a user supplied compatibility scope to a bounded string list."""
+
+    if value in (None, ""):
+        return []
+    raw = value
+    if isinstance(value, str):
+        parsed = _parse_json(value, None)
+        raw = parsed if isinstance(parsed, list) else value.replace("，", ",").replace(";", ",").split(",")
+    if not isinstance(raw, (list, tuple, set)):
+        raise HTTPException(status_code=422, detail=f"{field} must be a list or comma-separated string")
+    result: list[str] = []
+    for item in raw:
+        text = " ".join(str(item or "").strip().split())
+        if text and text not in result:
+            result.append(text[:160])
+    if len(result) > max_items:
+        raise HTTPException(status_code=422, detail=f"{field} has too many entries")
+    return result
 
 
 def _tenant_id(user: Any) -> str | None:
@@ -130,6 +163,38 @@ def _safe_collector_view(row: Any) -> dict[str, Any]:
     return item
 
 
+def _safe_variant_view(row: Any) -> dict[str, Any]:
+    """Return variant metadata with parsed, secret-free OID configuration."""
+    item = _dict(row)
+    item["oid_config"] = _parse_json(item.pop("oid_config_json", "{}"), {})
+    for key in ("supported_platforms", "supported_models", "supported_version_scope", "verified_models", "verified_versions"):
+        item[key] = _parse_json(item.get(key), [])
+        if not isinstance(item[key], list):
+            item[key] = []
+    return item
+
+
+def _oid_config_hashes(config: Mapping[str, Any]) -> tuple[str, str]:
+    canonical = json.dumps(config, ensure_ascii=False, sort_keys=True, separators=(",", ":"))
+    mib_sources = json.dumps(config.get("mib_sources") or [], ensure_ascii=False, sort_keys=True, separators=(",", ":"))
+    return hashlib.sha256(canonical.encode("utf-8")).hexdigest(), hashlib.sha256(mib_sources.encode("utf-8")).hexdigest()
+
+
+def _is_canonical_plan(value: Mapping[str, Any]) -> bool:
+    return str(value.get("id") or "") == CANONICAL_PLAN_ID or str(value.get("name") or "") in CANONICAL_PLAN_NAME_ALIASES
+
+
+def _reload_snmp_exporter_config() -> bool:
+    """Ask the local Compose exporter to reload its published config."""
+    request = UrlRequest("http://snmp-exporter:9116/-/reload", method="POST")
+    try:
+        with build_opener(ProxyHandler({}))(request, timeout=3) as response:
+            return 200 <= int(response.status) < 300
+    except Exception:
+        logger.warning("SNMP exporter configuration reload is pending", exc_info=True)
+        return False
+
+
 class ModuleRequest(BaseModel):
     module_key: str = Field(min_length=1, max_length=160)
     display_name: str = Field(min_length=1, max_length=200)
@@ -150,6 +215,10 @@ class VariantRequest(BaseModel):
     retries: int = Field(default=2, ge=0, le=10)
     request_timeout_ms: int = Field(default=3000, ge=100, le=120000)
     scrape_timeout_ms: int = Field(default=20000, ge=1000, le=300000)
+    supported_platforms: list[str] = Field(default_factory=list, max_length=128)
+    supported_models: list[str] = Field(default_factory=list, max_length=128)
+    supported_version_scope: list[str] = Field(default_factory=list, max_length=128)
+    oid_config: dict[str, Any] = Field(default_factory=dict)
     status: str = "DRAFT"
     enabled: bool = True
 
@@ -254,6 +323,39 @@ def update_module(module_id: str, body: dict[str, Any], _user=require_role("Oper
         conn.close()
 
 
+@router.delete("/modules/{module_id}")
+def delete_module(module_id: str, _user=require_role("Operator")):
+    conn = get_db_connection()
+    try:
+        row = conn.execute("SELECT id, module_key, built_in FROM snmp_modules WHERE id = ?", (module_id,)).fetchone()
+        if not row:
+            raise HTTPException(status_code=404, detail="Module not found")
+        module = _dict(row)
+        if bool(module.get("built_in")):
+            raise HTTPException(status_code=409, detail="Built-in modules cannot be deleted")
+        references = []
+        for plan_row in conn.execute("SELECT id, name, config_json FROM monitoring_collection_plans").fetchall():
+            plan = _dict(plan_row)
+            config = _parse_json(plan.get("config_json"), {})
+            entries = config.get("modules") if isinstance(config, dict) else []
+            if any(str(_dict(entry).get("module") or _dict(entry).get("module_key") or "") == str(module.get("module_key")) for entry in entries if isinstance(entry, dict)):
+                references.append(str(plan.get("name") or plan.get("id") or ""))
+        if references:
+            raise HTTPException(status_code=409, detail=f"Module is used by collection plans: {', '.join(references[:5])}")
+        conn.execute("DELETE FROM snmp_modules WHERE id = ?", (module_id,))
+        conn.commit()
+    except HTTPException:
+        conn.rollback()
+        raise
+    except Exception as exc:
+        conn.rollback()
+        raise HTTPException(status_code=409, detail=f"Module deletion failed: {exc}") from exc
+    finally:
+        conn.close()
+    _audit(_user, "MONITORING_MODULE_DELETED", f"Deleted monitoring module {module_id}", target_type="snmp_module", target_id=module_id, details={"module_key": module.get("module_key", "")})
+    return {"id": module_id, "deleted": True}
+
+
 @router.get("/module-variants")
 def list_module_variants(module_id: str | None = Query(default=None), _user=require_role("Viewer")):
     conn = get_db_connection()
@@ -262,7 +364,7 @@ def list_module_variants(module_id: str | None = Query(default=None), _user=requ
             rows = conn.execute("SELECT * FROM snmp_module_variants WHERE module_id = ? ORDER BY variant_key", (module_id,)).fetchall()
         else:
             rows = conn.execute("SELECT * FROM snmp_module_variants ORDER BY variant_key").fetchall()
-        return {"items": [_dict(row) for row in rows]}
+        return {"items": [_safe_variant_view(row) for row in rows]}
     finally:
         conn.close()
 
@@ -274,7 +376,7 @@ def get_module_variant(variant_id: str, _user=require_role("Viewer")):
         row = conn.execute("SELECT * FROM snmp_module_variants WHERE id = ?", (variant_id,)).fetchone()
         if not row:
             raise HTTPException(status_code=404, detail="Module variant not found")
-        return _dict(row)
+        return _safe_variant_view(row)
     finally:
         conn.close()
 
@@ -283,6 +385,20 @@ def get_module_variant(variant_id: str, _user=require_role("Viewer")):
 def update_module_variant(variant_id: str, body: dict[str, Any], _user=require_role("Operator")):
     allowed = {"display_name", "max_repetitions", "retries", "request_timeout_ms", "scrape_timeout_ms", "status", "enabled"}
     updates = {key: value for key, value in body.items() if key in allowed}
+    for key in ("supported_platforms", "supported_models", "supported_version_scope"):
+        if key in body:
+            updates[key] = json.dumps(_scope_list(body.get(key), field=key), ensure_ascii=False)
+    if "oid_config" in body:
+        if not isinstance(body["oid_config"], dict):
+            raise HTTPException(status_code=422, detail="oid_config must be an object")
+        try:
+            validated_oid_config = validate_oid_config(body["oid_config"])
+        except CompileError as exc:
+            raise HTTPException(status_code=422, detail=str(exc)) from exc
+        generator_hash, mib_hash = _oid_config_hashes(validated_oid_config)
+        updates["oid_config_json"] = json.dumps(validated_oid_config, ensure_ascii=False, sort_keys=True)
+        updates["generator_config_hash"] = generator_hash
+        updates["mib_hash"] = mib_hash
     if not updates:
         raise HTTPException(status_code=422, detail="No module variant fields to update")
     if "status" in updates:
@@ -302,20 +418,62 @@ def update_module_variant(variant_id: str, body: dict[str, Any], _user=require_r
         conn.close()
 
 
+@router.delete("/module-variants/{variant_id}")
+def delete_module_variant(variant_id: str, _user=require_role("Operator")):
+    conn = get_db_connection()
+    try:
+        row = conn.execute("SELECT id, variant_key FROM snmp_module_variants WHERE id = ?", (variant_id,)).fetchone()
+        if not row:
+            raise HTTPException(status_code=404, detail="Module variant not found")
+        variant = _dict(row)
+        references = []
+        for plan_row in conn.execute("SELECT id, name, config_json FROM monitoring_collection_plans").fetchall():
+            plan = _dict(plan_row)
+            config = _parse_json(plan.get("config_json"), {})
+            entries = config.get("modules") if isinstance(config, dict) else []
+            if any(str(_dict(entry).get("variant") or _dict(entry).get("variant_key") or "") == str(variant.get("variant_key")) for entry in entries if isinstance(entry, dict)):
+                references.append(str(plan.get("name") or plan.get("id") or ""))
+        if references:
+            raise HTTPException(status_code=409, detail=f"Module variant is used by collection plans: {', '.join(references[:5])}")
+        conn.execute("DELETE FROM snmp_module_variants WHERE id = ?", (variant_id,))
+        conn.commit()
+    except HTTPException:
+        conn.rollback()
+        raise
+    except Exception as exc:
+        conn.rollback()
+        raise HTTPException(status_code=409, detail=f"Module variant deletion failed: {exc}") from exc
+    finally:
+        conn.close()
+    _audit(_user, "MONITORING_VARIANT_DELETED", f"Deleted monitoring module variant {variant_id}", target_type="snmp_module_variant", target_id=variant_id, details={"variant_key": variant.get("variant_key", "")})
+    return {"id": variant_id, "deleted": True}
+
+
 @router.post("/module-variants")
 def create_module_variant(body: VariantRequest, _user=require_role("Operator")):
+    try:
+        validated_oid_config = validate_oid_config(body.oid_config)
+    except CompileError as exc:
+        raise HTTPException(status_code=422, detail=str(exc)) from exc
     variant_id = f"variant-{uuid.uuid4().hex[:16]}"
+    generator_hash, mib_hash = _oid_config_hashes(validated_oid_config)
     now = _now()
     conn = get_db_connection()
     try:
         conn.execute(
             """INSERT INTO snmp_module_variants
                (id, module_id, variant_key, display_name, max_repetitions, retries,
-                request_timeout_ms, scrape_timeout_ms, status, enabled, created_at, updated_at)
-               VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
+                request_timeout_ms, scrape_timeout_ms, supported_platforms,
+                supported_models, supported_version_scope, status, enabled,
+                oid_config_json, generator_config_hash, mib_hash, created_at, updated_at)
+               VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
             (variant_id, body.module_id, body.variant_key, body.display_name, body.max_repetitions,
-             body.retries, body.request_timeout_ms, body.scrape_timeout_ms, body.status.upper(),
-             int(body.enabled), now, now),
+             body.retries, body.request_timeout_ms, body.scrape_timeout_ms,
+             json.dumps(_scope_list(body.supported_platforms, field="supported_platforms"), ensure_ascii=False),
+             json.dumps(_scope_list(body.supported_models, field="supported_models"), ensure_ascii=False),
+             json.dumps(_scope_list(body.supported_version_scope, field="supported_version_scope"), ensure_ascii=False),
+             body.status.upper(), int(body.enabled),
+             json.dumps(validated_oid_config, ensure_ascii=False, sort_keys=True), generator_hash, mib_hash, now, now),
         )
         conn.commit()
     except Exception as exc:
@@ -331,12 +489,19 @@ def create_module_variant(body: VariantRequest, _user=require_role("Operator")):
 def test_module_variant(variant_id: str, _user=require_role("Operator")):
     conn = get_db_connection()
     try:
-        row = conn.execute("SELECT id, status, enabled, max_repetitions, retries, request_timeout_ms FROM snmp_module_variants WHERE id = ?", (variant_id,)).fetchone()
+        row = conn.execute("SELECT id, status, enabled, max_repetitions, retries, request_timeout_ms, oid_config_json FROM snmp_module_variants WHERE id = ?", (variant_id,)).fetchone()
         if not row:
             raise HTTPException(status_code=404, detail="Module variant not found")
         item = _dict(row)
-        valid = bool(item.get("enabled")) and str(item.get("status") or "").upper() not in {"FAILED", "DEPRECATED"}
-        return {"variant_id": variant_id, "status": "SUCCESS" if valid else "FAILED", "samples": 0, "duration_seconds": 0, "snmp_retries": int(item.get("retries") or 0), "error_code": None if valid else "MODULE_ERROR"}
+        oid_error = None
+        oid_metric_count = 0
+        try:
+            oid_config = validate_oid_config(item.get("oid_config_json") or "{}")
+            oid_metric_count = len(oid_config.get("metrics") or [])
+        except CompileError as exc:
+            oid_error = str(exc)
+        valid = bool(item.get("enabled")) and str(item.get("status") or "").upper() not in {"FAILED", "DEPRECATED"} and oid_error is None
+        return {"variant_id": variant_id, "status": "SUCCESS" if valid else "FAILED", "samples": 0, "duration_seconds": 0, "snmp_retries": int(item.get("retries") or 0), "oid_metric_count": oid_metric_count, "error_code": oid_error or (None if valid else "MODULE_ERROR")}
     finally:
         conn.close()
 
@@ -345,9 +510,13 @@ def test_module_variant(variant_id: str, _user=require_role("Operator")):
 def publish_module_variant(variant_id: str, _user=require_role("Operator")):
     conn = get_db_connection()
     try:
-        row = conn.execute("SELECT id FROM snmp_module_variants WHERE id = ?", (variant_id,)).fetchone()
+        row = conn.execute("SELECT id, oid_config_json FROM snmp_module_variants WHERE id = ?", (variant_id,)).fetchone()
         if not row:
             raise HTTPException(status_code=404, detail="Module variant not found")
+        try:
+            validate_oid_config(row["oid_config_json"] if hasattr(row, "keys") else row[1])
+        except CompileError as exc:
+            raise HTTPException(status_code=422, detail=str(exc)) from exc
         conn.execute("UPDATE snmp_module_variants SET status = 'PUBLISHED', enabled = 1, updated_at = ? WHERE id = ?", (_now(), variant_id))
         conn.commit()
         _audit(_user, "MONITORING_VARIANT_PUBLISHED", f"Published monitoring module variant {variant_id}", target_type="snmp_module_variant", target_id=variant_id)
@@ -427,6 +596,8 @@ def update_collector(collector_id: str, body: dict[str, Any], _user=require_role
         raise HTTPException(status_code=422, detail="No collector fields to update")
     if "collector_type" in updates:
         updates["collector_type"] = str(updates["collector_type"]).upper()
+    if str(updates.get("remote_write_endpoint") or "") == "[REDACTED]":
+        updates.pop("remote_write_endpoint", None)
     if "remote_write_endpoint" in updates:
         updates["remote_write_endpoint"] = _validate_remote_write_endpoint(str(updates["remote_write_endpoint"]))
     updates["updated_at"] = _now()
@@ -442,6 +613,32 @@ def update_collector(collector_id: str, body: dict[str, Any], _user=require_role
         return result
     finally:
         conn.close()
+
+
+@router.delete("/collectors/{collector_id}")
+def delete_collector(collector_id: str, _user=require_role("Operator")):
+    conn = get_db_connection()
+    try:
+        row = conn.execute("SELECT id, code FROM monitoring_collectors WHERE id = ?", (collector_id,)).fetchone()
+        if not row:
+            raise HTTPException(status_code=404, detail="Collector not found")
+        assignment_count = int(_dict(conn.execute("SELECT COUNT(*) AS count FROM monitoring_collection_assignments WHERE collector_id = ?", (collector_id,)).fetchone()).get("count") or 0)
+        config_count = int(_dict(conn.execute("SELECT COUNT(*) AS count FROM monitoring_config_versions WHERE collector_id = ?", (collector_id,)).fetchone()).get("count") or 0)
+        if assignment_count or config_count:
+            raise HTTPException(status_code=409, detail="Collector has assignments or configuration history and cannot be deleted")
+        conn.execute("DELETE FROM monitoring_collectors WHERE id = ?", (collector_id,))
+        conn.commit()
+    except HTTPException:
+        conn.rollback()
+        raise
+    except Exception as exc:
+        conn.rollback()
+        raise HTTPException(status_code=409, detail=f"Collector deletion failed: {exc}") from exc
+    finally:
+        conn.close()
+    collector = _dict(row)
+    _audit(_user, "MONITORING_COLLECTOR_DELETED", f"Deleted monitoring collector {collector_id}", target_type="monitoring_collector", target_id=collector_id, details={"code": collector.get("code", "")})
+    return {"id": collector_id, "deleted": True}
 
 
 @router.post("/collectors")
@@ -516,6 +713,7 @@ def list_monitoring_plans(_user=require_role("Viewer")):
         for row in rows:
             item = _dict(row)
             item["config"] = _parse_json(item.pop("config_json", "{}"), {})
+            item["is_canonical"] = _is_canonical_plan(item)
             result.append(item)
         return {"items": result}
     finally:
@@ -531,7 +729,81 @@ def preview_monitoring_plan(plan_id: str, _user=require_role("Viewer")):
             raise HTTPException(status_code=404, detail="Collection plan not found")
         row = _dict(plan)
         config = _parse_json(row.pop("config_json", "{}"), {})
-        return {"plan": {**row, "config": config}, "preview": "read-only"}
+        row["is_canonical"] = _is_canonical_plan(row)
+        try:
+            device_sql = "SELECT id, hostname, vendor, platform, cli_platform, model, version, os_version, firmware_version, role, device_role, device_category, site, site_id, ip_address, management_address, status FROM devices WHERE (status IS NULL OR LOWER(status) = 'online')"
+            device_params: tuple[Any, ...] = ()
+            tenant = _tenant_id(_user)
+            if tenant is not None:
+                device_sql += " AND COALESCE(tenant_id, 'tenant-default') = ?"
+                device_params = (tenant,)
+            devices = conn.execute(device_sql, device_params).fetchall()
+        except Exception:
+            # Read-only preview remains useful on an installation where CMDB
+            # access is temporarily unavailable; the compile/apply path still
+            # fails closed when it needs real device rows.
+            devices = []
+        entries = config.get("modules") if isinstance(config, dict) else []
+        module_rows = {
+            str(item["module_key"]): _dict(item)
+            for item in conn.execute("SELECT * FROM snmp_modules WHERE enabled = 1").fetchall()
+            if item["module_key"]
+        }
+        variant_rows = {
+            str(item["variant_key"]): _dict(item)
+            for item in conn.execute("SELECT * FROM snmp_module_variants WHERE enabled = 1").fetchall()
+            if item["variant_key"]
+        }
+        matched_devices = []
+        matched_variants: dict[str, int] = {}
+        for device_row in devices:
+            device = _dict(device_row)
+            if not plan_target_matches_device(device, config):
+                continue
+            selected = []
+            if isinstance(entries, list):
+                for raw_entry in entries:
+                    if not isinstance(raw_entry, dict) or raw_entry.get("enabled", True) is False:
+                        continue
+                    entry = _dict(raw_entry)
+                    if not plan_entry_matches_device(entry, device):
+                        continue
+                    variant_key = str(entry.get("variant") or entry.get("variant_key") or "")
+                    variant = variant_rows.get(variant_key) or {}
+                    module_key = str(entry.get("module") or entry.get("module_key") or "")
+                    module = module_rows.get(module_key) or {}
+                    if variant and not variant_matches_device(variant, device, module):
+                        continue
+                    selected.append(entry)
+            if not selected:
+                continue
+            for entry in selected:
+                variant_key = str(entry.get("variant") or entry.get("variant_key") or "")
+                if variant_key:
+                    matched_variants[variant_key] = matched_variants.get(variant_key, 0) + 1
+            match_reasons: set[str] = set()
+            for entry in selected:
+                variant_key = str(entry.get("variant") or entry.get("variant_key") or "")
+                module_key = str(entry.get("module") or entry.get("module_key") or "")
+                variant = variant_rows.get(variant_key) or {}
+                module = module_rows.get(module_key) or {}
+                reason = plan_entry_match_reason(entry, device)
+                variant_reason = variant_match_reason(variant, device, module)
+                match_reasons.add(reason if variant_reason == "variant scope unrestricted" else f"{reason}; {variant_reason}")
+            matched_devices.append({
+                "id": device.get("id"),
+                "hostname": device.get("hostname") or device.get("id"),
+                "vendor": device.get("vendor") or "",
+                "platform": device.get("platform") or device.get("cli_platform") or "",
+                "variants": sorted({str(entry.get("variant") or entry.get("variant_key") or "") for entry in selected if entry.get("variant") or entry.get("variant_key")}),
+                "match_reasons": sorted(match_reasons),
+            })
+        coverage = {
+            "target_count": len(matched_devices),
+            "variant_hits": matched_variants,
+            "unmatched_online_devices": max(len(devices) - len(matched_devices), 0),
+        }
+        return {"plan": {**row, "config": config, "coverage": coverage}, "preview": "read-only"}
     finally:
         conn.close()
 
@@ -569,14 +841,24 @@ def compile_test_monitoring_plan(plan_id: str, _user=require_role("Operator")):
                     errors.append("TIMEOUT_INVALID")
             except CompileError as exc:
                 errors.append(str(exc))
+        try:
+            render_exporter_modules(
+                [{"variant_key": _dict(item).get("variant") or _dict(item).get("variant_key"), "enabled": _dict(item).get("enabled", True)} for item in entries if isinstance(item, dict)],
+                modules=[_dict(item) for item in modules],
+                variants=[_dict(item) for item in variants],
+            )
+        except CompileError as exc:
+            errors.append(str(exc))
         target_scope = config.get("target_scope") if isinstance(config, dict) and isinstance(config.get("target_scope"), dict) else {}
         target_ips = {str(value).strip() for value in (config.get("target_ips") or []) if str(value).strip()} if isinstance(config, dict) else set()
         target_device_ids = {str(value).strip() for value in (config.get("device_ids") or []) if str(value).strip()} if isinstance(config, dict) else set()
         matched_targets: list[dict[str, Any]] = []
         if target_scope or target_ips or target_device_ids:
             device_rows = conn.execute(
-                "SELECT id, hostname, ip_address, management_address, platform, role, device_role, device_category, site, site_id, status FROM devices WHERE status IS NULL OR LOWER(status) = 'online'"
+                "SELECT id, hostname, ip_address, management_address, vendor, platform, cli_platform, model, version, os_version, firmware_version, role, device_role, device_category, site, site_id, status FROM devices WHERE status IS NULL OR LOWER(status) = 'online'"
             ).fetchall()
+            module_lookup = {str(_dict(item).get("module_key") or ""): _dict(item) for item in modules}
+            variant_lookup = {str(_dict(item).get("variant_key") or ""): _dict(item) for item in variants}
             try:
                 from services.tag_service import get_device_tags
             except Exception:
@@ -589,6 +871,19 @@ def compile_test_monitoring_plan(plan_id: str, _user=require_role("Operator")):
                     except Exception:
                         item["tag_ids"] = []
                 if plan_target_matches_device(item, {"target_scope": target_scope, "target_ips": target_ips, "device_ids": target_device_ids}):
+                    scope_matches = []
+                    for raw_entry in entries if isinstance(entries, list) else []:
+                        entry = _dict(raw_entry)
+                        if entry.get("enabled", True) is False or not plan_entry_matches_device(entry, item):
+                            continue
+                        variant_key = str(entry.get("variant") or entry.get("variant_key") or "")
+                        module_key = str(entry.get("module") or entry.get("module_key") or "")
+                        variant = variant_lookup.get(variant_key) or {}
+                        module = module_lookup.get(module_key) or {}
+                        if variant and variant_matches_device(variant, item, module):
+                            scope_matches.append(variant_key)
+                    if entries and not scope_matches:
+                        errors.append(f"MODULE_VARIANT_SCOPE_NO_MATCH:{item.get('id')}")
                     matched_targets.append({
                         "id": item.get("id"),
                         "hostname": item.get("hostname") or item.get("id"),
@@ -659,6 +954,94 @@ def update_monitoring_plan(plan_id: str, body: PlanRequest, _user=require_role("
         conn.close()
     _audit(_user, "MONITORING_PLAN_UPDATED", f"Updated monitoring collection plan {plan_id}", target_type="monitoring_collection_plan", target_id=plan_id, details={"name": body.name, "cli_platform": body.cli_platform, "module_count": len(body.config.get("modules") or [])})
     return {"id": plan_id, "name": body.name, "cli_platform": body.cli_platform, "description": body.description, "config": body.config, "enabled": body.enabled, "updated_at": now}
+
+
+@router.post("/collection-plans/{plan_id}/apply")
+def apply_monitoring_plan(plan_id: str, _user=require_role("Operator")):
+    """Save-and-apply entry point for the normal plan workflow.
+
+    Users do not need to reason about the intermediate compiler state.  The
+    control plane still keeps the versioned compile/publish records and calls
+    the same audited operations used by collector administration.
+    """
+
+    conn = get_db_connection()
+    try:
+        row = conn.execute(
+            "SELECT id, name, enabled FROM monitoring_collection_plans WHERE id = ?",
+            (plan_id,),
+        ).fetchone()
+        if not row:
+            raise HTTPException(status_code=404, detail="Collection plan not found")
+        if not bool(row["enabled"] if hasattr(row, "keys") else row[2]):
+            raise HTTPException(status_code=409, detail="Disabled collection plan cannot be applied")
+        tenant = _tenant_id(_user)
+        if tenant is None:
+            collector_rows = conn.execute("SELECT id FROM monitoring_collectors WHERE enabled = 1 ORDER BY id").fetchall()
+        else:
+            collector_rows = conn.execute(
+                "SELECT c.id FROM monitoring_collectors c WHERE c.enabled = 1 AND (c.id = 'collector-local' OR c.site_id IN (SELECT DISTINCT site_id FROM devices WHERE COALESCE(tenant_id, 'tenant-default') = ?)) ORDER BY c.id",
+                (tenant,),
+            ).fetchall()
+        collectors = [str(item["id"] if hasattr(item, "keys") else item[0]) for item in collector_rows]
+    finally:
+        conn.close()
+
+    if not collectors:
+        raise HTTPException(status_code=409, detail="No enabled collector is available")
+    results = []
+    try:
+        for collector_id in collectors:
+            compiled = compile_collector(collector_id, _user=_user)
+            published = publish_collector(collector_id, _user=_user)
+            results.append({"collector_id": collector_id, "config_version": published.get("config_version"), "status": published.get("status"), "assignment_count": compiled.get("assignment_count", 0)})
+    except HTTPException as exc:
+        detail = exc.detail
+        raise HTTPException(status_code=exc.status_code, detail={"code": "PLAN_APPLY_FAILED", "plan_id": plan_id, "collector_results": results, "cause": detail}) from exc
+    _audit(
+        _user,
+        "MONITORING_PLAN_APPLIED",
+        f"Applied monitoring collection plan {plan_id}",
+        target_type="monitoring_collection_plan",
+        target_id=plan_id,
+        details={"plan_id": plan_id, "collector_count": len(results), "status": "APPLIED"},
+    )
+    return {"plan_id": plan_id, "status": "APPLIED", "collectors": results}
+
+
+@router.delete("/collection-plans/{plan_id}")
+def delete_monitoring_plan(plan_id: str, _user=require_role("Operator")):
+    """Delete a plan and the assignments compiled exclusively from it.
+
+    Assignments do not have a database foreign key to plans, so they must be
+    removed in the same transaction; otherwise a deleted plan could continue
+    to be collected until a later compilation run.
+    """
+    conn = get_db_connection()
+    try:
+        existing = conn.execute("SELECT id, name FROM monitoring_collection_plans WHERE id = ?", (plan_id,)).fetchone()
+        if not existing:
+            raise HTTPException(status_code=404, detail="Collection plan not found")
+        existing_plan = _dict(existing)
+        if _is_canonical_plan(existing_plan):
+            raise HTTPException(status_code=409, detail="The canonical SNMP baseline plan cannot be deleted")
+        removed_assignments = conn.execute(
+            "DELETE FROM monitoring_collection_assignments WHERE source_type = ? AND source_plan_id = ?",
+            ("PLAN", plan_id),
+        ).rowcount
+        conn.execute("DELETE FROM monitoring_collection_plans WHERE id = ?", (plan_id,))
+        conn.commit()
+    except HTTPException:
+        conn.rollback()
+        raise
+    except Exception as exc:
+        conn.rollback()
+        raise HTTPException(status_code=409, detail=f"Collection plan deletion failed: {exc}") from exc
+    finally:
+        conn.close()
+    plan = _dict(existing)
+    _audit(_user, "MONITORING_PLAN_DELETED", f"Deleted monitoring collection plan {plan_id}", target_type="monitoring_collection_plan", target_id=plan_id, details={"name": plan.get("name", ""), "removed_assignment_count": removed_assignments or 0})
+    return {"id": plan_id, "deleted": True, "removed_assignment_count": removed_assignments or 0}
 
 
 @router.get("/assignments")
@@ -810,7 +1193,15 @@ def compile_collector(collector_id: str, body: CompileRequest | None = None, _us
         used_credentials = {str(item.get("credential_id") or "") for item in assignments}
         artifact_credentials = [item for item in inputs[5] if str(item.get("id") or "") in used_credentials]
         artifact_root = os.environ.get("MONITORING_ARTIFACT_ROOT") or os.path.join(os.getcwd(), "artifacts", "monitoring")
-        artifact = compile_artifact(assignments, collector_id=collector_id, config_version=version, credentials=artifact_credentials, output_root=artifact_root)
+        artifact = compile_artifact(
+            assignments,
+            collector_id=collector_id,
+            config_version=version,
+            credentials=artifact_credentials,
+            modules=inputs[2],
+            variants=inputs[3],
+            output_root=artifact_root,
+        )
         validate_artifact(artifact)
         manifest = artifact["manifest"]
         now = _now()
@@ -868,6 +1259,9 @@ def rollback_collector(collector_id: str, _user=require_role("Operator")):
                 CollectorArtifactStore(str(Path(artifact_path).parent)).rollback()
             except ArtifactStoreError as exc:
                 raise HTTPException(status_code=409, detail=str(exc)) from exc
+            exporter_reload = _reload_snmp_exporter_config()
+        else:
+            exporter_reload = None
         now = _now()
         conn.execute("UPDATE monitoring_config_versions SET status = 'ROLLED_BACK', rolled_back_at = ? WHERE collector_id = ? AND config_version > ?", (now, collector_id, target))
         conn.execute("UPDATE monitoring_config_versions SET status = 'APPLIED', applied_at = ? WHERE collector_id = ? AND config_version = ?", (now, collector_id, target))
@@ -875,7 +1269,7 @@ def rollback_collector(collector_id: str, _user=require_role("Operator")):
         conn.execute("UPDATE monitoring_collectors SET last_config_version = ?, last_config_status = 'ROLLED_BACK', updated_at = ? WHERE id = ?", (target, now, collector_id))
         conn.commit()
         _audit(_user, "MONITORING_CONFIG_ROLLED_BACK", f"Rolled back monitoring config {collector_id} to v{target}", target_type="monitoring_config", target_id=f"{collector_id}:{target}", details={"collector_id": collector_id, "config_version": target, "status": "ROLLED_BACK"})
-        return {"status": "ROLLED_BACK", "collector_id": collector_id, "config_version": target}
+        return {"status": "ROLLED_BACK", "collector_id": collector_id, "config_version": target, "snmp_exporter_reload": exporter_reload}
     finally:
         conn.close()
 
@@ -929,13 +1323,16 @@ def publish_collector(collector_id: str, _user=require_role("Operator")):
                 CollectorArtifactStore(str(Path(artifact_path).parent)).publish(artifact_path, config_version=version)
             except ArtifactStoreError as exc:
                 raise HTTPException(status_code=422, detail=str(exc)) from exc
+            exporter_reload = _reload_snmp_exporter_config()
+        else:
+            exporter_reload = None
         now = _now()
         conn.execute("UPDATE monitoring_config_versions SET status = 'APPLIED', applied_at = ? WHERE collector_id = ? AND config_version = ?", (now, collector_id, version))
         conn.execute("UPDATE monitoring_target_snapshots SET is_last_known_good = CASE WHEN config_version = ? THEN 1 ELSE 0 END WHERE collector_id = ?", (version, collector_id))
         conn.execute("UPDATE monitoring_collectors SET status = 'ONLINE', last_config_status = 'APPLIED', last_config_version = ?, last_config_applied_at = ?, updated_at = ? WHERE id = ?", (version, now, now, collector_id))
         conn.commit()
         _audit(_user, "MONITORING_CONFIG_PUBLISHED", f"Published monitoring config {collector_id} v{version}", target_type="monitoring_config", target_id=f"{collector_id}:{version}", details={"collector_id": collector_id, "config_version": version, "status": "APPLIED"})
-        return {"status": "APPLIED", "collector_id": collector_id, "config_version": version}
+        return {"status": "APPLIED", "collector_id": collector_id, "config_version": version, "snmp_exporter_reload": exporter_reload}
     finally:
         conn.close()
 
@@ -1008,7 +1405,7 @@ def collection_health(collector_id: str | None = Query(default=None), _user=requ
                 FROM monitoring_collection_assignments a
                 JOIN devices d ON d.id = a.asset_id
                 LEFT JOIN LATERAL (
-                    SELECT status, last_success_at, error_code
+                    SELECT status, last_attempt_at, last_success_at, duration_ms, consecutive_failures, error_code
                       FROM device_collection_status
                      WHERE device_id = a.asset_id AND collector LIKE 'snmp_%'
                      ORDER BY updated_at DESC LIMIT 1

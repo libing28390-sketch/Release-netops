@@ -21,6 +21,13 @@ import { ActionButton } from '../../ui/ActionIconButton';
 export interface ProfileForm {
   vendor: string;
   model: string;
+  platforms: string;
+  modelPattern: string;
+  softwareVersionScope: string;
+  minVersion: string;
+  maxVersion: string;
+  excludedVersions: string;
+  scopePriority: string;
   metrics: MetricRow[];
   interfaceConfig: InterfaceOidConfig;
 }
@@ -211,11 +218,71 @@ export const MetricProfileEditor: React.FC<MetricProfileEditorProps> = ({
             </label>
           </div>
 
+          <div className="mb-3.5 rounded-xl border border-slate-200 bg-slate-50/70 p-3 dark:border-white/10 dark:bg-white/[.03]">
+            <div className="mb-2 flex items-center justify-between gap-2">
+              <div>
+                <p className="text-xs font-semibold text-black/75 dark:text-white/80">{zh ? '适配范围' : 'Compatibility scope'}</p>
+                <p className="mt-0.5 text-[10px] text-black/45 dark:text-white/45">{zh ? '同一厂商可按平台、型号系列和软件版本维护多套 OID。留空表示该维度不限制。' : 'Keep multiple OID definitions for one vendor by platform, model family, and software release. Empty means unrestricted.'}</p>
+              </div>
+              <span className="rounded-full bg-white px-2 py-1 text-[10px] font-semibold text-slate-500 dark:bg-white/[.08]">{zh ? '可选' : 'Optional'}</span>
+            </div>
+            <div className="grid gap-3 sm:grid-cols-2">
+              <label className="block text-[11px] font-medium text-black/65 dark:text-white/65">
+                {zh ? '平台范围' : 'Platform scope'}
+                <input
+                  value={form.platforms}
+                  onChange={e => onChangeForm(prev => ({ ...prev, platforms: e.target.value }))}
+                  className="mt-1 w-full rounded-lg border border-black/8 bg-white px-3 py-2 text-xs outline-none focus:border-[#00bceb]/50 dark:border-white/10 dark:bg-white/[.04]"
+                  placeholder={zh ? '例如：h3c_comware_v7,h3c_comware_v9' : 'e.g. h3c_comware_v7,h3c_comware_v9'}
+                />
+              </label>
+              <label className="block text-[11px] font-medium text-black/65 dark:text-white/65">
+                {zh ? '型号/系列规则' : 'Model / series pattern'}
+                <input
+                  value={form.modelPattern}
+                  onChange={e => onChangeForm(prev => ({ ...prev, modelPattern: e.target.value }))}
+                  className="mt-1 w-full rounded-lg border border-black/8 bg-white px-3 py-2 text-xs outline-none focus:border-[#00bceb]/50 dark:border-white/10 dark:bg-white/[.04]"
+                  placeholder={zh ? '例如：S6800-*；留空默认精确型号' : 'e.g. S6800-*; empty uses exact model'}
+                />
+              </label>
+              <label className="block text-[11px] font-medium text-black/65 dark:text-white/65 sm:col-span-2">
+                {zh ? '软件版本范围' : 'Software version scope'}
+                <input
+                  value={form.softwareVersionScope}
+                  onChange={e => onChangeForm(prev => ({ ...prev, softwareVersionScope: e.target.value }))}
+                  className="mt-1 w-full rounded-lg border border-black/8 bg-white px-3 py-2 text-xs outline-none focus:border-[#00bceb]/50 dark:border-white/10 dark:bg-white/[.04]"
+                  placeholder={zh ? '例如：Comware V7, 7.x 或 VRP V8' : 'e.g. Comware V7, 7.x, or VRP V8'}
+                />
+              </label>
+              <details className="sm:col-span-2">
+                <summary className="cursor-pointer text-[11px] font-semibold text-black/55 dark:text-white/55">{zh ? '高级版本边界（可选）' : 'Advanced version bounds (optional)'}</summary>
+                <div className="mt-2 grid gap-3 sm:grid-cols-3">
+                  <label className="block text-[11px] font-medium text-black/65 dark:text-white/65">
+                    {zh ? '最低版本' : 'Minimum version'}
+                    <input value={form.minVersion} onChange={e => onChangeForm(prev => ({ ...prev, minVersion: e.target.value }))} className="mt-1 w-full rounded-lg border border-black/8 bg-white px-3 py-2 text-xs outline-none focus:border-[#00bceb]/50 dark:border-white/10 dark:bg-white/[.04]" placeholder="7.0" />
+                  </label>
+                  <label className="block text-[11px] font-medium text-black/65 dark:text-white/65">
+                    {zh ? '最高版本' : 'Maximum version'}
+                    <input value={form.maxVersion} onChange={e => onChangeForm(prev => ({ ...prev, maxVersion: e.target.value }))} className="mt-1 w-full rounded-lg border border-black/8 bg-white px-3 py-2 text-xs outline-none focus:border-[#00bceb]/50 dark:border-white/10 dark:bg-white/[.04]" placeholder="8.9" />
+                  </label>
+                  <label className="block text-[11px] font-medium text-black/65 dark:text-white/65">
+                    {zh ? '排除版本' : 'Excluded versions'}
+                    <input value={form.excludedVersions} onChange={e => onChangeForm(prev => ({ ...prev, excludedVersions: e.target.value }))} className="mt-1 w-full rounded-lg border border-black/8 bg-white px-3 py-2 text-xs outline-none focus:border-[#00bceb]/50 dark:border-white/10 dark:bg-white/[.04]" placeholder={zh ? '例如：7.1.070' : 'e.g. 7.1.070'} />
+                  </label>
+                  <label className="block text-[11px] font-medium text-black/65 dark:text-white/65">
+                    {zh ? '匹配优先级' : 'Match priority'}
+                    <input type="number" min="0" max="1000" value={form.scopePriority} onChange={e => onChangeForm(prev => ({ ...prev, scopePriority: e.target.value }))} className="mt-1 w-full rounded-lg border border-black/8 bg-white px-3 py-2 text-xs outline-none focus:border-[#00bceb]/50 dark:border-white/10 dark:bg-white/[.04]" placeholder="0" />
+                  </label>
+                </div>
+              </details>
+            </div>
+          </div>
+
           <div className="mb-3.5 rounded-lg border border-[#00bceb]/25 bg-[#00bceb]/[0.05] px-3 py-2 text-[11px] leading-4 text-[#006b83] dark:border-[#00bceb]/25 dark:bg-[#00bceb]/[0.08] dark:text-[#8eeaff]">
             <span className="font-semibold">{zh ? '模板匹配规则：' : 'Template matching: '}</span>
             {zh
-              ? 'H3C 不是固定要求，请选择设备的实际厂商。保存后会按“厂商 + 精确型号”作为该型号的 SNMP 采集模板；S6850-1 应选择 H3C / S6800。仅在官方模板未匹配或不适配时使用自定义模板。'
-              : 'H3C is not mandatory. Select the device’s actual vendor. Saving activates this profile for the exact vendor + model; S6850-1 should use H3C / S6800. Use a custom profile only when no official template matches or fits.'}
+              ? '先按厂商隔离，再按平台、型号系列和软件版本选出唯一 OID 配置；如果多个模板同时命中，系统会标记为歧义并停止自动套用。'
+              : 'The resolver isolates vendors first, then selects one OID definition by platform, model family, and software version. Tied matches are marked ambiguous and are not auto-applied.'}
           </div>
 
           {/* Smart Auto Match Recommendation Capsule */}

@@ -65,6 +65,17 @@ class CollectorArtifactStore:
             return None
         return self._read_version(self.previous)
 
+    def _sync_runtime(self, *, config_version: int, status: str, **details: Any) -> None:
+        """Expose the active artifact through the shared collector runtime path."""
+        if not self.current.exists():
+            raise ArtifactStoreError("current artifact is missing")
+        self._copy_tree_atomic(self.current, self.runtime)
+        runtime_state = {"config_version": int(config_version), "status": status, **details}
+        (self.runtime / "current_version.json").write_text(
+            json.dumps(runtime_state, indent=2) + "\n",
+            encoding="utf-8",
+        )
+
     def _copy_tree_atomic(self, source: Path, destination: Path) -> None:
         source = self._inside_root(source)
         destination = self._inside_root(destination)
@@ -104,10 +115,7 @@ class CollectorArtifactStore:
                 shutil.rmtree(self.previous)
             self._copy_tree_atomic(self.current, self.previous)
         self._copy_tree_atomic(version_dir, self.current)
-        (self.runtime / "current_version.json").write_text(
-            json.dumps({"config_version": int(config_version), "status": "APPLIED"}, indent=2) + "\n",
-            encoding="utf-8",
-        )
+        self._sync_runtime(config_version=config_version, status="APPLIED")
         return {
             "status": "APPLIED",
             "config_version": int(config_version),
@@ -138,10 +146,7 @@ class CollectorArtifactStore:
                     shutil.rmtree(backup, ignore_errors=True)
         else:
             os.replace(self.previous, self.current)
-        (self.runtime / "current_version.json").write_text(
-            json.dumps({"config_version": previous_version, "status": "ROLLED_BACK", "from_version": current_version}, indent=2) + "\n",
-            encoding="utf-8",
-        )
+        self._sync_runtime(config_version=previous_version, status="ROLLED_BACK", from_version=current_version)
         return {
             "status": "ROLLED_BACK",
             "config_version": previous_version,

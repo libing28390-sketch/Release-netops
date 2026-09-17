@@ -11,6 +11,7 @@ from __future__ import annotations
 import hashlib
 import json
 import math
+import re
 import threading
 import time
 import uuid
@@ -444,6 +445,302 @@ def normalize_vendor_key(vendor: Any, platform: Any = "") -> str:
     return normalize_vendor_name(vendor, platform).casefold()
 
 
+_SCOPE_SPLIT_RE = re.compile(r"[,;\n]+")
+
+
+def normalize_platform_key(value: Any) -> str:
+    """Normalize a platform/profile code while retaining version suffixes."""
+
+    token = re.sub(r"[\s./-]+", "_", str(value or "").strip().casefold()).strip("_")
+    aliases = {
+        "comware": "h3c_comware",
+        "hp_comware": "h3c_comware_v5",
+        "h3c_comware7": "h3c_comware_v7",
+        "h3c_comware9": "h3c_comware_v9",
+        "vrp": "huawei_vrp",
+        "ios": "cisco_ios",
+        "iosxe": "cisco_iosxe",
+        "nxos": "cisco_nxos",
+    }
+    return aliases.get(token, token)
+
+
+def _scope_list(value: Any, *, max_items: int = 128) -> list[str]:
+    """Decode a bounded list accepted from JSON or a comma-separated form."""
+
+    if value in (None, ""):
+        return []
+    raw = value
+    if isinstance(value, str):
+        try:
+            parsed = json.loads(value)
+        except (TypeError, ValueError):
+            parsed = None
+        if isinstance(parsed, dict):
+            raw = parsed.get("include") or parsed.get("versions") or parsed.get("values") or []
+        elif isinstance(parsed, list):
+            raw = parsed
+        else:
+            raw = _SCOPE_SPLIT_RE.split(value)
+    elif isinstance(value, Mapping):
+        raw = value.get("include") or value.get("versions") or value.get("values") or []
+    if not isinstance(raw, (list, tuple, set, frozenset)):
+        raw = [raw]
+    result: list[str] = []
+    for item in raw:
+        text = _clean_text(item, 160)
+        if text and text.casefold() not in {existing.casefold() for existing in result}:
+            result.append(text)
+    if len(result) > max_items:
+        raise ValueError("compatibility scope has too many entries")
+    return result
+
+
+def _version_numbers(value: Any) -> tuple[int, ...]:
+    numbers = re.findall(r"\d+", str(value or ""))
+    return tuple(int(item) for item in numbers[:6])
+
+
+def _version_compare(left: tuple[int, ...], right: tuple[int, ...]) -> int:
+    width = max(len(left), len(right), 1)
+    l_value = (*left, *(0 for _ in range(width - len(left))))
+    r_value = (*right, *(0 for _ in range(width - len(right))))
+    return (l_value > r_value) - (l_value < r_value)
+
+
+def _glob_match(actual: str, selector: str) -> bool:
+    pattern = re.escape(selector).replace(r"\*", ".*").replace(r"\?", ".")
+    return bool(re.fullmatch(pattern, actual, re.IGNORECASE))
+
+
+def _platform_scope_matches(actual: Any, selector: Any) -> bool:
+    actual_key = normalize_platform_key(actual)
+    selector_key = normalize_platform_key(selector)
+    if selector_key in {"", "*", "any", "all"}:
+        return True
+    if not actual_key:
+        return False
+    if _glob_match(actual_key, selector_key) or actual_key == selector_key:
+        return True
+    # Family selectors match concrete release suffixes, but a concrete v5
+    # selector must not match v7 merely because they share a prefix.
+    return actual_key.startswith(f"{selector_key}_")
+
+
+def _model_scope_matches(actual: Any, selector: Any) -> bool:
+    actual_text = _clean_text(actual, 256).casefold()
+    selector_text = _clean_text(selector, 256).casefold()
+    if selector_text in {"", "*", "any", "all"}:
+        return True
+    if not actual_text:
+        return False
+    return bool(
+        _glob_match(actual_text, selector_text)
+        or actual_text == selector_text
+        or actual_text.startswith(f"{selector_text}-")
+        or actual_text.startswith(f"{selector_text} ")
+    )
+
+
+def _version_scope_matches(actual: Any, selector: Any) -> bool:
+    actual_text = _clean_text(actual, 256).casefold()
+    selector_text = _clean_text(selector, 256).casefold()
+    if selector_text in {"", "*", "any", "all"}:
+        return True
+    if not actual_text:
+        return False
+    if _glob_match(actual_text, selector_text):
+        return True
+    if "x" in selector_text:
+        wildcard_selector = selector_text.replace("x", "*")
+        if _glob_match(actual_text, wildcard_selector):
+            return True
+    actual_compact = re.sub(r"[^a-z0-9]+", "", actual_text)
+    selector_compact = re.sub(r"[^a-z0-9]+", "", selector_text)
+    if selector_compact and selector_compact in actual_compact:
+        return True
+    # “Comware 7” / “VRP V8” / “IOS-XE” are common human scopes. Match their
+    # family token plus major release when one is present.
+    families = [token for token in ("comware", "vrp", "iosxe", "ios", "nxos", "asa") if token in selector_compact]
+    if families and not any(token in actual_compact for token in families):
+        return False
+    selector_major = re.search(r"(?:v|version|comware|vrp|ios(?:xe)?|nxos|asa)?\s*(\d+)", selector_text)
+    if selector_major:
+        major = selector_major.group(1)
+        return bool(re.search(rf"(?:^|[^a-z0-9])v?{re.escape(major)}(?:$|[^0-9])", actual_text)) or bool(
+            re.search(rf"(?:v|version|comware|vrp|ios(?:xe)?|nxos|asa){re.escape(major)}", actual_compact)
+        )
+    return False
+
+
+def _device_platform_values(device: Mapping[str, Any]) -> list[str]:
+    return [
+        str(value).strip()
+        for value in (
+            device.get("platform_code"),
+            device.get("platform"),
+            device.get("cli_platform"),
+            device.get("platform_key"),
+        )
+        if str(value or "").strip()
+    ]
+
+
+def _device_version_values(device: Mapping[str, Any]) -> list[str]:
+    return [
+        str(value).strip()
+        for value in (
+            device.get("software_version"),
+            device.get("version"),
+            device.get("os_version"),
+            device.get("firmware_version"),
+        )
+        if str(value or "").strip()
+    ]
+
+
+def _profile_scope(row: Mapping[str, Any]) -> dict[str, Any]:
+    platforms = _scope_list(_row_value(row, "platform_scope_json", ""))
+    if not platforms:
+        platforms = _scope_list(_row_value(row, "platforms", ""))
+    if not platforms and _row_value(row, "platform_key", ""):
+        platforms = _scope_list(_row_value(row, "platform_key", ""))
+    model_pattern = _clean_text(
+        _row_value(row, "model_pattern", "")
+        or _row_value(row, "model_name", "")
+        or _row_value(row, "profile_model", "")
+        or _row_value(row, "model", "")
+        or "",
+        256,
+    )
+    versions = _scope_list(_row_value(row, "software_version_scope_json", ""))
+    if not versions:
+        versions = _scope_list(_row_value(row, "software_version_scope", "") or _row_value(row, "software_versions", ""))
+    excluded = _scope_list(_row_value(row, "excluded_versions_json", ""))
+    if not excluded:
+        excluded = _scope_list(_row_value(row, "excluded_versions", ""))
+    try:
+        priority = max(0, min(1000, int(_row_value(row, "scope_priority", _row_value(row, "priority", 0)) or 0)))
+    except (TypeError, ValueError):
+        priority = 0
+    return {
+        "platforms": [normalize_platform_key(value) for value in platforms if normalize_platform_key(value)],
+        "model_pattern": model_pattern,
+        "software_versions": versions,
+        "min_version": _clean_text(_row_value(row, "min_version", "") or "", 128),
+        "max_version": _clean_text(_row_value(row, "max_version", "") or "", 128),
+        "excluded_versions": excluded,
+        "priority": priority,
+    }
+
+
+def _profile_scope_from_payload(payload: Mapping[str, Any], existing: Any = None) -> dict[str, Any]:
+    def submitted(*keys: str, default: Any = None) -> Any:
+        for key in keys:
+            if key in payload:
+                return payload.get(key)
+        return default
+
+    existing_row = existing if isinstance(existing, Mapping) or hasattr(existing, "keys") else {}
+    platform_value = submitted("platforms", "platform", default=None)
+    if platform_value is None:
+        platform_value = _row_value(existing_row, "platform_scope_json", "") or _row_value(existing_row, "platform_key", "")
+    platforms = [normalize_platform_key(value) for value in _scope_list(platform_value) if normalize_platform_key(value)]
+    model_pattern = _clean_text(
+        submitted("model_pattern", default=None)
+        if submitted("model_pattern", default=None) is not None
+        else _row_value(existing_row, "model_pattern", ""),
+        256,
+    )
+    if not model_pattern:
+        model_pattern = _clean_text(
+            payload.get("model") if payload.get("model") is not None else _row_value(existing_row, "model_name", ""),
+            256,
+        )
+    version_value = submitted("software_version_scope", "software_versions", "version_scope", default=None)
+    if version_value is None:
+        version_value = _row_value(existing_row, "software_version_scope_json", "")
+    excluded_value = submitted("excluded_versions", default=None)
+    if excluded_value is None:
+        excluded_value = _row_value(existing_row, "excluded_versions_json", "")
+    priority_value = submitted("scope_priority", "priority", default=None)
+    if priority_value is None:
+        priority_value = _row_value(existing_row, "scope_priority", 0)
+    try:
+        priority = max(0, min(1000, int(priority_value or 0)))
+    except (TypeError, ValueError) as exc:
+        raise ValueError("scope_priority must be an integer") from exc
+    return {
+        "platforms": platforms,
+        "platform_key": platforms[0] if platforms else "",
+        "model_pattern": model_pattern,
+        "software_versions": _scope_list(version_value),
+        "min_version": _clean_text(submitted("min_version", default=_row_value(existing_row, "min_version", "")), 128),
+        "max_version": _clean_text(submitted("max_version", default=_row_value(existing_row, "max_version", "")), 128),
+        "excluded_versions": _scope_list(excluded_value),
+        "scope_priority": priority,
+    }
+
+
+def profile_scope_match(profile: Mapping[str, Any], device: Mapping[str, Any]) -> dict[str, Any]:
+    """Evaluate a profile against vendor/platform/model/software identity."""
+
+    profile_vendor = normalize_vendor_key(profile.get("profile_vendor") or profile.get("vendor") or profile.get("vendor_name") or profile.get("vendor_key"), "")
+    device_vendor = normalize_vendor_key(device.get("vendor") or device.get("vendor_name"), device.get("platform"))
+    if profile_vendor and profile_vendor not in {"unknown", "generic"} and device_vendor != profile_vendor:
+        return {"matched": False, "score": -1, "reason": "vendor_mismatch", "vendor": False}
+
+    scope = _profile_scope(profile)
+    platform_values = _device_platform_values(device)
+    version_values = [*_device_version_values(device), *platform_values]
+    model_value = str(device.get("model") or "").strip()
+    if scope["platforms"] and platform_values and not any(
+        _platform_scope_matches(actual, selector)
+        for actual in platform_values
+        for selector in scope["platforms"]
+    ):
+        return {"matched": False, "score": -1, "reason": "platform_mismatch", "vendor": True}
+    if scope["model_pattern"] and model_value and not _model_scope_matches(model_value, scope["model_pattern"]):
+        return {"matched": False, "score": -1, "reason": "model_mismatch", "vendor": True}
+    if scope["software_versions"] and version_values and not any(
+        _version_scope_matches(actual, selector)
+        for actual in version_values
+        for selector in scope["software_versions"]
+    ):
+        return {"matched": False, "score": -1, "reason": "version_mismatch", "vendor": True}
+    if scope["min_version"] or scope["max_version"]:
+        actual_numbers = next((_version_numbers(value) for value in version_values if _version_numbers(value)), ())
+        if actual_numbers:
+            if scope["min_version"] and _version_compare(actual_numbers, _version_numbers(scope["min_version"])) < 0:
+                return {"matched": False, "score": -1, "reason": "version_below_minimum", "vendor": True}
+            if scope["max_version"] and _version_compare(actual_numbers, _version_numbers(scope["max_version"])) > 0:
+                return {"matched": False, "score": -1, "reason": "version_above_maximum", "vendor": True}
+    if scope["excluded_versions"] and any(
+        _version_scope_matches(actual, selector)
+        for actual in version_values
+        for selector in scope["excluded_versions"]
+    ):
+        return {"matched": False, "score": -1, "reason": "version_excluded", "vendor": True}
+
+    score = scope["priority"] * 1000
+    if scope["platforms"]:
+        score += 80 if platform_values and any(normalize_platform_key(actual) == selector for actual in platform_values for selector in scope["platforms"]) else 40
+    if scope["model_pattern"]:
+        pattern = scope["model_pattern"].casefold()
+        score += 80 if model_value.casefold() == pattern else (60 if "*" not in pattern and "?" not in pattern else 40)
+    if scope["software_versions"]:
+        score += 80 if any(_clean_text(actual).casefold() == _clean_text(selector).casefold() for actual in version_values for selector in scope["software_versions"]) else 45
+    if scope["min_version"] or scope["max_version"]:
+        score += 35
+    return {
+        "matched": True,
+        "score": score,
+        "reason": "matched",
+        "vendor": True,
+        "scope": scope,
+    }
+
+
 def _safe_oid(value: Any) -> str:
     try:
         return normalize_metric_oid(value)
@@ -631,8 +928,9 @@ def metric_config_hash(config: Mapping[str, Any]) -> str:
     return hashlib.sha256(payload.encode("utf-8")).hexdigest()[:32]
 
 
-def _config_json(config: Mapping[str, Any]) -> str:
-    return json.dumps(dict(config), sort_keys=True, separators=(",", ":"), ensure_ascii=False)
+def _config_json(config: Any) -> str:
+    payload = dict(config) if isinstance(config, Mapping) else config
+    return json.dumps(payload, sort_keys=True, separators=(",", ":"), ensure_ascii=False)
 
 
 def _profile_metric_definitions(row: Any) -> dict[str, dict[str, Any]]:
@@ -771,6 +1069,7 @@ def _load_profile_cache() -> dict[str, dict[str, Any]]:
                     "interface_profile_status": interface_status,
                     "configured": bool(hardware_definitions),
                     "interface_configured": bool(interface_definition),
+                    **_profile_scope(dict(row)),
                 }
         except Exception:
             # A collector may briefly start before an additive migration has
@@ -786,15 +1085,15 @@ def _load_profile_cache() -> dict[str, dict[str, Any]]:
         return profiles
 
 
-def resolve_metric_profiles(device: Mapping[str, Any]) -> dict[str, Any]:
+def resolve_metric_profiles(device: Mapping[str, Any], *, allow_auto: bool = False) -> dict[str, Any]:
     """Resolve the effective definition for one device.
 
-    A migrated device's explicit ``snmp_metric_profile_id`` is the only source
-    of SNMP metric OIDs. Legacy per-device CPU/memory OID fields and
-    vendor/model matching are intentionally ignored. A missing/unconfigured
-    template is represented explicitly instead of falling back to a
-    vendor-specific hard-coded collector. The narrow missing-key compatibility
-    branch exists only for pre-m0181 partial objects used during upgrades.
+    A migrated device's explicit ``snmp_metric_profile_id`` remains the normal
+    source of SNMP metric OIDs. ``allow_auto=True`` opts into the scoped
+    resolver for preview/new-ingestion flows; ambiguous or missing matches
+    fail closed. Legacy per-device CPU/memory OID fields are ignored. The
+    narrow missing-key compatibility branch exists only for pre-m0181 partial
+    objects used during upgrades.
     """
     metrics: dict[str, dict[str, Any]] = {}
     sources: dict[str, str] = {}
@@ -803,8 +1102,15 @@ def resolve_metric_profiles(device: Mapping[str, Any]) -> dict[str, Any]:
     profile_id = ""
     has_explicit_binding_field = "snmp_metric_profile_id" in device
     profile_id = str(device.get("snmp_metric_profile_id") or "").strip()
+    candidate_result: dict[str, Any] = {"status": "not_requested", "reason": "explicit_binding_required"}
     if profile_id:
         profile = _load_profile_cache().get(profile_id, {})
+        candidate_result = resolve_metric_profile_candidate(device)
+    elif allow_auto:
+        candidate_result = resolve_metric_profile_candidate(device)
+        if candidate_result.get("status") == "matched":
+            profile_id = str(candidate_result.get("profile_id") or "")
+            profile = candidate_result.get("profile") or {}
     elif not has_explicit_binding_field:
         # Compatibility for callers that still pass a pre-m0181 partial device
         # object.  Real migrated device rows always contain the field, and an
@@ -821,19 +1127,25 @@ def resolve_metric_profiles(device: Mapping[str, Any]) -> dict[str, Any]:
                 break
     if profile_id and not profile:
         profile = _load_profile_cache().get(profile_id, {})
-    for metric, config in (profile.get("metrics") or {}).items():
+    compatibility = profile_scope_match(profile, device) if profile else {"matched": False, "reason": "profile_not_found", "score": -1}
+    profile_compatible = bool(profile) and bool(compatibility.get("matched"))
+    # A profile with a scope mismatch is never allowed to supply OIDs. This
+    # prevents an explicit stale binding from crossing vendor/platform/version
+    # boundaries after a device is reclassified.
+    effective_profile = profile if profile_compatible else {}
+    for metric, config in (effective_profile.get("metrics") or {}).items():
         if config:
             metrics[metric] = dict(config)
             sources[metric] = "snmp_template"
-    if profile.get('interface'):
-        interface = dict(profile['interface'])
+    if effective_profile.get('interface'):
+        interface = dict(effective_profile['interface'])
 
     metric_sources = {
         metric: sources.get(metric, "template_not_applied")
         for metric in HEALTH_METRIC_KEYS
     }
     template_applied = bool(
-        profile_id and (profile.get("configured") or profile.get("interface_configured"))
+        profile_id and (effective_profile.get("configured") or effective_profile.get("interface_configured"))
     )
     profile_source = "snmp_template" if template_applied else "template_not_applied"
 
@@ -843,13 +1155,18 @@ def resolve_metric_profiles(device: Mapping[str, Any]) -> dict[str, Any]:
         "sources": sources,
         "metric_sources": metric_sources,
         "metric_keys": sorted(metric for metric, config in metrics.items() if config),
-        "profile_vendor": str(profile.get("profile_vendor") or ""),
-        "profile_model": str(profile.get("profile_model") or ""),
-        "template_name": str(profile.get("template_name") or ""),
-        "template_source": str(profile.get("source") or "none"),
-        "official_preset_id": str(profile.get("official_preset_id") or ""),
-        "profile_status": str(profile.get("profile_status") or "none"),
-        "interface_profile_status": str(profile.get("interface_profile_status") or "none"),
+        "profile_vendor": str(effective_profile.get("profile_vendor") or profile.get("profile_vendor") or ""),
+        "profile_model": str(effective_profile.get("profile_model") or profile.get("profile_model") or ""),
+        "template_name": str(effective_profile.get("template_name") or profile.get("template_name") or ""),
+        "template_source": str(effective_profile.get("source") or profile.get("source") or "none"),
+        "official_preset_id": str(effective_profile.get("official_preset_id") or profile.get("official_preset_id") or ""),
+        "profile_status": str(effective_profile.get("profile_status") or ("incompatible" if profile and not profile_compatible else "none")),
+        "interface_profile_status": str(effective_profile.get("interface_profile_status") or ("incompatible" if profile and not profile_compatible else "none")),
+        "profile_binding_status": "matched" if profile_compatible else ("incompatible" if profile else str(candidate_result.get("status") or "none")),
+        "profile_match_reason": str(compatibility.get("reason") or candidate_result.get("reason") or ""),
+        "profile_match_score": int(compatibility.get("score") or candidate_result.get("score") or 0),
+        "profile_scope": _profile_scope(effective_profile or profile) if (effective_profile or profile) else {},
+        "candidate_profiles": candidate_result.get("candidates") or [],
         "profile_source": profile_source,
         "interface": interface,
         "interface_source": "snmp_template" if interface else "template_not_applied",
@@ -901,6 +1218,10 @@ def annotate_devices_with_snmp_profile(devices: list[dict[str, Any]]) -> list[di
                 "metric_sources": resolved.get("metric_sources") or {},
                 "interface_source": resolved.get("interface_source") or "template_not_applied",
                 "interface_status": resolved.get("interface_profile_status") or "none",
+                "binding_status": resolved.get("profile_binding_status") or "none",
+                "match_reason": resolved.get("profile_match_reason") or "",
+                "match_score": resolved.get("profile_match_score") or 0,
+                "scope": resolved.get("profile_scope") or {},
                 "collection_mode": resolved.get("collection_mode") or "health_only",
             }
         except Exception:
@@ -919,6 +1240,10 @@ def annotate_devices_with_snmp_profile(devices: list[dict[str, Any]]) -> list[di
                 "metric_sources": {metric: "template_not_applied" for metric in HEALTH_METRIC_KEYS},
                 "interface_source": "template_not_applied",
                 "interface_status": "none",
+                "binding_status": "none",
+                "match_reason": "",
+                "match_score": 0,
+                "scope": {},
                 "collection_mode": "health_only",
             }
         enriched.append(item)
@@ -946,6 +1271,7 @@ def _profile_to_dict(row: Any) -> dict[str, Any]:
     source = str(_row_value(row, "source", "custom") or "custom").strip().casefold()
     if source not in {"official", "custom", "legacy", "inventory"}:
         source = "custom"
+    scope = _profile_scope(row)
     return {
         "profile_id": str(_row_value(row, "id", "")),
         "vendor": vendor,
@@ -972,8 +1298,92 @@ def _profile_to_dict(row: Any) -> dict[str, Any]:
         "last_test_message": str(_row_value(row, "last_test_message", "") or ""),
         "updated_at": _row_value(row, "updated_at"),
         "updated_by": str(_row_value(row, "updated_by", "") or ""),
+        "platform": scope["platforms"][0] if scope["platforms"] else "",
+        "platform_key": scope["platforms"][0] if scope["platforms"] else "",
+        "platforms": scope["platforms"],
+        "model_pattern": scope["model_pattern"],
+        "software_version_scope": scope["software_versions"],
+        "min_version": scope["min_version"],
+        "max_version": scope["max_version"],
+        "excluded_versions": scope["excluded_versions"],
+        "scope_priority": scope["priority"],
         "bound_device_count": 0,
         "unbound_device_count": 0,
+    }
+
+
+def resolve_metric_profile_candidate(device: Mapping[str, Any]) -> dict[str, Any]:
+    """Resolve the best unbound SNMP profile for a device identity.
+
+    Explicit ``snmp_metric_profile_id`` remains authoritative for collection.
+    This resolver is used by matching/preview flows and by callers that opt in
+    to automatic selection.  A tied top score is reported as ambiguous rather
+    than silently picking whichever row happened to be returned first.
+    """
+
+    explicit_id = str(device.get("snmp_metric_profile_id") or "").strip()
+    profiles = _load_profile_cache()
+    if explicit_id:
+        profile = profiles.get(explicit_id)
+        if not profile:
+            return {
+                "status": "missing",
+                "profile_id": explicit_id,
+                "profile": None,
+                "candidates": [],
+                "reason": "profile_not_found",
+            }
+        compatibility = profile_scope_match(profile, device)
+        return {
+            "status": "matched" if compatibility.get("matched") else "incompatible",
+            "profile_id": explicit_id,
+            "profile": profile,
+            "candidates": [{"profile_id": explicit_id, "score": compatibility.get("score", -1), "reason": compatibility.get("reason")}],
+            "reason": compatibility.get("reason", "matched"),
+            "score": compatibility.get("score", -1),
+        }
+
+    candidates: list[dict[str, Any]] = []
+    for profile_id, profile in profiles.items():
+        compatibility = profile_scope_match(profile, device)
+        if not compatibility.get("matched"):
+            continue
+        candidates.append(
+            {
+                "profile_id": profile_id,
+                "score": int(compatibility.get("score") or 0),
+                "reason": str(compatibility.get("reason") or "matched"),
+                "profile": profile,
+            }
+        )
+    candidates.sort(key=lambda item: (-int(item["score"]), str(item["profile_id"])))
+    if not candidates:
+        return {"status": "no_match", "profile_id": "", "profile": None, "candidates": [], "reason": "no_match"}
+    top_score = int(candidates[0]["score"])
+    top = [item for item in candidates if int(item["score"]) == top_score]
+    if len(top) > 1:
+        return {
+            "status": "ambiguous",
+            "profile_id": "",
+            "profile": None,
+            "candidates": [
+                {key: value for key, value in item.items() if key != "profile"}
+                for item in candidates[:20]
+            ],
+            "reason": "ambiguous_match",
+            "score": top_score,
+        }
+    selected = candidates[0]
+    return {
+        "status": "matched",
+        "profile_id": str(selected["profile_id"]),
+        "profile": selected["profile"],
+        "candidates": [
+            {key: value for key, value in item.items() if key != "profile"}
+            for item in candidates[:20]
+        ],
+        "reason": str(selected.get("reason") or "matched"),
+        "score": top_score,
     }
 
 
@@ -1002,7 +1412,7 @@ def _collect_model_metric_profiles(conn, search: str = "") -> list[dict[str, Any
     """
     device_rows = conn.execute(
         """
-        SELECT id, hostname, ip_address, vendor, platform, model, status,
+        SELECT id, hostname, ip_address, vendor, platform, model, version, os_version, firmware_version, status,
                snmp_metric_profile_id
         FROM devices
         WHERE COALESCE(TRIM(model), '') <> ''
@@ -1047,6 +1457,7 @@ def _collect_model_metric_profiles(conn, search: str = "") -> list[dict[str, Any
         }
 
     profiles = conn.execute("SELECT * FROM snmp_metric_profiles ORDER BY vendor_name, model_name, id").fetchall()
+    all_inventory_devices = [dict(row) for row in device_rows]
     items: list[dict[str, Any]] = []
     saved_identity_keys: set[tuple[str, str]] = set()
     for row in profiles:
@@ -1059,9 +1470,17 @@ def _collect_model_metric_profiles(conn, search: str = "") -> list[dict[str, Any
             model_key or normalize_model_key(profile.get("model")),
         )
         saved_identity_keys.add(identity_key)
-        identity = inventory.get(identity_key, {"devices": [], "platforms": []})
         bound_devices = devices_by_profile.get(profile_id, [])
-        all_devices = identity.get("devices", [])
+        scoped_devices = [
+            device
+            for device in all_inventory_devices
+            if profile_scope_match(profile, device).get("matched")
+        ]
+        # Keep a useful platform summary even when no device has been bound;
+        # it comes from the profile scope first, then from matching inventory.
+        scoped_platforms = set(profile.get("platforms") or [])
+        scoped_platforms.update(str(device.get("platform") or "").strip() for device in scoped_devices if str(device.get("platform") or "").strip())
+        all_devices = scoped_devices
         unbound_devices = [device for device in all_devices if not str(device.get("snmp_metric_profile_id") or "").strip()]
         sample = _sample(bound_devices or all_devices)
         profile.update(
@@ -1074,7 +1493,7 @@ def _collect_model_metric_profiles(conn, search: str = "") -> list[dict[str, Any
                 "sample_device_id": sample["sample_device_id"],
                 "sample_device_ip": sample["sample_device_ip"],
                 "sample_device_status": sample["sample_device_status"],
-                "platforms": sorted(identity.get("platforms", [])),
+                "platforms": sorted(scoped_platforms),
             }
         )
         items.append(profile)
@@ -1123,6 +1542,12 @@ def _collect_model_metric_profiles(conn, search: str = "") -> list[dict[str, Any
                 "sample_device_ip": sample["sample_device_ip"],
                 "sample_device_status": sample["sample_device_status"],
                 "platforms": sorted(identity.get("platforms", [])),
+                "model_pattern": identity.get("model", ""),
+                "software_version_scope": [],
+                "min_version": "",
+                "max_version": "",
+                "excluded_versions": [],
+                "scope_priority": 0,
                 "updated_at": None,
                 "updated_by": "",
             }
@@ -1137,6 +1562,8 @@ def _collect_model_metric_profiles(conn, search: str = "") -> list[dict[str, Any
             or query in str(item.get("template_name") or "").casefold()
             or query in str(item.get("source") or "").casefold()
             or any(query in str(platform).casefold() for platform in item.get("platforms", []))
+            or query in str(item.get("model_pattern") or "").casefold()
+            or any(query in str(version).casefold() for version in item.get("software_version_scope", []))
         ]
 
     for item in items:
@@ -1432,16 +1859,17 @@ def list_model_metric_profile_devices(conn, profile_id: str) -> list[dict[str, A
         (normalized_profile_id,),
     ).fetchone():
         raise ValueError("Model metric profile not found")
+    device_columns = _table_columns(conn, "devices")
+    select_fields = [
+        field if field in device_columns else f"'' AS {field}"
+        for field in ("id", "hostname", "ip_address", "vendor", "platform", "model", "version", "os_version", "firmware_version", "status", "snmp_metric_profile_id")
+    ]
     rows = conn.execute(
-        """
-        SELECT id, hostname, ip_address, vendor, platform, model, status,
-               snmp_metric_profile_id
-        FROM devices
-        WHERE snmp_metric_profile_id = ?
-        ORDER BY CASE WHEN LOWER(TRIM(COALESCE(status, ''))) = 'online' THEN 0 ELSE 1 END,
-                 CASE WHEN COALESCE(TRIM(ip_address), '') <> '' THEN 0 ELSE 1 END,
-                 COALESCE(hostname, ''), id
-        """,
+        f"SELECT {', '.join(select_fields)} FROM devices "
+        "WHERE snmp_metric_profile_id = ? "
+        "ORDER BY CASE WHEN LOWER(TRIM(COALESCE(status, ''))) = 'online' THEN 0 ELSE 1 END, "
+        "CASE WHEN COALESCE(TRIM(ip_address), '') <> '' THEN 0 ELSE 1 END, "
+        "COALESCE(hostname, ''), id",
         (normalized_profile_id,),
     ).fetchall()
     return [
@@ -1452,6 +1880,7 @@ def list_model_metric_profile_devices(conn, profile_id: str) -> list[dict[str, A
             "vendor": str(_row_value(row, "vendor", "") or ""),
             "platform": str(_row_value(row, "platform", "") or ""),
             "model": str(_row_value(row, "model", "") or ""),
+            "version": str(_row_value(row, "version", "") or _row_value(row, "os_version", "") or _row_value(row, "firmware_version", "") or ""),
             "status": str(_row_value(row, "status", "unknown") or "unknown"),
             "profile_id": normalized_profile_id,
         }
@@ -1474,14 +1903,30 @@ def bind_model_metric_profile(
         raise ValueError("Model metric profile not found")
     normalized_device_ids = _normalized_binding_ids(device_ids)
     placeholders = ", ".join("?" for _ in normalized_device_ids)
+    device_columns = _table_columns(conn, "devices")
+    scope_select = [
+        field if field in device_columns else f"'' AS {field}"
+        for field in ("id", "vendor", "platform", "model", "version", "os_version", "firmware_version")
+    ]
     rows = conn.execute(
-        f"SELECT id FROM devices WHERE id IN ({placeholders})",
+        f"SELECT {', '.join(scope_select)} FROM devices WHERE id IN ({placeholders})",
         tuple(normalized_device_ids),
     ).fetchall()
     found_ids = {str(_row_value(row, "id", "") or "") for row in rows}
     missing_ids = [device_id for device_id in normalized_device_ids if device_id not in found_ids]
     if missing_ids:
         raise ValueError(f"Device not found: {', '.join(missing_ids[:5])}")
+    profile_view = _profile_to_dict(profile_row)
+    incompatible = [
+        str(_row_value(row, "id", "") or "")
+        for row in rows
+        if not profile_scope_match(profile_view, dict(row)).get("matched")
+    ]
+    if incompatible:
+        raise ValueError(
+            "Device identity is incompatible with this template: "
+            + ", ".join(incompatible[:5])
+        )
     conn.execute(
         f"UPDATE devices SET snmp_metric_profile_id = ? WHERE id IN ({placeholders})",
         (normalized_profile_id, *normalized_device_ids),
@@ -1566,68 +2011,55 @@ def create_model_metric_profile(
         else " / ".join(part for part in (vendor, model) if part),
         160,
     )
+    scope = _profile_scope_from_payload(payload)
 
     now = _utc_now()
     profile_id = f"snmp-profile-{uuid.uuid4().hex[:12]}"
     profile_columns = _table_columns(conn, "snmp_metric_profiles")
+    fields = [
+        "id", "vendor_key", "vendor_name", "model_key", "model_name",
+        "cpu_oid", "memory_oid", "cpu_config_json", "memory_config_json",
+        "metric_definitions_json", "interface_config_json", "created_at",
+        "updated_at", "updated_by",
+    ]
+    values: list[Any] = [
+        profile_id,
+        vendor_key,
+        vendor,
+        model_key,
+        model,
+        str(cpu_config.get("oid") or ""),
+        str(memory_config.get("oid") or ""),
+        _config_json(cpu_config),
+        _config_json(memory_config),
+        _config_json(metric_definitions),
+        _config_json(interface_config),
+        now,
+        now,
+        updated_by,
+    ]
     if {"template_name", "source", "official_preset_id"}.issubset(profile_columns):
-        conn.execute(
-            """
-            INSERT INTO snmp_metric_profiles
-                (id, vendor_key, vendor_name, model_key, model_name,
-                 cpu_oid, memory_oid, cpu_config_json, memory_config_json,
-                 metric_definitions_json, interface_config_json,
-                 created_at, updated_at, updated_by, template_name, source,
-                 official_preset_id)
-            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-            """,
-            (
-                profile_id,
-                vendor_key,
-                vendor,
-                model_key,
-                model,
-                str(cpu_config.get("oid") or ""),
-                str(memory_config.get("oid") or ""),
-                _config_json(cpu_config),
-                _config_json(memory_config),
-                _config_json(metric_definitions),
-                _config_json(interface_config),
-                now,
-                now,
-                updated_by,
-                template_name,
-                normalized_source,
-                _clean_text(official_preset_id, 160),
-            ),
-        )
-    else:
-        conn.execute(
-            """
-            INSERT INTO snmp_metric_profiles
-                (id, vendor_key, vendor_name, model_key, model_name,
-                 cpu_oid, memory_oid, cpu_config_json, memory_config_json,
-                 metric_definitions_json, interface_config_json,
-                 created_at, updated_at, updated_by)
-            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-            """,
-            (
-                profile_id,
-                vendor_key,
-                vendor,
-                model_key,
-                model,
-                str(cpu_config.get("oid") or ""),
-                str(memory_config.get("oid") or ""),
-                _config_json(cpu_config),
-                _config_json(memory_config),
-                _config_json(metric_definitions),
-                _config_json(interface_config),
-                now,
-                now,
-                updated_by,
-            ),
-        )
+        fields.extend(("template_name", "source", "official_preset_id"))
+        values.extend((template_name, normalized_source, _clean_text(official_preset_id, 160)))
+    scope_values = {
+        "platform_key": scope["platform_key"],
+        "platform_scope_json": _config_json(scope["platforms"]),
+        "model_pattern": scope["model_pattern"],
+        "software_version_scope_json": _config_json(scope["software_versions"]),
+        "min_version": scope["min_version"],
+        "max_version": scope["max_version"],
+        "excluded_versions_json": _config_json(scope["excluded_versions"]),
+        "scope_priority": scope["scope_priority"],
+    }
+    for field, value in scope_values.items():
+        if field in profile_columns:
+            fields.append(field)
+            values.append(value)
+    placeholders = ", ".join("?" for _ in fields)
+    conn.execute(
+        f"INSERT INTO snmp_metric_profiles ({', '.join(fields)}) VALUES ({placeholders})",
+        tuple(values),
+    )
     invalidate_metric_profile_cache()
     return dict(conn.execute("SELECT * FROM snmp_metric_profiles WHERE id = ?", (profile_id,)).fetchone())
 
@@ -1663,6 +2095,8 @@ def apply_official_model_preset(conn, preset_id: str, updated_by: str = "") -> d
         "model": preset.get("model"),
         "metric_definitions": preset.get("metric_definitions") or {},
         "interface_config": preset.get("interface_config") or {},
+        "platforms": preset.get("platforms") or preset.get("supported_platforms") or [],
+        "software_version_scope": [preset.get("firmware_scope")] if preset.get("firmware_scope") else [],
     }
     vendor, model, vendor_key, model_key = _profile_identity(conn, payload)
     profile_columns = _table_columns(conn, "snmp_metric_profiles")
@@ -1745,77 +2179,50 @@ def update_model_metric_profile(
         160,
     )
     official_preset_id = str(_row_value(row, "official_preset_id", "") or "")
+    scope = _profile_scope_from_payload(payload, row)
 
     now = _utc_now()
     profile_columns = _table_columns(conn, "snmp_metric_profiles")
+    assignments = [
+        "vendor_key = ?", "vendor_name = ?", "model_key = ?", "model_name = ?",
+        "cpu_oid = ?", "memory_oid = ?", "cpu_config_json = ?", "memory_config_json = ?",
+        "metric_definitions_json = ?", "interface_config_json = ?",
+        "verification_status = 'unverified'", "last_test_at = NULL",
+        "last_test_device_id = ''",
+        "last_test_message = 'Metric definition changed; live verification required'",
+        "interface_verification_status = 'unverified'", "interface_last_test_at = NULL",
+        "interface_last_test_device_id = ''",
+        "interface_last_test_message = 'Interface definition changed; live verification required'",
+    ]
+    values: list[Any] = [
+        vendor_key, vendor, model_key, model,
+        str(cpu_config.get("oid") or ""), str(memory_config.get("oid") or ""),
+        _config_json(cpu_config), _config_json(memory_config),
+        _config_json(metric_definitions), _config_json(interface_config),
+    ]
     if {"template_name", "source", "official_preset_id"}.issubset(profile_columns):
-        conn.execute(
-            """
-            UPDATE snmp_metric_profiles
-            SET vendor_key = ?, vendor_name = ?, model_key = ?, model_name = ?,
-                cpu_oid = ?, memory_oid = ?, cpu_config_json = ?, memory_config_json = ?,
-                metric_definitions_json = ?, interface_config_json = ?,
-                template_name = ?, source = ?, official_preset_id = ?,
-                verification_status = 'unverified', last_test_at = NULL,
-                last_test_device_id = '',
-                last_test_message = 'Metric definition changed; live verification required',
-                interface_verification_status = 'unverified', interface_last_test_at = NULL,
-                interface_last_test_device_id = '',
-                interface_last_test_message = 'Interface definition changed; live verification required',
-                updated_at = ?, updated_by = ?
-            WHERE id = ?
-            """,
-            (
-                vendor_key,
-                vendor,
-                model_key,
-                model,
-                str(cpu_config.get("oid") or ""),
-                str(memory_config.get("oid") or ""),
-                _config_json(cpu_config),
-                _config_json(memory_config),
-                _config_json(metric_definitions),
-                _config_json(interface_config),
-                template_name,
-                current_source,
-                official_preset_id,
-                now,
-                updated_by,
-                profile_id,
-            ),
-        )
-    else:
-        conn.execute(
-            """
-            UPDATE snmp_metric_profiles
-            SET vendor_key = ?, vendor_name = ?, model_key = ?, model_name = ?,
-                cpu_oid = ?, memory_oid = ?, cpu_config_json = ?, memory_config_json = ?,
-                metric_definitions_json = ?, interface_config_json = ?,
-                verification_status = 'unverified', last_test_at = NULL,
-                last_test_device_id = '',
-                last_test_message = 'Metric definition changed; live verification required',
-                interface_verification_status = 'unverified', interface_last_test_at = NULL,
-                interface_last_test_device_id = '',
-                interface_last_test_message = 'Interface definition changed; live verification required',
-                updated_at = ?, updated_by = ?
-            WHERE id = ?
-            """,
-            (
-                vendor_key,
-                vendor,
-                model_key,
-                model,
-                str(cpu_config.get("oid") or ""),
-                str(memory_config.get("oid") or ""),
-                _config_json(cpu_config),
-                _config_json(memory_config),
-                _config_json(metric_definitions),
-                _config_json(interface_config),
-                now,
-                updated_by,
-                profile_id,
-            ),
-        )
+        assignments.extend(("template_name = ?", "source = ?", "official_preset_id = ?"))
+        values.extend((template_name, current_source, official_preset_id))
+    scope_values = {
+        "platform_key": scope["platform_key"],
+        "platform_scope_json": _config_json(scope["platforms"]),
+        "model_pattern": scope["model_pattern"],
+        "software_version_scope_json": _config_json(scope["software_versions"]),
+        "min_version": scope["min_version"],
+        "max_version": scope["max_version"],
+        "excluded_versions_json": _config_json(scope["excluded_versions"]),
+        "scope_priority": scope["scope_priority"],
+    }
+    for field, value in scope_values.items():
+        if field in profile_columns:
+            assignments.append(f"{field} = ?")
+            values.append(value)
+    assignments.extend(("updated_at = ?", "updated_by = ?"))
+    values.extend((now, updated_by, profile_id))
+    conn.execute(
+        f"UPDATE snmp_metric_profiles SET {', '.join(assignments)} WHERE id = ?",
+        tuple(values),
+    )
     invalidate_metric_profile_cache()
     return dict(conn.execute("SELECT * FROM snmp_metric_profiles WHERE id = ?", (profile_id,)).fetchone())
 
@@ -1898,6 +2305,7 @@ __all__ = [
     "normalize_metric_config",
     "normalize_interface_config",
     "normalize_model_key",
+    "normalize_platform_key",
     "normalize_vendor_key",
     "normalize_vendor_name",
     "unbind_model_metric_profile",
@@ -1906,6 +2314,8 @@ __all__ = [
     "validate_metric_definitions",
     "profile_interface_config",
     "resolve_metric_oids",
+    "resolve_metric_profile_candidate",
+    "profile_scope_match",
     "resolve_health_metric_profiles",
     "resolve_metric_profiles",
     "update_model_metric_profile",

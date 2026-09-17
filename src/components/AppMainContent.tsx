@@ -14,6 +14,7 @@ const MonitoringCenter = lazy(() => import('./MonitoringCenter.tsx'));
 const OutboundHealthPage = lazy(() => import('../pages/OutboundHealthPage'));
 const ServerMonitoring = lazy(() => import('./ServerMonitoring.tsx'));
 const NetworkMonitoring = lazy(() => import('./NetworkMonitoring.tsx'));
+const GrafanaDashboardPage = lazy(() => import('../pages/GrafanaDashboardPage'));
 const MonitoringManagementPage = lazy(() => import('./MonitoringManagementPage.tsx'));
 const DeviceHealthTab = lazy(() => import('../pages/DeviceHealthTab'));
 const DashboardTab = lazy(() => import('../pages/DashboardTab'));
@@ -431,6 +432,7 @@ const AppMainContent: React.FC = () => {
     activeTab === 'maintenance' || 
     activeTab === 'platform-registry' ||
     activeTab === 'snmp-metric-templates' ||
+    activeTab === 'monitoring-dashboards' ||
     activeTab === 'access' ||
     activeTab === 'access-favorites' ||
     activeTab === 'access-history' ||
@@ -545,6 +547,12 @@ const AppMainContent: React.FC = () => {
             showToast={showToast}
             isAuthenticated={isAuthenticated}
           />
+        </Suspense>
+      )}
+
+      {activeTab === 'monitoring-dashboards' && (
+        <Suspense fallback={lazyPanelFallback}>
+          <GrafanaDashboardPage language={language} />
         </Suspense>
       )}
 

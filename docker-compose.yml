@@ -68,6 +68,12 @@ services:
       - ENVIRONMENT=production
       - POSTGRES_USER=${POSTGRES_USER:-postgres}
       - DATABASE_URL=postgresql://${POSTGRES_USER:-postgres}:${POSTGRES_PASSWORD:?POSTGRES_PASSWORD must be set to a non-default secret}@db:5432/${POSTGRES_DB:-netops}
+      # Docker runs the Prometheus-compatible VictoriaMetrics path by default;
+      # local development keeps its native PostgreSQL provider unless opted in.
+      - MONITORING_METRIC_BACKEND=${MONITORING_METRIC_BACKEND:-victoriametrics}
+      - VICTORIAMETRICS_URL=${VICTORIAMETRICS_URL:-http://victoriametrics:8428}
+      - VICTORIAMETRICS_ALLOWED_HOSTS=${VICTORIAMETRICS_ALLOWED_HOSTS:-victoriametrics}
+      - MONITORING_ARTIFACT_ROOT=/app/artifacts/monitoring
       - SECRET_KEY=${SECRET_KEY:?SECRET_KEY must be set to a non-default secret}
       - CREDENTIAL_ENCRYPTION_KEY=${CREDENTIAL_ENCRYPTION_KEY:?CREDENTIAL_ENCRYPTION_KEY must be set to a non-default secret}
       # AI settings are passed through from the existing .env contract. The
@@ -116,6 +122,7 @@ services:
       - nexora-data:/app/data
       - nexora-backup:/app/backup
       - nexora-dist:/app/dist
+      - nexora-monitoring-artifacts:/app/artifacts/monitoring
     depends_on:
       db:
         condition: service_healthy
@@ -154,14 +161,24 @@ services:
   snmp-exporter:
     image: prom/snmp-exporter:v0.26.0
     container_name: nexora-snmp-exporter
+    # The empty checked-in config is only a bootstrap.  Wait for the control
+    # plane to publish a credential-bearing artifact before starting the
+    # exporter, then reload it after every subsequent publish.
+    entrypoint:
+      - /bin/sh
+      - -ec
     command:
-      - "--config.file=/etc/snmp_exporter/snmp.yml"
-      - "--web.listen-address=:9116"
+      - |
+        while [ ! -f /etc/snmp_exporter/runtime/current_version.json ]; do sleep 2; done
+        exec /bin/snmp_exporter --config.file=/etc/snmp_exporter/runtime/snmp_exporter/snmp.yml --web.listen-address=:9116
     volumes:
-      - ./monitoring/snmp-exporter:/etc/snmp_exporter:ro
+      - nexora-monitoring-artifacts:/etc/snmp_exporter:ro
     expose:
       - "9116"
     restart: unless-stopped
+    depends_on:
+      netops:
+        condition: service_healthy
     logging: *container-logging
     healthcheck:
       test: ["CMD", "wget", "-Y", "off", "-qO-", "http://127.0.0.1:9116/metrics"]
@@ -173,17 +190,19 @@ services:
     image: victoriametrics/vmagent:v1.103.0
     container_name: nexora-vmagent
     command:
-      - "-promscrape.config=/etc/nexora-collector/scrape.yml"
+      - "-promscrape.config=/etc/nexora-collector/runtime/vmagent/scrape.yml"
       - "-remoteWrite.url=http://victoriametrics:8428/api/v1/write"
       - "-remoteWrite.tmpDataPath=/var/lib/vmagent"
       - "-remoteWrite.maxDiskUsagePerURL=${VMAGENT_MAX_DISK_USAGE:-10GB}"
       - "-httpListenAddr=:8429"
     volumes:
-      - ./monitoring/vmagent:/etc/nexora-collector:ro
+      - nexora-monitoring-artifacts:/etc/nexora-collector:ro
       - nexora-vmagent-queue:/var/lib/vmagent
     expose:
       - "8429"
     depends_on:
+      netops:
+        condition: service_healthy
       victoriametrics:
         condition: service_healthy
       snmp-exporter:
@@ -193,6 +212,35 @@ services:
     healthcheck:
       test: ["CMD", "wget", "-Y", "off", "-qO-", "http://127.0.0.1:8429/health"]
       interval: 15s
+      timeout: 5s
+      retries: 5
+
+  grafana:
+    image: grafana/grafana:12.1.0
+    container_name: nexora-grafana
+    environment:
+      - GF_SERVER_ROOT_URL=${GRAFANA_ROOT_URL:-%(protocol)s://%(domain)s/grafana/}
+      - GF_SERVER_SERVE_FROM_SUB_PATH=true
+      - GF_SECURITY_ALLOW_EMBEDDING=${GRAFANA_ALLOW_EMBEDDING:-true}
+      - GF_AUTH_ANONYMOUS_ENABLED=${GRAFANA_ANONYMOUS_ENABLED:-false}
+      - GF_AUTH_ANONYMOUS_ORG_ROLE=Viewer
+      - GF_USERS_ALLOW_SIGN_UP=false
+      - GF_SECURITY_ADMIN_USER=${GRAFANA_ADMIN_USER:-admin}
+      - GF_SECURITY_ADMIN_PASSWORD=${GRAFANA_ADMIN_PASSWORD:?GRAFANA_ADMIN_PASSWORD must be set}
+    volumes:
+      - nexora-grafana-data:/var/lib/grafana
+      - ./monitoring/grafana/provisioning:/etc/grafana/provisioning:ro
+      - ./monitoring/grafana/dashboards:/var/lib/grafana/dashboards:ro
+    expose:
+      - "3000"
+    depends_on:
+      victoriametrics:
+        condition: service_healthy
+    restart: unless-stopped
+    logging: *container-logging
+    healthcheck:
+      test: ["CMD-SHELL", "wget -qO- http://127.0.0.1:3000/api/health >/dev/null"]
+      interval: 20s
       timeout: 5s
       retries: 5
 
@@ -297,3 +345,7 @@ volumes:
     name: nexora-vmdata
   nexora-vmagent-queue:
     name: nexora-vmagent-queue
+  nexora-monitoring-artifacts:
+    name: nexora-monitoring-artifacts
+  nexora-grafana-data:
+    name: nexora-grafana-data

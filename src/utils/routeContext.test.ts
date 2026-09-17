@@ -41,6 +41,7 @@ describe('getRouteContext monitoring routes', () => {
     expect(getRouteContext('/monitor/telemetry').activeTab).toBe('monitoring');
     expect(getRouteContext('/monitor/servers').activeTab).toBe('server-monitoring');
     expect(getRouteContext('/monitor/networks').activeTab).toBe('network-monitoring');
+    expect(getRouteContext('/monitor/dashboards').activeTab).toBe('monitoring-dashboards');
     expect(getRouteContext('/monitor/collection-plans').activeTab).toBe('monitoring-plans');
     expect(getRouteContext('/monitor/modules').activeTab).toBe('monitoring-modules');
     expect(getRouteContext('/monitor/collectors').activeTab).toBe('monitoring-collectors');

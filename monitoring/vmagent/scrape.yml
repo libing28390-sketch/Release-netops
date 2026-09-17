@@ -6,7 +6,7 @@ scrape_configs:
   - job_name: network_snmp
     file_sd_configs:
       - files:
-          - /etc/nexora-collector/targets/snmp_targets.yml
+          - /etc/nexora-collector/runtime/vmagent/targets/snmp_targets.yml
     metrics_path: /snmp
     relabel_configs:
       - source_labels: [__address__]

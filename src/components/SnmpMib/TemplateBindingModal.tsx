@@ -53,6 +53,43 @@ export interface TemplateBindingModalProps {
 const normalize = (value: unknown) => String(value || '').trim().toLowerCase();
 const statusRank = (status?: string) => normalize(status) === 'online' ? 0 : 1;
 
+const scopeList = (value: unknown): string[] => {
+  if (Array.isArray(value)) return value.map(item => normalize(item)).filter(Boolean);
+  return String(value || '').split(/[;,\n]/).map(item => normalize(item)).filter(Boolean);
+};
+
+const globMatch = (actual: string, selector: string) => {
+  if (!selector || selector === '*' || selector === 'any' || selector === 'all') return true;
+  const escaped = selector.replace(/[.+^${}()|[\]\\]/g, '\\$&').replace(/\*/g, '.*').replace(/\?/g, '.');
+  return new RegExp(`^${escaped}$`, 'i').test(actual);
+};
+
+const templateCompatible = (template: ModelPresetItem | null, device: CandidateDevice) => {
+  if (!template) return false;
+  const vendor = normalize(device.vendor);
+  const templateVendor = normalize(template.vendor);
+  if (vendor && templateVendor && !vendor.includes(templateVendor) && !templateVendor.includes(vendor)) return false;
+  const platforms = scopeList(template.platforms);
+  const platform = normalize(device.platform);
+  if (platforms.length && platform && !platforms.some(selector => platform === selector || platform.startsWith(`${selector}_`) || selector.includes(platform) || globMatch(platform, selector))) return false;
+  const model = normalize(device.model);
+  const modelPattern = normalize(template.model_pattern || template.model);
+  if (model && modelPattern && !globMatch(model, modelPattern) && model !== modelPattern && !model.startsWith(`${modelPattern}-`) && !model.startsWith(`${modelPattern} `)) return false;
+  const versions = scopeList(template.software_version_scope || template.firmware_scope);
+  const version = normalize(device.version);
+  const platformForVersion = normalize(device.platform);
+  if (versions.length && version && !versions.some(selector => {
+    const compactSelector = selector.replace(/[^a-z0-9]/g, '');
+    const compactVersion = version.replace(/[^a-z0-9]/g, '');
+    const major = selector.match(/(?:v|version|comware|vrp|ios(?:xe)?|nxos|asa)?(\d+)/)?.[1];
+    return version.includes(selector)
+      || globMatch(version, selector)
+      || (compactSelector && compactVersion.includes(compactSelector))
+      || Boolean(major && (new RegExp(`(?:^|[^0-9])v?${major}(?:$|[^0-9])`).test(version) || platformForVersion.includes(`v${major}`) || platformForVersion.endsWith(major)));
+  })) return false;
+  return true;
+};
+
 const displayValue = (value: unknown) => {
   if (value === undefined || value === null || value === '') return '-';
   if (typeof value === 'object') {
@@ -130,6 +167,10 @@ const TemplateBindingModal: React.FC<TemplateBindingModalProps> = ({
             hostname: String(item.hostname || item.ip_address || item.model || ''),
             ip_address: String(item.ip_address || item.management_ip || ''),
             status: String(item.status || ''),
+            vendor: String(item.vendor || ''),
+            platform: String(item.platform || item.platform_code || ''),
+            model: String(item.model || ''),
+            version: String(item.version || item.software_version || item.os_version || item.firmware_version || ''),
           }))
           .filter(device => device.device_id)
           .sort((a, b) => statusRank(a.status) - statusRank(b.status) || a.hostname.localeCompare(b.hostname));
@@ -201,14 +242,14 @@ const TemplateBindingModal: React.FC<TemplateBindingModalProps> = ({
   };
 
   const selectAllVisible = () => {
-    const visibleIds = filteredDevices.map(device => device.device_id);
+    const visibleIds = filteredDevices.filter(device => templateCompatible(template, device)).map(device => device.device_id);
     setSelectedDeviceIds(current => Array.from(new Set([...current, ...visibleIds])));
     if (!testDeviceId) setTestDeviceId(visibleIds[0] || '');
     setTestResult(null);
   };
 
   const selectAllDevices = () => {
-    const allIds = devices.map(device => device.device_id);
+    const allIds = devices.filter(device => templateCompatible(template, device)).map(device => device.device_id);
     setSelectedDeviceIds(allIds);
     if (!testDeviceId) {
       setTestDeviceId(
@@ -371,16 +412,18 @@ const TemplateBindingModal: React.FC<TemplateBindingModalProps> = ({
                   <div className="p-8 text-center text-xs text-black/40 dark:text-white/40">{zh ? '没有可选设备' : 'No selectable devices'}</div>
                 ) : filteredDevices.map(device => {
                   const checked = selectedDeviceIds.includes(device.device_id);
+                  const compatible = templateCompatible(template, device);
                   return (
-                    <label key={device.device_id} className={`flex cursor-pointer items-center gap-2 border-b border-black/5 px-3 py-2.5 last:border-b-0 dark:border-white/6 ${checked ? 'bg-[#00bceb]/[.06]' : 'hover:bg-black/[.02] dark:hover:bg-white/[.03]'}`}>
-                      <input type="checkbox" checked={checked} onChange={() => toggleDevice(device.device_id)} className="accent-[#00a9ce]" />
+                    <label key={device.device_id} className={`flex items-center gap-2 border-b border-black/5 px-3 py-2.5 last:border-b-0 dark:border-white/6 ${compatible ? 'cursor-pointer' : 'cursor-not-allowed opacity-55'} ${checked ? 'bg-[#00bceb]/[.06]' : compatible ? 'hover:bg-black/[.02] dark:hover:bg-white/[.03]' : ''}`}>
+                      <input type="checkbox" checked={checked} disabled={!compatible} onChange={() => toggleDevice(device.device_id)} className="accent-[#00a9ce]" />
                       <span className="min-w-0 flex-1">
                         <span className="block truncate text-xs font-medium text-black/80 dark:text-white/85">{device.hostname || device.device_id}</span>
-                        <span className="block truncate text-[10px] text-black/45 dark:text-white/45">{device.ip_address || '-'} · {device.status || (zh ? '状态未知' : 'unknown')}</span>
+                        <span className="block truncate text-[10px] text-black/45 dark:text-white/45">{device.ip_address || '-'} · {device.vendor || '-'} · {device.platform || '-'} · {device.model || '-'} · {device.version || '-'} · {device.status || (zh ? '状态未知' : 'unknown')}</span>
                       </span>
                       <button type="button" onClick={event => { event.preventDefault(); setTestDeviceId(device.device_id); setTestResult(null); }} className={`shrink-0 rounded px-1.5 py-1 text-[9px] ${testDeviceId === device.device_id ? 'bg-[#00bceb]/15 text-[#007391] dark:text-[#00bceb]' : 'text-black/35 hover:bg-black/5 dark:text-white/35 dark:hover:bg-white/8'}`}>
                         {testDeviceId === device.device_id ? (zh ? '测试样例' : 'Test sample') : (zh ? '设为测试' : 'Test')}
                       </button>
+                      {!compatible && <span className="shrink-0 text-[9px] font-semibold text-rose-600">{zh ? '范围不匹配' : 'Out of scope'}</span>}
                     </label>
                   );
                 })}

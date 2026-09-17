@@ -24,6 +24,13 @@ export interface MetricOidProfile {
   profile_id: string | null;
   vendor: string;
   model: string;
+  platform?: string;
+  model_pattern?: string;
+  software_version_scope?: string[];
+  min_version?: string;
+  max_version?: string;
+  excluded_versions?: string[];
+  scope_priority?: number;
   template_name?: string;
   cpu_oid: string;
   memory_oid: string;
@@ -462,7 +469,7 @@ export const MetricProfileList: React.FC<MetricProfileListProps> = ({
           <table className="nx-data-table nx-data-table--compact">
             <thead className="sticky top-0 z-10 bg-[var(--card-bg)] shadow-sm text-black/40 dark:text-white/40">
               <tr>
-                <th className="w-[34%] px-3.5 py-2.5 font-medium">{zh ? '厂商 / 适配型号' : 'Vendor / Supported Models'}</th>
+                <th className="w-[34%] px-3.5 py-2.5 font-medium">{zh ? '厂商 / 平台 / 适配型号' : 'Vendor / Platform / Models'}</th>
                 <th className="w-[42%] px-3 py-2.5 font-medium">{zh ? '采集指标' : 'Collected Metrics'}</th>
                 <th className="w-[24%] px-3 py-2.5 font-medium">{zh ? '绑定与管理' : 'Binding & Management'}</th>
               </tr>
@@ -658,6 +665,13 @@ export const MetricProfileList: React.FC<MetricProfileListProps> = ({
                         <div className="truncate font-mono text-[10px] text-black/45 dark:text-white/45">
                           {profile.model}
                         </div>
+                        {(profile.platforms?.length || profile.model_pattern || profile.software_version_scope?.length) ? (
+                          <div className="mt-1 flex flex-wrap gap-1 text-[9px] text-black/45 dark:text-white/45">
+                            {profile.platforms?.map(platform => <span key={platform} className="rounded bg-cyan-500/10 px-1.5 py-0.5 font-mono text-cyan-700 dark:text-cyan-300">{platform}</span>)}
+                            {profile.model_pattern && profile.model_pattern !== profile.model && <span className="rounded bg-black/[.04] px-1.5 py-0.5 font-mono dark:bg-white/[.06]">{profile.model_pattern}</span>}
+                            {profile.software_version_scope?.map(version => <span key={version} className="rounded bg-amber-500/10 px-1.5 py-0.5 font-mono text-amber-700 dark:text-amber-300">{version}</span>)}
+                          </div>
+                        ) : null}
                       </td>
 
                       {/* Metrics Badges */}

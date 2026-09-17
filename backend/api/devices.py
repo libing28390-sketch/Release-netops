@@ -57,11 +57,14 @@ from services.snmp_metric_profile_service import (
     normalize_vendor_key,
     profile_interface_config,
     profile_metric_definitions,
+    profile_scope_match,
     HEALTH_METRIC_KEYS,
     validate_metric_definitions,
     SUPPORTED_METRIC_KEYS,
     annotate_devices_with_snmp_profile,
     resolve_health_metric_profiles,
+    resolve_metric_profile_candidate,
+    normalize_platform_key,
     unbind_model_metric_profile,
     update_model_metric_profile,
 )
@@ -1678,6 +1681,62 @@ def apply_snmp_metric_preset(payload: dict = Body(...), user=require_role("Opera
         conn.close()
 
 
+@router.get("/platform-registry/snmp-metric-profiles/resolve")
+def resolve_snmp_metric_profile(
+    device_id: str = Query(default="", max_length=128),
+    vendor: str = Query(default="", max_length=128),
+    model: str = Query(default="", max_length=256),
+    platform: str = Query(default="", max_length=128),
+    software_version: str = Query(default="", max_length=256),
+    user=require_role("Viewer"),
+):
+    """Preview the deterministic vendor/platform/model/version resolution."""
+
+    device: dict[str, Any] = {
+        "vendor": vendor,
+        "model": model,
+        "platform": platform,
+        "version": software_version,
+        "software_version": software_version,
+    }
+    conn = get_db_connection()
+    try:
+        if device_id:
+            row = conn.execute(
+                "SELECT id, vendor, platform, model, version, os_version, firmware_version "
+                "FROM devices WHERE id = ?",
+                (device_id,),
+            ).fetchone()
+            if not row:
+                raise HTTPException(status_code=404, detail="Device not found")
+            device.update(dict(row))
+        result = resolve_metric_profile_candidate(device)
+        profile = result.get("profile") or {}
+        profile_summary = None
+        if profile:
+            profile_summary = {
+                "profile_id": profile.get("profile_id"),
+                "vendor": profile.get("profile_vendor"),
+                "model": profile.get("profile_model"),
+                "template_name": profile.get("template_name"),
+                "source": profile.get("source"),
+                "scope": profile_scope_match(profile, device).get("scope") or {},
+            }
+        return {
+            "success": True,
+            "data": {
+                "status": result.get("status"),
+                "profile_id": result.get("profile_id") or None,
+                "reason": result.get("reason") or "",
+                "score": result.get("score") or 0,
+                "profile": profile_summary,
+                "candidates": result.get("candidates") or [],
+            },
+        }
+    finally:
+        conn.close()
+
+
 @router.get("/platform-registry/snmp-metric-profiles/{profile_id}/bindings")
 def list_snmp_metric_profile_bindings(profile_id: str, user=require_role("Viewer")):
     conn = get_db_connection()
@@ -1725,7 +1784,8 @@ def bind_snmp_metric_profile_devices(
         return {"success": True, "data": result}
     except ValueError as exc:
         conn.rollback()
-        raise HTTPException(status_code=400, detail=str(exc)) from exc
+        status_code = 409 if "incompatible" in str(exc).casefold() else 400
+        raise HTTPException(status_code=status_code, detail=str(exc)) from exc
     finally:
         conn.close()
 
@@ -1885,11 +1945,14 @@ async def test_snmp_metric_profile(
         # the binding dialog.  Manual binding is deliberately not restricted
         # by vendor/model heuristics.
         matching = [dict(row) for row in candidate_rows]
+        if matching and not profile_scope_match(dict(profile_row), matching[0]).get("matched"):
+            raise HTTPException(status_code=409, detail="Selected device is incompatible with this vendor/platform/model/version template")
     else:
         matching = [
             dict(row) for row in candidate_rows
             if normalize_model_key(row['model']) == str(profile['model_key'] or '')
             and normalize_vendor_key(row['vendor'], row['platform']) == str(profile['vendor_key'] or '')
+            and profile_scope_match(dict(profile_row), dict(row)).get("matched")
         ]
     if not matching:
         raise HTTPException(status_code=400, detail='No device matches this vendor/model profile')
@@ -2087,10 +2150,17 @@ def get_official_model_presets(user=require_role("Viewer")):
 def auto_match_model_mibs(
     vendor: str = Query("", max_length=64),
     model: str = Query("", max_length=128),
+    platform: str = Query("", max_length=128),
+    software_version: str = Query("", max_length=256),
     user=require_role("Viewer"),
 ):
-    """Auto-match and recommend optimal MIB metrics and OIDs for an asset model."""
-    match_result = match_profile_for_model(vendor=vendor, model=model)
+    """Auto-match and recommend OIDs using the full device identity scope."""
+    match_result = match_profile_for_model(
+        vendor=vendor,
+        model=model,
+        platform=platform,
+        software_version=software_version,
+    )
     if not match_result:
         return {
             "success": True,

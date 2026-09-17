@@ -1,0 +1,293 @@
+{
+  "annotations": {
+    "list": []
+  },
+  "editable": false,
+  "fiscalYearStartMonth": 0,
+  "graphTooltip": 1,
+  "id": null,
+  "links": [],
+  "panels": [
+    {
+      "datasource": {
+        "type": "prometheus",
+        "uid": "nexora-victoriametrics"
+      },
+      "fieldConfig": {
+        "defaults": {
+          "color": {
+            "mode": "thresholds"
+          },
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              {
+                "color": "green",
+                "value": null
+              }
+            ]
+          }
+        },
+        "overrides": []
+      },
+      "gridPos": {
+        "h": 5,
+        "w": 6,
+        "x": 0,
+        "y": 0
+      },
+      "id": 1,
+      "options": {
+        "colorMode": "value",
+        "graphMode": "area",
+        "justifyMode": "auto",
+        "orientation": "auto",
+        "reduceOptions": {
+          "calcs": [
+            "lastNotNull"
+          ],
+          "fields": "",
+          "values": false
+        },
+        "textMode": "auto"
+      },
+      "pluginVersion": "12.1.0",
+      "targets": [
+        {
+          "expr": "count(count by (asset_id) (ifOperStatus{site_id=~\"$site\",asset_id=~\"$device\"}))",
+          "refId": "A"
+        }
+      ],
+      "title": "纳管设备数",
+      "type": "stat"
+    },
+    {
+      "datasource": {
+        "type": "prometheus",
+        "uid": "nexora-victoriametrics"
+      },
+      "fieldConfig": {
+        "defaults": {
+          "color": {
+            "mode": "palette-classic"
+          },
+          "unit": "bps"
+        },
+        "overrides": []
+      },
+      "gridPos": {
+        "h": 8,
+        "w": 18,
+        "x": 6,
+        "y": 0
+      },
+      "id": 2,
+      "options": {
+        "legend": {
+          "displayMode": "list",
+          "placement": "bottom"
+        },
+        "tooltip": {
+          "mode": "multi",
+          "sort": "desc"
+        }
+      },
+      "pluginVersion": "12.1.0",
+      "targets": [
+        {
+          "expr": "sum(rate(ifHCInOctets{site_id=~\"$site\",asset_id=~\"$device\"}[5m])) * 8",
+          "legendFormat": "入流量",
+          "refId": "A"
+        },
+        {
+          "expr": "sum(rate(ifHCOutOctets{site_id=~\"$site\",asset_id=~\"$device\"}[5m])) * 8",
+          "legendFormat": "出流量",
+          "refId": "B"
+        }
+      ],
+      "title": "接口总流量",
+      "type": "timeseries"
+    },
+    {
+      "datasource": {
+        "type": "prometheus",
+        "uid": "nexora-victoriametrics"
+      },
+      "fieldConfig": {
+        "defaults": {
+          "color": {
+            "mode": "palette-classic"
+          },
+          "unit": "short"
+        },
+        "overrides": []
+      },
+      "gridPos": {
+        "h": 8,
+        "w": 12,
+        "x": 0,
+        "y": 8
+      },
+      "id": 3,
+      "options": {
+        "legend": {
+          "displayMode": "list",
+          "placement": "bottom"
+        },
+        "tooltip": {
+          "mode": "multi",
+          "sort": "desc"
+        }
+      },
+      "pluginVersion": "12.1.0",
+      "targets": [
+        {
+          "expr": "sum(rate(ifInErrors{site_id=~\"$site\",asset_id=~\"$device\"}[5m])) + sum(rate(ifOutErrors{site_id=~\"$site\",asset_id=~\"$device\"}[5m]))",
+          "legendFormat": "错误",
+          "refId": "A"
+        },
+        {
+          "expr": "sum(rate(ifInDiscards{site_id=~\"$site\",asset_id=~\"$device\"}[5m])) + sum(rate(ifOutDiscards{site_id=~\"$site\",asset_id=~\"$device\"}[5m]))",
+          "legendFormat": "丢弃",
+          "refId": "B"
+        }
+      ],
+      "title": "接口错误与丢弃",
+      "type": "timeseries"
+    },
+    {
+      "datasource": {
+        "type": "prometheus",
+        "uid": "nexora-victoriametrics"
+      },
+      "fieldConfig": {
+        "defaults": {
+          "color": {
+            "mode": "thresholds"
+          },
+          "unit": "bps"
+        },
+        "overrides": []
+      },
+      "gridPos": {
+        "h": 8,
+        "w": 12,
+        "x": 12,
+        "y": 8
+      },
+      "id": 4,
+      "options": {
+        "cellHeight": "sm",
+        "footer": {
+          "countRows": false,
+          "fields": "",
+          "reducer": [
+            "sum"
+          ],
+          "show": false
+        },
+        "showHeader": true
+      },
+      "pluginVersion": "12.1.0",
+      "targets": [
+        {
+          "expr": "topk(10, sum by (asset_id) (rate(ifHCInOctets{site_id=~\"$site\",asset_id=~\"$device\"}[5m]) * 8 + rate(ifHCOutOctets{site_id=~\"$site\",asset_id=~\"$device\"}[5m]) * 8))",
+          "format": "table",
+          "instant": true,
+          "refId": "A"
+        }
+      ],
+      "title": "设备带宽排行",
+      "type": "table"
+    },
+    {
+      "id": 5,
+      "type": "timeseries",
+      "title": "设备 CPU 使用率",
+      "datasource": {"type": "prometheus", "uid": "nexora-victoriametrics"},
+      "gridPos": {"h": 8, "w": 12, "x": 0, "y": 16},
+      "fieldConfig": {"defaults": {"unit": "percent"}, "overrides": []},
+      "targets": [{"expr": "max by (asset_id, vendor) (cpmCPUTotal1minRev{site_id=~\"$site\",asset_id=~\"$device\"} or hh3cEntityExtCpuUsage{site_id=~\"$site\",asset_id=~\"$device\"} or hwEntityCpuUsage{site_id=~\"$site\",asset_id=~\"$device\"})", "legendFormat": "{{asset_id}} · {{vendor}}", "refId": "A"}]
+    },
+    {
+      "id": 6,
+      "type": "timeseries",
+      "title": "设备内存使用率",
+      "datasource": {"type": "prometheus", "uid": "nexora-victoriametrics"},
+      "gridPos": {"h": 8, "w": 12, "x": 12, "y": 16},
+      "fieldConfig": {"defaults": {"unit": "percent"}, "overrides": []},
+      "targets": [{"expr": "max by (asset_id, vendor) (hh3cEntityExtMemUsage{site_id=~\"$site\",asset_id=~\"$device\"} or hwEntityMemUsage{site_id=~\"$site\",asset_id=~\"$device\"})", "legendFormat": "{{asset_id}} · {{vendor}}", "refId": "A"}]
+    },
+    {
+      "id": 7,
+      "type": "timeseries",
+      "title": "设备温度",
+      "datasource": {"type": "prometheus", "uid": "nexora-victoriametrics"},
+      "gridPos": {"h": 8, "w": 12, "x": 0, "y": 24},
+      "fieldConfig": {"defaults": {"unit": "celsius"}, "overrides": []},
+      "targets": [{"expr": "max by (asset_id, vendor) (hh3cEntityExtTemperature{site_id=~\"$site\",asset_id=~\"$device\"} or hwEntityTemperature{site_id=~\"$site\",asset_id=~\"$device\"} or entSensorValue{site_id=~\"$site\",asset_id=~\"$device\"})", "legendFormat": "{{asset_id}} · {{vendor}}", "refId": "A"}]
+    }
+  ],
+  "refresh": "30s",
+  "schemaVersion": 39,
+  "tags": [
+    "nexora",
+    "network"
+  ],
+  "templating": {
+    "list": [
+      {
+        "allValue": ".*",
+        "current": {
+          "text": "全部站点",
+          "value": [
+            "$__all"
+          ]
+        },
+        "definition": "label_values(ifOperStatus, site_id)",
+        "includeAll": true,
+        "label": "站点",
+        "multi": true,
+        "name": "site",
+        "options": [],
+        "query": {
+          "query": "label_values(ifOperStatus, site_id)",
+          "refId": "StandardVariableQuery"
+        },
+        "refresh": 1,
+        "type": "query"
+      },
+      {
+        "allValue": ".*",
+        "current": {
+          "text": "全部设备",
+          "value": [
+            "$__all"
+          ]
+        },
+        "definition": "label_values(ifOperStatus{site_id=~\"$site\"}, asset_id)",
+        "includeAll": true,
+        "label": "设备",
+        "multi": true,
+        "name": "device",
+        "options": [],
+        "query": {
+          "query": "label_values(ifOperStatus{site_id=~\"$site\"}, asset_id)",
+          "refId": "StandardVariableQuery"
+        },
+        "refresh": 1,
+        "type": "query"
+      }
+    ]
+  },
+  "time": {
+    "from": "now-6h",
+    "to": "now"
+  },
+  "timepicker": {},
+  "timezone": "browser",
+  "title": "Nexora 网络监控总览",
+  "uid": "nexora-network-overview",
+  "version": 1,
+  "weekStart": ""
+}

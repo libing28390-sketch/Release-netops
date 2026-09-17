@@ -12,6 +12,7 @@ import { useTopologyGenerationStatus } from '../hooks/useTopologyGenerationStatu
 import { matchesTopologyTagConditions } from '../hooks/useTopologyVisibleDevices';
 import { topologyRoleLabel } from '../domain/topologyRoles';
 import { buildTopologySiteOverview } from '../utils/topologySiteOverview';
+import Pagination from '../components/Pagination';
 
 type TopologyStatusFilter = 'all' | 'online' | 'offline' | 'pending';
 type TopologyLinkStatusFilter = 'all' | 'up' | 'degraded' | 'down' | 'stale' | 'unknown';
@@ -87,6 +88,12 @@ const TopologySiteOverview: React.FC<TopologySiteOverviewProps> = ({ language, s
     () => buildTopologySiteOverview(sites, devices, links, language === 'zh' ? '未分配站点' : 'Unassigned site'),
     [devices, language, links, sites],
   );
+  const [sitePage, setSitePage] = React.useState(1);
+  const [sitePageSize, setSitePageSize] = React.useState(20);
+  const siteTotalPages = Math.max(1, Math.ceil(overview.sites.length / sitePageSize));
+  const pagedSites = overview.sites.slice((sitePage - 1) * sitePageSize, sitePage * sitePageSize);
+  React.useEffect(() => { setSitePage(1); }, [overview.sites.length, sitePageSize]);
+  React.useEffect(() => { setSitePage(current => Math.min(current, siteTotalPages)); }, [siteTotalPages]);
 
   return (
     <div className="h-full overflow-auto bg-slate-50/70 p-5">
@@ -114,8 +121,9 @@ const TopologySiteOverview: React.FC<TopologySiteOverviewProps> = ({ language, s
             {language === 'zh' ? '暂无可用站点数据，请先刷新拓扑发现。' : 'No site data is available. Run topology discovery first.'}
           </div>
         ) : (
+          <>
           <div className="mt-5 grid gap-4 md:grid-cols-2 xl:grid-cols-3 2xl:grid-cols-4">
-            {overview.sites.map((site) => {
+            {pagedSites.map((site) => {
               const healthy = site.offlineCount === 0 && site.staleCount === 0 && site.orphanCount === 0;
               return (
                 <button
@@ -132,8 +140,8 @@ const TopologySiteOverview: React.FC<TopologySiteOverviewProps> = ({ language, s
                       <div className="min-w-0">
                         <div className="truncate text-sm font-extrabold text-slate-900">{site.name}</div>
                         <div className="mt-0.5 text-[10px] font-semibold uppercase tracking-[0.12em] text-slate-400">{site.id}</div>
-                      </div>
-                    </div>
+           </div>
+                     </div>
                     <span className={`h-2.5 w-2.5 shrink-0 rounded-full ${healthy ? 'bg-emerald-500' : 'bg-amber-500'}`} title={healthy ? 'Healthy' : 'Needs attention'} />
                   </div>
                   <div className="mt-4 grid grid-cols-3 gap-2 border-t border-slate-100 pt-3">
@@ -149,6 +157,8 @@ const TopologySiteOverview: React.FC<TopologySiteOverviewProps> = ({ language, s
               );
             })}
           </div>
+          <Pagination currentPage={sitePage} totalItems={overview.sites.length} itemsPerPage={sitePageSize} onPageChange={setSitePage} onItemsPerPageChange={size => { setSitePageSize(size); setSitePage(1); }} language={language === 'zh' ? 'zh' : 'en'} itemLabel={language === 'zh' ? '个站点' : 'sites'} />
+          </>
         )}
 
         {overview.connections.length > 0 && (

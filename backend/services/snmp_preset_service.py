@@ -9,6 +9,7 @@ from __future__ import annotations
 
 import hashlib
 import logging
+import re
 from copy import deepcopy
 from typing import Any
 
@@ -667,7 +668,12 @@ def reset_builtin_mibs() -> int:
     return count
 
 
-def match_profile_for_model(vendor: str, model: str) -> dict[str, Any] | None:
+def match_profile_for_model(
+    vendor: str,
+    model: str,
+    platform: str = "",
+    software_version: str = "",
+) -> dict[str, Any] | None:
     """Match an asset to one of the MD-backed vendor/model templates.
 
     The matcher deliberately uses the same MD catalog that the preset API
@@ -692,11 +698,35 @@ def match_profile_for_model(vendor: str, model: str) -> dict[str, Any] | None:
             v_clean = canonical
             break
 
+    def preset_applicable(item: dict[str, Any]) -> bool:
+        platform_hint = str(platform or "").strip().casefold()
+        version_hint = str(software_version or "").strip().casefold()
+        declared_platforms = item.get("platforms") or item.get("supported_platforms") or []
+        if platform_hint and declared_platforms:
+            values = declared_platforms if isinstance(declared_platforms, (list, tuple, set)) else [declared_platforms]
+            if not any(
+                platform_hint == str(value).strip().casefold()
+                or platform_hint.startswith(f"{str(value).strip().casefold()}_")
+                or str(value).strip().casefold() in platform_hint
+                for value in values
+            ):
+                return False
+        firmware_scope = str(item.get("firmware_scope") or "").strip().casefold()
+        if version_hint and firmware_scope:
+            compact_scope = re.sub(r"[^a-z0-9]+", "", firmware_scope)
+            compact_version = re.sub(r"[^a-z0-9]+", "", version_hint)
+            scope_major = re.search(r"(?:v|version|comware|vrp|ios(?:xe)?|nxos|asa)?\s*(\d+)", firmware_scope)
+            if compact_scope not in compact_version and not any(token in compact_version for token in compact_scope.split("v") if token):
+                if not scope_major or not re.search(rf"(?:^|[^a-z0-9])v?{scope_major.group(1)}(?:$|[^0-9])", version_hint):
+                    return False
+        return True
+
     def preset_for(preset_id: str, model_hint: str = "") -> dict[str, Any] | None:
         candidates = [
             item
             for item in OFFICIAL_MODEL_PRESETS
-            if item.get("id") == preset_id or item.get("family_id") == preset_id
+            if (item.get("id") == preset_id or item.get("family_id") == preset_id)
+            and preset_applicable(item)
         ]
         if not candidates:
             return None
@@ -704,7 +734,7 @@ def match_profile_for_model(vendor: str, model: str) -> dict[str, Any] | None:
         # Prefer an explicitly named model row when the asset model contains
         # the series marker.  Keep the V5 row separate from the V7 OIDs.
         hint = model_hint.casefold()
-        if "v5" in hint:
+        if "v5" in hint or "v5" in str(software_version or "").casefold():
             v5 = next((item for item in candidates if "v5" in str(item.get("model", "")).casefold()), None)
             if v5:
                 return v5
@@ -734,7 +764,7 @@ def match_profile_for_model(vendor: str, model: str) -> dict[str, Any] | None:
     for preset in OFFICIAL_MODEL_PRESETS:
         p_vendor = str(preset.get("vendor", "")).strip().lower()
         p_model = str(preset.get("model", "")).strip().lower()
-        if (not v_clean or p_vendor == v_clean) and p_model == m_clean:
+        if (not v_clean or p_vendor == v_clean) and p_model == m_clean and preset_applicable(preset):
             return {
                 "match_type": "exact",
                 "confidence": 1.0,

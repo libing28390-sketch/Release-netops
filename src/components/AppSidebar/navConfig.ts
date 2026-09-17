@@ -21,6 +21,7 @@ export const navConfig: NavGroup[] = [
       { id: 'outbound-monitoring', label: '互联网出口', labelEn: 'Internet Outbound', path: '/monitor/outbound', icon: 'Globe' },
       { id: 'server-monitoring', label: '服务器监控', labelEn: 'Server Monitoring', path: '/monitor/servers',     icon: 'Server' },
       { id: 'network-monitoring', label: '网络监控', labelEn: 'Network Monitoring', path: '/monitor/networks',    icon: 'Router' },
+      { id: 'monitoring-dashboards', label: '监控大盘', labelEn: 'Monitoring Dashboards', path: '/monitor/dashboards', icon: 'BarChart2' },
       { id: 'monitoring-plans', label: '采集计划', labelEn: 'Collection Plans', path: '/monitor/collection-plans', icon: 'Layers3', requiredRole: 'Operator' },
       { id: 'monitoring-modules', label: '模块目录', labelEn: 'Module Catalog', path: '/monitor/modules', icon: 'Boxes', requiredRole: 'Operator' },
       { id: 'monitoring-collectors', label: '采集器管理', labelEn: 'Collectors', path: '/monitor/collectors', icon: 'CloudCog', requiredRole: 'Operator' },

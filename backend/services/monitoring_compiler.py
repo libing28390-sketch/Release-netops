@@ -18,6 +18,8 @@ from typing import Any, Iterable, Mapping
 
 import yaml
 
+from .monitoring_oid_catalog import exporter_config_from_variant
+
 
 class CompileError(ValueError):
     """A configuration cannot safely be applied to a collector."""
@@ -28,12 +30,25 @@ class CollectionAssignmentConflict(CompileError):
 
 
 _DURATION_RE = re.compile(r"^\s*(\d+(?:\.\d+)?)\s*([smh]?)\s*$", re.I)
+_NUMERIC_OID_RE = re.compile(r"^\.?\d+(?:\.\d+)+$")
+_MIB_OID_RE = re.compile(r"^[A-Za-z][A-Za-z0-9_-]*::[A-Za-z][A-Za-z0-9_-]*(?:\.\d+)*$")
+_METRIC_NAME_RE = re.compile(r"^[a-zA-Z_:][a-zA-Z0-9_:]*$")
+
+
+def _valid_oid_token(value: str) -> bool:
+    token = str(value or "").strip()
+    if _NUMERIC_OID_RE.fullmatch(token):
+        parts = [int(part) for part in token.lstrip(".").split(".")]
+        # SMIv2 first/second arc constraints; subsequent arcs are bounded to
+        # the unsigned 32-bit range accepted by net-snmp/gosnmp.
+        return len(parts) >= 2 and parts[0] in {0, 1, 2} and (parts[0] == 2 or parts[1] < 40) and all(0 <= part <= 4_294_967_295 for part in parts)
+    return bool(_MIB_OID_RE.fullmatch(token))
 
 GENERIC_IF_MIB_MODULE = {
     "module_key": "generic_ifmib_interface",
     "display_name": "Generic IF-MIB interface",
     "metric_group": "interface",
-    "walk": ["1.3.6.1.2.1.2.2", "1.3.6.1.2.1.31.1.1"],
+    "walk": ["1.3.6.1.2.1.2.2", "1.3.6.1.2.1.31.1.1", "1.3.6.1.2.1.10.7.2.1"],
 }
 GENERIC_IF_MIB_VARIANT = {
     "variant_key": "generic_ifmib_interface_std",
@@ -47,6 +62,212 @@ GENERIC_IF_MIB_METRICS = (
     "ifHCInOctets", "ifHCOutOctets", "ifInErrors", "ifOutErrors",
     "ifInDiscards", "ifOutDiscards",
 )
+
+
+def _parse_variant_oid_config(value: Any) -> dict[str, Any]:
+    """Parse and validate the persisted generator payload.
+
+    A variant is considered executable only when it contains at least one
+    walk/get OID and one metric mapping.  This prevents a UI-created variant
+    from looking published while producing an exporter module with no data.
+    """
+
+    if isinstance(value, Mapping):
+        config = dict(value)
+    elif isinstance(value, str):
+        try:
+            parsed = json.loads(value)
+        except (TypeError, ValueError) as exc:
+            raise CompileError("OID_CONFIG_INVALID_JSON") from exc
+        if not isinstance(parsed, Mapping):
+            raise CompileError("OID_CONFIG_MUST_BE_OBJECT")
+        config = dict(parsed)
+    elif not value:
+        return {}
+    else:
+        raise CompileError("OID_CONFIG_MUST_BE_OBJECT")
+
+    for key in ("walk", "get"):
+        raw = config.get(key, [])
+        if raw is None:
+            raw = []
+        if not isinstance(raw, list) or len(raw) > 256:
+            raise CompileError(f"OID_CONFIG_{key.upper()}_INVALID")
+        normalized: list[str] = []
+        for oid in raw:
+            text = str(oid or "").strip()
+            if not _valid_oid_token(text):
+                raise CompileError(f"OID_CONFIG_{key.upper()}_INVALID:{text}")
+            normalized.append(text.lstrip("."))
+        config[key] = normalized
+
+    oid_values = [*config.get("walk", []), *config.get("get", [])]
+    if len(oid_values) != len(set(oid_values)):
+        raise CompileError("OID_CONFIG_DUPLICATE_OID")
+
+    metrics = config.get("metrics", [])
+    if metrics is None:
+        metrics = []
+    if not isinstance(metrics, list) or len(metrics) > 1024:
+        raise CompileError("OID_CONFIG_METRICS_INVALID")
+    normalized_metrics: list[dict[str, Any]] = []
+    metric_oids: set[str] = set()
+    for metric in metrics:
+        if not isinstance(metric, Mapping):
+            raise CompileError("OID_CONFIG_METRIC_INVALID")
+        name = str(metric.get("name") or "").strip()
+        oid = str(metric.get("oid") or "").strip()
+        metric_type = str(metric.get("type") or "gauge").strip()
+        metric_type = {"Counter64": "counter", "Counter32": "counter", "Gauge32": "gauge", "Integer32": "gauge"}.get(metric_type, metric_type)
+        if not _METRIC_NAME_RE.fullmatch(name):
+            raise CompileError(f"OID_CONFIG_METRIC_NAME_INVALID:{name}")
+        if not _valid_oid_token(oid):
+            raise CompileError(f"OID_CONFIG_METRIC_OID_INVALID:{name}")
+        normalized_oid = oid.lstrip(".")
+        if normalized_oid in metric_oids:
+            raise CompileError(f"OID_CONFIG_DUPLICATE_METRIC_OID:{normalized_oid}")
+        metric_oids.add(normalized_oid)
+        if metric_type not in {"gauge", "counter", "DisplayString", "OctetString", "EnumAsInfo", "EnumAsStateSet"}:
+            raise CompileError(f"OID_CONFIG_METRIC_TYPE_INVALID:{name}")
+        item = {str(key): value for key, value in metric.items() if str(key) in {"name", "oid", "type", "help", "unit", "indexes", "lookups", "enum_values", "scale", "offset", "display_hint", "datetime_pattern", "regex_extracts"}}
+        item["name"] = name
+        item["oid"] = oid.lstrip(".")
+        item["type"] = metric_type
+        item["help"] = str(item.get("help") or name)
+        item["unit"] = str(item.get("unit") or "")[:64]
+        indexes = item.get("indexes")
+        if indexes is not None:
+            if not isinstance(indexes, list) or len(indexes) > 16:
+                raise CompileError(f"OID_CONFIG_INDEXES_INVALID:{name}")
+            for index in indexes:
+                if not isinstance(index, Mapping) or not _METRIC_NAME_RE.fullmatch(str(index.get("labelname") or "")):
+                    raise CompileError(f"OID_CONFIG_INDEX_INVALID:{name}")
+                if str(index.get("type") or "gauge") not in {"gauge", "counter", "Integer32", "Integer", "DisplayString", "OctetString", "PhysAddress48", "EnumAsInfo"}:
+                    raise CompileError(f"OID_CONFIG_INDEX_TYPE_INVALID:{name}")
+        lookups = item.get("lookups")
+        if lookups is not None:
+            if not isinstance(lookups, list) or len(lookups) > 16:
+                raise CompileError(f"OID_CONFIG_LOOKUPS_INVALID:{name}")
+            for lookup in lookups:
+                if not isinstance(lookup, Mapping) or not _METRIC_NAME_RE.fullmatch(str(lookup.get("labelname") or "")):
+                    raise CompileError(f"OID_CONFIG_LOOKUP_INVALID:{name}")
+                lookup_oid = str(lookup.get("oid") or "").strip()
+                if lookup_oid and not _valid_oid_token(lookup_oid):
+                    raise CompileError(f"OID_CONFIG_LOOKUP_OID_INVALID:{name}")
+        normalized_metrics.append(item)
+    config["metrics"] = normalized_metrics
+    if not config.get("walk") and not config.get("get"):
+        raise CompileError("OID_CONFIG_HAS_NO_OIDS")
+    if not normalized_metrics:
+        raise CompileError("OID_CONFIG_HAS_NO_METRICS")
+    return config
+
+
+def _fallback_exporter_modules() -> dict[str, dict[str, Any]]:
+    """Compatibility modules for offline callers that pass no catalog rows."""
+
+    return {
+        GENERIC_IF_MIB_VARIANT["variant_key"]: {
+            "walk": list(GENERIC_IF_MIB_MODULE["walk"]),
+            "max_repetitions": GENERIC_IF_MIB_VARIANT["max_repetitions"],
+            "retries": GENERIC_IF_MIB_VARIANT["retries"],
+            "timeout": f"{GENERIC_IF_MIB_VARIANT['request_timeout_ms'] / 1000:g}s",
+            "metrics": [
+                {"name": name, "oid": oid, "type": "DisplayString" if name in {"ifName", "ifAlias"} else ("counter" if "Octets" in name or "Errors" in name or "Discards" in name else "gauge"), "help": name, "indexes": [{"labelname": "ifIndex", "type": "gauge"}]}
+                for name, oid in (
+                    ("ifMtu", "1.3.6.1.2.1.2.2.1.4"),
+                    ("ifSpeed", "1.3.6.1.2.1.2.2.1.5"),
+                    ("ifType", "1.3.6.1.2.1.2.2.1.3"),
+                    ("ifAdminStatus", "1.3.6.1.2.1.2.2.1.7"),
+                    ("ifOperStatus", "1.3.6.1.2.1.2.2.1.8"),
+                    ("ifInDiscards", "1.3.6.1.2.1.2.2.1.13"),
+                    ("ifInErrors", "1.3.6.1.2.1.2.2.1.14"),
+                    ("ifInOctets", "1.3.6.1.2.1.2.2.1.10"),
+                    ("ifOutDiscards", "1.3.6.1.2.1.2.2.1.19"),
+                    ("ifOutErrors", "1.3.6.1.2.1.2.2.1.20"),
+                    ("ifOutOctets", "1.3.6.1.2.1.2.2.1.16"),
+                    ("ifName", "1.3.6.1.2.1.31.1.1.1.1"),
+                    ("ifHighSpeed", "1.3.6.1.2.1.31.1.1.1.15"),
+                    ("ifHCInOctets", "1.3.6.1.2.1.31.1.1.1.6"),
+                    ("ifHCOutOctets", "1.3.6.1.2.1.31.1.1.1.10"),
+                    ("ifAlias", "1.3.6.1.2.1.31.1.1.1.18"),
+                    ("dot3StatsFCSErrors", "1.3.6.1.2.1.10.7.2.1.3"),
+                )
+            ],
+        },
+        "generic_system_std": {
+            "walk": ["1.3.6.1.2.1.1"],
+            "max_repetitions": 10,
+            "retries": 2,
+            "timeout": "3s",
+            "metrics": [
+                {"name": name, "oid": oid, "type": "DisplayString" if name != "sysUpTime" else "gauge", "help": name}
+                for name, oid in (
+                    ("sysUpTime", "1.3.6.1.2.1.1.3"),
+                    ("sysDescr", "1.3.6.1.2.1.1.1"),
+                    ("sysName", "1.3.6.1.2.1.1.5"),
+                )
+            ],
+        },
+    }
+
+
+def validate_oid_config(value: Any, *, allow_empty: bool = False) -> dict[str, Any]:
+    """Public validation boundary used by the API and offline tests."""
+
+    if allow_empty and not value:
+        return {}
+    return _parse_variant_oid_config(value)
+
+
+def render_exporter_modules(
+    assignments: Iterable[Mapping[str, Any]],
+    *,
+    modules: Iterable[Mapping[str, Any]] = (),
+    variants: Iterable[Mapping[str, Any]] = (),
+) -> dict[str, dict[str, Any]]:
+    """Render one strict snmp_exporter module per selected Variant.
+
+    ``oid_config_json`` is the source of truth.  Module metadata only supplies
+    a fallback walk for legacy rows, while the row-level timing knobs remain
+    authoritative for GETBULK behaviour.
+    """
+
+    module_rows: dict[str, dict[str, Any]] = {}
+    for item in modules:
+        row = _row(item)
+        for key in (row.get("module_key"), row.get("id")):
+            if key:
+                module_rows[str(key)] = row
+    variant_rows: dict[str, dict[str, Any]] = {}
+    for item in variants:
+        row = _row(item)
+        for key in (row.get("variant_key"), row.get("id")):
+            if key:
+                variant_rows[str(key)] = row
+    selected_keys = {str(_row(item).get("variant_key") or "") for item in assignments if _row(item).get("enabled", True) is not False}
+    if not selected_keys:
+        return _fallback_exporter_modules()
+    output: dict[str, dict[str, Any]] = {}
+    fallbacks = _fallback_exporter_modules()
+    for variant_key in sorted(selected_keys):
+        variant = variant_rows.get(variant_key) or {}
+        module = module_rows.get(str(variant.get("module_key") or "")) or module_rows.get(str(variant.get("module_id") or "")) or {}
+        raw = variant.get("oid_config") or variant.get("oid_config_json")
+        if not raw and variant_key in fallbacks:
+            output[variant_key] = fallbacks[variant_key]
+            continue
+        config = _parse_variant_oid_config(raw)
+        if not config:
+            raise CompileError(f"OID_CONFIG_MISSING:{variant_key}")
+        exporter_config = exporter_config_from_variant(module, {"oid_config": config})
+        exporter_config = _parse_variant_oid_config(exporter_config)
+        exporter_config["max_repetitions"] = int(variant.get("max_repetitions") or 25)
+        exporter_config["retries"] = int(variant.get("retries") or 2)
+        timeout_ms = int(variant.get("request_timeout_ms") or 3000)
+        exporter_config["timeout"] = f"{timeout_ms / 1000:g}s"
+        output[variant_key] = exporter_config
+    return output
 
 
 def duration_seconds(value: Any, *, field: str) -> int:
@@ -122,6 +343,7 @@ class Assignment:
     vendor: str
     platform: str
     role: str
+    selection_reason: str
     assignment_hash: str
 
     def as_dict(self) -> dict[str, Any]:
@@ -145,6 +367,7 @@ class Assignment:
             "vendor": self.vendor,
             "platform": self.platform,
             "role": self.role,
+            "selection_reason": self.selection_reason,
             "assignment_hash": self.assignment_hash,
         }
 
@@ -234,6 +457,227 @@ def plan_target_matches_device(device: Mapping[str, Any], plan: Mapping[str, Any
     return True
 
 
+def _selector_values(value: Any) -> list[str]:
+    if value is None:
+        return []
+    if isinstance(value, (list, tuple, set)):
+        values = value
+    else:
+        values = re.split(r"[,;\n]", str(value))
+    return [str(item).strip().lower() for item in values if str(item).strip()]
+
+
+def _selector_matches(actual: str, expected: str) -> bool:
+    actual = str(actual or "").strip().lower()
+    expected = str(expected or "").strip().lower()
+    if not actual or not expected:
+        return False
+    # CMDB platform values commonly carry a version suffix (for example
+    # ``h3c_comware7`` or ``cisco_iosxe``), while the catalog stores the
+    # stable family token.  Matching on token boundaries keeps the selector
+    # useful without requiring one plan per software release.
+    return actual == expected or actual.startswith(f"{expected}_") or actual.startswith(f"{expected}-") or expected in actual
+
+
+def plan_entry_matches_device(entry: Mapping[str, Any], device: Mapping[str, Any]) -> bool:
+    """Apply optional vendor/platform selectors on a single plan entry."""
+
+    vendor_selectors = _selector_values(entry.get("vendor") or entry.get("vendors"))
+    platform_selectors = _selector_values(entry.get("platform") or entry.get("platforms"))
+    if not vendor_selectors and not platform_selectors:
+        return True
+    actual_vendor = str(device.get("vendor") or device.get("vendor_name") or device.get("manufacturer") or "").strip().lower()
+    actual_platform = str(device.get("platform") or device.get("cli_platform") or device.get("platform_key") or "").strip().lower()
+    if vendor_selectors and not any(_selector_matches(actual_vendor, value) or _selector_matches(actual_platform, value) for value in vendor_selectors):
+        return False
+    if platform_selectors and not any(_selector_matches(actual_platform, value) for value in platform_selectors):
+        return False
+    return True
+
+
+def plan_entry_match_reason(entry: Mapping[str, Any], device: Mapping[str, Any]) -> str:
+    """Return a human-readable, secret-free explanation for a Variant hit."""
+
+    vendor_selectors = _selector_values(entry.get("vendor") or entry.get("vendors"))
+    platform_selectors = _selector_values(entry.get("platform") or entry.get("platforms"))
+    if not vendor_selectors and not platform_selectors:
+        return "generic baseline"
+    actual_vendor = str(device.get("vendor") or device.get("vendor_name") or device.get("manufacturer") or "").strip() or "unknown vendor"
+    actual_platform = str(device.get("platform") or device.get("cli_platform") or device.get("platform_key") or "").strip() or "unknown platform"
+    selectors = []
+    if vendor_selectors:
+        selectors.append(f"vendor={actual_vendor}")
+    if platform_selectors:
+        selectors.append(f"platform={actual_platform}")
+    return ", ".join(selectors)
+
+
+def _scope_values(value: Any) -> list[str]:
+    """Return a normalized selector list from JSON/text compatibility data."""
+
+    if value in (None, ""):
+        return []
+    raw = value
+    if isinstance(value, str):
+        try:
+            parsed = json.loads(value)
+        except (TypeError, ValueError):
+            parsed = None
+        raw = parsed if isinstance(parsed, list) else re.split(r"[,;\n]", value)
+    if not isinstance(raw, (list, tuple, set, frozenset)):
+        raw = [raw]
+    result: list[str] = []
+    for item in raw:
+        text = " ".join(str(item or "").strip().split())
+        if text and text.casefold() not in {existing.casefold() for existing in result}:
+            result.append(text)
+    return result
+
+
+def _scope_token(value: Any) -> str:
+    return re.sub(r"[\s./-]+", "_", str(value or "").strip().casefold()).strip("_")
+
+
+def _glob_match(actual: str, selector: str) -> bool:
+    """Small, dependency-free glob matcher for platform/model selectors."""
+
+    pattern = re.escape(selector).replace(r"\*", ".*").replace(r"\?", ".")
+    return bool(re.fullmatch(pattern, actual, re.IGNORECASE))
+
+
+def _platform_selector_matches(actual: str, selector: str) -> bool:
+    actual_token = _scope_token(actual)
+    selector_token = _scope_token(selector)
+    if not actual_token or not selector_token or selector_token in {"*", "any", "all"}:
+        return selector_token in {"*", "any", "all"}
+    if _glob_match(actual_token, selector_token):
+        return True
+    # Stable family selectors (h3c_comware, huawei_vrp, iosxe) may match a
+    # concrete version suffix, but v5/v7/v9 are intentionally not collapsed.
+    return actual_token.startswith(f"{selector_token}_") or (
+        selector_token in {"comware", "vrp", "ios", "iosxe", "nxos", "asa"}
+        and selector_token in actual_token
+    )
+
+
+def _model_selector_matches(actual: str, selector: str) -> bool:
+    actual_text = " ".join(str(actual or "").strip().casefold().split())
+    selector_text = " ".join(str(selector or "").strip().casefold().split())
+    if not selector_text or selector_text in {"*", "any", "all"}:
+        return True
+    if not actual_text:
+        return False
+    if _glob_match(actual_text, selector_text):
+        return True
+    if "x" in selector_text:
+        if _glob_match(actual_text, selector_text.replace("x", "*")):
+            return True
+    # A documented series such as S6800 also covers concrete SKUs such as
+    # S6800-54QT, while a plain unrelated model never matches by substring.
+    return actual_text == selector_text or actual_text.startswith(f"{selector_text}-") or actual_text.startswith(f"{selector_text} ")
+
+
+def _version_selector_matches(actual: str, selector: str) -> bool:
+    actual_text = " ".join(str(actual or "").strip().casefold().split())
+    selector_text = " ".join(str(selector or "").strip().casefold().split())
+    if not selector_text or selector_text in {"*", "any", "all"}:
+        return True
+    if not actual_text:
+        return False
+    if _glob_match(actual_text, selector_text):
+        return True
+    actual_compact = re.sub(r"[^a-z0-9]+", "", actual_text)
+    selector_compact = re.sub(r"[^a-z0-9]+", "", selector_text)
+    if selector_compact and selector_compact in actual_compact:
+        return True
+    # Human-readable scopes such as “Comware 7” / “VRP V8” should match a
+    # concrete banner containing the same platform family and major release.
+    selector_major = re.search(r"(?:v|version|comware|vrp|ios(?:xe)?|nxos|asa)?\s*(\d+)", selector_text)
+    if selector_major:
+        major = selector_major.group(1)
+        actual_majors = re.findall(r"(?:^|[^a-z0-9])v?(\d+)(?:\.|$|[^0-9])", actual_text)
+        if major in actual_majors or re.search(rf"(?:^|[^a-z0-9])v?{re.escape(major)}(?:$|[^0-9])", actual_text):
+            family_tokens = [token for token in ("comware", "vrp", "iosxe", "ios", "nxos", "asa") if token in selector_text]
+            return not family_tokens or any(token in actual_text for token in family_tokens)
+    return False
+
+
+def _device_platform_values(device: Mapping[str, Any]) -> list[str]:
+    values = [
+        device.get("platform_code"),
+        device.get("platform"),
+        device.get("cli_platform"),
+        device.get("platform_key"),
+    ]
+    return [str(value).strip() for value in values if str(value or "").strip()]
+
+
+def _device_version_values(device: Mapping[str, Any]) -> list[str]:
+    values = [
+        device.get("software_version"),
+        device.get("version"),
+        device.get("os_version"),
+        device.get("firmware_version"),
+    ]
+    return [str(value).strip() for value in values if str(value or "").strip()]
+
+
+def variant_matches_device(
+    variant: Mapping[str, Any],
+    device: Mapping[str, Any],
+    module: Mapping[str, Any] | None = None,
+) -> bool:
+    """Return whether a published Variant is applicable to one device.
+
+    Empty scope means wildcard for backward compatibility.  A populated scope
+    is enforced only when the device exposes the corresponding identity; an
+    unknown model/version remains eligible but is reported in the reason so an
+    operator can decide whether to bind it explicitly.
+    """
+
+    platforms = _scope_values(variant.get("supported_platforms"))
+    models = _scope_values(variant.get("supported_models"))
+    versions = _scope_values(variant.get("supported_version_scope"))
+    platform_values = _device_platform_values(device)
+    version_values = _device_version_values(device)
+    model_value = str(device.get("model") or "").strip()
+
+    if platforms and platform_values and not any(
+        _platform_selector_matches(actual, selector)
+        for actual in platform_values
+        for selector in platforms
+    ):
+        return False
+    if models and model_value and not any(_model_selector_matches(model_value, selector) for selector in models):
+        return False
+    if versions and version_values and not any(
+        _version_selector_matches(actual, selector)
+        for actual in [*version_values, *platform_values]
+        for selector in versions
+    ):
+        return False
+    return True
+
+
+def variant_match_reason(
+    variant: Mapping[str, Any],
+    device: Mapping[str, Any],
+    module: Mapping[str, Any] | None = None,
+) -> str:
+    """Explain the scope dimensions used for a Variant assignment."""
+
+    if not any(_scope_values(variant.get(key)) for key in ("supported_platforms", "supported_models", "supported_version_scope")):
+        return "variant scope unrestricted"
+    parts: list[str] = []
+    if _scope_values(variant.get("supported_platforms")):
+        parts.append(f"platform={str(device.get('platform') or device.get('cli_platform') or 'unknown')}")
+    if _scope_values(variant.get("supported_models")):
+        parts.append(f"model={str(device.get('model') or 'unknown')}")
+    if _scope_values(variant.get("supported_version_scope")):
+        parts.append(f"version={str(device.get('version') or device.get('software_version') or 'unknown')}")
+    return "variant " + ", ".join(parts)
+
+
 def build_assignments(
     devices: Iterable[Mapping[str, Any]],
     plans: Iterable[Mapping[str, Any]],
@@ -294,6 +738,8 @@ def build_assignments(
             entry = _row(entry_value)
             if entry.get("enabled", True) is False:
                 continue
+            if not plan_entry_matches_device(entry, device):
+                continue
             module_key = str(entry.get("module") or entry.get("module_key") or "").strip()
             variant_key = str(entry.get("variant") or entry.get("variant_key") or "").strip()
             module = module_map.get(module_key) or module_by_id.get(module_key)
@@ -302,6 +748,12 @@ def build_assignments(
                 raise CompileError(f"MODULE_NOT_FOUND: {module_key}")
             if not variant:
                 raise CompileError(f"MODULE_VARIANT_NOT_FOUND: {variant_key}")
+            if not variant_matches_device(variant, device, module):
+                # A plan may contain several entries for the same capability,
+                # each scoped to a different platform/model/version.  A
+                # non-applicable entry is skipped so the next scoped Variant
+                # can win without creating a second collection plan.
+                continue
             variant_status = str(variant.get("status") or "PUBLISHED").upper()
             if variant_status not in {"TESTED", "PUBLISHED"}:
                 raise CompileError(f"MODULE_VARIANT_NOT_PUBLISHED: {variant_key}")
@@ -358,6 +810,11 @@ def build_assignments(
                 vendor=str(device.get("vendor") or module.get("vendor") or ""),
                 platform=str(device.get("platform") or module.get("cli_platform") or ""),
                 role=str(device.get("role") or ""),
+                selection_reason=(
+                    plan_entry_match_reason(entry, device)
+                    if variant_match_reason(variant, device, module) == "variant scope unrestricted"
+                    else f"{plan_entry_match_reason(entry, device)}; {variant_match_reason(variant, device, module)}"
+                ),
                 assignment_hash=assignment_hash,
             )
             seen[key] = assignment
@@ -423,7 +880,7 @@ def validate_assignments(assignments: Iterable[Mapping[str, Any]]) -> list[str]:
     return sorted(set(errors))
 
 
-def render_vmagent_config(snapshot_path: str = "/etc/nexora-collector/targets/snmp_targets.yml") -> dict[str, Any]:
+def render_vmagent_config(snapshot_path: str = "/etc/nexora-collector/runtime/vmagent/targets/snmp_targets.yml") -> dict[str, Any]:
     return {
         "global": {"scrape_interval": "60s", "scrape_timeout": "30s"},
         "scrape_configs": [{
@@ -462,9 +919,9 @@ def render_auth_aliases(credentials: Iterable[Mapping[str, Any]], aliases: Mappi
         alias = str(aliases.get(credential_id) or opaque_auth_alias(credential_id))
         if not alias.startswith("auth_"):
             raise CompileError("AUTH_ALIAS_INVALID")
-        auth: dict[str, Any] = {"version": 3}
         credential_type = str(credential.get("credential_type") or "snmpv2").lower()
         if credential_type in {"snmpv3", "snmp_v3"}:
+            auth: dict[str, Any] = {"version": 3}
             auth.update({
                 "username": credential.get("username") or "",
                 "security_level": credential.get("security_level") or "authPriv",
@@ -482,6 +939,7 @@ def render_auth_aliases(credentials: Iterable[Mapping[str, Any]], aliases: Mappi
             if security_level == "authpriv" and not auth["priv_password"]:
                 raise CompileError(f"AUTH_INVALID: {alias} requires an SNMPv3 privacy password")
         else:
+            auth = {"version": 2}
             auth.update({"community": credential.get("community") or credential.get("snmp_community") or ""})
             if not auth["community"]:
                 raise CompileError(f"AUTH_INVALID: {alias} requires an SNMPv2c community")
@@ -495,15 +953,20 @@ def compile_artifact(
     collector_id: str,
     config_version: int,
     credentials: Iterable[Mapping[str, Any]] = (),
+    modules: Iterable[Mapping[str, Any]] = (),
+    variants: Iterable[Mapping[str, Any]] = (),
     output_root: str | Path | None = None,
     compiler_version: str = "monitoring-compiler-1.0.0",
 ) -> dict[str, Any]:
     """Build a versioned artifact; writes atomically only when ``output_root`` is supplied."""
     selected = [a for a in assignments if str(a.get("collector_id")) == collector_id and a.get("enabled", True) is not False]
     credential_rows = list(credentials)
+    module_rows = list(modules)
+    variant_rows = list(variants)
     snapshot = render_target_snapshot(selected, collector_id=collector_id)
     target_yaml = yaml.safe_dump(snapshot, allow_unicode=True, sort_keys=False)
     vmagent_yaml = yaml.safe_dump(render_vmagent_config(), allow_unicode=True, sort_keys=False)
+    exporter_modules = render_exporter_modules(selected, modules=module_rows, variants=variant_rows)
     assignment_aliases = {
         str(a.get("credential_id") or ""): str(a.get("auth_alias") or "")
         for a in selected
@@ -516,6 +979,32 @@ def compile_artifact(
     if missing_aliases:
         raise CompileError(f"AUTH_NOT_FOUND: missing collector auth artifact for {','.join(missing_aliases)}")
     auth_yaml = yaml.safe_dump(auth_payload, allow_unicode=True, sort_keys=False)
+    variant_index = {}
+    for value in variant_rows:
+        row = _row(value)
+        for key in (row.get("variant_key"), row.get("id")):
+            if key:
+                variant_index[str(key)] = row
+    module_manifest = []
+    for variant_key, config in sorted(exporter_modules.items()):
+        variant = variant_index.get(variant_key) or {}
+        raw_config = variant.get("oid_config") or variant.get("oid_config_json") or {}
+        try:
+            normalized_config = _parse_variant_oid_config(raw_config)
+        except CompileError:
+            normalized_config = config
+        module_manifest.append({
+            "variant_key": variant_key,
+            "supported_platforms": _scope_values(variant.get("supported_platforms")),
+            "supported_models": _scope_values(variant.get("supported_models")),
+            "supported_version_scope": _scope_values(variant.get("supported_version_scope")),
+            "mib_bundle_id": str(variant.get("mib_bundle_id") or ""),
+            "generator_version": str(variant.get("generator_version") or compiler_version),
+            "generator_config_hash": str(variant.get("generator_config_hash") or _hash(normalized_config)),
+            "walk_count": len(config.get("walk") or []),
+            "get_count": len(config.get("get") or []),
+            "metric_count": len(config.get("metrics") or []),
+        })
     manifest = {
         "schema_version": "1.0",
         "collector_id": collector_id,
@@ -524,30 +1013,36 @@ def compile_artifact(
         "assignment_count": len(selected),
         "module_count": len({str(a.get("variant_key")) for a in selected}),
         "auth_alias_count": len(auth_payload.get("auths") or {}),
+        "modules": module_manifest,
         "compiler_version": compiler_version,
+    }
+    module_files = {
+        f"snmp_exporter/modules/{variant_key}.yml": yaml.safe_dump(
+            {"modules": {variant_key: config}}, allow_unicode=True, sort_keys=False,
+        )
+        for variant_key, config in exporter_modules.items()
     }
     files = {
         "vmagent/scrape.yml": vmagent_yaml,
         "vmagent/targets/snmp_targets.yml": target_yaml,
-        "snmp_exporter/modules/generic_ifmib_interface_std.yml": yaml.safe_dump(
-            {"modules": {"generic_ifmib_interface_std": {
-                "walk": list(GENERIC_IF_MIB_MODULE["walk"]),
-                "max_repetitions": GENERIC_IF_MIB_VARIANT["max_repetitions"],
-                "retries": GENERIC_IF_MIB_VARIANT["retries"],
-                "timeout": f"{GENERIC_IF_MIB_VARIANT['request_timeout_ms'] / 1000:g}s",
-            }}}, allow_unicode=True, sort_keys=False,
-        ),
-        "snmp_exporter/modules/generic_system_std.yml": yaml.safe_dump(
-            {"modules": {"generic_system_std": {
-                "walk": ["1.3.6.1.2.1.1.3"],
-                "max_repetitions": 10,
-                "retries": 2,
-                "timeout": "3s",
-            }}}, allow_unicode=True, sort_keys=False,
+        "snmp_exporter/modules/modules.yml": yaml.safe_dump(
+            {"modules": exporter_modules}, allow_unicode=True, sort_keys=False,
         ),
         "snmp_exporter/auth/auth.yml": auth_yaml,
         "manifest.json": json.dumps(manifest, ensure_ascii=False, indent=2) + "\n",
     }
+    files.update(module_files)
+    # The Docker snmp-exporter consumes one complete config file.  Keep the
+    # split module/auth artifacts above for external collector nodes, and also
+    # render a merged file for the shared Compose runtime volume.
+    files["snmp_exporter/snmp.yml"] = yaml.safe_dump(
+        {
+            "auths": auth_payload.get("auths") or {},
+            "modules": exporter_modules,
+        },
+        allow_unicode=True,
+        sort_keys=False,
+    )
     checksums = []
     # Avoid a self-referential manifest checksum: the manifest records the
     # checksum file, while the checksum file covers all payload files except
@@ -572,7 +1067,7 @@ def compile_artifact(
             destination = temp / name
             destination.parent.mkdir(parents=True, exist_ok=True)
             destination.write_text(content, encoding="utf-8")
-            if name.endswith("auth.yml"):
+            if name.endswith("auth.yml") or name.endswith("snmp.yml"):
                 try:
                     destination.chmod(0o600)
                 except OSError:
@@ -608,6 +1103,8 @@ def validate_artifact(artifact: Mapping[str, Any] | str | Path) -> dict[str, Any
         raise CompileError("MANIFEST_INVALID") from exc
     if not isinstance(manifest, dict) or manifest.get("schema_version") != "1.0":
         raise CompileError("MANIFEST_SCHEMA_INVALID")
+    if "modules" in manifest and not isinstance(manifest.get("modules"), list):
+        raise CompileError("MANIFEST_MODULES_INVALID")
     checksums_text = files.get("checksums.sha256", "")
     if not checksums_text.strip():
         raise CompileError("CHECKSUMS_MISSING")
@@ -623,13 +1120,14 @@ def validate_artifact(artifact: Mapping[str, Any] | str | Path) -> dict[str, Any
         if content is None or hashlib.sha256(content.encode("utf-8")).hexdigest() != expected:
             raise CompileError(f"CHECKSUM_MISMATCH:{name}")
         checked += 1
-    for required in ("vmagent/scrape.yml", "vmagent/targets/snmp_targets.yml", "snmp_exporter/auth/auth.yml"):
+    for required in ("vmagent/scrape.yml", "vmagent/targets/snmp_targets.yml", "snmp_exporter/auth/auth.yml", "snmp_exporter/snmp.yml"):
         if required not in files:
             raise CompileError(f"ARTIFACT_FILE_MISSING:{required}")
     try:
         yaml.safe_load(files["vmagent/scrape.yml"])
         targets = yaml.safe_load(files["vmagent/targets/snmp_targets.yml"])
         yaml.safe_load(files["snmp_exporter/auth/auth.yml"])
+        yaml.safe_load(files["snmp_exporter/snmp.yml"])
     except yaml.YAMLError as exc:
         raise CompileError("ARTIFACT_YAML_INVALID") from exc
     if not isinstance(targets, list):
@@ -666,5 +1164,14 @@ class ConfigCompiler:
     def assignments(self, devices, plans, modules, variants, collectors, *, credential_aliases=None):
         return build_assignments(devices, plans, modules, variants, collectors, credential_aliases=credential_aliases)
 
-    def artifact(self, assignments, *, collector_id: str, config_version: int, credentials=(), output_root=None):
-        return compile_artifact(assignments, collector_id=collector_id, config_version=config_version, credentials=credentials, output_root=output_root, compiler_version=self.compiler_version)
+    def artifact(self, assignments, *, collector_id: str, config_version: int, credentials=(), modules=(), variants=(), output_root=None):
+        return compile_artifact(
+            assignments,
+            collector_id=collector_id,
+            config_version=config_version,
+            credentials=credentials,
+            modules=modules,
+            variants=variants,
+            output_root=output_root,
+            compiler_version=self.compiler_version,
+        )
