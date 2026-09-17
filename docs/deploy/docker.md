@@ -51,6 +51,10 @@ VICTORIAMETRICS_ALLOWED_HOSTS=victoriametrics
 完成采集计划编译并发布后，vmagent 会读取新的 file-SD 目标，控制面也会请求
 snmp-exporter 热加载认证和模块配置。检查链路可运行：
 
+因此，在首次发布采集配置之前，`snmp-exporter` 显示 `unhealthy`、`vmagent`
+显示 `Created` 是预期状态，并不表示镜像崩溃。发布成功后如果 `vmagent` 仍为
+`Created`，重新执行 `docker compose up -d vmagent` 使其启动。
+
 计划只保留系统基线 `plan-generic-ifmib`（界面显示“SNMP 基线采集计划”）；华三、华为、思科的常用 CPU/内存/温度/状态
 OID 作为同一计划下的 Module/Variant 维护，配置和来源见
 [厂商 OID 目录](../monitoring/vendor_oid_catalog.md)。
@@ -64,6 +68,33 @@ Nexora 的“监控大盘”通过同源 `/grafana/` 访问 Grafana，Grafana �
 指向 `http://victoriametrics:8428`。默认关闭匿名访问；首次打开大盘时使用
 `GRAFANA_ADMIN_USER` / `GRAFANA_ADMIN_PASSWORD` 登录。需要在 Nexora 内嵌大盘时，
 保持 `GRAFANA_ALLOW_EMBEDDING=1`，不要为了省略登录而把匿名访问开放到不可信网络。
+
+`GRAFANA_ROOT_URL` 必须填写浏览器实际访问的 HTTPS 地址并保留结尾斜杠，例如
+`https://nexora.example.com/grafana/`。不要保留 `%(domain)s`、`localhost` 或
+Grafana 内部的 `:3000`；否则 Grafana 会把 iframe 重定向到用户工作站的
+`localhost`。Nginx 会剥离 `/grafana/` 前缀后转发到 Grafana，因此 Compose 中
+保持 `GF_SERVER_SERVE_FROM_SUB_PATH=false`，不要再让 Grafana重复处理该前缀。
+使用 `scripts/deploy-docker.sh` 部署时，缺省占位值会自动根据 `TLS_COMMON_NAME`
+生成。
+
+Grafana 到 VictoriaMetrics 的请求走 Docker 内部网络；Compose 会清空
+`HTTP_PROXY`/`HTTPS_PROXY` 等主机代理变量，避免内部服务名被转发到外部代理而返回
+`502`。这与浏览器访问的域名无关。
+
+局域网部署示例（假设服务器地址为 `192.168.1.100`）：
+
+```dotenv
+TLS_COMMON_NAME=192.168.1.100
+GRAFANA_ROOT_URL=https://192.168.1.100/grafana/
+```
+
+局域网用户应访问 `https://192.168.1.100/`；不要让用户访问 `:3000`，也不要把
+`127.0.0.1` 写进这个 URL。自签名证书首次访问时需要在浏览器中信任该证书；
+正式环境应将 `nginx/ssl` 替换为包含该 IP/域名的受信任证书。
+
+升级时，部署脚本和后端启动流程会自动兼容旧版 SNMP runtime artifact（移除
+仅供 Nexora UI 使用、但会被 `snmp-exporter` 拒绝的指标元数据），并在 exporter
+恢复后自动启动 `vmagent`；不需要为了这个兼容性修复手动重新应用基线采集计划。
 
 首次登录使用默认账号 `admin`、密码 `admin`。登录后请立即在用户设置中修改密码；已有数据库中的管理员密码会保留，不会因更新或重启而自动改回默认值。
 

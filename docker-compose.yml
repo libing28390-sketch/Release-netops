@@ -220,16 +220,36 @@ services:
     container_name: nexora-grafana
     environment:
       - GF_SERVER_ROOT_URL=${GRAFANA_ROOT_URL:-%(protocol)s://%(domain)s/grafana/}
-      - GF_SERVER_SERVE_FROM_SUB_PATH=true
+      # Nginx strips /grafana/ in proxy_pass, so Grafana serves its internal
+      # root path and uses root_url only for browser-facing links/redirects.
+      # Enabling serve_from_sub_path here would make both layers add the
+      # prefix and cause an endless redirect loop.
+      - GF_SERVER_SERVE_FROM_SUB_PATH=false
       - GF_SECURITY_ALLOW_EMBEDDING=${GRAFANA_ALLOW_EMBEDDING:-true}
       - GF_AUTH_ANONYMOUS_ENABLED=${GRAFANA_ANONYMOUS_ENABLED:-false}
       - GF_AUTH_ANONYMOUS_ORG_ROLE=Viewer
       - GF_USERS_ALLOW_SIGN_UP=false
       - GF_SECURITY_ADMIN_USER=${GRAFANA_ADMIN_USER:-admin}
       - GF_SECURITY_ADMIN_PASSWORD=${GRAFANA_ADMIN_PASSWORD:?GRAFANA_ADMIN_PASSWORD must be set}
+      # Grafana's Prometheus datasource is an internal Docker request. Do not
+      # let host-wide proxy variables turn victoriametrics:8428 into an
+      # external proxy request (which returns 502 for private service names).
+      - HTTP_PROXY=
+      - HTTPS_PROXY=
+      - ALL_PROXY=
+      - http_proxy=
+      - https_proxy=
+      - all_proxy=
+      - NO_PROXY=localhost,127.0.0.1,victoriametrics,grafana,snmp-exporter,vmagent
+      - no_proxy=localhost,127.0.0.1,victoriametrics,grafana,snmp-exporter,vmagent
     volumes:
       - nexora-grafana-data:/var/lib/grafana
-      - ./monitoring/grafana/provisioning:/etc/grafana/provisioning:ro
+      # Mount only the directories owned by this release. Mounting the whole
+      # provisioning directory hides Grafana's image-provided plugins,
+      # alerting, and access-control directories and produces misleading
+      # "directory not found" startup errors.
+      - ./monitoring/grafana/provisioning/datasources:/etc/grafana/provisioning/datasources:ro
+      - ./monitoring/grafana/provisioning/dashboards:/etc/grafana/provisioning/dashboards:ro
       - ./monitoring/grafana/dashboards:/var/lib/grafana/dashboards:ro
     expose:
       - "3000"
@@ -239,10 +259,13 @@ services:
     restart: unless-stopped
     logging: *container-logging
     healthcheck:
-      test: ["CMD-SHELL", "wget -qO- http://127.0.0.1:3000/api/health >/dev/null"]
+      # Grafana's official 12.1.0 image includes curl. Use a fail-fast probe
+      # so a missing/failed HTTP request is reflected in the container state.
+      test: ["CMD-SHELL", "curl -fsS http://127.0.0.1:3000/api/health >/dev/null"]
       interval: 20s
       timeout: 5s
       retries: 5
+      start_period: 60s
 
   nginx:
     image: nexora-nginx

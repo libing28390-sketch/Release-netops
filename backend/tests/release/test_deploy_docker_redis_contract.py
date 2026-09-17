@@ -27,6 +27,10 @@ def test_deploy_script_uses_the_unified_compose_file_and_offline_image():
     assert "--pull never" in source
     assert 'set_env_value REDIS_PASSWORD' in source
     assert 'set_env_value REDIS_URL "redis://nexora:' in source
+    assert 'set_env_value GRAFANA_ROOT_URL "https://${server_name}/grafana/"' in source
+    assert "%(domain)s" in source
+    assert "replace-with-your-server-host" in source
+    assert "start_deferred_vmagent" in source
     assert 'docker compose --project-name "$project_name"' in source
     assert "resolve_compose_project_name()" in source
     assert 'index .Config.Labels "com.docker.compose.project"' in source

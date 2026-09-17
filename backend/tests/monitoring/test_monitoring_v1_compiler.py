@@ -17,6 +17,7 @@ from services.monitoring_compiler import (
 from services.monitoring_oid_catalog import iter_builtin_catalog
 from services.monitoring_health_service import classify_collection_health
 from services.collection_plan_service import validate_policy
+from services.monitoring_runtime_normalizer import normalize_snmp_runtime
 
 
 MODULES = [{"id": "module-1", "module_key": "generic_ifmib_interface", "vendor": "generic"}]
@@ -174,6 +175,82 @@ def test_vendor_oid_catalog_renders_h3c_huawei_and_cisco_modules():
     assert rendered["h3c_common_std"]["metrics"][0]["oid"].startswith("1.3.6.1.4.1.25506")
     assert rendered["huawei_common_std"]["metrics"][0]["oid"].startswith("1.3.6.1.4.1.2011")
     assert rendered["cisco_common_std"]["metrics"][0]["oid"].startswith("1.3.6.1.4.1.9.9")
+
+
+def test_exporter_renderer_drops_nexora_only_metric_metadata():
+    rendered = render_exporter_modules(
+        [{"variant_key": "custom_variant", "enabled": True}],
+        modules=[{"module_key": "custom_module", "walk": ["1.3.6.1.2.1.1"]}],
+        variants=[{
+            "variant_key": "custom_variant",
+            "module_key": "custom_module",
+            "oid_config": {
+                "walk": ["1.3.6.1.2.1.1"],
+                "metrics": [{
+                    "name": "sysName",
+                    "oid": "1.3.6.1.2.1.1.5",
+                    "type": "DisplayString",
+                    "help": "System name",
+                    "unit": "text",
+                    "source_name": "sysName",
+                }],
+            },
+        }],
+    )
+
+    metric = rendered["custom_variant"]["metrics"][0]
+    assert "unit" not in metric
+    assert "source_name" not in metric
+
+    artifact = compile_artifact(
+        [{
+            "collector_id": "collector-local",
+            "asset_id": "asset-1",
+            "target": "192.0.2.10",
+            "variant_key": "custom_variant",
+            "credential_id": "cred-1",
+            "auth_alias": "auth_opaque",
+            "interval_seconds": 60,
+            "scrape_timeout_seconds": 20,
+            "enabled": True,
+        }],
+        collector_id="collector-local",
+        config_version=1,
+        credentials=[{"id": "cred-1", "credential_type": "snmpv2", "community": "private"}],
+        modules=[{"module_key": "custom_module", "walk": ["1.3.6.1.2.1.1"]}],
+        variants=[{
+            "variant_key": "custom_variant",
+            "module_key": "custom_module",
+            "oid_config": {
+                "walk": ["1.3.6.1.2.1.1"],
+                "metrics": [{
+                    "name": "sysName",
+                    "oid": "1.3.6.1.2.1.1.5",
+                    "type": "DisplayString",
+                    "help": "System name",
+                    "unit": "text",
+                    "source_name": "sysName",
+                }],
+            },
+        }],
+    )
+    assert "unit:" not in artifact["files"]["snmp_exporter/snmp.yml"]
+
+
+def test_runtime_normalizer_repairs_legacy_exporter_copy(tmp_path):
+    runtime = tmp_path / "runtime" / "snmp_exporter"
+    runtime.mkdir(parents=True)
+    config = runtime / "snmp.yml"
+    config.write_text(
+        """auths: {}\nmodules:\n  demo:\n    walk: [1.3.6.1.2.1.1]\n    metrics:\n      - name: sysName\n        oid: 1.3.6.1.2.1.1.5\n        type: DisplayString\n        help: System name\n        unit: text\n        source_name: sysName\n""",
+        encoding="utf-8",
+    )
+
+    assert normalize_snmp_runtime(tmp_path / "runtime") == 2
+    normalized = yaml.safe_load(config.read_text(encoding="utf-8"))
+    metric = normalized["modules"]["demo"]["metrics"][0]
+    assert "unit" not in metric
+    assert "source_name" not in metric
 
 
 def test_compiled_manifest_records_oid_module_provenance():

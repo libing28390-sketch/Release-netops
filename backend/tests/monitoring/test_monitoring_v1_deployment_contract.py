@@ -24,7 +24,17 @@ def test_fixed_collector_stack_and_queue_contract():
     assert any("runtime/snmp_exporter/snmp.yml" in item for item in services["snmp-exporter"]["command"])
     assert any("MONITORING_METRIC_BACKEND=${MONITORING_METRIC_BACKEND:-victoriametrics}" in item for item in services["netops"]["environment"])
     assert any("monitoring/grafana/provisioning" in item for item in services["grafana"]["volumes"])
+    assert any("provisioning/datasources:/etc/grafana/provisioning/datasources" in item for item in services["grafana"]["volumes"])
+    assert any("provisioning/dashboards:/etc/grafana/provisioning/dashboards" in item for item in services["grafana"]["volumes"])
     assert any("monitoring/grafana/dashboards" in item for item in services["grafana"]["volumes"])
+    assert "GF_SERVER_SERVE_FROM_SUB_PATH=false" in services["grafana"]["environment"]
+    assert "HTTP_PROXY=" in services["grafana"]["environment"]
+    assert "HTTPS_PROXY=" in services["grafana"]["environment"]
+    assert "ALL_PROXY=" in services["grafana"]["environment"]
+    assert "victoriametrics" in next(item for item in services["grafana"]["environment"] if item.startswith("NO_PROXY="))
+    healthcheck = services["grafana"]["healthcheck"]
+    assert "curl -fsS http://127.0.0.1:3000/api/health" in healthcheck["test"][1]
+    assert healthcheck["start_period"] == "60s"
 
 
 def test_static_vmagent_and_generic_ifmib_contract():

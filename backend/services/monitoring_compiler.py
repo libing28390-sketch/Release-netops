@@ -64,7 +64,7 @@ GENERIC_IF_MIB_METRICS = (
 )
 
 
-def _parse_variant_oid_config(value: Any) -> dict[str, Any]:
+def _parse_variant_oid_config(value: Any, *, include_unit: bool = True) -> dict[str, Any]:
     """Parse and validate the persisted generator payload.
 
     A variant is considered executable only when it contains at least one
@@ -134,7 +134,12 @@ def _parse_variant_oid_config(value: Any) -> dict[str, Any]:
         item["oid"] = oid.lstrip(".")
         item["type"] = metric_type
         item["help"] = str(item.get("help") or name)
-        item["unit"] = str(item.get("unit") or "")[:64]
+        # ``unit`` is Nexora metadata used by the UI and metric dictionary,
+        # but snmp_exporter rejects it from its strict runtime schema. Keep it
+        # while validating persisted OID definitions and omit it when the
+        # normalized object is being used to render exporter YAML.
+        if include_unit:
+            item["unit"] = str(item.get("unit") or "")[:64]
         indexes = item.get("indexes")
         if indexes is not None:
             if not isinstance(indexes, list) or len(indexes) > 16:
@@ -261,7 +266,7 @@ def render_exporter_modules(
         if not config:
             raise CompileError(f"OID_CONFIG_MISSING:{variant_key}")
         exporter_config = exporter_config_from_variant(module, {"oid_config": config})
-        exporter_config = _parse_variant_oid_config(exporter_config)
+        exporter_config = _parse_variant_oid_config(exporter_config, include_unit=False)
         exporter_config["max_repetitions"] = int(variant.get("max_repetitions") or 25)
         exporter_config["retries"] = int(variant.get("retries") or 2)
         timeout_ms = int(variant.get("request_timeout_ms") or 3000)

@@ -165,7 +165,7 @@ initialize_env() {
     fi
 
     require_command openssl
-    local db_user db_name db_password server_name redis_password redis_url grafana_password
+    local db_user db_name db_password server_name redis_password redis_url grafana_password grafana_root_url
     db_user="$(env_value POSTGRES_USER)"
     db_name="$(env_value POSTGRES_DB)"
     db_user="${db_user:-postgres}"
@@ -196,6 +196,18 @@ initialize_env() {
         server_name="${server_name:-localhost}"
         set_env_value TLS_COMMON_NAME "$server_name"
     fi
+
+    # Grafana is served through the HTTPS Nginx path, not directly from its
+    # internal port.  The stock %(domain)s template resolves to Grafana's
+    # default localhost domain and makes browser redirects escape to the local
+    # workstation. Derive the public URL when the value is absent or still a
+    # localhost/template placeholder; preserve an explicitly configured domain.
+    grafana_root_url="$(env_value GRAFANA_ROOT_URL)"
+    case "$grafana_root_url" in
+        ""|*'%(protocol)s'*|*'%(domain)s'*|*replace-with-your-server-host*|*replace-with-your-domain*|*change-me*|http://localhost*|https://localhost*|http://127.0.0.1*|https://127.0.0.1*)
+            set_env_value GRAFANA_ROOT_URL "https://${server_name}/grafana/"
+            ;;
+    esac
 
     # The optional Redis sidecar is part of the standard Compose deployment.
     # Generate a URL-safe password only for the untouched local service URL;
@@ -377,8 +389,30 @@ build_and_start() {
     # the application container starts its migrations.
     compose build "${build_args[@]}"
     compose up -d --force-recreate --remove-orphans "${service_args[@]}"
+    start_deferred_vmagent
     stop_disabled_redis
     compose ps "${service_args[@]}"
+}
+
+start_deferred_vmagent() {
+    # Compose creates vmagent before its SNMP dependency is healthy, leaving it
+    # in `Created` when a persisted artifact needs a short compatibility
+    # migration. Give the netops startup normalizer a bounded window to repair
+    # the runtime copy, then ask Compose to start vmagent once the exporter is
+    # healthy. If no collector artifact has ever been published, keep the
+    # existing intentional Created state and let the operator publish one.
+    local exporter_id="" health="" attempt
+    exporter_id="$(compose ps -q snmp-exporter 2>/dev/null || true)"
+    [[ -n "$exporter_id" ]] || return 0
+    for attempt in {1..15}; do
+        health="$(docker inspect --format '{{if .State.Health}}{{.State.Health.Status}}{{else}}none{{end}}' "$exporter_id" 2>/dev/null || true)"
+        if [[ "$health" == "healthy" ]]; then
+            compose up -d vmagent
+            return 0
+        fi
+        sleep 2
+    done
+    log "SNMP exporter is not healthy after the bounded startup wait; vmagent remains deferred"
 }
 
 required_images() {
@@ -515,8 +549,14 @@ case "$COMMAND" in
         require_command git
         [[ -d "$DEPLOYMENT_DIR/.git" ]] || die "Not a Git deployment: $DEPLOYMENT_DIR"
         cd "$DEPLOYMENT_DIR"
-        backup_release_state
+        # Repair/initialize dotenv values before the first Compose call. The
+        # release backup itself uses `docker compose exec`; if an older .env
+        # lacks a newly required variable (for example Grafana's password),
+        # validating Compose before initialize_env makes the update fail before
+        # the repair can run. Keep the pre-update .env backup before mutating it.
         backup_env
+        initialize_env
+        backup_release_state
         sync_release
         initialize_env
         if [[ "${FORCE_UPDATE:-}" != "--force" && "$RELEASE_CHANGED" != "1" ]]; then
