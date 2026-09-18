@@ -3016,6 +3016,7 @@ def import_assets(
         skipped_items = []
         failed_items: list[dict] = []
         row_results: list[dict] = []
+        pending_hostname_sync: list[str] = []
 
         def _safe_import_error(exc: Exception) -> dict:
             detail = exc.detail if isinstance(exc, HTTPException) else None
@@ -3070,11 +3071,17 @@ def import_assets(
             asset_origin = body.asset_origin if body.asset_origin in ('new', 'legacy') else 'new'
             legacy_production = asset_origin == 'legacy' and body.lifecycle_status == 'production'
             initial_lifecycle = 'production' if legacy_production else 'staging'
-            if not (body.hostname or '').strip() and not (body.asset_tag or '').strip():
-                raise HTTPException(status_code=422, detail={
-                    'code': 'ASSET_IDENTITY_REQUIRED',
-                    'message': '导入资产必须至少填写主机名或资产编号',
-                })
+            was_hostname_empty = not (body.hostname or '').strip()
+            if was_hostname_empty:
+                if (body.management_ip or '').strip():
+                    body.hostname = body.management_ip.strip()
+                elif (body.asset_tag or '').strip():
+                    body.hostname = body.asset_tag.strip()
+                else:
+                    raise HTTPException(status_code=422, detail={
+                        'code': 'ASSET_IDENTITY_REQUIRED',
+                        'message': '导入资产必须至少填写主机名、资产编号或管理IP',
+                    })
             if legacy_production:
                 reason = (body.takeover_exempt_reason or '').strip()
                 normal_username = (body.normal_username or body.username or '').strip()
@@ -3173,6 +3180,8 @@ def import_assets(
             if body.asset_type in ('network_device', 'server'):
                 device_id = _create_linked_device(conn, asset_id, body, _user)
                 _sync_asset_tags(conn, asset_id, requested_tag_ids)
+                if was_hostname_empty and device_id:
+                    pending_hostname_sync.append(device_id)
                 if legacy_production:
                     conn.execute(
                         "UPDATE devices SET lifecycle_status = 'production', rotation_status = 'exempt', is_managed = 0 WHERE id = ?",
@@ -3255,6 +3264,20 @@ def import_assets(
                 conn.rollback()
                 raise
         conn.commit()
+        if pending_hostname_sync:
+            import asyncio as _aio
+            async def _bg_auto_sync(dids: list[str]):
+                for did in dids:
+                    try:
+                        from api.devices import sync_device_hostname
+                        await sync_device_hostname(did)
+                    except Exception as e:
+                        logger.debug("Auto hostname sync skipped for %s: %s", did, e)
+            try:
+                loop = _aio.get_running_loop()
+                loop.create_task(_bg_auto_sync(pending_hostname_sync))
+            except RuntimeError:
+                pass
         response = {
             'created': created,
             'skipped': skipped,

@@ -1,5 +1,6 @@
 from fastapi import APIRouter, HTTPException, Body, Query, Depends, File, UploadFile, BackgroundTasks
 from fastapi.responses import JSONResponse
+from pydantic import BaseModel
 import os
 import uuid
 import json
@@ -3903,3 +3904,154 @@ def collect_device_parsed_command(device_id: str, payload: dict = Body(default={
         if ssh_failure_response:
             return ssh_failure_response
         raise HTTPException(status_code=500, detail=f'Parsed command execution failed: {exc}')
+
+
+def clean_system_hostname(raw_sys_name: str) -> str:
+    """Clean standard RFC 1213 MIB-II sysName into a canonical management hostname.
+
+    Works across all vendors without requiring any vendor-specific templates:
+    strips trailing newlines, domain suffixes (e.g. '.CCIE', '.corp.local'),
+    and extra whitespace.
+    """
+    if not raw_sys_name:
+        return ''
+    cleaned = str(raw_sys_name).strip().split('\r')[0].split('\n')[0].strip()
+    if not cleaned:
+        return ''
+    if '.' in cleaned:
+        parts = cleaned.split('.')
+        candidate = parts[0].strip()
+        if len(candidate) >= 2 and re.match(r'^[A-Za-z0-9_-]+$', candidate):
+            return candidate
+    return cleaned
+
+
+@router.post("/devices/{device_id}/sync-hostname")
+async def sync_device_hostname(device_id: str, user=require_role("Operator")):
+    """Fetch actual sysName from device via RFC1213 standard SNMP MIB-II (1.3.6.1.2.1.1.5.0).
+
+    Does not require any vendor template: works uniformly across all network vendors.
+    Cleans domain suffixes, updates devices.hostname, devices.sys_name, and physical_assets.hostname,
+    and updates topology observation matching.
+    """
+    conn = get_db_connection()
+    try:
+        device = conn.execute('SELECT * FROM devices WHERE id = ?', (device_id,)).fetchone()
+        if not device:
+            raise HTTPException(status_code=404, detail="Device not found")
+        device_data = dict(device)
+    finally:
+        conn.close()
+
+    collector_credentials = resolve_collector_credentials(device_data)
+    ip = device_data.get('ip_address')
+    snmp_ip = collector_credentials['snmp'].get('server') or ip
+    community = collector_credentials['snmp'].get('community') or ''
+    port = collector_credentials['snmp'].get('port') or 161
+
+    if not snmp_ip:
+        raise HTTPException(status_code=400, detail="设备未配置管理 IP 地址")
+    if not community:
+        raise HTTPException(status_code=400, detail="设备未配置 SNMP 社区名/凭据，无法通过 SNMP 读取实际主机名")
+
+    from services.snmp_service import _snmp_get
+    try:
+        # RFC 1213 sysName.0 is universal across all hardware vendors
+        raw_sys_name = await _snmp_get(snmp_ip, community, '1.3.6.1.2.1.1.5.0', port, timeout=3)
+    except Exception as exc:
+        logger.warning("SNMP sysName read failed for %s: %s", snmp_ip, exc)
+        raise HTTPException(status_code=502, detail=f"SNMP 连接失败: {exc}")
+
+    if not raw_sys_name:
+        raise HTTPException(status_code=502, detail="设备 SNMP 响应中 sysName.0 为空，请检查设备配置")
+
+    clean_name = clean_system_hostname(raw_sys_name) or str(raw_sys_name).strip()
+    previous_hostname = device_data.get('hostname') or ''
+    asset_id = device_data.get('asset_id')
+
+    conn2 = get_db_connection()
+    try:
+        conn2.execute(
+            'UPDATE devices SET hostname = ?, sys_name = ? WHERE id = ?',
+            (clean_name, raw_sys_name, device_id),
+        )
+        if asset_id:
+            conn2.execute(
+                'UPDATE physical_assets SET hostname = ?, updated_at = ? WHERE id = ?',
+                (clean_name, _utc_now(), asset_id),
+            )
+        # Also update topology observations where this device is source or target
+        conn2.execute(
+            'UPDATE topology_observations SET source_hostname = ? WHERE source_device_id = ?',
+            (clean_name, device_id),
+        )
+        # If any observation target_device_id was matched to this device, rematch or update
+        conn2.commit()
+    finally:
+        conn2.close()
+
+    return {
+        "success": True,
+        "device_id": device_id,
+        "previous_hostname": previous_hostname,
+        "new_hostname": clean_name,
+        "raw_sys_name": raw_sys_name,
+        "message": f"主机名已成功从“{previous_hostname}”同步为“{clean_name}”"
+    }
+
+
+class ProbeHostnamePayload(BaseModel):
+    ip: str = ""
+    community: str = "public"
+    port: int = 161
+    device_id: str | None = None
+
+
+@router.post("/devices/probe-hostname")
+async def probe_device_hostname(payload: ProbeHostnamePayload, user=require_role("Viewer")):
+    """Directly probe actual sysName from IP via RFC 1213 standard SNMP MIB-II (1.3.6.1.2.1.1.5.0).
+
+    Does NOT require any vendor SNMP template. Works universally across all hardware vendors.
+    Useful for interactive UI forms (such as AssetModal or device creation) to auto-fill hostname.
+    """
+    ip = str(payload.ip or "").strip()
+    community = str(payload.community or "").strip()
+    port = int(payload.port or 161)
+
+    if not ip and payload.device_id:
+        conn = get_db_connection()
+        try:
+            device = conn.execute("SELECT * FROM devices WHERE id = ?", (payload.device_id,)).fetchone()
+            if device:
+                device_data = dict(device)
+                creds = resolve_collector_credentials(device_data)
+                ip = creds["snmp"].get("server") or device_data.get("ip_address") or ""
+                if not community:
+                    community = creds["snmp"].get("community") or "public"
+                port = creds["snmp"].get("port") or 161
+        finally:
+            conn.close()
+
+    if not ip:
+        raise HTTPException(status_code=400, detail="请提供有效的设备 IP 地址")
+    if not community:
+        raise HTTPException(status_code=400, detail="请提供 SNMP Community 凭据")
+
+    from services.snmp_service import _snmp_get
+    try:
+        raw_sys_name = await _snmp_get(ip, community, "1.3.6.1.2.1.1.5.0", port, timeout=3)
+    except Exception as exc:
+        logger.warning("SNMP sysName probe failed for %s: %s", ip, exc)
+        raise HTTPException(status_code=502, detail=f"SNMP 探测连接失败: {exc}")
+
+    if not raw_sys_name:
+        raise HTTPException(status_code=502, detail="设备未返回有效的 sysName.0")
+
+    clean_name = clean_system_hostname(raw_sys_name) or str(raw_sys_name).strip()
+    return {
+        "success": True,
+        "hostname": clean_name,
+        "raw_sys_name": raw_sys_name,
+        "ip": ip,
+    }
+

@@ -21,7 +21,9 @@ def test_fixed_collector_stack_and_queue_contract():
     assert any("nexora-monitoring-artifacts:/etc/nexora-collector" in item for item in services["vmagent"]["volumes"])
     assert any("nexora-monitoring-artifacts:/etc/snmp_exporter" in item for item in services["snmp-exporter"]["volumes"])
     assert any("runtime/vmagent/scrape.yml" in item for item in command)
-    assert any("runtime/snmp_exporter/snmp.yml" in item for item in services["snmp-exporter"]["command"])
+    exporter_command = " ".join(str(item) for item in services["snmp-exporter"]["command"])
+    assert "runtime/snmp_exporter/snmp.yml" in exporter_command
+    assert "current_version.json" not in exporter_command
     assert any("MONITORING_METRIC_BACKEND=${MONITORING_METRIC_BACKEND:-victoriametrics}" in item for item in services["netops"]["environment"])
     assert any("monitoring/grafana/provisioning" in item for item in services["grafana"]["volumes"])
     assert any("provisioning/datasources:/etc/grafana/provisioning/datasources" in item for item in services["grafana"]["volumes"])
@@ -45,6 +47,8 @@ def test_static_vmagent_and_generic_ifmib_contract():
     assert any(item.get("action") == "labeldrop" and "nexora_auth" in item.get("regex", "") for item in relabel)
 
     exporter = yaml.safe_load((ROOT / "monitoring" / "snmp-exporter" / "snmp.yml").read_text(encoding="utf-8"))
+    assert exporter["auths"]["bootstrap_disabled_v2"]["version"] == 2
+    assert exporter["auths"]["bootstrap_disabled_v2"]["community"] == "__nexora_bootstrap_disabled__"
     walk = exporter["modules"]["generic_ifmib_interface_std"]["walk"]
     assert "1.3.6.1.2.1.2.2" in walk
     assert "1.3.6.1.2.1.31.1.1" in walk

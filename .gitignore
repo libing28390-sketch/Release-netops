@@ -24,7 +24,9 @@ data/change_order_attachments/
 .bypy/
 dist_baidupan/
 .codex-tmp/
+.tmp/
 tmp/
+*.tmp
 scratch/
 backup/
 data/logs/
@@ -98,6 +100,8 @@ deploy-ubuntu.gitee.sh
 # Local session links and codex-bridge cache
 artifacts_symlink/
 ~/
+.codex/*
+!.codex/config.toml
 
 # Large executables and installers
 postgresql-installer.exe

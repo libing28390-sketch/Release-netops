@@ -173,6 +173,7 @@ const NetworkMonitoring: React.FC<NetworkMonitoringProps> = ({ language, devices
 
   const [loading, setLoading] = useState(false);
   const [refreshing, setRefreshing] = useState(false);
+  const [syncingHostname, setSyncingHostname] = useState(false);
   const [rangeHours, setRangeHours] = useState<number>(24);
   const [autoRefresh, setAutoRefresh] = useState(true);
   const [metricProvider, setMetricProvider] = useState<MetricProvider>('native');
@@ -391,6 +392,33 @@ const NetworkMonitoring: React.FC<NetworkMonitoringProps> = ({ language, devices
       setDiagnosticsLoading(false);
     }
   }, [diagnosticsLoading, fetchCollectionStatus, selectedId, showToast, zh]);
+
+  const handleSyncHostname = useCallback(async () => {
+    if (!selectedId || syncingHostname) return;
+    setSyncingHostname(true);
+    try {
+      const resp = await fetch(`/api/devices/${selectedId}/sync-hostname`, {
+        method: 'POST',
+        headers: authHeaders(),
+      });
+      const data = await resp.json().catch(() => ({}));
+      if (!resp.ok) {
+        throw new Error(data.detail || (zh ? '同步失败' : 'Failed to sync hostname'));
+      }
+      showToast(data.message || (zh ? '主机名同步成功' : 'Hostname synced successfully'), 'success');
+      setDeviceRows((prev) =>
+        prev.map((d) =>
+          d.id === selectedId
+            ? { ...d, hostname: data.new_hostname, sys_name: data.raw_sys_name }
+            : d
+        )
+      );
+    } catch (err: any) {
+      showToast(err?.message || (zh ? '主机名同步失败' : 'Failed to sync hostname'), 'error');
+    } finally {
+      setSyncingHostname(false);
+    }
+  }, [selectedId, syncingHostname, showToast, zh]);
 
   // Load telemetry data when selected device changes or range changes
   const loadDeviceData = useCallback(async (deviceId: string, hours: number, iface: string, page: number, sev: string, ph: string, showSpinner = true, signal?: AbortSignal, includeTrend = true) => {
@@ -837,15 +865,34 @@ const NetworkMonitoring: React.FC<NetworkMonitoringProps> = ({ language, devices
                     <Router size={18} />
                   </div>
                   <div>
-                    <p className="text-base font-bold text-gray-900 dark:text-white">{selectedDevice.hostname || selectedDevice.ip_address}</p>
+                    <div className="flex items-center gap-2">
+                      <p className="text-base font-bold text-gray-900 dark:text-white">{selectedDevice.hostname || selectedDevice.ip_address}</p>
+                      {selectedDevice.sys_name && selectedDevice.sys_name !== selectedDevice.hostname && (
+                        <span className="text-[10px] font-mono px-2 py-0.5 rounded-md bg-amber-50 text-amber-700 border border-amber-200 dark:bg-amber-950/40 dark:text-amber-400 dark:border-amber-800/60" title={zh ? 'SNMP 报告的系统名称' : 'SNMP sysName'}>
+                          sysName: {selectedDevice.sys_name}
+                        </span>
+                      )}
+                    </div>
                     <p className="text-xs font-mono text-gray-400 mt-0.5">
                       {selectedDevice.ip_address} · {selectedDevice.platform || 'SNMP Agent'}
                     </p>
                   </div>
                 </div>
-                <div className="flex items-center gap-2 text-xs text-gray-400">
-                  <Clock size={13} />
-                  {lastSampleAt ? (zh ? `最近采样 ${fmtTime(lastSampleAt)}` : `Last sample ${fmtTime(lastSampleAt)}`) : (zh ? '等待数据' : 'Awaiting data')}
+                <div className="flex items-center gap-3">
+                  <button
+                    type="button"
+                    onClick={handleSyncHostname}
+                    disabled={syncingHostname}
+                    title={zh ? '通过通用 SNMP sysName 校验并同步设备主机名' : 'Validate and sync hostname from device via universal SNMP sysName'}
+                    className="flex items-center gap-1.5 px-3 py-1.5 rounded-xl text-xs font-semibold border border-blue-200 bg-blue-50/80 text-blue-700 hover:bg-blue-100 transition cursor-pointer disabled:cursor-wait disabled:opacity-60"
+                  >
+                    <RefreshCw size={12} className={syncingHostname ? 'animate-spin text-blue-600' : ''} />
+                    <span>{syncingHostname ? (zh ? '同步中…' : 'Syncing…') : (zh ? '同步主机名' : 'Sync Hostname')}</span>
+                  </button>
+                  <div className="flex items-center gap-2 text-xs text-gray-400">
+                    <Clock size={13} />
+                    {lastSampleAt ? (zh ? `最近采样 ${fmtTime(lastSampleAt)}` : `Last sample ${fmtTime(lastSampleAt)}`) : (zh ? '等待数据' : 'Awaiting data')}
+                  </div>
                 </div>
               </div>
 

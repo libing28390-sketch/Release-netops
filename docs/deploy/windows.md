@@ -120,6 +120,10 @@ SELECT MIN(version), MAX(version), COUNT(*) FROM schema_migrations;
 
 预期结果是 PostgreSQL 18.x、两个扩展均存在，并且迁移版本达到当前发布版本。若启动日志出现 `POSTGRES_EXTENSION_MISSING`，优先检查 pgvector 是否安装到了 PostgreSQL 18 的目录，以及当前账号是否有 `CREATE EXTENSION` 权限。
 
+如果凭据导入确认时出现 `credentials.snmp_security_level` 不存在，说明数据库曾记录
+过旧版 `m0232` 但没有完整落地 SNMPv3 字段。重新启动本地后端会自动执行后续修复迁移，
+不会删除或重置已有凭据；确认日志中的迁移完成后再重试导入。
+
 Windows 后端实际监听 `0.0.0.0:5010`，浏览器默认使用 `127.0.0.1:5010`。只允许本机访问时，应使用 Windows 防火墙限制 5010 入站；需要局域网访问时再按实际网段放行。
 
 ## 日常使用与数据重置

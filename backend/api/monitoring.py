@@ -377,6 +377,7 @@ def list_monitoring_network_devices(
             f"""
             SELECT d.id, d.hostname, d.ip_address, d.platform, d.status,
                    d.compliance, d.role, d.device_category, d.model, d.version,
+                   d.sys_name,
                    {site_id_expr} AS site_id,
                    {site_name_expr} AS site
             FROM devices d LEFT JOIN physical_assets pa ON pa.id = d.asset_id LEFT JOIN sites s ON s.id = d.site_id
@@ -707,7 +708,7 @@ def monitoring_device_realtime(
         tenant_clause, tenant_params = _monitoring_tenant_scope(user)
         device = conn.execute(
             "SELECT id, hostname, ip_address, platform, status, device_category, "
-            "cpu_usage, memory_usage, temp, fan_status, psu_status FROM devices WHERE id = ?" + tenant_clause,
+            "sys_name, cpu_usage, memory_usage, temp, fan_status, psu_status FROM devices WHERE id = ?" + tenant_clause,
             (device_id, *tenant_params),
         ).fetchone()
         if not device:
@@ -888,6 +889,7 @@ def monitoring_device_realtime(
             'device': {
                 'id': device['id'],
                 'hostname': device['hostname'],
+                'sys_name': device.get('sys_name'),
                 'ip_address': device['ip_address'],
                 'platform': device['platform'],
                 'status': device['status'],

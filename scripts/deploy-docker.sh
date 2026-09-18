@@ -395,12 +395,10 @@ build_and_start() {
 }
 
 start_deferred_vmagent() {
-    # Compose creates vmagent before its SNMP dependency is healthy, leaving it
-    # in `Created` when a persisted artifact needs a short compatibility
-    # migration. Give the netops startup normalizer a bounded window to repair
-    # the runtime copy, then ask Compose to start vmagent once the exporter is
-    # healthy. If no collector artifact has ever been published, keep the
-    # existing intentional Created state and let the operator publish one.
+    # Compose normally starts vmagent after the bootstrap exporter becomes
+    # healthy. Keep this bounded fallback for Compose versions or persisted
+    # runtime migrations that leave the dependent container in `Created`; it
+    # is safe with both an empty target file and a published artifact.
     local exporter_id="" health="" attempt
     exporter_id="$(compose ps -q snmp-exporter 2>/dev/null || true)"
     [[ -n "$exporter_id" ]] || return 0
@@ -412,7 +410,7 @@ start_deferred_vmagent() {
         fi
         sleep 2
     done
-    log "SNMP exporter is not healthy after the bounded startup wait; vmagent remains deferred"
+    log "SNMP exporter is not healthy after the bounded startup wait; vmagent remains deferred until the exporter recovers"
 }
 
 required_images() {

@@ -3789,6 +3789,8 @@ def get_topology_generation_status(
             'code': 'unmanaged_neighbors',
             'count': unmatched_observations,
             'message': 'Some neighbors are not present in managed device inventory.',
+            'severity': 'info',
+            'blocking': False,
         })
     if stale_links:
         warnings.append({
@@ -3797,6 +3799,7 @@ def get_topology_generation_status(
             'message': 'Some links have not been refreshed within the discovery evidence TTL.',
         })
 
+    blocking_warnings = [item for item in warnings if item.get('blocking', True)]
     return {
         'generation': {
             'strategy': 'automatic_and_on_demand',
@@ -3835,7 +3838,10 @@ def get_topology_generation_status(
         },
         'latest_manual_run': latest_run,
         'warnings': warnings,
-        'health': 'empty' if total_observations == 0 else ('degraded' if warnings else 'healthy'),
+        # An LLDP neighbor outside the CMDB is valid external topology
+        # evidence. Keep it visible as an informational warning without
+        # making the discovery pipeline look unhealthy.
+        'health': 'empty' if total_observations == 0 else ('degraded' if blocking_warnings else 'healthy'),
     }
 
 

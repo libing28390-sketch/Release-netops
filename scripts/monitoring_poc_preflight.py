@@ -63,6 +63,9 @@ def _check_static() -> tuple[list[str], list[str]]:
             if label not in labels:
                 errors.append(f"vmagent relabel missing: {label}")
         exporter = yaml.safe_load((ROOT / "monitoring" / "snmp-exporter" / "snmp.yml").read_text(encoding="utf-8")) or {}
+        auths = exporter.get("auths") or {}
+        if not auths:
+            errors.append("SNMP bootstrap auth definition missing")
         modules = exporter.get("modules") or {}
         required_modules = {
             "generic_ifmib_interface_std",

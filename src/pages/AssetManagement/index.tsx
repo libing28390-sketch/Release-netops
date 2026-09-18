@@ -1270,7 +1270,7 @@ const AssetManagementTab: React.FC<AssetManagementTabProps> = ({ language, setAc
                 obj[key] = mappedVal;
               }
             }
-            if (obj.hostname || obj.asset_tag) {
+            if (obj.hostname || obj.asset_tag || obj.management_ip) {
               if (!obj.asset_type) {
                 if (isUnifiedAssetSheet) {
                   templateMismatchRows.push(`${name} 第${rowIndex + 2}行：资产类型必填，请选择“服务器”或“网络设备”`);
@@ -1413,7 +1413,7 @@ const AssetManagementTab: React.FC<AssetManagementTabProps> = ({ language, setAc
       ['网络设备', '每台设备一行', '只填写网络设备；资产类型固定填写“网络设备”，不要混入服务器。'],
       ['服务器', '每台设备一行', '只填写服务器；资产类型固定填写“服务器”，不要混入网络设备。'],
       ['资产类型', '必填', '按当前工作表填写对应值：“网络设备”或“服务器”。'],
-      ['主机名/资产编号', '至少填一个', '资产表中两者至少填写一个；“管理入口”的资产编号和主机名会自动读取，不要手工修改。'],
+      ['主机名/资产编号', '选填（支持留空自动探测）', '主机名可留空，配置 SNMP 凭据时系统将自动从设备抓取实际主机名；管理IP或资产编号至少填写一个。'],
       ['录入来源', '必填', '填写“新设备”或“存量设备”。'],
       ['投产状态', '必填', '新设备填“待投产”；存量设备按实际状态填写。'],
       ['管理入口', '每个资产一行', '资产编号和主机名会从两张资产表自动带出；SSH 只填一行，导入后自动提供“SSH 终端”和“Web SSH”。'],
@@ -1429,7 +1429,7 @@ const AssetManagementTab: React.FC<AssetManagementTabProps> = ({ language, setAc
       ['Network Devices', 'One row per device', 'Enter network devices only; keep Asset Type as network_device.'],
       ['Servers', 'One row per device', 'Enter servers only; keep Asset Type as server.'],
       ['Asset Type', 'Required', 'Use the value matching the current sheet: network_device or server.'],
-      ['Hostname / Asset Tag', 'At least one', 'Provide at least one in the asset sheet; Management Entries fills both columns automatically.'],
+      ['Hostname / Asset Tag', 'Optional (Auto-discovered)', 'Hostname can be left blank; system automatically discovers it via SNMP when credentials are configured.'],
       ['Asset Origin', 'Required', 'Use new or legacy.'],
       ['Lifecycle', 'Required', 'Use staging for new devices; use the actual state for legacy devices.'],
       ['Management Entries', 'One row per asset', 'Asset Tag and Hostname are read from Network Devices and Servers. For SSH, enter one row only; the imported asset automatically provides SSH terminal and Web SSH.'],
@@ -1451,8 +1451,8 @@ const AssetManagementTab: React.FC<AssetManagementTabProps> = ({ language, setAc
       ? ['资产类型', '主机名', '资产编号', '序列号', '厂商', '型号', '平台', 'SSH算法策略', '管理IP', '业务IP', '状态', '角色', '设备分类', '录入来源（必填：新设备或存量设备）', 'VLAN', '上联交换机', '上联端口', '站点', '机柜', 'U位', 'U高度', '规划起始U', '功耗(W)', 'SNMP社区名', 'SNMP端口', '普通用户', '特权用户', '普通密码', '特权密码', 'Enable密码', '绑定凭据', '绑定特权凭据', 'SNMP凭据（推荐）', '标签代码', '部门', '购买日期', '投产状态', '免上收投产原因', '保修到期', '备注', '功能', '区域']
       : ['Asset Type', 'Hostname', 'Asset Tag', 'Serial Number', 'Vendor', 'Model', 'Platform', 'SSH Algorithm Profile', 'Mgmt IP', 'Business IP', 'Status', 'Role', 'Device Category', 'Asset Origin (Required: new or legacy)', 'VLAN', 'Uplink Switch', 'Uplink Port', 'Site', 'Rack', 'Rack Unit', 'U Height', 'Planned Start U', 'Power(W)', 'SNMP Community', 'SNMP Port', 'Normal User', 'Admin User', 'Normal Password', 'Admin Password', 'Enable Secret', 'Credential', 'Admin Credential', 'SNMP Credential (recommended)', 'Tags', 'Department', 'Purchase Date', 'Lifecycle', 'Takeover Exemption Reason', 'Warranty Expiry', 'Notes', 'Function', 'Zone'];
     const requiredHeaders = zh
-      ? new Set(['资产类型', '主机名', '资产编号', '录入来源（必填：新设备或存量设备）', '投产状态', '免上收投产原因'])
-      : new Set(['Asset Type', 'Hostname', 'Asset Tag', 'Asset Origin (Required: new or legacy)', 'Lifecycle', 'Takeover Exemption Reason']);
+      ? new Set(['资产类型', '资产编号', '录入来源（必填：新设备或存量设备）', '投产状态', '免上收投产原因'])
+      : new Set(['Asset Type', 'Asset Tag', 'Asset Origin (Required: new or legacy)', 'Lifecycle', 'Takeover Exemption Reason']);
     // Keep the fallback on the same field order as the user-supplied split
     // workbook. Network sheets omit Business IP; server sheets omit the SNMP
     // community/port, Enable password and SNMP credential fields.

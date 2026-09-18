@@ -1,6 +1,6 @@
 import React from 'react';
 import { motion } from 'motion/react';
-import { Activity, AlertTriangle, ArrowRight, Clock3, Database, Download, EyeOff, GitMerge, Globe, LayoutGrid, MapPin, Network, PanelRightClose, PanelRightOpen, RotateCcw, Search, Tag, X } from 'lucide-react';
+import { Activity, AlertTriangle, ArrowRight, Clock3, Database, Download, EyeOff, GitMerge, Globe, Info, LayoutGrid, MapPin, Network, PanelRightClose, PanelRightOpen, RotateCcw, Search, Tag, X } from 'lucide-react';
 import type { Device, TagDefinition } from '../types';
 import { darkActionBtnClass, secondaryActionBtnClass } from '../components/shared';
 import { ActionButton } from '../components/ui/ActionIconButton';
@@ -22,6 +22,8 @@ type TopologyGraphView = 'all' | 'physical' | 'l2' | 'l3' | 'logical' | 'site' |
 interface TopologyStats {
   nodeCount: number;
   linkCount: number;
+  managedLinkCount?: number;
+  externalLinkCount?: number;
   siteCount: number;
   atRiskCount: number;
   orphanCount: number;
@@ -493,9 +495,26 @@ const TopologyPage: React.FC<TopologyPageProps> = ({
             {generationStatusError && (
               <span className="inline-flex items-center gap-1 rounded-xl bg-amber-50 px-2 py-1 text-[11px] font-semibold text-amber-700"><AlertTriangle size={11} />{language === 'zh' ? '生成状态暂时不可用，拓扑数据仍可继续查看。' : 'Generation status is temporarily unavailable; topology data remains available.'}</span>
             )}
-            {generationStatus?.warnings.map((warning) => (
-              <span key={warning.code} className="inline-flex items-center gap-1 rounded-xl bg-amber-50 px-2 py-1 text-[11px] font-semibold text-amber-700"><AlertTriangle size={11} />{warning.code} · {warning.count}</span>
-            ))}
+            {generationStatus?.warnings.map((warning) => {
+              const isInfo = warning.severity === 'info' || warning.blocking === false;
+              const isUnmanaged = warning.code === 'unmanaged_neighbors';
+              const label = isUnmanaged
+                ? (language === 'zh' ? `未纳管邻居 · ${warning.count}` : `Unmanaged peers · ${warning.count}`)
+                : `${warning.code} · ${warning.count}`;
+              return (
+                <span
+                  key={warning.code}
+                  className={`inline-flex items-center gap-1 rounded-xl px-2 py-1 text-[11px] font-semibold ${
+                    isInfo
+                      ? 'bg-slate-100 text-slate-700 dark:bg-zinc-800 dark:text-zinc-300 border border-slate-200/80 dark:border-zinc-700'
+                      : 'bg-amber-50 text-amber-700 dark:bg-amber-950/40 dark:text-amber-300'
+                  }`}
+                >
+                  {isInfo ? <Info size={11} className="text-slate-500" /> : <AlertTriangle size={11} />}
+                  {label}
+                </span>
+              );
+            })}
           </div>
         )}
       </div>
@@ -545,7 +564,8 @@ const TopologyPage: React.FC<TopologyPageProps> = ({
         <div className="flex flex-wrap items-center gap-x-6 gap-y-2">
           {[
             { label: language === 'zh' ? '节点' : 'Nodes', value: topologyStats.nodeCount, color: 'text-blue-600 dark:text-blue-400' },
-            { label: language === 'zh' ? '链路' : 'Links', value: topologyStats.linkCount, color: 'text-gray-800 dark:text-zinc-200' },
+            { label: language === 'zh' ? '管理链路' : 'Managed Links', value: topologyStats.managedLinkCount ?? topologyStats.linkCount, color: 'text-gray-800 dark:text-zinc-200' },
+            { label: language === 'zh' ? '外部链路' : 'External Links', value: topologyStats.externalLinkCount ?? 0, color: 'text-sky-600 dark:text-sky-400' },
             { label: language === 'zh' ? '站点' : 'Sites', value: topologyStats.siteCount, color: 'text-emerald-600 dark:text-emerald-400' },
             { label: language === 'zh' ? '风险' : 'Risk', value: topologyStats.atRiskCount, color: topologyStats.atRiskCount > 0 ? 'text-amber-600' : 'text-gray-400' },
             { label: language === 'zh' ? '孤立' : 'Orphans', value: topologyStats.orphanCount, color: topologyStats.orphanCount > 0 ? 'text-rose-600' : 'text-gray-400' },

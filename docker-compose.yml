@@ -161,15 +161,16 @@ services:
   snmp-exporter:
     image: prom/snmp-exporter:v0.26.0
     container_name: nexora-snmp-exporter
-    # The empty checked-in config is only a bootstrap.  Wait for the control
-    # plane to publish a credential-bearing artifact before starting the
-    # exporter, then reload it after every subsequent publish.
+    # Start immediately with the checked-in, credential-free bootstrap config.
+    # The control plane atomically replaces this runtime file when a collector
+    # plan is published, then asks the exporter to reload it.  Waiting for
+    # current_version.json here would make a fresh deployment look unhealthy
+    # and would block vmagent even though an empty-target config is valid.
     entrypoint:
       - /bin/sh
       - -ec
     command:
       - |
-        while [ ! -f /etc/snmp_exporter/runtime/current_version.json ]; do sleep 2; done
         exec /bin/snmp_exporter --config.file=/etc/snmp_exporter/runtime/snmp_exporter/snmp.yml --web.listen-address=:9116
     volumes:
       - nexora-monitoring-artifacts:/etc/snmp_exporter:ro

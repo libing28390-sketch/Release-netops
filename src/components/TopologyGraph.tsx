@@ -280,6 +280,9 @@ const normalizeTopologyRelationType = (item: any): string => {
 
 const getTopologyLinkStyle = (item: any): TopologyLinkStyle => {
   const relationType = normalizeTopologyRelationType(item);
+  if (item?.is_unmanaged) {
+    return { relationType: 'UNMANAGED', color: '#94a3b8', dash: '4,3', width: 2.2 };
+  }
   if (relationType === 'PHYSICAL') {
     const bandwidth = getBandwidthTier(getLinkDisplayBandwidthMbps(item));
     return { relationType, color: bandwidth.color, dash: 'none', width: 3 };
@@ -384,6 +387,9 @@ type TopologyLayoutMode = 'hierarchy' | 'horizontal' | 'force' | 'radial';
 type PortLabelMode = 'auto' | 'visible' | 'hidden';
 
 const getLayerTone = (device: Device) => {
+  if (device.is_unmanaged) {
+    return { color: '#64748b', soft: 'rgba(100,116,139,0.14)', label: '外部' };
+  }
   const roleCandidates = [device.role_identity, device.role, device.device_category];
   const roleKey = roleCandidates
     .map((value) => canonicalTopologyRole(value))
@@ -561,18 +567,20 @@ const getNodeTone = (device: Device) => {
 };
 
 const getDeviceStatusColor = (device: Device): string => {
+  if (device.is_unmanaged) return '#94a3b8'; // Grey / Unmanaged
   if (device.status === 'offline') return '#ef4444'; // Red / Down
   if (device.health_status === 'critical' || (device.critical_open_alerts || 0) > 0) return '#f97316'; // Orange / Warning
   if (device.health_status === 'warning' || (device.open_alert_count || 0) > 0 || device.status === 'pending') return '#f59e0b'; // Yellow / Warning
-  if (device.is_unmanaged || device.status === 'unknown') return '#94a3b8'; // Grey / Unknown
+  if (device.status === 'unknown') return '#94a3b8'; // Grey / Unknown
   return '#10b981'; // Green / Online
 };
 
 const getDeviceStatusLabel = (device: Device): string => {
+  if (device.is_unmanaged) return '未纳管';
   if (device.status === 'offline') return '离线';
   if (device.health_status === 'critical' || (device.critical_open_alerts || 0) > 0) return '严重告警';
   if (device.health_status === 'warning' || (device.open_alert_count || 0) > 0 || device.status === 'pending') return '预警';
-  if (device.is_unmanaged || device.status === 'unknown') return '状态未知';
+  if (device.status === 'unknown') return '状态未知';
   return '在线';
 };
 

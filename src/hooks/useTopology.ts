@@ -142,6 +142,44 @@ const topologyApiErrorMessage = (payload: unknown, fallback: string): string => 
   return fallback;
 };
 
+const toUnmanagedTopologyDevice = (node: any): Device => ({
+  id: String(node?.id || '').trim(),
+  hostname: String(node?.hostname || 'Unknown neighbor'),
+  ip_address: String(node?.ip_address || ''),
+  platform: 'unmanaged',
+  status: 'pending',
+  compliance: 'unknown',
+  sn: '',
+  model: '',
+  version: '',
+  role: 'external',
+  site: String(node?.site || node?.site_name || 'Unassigned'),
+  site_id: String(node?.site_id || ''),
+  site_name: String(node?.site_name || node?.site || 'Unassigned'),
+  uptime: '',
+  connection_method: 'none',
+  config_history: [],
+  is_unmanaged: true,
+  observation_count: Number(node?.observation_count || 0),
+  protocols: Array.isArray(node?.protocols) ? node.protocols : [],
+  connected_device_ids: Array.isArray(node?.connected_device_ids) ? node.connected_device_ids : [],
+} as Device);
+
+const normalizeUnmanagedTopologyLink = (link: any) => ({
+  ...link,
+  id: String(link?.link_key || ''),
+  link_key: String(link?.link_key || ''),
+  relation_type: 'PHYSICAL',
+  semantic_relation: 'PHYSICAL',
+  discovery_source: String(link?.discovery_source || 'lldp'),
+  status: 'unknown',
+  is_unmanaged: true,
+  is_inferred: false,
+  inferred: false,
+  evidence_count: Number(link?.evidence_count || 1),
+  operational_state: 'unknown',
+});
+
 const STALE_THRESHOLD_MS = 30 * 60 * 1000;
 
 const EXPORT_BANDWIDTH_TIERS = [
@@ -183,6 +221,8 @@ interface UseTopologyArgs {
 
 export const useTopology = ({ devices, language, showToast, isAuthenticated, enabled, refreshDevices }: UseTopologyArgs) => {
   const [topologyLinks, setTopologyLinks] = useState<any[]>([]);
+  const [topologyUnmanagedNodes, setTopologyUnmanagedNodes] = useState<Device[]>([]);
+  const [topologyUnmanagedLinks, setTopologyUnmanagedLinks] = useState<any[]>([]);
   const [topologySearch, setTopologySearch] = useState('');
   const [topologyStatusFilter, setTopologyStatusFilter] = useState<'all' | 'online' | 'offline' | 'pending'>('all');
   const [topologyRoleFilter, setTopologyRoleFilter] = useState('all');
@@ -257,7 +297,20 @@ export const useTopology = ({ devices, language, showToast, isAuthenticated, ena
     if (!linksResponse.ok) throw new Error(`topology_links_${linksResponse.status}`);
     const linksPayload = await linksResponse.json();
     const legacyLinks = Array.isArray(linksPayload?.links) ? linksPayload.links : [];
-    let nextLinks = legacyLinks;
+    const unmanagedNodes = (Array.isArray(linksPayload?.unmanaged_nodes) ? linksPayload.unmanaged_nodes : [])
+      .map(toUnmanagedTopologyDevice)
+      .filter((node: Device) => Boolean(node.id));
+    const unmanagedLinks = (Array.isArray(linksPayload?.unmanaged_links) ? linksPayload.unmanaged_links : [])
+      .map(normalizeUnmanagedTopologyLink)
+      .filter((link: any) => Boolean(link.source_device_id && link.target_device_id));
+    setTopologyUnmanagedNodes(unmanagedNodes);
+    setTopologyUnmanagedLinks(unmanagedLinks);
+    const externalLinksForView = topologyGraphView === 'external'
+      || topologyGraphView === 'physical'
+      || topologyGraphView === 'all'
+      ? unmanagedLinks
+      : [];
+    let nextLinks = [...legacyLinks, ...externalLinksForView];
     const graphNodeMetadata: Record<string, Partial<Device>> = {};
     if (graphResponse.ok) {
       const graphPayload = await graphResponse.json();
@@ -367,10 +420,12 @@ export const useTopology = ({ devices, language, showToast, isAuthenticated, ena
         return Array.from(collapsed.values());
       };
       if (topologyGraphView === 'physical') {
-        nextLinks = foldedPhysicalLinks.length > 0 ? foldedPhysicalLinks : graphLinks;
+        nextLinks = [...(foldedPhysicalLinks.length > 0 ? foldedPhysicalLinks : graphLinks), ...externalLinksForView];
       } else if (topologyGraphView === 'all') {
         const logicalLinks = collapseRelationLinks(graphLinks.filter((link: any) => String(link.relation_type || '').toUpperCase() !== 'PHYSICAL'));
-        nextLinks = [...foldedPhysicalLinks, ...logicalLinks];
+        nextLinks = [...foldedPhysicalLinks, ...logicalLinks, ...externalLinksForView];
+      } else if (topologyGraphView === 'external') {
+        nextLinks = externalLinksForView;
       } else {
         nextLinks = collapseRelationLinks(graphLinks.filter((link: any) => String(link.relation_type || '').toUpperCase() !== 'PHYSICAL'));
       }
@@ -410,6 +465,8 @@ export const useTopology = ({ devices, language, showToast, isAuthenticated, ena
   React.useEffect(() => {
     if (!enabled || !isAuthenticated || !topologyAuthHeaders().Authorization) {
       setTopologyLinks([]);
+      setTopologyUnmanagedNodes([]);
+      setTopologyUnmanagedLinks([]);
       setTopologySites([]);
       setTopologyNodeMetadata({});
       setTopologyGraphNodeDevices([]);
@@ -518,13 +575,19 @@ export const useTopology = ({ devices, language, showToast, isAuthenticated, ena
       const serverOperationalState = String(link.operational_state || link.status || '').toLowerCase();
       const serverMarksStale = serverOperationalState === 'stale';
       const inferred = Boolean(link.inferred || link.is_inferred);
+      const isUnmanaged = Boolean(link.is_unmanaged || sourceDevice?.is_unmanaged || targetDevice?.is_unmanaged);
 
       let operationalState: TopologyOperationalState = 'unknown';
       let operationalSummary = language === 'zh'
         ? '缺少接口遥测，链路状态未知。'
         : 'Link state is unknown because interface telemetry is unavailable.';
 
-      if (inferred) {
+      if (isUnmanaged) {
+        operationalState = 'unknown';
+        operationalSummary = language === 'zh'
+          ? '未纳管邻居：已发现但尚未匹配到 CMDB 设备。'
+          : 'Unmanaged neighbor: discovered but not matched to a CMDB device.';
+      } else if (inferred) {
         operationalState = 'unknown';
         operationalSummary = language === 'zh'
           ? '这是推断链路，需要等待真实邻居证据确认。'
@@ -614,8 +677,13 @@ export const useTopology = ({ devices, language, showToast, isAuthenticated, ena
 
   const graphInventory = useMemo(() => {
     const existingIds = new Set(devices.map((device) => String(device.id)));
-    return [...devices, ...topologyGraphNodeDevices.filter((device) => !existingIds.has(String(device.id)))];
-  }, [devices, topologyGraphNodeDevices]);
+    topologyGraphNodeDevices.forEach((device) => existingIds.add(String(device.id)));
+    return [
+      ...devices,
+      ...topologyGraphNodeDevices.filter((device) => !devices.some((item) => String(item.id) === String(device.id))),
+      ...topologyUnmanagedNodes.filter((device) => !existingIds.has(String(device.id))),
+    ];
+  }, [devices, topologyGraphNodeDevices, topologyUnmanagedNodes]);
 
   const {
     topologySiteOptions,
@@ -702,10 +770,12 @@ export const useTopology = ({ devices, language, showToast, isAuthenticated, ena
   const topologyStats = useMemo(() => ({
     nodeCount: topologyFilteredDevices.length,
     linkCount: topologyVisibleLinks.length,
+    managedLinkCount: topologyVisibleLinks.filter((link) => !link.is_unmanaged).length,
+    externalLinkCount: topologyVisibleLinks.filter((link) => Boolean(link.is_unmanaged)).length,
     siteCount: new Set(topologyFilteredDevices.map((device) => String(device.site_id || device.site || '').trim()).filter(Boolean)).size,
     atRiskCount: topologyFilteredDevices.filter((device) => device.status !== 'online' || device.health_status === 'critical' || (device.open_alert_count || 0) > 0).length,
     orphanCount: topologyFilteredDevices.filter((device) => !topologyConnectedDeviceIds.has(device.id)).length,
-  }), [topologyConnectedDeviceIds, topologyFilteredDevices, topologyVisibleLinks.length]);
+  }), [topologyConnectedDeviceIds, topologyFilteredDevices, topologyVisibleLinks]);
 
   const topologyLinkStats = useMemo(() => ({
     up: topologyVisibleLinks.filter((link) => link.operational_state === 'up').length,

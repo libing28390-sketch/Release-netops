@@ -1,7 +1,15 @@
 # Safe static fallback.  Control-plane artifacts replace this file after a
 # plan is saved and applied.  Numeric OIDs keep the fallback independent of
 # the container's MIB search path.
-auths: {}
+# snmp_exporter requires at least one auth definition even when there are no
+# targets. This is a deliberately unusable, non-secret bootstrap auth; the
+# control plane replaces it with credential-bearing auths before any target is
+# published. Keeping targets empty prevents this value from being sent to a
+# device.
+auths:
+  bootstrap_disabled_v2:
+    version: 2
+    community: __nexora_bootstrap_disabled__
 
 modules:
   generic_ifmib_interface_std:

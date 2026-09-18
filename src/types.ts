@@ -75,6 +75,10 @@ export interface Device {
   topology_node_type?: string;
   layout_override?: { x?: number; y?: number; manual?: number };
   topology_node_id?: string;
+  is_unmanaged?: boolean;
+  observation_count?: number;
+  protocols?: string[];
+  connected_device_ids?: string[];
   uptime: string;
   connection_method: 'ssh' | 'netconf' | 'web' | 'none';
   /** Device-specific SSH compatibility policy; defaults to auto. */

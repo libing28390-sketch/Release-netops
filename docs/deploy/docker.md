@@ -47,13 +47,13 @@ VICTORIAMETRICS_URL=http://victoriametrics:8428
 VICTORIAMETRICS_ALLOWED_HOSTS=victoriametrics
 ```
 
-首次启动时 `snmp-exporter` 会等待控制面发布第一份有效采集配置；在页面中
-完成采集计划编译并发布后，vmagent 会读取新的 file-SD 目标，控制面也会请求
-snmp-exporter 热加载认证和模块配置。检查链路可运行：
+首次启动时 `snmp-exporter` 会直接使用镜像内置的无目标、非敏感 bootstrap 配置，`vmagent` 会
+使用空的 file-SD 目标正常待命；这两个服务不需要用户手动启动，也不会因为尚未
+发布业务采集计划而被判定为部署失败。在页面中完成采集计划编译并发布后，控制面
+会原子替换共享 runtime、请求 `snmp-exporter` 热加载认证和模块配置，vmagent
+会自动读取新的 file-SD 目标。
 
-因此，在首次发布采集配置之前，`snmp-exporter` 显示 `unhealthy`、`vmagent`
-显示 `Created` 是预期状态，并不表示镜像崩溃。发布成功后如果 `vmagent` 仍为
-`Created`，重新执行 `docker compose up -d vmagent` 使其启动。
+可以用以下命令检查链路：
 
 计划只保留系统基线 `plan-generic-ifmib`（界面显示“SNMP 基线采集计划”）；华三、华为、思科的常用 CPU/内存/温度/状态
 OID 作为同一计划下的 Module/Variant 维护，配置和来源见

@@ -78,13 +78,15 @@ interface TopologyInspectorPanelProps {
 }
 
 /* ── helpers ── */
-const statusDot = (status?: string) => {
+const statusDot = (status?: string, isUnmanaged?: boolean) => {
+  if (isUnmanaged) return 'bg-slate-400';
   if (status === 'online') return 'bg-emerald-400';
   if (status === 'pending') return 'bg-amber-400';
   return 'bg-rose-400';
 };
 
-const statusBadgeClass = (status?: string) => {
+const statusBadgeClass = (status?: string, isUnmanaged?: boolean) => {
+  if (isUnmanaged) return 'border-slate-200/60 bg-slate-100 text-slate-600';
   if (status === 'online') return 'border-emerald-200/60 bg-emerald-50 text-emerald-600';
   if (status === 'pending') return 'border-amber-200/60 bg-amber-50 text-amber-600';
   return 'border-rose-200/60 bg-rose-50 text-rose-600';
@@ -260,7 +262,7 @@ const TopologyInspectorPanel: React.FC<TopologyInspectorPanelProps> = ({
             {/* status dot + hostname */}
             <div className="flex-1 min-w-0">
               <div className="flex items-center gap-2">
-                <span className={`mt-0.5 h-2.5 w-2.5 shrink-0 rounded-full ring-2 ring-white ${statusDot(selectedTopologyDevice.status)}`} />
+                <span className={`mt-0.5 h-2.5 w-2.5 shrink-0 rounded-full ring-2 ring-white ${statusDot(selectedTopologyDevice.status, (selectedTopologyDevice as any).is_unmanaged)}`} />
                 <h3 className="truncate text-[17px] font-bold tracking-tight text-slate-800">
                   {selectedTopologyDevice.hostname}
                 </h3>
@@ -271,8 +273,8 @@ const TopologyInspectorPanel: React.FC<TopologyInspectorPanelProps> = ({
                 {selectedTopologyDevice.role ? ` · ${selectedTopologyDevice.role}` : ''}
               </p>
             </div>
-            <span className={`shrink-0 rounded-full border px-2.5 py-[3px] text-[10px] font-bold uppercase tracking-wide ${statusBadgeClass(selectedTopologyDevice.status)}`}>
-              {selectedTopologyDevice.status}
+            <span className={`shrink-0 rounded-full border px-2.5 py-[3px] text-[10px] font-bold uppercase tracking-wide ${statusBadgeClass(selectedTopologyDevice.status, (selectedTopologyDevice as any).is_unmanaged)}`}>
+              {(selectedTopologyDevice as any).is_unmanaged ? (zh ? '未纳管' : 'Unmanaged') : selectedTopologyDevice.status}
             </span>
           </div>
 
@@ -289,16 +291,24 @@ const TopologyInspectorPanel: React.FC<TopologyInspectorPanelProps> = ({
           </div>
 
           {/* action buttons */}
-          <div className="mt-3 flex gap-2">
-            <button onClick={() => onOpenDeviceDetail(selectedTopologyDevice)} className={secondaryActionBtnClass}>
-              <Eye size={15} />
-              {zh ? '设备详情' : 'Detail'}
-            </button>
-            <button onClick={onOpenMonitoring} className={secondaryActionBtnClass}>
-              <Monitor size={15} />
-              {zh ? '监控中心' : 'Monitor'}
-            </button>
-          </div>
+          {(selectedTopologyDevice as any).is_unmanaged ? (
+            <div className="mt-3 rounded-lg bg-slate-50 p-2.5 text-xs text-slate-500 ring-1 ring-slate-200/60">
+              {zh
+                ? '此设备由 LLDP 邻居发现观测到，尚未录入 CMDB。如需纳入监控与配置管理，请在资产管理中录入该设备。'
+                : 'This device was discovered via LLDP and is not in the CMDB. Add it to CMDB to enable monitoring and full management.'}
+            </div>
+          ) : (
+            <div className="mt-3 flex gap-2">
+              <button onClick={() => onOpenDeviceDetail(selectedTopologyDevice)} className={secondaryActionBtnClass}>
+                <Eye size={15} />
+                {zh ? '设备详情' : 'Detail'}
+              </button>
+              <button onClick={onOpenMonitoring} className={secondaryActionBtnClass}>
+                <Monitor size={15} />
+                {zh ? '监控中心' : 'Monitor'}
+              </button>
+            </div>
+          )}
         </div>
       </div>
 

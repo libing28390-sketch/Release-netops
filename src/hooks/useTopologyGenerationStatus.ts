@@ -41,7 +41,7 @@ export type TopologyGenerationStatus = {
     failed_devices?: number;
     last_error_code?: string;
   } | null;
-  warnings: Array<{ code: string; count: number; message: string }>;
+  warnings: Array<{ code: string; count: number; message: string; severity?: string; blocking?: boolean }>;
   health: 'healthy' | 'degraded' | 'empty';
 };
 

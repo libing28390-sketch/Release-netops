@@ -1,6 +1,6 @@
 import React from 'react';
 import { AnimatePresence, motion } from 'motion/react';
-import { Terminal, Shield, Lock, Wifi, Network, Building2, AlertCircle, AlertTriangle, Eye, EyeOff, Globe2, Plus, Trash2, X } from 'lucide-react';
+import { Terminal, Shield, Lock, Wifi, Network, Building2, AlertCircle, AlertTriangle, Eye, EyeOff, Globe2, Plus, Trash2, X, RefreshCw } from 'lucide-react';
 import DateTimePicker from '../../../components/DateTimePicker';
 import { Asset } from '../types';
 import type { TagDefinition } from '../../../types';
@@ -74,6 +74,44 @@ export const AssetModal: React.FC<AssetModalProps> = ({
   const [credentials, setCredentials] = React.useState<any[]>([]);
   const [credMode, setCredMode] = React.useState<'manual' | 'existing'>('manual');
   const [breakGlassAcknowledged, setBreakGlassAcknowledged] = React.useState(false);
+  const [probingHostname, setProbingHostname] = React.useState(false);
+
+  const handleProbeHostname = async () => {
+    const ip = String(form.management_ip || '').trim();
+    if (!ip) {
+      setModalError(zh ? '请先填写管理 IP 地址再进行探测' : 'Please fill in Management IP first');
+      return;
+    }
+    setProbingHostname(true);
+    try {
+      const token = localStorage.getItem('netops_token');
+      const headers: Record<string, string> = { 'Content-Type': 'application/json' };
+      if (token) headers['Authorization'] = `Bearer ${token}`;
+      const res = await fetch('/api/devices/probe-hostname', {
+        method: 'POST',
+        headers,
+        body: JSON.stringify({
+          ip,
+          community: form.snmp_community || 'public',
+          port: form.snmp_port ? Number(form.snmp_port) : 161,
+          device_id: editingAsset?.id,
+        }),
+      });
+      const data = await res.json().catch(() => ({}));
+      if (!res.ok) throw new Error(data.detail || (zh ? '探测失败' : 'Probe failed'));
+      if (data.hostname) {
+        setForm((f: any) => ({ ...f, hostname: data.hostname }));
+        setFeedbackMsg({
+          type: 'success',
+          text: zh ? `成功从设备读取主机名：${data.hostname} (sysName: ${data.raw_sys_name})` : `Hostname probed: ${data.hostname} (sysName: ${data.raw_sys_name})`
+        });
+      }
+    } catch (err: any) {
+      setModalError(err.message || (zh ? 'SNMP 主机名探测失败' : 'Failed to probe hostname'));
+    } finally {
+      setProbingHostname(false);
+    }
+  };
 
   const mgmtIpError = React.useMemo(() => {
     const ip = String(form.management_ip || '').trim();
@@ -270,7 +308,26 @@ export const AssetModal: React.FC<AssetModalProps> = ({
                   <option value="network_device">{zh ? '网络设备' : 'Network Device'}</option>
                 </select>
               </div>
-              <Field label={zh ? '主机名' : 'Hostname'} value={form.hostname} onChange={v => setForm(f => ({ ...f, hostname: v }))} placeholder="e.g. web-srv-01" />
+              <Field
+                label={zh ? '主机名' : 'Hostname'}
+                value={form.hostname}
+                onChange={v => setForm(f => ({ ...f, hostname: v }))}
+                placeholder={zh ? '留空导入将自动同步' : 'Leave empty to auto-sync'}
+                action={
+                  form.asset_type === 'network_device' ? (
+                    <button
+                      type="button"
+                      onClick={handleProbeHostname}
+                      disabled={probingHostname}
+                      title={zh ? '通过通用 SNMP sysName 从设备自动探测并填入主机名' : 'Probe and fill hostname via universal SNMP sysName'}
+                      className="text-[10px] text-blue-600 hover:text-blue-800 disabled:opacity-50 flex items-center gap-0.5 cursor-pointer"
+                    >
+                      <RefreshCw size={10} className={probingHostname ? 'animate-spin' : ''} />
+                      {probingHostname ? (zh ? '探测中…' : 'SNMP探测') : (zh ? 'SNMP探测' : 'Probe')}
+                    </button>
+                  ) : undefined
+                }
+              />
               <Field label={zh ? '资产编号' : 'Asset Tag'} value={form.asset_tag} onChange={v => setForm(f => ({ ...f, asset_tag: v }))} placeholder="e.g. SRV-BJ-001" />
               <Field label={zh ? '序列号 (S/N)' : 'Serial Number'} value={form.serial_number} onChange={v => setForm(f => ({ ...f, serial_number: v }))} />
               
@@ -1154,14 +1211,17 @@ export const AssetModal: React.FC<AssetModalProps> = ({
 };
 
 /* --- Form field --- */
-function Field({ label, value, onChange, placeholder, type = 'text', list, error }: {
-  label: string; value: string; onChange: (v: string) => void; placeholder?: string; type?: string; list?: string; error?: string | null;
+function Field({ label, value, onChange, placeholder, type = 'text', list, error, action }: {
+  label: string; value: string; onChange: (v: string) => void; placeholder?: string; type?: string; list?: string; error?: string | null; action?: React.ReactNode;
 }) {
   return (
     <div>
       <div className="flex items-center justify-between mb-0.5">
         <label className="block text-[10px] text-black/30">{label}</label>
-        {error && <span className="text-[9px] text-red-500 font-medium">{error}</span>}
+        <div className="flex items-center gap-1.5">
+          {action}
+          {error && <span className="text-[9px] text-red-500 font-medium">{error}</span>}
+        </div>
       </div>
       <input
         type={type}
