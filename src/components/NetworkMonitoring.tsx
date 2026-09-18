@@ -469,7 +469,12 @@ const NetworkMonitoring: React.FC<NetworkMonitoringProps> = ({ language, devices
         data.failed > 0 ? 'warning' : 'success'
       );
       if (Array.isArray(data.details)) {
-        const detailMap = new Map(data.details.map((item: any) => [item.device_id, item]));
+        const detailMap = new Map<string, { new_hostname?: string; raw_sys_name?: string }>();
+        data.details.forEach((item: any) => {
+          if (item?.device_id) {
+            detailMap.set(String(item.device_id), item);
+          }
+        });
         setDeviceRows((prev) =>
           prev.map((d) => {
             const match = detailMap.get(d.id);
