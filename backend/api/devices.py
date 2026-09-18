@@ -4055,3 +4055,151 @@ async def probe_device_hostname(payload: ProbeHostnamePayload, user=require_role
         "ip": ip,
     }
 
+
+class BatchSyncHostnamePayload(BaseModel):
+    device_ids: list[str] | None = None
+    max_concurrency: int = 10
+
+
+@router.post("/devices/batch-sync-hostname")
+async def batch_sync_hostname(
+    payload: BatchSyncHostnamePayload = Body(default=BatchSyncHostnamePayload()),
+    user=require_role("Operator"),
+):
+    """Batch probe and synchronize actual sysName for devices via universal RFC 1213 MIB-II (1.3.6.1.2.1.1.5.0).
+
+    Does NOT require any vendor SNMP template. Works universally across all network equipment vendors.
+    Safely executes with bounded concurrency (default 10) to prevent network congestion.
+    """
+    import asyncio
+
+    conn = get_db_connection()
+    try:
+        if payload.device_ids:
+            placeholders = ",".join(["?"] * len(payload.device_ids))
+            devices = conn.execute(
+                f"SELECT * FROM devices WHERE id IN ({placeholders})",
+                tuple(payload.device_ids),
+            ).fetchall()
+        else:
+            # Query all non-server network devices
+            devices = conn.execute(
+                """
+                SELECT d.* FROM devices d
+                WHERE LOWER(COALESCE(d.platform, '')) NOT LIKE '%linux%'
+                  AND LOWER(COALESCE(d.platform, '')) NOT LIKE '%ubuntu%'
+                  AND LOWER(COALESCE(d.platform, '')) NOT LIKE '%centos%'
+                  AND LOWER(COALESCE(d.platform, '')) NOT LIKE '%debian%'
+                  AND LOWER(COALESCE(d.platform, '')) NOT LIKE '%server%'
+                  AND LOWER(COALESCE(d.device_category, '')) NOT LIKE '%server%'
+                ORDER BY d.hostname ASC
+                """
+            ).fetchall()
+        device_list = [dict(d) for d in devices]
+    finally:
+        conn.close()
+
+    if not device_list:
+        return {
+            "success": True,
+            "total": 0,
+            "updated": 0,
+            "unchanged": 0,
+            "failed": 0,
+            "message": "没有找到需要同步主机名的网络设备",
+            "details": [],
+        }
+
+    from services.snmp_service import _snmp_get
+
+    sem = asyncio.Semaphore(max(1, min(20, payload.max_concurrency)))
+
+    async def _sync_single(device_data: dict) -> dict:
+        dev_id = device_data["id"]
+        prev_name = device_data.get("hostname") or ""
+        ip = device_data.get("ip_address")
+        creds = resolve_collector_credentials(device_data)
+        snmp_ip = creds["snmp"].get("server") or ip
+        community = creds["snmp"].get("community") or ""
+        port = creds["snmp"].get("port") or 161
+
+        if not snmp_ip or not community:
+            return {
+                "device_id": dev_id,
+                "ip": snmp_ip or ip,
+                "previous_hostname": prev_name,
+                "status": "failed",
+                "error": "缺少管理 IP 或 SNMP Community 凭据",
+            }
+
+        async with sem:
+            try:
+                raw_sys_name = await _snmp_get(snmp_ip, community, "1.3.6.1.2.1.1.5.0", port, timeout=3)
+            except Exception as exc:
+                return {
+                    "device_id": dev_id,
+                    "ip": snmp_ip,
+                    "previous_hostname": prev_name,
+                    "status": "failed",
+                    "error": f"SNMP 请求异常: {exc}",
+                }
+
+        if not raw_sys_name:
+            return {
+                "device_id": dev_id,
+                "ip": snmp_ip,
+                "previous_hostname": prev_name,
+                "status": "failed",
+                "error": "设备响应中 sysName 为空",
+            }
+
+        clean_name = clean_system_hostname(raw_sys_name) or str(raw_sys_name).strip()
+        asset_id = device_data.get("asset_id")
+
+        # Update DB if name changed or sys_name changed
+        conn_u = get_db_connection()
+        try:
+            conn_u.execute(
+                "UPDATE devices SET hostname = ?, sys_name = ? WHERE id = ?",
+                (clean_name, raw_sys_name, dev_id),
+            )
+            if asset_id:
+                conn_u.execute(
+                    "UPDATE physical_assets SET hostname = ?, updated_at = ? WHERE id = ?",
+                    (clean_name, _utc_now(), asset_id),
+                )
+            conn_u.execute(
+                "UPDATE topology_observations SET source_hostname = ? WHERE source_device_id = ?",
+                (clean_name, dev_id),
+            )
+            conn_u.commit()
+        finally:
+            conn_u.close()
+
+        is_updated = (clean_name != prev_name)
+        return {
+            "device_id": dev_id,
+            "ip": snmp_ip,
+            "previous_hostname": prev_name,
+            "new_hostname": clean_name,
+            "raw_sys_name": raw_sys_name,
+            "status": "updated" if is_updated else "unchanged",
+        }
+
+    results = await asyncio.gather(*[_sync_single(d) for d in device_list])
+
+    updated_count = sum(1 for r in results if r.get("status") == "updated")
+    unchanged_count = sum(1 for r in results if r.get("status") == "unchanged")
+    failed_count = sum(1 for r in results if r.get("status") == "failed")
+
+    return {
+        "success": True,
+        "total": len(results),
+        "updated": updated_count,
+        "unchanged": unchanged_count,
+        "failed": failed_count,
+        "message": f"批量同步完成：已处理 {len(results)} 台设备，更新 {updated_count} 台，未变更 {unchanged_count} 台，失败 {failed_count} 台",
+        "details": results,
+    }
+
+

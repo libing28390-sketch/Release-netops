@@ -1,5 +1,7 @@
 import pytest
-from backend.api.devices import clean_system_hostname
+from unittest.mock import patch, AsyncMock
+import services.snmp_service
+from backend.api.devices import clean_system_hostname, batch_sync_hostname, BatchSyncHostnamePayload
 
 
 def test_clean_system_hostname():
@@ -19,3 +21,33 @@ def test_clean_system_hostname():
     # Empty or None handling
     assert clean_system_hostname("") == ""
     assert clean_system_hostname(None) == ""
+
+
+@pytest.mark.anyio
+async def test_batch_sync_hostname_mocked():
+    fake_devices = [
+        {"id": "dev-1", "hostname": "temp-01", "ip_address": "192.168.1.1", "asset_id": "ast-1"},
+        {"id": "dev-2", "hostname": "core-sw-02", "ip_address": "192.168.1.2", "asset_id": "ast-2"},
+    ]
+    with patch("backend.api.devices.get_db_connection") as mock_conn_fn, \
+         patch("backend.api.devices.resolve_collector_credentials") as mock_creds, \
+         patch.object(services.snmp_service, "_snmp_get", new_callable=AsyncMock) as mock_snmp:
+        
+        mock_conn = mock_conn_fn.return_value
+        mock_conn.execute.return_value.fetchall.return_value = fake_devices
+        mock_creds.return_value = {"snmp": {"server": "192.168.1.1", "community": "public", "port": 161}}
+        mock_snmp.side_effect = ["core-sw-01.CCIE", "core-sw-02.CCIE"]
+        
+        payload = BatchSyncHostnamePayload(device_ids=["dev-1", "dev-2"])
+        result = await batch_sync_hostname(payload)
+        
+        assert result["success"] is True
+        assert result["total"] == 2
+        assert result["updated"] == 1
+        assert result["unchanged"] == 1
+        assert result["failed"] == 0
+        assert len(result["details"]) == 2
+        assert result["details"][0]["status"] == "updated"
+        assert result["details"][0]["new_hostname"] == "core-sw-01"
+        assert result["details"][1]["status"] == "unchanged"
+        assert result["details"][1]["new_hostname"] == "core-sw-02"

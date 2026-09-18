@@ -174,6 +174,7 @@ const NetworkMonitoring: React.FC<NetworkMonitoringProps> = ({ language, devices
   const [loading, setLoading] = useState(false);
   const [refreshing, setRefreshing] = useState(false);
   const [syncingHostname, setSyncingHostname] = useState(false);
+  const [batchSyncing, setBatchSyncing] = useState(false);
   const [rangeHours, setRangeHours] = useState<number>(24);
   const [autoRefresh, setAutoRefresh] = useState(true);
   const [metricProvider, setMetricProvider] = useState<MetricProvider>('native');
@@ -444,6 +445,58 @@ const NetworkMonitoring: React.FC<NetworkMonitoringProps> = ({ language, devices
       if (showSpinner) setLoading(false);
     }
   }, [fetchRealtime, fetchTrend, fetchAlerts, fetchCollectionStatus]);
+
+  const handleBatchSyncHostnames = useCallback(async () => {
+    if (batchSyncing) return;
+    setBatchSyncing(true);
+    try {
+      const resp = await fetch('/api/devices/batch-sync-hostname', {
+        method: 'POST',
+        headers: { ...authHeaders(), 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          device_ids: deviceRows.map((d) => d.id),
+        }),
+      });
+      const data = await resp.json().catch(() => ({}));
+      if (!resp.ok) {
+        throw new Error(data.detail || (zh ? '批量同步失败' : 'Batch sync failed'));
+      }
+      showToast(
+        data.message ||
+          (zh
+            ? `批量同步完成：更新 ${data.updated || 0} 台，未变更 ${data.unchanged || 0} 台`
+            : `Batch sync complete: ${data.updated || 0} updated, ${data.unchanged || 0} unchanged`),
+        data.failed > 0 ? 'warning' : 'success'
+      );
+      if (Array.isArray(data.details)) {
+        const detailMap = new Map(data.details.map((item: any) => [item.device_id, item]));
+        setDeviceRows((prev) =>
+          prev.map((d) => {
+            const match = detailMap.get(d.id);
+            if (match && match.new_hostname) {
+              return { ...d, hostname: match.new_hostname, sys_name: match.raw_sys_name };
+            }
+            return d;
+          })
+        );
+      }
+      if (selectedId) {
+        loadDeviceData(
+          selectedId,
+          rangeHours,
+          trendInterface,
+          alertsPage,
+          alertsSeverity,
+          alertsPhase,
+          false
+        );
+      }
+    } catch (err: any) {
+      showToast(err?.message || (zh ? '批量同步主机名失败' : 'Failed to batch sync hostnames'), 'error');
+    } finally {
+      setBatchSyncing(false);
+    }
+  }, [alertsPage, alertsPhase, alertsSeverity, batchSyncing, deviceRows, loadDeviceData, rangeHours, selectedId, showToast, trendInterface, zh]);
 
   useEffect(() => {
     if (!isAuthenticated || !selectedId) {
@@ -781,6 +834,16 @@ const NetworkMonitoring: React.FC<NetworkMonitoringProps> = ({ language, devices
 
             <div className="flex items-center justify-between text-[11px] font-medium text-gray-400 px-0.5">
               <span>{deviceListLoading ? (zh ? '正在加载设备…' : 'Loading…') : `${deviceTotal} ${zh ? '台在管网络设备' : 'switches'}`}</span>
+              <button
+                type="button"
+                onClick={handleBatchSyncHostnames}
+                disabled={batchSyncing || deviceListLoading || deviceTotal === 0}
+                title={zh ? '通过 RFC 1213 通用 SNMP sysName 一键批量校准在管设备主机名' : 'Batch sync hostnames via standard SNMP sysName'}
+                className="flex items-center gap-1 text-[11px] font-semibold text-blue-600 hover:text-blue-700 dark:text-blue-400 dark:hover:text-blue-300 disabled:opacity-40 transition cursor-pointer"
+              >
+                <RefreshCw size={11} className={batchSyncing ? 'animate-spin' : ''} />
+                <span>{batchSyncing ? (zh ? '同步中…' : 'Syncing…') : (zh ? '批量同步' : 'Batch Sync')}</span>
+              </button>
             </div>
             {deviceListError && <p className="truncate text-[9px] text-amber-700" title={deviceListError}>{zh ? '列表接口暂时不可用，显示本地缓存' : 'List API unavailable; showing local fallback'}</p>}
           </div>
