@@ -600,6 +600,11 @@ def _match_target_device_with_evidence(
             add_candidate(device, 0.98, 'chassis_serial')
         if normalized_name and normalized_name in {hostname, sys_name}:
             add_candidate(device, 0.94, 'system_name')
+        norm_clean = re.sub(r'[-_\s]', '', normalized_name)
+        host_clean = re.sub(r'[-_\s]', '', hostname)
+        sys_clean = re.sub(r'[-_\s]', '', sys_name)
+        if norm_clean and (norm_clean == host_clean or (sys_clean and norm_clean == sys_clean)):
+            add_candidate(device, 0.93, 'system_name_relaxed')
         if len(normalized_name) >= 4:
             names = [value for value in (hostname, sys_name) if value]
             if any(value.startswith(normalized_name) or normalized_name.startswith(value) for value in names):
@@ -866,19 +871,24 @@ def _synthesise_runtime_aggregation_links(
     """
     candidates_by_device = _load_runtime_aggregation_candidates(conn)
     groups: dict[tuple[str, str], list[dict[str, Any]]] = {}
+    existing_aggregation_pairs: set[tuple[str, str]] = set()
     for item in items:
-        if str(item.get('link_kind') or '').lower() == 'aggregation':
-            continue
         source_id = str(item.get('source_device_id') or '').strip()
         target_id = str(item.get('target_device_id') or '').strip()
         if not source_id or not target_id or source_id == target_id:
             continue
         pair = tuple(sorted((source_id, target_id)))
+        if str(item.get('link_kind') or '').lower() == 'aggregation':
+            existing_aggregation_pairs.add(pair)
+            continue
         groups.setdefault(pair, []).append(item)
 
     replacements: dict[int, dict[str, Any]] = {}
     consumed: set[int] = set()
-    for group in groups.values():
+    for pair, group in groups.items():
+        if pair in existing_aggregation_pairs:
+            consumed.update(id(item) for item in group)
+            continue
         if len(group) < 2:
             continue
         first = group[0]
@@ -1123,6 +1133,18 @@ def _sync_aggregation_inventory(device: dict[str, Any], platform_action_session=
     """
     if str(os.environ.get('TOPOLOGY_AGGREGATION_DISCOVERY_ENABLED', '1')).strip().lower() in {'0', 'false', 'no'}:
         return {'parents': 0, 'members': 0}
+    device_id = str(device.get('id') or '')
+    if device_id:
+        conn = get_db_connection()
+        try:
+            has_lag = conn.execute(
+                "SELECT 1 FROM interfaces WHERE device_id = ? AND parent_interface_id IS NOT NULL AND parent_interface_id <> '' LIMIT 1",
+                (device_id,)
+            ).fetchone()
+            if has_lag:
+                return {'parents': 0, 'members': 0}
+        finally:
+            conn.close()
     try:
         from services.operational_data_service import collect_operational_data
 
@@ -1522,6 +1544,46 @@ async def _collect_neighbors_with_netmiko(
 
 async def _collect_device_observations(device: dict[str, Any], platform_action_session=None) -> tuple[list[dict[str, Any]], str]:
     ip = device.get('ip_address')
+
+    # 1. Primary path: Fast, non-intrusive, zero-SSH SNMP LLDP/CDP discovery
+    snmp_community = ""
+    raw_community = str(device.get("snmp_community") or "").strip()
+    snmp_cred_id = str(device.get("snmp_credential_id") or "").strip()
+    if raw_community:
+        try:
+            snmp_community = decrypt_credential(raw_community) or raw_community
+        except Exception:
+            snmp_community = raw_community
+    elif snmp_cred_id:
+        conn = get_db_connection()
+        try:
+            cred_row = conn.execute("SELECT snmp_community FROM credentials WHERE id = ?", (snmp_cred_id,)).fetchone()
+            if cred_row and cred_row["snmp_community"]:
+                try:
+                    snmp_community = decrypt_credential(cred_row["snmp_community"]) or str(cred_row["snmp_community"]).strip()
+                except Exception:
+                    snmp_community = str(cred_row["snmp_community"]).strip()
+        finally:
+            conn.close()
+
+    snmp_port = int(device.get("snmp_port") or 161)
+    if snmp_community and ip:
+        try:
+            from services.snmp_service import collect_snmp_lldp_neighbors
+            snmp_records = await collect_snmp_lldp_neighbors(ip, snmp_community, port=snmp_port)
+            if snmp_records:
+                observations: list[dict[str, Any]] = []
+                for item in snmp_records:
+                    obs = _extract_observation_fields(item, item.get("protocol", "lldp"))
+                    if obs.get("neighbor_name_raw") and obs.get("source_port_raw"):
+                        observations.append(obs)
+                if observations:
+                    logger.info("Discovered %d LLDP/CDP neighbors via SNMP for %s (%s)", len(observations), device.get("hostname"), ip)
+                    return _NeighborCollectionBatch(observations, "success"), "snmp"
+        except Exception as snmp_err:
+            logger.debug("SNMP LLDP discovery skipped or failed for %s, falling back to SSH: %s", device.get("hostname"), snmp_err)
+
+    # 2. Secondary path: Fallback to SSH CLI + TextFSM if SNMP produced no observations
     port = int(device.get('management_port') or device.get('port') or 22)
     from drivers.ssh_compat import is_ssh_port_open
     if not is_ssh_port_open(ip, port):
@@ -1951,6 +2013,21 @@ def _rebuild_links_from_observations_unlocked() -> int:
                 ),
             )
 
+        active_aggregated_member_keys: set[str] = set()
+        for bundle in grouped_with_contract.values():
+            aggregation = bundle.get('aggregation') or {}
+            for member in aggregation.get('members') or []:
+                if isinstance(member, dict):
+                    src = member.get('source') or {}
+                    tgt = member.get('target') or {}
+                    m_key = _build_link_key(
+                        str(src.get('device_id') or ''),
+                        str(src.get('normalized') or src.get('name') or ''),
+                        str(tgt.get('device_id') or ''),
+                        str(tgt.get('normalized') or tgt.get('name') or ''),
+                    )
+                    active_aggregated_member_keys.add(m_key)
+
         for link_key, existing in existing_by_key.items():
             if link_key in active_link_keys:
                 continue
@@ -1963,6 +2040,17 @@ def _rebuild_links_from_observations_unlocked() -> int:
             # A link written by an older normalization pass can have a
             # different persisted key while representing an active link.
             if existing_canonical_key in active_link_keys:
+                continue
+            # Links that are members of an active aggregation link are superseded, not stale
+            if link_key in active_aggregated_member_keys or existing_canonical_key in active_aggregated_member_keys:
+                continue
+            # Exclude obsolete links generated from port descriptions (e.g. TO-xxx)
+            if (
+                str(existing.get('source_port_raw') or '').upper().startswith('TO-')
+                or str(existing.get('target_port_raw') or '').upper().startswith('TO-')
+                or str(existing.get('source_port_normalized') or '').upper().startswith('TO-')
+                or str(existing.get('target_port_normalized') or '').upper().startswith('TO-')
+            ):
                 continue
             # Do not retain historical CDP edges in the active topology. The
             # grace period applies only to LLDP observations after a successful
@@ -2271,55 +2359,14 @@ async def discover_device_neighbors(
         if snapshot_generation <= 0:
             raise RuntimeError('topology_lldp_snapshot_generation_unavailable')
 
-        platform_action_session = None
-        if device.get('platform_profile_id'):
-            from services.platform_registry_service import PlatformActionSession
-
-            platform_action_session = PlatformActionSession(
-                str(device_id),
-                {
-                    'id': f"topology:{device.get('id') or 'unknown'}",
-                    'username': 'topology-collector',
-                    'role': 'Operator',
-                    'tenant_id': device.get('tenant_id') or '',
-                },
-            )
-            # Opening the driver is blocking; keep one session per device but
-            # do not serialize login handshakes across the discovery batch.
-            await asyncio.to_thread(platform_action_session.__enter__)
-        try:
-            if platform_action_session is None:
-                # Keep the legacy no-profile call shape for integrations and
-                # tests that provide a one-argument observation collector.
-                observations, method = await _collect_device_observations(device)
-            else:
-                observations, method = await _collect_device_observations(
-                    device,
-                    platform_action_session=platform_action_session,
-                )
-            aggregation_summary = await asyncio.to_thread(
-                _sync_aggregation_inventory,
-                device,
-                platform_action_session,
-            )
-            from services.topology_protocol_service import collect_protocol_evidence
-
-            protocol_summary = await asyncio.to_thread(
-                collect_protocol_evidence,
-                device,
-                run_id=run_id,
-                platform_action_session=platform_action_session,
-            )
-        finally:
-            if platform_action_session is not None:
-                await asyncio.to_thread(platform_action_session.__exit__, None, None, None)
-        if 'protocol_summary' not in locals():
-            protocol_summary = {
-                'success': False,
-                'observations_count': 0,
-                'protocols': [],
-                'error': 'protocol_collection_not_started',
-            }
+        # Fast, non-intrusive discovery: SNMP-first LLDP/CDP, safe fallback to single-command CLI LLDP only if needed
+        observations, method = await _collect_device_observations(device)
+        aggregation_summary = await asyncio.to_thread(_sync_aggregation_inventory, device)
+        protocol_summary = {
+            'success': True,
+            'observations_count': 0,
+            'protocols': [],
+        }
         collection_status = str(getattr(observations, 'collection_status', 'parse_failed') or 'parse_failed')
         if collection_status not in {'success', 'no_neighbors'}:
             raise RuntimeError(f'topology_lldp_snapshot_{collection_status}')
@@ -3175,7 +3222,7 @@ def _sync_evidence_graph_from_observations() -> None:
                            protocol, relation_type, direction, observation_json,
                            confidence, last_seen
                     FROM topology_protocol_observations
-                    WHERE is_active = 1
+                    WHERE is_active = 1 AND COALESCE(protocol, '') NOT IN ('interface_description', 'description')
                     """
                 ).fetchall()
             except Exception:
@@ -3357,6 +3404,7 @@ def get_unmanaged_neighbors(
     site_id: str | None = None,
     *,
     source_device_ids: list[str] | tuple[str, ...] | None = None,
+    include_stale: bool = False,
 ) -> dict[str, Any]:
     """Aggregate topology observations where the neighbor was not matched to any managed device.
 
@@ -3372,6 +3420,9 @@ def get_unmanaged_neighbors(
             'o.target_device_id IS NULL',
             "COALESCE(o.neighbor_name_raw, '') <> ''",
         ]
+        if not include_stale:
+            clauses.append("COALESCE(o.is_active, 1) = 1")
+            clauses.append("COALESCE(o.status, 'active') <> 'stale'")
         params: list[Any] = []
         if site_id:
             clauses.append(
@@ -3703,7 +3754,10 @@ def get_topology_generation_status(
             tuple(device_params),
         ).fetchone()
         observation_filter, observation_params = _device_id_filter('o.source_device_id', device_ids)
-        observation_where = f'WHERE {observation_filter}' if observation_filter else ''
+        obs_clauses = ["COALESCE(o.is_active, 1) = 1", "COALESCE(o.status, 'active') <> 'stale'"]
+        if observation_filter:
+            obs_clauses.append(observation_filter)
+        observation_where = f'WHERE {" AND ".join(obs_clauses)}'
         observation_metrics = conn.execute(
             f'''
             SELECT COUNT(*) AS total_observations,

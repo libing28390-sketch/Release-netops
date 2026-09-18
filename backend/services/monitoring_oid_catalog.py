@@ -353,6 +353,247 @@ CISCO_ENTITY_CONFIG = {
 }
 
 
+RUIJIE_ENTITY_CONFIG = {
+    "schema_version": "1",
+    "mib_sources": ["RUIJIE-DEVICE-MIB", "RUIJIE-SYSTEM-MIB", "ENTITY-MIB (RFC 4133)"],
+    "source_urls": ["https://www.ruijienetworks.com"],
+    "walk": [
+        "1.3.6.1.4.1.4881.1.1.10.2.35.1.1",
+        "1.3.6.1.2.1.47.1.1.1.1.7",
+    ],
+    "metrics": [
+        _metric("ruijieCpuCostRate", "1.3.6.1.4.1.4881.1.1.10.2.35.1.1.1.3", "gauge", "CPU utilization percentage for the Ruijie entity.", source_name="ruijieCpuCostRate", indexes=_ENTITY_INDEX),
+        _metric("ruijieMemoryPoolCurrentUtilization", "1.3.6.1.4.1.4881.1.1.10.2.35.1.1.1.2", "gauge", "Memory utilization percentage for the Ruijie entity.", source_name="ruijieMemoryPoolCurrentUtilization", indexes=_ENTITY_INDEX),
+        _metric("ruijieDeviceTemperature", "1.3.6.1.4.1.4881.1.1.10.2.35.1.1.1.4", "gauge", "Temperature for the Ruijie entity in degrees Celsius.", source_name="ruijieDeviceTemperature", indexes=_ENTITY_INDEX),
+        _metric("ruijieDevicePowerStatus", "1.3.6.1.4.1.4881.1.1.10.2.35.1.1.1.5", "gauge", "Power supply status for the Ruijie entity.", source_name="ruijieDevicePowerStatus", indexes=_ENTITY_INDEX),
+        _metric("ruijieDeviceFanStatus", "1.3.6.1.4.1.4881.1.1.10.2.35.1.1.1.6", "gauge", "Fan status for the Ruijie entity.", source_name="ruijieDeviceFanStatus", indexes=_ENTITY_INDEX),
+        _metric("entPhysicalName", "1.3.6.1.2.1.47.1.1.1.1.7", "DisplayString", "Physical entity name used to identify Ruijie card and sensor rows.", source_name="entPhysicalName", indexes=_ENTITY_INDEX),
+    ],
+}
+
+
+JUNIPER_ENTITY_CONFIG = {
+    "schema_version": "1",
+    "mib_sources": ["JUNIPER-MIB", "JUNIPER-SMI"],
+    "source_urls": ["https://www.juniper.net"],
+    "walk": [
+        "1.3.6.1.4.1.2636.3.1.13.1",
+    ],
+    "metrics": [
+        _metric("jnxOperatingCPU", "1.3.6.1.4.1.2636.3.1.13.1.8", "gauge", "Overall CPU busy percentage for the Juniper operating entity.", source_name="jnxOperatingCPU", indexes=("operating_index",)),
+        _metric("jnxOperatingBuffer", "1.3.6.1.4.1.2636.3.1.13.1.11", "gauge", "Buffer/memory utilization percentage for the Juniper operating entity.", source_name="jnxOperatingBuffer", indexes=("operating_index",)),
+        _metric("jnxOperatingTemp", "1.3.6.1.4.1.2636.3.1.13.1.7", "gauge", "Temperature of the Juniper operating entity in degrees Celsius.", source_name="jnxOperatingTemp", indexes=("operating_index",)),
+        _metric("jnxOperatingDRAMSize", "1.3.6.1.4.1.2636.3.1.13.1.10", "gauge", "Total DRAM size of the Juniper operating entity in bytes.", source_name="jnxOperatingDRAMSize", indexes=("operating_index",)),
+        _metric("jnxOperatingDescr", "1.3.6.1.4.1.2636.3.1.13.1.5", "DisplayString", "Textual description of the Juniper operating entity.", source_name="jnxOperatingDescr", indexes=("operating_index",)),
+    ],
+}
+
+
+FORTINET_ENTITY_CONFIG = {
+    "schema_version": "1",
+    "mib_sources": ["FORTINET-CORE-MIB", "FORTINET-FORTIGATE-MIB"],
+    "source_urls": ["https://docs.fortinet.com"],
+    "walk": [
+        "1.3.6.1.4.1.12356.101.4.1",
+    ],
+    "metrics": [
+        _metric("fnSysCpuUsage", "1.3.6.1.4.1.12356.101.4.1.3", "gauge", "Current CPU usage percentage of the FortiGate firewall.", source_name="fnSysCpuUsage"),
+        _metric("fnSysMemUsage", "1.3.6.1.4.1.12356.101.4.1.4", "gauge", "Current memory usage percentage of the FortiGate firewall.", source_name="fnSysMemUsage"),
+        _metric("fnSysSesCount", "1.3.6.1.4.1.12356.101.4.1.8", "gauge", "Number of active firewall sessions on the FortiGate.", source_name="fnSysSesCount"),
+        _metric("fnSysDiskUsage", "1.3.6.1.4.1.12356.101.4.1.6", "gauge", "Current disk usage percentage of the FortiGate firewall.", source_name="fnSysDiskUsage"),
+    ],
+}
+
+
+ZTE_ENTITY_CONFIG = {
+    "schema_version": "1",
+    "mib_sources": ["ZTE-AN-SYS-MIB", "ZTE-EQUIPMENT-MIB", "ZXR10-SMI"],
+    "source_urls": ["https://www.zte.com.cn"],
+    "walk": [
+        "1.3.6.1.4.1.3902.1082.500.1.2",
+    ],
+    "metrics": [
+        _metric("zteCpuRate", "1.3.6.1.4.1.3902.1082.500.1.2.1.1.1", "gauge", "CPU utilization percentage for ZTE network device.", source_name="zteCpuRate", indexes=_ENTITY_INDEX),
+        _metric("zteMemRate", "1.3.6.1.4.1.3902.1082.500.1.2.2.1.1", "gauge", "Memory utilization percentage for ZTE network device.", source_name="zteMemRate", indexes=_ENTITY_INDEX),
+        _metric("zteTemperature", "1.3.6.1.4.1.3902.1082.500.1.2.3.1.1", "gauge", "Board temperature in degrees Celsius for ZTE network device.", source_name="zteTemperature", indexes=_ENTITY_INDEX),
+    ],
+}
+
+
+MAIPU_ENTITY_CONFIG = {
+    "schema_version": "1",
+    "mib_sources": ["MAIPU-SMI", "MP-SYSTEM-MIB"],
+    "source_urls": ["https://www.maipu.com"],
+    "walk": [
+        "1.3.6.1.4.1.5651.1.2",
+    ],
+    "metrics": [
+        _metric("mpCpuUtilization5Min", "1.3.6.1.4.1.5651.1.2.1.1.1", "gauge", "5-minute CPU utilization percentage for Maipu MyPower device.", source_name="mpCpuUtilization5Min", indexes=_ENTITY_INDEX),
+        _metric("mpMemoryUtilization", "1.3.6.1.4.1.5651.1.2.1.1.2", "gauge", "Memory utilization percentage for Maipu MyPower device.", source_name="mpMemoryUtilization", indexes=_ENTITY_INDEX),
+        _metric("mpTemperature", "1.3.6.1.4.1.5651.1.2.1.1.3", "gauge", "Temperature in degrees Celsius for Maipu MyPower device.", source_name="mpTemperature", indexes=_ENTITY_INDEX),
+    ],
+}
+
+
+DPTECH_ENTITY_CONFIG = {
+    "schema_version": "1",
+    "mib_sources": ["DPTECH-SYSTEM-MIB", "DPTECH-FRAMEWORK-MIB"],
+    "source_urls": ["https://www.dptech.com"],
+    "walk": [
+        "1.3.6.1.4.1.31648.1.1",
+    ],
+    "metrics": [
+        _metric("dptechCpuUsage", "1.3.6.1.4.1.31648.1.1.1.1", "gauge", "CPU usage percentage for DPtech switch/security device.", source_name="dptechCpuUsage", indexes=_ENTITY_INDEX),
+        _metric("dptechMemUsage", "1.3.6.1.4.1.31648.1.1.1.2", "gauge", "Memory usage percentage for DPtech switch/security device.", source_name="dptechMemUsage", indexes=_ENTITY_INDEX),
+        _metric("dptechTemperature", "1.3.6.1.4.1.31648.1.1.1.3", "gauge", "Temperature in degrees Celsius for DPtech device.", source_name="dptechTemperature", indexes=_ENTITY_INDEX),
+        _metric("dptechSessions", "1.3.6.1.4.1.31648.1.1.1.4", "gauge", "Active session count for DPtech security gateway.", source_name="dptechSessions", indexes=_ENTITY_INDEX),
+    ],
+}
+
+
+HILLSTONE_ENTITY_CONFIG = {
+    "schema_version": "1",
+    "mib_sources": ["HILLSTONE-SYSTEM-MIB", "HILLSTONE-SMI"],
+    "source_urls": ["https://www.hillstonenet.com.cn"],
+    "walk": [
+        "1.3.6.1.4.1.24681.1.1.1.1",
+    ],
+    "metrics": [
+        _metric("hillstoneCPUUtilization", "1.3.6.1.4.1.24681.1.1.1.1.1.1", "gauge", "Current CPU utilization percentage for Hillstone StoneOS firewall.", source_name="hillstoneCPUUtilization", indexes=_ENTITY_INDEX),
+        _metric("hillstoneMemoryUtilization", "1.3.6.1.4.1.24681.1.1.1.1.1.2", "gauge", "Current memory utilization percentage for Hillstone StoneOS firewall.", source_name="hillstoneMemoryUtilization", indexes=_ENTITY_INDEX),
+        _metric("hillstoneActiveSessions", "1.3.6.1.4.1.24681.1.1.1.1.1.3", "gauge", "Active concurrent session count for Hillstone StoneOS firewall.", source_name="hillstoneActiveSessions", indexes=_ENTITY_INDEX),
+    ],
+}
+
+
+SANGFOR_ENTITY_CONFIG = {
+    "schema_version": "1",
+    "mib_sources": ["SANGFOR-SYSTEM-MIB", "SANGFOR-SMI"],
+    "source_urls": ["https://www.sangfor.com.cn"],
+    "get": [
+        "1.3.6.1.4.1.35047.1.1.0",
+        "1.3.6.1.4.1.35047.1.2.0",
+        "1.3.6.1.4.1.35047.1.3.0",
+    ],
+    "metrics": [
+        _metric("sangforCpuUsage", "1.3.6.1.4.1.35047.1.1", "gauge", "Current CPU usage percentage for Sangfor gateway device.", source_name="sangforCpuUsage"),
+        _metric("sangforMemUsage", "1.3.6.1.4.1.35047.1.2", "gauge", "Current memory usage percentage for Sangfor gateway device.", source_name="sangforMemUsage"),
+        _metric("sangforConcurrentConns", "1.3.6.1.4.1.35047.1.3", "gauge", "Active concurrent connections for Sangfor gateway device.", source_name="sangforConcurrentConns"),
+    ],
+}
+
+
+DCN_ENTITY_CONFIG = {
+    "schema_version": "1",
+    "mib_sources": ["DCN-SYSTEM-MIB", "DCN-SMI"],
+    "source_urls": ["https://www.digitalchina.com"],
+    "walk": [
+        "1.3.6.1.4.1.6339.100.1.1",
+    ],
+    "metrics": [
+        _metric("dcnCpuUsage", "1.3.6.1.4.1.6339.100.1.1.1.1", "gauge", "Current CPU usage percentage for DCN switch.", source_name="dcnCpuUsage", indexes=_ENTITY_INDEX),
+        _metric("dcnMemUsage", "1.3.6.1.4.1.6339.100.1.1.1.2", "gauge", "Current memory usage percentage for DCN switch.", source_name="dcnMemUsage", indexes=_ENTITY_INDEX),
+        _metric("dcnTemperature", "1.3.6.1.4.1.6339.100.1.1.1.3", "gauge", "Current temperature in degrees Celsius for DCN switch.", source_name="dcnTemperature", indexes=_ENTITY_INDEX),
+    ],
+}
+
+
+HUAWEI_WIRELESS_CONFIG = {
+    "schema_version": "1",
+    "mib_sources": ["HUAWEI-WLAN-MIB", "HUAWEI-WLAN-AP-MIB"],
+    "source_urls": ["https://support.huawei.com"],
+    "get": [
+        "1.3.6.1.4.1.2011.6.139.13.1.2.1.0",
+        "1.3.6.1.4.1.2011.6.139.13.1.2.2.0",
+        "1.3.6.1.4.1.2011.6.139.13.1.2.3.0",
+    ],
+    "metrics": [
+        _metric("hwWlanCurOnlineApNum", "1.3.6.1.4.1.2011.6.139.13.1.2.1", "gauge", "Current online AP count managed by Huawei WLAN AC.", source_name="hwWlanCurOnlineApNum"),
+        _metric("hwWlanCurAssocUserNum", "1.3.6.1.4.1.2011.6.139.13.1.2.2", "gauge", "Current associated wireless clients count on Huawei WLAN AC.", source_name="hwWlanCurAssocUserNum"),
+        _metric("hwWlanApTotalNum", "1.3.6.1.4.1.2011.6.139.13.1.2.3", "gauge", "Total configured AP count on Huawei WLAN AC.", source_name="hwWlanApTotalNum"),
+    ],
+}
+
+
+H3C_WIRELESS_CONFIG = {
+    "schema_version": "1",
+    "mib_sources": ["HH3C-DOT11-AC-MIB", "HH3C-DOT11-AP-MIB"],
+    "source_urls": ["https://www.h3c.com"],
+    "get": [
+        "1.3.6.1.4.1.25506.2.75.1.1.1.0",
+        "1.3.6.1.4.1.25506.2.75.1.1.2.0",
+        "1.3.6.1.4.1.25506.2.75.1.1.3.0",
+    ],
+    "metrics": [
+        _metric("hh3cDot11CurrOnlineAPNum", "1.3.6.1.4.1.25506.2.75.1.1.1", "gauge", "Current online AP count managed by H3C wireless controller.", source_name="hh3cDot11CurrOnlineAPNum"),
+        _metric("hh3cDot11CurrAssocUserNum", "1.3.6.1.4.1.25506.2.75.1.1.2", "gauge", "Current associated wireless stations on H3C wireless controller.", source_name="hh3cDot11CurrAssocUserNum"),
+        _metric("hh3cDot11TotalAPNum", "1.3.6.1.4.1.25506.2.75.1.1.3", "gauge", "Total AP count connected to H3C wireless controller.", source_name="hh3cDot11TotalAPNum"),
+    ],
+}
+
+
+RUIJIE_WIRELESS_CONFIG = {
+    "schema_version": "1",
+    "mib_sources": ["RUIJIE-WLAN-AC-MIB", "RUIJIE-AC-MGMT-MIB"],
+    "source_urls": ["https://www.ruijienetworks.com"],
+    "get": [
+        "1.3.6.1.4.1.4881.1.1.10.2.75.1.1.1.0",
+        "1.3.6.1.4.1.4881.1.1.10.2.75.1.1.2.0",
+        "1.3.6.1.4.1.4881.1.1.10.2.75.1.1.3.0",
+    ],
+    "metrics": [
+        _metric("ruijieApcTotalApNum", "1.3.6.1.4.1.4881.1.1.10.2.75.1.1.1", "gauge", "Total managed AP count for Ruijie AC.", source_name="ruijieApcTotalApNum"),
+        _metric("ruijieApcOnlineApNum", "1.3.6.1.4.1.4881.1.1.10.2.75.1.1.2", "gauge", "Current online AP count for Ruijie AC.", source_name="ruijieApcOnlineApNum"),
+        _metric("ruijieApcTotalStaNum", "1.3.6.1.4.1.4881.1.1.10.2.75.1.1.3", "gauge", "Total associated wireless stations on Ruijie AC.", source_name="ruijieApcTotalStaNum"),
+    ],
+}
+
+
+CISCO_WIRELESS_CONFIG = {
+    "schema_version": "1",
+    "mib_sources": ["CISCO-LWAPP-SYS-MIB", "CISCO-LWAPP-AP-MIB"],
+    "source_urls": ["https://www.cisco.com"],
+    "get": [
+        "1.3.6.1.4.1.9.9.513.1.1.1.1.5.0",
+        "1.3.6.1.4.1.9.9.618.1.1.1.0",
+    ],
+    "metrics": [
+        _metric("cLApTotalUpAPs", "1.3.6.1.4.1.9.9.513.1.1.1.1.5", "gauge", "Total number of joined and up APs on Cisco WLC.", source_name="cLApTotalUpAPs"),
+        _metric("cLSysTotalNumOfClients", "1.3.6.1.4.1.9.9.618.1.1.1", "gauge", "Total number of associated wireless clients on Cisco WLC.", source_name="cLSysTotalNumOfClients"),
+    ],
+}
+
+
+ARUBA_WIRELESS_CONFIG = {
+    "schema_version": "1",
+    "mib_sources": ["WLSX-SYSTEMEXT-MIB", "ARUBA-MIB"],
+    "source_urls": ["https://www.arubanetworks.com"],
+    "get": [
+        "1.3.6.1.4.1.14823.2.2.1.1.3.1.0",
+        "1.3.6.1.4.1.14823.2.2.1.1.3.2.0",
+    ],
+    "metrics": [
+        _metric("wlsxSysExtAccessPointsNum", "1.3.6.1.4.1.14823.2.2.1.1.3.1", "gauge", "Total active Access Points managed by Aruba Mobility Controller.", source_name="wlsxSysExtAccessPointsNum"),
+        _metric("wlsxSysExtStationsNum", "1.3.6.1.4.1.14823.2.2.1.1.3.2", "gauge", "Total connected wireless clients on Aruba Mobility Controller.", source_name="wlsxSysExtStationsNum"),
+    ],
+}
+
+
+RUCKUS_WIRELESS_CONFIG = {
+    "schema_version": "1",
+    "mib_sources": ["RUCKUS-ZD-SYSTEM-MIB", "RUCKUS-ROOT-MIB"],
+    "source_urls": ["https://www.commscope.com/ruckus/"],
+    "get": [
+        "1.3.6.1.4.1.25053.1.2.1.1.1.0",
+        "1.3.6.1.4.1.25053.1.2.1.1.2.0",
+    ],
+    "metrics": [
+        _metric("ruckusZDTotalNumAP", "1.3.6.1.4.1.25053.1.2.1.1.1", "gauge", "Total number of APs connected to Ruckus ZoneDirector/SmartZone controller.", source_name="ruckusZDTotalNumAP"),
+        _metric("ruckusZDTotalNumSta", "1.3.6.1.4.1.25053.1.2.1.1.2", "gauge", "Total number of client stations connected to Ruckus controller.", source_name="ruckusZDTotalNumSta"),
+    ],
+}
+
+
 BUILTIN_OID_CATALOG: tuple[dict[str, Any], ...] = (
     _module(
         "module-generic-if-mib",
@@ -424,6 +665,186 @@ BUILTIN_OID_CATALOG: tuple[dict[str, Any], ...] = (
         "cisco-process-memory-sensor:1.3.6.1.4.1.9.9",
         "思科 IOS/NX-OS 常用 CPU、内存池和实体传感器 OID。",
         _variant("variant-cisco-common-std", "cisco_common_std", "思科通用标准版本", CISCO_ENTITY_CONFIG, mib_bundle_id="cisco-process-memory-sensor-2026", supported_platforms=["cisco_ios", "cisco_iosxe", "cisco_nxos", "cisco_asa", "ios", "iosxe", "nxos", "asa"], supported_models=["Catalyst", "2960", "3850", "9300", "9500", "Nexus"], supported_version_scope=["IOS", "IOS-XE", "NX-OS", "ASA"]),
+    ),
+    _module(
+        "module-ruijie-common",
+        "ruijie_common",
+        "锐捷通用设备",
+        "ruijie",
+        "rgos",
+        "hardware",
+        "hardware",
+        "ruijie-device-cpu-memory:1.3.6.1.4.1.4881",
+        "锐捷 RGOS 常用实体 CPU、内存使用率与温度 OID。",
+        _variant("variant-ruijie-common-std", "ruijie_common_std", "锐捷通用标准版本", RUIJIE_ENTITY_CONFIG, mib_bundle_id="ruijie-device-cpu-memory-2024", supported_platforms=["ruijie_rgos", "ruijie", "rgos"], supported_models=["RG-S", "RG-NBS", "RG-CS", "RG-IS"], supported_version_scope=["RGOS", "11.x", "12.x"]),
+    ),
+    _module(
+        "module-juniper-common",
+        "juniper_common",
+        "瞻博通用设备",
+        "juniper",
+        "junos",
+        "hardware",
+        "hardware",
+        "juniper-operating-table:1.3.6.1.4.1.2636",
+        "瞻博 JUNOS 常用实体 CPU、内存缓冲与温度 OID。",
+        _variant("variant-juniper-common-std", "juniper_common_std", "瞻博通用标准版本", JUNIPER_ENTITY_CONFIG, mib_bundle_id="juniper-operating-table-2024", supported_platforms=["juniper_junos", "juniper", "junos"], supported_models=["EX", "QFX", "MX", "SRX"], supported_version_scope=["JUNOS"]),
+    ),
+    _module(
+        "module-fortinet-common",
+        "fortinet_common",
+        "飞塔防火墙设备",
+        "fortinet",
+        "fortios",
+        "hardware",
+        "hardware",
+        "fortinet-sys-stats:1.3.6.1.4.1.12356",
+        "飞塔 FortiOS 常用系统 CPU、内存使用率与会话数 OID。",
+        _variant("variant-fortinet-common-std", "fortinet_common_std", "飞塔通用标准版本", FORTINET_ENTITY_CONFIG, mib_bundle_id="fortinet-sys-stats-2024", supported_platforms=["fortinet_fortios", "fortinet", "fortios"], supported_models=["FortiGate", "FG-"], supported_version_scope=["FortiOS"]),
+    ),
+    _module(
+        "module-zte-common",
+        "zte_common",
+        "中兴通用设备",
+        "zte",
+        "zxros",
+        "hardware",
+        "hardware",
+        "zte-sys-stats:1.3.6.1.4.1.3902",
+        "中兴 ZXR10 常用系统 CPU、内存利用率与板卡温度 OID。",
+        _variant("variant-zte-common-std", "zte_common_std", "中兴通用标准版本", ZTE_ENTITY_CONFIG, mib_bundle_id="zte-zxr10-2024", supported_platforms=["zte", "zte_zxros", "zxros"], supported_models=["ZXR10", "ZXCTN", "ZXHN"], supported_version_scope=["ZXROS"]),
+    ),
+    _module(
+        "module-maipu-common",
+        "maipu_common",
+        "迈普通用设备",
+        "maipu",
+        "mypower",
+        "hardware",
+        "hardware",
+        "maipu-sys-stats:1.3.6.1.4.1.5651",
+        "迈普 MyPower 常用 CPU（5分钟均值）、内存与温度 OID。",
+        _variant("variant-maipu-common-std", "maipu_common_std", "迈普通用标准版本", MAIPU_ENTITY_CONFIG, mib_bundle_id="maipu-mypower-2024", supported_platforms=["maipu", "maipu_mypower", "mypower"], supported_models=["NSS", "S3", "S4", "MP"], supported_version_scope=["MyPower"]),
+    ),
+    _module(
+        "module-dptech-common",
+        "dptech_common",
+        "迪普通用设备",
+        "dptech",
+        "conplat",
+        "hardware",
+        "hardware",
+        "dptech-sys-stats:1.3.6.1.4.1.31648",
+        "迪普 Conplat 常用交换机与安全网关 CPU、内存、温度与会话 OID。",
+        _variant("variant-dptech-common-std", "dptech_common_std", "迪普通用标准版本", DPTECH_ENTITY_CONFIG, mib_bundle_id="dptech-conplat-2024", supported_platforms=["dptech", "dptech_conplat", "conplat"], supported_models=["DPX", "FW", "IPS"], supported_version_scope=["Conplat"]),
+    ),
+    _module(
+        "module-hillstone-common",
+        "hillstone_common",
+        "山石网科安全设备",
+        "hillstone",
+        "stoneos",
+        "hardware",
+        "hardware",
+        "hillstone-sys-stats:1.3.6.1.4.1.24681",
+        "山石网科 StoneOS 防火墙常用 CPU、内存使用率与并发会话数 OID。",
+        _variant("variant-hillstone-common-std", "hillstone_common_std", "山石网科标准版本", HILLSTONE_ENTITY_CONFIG, mib_bundle_id="hillstone-stoneos-2024", supported_platforms=["hillstone", "hillstone_stoneos", "stoneos"], supported_models=["SG-", "K-", "A-", "E-"], supported_version_scope=["StoneOS"]),
+    ),
+    _module(
+        "module-sangfor-common",
+        "sangfor_common",
+        "深信服网关设备",
+        "sangfor",
+        "sangforos",
+        "hardware",
+        "hardware",
+        "sangfor-sys-stats:1.3.6.1.4.1.35047",
+        "深信服安全与应用交付网关常用 CPU、内存与连接数 OID。",
+        _variant("variant-sangfor-common-std", "sangfor_common_std", "深信服通用标准版本", SANGFOR_ENTITY_CONFIG, mib_bundle_id="sangfor-sangforos-2024", supported_platforms=["sangfor", "sangfor_sangforos", "sangforos"], supported_models=["NGAF", "AC", "AD", "AF"], supported_version_scope=["SangforOS"]),
+    ),
+    _module(
+        "module-dcn-common",
+        "dcn_common",
+        "神州数码网络设备",
+        "dcn",
+        "dcos",
+        "hardware",
+        "hardware",
+        "dcn-sys-stats:1.3.6.1.4.1.6339",
+        "神州数码 DCN 交换机常用 CPU、内存使用率与温度 OID。",
+        _variant("variant-dcn-common-std", "dcn_common_std", "神州数码通用标准版本", DCN_ENTITY_CONFIG, mib_bundle_id="dcn-dcos-2024", supported_platforms=["dcn", "dcn_dcos", "dcos"], supported_models=["CS", "S4", "S5", "DCRS"], supported_version_scope=["DCOS"]),
+    ),
+    _module(
+        "module-huawei-wireless",
+        "huawei_wireless",
+        "华为无线控制器（WLAN AC）",
+        "huawei",
+        "vrp",
+        "wireless",
+        "wireless",
+        "huawei-wlan:1.3.6.1.4.1.2011.6.139",
+        "华为 WLAN AC 在线 AP 数、离线 AP 数与关联无线客户端用户数。",
+        _variant("variant-huawei-wireless-std", "huawei_wireless_std", "华为无线标准版本", HUAWEI_WIRELESS_CONFIG, mib_bundle_id="huawei-wlan-2024", supported_platforms=["huawei_vrp", "huawei_wlan", "huawei"], supported_models=["AC6", "AC9", "AirEngine"], supported_version_scope=["VRP WLAN"]),
+    ),
+    _module(
+        "module-h3c-wireless",
+        "h3c_wireless",
+        "华三无线控制器（Dot11 AC）",
+        "h3c",
+        "comware",
+        "wireless",
+        "wireless",
+        "h3c-dot11:1.3.6.1.4.1.25506.2.75",
+        "华三 Comware 无线 AC 在线 AP 总数与关联无线终端客户端数。",
+        _variant("variant-h3c-wireless-std", "h3c_wireless_std", "华三无线标准版本", H3C_WIRELESS_CONFIG, mib_bundle_id="hh3c-dot11-2024", supported_platforms=["h3c_comware_v7", "h3c_comware_v5", "h3c_wlan", "h3c"], supported_models=["WX", "MSG", "WAP"], supported_version_scope=["Comware Dot11"]),
+    ),
+    _module(
+        "module-ruijie-wireless",
+        "ruijie_wireless",
+        "锐捷无线控制器（RG-WS）",
+        "ruijie",
+        "rgos",
+        "wireless",
+        "wireless",
+        "ruijie-wlan:1.3.6.1.4.1.4881.1.1.10.2.75",
+        "锐捷无线控制器纳管 AP 总数、在线 AP 数与在线关联终端数。",
+        _variant("variant-ruijie-wireless-std", "ruijie_wireless_std", "锐捷无线标准版本", RUIJIE_WIRELESS_CONFIG, mib_bundle_id="ruijie-wlan-2024", supported_platforms=["ruijie_rgos", "ruijie_wlan", "ruijie"], supported_models=["RG-WS", "WS6", "RG-M"], supported_version_scope=["RGOS WLAN"]),
+    ),
+    _module(
+        "module-cisco-wireless",
+        "cisco_wireless",
+        "思科无线控制器（WLC / 9800）",
+        "cisco",
+        "iosxe",
+        "wireless",
+        "wireless",
+        "cisco-lwapp:1.3.6.1.4.1.9.9.513",
+        "思科 AireOS / Catalyst 9800 WLC 在线 AP 总数与无线客户端总数。",
+        _variant("variant-cisco-wireless-std", "cisco_wireless_std", "思科无线标准版本", CISCO_WIRELESS_CONFIG, mib_bundle_id="cisco-lwapp-2024", supported_platforms=["cisco_iosxe", "cisco_aireos", "cisco_wlc", "cisco"], supported_models=["Catalyst 9800", "AIR-CT", "WLC"], supported_version_scope=["IOS-XE Wireless", "AireOS"]),
+    ),
+    _module(
+        "module-aruba-wireless",
+        "aruba_wireless",
+        "Aruba 无线控制器（Mobility Controller）",
+        "aruba",
+        "arubaos",
+        "wireless",
+        "wireless",
+        "aruba-wlsx:1.3.6.1.4.1.14823.2.2.1",
+        "Aruba Mobility Controller 在线 AP 数与活跃无线客户端站点数。",
+        _variant("variant-aruba-wireless-std", "aruba_wireless_std", "Aruba 无线标准版本", ARUBA_WIRELESS_CONFIG, mib_bundle_id="aruba-wlsx-2024", supported_platforms=["aruba_arubaos", "arubaos", "aruba"], supported_models=["Aruba 7", "Aruba 9", "Controller"], supported_version_scope=["ArubaOS"]),
+    ),
+    _module(
+        "module-ruckus-wireless",
+        "ruckus_wireless",
+        "优科无线控制器（ZoneDirector / SmartZone）",
+        "ruckus",
+        "smartzone",
+        "wireless",
+        "wireless",
+        "ruckus-zd:1.3.6.1.4.1.25053.1",
+        "Ruckus 优科 ZoneDirector / SmartZone 控制器纳管 AP 总数与无线终端数。",
+        _variant("variant-ruckus-wireless-std", "ruckus_wireless_std", "优科无线标准版本", RUCKUS_WIRELESS_CONFIG, mib_bundle_id="ruckus-zd-2024", supported_platforms=["ruckus_smartzone", "smartzone", "ruckus"], supported_models=["ZoneDirector", "SmartZone", "SZ-", "ZD-"], supported_version_scope=["SmartZone"]),
     ),
 )
 

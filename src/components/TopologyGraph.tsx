@@ -2407,9 +2407,11 @@ const TopologyGraph: React.FC<TopologyGraphProps> = ({ devices, links, onNodeCli
       const direction = endpoint === 'source' ? 1 : -1;
 
       if (isRealAggregationLink(item)) {
+        const isIdentical = getPortDisplayLabel(item, 'source') === getPortDisplayLabel(item, 'target');
+        const perpOffset = isIdentical ? 0 : 13 * direction;
         return {
-          x: (source.x + target.x) / 2 + perpX * 13 * direction,
-          y: (source.y + target.y) / 2 + perpY * 13 * direction,
+          x: (source.x + target.x) / 2 + perpX * perpOffset,
+          y: (source.y + target.y) / 2 + perpY * perpOffset,
           normal: { x: perpX, y: perpY },
           tangent: { x: uX * direction, y: uY * direction },
         };
@@ -2526,7 +2528,12 @@ const TopologyGraph: React.FC<TopologyGraphProps> = ({ devices, links, onNodeCli
       .text((item: any) => getPortDisplayLabel(item, 'target'));
     targetPortLabel.append('title')
       .text((item: any) => getLinkEndpointLabel(item, 'target'));
-    targetPortLabelGroup.style('display', null);
+    targetPortLabelGroup.style('display', (item: any) => {
+      if (isRealAggregationLink(item) && getPortDisplayLabel(item, 'source') === getPortDisplayLabel(item, 'target')) {
+        return 'none';
+      }
+      return null;
+    });
     sourcePortLabelGroup.insert('rect', 'text')
       .attr('rx', 4)
       .attr('fill', (item: any) => isRealAggregationLink(item) ? 'rgba(255,255,255,0.72)' : 'rgba(255,255,255,0.90)')
@@ -3010,7 +3017,8 @@ const TopologyGraph: React.FC<TopologyGraphProps> = ({ devices, links, onNodeCli
             priority,
           });
         }
-        if (targetText && targetSize) {
+        const isIdenticalAgg = isRealAggregationLink(item) && sourceText === targetText;
+        if (targetText && targetSize && !isIdenticalAgg) {
           const anchor = getPortLabelAnchor(item, 'target', offset);
           candidates.push({
             id: getPortLabelIdentity(item, 'target', index),
@@ -3139,9 +3147,12 @@ const TopologyGraph: React.FC<TopologyGraphProps> = ({ devices, links, onNodeCli
           return `translate(${placement?.x ?? anchor.x},${placement?.y ?? anchor.y})`;
         });
       targetPortLabelGroup
-        .style('display', (d: any, i: number) => (
-          portLabelPlacements[getPortLabelIdentity(d, 'target', i)]?.hidden ? 'none' : null
-        ));
+        .style('display', (d: any, i: number) => {
+          if (isRealAggregationLink(d) && getPortDisplayLabel(d, 'source') === getPortDisplayLabel(d, 'target')) {
+            return 'none';
+          }
+          return portLabelPlacements[getPortLabelIdentity(d, 'target', i)]?.hidden ? 'none' : null;
+        });
 
       const updatePortLabel = (labelNode: SVGTextElement) => {
         const bbox = labelNode.getBBox();

@@ -199,7 +199,7 @@ export const navConfig: NavGroup[] = [
       { id: 'audit',        label: '审计日志', labelEn: 'Audit Logs',        icon: 'Clock',  path: '/management/audit',       requiredRole: 'Administrator' },
       { id: 'users',        label: '用户管理', labelEn: 'Users',             icon: 'User',   path: '/management/users',       requiredRole: 'Administrator' },
       { id: 'credentials',  label: '凭据轮换', labelEn: 'Password Rotation', icon: 'Key',    path: '/management/credentials', requiredRole: 'Administrator' },
-      { id: 'snmp-metric-templates', label: 'SNMP 指标模板', labelEn: 'SNMP Metric Templates', icon: 'Cpu', path: '/management/snmp-metric-templates', requiredRole: 'Viewer' },
+      { id: 'snmp-metric-templates', label: 'SNMP 指标模板 (旧版)', labelEn: 'SNMP Templates (Legacy)', icon: 'Cpu', path: '/management/snmp-metric-templates', requiredRole: 'Viewer' },
     ],
   },
 ];

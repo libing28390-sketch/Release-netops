@@ -374,18 +374,18 @@ const TopologyPage: React.FC<TopologyPageProps> = ({
   const pipelineLabels: Record<string, string> = language === 'zh'
     ? {
         select: '筛选在线设备',
-        collect: '只读采集 LLDP',
+        collect: '只读采集 xDP/LLDP (SNMP优先)',
         normalize: '规范化厂商与端口',
         match: '匹配受管设备',
-        deduplicate: '合并双向重复证据',
+        deduplicate: '合并双向证据与链路聚合',
         publish: '发布链路与未纳管节点',
       }
     : {
         select: 'Select eligible devices',
-        collect: 'Collect LLDP read-only',
+        collect: 'Read-only xDP/LLDP (SNMP First)',
         normalize: 'Normalize vendor and ports',
         match: 'Match managed devices',
-        deduplicate: 'Merge directional evidence',
+        deduplicate: 'Merge directional evidence & LAGs',
         publish: 'Publish links and unmanaged peers',
       };
   const pipelineStages = generationStatus?.generation.pipeline.map((stage) => stage.stage)
@@ -447,7 +447,7 @@ const TopologyPage: React.FC<TopologyPageProps> = ({
           <div>
             <div className="flex items-center gap-2">
               <span className="text-[10px] font-bold uppercase tracking-[0.16em] text-blue-600 bg-blue-50 px-2 py-0.5 rounded-full">
-                LLDP
+                SNMP · LLDP
               </span>
               <h3 className="text-sm font-bold text-gray-900 dark:text-white">{language === 'zh' ? '拓扑自动生成流水线' : 'Topology Generation Pipeline'}</h3>
               <span className={`rounded-full px-2 py-0.5 text-[10px] font-bold ${generationStatus?.health === 'healthy' ? 'bg-emerald-50 text-emerald-700 dark:bg-emerald-950/40 dark:text-emerald-300' : generationStatus?.health === 'degraded' ? 'bg-amber-50 text-amber-700 dark:bg-amber-950/40 dark:text-amber-300' : 'bg-gray-100 text-gray-600 dark:bg-zinc-800 dark:text-zinc-400'}`}>
@@ -462,8 +462,8 @@ const TopologyPage: React.FC<TopologyPageProps> = ({
             </div>
             <p className="mt-1 text-xs text-gray-400">
               {language === 'zh'
-                ? `系统每 ${automaticIntervalLabel} 自动执行一次；“刷新发现”会同时刷新接口摘要、聚合成员和邻居关系，全部为设备只读查询，不写入设备配置。`
-                : `Automatic discovery runs every ${automaticIntervalLabel}; Refresh Discovery is for immediate validation. Device access is limited to vendor-specific read-only neighbor queries.`}
+                ? `系统每 ${automaticIntervalLabel} 自动执行一次；优先通过免密 SNMP 采集标准 xDP/LLDP 邻居与聚合状态，无响应时安全回退至只读 CLI，绝不写入设备配置。`
+                : `Automatic discovery runs every ${automaticIntervalLabel}; Prioritizes non-intrusive SNMP xDP/LLDP queries with safe read-only CLI fallback, without writing configs.`}
             </p>
           </div>
           <div className="flex flex-wrap gap-2 text-xs font-mono text-gray-500">

@@ -92,9 +92,10 @@ export const AssetModal: React.FC<AssetModalProps> = ({
         headers,
         body: JSON.stringify({
           ip,
-          community: form.snmp_community || 'public',
+          community: form.snmp_community || '',
+          credential_id: form.snmp_credential_id || '',
           port: form.snmp_port ? Number(form.snmp_port) : 161,
-          device_id: editingAsset?.id,
+          device_id: (editingAsset as any)?.device_id || editingAsset?.id,
         }),
       });
       const data = await res.json().catch(() => ({}));

@@ -26,6 +26,7 @@ ALLOWED_METRICS = {
     "interface_rx_bps", "interface_tx_bps", "interface_in_errors_rate",
     "interface_out_errors_rate", "interface_in_discards_rate", "interface_out_discards_rate",
     "device_uptime_seconds", "in_bps", "out_bps", "bw_in_pct", "bw_out_pct",
+    "wireless_ap_online_count", "wireless_client_online_count",
 }
 
 CANONICAL_PROMQL = {
@@ -33,6 +34,8 @@ CANONICAL_PROMQL = {
     "cpu_usage_percent": "cpu_usage_percent",
     "memory_usage_percent": "memory_usage_percent",
     "temperature_celsius": "temperature_celsius",
+    "wireless_ap_online_count": "wireless_ap_online_count",
+    "wireless_client_online_count": "wireless_client_online_count",
     "interface_admin_status": "ifAdminStatus",
     "interface_oper_status": "ifOperStatus",
     "interface_speed_bps": "ifHighSpeed * 1000000",
@@ -143,6 +146,8 @@ class NativeMetricProvider(MetricProvider):
         metric = str(metric_key or "").strip()
         if metric not in ALLOWED_METRICS:
             raise ValueError(f"Unsupported metric key: {metric}")
+        if metric in {"wireless_ap_online_count", "wireless_client_online_count"}:
+            return "wireless", metric
         if metric in {"cpu_usage_percent", "memory_usage_percent", "temperature_celsius"}:
             return "device", {"cpu_usage_percent": "cpu_usage", "memory_usage_percent": "memory_usage", "temperature_celsius": "temp"}[metric]
         mapping = {
@@ -158,6 +163,8 @@ class NativeMetricProvider(MetricProvider):
 
     def instant(self, *, query: str, asset_id: str | None = None, metric_key: str | None = None) -> dict[str, Any]:
         key = metric_key or query
+        if key in {"wireless_ap_online_count", "wireless_client_online_count"}:
+            return {"provider": self.name, "metric_key": key, "data": []}
         if key in {"interface_admin_status", "interface_oper_status", "interface_speed_bps"}:
             if not asset_id:
                 return {"provider": self.name, "metric_key": key, "data": []}
@@ -196,6 +203,8 @@ class NativeMetricProvider(MetricProvider):
 
     def range(self, *, query: str, start: datetime, end: datetime, step_seconds: int, asset_id: str | None = None, metric_key: str | None = None) -> dict[str, Any]:
         key = metric_key or query
+        if key in {"wireless_ap_online_count", "wireless_client_online_count"}:
+            return {"provider": self.name, "metric_key": key, "step_seconds": step_seconds, "data": []}
         if key in {"interface_admin_status", "interface_oper_status", "interface_speed_bps"}:
             return self.instant(query=key, asset_id=asset_id, metric_key=key)
         source, column = self._metric_column(key)
@@ -226,6 +235,26 @@ class NativeMetricProvider(MetricProvider):
             return {"provider": self.name, "metric_key": key, "step_seconds": step_seconds, "data": data}
         finally:
             conn.close()
+
+
+def extract_instant_metric_value(result_data: Any) -> float | None:
+    """Extract a scalar float value from Prometheus/VictoriaMetrics instant query result data."""
+    if not isinstance(result_data, list) or not result_data:
+        return None
+    values: list[float] = []
+    for item in result_data:
+        if isinstance(item, Mapping):
+            val_pair = item.get("value")
+            if isinstance(val_pair, (list, tuple)) and len(val_pair) > 1:
+                try:
+                    val = float(val_pair[1])
+                    if val == val:  # not NaN
+                        values.append(val)
+                except (ValueError, TypeError):
+                    pass
+    if not values:
+        return None
+    return round(max(values), 1)
 
 
 class VictoriaMetricsMetricProvider(MetricProvider):
@@ -266,6 +295,86 @@ class VictoriaMetricsMetricProvider(MetricProvider):
     @staticmethod
     def _selector(query: str, asset_id: str | None) -> str:
         key = str(query or "").strip()
+        escaped = str(asset_id or "").replace('\\', '\\\\').replace('"', '\\"')
+        is_regex = bool(asset_id and "|" in asset_id)
+        match_op = "=~" if is_regex else "="
+        selector = f'{{asset_id{match_op}"{escaped}"}}' if asset_id else ""
+
+        if key == "cpu_usage_percent":
+            candidates = (
+                "cpmCPUTotal1minRev",
+                "hh3cEntityExtCpuUsage",
+                "hwEntityCpuUsage",
+                "ruijieCpuCostRate",
+                "jnxOperatingCPU",
+                "fnSysCpuUsage",
+                "zteCpuRate",
+                "mpCpuUtilization5Min",
+                "dptechCpuUsage",
+                "hillstoneCPUUtilization",
+                "sangforCpuUsage",
+                "dcnCpuUsage",
+                "cpu_usage_percent",
+            )
+            return " or ".join(f"{name}{selector}" for name in candidates)
+
+        if key == "memory_usage_percent":
+            candidates = (
+                "hh3cEntityExtMemUsage",
+                "hwEntityMemUsage",
+                "ruijieMemoryPoolCurrentUtilization",
+                "jnxOperatingBuffer",
+                "fnSysMemUsage",
+                "zteMemRate",
+                "mpMemoryUtilization",
+                "dptechMemUsage",
+                "hillstoneMemoryUtilization",
+                "sangforMemUsage",
+                "dcnMemUsage",
+                "memory_usage_percent",
+            )
+            return " or ".join(f"{name}{selector}" for name in candidates)
+
+        if key == "temperature_celsius":
+            candidates = (
+                "hh3cEntityExtTemperature",
+                "hwEntityTemperature",
+                "ruijieDeviceTemperature",
+                "jnxOperatingTemp",
+                "entSensorValue",
+                "zteTemperature",
+                "mpTemperature",
+                "dptechTemperature",
+                "dcnTemperature",
+                "temperature_celsius",
+            )
+            return " or ".join(f"{name}{selector}" for name in candidates)
+
+        if key == "wireless_ap_online_count":
+            candidates = (
+                "hwWlanCurOnlineApNum",
+                "hh3cDot11CurrOnlineAPNum",
+                "ruijieApcOnlineApNum",
+                "ruijieApcTotalApNum",
+                "cLApTotalUpAPs",
+                "wlsxSysExtAccessPointsNum",
+                "ruckusZDTotalNumAP",
+                "wireless_ap_online_count",
+            )
+            return " or ".join(f"{name}{selector}" for name in candidates)
+
+        if key == "wireless_client_online_count":
+            candidates = (
+                "hwWlanCurAssocUserNum",
+                "hh3cDot11CurrAssocUserNum",
+                "ruijieApcTotalStaNum",
+                "cLSysTotalNumOfClients",
+                "wlsxSysExtStationsNum",
+                "ruckusZDTotalNumSta",
+                "wireless_client_online_count",
+            )
+            return " or ".join(f"{name}{selector}" for name in candidates)
+
         metric = CANONICAL_PROMQL.get(key)
         if metric is None:
             if not key or not re.fullmatch(r"[A-Za-z_:][A-Za-z0-9_:]*", key):
@@ -273,8 +382,6 @@ class VictoriaMetricsMetricProvider(MetricProvider):
             metric = key
         if not asset_id:
             return metric
-        escaped = str(asset_id).replace('\\', '\\\\').replace('"', '\\"')
-        selector = f'{{asset_id="{escaped}"}}'
         # Apply the stable asset selector inside rate() expressions; a label
         # matcher appended after the expression would be invalid PromQL.
         for raw_metric in ("ifHCInOctets", "ifHCOutOctets", "ifInErrors", "ifOutErrors", "ifInDiscards", "ifOutDiscards"):

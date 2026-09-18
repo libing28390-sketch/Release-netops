@@ -1712,6 +1712,201 @@ async def collect_device_info(ip: str, community: str = 'public', port: int = 16
     return result
 
 
+async def collect_snmp_lldp_neighbors(
+    ip: str,
+    community: str = 'public',
+    port: int = 161,
+    version: str = '2c',
+    timeout: float = 4.0,
+) -> list[dict[str, Any]]:
+    """Collect LLDP and CDP neighbor relationships via standard IEEE 802.1AB LLDP-MIB
+
+    and CISCO-CDP-MIB using lightweight, zero-SSH SNMP walk.
+    Universal across all hardware vendors (Cisco, Huawei, H3C, Ruijie, Arista, Juniper, ZTE, DPtech, Maipu).
+    Returns a list of neighbor dicts with:
+        local_interface, neighbor_name, neighbor_interface, mgmt_address,
+        chassis_id, neighbor_platform, protocol ('lldp' or 'cdp')
+    """
+    neighbors: list[dict[str, Any]] = []
+
+    def _clean_host(raw_name: str) -> str:
+        if not raw_name:
+            return ''
+        s = str(raw_name).strip().split('\r')[0].split('\n')[0].strip()
+        if '.' in s:
+            candidate = s.split('.')[0].strip()
+            if len(candidate) >= 2 and re.match(r'^[A-Za-z0-9_-]+$', candidate):
+                return candidate
+        return s
+
+    def _parse_lldp_suffix(suffix: str) -> tuple[str, str]:
+        # Suffix is timeMark.localPortNum.remIndex
+        parts = suffix.strip('.').split('.')
+        if len(parts) >= 3:
+            return parts[1], parts[2]
+        if len(parts) == 2:
+            return parts[0], parts[1]
+        return parts[0] if parts else '1', '1'
+
+    # 1. First, attempt IEEE 802.1AB LLDP-MIB tables
+    try:
+        lldp_tasks = [
+            _snmp_walk(ip, community, '1.0.8802.1.1.2.1.4.1.1.9', port, timeout=timeout, version=version),  # lldpRemSysName (standard col 9)
+            _snmp_walk(ip, community, '1.0.8802.1.1.2.1.4.1.1.7', port, timeout=timeout, version=version),  # lldpRemPortId (standard col 7)
+            _snmp_walk(ip, community, '1.0.8802.1.1.2.1.4.1.1.8', port, timeout=timeout, version=version),  # lldpRemPortDesc (col 8)
+            _snmp_walk(ip, community, '1.0.8802.1.1.2.1.4.1.1.2', port, timeout=timeout, version=version),  # lldpRemChassisId (col 2)
+            _snmp_walk(ip, community, '1.0.8802.1.1.2.1.4.1.1.10', port, timeout=timeout, version=version), # lldpRemSysDesc (col 10)
+            _snmp_walk(ip, community, '1.0.8802.1.1.2.1.4.2.1', port, timeout=timeout, version=version),    # lldpRemManAddrTable
+            _snmp_walk(ip, community, '1.0.8802.1.1.2.1.3.7.1.3', port, timeout=timeout, version=version),  # lldpLocPortId
+            _snmp_walk(ip, community, '1.3.6.1.2.1.31.1.1.1.1', port, timeout=timeout, version=version),    # ifName
+            _snmp_walk(ip, community, '1.0.8802.1.1.2.1.4.1.1.4', port, timeout=timeout, version=version),  # lldpRemPortId (fallback col 4)
+        ]
+        results = await asyncio.gather(*lldp_tasks, return_exceptions=True)
+        rem_sys_names = results[0] if isinstance(results[0], list) else []
+        rem_port_ids = results[1] if isinstance(results[1], list) else []
+        rem_port_descs = results[2] if isinstance(results[2], list) else []
+        rem_chassis_ids = results[3] if isinstance(results[3], list) else []
+        rem_sys_descs = results[4] if isinstance(results[4], list) else []
+        rem_man_addrs = results[5] if isinstance(results[5], list) else []
+        loc_port_ids = dict(results[6]) if isinstance(results[6], list) else {}
+        if_names = dict(results[7]) if isinstance(results[7], list) else {}
+        rem_port_ids_fallback = results[8] if len(results) > 8 and isinstance(results[8], list) else []
+
+        sys_name_map = { _parse_lldp_suffix(s): v for s, v in rem_sys_names }
+        port_id_map = { _parse_lldp_suffix(s): v for s, v in rem_port_ids }
+        if not port_id_map and rem_port_ids_fallback:
+            port_id_map = { _parse_lldp_suffix(s): v for s, v in rem_port_ids_fallback }
+        port_desc_map = { _parse_lldp_suffix(s): v for s, v in rem_port_descs }
+        chassis_id_map = { _parse_lldp_suffix(s): v for s, v in rem_chassis_ids }
+        sys_desc_map = { _parse_lldp_suffix(s): v for s, v in rem_sys_descs }
+
+        # Extract management IP addresses from lldpRemManAddrTable
+        # IEEE 802.1AB Index: timeMark.localPortNum.remIndex.manAddrSubtype(1).manAddrLen(4).a.b.c.d
+        man_addr_map: dict[Any, str] = {}
+        for s, _ in rem_man_addrs:
+            parts = s.strip('.').split('.')
+            found = False
+            for k in range(len(parts) - 5):
+                if parts[k] == '1' and parts[k+1] == '4' and len(parts) - (k + 2) == 4:
+                    ip_cand = '.'.join(parts[k+2:])
+                    if k >= 2:
+                        man_addr_map[(parts[k-2], parts[k-1])] = ip_cand
+                        man_addr_map[parts[k-2]] = ip_cand
+                    found = True
+                    break
+            if not found and len(parts) >= 4:
+                last4 = parts[-4:]
+                if all(x.isdigit() and 0 <= int(x) <= 255 for x in last4):
+                    ip_cand = '.'.join(last4)
+                    if len(parts) >= 6:
+                        man_addr_map[(parts[-6], parts[-5])] = ip_cand
+                        man_addr_map[parts[-6]] = ip_cand
+
+        all_keys = set(sys_name_map.keys()) | set(port_id_map.keys()) | set(chassis_id_map.keys())
+        for key in all_keys:
+            loc_port_num, rem_idx = key
+            loc_port = loc_port_ids.get(loc_port_num) or if_names.get(loc_port_num) or f"Port-{loc_port_num}"
+            raw_peer_name = sys_name_map.get(key) or chassis_id_map.get(key) or ''
+            peer_name = _clean_host(raw_peer_name)
+            if not peer_name:
+                continue
+
+            r_desc = (port_desc_map.get(key) or '').strip()
+            r_id = (port_id_map.get(key) or '').strip()
+
+            def _is_mac_or_pure_number(val: str) -> bool:
+                if not val:
+                    return True
+                cleaned = val.replace(':', '').replace('-', '').replace('.', '')
+                if cleaned.isdigit():
+                    return True
+                if len(cleaned) == 12 and all(c in '0123456789abcdefABCDEF' for c in cleaned):
+                    return True
+                return False
+
+            # Prefer the standard IEEE 802.1AB lldpRemPortId (r_id) whenever it is a valid port identifier.
+            # Only fall back to lldpRemPortDesc (r_desc) if r_id is empty, pure numeric index, or MAC address,
+            # and r_desc is not a user description prefix (e.g. "TO-", "uplink", etc.).
+            if r_id and not _is_mac_or_pure_number(r_id):
+                remote_port = r_id
+            elif r_desc and not _is_mac_or_pure_number(r_desc) and not re.match(r'^(?:to[-_ ]|uplink|downlink|peer)', r_desc, re.I):
+                remote_port = r_desc
+            elif r_id:
+                remote_port = r_id
+            else:
+                remote_port = r_desc or 'Unknown'
+
+            sys_desc = sys_desc_map.get(key) or ''
+            chassis_val = chassis_id_map.get(key) or ''
+            mgmt_ip = man_addr_map.get(key) or man_addr_map.get(loc_port_num) or ''
+
+            neighbors.append({
+                'protocol': 'lldp',
+                'local_interface': loc_port,
+                'neighbor_name': peer_name,
+                'neighbor_interface': remote_port,
+                'mgmt_address': mgmt_ip,
+                'chassis_id': chassis_val,
+                'neighbor_platform': sys_desc,
+                'system_description': sys_desc,
+            })
+    except Exception as exc:
+        logger.debug("SNMP LLDP walk encounter error on %s: %s", ip, exc)
+
+    # 2. If no LLDP neighbors found, attempt CISCO-CDP-MIB tables
+    if not neighbors:
+        try:
+            cdp_tasks = [
+                _snmp_walk(ip, community, '1.3.6.1.4.1.9.9.23.1.2.1.1.6', port, timeout=timeout, version=version),  # cdpCacheDeviceId
+                _snmp_walk(ip, community, '1.3.6.1.4.1.9.9.23.1.2.1.1.7', port, timeout=timeout, version=version),  # cdpCacheDevicePort
+                _snmp_walk(ip, community, '1.3.6.1.4.1.9.9.23.1.2.1.1.8', port, timeout=timeout, version=version),  # cdpCachePlatform
+                _snmp_walk(ip, community, '1.3.6.1.4.1.9.9.23.1.2.1.1.4', port, timeout=timeout, version=version),  # cdpCacheAddress
+                _snmp_walk(ip, community, '1.3.6.1.2.1.31.1.1.1.1', port, timeout=timeout, version=version),        # ifName
+            ]
+            cdp_results = await asyncio.gather(*cdp_tasks, return_exceptions=True)
+            cdp_dev_ids = cdp_results[0] if isinstance(cdp_results[0], list) else []
+            cdp_dev_ports = dict(cdp_results[1]) if isinstance(cdp_results[1], list) else {}
+            cdp_platforms = dict(cdp_results[2]) if isinstance(cdp_results[2], list) else {}
+            cdp_addrs = dict(cdp_results[3]) if isinstance(cdp_results[3], list) else {}
+            cdp_if_names = dict(cdp_results[4]) if isinstance(cdp_results[4], list) else {}
+
+            for s, raw_dev_id in cdp_dev_ids:
+                if not raw_dev_id:
+                    continue
+                parts = s.strip('.').split('.')
+                if_idx = parts[0]
+                loc_port = cdp_if_names.get(if_idx) or f"Port-{if_idx}"
+                rem_port = cdp_dev_ports.get(s) or 'Unknown'
+                platform_str = cdp_platforms.get(s) or ''
+                addr_raw = cdp_addrs.get(s) or ''
+                mgmt_ip = ''
+                if addr_raw:
+                    if len(addr_raw) == 4:
+                        mgmt_ip = '.'.join(str(ord(c)) for c in addr_raw)
+                    elif re.match(r'^[0-9a-fA-F]{8}$', addr_raw):
+                        try:
+                            mgmt_ip = '.'.join(str(int(addr_raw[i:i+2], 16)) for i in (0, 2, 4, 6))
+                        except Exception:
+                            pass
+                    elif re.match(r'^\d+\.\d+\.\d+\.\d+$', addr_raw):
+                        mgmt_ip = addr_raw
+
+                neighbors.append({
+                    'protocol': 'cdp',
+                    'local_interface': loc_port,
+                    'neighbor_name': _clean_host(raw_dev_id),
+                    'neighbor_interface': rem_port,
+                    'mgmt_address': mgmt_ip,
+                    'chassis_id': '',
+                    'neighbor_platform': platform_str,
+                    'system_description': platform_str,
+                })
+        except Exception as exc:
+            logger.debug("SNMP CDP walk encounter error on %s: %s", ip, exc)
+
+    return neighbors
+
+
 async def _collect_h3c_fan_psu_status(
     ip: str,
     community: str,

@@ -171,10 +171,31 @@ def test_vendor_oid_catalog_renders_h3c_huawei_and_cisco_modules():
 
     rendered = render_exporter_modules(assignments, modules=modules, variants=variants)
 
-    assert {"h3c_common_std", "huawei_common_std", "cisco_common_std"} <= set(rendered)
+    assert {"h3c_common_std", "huawei_common_std", "cisco_common_std", "ruijie_common_std", "juniper_common_std", "fortinet_common_std"} <= set(rendered)
     assert rendered["h3c_common_std"]["metrics"][0]["oid"].startswith("1.3.6.1.4.1.25506")
     assert rendered["huawei_common_std"]["metrics"][0]["oid"].startswith("1.3.6.1.4.1.2011")
     assert rendered["cisco_common_std"]["metrics"][0]["oid"].startswith("1.3.6.1.4.1.9.9")
+    assert rendered["ruijie_common_std"]["metrics"][0]["oid"].startswith("1.3.6.1.4.1.4881")
+    assert rendered["juniper_common_std"]["metrics"][0]["oid"].startswith("1.3.6.1.4.1.2636")
+    assert rendered["fortinet_common_std"]["metrics"][0]["oid"].startswith("1.3.6.1.4.1.12356")
+
+
+def test_multi_vendor_device_variant_matching_matrix():
+    from services.monitoring_compiler import variant_matches_device
+    catalog = iter_builtin_catalog()
+    variant_by_key = {item["variant"]["variant_key"]: item["variant"] for item in catalog}
+
+    ruijie_device = {"platform": "ruijie_rgos", "model": "RG-S6220-48XT4QXS", "version": "RGOS 11.4"}
+    juniper_device = {"platform": "juniper_junos", "model": "QFX5100-48S-6Q", "version": "JUNOS 20.4R3"}
+    fortinet_device = {"platform": "fortinet_fortios", "model": "FortiGate-100F", "version": "FortiOS 7.2"}
+
+    assert variant_matches_device(variant_by_key["ruijie_common_std"], ruijie_device)
+    assert variant_matches_device(variant_by_key["juniper_common_std"], juniper_device)
+    assert variant_matches_device(variant_by_key["fortinet_common_std"], fortinet_device)
+
+    # Cross-vendor isolation: Ruijie should not match Cisco or H3C
+    assert not variant_matches_device(variant_by_key["cisco_common_std"], ruijie_device)
+    assert not variant_matches_device(variant_by_key["h3c_common_std"], ruijie_device)
 
 
 def test_exporter_renderer_drops_nexora_only_metric_metadata():

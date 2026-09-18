@@ -89,15 +89,22 @@ def test_batch_import_binds_snmp_credential_name_to_asset_and_device(isolated_db
     assert result["created"] == 1
     with get_db_connection() as conn:
         asset = conn.execute(
-            "SELECT snmp_credential_id FROM physical_assets WHERE hostname = ?",
+            "SELECT snmp_credential_id, snmp_community FROM physical_assets WHERE hostname = ?",
             ("imported-snmp-by-name",),
         ).fetchone()
         device = conn.execute(
-            "SELECT snmp_credential_id FROM devices WHERE hostname = ?",
+            "SELECT snmp_credential_id, snmp_community FROM devices WHERE hostname = ?",
             ("imported-snmp-by-name",),
         ).fetchone()
     assert asset["snmp_credential_id"] == "cred-import-snmp"
     assert device["snmp_credential_id"] == "cred-import-snmp"
+    from core.crypto import decrypt_credential
+    assert decrypt_credential(asset["snmp_community"]) == "community-import-only"
+    assert decrypt_credential(device["snmp_community"]) == "community-import-only"
+
+    listed = assets.list_assets(q="imported-snmp-by-name", page=1, page_size=10)
+    assert listed["items"][0]["snmp_credential_name"] == "import-snmp-monitor"
+    assert listed["items"][0]["snmp_community_set"] is True
 
 
 def test_batch_import_rejects_non_snmp_credential_name(isolated_db):

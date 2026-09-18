@@ -4,6 +4,7 @@ import asyncio
 import heapq
 import json
 import logging
+import os
 import threading
 import time
 import uuid
@@ -27,7 +28,7 @@ from services.monitoring_incident_service import (
     recommend_incident_playbooks,
     update_incident_status,
 )
-from services.metric_provider import provider_from_environment
+from services.metric_provider import extract_instant_metric_value, provider_from_environment
 
 router = APIRouter()
 logger = logging.getLogger(__name__)
@@ -701,6 +702,7 @@ def monitoring_device_realtime(
     device_id: str,
     window_minutes: int = Query(default=15, ge=1, le=180),
     limit: int = Query(default=600, ge=50, le=2000),
+    provider: Optional[str] = Query(default=None),
     user=require_role('Viewer'),
 ):
     conn = get_db_connection()
@@ -708,7 +710,7 @@ def monitoring_device_realtime(
         tenant_clause, tenant_params = _monitoring_tenant_scope(user)
         device = conn.execute(
             "SELECT id, hostname, ip_address, platform, status, device_category, "
-            "sys_name, cpu_usage, memory_usage, temp, fan_status, psu_status FROM devices WHERE id = ?" + tenant_clause,
+            "sys_name, cpu_usage, memory_usage, temp, fan_status, psu_status, asset_id FROM devices WHERE id = ?" + tenant_clause,
             (device_id, *tenant_params),
         ).fetchone()
         if not device:
@@ -718,6 +720,36 @@ def monitoring_device_realtime(
             item for item in (fetch_interface_data(conn, device['id']) or [])
             if not _is_virtual_interface_name(item.get('interface_name') or item.get('name'))
         ]
+
+        # Resolve real-time hardware telemetry from provider if VM/Shadow mode
+        provider_name = provider.strip().lower() if isinstance(provider, str) and provider.strip() else None
+        selected_backend = (provider_name or os.environ.get("MONITORING_METRIC_BACKEND", "native")).strip().lower()
+        if selected_backend in {"victoriametrics", "shadow"}:
+            try:
+                target_asset_id = str(device.get('asset_id') or device.get('id') or device_id)
+                lookup_id = (
+                    f"{device['asset_id']}|{device['id']}"
+                    if device.get('asset_id') and device.get('id') and str(device['asset_id']) != str(device['id'])
+                    else target_asset_id
+                )
+                provider_inst = provider_from_environment(mode=selected_backend)
+
+                cpu_payload = provider_inst.instant(query="cpu_usage_percent", asset_id=lookup_id, metric_key="cpu_usage_percent")
+                cpu_val = extract_instant_metric_value(cpu_payload.get("data"))
+                if cpu_val is not None:
+                    device['cpu_usage'] = cpu_val
+
+                mem_payload = provider_inst.instant(query="memory_usage_percent", asset_id=lookup_id, metric_key="memory_usage_percent")
+                mem_val = extract_instant_metric_value(mem_payload.get("data"))
+                if mem_val is not None:
+                    device['memory_usage'] = mem_val
+
+                temp_payload = provider_inst.instant(query="temperature_celsius", asset_id=lookup_id, metric_key="temperature_celsius")
+                temp_val = extract_instant_metric_value(temp_payload.get("data"))
+                if temp_val is not None:
+                    device['temp'] = temp_val
+            except Exception as vm_err:
+                logger.debug("Failed to query real-time hardware metrics from provider for %s: %s", device_id, vm_err)
 
         plat = str(device.get('platform') or '').lower()
         category = str(device.get('device_category') or '').lower()
@@ -924,7 +956,7 @@ def monitoring_device_trend(
     try:
         tenant_clause, tenant_params = _monitoring_tenant_scope(user)
         device = conn.execute(
-            "SELECT id, hostname, ip_address, platform, status, device_category FROM devices WHERE id = ?" + tenant_clause,
+            "SELECT id, hostname, ip_address, platform, status, device_category, asset_id FROM devices WHERE id = ?" + tenant_clause,
             (device_id, *tenant_params),
         ).fetchone()
         if not device:
@@ -978,11 +1010,17 @@ def monitoring_device_trend(
             points: dict[str, dict[str, Any]] = {}
             shadow_results: list[dict[str, Any]] = []
             provider_errors: list[str] = []
+            target_asset_id = str(device.get('asset_id') or device.get('id') or device_id)
+            lookup_id = (
+                f"{device['asset_id']}|{device['id']}"
+                if device.get('asset_id') and device.get('id') and str(device['asset_id']) != str(device['id'])
+                else target_asset_id
+            )
             for metric_key in metric_keys:
                 result = provider_instance.range(
                     query=metric_key,
                     metric_key=metric_key,
-                    asset_id=device_id,
+                    asset_id=lookup_id,
                     start=start_dt,
                     end=end_dt,
                     step_seconds=300 if range_hours > 24 else 60,

@@ -1,5 +1,5 @@
 import React, { useEffect, useState } from 'react';
-import { Cpu, Database, Plus, Sparkles, X } from 'lucide-react';
+import { AlertCircle, Cpu, Database, Plus, Sparkles, X } from 'lucide-react';
 import { apiRequest } from '../../api/http';
 import OidPickerModal, { MibNodeItem } from '../SnmpMib/OidPickerModal';
 import MibUploadModal from '../SnmpMib/MibUploadModal';
@@ -935,6 +935,24 @@ const MetricOidProfilesModal: React.FC<Props> = ({
               <X size={17} />
             </button>
           )}
+        </div>
+
+        {/* Deprecation Warning Banner */}
+        <div className="mx-5 mt-3 flex items-center justify-between rounded-xl border border-amber-500/25 bg-amber-500/10 px-4 py-2.5 text-xs text-amber-800 dark:text-amber-200">
+          <div className="flex items-center gap-2">
+            <AlertCircle size={15} className="shrink-0 text-amber-600 dark:text-amber-400" />
+            <span>
+              {zh
+                ? '【维护提示】当前页面为旧版 SNMP 标量模板体系，已进入维护废弃期。全网指标与 Grafana 监控已全面统一至【监控中心 -> 采集计划 / 模块管理】。'
+                : '[Legacy Notice] This page is for legacy scalar SNMP templates. Production monitoring has migrated to Collection Plans & Modules.'}
+            </span>
+          </div>
+          <a
+            href="/monitoring/collection-plans"
+            className="ml-3 shrink-0 font-medium text-[#009ec4] underline hover:opacity-80"
+          >
+            {zh ? '前往监控中心采集计划 →' : 'Go to Collection Plans →'}
+          </a>
         </div>
 
         {/* Body content: List */}

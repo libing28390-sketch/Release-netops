@@ -320,13 +320,20 @@ const NetworkMonitoring: React.FC<NetworkMonitoringProps> = ({ language, devices
   }, [deviceRows, selectedId]);
 
   const fetchRealtime = useCallback(async (deviceId: string, signal?: AbortSignal) => {
-    const resp = await fetch(`/api/monitoring/device/${deviceId}/realtime?window_minutes=${REALTIME_WINDOW_MINUTES}&limit=1000`, {
+    const params = new URLSearchParams({
+      window_minutes: String(REALTIME_WINDOW_MINUTES),
+      limit: '1000',
+    });
+    if (metricProvider) {
+      params.set('provider', metricProvider);
+    }
+    const resp = await fetch(`/api/monitoring/device/${deviceId}/realtime?${params.toString()}`, {
       headers: authHeaders(),
       signal,
     });
     if (!resp.ok) throw new Error('realtime fetch failed');
     return resp.json();
-  }, []);
+  }, [metricProvider]);
 
   const fetchTrend = useCallback(async (deviceId: string, hours: number, interfaceName?: string, signal?: AbortSignal) => {
     const resolution = hours <= 24 ? '1m' : '5m';

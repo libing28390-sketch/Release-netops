@@ -318,7 +318,7 @@ def get_links(
         # be reintroduced through this auxiliary read model.
         {'unmanaged_nodes': [], 'unmanaged_links': []}
         if normalized_rack_id or (device_ids is not None and not device_ids)
-        else get_unmanaged_neighbors(site_id=site_id, source_device_ids=device_ids)
+        else get_unmanaged_neighbors(site_id=site_id, source_device_ids=device_ids, include_stale=include_stale)
     )
     node_metadata = get_topology_node_metadata(site_id=site_id, device_ids=device_ids)
     if device_ids is not None:

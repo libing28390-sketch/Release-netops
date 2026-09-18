@@ -4002,9 +4002,10 @@ async def sync_device_hostname(device_id: str, user=require_role("Operator")):
 
 class ProbeHostnamePayload(BaseModel):
     ip: str = ""
-    community: str = "public"
+    community: str = ""
     port: int = 161
     device_id: str | None = None
+    credential_id: str | None = None
 
 
 @router.post("/devices/probe-hostname")
@@ -4018,24 +4019,52 @@ async def probe_device_hostname(payload: ProbeHostnamePayload, user=require_role
     community = str(payload.community or "").strip()
     port = int(payload.port or 161)
 
-    if not ip and payload.device_id:
+    if payload.credential_id and not community:
         conn = get_db_connection()
         try:
-            device = conn.execute("SELECT * FROM devices WHERE id = ?", (payload.device_id,)).fetchone()
-            if device:
-                device_data = dict(device)
-                creds = resolve_collector_credentials(device_data)
-                ip = creds["snmp"].get("server") or device_data.get("ip_address") or ""
-                if not community:
-                    community = creds["snmp"].get("community") or "public"
-                port = creds["snmp"].get("port") or 161
+            cred_row = conn.execute(
+                "SELECT snmp_community FROM credentials WHERE id = ? OR credential_name = ?",
+                (payload.credential_id, payload.credential_id)
+            ).fetchone()
+            if cred_row:
+                from core.crypto import decrypt_credential
+                community = decrypt_credential(cred_row["snmp_community"]) or str(cred_row["snmp_community"] or "").strip()
         finally:
             conn.close()
 
+    if payload.device_id and (not ip or not community):
+        conn = get_db_connection()
+        try:
+            device = conn.execute("SELECT * FROM devices WHERE id = ? OR asset_id = ?", (payload.device_id, payload.device_id)).fetchone()
+            if device:
+                device_data = dict(device)
+                creds = resolve_collector_credentials(device_data)
+                if not ip:
+                    ip = creds["snmp"].get("server") or device_data.get("ip_address") or ""
+                if not community:
+                    community = creds["snmp"].get("community") or ""
+                port = creds["snmp"].get("port") or port or 161
+            else:
+                asset = conn.execute("SELECT * FROM physical_assets WHERE id = ?", (payload.device_id,)).fetchone()
+                if asset:
+                    if not ip:
+                        ip = asset["management_ip"] or ""
+                    if not community and asset["snmp_credential_id"]:
+                        cred_row = conn.execute("SELECT snmp_community FROM credentials WHERE id = ?", (asset["snmp_credential_id"],)).fetchone()
+                        if cred_row:
+                            from core.crypto import decrypt_credential
+                            community = decrypt_credential(cred_row["snmp_community"]) or str(cred_row["snmp_community"] or "").strip()
+                    if not community and asset["snmp_community"]:
+                        from core.crypto import decrypt_credential
+                        community = decrypt_credential(asset["snmp_community"]) or str(asset["snmp_community"] or "").strip()
+        finally:
+            conn.close()
+
+    if not community:
+        community = "public"
+
     if not ip:
         raise HTTPException(status_code=400, detail="请提供有效的设备 IP 地址")
-    if not community:
-        raise HTTPException(status_code=400, detail="请提供 SNMP Community 凭据")
 
     from services.snmp_service import _snmp_get
     try:

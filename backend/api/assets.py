@@ -79,6 +79,7 @@ _PUBLIC_ASSET_FIELDS = frozenset({
     'winrm_cert_fingerprint',
     'power_watts', 'device_id', 'is_managed', 'takeover_error',
     'credential_id', 'admin_credential_id', 'snmp_credential_id',
+    'snmp_credential_name',
     'password_set', 'normal_password_set', 'admin_password_set',
     'enable_password_set', 'snmp_community_set', 'created_at', 'updated_at',
 })
@@ -322,8 +323,8 @@ def _sanitize_asset_item(item: dict) -> dict:
     for sensitive in ('password', 'normal_password', 'admin_password', 'enable_password'):
         if sensitive in source:
             source[f'{sensitive}_set'] = bool(source.get(sensitive))
-    if 'snmp_community' in source:
-        source['snmp_community_set'] = bool(source.get('snmp_community'))
+    if 'snmp_community' in source or 'snmp_credential_id' in source:
+        source['snmp_community_set'] = bool(source.get('snmp_community') or source.get('snmp_credential_id'))
     source['ssh_algorithm_profile'] = normalize_ssh_algorithm_profile(
         source.get('ssh_algorithm_profile')
     )
@@ -760,7 +761,27 @@ def _resolve_snmp_credential_binding(conn, body) -> None:
     requested_id = str(getattr(body, 'snmp_credential_id', '') or '').strip()
     requested_name = str(getattr(body, 'snmp_credential_name', '') or '').strip()
     requested = requested_id or requested_name
-    body.snmp_credential_id = _resolve_snmp_credential_id(conn, requested)
+    if not requested:
+        body.snmp_credential_id = ''
+        return
+    row = conn.execute(
+        '''SELECT id, credential_name, credential_type, snmp_community
+           FROM credentials WHERE id = ? OR credential_name = ?''',
+        (requested, requested),
+    ).fetchone()
+    if not row:
+        raise HTTPException(status_code=422, detail=f'SNMP凭据不存在: {requested}')
+    if str(row['credential_type'] or '').lower() != 'snmpv2':
+        raise HTTPException(status_code=422, detail='SNMP关联必须选择 SNMPv2 凭据')
+    from core.crypto import decrypt_credential
+    dec_community = decrypt_credential(row['snmp_community']) or str(row['snmp_community'] or '').strip()
+    if not dec_community:
+        raise HTTPException(status_code=422, detail='SNMP凭据未配置 Community')
+    body.snmp_credential_id = str(row['id'])
+    if hasattr(body, 'snmp_credential_name'):
+        body.snmp_credential_name = str(row['credential_name'] or '')
+    if not getattr(body, 'snmp_community', None):
+        body.snmp_community = dec_community
 
 
 def _create_device_local_credential(
@@ -983,6 +1004,18 @@ def _create_linked_device(conn, asset_id: str, body, user: dict) -> str:
             if not admin_pwd: admin_pwd = dec_pwd
             if not enable_pwd: enable_pwd = dec_enable
 
+    existing_snmp_cred_id = getattr(body, 'snmp_credential_id', '') or ''
+    if existing_snmp_cred_id and not community:
+        snmp_row = conn.execute(
+            'SELECT id, credential_name, credential_type, snmp_community FROM credentials WHERE id = ? OR credential_name = ?',
+            (existing_snmp_cred_id, existing_snmp_cred_id)
+        ).fetchone()
+        if snmp_row:
+            from core.crypto import decrypt_credential
+            dec_snmp = decrypt_credential(snmp_row['snmp_community']) or str(snmp_row['snmp_community'] or '').strip()
+            if dec_snmp:
+                community = dec_snmp
+
     onboarding = 'verified' if has_creds else 'pending_credentials'
 
     resolved_pwd = normal_pwd or pwd or admin_pwd or ''
@@ -1059,8 +1092,11 @@ def _create_linked_device(conn, asset_id: str, body, user: dict) -> str:
     conn.execute('UPDATE devices SET site_id = ? WHERE id = ?', (body.site_id, device_id))
     conn.execute('UPDATE devices SET snmp_credential_id = ? WHERE id = ?', (getattr(body, 'snmp_credential_id', '') or '', device_id))
     conn.execute(
-        'UPDATE physical_assets SET credential_id = ?, admin_credential_id = ?, snmp_credential_id = ? WHERE id = ?',
-        (credential_id or '', admin_credential_id or '', getattr(body, 'snmp_credential_id', '') or '', asset_id),
+        '''UPDATE physical_assets
+           SET credential_id = ?, admin_credential_id = ?, snmp_credential_id = ?,
+               snmp_community = CASE WHEN snmp_community IS NULL OR snmp_community = '' THEN ? ELSE snmp_community END
+           WHERE id = ?''',
+        (credential_id or '', admin_credential_id or '', getattr(body, 'snmp_credential_id', '') or '', _safe_encrypt(community), asset_id),
     )
     # Asset create/import owns the surrounding transaction.  Do not let the
     # automatic status tag seed or commit release a row SAVEPOINT used by
@@ -1207,6 +1243,26 @@ def _sync_device_from_asset(conn, asset_id: str, body) -> None:
                 conn.execute('UPDATE devices SET admin_credential_id = NULL WHERE id = ?', (device_id,))
                 conn.execute('UPDATE physical_assets SET admin_credential_id = \'\' WHERE id = ?', (asset_id,))
                 admin_credential_id = None
+
+    # If a new snmp_credential_id is passed, update binding
+    input_snmp_credential_id = getattr(body, 'snmp_credential_id', None)
+    if input_snmp_credential_id is not None:
+        if input_snmp_credential_id:
+            cred_row = conn.execute(
+                'SELECT id, credential_name, snmp_community FROM credentials WHERE id = ? OR credential_name = ?',
+                (input_snmp_credential_id, input_snmp_credential_id),
+            ).fetchone()
+            if cred_row:
+                input_id = cred_row['id']
+                from core.crypto import decrypt_credential
+                dec_snmp = decrypt_credential(cred_row['snmp_community']) or str(cred_row['snmp_community'] or '').strip()
+                conn.execute('UPDATE devices SET snmp_credential_id = ?, snmp_community = ? WHERE id = ?',
+                             (input_id, _safe_encrypt(dec_snmp), device_id))
+                conn.execute('UPDATE physical_assets SET snmp_credential_id = ?, snmp_community = ? WHERE id = ?',
+                             (input_id, _safe_encrypt(dec_snmp), asset_id))
+        else:
+            conn.execute('UPDATE devices SET snmp_credential_id = \'\' WHERE id = ?', (device_id,))
+            conn.execute('UPDATE physical_assets SET snmp_credential_id = \'\' WHERE id = ?', (asset_id,))
 
     # Sync credential row if it's device-specific
     if credential_id:
@@ -2052,10 +2108,12 @@ def list_assets(
                 COALESCE(NULLIF(d.status, ''), CASE WHEN pa.status = 'active' THEN 'online' WHEN pa.status IN ('inactive', 'maintenance', 'decommissioned') THEN 'offline' ELSE 'pending' END) AS online_status,
                 COALESCE(NULLIF(pa.normal_username,''), d.normal_username, '') AS normal_username,
                 COALESCE(NULLIF(pa.admin_username,''),  d.admin_username,  '') AS admin_username,
-                COALESCE(NULLIF(pa.username,''),        d.username,        '') AS username
+                COALESCE(NULLIF(pa.username,''),        d.username,        '') AS username,
+                sc.credential_name AS snmp_credential_name
             FROM physical_assets pa
             LEFT JOIN devices d ON d.asset_id = pa.id
             LEFT JOIN sites s ON s.id = pa.site_id
+            LEFT JOIN credentials sc ON sc.id = COALESCE(NULLIF(pa.snmp_credential_id, ''), d.snmp_credential_id)
             {where} ORDER BY pa.created_at DESC LIMIT ? OFFSET ?''',
             params + [page_size, offset]
         ).fetchall()
@@ -2175,12 +2233,15 @@ def get_asset(asset_id: str, _user=require_role("Viewer")):
     try:
         row = conn.execute(
             '''SELECT pa.*, s.tenant_id AS site_tenant_id,
+               d.id AS device_id,
                COALESCE(NULLIF(pa.normal_username,''), d.normal_username, '') AS normal_username,
                COALESCE(NULLIF(pa.admin_username,''),  d.admin_username,  '') AS admin_username,
-               COALESCE(NULLIF(pa.username,''),        d.username,        '') AS username
+               COALESCE(NULLIF(pa.username,''),        d.username,        '') AS username,
+               sc.credential_name AS snmp_credential_name
             FROM physical_assets pa
             LEFT JOIN devices d ON d.asset_id = pa.id
             LEFT JOIN sites s ON s.id = pa.site_id
+            LEFT JOIN credentials sc ON sc.id = COALESCE(NULLIF(pa.snmp_credential_id, ''), d.snmp_credential_id)
             WHERE pa.id = ?''',
             (asset_id,)
         ).fetchone()

@@ -350,11 +350,13 @@ class Assignment:
     role: str
     selection_reason: str
     assignment_hash: str
+    hostname: str = ""
 
     def as_dict(self) -> dict[str, Any]:
         return {
             "id": self.id,
             "asset_id": self.asset_id,
+            "hostname": self.hostname,
             "target": self.target,
             "collector_id": self.collector_id,
             "module_variant_id": self.module_variant_id,
@@ -559,8 +561,13 @@ def _platform_selector_matches(actual: str, selector: str) -> bool:
         return True
     # Stable family selectors (h3c_comware, huawei_vrp, iosxe) may match a
     # concrete version suffix, but v5/v7/v9 are intentionally not collapsed.
+    supported_families = {
+        "comware", "vrp", "ios", "iosxe", "nxos", "asa", "rgos", "junos", "fortios",
+        "zte", "zxros", "maipu", "mypower", "dptech", "conplat", "hillstone", "stoneos",
+        "sangfor", "sangforos", "dcn", "dcos", "wlan", "aruba", "arubaos", "ruckus", "smartzone", "aireos",
+    }
     return actual_token.startswith(f"{selector_token}_") or (
-        selector_token in {"comware", "vrp", "ios", "iosxe", "nxos", "asa"}
+        selector_token in supported_families
         and selector_token in actual_token
     )
 
@@ -578,8 +585,13 @@ def _model_selector_matches(actual: str, selector: str) -> bool:
         if _glob_match(actual_text, selector_text.replace("x", "*")):
             return True
     # A documented series such as S6800 also covers concrete SKUs such as
-    # S6800-54QT, while a plain unrelated model never matches by substring.
-    return actual_text == selector_text or actual_text.startswith(f"{selector_text}-") or actual_text.startswith(f"{selector_text} ")
+    # S6800-54QT, while a series code such as RG-S or QFX covers RG-S6220 or QFX5100.
+    return (
+        actual_text == selector_text
+        or actual_text.startswith(f"{selector_text}-")
+        or actual_text.startswith(f"{selector_text} ")
+        or (actual_text.startswith(selector_text) and len(actual_text) > len(selector_text) and actual_text[len(selector_text)].isdigit())
+    )
 
 
 def _version_selector_matches(actual: str, selector: str) -> bool:
@@ -597,12 +609,17 @@ def _version_selector_matches(actual: str, selector: str) -> bool:
         return True
     # Human-readable scopes such as “Comware 7” / “VRP V8” should match a
     # concrete banner containing the same platform family and major release.
-    selector_major = re.search(r"(?:v|version|comware|vrp|ios(?:xe)?|nxos|asa)?\s*(\d+)", selector_text)
+    selector_major = re.search(r"(?:v|version|comware|vrp|ios(?:xe)?|nxos|asa|rgos|junos|fortios|zxros|mypower|conplat|stoneos|sangforos|dcos|smartzone|arubaos)?\s*(\d+)", selector_text)
     if selector_major:
         major = selector_major.group(1)
         actual_majors = re.findall(r"(?:^|[^a-z0-9])v?(\d+)(?:\.|$|[^0-9])", actual_text)
         if major in actual_majors or re.search(rf"(?:^|[^a-z0-9])v?{re.escape(major)}(?:$|[^0-9])", actual_text):
-            family_tokens = [token for token in ("comware", "vrp", "iosxe", "ios", "nxos", "asa") if token in selector_text]
+            family_tokens = [
+                token for token in (
+                    "comware", "vrp", "iosxe", "ios", "nxos", "asa", "rgos", "junos", "fortios",
+                    "zxros", "mypower", "conplat", "stoneos", "sangforos", "dcos", "smartzone", "arubaos"
+                ) if token in selector_text
+            ]
             return not family_tokens or any(token in actual_text for token in family_tokens)
     return False
 
@@ -795,9 +812,11 @@ def build_assignments(
                     )
                 continue
             assignment_id = f"assignment-{assignment_hash[:16]}"
+            hostname = str(device.get("hostname") or device.get("name") or "").strip()
             assignment = Assignment(
                 id=assignment_id,
                 asset_id=asset_id,
+                hostname=hostname,
                 target=target,
                 collector_id=collector_id,
                 module_variant_id=str(variant.get("id") or ""),
@@ -840,8 +859,11 @@ def render_target_snapshot(assignments: Iterable[Mapping[str, Any]], *, collecto
         timeout = int(assignment.get("scrape_timeout_seconds") or 20)
         if timeout >= interval:
             raise CompileError("TIMEOUT_INVALID: scrape timeout must be less than interval")
+        hostname = str(assignment.get("hostname") or "").strip()
+        target = str(assignment.get("target") or "").strip()
         labels = {
             "nexora_asset_id": str(assignment.get("asset_id") or ""),
+            "nexora_hostname": hostname or target,
             "nexora_tenant_id": str(assignment.get("tenant_id") or ""),
             "nexora_site_id": str(assignment.get("site_id") or ""),
             "nexora_vendor": str(assignment.get("vendor") or ""),
@@ -900,6 +922,7 @@ def render_vmagent_config(snapshot_path: str = "/etc/nexora-collector/runtime/vm
                 {"source_labels": ["nexora_scrape_timeout"], "target_label": "__scrape_timeout__"},
                 {"source_labels": ["__param_target"], "target_label": "instance"},
                 {"source_labels": ["nexora_asset_id"], "target_label": "asset_id"},
+                {"source_labels": ["nexora_hostname"], "target_label": "hostname"},
                 {"source_labels": ["nexora_tenant_id"], "target_label": "tenant_id"},
                 {"source_labels": ["nexora_site_id"], "target_label": "site_id"},
                 {"source_labels": ["nexora_vendor"], "target_label": "vendor"},
