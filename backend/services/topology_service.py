@@ -1266,7 +1266,7 @@ def _sync_aggregation_inventory(device: dict[str, Any], platform_action_session=
                         INSERT INTO interfaces (
                             id, device_id, interface_name, interface_type, admin_status, oper_status,
                             parent_interface_id, channel_group
-                        ) VALUES (?, ?, ?, 'physical', 'unknown', 'unknown', ?, ?)
+                        ) VALUES (?, ?, ?, 'physical', 'up', 'down', ?, ?)
                         ON CONFLICT(device_id, interface_name) DO UPDATE SET
                             parent_interface_id = excluded.parent_interface_id,
                             channel_group = excluded.channel_group
@@ -1279,7 +1279,7 @@ def _sync_aggregation_inventory(device: dict[str, Any], platform_action_session=
                 conn.execute(
                     '''
                     UPDATE interfaces SET parent_interface_id = ?, channel_group = ?,
-                        oper_status = ?, aggregation_protocol = ?
+                        admin_status = 'up', oper_status = ?, aggregation_protocol = ?
                     WHERE id = ?
                     ''',
                     (parent_id, channel_group, member_oper, protocol, member_id),
@@ -1905,7 +1905,7 @@ def _rebuild_links_from_observations_unlocked() -> int:
             if src_dev and src_port_norm and not src_intf_id:
                 src_intf_id = str(uuid.uuid4())
                 conn.execute(
-                    "INSERT INTO interfaces (id, device_id, interface_name, admin_status, oper_status) VALUES (?, ?, ?, 'unknown', 'unknown')",
+                    "INSERT INTO interfaces (id, device_id, interface_name, admin_status, oper_status) VALUES (?, ?, ?, 'up', 'up')",
                     (src_intf_id, src_dev, ordered[0]['port_raw'] or src_port)
                 )
                 interface_map[(src_dev, src_port_norm)] = {
@@ -1932,7 +1932,7 @@ def _rebuild_links_from_observations_unlocked() -> int:
             if tgt_dev and tgt_port_norm and not tgt_intf_id:
                 tgt_intf_id = str(uuid.uuid4())
                 conn.execute(
-                    "INSERT INTO interfaces (id, device_id, interface_name, admin_status, oper_status) VALUES (?, ?, ?, 'unknown', 'unknown')",
+                    "INSERT INTO interfaces (id, device_id, interface_name, admin_status, oper_status) VALUES (?, ?, ?, 'up', 'up')",
                     (tgt_intf_id, tgt_dev, ordered[1]['port_raw'] or tgt_port)
                 )
                 interface_map[(tgt_dev, tgt_port_norm)] = {

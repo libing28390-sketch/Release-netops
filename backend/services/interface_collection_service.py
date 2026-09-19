@@ -10,9 +10,11 @@ for link identity separately.
 
 from __future__ import annotations
 
+import asyncio
 import ipaddress
 import logging
 import re
+import uuid
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from datetime import datetime, timezone
 from typing import Any
@@ -23,6 +25,18 @@ from services.read_only_collection_adapter import collect_read_only_evidence
 from services.normalizers.common import interface_type as infer_interface_type
 
 logger = logging.getLogger(__name__)
+
+
+def _run_async(coro: Any) -> Any:
+    """Run an async coroutine synchronously and safely within existing event loops."""
+    try:
+        loop = asyncio.get_running_loop()
+    except RuntimeError:
+        loop = None
+    if loop and loop.is_running():
+        with ThreadPoolExecutor(max_workers=1) as pool:
+            return pool.submit(asyncio.run, coro).result()
+    return asyncio.run(coro)
 
 
 def _now() -> str:
@@ -100,6 +114,7 @@ _INTERFACE_PREFIXES = (
     "vlanif", "vlan-interface", "vlan", "svi", "bvi", "irb", "loopback", "loop",
     "lo", "null", "inloopback", "meth", "management", "mgmt", "eth-trunk",
     "bridge-aggregation", "route-aggregation", "port-channel", "portchannel", "tunnel",
+    "serial", "pos", "atm", "wlan-ess", "wlan-bss", "aux", "console",
 )
 
 
@@ -343,6 +358,141 @@ def _load_ip_inventory(device_id: str) -> dict[str, dict[str, Any]]:
         conn.close()
 
 
+def _collect_snmp_interfaces(device: dict[str, Any]) -> list[dict[str, Any]] | None:
+    """Collect full interface table using standard IF-MIB via SNMP if configured."""
+    try:
+        from services.vault_service import resolve_collector_credentials
+        from services.snmp_service import collect_interface_data
+
+        creds = resolve_collector_credentials(device)
+        snmp_cred = creds.get("snmp") or {}
+        if not snmp_cred.get("configured") or not snmp_cred.get("community"):
+            return None
+
+        target_ip = snmp_cred.get("server") or str(device.get("ip_address") or "").strip()
+        if not target_ip:
+            return None
+
+        community = str(snmp_cred["community"])
+        port = int(snmp_cred.get("port") or 161)
+
+        interfaces = _run_async(
+            collect_interface_data(target_ip, community=community, port=port, template_only=False)
+        )
+        if not interfaces or not isinstance(interfaces, list):
+            return None
+        return interfaces
+    except Exception as exc:
+        logger.info(
+            "SNMP interface collection for %s failed (%s), falling back to CLI",
+            device.get("hostname") or device.get("id"),
+            exc,
+        )
+        return None
+
+
+def _upsert_snmp_interfaces(device: dict[str, Any], snmp_interfaces: list[dict[str, Any]]) -> int:
+    """Synchronize raw SNMP IF-MIB interface inventory and physical status into CMDB."""
+    if not snmp_interfaces:
+        return 0
+    conn = get_db_connection()
+    try:
+        updated = 0
+        observed_at = _now()
+        existing_rows = conn.execute(
+            "SELECT id, interface_name, admin_status, oper_status, speed, description FROM interfaces WHERE device_id = ?",
+            (device["id"],),
+        ).fetchall()
+
+        existing_by_key: dict[str, list[dict[str, Any]]] = {}
+        for row in existing_rows:
+            key = normalize_interface_name(row["interface_name"])
+            if key:
+                existing_by_key.setdefault(key, []).append(dict(row))
+
+        for item in snmp_interfaces:
+            raw_name = str(item.get("name") or "").strip()
+            if not raw_name or not _looks_like_interface_name(raw_name):
+                continue
+            key = normalize_interface_name(raw_name)
+            if not key:
+                continue
+
+            admin_stat = _normalize_status(item.get("admin_status") or item.get("status"))
+            oper_stat = _normalize_status(item.get("status") or item.get("oper_status"))
+            if oper_stat == "unknown" and admin_stat in ("up", "down"):
+                oper_stat = admin_stat
+
+            speed_mbps = item.get("speed_mbps") or 0
+            try:
+                speed_bps = int(speed_mbps * 1_000_000) if speed_mbps else None
+            except (TypeError, ValueError):
+                speed_bps = None
+
+            description = str(item.get("description") or "").strip()
+            if_index = item.get("index")
+            try:
+                if_index_val = int(if_index) if str(if_index or "").isdigit() else None
+            except (TypeError, ValueError):
+                if_index_val = None
+
+            matching = existing_by_key.get(key, [])
+            if matching:
+                for existing in matching:
+                    conn.execute(
+                        """UPDATE interfaces SET
+                               admin_status = CASE WHEN ? <> 'unknown' THEN ? ELSE admin_status END,
+                               oper_status = CASE WHEN ? <> 'unknown' THEN ? ELSE oper_status END,
+                               speed = COALESCE(?, speed),
+                               description = CASE WHEN ? <> '' THEN ? ELSE description END,
+                               if_index = COALESCE(?, if_index),
+                               last_seen = ?
+                           WHERE id = ?""",
+                        (
+                            admin_stat, admin_stat,
+                            oper_stat, oper_stat,
+                            speed_bps,
+                            description, description,
+                            if_index_val,
+                            observed_at,
+                            existing["id"],
+                        ),
+                    )
+                    updated += 1
+            else:
+                detected_type = infer_interface_type(raw_name)
+                default_mode = "l3" if detected_type in {
+                    "svi", "loopback", "tunnel", "sub_interface"
+                } else "access"
+                new_id = f"intf-{device['id']}-{re.sub(r'[^a-zA-Z0-9]+', '-', raw_name).strip('-').lower()}"
+                conn.execute(
+                    """INSERT INTO interfaces (
+                           id, device_id, interface_name, description,
+                           admin_status, oper_status, speed, if_index,
+                           interface_type, switchport_mode, is_l3, ip_enabled, last_seen
+                       ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, FALSE, 0, ?)
+                       ON CONFLICT(id) DO UPDATE SET
+                           admin_status = excluded.admin_status,
+                           oper_status = excluded.oper_status,
+                           speed = COALESCE(excluded.speed, interfaces.speed),
+                           description = CASE WHEN excluded.description <> '' THEN excluded.description ELSE interfaces.description END,
+                           last_seen = excluded.last_seen""",
+                    (
+                        new_id, device["id"], raw_name, description,
+                        admin_stat, oper_stat, speed_bps,
+                        if_index_val,
+                        detected_type, default_mode, observed_at,
+                    ),
+                )
+                existing_by_key.setdefault(key, []).append({"id": new_id, "interface_name": raw_name})
+                updated += 1
+
+        conn.commit()
+        return updated
+    finally:
+        conn.close()
+
+
 def _upsert_interfaces(device: dict[str, Any], interface_rows: list[dict[str, Any]]) -> int:
     if not interface_rows:
         return 0
@@ -370,15 +520,15 @@ def _upsert_interfaces(device: dict[str, Any], interface_rows: list[dict[str, An
                 existing_by_key.setdefault(key, []).append(row["id"])
         # ``interfaces`` is a current-state projection, not a history table.
         # Preserve the row identity for topology references, but remove the
-        # address/status snapshot from interfaces that disappeared from the
-        # authoritative inventory used by this successful collection.
+        # address snapshot from interfaces that disappeared from the IP-bearing
+        # inventory. Keep admin_status and oper_status intact because physical
+        # and L2 bridge ports are discovered and maintained via SNMP IF-MIB.
         for row in existing_rows:
             if normalize_interface_name(row["interface_name"]) not in current_keys:
                 conn.execute(
                     """UPDATE interfaces SET
                            primary_ip = '', ip_address = '', ip_prefix_length = NULL,
                            is_l3 = FALSE, ip_enabled = 0,
-                           admin_status = 'unknown', oper_status = 'unknown',
                            last_seen = ?
                        WHERE id = ?""",
                     (observed_at, row["id"]),
@@ -399,7 +549,8 @@ def _upsert_interfaces(device: dict[str, Any], interface_rows: list[dict[str, An
                     conn.execute(
                         """UPDATE interfaces SET
                                description = COALESCE(?, description),
-                               admin_status = ?, oper_status = ?,
+                               admin_status = CASE WHEN ? <> 'unknown' THEN ? ELSE admin_status END,
+                               oper_status = CASE WHEN ? <> 'unknown' THEN ? ELSE oper_status END,
                                primary_ip = ?, ip_address = ?, is_l3 = ?,
                                ip_enabled = ?,
                                ip_prefix_length = ?,
@@ -414,7 +565,10 @@ def _upsert_interfaces(device: dict[str, Any], interface_rows: list[dict[str, An
                                last_seen = ?
                            WHERE id = ?""",
                         (
-                            item.get("description"), item["admin_status"], item["oper_status"], interface_ip,
+                            item.get("description"),
+                            item["admin_status"], item["admin_status"],
+                            item["oper_status"], item["oper_status"],
+                            interface_ip,
                             interface_ip, l3_enabled, ip_enabled, item.get("prefix_length"),
                             detected_interface_type, detected_interface_type, detected_interface_type,
                             default_mode, observed_at, existing_id,
@@ -470,6 +624,24 @@ def collect_interface_status_target(device_id: str) -> dict[str, Any]:
             'vlan_projection': {'vlans': 0, 'interfaces': 0},
             'prefix_sync': {'ok': True, 'skipped': True},
         }
+
+    # ── SNMP-First: Collect authoritative physical and operational port states ──
+    snmp_updated = 0
+    snmp_interfaces = None
+    if collect_interfaces:
+        try:
+            snmp_interfaces = _collect_snmp_interfaces(device)
+            if snmp_interfaces:
+                snmp_updated = _upsert_snmp_interfaces(device, snmp_interfaces)
+                logger.info(
+                    "SNMP-First successfully synchronized %d interfaces for %s",
+                    len(snmp_interfaces),
+                    device.get("hostname") or device_id,
+                )
+        except Exception as snmp_exc:
+            logger.info("SNMP interface collection for %s skipped/failed: %s", device_id, snmp_exc)
+
+    payload = {"categories": [], "collected_at": _now()}
     try:
         # Status and description use separate vendor TextFSM grammars. The
         # dedicated description command is authoritative for this field.
@@ -479,12 +651,14 @@ def collect_interface_status_target(device_id: str) -> dict[str, Any]:
             auth_role="auto",
         )
     except Exception as exc:
-        message = _friendly_collection_error(exc)
-        logger.warning("Interface status collection failed for %s: %s", device.get("hostname") or device_id, message, exc_info=True)
-        raise RuntimeError(message) from exc
+        if not snmp_interfaces:
+            message = _friendly_collection_error(exc)
+            logger.warning("Interface status collection failed for %s: %s", device.get("hostname") or device_id, message, exc_info=True)
+            raise RuntimeError(message) from exc
+        logger.info("CLI evidence collection failed for %s (%s), but preserved SNMP interface data", device.get("hostname") or device_id, exc)
 
     category = next((item for item in payload.get("categories", []) if item.get("key") == "interfaces"), {})
-    if collect_interfaces and not category.get("success", False):
+    if collect_interfaces and not category.get("success", False) and not snmp_interfaces:
         raise RuntimeError(str(category.get("error") or "接口状态采集失败"))
     description_category = next(
         (item for item in payload.get("categories", []) if item.get("key") == "interface_description"),
@@ -547,15 +721,17 @@ def collect_interface_status_target(device_id: str) -> dict[str, Any]:
         "success": True,
         "device_id": device_id,
         "hostname": device.get("hostname") or device_id,
-        "interface_count": len(rows),
-        "updated_count": updated,
+        "interface_count": len(rows) if rows else (len(snmp_interfaces) if snmp_interfaces else 0),
+        "updated_count": updated + snmp_updated,
+        "snmp_updated_count": snmp_updated,
+        "snmp_used": bool(snmp_interfaces),
         "description_updated_count": description_updated,
         "vlan_projection": vlan_projection,
         "unknown_status_count": unknown,
         "parsed_count": len(parsed_by_interface),
         "ip_bearing_count": sum(1 for row in rows if row["interface_ip"]),
         "status_only_count": sum(1 for row in rows if not row["interface_ip"]),
-        "parser": "textfsm",
+        "parser": "snmp+textfsm" if snmp_interfaces else "textfsm",
         "command": (category.get("commands") or [""])[0],
         "collected_at": payload.get("collected_at") or _now(),
         "prefix_sync": prefix_sync,

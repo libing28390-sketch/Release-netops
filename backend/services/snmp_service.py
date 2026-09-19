@@ -90,6 +90,7 @@ def _set_result_cache(key: str, value):
 
 # Standard IF-MIB OIDs (all vendors)
 IF_DESCR       = '1.3.6.1.2.1.2.2.1.2'
+IF_ADMIN_STATUS = '1.3.6.1.2.1.2.2.1.7'
 IF_OPER_STATUS = '1.3.6.1.2.1.2.2.1.8'
 IF_SPEED       = '1.3.6.1.2.1.2.2.1.5'
 IF_IN_OCTETS   = '1.3.6.1.2.1.2.2.1.10'
@@ -150,6 +151,7 @@ DEFAULT_INTERFACE_CONFIG = {
     'if_name_oid': IF_NAME,
     'if_descr_oid': IF_DESCR,
     'if_alias_oid': IF_ALIAS,
+    'if_admin_status_oid': IF_ADMIN_STATUS,
     'if_oper_status_oid': IF_OPER_STATUS,
     'if_high_speed_oid': IF_HIGH_SPEED,
     'if_speed_oid': IF_SPEED,
@@ -194,6 +196,8 @@ _INTERFACE_OID_ALIASES = {
     'if_name': 'if_name_oid',
     'if_descr': 'if_descr_oid',
     'if_alias': 'if_alias_oid',
+    'if_admin_status': 'if_admin_status_oid',
+    'admin_status_oid': 'if_admin_status_oid',
     'if_oper_status': 'if_oper_status_oid',
     'if_high_speed': 'if_high_speed_oid',
     'if_speed': 'if_speed_oid',
@@ -2516,7 +2520,7 @@ async def collect_interface_data(
             interfaces[idx] = {'name': val, 'index': idx}
 
         # Step 2: Parallel fetch of all independent OIDs using GetBulk
-        (status_rows, hspeed_rows, speed_rows,
+        (status_rows, admin_status_rows, hspeed_rows, speed_rows,
          hc_in_rows, hc_out_rows, alias_rows,
          in_err_rows, out_err_rows, in_disc_rows, out_disc_rows,
          in_ucast_rows, out_ucast_rows,
@@ -2526,6 +2530,7 @@ async def collect_interface_data(
          fcs32_rows,
          sys_uptime_raw, lc_rows) = await asyncio.gather(
             _walk(config['if_oper_status_oid']),
+            _walk(config.get('if_admin_status_oid') or IF_ADMIN_STATUS),
             _walk(config['if_high_speed_oid']),
             _walk(config['if_speed_oid']),
             _typed_walk(config['if_hc_in_octets_oid']) if config['counter_mode'] in {'auto', '64'} else asyncio.sleep(0, result=[]),
@@ -2632,6 +2637,16 @@ async def collect_interface_data(
             if idx in interfaces:
                 s = int(val) if val.isdigit() else 2
                 interfaces[idx]['status'] = 'up' if s == 1 else 'down' if s == 2 else 'testing'
+
+        # ifAdminStatus
+        for idx, val in admin_status_rows:
+            if idx in interfaces:
+                s = int(val) if val.isdigit() else 2
+                interfaces[idx]['admin_status'] = 'up' if s == 1 else 'down' if s == 2 else 'testing'
+
+        for idx, iface in interfaces.items():
+            if 'admin_status' not in iface:
+                iface['admin_status'] = 'up' if iface.get('status') == 'up' else 'down'
 
         # Speed
         speed_map = {idx: int(val) // 1_000_000 for idx, val in speed_rows if val.isdigit()}
