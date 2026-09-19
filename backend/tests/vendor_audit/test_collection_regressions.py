@@ -64,7 +64,8 @@ def test_interface_snapshot_clears_missing_current_rows(monkeypatch):
     stale = dict(connection.execute("SELECT * FROM interfaces WHERE id = 'old'").fetchone())
     assert stale['primary_ip'] == ''
     assert stale['ip_enabled'] == 0
-    assert stale['oper_status'] == 'unknown'
+    assert stale['admin_status'] == 'up'
+    assert stale['oper_status'] == 'up'
     current = dict(connection.execute("SELECT * FROM interfaces WHERE id = 'current'").fetchone())
     assert current['interface_name'] == 'LoopBack0'
     assert current['primary_ip'] == '10.0.0.10'
@@ -104,10 +105,14 @@ def test_interface_snapshot_uses_boolean_flags_for_postgresql_compatibility(monk
 
     assert recorder.stale_snapshot_sql
     assert len(recorder.boolean_updates) == 1
-    _, params = recorder.boolean_updates[0]
-    assert params[5] is True
-    assert type(params[6]) is int
-    assert params[6] == 1
+    sql, params = recorder.boolean_updates[0]
+    is_l3_param_index = sql.index('is_l3 = ?')
+    is_l3_param_index = sql[:is_l3_param_index].count('?')
+    ip_enabled_param_index = sql.index('ip_enabled = ?')
+    ip_enabled_param_index = sql[:ip_enabled_param_index].count('?')
+    assert params[is_l3_param_index] is True
+    assert type(params[ip_enabled_param_index]) is int
+    assert params[ip_enabled_param_index] == 1
 
 
 def test_device_ip_output_supersedes_legacy_inventory_rows():
