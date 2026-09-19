@@ -139,8 +139,7 @@ const TopologySiteOverview: React.FC<TopologySiteOverviewProps> = ({ language, s
                       </span>
                       <div className="min-w-0">
                         <div className="truncate text-sm font-extrabold text-slate-900">{site.name}</div>
-                        <div className="mt-0.5 text-[10px] font-semibold uppercase tracking-[0.12em] text-slate-400">{site.id}</div>
-           </div>
+                      </div>
                      </div>
                     <span className={`h-2.5 w-2.5 shrink-0 rounded-full ${healthy ? 'bg-emerald-500' : 'bg-amber-500'}`} title={healthy ? 'Healthy' : 'Needs attention'} />
                   </div>

@@ -1902,19 +1902,25 @@ def _rebuild_links_from_observations_unlocked() -> int:
                 )
                 ordered[0]['port_raw'] = display_name
                 ordered[0]['port_normalized'] = normalize_interface_name(display_name)
-            if src_dev and src_port_norm and not src_intf_id:
-                src_intf_id = str(uuid.uuid4())
-                conn.execute(
-                    "INSERT INTO interfaces (id, device_id, interface_name, admin_status, oper_status) VALUES (?, ?, ?, 'up', 'up')",
-                    (src_intf_id, src_dev, ordered[0]['port_raw'] or src_port)
-                )
-                interface_map[(src_dev, src_port_norm)] = {
-                    'id': src_intf_id,
-                    'device_id': src_dev,
-                    'interface_name': ordered[0]['port_raw'] or src_port,
-                    'display_name': _clean_interface_display_name(ordered[0]['port_raw'] or src_port),
-                    'interface_type': 'physical',
-                }
+            if src_dev and src_port_norm:
+                if not src_intf_id:
+                    src_intf_id = str(uuid.uuid4())
+                    conn.execute(
+                        "INSERT INTO interfaces (id, device_id, interface_name, admin_status, oper_status) VALUES (?, ?, ?, 'up', 'up')",
+                        (src_intf_id, src_dev, ordered[0]['port_raw'] or src_port)
+                    )
+                    interface_map[(src_dev, src_port_norm)] = {
+                        'id': src_intf_id,
+                        'device_id': src_dev,
+                        'interface_name': ordered[0]['port_raw'] or src_port,
+                        'display_name': _clean_interface_display_name(ordered[0]['port_raw'] or src_port),
+                        'interface_type': 'physical',
+                    }
+                else:
+                    conn.execute(
+                        "UPDATE interfaces SET oper_status = 'up', admin_status = 'up' WHERE id = ? AND (oper_status IN ('down', 'unknown') OR admin_status IN ('down', 'unknown'))",
+                        (src_intf_id,)
+                    )
 
             # Resolve target_interface_id
             tgt_dev = ordered[1]['device_id']
@@ -1929,19 +1935,25 @@ def _rebuild_links_from_observations_unlocked() -> int:
                 )
                 ordered[1]['port_raw'] = display_name
                 ordered[1]['port_normalized'] = normalize_interface_name(display_name)
-            if tgt_dev and tgt_port_norm and not tgt_intf_id:
-                tgt_intf_id = str(uuid.uuid4())
-                conn.execute(
-                    "INSERT INTO interfaces (id, device_id, interface_name, admin_status, oper_status) VALUES (?, ?, ?, 'up', 'up')",
-                    (tgt_intf_id, tgt_dev, ordered[1]['port_raw'] or tgt_port)
-                )
-                interface_map[(tgt_dev, tgt_port_norm)] = {
-                    'id': tgt_intf_id,
-                    'device_id': tgt_dev,
-                    'interface_name': ordered[1]['port_raw'] or tgt_port,
-                    'display_name': _clean_interface_display_name(ordered[1]['port_raw'] or tgt_port),
-                    'interface_type': 'physical',
-                }
+            if tgt_dev and tgt_port_norm:
+                if not tgt_intf_id:
+                    tgt_intf_id = str(uuid.uuid4())
+                    conn.execute(
+                        "INSERT INTO interfaces (id, device_id, interface_name, admin_status, oper_status) VALUES (?, ?, ?, 'up', 'up')",
+                        (tgt_intf_id, tgt_dev, ordered[1]['port_raw'] or tgt_port)
+                    )
+                    interface_map[(tgt_dev, tgt_port_norm)] = {
+                        'id': tgt_intf_id,
+                        'device_id': tgt_dev,
+                        'interface_name': ordered[1]['port_raw'] or tgt_port,
+                        'display_name': _clean_interface_display_name(ordered[1]['port_raw'] or tgt_port),
+                        'interface_type': 'physical',
+                    }
+                else:
+                    conn.execute(
+                        "UPDATE interfaces SET oper_status = 'up', admin_status = 'up' WHERE id = ? AND (oper_status IN ('down', 'unknown') OR admin_status IN ('down', 'unknown'))",
+                        (tgt_intf_id,)
+                    )
 
             member_rows = aggregation.get('members') or []
             metadata = {
@@ -1986,7 +1998,7 @@ def _rebuild_links_from_observations_unlocked() -> int:
                     ordered[1]['port_normalized'],
                     '+'.join(protocols),
                     confidence,
-                    aggregation.get('status') if is_aggregation else 'unknown',
+                    aggregation.get('status') if is_aggregation else ('up' if len(observations) > 0 else 'unknown'),
                     0,
                     len(observations),
                     _safe_json(metadata),
@@ -2343,7 +2355,11 @@ async def discover_device_neighbors(
             raise RuntimeError('device_not_found')
         if device.get('status') == 'offline':
             raise RuntimeError('device_is_offline')
-        if not device.get('ip_address') or not device.get('username') or not device.get('password'):
+        if not device.get('ip_address'):
+            raise RuntimeError('device_ip_missing')
+        has_snmp = bool(device.get('snmp_community') or device.get('snmp_credential_id'))
+        has_ssh = bool(device.get('username') and device.get('password'))
+        if not has_snmp and not has_ssh:
             raise RuntimeError('device_credentials_incomplete')
 
         from services.topology_lldp_snapshot_service import (
@@ -2361,7 +2377,12 @@ async def discover_device_neighbors(
 
         # Fast, non-intrusive discovery: SNMP-first LLDP/CDP, safe fallback to single-command CLI LLDP only if needed
         observations, method = await _collect_device_observations(device)
-        aggregation_summary = await asyncio.to_thread(_sync_aggregation_inventory, device)
+        aggregation_summary = {'parents': 0, 'members': 0}
+        if method != 'snmp' and has_ssh:
+            try:
+                aggregation_summary = await asyncio.to_thread(_sync_aggregation_inventory, device)
+            except Exception:
+                pass
         protocol_summary = {
             'success': True,
             'observations_count': 0,
