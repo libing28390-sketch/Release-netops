@@ -56,7 +56,7 @@
       },
       "targets": [
         {
-          "expr": "sum(rate(ifHCInOctets[5m])) * 8",
+          "expr": "sum(rate(ifHCInOctets{site_name=~\"$site\",vendor=~\"$vendor\",role=~\"$role\",hostname=~\"$device\"}[5m])) * 8",
           "refId": "A"
         }
       ]
@@ -109,7 +109,7 @@
       },
       "targets": [
         {
-          "expr": "sum(rate(ifHCOutOctets[5m])) * 8",
+          "expr": "sum(rate(ifHCOutOctets{site_name=~\"$site\",vendor=~\"$vendor\",role=~\"$role\",hostname=~\"$device\"}[5m])) * 8",
           "refId": "A"
         }
       ]
@@ -170,7 +170,7 @@
       },
       "targets": [
         {
-          "expr": "sum(rate(ifInErrors[5m]) + rate(ifOutErrors[5m]))",
+          "expr": "sum(rate(ifInErrors{site_name=~\"$site\",vendor=~\"$vendor\",role=~\"$role\",hostname=~\"$device\"}[5m]) + rate(ifOutErrors{site_name=~\"$site\",vendor=~\"$vendor\",role=~\"$role\",hostname=~\"$device\"}[5m]))",
           "refId": "A"
         }
       ]
@@ -231,7 +231,7 @@
       },
       "targets": [
         {
-          "expr": "sum(rate(ifInDiscards[5m]) + rate(ifOutDiscards[5m]))",
+          "expr": "sum(rate(ifInDiscards{site_name=~\"$site\",vendor=~\"$vendor\",role=~\"$role\",hostname=~\"$device\"}[5m]) + rate(ifOutDiscards{site_name=~\"$site\",vendor=~\"$vendor\",role=~\"$role\",hostname=~\"$device\"}[5m]))",
           "refId": "A"
         }
       ]
@@ -277,8 +277,8 @@
       },
       "targets": [
         {
-          "expr": "topk(10, rate(ifHCInOctets{site_id=~\"$site\",instance=~\"$device\"}[5m]) * 8)",
-          "legendFormat": "{{instance}} - {{ifName}}",
+          "expr": "topk(10, rate(ifHCInOctets{site_name=~\"$site\",vendor=~\"$vendor\",role=~\"$role\",hostname=~\"$device\"}[5m]) * 8)",
+          "legendFormat": "{{hostname}} ({{instance}}) - 端口 {{ifIndex}}",
           "refId": "A"
         }
       ]
@@ -324,8 +324,8 @@
       },
       "targets": [
         {
-          "expr": "topk(10, rate(ifHCOutOctets{site_id=~\"$site\",instance=~\"$device\"}[5m]) * 8)",
-          "legendFormat": "{{instance}} - {{ifName}}",
+          "expr": "topk(10, rate(ifHCOutOctets{site_name=~\"$site\",vendor=~\"$vendor\",role=~\"$role\",hostname=~\"$device\"}[5m]) * 8)",
+          "legendFormat": "{{hostname}} ({{instance}}) - 端口 {{ifIndex}}",
           "refId": "A"
         }
       ]
@@ -362,10 +362,54 @@
       },
       "targets": [
         {
-          "expr": "topk(20, (rate(ifHCInOctets{site_id=~\"$site\",instance=~\"$device\"}[5m]) * 8) / (ifHighSpeed * 1000000) * 100)",
+          "expr": "topk(20, max by (hostname, instance, ifIndex) ((rate(ifHCInOctets{site_name=~\"$site\",vendor=~\"$vendor\",role=~\"$role\",hostname=~\"$device\"}[5m]) * 8) / (ifHighSpeed * 1000000) * 100))",
           "format": "table",
           "instant": true,
           "refId": "A"
+        }
+      ],
+      "transformations": [
+        {
+          "id": "organize",
+          "options": {
+            "excludeByName": {
+              "Time": true,
+              "__name__": true,
+              "asset_id": true,
+              "nexora_asset_id": true,
+              "nexora_hostname": true,
+              "nexora_module": true,
+              "nexora_platform": true,
+              "nexora_role": true,
+              "nexora_site_id": true,
+              "nexora_site_name": true,
+              "nexora_tenant_id": true,
+              "nexora_vendor": true,
+              "job": true,
+              "tenant_id": true,
+              "site_id": true,
+              "site_name": true,
+              "platform": true
+            },
+            "indexByName": {
+              "hostname": 0,
+              "instance": 1,
+              "ifIndex": 2,
+              "ifName": 3,
+              "vendor": 4,
+              "role": 5,
+              "Value": 6
+            },
+            "renameByName": {
+              "hostname": "设备名称",
+              "instance": "管理 IP",
+              "ifIndex": "端口号 (ifIndex)",
+              "ifName": "接口名称",
+              "vendor": "厂商",
+              "role": "角色",
+              "Value": "带宽利用率"
+            }
+          }
         }
       ]
     },
@@ -401,10 +445,54 @@
       },
       "targets": [
         {
-          "expr": "topk(20, rate(ifInErrors{site_id=~\"$site\",instance=~\"$device\"}[5m]) + rate(ifOutErrors{site_id=~\"$site\",instance=~\"$device\"}[5m]) + rate(ifInDiscards{site_id=~\"$site\",instance=~\"$device\"}[5m]))",
+          "expr": "topk(20, sum by (hostname, instance, ifIndex) (rate(ifInErrors{site_name=~\"$site\",vendor=~\"$vendor\",role=~\"$role\",hostname=~\"$device\"}[5m]) + rate(ifOutErrors{site_name=~\"$site\",vendor=~\"$vendor\",role=~\"$role\",hostname=~\"$device\"}[5m]) + rate(ifInDiscards{site_name=~\"$site\",vendor=~\"$vendor\",role=~\"$role\",hostname=~\"$device\"}[5m])))",
           "format": "table",
           "instant": true,
           "refId": "A"
+        }
+      ],
+      "transformations": [
+        {
+          "id": "organize",
+          "options": {
+            "excludeByName": {
+              "Time": true,
+              "__name__": true,
+              "asset_id": true,
+              "nexora_asset_id": true,
+              "nexora_hostname": true,
+              "nexora_module": true,
+              "nexora_platform": true,
+              "nexora_role": true,
+              "nexora_site_id": true,
+              "nexora_site_name": true,
+              "nexora_tenant_id": true,
+              "nexora_vendor": true,
+              "job": true,
+              "tenant_id": true,
+              "site_id": true,
+              "site_name": true,
+              "platform": true
+            },
+            "indexByName": {
+              "hostname": 0,
+              "instance": 1,
+              "ifIndex": 2,
+              "ifName": 3,
+              "vendor": 4,
+              "role": 5,
+              "Value": 6
+            },
+            "renameByName": {
+              "hostname": "设备名称",
+              "instance": "管理 IP",
+              "ifIndex": "端口号 (ifIndex)",
+              "ifName": "接口名称",
+              "vendor": "厂商",
+              "role": "角色",
+              "Value": "错误/丢弃率 (pps)"
+            }
+          }
         }
       ]
     }
@@ -429,14 +517,14 @@
             "$__all"
           ]
         },
-        "definition": "label_values(ifOperStatus, site_id)",
+        "definition": "label_values(ifOperStatus, site_name)",
         "includeAll": true,
         "label": "站点",
         "multi": true,
         "name": "site",
         "options": [],
         "query": {
-          "query": "label_values(ifOperStatus, site_id)",
+          "query": "label_values(ifOperStatus, site_name)",
           "refId": "StandardVariableQuery"
         },
         "refresh": 1,
@@ -453,14 +541,62 @@
             "$__all"
           ]
         },
-        "definition": "label_values(ifOperStatus{site_id=~\"$site\"}, instance)",
+        "definition": "label_values(ifOperStatus{site_name=~\"$site\"}, vendor)",
+        "includeAll": true,
+        "label": "厂商",
+        "multi": true,
+        "name": "vendor",
+        "options": [],
+        "query": {
+          "query": "label_values(ifOperStatus{site_name=~\"$site\"}, vendor)",
+          "refId": "StandardVariableQuery"
+        },
+        "refresh": 1,
+        "type": "query"
+      },
+      {
+        "allValue": ".*",
+        "current": {
+          "selected": true,
+          "text": [
+            "All"
+          ],
+          "value": [
+            "$__all"
+          ]
+        },
+        "definition": "label_values(ifOperStatus{site_name=~\"$site\",vendor=~\"$vendor\"}, role)",
+        "includeAll": true,
+        "label": "角色",
+        "multi": true,
+        "name": "role",
+        "options": [],
+        "query": {
+          "query": "label_values(ifOperStatus{site_name=~\"$site\",vendor=~\"$vendor\"}, role)",
+          "refId": "StandardVariableQuery"
+        },
+        "refresh": 1,
+        "type": "query"
+      },
+      {
+        "allValue": ".*",
+        "current": {
+          "selected": true,
+          "text": [
+            "All"
+          ],
+          "value": [
+            "$__all"
+          ]
+        },
+        "definition": "label_values(ifOperStatus{site_name=~\"$site\",vendor=~\"$vendor\",role=~\"$role\"}, hostname)",
         "includeAll": true,
         "label": "设备",
         "multi": true,
         "name": "device",
         "options": [],
         "query": {
-          "query": "label_values(ifOperStatus{site_id=~\"$site\"}, instance)",
+          "query": "label_values(ifOperStatus{site_name=~\"$site\",vendor=~\"$vendor\",role=~\"$role\"}, hostname)",
           "refId": "StandardVariableQuery"
         },
         "refresh": 1,
@@ -475,5 +611,5 @@
   "timezone": "browser",
   "title": "04 接口流量与健康 (Interface Traffic & Health)",
   "uid": "nexora-network-interface",
-  "version": 1
+  "version": 2
 }

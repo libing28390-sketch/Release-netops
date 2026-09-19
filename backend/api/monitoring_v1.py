@@ -19,7 +19,7 @@ from typing import Any, Mapping
 from urllib.parse import urlparse
 from urllib.request import Request as UrlRequest, ProxyHandler, build_opener
 
-from fastapi import APIRouter, HTTPException, Query
+from fastapi import APIRouter, HTTPException, Query, Response
 from pydantic import BaseModel, Field
 
 from core.rbac import require_role
@@ -29,6 +29,14 @@ from database import get_db_connection
 from services.audit_service import log_audit_event
 from services.metric_provider import ShadowMetricProvider, provider_from_environment
 from services.vault_service import resolve_collector_credentials
+from services.monitoring_export_service import (
+    generate_interfaces_report,
+    generate_devices_report,
+    generate_outbound_report,
+    fetch_interfaces_report_data,
+    fetch_devices_report_data,
+    fetch_outbound_report_data,
+)
 from services.monitoring_compiler import (
     CompileError,
     build_assignments,
@@ -1092,10 +1100,16 @@ def preview_device_assignments(device_id: str, _user=require_role("Viewer")):
 
 def _load_compile_inputs(conn, collector_id: str, user: Any = None):
     tenant = _tenant_id(user)
-    device_sql = "SELECT * FROM devices WHERE status IS NULL OR LOWER(status) = 'online'"
+    device_sql = """
+        SELECT d.*,
+               COALESCE(NULLIF(s.site_name, ''), NULLIF(s.site_code, ''), CASE WHEN SUBSTR(COALESCE(d.site, ''), 1, 5) = 'site-' THEN '' ELSE COALESCE(d.site, '') END, '') AS site_name
+        FROM devices d
+        LEFT JOIN sites s ON (s.id = d.site OR s.site_code = d.site OR s.site_name = d.site)
+        WHERE d.status IS NULL OR LOWER(d.status) = 'online'
+    """
     device_params: tuple[Any, ...] = ()
     if tenant is not None:
-        device_sql += " AND COALESCE(tenant_id, 'tenant-default') = ?"
+        device_sql += " AND COALESCE(d.tenant_id, 'tenant-default') = ?"
         device_params = (tenant,)
     devices = [_dict(row) for row in conn.execute(device_sql, device_params).fetchall()]
     try:
@@ -1422,6 +1436,117 @@ def collection_health(collector_id: str | None = Query(default=None), _user=requ
         return {"items": items, "summary": summarize_collection_health(items), "provider": str(os.environ.get("MONITORING_METRIC_BACKEND", "native")).lower()}
     finally:
         conn.close()
+
+
+@router.get("/reports/data")
+def get_monitoring_report_data(
+    report_type: str = Query(default="interfaces"),
+    keyword: str | None = Query(default=None),
+    vendor: str | None = Query(default=None),
+    site: str | None = Query(default=None),
+    role: str | None = Query(default=None),
+    status: str | None = Query(default=None),
+    min_util: float | None = Query(default=None),
+    has_errors: bool | None = Query(default=None),
+    high_load_only: bool | None = Query(default=None),
+    isp: str | None = Query(default=None),
+    target_type: str | None = Query(default=None),
+    _user=require_role("Viewer"),
+):
+    filters = {
+        "keyword": keyword,
+        "vendor": vendor,
+        "site": site,
+        "role": role,
+        "status": status,
+        "min_util": min_util,
+        "has_errors": has_errors,
+        "high_load_only": high_load_only,
+        "isp": isp,
+        "target_type": target_type,
+    }
+    if report_type == "devices":
+        return fetch_devices_report_data(filters=filters)
+    elif report_type == "outbound":
+        return fetch_outbound_report_data(filters=filters)
+    return fetch_interfaces_report_data(filters=filters)
+
+
+@router.get("/export/interfaces")
+def export_interfaces_report(
+    format: str = Query(default="xlsx"),
+    keyword: str | None = Query(default=None),
+    vendor: str | None = Query(default=None),
+    site: str | None = Query(default=None),
+    role: str | None = Query(default=None),
+    status: str | None = Query(default=None),
+    min_util: float | None = Query(default=None),
+    has_errors: bool | None = Query(default=None),
+    _user=require_role("Viewer"),
+):
+    filters = {
+        "keyword": keyword,
+        "vendor": vendor,
+        "site": site,
+        "role": role,
+        "status": status,
+        "min_util": min_util,
+        "has_errors": has_errors,
+    }
+    content, filename, media_type = generate_interfaces_report(format_type=format, filters=filters)
+    return Response(
+        content=content,
+        media_type=media_type,
+        headers={"Content-Disposition": f'attachment; filename="{filename}"'}
+    )
+
+
+@router.get("/export/devices")
+def export_devices_report(
+    format: str = Query(default="xlsx"),
+    keyword: str | None = Query(default=None),
+    vendor: str | None = Query(default=None),
+    site: str | None = Query(default=None),
+    role: str | None = Query(default=None),
+    status: str | None = Query(default=None),
+    high_load_only: bool | None = Query(default=None),
+    _user=require_role("Viewer"),
+):
+    filters = {
+        "keyword": keyword,
+        "vendor": vendor,
+        "site": site,
+        "role": role,
+        "status": status,
+        "high_load_only": high_load_only,
+    }
+    content, filename, media_type = generate_devices_report(format_type=format, filters=filters)
+    return Response(
+        content=content,
+        media_type=media_type,
+        headers={"Content-Disposition": f'attachment; filename="{filename}"'}
+    )
+
+
+@router.get("/export/outbound")
+def export_outbound_report(
+    format: str = Query(default="xlsx"),
+    keyword: str | None = Query(default=None),
+    isp: str | None = Query(default=None),
+    target_type: str | None = Query(default=None),
+    _user=require_role("Viewer"),
+):
+    filters = {
+        "keyword": keyword,
+        "isp": isp,
+        "target_type": target_type,
+    }
+    content, filename, media_type = generate_outbound_report(format_type=format, filters=filters)
+    return Response(
+        content=content,
+        media_type=media_type,
+        headers={"Content-Disposition": f'attachment; filename="{filename}"'}
+    )
 
 
 @router.get("/shadow-comparisons")

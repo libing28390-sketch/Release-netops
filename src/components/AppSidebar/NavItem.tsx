@@ -1,4 +1,5 @@
 import React from 'react';
+import { ChevronDown } from 'lucide-react';
 import { cn } from '../../lib/cn';
 
 interface NavItemProps {
@@ -20,6 +21,12 @@ interface NavItemProps {
   badgeDot?: boolean;
   /** Critical dot color (red instead of cyan) */
   badgeDotCritical?: boolean;
+  /** Whether this item has collapsible nested children */
+  hasChildren?: boolean;
+  /** Whether the nested children are currently open */
+  isOpen?: boolean;
+  /** Toggle callback for expanding/collapsing */
+  onToggleOpen?: (e: React.MouseEvent) => void;
   /** Click handler */
   onClick: () => void;
 }
@@ -47,6 +54,9 @@ const NavItem: React.FC<NavItemProps> = ({
   mini = false,
   badgeDot = false,
   badgeDotCritical = false,
+  hasChildren = false,
+  isOpen = false,
+  onToggleOpen,
   onClick,
 }) => {
   const ACCENT = '#0078d4';
@@ -126,6 +136,28 @@ const NavItem: React.FC<NavItemProps> = ({
         {label}
       </span>
       {badge}
+      {hasChildren && (
+        <span
+          role="button"
+          tabIndex={0}
+          onClick={(e) => {
+            if (onToggleOpen) {
+              e.stopPropagation();
+              onToggleOpen(e);
+            }
+          }}
+          className="p-1 -mr-1 rounded hover:bg-[var(--app-hover-bg)] text-[var(--muted-text)] hover:text-[var(--app-text)] transition-colors cursor-pointer"
+          aria-label={isOpen ? 'Collapse sub-menu' : 'Expand sub-menu'}
+        >
+          <ChevronDown
+            size={13}
+            className={cn(
+              'transition-transform duration-200',
+              !isOpen && '-rotate-90'
+            )}
+          />
+        </span>
+      )}
     </button>
   );
 };

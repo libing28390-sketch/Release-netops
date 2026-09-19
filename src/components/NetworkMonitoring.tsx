@@ -2,7 +2,7 @@ import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import {
   Router, Search, RefreshCw, Cpu, MemoryStick, Thermometer, Wind, Zap,
   Activity, Clock, AlertTriangle, CheckCircle2, Database, Eye,
-  ChevronLeft, ChevronRight, Network,
+  ChevronLeft, ChevronRight, Network, FileSpreadsheet,
 } from 'lucide-react';
 import { ResponsiveContainer, AreaChart, Area, XAxis, YAxis, Tooltip, CartesianGrid, Brush } from 'recharts';
 import type { Device } from '../types';
@@ -168,6 +168,38 @@ const NetworkMonitoring: React.FC<NetworkMonitoringProps> = ({ language, devices
   const [dataError, setDataError] = useState('');
   const [alertTotal, setAlertTotal] = useState(0);
   const [alertsPage, setAlertsPage] = useState(1);
+  const [exportingExcel, setExportingExcel] = useState(false);
+
+  const handleExportInterfacesExcel = async () => {
+    setExportingExcel(true);
+    try {
+      const token = localStorage.getItem('netops_token');
+      const headers: Record<string, string> = {};
+      if (token) headers['Authorization'] = `Bearer ${token}`;
+
+      const res = await fetch('/api/monitoring/v1/export/interfaces?format=xlsx', { headers, credentials: 'same-origin' });
+      if (!res.ok) throw new Error(`HTTP ${res.status}`);
+      const blob = await res.blob();
+      const disposition = res.headers.get('Content-Disposition') || '';
+      let filename = `nexora_interfaces_${new Date().toISOString().slice(0, 10)}.xlsx`;
+      const match = disposition.match(/filename="?([^"]+)"?/);
+      if (match && match[1]) filename = match[1];
+
+      const url = window.URL.createObjectURL(blob);
+      const a = document.createElement('a');
+      a.href = url;
+      a.download = filename;
+      document.body.appendChild(a);
+      a.click();
+      window.URL.revokeObjectURL(url);
+      document.body.removeChild(a);
+      showToast(zh ? `已成功导出报表：${filename}` : `Exported: ${filename}`, 'success');
+    } catch (e: any) {
+      showToast(zh ? `导出失败: ${e?.message || '网络异常'}` : `Export error: ${e?.message}`, 'error');
+    } finally {
+      setExportingExcel(false);
+    }
+  };
   const [alertsSeverity, setAlertsSeverity] = useState('all');
   const [alertsPhase, setAlertsPhase] = useState('all');
 
@@ -791,6 +823,24 @@ const NetworkMonitoring: React.FC<NetworkMonitoringProps> = ({ language, devices
               <RefreshCw size={12} className={refreshing ? 'animate-spin text-blue-600' : ''} />
               <span>{zh ? '刷新' : 'Refresh'}</span>
             </button>
+            <button
+              type="button"
+              disabled={exportingExcel}
+              onClick={handleExportInterfacesExcel}
+              className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-xl text-xs font-bold border border-emerald-600/30 bg-emerald-50 dark:bg-emerald-950/40 text-emerald-700 dark:text-emerald-300 hover:bg-emerald-100 transition-all cursor-pointer"
+              title={zh ? '导出包含多工作表（接口状态、流量统计、高负荷预警、错包排行）的专业 Excel 报表' : 'Export interfaces multi-sheet Excel'}
+            >
+              <FileSpreadsheet size={13} className={exportingExcel ? 'animate-spin' : 'text-emerald-600 dark:text-emerald-400'} />
+              <span>{exportingExcel ? (zh ? '正在导出…' : 'Exporting…') : zh ? '导出 Excel' : 'Export Excel'}</span>
+            </button>
+            <a
+              href="/monitor/grafana"
+              className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-xl text-xs font-bold border border-cyan-500/20 bg-cyan-500/10 text-cyan-700 dark:text-cyan-300 hover:bg-cyan-500/20 transition-all cursor-pointer"
+              title={zh ? '在 Grafana 中查看全网接口与设备时序大盘' : 'View Grafana dashboards'}
+            >
+              <Activity size={13} />
+              <span>{zh ? 'Grafana 监控大盘' : 'Grafana Dashboard'}</span>
+            </a>
           </div>
         }
       />

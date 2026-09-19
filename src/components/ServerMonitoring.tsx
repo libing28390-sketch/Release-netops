@@ -718,6 +718,14 @@ const ServerMonitoring: React.FC<ServerMonitoringProps> = ({ language, devices, 
               <span className={`h-1.5 w-1.5 rounded-full ${autoRefresh ? 'bg-emerald-500 animate-pulse' : 'bg-gray-300'}`} />
               {autoRefresh ? '30s' : 'OFF'}
             </button>
+            <a
+              href="/monitor/grafana"
+              className="inline-flex items-center gap-1.5 rounded-xl border border-cyan-500/20 bg-cyan-500/10 px-3 py-1.5 text-xs font-bold text-cyan-700 transition-colors hover:bg-cyan-500/20 dark:text-cyan-300"
+              title={zh ? '在 Grafana 中查看主机 CPU Load、内存、磁盘与网络连接时序大盘' : 'View host CPU Load, memory, disk and network metrics in Grafana'}
+            >
+              <Activity size={13} />
+              <span>{zh ? 'Grafana 服务器大盘' : 'Grafana Server Dashboard'}</span>
+            </a>
             <button
               type="button"
               disabled={refreshing}

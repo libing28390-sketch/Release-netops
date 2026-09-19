@@ -134,6 +134,7 @@ export const usePageTitle = ({
     if (activeTab === 'server-monitoring') return language === 'zh' ? '服务器监控' : 'Server Monitoring';
     if (activeTab === 'network-monitoring') return language === 'zh' ? '网络监控' : 'Network Monitoring';
     if (activeTab === 'monitoring-dashboards') return language === 'zh' ? '监控大盘' : 'Monitoring Dashboards';
+    if (activeTab === 'monitoring-reports') return language === 'zh' ? '监控报表' : 'Monitoring Reports';
     if (activeTab === 'monitoring-plans') return language === 'zh' ? '采集计划' : 'Collection Plans';
     if (activeTab === 'monitoring-modules') return language === 'zh' ? '模块目录' : 'Module Catalog';
     if (activeTab === 'monitoring-collectors') return language === 'zh' ? '采集器管理' : 'Collectors';

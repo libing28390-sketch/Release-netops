@@ -1,4 +1,5 @@
 import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import { useNavigate } from 'react-router-dom';
 import {
   Activity,
   BarChart2,
@@ -14,8 +15,12 @@ import {
   ShieldCheck,
   Tv,
   Wifi,
+  Globe,
+  HardDrive,
+  FileSpreadsheet,
 } from 'lucide-react';
 import PageHero from '../components/PageHero';
+import ExportTableModal from '../components/ExportTableModal';
 
 interface GrafanaDashboardPageProps {
   language: 'zh' | 'en';
@@ -65,6 +70,22 @@ export const GRAFANA_DASHBOARDS = [
     descEn: 'vmagent probe up status, scrape durations and slowest targets ranking',
     icon: Layers,
   },
+  {
+    uid: 'nexora-network-outbound',
+    titleZh: '06 互联网出口',
+    titleEn: '06 Internet Outbound & WAN',
+    descZh: '边界网关出入向实时带宽、利用率走势与出口链路丢包诊断',
+    descEn: 'Gateway in/out bandwidth, utilization trends and WAN discards diagnostics',
+    icon: Globe,
+  },
+  {
+    uid: 'nexora-server-metrics',
+    titleZh: '07 服务器监控',
+    titleEn: '07 Server Metrics',
+    descZh: '主机 CPU Load、内存/Swap、磁盘空间与网络 TCP 连接',
+    descEn: 'Host CPU Load, Memory/Swap, disk usage and TCP connections',
+    icon: HardDrive,
+  },
 ];
 
 const TIME_RANGES = [
@@ -94,6 +115,7 @@ function resolveSystemTheme(): 'light' | 'dark' {
 
 const GrafanaDashboardPage: React.FC<GrafanaDashboardPageProps> = ({ language }) => {
   const zh = language === 'zh';
+  const navigate = useNavigate();
   const containerRef = useRef<HTMLDivElement>(null);
 
   const [selectedDashboard, setSelectedDashboard] = useState(GRAFANA_DASHBOARDS[0].uid);
@@ -105,6 +127,7 @@ const GrafanaDashboardPage: React.FC<GrafanaDashboardPageProps> = ({ language })
   const [timeRange, setTimeRange] = useState('6h');
   const [refreshRate, setRefreshRate] = useState('30s');
   const [isFullscreen, setIsFullscreen] = useState(false);
+  const [isExportModalOpen, setIsExportModalOpen] = useState(false);
 
   // Sync theme with Nexora's top-level data-theme attribute
   useEffect(() => {
@@ -223,11 +246,53 @@ const GrafanaDashboardPage: React.FC<GrafanaDashboardPageProps> = ({ language })
         }
         actions={
           <div className="flex flex-wrap items-center gap-2">
+            {selectedDashboard === 'network-outbound' && (
+              <button
+                type="button"
+                onClick={() => navigate('/monitor/outbound')}
+                className="inline-flex items-center gap-1.5 rounded-xl border border-blue-200 dark:border-blue-900/60 bg-blue-50 dark:bg-blue-950/40 px-3 py-2 text-xs font-semibold text-blue-700 dark:text-blue-300 shadow-sm hover:bg-blue-100 dark:hover:bg-blue-900/50 cursor-pointer transition-colors"
+                title={zh ? '配置与管理出口探针、目标与期望公网 IP' : 'Manage outbound probes and target overrides'}
+              >
+                <Globe size={14} className="text-blue-600 dark:text-blue-400" />
+                <span>{zh ? '探针配置管理' : 'Probes Config'}</span>
+              </button>
+            )}
+            {selectedDashboard === 'server-metrics' && (
+              <button
+                type="button"
+                onClick={() => navigate('/monitor/servers')}
+                className="inline-flex items-center gap-1.5 rounded-xl border border-purple-200 dark:border-purple-900/60 bg-purple-50 dark:bg-purple-950/40 px-3 py-2 text-xs font-semibold text-purple-700 dark:text-purple-300 shadow-sm hover:bg-purple-100 dark:hover:bg-purple-900/50 cursor-pointer transition-colors"
+                title={zh ? '查看服务器本地进程清单、磁盘明细与网络连接' : 'View server processes and disk status'}
+              >
+                <HardDrive size={14} className="text-purple-600 dark:text-purple-400" />
+                <span>{zh ? '进程与系统明细' : 'Processes Detail'}</span>
+              </button>
+            )}
+            {selectedDashboard === 'monitoring-health' && (
+              <button
+                type="button"
+                onClick={() => navigate('/monitor/collection-health')}
+                className="inline-flex items-center gap-1.5 rounded-xl border border-amber-200 dark:border-amber-900/60 bg-amber-50 dark:bg-amber-950/40 px-3 py-2 text-xs font-semibold text-amber-700 dark:text-amber-300 shadow-sm hover:bg-amber-100 dark:hover:bg-amber-900/50 cursor-pointer transition-colors"
+                title={zh ? '查看采集计划健康诊断与超时测试' : 'Collection diagnostics and tests'}
+              >
+                <Activity size={14} className="text-amber-600 dark:text-amber-400" />
+                <span>{zh ? '采集调度与诊断' : 'Collection Diagnostics'}</span>
+              </button>
+            )}
+            <button
+              type="button"
+              onClick={() => setIsExportModalOpen(true)}
+              className="inline-flex items-center gap-1.5 rounded-xl border border-emerald-600/30 bg-emerald-50 dark:bg-emerald-950/40 px-3 py-2 text-xs font-bold text-emerald-700 dark:text-emerald-300 shadow-sm hover:bg-emerald-100 dark:hover:bg-emerald-900/50 cursor-pointer transition-colors"
+              title={zh ? '导出包含多工作表的专业 Excel / CSV 报表' : 'Export multi-sheet Excel / CSV reports'}
+            >
+              <FileSpreadsheet size={14} className="text-emerald-600 dark:text-emerald-400" />
+              <span>{zh ? '导出监控报表 (Excel/CSV)' : 'Export Reports'}</span>
+            </button>
             <button
               type="button"
               onClick={() => void checkGrafana()}
               disabled={status === 'checking'}
-              className="inline-flex items-center gap-1.5 rounded-xl border border-slate-200 dark:border-zinc-800 bg-white dark:bg-zinc-900 px-3 py-2 text-xs font-semibold text-slate-700 dark:text-zinc-200 shadow-sm hover:border-cyan-300 disabled:cursor-wait disabled:opacity-60"
+              className="inline-flex items-center gap-1.5 rounded-xl border border-slate-200 dark:border-zinc-800 bg-white dark:bg-zinc-900 px-3 py-2 text-xs font-semibold text-slate-700 dark:text-zinc-200 shadow-sm hover:border-cyan-300 disabled:cursor-wait disabled:opacity-60 cursor-pointer"
             >
               <RefreshCw size={14} className={status === 'checking' ? 'animate-spin' : ''} />
               {zh ? '检查并刷新' : 'Check & refresh'}
@@ -237,7 +302,7 @@ const GrafanaDashboardPage: React.FC<GrafanaDashboardPageProps> = ({ language })
                 href={`/grafana/d/${selectedDashboard}/${selectedDashboard}?orgId=1`}
                 target="_blank"
                 rel="noreferrer"
-                className="inline-flex items-center gap-1.5 rounded-xl bg-cyan-600 px-3 py-2 text-xs font-bold text-white shadow-sm hover:bg-cyan-700"
+                className="inline-flex items-center gap-1.5 rounded-xl bg-cyan-600 px-3 py-2 text-xs font-bold text-white shadow-sm hover:bg-cyan-700 cursor-pointer"
               >
                 <ExternalLink size={14} />
                 {zh ? '在新窗口打开' : 'Open in New Tab'}
@@ -465,6 +530,13 @@ const GrafanaDashboardPage: React.FC<GrafanaDashboardPageProps> = ({ language })
           )}
         </div>
       </div>
+
+      <ExportTableModal
+        isOpen={isExportModalOpen}
+        onClose={() => setIsExportModalOpen(false)}
+        language={language}
+        currentDashboardUid={selectedDashboard}
+      />
     </div>
   );
 };

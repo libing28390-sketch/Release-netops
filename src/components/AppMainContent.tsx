@@ -15,6 +15,7 @@ const OutboundHealthPage = lazy(() => import('../pages/OutboundHealthPage'));
 const ServerMonitoring = lazy(() => import('./ServerMonitoring.tsx'));
 const NetworkMonitoring = lazy(() => import('./NetworkMonitoring.tsx'));
 const GrafanaDashboardPage = lazy(() => import('../pages/GrafanaDashboardPage'));
+const MonitoringReportsPage = lazy(() => import('../pages/MonitoringReportsPage'));
 const MonitoringManagementPage = lazy(() => import('./MonitoringManagementPage.tsx'));
 const DeviceHealthTab = lazy(() => import('../pages/DeviceHealthTab'));
 const DashboardTab = lazy(() => import('../pages/DashboardTab'));
@@ -431,8 +432,8 @@ const AppMainContent: React.FC = () => {
     activeTab === 'alert-history' || 
     activeTab === 'maintenance' || 
     activeTab === 'platform-registry' ||
-    activeTab === 'snmp-metric-templates' ||
     activeTab === 'monitoring-dashboards' ||
+    activeTab === 'monitoring-reports' ||
     activeTab === 'access' ||
     activeTab === 'access-favorites' ||
     activeTab === 'access-history' ||
@@ -553,6 +554,12 @@ const AppMainContent: React.FC = () => {
       {activeTab === 'monitoring-dashboards' && (
         <Suspense fallback={lazyPanelFallback}>
           <GrafanaDashboardPage language={language} />
+        </Suspense>
+      )}
+
+      {activeTab === 'monitoring-reports' && (
+        <Suspense fallback={lazyPanelFallback}>
+          <MonitoringReportsPage language={language as 'zh' | 'en'} />
         </Suspense>
       )}
 
@@ -1222,12 +1229,6 @@ const AppMainContent: React.FC = () => {
       {activeTab === 'platform-registry' && (
         <Suspense fallback={lazyPanelFallback}>
           <PlatformRegistryTab language={language} currentUser={currentUser} />
-        </Suspense>
-      )}
-
-      {activeTab === 'snmp-metric-templates' && (
-        <Suspense fallback={lazyPanelFallback}>
-          <SnmpMetricTemplatesTab language={language} showToast={showToast} />
         </Suspense>
       )}
 

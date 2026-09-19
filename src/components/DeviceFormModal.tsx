@@ -546,12 +546,12 @@ const DeviceFormModal: React.FC<DeviceFormModalProps> = ({
                   ? '监控、设备健康、接口流量、巡检和 WAN 采集统一使用“平台管理 → SNMP 指标模板”中已应用的型号模板 OID；设备页不再维护单台 OID，未应用模板时不会回退到内置 OID。'
                   : 'Monitoring, device health, interface traffic, inspection, and WAN collection use only the applied model template under Platform Management → SNMP Metric Templates. No built-in OID fallback is used.'}
                 <a
-                  href="/management/snmp-metric-templates"
+                  href="/monitoring"
                   target="_blank"
                   rel="noopener noreferrer"
                   className="ml-2 font-semibold text-cyan-700 underline underline-offset-2 hover:text-cyan-900"
                 >
-                  {language === 'zh' ? '打开模板管理' : 'Open template management'}
+                  {language === 'zh' ? '打开统一监控中心' : 'Open Unified Monitoring'}
                 </a>
               </p>
             </div>

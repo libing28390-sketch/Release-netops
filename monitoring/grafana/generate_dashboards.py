@@ -1,11 +1,13 @@
 import json
 import os
+from pathlib import Path
 
 false = False
 true = True
 null = None
 
-DASHBOARDS_DIR = r"D:\netops\netsops-main\monitoring\grafana\dashboards"
+ROOT_DIR = Path(__file__).resolve().parents[2]
+DASHBOARDS_DIR = ROOT_DIR / "monitoring" / "grafana" / "dashboards"
 DS_UID = "victoriametrics"
 
 def stat_panel(pid, title, expr, x, y, w=4, h=4, unit="", color="green", thresholds=None):
@@ -59,8 +61,57 @@ def timeseries_panel(pid, title, targets, x, y, w=12, h=8, unit=""):
         "targets": targets
     }
 
-def table_panel(pid, title, expr, x, y, w=12, h=8, unit=""):
-    return {
+def clean_organize_transformation(value_col_name="数值", extra_renames=None):
+    renames = {
+        "hostname": "设备名称",
+        "instance": "管理 IP",
+        "ifIndex": "端口号 (ifIndex)",
+        "ifName": "接口名称",
+        "vendor": "厂商",
+        "role": "角色",
+        "Value": value_col_name,
+    }
+    if extra_renames:
+        renames.update(extra_renames)
+    return [
+        {
+            "id": "organize",
+            "options": {
+                "excludeByName": {
+                    "Time": True,
+                    "__name__": True,
+                    "asset_id": True,
+                    "nexora_asset_id": True,
+                    "nexora_hostname": True,
+                    "nexora_module": True,
+                    "nexora_platform": True,
+                    "nexora_role": True,
+                    "nexora_site_id": True,
+                    "nexora_site_name": True,
+                    "nexora_tenant_id": True,
+                    "nexora_vendor": True,
+                    "job": True,
+                    "tenant_id": True,
+                    "site_id": True,
+                    "site_name": True,
+                    "platform": True,
+                },
+                "indexByName": {
+                    "hostname": 0,
+                    "instance": 1,
+                    "ifIndex": 2,
+                    "ifName": 3,
+                    "vendor": 4,
+                    "role": 5,
+                    "Value": 6,
+                },
+                "renameByName": renames,
+            }
+        }
+    ]
+
+def table_panel(pid, title, expr, x, y, w=12, h=8, unit="", transformations=None):
+    panel = {
         "id": pid,
         "title": title,
         "type": "table",
@@ -80,6 +131,9 @@ def table_panel(pid, title, expr, x, y, w=12, h=8, unit=""):
         },
         "targets": [{"expr": expr, "format": "table", "instant": True, "refId": "A"}]
     }
+    if transformations:
+        panel["transformations"] = transformations
+    return panel
 
 def bar_gauge_panel(pid, title, expr, x, y, w=12, h=8, unit="percent"):
     return {
@@ -112,80 +166,101 @@ def bar_gauge_panel(pid, title, expr, x, y, w=12, h=8, unit="percent"):
         "targets": [{"expr": expr, "legendFormat": "{{hostname}} ({{instance}})", "refId": "A"}]
     }
 
+def make_query_variable(name, label, query_str, multi=True, include_all=True):
+    return {
+        "allValue": ".*" if include_all else None,
+        "current": {"selected": True, "text": ["All"], "value": ["$__all"]} if include_all else {"selected": False, "text": "", "value": ""},
+        "definition": query_str,
+        "includeAll": include_all,
+        "label": label,
+        "multi": multi,
+        "name": name,
+        "options": [],
+        "query": {"query": query_str, "refId": "StandardVariableQuery"},
+        "refresh": 1,
+        "type": "query"
+    }
+
 # 1. Overview Dashboard
 def build_overview_dashboard():
+    sel = 'site_name=~"$site",vendor=~"$vendor",role=~"$role",hostname=~"$device"'
     cpu_expr = (
         "max by (hostname, instance, vendor) ("
-        "cpmCPUTotal1minRev{site_id=~\"$site\",instance=~\"$device\"} or "
-        "hh3cEntityExtCpuUsage{site_id=~\"$site\",instance=~\"$device\"} or "
-        "hwEntityCpuUsage{site_id=~\"$site\",instance=~\"$device\"} or "
-        "ruijieCpuCostRate{site_id=~\"$site\",instance=~\"$device\"} or "
-        "jnxOperatingCPU{site_id=~\"$site\",instance=~\"$device\"} or "
-        "fnSysCpuUsage{site_id=~\"$site\",instance=~\"$device\"} or "
-        "zteCpuRate{site_id=~\"$site\",instance=~\"$device\"} or "
-        "mpCpuUtilization5Min{site_id=~\"$site\",instance=~\"$device\"} or "
-        "dptechCpuUsage{site_id=~\"$site\",instance=~\"$device\"} or "
-        "hillstoneCPUUtilization{site_id=~\"$site\",instance=~\"$device\"} or "
-        "sangforCpuUsage{site_id=~\"$site\",instance=~\"$device\"} or "
-        "dcnCpuUsage{site_id=~\"$site\",instance=~\"$device\"}"
+        f"cpmCPUTotal1minRev{{{sel}}} or "
+        f"hh3cEntityExtCpuUsage{{{sel}}} or "
+        f"hwEntityCpuUsage{{{sel}}} or "
+        f"ruijieCpuCostRate{{{sel}}} or "
+        f"jnxOperatingCPU{{{sel}}} or "
+        f"fnSysCpuUsage{{{sel}}} or "
+        f"zteCpuRate{{{sel}}} or "
+        f"mpCpuUtilization5Min{{{sel}}} or "
+        f"dptechCpuUsage{{{sel}}} or "
+        f"hillstoneCPUUtilization{{{sel}}} or "
+        f"sangforCpuUsage{{{sel}}} or "
+        f"dcnCpuUsage{{{sel}}}"
         ")"
     )
     mem_expr = (
         "max by (hostname, instance, vendor) ("
-        "hh3cEntityExtMemUsage{site_id=~\"$site\",instance=~\"$device\"} or "
-        "hwEntityMemUsage{site_id=~\"$site\",instance=~\"$device\"} or "
-        "ruijieMemoryPoolCurrentUtilization{site_id=~\"$site\",instance=~\"$device\"} or "
-        "jnxOperatingBuffer{site_id=~\"$site\",instance=~\"$device\"} or "
-        "fnSysMemUsage{site_id=~\"$site\",instance=~\"$device\"} or "
-        "zteMemRate{site_id=~\"$site\",instance=~\"$device\"} or "
-        "mpMemoryUtilization{site_id=~\"$site\",instance=~\"$device\"} or "
-        "dptechMemUsage{site_id=~\"$site\",instance=~\"$device\"} or "
-        "hillstoneMemoryUtilization{site_id=~\"$site\",instance=~\"$device\"} or "
-        "sangforMemUsage{site_id=~\"$site\",instance=~\"$device\"} or "
-        "dcnMemUsage{site_id=~\"$site\",instance=~\"$device\"}"
+        f"hh3cEntityExtMemUsage{{{sel}}} or "
+        f"hwEntityMemUsage{{{sel}}} or "
+        f"ruijieMemoryPoolCurrentUtilization{{{sel}}} or "
+        f"jnxOperatingBuffer{{{sel}}} or "
+        f"fnSysMemUsage{{{sel}}} or "
+        f"zteMemRate{{{sel}}} or "
+        f"mpMemoryUtilization{{{sel}}} or "
+        f"dptechMemUsage{{{sel}}} or "
+        f"hillstoneMemoryUtilization{{{sel}}} or "
+        f"sangforMemUsage{{{sel}}} or "
+        f"dcnMemUsage{{{sel}}}"
         ")"
     )
     ap_online_expr = (
-        "sum(hwWlanCurOnlineApNum or hh3cDot11CurrOnlineAPNum or ruijieApcOnlineApNum or "
-        "ruijieApcTotalApNum or cLApTotalUpAPs or wlsxSysExtAccessPointsNum or ruckusZDTotalNumAP) or vector(0)"
+        f"sum(hwWlanCurOnlineApNum{{{sel}}} or hh3cDot11CurrOnlineAPNum{{{sel}}} or ruijieApcOnlineApNum{{{sel}}} or "
+        f"ruijieApcTotalApNum{{{sel}}} or cLApTotalUpAPs{{{sel}}} or wlsxSysExtAccessPointsNum{{{sel}}} or ruckusZDTotalNumAP{{{sel}}}) or vector(0)"
     )
     client_online_expr = (
-        "sum(hwWlanCurAssocUserNum or hh3cDot11CurrAssocUserNum or ruijieApcTotalStaNum or "
-        "cLSysTotalNumOfClients or wlsxSysExtStationsNum or ruckusZDTotalNumSta) or vector(0)"
+        f"sum(hwWlanCurAssocUserNum{{{sel}}} or hh3cDot11CurrAssocUserNum{{{sel}}} or ruijieApcTotalStaNum{{{sel}}} or "
+        f"cLSysTotalNumOfClients{{{sel}}} or wlsxSysExtStationsNum{{{sel}}} or ruckusZDTotalNumSta{{{sel}}}) or vector(0)"
     )
 
     panels = [
-        stat_panel(1, "纳管设备数", "count(count by (instance) (ifOperStatus{site_id=~\"$site\",instance=~\"$device\"}))", 0, 0, 4, 4, color="#3274D9"),
-        stat_panel(2, "监控站点数", "count(count by (site_id) (ifOperStatus))", 4, 0, 4, 4, color="#A352CC"),
+        stat_panel(1, "纳管设备数", f"count(count by (hostname) (ifOperStatus{{{sel}}}))", 0, 0, 4, 4, color="#3274D9"),
+        stat_panel(2, "监控站点数", "count(count by (site_name) (ifOperStatus))", 4, 0, 4, 4, color="#A352CC"),
         stat_panel(3, "全网在线 AP 数", ap_online_expr, 8, 0, 4, 4, color="#56A64B"),
         stat_panel(4, "无线在线客户端数", client_online_expr, 12, 0, 4, 4, color="#37872D"),
-        stat_panel(5, "采集接口总数", "count(ifOperStatus{site_id=~\"$site\",instance=~\"$device\"})", 16, 0, 4, 4, color="#3274D9"),
-        stat_panel(6, "异常/Down接口数", "count(ifOperStatus{site_id=~\"$site\",instance=~\"$device\"} != 1) or vector(0)", 20, 0, 4, 4, thresholds=[
+        stat_panel(5, "采集接口总数", f"count(ifOperStatus{{{sel}}})", 16, 0, 4, 4, color="#3274D9"),
+        stat_panel(6, "异常/Down接口数", f"count(ifOperStatus{{{sel}}} != 1) or vector(0)", 20, 0, 4, 4, thresholds=[
             {"color": "green", "value": None},
             {"color": "#E0B400", "value": 1},
             {"color": "#F2495C", "value": 5}
         ]),
         timeseries_panel(7, "网络接口总流量", [
-            {"expr": "sum(rate(ifHCInOctets{site_id=~\"$site\",instance=~\"$device\"}[5m])) * 8", "legendFormat": "入流量", "refId": "A"},
-            {"expr": "sum(rate(ifHCOutOctets{site_id=~\"$site\",instance=~\"$device\"}[5m])) * 8", "legendFormat": "出流量", "refId": "B"}
+            {"expr": f"sum(rate(ifHCInOctets{{{sel}}}[5m])) * 8", "legendFormat": "入流量", "refId": "A"},
+            {"expr": f"sum(rate(ifHCOutOctets{{{sel}}}[5m])) * 8", "legendFormat": "出流量", "refId": "B"}
         ], 0, 4, 12, 8, unit="bps"),
         timeseries_panel(8, "全网无线终端与 AP 规模趋势", [
-            {"expr": "sum(hwWlanCurAssocUserNum or hh3cDot11CurrAssocUserNum or ruijieApcTotalStaNum or cLSysTotalNumOfClients or wlsxSysExtStationsNum or ruckusZDTotalNumSta)", "legendFormat": "无线客户端总数", "refId": "A"},
-            {"expr": "sum(hwWlanCurOnlineApNum or hh3cDot11CurrOnlineAPNum or ruijieApcOnlineApNum or ruijieApcTotalApNum or cLApTotalUpAPs or wlsxSysExtAccessPointsNum or ruckusZDTotalNumAP)", "legendFormat": "在线 AP 总数", "refId": "B"}
+            {"expr": f"sum(hwWlanCurAssocUserNum{{{sel}}} or hh3cDot11CurrAssocUserNum{{{sel}}} or ruijieApcTotalStaNum{{{sel}}} or cLSysTotalNumOfClients{{{sel}}} or wlsxSysExtStationsNum{{{sel}}} or ruckusZDTotalNumSta{{{sel}}})", "legendFormat": "无线客户端总数", "refId": "A"},
+            {"expr": f"sum(hwWlanCurOnlineApNum{{{sel}}} or hh3cDot11CurrOnlineAPNum{{{sel}}} or ruijieApcOnlineApNum{{{sel}}} or ruijieApcTotalApNum{{{sel}}} or cLApTotalUpAPs{{{sel}}} or wlsxSysExtAccessPointsNum{{{sel}}} or ruckusZDTotalNumAP{{{sel}}})", "legendFormat": "在线 AP 总数", "refId": "B"}
         ], 12, 4, 12, 8, unit="short"),
         timeseries_panel(9, "设备 CPU 使用率", [
             {"expr": cpu_expr, "legendFormat": "{{hostname}} ({{instance}}) · {{vendor}}", "refId": "A"}
         ], 0, 12, 12, 8, unit="percent"),
         timeseries_panel(10, "设备内存使用率", [
             {"expr": mem_expr, "legendFormat": "{{hostname}} ({{instance}}) · {{vendor}}", "refId": "A"}
-        ], 12, 12, 12, 8, unit="percent"),
+        ], 12, 12, 8, unit="percent"),
         timeseries_panel(11, "设备温度", [
-            {"expr": "max by (hostname, instance, vendor) (hh3cEntityExtTemperature{site_id=~\"$site\",instance=~\"$device\"} or hwEntityTemperature{site_id=~\"$site\",instance=~\"$device\"} or ruijieDeviceTemperature{site_id=~\"$site\",instance=~\"$device\"} or jnxOperatingTemp{site_id=~\"$site\",instance=~\"$device\"} or entSensorValue{site_id=~\"$site\",instance=~\"$device\"} or zteTemperature{site_id=~\"$site\",instance=~\"$device\"} or mpTemperature{site_id=~\"$site\",instance=~\"$device\"} or dptechTemperature{site_id=~\"$site\",instance=~\"$device\"} or dcnTemperature{site_id=~\"$site\",instance=~\"$device\"})", "legendFormat": "{{hostname}} ({{instance}}) · {{vendor}}", "refId": "A"}
+            {"expr": f"max by (hostname, instance, vendor) (hh3cEntityExtTemperature{{{sel}}} or hwEntityTemperature{{{sel}}} or ruijieDeviceTemperature{{{sel}}} or jnxOperatingTemp{{{sel}}} or entSensorValue{{{sel}}} or zteTemperature{{{sel}}} or mpTemperature{{{sel}}} or dptechTemperature{{{sel}}} or dcnTemperature{{{sel}}})", "legendFormat": "{{hostname}} ({{instance}}) · {{vendor}}", "refId": "A"}
         ], 0, 20, 12, 8, unit="celsius"),
-        table_panel(12, "设备接口流量排行 Top 10", "topk(10, sum by (hostname, instance, vendor) (rate(ifHCInOctets{site_id=~\"$site\",instance=~\"$device\"}[5m]) * 8 + rate(ifHCOutOctets{site_id=~\"$site\",instance=~\"$device\"}[5m]) * 8))", 12, 20, 12, 8, unit="bps"),
+        table_panel(
+            12, "设备接口流量排行 Top 10",
+            f"topk(10, sum by (hostname, instance, vendor) (rate(ifHCInOctets{{{sel}}}[5m]) * 8 + rate(ifHCOutOctets{{{sel}}}[5m]) * 8))",
+            12, 20, 12, 8, unit="bps",
+            transformations=clean_organize_transformation("总流量")
+        ),
         timeseries_panel(13, "接口错误与丢弃统计", [
-            {"expr": "sum(rate(ifInErrors{site_id=~\"$site\",instance=~\"$device\"}[5m])) + sum(rate(ifOutErrors{site_id=~\"$site\",instance=~\"$device\"}[5m]))", "legendFormat": "错误包/秒", "refId": "A"},
-            {"expr": "sum(rate(ifInDiscards{site_id=~\"$site\",instance=~\"$device\"}[5m])) + sum(rate(ifOutDiscards{site_id=~\"$site\",instance=~\"$device\"}[5m]))", "legendFormat": "丢弃包/秒", "refId": "B"}
+            {"expr": f"sum(rate(ifInErrors{{{sel}}}[5m])) + sum(rate(ifOutErrors{{{sel}}}[5m]))", "legendFormat": "错误包/秒", "refId": "A"},
+            {"expr": f"sum(rate(ifInDiscards{{{sel}}}[5m])) + sum(rate(ifOutDiscards{{{sel}}}[5m]))", "legendFormat": "丢弃包/秒", "refId": "B"}
         ], 0, 28, 24, 8, unit="pps")
     ]
 
@@ -202,78 +277,60 @@ def build_overview_dashboard():
         "tags": ["nexora", "network", "overview"],
         "templating": {
             "list": [
-                {
-                    "allValue": ".*",
-                    "current": {"selected": True, "text": ["All"], "value": ["$__all"]},
-                    "definition": "label_values(ifOperStatus, site_id)",
-                    "includeAll": True,
-                    "label": "站点",
-                    "multi": True,
-                    "name": "site",
-                    "options": [],
-                    "query": {"query": "label_values(ifOperStatus, site_id)", "refId": "StandardVariableQuery"},
-                    "refresh": 1,
-                    "type": "query"
-                },
-                {
-                    "allValue": ".*",
-                    "current": {"selected": True, "text": ["All"], "value": ["$__all"]},
-                    "definition": "label_values(ifOperStatus{site_id=~\"$site\"}, instance)",
-                    "includeAll": True,
-                    "label": "设备",
-                    "multi": True,
-                    "name": "device",
-                    "options": [],
-                    "query": {"query": "label_values(ifOperStatus{site_id=~\"$site\"}, instance)", "refId": "StandardVariableQuery"},
-                    "refresh": 1,
-                    "type": "query"
-                }
+                make_query_variable("site", "站点", "label_values(ifOperStatus, site_name)"),
+                make_query_variable("vendor", "厂商", 'label_values(ifOperStatus{site_name=~"$site"}, vendor)'),
+                make_query_variable("role", "角色", 'label_values(ifOperStatus{site_name=~"$site",vendor=~"$vendor"}, role)'),
+                make_query_variable("device", "设备", 'label_values(ifOperStatus{site_name=~"$site",vendor=~"$vendor",role=~"$role"}, hostname)'),
             ]
         },
         "time": {"from": "now-6h", "to": "now"},
         "timezone": "browser",
         "title": "01 网络总览 (Network Overview)",
         "uid": "nexora-network-overview",
-        "version": 4
+        "version": 5
     }
 
 # 2. Network Device Detail Dashboard
 def build_device_dashboard():
+    dev_sel = 'hostname=~"$device"'
     panels = [
-        stat_panel(1, "系统运行时间 (Uptime)", "sysUpTime{instance=~\"$device\"} / 100", 0, 0, 6, 4, unit="s", color="#3274D9"),
+        stat_panel(1, "系统运行时间 (Uptime)", f"sysUpTime{{{dev_sel}}} / 100", 0, 0, 6, 4, unit="s", color="#3274D9"),
         stat_panel(2, "当前 CPU 使用率", (
-            "max(cpmCPUTotal1minRev{instance=~\"$device\"} or hh3cEntityExtCpuUsage{instance=~\"$device\"} or "
-            "hwEntityCpuUsage{instance=~\"$device\"} or ruijieCpuCostRate{instance=~\"$device\"} or "
-            "jnxOperatingCPU{instance=~\"$device\"} or fnSysCpuUsage{instance=~\"$device\"} or "
-            "zteCpuRate{instance=~\"$device\"} or mpCpuUtilization5Min{instance=~\"$device\"} or "
-            "dptechCpuUsage{instance=~\"$device\"} or hillstoneCPUUtilization{instance=~\"$device\"} or "
-            "sangforCpuUsage{instance=~\"$device\"} or dcnCpuUsage{instance=~\"$device\"})"
+            f"max(cpmCPUTotal1minRev{{{dev_sel}}} or hh3cEntityExtCpuUsage{{{dev_sel}}} or "
+            f"hwEntityCpuUsage{{{dev_sel}}} or ruijieCpuCostRate{{{dev_sel}}} or "
+            f"jnxOperatingCPU{{{dev_sel}}} or fnSysCpuUsage{{{dev_sel}}} or "
+            f"zteCpuRate{{{dev_sel}}} or mpCpuUtilization5Min{{{dev_sel}}} or "
+            f"dptechCpuUsage{{{dev_sel}}} or hillstoneCPUUtilization{{{dev_sel}}} or "
+            f"sangforCpuUsage{{{dev_sel}}} or dcnCpuUsage{{{dev_sel}}})"
         ), 6, 0, 6, 4, unit="percent", thresholds=[{"color": "green", "value": None}, {"color": "#E0B400", "value": 70}, {"color": "red", "value": 85}]),
         stat_panel(3, "当前内存使用率", (
-            "max(hh3cEntityExtMemUsage{instance=~\"$device\"} or hwEntityMemUsage{instance=~\"$device\"} or "
-            "ruijieMemoryPoolCurrentUtilization{instance=~\"$device\"} or jnxOperatingBuffer{instance=~\"$device\"} or "
-            "fnSysMemUsage{instance=~\"$device\"} or zteMemRate{instance=~\"$device\"} or "
-            "mpMemoryUtilization{instance=~\"$device\"} or dptechMemUsage{instance=~\"$device\"} or "
-            "hillstoneMemoryUtilization{instance=~\"$device\"} or sangforMemUsage{instance=~\"$device\"} or "
-            "dcnMemUsage{instance=~\"$device\"})"
+            f"max(hh3cEntityExtMemUsage{{{dev_sel}}} or hwEntityMemUsage{{{dev_sel}}} or "
+            f"ruijieMemoryPoolCurrentUtilization{{{dev_sel}}} or jnxOperatingBuffer{{{dev_sel}}} or "
+            f"fnSysMemUsage{{{dev_sel}}} or zteMemRate{{{dev_sel}}} or "
+            f"mpMemoryUtilization{{{dev_sel}}} or dptechMemUsage{{{dev_sel}}} or "
+            f"hillstoneMemoryUtilization{{{dev_sel}}} or sangforMemUsage{{{dev_sel}}} or "
+            f"dcnMemUsage{{{dev_sel}}})"
         ), 12, 0, 6, 4, unit="percent", thresholds=[{"color": "green", "value": None}, {"color": "#E0B400", "value": 75}, {"color": "red", "value": 90}]),
         stat_panel(4, "设备整机温度", (
-            "max(hh3cEntityExtTemperature{instance=~\"$device\"} or hwEntityTemperature{instance=~\"$device\"} or "
-            "ruijieDeviceTemperature{instance=~\"$device\"} or jnxOperatingTemp{instance=~\"$device\"} or "
-            "entSensorValue{instance=~\"$device\"} or zteTemperature{instance=~\"$device\"} or "
-            "mpTemperature{instance=~\"$device\"} or dptechTemperature{instance=~\"$device\"} or "
-            "dcnTemperature{instance=~\"$device\"})"
+            f"max(hh3cEntityExtTemperature{{{dev_sel}}} or hwEntityTemperature{{{dev_sel}}} or "
+            f"ruijieDeviceTemperature{{{dev_sel}}} or jnxOperatingTemp{{{dev_sel}}} or "
+            f"entSensorValue{{{dev_sel}}} or zteTemperature{{{dev_sel}}} or "
+            f"mpTemperature{{{dev_sel}}} or dptechTemperature{{{dev_sel}}} or "
+            f"dcnTemperature{{{dev_sel}}})"
         ), 18, 0, 6, 4, unit="celsius", thresholds=[{"color": "green", "value": None}, {"color": "#E0B400", "value": 55}, {"color": "red", "value": 70}]),
         timeseries_panel(5, "CPU 负载走势 (多核/主备控)", [
-            {"expr": "cpmCPUTotal1minRev{instance=~\"$device\"} or hh3cEntityExtCpuUsage{instance=~\"$device\"} or hwEntityCpuUsage{instance=~\"$device\"} or ruijieCpuCostRate{instance=~\"$device\"} or jnxOperatingCPU{instance=~\"$device\"} or fnSysCpuUsage{instance=~\"$device\"} or zteCpuRate{instance=~\"$device\"} or mpCpuUtilization5Min{instance=~\"$device\"} or dptechCpuUsage{instance=~\"$device\"} or hillstoneCPUUtilization{instance=~\"$device\"} or sangforCpuUsage{instance=~\"$device\"} or dcnCpuUsage{instance=~\"$device\"}", "legendFormat": "Slot/Core {{entPhysicalName}} ({{instance}})", "refId": "A"}
+            {"expr": f"cpmCPUTotal1minRev{{{dev_sel}}} or hh3cEntityExtCpuUsage{{{dev_sel}}} or hwEntityCpuUsage{{{dev_sel}}} or ruijieCpuCostRate{{{dev_sel}}} or jnxOperatingCPU{{{dev_sel}}} or fnSysCpuUsage{{{dev_sel}}} or zteCpuRate{{{dev_sel}}} or mpCpuUtilization5Min{{{dev_sel}}} or dptechCpuUsage{{{dev_sel}}} or hillstoneCPUUtilization{{{dev_sel}}} or sangforCpuUsage{{{dev_sel}}} or dcnCpuUsage{{{dev_sel}}}", "legendFormat": "Slot/Core {{entPhysicalName}} ({{instance}})", "refId": "A"}
         ], 0, 4, 12, 8, unit="percent"),
         timeseries_panel(6, "内存使用率与池走势", [
-            {"expr": "hh3cEntityExtMemUsage{instance=~\"$device\"} or hwEntityMemUsage{instance=~\"$device\"} or ruijieMemoryPoolCurrentUtilization{instance=~\"$device\"} or jnxOperatingBuffer{instance=~\"$device\"} or fnSysMemUsage{instance=~\"$device\"} or zteMemRate{instance=~\"$device\"} or mpMemoryUtilization{instance=~\"$device\"} or dptechMemUsage{instance=~\"$device\"} or hillstoneMemoryUtilization{instance=~\"$device\"} or sangforMemUsage{instance=~\"$device\"} or dcnMemUsage{instance=~\"$device\"}", "legendFormat": "Pool/Slot {{entPhysicalName}} ({{instance}})", "refId": "A"}
+            {"expr": f"hh3cEntityExtMemUsage{{{dev_sel}}} or hwEntityMemUsage{{{dev_sel}}} or ruijieMemoryPoolCurrentUtilization{{{dev_sel}}} or jnxOperatingBuffer{{{dev_sel}}} or fnSysMemUsage{{{dev_sel}}} or zteMemRate{{{dev_sel}}} or mpMemoryUtilization{{{dev_sel}}} or dptechMemUsage{{{dev_sel}}} or hillstoneMemoryUtilization{{{dev_sel}}} or sangforMemUsage{{{dev_sel}}} or dcnMemUsage{{{dev_sel}}}", "legendFormat": "Pool/Slot {{entPhysicalName}} ({{instance}})", "refId": "A"}
         ], 12, 4, 12, 8, unit="percent"),
         timeseries_panel(7, "板卡与环境温度传感器监控", [
-            {"expr": "hh3cEntityExtTemperature{instance=~\"$device\"} or hwEntityTemperature{instance=~\"$device\"} or ruijieDeviceTemperature{instance=~\"$device\"} or jnxOperatingTemp{instance=~\"$device\"} or entSensorValue{instance=~\"$device\"} or zteTemperature{instance=~\"$device\"} or mpTemperature{instance=~\"$device\"} or dptechTemperature{instance=~\"$device\"} or dcnTemperature{instance=~\"$device\"}", "legendFormat": "Sensor {{entPhysicalName}} ({{instance}})", "refId": "A"}
+            {"expr": f"hh3cEntityExtTemperature{{{dev_sel}}} or hwEntityTemperature{{{dev_sel}}} or ruijieDeviceTemperature{{{dev_sel}}} or jnxOperatingTemp{{{dev_sel}}} or entSensorValue{{{dev_sel}}} or zteTemperature{{{dev_sel}}} or mpTemperature{{{dev_sel}}} or dptechTemperature{{{dev_sel}}} or dcnTemperature{{{dev_sel}}}", "legendFormat": "Sensor {{entPhysicalName}} ({{instance}})", "refId": "A"}
         ], 0, 12, 12, 8, unit="celsius"),
-        table_panel(8, "设备端口实时状态清单", "ifOperStatus{instance=~\"$device\"}", 12, 12, 12, 8)
+        table_panel(
+            8, "设备端口实时状态清单", f"ifOperStatus{{{dev_sel}}}", 12, 12, 12, 8,
+            transformations=clean_organize_transformation("运行状态 (1=Up, 2=Down)")
+        )
     ]
 
     return {
@@ -289,43 +346,39 @@ def build_device_dashboard():
         "tags": ["nexora", "network", "device"],
         "templating": {
             "list": [
-                {
-                    "allValue": ".*",
-                    "current": {"selected": True, "text": ["All"], "value": ["$__all"]},
-                    "definition": "label_values(ifOperStatus, instance)",
-                    "includeAll": False,
-                    "label": "设备",
-                    "multi": False,
-                    "name": "device",
-                    "options": [],
-                    "query": {"query": "label_values(ifOperStatus, instance)", "refId": "StandardVariableQuery"},
-                    "refresh": 1,
-                    "type": "query"
-                }
+                make_query_variable("site", "站点", "label_values(ifOperStatus, site_name)"),
+                make_query_variable("vendor", "厂商", 'label_values(ifOperStatus{site_name=~"$site"}, vendor)'),
+                make_query_variable("device", "设备", 'label_values(ifOperStatus{site_name=~"$site",vendor=~"$vendor"}, hostname)', multi=False, include_all=False),
             ]
         },
         "time": {"from": "now-6h", "to": "now"},
         "timezone": "browser",
         "title": "02 网络设备详情 (Network Device Detail)",
         "uid": "nexora-network-device",
-        "version": 1
+        "version": 2
     }
 
 # 3. Wireless Monitoring Dashboard
 def build_wireless_dashboard():
+    sel = 'site_name=~"$site",vendor=~"$vendor",hostname=~"$device"'
     panels = [
-        stat_panel(1, "全网纳管 AP 总数", "sum(hwWlanApTotalNum or hh3cDot11TotalAPNum or ruijieApcTotalApNum or cLApTotalUpAPs or wlsxSysExtAccessPointsNum or ruckusZDTotalNumAP) or vector(0)", 0, 0, 6, 4, color="#3274D9"),
-        stat_panel(2, "当前在线 AP 总数", "sum(hwWlanCurOnlineApNum or hh3cDot11CurrOnlineAPNum or ruijieApcOnlineApNum or cLApTotalUpAPs or wlsxSysExtAccessPointsNum or ruckusZDTotalNumAP) or vector(0)", 6, 0, 6, 4, color="#56A64B"),
-        stat_panel(3, "当前离线 AP 数量", "(sum(hwWlanApTotalNum or hh3cDot11TotalAPNum or ruijieApcTotalApNum or cLApTotalUpAPs or wlsxSysExtAccessPointsNum or ruckusZDTotalNumAP) - sum(hwWlanCurOnlineApNum or hh3cDot11CurrOnlineAPNum or ruijieApcOnlineApNum or cLApTotalUpAPs or wlsxSysExtAccessPointsNum or ruckusZDTotalNumAP)) or vector(0)", 12, 0, 6, 4, thresholds=[{"color": "green", "value": None}, {"color": "#E0B400", "value": 1}, {"color": "red", "value": 5}]),
-        stat_panel(4, "全网在线关联无线终端", "sum(hwWlanCurAssocUserNum or hh3cDot11CurrAssocUserNum or ruijieApcTotalStaNum or cLSysTotalNumOfClients or wlsxSysExtStationsNum or ruckusZDTotalNumSta) or vector(0)", 18, 0, 6, 4, color="#A352CC"),
+        stat_panel(1, "全网纳管 AP 总数", f"sum(hwWlanApTotalNum{{{sel}}} or hh3cDot11TotalAPNum{{{sel}}} or ruijieApcTotalApNum{{{sel}}} or cLApTotalUpAPs{{{sel}}} or wlsxSysExtAccessPointsNum{{{sel}}} or ruckusZDTotalNumAP{{{sel}}}) or vector(0)", 0, 0, 6, 4, color="#3274D9"),
+        stat_panel(2, "当前在线 AP 总数", f"sum(hwWlanCurOnlineApNum{{{sel}}} or hh3cDot11CurrOnlineAPNum{{{sel}}} or ruijieApcOnlineApNum{{{sel}}} or cLApTotalUpAPs{{{sel}}} or wlsxSysExtAccessPointsNum{{{sel}}} or ruckusZDTotalNumAP{{{sel}}}) or vector(0)", 6, 0, 6, 4, color="#56A64B"),
+        stat_panel(3, "当前离线 AP 数量", f"(sum(hwWlanApTotalNum{{{sel}}} or hh3cDot11TotalAPNum{{{sel}}} or ruijieApcTotalApNum{{{sel}}} or cLApTotalUpAPs{{{sel}}} or wlsxSysExtAccessPointsNum{{{sel}}} or ruckusZDTotalNumAP{{{sel}}}) - sum(hwWlanCurOnlineApNum{{{sel}}} or hh3cDot11CurrOnlineAPNum{{{sel}}} or ruijieApcOnlineApNum{{{sel}}} or cLApTotalUpAPs{{{sel}}} or wlsxSysExtAccessPointsNum{{{sel}}} or ruckusZDTotalNumAP{{{sel}}})) or vector(0)", 12, 0, 6, 4, thresholds=[{"color": "green", "value": None}, {"color": "#E0B400", "value": 1}, {"color": "red", "value": 5}]),
+        stat_panel(4, "全网在线关联无线终端", f"sum(hwWlanCurAssocUserNum{{{sel}}} or hh3cDot11CurrAssocUserNum{{{sel}}} or ruijieApcTotalStaNum{{{sel}}} or cLSysTotalNumOfClients{{{sel}}} or wlsxSysExtStationsNum{{{sel}}} or ruckusZDTotalNumSta{{{sel}}}) or vector(0)", 18, 0, 6, 4, color="#A352CC"),
         timeseries_panel(5, "各无线控制器在线终端时序趋势", [
-            {"expr": "hwWlanCurAssocUserNum or hh3cDot11CurrAssocUserNum or ruijieApcTotalStaNum or cLSysTotalNumOfClients or wlsxSysExtStationsNum or ruckusZDTotalNumSta", "legendFormat": "{{hostname}} ({{instance}}) · {{vendor}}", "refId": "A"}
+            {"expr": f"hwWlanCurAssocUserNum{{{sel}}} or hh3cDot11CurrAssocUserNum{{{sel}}} or ruijieApcTotalStaNum{{{sel}}} or cLSysTotalNumOfClients{{{sel}}} or wlsxSysExtStationsNum{{{sel}}} or ruckusZDTotalNumSta{{{sel}}}", "legendFormat": "{{hostname}} ({{instance}}) · {{vendor}}", "refId": "A"}
         ], 0, 4, 12, 8, unit="short"),
         timeseries_panel(6, "各控制器纳管在线 AP 波动趋势", [
-            {"expr": "hwWlanCurOnlineApNum or hh3cDot11CurrOnlineAPNum or ruijieApcOnlineApNum or cLApTotalUpAPs or wlsxSysExtAccessPointsNum or ruckusZDTotalNumAP", "legendFormat": "{{hostname}} ({{instance}}) · {{vendor}}", "refId": "A"}
+            {"expr": f"hwWlanCurOnlineApNum{{{sel}}} or hh3cDot11CurrOnlineAPNum{{{sel}}} or ruijieApcOnlineApNum{{{sel}}} or cLApTotalUpAPs{{{sel}}} or wlsxSysExtAccessPointsNum{{{sel}}} or ruckusZDTotalNumAP{{{sel}}}", "legendFormat": "{{hostname}} ({{instance}}) · {{vendor}}", "refId": "A"}
         ], 12, 4, 12, 8, unit="short"),
-        bar_gauge_panel(7, "各无线控制器客户端负载 Top 榜", "hwWlanCurAssocUserNum or hh3cDot11CurrAssocUserNum or ruijieApcTotalStaNum or cLSysTotalNumOfClients or wlsxSysExtStationsNum or ruckusZDTotalNumSta", 0, 12, 12, 8, unit="short"),
-        table_panel(8, "全网无线控制器 AC 状态清单", "hwWlanCurOnlineApNum or hh3cDot11CurrOnlineAPNum or ruijieApcOnlineApNum or cLApTotalUpAPs or wlsxSysExtAccessPointsNum or ruckusZDTotalNumAP", 12, 12, 12, 8)
+        bar_gauge_panel(7, "各无线控制器客户端负载 Top 榜", f"hwWlanCurAssocUserNum{{{sel}}} or hh3cDot11CurrAssocUserNum{{{sel}}} or ruijieApcTotalStaNum{{{sel}}} or cLSysTotalNumOfClients{{{sel}}} or wlsxSysExtStationsNum{{{sel}}} or ruckusZDTotalNumSta{{{sel}}}", 0, 12, 12, 8, unit="short"),
+        table_panel(
+            8, "全网无线控制器 AC 状态清单",
+            f"hwWlanCurOnlineApNum{{{sel}}} or hh3cDot11CurrOnlineAPNum{{{sel}}} or ruijieApcOnlineApNum{{{sel}}} or cLApTotalUpAPs{{{sel}}} or wlsxSysExtAccessPointsNum{{{sel}}} or ruckusZDTotalNumAP{{{sel}}}",
+            12, 12, 12, 8,
+            transformations=clean_organize_transformation("在线 AP 数")
+        )
     ]
 
     return {
@@ -341,43 +394,44 @@ def build_wireless_dashboard():
         "tags": ["nexora", "network", "wireless"],
         "templating": {
             "list": [
-                {
-                    "allValue": ".*",
-                    "current": {"selected": True, "text": ["All"], "value": ["$__all"]},
-                    "definition": "label_values(ifOperStatus, site_id)",
-                    "includeAll": True,
-                    "label": "站点",
-                    "multi": True,
-                    "name": "site",
-                    "options": [],
-                    "query": {"query": "label_values(ifOperStatus, site_id)", "refId": "StandardVariableQuery"},
-                    "refresh": 1,
-                    "type": "query"
-                }
+                make_query_variable("site", "站点", "label_values(ifOperStatus, site_name)"),
+                make_query_variable("vendor", "厂商", 'label_values(ifOperStatus{site_name=~"$site"}, vendor)'),
+                make_query_variable("device", "设备", 'label_values(ifOperStatus{site_name=~"$site",vendor=~"$vendor"}, hostname)'),
             ]
         },
         "time": {"from": "now-6h", "to": "now"},
         "timezone": "browser",
         "title": "03 无线专网监控 (Wireless AP & Clients)",
         "uid": "nexora-network-wireless",
-        "version": 1
+        "version": 2
     }
 
 # 4. Interface Traffic & Health Dashboard
 def build_interface_dashboard():
+    sel = 'site_name=~"$site",vendor=~"$vendor",role=~"$role",hostname=~"$device"'
     panels = [
-        stat_panel(1, "全网聚合入流量 (Inbound)", "sum(rate(ifHCInOctets[5m])) * 8", 0, 0, 6, 4, unit="bps", color="#3274D9"),
-        stat_panel(2, "全网聚合出流量 (Outbound)", "sum(rate(ifHCOutOctets[5m])) * 8", 6, 0, 6, 4, unit="bps", color="#56A64B"),
-        stat_panel(3, "实时错误包总速率", "sum(rate(ifInErrors[5m]) + rate(ifOutErrors[5m]))", 12, 0, 6, 4, unit="pps", thresholds=[{"color": "green", "value": None}, {"color": "#E0B400", "value": 10}, {"color": "red", "value": 100}]),
-        stat_panel(4, "实时丢弃包总速率", "sum(rate(ifInDiscards[5m]) + rate(ifOutDiscards[5m]))", 18, 0, 6, 4, unit="pps", thresholds=[{"color": "green", "value": None}, {"color": "#E0B400", "value": 10}, {"color": "red", "value": 100}]),
+        stat_panel(1, "全网聚合入流量 (Inbound)", f"sum(rate(ifHCInOctets{{{sel}}}[5m])) * 8", 0, 0, 6, 4, unit="bps", color="#3274D9"),
+        stat_panel(2, "全网聚合出流量 (Outbound)", f"sum(rate(ifHCOutOctets{{{sel}}}[5m])) * 8", 6, 0, 6, 4, unit="bps", color="#56A64B"),
+        stat_panel(3, "实时错误包总速率", f"sum(rate(ifInErrors{{{sel}}}[5m]) + rate(ifOutErrors{{{sel}}}[5m]))", 12, 0, 6, 4, unit="pps", thresholds=[{"color": "green", "value": None}, {"color": "#E0B400", "value": 10}, {"color": "red", "value": 100}]),
+        stat_panel(4, "实时丢弃包总速率", f"sum(rate(ifInDiscards{{{sel}}}[5m]) + rate(ifOutDiscards{{{sel}}}[5m]))", 18, 0, 6, 4, unit="pps", thresholds=[{"color": "green", "value": None}, {"color": "#E0B400", "value": 10}, {"color": "red", "value": 100}]),
         timeseries_panel(5, "高负荷端口入流量 Top 10", [
-            {"expr": "topk(10, rate(ifHCInOctets{site_id=~\"$site\",instance=~\"$device\"}[5m]) * 8)", "legendFormat": "{{instance}} - {{ifName}}", "refId": "A"}
+            {"expr": f"topk(10, rate(ifHCInOctets{{{sel}}}[5m]) * 8)", "legendFormat": "{{hostname}} ({{instance}}) - 端口 {{ifIndex}}", "refId": "A"}
         ], 0, 4, 12, 8, unit="bps"),
         timeseries_panel(6, "高负荷端口出流量 Top 10", [
-            {"expr": "topk(10, rate(ifHCOutOctets{site_id=~\"$site\",instance=~\"$device\"}[5m]) * 8)", "legendFormat": "{{instance}} - {{ifName}}", "refId": "A"}
+            {"expr": f"topk(10, rate(ifHCOutOctets{{{sel}}}[5m]) * 8)", "legendFormat": "{{hostname}} ({{instance}}) - 端口 {{ifIndex}}", "refId": "A"}
         ], 12, 4, 12, 8, unit="bps"),
-        table_panel(7, "端口带宽利用率 Top 20", "topk(20, (rate(ifHCInOctets{site_id=~\"$site\",instance=~\"$device\"}[5m]) * 8) / (ifHighSpeed * 1000000) * 100)", 0, 12, 12, 8, unit="percent"),
-        table_panel(8, "端口错误与丢弃排行 Top 20", "topk(20, rate(ifInErrors{site_id=~\"$site\",instance=~\"$device\"}[5m]) + rate(ifOutErrors{site_id=~\"$site\",instance=~\"$device\"}[5m]) + rate(ifInDiscards{site_id=~\"$site\",instance=~\"$device\"}[5m]))", 12, 12, 12, 8, unit="pps")
+        table_panel(
+            7, "端口带宽利用率 Top 20",
+            f"topk(20, max by (hostname, instance, ifIndex) ((rate(ifHCInOctets{{{sel}}}[5m]) * 8) / (ifHighSpeed * 1000000) * 100))",
+            0, 12, 12, 8, unit="percent",
+            transformations=clean_organize_transformation("带宽利用率")
+        ),
+        table_panel(
+            8, "端口错误与丢弃排行 Top 20",
+            f"topk(20, sum by (hostname, instance, ifIndex) (rate(ifInErrors{{{sel}}}[5m]) + rate(ifOutErrors{{{sel}}}[5m]) + rate(ifInDiscards{{{sel}}}[5m])))",
+            12, 12, 12, 8, unit="pps",
+            transformations=clean_organize_transformation("错误/丢弃率 (pps)")
+        )
     ]
 
     return {
@@ -393,39 +447,17 @@ def build_interface_dashboard():
         "tags": ["nexora", "network", "interface"],
         "templating": {
             "list": [
-                {
-                    "allValue": ".*",
-                    "current": {"selected": True, "text": ["All"], "value": ["$__all"]},
-                    "definition": "label_values(ifOperStatus, site_id)",
-                    "includeAll": True,
-                    "label": "站点",
-                    "multi": True,
-                    "name": "site",
-                    "options": [],
-                    "query": {"query": "label_values(ifOperStatus, site_id)", "refId": "StandardVariableQuery"},
-                    "refresh": 1,
-                    "type": "query"
-                },
-                {
-                    "allValue": ".*",
-                    "current": {"selected": True, "text": ["All"], "value": ["$__all"]},
-                    "definition": "label_values(ifOperStatus{site_id=~\"$site\"}, instance)",
-                    "includeAll": True,
-                    "label": "设备",
-                    "multi": True,
-                    "name": "device",
-                    "options": [],
-                    "query": {"query": "label_values(ifOperStatus{site_id=~\"$site\"}, instance)", "refId": "StandardVariableQuery"},
-                    "refresh": 1,
-                    "type": "query"
-                }
+                make_query_variable("site", "站点", "label_values(ifOperStatus, site_name)"),
+                make_query_variable("vendor", "厂商", 'label_values(ifOperStatus{site_name=~"$site"}, vendor)'),
+                make_query_variable("role", "角色", 'label_values(ifOperStatus{site_name=~"$site",vendor=~"$vendor"}, role)'),
+                make_query_variable("device", "设备", 'label_values(ifOperStatus{site_name=~"$site",vendor=~"$vendor",role=~"$role"}, hostname)'),
             ]
         },
         "time": {"from": "now-6h", "to": "now"},
         "timezone": "browser",
         "title": "04 接口流量与健康 (Interface Traffic & Health)",
         "uid": "nexora-network-interface",
-        "version": 1
+        "version": 2
     }
 
 # 5. Monitoring Engine Health Dashboard
@@ -441,8 +473,14 @@ def build_health_dashboard():
         timeseries_panel(6, "抓取指标量统计 (Samples Scraped)", [
             {"expr": "scrape_samples_scraped", "legendFormat": "{{instance}}", "refId": "A"}
         ], 12, 4, 12, 8, unit="short"),
-        table_panel(7, "采集失败设备清单 (Target Scrape Failure)", "up == 0", 0, 12, 12, 8),
-        table_panel(8, "采集最慢目标排行 Top 10", "topk(10, scrape_duration_seconds)", 12, 12, 12, 8, unit="s")
+        table_panel(
+            7, "采集失败设备清单 (Target Scrape Failure)", "up == 0", 0, 12, 12, 8,
+            transformations=clean_organize_transformation("探测状态")
+        ),
+        table_panel(
+            8, "采集最慢目标排行 Top 10", "topk(10, scrape_duration_seconds)", 12, 12, 12, 8, unit="s",
+            transformations=clean_organize_transformation("采集耗时 (秒)")
+        )
     ]
 
     return {
@@ -461,6 +499,149 @@ def build_health_dashboard():
         "timezone": "browser",
         "title": "05 SNMP 采集健康 (SNMP Scrape Health)",
         "uid": "nexora-monitoring-health",
+        "version": 2
+    }
+
+# 6. Internet Outbound & WAN Dashboard
+def build_outbound_dashboard():
+    sel = 'site_name=~"$site",vendor=~"$vendor",hostname=~"$device"'
+    role_filter = 'role=~"gateway|firewall|wan|border|.*"'
+    comb_sel = f'{sel},{role_filter}'
+
+    panels = [
+        stat_panel(1, "出口总入向实时带宽 (Inbound)", f"sum(rate(ifHCInOctets{{{comb_sel}}}[5m])) * 8 or sum(rate(ifHCInOctets{{{sel}}}[5m])) * 8", 0, 0, 6, 4, unit="bps", color="#3274D9"),
+        stat_panel(2, "出口总出向实时带宽 (Outbound)", f"sum(rate(ifHCOutOctets{{{comb_sel}}}[5m])) * 8 or sum(rate(ifHCOutOctets{{{sel}}}[5m])) * 8", 6, 0, 6, 4, unit="bps", color="#56A64B"),
+        stat_panel(3, "出口最高端口带宽利用率", f"max((rate(ifHCInOctets{{{comb_sel}}}[5m]) * 8) / (ifHighSpeed * 1000000) * 100) or vector(0)", 12, 0, 6, 4, unit="percent", thresholds=[
+            {"color": "green", "value": None},
+            {"color": "#E0B400", "value": 70},
+            {"color": "red", "value": 85}
+        ]),
+        stat_panel(4, "出口链路错误与丢弃总速率", f"sum(rate(ifInErrors{{{comb_sel}}}[5m]) + rate(ifOutErrors{{{comb_sel}}}[5m]) + rate(ifInDiscards{{{comb_sel}}}[5m])) or vector(0)", 18, 0, 6, 4, unit="pps", thresholds=[
+            {"color": "green", "value": None},
+            {"color": "#E0B400", "value": 10},
+            {"color": "red", "value": 100}
+        ]),
+        timeseries_panel(5, "出口边界各设备入向流量趋势 (Inbound bps)", [
+            {"expr": f"sum by (hostname, instance) (rate(ifHCInOctets{{{comb_sel}}}[5m]) * 8)", "legendFormat": "{{hostname}} ({{instance}}) 入向", "refId": "A"}
+        ], 0, 4, 12, 8, unit="bps"),
+        timeseries_panel(6, "出口边界各设备出向流量趋势 (Outbound bps)", [
+            {"expr": f"sum by (hostname, instance) (rate(ifHCOutOctets{{{comb_sel}}}[5m]) * 8)", "legendFormat": "{{hostname}} ({{instance}}) 出向", "refId": "A"}
+        ], 12, 4, 12, 8, unit="bps"),
+        timeseries_panel(7, "出口端口带宽利用率走势 (In/Out Top 10)", [
+            {"expr": f"topk(10, (rate(ifHCInOctets{{{comb_sel}}}[5m]) * 8) / (ifHighSpeed * 1000000) * 100)", "legendFormat": "{{hostname}} - 端口 {{ifIndex}} 入向利用率", "refId": "A"},
+            {"expr": f"topk(10, (rate(ifHCOutOctets{{{comb_sel}}}[5m]) * 8) / (ifHighSpeed * 1000000) * 100)", "legendFormat": "{{hostname}} - 端口 {{ifIndex}} 出向利用率", "refId": "B"}
+        ], 0, 12, 12, 8, unit="percent"),
+        timeseries_panel(8, "出口链路接口丢包与错包时序 (PPS)", [
+            {"expr": f"sum by (hostname, instance) (rate(ifInErrors{{{comb_sel}}}[5m]) + rate(ifOutErrors{{{comb_sel}}}[5m]))", "legendFormat": "{{hostname}} ({{instance}}) 错包/秒", "refId": "A"},
+            {"expr": f"sum by (hostname, instance) (rate(ifInDiscards{{{comb_sel}}}[5m]) + rate(ifOutDiscards{{{comb_sel}}}[5m]))", "legendFormat": "{{hostname}} ({{instance}}) 丢弃/秒", "refId": "B"}
+        ], 12, 12, 12, 8, unit="pps"),
+        table_panel(
+            9, "出口端口带宽利用率排行 Top 10",
+            f"topk(10, max by (hostname, instance, ifIndex) ((rate(ifHCInOctets{{{comb_sel}}}[5m]) * 8) / (ifHighSpeed * 1000000) * 100))",
+            0, 20, 12, 8, unit="percent",
+            transformations=clean_organize_transformation("带宽利用率")
+        ),
+        table_panel(
+            10, "出口端口错误与丢弃排行 Top 10",
+            f"topk(10, sum by (hostname, instance, ifIndex) (rate(ifInErrors{{{comb_sel}}}[5m]) + rate(ifOutErrors{{{comb_sel}}}[5m]) + rate(ifInDiscards{{{comb_sel}}}[5m])))",
+            12, 20, 12, 8, unit="pps",
+            transformations=clean_organize_transformation("错误/丢弃率 (pps)")
+        )
+    ]
+
+    return {
+        "annotations": {"list": []},
+        "editable": false,
+        "fiscalYearStartMonth": 0,
+        "graphTooltip": 1,
+        "id": None,
+        "links": [],
+        "panels": panels,
+        "refresh": "30s",
+        "schemaVersion": 39,
+        "tags": ["nexora", "network", "outbound", "wan"],
+        "templating": {
+            "list": [
+                make_query_variable("site", "站点", "label_values(ifOperStatus, site_name)"),
+                make_query_variable("vendor", "厂商", 'label_values(ifOperStatus{site_name=~"$site"}, vendor)'),
+                make_query_variable("device", "出口设备", 'label_values(ifOperStatus{site_name=~"$site",vendor=~"$vendor",role=~"gateway|firewall|wan|border|.*"}, hostname)'),
+            ]
+        },
+        "time": {"from": "now-6h", "to": "now"},
+        "timezone": "browser",
+        "title": "06 互联网出口与 WAN (Internet Outbound & WAN Traffic)",
+        "uid": "nexora-network-outbound",
+        "version": 1
+    }
+
+def build_server_dashboard():
+    srv_sel = 'site_name=~"$site",hostname=~"$device"'
+    panels = [
+        stat_panel(1, "受纳管服务器总数", 'count(count by (hostname) (node_load1 or host_cpu_util or cpu_usage_percent{role=~"server|host"} or hrProcessorLoad)) or vector(0)', 0, 0, 6, 4, unit="none", color="blue"),
+        stat_panel(2, "主机平均 CPU 使用率", f'avg(100 - (rate(node_cpu_seconds_total{{{srv_sel},mode="idle"}}[5m]) * 100) or host_cpu_util{{{srv_sel}}} or hrProcessorLoad{{{srv_sel}}}) or vector(0)', 6, 0, 6, 4, unit="percent", thresholds=[
+            {"color": "green", "value": None},
+            {"color": "#E0B400", "value": 70},
+            {"color": "red", "value": 85}
+        ]),
+        stat_panel(3, "主机平均内存利用率", f'avg((1 - (node_memory_MemAvailable_bytes{{{srv_sel}}} / node_memory_MemTotal_bytes{{{srv_sel}}})) * 100 or host_mem_util{{{srv_sel}}} or hrStorageUsed{{{srv_sel},hrStorageType=~".*ram.*"}} / hrStorageSize * 100) or vector(0)', 12, 0, 6, 4, unit="percent", thresholds=[
+            {"color": "green", "value": None},
+            {"color": "#E0B400", "value": 80},
+            {"color": "red", "value": 90}
+        ]),
+        stat_panel(4, "TCP 活跃连接总数", f'sum(node_netstat_Tcp_CurrEstab{{{srv_sel}}} or host_tcp_estab{{{srv_sel}}}) or vector(0)', 18, 0, 6, 4, unit="none", color="purple"),
+
+        timeseries_panel(5, "服务器 CPU 利用率趋势 (%)", [
+            {"expr": f'100 - (rate(node_cpu_seconds_total{{{srv_sel},mode="idle"}}[5m]) * 100) or host_cpu_util{{{srv_sel}}} or avg by (hostname) (hrProcessorLoad{{{srv_sel}}})', "legendFormat": "{{hostname}} CPU", "refId": "A"}
+        ], 0, 4, 12, 8, unit="percent"),
+        timeseries_panel(6, "系统平均负载趋势 (1m Load)", [
+            {"expr": f'node_load1{{{srv_sel}}} or host_cpu_load1{{{srv_sel}}}', "legendFormat": "{{hostname}} Load1", "refId": "A"},
+            {"expr": f'node_load5{{{srv_sel}}} or host_cpu_load5{{{srv_sel}}}', "legendFormat": "{{hostname}} Load5", "refId": "B"}
+        ], 12, 4, 12, 8, unit="none"),
+
+        timeseries_panel(7, "内存与 Swap 空间消耗趋势", [
+            {"expr": f'(1 - (node_memory_MemAvailable_bytes{{{srv_sel}}} / node_memory_MemTotal_bytes{{{srv_sel}}})) * 100 or host_mem_util{{{srv_sel}}}', "legendFormat": "{{hostname}} 内存利用率", "refId": "A"},
+            {"expr": f'(1 - (node_memory_SwapFree_bytes{{{srv_sel}}} / node_memory_SwapTotal_bytes{{{srv_sel}}})) * 100 or host_swap_util{{{srv_sel}}}', "legendFormat": "{{hostname}} Swap 利用率", "refId": "B"}
+        ], 0, 12, 12, 8, unit="percent"),
+        timeseries_panel(8, "服务器网络吞吐走势 (bps)", [
+            {"expr": f'sum by (hostname) (rate(node_network_receive_bytes_total{{{srv_sel},device!~"lo|docker.*|veth.*"}}[5m]) * 8 or rate(ifHCInOctets{{{srv_sel}}}[5m]) * 8)', "legendFormat": "{{hostname}} 接收", "refId": "A"},
+            {"expr": f'sum by (hostname) (rate(node_network_transmit_bytes_total{{{srv_sel},device!~"lo|docker.*|veth.*"}}[5m]) * 8 or rate(ifHCOutOctets{{{srv_sel}}}[5m]) * 8)', "legendFormat": "{{hostname}} 发送", "refId": "B"}
+        ], 12, 12, 12, 8, unit="bps"),
+
+        table_panel(
+            9, "主机磁盘空间利用率 Top 10",
+            f'topk(10, max by (hostname, instance, mountpoint) ((1 - (node_filesystem_avail_bytes{{{srv_sel},fstype!~"tmpfs|iso9660"}} / node_filesystem_size_bytes{{{srv_sel}}})) * 100 or host_disk_util{{{srv_sel}}}))',
+            0, 20, 12, 8, unit="percent",
+            transformations=clean_organize_transformation("磁盘使用率", {"mountpoint": "挂载点"})
+        ),
+        table_panel(
+            10, "主机 TCP 连接活跃与等待排行 Top 10",
+            f'topk(10, sum by (hostname, instance) (node_netstat_Tcp_CurrEstab{{{srv_sel}}} or host_tcp_conns{{{srv_sel}}}))',
+            12, 20, 12, 8, unit="none",
+            transformations=clean_organize_transformation("活跃连接数")
+        )
+    ]
+
+    return {
+        "annotations": {"list": []},
+        "editable": false,
+        "fiscalYearStartMonth": 0,
+        "graphTooltip": 1,
+        "id": None,
+        "links": [],
+        "panels": panels,
+        "refresh": "30s",
+        "schemaVersion": 39,
+        "tags": ["nexora", "server", "host", "metrics"],
+        "templating": {
+            "list": [
+                make_query_variable("site", "站点", 'label_values(node_load1 or host_cpu_util or hrProcessorLoad or up, site_name)'),
+                make_query_variable("device", "服务器", 'label_values({site_name=~"$site"}, hostname)'),
+            ]
+        },
+        "time": {"from": "now-6h", "to": "now"},
+        "timezone": "browser",
+        "title": "07 服务器与主机监控 (Server & Host Metrics)",
+        "uid": "nexora-server-metrics",
         "version": 1
     }
 
@@ -472,6 +653,8 @@ def main():
         "network-wireless.json": build_wireless_dashboard(),
         "network-interface.json": build_interface_dashboard(),
         "monitoring-health.json": build_health_dashboard(),
+        "network-outbound.json": build_outbound_dashboard(),
+        "server-metrics.json": build_server_dashboard(),
     }
     for filename, data in dashboards.items():
         path = os.path.join(DASHBOARDS_DIR, filename)

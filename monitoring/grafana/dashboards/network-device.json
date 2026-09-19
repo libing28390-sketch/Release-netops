@@ -56,7 +56,7 @@
       },
       "targets": [
         {
-          "expr": "sysUpTime{instance=~\"$device\"} / 100",
+          "expr": "sysUpTime{hostname=~\"$device\"} / 100",
           "refId": "A"
         }
       ]
@@ -117,7 +117,7 @@
       },
       "targets": [
         {
-          "expr": "max(cpmCPUTotal1minRev{instance=~\"$device\"} or hh3cEntityExtCpuUsage{instance=~\"$device\"} or hwEntityCpuUsage{instance=~\"$device\"} or ruijieCpuCostRate{instance=~\"$device\"} or jnxOperatingCPU{instance=~\"$device\"} or fnSysCpuUsage{instance=~\"$device\"} or zteCpuRate{instance=~\"$device\"} or mpCpuUtilization5Min{instance=~\"$device\"} or dptechCpuUsage{instance=~\"$device\"} or hillstoneCPUUtilization{instance=~\"$device\"} or sangforCpuUsage{instance=~\"$device\"} or dcnCpuUsage{instance=~\"$device\"})",
+          "expr": "max(cpmCPUTotal1minRev{hostname=~\"$device\"} or hh3cEntityExtCpuUsage{hostname=~\"$device\"} or hwEntityCpuUsage{hostname=~\"$device\"} or ruijieCpuCostRate{hostname=~\"$device\"} or jnxOperatingCPU{hostname=~\"$device\"} or fnSysCpuUsage{hostname=~\"$device\"} or zteCpuRate{hostname=~\"$device\"} or mpCpuUtilization5Min{hostname=~\"$device\"} or dptechCpuUsage{hostname=~\"$device\"} or hillstoneCPUUtilization{hostname=~\"$device\"} or sangforCpuUsage{hostname=~\"$device\"} or dcnCpuUsage{hostname=~\"$device\"})",
           "refId": "A"
         }
       ]
@@ -178,7 +178,7 @@
       },
       "targets": [
         {
-          "expr": "max(hh3cEntityExtMemUsage{instance=~\"$device\"} or hwEntityMemUsage{instance=~\"$device\"} or ruijieMemoryPoolCurrentUtilization{instance=~\"$device\"} or jnxOperatingBuffer{instance=~\"$device\"} or fnSysMemUsage{instance=~\"$device\"} or zteMemRate{instance=~\"$device\"} or mpMemoryUtilization{instance=~\"$device\"} or dptechMemUsage{instance=~\"$device\"} or hillstoneMemoryUtilization{instance=~\"$device\"} or sangforMemUsage{instance=~\"$device\"} or dcnMemUsage{instance=~\"$device\"})",
+          "expr": "max(hh3cEntityExtMemUsage{hostname=~\"$device\"} or hwEntityMemUsage{hostname=~\"$device\"} or ruijieMemoryPoolCurrentUtilization{hostname=~\"$device\"} or jnxOperatingBuffer{hostname=~\"$device\"} or fnSysMemUsage{hostname=~\"$device\"} or zteMemRate{hostname=~\"$device\"} or mpMemoryUtilization{hostname=~\"$device\"} or dptechMemUsage{hostname=~\"$device\"} or hillstoneMemoryUtilization{hostname=~\"$device\"} or sangforMemUsage{hostname=~\"$device\"} or dcnMemUsage{hostname=~\"$device\"})",
           "refId": "A"
         }
       ]
@@ -239,7 +239,7 @@
       },
       "targets": [
         {
-          "expr": "max(hh3cEntityExtTemperature{instance=~\"$device\"} or hwEntityTemperature{instance=~\"$device\"} or ruijieDeviceTemperature{instance=~\"$device\"} or jnxOperatingTemp{instance=~\"$device\"} or entSensorValue{instance=~\"$device\"} or zteTemperature{instance=~\"$device\"} or mpTemperature{instance=~\"$device\"} or dptechTemperature{instance=~\"$device\"} or dcnTemperature{instance=~\"$device\"})",
+          "expr": "max(hh3cEntityExtTemperature{hostname=~\"$device\"} or hwEntityTemperature{hostname=~\"$device\"} or ruijieDeviceTemperature{hostname=~\"$device\"} or jnxOperatingTemp{hostname=~\"$device\"} or entSensorValue{hostname=~\"$device\"} or zteTemperature{hostname=~\"$device\"} or mpTemperature{hostname=~\"$device\"} or dptechTemperature{hostname=~\"$device\"} or dcnTemperature{hostname=~\"$device\"})",
           "refId": "A"
         }
       ]
@@ -285,7 +285,7 @@
       },
       "targets": [
         {
-          "expr": "cpmCPUTotal1minRev{instance=~\"$device\"} or hh3cEntityExtCpuUsage{instance=~\"$device\"} or hwEntityCpuUsage{instance=~\"$device\"} or ruijieCpuCostRate{instance=~\"$device\"} or jnxOperatingCPU{instance=~\"$device\"} or fnSysCpuUsage{instance=~\"$device\"} or zteCpuRate{instance=~\"$device\"} or mpCpuUtilization5Min{instance=~\"$device\"} or dptechCpuUsage{instance=~\"$device\"} or hillstoneCPUUtilization{instance=~\"$device\"} or sangforCpuUsage{instance=~\"$device\"} or dcnCpuUsage{instance=~\"$device\"}",
+          "expr": "cpmCPUTotal1minRev{hostname=~\"$device\"} or hh3cEntityExtCpuUsage{hostname=~\"$device\"} or hwEntityCpuUsage{hostname=~\"$device\"} or ruijieCpuCostRate{hostname=~\"$device\"} or jnxOperatingCPU{hostname=~\"$device\"} or fnSysCpuUsage{hostname=~\"$device\"} or zteCpuRate{hostname=~\"$device\"} or mpCpuUtilization5Min{hostname=~\"$device\"} or dptechCpuUsage{hostname=~\"$device\"} or hillstoneCPUUtilization{hostname=~\"$device\"} or sangforCpuUsage{hostname=~\"$device\"} or dcnCpuUsage{hostname=~\"$device\"}",
           "legendFormat": "Slot/Core {{entPhysicalName}} ({{instance}})",
           "refId": "A"
         }
@@ -332,7 +332,7 @@
       },
       "targets": [
         {
-          "expr": "hh3cEntityExtMemUsage{instance=~\"$device\"} or hwEntityMemUsage{instance=~\"$device\"} or ruijieMemoryPoolCurrentUtilization{instance=~\"$device\"} or jnxOperatingBuffer{instance=~\"$device\"} or fnSysMemUsage{instance=~\"$device\"} or zteMemRate{instance=~\"$device\"} or mpMemoryUtilization{instance=~\"$device\"} or dptechMemUsage{instance=~\"$device\"} or hillstoneMemoryUtilization{instance=~\"$device\"} or sangforMemUsage{instance=~\"$device\"} or dcnMemUsage{instance=~\"$device\"}",
+          "expr": "hh3cEntityExtMemUsage{hostname=~\"$device\"} or hwEntityMemUsage{hostname=~\"$device\"} or ruijieMemoryPoolCurrentUtilization{hostname=~\"$device\"} or jnxOperatingBuffer{hostname=~\"$device\"} or fnSysMemUsage{hostname=~\"$device\"} or zteMemRate{hostname=~\"$device\"} or mpMemoryUtilization{hostname=~\"$device\"} or dptechMemUsage{hostname=~\"$device\"} or hillstoneMemoryUtilization{hostname=~\"$device\"} or sangforMemUsage{hostname=~\"$device\"} or dcnMemUsage{hostname=~\"$device\"}",
           "legendFormat": "Pool/Slot {{entPhysicalName}} ({{instance}})",
           "refId": "A"
         }
@@ -379,7 +379,7 @@
       },
       "targets": [
         {
-          "expr": "hh3cEntityExtTemperature{instance=~\"$device\"} or hwEntityTemperature{instance=~\"$device\"} or ruijieDeviceTemperature{instance=~\"$device\"} or jnxOperatingTemp{instance=~\"$device\"} or entSensorValue{instance=~\"$device\"} or zteTemperature{instance=~\"$device\"} or mpTemperature{instance=~\"$device\"} or dptechTemperature{instance=~\"$device\"} or dcnTemperature{instance=~\"$device\"}",
+          "expr": "hh3cEntityExtTemperature{hostname=~\"$device\"} or hwEntityTemperature{hostname=~\"$device\"} or ruijieDeviceTemperature{hostname=~\"$device\"} or jnxOperatingTemp{hostname=~\"$device\"} or entSensorValue{hostname=~\"$device\"} or zteTemperature{hostname=~\"$device\"} or mpTemperature{hostname=~\"$device\"} or dptechTemperature{hostname=~\"$device\"} or dcnTemperature{hostname=~\"$device\"}",
           "legendFormat": "Sensor {{entPhysicalName}} ({{instance}})",
           "refId": "A"
         }
@@ -417,10 +417,54 @@
       },
       "targets": [
         {
-          "expr": "ifOperStatus{instance=~\"$device\"}",
+          "expr": "ifOperStatus{hostname=~\"$device\"}",
           "format": "table",
           "instant": true,
           "refId": "A"
+        }
+      ],
+      "transformations": [
+        {
+          "id": "organize",
+          "options": {
+            "excludeByName": {
+              "Time": true,
+              "__name__": true,
+              "asset_id": true,
+              "nexora_asset_id": true,
+              "nexora_hostname": true,
+              "nexora_module": true,
+              "nexora_platform": true,
+              "nexora_role": true,
+              "nexora_site_id": true,
+              "nexora_site_name": true,
+              "nexora_tenant_id": true,
+              "nexora_vendor": true,
+              "job": true,
+              "tenant_id": true,
+              "site_id": true,
+              "site_name": true,
+              "platform": true
+            },
+            "indexByName": {
+              "hostname": 0,
+              "instance": 1,
+              "ifIndex": 2,
+              "ifName": 3,
+              "vendor": 4,
+              "role": 5,
+              "Value": 6
+            },
+            "renameByName": {
+              "hostname": "设备名称",
+              "instance": "管理 IP",
+              "ifIndex": "端口号 (ifIndex)",
+              "ifName": "接口名称",
+              "vendor": "厂商",
+              "role": "角色",
+              "Value": "运行状态 (1=Up, 2=Down)"
+            }
+          }
         }
       ]
     }
@@ -445,14 +489,58 @@
             "$__all"
           ]
         },
-        "definition": "label_values(ifOperStatus, instance)",
+        "definition": "label_values(ifOperStatus, site_name)",
+        "includeAll": true,
+        "label": "站点",
+        "multi": true,
+        "name": "site",
+        "options": [],
+        "query": {
+          "query": "label_values(ifOperStatus, site_name)",
+          "refId": "StandardVariableQuery"
+        },
+        "refresh": 1,
+        "type": "query"
+      },
+      {
+        "allValue": ".*",
+        "current": {
+          "selected": true,
+          "text": [
+            "All"
+          ],
+          "value": [
+            "$__all"
+          ]
+        },
+        "definition": "label_values(ifOperStatus{site_name=~\"$site\"}, vendor)",
+        "includeAll": true,
+        "label": "厂商",
+        "multi": true,
+        "name": "vendor",
+        "options": [],
+        "query": {
+          "query": "label_values(ifOperStatus{site_name=~\"$site\"}, vendor)",
+          "refId": "StandardVariableQuery"
+        },
+        "refresh": 1,
+        "type": "query"
+      },
+      {
+        "allValue": null,
+        "current": {
+          "selected": false,
+          "text": "",
+          "value": ""
+        },
+        "definition": "label_values(ifOperStatus{site_name=~\"$site\",vendor=~\"$vendor\"}, hostname)",
         "includeAll": false,
         "label": "设备",
         "multi": false,
         "name": "device",
         "options": [],
         "query": {
-          "query": "label_values(ifOperStatus, instance)",
+          "query": "label_values(ifOperStatus{site_name=~\"$site\",vendor=~\"$vendor\"}, hostname)",
           "refId": "StandardVariableQuery"
         },
         "refresh": 1,
@@ -467,5 +555,5 @@
   "timezone": "browser",
   "title": "02 网络设备详情 (Network Device Detail)",
   "uid": "nexora-network-device",
-  "version": 1
+  "version": 2
 }

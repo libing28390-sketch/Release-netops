@@ -19,6 +19,7 @@ PUBLIC_ROUTES = {
     ('POST', '/api/pam/web-sessions/exchange'),
     ('POST', '/api/pam/web-sessions/{session_id}/status'),
     ('POST', '/api/pam/web-sessions/{session_id}/recording'),
+    ('POST', '/api/alerts/webhook/grafana'),
 }
 
 SELF_SERVICE_ROUTES = {

@@ -1,4 +1,5 @@
 import json
+import os
 import uuid
 from datetime import datetime, timedelta, timezone
 from fastapi import APIRouter, Body, HTTPException, Query, Depends
@@ -10,6 +11,7 @@ from services import alert_maintenance_service
 from services import alert_rule_service
 from services.audit_service import log_audit_event
 from services.alert_control_service import AlertState, check_no_data, compute_health, correlate_alerts, detect_storm, suppress_dependency_alerts, transition_state
+from services.notification_service import send_feishu, dispatch_to_all_users
 
 
 router = APIRouter()
@@ -1057,3 +1059,155 @@ def update_alert_note(alert_id: str, payload: dict = Body(default={})):
         return {'success': True}
     finally:
         conn.close()
+
+
+@router.post('/alerts/webhook/grafana')
+def receive_grafana_alert_webhook(
+    payload: dict = Body(...),
+    feishu_url: str | None = Query(default=None),
+):
+    """Receive Grafana Alertmanager webhook, normalize alert, and dispatch Feishu/system notifications."""
+    alerts = payload.get('alerts', [])
+    if not alerts and ('title' in payload or 'ruleName' in payload):
+        alerts = [payload]
+
+    processed = []
+    conn = get_db_connection()
+    try:
+        for raw_alert in alerts:
+            status_raw = str(raw_alert.get('status') or payload.get('status') or 'firing').lower()
+            labels = raw_alert.get('labels') or payload.get('commonLabels') or {}
+            annotations = raw_alert.get('annotations') or payload.get('commonAnnotations') or {}
+
+            title = (
+                annotations.get('summary')
+                or labels.get('alertname')
+                or payload.get('title')
+                or 'Grafana 监控告警'
+            )
+            raw_sev = str(labels.get('severity') or 'major').lower()
+            if raw_sev in {'critical', 'crit', 'fatal', 'p1'}:
+                severity = 'critical'
+            elif raw_sev in {'warning', 'warn', 'medium', 'p3'}:
+                severity = 'warning'
+            else:
+                severity = 'major'
+
+            obj = (
+                labels.get('hostname')
+                or labels.get('instance')
+                or labels.get('device')
+                or labels.get('device_id')
+                or '-'
+            )
+            raw_instance = str(labels.get('instance') or '')
+            ip = (
+                labels.get('ip_address')
+                or labels.get('ip')
+                or (raw_instance.split(':')[0] if ':' in raw_instance else raw_instance)
+                or '-'
+            )
+            message = (
+                annotations.get('description')
+                or annotations.get('message')
+                or annotations.get('summary')
+                or f"Grafana 告警规则触发：{title}"
+            )
+            starts_at = str(raw_alert.get('startsAt') or raw_alert.get('starts_at') or _utc_now_iso())
+            is_resolved = status_raw in {'resolved', 'ok'}
+
+            dedupe_key = f"grafana:{labels.get('alertname', title)}:{obj}:{ip}".replace(' ', '_')
+            now_utc = _utc_now_iso()
+
+            # Record into alert_events table
+            try:
+                if is_resolved:
+                    conn.execute(
+                        '''UPDATE alert_events
+                           SET resolved_at = ?, workflow_status = 'resolved', updated_at = ?
+                           WHERE dedupe_key = ? AND resolved_at IS NULL''',
+                        (now_utc, now_utc, dedupe_key),
+                    )
+                else:
+                    existing = conn.execute(
+                        "SELECT id FROM alert_events WHERE dedupe_key = ? AND resolved_at IS NULL",
+                        (dedupe_key,),
+                    ).fetchone()
+                    if existing:
+                        conn.execute(
+                            "UPDATE alert_events SET message = ?, updated_at = ? WHERE id = ?",
+                            (message, now_utc, existing['id']),
+                        )
+                    else:
+                        # Resolve actual device_id if exists in devices table (to satisfy FK constraints on triggers)
+                        resolved_device_id = None
+                        if obj or ip:
+                            dev_row = conn.execute(
+                                "SELECT id FROM devices WHERE hostname = ? OR ip_address = ? OR id = ? LIMIT 1",
+                                (obj, ip, obj),
+                            ).fetchone()
+                            if dev_row:
+                                resolved_device_id = dev_row['id']
+
+                        alert_id = str(uuid.uuid4())
+                        conn.execute(
+                            '''INSERT INTO alert_events (
+                                id, dedupe_key, source, severity, title, message,
+                                device_id, interface_name, created_at, resolved_at,
+                                workflow_status, note, updated_at
+                            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, NULL, 'open', '', ?)''',
+                            (
+                                alert_id,
+                                dedupe_key,
+                                'grafana_alert',
+                                severity,
+                                title,
+                                message,
+                                resolved_device_id,
+                                labels.get('ifName') or labels.get('interface') or '',
+                                starts_at,
+                                now_utc,
+                            ),
+                        )
+                conn.commit()
+            except Exception as db_err:
+                logger.warning("[GrafanaAlertWebhook] DB sync skipped/error: %s", db_err)
+                conn.rollback()
+
+            alert_data = {
+                'title': title,
+                'object_name': obj,
+                'ip_address': ip,
+                'status': 'resolved' if is_resolved else 'active',
+                'severity': severity,
+                'message': message,
+                'first_occurrence': starts_at,
+                'last_occurrence': now_utc,
+                'lang': 'zh',
+            }
+
+            dispatch_results = []
+            # Direct Feishu URL if specified in query or env
+            target_feishu = feishu_url or os.environ.get('FEISHU_WEBHOOK_URL')
+            if target_feishu:
+                ok, msg = send_feishu(target_feishu, alert_data)
+                dispatch_results.append({'platform': 'feishu_direct', 'success': ok, 'detail': msg})
+
+            # Broadcast to system configured notification channels
+            broadcast_res = dispatch_to_all_users(alert_data)
+            dispatch_results.extend(broadcast_res)
+
+            processed.append({
+                'title': title,
+                'dedupe_key': dedupe_key,
+                'status': 'resolved' if is_resolved else 'active',
+                'dispatch': dispatch_results,
+            })
+    finally:
+        conn.close()
+
+    return {
+        'status': 'ok',
+        'received_count': len(alerts),
+        'processed': processed,
+    }

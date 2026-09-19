@@ -1,5 +1,5 @@
 import React from 'react';
-import { Server, Activity, ShieldCheck, AlertCircle, AlertTriangle, Bell, TrendingUp, PieChart as PieChartIcon, History, Clock, ChevronRight, Zap, MonitorSmartphone, Play, CalendarPlus, LayoutDashboard, Pause, RefreshCw, Layers, ShieldAlert, CheckCircle2, ArrowUpRight } from 'lucide-react';
+import { Server, Activity, ShieldCheck, AlertCircle, AlertTriangle, Bell, TrendingUp, PieChart as PieChartIcon, History, Clock, ChevronRight, Zap, MonitorSmartphone, Play, CalendarPlus, LayoutDashboard, Pause, RefreshCw, Layers, ShieldAlert, CheckCircle2, ArrowUpRight, FileSpreadsheet } from 'lucide-react';
 import { ResponsiveContainer, AreaChart, Area, XAxis, YAxis, CartesianGrid, Tooltip, ReferenceLine, PieChart, Pie, Cell } from 'recharts';
 import type { Device, Job, ScheduledTask, HostResourceSnapshot, NotificationItem } from '../types';
 import { useChartTheme } from '../hooks/useChartTheme';
@@ -159,6 +159,16 @@ const DashboardTab: React.FC<DashboardTabProps> = ({
               <span className={`h-1.5 w-1.5 rounded-full ${healthLevel === 'healthy' ? 'bg-emerald-500' : healthLevel === 'degraded' ? 'bg-amber-500' : 'bg-red-500 animate-pulse'}`} />
               <span>{healthLabel}</span>
             </div>
+
+            {/* Secondary Action: Generate Reports */}
+            <button 
+              onClick={() => navigate('/monitor/reports')}
+              className="flex items-center gap-1.5 px-3.5 py-1.5 rounded-full text-xs font-semibold text-emerald-700 dark:text-emerald-300 bg-emerald-50 dark:bg-emerald-950/40 border border-emerald-200/80 dark:border-emerald-800/60 hover:bg-emerald-100 dark:hover:bg-emerald-900/60 shadow-2xs transition-all cursor-pointer"
+              title={language === 'zh' ? '生成全网接口流量、网络设备健康与出口链路权威多工作表报表' : 'Generate authoritative multi-sheet Excel / CSV reports'}
+            >
+              <FileSpreadsheet size={13} className="text-emerald-600 dark:text-emerald-400" />
+              <span>{language === 'zh' ? '生成报表' : 'Generate Reports'}</span>
+            </button>
 
             {/* Secondary Action: Platform Telemetry */}
             <button 

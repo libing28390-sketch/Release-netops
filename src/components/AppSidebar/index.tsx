@@ -30,6 +30,7 @@ import {
   Clock,
   CloudCog,
   FileText,
+  FileSpreadsheet,
   FileCode2,
   GitBranch,
   Globe,
@@ -66,7 +67,7 @@ import { useSystem } from '../../hooks/useSystem';
 
 /** Map icon string keys (from navConfig) → lucide component */
 const iconMap: Record<string, React.ComponentType<any>> = {
-  Activity, BarChart2, Bell, BookOpen, Bot, Boxes, ClipboardList, Clock, CloudCog, Cpu, FileCode2, FileText, Gauge, GitBranch, Globe, Key, Layers3, Lock, MessageSquare, Monitor, Server, Settings, Shield, ShieldAlert, ShieldCheck, Terminal, User, Wrench, Zap,
+  Activity, BarChart2, Bell, BookOpen, Bot, Boxes, ClipboardList, Clock, CloudCog, Cpu, FileCode2, FileSpreadsheet, FileText, Gauge, GitBranch, Globe, Key, Layers3, Lock, MessageSquare, Monitor, Server, Settings, Shield, ShieldAlert, ShieldCheck, Terminal, User, Wrench, Zap,
 };
 
 
@@ -147,6 +148,9 @@ const AppSidebar: React.FC<AppSidebarProps> = ({
   const isActive = useCallback((item: NavChild): boolean => {
     const { pathname } = location;
     if (pathname === item.path) return true;
+    if (item.id === 'reports-interfaces' && (pathname === '/monitor/reports' || pathname === '/monitor/reports/')) {
+      return true;
+    }
     if (item.activeMatch) {
       // Support comma-separated list of prefixes
       const prefixes = item.activeMatch.split(',');
@@ -155,9 +159,15 @@ const AppSidebar: React.FC<AppSidebarProps> = ({
     return false;
   }, [location]);
 
+  const itemOrChildActive = useCallback((item: NavChild): boolean => {
+    if (isActive(item)) return true;
+    if (item.children && item.children.some(c => isActive(c))) return true;
+    return false;
+  }, [isActive]);
+
   const sectionHasActive = useCallback(
-    (children: NavChild[]) => children.some(c => isActive(c)),
-    [isActive],
+    (children: NavChild[]) => children.some(c => itemOrChildActive(c)),
+    [itemOrChildActive],
   );
 
   /* ─────────── Badge helpers ─────────── */
@@ -187,10 +197,10 @@ const AppSidebar: React.FC<AppSidebarProps> = ({
   /* ─────────── Accordion: only one group open ─────────── */
   const getActiveGroupId = useCallback((): string | null => {
     for (const g of navConfig) {
-      if (g.children.some(c => isActive(c))) return g.id;
+      if (g.children.some(c => itemOrChildActive(c))) return g.id;
     }
     return null;
-  }, [isActive]);
+  }, [itemOrChildActive]);
 
   const [openGroupId, setOpenGroupId] = useState<string | null>(() => getActiveGroupId());
 
@@ -202,6 +212,33 @@ const AppSidebar: React.FC<AppSidebarProps> = ({
 
   const toggleGroup = useCallback((groupId: string) => {
     setOpenGroupId((prev: string | null) => prev === groupId ? null : groupId);
+  }, []);
+
+  /* ─────────── Child sub-menus accordion (e.g. 监控报表) ─────────── */
+  const [openChildIds, setOpenChildIds] = useState<Record<string, boolean>>({});
+
+  // Auto-expand child items when visiting their routes; auto-collapse when navigating away
+  useEffect(() => {
+    const nextOpen: Record<string, boolean> = {};
+    for (const group of navConfig) {
+      for (const child of group.children) {
+        if (child.children && child.children.length > 0) {
+          const hasActive = child.children.some(c => isActive(c)) ||
+            (child.activeMatch ? child.activeMatch.split(',').some(p => location.pathname.startsWith(p)) : location.pathname === child.path);
+          if (hasActive) {
+            nextOpen[child.id] = true;
+          }
+        }
+      }
+    }
+    setOpenChildIds(nextOpen);
+  }, [location.pathname, isActive]);
+
+  const toggleChild = useCallback((childId: string) => {
+    setOpenChildIds(prev => ({
+      ...prev,
+      [childId]: !prev[childId],
+    }));
   }, []);
 
   /* ═══════════════════════════════════════
@@ -324,16 +361,28 @@ const AppSidebar: React.FC<AppSidebarProps> = ({
             {visibleChildren.map(child => {
               const CIcon = child.icon ? iconMap[child.icon] : undefined;
               const nestedChildren = child.children ? filterByRole(child.children) : [];
+              const isChildOpen = Boolean(openChildIds[child.id]);
+              const hasActiveNestedChild = nestedChildren.some(nc => isActive(nc));
+              const isThisChildActive = isActive(child) && !hasActiveNestedChild;
+
               return (
                 <React.Fragment key={child.id}>
                   <NavItem
                     label={L(child.label, child.labelEn)}
-                    active={isActive(child)}
+                    active={isThisChildActive}
                     icon={CIcon}
                     indent
-                    onClick={() => handleNav(child.path)}
+                    hasChildren={nestedChildren.length > 0}
+                    isOpen={isChildOpen}
+                    onToggleOpen={() => toggleChild(child.id)}
+                    onClick={() => {
+                      if (nestedChildren.length > 0 && !isChildOpen) {
+                        toggleChild(child.id);
+                      }
+                      handleNav(child.path);
+                    }}
                   />
-                  {nestedChildren.length > 0 && (
+                  {nestedChildren.length > 0 && isChildOpen && (
                     <div className="ml-2 border-l border-slate-200/70 dark:border-white/10">
                       {nestedChildren.map(nestedChild => {
                         const NestedIcon = nestedChild.icon ? iconMap[nestedChild.icon] : undefined;

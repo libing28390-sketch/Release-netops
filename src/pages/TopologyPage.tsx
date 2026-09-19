@@ -441,83 +441,6 @@ const TopologyPage: React.FC<TopologyPageProps> = ({
         </div>
       )}
 
-      {/* Topology Generation Pipeline */}
-      <div className="bg-white dark:bg-zinc-900/90 border border-gray-200/70 dark:border-zinc-800/80 rounded-2xl p-4 shadow-2xs">
-        <div className="flex flex-wrap items-start justify-between gap-3">
-          <div>
-            <div className="flex items-center gap-2">
-              <span className="text-[10px] font-bold uppercase tracking-[0.16em] text-blue-600 bg-blue-50 px-2 py-0.5 rounded-full">
-                SNMP · LLDP
-              </span>
-              <h3 className="text-sm font-bold text-gray-900 dark:text-white">{language === 'zh' ? '拓扑自动生成流水线' : 'Topology Generation Pipeline'}</h3>
-              <span className={`rounded-full px-2 py-0.5 text-[10px] font-bold ${generationStatus?.health === 'healthy' ? 'bg-emerald-50 text-emerald-700 dark:bg-emerald-950/40 dark:text-emerald-300' : generationStatus?.health === 'degraded' ? 'bg-amber-50 text-amber-700 dark:bg-amber-950/40 dark:text-amber-300' : 'bg-gray-100 text-gray-600 dark:bg-zinc-800 dark:text-zinc-400'}`}>
-                {generationStatusLoading
-                  ? (language === 'zh' ? '读取中' : 'Loading')
-                  : generationStatus?.health === 'healthy'
-                    ? (language === 'zh' ? '证据正常' : 'Healthy')
-                    : generationStatus?.health === 'degraded'
-                      ? (language === 'zh' ? '需要关注' : 'Attention')
-                      : (language === 'zh' ? '等待证据' : 'Awaiting Evidence')}
-              </span>
-            </div>
-            <p className="mt-1 text-xs text-gray-400">
-              {language === 'zh'
-                ? `系统每 ${automaticIntervalLabel} 自动执行一次；优先通过免密 SNMP 采集标准 xDP/LLDP 邻居与聚合状态，无响应时安全回退至只读 CLI，绝不写入设备配置。`
-                : `Automatic discovery runs every ${automaticIntervalLabel}; Prioritizes non-intrusive SNMP xDP/LLDP queries with safe read-only CLI fallback, without writing configs.`}
-            </p>
-          </div>
-          <div className="flex flex-wrap gap-2 text-xs font-mono text-gray-500">
-            <span className="inline-flex items-center gap-1.5 rounded-xl border border-gray-200/80 dark:border-zinc-700 bg-gray-50 dark:bg-zinc-800 px-2.5 py-1 text-[11px]"><Clock3 size={12} />{language === 'zh' ? `证据 ${evidenceTtlLabel}过期` : `${evidenceTtlLabel} TTL`}</span>
-            <span className="inline-flex items-center gap-1.5 rounded-xl border border-gray-200/80 dark:border-zinc-700 bg-gray-50 dark:bg-zinc-800 px-2.5 py-1 text-[11px]"><Database size={12} />{language === 'zh' ? `${generationInventory?.eligible_devices ?? '—'} 台可发现` : `${generationInventory?.eligible_devices ?? '—'} eligible`}</span>
-            <span className="inline-flex items-center gap-1.5 rounded-xl border border-gray-200/80 dark:border-zinc-700 bg-gray-50 dark:bg-zinc-800 px-2.5 py-1 text-[11px]"><Activity size={12} />{language === 'zh' ? `${generationInventory?.managed_links ?? '—'} 条已生成链路` : `${generationInventory?.managed_links ?? '—'} links`}</span>
-          </div>
-        </div>
-
-        <div className="mt-3 grid gap-2 grid-cols-2 sm:grid-cols-3 xl:grid-cols-6">
-          {pipelineStages.map((stage, index) => (
-            <div key={stage} className="relative rounded-xl border border-gray-100 dark:border-zinc-800 bg-gray-50/70 dark:bg-zinc-800/40 px-3 py-2">
-              <div className="text-[9px] font-bold text-blue-600 dark:text-blue-400 font-mono">{String(index + 1).padStart(2, '0')}</div>
-              <div className="mt-0.5 text-xs font-medium text-gray-700 dark:text-zinc-300 truncate">{pipelineLabels[stage] || stage}</div>
-            </div>
-          ))}
-        </div>
-
-        <div className="mt-3 flex flex-wrap items-center gap-x-4 gap-y-1.5 text-xs text-gray-400 font-mono">
-          <span>{language === 'zh' ? '最近邻居证据：' : 'Latest evidence: '}{generationInventory?.last_observation_at ? formatTopologyLastSeen(generationInventory.last_observation_at) : (language === 'zh' ? '暂无' : 'None')}</span>
-          <span>{language === 'zh' ? '匹配：' : 'Matched: '}<b className="text-emerald-600 font-bold">{generationInventory?.matched_observations ?? 0}</b></span>
-          <span>{language === 'zh' ? '歧义：' : 'Ambiguous: '}<b className="text-amber-600 font-bold">{generationInventory?.ambiguous_observations ?? 0}</b></span>
-          <span>{language === 'zh' ? '未纳管：' : 'Unmanaged: '}<b className="text-gray-600 font-bold">{generationInventory?.unmatched_observations ?? 0}</b></span>
-          <span>{language === 'zh' ? '双向/多证据：' : 'Multi-evidence: '}<b className="text-blue-600 font-bold">{generationInventory?.multi_evidence_links ?? 0}</b></span>
-          <span>{language === 'zh' ? '陈旧链路：' : 'Stale: '}<b className="text-rose-600 font-bold">{generationInventory?.stale_links ?? 0}</b></span>
-        </div>
-        {(generationStatusError || (generationStatus?.warnings.length || 0) > 0) && (
-          <div className="mt-2.5 flex flex-wrap gap-2">
-            {generationStatusError && (
-              <span className="inline-flex items-center gap-1 rounded-xl bg-amber-50 px-2 py-1 text-[11px] font-semibold text-amber-700"><AlertTriangle size={11} />{language === 'zh' ? '生成状态暂时不可用，拓扑数据仍可继续查看。' : 'Generation status is temporarily unavailable; topology data remains available.'}</span>
-            )}
-            {generationStatus?.warnings.map((warning) => {
-              const isInfo = warning.severity === 'info' || warning.blocking === false;
-              const isUnmanaged = warning.code === 'unmanaged_neighbors';
-              const label = isUnmanaged
-                ? (language === 'zh' ? `未纳管邻居 · ${warning.count}` : `Unmanaged peers · ${warning.count}`)
-                : `${warning.code} · ${warning.count}`;
-              return (
-                <span
-                  key={warning.code}
-                  className={`inline-flex items-center gap-1 rounded-xl px-2 py-1 text-[11px] font-semibold ${
-                    isInfo
-                      ? 'bg-slate-100 text-slate-700 dark:bg-zinc-800 dark:text-zinc-300 border border-slate-200/80 dark:border-zinc-700'
-                      : 'bg-amber-50 text-amber-700 dark:bg-amber-950/40 dark:text-amber-300'
-                  }`}
-                >
-                  {isInfo ? <Info size={11} className="text-slate-500" /> : <AlertTriangle size={11} />}
-                  {label}
-                </span>
-              );
-            })}
-          </div>
-        )}
-      </div>
 
       {/* Discovery Task Strip */}
       {topologyDiscoveryProgress && (
@@ -613,20 +536,6 @@ const TopologyPage: React.FC<TopologyPageProps> = ({
           >
             <option value="all">{language === 'zh' ? '全部站点' : 'All Sites'}</option>
             {topologySiteOptions.map((site) => <option key={site.id} value={site.id}>{site.name}</option>)}
-          </select>
-          <select
-            value={topologyGraphView}
-            onChange={(event) => onTopologyGraphViewChange(event.target.value as TopologyGraphView)}
-            title={language === 'zh' ? '选择关系视图' : 'Choose relation view'}
-            className="rounded-xl border border-gray-200/80 dark:border-zinc-700 bg-gray-50 dark:bg-zinc-800 px-2.5 py-1.5 text-xs outline-none text-gray-700 dark:text-zinc-200 cursor-pointer"
-          >
-            <option value="physical">{language === 'zh' ? '物理视图（LLDP/CDP）' : 'Physical (LLDP/CDP)'}</option>
-            <option value="l2">{language === 'zh' ? '二层视图（STP/MAC）' : 'L2 (STP/MAC)'}</option>
-            <option value="l3">{language === 'zh' ? '三层视图（OSPF/BGP/路由）' : 'L3 (OSPF/BGP/Routing)'}</option>
-            <option value="logical">{language === 'zh' ? '逻辑视图（L3/路由）' : 'Logical (L3/Routing)'}</option>
-            <option value="all">{language === 'zh' ? '综合视图' : 'Composite'}</option>
-            <option value="oob">{language === 'zh' ? 'OOB 管理视图' : 'OOB management'}</option>
-            <option value="external">{language === 'zh' ? '外部/端点视图' : 'External / endpoint'}</option>
           </select>
           <div className="relative">
             <button

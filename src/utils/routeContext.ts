@@ -41,6 +41,9 @@ export function getRouteContext(pathname: string): RouteContext {
       activeTab = 'network-monitoring';
     } else if (second === 'dashboards') {
       activeTab = 'monitoring-dashboards';
+    } else if (second === 'reports') {
+      activeTab = 'monitoring-reports';
+      subPage = parts[2] || 'interfaces';
     } else if (second === 'collection-plans') {
       activeTab = 'monitoring-plans';
     } else if (second === 'modules') {
@@ -167,7 +170,7 @@ export function getRouteContext(pathname: string): RouteContext {
   // 10. Management (/management/...)
   else if (first === 'management') {
     if (second === 'snmp-metric-templates') {
-      activeTab = 'snmp-metric-templates';
+      activeTab = 'monitoring';
     } else if (second === 'audit') {
       activeTab = 'audit';
     } else if (second === 'users') {

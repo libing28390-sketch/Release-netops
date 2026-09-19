@@ -363,6 +363,50 @@
           "instant": true,
           "refId": "A"
         }
+      ],
+      "transformations": [
+        {
+          "id": "organize",
+          "options": {
+            "excludeByName": {
+              "Time": true,
+              "__name__": true,
+              "asset_id": true,
+              "nexora_asset_id": true,
+              "nexora_hostname": true,
+              "nexora_module": true,
+              "nexora_platform": true,
+              "nexora_role": true,
+              "nexora_site_id": true,
+              "nexora_site_name": true,
+              "nexora_tenant_id": true,
+              "nexora_vendor": true,
+              "job": true,
+              "tenant_id": true,
+              "site_id": true,
+              "site_name": true,
+              "platform": true
+            },
+            "indexByName": {
+              "hostname": 0,
+              "instance": 1,
+              "ifIndex": 2,
+              "ifName": 3,
+              "vendor": 4,
+              "role": 5,
+              "Value": 6
+            },
+            "renameByName": {
+              "hostname": "设备名称",
+              "instance": "管理 IP",
+              "ifIndex": "端口号 (ifIndex)",
+              "ifName": "接口名称",
+              "vendor": "厂商",
+              "role": "角色",
+              "Value": "探测状态"
+            }
+          }
+        }
       ]
     },
     {
@@ -402,6 +446,50 @@
           "instant": true,
           "refId": "A"
         }
+      ],
+      "transformations": [
+        {
+          "id": "organize",
+          "options": {
+            "excludeByName": {
+              "Time": true,
+              "__name__": true,
+              "asset_id": true,
+              "nexora_asset_id": true,
+              "nexora_hostname": true,
+              "nexora_module": true,
+              "nexora_platform": true,
+              "nexora_role": true,
+              "nexora_site_id": true,
+              "nexora_site_name": true,
+              "nexora_tenant_id": true,
+              "nexora_vendor": true,
+              "job": true,
+              "tenant_id": true,
+              "site_id": true,
+              "site_name": true,
+              "platform": true
+            },
+            "indexByName": {
+              "hostname": 0,
+              "instance": 1,
+              "ifIndex": 2,
+              "ifName": 3,
+              "vendor": 4,
+              "role": 5,
+              "Value": 6
+            },
+            "renameByName": {
+              "hostname": "设备名称",
+              "instance": "管理 IP",
+              "ifIndex": "端口号 (ifIndex)",
+              "ifName": "接口名称",
+              "vendor": "厂商",
+              "role": "角色",
+              "Value": "采集耗时 (秒)"
+            }
+          }
+        }
       ]
     }
   ],
@@ -422,5 +510,5 @@
   "timezone": "browser",
   "title": "05 SNMP 采集健康 (SNMP Scrape Health)",
   "uid": "nexora-monitoring-health",
-  "version": 1
+  "version": 2
 }

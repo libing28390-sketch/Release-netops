@@ -351,6 +351,7 @@ class Assignment:
     selection_reason: str
     assignment_hash: str
     hostname: str = ""
+    site_name: str = ""
 
     def as_dict(self) -> dict[str, Any]:
         return {
@@ -371,6 +372,7 @@ class Assignment:
             "source_plan_id": self.source_plan_id,
             "tenant_id": self.tenant_id,
             "site_id": self.site_id,
+            "site_name": self.site_name,
             "vendor": self.vendor,
             "platform": self.platform,
             "role": self.role,
@@ -831,6 +833,7 @@ def build_assignments(
                 source_plan_id=plan_id,
                 tenant_id=str(device.get("tenant_id") or ""),
                 site_id=str(device.get("site_id") or device.get("site") or ""),
+                site_name=str(device.get("site_name") or device.get("site") or device.get("site_id") or "").strip(),
                 vendor=str(device.get("vendor") or module.get("vendor") or ""),
                 platform=str(device.get("platform") or module.get("cli_platform") or ""),
                 role=str(device.get("role") or ""),
@@ -866,6 +869,7 @@ def render_target_snapshot(assignments: Iterable[Mapping[str, Any]], *, collecto
             "nexora_hostname": hostname or target,
             "nexora_tenant_id": str(assignment.get("tenant_id") or ""),
             "nexora_site_id": str(assignment.get("site_id") or ""),
+            "nexora_site_name": str(assignment.get("site_name") or assignment.get("site") or assignment.get("site_id") or "").strip(),
             "nexora_vendor": str(assignment.get("vendor") or ""),
             "nexora_platform": str(assignment.get("platform") or ""),
             "nexora_role": str(assignment.get("role") or ""),
@@ -925,10 +929,11 @@ def render_vmagent_config(snapshot_path: str = "/etc/nexora-collector/runtime/vm
                 {"source_labels": ["nexora_hostname"], "target_label": "hostname"},
                 {"source_labels": ["nexora_tenant_id"], "target_label": "tenant_id"},
                 {"source_labels": ["nexora_site_id"], "target_label": "site_id"},
+                {"source_labels": ["nexora_site_name"], "target_label": "site_name"},
                 {"source_labels": ["nexora_vendor"], "target_label": "vendor"},
                 {"source_labels": ["nexora_platform"], "target_label": "platform"},
                 {"source_labels": ["nexora_role"], "target_label": "role"},
-                {"action": "labeldrop", "regex": "nexora_auth|nexora_scrape_interval|nexora_scrape_timeout"},
+                {"action": "labeldrop", "regex": "nexora_auth|nexora_.*"},
                 {"target_label": "__address__", "replacement": "snmp-exporter:9116"},
             ],
         }],

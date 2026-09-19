@@ -24,8 +24,8 @@ describe('getRouteContext AI routes', () => {
 });
 
 describe('getRouteContext platform management routes', () => {
-  it('maps SNMP metric templates to the platform management tab', () => {
-    expect(getRouteContext('/management/snmp-metric-templates').activeTab).toBe('snmp-metric-templates');
+  it('redirects deprecated SNMP metric templates to the unified monitoring tab', () => {
+    expect(getRouteContext('/management/snmp-metric-templates').activeTab).toBe('monitoring');
   });
 });
 
@@ -42,6 +42,10 @@ describe('getRouteContext monitoring routes', () => {
     expect(getRouteContext('/monitor/servers').activeTab).toBe('server-monitoring');
     expect(getRouteContext('/monitor/networks').activeTab).toBe('network-monitoring');
     expect(getRouteContext('/monitor/dashboards').activeTab).toBe('monitoring-dashboards');
+    expect(getRouteContext('/monitor/reports').activeTab).toBe('monitoring-reports');
+    expect(getRouteContext('/monitor/reports/interfaces').subPage).toBe('interfaces');
+    expect(getRouteContext('/monitor/reports/devices').subPage).toBe('devices');
+    expect(getRouteContext('/monitor/reports/outbound').subPage).toBe('outbound');
     expect(getRouteContext('/monitor/collection-plans').activeTab).toBe('monitoring-plans');
     expect(getRouteContext('/monitor/modules').activeTab).toBe('monitoring-modules');
     expect(getRouteContext('/monitor/collectors').activeTab).toBe('monitoring-collectors');
