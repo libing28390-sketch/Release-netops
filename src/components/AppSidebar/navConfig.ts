@@ -32,7 +32,6 @@ export const navConfig: NavGroup[] = [
         ],
       },
       { id: 'monitoring-plans', label: '采集计划', labelEn: 'Collection Plans', path: '/monitor/collection-plans', icon: 'Layers3', requiredRole: 'Operator' },
-      { id: 'monitoring-modules', label: '模块目录', labelEn: 'Module Catalog', path: '/monitor/modules', icon: 'Boxes', requiredRole: 'Operator' },
       { id: 'monitoring-collectors', label: '采集器管理', labelEn: 'Collectors', path: '/monitor/collectors', icon: 'CloudCog', requiredRole: 'Operator' },
       { id: 'topology',          label: '网络拓扑',  labelEn: 'Topology',          path: '/monitor/topology',    icon: 'Network' },
     ],
