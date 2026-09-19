@@ -112,6 +112,7 @@ artifacts/*
 postgresql-installer.exe
 diagnostic_report.zip
 vector*.zip
+!third_party/pgvector/vector.v0.8.6-pg18.zip
 
 # Portable/bundled Node.js downloaded by the launcher (large, regenerable)
 tools/node/

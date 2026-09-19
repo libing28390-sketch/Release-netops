@@ -439,6 +439,7 @@ jobs:
           rm -rf .git
           git init
           git add .
+          git add -f third_party/pgvector/vector.v0.8.6-pg18.zip
 
           public_deploy_docs=(
             docs/deploy/README.md
