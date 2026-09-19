@@ -65,9 +65,8 @@ def clean_organize_transformation(value_col_name="数值", extra_renames=None):
     renames = {
         "hostname": "设备名称",
         "instance": "管理 IP",
-        "ifName": "端口编号",
-        "ifDescr": "端口名称",
-        "ifIndex": "端口索引",
+        "ifDescr": "接口全称",
+        "ifName": "接口名称",
         "vendor": "厂商",
         "role": "角色",
         "Value": value_col_name,
@@ -81,6 +80,7 @@ def clean_organize_transformation(value_col_name="数值", extra_renames=None):
                 "excludeByName": {
                     "Time": True,
                     "__name__": True,
+                    "ifIndex": True,
                     "asset_id": True,
                     "nexora_asset_id": True,
                     "nexora_hostname": True,
@@ -100,19 +100,24 @@ def clean_organize_transformation(value_col_name="数值", extra_renames=None):
                 "indexByName": {
                     "hostname": 0,
                     "instance": 1,
-                    "ifName": 2,
-                    "ifDescr": 3,
-                    "ifIndex": 4,
-                    "vendor": 5,
-                    "role": 6,
-                    "Value": 7,
+                    "ifDescr": 2,
+                    "ifName": 3,
+                    "vendor": 4,
+                    "role": 5,
+                    "Value": 6,
                 },
                 "renameByName": renames,
             }
         }
     ]
 
-def table_panel(pid, title, expr, x, y, w=12, h=8, unit="", transformations=None):
+def table_panel(pid, title, expr, x, y, w=12, h=8, unit="", transformations=None, value_col_name="数值"):
+    overrides = []
+    if unit:
+        overrides.append({
+            "matcher": {"id": "byName", "options": value_col_name},
+            "properties": [{"id": "unit", "value": unit}]
+        })
     panel = {
         "id": pid,
         "title": title,
@@ -121,10 +126,10 @@ def table_panel(pid, title, expr, x, y, w=12, h=8, unit="", transformations=None
         "gridPos": {"h": h, "w": w, "x": x, "y": y},
         "fieldConfig": {
             "defaults": {
-                "unit": unit,
+                "unit": "none",
                 "color": {"mode": "thresholds"}
             },
-            "overrides": []
+            "overrides": overrides
         },
         "options": {
             "cellHeight": "sm",
@@ -424,15 +429,17 @@ def build_interface_dashboard():
         ], 12, 4, 12, 8, unit="bps"),
         table_panel(
             7, "端口带宽利用率 Top 20",
-            f"topk(20, max by (hostname, instance, ifName, ifDescr, ifIndex) ((rate(ifHCInOctets{{{sel}}}[5m]) * 8) / (ifHighSpeed * 1000000) * 100))",
+            f"topk(20, max by (hostname, instance, ifDescr, ifName) ((rate(ifHCInOctets{{{sel}}}[5m]) * 8) / (ifHighSpeed * 1000000) * 100))",
             0, 12, 12, 8, unit="percent",
-            transformations=clean_organize_transformation("带宽利用率")
+            transformations=clean_organize_transformation("带宽利用率"),
+            value_col_name="带宽利用率"
         ),
         table_panel(
             8, "端口错误与丢弃排行 Top 20",
-            f"topk(20, sum by (hostname, instance, ifName, ifDescr, ifIndex) (rate(ifInErrors{{{sel}}}[5m]) + rate(ifOutErrors{{{sel}}}[5m]) + rate(ifInDiscards{{{sel}}}[5m])))",
+            f"topk(20, sum by (hostname, instance, ifDescr, ifName) (rate(ifInErrors{{{sel}}}[5m]) + rate(ifOutErrors{{{sel}}}[5m]) + rate(ifInDiscards{{{sel}}}[5m])))",
             12, 12, 12, 8, unit="pps",
-            transformations=clean_organize_transformation("错误/丢弃率 (pps)")
+            transformations=clean_organize_transformation("错误/丢弃率 (pps)"),
+            value_col_name="错误/丢弃率 (pps)"
         )
     ]
 
@@ -539,15 +546,17 @@ def build_outbound_dashboard():
         ], 12, 12, 12, 8, unit="pps"),
         table_panel(
             9, "出口端口带宽利用率排行 Top 10",
-            f"topk(10, max by (hostname, instance, ifName, ifDescr, ifIndex) ((rate(ifHCInOctets{{{comb_sel}}}[5m]) * 8) / (ifHighSpeed * 1000000) * 100))",
+            f"topk(10, max by (hostname, instance, ifDescr, ifName) ((rate(ifHCInOctets{{{comb_sel}}}[5m]) * 8) / (ifHighSpeed * 1000000) * 100))",
             0, 20, 12, 8, unit="percent",
-            transformations=clean_organize_transformation("带宽利用率")
+            transformations=clean_organize_transformation("带宽利用率"),
+            value_col_name="带宽利用率"
         ),
         table_panel(
             10, "出口端口错误与丢弃排行 Top 10",
-            f"topk(10, sum by (hostname, instance, ifName, ifDescr, ifIndex) (rate(ifInErrors{{{comb_sel}}}[5m]) + rate(ifOutErrors{{{comb_sel}}}[5m]) + rate(ifInDiscards{{{comb_sel}}}[5m])))",
+            f"topk(10, sum by (hostname, instance, ifDescr, ifName) (rate(ifInErrors{{{comb_sel}}}[5m]) + rate(ifOutErrors{{{comb_sel}}}[5m]) + rate(ifInDiscards{{{comb_sel}}}[5m])))",
             12, 20, 12, 8, unit="pps",
-            transformations=clean_organize_transformation("错误/丢弃率 (pps)")
+            transformations=clean_organize_transformation("错误/丢弃率 (pps)"),
+            value_col_name="错误/丢弃率 (pps)"
         )
     ]
 

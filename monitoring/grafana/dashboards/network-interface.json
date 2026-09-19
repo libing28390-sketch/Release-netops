@@ -346,12 +346,25 @@
       },
       "fieldConfig": {
         "defaults": {
-          "unit": "percent",
+          "unit": "none",
           "color": {
             "mode": "thresholds"
           }
         },
-        "overrides": []
+        "overrides": [
+          {
+            "matcher": {
+              "id": "byName",
+              "options": "带宽利用率"
+            },
+            "properties": [
+              {
+                "id": "unit",
+                "value": "percent"
+              }
+            ]
+          }
+        ]
       },
       "options": {
         "cellHeight": "sm",
@@ -362,7 +375,7 @@
       },
       "targets": [
         {
-          "expr": "topk(20, max by (hostname, instance, ifName, ifDescr, ifIndex) ((rate(ifHCInOctets{site_name=~\"$site\",vendor=~\"$vendor\",role=~\"$role\",hostname=~\"$device\"}[5m]) * 8) / (ifHighSpeed * 1000000) * 100))",
+          "expr": "topk(20, max by (hostname, instance, ifDescr, ifName) ((rate(ifHCInOctets{site_name=~\"$site\",vendor=~\"$vendor\",role=~\"$role\",hostname=~\"$device\"}[5m]) * 8) / (ifHighSpeed * 1000000) * 100))",
           "format": "table",
           "instant": true,
           "refId": "A"
@@ -375,6 +388,7 @@
             "excludeByName": {
               "Time": true,
               "__name__": true,
+              "ifIndex": true,
               "asset_id": true,
               "nexora_asset_id": true,
               "nexora_hostname": true,
@@ -394,19 +408,17 @@
             "indexByName": {
               "hostname": 0,
               "instance": 1,
-              "ifName": 2,
-              "ifDescr": 3,
-              "ifIndex": 4,
-              "vendor": 5,
-              "role": 6,
-              "Value": 7
+              "ifDescr": 2,
+              "ifName": 3,
+              "vendor": 4,
+              "role": 5,
+              "Value": 6
             },
             "renameByName": {
               "hostname": "设备名称",
               "instance": "管理 IP",
-              "ifName": "端口编号",
-              "ifDescr": "端口名称",
-              "ifIndex": "端口索引",
+              "ifDescr": "接口全称",
+              "ifName": "接口名称",
               "vendor": "厂商",
               "role": "角色",
               "Value": "带宽利用率"
@@ -431,12 +443,25 @@
       },
       "fieldConfig": {
         "defaults": {
-          "unit": "pps",
+          "unit": "none",
           "color": {
             "mode": "thresholds"
           }
         },
-        "overrides": []
+        "overrides": [
+          {
+            "matcher": {
+              "id": "byName",
+              "options": "错误/丢弃率 (pps)"
+            },
+            "properties": [
+              {
+                "id": "unit",
+                "value": "pps"
+              }
+            ]
+          }
+        ]
       },
       "options": {
         "cellHeight": "sm",
@@ -447,7 +472,7 @@
       },
       "targets": [
         {
-          "expr": "topk(20, sum by (hostname, instance, ifName, ifDescr, ifIndex) (rate(ifInErrors{site_name=~\"$site\",vendor=~\"$vendor\",role=~\"$role\",hostname=~\"$device\"}[5m]) + rate(ifOutErrors{site_name=~\"$site\",vendor=~\"$vendor\",role=~\"$role\",hostname=~\"$device\"}[5m]) + rate(ifInDiscards{site_name=~\"$site\",vendor=~\"$vendor\",role=~\"$role\",hostname=~\"$device\"}[5m])))",
+          "expr": "topk(20, sum by (hostname, instance, ifDescr, ifName) (rate(ifInErrors{site_name=~\"$site\",vendor=~\"$vendor\",role=~\"$role\",hostname=~\"$device\"}[5m]) + rate(ifOutErrors{site_name=~\"$site\",vendor=~\"$vendor\",role=~\"$role\",hostname=~\"$device\"}[5m]) + rate(ifInDiscards{site_name=~\"$site\",vendor=~\"$vendor\",role=~\"$role\",hostname=~\"$device\"}[5m])))",
           "format": "table",
           "instant": true,
           "refId": "A"
@@ -460,6 +485,7 @@
             "excludeByName": {
               "Time": true,
               "__name__": true,
+              "ifIndex": true,
               "asset_id": true,
               "nexora_asset_id": true,
               "nexora_hostname": true,
@@ -479,19 +505,17 @@
             "indexByName": {
               "hostname": 0,
               "instance": 1,
-              "ifName": 2,
-              "ifDescr": 3,
-              "ifIndex": 4,
-              "vendor": 5,
-              "role": 6,
-              "Value": 7
+              "ifDescr": 2,
+              "ifName": 3,
+              "vendor": 4,
+              "role": 5,
+              "Value": 6
             },
             "renameByName": {
               "hostname": "设备名称",
               "instance": "管理 IP",
-              "ifName": "端口编号",
-              "ifDescr": "端口名称",
-              "ifIndex": "端口索引",
+              "ifDescr": "接口全称",
+              "ifName": "接口名称",
               "vendor": "厂商",
               "role": "角色",
               "Value": "错误/丢弃率 (pps)"

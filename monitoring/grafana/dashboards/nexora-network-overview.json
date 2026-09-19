@@ -595,12 +595,25 @@
       },
       "fieldConfig": {
         "defaults": {
-          "unit": "bps",
+          "unit": "none",
           "color": {
             "mode": "thresholds"
           }
         },
-        "overrides": []
+        "overrides": [
+          {
+            "matcher": {
+              "id": "byName",
+              "options": "数值"
+            },
+            "properties": [
+              {
+                "id": "unit",
+                "value": "bps"
+              }
+            ]
+          }
+        ]
       },
       "options": {
         "cellHeight": "sm",
@@ -624,6 +637,7 @@
             "excludeByName": {
               "Time": true,
               "__name__": true,
+              "ifIndex": true,
               "asset_id": true,
               "nexora_asset_id": true,
               "nexora_hostname": true,
@@ -643,19 +657,17 @@
             "indexByName": {
               "hostname": 0,
               "instance": 1,
-              "ifName": 2,
-              "ifDescr": 3,
-              "ifIndex": 4,
-              "vendor": 5,
-              "role": 6,
-              "Value": 7
+              "ifDescr": 2,
+              "ifName": 3,
+              "vendor": 4,
+              "role": 5,
+              "Value": 6
             },
             "renameByName": {
               "hostname": "设备名称",
               "instance": "管理 IP",
-              "ifName": "端口编号",
-              "ifDescr": "端口名称",
-              "ifIndex": "端口索引",
+              "ifDescr": "接口全称",
+              "ifName": "接口名称",
               "vendor": "厂商",
               "role": "角色",
               "Value": "总流量"
