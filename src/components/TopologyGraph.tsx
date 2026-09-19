@@ -358,9 +358,19 @@ const abbreviateInterface = (value?: string) => {
   if (/^FastEthernet/i.test(compact)) return `Fa${compact.slice('FastEthernet'.length)}`;
   if (/^Ethernet/i.test(compact)) return `Et${compact.slice('Ethernet'.length)}`;
   if (/^Route-Aggregation/i.test(compact)) return `RAGG${compact.slice('Route-Aggregation'.length)}`;
+  if (/^RouteAggregation/i.test(compact)) return `RAGG${compact.slice('RouteAggregation'.length)}`;
   if (/^Bridge-Aggregation/i.test(compact)) return `BAGG${compact.slice('Bridge-Aggregation'.length)}`;
+  if (/^BridgeAggregation/i.test(compact)) return `BAGG${compact.slice('BridgeAggregation'.length)}`;
+  if (/^Link-Aggregation/i.test(compact)) return `BAGG${compact.slice('Link-Aggregation'.length)}`;
+  if (/^LinkAggregation/i.test(compact)) return `BAGG${compact.slice('LinkAggregation'.length)}`;
+  if (/^Eth-Trunk/i.test(compact)) return `Eth-Trunk${compact.slice('Eth-Trunk'.length)}`;
+  if (/^EthTrunk/i.test(compact)) return `Eth-Trunk${compact.slice('EthTrunk'.length)}`;
   if (/^Port-channel/i.test(compact)) return `Po${compact.slice('Port-channel'.length)}`;
   if (/^Portchannel/i.test(compact)) return `Po${compact.slice('Portchannel'.length)}`;
+  if (/^Bundle-Ether/i.test(compact)) return `BE${compact.slice('Bundle-Ether'.length)}`;
+  if (/^BundleEther/i.test(compact)) return `BE${compact.slice('BundleEther'.length)}`;
+  if (/^AggregatePort/i.test(compact)) return `Ag${compact.slice('AggregatePort'.length)}`;
+  if (/^Aggregated-Ethernet/i.test(compact)) return `ae${compact.slice('Aggregated-Ethernet'.length)}`;
   // Keep the device-native vendor prefix while shortening verbose forms for
   // the canvas. The full raw value is attached as a hover title below.
   return compact;
@@ -379,6 +389,20 @@ const normalizeGraphInterface = (value?: string) => {
   if (/^ge\d/.test(raw)) return `gi${raw.slice(2)}`;
   if (raw.startsWith('gigabitethernet')) return `gi${raw.slice('gigabitethernet'.length)}`;
   if (raw.startsWith('ethernet')) return `eth${raw.slice('ethernet'.length)}`;
+  if (raw.startsWith('bridge-aggregation')) return `bagg${raw.slice('bridge-aggregation'.length)}`;
+  if (raw.startsWith('bridgeaggregation')) return `bagg${raw.slice('bridgeaggregation'.length)}`;
+  if (raw.startsWith('link-aggregation')) return `bagg${raw.slice('link-aggregation'.length)}`;
+  if (raw.startsWith('linkaggregation')) return `bagg${raw.slice('linkaggregation'.length)}`;
+  if (raw.startsWith('route-aggregation')) return `ragg${raw.slice('route-aggregation'.length)}`;
+  if (raw.startsWith('routeaggregation')) return `ragg${raw.slice('routeaggregation'.length)}`;
+  if (raw.startsWith('eth-trunk')) return `eth-trunk${raw.slice('eth-trunk'.length)}`;
+  if (raw.startsWith('ethtrunk')) return `eth-trunk${raw.slice('ethtrunk'.length)}`;
+  if (raw.startsWith('port-channel')) return `po${raw.slice('port-channel'.length)}`;
+  if (raw.startsWith('portchannel')) return `po${raw.slice('portchannel'.length)}`;
+  if (raw.startsWith('bundle-ether')) return `be${raw.slice('bundle-ether'.length)}`;
+  if (raw.startsWith('bundleether')) return `be${raw.slice('bundleether'.length)}`;
+  if (raw.startsWith('aggregateport')) return `ag${raw.slice('aggregateport'.length)}`;
+  if (raw.startsWith('aggregated-ethernet')) return `ae${raw.slice('aggregated-ethernet'.length)}`;
   return raw;
 };
 

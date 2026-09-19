@@ -769,7 +769,7 @@ def _is_logical_aggregation_interface(row: dict[str, Any]) -> bool:
         return True
     compact = re.sub(r'[^a-z0-9-]', '', str(row.get('interface_name') or '').strip().lower())
     return bool(re.match(
-        r'^(?:bridge-aggregation|route-aggregation|eth-trunk|port-channel|portchannel|bagg|ragg|po|be)\d+$',
+        r'^(?:bridge-aggregation|route-aggregation|link-aggregation|eth-trunk|port-channel|portchannel|bundle-ether|bundleether|aggregateport|aggregate-port|bagg|ragg|po|be|ag|ae|bond|team|aggr|aggregate|trunk|lag)\d+$',
         compact,
     ))
 
@@ -778,13 +778,13 @@ def _aggregation_family_key(value: Any) -> tuple[str, str] | None:
     """Return a stable family/number key for common LAG display aliases."""
     compact = re.sub(r'[^a-z0-9]', '', str(value or '').strip().lower())
     match = re.match(
-        r'^(bridgeaggregation|bagg|routeaggregation|ragg|ethtrunk|portchannel|po|be)(\d+)$',
+        r'^(bridgeaggregation|bagg|linkaggregation|lag|routeaggregation|ragg|ethtrunk|trunk|portchannel|po|bundleether|be|aggregateport|ag|ae|bond|team|aggr|aggregate)(\d+)$',
         compact,
     )
     if not match:
         return None
     prefix, number = match.groups()
-    if prefix in {'bridgeaggregation', 'bagg'}:
+    if prefix in {'bridgeaggregation', 'bagg', 'linkaggregation', 'lag'}:
         family = 'bridge'
     elif prefix in {'routeaggregation', 'ragg'}:
         family = 'route'
@@ -1071,7 +1071,7 @@ def _load_interface_aggregation_map(conn) -> dict[tuple[str, str], dict[str, Any
         # the logical parent, but it must not be used to invent membership.
         name = re.sub(r'[^a-z0-9-]', '', str(row.get('interface_name') or '').strip().lower())
         return bool(re.match(
-            r'^(?:bridge-aggregation|route-aggregation|eth-trunk|port-channel|portchannel|bagg|ragg|po|be)\d+$',
+            r'^(?:bridge-aggregation|route-aggregation|link-aggregation|eth-trunk|port-channel|portchannel|bundle-ether|bundleether|aggregateport|aggregate-port|bagg|ragg|po|be|ag|ae|bond|team|aggr|aggregate|trunk|lag)\d+$',
             name,
         ))
 

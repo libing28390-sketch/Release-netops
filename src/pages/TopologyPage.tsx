@@ -1,12 +1,10 @@
 import React from 'react';
 import { motion } from 'motion/react';
-import { Activity, AlertTriangle, ArrowRight, Clock3, Database, Download, EyeOff, GitMerge, Globe, Info, LayoutGrid, MapPin, Network, PanelRightClose, PanelRightOpen, RotateCcw, Search, Tag, X } from 'lucide-react';
+import { Activity, AlertTriangle, ArrowRight, Clock3, Database, Download, EyeOff, GitMerge, Globe, Info, LayoutGrid, MapPin, Network, RotateCcw, Search, Tag, X } from 'lucide-react';
 import type { Device, TagDefinition } from '../types';
-import { darkActionBtnClass, secondaryActionBtnClass } from '../components/shared';
 import { ActionButton } from '../components/ui/ActionIconButton';
 import TagConditionPicker, { countTagFilterConditions, EMPTY_TAG_FILTER, hasTagFilterConditions, type TagFilterConfig } from '../components/TagConditionPicker';
 import TopologyGraph from '../components/TopologyGraph';
-import TopologyInspectorPanel from '../components/TopologyInspectorPanel';
 import PageHero from '../components/PageHero';
 import { useTopologyGenerationStatus } from '../hooks/useTopologyGenerationStatus';
 import { matchesTopologyTagConditions } from '../hooks/useTopologyVisibleDevices';
@@ -329,7 +327,6 @@ const TopologyPage: React.FC<TopologyPageProps> = ({
   getTopologyOperationalTone,
 }) => {
   const [canvasView, setCanvasView] = React.useState<'overview' | 'site'>(topologySiteFilter === 'all' ? 'overview' : 'site');
-  const [inspectorOpen, setInspectorOpen] = React.useState(false);
   const [tagPickerOpen, setTagPickerOpen] = React.useState(false);
   const [draftTopologyTagFilter, setDraftTopologyTagFilter] = React.useState<TagFilterConfig>(topologyTagFilter);
   const handleSiteFilterChange = (value: string) => {
@@ -342,9 +339,6 @@ const TopologyPage: React.FC<TopologyPageProps> = ({
   React.useEffect(() => {
     setDraftTopologyTagFilter(topologyTagFilter);
   }, [topologyTagFilter]);
-  React.useEffect(() => {
-    if (selectedTopologyDeviceId || selectedTopologyLinkKey) setInspectorOpen(true);
-  }, [selectedTopologyDeviceId, selectedTopologyLinkKey]);
   const terminalDiscoveryStatus = topologyDiscoveryProgress && ['completed', 'partial', 'failed', 'cancelled'].includes(topologyDiscoveryProgress.status)
     ? `${topologyDiscoveryProgress.id}:${topologyDiscoveryProgress.status}`
     : undefined;
@@ -642,9 +636,9 @@ const TopologyPage: React.FC<TopologyPageProps> = ({
         </div>
       </div>
 
-      {/* Canvas & Inspector Shell */}
-      <div className={`grid min-h-0 flex-1 gap-4 ${inspectorOpen ? 'xl:grid-cols-[minmax(0,2.35fr)_minmax(320px,0.85fr)]' : 'xl:grid-cols-1'}`}>
-        <div className="bg-white dark:bg-zinc-900/90 border border-gray-200/70 dark:border-zinc-800/80 relative flex min-h-[500px] flex-col overflow-hidden rounded-2xl shadow-2xs" ref={topologyCanvasRef}>
+      {/* Full-width Canvas */}
+      <div className="flex min-h-0 flex-1 flex-col">
+        <div className="bg-white dark:bg-zinc-900/90 border border-gray-200/70 dark:border-zinc-800/80 relative flex min-h-[500px] flex-1 flex-col overflow-hidden rounded-2xl shadow-2xs" ref={topologyCanvasRef}>
           <div className="relative flex items-center justify-between border-b border-gray-100 dark:border-zinc-800 px-4 py-3">
             <div>
               <h3 className="text-sm font-bold text-gray-900 dark:text-white">
@@ -674,15 +668,6 @@ const TopologyPage: React.FC<TopologyPageProps> = ({
                   <Network size={12} /> {language === 'zh' ? '站点拓扑' : 'Site topology'}
                 </button>
               </div>
-              <button
-                type="button"
-                onClick={() => setInspectorOpen((value) => !value)}
-                className="inline-flex items-center gap-1.5 rounded-xl border border-gray-200/80 dark:border-zinc-700 bg-white dark:bg-zinc-800 px-2.5 py-1 text-xs font-semibold text-gray-700 dark:text-zinc-200 hover:bg-gray-50 transition-all cursor-pointer"
-                title={inspectorOpen ? 'Hide inspector' : 'Show inspector'}
-              >
-                {inspectorOpen ? <PanelRightClose size={13} /> : <PanelRightOpen size={13} />}
-                {inspectorOpen ? (language === 'zh' ? '收起详情' : 'Hide') : (language === 'zh' ? '展开详情' : 'Details')}
-              </button>
             </div>
           </div>
 
@@ -737,30 +722,6 @@ const TopologyPage: React.FC<TopologyPageProps> = ({
             <span>{language === 'zh' ? '虚线代表推断链路' : 'Dashed: inferred'}</span>
           </div>
         </div>
-
-        {inspectorOpen && <TopologyInspectorPanel
-          language={language}
-          selectedTopologyDevice={selectedTopologyDevice}
-          selectedTopologyLink={selectedTopologyLink}
-          topologyNeighborDevices={topologyNeighborDevices}
-          topologyDeviceLinks={topologyDeviceLinks}
-          topologyPriorityDevices={topologyPriorityDevices}
-          topologyOrphanDevices={topologyOrphanDevices}
-          selectedTopologyLinkKey={selectedTopologyLinkKey}
-          secondaryActionBtnClass={secondaryActionBtnClass}
-          onSelectDevice={onSelectTopologyDevice}
-          onSelectLink={onSelectTopologyLink}
-          onOpenDeviceDetail={onOpenDeviceDetail}
-          onOpenMonitoring={onOpenMonitoring}
-          formatTopologyPort={formatTopologyPort}
-          formatTopologyInterfaceTelemetry={formatTopologyInterfaceTelemetry}
-          formatTopologyLastSeen={formatTopologyLastSeen}
-          formatTopologyOperationalState={formatTopologyOperationalState}
-          formatTopologyEvidenceLabel={formatTopologyEvidenceLabel}
-          getTopologyOperationalTone={getTopologyOperationalTone}
-          onConfirmTopologyRelation={onConfirmTopologyRelation}
-          loadTopologyHistory={loadTopologyHistory}
-        />}
       </div>
       </div>
     </div>
