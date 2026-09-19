@@ -278,7 +278,7 @@
       "targets": [
         {
           "expr": "100 - (rate(windows_cpu_time_total{site_name=~\"$site\",hostname=~\"$device\",mode=\"idle\"}[5m]) * 100) or hrProcessorLoad{site_name=~\"$site\",hostname=~\"$device\"}",
-          "legendFormat": "{{hostname}} ({{core}}) CPU",
+          "legendFormat": "{{hostname}} {{core}} CPU",
           "refId": "A"
         }
       ]
@@ -327,11 +327,6 @@
           "expr": "(1 - (windows_os_physical_memory_free_bytes{site_name=~\"$site\",hostname=~\"$device\"} / windows_cs_physical_memory_bytes{site_name=~\"$site\",hostname=~\"$device\"})) * 100",
           "legendFormat": "{{hostname}} 内存使用率 (%)",
           "refId": "A"
-        },
-        {
-          "expr": "windows_os_physical_memory_free_bytes{site_name=~\"$site\",hostname=~\"$device\"}",
-          "legendFormat": "{{hostname}} 可用内存 (Bytes)",
-          "refId": "B"
         }
       ]
     },
@@ -460,12 +455,12 @@
       "targets": [
         {
           "expr": "rate(windows_logical_disk_read_seconds_total{site_name=~\"$site\",hostname=~\"$device\"}[5m]) / (rate(windows_logical_disk_reads_total{site_name=~\"$site\",hostname=~\"$device\"}[5m]) > 0)",
-          "legendFormat": "{{hostname}} - {{volume}} 读延迟",
+          "legendFormat": "{{hostname}} {{volume}} 读延迟",
           "refId": "A"
         },
         {
           "expr": "rate(windows_logical_disk_write_seconds_total{site_name=~\"$site\",hostname=~\"$device\"}[5m]) / (rate(windows_logical_disk_writes_total{site_name=~\"$site\",hostname=~\"$device\"}[5m]) > 0)",
-          "legendFormat": "{{hostname}} - {{volume}} 写延迟",
+          "legendFormat": "{{hostname}} {{volume}} 写延迟",
           "refId": "B"
         }
       ]
@@ -512,12 +507,12 @@
       "targets": [
         {
           "expr": "sum by (hostname, nic) (rate(windows_net_bytes_received_total{site_name=~\"$site\",hostname=~\"$device\"}[5m]) * 8)",
-          "legendFormat": "{{hostname}} - {{nic}} 接收",
+          "legendFormat": "{{hostname}} {{nic}} 接收",
           "refId": "A"
         },
         {
           "expr": "sum by (hostname, nic) (rate(windows_net_bytes_sent_total{site_name=~\"$site\",hostname=~\"$device\"}[5m]) * 8)",
-          "legendFormat": "{{hostname}} - {{nic}} 发送",
+          "legendFormat": "{{hostname}} {{nic}} 发送",
           "refId": "B"
         }
       ]
@@ -650,14 +645,14 @@
             "$__all"
           ]
         },
-        "definition": "label_values({site_name=~\"$site\"}, hostname)",
+        "definition": "label_values(windows_cpu_time_total{site_name=~\"$site\"} or hrProcessorLoad{site_name=~\"$site\"} or up, hostname)",
         "includeAll": true,
         "label": "服务器",
         "multi": true,
         "name": "device",
         "options": [],
         "query": {
-          "query": "label_values({site_name=~\"$site\"}, hostname)",
+          "query": "label_values(windows_cpu_time_total{site_name=~\"$site\"} or hrProcessorLoad{site_name=~\"$site\"} or up, hostname)",
           "refId": "StandardVariableQuery"
         },
         "refresh": 1,

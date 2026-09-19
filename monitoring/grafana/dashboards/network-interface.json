@@ -278,7 +278,7 @@
       "targets": [
         {
           "expr": "topk(10, rate(ifHCInOctets{site_name=~\"$site\",vendor=~\"$vendor\",role=~\"$role\",hostname=~\"$device\"}[5m]) * 8)",
-          "legendFormat": "{{hostname}} ({{instance}}) - {{ifName}}",
+          "legendFormat": "{{hostname}} {{instance}} {{ifName}}",
           "refId": "A"
         }
       ]
@@ -325,7 +325,7 @@
       "targets": [
         {
           "expr": "topk(10, rate(ifHCOutOctets{site_name=~\"$site\",vendor=~\"$vendor\",role=~\"$role\",hostname=~\"$device\"}[5m]) * 8)",
-          "legendFormat": "{{hostname}} ({{instance}}) - {{ifName}}",
+          "legendFormat": "{{hostname}} {{instance}} {{ifName}}",
           "refId": "A"
         }
       ]
@@ -515,14 +515,14 @@
             "$__all"
           ]
         },
-        "definition": "label_values(site_name)",
+        "definition": "label_values(ifOperStatus or ifHCInOctets or up, site_name)",
         "includeAll": true,
         "label": "站点",
         "multi": true,
         "name": "site",
         "options": [],
         "query": {
-          "query": "label_values(site_name)",
+          "query": "label_values(ifOperStatus or ifHCInOctets or up, site_name)",
           "refId": "StandardVariableQuery"
         },
         "refresh": 1,
@@ -539,14 +539,14 @@
             "$__all"
           ]
         },
-        "definition": "label_values({site_name=~\"$site\"}, vendor)",
+        "definition": "label_values(ifOperStatus{site_name=~\"$site\"} or ifHCInOctets{site_name=~\"$site\"} or up, vendor)",
         "includeAll": true,
         "label": "厂商",
         "multi": true,
         "name": "vendor",
         "options": [],
         "query": {
-          "query": "label_values({site_name=~\"$site\"}, vendor)",
+          "query": "label_values(ifOperStatus{site_name=~\"$site\"} or ifHCInOctets{site_name=~\"$site\"} or up, vendor)",
           "refId": "StandardVariableQuery"
         },
         "refresh": 1,
@@ -563,14 +563,14 @@
             "$__all"
           ]
         },
-        "definition": "label_values({site_name=~\"$site\",vendor=~\"$vendor\"}, role)",
+        "definition": "label_values(ifOperStatus{site_name=~\"$site\",vendor=~\"$vendor\"} or up, role)",
         "includeAll": true,
         "label": "角色",
         "multi": true,
         "name": "role",
         "options": [],
         "query": {
-          "query": "label_values({site_name=~\"$site\",vendor=~\"$vendor\"}, role)",
+          "query": "label_values(ifOperStatus{site_name=~\"$site\",vendor=~\"$vendor\"} or up, role)",
           "refId": "StandardVariableQuery"
         },
         "refresh": 1,
@@ -587,14 +587,14 @@
             "$__all"
           ]
         },
-        "definition": "label_values({site_name=~\"$site\",vendor=~\"$vendor\"}, hostname)",
+        "definition": "label_values(ifOperStatus{site_name=~\"$site\",vendor=~\"$vendor\"} or ifHCInOctets{site_name=~\"$site\",vendor=~\"$vendor\"} or up, hostname)",
         "includeAll": true,
         "label": "设备",
         "multi": true,
         "name": "device",
         "options": [],
         "query": {
-          "query": "label_values({site_name=~\"$site\",vendor=~\"$vendor\"}, hostname)",
+          "query": "label_values(ifOperStatus{site_name=~\"$site\",vendor=~\"$vendor\"} or ifHCInOctets{site_name=~\"$site\",vendor=~\"$vendor\"} or up, hostname)",
           "refId": "StandardVariableQuery"
         },
         "refresh": 1,

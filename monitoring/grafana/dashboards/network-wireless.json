@@ -270,7 +270,7 @@
       "targets": [
         {
           "expr": "hwWlanCurAssocUserNum{site_name=~\"$site\",vendor=~\"$vendor\",hostname=~\"$device\"} or hh3cDot11CurrAssocUserNum{site_name=~\"$site\",vendor=~\"$vendor\",hostname=~\"$device\"} or ruijieApcTotalStaNum{site_name=~\"$site\",vendor=~\"$vendor\",hostname=~\"$device\"} or cLSysTotalNumOfClients{site_name=~\"$site\",vendor=~\"$vendor\",hostname=~\"$device\"} or wlsxSysExtStationsNum{site_name=~\"$site\",vendor=~\"$vendor\",hostname=~\"$device\"} or ruckusZDTotalNumSta{site_name=~\"$site\",vendor=~\"$vendor\",hostname=~\"$device\"}",
-          "legendFormat": "{{hostname}} ({{instance}}) · {{vendor}}",
+          "legendFormat": "{{hostname}} {{instance}} · {{vendor}}",
           "refId": "A"
         }
       ]
@@ -317,7 +317,7 @@
       "targets": [
         {
           "expr": "hwWlanCurOnlineApNum{site_name=~\"$site\",vendor=~\"$vendor\",hostname=~\"$device\"} or hh3cDot11CurrOnlineAPNum{site_name=~\"$site\",vendor=~\"$vendor\",hostname=~\"$device\"} or ruijieApcOnlineApNum{site_name=~\"$site\",vendor=~\"$vendor\",hostname=~\"$device\"} or cLApTotalUpAPs{site_name=~\"$site\",vendor=~\"$vendor\",hostname=~\"$device\"} or wlsxSysExtAccessPointsNum{site_name=~\"$site\",vendor=~\"$vendor\",hostname=~\"$device\"} or ruckusZDTotalNumAP{site_name=~\"$site\",vendor=~\"$vendor\",hostname=~\"$device\"}",
-          "legendFormat": "{{hostname}} ({{instance}}) · {{vendor}}",
+          "legendFormat": "{{hostname}} {{instance}} · {{vendor}}",
           "refId": "A"
         }
       ]
@@ -374,7 +374,7 @@
       "targets": [
         {
           "expr": "hwWlanCurAssocUserNum{site_name=~\"$site\",vendor=~\"$vendor\",hostname=~\"$device\"} or hh3cDot11CurrAssocUserNum{site_name=~\"$site\",vendor=~\"$vendor\",hostname=~\"$device\"} or ruijieApcTotalStaNum{site_name=~\"$site\",vendor=~\"$vendor\",hostname=~\"$device\"} or cLSysTotalNumOfClients{site_name=~\"$site\",vendor=~\"$vendor\",hostname=~\"$device\"} or wlsxSysExtStationsNum{site_name=~\"$site\",vendor=~\"$vendor\",hostname=~\"$device\"} or ruckusZDTotalNumSta{site_name=~\"$site\",vendor=~\"$vendor\",hostname=~\"$device\"}",
-          "legendFormat": "{{hostname}} ({{instance}})",
+          "legendFormat": "{{hostname}} {{instance}}",
           "refId": "A"
         }
       ]
@@ -482,14 +482,14 @@
             "$__all"
           ]
         },
-        "definition": "label_values(site_name)",
+        "definition": "label_values(hwWlanCurOnlineApNum or hh3cDot11CurrOnlineAPNum or ruijieApcOnlineApNum or cLApTotalUpAPs or up, site_name)",
         "includeAll": true,
         "label": "站点",
         "multi": true,
         "name": "site",
         "options": [],
         "query": {
-          "query": "label_values(site_name)",
+          "query": "label_values(hwWlanCurOnlineApNum or hh3cDot11CurrOnlineAPNum or ruijieApcOnlineApNum or cLApTotalUpAPs or up, site_name)",
           "refId": "StandardVariableQuery"
         },
         "refresh": 1,
@@ -506,14 +506,14 @@
             "$__all"
           ]
         },
-        "definition": "label_values({site_name=~\"$site\"}, vendor)",
+        "definition": "label_values(hwWlanCurOnlineApNum{site_name=~\"$site\"} or hh3cDot11CurrOnlineAPNum{site_name=~\"$site\"} or up, vendor)",
         "includeAll": true,
         "label": "厂商",
         "multi": true,
         "name": "vendor",
         "options": [],
         "query": {
-          "query": "label_values({site_name=~\"$site\"}, vendor)",
+          "query": "label_values(hwWlanCurOnlineApNum{site_name=~\"$site\"} or hh3cDot11CurrOnlineAPNum{site_name=~\"$site\"} or up, vendor)",
           "refId": "StandardVariableQuery"
         },
         "refresh": 1,
@@ -530,14 +530,14 @@
             "$__all"
           ]
         },
-        "definition": "label_values({site_name=~\"$site\",vendor=~\"$vendor\"}, hostname)",
+        "definition": "label_values(hwWlanCurOnlineApNum{site_name=~\"$site\",vendor=~\"$vendor\"} or hh3cDot11CurrOnlineAPNum or up, hostname)",
         "includeAll": true,
         "label": "设备",
         "multi": true,
         "name": "device",
         "options": [],
         "query": {
-          "query": "label_values({site_name=~\"$site\",vendor=~\"$vendor\"}, hostname)",
+          "query": "label_values(hwWlanCurOnlineApNum{site_name=~\"$site\",vendor=~\"$vendor\"} or hh3cDot11CurrOnlineAPNum or up, hostname)",
           "refId": "StandardVariableQuery"
         },
         "refresh": 1,

@@ -660,14 +660,14 @@
             "$__all"
           ]
         },
-        "definition": "label_values({site_name=~\"$site\"}, hostname)",
+        "definition": "label_values(node_load1{site_name=~\"$site\"} or host_cpu_util{site_name=~\"$site\"} or up, hostname)",
         "includeAll": true,
         "label": "服务器",
         "multi": true,
         "name": "device",
         "options": [],
         "query": {
-          "query": "label_values({site_name=~\"$site\"}, hostname)",
+          "query": "label_values(node_load1{site_name=~\"$site\"} or host_cpu_util{site_name=~\"$site\"} or up, hostname)",
           "refId": "StandardVariableQuery"
         },
         "refresh": 1,

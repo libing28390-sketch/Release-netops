@@ -278,7 +278,7 @@
       "targets": [
         {
           "expr": "sum by (hostname, instance) (rate(ifHCInOctets{site_name=~\"$site\",vendor=~\"$vendor\",hostname=~\"$device\",role=~\"gateway|firewall|wan|border|.*\"}[5m]) * 8)",
-          "legendFormat": "{{hostname}} ({{instance}}) 入向",
+          "legendFormat": "{{hostname}} {{instance}} 入向",
           "refId": "A"
         }
       ]
@@ -325,7 +325,7 @@
       "targets": [
         {
           "expr": "sum by (hostname, instance) (rate(ifHCOutOctets{site_name=~\"$site\",vendor=~\"$vendor\",hostname=~\"$device\",role=~\"gateway|firewall|wan|border|.*\"}[5m]) * 8)",
-          "legendFormat": "{{hostname}} ({{instance}}) 出向",
+          "legendFormat": "{{hostname}} {{instance}} 出向",
           "refId": "A"
         }
       ]
@@ -372,12 +372,12 @@
       "targets": [
         {
           "expr": "topk(10, (rate(ifHCInOctets{site_name=~\"$site\",vendor=~\"$vendor\",hostname=~\"$device\",role=~\"gateway|firewall|wan|border|.*\"}[5m]) * 8) / (ifHighSpeed * 1000000) * 100)",
-          "legendFormat": "{{hostname}} - {{ifName}} 入向利用率",
+          "legendFormat": "{{hostname}} {{instance}} {{ifName}} 入向利用率",
           "refId": "A"
         },
         {
           "expr": "topk(10, (rate(ifHCOutOctets{site_name=~\"$site\",vendor=~\"$vendor\",hostname=~\"$device\",role=~\"gateway|firewall|wan|border|.*\"}[5m]) * 8) / (ifHighSpeed * 1000000) * 100)",
-          "legendFormat": "{{hostname}} - {{ifName}} 出向利用率",
+          "legendFormat": "{{hostname}} {{instance}} {{ifName}} 出向利用率",
           "refId": "B"
         }
       ]
@@ -424,12 +424,12 @@
       "targets": [
         {
           "expr": "sum by (hostname, instance) (rate(ifInErrors{site_name=~\"$site\",vendor=~\"$vendor\",hostname=~\"$device\",role=~\"gateway|firewall|wan|border|.*\"}[5m]) + rate(ifOutErrors{site_name=~\"$site\",vendor=~\"$vendor\",hostname=~\"$device\",role=~\"gateway|firewall|wan|border|.*\"}[5m]))",
-          "legendFormat": "{{hostname}} ({{instance}}) 错包/秒",
+          "legendFormat": "{{hostname}} {{instance}} 错包/秒",
           "refId": "A"
         },
         {
           "expr": "sum by (hostname, instance) (rate(ifInDiscards{site_name=~\"$site\",vendor=~\"$vendor\",hostname=~\"$device\",role=~\"gateway|firewall|wan|border|.*\"}[5m]) + rate(ifOutDiscards{site_name=~\"$site\",vendor=~\"$vendor\",hostname=~\"$device\",role=~\"gateway|firewall|wan|border|.*\"}[5m]))",
-          "legendFormat": "{{hostname}} ({{instance}}) 丢弃/秒",
+          "legendFormat": "{{hostname}} {{instance}} 丢弃/秒",
           "refId": "B"
         }
       ]
@@ -620,14 +620,14 @@
             "$__all"
           ]
         },
-        "definition": "label_values(site_name)",
+        "definition": "label_values(ifOperStatus or ifHCInOctets or up, site_name)",
         "includeAll": true,
         "label": "站点",
         "multi": true,
         "name": "site",
         "options": [],
         "query": {
-          "query": "label_values(site_name)",
+          "query": "label_values(ifOperStatus or ifHCInOctets or up, site_name)",
           "refId": "StandardVariableQuery"
         },
         "refresh": 1,
@@ -644,14 +644,14 @@
             "$__all"
           ]
         },
-        "definition": "label_values({site_name=~\"$site\"}, vendor)",
+        "definition": "label_values(ifOperStatus{site_name=~\"$site\"} or up, vendor)",
         "includeAll": true,
         "label": "厂商",
         "multi": true,
         "name": "vendor",
         "options": [],
         "query": {
-          "query": "label_values({site_name=~\"$site\"}, vendor)",
+          "query": "label_values(ifOperStatus{site_name=~\"$site\"} or up, vendor)",
           "refId": "StandardVariableQuery"
         },
         "refresh": 1,
@@ -668,14 +668,14 @@
             "$__all"
           ]
         },
-        "definition": "label_values({site_name=~\"$site\",vendor=~\"$vendor\"}, hostname)",
+        "definition": "label_values(ifOperStatus{site_name=~\"$site\",vendor=~\"$vendor\"} or up, hostname)",
         "includeAll": true,
         "label": "出口设备",
         "multi": true,
         "name": "device",
         "options": [],
         "query": {
-          "query": "label_values({site_name=~\"$site\",vendor=~\"$vendor\"}, hostname)",
+          "query": "label_values(ifOperStatus{site_name=~\"$site\",vendor=~\"$vendor\"} or up, hostname)",
           "refId": "StandardVariableQuery"
         },
         "refresh": 1,

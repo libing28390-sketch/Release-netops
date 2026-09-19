@@ -480,7 +480,7 @@
       "targets": [
         {
           "expr": "max by (hostname, instance, vendor) (cpmCPUTotal1minRev{site_name=~\"$site\",vendor=~\"$vendor\",role=~\"$role\",hostname=~\"$device\"} or hh3cEntityExtCpuUsage{site_name=~\"$site\",vendor=~\"$vendor\",role=~\"$role\",hostname=~\"$device\"} or hwEntityCpuUsage{site_name=~\"$site\",vendor=~\"$vendor\",role=~\"$role\",hostname=~\"$device\"} or ruijieCpuCostRate{site_name=~\"$site\",vendor=~\"$vendor\",role=~\"$role\",hostname=~\"$device\"} or jnxOperatingCPU{site_name=~\"$site\",vendor=~\"$vendor\",role=~\"$role\",hostname=~\"$device\"} or fnSysCpuUsage{site_name=~\"$site\",vendor=~\"$vendor\",role=~\"$role\",hostname=~\"$device\"} or zteCpuRate{site_name=~\"$site\",vendor=~\"$vendor\",role=~\"$role\",hostname=~\"$device\"} or mpCpuUtilization5Min{site_name=~\"$site\",vendor=~\"$vendor\",role=~\"$role\",hostname=~\"$device\"} or dptechCpuUsage{site_name=~\"$site\",vendor=~\"$vendor\",role=~\"$role\",hostname=~\"$device\"} or hillstoneCPUUtilization{site_name=~\"$site\",vendor=~\"$vendor\",role=~\"$role\",hostname=~\"$device\"} or sangforCpuUsage{site_name=~\"$site\",vendor=~\"$vendor\",role=~\"$role\",hostname=~\"$device\"} or dcnCpuUsage{site_name=~\"$site\",vendor=~\"$vendor\",role=~\"$role\",hostname=~\"$device\"})",
-          "legendFormat": "{{hostname}} ({{instance}}) · {{vendor}}",
+          "legendFormat": "{{hostname}} {{instance}} · {{vendor}}",
           "refId": "A"
         }
       ]
@@ -527,7 +527,7 @@
       "targets": [
         {
           "expr": "max by (hostname, instance, vendor) (hh3cEntityExtMemUsage{site_name=~\"$site\",vendor=~\"$vendor\",role=~\"$role\",hostname=~\"$device\"} or hwEntityMemUsage{site_name=~\"$site\",vendor=~\"$vendor\",role=~\"$role\",hostname=~\"$device\"} or ruijieMemoryPoolCurrentUtilization{site_name=~\"$site\",vendor=~\"$vendor\",role=~\"$role\",hostname=~\"$device\"} or jnxOperatingBuffer{site_name=~\"$site\",vendor=~\"$vendor\",role=~\"$role\",hostname=~\"$device\"} or fnSysMemUsage{site_name=~\"$site\",vendor=~\"$vendor\",role=~\"$role\",hostname=~\"$device\"} or zteMemRate{site_name=~\"$site\",vendor=~\"$vendor\",role=~\"$role\",hostname=~\"$device\"} or mpMemoryUtilization{site_name=~\"$site\",vendor=~\"$vendor\",role=~\"$role\",hostname=~\"$device\"} or dptechMemUsage{site_name=~\"$site\",vendor=~\"$vendor\",role=~\"$role\",hostname=~\"$device\"} or hillstoneMemoryUtilization{site_name=~\"$site\",vendor=~\"$vendor\",role=~\"$role\",hostname=~\"$device\"} or sangforMemUsage{site_name=~\"$site\",vendor=~\"$vendor\",role=~\"$role\",hostname=~\"$device\"} or dcnMemUsage{site_name=~\"$site\",vendor=~\"$vendor\",role=~\"$role\",hostname=~\"$device\"})",
-          "legendFormat": "{{hostname}} ({{instance}}) · {{vendor}}",
+          "legendFormat": "{{hostname}} {{instance}} · {{vendor}}",
           "refId": "A"
         }
       ]
@@ -574,7 +574,7 @@
       "targets": [
         {
           "expr": "max by (hostname, instance, vendor) (hh3cEntityExtTemperature{site_name=~\"$site\",vendor=~\"$vendor\",role=~\"$role\",hostname=~\"$device\"} or hwEntityTemperature{site_name=~\"$site\",vendor=~\"$vendor\",role=~\"$role\",hostname=~\"$device\"} or ruijieDeviceTemperature{site_name=~\"$site\",vendor=~\"$vendor\",role=~\"$role\",hostname=~\"$device\"} or jnxOperatingTemp{site_name=~\"$site\",vendor=~\"$vendor\",role=~\"$role\",hostname=~\"$device\"} or entSensorValue{site_name=~\"$site\",vendor=~\"$vendor\",role=~\"$role\",hostname=~\"$device\"} or zteTemperature{site_name=~\"$site\",vendor=~\"$vendor\",role=~\"$role\",hostname=~\"$device\"} or mpTemperature{site_name=~\"$site\",vendor=~\"$vendor\",role=~\"$role\",hostname=~\"$device\"} or dptechTemperature{site_name=~\"$site\",vendor=~\"$vendor\",role=~\"$role\",hostname=~\"$device\"} or dcnTemperature{site_name=~\"$site\",vendor=~\"$vendor\",role=~\"$role\",hostname=~\"$device\"})",
-          "legendFormat": "{{hostname}} ({{instance}}) · {{vendor}}",
+          "legendFormat": "{{hostname}} {{instance}} · {{vendor}}",
           "refId": "A"
         }
       ]
@@ -734,14 +734,14 @@
             "$__all"
           ]
         },
-        "definition": "label_values(site_name)",
+        "definition": "label_values(ifOperStatus or ifHCInOctets or sysUpTime or up, site_name)",
         "includeAll": true,
         "label": "站点",
         "multi": true,
         "name": "site",
         "options": [],
         "query": {
-          "query": "label_values(site_name)",
+          "query": "label_values(ifOperStatus or ifHCInOctets or sysUpTime or up, site_name)",
           "refId": "StandardVariableQuery"
         },
         "refresh": 1,
@@ -758,14 +758,14 @@
             "$__all"
           ]
         },
-        "definition": "label_values({site_name=~\"$site\"}, vendor)",
+        "definition": "label_values(ifOperStatus{site_name=~\"$site\"} or sysUpTime{site_name=~\"$site\"} or up, vendor)",
         "includeAll": true,
         "label": "厂商",
         "multi": true,
         "name": "vendor",
         "options": [],
         "query": {
-          "query": "label_values({site_name=~\"$site\"}, vendor)",
+          "query": "label_values(ifOperStatus{site_name=~\"$site\"} or sysUpTime{site_name=~\"$site\"} or up, vendor)",
           "refId": "StandardVariableQuery"
         },
         "refresh": 1,
@@ -782,14 +782,14 @@
             "$__all"
           ]
         },
-        "definition": "label_values({site_name=~\"$site\",vendor=~\"$vendor\"}, role)",
+        "definition": "label_values(ifOperStatus{site_name=~\"$site\",vendor=~\"$vendor\"} or up, role)",
         "includeAll": true,
         "label": "角色",
         "multi": true,
         "name": "role",
         "options": [],
         "query": {
-          "query": "label_values({site_name=~\"$site\",vendor=~\"$vendor\"}, role)",
+          "query": "label_values(ifOperStatus{site_name=~\"$site\",vendor=~\"$vendor\"} or up, role)",
           "refId": "StandardVariableQuery"
         },
         "refresh": 1,
@@ -806,14 +806,14 @@
             "$__all"
           ]
         },
-        "definition": "label_values({site_name=~\"$site\",vendor=~\"$vendor\"}, hostname)",
+        "definition": "label_values(ifOperStatus{site_name=~\"$site\",vendor=~\"$vendor\"} or sysUpTime{site_name=~\"$site\",vendor=~\"$vendor\"} or up, hostname)",
         "includeAll": true,
         "label": "设备",
         "multi": true,
         "name": "device",
         "options": [],
         "query": {
-          "query": "label_values({site_name=~\"$site\",vendor=~\"$vendor\"}, hostname)",
+          "query": "label_values(ifOperStatus{site_name=~\"$site\",vendor=~\"$vendor\"} or sysUpTime{site_name=~\"$site\",vendor=~\"$vendor\"} or up, hostname)",
           "refId": "StandardVariableQuery"
         },
         "refresh": 1,

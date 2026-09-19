@@ -162,7 +162,7 @@ def bar_gauge_panel(pid, title, expr, x, y, w=12, h=8, unit="percent"):
             "orientation": "horizontal",
             "reduceOptions": {"calcs": ["lastNotNull"], "values": false}
         },
-        "targets": [{"expr": expr, "legendFormat": "{{hostname}} ({{instance}})", "refId": "A"}]
+        "targets": [{"expr": expr, "legendFormat": "{{hostname}} {{instance}}", "refId": "A"}]
     }
 
 def make_query_variable(name, label, query_str, multi=True, include_all=True):
@@ -243,13 +243,13 @@ def build_overview_dashboard():
             {"expr": f"sum(hwWlanCurOnlineApNum{{{sel}}} or hh3cDot11CurrOnlineAPNum{{{sel}}} or ruijieApcOnlineApNum{{{sel}}} or ruijieApcTotalApNum{{{sel}}} or cLApTotalUpAPs{{{sel}}} or wlsxSysExtAccessPointsNum{{{sel}}} or ruckusZDTotalNumAP{{{sel}}})", "legendFormat": "在线 AP 总数", "refId": "B"}
         ], 12, 4, 12, 8, unit="short"),
         timeseries_panel(9, "设备 CPU 使用率", [
-            {"expr": cpu_expr, "legendFormat": "{{hostname}} ({{instance}}) · {{vendor}}", "refId": "A"}
+            {"expr": cpu_expr, "legendFormat": "{{hostname}} {{instance}} · {{vendor}}", "refId": "A"}
         ], 0, 12, 12, 8, unit="percent"),
         timeseries_panel(10, "设备内存使用率", [
-            {"expr": mem_expr, "legendFormat": "{{hostname}} ({{instance}}) · {{vendor}}", "refId": "A"}
+            {"expr": mem_expr, "legendFormat": "{{hostname}} {{instance}} · {{vendor}}", "refId": "A"}
         ], 12, 12, 8, unit="percent"),
         timeseries_panel(11, "设备温度", [
-            {"expr": f"max by (hostname, instance, vendor) (hh3cEntityExtTemperature{{{sel}}} or hwEntityTemperature{{{sel}}} or ruijieDeviceTemperature{{{sel}}} or jnxOperatingTemp{{{sel}}} or entSensorValue{{{sel}}} or zteTemperature{{{sel}}} or mpTemperature{{{sel}}} or dptechTemperature{{{sel}}} or dcnTemperature{{{sel}}})", "legendFormat": "{{hostname}} ({{instance}}) · {{vendor}}", "refId": "A"}
+            {"expr": f"max by (hostname, instance, vendor) (hh3cEntityExtTemperature{{{sel}}} or hwEntityTemperature{{{sel}}} or ruijieDeviceTemperature{{{sel}}} or jnxOperatingTemp{{{sel}}} or entSensorValue{{{sel}}} or zteTemperature{{{sel}}} or mpTemperature{{{sel}}} or dptechTemperature{{{sel}}} or dcnTemperature{{{sel}}})", "legendFormat": "{{hostname}} {{instance}} · {{vendor}}", "refId": "A"}
         ], 0, 20, 12, 8, unit="celsius"),
         table_panel(
             12, "设备接口流量排行 Top 10",
@@ -276,10 +276,10 @@ def build_overview_dashboard():
         "tags": ["nexora", "network", "overview"],
         "templating": {
             "list": [
-                make_query_variable("site", "站点", "label_values(site_name)"),
-                make_query_variable("vendor", "厂商", 'label_values({site_name=~"$site"}, vendor)'),
-                make_query_variable("role", "角色", 'label_values({site_name=~"$site",vendor=~"$vendor"}, role)'),
-                make_query_variable("device", "设备", 'label_values({site_name=~"$site",vendor=~"$vendor"}, hostname)'),
+                make_query_variable("site", "站点", 'label_values(ifOperStatus or ifHCInOctets or sysUpTime or up, site_name)'),
+                make_query_variable("vendor", "厂商", 'label_values(ifOperStatus{site_name=~"$site"} or sysUpTime{site_name=~"$site"} or up, vendor)'),
+                make_query_variable("role", "角色", 'label_values(ifOperStatus{site_name=~"$site",vendor=~"$vendor"} or up, role)'),
+                make_query_variable("device", "设备", 'label_values(ifOperStatus{site_name=~"$site",vendor=~"$vendor"} or sysUpTime{site_name=~"$site",vendor=~"$vendor"} or up, hostname)'),
             ]
         },
         "time": {"from": "now-6h", "to": "now"},
@@ -345,9 +345,9 @@ def build_device_dashboard():
         "tags": ["nexora", "network", "device"],
         "templating": {
             "list": [
-                make_query_variable("site", "站点", "label_values(site_name)"),
-                make_query_variable("vendor", "厂商", 'label_values({site_name=~"$site"}, vendor)'),
-                make_query_variable("device", "设备", 'label_values({site_name=~"$site",vendor=~"$vendor"}, hostname)', multi=False, include_all=False),
+                make_query_variable("site", "站点", 'label_values(ifOperStatus or sysUpTime or up, site_name)'),
+                make_query_variable("vendor", "厂商", 'label_values(ifOperStatus{site_name=~"$site"} or sysUpTime{site_name=~"$site"} or up, vendor)'),
+                make_query_variable("device", "设备", 'label_values(ifOperStatus{site_name=~"$site",vendor=~"$vendor"} or sysUpTime{site_name=~"$site",vendor=~"$vendor"} or up, hostname)', multi=False, include_all=False),
             ]
         },
         "time": {"from": "now-6h", "to": "now"},
@@ -366,10 +366,10 @@ def build_wireless_dashboard():
         stat_panel(3, "当前离线 AP 数量", f"(sum(hwWlanApTotalNum{{{sel}}} or hh3cDot11TotalAPNum{{{sel}}} or ruijieApcTotalApNum{{{sel}}} or cLApTotalUpAPs{{{sel}}} or wlsxSysExtAccessPointsNum{{{sel}}} or ruckusZDTotalNumAP{{{sel}}}) - sum(hwWlanCurOnlineApNum{{{sel}}} or hh3cDot11CurrOnlineAPNum{{{sel}}} or ruijieApcOnlineApNum{{{sel}}} or cLApTotalUpAPs{{{sel}}} or wlsxSysExtAccessPointsNum{{{sel}}} or ruckusZDTotalNumAP{{{sel}}})) or vector(0)", 12, 0, 6, 4, thresholds=[{"color": "green", "value": None}, {"color": "#E0B400", "value": 1}, {"color": "red", "value": 5}]),
         stat_panel(4, "全网在线关联无线终端", f"sum(hwWlanCurAssocUserNum{{{sel}}} or hh3cDot11CurrAssocUserNum{{{sel}}} or ruijieApcTotalStaNum{{{sel}}} or cLSysTotalNumOfClients{{{sel}}} or wlsxSysExtStationsNum{{{sel}}} or ruckusZDTotalNumSta{{{sel}}}) or vector(0)", 18, 0, 6, 4, color="#A352CC"),
         timeseries_panel(5, "各无线控制器在线终端时序趋势", [
-            {"expr": f"hwWlanCurAssocUserNum{{{sel}}} or hh3cDot11CurrAssocUserNum{{{sel}}} or ruijieApcTotalStaNum{{{sel}}} or cLSysTotalNumOfClients{{{sel}}} or wlsxSysExtStationsNum{{{sel}}} or ruckusZDTotalNumSta{{{sel}}}", "legendFormat": "{{hostname}} ({{instance}}) · {{vendor}}", "refId": "A"}
+            {"expr": f"hwWlanCurAssocUserNum{{{sel}}} or hh3cDot11CurrAssocUserNum{{{sel}}} or ruijieApcTotalStaNum{{{sel}}} or cLSysTotalNumOfClients{{{sel}}} or wlsxSysExtStationsNum{{{sel}}} or ruckusZDTotalNumSta{{{sel}}}", "legendFormat": "{{hostname}} {{instance}} · {{vendor}}", "refId": "A"}
         ], 0, 4, 12, 8, unit="short"),
         timeseries_panel(6, "各控制器纳管在线 AP 波动趋势", [
-            {"expr": f"hwWlanCurOnlineApNum{{{sel}}} or hh3cDot11CurrOnlineAPNum{{{sel}}} or ruijieApcOnlineApNum{{{sel}}} or cLApTotalUpAPs{{{sel}}} or wlsxSysExtAccessPointsNum{{{sel}}} or ruckusZDTotalNumAP{{{sel}}}", "legendFormat": "{{hostname}} ({{instance}}) · {{vendor}}", "refId": "A"}
+            {"expr": f"hwWlanCurOnlineApNum{{{sel}}} or hh3cDot11CurrOnlineAPNum{{{sel}}} or ruijieApcOnlineApNum{{{sel}}} or cLApTotalUpAPs{{{sel}}} or wlsxSysExtAccessPointsNum{{{sel}}} or ruckusZDTotalNumAP{{{sel}}}", "legendFormat": "{{hostname}} {{instance}} · {{vendor}}", "refId": "A"}
         ], 12, 4, 12, 8, unit="short"),
         bar_gauge_panel(7, "各无线控制器客户端负载 Top 榜", f"hwWlanCurAssocUserNum{{{sel}}} or hh3cDot11CurrAssocUserNum{{{sel}}} or ruijieApcTotalStaNum{{{sel}}} or cLSysTotalNumOfClients{{{sel}}} or wlsxSysExtStationsNum{{{sel}}} or ruckusZDTotalNumSta{{{sel}}}", 0, 12, 12, 8, unit="short"),
         table_panel(
@@ -393,9 +393,9 @@ def build_wireless_dashboard():
         "tags": ["nexora", "network", "wireless"],
         "templating": {
             "list": [
-                make_query_variable("site", "站点", "label_values(site_name)"),
-                make_query_variable("vendor", "厂商", 'label_values({site_name=~"$site"}, vendor)'),
-                make_query_variable("device", "设备", 'label_values({site_name=~"$site",vendor=~"$vendor"}, hostname)'),
+                make_query_variable("site", "站点", 'label_values(hwWlanCurOnlineApNum or hh3cDot11CurrOnlineAPNum or ruijieApcOnlineApNum or cLApTotalUpAPs or up, site_name)'),
+                make_query_variable("vendor", "厂商", 'label_values(hwWlanCurOnlineApNum{site_name=~"$site"} or hh3cDot11CurrOnlineAPNum{site_name=~"$site"} or up, vendor)'),
+                make_query_variable("device", "设备", 'label_values(hwWlanCurOnlineApNum{site_name=~"$site",vendor=~"$vendor"} or hh3cDot11CurrOnlineAPNum or up, hostname)'),
             ]
         },
         "time": {"from": "now-6h", "to": "now"},
@@ -414,10 +414,10 @@ def build_interface_dashboard():
         stat_panel(3, "实时错误包总速率", f"sum(rate(ifInErrors{{{sel}}}[5m]) + rate(ifOutErrors{{{sel}}}[5m]))", 12, 0, 6, 4, unit="pps", thresholds=[{"color": "green", "value": None}, {"color": "#E0B400", "value": 10}, {"color": "red", "value": 100}]),
         stat_panel(4, "实时丢弃包总速率", f"sum(rate(ifInDiscards{{{sel}}}[5m]) + rate(ifOutDiscards{{{sel}}}[5m]))", 18, 0, 6, 4, unit="pps", thresholds=[{"color": "green", "value": None}, {"color": "#E0B400", "value": 10}, {"color": "red", "value": 100}]),
         timeseries_panel(5, "高负荷端口入流量 Top 10", [
-            {"expr": f"topk(10, rate(ifHCInOctets{{{sel}}}[5m]) * 8)", "legendFormat": "{{hostname}} ({{instance}}) - {{ifName}}", "refId": "A"}
+            {"expr": f"topk(10, rate(ifHCInOctets{{{sel}}}[5m]) * 8)", "legendFormat": "{{hostname}} {{instance}} {{ifName}}", "refId": "A"}
         ], 0, 4, 12, 8, unit="bps"),
         timeseries_panel(6, "高负荷端口出流量 Top 10", [
-            {"expr": f"topk(10, rate(ifHCOutOctets{{{sel}}}[5m]) * 8)", "legendFormat": "{{hostname}} ({{instance}}) - {{ifName}}", "refId": "A"}
+            {"expr": f"topk(10, rate(ifHCOutOctets{{{sel}}}[5m]) * 8)", "legendFormat": "{{hostname}} {{instance}} {{ifName}}", "refId": "A"}
         ], 12, 4, 12, 8, unit="bps"),
         table_panel(
             7, "端口带宽利用率 Top 20",
@@ -446,10 +446,10 @@ def build_interface_dashboard():
         "tags": ["nexora", "network", "interface"],
         "templating": {
             "list": [
-                make_query_variable("site", "站点", "label_values(site_name)"),
-                make_query_variable("vendor", "厂商", 'label_values({site_name=~"$site"}, vendor)'),
-                make_query_variable("role", "角色", 'label_values({site_name=~"$site",vendor=~"$vendor"}, role)'),
-                make_query_variable("device", "设备", 'label_values({site_name=~"$site",vendor=~"$vendor"}, hostname)'),
+                make_query_variable("site", "站点", 'label_values(ifOperStatus or ifHCInOctets or up, site_name)'),
+                make_query_variable("vendor", "厂商", 'label_values(ifOperStatus{site_name=~"$site"} or ifHCInOctets{site_name=~"$site"} or up, vendor)'),
+                make_query_variable("role", "角色", 'label_values(ifOperStatus{site_name=~"$site",vendor=~"$vendor"} or up, role)'),
+                make_query_variable("device", "设备", 'label_values(ifOperStatus{site_name=~"$site",vendor=~"$vendor"} or ifHCInOctets{site_name=~"$site",vendor=~"$vendor"} or up, hostname)'),
             ]
         },
         "time": {"from": "now-6h", "to": "now"},
@@ -521,18 +521,18 @@ def build_outbound_dashboard():
             {"color": "red", "value": 100}
         ]),
         timeseries_panel(5, "出口边界各设备入向流量趋势 (Inbound bps)", [
-            {"expr": f"sum by (hostname, instance) (rate(ifHCInOctets{{{comb_sel}}}[5m]) * 8)", "legendFormat": "{{hostname}} ({{instance}}) 入向", "refId": "A"}
+            {"expr": f"sum by (hostname, instance) (rate(ifHCInOctets{{{comb_sel}}}[5m]) * 8)", "legendFormat": "{{hostname}} {{instance}} 入向", "refId": "A"}
         ], 0, 4, 12, 8, unit="bps"),
         timeseries_panel(6, "出口边界各设备出向流量趋势 (Outbound bps)", [
-            {"expr": f"sum by (hostname, instance) (rate(ifHCOutOctets{{{comb_sel}}}[5m]) * 8)", "legendFormat": "{{hostname}} ({{instance}}) 出向", "refId": "A"}
+            {"expr": f"sum by (hostname, instance) (rate(ifHCOutOctets{{{comb_sel}}}[5m]) * 8)", "legendFormat": "{{hostname}} {{instance}} 出向", "refId": "A"}
         ], 12, 4, 12, 8, unit="bps"),
         timeseries_panel(7, "出口端口带宽利用率走势 (In/Out Top 10)", [
-            {"expr": f"topk(10, (rate(ifHCInOctets{{{comb_sel}}}[5m]) * 8) / (ifHighSpeed * 1000000) * 100)", "legendFormat": "{{hostname}} - {{ifName}} 入向利用率", "refId": "A"},
-            {"expr": f"topk(10, (rate(ifHCOutOctets{{{comb_sel}}}[5m]) * 8) / (ifHighSpeed * 1000000) * 100)", "legendFormat": "{{hostname}} - {{ifName}} 出向利用率", "refId": "B"}
+            {"expr": f"topk(10, (rate(ifHCInOctets{{{comb_sel}}}[5m]) * 8) / (ifHighSpeed * 1000000) * 100)", "legendFormat": "{{hostname}} {{instance}} {{ifName}} 入向利用率", "refId": "A"},
+            {"expr": f"topk(10, (rate(ifHCOutOctets{{{comb_sel}}}[5m]) * 8) / (ifHighSpeed * 1000000) * 100)", "legendFormat": "{{hostname}} {{instance}} {{ifName}} 出向利用率", "refId": "B"}
         ], 0, 12, 12, 8, unit="percent"),
         timeseries_panel(8, "出口链路接口丢包与错包时序 (PPS)", [
-            {"expr": f"sum by (hostname, instance) (rate(ifInErrors{{{comb_sel}}}[5m]) + rate(ifOutErrors{{{comb_sel}}}[5m]))", "legendFormat": "{{hostname}} ({{instance}}) 错包/秒", "refId": "A"},
-            {"expr": f"sum by (hostname, instance) (rate(ifInDiscards{{{comb_sel}}}[5m]) + rate(ifOutDiscards{{{comb_sel}}}[5m]))", "legendFormat": "{{hostname}} ({{instance}}) 丢弃/秒", "refId": "B"}
+            {"expr": f"sum by (hostname, instance) (rate(ifInErrors{{{comb_sel}}}[5m]) + rate(ifOutErrors{{{comb_sel}}}[5m]))", "legendFormat": "{{hostname}} {{instance}} 错包/秒", "refId": "A"},
+            {"expr": f"sum by (hostname, instance) (rate(ifInDiscards{{{comb_sel}}}[5m]) + rate(ifOutDiscards{{{comb_sel}}}[5m]))", "legendFormat": "{{hostname}} {{instance}} 丢弃/秒", "refId": "B"}
         ], 12, 12, 12, 8, unit="pps"),
         table_panel(
             9, "出口端口带宽利用率排行 Top 10",
@@ -561,9 +561,9 @@ def build_outbound_dashboard():
         "tags": ["nexora", "network", "outbound", "wan"],
         "templating": {
             "list": [
-                make_query_variable("site", "站点", "label_values(site_name)"),
-                make_query_variable("vendor", "厂商", 'label_values({site_name=~"$site"}, vendor)'),
-                make_query_variable("device", "出口设备", 'label_values({site_name=~"$site",vendor=~"$vendor"}, hostname)'),
+                make_query_variable("site", "站点", 'label_values(ifOperStatus or ifHCInOctets or up, site_name)'),
+                make_query_variable("vendor", "厂商", 'label_values(ifOperStatus{site_name=~"$site"} or up, vendor)'),
+                make_query_variable("device", "出口设备", 'label_values(ifOperStatus{site_name=~"$site",vendor=~"$vendor"} or up, hostname)'),
             ]
         },
         "time": {"from": "now-6h", "to": "now"},
@@ -636,7 +636,7 @@ def build_linux_dashboard():
         "templating": {
             "list": [
                 make_query_variable("site", "站点", 'label_values(node_load1 or host_cpu_util or hrProcessorLoad or up, site_name)'),
-                make_query_variable("device", "服务器", 'label_values({site_name=~"$site"}, hostname)'),
+                make_query_variable("device", "服务器", 'label_values(node_load1{site_name=~"$site"} or host_cpu_util{site_name=~"$site"} or up, hostname)'),
             ]
         },
         "time": {"from": "now-6h", "to": "now"},
@@ -663,11 +663,10 @@ def build_windows_dashboard():
         stat_panel(4, "远程桌面活跃会话", f'sum(windows_terminal_services_active_sessions{{{srv_sel}}}) or vector(0)', 18, 0, 6, 4, unit="none", color="purple"),
 
         timeseries_panel(5, "Windows CPU 使用率走势 (%)", [
-            {"expr": f'100 - (rate(windows_cpu_time_total{{{srv_sel},mode="idle"}}[5m]) * 100) or hrProcessorLoad{{{srv_sel}}}', "legendFormat": "{{hostname}} ({{core}}) CPU", "refId": "A"}
+            {"expr": f'100 - (rate(windows_cpu_time_total{{{srv_sel},mode="idle"}}[5m]) * 100) or hrProcessorLoad{{{srv_sel}}}', "legendFormat": "{{hostname}} {{core}} CPU", "refId": "A"}
         ], 0, 4, 12, 8, unit="percent"),
         timeseries_panel(6, "物理内存使用率与可用内存走势", [
-            {"expr": f'(1 - (windows_os_physical_memory_free_bytes{{{srv_sel}}} / windows_cs_physical_memory_bytes{{{srv_sel}}})) * 100', "legendFormat": "{{hostname}} 内存使用率 (%)", "refId": "A"},
-            {"expr": f'windows_os_physical_memory_free_bytes{{{srv_sel}}}', "legendFormat": "{{hostname}} 可用内存 (Bytes)", "refId": "B"}
+            {"expr": f'(1 - (windows_os_physical_memory_free_bytes{{{srv_sel}}} / windows_cs_physical_memory_bytes{{{srv_sel}}})) * 100', "legendFormat": "{{hostname}} 内存使用率 (%)", "refId": "A"}
         ], 12, 4, 12, 8, unit="percent"),
 
         table_panel(
@@ -677,13 +676,13 @@ def build_windows_dashboard():
             transformations=clean_organize_transformation("卷使用率", {"volume": "驱动器盘符"})
         ),
         timeseries_panel(8, "逻辑磁盘读写延迟走势 (秒)", [
-            {"expr": f'rate(windows_logical_disk_read_seconds_total{{{srv_sel}}}[5m]) / (rate(windows_logical_disk_reads_total{{{srv_sel}}}[5m]) > 0)', "legendFormat": "{{hostname}} - {{volume}} 读延迟", "refId": "A"},
-            {"expr": f'rate(windows_logical_disk_write_seconds_total{{{srv_sel}}}[5m]) / (rate(windows_logical_disk_writes_total{{{srv_sel}}}[5m]) > 0)', "legendFormat": "{{hostname}} - {{volume}} 写延迟", "refId": "B"}
+            {"expr": f'rate(windows_logical_disk_read_seconds_total{{{srv_sel}}}[5m]) / (rate(windows_logical_disk_reads_total{{{srv_sel}}}[5m]) > 0)', "legendFormat": "{{hostname}} {{volume}} 读延迟", "refId": "A"},
+            {"expr": f'rate(windows_logical_disk_write_seconds_total{{{srv_sel}}}[5m]) / (rate(windows_logical_disk_writes_total{{{srv_sel}}}[5m]) > 0)', "legendFormat": "{{hostname}} {{volume}} 写延迟", "refId": "B"}
         ], 12, 12, 12, 8, unit="s"),
 
         timeseries_panel(9, "网络适配器吞吐走势 (bps)", [
-            {"expr": f'sum by (hostname, nic) (rate(windows_net_bytes_received_total{{{srv_sel}}}[5m]) * 8)', "legendFormat": "{{hostname}} - {{nic}} 接收", "refId": "A"},
-            {"expr": f'sum by (hostname, nic) (rate(windows_net_bytes_sent_total{{{srv_sel}}}[5m]) * 8)', "legendFormat": "{{hostname}} - {{nic}} 发送", "refId": "B"}
+            {"expr": f'sum by (hostname, nic) (rate(windows_net_bytes_received_total{{{srv_sel}}}[5m]) * 8)', "legendFormat": "{{hostname}} {{nic}} 接收", "refId": "A"},
+            {"expr": f'sum by (hostname, nic) (rate(windows_net_bytes_sent_total{{{srv_sel}}}[5m]) * 8)', "legendFormat": "{{hostname}} {{nic}} 发送", "refId": "B"}
         ], 0, 20, 12, 8, unit="bps"),
         table_panel(
             10, "主机运行时间清单 (Uptime)",
@@ -707,7 +706,7 @@ def build_windows_dashboard():
         "templating": {
             "list": [
                 make_query_variable("site", "站点", 'label_values(windows_cpu_time_total or windows_os_info or hrProcessorLoad or up, site_name)'),
-                make_query_variable("device", "服务器", 'label_values({site_name=~"$site"}, hostname)'),
+                make_query_variable("device", "服务器", 'label_values(windows_cpu_time_total{site_name=~"$site"} or hrProcessorLoad{site_name=~"$site"} or up, hostname)'),
             ]
         },
         "time": {"from": "now-6h", "to": "now"},
