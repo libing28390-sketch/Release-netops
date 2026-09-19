@@ -1,0 +1,36 @@
+Value SEQ (\d+)
+Value TIMESTAMP (\*?[A-Za-z]{3}\s+\d+\s+(?:\d{4}\s+)?\d+:\d+:\d+(?:\.\d+)?|\d{4}-\d{2}-\d{2}\s+\d+:\d+:\d+(?:\.\d+)?)
+Value HOSTNAME (\S+)
+Value MODULE (\S+)
+Value FACILITY (\w+)
+Value SEVERITY (\d+)
+Value MNEMONIC ([\w\-]+)
+Value MESSAGE (.+?)
+
+Start
+  ^.*#\s*show\s+ -> Next
+  ^Logging\s+source\s+configurations -> Next
+  ^The\s+Context\s+of\s+logging\s+buffer: -> Next
+  # 1. With SEQ
+  ^\s*${SEQ}:\s+${TIMESTAMP}\s+${HOSTNAME}\s+${MODULE}\s+%${FACILITY}-${MNEMONIC}-${SEVERITY}:\s*${MESSAGE}\s*$$ -> Record
+  ^\s*${SEQ}:\s+${TIMESTAMP}\s+${HOSTNAME}\s+%${FACILITY}-${MNEMONIC}-${SEVERITY}:\s*${MESSAGE}\s*$$ -> Record
+  ^\s*${SEQ}:\s+${TIMESTAMP}:\s+${HOSTNAME}\s+%${FACILITY}-${SEVERITY}-${MNEMONIC}:\s*${MESSAGE}\s*$$ -> Record
+  ^\s*${SEQ}:\s+${TIMESTAMP}:\s+%${FACILITY}-${SEVERITY}-${MNEMONIC}:\s*${MESSAGE}\s*$$ -> Record
+  # 2. Maipu format: TIMESTAMP HOSTNAME MODULE %FACILITY-MNEMONIC-SEVERITY:MESSAGE
+  ^\s*${TIMESTAMP}\s+${HOSTNAME}\s+${MODULE}\s+%${FACILITY}-${MNEMONIC}-${SEVERITY}:\s*${MESSAGE}\s*$$ -> Record
+  # 3. Maipu format: TIMESTAMP HOSTNAME %FACILITY-MNEMONIC-SEVERITY:MESSAGE
+  ^\s*${TIMESTAMP}\s+${HOSTNAME}\s+%${FACILITY}-${MNEMONIC}-${SEVERITY}:\s*${MESSAGE}\s*$$ -> Record
+  # 4. Maipu format: TIMESTAMP %FACILITY-MNEMONIC-SEVERITY:MESSAGE
+  ^\s*${TIMESTAMP}:\s+%${FACILITY}-${MNEMONIC}-${SEVERITY}:\s*${MESSAGE}\s*$$ -> Record
+  ^\s*${TIMESTAMP}\s+%${FACILITY}-${MNEMONIC}-${SEVERITY}:\s*${MESSAGE}\s*$$ -> Record
+  # 5. Standard syslog: TIMESTAMP HOSTNAME %FACILITY-SEVERITY-MNEMONIC:MESSAGE
+  ^\s*${TIMESTAMP}:\s+${HOSTNAME}\s+%${FACILITY}-${SEVERITY}-${MNEMONIC}:\s*${MESSAGE}\s*$$ -> Record
+  ^\s*${TIMESTAMP}\s+${HOSTNAME}\s+%${FACILITY}-${SEVERITY}-${MNEMONIC}:\s*${MESSAGE}\s*$$ -> Record
+  # 6. Standard syslog: TIMESTAMP %FACILITY-SEVERITY-MNEMONIC:MESSAGE
+  ^\s*${TIMESTAMP}:\s+%${FACILITY}-${SEVERITY}-${MNEMONIC}:\s*${MESSAGE}\s*$$ -> Record
+  ^\s*${TIMESTAMP}\s+%${FACILITY}-${SEVERITY}-${MNEMONIC}:\s*${MESSAGE}\s*$$ -> Record
+  # 7. Bare formats
+  ^\s*%${FACILITY}-${MNEMONIC}-${SEVERITY}:\s*${MESSAGE}\s*$$ -> Record
+  ^\s*%${FACILITY}-${SEVERITY}-${MNEMONIC}:\s*${MESSAGE}\s*$$ -> Record
+  ^\s*$$
+  ^. -> Next

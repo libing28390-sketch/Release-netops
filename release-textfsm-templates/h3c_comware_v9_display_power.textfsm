@@ -1,0 +1,23 @@
+Value Filldown SLOT (\d+)
+Value Required POWER_ID (\d+)
+Value STATUS (\S+)
+Value MODE (\S+)
+Value CURRENT (\S+)
+Value VOLTAGE (\S+)
+Value POWER_W (\S+)
+Value AIRFLOW (\S+)
+
+Start
+  ^\s*Device\s+Info\s+on\s+Slot\s+${SLOT}:\s*$$ -> DeviceTable
+  ^\s*Slot\s+${SLOT}: -> Power
+
+DeviceTable
+  ^\s*Device\s+ID\.\s+Status\s*$$
+  ^\s*${POWER_ID}\s+${STATUS}\s*$$ -> Record DeviceTable
+  ^\s*$$
+  ^.*
+
+Power
+  ^\s*Input\s+Power:
+  ^\s*PowerID\s+State\s+Mode
+  ^\s*${POWER_ID}\s+${STATUS}\s+${MODE}\s+${CURRENT}\s+${VOLTAGE}\s+${POWER_W}\s+${AIRFLOW}\s*$$ -> Record

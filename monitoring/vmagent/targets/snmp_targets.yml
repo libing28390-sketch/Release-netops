@@ -1,0 +1,420 @@
+- targets:
+  - 10.255.0.4
+  labels:
+    nexora_asset_id: asset-09023ddcd695
+    nexora_hostname: R4
+    nexora_tenant_id: tenant-default
+    nexora_site_id: site-f287cf1c61ec
+    nexora_site_name: WH-DC-01
+    nexora_vendor: Cisco
+    nexora_platform: cisco_ios
+    nexora_role: distribution
+    nexora_module: generic_ifmib_interface_std
+    nexora_auth: auth_79eedfba6ff9
+    nexora_scrape_interval: 30s
+    nexora_scrape_timeout: 20s
+- targets:
+  - 10.255.0.4
+  labels:
+    nexora_asset_id: asset-09023ddcd695
+    nexora_hostname: R4
+    nexora_tenant_id: tenant-default
+    nexora_site_id: site-f287cf1c61ec
+    nexora_site_name: WH-DC-01
+    nexora_vendor: Cisco
+    nexora_platform: cisco_ios
+    nexora_role: distribution
+    nexora_module: generic_system_std
+    nexora_auth: auth_79eedfba6ff9
+    nexora_scrape_interval: 900s
+    nexora_scrape_timeout: 30s
+- targets:
+  - 10.254.0.5
+  labels:
+    nexora_asset_id: asset-1856e0544701
+    nexora_hostname: S6850-5
+    nexora_tenant_id: tenant-default
+    nexora_site_id: site-e7956b343326
+    nexora_site_name: WH-DC-02
+    nexora_vendor: H3C
+    nexora_platform: h3c_comware
+    nexora_role: access
+    nexora_module: generic_ifmib_interface_std
+    nexora_auth: auth_f36f2d0d2eeb
+    nexora_scrape_interval: 30s
+    nexora_scrape_timeout: 20s
+- targets:
+  - 10.254.0.5
+  labels:
+    nexora_asset_id: asset-1856e0544701
+    nexora_hostname: S6850-5
+    nexora_tenant_id: tenant-default
+    nexora_site_id: site-e7956b343326
+    nexora_site_name: WH-DC-02
+    nexora_vendor: H3C
+    nexora_platform: h3c_comware
+    nexora_role: access
+    nexora_module: generic_system_std
+    nexora_auth: auth_f36f2d0d2eeb
+    nexora_scrape_interval: 900s
+    nexora_scrape_timeout: 30s
+- targets:
+  - 10.255.0.5
+  labels:
+    nexora_asset_id: asset-1b6945d575fe
+    nexora_hostname: SW5
+    nexora_tenant_id: tenant-default
+    nexora_site_id: site-f287cf1c61ec
+    nexora_site_name: WH-DC-01
+    nexora_vendor: Cisco
+    nexora_platform: cisco_ios
+    nexora_role: access
+    nexora_module: generic_ifmib_interface_std
+    nexora_auth: auth_79eedfba6ff9
+    nexora_scrape_interval: 30s
+    nexora_scrape_timeout: 20s
+- targets:
+  - 10.255.0.5
+  labels:
+    nexora_asset_id: asset-1b6945d575fe
+    nexora_hostname: SW5
+    nexora_tenant_id: tenant-default
+    nexora_site_id: site-f287cf1c61ec
+    nexora_site_name: WH-DC-01
+    nexora_vendor: Cisco
+    nexora_platform: cisco_ios
+    nexora_role: access
+    nexora_module: generic_system_std
+    nexora_auth: auth_79eedfba6ff9
+    nexora_scrape_interval: 900s
+    nexora_scrape_timeout: 30s
+- targets:
+  - 10.254.0.4
+  labels:
+    nexora_asset_id: asset-1ddc8495ce01
+    nexora_hostname: S6850-4
+    nexora_tenant_id: tenant-default
+    nexora_site_id: site-e7956b343326
+    nexora_site_name: WH-DC-02
+    nexora_vendor: H3C
+    nexora_platform: h3c_comware
+    nexora_role: distribution
+    nexora_module: generic_ifmib_interface_std
+    nexora_auth: auth_858b0a8edd64
+    nexora_scrape_interval: 30s
+    nexora_scrape_timeout: 20s
+- targets:
+  - 10.254.0.4
+  labels:
+    nexora_asset_id: asset-1ddc8495ce01
+    nexora_hostname: S6850-4
+    nexora_tenant_id: tenant-default
+    nexora_site_id: site-e7956b343326
+    nexora_site_name: WH-DC-02
+    nexora_vendor: H3C
+    nexora_platform: h3c_comware
+    nexora_role: distribution
+    nexora_module: generic_system_std
+    nexora_auth: auth_858b0a8edd64
+    nexora_scrape_interval: 900s
+    nexora_scrape_timeout: 30s
+- targets:
+  - 192.168.96.102
+  labels:
+    nexora_asset_id: asset-26fc3ae691eb
+    nexora_hostname: R2
+    nexora_tenant_id: tenant-default
+    nexora_site_id: site-f287cf1c61ec
+    nexora_site_name: WH-DC-01
+    nexora_vendor: Cisco
+    nexora_platform: cisco_ios
+    nexora_role: core
+    nexora_module: generic_ifmib_interface_std
+    nexora_auth: auth_79eedfba6ff9
+    nexora_scrape_interval: 30s
+    nexora_scrape_timeout: 20s
+- targets:
+  - 192.168.96.102
+  labels:
+    nexora_asset_id: asset-26fc3ae691eb
+    nexora_hostname: R2
+    nexora_tenant_id: tenant-default
+    nexora_site_id: site-f287cf1c61ec
+    nexora_site_name: WH-DC-01
+    nexora_vendor: Cisco
+    nexora_platform: cisco_ios
+    nexora_role: core
+    nexora_module: generic_system_std
+    nexora_auth: auth_79eedfba6ff9
+    nexora_scrape_interval: 900s
+    nexora_scrape_timeout: 30s
+- targets:
+  - 10.254.0.2
+  labels:
+    nexora_asset_id: asset-6dc583cb9974
+    nexora_hostname: S6850-2
+    nexora_tenant_id: tenant-default
+    nexora_site_id: site-e7956b343326
+    nexora_site_name: WH-DC-02
+    nexora_vendor: H3C
+    nexora_platform: h3c_comware
+    nexora_role: core
+    nexora_module: generic_ifmib_interface_std
+    nexora_auth: auth_7358c4e31481
+    nexora_scrape_interval: 30s
+    nexora_scrape_timeout: 20s
+- targets:
+  - 10.254.0.2
+  labels:
+    nexora_asset_id: asset-6dc583cb9974
+    nexora_hostname: S6850-2
+    nexora_tenant_id: tenant-default
+    nexora_site_id: site-e7956b343326
+    nexora_site_name: WH-DC-02
+    nexora_vendor: H3C
+    nexora_platform: h3c_comware
+    nexora_role: core
+    nexora_module: generic_system_std
+    nexora_auth: auth_7358c4e31481
+    nexora_scrape_interval: 900s
+    nexora_scrape_timeout: 30s
+- targets:
+  - 10.255.0.6
+  labels:
+    nexora_asset_id: asset-802a67a18c2f
+    nexora_hostname: SW6
+    nexora_tenant_id: tenant-default
+    nexora_site_id: site-f287cf1c61ec
+    nexora_site_name: WH-DC-01
+    nexora_vendor: Cisco
+    nexora_platform: cisco_ios
+    nexora_role: access
+    nexora_module: generic_ifmib_interface_std
+    nexora_auth: auth_79eedfba6ff9
+    nexora_scrape_interval: 30s
+    nexora_scrape_timeout: 20s
+- targets:
+  - 10.255.0.6
+  labels:
+    nexora_asset_id: asset-802a67a18c2f
+    nexora_hostname: SW6
+    nexora_tenant_id: tenant-default
+    nexora_site_id: site-f287cf1c61ec
+    nexora_site_name: WH-DC-01
+    nexora_vendor: Cisco
+    nexora_platform: cisco_ios
+    nexora_role: access
+    nexora_module: generic_system_std
+    nexora_auth: auth_79eedfba6ff9
+    nexora_scrape_interval: 900s
+    nexora_scrape_timeout: 30s
+- targets:
+  - 192.168.56.12
+  labels:
+    nexora_asset_id: asset-8e33137b1e14
+    nexora_hostname: F1090-10
+    nexora_tenant_id: tenant-default
+    nexora_site_id: site-e7956b343326
+    nexora_site_name: WH-DC-02
+    nexora_vendor: H3C
+    nexora_platform: h3c_comware
+    nexora_role: firewall
+    nexora_module: generic_ifmib_interface_std
+    nexora_auth: auth_ca26b0e9e4c6
+    nexora_scrape_interval: 30s
+    nexora_scrape_timeout: 20s
+- targets:
+  - 192.168.56.12
+  labels:
+    nexora_asset_id: asset-8e33137b1e14
+    nexora_hostname: F1090-10
+    nexora_tenant_id: tenant-default
+    nexora_site_id: site-e7956b343326
+    nexora_site_name: WH-DC-02
+    nexora_vendor: H3C
+    nexora_platform: h3c_comware
+    nexora_role: firewall
+    nexora_module: generic_system_std
+    nexora_auth: auth_ca26b0e9e4c6
+    nexora_scrape_interval: 900s
+    nexora_scrape_timeout: 30s
+- targets:
+  - 10.255.0.3
+  labels:
+    nexora_asset_id: asset-93468497c56c
+    nexora_hostname: R3
+    nexora_tenant_id: tenant-default
+    nexora_site_id: site-f287cf1c61ec
+    nexora_site_name: WH-DC-01
+    nexora_vendor: Cisco
+    nexora_platform: cisco_ios
+    nexora_role: distribution
+    nexora_module: generic_ifmib_interface_std
+    nexora_auth: auth_79eedfba6ff9
+    nexora_scrape_interval: 30s
+    nexora_scrape_timeout: 20s
+- targets:
+  - 10.255.0.3
+  labels:
+    nexora_asset_id: asset-93468497c56c
+    nexora_hostname: R3
+    nexora_tenant_id: tenant-default
+    nexora_site_id: site-f287cf1c61ec
+    nexora_site_name: WH-DC-01
+    nexora_vendor: Cisco
+    nexora_platform: cisco_ios
+    nexora_role: distribution
+    nexora_module: generic_system_std
+    nexora_auth: auth_79eedfba6ff9
+    nexora_scrape_interval: 900s
+    nexora_scrape_timeout: 30s
+- targets:
+  - 10.254.0.3
+  labels:
+    nexora_asset_id: asset-9ac064cbc4be
+    nexora_hostname: S6850-3
+    nexora_tenant_id: tenant-default
+    nexora_site_id: site-e7956b343326
+    nexora_site_name: WH-DC-02
+    nexora_vendor: H3C
+    nexora_platform: h3c_comware
+    nexora_role: distribution
+    nexora_module: generic_ifmib_interface_std
+    nexora_auth: auth_dbed31e719e8
+    nexora_scrape_interval: 30s
+    nexora_scrape_timeout: 20s
+- targets:
+  - 10.254.0.3
+  labels:
+    nexora_asset_id: asset-9ac064cbc4be
+    nexora_hostname: S6850-3
+    nexora_tenant_id: tenant-default
+    nexora_site_id: site-e7956b343326
+    nexora_site_name: WH-DC-02
+    nexora_vendor: H3C
+    nexora_platform: h3c_comware
+    nexora_role: distribution
+    nexora_module: generic_system_std
+    nexora_auth: auth_dbed31e719e8
+    nexora_scrape_interval: 900s
+    nexora_scrape_timeout: 30s
+- targets:
+  - 10.254.0.1
+  labels:
+    nexora_asset_id: asset-b4c8d79a3ba7
+    nexora_hostname: S6850-1
+    nexora_tenant_id: tenant-default
+    nexora_site_id: site-e7956b343326
+    nexora_site_name: WH-DC-02
+    nexora_vendor: H3C
+    nexora_platform: h3c_comware
+    nexora_role: core
+    nexora_module: generic_ifmib_interface_std
+    nexora_auth: auth_438a7a1edf22
+    nexora_scrape_interval: 30s
+    nexora_scrape_timeout: 20s
+- targets:
+  - 10.254.0.1
+  labels:
+    nexora_asset_id: asset-b4c8d79a3ba7
+    nexora_hostname: S6850-1
+    nexora_tenant_id: tenant-default
+    nexora_site_id: site-e7956b343326
+    nexora_site_name: WH-DC-02
+    nexora_vendor: H3C
+    nexora_platform: h3c_comware
+    nexora_role: core
+    nexora_module: generic_system_std
+    nexora_auth: auth_438a7a1edf22
+    nexora_scrape_interval: 900s
+    nexora_scrape_timeout: 30s
+- targets:
+  - 192.168.96.101
+  labels:
+    nexora_asset_id: asset-bc76e069f2da
+    nexora_hostname: R1
+    nexora_tenant_id: tenant-default
+    nexora_site_id: site-f287cf1c61ec
+    nexora_site_name: WH-DC-01
+    nexora_vendor: Cisco
+    nexora_platform: cisco_ios
+    nexora_role: core
+    nexora_module: generic_ifmib_interface_std
+    nexora_auth: auth_79eedfba6ff9
+    nexora_scrape_interval: 30s
+    nexora_scrape_timeout: 20s
+- targets:
+  - 192.168.96.101
+  labels:
+    nexora_asset_id: asset-bc76e069f2da
+    nexora_hostname: R1
+    nexora_tenant_id: tenant-default
+    nexora_site_id: site-f287cf1c61ec
+    nexora_site_name: WH-DC-01
+    nexora_vendor: Cisco
+    nexora_platform: cisco_ios
+    nexora_role: core
+    nexora_module: generic_system_std
+    nexora_auth: auth_79eedfba6ff9
+    nexora_scrape_interval: 900s
+    nexora_scrape_timeout: 30s
+- targets:
+  - 10.254.0.6
+  labels:
+    nexora_asset_id: asset-bd4beef9fecd
+    nexora_hostname: S6850-6
+    nexora_tenant_id: tenant-default
+    nexora_site_id: site-e7956b343326
+    nexora_site_name: WH-DC-02
+    nexora_vendor: H3C
+    nexora_platform: h3c_comware
+    nexora_role: access
+    nexora_module: generic_ifmib_interface_std
+    nexora_auth: auth_33cb3693e848
+    nexora_scrape_interval: 30s
+    nexora_scrape_timeout: 20s
+- targets:
+  - 10.254.0.6
+  labels:
+    nexora_asset_id: asset-bd4beef9fecd
+    nexora_hostname: S6850-6
+    nexora_tenant_id: tenant-default
+    nexora_site_id: site-e7956b343326
+    nexora_site_name: WH-DC-02
+    nexora_vendor: H3C
+    nexora_platform: h3c_comware
+    nexora_role: access
+    nexora_module: generic_system_std
+    nexora_auth: auth_33cb3693e848
+    nexora_scrape_interval: 900s
+    nexora_scrape_timeout: 30s
+- targets:
+  - 192.168.56.11
+  labels:
+    nexora_asset_id: asset-f2b0996e38b3
+    nexora_hostname: F1090-9
+    nexora_tenant_id: tenant-default
+    nexora_site_id: site-e7956b343326
+    nexora_site_name: WH-DC-02
+    nexora_vendor: H3C
+    nexora_platform: h3c_comware
+    nexora_role: firewall
+    nexora_module: generic_ifmib_interface_std
+    nexora_auth: auth_6f49dbfde8d5
+    nexora_scrape_interval: 30s
+    nexora_scrape_timeout: 20s
+- targets:
+  - 192.168.56.11
+  labels:
+    nexora_asset_id: asset-f2b0996e38b3
+    nexora_hostname: F1090-9
+    nexora_tenant_id: tenant-default
+    nexora_site_id: site-e7956b343326
+    nexora_site_name: WH-DC-02
+    nexora_vendor: H3C
+    nexora_platform: h3c_comware
+    nexora_role: firewall
+    nexora_module: generic_system_std
+    nexora_auth: auth_6f49dbfde8d5
+    nexora_scrape_interval: 900s
+    nexora_scrape_timeout: 30s

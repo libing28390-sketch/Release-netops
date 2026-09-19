@@ -1,0 +1,12 @@
+apiVersion: 1
+
+providers:
+  - name: Nexora dashboards
+    orgId: 1
+    folder: Nexora
+    type: file
+    disableDeletion: true
+    updateIntervalSeconds: 30
+    options:
+      path: /var/lib/grafana/dashboards
+      foldersFromFilesStructure: false

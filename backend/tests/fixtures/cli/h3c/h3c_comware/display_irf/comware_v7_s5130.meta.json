@@ -1,0 +1,9 @@
+{
+  "source_type": "official_vendor_documentation",
+  "source_url": "https://www.h3c.com/en/d_201909/1227147_294551_0.htm",
+  "vendor": "H3C",
+  "platform": "Comware7",
+  "model_family": "S5130S-HI/S5110V2/S3100V3-EI",
+  "command": "display irf",
+  "source_note": "Official IRF fabric information example, including master/login markers."
+}

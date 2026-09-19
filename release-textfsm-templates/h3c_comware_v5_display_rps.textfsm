@@ -1,0 +1,10 @@
+Value Filldown SLOT (\d+)
+Value Required RPS_ID (\d+)
+Value Required STATUS (\S+)
+
+Start
+  ^\s*Slot\s+${SLOT}\s*:?[ \t]*$$
+  ^\s*Power\s+${RPS_ID}\s*$$
+  ^\s*State\s*:\s*${STATUS}\s*$$ -> Record Start
+  ^\s*$$
+  ^.*$$

@@ -1,0 +1,9 @@
+- targets:
+    - 192.168.204.128:9100
+  labels:
+    instance: 192.168.204.128:9100
+    hostname: docker
+    site_name: WH-DC-01
+    site_id: site-4eb4ad17a9f3
+    role: server
+    os: linux

@@ -1,0 +1,13 @@
+{
+  "vendor": "H3C",
+  "platform": "h3c_comware",
+  "software_family": "Comware7/9",
+  "model": "Comware switch example",
+  "command": "display memory",
+  "source_type": "official_vendor_documentation",
+  "source_url": "https://www.h3c.com/en/d_202212/1738057_294551_0.htm",
+  "source_title": "03-Hardware resource management commands - H3C",
+  "source_section": "display memory",
+  "expected_record_count": 1,
+  "expected_fields": ["MEMORY_CLASS", "TOTAL_KB", "USED_KB", "FREE_KB", "SHARED_KB", "BUFFERS_KB", "CACHED_KB", "FREE_RATIO"]
+}
