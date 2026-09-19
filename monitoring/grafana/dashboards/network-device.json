@@ -489,14 +489,14 @@
             "$__all"
           ]
         },
-        "definition": "label_values(ifOperStatus, site_name)",
+        "definition": "label_values(site_name)",
         "includeAll": true,
         "label": "站点",
         "multi": true,
         "name": "site",
         "options": [],
         "query": {
-          "query": "label_values(ifOperStatus, site_name)",
+          "query": "label_values(site_name)",
           "refId": "StandardVariableQuery"
         },
         "refresh": 1,
@@ -513,14 +513,14 @@
             "$__all"
           ]
         },
-        "definition": "label_values(ifOperStatus{site_name=~\"$site\"}, vendor)",
+        "definition": "label_values({site_name=~\"$site\"}, vendor)",
         "includeAll": true,
         "label": "厂商",
         "multi": true,
         "name": "vendor",
         "options": [],
         "query": {
-          "query": "label_values(ifOperStatus{site_name=~\"$site\"}, vendor)",
+          "query": "label_values({site_name=~\"$site\"}, vendor)",
           "refId": "StandardVariableQuery"
         },
         "refresh": 1,
@@ -533,14 +533,14 @@
           "text": "",
           "value": ""
         },
-        "definition": "label_values(ifOperStatus{site_name=~\"$site\",vendor=~\"$vendor\"}, hostname)",
+        "definition": "label_values({site_name=~\"$site\",vendor=~\"$vendor\"}, hostname)",
         "includeAll": false,
         "label": "设备",
         "multi": false,
         "name": "device",
         "options": [],
         "query": {
-          "query": "label_values(ifOperStatus{site_name=~\"$site\",vendor=~\"$vendor\"}, hostname)",
+          "query": "label_values({site_name=~\"$site\",vendor=~\"$vendor\"}, hostname)",
           "refId": "StandardVariableQuery"
         },
         "refresh": 1,

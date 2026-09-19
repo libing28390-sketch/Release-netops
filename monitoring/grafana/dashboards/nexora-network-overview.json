@@ -56,7 +56,7 @@
       },
       "targets": [
         {
-          "expr": "count(count by (hostname) (ifOperStatus{site_name=~\"$site\",vendor=~\"$vendor\",role=~\"$role\",hostname=~\"$device\"}))",
+          "expr": "count(count by (instance) (ifOperStatus or up{job=\"network_snmp\"} or {job=~\".*snmp.*\"}))",
           "refId": "A"
         }
       ]
@@ -109,7 +109,7 @@
       },
       "targets": [
         {
-          "expr": "count(count by (site_name) (ifOperStatus))",
+          "expr": "count(count by (site_name) (ifOperStatus{site_name!=\"\"} or up{site_name!=\"\"} or {site_name!=\"\"}))",
           "refId": "A"
         }
       ]
@@ -735,14 +735,14 @@
             "$__all"
           ]
         },
-        "definition": "label_values(ifOperStatus, site_name)",
+        "definition": "label_values(site_name)",
         "includeAll": true,
         "label": "站点",
         "multi": true,
         "name": "site",
         "options": [],
         "query": {
-          "query": "label_values(ifOperStatus, site_name)",
+          "query": "label_values(site_name)",
           "refId": "StandardVariableQuery"
         },
         "refresh": 1,
@@ -759,14 +759,14 @@
             "$__all"
           ]
         },
-        "definition": "label_values(ifOperStatus{site_name=~\"$site\"}, vendor)",
+        "definition": "label_values({site_name=~\"$site\"}, vendor)",
         "includeAll": true,
         "label": "厂商",
         "multi": true,
         "name": "vendor",
         "options": [],
         "query": {
-          "query": "label_values(ifOperStatus{site_name=~\"$site\"}, vendor)",
+          "query": "label_values({site_name=~\"$site\"}, vendor)",
           "refId": "StandardVariableQuery"
         },
         "refresh": 1,
@@ -783,14 +783,14 @@
             "$__all"
           ]
         },
-        "definition": "label_values(ifOperStatus{site_name=~\"$site\",vendor=~\"$vendor\"}, role)",
+        "definition": "label_values({site_name=~\"$site\",vendor=~\"$vendor\"}, role)",
         "includeAll": true,
         "label": "角色",
         "multi": true,
         "name": "role",
         "options": [],
         "query": {
-          "query": "label_values(ifOperStatus{site_name=~\"$site\",vendor=~\"$vendor\"}, role)",
+          "query": "label_values({site_name=~\"$site\",vendor=~\"$vendor\"}, role)",
           "refId": "StandardVariableQuery"
         },
         "refresh": 1,
@@ -807,14 +807,14 @@
             "$__all"
           ]
         },
-        "definition": "label_values(ifOperStatus{site_name=~\"$site\",vendor=~\"$vendor\",role=~\"$role\"}, hostname)",
+        "definition": "label_values({site_name=~\"$site\",vendor=~\"$vendor\"}, hostname)",
         "includeAll": true,
         "label": "设备",
         "multi": true,
         "name": "device",
         "options": [],
         "query": {
-          "query": "label_values(ifOperStatus{site_name=~\"$site\",vendor=~\"$vendor\",role=~\"$role\"}, hostname)",
+          "query": "label_values({site_name=~\"$site\",vendor=~\"$vendor\"}, hostname)",
           "refId": "StandardVariableQuery"
         },
         "refresh": 1,

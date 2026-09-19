@@ -23,9 +23,10 @@ export const navConfig: NavGroup[] = [
         label: '监控报表',
         labelEn: 'Monitoring Reports',
         path: '/monitor/reports/interfaces',
+        activeMatch: '/monitor/reports',
         icon: 'FileSpreadsheet',
         children: [
-          { id: 'reports-interfaces', label: '全网接口流量与利用率', labelEn: 'Interface Traffic & Util', path: '/monitor/reports/interfaces', icon: 'Activity' },
+          { id: 'reports-interfaces', label: '全网接口流量与利用率', labelEn: 'Interface Traffic & Util', path: '/monitor/reports/interfaces', activeMatch: '/monitor/reports/interfaces,/monitor/reports', icon: 'Activity' },
           { id: 'reports-devices',    label: '网络设备运行与资源',   labelEn: 'Device Load & Resources', path: '/monitor/reports/devices',    icon: 'Server' },
           { id: 'reports-outbound',   label: '互联网出口与 WAN 链路', labelEn: 'Outbound & WAN Probes',   path: '/monitor/reports/outbound',   icon: 'Globe' },
         ],

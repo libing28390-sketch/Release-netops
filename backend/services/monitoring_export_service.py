@@ -172,6 +172,7 @@ def fetch_interfaces_report_data(
     out_err_map = _query_vm_instant_safe("rate(ifOutErrors[5m])")
     in_disc_map = _query_vm_instant_safe("rate(ifInDiscards[5m])")
     out_disc_map = _query_vm_instant_safe("rate(ifOutDiscards[5m])")
+    if_oper_map = _query_vm_instant_safe("ifOperStatus")
 
     now_str = datetime.now(timezone.utc).strftime("%Y-%m-%d %H:%M:%S UTC")
 
@@ -188,8 +189,25 @@ def fetch_interfaces_report_data(
         site = r["site_name"] or "默认站点"
         ifname = r["interface_name"] or "--"
         desc = r["description"] or ""
-        admin = str(r["admin_status"] or "UP").upper()
-        oper = str(r["oper_status"] or "UP").upper()
+        admin = str(r["admin_status"] or "").strip().upper()
+        oper = str(r["oper_status"] or "").strip().upper()
+
+        # If oper is unknown or empty, infer from VictoriaMetrics ifOperStatus or admin_status
+        if not oper or oper in ("UNKNOWN", "--", "-", "NONE"):
+            lookup_keys = [f"{hostname}:{ifname}", f"{ip}:{ifname}"]
+            vm_oper_val = next((if_oper_map[k] for k in lookup_keys if k in if_oper_map), None)
+            if vm_oper_val is not None:
+                oper = "UP" if int(vm_oper_val) == 1 else "DOWN"
+            elif admin in ("DOWN", "ADM", "ADMINISTRATIVELY DOWN", "DISABLED"):
+                oper = "DOWN"
+            elif admin == "UP":
+                oper = "UP"
+            else:
+                oper = "DOWN"
+
+        if not admin or admin in ("UNKNOWN", "--", "-", "NONE"):
+            admin = oper if oper in ("UP", "DOWN") else "DOWN"
+
         speed = int(r["speed"]) if r["speed"] and str(r["speed"]).isdigit() else 1_000_000_000
 
         if vendor:

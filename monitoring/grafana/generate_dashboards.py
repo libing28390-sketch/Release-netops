@@ -225,8 +225,8 @@ def build_overview_dashboard():
     )
 
     panels = [
-        stat_panel(1, "纳管设备数", f"count(count by (hostname) (ifOperStatus{{{sel}}}))", 0, 0, 4, 4, color="#3274D9"),
-        stat_panel(2, "监控站点数", "count(count by (site_name) (ifOperStatus))", 4, 0, 4, 4, color="#A352CC"),
+        stat_panel(1, "纳管设备数", 'count(count by (instance) (ifOperStatus or up{job="network_snmp"} or {job=~".*snmp.*"}))', 0, 0, 4, 4, color="#3274D9"),
+        stat_panel(2, "监控站点数", 'count(count by (site_name) (ifOperStatus{site_name!=""} or up{site_name!=""} or {site_name!=""}))', 4, 0, 4, 4, color="#A352CC"),
         stat_panel(3, "全网在线 AP 数", ap_online_expr, 8, 0, 4, 4, color="#56A64B"),
         stat_panel(4, "无线在线客户端数", client_online_expr, 12, 0, 4, 4, color="#37872D"),
         stat_panel(5, "采集接口总数", f"count(ifOperStatus{{{sel}}})", 16, 0, 4, 4, color="#3274D9"),
@@ -277,10 +277,10 @@ def build_overview_dashboard():
         "tags": ["nexora", "network", "overview"],
         "templating": {
             "list": [
-                make_query_variable("site", "站点", "label_values(ifOperStatus, site_name)"),
-                make_query_variable("vendor", "厂商", 'label_values(ifOperStatus{site_name=~"$site"}, vendor)'),
-                make_query_variable("role", "角色", 'label_values(ifOperStatus{site_name=~"$site",vendor=~"$vendor"}, role)'),
-                make_query_variable("device", "设备", 'label_values(ifOperStatus{site_name=~"$site",vendor=~"$vendor",role=~"$role"}, hostname)'),
+                make_query_variable("site", "站点", "label_values(site_name)"),
+                make_query_variable("vendor", "厂商", 'label_values({site_name=~"$site"}, vendor)'),
+                make_query_variable("role", "角色", 'label_values({site_name=~"$site",vendor=~"$vendor"}, role)'),
+                make_query_variable("device", "设备", 'label_values({site_name=~"$site",vendor=~"$vendor"}, hostname)'),
             ]
         },
         "time": {"from": "now-6h", "to": "now"},
@@ -346,9 +346,9 @@ def build_device_dashboard():
         "tags": ["nexora", "network", "device"],
         "templating": {
             "list": [
-                make_query_variable("site", "站点", "label_values(ifOperStatus, site_name)"),
-                make_query_variable("vendor", "厂商", 'label_values(ifOperStatus{site_name=~"$site"}, vendor)'),
-                make_query_variable("device", "设备", 'label_values(ifOperStatus{site_name=~"$site",vendor=~"$vendor"}, hostname)', multi=False, include_all=False),
+                make_query_variable("site", "站点", "label_values(site_name)"),
+                make_query_variable("vendor", "厂商", 'label_values({site_name=~"$site"}, vendor)'),
+                make_query_variable("device", "设备", 'label_values({site_name=~"$site",vendor=~"$vendor"}, hostname)', multi=False, include_all=False),
             ]
         },
         "time": {"from": "now-6h", "to": "now"},
@@ -394,9 +394,9 @@ def build_wireless_dashboard():
         "tags": ["nexora", "network", "wireless"],
         "templating": {
             "list": [
-                make_query_variable("site", "站点", "label_values(ifOperStatus, site_name)"),
-                make_query_variable("vendor", "厂商", 'label_values(ifOperStatus{site_name=~"$site"}, vendor)'),
-                make_query_variable("device", "设备", 'label_values(ifOperStatus{site_name=~"$site",vendor=~"$vendor"}, hostname)'),
+                make_query_variable("site", "站点", "label_values(site_name)"),
+                make_query_variable("vendor", "厂商", 'label_values({site_name=~"$site"}, vendor)'),
+                make_query_variable("device", "设备", 'label_values({site_name=~"$site",vendor=~"$vendor"}, hostname)'),
             ]
         },
         "time": {"from": "now-6h", "to": "now"},
@@ -447,10 +447,10 @@ def build_interface_dashboard():
         "tags": ["nexora", "network", "interface"],
         "templating": {
             "list": [
-                make_query_variable("site", "站点", "label_values(ifOperStatus, site_name)"),
-                make_query_variable("vendor", "厂商", 'label_values(ifOperStatus{site_name=~"$site"}, vendor)'),
-                make_query_variable("role", "角色", 'label_values(ifOperStatus{site_name=~"$site",vendor=~"$vendor"}, role)'),
-                make_query_variable("device", "设备", 'label_values(ifOperStatus{site_name=~"$site",vendor=~"$vendor",role=~"$role"}, hostname)'),
+                make_query_variable("site", "站点", "label_values(site_name)"),
+                make_query_variable("vendor", "厂商", 'label_values({site_name=~"$site"}, vendor)'),
+                make_query_variable("role", "角色", 'label_values({site_name=~"$site",vendor=~"$vendor"}, role)'),
+                make_query_variable("device", "设备", 'label_values({site_name=~"$site",vendor=~"$vendor"}, hostname)'),
             ]
         },
         "time": {"from": "now-6h", "to": "now"},
@@ -562,9 +562,9 @@ def build_outbound_dashboard():
         "tags": ["nexora", "network", "outbound", "wan"],
         "templating": {
             "list": [
-                make_query_variable("site", "站点", "label_values(ifOperStatus, site_name)"),
-                make_query_variable("vendor", "厂商", 'label_values(ifOperStatus{site_name=~"$site"}, vendor)'),
-                make_query_variable("device", "出口设备", 'label_values(ifOperStatus{site_name=~"$site",vendor=~"$vendor",role=~"gateway|firewall|wan|border|.*"}, hostname)'),
+                make_query_variable("site", "站点", "label_values(site_name)"),
+                make_query_variable("vendor", "厂商", 'label_values({site_name=~"$site"}, vendor)'),
+                make_query_variable("device", "出口设备", 'label_values({site_name=~"$site",vendor=~"$vendor"}, hostname)'),
             ]
         },
         "time": {"from": "now-6h", "to": "now"},

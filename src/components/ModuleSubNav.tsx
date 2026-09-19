@@ -125,12 +125,16 @@ const ModuleSubNav: React.FC<ModuleSubNavProps> = ({ language, userRole, current
   // automatically when there is not enough room for a second navigation column.
   const isCompactNav = collapsed || compactViewport;
 
-  const checkChildActive = (child: any, path: string) => {
+  const checkChildActive = (child: any, path: string): boolean => {
     if (child.activeMatch) {
       const prefixes = child.activeMatch.split(',');
       if (prefixes.some((p: string) => path === p || path.startsWith(p + '/'))) return true;
     }
-    return path === child.path || path.startsWith(child.path + '/');
+    if (path === child.path || path.startsWith(child.path + '/')) return true;
+    if (child.children && Array.isArray(child.children)) {
+      return child.children.some((sub: any) => checkChildActive(sub, path));
+    }
+    return false;
   };
 
   // Find group that owns the current path

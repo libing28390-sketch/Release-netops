@@ -85,8 +85,8 @@ class H3CNormalizer(BaseNormalizer):
                 interfaces,
                 device_id,
                 name,
-                record_value(record, "admin_status", "link_status", "status"),
-                record_value(record, "oper_status", "protocol_status", "line_protocol"),
+                record_value(record, "admin_status", "link_status", "status", "link"),
+                record_value(record, "oper_status", "protocol_status", "line_protocol", "protocol"),
                 record_value(record, "description"),
                 record_value(record, "mtu"),
                 record_value(record, "mac_address", "hardware_address"),
@@ -165,20 +165,29 @@ class H3CNormalizer(BaseNormalizer):
     ) -> None:
         key = H3CNormalizer._normalize_interface(name)
         interface = interfaces.get(key)
+        admin_val = status_value(admin) if admin else ""
+        oper_val = status_value(oper) if oper else ""
+        if not oper_val and admin_val:
+            oper_val = admin_val
+        if admin_val == "down":
+            oper_val = "down"
+
         if interface is None:
             interface = Interface(
                 device_id=device_id,
                 name_raw=name,
                 name_display=key,
                 interface_type=interface_type(name),
-                admin_status=status_value(admin),
-                oper_status=status_value(oper),
+                admin_status=admin_val or "down",
+                oper_status=oper_val or admin_val or "down",
             )
             interfaces[key] = interface
         elif admin:
-            interface.admin_status = status_value(admin)
+            interface.admin_status = admin_val
         if oper:
-            interface.oper_status = status_value(oper)
+            interface.oper_status = oper_val
+        elif admin_val and (not interface.oper_status or interface.oper_status == "unknown"):
+            interface.oper_status = admin_val
         if description:
             interface.description = description
         if mtu_value and re.search(r"\d+", mtu_value):

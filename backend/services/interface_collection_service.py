@@ -83,6 +83,8 @@ def _normalize_status(value: Any) -> str:
     raw = str(value or "").strip().lower()
     if not raw:
         return "unknown"
+    if raw in {"--", "-", "*down", "none"}:
+        return "down"
     if any(token in raw for token in ("administratively down", "admin down", "adm", "disabled", "inactive")):
         return "down"
     if "down" in raw or raw in {"notconnect", "not connected", "deleted", "err-disabled"}:
@@ -125,9 +127,21 @@ def _status_record(record: dict[str, Any], ip_by_interface: dict[str, str]) -> t
 
     # The Playbook/TextFSM families use different field names:
     # Cisco: STATUS + PROTO, Huawei: PHY + PROTOCOL, H3C: LINK + PROTOCOL.
+    # Note: In H3C bridge mode, only LINK is present (no PROTOCOL).
     admin_value = _record_value(record, "STATUS", "LINK", "PHY", "ADMIN_STATUS", "LINK_STATUS")
     oper_value = _record_value(record, "PROTO", "PROTOCOL", "OPER_STATUS", "OPERATE_STATUS")
-    return interface_name, ip_value, prefix_length, _normalize_status(admin_value), _normalize_status(oper_value)
+
+    admin_norm = _normalize_status(admin_value)
+    oper_norm = _normalize_status(oper_value)
+
+    # If oper is unknown or unprovided (e.g. L2 bridge port with no protocol, or protocol is "--"),
+    # fall back to link/admin state.
+    if oper_norm == "unknown" and admin_norm in ("up", "down"):
+        oper_norm = admin_norm
+    elif admin_norm == "down":
+        oper_norm = "down"
+
+    return interface_name, ip_value, prefix_length, admin_norm, oper_norm
 
 
 def _prefer_status(current: str, candidate: str) -> str:
