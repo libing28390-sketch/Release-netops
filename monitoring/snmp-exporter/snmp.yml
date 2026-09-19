@@ -51,6 +51,8 @@ modules:
       lookups:
       - source_indexes: [ifIndex]
         lookup: ifName
+      - source_indexes: [ifIndex]
+        lookup: ifDescr
     - name: ifOperStatus
       oid: 1.3.6.1.2.1.2.2.1.8
       type: gauge
@@ -61,6 +63,8 @@ modules:
       lookups:
       - source_indexes: [ifIndex]
         lookup: ifName
+      - source_indexes: [ifIndex]
+        lookup: ifDescr
     - name: ifInDiscards
       oid: 1.3.6.1.2.1.2.2.1.13
       type: counter
@@ -71,6 +75,8 @@ modules:
       lookups:
       - source_indexes: [ifIndex]
         lookup: ifName
+      - source_indexes: [ifIndex]
+        lookup: ifDescr
     - name: ifInErrors
       oid: 1.3.6.1.2.1.2.2.1.14
       type: counter
@@ -81,6 +87,8 @@ modules:
       lookups:
       - source_indexes: [ifIndex]
         lookup: ifName
+      - source_indexes: [ifIndex]
+        lookup: ifDescr
     - name: ifInOctets
       oid: 1.3.6.1.2.1.2.2.1.10
       type: counter
@@ -91,6 +99,8 @@ modules:
       lookups:
       - source_indexes: [ifIndex]
         lookup: ifName
+      - source_indexes: [ifIndex]
+        lookup: ifDescr
     - name: ifOutDiscards
       oid: 1.3.6.1.2.1.2.2.1.19
       type: counter
@@ -101,6 +111,8 @@ modules:
       lookups:
       - source_indexes: [ifIndex]
         lookup: ifName
+      - source_indexes: [ifIndex]
+        lookup: ifDescr
     - name: ifOutErrors
       oid: 1.3.6.1.2.1.2.2.1.20
       type: counter
@@ -111,6 +123,8 @@ modules:
       lookups:
       - source_indexes: [ifIndex]
         lookup: ifName
+      - source_indexes: [ifIndex]
+        lookup: ifDescr
     - name: ifOutOctets
       oid: 1.3.6.1.2.1.2.2.1.16
       type: counter
@@ -121,10 +135,19 @@ modules:
       lookups:
       - source_indexes: [ifIndex]
         lookup: ifName
+      - source_indexes: [ifIndex]
+        lookup: ifDescr
     - name: ifName
       oid: 1.3.6.1.2.1.31.1.1.1.1
       type: DisplayString
       help: Interface name.
+      indexes:
+      - labelname: ifIndex
+        type: gauge
+    - name: ifDescr
+      oid: 1.3.6.1.2.1.2.2.1.2
+      type: DisplayString
+      help: A textual string containing information about the interface.
       indexes:
       - labelname: ifIndex
         type: gauge
@@ -138,6 +161,8 @@ modules:
       lookups:
       - source_indexes: [ifIndex]
         lookup: ifName
+      - source_indexes: [ifIndex]
+        lookup: ifDescr
     - name: ifHCInOctets
       oid: 1.3.6.1.2.1.31.1.1.1.6
       type: counter
@@ -148,6 +173,8 @@ modules:
       lookups:
       - source_indexes: [ifIndex]
         lookup: ifName
+      - source_indexes: [ifIndex]
+        lookup: ifDescr
     - name: ifHCInUcastPkts
       oid: 1.3.6.1.2.1.31.1.1.1.7
       type: counter
@@ -158,6 +185,8 @@ modules:
       lookups:
       - source_indexes: [ifIndex]
         lookup: ifName
+      - source_indexes: [ifIndex]
+        lookup: ifDescr
     - name: ifHCInMulticastPkts
       oid: 1.3.6.1.2.1.31.1.1.1.8
       type: counter
@@ -168,6 +197,8 @@ modules:
       lookups:
       - source_indexes: [ifIndex]
         lookup: ifName
+      - source_indexes: [ifIndex]
+        lookup: ifDescr
     - name: ifHCInBroadcastPkts
       oid: 1.3.6.1.2.1.31.1.1.1.9
       type: counter
@@ -178,6 +209,8 @@ modules:
       lookups:
       - source_indexes: [ifIndex]
         lookup: ifName
+      - source_indexes: [ifIndex]
+        lookup: ifDescr
     - name: ifHCOutOctets
       oid: 1.3.6.1.2.1.31.1.1.1.10
       type: counter
@@ -188,6 +221,8 @@ modules:
       lookups:
       - source_indexes: [ifIndex]
         lookup: ifName
+      - source_indexes: [ifIndex]
+        lookup: ifDescr
     - name: ifHCOutUcastPkts
       oid: 1.3.6.1.2.1.31.1.1.1.11
       type: counter

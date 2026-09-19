@@ -404,21 +404,24 @@
               "tenant_id": true,
               "site_id": true,
               "site_name": true,
-              "platform": true,
-              "ifIndex": true
+              "platform": true
             },
             "indexByName": {
               "hostname": 0,
               "instance": 1,
               "ifName": 2,
-              "vendor": 3,
-              "role": 4,
-              "Value": 5
+              "ifDescr": 3,
+              "ifIndex": 4,
+              "vendor": 5,
+              "role": 6,
+              "Value": 7
             },
             "renameByName": {
               "hostname": "设备名称",
               "instance": "管理 IP",
               "ifName": "端口编号",
+              "ifDescr": "端口名称",
+              "ifIndex": "端口索引",
               "vendor": "厂商",
               "role": "角色",
               "Value": "磁盘使用率",
@@ -591,21 +594,24 @@
               "tenant_id": true,
               "site_id": true,
               "site_name": true,
-              "platform": true,
-              "ifIndex": true
+              "platform": true
             },
             "indexByName": {
               "hostname": 0,
               "instance": 1,
               "ifName": 2,
-              "vendor": 3,
-              "role": 4,
-              "Value": 5
+              "ifDescr": 3,
+              "ifIndex": 4,
+              "vendor": 5,
+              "role": 6,
+              "Value": 7
             },
             "renameByName": {
               "hostname": "设备名称",
               "instance": "管理 IP",
               "ifName": "端口编号",
+              "ifDescr": "端口名称",
+              "ifIndex": "端口索引",
               "vendor": "厂商",
               "role": "角色",
               "Value": "活跃连接数"
@@ -636,14 +642,14 @@
             "$__all"
           ]
         },
-        "definition": "label_values(node_load1 or host_cpu_util or hrProcessorLoad or up, site_name)",
+        "definition": "label_values({__name__=~\"node_load1|node_uname_info|host_cpu_util|hrProcessorLoad|up\"}, site_name)",
         "includeAll": true,
         "label": "站点",
         "multi": true,
         "name": "site",
         "options": [],
         "query": {
-          "query": "label_values(node_load1 or host_cpu_util or hrProcessorLoad or up, site_name)",
+          "query": "label_values({__name__=~\"node_load1|node_uname_info|host_cpu_util|hrProcessorLoad|up\"}, site_name)",
           "refId": "StandardVariableQuery"
         },
         "refresh": 1,
@@ -660,14 +666,14 @@
             "$__all"
           ]
         },
-        "definition": "label_values(node_load1{site_name=~\"$site\"} or host_cpu_util{site_name=~\"$site\"} or up, hostname)",
+        "definition": "label_values({__name__=~\"node_load1|node_uname_info|host_cpu_util|hrProcessorLoad|up\",site_name=~\"$site\"}, hostname)",
         "includeAll": true,
         "label": "服务器",
         "multi": true,
         "name": "device",
         "options": [],
         "query": {
-          "query": "label_values(node_load1{site_name=~\"$site\"} or host_cpu_util{site_name=~\"$site\"} or up, hostname)",
+          "query": "label_values({__name__=~\"node_load1|node_uname_info|host_cpu_util|hrProcessorLoad|up\",site_name=~\"$site\"}, hostname)",
           "refId": "StandardVariableQuery"
         },
         "refresh": 1,

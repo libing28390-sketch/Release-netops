@@ -362,7 +362,7 @@
       },
       "targets": [
         {
-          "expr": "topk(20, max by (hostname, instance, ifName) ((rate(ifHCInOctets{site_name=~\"$site\",vendor=~\"$vendor\",role=~\"$role\",hostname=~\"$device\"}[5m]) * 8) / (ifHighSpeed * 1000000) * 100))",
+          "expr": "topk(20, max by (hostname, instance, ifName, ifDescr, ifIndex) ((rate(ifHCInOctets{site_name=~\"$site\",vendor=~\"$vendor\",role=~\"$role\",hostname=~\"$device\"}[5m]) * 8) / (ifHighSpeed * 1000000) * 100))",
           "format": "table",
           "instant": true,
           "refId": "A"
@@ -389,21 +389,24 @@
               "tenant_id": true,
               "site_id": true,
               "site_name": true,
-              "platform": true,
-              "ifIndex": true
+              "platform": true
             },
             "indexByName": {
               "hostname": 0,
               "instance": 1,
               "ifName": 2,
-              "vendor": 3,
-              "role": 4,
-              "Value": 5
+              "ifDescr": 3,
+              "ifIndex": 4,
+              "vendor": 5,
+              "role": 6,
+              "Value": 7
             },
             "renameByName": {
               "hostname": "设备名称",
               "instance": "管理 IP",
               "ifName": "端口编号",
+              "ifDescr": "端口名称",
+              "ifIndex": "端口索引",
               "vendor": "厂商",
               "role": "角色",
               "Value": "带宽利用率"
@@ -444,7 +447,7 @@
       },
       "targets": [
         {
-          "expr": "topk(20, sum by (hostname, instance, ifName) (rate(ifInErrors{site_name=~\"$site\",vendor=~\"$vendor\",role=~\"$role\",hostname=~\"$device\"}[5m]) + rate(ifOutErrors{site_name=~\"$site\",vendor=~\"$vendor\",role=~\"$role\",hostname=~\"$device\"}[5m]) + rate(ifInDiscards{site_name=~\"$site\",vendor=~\"$vendor\",role=~\"$role\",hostname=~\"$device\"}[5m])))",
+          "expr": "topk(20, sum by (hostname, instance, ifName, ifDescr, ifIndex) (rate(ifInErrors{site_name=~\"$site\",vendor=~\"$vendor\",role=~\"$role\",hostname=~\"$device\"}[5m]) + rate(ifOutErrors{site_name=~\"$site\",vendor=~\"$vendor\",role=~\"$role\",hostname=~\"$device\"}[5m]) + rate(ifInDiscards{site_name=~\"$site\",vendor=~\"$vendor\",role=~\"$role\",hostname=~\"$device\"}[5m])))",
           "format": "table",
           "instant": true,
           "refId": "A"
@@ -471,21 +474,24 @@
               "tenant_id": true,
               "site_id": true,
               "site_name": true,
-              "platform": true,
-              "ifIndex": true
+              "platform": true
             },
             "indexByName": {
               "hostname": 0,
               "instance": 1,
               "ifName": 2,
-              "vendor": 3,
-              "role": 4,
-              "Value": 5
+              "ifDescr": 3,
+              "ifIndex": 4,
+              "vendor": 5,
+              "role": 6,
+              "Value": 7
             },
             "renameByName": {
               "hostname": "设备名称",
               "instance": "管理 IP",
               "ifName": "端口编号",
+              "ifDescr": "端口名称",
+              "ifIndex": "端口索引",
               "vendor": "厂商",
               "role": "角色",
               "Value": "错误/丢弃率 (pps)"
@@ -515,14 +521,14 @@
             "$__all"
           ]
         },
-        "definition": "label_values(ifOperStatus or ifHCInOctets or up, site_name)",
+        "definition": "label_values({__name__=~\"ifOperStatus|ifHCInOctets|up\"}, site_name)",
         "includeAll": true,
         "label": "站点",
         "multi": true,
         "name": "site",
         "options": [],
         "query": {
-          "query": "label_values(ifOperStatus or ifHCInOctets or up, site_name)",
+          "query": "label_values({__name__=~\"ifOperStatus|ifHCInOctets|up\"}, site_name)",
           "refId": "StandardVariableQuery"
         },
         "refresh": 1,
@@ -539,14 +545,14 @@
             "$__all"
           ]
         },
-        "definition": "label_values(ifOperStatus{site_name=~\"$site\"} or ifHCInOctets{site_name=~\"$site\"} or up, vendor)",
+        "definition": "label_values({__name__=~\"ifOperStatus|ifHCInOctets|up\",site_name=~\"$site\"}, vendor)",
         "includeAll": true,
         "label": "厂商",
         "multi": true,
         "name": "vendor",
         "options": [],
         "query": {
-          "query": "label_values(ifOperStatus{site_name=~\"$site\"} or ifHCInOctets{site_name=~\"$site\"} or up, vendor)",
+          "query": "label_values({__name__=~\"ifOperStatus|ifHCInOctets|up\",site_name=~\"$site\"}, vendor)",
           "refId": "StandardVariableQuery"
         },
         "refresh": 1,
@@ -563,14 +569,14 @@
             "$__all"
           ]
         },
-        "definition": "label_values(ifOperStatus{site_name=~\"$site\",vendor=~\"$vendor\"} or up, role)",
+        "definition": "label_values({__name__=~\"ifOperStatus|up\",site_name=~\"$site\",vendor=~\"$vendor\"}, role)",
         "includeAll": true,
         "label": "角色",
         "multi": true,
         "name": "role",
         "options": [],
         "query": {
-          "query": "label_values(ifOperStatus{site_name=~\"$site\",vendor=~\"$vendor\"} or up, role)",
+          "query": "label_values({__name__=~\"ifOperStatus|up\",site_name=~\"$site\",vendor=~\"$vendor\"}, role)",
           "refId": "StandardVariableQuery"
         },
         "refresh": 1,
@@ -587,14 +593,14 @@
             "$__all"
           ]
         },
-        "definition": "label_values(ifOperStatus{site_name=~\"$site\",vendor=~\"$vendor\"} or ifHCInOctets{site_name=~\"$site\",vendor=~\"$vendor\"} or up, hostname)",
+        "definition": "label_values({__name__=~\"ifOperStatus|ifHCInOctets|up\",site_name=~\"$site\",vendor=~\"$vendor\"}, hostname)",
         "includeAll": true,
         "label": "设备",
         "multi": true,
         "name": "device",
         "options": [],
         "query": {
-          "query": "label_values(ifOperStatus{site_name=~\"$site\",vendor=~\"$vendor\"} or ifHCInOctets{site_name=~\"$site\",vendor=~\"$vendor\"} or up, hostname)",
+          "query": "label_values({__name__=~\"ifOperStatus|ifHCInOctets|up\",site_name=~\"$site\",vendor=~\"$vendor\"}, hostname)",
           "refId": "StandardVariableQuery"
         },
         "refresh": 1,

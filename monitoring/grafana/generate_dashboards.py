@@ -66,6 +66,8 @@ def clean_organize_transformation(value_col_name="数值", extra_renames=None):
         "hostname": "设备名称",
         "instance": "管理 IP",
         "ifName": "端口编号",
+        "ifDescr": "端口名称",
+        "ifIndex": "端口索引",
         "vendor": "厂商",
         "role": "角色",
         "Value": value_col_name,
@@ -94,15 +96,16 @@ def clean_organize_transformation(value_col_name="数值", extra_renames=None):
                     "site_id": True,
                     "site_name": True,
                     "platform": True,
-                    "ifIndex": True,
                 },
                 "indexByName": {
                     "hostname": 0,
                     "instance": 1,
                     "ifName": 2,
-                    "vendor": 3,
-                    "role": 4,
-                    "Value": 5,
+                    "ifDescr": 3,
+                    "ifIndex": 4,
+                    "vendor": 5,
+                    "role": 6,
+                    "Value": 7,
                 },
                 "renameByName": renames,
             }
@@ -276,10 +279,10 @@ def build_overview_dashboard():
         "tags": ["nexora", "network", "overview"],
         "templating": {
             "list": [
-                make_query_variable("site", "站点", 'label_values(ifOperStatus or ifHCInOctets or sysUpTime or up, site_name)'),
-                make_query_variable("vendor", "厂商", 'label_values(ifOperStatus{site_name=~"$site"} or sysUpTime{site_name=~"$site"} or up, vendor)'),
-                make_query_variable("role", "角色", 'label_values(ifOperStatus{site_name=~"$site",vendor=~"$vendor"} or up, role)'),
-                make_query_variable("device", "设备", 'label_values(ifOperStatus{site_name=~"$site",vendor=~"$vendor"} or sysUpTime{site_name=~"$site",vendor=~"$vendor"} or up, hostname)'),
+                make_query_variable("site", "站点", 'label_values({__name__=~"ifOperStatus|ifHCInOctets|sysUpTime|up"}, site_name)'),
+                make_query_variable("vendor", "厂商", 'label_values({__name__=~"ifOperStatus|sysUpTime|up",site_name=~"$site"}, vendor)'),
+                make_query_variable("role", "角色", 'label_values({__name__=~"ifOperStatus|up",site_name=~"$site",vendor=~"$vendor"}, role)'),
+                make_query_variable("device", "设备", 'label_values({__name__=~"ifOperStatus|ifHCInOctets|sysUpTime|up",site_name=~"$site",vendor=~"$vendor"}, hostname)'),
             ]
         },
         "time": {"from": "now-6h", "to": "now"},
@@ -345,9 +348,9 @@ def build_device_dashboard():
         "tags": ["nexora", "network", "device"],
         "templating": {
             "list": [
-                make_query_variable("site", "站点", 'label_values(ifOperStatus or sysUpTime or up, site_name)'),
-                make_query_variable("vendor", "厂商", 'label_values(ifOperStatus{site_name=~"$site"} or sysUpTime{site_name=~"$site"} or up, vendor)'),
-                make_query_variable("device", "设备", 'label_values(ifOperStatus{site_name=~"$site",vendor=~"$vendor"} or sysUpTime{site_name=~"$site",vendor=~"$vendor"} or up, hostname)', multi=False, include_all=False),
+                make_query_variable("site", "站点", 'label_values({__name__=~"ifOperStatus|sysUpTime|up"}, site_name)'),
+                make_query_variable("vendor", "厂商", 'label_values({__name__=~"ifOperStatus|sysUpTime|up",site_name=~"$site"}, vendor)'),
+                make_query_variable("device", "设备", 'label_values({__name__=~"ifOperStatus|sysUpTime|up",site_name=~"$site",vendor=~"$vendor"}, hostname)', multi=False, include_all=False),
             ]
         },
         "time": {"from": "now-6h", "to": "now"},
@@ -393,9 +396,9 @@ def build_wireless_dashboard():
         "tags": ["nexora", "network", "wireless"],
         "templating": {
             "list": [
-                make_query_variable("site", "站点", 'label_values(hwWlanCurOnlineApNum or hh3cDot11CurrOnlineAPNum or ruijieApcOnlineApNum or cLApTotalUpAPs or up, site_name)'),
-                make_query_variable("vendor", "厂商", 'label_values(hwWlanCurOnlineApNum{site_name=~"$site"} or hh3cDot11CurrOnlineAPNum{site_name=~"$site"} or up, vendor)'),
-                make_query_variable("device", "设备", 'label_values(hwWlanCurOnlineApNum{site_name=~"$site",vendor=~"$vendor"} or hh3cDot11CurrOnlineAPNum or up, hostname)'),
+                make_query_variable("site", "站点", 'label_values({__name__=~"hwWlanCurOnlineApNum|hh3cDot11CurrOnlineAPNum|ruijieApcOnlineApNum|cLApTotalUpAPs|up"}, site_name)'),
+                make_query_variable("vendor", "厂商", 'label_values({__name__=~"hwWlanCurOnlineApNum|hh3cDot11CurrOnlineAPNum|up",site_name=~"$site"}, vendor)'),
+                make_query_variable("device", "设备", 'label_values({__name__=~"hwWlanCurOnlineApNum|hh3cDot11CurrOnlineAPNum|up",site_name=~"$site",vendor=~"$vendor"}, hostname)'),
             ]
         },
         "time": {"from": "now-6h", "to": "now"},
@@ -421,13 +424,13 @@ def build_interface_dashboard():
         ], 12, 4, 12, 8, unit="bps"),
         table_panel(
             7, "端口带宽利用率 Top 20",
-            f"topk(20, max by (hostname, instance, ifName) ((rate(ifHCInOctets{{{sel}}}[5m]) * 8) / (ifHighSpeed * 1000000) * 100))",
+            f"topk(20, max by (hostname, instance, ifName, ifDescr, ifIndex) ((rate(ifHCInOctets{{{sel}}}[5m]) * 8) / (ifHighSpeed * 1000000) * 100))",
             0, 12, 12, 8, unit="percent",
             transformations=clean_organize_transformation("带宽利用率")
         ),
         table_panel(
             8, "端口错误与丢弃排行 Top 20",
-            f"topk(20, sum by (hostname, instance, ifName) (rate(ifInErrors{{{sel}}}[5m]) + rate(ifOutErrors{{{sel}}}[5m]) + rate(ifInDiscards{{{sel}}}[5m])))",
+            f"topk(20, sum by (hostname, instance, ifName, ifDescr, ifIndex) (rate(ifInErrors{{{sel}}}[5m]) + rate(ifOutErrors{{{sel}}}[5m]) + rate(ifInDiscards{{{sel}}}[5m])))",
             12, 12, 12, 8, unit="pps",
             transformations=clean_organize_transformation("错误/丢弃率 (pps)")
         )
@@ -446,10 +449,10 @@ def build_interface_dashboard():
         "tags": ["nexora", "network", "interface"],
         "templating": {
             "list": [
-                make_query_variable("site", "站点", 'label_values(ifOperStatus or ifHCInOctets or up, site_name)'),
-                make_query_variable("vendor", "厂商", 'label_values(ifOperStatus{site_name=~"$site"} or ifHCInOctets{site_name=~"$site"} or up, vendor)'),
-                make_query_variable("role", "角色", 'label_values(ifOperStatus{site_name=~"$site",vendor=~"$vendor"} or up, role)'),
-                make_query_variable("device", "设备", 'label_values(ifOperStatus{site_name=~"$site",vendor=~"$vendor"} or ifHCInOctets{site_name=~"$site",vendor=~"$vendor"} or up, hostname)'),
+                make_query_variable("site", "站点", 'label_values({__name__=~"ifOperStatus|ifHCInOctets|up"}, site_name)'),
+                make_query_variable("vendor", "厂商", 'label_values({__name__=~"ifOperStatus|ifHCInOctets|up",site_name=~"$site"}, vendor)'),
+                make_query_variable("role", "角色", 'label_values({__name__=~"ifOperStatus|up",site_name=~"$site",vendor=~"$vendor"}, role)'),
+                make_query_variable("device", "设备", 'label_values({__name__=~"ifOperStatus|ifHCInOctets|up",site_name=~"$site",vendor=~"$vendor"}, hostname)'),
             ]
         },
         "time": {"from": "now-6h", "to": "now"},
@@ -536,13 +539,13 @@ def build_outbound_dashboard():
         ], 12, 12, 12, 8, unit="pps"),
         table_panel(
             9, "出口端口带宽利用率排行 Top 10",
-            f"topk(10, max by (hostname, instance, ifName) ((rate(ifHCInOctets{{{comb_sel}}}[5m]) * 8) / (ifHighSpeed * 1000000) * 100))",
+            f"topk(10, max by (hostname, instance, ifName, ifDescr, ifIndex) ((rate(ifHCInOctets{{{comb_sel}}}[5m]) * 8) / (ifHighSpeed * 1000000) * 100))",
             0, 20, 12, 8, unit="percent",
             transformations=clean_organize_transformation("带宽利用率")
         ),
         table_panel(
             10, "出口端口错误与丢弃排行 Top 10",
-            f"topk(10, sum by (hostname, instance, ifName) (rate(ifInErrors{{{comb_sel}}}[5m]) + rate(ifOutErrors{{{comb_sel}}}[5m]) + rate(ifInDiscards{{{comb_sel}}}[5m])))",
+            f"topk(10, sum by (hostname, instance, ifName, ifDescr, ifIndex) (rate(ifInErrors{{{comb_sel}}}[5m]) + rate(ifOutErrors{{{comb_sel}}}[5m]) + rate(ifInDiscards{{{comb_sel}}}[5m])))",
             12, 20, 12, 8, unit="pps",
             transformations=clean_organize_transformation("错误/丢弃率 (pps)")
         )
@@ -561,9 +564,9 @@ def build_outbound_dashboard():
         "tags": ["nexora", "network", "outbound", "wan"],
         "templating": {
             "list": [
-                make_query_variable("site", "站点", 'label_values(ifOperStatus or ifHCInOctets or up, site_name)'),
-                make_query_variable("vendor", "厂商", 'label_values(ifOperStatus{site_name=~"$site"} or up, vendor)'),
-                make_query_variable("device", "出口设备", 'label_values(ifOperStatus{site_name=~"$site",vendor=~"$vendor"} or up, hostname)'),
+                make_query_variable("site", "站点", 'label_values({__name__=~"ifOperStatus|ifHCInOctets|up"}, site_name)'),
+                make_query_variable("vendor", "厂商", 'label_values({__name__=~"ifOperStatus|up",site_name=~"$site"}, vendor)'),
+                make_query_variable("device", "出口设备", 'label_values({__name__=~"ifOperStatus|up",site_name=~"$site",vendor=~"$vendor"}, hostname)'),
             ]
         },
         "time": {"from": "now-6h", "to": "now"},
@@ -635,8 +638,8 @@ def build_linux_dashboard():
         "tags": ["nexora", "server", "linux", "metrics"],
         "templating": {
             "list": [
-                make_query_variable("site", "站点", 'label_values(node_load1 or host_cpu_util or hrProcessorLoad or up, site_name)'),
-                make_query_variable("device", "服务器", 'label_values(node_load1{site_name=~"$site"} or host_cpu_util{site_name=~"$site"} or up, hostname)'),
+                make_query_variable("site", "站点", 'label_values({__name__=~"node_load1|node_uname_info|host_cpu_util|hrProcessorLoad|up"}, site_name)'),
+                make_query_variable("device", "服务器", 'label_values({__name__=~"node_load1|node_uname_info|host_cpu_util|hrProcessorLoad|up",site_name=~"$site"}, hostname)'),
             ]
         },
         "time": {"from": "now-6h", "to": "now"},
@@ -705,8 +708,8 @@ def build_windows_dashboard():
         "tags": ["nexora", "server", "windows", "metrics"],
         "templating": {
             "list": [
-                make_query_variable("site", "站点", 'label_values(windows_cpu_time_total or windows_os_info or hrProcessorLoad or up, site_name)'),
-                make_query_variable("device", "服务器", 'label_values(windows_cpu_time_total{site_name=~"$site"} or hrProcessorLoad{site_name=~"$site"} or up, hostname)'),
+                make_query_variable("site", "站点", 'label_values({__name__=~"windows_cpu_time_total|windows_os_info|hrProcessorLoad|up"}, site_name)'),
+                make_query_variable("device", "服务器", 'label_values({__name__=~"windows_cpu_time_total|windows_os_info|hrProcessorLoad|up",site_name=~"$site"}, hostname)'),
             ]
         },
         "time": {"from": "now-6h", "to": "now"},

@@ -444,21 +444,24 @@
               "tenant_id": true,
               "site_id": true,
               "site_name": true,
-              "platform": true,
-              "ifIndex": true
+              "platform": true
             },
             "indexByName": {
               "hostname": 0,
               "instance": 1,
               "ifName": 2,
-              "vendor": 3,
-              "role": 4,
-              "Value": 5
+              "ifDescr": 3,
+              "ifIndex": 4,
+              "vendor": 5,
+              "role": 6,
+              "Value": 7
             },
             "renameByName": {
               "hostname": "设备名称",
               "instance": "管理 IP",
               "ifName": "端口编号",
+              "ifDescr": "端口名称",
+              "ifIndex": "端口索引",
               "vendor": "厂商",
               "role": "角色",
               "Value": "运行状态 (1=Up, 2=Down)"
@@ -488,14 +491,14 @@
             "$__all"
           ]
         },
-        "definition": "label_values(ifOperStatus or sysUpTime or up, site_name)",
+        "definition": "label_values({__name__=~\"ifOperStatus|sysUpTime|up\"}, site_name)",
         "includeAll": true,
         "label": "站点",
         "multi": true,
         "name": "site",
         "options": [],
         "query": {
-          "query": "label_values(ifOperStatus or sysUpTime or up, site_name)",
+          "query": "label_values({__name__=~\"ifOperStatus|sysUpTime|up\"}, site_name)",
           "refId": "StandardVariableQuery"
         },
         "refresh": 1,
@@ -512,14 +515,14 @@
             "$__all"
           ]
         },
-        "definition": "label_values(ifOperStatus{site_name=~\"$site\"} or sysUpTime{site_name=~\"$site\"} or up, vendor)",
+        "definition": "label_values({__name__=~\"ifOperStatus|sysUpTime|up\",site_name=~\"$site\"}, vendor)",
         "includeAll": true,
         "label": "厂商",
         "multi": true,
         "name": "vendor",
         "options": [],
         "query": {
-          "query": "label_values(ifOperStatus{site_name=~\"$site\"} or sysUpTime{site_name=~\"$site\"} or up, vendor)",
+          "query": "label_values({__name__=~\"ifOperStatus|sysUpTime|up\",site_name=~\"$site\"}, vendor)",
           "refId": "StandardVariableQuery"
         },
         "refresh": 1,
@@ -532,14 +535,14 @@
           "text": "",
           "value": ""
         },
-        "definition": "label_values(ifOperStatus{site_name=~\"$site\",vendor=~\"$vendor\"} or sysUpTime{site_name=~\"$site\",vendor=~\"$vendor\"} or up, hostname)",
+        "definition": "label_values({__name__=~\"ifOperStatus|sysUpTime|up\",site_name=~\"$site\",vendor=~\"$vendor\"}, hostname)",
         "includeAll": false,
         "label": "设备",
         "multi": false,
         "name": "device",
         "options": [],
         "query": {
-          "query": "label_values(ifOperStatus{site_name=~\"$site\",vendor=~\"$vendor\"} or sysUpTime{site_name=~\"$site\",vendor=~\"$vendor\"} or up, hostname)",
+          "query": "label_values({__name__=~\"ifOperStatus|sysUpTime|up\",site_name=~\"$site\",vendor=~\"$vendor\"}, hostname)",
           "refId": "StandardVariableQuery"
         },
         "refresh": 1,

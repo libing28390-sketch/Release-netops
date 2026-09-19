@@ -385,21 +385,24 @@
               "tenant_id": true,
               "site_id": true,
               "site_name": true,
-              "platform": true,
-              "ifIndex": true
+              "platform": true
             },
             "indexByName": {
               "hostname": 0,
               "instance": 1,
               "ifName": 2,
-              "vendor": 3,
-              "role": 4,
-              "Value": 5
+              "ifDescr": 3,
+              "ifIndex": 4,
+              "vendor": 5,
+              "role": 6,
+              "Value": 7
             },
             "renameByName": {
               "hostname": "设备名称",
               "instance": "管理 IP",
               "ifName": "端口编号",
+              "ifDescr": "端口名称",
+              "ifIndex": "端口索引",
               "vendor": "厂商",
               "role": "角色",
               "Value": "探测状态"
@@ -467,21 +470,24 @@
               "tenant_id": true,
               "site_id": true,
               "site_name": true,
-              "platform": true,
-              "ifIndex": true
+              "platform": true
             },
             "indexByName": {
               "hostname": 0,
               "instance": 1,
               "ifName": 2,
-              "vendor": 3,
-              "role": 4,
-              "Value": 5
+              "ifDescr": 3,
+              "ifIndex": 4,
+              "vendor": 5,
+              "role": 6,
+              "Value": 7
             },
             "renameByName": {
               "hostname": "设备名称",
               "instance": "管理 IP",
               "ifName": "端口编号",
+              "ifDescr": "端口名称",
+              "ifIndex": "端口索引",
               "vendor": "厂商",
               "role": "角色",
               "Value": "采集耗时 (秒)"

@@ -1,0 +1,10 @@
+# Linux Node Exporter 监控目标配置 (监听端口默认为 9100)
+# 示例结构：
+# - targets:
+#     - '192.168.10.50:9100'
+#   labels:
+#     nexora_hostname: 'linux-srv-01'
+#     nexora_site_name: '总经办机房'
+#     nexora_site_id: 'site-01'
+#     nexora_role: 'server'
+[]

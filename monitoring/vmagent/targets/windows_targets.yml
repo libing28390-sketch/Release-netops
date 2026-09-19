@@ -1,0 +1,10 @@
+# Windows Exporter 监控目标配置 (监听端口默认为 9182)
+# 示例结构：
+# - targets:
+#     - '192.168.10.60:9182'
+#   labels:
+#     nexora_hostname: 'win-ad-server'
+#     nexora_site_name: '总经办机房'
+#     nexora_site_id: 'site-01'
+#     nexora_role: 'server'
+[]
