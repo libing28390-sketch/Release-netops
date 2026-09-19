@@ -56,7 +56,7 @@
       },
       "targets": [
         {
-          "expr": "sum(hwWlanApTotalNum{site_name=~\"$site\",vendor=~\"$vendor\",hostname=~\"$device\"} or hh3cDot11TotalAPNum{site_name=~\"$site\",vendor=~\"$vendor\",hostname=~\"$device\"} or ruijieApcTotalApNum{site_name=~\"$site\",vendor=~\"$vendor\",hostname=~\"$device\"} or cLApTotalUpAPs{site_name=~\"$site\",vendor=~\"$vendor\",hostname=~\"$device\"} or wlsxSysExtAccessPointsNum{site_name=~\"$site\",vendor=~\"$vendor\",hostname=~\"$device\"} or ruckusZDTotalNumAP{site_name=~\"$site\",vendor=~\"$vendor\",hostname=~\"$device\"}) or vector(0)",
+          "expr": "sum((hwWlanApTotalNum{site_id=~\"$site\",vendor=~\"$vendor\"} or hh3cDot11TotalAPNum{site_id=~\"$site\",vendor=~\"$vendor\"} or ruijieApcTotalApNum{site_id=~\"$site\",vendor=~\"$vendor\"} or cLApTotalUpAPs{site_id=~\"$site\",vendor=~\"$vendor\"} or wlsxSysExtAccessPointsNum{site_id=~\"$site\",vendor=~\"$vendor\"} or ruckusZDTotalNumAP{site_id=~\"$site\",vendor=~\"$vendor\"}) * on(instance) group_left(sysName) (last_over_time(sysName{sysName=~\"$device\"}[1d]) * 0 + 1)) or vector(0)",
           "refId": "A"
         }
       ]
@@ -109,7 +109,7 @@
       },
       "targets": [
         {
-          "expr": "sum(hwWlanCurOnlineApNum{site_name=~\"$site\",vendor=~\"$vendor\",hostname=~\"$device\"} or hh3cDot11CurrOnlineAPNum{site_name=~\"$site\",vendor=~\"$vendor\",hostname=~\"$device\"} or ruijieApcOnlineApNum{site_name=~\"$site\",vendor=~\"$vendor\",hostname=~\"$device\"} or cLApTotalUpAPs{site_name=~\"$site\",vendor=~\"$vendor\",hostname=~\"$device\"} or wlsxSysExtAccessPointsNum{site_name=~\"$site\",vendor=~\"$vendor\",hostname=~\"$device\"} or ruckusZDTotalNumAP{site_name=~\"$site\",vendor=~\"$vendor\",hostname=~\"$device\"}) or vector(0)",
+          "expr": "sum((hwWlanCurOnlineApNum{site_id=~\"$site\",vendor=~\"$vendor\"} or hh3cDot11CurrOnlineAPNum{site_id=~\"$site\",vendor=~\"$vendor\"} or ruijieApcOnlineApNum{site_id=~\"$site\",vendor=~\"$vendor\"} or cLApTotalUpAPs{site_id=~\"$site\",vendor=~\"$vendor\"} or wlsxSysExtAccessPointsNum{site_id=~\"$site\",vendor=~\"$vendor\"} or ruckusZDTotalNumAP{site_id=~\"$site\",vendor=~\"$vendor\"}) * on(instance) group_left(sysName) (last_over_time(sysName{sysName=~\"$device\"}[1d]) * 0 + 1)) or vector(0)",
           "refId": "A"
         }
       ]
@@ -170,7 +170,7 @@
       },
       "targets": [
         {
-          "expr": "(sum(hwWlanApTotalNum{site_name=~\"$site\",vendor=~\"$vendor\",hostname=~\"$device\"} or hh3cDot11TotalAPNum{site_name=~\"$site\",vendor=~\"$vendor\",hostname=~\"$device\"} or ruijieApcTotalApNum{site_name=~\"$site\",vendor=~\"$vendor\",hostname=~\"$device\"} or cLApTotalUpAPs{site_name=~\"$site\",vendor=~\"$vendor\",hostname=~\"$device\"} or wlsxSysExtAccessPointsNum{site_name=~\"$site\",vendor=~\"$vendor\",hostname=~\"$device\"} or ruckusZDTotalNumAP{site_name=~\"$site\",vendor=~\"$vendor\",hostname=~\"$device\"}) - sum(hwWlanCurOnlineApNum{site_name=~\"$site\",vendor=~\"$vendor\",hostname=~\"$device\"} or hh3cDot11CurrOnlineAPNum{site_name=~\"$site\",vendor=~\"$vendor\",hostname=~\"$device\"} or ruijieApcOnlineApNum{site_name=~\"$site\",vendor=~\"$vendor\",hostname=~\"$device\"} or cLApTotalUpAPs{site_name=~\"$site\",vendor=~\"$vendor\",hostname=~\"$device\"} or wlsxSysExtAccessPointsNum{site_name=~\"$site\",vendor=~\"$vendor\",hostname=~\"$device\"} or ruckusZDTotalNumAP{site_name=~\"$site\",vendor=~\"$vendor\",hostname=~\"$device\"})) or vector(0)",
+          "expr": "(sum((hwWlanApTotalNum{site_id=~\"$site\",vendor=~\"$vendor\"} or hh3cDot11TotalAPNum{site_id=~\"$site\",vendor=~\"$vendor\"} or ruijieApcTotalApNum{site_id=~\"$site\",vendor=~\"$vendor\"} or cLApTotalUpAPs{site_id=~\"$site\",vendor=~\"$vendor\"} or wlsxSysExtAccessPointsNum{site_id=~\"$site\",vendor=~\"$vendor\"} or ruckusZDTotalNumAP{site_id=~\"$site\",vendor=~\"$vendor\"}) * on(instance) group_left(sysName) (last_over_time(sysName{sysName=~\"$device\"}[1d]) * 0 + 1)) - sum((hwWlanCurOnlineApNum{site_id=~\"$site\",vendor=~\"$vendor\"} or hh3cDot11CurrOnlineAPNum{site_id=~\"$site\",vendor=~\"$vendor\"} or ruijieApcOnlineApNum{site_id=~\"$site\",vendor=~\"$vendor\"} or cLApTotalUpAPs{site_id=~\"$site\",vendor=~\"$vendor\"} or wlsxSysExtAccessPointsNum{site_id=~\"$site\",vendor=~\"$vendor\"} or ruckusZDTotalNumAP{site_id=~\"$site\",vendor=~\"$vendor\"}) * on(instance) group_left(sysName) (last_over_time(sysName{sysName=~\"$device\"}[1d]) * 0 + 1))) or vector(0)",
           "refId": "A"
         }
       ]
@@ -223,14 +223,14 @@
       },
       "targets": [
         {
-          "expr": "sum(hwWlanCurAssocUserNum{site_name=~\"$site\",vendor=~\"$vendor\",hostname=~\"$device\"} or hh3cDot11CurrAssocUserNum{site_name=~\"$site\",vendor=~\"$vendor\",hostname=~\"$device\"} or ruijieApcTotalStaNum{site_name=~\"$site\",vendor=~\"$vendor\",hostname=~\"$device\"} or cLSysTotalNumOfClients{site_name=~\"$site\",vendor=~\"$vendor\",hostname=~\"$device\"} or wlsxSysExtStationsNum{site_name=~\"$site\",vendor=~\"$vendor\",hostname=~\"$device\"} or ruckusZDTotalNumSta{site_name=~\"$site\",vendor=~\"$vendor\",hostname=~\"$device\"}) or vector(0)",
+          "expr": "sum((hwWlanCurAssocUserNum{site_id=~\"$site\",vendor=~\"$vendor\"} or hh3cDot11CurrAssocUserNum{site_id=~\"$site\",vendor=~\"$vendor\"} or ruijieApcTotalStaNum{site_id=~\"$site\",vendor=~\"$vendor\"} or cLSysTotalNumOfClients{site_id=~\"$site\",vendor=~\"$vendor\"} or wlsxSysExtStationsNum{site_id=~\"$site\",vendor=~\"$vendor\"} or ruckusZDTotalNumSta{site_id=~\"$site\",vendor=~\"$vendor\"}) * on(instance) group_left(sysName) (last_over_time(sysName{sysName=~\"$device\"}[1d]) * 0 + 1)) or vector(0)",
           "refId": "A"
         }
       ]
     },
     {
       "id": 5,
-      "title": "各无线控制器在线终端时序趋势",
+      "title": "无线 AP 在线规模趋势",
       "type": "timeseries",
       "datasource": {
         "type": "prometheus",
@@ -269,15 +269,15 @@
       },
       "targets": [
         {
-          "expr": "hwWlanCurAssocUserNum{site_name=~\"$site\",vendor=~\"$vendor\",hostname=~\"$device\"} or hh3cDot11CurrAssocUserNum{site_name=~\"$site\",vendor=~\"$vendor\",hostname=~\"$device\"} or ruijieApcTotalStaNum{site_name=~\"$site\",vendor=~\"$vendor\",hostname=~\"$device\"} or cLSysTotalNumOfClients{site_name=~\"$site\",vendor=~\"$vendor\",hostname=~\"$device\"} or wlsxSysExtStationsNum{site_name=~\"$site\",vendor=~\"$vendor\",hostname=~\"$device\"} or ruckusZDTotalNumSta{site_name=~\"$site\",vendor=~\"$vendor\",hostname=~\"$device\"}",
-          "legendFormat": "{{hostname}} {{instance}} · {{vendor}}",
+          "expr": "sum((hwWlanCurOnlineApNum{site_id=~\"$site\",vendor=~\"$vendor\"} or hh3cDot11CurrOnlineAPNum{site_id=~\"$site\",vendor=~\"$vendor\"} or ruijieApcOnlineApNum{site_id=~\"$site\",vendor=~\"$vendor\"} or cLApTotalUpAPs{site_id=~\"$site\",vendor=~\"$vendor\"} or wlsxSysExtAccessPointsNum{site_id=~\"$site\",vendor=~\"$vendor\"} or ruckusZDTotalNumAP{site_id=~\"$site\",vendor=~\"$vendor\"}) * on(instance) group_left(sysName) (last_over_time(sysName{sysName=~\"$device\"}[1d]) * 0 + 1))",
+          "legendFormat": "在线 AP 数",
           "refId": "A"
         }
       ]
     },
     {
       "id": 6,
-      "title": "各控制器纳管在线 AP 波动趋势",
+      "title": "关联终端客户数走势",
       "type": "timeseries",
       "datasource": {
         "type": "prometheus",
@@ -316,72 +316,15 @@
       },
       "targets": [
         {
-          "expr": "hwWlanCurOnlineApNum{site_name=~\"$site\",vendor=~\"$vendor\",hostname=~\"$device\"} or hh3cDot11CurrOnlineAPNum{site_name=~\"$site\",vendor=~\"$vendor\",hostname=~\"$device\"} or ruijieApcOnlineApNum{site_name=~\"$site\",vendor=~\"$vendor\",hostname=~\"$device\"} or cLApTotalUpAPs{site_name=~\"$site\",vendor=~\"$vendor\",hostname=~\"$device\"} or wlsxSysExtAccessPointsNum{site_name=~\"$site\",vendor=~\"$vendor\",hostname=~\"$device\"} or ruckusZDTotalNumAP{site_name=~\"$site\",vendor=~\"$vendor\",hostname=~\"$device\"}",
-          "legendFormat": "{{hostname}} {{instance}} · {{vendor}}",
+          "expr": "sum((hwWlanCurAssocUserNum{site_id=~\"$site\",vendor=~\"$vendor\"} or hh3cDot11CurrAssocUserNum{site_id=~\"$site\",vendor=~\"$vendor\"} or ruijieApcTotalStaNum{site_id=~\"$site\",vendor=~\"$vendor\"} or cLSysTotalNumOfClients{site_id=~\"$site\",vendor=~\"$vendor\"} or wlsxSysExtStationsNum{site_id=~\"$site\",vendor=~\"$vendor\"} or ruckusZDTotalNumSta{site_id=~\"$site\",vendor=~\"$vendor\"}) * on(instance) group_left(sysName) (last_over_time(sysName{sysName=~\"$device\"}[1d]) * 0 + 1))",
+          "legendFormat": "关联终端数",
           "refId": "A"
         }
       ]
     },
     {
       "id": 7,
-      "title": "各无线控制器客户端负载 Top 榜",
-      "type": "bargauge",
-      "datasource": {
-        "type": "prometheus",
-        "uid": "victoriametrics"
-      },
-      "gridPos": {
-        "h": 8,
-        "w": 12,
-        "x": 0,
-        "y": 12
-      },
-      "fieldConfig": {
-        "defaults": {
-          "unit": "short",
-          "min": 0,
-          "max": 100,
-          "thresholds": {
-            "mode": "absolute",
-            "steps": [
-              {
-                "color": "green",
-                "value": null
-              },
-              {
-                "color": "#E0B400",
-                "value": 70
-              },
-              {
-                "color": "red",
-                "value": 85
-              }
-            ]
-          }
-        },
-        "overrides": []
-      },
-      "options": {
-        "displayMode": "gradient",
-        "orientation": "horizontal",
-        "reduceOptions": {
-          "calcs": [
-            "lastNotNull"
-          ],
-          "values": false
-        }
-      },
-      "targets": [
-        {
-          "expr": "hwWlanCurAssocUserNum{site_name=~\"$site\",vendor=~\"$vendor\",hostname=~\"$device\"} or hh3cDot11CurrAssocUserNum{site_name=~\"$site\",vendor=~\"$vendor\",hostname=~\"$device\"} or ruijieApcTotalStaNum{site_name=~\"$site\",vendor=~\"$vendor\",hostname=~\"$device\"} or cLSysTotalNumOfClients{site_name=~\"$site\",vendor=~\"$vendor\",hostname=~\"$device\"} or wlsxSysExtStationsNum{site_name=~\"$site\",vendor=~\"$vendor\",hostname=~\"$device\"} or ruckusZDTotalNumSta{site_name=~\"$site\",vendor=~\"$vendor\",hostname=~\"$device\"}",
-          "legendFormat": "{{hostname}} {{instance}}",
-          "refId": "A"
-        }
-      ]
-    },
-    {
-      "id": 8,
-      "title": "全网无线控制器 AC 状态清单",
+      "title": "AP 负载与终端数排行 Top 10",
       "type": "table",
       "datasource": {
         "type": "prometheus",
@@ -390,7 +333,7 @@
       "gridPos": {
         "h": 8,
         "w": 12,
-        "x": 12,
+        "x": 0,
         "y": 12
       },
       "fieldConfig": {
@@ -400,7 +343,20 @@
             "mode": "thresholds"
           }
         },
-        "overrides": []
+        "overrides": [
+          {
+            "matcher": {
+              "id": "byName",
+              "options": "数值"
+            },
+            "properties": [
+              {
+                "id": "unit",
+                "value": "short"
+              }
+            ]
+          }
+        ]
       },
       "options": {
         "cellHeight": "sm",
@@ -411,7 +367,7 @@
       },
       "targets": [
         {
-          "expr": "hwWlanCurOnlineApNum{site_name=~\"$site\",vendor=~\"$vendor\",hostname=~\"$device\"} or hh3cDot11CurrOnlineAPNum{site_name=~\"$site\",vendor=~\"$vendor\",hostname=~\"$device\"} or ruijieApcOnlineApNum{site_name=~\"$site\",vendor=~\"$vendor\",hostname=~\"$device\"} or cLApTotalUpAPs{site_name=~\"$site\",vendor=~\"$vendor\",hostname=~\"$device\"} or wlsxSysExtAccessPointsNum{site_name=~\"$site\",vendor=~\"$vendor\",hostname=~\"$device\"} or ruckusZDTotalNumAP{site_name=~\"$site\",vendor=~\"$vendor\",hostname=~\"$device\"}",
+          "expr": "topk(10, (hwWlanCurAssocUserNum{site_id=~\"$site\",vendor=~\"$vendor\"} or hh3cDot11CurrAssocUserNum{site_id=~\"$site\",vendor=~\"$vendor\"} or ruijieApcTotalStaNum{site_id=~\"$site\",vendor=~\"$vendor\"} or cLSysTotalNumOfClients{site_id=~\"$site\",vendor=~\"$vendor\"} or wlsxSysExtStationsNum{site_id=~\"$site\",vendor=~\"$vendor\"} or ruckusZDTotalNumSta{site_id=~\"$site\",vendor=~\"$vendor\"}) * on(instance) group_left(sysName) (last_over_time(sysName{sysName=~\"$device\"}[1d]) * 0 + 1))",
           "format": "table",
           "instant": true,
           "refId": "A"
@@ -442,22 +398,123 @@
               "platform": true
             },
             "indexByName": {
-              "hostname": 0,
-              "instance": 1,
-              "ifDescr": 2,
+              "sysName": 0,
+              "hostname": 1,
+              "instance": 2,
               "ifName": 3,
-              "vendor": 4,
-              "role": 5,
-              "Value": 6
+              "ifDescr": 4,
+              "vendor": 5,
+              "role": 6,
+              "Value": 7
             },
             "renameByName": {
+              "sysName": "设备名称",
               "hostname": "设备名称",
               "instance": "管理 IP",
-              "ifDescr": "接口全称",
-              "ifName": "接口名称",
+              "ifName": "接口全称",
+              "ifDescr": "接口描述",
               "vendor": "厂商",
               "role": "角色",
-              "Value": "在线 AP 数"
+              "Value": "终端数量"
+            }
+          }
+        }
+      ]
+    },
+    {
+      "id": 8,
+      "title": "无线信道利用率排行 Top 10",
+      "type": "table",
+      "datasource": {
+        "type": "prometheus",
+        "uid": "victoriametrics"
+      },
+      "gridPos": {
+        "h": 8,
+        "w": 12,
+        "x": 12,
+        "y": 12
+      },
+      "fieldConfig": {
+        "defaults": {
+          "unit": "none",
+          "color": {
+            "mode": "thresholds"
+          }
+        },
+        "overrides": [
+          {
+            "matcher": {
+              "id": "byName",
+              "options": "数值"
+            },
+            "properties": [
+              {
+                "id": "unit",
+                "value": "percent"
+              }
+            ]
+          }
+        ]
+      },
+      "options": {
+        "cellHeight": "sm",
+        "showHeader": true,
+        "footer": {
+          "show": false
+        }
+      },
+      "targets": [
+        {
+          "expr": "topk(10, (hh3cDot11ChannelUsage{site_id=~\"$site\",vendor=~\"$vendor\"} or ruijieRadioChannelUsage{site_id=~\"$site\",vendor=~\"$vendor\"}) * on(instance) group_left(sysName) (last_over_time(sysName{sysName=~\"$device\"}[1d]) * 0 + 1))",
+          "format": "table",
+          "instant": true,
+          "refId": "A"
+        }
+      ],
+      "transformations": [
+        {
+          "id": "organize",
+          "options": {
+            "excludeByName": {
+              "Time": true,
+              "__name__": true,
+              "ifIndex": true,
+              "asset_id": true,
+              "nexora_asset_id": true,
+              "nexora_hostname": true,
+              "nexora_module": true,
+              "nexora_platform": true,
+              "nexora_role": true,
+              "nexora_site_id": true,
+              "nexora_site_name": true,
+              "nexora_tenant_id": true,
+              "nexora_vendor": true,
+              "job": true,
+              "tenant_id": true,
+              "site_id": true,
+              "site_name": true,
+              "platform": true
+            },
+            "indexByName": {
+              "sysName": 0,
+              "hostname": 1,
+              "instance": 2,
+              "ifName": 3,
+              "ifDescr": 4,
+              "vendor": 5,
+              "role": 6,
+              "Value": 7
+            },
+            "renameByName": {
+              "sysName": "设备名称",
+              "hostname": "设备名称",
+              "instance": "管理 IP",
+              "ifName": "接口全称",
+              "ifDescr": "接口描述",
+              "vendor": "厂商",
+              "role": "角色",
+              "Value": "信道利用率"
             }
           }
         }
@@ -484,14 +541,14 @@
             "$__all"
           ]
         },
-        "definition": "label_values({__name__=~\"hwWlanCurOnlineApNum|hh3cDot11CurrOnlineAPNum|ruijieApcOnlineApNum|cLApTotalUpAPs|up\"}, site_name)",
+        "definition": "label_values({__name__=~\"sysName|ifOperStatus|up\"}, site_id)",
         "includeAll": true,
         "label": "站点",
         "multi": true,
         "name": "site",
         "options": [],
         "query": {
-          "query": "label_values({__name__=~\"hwWlanCurOnlineApNum|hh3cDot11CurrOnlineAPNum|ruijieApcOnlineApNum|cLApTotalUpAPs|up\"}, site_name)",
+          "query": "label_values({__name__=~\"sysName|ifOperStatus|up\"}, site_id)",
           "refId": "StandardVariableQuery"
         },
         "refresh": 1,
@@ -508,14 +565,14 @@
             "$__all"
           ]
         },
-        "definition": "label_values({__name__=~\"hwWlanCurOnlineApNum|hh3cDot11CurrOnlineAPNum|up\",site_name=~\"$site\"}, vendor)",
+        "definition": "label_values({__name__=~\"sysName|ifOperStatus|up\",site_id=~\"$site\"}, vendor)",
         "includeAll": true,
         "label": "厂商",
         "multi": true,
         "name": "vendor",
         "options": [],
         "query": {
-          "query": "label_values({__name__=~\"hwWlanCurOnlineApNum|hh3cDot11CurrOnlineAPNum|up\",site_name=~\"$site\"}, vendor)",
+          "query": "label_values({__name__=~\"sysName|ifOperStatus|up\",site_id=~\"$site\"}, vendor)",
           "refId": "StandardVariableQuery"
         },
         "refresh": 1,
@@ -532,14 +589,38 @@
             "$__all"
           ]
         },
-        "definition": "label_values({__name__=~\"hwWlanCurOnlineApNum|hh3cDot11CurrOnlineAPNum|up\",site_name=~\"$site\",vendor=~\"$vendor\"}, hostname)",
+        "definition": "label_values({__name__=~\"sysName|ifOperStatus|up\",site_id=~\"$site\",vendor=~\"$vendor\"}, role)",
+        "includeAll": true,
+        "label": "角色",
+        "multi": true,
+        "name": "role",
+        "options": [],
+        "query": {
+          "query": "label_values({__name__=~\"sysName|ifOperStatus|up\",site_id=~\"$site\",vendor=~\"$vendor\"}, role)",
+          "refId": "StandardVariableQuery"
+        },
+        "refresh": 1,
+        "type": "query"
+      },
+      {
+        "allValue": ".*",
+        "current": {
+          "selected": true,
+          "text": [
+            "All"
+          ],
+          "value": [
+            "$__all"
+          ]
+        },
+        "definition": "label_values({__name__=~\"sysName\",site_id=~\"$site\",vendor=~\"$vendor\",role=~\"$role\"}, sysName)",
         "includeAll": true,
         "label": "设备",
         "multi": true,
         "name": "device",
         "options": [],
         "query": {
-          "query": "label_values({__name__=~\"hwWlanCurOnlineApNum|hh3cDot11CurrOnlineAPNum|up\",site_name=~\"$site\",vendor=~\"$vendor\"}, hostname)",
+          "query": "label_values({__name__=~\"sysName\",site_id=~\"$site\",vendor=~\"$vendor\",role=~\"$role\"}, sysName)",
           "refId": "StandardVariableQuery"
         },
         "refresh": 1,
@@ -554,5 +635,5 @@
   "timezone": "browser",
   "title": "03 无线专网监控 (Wireless AP & Clients)",
   "uid": "nexora-network-wireless",
-  "version": 2
+  "version": 3
 }

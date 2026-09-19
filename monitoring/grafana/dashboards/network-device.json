@@ -56,7 +56,7 @@
       },
       "targets": [
         {
-          "expr": "sysUpTime{hostname=~\"$device\"} / 100",
+          "expr": "sysUpTime / 100 * on(instance) group_left(sysName) (last_over_time(sysName{sysName=~\"$device\"}[1d]) * 0 + 1)",
           "refId": "A"
         }
       ]
@@ -117,7 +117,7 @@
       },
       "targets": [
         {
-          "expr": "max(cpmCPUTotal1minRev{hostname=~\"$device\"} or hh3cEntityExtCpuUsage{hostname=~\"$device\"} or hwEntityCpuUsage{hostname=~\"$device\"} or ruijieCpuCostRate{hostname=~\"$device\"} or jnxOperatingCPU{hostname=~\"$device\"} or fnSysCpuUsage{hostname=~\"$device\"} or zteCpuRate{hostname=~\"$device\"} or mpCpuUtilization5Min{hostname=~\"$device\"} or dptechCpuUsage{hostname=~\"$device\"} or hillstoneCPUUtilization{hostname=~\"$device\"} or sangforCpuUsage{hostname=~\"$device\"} or dcnCpuUsage{hostname=~\"$device\"})",
+          "expr": "max(cpmCPUTotal1minRev or hh3cEntityExtCpuUsage or hwEntityCpuUsage or ruijieCpuCostRate or jnxOperatingCPU or fnSysCpuUsage or zteCpuRate or mpCpuUtilization5Min or dptechCpuUsage or hillstoneCPUUtilization or sangforCpuUsage or dcnCpuUsage) * on(instance) group_left(sysName) (last_over_time(sysName{sysName=~\"$device\"}[1d]) * 0 + 1)",
           "refId": "A"
         }
       ]
@@ -178,7 +178,7 @@
       },
       "targets": [
         {
-          "expr": "max(hh3cEntityExtMemUsage{hostname=~\"$device\"} or hwEntityMemUsage{hostname=~\"$device\"} or ruijieMemoryPoolCurrentUtilization{hostname=~\"$device\"} or jnxOperatingBuffer{hostname=~\"$device\"} or fnSysMemUsage{hostname=~\"$device\"} or zteMemRate{hostname=~\"$device\"} or mpMemoryUtilization{hostname=~\"$device\"} or dptechMemUsage{hostname=~\"$device\"} or hillstoneMemoryUtilization{hostname=~\"$device\"} or sangforMemUsage{hostname=~\"$device\"} or dcnMemUsage{hostname=~\"$device\"})",
+          "expr": "max(hh3cEntityExtMemUsage or hwEntityMemUsage or ruijieMemoryPoolCurrentUtilization or jnxOperatingBuffer or fnSysMemUsage or zteMemRate or mpMemoryUtilization or dptechMemUsage or hillstoneMemoryUtilization or sangforMemUsage or dcnMemUsage) * on(instance) group_left(sysName) (last_over_time(sysName{sysName=~\"$device\"}[1d]) * 0 + 1)",
           "refId": "A"
         }
       ]
@@ -239,7 +239,7 @@
       },
       "targets": [
         {
-          "expr": "max(hh3cEntityExtTemperature{hostname=~\"$device\"} or hwEntityTemperature{hostname=~\"$device\"} or ruijieDeviceTemperature{hostname=~\"$device\"} or jnxOperatingTemp{hostname=~\"$device\"} or entSensorValue{hostname=~\"$device\"} or zteTemperature{hostname=~\"$device\"} or mpTemperature{hostname=~\"$device\"} or dptechTemperature{hostname=~\"$device\"} or dcnTemperature{hostname=~\"$device\"})",
+          "expr": "max(hh3cEntityExtTemperature or hwEntityTemperature or ruijieDeviceTemperature or jnxOperatingTemp or entSensorValue or zteTemperature or mpTemperature or dptechTemperature or dcnTemperature) * on(instance) group_left(sysName) (last_over_time(sysName{sysName=~\"$device\"}[1d]) * 0 + 1)",
           "refId": "A"
         }
       ]
@@ -285,8 +285,8 @@
       },
       "targets": [
         {
-          "expr": "cpmCPUTotal1minRev{hostname=~\"$device\"} or hh3cEntityExtCpuUsage{hostname=~\"$device\"} or hwEntityCpuUsage{hostname=~\"$device\"} or ruijieCpuCostRate{hostname=~\"$device\"} or jnxOperatingCPU{hostname=~\"$device\"} or fnSysCpuUsage{hostname=~\"$device\"} or zteCpuRate{hostname=~\"$device\"} or mpCpuUtilization5Min{hostname=~\"$device\"} or dptechCpuUsage{hostname=~\"$device\"} or hillstoneCPUUtilization{hostname=~\"$device\"} or sangforCpuUsage{hostname=~\"$device\"} or dcnCpuUsage{hostname=~\"$device\"}",
-          "legendFormat": "Slot/Core {{entPhysicalName}} ({{instance}})",
+          "expr": "(cpmCPUTotal1minRev or hh3cEntityExtCpuUsage or hwEntityCpuUsage or ruijieCpuCostRate or jnxOperatingCPU or fnSysCpuUsage or zteCpuRate or mpCpuUtilization5Min or dptechCpuUsage or hillstoneCPUUtilization or sangforCpuUsage or dcnCpuUsage) * on(instance) group_left(sysName) (last_over_time(sysName{sysName=~\"$device\"}[1d]) * 0 + 1)",
+          "legendFormat": "{{sysName}} ({{instance}})",
           "refId": "A"
         }
       ]
@@ -332,8 +332,8 @@
       },
       "targets": [
         {
-          "expr": "hh3cEntityExtMemUsage{hostname=~\"$device\"} or hwEntityMemUsage{hostname=~\"$device\"} or ruijieMemoryPoolCurrentUtilization{hostname=~\"$device\"} or jnxOperatingBuffer{hostname=~\"$device\"} or fnSysMemUsage{hostname=~\"$device\"} or zteMemRate{hostname=~\"$device\"} or mpMemoryUtilization{hostname=~\"$device\"} or dptechMemUsage{hostname=~\"$device\"} or hillstoneMemoryUtilization{hostname=~\"$device\"} or sangforMemUsage{hostname=~\"$device\"} or dcnMemUsage{hostname=~\"$device\"}",
-          "legendFormat": "Pool/Slot {{entPhysicalName}} ({{instance}})",
+          "expr": "(hh3cEntityExtMemUsage or hwEntityMemUsage or ruijieMemoryPoolCurrentUtilization or jnxOperatingBuffer or fnSysMemUsage or zteMemRate or mpMemoryUtilization or dptechMemUsage or hillstoneMemoryUtilization or sangforMemUsage or dcnMemUsage) * on(instance) group_left(sysName) (last_over_time(sysName{sysName=~\"$device\"}[1d]) * 0 + 1)",
+          "legendFormat": "{{sysName}} ({{instance}})",
           "refId": "A"
         }
       ]
@@ -379,8 +379,8 @@
       },
       "targets": [
         {
-          "expr": "hh3cEntityExtTemperature{hostname=~\"$device\"} or hwEntityTemperature{hostname=~\"$device\"} or ruijieDeviceTemperature{hostname=~\"$device\"} or jnxOperatingTemp{hostname=~\"$device\"} or entSensorValue{hostname=~\"$device\"} or zteTemperature{hostname=~\"$device\"} or mpTemperature{hostname=~\"$device\"} or dptechTemperature{hostname=~\"$device\"} or dcnTemperature{hostname=~\"$device\"}",
-          "legendFormat": "Sensor {{entPhysicalName}} ({{instance}})",
+          "expr": "(hh3cEntityExtTemperature or hwEntityTemperature or ruijieDeviceTemperature or jnxOperatingTemp or entSensorValue or zteTemperature or mpTemperature or dptechTemperature or dcnTemperature) * on(instance) group_left(sysName) (last_over_time(sysName{sysName=~\"$device\"}[1d]) * 0 + 1)",
+          "legendFormat": "{{sysName}} ({{instance}})",
           "refId": "A"
         }
       ]
@@ -417,7 +417,7 @@
       },
       "targets": [
         {
-          "expr": "ifOperStatus{hostname=~\"$device\"}",
+          "expr": "ifOperStatus * on(instance) group_left(sysName) (last_over_time(sysName{sysName=~\"$device\"}[1d]) * 0 + 1) * on(instance, ifIndex) group_left(ifName) (ifName * 0 + 1)",
           "format": "table",
           "instant": true,
           "refId": "A"
@@ -448,19 +448,21 @@
               "platform": true
             },
             "indexByName": {
-              "hostname": 0,
-              "instance": 1,
-              "ifDescr": 2,
+              "sysName": 0,
+              "hostname": 1,
+              "instance": 2,
               "ifName": 3,
-              "vendor": 4,
-              "role": 5,
-              "Value": 6
+              "ifDescr": 4,
+              "vendor": 5,
+              "role": 6,
+              "Value": 7
             },
             "renameByName": {
+              "sysName": "设备名称",
               "hostname": "设备名称",
               "instance": "管理 IP",
-              "ifDescr": "接口全称",
-              "ifName": "接口名称",
+              "ifName": "接口全称",
+              "ifDescr": "接口描述",
               "vendor": "厂商",
               "role": "角色",
               "Value": "运行状态 (1=Up, 2=Down)"
@@ -490,14 +492,14 @@
             "$__all"
           ]
         },
-        "definition": "label_values({__name__=~\"ifOperStatus|sysUpTime|up\"}, site_name)",
+        "definition": "label_values({__name__=~\"sysName|ifOperStatus|up\"}, site_id)",
         "includeAll": true,
         "label": "站点",
         "multi": true,
         "name": "site",
         "options": [],
         "query": {
-          "query": "label_values({__name__=~\"ifOperStatus|sysUpTime|up\"}, site_name)",
+          "query": "label_values({__name__=~\"sysName|ifOperStatus|up\"}, site_id)",
           "refId": "StandardVariableQuery"
         },
         "refresh": 1,
@@ -514,14 +516,38 @@
             "$__all"
           ]
         },
-        "definition": "label_values({__name__=~\"ifOperStatus|sysUpTime|up\",site_name=~\"$site\"}, vendor)",
+        "definition": "label_values({__name__=~\"sysName|ifOperStatus|up\",site_id=~\"$site\"}, vendor)",
         "includeAll": true,
         "label": "厂商",
         "multi": true,
         "name": "vendor",
         "options": [],
         "query": {
-          "query": "label_values({__name__=~\"ifOperStatus|sysUpTime|up\",site_name=~\"$site\"}, vendor)",
+          "query": "label_values({__name__=~\"sysName|ifOperStatus|up\",site_id=~\"$site\"}, vendor)",
+          "refId": "StandardVariableQuery"
+        },
+        "refresh": 1,
+        "type": "query"
+      },
+      {
+        "allValue": ".*",
+        "current": {
+          "selected": true,
+          "text": [
+            "All"
+          ],
+          "value": [
+            "$__all"
+          ]
+        },
+        "definition": "label_values({__name__=~\"sysName|ifOperStatus|up\",site_id=~\"$site\",vendor=~\"$vendor\"}, role)",
+        "includeAll": true,
+        "label": "角色",
+        "multi": true,
+        "name": "role",
+        "options": [],
+        "query": {
+          "query": "label_values({__name__=~\"sysName|ifOperStatus|up\",site_id=~\"$site\",vendor=~\"$vendor\"}, role)",
           "refId": "StandardVariableQuery"
         },
         "refresh": 1,
@@ -534,14 +560,14 @@
           "text": "",
           "value": ""
         },
-        "definition": "label_values({__name__=~\"ifOperStatus|sysUpTime|up\",site_name=~\"$site\",vendor=~\"$vendor\"}, hostname)",
+        "definition": "label_values({__name__=~\"sysName\",site_id=~\"$site\",vendor=~\"$vendor\",role=~\"$role\"}, sysName)",
         "includeAll": false,
         "label": "设备",
         "multi": false,
         "name": "device",
         "options": [],
         "query": {
-          "query": "label_values({__name__=~\"ifOperStatus|sysUpTime|up\",site_name=~\"$site\",vendor=~\"$vendor\"}, hostname)",
+          "query": "label_values({__name__=~\"sysName\",site_id=~\"$site\",vendor=~\"$vendor\",role=~\"$role\"}, sysName)",
           "refId": "StandardVariableQuery"
         },
         "refresh": 1,
@@ -556,5 +582,5 @@
   "timezone": "browser",
   "title": "02 网络设备详情 (Network Device Detail)",
   "uid": "nexora-network-device",
-  "version": 2
+  "version": 3
 }

@@ -389,19 +389,21 @@
               "platform": true
             },
             "indexByName": {
-              "hostname": 0,
-              "instance": 1,
-              "ifDescr": 2,
+              "sysName": 0,
+              "hostname": 1,
+              "instance": 2,
               "ifName": 3,
-              "vendor": 4,
-              "role": 5,
-              "Value": 6
+              "ifDescr": 4,
+              "vendor": 5,
+              "role": 6,
+              "Value": 7
             },
             "renameByName": {
+              "sysName": "设备名称",
               "hostname": "设备名称",
               "instance": "管理 IP",
-              "ifDescr": "接口全称",
-              "ifName": "接口名称",
+              "ifName": "接口全称",
+              "ifDescr": "接口描述",
               "vendor": "厂商",
               "role": "角色",
               "Value": "探测状态"
@@ -486,19 +488,21 @@
               "platform": true
             },
             "indexByName": {
-              "hostname": 0,
-              "instance": 1,
-              "ifDescr": 2,
+              "sysName": 0,
+              "hostname": 1,
+              "instance": 2,
               "ifName": 3,
-              "vendor": 4,
-              "role": 5,
-              "Value": 6
+              "ifDescr": 4,
+              "vendor": 5,
+              "role": 6,
+              "Value": 7
             },
             "renameByName": {
+              "sysName": "设备名称",
               "hostname": "设备名称",
               "instance": "管理 IP",
-              "ifDescr": "接口全称",
-              "ifName": "接口名称",
+              "ifName": "接口全称",
+              "ifDescr": "接口描述",
               "vendor": "厂商",
               "role": "角色",
               "Value": "采集耗时 (秒)"
@@ -525,5 +529,5 @@
   "timezone": "browser",
   "title": "05 SNMP 采集健康 (SNMP Scrape Health)",
   "uid": "nexora-monitoring-health",
-  "version": 2
+  "version": 3
 }

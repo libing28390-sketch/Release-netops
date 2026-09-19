@@ -56,7 +56,7 @@
       },
       "targets": [
         {
-          "expr": "count(count by (hostname) (windows_cpu_time_total or windows_os_info)) or vector(0)",
+          "expr": "count(count by (instance) (windows_cpu_time_total or windows_os_info or up{job=\"windows_servers\"})) or vector(0)",
           "refId": "A"
         }
       ]
@@ -117,7 +117,7 @@
       },
       "targets": [
         {
-          "expr": "avg(100 - (rate(windows_cpu_time_total{site_name=~\"$site\",hostname=~\"$device\",mode=\"idle\"}[5m]) * 100) or hrProcessorLoad{site_name=~\"$site\",hostname=~\"$device\"}) or vector(0)",
+          "expr": "avg(100 - (rate(windows_cpu_time_total{instance=~\"$device\",mode=\"idle\"}[5m]) * 100) or hrProcessorLoad{instance=~\"$device\"}) or vector(0)",
           "refId": "A"
         }
       ]
@@ -178,7 +178,7 @@
       },
       "targets": [
         {
-          "expr": "avg((1 - (windows_os_physical_memory_free_bytes{site_name=~\"$site\",hostname=~\"$device\"} / windows_cs_physical_memory_bytes{site_name=~\"$site\",hostname=~\"$device\"})) * 100) or vector(0)",
+          "expr": "avg((1 - (windows_os_physical_memory_free_bytes{instance=~\"$device\"} / windows_cs_physical_memory_bytes{instance=~\"$device\"})) * 100) or vector(0)",
           "refId": "A"
         }
       ]
@@ -231,14 +231,14 @@
       },
       "targets": [
         {
-          "expr": "sum(windows_terminal_services_active_sessions{site_name=~\"$site\",hostname=~\"$device\"}) or vector(0)",
+          "expr": "sum(windows_terminal_services_active_sessions{instance=~\"$device\"}) or vector(0)",
           "refId": "A"
         }
       ]
     },
     {
       "id": 5,
-      "title": "Windows CPU 使用率走势 (%)",
+      "title": "CPU 占用率走势 (%)",
       "type": "timeseries",
       "datasource": {
         "type": "prometheus",
@@ -277,15 +277,15 @@
       },
       "targets": [
         {
-          "expr": "100 - (rate(windows_cpu_time_total{site_name=~\"$site\",hostname=~\"$device\",mode=\"idle\"}[5m]) * 100) or hrProcessorLoad{site_name=~\"$site\",hostname=~\"$device\"}",
-          "legendFormat": "{{hostname}} {{core}} CPU",
+          "expr": "100 - (rate(windows_cpu_time_total{instance=~\"$device\",mode=\"idle\"}[5m]) * 100) or hrProcessorLoad{instance=~\"$device\"}",
+          "legendFormat": "{{instance}} CPU 利用率",
           "refId": "A"
         }
       ]
     },
     {
       "id": 6,
-      "title": "物理内存使用率与可用内存走势",
+      "title": "可用物理内存与已提交字节走势",
       "type": "timeseries",
       "datasource": {
         "type": "prometheus",
@@ -299,7 +299,7 @@
       },
       "fieldConfig": {
         "defaults": {
-          "unit": "percent",
+          "unit": "bytes",
           "color": {
             "mode": "palette-classic"
           },
@@ -324,15 +324,20 @@
       },
       "targets": [
         {
-          "expr": "(1 - (windows_os_physical_memory_free_bytes{site_name=~\"$site\",hostname=~\"$device\"} / windows_cs_physical_memory_bytes{site_name=~\"$site\",hostname=~\"$device\"})) * 100",
-          "legendFormat": "{{hostname}} 内存使用率 (%)",
+          "expr": "windows_os_physical_memory_free_bytes{instance=~\"$device\"}",
+          "legendFormat": "{{instance}} 可用物理内存",
           "refId": "A"
+        },
+        {
+          "expr": "windows_os_committed_bytes{instance=~\"$device\"}",
+          "legendFormat": "{{instance}} 已提交字节",
+          "refId": "B"
         }
       ]
     },
     {
       "id": 7,
-      "title": "逻辑磁盘驱动器空间利用率 Top 10",
+      "title": "逻辑磁盘剩余空间百分比 Top 10",
       "type": "table",
       "datasource": {
         "type": "prometheus",
@@ -375,7 +380,7 @@
       },
       "targets": [
         {
-          "expr": "topk(10, max by (hostname, instance, volume) ((1 - (windows_logical_disk_free_bytes{site_name=~\"$site\",hostname=~\"$device\"} / windows_logical_disk_size_bytes{site_name=~\"$site\",hostname=~\"$device\"})) * 100))",
+          "expr": "topk(10, min by (instance, volume) ((windows_logical_disk_free_bytes{instance=~\"$device\"} / windows_logical_disk_size_bytes{instance=~\"$device\"}) * 100))",
           "format": "table",
           "instant": true,
           "refId": "A"
@@ -406,23 +411,25 @@
               "platform": true
             },
             "indexByName": {
-              "hostname": 0,
-              "instance": 1,
-              "ifDescr": 2,
+              "sysName": 0,
+              "hostname": 1,
+              "instance": 2,
               "ifName": 3,
-              "vendor": 4,
-              "role": 5,
-              "Value": 6
+              "ifDescr": 4,
+              "vendor": 5,
+              "role": 6,
+              "Value": 7
             },
             "renameByName": {
+              "sysName": "设备名称",
               "hostname": "设备名称",
               "instance": "管理 IP",
-              "ifDescr": "接口全称",
-              "ifName": "接口名称",
+              "ifName": "接口全称",
+              "ifDescr": "接口描述",
               "vendor": "厂商",
               "role": "角色",
-              "Value": "卷使用率",
-              "volume": "驱动器盘符"
+              "Value": "剩余空间 (%)",
+              "volume": "盘符"
             }
           }
         }
@@ -430,7 +437,7 @@
     },
     {
       "id": 8,
-      "title": "逻辑磁盘读写延迟走势 (秒)",
+      "title": "系统进程数与线程数",
       "type": "timeseries",
       "datasource": {
         "type": "prometheus",
@@ -444,7 +451,7 @@
       },
       "fieldConfig": {
         "defaults": {
-          "unit": "s",
+          "unit": "short",
           "color": {
             "mode": "palette-classic"
           },
@@ -469,20 +476,20 @@
       },
       "targets": [
         {
-          "expr": "rate(windows_logical_disk_read_seconds_total{site_name=~\"$site\",hostname=~\"$device\"}[5m]) / (rate(windows_logical_disk_reads_total{site_name=~\"$site\",hostname=~\"$device\"}[5m]) > 0)",
-          "legendFormat": "{{hostname}} {{volume}} 读延迟",
+          "expr": "windows_system_processes{instance=~\"$device\"}",
+          "legendFormat": "{{instance}} 进程数",
           "refId": "A"
         },
         {
-          "expr": "rate(windows_logical_disk_write_seconds_total{site_name=~\"$site\",hostname=~\"$device\"}[5m]) / (rate(windows_logical_disk_writes_total{site_name=~\"$site\",hostname=~\"$device\"}[5m]) > 0)",
-          "legendFormat": "{{hostname}} {{volume}} 写延迟",
+          "expr": "windows_system_threads{instance=~\"$device\"}",
+          "legendFormat": "{{instance}} 线程数",
           "refId": "B"
         }
       ]
     },
     {
       "id": 9,
-      "title": "网络适配器吞吐走势 (bps)",
+      "title": "网卡收发流量走势 (bps)",
       "type": "timeseries",
       "datasource": {
         "type": "prometheus",
@@ -521,20 +528,20 @@
       },
       "targets": [
         {
-          "expr": "sum by (hostname, nic) (rate(windows_net_bytes_received_total{site_name=~\"$site\",hostname=~\"$device\"}[5m]) * 8)",
-          "legendFormat": "{{hostname}} {{nic}} 接收",
+          "expr": "sum by (instance, nic) (rate(windows_net_bytes_received_total{instance=~\"$device\"}[5m]) * 8)",
+          "legendFormat": "{{instance}} - {{nic}} 接收",
           "refId": "A"
         },
         {
-          "expr": "sum by (hostname, nic) (rate(windows_net_bytes_sent_total{site_name=~\"$site\",hostname=~\"$device\"}[5m]) * 8)",
-          "legendFormat": "{{hostname}} {{nic}} 发送",
+          "expr": "sum by (instance, nic) (rate(windows_net_bytes_sent_total{instance=~\"$device\"}[5m]) * 8)",
+          "legendFormat": "{{instance}} - {{nic}} 发送",
           "refId": "B"
         }
       ]
     },
     {
       "id": 10,
-      "title": "主机运行时间清单 (Uptime)",
+      "title": "系统关键服务运行状态",
       "type": "table",
       "datasource": {
         "type": "prometheus",
@@ -562,7 +569,7 @@
             "properties": [
               {
                 "id": "unit",
-                "value": "s"
+                "value": "none"
               }
             ]
           }
@@ -577,7 +584,7 @@
       },
       "targets": [
         {
-          "expr": "windows_system_system_up_time{site_name=~\"$site\",hostname=~\"$device\"}",
+          "expr": "windows_service_status{instance=~\"$device\",state=\"running\"}",
           "format": "table",
           "instant": true,
           "refId": "A"
@@ -608,22 +615,25 @@
               "platform": true
             },
             "indexByName": {
-              "hostname": 0,
-              "instance": 1,
-              "ifDescr": 2,
+              "sysName": 0,
+              "hostname": 1,
+              "instance": 2,
               "ifName": 3,
-              "vendor": 4,
-              "role": 5,
-              "Value": 6
+              "ifDescr": 4,
+              "vendor": 5,
+              "role": 6,
+              "Value": 7
             },
             "renameByName": {
+              "sysName": "设备名称",
               "hostname": "设备名称",
               "instance": "管理 IP",
-              "ifDescr": "接口全称",
-              "ifName": "接口名称",
+              "ifName": "接口全称",
+              "ifDescr": "接口描述",
               "vendor": "厂商",
               "role": "角色",
-              "Value": "已运行时间 (秒)"
+              "Value": "服务状态",
+              "name": "服务名"
             }
           }
         }
@@ -651,14 +661,14 @@
             "$__all"
           ]
         },
-        "definition": "label_values({__name__=~\"windows_cpu_time_total|windows_os_info|hrProcessorLoad|up\"}, site_name)",
+        "definition": "label_values({__name__=~\"windows_.*|up\"}, site_id)",
         "includeAll": true,
         "label": "站点",
         "multi": true,
         "name": "site",
         "options": [],
         "query": {
-          "query": "label_values({__name__=~\"windows_cpu_time_total|windows_os_info|hrProcessorLoad|up\"}, site_name)",
+          "query": "label_values({__name__=~\"windows_.*|up\"}, site_id)",
           "refId": "StandardVariableQuery"
         },
         "refresh": 1,
@@ -675,14 +685,14 @@
             "$__all"
           ]
         },
-        "definition": "label_values({__name__=~\"windows_cpu_time_total|windows_os_info|hrProcessorLoad|up\",site_name=~\"$site\"}, hostname)",
+        "definition": "label_values({__name__=~\"windows_.*|up\"}, instance)",
         "includeAll": true,
         "label": "服务器",
         "multi": true,
         "name": "device",
         "options": [],
         "query": {
-          "query": "label_values({__name__=~\"windows_cpu_time_total|windows_os_info|hrProcessorLoad|up\",site_name=~\"$site\"}, hostname)",
+          "query": "label_values({__name__=~\"windows_.*|up\"}, instance)",
           "refId": "StandardVariableQuery"
         },
         "refresh": 1,
@@ -695,7 +705,7 @@
     "to": "now"
   },
   "timezone": "browser",
-  "title": "08 Windows 主机监控 (Windows Host Metrics)",
+  "title": "08 Windows 服务器监控 (Windows Server Metrics)",
   "uid": "nexora-windows-metrics",
-  "version": 1
+  "version": 2
 }

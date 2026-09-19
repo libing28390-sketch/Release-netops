@@ -56,7 +56,7 @@
       },
       "targets": [
         {
-          "expr": "count(count by (hostname) (node_load1 or node_uname_info)) or vector(0)",
+          "expr": "count(count by (instance) (node_load1 or node_uname_info or up{job=\"linux_servers\"})) or vector(0)",
           "refId": "A"
         }
       ]
@@ -117,7 +117,7 @@
       },
       "targets": [
         {
-          "expr": "avg(100 - (rate(node_cpu_seconds_total{site_name=~\"$site\",hostname=~\"$device\",mode=\"idle\"}[5m]) * 100) or host_cpu_util{site_name=~\"$site\",hostname=~\"$device\"}) or vector(0)",
+          "expr": "avg(100 - (rate(node_cpu_seconds_total{instance=~\"$device\",mode=\"idle\"}[5m]) * 100) or host_cpu_util{instance=~\"$device\"}) or vector(0)",
           "refId": "A"
         }
       ]
@@ -178,7 +178,7 @@
       },
       "targets": [
         {
-          "expr": "avg((1 - (node_memory_MemAvailable_bytes{site_name=~\"$site\",hostname=~\"$device\"} / node_memory_MemTotal_bytes{site_name=~\"$site\",hostname=~\"$device\"})) * 100 or host_mem_util{site_name=~\"$site\",hostname=~\"$device\"}) or vector(0)",
+          "expr": "avg((1 - (node_memory_MemAvailable_bytes{instance=~\"$device\"} / node_memory_MemTotal_bytes{instance=~\"$device\"})) * 100 or host_mem_util{instance=~\"$device\"}) or vector(0)",
           "refId": "A"
         }
       ]
@@ -231,7 +231,7 @@
       },
       "targets": [
         {
-          "expr": "sum(node_netstat_Tcp_CurrEstab{site_name=~\"$site\",hostname=~\"$device\"} or host_tcp_estab{site_name=~\"$site\",hostname=~\"$device\"}) or vector(0)",
+          "expr": "sum(node_netstat_Tcp_CurrEstab{instance=~\"$device\"} or host_tcp_estab{instance=~\"$device\"}) or vector(0)",
           "refId": "A"
         }
       ]
@@ -277,18 +277,18 @@
       },
       "targets": [
         {
-          "expr": "100 - (rate(node_cpu_seconds_total{site_name=~\"$site\",hostname=~\"$device\",mode=\"idle\"}[5m]) * 100) or host_cpu_util{site_name=~\"$site\",hostname=~\"$device\"}",
-          "legendFormat": "{{hostname}} CPU利用率 (%)",
+          "expr": "100 - (rate(node_cpu_seconds_total{instance=~\"$device\",mode=\"idle\"}[5m]) * 100) or host_cpu_util{instance=~\"$device\"}",
+          "legendFormat": "{{instance}} CPU利用率 (%)",
           "refId": "A"
         },
         {
-          "expr": "node_load1{site_name=~\"$site\",hostname=~\"$device\"} or host_cpu_load1{site_name=~\"$site\",hostname=~\"$device\"}",
-          "legendFormat": "{{hostname}} 1分钟负载 (Load1)",
+          "expr": "node_load1{instance=~\"$device\"} or host_cpu_load1{instance=~\"$device\"}",
+          "legendFormat": "{{instance}} 1分钟负载 (Load1)",
           "refId": "B"
         },
         {
-          "expr": "node_load5{site_name=~\"$site\",hostname=~\"$device\"} or host_cpu_load5{site_name=~\"$site\",hostname=~\"$device\"}",
-          "legendFormat": "{{hostname}} 5分钟负载 (Load5)",
+          "expr": "node_load5{instance=~\"$device\"} or host_cpu_load5{instance=~\"$device\"}",
+          "legendFormat": "{{instance}} 5分钟负载 (Load5)",
           "refId": "C"
         }
       ]
@@ -334,13 +334,13 @@
       },
       "targets": [
         {
-          "expr": "(1 - (node_memory_MemAvailable_bytes{site_name=~\"$site\",hostname=~\"$device\"} / node_memory_MemTotal_bytes{site_name=~\"$site\",hostname=~\"$device\"})) * 100 or host_mem_util{site_name=~\"$site\",hostname=~\"$device\"}",
-          "legendFormat": "{{hostname}} 内存利用率 (%)",
+          "expr": "(1 - (node_memory_MemAvailable_bytes{instance=~\"$device\"} / node_memory_MemTotal_bytes{instance=~\"$device\"})) * 100 or host_mem_util{instance=~\"$device\"}",
+          "legendFormat": "{{instance}} 内存利用率 (%)",
           "refId": "A"
         },
         {
-          "expr": "(1 - (node_memory_SwapFree_bytes{site_name=~\"$site\",hostname=~\"$device\"} / node_memory_SwapTotal_bytes{site_name=~\"$site\",hostname=~\"$device\"})) * 100 or host_swap_util{site_name=~\"$site\",hostname=~\"$device\"}",
-          "legendFormat": "{{hostname}} Swap 利用率 (%)",
+          "expr": "(1 - (node_memory_SwapFree_bytes{instance=~\"$device\"} / node_memory_SwapTotal_bytes{instance=~\"$device\"})) * 100 or host_swap_util{instance=~\"$device\"}",
+          "legendFormat": "{{instance}} Swap 利用率 (%)",
           "refId": "B"
         }
       ]
@@ -390,7 +390,7 @@
       },
       "targets": [
         {
-          "expr": "topk(10, max by (hostname, instance, mountpoint) ((1 - (node_filesystem_avail_bytes{site_name=~\"$site\",hostname=~\"$device\",fstype!~\"tmpfs|iso9660|squashfs\"} / node_filesystem_size_bytes{site_name=~\"$site\",hostname=~\"$device\"})) * 100 or host_disk_util{site_name=~\"$site\",hostname=~\"$device\"}))",
+          "expr": "topk(10, max by (instance, mountpoint) ((1 - (node_filesystem_avail_bytes{instance=~\"$device\",fstype!~\"tmpfs|iso9660|squashfs\"} / node_filesystem_size_bytes{instance=~\"$device\"})) * 100 or host_disk_util{instance=~\"$device\"}))",
           "format": "table",
           "instant": true,
           "refId": "A"
@@ -421,19 +421,21 @@
               "platform": true
             },
             "indexByName": {
-              "hostname": 0,
-              "instance": 1,
-              "ifDescr": 2,
+              "sysName": 0,
+              "hostname": 1,
+              "instance": 2,
               "ifName": 3,
-              "vendor": 4,
-              "role": 5,
-              "Value": 6
+              "ifDescr": 4,
+              "vendor": 5,
+              "role": 6,
+              "Value": 7
             },
             "renameByName": {
+              "sysName": "设备名称",
               "hostname": "设备名称",
               "instance": "管理 IP",
-              "ifDescr": "接口全称",
-              "ifName": "接口名称",
+              "ifName": "接口全称",
+              "ifDescr": "接口描述",
               "vendor": "厂商",
               "role": "角色",
               "Value": "磁盘使用率",
@@ -484,13 +486,13 @@
       },
       "targets": [
         {
-          "expr": "sum by (hostname, device) (rate(node_disk_reads_completed_total{site_name=~\"$site\",hostname=~\"$device\",device!~\"loop.*\"}[5m]))",
-          "legendFormat": "{{hostname}} - {{device}} 读 IOPS",
+          "expr": "sum by (instance, device) (rate(node_disk_reads_completed_total{instance=~\"$device\",device!~\"loop.*\"}[5m]))",
+          "legendFormat": "{{instance}} - {{device}} 读 IOPS",
           "refId": "A"
         },
         {
-          "expr": "sum by (hostname, device) (rate(node_disk_writes_completed_total{site_name=~\"$site\",hostname=~\"$device\",device!~\"loop.*\"}[5m]))",
-          "legendFormat": "{{hostname}} - {{device}} 写 IOPS",
+          "expr": "sum by (instance, device) (rate(node_disk_writes_completed_total{instance=~\"$device\",device!~\"loop.*\"}[5m]))",
+          "legendFormat": "{{instance}} - {{device}} 写 IOPS",
           "refId": "B"
         }
       ]
@@ -536,13 +538,13 @@
       },
       "targets": [
         {
-          "expr": "sum by (hostname, device) (rate(node_network_receive_bytes_total{site_name=~\"$site\",hostname=~\"$device\",device!~\"lo|docker.*|veth.*|br-.*\"}[5m]) * 8 or rate(ifHCInOctets{site_name=~\"$site\",hostname=~\"$device\"}[5m]) * 8)",
-          "legendFormat": "{{hostname}} - {{device}} 接收",
+          "expr": "sum by (instance, device) (rate(node_network_receive_bytes_total{instance=~\"$device\",device!~\"lo|docker.*|veth.*|br-.*\"}[5m]) * 8 or rate(ifHCInOctets{instance=~\"$device\"}[5m]) * 8)",
+          "legendFormat": "{{instance}} - {{device}} 接收",
           "refId": "A"
         },
         {
-          "expr": "sum by (hostname, device) (rate(node_network_transmit_bytes_total{site_name=~\"$site\",hostname=~\"$device\",device!~\"lo|docker.*|veth.*|br-.*\"}[5m]) * 8 or rate(ifHCOutOctets{site_name=~\"$site\",hostname=~\"$device\"}[5m]) * 8)",
-          "legendFormat": "{{hostname}} - {{device}} 发送",
+          "expr": "sum by (instance, device) (rate(node_network_transmit_bytes_total{instance=~\"$device\",device!~\"lo|docker.*|veth.*|br-.*\"}[5m]) * 8 or rate(ifHCOutOctets{instance=~\"$device\"}[5m]) * 8)",
+          "legendFormat": "{{instance}} - {{device}} 发送",
           "refId": "B"
         }
       ]
@@ -592,7 +594,7 @@
       },
       "targets": [
         {
-          "expr": "topk(10, sum by (hostname, instance) (node_netstat_Tcp_CurrEstab{site_name=~\"$site\",hostname=~\"$device\"} or host_tcp_conns{site_name=~\"$site\",hostname=~\"$device\"}))",
+          "expr": "topk(10, sum by (instance) (node_netstat_Tcp_CurrEstab{instance=~\"$device\"} or host_tcp_conns{instance=~\"$device\"}))",
           "format": "table",
           "instant": true,
           "refId": "A"
@@ -623,19 +625,21 @@
               "platform": true
             },
             "indexByName": {
-              "hostname": 0,
-              "instance": 1,
-              "ifDescr": 2,
+              "sysName": 0,
+              "hostname": 1,
+              "instance": 2,
               "ifName": 3,
-              "vendor": 4,
-              "role": 5,
-              "Value": 6
+              "ifDescr": 4,
+              "vendor": 5,
+              "role": 6,
+              "Value": 7
             },
             "renameByName": {
+              "sysName": "设备名称",
               "hostname": "设备名称",
               "instance": "管理 IP",
-              "ifDescr": "接口全称",
-              "ifName": "接口名称",
+              "ifName": "接口全称",
+              "ifDescr": "接口描述",
               "vendor": "厂商",
               "role": "角色",
               "Value": "活跃连接数"
@@ -666,14 +670,14 @@
             "$__all"
           ]
         },
-        "definition": "label_values({__name__=~\"node_load1|node_uname_info|host_cpu_util|hrProcessorLoad|up\"}, site_name)",
+        "definition": "label_values({__name__=~\"node_.*|up\"}, site_id)",
         "includeAll": true,
         "label": "站点",
         "multi": true,
         "name": "site",
         "options": [],
         "query": {
-          "query": "label_values({__name__=~\"node_load1|node_uname_info|host_cpu_util|hrProcessorLoad|up\"}, site_name)",
+          "query": "label_values({__name__=~\"node_.*|up\"}, site_id)",
           "refId": "StandardVariableQuery"
         },
         "refresh": 1,
@@ -690,14 +694,14 @@
             "$__all"
           ]
         },
-        "definition": "label_values({__name__=~\"node_load1|node_uname_info|host_cpu_util|hrProcessorLoad|up\",site_name=~\"$site\"}, hostname)",
+        "definition": "label_values({__name__=~\"node_.*|up\"}, instance)",
         "includeAll": true,
         "label": "服务器",
         "multi": true,
         "name": "device",
         "options": [],
         "query": {
-          "query": "label_values({__name__=~\"node_load1|node_uname_info|host_cpu_util|hrProcessorLoad|up\",site_name=~\"$site\"}, hostname)",
+          "query": "label_values({__name__=~\"node_.*|up\"}, instance)",
           "refId": "StandardVariableQuery"
         },
         "refresh": 1,
@@ -712,5 +716,5 @@
   "timezone": "browser",
   "title": "07 Linux 服务器监控 (Linux Server Metrics)",
   "uid": "nexora-linux-metrics",
-  "version": 1
+  "version": 2
 }
