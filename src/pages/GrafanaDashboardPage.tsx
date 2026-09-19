@@ -79,12 +79,20 @@ export const GRAFANA_DASHBOARDS = [
     icon: Globe,
   },
   {
-    uid: 'nexora-server-metrics',
-    titleZh: '07 服务器监控',
-    titleEn: '07 Server Metrics',
-    descZh: '主机 CPU Load、内存/Swap、磁盘空间与网络 TCP 连接',
-    descEn: 'Host CPU Load, Memory/Swap, disk usage and TCP connections',
+    uid: 'nexora-linux-metrics',
+    titleZh: '07 Linux 服务器',
+    titleEn: '07 Linux Server',
+    descZh: 'Linux CPU、负载、物理内存/Swap、磁盘空间与 IOPS、网络流量与 TCP 连接',
+    descEn: 'Linux CPU, Load, Memory/Swap, disk space & IOPS, network traffic & TCP sockets',
     icon: HardDrive,
+  },
+  {
+    uid: 'nexora-windows-metrics',
+    titleZh: '08 Windows 主机',
+    titleEn: '08 Windows Host',
+    descZh: 'Windows CPU、物理内存、逻辑磁盘读写延迟、网络适配器与远程桌面会话',
+    descEn: 'Windows CPU, physical memory, logical disk latency, NIC throughput & RDP sessions',
+    icon: Monitor,
   },
 ];
 
@@ -246,7 +254,7 @@ const GrafanaDashboardPage: React.FC<GrafanaDashboardPageProps> = ({ language })
         }
         actions={
           <div className="flex flex-wrap items-center gap-2">
-            {selectedDashboard === 'network-outbound' && (
+            {selectedDashboard.includes('outbound') && (
               <button
                 type="button"
                 onClick={() => navigate('/monitor/outbound')}
@@ -257,7 +265,7 @@ const GrafanaDashboardPage: React.FC<GrafanaDashboardPageProps> = ({ language })
                 <span>{zh ? '探针配置管理' : 'Probes Config'}</span>
               </button>
             )}
-            {selectedDashboard === 'server-metrics' && (
+            {(selectedDashboard.includes('linux') || selectedDashboard.includes('windows') || selectedDashboard.includes('server')) && (
               <button
                 type="button"
                 onClick={() => navigate('/monitor/servers')}
@@ -268,7 +276,7 @@ const GrafanaDashboardPage: React.FC<GrafanaDashboardPageProps> = ({ language })
                 <span>{zh ? '进程与系统明细' : 'Processes Detail'}</span>
               </button>
             )}
-            {selectedDashboard === 'monitoring-health' && (
+            {selectedDashboard.includes('health') && (
               <button
                 type="button"
                 onClick={() => navigate('/monitor/collection-health')}

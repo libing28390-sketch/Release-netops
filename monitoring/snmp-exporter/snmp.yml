@@ -48,6 +48,9 @@ modules:
       indexes:
       - labelname: ifIndex
         type: gauge
+      lookups:
+      - source_indexes: [ifIndex]
+        lookup: ifName
     - name: ifOperStatus
       oid: 1.3.6.1.2.1.2.2.1.8
       type: gauge
@@ -55,6 +58,9 @@ modules:
       indexes:
       - labelname: ifIndex
         type: gauge
+      lookups:
+      - source_indexes: [ifIndex]
+        lookup: ifName
     - name: ifInDiscards
       oid: 1.3.6.1.2.1.2.2.1.13
       type: counter
@@ -62,6 +68,9 @@ modules:
       indexes:
       - labelname: ifIndex
         type: gauge
+      lookups:
+      - source_indexes: [ifIndex]
+        lookup: ifName
     - name: ifInErrors
       oid: 1.3.6.1.2.1.2.2.1.14
       type: counter
@@ -69,6 +78,9 @@ modules:
       indexes:
       - labelname: ifIndex
         type: gauge
+      lookups:
+      - source_indexes: [ifIndex]
+        lookup: ifName
     - name: ifInOctets
       oid: 1.3.6.1.2.1.2.2.1.10
       type: counter
@@ -76,6 +88,9 @@ modules:
       indexes:
       - labelname: ifIndex
         type: gauge
+      lookups:
+      - source_indexes: [ifIndex]
+        lookup: ifName
     - name: ifOutDiscards
       oid: 1.3.6.1.2.1.2.2.1.19
       type: counter
@@ -83,6 +98,9 @@ modules:
       indexes:
       - labelname: ifIndex
         type: gauge
+      lookups:
+      - source_indexes: [ifIndex]
+        lookup: ifName
     - name: ifOutErrors
       oid: 1.3.6.1.2.1.2.2.1.20
       type: counter
@@ -90,6 +108,9 @@ modules:
       indexes:
       - labelname: ifIndex
         type: gauge
+      lookups:
+      - source_indexes: [ifIndex]
+        lookup: ifName
     - name: ifOutOctets
       oid: 1.3.6.1.2.1.2.2.1.16
       type: counter
@@ -97,6 +118,9 @@ modules:
       indexes:
       - labelname: ifIndex
         type: gauge
+      lookups:
+      - source_indexes: [ifIndex]
+        lookup: ifName
     - name: ifName
       oid: 1.3.6.1.2.1.31.1.1.1.1
       type: DisplayString
@@ -111,6 +135,9 @@ modules:
       indexes:
       - labelname: ifIndex
         type: gauge
+      lookups:
+      - source_indexes: [ifIndex]
+        lookup: ifName
     - name: ifHCInOctets
       oid: 1.3.6.1.2.1.31.1.1.1.6
       type: counter
@@ -118,6 +145,9 @@ modules:
       indexes:
       - labelname: ifIndex
         type: gauge
+      lookups:
+      - source_indexes: [ifIndex]
+        lookup: ifName
     - name: ifHCInUcastPkts
       oid: 1.3.6.1.2.1.31.1.1.1.7
       type: counter
@@ -125,6 +155,9 @@ modules:
       indexes:
       - labelname: ifIndex
         type: gauge
+      lookups:
+      - source_indexes: [ifIndex]
+        lookup: ifName
     - name: ifHCInMulticastPkts
       oid: 1.3.6.1.2.1.31.1.1.1.8
       type: counter
@@ -132,6 +165,9 @@ modules:
       indexes:
       - labelname: ifIndex
         type: gauge
+      lookups:
+      - source_indexes: [ifIndex]
+        lookup: ifName
     - name: ifHCInBroadcastPkts
       oid: 1.3.6.1.2.1.31.1.1.1.9
       type: counter
@@ -139,6 +175,9 @@ modules:
       indexes:
       - labelname: ifIndex
         type: gauge
+      lookups:
+      - source_indexes: [ifIndex]
+        lookup: ifName
     - name: ifHCOutOctets
       oid: 1.3.6.1.2.1.31.1.1.1.10
       type: counter
@@ -146,6 +185,9 @@ modules:
       indexes:
       - labelname: ifIndex
         type: gauge
+      lookups:
+      - source_indexes: [ifIndex]
+        lookup: ifName
     - name: ifHCOutUcastPkts
       oid: 1.3.6.1.2.1.31.1.1.1.11
       type: counter

@@ -438,22 +438,21 @@
               "tenant_id": true,
               "site_id": true,
               "site_name": true,
-              "platform": true
+              "platform": true,
+              "ifIndex": true
             },
             "indexByName": {
               "hostname": 0,
               "instance": 1,
-              "ifIndex": 2,
-              "ifName": 3,
-              "vendor": 4,
-              "role": 5,
-              "Value": 6
+              "ifName": 2,
+              "vendor": 3,
+              "role": 4,
+              "Value": 5
             },
             "renameByName": {
               "hostname": "设备名称",
               "instance": "管理 IP",
-              "ifIndex": "端口号 (ifIndex)",
-              "ifName": "接口名称",
+              "ifName": "端口编号",
               "vendor": "厂商",
               "role": "角色",
               "Value": "在线 AP 数"

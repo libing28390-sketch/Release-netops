@@ -4640,7 +4640,7 @@ ${rep.repair_commands}
               {/* Modal Footer / Actions */}
               <div className="px-5 py-3.5 bg-neutral-50/50 dark:bg-white/[0.01] border-t border-black/5 dark:border-white/5 flex gap-3">
                 <a
-                  href={isSrv ? `/monitor/servers?q=${encodeURIComponent(activeHop.ip)}` : `/monitor/networks?q=${encodeURIComponent(activeHop.ip)}`}
+                  href={isSrv ? `/monitor/servers?q=${encodeURIComponent(activeHop.ip)}` : `/assets/network-devices?q=${encodeURIComponent(activeHop.ip)}`}
                   className="flex-1 flex items-center justify-center gap-1.5 px-4 py-2 rounded-xl bg-[#06b6d4]/5 hover:bg-[#06b6d4]/10 text-[#0891b2] text-xs font-semibold transition-colors"
                 >
                   <Activity size={13} /> {zh ? '监控中心' : 'Monitor'}

@@ -40,7 +40,8 @@ describe('getRouteContext monitoring routes', () => {
   it('maps monitoring navigation targets to their rendered panels', () => {
     expect(getRouteContext('/monitor/telemetry').activeTab).toBe('monitoring');
     expect(getRouteContext('/monitor/servers').activeTab).toBe('server-monitoring');
-    expect(getRouteContext('/monitor/networks').activeTab).toBe('network-monitoring');
+    expect(getRouteContext('/monitor/networks').activeTab).toBe('inventory');
+    expect(getRouteContext('/monitor/networks').subPage).toBe('devices');
     expect(getRouteContext('/monitor/dashboards').activeTab).toBe('monitoring-dashboards');
     expect(getRouteContext('/monitor/reports').activeTab).toBe('monitoring-reports');
     expect(getRouteContext('/monitor/reports/interfaces').subPage).toBe('interfaces');

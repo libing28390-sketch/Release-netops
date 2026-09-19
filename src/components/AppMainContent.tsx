@@ -834,10 +834,10 @@ const AppMainContent: React.FC = () => {
                 if (isServer) {
                   navTo('/monitor/servers');
                 } else {
-                  navTo('/monitor/networks');
+                  navTo('/assets/network-devices');
                 }
               } else {
-                navTo('/monitor/networks');
+                navTo('/assets/network-devices');
               }
             }}
             formatTopologyPort={formatTopologyPort}

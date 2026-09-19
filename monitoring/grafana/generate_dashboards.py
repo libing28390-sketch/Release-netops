@@ -65,8 +65,7 @@ def clean_organize_transformation(value_col_name="数值", extra_renames=None):
     renames = {
         "hostname": "设备名称",
         "instance": "管理 IP",
-        "ifIndex": "端口号 (ifIndex)",
-        "ifName": "接口名称",
+        "ifName": "端口编号",
         "vendor": "厂商",
         "role": "角色",
         "Value": value_col_name,
@@ -95,15 +94,15 @@ def clean_organize_transformation(value_col_name="数值", extra_renames=None):
                     "site_id": True,
                     "site_name": True,
                     "platform": True,
+                    "ifIndex": True,
                 },
                 "indexByName": {
                     "hostname": 0,
                     "instance": 1,
-                    "ifIndex": 2,
-                    "ifName": 3,
-                    "vendor": 4,
-                    "role": 5,
-                    "Value": 6,
+                    "ifName": 2,
+                    "vendor": 3,
+                    "role": 4,
+                    "Value": 5,
                 },
                 "renameByName": renames,
             }
@@ -415,20 +414,20 @@ def build_interface_dashboard():
         stat_panel(3, "实时错误包总速率", f"sum(rate(ifInErrors{{{sel}}}[5m]) + rate(ifOutErrors{{{sel}}}[5m]))", 12, 0, 6, 4, unit="pps", thresholds=[{"color": "green", "value": None}, {"color": "#E0B400", "value": 10}, {"color": "red", "value": 100}]),
         stat_panel(4, "实时丢弃包总速率", f"sum(rate(ifInDiscards{{{sel}}}[5m]) + rate(ifOutDiscards{{{sel}}}[5m]))", 18, 0, 6, 4, unit="pps", thresholds=[{"color": "green", "value": None}, {"color": "#E0B400", "value": 10}, {"color": "red", "value": 100}]),
         timeseries_panel(5, "高负荷端口入流量 Top 10", [
-            {"expr": f"topk(10, rate(ifHCInOctets{{{sel}}}[5m]) * 8)", "legendFormat": "{{hostname}} ({{instance}}) - 端口 {{ifIndex}}", "refId": "A"}
+            {"expr": f"topk(10, rate(ifHCInOctets{{{sel}}}[5m]) * 8)", "legendFormat": "{{hostname}} ({{instance}}) - {{ifName}}", "refId": "A"}
         ], 0, 4, 12, 8, unit="bps"),
         timeseries_panel(6, "高负荷端口出流量 Top 10", [
-            {"expr": f"topk(10, rate(ifHCOutOctets{{{sel}}}[5m]) * 8)", "legendFormat": "{{hostname}} ({{instance}}) - 端口 {{ifIndex}}", "refId": "A"}
+            {"expr": f"topk(10, rate(ifHCOutOctets{{{sel}}}[5m]) * 8)", "legendFormat": "{{hostname}} ({{instance}}) - {{ifName}}", "refId": "A"}
         ], 12, 4, 12, 8, unit="bps"),
         table_panel(
             7, "端口带宽利用率 Top 20",
-            f"topk(20, max by (hostname, instance, ifIndex) ((rate(ifHCInOctets{{{sel}}}[5m]) * 8) / (ifHighSpeed * 1000000) * 100))",
+            f"topk(20, max by (hostname, instance, ifName) ((rate(ifHCInOctets{{{sel}}}[5m]) * 8) / (ifHighSpeed * 1000000) * 100))",
             0, 12, 12, 8, unit="percent",
             transformations=clean_organize_transformation("带宽利用率")
         ),
         table_panel(
             8, "端口错误与丢弃排行 Top 20",
-            f"topk(20, sum by (hostname, instance, ifIndex) (rate(ifInErrors{{{sel}}}[5m]) + rate(ifOutErrors{{{sel}}}[5m]) + rate(ifInDiscards{{{sel}}}[5m])))",
+            f"topk(20, sum by (hostname, instance, ifName) (rate(ifInErrors{{{sel}}}[5m]) + rate(ifOutErrors{{{sel}}}[5m]) + rate(ifInDiscards{{{sel}}}[5m])))",
             12, 12, 12, 8, unit="pps",
             transformations=clean_organize_transformation("错误/丢弃率 (pps)")
         )
@@ -528,8 +527,8 @@ def build_outbound_dashboard():
             {"expr": f"sum by (hostname, instance) (rate(ifHCOutOctets{{{comb_sel}}}[5m]) * 8)", "legendFormat": "{{hostname}} ({{instance}}) 出向", "refId": "A"}
         ], 12, 4, 12, 8, unit="bps"),
         timeseries_panel(7, "出口端口带宽利用率走势 (In/Out Top 10)", [
-            {"expr": f"topk(10, (rate(ifHCInOctets{{{comb_sel}}}[5m]) * 8) / (ifHighSpeed * 1000000) * 100)", "legendFormat": "{{hostname}} - 端口 {{ifIndex}} 入向利用率", "refId": "A"},
-            {"expr": f"topk(10, (rate(ifHCOutOctets{{{comb_sel}}}[5m]) * 8) / (ifHighSpeed * 1000000) * 100)", "legendFormat": "{{hostname}} - 端口 {{ifIndex}} 出向利用率", "refId": "B"}
+            {"expr": f"topk(10, (rate(ifHCInOctets{{{comb_sel}}}[5m]) * 8) / (ifHighSpeed * 1000000) * 100)", "legendFormat": "{{hostname}} - {{ifName}} 入向利用率", "refId": "A"},
+            {"expr": f"topk(10, (rate(ifHCOutOctets{{{comb_sel}}}[5m]) * 8) / (ifHighSpeed * 1000000) * 100)", "legendFormat": "{{hostname}} - {{ifName}} 出向利用率", "refId": "B"}
         ], 0, 12, 12, 8, unit="percent"),
         timeseries_panel(8, "出口链路接口丢包与错包时序 (PPS)", [
             {"expr": f"sum by (hostname, instance) (rate(ifInErrors{{{comb_sel}}}[5m]) + rate(ifOutErrors{{{comb_sel}}}[5m]))", "legendFormat": "{{hostname}} ({{instance}}) 错包/秒", "refId": "A"},
@@ -537,13 +536,13 @@ def build_outbound_dashboard():
         ], 12, 12, 12, 8, unit="pps"),
         table_panel(
             9, "出口端口带宽利用率排行 Top 10",
-            f"topk(10, max by (hostname, instance, ifIndex) ((rate(ifHCInOctets{{{comb_sel}}}[5m]) * 8) / (ifHighSpeed * 1000000) * 100))",
+            f"topk(10, max by (hostname, instance, ifName) ((rate(ifHCInOctets{{{comb_sel}}}[5m]) * 8) / (ifHighSpeed * 1000000) * 100))",
             0, 20, 12, 8, unit="percent",
             transformations=clean_organize_transformation("带宽利用率")
         ),
         table_panel(
             10, "出口端口错误与丢弃排行 Top 10",
-            f"topk(10, sum by (hostname, instance, ifIndex) (rate(ifInErrors{{{comb_sel}}}[5m]) + rate(ifOutErrors{{{comb_sel}}}[5m]) + rate(ifInDiscards{{{comb_sel}}}[5m])))",
+            f"topk(10, sum by (hostname, instance, ifName) (rate(ifInErrors{{{comb_sel}}}[5m]) + rate(ifOutErrors{{{comb_sel}}}[5m]) + rate(ifInDiscards{{{comb_sel}}}[5m])))",
             12, 20, 12, 8, unit="pps",
             transformations=clean_organize_transformation("错误/丢弃率 (pps)")
         )
@@ -574,47 +573,49 @@ def build_outbound_dashboard():
         "version": 1
     }
 
-def build_server_dashboard():
+def build_linux_dashboard():
     srv_sel = 'site_name=~"$site",hostname=~"$device"'
     panels = [
-        stat_panel(1, "受纳管服务器总数", 'count(count by (hostname) (node_load1 or host_cpu_util or cpu_usage_percent{role=~"server|host"} or hrProcessorLoad)) or vector(0)', 0, 0, 6, 4, unit="none", color="blue"),
-        stat_panel(2, "主机平均 CPU 使用率", f'avg(100 - (rate(node_cpu_seconds_total{{{srv_sel},mode="idle"}}[5m]) * 100) or host_cpu_util{{{srv_sel}}} or hrProcessorLoad{{{srv_sel}}}) or vector(0)', 6, 0, 6, 4, unit="percent", thresholds=[
+        stat_panel(1, "受纳管 Linux 主机数", 'count(count by (hostname) (node_load1 or node_uname_info)) or vector(0)', 0, 0, 6, 4, unit="none", color="blue"),
+        stat_panel(2, "平均 CPU 使用率", f'avg(100 - (rate(node_cpu_seconds_total{{{srv_sel},mode="idle"}}[5m]) * 100) or host_cpu_util{{{srv_sel}}}) or vector(0)', 6, 0, 6, 4, unit="percent", thresholds=[
             {"color": "green", "value": None},
             {"color": "#E0B400", "value": 70},
             {"color": "red", "value": 85}
         ]),
-        stat_panel(3, "主机平均内存利用率", f'avg((1 - (node_memory_MemAvailable_bytes{{{srv_sel}}} / node_memory_MemTotal_bytes{{{srv_sel}}})) * 100 or host_mem_util{{{srv_sel}}} or hrStorageUsed{{{srv_sel},hrStorageType=~".*ram.*"}} / hrStorageSize * 100) or vector(0)', 12, 0, 6, 4, unit="percent", thresholds=[
+        stat_panel(3, "平均物理内存利用率", f'avg((1 - (node_memory_MemAvailable_bytes{{{srv_sel}}} / node_memory_MemTotal_bytes{{{srv_sel}}})) * 100 or host_mem_util{{{srv_sel}}}) or vector(0)', 12, 0, 6, 4, unit="percent", thresholds=[
             {"color": "green", "value": None},
             {"color": "#E0B400", "value": 80},
             {"color": "red", "value": 90}
         ]),
         stat_panel(4, "TCP 活跃连接总数", f'sum(node_netstat_Tcp_CurrEstab{{{srv_sel}}} or host_tcp_estab{{{srv_sel}}}) or vector(0)', 18, 0, 6, 4, unit="none", color="purple"),
 
-        timeseries_panel(5, "服务器 CPU 利用率趋势 (%)", [
-            {"expr": f'100 - (rate(node_cpu_seconds_total{{{srv_sel},mode="idle"}}[5m]) * 100) or host_cpu_util{{{srv_sel}}} or avg by (hostname) (hrProcessorLoad{{{srv_sel}}})', "legendFormat": "{{hostname}} CPU", "refId": "A"}
+        timeseries_panel(5, "CPU 利用率与平均负载趋势", [
+            {"expr": f'100 - (rate(node_cpu_seconds_total{{{srv_sel},mode="idle"}}[5m]) * 100) or host_cpu_util{{{srv_sel}}}', "legendFormat": "{{hostname}} CPU利用率 (%)", "refId": "A"},
+            {"expr": f'node_load1{{{srv_sel}}} or host_cpu_load1{{{srv_sel}}}', "legendFormat": "{{hostname}} 1分钟负载 (Load1)", "refId": "B"},
+            {"expr": f'node_load5{{{srv_sel}}} or host_cpu_load5{{{srv_sel}}}', "legendFormat": "{{hostname}} 5分钟负载 (Load5)", "refId": "C"}
         ], 0, 4, 12, 8, unit="percent"),
-        timeseries_panel(6, "系统平均负载趋势 (1m Load)", [
-            {"expr": f'node_load1{{{srv_sel}}} or host_cpu_load1{{{srv_sel}}}', "legendFormat": "{{hostname}} Load1", "refId": "A"},
-            {"expr": f'node_load5{{{srv_sel}}} or host_cpu_load5{{{srv_sel}}}', "legendFormat": "{{hostname}} Load5", "refId": "B"}
-        ], 12, 4, 12, 8, unit="none"),
-
-        timeseries_panel(7, "内存与 Swap 空间消耗趋势", [
-            {"expr": f'(1 - (node_memory_MemAvailable_bytes{{{srv_sel}}} / node_memory_MemTotal_bytes{{{srv_sel}}})) * 100 or host_mem_util{{{srv_sel}}}', "legendFormat": "{{hostname}} 内存利用率", "refId": "A"},
-            {"expr": f'(1 - (node_memory_SwapFree_bytes{{{srv_sel}}} / node_memory_SwapTotal_bytes{{{srv_sel}}})) * 100 or host_swap_util{{{srv_sel}}}', "legendFormat": "{{hostname}} Swap 利用率", "refId": "B"}
-        ], 0, 12, 12, 8, unit="percent"),
-        timeseries_panel(8, "服务器网络吞吐走势 (bps)", [
-            {"expr": f'sum by (hostname) (rate(node_network_receive_bytes_total{{{srv_sel},device!~"lo|docker.*|veth.*"}}[5m]) * 8 or rate(ifHCInOctets{{{srv_sel}}}[5m]) * 8)', "legendFormat": "{{hostname}} 接收", "refId": "A"},
-            {"expr": f'sum by (hostname) (rate(node_network_transmit_bytes_total{{{srv_sel},device!~"lo|docker.*|veth.*"}}[5m]) * 8 or rate(ifHCOutOctets{{{srv_sel}}}[5m]) * 8)', "legendFormat": "{{hostname}} 发送", "refId": "B"}
-        ], 12, 12, 12, 8, unit="bps"),
+        timeseries_panel(6, "物理内存与 Swap 空间消耗走势", [
+            {"expr": f'(1 - (node_memory_MemAvailable_bytes{{{srv_sel}}} / node_memory_MemTotal_bytes{{{srv_sel}}})) * 100 or host_mem_util{{{srv_sel}}}', "legendFormat": "{{hostname}} 内存利用率 (%)", "refId": "A"},
+            {"expr": f'(1 - (node_memory_SwapFree_bytes{{{srv_sel}}} / node_memory_SwapTotal_bytes{{{srv_sel}}})) * 100 or host_swap_util{{{srv_sel}}}', "legendFormat": "{{hostname}} Swap 利用率 (%)", "refId": "B"}
+        ], 12, 4, 12, 8, unit="percent"),
 
         table_panel(
-            9, "主机磁盘空间利用率 Top 10",
-            f'topk(10, max by (hostname, instance, mountpoint) ((1 - (node_filesystem_avail_bytes{{{srv_sel},fstype!~"tmpfs|iso9660"}} / node_filesystem_size_bytes{{{srv_sel}}})) * 100 or host_disk_util{{{srv_sel}}}))',
-            0, 20, 12, 8, unit="percent",
+            7, "主机磁盘空间利用率 Top 10",
+            f'topk(10, max by (hostname, instance, mountpoint) ((1 - (node_filesystem_avail_bytes{{{srv_sel},fstype!~"tmpfs|iso9660|squashfs"}} / node_filesystem_size_bytes{{{srv_sel}}})) * 100 or host_disk_util{{{srv_sel}}}))',
+            0, 12, 12, 8, unit="percent",
             transformations=clean_organize_transformation("磁盘使用率", {"mountpoint": "挂载点"})
         ),
+        timeseries_panel(8, "磁盘读写 IOPS 走势", [
+            {"expr": f'sum by (hostname, device) (rate(node_disk_reads_completed_total{{{srv_sel},device!~"loop.*"}}[5m]))', "legendFormat": "{{hostname}} - {{device}} 读 IOPS", "refId": "A"},
+            {"expr": f'sum by (hostname, device) (rate(node_disk_writes_completed_total{{{srv_sel},device!~"loop.*"}}[5m]))', "legendFormat": "{{hostname}} - {{device}} 写 IOPS", "refId": "B"}
+        ], 12, 12, 12, 8, unit="iops"),
+
+        timeseries_panel(9, "服务器网卡流量走势 (bps)", [
+            {"expr": f'sum by (hostname, device) (rate(node_network_receive_bytes_total{{{srv_sel},device!~"lo|docker.*|veth.*|br-.*"}}[5m]) * 8 or rate(ifHCInOctets{{{srv_sel}}}[5m]) * 8)', "legendFormat": "{{hostname}} - {{device}} 接收", "refId": "A"},
+            {"expr": f'sum by (hostname, device) (rate(node_network_transmit_bytes_total{{{srv_sel},device!~"lo|docker.*|veth.*|br-.*"}}[5m]) * 8 or rate(ifHCOutOctets{{{srv_sel}}}[5m]) * 8)', "legendFormat": "{{hostname}} - {{device}} 发送", "refId": "B"}
+        ], 0, 20, 12, 8, unit="bps"),
         table_panel(
-            10, "主机 TCP 连接活跃与等待排行 Top 10",
+            10, "主机 TCP 活跃连接数 Top 10",
             f'topk(10, sum by (hostname, instance) (node_netstat_Tcp_CurrEstab{{{srv_sel}}} or host_tcp_conns{{{srv_sel}}}))',
             12, 20, 12, 8, unit="none",
             transformations=clean_organize_transformation("活跃连接数")
@@ -631,7 +632,7 @@ def build_server_dashboard():
         "panels": panels,
         "refresh": "30s",
         "schemaVersion": 39,
-        "tags": ["nexora", "server", "host", "metrics"],
+        "tags": ["nexora", "server", "linux", "metrics"],
         "templating": {
             "list": [
                 make_query_variable("site", "站点", 'label_values(node_load1 or host_cpu_util or hrProcessorLoad or up, site_name)'),
@@ -640,8 +641,79 @@ def build_server_dashboard():
         },
         "time": {"from": "now-6h", "to": "now"},
         "timezone": "browser",
-        "title": "07 服务器与主机监控 (Server & Host Metrics)",
-        "uid": "nexora-server-metrics",
+        "title": "07 Linux 服务器监控 (Linux Server Metrics)",
+        "uid": "nexora-linux-metrics",
+        "version": 1
+    }
+
+def build_windows_dashboard():
+    srv_sel = 'site_name=~"$site",hostname=~"$device"'
+    panels = [
+        stat_panel(1, "受纳管 Windows 主机数", 'count(count by (hostname) (windows_cpu_time_total or windows_os_info)) or vector(0)', 0, 0, 6, 4, unit="none", color="blue"),
+        stat_panel(2, "平均 CPU 使用率", f'avg(100 - (rate(windows_cpu_time_total{{{srv_sel},mode="idle"}}[5m]) * 100) or hrProcessorLoad{{{srv_sel}}}) or vector(0)', 6, 0, 6, 4, unit="percent", thresholds=[
+            {"color": "green", "value": None},
+            {"color": "#E0B400", "value": 70},
+            {"color": "red", "value": 85}
+        ]),
+        stat_panel(3, "平均物理内存使用率", f'avg((1 - (windows_os_physical_memory_free_bytes{{{srv_sel}}} / windows_cs_physical_memory_bytes{{{srv_sel}}})) * 100) or vector(0)', 12, 0, 6, 4, unit="percent", thresholds=[
+            {"color": "green", "value": None},
+            {"color": "#E0B400", "value": 80},
+            {"color": "red", "value": 90}
+        ]),
+        stat_panel(4, "远程桌面活跃会话", f'sum(windows_terminal_services_active_sessions{{{srv_sel}}}) or vector(0)', 18, 0, 6, 4, unit="none", color="purple"),
+
+        timeseries_panel(5, "Windows CPU 使用率走势 (%)", [
+            {"expr": f'100 - (rate(windows_cpu_time_total{{{srv_sel},mode="idle"}}[5m]) * 100) or hrProcessorLoad{{{srv_sel}}}', "legendFormat": "{{hostname}} ({{core}}) CPU", "refId": "A"}
+        ], 0, 4, 12, 8, unit="percent"),
+        timeseries_panel(6, "物理内存使用率与可用内存走势", [
+            {"expr": f'(1 - (windows_os_physical_memory_free_bytes{{{srv_sel}}} / windows_cs_physical_memory_bytes{{{srv_sel}}})) * 100', "legendFormat": "{{hostname}} 内存使用率 (%)", "refId": "A"},
+            {"expr": f'windows_os_physical_memory_free_bytes{{{srv_sel}}}', "legendFormat": "{{hostname}} 可用内存 (Bytes)", "refId": "B"}
+        ], 12, 4, 12, 8, unit="percent"),
+
+        table_panel(
+            7, "逻辑磁盘驱动器空间利用率 Top 10",
+            f'topk(10, max by (hostname, instance, volume) ((1 - (windows_logical_disk_free_bytes{{{srv_sel}}} / windows_logical_disk_size_bytes{{{srv_sel}}})) * 100))',
+            0, 12, 12, 8, unit="percent",
+            transformations=clean_organize_transformation("卷使用率", {"volume": "驱动器盘符"})
+        ),
+        timeseries_panel(8, "逻辑磁盘读写延迟走势 (秒)", [
+            {"expr": f'rate(windows_logical_disk_read_seconds_total{{{srv_sel}}}[5m]) / (rate(windows_logical_disk_reads_total{{{srv_sel}}}[5m]) > 0)', "legendFormat": "{{hostname}} - {{volume}} 读延迟", "refId": "A"},
+            {"expr": f'rate(windows_logical_disk_write_seconds_total{{{srv_sel}}}[5m]) / (rate(windows_logical_disk_writes_total{{{srv_sel}}}[5m]) > 0)', "legendFormat": "{{hostname}} - {{volume}} 写延迟", "refId": "B"}
+        ], 12, 12, 12, 8, unit="s"),
+
+        timeseries_panel(9, "网络适配器吞吐走势 (bps)", [
+            {"expr": f'sum by (hostname, nic) (rate(windows_net_bytes_received_total{{{srv_sel}}}[5m]) * 8)', "legendFormat": "{{hostname}} - {{nic}} 接收", "refId": "A"},
+            {"expr": f'sum by (hostname, nic) (rate(windows_net_bytes_sent_total{{{srv_sel}}}[5m]) * 8)', "legendFormat": "{{hostname}} - {{nic}} 发送", "refId": "B"}
+        ], 0, 20, 12, 8, unit="bps"),
+        table_panel(
+            10, "主机运行时间清单 (Uptime)",
+            f'windows_system_system_up_time{{{srv_sel}}}',
+            12, 20, 12, 8, unit="s",
+            transformations=clean_organize_transformation("已运行时间 (秒)")
+        )
+    ]
+
+    return {
+        "annotations": {"list": []},
+        "editable": false,
+        "fiscalYearStartMonth": 0,
+        "graphTooltip": 1,
+        "id": None,
+        "links": [],
+        "panels": panels,
+        "refresh": "30s",
+        "schemaVersion": 39,
+        "tags": ["nexora", "server", "windows", "metrics"],
+        "templating": {
+            "list": [
+                make_query_variable("site", "站点", 'label_values(windows_cpu_time_total or windows_os_info or hrProcessorLoad or up, site_name)'),
+                make_query_variable("device", "服务器", 'label_values({site_name=~"$site"}, hostname)'),
+            ]
+        },
+        "time": {"from": "now-6h", "to": "now"},
+        "timezone": "browser",
+        "title": "08 Windows 主机监控 (Windows Host Metrics)",
+        "uid": "nexora-windows-metrics",
         "version": 1
     }
 
@@ -654,7 +726,8 @@ def main():
         "network-interface.json": build_interface_dashboard(),
         "monitoring-health.json": build_health_dashboard(),
         "network-outbound.json": build_outbound_dashboard(),
-        "server-metrics.json": build_server_dashboard(),
+        "linux-metrics.json": build_linux_dashboard(),
+        "windows-metrics.json": build_windows_dashboard(),
     }
     for filename, data in dashboards.items():
         path = os.path.join(DASHBOARDS_DIR, filename)

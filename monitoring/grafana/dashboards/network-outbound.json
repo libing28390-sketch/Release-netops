@@ -372,12 +372,12 @@
       "targets": [
         {
           "expr": "topk(10, (rate(ifHCInOctets{site_name=~\"$site\",vendor=~\"$vendor\",hostname=~\"$device\",role=~\"gateway|firewall|wan|border|.*\"}[5m]) * 8) / (ifHighSpeed * 1000000) * 100)",
-          "legendFormat": "{{hostname}} - 端口 {{ifIndex}} 入向利用率",
+          "legendFormat": "{{hostname}} - {{ifName}} 入向利用率",
           "refId": "A"
         },
         {
           "expr": "topk(10, (rate(ifHCOutOctets{site_name=~\"$site\",vendor=~\"$vendor\",hostname=~\"$device\",role=~\"gateway|firewall|wan|border|.*\"}[5m]) * 8) / (ifHighSpeed * 1000000) * 100)",
-          "legendFormat": "{{hostname}} - 端口 {{ifIndex}} 出向利用率",
+          "legendFormat": "{{hostname}} - {{ifName}} 出向利用率",
           "refId": "B"
         }
       ]
@@ -466,7 +466,7 @@
       },
       "targets": [
         {
-          "expr": "topk(10, max by (hostname, instance, ifIndex) ((rate(ifHCInOctets{site_name=~\"$site\",vendor=~\"$vendor\",hostname=~\"$device\",role=~\"gateway|firewall|wan|border|.*\"}[5m]) * 8) / (ifHighSpeed * 1000000) * 100))",
+          "expr": "topk(10, max by (hostname, instance, ifName) ((rate(ifHCInOctets{site_name=~\"$site\",vendor=~\"$vendor\",hostname=~\"$device\",role=~\"gateway|firewall|wan|border|.*\"}[5m]) * 8) / (ifHighSpeed * 1000000) * 100))",
           "format": "table",
           "instant": true,
           "refId": "A"
@@ -493,22 +493,21 @@
               "tenant_id": true,
               "site_id": true,
               "site_name": true,
-              "platform": true
+              "platform": true,
+              "ifIndex": true
             },
             "indexByName": {
               "hostname": 0,
               "instance": 1,
-              "ifIndex": 2,
-              "ifName": 3,
-              "vendor": 4,
-              "role": 5,
-              "Value": 6
+              "ifName": 2,
+              "vendor": 3,
+              "role": 4,
+              "Value": 5
             },
             "renameByName": {
               "hostname": "设备名称",
               "instance": "管理 IP",
-              "ifIndex": "端口号 (ifIndex)",
-              "ifName": "接口名称",
+              "ifName": "端口编号",
               "vendor": "厂商",
               "role": "角色",
               "Value": "带宽利用率"
@@ -549,7 +548,7 @@
       },
       "targets": [
         {
-          "expr": "topk(10, sum by (hostname, instance, ifIndex) (rate(ifInErrors{site_name=~\"$site\",vendor=~\"$vendor\",hostname=~\"$device\",role=~\"gateway|firewall|wan|border|.*\"}[5m]) + rate(ifOutErrors{site_name=~\"$site\",vendor=~\"$vendor\",hostname=~\"$device\",role=~\"gateway|firewall|wan|border|.*\"}[5m]) + rate(ifInDiscards{site_name=~\"$site\",vendor=~\"$vendor\",hostname=~\"$device\",role=~\"gateway|firewall|wan|border|.*\"}[5m])))",
+          "expr": "topk(10, sum by (hostname, instance, ifName) (rate(ifInErrors{site_name=~\"$site\",vendor=~\"$vendor\",hostname=~\"$device\",role=~\"gateway|firewall|wan|border|.*\"}[5m]) + rate(ifOutErrors{site_name=~\"$site\",vendor=~\"$vendor\",hostname=~\"$device\",role=~\"gateway|firewall|wan|border|.*\"}[5m]) + rate(ifInDiscards{site_name=~\"$site\",vendor=~\"$vendor\",hostname=~\"$device\",role=~\"gateway|firewall|wan|border|.*\"}[5m])))",
           "format": "table",
           "instant": true,
           "refId": "A"
@@ -576,22 +575,21 @@
               "tenant_id": true,
               "site_id": true,
               "site_name": true,
-              "platform": true
+              "platform": true,
+              "ifIndex": true
             },
             "indexByName": {
               "hostname": 0,
               "instance": 1,
-              "ifIndex": 2,
-              "ifName": 3,
-              "vendor": 4,
-              "role": 5,
-              "Value": 6
+              "ifName": 2,
+              "vendor": 3,
+              "role": 4,
+              "Value": 5
             },
             "renameByName": {
               "hostname": "设备名称",
               "instance": "管理 IP",
-              "ifIndex": "端口号 (ifIndex)",
-              "ifName": "接口名称",
+              "ifName": "端口编号",
               "vendor": "厂商",
               "role": "角色",
               "Value": "错误/丢弃率 (pps)"
