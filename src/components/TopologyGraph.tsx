@@ -955,23 +955,26 @@ const createDefaultTransform = (width: number, height: number, nodes?: { x: numb
     maxY = Math.max(maxY, node.y + nodePadding);
   });
 
-  const dx = maxX - minX;
-  const dy = maxY - minY;
+  const dx = Math.max(1, maxX - minX);
+  const dy = Math.max(1, maxY - minY);
   const cx = (minX + maxX) / 2;
   const cy = (minY + maxY) / 2;
 
-  const paddingPercent = 0.22; // occupy ~78% of viewport
+  // Reserve top margin for floating toolbar (~56px) so top nodes are not occluded
+  const topToolbarMargin = 60;
+  const paddingPercent = 0.15; // occupy ~85% of viewport
   const targetWidth = width * (1 - paddingPercent);
-  const targetHeight = height * (1 - paddingPercent);
+  const targetHeight = Math.max(120, (height - topToolbarMargin) * (1 - paddingPercent));
 
   let scale = Math.min(targetWidth / dx, targetHeight / dy);
-  // Dense role hierarchies can be taller than the current split-pane
-  // viewport. Allow fit-to-view to zoom out far enough to keep every layer
-  // visible instead of leaving the lower rows clipped or collapsed.
-  scale = Math.max(0.3, Math.min(scale, 1.8));
+
+  // For small/medium topologies (<= 25 nodes), keep scale readable and prevent extreme zoom-out
+  const nodeCount = nodes.length;
+  const minAllowedScale = nodeCount <= 12 ? 0.78 : (nodeCount <= 25 ? 0.62 : 0.42);
+  scale = Math.max(minAllowedScale, Math.min(scale, 1.35));
 
   const tx = width / 2 - cx * scale;
-  const ty = height / 2 - cy * scale;
+  const ty = (height + topToolbarMargin) / 2 - cy * scale;
 
   return d3.zoomIdentity.translate(tx, ty).scale(scale);
 };
@@ -1481,7 +1484,9 @@ const TopologyGraph: React.FC<TopologyGraphProps> = ({ devices, links, onNodeCli
       const pos = persistedPositionsRef.current[d.id] || { x: viewport.width / 2, y: viewport.height / 2 };
       return pos;
     });
-    applyTransform(createDefaultTransform(viewport.width, viewport.height, nodePositions));
+    const nextTransform = createDefaultTransform(viewport.width, viewport.height, nodePositions);
+    applyTransform(nextTransform);
+    setZoomPercent(Math.round(nextTransform.k * 100));
   };
 
   const resetLayout = () => {
@@ -1644,11 +1649,16 @@ const TopologyGraph: React.FC<TopologyGraphProps> = ({ devices, links, onNodeCli
       routingMode: 'straight',
       positions: compatibleLocalLayout ? persistedLayout.positions : {},
     });
-    if (compatibleLocalLayout && persistedLayout.transform) {
+    const localK = Number(persistedLayout.transform?.k || 1);
+    const isLocalPathologicalZoom = localK <= 0.5 && devices.length <= 25;
+    if (compatibleLocalLayout && persistedLayout.transform && !isLocalPathologicalZoom) {
       zoomTransformRef.current = d3.zoomIdentity
         .translate(persistedLayout.transform.x, persistedLayout.transform.y)
-        .scale(persistedLayout.transform.k);
-      setZoomPercent(Math.round(persistedLayout.transform.k * 100));
+        .scale(localK);
+      setZoomPercent(Math.round(localK * 100));
+    } else {
+      zoomTransformRef.current = null;
+      setZoomPercent(90);
     }
 
     const token = typeof window === 'undefined' ? '' : (window.localStorage.getItem('netops_token') || '');
@@ -1673,11 +1683,13 @@ const TopologyGraph: React.FC<TopologyGraphProps> = ({ devices, links, onNodeCli
           && layoutIsFree(layout)
           && String(layout.displayMode || '') === 'hierarchy';
         persistedPositionsRef.current = compatibleRemoteLayout ? (layout.positions || {}) : {};
-        if (compatibleRemoteLayout && layout.transform) {
+        const remoteK = Number(layout.transform?.k || 1);
+        const isRemotePathologicalZoom = remoteK <= 0.5 && devices.length <= 25;
+        if (compatibleRemoteLayout && layout.transform && !isRemotePathologicalZoom) {
           zoomTransformRef.current = d3.zoomIdentity
             .translate(Number(layout.transform.x || 0), Number(layout.transform.y || 0))
-            .scale(Number(layout.transform.k || 1));
-          setZoomPercent(Math.round(Number(layout.transform.k || 1) * 100));
+            .scale(remoteK);
+          setZoomPercent(Math.round(remoteK * 100));
         } else {
           zoomTransformRef.current = null;
           setZoomPercent(90);

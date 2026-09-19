@@ -31,7 +31,6 @@ export const navConfig: NavGroup[] = [
           { id: 'reports-outbound',   label: '互联网出口与 WAN 链路', labelEn: 'Outbound & WAN Probes',   path: '/monitor/reports/outbound',   icon: 'Globe' },
         ],
       },
-      { id: 'monitoring-plans', label: '采集计划', labelEn: 'Collection Plans', path: '/monitor/collection-plans', icon: 'Layers3', requiredRole: 'Operator' },
       { id: 'monitoring-collectors', label: '采集器管理', labelEn: 'Collectors', path: '/monitor/collectors', icon: 'CloudCog', requiredRole: 'Operator' },
       { id: 'topology',          label: '网络拓扑',  labelEn: 'Topology',          path: '/monitor/topology',    icon: 'Network' },
     ],

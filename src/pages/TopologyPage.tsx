@@ -638,7 +638,7 @@ const TopologyPage: React.FC<TopologyPageProps> = ({
 
       {/* Full-width Canvas */}
       <div className="flex min-h-0 flex-1 flex-col">
-        <div className="bg-white dark:bg-zinc-900/90 border border-gray-200/70 dark:border-zinc-800/80 relative flex min-h-[500px] flex-1 flex-col overflow-hidden rounded-2xl shadow-2xs" ref={topologyCanvasRef}>
+        <div className="bg-white dark:bg-zinc-900/90 border border-gray-200/70 dark:border-zinc-800/80 relative flex h-[calc(100vh-270px)] min-h-[660px] flex-col overflow-hidden rounded-2xl shadow-2xs" ref={topologyCanvasRef}>
           <div className="relative flex items-center justify-between border-b border-gray-100 dark:border-zinc-800 px-4 py-3">
             <div>
               <h3 className="text-sm font-bold text-gray-900 dark:text-white">
@@ -671,7 +671,7 @@ const TopologyPage: React.FC<TopologyPageProps> = ({
             </div>
           </div>
 
-          <div className="relative flex-1">
+          <div className="relative flex-1 min-h-0">
             {canvasView === 'overview' ? (
               <TopologySiteOverview
                 language={language}
