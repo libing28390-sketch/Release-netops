@@ -884,6 +884,53 @@ def render_target_snapshot(assignments: Iterable[Mapping[str, Any]], *, collecto
     return sorted(output, key=lambda item: (item["labels"].get("nexora_asset_id", ""), item["labels"].get("nexora_module", "")))
 
 
+def render_server_targets(servers: Iterable[Mapping[str, Any]] = ()) -> tuple[list[dict[str, Any]], list[dict[str, Any]]]:
+    """Render secret-free file-SD targets for Linux (node_exporter) and Windows servers."""
+    linux_targets: list[dict[str, Any]] = []
+    windows_targets: list[dict[str, Any]] = []
+
+    for server_val in servers:
+        server = _row(server_val)
+        ip = str(server.get("management_ip") or server.get("ip_address") or server.get("ip") or "").strip()
+        if not ip:
+            continue
+        platform = str(server.get("platform") or server.get("os") or server.get("os_type") or "").strip().lower()
+        hostname = str(server.get("hostname") or server.get("name") or ip).strip()
+        site_name = str(server.get("site_name") or server.get("site") or "").strip()
+        site_id = str(server.get("site_id") or "").strip()
+        tenant_id = str(server.get("tenant_id") or "tenant-default").strip()
+        asset_id = str(server.get("id") or server.get("asset_id") or "").strip()
+
+        is_windows = "windows" in platform or "win" in platform
+        port = 9182 if is_windows else 9100
+        target_addr = f"{ip}:{port}"
+
+        labels: dict[str, str] = {
+            "instance": target_addr,
+            "hostname": hostname,
+            "role": "server",
+            "os": "windows" if is_windows else "linux",
+        }
+        if site_name:
+            labels["site_name"] = site_name
+        if site_id:
+            labels["site_id"] = site_id
+        if tenant_id:
+            labels["tenant_id"] = tenant_id
+        if asset_id:
+            labels["asset_id"] = asset_id
+
+        entry = {"targets": [target_addr], "labels": labels}
+        if is_windows:
+            windows_targets.append(entry)
+        else:
+            linux_targets.append(entry)
+
+    linux_targets.sort(key=lambda x: x["labels"].get("hostname", ""))
+    windows_targets.sort(key=lambda x: x["labels"].get("hostname", ""))
+    return linux_targets, windows_targets
+
+
 def validate_assignments(assignments: Iterable[Mapping[str, Any]]) -> list[str]:
     """Validate already-materialized assignments before an Apply operation."""
     errors: list[str] = []
@@ -1016,6 +1063,7 @@ def compile_artifact(
     credentials: Iterable[Mapping[str, Any]] = (),
     modules: Iterable[Mapping[str, Any]] = (),
     variants: Iterable[Mapping[str, Any]] = (),
+    servers: Iterable[Mapping[str, Any]] = (),
     output_root: str | Path | None = None,
     compiler_version: str = "monitoring-compiler-1.0.0",
 ) -> dict[str, Any]:
@@ -1066,6 +1114,7 @@ def compile_artifact(
             "get_count": len(config.get("get") or []),
             "metric_count": len(config.get("metrics") or []),
         })
+    linux_targets, windows_targets = render_server_targets(servers)
     manifest = {
         "schema_version": "1.0",
         "collector_id": collector_id,
@@ -1074,6 +1123,7 @@ def compile_artifact(
         "assignment_count": len(selected),
         "module_count": len({str(a.get("variant_key")) for a in selected}),
         "auth_alias_count": len(auth_payload.get("auths") or {}),
+        "server_target_count": len(linux_targets) + len(windows_targets),
         "modules": module_manifest,
         "compiler_version": compiler_version,
     }
@@ -1086,6 +1136,8 @@ def compile_artifact(
     files = {
         "vmagent/scrape.yml": vmagent_yaml,
         "vmagent/targets/snmp_targets.yml": target_yaml,
+        "vmagent/targets/linux_targets.yml": yaml.safe_dump(linux_targets, allow_unicode=True, sort_keys=False),
+        "vmagent/targets/windows_targets.yml": yaml.safe_dump(windows_targets, allow_unicode=True, sort_keys=False),
         "snmp_exporter/modules/modules.yml": yaml.safe_dump(
             {"modules": exporter_modules}, allow_unicode=True, sort_keys=False,
         ),

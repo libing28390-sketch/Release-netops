@@ -313,6 +313,25 @@ def _is_ip_address(value: str | None) -> bool:
         return False
 
 
+def strip_domain_suffix(value: str | None) -> str:
+    """Strip domain suffix (e.g., .lab.local, .eve.lab, .corp.local) preserving case.
+
+    Leaves IPv4 and IPv6 addresses untouched.
+    """
+    if not value:
+        return ''
+    cleaned = str(value).strip().strip('[](){}<> ')
+    if not cleaned:
+        return ''
+    if _is_ip_address(cleaned):
+        return cleaned
+    if '.' in cleaned:
+        candidate = cleaned.split('.')[0].strip()
+        if candidate and re.match(r'^[A-Za-z0-9_-]+$', candidate):
+            return candidate
+    return cleaned
+
+
 def _safe_json(value: Any) -> str:
     try:
         return json.dumps(value or {}, ensure_ascii=False)
@@ -431,7 +450,7 @@ def _extract_observation_fields(raw: dict[str, Any], protocol: str) -> dict[str,
     )
     # Some LLDP implementations omit System Name but still expose a stable
     # chassis ID. Keep that evidence instead of silently dropping the peer.
-    neighbor_identity = neighbor_name or chassis_id
+    neighbor_identity = strip_domain_suffix(neighbor_name) or chassis_id
     confidence = 0.9 if protocol == 'lldp' else 0.82
     return {
         **common,
@@ -1684,7 +1703,7 @@ def _replace_device_observations(
                         observation['neighbor_name_raw'],
                         observation['neighbor_ip_address'],
                         target_device['id'] if target_device else None,
-                        target_device.get('hostname') if target_device else observation['neighbor_name_raw'],
+                        target_device.get('hostname') if target_device else strip_domain_suffix(observation['neighbor_name_raw']),
                         observation['target_port_raw'],
                         final_confidence,
                         run_id,
@@ -1721,7 +1740,7 @@ def _replace_device_observations(
                         neighbor_name,
                         observation['neighbor_ip_address'],
                         target_device['id'] if target_device else None,
-                        target_device.get('hostname') if target_device else observation['neighbor_name_raw'],
+                        target_device.get('hostname') if target_device else strip_domain_suffix(observation['neighbor_name_raw']),
                         observation['target_port_raw'],
                         target_port,
                         final_confidence,
@@ -3496,7 +3515,7 @@ def get_unmanaged_neighbors(
 
         for neighbor_key, observations in neighbor_groups.items():
             first = observations[0]
-            display_name = first.get('neighbor_name_raw') or first.get('neighbor_name_normalized') or 'Unknown'
+            display_name = strip_domain_suffix(first.get('neighbor_name_raw') or first.get('neighbor_name_normalized') or 'Unknown')
             ip_address = first.get('neighbor_ip_address') or ''
             protocols = sorted({obs.get('protocol') or 'lldp' for obs in observations})
             max_confidence = max(float(obs.get('confidence') or 0.0) for obs in observations)

@@ -1104,7 +1104,7 @@ def _load_compile_inputs(conn, collector_id: str, user: Any = None):
         SELECT d.*,
                COALESCE(NULLIF(s.site_name, ''), NULLIF(s.site_code, ''), CASE WHEN SUBSTR(COALESCE(d.site, ''), 1, 5) = 'site-' THEN '' ELSE COALESCE(d.site, '') END, '') AS site_name
         FROM devices d
-        LEFT JOIN sites s ON (s.id = d.site OR s.site_code = d.site OR s.site_name = d.site)
+        LEFT JOIN sites s ON (s.id = d.site_id OR s.id = d.site OR s.site_code = d.site OR s.site_name = d.site)
         WHERE d.status IS NULL OR LOWER(d.status) = 'online'
     """
     device_params: tuple[Any, ...] = ()
@@ -1112,6 +1112,22 @@ def _load_compile_inputs(conn, collector_id: str, user: Any = None):
         device_sql += " AND COALESCE(d.tenant_id, 'tenant-default') = ?"
         device_params = (tenant,)
     devices = [_dict(row) for row in conn.execute(device_sql, device_params).fetchall()]
+    server_sql = """
+        SELECT pa.*,
+               COALESCE(NULLIF(s.site_name, ''), NULLIF(s.site_code, ''), '') AS site_name
+        FROM physical_assets pa
+        LEFT JOIN sites s ON (s.id = pa.site_id OR s.id = pa.site)
+        WHERE pa.asset_type = 'server'
+          AND (pa.status IS NULL OR pa.status = 'active')
+    """
+    server_params: tuple[Any, ...] = ()
+    if tenant is not None:
+        server_sql += " AND COALESCE(pa.tenant_id, 'tenant-default') = ?"
+        server_params = (tenant,)
+    try:
+        servers = [_dict(row) for row in conn.execute(server_sql, server_params).fetchall()]
+    except Exception:
+        servers = []
     try:
         from services.tag_service import get_device_tags
         for device in devices:
@@ -1182,7 +1198,7 @@ def _load_compile_inputs(conn, collector_id: str, user: Any = None):
             # A legacy/incomplete CMDB row is left for the compiler to mark as
             # unconfigured; no plaintext fallback is introduced here.
             pass
-    return devices, plans, modules, variants, collectors, credentials, aliases
+    return devices, plans, modules, variants, collectors, credentials, aliases, servers
 
 
 @router.post("/collectors/{collector_id}/compile")
@@ -1196,7 +1212,7 @@ def compile_collector(collector_id: str, body: CompileRequest | None = None, _us
         if not collector:
             raise HTTPException(status_code=404, detail="Collector not found")
         inputs = _load_compile_inputs(conn, collector_id, _user)
-        assignments = build_assignments(*inputs[:5], credential_aliases=inputs[-1])
+        assignments = build_assignments(*inputs[:5], credential_aliases=inputs[6])
         assignment_count = len(assignments)
         validation_errors = validate_assignments(assignments)
         if validation_errors:
@@ -1214,6 +1230,7 @@ def compile_collector(collector_id: str, body: CompileRequest | None = None, _us
             credentials=artifact_credentials,
             modules=inputs[2],
             variants=inputs[3],
+            servers=inputs[7],
             output_root=artifact_root,
         )
         validate_artifact(artifact)

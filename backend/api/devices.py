@@ -3910,7 +3910,7 @@ def clean_system_hostname(raw_sys_name: str) -> str:
     """Clean standard RFC 1213 MIB-II sysName into a canonical management hostname.
 
     Works across all vendors without requiring any vendor-specific templates:
-    strips trailing newlines, domain suffixes (e.g. '.CCIE', '.corp.local'),
+    strips trailing newlines, domain suffixes (e.g. '.CCIE', '.corp.local', '.eve.lab'),
     and extra whitespace.
     """
     if not raw_sys_name:
@@ -3918,12 +3918,8 @@ def clean_system_hostname(raw_sys_name: str) -> str:
     cleaned = str(raw_sys_name).strip().split('\r')[0].split('\n')[0].strip()
     if not cleaned:
         return ''
-    if '.' in cleaned:
-        parts = cleaned.split('.')
-        candidate = parts[0].strip()
-        if len(candidate) >= 2 and re.match(r'^[A-Za-z0-9_-]+$', candidate):
-            return candidate
-    return cleaned
+    from services.topology_service import strip_domain_suffix
+    return strip_domain_suffix(cleaned)
 
 
 @router.post("/devices/{device_id}/sync-hostname")

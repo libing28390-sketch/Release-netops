@@ -117,7 +117,7 @@
       },
       "targets": [
         {
-          "expr": "avg(100 - (rate(windows_cpu_time_total{instance=~\"$device\",mode=\"idle\"}[5m]) * 100) or hrProcessorLoad{instance=~\"$device\"}) or vector(0)",
+          "expr": "avg(100 - (rate(windows_cpu_time_total{instance=~\"$device\",mode=\"idle\"}[5m]) * 100)) or vector(0)",
           "refId": "A"
         }
       ]
@@ -277,7 +277,7 @@
       },
       "targets": [
         {
-          "expr": "100 - (rate(windows_cpu_time_total{instance=~\"$device\",mode=\"idle\"}[5m]) * 100) or hrProcessorLoad{instance=~\"$device\"}",
+          "expr": "100 - (rate(windows_cpu_time_total{instance=~\"$device\",mode=\"idle\"}[5m]) * 100)",
           "legendFormat": "{{instance}} CPU 利用率",
           "refId": "A"
         }
@@ -661,14 +661,14 @@
             "$__all"
           ]
         },
-        "definition": "label_values({__name__=~\"windows_.*|up\"}, site_id)",
+        "definition": "label_values({job=\"windows_servers\"} or {__name__=~\"windows_.*\"}, site_name)",
         "includeAll": true,
         "label": "站点",
         "multi": true,
         "name": "site",
         "options": [],
         "query": {
-          "query": "label_values({__name__=~\"windows_.*|up\"}, site_id)",
+          "query": "label_values({job=\"windows_servers\"} or {__name__=~\"windows_.*\"}, site_name)",
           "refId": "StandardVariableQuery"
         },
         "refresh": 1,
@@ -685,14 +685,14 @@
             "$__all"
           ]
         },
-        "definition": "label_values({__name__=~\"windows_.*|up\"}, instance)",
+        "definition": "label_values({job=\"windows_servers\",site_name=~\"$site\"} or {__name__=~\"windows_.*\",site_name=~\"$site\"}, instance)",
         "includeAll": true,
         "label": "服务器",
         "multi": true,
         "name": "device",
         "options": [],
         "query": {
-          "query": "label_values({__name__=~\"windows_.*|up\"}, instance)",
+          "query": "label_values({job=\"windows_servers\",site_name=~\"$site\"} or {__name__=~\"windows_.*\",site_name=~\"$site\"}, instance)",
           "refId": "StandardVariableQuery"
         },
         "refresh": 1,
@@ -707,5 +707,5 @@
   "timezone": "browser",
   "title": "08 Windows 服务器监控 (Windows Server Metrics)",
   "uid": "nexora-windows-metrics",
-  "version": 2
+  "version": 3
 }
