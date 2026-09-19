@@ -13,7 +13,7 @@ from __future__ import annotations
 import csv
 import io
 import logging
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from typing import Any
 
 import openpyxl
@@ -58,7 +58,9 @@ def _format_speed(bps: int | float | None) -> str:
 
 
 def _format_bps(bps: int | float | None) -> str:
-    if bps is None or bps == 0:
+    if bps is None:
+        return "—"
+    if bps == 0:
         return "0 bps"
     if bps >= 1_000_000_000:
         return f"{bps / 1_000_000_000:.2f} Gbps"
@@ -69,23 +71,51 @@ def _format_bps(bps: int | float | None) -> str:
     return f"{bps:.0f} bps"
 
 
-def _query_vm_instant_safe(query: str) -> dict[str, float]:
+class _InstantMetricMap(dict[str, float]):
+    def __init__(self) -> None:
+        super().__init__()
+        self.sample_times: dict[str, str] = {}
+
+
+def _query_vm_instant_safe(query: str) -> _InstantMetricMap:
     """Execute PromQL instant query against VictoriaMetrics, return {key: value} mapping."""
+    mapping = _InstantMetricMap()
     try:
         vm = VictoriaMetricsMetricProvider(timeout_seconds=1.0)
         res = vm._request("/api/v1/query", {"query": query})
         result_items = res.get("data", {}).get("result", [])
-        mapping = {}
         for item in result_items:
             metric = item.get("metric", {})
             value_pair = item.get("value", [])
-            val = float(value_pair[1]) if len(value_pair) > 1 else 0.0
+            if len(value_pair) <= 1:
+                continue
+            val = float(value_pair[1])
+            sample_time = None
+            try:
+                sample_time = datetime.fromtimestamp(float(value_pair[0]), tz=timezone.utc).isoformat()
+            except (TypeError, ValueError, OverflowError, OSError):
+                pass
             h = metric.get("hostname") or metric.get("instance", "")
-            idx = metric.get("ifIndex") or metric.get("ifName", "")
-            if h and idx:
-                mapping[f"{h}:{idx}"] = val
+            asset_id = str(metric.get("asset_id") or metric.get("nexora_asset_id") or "").strip()
+            if_index = str(metric.get("ifIndex") or "").strip()
+            if_name = str(metric.get("ifName") or metric.get("ifname") or "").strip()
+            keys: list[str] = []
+            if asset_id:
+                keys.append(f"asset:{asset_id}")
+                if if_index:
+                    keys.append(f"asset:{asset_id}:ifindex:{if_index}")
+                if if_name:
+                    keys.append(f"asset:{asset_id}:ifname:{if_name.casefold()}")
             if h:
-                mapping[h] = val
+                keys.append(f"hostname:{h}")
+                if if_index:
+                    keys.append(f"hostname:{h}:ifindex:{if_index}")
+                if if_name:
+                    keys.append(f"hostname:{h}:ifname:{if_name.casefold()}")
+            for key in keys:
+                mapping[key] = val
+                if sample_time:
+                    mapping.sample_times[key] = sample_time
         return mapping
     except Exception as exc:
         logger.debug("VictoriaMetrics instant query skipped or unavailable: %s", exc)
@@ -151,17 +181,20 @@ def fetch_interfaces_report_data(
         conn = get_db_connection()
         should_close = True
     try:
-        query = """
-            SELECT i.id, i.device_id, i.interface_name, i.description, i.admin_status,
+        tenant_id = str(filters.get("tenant_id") or "").strip()
+        tenant_filter = "WHERE COALESCE(d.tenant_id, 'tenant-default') = ?" if tenant_id else ""
+        query = f"""
+            SELECT i.id, i.device_id, i.if_index, i.interface_name, i.description, i.admin_status,
                    i.oper_status, i.speed, i.mac_address,
                    d.hostname, d.ip_address, d.vendor, d.role,
                    COALESCE(s.site_name, d.site, '默认站点') as site_name
               FROM interfaces i
               JOIN devices d ON i.device_id = d.id
               LEFT JOIN sites s ON d.site_id = s.id
+              {tenant_filter}
              ORDER BY d.hostname, i.interface_name
         """
-        rows = conn.execute(query).fetchall()
+        rows = conn.execute(query, (tenant_id,) if tenant_id else ()).fetchall()
     finally:
         if should_close:
             conn.close()
@@ -194,7 +227,14 @@ def fetch_interfaces_report_data(
 
         # If oper is unknown or empty, infer from VictoriaMetrics ifOperStatus or admin_status
         if not oper or oper in ("UNKNOWN", "--", "-", "NONE"):
-            lookup_keys = [f"{hostname}:{ifname}", f"{ip}:{ifname}"]
+            try:
+                interface_index = str(r["if_index"] or "").strip()
+            except (KeyError, IndexError):
+                interface_index = ""
+            lookup_keys = (
+                [f"asset:{r['device_id']}:ifindex:{interface_index}"] if interface_index else []
+            )
+            lookup_keys.append(f"asset:{r['device_id']}:ifname:{ifname.casefold()}")
             vm_oper_val = next((if_oper_map[k] for k in lookup_keys if k in if_oper_map), None)
             if vm_oper_val is not None:
                 oper = "UP" if int(vm_oper_val) == 1 else "DOWN"
@@ -203,10 +243,10 @@ def fetch_interfaces_report_data(
             elif admin == "UP":
                 oper = "UP"
             else:
-                oper = "DOWN"
+                oper = "UNKNOWN"
 
         if not admin or admin in ("UNKNOWN", "--", "-", "NONE"):
-            admin = oper if oper in ("UP", "DOWN") else "DOWN"
+            admin = oper if oper in ("UP", "DOWN") else "UNKNOWN"
 
         speed = int(r["speed"]) if r["speed"] and str(r["speed"]).isdigit() else 1_000_000_000
 
@@ -217,33 +257,62 @@ def fetch_interfaces_report_data(
         if role:
             roles_set.add(role)
 
-        lookup_keys = [f"{hostname}:{ifname}", f"{ip}:{ifname}", hostname]
-        in_bps = next((in_bps_map[k] for k in lookup_keys if k in in_bps_map), 0.0)
-        out_bps = next((out_bps_map[k] for k in lookup_keys if k in out_bps_map), 0.0)
-        in_pct = round((in_bps / speed) * 100, 2) if speed > 0 else 0.0
-        out_pct = round((out_bps / speed) * 100, 2) if speed > 0 else 0.0
-        max_pct = max(in_pct, out_pct)
+        asset_id = str(r["device_id"] or "")
+        try:
+            if_index = str(r["if_index"] or "").strip()
+        except (KeyError, IndexError):
+            if_index = ""
+        interface_keys = [f"asset:{asset_id}:ifindex:{if_index}"] if asset_id and if_index else []
+        if asset_id:
+            interface_keys.append(f"asset:{asset_id}:ifname:{ifname.casefold()}")
 
-        in_err = next((in_err_map[k] for k in lookup_keys if k in in_err_map), 0.0)
-        out_err = next((out_err_map[k] for k in lookup_keys if k in out_err_map), 0.0)
-        in_disc = next((in_disc_map[k] for k in lookup_keys if k in in_disc_map), 0.0)
-        out_disc = next((out_disc_map[k] for k in lookup_keys if k in out_disc_map), 0.0)
-        total_err = in_err + out_err + in_disc + out_disc
+        def metric_value(metric_map: _InstantMetricMap) -> float | None:
+            return next((metric_map[key] for key in interface_keys if key in metric_map), None)
 
-        if max_pct >= 85.0:
+        in_bps = metric_value(in_bps_map)
+        out_bps = metric_value(out_bps_map)
+        in_pct = round((in_bps / speed) * 100, 2) if in_bps is not None and speed > 0 else None
+        out_pct = round((out_bps / speed) * 100, 2) if out_bps is not None and speed > 0 else None
+        utilization_values = [value for value in (in_pct, out_pct) if value is not None]
+        max_pct = max(utilization_values) if utilization_values else None
+
+        in_err = metric_value(in_err_map)
+        out_err = metric_value(out_err_map)
+        in_disc = metric_value(in_disc_map)
+        out_disc = metric_value(out_disc_map)
+        error_values = [value for value in (in_err, out_err, in_disc, out_disc) if value is not None]
+        total_err = sum(error_values) if error_values else None
+        measured_at = [
+            getattr(metric_map, 'sample_times', {}).get(key)
+            for metric_map in (in_bps_map, out_bps_map, in_err_map, out_err_map, in_disc_map, out_disc_map)
+            for key in interface_keys
+            if key in getattr(metric_map, 'sample_times', {})
+        ]
+        sample_time = max(measured_at) if measured_at else None
+        sample_quality = "current" if sample_time else "no_data"
+
+        if max_pct is not None and max_pct >= 85.0:
             level = "CRITICAL"
             advice = "立即排查异常突发流量并考虑扩容或链路分流"
-        elif max_pct >= 70.0:
+        elif max_pct is not None and max_pct >= 70.0:
             level = "WARNING"
             advice = "持续观察峰值持续时间，检查是否有大文件传输或环路"
-        elif max_pct >= 50.0:
+        elif max_pct is not None and max_pct >= 50.0:
             level = "NOTICE"
             advice = "利用率偏高，保持例行业务监控"
+        elif max_pct is None:
+            level = "NO_DATA"
+            advice = "当前没有有效接口遥测样本，请检查采集状态"
         else:
             level = "NORMAL"
             advice = "负荷正常"
 
-        health = "异常/物理链路" if total_err > 10 else "偶发错包" if total_err > 0 else "健康正常"
+        health = (
+            "不可用" if total_err is None and max_pct is None
+            else "异常/物理链路" if total_err is not None and total_err > 10
+            else "偶发错包" if total_err is not None and total_err > 0
+            else "健康正常"
+        )
 
         item = {
             "id": str(r["id"] or f"{hostname}-{ifname}"),
@@ -274,7 +343,8 @@ def fetch_interfaces_report_data(
             "health_status": health,
             "alert_level": level,
             "advice": advice,
-            "sample_time": now_str,
+            "sample_quality": sample_quality,
+            "sample_time": sample_time,
         }
         all_items.append(item)
 
@@ -311,21 +381,23 @@ def fetch_interfaces_report_data(
     if min_util is not None and str(min_util) != "":
         try:
             m_val = float(min_util)
-            filtered = [x for x in filtered if x["max_util"] >= m_val]
+            filtered = [x for x in filtered if x["max_util"] is not None and x["max_util"] >= m_val]
         except ValueError:
             pass
 
     has_errors_flt = filters.get("has_errors")
     if has_errors_flt is True or str(has_errors_flt).lower() in ("true", "1", "yes"):
-        filtered = [x for x in filtered if x["total_errors"] > 0]
+        filtered = [x for x in filtered if x["total_errors"] is not None and x["total_errors"] > 0]
 
     # Global & filtered KPIs
     up_cnt = sum(1 for x in filtered if x["oper_status"] == "UP")
-    down_cnt = sum(1 for x in filtered if x["oper_status"] != "UP")
-    high_util_cnt = sum(1 for x in filtered if x["max_util"] >= 70.0)
-    critical_cnt = sum(1 for x in filtered if x["max_util"] >= 85.0)
-    err_cnt = sum(1 for x in filtered if x["total_errors"] > 0)
-    avg_util = round(sum(x["max_util"] for x in filtered) / len(filtered), 2) if filtered else 0.0
+    down_cnt = sum(1 for x in filtered if x["oper_status"] == "DOWN")
+    unknown_cnt = sum(1 for x in filtered if x["oper_status"] not in {"UP", "DOWN"})
+    high_util_cnt = sum(1 for x in filtered if x["max_util"] is not None and x["max_util"] >= 70.0)
+    critical_cnt = sum(1 for x in filtered if x["max_util"] is not None and x["max_util"] >= 85.0)
+    err_cnt = sum(1 for x in filtered if x["total_errors"] is not None and x["total_errors"] > 0)
+    available_util = [x["max_util"] for x in filtered if x["max_util"] is not None]
+    avg_util = round(sum(available_util) / len(available_util), 2) if available_util else None
 
     return {
         "report_type": "interfaces",
@@ -333,10 +405,12 @@ def fetch_interfaces_report_data(
             "total_interfaces": len(filtered),
             "up_interfaces": up_cnt,
             "down_interfaces": down_cnt,
+            "unknown_interfaces": unknown_cnt,
             "high_util_count": high_util_cnt,
             "critical_util_count": critical_cnt,
             "error_interfaces_count": err_cnt,
             "avg_utilization": avg_util,
+            "no_data_interfaces": sum(1 for x in filtered if x["sample_quality"] == "no_data"),
         },
         "options": {
             "vendors": sorted(list(vendors_set)),
@@ -361,15 +435,18 @@ def fetch_devices_report_data(
         conn = get_db_connection()
         should_close = True
     try:
-        query = """
+        tenant_id = str(filters.get("tenant_id") or "").strip()
+        tenant_filter = "WHERE COALESCE(d.tenant_id, 'tenant-default') = ?" if tenant_id else ""
+        query = f"""
             SELECT d.id, d.hostname, d.ip_address, d.vendor, d.platform, d.role, d.status,
                    d.cpu_usage, d.memory_usage, d.temp as temperature,
                    COALESCE(s.site_name, d.site, '默认站点') as site_name
               FROM devices d
               LEFT JOIN sites s ON d.site_id = s.id
+              {tenant_filter}
              ORDER BY d.hostname
         """
-        rows = conn.execute(query).fetchall()
+        rows = conn.execute(query, (tenant_id,) if tenant_id else ()).fetchall()
     finally:
         if should_close:
             conn.close()
@@ -377,6 +454,12 @@ def fetch_devices_report_data(
     cpu_map = _query_vm_instant_safe("cpu_usage_percent or cpmCPUTotal1minRev or hh3cEntityExtCpuUsage or hwEntityCpuUsage or ruijieCpuCostRate")
     mem_map = _query_vm_instant_safe("memory_usage_percent or hh3cEntityExtMemUsage or hwEntityMemUsage or ruijieMemoryPoolCurrentUtilization")
     temp_map = _query_vm_instant_safe("temperature_celsius or hh3cEntityExtTemperature or hwEntityTemperature")
+
+    hostname_counts: dict[str, int] = {}
+    for row in rows:
+        hostname_key = str(row["hostname"] or "").strip()
+        if hostname_key:
+            hostname_counts[hostname_key] = hostname_counts.get(hostname_key, 0) + 1
 
     now_str = datetime.now(timezone.utc).strftime("%Y-%m-%d %H:%M:%S UTC")
 
@@ -401,15 +484,50 @@ def fetch_devices_report_data(
         if role:
             roles_set.add(role)
 
-        cpu = cpu_map.get(h) or (float(r["cpu_usage"]) if r["cpu_usage"] is not None else 0.0)
-        mem = mem_map.get(h) or (float(r["memory_usage"]) if r["memory_usage"] is not None else 0.0)
-        temp = temp_map.get(h) or (float(r["temperature"]) if r["temperature"] is not None else None)
+        asset_key = f"asset:{r['id']}"
+        legacy_host_key = f"hostname:{h}" if hostname_counts.get(h) == 1 else ""
+
+        def current_value(metric_map: _InstantMetricMap) -> float | None:
+            if asset_key in metric_map:
+                return metric_map[asset_key]
+            return metric_map.get(legacy_host_key) if legacy_host_key else None
+
+        cpu_live = current_value(cpu_map)
+        mem_live = current_value(mem_map)
+        temp_live = current_value(temp_map)
+        cpu_snapshot = float(r["cpu_usage"]) if r["cpu_usage"] is not None else None
+        mem_snapshot = float(r["memory_usage"]) if r["memory_usage"] is not None else None
+        temp_snapshot = float(r["temperature"]) if r["temperature"] is not None else None
+        cpu = cpu_live if cpu_live is not None else cpu_snapshot
+        mem = mem_live if mem_live is not None else mem_snapshot
+        temp = temp_live if temp_live is not None else temp_snapshot
+        live_values = [value for value in (cpu_live, mem_live) if value is not None]
+        has_snapshot = any(value is not None for value in (cpu_snapshot, mem_snapshot, temp_snapshot))
+        sample_quality = (
+            "current" if cpu_live is not None and mem_live is not None
+            else "partial" if live_values
+            else "stale" if has_snapshot
+            else "no_data"
+        )
+        sample_times = [
+            getattr(metric_map, 'sample_times', {})[key]
+            for metric_map in (cpu_map, mem_map, temp_map)
+            for key in (asset_key, legacy_host_key)
+            if key and key in getattr(metric_map, 'sample_times', {})
+        ]
+        sample_time = max(sample_times) if sample_times else None
         temp_str = f"{temp:.1f} °C" if temp is not None else "--"
 
-        if cpu >= 85.0 or mem >= 90.0:
+        if sample_quality == "stale":
+            risk = "STALE"
+            advice = "仅有 CMDB 缓存值，当前没有有效实时资源样本"
+        elif sample_quality == "no_data":
+            risk = "NO_DATA"
+            advice = "当前没有有效资源样本，请检查设备采集状态"
+        elif (cpu_live is not None and cpu_live >= 85.0) or (mem_live is not None and mem_live >= 90.0):
             risk = "CRITICAL"
             advice = "立即排查路由抖动、异常进程或内存泄露"
-        elif cpu >= 70.0 or mem >= 75.0:
+        elif (cpu_live is not None and cpu_live >= 70.0) or (mem_live is not None and mem_live >= 75.0):
             risk = "WARNING"
             advice = "负荷偏高，排查是否有大流量洪泛或周期脚本"
         else:
@@ -425,13 +543,19 @@ def fetch_devices_report_data(
             "role": role,
             "site_name": site,
             "status": status,
-            "cpu_usage": round(cpu, 1),
-            "memory_usage": round(mem, 1),
+            "cpu_usage": round(cpu, 1) if cpu is not None else None,
+            "memory_usage": round(mem, 1) if mem is not None else None,
             "temperature": round(temp, 1) if temp is not None else None,
             "temperature_str": temp_str,
             "risk_level": risk,
             "advice": advice,
-            "sample_time": now_str,
+            "sample_quality": sample_quality,
+            "sample_time": sample_time,
+            "metric_sources": {
+                "cpu_usage": "victoriametrics" if cpu_live is not None else "cmdb_snapshot" if cpu_snapshot is not None else "none",
+                "memory_usage": "victoriametrics" if mem_live is not None else "cmdb_snapshot" if mem_snapshot is not None else "none",
+                "temperature": "victoriametrics" if temp_live is not None else "cmdb_snapshot" if temp_snapshot is not None else "none",
+            },
         })
 
     # Filtering
@@ -464,14 +588,20 @@ def fetch_devices_report_data(
 
     high_load_only = filters.get("high_load_only")
     if high_load_only is True or str(high_load_only).lower() in ("true", "1", "yes"):
-        filtered = [x for x in filtered if x["cpu_usage"] >= 70.0 or x["memory_usage"] >= 75.0]
+        filtered = [
+            x for x in filtered
+            if (x["metric_sources"]["cpu_usage"] == "victoriametrics" and x["cpu_usage"] is not None and x["cpu_usage"] >= 70.0)
+            or (x["metric_sources"]["memory_usage"] == "victoriametrics" and x["memory_usage"] is not None and x["memory_usage"] >= 75.0)
+        ]
 
     online_cnt = sum(1 for x in filtered if x["status"] == "ONLINE")
     offline_cnt = sum(1 for x in filtered if x["status"] != "ONLINE")
-    high_cpu_cnt = sum(1 for x in filtered if x["cpu_usage"] >= 70.0)
-    high_mem_cnt = sum(1 for x in filtered if x["memory_usage"] >= 75.0)
-    avg_cpu = round(sum(x["cpu_usage"] for x in filtered) / len(filtered), 1) if filtered else 0.0
-    avg_mem = round(sum(x["memory_usage"] for x in filtered) / len(filtered), 1) if filtered else 0.0
+    current_cpu = [x["cpu_usage"] for x in filtered if x["metric_sources"]["cpu_usage"] == "victoriametrics"]
+    current_mem = [x["memory_usage"] for x in filtered if x["metric_sources"]["memory_usage"] == "victoriametrics"]
+    high_cpu_cnt = sum(1 for value in current_cpu if value is not None and value >= 70.0)
+    high_mem_cnt = sum(1 for value in current_mem if value is not None and value >= 75.0)
+    avg_cpu = round(sum(current_cpu) / len(current_cpu), 1) if current_cpu else None
+    avg_mem = round(sum(current_mem) / len(current_mem), 1) if current_mem else None
 
     return {
         "report_type": "devices",
@@ -483,6 +613,8 @@ def fetch_devices_report_data(
             "high_mem_count": high_mem_cnt,
             "avg_cpu": avg_cpu,
             "avg_mem": avg_mem,
+            "no_data_devices": sum(1 for x in filtered if x["sample_quality"] == "no_data"),
+            "stale_devices": sum(1 for x in filtered if x["sample_quality"] == "stale"),
         },
         "options": {
             "vendors": sorted(list(vendors_set)),
@@ -500,87 +632,105 @@ def fetch_outbound_report_data(
     conn: Any = None,
     filters: dict[str, Any] | None = None,
 ) -> dict[str, Any]:
-    """Fetch structured internet outbound and WAN link probe data with filter options."""
+    """Fetch probe configuration with the latest real result and recent loss."""
     filters = filters or {}
+    tenant_id = str(filters.get("tenant_id") or "").strip()
+    recent_cutoff = (datetime.now(timezone.utc) - timedelta(hours=1)).isoformat()
+    where = "WHERE COALESCE(t.tenant_id, 'tenant-default') = ?" if tenant_id else ""
+    params: tuple[Any, ...] = (recent_cutoff, tenant_id) if tenant_id else (recent_cutoff,)
     should_close = False
     if conn is None:
         conn = get_db_connection()
         should_close = True
     try:
-        targets = conn.execute("""
-            SELECT id, target_name as name, probe_type as target_type, host as target,
-                   COALESCE(group_name, '默认分组') as isp, is_active
-              FROM outbound_probe_targets
-             ORDER BY target_name
-        """).fetchall()
-    except Exception:
-        targets = []
+        targets = conn.execute(
+            f"""
+            WITH latest AS (
+                SELECT DISTINCT ON (target_id)
+                       target_id, sampled_at, success, latency_ms, error_type
+                  FROM outbound_probe_results
+                 ORDER BY target_id, sampled_at DESC, id DESC
+            ), recent AS (
+                SELECT target_id, COUNT(*) AS sample_count,
+                       SUM(CASE WHEN success IS TRUE THEN 1 ELSE 0 END) AS success_count
+                  FROM outbound_probe_results
+                 WHERE sampled_at >= ?
+                 GROUP BY target_id
+            )
+            SELECT t.id, t.target_name AS name, t.probe_type AS target_type,
+                   t.host AS target, COALESCE(t.group_name, '默认分组') AS isp,
+                   COALESCE(t.enabled, t.is_active, FALSE) AS is_active,
+                   latest.sampled_at, latest.success, latest.latency_ms,
+                   latest.error_type, COALESCE(recent.sample_count, 0) AS sample_count,
+                   COALESCE(recent.success_count, 0) AS success_count
+              FROM outbound_probe_targets t
+              LEFT JOIN latest ON latest.target_id = t.id
+              LEFT JOIN recent ON recent.target_id = t.id
+              {where}
+             ORDER BY t.target_name
+            """,
+            params,
+        ).fetchall()
     finally:
         if should_close:
             conn.close()
 
-    now_str = datetime.now(timezone.utc).strftime("%Y-%m-%d %H:%M:%S UTC")
-
+    now = datetime.now(timezone.utc)
+    now_str = now.strftime("%Y-%m-%d %H:%M:%S UTC")
+    stale_after_seconds = 300
     all_items: list[dict[str, Any]] = []
     isps_set: set[str] = set()
 
-    for t in targets:
-        name = t["name"] or "未命名探针"
-        ttype = str(t["target_type"] or "ICMP").upper()
-        target = t["target"] or "--"
-        isp = t["isp"] or "综合出口"
-        active = bool(t["is_active"])
+    for row in targets:
+        item = dict(row)
+        name = item.get("name") or "未命名探针"
+        isp = item.get("isp") or "综合出口"
+        sampled_at = item.get("sampled_at")
+        parsed_at = None
+        if sampled_at:
+            try:
+                parsed_at = datetime.fromisoformat(str(sampled_at).replace("Z", "+00:00"))
+                if parsed_at.tzinfo is None:
+                    parsed_at = parsed_at.replace(tzinfo=timezone.utc)
+            except (TypeError, ValueError):
+                parsed_at = None
+        active = bool(item.get("is_active"))
+        is_stale = parsed_at is None or (now - parsed_at.astimezone(timezone.utc)).total_seconds() > stale_after_seconds
+        sample_count = int(item.get("sample_count") or 0)
+        success_count = int(item.get("success_count") or 0)
+        packet_loss = round((sample_count - success_count) / sample_count * 100, 2) if sample_count else None
+        latency = float(item["latency_ms"]) if item.get("success") and item.get("latency_ms") is not None else None
+
+        if not active:
+            status, sample_quality, grade = "DISABLED", "disabled", "已禁用"
+        elif parsed_at is None:
+            status, sample_quality, grade = "NO_DATA", "no_data", "无采样"
+        elif is_stale:
+            status, sample_quality, grade = "STALE", "stale", "采样过期"
+        elif not bool(item.get("success")):
+            status, sample_quality, grade = "DEGRADED", "failed", "探测失败"
+        else:
+            status, sample_quality, grade = "NORMAL", "current", "采样成功"
 
         if isp:
-            isps_set.add(isp)
-
+            isps_set.add(str(isp))
         all_items.append({
-            "id": str(t["id"] or name),
-            "name": name,
-            "target_type": ttype,
-            "target": target,
-            "isp": isp,
+            "id": str(item.get("id") or name),
+            "name": str(name),
+            "target_type": str(item.get("target_type") or "ICMP").upper(),
+            "target": item.get("target") or "—",
+            "isp": str(isp),
             "is_active": active,
             "active_str": "启用" if active else "禁用",
-            "latency_ms": 12.4,
-            "packet_loss": 0.0,
-            "health_grade": "优 (EXCELLENT)",
-            "status": "NORMAL",
-            "sample_time": now_str,
+            "latency_ms": latency,
+            "packet_loss": packet_loss,
+            "health_grade": grade,
+            "status": status,
+            "sample_quality": sample_quality,
+            "sample_time": parsed_at.astimezone(timezone.utc).isoformat() if parsed_at else None,
+            "error_type": item.get("error_type"),
+            "recent_sample_count": sample_count,
         })
-
-    if not all_items:
-        all_items = [
-            {
-                "id": "wan-01",
-                "name": "主出口网关 (WAN-01)",
-                "target_type": "ICMP",
-                "target": "114.114.114.114",
-                "isp": "电信 10G 对等",
-                "is_active": True,
-                "active_str": "启用",
-                "latency_ms": 8.2,
-                "packet_loss": 0.0,
-                "health_grade": "优 (EXCELLENT)",
-                "status": "NORMAL",
-                "sample_time": now_str,
-            },
-            {
-                "id": "wan-02",
-                "name": "备用出口网关 (WAN-02)",
-                "target_type": "ICMP",
-                "target": "223.5.5.5",
-                "isp": "联通 5G 备用",
-                "is_active": True,
-                "active_str": "启用",
-                "latency_ms": 15.6,
-                "packet_loss": 0.0,
-                "health_grade": "优 (EXCELLENT)",
-                "status": "NORMAL",
-                "sample_time": now_str,
-            },
-        ]
-        isps_set.update(["电信 10G 对等", "联通 5G 备用"])
 
     # Filtering
     filtered = all_items
@@ -602,8 +752,10 @@ def fetch_outbound_report_data(
         filtered = [x for x in filtered if x["target_type"] == ttype_flt]
 
     active_cnt = sum(1 for x in filtered if x["is_active"])
-    avg_lat = round(sum(x["latency_ms"] for x in filtered) / len(filtered), 1) if filtered else 0.0
-    avg_loss = round(sum(x["packet_loss"] for x in filtered) / len(filtered), 2) if filtered else 0.0
+    measured_latency = [x["latency_ms"] for x in filtered if x["latency_ms"] is not None and x["sample_quality"] == "current"]
+    measured_loss = [x["packet_loss"] for x in filtered if x["packet_loss"] is not None and x["sample_quality"] == "current"]
+    avg_lat = round(sum(measured_latency) / len(measured_latency), 1) if measured_latency else None
+    avg_loss = round(sum(measured_loss) / len(measured_loss), 2) if measured_loss else None
 
     return {
         "report_type": "outbound",
@@ -612,6 +764,9 @@ def fetch_outbound_report_data(
             "active_probes": active_cnt,
             "avg_latency_ms": avg_lat,
             "avg_packet_loss": avg_loss,
+            "no_data_probes": sum(1 for x in filtered if x["sample_quality"] == "no_data"),
+            "stale_probes": sum(1 for x in filtered if x["sample_quality"] == "stale"),
+            "failed_probes": sum(1 for x in filtered if x["sample_quality"] == "failed"),
         },
         "options": {
             "isps": sorted(list(isps_set)),
@@ -648,30 +803,38 @@ def generate_interfaces_report(
         s1_rows.append([
             item["hostname"], item["ip_address"], item["vendor"], item["role"], item["site_name"],
             item["interface_name"], item["description"], item["admin_status"], item["oper_status"],
-            item["speed_str"], now_str
+            item["speed_str"], item["sample_time"] or "—"
         ])
         s2_rows.append([
             item["hostname"], item["interface_name"], item["ip_address"], item["speed_str"],
-            item["in_bps_str"], item["out_bps_str"], f"{item['in_util']:.2f}%", f"{item['out_util']:.2f}%",
-            f"{item['max_util']:.2f}%", now_str
+            item["in_bps_str"], item["out_bps_str"],
+            f"{item['in_util']:.2f}%" if item["in_util"] is not None else "—",
+            f"{item['out_util']:.2f}%" if item["out_util"] is not None else "—",
+            f"{item['max_util']:.2f}%" if item["max_util"] is not None else "—",
+            item["sample_time"] or "—"
         ])
-        if item["max_util"] >= 50.0:
+        if item["max_util"] is not None and item["max_util"] >= 50.0:
             s3_rows.append([
                 item["hostname"], item["interface_name"], item["ip_address"], item["speed_str"],
-                f"{item['max_util']:.2f}%", item["alert_level"], item["advice"], now_str
+                f"{item['max_util']:.2f}%", item["alert_level"], item["advice"], item["sample_time"] or "—"
             ])
         s4_rows.append([
             item["hostname"], item["interface_name"], item["ip_address"],
-            f"{item['in_errors']:.2f}", f"{item['out_errors']:.2f}",
-            f"{item['in_discards']:.2f}", f"{item['out_discards']:.2f}",
-            item["health_status"], now_str
+            f"{item['in_errors']:.2f}" if item["in_errors"] is not None else "—",
+            f"{item['out_errors']:.2f}" if item["out_errors"] is not None else "—",
+            f"{item['in_discards']:.2f}" if item["in_discards"] is not None else "—",
+            f"{item['out_discards']:.2f}" if item["out_discards"] is not None else "—",
+            item["health_status"], item["sample_time"] or "—"
         ])
 
     if not s3_rows:
-        s3_rows.append(["全网接口运行良好", "--", "--", "--", "< 50.0%", "NORMAL 正常", "全网未发现超负荷高利用率接口", now_str])
+        if all(item["max_util"] is None for item in items):
+            s3_rows.append(["无有效接口采样", "—", "—", "—", "—", "NO_DATA", "无法评估接口利用率", "—"])
+        else:
+            s3_rows.append(["全网接口运行良好", "--", "--", "--", "< 50.0%", "NORMAL 正常", "全网未发现超负荷高利用率接口", now_str])
 
-    s2_rows.sort(key=lambda r: float(r[8].replace("%", "")), reverse=True)
-    s4_rows.sort(key=lambda r: float(r[3]) + float(r[4]) + float(r[5]) + float(r[6]), reverse=True)
+    s2_rows.sort(key=lambda r: float(r[8].replace("%", "")) if r[8] != "—" else -1, reverse=True)
+    s4_rows.sort(key=lambda r: sum(float(value) for value in r[3:7] if value != "—"), reverse=True)
 
     if format_type.lower() == "csv":
         out = io.StringIO()
@@ -732,20 +895,24 @@ def generate_devices_report(
     for item in items:
         s1_rows.append([
             item["hostname"], item["ip_address"], item["vendor"], item["platform"], item["role"],
-            item["site_name"], item["status"], f"{item['cpu_usage']:.1f}%", f"{item['memory_usage']:.1f}%",
-            item["temperature_str"], now_str
+            item["site_name"], item["status"], f"{item['cpu_usage']:.1f}%" if item["cpu_usage"] is not None else "—",
+            f"{item['memory_usage']:.1f}%" if item["memory_usage"] is not None else "—",
+            item["temperature_str"], item["sample_time"] or "—"
         ])
-        if item["cpu_usage"] >= 70.0:
+        if item["metric_sources"]["cpu_usage"] == "victoriametrics" and item["cpu_usage"] is not None and item["cpu_usage"] >= 70.0:
             lvl = "CRITICAL 严重" if item["cpu_usage"] >= 85.0 else "WARNING 预警"
-            s2_rows.append([item["hostname"], item["ip_address"], item["vendor"], "CPU 负荷过高", f"{item['cpu_usage']:.1f}%", lvl, item["advice"], now_str])
-        if item["memory_usage"] >= 75.0:
+            s2_rows.append([item["hostname"], item["ip_address"], item["vendor"], "CPU 负荷过高", f"{item['cpu_usage']:.1f}%", lvl, item["advice"], item["sample_time"] or "—"])
+        if item["metric_sources"]["memory_usage"] == "victoriametrics" and item["memory_usage"] is not None and item["memory_usage"] >= 75.0:
             lvl = "CRITICAL 严重" if item["memory_usage"] >= 90.0 else "WARNING 预警"
-            s2_rows.append([item["hostname"], item["ip_address"], item["vendor"], "内存使用过高", f"{item['memory_usage']:.1f}%", lvl, item["advice"], now_str])
+            s2_rows.append([item["hostname"], item["ip_address"], item["vendor"], "内存使用过高", f"{item['memory_usage']:.1f}%", lvl, item["advice"], item["sample_time"] or "—"])
 
     if not s2_rows:
-        s2_rows.append(["全网设备健康", "--", "--", "全局正常", "正常", "NORMAL 正常", "全网未发现 CPU/内存高负荷设备", now_str])
+        if all(item["sample_quality"] in {"no_data", "stale"} for item in items):
+            s2_rows.append(["无有效资源采样", "—", "—", "不可评估", "—", "NO_DATA", "当前没有有效 VM 采样", "—"])
+        else:
+            s2_rows.append(["全网设备健康", "--", "--", "全局正常", "正常", "NORMAL 正常", "全网未发现 CPU/内存高负荷设备", now_str])
 
-    s1_rows.sort(key=lambda r: float(r[7].replace("%", "")), reverse=True)
+    s1_rows.sort(key=lambda r: float(r[7].replace("%", "")) if r[7] != "—" else -1, reverse=True)
 
     if format_type.lower() == "csv":
         out = io.StringIO()
@@ -790,7 +957,9 @@ def generate_outbound_report(
     for item in items:
         s1_rows.append([
             item["name"], item["target_type"], item["target"], item["isp"], item["active_str"],
-            f"{item['latency_ms']:.1f} ms", f"{item['packet_loss']:.1f}%", item["health_grade"], now_str
+            f"{item['latency_ms']:.1f} ms" if item["latency_ms"] is not None else "—",
+            f"{item['packet_loss']:.1f}%" if item["packet_loss"] is not None else "—",
+            item["status"], item["sample_time"] or "—"
         ])
 
     if format_type.lower() == "csv":

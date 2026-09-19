@@ -27,6 +27,14 @@ type MonitorDevice = {
   site?: string;
 };
 
+type HealthDrilldownQuery = {
+  health_status?: string;
+  availability_status?: string;
+  collection_status?: string;
+};
+
+const HEALTH_DRILLDOWN_PAGE_SIZE = 200;
+
 interface MonitoringCenterProps {
   language: 'zh' | 'en';
   devices: Device[];
@@ -295,10 +303,23 @@ const MonitoringCenter: React.FC<MonitoringCenterProps> = ({ language, devices: 
   const [healthDrilldownFilter, setHealthDrilldownFilter] = useState<string | null>(null);
   const [healthDrilldownLoading, setHealthDrilldownLoading] = useState(false);
   const [healthDrilldownItems, setHealthDrilldownItems] = useState<MonitoringHealthDevice[]>([]);
+  const [healthDrilldownTotal, setHealthDrilldownTotal] = useState(0);
+  const [healthDrilldownOffset, setHealthDrilldownOffset] = useState(0);
+  const [healthDrilldownRequestedOffset, setHealthDrilldownRequestedOffset] = useState(0);
+  const [healthDrilldownQuery, setHealthDrilldownQuery] = useState<HealthDrilldownQuery>({});
+  const [healthDrilldownError, setHealthDrilldownError] = useState<string | null>(null);
+  const [healthDrilldownPermissionDenied, setHealthDrilldownPermissionDenied] = useState(false);
+  const healthDrilldownRequestSequenceRef = useRef(0);
+  const healthDrilldownAbortControllerRef = useRef<AbortController | null>(null);
   const [healthHistoryRange, setHealthHistoryRange] = useState<1 | 24 | 168>(24);
   const autoRefreshRef = useRef<ReturnType<typeof setInterval> | null>(null);
   const [hostResourceAlertView, setHostResourceAlertView] = useState<'active' | 'history'>('active');
   const advancedSectionRef = useRef<HTMLDivElement | null>(null);
+
+  useEffect(() => () => {
+    healthDrilldownRequestSequenceRef.current += 1;
+    healthDrilldownAbortControllerRef.current?.abort();
+  }, []);
 
   // Read all monitoring state from store
   const {
@@ -472,19 +493,78 @@ const MonitoringCenter: React.FC<MonitoringCenterProps> = ({ language, devices: 
     }
   }, [fetchMonitoringCollectionStatus, language, showToast]);
 
-  const openHealthDrilldown = useCallback(async (filter: { label: string; health_status?: string; availability_status?: string; collection_status?: string }) => {
-    setHealthDrilldownFilter(filter.label);
+  const requestHealthDrilldownPage = useCallback(async (query: HealthDrilldownQuery, offset: number) => {
+    healthDrilldownAbortControllerRef.current?.abort();
+    const controller = new AbortController();
+    healthDrilldownAbortControllerRef.current = controller;
+    const requestSequence = ++healthDrilldownRequestSequenceRef.current;
     setHealthDrilldownLoading(true);
+    setHealthDrilldownItems([]);
+    setHealthDrilldownError(null);
+    setHealthDrilldownPermissionDenied(false);
+    setHealthDrilldownRequestedOffset(offset);
     try {
-      const query = Object.fromEntries(Object.entries(filter).filter(([key]) => key !== 'label')) as { health_status?: string; availability_status?: string; collection_status?: string };
-      const payload = await fetchMonitoringHealthDevices(query);
-      setHealthDrilldownItems(payload.items || []);
+      const payload = await fetchMonitoringHealthDevices({ ...query, limit: HEALTH_DRILLDOWN_PAGE_SIZE, offset }, controller.signal);
+      if (requestSequence !== healthDrilldownRequestSequenceRef.current) return;
+      const items = Array.isArray(payload.items) ? payload.items : [];
+      setHealthDrilldownItems(items);
+      setHealthDrilldownTotal(Math.max(0, Number(payload.total) || 0));
+      setHealthDrilldownOffset(offset);
     } catch (error) {
-      showToast(error instanceof Error ? error.message : (language === 'zh' ? '加载健康下钻失败' : 'Unable to load health drilldown'), 'error');
+      if (requestSequence !== healthDrilldownRequestSequenceRef.current || (error instanceof Error && error.name === 'AbortError')) return;
+      const status = (error as { status?: number } | null)?.status;
+      if (status === 403) {
+        setHealthDrilldownPermissionDenied(true);
+        setHealthDrilldownError(language === 'zh' ? '你没有权限查看设备健康详情。' : 'You do not have permission to view device health details.');
+      } else if (status === 401) {
+        setHealthDrilldownError(language === 'zh' ? '登录状态已失效，请重新登录后重试。' : 'Your session has expired. Sign in again and retry.');
+      } else {
+        setHealthDrilldownError(error instanceof Error ? error.message : (language === 'zh' ? '加载健康下钻失败' : 'Unable to load health drilldown'));
+      }
     } finally {
-      setHealthDrilldownLoading(false);
+      if (requestSequence === healthDrilldownRequestSequenceRef.current) {
+        setHealthDrilldownLoading(false);
+        healthDrilldownAbortControllerRef.current = null;
+      }
     }
-  }, [fetchMonitoringHealthDevices, language, showToast]);
+  }, [fetchMonitoringHealthDevices, language]);
+
+  const openHealthDrilldown = useCallback((filter: { label: string } & HealthDrilldownQuery) => {
+    const { label, ...query } = filter;
+    setHealthDrilldownFilter(label);
+    setHealthDrilldownQuery(query);
+    setHealthDrilldownItems([]);
+    setHealthDrilldownTotal(0);
+    setHealthDrilldownOffset(0);
+    setHealthDrilldownRequestedOffset(0);
+    void requestHealthDrilldownPage(query, 0);
+  }, [requestHealthDrilldownPage]);
+
+  const loadMoreHealthDrilldown = useCallback(() => {
+    void requestHealthDrilldownPage(healthDrilldownQuery, healthDrilldownOffset + HEALTH_DRILLDOWN_PAGE_SIZE);
+  }, [healthDrilldownOffset, healthDrilldownQuery, requestHealthDrilldownPage]);
+
+  const retryHealthDrilldown = useCallback(() => {
+    void requestHealthDrilldownPage(healthDrilldownQuery, healthDrilldownRequestedOffset);
+  }, [healthDrilldownQuery, healthDrilldownRequestedOffset, requestHealthDrilldownPage]);
+
+  const previousHealthDrilldownPage = useCallback(() => {
+    if (healthDrilldownOffset <= 0) return;
+    void requestHealthDrilldownPage(healthDrilldownQuery, Math.max(0, healthDrilldownOffset - HEALTH_DRILLDOWN_PAGE_SIZE));
+  }, [healthDrilldownOffset, healthDrilldownQuery, requestHealthDrilldownPage]);
+
+  const closeHealthDrilldown = useCallback(() => {
+    healthDrilldownRequestSequenceRef.current += 1;
+    healthDrilldownAbortControllerRef.current?.abort();
+    healthDrilldownAbortControllerRef.current = null;
+    setHealthDrilldownFilter(null);
+    setHealthDrilldownItems([]);
+    setHealthDrilldownTotal(0);
+    setHealthDrilldownOffset(0);
+    setHealthDrilldownError(null);
+    setHealthDrilldownPermissionDenied(false);
+    setHealthDrilldownLoading(false);
+  }, []);
 
   const mutateIncident = useCallback(async (action: 'acknowledge' | 'assign' | 'resolve', body: Record<string, string>) => {
     if (!selectedIncident) return;
@@ -1408,11 +1488,33 @@ const MonitoringCenter: React.FC<MonitoringCenterProps> = ({ language, devices: 
               <div className="flex items-center justify-between gap-2">
                 <div>
                   <p className="text-[10px] font-bold uppercase tracking-wider text-blue-700">{healthDrilldownFilter}</p>
-                  <p className="mt-1 text-[11px] text-gray-500">{healthDrilldownLoading ? (language === 'zh' ? '正在加载下钻结果…' : 'Loading drilldown…') : `${healthDrilldownItems.length} ${language === 'zh' ? '台设备' : 'devices'}`}</p>
+                  <p className="mt-1 text-[11px] text-gray-500" aria-live="polite">
+                    {healthDrilldownLoading
+                      ? (language === 'zh' ? '正在加载下钻结果…' : 'Loading drilldown…')
+                      : healthDrilldownError
+                        ? (language === 'zh' ? '加载未完成' : 'Results unavailable')
+                        : healthDrilldownTotal === 0
+                          ? `0 ${language === 'zh' ? '台设备' : 'devices'}`
+                          : `${healthDrilldownOffset + 1}–${healthDrilldownOffset + healthDrilldownItems.length} / ${healthDrilldownTotal} ${language === 'zh' ? '台设备' : 'devices'}`}
+                  </p>
                 </div>
-                <button type="button" onClick={() => setHealthDrilldownFilter(null)} className="rounded-lg px-2 py-1 text-[10px] font-semibold text-gray-500 hover:bg-white/70">{language === 'zh' ? '收起' : 'Collapse'}</button>
+                <button type="button" onClick={closeHealthDrilldown} className="rounded-lg px-2 py-1 text-[10px] font-semibold text-gray-500 hover:bg-white/70">{language === 'zh' ? '收起' : 'Collapse'}</button>
               </div>
-              {!healthDrilldownLoading && (
+              {healthDrilldownError && (
+                <div role="alert" className={`mt-2 rounded-lg border px-3 py-2 text-[11px] ${healthDrilldownPermissionDenied ? 'border-amber-200 bg-amber-50 text-amber-800' : 'border-rose-200 bg-rose-50 text-rose-700'}`}>
+                  <p>{healthDrilldownError}</p>
+                  {!healthDrilldownPermissionDenied && (
+                    <button type="button" onClick={retryHealthDrilldown} disabled={healthDrilldownLoading} className="mt-1 font-semibold underline underline-offset-2 disabled:opacity-50">
+                      {language === 'zh' ? '重试' : 'Retry'}
+                    </button>
+                  )}
+                </div>
+              )}
+              {healthDrilldownLoading && healthDrilldownItems.length === 0 ? (
+                <p role="status" className="mt-2 py-3 text-center text-[11px] text-gray-500">{language === 'zh' ? '正在加载设备…' : 'Loading devices…'}</p>
+              ) : !healthDrilldownLoading && !healthDrilldownError && healthDrilldownItems.length === 0 ? (
+                <p className="mt-2 py-2 text-center text-[11px] text-gray-400">{language === 'zh' ? '没有匹配设备' : 'No matching devices'}</p>
+              ) : healthDrilldownItems.length > 0 && (
                 <div className="mt-2 max-h-44 space-y-1.5 overflow-auto">
                   {healthDrilldownItems.map((item) => (
                     <button key={item.id} type="button" onClick={() => openMonitorDevice(item)} className="flex w-full items-center justify-between gap-2 rounded-lg bg-white px-2.5 py-2 text-left text-[10px] hover:bg-blue-50/60">
@@ -1420,9 +1522,18 @@ const MonitoringCenter: React.FC<MonitoringCenterProps> = ({ language, devices: 
                       <span className="shrink-0 text-gray-400">{item.health_status || 'unknown'} · {item.collection_status || 'unknown'}</span>
                     </button>
                   ))}
-                  {!healthDrilldownItems.length && <p className="py-2 text-center text-[11px] text-gray-400">{language === 'zh' ? '没有匹配设备' : 'No matching devices'}</p>}
                 </div>
               )}
+              <div className="mt-2 flex flex-wrap items-center justify-between gap-2">
+                <button type="button" onClick={previousHealthDrilldownPage} disabled={healthDrilldownOffset === 0 || healthDrilldownLoading} className="rounded-lg border border-blue-200 bg-white px-2.5 py-1.5 text-[10px] font-semibold text-blue-700 hover:bg-blue-50 disabled:cursor-not-allowed disabled:opacity-50">
+                  {healthDrilldownLoading ? (language === 'zh' ? '加载中…' : 'Loading…') : (language === 'zh' ? '上一页' : 'Previous page')}
+                </button>
+                {healthDrilldownOffset + HEALTH_DRILLDOWN_PAGE_SIZE < healthDrilldownTotal && !healthDrilldownError && (
+                  <button type="button" onClick={loadMoreHealthDrilldown} disabled={healthDrilldownLoading} className="rounded-lg border border-blue-600 bg-blue-600 px-2.5 py-1.5 text-[10px] font-semibold text-white hover:bg-blue-700 disabled:cursor-not-allowed disabled:opacity-50">
+                    {healthDrilldownLoading ? (language === 'zh' ? '加载中…' : 'Loading…') : (language === 'zh' ? '加载更多 / 下一页' : 'Load more / Next page')}
+                  </button>
+                )}
+              </div>
             </div>
           )}
         </div>

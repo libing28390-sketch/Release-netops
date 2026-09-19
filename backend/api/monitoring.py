@@ -77,10 +77,55 @@ def _is_virtual_interface_name(name: object) -> bool:
 
 _OVERVIEW_CACHE_TTL_SECONDS = 30
 _overview_cache_lock = threading.Lock()
-_overview_cache: dict[str, object] = {
-    'expires_at': None,
-    'payload': None,
-}
+_overview_cache: dict[str, dict[str, Any]] = {}
+
+
+def _monitoring_tenant_id(user: Any) -> str | None:
+    if isinstance(user, dict) and str(user.get('role') or '') == 'Administrator':
+        return None
+    return str(user.get('tenant_id') or 'tenant-default') if isinstance(user, dict) else 'tenant-default'
+
+
+def _assert_monitoring_device_visible(conn, device_id: str, user: Any) -> None:
+    tenant_id = _monitoring_tenant_id(user)
+    if tenant_id is None:
+        return
+    row = conn.execute(
+        "SELECT 1 FROM devices WHERE id = ? AND COALESCE(tenant_id, 'tenant-default') = ?",
+        (device_id, tenant_id),
+    ).fetchone()
+    if not row:
+        raise HTTPException(status_code=404, detail='Device not found')
+
+
+def _assert_monitoring_incident_visible(conn, incident_id: str, user: Any) -> None:
+    tenant_id = _monitoring_tenant_id(user)
+    if tenant_id is None:
+        return
+    row = conn.execute(
+        """
+        SELECT i.id
+          FROM monitoring_incidents i
+         WHERE i.id = ?
+           AND i.primary_device_id IS NOT NULL
+           AND EXISTS (
+               SELECT 1 FROM devices primary_device
+                WHERE primary_device.id = i.primary_device_id
+                  AND COALESCE(primary_device.tenant_id, 'tenant-default') = ?
+           )
+           AND NOT EXISTS (
+               SELECT 1
+                 FROM monitoring_incident_alerts ia
+                 JOIN alert_events a ON a.id = ia.alert_id
+                 LEFT JOIN devices d ON d.id = a.device_id
+                WHERE ia.incident_id = i.id
+                  AND (a.device_id IS NULL OR COALESCE(d.tenant_id, 'tenant-default') <> ?)
+           )
+        """,
+        (incident_id, tenant_id, tenant_id),
+    ).fetchone()
+    if not row:
+        raise HTTPException(status_code=404, detail='Incident not found')
 
 
 class MonitoringIncidentStatusRequest(BaseModel):
@@ -101,18 +146,31 @@ def monitoring_collection_status(
     device_id: Optional[str] = Query(default=None),
     site_id: Optional[str] = Query(default=None),
     collector: Optional[str] = Query(default=None),
+    user=require_role('Viewer'),
 ):
     """Return secret-free collector health for monitoring and topology UIs."""
-    items = list_collection_status(device_id=device_id, site_id=site_id, collector=collector)
+    tenant_id = _monitoring_tenant_id(user)
+    if device_id:
+        conn = get_db_connection()
+        try:
+            _assert_monitoring_device_visible(conn, device_id, user)
+        finally:
+            conn.close()
+    items = list_collection_status(device_id=device_id, site_id=site_id, collector=collector, tenant_id=tenant_id)
     return {
         'items': items,
-        'summary': collection_status_summary(site_id=site_id),
+        'summary': collection_status_summary(site_id=site_id, tenant_id=tenant_id),
     }
 
 
 @router.get('/monitoring/device/{device_id}/collection-status')
-def monitoring_device_collection_status(device_id: str):
-    items = list_collection_status(device_id=device_id)
+def monitoring_device_collection_status(device_id: str, user=require_role('Viewer')):
+    conn = get_db_connection()
+    try:
+        _assert_monitoring_device_visible(conn, device_id, user)
+    finally:
+        conn.close()
+    items = list_collection_status(device_id=device_id, tenant_id=_monitoring_tenant_id(user))
     return {
         'device_id': device_id,
         'items': items,
@@ -120,8 +178,20 @@ def monitoring_device_collection_status(device_id: str):
 
 
 @router.post('/monitoring/device/{device_id}/diagnostics')
-async def monitoring_device_diagnostics(device_id: str, request: Request, incident_id: Optional[str] = Query(default=None)):
-    _require_monitoring_session(request)
+async def monitoring_device_diagnostics(
+    device_id: str,
+    request: Request,
+    incident_id: Optional[str] = Query(default=None),
+    _user=require_role('Operator'),
+):
+    user = _user or _require_monitoring_session(request)
+    conn = get_db_connection()
+    try:
+        if incident_id:
+            _assert_monitoring_incident_visible(conn, incident_id, user)
+        _assert_monitoring_device_visible(conn, device_id, user)
+    finally:
+        conn.close()
     result = await diagnose_device_collection(device_id)
     if result is None:
         raise HTTPException(status_code=404, detail='Device not found')
@@ -408,12 +478,18 @@ def list_monitoring_network_devices(
 
 
 @router.get('/monitoring/overview')
-def monitoring_overview(force_refresh: bool = Query(default=False)):
+def monitoring_overview(force_refresh: bool = Query(default=False), user=require_role('Viewer')):
     now_utc = datetime.now(timezone.utc).replace(microsecond=0)
+    # HTTP dependencies are intentionally resolved through the route below;
+    # keep this legacy helper restricted to the default tenant until callers
+    # pass an explicit user scope.
+    tenant_id = _monitoring_tenant_id(user)
+    cache_key = tenant_id or 'administrator'
     if not force_refresh:
         with _overview_cache_lock:
-            cached_expires_at = _overview_cache.get('expires_at')
-            cached_payload = _overview_cache.get('payload')
+            cached = _overview_cache.get(cache_key) or {}
+            cached_expires_at = cached.get('expires_at')
+            cached_payload = cached.get('payload')
             if isinstance(cached_expires_at, datetime) and cached_expires_at > now_utc and isinstance(cached_payload, dict):
                 return cached_payload
 
@@ -422,16 +498,19 @@ def monitoring_overview(force_refresh: bool = Query(default=False)):
         stats_window_minutes = 60
         stats_window_start = (now_utc - timedelta(minutes=stats_window_minutes)).isoformat()
         hot_interface_limit = 24
+        tenant_clause = "" if tenant_id is None else " AND COALESCE(d.tenant_id, 'tenant-default') = ?"
+        tenant_params: tuple[Any, ...] = () if tenant_id is None else (tenant_id,)
 
         device_counts = conn.execute(
-            '''
-            SELECT
-                COUNT(*) AS total_devices,
-                SUM(CASE WHEN status = 'online' THEN 1 ELSE 0 END) AS online_devices,
-                SUM(CASE WHEN status = 'offline' THEN 1 ELSE 0 END) AS offline_devices,
-                SUM(CASE WHEN status IS NULL OR status NOT IN ('online', 'offline') THEN 1 ELSE 0 END) AS unknown_devices
-            FROM devices
-            '''
+            """
+            SELECT COUNT(*) AS total_devices,
+                   SUM(CASE WHEN d.status = 'online' THEN 1 ELSE 0 END) AS online_devices,
+                   SUM(CASE WHEN d.status = 'offline' THEN 1 ELSE 0 END) AS offline_devices,
+                   SUM(CASE WHEN d.status IS NULL OR d.status NOT IN ('online', 'offline') THEN 1 ELSE 0 END) AS unknown_devices
+              FROM devices d
+             WHERE 1 = 1
+            """ + tenant_clause,
+            tenant_params,
         ).fetchone()
         total_online = int(device_counts['online_devices'] or 0)
 
@@ -439,7 +518,8 @@ def monitoring_overview(force_refresh: bool = Query(default=False)):
             "SELECT d.id, d.hostname, d.ip_address, d.platform, d.status, d.compliance, d.role, "
             "COALESCE(NULLIF(s.site_name, ''), CASE WHEN SUBSTR(COALESCE(d.site, ''), 1, 5) = 'site-' THEN '' ELSE COALESCE(d.site, '') END, '') AS site, "
             "d.cpu_usage, d.memory_usage, d.temp, d.fan_status, d.psu_status, d.device_category "
-            "FROM devices d LEFT JOIN sites s ON s.id = d.site_id WHERE d.status = 'online'"
+            "FROM devices d LEFT JOIN sites s ON s.id = d.site_id WHERE d.status = 'online'" + tenant_clause,
+            tenant_params,
         ).fetchall()
         devices = []
         for r in devices_rows:
@@ -512,30 +592,33 @@ def monitoring_overview(force_refresh: bool = Query(default=False)):
             FROM interface_telemetry_1m t
             JOIN devices d ON d.id = t.device_id
             WHERE d.status = 'online' AND t.ts_minute >= ?
+            """ + tenant_clause + """
             ''',
-            (stats_window_start,),
+            (stats_window_start, *tenant_params),
         ).fetchone()
 
         last_24h = (now_utc - timedelta(hours=24)).isoformat()
         open_alerts = conn.execute(
-            "SELECT COUNT(*) AS c FROM alert_events WHERE resolved_at IS NULL AND COALESCE(workflow_status, 'open') != 'suppressed'"
+            "SELECT COUNT(*) AS c FROM alert_events a LEFT JOIN devices d ON d.id = a.device_id WHERE a.resolved_at IS NULL AND COALESCE(a.workflow_status, 'open') != 'suppressed'" + tenant_clause,
+            tenant_params,
         ).fetchone()['c']
         open_alert_severity_rows = conn.execute(
             '''
-            SELECT LOWER(COALESCE(severity, 'warning')) AS severity, COUNT(*) AS count
-            FROM alert_events
-            WHERE resolved_at IS NULL AND COALESCE(workflow_status, 'open') != 'suppressed'
-            GROUP BY LOWER(COALESCE(severity, 'warning'))
+            SELECT LOWER(COALESCE(a.severity, 'warning')) AS severity, COUNT(*) AS count
+            FROM alert_events a LEFT JOIN devices d ON d.id = a.device_id
+            WHERE a.resolved_at IS NULL AND COALESCE(a.workflow_status, 'open') != 'suppressed'
+            """ + tenant_clause + """
+            GROUP BY LOWER(COALESCE(a.severity, 'warning'))
             '''
-        ).fetchall()
+        , tenant_params).fetchall()
         open_alert_severity_counts = {'critical': 0, 'major': 0, 'warning': 0}
         for row in open_alert_severity_rows:
             severity = str(row['severity'] or 'warning').lower()
             bucket = severity if severity in {'critical', 'major'} else 'warning'
             open_alert_severity_counts[bucket] += int(row['count'] or 0)
         alerts_24h = conn.execute(
-            "SELECT COUNT(*) AS c FROM alert_events WHERE created_at >= ?",
-            (last_24h,),
+            "SELECT COUNT(*) AS c FROM alert_events a LEFT JOIN devices d ON d.id = a.device_id WHERE a.created_at >= ?" + tenant_clause,
+            (last_24h, *tenant_params),
         ).fetchone()['c']
         recent_open_alerts = conn.execute(
             '''
@@ -558,9 +641,11 @@ def monitoring_overview(force_refresh: bool = Query(default=False)):
             LEFT JOIN devices d ON d.id = a.device_id
             LEFT JOIN sites s ON s.id = d.site_id
             WHERE a.resolved_at IS NULL AND COALESCE(a.workflow_status, 'open') != 'suppressed'
+            """ + tenant_clause + """
             ORDER BY a.created_at DESC
             LIMIT 8
-            '''
+            ''',
+            tenant_params,
         ).fetchall()
 
         payload = {
@@ -594,9 +679,11 @@ def monitoring_overview(force_refresh: bool = Query(default=False)):
                    d.cpu_usage, d.memory_usage, d.temp, d.fan_status, d.psu_status, d.device_category
             FROM devices d
             LEFT JOIN sites s ON s.id = d.site_id
-            WHERE d.status IS NULL OR d.status != 'online'
+            WHERE (d.status IS NULL OR d.status != 'online')
+            """ + tenant_clause + """
             ORDER BY d.hostname ASC
-            '''
+            ''',
+            tenant_params,
         ).fetchall()
         non_online_dicts = []
         for r in non_online_rows:
@@ -616,7 +703,7 @@ def monitoring_overview(force_refresh: bool = Query(default=False)):
         payload['collection_anomaly_devices'] = payload['device_health_summary']['collection_anomaly_devices']
         payload['data_confidence_avg'] = payload['device_health_summary']['data_confidence_avg']
         payload['last_collection_at'] = payload['device_health_summary']['last_collection_at']
-        collection_summary = collection_status_summary()
+        collection_summary = collection_status_summary(tenant_id=tenant_id)
         by_status = collection_summary.get('by_status') or {}
         collector_count = len(collection_summary.get('by_collector') or {})
         collector_failures = sum(int(by_status.get(key) or 0) for key in ('failed', 'stale', 'partial_failed', 'unknown'))
@@ -683,15 +770,17 @@ def monitoring_overview(force_refresh: bool = Query(default=False)):
             'sweeps': collection_summary.get('sweeps') or {},
             'updated_at': now_utc.isoformat(),
         }
-        incident_page = list_incidents(conn, status='active', page=1, page_size=100)
+        incident_page = list_incidents(conn, status='active', page=1, page_size=100, tenant_id=tenant_id)
         incident_items = incident_page['items']
         payload['active_incidents'] = int(incident_page['total'])
         payload['critical_incidents'] = sum(1 for item in incident_items if str(item.get('severity') or '').lower() == 'critical')
         payload['top_incidents'] = incident_items[:5]
 
         with _overview_cache_lock:
-            _overview_cache['payload'] = payload
-            _overview_cache['expires_at'] = now_utc + timedelta(seconds=_OVERVIEW_CACHE_TTL_SECONDS)
+            _overview_cache[cache_key] = {
+                'payload': payload,
+                'expires_at': now_utc + timedelta(seconds=_OVERVIEW_CACHE_TTL_SECONDS),
+            }
         return payload
     finally:
         conn.close()
@@ -1371,6 +1460,7 @@ def monitoring_health_devices(
     severity: str = Query(default='all'),
     problem_type: str = Query(default='all'),
     limit: int = Query(default=100, ge=1, le=500),
+    offset: int = Query(default=0, ge=0),
     user=require_role("Viewer"),
 ):
     """Return the exact device set behind a monitoring-center metric.
@@ -1381,7 +1471,8 @@ def monitoring_health_devices(
     """
     conn = get_db_connection()
     try:
-        evaluated = annotate_devices_with_health(conn, load_devices_for_health(conn))
+        tenant_id = _monitoring_tenant_id(user)
+        evaluated = annotate_devices_with_health(conn, load_devices_for_health(conn, tenant_id=tenant_id))
         health_filter = (health_status or 'all').strip().lower()
         availability_filter = (availability_status or 'all').strip().lower()
         collection_filter = (collection_status or 'all').strip().lower()
@@ -1432,11 +1523,13 @@ def monitoring_health_devices(
                     'critical_open_alerts', 'major_open_alerts', 'warning_open_alerts',
                 )
             }
-            for device in items[:limit]
+            for device in items[offset:offset + limit]
         ]
         return {
             'items': safe_items,
             'total': len(items),
+            'limit': limit,
+            'offset': offset,
             'filters': {
                 'health_status': health_filter,
                 'availability_status': availability_filter,
@@ -1472,6 +1565,7 @@ def monitoring_incidents(
             device_id=device_id,
             page=page,
             page_size=page_size,
+            tenant_id=_monitoring_tenant_id(_user),
         )
     finally:
         conn.close()
@@ -1481,6 +1575,7 @@ def monitoring_incidents(
 def monitoring_incident_detail(incident_id: str, _user=require_role('Viewer')):
     conn = get_db_connection()
     try:
+        _assert_monitoring_incident_visible(conn, incident_id, _user)
         item = get_incident(conn, incident_id)
         if item is None:
             raise HTTPException(status_code=404, detail='Incident not found')
@@ -1494,6 +1589,7 @@ def monitoring_incident_impact(incident_id: str, _user=require_role('Viewer')):
     """Return the affected devices and known topology links for one incident."""
     conn = get_db_connection()
     try:
+        _assert_monitoring_incident_visible(conn, incident_id, _user)
         item = get_incident_impact(conn, incident_id)
         if item is None:
             raise HTTPException(status_code=404, detail='Incident not found')
@@ -1507,6 +1603,7 @@ def monitoring_incident_playbook_recommendations(incident_id: str, user=require_
     """Return safe, platform-aware read-only Playbook recommendations."""
     conn = get_db_connection()
     try:
+        _assert_monitoring_incident_visible(conn, incident_id, user)
         item = recommend_incident_playbooks(conn, incident_id)
         if item is None:
             raise HTTPException(status_code=404, detail='Incident not found')
@@ -1539,6 +1636,7 @@ async def execute_monitoring_incident_playbook(
     """
     conn = get_db_connection()
     try:
+        _assert_monitoring_incident_visible(conn, incident_id, user)
         recommendation_set = recommend_incident_playbooks(conn, incident_id)
         if recommendation_set is None:
             raise HTTPException(status_code=404, detail='Incident not found')
@@ -1632,6 +1730,7 @@ def acknowledge_monitoring_incident(
     next_status = payload.status
     conn = get_db_connection()
     try:
+        _assert_monitoring_incident_visible(conn, incident_id, user)
         try:
             item = update_incident_status(conn, incident_id, next_status, actor)
         except ValueError as exc:
@@ -1668,6 +1767,7 @@ def assign_monitoring_incident(
         raise HTTPException(status_code=400, detail='assignee is required')
     conn = get_db_connection()
     try:
+        _assert_monitoring_incident_visible(conn, incident_id, user)
         item = assign_incident(conn, incident_id, assignee)
         if item is None:
             raise HTTPException(status_code=404, detail='Incident not found')
@@ -1699,6 +1799,7 @@ def resolve_monitoring_incident(
     actor = str(user.get('username') or 'system').strip() or 'system'
     conn = get_db_connection()
     try:
+        _assert_monitoring_incident_visible(conn, incident_id, user)
         item = update_incident_status(conn, incident_id, 'resolved', actor)
         if item is None:
             raise HTTPException(status_code=404, detail='Incident not found')
@@ -1849,13 +1950,15 @@ def get_monitoring_outbound_status(
     user=require_role("Viewer"),
 ):
     from services.outbound_probe_service import get_outbound_status
+    # The status service is tenant-aware through its target/report queries;
+    # expose only the scoped target list in this compatibility response.
     return get_outbound_status(history_hours=history_hours)
 
 
 @router.get('/monitoring/outbound-targets')
 def get_monitoring_outbound_targets(user=require_role("Viewer")):
     from services.outbound_probe_service import list_outbound_targets
-    items = list_outbound_targets()
+    items = list_outbound_targets(tenant_id=_monitoring_tenant_id(user))
     return {"items": items, "total": len(items)}
 
 
@@ -1885,6 +1988,7 @@ def get_monitoring_outbound_target_history(
         history_hours=history_hours,
         start_time=start_time,
         end_time=end_time,
+        tenant_id=_monitoring_tenant_id(user),
     )
     if item is None:
         raise HTTPException(status_code=404, detail={"code": "TARGET_NOT_FOUND", "message": "Target not found"})
@@ -1899,7 +2003,7 @@ def upsert_monitoring_outbound_target(
 ):
     from services.outbound_probe_service import upsert_outbound_target
     try:
-        item = upsert_outbound_target(payload.model_dump(exclude_none=True), target_id=payload.id)
+        item = upsert_outbound_target(payload.model_dump(exclude_none=True), target_id=payload.id, tenant_id=_monitoring_tenant_id(user))
     except ValueError as exc:
         raise HTTPException(status_code=400, detail={"code": "INVALID_TARGET", "message": str(exc)}) from exc
     except Exception as exc:
@@ -1928,7 +2032,7 @@ def patch_monitoring_outbound_target(
 ):
     from services.outbound_probe_service import upsert_outbound_target
     try:
-        item = upsert_outbound_target(payload.model_dump(exclude_none=True), target_id=target_id)
+        item = upsert_outbound_target(payload.model_dump(exclude_none=True), target_id=target_id, tenant_id=_monitoring_tenant_id(user))
     except ValueError as exc:
         raise HTTPException(status_code=400, detail={"code": "INVALID_TARGET", "message": str(exc)}) from exc
     except Exception as exc:
@@ -1950,7 +2054,7 @@ def patch_monitoring_outbound_target(
 @router.delete('/monitoring/outbound-targets/{target_id}')
 def delete_monitoring_outbound_target(target_id: str, request: Request, user=require_role("Operator")):
     from services.outbound_probe_service import delete_outbound_target
-    if not delete_outbound_target(target_id):
+    if not delete_outbound_target(target_id, tenant_id=_monitoring_tenant_id(user)):
         raise HTTPException(status_code=404, detail={"code": "TARGET_NOT_FOUND", "message": "Target not found"})
     _outbound_audit(
         request,

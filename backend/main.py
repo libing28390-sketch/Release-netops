@@ -313,6 +313,19 @@ async def lifespan(app: FastAPI):
         'interval', minutes=1, id='outbound_probe_sampler', replace_existing=True,
         max_instances=1, coalesce=True,
     )
+    from services.monitoring_notification_outbox_service import process_alert_delivery_outbox
+    scheduler.add_job(
+        synchronized_scheduler_job('monitoring_alert_delivery_outbox', expire_seconds=55)(process_alert_delivery_outbox),
+        'interval', seconds=5, id='monitoring_alert_delivery_outbox', replace_existing=True,
+        max_instances=1, coalesce=True,
+    )
+    scheduler.add_job(
+        synchronized_scheduler_job('monitoring_maintenance_reopen', expire_seconds=55)(
+            alert_maintenance_service.reopen_expired_suppressed_alerts
+        ),
+        'interval', minutes=1, id='monitoring_maintenance_reopen', replace_existing=True,
+        max_instances=1, coalesce=True,
+    )
     scheduler.add_job(
         synchronized_scheduler_job('outbound_egress_sampler', expire_seconds=290)(record_outbound_egress_snapshot),
         'interval', minutes=5, id='outbound_egress_sampler', replace_existing=True,

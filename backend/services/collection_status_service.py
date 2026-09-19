@@ -300,6 +300,7 @@ def list_collection_status(
     device_id: str | None = None,
     site_id: str | None = None,
     collector: str | None = None,
+    tenant_id: str | None = None,
 ) -> list[dict[str, Any]]:
     clauses: list[str] = []
     params: list[Any] = []
@@ -312,6 +313,9 @@ def list_collection_status(
     if collector:
         clauses.append("c.collector = ?")
         params.append(collector)
+    if tenant_id:
+        clauses.append("COALESCE(d.tenant_id, 'tenant-default') = ?")
+        params.append(str(tenant_id))
     where_sql = f"WHERE {' AND '.join(clauses)}" if clauses else ""
 
     conn = get_db_connection()
@@ -333,8 +337,8 @@ def list_collection_status(
         conn.close()
 
 
-def collection_status_summary(site_id: str | None = None) -> dict[str, Any]:
-    items = list_collection_status(site_id=site_id)
+def collection_status_summary(site_id: str | None = None, tenant_id: str | None = None) -> dict[str, Any]:
+    items = list_collection_status(site_id=site_id, tenant_id=tenant_id)
     by_status: dict[str, int] = {}
     by_collector: dict[str, dict[str, int]] = {}
     for item in items:
@@ -347,10 +351,6 @@ def collection_status_summary(site_id: str | None = None) -> dict[str, Any]:
         "total": len(items),
         "by_status": by_status,
         "by_collector": by_collector,
-        "sweeps": {
-            "arp": get_collector_sweep_state("arp"),
-        },
-        "queues": {
-            "arp": queue_summary("arp"),
-        },
+        "sweeps": ({"arp": get_collector_sweep_state("arp")} if tenant_id is None else {}),
+        "queues": ({"arp": queue_summary("arp")} if tenant_id is None else {}),
     }

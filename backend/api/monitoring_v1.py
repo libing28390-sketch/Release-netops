@@ -1454,6 +1454,7 @@ def get_monitoring_report_data(
     _user=require_role("Viewer"),
 ):
     filters = {
+        "tenant_id": None if str(_user.get("role") or "") == "Administrator" else str(_user.get("tenant_id") or "tenant-default"),
         "keyword": keyword,
         "vendor": vendor,
         "site": site,
@@ -1485,6 +1486,7 @@ def export_interfaces_report(
     _user=require_role("Viewer"),
 ):
     filters = {
+        "tenant_id": None if str(_user.get("role") or "") == "Administrator" else str(_user.get("tenant_id") or "tenant-default"),
         "keyword": keyword,
         "vendor": vendor,
         "site": site,
@@ -1513,6 +1515,7 @@ def export_devices_report(
     _user=require_role("Viewer"),
 ):
     filters = {
+        "tenant_id": None if str(_user.get("role") or "") == "Administrator" else str(_user.get("tenant_id") or "tenant-default"),
         "keyword": keyword,
         "vendor": vendor,
         "site": site,
@@ -1537,6 +1540,7 @@ def export_outbound_report(
     _user=require_role("Viewer"),
 ):
     filters = {
+        "tenant_id": None if str(_user.get("role") or "") == "Administrator" else str(_user.get("tenant_id") or "tenant-default"),
         "keyword": keyword,
         "isp": isp,
         "target_type": target_type,

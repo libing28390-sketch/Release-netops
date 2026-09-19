@@ -861,6 +861,19 @@ def maybe_notify_webhook(dedupe_key: str, severity: str, title: str, message: st
     if alert_count is not None:
         alert_info['alert_count'] = alert_count
 
+    tenant_id = 'tenant-default'
+    try:
+        tenant_row = _db_quick(
+            "SELECT COALESCE(tenant_id, 'tenant-default') AS tenant_id FROM devices WHERE id = ?",
+            (device_id,), fetch=True,
+        )
+        tenant_id = str(tenant_row['tenant_id'] or 'tenant-default') if tenant_row else tenant_id
+    except Exception:
+        logger.warning('[Alert] Unable to resolve tenant for notification %s', dedupe_key)
+    alert_info['tenant_id'] = tenant_id
+
+    from services.monitoring_notification_outbox_service import enqueue_alert_delivery
+
     # 1. 全局 webhook（.env 配置，纯文字兼容）
     if (settings.ALERT_NOTIFY_WEBHOOK_URL or '').strip():
         plain = (
@@ -870,16 +883,17 @@ def maybe_notify_webhook(dedupe_key: str, severity: str, title: str, message: st
             f"时间: {created_at}"
         )
         payload = {"msgtype": "text", "text": {"content": plain}}
-        asyncio.create_task(asyncio.to_thread(_send_webhook_notification, payload))
+        enqueue_alert_delivery(
+            delivery_key=f"{dedupe_key}:global_webhook:{status}:{created_at}",
+            channel='global_webhook',
+            payload=payload,
+        )
 
-    def _dispatch_user_channels():
-        try:
-            user_alert = {**alert_info, 'lang': 'zh'}
-            notification_service.dispatch_to_all_users(user_alert)
-        except Exception as exc:
-            logger.warning(f"[Alert] Workspace channel dispatch failed: {exc}")
-
-    asyncio.create_task(asyncio.to_thread(_dispatch_user_channels))
+    enqueue_alert_delivery(
+        delivery_key=f"{dedupe_key}:workspace:{status}:{created_at}",
+        channel='workspace',
+        payload={**alert_info, 'lang': 'zh'},
+    )
 
 def set_alert_state(dedupe_key: str, is_active: bool, severity: str, title: str, message: str,
                      device_id: str, interface_name: str | None = None,
@@ -1573,22 +1587,36 @@ async def _process_device_raw(device, cycle_tick: int):
                                         iface['bw_in_pct'] = min(bw_in, 100.0)
                                         iface['bw_out_pct'] = min(bw_out, 100.0)
 
-                                    delta_error_events = max(0, iface.get('in_errors', 0) - previous.get('in_errors', 0))
-                                    delta_error_events += max(0, iface.get('out_errors', 0) - previous.get('out_errors', 0))
-                                    delta_error_events += max(0, iface.get('in_discards', 0) - previous.get('in_discards', 0))
-                                    delta_error_events += max(0, iface.get('out_discards', 0) - previous.get('out_discards', 0))
-                                    delta_packets = max(
-                                        0,
-                                        iface.get('in_packets_total', iface.get('in_ucast_pkts', 0))
-                                        - previous.get('in_packets_total', previous.get('in_ucast_pkts', 0)),
-                                    )
-                                    delta_packets += max(
-                                        0,
-                                        iface.get('out_packets_total', iface.get('out_ucast_pkts', 0))
-                                        - previous.get('out_packets_total', previous.get('out_ucast_pkts', 0)),
-                                    )
-                                    if delta_packets > 0:
-                                        iface['error_rate_pct'] = round((delta_error_events / delta_packets) * 100, 3)
+                                    counter_bits = width or 32
+                                    error_deltas = [
+                                        calculate_counter_delta(iface.get(field), previous.get(field), dt, counter_bits,
+                                                                 current_uptime_cs=iface.get('device_uptime_cs'),
+                                                                 previous_uptime_cs=previous.get('device_uptime_cs'))
+                                        for field in ('in_errors', 'out_errors', 'in_discards', 'out_discards')
+                                    ]
+                                    packet_deltas = [
+                                        calculate_counter_delta(
+                                            iface.get(field, iface.get(fallback, 0)),
+                                            previous.get(field, previous.get(fallback, 0)),
+                                            dt, counter_bits,
+                                            current_uptime_cs=iface.get('device_uptime_cs'),
+                                            previous_uptime_cs=previous.get('device_uptime_cs'),
+                                        )
+                                        for field, fallback in (
+                                            ('in_packets_total', 'in_ucast_pkts'),
+                                            ('out_packets_total', 'out_ucast_pkts'),
+                                        )
+                                    ]
+                                    if all(item.get('rate_per_sec') is not None for item in (*error_deltas, *packet_deltas)):
+                                        delta_error_events = sum(int(item['delta'] or 0) for item in error_deltas)
+                                        delta_packets = sum(int(item['delta'] or 0) for item in packet_deltas)
+                                        if delta_packets > 0:
+                                            iface['error_rate_pct'] = round((delta_error_events / delta_packets) * 100, 3)
+                                    else:
+                                        iface['counter_delta_status'] = {
+                                            **iface.get('counter_delta_status', {}),
+                                            'error': 'invalid_or_reset',
+                                        }
 
                         # Persist high-frequency telemetry for short-term tracing.
                         raw_rows.append((
@@ -1666,9 +1694,11 @@ async def _process_device_raw(device, cycle_tick: int):
 
                         error_rate_rule = resolve_alert_rule('interface_error_rate_high', device_row=device, ip_address=ip, interface_name=iname)
                         error_rate_threshold = float(error_rate_rule['threshold']) if error_rate_rule and error_rate_rule.get('threshold') is not None else None
-                        current_error_rate = float(iface.get('error_rate_pct') or 0)
-                        error_rate_active = bool(error_rate_rule and error_rate_threshold is not None and current_error_rate >= error_rate_threshold)
-                        set_alert_state(
+                        current_error_rate_value = iface.get('error_rate_pct')
+                        current_error_rate = float(current_error_rate_value) if current_error_rate_value is not None else None
+                        if current_error_rate is not None:
+                            error_rate_active = bool(error_rate_rule and error_rate_threshold is not None and current_error_rate >= error_rate_threshold)
+                            set_alert_state(
                             f"if_error_rate:{dev_id}:{iname}",
                             error_rate_active,
                             (error_rate_rule or {}).get('severity', 'major'),
@@ -1683,31 +1713,36 @@ async def _process_device_raw(device, cycle_tick: int):
                             ip_address=ip,
                             status='active' if error_rate_active else 'resolved',
                             rule=error_rate_rule,
-                        )
+                            )
 
-                        max_util = max(float(iface.get('bw_in_pct') or 0), float(iface.get('bw_out_pct') or 0))
-                        util_rule = resolve_alert_rule('interface_util', device_row=device, ip_address=ip, interface_name=iname)
-                        util_threshold = float(util_rule['threshold']) if util_rule and util_rule.get('threshold') is not None else None
-                        util_active = bool(util_rule and util_threshold is not None and max_util >= util_threshold)
-                        util_key = f"if_util:{dev_id}:{iname}"
-                        if util_active:
-                            set_alert_state(
+                        utilization_values = [
+                            float(value) for value in (iface.get('bw_in_pct'), iface.get('bw_out_pct'))
+                            if value is not None
+                        ]
+                        if utilization_values:
+                            max_util = max(utilization_values)
+                            util_rule = resolve_alert_rule('interface_util', device_row=device, ip_address=ip, interface_name=iname)
+                            util_threshold = float(util_rule['threshold']) if util_rule and util_rule.get('threshold') is not None else None
+                            util_active = bool(util_rule and util_threshold is not None and max_util >= util_threshold)
+                            util_key = f"if_util:{dev_id}:{iname}"
+                            if util_active:
+                                set_alert_state(
                                 util_key, True,
                                 util_rule.get('severity', 'warning'),
                                 'Interface Utilization High',
                                 f"{iname} 带宽占用率达到 {max_util:.1f}%，超过阈值 {util_threshold}%",
                                 dev_id, iname,
                                 ip_address=ip, status='active', rule=util_rule,
-                            )
-                        else:
-                            set_alert_state(
+                                )
+                            else:
+                                set_alert_state(
                                 util_key, False,
                                 resolved_alert_severity(util_rule, 'warning'),
                                 'Interface Utilization High',
                                 f"{iname} 带宽占用率已恢复正常（当前 {max_util:.1f}%）",
                                 dev_id, iname,
                                 ip_address=ip, status='resolved', rule=util_rule,
-                            )
+                                )
 
                     prev_intf_octets[dev_id] = cur_snapshot
                     prev_intf_config_hash[str(dev_id)] = interface_config_hash

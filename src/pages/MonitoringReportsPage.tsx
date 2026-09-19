@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useMemo, useCallback } from 'react';
+import React, { useState, useEffect, useMemo, useCallback, useRef } from 'react';
 import { useLocation, useNavigate } from 'react-router-dom';
 import {
   FileSpreadsheet,
@@ -62,6 +62,26 @@ const INITIAL_FILTERS: ReportFilterState = {
   isp: 'all',
 };
 
+const UNAVAILABLE_VALUE = '—';
+
+const toNullableNumber = (value: unknown): number | null => {
+  if (value === null || value === undefined || value === '') return null;
+  const number = Number(value);
+  return Number.isFinite(number) ? number : null;
+};
+
+const formatMetric = (value: unknown, suffix = '', decimals = 1): string => {
+  const number = toNullableNumber(value);
+  return number === null ? UNAVAILABLE_VALUE : `${number.toFixed(decimals)}${suffix}`;
+};
+
+const formatSampleTime = (value: unknown, language: 'zh' | 'en'): string => {
+  if (typeof value !== 'string' || !value) return UNAVAILABLE_VALUE;
+  const timestamp = new Date(value);
+  if (Number.isNaN(timestamp.getTime())) return value;
+  return timestamp.toLocaleString(language === 'zh' ? 'zh-CN' : 'en-US');
+};
+
 export const MonitoringReportsPage: React.FC<MonitoringReportsPageProps> = ({ language }) => {
   const zh = language === 'zh';
   const location = useLocation();
@@ -91,9 +111,12 @@ export const MonitoringReportsPage: React.FC<MonitoringReportsPageProps> = ({ la
   const [loading, setLoading] = useState(false);
   const [reportData, setReportData] = useState<any>(null);
   const [errorMessage, setErrorMessage] = useState<string | null>(null);
+  const [exportErrorMessage, setExportErrorMessage] = useState<string | null>(null);
   const [successMessage, setSuccessMessage] = useState<string | null>(null);
   const [downloadingKey, setDownloadingKey] = useState<string | null>(null);
   const [showFullExportMenu, setShowFullExportMenu] = useState(false);
+  const reportRequestSequenceRef = useRef(0);
+  const reportAbortControllerRef = useRef<AbortController | null>(null);
 
   // Table Sorting & Pagination State
   const [sortKey, setSortKey] = useState<string>('');
@@ -117,7 +140,12 @@ export const MonitoringReportsPage: React.FC<MonitoringReportsPageProps> = ({ la
 
   // Fetch Report Tabular Data from Backend
   const fetchData = useCallback(async () => {
+    reportAbortControllerRef.current?.abort();
+    const controller = new AbortController();
+    reportAbortControllerRef.current = controller;
+    const requestSequence = ++reportRequestSequenceRef.current;
     setLoading(true);
+    setReportData(null);
     setErrorMessage(null);
 
     try {
@@ -144,25 +172,42 @@ export const MonitoringReportsPage: React.FC<MonitoringReportsPageProps> = ({ la
       const res = await fetch(`/api/monitoring/reports/data?${params.toString()}`, {
         headers,
         credentials: 'same-origin',
+        signal: controller.signal,
       });
 
       if (!res.ok) {
-        throw new Error(`Failed to load report data (HTTP ${res.status})`);
+        const message = res.status === 403
+          ? (zh ? '你没有权限查看监控报表' : 'You do not have permission to view monitoring reports')
+          : res.status === 401
+            ? (zh ? '登录状态已失效，请重新登录' : 'Your session has expired. Please sign in again.')
+            : `Failed to load report data (HTTP ${res.status})`;
+        throw new Error(message);
       }
 
       const data = await res.json();
+      if (requestSequence !== reportRequestSequenceRef.current) return;
       setReportData(data);
       setCurrentPage(1); // reset to page 1 on new query
     } catch (err: any) {
+      if (requestSequence !== reportRequestSequenceRef.current || err?.name === 'AbortError') return;
+      setReportData(null);
       setErrorMessage(err?.message || (zh ? '获取报表数据异常' : 'Error loading report data'));
     } finally {
-      setLoading(false);
+      if (requestSequence === reportRequestSequenceRef.current) {
+        setLoading(false);
+        reportAbortControllerRef.current = null;
+      }
     }
   }, [activeTab, filters, zh]);
 
   // Re-fetch when tab or applied filters change
   useEffect(() => {
     void fetchData();
+    return () => {
+      reportRequestSequenceRef.current += 1;
+      reportAbortControllerRef.current?.abort();
+      reportAbortControllerRef.current = null;
+    };
   }, [fetchData]);
 
   // Handle Download (either current filtered or authoritative full)
@@ -170,7 +215,7 @@ export const MonitoringReportsPage: React.FC<MonitoringReportsPageProps> = ({ la
     const key = `${activeTab}-${format}-${isFiltered ? 'filtered' : 'full'}`;
     setDownloadingKey(key);
     setSuccessMessage(null);
-    setErrorMessage(null);
+    setExportErrorMessage(null);
     setShowFullExportMenu(false);
 
     try {
@@ -200,7 +245,12 @@ export const MonitoringReportsPage: React.FC<MonitoringReportsPageProps> = ({ la
       });
 
       if (!response.ok) {
-        throw new Error(`Export failed with HTTP status ${response.status}`);
+        const message = response.status === 403
+          ? (zh ? '你没有权限导出此监控报表' : 'You do not have permission to export this monitoring report')
+          : response.status === 401
+            ? (zh ? '登录状态已失效，请重新登录' : 'Your session has expired. Please sign in again.')
+            : `Export failed with HTTP status ${response.status}`;
+        throw new Error(message);
       }
 
       const blob = await response.blob();
@@ -226,7 +276,7 @@ export const MonitoringReportsPage: React.FC<MonitoringReportsPageProps> = ({ la
           : `Successfully exported and downloaded: ${filename}`
       );
     } catch (err: any) {
-      setErrorMessage(
+      setExportErrorMessage(
         zh
           ? `导出失败：${err?.message || '网络连接或服务端异常'}`
           : `Export error: ${err?.message || 'Network or server failure'}`
@@ -260,12 +310,15 @@ export const MonitoringReportsPage: React.FC<MonitoringReportsPageProps> = ({ la
       let valA = a[sortKey];
       let valB = b[sortKey];
 
+      if (valA == null || valB == null) {
+        if (valA == null && valB == null) return 0;
+        return valA == null ? 1 : -1;
+      }
+
       if (typeof valA === 'string') {
-        const cmp = valA.localeCompare(valB, 'zh-CN');
+        const cmp = valA.localeCompare(String(valB), 'zh-CN');
         return sortOrder === 'asc' ? cmp : -cmp;
       }
-      valA = valA ?? 0;
-      valB = valB ?? 0;
       return sortOrder === 'asc' ? valA - valB : valB - valA;
     });
   }, [reportData?.items, sortKey, sortOrder]);
@@ -278,6 +331,7 @@ export const MonitoringReportsPage: React.FC<MonitoringReportsPageProps> = ({ la
   // Options from backend
   const options = reportData?.options || { vendors: [], sites: [], roles: [], isps: [] };
   const summary = reportData?.summary || {};
+  const summaryHasNoData = String(summary.sample_quality || '').toUpperCase() === 'NO_DATA';
 
   return (
     <div className="flex h-full min-h-0 flex-col overflow-hidden bg-slate-50 dark:bg-zinc-950">
@@ -331,7 +385,7 @@ export const MonitoringReportsPage: React.FC<MonitoringReportsPageProps> = ({ la
           </div>
         )}
         {errorMessage && (
-          <div className="flex items-center justify-between gap-2 rounded-2xl bg-rose-50 dark:bg-rose-950/40 border border-rose-200 dark:border-rose-800/50 p-3.5 text-xs text-rose-800 dark:text-rose-300 shadow-2xs animate-in fade-in">
+          <div role="alert" className="flex items-center justify-between gap-2 rounded-2xl bg-rose-50 dark:bg-rose-950/40 border border-rose-200 dark:border-rose-800/50 p-3.5 text-xs text-rose-800 dark:text-rose-300 shadow-2xs animate-in fade-in">
             <div className="flex items-center gap-2">
               <AlertCircle size={18} className="text-rose-600 shrink-0" />
               <span className="font-semibold text-sm">{errorMessage}</span>
@@ -342,6 +396,15 @@ export const MonitoringReportsPage: React.FC<MonitoringReportsPageProps> = ({ la
             >
               ✕
             </button>
+          </div>
+        )}
+        {exportErrorMessage && (
+          <div role="alert" className="flex items-center justify-between gap-2 rounded-2xl bg-rose-50 dark:bg-rose-950/40 border border-rose-200 dark:border-rose-800/50 p-3.5 text-xs text-rose-800 dark:text-rose-300 shadow-2xs animate-in fade-in">
+            <div className="flex items-center gap-2">
+              <AlertCircle size={18} className="text-rose-600 shrink-0" />
+              <span className="font-semibold text-sm">{exportErrorMessage}</span>
+            </div>
+            <button type="button" onClick={() => setExportErrorMessage(null)} className="text-rose-600 hover:text-rose-800 text-xs cursor-pointer font-bold" aria-label={zh ? '关闭导出错误' : 'Dismiss export error'}>✕</button>
           </div>
         )}
 
@@ -372,7 +435,9 @@ export const MonitoringReportsPage: React.FC<MonitoringReportsPageProps> = ({ la
               onClick={() => void handleExport('xlsx', true)}
               disabled={Boolean(downloadingKey)}
               className="inline-flex items-center gap-1.5 rounded-xl bg-emerald-600 hover:bg-emerald-700 text-white px-3.5 py-2 text-xs font-bold shadow-xs hover:shadow-sm transition-all disabled:opacity-50 cursor-pointer active:scale-98"
-              title={zh ? '导出当前表格筛选结果 (Excel .xlsx)' : 'Export current filtered table to Excel'}
+              title={activeTab === 'devices' && filters.highLoadOnly
+                ? (zh ? '仅导出有效采样且达到 CPU / 内存阈值的设备' : 'Export only devices with valid CPU or memory samples above the thresholds')
+                : (zh ? '导出当前表格筛选结果 (Excel .xlsx)' : 'Export current filtered table to Excel')}
             >
               <FileSpreadsheet size={14} className={downloadingKey?.includes('xlsx') ? 'animate-spin' : ''} />
               <span>{zh ? '导出当前筛选 (Excel)' : 'Export Filtered (.xlsx)'}</span>
@@ -383,7 +448,10 @@ export const MonitoringReportsPage: React.FC<MonitoringReportsPageProps> = ({ la
               onClick={() => void handleExport('csv', true)}
               disabled={Boolean(downloadingKey)}
               className="inline-flex items-center gap-1.5 rounded-xl border border-slate-200 dark:border-zinc-700 bg-white dark:bg-zinc-900 hover:bg-slate-100 dark:hover:bg-zinc-800 text-slate-700 dark:text-zinc-200 px-3 py-2 text-xs font-semibold shadow-2xs transition-colors disabled:opacity-50 cursor-pointer"
-              title={zh ? '导出带 UTF-8 BOM 的通用 CSV 文本' : 'Export CSV with UTF-8 BOM'}
+              title={activeTab === 'devices' && filters.highLoadOnly
+                ? (zh ? '仅导出有效采样且达到 CPU / 内存阈值的设备' : 'Export only devices with valid CPU or memory samples above the thresholds')
+                : undefined}
+              aria-label={zh ? '导出带 UTF-8 BOM 的通用 CSV 文本' : 'Export CSV with UTF-8 BOM'}
             >
               <Download size={13} className={downloadingKey?.includes('csv') ? 'animate-spin' : ''} />
               <span>CSV</span>
@@ -456,7 +524,7 @@ export const MonitoringReportsPage: React.FC<MonitoringReportsPageProps> = ({ la
                 {summary.up_interfaces ?? '--'}
               </div>
               <div className="text-[11px] text-emerald-600/70 mt-0.5">
-                {summary.down_interfaces ? `${summary.down_interfaces} DOWN` : (zh ? '无异常离线端口' : 'All UP')}
+                {summary.down_interfaces == null ? (zh ? '采样数据不可用' : 'Sample unavailable') : summary.down_interfaces > 0 ? `${summary.down_interfaces} DOWN` : (zh ? '无异常离线端口' : 'All UP')}
               </div>
             </div>
 
@@ -465,10 +533,10 @@ export const MonitoringReportsPage: React.FC<MonitoringReportsPageProps> = ({ la
                 {zh ? '高负荷预警 (>70%)' : 'High Load Ports'}
               </div>
               <div className="text-2xl font-black text-amber-600 dark:text-amber-400 mt-1">
-                {summary.high_util_count ?? 0}
+                {summaryHasNoData ? UNAVAILABLE_VALUE : (summary.high_util_count ?? UNAVAILABLE_VALUE)}
               </div>
               <div className="text-[11px] text-amber-600/70 mt-0.5">
-                {summary.critical_util_count ? `${summary.critical_util_count} 项严重告警 (>85%)` : (zh ? '无严重瓶颈' : 'No Critical')}
+                {summaryHasNoData || summary.critical_util_count == null ? (zh ? '采样数据不可用' : 'Sample unavailable') : summary.critical_util_count > 0 ? `${summary.critical_util_count} ${zh ? '项严重告警 (>85%)' : 'critical (>85%)'}` : (zh ? '无严重瓶颈' : 'No Critical')}
               </div>
             </div>
 
@@ -477,10 +545,10 @@ export const MonitoringReportsPage: React.FC<MonitoringReportsPageProps> = ({ la
                 {zh ? '物理错包/丢包端口' : 'Error / Discard Ports'}
               </div>
               <div className="text-2xl font-black text-rose-600 dark:text-rose-400 mt-1">
-                {summary.error_interfaces_count ?? 0}
+                {summary.error_interfaces_count ?? UNAVAILABLE_VALUE}
               </div>
               <div className="text-[11px] text-rose-600/70 mt-0.5">
-                {summary.error_interfaces_count ? (zh ? '需排查光模块与线缆' : 'Check optic cables') : (zh ? '物理层健康' : 'Normal')}
+                {summary.error_interfaces_count == null ? (zh ? '计数数据不可用' : 'Count unavailable') : summary.error_interfaces_count > 0 ? (zh ? '需排查光模块与线缆' : 'Check optic cables') : (zh ? '物理层健康' : 'Normal')}
               </div>
             </div>
 
@@ -489,10 +557,12 @@ export const MonitoringReportsPage: React.FC<MonitoringReportsPageProps> = ({ la
                 {zh ? '全网平均利用率' : 'Avg Utilization'}
               </div>
               <div className="text-2xl font-black text-cyan-600 dark:text-cyan-400 mt-1">
-                {summary.avg_utilization ? `${summary.avg_utilization}%` : '0.0%'}
+                {formatMetric(summary.avg_utilization, '%')}
               </div>
               <div className="text-[11px] text-cyan-600/70 mt-0.5">
-                {zh ? '基于 5m 时序均值' : '5m sliding rate'}
+                {summaryHasNoData
+                  ? (zh ? 'NO_DATA · 无有效采样' : 'NO_DATA · No valid sample')
+                  : `${zh ? '基于 5m 时序均值' : '5m sliding rate'} · ${formatSampleTime(summary.sample_time, language)}`}
               </div>
             </div>
           </div>
@@ -510,20 +580,22 @@ export const MonitoringReportsPage: React.FC<MonitoringReportsPageProps> = ({ la
               <div className="text-[11px] font-bold text-emerald-700 dark:text-emerald-400">{zh ? '在线运行设备' : 'Online Devices'}</div>
               <div className="text-2xl font-black text-emerald-600 dark:text-emerald-400 mt-1">{summary.online_devices ?? '--'}</div>
               <div className="text-[11px] text-emerald-600/70 mt-0.5">
-                {summary.offline_devices ? `${summary.offline_devices} 离线` : (zh ? '全员在线' : '100% Online')}
+                {summary.offline_devices == null ? (zh ? '状态数据不可用' : 'Status unavailable') : summary.offline_devices > 0 ? `${summary.offline_devices} ${zh ? '离线' : 'offline'}` : (zh ? '全员在线' : '100% Online')}
               </div>
             </div>
 
             <div className="rounded-2xl border border-amber-500/20 dark:border-amber-500/20 bg-amber-50/40 dark:bg-amber-950/20 p-4 shadow-2xs">
               <div className="text-[11px] font-bold text-amber-700 dark:text-amber-400">{zh ? 'CPU 负荷高 (>70%)' : 'High CPU Devices'}</div>
-              <div className="text-2xl font-black text-amber-600 dark:text-amber-400 mt-1">{summary.high_cpu_count ?? 0}</div>
-              <div className="text-[11px] text-amber-600/70 mt-0.5">{zh ? '平均 CPU' : 'Avg CPU'}: {summary.avg_cpu ?? 0}%</div>
+              <div className="text-2xl font-black text-amber-600 dark:text-amber-400 mt-1">{summaryHasNoData ? UNAVAILABLE_VALUE : (summary.high_cpu_count ?? UNAVAILABLE_VALUE)}</div>
+              <div className="text-[11px] text-amber-600/70 mt-0.5">{zh ? '平均 CPU' : 'Avg CPU'}: {formatMetric(summary.avg_cpu, '%')}</div>
+              <div className="text-[10px] text-slate-400 mt-1">{String(summary.sample_quality || UNAVAILABLE_VALUE).toUpperCase()} · {formatSampleTime(summary.sample_time, language)}</div>
             </div>
 
             <div className="rounded-2xl border border-rose-500/20 dark:border-rose-500/20 bg-rose-50/40 dark:bg-rose-950/20 p-4 shadow-2xs">
               <div className="text-[11px] font-bold text-rose-700 dark:text-rose-400">{zh ? '内存负荷高 (>75%)' : 'High Mem Devices'}</div>
-              <div className="text-2xl font-black text-rose-600 dark:text-rose-400 mt-1">{summary.high_mem_count ?? 0}</div>
-              <div className="text-[11px] text-rose-600/70 mt-0.5">{zh ? '平均内存' : 'Avg Mem'}: {summary.avg_mem ?? 0}%</div>
+              <div className="text-2xl font-black text-rose-600 dark:text-rose-400 mt-1">{summaryHasNoData ? UNAVAILABLE_VALUE : (summary.high_mem_count ?? UNAVAILABLE_VALUE)}</div>
+              <div className="text-[11px] text-rose-600/70 mt-0.5">{zh ? '平均内存' : 'Avg Mem'}: {formatMetric(summary.avg_mem, '%')}</div>
+              <div className="text-[10px] text-slate-400 mt-1">{String(summary.sample_quality || UNAVAILABLE_VALUE).toUpperCase()} · {formatSampleTime(summary.sample_time, language)}</div>
             </div>
           </div>
         )}
@@ -544,13 +616,13 @@ export const MonitoringReportsPage: React.FC<MonitoringReportsPageProps> = ({ la
 
             <div className="rounded-2xl border border-cyan-500/20 dark:border-cyan-500/20 bg-cyan-50/40 dark:bg-cyan-950/20 p-4 shadow-2xs">
               <div className="text-[11px] font-bold text-cyan-700 dark:text-cyan-400">{zh ? '平均网络延迟' : 'Avg Latency'}</div>
-              <div className="text-2xl font-black text-cyan-600 dark:text-cyan-400 mt-1">{summary.avg_latency_ms ?? 0} ms</div>
+              <div className="text-2xl font-black text-cyan-600 dark:text-cyan-400 mt-1">{formatMetric(summary.avg_latency_ms, ' ms')}</div>
               <div className="text-[11px] text-cyan-600/70 mt-0.5">{zh ? '出口公网响应' : 'WAN RTT'}</div>
             </div>
 
             <div className="rounded-2xl border border-blue-500/20 dark:border-blue-500/20 bg-blue-50/40 dark:bg-blue-950/20 p-4 shadow-2xs">
               <div className="text-[11px] font-bold text-blue-700 dark:text-blue-400">{zh ? '平均丢包率' : 'Avg Packet Loss'}</div>
-              <div className="text-2xl font-black text-blue-600 dark:text-blue-400 mt-1">{summary.avg_packet_loss ?? 0}%</div>
+              <div className="text-2xl font-black text-blue-600 dark:text-blue-400 mt-1">{formatMetric(summary.avg_packet_loss, '%')}</div>
               <div className="text-[11px] text-blue-600/70 mt-0.5">{zh ? '链路传输平稳' : 'Smooth Loss'}</div>
             </div>
           </div>
@@ -609,6 +681,7 @@ export const MonitoringReportsPage: React.FC<MonitoringReportsPageProps> = ({ la
               <select
                 value={filters.minUtil}
                 onChange={(e) => setFilters({ ...filters, minUtil: e.target.value })}
+                title={zh ? '无有效采样值的接口不会匹配利用率阈值' : 'Interfaces without valid samples do not match utilization thresholds'}
                 className="rounded-2xl border border-slate-200 dark:border-zinc-700 bg-slate-50/50 dark:bg-zinc-800/50 px-3 py-2 text-xs text-slate-700 dark:text-zinc-200 focus:border-cyan-500 focus:outline-hidden cursor-pointer"
               >
                 <option value="">{zh ? '全部利用率区间' : 'All Utilization'}</option>
@@ -734,7 +807,9 @@ export const MonitoringReportsPage: React.FC<MonitoringReportsPageProps> = ({ la
                       onChange={(e) => setFilters({ ...filters, highLoadOnly: e.target.checked })}
                       className="rounded text-cyan-600 focus:ring-cyan-500"
                     />
-                    <span>{zh ? '仅显示高负荷预警设备 (CPU>70% 或 内存>75%)' : 'Only high-load devices'}</span>
+                    <span title={zh ? '无有效 VM 采样的设备不会按 0% 或正常负荷匹配；筛选导出也使用此规则。' : 'Devices without valid VM samples are not treated as 0% or normal; filtered exports use the same rule.'}>
+                      {zh ? '仅显示有效采样的高负荷设备 (CPU>70% 或 内存>75%)' : 'Only sampled high-load devices (CPU >70% or memory >75%)'}
+                    </span>
                   </label>
                 )}
 
@@ -926,7 +1001,7 @@ export const MonitoringReportsPage: React.FC<MonitoringReportsPageProps> = ({ la
                           </div>
                         </th>
                         <th className="py-3 px-3 text-right">{zh ? '运行温度' : 'Temp'}</th>
-                        <th className="py-3 px-4">{zh ? '运行评估与建议' : 'Assessment'}</th>
+                        <th className="py-3 px-4">{zh ? '运行评估与采样信息' : 'Assessment & sample'}</th>
                       </>
                     )}
 
@@ -948,9 +1023,11 @@ export const MonitoringReportsPage: React.FC<MonitoringReportsPageProps> = ({ la
                 <tbody className="divide-y divide-slate-200/70 dark:divide-zinc-800/70">
                   {activeTab === 'interfaces' &&
                     paginatedItems.map((item: any, idx: number) => {
-                      const maxUtil = item.max_util || 0;
-                      const isHigh = maxUtil >= 70.0;
-                      const isCritical = maxUtil >= 85.0;
+                      const maxUtil = toNullableNumber(item.max_util);
+                      const sampleQuality = String(item.sample_quality || '').toUpperCase();
+                      const noValidSample = sampleQuality === 'NO_DATA' || String(item.risk_level || '').toUpperCase() === 'NO_DATA' || maxUtil === null;
+                      const isHigh = maxUtil !== null && maxUtil >= 70.0;
+                      const isCritical = maxUtil !== null && maxUtil >= 85.0;
                       const hasErr = (item.total_errors || 0) > 0;
 
                       return (
@@ -1004,13 +1081,13 @@ export const MonitoringReportsPage: React.FC<MonitoringReportsPageProps> = ({ la
 
                           {/* Physical Speed */}
                           <td className="py-3 px-3 text-right font-mono font-medium text-slate-600 dark:text-zinc-400">
-                            {item.speed_str}
+                            {item.speed_str ?? UNAVAILABLE_VALUE}
                           </td>
 
                           {/* In / Out bps */}
                           <td className="py-3 px-3 text-right font-mono">
-                            <div className="text-slate-800 dark:text-zinc-200">↓ {item.in_bps_str}</div>
-                            <div className="text-[11px] text-slate-400">↑ {item.out_bps_str}</div>
+                            <div className="text-slate-800 dark:text-zinc-200">↓ {item.in_bps_str ?? UNAVAILABLE_VALUE}</div>
+                            <div className="text-[11px] text-slate-400">↑ {item.out_bps_str ?? UNAVAILABLE_VALUE}</div>
                           </td>
 
                           {/* Bandwidth Utilization */}
@@ -1025,7 +1102,7 @@ export const MonitoringReportsPage: React.FC<MonitoringReportsPageProps> = ({ la
                                     : 'text-slate-700 dark:text-zinc-200'
                                 }
                               >
-                                {maxUtil.toFixed(1)}%
+                                {maxUtil === null ? UNAVAILABLE_VALUE : `${maxUtil.toFixed(1)}%`}
                               </span>
                             </div>
                             {/* Visual Progress Bar */}
@@ -1040,7 +1117,7 @@ export const MonitoringReportsPage: React.FC<MonitoringReportsPageProps> = ({ la
                                     ? 'bg-cyan-500'
                                     : 'bg-emerald-500'
                                 }`}
-                                style={{ width: `${Math.min(maxUtil, 100)}%` }}
+                                style={{ width: `${maxUtil === null ? 0 : Math.min(maxUtil, 100)}%` }}
                               />
                             </div>
                           </td>
@@ -1060,19 +1137,25 @@ export const MonitoringReportsPage: React.FC<MonitoringReportsPageProps> = ({ la
                           {/* Alert Level & Advice */}
                           <td className="py-3 px-4">
                             <div className="flex items-center gap-1.5">
-                              {item.alert_level === 'CRITICAL' && (
+                              {noValidSample ? (
+                                <span className="rounded bg-slate-100 dark:bg-zinc-800 px-1.5 py-0.2 text-[10px] font-bold text-slate-600 dark:text-zinc-300 shrink-0">NO_DATA</span>
+                              ) : item.alert_level === 'CRITICAL' && (
                                 <span className="rounded bg-rose-100 dark:bg-rose-950 px-1.5 py-0.2 text-[10px] font-bold text-rose-700 dark:text-rose-300 shrink-0">
-                                  严重
+                                  {zh ? '严重' : 'Critical'}
                                 </span>
                               )}
-                              {item.alert_level === 'WARNING' && (
+                              {!noValidSample && item.alert_level === 'WARNING' && (
                                 <span className="rounded bg-amber-100 dark:bg-amber-950 px-1.5 py-0.2 text-[10px] font-bold text-amber-700 dark:text-amber-300 shrink-0">
-                                  预警
+                                  {zh ? '预警' : 'Warning'}
                                 </span>
                               )}
                               <span className="text-[11px] text-slate-500 dark:text-zinc-400 truncate max-w-xs">
-                                {item.advice}
+                                {noValidSample ? (zh ? '无有效采样，暂不可评估' : 'No valid sample; assessment unavailable') : item.advice}
                               </span>
+                            </div>
+                            <div className="mt-1 text-[10px] text-slate-400" title={item.sample_time || ''}>
+                              {sampleQuality || (noValidSample ? 'NO_DATA' : (zh ? '采样质量未知' : 'Sample quality unknown'))}
+                              {' · '}{formatSampleTime(item.sample_time, language)}
                             </div>
                           </td>
                         </tr>
@@ -1081,8 +1164,10 @@ export const MonitoringReportsPage: React.FC<MonitoringReportsPageProps> = ({ la
 
                   {activeTab === 'devices' &&
                     paginatedItems.map((item: any, idx: number) => {
-                      const cpu = item.cpu_usage || 0;
-                      const mem = item.memory_usage || 0;
+                      const cpu = toNullableNumber(item.cpu_usage);
+                      const mem = toNullableNumber(item.memory_usage);
+                      const sampleQuality = String(item.sample_quality || '').toUpperCase();
+                      const noValidSample = sampleQuality === 'NO_DATA' || String(item.risk_level || '').toUpperCase() === 'NO_DATA' || (cpu === null && mem === null);
 
                       return (
                         <tr
@@ -1121,16 +1206,16 @@ export const MonitoringReportsPage: React.FC<MonitoringReportsPageProps> = ({ la
                           {/* CPU Load */}
                           <td className="py-3 px-4 text-right">
                             <div className="font-mono font-bold text-xs">
-                              <span className={cpu >= 85 ? 'text-rose-600' : cpu >= 70 ? 'text-amber-600' : ''}>
-                                {cpu.toFixed(1)}%
+                              <span className={cpu !== null && cpu >= 85 ? 'text-rose-600' : cpu !== null && cpu >= 70 ? 'text-amber-600' : cpu === null ? 'text-slate-400' : ''}>
+                                {formatMetric(cpu, '%')}
                               </span>
                             </div>
                             <div className="mt-1 h-1.5 w-20 ml-auto rounded-full bg-slate-100 dark:bg-zinc-800 overflow-hidden">
                               <div
                                 className={`h-full rounded-full ${
-                                  cpu >= 85 ? 'bg-rose-500' : cpu >= 70 ? 'bg-amber-500' : 'bg-cyan-500'
+                                  cpu === null ? '' : cpu >= 85 ? 'bg-rose-500' : cpu >= 70 ? 'bg-amber-500' : 'bg-cyan-500'
                                 }`}
-                                style={{ width: `${Math.min(cpu, 100)}%` }}
+                                style={{ width: `${cpu === null ? 0 : Math.min(cpu, 100)}%` }}
                               />
                             </div>
                           </td>
@@ -1138,27 +1223,29 @@ export const MonitoringReportsPage: React.FC<MonitoringReportsPageProps> = ({ la
                           {/* Memory Load */}
                           <td className="py-3 px-4 text-right">
                             <div className="font-mono font-bold text-xs">
-                              <span className={mem >= 90 ? 'text-rose-600' : mem >= 75 ? 'text-amber-600' : ''}>
-                                {mem.toFixed(1)}%
+                              <span className={mem !== null && mem >= 90 ? 'text-rose-600' : mem !== null && mem >= 75 ? 'text-amber-600' : mem === null ? 'text-slate-400' : ''}>
+                                {formatMetric(mem, '%')}
                               </span>
                             </div>
                             <div className="mt-1 h-1.5 w-20 ml-auto rounded-full bg-slate-100 dark:bg-zinc-800 overflow-hidden">
                               <div
                                 className={`h-full rounded-full ${
-                                  mem >= 90 ? 'bg-rose-500' : mem >= 75 ? 'bg-amber-500' : 'bg-emerald-500'
+                                  mem === null ? '' : mem >= 90 ? 'bg-rose-500' : mem >= 75 ? 'bg-amber-500' : 'bg-emerald-500'
                                 }`}
-                                style={{ width: `${Math.min(mem, 100)}%` }}
+                                style={{ width: `${mem === null ? 0 : Math.min(mem, 100)}%` }}
                               />
                             </div>
                           </td>
 
                           <td className="py-3 px-3 text-right font-mono text-slate-600 dark:text-zinc-400">
-                            {item.temperature_str}
+                            {item.temperature_str ?? UNAVAILABLE_VALUE}
                           </td>
 
                           <td className="py-3 px-4">
                             <div className="flex items-center gap-1.5">
-                              {item.risk_level !== 'NORMAL' && (
+                              {noValidSample ? (
+                                <span className="rounded bg-slate-100 dark:bg-zinc-800 px-1.5 py-0.2 text-[10px] font-bold text-slate-600 dark:text-zinc-300 shrink-0">NO_DATA</span>
+                              ) : item.risk_level && item.risk_level !== 'NORMAL' && (
                                 <span
                                   className={`rounded px-1.5 py-0.2 text-[10px] font-bold shrink-0 ${
                                     item.risk_level === 'CRITICAL'
@@ -1170,8 +1257,12 @@ export const MonitoringReportsPage: React.FC<MonitoringReportsPageProps> = ({ la
                                 </span>
                               )}
                               <span className="text-[11px] text-slate-500 dark:text-zinc-400 truncate max-w-xs">
-                                {item.advice}
+                                {noValidSample ? (zh ? '无有效采样，暂不可评估' : 'No valid sample; assessment unavailable') : item.advice}
                               </span>
+                            </div>
+                            <div className="mt-1 text-[10px] text-slate-400" title={item.sample_time || ''}>
+                              {sampleQuality || (noValidSample ? 'NO_DATA' : (zh ? '采样质量未知' : 'Sample quality unknown'))}
+                              {' · '}{formatSampleTime(item.sample_time, language)}
                             </div>
                           </td>
                         </tr>
@@ -1195,15 +1286,15 @@ export const MonitoringReportsPage: React.FC<MonitoringReportsPageProps> = ({ la
                           </span>
                         </td>
                         <td className="py-3 px-3 text-right font-mono font-bold text-emerald-600">
-                          {item.latency_ms.toFixed(1)} ms
+                          {formatMetric(item.latency_ms, ' ms')}
                         </td>
                         <td className="py-3 px-3 text-right font-mono text-slate-600 dark:text-zinc-400">
-                          {item.packet_loss.toFixed(1)}%
+                          {formatMetric(item.packet_loss, '%')}
                         </td>
                         <td className="py-3 px-4">
                           <span className="inline-flex items-center gap-1 rounded-lg bg-emerald-50 dark:bg-emerald-950/60 border border-emerald-200 dark:border-emerald-800/60 px-2 py-0.5 text-xs font-semibold text-emerald-700 dark:text-emerald-300">
                             <CheckCircle2 size={12} />
-                            <span>{item.health_grade}</span>
+                            <span>{item.health_grade ?? UNAVAILABLE_VALUE}</span>
                           </span>
                         </td>
                       </tr>

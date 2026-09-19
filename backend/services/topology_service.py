@@ -21,6 +21,7 @@ from database import get_db_connection
 from services.vault_service import resolve_collector_credentials
 from services.network_access_limiter import limited_connect_handler
 from services.collection_status_service import record_collection_result
+from services.device_classification_service import is_server_device, server_device_sql, server_device_sql_params
 from services.neighbor_collection_contract import (
     assert_lldp_command,
     classify_lldp_status,
@@ -2180,8 +2181,12 @@ def select_topology_discovery_devices(
         if normalized_scope == 'site' and canonical_site_id not in sites_by_id:
             raise ValueError('topology_site_not_found')
 
-        clauses = ["d.status = 'online'", "COALESCE(d.ip_address, '') <> ''"]
-        params: list[Any] = []
+        clauses = [
+            "d.status = 'online'",
+            "COALESCE(d.ip_address, '') <> ''",
+            f"NOT {server_device_sql('d')}",
+        ]
+        params: list[Any] = list(server_device_sql_params())
         if normalized_scope == 'site':
             site = sites_by_id[canonical_site_id]
             site_values = list(dict.fromkeys(
@@ -2214,7 +2219,7 @@ def select_topology_discovery_devices(
 
         rows = conn.execute(
             f'''
-            SELECT d.id, d.hostname, d.ip_address, d.platform,
+            SELECT d.id, d.hostname, d.ip_address, d.platform, d.device_category, d.role,
                    COALESCE(NULLIF(s.id, ''), NULLIF(d.site_id, ''), NULLIF(pa.site_id, '')) AS site_id
             FROM devices d
             LEFT JOIN physical_assets pa ON pa.id = d.asset_id
@@ -2224,7 +2229,7 @@ def select_topology_discovery_devices(
             ''',
             tuple(params),
         ).fetchall()
-        devices = [dict(row) for row in rows]
+        devices = [dict(row) for row in rows if not is_server_device(dict(row))]
         eligible_ids = [str(item['id']) for item in devices]
         eligible_id_set = set(eligible_ids)
         excluded_ids = [device_id for device_id in requested_device_ids if device_id not in eligible_id_set]
@@ -3174,11 +3179,13 @@ def _sync_evidence_graph_from_observations() -> None:
 
         with get_db_connection() as conn:
             device_rows = conn.execute(
-                """
-                SELECT id, hostname, ip_address, site_id, role, device_category,
-                       function, zone, status
-                FROM devices
-                """
+                f"""
+                SELECT d.id, d.hostname, d.ip_address, d.site_id, d.role, d.device_category,
+                       d.function, d.zone, d.status
+                FROM devices d
+                WHERE NOT {server_device_sql('d')}
+                """,
+                server_device_sql_params(),
             ).fetchall()
             current_device_ids = {str(row['id']) for row in device_rows}
             nodes = [
@@ -3379,9 +3386,9 @@ def get_topology_node_metadata(
             "n.status = 'active'",
             "n.device_id IS NOT NULL",
             "n.device_id <> ''",
-            "EXISTS (SELECT 1 FROM devices d WHERE d.id = n.device_id)",
+            f"EXISTS (SELECT 1 FROM devices d WHERE d.id = n.device_id AND NOT {server_device_sql('d')})",
         ]
-        params: list[Any] = []
+        params: list[Any] = list(server_device_sql_params())
         if site_id:
             clauses.append("(n.site_id = ? OR n.node_type = 'SITE')")
             params.append(site_id)
@@ -3571,13 +3578,14 @@ def get_topology_site_summaries(
             """
             SELECT d.id,
                    COALESCE(NULLIF(pa.site_id, ''), NULLIF(d.site_id, '')) AS site_id,
-                   d.status, s.tenant_id
+                   d.status, s.tenant_id, d.device_category, d.function, d.platform, d.role
             FROM devices d
             LEFT JOIN physical_assets pa ON pa.id = d.asset_id
             LEFT JOIN sites s ON s.id = COALESCE(NULLIF(pa.site_id, ''), NULLIF(d.site_id, ''))
             ORDER BY d.id
             """
         ).fetchall()
+        device_rows = [row for row in device_rows if not is_server_device(dict(row))]
         link_rows = conn.execute(
             '''
             SELECT l.link_key, l.source_device_id, l.target_device_id,

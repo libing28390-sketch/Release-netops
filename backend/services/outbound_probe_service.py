@@ -496,52 +496,62 @@ def _latest_run(conn, node_id: str) -> dict | None:
     return dict(row) if row else None
 
 
-def list_outbound_targets() -> list[dict]:
+def list_outbound_targets(*, tenant_id: str | None = None) -> list[dict]:
     conn = get_db_connection()
     try:
-        # Check if default ICMP ping targets exist, if not, add them automatically
-        cursor = conn.cursor()
-        cursor.execute("SELECT target_name FROM outbound_probe_targets WHERE probe_type = 'ICMP_PING'")
-        existing_pings = {str(row[0]) for row in cursor.fetchall()}
-        
-        now = datetime.now(timezone.utc).isoformat()
-        default_pings = [
-            ("default-aliyun-ping", "Aliyun Ping", "223.5.5.5", 0, "ICMP_PING", "domestic", "", 200),
-            ("default-tencent-ping", "Tencent Ping", "119.29.29.29", 0, "ICMP_PING", "domestic", "", 200),
-            ("default-google-ping", "Google DNS Ping", "8.8.8.8", 0, "ICMP_PING", "international", "", 200),
-        ]
-        seeded_any = False
-        for target_id, name, host, port, probe_type, group_name, url, expected_status in default_pings:
-            if name not in existing_pings:
-                cursor.execute(
-                    """
-                    INSERT INTO outbound_probe_targets (
-                        id, target_name, host, port, probe_type, enabled, created_at, group_name,
-                        url, expected_status_code, expected_keyword, timeout_ms, is_active, updated_at
-                    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-                    ON CONFLICT (id) DO NOTHING
-                    """,
-                    (target_id, name, host, port, probe_type, True, now, group_name, url, expected_status, "", 2500, True, now),
-                )
-                seeded_any = True
-        if seeded_any:
-            conn.commit()
-
+        target_scope = str(tenant_id or '').strip()
+        if not target_scope or target_scope == 'tenant-default':
+            cursor = conn.cursor()
+            cursor.execute(
+                "SELECT target_name FROM outbound_probe_targets WHERE probe_type = 'ICMP_PING' AND COALESCE(tenant_id, 'tenant-default') = 'tenant-default'"
+            )
+            existing_pings = {str(row[0]) for row in cursor.fetchall()}
+            now = datetime.now(timezone.utc).isoformat()
+            default_pings = [
+                ("default-aliyun-ping", "Aliyun Ping", "223.5.5.5", 0, "ICMP_PING", "domestic", "", 200),
+                ("default-tencent-ping", "Tencent Ping", "119.29.29.29", 0, "ICMP_PING", "domestic", "", 200),
+                ("default-google-ping", "Google DNS Ping", "8.8.8.8", 0, "ICMP_PING", "international", "", 200),
+            ]
+            seeded_any = False
+            for target_id, name, host, port, probe_type, group_name, url, expected_status in default_pings:
+                if name not in existing_pings:
+                    cursor.execute(
+                        """
+                        INSERT INTO outbound_probe_targets (
+                            id, target_name, host, port, probe_type, enabled, created_at, group_name,
+                            url, expected_status_code, expected_keyword, timeout_ms, is_active, updated_at
+                        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                        ON CONFLICT (id) DO NOTHING
+                        """,
+                        (target_id, name, host, port, probe_type, True, now, group_name, url, expected_status, "", 2500, True, now),
+                    )
+                    seeded_any = True
+            if seeded_any:
+                conn.commit()
+        where = "WHERE COALESCE(tenant_id, 'tenant-default') = ?" if target_scope else ""
         rows = conn.execute(
             "SELECT id, target_name, host, port, probe_type, group_name, url, expected_status_code, "
-            "expected_keyword, timeout_ms, enabled, is_active, created_at, updated_at "
-            "FROM outbound_probe_targets ORDER BY group_name, target_name"
+            "expected_keyword, timeout_ms, enabled, is_active, tenant_id, created_at, updated_at "
+            f"FROM outbound_probe_targets {where} ORDER BY group_name, target_name",
+            (target_scope,) if target_scope else (),
         ).fetchall()
         return [dict(row) for row in rows]
     finally:
         conn.close()
 
 
-def upsert_outbound_target(payload: dict, *, target_id: str | None = None) -> dict:
+def upsert_outbound_target(payload: dict, *, target_id: str | None = None, tenant_id: str | None = None) -> dict:
     target = normalize_target_payload(payload, target_id=target_id)
+    tenant_scope = str(tenant_id or '').strip()
+    target_tenant = tenant_scope or str(payload.get('tenant_id') or 'tenant-default').strip() or 'tenant-default'
     conn = get_db_connection()
     try:
-        existing = conn.execute("SELECT * FROM outbound_probe_targets WHERE id = ?", (target["id"],)).fetchone()
+        existing_query = "SELECT * FROM outbound_probe_targets WHERE id = ?"
+        existing_params: tuple[Any, ...] = (target["id"],)
+        if tenant_scope:
+            existing_query += " AND COALESCE(tenant_id, 'tenant-default') = ?"
+            existing_params = (target["id"], tenant_scope)
+        existing = conn.execute(existing_query, existing_params).fetchone()
         if existing:
             conn.execute(
                 """
@@ -560,13 +570,13 @@ def upsert_outbound_target(payload: dict, *, target_id: str | None = None) -> di
                 """
                 INSERT INTO outbound_probe_targets
                     (id, target_name, host, port, probe_type, is_active, created_at, group_name, url,
-                     expected_status_code, expected_keyword, timeout_ms, enabled, updated_at)
-                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                     expected_status_code, expected_keyword, timeout_ms, enabled, updated_at, tenant_id)
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                 """,
                 (target["id"], target["target_name"], target["host"], target["port"], target["probe_type"],
                  target["enabled"], target["updated_at"], target["group_name"], target["url"],
                  target["expected_status_code"], target["expected_keyword"], target["timeout_ms"],
-                 target["enabled"], target["updated_at"]),
+                 target["enabled"], target["updated_at"], target_tenant),
             )
         conn.commit()
         row = conn.execute("SELECT * FROM outbound_probe_targets WHERE id = ?", (target["id"],)).fetchone()
@@ -578,13 +588,24 @@ def upsert_outbound_target(payload: dict, *, target_id: str | None = None) -> di
         conn.close()
 
 
-def delete_outbound_target(target_id: str) -> bool:
+def delete_outbound_target(target_id: str, *, tenant_id: str | None = None) -> bool:
+    tenant_scope = str(tenant_id or '').strip()
     conn = get_db_connection()
     try:
-        row = conn.execute("SELECT id FROM outbound_probe_targets WHERE id = ?", (target_id,)).fetchone()
+        query = "SELECT id FROM outbound_probe_targets WHERE id = ?"
+        params: tuple[Any, ...] = (target_id,)
+        if tenant_scope:
+            query += " AND COALESCE(tenant_id, 'tenant-default') = ?"
+            params = (target_id, tenant_scope)
+        row = conn.execute(query, params).fetchone()
         if not row:
             return False
-        conn.execute("DELETE FROM outbound_probe_targets WHERE id = ?", (target_id,))
+        delete_query = "DELETE FROM outbound_probe_targets WHERE id = ?"
+        delete_params: tuple[Any, ...] = (target_id,)
+        if tenant_scope:
+            delete_query += " AND COALESCE(tenant_id, 'tenant-default') = ?"
+            delete_params = (target_id, tenant_scope)
+        conn.execute(delete_query, delete_params)
         conn.commit()
         return True
     finally:
@@ -1260,7 +1281,7 @@ def _percentile(values: list[float], percentile: float) -> float | None:
     return round(ordered[lower] + (ordered[upper] - ordered[lower]) * weight, 2)
 
 
-def get_outbound_target_history(*, target_id: str, history_hours: int = 24, start_time: str | None = None, end_time: str | None = None) -> dict | None:
+def get_outbound_target_history(*, target_id: str, history_hours: int = 24, start_time: str | None = None, end_time: str | None = None, tenant_id: str | None = None) -> dict | None:
     """Return per-target samples and latency/availability summary."""
     conn = get_db_connection()
     try:
@@ -1269,9 +1290,9 @@ def get_outbound_target_history(*, target_id: str, history_hours: int = 24, star
             SELECT id, target_name, host, port, probe_type, group_name, url, expected_status_code,
                    expected_keyword, timeout_ms, enabled, is_active, created_at, updated_at
             FROM outbound_probe_targets
-            WHERE id = ?
+            WHERE id = ? AND (? IS NULL OR COALESCE(tenant_id, 'tenant-default') = ?)
             """,
-            (target_id,),
+            (target_id, tenant_id, tenant_id),
         ).fetchone()
         if not target_row:
             return None

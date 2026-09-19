@@ -23,6 +23,7 @@ from datetime import datetime, timezone
 from typing import Any, Iterable
 
 from database import get_db_connection
+from services.device_classification_service import is_server_device, server_device_sql, server_device_sql_params
 
 NODE_TYPES = {"DEVICE", "SITE", "EXTERNAL", "VIRTUAL", "GROUP", "UNKNOWN"}
 ROLE_IDENTITIES = {
@@ -121,6 +122,15 @@ def _table_exists(conn: Any, table_name: str) -> bool:
             (table_name,),
         ).fetchone()
     )
+
+
+def _table_has_columns(conn: Any, table_name: str, columns: set[str]) -> bool:
+    rows = conn.execute(
+        "SELECT column_name FROM information_schema.columns "
+        "WHERE table_schema = current_schema() AND table_name = ?",
+        (table_name,),
+    ).fetchall()
+    return columns.issubset({str(row[0]).lower() for row in rows})
 
 
 def normalize_role(value: Any) -> str:
@@ -625,7 +635,18 @@ def build_graph(
 ) -> dict[str, Any]:
     node_map: dict[str, dict[str, Any]] = {}
     key_to_id: dict[str, str] = {}
-    for raw in nodes:
+    raw_nodes = list(nodes)
+    excluded_server_keys: set[str] = set()
+    for raw in raw_nodes:
+        if not is_server_device(raw):
+            continue
+        for field in ("id", "canonical_key", "device_id", "hostname", "display_name", "ip_address"):
+            value = str(raw.get(field) or "").strip()
+            if value:
+                excluded_server_keys.add(value)
+    for raw in raw_nodes:
+        if is_server_device(raw):
+            continue
         node = normalize_node(raw, tenant_id=tenant_id)
         node_map[node["id"]] = node
         for key in (node["id"], node["canonical_key"], node.get("device_id"), node.get("display_name")):
@@ -642,6 +663,10 @@ def build_graph(
     group_members: list[dict[str, Any]] = []
 
     for raw in observations:
+        source_key = str(raw.get("source_node") or raw.get("source_device_id") or "").strip()
+        target_key = str(raw.get("target_node") or raw.get("target_device_id") or raw.get("target_identity") or "").strip()
+        if source_key in excluded_server_keys or target_key in excluded_server_keys:
+            continue
         item = normalize_observation(dict(raw))
         source_id = _resolve_node(item["source_node"], node_map, key_to_id, tenant_id=tenant_id)
         target_id = _resolve_node(item["target_node"], node_map, key_to_id, tenant_id=tenant_id, target=True)
@@ -1050,6 +1075,42 @@ def persist_graph(graph: dict[str, Any]) -> dict[str, int]:
     edges = list(graph.get("edges") or [])
     tenant_id = str((nodes[0].get("tenant_id") if nodes else graph.get("tenant_id")) or "tenant-default")
     with get_db_connection() as conn:
+        managed_device_ids = sorted({str(node.get("device_id") or "").strip() for node in nodes if str(node.get("device_id") or "").strip()})
+        server_device_ids: set[str] = set()
+        if managed_device_ids and _table_has_columns(conn, "devices", {"platform", "role", "device_category"}):
+            placeholders = ",".join("?" for _ in managed_device_ids)
+            try:
+                server_rows = conn.execute(
+                    f"SELECT d.id FROM devices d WHERE d.id IN ({placeholders}) AND {server_device_sql('d')}",
+                    (*managed_device_ids, *server_device_sql_params()),
+                ).fetchall()
+                server_device_ids = {str(row["id"]) for row in server_rows}
+            except Exception:
+                # Minimal graph fixtures and rolling upgrades may expose only
+                # device identity; raw node classification still applies.
+                try:
+                    conn.rollback()
+                except Exception:
+                    pass
+        excluded_node_ids = {
+            str(node.get("id") or "") for node in nodes
+            if str(node.get("device_id") or "") in server_device_ids or is_server_device(node)
+        }
+        nodes = [
+            node for node in nodes
+            if str(node.get("device_id") or "") not in server_device_ids
+            and str(node.get("id") or "") not in excluded_node_ids
+            and not is_server_device(node)
+        ]
+        excluded_node_ids.update(
+            str(node.get("id") or "") for node in graph.get("nodes", [])
+            if str(node.get("device_id") or "") in server_device_ids or is_server_device(node)
+        )
+        edges = [
+            edge for edge in edges
+            if str(edge.get("source_node_id") or "") not in excluded_node_ids
+            and str(edge.get("target_node_id") or "") not in excluded_node_ids
+        ]
         for node in nodes:
             existing = conn.execute(
                 "SELECT id, rank, layout_override_json, role_identity, function, zone, status FROM topology_nodes WHERE tenant_id = ? AND canonical_key = ?",
@@ -1378,7 +1439,13 @@ def _graph_rows(
         "oob": {"OOB"},
     }
     node_where = ["tenant_id = ?", "status = 'active'"]
-    node_params: list[Any] = [tenant_id]
+    node_params: list[Any] = [tenant_id, *server_device_sql_params()]
+    if _table_has_columns(conn, "devices", {"platform", "role", "device_category"}):
+        node_where.append(
+            f"(node_type <> 'DEVICE' OR EXISTS (SELECT 1 FROM devices d WHERE d.id = topology_nodes.device_id AND NOT {server_device_sql('d')}))"
+        )
+    else:
+        node_params = [tenant_id]
     if site_id:
         node_where.append("(site_id = ? OR id = ? OR node_type = 'SITE')")
         node_params.extend([site_id, f"site:{site_id}"])
@@ -1514,8 +1581,14 @@ def get_graph(
                 group_members.append(item)
         except Exception:
             pass
-        graph["groups"] = groups
-        graph["group_members"] = group_members
+        graph_node_ids = {str(item.get("id") or "") for item in graph.get("nodes") or []}
+        graph["groups"] = [item for item in groups if str(item.get("node_id") or "") in graph_node_ids]
+        valid_group_ids = {str(item.get("id") or "") for item in graph["groups"]}
+        graph["group_members"] = [
+            item for item in group_members
+            if str(item.get("node_id") or "") in graph_node_ids
+            and str(item.get("group_id") or "") in valid_group_ids
+        ]
         return {
             **graph,
             "anchors": detect_topology_anchors(nodes, edges),

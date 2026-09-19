@@ -2488,6 +2488,64 @@ def _init_db_logic(conn, *, allow_legacy_import: bool = True):
     cursor.execute('CREATE INDEX IF NOT EXISTS idx_alert_events_resolved_at ON alert_events(resolved_at)')
     cursor.execute('CREATE INDEX IF NOT EXISTS idx_alert_events_dedupe_key ON alert_events(dedupe_key)')
 
+    # Current baseline for outbound probe targets. m0024/m0025 remain
+    # idempotent for deployed databases and continue to seed default targets.
+    cursor.execute('''
+    CREATE TABLE IF NOT EXISTS outbound_probe_targets (
+        id TEXT PRIMARY KEY,
+        target_name TEXT NOT NULL UNIQUE,
+        host TEXT NOT NULL,
+        port INTEGER NOT NULL,
+        probe_type TEXT NOT NULL DEFAULT 'tcp',
+        is_active BOOLEAN NOT NULL DEFAULT TRUE,
+        created_at TEXT NOT NULL,
+        group_name TEXT NOT NULL DEFAULT 'business',
+        url TEXT DEFAULT '',
+        expected_status_code INTEGER DEFAULT 200,
+        expected_keyword TEXT DEFAULT '',
+        timeout_ms INTEGER NOT NULL DEFAULT 2000,
+        enabled BOOLEAN NOT NULL DEFAULT TRUE,
+        updated_at TEXT DEFAULT '',
+        tenant_id TEXT NOT NULL DEFAULT 'tenant-default'
+    )
+    ''')
+    ensure_column('outbound_probe_targets', 'tenant_id', "TEXT NOT NULL DEFAULT 'tenant-default'")
+    cursor.execute(
+        'CREATE INDEX IF NOT EXISTS idx_outbound_probe_targets_tenant_id '
+        'ON outbound_probe_targets(tenant_id)'
+    )
+
+    # Durable alert delivery queue; the tracked migration creates the same
+    # additive definition for installations upgraded from an older baseline.
+    cursor.execute('''
+    CREATE TABLE IF NOT EXISTS alert_delivery_outbox (
+        id TEXT PRIMARY KEY,
+        delivery_key TEXT NOT NULL UNIQUE,
+        channel TEXT NOT NULL CHECK (channel IN ('workspace', 'global_webhook')),
+        payload JSONB NOT NULL DEFAULT '{}'::jsonb,
+        status TEXT NOT NULL DEFAULT 'pending'
+            CHECK (status IN ('pending', 'processing', 'succeeded', 'failed')),
+        attempts INTEGER NOT NULL DEFAULT 0 CHECK (attempts >= 0),
+        max_attempts INTEGER NOT NULL DEFAULT 8 CHECK (max_attempts > 0),
+        available_at TIMESTAMPTZ NOT NULL DEFAULT clock_timestamp(),
+        lease_owner TEXT NOT NULL DEFAULT '',
+        lease_until TIMESTAMPTZ,
+        last_error TEXT NOT NULL DEFAULT '',
+        created_at TIMESTAMPTZ NOT NULL DEFAULT clock_timestamp(),
+        updated_at TIMESTAMPTZ NOT NULL DEFAULT clock_timestamp(),
+        completed_at TIMESTAMPTZ
+    )
+    ''')
+    cursor.execute(
+        "CREATE INDEX IF NOT EXISTS idx_alert_delivery_outbox_claim "
+        "ON alert_delivery_outbox (available_at, created_at, id) "
+        "WHERE status IN ('pending', 'processing')"
+    )
+    cursor.execute(
+        'CREATE INDEX IF NOT EXISTS idx_alert_delivery_outbox_status_created '
+        'ON alert_delivery_outbox (status, created_at DESC)'
+    )
+
     cursor.execute('''
     CREATE TABLE IF NOT EXISTS protocol_peer_state (
         metric_type TEXT NOT NULL,

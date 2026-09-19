@@ -625,7 +625,12 @@ def send_all_channels(channels: dict, alert: dict) -> list[dict]:
     return results
 
 
-def _dispatch_to_users(alert: dict, tenant_id: str | None = None) -> list[dict]:
+def _dispatch_to_users(
+    alert: dict,
+    tenant_id: str | None = None,
+    *,
+    raise_on_error: bool = False,
+) -> list[dict]:
     """Dispatch through configured channels without crossing tenant scope."""
     if not automatic_notifications_enabled():
         logger.info("[Notify] Automatic notification dispatch disabled by runtime policy")
@@ -700,20 +705,22 @@ def _dispatch_to_users(alert: dict, tenant_id: str | None = None) -> list[dict]:
         return results
     except Exception as e:
         logger.error(f"[Notify] scoped notification dispatch error: {e}")
+        if raise_on_error:
+            raise
         return []
     finally:
         conn.close()
 
 
-def dispatch_to_all_users(alert: dict) -> list[dict]:
+def dispatch_to_all_users(alert: dict, *, raise_on_error: bool = False) -> list[dict]:
     """Dispatch to all configured active users (legacy alert path)."""
-    return _dispatch_to_users(alert)
+    return _dispatch_to_users(alert, raise_on_error=raise_on_error)
 
 
-def dispatch_to_tenant_users(alert: dict, tenant_id: str) -> list[dict]:
+def dispatch_to_tenant_users(alert: dict, tenant_id: str, *, raise_on_error: bool = False) -> list[dict]:
     """Dispatch only to active users in the Playbook execution tenant."""
     tenant_id = str(tenant_id or '').strip()
     if not tenant_id:
         logger.warning('[Notify] tenant-scoped dispatch rejected without tenant_id')
         return []
-    return _dispatch_to_users(alert, tenant_id=tenant_id)
+    return _dispatch_to_users(alert, tenant_id=tenant_id, raise_on_error=raise_on_error)

@@ -27,6 +27,19 @@ def test_graph_fuses_evidence_and_does_not_use_role_for_rank():
     assert all(node["rank"] == 0 for node in graph["nodes"])
 
 
+def test_server_assets_and_links_are_excluded_from_topology_graph():
+    graph = build_graph(
+        [
+            {"id": "switch-1", "device_id": "switch-1", "hostname": "SW-1", "role": "access", "platform": "h3c_comware"},
+            {"id": "server-1", "device_id": "server-1", "hostname": "app-server", "role": "server", "platform": "linux"},
+        ],
+        [{"source_device_id": "switch-1", "target_device_id": "server-1", "source_type": "lldp"}],
+    )
+
+    assert all(node.get("device_id") != "server-1" for node in graph["nodes"])
+    assert graph["edges"] == []
+
+
 def test_layout_override_wins_without_role_layer_heuristics():
     graph = {"nodes": [{"id": "a", "rank": 3, "role_identity": "SWITCH"}]}
     layout = layout_graph(graph, overrides={"a": {"x": 42, "y": 84}})

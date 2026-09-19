@@ -156,17 +156,25 @@ export const useMonitoring = ({ isAuthenticated, activeTab, pollOutbound = true,
     role?: string;
     severity?: string;
     problem_type?: string;
+    limit?: number;
+    offset?: number;
   } = {}, signal?: AbortSignal) => {
     const params = new URLSearchParams();
-    for (const [key, value] of Object.entries(filters)) {
+    const { limit = 200, offset = 0, ...criteria } = filters;
+    for (const [key, value] of Object.entries(criteria)) {
       if (value && value !== 'all') params.set(key, value);
     }
-    params.set('limit', '200');
+    const boundedLimit = Number.isFinite(limit) ? Math.trunc(limit) : 200;
+    const safeOffset = Number.isFinite(offset) ? Math.trunc(offset) : 0;
+    params.set('limit', String(Math.min(500, Math.max(1, boundedLimit))));
+    params.set('offset', String(Math.max(0, safeOffset)));
     const resp = await fetch(`/api/monitoring/health-devices?${params.toString()}`, { signal, headers: outboundHeaders() });
     const payload = await resp.json().catch(() => ({}));
     if (!resp.ok) {
       const detail = payload?.detail?.message || payload?.detail;
-      throw new Error(detail ? String(detail) : 'Unable to load health drilldown');
+      const error = new Error(detail ? String(detail) : 'Unable to load health drilldown') as Error & { status: number };
+      error.status = resp.status;
+      throw error;
     }
     return payload as MonitoringHealthDevicesResponse;
   }, [outboundHeaders]);

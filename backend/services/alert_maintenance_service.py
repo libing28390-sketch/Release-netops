@@ -560,7 +560,7 @@ def reopen_expired_suppressed_alerts() -> list[dict[str, Any]]:
                 a.id, a.dedupe_key, a.source, a.severity, a.title, a.message,
                 a.device_id, a.interface_name, a.created_at, a.resolved_at,
                 a.workflow_status, a.assignee, a.ack_by, a.ack_at, a.note, a.updated_at,
-                d.hostname, d.ip_address, d.site
+                d.hostname, d.ip_address, d.site, COALESCE(d.tenant_id, 'tenant-default') AS tenant_id
             FROM alert_events a
             LEFT JOIN devices d ON d.id = a.device_id
             WHERE a.resolved_at IS NULL AND COALESCE(a.workflow_status, 'open') = 'suppressed'
@@ -588,6 +588,39 @@ def reopen_expired_suppressed_alerts() -> list[dict[str, Any]]:
             item['note'] = ''
             item['updated_at'] = now_iso
             reopened.append(item)
+            try:
+                from services.monitoring_notification_outbox_service import enqueue_alert_delivery
+                payload = {
+                    'tenant_id': str(item.get('tenant_id') or 'tenant-default'),
+                    'title': item.get('title') or 'Monitoring alert reopened',
+                    'object_name': item.get('interface_name') or item.get('hostname') or item.get('dedupe_key'),
+                    'ip_address': item.get('ip_address') or '',
+                    'status': 'active',
+                    'severity': item.get('severity') or 'warning',
+                    'message': f"{item.get('title') or 'Monitoring alert'} remains active after maintenance window",
+                    'first_occurrence': item.get('created_at'),
+                    'last_occurrence': now_iso,
+                    'reopened_after_maintenance': True,
+                }
+                enqueue_alert_delivery(
+                    delivery_key=f"{item.get('dedupe_key')}:maintenance-reopen:{now_iso}",
+                    channel='workspace',
+                    payload=payload,
+                )
+                from core.config import settings
+                if (settings.ALERT_NOTIFY_WEBHOOK_URL or '').strip():
+                    plain = (
+                        f"[{payload['severity'].upper()}] {payload['title']}\n"
+                        f"对象: {payload['object_name']}  IP: {payload['ip_address']}\n"
+                        f"{payload['message']}\n时间: {now_iso}"
+                    )
+                    enqueue_alert_delivery(
+                        delivery_key=f"{item.get('dedupe_key')}:maintenance-reopen-global:{now_iso}",
+                        channel='global_webhook',
+                        payload={'msgtype': 'text', 'text': {'content': plain}},
+                    )
+            except Exception:
+                logger.warning('Failed to enqueue maintenance reopen notification', exc_info=True)
 
         if reopened:
             conn.commit()

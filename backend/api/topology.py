@@ -25,6 +25,7 @@ from services.topology_service import (
     request_cancel_discovery_run,
     select_topology_discovery_devices,
 )
+from services.device_classification_service import is_server_device
 from services.topology_graph_service import (
     apply_layout_override,
     apply_relation_override,
@@ -38,6 +39,7 @@ from services.topology_graph_service import (
     record_manual_relation_override,
 )
 from services import rack_scope_service
+
 
 # All topology data is tenant-scoped operational data.  Require an
 # authenticated viewer at the router boundary and make state-changing or
@@ -93,22 +95,20 @@ def _topology_asset_scope(conn, user):
 def _authorized_topology_device_ids(conn, scope) -> list[str] | None:
     """Resolve one bounded device set for all legacy topology read models."""
 
-    if scope is None:
-        return None
-    if scope.site_ids is not None and not scope.site_ids:
+    if scope is not None and scope.site_ids is not None and not scope.site_ids:
         return []
     clauses: list[str] = []
     params: list[str] = []
-    if scope.site_ids is not None:
+    if scope is not None and scope.site_ids is not None:
         placeholders = ','.join('?' for _ in scope.site_ids)
         clauses.append(f's.id IN ({placeholders})')
         params.extend(scope.site_ids)
-    if scope.tenant_id:
-        clauses.append('s.tenant_id = ?')
+    if scope is not None and scope.tenant_id:
+        clauses.append("COALESCE(s.tenant_id, d.tenant_id, 'tenant-default') = ?")
         params.append(scope.tenant_id)
     where = f"WHERE {' AND '.join(clauses)}" if clauses else ''
     rows = conn.execute(
-        f'''SELECT d.id
+        f'''SELECT d.id, d.platform, d.device_category, d.role
               FROM devices d
               LEFT JOIN physical_assets pa ON pa.id = d.asset_id
               LEFT JOIN sites s ON s.id = COALESCE(NULLIF(pa.site_id, ''), NULLIF(d.site_id, ''))
@@ -116,7 +116,11 @@ def _authorized_topology_device_ids(conn, scope) -> list[str] | None:
              ORDER BY d.id''',
         tuple(params),
     ).fetchall()
-    return [str(row['id']) for row in rows if str(row['id'] or '').strip()]
+    result_ids = [
+        str(row['id']) for row in rows
+        if str(row['id'] or '').strip() and not is_server_device(dict(row))
+    ]
+    return result_ids
 
 
 def _enforce_topology_site_scope(conn, user, site_id: str) -> None:

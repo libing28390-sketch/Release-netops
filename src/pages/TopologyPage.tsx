@@ -11,6 +11,7 @@ import { matchesTopologyTagConditions } from '../hooks/useTopologyVisibleDevices
 import { topologyRoleLabel } from '../domain/topologyRoles';
 import { buildTopologySiteOverview } from '../utils/topologySiteOverview';
 import Pagination from '../components/Pagination';
+import { excludeServerTopologyDevices } from '../utils/topologyDevices';
 
 type TopologyStatusFilter = 'all' | 'online' | 'offline' | 'pending';
 type TopologyLinkStatusFilter = 'all' | 'up' | 'degraded' | 'down' | 'stale' | 'unknown';
@@ -328,6 +329,16 @@ const TopologyPage: React.FC<TopologyPageProps> = ({
   const [canvasView, setCanvasView] = React.useState<'overview' | 'site'>(topologySiteFilter === 'all' ? 'overview' : 'site');
   const [tagPickerOpen, setTagPickerOpen] = React.useState(false);
   const [draftTopologyTagFilter, setDraftTopologyTagFilter] = React.useState<TagFilterConfig>(topologyTagFilter);
+  const topologyNetworkScope = React.useMemo(
+    () => excludeServerTopologyDevices(topologyVisibleDevices),
+    [topologyVisibleDevices],
+  );
+  const topologyMapLinks = React.useMemo(
+    () => topologyVisibleLinks.filter((link) =>
+      !topologyNetworkScope.excludedIds.has(link.source_device_id)
+      && !topologyNetworkScope.excludedIds.has(link.target_device_id)),
+    [topologyNetworkScope.excludedIds, topologyVisibleLinks],
+  );
   const handleSiteFilterChange = (value: string) => {
     onTopologySiteFilterChange(value);
     setCanvasView(value === 'all' ? 'overview' : 'site');
@@ -675,11 +686,11 @@ const TopologyPage: React.FC<TopologyPageProps> = ({
               <TopologySiteOverview
                 language={language}
                 sites={topologySites}
-                devices={topologyVisibleDevices}
-                links={topologyVisibleLinks}
+                devices={topologyNetworkScope.devices}
+                links={topologyMapLinks}
                 onSelectSite={handleSiteFilterChange}
               />
-            ) : topologyVisibleDevices.length === 0 ? (
+            ) : topologyNetworkScope.devices.length === 0 ? (
               <div className="absolute inset-0 flex flex-col items-center justify-center gap-3 text-center">
                 <div className="rounded-full border border-gray-200 dark:border-zinc-800 bg-gray-50 dark:bg-zinc-800 p-4 text-gray-400">
                   <Globe size={26} />
@@ -696,8 +707,8 @@ const TopologyPage: React.FC<TopologyPageProps> = ({
             ) : (
               <motion.div initial={{ opacity: 0 }} animate={{ opacity: 1 }} className="relative h-full w-full">
                 <TopologyGraph
-                  devices={topologyVisibleDevices}
-                  links={topologyVisibleLinks}
+                  devices={topologyNetworkScope.devices}
+                  links={topologyMapLinks}
                   selectedNodeId={selectedTopologyDeviceId}
                   selectedLinkKey={selectedTopologyLinkKey}
                   onNodeClick={(device) => {

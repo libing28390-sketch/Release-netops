@@ -268,6 +268,7 @@ def list_incidents(
     device_id: str | None = None,
     page: int = 1,
     page_size: int = 20,
+    tenant_id: str | None = None,
     sync: bool = True,
 ) -> dict[str, Any]:
     if sync:
@@ -289,6 +290,22 @@ def list_incidents(
     if device_id:
         clauses.append("EXISTS (SELECT 1 FROM monitoring_incident_alerts ia2 JOIN alert_events a2 ON a2.id = ia2.alert_id WHERE ia2.incident_id = i.id AND a2.device_id = ?)")
         params.append(device_id)
+    if tenant_id:
+        clauses.append(
+            "i.primary_device_id IS NOT NULL AND EXISTS ("
+            "SELECT 1 FROM devices primary_device WHERE primary_device.id = i.primary_device_id "
+            "AND COALESCE(primary_device.tenant_id, 'tenant-default') = ?)"
+        )
+        params.append(tenant_id)
+        clauses.append(
+            "NOT EXISTS ("
+            "SELECT 1 FROM monitoring_incident_alerts scope_ia "
+            "JOIN alert_events scope_alert ON scope_alert.id = scope_ia.alert_id "
+            "LEFT JOIN devices scope_device ON scope_device.id = scope_alert.device_id "
+            "WHERE scope_ia.incident_id = i.id AND (scope_alert.device_id IS NULL "
+            "OR COALESCE(scope_device.tenant_id, 'tenant-default') <> ?))"
+        )
+        params.append(tenant_id)
     where_sql = f"WHERE {' AND '.join(clauses)}" if clauses else ""
     total = conn.execute(f"SELECT COUNT(*) AS c FROM monitoring_incidents i {where_sql}", tuple(params)).fetchone()["c"]
     offset = (page - 1) * page_size
