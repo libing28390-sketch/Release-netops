@@ -29,6 +29,8 @@ RUN apt-get update -qq && \
         libssl-dev \
         libcap2-bin \
         tzdata && \
+    ln -snf /usr/share/zoneinfo/Asia/Shanghai /etc/localtime && \
+    echo "Asia/Shanghai" > /etc/timezone && \
     rm -rf /var/lib/apt/lists/*
 
 WORKDIR /app

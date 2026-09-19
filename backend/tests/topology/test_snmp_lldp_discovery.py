@@ -6,8 +6,7 @@ from services.snmp_service import collect_snmp_lldp_neighbors
 from services.topology_service import _collect_device_observations
 
 
-@pytest.mark.asyncio
-async def test_collect_snmp_lldp_neighbors_success():
+def test_collect_snmp_lldp_neighbors_success():
     """Test IEEE 802.1AB LLDP-MIB walk parses local port, neighbor name, remote port, and mgmt IP."""
     async def mock_walk(ip, community, oid, port=161, timeout=4.0, version='2c'):
         if oid == '1.0.8802.1.1.2.1.4.1.1.9': # lldpRemSysName
@@ -29,7 +28,7 @@ async def test_collect_snmp_lldp_neighbors_success():
         return []
 
     with patch('services.snmp_service._snmp_walk', side_effect=mock_walk):
-        neighbors = await collect_snmp_lldp_neighbors('10.10.10.1', 'public')
+        neighbors = asyncio.run(collect_snmp_lldp_neighbors('10.10.10.1', 'public'))
         assert len(neighbors) == 1
         n = neighbors[0]
         assert n['protocol'] == 'lldp'
@@ -40,8 +39,7 @@ async def test_collect_snmp_lldp_neighbors_success():
         assert 'Huawei' in n['neighbor_platform']
 
 
-@pytest.mark.asyncio
-async def test_collect_snmp_cdp_fallback_when_lldp_empty():
+def test_collect_snmp_cdp_fallback_when_lldp_empty():
     """Test fallback to CISCO-CDP-MIB when LLDP returns no entries."""
     async def mock_walk(ip, community, oid, port=161, timeout=4.0, version='2c'):
         if oid.startswith('1.0.8802.'):
@@ -59,7 +57,7 @@ async def test_collect_snmp_cdp_fallback_when_lldp_empty():
         return []
 
     with patch('services.snmp_service._snmp_walk', side_effect=mock_walk):
-        neighbors = await collect_snmp_lldp_neighbors('192.168.100.1', 'cisco-ro')
+        neighbors = asyncio.run(collect_snmp_lldp_neighbors('192.168.100.1', 'cisco-ro'))
         assert len(neighbors) == 1
         n = neighbors[0]
         assert n['protocol'] == 'cdp'
@@ -70,8 +68,7 @@ async def test_collect_snmp_cdp_fallback_when_lldp_empty():
         assert 'cisco' in n['neighbor_platform'].lower()
 
 
-@pytest.mark.asyncio
-async def test_topology_service_collects_snmp_first():
+def test_topology_service_collects_snmp_first():
     """Test _collect_device_observations uses SNMP and bypasses SSH when SNMP neighbors exist."""
     device = {
         'id': 'dev-test-1',
@@ -95,7 +92,7 @@ async def test_topology_service_collects_snmp_first():
 
     with patch('services.snmp_service.collect_snmp_lldp_neighbors', new=AsyncMock(return_value=mock_snmp_neighbors)):
         with patch('drivers.ssh_compat.is_ssh_port_open') as mock_ssh_check:
-            batch, method = await _collect_device_observations(device)
+            batch, method = asyncio.run(_collect_device_observations(device))
             assert method == 'snmp'
             assert len(batch) == 1
             assert batch.collection_status == 'success'
@@ -141,8 +138,7 @@ def test_get_unmanaged_neighbors_filters_stale():
         assert "COALESCE(o.is_active, 1) = 1" not in called_sql_stale
 
 
-@pytest.mark.asyncio
-async def test_collect_snmp_lldp_prefers_port_id_over_description():
+def test_collect_snmp_lldp_prefers_port_id_over_description():
     """Verify that lldpRemPortId (e.g. GigabitEthernet1/0/1) is preferred over description (e.g. TO-S6850-4-GE1/0/1)."""
     from services.snmp_service import collect_snmp_lldp_neighbors
 
@@ -160,7 +156,7 @@ async def test_collect_snmp_lldp_prefers_port_id_over_description():
         return []
 
     with patch('services.snmp_service._snmp_walk', side_effect=mock_walk):
-        neighbors = await collect_snmp_lldp_neighbors('10.254.0.3', 'public')
+        neighbors = asyncio.run(collect_snmp_lldp_neighbors('10.254.0.3', 'public'))
         assert len(neighbors) == 1
         neighbor = neighbors[0]
         # Must prefer the standard GigabitEthernet1/0/1 over TO-S6850-4-GE1/0/1

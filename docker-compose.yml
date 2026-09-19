@@ -142,6 +142,8 @@ services:
   victoriametrics:
     image: victoriametrics/victoria-metrics:v1.103.0
     container_name: nexora-victoriametrics
+    environment:
+      - TZ=${TZ:-Asia/Shanghai}
     command:
       - "-storageDataPath=/storage"
       - "-retentionPeriod=${VM_RETENTION_PERIOD:-90d}"
@@ -161,6 +163,8 @@ services:
   snmp-exporter:
     image: prom/snmp-exporter:v0.26.0
     container_name: nexora-snmp-exporter
+    environment:
+      - TZ=${TZ:-Asia/Shanghai}
     # Start immediately with the checked-in, credential-free bootstrap config.
     # The control plane atomically replaces this runtime file when a collector
     # plan is published, then asks the exporter to reload it.  Waiting for
@@ -190,6 +194,8 @@ services:
   vmagent:
     image: victoriametrics/vmagent:v1.103.0
     container_name: nexora-vmagent
+    environment:
+      - TZ=${TZ:-Asia/Shanghai}
     command:
       - "-promscrape.config=/etc/nexora-collector/runtime/vmagent/scrape.yml"
       - "-remoteWrite.url=http://victoriametrics:8428/api/v1/write"
@@ -220,6 +226,8 @@ services:
     image: grafana/grafana:12.1.0
     container_name: nexora-grafana
     environment:
+      - TZ=${TZ:-Asia/Shanghai}
+      - GF_DATE_FORMATS_DEFAULT_TIMEZONE=${GRAFANA_DEFAULT_TIMEZONE:-Asia/Shanghai}
       - GF_SERVER_ROOT_URL=${GRAFANA_ROOT_URL:-%(protocol)s://%(domain)s/grafana/}
       # Nginx strips /grafana/ in proxy_pass, so Grafana serves its internal
       # root path and uses root_url only for browser-facing links/redirects.
