@@ -1,0 +1,533 @@
+{
+  "annotations": {
+    "list": []
+  },
+  "editable": false,
+  "fiscalYearStartMonth": 0,
+  "graphTooltip": 1,
+  "id": null,
+  "links": [],
+  "panels": [
+    {
+      "id": 1,
+      "title": "探针在线目标 (Scrape Up)",
+      "type": "stat",
+      "datasource": {
+        "type": "prometheus",
+        "uid": "victoriametrics"
+      },
+      "gridPos": {
+        "h": 4,
+        "w": 6,
+        "x": 0,
+        "y": 0
+      },
+      "fieldConfig": {
+        "defaults": {
+          "unit": "",
+          "color": {
+            "mode": "thresholds"
+          },
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              {
+                "color": "#56A64B",
+                "value": null
+              }
+            ]
+          }
+        },
+        "overrides": []
+      },
+      "options": {
+        "colorMode": "value",
+        "graphMode": "area",
+        "justifyMode": "auto",
+        "orientation": "auto",
+        "reduceOptions": {
+          "calcs": [
+            "lastNotNull"
+          ],
+          "fields": "",
+          "values": false
+        },
+        "textMode": "auto"
+      },
+      "targets": [
+        {
+          "expr": "sum(up)",
+          "refId": "A"
+        }
+      ]
+    },
+    {
+      "id": 2,
+      "title": "探测失败目标 (Scrape Down)",
+      "type": "stat",
+      "datasource": {
+        "type": "prometheus",
+        "uid": "victoriametrics"
+      },
+      "gridPos": {
+        "h": 4,
+        "w": 6,
+        "x": 6,
+        "y": 0
+      },
+      "fieldConfig": {
+        "defaults": {
+          "unit": "",
+          "color": {
+            "mode": "thresholds"
+          },
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              {
+                "color": "green",
+                "value": null
+              },
+              {
+                "color": "red",
+                "value": 1
+              }
+            ]
+          }
+        },
+        "overrides": []
+      },
+      "options": {
+        "colorMode": "value",
+        "graphMode": "area",
+        "justifyMode": "auto",
+        "orientation": "auto",
+        "reduceOptions": {
+          "calcs": [
+            "lastNotNull"
+          ],
+          "fields": "",
+          "values": false
+        },
+        "textMode": "auto"
+      },
+      "targets": [
+        {
+          "expr": "sum(up == 0) or vector(0)",
+          "refId": "A"
+        }
+      ]
+    },
+    {
+      "id": 3,
+      "title": "平均 SNMP 采集耗时",
+      "type": "stat",
+      "datasource": {
+        "type": "prometheus",
+        "uid": "victoriametrics"
+      },
+      "gridPos": {
+        "h": 4,
+        "w": 6,
+        "x": 12,
+        "y": 0
+      },
+      "fieldConfig": {
+        "defaults": {
+          "unit": "s",
+          "color": {
+            "mode": "thresholds"
+          },
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              {
+                "color": "#3274D9",
+                "value": null
+              }
+            ]
+          }
+        },
+        "overrides": []
+      },
+      "options": {
+        "colorMode": "value",
+        "graphMode": "area",
+        "justifyMode": "auto",
+        "orientation": "auto",
+        "reduceOptions": {
+          "calcs": [
+            "lastNotNull"
+          ],
+          "fields": "",
+          "values": false
+        },
+        "textMode": "auto"
+      },
+      "targets": [
+        {
+          "expr": "avg(scrape_duration_seconds)",
+          "refId": "A"
+        }
+      ]
+    },
+    {
+      "id": 4,
+      "title": "最大 SNMP 采集耗时",
+      "type": "stat",
+      "datasource": {
+        "type": "prometheus",
+        "uid": "victoriametrics"
+      },
+      "gridPos": {
+        "h": 4,
+        "w": 6,
+        "x": 18,
+        "y": 0
+      },
+      "fieldConfig": {
+        "defaults": {
+          "unit": "s",
+          "color": {
+            "mode": "thresholds"
+          },
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              {
+                "color": "green",
+                "value": null
+              },
+              {
+                "color": "#E0B400",
+                "value": 5
+              },
+              {
+                "color": "red",
+                "value": 15
+              }
+            ]
+          }
+        },
+        "overrides": []
+      },
+      "options": {
+        "colorMode": "value",
+        "graphMode": "area",
+        "justifyMode": "auto",
+        "orientation": "auto",
+        "reduceOptions": {
+          "calcs": [
+            "lastNotNull"
+          ],
+          "fields": "",
+          "values": false
+        },
+        "textMode": "auto"
+      },
+      "targets": [
+        {
+          "expr": "max(scrape_duration_seconds)",
+          "refId": "A"
+        }
+      ]
+    },
+    {
+      "id": 5,
+      "title": "各设备 SNMP 采集耗时分布 (秒)",
+      "type": "timeseries",
+      "datasource": {
+        "type": "prometheus",
+        "uid": "victoriametrics"
+      },
+      "gridPos": {
+        "h": 8,
+        "w": 12,
+        "x": 0,
+        "y": 4
+      },
+      "fieldConfig": {
+        "defaults": {
+          "unit": "s",
+          "color": {
+            "mode": "palette-classic"
+          },
+          "custom": {
+            "drawStyle": "line",
+            "lineInterpolation": "smooth",
+            "fillOpacity": 10
+          }
+        },
+        "overrides": []
+      },
+      "options": {
+        "legend": {
+          "displayMode": "list",
+          "placement": "bottom",
+          "showLegend": true
+        },
+        "tooltip": {
+          "mode": "multi",
+          "sort": "desc"
+        }
+      },
+      "targets": [
+        {
+          "expr": "scrape_duration_seconds",
+          "legendFormat": "{{instance}} ({{job}})",
+          "refId": "A"
+        }
+      ]
+    },
+    {
+      "id": 6,
+      "title": "抓取指标量统计 (Samples Scraped)",
+      "type": "timeseries",
+      "datasource": {
+        "type": "prometheus",
+        "uid": "victoriametrics"
+      },
+      "gridPos": {
+        "h": 8,
+        "w": 12,
+        "x": 12,
+        "y": 4
+      },
+      "fieldConfig": {
+        "defaults": {
+          "unit": "short",
+          "color": {
+            "mode": "palette-classic"
+          },
+          "custom": {
+            "drawStyle": "line",
+            "lineInterpolation": "smooth",
+            "fillOpacity": 10
+          }
+        },
+        "overrides": []
+      },
+      "options": {
+        "legend": {
+          "displayMode": "list",
+          "placement": "bottom",
+          "showLegend": true
+        },
+        "tooltip": {
+          "mode": "multi",
+          "sort": "desc"
+        }
+      },
+      "targets": [
+        {
+          "expr": "scrape_samples_scraped",
+          "legendFormat": "{{instance}}",
+          "refId": "A"
+        }
+      ]
+    },
+    {
+      "id": 7,
+      "title": "采集失败设备清单 (Target Scrape Failure)",
+      "type": "table",
+      "datasource": {
+        "type": "prometheus",
+        "uid": "victoriametrics"
+      },
+      "gridPos": {
+        "h": 8,
+        "w": 12,
+        "x": 0,
+        "y": 12
+      },
+      "fieldConfig": {
+        "defaults": {
+          "unit": "none",
+          "color": {
+            "mode": "thresholds"
+          }
+        },
+        "overrides": []
+      },
+      "options": {
+        "cellHeight": "sm",
+        "showHeader": true,
+        "footer": {
+          "show": false
+        }
+      },
+      "targets": [
+        {
+          "expr": "up == 0",
+          "format": "table",
+          "instant": true,
+          "refId": "A"
+        }
+      ],
+      "transformations": [
+        {
+          "id": "organize",
+          "options": {
+            "excludeByName": {
+              "Time": true,
+              "__name__": true,
+              "ifIndex": true,
+              "asset_id": true,
+              "nexora_asset_id": true,
+              "nexora_hostname": true,
+              "nexora_module": true,
+              "nexora_platform": true,
+              "nexora_role": true,
+              "nexora_site_id": true,
+              "nexora_site_name": true,
+              "nexora_tenant_id": true,
+              "nexora_vendor": true,
+              "job": true,
+              "tenant_id": true,
+              "site_id": true,
+              "site_name": true,
+              "platform": true
+            },
+            "indexByName": {
+              "sysName": 0,
+              "hostname": 1,
+              "instance": 2,
+              "ifName": 3,
+              "ifDescr": 4,
+              "vendor": 5,
+              "role": 6,
+              "Value": 7
+            },
+            "renameByName": {
+              "sysName": "设备名称",
+              "hostname": "设备名称",
+              "instance": "管理 IP",
+              "ifName": "接口全称",
+              "ifDescr": "接口描述",
+              "vendor": "厂商",
+              "role": "角色",
+              "Value": "探测状态"
+            }
+          }
+        }
+      ]
+    },
+    {
+      "id": 8,
+      "title": "采集最慢目标排行 Top 10",
+      "type": "table",
+      "datasource": {
+        "type": "prometheus",
+        "uid": "victoriametrics"
+      },
+      "gridPos": {
+        "h": 8,
+        "w": 12,
+        "x": 12,
+        "y": 12
+      },
+      "fieldConfig": {
+        "defaults": {
+          "unit": "none",
+          "color": {
+            "mode": "thresholds"
+          }
+        },
+        "overrides": [
+          {
+            "matcher": {
+              "id": "byName",
+              "options": "数值"
+            },
+            "properties": [
+              {
+                "id": "unit",
+                "value": "s"
+              }
+            ]
+          }
+        ]
+      },
+      "options": {
+        "cellHeight": "sm",
+        "showHeader": true,
+        "footer": {
+          "show": false
+        }
+      },
+      "targets": [
+        {
+          "expr": "topk(10, scrape_duration_seconds)",
+          "format": "table",
+          "instant": true,
+          "refId": "A"
+        }
+      ],
+      "transformations": [
+        {
+          "id": "organize",
+          "options": {
+            "excludeByName": {
+              "Time": true,
+              "__name__": true,
+              "ifIndex": true,
+              "asset_id": true,
+              "nexora_asset_id": true,
+              "nexora_hostname": true,
+              "nexora_module": true,
+              "nexora_platform": true,
+              "nexora_role": true,
+              "nexora_site_id": true,
+              "nexora_site_name": true,
+              "nexora_tenant_id": true,
+              "nexora_vendor": true,
+              "job": true,
+              "tenant_id": true,
+              "site_id": true,
+              "site_name": true,
+              "platform": true
+            },
+            "indexByName": {
+              "sysName": 0,
+              "hostname": 1,
+              "instance": 2,
+              "ifName": 3,
+              "ifDescr": 4,
+              "vendor": 5,
+              "role": 6,
+              "Value": 7
+            },
+            "renameByName": {
+              "sysName": "设备名称",
+              "hostname": "设备名称",
+              "instance": "管理 IP",
+              "ifName": "接口全称",
+              "ifDescr": "接口描述",
+              "vendor": "厂商",
+              "role": "角色",
+              "Value": "采集耗时 (秒)"
+            }
+          }
+        }
+      ]
+    }
+  ],
+  "refresh": "30s",
+  "schemaVersion": 39,
+  "tags": [
+    "nexora",
+    "monitoring",
+    "health"
+  ],
+  "templating": {
+    "list": []
+  },
+  "time": {
+    "from": "now-1h",
+    "to": "now"
+  },
+  "timezone": "browser",
+  "title": "05 SNMP 采集健康 (SNMP Scrape Health)",
+  "uid": "nexora-monitoring-health",
+  "version": 3
+}

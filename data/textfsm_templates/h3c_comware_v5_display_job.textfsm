@@ -1,0 +1,13 @@
+# Comware V5 scheduled job detail.
+Value Filldown JOB_NAME (\S+)
+Value SPECIFIED_VIEW (\S+)
+Value Required TIME_INDEX (\d+)
+Value Required COMMAND (.+?)
+Value Required DELAY_MINUTES (\d+)
+
+Start
+  ^\s*Job\s+name:\s*${JOB_NAME}\s*$$
+  ^\s*Specified\s+view:\s*${SPECIFIED_VIEW}\s*$$
+  ^\s*Time\s+${TIME_INDEX}:\s+Execute\s+command\s+${COMMAND}\s+after\s+${DELAY_MINUTES}\s+minutes\s*$$ -> Record
+  ^.*$$
+

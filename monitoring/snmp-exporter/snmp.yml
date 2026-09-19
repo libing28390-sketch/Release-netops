@@ -1,0 +1,1184 @@
+# Safe static fallback.  Control-plane artifacts replace this file after a
+# plan is saved and applied.  Numeric OIDs keep the fallback independent of
+# the container's MIB search path.
+# snmp_exporter requires at least one auth definition even when there are no
+# targets. This is a deliberately unusable, non-secret bootstrap auth; the
+# control plane replaces it with credential-bearing auths before any target is
+# published. Keeping targets empty prevents this value from being sent to a
+# device.
+auths:
+  bootstrap_disabled_v2:
+    version: 2
+    community: __nexora_bootstrap_disabled__
+modules:
+  generic_ifmib_interface_std:
+    walk:
+    - 1.3.6.1.2.1.2.2
+    - 1.3.6.1.2.1.31.1.1
+    - 1.3.6.1.2.1.10.7.2.1
+    get:
+    - 1.3.6.1.2.1.1.3.0
+    - 1.3.6.1.2.1.1.5.0
+    metrics:
+    - name: ifMtu
+      oid: 1.3.6.1.2.1.2.2.1.4
+      type: gauge
+      help: Maximum transmission unit of the interface.
+      indexes:
+      - labelname: ifIndex
+        type: gauge
+    - name: ifSpeed
+      oid: 1.3.6.1.2.1.2.2.1.5
+      type: gauge
+      help: Interface speed in bits per second (32-bit value).
+      indexes:
+      - labelname: ifIndex
+        type: gauge
+    - name: ifType
+      oid: 1.3.6.1.2.1.2.2.1.3
+      type: gauge
+      help: Interface type enumeration.
+      indexes:
+      - labelname: ifIndex
+        type: gauge
+    - name: ifAdminStatus
+      oid: 1.3.6.1.2.1.2.2.1.7
+      type: gauge
+      help: Administrative state of the interface.
+      indexes:
+      - labelname: ifIndex
+        type: gauge
+      lookups:
+      - source_indexes: [ifIndex]
+        lookup: ifName
+      - source_indexes: [ifIndex]
+        lookup: ifDescr
+    - name: ifOperStatus
+      oid: 1.3.6.1.2.1.2.2.1.8
+      type: gauge
+      help: Operational state of the interface.
+      indexes:
+      - labelname: ifIndex
+        type: gauge
+      lookups:
+      - source_indexes: [ifIndex]
+        lookup: ifName
+      - source_indexes: [ifIndex]
+        lookup: ifDescr
+    - name: ifInDiscards
+      oid: 1.3.6.1.2.1.2.2.1.13
+      type: counter
+      help: Inbound packets discarded.
+      indexes:
+      - labelname: ifIndex
+        type: gauge
+      lookups:
+      - source_indexes: [ifIndex]
+        lookup: ifName
+      - source_indexes: [ifIndex]
+        lookup: ifDescr
+    - name: ifInErrors
+      oid: 1.3.6.1.2.1.2.2.1.14
+      type: counter
+      help: Inbound packets with errors.
+      indexes:
+      - labelname: ifIndex
+        type: gauge
+      lookups:
+      - source_indexes: [ifIndex]
+        lookup: ifName
+      - source_indexes: [ifIndex]
+        lookup: ifDescr
+    - name: ifInOctets
+      oid: 1.3.6.1.2.1.2.2.1.10
+      type: counter
+      help: Inbound octets using the 32-bit interface counter.
+      indexes:
+      - labelname: ifIndex
+        type: gauge
+      lookups:
+      - source_indexes: [ifIndex]
+        lookup: ifName
+      - source_indexes: [ifIndex]
+        lookup: ifDescr
+    - name: ifOutDiscards
+      oid: 1.3.6.1.2.1.2.2.1.19
+      type: counter
+      help: Outbound packets discarded.
+      indexes:
+      - labelname: ifIndex
+        type: gauge
+      lookups:
+      - source_indexes: [ifIndex]
+        lookup: ifName
+      - source_indexes: [ifIndex]
+        lookup: ifDescr
+    - name: ifOutErrors
+      oid: 1.3.6.1.2.1.2.2.1.20
+      type: counter
+      help: Outbound packets with errors.
+      indexes:
+      - labelname: ifIndex
+        type: gauge
+      lookups:
+      - source_indexes: [ifIndex]
+        lookup: ifName
+      - source_indexes: [ifIndex]
+        lookup: ifDescr
+    - name: ifOutOctets
+      oid: 1.3.6.1.2.1.2.2.1.16
+      type: counter
+      help: Outbound octets using the 32-bit interface counter.
+      indexes:
+      - labelname: ifIndex
+        type: gauge
+      lookups:
+      - source_indexes: [ifIndex]
+        lookup: ifName
+      - source_indexes: [ifIndex]
+        lookup: ifDescr
+    - name: ifName
+      oid: 1.3.6.1.2.1.31.1.1.1.1
+      type: DisplayString
+      help: Interface name.
+      indexes:
+      - labelname: ifIndex
+        type: gauge
+    - name: ifDescr
+      oid: 1.3.6.1.2.1.2.2.1.2
+      type: DisplayString
+      help: A textual string containing information about the interface.
+      indexes:
+      - labelname: ifIndex
+        type: gauge
+    - name: ifHighSpeed
+      oid: 1.3.6.1.2.1.31.1.1.1.15
+      type: gauge
+      help: Interface speed in millions of bits per second.
+      indexes:
+      - labelname: ifIndex
+        type: gauge
+      lookups:
+      - source_indexes: [ifIndex]
+        lookup: ifName
+      - source_indexes: [ifIndex]
+        lookup: ifDescr
+    - name: ifHCInOctets
+      oid: 1.3.6.1.2.1.31.1.1.1.6
+      type: counter
+      help: Inbound octets using the high-capacity counter.
+      indexes:
+      - labelname: ifIndex
+        type: gauge
+      lookups:
+      - source_indexes: [ifIndex]
+        lookup: ifName
+      - source_indexes: [ifIndex]
+        lookup: ifDescr
+    - name: ifHCInUcastPkts
+      oid: 1.3.6.1.2.1.31.1.1.1.7
+      type: counter
+      help: Inbound unicast packets using the high-capacity counter.
+      indexes:
+      - labelname: ifIndex
+        type: gauge
+      lookups:
+      - source_indexes: [ifIndex]
+        lookup: ifName
+      - source_indexes: [ifIndex]
+        lookup: ifDescr
+    - name: ifHCInMulticastPkts
+      oid: 1.3.6.1.2.1.31.1.1.1.8
+      type: counter
+      help: Inbound multicast packets using the high-capacity counter.
+      indexes:
+      - labelname: ifIndex
+        type: gauge
+      lookups:
+      - source_indexes: [ifIndex]
+        lookup: ifName
+      - source_indexes: [ifIndex]
+        lookup: ifDescr
+    - name: ifHCInBroadcastPkts
+      oid: 1.3.6.1.2.1.31.1.1.1.9
+      type: counter
+      help: Inbound broadcast packets using the high-capacity counter.
+      indexes:
+      - labelname: ifIndex
+        type: gauge
+      lookups:
+      - source_indexes: [ifIndex]
+        lookup: ifName
+      - source_indexes: [ifIndex]
+        lookup: ifDescr
+    - name: ifHCOutOctets
+      oid: 1.3.6.1.2.1.31.1.1.1.10
+      type: counter
+      help: Outbound octets using the high-capacity counter.
+      indexes:
+      - labelname: ifIndex
+        type: gauge
+      lookups:
+      - source_indexes: [ifIndex]
+        lookup: ifName
+      - source_indexes: [ifIndex]
+        lookup: ifDescr
+    - name: ifHCOutUcastPkts
+      oid: 1.3.6.1.2.1.31.1.1.1.11
+      type: counter
+      help: Outbound unicast packets using the high-capacity counter.
+      indexes:
+      - labelname: ifIndex
+        type: gauge
+    - name: ifHCOutMulticastPkts
+      oid: 1.3.6.1.2.1.31.1.1.1.12
+      type: counter
+      help: Outbound multicast packets using the high-capacity counter.
+      indexes:
+      - labelname: ifIndex
+        type: gauge
+    - name: ifHCOutBroadcastPkts
+      oid: 1.3.6.1.2.1.31.1.1.1.13
+      type: counter
+      help: Outbound broadcast packets using the high-capacity counter.
+      indexes:
+      - labelname: ifIndex
+        type: gauge
+    - name: ifPhysAddress
+      oid: 1.3.6.1.2.1.2.2.1.6
+      type: OctetString
+      help: Interface physical address.
+      indexes:
+      - labelname: ifIndex
+        type: gauge
+    - name: ifAlias
+      oid: 1.3.6.1.2.1.31.1.1.1.18
+      type: DisplayString
+      help: Interface alias/description.
+      indexes:
+      - labelname: ifIndex
+        type: gauge
+    - name: dot3StatsFCSErrors
+      oid: 1.3.6.1.2.1.10.7.2.1.3
+      type: counter
+      help: Ethernet frames received with FCS errors.
+      indexes:
+      - labelname: ifIndex
+        type: gauge
+    max_repetitions: 25
+    retries: 2
+    timeout: 3s
+  generic_system_std:
+    walk:
+    - 1.3.6.1.2.1.1
+    get:
+    - 1.3.6.1.2.1.1.1.0
+    - 1.3.6.1.2.1.1.3.0
+    - 1.3.6.1.2.1.1.5.0
+    - 1.3.6.1.2.1.1.6.0
+    - 1.3.6.1.2.1.1.4.0
+    - 1.3.6.1.2.1.1.2.0
+    metrics:
+    - name: sysUpTime
+      oid: 1.3.6.1.2.1.1.3
+      type: gauge
+      help: Time since the network management portion of the system was last re-initialized.
+    - name: sysDescr
+      oid: 1.3.6.1.2.1.1.1
+      type: DisplayString
+      help: Textual description of the managed device.
+    - name: sysName
+      oid: 1.3.6.1.2.1.1.5
+      type: DisplayString
+      help: Administratively assigned name of the managed device.
+    - name: sysLocation
+      oid: 1.3.6.1.2.1.1.6
+      type: DisplayString
+      help: Physical location of the managed device.
+    - name: sysContact
+      oid: 1.3.6.1.2.1.1.4
+      type: DisplayString
+      help: Contact person for the managed device.
+    - name: sysObjectID
+      oid: 1.3.6.1.2.1.1.2
+      type: DisplayString
+      help: Vendor authoritative identification of the network management subsystem.
+    max_repetitions: 10
+    retries: 2
+    timeout: 3s
+  h3c_common_std:
+    walk:
+    - 1.3.6.1.4.1.25506.2.6.1.1.1.1
+    - 1.3.6.1.4.1.25506.2.6.1.2.1.1
+    - 1.3.6.1.4.1.25506.2.6.1.3.1.1
+    - 1.3.6.1.4.1.25506.2.5.1.1.4.1.1
+    - 1.3.6.1.4.1.25506.8.35.9.1.1.1
+    - 1.3.6.1.4.1.25506.8.35.9.1.2.1
+    - 1.3.6.1.2.1.47.1.1.1.1.7
+    - 1.3.6.1.2.1.47.1.1.1.1.10
+    - 1.3.6.1.2.1.47.1.1.1.1.11
+    get:
+    - 1.3.6.1.4.1.25506.8.35.5.1.12
+    metrics:
+    - name: hh3cEntityExtCpuUsage
+      oid: 1.3.6.1.4.1.25506.2.6.1.1.1.1.6
+      type: gauge
+      help: CPU usage for the H3C entity (5-second sample).
+      indexes:
+      - labelname: entity_index
+        type: gauge
+    - name: hh3cEntityExtCpuMaxUsage
+      oid: 1.3.6.1.4.1.25506.2.6.1.1.1.1.20
+      type: gauge
+      help: Peak CPU usage during the most recent one-minute interval.
+      indexes:
+      - labelname: entity_index
+        type: gauge
+    - name: hh3cEntityExtCpuAvgUsage
+      oid: 1.3.6.1.4.1.25506.2.6.1.1.1.1.26
+      type: gauge
+      help: Average CPU usage for the H3C entity.
+      indexes:
+      - labelname: entity_index
+        type: gauge
+    - name: hh3cEntityExtCpuUsageIn1Minute
+      oid: 1.3.6.1.4.1.25506.2.6.1.1.1.1.33
+      type: gauge
+      help: Average CPU usage during the most recent one-minute interval.
+      indexes:
+      - labelname: entity_index
+        type: gauge
+    - name: hh3cEntityExtCpuUsageIn5Minutes
+      oid: 1.3.6.1.4.1.25506.2.6.1.1.1.1.34
+      type: gauge
+      help: Average CPU usage during the most recent five-minute interval.
+      indexes:
+      - labelname: entity_index
+        type: gauge
+    - name: hh3cEntityExtMemUsage
+      oid: 1.3.6.1.4.1.25506.2.6.1.1.1.1.8
+      type: gauge
+      help: Memory usage for the H3C entity in percent.
+      indexes:
+      - labelname: entity_index
+        type: gauge
+    - name: hh3cEntityExtMemAvgUsage
+      oid: 1.3.6.1.4.1.25506.2.6.1.1.1.1.27
+      type: gauge
+      help: Average memory usage for the H3C entity.
+      indexes:
+      - labelname: entity_index
+        type: gauge
+    - name: hh3cEntityExtMemSize
+      oid: 1.3.6.1.4.1.25506.2.6.1.1.1.1.10
+      type: gauge
+      help: Memory size for the H3C entity in bytes.
+      indexes:
+      - labelname: entity_index
+        type: gauge
+    - name: hh3cEntityExtMemSizeRev
+      oid: 1.3.6.1.4.1.25506.2.6.1.1.1.1.32
+      type: gauge
+      help: 64-bit memory size for the H3C entity in bytes.
+      indexes:
+      - labelname: entity_index
+        type: gauge
+    - name: hh3cEntityExtTemperature
+      oid: 1.3.6.1.4.1.25506.2.6.1.1.1.1.12
+      type: gauge
+      help: Temperature of the H3C entity.
+      indexes:
+      - labelname: entity_index
+        type: gauge
+    - name: hh3cEntityExtOperStatus
+      oid: 1.3.6.1.4.1.25506.2.6.1.1.1.1.3
+      type: EnumAsInfo
+      help: Operational status of the H3C entity.
+      indexes:
+      - labelname: entity_index
+        type: gauge
+      enum_values:
+        1: notSupported
+        2: disabled
+        3: enabled
+        4: dangerous
+    - name: hh3cEntityExtErrorStatus
+      oid: 1.3.6.1.4.1.25506.2.6.1.1.1.1.19
+      type: EnumAsInfo
+      help: Error status of the H3C entity.
+      indexes:
+      - labelname: entity_index
+        type: gauge
+      enum_values:
+        1: notSupported
+        2: normal
+        3: postFailure
+        4: entityAbsent
+        11: poeError
+        21: stackError
+        22: stackPortBlocked
+        23: stackPortFailed
+        31: sfpRecvError
+        32: sfpSendError
+        33: sfpBothError
+        41: fanError
+        51: psuError
+        61: rpsError
+        71: moduleFaulty
+        81: sensorError
+        91: hardwareFaulty
+    - name: entPhysicalName
+      oid: 1.3.6.1.2.1.47.1.1.1.1.7
+      type: DisplayString
+      help: Physical entity name used to identify H3C CPU, module and sensor rows.
+      indexes:
+      - labelname: entity_index
+        type: gauge
+    - name: entPhysicalHardwareRev
+      oid: 1.3.6.1.2.1.47.1.1.1.1.10
+      type: DisplayString
+      help: Hardware revision of the H3C physical entity.
+      indexes:
+      - labelname: entity_index
+        type: gauge
+    - name: entPhysicalFirmwareRev
+      oid: 1.3.6.1.2.1.47.1.1.1.1.11
+      type: DisplayString
+      help: Firmware revision of the H3C physical entity.
+      indexes:
+      - labelname: entity_index
+        type: gauge
+    - name: hh3cEntityExtUpTime
+      oid: 1.3.6.1.4.1.25506.2.6.1.1.1.1.11
+      type: gauge
+      help: Power-on time of the H3C entity in seconds.
+      indexes:
+      - labelname: entity_index
+        type: gauge
+    - name: hh3cEntityExtMacAddressCount
+      oid: 1.3.6.1.4.1.25506.2.6.1.2.1.1.5
+      type: gauge
+      help: MAC address count reported for the H3C entity.
+      indexes:
+      - labelname: entity_index
+        type: gauge
+    - name: hh3cDevMFanStatus
+      oid: 1.3.6.1.4.1.25506.8.35.9.1.1.1.2
+      type: EnumAsInfo
+      help: 'H3C fan status: active, deactive, not installed, or unsupported.'
+      indexes:
+      - labelname: fan_index
+        type: gauge
+      enum_values: &id001
+        1: active
+        2: deactive
+        3: not-install
+        4: unsupport
+    - name: hh3cDevMPowerStatus
+      oid: 1.3.6.1.4.1.25506.8.35.9.1.2.1.2
+      type: EnumAsInfo
+      help: 'H3C power supply status: active, deactive, not installed, or unsupported.'
+      indexes:
+      - labelname: power_index
+        type: gauge
+      enum_values: *id001
+    - name: hh3cFlhPartSpace
+      oid: 1.3.6.1.4.1.25506.2.5.1.1.4.1.1.4
+      type: gauge
+      help: H3C Flash partition capacity in bytes.
+      indexes:
+      - labelname: flash_index
+        type: gauge
+      - labelname: partition_index
+        type: gauge
+    - name: hh3cFlhPartSpaceFree
+      oid: 1.3.6.1.4.1.25506.2.5.1.1.4.1.1.5
+      type: gauge
+      help: H3C Flash partition free capacity in bytes.
+      indexes:
+      - labelname: flash_index
+        type: gauge
+      - labelname: partition_index
+        type: gauge
+    - name: hh3cFlhPartStatus
+      oid: 1.3.6.1.4.1.25506.2.5.1.1.4.1.1.8
+      type: EnumAsInfo
+      help: H3C Flash partition status.
+      indexes:
+      - labelname: flash_index
+        type: gauge
+      - labelname: partition_index
+        type: gauge
+      enum_values:
+        1: readOnly
+        2: runFromFlash
+        3: readWrite
+    - name: hh3cFlhPartName
+      oid: 1.3.6.1.4.1.25506.2.5.1.1.4.1.1.10
+      type: DisplayString
+      help: H3C Flash partition name.
+      indexes:
+      - labelname: flash_index
+        type: gauge
+      - labelname: partition_index
+        type: gauge
+    - name: hh3cMaxMacLearnRange
+      oid: 1.3.6.1.4.1.25506.8.35.5.1.12
+      type: gauge
+      help: Maximum number of MAC addresses supported by an H3C interface.
+    - name: hh3cEntityExtNominalPower
+      oid: 1.3.6.1.4.1.25506.2.6.1.3.1.1.2
+      type: gauge
+      help: Rated power of an H3C power entity in milliwatts.
+      indexes:
+      - labelname: power_index
+        type: gauge
+    - name: hh3cEntityExtCurrentPower
+      oid: 1.3.6.1.4.1.25506.2.6.1.3.1.1.3
+      type: gauge
+      help: Current power of an H3C power entity in milliwatts.
+      indexes:
+      - labelname: power_index
+        type: gauge
+    - name: hh3cEntityExtAveragePower
+      oid: 1.3.6.1.4.1.25506.2.6.1.3.1.1.4
+      type: gauge
+      help: Average power of an H3C power entity in milliwatts.
+      indexes:
+      - labelname: power_index
+        type: gauge
+    max_repetitions: 25
+    retries: 3
+    timeout: 5s
+  huawei_common_std:
+    walk:
+    - 1.3.6.1.4.1.2011.5.25.31.1.1.1
+    - 1.3.6.1.4.1.2011.6.3.4
+    - 1.3.6.1.4.1.2011.6.3.5
+    - 1.3.6.1.4.1.2011.6.157.2.1.1
+    - 1.3.6.1.2.1.47.1.1.1.1.7
+    get:
+    - 1.3.6.1.4.1.2011.6.157.1.1
+    - 1.3.6.1.4.1.2011.6.157.1.3
+    - 1.3.6.1.4.1.2011.6.157.1.4
+    - 1.3.6.1.4.1.2011.6.157.1.6
+    metrics:
+    - name: hwEntityCpuUsage
+      oid: 1.3.6.1.4.1.2011.5.25.31.1.1.1.1.5
+      type: gauge
+      help: CPU usage of the Huawei physical entity.
+      indexes:
+      - labelname: entity_index
+        type: gauge
+    - name: hwEntityMemUsage
+      oid: 1.3.6.1.4.1.2011.5.25.31.1.1.1.1.7
+      type: gauge
+      help: Memory usage of the Huawei physical entity in percent.
+      indexes:
+      - labelname: entity_index
+        type: gauge
+    - name: hwEntityMemSize
+      oid: 1.3.6.1.4.1.2011.5.25.31.1.1.1.1.9
+      type: gauge
+      help: Memory size of the Huawei physical entity in bytes.
+      indexes:
+      - labelname: entity_index
+        type: gauge
+    - name: hwEntityTemperature
+      oid: 1.3.6.1.4.1.2011.5.25.31.1.1.1.1.11
+      type: gauge
+      help: Highest temperature reported for the Huawei entity in degrees Celsius.
+      indexes:
+      - labelname: entity_index
+        type: gauge
+    - name: hwCpuDevDuty
+      oid: 1.3.6.1.4.1.2011.6.3.4.1.2
+      type: gauge
+      help: Current CPU occupancy of a Huawei board or entity.
+      indexes:
+      - labelname: frame_index
+        type: gauge
+      - labelname: slot_index
+        type: gauge
+      - labelname: cpu_index
+        type: gauge
+    - name: hwAvgDuty1min
+      oid: 1.3.6.1.4.1.2011.6.3.4.1.3
+      type: gauge
+      help: One-minute average CPU occupancy of a Huawei board or entity.
+      indexes:
+      - labelname: frame_index
+        type: gauge
+      - labelname: slot_index
+        type: gauge
+      - labelname: cpu_index
+        type: gauge
+    - name: hwAvgDuty5min
+      oid: 1.3.6.1.4.1.2011.6.3.4.1.4
+      type: gauge
+      help: Five-minute average CPU occupancy of a Huawei board or entity.
+      indexes:
+      - labelname: frame_index
+        type: gauge
+      - labelname: slot_index
+        type: gauge
+      - labelname: cpu_index
+        type: gauge
+    - name: hwMemoryDevSize
+      oid: 1.3.6.1.4.1.2011.6.3.5.1.1.2
+      type: gauge
+      help: Total memory size of a Huawei memory module in bytes.
+      indexes:
+      - labelname: frame_index
+        type: gauge
+      - labelname: slot_index
+        type: gauge
+      - labelname: memory_module_index
+        type: gauge
+    - name: hwMemoryDevFree
+      oid: 1.3.6.1.4.1.2011.6.3.5.1.1.3
+      type: gauge
+      help: Free memory size of a Huawei memory module in bytes.
+      indexes:
+      - labelname: frame_index
+        type: gauge
+      - labelname: slot_index
+        type: gauge
+      - labelname: memory_module_index
+        type: gauge
+    - name: hwMemoryDevSize64
+      oid: 1.3.6.1.4.1.2011.6.3.5.1.1.8
+      type: gauge
+      help: 64-bit total memory size of a Huawei memory module in bytes.
+      indexes:
+      - labelname: frame_index
+        type: gauge
+      - labelname: slot_index
+        type: gauge
+      - labelname: memory_module_index
+        type: gauge
+    - name: hwMemoryDevFree64
+      oid: 1.3.6.1.4.1.2011.6.3.5.1.1.9
+      type: gauge
+      help: 64-bit free memory size of a Huawei memory module in bytes.
+      indexes:
+      - labelname: frame_index
+        type: gauge
+      - labelname: slot_index
+        type: gauge
+      - labelname: memory_module_index
+        type: gauge
+    - name: hwBoardRatedPower
+      oid: 1.3.6.1.4.1.2011.6.157.2.1.1.5
+      type: gauge
+      help: Rated power of a Huawei board or power supply in milliwatts.
+      indexes:
+      - labelname: board_index
+        type: gauge
+    - name: hwPowerConsumption
+      oid: 1.3.6.1.4.1.2011.6.157.1.1
+      type: gauge
+      help: Historical Huawei device power consumption.
+    - name: hwAveragePower
+      oid: 1.3.6.1.4.1.2011.6.157.1.3
+      type: gauge
+      help: Average Huawei device power in milliwatts.
+    - name: hwRatedPower
+      oid: 1.3.6.1.4.1.2011.6.157.1.4
+      type: gauge
+      help: Rated Huawei device power in milliwatts.
+    - name: hwCurrentPower
+      oid: 1.3.6.1.4.1.2011.6.157.1.6
+      type: gauge
+      help: Current Huawei device power in milliwatts.
+    - name: entPhysicalName
+      oid: 1.3.6.1.2.1.47.1.1.1.1.7
+      type: DisplayString
+      help: Physical entity name used to identify Huawei board and sensor rows.
+      indexes:
+      - labelname: entity_index
+        type: gauge
+    max_repetitions: 25
+    retries: 2
+    timeout: 3s
+  cisco_common_std:
+    walk:
+    - 1.3.6.1.4.1.9.9.109.1.1.1
+    - 1.3.6.1.4.1.9.9.48.1.1.1
+    - 1.3.6.1.4.1.9.9.91.1.1.1
+    - 1.3.6.1.2.1.47.1.1.1.1.7
+    metrics:
+    - name: cpmCPUTotal1minRev
+      oid: 1.3.6.1.4.1.9.9.109.1.1.1.1.7
+      type: gauge
+      help: Cisco overall CPU busy percentage during the last one-minute period.
+      indexes:
+      - labelname: cpu_index
+        type: gauge
+    - name: cpmCPUTotal5minRev
+      oid: 1.3.6.1.4.1.9.9.109.1.1.1.1.8
+      type: gauge
+      help: Cisco overall CPU busy percentage during the last five-minute period.
+      indexes:
+      - labelname: cpu_index
+        type: gauge
+    - name: cpmCPUTotalMonIntervalValue
+      oid: 1.3.6.1.4.1.9.9.109.1.1.1.1.10
+      type: gauge
+      help: Cisco CPU busy percentage during the configured monitoring interval.
+      indexes:
+      - labelname: cpu_index
+        type: gauge
+    - name: cpmCPUInterruptMonIntervalValue
+      oid: 1.3.6.1.4.1.9.9.109.1.1.1.1.11
+      type: gauge
+      help: Cisco CPU interrupt utilization percentage.
+      indexes:
+      - labelname: cpu_index
+        type: gauge
+    - name: cpmCPUMemoryHCUsed
+      oid: 1.3.6.1.4.1.9.9.109.1.1.1.1.17
+      type: gauge
+      help: Cisco CPU-wide memory currently in use, in kilobytes.
+      indexes:
+      - labelname: cpu_index
+        type: gauge
+    - name: cpmCPUMemoryHCFree
+      oid: 1.3.6.1.4.1.9.9.109.1.1.1.1.19
+      type: gauge
+      help: Cisco CPU-wide memory currently free, in kilobytes.
+      indexes:
+      - labelname: cpu_index
+        type: gauge
+    - name: ciscoMemoryPoolUsed
+      oid: 1.3.6.1.4.1.9.9.48.1.1.1.5
+      type: gauge
+      help: Cisco memory pool used bytes/kilobytes, depending on platform MIB implementation.
+      indexes:
+      - labelname: memory_pool_index
+        type: gauge
+    - name: ciscoMemoryPoolFree
+      oid: 1.3.6.1.4.1.9.9.48.1.1.1.6
+      type: gauge
+      help: Cisco memory pool free bytes/kilobytes, depending on platform MIB implementation.
+      indexes:
+      - labelname: memory_pool_index
+        type: gauge
+    - name: ciscoMemoryPoolName
+      oid: 1.3.6.1.4.1.9.9.48.1.1.1.2
+      type: DisplayString
+      help: Cisco memory pool name.
+      indexes:
+      - labelname: memory_pool_index
+        type: gauge
+    - name: entSensorValue
+      oid: 1.3.6.1.4.1.9.9.91.1.1.1.4
+      type: gauge
+      help: Cisco entity sensor value.
+      indexes:
+      - labelname: sensor_index
+        type: gauge
+    - name: entPhysicalName
+      oid: 1.3.6.1.2.1.47.1.1.1.1.7
+      type: DisplayString
+      help: Physical entity name used to identify Cisco CPU, memory and sensor rows.
+      indexes:
+      - labelname: entity_index
+        type: gauge
+    max_repetitions: 25
+    retries: 2
+    timeout: 3s
+  ruijie_common_std:
+    walk:
+    - 1.3.6.1.4.1.4881.1.1.10.2.35.1.1
+    - 1.3.6.1.2.1.47.1.1.1.1.7
+    metrics:
+    - name: ruijieCpuCostRate
+      oid: 1.3.6.1.4.1.4881.1.1.10.2.35.1.1.1.3
+      type: gauge
+      help: CPU utilization percentage for the Ruijie entity.
+      indexes:
+      - labelname: entity_index
+        type: gauge
+    - name: ruijieMemoryPoolCurrentUtilization
+      oid: 1.3.6.1.4.1.4881.1.1.10.2.35.1.1.1.2
+      type: gauge
+      help: Memory utilization percentage for the Ruijie entity.
+      indexes:
+      - labelname: entity_index
+        type: gauge
+    - name: ruijieDeviceTemperature
+      oid: 1.3.6.1.4.1.4881.1.1.10.2.35.1.1.1.4
+      type: gauge
+      help: Temperature for the Ruijie entity in degrees Celsius.
+      indexes:
+      - labelname: entity_index
+        type: gauge
+    - name: ruijieDevicePowerStatus
+      oid: 1.3.6.1.4.1.4881.1.1.10.2.35.1.1.1.5
+      type: gauge
+      help: Power supply status for the Ruijie entity.
+      indexes:
+      - labelname: entity_index
+        type: gauge
+    - name: ruijieDeviceFanStatus
+      oid: 1.3.6.1.4.1.4881.1.1.10.2.35.1.1.1.6
+      type: gauge
+      help: Fan status for the Ruijie entity.
+      indexes:
+      - labelname: entity_index
+        type: gauge
+    - name: entPhysicalName
+      oid: 1.3.6.1.2.1.47.1.1.1.1.7
+      type: DisplayString
+      help: Physical entity name used to identify Ruijie card and sensor rows.
+      indexes:
+      - labelname: entity_index
+        type: gauge
+    max_repetitions: 25
+    retries: 2
+    timeout: 3s
+  juniper_common_std:
+    walk:
+    - 1.3.6.1.4.1.2636.3.1.13.1
+    metrics:
+    - name: jnxOperatingCPU
+      oid: 1.3.6.1.4.1.2636.3.1.13.1.8
+      type: gauge
+      help: Overall CPU busy percentage for the Juniper operating entity.
+      indexes:
+      - labelname: operating_index
+        type: gauge
+    - name: jnxOperatingBuffer
+      oid: 1.3.6.1.4.1.2636.3.1.13.1.11
+      type: gauge
+      help: Buffer/memory utilization percentage for the Juniper operating entity.
+      indexes:
+      - labelname: operating_index
+        type: gauge
+    - name: jnxOperatingTemp
+      oid: 1.3.6.1.4.1.2636.3.1.13.1.7
+      type: gauge
+      help: Temperature of the Juniper operating entity in degrees Celsius.
+      indexes:
+      - labelname: operating_index
+        type: gauge
+    - name: jnxOperatingDRAMSize
+      oid: 1.3.6.1.4.1.2636.3.1.13.1.10
+      type: gauge
+      help: Total DRAM size of the Juniper operating entity in bytes.
+      indexes:
+      - labelname: operating_index
+        type: gauge
+    - name: jnxOperatingDescr
+      oid: 1.3.6.1.4.1.2636.3.1.13.1.5
+      type: DisplayString
+      help: Textual description of the Juniper operating entity.
+      indexes:
+      - labelname: operating_index
+        type: gauge
+    max_repetitions: 25
+    retries: 2
+    timeout: 3s
+  fortinet_common_std:
+    walk:
+    - 1.3.6.1.4.1.12356.101.4.1
+    metrics:
+    - name: fnSysCpuUsage
+      oid: 1.3.6.1.4.1.12356.101.4.1.3
+      type: gauge
+      help: Current CPU usage percentage of the FortiGate firewall.
+    - name: fnSysMemUsage
+      oid: 1.3.6.1.4.1.12356.101.4.1.4
+      type: gauge
+      help: Current memory usage percentage of the FortiGate firewall.
+    - name: fnSysSesCount
+      oid: 1.3.6.1.4.1.12356.101.4.1.8
+      type: gauge
+      help: Number of active firewall sessions on the FortiGate.
+    - name: fnSysDiskUsage
+      oid: 1.3.6.1.4.1.12356.101.4.1.6
+      type: gauge
+      help: Current disk usage percentage of the FortiGate firewall.
+    max_repetitions: 25
+    retries: 2
+    timeout: 3s
+  zte_common_std:
+    walk:
+    - 1.3.6.1.4.1.3902.1082.500.1.2
+    metrics:
+    - name: zteCpuRate
+      oid: 1.3.6.1.4.1.3902.1082.500.1.2.1.1.1
+      type: gauge
+      help: CPU utilization percentage for ZTE network device.
+      indexes:
+      - labelname: entity_index
+        type: gauge
+    - name: zteMemRate
+      oid: 1.3.6.1.4.1.3902.1082.500.1.2.2.1.1
+      type: gauge
+      help: Memory utilization percentage for ZTE network device.
+      indexes:
+      - labelname: entity_index
+        type: gauge
+    - name: zteTemperature
+      oid: 1.3.6.1.4.1.3902.1082.500.1.2.3.1.1
+      type: gauge
+      help: Board temperature in degrees Celsius for ZTE network device.
+      indexes:
+      - labelname: entity_index
+        type: gauge
+    max_repetitions: 25
+    retries: 2
+    timeout: 3s
+  maipu_common_std:
+    walk:
+    - 1.3.6.1.4.1.5651.1.2
+    metrics:
+    - name: mpCpuUtilization5Min
+      oid: 1.3.6.1.4.1.5651.1.2.1.1.1
+      type: gauge
+      help: 5-minute CPU utilization percentage for Maipu MyPower device.
+      indexes:
+      - labelname: entity_index
+        type: gauge
+    - name: mpMemoryUtilization
+      oid: 1.3.6.1.4.1.5651.1.2.1.1.2
+      type: gauge
+      help: Memory utilization percentage for Maipu MyPower device.
+      indexes:
+      - labelname: entity_index
+        type: gauge
+    - name: mpTemperature
+      oid: 1.3.6.1.4.1.5651.1.2.1.1.3
+      type: gauge
+      help: Temperature in degrees Celsius for Maipu MyPower device.
+      indexes:
+      - labelname: entity_index
+        type: gauge
+    max_repetitions: 25
+    retries: 2
+    timeout: 3s
+  dptech_common_std:
+    walk:
+    - 1.3.6.1.4.1.31648.1.1
+    metrics:
+    - name: dptechCpuUsage
+      oid: 1.3.6.1.4.1.31648.1.1.1.1
+      type: gauge
+      help: CPU usage percentage for DPtech switch/security device.
+      indexes:
+      - labelname: entity_index
+        type: gauge
+    - name: dptechMemUsage
+      oid: 1.3.6.1.4.1.31648.1.1.1.2
+      type: gauge
+      help: Memory usage percentage for DPtech switch/security device.
+      indexes:
+      - labelname: entity_index
+        type: gauge
+    - name: dptechTemperature
+      oid: 1.3.6.1.4.1.31648.1.1.1.3
+      type: gauge
+      help: Temperature in degrees Celsius for DPtech device.
+      indexes:
+      - labelname: entity_index
+        type: gauge
+    - name: dptechSessions
+      oid: 1.3.6.1.4.1.31648.1.1.1.4
+      type: gauge
+      help: Active session count for DPtech security gateway.
+      indexes:
+      - labelname: entity_index
+        type: gauge
+    max_repetitions: 25
+    retries: 2
+    timeout: 3s
+  hillstone_common_std:
+    walk:
+    - 1.3.6.1.4.1.24681.1.1.1.1
+    metrics:
+    - name: hillstoneCPUUtilization
+      oid: 1.3.6.1.4.1.24681.1.1.1.1.1.1
+      type: gauge
+      help: Current CPU utilization percentage for Hillstone StoneOS firewall.
+      indexes:
+      - labelname: entity_index
+        type: gauge
+    - name: hillstoneMemoryUtilization
+      oid: 1.3.6.1.4.1.24681.1.1.1.1.1.2
+      type: gauge
+      help: Current memory utilization percentage for Hillstone StoneOS firewall.
+      indexes:
+      - labelname: entity_index
+        type: gauge
+    - name: hillstoneActiveSessions
+      oid: 1.3.6.1.4.1.24681.1.1.1.1.1.3
+      type: gauge
+      help: Active concurrent session count for Hillstone StoneOS firewall.
+      indexes:
+      - labelname: entity_index
+        type: gauge
+    max_repetitions: 25
+    retries: 2
+    timeout: 3s
+  sangfor_common_std:
+    get:
+    - 1.3.6.1.4.1.35047.1.1.0
+    - 1.3.6.1.4.1.35047.1.2.0
+    - 1.3.6.1.4.1.35047.1.3.0
+    metrics:
+    - name: sangforCpuUsage
+      oid: 1.3.6.1.4.1.35047.1.1
+      type: gauge
+      help: Current CPU usage percentage for Sangfor gateway device.
+    - name: sangforMemUsage
+      oid: 1.3.6.1.4.1.35047.1.2
+      type: gauge
+      help: Current memory usage percentage for Sangfor gateway device.
+    - name: sangforConcurrentConns
+      oid: 1.3.6.1.4.1.35047.1.3
+      type: gauge
+      help: Active concurrent connections for Sangfor gateway device.
+    max_repetitions: 25
+    retries: 2
+    timeout: 3s
+  dcn_common_std:
+    walk:
+    - 1.3.6.1.4.1.6339.100.1.1
+    metrics:
+    - name: dcnCpuUsage
+      oid: 1.3.6.1.4.1.6339.100.1.1.1.1
+      type: gauge
+      help: Current CPU usage percentage for DCN switch.
+      indexes:
+      - labelname: entity_index
+        type: gauge
+    - name: dcnMemUsage
+      oid: 1.3.6.1.4.1.6339.100.1.1.1.2
+      type: gauge
+      help: Current memory usage percentage for DCN switch.
+      indexes:
+      - labelname: entity_index
+        type: gauge
+    - name: dcnTemperature
+      oid: 1.3.6.1.4.1.6339.100.1.1.1.3
+      type: gauge
+      help: Current temperature in degrees Celsius for DCN switch.
+      indexes:
+      - labelname: entity_index
+        type: gauge
+    max_repetitions: 25
+    retries: 2
+    timeout: 3s
+  huawei_wireless_std:
+    get:
+    - 1.3.6.1.4.1.2011.6.139.13.1.2.1.0
+    - 1.3.6.1.4.1.2011.6.139.13.1.2.2.0
+    - 1.3.6.1.4.1.2011.6.139.13.1.2.3.0
+    metrics:
+    - name: hwWlanCurOnlineApNum
+      oid: 1.3.6.1.4.1.2011.6.139.13.1.2.1
+      type: gauge
+      help: Current online AP count managed by Huawei WLAN AC.
+    - name: hwWlanCurAssocUserNum
+      oid: 1.3.6.1.4.1.2011.6.139.13.1.2.2
+      type: gauge
+      help: Current associated wireless clients count on Huawei WLAN AC.
+    - name: hwWlanApTotalNum
+      oid: 1.3.6.1.4.1.2011.6.139.13.1.2.3
+      type: gauge
+      help: Total configured AP count on Huawei WLAN AC.
+    max_repetitions: 25
+    retries: 2
+    timeout: 3s
+  h3c_wireless_std:
+    get:
+    - 1.3.6.1.4.1.25506.2.75.1.1.1.0
+    - 1.3.6.1.4.1.25506.2.75.1.1.2.0
+    - 1.3.6.1.4.1.25506.2.75.1.1.3.0
+    metrics:
+    - name: hh3cDot11CurrOnlineAPNum
+      oid: 1.3.6.1.4.1.25506.2.75.1.1.1
+      type: gauge
+      help: Current online AP count managed by H3C wireless controller.
+    - name: hh3cDot11CurrAssocUserNum
+      oid: 1.3.6.1.4.1.25506.2.75.1.1.2
+      type: gauge
+      help: Current associated wireless stations on H3C wireless controller.
+    - name: hh3cDot11TotalAPNum
+      oid: 1.3.6.1.4.1.25506.2.75.1.1.3
+      type: gauge
+      help: Total AP count connected to H3C wireless controller.
+    max_repetitions: 25
+    retries: 2
+    timeout: 3s
+  ruijie_wireless_std:
+    get:
+    - 1.3.6.1.4.1.4881.1.1.10.2.75.1.1.1.0
+    - 1.3.6.1.4.1.4881.1.1.10.2.75.1.1.2.0
+    - 1.3.6.1.4.1.4881.1.1.10.2.75.1.1.3.0
+    metrics:
+    - name: ruijieApcTotalApNum
+      oid: 1.3.6.1.4.1.4881.1.1.10.2.75.1.1.1
+      type: gauge
+      help: Total managed AP count for Ruijie AC.
+    - name: ruijieApcOnlineApNum
+      oid: 1.3.6.1.4.1.4881.1.1.10.2.75.1.1.2
+      type: gauge
+      help: Current online AP count for Ruijie AC.
+    - name: ruijieApcTotalStaNum
+      oid: 1.3.6.1.4.1.4881.1.1.10.2.75.1.1.3
+      type: gauge
+      help: Total associated wireless stations on Ruijie AC.
+    max_repetitions: 25
+    retries: 2
+    timeout: 3s
+  cisco_wireless_std:
+    get:
+    - 1.3.6.1.4.1.9.9.513.1.1.1.1.5.0
+    - 1.3.6.1.4.1.9.9.618.1.1.1.0
+    metrics:
+    - name: cLApTotalUpAPs
+      oid: 1.3.6.1.4.1.9.9.513.1.1.1.1.5
+      type: gauge
+      help: Total number of joined and up APs on Cisco WLC.
+    - name: cLSysTotalNumOfClients
+      oid: 1.3.6.1.4.1.9.9.618.1.1.1
+      type: gauge
+      help: Total number of associated wireless clients on Cisco WLC.
+    max_repetitions: 25
+    retries: 2
+    timeout: 3s
+  aruba_wireless_std:
+    get:
+    - 1.3.6.1.4.1.14823.2.2.1.1.3.1.0
+    - 1.3.6.1.4.1.14823.2.2.1.1.3.2.0
+    metrics:
+    - name: wlsxSysExtAccessPointsNum
+      oid: 1.3.6.1.4.1.14823.2.2.1.1.3.1
+      type: gauge
+      help: Total active Access Points managed by Aruba Mobility Controller.
+    - name: wlsxSysExtStationsNum
+      oid: 1.3.6.1.4.1.14823.2.2.1.1.3.2
+      type: gauge
+      help: Total connected wireless clients on Aruba Mobility Controller.
+    max_repetitions: 25
+    retries: 2
+    timeout: 3s
+  ruckus_wireless_std:
+    get:
+    - 1.3.6.1.4.1.25053.1.2.1.1.1.0
+    - 1.3.6.1.4.1.25053.1.2.1.1.2.0
+    metrics:
+    - name: ruckusZDTotalNumAP
+      oid: 1.3.6.1.4.1.25053.1.2.1.1.1
+      type: gauge
+      help: Total number of APs connected to Ruckus ZoneDirector/SmartZone controller.
+    - name: ruckusZDTotalNumSta
+      oid: 1.3.6.1.4.1.25053.1.2.1.1.2
+      type: gauge
+      help: Total number of client stations connected to Ruckus controller.
+    max_repetitions: 25
+    retries: 2
+    timeout: 3s

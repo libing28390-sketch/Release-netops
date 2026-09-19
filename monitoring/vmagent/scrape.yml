@@ -1,0 +1,72 @@
+global:
+  scrape_interval: 60s
+  scrape_timeout: 30s
+
+scrape_configs:
+  - job_name: network_snmp
+    file_sd_configs:
+      - files:
+          - /etc/nexora-collector/runtime/vmagent/targets/snmp_targets.yml
+    metrics_path: /snmp
+    relabel_configs:
+      - source_labels: [__address__]
+        target_label: __param_target
+      - source_labels: [nexora_module]
+        target_label: __param_module
+      - source_labels: [nexora_auth]
+        target_label: __param_auth
+      - source_labels: [nexora_scrape_interval]
+        target_label: __scrape_interval__
+      - source_labels: [nexora_scrape_timeout]
+        target_label: __scrape_timeout__
+      - source_labels: [__param_target]
+        target_label: instance
+      - source_labels: [nexora_asset_id]
+        target_label: asset_id
+      - source_labels: [nexora_hostname]
+        target_label: hostname
+      - source_labels: [nexora_tenant_id]
+        target_label: tenant_id
+      - source_labels: [nexora_site_id]
+        target_label: site_id
+      - source_labels: [nexora_site_name]
+        target_label: site_name
+      - source_labels: [nexora_vendor]
+        target_label: vendor
+      - source_labels: [nexora_platform]
+        target_label: platform
+      - source_labels: [nexora_role]
+        target_label: role
+      - action: labeldrop
+        regex: nexora_auth|nexora_.*
+      - target_label: __address__
+        replacement: snmp-exporter:9116
+
+  - job_name: linux_servers
+    scrape_interval: 15s
+    scrape_timeout: 10s
+    metrics_path: /metrics
+    file_sd_configs:
+      - files:
+          - /etc/nexora-collector/runtime/vmagent/targets/linux_targets.yml
+          - /etc/nexora-collector/runtime/vmagent/targets/*linux*.yml
+          - /etc/nexora-collector/runtime/vmagent/targets/*server*.yml
+    static_configs:
+      - targets:
+          - "192.168.204.128:9100"
+        labels:
+          instance: "192.168.204.128:9100"
+          hostname: "docker"
+          site_name: "WH-DC-01"
+          site_id: "site-4eb4ad17a9f3"
+          role: "server"
+          os: "linux"
+
+  - job_name: windows_servers
+    scrape_interval: 15s
+    scrape_timeout: 10s
+    metrics_path: /metrics
+    file_sd_configs:
+      - files:
+          - /etc/nexora-collector/runtime/vmagent/targets/windows_targets.yml
+          - /etc/nexora-collector/runtime/vmagent/targets/*windows*.yml

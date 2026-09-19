@@ -1,0 +1,711 @@
+{
+  "annotations": {
+    "list": []
+  },
+  "editable": false,
+  "fiscalYearStartMonth": 0,
+  "graphTooltip": 1,
+  "id": null,
+  "links": [],
+  "panels": [
+    {
+      "id": 1,
+      "title": "受纳管 Windows 主机数",
+      "type": "stat",
+      "datasource": {
+        "type": "prometheus",
+        "uid": "victoriametrics"
+      },
+      "gridPos": {
+        "h": 4,
+        "w": 6,
+        "x": 0,
+        "y": 0
+      },
+      "fieldConfig": {
+        "defaults": {
+          "unit": "none",
+          "color": {
+            "mode": "thresholds"
+          },
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              {
+                "color": "blue",
+                "value": null
+              }
+            ]
+          }
+        },
+        "overrides": []
+      },
+      "options": {
+        "colorMode": "value",
+        "graphMode": "area",
+        "justifyMode": "auto",
+        "orientation": "auto",
+        "reduceOptions": {
+          "calcs": [
+            "lastNotNull"
+          ],
+          "fields": "",
+          "values": false
+        },
+        "textMode": "auto"
+      },
+      "targets": [
+        {
+          "expr": "count(count by (instance) (windows_cpu_time_total or windows_os_info or up{job=\"windows_servers\"})) or vector(0)",
+          "refId": "A"
+        }
+      ]
+    },
+    {
+      "id": 2,
+      "title": "平均 CPU 使用率",
+      "type": "stat",
+      "datasource": {
+        "type": "prometheus",
+        "uid": "victoriametrics"
+      },
+      "gridPos": {
+        "h": 4,
+        "w": 6,
+        "x": 6,
+        "y": 0
+      },
+      "fieldConfig": {
+        "defaults": {
+          "unit": "percent",
+          "color": {
+            "mode": "thresholds"
+          },
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              {
+                "color": "green",
+                "value": null
+              },
+              {
+                "color": "#E0B400",
+                "value": 70
+              },
+              {
+                "color": "red",
+                "value": 85
+              }
+            ]
+          }
+        },
+        "overrides": []
+      },
+      "options": {
+        "colorMode": "value",
+        "graphMode": "area",
+        "justifyMode": "auto",
+        "orientation": "auto",
+        "reduceOptions": {
+          "calcs": [
+            "lastNotNull"
+          ],
+          "fields": "",
+          "values": false
+        },
+        "textMode": "auto"
+      },
+      "targets": [
+        {
+          "expr": "avg(100 - (rate(windows_cpu_time_total{instance=~\"$device\",mode=\"idle\"}[5m]) * 100)) or vector(0)",
+          "refId": "A"
+        }
+      ]
+    },
+    {
+      "id": 3,
+      "title": "平均物理内存使用率",
+      "type": "stat",
+      "datasource": {
+        "type": "prometheus",
+        "uid": "victoriametrics"
+      },
+      "gridPos": {
+        "h": 4,
+        "w": 6,
+        "x": 12,
+        "y": 0
+      },
+      "fieldConfig": {
+        "defaults": {
+          "unit": "percent",
+          "color": {
+            "mode": "thresholds"
+          },
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              {
+                "color": "green",
+                "value": null
+              },
+              {
+                "color": "#E0B400",
+                "value": 80
+              },
+              {
+                "color": "red",
+                "value": 90
+              }
+            ]
+          }
+        },
+        "overrides": []
+      },
+      "options": {
+        "colorMode": "value",
+        "graphMode": "area",
+        "justifyMode": "auto",
+        "orientation": "auto",
+        "reduceOptions": {
+          "calcs": [
+            "lastNotNull"
+          ],
+          "fields": "",
+          "values": false
+        },
+        "textMode": "auto"
+      },
+      "targets": [
+        {
+          "expr": "avg((1 - (windows_os_physical_memory_free_bytes{instance=~\"$device\"} / windows_cs_physical_memory_bytes{instance=~\"$device\"})) * 100) or vector(0)",
+          "refId": "A"
+        }
+      ]
+    },
+    {
+      "id": 4,
+      "title": "远程桌面活跃会话",
+      "type": "stat",
+      "datasource": {
+        "type": "prometheus",
+        "uid": "victoriametrics"
+      },
+      "gridPos": {
+        "h": 4,
+        "w": 6,
+        "x": 18,
+        "y": 0
+      },
+      "fieldConfig": {
+        "defaults": {
+          "unit": "none",
+          "color": {
+            "mode": "thresholds"
+          },
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              {
+                "color": "purple",
+                "value": null
+              }
+            ]
+          }
+        },
+        "overrides": []
+      },
+      "options": {
+        "colorMode": "value",
+        "graphMode": "area",
+        "justifyMode": "auto",
+        "orientation": "auto",
+        "reduceOptions": {
+          "calcs": [
+            "lastNotNull"
+          ],
+          "fields": "",
+          "values": false
+        },
+        "textMode": "auto"
+      },
+      "targets": [
+        {
+          "expr": "sum(windows_terminal_services_active_sessions{instance=~\"$device\"}) or vector(0)",
+          "refId": "A"
+        }
+      ]
+    },
+    {
+      "id": 5,
+      "title": "CPU 占用率走势 (%)",
+      "type": "timeseries",
+      "datasource": {
+        "type": "prometheus",
+        "uid": "victoriametrics"
+      },
+      "gridPos": {
+        "h": 8,
+        "w": 12,
+        "x": 0,
+        "y": 4
+      },
+      "fieldConfig": {
+        "defaults": {
+          "unit": "percent",
+          "color": {
+            "mode": "palette-classic"
+          },
+          "custom": {
+            "drawStyle": "line",
+            "lineInterpolation": "smooth",
+            "fillOpacity": 10
+          }
+        },
+        "overrides": []
+      },
+      "options": {
+        "legend": {
+          "displayMode": "list",
+          "placement": "bottom",
+          "showLegend": true
+        },
+        "tooltip": {
+          "mode": "multi",
+          "sort": "desc"
+        }
+      },
+      "targets": [
+        {
+          "expr": "100 - (rate(windows_cpu_time_total{instance=~\"$device\",mode=\"idle\"}[5m]) * 100)",
+          "legendFormat": "{{instance}} CPU 利用率",
+          "refId": "A"
+        }
+      ]
+    },
+    {
+      "id": 6,
+      "title": "可用物理内存与已提交字节走势",
+      "type": "timeseries",
+      "datasource": {
+        "type": "prometheus",
+        "uid": "victoriametrics"
+      },
+      "gridPos": {
+        "h": 8,
+        "w": 12,
+        "x": 12,
+        "y": 4
+      },
+      "fieldConfig": {
+        "defaults": {
+          "unit": "bytes",
+          "color": {
+            "mode": "palette-classic"
+          },
+          "custom": {
+            "drawStyle": "line",
+            "lineInterpolation": "smooth",
+            "fillOpacity": 10
+          }
+        },
+        "overrides": []
+      },
+      "options": {
+        "legend": {
+          "displayMode": "list",
+          "placement": "bottom",
+          "showLegend": true
+        },
+        "tooltip": {
+          "mode": "multi",
+          "sort": "desc"
+        }
+      },
+      "targets": [
+        {
+          "expr": "windows_os_physical_memory_free_bytes{instance=~\"$device\"}",
+          "legendFormat": "{{instance}} 可用物理内存",
+          "refId": "A"
+        },
+        {
+          "expr": "windows_os_committed_bytes{instance=~\"$device\"}",
+          "legendFormat": "{{instance}} 已提交字节",
+          "refId": "B"
+        }
+      ]
+    },
+    {
+      "id": 7,
+      "title": "逻辑磁盘剩余空间百分比 Top 10",
+      "type": "table",
+      "datasource": {
+        "type": "prometheus",
+        "uid": "victoriametrics"
+      },
+      "gridPos": {
+        "h": 8,
+        "w": 12,
+        "x": 0,
+        "y": 12
+      },
+      "fieldConfig": {
+        "defaults": {
+          "unit": "none",
+          "color": {
+            "mode": "thresholds"
+          }
+        },
+        "overrides": [
+          {
+            "matcher": {
+              "id": "byName",
+              "options": "数值"
+            },
+            "properties": [
+              {
+                "id": "unit",
+                "value": "percent"
+              }
+            ]
+          }
+        ]
+      },
+      "options": {
+        "cellHeight": "sm",
+        "showHeader": true,
+        "footer": {
+          "show": false
+        }
+      },
+      "targets": [
+        {
+          "expr": "topk(10, min by (instance, volume) ((windows_logical_disk_free_bytes{instance=~\"$device\"} / windows_logical_disk_size_bytes{instance=~\"$device\"}) * 100))",
+          "format": "table",
+          "instant": true,
+          "refId": "A"
+        }
+      ],
+      "transformations": [
+        {
+          "id": "organize",
+          "options": {
+            "excludeByName": {
+              "Time": true,
+              "__name__": true,
+              "ifIndex": true,
+              "asset_id": true,
+              "nexora_asset_id": true,
+              "nexora_hostname": true,
+              "nexora_module": true,
+              "nexora_platform": true,
+              "nexora_role": true,
+              "nexora_site_id": true,
+              "nexora_site_name": true,
+              "nexora_tenant_id": true,
+              "nexora_vendor": true,
+              "job": true,
+              "tenant_id": true,
+              "site_id": true,
+              "site_name": true,
+              "platform": true
+            },
+            "indexByName": {
+              "sysName": 0,
+              "hostname": 1,
+              "instance": 2,
+              "ifName": 3,
+              "ifDescr": 4,
+              "vendor": 5,
+              "role": 6,
+              "Value": 7
+            },
+            "renameByName": {
+              "sysName": "设备名称",
+              "hostname": "设备名称",
+              "instance": "管理 IP",
+              "ifName": "接口全称",
+              "ifDescr": "接口描述",
+              "vendor": "厂商",
+              "role": "角色",
+              "Value": "剩余空间 (%)",
+              "volume": "盘符"
+            }
+          }
+        }
+      ]
+    },
+    {
+      "id": 8,
+      "title": "系统进程数与线程数",
+      "type": "timeseries",
+      "datasource": {
+        "type": "prometheus",
+        "uid": "victoriametrics"
+      },
+      "gridPos": {
+        "h": 8,
+        "w": 12,
+        "x": 12,
+        "y": 12
+      },
+      "fieldConfig": {
+        "defaults": {
+          "unit": "short",
+          "color": {
+            "mode": "palette-classic"
+          },
+          "custom": {
+            "drawStyle": "line",
+            "lineInterpolation": "smooth",
+            "fillOpacity": 10
+          }
+        },
+        "overrides": []
+      },
+      "options": {
+        "legend": {
+          "displayMode": "list",
+          "placement": "bottom",
+          "showLegend": true
+        },
+        "tooltip": {
+          "mode": "multi",
+          "sort": "desc"
+        }
+      },
+      "targets": [
+        {
+          "expr": "windows_system_processes{instance=~\"$device\"}",
+          "legendFormat": "{{instance}} 进程数",
+          "refId": "A"
+        },
+        {
+          "expr": "windows_system_threads{instance=~\"$device\"}",
+          "legendFormat": "{{instance}} 线程数",
+          "refId": "B"
+        }
+      ]
+    },
+    {
+      "id": 9,
+      "title": "网卡收发流量走势 (bps)",
+      "type": "timeseries",
+      "datasource": {
+        "type": "prometheus",
+        "uid": "victoriametrics"
+      },
+      "gridPos": {
+        "h": 8,
+        "w": 12,
+        "x": 0,
+        "y": 20
+      },
+      "fieldConfig": {
+        "defaults": {
+          "unit": "bps",
+          "color": {
+            "mode": "palette-classic"
+          },
+          "custom": {
+            "drawStyle": "line",
+            "lineInterpolation": "smooth",
+            "fillOpacity": 10
+          }
+        },
+        "overrides": []
+      },
+      "options": {
+        "legend": {
+          "displayMode": "list",
+          "placement": "bottom",
+          "showLegend": true
+        },
+        "tooltip": {
+          "mode": "multi",
+          "sort": "desc"
+        }
+      },
+      "targets": [
+        {
+          "expr": "sum by (instance, nic) (rate(windows_net_bytes_received_total{instance=~\"$device\"}[5m]) * 8)",
+          "legendFormat": "{{instance}} - {{nic}} 接收",
+          "refId": "A"
+        },
+        {
+          "expr": "sum by (instance, nic) (rate(windows_net_bytes_sent_total{instance=~\"$device\"}[5m]) * 8)",
+          "legendFormat": "{{instance}} - {{nic}} 发送",
+          "refId": "B"
+        }
+      ]
+    },
+    {
+      "id": 10,
+      "title": "系统关键服务运行状态",
+      "type": "table",
+      "datasource": {
+        "type": "prometheus",
+        "uid": "victoriametrics"
+      },
+      "gridPos": {
+        "h": 8,
+        "w": 12,
+        "x": 12,
+        "y": 20
+      },
+      "fieldConfig": {
+        "defaults": {
+          "unit": "none",
+          "color": {
+            "mode": "thresholds"
+          }
+        },
+        "overrides": [
+          {
+            "matcher": {
+              "id": "byName",
+              "options": "数值"
+            },
+            "properties": [
+              {
+                "id": "unit",
+                "value": "none"
+              }
+            ]
+          }
+        ]
+      },
+      "options": {
+        "cellHeight": "sm",
+        "showHeader": true,
+        "footer": {
+          "show": false
+        }
+      },
+      "targets": [
+        {
+          "expr": "windows_service_status{instance=~\"$device\",state=\"running\"}",
+          "format": "table",
+          "instant": true,
+          "refId": "A"
+        }
+      ],
+      "transformations": [
+        {
+          "id": "organize",
+          "options": {
+            "excludeByName": {
+              "Time": true,
+              "__name__": true,
+              "ifIndex": true,
+              "asset_id": true,
+              "nexora_asset_id": true,
+              "nexora_hostname": true,
+              "nexora_module": true,
+              "nexora_platform": true,
+              "nexora_role": true,
+              "nexora_site_id": true,
+              "nexora_site_name": true,
+              "nexora_tenant_id": true,
+              "nexora_vendor": true,
+              "job": true,
+              "tenant_id": true,
+              "site_id": true,
+              "site_name": true,
+              "platform": true
+            },
+            "indexByName": {
+              "sysName": 0,
+              "hostname": 1,
+              "instance": 2,
+              "ifName": 3,
+              "ifDescr": 4,
+              "vendor": 5,
+              "role": 6,
+              "Value": 7
+            },
+            "renameByName": {
+              "sysName": "设备名称",
+              "hostname": "设备名称",
+              "instance": "管理 IP",
+              "ifName": "接口全称",
+              "ifDescr": "接口描述",
+              "vendor": "厂商",
+              "role": "角色",
+              "Value": "服务状态",
+              "name": "服务名"
+            }
+          }
+        }
+      ]
+    }
+  ],
+  "refresh": "30s",
+  "schemaVersion": 39,
+  "tags": [
+    "nexora",
+    "server",
+    "windows",
+    "metrics"
+  ],
+  "templating": {
+    "list": [
+      {
+        "allValue": ".*",
+        "current": {
+          "selected": true,
+          "text": [
+            "All"
+          ],
+          "value": [
+            "$__all"
+          ]
+        },
+        "definition": "label_values({job=\"windows_servers\"} or {__name__=~\"windows_.*\"}, site_name)",
+        "includeAll": true,
+        "label": "站点",
+        "multi": true,
+        "name": "site",
+        "options": [],
+        "query": {
+          "query": "label_values({job=\"windows_servers\"} or {__name__=~\"windows_.*\"}, site_name)",
+          "refId": "StandardVariableQuery"
+        },
+        "refresh": 1,
+        "type": "query"
+      },
+      {
+        "allValue": ".*",
+        "current": {
+          "selected": true,
+          "text": [
+            "All"
+          ],
+          "value": [
+            "$__all"
+          ]
+        },
+        "definition": "label_values({job=\"windows_servers\",site_name=~\"$site\"} or {__name__=~\"windows_.*\",site_name=~\"$site\"}, instance)",
+        "includeAll": true,
+        "label": "服务器",
+        "multi": true,
+        "name": "device",
+        "options": [],
+        "query": {
+          "query": "label_values({job=\"windows_servers\",site_name=~\"$site\"} or {__name__=~\"windows_.*\",site_name=~\"$site\"}, instance)",
+          "refId": "StandardVariableQuery"
+        },
+        "refresh": 1,
+        "type": "query"
+      }
+    ]
+  },
+  "time": {
+    "from": "now-6h",
+    "to": "now"
+  },
+  "timezone": "browser",
+  "title": "08 Windows 服务器监控 (Windows Server Metrics)",
+  "uid": "nexora-windows-metrics",
+  "version": 3
+}
