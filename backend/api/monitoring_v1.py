@@ -1133,14 +1133,15 @@ def _load_compile_inputs(conn, collector_id: str, user: Any = None):
                d.site_id, COALESCE(d.tenant_id, 'tenant-default') AS tenant_id
         FROM devices d
         LEFT JOIN sites s ON (s.id = d.site_id OR s.id = d.site OR s.site_code = d.site OR s.site_name = d.site)
-        WHERE (d.role = 'server' OR d.device_category LIKE '%server%' OR LOWER(d.platform) IN ('linux', 'ubuntu', 'centos', 'debian', 'redhat', 'windows', 'windows_server'))
+        WHERE (d.role = 'server' OR LOWER(COALESCE(d.device_category, '')) LIKE ? OR LOWER(COALESCE(d.platform, '')) IN ('linux', 'ubuntu', 'centos', 'debian', 'redhat', 'windows', 'windows_server'))
           AND (d.status IS NULL OR LOWER(d.status) = 'online' OR LOWER(d.status) = 'active')
     """
-    server_params: tuple[Any, ...] = ()
+    server_params: tuple[Any, ...] = ('%server%',)
     try:
         servers = [_dict(row) for row in conn.execute(server_sql, server_params).fetchall()]
-    except Exception:
+    except Exception as exc:
         conn.rollback()
+        logger.warning("[CollectorCompile] Failed to query server targets: %s", exc, exc_info=True)
         servers = []
     try:
         from services.tag_service import get_device_tags

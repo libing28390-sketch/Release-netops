@@ -83,9 +83,20 @@ def _adapt_pg_sql(sql: str, *, escape_percent: bool = True) -> str:
             index += 1
             continue
         next_char = translated[index + 1] if index + 1 < len(translated) else ''
-        if next_char in {'s', '%', '('}:
-            result.append('%' + next_char)
+        if next_char == '%':
+            result.append('%%')
             index += 2
+        elif next_char == '(':
+            result.append('%(')
+            index += 2
+        elif next_char.lower() == 's':
+            after_s = translated[index + 2] if index + 2 < len(translated) else ''
+            if after_s.isalnum() or after_s == '_':
+                result.append('%%')
+                index += 1
+            else:
+                result.append('%' + next_char)
+                index += 2
         else:
             result.append('%%')
             index += 1

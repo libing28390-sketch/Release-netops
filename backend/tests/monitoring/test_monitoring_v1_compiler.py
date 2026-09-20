@@ -367,3 +367,43 @@ def test_reload_snmp_exporter_config_uses_opener_open(monkeypatch):
     assert called["timeout"] == 3
 
 
+def test_adapt_pg_sql_does_not_misinterpret_percent_words_as_placeholders():
+    from database.core import _adapt_pg_sql
+
+    sql = "SELECT * FROM devices WHERE device_category LIKE '%server%' AND hostname LIKE '%switch%' AND id = ?"
+    adapted = _adapt_pg_sql(sql)
+    assert "?" not in adapted
+    # Both %server% and %switch% should be escaped to %%
+    assert "%%server%%" in adapted
+    assert "%%switch%%" in adapted
+    # The true placeholder ? should become %s
+    assert "id = %s" in adapted
+
+    # Test formatting with 1 argument (only for the id placeholder)
+    formatted = adapted % ("dev-1",)
+    assert "device_category LIKE '%server%'" in formatted
+    assert "hostname LIKE '%switch%'" in formatted
+    assert "id = dev-1" in formatted
+
+
+def test_load_compile_inputs_loads_servers_without_syntax_error(isolated_db):
+    import database
+    conn = database.get_db_connection()
+    try:
+        now = "2026-09-20T20:00:00"
+        conn.execute(
+            """INSERT INTO physical_assets
+               (id, asset_type, hostname, management_ip, platform, status, created_at, updated_at)
+               VALUES (?, 'server', 'linux-node-1', '192.168.204.128', 'ubuntu', 'active', ?, ?)""",
+            ("server-test-1", now, now)
+        )
+        conn.commit()
+
+        from api.monitoring_v1 import _load_compile_inputs
+        inputs = _load_compile_inputs(conn, "collector-local")
+        servers = inputs[7]
+        assert len(servers) >= 1
+        server_ips = {s.get("management_ip") for s in servers}
+        assert "192.168.204.128" in server_ips
+    finally:
+        conn.close()

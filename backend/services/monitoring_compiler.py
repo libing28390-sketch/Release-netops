@@ -896,7 +896,7 @@ def render_server_targets(servers: Iterable[Mapping[str, Any]] = ()) -> tuple[li
             continue
         platform = str(server.get("platform") or server.get("os") or server.get("os_type") or "").strip().lower()
         hostname = str(server.get("hostname") or server.get("name") or ip).strip()
-        site_name = str(server.get("site_name") or server.get("site") or "").strip()
+        site_name = str(server.get("site_name") or server.get("site") or "默认站点").strip()
         site_id = str(server.get("site_id") or "").strip()
         tenant_id = str(server.get("tenant_id") or "tenant-default").strip()
         asset_id = str(server.get("id") or server.get("asset_id") or "").strip()
@@ -910,9 +910,8 @@ def render_server_targets(servers: Iterable[Mapping[str, Any]] = ()) -> tuple[li
             "hostname": hostname,
             "role": "server",
             "os": "windows" if is_windows else "linux",
+            "site_name": site_name,
         }
-        if site_name:
-            labels["site_name"] = site_name
         if site_id:
             labels["site_id"] = site_id
         if tenant_id:
