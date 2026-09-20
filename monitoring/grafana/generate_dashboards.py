@@ -9,7 +9,7 @@ null = None
 ROOT_DIR = Path(__file__).resolve().parents[2]
 DASHBOARDS_DIR = ROOT_DIR / "monitoring" / "grafana" / "dashboards"
 DS_UID = "victoriametrics"
-DASHBOARD_VERSION = 20
+DASHBOARD_VERSION = 21
 
 DEV_JOIN = "* on(instance) group_left(sysName) (last_over_time(sysName{sysName=~\"$device\"}[1d]) * 0 + 1)"
 IF_JOIN = "* on(instance, ifIndex) group_left(ifName) (ifName * 0 + 1)"
@@ -196,9 +196,9 @@ def make_query_variable(name, label, query_str, multi=True, include_all=True):
 
 def make_network_variables(multi_device=True, include_all_device=True):
     return [
-        make_query_variable("site", "站点", 'label_values({__name__=~"sysName|ifOperStatus|up"}, site_name)'),
-        make_query_variable("vendor", "厂商", 'label_values({__name__=~"sysName|ifOperStatus|up",site_name=~"$site"}, vendor)'),
-        make_query_variable("role", "角色", 'label_values({__name__=~"sysName|ifOperStatus|up",site_name=~"$site",vendor=~"$vendor"}, role)'),
+        make_query_variable("site", "站点", 'label_values({__name__=~"sysName|ifOperStatus|up",job="snmp"}, site_name)'),
+        make_query_variable("vendor", "厂商", 'label_values({__name__=~"sysName|ifOperStatus|up",job="snmp",site_name=~"$site"}, vendor)'),
+        make_query_variable("role", "角色", 'label_values({__name__=~"sysName|ifOperStatus|up",job="snmp",site_name=~"$site",vendor=~"$vendor"}, role)'),
         make_query_variable("device", "设备", 'label_values({__name__=~"sysName",site_name=~"$site",vendor=~"$vendor",role=~"$role"}, sysName)', multi=multi_device, include_all=include_all_device),
     ]
 
@@ -672,8 +672,8 @@ def build_linux_dashboard():
         "tags": ["nexora", "server", "linux", "metrics"],
         "templating": {
             "list": [
-                make_query_variable("site", "站点", 'label_values({__name__=~"node_uname_info|node_load1|up"}, site_name)'),
-                make_query_variable("device", "服务器", 'label_values({__name__=~"node_uname_info|node_load1|up",site_name=~"$site"}, instance)'),
+                make_query_variable("site", "站点", 'label_values({__name__=~"node_.*|up",job=~"linux_servers|.*node.*"}, site_name)'),
+                make_query_variable("device", "服务器", 'label_values({__name__=~"node_.*|up",job=~"linux_servers|.*node.*",site_name=~"$site"}, instance)'),
             ]
         },
         "time": {"from": "now-6h", "to": "now"},
@@ -745,8 +745,8 @@ def build_windows_dashboard():
         "tags": ["nexora", "server", "windows", "metrics"],
         "templating": {
             "list": [
-                make_query_variable("site", "站点", 'label_values({__name__=~"windows_os_info|windows_cpu_time_total|up"}, site_name)'),
-                make_query_variable("device", "服务器", 'label_values({__name__=~"windows_os_info|windows_cpu_time_total|up",site_name=~"$site"}, instance)'),
+                make_query_variable("site", "站点", 'label_values({__name__=~"windows_.*|up",job=~"windows_servers|.*windows.*"}, site_name)'),
+                make_query_variable("device", "服务器", 'label_values({__name__=~"windows_.*|up",job=~"windows_servers|.*windows.*",site_name=~"$site"}, instance)'),
             ]
         },
         "time": {"from": "now-6h", "to": "now"},

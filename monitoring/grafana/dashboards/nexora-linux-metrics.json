@@ -918,14 +918,14 @@
             "$__all"
           ]
         },
-        "definition": "label_values({__name__=~\"node_uname_info|node_load1|up\"}, site_name)",
+        "definition": "label_values({__name__=~\"node_.*|up\",job=~\"linux_servers|.*node.*\"}, site_name)",
         "includeAll": true,
         "label": "站点",
         "multi": true,
         "name": "site",
         "options": [],
         "query": {
-          "query": "label_values({__name__=~\"node_uname_info|node_load1|up\"}, site_name)",
+          "query": "label_values({__name__=~\"node_.*|up\",job=~\"linux_servers|.*node.*\"}, site_name)",
           "refId": "StandardVariableQuery"
         },
         "refresh": 1,
@@ -942,14 +942,14 @@
             "$__all"
           ]
         },
-        "definition": "label_values({__name__=~\"node_uname_info|node_load1|up\",site_name=~\"$site\"}, instance)",
+        "definition": "label_values({__name__=~\"node_.*|up\",job=~\"linux_servers|.*node.*\",site_name=~\"$site\"}, instance)",
         "includeAll": true,
         "label": "服务器",
         "multi": true,
         "name": "device",
         "options": [],
         "query": {
-          "query": "label_values({__name__=~\"node_uname_info|node_load1|up\",site_name=~\"$site\"}, instance)",
+          "query": "label_values({__name__=~\"node_.*|up\",job=~\"linux_servers|.*node.*\",site_name=~\"$site\"}, instance)",
           "refId": "StandardVariableQuery"
         },
         "refresh": 1,
@@ -964,5 +964,5 @@
   "timezone": "browser",
   "title": "07 Linux 服务器监控 (Linux Server Metrics)",
   "uid": "nexora-linux-metrics",
-  "version": 20
+  "version": 21
 }

@@ -751,14 +751,14 @@
             "$__all"
           ]
         },
-        "definition": "label_values({__name__=~\"sysName|ifOperStatus|up\"}, site_name)",
+        "definition": "label_values({__name__=~\"sysName|ifOperStatus|up\",job=\"snmp\"}, site_name)",
         "includeAll": true,
         "label": "站点",
         "multi": true,
         "name": "site",
         "options": [],
         "query": {
-          "query": "label_values({__name__=~\"sysName|ifOperStatus|up\"}, site_name)",
+          "query": "label_values({__name__=~\"sysName|ifOperStatus|up\",job=\"snmp\"}, site_name)",
           "refId": "StandardVariableQuery"
         },
         "refresh": 1,
@@ -775,14 +775,14 @@
             "$__all"
           ]
         },
-        "definition": "label_values({__name__=~\"sysName|ifOperStatus|up\",site_name=~\"$site\"}, vendor)",
+        "definition": "label_values({__name__=~\"sysName|ifOperStatus|up\",job=\"snmp\",site_name=~\"$site\"}, vendor)",
         "includeAll": true,
         "label": "厂商",
         "multi": true,
         "name": "vendor",
         "options": [],
         "query": {
-          "query": "label_values({__name__=~\"sysName|ifOperStatus|up\",site_name=~\"$site\"}, vendor)",
+          "query": "label_values({__name__=~\"sysName|ifOperStatus|up\",job=\"snmp\",site_name=~\"$site\"}, vendor)",
           "refId": "StandardVariableQuery"
         },
         "refresh": 1,
@@ -799,14 +799,14 @@
             "$__all"
           ]
         },
-        "definition": "label_values({__name__=~\"sysName|ifOperStatus|up\",site_name=~\"$site\",vendor=~\"$vendor\"}, role)",
+        "definition": "label_values({__name__=~\"sysName|ifOperStatus|up\",job=\"snmp\",site_name=~\"$site\",vendor=~\"$vendor\"}, role)",
         "includeAll": true,
         "label": "角色",
         "multi": true,
         "name": "role",
         "options": [],
         "query": {
-          "query": "label_values({__name__=~\"sysName|ifOperStatus|up\",site_name=~\"$site\",vendor=~\"$vendor\"}, role)",
+          "query": "label_values({__name__=~\"sysName|ifOperStatus|up\",job=\"snmp\",site_name=~\"$site\",vendor=~\"$vendor\"}, role)",
           "refId": "StandardVariableQuery"
         },
         "refresh": 1,
@@ -845,5 +845,5 @@
   "timezone": "browser",
   "title": "01 网络总览 (Network Overview)",
   "uid": "nexora-network-overview",
-  "version": 20
+  "version": 21
 }
