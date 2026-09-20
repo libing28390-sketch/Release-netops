@@ -9,6 +9,7 @@ null = None
 ROOT_DIR = Path(__file__).resolve().parents[2]
 DASHBOARDS_DIR = ROOT_DIR / "monitoring" / "grafana" / "dashboards"
 DS_UID = "victoriametrics"
+DASHBOARD_VERSION = 20
 
 DEV_JOIN = "* on(instance) group_left(sysName) (last_over_time(sysName{sysName=~\"$device\"}[1d]) * 0 + 1)"
 IF_JOIN = "* on(instance, ifIndex) group_left(ifName) (ifName * 0 + 1)"
@@ -302,7 +303,7 @@ def build_overview_dashboard():
         "timezone": "browser",
         "title": "01 网络总览 (Network Overview)",
         "uid": "nexora-network-overview",
-        "version": 6
+        "version": DASHBOARD_VERSION
     }
 
 # 2. Network Device Detail Dashboard
@@ -371,7 +372,7 @@ def build_device_dashboard():
         "timezone": "browser",
         "title": "02 网络设备详情 (Network Device Detail)",
         "uid": "nexora-network-device",
-        "version": 3
+        "version": DASHBOARD_VERSION
     }
 
 # 3. Wireless Monitoring Dashboard
@@ -420,7 +421,7 @@ def build_wireless_dashboard():
         "timezone": "browser",
         "title": "03 无线专网监控 (Wireless AP & Clients)",
         "uid": "nexora-network-wireless",
-        "version": 3
+        "version": DASHBOARD_VERSION
     }
 
 # 4. Interface Traffic & Health Dashboard
@@ -471,7 +472,7 @@ def build_interface_dashboard():
         "timezone": "browser",
         "title": "04 接口流量与健康 (Interface Traffic & Health)",
         "uid": "nexora-network-interface",
-        "version": 3
+        "version": DASHBOARD_VERSION
     }
 
 # 5. Monitoring Engine Health Dashboard
@@ -513,7 +514,7 @@ def build_health_dashboard():
         "timezone": "browser",
         "title": "05 SNMP 采集健康 (SNMP Scrape Health)",
         "uid": "nexora-monitoring-health",
-        "version": 3
+        "version": DASHBOARD_VERSION
     }
 
 # 6. Internet Outbound & WAN Dashboard
@@ -582,7 +583,7 @@ def build_outbound_dashboard():
         "timezone": "browser",
         "title": "06 互联网出口与 WAN (Internet Outbound & WAN Traffic)",
         "uid": "nexora-network-outbound",
-        "version": 2
+        "version": DASHBOARD_VERSION
     }
 
 def build_linux_dashboard():
@@ -679,7 +680,7 @@ def build_linux_dashboard():
         "timezone": "browser",
         "title": "07 Linux 服务器监控 (Linux Server Metrics)",
         "uid": "nexora-linux-metrics",
-        "version": 3
+        "version": DASHBOARD_VERSION
     }
 
 def build_windows_dashboard():
@@ -752,7 +753,7 @@ def build_windows_dashboard():
         "timezone": "browser",
         "title": "08 Windows 服务器监控 (Windows Server Metrics)",
         "uid": "nexora-windows-metrics",
-        "version": 3
+        "version": DASHBOARD_VERSION
     }
 
 def main():
