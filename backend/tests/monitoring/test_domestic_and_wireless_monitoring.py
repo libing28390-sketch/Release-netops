@@ -65,10 +65,13 @@ def test_dashboards_suite_completeness():
     dashboard_dir = os.path.join("monitoring", "grafana", "dashboards")
     expected_files = [
         "nexora-network-overview.json",
-        "network-device.json",
-        "network-wireless.json",
-        "network-interface.json",
-        "monitoring-health.json",
+        "nexora-network-device.json",
+        "nexora-network-wireless.json",
+        "nexora-network-interface.json",
+        "nexora-monitoring-health.json",
+        "nexora-network-outbound.json",
+        "nexora-linux-metrics.json",
+        "nexora-windows-metrics.json",
     ]
     for filename in expected_files:
         path = os.path.join(dashboard_dir, filename)
