@@ -2496,6 +2496,11 @@ def create_asset(body: AssetCreate, _user=require_role("Operator")):
             details={'asset_type': body.asset_type, 'source': 'api'},
         )
         conn.commit()
+        try:
+            from services.collector_sync_service import trigger_async_monitoring_sync
+            trigger_async_monitoring_sync()
+        except Exception:
+            pass
         return {'id': asset_id, 'device_id': device_id, 'legacy_exempt': legacy_production}
     finally:
         conn.close()
@@ -2905,6 +2910,11 @@ def update_asset(asset_id: str, body: AssetUpdate, run_bg_rotate: bool = True, _
         # asset mutations are committed together.  A second commit is safe
         # for the legacy path and keeps the function's existing contract.
         conn.commit()
+        try:
+            from services.collector_sync_service import trigger_async_monitoring_sync
+            trigger_async_monitoring_sync()
+        except Exception:
+            pass
         return {
             'ok': True,
             'password_rotated': rotation_result is not None and rotation_result.get('success', False),
@@ -2974,6 +2984,11 @@ def delete_asset(asset_id: str, _user=require_role("Administrator")):
             details={'source': 'api'},
         )
         conn.commit()
+        try:
+            from services.collector_sync_service import trigger_async_monitoring_sync
+            trigger_async_monitoring_sync()
+        except Exception:
+            pass
         return {'ok': True}
     finally:
         conn.close()
@@ -3325,6 +3340,12 @@ def import_assets(
                 conn.rollback()
                 raise
         conn.commit()
+        if created > 0:
+            try:
+                from services.collector_sync_service import trigger_async_monitoring_sync
+                trigger_async_monitoring_sync()
+            except Exception:
+                pass
         if pending_hostname_sync:
             import asyncio as _aio
             async def _bg_auto_sync(dids: list[str]):

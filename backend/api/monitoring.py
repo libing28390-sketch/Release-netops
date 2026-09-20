@@ -517,7 +517,7 @@ def monitoring_overview(force_refresh: bool = Query(default=False), user=require
         devices_rows = conn.execute(
             "SELECT d.id, d.hostname, d.ip_address, d.platform, d.status, d.compliance, d.role, "
             "COALESCE(NULLIF(s.site_name, ''), CASE WHEN SUBSTR(COALESCE(d.site, ''), 1, 5) = 'site-' THEN '' ELSE COALESCE(d.site, '') END, '') AS site, "
-            "d.cpu_usage, d.memory_usage, d.temp, d.fan_status, d.psu_status, d.device_category "
+            "d.cpu_usage, d.memory_usage, d.temp, d.fan_status, d.psu_status, 'network_device' AS device_category "
             "FROM devices d LEFT JOIN sites s ON s.id = d.site_id WHERE d.status = 'online'" + tenant_clause,
             tenant_params,
         ).fetchall()

@@ -2572,6 +2572,11 @@ def create_device(device: dict = Body(...), user=require_role("Operator")):
         # Plan-A: auto-create linked physical_assets record
         _create_linked_asset_for_device(conn, device_id, device)
         conn.commit()
+        try:
+            from services.collector_sync_service import trigger_async_monitoring_sync
+            trigger_async_monitoring_sync()
+        except Exception:
+            pass
         new_device = conn.execute('SELECT * FROM devices WHERE id = ?', (device_id,)).fetchone()
         log_audit_event(
             event_type='DEVICE_CREATE',
@@ -2640,6 +2645,11 @@ def delete_device(device_id: str):
         # deletion. They can only be removed explicitly from the credential
         # center after all normal/admin device references are cleared.
         conn.commit()
+        try:
+            from services.collector_sync_service import trigger_async_monitoring_sync
+            trigger_async_monitoring_sync()
+        except Exception:
+            pass
         log_audit_event(
             event_type='DEVICE_DELETE',
             category='inventory',
@@ -2833,6 +2843,11 @@ def update_device(device_id: str, device: dict = Body(...)):
                 ),
             )
         conn.commit()
+        try:
+            from services.collector_sync_service import trigger_async_monitoring_sync
+            trigger_async_monitoring_sync()
+        except Exception:
+            pass
 
         # Track lifecycle transition in audit details
         old_lifecycle = existing_row['lifecycle_status'] or 'staging'
@@ -3467,6 +3482,11 @@ def import_devices(payload: dict = Body(...), user=require_role("Operator")):
             ))
             tag_service.sync_device_status_tag(conn, device_id, device.get('status', 'pending'))
         conn.commit()
+        try:
+            from services.collector_sync_service import trigger_async_monitoring_sync
+            trigger_async_monitoring_sync()
+        except Exception:
+            pass
         log_audit_event(
             event_type='DEVICE_IMPORT',
             category='inventory',

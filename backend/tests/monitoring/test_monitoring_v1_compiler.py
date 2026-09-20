@@ -321,3 +321,19 @@ def test_oid_config_validation_rejects_duplicate_and_empty_payloads():
         validate_oid_config({"walk": ["1.3.6.1.2.1.1"]})
     with pytest.raises(ValueError, match="OID_CONFIG_WALK_INVALID"):
         validate_oid_config({"walk": ["3.999.1"], "metrics": [{"name": "bad", "oid": "1.3.6.1.2.1.1.3", "type": "gauge"}]})
+
+
+def test_load_compile_inputs_sql_schema_contract():
+    from api.monitoring_v1 import _load_compile_inputs
+    import inspect
+
+    src = inspect.getsource(_load_compile_inputs)
+    # physical_assets has no 'site' (only site_id) or 'tenant_id' column
+    assert "pa.site)" not in src
+    assert "pa.site " not in src
+    assert "pa.tenant_id" not in src
+    # Must use s.id = pa.site_id
+    assert "s.id = pa.site_id" in src
+    # Must rollback on exception to prevent aborted transactions
+    assert "conn.rollback()" in src
+

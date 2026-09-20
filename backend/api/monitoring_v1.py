@@ -739,14 +739,21 @@ def preview_monitoring_plan(plan_id: str, _user=require_role("Viewer")):
         config = _parse_json(row.pop("config_json", "{}"), {})
         row["is_canonical"] = _is_canonical_plan(row)
         try:
-            device_sql = "SELECT id, hostname, vendor, platform, cli_platform, model, version, os_version, firmware_version, role, device_role, device_category, site, site_id, ip_address, management_address, status FROM devices WHERE (status IS NULL OR LOWER(status) = 'online')"
+            device_sql = """
+                SELECT d.*,
+                       COALESCE(NULLIF(s.site_name, ''), NULLIF(s.site_code, ''), CASE WHEN SUBSTR(COALESCE(d.site, ''), 1, 5) = 'site-' THEN '' ELSE COALESCE(d.site, '') END, '') AS site_name
+                FROM devices d
+                LEFT JOIN sites s ON (s.id = d.site_id OR s.id = d.site OR s.site_code = d.site OR s.site_name = d.site)
+                WHERE (d.status IS NULL OR LOWER(d.status) = 'online')
+            """
             device_params: tuple[Any, ...] = ()
             tenant = _tenant_id(_user)
             if tenant is not None:
-                device_sql += " AND COALESCE(tenant_id, 'tenant-default') = ?"
+                device_sql += " AND COALESCE(d.tenant_id, 'tenant-default') = ?"
                 device_params = (tenant,)
             devices = conn.execute(device_sql, device_params).fetchall()
         except Exception:
+            conn.rollback()
             # Read-only preview remains useful on an installation where CMDB
             # access is temporarily unavailable; the compile/apply path still
             # fails closed when it needs real device rows.
@@ -1116,23 +1123,22 @@ def _load_compile_inputs(conn, collector_id: str, user: Any = None):
         SELECT pa.*,
                COALESCE(NULLIF(s.site_name, ''), NULLIF(s.site_code, ''), '') AS site_name
         FROM physical_assets pa
-        LEFT JOIN sites s ON (s.id = pa.site_id OR s.id = pa.site)
+        LEFT JOIN sites s ON s.id = pa.site_id
         WHERE pa.asset_type = 'server'
           AND (pa.status IS NULL OR pa.status = 'active')
     """
     server_params: tuple[Any, ...] = ()
-    if tenant is not None:
-        server_sql += " AND COALESCE(pa.tenant_id, 'tenant-default') = ?"
-        server_params = (tenant,)
     try:
         servers = [_dict(row) for row in conn.execute(server_sql, server_params).fetchall()]
     except Exception:
+        conn.rollback()
         servers = []
     try:
         from services.tag_service import get_device_tags
         for device in devices:
             device["tag_ids"] = [str(item.get("id") or "") for item in get_device_tags(conn, str(device.get("id") or "")) if item.get("id")]
     except Exception:
+        conn.rollback()
         for device in devices:
             device.setdefault("tag_ids", [])
     modules = [_dict(row) for row in conn.execute("SELECT * FROM snmp_modules WHERE enabled = 1").fetchall()]
@@ -1164,7 +1170,23 @@ def _load_compile_inputs(conn, collector_id: str, user: Any = None):
                 item["password"] = item["auth_password"]
             credentials.append(item)
     except Exception:
-        pass
+        conn.rollback()
+        try:
+            # Fallback for environments where snmpv3 columns are not present yet
+            for row in conn.execute("SELECT id, credential_type, username, snmp_community, encrypted_password FROM credentials").fetchall():
+                item = _dict(row)
+                item["community"] = decrypt_credential(item.pop("snmp_community", "") or "") or ""
+                item["password"] = decrypt_credential(item.pop("encrypted_password", "") or "") or ""
+                item["auth_protocol"] = "SHA"
+                item["security_level"] = "authPriv"
+                item["priv_protocol"] = "AES"
+                item["context_name"] = ""
+                item["priv_password"] = ""
+                item["auth_password"] = ""
+                credentials.append(item)
+        except Exception:
+            conn.rollback()
+            credentials = []
     aliases = {str(item["id"]): opaque_auth_alias(str(item["id"])) for item in credentials if item.get("id")}
     for device in devices:
         device.setdefault("collector_id", collector_id)
