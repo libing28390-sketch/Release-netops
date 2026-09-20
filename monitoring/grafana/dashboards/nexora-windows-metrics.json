@@ -117,7 +117,7 @@
       },
       "targets": [
         {
-          "expr": "avg(100 - (rate(windows_cpu_time_total{instance=~\"$device\",mode=\"idle\"}[5m]) * 100)) or vector(0)",
+          "expr": "avg(100 - (avg by (instance) (rate(windows_cpu_time_total{instance=~\"$device\",mode=\"idle\"}[5m])) * 100)) or vector(0)",
           "refId": "A"
         }
       ]
@@ -277,15 +277,15 @@
       },
       "targets": [
         {
-          "expr": "100 - (rate(windows_cpu_time_total{instance=~\"$device\",mode=\"idle\"}[5m]) * 100)",
-          "legendFormat": "{{instance}} CPU 利用率",
+          "expr": "100 - (avg by (instance) (rate(windows_cpu_time_total{instance=~\"$device\",mode=\"idle\"}[5m])) * 100)",
+          "legendFormat": "{{instance}} CPU 利用率 (%)",
           "refId": "A"
         }
       ]
     },
     {
       "id": 6,
-      "title": "可用物理内存与已提交字节走势",
+      "title": "物理内存分配与提交走势",
       "type": "timeseries",
       "datasource": {
         "type": "prometheus",
@@ -324,14 +324,24 @@
       },
       "targets": [
         {
-          "expr": "windows_os_physical_memory_free_bytes{instance=~\"$device\"}",
-          "legendFormat": "{{instance}} 可用物理内存",
+          "expr": "windows_cs_physical_memory_bytes{instance=~\"$device\"} - windows_os_physical_memory_free_bytes{instance=~\"$device\"}",
+          "legendFormat": "{{instance}} 物理内存已用",
           "refId": "A"
         },
         {
-          "expr": "windows_os_committed_bytes{instance=~\"$device\"}",
-          "legendFormat": "{{instance}} 已提交字节",
+          "expr": "windows_os_physical_memory_free_bytes{instance=~\"$device\"}",
+          "legendFormat": "{{instance}} 可用物理内存",
           "refId": "B"
+        },
+        {
+          "expr": "windows_os_committed_bytes{instance=~\"$device\"}",
+          "legendFormat": "{{instance}} 已提交虚拟内存",
+          "refId": "C"
+        },
+        {
+          "expr": "windows_cs_physical_memory_bytes{instance=~\"$device\"}",
+          "legendFormat": "{{instance}} 物理内存总量 (Total)",
+          "refId": "D"
         }
       ]
     },
@@ -661,14 +671,14 @@
             "$__all"
           ]
         },
-        "definition": "label_values({job=\"windows_servers\"} or {__name__=~\"windows_.*\"}, site_name)",
+        "definition": "label_values({__name__=~\"windows_os_info|windows_cpu_time_total|up\"}, site_name)",
         "includeAll": true,
         "label": "站点",
         "multi": true,
         "name": "site",
         "options": [],
         "query": {
-          "query": "label_values({job=\"windows_servers\"} or {__name__=~\"windows_.*\"}, site_name)",
+          "query": "label_values({__name__=~\"windows_os_info|windows_cpu_time_total|up\"}, site_name)",
           "refId": "StandardVariableQuery"
         },
         "refresh": 1,
@@ -685,14 +695,14 @@
             "$__all"
           ]
         },
-        "definition": "label_values({job=\"windows_servers\",site_name=~\"$site\"} or {__name__=~\"windows_.*\",site_name=~\"$site\"}, instance)",
+        "definition": "label_values({__name__=~\"windows_os_info|windows_cpu_time_total|up\",site_name=~\"$site\"}, instance)",
         "includeAll": true,
         "label": "服务器",
         "multi": true,
         "name": "device",
         "options": [],
         "query": {
-          "query": "label_values({job=\"windows_servers\",site_name=~\"$site\"} or {__name__=~\"windows_.*\",site_name=~\"$site\"}, instance)",
+          "query": "label_values({__name__=~\"windows_os_info|windows_cpu_time_total|up\",site_name=~\"$site\"}, instance)",
           "refId": "StandardVariableQuery"
         },
         "refresh": 1,

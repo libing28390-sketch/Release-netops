@@ -56,7 +56,7 @@
       },
       "targets": [
         {
-          "expr": "count(count by (instance) (node_uname_info or node_load1 or up{job=\"linux_servers\"})) or vector(0)",
+          "expr": "count(count by (instance) (node_load1 or up{job=\"linux_servers\"})) or vector(0)",
           "refId": "A"
         }
       ]
@@ -170,7 +170,7 @@
       },
       "targets": [
         {
-          "expr": "avg(100 - (rate(node_cpu_seconds_total{instance=~\"$device\",mode=\"idle\"}[5m]) * 100)) or vector(0)",
+          "expr": "avg(100 - (avg by (instance) (rate(node_cpu_seconds_total{instance=~\"$device\",mode=\"idle\"}[5m])) * 100)) or vector(0)",
           "refId": "A"
         }
       ]
@@ -291,7 +291,7 @@
     },
     {
       "id": 6,
-      "title": "文件句柄利用率",
+      "title": "已打开文件句柄数",
       "type": "stat",
       "datasource": {
         "type": "prometheus",
@@ -305,7 +305,7 @@
       },
       "fieldConfig": {
         "defaults": {
-          "unit": "percent",
+          "unit": "short",
           "color": {
             "mode": "thresholds"
           },
@@ -318,11 +318,11 @@
               },
               {
                 "color": "#E0B400",
-                "value": 70
+                "value": 20000
               },
               {
                 "color": "red",
-                "value": 85
+                "value": 100000
               }
             ]
           }
@@ -345,14 +345,14 @@
       },
       "targets": [
         {
-          "expr": "avg(node_filefd_allocated{instance=~\"$device\"} / node_filefd_maximum{instance=~\"$device\"} * 100) or vector(0)",
+          "expr": "sum(node_filefd_allocated{instance=~\"$device\"}) or vector(0)",
           "refId": "A"
         }
       ]
     },
     {
       "id": 7,
-      "title": "CPU 利用率与平均负载趋势",
+      "title": "CPU 各状态利用率走势 (%)",
       "type": "timeseries",
       "datasource": {
         "type": "prometheus",
@@ -391,30 +391,30 @@
       },
       "targets": [
         {
-          "expr": "100 - (rate(node_cpu_seconds_total{instance=~\"$device\",mode=\"idle\"}[5m]) * 100)",
-          "legendFormat": "{{instance}} CPU利用率 (%)",
+          "expr": "100 - (avg by (instance) (rate(node_cpu_seconds_total{instance=~\"$device\",mode=\"idle\"}[5m])) * 100)",
+          "legendFormat": "{{instance}} 整机 CPU 利用率 (%)",
           "refId": "A"
         },
         {
-          "expr": "node_load1{instance=~\"$device\"}",
-          "legendFormat": "{{instance}} 1分钟负载 (Load1)",
+          "expr": "avg by (instance) (rate(node_cpu_seconds_total{instance=~\"$device\",mode=\"user\"}[5m])) * 100",
+          "legendFormat": "{{instance}} 用户态 (user %)",
           "refId": "B"
         },
         {
-          "expr": "node_load5{instance=~\"$device\"}",
-          "legendFormat": "{{instance}} 5分钟负载 (Load5)",
+          "expr": "avg by (instance) (rate(node_cpu_seconds_total{instance=~\"$device\",mode=\"system\"}[5m])) * 100",
+          "legendFormat": "{{instance}} 系统态 (system %)",
           "refId": "C"
         },
         {
-          "expr": "node_load15{instance=~\"$device\"}",
-          "legendFormat": "{{instance}} 15分钟负载 (Load15)",
+          "expr": "avg by (instance) (rate(node_cpu_seconds_total{instance=~\"$device\",mode=\"iowait\"}[5m])) * 100",
+          "legendFormat": "{{instance}} I/O等待 (iowait %)",
           "refId": "D"
         }
       ]
     },
     {
       "id": 8,
-      "title": "物理内存与 Swap 空间消耗走势",
+      "title": "物理内存与 Swap 分布走势",
       "type": "timeseries",
       "datasource": {
         "type": "prometheus",
@@ -428,7 +428,7 @@
       },
       "fieldConfig": {
         "defaults": {
-          "unit": "percent",
+          "unit": "bytes",
           "color": {
             "mode": "palette-classic"
           },
@@ -453,24 +453,148 @@
       },
       "targets": [
         {
-          "expr": "(1 - (node_memory_MemAvailable_bytes{instance=~\"$device\"} / node_memory_MemTotal_bytes{instance=~\"$device\"})) * 100",
-          "legendFormat": "{{instance}} 内存利用率 (%)",
+          "expr": "node_memory_MemTotal_bytes{instance=~\"$device\"} - node_memory_MemAvailable_bytes{instance=~\"$device\"}",
+          "legendFormat": "{{instance}} 内存已用量",
           "refId": "A"
         },
         {
-          "expr": "node_memory_MemTotal_bytes{instance=~\"$device\"} - node_memory_MemAvailable_bytes{instance=~\"$device\"}",
-          "legendFormat": "{{instance}} 内存已用量",
+          "expr": "node_memory_MemAvailable_bytes{instance=~\"$device\"}",
+          "legendFormat": "{{instance}} 可用物理内存",
           "refId": "B"
         },
         {
-          "expr": "(1 - (node_memory_SwapFree_bytes{instance=~\"$device\"} / node_memory_SwapTotal_bytes{instance=~\"$device\"})) * 100",
-          "legendFormat": "{{instance}} Swap 利用率 (%)",
+          "expr": "node_memory_Cached_bytes{instance=~\"$device\"} + node_memory_Buffers_bytes{instance=~\"$device\"}",
+          "legendFormat": "{{instance}} 缓冲与缓存 (Buffers+Cache)",
           "refId": "C"
+        },
+        {
+          "expr": "node_memory_SwapTotal_bytes{instance=~\"$device\"} - node_memory_SwapFree_bytes{instance=~\"$device\"}",
+          "legendFormat": "{{instance}} Swap 已用量",
+          "refId": "D"
+        },
+        {
+          "expr": "node_memory_MemTotal_bytes{instance=~\"$device\"}",
+          "legendFormat": "{{instance}} 物理内存总量 (Total)",
+          "refId": "E"
         }
       ]
     },
     {
       "id": 9,
+      "title": "系统平均负载走势 (Load1 / Load5 / Load15)",
+      "type": "timeseries",
+      "datasource": {
+        "type": "prometheus",
+        "uid": "victoriametrics"
+      },
+      "gridPos": {
+        "h": 8,
+        "w": 12,
+        "x": 0,
+        "y": 12
+      },
+      "fieldConfig": {
+        "defaults": {
+          "unit": "short",
+          "color": {
+            "mode": "palette-classic"
+          },
+          "custom": {
+            "drawStyle": "line",
+            "lineInterpolation": "smooth",
+            "fillOpacity": 10
+          }
+        },
+        "overrides": []
+      },
+      "options": {
+        "legend": {
+          "displayMode": "list",
+          "placement": "bottom",
+          "showLegend": true
+        },
+        "tooltip": {
+          "mode": "multi",
+          "sort": "desc"
+        }
+      },
+      "targets": [
+        {
+          "expr": "node_load1{instance=~\"$device\"}",
+          "legendFormat": "{{instance}} 1分钟负载 (Load1)",
+          "refId": "A"
+        },
+        {
+          "expr": "node_load5{instance=~\"$device\"}",
+          "legendFormat": "{{instance}} 5分钟负载 (Load5)",
+          "refId": "B"
+        },
+        {
+          "expr": "node_load15{instance=~\"$device\"}",
+          "legendFormat": "{{instance}} 15分钟负载 (Load15)",
+          "refId": "C"
+        },
+        {
+          "expr": "count by (instance) (node_cpu_seconds_total{instance=~\"$device\",mode=\"idle\"})",
+          "legendFormat": "{{instance}} 逻辑 CPU 核心数 (阈值参考)",
+          "refId": "D"
+        }
+      ]
+    },
+    {
+      "id": 10,
+      "title": "磁盘读写吞吐速率 (Bytes/s)",
+      "type": "timeseries",
+      "datasource": {
+        "type": "prometheus",
+        "uid": "victoriametrics"
+      },
+      "gridPos": {
+        "h": 8,
+        "w": 12,
+        "x": 12,
+        "y": 12
+      },
+      "fieldConfig": {
+        "defaults": {
+          "unit": "Bps",
+          "color": {
+            "mode": "palette-classic"
+          },
+          "custom": {
+            "drawStyle": "line",
+            "lineInterpolation": "smooth",
+            "fillOpacity": 10
+          }
+        },
+        "overrides": []
+      },
+      "options": {
+        "legend": {
+          "displayMode": "list",
+          "placement": "bottom",
+          "showLegend": true
+        },
+        "tooltip": {
+          "mode": "multi",
+          "sort": "desc"
+        }
+      },
+      "targets": [
+        {
+          "expr": "sum by (instance, device) (rate(node_disk_read_bytes_total{instance=~\"$device\",device!~\"loop.*|ram.*\"}[5m]))",
+          "legendFormat": "{{instance}} - {{device}} 读吞吐",
+          "refId": "A"
+        },
+        {
+          "expr": "sum by (instance, device) (rate(node_disk_written_bytes_total{instance=~\"$device\",device!~\"loop.*|ram.*\"}[5m]))",
+          "legendFormat": "{{instance}} - {{device}} 写吞吐",
+          "refId": "B"
+        }
+      ]
+    },
+    {
+      "id": 11,
       "title": "主机磁盘空间利用率 Top 10",
       "type": "table",
       "datasource": {
@@ -481,7 +605,7 @@
         "h": 8,
         "w": 12,
         "x": 0,
-        "y": 12
+        "y": 20
       },
       "fieldConfig": {
         "defaults": {
@@ -514,7 +638,7 @@
       },
       "targets": [
         {
-          "expr": "topk(10, max by (instance, mountpoint) ((1 - (node_filesystem_avail_bytes{instance=~\"$device\",fstype!~\"tmpfs|iso9660|squashfs\"} / node_filesystem_size_bytes{instance=~\"$device\"})) * 100))",
+          "expr": "topk(10, max by (instance, mountpoint) ((1 - (node_filesystem_avail_bytes{instance=~\"$device\",fstype!~\"tmpfs|iso9660|squashfs\",fstype!=\"\"} / node_filesystem_size_bytes{instance=~\"$device\"})) * 100))",
           "format": "table",
           "instant": true,
           "refId": "A"
@@ -570,59 +694,7 @@
       ]
     },
     {
-      "id": 10,
-      "title": "磁盘读写吞吐速率 (Bytes/s)",
-      "type": "timeseries",
-      "datasource": {
-        "type": "prometheus",
-        "uid": "victoriametrics"
-      },
-      "gridPos": {
-        "h": 8,
-        "w": 12,
-        "x": 12,
-        "y": 12
-      },
-      "fieldConfig": {
-        "defaults": {
-          "unit": "Bps",
-          "color": {
-            "mode": "palette-classic"
-          },
-          "custom": {
-            "drawStyle": "line",
-            "lineInterpolation": "smooth",
-            "fillOpacity": 10
-          }
-        },
-        "overrides": []
-      },
-      "options": {
-        "legend": {
-          "displayMode": "list",
-          "placement": "bottom",
-          "showLegend": true
-        },
-        "tooltip": {
-          "mode": "multi",
-          "sort": "desc"
-        }
-      },
-      "targets": [
-        {
-          "expr": "sum by (instance, device) (rate(node_disk_read_bytes_total{instance=~\"$device\",device!~\"loop.*\"}[5m]))",
-          "legendFormat": "{{instance}} - {{device}} 读吞吐",
-          "refId": "A"
-        },
-        {
-          "expr": "sum by (instance, device) (rate(node_disk_written_bytes_total{instance=~\"$device\",device!~\"loop.*\"}[5m]))",
-          "legendFormat": "{{instance}} - {{device}} 写吞吐",
-          "refId": "B"
-        }
-      ]
-    },
-    {
-      "id": 11,
+      "id": 12,
       "title": "服务器网卡流量走势 (bps)",
       "type": "timeseries",
       "datasource": {
@@ -632,7 +704,7 @@
       "gridPos": {
         "h": 8,
         "w": 12,
-        "x": 0,
+        "x": 12,
         "y": 20
       },
       "fieldConfig": {
@@ -669,58 +741,6 @@
         {
           "expr": "sum by (instance, device) (rate(node_network_transmit_bytes_total{instance=~\"$device\",device!~\"lo|docker.*|veth.*|br-.*\"}[5m]) * 8)",
           "legendFormat": "{{instance}} - {{device}} 发送 (bps)",
-          "refId": "B"
-        }
-      ]
-    },
-    {
-      "id": 12,
-      "title": "网卡丢包与错包速率 (PPS)",
-      "type": "timeseries",
-      "datasource": {
-        "type": "prometheus",
-        "uid": "victoriametrics"
-      },
-      "gridPos": {
-        "h": 8,
-        "w": 12,
-        "x": 12,
-        "y": 20
-      },
-      "fieldConfig": {
-        "defaults": {
-          "unit": "pps",
-          "color": {
-            "mode": "palette-classic"
-          },
-          "custom": {
-            "drawStyle": "line",
-            "lineInterpolation": "smooth",
-            "fillOpacity": 10
-          }
-        },
-        "overrides": []
-      },
-      "options": {
-        "legend": {
-          "displayMode": "list",
-          "placement": "bottom",
-          "showLegend": true
-        },
-        "tooltip": {
-          "mode": "multi",
-          "sort": "desc"
-        }
-      },
-      "targets": [
-        {
-          "expr": "sum by (instance, device) (rate(node_network_receive_drop_total{instance=~\"$device\",device!~\"lo|docker.*|veth.*|br-.*\"}[5m]) + rate(node_network_transmit_drop_total{instance=~\"$device\",device!~\"lo|docker.*|veth.*|br-.*\"}[5m]))",
-          "legendFormat": "{{instance}} - {{device}} 丢包/秒",
-          "refId": "A"
-        },
-        {
-          "expr": "sum by (instance, device) (rate(node_network_receive_errs_total{instance=~\"$device\",device!~\"lo|docker.*|veth.*|br-.*\"}[5m]) + rate(node_network_transmit_errs_total{instance=~\"$device\",device!~\"lo|docker.*|veth.*|br-.*\"}[5m]))",
-          "legendFormat": "{{instance}} - {{device}} 错包/秒",
           "refId": "B"
         }
       ]
@@ -898,14 +918,14 @@
             "$__all"
           ]
         },
-        "definition": "label_values({job=\"linux_servers\"} or {__name__=~\"node_.*\"}, site_name)",
+        "definition": "label_values({__name__=~\"node_uname_info|node_load1|up\"}, site_name)",
         "includeAll": true,
         "label": "站点",
         "multi": true,
         "name": "site",
         "options": [],
         "query": {
-          "query": "label_values({job=\"linux_servers\"} or {__name__=~\"node_.*\"}, site_name)",
+          "query": "label_values({__name__=~\"node_uname_info|node_load1|up\"}, site_name)",
           "refId": "StandardVariableQuery"
         },
         "refresh": 1,
@@ -922,14 +942,14 @@
             "$__all"
           ]
         },
-        "definition": "label_values({job=\"linux_servers\",site_name=~\"$site\"} or {__name__=~\"node_.*\",site_name=~\"$site\"}, instance)",
+        "definition": "label_values({__name__=~\"node_uname_info|node_load1|up\",site_name=~\"$site\"}, instance)",
         "includeAll": true,
         "label": "服务器",
         "multi": true,
         "name": "device",
         "options": [],
         "query": {
-          "query": "label_values({job=\"linux_servers\",site_name=~\"$site\"} or {__name__=~\"node_.*\",site_name=~\"$site\"}, instance)",
+          "query": "label_values({__name__=~\"node_uname_info|node_load1|up\",site_name=~\"$site\"}, instance)",
           "refId": "StandardVariableQuery"
         },
         "refresh": 1,

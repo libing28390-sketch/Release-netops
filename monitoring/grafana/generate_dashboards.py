@@ -588,9 +588,9 @@ def build_outbound_dashboard():
 def build_linux_dashboard():
     srv_sel = 'instance=~"$device"'
     panels = [
-        stat_panel(1, "受纳管 Linux 主机数", 'count(count by (instance) (node_uname_info or node_load1 or up{job="linux_servers"})) or vector(0)', 0, 0, 4, 4, unit="none", color="blue"),
+        stat_panel(1, "受纳管 Linux 主机数", 'count(count by (instance) (node_load1 or up{job="linux_servers"})) or vector(0)', 0, 0, 4, 4, unit="none", color="blue"),
         stat_panel(2, "系统平均运行时间 (Uptime)", f'avg(time() - node_boot_time_seconds{{{srv_sel}}}) or vector(0)', 4, 0, 4, 4, unit="s", color="#3274D9"),
-        stat_panel(3, "平均 CPU 使用率", f'avg(100 - (rate(node_cpu_seconds_total{{{srv_sel},mode="idle"}}[5m]) * 100)) or vector(0)', 8, 0, 4, 4, unit="percent", thresholds=[
+        stat_panel(3, "平均 CPU 使用率", f'avg(100 - (avg by (instance) (rate(node_cpu_seconds_total{{{srv_sel},mode="idle"}}[5m])) * 100)) or vector(0)', 8, 0, 4, 4, unit="percent", thresholds=[
             {"color": "green", "value": None},
             {"color": "#E0B400", "value": 70},
             {"color": "red", "value": 85}
@@ -601,43 +601,50 @@ def build_linux_dashboard():
             {"color": "red", "value": 90}
         ]),
         stat_panel(5, "TCP 活跃连接总数", f'sum(node_netstat_Tcp_CurrEstab{{{srv_sel}}}) or vector(0)', 16, 0, 4, 4, unit="none", color="purple"),
-        stat_panel(6, "文件句柄利用率", f'avg(node_filefd_allocated{{{srv_sel}}} / node_filefd_maximum{{{srv_sel}}} * 100) or vector(0)', 20, 0, 4, 4, unit="percent", thresholds=[
+        stat_panel(6, "已打开文件句柄数", f'sum(node_filefd_allocated{{{srv_sel}}}) or vector(0)', 20, 0, 4, 4, unit="short", color="#56A64B", thresholds=[
             {"color": "green", "value": None},
-            {"color": "#E0B400", "value": 70},
-            {"color": "red", "value": 85}
+            {"color": "#E0B400", "value": 20000},
+            {"color": "red", "value": 100000}
         ]),
 
-        timeseries_panel(7, "CPU 利用率与平均负载趋势", [
-            {"expr": f'100 - (rate(node_cpu_seconds_total{{{srv_sel},mode="idle"}}[5m]) * 100)', "legendFormat": "{{instance}} CPU利用率 (%)", "refId": "A"},
-            {"expr": f'node_load1{{{srv_sel}}}', "legendFormat": "{{instance}} 1分钟负载 (Load1)", "refId": "B"},
-            {"expr": f'node_load5{{{srv_sel}}}', "legendFormat": "{{instance}} 5分钟负载 (Load5)", "refId": "C"},
-            {"expr": f'node_load15{{{srv_sel}}}', "legendFormat": "{{instance}} 15分钟负载 (Load15)", "refId": "D"}
+        timeseries_panel(7, "CPU 各状态利用率走势 (%)", [
+            {"expr": f'100 - (avg by (instance) (rate(node_cpu_seconds_total{{{srv_sel},mode="idle"}}[5m])) * 100)', "legendFormat": "{{instance}} 整机 CPU 利用率 (%)", "refId": "A"},
+            {"expr": f'avg by (instance) (rate(node_cpu_seconds_total{{{srv_sel},mode="user"}}[5m])) * 100', "legendFormat": "{{instance}} 用户态 (user %)", "refId": "B"},
+            {"expr": f'avg by (instance) (rate(node_cpu_seconds_total{{{srv_sel},mode="system"}}[5m])) * 100', "legendFormat": "{{instance}} 系统态 (system %)", "refId": "C"},
+            {"expr": f'avg by (instance) (rate(node_cpu_seconds_total{{{srv_sel},mode="iowait"}}[5m])) * 100', "legendFormat": "{{instance}} I/O等待 (iowait %)", "refId": "D"}
         ], 0, 4, 12, 8, unit="percent"),
-        timeseries_panel(8, "物理内存与 Swap 空间消耗走势", [
-            {"expr": f'(1 - (node_memory_MemAvailable_bytes{{{srv_sel}}} / node_memory_MemTotal_bytes{{{srv_sel}}})) * 100', "legendFormat": "{{instance}} 内存利用率 (%)", "refId": "A"},
-            {"expr": f'node_memory_MemTotal_bytes{{{srv_sel}}} - node_memory_MemAvailable_bytes{{{srv_sel}}}', "legendFormat": "{{instance}} 内存已用量", "refId": "B"},
-            {"expr": f'(1 - (node_memory_SwapFree_bytes{{{srv_sel}}} / node_memory_SwapTotal_bytes{{{srv_sel}}})) * 100', "legendFormat": "{{instance}} Swap 利用率 (%)", "refId": "C"}
-        ], 12, 4, 12, 8, unit="percent"),
 
-        table_panel(
-            9, "主机磁盘空间利用率 Top 10",
-            f'topk(10, max by (instance, mountpoint) ((1 - (node_filesystem_avail_bytes{{{srv_sel},fstype!~"tmpfs|iso9660|squashfs"}} / node_filesystem_size_bytes{{{srv_sel}}})) * 100))',
-            0, 12, 12, 8, unit="percent",
-            transformations=clean_organize_transformation("磁盘使用率", {"mountpoint": "挂载点"})
-        ),
+        timeseries_panel(8, "物理内存与 Swap 分布走势", [
+            {"expr": f'node_memory_MemTotal_bytes{{{srv_sel}}} - node_memory_MemAvailable_bytes{{{srv_sel}}}', "legendFormat": "{{instance}} 内存已用量", "refId": "A"},
+            {"expr": f'node_memory_MemAvailable_bytes{{{srv_sel}}}', "legendFormat": "{{instance}} 可用物理内存", "refId": "B"},
+            {"expr": f'node_memory_Cached_bytes{{{srv_sel}}} + node_memory_Buffers_bytes{{{srv_sel}}}', "legendFormat": "{{instance}} 缓冲与缓存 (Buffers+Cache)", "refId": "C"},
+            {"expr": f'node_memory_SwapTotal_bytes{{{srv_sel}}} - node_memory_SwapFree_bytes{{{srv_sel}}}', "legendFormat": "{{instance}} Swap 已用量", "refId": "D"},
+            {"expr": f'node_memory_MemTotal_bytes{{{srv_sel}}}', "legendFormat": "{{instance}} 物理内存总量 (Total)", "refId": "E"}
+        ], 12, 4, 12, 8, unit="bytes"),
+
+        timeseries_panel(9, "系统平均负载走势 (Load1 / Load5 / Load15)", [
+            {"expr": f'node_load1{{{srv_sel}}}', "legendFormat": "{{instance}} 1分钟负载 (Load1)", "refId": "A"},
+            {"expr": f'node_load5{{{srv_sel}}}', "legendFormat": "{{instance}} 5分钟负载 (Load5)", "refId": "B"},
+            {"expr": f'node_load15{{{srv_sel}}}', "legendFormat": "{{instance}} 15分钟负载 (Load15)", "refId": "C"},
+            {"expr": f'count by (instance) (node_cpu_seconds_total{{{srv_sel},mode="idle"}})', "legendFormat": "{{instance}} 逻辑 CPU 核心数 (阈值参考)", "refId": "D"}
+        ], 0, 12, 12, 8, unit="short"),
+
         timeseries_panel(10, "磁盘读写吞吐速率 (Bytes/s)", [
-            {"expr": f'sum by (instance, device) (rate(node_disk_read_bytes_total{{{srv_sel},device!~"loop.*"}}[5m]))', "legendFormat": "{{instance}} - {{device}} 读吞吐", "refId": "A"},
-            {"expr": f'sum by (instance, device) (rate(node_disk_written_bytes_total{{{srv_sel},device!~"loop.*"}}[5m]))', "legendFormat": "{{instance}} - {{device}} 写吞吐", "refId": "B"}
+            {"expr": f'sum by (instance, device) (rate(node_disk_read_bytes_total{{{srv_sel},device!~"loop.*|ram.*"}}[5m]))', "legendFormat": "{{instance}} - {{device}} 读吞吐", "refId": "A"},
+            {"expr": f'sum by (instance, device) (rate(node_disk_written_bytes_total{{{srv_sel},device!~"loop.*|ram.*"}}[5m]))', "legendFormat": "{{instance}} - {{device}} 写吞吐", "refId": "B"}
         ], 12, 12, 12, 8, unit="Bps"),
 
-        timeseries_panel(11, "服务器网卡流量走势 (bps)", [
+        table_panel(
+            11, "主机磁盘空间利用率 Top 10",
+            f'topk(10, max by (instance, mountpoint) ((1 - (node_filesystem_avail_bytes{{{srv_sel},fstype!~"tmpfs|iso9660|squashfs",fstype!=""}} / node_filesystem_size_bytes{{{srv_sel}}})) * 100))',
+            0, 20, 12, 8, unit="percent",
+            transformations=clean_organize_transformation("磁盘使用率", {"mountpoint": "挂载点"})
+        ),
+
+        timeseries_panel(12, "服务器网卡流量走势 (bps)", [
             {"expr": f'sum by (instance, device) (rate(node_network_receive_bytes_total{{{srv_sel},device!~"lo|docker.*|veth.*|br-.*"}}[5m]) * 8)', "legendFormat": "{{instance}} - {{device}} 接收 (bps)", "refId": "A"},
             {"expr": f'sum by (instance, device) (rate(node_network_transmit_bytes_total{{{srv_sel},device!~"lo|docker.*|veth.*|br-.*"}}[5m]) * 8)', "legendFormat": "{{instance}} - {{device}} 发送 (bps)", "refId": "B"}
-        ], 0, 20, 12, 8, unit="bps"),
-        timeseries_panel(12, "网卡丢包与错包速率 (PPS)", [
-            {"expr": f'sum by (instance, device) (rate(node_network_receive_drop_total{{{srv_sel},device!~"lo|docker.*|veth.*|br-.*"}}[5m]) + rate(node_network_transmit_drop_total{{{srv_sel},device!~"lo|docker.*|veth.*|br-.*"}}[5m]))', "legendFormat": "{{instance}} - {{device}} 丢包/秒", "refId": "A"},
-            {"expr": f'sum by (instance, device) (rate(node_network_receive_errs_total{{{srv_sel},device!~"lo|docker.*|veth.*|br-.*"}}[5m]) + rate(node_network_transmit_errs_total{{{srv_sel},device!~"lo|docker.*|veth.*|br-.*"}}[5m]))', "legendFormat": "{{instance}} - {{device}} 错包/秒", "refId": "B"}
-        ], 12, 20, 12, 8, unit="pps"),
+        ], 12, 20, 12, 8, unit="bps"),
 
         table_panel(
             13, "主机 TCP 活跃连接数 Top 10",
@@ -664,8 +671,8 @@ def build_linux_dashboard():
         "tags": ["nexora", "server", "linux", "metrics"],
         "templating": {
             "list": [
-                make_query_variable("site", "站点", 'label_values({job="linux_servers"} or {__name__=~"node_.*"}, site_name)'),
-                make_query_variable("device", "服务器", 'label_values({job="linux_servers",site_name=~"$site"} or {__name__=~"node_.*",site_name=~"$site"}, instance)'),
+                make_query_variable("site", "站点", 'label_values({__name__=~"node_uname_info|node_load1|up"}, site_name)'),
+                make_query_variable("device", "服务器", 'label_values({__name__=~"node_uname_info|node_load1|up",site_name=~"$site"}, instance)'),
             ]
         },
         "time": {"from": "now-6h", "to": "now"},
@@ -679,7 +686,7 @@ def build_windows_dashboard():
     srv_sel = 'instance=~"$device"'
     panels = [
         stat_panel(1, "受纳管 Windows 主机数", 'count(count by (instance) (windows_cpu_time_total or windows_os_info or up{job="windows_servers"})) or vector(0)', 0, 0, 6, 4, unit="none", color="blue"),
-        stat_panel(2, "平均 CPU 使用率", f'avg(100 - (rate(windows_cpu_time_total{{{srv_sel},mode="idle"}}[5m]) * 100)) or vector(0)', 6, 0, 6, 4, unit="percent", thresholds=[
+        stat_panel(2, "平均 CPU 使用率", f'avg(100 - (avg by (instance) (rate(windows_cpu_time_total{{{srv_sel},mode="idle"}}[5m])) * 100)) or vector(0)', 6, 0, 6, 4, unit="percent", thresholds=[
             {"color": "green", "value": None},
             {"color": "#E0B400", "value": 70},
             {"color": "red", "value": 85}
@@ -692,11 +699,13 @@ def build_windows_dashboard():
         stat_panel(4, "远程桌面活跃会话", f'sum(windows_terminal_services_active_sessions{{{srv_sel}}}) or vector(0)', 18, 0, 6, 4, unit="none", color="purple"),
 
         timeseries_panel(5, "CPU 占用率走势 (%)", [
-            {"expr": f'100 - (rate(windows_cpu_time_total{{{srv_sel},mode="idle"}}[5m]) * 100)', "legendFormat": "{{instance}} CPU 利用率", "refId": "A"}
+            {"expr": f'100 - (avg by (instance) (rate(windows_cpu_time_total{{{srv_sel},mode="idle"}}[5m])) * 100)', "legendFormat": "{{instance}} CPU 利用率 (%)", "refId": "A"}
         ], 0, 4, 12, 8, unit="percent"),
-        timeseries_panel(6, "可用物理内存与已提交字节走势", [
-            {"expr": f'windows_os_physical_memory_free_bytes{{{srv_sel}}}', "legendFormat": "{{instance}} 可用物理内存", "refId": "A"},
-            {"expr": f'windows_os_committed_bytes{{{srv_sel}}}', "legendFormat": "{{instance}} 已提交字节", "refId": "B"}
+        timeseries_panel(6, "物理内存分配与提交走势", [
+            {"expr": f'windows_cs_physical_memory_bytes{{{srv_sel}}} - windows_os_physical_memory_free_bytes{{{srv_sel}}}', "legendFormat": "{{instance}} 物理内存已用", "refId": "A"},
+            {"expr": f'windows_os_physical_memory_free_bytes{{{srv_sel}}}', "legendFormat": "{{instance}} 可用物理内存", "refId": "B"},
+            {"expr": f'windows_os_committed_bytes{{{srv_sel}}}', "legendFormat": "{{instance}} 已提交虚拟内存", "refId": "C"},
+            {"expr": f'windows_cs_physical_memory_bytes{{{srv_sel}}}', "legendFormat": "{{instance}} 物理内存总量 (Total)", "refId": "D"}
         ], 12, 4, 12, 8, unit="bytes"),
 
         table_panel(
@@ -735,8 +744,8 @@ def build_windows_dashboard():
         "tags": ["nexora", "server", "windows", "metrics"],
         "templating": {
             "list": [
-                make_query_variable("site", "站点", 'label_values({job="windows_servers"} or {__name__=~"windows_.*"}, site_name)'),
-                make_query_variable("device", "服务器", 'label_values({job="windows_servers",site_name=~"$site"} or {__name__=~"windows_.*",site_name=~"$site"}, instance)'),
+                make_query_variable("site", "站点", 'label_values({__name__=~"windows_os_info|windows_cpu_time_total|up"}, site_name)'),
+                make_query_variable("device", "服务器", 'label_values({__name__=~"windows_os_info|windows_cpu_time_total|up",site_name=~"$site"}, instance)'),
             ]
         },
         "time": {"from": "now-6h", "to": "now"},

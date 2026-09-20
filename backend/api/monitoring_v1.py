@@ -1120,12 +1120,21 @@ def _load_compile_inputs(conn, collector_id: str, user: Any = None):
         device_params = (tenant,)
     devices = [_dict(row) for row in conn.execute(device_sql, device_params).fetchall()]
     server_sql = """
-        SELECT pa.*,
-               COALESCE(NULLIF(s.site_name, ''), NULLIF(s.site_code, ''), '') AS site_name
+        SELECT pa.id, 'server' AS asset_type, pa.management_ip, pa.hostname, pa.platform, pa.status,
+               COALESCE(NULLIF(s.site_name, ''), NULLIF(s.site_code, ''), '') AS site_name,
+               pa.site_id, 'tenant-default' AS tenant_id
         FROM physical_assets pa
         LEFT JOIN sites s ON s.id = pa.site_id
         WHERE pa.asset_type = 'server'
-          AND (pa.status IS NULL OR pa.status = 'active')
+          AND (pa.status IS NULL OR pa.status = 'active' OR pa.status = 'in_production' OR pa.status = 'online')
+        UNION
+        SELECT d.id, 'server' AS asset_type, d.ip_address AS management_ip, d.hostname, d.platform, d.status,
+               COALESCE(NULLIF(s.site_name, ''), NULLIF(s.site_code, ''), CASE WHEN SUBSTR(COALESCE(d.site, ''), 1, 5) = 'site-' THEN '' ELSE COALESCE(d.site, '') END, '') AS site_name,
+               d.site_id, COALESCE(d.tenant_id, 'tenant-default') AS tenant_id
+        FROM devices d
+        LEFT JOIN sites s ON (s.id = d.site_id OR s.id = d.site OR s.site_code = d.site OR s.site_name = d.site)
+        WHERE (d.role = 'server' OR d.device_category LIKE '%server%' OR LOWER(d.platform) IN ('linux', 'ubuntu', 'centos', 'debian', 'redhat', 'windows', 'windows_server'))
+          AND (d.status IS NULL OR LOWER(d.status) = 'online' OR LOWER(d.status) = 'active')
     """
     server_params: tuple[Any, ...] = ()
     try:
