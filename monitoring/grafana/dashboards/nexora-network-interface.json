@@ -56,7 +56,7 @@
       },
       "targets": [
         {
-          "expr": "sum(rate(ifHCInOctets{site_name=~\"$site\",vendor=~\"$vendor\",role=~\"$role\",hostname=~\"$device\"}[5m])) * 8 or vector(0)",
+          "expr": "sum(rate(ifHCInOctets{site_name=~\"$site\",vendor=~\"$vendor\",role=~\"$role\",hostname=~\"$device\"}[5m]) * on(instance, ifIndex) (ifName{site_name=~\"$site\",vendor=~\"$vendor\",role=~\"$role\",hostname=~\"$device\",ifName=~\"$interface\"} * 0 + 1)) * 8 or vector(0)",
           "refId": "A"
         }
       ]
@@ -109,7 +109,7 @@
       },
       "targets": [
         {
-          "expr": "sum(rate(ifHCOutOctets{site_name=~\"$site\",vendor=~\"$vendor\",role=~\"$role\",hostname=~\"$device\"}[5m])) * 8 or vector(0)",
+          "expr": "sum(rate(ifHCOutOctets{site_name=~\"$site\",vendor=~\"$vendor\",role=~\"$role\",hostname=~\"$device\"}[5m]) * on(instance, ifIndex) (ifName{site_name=~\"$site\",vendor=~\"$vendor\",role=~\"$role\",hostname=~\"$device\",ifName=~\"$interface\"} * 0 + 1)) * 8 or vector(0)",
           "refId": "A"
         }
       ]
@@ -170,7 +170,7 @@
       },
       "targets": [
         {
-          "expr": "(sum(rate(ifInErrors{site_name=~\"$site\",vendor=~\"$vendor\",role=~\"$role\",hostname=~\"$device\"}[5m])) + sum(rate(ifOutErrors{site_name=~\"$site\",vendor=~\"$vendor\",role=~\"$role\",hostname=~\"$device\"}[5m]))) or vector(0)",
+          "expr": "(sum(rate(ifInErrors{site_name=~\"$site\",vendor=~\"$vendor\",role=~\"$role\",hostname=~\"$device\"}[5m]) * on(instance, ifIndex) (ifName{site_name=~\"$site\",vendor=~\"$vendor\",role=~\"$role\",hostname=~\"$device\",ifName=~\"$interface\"} * 0 + 1)) + sum(rate(ifOutErrors{site_name=~\"$site\",vendor=~\"$vendor\",role=~\"$role\",hostname=~\"$device\"}[5m]) * on(instance, ifIndex) (ifName{site_name=~\"$site\",vendor=~\"$vendor\",role=~\"$role\",hostname=~\"$device\",ifName=~\"$interface\"} * 0 + 1))) or vector(0)",
           "refId": "A"
         }
       ]
@@ -231,7 +231,7 @@
       },
       "targets": [
         {
-          "expr": "(sum(rate(ifInDiscards{site_name=~\"$site\",vendor=~\"$vendor\",role=~\"$role\",hostname=~\"$device\"}[5m])) + sum(rate(ifOutDiscards{site_name=~\"$site\",vendor=~\"$vendor\",role=~\"$role\",hostname=~\"$device\"}[5m]))) or vector(0)",
+          "expr": "(sum(rate(ifInDiscards{site_name=~\"$site\",vendor=~\"$vendor\",role=~\"$role\",hostname=~\"$device\"}[5m]) * on(instance, ifIndex) (ifName{site_name=~\"$site\",vendor=~\"$vendor\",role=~\"$role\",hostname=~\"$device\",ifName=~\"$interface\"} * 0 + 1)) + sum(rate(ifOutDiscards{site_name=~\"$site\",vendor=~\"$vendor\",role=~\"$role\",hostname=~\"$device\"}[5m]) * on(instance, ifIndex) (ifName{site_name=~\"$site\",vendor=~\"$vendor\",role=~\"$role\",hostname=~\"$device\",ifName=~\"$interface\"} * 0 + 1))) or vector(0)",
           "refId": "A"
         }
       ]
@@ -277,7 +277,7 @@
       },
       "targets": [
         {
-          "expr": "topk(10, rate(ifHCInOctets{site_name=~\"$site\",vendor=~\"$vendor\",role=~\"$role\",hostname=~\"$device\"}[5m]) * 8 * on(instance, ifIndex) group_left(ifName) ((ifName * 0 + 1) or on(instance, ifIndex) (ifOperStatus * 0 + 1)))",
+          "expr": "topk(10, rate(ifHCInOctets{site_name=~\"$site\",vendor=~\"$vendor\",role=~\"$role\",hostname=~\"$device\"}[5m]) * 8 * on(instance, ifIndex) group_left(ifName) (ifName{site_name=~\"$site\",vendor=~\"$vendor\",role=~\"$role\",hostname=~\"$device\",ifName=~\"$interface\"} * 0 + 1))",
           "legendFormat": "{{hostname}} {{instance}} {{ifName}}",
           "refId": "A"
         }
@@ -324,7 +324,7 @@
       },
       "targets": [
         {
-          "expr": "topk(10, rate(ifHCOutOctets{site_name=~\"$site\",vendor=~\"$vendor\",role=~\"$role\",hostname=~\"$device\"}[5m]) * 8 * on(instance, ifIndex) group_left(ifName) ((ifName * 0 + 1) or on(instance, ifIndex) (ifOperStatus * 0 + 1)))",
+          "expr": "topk(10, rate(ifHCOutOctets{site_name=~\"$site\",vendor=~\"$vendor\",role=~\"$role\",hostname=~\"$device\"}[5m]) * 8 * on(instance, ifIndex) group_left(ifName) (ifName{site_name=~\"$site\",vendor=~\"$vendor\",role=~\"$role\",hostname=~\"$device\",ifName=~\"$interface\"} * 0 + 1))",
           "legendFormat": "{{hostname}} {{instance}} {{ifName}}",
           "refId": "A"
         }
@@ -375,7 +375,7 @@
       },
       "targets": [
         {
-          "expr": "topk(20, ((rate(ifHCInOctets{site_name=~\"$site\",vendor=~\"$vendor\",role=~\"$role\",hostname=~\"$device\"}[5m]) * 8) / (((ifHighSpeed > 0) * 1000000) or (ifSpeed > 0)) * 100) * on(instance, ifIndex) group_left(ifName) ((ifName * 0 + 1) or on(instance, ifIndex) (ifOperStatus * 0 + 1)))",
+          "expr": "topk(20, ((rate(ifHCInOctets{site_name=~\"$site\",vendor=~\"$vendor\",role=~\"$role\",hostname=~\"$device\"}[5m]) * 8) / (((ifHighSpeed > 0) * 1000000) or (ifSpeed > 0)) * 100) * on(instance, ifIndex) group_left(ifName) (ifName{site_name=~\"$site\",vendor=~\"$vendor\",role=~\"$role\",hostname=~\"$device\",ifName=~\"$interface\"} * 0 + 1))",
           "format": "table",
           "instant": true,
           "refId": "A"
@@ -474,7 +474,7 @@
       },
       "targets": [
         {
-          "expr": "topk(20, (rate(ifInErrors{site_name=~\"$site\",vendor=~\"$vendor\",role=~\"$role\",hostname=~\"$device\"}[5m]) + rate(ifOutErrors{site_name=~\"$site\",vendor=~\"$vendor\",role=~\"$role\",hostname=~\"$device\"}[5m]) + rate(ifInDiscards{site_name=~\"$site\",vendor=~\"$vendor\",role=~\"$role\",hostname=~\"$device\"}[5m])) * on(instance, ifIndex) group_left(ifName) ((ifName * 0 + 1) or on(instance, ifIndex) (ifOperStatus * 0 + 1)))",
+          "expr": "topk(20, (rate(ifInErrors{site_name=~\"$site\",vendor=~\"$vendor\",role=~\"$role\",hostname=~\"$device\"}[5m]) + rate(ifOutErrors{site_name=~\"$site\",vendor=~\"$vendor\",role=~\"$role\",hostname=~\"$device\"}[5m]) + rate(ifInDiscards{site_name=~\"$site\",vendor=~\"$vendor\",role=~\"$role\",hostname=~\"$device\"}[5m])) * on(instance, ifIndex) group_left(ifName) (ifName{site_name=~\"$site\",vendor=~\"$vendor\",role=~\"$role\",hostname=~\"$device\",ifName=~\"$interface\"} * 0 + 1))",
           "format": "table",
           "instant": true,
           "refId": "A"
@@ -633,6 +633,30 @@
         },
         "refresh": 1,
         "type": "query"
+      },
+      {
+        "allValue": ".*",
+        "current": {
+          "selected": true,
+          "text": [
+            "All"
+          ],
+          "value": [
+            "$__all"
+          ]
+        },
+        "definition": "label_values({__name__=~\"ifName\",job=~\"network_snmp|.*snmp.*\",site_name=~\"$site\",vendor=~\"$vendor\",role=~\"$role\",hostname=~\"$device\"}, ifName)",
+        "includeAll": true,
+        "label": "接口",
+        "multi": true,
+        "name": "interface",
+        "options": [],
+        "query": {
+          "query": "label_values({__name__=~\"ifName\",job=~\"network_snmp|.*snmp.*\",site_name=~\"$site\",vendor=~\"$vendor\",role=~\"$role\",hostname=~\"$device\"}, ifName)",
+          "refId": "StandardVariableQuery"
+        },
+        "refresh": 1,
+        "type": "query"
       }
     ]
   },
@@ -643,5 +667,5 @@
   "timezone": "browser",
   "title": "04 接口流量与健康 (Interface Traffic & Health)",
   "uid": "nexora-network-interface",
-  "version": 24
+  "version": 25
 }

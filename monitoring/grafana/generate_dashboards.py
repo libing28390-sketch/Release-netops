@@ -9,7 +9,7 @@ null = None
 ROOT_DIR = Path(__file__).resolve().parents[2]
 DASHBOARDS_DIR = ROOT_DIR / "monitoring" / "grafana" / "dashboards"
 DS_UID = "victoriametrics"
-DASHBOARD_VERSION = 24
+DASHBOARD_VERSION = 25
 
 DEV_JOIN = ""
 IF_JOIN = "* on(instance, ifIndex) group_left(ifName) ((ifName * 0 + 1) or on(instance, ifIndex) (ifOperStatus * 0 + 1))"
@@ -201,6 +201,19 @@ def make_network_variables(multi_device=True, include_all_device=True):
         make_query_variable("role", "角色", 'label_values({__name__=~"ifOperStatus|up",job=~"network_snmp|.*snmp.*",site_name=~"$site",vendor=~"$vendor"}, role)'),
         make_query_variable("device", "设备", 'label_values({__name__=~"ifOperStatus|up",job=~"network_snmp|.*snmp.*",site_name=~"$site",vendor=~"$vendor",role=~"$role"}, hostname)', multi=multi_device, include_all=include_all_device),
     ]
+
+def make_interface_variables(multi_device=True, include_all_device=True):
+    vars = make_network_variables(multi_device=multi_device, include_all_device=include_all_device)
+    vars.append(
+        make_query_variable(
+            "interface",
+            "接口",
+            'label_values({__name__=~"ifName",job=~"network_snmp|.*snmp.*",site_name=~"$site",vendor=~"$vendor",role=~"$role",hostname=~"$device"}, ifName)',
+            multi=True,
+            include_all=True
+        )
+    )
+    return vars
 
 # 1. Overview Dashboard
 def build_overview_dashboard():
@@ -429,27 +442,31 @@ def build_wireless_dashboard():
 # 4. Interface Traffic & Health Dashboard
 def build_interface_dashboard():
     sel = 'site_name=~"$site",vendor=~"$vendor",role=~"$role",hostname=~"$device"'
+    if_filter = 'site_name=~"$site",vendor=~"$vendor",role=~"$role",hostname=~"$device",ifName=~"$interface"'
+    if_join = f'* on(instance, ifIndex) group_left(ifName) (ifName{{{if_filter}}} * 0 + 1)'
+    stat_if_join = f'* on(instance, ifIndex) (ifName{{{if_filter}}} * 0 + 1)'
+
     panels = [
-        stat_panel(1, "全网聚合入流量 (Inbound)", f"sum(rate(ifHCInOctets{{{sel}}}[5m])) * 8 or vector(0)", 0, 0, 6, 4, unit="bps", color="#3274D9"),
-        stat_panel(2, "全网聚合出流量 (Outbound)", f"sum(rate(ifHCOutOctets{{{sel}}}[5m])) * 8 or vector(0)", 6, 0, 6, 4, unit="bps", color="#56A64B"),
-        stat_panel(3, "实时错误包总速率", f"(sum(rate(ifInErrors{{{sel}}}[5m])) + sum(rate(ifOutErrors{{{sel}}}[5m]))) or vector(0)", 12, 0, 6, 4, unit="pps", thresholds=[{"color": "green", "value": None}, {"color": "#E0B400", "value": 10}, {"color": "red", "value": 100}]),
-        stat_panel(4, "实时丢弃包总速率", f"(sum(rate(ifInDiscards{{{sel}}}[5m])) + sum(rate(ifOutDiscards{{{sel}}}[5m]))) or vector(0)", 18, 0, 6, 4, unit="pps", thresholds=[{"color": "green", "value": None}, {"color": "#E0B400", "value": 10}, {"color": "red", "value": 100}]),
+        stat_panel(1, "全网聚合入流量 (Inbound)", f"sum(rate(ifHCInOctets{{{sel}}}[5m]) {stat_if_join}) * 8 or vector(0)", 0, 0, 6, 4, unit="bps", color="#3274D9"),
+        stat_panel(2, "全网聚合出流量 (Outbound)", f"sum(rate(ifHCOutOctets{{{sel}}}[5m]) {stat_if_join}) * 8 or vector(0)", 6, 0, 6, 4, unit="bps", color="#56A64B"),
+        stat_panel(3, "实时错误包总速率", f"(sum(rate(ifInErrors{{{sel}}}[5m]) {stat_if_join}) + sum(rate(ifOutErrors{{{sel}}}[5m]) {stat_if_join})) or vector(0)", 12, 0, 6, 4, unit="pps", thresholds=[{"color": "green", "value": None}, {"color": "#E0B400", "value": 10}, {"color": "red", "value": 100}]),
+        stat_panel(4, "实时丢弃包总速率", f"(sum(rate(ifInDiscards{{{sel}}}[5m]) {stat_if_join}) + sum(rate(ifOutDiscards{{{sel}}}[5m]) {stat_if_join})) or vector(0)", 18, 0, 6, 4, unit="pps", thresholds=[{"color": "green", "value": None}, {"color": "#E0B400", "value": 10}, {"color": "red", "value": 100}]),
         timeseries_panel(5, "高负荷端口入流量 Top 10", [
-            {"expr": f"topk(10, rate(ifHCInOctets{{{sel}}}[5m]) * 8 {IF_JOIN})", "legendFormat": "{{hostname}} {{instance}} {{ifName}}", "refId": "A"}
+            {"expr": f"topk(10, rate(ifHCInOctets{{{sel}}}[5m]) * 8 {if_join})", "legendFormat": "{{hostname}} {{instance}} {{ifName}}", "refId": "A"}
         ], 0, 4, 12, 8, unit="bps"),
         timeseries_panel(6, "高负荷端口出流量 Top 10", [
-            {"expr": f"topk(10, rate(ifHCOutOctets{{{sel}}}[5m]) * 8 {IF_JOIN})", "legendFormat": "{{hostname}} {{instance}} {{ifName}}", "refId": "A"}
+            {"expr": f"topk(10, rate(ifHCOutOctets{{{sel}}}[5m]) * 8 {if_join})", "legendFormat": "{{hostname}} {{instance}} {{ifName}}", "refId": "A"}
         ], 12, 4, 12, 8, unit="bps"),
         table_panel(
             7, "端口带宽利用率 Top 20",
-            f"topk(20, ((rate(ifHCInOctets{{{sel}}}[5m]) * 8) / (((ifHighSpeed > 0) * 1000000) or (ifSpeed > 0)) * 100) {IF_JOIN})",
+            f"topk(20, ((rate(ifHCInOctets{{{sel}}}[5m]) * 8) / (((ifHighSpeed > 0) * 1000000) or (ifSpeed > 0)) * 100) {if_join})",
             0, 12, 12, 8, unit="percent",
             transformations=clean_organize_transformation("带宽利用率"),
             value_col_name="带宽利用率"
         ),
         table_panel(
             8, "端口错误与丢弃排行 Top 20",
-            f"topk(20, (rate(ifInErrors{{{sel}}}[5m]) + rate(ifOutErrors{{{sel}}}[5m]) + rate(ifInDiscards{{{sel}}}[5m])) {IF_JOIN})",
+            f"topk(20, (rate(ifInErrors{{{sel}}}[5m]) + rate(ifOutErrors{{{sel}}}[5m]) + rate(ifInDiscards{{{sel}}}[5m])) {if_join})",
             12, 12, 12, 8, unit="pps",
             transformations=clean_organize_transformation("错误/丢弃率 (pps)"),
             value_col_name="错误/丢弃率 (pps)"
@@ -468,7 +485,7 @@ def build_interface_dashboard():
         "schemaVersion": 39,
         "tags": ["nexora", "network", "interface"],
         "templating": {
-            "list": make_network_variables()
+            "list": make_interface_variables()
         },
         "time": {"from": "now-6h", "to": "now"},
         "timezone": "browser",

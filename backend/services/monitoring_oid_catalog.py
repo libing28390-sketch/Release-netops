@@ -34,6 +34,7 @@ def _metric(
     *,
     source_name: str = "",
     indexes: tuple[str, ...] = (),
+    lookups: list[dict[str, Any]] | tuple[dict[str, Any], ...] | None = None,
     scale: float | None = None,
     enum_values: dict[int, str] | None = None,
 ) -> dict[str, Any]:
@@ -47,6 +48,8 @@ def _metric(
         item["source_name"] = source_name
     if indexes:
         item["indexes"] = _indexes(*indexes)
+    if lookups:
+        item["lookups"] = [dict(lk) for lk in lookups]
     if scale is not None:
         item["scale"] = scale
     if enum_values:
@@ -55,6 +58,10 @@ def _metric(
 
 
 _IF_INDEX = ("ifIndex",)
+_INTERFACE_LOOKUPS = (
+    {"source_indexes": ["ifIndex"], "lookup": "ifName"},
+    {"source_indexes": ["ifIndex"], "lookup": "ifDescr"},
+)
 _ENTITY_INDEX = ("entity_index",)
 _FLASH_PARTITION_INDEX = ("flash_index", "partition_index")
 _FAN_INDEX = ("fan_index",)
@@ -102,30 +109,30 @@ _H3C_FLASH_PART_STATUS_VALUES = {
 
 
 STANDARD_INTERFACE_METRICS = [
-    _metric("ifMtu", "1.3.6.1.2.1.2.2.1.4", "gauge", "Maximum transmission unit of the interface.", source_name="ifMtu", indexes=_IF_INDEX),
-    _metric("ifSpeed", "1.3.6.1.2.1.2.2.1.5", "gauge", "Interface speed in bits per second (32-bit value).", source_name="ifSpeed", indexes=_IF_INDEX),
-    _metric("ifType", "1.3.6.1.2.1.2.2.1.3", "gauge", "Interface type enumeration.", source_name="ifType", indexes=_IF_INDEX),
-    _metric("ifAdminStatus", "1.3.6.1.2.1.2.2.1.7", "gauge", "Administrative state of the interface.", source_name="ifAdminStatus", indexes=_IF_INDEX),
-    _metric("ifOperStatus", "1.3.6.1.2.1.2.2.1.8", "gauge", "Operational state of the interface.", source_name="ifOperStatus", indexes=_IF_INDEX),
-    _metric("ifInDiscards", "1.3.6.1.2.1.2.2.1.13", "counter", "Inbound packets discarded.", source_name="ifInDiscards", indexes=_IF_INDEX),
-    _metric("ifInErrors", "1.3.6.1.2.1.2.2.1.14", "counter", "Inbound packets with errors.", source_name="ifInErrors", indexes=_IF_INDEX),
-    _metric("ifInOctets", "1.3.6.1.2.1.2.2.1.10", "counter", "Inbound octets using the 32-bit interface counter.", source_name="ifInOctets", indexes=_IF_INDEX),
-    _metric("ifOutDiscards", "1.3.6.1.2.1.2.2.1.19", "counter", "Outbound packets discarded.", source_name="ifOutDiscards", indexes=_IF_INDEX),
-    _metric("ifOutErrors", "1.3.6.1.2.1.2.2.1.20", "counter", "Outbound packets with errors.", source_name="ifOutErrors", indexes=_IF_INDEX),
-    _metric("ifOutOctets", "1.3.6.1.2.1.2.2.1.16", "counter", "Outbound octets using the 32-bit interface counter.", source_name="ifOutOctets", indexes=_IF_INDEX),
+    _metric("ifMtu", "1.3.6.1.2.1.2.2.1.4", "gauge", "Maximum transmission unit of the interface.", source_name="ifMtu", indexes=_IF_INDEX, lookups=_INTERFACE_LOOKUPS),
+    _metric("ifSpeed", "1.3.6.1.2.1.2.2.1.5", "gauge", "Interface speed in bits per second (32-bit value).", source_name="ifSpeed", indexes=_IF_INDEX, lookups=_INTERFACE_LOOKUPS),
+    _metric("ifType", "1.3.6.1.2.1.2.2.1.3", "gauge", "Interface type enumeration.", source_name="ifType", indexes=_IF_INDEX, lookups=_INTERFACE_LOOKUPS),
+    _metric("ifAdminStatus", "1.3.6.1.2.1.2.2.1.7", "gauge", "Administrative state of the interface.", source_name="ifAdminStatus", indexes=_IF_INDEX, lookups=_INTERFACE_LOOKUPS),
+    _metric("ifOperStatus", "1.3.6.1.2.1.2.2.1.8", "gauge", "Operational state of the interface.", source_name="ifOperStatus", indexes=_IF_INDEX, lookups=_INTERFACE_LOOKUPS),
+    _metric("ifInDiscards", "1.3.6.1.2.1.2.2.1.13", "counter", "Inbound packets discarded.", source_name="ifInDiscards", indexes=_IF_INDEX, lookups=_INTERFACE_LOOKUPS),
+    _metric("ifInErrors", "1.3.6.1.2.1.2.2.1.14", "counter", "Inbound packets with errors.", source_name="ifInErrors", indexes=_IF_INDEX, lookups=_INTERFACE_LOOKUPS),
+    _metric("ifInOctets", "1.3.6.1.2.1.2.2.1.10", "counter", "Inbound octets using the 32-bit interface counter.", source_name="ifInOctets", indexes=_IF_INDEX, lookups=_INTERFACE_LOOKUPS),
+    _metric("ifOutDiscards", "1.3.6.1.2.1.2.2.1.19", "counter", "Outbound packets discarded.", source_name="ifOutDiscards", indexes=_IF_INDEX, lookups=_INTERFACE_LOOKUPS),
+    _metric("ifOutErrors", "1.3.6.1.2.1.2.2.1.20", "counter", "Outbound packets with errors.", source_name="ifOutErrors", indexes=_IF_INDEX, lookups=_INTERFACE_LOOKUPS),
+    _metric("ifOutOctets", "1.3.6.1.2.1.2.2.1.16", "counter", "Outbound octets using the 32-bit interface counter.", source_name="ifOutOctets", indexes=_IF_INDEX, lookups=_INTERFACE_LOOKUPS),
     _metric("ifName", "1.3.6.1.2.1.31.1.1.1.1", "DisplayString", "Interface name.", source_name="ifName", indexes=_IF_INDEX),
-    _metric("ifHighSpeed", "1.3.6.1.2.1.31.1.1.1.15", "gauge", "Interface speed in millions of bits per second.", source_name="ifHighSpeed", indexes=_IF_INDEX),
-    _metric("ifHCInOctets", "1.3.6.1.2.1.31.1.1.1.6", "counter", "Inbound octets using the high-capacity counter.", source_name="ifHCInOctets", indexes=_IF_INDEX),
-    _metric("ifHCInUcastPkts", "1.3.6.1.2.1.31.1.1.1.7", "counter", "Inbound unicast packets using the high-capacity counter.", source_name="ifHCInUcastPkts", indexes=_IF_INDEX),
-    _metric("ifHCInMulticastPkts", "1.3.6.1.2.1.31.1.1.1.8", "counter", "Inbound multicast packets using the high-capacity counter.", source_name="ifHCInMulticastPkts", indexes=_IF_INDEX),
-    _metric("ifHCInBroadcastPkts", "1.3.6.1.2.1.31.1.1.1.9", "counter", "Inbound broadcast packets using the high-capacity counter.", source_name="ifHCInBroadcastPkts", indexes=_IF_INDEX),
-    _metric("ifHCOutOctets", "1.3.6.1.2.1.31.1.1.1.10", "counter", "Outbound octets using the high-capacity counter.", source_name="ifHCOutOctets", indexes=_IF_INDEX),
-    _metric("ifHCOutUcastPkts", "1.3.6.1.2.1.31.1.1.1.11", "counter", "Outbound unicast packets using the high-capacity counter.", source_name="ifHCOutUcastPkts", indexes=_IF_INDEX),
-    _metric("ifHCOutMulticastPkts", "1.3.6.1.2.1.31.1.1.1.12", "counter", "Outbound multicast packets using the high-capacity counter.", source_name="ifHCOutMulticastPkts", indexes=_IF_INDEX),
-    _metric("ifHCOutBroadcastPkts", "1.3.6.1.2.1.31.1.1.1.13", "counter", "Outbound broadcast packets using the high-capacity counter.", source_name="ifHCOutBroadcastPkts", indexes=_IF_INDEX),
+    _metric("ifHighSpeed", "1.3.6.1.2.1.31.1.1.1.15", "gauge", "Interface speed in millions of bits per second.", source_name="ifHighSpeed", indexes=_IF_INDEX, lookups=_INTERFACE_LOOKUPS),
+    _metric("ifHCInOctets", "1.3.6.1.2.1.31.1.1.1.6", "counter", "Inbound octets using the high-capacity counter.", source_name="ifHCInOctets", indexes=_IF_INDEX, lookups=_INTERFACE_LOOKUPS),
+    _metric("ifHCInUcastPkts", "1.3.6.1.2.1.31.1.1.1.7", "counter", "Inbound unicast packets using the high-capacity counter.", source_name="ifHCInUcastPkts", indexes=_IF_INDEX, lookups=_INTERFACE_LOOKUPS),
+    _metric("ifHCInMulticastPkts", "1.3.6.1.2.1.31.1.1.1.8", "counter", "Inbound multicast packets using the high-capacity counter.", source_name="ifHCInMulticastPkts", indexes=_IF_INDEX, lookups=_INTERFACE_LOOKUPS),
+    _metric("ifHCInBroadcastPkts", "1.3.6.1.2.1.31.1.1.1.9", "counter", "Inbound broadcast packets using the high-capacity counter.", source_name="ifHCInBroadcastPkts", indexes=_IF_INDEX, lookups=_INTERFACE_LOOKUPS),
+    _metric("ifHCOutOctets", "1.3.6.1.2.1.31.1.1.1.10", "counter", "Outbound octets using the high-capacity counter.", source_name="ifHCOutOctets", indexes=_IF_INDEX, lookups=_INTERFACE_LOOKUPS),
+    _metric("ifHCOutUcastPkts", "1.3.6.1.2.1.31.1.1.1.11", "counter", "Outbound unicast packets using the high-capacity counter.", source_name="ifHCOutUcastPkts", indexes=_IF_INDEX, lookups=_INTERFACE_LOOKUPS),
+    _metric("ifHCOutMulticastPkts", "1.3.6.1.2.1.31.1.1.1.12", "counter", "Outbound multicast packets using the high-capacity counter.", source_name="ifHCOutMulticastPkts", indexes=_IF_INDEX, lookups=_INTERFACE_LOOKUPS),
+    _metric("ifHCOutBroadcastPkts", "1.3.6.1.2.1.31.1.1.1.13", "counter", "Outbound broadcast packets using the high-capacity counter.", source_name="ifHCOutBroadcastPkts", indexes=_IF_INDEX, lookups=_INTERFACE_LOOKUPS),
     _metric("ifPhysAddress", "1.3.6.1.2.1.2.2.1.6", "OctetString", "Interface physical address.", source_name="ifPhysAddress", indexes=_IF_INDEX),
     _metric("ifAlias", "1.3.6.1.2.1.31.1.1.1.18", "DisplayString", "Interface alias/description.", source_name="ifAlias", indexes=_IF_INDEX),
-    _metric("dot3StatsFCSErrors", "1.3.6.1.2.1.10.7.2.1.3", "counter", "Ethernet frames received with FCS errors.", source_name="dot3StatsFCSErrors", indexes=_IF_INDEX),
+    _metric("dot3StatsFCSErrors", "1.3.6.1.2.1.10.7.2.1.3", "counter", "Ethernet frames received with FCS errors.", source_name="dot3StatsFCSErrors", indexes=_IF_INDEX, lookups=_INTERFACE_LOOKUPS),
 ]
 
 

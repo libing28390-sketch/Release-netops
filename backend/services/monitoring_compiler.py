@@ -154,7 +154,10 @@ def _parse_variant_oid_config(value: Any, *, include_unit: bool = True) -> dict[
             if not isinstance(lookups, list) or len(lookups) > 16:
                 raise CompileError(f"OID_CONFIG_LOOKUPS_INVALID:{name}")
             for lookup in lookups:
-                if not isinstance(lookup, Mapping) or not _METRIC_NAME_RE.fullmatch(str(lookup.get("labelname") or "")):
+                if not isinstance(lookup, Mapping):
+                    raise CompileError(f"OID_CONFIG_LOOKUP_INVALID:{name}")
+                lookup_target = str(lookup.get("lookup") or lookup.get("labelname") or "").strip()
+                if not _METRIC_NAME_RE.fullmatch(lookup_target):
                     raise CompileError(f"OID_CONFIG_LOOKUP_INVALID:{name}")
                 lookup_oid = str(lookup.get("oid") or "").strip()
                 if lookup_oid and not _valid_oid_token(lookup_oid):
@@ -171,6 +174,10 @@ def _parse_variant_oid_config(value: Any, *, include_unit: bool = True) -> dict[
 def _fallback_exporter_modules() -> dict[str, dict[str, Any]]:
     """Compatibility modules for offline callers that pass no catalog rows."""
 
+    _if_lookups = [
+        {"source_indexes": ["ifIndex"], "lookup": "ifName"},
+        {"source_indexes": ["ifIndex"], "lookup": "ifDescr"},
+    ]
     return {
         GENERIC_IF_MIB_VARIANT["variant_key"]: {
             "walk": list(GENERIC_IF_MIB_MODULE["walk"]),
@@ -178,7 +185,14 @@ def _fallback_exporter_modules() -> dict[str, dict[str, Any]]:
             "retries": GENERIC_IF_MIB_VARIANT["retries"],
             "timeout": f"{GENERIC_IF_MIB_VARIANT['request_timeout_ms'] / 1000:g}s",
             "metrics": [
-                {"name": name, "oid": oid, "type": "DisplayString" if name in {"ifName", "ifAlias"} else ("counter" if "Octets" in name or "Errors" in name or "Discards" in name else "gauge"), "help": name, "indexes": [{"labelname": "ifIndex", "type": "gauge"}]}
+                {
+                    "name": name,
+                    "oid": oid,
+                    "type": "DisplayString" if name in {"ifName", "ifAlias"} else ("counter" if "Octets" in name or "Errors" in name or "Discards" in name else "gauge"),
+                    "help": name,
+                    "indexes": [{"labelname": "ifIndex", "type": "gauge"}],
+                    **({"lookups": _if_lookups} if name not in {"ifName", "ifAlias"} else {})
+                }
                 for name, oid in (
                     ("ifMtu", "1.3.6.1.2.1.2.2.1.4"),
                     ("ifSpeed", "1.3.6.1.2.1.2.2.1.5"),
