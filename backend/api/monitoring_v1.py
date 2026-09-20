@@ -1197,7 +1197,10 @@ def _load_compile_inputs(conn, collector_id: str, user: Any = None):
             conn.rollback()
             credentials = []
     aliases = {str(item["id"]): opaque_auth_alias(str(item["id"])) for item in credentials if item.get("id")}
+    snmp_devices = []
     for device in devices:
+        if str(device.get("role") or "").lower() == "server" or "server" in str(device.get("device_category") or "").lower():
+            continue
         device.setdefault("collector_id", collector_id)
         # The vault is the sole credential resolution boundary.  Do not read
         # device-local communities directly when a credential binding exists.
@@ -1225,11 +1228,20 @@ def _load_compile_inputs(conn, collector_id: str, user: Any = None):
                     if str(item.get("id") or "") == credential_id:
                         item["community"] = resolved_community or str(item.get("community") or "")
                         break
+            explicit_alias = str(device.get("auth_alias") or "")
+            auth_alias = str(explicit_alias or aliases.get(credential_id) or "")
+            if auth_alias or (credential_id and credential_id in aliases):
+                snmp_devices.append(device)
+            else:
+                logger.warning(
+                    "[CollectorCompile] Skipping device %s (%s) from SNMP collection: no SNMP credential or community configured",
+                    device.get("id"), device.get("hostname") or device.get("ip_address"),
+                )
         except Exception:
             # A legacy/incomplete CMDB row is left for the compiler to mark as
             # unconfigured; no plaintext fallback is introduced here.
             pass
-    return devices, plans, modules, variants, collectors, credentials, aliases, servers
+    return snmp_devices, plans, modules, variants, collectors, credentials, aliases, servers
 
 
 @router.post("/collectors/{collector_id}/compile")
