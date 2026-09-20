@@ -56,7 +56,7 @@
       },
       "targets": [
         {
-          "expr": "sum(rate(ifHCInOctets{site_name=~\"$site\",vendor=~\"$vendor\"}[5m]) * on(instance) group_left(sysName) (last_over_time(sysName{sysName=~\"$device\"}[1d]) * 0 + 1)) * 8",
+          "expr": "sum(rate(ifHCInOctets{site_name=~\"$site\",vendor=~\"$vendor\",hostname=~\"$device\"}[5m])) * 8 or vector(0)",
           "refId": "A"
         }
       ]
@@ -109,7 +109,7 @@
       },
       "targets": [
         {
-          "expr": "sum(rate(ifHCOutOctets{site_name=~\"$site\",vendor=~\"$vendor\"}[5m]) * on(instance) group_left(sysName) (last_over_time(sysName{sysName=~\"$device\"}[1d]) * 0 + 1)) * 8",
+          "expr": "sum(rate(ifHCOutOctets{site_name=~\"$site\",vendor=~\"$vendor\",hostname=~\"$device\"}[5m])) * 8 or vector(0)",
           "refId": "A"
         }
       ]
@@ -170,7 +170,7 @@
       },
       "targets": [
         {
-          "expr": "max(((rate(ifHCInOctets{site_name=~\"$site\",vendor=~\"$vendor\"}[5m]) * 8) / (ifHighSpeed * 1000000) * 100) * on(instance) group_left(sysName) (last_over_time(sysName{sysName=~\"$device\"}[1d]) * 0 + 1)) or vector(0)",
+          "expr": "max(((rate(ifHCInOctets{site_name=~\"$site\",vendor=~\"$vendor\",hostname=~\"$device\"}[5m]) * 8) / (((ifHighSpeed > 0) * 1000000) or (ifSpeed > 0)) * 100)) or vector(0)",
           "refId": "A"
         }
       ]
@@ -231,7 +231,7 @@
       },
       "targets": [
         {
-          "expr": "sum((rate(ifInErrors{site_name=~\"$site\",vendor=~\"$vendor\"}[5m]) + rate(ifOutErrors{site_name=~\"$site\",vendor=~\"$vendor\"}[5m]) + rate(ifInDiscards{site_name=~\"$site\",vendor=~\"$vendor\"}[5m])) * on(instance) group_left(sysName) (last_over_time(sysName{sysName=~\"$device\"}[1d]) * 0 + 1)) or vector(0)",
+          "expr": "(sum(rate(ifInErrors{site_name=~\"$site\",vendor=~\"$vendor\",hostname=~\"$device\"}[5m]) + rate(ifOutErrors{site_name=~\"$site\",vendor=~\"$vendor\",hostname=~\"$device\"}[5m])) + sum(rate(ifInDiscards{site_name=~\"$site\",vendor=~\"$vendor\",hostname=~\"$device\"}[5m]))) or vector(0)",
           "refId": "A"
         }
       ]
@@ -277,8 +277,8 @@
       },
       "targets": [
         {
-          "expr": "sum by (sysName, instance) (rate(ifHCInOctets{site_name=~\"$site\",vendor=~\"$vendor\"}[5m]) * 8 * on(instance) group_left(sysName) (last_over_time(sysName{sysName=~\"$device\"}[1d]) * 0 + 1))",
-          "legendFormat": "{{sysName}} ({{instance}}) 入向",
+          "expr": "sum by (hostname, instance) (rate(ifHCInOctets{site_name=~\"$site\",vendor=~\"$vendor\",hostname=~\"$device\"}[5m]) * 8)",
+          "legendFormat": "{{hostname}} ({{instance}}) 入向",
           "refId": "A"
         }
       ]
@@ -324,8 +324,8 @@
       },
       "targets": [
         {
-          "expr": "sum by (sysName, instance) (rate(ifHCOutOctets{site_name=~\"$site\",vendor=~\"$vendor\"}[5m]) * 8 * on(instance) group_left(sysName) (last_over_time(sysName{sysName=~\"$device\"}[1d]) * 0 + 1))",
-          "legendFormat": "{{sysName}} ({{instance}}) 出向",
+          "expr": "sum by (hostname, instance) (rate(ifHCOutOctets{site_name=~\"$site\",vendor=~\"$vendor\",hostname=~\"$device\"}[5m]) * 8)",
+          "legendFormat": "{{hostname}} ({{instance}}) 出向",
           "refId": "A"
         }
       ]
@@ -371,13 +371,13 @@
       },
       "targets": [
         {
-          "expr": "topk(10, ((rate(ifHCInOctets{site_name=~\"$site\",vendor=~\"$vendor\"}[5m]) * 8) / (ifHighSpeed * 1000000) * 100) * on(instance, ifIndex) group_left(ifName) (ifName * 0 + 1) * on(instance) group_left(sysName) (last_over_time(sysName{sysName=~\"$device\"}[1d]) * 0 + 1))",
-          "legendFormat": "{{sysName}} {{instance}} {{ifName}} 入向利用率",
+          "expr": "topk(10, ((rate(ifHCInOctets{site_name=~\"$site\",vendor=~\"$vendor\",hostname=~\"$device\"}[5m]) * 8) / (((ifHighSpeed > 0) * 1000000) or (ifSpeed > 0)) * 100) * on(instance, ifIndex) group_left(ifName) ((ifName * 0 + 1) or on(instance, ifIndex) (ifOperStatus * 0 + 1)))",
+          "legendFormat": "{{hostname}} {{instance}} {{ifName}} 入向利用率",
           "refId": "A"
         },
         {
-          "expr": "topk(10, ((rate(ifHCOutOctets{site_name=~\"$site\",vendor=~\"$vendor\"}[5m]) * 8) / (ifHighSpeed * 1000000) * 100) * on(instance, ifIndex) group_left(ifName) (ifName * 0 + 1) * on(instance) group_left(sysName) (last_over_time(sysName{sysName=~\"$device\"}[1d]) * 0 + 1))",
-          "legendFormat": "{{sysName}} {{instance}} {{ifName}} 出向利用率",
+          "expr": "topk(10, ((rate(ifHCOutOctets{site_name=~\"$site\",vendor=~\"$vendor\",hostname=~\"$device\"}[5m]) * 8) / (((ifHighSpeed > 0) * 1000000) or (ifSpeed > 0)) * 100) * on(instance, ifIndex) group_left(ifName) ((ifName * 0 + 1) or on(instance, ifIndex) (ifOperStatus * 0 + 1)))",
+          "legendFormat": "{{hostname}} {{instance}} {{ifName}} 出向利用率",
           "refId": "B"
         }
       ]
@@ -423,13 +423,13 @@
       },
       "targets": [
         {
-          "expr": "sum by (sysName, instance) ((rate(ifInErrors{site_name=~\"$site\",vendor=~\"$vendor\"}[5m]) + rate(ifOutErrors{site_name=~\"$site\",vendor=~\"$vendor\"}[5m])) * on(instance) group_left(sysName) (last_over_time(sysName{sysName=~\"$device\"}[1d]) * 0 + 1))",
-          "legendFormat": "{{sysName}} {{instance}} 错包/秒",
+          "expr": "sum by (hostname, instance) ((rate(ifInErrors{site_name=~\"$site\",vendor=~\"$vendor\",hostname=~\"$device\"}[5m]) + rate(ifOutErrors{site_name=~\"$site\",vendor=~\"$vendor\",hostname=~\"$device\"}[5m])))",
+          "legendFormat": "{{hostname}} {{instance}} 错包/秒",
           "refId": "A"
         },
         {
-          "expr": "sum by (sysName, instance) (rate(ifInDiscards{site_name=~\"$site\",vendor=~\"$vendor\"}[5m]) * 8 * on(instance) group_left(sysName) (last_over_time(sysName{sysName=~\"$device\"}[1d]) * 0 + 1))",
-          "legendFormat": "{{sysName}} {{instance}} 丢弃/秒",
+          "expr": "sum by (hostname, instance) (rate(ifInDiscards{site_name=~\"$site\",vendor=~\"$vendor\",hostname=~\"$device\"}[5m]))",
+          "legendFormat": "{{hostname}} {{instance}} 丢弃/秒",
           "refId": "B"
         }
       ]
@@ -479,7 +479,7 @@
       },
       "targets": [
         {
-          "expr": "topk(10, ((rate(ifHCInOctets{site_name=~\"$site\",vendor=~\"$vendor\"}[5m]) * 8) / (ifHighSpeed * 1000000) * 100) * on(instance, ifIndex) group_left(ifName) (ifName * 0 + 1) * on(instance) group_left(sysName) (last_over_time(sysName{sysName=~\"$device\"}[1d]) * 0 + 1))",
+          "expr": "topk(10, ((rate(ifHCInOctets{site_name=~\"$site\",vendor=~\"$vendor\",hostname=~\"$device\"}[5m]) * 8) / (((ifHighSpeed > 0) * 1000000) or (ifSpeed > 0)) * 100) * on(instance, ifIndex) group_left(ifName) ((ifName * 0 + 1) or on(instance, ifIndex) (ifOperStatus * 0 + 1)))",
           "format": "table",
           "instant": true,
           "refId": "A"
@@ -578,7 +578,7 @@
       },
       "targets": [
         {
-          "expr": "topk(10, (rate(ifInErrors{site_name=~\"$site\",vendor=~\"$vendor\"}[5m]) + rate(ifOutErrors{site_name=~\"$site\",vendor=~\"$vendor\"}[5m]) + rate(ifInDiscards{site_name=~\"$site\",vendor=~\"$vendor\"}[5m])) * on(instance, ifIndex) group_left(ifName) (ifName * 0 + 1) * on(instance) group_left(sysName) (last_over_time(sysName{sysName=~\"$device\"}[1d]) * 0 + 1))",
+          "expr": "topk(10, (rate(ifInErrors{site_name=~\"$site\",vendor=~\"$vendor\",hostname=~\"$device\"}[5m]) + rate(ifOutErrors{site_name=~\"$site\",vendor=~\"$vendor\",hostname=~\"$device\"}[5m]) + rate(ifInDiscards{site_name=~\"$site\",vendor=~\"$vendor\",hostname=~\"$device\"}[5m])) * on(instance, ifIndex) group_left(ifName) ((ifName * 0 + 1) or on(instance, ifIndex) (ifOperStatus * 0 + 1)))",
           "format": "table",
           "instant": true,
           "refId": "A"
@@ -654,14 +654,14 @@
             "$__all"
           ]
         },
-        "definition": "label_values({__name__=~\"sysName|ifOperStatus|up\",job=~\"network_snmp|.*snmp.*\"}, site_name)",
+        "definition": "label_values({__name__=~\"ifOperStatus|up\",job=~\"network_snmp|.*snmp.*\"}, site_name)",
         "includeAll": true,
         "label": "站点",
         "multi": true,
         "name": "site",
         "options": [],
         "query": {
-          "query": "label_values({__name__=~\"sysName|ifOperStatus|up\",job=~\"network_snmp|.*snmp.*\"}, site_name)",
+          "query": "label_values({__name__=~\"ifOperStatus|up\",job=~\"network_snmp|.*snmp.*\"}, site_name)",
           "refId": "StandardVariableQuery"
         },
         "refresh": 1,
@@ -678,14 +678,14 @@
             "$__all"
           ]
         },
-        "definition": "label_values({__name__=~\"sysName|ifOperStatus|up\",job=~\"network_snmp|.*snmp.*\",site_name=~\"$site\"}, vendor)",
+        "definition": "label_values({__name__=~\"ifOperStatus|up\",job=~\"network_snmp|.*snmp.*\",site_name=~\"$site\"}, vendor)",
         "includeAll": true,
         "label": "厂商",
         "multi": true,
         "name": "vendor",
         "options": [],
         "query": {
-          "query": "label_values({__name__=~\"sysName|ifOperStatus|up\",job=~\"network_snmp|.*snmp.*\",site_name=~\"$site\"}, vendor)",
+          "query": "label_values({__name__=~\"ifOperStatus|up\",job=~\"network_snmp|.*snmp.*\",site_name=~\"$site\"}, vendor)",
           "refId": "StandardVariableQuery"
         },
         "refresh": 1,
@@ -702,14 +702,14 @@
             "$__all"
           ]
         },
-        "definition": "label_values({__name__=~\"sysName|ifOperStatus|up\",job=~\"network_snmp|.*snmp.*\",site_name=~\"$site\",vendor=~\"$vendor\"}, role)",
+        "definition": "label_values({__name__=~\"ifOperStatus|up\",job=~\"network_snmp|.*snmp.*\",site_name=~\"$site\",vendor=~\"$vendor\"}, role)",
         "includeAll": true,
         "label": "角色",
         "multi": true,
         "name": "role",
         "options": [],
         "query": {
-          "query": "label_values({__name__=~\"sysName|ifOperStatus|up\",job=~\"network_snmp|.*snmp.*\",site_name=~\"$site\",vendor=~\"$vendor\"}, role)",
+          "query": "label_values({__name__=~\"ifOperStatus|up\",job=~\"network_snmp|.*snmp.*\",site_name=~\"$site\",vendor=~\"$vendor\"}, role)",
           "refId": "StandardVariableQuery"
         },
         "refresh": 1,
@@ -726,14 +726,14 @@
             "$__all"
           ]
         },
-        "definition": "label_values({__name__=~\"sysName\",job=~\"network_snmp|.*snmp.*\",site_name=~\"$site\",vendor=~\"$vendor\",role=~\"$role\"}, sysName)",
+        "definition": "label_values({__name__=~\"ifOperStatus|up\",job=~\"network_snmp|.*snmp.*\",site_name=~\"$site\",vendor=~\"$vendor\",role=~\"$role\"}, hostname)",
         "includeAll": true,
         "label": "设备",
         "multi": true,
         "name": "device",
         "options": [],
         "query": {
-          "query": "label_values({__name__=~\"sysName\",job=~\"network_snmp|.*snmp.*\",site_name=~\"$site\",vendor=~\"$vendor\",role=~\"$role\"}, sysName)",
+          "query": "label_values({__name__=~\"ifOperStatus|up\",job=~\"network_snmp|.*snmp.*\",site_name=~\"$site\",vendor=~\"$vendor\",role=~\"$role\"}, hostname)",
           "refId": "StandardVariableQuery"
         },
         "refresh": 1,
@@ -748,5 +748,5 @@
   "timezone": "browser",
   "title": "06 互联网出口与 WAN (Internet Outbound & WAN Traffic)",
   "uid": "nexora-network-outbound",
-  "version": 22
+  "version": 24
 }

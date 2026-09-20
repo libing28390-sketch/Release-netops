@@ -529,5 +529,5 @@
   "timezone": "browser",
   "title": "05 SNMP 采集健康 (SNMP Scrape Health)",
   "uid": "nexora-monitoring-health",
-  "version": 22
+  "version": 24
 }
