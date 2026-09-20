@@ -749,21 +749,20 @@ def build_windows_dashboard():
 def main():
     DASHBOARDS_DIR.mkdir(parents=True, exist_ok=True)
     dashboards = [
-        ("nexora-network-overview.json", "network-overview.json", build_overview_dashboard()),
-        ("nexora-network-device.json", "network-device.json", build_device_dashboard()),
-        ("nexora-network-wireless.json", "network-wireless.json", build_wireless_dashboard()),
-        ("nexora-network-interface.json", "network-interface.json", build_interface_dashboard()),
-        ("nexora-monitoring-health.json", "monitoring-health.json", build_health_dashboard()),
-        ("nexora-network-outbound.json", "network-outbound.json", build_outbound_dashboard()),
-        ("nexora-linux-metrics.json", "linux-metrics.json", build_linux_dashboard()),
-        ("nexora-windows-metrics.json", "windows-metrics.json", build_windows_dashboard()),
+        ("nexora-network-overview.json", build_overview_dashboard()),
+        ("nexora-network-device.json", build_device_dashboard()),
+        ("nexora-network-wireless.json", build_wireless_dashboard()),
+        ("nexora-network-interface.json", build_interface_dashboard()),
+        ("nexora-monitoring-health.json", build_health_dashboard()),
+        ("nexora-network-outbound.json", build_outbound_dashboard()),
+        ("nexora-linux-metrics.json", build_linux_dashboard()),
+        ("nexora-windows-metrics.json", build_windows_dashboard()),
     ]
-    for fn1, fn2, data in dashboards:
-        for fname in [fn1, fn2]:
-            path = DASHBOARDS_DIR / fname
-            with open(path, "w", encoding="utf-8") as f:
-                json.dump(data, f, indent=2, ensure_ascii=False)
-            print(f"Generated {path}")
+    for fname, data in dashboards:
+        path = DASHBOARDS_DIR / fname
+        with open(path, "w", encoding="utf-8") as f:
+            json.dump(data, f, indent=2, ensure_ascii=False)
+        print(f"Generated {path}")
 
 if __name__ == "__main__":
     main()
