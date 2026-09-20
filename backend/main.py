@@ -139,12 +139,13 @@ async def _bg_init():
         telemetry_orch = get_telemetry_orchestrator()
         telemetry_orch.start_loops()
         # Auto-sync monitoring collector targets from CMDB on startup
-        try:
-            from services.collector_sync_service import sync_all_monitoring_collectors
-            sync_all_monitoring_collectors()
-            logger.info("[Background] Monitoring targets auto-synchronized from CMDB.")
-        except Exception as sync_exc:
-            logger.warning(f"[Background] Monitoring targets auto-sync failed: {sync_exc}")
+        if os.environ.get("ENVIRONMENT") != "test" and "PYTEST_CURRENT_TEST" not in os.environ and "pytest" not in sys.modules:
+            try:
+                from services.collector_sync_service import sync_all_monitoring_collectors
+                sync_all_monitoring_collectors()
+                logger.info("[Background] Monitoring targets auto-synchronized from CMDB.")
+            except Exception as sync_exc:
+                logger.warning(f"[Background] Monitoring targets auto-sync failed: {sync_exc}")
         logger.info("[Background] Core background tasks initialized.")
     except Exception as e:
         logger.error(f"[Background] Initialization failed: {e}")
@@ -338,12 +339,13 @@ async def lifespan(app: FastAPI):
         'interval', minutes=5, id='outbound_egress_sampler', replace_existing=True,
         max_instances=1, coalesce=True,
     )
-    from services.collector_sync_service import sync_all_monitoring_collectors
-    scheduler.add_job(
-        synchronized_scheduler_job('monitoring_collector_auto_sync', expire_seconds=290)(sync_all_monitoring_collectors),
-        'interval', minutes=5, id='monitoring_collector_auto_sync', replace_existing=True,
-        max_instances=1, coalesce=True,
-    )
+    if os.environ.get("ENVIRONMENT") != "test" and "PYTEST_CURRENT_TEST" not in os.environ and "pytest" not in sys.modules:
+        from services.collector_sync_service import sync_all_monitoring_collectors
+        scheduler.add_job(
+            synchronized_scheduler_job('monitoring_collector_auto_sync', expire_seconds=290)(sync_all_monitoring_collectors),
+            'interval', minutes=5, id='monitoring_collector_auto_sync', replace_existing=True,
+            max_instances=1, coalesce=True,
+        )
     from services.wan_link_service import run_wan_collection_once
     scheduler.add_job(
         synchronized_scheduler_job('wan_link_sampler', expire_seconds=55)(run_wan_collection_once),

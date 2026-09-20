@@ -91,6 +91,11 @@ def trigger_async_monitoring_sync(delay_seconds: float = 2.0) -> None:
     Consecutive calls within delay_seconds are merged into a single run.
     Safe to call from HTTP request threads.
     """
+    import os
+    import sys
+    if os.environ.get("ENVIRONMENT") == "test" or "PYTEST_CURRENT_TEST" in os.environ or "pytest" in sys.modules:
+        return
+
     global _debounce_timer
     with _timer_lock:
         if _debounce_timer is not None:

@@ -152,6 +152,7 @@ def _postgres_schema_template():
         switch_database(template.url, initialized=False)
         database.init_db()
         close_database_pool()
+        switch_database(source_url, initialized=True)
         yield template
     finally:
         close_temporary_test_connections()
