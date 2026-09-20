@@ -196,7 +196,7 @@ def _reload_snmp_exporter_config() -> bool:
     """Ask the local Compose exporter to reload its published config."""
     request = UrlRequest("http://snmp-exporter:9116/-/reload", method="POST")
     try:
-        with build_opener(ProxyHandler({}))(request, timeout=3) as response:
+        with build_opener(ProxyHandler({})).open(request, timeout=3) as response:
             return 200 <= int(response.status) < 300
     except Exception:
         logger.warning("SNMP exporter configuration reload is pending", exc_info=True)

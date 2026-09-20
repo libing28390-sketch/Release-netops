@@ -337,3 +337,33 @@ def test_load_compile_inputs_sql_schema_contract():
     # Must rollback on exception to prevent aborted transactions
     assert "conn.rollback()" in src
 
+
+def test_reload_snmp_exporter_config_uses_opener_open(monkeypatch):
+    from api.monitoring_v1 import _reload_snmp_exporter_config
+    import api.monitoring_v1 as mon_v1
+
+    called = {}
+
+    class FakeResponse:
+        status = 200
+        def __enter__(self):
+            return self
+        def __exit__(self, exc_type, exc_val, exc_tb):
+            return False
+
+    class FakeOpener:
+        def open(self, req, timeout=3):
+            called["url"] = req.full_url
+            called["method"] = req.get_method()
+            called["timeout"] = timeout
+            return FakeResponse()
+
+    monkeypatch.setattr(mon_v1, "build_opener", lambda *args: FakeOpener())
+
+    success = _reload_snmp_exporter_config()
+    assert success is True
+    assert called["url"] == "http://snmp-exporter:9116/-/reload"
+    assert called["method"] == "POST"
+    assert called["timeout"] == 3
+
+
