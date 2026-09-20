@@ -28,15 +28,15 @@ if [ ! -f "$MONITORING_RUNTIME/current_version.json" ]; then
     mkdir -p "$MONITORING_RUNTIME"
     cp -a "$MONITORING_DEFAULTS/." "$MONITORING_RUNTIME/"
 else
-    # Keep vmagent scrape config and target baselines in sync
+    # Keep vmagent scrape config in sync while preserving materialized targets
     mkdir -p "$MONITORING_RUNTIME/vmagent/targets"
     if [ -f "$MONITORING_DEFAULTS/vmagent/scrape.yml" ]; then
         cp -f "$MONITORING_DEFAULTS/vmagent/scrape.yml" "$MONITORING_RUNTIME/vmagent/scrape.yml"
     fi
-    if [ -f "$MONITORING_DEFAULTS/vmagent/targets/linux_targets.yml" ]; then
+    if [ ! -f "$MONITORING_RUNTIME/vmagent/targets/linux_targets.yml" ] && [ -f "$MONITORING_DEFAULTS/vmagent/targets/linux_targets.yml" ]; then
         cp -f "$MONITORING_DEFAULTS/vmagent/targets/linux_targets.yml" "$MONITORING_RUNTIME/vmagent/targets/linux_targets.yml"
     fi
-    if [ -f "$MONITORING_DEFAULTS/vmagent/targets/windows_targets.yml" ]; then
+    if [ ! -f "$MONITORING_RUNTIME/vmagent/targets/windows_targets.yml" ] && [ -f "$MONITORING_DEFAULTS/vmagent/targets/windows_targets.yml" ]; then
         cp -f "$MONITORING_DEFAULTS/vmagent/targets/windows_targets.yml" "$MONITORING_RUNTIME/vmagent/targets/windows_targets.yml"
     fi
 fi

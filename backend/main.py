@@ -340,12 +340,13 @@ async def lifespan(app: FastAPI):
         max_instances=1, coalesce=True,
     )
     if os.environ.get("ENVIRONMENT") != "test" and "PYTEST_CURRENT_TEST" not in os.environ and "pytest" not in sys.modules:
-        from services.collector_sync_service import sync_all_monitoring_collectors
+        from services.collector_sync_service import sync_all_monitoring_collectors, trigger_async_monitoring_sync
         scheduler.add_job(
             synchronized_scheduler_job('monitoring_collector_auto_sync', expire_seconds=290)(sync_all_monitoring_collectors),
             'interval', minutes=5, id='monitoring_collector_auto_sync', replace_existing=True,
             max_instances=1, coalesce=True,
         )
+        trigger_async_monitoring_sync(delay_seconds=3.0)
     from services.wan_link_service import run_wan_collection_once
     scheduler.add_job(
         synchronized_scheduler_job('wan_link_sampler', expire_seconds=55)(run_wan_collection_once),
