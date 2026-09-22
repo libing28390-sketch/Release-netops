@@ -6,6 +6,12 @@ from services.snmp_service import collect_snmp_lldp_neighbors
 from services.topology_service import _collect_device_observations
 
 
+def test_collect_snmp_lldp_requires_explicit_community():
+    """LLDP must not silently fall back to the public community."""
+    with pytest.raises(ValueError, match='SNMP community is required'):
+        asyncio.run(collect_snmp_lldp_neighbors('10.10.10.1', ''))
+
+
 def test_collect_snmp_lldp_neighbors_success():
     """Test IEEE 802.1AB LLDP-MIB walk parses local port, neighbor name, remote port, and mgmt IP."""
     async def mock_walk(ip, community, oid, port=161, timeout=4.0, version='2c'):
@@ -90,16 +96,36 @@ def test_topology_service_collects_snmp_first():
         'neighbor_platform': 'Huawei',
     }]
 
-    with patch('services.snmp_service.collect_snmp_lldp_neighbors', new=AsyncMock(return_value=mock_snmp_neighbors)):
-        with patch('drivers.ssh_compat.is_ssh_port_open') as mock_ssh_check:
-            batch, method = asyncio.run(_collect_device_observations(device))
-            assert method == 'snmp'
-            assert len(batch) == 1
-            assert batch.collection_status == 'success'
-            obs = batch[0]
-            assert obs['neighbor_name_raw'] == 'Switch-B'
-            assert obs['source_port_raw'] == 'GigabitEthernet0/0/1'
-            mock_ssh_check.assert_not_called()
+    mock_collect = AsyncMock(return_value=mock_snmp_neighbors)
+    resolved_credentials = {
+        'ssh': {},
+        'snmp': {
+            'server': '10.20.30.40',
+            'community': 'asset-template-community',
+            'port': 1161,
+            'version': '2c',
+        },
+    }
+
+    with patch('services.topology_service.resolve_collector_credentials', return_value=resolved_credentials) as mock_resolve:
+        with patch('services.snmp_service.collect_snmp_lldp_neighbors', new=mock_collect):
+            with patch('drivers.ssh_compat.is_ssh_port_open') as mock_ssh_check:
+                batch, method = asyncio.run(_collect_device_observations(device))
+                assert method == 'snmp'
+                assert len(batch) == 1
+                assert batch.collection_status == 'success'
+                obs = batch[0]
+                assert obs['neighbor_name_raw'] == 'Switch-B'
+                assert obs['source_port_raw'] == 'GigabitEthernet0/0/1'
+                mock_ssh_check.assert_not_called()
+
+    mock_resolve.assert_called_once_with(device, ssh_role='normal')
+    mock_collect.assert_awaited_once_with(
+        '10.20.30.40',
+        'asset-template-community',
+        port=1161,
+        version='2c',
+    )
 
 
 def test_match_target_device_relaxed_delimiter():

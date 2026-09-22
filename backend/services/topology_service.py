@@ -13,7 +13,6 @@ from typing import Any
 
 from netmiko import ConnectHandler
 
-from core.crypto import decrypt_credential
 from core.interface_utils import interface_nominal_speed_mbps, normalize_interface_name
 from core.textfsm import configure_ntc_templates, smart_parse_cli
 from core.read_cache import invalidate_read_cache
@@ -571,7 +570,7 @@ def _get_device(device_id: str) -> dict[str, Any] | None:
         # Topology discovery is a read-only workflow and must use the
         # ordinary account stored on the linked CMDB asset. Administrative
         # credentials are reserved for backup/configuration workflows.
-        collector_credentials = resolve_collector_credentials(device, ssh_role='normal')
+        collector_credentials = _collector_credentials_for_device(device)
         ssh_credentials = collector_credentials['ssh']
         device['username'] = ssh_credentials['username'] or device.get('username', '')
         device['password'] = ssh_credentials['password']
@@ -579,6 +578,16 @@ def _get_device(device_id: str) -> dict[str, Any] | None:
         return device
     finally:
         conn.close()
+
+
+def _collector_credentials_for_device(device: dict[str, Any]) -> dict[str, Any]:
+    """Resolve and memoize asset-backed collector credentials for one run."""
+    cached = device.get('_collector_credentials')
+    if isinstance(cached, dict):
+        return cached
+    resolved = resolve_collector_credentials(device, ssh_role='normal')
+    device['_collector_credentials'] = resolved
+    return resolved
 
 
 def _match_target_device_with_evidence(
@@ -1566,31 +1575,25 @@ async def _collect_device_observations(device: dict[str, Any], platform_action_s
     ip = device.get('ip_address')
 
     # 1. Primary path: Fast, non-intrusive, zero-SSH SNMP LLDP/CDP discovery
-    snmp_community = ""
-    raw_community = str(device.get("snmp_community") or "").strip()
-    snmp_cred_id = str(device.get("snmp_credential_id") or "").strip()
-    if raw_community:
-        try:
-            snmp_community = decrypt_credential(raw_community) or raw_community
-        except Exception:
-            snmp_community = raw_community
-    elif snmp_cred_id:
-        conn = get_db_connection()
-        try:
-            cred_row = conn.execute("SELECT snmp_community FROM credentials WHERE id = ?", (snmp_cred_id,)).fetchone()
-            if cred_row and cred_row["snmp_community"]:
-                try:
-                    snmp_community = decrypt_credential(cred_row["snmp_community"]) or str(cred_row["snmp_community"]).strip()
-                except Exception:
-                    snmp_community = str(cred_row["snmp_community"]).strip()
-        finally:
-            conn.close()
-
-    snmp_port = int(device.get("snmp_port") or 161)
-    if snmp_community and ip:
+    # ``resolve_collector_credentials`` follows the linked physical asset and
+    # its SNMP credential binding, then falls back to the legacy asset-local
+    # community.  Reading ``devices.snmp_community`` directly here can use a
+    # stale copy and bypass an updated credential-center value.
+    collector_credentials = _collector_credentials_for_device(device)
+    snmp_credentials = collector_credentials.get('snmp') or {}
+    snmp_ip = str(snmp_credentials.get('server') or ip or '').strip()
+    snmp_community = str(snmp_credentials.get('community') or '').strip()
+    snmp_port = int(snmp_credentials.get('port') or 161)
+    snmp_version = str(snmp_credentials.get('version') or '2c').strip().lower() or '2c'
+    if snmp_community and snmp_ip:
         try:
             from services.snmp_service import collect_snmp_lldp_neighbors
-            snmp_records = await collect_snmp_lldp_neighbors(ip, snmp_community, port=snmp_port)
+            snmp_records = await collect_snmp_lldp_neighbors(
+                snmp_ip,
+                snmp_community,
+                port=snmp_port,
+                version=snmp_version,
+            )
             if snmp_records:
                 observations: list[dict[str, Any]] = []
                 for item in snmp_records:
@@ -1598,7 +1601,7 @@ async def _collect_device_observations(device: dict[str, Any], platform_action_s
                     if obs.get("neighbor_name_raw") and obs.get("source_port_raw"):
                         observations.append(obs)
                 if observations:
-                    logger.info("Discovered %d LLDP/CDP neighbors via SNMP for %s (%s)", len(observations), device.get("hostname"), ip)
+                    logger.info("Discovered %d LLDP/CDP neighbors via SNMP for %s (%s)", len(observations), device.get("hostname"), snmp_ip)
                     return _NeighborCollectionBatch(observations, "success"), "snmp"
         except Exception as snmp_err:
             logger.debug("SNMP LLDP discovery skipped or failed for %s, falling back to SSH: %s", device.get("hostname"), snmp_err)
@@ -2381,8 +2384,15 @@ async def discover_device_neighbors(
             raise RuntimeError('device_is_offline')
         if not device.get('ip_address'):
             raise RuntimeError('device_ip_missing')
-        has_snmp = bool(device.get('snmp_community') or device.get('snmp_credential_id'))
-        has_ssh = bool(device.get('username') and device.get('password'))
+        # Resolve the canonical asset/credential-center contract before the
+        # eligibility check as well as before the actual SNMP walk.  Looking
+        # only at the legacy devices cache can reject an asset whose SNMP
+        # community is configured exclusively in the import template.
+        collector_credentials = _collector_credentials_for_device(device)
+        snmp_credentials = collector_credentials.get('snmp') or {}
+        has_snmp = bool(snmp_credentials.get('configured') or snmp_credentials.get('community'))
+        ssh_credentials = collector_credentials.get('ssh') or {}
+        has_ssh = bool(ssh_credentials.get('username') and ssh_credentials.get('password'))
         if not has_snmp and not has_ssh:
             raise RuntimeError('device_credentials_incomplete')
 

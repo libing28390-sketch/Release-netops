@@ -1718,7 +1718,7 @@ async def collect_device_info(ip: str, community: str = 'public', port: int = 16
 
 async def collect_snmp_lldp_neighbors(
     ip: str,
-    community: str = 'public',
+    community: str,
     port: int = 161,
     version: str = '2c',
     timeout: float = 4.0,
@@ -1731,6 +1731,13 @@ async def collect_snmp_lldp_neighbors(
         local_interface, neighbor_name, neighbor_interface, mgmt_address,
         chassis_id, neighbor_platform, protocol ('lldp' or 'cdp')
     """
+    # LLDP discovery must use the credential resolved for the target asset.
+    # Never silently probe with the well-known ``public`` community: callers
+    # that do not have an SNMP secret should skip this path and use their
+    # configured fallback (for example, SSH) instead.
+    if not str(community or '').strip():
+        raise ValueError('SNMP community is required for LLDP discovery')
+
     neighbors: list[dict[str, Any]] = []
 
     def _clean_host(raw_name: str) -> str:
