@@ -1385,20 +1385,33 @@ const AssetManagementTab: React.FC<AssetManagementTabProps> = ({ language, setAc
   };
 
   const handleDownloadTemplate = async () => {
-    // The distributable template contains native Excel list validation rules.
-    // Keep the generated fallback below for development/older deployments.
+    const downloadTemplateBlob = (blob: Blob) => {
+      const url = URL.createObjectURL(blob);
+      const anchor = document.createElement('a');
+      anchor.href = url;
+      anchor.download = zh ? '资产导入模板.xlsx' : 'asset_import_template.xlsx';
+      document.body.appendChild(anchor);
+      anchor.click();
+      anchor.remove();
+      URL.revokeObjectURL(url);
+    };
+
+    // The authenticated endpoint adds this vault's SNMPv2 names to a native
+    // Excel dropdown. Keep static and browser-generated fallbacks for older deployments.
     try {
-      const templateResponse = await fetch('/templates/asset_import_template.xlsx', { cache: 'no-store' });
-      if (templateResponse.ok) {
-        const blob = await templateResponse.blob();
-        const url = URL.createObjectURL(blob);
-        const anchor = document.createElement('a');
-        anchor.href = url;
-        anchor.download = zh ? '资产导入模板.xlsx' : 'asset_import_template.xlsx';
-        document.body.appendChild(anchor);
-        anchor.click();
-        anchor.remove();
-        URL.revokeObjectURL(url);
+      const response = await fetch('/api/assets/import-template', { headers: authHeaders(), cache: 'no-store' });
+      if (response.ok) {
+        downloadTemplateBlob(await response.blob());
+        return;
+      }
+    } catch {
+      // Fall through to the static distributable template.
+    }
+
+    try {
+      const response = await fetch('/templates/asset_import_template.xlsx', { cache: 'no-store' });
+      if (response.ok) {
+        downloadTemplateBlob(await response.blob());
         return;
       }
     } catch {
@@ -1420,9 +1433,11 @@ const AssetManagementTab: React.FC<AssetManagementTabProps> = ({ language, setAc
       ['网页管理', '有网页才填', '只有设备自带 HTTP/HTTPS 管理页面才另填 HTTP 或 HTTPS；这不是 Web SSH。'],
       ['没有登录入口', '填 NONE', '协议填 NONE，其它入口信息留空。'],
       ['端口/路径', '可留空', 'SSH 默认 22；HTTP 默认 80；HTTPS 默认 443。SSH 和 Web SSH 不填路径。'],
-      ['凭据', '可选', '默认使用资产凭据；没有特殊账号就留空。'],
+      ['凭据', '可选', '默认使用资产凭据；填写名称或ID时先确认凭据中心中存在。样例名称需核实或替换，不要填密码。'],
+      ['SNMPv2凭据名称', '选填', '填写凭据中心中已存在的 SNMPv2 凭据名称，须完全一致；填此列时清空 SNMP社区名。'],
       ['其它列', '可选', '不需要的字段全部留空。'],
       ['安全提示', '注意', '优先填写绑定凭据，不要在表格中填写密码。'],
+      ['重复资产', '会跳过', '主机名、资产编号、序列号或管理 IP 重复时跳过整行，不更新旧资产；修改旧资产请到资产管理编辑。'],
     ] : [
       ['Asset Import Instructions'],
       ['Item', 'How to fill', 'Only complete Network Devices, Servers and Management Entries; a red * means required; other sheets are reference-only.'],
@@ -1436,9 +1451,11 @@ const AssetManagementTab: React.FC<AssetManagementTabProps> = ({ language, setAc
       ['Device Web Page', 'Only when present', 'Use HTTP or HTTPS only for the device\'s own web page; this is not Web SSH.'],
       ['No Login', 'Use NONE', 'Set the protocol to NONE and leave the remaining entry fields blank.'],
       ['Port / Path', 'Optional', 'Defaults are SSH 22, HTTP 80 and HTTPS 443. Leave SSH and Web SSH paths blank.'],
-      ['Credentials', 'Optional', 'Asset credentials are inherited by default; leave blank when there is no special account.'],
+      ['Credentials', 'Optional', 'Asset credentials are inherited by default. Verify that a bound name or ID exists in the credential center; replace sample names and never enter passwords.'],
+      ['SNMPv2 Credential Name', 'Optional', 'Enter an existing credential-center SNMPv2 name exactly; clear SNMP Community when this field is used.'],
       ['Other columns', 'Optional', 'Leave fields you do not need blank.'],
       ['Security', 'Important', 'Prefer credential bindings and avoid putting passwords in the sheet.'],
+      ['Duplicate assets', 'Skipped', 'Rows matching an existing hostname, asset tag, serial number or management IP are skipped, not updated. Edit existing assets in Asset Management.'],
     ];
     const wsGuide = XLSX.utils.aoa_to_sheet(guideRows);
     wsGuide['!cols'] = [{ wch: 28 }, { wch: 18 }, { wch: 72 }];
@@ -1448,8 +1465,8 @@ const AssetManagementTab: React.FC<AssetManagementTabProps> = ({ language, setAc
     // full legacy workbook. Old 41-column files remain valid because parsing
     // is header based; this version additionally exposes SSH policy.
     const rawAssetHeaders = zh
-      ? ['资产类型', '主机名', '资产编号', '序列号', '厂商', '型号', '平台', 'SSH算法策略', '管理IP', '业务IP', '状态', '角色', '设备分类', '录入来源（必填：新设备或存量设备）', 'VLAN', '上联交换机', '上联端口', '站点', '机柜', 'U位', 'U高度', '规划起始U', '功耗(W)', 'SNMP社区名', 'SNMP端口', '普通用户', '特权用户', '普通密码', '特权密码', 'Enable密码', '绑定凭据', '绑定特权凭据', 'SNMP凭据（推荐）', '标签代码', '部门', '购买日期', '投产状态', '免上收投产原因', '保修到期', '备注', '功能', '区域']
-      : ['Asset Type', 'Hostname', 'Asset Tag', 'Serial Number', 'Vendor', 'Model', 'Platform', 'SSH Algorithm Profile', 'Mgmt IP', 'Business IP', 'Status', 'Role', 'Device Category', 'Asset Origin (Required: new or legacy)', 'VLAN', 'Uplink Switch', 'Uplink Port', 'Site', 'Rack', 'Rack Unit', 'U Height', 'Planned Start U', 'Power(W)', 'SNMP Community', 'SNMP Port', 'Normal User', 'Admin User', 'Normal Password', 'Admin Password', 'Enable Secret', 'Credential', 'Admin Credential', 'SNMP Credential (recommended)', 'Tags', 'Department', 'Purchase Date', 'Lifecycle', 'Takeover Exemption Reason', 'Warranty Expiry', 'Notes', 'Function', 'Zone'];
+      ? ['资产类型', '主机名', '资产编号', '序列号', '厂商', '型号', '平台', 'SSH算法策略', '管理IP', '业务IP', '状态', '角色', '设备分类', '录入来源（必填：新设备或存量设备）', 'VLAN', '上联交换机', '上联端口', '站点', '机柜', 'U位', 'U高度', '规划起始U', '功耗(W)', 'SNMP社区名', 'SNMP端口', '普通用户', '特权用户', '普通密码', '特权密码', 'Enable密码', '绑定凭据', '绑定特权凭据', 'SNMPv2凭据名称（选填）', '标签代码', '部门', '购买日期', '投产状态', '免上收投产原因', '保修到期', '备注', '功能', '区域']
+      : ['Asset Type', 'Hostname', 'Asset Tag', 'Serial Number', 'Vendor', 'Model', 'Platform', 'SSH Algorithm Profile', 'Mgmt IP', 'Business IP', 'Status', 'Role', 'Device Category', 'Asset Origin (Required: new or legacy)', 'VLAN', 'Uplink Switch', 'Uplink Port', 'Site', 'Rack', 'Rack Unit', 'U Height', 'Planned Start U', 'Power(W)', 'SNMP Community', 'SNMP Port', 'Normal User', 'Admin User', 'Normal Password', 'Admin Password', 'Enable Secret', 'Credential', 'Admin Credential', 'SNMPv2 Credential Name (optional)', 'Tags', 'Department', 'Purchase Date', 'Lifecycle', 'Takeover Exemption Reason', 'Warranty Expiry', 'Notes', 'Function', 'Zone'];
     const requiredHeaders = zh
       ? new Set(['资产类型', '资产编号', '录入来源（必填：新设备或存量设备）', '投产状态', '免上收投产原因'])
       : new Set(['Asset Type', 'Asset Tag', 'Asset Origin (Required: new or legacy)', 'Lifecycle', 'Takeover Exemption Reason']);
@@ -1460,7 +1477,7 @@ const AssetManagementTab: React.FC<AssetManagementTabProps> = ({ language, setAc
     const serverAssetIndexes = [0, 1, 2, 3, 4, 5, 6, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18, 19, 20, 21, 22, 25, 26, 27, 28, 30, 31, 33, 34, 35, 36, 37, 38, 39, 40, 41];
     const networkAssetHeaders = networkAssetIndexes.map(index => rawAssetHeaders[index]);
     networkAssetHeaders[25] = zh ? '绑定普通用户凭据' : 'Normal Credential';
-    networkAssetHeaders[27] = zh ? 'SNMP凭据（推荐）' : 'SNMP Credential (recommended)';
+    networkAssetHeaders[27] = zh ? 'SNMPv2凭据名称（选填）' : 'SNMPv2 Credential Name (optional)';
     const serverAssetHeaders = serverAssetIndexes.map(index => rawAssetHeaders[index]);
     const markRequiredHeaders = (headers: string[]) => headers.map(header => requiredHeaders.has(header) ? `${header} *` : header);
     const markedNetworkAssetHeaders = markRequiredHeaders(networkAssetHeaders);

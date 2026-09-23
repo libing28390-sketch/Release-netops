@@ -12,10 +12,12 @@ import logging
 import threading
 import time
 import ipaddress
+from pathlib import Path
 from collections import deque
 from datetime import datetime, timedelta, timezone
 from typing import Optional
 from fastapi import APIRouter, HTTPException, Query
+from fastapi.responses import Response
 from pydantic import BaseModel, Field, field_validator
 from database import get_db_connection
 from core.crypto import encrypt_credential, decrypt_credential
@@ -2243,6 +2245,111 @@ def asset_tree(_user=require_role("Viewer")):
         return {'items': [dict(row) for row in rows]}
     finally:
         conn.close()
+
+
+def _build_asset_import_template(snmpv2_credential_names: list[str]) -> bytes:
+    """Build the distributable asset workbook with this vault's SNMPv2 names."""
+    from io import BytesIO
+
+    import openpyxl
+    from openpyxl.worksheet.datavalidation import DataValidation
+    from openpyxl.workbook.defined_name import DefinedName
+
+    template_path = (
+        Path(__file__).resolve().parents[2]
+        / 'public'
+        / 'templates'
+        / 'asset_import_template.xlsx'
+    )
+    if not template_path.is_file():
+        raise FileNotFoundError('Asset import template file is missing')
+
+    workbook = openpyxl.load_workbook(template_path)
+    network_sheet = workbook['网络设备']
+    credential_headers = {'SNMPv2凭据名称（选填）', 'SNMP凭据（推荐）'}
+    credential_column = next(
+        (
+            cell.column
+            for cell in network_sheet[1]
+            if str(cell.value or '').strip() in credential_headers
+        ),
+        None,
+    )
+    if credential_column is None:
+        raise ValueError('SNMP credential column is missing from the asset template')
+
+    names = sorted({str(name).strip() for name in snmpv2_credential_names if str(name or '').strip()}, key=str.casefold)
+    helper_sheet_name = '_SNMPv2Credentials'
+    if helper_sheet_name in workbook.sheetnames:
+        del workbook[helper_sheet_name]
+    if 'SNMPv2CredentialNames' in workbook.defined_names:
+        del workbook.defined_names['SNMPv2CredentialNames']
+
+    if names:
+        helper_sheet = workbook.create_sheet(helper_sheet_name)
+        helper_sheet['A1'] = 'SNMPv2 credential names'
+        for row_number, credential_name in enumerate(names, start=2):
+            cell = helper_sheet.cell(row=row_number, column=1, value=credential_name)
+            # Credential names are user-managed text; force text so a name
+            # beginning with '=' cannot become an Excel formula.
+            cell.data_type = 's'
+        helper_sheet.sheet_state = 'hidden'
+        workbook.defined_names.add(DefinedName(
+            'SNMPv2CredentialNames',
+            attr_text=f"'{helper_sheet_name}'!$A$2:$A${len(names) + 1}",
+        ))
+
+        column_letter = openpyxl.utils.get_column_letter(credential_column)
+        validation = DataValidation(
+            type='list',
+            formula1='=SNMPv2CredentialNames',
+            allow_blank=True,
+            errorStyle='stop',
+        )
+        validation.errorTitle = 'SNMP 凭据无效'
+        validation.error = '请选择凭据中心中已存在的 SNMPv2 凭据名称。'
+        validation.promptTitle = '选择 SNMPv2 凭据'
+        validation.prompt = '只列出凭据中心中现有的 SNMPv2 凭据；不使用凭据中心时可留空。'
+        validation.showErrorMessage = True
+        validation.showInputMessage = True
+        network_sheet.add_data_validation(validation)
+        validation.add(f'{column_letter}2:{column_letter}2000')
+
+    output = BytesIO()
+    workbook.save(output)
+    return output.getvalue()
+
+
+@router.get('/assets/import-template', response_class=Response)
+def download_asset_import_template(_user=require_role('Operator')):
+    """Download the asset template with credential choices from the current vault."""
+    conn = get_db_connection()
+    try:
+        rows = conn.execute(
+            '''SELECT credential_name FROM credentials
+               WHERE LOWER(COALESCE(credential_type, '')) = 'snmpv2'
+                 AND credential_name IS NOT NULL
+                 AND NULLIF(BTRIM(COALESCE(snmp_community, '')), '') IS NOT NULL
+               ORDER BY credential_name'''
+        ).fetchall()
+        credential_names = [str(row['credential_name'] or '').strip() for row in rows]
+    finally:
+        conn.close()
+
+    try:
+        content = _build_asset_import_template(credential_names)
+    except Exception as exc:  # noqa: BLE001
+        logger.exception('Failed to build asset import template')
+        raise HTTPException(status_code=500, detail='资产导入模板暂时不可用。') from exc
+
+    return Response(
+        content=content,
+        media_type='application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
+        headers={
+            'Content-Disposition': 'attachment; filename="asset_import_template.xlsx"',
+            'Cache-Control': 'no-store',
+        },
+    )
 
 
 @router.get('/assets/{asset_id}')
