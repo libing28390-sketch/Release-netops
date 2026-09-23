@@ -23,7 +23,7 @@ from ai.services.rag_retriever import RAGRetriever, RetrievalRequest
 logger = logging.getLogger("nexora.promptfoo_provider")
 
 
-def call_api(prompt: str, options: dict[str, Any] | None = None, context: dict[str, Any] | None = None) -> dict[str, Any]:
+def _call_api_impl(prompt: str, options: dict[str, Any] | None = None, context: dict[str, Any] | None = None) -> dict[str, Any]:
     """Promptfoo custom provider entrypoint."""
     ctx_vars = (context or {}).get("vars", {})
     query = str(ctx_vars.get("query") or prompt or "").strip()
@@ -180,6 +180,30 @@ def call_api(prompt: str, options: dict[str, Any] | None = None, context: dict[s
                 "reason_code": "PROVIDER_EXECUTION_FAILED",
                 "error_type": error_type,
                 "error_stage": "retrieve_knowledge",
+                "outcome": "no_match",
+                "returned_document_ids": [],
+                "returned_vendors": [],
+                "returned_platforms": [],
+                "returned_features": [],
+            },
+        }
+
+
+def call_api(prompt: str, options: dict[str, Any] | None = None, context: dict[str, Any] | None = None) -> dict[str, Any]:
+    """Promptfoo entrypoint with a redacted guard for import/initialization errors."""
+    try:
+        return _call_api_impl(prompt, options, context)
+    except Exception as exc:
+        error_type = type(exc).__name__
+        logger.warning("Promptfoo provider initialization failed: %s", error_type)
+        return {
+            "error": "PROVIDER_INITIALIZATION_FAILED",
+            "output": "ERROR: PROVIDER_INITIALIZATION_FAILED",
+            "metadata": {
+                "decision": "error",
+                "reason_code": "PROVIDER_INITIALIZATION_FAILED",
+                "error_type": error_type,
+                "error_stage": "provider_entrypoint",
                 "outcome": "no_match",
                 "returned_document_ids": [],
                 "returned_vendors": [],

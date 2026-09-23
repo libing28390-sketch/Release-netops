@@ -5,6 +5,7 @@
 # 实际修改文件
 
 - `scripts/promptfoo_nexora_provider.py`：Provider 捕获异常时仅记录异常类型和固定阶段，不输出 SQL、连接串、响应体或敏感参数；将安全字段放入 metadata。
+- Provider 入口层也增加同样的脱敏保护，覆盖模块导入和初始化阶段异常，避免 wrapper 直接退出而失去错误类型。
 - `scripts/promptfoo_gate_report.py`：兼容 Promptfoo 的 `error` 字段，脱敏报告保留 `error_type`/`error_stage`，并在 CI 日志输出聚合失败类别。
 - `backend/tests/ai/test_promptfoo_gate_report.py`：增加错误字段与异常类型脱敏回归断言。
 
