@@ -2,7 +2,7 @@
 
 [English](#english) | [中文](#中文说明)
 
-> Version 1.0.8 · Standard Edition
+> Version 1.0.9 · Standard Edition · Linux/Docker release
 
 Nexora is a full-stack network operations platform covering device inventory, real-time monitoring, automation, configuration backup, compliance auditing, and operational traceability.
 
@@ -25,15 +25,17 @@ Nexora 是一个面向网络运维场景的全栈平台，覆盖设备资产管�
 | RHEL / Rocky Linux / AlmaLinux | 9.x | x86_64 | ✅ Supported / 支持 |
 | CentOS Stream | 8, 9 | x86_64 | ✅ Supported / 支持 |
 | GitHub Codespaces | — | x86_64 | ✅ Supported / 支持 |
-| Docker (any host OS) | Engine 20.10+ | x86_64 | ✅ Supported / 支持 |
+| Docker (Linux host) | Engine 20.10+ | x86_64 | ✅ Supported / 支持 |
 | **CentOS** | **7.x** | x86_64 | ❌ Not supported / 不支持 |
 | ARM64 / aarch64 | any | arm64 | ❌ Not supported / 不支持 |
-| Windows (native client) | Windows 10/11 | x86_64 | ✅ Supported / 支持 |
+| Windows (native server client) | Windows 10/11 | x86_64 | ❌ Server deployment not supported from v1.0.9 / v1.0.9 起不支持服务端部署 |
 | macOS (native) | any | — | ❌ Not supported / 不支持 |
 
 > **Why CentOS 7 is not supported:** The compiled `.so` files require glibc ≥ 2.28. CentOS 7 ships glibc 2.17 and reached End-of-Life in June 2024. Migrate to Rocky Linux 8+ or AlmaLinux 8+.
 >
 > **为什么不支持 CentOS 7：** 编译的 `.so` 文件需要 glibc ≥ 2.28，CentOS 7 自带 glibc 2.17，且已于 2024 年 6 月停止维护。建议迁移到 Rocky Linux 8+ 或 AlmaLinux 8+。
+
+Windows 用户仍可使用浏览器访问 Linux/Docker 服务端，并在本机运行同一版本的 Windows Workstation Agent；该 Agent 只负责本地浏览器/终端拉起，不提供 Windows 服务端部署。
 
 ---
 
@@ -43,7 +45,7 @@ Nexora 是一个面向网络运维场景的全栈平台，覆盖设备资产管�
 |-----------|---------|-------------|-------|
 | Python | 3.10 | 3.12 | 3.10 / 3.11 / 3.12 all supported |
 | Node.js | 18.x | 22.x LTS | Required for frontend build only |
-| PostgreSQL | 14 | 17 | SQLite fallback available for dev/test |
+| PostgreSQL | 18 | 18 | Required; `vector` and `pg_trgm` extensions are used |
 | Nginx | 1.18 | 1.27 | Reverse proxy, included in deploy script |
 | glibc | 2.28 | 2.35+ | Determines OS compatibility |
 | Docker Engine | 20.10 | 26.x | Docker deployment only |
@@ -277,7 +279,7 @@ cd nexora-automation
 
 # Python environment
 python3 -m venv .venv
-source .venv/bin/activate          # Windows: .\.venv\Scripts\Activate.ps1
+source .venv/bin/activate
 pip install -r backend/requirements.txt
 
 # Frontend
@@ -502,7 +504,7 @@ cd nexora-automation
 
 # Python 环境
 python3 -m venv .venv
-source .venv/bin/activate          # Windows: .\.venv\Scripts\Activate.ps1
+source .venv/bin/activate
 pip install -r backend/requirements.txt
 
 # 前端

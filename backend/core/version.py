@@ -8,4 +8,4 @@ VERSION = "1.0.9"
 EDITION = "Standard"
 
 # Build timestamp or metadata
-BUILD_DATE = "2026-09-15"
+BUILD_DATE = "2026-09-23"

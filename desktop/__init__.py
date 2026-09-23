@@ -1,1 +1,0 @@
-"""Windows desktop client package."""

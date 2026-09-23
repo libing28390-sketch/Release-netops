@@ -10,7 +10,8 @@ on:
 
 # Keep the release-repository synchronization behavior used at the end of
 # August: every main push, version tag, or manual dispatch may publish after
-# the complete Ubuntu gate; Windows follows after Ubuntu succeeds.
+# the complete Linux/Docker gate; v1.0.9 and later publish the Linux server
+# artifacts plus the separate Windows workstation Agent when a version tag is built.
 concurrency:
   group: release-${{ github.ref }}
   cancel-in-progress: false
@@ -88,7 +89,7 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
-          required=(Dockerfile docker-compose.yml docker/postgres/Dockerfile .dockerignore .env.example package.json package-lock.json deploy-ubuntu.sh backend/requirements.txt backend/main.py NexoraTerminalAgent.exe data/textfsm_templates assets/catalog tools/blender public/assets/3d nginx/Dockerfile nginx/.dockerignore nginx/nginx.conf nginx/docker-entrypoint.d/05-ensure-tls-certificate.sh scripts/deploy-docker.sh scripts/terminal_agent.py scripts/install-terminal-agent.sh scripts/install-terminal-agent.ps1 scripts/sync-frontend-dist.sh src)
+          required=(Dockerfile docker-compose.yml docker/postgres/Dockerfile .dockerignore .env.example package.json package-lock.json deploy-ubuntu.sh backend/requirements.txt backend/main.py data/textfsm_templates assets/catalog tools/blender public/assets/3d nginx/Dockerfile nginx/.dockerignore nginx/nginx.conf nginx/docker-entrypoint.d/05-ensure-tls-certificate.sh scripts/deploy-docker.sh scripts/terminal_agent.py scripts/install-terminal-agent.sh scripts/install-terminal-agent.ps1 scripts/sync-frontend-dist.sh src)
           for path in "${required[@]}"; do
             test -e "$path" || { echo "[FAIL] Missing release input: $path"; exit 1; }
           done
@@ -168,9 +169,9 @@ jobs:
               ! -name 'docker.md' \
               ! -name 'docker-release-manual.md' \
               ! -name 'ubuntu.md' \
-              ! -name 'windows.md' \
-              ! -name 'windows_pgvector_guide.md' \
+              ! -name 'release-notes.md' \
               ! -name 'terminal-agent.md' \
+              ! -name 'terminal-agent-autostart.md' \
               -exec rm -rf {} +
           fi
           rm -rf brain/ skills/ .github/skills/ .agents/ blog/
@@ -200,8 +201,6 @@ jobs:
           rm -f .clinerules .cursorrules .geminirules mcp-config.json
           rm -f -- "--version"
 
-          rm -rf desktop/
-          rm -f NetOps.exe NetOps.spec NexoraTerminalAgent.spec start.bat netops_logo.png
           rm -rf .github/
 
           # TLS keys and certificates are deployment inputs, never release content.
@@ -224,23 +223,23 @@ jobs:
             docs/deploy/docker.md
             docs/deploy/docker-release-manual.md
             docs/deploy/ubuntu.md
-            docs/deploy/windows.md
-            docs/deploy/windows_pgvector_guide.md
+            docs/deploy/release-notes.md
             docs/deploy/terminal-agent.md
+            docs/deploy/terminal-agent-autostart.md
           )
           for path in "${public_deploy_docs[@]}"; do
             test -f "$path" || { echo "[FAIL] Required public deployment document missing: $path"; exit 1; }
           done
           while IFS= read -r path; do
             case "$path" in
-              docs/deploy/README.md|docs/deploy/docker.md|docs/deploy/docker-release-manual.md|docs/deploy/ubuntu.md|docs/deploy/windows.md|docs/deploy/windows_pgvector_guide.md|docs/deploy/terminal-agent.md) ;;
+              docs/deploy/README.md|docs/deploy/docker.md|docs/deploy/docker-release-manual.md|docs/deploy/ubuntu.md|docs/deploy/release-notes.md|docs/deploy/terminal-agent.md|docs/deploy/terminal-agent-autostart.md) ;;
               *) echo "[FAIL] Unexpected deployment document staged: $path"; exit 1 ;;
             esac
           done < <(git ls-files 'docs/deploy/*')
 
           # tools/ is intentionally removed above from the sanitized public
           # release tree.  Validate the release-owned paths that remain.
-          required=(Dockerfile docker-compose.yml .dockerignore .env.example package.json package-lock.json deploy-ubuntu.sh backend/requirements.txt backend/main.py NexoraTerminalAgent.exe assets/catalog public/assets/3d nginx/Dockerfile nginx/.dockerignore nginx/nginx.conf nginx/docker-entrypoint.d/05-ensure-tls-certificate.sh scripts/deploy-docker.sh scripts/terminal_agent.py scripts/install-terminal-agent.sh scripts/install-terminal-agent.ps1 scripts/sync-frontend-dist.sh src)
+          required=(Dockerfile docker-compose.yml .dockerignore .env.example package.json package-lock.json deploy-ubuntu.sh backend/requirements.txt backend/main.py assets/catalog public/assets/3d nginx/Dockerfile nginx/.dockerignore nginx/nginx.conf nginx/docker-entrypoint.d/05-ensure-tls-certificate.sh scripts/deploy-docker.sh scripts/terminal_agent.py scripts/install-terminal-agent.sh scripts/install-terminal-agent.ps1 scripts/sync-frontend-dist.sh src)
           for path in "${required[@]}"; do
             test -n "$(git ls-files -- "$path" | head -n 1)" || { echo "[FAIL] Required release path missing: $path"; exit 1; }
           done
@@ -290,227 +289,43 @@ jobs:
           # Do not generate a changelog from the private source repository.
           # The public release must not expose source-repository URLs or commit
           # history; release details belong in the sanitized release tree.
-          body: ""
+          body_path: docs/deploy/release-notes.md
           files: NetOps-Linux-Ubuntu.zip
           draft: false
           prerelease: false
 
-  release-windows:
-    name: Release Windows (windows branch)
+  release-windows-workstation-agent:
+    name: Release Windows Workstation Agent
     needs: release-ubuntu
+    if: startsWith(github.ref, 'refs/tags/')
     runs-on: windows-latest
     steps:
       - name: Checkout source repository
         uses: actions/checkout@v4
-
-      - name: Bundle PostgreSQL 18 pgvector runtime for Windows
-        shell: pwsh
-        run: |
-          $ErrorActionPreference = "Stop"
-          $destination = Join-Path $PWD "third_party\pgvector\vector.v0.8.6-pg18.zip"
-          New-Item -ItemType Directory -Path (Split-Path -Parent $destination) -Force | Out-Null
-          $url = "https://github.com/andreiramani/pgvector_pgsql_windows/releases/download/0.8.6_18/vector.v0.8.6-pg18.zip"
-          Invoke-WebRequest -Uri $url -OutFile $destination
-          $expected = "bda17eb97d9e687e3da701adbf4b65a342943b3e0cdc81935ccf0b9833a1ed62"
-          $actual = (Get-FileHash -Algorithm SHA256 -LiteralPath $destination).Hash.ToLowerInvariant()
-          if ($actual -ne $expected) {
-            throw "pgvector Windows asset digest mismatch. Expected $expected, got $actual."
-          }
-          Write-Host "Bundled verified pgvector asset: $destination"
 
       - name: Set up Python
         uses: actions/setup-python@v5
         with:
           python-version: '3.11'
 
-      - name: Cache uploader script
-        shell: bash
-        run: |
-          cp .github/scripts/upload_to_baidupan.py "$RUNNER_TEMP/upload_to_baidupan.py"
-
-      - name: Install Windows packaging dependencies
-        shell: bash
-        run: |
-          python -m pip install --upgrade pip
-          pip install \
-            pyinstaller==6.22.1 \
-            pyinstaller-hooks-contrib==2026.6 \
-            PySide6==6.11.1 \
-            pillow pystray certifi \
-            psycopg2-binary==2.9.13
-
-      - name: Build NetOps.exe
-        shell: bash
-        run: |
-          pyinstaller NetOps.spec
-          cp dist/NetOps.exe ./NetOps.exe
-          rm -rf build/ dist/
-
-      - name: Smoke test Windows launcher
+      - name: Build Windows workstation Agent
         shell: pwsh
         run: |
           $ErrorActionPreference = "Stop"
-          $exe = Join-Path $PWD "NetOps.exe"
-          $process = Start-Process -FilePath $exe -ArgumentList "--smoke-test" -WorkingDirectory $PWD -WindowStyle Hidden -PassThru
-          if (-not $process.WaitForExit(30000)) {
-            try { $process.Kill($true) } catch { $process.Kill() }
-            throw "NetOps.exe smoke test timed out after 30 seconds."
+          python -m pip install --upgrade pip
+          python -m pip install pyinstaller==6.22.1
+          pyinstaller --onefile --noconsole --name NexoraTerminalAgent scripts/terminal_agent.py
+          if (-not (Test-Path -LiteralPath "dist\NexoraTerminalAgent.exe")) {
+            throw "Windows workstation Agent build did not produce dist\NexoraTerminalAgent.exe"
           }
-          if ($process.ExitCode -ne 0) {
-            throw "NetOps.exe smoke test failed with exit code $($process.ExitCode)."
-          }
-          $log = Join-Path $PWD "launcher_setup.log"
-          if (-not (Test-Path -LiteralPath $log) -or
-              -not (Select-String -LiteralPath $log -SimpleMatch "SMOKE_TEST_OK" -Quiet)) {
-            throw "NetOps.exe did not write the SMOKE_TEST_OK marker."
-          }
-          Remove-Item -LiteralPath $log -Force
 
-      - name: Build NexoraTerminalAgent.exe
-        shell: bash
-        run: |
-          # The Agent only uses the Python standard library.  Keep the
-          # browser launcher/recorder small; Qt/Pillow belong to NetOps.exe,
-          # not to the workstation Agent.
-          pyinstaller --onefile --noconsole --name NexoraTerminalAgent \
-            scripts/terminal_agent.py
-          cp dist/NexoraTerminalAgent.exe ./NexoraTerminalAgent.exe
-          rm -rf build/ dist/
-
-      - name: Remove private and Linux-only files
-        shell: bash
-        run: |
-          set -euo pipefail
-          rm -rf tools/ scripts/
-          rm -f bug_fix_memory.md PAM_Audit_Restoration_Report.md
-          if [ -d docs ]; then
-            find docs -mindepth 1 -maxdepth 1 ! -name deploy -exec rm -rf {} +
-          fi
-          if [ -d docs/deploy ]; then
-            # Keep the same public README allowlist as the Ubuntu release.
-            find docs/deploy -mindepth 1 -maxdepth 1 \
-              ! -name 'README.md' \
-              ! -name 'docker.md' \
-              ! -name 'docker-release-manual.md' \
-              ! -name 'ubuntu.md' \
-              ! -name 'windows.md' \
-              ! -name 'windows_pgvector_guide.md' \
-              ! -name 'terminal-agent.md' \
-              -exec rm -rf {} +
-          fi
-          rm -rf brain/ skills/ .github/skills/ .agents/ blog/
-          rm -rf scratch/ backend/scratch/
-          if [ -d backend/tests ]; then
-            find backend/tests -mindepth 1 -maxdepth 1 ! -name fixtures -exec rm -rf {} +
-          fi
-          rm -f pytest.ini backend/_check_audit.py backend/check_executions.py
-          rm -f backend/check_results.py backend/debug_device.py backend/find_target.py
-          rm -f _purge_bogus_backups.py
-          find . -maxdepth 2 -type f -name '_*.py' -not -path './.git/*' -delete || true
-          rm -f patch-vmware.sh patch-*.sh hotfix-*.sh
-          rm -f task.md task_progress.md task-*.md task_*.md
-          rm -f implementation_plan.md walkthrough.md refactor.cjs refactor2.cjs
-          # handoff.md is private coordination material and must stay in the
-          # source repository, not the public release repository.
-          rm -f handoff.md
-          rm -f netops.db backend/netops.db backend/netsops.db data/netops.db.bak
-          rm -rf data/backups/ data/pam_recordings/ data/logs/
-          rm -rf data/change_order_attachments/ backup/
-          rm -rf .codex/ .cursor/ .playwright-mcp/ .vscode/
-          rm -f .clinerules .cursorrules .geminirules mcp-config.json
-          rm -f -- "--version"
-          # Release templates are embedded in NetOps.exe and also kept in a
-          # separate read-only directory for source-based Windows launches.
-          # Do not leave them in data/textfsm_templates, which is reserved for
-          # user-managed overrides and would otherwise shadow newer templates.
-          if [ -d data/textfsm_templates ]; then
-            rm -rf release-textfsm-templates
-            mv data/textfsm_templates release-textfsm-templates
-          fi
-          rm -f deploy-ubuntu.sh deploy-ubuntu.gitee.sh Dockerfile docker-compose.yml .dockerignore
-          rm -rf nginx/ .github/
-
-      - name: Commit sanitized Windows release tree
-        shell: bash
-        run: |
-          set -euo pipefail
-          git config --global user.name "GitHub Action Bot"
-          git config --global user.email "action@github.com"
-          rm -rf .git
-          git init
-          git add .
-          git add -f third_party/pgvector/vector.v0.8.6-pg18.zip
-
-          public_deploy_docs=(
-            docs/deploy/README.md
-            docs/deploy/docker.md
-            docs/deploy/docker-release-manual.md
-            docs/deploy/ubuntu.md
-            docs/deploy/windows.md
-            docs/deploy/windows_pgvector_guide.md
-            docs/deploy/terminal-agent.md
-          )
-          for path in "${public_deploy_docs[@]}"; do
-            test -f "$path" || { echo "[FAIL] Required public deployment document missing: $path"; exit 1; }
-          done
-          while IFS= read -r path; do
-            case "$path" in
-              docs/deploy/README.md|docs/deploy/docker.md|docs/deploy/docker-release-manual.md|docs/deploy/ubuntu.md|docs/deploy/windows.md|docs/deploy/windows_pgvector_guide.md|docs/deploy/terminal-agent.md) ;;
-              *) echo "[FAIL] Unexpected deployment document staged: $path"; exit 1 ;;
-            esac
-          done < <(git ls-files 'docs/deploy/*')
-
-          required=(.env.example package.json package-lock.json backend/requirements.txt backend/main.py release-textfsm-templates third_party/pgvector/README.md third_party/pgvector/vector.v0.8.6-pg18.zip desktop/launcher.py desktop/desktop_tray.py desktop/update_service.py NetOps.exe NexoraTerminalAgent.exe start.bat src)
-          for path in "${required[@]}"; do
-            test -n "$(git ls-files -- "$path" | head -n 1)" || { echo "[FAIL] Required Windows release path missing: $path"; exit 1; }
-          done
-          for path in data/netops.db.bak data/backups data/pam_recordings nginx/ssl/netops.crt nginx/ssl/netops.key blog handoff.md .agents .codex; do
-            test -z "$(git ls-files -- "$path")" || { echo "[FAIL] Forbidden path staged: $path"; exit 1; }
-          done
-
-          git commit -m "Release build: Production ready stable Windows release"
-          git branch -M windows
-          git remote add origin https://${{ secrets.RELEASE_REPO_TOKEN }}@github.com/libing28390-sketch/Release-netops.git
-          git push -u origin windows --force
-
-          if [[ "${{ github.ref }}" == refs/tags/* ]]; then
-            git tag "${{ github.ref_name }}-windows"
-            git push origin "${{ github.ref_name }}-windows" --force
-          fi
-
-      - name: Package Windows Release Archive (ZIP)
-        shell: bash
-        run: |
-          git archive --format=zip HEAD -o NetOps-Windows.zip
-
-      - name: Upload Windows Release to Baidu Pan (百度网盘)
-        if: startsWith(github.ref, 'refs/tags/') || github.event_name == 'workflow_dispatch'
-        shell: bash
-        env:
-          BYPY_TOKEN_CONTENT: ${{ secrets.BAIDU_PAN_TOKEN }}
-          PYTHONUNBUFFERED: "1"
-        run: |
-          if [ -z "$BYPY_TOKEN_CONTENT" ]; then
-            echo "[INFO] 未配置 BAIDU_PAN_TOKEN Secret，跳过百度网盘上传。"
-            exit 0
-          fi
-
-          echo "==== 1. 安装 bypy 依赖 ===="
-          python -m pip install --no-cache-dir bypy
-
-          echo "==== 2. 运行百度网盘自动上传 ===="
-          python "$RUNNER_TEMP/upload_to_baidupan.py"
-
-      - name: Publish Windows executable release asset
-        if: startsWith(github.ref, 'refs/tags/')
+      - name: Publish Windows workstation Agent asset
         uses: softprops/action-gh-release@v2
         with:
           token: ${{ secrets.RELEASE_REPO_TOKEN }}
           repository: libing28390-sketch/Release-netops
-          tag_name: ${{ github.ref_name }}-windows
-          name: Windows Release ${{ github.ref_name }}
-          files: |
-            NetOps.exe
-            NetOps-Windows.zip
+          tag_name: ${{ github.ref_name }}
+          files: dist/NexoraTerminalAgent.exe
+          fail_on_unmatched_files: true
           draft: false
           prerelease: false

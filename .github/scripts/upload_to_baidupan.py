@@ -1,7 +1,7 @@
 """Baidu Netdisk (百度网盘) Automated Release Upload Script.
 
 Reads BYPY_TOKEN_CONTENT from environment, sets up bypy authentication,
-and uploads built zip packages (Windows and Linux) to Baidu Netdisk release directories.
+and uploads built Linux packages to Baidu Netdisk release directories.
 Supports raw JSON, base64-encoded JSON, and single-line JSON strings.
 """
 
@@ -101,11 +101,6 @@ def main():
     work_dir.mkdir(parents=True, exist_ok=True)
 
     artifacts = []
-    if Path("NetOps-Windows.zip").exists():
-        artifacts.append(("NetOps-Windows.zip", f"NetOps-Windows_{tag_name}_{date_str}.zip", "NetOps-Windows-Latest.zip"))
-    elif Path("NetOps.exe").exists():
-        artifacts.append(("NetOps.exe", f"NetOps_{tag_name}_{date_str}.exe", "NetOps-Windows-Latest.exe"))
-
     if Path("NetOps-Linux-Ubuntu.zip").exists():
         artifacts.append(("NetOps-Linux-Ubuntu.zip", f"NetOps-Linux-Ubuntu_{tag_name}_{date_str}.zip", "NetOps-Linux-Ubuntu-Latest.zip"))
 

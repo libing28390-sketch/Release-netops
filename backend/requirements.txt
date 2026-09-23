@@ -65,6 +65,3 @@ watchfiles>=0.21.0
 # Task Queue (optional, for future use)
 celery>=5.3.0
 redis>=5.0.0
-
-# Desktop Client Packaging
-pystray>=0.19.5

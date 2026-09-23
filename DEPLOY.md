@@ -13,7 +13,6 @@
 - ✅ CentOS Stream 8, 9 (x86_64)
 - ✅ Docker (any host OS, x86_64)
 - ❌ CentOS 7.x — glibc 2.17, not supported
-- ✅ Windows 10/11 native (x86_64, Windows client)
 - ❌ ARM64 / macOS native — not supported
 
 ---
@@ -325,7 +324,7 @@ cd nexora-automation
 
 # 2. Python environment
 python3 -m venv .venv
-source .venv/bin/activate          # Windows: .\.venv\Scripts\Activate.ps1
+source .venv/bin/activate
 pip install -r backend/requirements.txt
 
 # 3. Frontend
@@ -379,11 +378,6 @@ bash scripts/deploy-docker.sh update
 # 强制重新构建镜像时使用：
 # bash scripts/deploy-docker.sh update --force
 
-# Windows (GUI)
-# 1. Right-click the system tray icon and click "Exit" to stop the running service.
-# 2. Run the following command in the project root to fetch the latest changes (including the Nexora Windows client):
-git pull
-# 3. Double-click `start.bat` again. The graphical manager will automatically update dependencies and boot.
 ```
 
 ---
@@ -643,7 +637,7 @@ cd nexora-automation
 
 # 2. Python 环境
 python3 -m venv .venv
-source .venv/bin/activate          # Windows: .\.venv\Scripts\Activate.ps1
+source .venv/bin/activate
 pip install -r backend/requirements.txt
 
 # 3. 前端
@@ -697,74 +691,9 @@ bash scripts/deploy-docker.sh update
 # 如需强制重新构建镜像：
 # bash scripts/deploy-docker.sh update --force
 
-# Windows 本地部署 (GUI)
-# 1. 右键系统托盘图标，点击“退出 (Exit)”以完全关闭运行中的服务。
-# 2. 在项目根目录执行以下命令拉取最新代码（包括最新的 Nexora Windows 客户端）：
-git pull
-# 3. 重新双击运行根目录下的 `start.bat` 即可，图形化向导会自动处理后续的环境校验与启动。
 ```
 
 ---
-
-### Windows Deployment & Desktop Integration
-
-The Nexora Windows client runs the platform locally with a system-tray controller. The UI and product name are Nexora; `NetOps.exe` remains the backward-compatible launcher filename.
-
-#### 0. Requirements
-
-- Windows 10/11 x86_64 and a writable deployment directory.
-- PostgreSQL 18.x with pgvector and the `pg_trgm` extension; provide a target database or an account that can create it. The detailed setup is in [docs/deploy/windows.md](docs/deploy/windows.md).
-- Internet access and UAC permission for the first-time dependency setup.
-
-The launcher can reuse Python 3.10–3.12 or install Python 3.11.9, and can reuse Node.js 20+ or download a portable Node.js 20.12.2 when `dist/` is missing. It also creates `.venv` and installs the backend and tray dependencies.
-
-#### 1. Install and start
-
-```powershell
-git clone -b windows https://github.com/libing28390-sketch/Release-netops.git nexora-automation
-cd nexora-automation
-```
-
-Prepare PostgreSQL 18, `pgvector`, and `pg_trgm` before starting the client. The Nexora wizard can create the `netops` database when the selected account can connect to `postgres` and has `CREATEDB`; otherwise create it first. Then double-click `NetOps.exe` or run `start.bat`, enter the database connection, and click “启动平台客户端” on the completion page.
-
-Open `http://127.0.0.1:5010` and sign in as `admin / admin` on a fresh database; change the password immediately. Existing accounts keep their stored passwords. The backend binds to `0.0.0.0:5010`, so restrict Windows Firewall to localhost unless LAN access is intentional.
-
-#### 2. Existing installations and upgrades
-
-For a complete upgrade, stop the tray service, back up PostgreSQL with `pg_dump`, preserve `.env`, `data/`, `backup/`, and `desktop/desktop_settings.ini`, then run `git pull origin windows` or unpack the latest Windows ZIP into a new directory. Start `start.bat` again; backend startup runs pending migrations without resetting the database.
-
-The tray “Check for Updates” action currently replaces only `NetOps.exe` and restarts it. It does not synchronize backend sources, tray sources, frontend assets, or migration files, so use the full Windows package for platform upgrades. Existing `NetOps.exe` installations remain supported while the visible client branding is Nexora.
-
----
-
-### Windows 本地部署与桌面集成指南
-
-Nexora Windows 客户端在本机运行后端服务，并通过系统托盘管理服务。界面和平台名称统一为 Nexora；`NetOps.exe` 只是历史兼容启动文件名。
-
-#### 0. 新机器要求
-
-- Windows 10/11 64 位，以及可写的部署目录。
-- PostgreSQL 18.x、pgvector、`pg_trgm`，以及目标业务数据库或 `CREATEDB` 权限。
-- 首次运行需要网络下载依赖，并允许 PostgreSQL 安装时的 UAC 提权。
-
-向导可以自动准备兼容的 Python 3.10–3.12（无兼容版本时安装 3.11.9）、Node.js 20+ 或便携版 Node.js 20.12.2，并在 `.venv` 中安装后端和托盘依赖。详细的 PostgreSQL 初始化步骤见 [docs/deploy/windows.md](docs/deploy/windows.md)。
-
-#### 1. 安装与启动
-
-```powershell
-git clone -b windows https://github.com/libing28390-sketch/Release-netops.git nexora-automation
-cd nexora-automation
-```
-
-先准备 PostgreSQL 18、pgvector 和 `pg_trgm`。如果账号有连接维护库 `postgres` 和 `CREATEDB` 权限，Nexora 向导可以创建 `netops` 数据库；否则先手工创建，再双击 `NetOps.exe` 或运行 `start.bat`，填写数据库连接并点击“启动平台客户端”。
-
-新数据库首次启动后，浏览器访问 `http://127.0.0.1:5010` 并使用 `admin / admin` 登录，随后立即修改密码。已有账号保留当前密码。后端实际监听 `0.0.0.0:5010`，只允许本机使用时应限制 Windows 防火墙入站规则。
-
-#### 2. 已有安装升级
-
-完整升级前先退出系统托盘服务，使用 `pg_dump` 备份 PostgreSQL，并保留 `.env`、`data/`、`backup/` 和 `desktop/desktop_settings.ini`。Git 发布目录执行 `git pull origin windows`；ZIP 发布包建议解压到新目录后复制这些配置和数据文件，再运行 `start.bat`。后端启动时会执行未完成的数据库迁移，不会重置业务数据。
-
-托盘中的“检查更新”目前只下载并替换 `NetOps.exe` 后重启，不会同步后端源码、托盘源码、前端资源或数据库迁移文件，因此不能代替完整平台升级。现有 `NetOps.exe` 仍可使用，客户端界面和平台品牌已经统一为 Nexora。
 
 ### Terminal Agent trusted origins / 工作站终端助手的可信来源
 
@@ -772,11 +701,11 @@ The API always delegates local terminal launch to the workstation Agent. Install
 
 本地终端统一由工作站 Agent 启动。默认仅信任 `http://localhost:5010` 和 `http://127.0.0.1:5010`；远程部署或其他端口必须在**运行 Agent 的工作站**配置 `NEXORA_AGENT_ALLOWED_ORIGINS`，多个来源以逗号分隔，写明协议、主机和非默认端口。浏览器来源必须与后端来源一致。服务器上的 `.env` 不会自动配置其他工作站的 Agent。
 
-Windows 示例（将示例域名替换为实际平台地址，并重启 Agent；新登录会话继承用户环境变量）：
+Linux 示例（将示例域名替换为实际平台地址，并重启 Agent）：
 
-```powershell
-[Environment]::SetEnvironmentVariable('NEXORA_AGENT_ALLOWED_ORIGINS', 'https://netops.example.com', 'User')
-$env:NEXORA_AGENT_ALLOWED_ORIGINS = 'https://netops.example.com'
+```bash
+systemctl --user set-environment NEXORA_AGENT_ALLOWED_ORIGINS=https://netops.example.com
+systemctl --user restart nexora-terminal-agent
 ```
 
 Linux systemd 用户服务可通过 `systemctl --user edit nexora-terminal-agent` 配置以下内容，然后重启服务：
@@ -786,7 +715,7 @@ Linux systemd 用户服务可通过 `systemctl --user edit nexora-terminal-agent
 Environment="NEXORA_AGENT_ALLOWED_ORIGINS=https://netops.example.com"
 ```
 
-TLS certificate verification is enabled by default. Install the organization's CA certificate in the workstation trust configuration for private PKI deployments. Custom executable paths must point to the selected terminal client, such as `putty.exe`, rather than shell interpreters or scripts.
+TLS certificate verification is enabled by default. Install the organization's CA certificate in the workstation trust configuration for private PKI deployments. The Linux workstation must have the system SSH client installed.
 
-TLS 证书验证默认开启。使用私有 CA 时，需要在工作站配置证书信任。自定义程序路径必须对应所选终端客户端（例如 `putty.exe`），不接受 Shell 解释器或脚本。已打包的旧 Agent 可执行文件不包含这些源码修复，需要重新构建或使用更新后的 Python 脚本。
+TLS 证书验证默认开启。使用私有 CA 时，需要在工作站配置证书信任。Linux 工作站需要预先安装系统 SSH 客户端。
 

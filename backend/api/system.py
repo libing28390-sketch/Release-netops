@@ -1,14 +1,10 @@
-from fastapi import APIRouter, Depends, BackgroundTasks, Request, HTTPException
-from typing import Dict, Any, Optional
+from fastapi import APIRouter, Request, HTTPException
+from typing import Dict, Any
 import os
-import sys
 from core.version import VERSION, EDITION, BUILD_DATE
 from core.config import settings
 
-from services import notification_service
 from core.crypto import decrypt_credential
-import random
-import time
 from database import get_db_connection
 from services.connection_profile import resolve_ssh_port
 from services.vault_service import resolve_device_credentials
@@ -97,7 +93,7 @@ async def check_for_updates() -> Dict[str, Any]:
         "latest_version": latest_version,
         "update_available": latest_version != VERSION,
         "changelog": [
-            "优化 Windows 事件循环策略 (Proactor)，提升高并发稳定性。",
+            "优化 Linux/Docker 运行时稳定性。",
             "修复定时备份任务中的权限拦截问题。",
             "改进许可证验证引擎，支持版本授权控制。"
         ] if latest_version != VERSION else [],
@@ -105,60 +101,13 @@ async def check_for_updates() -> Dict[str, Any]:
         "release_date": "2026-05-10"
     }
 
-@router.get("/file-picker")
-async def open_file_picker() -> Dict[str, Any]:
-    import asyncio
-    import concurrent.futures
-
-    # 检测是否在 Docker/无 GUI 环境下运行
-    is_docker = os.path.exists('/.dockerenv') or os.path.isfile('/proc/1/cgroup')
-    is_headless = sys.platform != 'win32' and not os.environ.get('DISPLAY')
-
-    if is_docker or is_headless:
-        return {
-            "path": "",
-            "error": "文件浏览器仅支持本地（Windows）部署模式。Docker 容器中请直接手动输入程序路径。"
-        }
-
-    def run_picker():
-        try:
-            import tkinter as tk
-            from tkinter import filedialog
-            root = tk.Tk()
-            root.withdraw()
-            root.attributes("-topmost", True)
-            file_path = filedialog.askopenfilename(
-                title="选择终端程序可执行文件",
-                filetypes=[("可执行文件", "*.exe"), ("所有文件", "*.*")]
-            )
-            root.destroy()
-            return {"path": file_path.replace('/', '\\')} if file_path else {"path": ""}
-        except Exception:
-            return {"path": "", "error": "文件浏览器不可用，请手动输入程序路径。"}
-
-    with concurrent.futures.ThreadPoolExecutor() as pool:
-        return await asyncio.get_event_loop().run_in_executor(pool, run_picker)
-
-@router.get("/download-assistant")
-async def download_assistant():
-    from fastapi.responses import FileResponse
-    # Get path to nexora.exe
-    bin_path = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "static", "nexora.exe")
-    if not os.path.exists(bin_path):
-        return {"success": False, "error": f"Assistant binary not found on server at: {bin_path}"}
-    sys_name = _get_system_name()
-    fn = f"{sys_name.lower()}_assistant.exe" if sys_name else "nexora.exe"
-    return FileResponse(bin_path, media_type="application/octet-stream", filename=fn)
-
-
 @router.get("/download-terminal-agent")
 def download_terminal_agent(platform: str = "windows"):
-    """Return the agent package for the operator's workstation platform.
+    """Return the workstation Agent matching the browser workstation OS.
 
-    The API server may run in Docker while the browser runs on Windows.  In
-    that case the Windows executable is a release artifact, not a file inside
-    the Linux container, so deployments can configure a redirect URL.  Ubuntu
-    workstations receive the systemd installer instead.
+    The Nexora server is Linux/Docker-only from v1.0.9, but operators may
+    access it from Windows workstations. The Windows Agent is therefore a
+    workstation artifact and can be served from a configured release URL.
     """
     from fastapi.responses import FileResponse, StreamingResponse
     from urllib.error import HTTPError, URLError
@@ -171,7 +120,7 @@ def download_terminal_agent(platform: str = "windows"):
     if platform_key in {"ubuntu", "linux", "unix"}:
         installer_path = os.path.join(scripts_root, "install-terminal-agent.sh")
         if not os.path.exists(installer_path):
-            return {"success": False, "error": "Ubuntu Terminal Agent installer is not available in this release"}
+            return {"success": False, "error": "Linux Terminal Agent installer is not available in this release"}
         return FileResponse(installer_path, media_type="text/x-shellscript", filename="install-terminal-agent.sh")
 
     if platform_key not in {"windows", "win"}:
@@ -183,7 +132,7 @@ def download_terminal_agent(platform: str = "windows"):
 
     release_url = os.environ.get(
         "TERMINAL_AGENT_WINDOWS_URL",
-        "https://github.com/libing28390-sketch/Release-netops/raw/refs/heads/windows/NexoraTerminalAgent.exe",
+        "https://github.com/libing28390-sketch/Release-netops/releases/latest/download/NexoraTerminalAgent.exe",
     ).strip()
     if release_url.startswith(("https://", "http://")):
         try:
@@ -218,7 +167,7 @@ def download_terminal_agent(platform: str = "windows"):
 
     return {
         "success": False,
-        "error": "Windows Terminal Agent executable is not available in this release. Configure TERMINAL_AGENT_WINDOWS_URL or use the Python installer.",
+        "error": "Windows Terminal Agent executable is not available. Configure TERMINAL_AGENT_WINDOWS_URL or use the Linux installer.",
     }
 
 

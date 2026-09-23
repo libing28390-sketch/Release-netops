@@ -8,8 +8,6 @@
   "database_contract": "postgresql_only",
   "postgres_ci_image": "repository_dockerfile_with_pgvector_and_pg_trgm",
   "ci_node_version": "22.22.2",
-  "windows_pgvector_version": "0.8.6",
-  "windows_node_install": "official_msi",
   "external_network": "not_used_by_offline_runner",
   "production_write": false,
   "isolated_anchor_evidence": true,
@@ -18,7 +16,7 @@
   "workflow_sha256": {
     "knowledge_engine_eval": "4fb25dc92bd6ea53088cc74822465828b3cf55b8741a4c58b89baad4c1b6e609",
     "backend_pytest": "5b343139af41f24eb7bd01a12e8fcf468e32d5f3d1bc2943ad869f416c4e142f",
-    "release": "adb40abb993f4b0acf20c9f47f8ae40a700908934c5d7fa81787250396a27b34",
+    "release": "0611c0386a36326187740c491d2cb5d0143b3cadd2fa43269297611e0be2f50c",
     "promptfoo": "726ec3502e0549c72e5f0850ffd972e3af38e4af85163aac1d89520743265b3e"
   }
 }

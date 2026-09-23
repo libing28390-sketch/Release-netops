@@ -349,7 +349,6 @@ backup_release_state() {
     local config_entries=(.env)
     [[ -f .env.example ]] && config_entries+=(.env.example)
     [[ -d nginx/ssl ]] && config_entries+=(nginx/ssl)
-    [[ -f desktop/desktop_settings.ini ]] && config_entries+=(desktop/desktop_settings.ini)
     if tar -czf "$config_partial" -C . "${config_entries[@]}"; then
         [[ -s "$config_partial" ]] || die "Release backup failed: empty deployment configuration archive"
         chmod 600 "$config_partial"

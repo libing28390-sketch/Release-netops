@@ -6,11 +6,9 @@
   "scripts": {
     "dev": "node scripts/dev-internal.mjs",
     "wait:backend": "node -e \"const path=require('path');const port=process.env.BACKEND_PORT||'5310';const waitOn=path.join(process.cwd(),'node_modules','wait-on','bin','wait-on');require('child_process').execFileSync(process.execPath,[waitOn,'http-get://127.0.0.1:'+port+'/api/health','--interval','500','--timeout','120000'],{stdio:'inherit'})\"",
-    "dev:backend:win": "node scripts/dev-backend.mjs",
     "dev:backend:linux": "node scripts/dev-backend.mjs",
     "dev:backend": "node scripts/dev-backend.mjs",
     "dev:frontend": "node scripts/dev-frontend.mjs",
-    "start:win": "npm run build && cross-env PYTHONUNBUFFERED=1 NODE_ENV=production .venv/Scripts/python.exe backend/main.py",
     "start:linux": "npm run build && cross-env PYTHONUNBUFFERED=1 NODE_ENV=production .venv/bin/python backend/main.py",
     "start": "npm run start:internal",
     "build": "cross-env NODE_OPTIONS=\"--max-old-space-size=4096\" vite build",
@@ -21,7 +19,7 @@
     "test:frontend": "vitest --config vitest.config.ts",
     "benchmark:rack-fleet": "tsx scripts/benchmark-rack-fleet.ts",
     "dev:internal": "node scripts/dev-internal.mjs",
-    "start:internal": "node -e \"const p=process.platform==='win32'?'.venv/Scripts/python.exe':'.venv/bin/python';require('child_process').execSync('cross-env NODE_ENV=production '+p+' backend/main.py',{stdio:'inherit'})\"",
+    "start:internal": "node -e \"require('child_process').execFileSync('.venv/bin/python',['backend/main.py'],{stdio:'inherit',env:{...process.env,NODE_ENV:'production'}})\"",
     "release:patch": "npm version patch && git push origin main --tags",
     "release:minor": "npm version minor && git push origin main --tags",
     "release:major": "npm version major && git push origin main --tags"

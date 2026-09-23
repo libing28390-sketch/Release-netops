@@ -25,14 +25,9 @@ RELEASE_WORKFLOW_PATH = ROOT / ".github" / "workflows" / "release.yml"
 PROMPTFOO_WORKFLOW_PATH = ROOT / ".github" / "workflows" / "knowledge-engine-promptfoo.yml"
 POSTGRES_ACTION_PATH = ROOT / ".github" / "actions" / "postgres" / "action.yml"
 BOOTSTRAP_PATH = ROOT / "scripts" / "knowledge_eval_bootstrap.py"
-WINDOWS_LAUNCHER_PATH = ROOT / "desktop" / "launcher.py"
-WINDOWS_PGVECTOR_PATH = ROOT / "desktop" / "pgvector_windows.py"
-WINDOWS_SPEC_PATH = ROOT / "NetOps.spec"
 DATABASE_SCHEMA_PATH = ROOT / "backend" / "database" / "schema.py"
 REPORT_PATH = ROOT / "docs" / "knowledge-engine" / "eval" / "eval-ci-gate-v1.manifest.json"
 CI_NODE_VERSION = "22.22.2"
-WINDOWS_PGVECTOR_VERSION = "0.8.6"
-WINDOWS_NODE_INSTALL_SHA256 = "57456aa33fcd6fb6a9418e09227de0b0ca604f7b2123566acc66b555cb2f42e5"
 
 
 def _read(path: Path) -> str:
@@ -60,9 +55,6 @@ def validate_ci_gate() -> dict[str, Any]:
     promptfoo_ci = _read(PROMPTFOO_WORKFLOW_PATH)
     postgres_action = _read(POSTGRES_ACTION_PATH)
     bootstrap = _read(BOOTSTRAP_PATH)
-    windows_launcher = _read(WINDOWS_LAUNCHER_PATH)
-    windows_pgvector = _read(WINDOWS_PGVECTOR_PATH)
-    windows_spec = _read(WINDOWS_SPEC_PATH)
     database_schema = _read(DATABASE_SCHEMA_PATH)
 
     for label, text in (("EVAL-010 workflow", small_ci), ("backend workflow", backend_ci)):
@@ -99,30 +91,6 @@ def validate_ci_gate() -> dict[str, Any]:
 
     _require(postgres_action, "docker/postgres/Dockerfile", "PostgreSQL CI action")
     _require(postgres_action, "pg_available_extensions", "PostgreSQL CI action")
-    _require(windows_pgvector, f"PGVECTOR_WINDOWS_VERSION = \"{WINDOWS_PGVECTOR_VERSION}\"", "Windows pgvector installer")
-    _require(windows_pgvector, "SUPPORTED_POSTGRES_MAJOR_VERSIONS = (18,)", "Windows PostgreSQL version contract")
-    _require(windows_pgvector, "vector.v0.8.6-pg18.zip", "Windows pgvector installer")
-    _require(windows_pgvector, "bda17eb97d9e687e3da701adbf4b65a342943b3e0cdc81935ccf0b9833a1ed62", "Windows pgvector installer")
-    _require(windows_launcher, "install_pgvector_windows", "Windows deployment wizard")
-    _require(windows_launcher, "node-v22.22.2-x64.msi", "Windows deployment wizard")
-    _require(windows_launcher, WINDOWS_NODE_INSTALL_SHA256, "Windows Node.js installer")
-    _require(windows_launcher, "npm ci --include=dev", "Windows deployment wizard")
-    _require(windows_launcher, "POSTGRES_INSTALL_VERSION = \"18.6\"", "Windows deployment wizard")
-    _require(windows_launcher, "Nexora 仅支持 PostgreSQL {POSTGRES_BASELINE_MAJOR}", "Windows PostgreSQL runtime gate")
-    _require(windows_spec, "'psycopg2._psycopg'", "Windows launcher PyInstaller spec")
-    _require(windows_spec, "basename.startswith(\"icu\")", "Windows Qt ICU DLL exclusion")
-    _require(windows_spec, "\"poppler\" in source_parts", "Windows Poppler ICU source filter")
-    icu_filter_marker = "a.binaries = [binary for binary in a.binaries if not _is_poppler_icu(binary)]"
-    _require(windows_spec, icu_filter_marker, "Windows Qt ICU DLL exclusion")
-    assert windows_spec.index(icu_filter_marker) < windows_spec.index("exe = EXE("), (
-        "Windows Qt ICU DLL filter must run before PyInstaller creates the EXE"
-    )
-    _require(release_ci, "pyinstaller==6.22.1", "Windows PyInstaller version")
-    _require(release_ci, "pyinstaller-hooks-contrib==2026.6", "Windows PyInstaller hooks version")
-    _require(release_ci, "PySide6==6.11.1", "Windows Qt binding version")
-    _require(release_ci, "psycopg2-binary==2.9.13", "Windows PostgreSQL driver version")
-    _require(release_ci, "Smoke test Windows launcher", "Windows release smoke test")
-    _require(release_ci, "SMOKE_TEST_OK", "Windows release smoke test")
     _require(postgres_dockerfile, "pgvector/pgvector:0.8.6-pg18-bookworm", "PostgreSQL 18 Docker baseline")
     _require(postgres_dockerfile, "postgresql-contrib-18", "PostgreSQL 18 contrib extensions")
     _require(docker_compose, "nexora-pgdata:/var/lib/postgresql", "PostgreSQL 18 persistent volume mount")
@@ -160,13 +128,11 @@ def validate_ci_gate() -> dict[str, Any]:
     _require(release_ci, "ai_rag_release_config_check.py", "release-safe configuration gate")
     _require(release_ci, f'node-version: "{CI_NODE_VERSION}"', "release frontend runtime")
     _require(release_ci, "npm run test:frontend -- --run", "release frontend regression gate")
-    _require(release_ci, "Bundle PostgreSQL 18 pgvector runtime for Windows", "Windows release packaging")
-    _require(release_ci, "third_party/pgvector/vector.v0.8.6-pg18.zip", "Windows release packaging")
-    assert release_ci.count("rm -f handoff.md") == 2, (
-        "release workflow must remove private handoff.md in both release jobs"
+    assert release_ci.count("rm -f handoff.md") == 1, (
+        "release workflow must remove private handoff.md in the release job"
     )
-    assert release_ci.count("nginx/ssl/netops.key blog handoff.md") == 2, (
-        "release workflow must forbid staging private handoff.md in both release jobs"
+    assert release_ci.count("nginx/ssl/netops.key blog handoff.md") == 1, (
+        "release workflow must forbid staging private handoff.md in the release job"
     )
     _require(promptfoo_ci, f'node-version: "{CI_NODE_VERSION}"', "Promptfoo workflow")
     _require(promptfoo_ci, 'PROMPTFOO_VERSION: "0.118.0"', "Promptfoo workflow")
@@ -184,8 +150,6 @@ def validate_ci_gate() -> dict[str, Any]:
         "database_contract": "postgresql_only",
         "postgres_ci_image": "repository_dockerfile_with_pgvector_and_pg_trgm",
         "ci_node_version": CI_NODE_VERSION,
-        "windows_pgvector_version": WINDOWS_PGVECTOR_VERSION,
-        "windows_node_install": "official_msi",
         "external_network": "not_used_by_offline_runner",
         "production_write": False,
         "isolated_anchor_evidence": True,

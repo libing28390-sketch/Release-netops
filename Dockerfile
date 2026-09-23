@@ -51,16 +51,11 @@ COPY assets/catalog/ /app/assets/catalog/
 # Copy environment template
 COPY .env.example /app/.env.example
 
-# Keep the loopback Terminal Agent available for Docker/Ubuntu users to
-# download and run on their own workstation. It is never started in the
-# backend container.
+# Keep the loopback Terminal Agent installer available for Linux workstations.
 COPY scripts/terminal_agent.py /app/scripts/terminal_agent.py
 COPY scripts/install-terminal-agent.sh /app/scripts/install-terminal-agent.sh
 COPY scripts/sync-frontend-dist.sh /app/scripts/sync-frontend-dist.sh
 RUN chmod +x /app/scripts/sync-frontend-dist.sh
-# This Windows binary is a download-only artifact. It is never executed in
-# the Linux container; the browser workstation downloads it as an attachment.
-COPY NexoraTerminalAgent.exe /app/NexoraTerminalAgent.exe
 
 # Keep release-owned TextFSM templates outside the persistent /app/data volume.
 # The parser checks this directory after user templates, so every rebuilt image

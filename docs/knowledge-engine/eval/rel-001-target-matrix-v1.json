@@ -4,17 +4,6 @@
   "authority": "PostgreSQL",
   "sqlite": "forbidden",
   "targets": {
-    "windows_desktop": {
-      "files": {
-        "start.bat": true,
-        "NetOps.exe": true,
-        "desktop/launcher.py": true,
-        "backend/main.py": true,
-        ".env.example": true
-      },
-      "entrypoint": "start.bat -> NetOps.exe or desktop/launcher.py",
-      "status": true
-    },
     "ubuntu_native": {
       "files": {
         "deploy-ubuntu.sh": true,
@@ -58,7 +47,6 @@
     }
   },
   "package_start_scripts": {
-    "start:win": true,
     "start:linux": true,
     "build": true,
     "lint": true

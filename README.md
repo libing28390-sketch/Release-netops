@@ -9,7 +9,6 @@
 `CMDB` · `IPAM` · `Monitoring` · `Topology` · `Automation` · `PAM` · `Change Management` · `AI / RAG`
 
 [![Release](https://img.shields.io/badge/Release-main-0f766e?style=flat-square)](https://github.com/libing28390-sketch/Release-netops)
-[![Windows](https://img.shields.io/badge/Windows-windows-2563eb?style=flat-square&logo=windows)](https://github.com/libing28390-sketch/Release-netops/tree/windows)
 [![Docker](https://img.shields.io/badge/Docker-Compose-2496ed?style=flat-square&logo=docker&logoColor=white)](#快速开始--quick-start)
 [![License](https://img.shields.io/badge/License-Apache--2.0-f59e0b?style=flat-square)](LICENSE)
 
@@ -23,9 +22,8 @@ Nexora 面向网络运维团队，将分散在表格、监控系统、终端工�
 
 当前公开仓库由私有开发仓库通过 GitHub Actions 清理并同步：
 
-- `main`：Ubuntu / Linux / Docker Compose 发布树。
-- `windows`：Windows x64 图形化部署包与兼容启动器。
-- 版本标签：生成 Linux / Windows ZIP 和对应 GitHub Release 制品。
+- `main`：Linux / Docker Compose 发布树。
+- 版本标签：生成 Linux / Docker 发布制品。
 
 > Nexora 会连接网络设备、执行命令并保存加密凭据。首次生产部署前，请先完成密钥替换、权限规划、数据库备份和网络访问控制。
 
@@ -57,7 +55,7 @@ Nexora 面向网络运维团队，将分散在表格、监控系统、终端工�
 
 ```mermaid
 flowchart LR
-    User[Browser / Desktop] --> Nginx[Nginx HTTP/HTTPS]
+    User[Operator Browser] --> Nginx[Nginx HTTP/HTTPS]
     Nginx --> Web[React 19 + TypeScript]
     Nginx --> API[FastAPI API + WebSocket]
     API --> DB[(PostgreSQL 18<br/>pgvector + pg_trgm)]
@@ -78,7 +76,7 @@ flowchart LR
 | 指标与数据层 | PostgreSQL 18、pgvector、pg_trgm、VictoriaMetrics | 业务数据、审计、知识向量、全文检索和 Prometheus-compatible 指标时序。 |
 | 接入网关 | Nginx | 前端静态资源、API/WebSocket 代理、HTTP/HTTPS 入口。 |
 
-生产和发布基线统一使用 PostgreSQL 18；AI/知识库迁移还要求数据库具备 `vector` 与 `pg_trgm` 扩展。Windows 向导新装 PostgreSQL 18.6。PG17 升级到 PG18 属于主版本升级，旧数据目录或 Docker 数据卷不能直接复用；请先备份，再通过 `pg_upgrade` 或 `pg_dump`/`pg_restore` 完成迁移。
+生产和发布基线统一使用 PostgreSQL 18；AI/知识库迁移还要求数据库具备 `vector` 与 `pg_trgm` 扩展。PG17 升级到 PG18 属于主版本升级，旧数据目录或 Docker 数据卷不能直接复用；请先备份，再通过 `pg_upgrade` 或 `pg_dump`/`pg_restore` 完成迁移。
 
 ## 快速开始 / Quick Start
 
@@ -115,21 +113,14 @@ bash /tmp/deploy-nexora.sh
 
 脚本会准备 PostgreSQL、Python、Node.js、systemd 和 Nginx。详见 [Ubuntu 一键部署](docs/deploy/ubuntu.md)。
 
-### Windows x64
-
-```powershell
-git clone -b windows https://github.com/libing28390-sketch/Release-netops.git nexora-automation
-cd nexora-automation
-```
-
-随后双击 `NetOps.exe`，向导默认准备 PostgreSQL 18.6，并完成 pgvector、Python/Node.js 运行环境和前端资源初始化。默认本地访问地址为 `http://127.0.0.1:5010`。详见 [Windows 部署指南](docs/deploy/windows.md)。
+Windows 工作站仍可通过浏览器访问 Linux/Docker 服务端。进入个人设置后，按浏览器所在工作站系统下载并运行对应的 Terminal Agent；这属于工作站接入能力，不代表 Windows 原生服务端部署仍受支持。详见 [本地终端 Agent](docs/deploy/terminal-agent.md)。
 
 ## 部署后必做 / Security Checklist
 
 1. 立即修改首次安装账号密码，并按 Viewer / Operator / Administrator 分配最小权限。
 2. 确认 `.env` 中的 `POSTGRES_PASSWORD`、`SECRET_KEY` 和 `CREDENTIAL_ENCRYPTION_KEY` 均为独立高强度随机值。
 3. 不要将 `.env`、数据库备份、设备配置、终端录屏、SSH/SNMP 凭据或 AI Provider Key 提交到 Git。
-4. 将设备管理网、数据库端口和 Windows `5010` 端口限制在可信网段；生产流量通过 Nginx 和受信任的 HTTPS 证书接入。
+4. 将设备管理网、数据库端口和管理入口限制在可信网段；生产流量通过 Nginx 和受信任的 HTTPS 证书接入。
 5. 在启用自动化写操作、PAM、通知 Webhook 或外部 AI 前，先完成测试环境验证和审计策略配置。
 6. 定期备份 PostgreSQL、配置快照和必要附件，并实际演练恢复流程。
 
@@ -201,9 +192,8 @@ Release-netops/
 - [Docker Compose 部署](docs/deploy/docker.md)
 - [Docker 离线交付与升级](docs/deploy/docker-release-manual.md)
 - [Ubuntu 原生部署](docs/deploy/ubuntu.md)
-- [Windows 一键部署](docs/deploy/windows.md)
-- [Windows pgvector 配置](docs/deploy/windows_pgvector_guide.md)
 - [本地终端 Agent](docs/deploy/terminal-agent.md)
+- [Windows Agent 开机启动排障](docs/deploy/terminal-agent-autostart.md)
 - [AI Provider、模型与安全网关配置](public/downloads/nexora-ai-provider-debug-manual.md)
 
 后端启动后可在 `/api/docs` 或 `/api/redoc` 查看当前 API 文档；生产环境如不需要公开接口文档，应在网关层限制访问。

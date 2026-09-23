@@ -9,7 +9,7 @@ from core.rbac import require_role
 # Agent callbacks authenticate their own one-time/callback capabilities.
 PUBLIC_ROUTES = {
     ('GET', '/api/health'), ('HEAD', '/api/health'), ('GET', '/api/health/live'),
-    ('GET', '/api/system/info'), ('GET', '/api/system/download-assistant'),
+    ('GET', '/api/system/info'),
     ('GET', '/api/system/download-terminal-agent'), ('GET', '/api/system/exchange-token'),
     ('GET', '/api/captcha/generate'), ('POST', '/api/login'),
     ('POST', '/api/mfa/verify'),

@@ -95,7 +95,6 @@ CONFIG_PARTIAL="\$CONFIG_OUT.partial"
 CONFIG_ENTRIES=(.env)
 [ -f "\$PROJECT_DIR/.env.example" ] && CONFIG_ENTRIES+=(.env.example)
 [ -d "\$PROJECT_DIR/nginx/ssl" ] && CONFIG_ENTRIES+=(nginx/ssl)
-[ -f "\$PROJECT_DIR/desktop/desktop_settings.ini" ] && CONFIG_ENTRIES+=(desktop/desktop_settings.ini)
 if tar -czf "\$CONFIG_PARTIAL" -C "\$PROJECT_DIR" "\${CONFIG_ENTRIES[@]}"; then
     if [ ! -s "\$CONFIG_PARTIAL" ]; then
         echo "[netops-backup] configuration archive is empty" >&2

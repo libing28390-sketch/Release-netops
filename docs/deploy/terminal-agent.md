@@ -1,6 +1,6 @@
 # Nexora Terminal Agent
 
-Terminal Agent 运行在操作员工作站上。前端通过本机回环地址调用它，并传递一次性短期令牌。Agent 只监听回环地址，不向局域网开放，也不会把交换到的凭据写入日志。
+Terminal Agent 运行在操作员工作站上。v1.0.9 的 Nexora 服务端只支持 Linux/Ubuntu/Docker 部署，但 Windows 操作员仍可通过浏览器访问远程服务，并在本机运行 Windows Agent。前端通过本机回环地址调用 Agent，并传递一次性短期令牌。Agent 只监听回环地址，不向局域网开放，也不会把交换到的凭据写入日志。
 
 ## Windows 工作站
 
@@ -32,7 +32,7 @@ chmod +x scripts/install-terminal-agent.sh
 ./scripts/install-terminal-agent.sh
 ```
 
-Ubuntu/Linux 工作站不需要配置 Windows 客户端路径，安装并运行对应脚本即可。Xshell、PuTTY 等 Windows 客户端只能在 Windows 工作站上使用。
+Ubuntu/Linux 工作站不需要配置 Windows 客户端路径，安装并运行对应脚本即可。Windows 工作站继续使用上面的 EXE Agent 和本机终端客户端。
 
 ## Docker / Ubuntu 服务端
 
@@ -52,10 +52,10 @@ NEXORA_AGENT_TLS_VERIFY=1
 
 Agent 始终只绑定 `127.0.0.1`、`localhost` 或 `::1`，不能直接暴露到管理网。
 
-Docker 镜像会携带 `NexoraTerminalAgent.exe` 作为下载附件。自定义镜像如果没有该文件，可通过环境变量指定企业内部可访问的 Windows Agent 地址：
+服务端不需要把 Windows Agent 打进 Linux 镜像。Windows 浏览器访问服务端时，API 会从配置的 release URL 流式返回本机 Agent；内部部署可改成企业内网地址：
 
 ```text
-TERMINAL_AGENT_WINDOWS_URL=https://github.com/libing28390-sketch/Release-netops/raw/refs/heads/windows/NexoraTerminalAgent.exe
+TERMINAL_AGENT_WINDOWS_URL=https://github.com/libing28390-sketch/Release-netops/releases/latest/download/NexoraTerminalAgent.exe
 ```
 
 个人设置会识别浏览器所在的工作站系统，并只显示匹配的下载入口：Windows 显示 EXE，Ubuntu/Linux 显示安装脚本。不要在远程设备的操作系统和本机 Agent 包之间做映射。
