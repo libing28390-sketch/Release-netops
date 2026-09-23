@@ -7,6 +7,7 @@ def call_api(prompt, options, context) -> dict
 from __future__ import annotations
 
 import json
+import logging
 import sys
 from pathlib import Path
 from typing import Any
@@ -18,6 +19,8 @@ if str(BACKEND_ROOT) not in sys.path:
 
 import re
 from ai.services.rag_retriever import RAGRetriever, RetrievalRequest
+
+logger = logging.getLogger("nexora.promptfoo_provider")
 
 
 def call_api(prompt: str, options: dict[str, Any] | None = None, context: dict[str, Any] | None = None) -> dict[str, Any]:
@@ -160,17 +163,23 @@ def call_api(prompt: str, options: dict[str, Any] | None = None, context: dict[s
             "output": json.dumps(output_summary, ensure_ascii=False),
             "metadata": output_summary,
         }
-    except Exception:
+    except Exception as exc:
         # Promptfoo output is an evaluation artifact.  Do not echo provider
         # exceptions because they can contain SQL/connection details or
         # provider payload fragments; the gate only needs a stable failure
-        # contract and the server-side logs retain the diagnostic context.
+        # contract and the server-side logs retain the diagnostic context. The
+        # exception class is safe to expose in the redacted metadata and lets
+        # CI distinguish a provider/runtime failure from an assertion failure.
+        error_type = type(exc).__name__
+        logger.warning("Promptfoo provider execution failed: %s", error_type)
         return {
             "error": "PROVIDER_EXECUTION_FAILED",
             "output": "ERROR: PROVIDER_EXECUTION_FAILED",
             "metadata": {
                 "decision": "error",
                 "reason_code": "PROVIDER_EXECUTION_FAILED",
+                "error_type": error_type,
+                "error_stage": "retrieve_knowledge",
                 "outcome": "no_match",
                 "returned_document_ids": [],
                 "returned_vendors": [],

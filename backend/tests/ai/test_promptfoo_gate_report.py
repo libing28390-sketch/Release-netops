@@ -27,7 +27,8 @@ def test_promptfoo_report_redacts_variables_and_error_bodies(tmp_path: Path) -> 
                     {
                         "success": False,
                         "testCase": {"description": "ANCHOR-047", "vars": {"query": "tenant-beta"}},
-                        "failureReason": "provider returned https://internal.example/key?token=secret",
+                        "error": "provider returned https://internal.example/key?token=secret",
+                        "metadata": {"error_type": "OperationalError", "error_stage": "retrieve_knowledge"},
                         "gradingResult": {"componentResults": [{"pass": False}]},
                     },
                 ]
@@ -40,6 +41,8 @@ def test_promptfoo_report_redacts_variables_and_error_bodies(tmp_path: Path) -> 
     assert "password=fixture" not in rendered
     assert "internal.example" not in rendered
     assert "secret test" not in rendered
+    assert report["cases"][1]["error_type"] == "OperationalError"
+    assert report["cases"][1]["error_stage"] == "retrieve_knowledge"
 
     junit = tmp_path / "promptfoo.xml"
     write_junit(report, junit)

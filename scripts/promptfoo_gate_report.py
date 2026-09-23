@@ -11,6 +11,7 @@ categories.
 from __future__ import annotations
 
 import argparse
+from collections import Counter
 import json
 import re
 import sys
@@ -53,12 +54,21 @@ def _safe_error(value: Any) -> str | None:
     return "evaluation_error"
 
 
+def _safe_error_type(value: Any) -> str | None:
+    """Keep only a Python exception class name in the durable report."""
+    if value in (None, ""):
+        return None
+    text = re.sub(r"[^A-Za-z0-9_.]+", "", str(value))
+    return text[:80] or None
+
+
 def build_redacted_report(payload: Mapping[str, Any]) -> dict[str, Any]:
     rows = _result_rows(payload)
     cases: list[dict[str, Any]] = []
     for index, item in enumerate(rows, start=1):
         grading = item.get("gradingResult") if isinstance(item.get("gradingResult"), Mapping) else {}
         components = grading.get("componentResults") if isinstance(grading.get("componentResults"), list) else []
+        metadata = item.get("metadata") if isinstance(item.get("metadata"), Mapping) else {}
         cases.append(
             {
                 "case": _safe_name(
@@ -68,7 +78,9 @@ def build_redacted_report(payload: Mapping[str, Any]) -> dict[str, Any]:
                     f"case-{index}",
                 ),
                 "passed": bool(item.get("success", item.get("pass", False))),
-                "failure_reason": _safe_error(item.get("failureReason")),
+                "failure_reason": _safe_error(item.get("failureReason") or item.get("error")),
+                "error_type": _safe_error_type(metadata.get("error_type")),
+                "error_stage": _safe_error_type(metadata.get("error_stage")),
                 "assertion_count": len(components),
                 "assertion_failed_count": sum(
                     1 for component in components if isinstance(component, Mapping) and not bool(component.get("pass"))
@@ -136,6 +148,13 @@ def main(argv: list[str] | None = None) -> int:
         f"Promptfoo redacted report: {report['passed_cases']}/{report['case_count']} passed; "
         f"status={report['status']}"
     )
+    if report["failed_cases"]:
+        categories = Counter(
+            case.get("error_type") or case.get("failure_reason") or "unknown"
+            for case in report["cases"]
+            if not case.get("passed")
+        )
+        print(f"Promptfoo failure categories: {dict(categories)}")
     return 1 if args.strict and report["status"] != "PASS" else 0
 
 
