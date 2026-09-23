@@ -1,0 +1,984 @@
+{
+  "annotations": {
+    "list": []
+  },
+  "editable": false,
+  "fiscalYearStartMonth": 0,
+  "graphTooltip": 1,
+  "id": null,
+  "links": [],
+  "panels": [
+    {
+      "id": 1,
+      "title": "受纳管 Linux 主机数",
+      "type": "stat",
+      "datasource": {
+        "type": "prometheus",
+        "uid": "victoriametrics"
+      },
+      "gridPos": {
+        "h": 4,
+        "w": 4,
+        "x": 0,
+        "y": 0
+      },
+      "fieldConfig": {
+        "defaults": {
+          "unit": "none",
+          "noValue": "—",
+          "color": {
+            "mode": "thresholds"
+          },
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              {
+                "color": "blue",
+                "value": null
+              }
+            ]
+          }
+        },
+        "overrides": []
+      },
+      "options": {
+        "colorMode": "value",
+        "graphMode": "none",
+        "justifyMode": "center",
+        "orientation": "auto",
+        "reduceOptions": {
+          "calcs": [
+            "lastNotNull"
+          ],
+          "fields": "",
+          "values": false
+        },
+        "textMode": "value"
+      },
+      "targets": [
+        {
+          "expr": "count(count by (hostname) (up{job=\"linux_servers\",site_name=~\"$site\",hostname=~\"$device\"})) or vector(0)",
+          "refId": "A"
+        }
+      ]
+    },
+    {
+      "id": 2,
+      "title": "系统平均运行时间 (Uptime)",
+      "type": "stat",
+      "datasource": {
+        "type": "prometheus",
+        "uid": "victoriametrics"
+      },
+      "gridPos": {
+        "h": 4,
+        "w": 4,
+        "x": 4,
+        "y": 0
+      },
+      "fieldConfig": {
+        "defaults": {
+          "unit": "s",
+          "noValue": "—",
+          "color": {
+            "mode": "thresholds"
+          },
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              {
+                "color": "#3274D9",
+                "value": null
+              }
+            ]
+          }
+        },
+        "overrides": []
+      },
+      "options": {
+        "colorMode": "value",
+        "graphMode": "none",
+        "justifyMode": "center",
+        "orientation": "auto",
+        "reduceOptions": {
+          "calcs": [
+            "lastNotNull"
+          ],
+          "fields": "",
+          "values": false
+        },
+        "textMode": "value"
+      },
+      "targets": [
+        {
+          "expr": "avg(time() - node_boot_time_seconds{job=\"linux_servers\",site_name=~\"$site\",hostname=~\"$device\"}) or vector(0)",
+          "refId": "A"
+        }
+      ]
+    },
+    {
+      "id": 3,
+      "title": "平均 CPU 使用率",
+      "type": "stat",
+      "datasource": {
+        "type": "prometheus",
+        "uid": "victoriametrics"
+      },
+      "gridPos": {
+        "h": 4,
+        "w": 4,
+        "x": 8,
+        "y": 0
+      },
+      "fieldConfig": {
+        "defaults": {
+          "unit": "percent",
+          "noValue": "—",
+          "color": {
+            "mode": "thresholds"
+          },
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              {
+                "color": "green",
+                "value": null
+              },
+              {
+                "color": "#E0B400",
+                "value": 70
+              },
+              {
+                "color": "red",
+                "value": 85
+              }
+            ]
+          }
+        },
+        "overrides": []
+      },
+      "options": {
+        "colorMode": "value",
+        "graphMode": "none",
+        "justifyMode": "center",
+        "orientation": "auto",
+        "reduceOptions": {
+          "calcs": [
+            "lastNotNull"
+          ],
+          "fields": "",
+          "values": false
+        },
+        "textMode": "value"
+      },
+      "targets": [
+        {
+          "expr": "avg(100 - (avg by (hostname) (rate(node_cpu_seconds_total{job=\"linux_servers\",site_name=~\"$site\",hostname=~\"$device\",mode=\"idle\"}[5m])) * 100)) or vector(0)",
+          "refId": "A"
+        }
+      ]
+    },
+    {
+      "id": 4,
+      "title": "平均物理内存利用率",
+      "type": "stat",
+      "datasource": {
+        "type": "prometheus",
+        "uid": "victoriametrics"
+      },
+      "gridPos": {
+        "h": 4,
+        "w": 4,
+        "x": 12,
+        "y": 0
+      },
+      "fieldConfig": {
+        "defaults": {
+          "unit": "percent",
+          "noValue": "—",
+          "color": {
+            "mode": "thresholds"
+          },
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              {
+                "color": "green",
+                "value": null
+              },
+              {
+                "color": "#E0B400",
+                "value": 80
+              },
+              {
+                "color": "red",
+                "value": 90
+              }
+            ]
+          }
+        },
+        "overrides": []
+      },
+      "options": {
+        "colorMode": "value",
+        "graphMode": "none",
+        "justifyMode": "center",
+        "orientation": "auto",
+        "reduceOptions": {
+          "calcs": [
+            "lastNotNull"
+          ],
+          "fields": "",
+          "values": false
+        },
+        "textMode": "value"
+      },
+      "targets": [
+        {
+          "expr": "avg((1 - (node_memory_MemAvailable_bytes{job=\"linux_servers\",site_name=~\"$site\",hostname=~\"$device\"} / node_memory_MemTotal_bytes{job=\"linux_servers\",site_name=~\"$site\",hostname=~\"$device\"})) * 100) or vector(0)",
+          "refId": "A"
+        }
+      ]
+    },
+    {
+      "id": 5,
+      "title": "TCP 活跃连接总数",
+      "type": "stat",
+      "datasource": {
+        "type": "prometheus",
+        "uid": "victoriametrics"
+      },
+      "gridPos": {
+        "h": 4,
+        "w": 4,
+        "x": 16,
+        "y": 0
+      },
+      "fieldConfig": {
+        "defaults": {
+          "unit": "none",
+          "noValue": "—",
+          "color": {
+            "mode": "thresholds"
+          },
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              {
+                "color": "purple",
+                "value": null
+              }
+            ]
+          }
+        },
+        "overrides": []
+      },
+      "options": {
+        "colorMode": "value",
+        "graphMode": "none",
+        "justifyMode": "center",
+        "orientation": "auto",
+        "reduceOptions": {
+          "calcs": [
+            "lastNotNull"
+          ],
+          "fields": "",
+          "values": false
+        },
+        "textMode": "value"
+      },
+      "targets": [
+        {
+          "expr": "sum(node_netstat_Tcp_CurrEstab{job=\"linux_servers\",site_name=~\"$site\",hostname=~\"$device\"}) or vector(0)",
+          "refId": "A"
+        }
+      ]
+    },
+    {
+      "id": 6,
+      "title": "已打开文件句柄数",
+      "type": "stat",
+      "datasource": {
+        "type": "prometheus",
+        "uid": "victoriametrics"
+      },
+      "gridPos": {
+        "h": 4,
+        "w": 4,
+        "x": 20,
+        "y": 0
+      },
+      "fieldConfig": {
+        "defaults": {
+          "unit": "short",
+          "noValue": "—",
+          "color": {
+            "mode": "thresholds"
+          },
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              {
+                "color": "green",
+                "value": null
+              },
+              {
+                "color": "#E0B400",
+                "value": 20000
+              },
+              {
+                "color": "red",
+                "value": 100000
+              }
+            ]
+          }
+        },
+        "overrides": []
+      },
+      "options": {
+        "colorMode": "value",
+        "graphMode": "none",
+        "justifyMode": "center",
+        "orientation": "auto",
+        "reduceOptions": {
+          "calcs": [
+            "lastNotNull"
+          ],
+          "fields": "",
+          "values": false
+        },
+        "textMode": "value"
+      },
+      "targets": [
+        {
+          "expr": "sum(node_filefd_allocated{job=\"linux_servers\",site_name=~\"$site\",hostname=~\"$device\"}) or vector(0)",
+          "refId": "A"
+        }
+      ]
+    },
+    {
+      "id": 7,
+      "title": "CPU 各状态利用率走势 (%)",
+      "type": "timeseries",
+      "datasource": {
+        "type": "prometheus",
+        "uid": "victoriametrics"
+      },
+      "gridPos": {
+        "h": 8,
+        "w": 12,
+        "x": 0,
+        "y": 4
+      },
+      "fieldConfig": {
+        "defaults": {
+          "unit": "percent",
+          "noValue": "—",
+          "color": {
+            "mode": "palette-classic"
+          },
+          "custom": {
+            "drawStyle": "line",
+            "lineInterpolation": "linear",
+            "fillOpacity": 10
+          }
+        },
+        "overrides": []
+      },
+      "options": {
+        "legend": {
+          "displayMode": "list",
+          "placement": "bottom",
+          "showLegend": true
+        },
+        "tooltip": {
+          "mode": "multi",
+          "sort": "desc"
+        }
+      },
+      "targets": [
+        {
+          "expr": "100 - (avg by (hostname) (rate(node_cpu_seconds_total{job=\"linux_servers\",site_name=~\"$site\",hostname=~\"$device\",mode=\"idle\"}[5m])) * 100)",
+          "legendFormat": "{{site_name}} / {{hostname}} 整机 CPU 利用率 (%)",
+          "refId": "A"
+        },
+        {
+          "expr": "avg by (hostname) (rate(node_cpu_seconds_total{job=\"linux_servers\",site_name=~\"$site\",hostname=~\"$device\",mode=\"user\"}[5m])) * 100",
+          "legendFormat": "{{site_name}} / {{hostname}} 用户态 (user %)",
+          "refId": "B"
+        },
+        {
+          "expr": "avg by (hostname) (rate(node_cpu_seconds_total{job=\"linux_servers\",site_name=~\"$site\",hostname=~\"$device\",mode=\"system\"}[5m])) * 100",
+          "legendFormat": "{{site_name}} / {{hostname}} 系统态 (system %)",
+          "refId": "C"
+        },
+        {
+          "expr": "avg by (hostname) (rate(node_cpu_seconds_total{job=\"linux_servers\",site_name=~\"$site\",hostname=~\"$device\",mode=\"iowait\"}[5m])) * 100",
+          "legendFormat": "{{site_name}} / {{hostname}} I/O等待 (iowait %)",
+          "refId": "D"
+        }
+      ]
+    },
+    {
+      "id": 8,
+      "title": "物理内存与 Swap 分布走势",
+      "type": "timeseries",
+      "datasource": {
+        "type": "prometheus",
+        "uid": "victoriametrics"
+      },
+      "gridPos": {
+        "h": 8,
+        "w": 12,
+        "x": 12,
+        "y": 4
+      },
+      "fieldConfig": {
+        "defaults": {
+          "unit": "bytes",
+          "noValue": "—",
+          "color": {
+            "mode": "palette-classic"
+          },
+          "custom": {
+            "drawStyle": "line",
+            "lineInterpolation": "linear",
+            "fillOpacity": 10
+          }
+        },
+        "overrides": []
+      },
+      "options": {
+        "legend": {
+          "displayMode": "list",
+          "placement": "bottom",
+          "showLegend": true
+        },
+        "tooltip": {
+          "mode": "multi",
+          "sort": "desc"
+        }
+      },
+      "targets": [
+        {
+          "expr": "node_memory_MemTotal_bytes{job=\"linux_servers\",site_name=~\"$site\",hostname=~\"$device\"} - node_memory_MemAvailable_bytes{job=\"linux_servers\",site_name=~\"$site\",hostname=~\"$device\"}",
+          "legendFormat": "{{site_name}} / {{hostname}} 内存已用量",
+          "refId": "A"
+        },
+        {
+          "expr": "node_memory_MemAvailable_bytes{job=\"linux_servers\",site_name=~\"$site\",hostname=~\"$device\"}",
+          "legendFormat": "{{site_name}} / {{hostname}} 可用物理内存",
+          "refId": "B"
+        },
+        {
+          "expr": "node_memory_Cached_bytes{job=\"linux_servers\",site_name=~\"$site\",hostname=~\"$device\"} + node_memory_Buffers_bytes{job=\"linux_servers\",site_name=~\"$site\",hostname=~\"$device\"}",
+          "legendFormat": "{{site_name}} / {{hostname}} 缓冲与缓存 (Buffers+Cache)",
+          "refId": "C"
+        },
+        {
+          "expr": "node_memory_SwapTotal_bytes{job=\"linux_servers\",site_name=~\"$site\",hostname=~\"$device\"} - node_memory_SwapFree_bytes{job=\"linux_servers\",site_name=~\"$site\",hostname=~\"$device\"}",
+          "legendFormat": "{{site_name}} / {{hostname}} Swap 已用量",
+          "refId": "D"
+        },
+        {
+          "expr": "node_memory_MemTotal_bytes{job=\"linux_servers\",site_name=~\"$site\",hostname=~\"$device\"}",
+          "legendFormat": "{{site_name}} / {{hostname}} 物理内存总量 (Total)",
+          "refId": "E"
+        }
+      ]
+    },
+    {
+      "id": 9,
+      "title": "系统平均负载走势 (Load1 / Load5 / Load15)",
+      "type": "timeseries",
+      "datasource": {
+        "type": "prometheus",
+        "uid": "victoriametrics"
+      },
+      "gridPos": {
+        "h": 8,
+        "w": 12,
+        "x": 0,
+        "y": 12
+      },
+      "fieldConfig": {
+        "defaults": {
+          "unit": "short",
+          "noValue": "—",
+          "color": {
+            "mode": "palette-classic"
+          },
+          "custom": {
+            "drawStyle": "line",
+            "lineInterpolation": "linear",
+            "fillOpacity": 10
+          }
+        },
+        "overrides": []
+      },
+      "options": {
+        "legend": {
+          "displayMode": "list",
+          "placement": "bottom",
+          "showLegend": true
+        },
+        "tooltip": {
+          "mode": "multi",
+          "sort": "desc"
+        }
+      },
+      "targets": [
+        {
+          "expr": "node_load1{job=\"linux_servers\",site_name=~\"$site\",hostname=~\"$device\"}",
+          "legendFormat": "{{site_name}} / {{hostname}} 1分钟负载 (Load1)",
+          "refId": "A"
+        },
+        {
+          "expr": "node_load5{job=\"linux_servers\",site_name=~\"$site\",hostname=~\"$device\"}",
+          "legendFormat": "{{site_name}} / {{hostname}} 5分钟负载 (Load5)",
+          "refId": "B"
+        },
+        {
+          "expr": "node_load15{job=\"linux_servers\",site_name=~\"$site\",hostname=~\"$device\"}",
+          "legendFormat": "{{site_name}} / {{hostname}} 15分钟负载 (Load15)",
+          "refId": "C"
+        },
+        {
+          "expr": "count by (hostname) (node_cpu_seconds_total{job=\"linux_servers\",site_name=~\"$site\",hostname=~\"$device\",mode=\"idle\"})",
+          "legendFormat": "{{site_name}} / {{hostname}} 逻辑 CPU 核心数 (阈值参考)",
+          "refId": "D"
+        }
+      ]
+    },
+    {
+      "id": 10,
+      "title": "磁盘读写吞吐速率 (Bytes/s)",
+      "type": "timeseries",
+      "datasource": {
+        "type": "prometheus",
+        "uid": "victoriametrics"
+      },
+      "gridPos": {
+        "h": 8,
+        "w": 12,
+        "x": 12,
+        "y": 12
+      },
+      "fieldConfig": {
+        "defaults": {
+          "unit": "Bps",
+          "noValue": "—",
+          "color": {
+            "mode": "palette-classic"
+          },
+          "custom": {
+            "drawStyle": "line",
+            "lineInterpolation": "linear",
+            "fillOpacity": 10
+          }
+        },
+        "overrides": []
+      },
+      "options": {
+        "legend": {
+          "displayMode": "list",
+          "placement": "bottom",
+          "showLegend": true
+        },
+        "tooltip": {
+          "mode": "multi",
+          "sort": "desc"
+        }
+      },
+      "targets": [
+        {
+          "expr": "sum by (hostname, device) (rate(node_disk_read_bytes_total{job=\"linux_servers\",site_name=~\"$site\",hostname=~\"$device\",device!~\"loop.*|ram.*\"}[5m]))",
+          "legendFormat": "{{site_name}} / {{hostname}} - {{device}} 读吞吐",
+          "refId": "A"
+        },
+        {
+          "expr": "sum by (hostname, device) (rate(node_disk_written_bytes_total{job=\"linux_servers\",site_name=~\"$site\",hostname=~\"$device\",device!~\"loop.*|ram.*\"}[5m]))",
+          "legendFormat": "{{site_name}} / {{hostname}} - {{device}} 写吞吐",
+          "refId": "B"
+        }
+      ]
+    },
+    {
+      "id": 11,
+      "title": "主机磁盘空间利用率 Top 10",
+      "type": "table",
+      "datasource": {
+        "type": "prometheus",
+        "uid": "victoriametrics"
+      },
+      "gridPos": {
+        "h": 8,
+        "w": 12,
+        "x": 0,
+        "y": 20
+      },
+      "fieldConfig": {
+        "defaults": {
+          "unit": "none",
+          "noValue": "—",
+          "color": {
+            "mode": "thresholds"
+          }
+        },
+        "overrides": [
+          {
+            "matcher": {
+              "id": "byName",
+              "options": "数值"
+            },
+            "properties": [
+              {
+                "id": "unit",
+                "value": "percent"
+              }
+            ]
+          }
+        ]
+      },
+      "options": {
+        "cellHeight": "sm",
+        "showHeader": true,
+        "footer": {
+          "show": false
+        }
+      },
+      "targets": [
+        {
+          "expr": "topk(10, max by (hostname, mountpoint) ((1 - (node_filesystem_avail_bytes{job=\"linux_servers\",site_name=~\"$site\",hostname=~\"$device\",fstype!~\"tmpfs|iso9660|squashfs\",fstype!=\"\"} / node_filesystem_size_bytes{job=\"linux_servers\",site_name=~\"$site\",hostname=~\"$device\"})) * 100))",
+          "format": "table",
+          "instant": true,
+          "refId": "A"
+        }
+      ],
+      "transformations": [
+        {
+          "id": "organize",
+          "options": {
+            "excludeByName": {
+              "Time": true,
+              "__name__": true,
+              "ifIndex": true,
+              "asset_id": true,
+              "nexora_asset_id": true,
+              "nexora_hostname": true,
+              "nexora_module": true,
+              "nexora_platform": true,
+              "nexora_role": true,
+              "nexora_site_id": true,
+              "nexora_site_name": true,
+              "nexora_tenant_id": true,
+              "nexora_vendor": true,
+              "job": true,
+              "tenant_id": true,
+              "site_id": true,
+              "platform": true
+            },
+            "indexByName": {
+              "sysName": 0,
+              "hostname": 1,
+              "site_name": 2,
+              "instance": 3,
+              "ifName": 4,
+              "ifDescr": 5,
+              "vendor": 6,
+              "role": 7,
+              "Value": 8
+            },
+            "renameByName": {
+              "sysName": "设备名称",
+              "hostname": "设备名称",
+              "instance": "管理 IP",
+              "site_name": "站点",
+              "ifName": "接口全称",
+              "ifDescr": "接口描述",
+              "vendor": "厂商",
+              "role": "角色",
+              "Value": "磁盘使用率",
+              "mountpoint": "挂载点"
+            }
+          }
+        }
+      ]
+    },
+    {
+      "id": 12,
+      "title": "服务器网卡流量走势 (bps)",
+      "type": "timeseries",
+      "datasource": {
+        "type": "prometheus",
+        "uid": "victoriametrics"
+      },
+      "gridPos": {
+        "h": 8,
+        "w": 12,
+        "x": 12,
+        "y": 20
+      },
+      "fieldConfig": {
+        "defaults": {
+          "unit": "bps",
+          "noValue": "—",
+          "color": {
+            "mode": "palette-classic"
+          },
+          "custom": {
+            "drawStyle": "line",
+            "lineInterpolation": "linear",
+            "fillOpacity": 10
+          }
+        },
+        "overrides": []
+      },
+      "options": {
+        "legend": {
+          "displayMode": "list",
+          "placement": "bottom",
+          "showLegend": true
+        },
+        "tooltip": {
+          "mode": "multi",
+          "sort": "desc"
+        }
+      },
+      "targets": [
+        {
+          "expr": "sum by (hostname, device) (rate(node_network_receive_bytes_total{job=\"linux_servers\",site_name=~\"$site\",hostname=~\"$device\",device!~\"lo|docker.*|veth.*|br-.*\"}[5m]) * 8)",
+          "legendFormat": "{{site_name}} / {{hostname}} - {{device}} 接收 (bps)",
+          "refId": "A"
+        },
+        {
+          "expr": "sum by (hostname, device) (rate(node_network_transmit_bytes_total{job=\"linux_servers\",site_name=~\"$site\",hostname=~\"$device\",device!~\"lo|docker.*|veth.*|br-.*\"}[5m]) * 8)",
+          "legendFormat": "{{site_name}} / {{hostname}} - {{device}} 发送 (bps)",
+          "refId": "B"
+        }
+      ]
+    },
+    {
+      "id": 13,
+      "title": "主机 TCP 活跃连接数 Top 10",
+      "type": "table",
+      "datasource": {
+        "type": "prometheus",
+        "uid": "victoriametrics"
+      },
+      "gridPos": {
+        "h": 8,
+        "w": 12,
+        "x": 0,
+        "y": 28
+      },
+      "fieldConfig": {
+        "defaults": {
+          "unit": "none",
+          "noValue": "—",
+          "color": {
+            "mode": "thresholds"
+          }
+        },
+        "overrides": [
+          {
+            "matcher": {
+              "id": "byName",
+              "options": "数值"
+            },
+            "properties": [
+              {
+                "id": "unit",
+                "value": "none"
+              }
+            ]
+          }
+        ]
+      },
+      "options": {
+        "cellHeight": "sm",
+        "showHeader": true,
+        "footer": {
+          "show": false
+        }
+      },
+      "targets": [
+        {
+          "expr": "topk(10, sum by (hostname) (node_netstat_Tcp_CurrEstab{job=\"linux_servers\",site_name=~\"$site\",hostname=~\"$device\"}))",
+          "format": "table",
+          "instant": true,
+          "refId": "A"
+        }
+      ],
+      "transformations": [
+        {
+          "id": "organize",
+          "options": {
+            "excludeByName": {
+              "Time": true,
+              "__name__": true,
+              "ifIndex": true,
+              "asset_id": true,
+              "nexora_asset_id": true,
+              "nexora_hostname": true,
+              "nexora_module": true,
+              "nexora_platform": true,
+              "nexora_role": true,
+              "nexora_site_id": true,
+              "nexora_site_name": true,
+              "nexora_tenant_id": true,
+              "nexora_vendor": true,
+              "job": true,
+              "tenant_id": true,
+              "site_id": true,
+              "platform": true
+            },
+            "indexByName": {
+              "sysName": 0,
+              "hostname": 1,
+              "site_name": 2,
+              "instance": 3,
+              "ifName": 4,
+              "ifDescr": 5,
+              "vendor": 6,
+              "role": 7,
+              "Value": 8
+            },
+            "renameByName": {
+              "sysName": "设备名称",
+              "hostname": "设备名称",
+              "instance": "管理 IP",
+              "site_name": "站点",
+              "ifName": "接口全称",
+              "ifDescr": "接口描述",
+              "vendor": "厂商",
+              "role": "角色",
+              "Value": "活跃连接数"
+            }
+          }
+        }
+      ]
+    },
+    {
+      "id": 14,
+      "title": "系统进程调度与阻塞情况",
+      "type": "timeseries",
+      "datasource": {
+        "type": "prometheus",
+        "uid": "victoriametrics"
+      },
+      "gridPos": {
+        "h": 8,
+        "w": 12,
+        "x": 12,
+        "y": 28
+      },
+      "fieldConfig": {
+        "defaults": {
+          "unit": "short",
+          "noValue": "—",
+          "color": {
+            "mode": "palette-classic"
+          },
+          "custom": {
+            "drawStyle": "line",
+            "lineInterpolation": "linear",
+            "fillOpacity": 10
+          }
+        },
+        "overrides": []
+      },
+      "options": {
+        "legend": {
+          "displayMode": "list",
+          "placement": "bottom",
+          "showLegend": true
+        },
+        "tooltip": {
+          "mode": "multi",
+          "sort": "desc"
+        }
+      },
+      "targets": [
+        {
+          "expr": "node_procs_running{job=\"linux_servers\",site_name=~\"$site\",hostname=~\"$device\"}",
+          "legendFormat": "{{site_name}} / {{hostname}} 正在运行进程数",
+          "refId": "A"
+        },
+        {
+          "expr": "node_procs_blocked{job=\"linux_servers\",site_name=~\"$site\",hostname=~\"$device\"}",
+          "legendFormat": "{{site_name}} / {{hostname}} 阻塞/等待I/O进程数",
+          "refId": "B"
+        }
+      ]
+    }
+  ],
+  "refresh": "30s",
+  "schemaVersion": 39,
+  "tags": [
+    "nexora",
+    "server",
+    "linux",
+    "metrics"
+  ],
+  "templating": {
+    "list": [
+      {
+        "allValue": ".*",
+        "current": {
+          "selected": true,
+          "text": [
+            "All"
+          ],
+          "value": [
+            "$__all"
+          ]
+        },
+        "definition": "label_values({__name__=~\"node_.*|up\",job=\"linux_servers\"}, site_name)",
+        "includeAll": true,
+        "label": "站点",
+        "multi": true,
+        "name": "site",
+        "options": [],
+        "query": {
+          "query": "label_values({__name__=~\"node_.*|up\",job=\"linux_servers\"}, site_name)",
+          "refId": "StandardVariableQuery"
+        },
+        "refresh": 1,
+        "type": "query"
+      },
+      {
+        "allValue": ".*",
+        "current": {
+          "selected": true,
+          "text": [
+            "All"
+          ],
+          "value": [
+            "$__all"
+          ]
+        },
+        "definition": "label_values({__name__=~\"node_.*|up\",job=\"linux_servers\",site_name=~\"$site\"}, hostname)",
+        "includeAll": true,
+        "label": "服务器",
+        "multi": true,
+        "name": "device",
+        "options": [],
+        "query": {
+          "query": "label_values({__name__=~\"node_.*|up\",job=\"linux_servers\",site_name=~\"$site\"}, hostname)",
+          "refId": "StandardVariableQuery"
+        },
+        "refresh": 1,
+        "type": "query"
+      }
+    ]
+  },
+  "time": {
+    "from": "now-6h",
+    "to": "now"
+  },
+  "timezone": "browser",
+  "title": "07 Linux 服务器监控 (Linux Server Metrics)",
+  "uid": "nexora-linux-metrics",
+  "version": 26
+}
