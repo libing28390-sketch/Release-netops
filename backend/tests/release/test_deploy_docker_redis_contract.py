@@ -48,6 +48,17 @@ def test_deploy_script_keeps_an_explicit_way_to_disable_the_sidecar():
     assert "Set to 0 to run db/netops/monitoring/nginx without Redis." in source
 
 
+def test_legacy_dashboard_cleanup_uses_stdin_auth_and_only_targets_retired_uid():
+    source = SCRIPT.read_text(encoding="utf-8")
+    cleanup = source.split("prune_legacy_grafana_dashboard() {", 1)[1].split("\nrequired_images()", 1)[0]
+
+    assert "nexora-server-metrics" in cleanup
+    assert '"Server & Host Metrics"' in cleanup
+    assert "--config -" in cleanup
+    assert "--user " not in cleanup
+    assert 'read -r -s -p "Grafana admin password (input hidden): "' in cleanup
+
+
 def test_redis_sidecar_uses_a_restricted_acl_user_and_keeps_ai_rate_limits_working():
     compose = yaml.safe_load(COMPOSE.read_text(encoding="utf-8"))
     service = compose["services"]["redis"]

@@ -69,6 +69,16 @@ Nexora 的“监控大盘”通过同源 `/grafana/` 访问 Grafana，Grafana �
 `GRAFANA_ADMIN_USER` / `GRAFANA_ADMIN_PASSWORD` 登录。需要在 Nexora 内嵌大盘时，
 保持 `GRAFANA_ALLOW_EMBEDDING=1`，不要为了省略登录而把匿名访问开放到不可信网络。
 
+旧版统一主机大盘 `07 服务器与主机监控`（UID `nexora-server-metrics`）已被 Linux 与
+Windows 专用大盘替代。Docker 部署脚本在安装、升级和离线启动时会尝试删除该旧 UID；
+也可以在部署目录中单独执行以下命令。脚本会先核对旧 UID 的标题，只删除这条历史记录。
+若容器环境中的 Grafana 凭据与当前登录凭据不一致，手动命令会隐藏提示输入管理员账号和密码；
+自动部署不会交互，认证失败或标题不匹配时会报告清理未完成，不会触碰其他大盘。
+
+```bash
+bash scripts/deploy-docker.sh prune-legacy-dashboard
+```
+
 `GRAFANA_ROOT_URL` 必须填写浏览器实际访问的 HTTPS 地址并保留结尾斜杠，例如
 `https://nexora.example.com/grafana/`。不要保留 `%(domain)s`、`localhost` 或
 Grafana 内部的 `:3000`；否则 Grafana 会把 iframe 重定向到用户工作站的

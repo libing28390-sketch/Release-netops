@@ -25,6 +25,7 @@ Usage:
   bash scripts/deploy-docker.sh load-images <archive-path>
   bash scripts/deploy-docker.sh backup-release [deployment-directory]
   bash scripts/deploy-docker.sh start-offline
+  bash scripts/deploy-docker.sh prune-legacy-dashboard [deployment-directory]
   bash scripts/deploy-docker.sh redis-status [deployment-directory]
   bash scripts/deploy-docker.sh redis-logs [deployment-directory]
   bash scripts/deploy-docker.sh reset-data [deployment-directory] [--yes]
@@ -45,6 +46,8 @@ Commands:
   start-offline Start the stack, including monitoring services and the Redis
                  sidecar when enabled, using only local images, without
                  building or pulling images.
+  prune-legacy-dashboard Remove only the retired `nexora-server-metrics`
+                         dashboard from the running Grafana instance.
   redis-status Show the Redis sidecar status through the same Compose project.
   redis-logs   Follow the Redis sidecar logs (use Ctrl-C to stop following).
   reset-data Stop the stack and delete this Compose project's volumes, local
@@ -396,6 +399,9 @@ build_and_start() {
     compose up -d --force-recreate --remove-orphans "${service_args[@]}"
     start_deferred_vmagent
     stop_disabled_redis
+    if ! prune_legacy_grafana_dashboard; then
+        log "Warning: legacy Grafana dashboard cleanup did not complete; retry with 'bash scripts/deploy-docker.sh prune-legacy-dashboard'"
+    fi
     compose ps "${service_args[@]}"
 }
 
@@ -416,6 +422,115 @@ start_deferred_vmagent() {
         sleep 2
     done
     log "SNMP exporter is not healthy after the bounded startup wait; vmagent remains deferred until the exporter recovers"
+}
+
+prune_legacy_grafana_dashboard() {
+    local allow_prompt="${1:-0}" grafana_id="" health="" attempt response status body
+    local auth_mode="container" api_user="" api_password="" input_user=""
+    grafana_id="$(compose ps -q grafana 2>/dev/null || true)"
+    if [[ -z "$grafana_id" ]]; then
+        log "Grafana container is not present in this Compose project"
+        return 1
+    fi
+
+    for attempt in {1..30}; do
+        health="$(docker inspect --format '{{if .State.Health}}{{.State.Health.Status}}{{else}}{{.State.Status}}{{end}}' "$grafana_id" 2>/dev/null || true)"
+        [[ "$health" == "healthy" ]] && break
+        sleep 2
+    done
+    if [[ "$health" != "healthy" ]]; then
+        log "Grafana did not become healthy; skipped legacy dashboard cleanup"
+        return 1
+    fi
+
+    response="$(compose exec -T grafana sh -c '
+        set -eu
+        : "${GF_SECURITY_ADMIN_PASSWORD:?Grafana admin password is missing in the container}"
+        auth_header="$(printf "%s:%s" "${GF_SECURITY_ADMIN_USER:-admin}" "$GF_SECURITY_ADMIN_PASSWORD" | base64 | tr -d "\\r\\n")"
+        printf "header = \"Authorization: Basic %s\"\\n" "$auth_header" | \
+          curl -sS -w "\\n%{http_code}" --config - "http://127.0.0.1:3000/api/dashboards/uid/nexora-server-metrics"
+    ' 2>/dev/null)" || {
+        log "Could not query Grafana for legacy dashboard UID nexora-server-metrics"
+        return 1
+    }
+    status="${response##*$'\n'}"
+    body="${response%$'\n'*}"
+    if [[ ("$status" == "401" || "$status" == "403") && "$allow_prompt" == "1" && -t 0 ]]; then
+        api_user="$(compose exec -T grafana sh -c 'printf "%s" "${GF_SECURITY_ADMIN_USER:-admin}"' 2>/dev/null || printf admin)"
+        read -r -p "Grafana admin username [$api_user]: " input_user
+        [[ -z "$input_user" ]] || api_user="$input_user"
+        read -r -s -p "Grafana admin password (input hidden): " api_password
+        printf '\n' >&2
+        response="$(printf '%s\n%s\n' "$api_user" "$api_password" | compose exec -T grafana sh -c '
+            set -eu
+            IFS= read -r api_user
+            IFS= read -r api_password
+            auth_header="$(printf "%s:%s" "$api_user" "$api_password" | base64 | tr -d "\\r\\n")"
+            printf "header = \"Authorization: Basic %s\"\\n" "$auth_header" | \
+              curl -sS -w "\\n%{http_code}" --config - "http://127.0.0.1:3000/api/dashboards/uid/nexora-server-metrics"
+        ' 2>/dev/null)" || {
+            unset api_password
+            log "Could not query Grafana with the supplied admin credentials"
+            return 1
+        }
+        auth_mode="prompted"
+        status="${response##*$'\n'}"
+        body="${response%$'\n'*}"
+    fi
+    case "$status" in
+        404)
+            log "Legacy Grafana dashboard UID nexora-server-metrics is already absent"
+            return 0
+            ;;
+        200) ;;
+        401|403)
+            log "Grafana rejected authentication while checking legacy dashboard UID nexora-server-metrics"
+            return 1
+            ;;
+        *)
+            log "Grafana lookup for legacy dashboard UID nexora-server-metrics returned HTTP $status"
+            return 1
+            ;;
+    esac
+
+    if [[ "$body" != *"Server & Host Metrics"* ]]; then
+        log "Grafana UID nexora-server-metrics exists, but its title does not match the retired dashboard; left it untouched"
+        return 1
+    fi
+
+    if [[ "$auth_mode" == "prompted" ]]; then
+        status="$(printf '%s\n%s\n' "$api_user" "$api_password" | compose exec -T grafana sh -c '
+            set -eu
+            IFS= read -r api_user
+            IFS= read -r api_password
+            auth_header="$(printf "%s:%s" "$api_user" "$api_password" | base64 | tr -d "\\r\\n")"
+            printf "header = \"Authorization: Basic %s\"\\n" "$auth_header" | \
+              curl -sS -o /dev/null -w "%{http_code}" --config - --request DELETE "http://127.0.0.1:3000/api/dashboards/uid/nexora-server-metrics"
+        ' 2>/dev/null)" || {
+            unset api_password
+            log "Could not delete retired Grafana dashboard UID nexora-server-metrics"
+            return 1
+        }
+    else
+        status="$(compose exec -T grafana sh -c '
+            set -eu
+            : "${GF_SECURITY_ADMIN_PASSWORD:?Grafana admin password is missing in the container}"
+            auth_header="$(printf "%s:%s" "${GF_SECURITY_ADMIN_USER:-admin}" "$GF_SECURITY_ADMIN_PASSWORD" | base64 | tr -d "\\r\\n")"
+            printf "header = \"Authorization: Basic %s\"\\n" "$auth_header" | \
+              curl -sS -o /dev/null -w "%{http_code}" --config - --request DELETE "http://127.0.0.1:3000/api/dashboards/uid/nexora-server-metrics"
+        ' 2>/dev/null)" || {
+            unset api_password
+            log "Could not delete retired Grafana dashboard UID nexora-server-metrics"
+            return 1
+        }
+    fi
+    unset api_password
+    case "$status" in
+        200) log "Removed retired Grafana dashboard UID nexora-server-metrics" ;;
+        404) log "Legacy Grafana dashboard UID nexora-server-metrics is already absent" ;;
+        401|403) log "Grafana rejected authentication or delete permission for the retired dashboard"; return 1 ;;
+        *) log "Grafana delete for legacy dashboard UID nexora-server-metrics returned HTTP $status"; return 1 ;;
+    esac
 }
 
 required_images() {
@@ -480,6 +595,9 @@ start_offline() {
     mapfile -t service_args < <(compose_service_args)
     compose up -d --no-build --pull never --remove-orphans "${service_args[@]}"
     stop_disabled_redis
+    if ! prune_legacy_grafana_dashboard; then
+        log "Warning: legacy Grafana dashboard cleanup did not complete; retry with 'bash scripts/deploy-docker.sh prune-legacy-dashboard'"
+    fi
     compose ps "${service_args[@]}"
 }
 
@@ -567,6 +685,9 @@ case "$COMMAND" in
             service_args=()
             mapfile -t service_args < <(compose_service_args)
             stop_disabled_redis
+            if ! prune_legacy_grafana_dashboard; then
+                log "Warning: legacy Grafana dashboard cleanup did not complete; retry with 'bash scripts/deploy-docker.sh prune-legacy-dashboard'"
+            fi
             compose ps "${service_args[@]}"
             log "No release content changes; skipped image pull, build, and container recreation"
             log "Docker update check complete; .env, volumes, and nginx/ssl were preserved"
@@ -593,6 +714,12 @@ case "$COMMAND" in
     start-offline)
         require_docker
         start_offline
+        ;;
+    prune-legacy-dashboard)
+        require_docker
+        cd "$DEPLOYMENT_DIR"
+        configure_compose_files
+        prune_legacy_grafana_dashboard 1 || die "Legacy Grafana dashboard cleanup failed; inspect the Grafana container and admin credentials"
         ;;
     redis-status)
         require_docker
