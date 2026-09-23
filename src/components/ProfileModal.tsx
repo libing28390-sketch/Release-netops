@@ -32,6 +32,7 @@ interface NotificationChannelsState {
   feishu: { webhook_url: string; enabled: boolean; creator_username?: string };
   dingtalk: { webhook_url: string; enabled: boolean; secret: string; creator_username?: string };
   wechat: { webhook_url: string; enabled: boolean; creator_username?: string };
+  email: { webhook_url: string; enabled: boolean; active_enabled?: boolean; recovery_enabled?: boolean };
 }
 
 interface ProfileModalProps {
@@ -57,6 +58,7 @@ interface ProfileModalProps {
   onNotificationChannelToggle: (channel: keyof NotificationChannelsState) => void;
   onNotificationWebhookChange: (channel: keyof NotificationChannelsState, value: string) => void;
   onNotificationSecretChange: (value: string) => void;
+  onEmailPreferenceChange: (field: 'active_enabled' | 'recovery_enabled', value: boolean) => void;
   onTestNotificationChannel: (channel: keyof NotificationChannelsState) => void;
   mfaEnabled: boolean;
   onMfaStatusChange: (enabled: boolean) => void;
@@ -85,6 +87,7 @@ const ProfileModal: React.FC<ProfileModalProps> = ({
   onNotificationChannelToggle,
   onNotificationWebhookChange,
   onNotificationSecretChange,
+  onEmailPreferenceChange,
   onTestNotificationChannel,
   mfaEnabled,
   onMfaStatusChange,
@@ -1118,6 +1121,50 @@ const ProfileModal: React.FC<ProfileModalProps> = ({
                         </div>
                       );
                     })}
+                  </div>
+
+                  <div className={`rounded-2xl border p-4 transition-all duration-200 ${
+                    notificationChannels.email.enabled
+                      ? (isDark ? 'border-cyan-500/30 bg-cyan-500/[0.04] shadow-sm' : 'border-cyan-300 bg-cyan-50/40 shadow-sm')
+                      : (isDark ? 'border-white/10 bg-white/[0.02]' : 'border-slate-200/80 bg-white')
+                  }`}>
+                    <div className="flex items-center justify-between gap-3">
+                      <div className="flex items-center gap-3">
+                        <span className={`flex h-8 w-8 items-center justify-center rounded-xl text-white shadow-sm ${notificationChannels.email.enabled ? 'bg-emerald-600' : 'bg-slate-400'}`}>
+                          <Mail size={15} />
+                        </span>
+                        <div>
+                          <div className="flex items-center gap-2">
+                            <span className="text-xs font-bold">{isZh ? '邮件告警' : 'Email alerts'}</span>
+                            <span className={`rounded-md px-2 py-0.5 text-[10px] font-medium ${isDark ? 'border border-emerald-400/20 bg-emerald-400/10 text-emerald-300' : 'border border-emerald-200 bg-emerald-50 text-emerald-700'}`}>SMTP</span>
+                          </div>
+                          <p className={`mt-1 text-[11px] ${isDark ? 'text-white/40' : 'text-slate-500'}`}>
+                            {isZh ? `使用个人邮箱 ${profileForm.email || '未填写'} 接收规则指定的邮件告警` : `Use ${profileForm.email || 'your profile email'} for rule-selected email alerts`}
+                          </p>
+                        </div>
+                      </div>
+                      <button
+                        type="button"
+                        title={notificationChannels.email.enabled ? (isZh ? '关闭邮件告警' : 'Disable email alerts') : (isZh ? '开启邮件告警' : 'Enable email alerts')}
+                        onClick={() => onNotificationChannelToggle('email')}
+                        className={`relative h-6 w-10 shrink-0 rounded-full transition-colors ${notificationChannels.email.enabled ? 'bg-cyan-500' : (isDark ? 'bg-white/20' : 'bg-slate-300')}`}
+                      >
+                        <span className={`absolute top-1 h-4 w-4 rounded-full bg-white shadow-md transition-all ${notificationChannels.email.enabled ? 'left-5' : 'left-1'}`} />
+                      </button>
+                    </div>
+                    <div className="mt-3 flex flex-wrap gap-4 text-[11px]">
+                      <label className="flex items-center gap-2">
+                        <input type="checkbox" checked={notificationChannels.email.active_enabled !== false} onChange={(event) => onEmailPreferenceChange('active_enabled', event.target.checked)} disabled={!notificationChannels.email.enabled} />
+                        {isZh ? '触发通知' : 'Active alerts'}
+                      </label>
+                      <label className="flex items-center gap-2">
+                        <input type="checkbox" checked={notificationChannels.email.recovery_enabled !== false} onChange={(event) => onEmailPreferenceChange('recovery_enabled', event.target.checked)} disabled={!notificationChannels.email.enabled} />
+                        {isZh ? '恢复通知' : 'Recovery alerts'}
+                      </label>
+                    </div>
+                    {!profileForm.email.trim() && notificationChannels.email.enabled && (
+                      <p className="mt-2 text-[11px] font-medium text-amber-700">{isZh ? '请先在基本资料中填写有效邮箱地址。' : 'Add a valid email address in Profile first.'}</p>
+                    )}
                   </div>
                 </motion.div>
               )}

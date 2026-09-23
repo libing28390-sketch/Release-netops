@@ -23,6 +23,19 @@ from core.scheduler_manager import scheduler
 from apscheduler.triggers.cron import CronTrigger
 from services import config_backup_policy_service
 from services.config_search_service import redact_config_line
+from services.config_snapshot_storage import (
+    CONFIG_CONTENT_TYPE,
+    LEGACY_BACKUP_ROOT,
+    delete_legacy_file,
+    delete_snapshot_object,
+    object_key_for_snapshot,
+    put_snapshot_content,
+    read_legacy_content,
+    read_snapshot_content,
+    serialize_config_content,
+    write_config_spool,
+)
+from services.storage_service import StorageError
 
 logger = logging.getLogger(__name__)
 
@@ -78,7 +91,10 @@ def _build_device_scope_tree(rows: list[dict]) -> list[dict]:
     return [root]
 
 # Backup root directory - relative to cwd (d:\nexora-automation)
-BACKUP_ROOT = os.path.join(os.getcwd(), 'backup')
+# Legacy root retained only for old rows and the compatibility export path.
+# New snapshots use StorageService and live below STORAGE_LOCAL_ROOT when the
+# local provider is selected.
+BACKUP_ROOT = LEGACY_BACKUP_ROOT
 
 
 # ──────────────────────────────────────────────
@@ -187,13 +203,10 @@ def _write_config_file(vendor: str, hostname: str, ts: datetime, trigger: str, c
     suffix = "_startup" if config_type == "startup" else ""
     filename = f"{ts.strftime('%Y%m%d_%H%M%S')}_{trigger}{suffix}.cfg"
     abs_path = os.path.join(dir_path, filename)
-    data = gzip.compress(content.encode('utf-8'))
     # Configuration snapshots are raw sensitive output; fail closed if the
     # application key is unavailable instead of writing a plaintext archive.
     try:
-        from core.crypto import _get_fernet
-        f = _get_fernet()
-        data = b'ENCRYPTED:' + f.encrypt(data)
+        data = serialize_config_content(content)
     except Exception as exc:
         raise RuntimeError('CONFIG_BACKUP_ENCRYPTION_UNAVAILABLE') from exc
     with open(abs_path, 'wb') as fh:
@@ -202,43 +215,11 @@ def _write_config_file(vendor: str, hostname: str, ts: datetime, trigger: str, c
 
 
 def _read_config_file(file_path: str) -> str:
-    # Normalise separators so paths saved on Windows work on Linux and vice versa
-    abs_path = os.path.join(BACKUP_ROOT, file_path.replace('/', os.sep).replace('\\', os.sep))
-    if not os.path.exists(abs_path):
-        return ''
-    with open(abs_path, 'rb') as fh:
-        data = fh.read()
-    if data.startswith(b'ENCRYPTED:'):
-        try:
-            from core.crypto import _get_fernet
-            f = _get_fernet()
-            data = f.decrypt(data[len(b'ENCRYPTED:'):])
-        except Exception:
-            logger.error(f"Failed to decrypt config file: {file_path}")
-            return ''
-    # Detect gzip compression (magic bytes \x1f\x8b)
-    if data[:2] == b'\x1f\x8b':
-        try:
-            data = gzip.decompress(data)
-        except Exception:
-            logger.warning(f"Failed to decompress config file: {file_path}")
-    return data.decode('utf-8')
+    return read_legacy_content(file_path)
 
 
 def _delete_config_file(file_path: str):
-    abs_path = os.path.join(BACKUP_ROOT, file_path.replace('/', os.sep).replace('\\', os.sep))
-    if os.path.exists(abs_path):
-        os.remove(abs_path)
-    # Clean up empty parent dirs (up to BACKUP_ROOT)
-    parent = os.path.dirname(abs_path)
-    for _ in range(4):  # hostname / vendor / month / year
-        if parent == BACKUP_ROOT:
-            break
-        try:
-            os.rmdir(parent)  # only removes if empty
-        except OSError:
-            break
-        parent = os.path.dirname(parent)
+    delete_legacy_file(file_path)
 
 
 # ──────────────────────────────────────────────
@@ -247,6 +228,39 @@ def _delete_config_file(file_path: str):
 
 def _row_to_dict(row) -> dict:
     return dict(row)
+
+
+def _storage_columns(stored, *, status: str = 'READY', error: str = '') -> tuple:
+    """Return additive storage metadata for snapshot INSERT statements."""
+    return (
+        stored.backend,
+        stored.bucket or '',
+        stored.object_key,
+        stored.version_id or '',
+        int(stored.size or 0),
+        stored.sha256 or '',
+        stored.content_type or CONFIG_CONTENT_TYPE,
+        status,
+        error[:2000],
+        _utc_now_iso(),
+    )
+
+
+def _storage_error_columns(snapshot_id: str, ts: datetime, content: str, config_type: str) -> tuple:
+    spool = write_config_spool(snapshot_id, content, config_type)
+    return (
+        settings.STORAGE_BACKEND,
+        settings.S3_BUCKET if settings.STORAGE_BACKEND == 's3' else '',
+        object_key_for_snapshot(snapshot_id, ts, config_type),
+        '',
+        spool.stat().st_size,
+        '',
+        CONFIG_CONTENT_TYPE,
+        'ERROR',
+        'storage upload failed',
+        _utc_now_iso(),
+        str(spool),
+    )
 
 
 def _create_backup_run(
@@ -577,7 +591,9 @@ def list_latest_backups(
             SELECT d.id AS device_id, d.hostname, d.vendor, d.ip_address, d.status AS device_status,
                    d.platform, cs.id AS snapshot_id, cs.timestamp, cs.size, cs.trigger,
                    cs.raw_hash, cs.normalized_hash, cs.line_count, cs.section_count,
-                   cs.integrity_status, cs.lifecycle_status
+                   cs.integrity_status, cs.lifecycle_status,
+                   cs.storage_backend, cs.storage_bucket, cs.object_key,
+                   cs.object_size, cs.object_sha256, cs.content_type, cs.storage_status
             FROM devices d
             LEFT JOIN (
                 SELECT cs1.*
@@ -612,6 +628,13 @@ def list_latest_backups(
                 'section_count': r['section_count'] or 0,
                 'integrity_status': r['integrity_status'] or 'unknown',
                 'lifecycle_status': r['lifecycle_status'] or 'stored_raw',
+                'storage_backend': r['storage_backend'] or 'local',
+                'storage_bucket': r['storage_bucket'] or '',
+                'object_key': r['object_key'] or '',
+                'object_size': r['object_size'] or 0,
+                'object_sha256': r['object_sha256'] or '',
+                'content_type': r['content_type'] or CONFIG_CONTENT_TYPE,
+                'storage_status': r['storage_status'] or 'LEGACY',
             })
 
         return {'items': items, 'total': total, 'page': page, 'page_size': page_size}
@@ -820,14 +843,12 @@ def get_backup_run(
 
 @router.post('/configs/snapshots', status_code=201)
 def create_snapshot(body: SnapshotCreate):
-    """Save a config snapshot to file + DB."""
+    """Save a config snapshot through the configured storage provider + DB."""
     ts = _utc_now()
     snap_id = f"snap-{uuid.uuid4().hex[:12]}"
-    rel_path = _write_config_file(body.vendor, body.hostname, ts, body.trigger, body.content)
     size = len(body.content.encode('utf-8'))
     metadata = _config_snapshot_metadata(body.content)
     if metadata['integrity_status'] != 'verified':
-        _delete_config_file(rel_path)
         raise HTTPException(
             status_code=422,
             detail={
@@ -836,19 +857,70 @@ def create_snapshot(body: SnapshotCreate):
             },
         )
 
+    try:
+        stored = put_snapshot_content(
+            snapshot_id=snap_id,
+            timestamp=ts,
+            content=body.content,
+            config_type='running',
+        )
+    except Exception as exc:
+        logger.error("[Storage] Config snapshot %s upload failed: %s", snap_id, type(exc).__name__)
+        # Preserve the already-validated encrypted payload as an explicit
+        # spool so the scheduled retry job can publish it later.  This is not
+        # a provider fallback: the row remains bound to the configured
+        # provider and is visibly marked STORAGE_ERROR.
+        try:
+            spool = write_config_spool(snap_id, body.content, 'running')
+            conn_error = get_db_connection()
+            try:
+                conn_error.execute(
+                    '''INSERT INTO config_snapshots
+                       (id, device_id, hostname, vendor, timestamp, trigger, author, tag, file_path, size,
+                        raw_hash, normalized_hash, line_count, section_count, integrity_status,
+                        lifecycle_status, normalizer_version, collected_at, task_id,
+                        storage_backend, storage_bucket, object_key, object_version_id, object_size,
+                        object_sha256, content_type, storage_status, storage_error, storage_updated_at,
+                        storage_spool_path)
+                       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)''',
+                    (snap_id, body.device_id, body.hostname, body.vendor, ts.isoformat(), body.trigger,
+                     body.author, body.tag or '', '', size, metadata['raw_hash'], metadata['normalized_hash'],
+                     metadata['line_count'], metadata['section_count'], metadata['integrity_status'],
+                     metadata['lifecycle_status'], metadata['normalizer_version'], ts.isoformat(), '',
+                     settings.STORAGE_BACKEND, settings.S3_BUCKET if settings.STORAGE_BACKEND == 's3' else '',
+                     object_key_for_snapshot(snap_id, ts, 'running'), '', spool.stat().st_size, '',
+                     CONFIG_CONTENT_TYPE, 'ERROR', 'storage upload failed', _utc_now_iso(), str(spool))
+                )
+                conn_error.commit()
+            finally:
+                conn_error.close()
+        except Exception as spool_exc:
+            logger.error("[Storage] Could not persist config snapshot spool %s: %s", snap_id, type(spool_exc).__name__)
+        raise HTTPException(
+            status_code=503,
+            detail={
+                'message': '配置内容已校验，但对象存储不可用，未创建有效版本',
+                'code': 'CONFIG_SNAPSHOT_STORAGE_ERROR',
+            },
+        ) from exc
+
     conn = get_db_connection()
     try:
         conn.execute(
             '''INSERT INTO config_snapshots
                (id, device_id, hostname, vendor, timestamp, trigger, author, tag, file_path, size,
                 raw_hash, normalized_hash, line_count, section_count, integrity_status,
-                lifecycle_status, normalizer_version, collected_at, task_id)
-               VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)''',
+                lifecycle_status, normalizer_version, collected_at, task_id,
+                storage_backend, storage_bucket, object_key, object_version_id, object_size,
+                object_sha256, content_type, storage_status, storage_error, storage_updated_at,
+                storage_spool_path)
+               VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)''',
             (snap_id, body.device_id, body.hostname, body.vendor,
              ts.isoformat(), body.trigger, body.author, body.tag or '',
-             rel_path, size, metadata['raw_hash'], metadata['normalized_hash'],
+             '', size, metadata['raw_hash'], metadata['normalized_hash'],
              metadata['line_count'], metadata['section_count'], metadata['integrity_status'],
-             metadata['lifecycle_status'], metadata['normalizer_version'], ts.isoformat(), '')
+             metadata['lifecycle_status'], metadata['normalizer_version'], ts.isoformat(), '',
+             *_storage_columns(stored), '')
         )
         conn.commit()
     finally:
@@ -879,7 +951,16 @@ def create_snapshot(body: SnapshotCreate):
         'trigger': body.trigger,
         'author': body.author,
         'tag': body.tag,
-        'file_path': rel_path,
+        'file_path': '',
+        'storage_backend': stored.backend,
+        'storage_bucket': stored.bucket or '',
+        'object_key': stored.object_key,
+        'object_version_id': stored.version_id or '',
+        'object_size': stored.size,
+        'object_sha256': stored.sha256 or '',
+        'content_type': stored.content_type or CONFIG_CONTENT_TYPE,
+        'storage_status': 'READY',
+        'storage_spool_path': '',
         'size': size,
         **metadata,
     }
@@ -899,7 +980,7 @@ def get_snapshot_content(snap_id: str):
     if not row:
         raise HTTPException(status_code=404, detail='Snapshot not found')
 
-    content = _read_config_file(row['file_path'])
+    content = read_snapshot_content(row)
     actual_metadata = _config_snapshot_metadata(content)
     stored_hash = row['raw_hash'] or ''
     integrity_status = (
@@ -925,6 +1006,13 @@ def get_snapshot_content(snap_id: str):
         'integrity_status': integrity_status,
         'lifecycle_status': row['lifecycle_status'] or 'stored_raw',
         'normalizer_version': row['normalizer_version'] or '',
+        'storage_backend': row['storage_backend'] or 'local',
+        'storage_bucket': row['storage_bucket'] or '',
+        'object_key': row['object_key'] or '',
+        'storage_status': row['storage_status'] or 'LEGACY',
+        'object_size': row['object_size'] or 0,
+        'object_sha256': row['object_sha256'] or '',
+        'content_type': row['content_type'] or CONFIG_CONTENT_TYPE,
     }
 
 
@@ -942,7 +1030,7 @@ def download_snapshot(snap_id: str):
     if not row:
         raise HTTPException(status_code=404, detail='Snapshot not found')
 
-    content = _read_config_file(row['file_path'])
+    content = read_snapshot_content(row)
     ts_str = row['timestamp'].replace(':', '').replace('-', '').replace('T', '_').split('.')[0]
     filename = f"{row['hostname']}_{ts_str}.cfg"
     return Response(
@@ -957,12 +1045,14 @@ def delete_snapshot(snap_id: str):
     """Delete snapshot metadata + file."""
     conn = get_db_connection()
     try:
-        row = conn.execute(
-            'SELECT file_path, device_id, hostname FROM config_snapshots WHERE id = ?', (snap_id,)
-        ).fetchone()
+        row = conn.execute('SELECT * FROM config_snapshots WHERE id = ?', (snap_id,)).fetchone()
         if not row:
             raise HTTPException(status_code=404, detail='Snapshot not found')
-        _delete_config_file(row['file_path'])
+        try:
+            delete_snapshot_object(row)
+        except Exception as exc:
+            logger.error("[Storage] Config snapshot %s delete failed: %s", snap_id, type(exc).__name__)
+            raise HTTPException(status_code=503, detail='对象存储删除失败，未删除快照元数据') from exc
         conn.execute('DELETE FROM config_snapshots WHERE id = ?', (snap_id,))
         conn.commit()
     finally:
@@ -1438,17 +1528,22 @@ def _cleanup_expired_snapshots(
         # 1. Delete snapshots older than max_days
         cutoff = (datetime.now(timezone.utc) - timedelta(days=max_days)).replace(microsecond=0).isoformat()
         old = conn.execute(
-            f'SELECT id, file_path FROM config_snapshots WHERE timestamp < ?{policy_clause}',
+            f'SELECT * FROM config_snapshots WHERE timestamp < ?{policy_clause}',
             (cutoff, policy_id) if policy_id else (cutoff,),
         ).fetchall()
+        old_deleted_ids: list[str] = []
         for s in old:
-            _delete_config_file(s['file_path'])
-        if old:
+            try:
+                delete_snapshot_object(s)
+                old_deleted_ids.append(str(s['id']))
+            except Exception as exc:
+                logger.warning("[Storage] Retention delete failed for snapshot %s: %s", s['id'], type(exc).__name__)
+        if old_deleted_ids:
             conn.execute(
-                f'DELETE FROM config_snapshots WHERE timestamp < ?{policy_clause}',
-                (cutoff, policy_id) if policy_id else (cutoff,),
+                f"DELETE FROM config_snapshots WHERE id IN ({','.join('?' * len(old_deleted_ids))})",
+                old_deleted_ids,
             )
-            deleted += len(old)
+            deleted += len(old_deleted_ids)
 
         # 2. Per-device: keep only max_per_device most recent
         devs = conn.execute(
@@ -1457,7 +1552,7 @@ def _cleanup_expired_snapshots(
         ).fetchall()
         for d in devs:
             excess = conn.execute(
-                f'''SELECT id, file_path FROM config_snapshots
+                f'''SELECT * FROM config_snapshots
                     WHERE device_id = ?{policy_clause}
                     ORDER BY timestamp DESC LIMIT 1000 OFFSET ?''',
                 (
@@ -1466,15 +1561,19 @@ def _cleanup_expired_snapshots(
                     else (d['device_id'], max_per_device)
                 ),
             ).fetchall()
+            excess_deleted_ids: list[str] = []
             for s in excess:
-                _delete_config_file(s['file_path'])
-            if excess:
-                ids = [s['id'] for s in excess]
+                try:
+                    delete_snapshot_object(s)
+                    excess_deleted_ids.append(str(s['id']))
+                except Exception as exc:
+                    logger.warning("[Storage] Retention delete failed for snapshot %s: %s", s['id'], type(exc).__name__)
+            if excess_deleted_ids:
                 conn.execute(
-                    f"DELETE FROM config_snapshots WHERE id IN ({','.join('?' * len(ids))})",
-                    ids
+                    f"DELETE FROM config_snapshots WHERE id IN ({','.join('?' * len(excess_deleted_ids))})",
+                    excess_deleted_ids
                 )
-                deleted += len(excess)
+                deleted += len(excess_deleted_ids)
 
         conn.commit()
     finally:
@@ -1953,14 +2052,25 @@ async def run_scheduled_backup(
                 vendor = str(device.get('vendor') or 'Other')
 
             ts = _utc_now()
-            rel_path = _write_config_file(vendor, device['hostname'], ts, run_trigger, output, config_type='running')
             size = len(output.encode('utf-8'))
             snap_id = f"snap-{uuid.uuid4().hex[:12]}"
+            try:
+                stored = put_snapshot_content(
+                    snapshot_id=snap_id,
+                    timestamp=ts,
+                    content=output,
+                    config_type='running',
+                )
+                storage_fields = _storage_columns(stored) + ('',)
+            except Exception as storage_exc:
+                logger.error("[Scheduled Backup] Storage failed for %s: %s", device['hostname'], type(storage_exc).__name__)
+                stored = None
+                storage_fields = _storage_error_columns(snap_id, ts, output, 'running')
             
             created_backup_items.append({
-                'local_path': os.path.join(BACKUP_ROOT, rel_path.replace('/', os.sep).replace('\\', os.sep)),
-                'remote_name': os.path.basename(rel_path),
-                'archive_name': rel_path,
+                'local_path': '',
+                'remote_name': os.path.basename(stored.object_key if stored else storage_fields[2]),
+                'archive_name': stored.object_key if stored else storage_fields[2],
                 'hostname': device['hostname'],
                 # Keep local snapshots encrypted, but publish readable config
                 # text when the completed snapshot is offloaded remotely.
@@ -1982,8 +2092,19 @@ async def run_scheduled_backup(
                             has_unsaved = 0
                             unsaved_summary = "运行配置与启动配置一致"
 
-                        st_rel_path = _write_config_file(vendor, device['hostname'], ts, run_trigger, startup_output, config_type='startup')
                         startup_snap_id = f"snap-{uuid.uuid4().hex[:12]}"
+                        try:
+                            st_stored = put_snapshot_content(
+                                snapshot_id=startup_snap_id,
+                                timestamp=ts,
+                                content=startup_output,
+                                config_type='startup',
+                            )
+                            startup_storage_fields = _storage_columns(st_stored) + ('',)
+                        except Exception as storage_exc:
+                            logger.error("[Scheduled Backup] Startup storage failed for %s: %s", device['hostname'], type(storage_exc).__name__)
+                            st_stored = None
+                            startup_storage_fields = _storage_error_columns(startup_snap_id, ts, startup_output, 'startup')
                         st_size = len(startup_output.encode('utf-8'))
 
                         conn_st = get_db_connection()
@@ -1993,24 +2114,27 @@ async def run_scheduled_backup(
                                    (id, device_id, hostname, vendor, timestamp, trigger, author, tag, file_path, size,
                                     raw_hash, normalized_hash, line_count, section_count, integrity_status,
                                     lifecycle_status, normalizer_version, collected_at, task_id, policy_id, config_type,
-                                    has_unsaved_changes, unsaved_diff_summary)
-                                   VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)''',
+                                    has_unsaved_changes, unsaved_diff_summary,
+                                    storage_backend, storage_bucket, object_key, object_version_id, object_size,
+                                    object_sha256, content_type, storage_status, storage_error, storage_updated_at,
+                                    storage_spool_path)
+                                   VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)''',
                                 (startup_snap_id, device['id'], device['hostname'], vendor,
-                                 ts.isoformat(), run_trigger, run_author, '', st_rel_path, st_size,
+                                 ts.isoformat(), run_trigger, run_author, '', '', st_size,
                                  st_metadata['raw_hash'], st_metadata['normalized_hash'], st_metadata['line_count'],
                                  st_metadata['section_count'], st_metadata['integrity_status'],
                                  st_metadata['lifecycle_status'], st_metadata['normalizer_version'],
                                  ts.isoformat(), persisted_run_id, policy_id or '', 'startup',
-                                 has_unsaved, unsaved_summary)
+                                 has_unsaved, unsaved_summary, *startup_storage_fields)
                             )
                             conn_st.commit()
                         finally:
                             conn_st.close()
 
                         created_backup_items.append({
-                            'local_path': os.path.join(BACKUP_ROOT, st_rel_path.replace('/', os.sep).replace('\\', os.sep)),
-                            'remote_name': os.path.basename(st_rel_path),
-                            'archive_name': st_rel_path,
+                            'local_path': '',
+                            'remote_name': os.path.basename(st_stored.object_key if st_stored else startup_storage_fields[2]),
+                            'archive_name': st_stored.object_key if st_stored else startup_storage_fields[2],
                             'hostname': device['hostname'],
                             'data': startup_output.encode('utf-8'),
                         })
@@ -2024,15 +2148,18 @@ async def run_scheduled_backup(
                        (id, device_id, hostname, vendor, timestamp, trigger, author, tag, file_path, size,
                         raw_hash, normalized_hash, line_count, section_count, integrity_status,
                         lifecycle_status, normalizer_version, collected_at, task_id, policy_id, config_type,
-                        has_unsaved_changes, unsaved_diff_summary)
-                       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)''',
+                        has_unsaved_changes, unsaved_diff_summary,
+                        storage_backend, storage_bucket, object_key, object_version_id, object_size,
+                        object_sha256, content_type, storage_status, storage_error, storage_updated_at,
+                        storage_spool_path)
+                       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)''',
                     (snap_id, device['id'], device['hostname'], vendor,
-                     ts.isoformat(), run_trigger, run_author, '', rel_path, size,
+                     ts.isoformat(), run_trigger, run_author, '', '', size,
                      metadata['raw_hash'], metadata['normalized_hash'], metadata['line_count'],
                      metadata['section_count'], metadata['integrity_status'],
                      metadata['lifecycle_status'], metadata['normalizer_version'],
                      ts.isoformat(), persisted_run_id, policy_id or '', 'running',
-                     has_unsaved, unsaved_summary)
+                     has_unsaved, unsaved_summary, *storage_fields)
                 )
                 conn2.commit()
             finally:
@@ -2050,6 +2177,8 @@ async def run_scheduled_backup(
                 'raw_hash': metadata['raw_hash'],
                 'normalized_hash': metadata['normalized_hash'],
                 'integrity_status': metadata['integrity_status'],
+                'storage_status': storage_fields[7],
+                'storage_error': storage_fields[8],
             }
         except Exception as e:
             failed_count += 1
@@ -2389,23 +2518,20 @@ async def sync_snapshot_to_tftp(payload: TFTPSyncSnapshotPayload):
         snap = conn.execute("SELECT * FROM config_snapshots WHERE id = ?", (payload.snapshot_id,)).fetchone()
         if not snap:
             raise HTTPException(status_code=404, detail="快照不存在")
-        file_path = snap['file_path']
+        snap_dict = dict(snap)
         hostname = snap['hostname']
-        config_type = snap['config_type'] if 'config_type' in snap.keys() else 'running'
+        config_type = snap_dict.get('config_type') or 'running'
     finally:
         conn.close()
 
     options = _resolve_tftp_options(payload)
     _validate_archive_options(options)
 
-    abs_path = os.path.join(BACKUP_ROOT, file_path.replace('/', os.sep).replace('\\', os.sep))
-    if not os.path.isfile(abs_path):
-        raise HTTPException(status_code=404, detail="底层配置文件不存在")
-
-    remote_name = os.path.basename(file_path)
+    object_name = str(snap_dict.get('object_key') or snap_dict.get('file_path') or snap_dict.get('id'))
+    remote_name = os.path.basename(object_name)
     target_path = f"{options['path_prefix'].strip('/')}/{remote_name}" if options['path_prefix'].strip() else remote_name
 
-    content = _read_config_file(file_path)
+    content = read_snapshot_content(snap_dict)
     if not content:
         raise HTTPException(status_code=500, detail="配置文件解密失败或内容为空，未上传")
 
@@ -2438,7 +2564,7 @@ async def sync_batch_to_tftp(payload: TFTPSyncBatchPayload):
         run = conn.execute("SELECT * FROM config_backup_runs WHERE id = ?", (payload.run_id,)).fetchone()
         if not run:
             raise HTTPException(status_code=404, detail="备份批次不存在")
-        snapshots = conn.execute("SELECT file_path, hostname FROM config_snapshots WHERE task_id = ?", (payload.run_id,)).fetchall()
+        snapshots = conn.execute("SELECT * FROM config_snapshots WHERE task_id = ?", (payload.run_id,)).fetchall()
     finally:
         conn.close()
 
@@ -2447,20 +2573,19 @@ async def sync_batch_to_tftp(payload: TFTPSyncBatchPayload):
 
     items = []
     for s in snapshots:
-        rel_path = s['file_path']
-        abs_path = os.path.join(BACKUP_ROOT, rel_path.replace('/', os.sep).replace('\\', os.sep))
-        if os.path.isfile(abs_path):
-            content = _read_config_file(rel_path)
-            if content:
-                items.append({
-                    'local_path': abs_path,
-                    'remote_name': os.path.basename(rel_path),
-                    'archive_name': rel_path,
-                    'hostname': s['hostname'],
-                    'data': content.encode('utf-8'),
-                })
-            else:
-                logger.warning("[Archive Sync] Could not decode snapshot %s; skipping remote upload", rel_path)
+        snapshot_dict = dict(s)
+        content = read_snapshot_content(snapshot_dict)
+        object_name = str(snapshot_dict.get('object_key') or snapshot_dict.get('file_path') or snapshot_dict.get('id'))
+        if content:
+            items.append({
+                'local_path': '',
+                'remote_name': os.path.basename(object_name),
+                'archive_name': object_name,
+                'hostname': s['hostname'],
+                'data': content.encode('utf-8'),
+            })
+        else:
+            logger.warning("[Archive Sync] Could not decode snapshot %s; skipping remote upload", s['id'])
 
     if not items:
         raise HTTPException(status_code=400, detail="该批次没有可上传的有效备份快照文件")

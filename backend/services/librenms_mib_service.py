@@ -38,6 +38,12 @@ LIBRENMS_REPO_URL = "https://github.com/librenms/librenms.git"
 TARGET_DIR = BACKEND_DIR / "data" / "librenms_repo"
 MIBS_DIR = TARGET_DIR / "mibs"
 SYMBOL_INDEX_MAX_PASSES = 8
+LIBRENMS_SPARSE_PATHS = (
+    "mibs/",
+    "resources/definitions/os_detection/",
+    "resources/definitions/os_discovery/",
+    "LibreNMS/OS/",
+)
 
 # Vendor folder name normalizer
 VENDOR_DIR_MAP: dict[str, str] = {
@@ -82,7 +88,12 @@ def normalize_vendor_from_dir(dir_name: str) -> str:
 
 
 def fetch_librenms_mibs(target_dir: Path = TARGET_DIR) -> bool:
-    """Clone or pull only the `mibs/` directory from LibreNMS repository using sparse checkout."""
+    """Clone or pull the LibreNMS MIB and OS discovery sources."""
+    return fetch_librenms_sources(target_dir)
+
+
+def fetch_librenms_sources(target_dir: Path = TARGET_DIR) -> bool:
+    """Fetch the trusted LibreNMS source paths used for OID discovery."""
     target_dir.parent.mkdir(parents=True, exist_ok=True)
     mibs_path = target_dir / "mibs"
 
@@ -90,12 +101,12 @@ def fetch_librenms_mibs(target_dir: Path = TARGET_DIR) -> bool:
         logger.info("Existing LibreNMS repository found at %s. Pulling latest updates...", target_dir)
         try:
             subprocess.run(["git", "pull", "--depth", "1"], cwd=target_dir, check=True, capture_output=True, text=True)
-            return True
+            return (target_dir / "mibs").exists()
         except Exception as exc:
             logger.warning("Git pull failed: %s; using existing local MIB files", exc)
             return mibs_path.exists()
 
-    logger.info("Cloning LibreNMS repository (sparse checkout: mibs/ only) from %s...", LIBRENMS_REPO_URL)
+    logger.info("Cloning LibreNMS repository (MIB and OS discovery sources) from %s...", LIBRENMS_REPO_URL)
     try:
         target_dir.mkdir(parents=True, exist_ok=True)
         subprocess.run(["git", "init"], cwd=target_dir, check=True, capture_output=True)
@@ -103,9 +114,9 @@ def fetch_librenms_mibs(target_dir: Path = TARGET_DIR) -> bool:
         subprocess.run(["git", "config", "core.sparseCheckout", "true"], cwd=target_dir, check=True, capture_output=True)
         sparse_file = target_dir / ".git" / "info" / "sparse-checkout"
         sparse_file.parent.mkdir(parents=True, exist_ok=True)
-        sparse_file.write_text("mibs/\n", encoding="utf-8")
+        sparse_file.write_text("".join(f"{path}\n" for path in LIBRENMS_SPARSE_PATHS), encoding="utf-8")
         subprocess.run(["git", "pull", "--depth", "1", "origin", "master"], cwd=target_dir, check=True, capture_output=True, text=True)
-        logger.info("Successfully fetched LibreNMS mibs directory to %s", mibs_path)
+        logger.info("Successfully fetched LibreNMS sources to %s", target_dir)
         return True
     except Exception as exc:
         logger.error("Failed to clone LibreNMS mibs directory: %s", exc)

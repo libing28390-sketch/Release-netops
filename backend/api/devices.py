@@ -35,10 +35,12 @@ from services.snmp_mib_service import (
 )
 from services.librenms_mib_service import (
     fetch_librenms_mibs,
+    fetch_librenms_sources,
     import_mibs_from_directory,
     MIBS_DIR,
     TARGET_DIR,
 )
+from services.librenms_rule_service import sync_rules_from_repository
 from services.snmp_preset_service import (
     list_preset_profiles,
     seed_builtin_mibs,
@@ -1742,6 +1744,7 @@ def resolve_snmp_metric_profile(
 def list_snmp_metric_profile_bindings(profile_id: str, user=require_role("Viewer")):
     conn = get_db_connection()
     try:
+        rule_count = conn.execute("SELECT COUNT(*) AS count FROM snmp_librenms_rules").fetchone()
         return {
             "success": True,
             "data": {
@@ -2205,15 +2208,17 @@ async def trigger_sync_librenms_mibs(
         _librenms_sync_state["progress"] = "Fetching latest MIBs from LibreNMS repository..."
         _librenms_sync_state["started_at"] = time.time()
         try:
-            fetch_librenms_mibs(TARGET_DIR)
+            fetch_librenms_sources(TARGET_DIR)
             _librenms_sync_state["progress"] = "Parsing and indexing MIB definitions into database..."
             result = import_mibs_from_directory(
                 mibs_dir=MIBS_DIR,
                 target_vendors=target_vendors_list,
             )
+            rule_result = sync_rules_from_repository(TARGET_DIR)
+            result["librenms_rules"] = rule_result
             _librenms_sync_state["last_result"] = result
             _librenms_sync_state["run_id"] = result.get("run_id")
-            _librenms_sync_state["progress"] = f"Finished: {result.get('imported', 0)} MIBs imported, {result.get('nodes', 0)} OID nodes"
+            _librenms_sync_state["progress"] = f"Finished: {result.get('imported', 0)} MIBs imported, {result.get('nodes', 0)} OID nodes, {rule_result.get('imported', 0)} LibreNMS OS rules"
         except Exception as exc:
             logger.error("LibreNMS MIB sync worker failed: %s", exc)
             _librenms_sync_state["progress"] = f"Error: {exc}"
@@ -2241,6 +2246,7 @@ def get_sync_librenms_mibs_status(user=require_role("Viewer")):
             "data": {
                 **_librenms_sync_state,
                 "repository": get_mib_repository_stats(conn),
+                "librenms_rule_count": int((rule_count["count"] if rule_count else 0) or 0),
             },
         }
     finally:
@@ -2627,6 +2633,19 @@ def delete_device(device_id: str):
                 (now_iso, row['asset_id']),
             )
             conn.execute('DELETE FROM pam_session_tokens WHERE asset_id = ?', (row['asset_id'],))
+            # A direct device delete must remove the canonical rack placement
+            # before deleting the linked physical asset.  The asset-delete
+            # endpoint already performs this cleanup, but this endpoint is
+            # also used by the network-device inventory page.  Leaving the
+            # rack_devices row behind makes a later re-import fail with a
+            # false U-position conflict.
+            rack_device_rows = conn.execute(
+                'SELECT id FROM rack_devices WHERE asset_id = ?', (row['asset_id'],)
+            ).fetchall()
+            if rack_device_rows:
+                from services import rack_service
+                for rack_device_row in rack_device_rows:
+                    rack_service.delete_rack_device(conn, rack_device_row['id'], commit=False)
             conn.execute('DELETE FROM physical_assets WHERE id = ?', (row['asset_id'],))
         # Remove many-to-many tag associations before deleting the device row.
         # The FK is not cascade-enabled on older PostgreSQL installations.
@@ -3551,11 +3570,42 @@ async def snmp_test(device_id: str):
             "collection_mode": "health_only",
         }
 
+    from services.snmp_discovery_service import discover_device_oid_config, persist_discovery
+    discovery = None
+    try:
+        discovery = await discover_device_oid_config(
+            snmp_ip,
+            community,
+            port,
+            vendor=device_data.get('vendor'),
+            platform=device_data.get('platform'),
+            model=device_data.get('model'),
+            version=device_data.get('version'),
+            snmp_version=str(device_data.get('snmp_version') or '2c'),
+        )
+        persist_discovery(device_id, discovery)
+        if str(discovery.get('status') or '') in {'matched', 'partial'} and str(resolved_metrics.get('profile_status') or '').casefold() not in {'tested', 'published', 'verified', 'passed', 'approved'}:
+            resolved_metrics = {
+                **resolved_metrics,
+                'profile_id': f"discovery:{device_id}:{discovery.get('rule_version') or 'current'}",
+                'profile_status': discovery.get('status'),
+                'profile_source': 'snmp_discovery',
+                'metrics': discovery.get('metrics') or {},
+                'interface': discovery.get('interface') or {},
+                'metric_keys': sorted((discovery.get('metrics') or {}).keys()),
+                'template_applied': bool(discovery.get('metrics') or discovery.get('interface')),
+            }
+    except Exception as discovery_err:
+        logger.warning("SNMP OID discovery failed for %s: %s", snmp_ip, type(discovery_err).__name__)
+
     import asyncio as _aio
     from services.snmp_service import _snmp_get, _snmp_walk, collect_device_info, collect_interface_health, collect_device_metrics
 
     results = {"success": False, "ip": snmp_ip, "port": port,
                "sys_name": None, "sys_descr": None, "response_ms": None, "error": None,
+               "sys_object_id": (discovery or {}).get('identity', {}).get('sys_object_id'),
+               "snmp_discovery_status": (discovery or {}).get('status', 'pending'),
+               "snmp_discovery_reason": (discovery or {}).get('reason', ''),
                "synced": False,
                "hardware_metrics": {}, "metric_details": {},
                "hardware_collection_status": "pending",
@@ -3740,6 +3790,10 @@ async def snmp_test(device_id: str):
 
                 conn2 = get_db_connection()
                 try:
+                    if dev_info.get('sys_name'):
+                        from services.hostname_sync_service import sync_device_hostname_metadata
+
+                        sync_device_hostname_metadata(conn2, device_id, dev_info['sys_name'])
                     if updates:
                         set_clause = ', '.join(f'{k} = ?' for k in updates)
                         conn2.execute(f'UPDATE devices SET {set_clause} WHERE id = ?',
@@ -3933,13 +3987,8 @@ def clean_system_hostname(raw_sys_name: str) -> str:
     strips trailing newlines, domain suffixes (e.g. '.CCIE', '.corp.local', '.eve.lab'),
     and extra whitespace.
     """
-    if not raw_sys_name:
-        return ''
-    cleaned = str(raw_sys_name).strip().split('\r')[0].split('\n')[0].strip()
-    if not cleaned:
-        return ''
-    from services.topology_service import strip_domain_suffix
-    return strip_domain_suffix(cleaned)
+    from services.hostname_sync_service import clean_system_hostname as _clean_system_hostname
+    return _clean_system_hostname(raw_sys_name)
 
 
 @router.post("/devices/{device_id}/sync-hostname")

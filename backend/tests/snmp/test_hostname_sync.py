@@ -1,7 +1,8 @@
 import pytest
-from unittest.mock import patch, AsyncMock
+from unittest.mock import patch, AsyncMock, MagicMock
 import services.snmp_service
 from backend.api.devices import clean_system_hostname, batch_sync_hostname, BatchSyncHostnamePayload
+from services.hostname_sync_service import sync_device_hostname_metadata
 
 
 def test_clean_system_hostname():
@@ -21,6 +22,29 @@ def test_clean_system_hostname():
     # Empty or None handling
     assert clean_system_hostname("") == ""
     assert clean_system_hostname(None) == ""
+
+
+def test_sync_hostname_metadata_projects_to_linked_asset_and_topology():
+    conn = MagicMock()
+    conn.execute.return_value.fetchone.return_value = {
+        "id": "dev-1",
+        "hostname": "old-name",
+        "asset_id": "asset-1",
+    }
+
+    result = sync_device_hostname_metadata(conn, "dev-1", "core-sw-01.corp.local\n")
+
+    assert result == {
+        "device_id": "dev-1",
+        "asset_id": "asset-1",
+        "previous_hostname": "old-name",
+        "hostname": "core-sw-01",
+        "raw_sys_name": "core-sw-01.corp.local\n",
+    }
+    sql_calls = [call.args[0] for call in conn.execute.call_args_list]
+    assert any("UPDATE devices SET hostname" in sql for sql in sql_calls)
+    assert any("UPDATE physical_assets SET hostname" in sql for sql in sql_calls)
+    assert any("UPDATE topology_observations SET source_hostname" in sql for sql in sql_calls)
 
 
 @pytest.mark.anyio

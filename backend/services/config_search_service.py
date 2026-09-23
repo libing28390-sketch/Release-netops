@@ -22,6 +22,7 @@ import uuid
 from typing import Any, Iterable
 
 from database import get_db_connection
+from services.config_snapshot_storage import read_snapshot_content
 
 
 SEARCH_TYPES = {
@@ -565,6 +566,9 @@ def _select_snapshot_rows(conn, scope: str, filters: dict[str, Any]) -> list[dic
         f"""
         SELECT cs.id, cs.device_id, cs.hostname, cs.vendor, cs.timestamp,
                cs.trigger, cs.author, cs.file_path, cs.size,
+               cs.storage_backend, cs.storage_bucket, cs.object_key,
+               cs.object_version_id, cs.object_size, cs.object_sha256,
+               cs.content_type, cs.storage_status,
                COALESCE(cs.integrity_status, 'unknown') AS integrity_status,
                COALESCE(cs.lifecycle_status, '') AS lifecycle_status,
                COALESCE(cs.config_type, 'running') AS config_type,
@@ -764,10 +768,11 @@ def search_configurations(
             if files_read >= MAX_FILE_READS:
                 break
             file_path = str(row.get("file_path") or "")
-            if not file_path:
+            object_key = str(row.get("object_key") or "")
+            if not file_path and not object_key:
                 continue
             files_read += 1
-            content = _read_config_file(file_path)
+            content = read_snapshot_content(row)
             if not content:
                 continue
             objects = parse_config_objects(content, str(row.get("vendor") or ""))
@@ -1061,7 +1066,7 @@ def rebuild_index(
             params.append(scope_value)
         rows = conn.execute(
             f"""
-            SELECT cs.id, cs.device_id, cs.vendor, cs.file_path, cs.raw_hash, cs.timestamp
+            SELECT cs.*
             FROM config_snapshots cs
             LEFT JOIN devices d ON d.id = cs.device_id
             WHERE {' AND '.join(clauses)}
@@ -1072,7 +1077,7 @@ def rebuild_index(
         ).fetchall()
         for raw_row in rows:
             row = dict(raw_row)
-            content = _read_config_file(str(row.get("file_path") or ""))
+            content = read_snapshot_content(row)
             if not content:
                 failed += 1
                 continue

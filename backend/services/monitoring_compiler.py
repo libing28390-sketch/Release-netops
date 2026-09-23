@@ -264,12 +264,33 @@ def render_exporter_modules(
         for key in (row.get("variant_key"), row.get("id")):
             if key:
                 variant_rows[str(key)] = row
-    selected_keys = {str(_row(item).get("variant_key") or "") for item in assignments if _row(item).get("enabled", True) is not False}
+    selected_rows = [
+        _row(item)
+        for item in assignments
+        if _row(item).get("enabled", True) is not False
+    ]
+    selected_keys = {str(item.get("variant_key") or "") for item in selected_rows}
     if not selected_keys:
         return _fallback_exporter_modules()
     output: dict[str, dict[str, Any]] = {}
     fallbacks = _fallback_exporter_modules()
     for variant_key in sorted(selected_keys):
+        override_rows = [
+            item for item in selected_rows
+            if str(item.get("variant_key") or "") == variant_key
+            and isinstance(item.get("exporter_override"), Mapping)
+            and item.get("exporter_override")
+        ]
+        if override_rows:
+            override = dict(override_rows[0]["exporter_override"])
+            override_hash = _hash(override)
+            if any(_hash(dict(item["exporter_override"])) != override_hash for item in override_rows[1:]):
+                raise CompileError(f"EXPORTER_OVERRIDE_CONFLICT:{variant_key}")
+            output[variant_key] = _parse_variant_oid_config(override, include_unit=False)
+            output[variant_key]["max_repetitions"] = int(override.get("max_repetitions") or 25)
+            output[variant_key]["retries"] = int(override.get("retries") or 2)
+            output[variant_key]["timeout"] = str(override.get("timeout") or "5s")
+            continue
         variant = variant_rows.get(variant_key) or {}
         module = module_rows.get(str(variant.get("module_key") or "")) or module_rows.get(str(variant.get("module_id") or "")) or {}
         raw = variant.get("oid_config") or variant.get("oid_config_json")
@@ -366,6 +387,8 @@ class Assignment:
     assignment_hash: str
     hostname: str = ""
     site_name: str = ""
+    exporter_override: dict[str, Any] | None = None
+    discovery_status: str = ""
 
     def as_dict(self) -> dict[str, Any]:
         return {
@@ -392,6 +415,8 @@ class Assignment:
             "role": self.role,
             "selection_reason": self.selection_reason,
             "assignment_hash": self.assignment_hash,
+            "exporter_override": self.exporter_override,
+            "discovery_status": self.discovery_status,
         }
 
 
@@ -798,6 +823,30 @@ def build_assignments(
             module_id = str(module.get("id") or "")
             if str(variant.get("module_id") or "") not in {"", module_id}:
                 raise CompileError(f"MODULE_VARIANT_MISMATCH: {variant_key}")
+
+            discovery = device.get("snmp_discovery") if isinstance(device.get("snmp_discovery"), Mapping) else {}
+            discovery_status = str(discovery.get("status") or "pending").casefold()
+            module_vendor = str(module.get("vendor") or "").strip()
+            is_vendor_specific = bool(module_vendor and module_vendor.casefold() not in {"generic", "standard", ""})
+            profile_verification = str(device.get("snmp_profile_verification_status") or "").casefold()
+            discovery_module_available = bool(
+                isinstance(discovery.get("exporter_module"), Mapping)
+                and discovery.get("exporter_module", {}).get("metrics")
+            )
+            if is_vendor_specific and not discovery_module_available and profile_verification not in {"tested", "published", "verified", "passed", "approved"}:
+                # A family module with no device-level evidence is a guess. Keep
+                # generic IF-MIB/system collection, but do not publish a vendor
+                # OID module that has not been observed or explicitly verified.
+                continue
+            exporter_override = None
+            effective_variant_key = variant_key
+            if is_vendor_specific and discovery_status in {"matched", "partial"} and profile_verification not in {"tested", "published", "verified", "passed", "approved"}:
+                candidate_vendor = str((discovery.get("identity") or {}).get("vendor") or device.get("vendor") or "")
+                if _selector_matches(candidate_vendor, module_vendor) or _selector_matches(module_vendor, candidate_vendor):
+                    candidate_module = discovery.get("exporter_module")
+                    if isinstance(candidate_module, Mapping) and candidate_module.get("metrics"):
+                        exporter_override = dict(candidate_module)
+                        effective_variant_key = f"auto_{module_key}_{_hash(exporter_override)[:12]}"
             walk_fingerprint = str(module.get("walk_fingerprint") or "").strip()
             if walk_fingerprint:
                 walk_key = (asset_id, walk_fingerprint)
@@ -816,6 +865,8 @@ def build_assignments(
                 "auth_alias": auth_alias,
                 "interval_seconds": interval,
                 "scrape_timeout_seconds": scrape_timeout,
+                "variant_key": effective_variant_key,
+                "exporter_override": exporter_override or {},
             }
             key = (asset_id, str(variant.get("id") or variant_key))
             assignment_hash = _hash(assignment_payload)
@@ -837,7 +888,7 @@ def build_assignments(
                 collector_id=collector_id,
                 module_variant_id=str(variant.get("id") or ""),
                 module_key=str(module.get("module_key") or module_key),
-                variant_key=str(variant.get("variant_key") or variant_key),
+                variant_key=effective_variant_key,
                 credential_id=credential_id,
                 auth_alias=auth_alias,
                 interval_seconds=interval,
@@ -857,6 +908,8 @@ def build_assignments(
                     else f"{plan_entry_match_reason(entry, device)}; {variant_match_reason(variant, device, module)}"
                 ),
                 assignment_hash=assignment_hash,
+                exporter_override=exporter_override,
+                discovery_status=discovery_status,
             )
             seen[key] = assignment
             result.append(assignment)

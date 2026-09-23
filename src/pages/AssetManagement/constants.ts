@@ -298,13 +298,15 @@ export const COL_MAP: Record<string, string> = {
   '连接方式': 'connection_method', 'Connection': 'connection_method', 'connection_method': 'connection_method',
   'SSH算法策略': 'ssh_algorithm_profile', 'SSH 算法策略': 'ssh_algorithm_profile', 'SSH算法配置': 'ssh_algorithm_profile',
   'SSH Algorithm Profile': 'ssh_algorithm_profile', 'SSH Algorithm Policy': 'ssh_algorithm_profile', 'ssh_algorithm_profile': 'ssh_algorithm_profile',
-  'SNMP社区名': 'snmp_community', 'SNMP Community': 'snmp_community', 'snmp_community': 'snmp_community',
+  'SNMP社区名': 'snmp_community', 'SNMP Community': 'snmp_community', 'SNMP Community String': 'snmp_community', 'SNMP Community Name': 'snmp_community',
+  '社区名': 'snmp_community', '团体字': 'snmp_community', '团体字符串': 'snmp_community', 'SNMP团体字': 'snmp_community', 'SNMP 团体字': 'snmp_community', 'SNMP团体字符串': 'snmp_community', 'SNMP 团体字符串': 'snmp_community',
+  Community: 'snmp_community', community: 'snmp_community', 'Community String': 'snmp_community', 'Community Name': 'snmp_community', 'snmp_community': 'snmp_community',
   'SNMP端口': 'snmp_port', 'SNMP Port': 'snmp_port', 'snmp_port': 'snmp_port',
   // SNMP credentials are referenced by vault name (or ID for compatibility),
   // never by a community string in the template. Keep generic Credential
   // mapped to SSH above so existing imports remain unambiguous.
-  'SNMP凭据': 'snmp_credential_name', 'SNMP凭据名称': 'snmp_credential_name', 'SNMP凭据（推荐）': 'snmp_credential_name',
-  'SNMP Credential': 'snmp_credential_name', 'SNMP Credential Name': 'snmp_credential_name', 'SNMP Credential (recommended)': 'snmp_credential_name',
+  'SNMP凭据': 'snmp_credential_name', 'SNMP凭据名称': 'snmp_credential_name', 'SNMP凭据（推荐）': 'snmp_credential_name', '团体字凭据': 'snmp_credential_name', 'SNMP团体凭据': 'snmp_credential_name', 'community的凭据': 'snmp_credential_name', 'Community凭据': 'snmp_credential_name',
+  'SNMP Credential': 'snmp_credential_name', 'SNMP Credential Name': 'snmp_credential_name', 'SNMP Credential (recommended)': 'snmp_credential_name', 'Community Credential': 'snmp_credential_name', 'Community Credential Name': 'snmp_credential_name',
   'snmp_credential_name': 'snmp_credential_name',
   'SNMP凭据ID': 'snmp_credential_id', 'SNMP Credential ID': 'snmp_credential_id',
   'snmp_credential_id': 'snmp_credential_id',

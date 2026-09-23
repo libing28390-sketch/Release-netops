@@ -161,6 +161,23 @@ interface ParameterProfile {
   updated_at?: string;
 }
 
+interface SmtpSettingsDraft {
+  enabled: boolean;
+  host: string;
+  port: number;
+  security: 'ssl' | 'starttls' | 'none';
+  username: string;
+  password: string;
+  from_address: string;
+  from_name: string;
+  reply_to: string;
+  connect_timeout_seconds: number;
+  send_timeout_seconds: number;
+  rate_limit_per_minute: number;
+  has_password?: boolean;
+  configured?: boolean;
+}
+
 interface PlatformSettingsTabProps {
   t: (key: string) => string;
   language: string;
@@ -545,10 +562,79 @@ const PlatformSettingsTab: React.FC<PlatformSettingsTabProps> = ({
   const templateCacheRef = useRef<Map<string, { detail: TemplateDetail; profiles: ParameterProfile[] }>>(new Map());
   const detailRef = useRef<TemplateDetail | null>(null);
   const sourceContentRef = useRef('');
+  const [smtpSettings, setSmtpSettings] = useState<SmtpSettingsDraft | null>(null);
+  const [smtpLoading, setSmtpLoading] = useState(false);
+  const [smtpSaving, setSmtpSaving] = useState(false);
+  const [smtpTesting, setSmtpTesting] = useState(false);
+  const [smtpRecipient, setSmtpRecipient] = useState('');
   const draftStorageKey = (templateId: string) => `nexora.config-template-draft.${templateId}`;
 
   detailRef.current = detail;
   sourceContentRef.current = sourceContent;
+
+  useEffect(() => {
+    let cancelled = false;
+    setSmtpLoading(true);
+    void apiRequest<{ smtp?: Partial<SmtpSettingsDraft> }>('/api/alerts/notification-channels')
+      .then((payload) => {
+        if (cancelled || !payload.smtp) return;
+        setSmtpSettings({
+          enabled: Boolean(payload.smtp.enabled),
+          host: String(payload.smtp.host || ''),
+          port: Number(payload.smtp.port || 587),
+          security: (payload.smtp.security === 'ssl' || payload.smtp.security === 'none') ? payload.smtp.security : 'starttls',
+          username: String(payload.smtp.username || ''),
+          password: '',
+          from_address: String(payload.smtp.from_address || ''),
+          from_name: String(payload.smtp.from_name || 'Nexora'),
+          reply_to: String(payload.smtp.reply_to || ''),
+          connect_timeout_seconds: Number(payload.smtp.connect_timeout_seconds || 10),
+          send_timeout_seconds: Number(payload.smtp.send_timeout_seconds || 20),
+          rate_limit_per_minute: Number(payload.smtp.rate_limit_per_minute || 60),
+          has_password: Boolean(payload.smtp.has_password),
+          configured: Boolean(payload.smtp.configured),
+        });
+      })
+      .catch(() => {
+        if (!cancelled) setSmtpSettings(null);
+      })
+      .finally(() => {
+        if (!cancelled) setSmtpLoading(false);
+      });
+    return () => { cancelled = true; };
+  }, []);
+
+  const saveSmtpSettings = async () => {
+    if (!smtpSettings) return;
+    setSmtpSaving(true);
+    try {
+      const saved = await apiRequest<SmtpSettingsDraft>('/api/alerts/notification-channels/email', {
+        method: 'PUT',
+        body: JSON.stringify(smtpSettings),
+      });
+      setSmtpSettings((current) => current ? { ...current, ...saved, password: '' } : current);
+      showToast(zh ? 'SMTP 邮件通道已保存' : 'SMTP email channel saved', 'success');
+    } catch (error) {
+      showToast(error instanceof Error ? error.message : (zh ? '保存 SMTP 配置失败' : 'Failed to save SMTP settings'), 'error');
+    } finally {
+      setSmtpSaving(false);
+    }
+  };
+
+  const testSmtpSettings = async () => {
+    setSmtpTesting(true);
+    try {
+      await apiRequest('/api/alerts/notification-channels/email/test', {
+        method: 'POST',
+        body: JSON.stringify({ recipient: smtpRecipient.trim() || undefined }),
+      });
+      showToast(zh ? '测试邮件已发送' : 'Test email sent', 'success');
+    } catch (error) {
+      showToast(error instanceof Error ? error.message : (zh ? '测试邮件发送失败' : 'Test email failed'), 'error');
+    } finally {
+      setSmtpTesting(false);
+    }
+  };
 
   useEffect(() => {
     setTemplates(configTemplates);
@@ -1482,6 +1568,57 @@ const PlatformSettingsTab: React.FC<PlatformSettingsTabProps> = ({
           </div>
         </div>
       </div>
+
+      {smtpSettings && (
+        <div className="shrink-0 px-5 pt-3">
+          <div className="rounded-2xl border border-emerald-100 bg-white p-4 shadow-sm">
+            <div className="flex flex-wrap items-center gap-2">
+              <div className="flex-1">
+                <h2 className="text-sm font-black text-slate-800">{zh ? '邮件告警 SMTP 通道' : 'Email Alert SMTP Channel'}</h2>
+                <p className="mt-1 text-[10px] text-slate-500">{zh ? '规则选择邮件后，系统会通过此 SMTP 通道异步发送，并在告警历史中记录失败与重试。' : 'Rules selecting Email use this SMTP channel asynchronously; failures and retries remain visible in alert history.'}</p>
+              </div>
+              <label className="flex items-center gap-2 text-xs font-semibold text-slate-600">
+                <input type="checkbox" checked={smtpSettings.enabled} onChange={(event) => setSmtpSettings((current) => current ? { ...current, enabled: event.target.checked } : current)} />
+                {zh ? '启用' : 'Enabled'}
+              </label>
+            </div>
+            {smtpLoading ? (
+              <div className="mt-3 text-xs text-slate-400">{zh ? '正在加载 SMTP 配置…' : 'Loading SMTP settings…'}</div>
+            ) : (
+              <>
+                <div className="mt-3 grid gap-2 md:grid-cols-4">
+                  <input value={smtpSettings.host} onChange={(event) => setSmtpSettings((current) => current ? { ...current, host: event.target.value } : current)} placeholder={zh ? 'SMTP 主机' : 'SMTP host'} className={fieldClass} />
+                  <input type="number" min={1} max={65535} value={smtpSettings.port} onChange={(event) => setSmtpSettings((current) => current ? { ...current, port: Number(event.target.value) } : current)} placeholder={zh ? '端口' : 'Port'} className={fieldClass} />
+                  <select value={smtpSettings.security} onChange={(event) => setSmtpSettings((current) => current ? { ...current, security: event.target.value as SmtpSettingsDraft['security'] } : current)} className={fieldClass}>
+                    <option value="starttls">STARTTLS</option><option value="ssl">SSL</option><option value="none">{zh ? '无加密' : 'None'}</option>
+                  </select>
+                  <input value={smtpSettings.username} onChange={(event) => setSmtpSettings((current) => current ? { ...current, username: event.target.value } : current)} placeholder={zh ? 'SMTP 用户名' : 'SMTP username'} className={fieldClass} />
+                </div>
+                <div className="mt-2 grid gap-2 md:grid-cols-4">
+                  <input type="password" value={smtpSettings.password} onChange={(event) => setSmtpSettings((current) => current ? { ...current, password: event.target.value } : current)} placeholder={smtpSettings.has_password ? (zh ? '密码已保存，留空保持不变' : 'Password saved; leave blank to keep') : (zh ? 'SMTP 密码' : 'SMTP password')} className={fieldClass} autoComplete="new-password" />
+                  <input value={smtpSettings.from_address} onChange={(event) => setSmtpSettings((current) => current ? { ...current, from_address: event.target.value } : current)} placeholder={zh ? '发件人邮箱' : 'From address'} className={fieldClass} />
+                  <input value={smtpSettings.from_name} onChange={(event) => setSmtpSettings((current) => current ? { ...current, from_name: event.target.value } : current)} placeholder={zh ? '发件人名称' : 'From name'} className={fieldClass} />
+                  <input value={smtpSettings.reply_to} onChange={(event) => setSmtpSettings((current) => current ? { ...current, reply_to: event.target.value } : current)} placeholder={zh ? '回复地址（可选）' : 'Reply-To (optional)'} className={fieldClass} />
+                </div>
+                <div className="mt-2 grid gap-2 md:grid-cols-3">
+                  <input type="number" min={1} max={120} value={smtpSettings.connect_timeout_seconds} onChange={(event) => setSmtpSettings((current) => current ? { ...current, connect_timeout_seconds: Number(event.target.value) } : current)} placeholder={zh ? '连接超时(秒)' : 'Connect timeout (sec)'} className={fieldClass} />
+                  <input type="number" min={1} max={120} value={smtpSettings.send_timeout_seconds} onChange={(event) => setSmtpSettings((current) => current ? { ...current, send_timeout_seconds: Number(event.target.value) } : current)} placeholder={zh ? '发送超时(秒)' : 'Send timeout (sec)'} className={fieldClass} />
+                  <input type="number" min={1} max={10000} value={smtpSettings.rate_limit_per_minute} onChange={(event) => setSmtpSettings((current) => current ? { ...current, rate_limit_per_minute: Number(event.target.value) } : current)} placeholder={zh ? '每分钟上限' : 'Rate limit/min'} className={fieldClass} />
+                </div>
+                <div className="mt-3 flex flex-wrap items-center gap-2">
+                  <button type="button" onClick={() => void saveSmtpSettings()} disabled={smtpSaving} className="inline-flex items-center gap-1.5 rounded-xl bg-emerald-600 px-3 py-2 text-xs font-bold text-white disabled:opacity-40">
+                    {smtpSaving ? <Loader2 size={12} className="animate-spin" /> : <Save size={12} />} {zh ? '保存邮件通道' : 'Save email channel'}
+                  </button>
+                  <input value={smtpRecipient} onChange={(event) => setSmtpRecipient(event.target.value)} placeholder={zh ? '测试收件邮箱（留空使用当前用户）' : 'Test recipient (blank uses current user)'} className={`${fieldClass} min-w-[240px] flex-1`} />
+                  <button type="button" onClick={() => void testSmtpSettings()} disabled={smtpTesting || !smtpSettings.enabled} className="inline-flex items-center gap-1.5 rounded-xl border border-emerald-200 bg-emerald-50 px-3 py-2 text-xs font-bold text-emerald-700 disabled:opacity-40">
+                    {smtpTesting ? <Loader2 size={12} className="animate-spin" /> : <CheckCircle2 size={12} />} {zh ? '发送测试邮件' : 'Send test email'}
+                  </button>
+                </div>
+              </>
+            )}
+          </div>
+        </div>
+      )}
 
       <div className="flex min-h-0 flex-1 gap-0 overflow-hidden p-5 pt-4">
         <aside

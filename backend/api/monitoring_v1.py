@@ -55,6 +55,7 @@ from services.monitoring_compiler import (
 )
 from services.monitoring_health_service import classify_collection_health, summarize_collection_health
 from services.collector_artifact_service import ArtifactStoreError, CollectorArtifactStore
+from services.snmp_discovery_service import load_discoveries
 
 
 router = APIRouter(prefix="/monitoring", tags=["monitoring-v1"])
@@ -1086,6 +1087,31 @@ def device_assignments(device_id: str, _user=require_role("Viewer")):
     return list_assignments(collector_id=None, asset_id=device_id, _user=_user)
 
 
+@router.get("/devices/{device_id}/snmp-discovery")
+def device_snmp_discovery(device_id: str, _user=require_role("Viewer")):
+    """Return secret-free identity and per-device OID discovery evidence."""
+    _assert_asset_visible(device_id, _user)
+    conn = get_db_connection()
+    try:
+        row = conn.execute("SELECT id FROM devices WHERE id = ?", (device_id,)).fetchone()
+        if not row:
+            raise HTTPException(status_code=404, detail="Device not found")
+        discovery = load_discoveries(conn, [device_id]).get(device_id)
+        if not discovery:
+            return {
+                "device_id": device_id,
+                "status": "pending",
+                "reason": "SNMP identity discovery has not run yet",
+                "identity": {},
+                "metrics": {},
+                "interface": {},
+                "exporter_module": {},
+            }
+        return discovery
+    finally:
+        conn.close()
+
+
 @router.post("/devices/{device_id}/preview-assignments")
 def preview_device_assignments(device_id: str, _user=require_role("Viewer")):
     conn = get_db_connection()
@@ -1095,7 +1121,11 @@ def preview_device_assignments(device_id: str, _user=require_role("Viewer")):
             raise HTTPException(status_code=404, detail="Device not found")
         _assert_asset_visible(device_id, _user)
         inputs = _load_compile_inputs(conn, str(_dict(device).get("collector_id") or "collector-local"), _user)
-        device_rows = [_dict(device)]
+        device_rows = [
+            dict(item)
+            for item in inputs[0]
+            if str(item.get("id") or "") == device_id
+        ] or [_dict(device)]
         device_rows[0].setdefault("collector_id", "collector-local")
         assignments = build_assignments(device_rows, *inputs[1:5], credential_aliases=inputs[-1])
         return {"device_id": device_id, "items": assignments}
@@ -1109,8 +1139,10 @@ def _load_compile_inputs(conn, collector_id: str, user: Any = None):
     tenant = _tenant_id(user)
     device_sql = """
         SELECT d.*,
+               COALESCE(profile.verification_status, '') AS snmp_profile_verification_status,
                COALESCE(NULLIF(s.site_name, ''), NULLIF(s.site_code, ''), CASE WHEN SUBSTR(COALESCE(d.site, ''), 1, 5) = 'site-' THEN '' ELSE COALESCE(d.site, '') END, '') AS site_name
         FROM devices d
+        LEFT JOIN snmp_metric_profiles profile ON profile.id = d.snmp_metric_profile_id
         LEFT JOIN sites s ON (s.id = d.site_id OR s.id = d.site OR s.site_code = d.site OR s.site_name = d.site)
         WHERE d.status IS NULL OR LOWER(d.status) = 'online'
     """
@@ -1119,6 +1151,27 @@ def _load_compile_inputs(conn, collector_id: str, user: Any = None):
         device_sql += " AND COALESCE(d.tenant_id, 'tenant-default') = ?"
         device_params = (tenant,)
     devices = [_dict(row) for row in conn.execute(device_sql, device_params).fetchall()]
+    discovery_map = load_discoveries(conn, [str(item.get("id") or "") for item in devices])
+    for device in devices:
+        discovery = discovery_map.get(str(device.get("id") or ""))
+        if discovery:
+            identity = discovery.get("identity") or {}
+            identity_mismatch = any(
+                str(device.get(field) or "").strip().casefold()
+                and str(device.get(field) or "").strip().casefold()
+                != str(identity.get("software_version" if field == "version" else field) or discovery.get(field) or "").strip().casefold()
+                for field in ("vendor", "platform", "model", "version")
+            )
+            if identity_mismatch:
+                discovery = {
+                    **discovery,
+                    "status": "pending",
+                    "reason": "asset identity changed after the last SNMP discovery",
+                    "metrics": {},
+                    "interface": {},
+                    "exporter_module": {},
+                }
+            device["snmp_discovery"] = discovery
     server_sql = """
         SELECT pa.id, 'server' AS asset_type, pa.management_ip, pa.hostname, pa.platform, pa.status,
                COALESCE(NULLIF(s.site_name, ''), NULLIF(s.site_code, ''), '') AS site_name,
@@ -1267,6 +1320,38 @@ def compile_collector(collector_id: str, body: CompileRequest | None = None, _us
         used_credentials = {str(item.get("credential_id") or "") for item in assignments}
         artifact_credentials = [item for item in inputs[5] if str(item.get("id") or "") in used_credentials]
         artifact_root = os.environ.get("MONITORING_ARTIFACT_ROOT") or os.path.join(os.getcwd(), "artifacts", "monitoring")
+        artifact = compile_artifact(
+            assignments,
+            collector_id=collector_id,
+            config_version=version,
+            credentials=artifact_credentials,
+            modules=inputs[2],
+            variants=inputs[3],
+            servers=inputs[7],
+            output_root=None,
+        )
+        validate_artifact(artifact)
+        manifest = artifact["manifest"]
+        latest_same = conn.execute(
+            """SELECT config_version, status, artifact_path, manifest_json, checksum
+                 FROM monitoring_config_versions
+                WHERE collector_id = ?
+                ORDER BY config_version DESC LIMIT 1""",
+            (collector_id,),
+        ).fetchone()
+        if not requested and latest_same and str(latest_same["checksum"] or "") == str(manifest.get("checksum") or ""):
+            compile_succeeded = True
+            existing_manifest = _parse_json(latest_same["manifest_json"], manifest)
+            already_applied = str(latest_same["status"] or "").upper() == "APPLIED"
+            return {
+                "status": "UNCHANGED",
+                "collector_id": collector_id,
+                "config_version": int(latest_same["config_version"]),
+                "assignment_count": assignment_count,
+                "manifest": existing_manifest,
+                "artifact_path": latest_same["artifact_path"] or "",
+                "already_applied": already_applied,
+            }
         artifact = compile_artifact(
             assignments,
             collector_id=collector_id,

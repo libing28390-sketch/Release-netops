@@ -7,6 +7,7 @@ export interface NotificationChannelsState {
   feishu: { webhook_url: string; enabled: boolean; creator_username?: string };
   dingtalk: { webhook_url: string; enabled: boolean; secret: string; creator_username?: string };
   wechat: { webhook_url: string; enabled: boolean; creator_username?: string };
+  email: { webhook_url: string; enabled: boolean; active_enabled?: boolean; recovery_enabled?: boolean };
 }
 
 const EMPTY_PROFILE_FORM: ProfileFormState = {
@@ -24,6 +25,7 @@ const EMPTY_CHANNELS: NotificationChannelsState = {
   feishu: { webhook_url: '', enabled: false },
   dingtalk: { webhook_url: '', enabled: false, secret: '' },
   wechat: { webhook_url: '', enabled: false },
+  email: { webhook_url: '', enabled: false, active_enabled: true, recovery_enabled: true },
 };
 
 interface UseUserProfileArgs {
@@ -93,6 +95,12 @@ export const useUserProfile = ({
         webhook_url: savedChannels?.wechat?.webhook_url || '',
         enabled: !!savedChannels?.wechat?.enabled,
         creator_username: savedChannels?.wechat?.creator_username || '',
+      },
+      email: {
+        webhook_url: '',
+        enabled: !!savedChannels?.email?.enabled,
+        active_enabled: savedChannels?.email?.active_enabled !== false,
+        recovery_enabled: savedChannels?.email?.recovery_enabled !== false,
       },
     });
     setNotifyTestLoading('');

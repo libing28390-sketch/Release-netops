@@ -99,6 +99,26 @@ interface ArchiveSettings {
   path_prefix: string;
 }
 
+interface StorageStatus {
+  backend: 'local' | 's3' | string;
+  provider: string;
+  endpoint: string;
+  bucket: string;
+  status: 'ready' | 'degraded' | string;
+  health_ok: boolean;
+  health_message: string;
+  checked_at: string;
+  configuration_source: string;
+  counts: {
+    ready: number;
+    pending: number;
+    error: number;
+    legacy: number;
+    spool: number;
+  };
+  recent_errors: Array<{ kind: string; id: string; message: string; updated_at: string }>;
+}
+
 const archiveProtocolPort = (protocol: ArchiveProtocol): number => (
   protocol === 'sftp' ? 22 : protocol === 'ftp' ? 21 : 69
 );
@@ -278,6 +298,8 @@ const ConfigBackupTab: React.FC<ConfigBackupTabProps> = ({
   const [tftpSaving, setTftpSaving] = useState(false);
   const [tftpSyncing, setTftpSyncing] = useState(false);
   const [tftpSyncingSnapshotId, setTftpSyncingSnapshotId] = useState<string | null>(null);
+  const [storageStatus, setStorageStatus] = useState<StorageStatus | null>(null);
+  const [storageStatusLoading, setStorageStatusLoading] = useState(false);
 
   const loadTftpSettings = useCallback(async () => {
     try {
@@ -302,6 +324,19 @@ const ConfigBackupTab: React.FC<ConfigBackupTabProps> = ({
       }
     } catch {
       // ignore
+    }
+  }, []);
+
+  const loadStorageStatus = useCallback(async () => {
+    setStorageStatusLoading(true);
+    try {
+      const response = await fetch('/api/storage/status', { headers: authHeaders() });
+      if (!response.ok) throw new Error(`HTTP ${response.status}`);
+      setStorageStatus(await response.json() as StorageStatus);
+    } catch {
+      setStorageStatus(null);
+    } finally {
+      setStorageStatusLoading(false);
     }
   }, []);
 
@@ -806,12 +841,13 @@ const ConfigBackupTab: React.FC<ConfigBackupTabProps> = ({
     setDetailExpanded(false);
   };
 
-  useEffect(() => { void loadLatestBackups(); void loadBackupRuns(); }, [loadLatestBackups, loadBackupRuns]);
+  useEffect(() => { void loadLatestBackups(); void loadBackupRuns(); void loadStorageStatus(); }, [loadLatestBackups, loadBackupRuns, loadStorageStatus]);
 
   const handleBackupAllClick = async () => {
     await onBackupAllOnline();
     void loadLatestBackups();
     void loadBackupRuns();
+    void loadStorageStatus();
   };
 
   const handleBackupDeviceClick = async (deviceId: string) => {
@@ -820,6 +856,7 @@ const ConfigBackupTab: React.FC<ConfigBackupTabProps> = ({
       await onBackupDevice(deviceId);
       void loadLatestBackups();
       void loadBackupRuns();
+      void loadStorageStatus();
     } finally {
       setBackupingDeviceId(null);
     }
@@ -1028,7 +1065,7 @@ const ConfigBackupTab: React.FC<ConfigBackupTabProps> = ({
               {zh ? '备份全部在线设备' : 'Backup All Online'}
             </button>
             <button
-              onClick={() => { void loadLatestBackups(); void loadBackupRuns(); }}
+              onClick={() => { void loadLatestBackups(); void loadBackupRuns(); void loadStorageStatus(); }}
               className="inline-flex h-11 items-center justify-center gap-2 rounded-2xl border border-[#d8e1eb] bg-[#f7f9fc] px-4 text-sm font-semibold text-[#0e7490] transition-all duration-200 hover:-translate-y-0.5 hover:border-[#c7d4e2] hover:bg-white hover:text-[#0891b2]"
             >
               <RefreshCw size={14} className={loading ? 'animate-spin' : ''} />
@@ -1047,6 +1084,59 @@ const ConfigBackupTab: React.FC<ConfigBackupTabProps> = ({
         <span className="text-[11px] text-black/35">
           {zh ? '按 Site、日期和批次定位备份详情' : 'Locate backup details by Site, date, and batch'}
         </span>
+      </div>
+
+      <div className={`rounded-2xl border px-4 py-3 shadow-[0_8px_24px_rgba(11,35,64,0.04)] ${storageStatus?.status === 'degraded' ? 'border-amber-200 bg-amber-50/70' : 'border-cyan-100 bg-cyan-50/50'}`}>
+        <div className="flex flex-wrap items-center justify-between gap-3">
+          <div className="flex items-center gap-2">
+            {storageStatus?.status === 'degraded' ? <AlertTriangle size={16} className="text-amber-600" /> : <CheckCircle2 size={16} className="text-emerald-600" />}
+            <div>
+              <p className="text-xs font-bold text-[#164e63]">{zh ? '对象存储状态' : 'Object storage status'}</p>
+              <p className="mt-0.5 text-[10px] text-black/45">
+                {storageStatusLoading
+                  ? (zh ? '正在检查连接…' : 'Checking connection…')
+                  : storageStatus
+                    ? `${storageStatus.provider}${storageStatus.bucket ? ` · ${storageStatus.bucket}` : ''}`
+                    : (zh ? '状态暂时不可用' : 'Status unavailable')}
+              </p>
+            </div>
+          </div>
+          <div className="flex items-center gap-2">
+            {storageStatus && (
+              <span className={`rounded-full px-2.5 py-1 text-[10px] font-bold uppercase ${storageStatus.status === 'degraded' ? 'bg-amber-100 text-amber-700' : 'bg-emerald-100 text-emerald-700'}`}>
+                {storageStatus.status === 'degraded' ? (zh ? '需关注' : 'Degraded') : (zh ? '正常' : 'Ready')}
+              </span>
+            )}
+            <button type="button" onClick={() => void loadStorageStatus()} disabled={storageStatusLoading} className="inline-flex items-center gap-1 rounded-lg border border-black/10 bg-white px-2.5 py-1.5 text-[10px] font-semibold text-[#0e7490] hover:bg-cyan-50 disabled:opacity-50">
+              <RefreshCw size={12} className={storageStatusLoading ? 'animate-spin' : ''} />
+              {zh ? '检查' : 'Check'}
+            </button>
+          </div>
+        </div>
+        {storageStatus && (
+          <div className="mt-3 grid grid-cols-2 gap-2 sm:grid-cols-5">
+            {([
+              [zh ? '已就绪' : 'Ready', storageStatus.counts.ready, 'text-emerald-700'],
+              [zh ? '待处理' : 'Pending', storageStatus.counts.pending, 'text-cyan-700'],
+              [zh ? '失败' : 'Errors', storageStatus.counts.error, 'text-rose-700'],
+              [zh ? '旧路径' : 'Legacy', storageStatus.counts.legacy, 'text-slate-600'],
+              [zh ? 'Spool' : 'Spool', storageStatus.counts.spool, 'text-amber-700'],
+            ] as const).map(([label, value, tone]) => (
+              <div key={String(label)} className="rounded-xl border border-black/5 bg-white/80 px-3 py-2">
+                <p className="text-[10px] font-semibold text-black/35">{label}</p>
+                <p className={`mt-1 text-lg font-bold tabular-nums ${tone}`}>{value}</p>
+              </div>
+            ))}
+          </div>
+        )}
+        {storageStatus && (!storageStatus.health_ok || storageStatus.recent_errors.length > 0) && (
+          <div className="mt-3 rounded-xl border border-amber-200/80 bg-white/70 px-3 py-2 text-[10px] text-amber-800">
+            <p className="font-semibold">{storageStatus.health_message}</p>
+            {storageStatus.recent_errors.slice(0, 3).map((item) => (
+              <p key={`${item.kind}-${item.id}`} className="mt-1 truncate">{item.kind}/{item.id}: {item.message}</p>
+            ))}
+          </div>
+        )}
       </div>
 
       {(

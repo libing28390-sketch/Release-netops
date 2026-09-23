@@ -9,6 +9,10 @@ sqlalchemy>=2.0.0,<3.0.0
 psycopg2-binary>=2.9.9
 PyYAML>=6.0
 
+# Provider-neutral object storage.  The S3 provider imports boto3 lazily so
+# local-only deployments can still run without an object-store endpoint.
+boto3>=1.34.0,<2.0.0
+
 # Config & Validation
 pydantic>=2.6.0,<3.0.0
 pydantic-settings>=2.2.0,<3.0.0

@@ -25,6 +25,7 @@
       "fieldConfig": {
         "defaults": {
           "unit": "none",
+          "noValue": "—",
           "color": {
             "mode": "thresholds"
           },
@@ -42,8 +43,8 @@
       },
       "options": {
         "colorMode": "value",
-        "graphMode": "area",
-        "justifyMode": "auto",
+        "graphMode": "none",
+        "justifyMode": "center",
         "orientation": "auto",
         "reduceOptions": {
           "calcs": [
@@ -52,11 +53,11 @@
           "fields": "",
           "values": false
         },
-        "textMode": "auto"
+        "textMode": "value"
       },
       "targets": [
         {
-          "expr": "count(count by (instance) (node_load1 or up{job=\"linux_servers\"})) or vector(0)",
+          "expr": "count(count by (hostname) (up{job=\"linux_servers\",site_name=~\"$site\",hostname=~\"$device\"})) or vector(0)",
           "refId": "A"
         }
       ]
@@ -78,6 +79,7 @@
       "fieldConfig": {
         "defaults": {
           "unit": "s",
+          "noValue": "—",
           "color": {
             "mode": "thresholds"
           },
@@ -95,8 +97,8 @@
       },
       "options": {
         "colorMode": "value",
-        "graphMode": "area",
-        "justifyMode": "auto",
+        "graphMode": "none",
+        "justifyMode": "center",
         "orientation": "auto",
         "reduceOptions": {
           "calcs": [
@@ -105,11 +107,11 @@
           "fields": "",
           "values": false
         },
-        "textMode": "auto"
+        "textMode": "value"
       },
       "targets": [
         {
-          "expr": "avg(time() - node_boot_time_seconds{instance=~\"$device\"}) or vector(0)",
+          "expr": "avg(time() - node_boot_time_seconds{job=\"linux_servers\",site_name=~\"$site\",hostname=~\"$device\"}) or vector(0)",
           "refId": "A"
         }
       ]
@@ -131,6 +133,7 @@
       "fieldConfig": {
         "defaults": {
           "unit": "percent",
+          "noValue": "—",
           "color": {
             "mode": "thresholds"
           },
@@ -156,8 +159,8 @@
       },
       "options": {
         "colorMode": "value",
-        "graphMode": "area",
-        "justifyMode": "auto",
+        "graphMode": "none",
+        "justifyMode": "center",
         "orientation": "auto",
         "reduceOptions": {
           "calcs": [
@@ -166,11 +169,11 @@
           "fields": "",
           "values": false
         },
-        "textMode": "auto"
+        "textMode": "value"
       },
       "targets": [
         {
-          "expr": "avg(100 - (avg by (instance) (rate(node_cpu_seconds_total{instance=~\"$device\",mode=\"idle\"}[5m])) * 100)) or vector(0)",
+          "expr": "avg(100 - (avg by (hostname) (rate(node_cpu_seconds_total{job=\"linux_servers\",site_name=~\"$site\",hostname=~\"$device\",mode=\"idle\"}[5m])) * 100)) or vector(0)",
           "refId": "A"
         }
       ]
@@ -192,6 +195,7 @@
       "fieldConfig": {
         "defaults": {
           "unit": "percent",
+          "noValue": "—",
           "color": {
             "mode": "thresholds"
           },
@@ -217,8 +221,8 @@
       },
       "options": {
         "colorMode": "value",
-        "graphMode": "area",
-        "justifyMode": "auto",
+        "graphMode": "none",
+        "justifyMode": "center",
         "orientation": "auto",
         "reduceOptions": {
           "calcs": [
@@ -227,11 +231,11 @@
           "fields": "",
           "values": false
         },
-        "textMode": "auto"
+        "textMode": "value"
       },
       "targets": [
         {
-          "expr": "avg((1 - (node_memory_MemAvailable_bytes{instance=~\"$device\"} / node_memory_MemTotal_bytes{instance=~\"$device\"})) * 100) or vector(0)",
+          "expr": "avg((1 - (node_memory_MemAvailable_bytes{job=\"linux_servers\",site_name=~\"$site\",hostname=~\"$device\"} / node_memory_MemTotal_bytes{job=\"linux_servers\",site_name=~\"$site\",hostname=~\"$device\"})) * 100) or vector(0)",
           "refId": "A"
         }
       ]
@@ -253,6 +257,7 @@
       "fieldConfig": {
         "defaults": {
           "unit": "none",
+          "noValue": "—",
           "color": {
             "mode": "thresholds"
           },
@@ -270,8 +275,8 @@
       },
       "options": {
         "colorMode": "value",
-        "graphMode": "area",
-        "justifyMode": "auto",
+        "graphMode": "none",
+        "justifyMode": "center",
         "orientation": "auto",
         "reduceOptions": {
           "calcs": [
@@ -280,11 +285,11 @@
           "fields": "",
           "values": false
         },
-        "textMode": "auto"
+        "textMode": "value"
       },
       "targets": [
         {
-          "expr": "sum(node_netstat_Tcp_CurrEstab{instance=~\"$device\"}) or vector(0)",
+          "expr": "sum(node_netstat_Tcp_CurrEstab{job=\"linux_servers\",site_name=~\"$site\",hostname=~\"$device\"}) or vector(0)",
           "refId": "A"
         }
       ]
@@ -306,6 +311,7 @@
       "fieldConfig": {
         "defaults": {
           "unit": "short",
+          "noValue": "—",
           "color": {
             "mode": "thresholds"
           },
@@ -331,8 +337,8 @@
       },
       "options": {
         "colorMode": "value",
-        "graphMode": "area",
-        "justifyMode": "auto",
+        "graphMode": "none",
+        "justifyMode": "center",
         "orientation": "auto",
         "reduceOptions": {
           "calcs": [
@@ -341,11 +347,11 @@
           "fields": "",
           "values": false
         },
-        "textMode": "auto"
+        "textMode": "value"
       },
       "targets": [
         {
-          "expr": "sum(node_filefd_allocated{instance=~\"$device\"}) or vector(0)",
+          "expr": "sum(node_filefd_allocated{job=\"linux_servers\",site_name=~\"$site\",hostname=~\"$device\"}) or vector(0)",
           "refId": "A"
         }
       ]
@@ -367,12 +373,13 @@
       "fieldConfig": {
         "defaults": {
           "unit": "percent",
+          "noValue": "—",
           "color": {
             "mode": "palette-classic"
           },
           "custom": {
             "drawStyle": "line",
-            "lineInterpolation": "smooth",
+            "lineInterpolation": "linear",
             "fillOpacity": 10
           }
         },
@@ -391,23 +398,23 @@
       },
       "targets": [
         {
-          "expr": "100 - (avg by (instance) (rate(node_cpu_seconds_total{instance=~\"$device\",mode=\"idle\"}[5m])) * 100)",
-          "legendFormat": "{{instance}} 整机 CPU 利用率 (%)",
+          "expr": "100 - (avg by (hostname) (rate(node_cpu_seconds_total{job=\"linux_servers\",site_name=~\"$site\",hostname=~\"$device\",mode=\"idle\"}[5m])) * 100)",
+          "legendFormat": "{{site_name}} / {{hostname}} 整机 CPU 利用率 (%)",
           "refId": "A"
         },
         {
-          "expr": "avg by (instance) (rate(node_cpu_seconds_total{instance=~\"$device\",mode=\"user\"}[5m])) * 100",
-          "legendFormat": "{{instance}} 用户态 (user %)",
+          "expr": "avg by (hostname) (rate(node_cpu_seconds_total{job=\"linux_servers\",site_name=~\"$site\",hostname=~\"$device\",mode=\"user\"}[5m])) * 100",
+          "legendFormat": "{{site_name}} / {{hostname}} 用户态 (user %)",
           "refId": "B"
         },
         {
-          "expr": "avg by (instance) (rate(node_cpu_seconds_total{instance=~\"$device\",mode=\"system\"}[5m])) * 100",
-          "legendFormat": "{{instance}} 系统态 (system %)",
+          "expr": "avg by (hostname) (rate(node_cpu_seconds_total{job=\"linux_servers\",site_name=~\"$site\",hostname=~\"$device\",mode=\"system\"}[5m])) * 100",
+          "legendFormat": "{{site_name}} / {{hostname}} 系统态 (system %)",
           "refId": "C"
         },
         {
-          "expr": "avg by (instance) (rate(node_cpu_seconds_total{instance=~\"$device\",mode=\"iowait\"}[5m])) * 100",
-          "legendFormat": "{{instance}} I/O等待 (iowait %)",
+          "expr": "avg by (hostname) (rate(node_cpu_seconds_total{job=\"linux_servers\",site_name=~\"$site\",hostname=~\"$device\",mode=\"iowait\"}[5m])) * 100",
+          "legendFormat": "{{site_name}} / {{hostname}} I/O等待 (iowait %)",
           "refId": "D"
         }
       ]
@@ -429,12 +436,13 @@
       "fieldConfig": {
         "defaults": {
           "unit": "bytes",
+          "noValue": "—",
           "color": {
             "mode": "palette-classic"
           },
           "custom": {
             "drawStyle": "line",
-            "lineInterpolation": "smooth",
+            "lineInterpolation": "linear",
             "fillOpacity": 10
           }
         },
@@ -453,28 +461,28 @@
       },
       "targets": [
         {
-          "expr": "node_memory_MemTotal_bytes{instance=~\"$device\"} - node_memory_MemAvailable_bytes{instance=~\"$device\"}",
-          "legendFormat": "{{instance}} 内存已用量",
+          "expr": "node_memory_MemTotal_bytes{job=\"linux_servers\",site_name=~\"$site\",hostname=~\"$device\"} - node_memory_MemAvailable_bytes{job=\"linux_servers\",site_name=~\"$site\",hostname=~\"$device\"}",
+          "legendFormat": "{{site_name}} / {{hostname}} 内存已用量",
           "refId": "A"
         },
         {
-          "expr": "node_memory_MemAvailable_bytes{instance=~\"$device\"}",
-          "legendFormat": "{{instance}} 可用物理内存",
+          "expr": "node_memory_MemAvailable_bytes{job=\"linux_servers\",site_name=~\"$site\",hostname=~\"$device\"}",
+          "legendFormat": "{{site_name}} / {{hostname}} 可用物理内存",
           "refId": "B"
         },
         {
-          "expr": "node_memory_Cached_bytes{instance=~\"$device\"} + node_memory_Buffers_bytes{instance=~\"$device\"}",
-          "legendFormat": "{{instance}} 缓冲与缓存 (Buffers+Cache)",
+          "expr": "node_memory_Cached_bytes{job=\"linux_servers\",site_name=~\"$site\",hostname=~\"$device\"} + node_memory_Buffers_bytes{job=\"linux_servers\",site_name=~\"$site\",hostname=~\"$device\"}",
+          "legendFormat": "{{site_name}} / {{hostname}} 缓冲与缓存 (Buffers+Cache)",
           "refId": "C"
         },
         {
-          "expr": "node_memory_SwapTotal_bytes{instance=~\"$device\"} - node_memory_SwapFree_bytes{instance=~\"$device\"}",
-          "legendFormat": "{{instance}} Swap 已用量",
+          "expr": "node_memory_SwapTotal_bytes{job=\"linux_servers\",site_name=~\"$site\",hostname=~\"$device\"} - node_memory_SwapFree_bytes{job=\"linux_servers\",site_name=~\"$site\",hostname=~\"$device\"}",
+          "legendFormat": "{{site_name}} / {{hostname}} Swap 已用量",
           "refId": "D"
         },
         {
-          "expr": "node_memory_MemTotal_bytes{instance=~\"$device\"}",
-          "legendFormat": "{{instance}} 物理内存总量 (Total)",
+          "expr": "node_memory_MemTotal_bytes{job=\"linux_servers\",site_name=~\"$site\",hostname=~\"$device\"}",
+          "legendFormat": "{{site_name}} / {{hostname}} 物理内存总量 (Total)",
           "refId": "E"
         }
       ]
@@ -496,12 +504,13 @@
       "fieldConfig": {
         "defaults": {
           "unit": "short",
+          "noValue": "—",
           "color": {
             "mode": "palette-classic"
           },
           "custom": {
             "drawStyle": "line",
-            "lineInterpolation": "smooth",
+            "lineInterpolation": "linear",
             "fillOpacity": 10
           }
         },
@@ -520,23 +529,23 @@
       },
       "targets": [
         {
-          "expr": "node_load1{instance=~\"$device\"}",
-          "legendFormat": "{{instance}} 1分钟负载 (Load1)",
+          "expr": "node_load1{job=\"linux_servers\",site_name=~\"$site\",hostname=~\"$device\"}",
+          "legendFormat": "{{site_name}} / {{hostname}} 1分钟负载 (Load1)",
           "refId": "A"
         },
         {
-          "expr": "node_load5{instance=~\"$device\"}",
-          "legendFormat": "{{instance}} 5分钟负载 (Load5)",
+          "expr": "node_load5{job=\"linux_servers\",site_name=~\"$site\",hostname=~\"$device\"}",
+          "legendFormat": "{{site_name}} / {{hostname}} 5分钟负载 (Load5)",
           "refId": "B"
         },
         {
-          "expr": "node_load15{instance=~\"$device\"}",
-          "legendFormat": "{{instance}} 15分钟负载 (Load15)",
+          "expr": "node_load15{job=\"linux_servers\",site_name=~\"$site\",hostname=~\"$device\"}",
+          "legendFormat": "{{site_name}} / {{hostname}} 15分钟负载 (Load15)",
           "refId": "C"
         },
         {
-          "expr": "count by (instance) (node_cpu_seconds_total{instance=~\"$device\",mode=\"idle\"})",
-          "legendFormat": "{{instance}} 逻辑 CPU 核心数 (阈值参考)",
+          "expr": "count by (hostname) (node_cpu_seconds_total{job=\"linux_servers\",site_name=~\"$site\",hostname=~\"$device\",mode=\"idle\"})",
+          "legendFormat": "{{site_name}} / {{hostname}} 逻辑 CPU 核心数 (阈值参考)",
           "refId": "D"
         }
       ]
@@ -558,12 +567,13 @@
       "fieldConfig": {
         "defaults": {
           "unit": "Bps",
+          "noValue": "—",
           "color": {
             "mode": "palette-classic"
           },
           "custom": {
             "drawStyle": "line",
-            "lineInterpolation": "smooth",
+            "lineInterpolation": "linear",
             "fillOpacity": 10
           }
         },
@@ -582,13 +592,13 @@
       },
       "targets": [
         {
-          "expr": "sum by (instance, device) (rate(node_disk_read_bytes_total{instance=~\"$device\",device!~\"loop.*|ram.*\"}[5m]))",
-          "legendFormat": "{{instance}} - {{device}} 读吞吐",
+          "expr": "sum by (hostname, device) (rate(node_disk_read_bytes_total{job=\"linux_servers\",site_name=~\"$site\",hostname=~\"$device\",device!~\"loop.*|ram.*\"}[5m]))",
+          "legendFormat": "{{site_name}} / {{hostname}} - {{device}} 读吞吐",
           "refId": "A"
         },
         {
-          "expr": "sum by (instance, device) (rate(node_disk_written_bytes_total{instance=~\"$device\",device!~\"loop.*|ram.*\"}[5m]))",
-          "legendFormat": "{{instance}} - {{device}} 写吞吐",
+          "expr": "sum by (hostname, device) (rate(node_disk_written_bytes_total{job=\"linux_servers\",site_name=~\"$site\",hostname=~\"$device\",device!~\"loop.*|ram.*\"}[5m]))",
+          "legendFormat": "{{site_name}} / {{hostname}} - {{device}} 写吞吐",
           "refId": "B"
         }
       ]
@@ -610,6 +620,7 @@
       "fieldConfig": {
         "defaults": {
           "unit": "none",
+          "noValue": "—",
           "color": {
             "mode": "thresholds"
           }
@@ -638,7 +649,7 @@
       },
       "targets": [
         {
-          "expr": "topk(10, max by (instance, mountpoint) ((1 - (node_filesystem_avail_bytes{instance=~\"$device\",fstype!~\"tmpfs|iso9660|squashfs\",fstype!=\"\"} / node_filesystem_size_bytes{instance=~\"$device\"})) * 100))",
+          "expr": "topk(10, max by (hostname, mountpoint) ((1 - (node_filesystem_avail_bytes{job=\"linux_servers\",site_name=~\"$site\",hostname=~\"$device\",fstype!~\"tmpfs|iso9660|squashfs\",fstype!=\"\"} / node_filesystem_size_bytes{job=\"linux_servers\",site_name=~\"$site\",hostname=~\"$device\"})) * 100))",
           "format": "table",
           "instant": true,
           "refId": "A"
@@ -665,23 +676,24 @@
               "job": true,
               "tenant_id": true,
               "site_id": true,
-              "site_name": true,
               "platform": true
             },
             "indexByName": {
               "sysName": 0,
               "hostname": 1,
-              "instance": 2,
-              "ifName": 3,
-              "ifDescr": 4,
-              "vendor": 5,
-              "role": 6,
-              "Value": 7
+              "site_name": 2,
+              "instance": 3,
+              "ifName": 4,
+              "ifDescr": 5,
+              "vendor": 6,
+              "role": 7,
+              "Value": 8
             },
             "renameByName": {
               "sysName": "设备名称",
               "hostname": "设备名称",
               "instance": "管理 IP",
+              "site_name": "站点",
               "ifName": "接口全称",
               "ifDescr": "接口描述",
               "vendor": "厂商",
@@ -710,12 +722,13 @@
       "fieldConfig": {
         "defaults": {
           "unit": "bps",
+          "noValue": "—",
           "color": {
             "mode": "palette-classic"
           },
           "custom": {
             "drawStyle": "line",
-            "lineInterpolation": "smooth",
+            "lineInterpolation": "linear",
             "fillOpacity": 10
           }
         },
@@ -734,13 +747,13 @@
       },
       "targets": [
         {
-          "expr": "sum by (instance, device) (rate(node_network_receive_bytes_total{instance=~\"$device\",device!~\"lo|docker.*|veth.*|br-.*\"}[5m]) * 8)",
-          "legendFormat": "{{instance}} - {{device}} 接收 (bps)",
+          "expr": "sum by (hostname, device) (rate(node_network_receive_bytes_total{job=\"linux_servers\",site_name=~\"$site\",hostname=~\"$device\",device!~\"lo|docker.*|veth.*|br-.*\"}[5m]) * 8)",
+          "legendFormat": "{{site_name}} / {{hostname}} - {{device}} 接收 (bps)",
           "refId": "A"
         },
         {
-          "expr": "sum by (instance, device) (rate(node_network_transmit_bytes_total{instance=~\"$device\",device!~\"lo|docker.*|veth.*|br-.*\"}[5m]) * 8)",
-          "legendFormat": "{{instance}} - {{device}} 发送 (bps)",
+          "expr": "sum by (hostname, device) (rate(node_network_transmit_bytes_total{job=\"linux_servers\",site_name=~\"$site\",hostname=~\"$device\",device!~\"lo|docker.*|veth.*|br-.*\"}[5m]) * 8)",
+          "legendFormat": "{{site_name}} / {{hostname}} - {{device}} 发送 (bps)",
           "refId": "B"
         }
       ]
@@ -762,6 +775,7 @@
       "fieldConfig": {
         "defaults": {
           "unit": "none",
+          "noValue": "—",
           "color": {
             "mode": "thresholds"
           }
@@ -790,7 +804,7 @@
       },
       "targets": [
         {
-          "expr": "topk(10, sum by (instance) (node_netstat_Tcp_CurrEstab{instance=~\"$device\"}))",
+          "expr": "topk(10, sum by (hostname) (node_netstat_Tcp_CurrEstab{job=\"linux_servers\",site_name=~\"$site\",hostname=~\"$device\"}))",
           "format": "table",
           "instant": true,
           "refId": "A"
@@ -817,23 +831,24 @@
               "job": true,
               "tenant_id": true,
               "site_id": true,
-              "site_name": true,
               "platform": true
             },
             "indexByName": {
               "sysName": 0,
               "hostname": 1,
-              "instance": 2,
-              "ifName": 3,
-              "ifDescr": 4,
-              "vendor": 5,
-              "role": 6,
-              "Value": 7
+              "site_name": 2,
+              "instance": 3,
+              "ifName": 4,
+              "ifDescr": 5,
+              "vendor": 6,
+              "role": 7,
+              "Value": 8
             },
             "renameByName": {
               "sysName": "设备名称",
               "hostname": "设备名称",
               "instance": "管理 IP",
+              "site_name": "站点",
               "ifName": "接口全称",
               "ifDescr": "接口描述",
               "vendor": "厂商",
@@ -861,12 +876,13 @@
       "fieldConfig": {
         "defaults": {
           "unit": "short",
+          "noValue": "—",
           "color": {
             "mode": "palette-classic"
           },
           "custom": {
             "drawStyle": "line",
-            "lineInterpolation": "smooth",
+            "lineInterpolation": "linear",
             "fillOpacity": 10
           }
         },
@@ -885,13 +901,13 @@
       },
       "targets": [
         {
-          "expr": "node_procs_running{instance=~\"$device\"}",
-          "legendFormat": "{{instance}} 正在运行进程数",
+          "expr": "node_procs_running{job=\"linux_servers\",site_name=~\"$site\",hostname=~\"$device\"}",
+          "legendFormat": "{{site_name}} / {{hostname}} 正在运行进程数",
           "refId": "A"
         },
         {
-          "expr": "node_procs_blocked{instance=~\"$device\"}",
-          "legendFormat": "{{instance}} 阻塞/等待I/O进程数",
+          "expr": "node_procs_blocked{job=\"linux_servers\",site_name=~\"$site\",hostname=~\"$device\"}",
+          "legendFormat": "{{site_name}} / {{hostname}} 阻塞/等待I/O进程数",
           "refId": "B"
         }
       ]
@@ -918,14 +934,14 @@
             "$__all"
           ]
         },
-        "definition": "label_values({__name__=~\"node_.*|up\",job=~\"linux_servers|.*node.*\"}, site_name)",
+        "definition": "label_values({__name__=~\"node_.*|up\",job=\"linux_servers\"}, site_name)",
         "includeAll": true,
         "label": "站点",
         "multi": true,
         "name": "site",
         "options": [],
         "query": {
-          "query": "label_values({__name__=~\"node_.*|up\",job=~\"linux_servers|.*node.*\"}, site_name)",
+          "query": "label_values({__name__=~\"node_.*|up\",job=\"linux_servers\"}, site_name)",
           "refId": "StandardVariableQuery"
         },
         "refresh": 1,
@@ -942,14 +958,14 @@
             "$__all"
           ]
         },
-        "definition": "label_values({__name__=~\"node_.*|up\",job=~\"linux_servers|.*node.*\",site_name=~\"$site\"}, instance)",
+        "definition": "label_values({__name__=~\"node_.*|up\",job=\"linux_servers\",site_name=~\"$site\"}, hostname)",
         "includeAll": true,
         "label": "服务器",
         "multi": true,
         "name": "device",
         "options": [],
         "query": {
-          "query": "label_values({__name__=~\"node_.*|up\",job=~\"linux_servers|.*node.*\",site_name=~\"$site\"}, instance)",
+          "query": "label_values({__name__=~\"node_.*|up\",job=\"linux_servers\",site_name=~\"$site\"}, hostname)",
           "refId": "StandardVariableQuery"
         },
         "refresh": 1,
@@ -964,5 +980,5 @@
   "timezone": "browser",
   "title": "07 Linux 服务器监控 (Linux Server Metrics)",
   "uid": "nexora-linux-metrics",
-  "version": 25
+  "version": 26
 }

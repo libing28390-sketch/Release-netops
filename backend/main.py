@@ -87,6 +87,7 @@ from api.interfaces import router as interfaces_router
 from api.discovery import router as discovery_router
 from api.graph import router as graph_router
 from api.system import router as system_router
+from api.storage import router as storage_router
 from api.access import router as access_router
 from api.windows_management import router as windows_management_router
 from ai.api import ai_router
@@ -242,6 +243,24 @@ async def lifespan(app: FastAPI):
     from services.ip_locator_invalidation_service import process_pending_locator_invalidations
     from services.ip_locator_run_worker_service import process_pending_locator_runs
     from services.ip_locator_task_service import cleanup_locator_tasks
+    from services.pam_recording_storage import retry_pending_pam_recordings
+    from services.config_snapshot_storage import retry_pending_config_snapshots
+
+    storage_retry_seconds = max(10, int(getattr(settings, 'STORAGE_RETRY_INTERVAL_SECONDS', 60)))
+    scheduler.add_job(
+        synchronized_scheduler_job('pam_recording_storage_retry', expire_seconds=max(30, storage_retry_seconds * 2))(
+            retry_pending_pam_recordings
+        ),
+        'interval', seconds=storage_retry_seconds, id='pam_recording_storage_retry',
+        replace_existing=True, max_instances=1, coalesce=True,
+    )
+    scheduler.add_job(
+        synchronized_scheduler_job('config_snapshot_storage_retry', expire_seconds=max(30, storage_retry_seconds * 2))(
+            retry_pending_config_snapshots
+        ),
+        'interval', seconds=storage_retry_seconds, id='config_snapshot_storage_retry',
+        replace_existing=True, max_instances=1, coalesce=True,
+    )
 
     scheduler.add_job(
         synchronized_scheduler_job('ip_locator_cache_invalidation', expire_seconds=60)(
@@ -680,6 +699,7 @@ app.include_router(health_router,        prefix="/api")
 app.include_router(users_router,         prefix="/api")
 app.include_router(setup_router,         prefix="/api")
 app.include_router(system_router,        prefix="/api")
+app.include_router(storage_router,       prefix="/api")
 app.include_router(notifications_router, prefix="/api")
 app.include_router(tags_router,          prefix="/api")
 

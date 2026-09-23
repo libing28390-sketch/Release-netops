@@ -9,6 +9,7 @@ from __future__ import annotations
 
 import hashlib
 import hmac
+import asyncio
 import ipaddress
 import os
 import secrets
@@ -20,8 +21,10 @@ from pathlib import Path
 from fastapi import APIRouter, File, Form, HTTPException, Request, UploadFile
 
 from database import get_db_connection
+from core.config import settings
 from schemas.web import WebSessionCreateInput, WebSessionExchangeInput, WebSessionStatusInput
 from services.audit_service import log_audit_event
+from services.pam_recording_storage import finalize_pam_recording
 
 
 router = APIRouter()
@@ -336,6 +339,10 @@ async def upload_web_recording(
     temp_path: str | None = None
     try:
         session = _callback_session(conn, session_id, callback_token, agent_id)
+        # Keep the historical relative path as a compatibility mirror for
+        # existing desktop agents and API consumers.  The canonical object is
+        # still published through StorageService; this file is explicit local
+        # staging, never an implicit provider fallback.
         recordings_dir = Path("data") / "pam_recordings"
         recordings_dir.mkdir(parents=True, exist_ok=True)
         safe_session_id = "".join(char for char in session_id if char.isalnum() or char in {"-", "_"})[:100]
@@ -371,7 +378,9 @@ async def upload_web_recording(
         now = _now()
         conn.execute(
             """UPDATE pam_sessions
-               SET recording_path = ?, recording_status = 'uploaded', updated_at = ?
+               SET recording_path = '', recording_spool_path = ?,
+                   recording_status = 'uploaded', storage_status = 'PENDING',
+                   storage_error = '', updated_at = ?
                WHERE id = ? AND session_kind = 'device_web'""",
             (str(final_path), now, session_id),
         )
@@ -392,10 +401,18 @@ async def upload_web_recording(
             conn=conn,
         )
         conn.commit()
+        stored = await asyncio.to_thread(
+            finalize_pam_recording,
+            session_id,
+            str(final_path),
+            content_type=_RECORDING_TYPES[suffix],
+            legacy_path=str(final_path),
+        )
         return {
             "success": True,
             "session_id": session_id,
             "recording_status": "uploaded",
+            "storage_status": "READY" if stored else "ERROR",
             "size": size,
             "sha256": digest.hexdigest(),
         }

@@ -7,7 +7,8 @@ import uuid
 
 import httpx
 
-from api import assets, users
+from api import assets, devices, users
+from database import get_db_connection
 from main import app
 from services import rack_service
 
@@ -140,3 +141,102 @@ def test_asset_without_canonical_placement_returns_null_placement(isolated_db):
     )
     payload = assets.get_asset(asset["id"])
     assert payload["placement"] is None
+
+
+def test_direct_device_delete_clears_rack_placement_for_reimport(isolated_db):
+    """Deleting from the network-device inventory must not leave a ghost U row."""
+    conn = isolated_db["module"].get_db_connection()
+    site_id = _id("delete-site")
+    conn.execute(
+        """INSERT INTO sites (id, site_code, site_name, status, tenant_id)
+           VALUES (?, ?, ?, 'active', ?)""",
+        (site_id, _id("delete-code"), "Delete placement site", "tenant-default"),
+    )
+    conn.commit()
+    rack = rack_service.create_rack(
+        conn,
+        name=_id("delete-rack"),
+        site_id=site_id,
+        total_u=42,
+        rack_code=_id("delete-rack-code"),
+    )
+    device_type = rack_service.create_device_type(
+        conn,
+        model=_id("delete-model"),
+        vendor="RackVision",
+        u_height=1,
+        device_role="switch",
+    )
+    first_hostname = _id("delete-host")
+    first = assets.create_asset(
+        assets.AssetCreate(
+            asset_type="network_device",
+            asset_tag=_id("delete-asset"),
+            hostname=first_hostname,
+            vendor="RackVision",
+            model=device_type["model"],
+            site_id=site_id,
+            management_ip="192.0.2.181",
+        )
+    )
+    conn.close()
+    conn = get_db_connection()
+    device_row = conn.execute(
+        "SELECT id FROM devices WHERE asset_id = ?", (first["id"],)
+    ).fetchone()
+    rack_service.create_rack_device(
+        conn,
+        name=first_hostname,
+        rack_id=rack["id"],
+        device_type_id=device_type["id"],
+        start_u=10,
+        position="front",
+        height_u=1,
+        placement_status="confirmed",
+        placement_source="manual",
+        asset_id=first["id"],
+        commit=True,
+    )
+    conn.close()
+
+    devices.delete_device(device_row["id"])
+
+    conn = get_db_connection()
+    try:
+        assert conn.execute("SELECT COUNT(*) FROM physical_assets WHERE id = ?", (first["id"],)).fetchone()[0] == 0
+        assert conn.execute("SELECT COUNT(*) FROM devices WHERE id = ?", (device_row["id"],)).fetchone()[0] == 0
+        assert conn.execute("SELECT COUNT(*) FROM rack_devices WHERE asset_id = ?", (first["id"],)).fetchone()[0] == 0
+        assert conn.execute("SELECT COUNT(*) FROM racks WHERE id = ?", (rack["id"],)).fetchone()[0] == 1
+    finally:
+        conn.close()
+
+    replacement_hostname = _id("replacement-host")
+    import_result = assets.import_assets(
+        [assets.AssetCreate(
+            asset_type="network_device",
+            asset_tag=_id("replacement-asset"),
+            hostname=replacement_hostname,
+            vendor="RackVision",
+            model=device_type["model"],
+            site_id=site_id,
+            rack_id=rack["id"],
+            rack_position="front",
+            rack_placement_status="confirmed",
+            planned_start_u=10,
+            u_height=1,
+            management_ip="192.0.2.182",
+        )],
+        detailed=True,
+    )
+    assert import_result["created"] == 1
+    replacement = {"id": import_result["results"][0]["asset_id"]}
+    conn = get_db_connection()
+    try:
+        placement = conn.execute(
+            "SELECT rack_id, start_u FROM rack_devices WHERE asset_id = ?",
+            (replacement["id"],),
+        ).fetchone()
+        assert placement["rack_id"] == rack["id"]
+        assert placement["start_u"] == 10
+    finally:
+        conn.close()

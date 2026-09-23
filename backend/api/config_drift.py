@@ -14,6 +14,7 @@ from fastapi import APIRouter, HTTPException, Query
 from pydantic import BaseModel
 from database import get_db_connection
 from core.rbac import require_role
+from services.config_snapshot_storage import read_snapshot_content
 
 logger = logging.getLogger(__name__)
 
@@ -50,7 +51,7 @@ def _run_drift_scan_sync():
         for dev in devices:
             device_id = dev['device_id']
             snaps = conn.execute('''
-                SELECT id, timestamp, trigger, file_path
+                SELECT *
                 FROM config_snapshots
                 WHERE device_id = ?
                 ORDER BY timestamp DESC
@@ -78,8 +79,8 @@ def _run_drift_scan_sync():
             else:
                 continue
 
-            current_content = _read_config_file(current_snap['file_path']) if current_snap['file_path'] else ''
-            baseline_content = _read_config_file(baseline_snap['file_path']) if baseline_snap['file_path'] else ''
+            current_content = read_snapshot_content(current_snap)
+            baseline_content = read_snapshot_content(baseline_snap)
 
             if not current_content or not baseline_content:
                 drift_status = 'error'
@@ -313,7 +314,7 @@ def get_device_diff(
             # Use the designated baseline when present; otherwise compare the
             # two latest snapshots for backwards compatibility.
             snaps = conn.execute('''
-                SELECT id, timestamp, trigger, file_path, hostname, vendor
+                SELECT *
                 FROM config_snapshots
                 WHERE device_id = ?
                 ORDER BY timestamp DESC
@@ -352,8 +353,8 @@ def get_device_diff(
     finally:
         conn.close()
 
-    baseline_content = _read_config_file(baseline_snap['file_path']) if baseline_snap.get('file_path') else ''
-    current_content = _read_config_file(current_snap['file_path']) if current_snap.get('file_path') else ''
+    baseline_content = read_snapshot_content(baseline_snap)
+    current_content = read_snapshot_content(current_snap)
 
     diff_result = _compute_diff(
         baseline_content,
@@ -498,8 +499,8 @@ def rollback_preview(body: RollbackRequest):
     finally:
         conn.close()
 
-    baseline_content = _read_config_file(snap['file_path']) if snap['file_path'] else ''
-    current_content = _read_config_file(current['file_path']) if current and current['file_path'] else ''
+    baseline_content = read_snapshot_content(snap)
+    current_content = read_snapshot_content(current) if current else ''
 
     if not baseline_content:
         raise HTTPException(status_code=400, detail='Cannot read baseline snapshot')

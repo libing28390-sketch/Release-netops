@@ -36,6 +36,7 @@ const AlertHistoryTab: React.FC<AlertHistoryTabProps> = ({ language, showToast, 
   const [page, setPage] = useState(1);
   const [pageSize, setPageSize] = useState(20);
   const [severityFilter, setSeverityFilter] = useState('all');
+  const [notificationStatusFilter, setNotificationStatusFilter] = useState('all');
   const [search, setSearch] = useState('');
   const [createdFrom, setCreatedFrom] = useState('');
   const [createdTo, setCreatedTo] = useState('');
@@ -62,6 +63,7 @@ const AlertHistoryTab: React.FC<AlertHistoryTabProps> = ({ language, showToast, 
         page_size: String(pageSize),
         status: 'resolved',
         severity: severityFilter,
+        notification_status: notificationStatusFilter,
         site: 'all',
         assignee: 'all',
         search,
@@ -81,7 +83,7 @@ const AlertHistoryTab: React.FC<AlertHistoryTabProps> = ({ language, showToast, 
       setLoading(false);
     }
   // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [page, pageSize, severityFilter, search, createdFrom, createdTo, zh]);
+  }, [page, pageSize, severityFilter, notificationStatusFilter, search, createdFrom, createdTo, zh]);
 
   useEffect(() => { void loadAlerts(); }, [loadAlerts]);
 
@@ -116,6 +118,7 @@ const AlertHistoryTab: React.FC<AlertHistoryTabProps> = ({ language, showToast, 
     const params = new URLSearchParams({
       status: 'resolved',
       severity: severityFilter,
+      notification_status: notificationStatusFilter,
       site: 'all',
       assignee: 'all',
       search,
@@ -131,6 +134,7 @@ const AlertHistoryTab: React.FC<AlertHistoryTabProps> = ({ language, showToast, 
         [zh ? '设备' : 'Device']: r.hostname || r.ip_address || '--',
         [zh ? '站点' : 'Site']: r.site || '--',
         [zh ? '级别' : 'Severity']: severityLabel(r.severity, language),
+        [zh ? '通知状态' : 'Notification']: r.notification_status || '--',
         [zh ? '状态' : 'Status']: workflowLabel(r.workflow_status, language),
         [zh ? '责任人' : 'Assignee']: r.assignee || '--',
         [zh ? '创建时间' : 'Created']: formatTs(r.created_at),
@@ -211,6 +215,19 @@ const AlertHistoryTab: React.FC<AlertHistoryTabProps> = ({ language, showToast, 
               <option value="critical">{severityLabel('critical', language)}</option>
               <option value="major">{severityLabel('major', language)}</option>
               <option value="warning">{severityLabel('warning', language)}</option>
+            </select>
+
+            <select
+              title={zh ? '按通知投递状态筛选' : 'Filter by notification delivery'}
+              value={notificationStatusFilter}
+              onChange={(e) => { setPage(1); setNotificationStatusFilter(e.target.value); }}
+              className="rounded-xl border border-black/10 bg-white px-3 py-3 text-sm text-[#164e63] outline-none"
+            >
+              <option value="all">{zh ? '全部通知状态' : 'All Delivery Status'}</option>
+              <option value="succeeded">{zh ? '已发送' : 'Sent'}</option>
+              <option value="retrying">{zh ? '重试中' : 'Retrying'}</option>
+              <option value="failed">{zh ? '最终失败' : 'Failed'}</option>
+              <option value="skipped">{zh ? '已跳过' : 'Skipped'}</option>
             </select>
 
             <button
@@ -304,6 +321,7 @@ const AlertHistoryTab: React.FC<AlertHistoryTabProps> = ({ language, showToast, 
                 <th className="px-5 py-3">{zh ? '告警标题' : 'Alert'}</th>
                 <th className="px-5 py-3">{zh ? '对象' : 'Object'}</th>
                 <th className="px-5 py-3">{zh ? '级别' : 'Severity'}</th>
+                <th className="px-5 py-3">{zh ? '通知' : 'Notify'}</th>
                 <th className="px-5 py-3">{zh ? '责任人' : 'Assignee'}</th>
                 <th className="px-5 py-3">{zh ? '发生时间' : 'Created'}</th>
                 <th className="px-5 py-3">{zh ? '恢复时间' : 'Resolved'}</th>
@@ -314,7 +332,7 @@ const AlertHistoryTab: React.FC<AlertHistoryTabProps> = ({ language, showToast, 
             <tbody>
               {loading ? (
                 <tr>
-                  <td colSpan={8} className="px-5 py-12 text-center text-sm text-black/40">
+                  <td colSpan={9} className="px-5 py-12 text-center text-sm text-black/40">
                     {zh ? '正在加载...' : 'Loading...'}
                   </td>
                 </tr>
@@ -356,6 +374,11 @@ const AlertHistoryTab: React.FC<AlertHistoryTabProps> = ({ language, showToast, 
                         {severityLabel(row.severity, language)}
                       </span>
                     </td>
+                    <td className="px-5 py-4 align-top">
+                      <span className={`inline-flex rounded-full px-2 py-1 text-[10px] font-bold ${row.notification_status === 'succeeded' ? 'bg-emerald-50 text-emerald-700' : row.notification_status === 'failed' ? 'bg-rose-50 text-rose-700' : row.notification_status === 'retrying' ? 'bg-amber-50 text-amber-700' : 'bg-slate-100 text-slate-500'}`}>
+                        {row.notification_status === 'succeeded' ? (zh ? '已发送' : 'Sent') : row.notification_status === 'failed' ? (zh ? '失败' : 'Failed') : row.notification_status === 'retrying' ? (zh ? '重试中' : 'Retrying') : row.notification_status === 'none' ? (zh ? '无' : 'None') : row.notification_status || '--'}
+                      </span>
+                    </td>
                     <td className="px-5 py-4 align-top text-sm text-black/60">
                       {row.assignee || (zh ? '未分派' : 'Unassigned')}
                     </td>
@@ -382,7 +405,7 @@ const AlertHistoryTab: React.FC<AlertHistoryTabProps> = ({ language, showToast, 
                 ))
               ) : (
                 <tr>
-                  <td colSpan={8} className="px-5 py-12 text-center text-sm text-black/40">
+                  <td colSpan={9} className="px-5 py-12 text-center text-sm text-black/40">
                     {zh ? '当前筛选条件下没有历史告警。' : 'No historical alerts found.'}
                   </td>
                 </tr>
@@ -496,6 +519,23 @@ const AlertHistoryTab: React.FC<AlertHistoryTabProps> = ({ language, showToast, 
                       {selectedItem.message}
                     </div>
                   </div>
+
+                  {selectedDetail?.deliveries?.items?.length ? (
+                    <div>
+                      <p className="text-[11px] font-bold uppercase tracking-[0.18em] text-black/35">{zh ? '通知投递历史' : 'Notification Delivery History'}</p>
+                      <div className="mt-2 grid gap-2 md:grid-cols-2">
+                        {Object.entries(selectedDetail.deliveries.summary || {}).map(([channel, summary]) => (
+                          <div key={channel} className="rounded-2xl border border-black/8 bg-white p-3">
+                            <div className="flex items-center gap-2">
+                              <span className="text-sm font-semibold text-[#164e63]">{channel}</span>
+                              <span className={`rounded-full px-2 py-0.5 text-[9px] font-bold ${summary.status === 'succeeded' ? 'bg-emerald-50 text-emerald-700' : summary.status === 'failed' ? 'bg-rose-50 text-rose-700' : 'bg-amber-50 text-amber-700'}`}>{summary.status}</span>
+                            </div>
+                            <p className="mt-1 text-xs text-black/45">{zh ? `尝试 ${summary.attempt_no || 0} 次` : `${summary.attempt_no || 0} attempt(s)`}{summary.error_code ? ` · ${summary.error_code}` : ''}</p>
+                          </div>
+                        ))}
+                      </div>
+                    </div>
+                  ) : null}
 
                   {selectedItem.note && (
                     <div>

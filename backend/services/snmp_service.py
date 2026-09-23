@@ -251,6 +251,7 @@ SYS_UPTIME   = '1.3.6.1.2.1.1.3.0'
 SYS_CONTACT  = '1.3.6.1.2.1.1.4.0'
 SYS_NAME     = '1.3.6.1.2.1.1.5.0'
 SYS_LOCATION = '1.3.6.1.2.1.1.6.0'
+SYS_OBJECT_ID = '1.3.6.1.2.1.1.2.0'
 
 VENDOR_OIDS = {
     # ── Cisco IOS / IOS-XE ──
@@ -1683,34 +1684,36 @@ async def probe_metric_definition(
 async def collect_device_info(ip: str, community: str = 'public', port: int = 161) -> dict:
     """
     Collect standard MIB-2 system information.
-    Returns: { sys_name, sys_descr, uptime, sys_location, sys_contact }
+    Returns: { sys_name, sys_descr, sys_object_id, uptime, sys_location, sys_contact }
     """
     import asyncio as _aio
-    result = {'sys_name': None, 'sys_descr': None, 'uptime': None,
+    result = {'sys_name': None, 'sys_descr': None, 'sys_object_id': None, 'uptime': None,
               'sys_location': None, 'sys_contact': None}
     try:
         vals = await _aio.gather(
             _snmp_get(ip, community, SYS_NAME, port),
             _snmp_get(ip, community, SYS_DESCR, port),
+            _snmp_get(ip, community, SYS_OBJECT_ID, port),
             _snmp_get(ip, community, SYS_UPTIME, port),
             _snmp_get(ip, community, SYS_LOCATION, port),
             _snmp_get(ip, community, SYS_CONTACT, port),
         )
         result['sys_name'] = vals[0]
         result['sys_descr'] = vals[1]
+        result['sys_object_id'] = vals[2]
         # sysUpTime is in hundredths of a second → human readable
-        if vals[2]:
+        if vals[3]:
             try:
-                ticks = int(vals[2])
+                ticks = int(vals[3])
                 secs = ticks // 100
                 days, rem = divmod(secs, 86400)
                 hours, rem = divmod(rem, 3600)
                 mins, _ = divmod(rem, 60)
                 result['uptime'] = f"{days}d {hours}h {mins}m"
             except (ValueError, TypeError):
-                result['uptime'] = vals[2]
-        result['sys_location'] = vals[3]
-        result['sys_contact'] = vals[4]
+                result['uptime'] = vals[3]
+        result['sys_location'] = vals[4]
+        result['sys_contact'] = vals[5]
     except Exception as e:
         logger.warning(f"SNMP device info collection failed for {ip}: {e}")
     return result

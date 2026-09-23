@@ -55,11 +55,14 @@ def sync_all_monitoring_collectors(user: Any = None) -> dict[str, Any]:
         for cid in collector_ids:
             try:
                 compiled = compile_collector(cid, _user=actor)
-                published = publish_collector(cid, _user=actor)
+                if compiled.get("status") == "UNCHANGED" and compiled.get("already_applied"):
+                    published = compiled
+                else:
+                    published = publish_collector(cid, _user=actor)
                 results.append({
                     "collector_id": cid,
                     "config_version": published.get("config_version"),
-                    "status": "APPLIED",
+                    "status": published.get("status") or "APPLIED",
                     "assignment_count": compiled.get("assignment_count", 0),
                 })
                 logger.info(

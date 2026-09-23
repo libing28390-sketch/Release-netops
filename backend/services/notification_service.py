@@ -17,14 +17,26 @@ import hmac
 import base64
 import hashlib
 import logging
+import re
+import smtplib
+import socket
+import ssl
+import threading
 from datetime import datetime
+from email.message import EmailMessage
+from email.utils import formataddr
 from urllib import request as urlrequest, error as urlerror
 from urllib.parse import quote
+
+from core.crypto import decrypt_credential
+from database import get_db_connection
 
 logger = logging.getLogger(__name__)
 
 _AUTOMATIC_NOTIFICATIONS_ENV = "NEXORA_AUTOMATIC_NOTIFICATIONS_ENABLED"
 _TRUE_VALUES = frozenset({"1", "true", "yes", "on"})
+_email_rate_lock = threading.Lock()
+_email_rate_history: dict[str, list[float]] = {}
 
 
 def automatic_notifications_enabled() -> bool:
@@ -147,6 +159,171 @@ def _post_json(url: str, payload: dict, timeout: int = 5) -> tuple[bool, str]:
             return True, body
     except urlerror.URLError as exc:
         return False, str(exc)
+
+
+_EMAIL_ADDRESS_RE = re.compile(r"^[^\s@]+@[^\s@]+\.[^\s@]+$")
+
+
+def _email_recipients(values) -> list[str]:
+    """Return validated, de-duplicated recipients without leaking addresses."""
+    if isinstance(values, str):
+        values = [values]
+    if not isinstance(values, (list, tuple, set)):
+        return []
+    result: list[str] = []
+    for value in values:
+        address = str(value or '').strip().lower()
+        if address and _EMAIL_ADDRESS_RE.fullmatch(address) and address not in result:
+            result.append(address)
+    return result
+
+
+def _email_subject(alert: dict) -> str:
+    severity = str(alert.get('severity') or 'info').upper()
+    title = str(alert.get('title') or 'Nexora Alert').strip()
+    object_name = str(alert.get('object_name') or alert.get('ip_address') or '').strip()
+    return f"[{severity}] {title}{f' - {object_name}' if object_name else ''}"[:240]
+
+
+def _email_body(alert: dict, *, html: bool = False) -> str:
+    status = _status_label(str(alert.get('status') or 'active'), 'zh')
+    title = str(alert.get('title') or '告警通知')
+    object_name = str(alert.get('object_name') or '-')
+    ip_address = str(alert.get('ip_address') or '-')
+    severity = str(alert.get('severity') or 'info')
+    message = str(alert.get('message') or '-')
+    first = str(alert.get('first_occurrence') or _now_str())
+    last = str(alert.get('last_occurrence') or first)
+    duration = alert.get('duration_seconds')
+    platform_url = str(alert.get('platform_url') or '').strip()
+    if not html:
+        lines = [
+            title,
+            f"级别：{severity}",
+            f"状态：{status}",
+            f"对象：{object_name}",
+            f"IP：{ip_address}",
+            f"描述：{message}",
+            f"首次发生：{first}",
+            f"最近发生：{last}",
+        ]
+        if duration is not None:
+            lines.append(f"持续时间：{_fmt_duration(duration, False)}")
+        if platform_url:
+            lines.append(f"处理链接：{platform_url}")
+        return "\n".join(lines)
+
+    def escape(value: str) -> str:
+        return (
+            value.replace('&', '&amp;')
+            .replace('<', '&lt;')
+            .replace('>', '&gt;')
+            .replace('"', '&quot;')
+        )
+
+    rows = [
+        ('告警名称', title),
+        ('级别', severity),
+        ('状态', status),
+        ('对象', object_name),
+        ('IP', ip_address),
+        ('描述', message),
+        ('首次发生', first),
+        ('最近发生', last),
+    ]
+    if duration is not None:
+        rows.append(('持续时间', _fmt_duration(duration, False)))
+    table = ''.join(
+        f'<tr><th style="text-align:left;padding:6px 10px">{escape(label)}</th>'
+        f'<td style="padding:6px 10px">{escape(value)}</td></tr>'
+        for label, value in rows
+    )
+    link = f'<p><a href="{escape(platform_url)}">前往告警台处理</a></p>' if platform_url else ''
+    return f'<html><body><h2>{escape(title)}</h2><table>{table}</table>{link}</body></html>'
+
+
+def send_email(smtp_config: dict, recipients, alert: dict) -> dict:
+    """Send one alert email and return a safe, structured provider result."""
+    addresses = _email_recipients(recipients)
+    if not addresses:
+        return {'success': False, 'error_code': 'smtp_invalid_recipient', 'recipient_count': 0}
+
+    config = dict(smtp_config or {})
+    if not bool(config.get('enabled')):
+        return {'success': False, 'error_code': 'smtp_config_missing', 'recipient_count': len(addresses)}
+    host = str(config.get('host') or '').strip()
+    from_address = str(config.get('from_address') or '').strip()
+    if not host or not _EMAIL_ADDRESS_RE.fullmatch(from_address):
+        return {'success': False, 'error_code': 'smtp_config_missing', 'recipient_count': len(addresses)}
+    security = str(config.get('security') or 'starttls').strip().lower()
+    try:
+        rate_limit = max(1, min(10000, int(config.get('rate_limit_per_minute') or 60)))
+    except (TypeError, ValueError):
+        rate_limit = 60
+    rate_key = str(config.get('id') or f"{host}:{from_address}")
+    now = time.time()
+    with _email_rate_lock:
+        recent = [timestamp for timestamp in _email_rate_history.get(rate_key, []) if now - timestamp < 60]
+        if len(recent) >= rate_limit:
+            _email_rate_history[rate_key] = recent
+            return {'success': False, 'error_code': 'smtp_rate_limited', 'recipient_count': len(addresses)}
+        recent.append(now)
+        _email_rate_history[rate_key] = recent
+    try:
+        port = int(config.get('port') or (465 if security == 'ssl' else 587))
+        timeout = max(1, min(120, int(config.get('send_timeout_seconds') or 20)))
+    except (TypeError, ValueError):
+        return {'success': False, 'error_code': 'smtp_config_missing', 'recipient_count': len(addresses)}
+
+    password = str(config.get('password') or '')
+    if not password and config.get('password_ciphertext'):
+        password = str(decrypt_credential(config.get('password_ciphertext')) or '')
+    username = str(config.get('username') or '').strip()
+    message = EmailMessage()
+    message['Subject'] = _email_subject(alert)
+    message['From'] = formataddr((str(config.get('from_name') or 'Nexora').strip(), from_address))
+    message['To'] = ', '.join(addresses)
+    reply_to = str(config.get('reply_to') or '').strip()
+    if reply_to and _EMAIL_ADDRESS_RE.fullmatch(reply_to):
+        message['Reply-To'] = reply_to
+    message.set_content(_email_body(alert, html=False))
+    message.add_alternative(_email_body(alert, html=True), subtype='html')
+
+    smtp = None
+    try:
+        if security == 'ssl':
+            smtp = smtplib.SMTP_SSL(host, port, timeout=timeout, context=ssl.create_default_context())
+        else:
+            smtp = smtplib.SMTP(host, port, timeout=timeout)
+            smtp.ehlo()
+            if security == 'starttls':
+                smtp.starttls(context=ssl.create_default_context())
+                smtp.ehlo()
+        if username:
+            smtp.login(username, password)
+        smtp.send_message(message)
+        return {'success': True, 'error_code': '', 'recipient_count': len(addresses)}
+    except smtplib.SMTPAuthenticationError:
+        return {'success': False, 'error_code': 'smtp_auth_failed', 'recipient_count': len(addresses)}
+    except smtplib.SMTPRecipientsRefused:
+        return {'success': False, 'error_code': 'smtp_recipient_rejected', 'recipient_count': len(addresses)}
+    except (ssl.SSLError, smtplib.SMTPNotSupportedError):
+        return {'success': False, 'error_code': 'smtp_tls_failed', 'recipient_count': len(addresses)}
+    except (socket.timeout, TimeoutError):
+        return {'success': False, 'error_code': 'smtp_timeout', 'recipient_count': len(addresses)}
+    except (smtplib.SMTPConnectError, smtplib.SMTPServerDisconnected, OSError):
+        return {'success': False, 'error_code': 'smtp_dns_or_connect_failed', 'recipient_count': len(addresses)}
+    except smtplib.SMTPException:
+        return {'success': False, 'error_code': 'smtp_provider_error', 'recipient_count': len(addresses)}
+    finally:
+        if smtp is not None:
+            try:
+                smtp.quit()
+            except Exception:
+                try:
+                    smtp.close()
+                except Exception:
+                    pass
 
 
 # ── 飞书 Interactive Card ─────────────────────
@@ -629,59 +806,140 @@ def _dispatch_to_users(
     alert: dict,
     tenant_id: str | None = None,
     *,
+    channels: set[str] | list[str] | tuple[str, ...] | None = None,
     raise_on_error: bool = False,
 ) -> list[dict]:
-    """Dispatch through configured channels without crossing tenant scope."""
+    """Dispatch through configured channels without crossing tenant scope.
+
+    ``channels=None`` preserves the legacy workspace behavior and follows each
+    user's enabled preferences.  An explicit channel set is used by a rule
+    notification policy and prevents a Feishu-only rule from also sending to
+    other configured destinations.
+    """
     if not automatic_notifications_enabled():
         logger.info("[Notify] Automatic notification dispatch disabled by runtime policy")
         return []
 
-    from database import get_db_connection
     tenant_id = str(tenant_id or '').strip()
+    requested_channels = None if channels is None else {
+        str(channel or '').strip().lower()
+        for channel in channels
+        if str(channel or '').strip()
+    }
     conn = get_db_connection()
     try:
         # 1. 获取全局通道配置（作为 URL 和 Secret 的来源）
         global_rows = conn.execute(
             "SELECT platform, webhook_url, enabled, secret FROM global_notification_channels"
         ).fetchall()
-        global_map = {r['platform']: dict(r) for r in global_rows}
+        global_map = {str(r['platform'] or '').strip().lower(): dict(r) for r in global_rows}
+
+        smtp_query = (
+            "SELECT * FROM notification_smtp_configs "
+            "WHERE tenant_id = ? OR tenant_id = 'tenant-default' "
+            "ORDER BY CASE WHEN tenant_id = ? THEN 0 ELSE 1 END, updated_at DESC LIMIT 1"
+        )
+        smtp_params = (tenant_id or 'tenant-default', tenant_id or 'tenant-default')
+        smtp_row = None
+        try:
+            smtp_row = conn.execute(smtp_query, smtp_params).fetchone()
+        except Exception:
+            # Older databases before m0245 have no SMTP table. Explicit email
+            # delivery will return a visible configuration error below.
+            smtp_row = None
+        smtp_config = dict(smtp_row) if smtp_row else None
 
         # 2. 获取所有用户的通知偏好
-        user_query = "SELECT notification_channels, preferred_language FROM users WHERE status = 'active'"
+        user_query = "SELECT id, email, notification_channels, preferred_language FROM users WHERE status = 'active'"
         user_params: list[str] = []
         if tenant_id:
             user_query += " AND tenant_id = ?"
             user_params.append(tenant_id)
         user_rows = conn.execute(user_query, user_params).fetchall()
 
-        # 3. 汇总去重后的发送目标
+        # 3. 汇总去重后的发送目标。个人设置可以覆盖全局通道；如果
+        # 个人设置只保存了掩码值，则安全地回退到全局通道配置。
         # targets: (platform, url) -> {secret, lang}
-        targets = {}  
-        
+        targets = {}
+        email_recipients: list[str] = []
+        email_pref_seen = False
+
+        def _unmasked(value) -> str:
+            normalized = str(value or '').strip()
+            if not normalized or '***' in normalized or '****' in normalized:
+                return ''
+            return normalized
+
         for u_row in user_rows:
             try:
                 user_channels = json.loads(u_row['notification_channels'] or '{}')
                 u_lang = u_row['preferred_language'] or 'zh'
             except Exception:
                 continue
+            if not isinstance(user_channels, dict):
+                user_channels = {}
 
-            for platform, g_cfg in global_map.items():
-                if not g_cfg['webhook_url']:
+            personal_platforms = {
+                str(platform).strip().lower()
+                for platform in user_channels
+                if str(platform).strip().lower() in {'feishu', 'dingtalk', 'wechat', 'email'}
+            }
+            configured_platforms = (
+                set(requested_channels)
+                if requested_channels is not None
+                else set(global_map) | personal_platforms
+            )
+            for platform in configured_platforms:
+                if platform == 'email':
+                    email_pref_seen = True
+                    email_pref = user_channels.get('email') or {}
+                    if not isinstance(email_pref, dict):
+                        email_pref = {}
+                    if not bool(email_pref.get('enabled')):
+                        continue
+                    status = str(alert.get('status') or 'active').strip().lower()
+                    if status == 'resolved' and email_pref.get('recovery_enabled') is False:
+                        continue
+                    if status != 'resolved' and email_pref.get('active_enabled') is False:
+                        continue
+                    raw_email = u_row.get('email') if hasattr(u_row, 'get') else u_row['email']
+                    address = str(raw_email or '').strip().lower()
+                    if address and address not in email_recipients:
+                        email_recipients.append(address)
                     continue
-                
-                u_pref = user_channels.get(platform, {})
-                # 优先级：用户设置的 enabled 状态 > 全局设置
-                is_enabled = u_pref.get('enabled') if 'enabled' in u_pref else bool(g_cfg['enabled'])
-                
-                if is_enabled:
-                    key = (platform, g_cfg['webhook_url'])
-                    if key not in targets:
-                        targets[key] = {
-                            'secret': g_cfg['secret'] or '',
-                            'lang': u_lang
-                        }
 
-        # 4. 执行发送
+                g_cfg = global_map.get(platform) or {}
+                u_pref = user_channels.get(platform) or {}
+                if not isinstance(u_pref, dict):
+                    u_pref = {}
+
+                personal_url = _unmasked(u_pref.get('webhook_url'))
+                webhook_url = personal_url or _unmasked(g_cfg.get('webhook_url'))
+                if not webhook_url:
+                    continue
+
+                # 优先级：用户设置的 enabled 状态 > 全局设置。没有显式
+                # enabled 时，个人 URL 默认启用；只有全局回退 URL 时才
+                # 继承全局开关。
+                if 'enabled' in u_pref:
+                    is_enabled = bool(u_pref.get('enabled'))
+                elif personal_url:
+                    is_enabled = True
+                else:
+                    is_enabled = bool(g_cfg.get('enabled'))
+                if not is_enabled:
+                    continue
+
+                personal_secret = _unmasked(u_pref.get('secret'))
+                secret = personal_secret or _unmasked(g_cfg.get('secret'))
+                key = (platform, webhook_url)
+                if key not in targets:
+                    targets[key] = {
+                        'secret': secret,
+                        'lang': u_lang,
+                    }
+
+        # 4. 执行 webhook 发送
         results = []
         for (platform, url), cfg in targets.items():
             # 为当前目的地克隆告警信息并设置语言
@@ -702,6 +960,33 @@ def _dispatch_to_users(
             else:
                 logger.warning(f"[Notify] Dispatch failed to {platform}: {msg}")
 
+        email_requested = requested_channels is not None and 'email' in requested_channels
+        if requested_channels is None and email_pref_seen:
+            email_requested = True
+        if email_requested:
+            if smtp_config is None or not bool(smtp_config.get('enabled')):
+                results.append({
+                    'platform': 'email',
+                    'success': False,
+                    'error': 'smtp_config_missing',
+                    'recipient_count': len(email_recipients),
+                })
+            elif not email_recipients:
+                results.append({
+                    'platform': 'email',
+                    'success': False,
+                    'error': 'email_no_recipients',
+                    'recipient_count': 0,
+                })
+            else:
+                email_result = send_email(smtp_config, email_recipients, alert)
+                results.append({
+                    'platform': 'email',
+                    'success': bool(email_result.get('success')),
+                    'error': email_result.get('error_code') or '',
+                    'recipient_count': int(email_result.get('recipient_count') or 0),
+                })
+
         return results
     except Exception as e:
         logger.error(f"[Notify] scoped notification dispatch error: {e}")
@@ -712,15 +997,31 @@ def _dispatch_to_users(
         conn.close()
 
 
-def dispatch_to_all_users(alert: dict, *, raise_on_error: bool = False) -> list[dict]:
+def dispatch_to_all_users(
+    alert: dict,
+    *,
+    channels: set[str] | list[str] | tuple[str, ...] | None = None,
+    raise_on_error: bool = False,
+) -> list[dict]:
     """Dispatch to all configured active users (legacy alert path)."""
-    return _dispatch_to_users(alert, raise_on_error=raise_on_error)
+    return _dispatch_to_users(alert, channels=channels, raise_on_error=raise_on_error)
 
 
-def dispatch_to_tenant_users(alert: dict, tenant_id: str, *, raise_on_error: bool = False) -> list[dict]:
+def dispatch_to_tenant_users(
+    alert: dict,
+    tenant_id: str,
+    *,
+    channels: set[str] | list[str] | tuple[str, ...] | None = None,
+    raise_on_error: bool = False,
+) -> list[dict]:
     """Dispatch only to active users in the Playbook execution tenant."""
     tenant_id = str(tenant_id or '').strip()
     if not tenant_id:
         logger.warning('[Notify] tenant-scoped dispatch rejected without tenant_id')
         return []
-    return _dispatch_to_users(alert, tenant_id=tenant_id, raise_on_error=raise_on_error)
+    return _dispatch_to_users(
+        alert,
+        tenant_id=tenant_id,
+        channels=channels,
+        raise_on_error=raise_on_error,
+    )

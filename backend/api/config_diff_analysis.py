@@ -24,7 +24,7 @@ from services.config_diff_analysis_service import (
     safe_json,
     validate_snapshot_content,
 )
-from services.config_search_service import _read_config_file
+from services.config_snapshot_storage import read_snapshot_content
 
 
 router = APIRouter()
@@ -270,8 +270,8 @@ def _compliance_rules(conn) -> list[dict[str, Any]]:
 
 def _analyze(conn, body: DiffAnalysisRequest) -> dict[str, Any]:
     device, snapshot_a, snapshot_b = _load_pair(conn, body)
-    content_a = _read_config_file(snapshot_a.get("file_path") or "")
-    content_b = _read_config_file(snapshot_b.get("file_path") or "")
+    content_a = read_snapshot_content(snapshot_a)
+    content_b = read_snapshot_content(snapshot_b)
     if not content_a or not content_b:
         raise HTTPException(status_code=422, detail="无法读取 A/B 快照内容")
     validation_a = validate_snapshot_content(content_a, vendor=snapshot_a.get("vendor") or device.get("vendor") or "")
@@ -813,7 +813,7 @@ def scan_config_compliance(
             if not snapshot:
                 items.append({"device_id": device["id"], "hostname": device["hostname"], "status": "no_valid_snapshot"})
                 continue
-            content = _read_config_file(snapshot["file_path"] or "")
+            content = read_snapshot_content(snapshot)
             result = evaluate_compliance(content, rules, device)
             scan_id = str(uuid.uuid4())
             conn.execute(

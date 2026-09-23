@@ -424,6 +424,8 @@ const AppMainContent: React.FC = () => {
     formatTopologyOperationalState,
     formatTopologyEvidenceLabel,
     getTopologyOperationalTone,
+    hostnameSyncing,
+    handleSyncHostnames,
   } = topology;
 
   const isStandaloneScrollTab = 
@@ -716,7 +718,7 @@ const AppMainContent: React.FC = () => {
             setEditForm={setEditForm}
             setSelectedDevice={setSelectedDevice}
             setActiveTab={setActiveTab}
-            onRefresh={() => {/* TODO: implement inventory refresh */}}
+            onRefresh={fetchDevicesData}
             language={language}
             t={t}
           />
@@ -789,6 +791,8 @@ const AppMainContent: React.FC = () => {
             onHideOrphanDevicesChange={setHideOrphanDevices}
             onTriggerDiscovery={handleTriggerDiscovery}
             onCancelDiscovery={handleCancelDiscovery}
+            hostnameSyncing={hostnameSyncing}
+            onSyncHostnames={handleSyncHostnames}
             onExportMap={handleExportMap}
             onTopologySearchChange={setTopologySearch}
             onTopologySiteFilterChange={setTopologySiteFilter}

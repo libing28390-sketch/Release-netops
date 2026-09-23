@@ -1,16 +1,19 @@
 import json
 import os
+import re
 import uuid
 from datetime import datetime, timedelta, timezone
 from fastapi import APIRouter, Body, HTTPException, Query, Depends
 from core.rbac import require_role
 from core.config import settings
+from core.crypto import decrypt_credential, encrypt_credential
 from services.config_approval_service import verify_code, consume_approval
 from database import get_db_connection
 from services import alert_maintenance_service
 from services import alert_rule_service
 from services.audit_service import log_audit_event
 from services.alert_control_service import AlertState, check_no_data, compute_health, correlate_alerts, detect_storm, suppress_dependency_alerts, transition_state
+from services import notification_service
 from services.notification_service import send_feishu, dispatch_to_all_users
 
 
@@ -54,9 +57,53 @@ def _normalize_workflow_status(row: dict) -> str:
     return 'open'
 
 
+_ALERT_DEDUPE_METRIC_TYPES = {
+    'cpu_high': 'cpu',
+    'mem_high': 'memory',
+    'if_util': 'interface_util',
+    'if_down': 'interface_down',
+    'interconnect_down': 'interconnect_down',
+    'temp_high': 'temperature_high',
+    'snmp_unreachable': 'snmp_unreachable',
+    'fan_failure': 'fan_failure',
+    'psu_failure': 'power_supply_failure',
+    'if_error_rate': 'interface_error_rate_high',
+    'if_flap': 'interface_flap',
+    'lldp_neighbor_lost': 'lldp_neighbor_lost',
+    'bgp_neighbor_down': 'bgp_neighbor_down',
+    'ospf_neighbor_down': 'ospf_neighbor_down',
+    'bfd_session_down': 'bfd_session_down',
+    'dev_offline': 'device_offline',
+    'system_resource': 'system_resource',
+}
+
+
+def _alert_metric_type(dedupe_key: str | None) -> str:
+    prefix = str(dedupe_key or '').split(':', 1)[0].strip().lower()
+    return _ALERT_DEDUPE_METRIC_TYPES.get(prefix, prefix or 'unknown')
+
+
+def _alert_collector_source(metric_type: str) -> str:
+    if metric_type in {
+        'cpu', 'memory', 'interface_util', 'interface_down', 'interconnect_down',
+        'temperature_high', 'snmp_unreachable', 'fan_failure',
+        'power_supply_failure', 'interface_error_rate_high', 'interface_flap',
+    }:
+        return 'snmp'
+    if metric_type in {'lldp_neighbor_lost', 'bgp_neighbor_down', 'ospf_neighbor_down', 'bfd_session_down'}:
+        return 'ssh_cli'
+    if metric_type in {'ping_unreachable', 'device_offline'}:
+        return 'icmp_tcp'
+    if metric_type == 'system_resource':
+        return 'system'
+    return 'unknown'
+
+
 def _row_to_alert(row) -> dict:
     item = dict(row)
     item['workflow_status'] = _normalize_workflow_status(item)
+    item['metric_type'] = _alert_metric_type(item.get('dedupe_key'))
+    item['collector_source'] = _alert_collector_source(item['metric_type'])
     created_at = item.get('created_at')
     resolved_at = item.get('resolved_at')
     duration_seconds = None
@@ -94,6 +141,55 @@ def list_alert_activity(alert_id: str, limit: int = Query(default=100, ge=1, le=
     except Exception:
         # Keep the endpoint compatible with installations before m0105.
         return {'items': [], 'alert_id': alert_id, 'limit': limit, 'offset': offset}
+    finally:
+        conn.close()
+
+
+def _list_alert_deliveries(conn, alert_id: str, limit: int = 100) -> dict:
+    try:
+        rows = conn.execute(
+            """
+            SELECT id, delivery_id, alert_id, tenant_id, channel, event_kind,
+                   attempt_no, status, error_code, error_summary, provider_class,
+                   recipient_count, started_at, finished_at, created_at
+            FROM alert_delivery_attempts
+            WHERE alert_id = ?
+            ORDER BY created_at DESC
+            LIMIT ?
+            """,
+            (alert_id, limit),
+        ).fetchall()
+    except Exception:
+        return {'items': [], 'summary': {}}
+    items = [dict(row) for row in rows]
+    latest: dict[str, dict] = {}
+    for item in items:
+        channel = str(item.get('channel') or 'unknown')
+        latest.setdefault(channel, item)
+    return {
+        'items': items,
+        'summary': {
+            channel: {
+                'status': item.get('status'),
+                'event_kind': item.get('event_kind'),
+                'attempt_no': item.get('attempt_no'),
+                'error_code': item.get('error_code') or '',
+                'recipient_count': item.get('recipient_count') or 0,
+                'created_at': item.get('created_at'),
+            }
+            for channel, item in latest.items()
+        },
+    }
+
+
+@router.get('/alerts/{alert_id}/deliveries')
+def list_alert_deliveries(alert_id: str, limit: int = Query(default=100, ge=1, le=500)):
+    conn = get_db_connection()
+    try:
+        row = conn.execute('SELECT id FROM alert_events WHERE id = ?', (alert_id,)).fetchone()
+        if not row:
+            raise HTTPException(status_code=404, detail='Alert not found')
+        return {'alert_id': alert_id, **_list_alert_deliveries(conn, alert_id, limit)}
     finally:
         conn.close()
 
@@ -349,6 +445,7 @@ def get_alert_summary():
 def list_alerts(
     status: str = Query(default='open'),
     severity: str = Query(default='all'),
+    notification_status: str = Query(default='all'),
     search: str = Query(default=''),
     site: str = Query(default='all'),
     assignee: str = Query(default='all'),
@@ -380,6 +477,16 @@ def list_alerts(
         if severity_value != 'all':
             where.append('LOWER(a.severity) = ?')
             params.append(severity_value)
+
+        notification_status_value = (notification_status or 'all').strip().lower()
+        if notification_status_value != 'all':
+            if notification_status_value not in {'succeeded', 'retrying', 'failed', 'skipped', 'sending'}:
+                raise HTTPException(status_code=400, detail='Unsupported notification_status')
+            where.append(
+                "EXISTS (SELECT 1 FROM alert_delivery_attempts da "
+                "WHERE da.alert_id = a.id AND da.status = ?)"
+            )
+            params.append(notification_status_value)
 
         site_value = (site or 'all').strip()
         if site_value and site_value.lower() != 'all':
@@ -431,6 +538,12 @@ def list_alerts(
                 a.id, a.dedupe_key, a.source, a.severity, a.title, a.message,
                 a.device_id, a.interface_name, a.created_at, a.resolved_at,
                 a.workflow_status, a.assignee, a.ack_by, a.ack_at, a.note, a.updated_at,
+                COALESCE((
+                    SELECT da.status FROM alert_delivery_attempts da
+                    WHERE da.alert_id = a.id
+                    ORDER BY da.created_at DESC
+                    LIMIT 1
+                ), 'none') AS notification_status,
                 d.hostname, d.ip_address, d.site,
                 (
                     SELECT COUNT(*) FROM alert_events a2
@@ -621,6 +734,216 @@ def read_alert_rule_collection_catalog(user=require_role("Viewer")):
     return {
         'items': alert_rule_service.list_alert_metric_collections(),
     }
+
+
+def _notification_tenant_id(user: dict | None = None) -> str:
+    return str((user or {}).get('tenant_id') or 'tenant-default').strip() or 'tenant-default'
+
+
+def _safe_smtp_config(row) -> dict:
+    if not row:
+        return {
+            'configured': False,
+            'enabled': False,
+            'host': '',
+            'port': 587,
+            'security': 'starttls',
+            'username': '',
+            'from_address': '',
+            'from_name': 'Nexora',
+            'reply_to': '',
+            'connect_timeout_seconds': 10,
+            'send_timeout_seconds': 20,
+            'rate_limit_per_minute': 60,
+            'has_password': False,
+            'updated_at': None,
+        }
+    item = dict(row)
+    return {
+        'configured': bool(str(item.get('host') or '').strip() and str(item.get('from_address') or '').strip()),
+        'enabled': bool(item.get('enabled')),
+        'host': str(item.get('host') or ''),
+        'port': int(item.get('port') or 587),
+        'security': str(item.get('security') or 'starttls'),
+        'username': str(item.get('username') or ''),
+        'from_address': str(item.get('from_address') or ''),
+        'from_name': str(item.get('from_name') or 'Nexora'),
+        'reply_to': str(item.get('reply_to') or ''),
+        'connect_timeout_seconds': int(item.get('connect_timeout_seconds') or 10),
+        'send_timeout_seconds': int(item.get('send_timeout_seconds') or 20),
+        'rate_limit_per_minute': int(item.get('rate_limit_per_minute') or 60),
+        'has_password': bool(str(item.get('password_ciphertext') or '').strip()),
+        'updated_at': item.get('updated_at'),
+    }
+
+
+@router.get('/alerts/notification-channels')
+def read_alert_notification_channels(user=require_role('Viewer')):
+    """Return channel availability without returning webhook/SMTP secrets."""
+    tenant_id = _notification_tenant_id(user)
+    conn = get_db_connection()
+    try:
+        smtp_row = conn.execute(
+            """
+            SELECT * FROM notification_smtp_configs
+            WHERE tenant_id = ? OR tenant_id = 'tenant-default'
+            ORDER BY CASE WHEN tenant_id = ? THEN 0 ELSE 1 END, updated_at DESC
+            LIMIT 1
+            """,
+            (tenant_id, tenant_id),
+        ).fetchone()
+        global_rows = conn.execute(
+            "SELECT platform, enabled FROM global_notification_channels"
+        ).fetchall()
+        configured = {str(row['platform'] or '').strip().lower(): bool(row['enabled']) for row in global_rows}
+        return {
+            'channels': [
+                {'id': 'workspace', 'label': '跟随个人设置', 'configured': True, 'enabled': True},
+                {'id': 'feishu', 'label': '飞书', 'configured': configured.get('feishu', False), 'enabled': configured.get('feishu', False)},
+                {'id': 'dingtalk', 'label': '钉钉', 'configured': configured.get('dingtalk', False), 'enabled': configured.get('dingtalk', False)},
+                {'id': 'wechat', 'label': '企业微信', 'configured': configured.get('wechat', False), 'enabled': configured.get('wechat', False)},
+                {'id': 'email', 'label': '邮件', 'configured': bool(smtp_row and smtp_row['enabled']), 'enabled': bool(smtp_row and smtp_row['enabled'])},
+                {'id': 'global_webhook', 'label': '全局 Webhook', 'configured': bool((settings.ALERT_NOTIFY_WEBHOOK_URL or '').strip()), 'enabled': bool((settings.ALERT_NOTIFY_WEBHOOK_URL or '').strip())},
+            ],
+            'smtp': _safe_smtp_config(smtp_row),
+        }
+    finally:
+        conn.close()
+
+
+@router.put('/alerts/notification-channels/email')
+def update_alert_email_channel(payload: dict = Body(...), user=require_role('Administrator')):
+    """Save tenant SMTP settings; the password is encrypted before persistence."""
+    tenant_id = _notification_tenant_id(user)
+    host = str(payload.get('host') or '').strip()
+    from_address = str(payload.get('from_address') or '').strip()
+    security = str(payload.get('security') or 'starttls').strip().lower()
+    if not host:
+        raise HTTPException(status_code=400, detail='SMTP host is required')
+    if security not in {'ssl', 'starttls', 'none'}:
+        raise HTTPException(status_code=400, detail='security must be ssl, starttls, or none')
+    if not re.fullmatch(r'[^\s@]+@[^\s@]+\.[^\s@]+', from_address):
+        raise HTTPException(status_code=400, detail='from_address must be a valid email address')
+    try:
+        port = int(payload.get('port') or (465 if security == 'ssl' else 587))
+        connect_timeout = int(payload.get('connect_timeout_seconds') or 10)
+        send_timeout = int(payload.get('send_timeout_seconds') or 20)
+        rate_limit = int(payload.get('rate_limit_per_minute') or 60)
+    except (TypeError, ValueError) as exc:
+        raise HTTPException(status_code=400, detail='SMTP numeric fields are invalid') from exc
+    if not 1 <= port <= 65535 or not 1 <= connect_timeout <= 120 or not 1 <= send_timeout <= 120 or not 1 <= rate_limit <= 10000:
+        raise HTTPException(status_code=400, detail='SMTP numeric fields are out of range')
+
+    conn = get_db_connection()
+    try:
+        existing = conn.execute(
+            "SELECT id, password_ciphertext FROM notification_smtp_configs WHERE tenant_id = ? AND name = 'primary' LIMIT 1",
+            (tenant_id,),
+        ).fetchone()
+        password = str(payload.get('password') or '').strip()
+        if password:
+            try:
+                password_ciphertext = encrypt_credential(password) or ''
+            except Exception as exc:
+                raise HTTPException(status_code=500, detail='SMTP password encryption is unavailable') from exc
+        else:
+            password_ciphertext = str(existing['password_ciphertext'] or '') if existing else ''
+        config_id = str(existing['id']) if existing else f"smtp_{uuid.uuid4().hex[:16]}"
+        now = _utc_now_iso()
+        conn.execute(
+            """
+            INSERT INTO notification_smtp_configs (
+                id, tenant_id, name, enabled, host, port, security, username,
+                password_ciphertext, from_address, from_name, reply_to,
+                connect_timeout_seconds, send_timeout_seconds, rate_limit_per_minute,
+                created_by, created_at, updated_by, updated_at
+            ) VALUES (?, ?, 'primary', ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            ON CONFLICT (tenant_id, name) DO UPDATE SET
+                enabled = excluded.enabled, host = excluded.host, port = excluded.port,
+                security = excluded.security, username = excluded.username,
+                password_ciphertext = excluded.password_ciphertext,
+                from_address = excluded.from_address, from_name = excluded.from_name,
+                reply_to = excluded.reply_to,
+                connect_timeout_seconds = excluded.connect_timeout_seconds,
+                send_timeout_seconds = excluded.send_timeout_seconds,
+                rate_limit_per_minute = excluded.rate_limit_per_minute,
+                updated_by = excluded.updated_by, updated_at = excluded.updated_at
+            """,
+            (
+                config_id,
+                tenant_id,
+                bool(payload.get('enabled', False)),
+                host,
+                port,
+                security,
+                str(payload.get('username') or '').strip(),
+                password_ciphertext,
+                from_address,
+                str(payload.get('from_name') or 'Nexora').strip()[:120],
+                str(payload.get('reply_to') or '').strip(),
+                connect_timeout,
+                send_timeout,
+                rate_limit,
+                str(user.get('username') or 'system'),
+                now,
+                str(user.get('username') or 'system'),
+                now,
+            ),
+        )
+        conn.commit()
+        row = conn.execute(
+            "SELECT * FROM notification_smtp_configs WHERE tenant_id = ? AND name = 'primary' LIMIT 1",
+            (tenant_id,),
+        ).fetchone()
+        return _safe_smtp_config(row)
+    finally:
+        conn.close()
+
+
+@router.post('/alerts/notification-channels/email/test')
+def test_alert_email_channel(payload: dict = Body(default={}), user=require_role('Administrator')):
+    """Send an explicit SMTP test; it is not an alert delivery or history event."""
+    tenant_id = _notification_tenant_id(user)
+    conn = get_db_connection()
+    try:
+        row = conn.execute(
+            """
+            SELECT * FROM notification_smtp_configs
+            WHERE tenant_id = ? OR tenant_id = 'tenant-default'
+            ORDER BY CASE WHEN tenant_id = ? THEN 0 ELSE 1 END, updated_at DESC
+            LIMIT 1
+            """,
+            (tenant_id, tenant_id),
+        ).fetchone()
+    finally:
+        conn.close()
+    if not row:
+        raise HTTPException(status_code=400, detail='SMTP is not configured')
+    recipient = str(payload.get('recipient') or user.get('email') or '').strip()
+    if not recipient and user.get('user_id'):
+        conn = get_db_connection()
+        try:
+            recipient_row = conn.execute('SELECT email FROM users WHERE id = ?', (user['user_id'],)).fetchone()
+            recipient = str(recipient_row['email'] or '').strip() if recipient_row else ''
+        finally:
+            conn.close()
+    result = notification_service.send_email(
+        dict(row),
+        [recipient],
+        {
+            'title': 'Nexora 邮件通道测试',
+            'object_name': 'Notification Settings',
+            'ip_address': 'smtp',
+            'status': 'active',
+            'severity': 'info',
+            'message': f'用户 {user.get("username") or "admin"} 发起了 SMTP 测试。',
+            'first_occurrence': datetime.now(timezone.utc).isoformat(),
+            'last_occurrence': datetime.now(timezone.utc).isoformat(),
+        },
+    )
+    if not result.get('success'):
+        raise HTTPException(status_code=502, detail=str(result.get('error_code') or 'smtp_provider_error'))
+    return {'success': True, 'recipient_count': result.get('recipient_count', 1)}
 
 
 @router.post('/alerts/rules')
@@ -931,7 +1254,7 @@ def get_alert_detail(alert_id: str):
         item = _row_to_alert(row)
         timeline_rows = conn.execute(
             '''
-            SELECT id, severity, title, message, created_at, resolved_at, workflow_status, assignee, ack_by, ack_at, note, updated_at
+            SELECT id, dedupe_key, severity, title, message, created_at, resolved_at, workflow_status, assignee, ack_by, ack_at, note, updated_at
             FROM alert_events
             WHERE dedupe_key = ?
             ORDER BY created_at DESC
@@ -942,6 +1265,7 @@ def get_alert_detail(alert_id: str):
         return {
             'item': item,
             'timeline': [_row_to_alert(tl) for tl in timeline_rows],
+            'deliveries': _list_alert_deliveries(conn, alert_id),
         }
     finally:
         conn.close()

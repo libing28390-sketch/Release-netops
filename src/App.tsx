@@ -411,6 +411,8 @@ const App: React.FC = () => {
     handleExportMap,
     handleTriggerDiscovery,
     handleCancelDiscovery,
+    hostnameSyncing,
+    handleSyncHostnames,
     handleConfirmTopologyRelation,
     loadTopologyHistory,
   } = useTopology({
@@ -1658,7 +1660,7 @@ const App: React.FC = () => {
     selectedTopologyDeviceId, selectedTopologyLinkKey, selectedTopologyDevice, selectedTopologyLink,
     topologyNeighborDevices, topologyDeviceLinks, topologyPriorityDevices, topologyOrphanDevices, topologyRef,
     hideStaleLinks, setHideStaleLinks, hideOrphanDevices, setHideOrphanDevices,
-    handleTriggerDiscovery, handleCancelDiscovery, handleExportMap,
+     handleTriggerDiscovery, handleCancelDiscovery, hostnameSyncing, handleSyncHostnames, handleExportMap,
     handleConfirmTopologyRelation, loadTopologyHistory,
     setTopologySearch, setTopologySiteFilter, setTopologyGraphView, setTopologyTagFilter, setTopologyRoleFilter, setTopologyStatusFilter,
     setTopologyLinkStatusFilter, setTopologyProtocolFilter,

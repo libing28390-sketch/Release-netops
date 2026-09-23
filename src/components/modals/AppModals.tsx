@@ -102,6 +102,7 @@ export const AppModals: React.FC<any> = (props) => {
         onNotificationChannelToggle={(channel) => setNotificationChannels((prev) => ({ ...prev, [channel]: { ...prev[channel], enabled: !prev[channel].enabled } }))}
         onNotificationWebhookChange={(channel, value) => setNotificationChannels((prev) => ({ ...prev, [channel]: { ...prev[channel], webhook_url: value } }))}
         onNotificationSecretChange={(value) => setNotificationChannels((prev) => ({ ...prev, dingtalk: { ...prev.dingtalk, secret: value } }))}
+        onEmailPreferenceChange={(field, value) => setNotificationChannels((prev) => ({ ...prev, email: { ...prev.email, [field]: value } }))}
         onTestNotificationChannel={async (channel) => {
           const profileUserId = currentUser.id ?? currentUserRecord?.id;
           if (!profileUserId) return;

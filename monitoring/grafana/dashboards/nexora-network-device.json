@@ -25,6 +25,7 @@
       "fieldConfig": {
         "defaults": {
           "unit": "s",
+          "noValue": "—",
           "color": {
             "mode": "thresholds"
           },
@@ -42,8 +43,8 @@
       },
       "options": {
         "colorMode": "value",
-        "graphMode": "area",
-        "justifyMode": "auto",
+        "graphMode": "none",
+        "justifyMode": "center",
         "orientation": "auto",
         "reduceOptions": {
           "calcs": [
@@ -52,18 +53,18 @@
           "fields": "",
           "values": false
         },
-        "textMode": "auto"
+        "textMode": "value"
       },
       "targets": [
         {
-          "expr": "sysUpTime{hostname=~\"$device\"} / 100",
+          "expr": "sysUpTime{job=\"network_snmp\",site_name=~\"$site\",vendor=~\"$vendor\",role=~\"$role\",hostname=~\"$device\"} / 100",
           "refId": "A"
         }
       ]
     },
     {
       "id": 2,
-      "title": "当前 CPU 使用率",
+      "title": "平均 CPU 使用率",
       "type": "stat",
       "datasource": {
         "type": "prometheus",
@@ -78,6 +79,7 @@
       "fieldConfig": {
         "defaults": {
           "unit": "percent",
+          "noValue": "—",
           "color": {
             "mode": "thresholds"
           },
@@ -103,8 +105,8 @@
       },
       "options": {
         "colorMode": "value",
-        "graphMode": "area",
-        "justifyMode": "auto",
+        "graphMode": "none",
+        "justifyMode": "center",
         "orientation": "auto",
         "reduceOptions": {
           "calcs": [
@@ -113,18 +115,18 @@
           "fields": "",
           "values": false
         },
-        "textMode": "auto"
+        "textMode": "value"
       },
       "targets": [
         {
-          "expr": "max(cpmCPUTotal1minRev{hostname=~\"$device\"} or hh3cEntityExtCpuUsage{hostname=~\"$device\"} or hwEntityCpuUsage{hostname=~\"$device\"} or ruijieCpuCostRate{hostname=~\"$device\"} or jnxOperatingCPU{hostname=~\"$device\"} or fnSysCpuUsage{hostname=~\"$device\"} or zteCpuRate{hostname=~\"$device\"} or mpCpuUtilization5Min{hostname=~\"$device\"} or dptechCpuUsage{hostname=~\"$device\"} or hillstoneCPUUtilization{hostname=~\"$device\"} or sangforCpuUsage{hostname=~\"$device\"} or dcnCpuUsage{hostname=~\"$device\"})",
+          "expr": "avg(cpmCPUTotal1minRev{job=\"network_snmp\",site_name=~\"$site\",vendor=~\"$vendor\",role=~\"$role\",hostname=~\"$device\"} or hh3cEntityExtCpuUsage{job=\"network_snmp\",site_name=~\"$site\",vendor=~\"$vendor\",role=~\"$role\",hostname=~\"$device\"} or hwEntityCpuUsage{job=\"network_snmp\",site_name=~\"$site\",vendor=~\"$vendor\",role=~\"$role\",hostname=~\"$device\"} or ruijieCpuCostRate{job=\"network_snmp\",site_name=~\"$site\",vendor=~\"$vendor\",role=~\"$role\",hostname=~\"$device\"} or jnxOperatingCPU{job=\"network_snmp\",site_name=~\"$site\",vendor=~\"$vendor\",role=~\"$role\",hostname=~\"$device\"} or fnSysCpuUsage{job=\"network_snmp\",site_name=~\"$site\",vendor=~\"$vendor\",role=~\"$role\",hostname=~\"$device\"} or zteCpuRate{job=\"network_snmp\",site_name=~\"$site\",vendor=~\"$vendor\",role=~\"$role\",hostname=~\"$device\"} or mpCpuUtilization5Min{job=\"network_snmp\",site_name=~\"$site\",vendor=~\"$vendor\",role=~\"$role\",hostname=~\"$device\"} or dptechCpuUsage{job=\"network_snmp\",site_name=~\"$site\",vendor=~\"$vendor\",role=~\"$role\",hostname=~\"$device\"} or hillstoneCPUUtilization{job=\"network_snmp\",site_name=~\"$site\",vendor=~\"$vendor\",role=~\"$role\",hostname=~\"$device\"} or sangforCpuUsage{job=\"network_snmp\",site_name=~\"$site\",vendor=~\"$vendor\",role=~\"$role\",hostname=~\"$device\"} or dcnCpuUsage{job=\"network_snmp\",site_name=~\"$site\",vendor=~\"$vendor\",role=~\"$role\",hostname=~\"$device\"})",
           "refId": "A"
         }
       ]
     },
     {
       "id": 3,
-      "title": "当前内存使用率",
+      "title": "平均内存使用率",
       "type": "stat",
       "datasource": {
         "type": "prometheus",
@@ -139,6 +141,7 @@
       "fieldConfig": {
         "defaults": {
           "unit": "percent",
+          "noValue": "—",
           "color": {
             "mode": "thresholds"
           },
@@ -164,8 +167,8 @@
       },
       "options": {
         "colorMode": "value",
-        "graphMode": "area",
-        "justifyMode": "auto",
+        "graphMode": "none",
+        "justifyMode": "center",
         "orientation": "auto",
         "reduceOptions": {
           "calcs": [
@@ -174,11 +177,11 @@
           "fields": "",
           "values": false
         },
-        "textMode": "auto"
+        "textMode": "value"
       },
       "targets": [
         {
-          "expr": "max(hh3cEntityExtMemUsage{hostname=~\"$device\"} or hwEntityMemUsage{hostname=~\"$device\"} or ruijieMemoryPoolCurrentUtilization{hostname=~\"$device\"} or jnxOperatingBuffer{hostname=~\"$device\"} or fnSysMemUsage{hostname=~\"$device\"} or zteMemRate{hostname=~\"$device\"} or mpMemoryUtilization{hostname=~\"$device\"} or dptechMemUsage{hostname=~\"$device\"} or hillstoneMemoryUtilization{hostname=~\"$device\"} or sangforMemUsage{hostname=~\"$device\"} or dcnMemUsage{hostname=~\"$device\"})",
+          "expr": "avg(hh3cEntityExtMemUsage{job=\"network_snmp\",site_name=~\"$site\",vendor=~\"$vendor\",role=~\"$role\",hostname=~\"$device\"} or hwEntityMemUsage{job=\"network_snmp\",site_name=~\"$site\",vendor=~\"$vendor\",role=~\"$role\",hostname=~\"$device\"} or (100 * ciscoMemoryPoolUsed{job=\"network_snmp\",site_name=~\"$site\",vendor=~\"$vendor\",role=~\"$role\",hostname=~\"$device\"} / (ciscoMemoryPoolUsed{job=\"network_snmp\",site_name=~\"$site\",vendor=~\"$vendor\",role=~\"$role\",hostname=~\"$device\"} + ciscoMemoryPoolFree{job=\"network_snmp\",site_name=~\"$site\",vendor=~\"$vendor\",role=~\"$role\",hostname=~\"$device\"})) or ruijieMemoryPoolCurrentUtilization{job=\"network_snmp\",site_name=~\"$site\",vendor=~\"$vendor\",role=~\"$role\",hostname=~\"$device\"} or jnxOperatingBuffer{job=\"network_snmp\",site_name=~\"$site\",vendor=~\"$vendor\",role=~\"$role\",hostname=~\"$device\"} or fnSysMemUsage{job=\"network_snmp\",site_name=~\"$site\",vendor=~\"$vendor\",role=~\"$role\",hostname=~\"$device\"} or zteMemRate{job=\"network_snmp\",site_name=~\"$site\",vendor=~\"$vendor\",role=~\"$role\",hostname=~\"$device\"} or mpMemoryUtilization{job=\"network_snmp\",site_name=~\"$site\",vendor=~\"$vendor\",role=~\"$role\",hostname=~\"$device\"} or dptechMemUsage{job=\"network_snmp\",site_name=~\"$site\",vendor=~\"$vendor\",role=~\"$role\",hostname=~\"$device\"} or hillstoneMemoryUtilization{job=\"network_snmp\",site_name=~\"$site\",vendor=~\"$vendor\",role=~\"$role\",hostname=~\"$device\"} or sangforMemUsage{job=\"network_snmp\",site_name=~\"$site\",vendor=~\"$vendor\",role=~\"$role\",hostname=~\"$device\"} or dcnMemUsage{job=\"network_snmp\",site_name=~\"$site\",vendor=~\"$vendor\",role=~\"$role\",hostname=~\"$device\"})",
           "refId": "A"
         }
       ]
@@ -200,6 +203,7 @@
       "fieldConfig": {
         "defaults": {
           "unit": "celsius",
+          "noValue": "—",
           "color": {
             "mode": "thresholds"
           },
@@ -225,8 +229,8 @@
       },
       "options": {
         "colorMode": "value",
-        "graphMode": "area",
-        "justifyMode": "auto",
+        "graphMode": "none",
+        "justifyMode": "center",
         "orientation": "auto",
         "reduceOptions": {
           "calcs": [
@@ -235,18 +239,18 @@
           "fields": "",
           "values": false
         },
-        "textMode": "auto"
+        "textMode": "value"
       },
       "targets": [
         {
-          "expr": "max(hh3cEntityExtTemperature{hostname=~\"$device\"} or hwEntityTemperature{hostname=~\"$device\"} or ruijieDeviceTemperature{hostname=~\"$device\"} or jnxOperatingTemp{hostname=~\"$device\"} or entSensorValue{hostname=~\"$device\"} or zteTemperature{hostname=~\"$device\"} or mpTemperature{hostname=~\"$device\"} or dptechTemperature{hostname=~\"$device\"} or dcnTemperature{hostname=~\"$device\"})",
+          "expr": "max(hh3cEntityExtTemperature{job=\"network_snmp\",site_name=~\"$site\",vendor=~\"$vendor\",role=~\"$role\",hostname=~\"$device\"} or hwEntityTemperature{job=\"network_snmp\",site_name=~\"$site\",vendor=~\"$vendor\",role=~\"$role\",hostname=~\"$device\"} or ruijieDeviceTemperature{job=\"network_snmp\",site_name=~\"$site\",vendor=~\"$vendor\",role=~\"$role\",hostname=~\"$device\"} or jnxOperatingTemp{job=\"network_snmp\",site_name=~\"$site\",vendor=~\"$vendor\",role=~\"$role\",hostname=~\"$device\"} or zteTemperature{job=\"network_snmp\",site_name=~\"$site\",vendor=~\"$vendor\",role=~\"$role\",hostname=~\"$device\"} or mpTemperature{job=\"network_snmp\",site_name=~\"$site\",vendor=~\"$vendor\",role=~\"$role\",hostname=~\"$device\"} or dptechTemperature{job=\"network_snmp\",site_name=~\"$site\",vendor=~\"$vendor\",role=~\"$role\",hostname=~\"$device\"} or dcnTemperature{job=\"network_snmp\",site_name=~\"$site\",vendor=~\"$vendor\",role=~\"$role\",hostname=~\"$device\"})",
           "refId": "A"
         }
       ]
     },
     {
       "id": 5,
-      "title": "CPU 负载走势 (多核/主备控)",
+      "title": "CPU 平均使用率走势 (多核/主备控)",
       "type": "timeseries",
       "datasource": {
         "type": "prometheus",
@@ -261,12 +265,13 @@
       "fieldConfig": {
         "defaults": {
           "unit": "percent",
+          "noValue": "—",
           "color": {
             "mode": "palette-classic"
           },
           "custom": {
             "drawStyle": "line",
-            "lineInterpolation": "smooth",
+            "lineInterpolation": "linear",
             "fillOpacity": 10
           }
         },
@@ -285,15 +290,15 @@
       },
       "targets": [
         {
-          "expr": "cpmCPUTotal1minRev{hostname=~\"$device\"} or hh3cEntityExtCpuUsage{hostname=~\"$device\"} or hwEntityCpuUsage{hostname=~\"$device\"} or ruijieCpuCostRate{hostname=~\"$device\"} or jnxOperatingCPU{hostname=~\"$device\"} or fnSysCpuUsage{hostname=~\"$device\"} or zteCpuRate{hostname=~\"$device\"} or mpCpuUtilization5Min{hostname=~\"$device\"} or dptechCpuUsage{hostname=~\"$device\"} or hillstoneCPUUtilization{hostname=~\"$device\"} or sangforCpuUsage{hostname=~\"$device\"} or dcnCpuUsage{hostname=~\"$device\"}",
-          "legendFormat": "{{hostname}} ({{instance}})",
+          "expr": "avg by (hostname, site_name, instance, vendor) (cpmCPUTotal1minRev{job=\"network_snmp\",site_name=~\"$site\",vendor=~\"$vendor\",role=~\"$role\",hostname=~\"$device\"} or hh3cEntityExtCpuUsage{job=\"network_snmp\",site_name=~\"$site\",vendor=~\"$vendor\",role=~\"$role\",hostname=~\"$device\"} or hwEntityCpuUsage{job=\"network_snmp\",site_name=~\"$site\",vendor=~\"$vendor\",role=~\"$role\",hostname=~\"$device\"} or ruijieCpuCostRate{job=\"network_snmp\",site_name=~\"$site\",vendor=~\"$vendor\",role=~\"$role\",hostname=~\"$device\"} or jnxOperatingCPU{job=\"network_snmp\",site_name=~\"$site\",vendor=~\"$vendor\",role=~\"$role\",hostname=~\"$device\"} or fnSysCpuUsage{job=\"network_snmp\",site_name=~\"$site\",vendor=~\"$vendor\",role=~\"$role\",hostname=~\"$device\"} or zteCpuRate{job=\"network_snmp\",site_name=~\"$site\",vendor=~\"$vendor\",role=~\"$role\",hostname=~\"$device\"} or mpCpuUtilization5Min{job=\"network_snmp\",site_name=~\"$site\",vendor=~\"$vendor\",role=~\"$role\",hostname=~\"$device\"} or dptechCpuUsage{job=\"network_snmp\",site_name=~\"$site\",vendor=~\"$vendor\",role=~\"$role\",hostname=~\"$device\"} or hillstoneCPUUtilization{job=\"network_snmp\",site_name=~\"$site\",vendor=~\"$vendor\",role=~\"$role\",hostname=~\"$device\"} or sangforCpuUsage{job=\"network_snmp\",site_name=~\"$site\",vendor=~\"$vendor\",role=~\"$role\",hostname=~\"$device\"} or dcnCpuUsage{job=\"network_snmp\",site_name=~\"$site\",vendor=~\"$vendor\",role=~\"$role\",hostname=~\"$device\"})",
+          "legendFormat": "{{site_name}} / {{hostname}} · {{vendor}}",
           "refId": "A"
         }
       ]
     },
     {
       "id": 6,
-      "title": "内存使用率与池走势",
+      "title": "内存平均使用率与池走势",
       "type": "timeseries",
       "datasource": {
         "type": "prometheus",
@@ -308,12 +313,13 @@
       "fieldConfig": {
         "defaults": {
           "unit": "percent",
+          "noValue": "—",
           "color": {
             "mode": "palette-classic"
           },
           "custom": {
             "drawStyle": "line",
-            "lineInterpolation": "smooth",
+            "lineInterpolation": "linear",
             "fillOpacity": 10
           }
         },
@@ -332,8 +338,8 @@
       },
       "targets": [
         {
-          "expr": "hh3cEntityExtMemUsage{hostname=~\"$device\"} or hwEntityMemUsage{hostname=~\"$device\"} or ruijieMemoryPoolCurrentUtilization{hostname=~\"$device\"} or jnxOperatingBuffer{hostname=~\"$device\"} or fnSysMemUsage{hostname=~\"$device\"} or zteMemRate{hostname=~\"$device\"} or mpMemoryUtilization{hostname=~\"$device\"} or dptechMemUsage{hostname=~\"$device\"} or hillstoneMemoryUtilization{hostname=~\"$device\"} or sangforMemUsage{hostname=~\"$device\"} or dcnMemUsage{hostname=~\"$device\"}",
-          "legendFormat": "{{hostname}} ({{instance}})",
+          "expr": "avg by (hostname, site_name, instance, vendor) (hh3cEntityExtMemUsage{job=\"network_snmp\",site_name=~\"$site\",vendor=~\"$vendor\",role=~\"$role\",hostname=~\"$device\"} or hwEntityMemUsage{job=\"network_snmp\",site_name=~\"$site\",vendor=~\"$vendor\",role=~\"$role\",hostname=~\"$device\"} or (100 * ciscoMemoryPoolUsed{job=\"network_snmp\",site_name=~\"$site\",vendor=~\"$vendor\",role=~\"$role\",hostname=~\"$device\"} / (ciscoMemoryPoolUsed{job=\"network_snmp\",site_name=~\"$site\",vendor=~\"$vendor\",role=~\"$role\",hostname=~\"$device\"} + ciscoMemoryPoolFree{job=\"network_snmp\",site_name=~\"$site\",vendor=~\"$vendor\",role=~\"$role\",hostname=~\"$device\"})) or ruijieMemoryPoolCurrentUtilization{job=\"network_snmp\",site_name=~\"$site\",vendor=~\"$vendor\",role=~\"$role\",hostname=~\"$device\"} or jnxOperatingBuffer{job=\"network_snmp\",site_name=~\"$site\",vendor=~\"$vendor\",role=~\"$role\",hostname=~\"$device\"} or fnSysMemUsage{job=\"network_snmp\",site_name=~\"$site\",vendor=~\"$vendor\",role=~\"$role\",hostname=~\"$device\"} or zteMemRate{job=\"network_snmp\",site_name=~\"$site\",vendor=~\"$vendor\",role=~\"$role\",hostname=~\"$device\"} or mpMemoryUtilization{job=\"network_snmp\",site_name=~\"$site\",vendor=~\"$vendor\",role=~\"$role\",hostname=~\"$device\"} or dptechMemUsage{job=\"network_snmp\",site_name=~\"$site\",vendor=~\"$vendor\",role=~\"$role\",hostname=~\"$device\"} or hillstoneMemoryUtilization{job=\"network_snmp\",site_name=~\"$site\",vendor=~\"$vendor\",role=~\"$role\",hostname=~\"$device\"} or sangforMemUsage{job=\"network_snmp\",site_name=~\"$site\",vendor=~\"$vendor\",role=~\"$role\",hostname=~\"$device\"} or dcnMemUsage{job=\"network_snmp\",site_name=~\"$site\",vendor=~\"$vendor\",role=~\"$role\",hostname=~\"$device\"})",
+          "legendFormat": "{{site_name}} / {{hostname}} · {{vendor}}",
           "refId": "A"
         }
       ]
@@ -355,12 +361,13 @@
       "fieldConfig": {
         "defaults": {
           "unit": "celsius",
+          "noValue": "—",
           "color": {
             "mode": "palette-classic"
           },
           "custom": {
             "drawStyle": "line",
-            "lineInterpolation": "smooth",
+            "lineInterpolation": "linear",
             "fillOpacity": 10
           }
         },
@@ -379,8 +386,8 @@
       },
       "targets": [
         {
-          "expr": "hh3cEntityExtTemperature{hostname=~\"$device\"} or hwEntityTemperature{hostname=~\"$device\"} or ruijieDeviceTemperature{hostname=~\"$device\"} or jnxOperatingTemp{hostname=~\"$device\"} or entSensorValue{hostname=~\"$device\"} or zteTemperature{hostname=~\"$device\"} or mpTemperature{hostname=~\"$device\"} or dptechTemperature{hostname=~\"$device\"} or dcnTemperature{hostname=~\"$device\"}",
-          "legendFormat": "{{hostname}} ({{instance}})",
+          "expr": "hh3cEntityExtTemperature{job=\"network_snmp\",site_name=~\"$site\",vendor=~\"$vendor\",role=~\"$role\",hostname=~\"$device\"} or hwEntityTemperature{job=\"network_snmp\",site_name=~\"$site\",vendor=~\"$vendor\",role=~\"$role\",hostname=~\"$device\"} or ruijieDeviceTemperature{job=\"network_snmp\",site_name=~\"$site\",vendor=~\"$vendor\",role=~\"$role\",hostname=~\"$device\"} or jnxOperatingTemp{job=\"network_snmp\",site_name=~\"$site\",vendor=~\"$vendor\",role=~\"$role\",hostname=~\"$device\"} or zteTemperature{job=\"network_snmp\",site_name=~\"$site\",vendor=~\"$vendor\",role=~\"$role\",hostname=~\"$device\"} or mpTemperature{job=\"network_snmp\",site_name=~\"$site\",vendor=~\"$vendor\",role=~\"$role\",hostname=~\"$device\"} or dptechTemperature{job=\"network_snmp\",site_name=~\"$site\",vendor=~\"$vendor\",role=~\"$role\",hostname=~\"$device\"} or dcnTemperature{job=\"network_snmp\",site_name=~\"$site\",vendor=~\"$vendor\",role=~\"$role\",hostname=~\"$device\"}",
+          "legendFormat": "{{site_name}} / {{hostname}} · {{vendor}}",
           "refId": "A"
         }
       ]
@@ -402,6 +409,7 @@
       "fieldConfig": {
         "defaults": {
           "unit": "none",
+          "noValue": "—",
           "color": {
             "mode": "thresholds"
           }
@@ -417,7 +425,7 @@
       },
       "targets": [
         {
-          "expr": "ifOperStatus{hostname=~\"$device\"} * on(instance, ifIndex) group_left(ifName) ((ifName * 0 + 1) or on(instance, ifIndex) (ifOperStatus * 0 + 1))",
+          "expr": "ifOperStatus{job=\"network_snmp\",site_name=~\"$site\",vendor=~\"$vendor\",role=~\"$role\",hostname=~\"$device\"} * on(instance, ifIndex) group_left(ifName) ((ifName{job=\"network_snmp\",site_name=~\"$site\",vendor=~\"$vendor\",role=~\"$role\",hostname=~\"$device\"} * 0 + 1 or on(instance, ifIndex) (ifOperStatus{job=\"network_snmp\",site_name=~\"$site\",vendor=~\"$vendor\",role=~\"$role\",hostname=~\"$device\"} * 0 + 1)))",
           "format": "table",
           "instant": true,
           "refId": "A"
@@ -444,23 +452,24 @@
               "job": true,
               "tenant_id": true,
               "site_id": true,
-              "site_name": true,
               "platform": true
             },
             "indexByName": {
               "sysName": 0,
               "hostname": 1,
-              "instance": 2,
-              "ifName": 3,
-              "ifDescr": 4,
-              "vendor": 5,
-              "role": 6,
-              "Value": 7
+              "site_name": 2,
+              "instance": 3,
+              "ifName": 4,
+              "ifDescr": 5,
+              "vendor": 6,
+              "role": 7,
+              "Value": 8
             },
             "renameByName": {
               "sysName": "设备名称",
               "hostname": "设备名称",
               "instance": "管理 IP",
+              "site_name": "站点",
               "ifName": "接口全称",
               "ifDescr": "接口描述",
               "vendor": "厂商",
@@ -468,6 +477,59 @@
               "Value": "运行状态 (1=Up, 2=Down)"
             }
           }
+        }
+      ]
+    },
+    {
+      "id": 9,
+      "title": "设备接口流量走势",
+      "type": "timeseries",
+      "datasource": {
+        "type": "prometheus",
+        "uid": "victoriametrics"
+      },
+      "gridPos": {
+        "h": 8,
+        "w": 24,
+        "x": 0,
+        "y": 20
+      },
+      "fieldConfig": {
+        "defaults": {
+          "unit": "bps",
+          "noValue": "—",
+          "color": {
+            "mode": "palette-classic"
+          },
+          "custom": {
+            "drawStyle": "line",
+            "lineInterpolation": "linear",
+            "fillOpacity": 10
+          }
+        },
+        "overrides": []
+      },
+      "options": {
+        "legend": {
+          "displayMode": "list",
+          "placement": "bottom",
+          "showLegend": true
+        },
+        "tooltip": {
+          "mode": "multi",
+          "sort": "desc"
+        }
+      },
+      "targets": [
+        {
+          "expr": "sum by (hostname, site_name, ifName) ((rate(ifHCInOctets{job=\"network_snmp\",site_name=~\"$site\",vendor=~\"$vendor\",role=~\"$role\",hostname=~\"$device\"}[5m]) or rate(ifInOctets{job=\"network_snmp\",site_name=~\"$site\",vendor=~\"$vendor\",role=~\"$role\",hostname=~\"$device\"}[5m])) * 8 * on(instance, ifIndex) group_left(ifName) ((ifName{job=\"network_snmp\",site_name=~\"$site\",vendor=~\"$vendor\",role=~\"$role\",hostname=~\"$device\"} * 0 + 1 or on(instance, ifIndex) (ifOperStatus{job=\"network_snmp\",site_name=~\"$site\",vendor=~\"$vendor\",role=~\"$role\",hostname=~\"$device\"} * 0 + 1))))",
+          "legendFormat": "{{site_name}} / {{hostname}} / {{ifName}} 入流量",
+          "refId": "A"
+        },
+        {
+          "expr": "sum by (hostname, site_name, ifName) ((rate(ifHCOutOctets{job=\"network_snmp\",site_name=~\"$site\",vendor=~\"$vendor\",role=~\"$role\",hostname=~\"$device\"}[5m]) or rate(ifOutOctets{job=\"network_snmp\",site_name=~\"$site\",vendor=~\"$vendor\",role=~\"$role\",hostname=~\"$device\"}[5m])) * 8 * on(instance, ifIndex) group_left(ifName) ((ifName{job=\"network_snmp\",site_name=~\"$site\",vendor=~\"$vendor\",role=~\"$role\",hostname=~\"$device\"} * 0 + 1 or on(instance, ifIndex) (ifOperStatus{job=\"network_snmp\",site_name=~\"$site\",vendor=~\"$vendor\",role=~\"$role\",hostname=~\"$device\"} * 0 + 1))))",
+          "legendFormat": "{{site_name}} / {{hostname}} / {{ifName}} 出流量",
+          "refId": "B"
         }
       ]
     }
@@ -492,14 +554,14 @@
             "$__all"
           ]
         },
-        "definition": "label_values({__name__=~\"ifOperStatus|up\",job=~\"network_snmp|.*snmp.*\"}, site_name)",
+        "definition": "label_values({__name__=~\"ifOperStatus|up\",job=\"network_snmp\"}, site_name)",
         "includeAll": true,
         "label": "站点",
         "multi": true,
         "name": "site",
         "options": [],
         "query": {
-          "query": "label_values({__name__=~\"ifOperStatus|up\",job=~\"network_snmp|.*snmp.*\"}, site_name)",
+          "query": "label_values({__name__=~\"ifOperStatus|up\",job=\"network_snmp\"}, site_name)",
           "refId": "StandardVariableQuery"
         },
         "refresh": 1,
@@ -516,14 +578,14 @@
             "$__all"
           ]
         },
-        "definition": "label_values({__name__=~\"ifOperStatus|up\",job=~\"network_snmp|.*snmp.*\",site_name=~\"$site\"}, vendor)",
+        "definition": "label_values({__name__=~\"ifOperStatus|up\",job=\"network_snmp\",site_name=~\"$site\"}, vendor)",
         "includeAll": true,
         "label": "厂商",
         "multi": true,
         "name": "vendor",
         "options": [],
         "query": {
-          "query": "label_values({__name__=~\"ifOperStatus|up\",job=~\"network_snmp|.*snmp.*\",site_name=~\"$site\"}, vendor)",
+          "query": "label_values({__name__=~\"ifOperStatus|up\",job=\"network_snmp\",site_name=~\"$site\"}, vendor)",
           "refId": "StandardVariableQuery"
         },
         "refresh": 1,
@@ -540,14 +602,14 @@
             "$__all"
           ]
         },
-        "definition": "label_values({__name__=~\"ifOperStatus|up\",job=~\"network_snmp|.*snmp.*\",site_name=~\"$site\",vendor=~\"$vendor\"}, role)",
+        "definition": "label_values({__name__=~\"ifOperStatus|up\",job=\"network_snmp\",site_name=~\"$site\",vendor=~\"$vendor\"}, role)",
         "includeAll": true,
         "label": "角色",
         "multi": true,
         "name": "role",
         "options": [],
         "query": {
-          "query": "label_values({__name__=~\"ifOperStatus|up\",job=~\"network_snmp|.*snmp.*\",site_name=~\"$site\",vendor=~\"$vendor\"}, role)",
+          "query": "label_values({__name__=~\"ifOperStatus|up\",job=\"network_snmp\",site_name=~\"$site\",vendor=~\"$vendor\"}, role)",
           "refId": "StandardVariableQuery"
         },
         "refresh": 1,
@@ -560,14 +622,14 @@
           "text": "",
           "value": ""
         },
-        "definition": "label_values({__name__=~\"ifOperStatus|up\",job=~\"network_snmp|.*snmp.*\",site_name=~\"$site\",vendor=~\"$vendor\",role=~\"$role\"}, hostname)",
+        "definition": "label_values({__name__=~\"ifOperStatus|up\",job=\"network_snmp\",site_name=~\"$site\",vendor=~\"$vendor\",role=~\"$role\"}, hostname)",
         "includeAll": false,
         "label": "设备",
         "multi": false,
         "name": "device",
         "options": [],
         "query": {
-          "query": "label_values({__name__=~\"ifOperStatus|up\",job=~\"network_snmp|.*snmp.*\",site_name=~\"$site\",vendor=~\"$vendor\",role=~\"$role\"}, hostname)",
+          "query": "label_values({__name__=~\"ifOperStatus|up\",job=\"network_snmp\",site_name=~\"$site\",vendor=~\"$vendor\",role=~\"$role\"}, hostname)",
           "refId": "StandardVariableQuery"
         },
         "refresh": 1,
@@ -582,5 +644,5 @@
   "timezone": "browser",
   "title": "02 网络设备详情 (Network Device Detail)",
   "uid": "nexora-network-device",
-  "version": 25
+  "version": 26
 }

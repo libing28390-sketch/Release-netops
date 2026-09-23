@@ -163,12 +163,24 @@ def _fetch_global_notification_channels() -> list[dict]:
 
 def _build_user_channels(user_channels: dict, shared_rows: list[dict]) -> dict:
     """Merge a user's personal channel prefs with the shared channel templates."""
+    if not isinstance(user_channels, dict):
+        user_channels = {}
     final_channels: dict[str, dict] = {}
     for s_row in shared_rows:
         platform = s_row['platform']
         url = (s_row.get('webhook_url') or '').strip()
-        masked_url = _mask_webhook_url(url)
         user_pref = user_channels.get(platform, {})
+        if not isinstance(user_pref, dict):
+            user_pref = {}
+        personal_url = str(user_pref.get('webhook_url') or '').strip()
+        if '***' in personal_url or '****' in personal_url:
+            personal_url = ''
+        effective_url = personal_url or url
+        masked_url = _mask_webhook_url(effective_url)
+        personal_secret = str(user_pref.get('secret') or '').strip()
+        if '***' in personal_secret or '****' in personal_secret:
+            personal_secret = ''
+        effective_secret = personal_secret or str(s_row.get('secret') or '').strip()
         is_enabled = (
             bool(user_pref.get('enabled'))
             if 'enabled' in user_pref
@@ -177,18 +189,33 @@ def _build_user_channels(user_channels: dict, shared_rows: list[dict]) -> dict:
         final_channels[platform] = {
             'webhook_url': masked_url,
             'enabled': is_enabled,
-            'secret': '***' if (s_row.get('secret') or '').strip() else '',
+            'secret': '***' if effective_secret else '',
             'creator_username': s_row.get('creator_username'),
         }
+        if platform == 'email':
+            final_channels[platform]['active_enabled'] = user_pref.get('active_enabled') is not False
+            final_channels[platform]['recovery_enabled'] = user_pref.get('recovery_enabled') is not False
     # Ensure all standard platforms are present even if not configured.
-    for p in ('feishu', 'dingtalk', 'wechat'):
+    for p in ('feishu', 'dingtalk', 'wechat', 'email'):
         if p not in final_channels:
+            user_pref = user_channels.get(p, {})
+            if not isinstance(user_pref, dict):
+                user_pref = {}
+            personal_url = str(user_pref.get('webhook_url') or '').strip()
+            if '***' in personal_url or '****' in personal_url:
+                personal_url = ''
+            personal_secret = str(user_pref.get('secret') or '').strip()
+            if '***' in personal_secret or '****' in personal_secret:
+                personal_secret = ''
             final_channels[p] = {
-                'webhook_url': '',
-                'enabled': False,
-                'secret': '',
+                'webhook_url': _mask_webhook_url(personal_url),
+                'enabled': bool(user_pref.get('enabled')) if 'enabled' in user_pref else bool(personal_url),
+                'secret': '***' if personal_secret else '',
                 'creator_username': '',
             }
+            if p == 'email':
+                final_channels[p]['active_enabled'] = user_pref.get('active_enabled') is not False
+                final_channels[p]['recovery_enabled'] = user_pref.get('recovery_enabled') is not False
     return final_channels
 
 
@@ -1257,6 +1284,8 @@ async def update_user(user_id: str, request: Request, user: dict = Body(...)):
         if notification_channels_raw is not None and isinstance(notification_channels_raw, dict):
             for platform, cfg in notification_channels_raw.items():
                 if not isinstance(cfg, dict):
+                    continue
+                if str(platform).strip().lower() == 'email':
                     continue
                 
                 existing_global = conn.execute(

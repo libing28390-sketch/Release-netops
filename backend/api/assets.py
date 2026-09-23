@@ -729,6 +729,19 @@ def _safe_encrypt(plaintext: str) -> str:
         return ''
 
 
+def _safe_encrypt_snmp_community(community: str) -> str:
+    """Persist a community or fail visibly instead of silently dropping it."""
+    if not community:
+        return community
+    try:
+        return encrypt_credential(community)
+    except RuntimeError as exc:
+        raise HTTPException(
+            status_code=500,
+            detail='SNMP Community 无法安全存储，请先配置 CREDENTIAL_ENCRYPTION_KEY。',
+        ) from exc
+
+
 def _resolve_snmp_credential_id(conn, value: str | None) -> str:
     """Validate and normalize an independent SNMP credential binding."""
     requested = str(value or '').strip()
@@ -758,6 +771,8 @@ def _resolve_snmp_credential_binding(conn, body) -> None:
     are supplied, so existing callers cannot be silently redirected by the
     alias.
     """
+    if not getattr(body, 'snmp_community', None) and getattr(body, 'community', None):
+        body.snmp_community = str(getattr(body, 'community') or '').strip()
     requested_id = str(getattr(body, 'snmp_credential_id', '') or '').strip()
     requested_name = str(getattr(body, 'snmp_credential_name', '') or '').strip()
     requested = requested_id or requested_name
@@ -819,7 +834,7 @@ def _create_device_local_credential(
             'unbound',
             _safe_encrypt(password) if password else '',
             _safe_encrypt(enable_password) if enable_password else '',
-            _safe_encrypt(snmp_community) if snmp_community else '',
+            _safe_encrypt_snmp_community(snmp_community) if snmp_community else '',
             now,
         ),
     )
@@ -1021,7 +1036,7 @@ def _create_linked_device(conn, asset_id: str, body, user: dict) -> str:
     resolved_pwd = normal_pwd or pwd or admin_pwd or ''
     enc_pwd = _safe_encrypt(resolved_pwd) if resolved_pwd else ''
     enc_enable = _safe_encrypt(enable_pwd) if enable_pwd else ''
-    enc_snmp = _safe_encrypt(community) if community else ''
+    enc_snmp = _safe_encrypt_snmp_community(community) if community else ''
     resolved_uname = normal_user or uname or admin_user or ''
 
     # Manual dual-account entry creates two separate device-local records so
@@ -1068,7 +1083,7 @@ def _create_linked_device(conn, asset_id: str, body, user: dict) -> str:
         uname, '', # password column empty
         body.serial_number, body.model, '', body.device_role,
         body.site_id, '0d 0h', method, body.vendor,
-        _safe_encrypt(community), port,
+        _safe_encrypt_snmp_community(community), port,
         normal_user, '', # normal_password column empty
         admin_user,  '', # admin_password column empty
         '', # enable_password column empty
@@ -1096,7 +1111,7 @@ def _create_linked_device(conn, asset_id: str, body, user: dict) -> str:
            SET credential_id = ?, admin_credential_id = ?, snmp_credential_id = ?,
                snmp_community = CASE WHEN snmp_community IS NULL OR snmp_community = '' THEN ? ELSE snmp_community END
            WHERE id = ?''',
-        (credential_id or '', admin_credential_id or '', getattr(body, 'snmp_credential_id', '') or '', _safe_encrypt(community), asset_id),
+        (credential_id or '', admin_credential_id or '', getattr(body, 'snmp_credential_id', '') or '', _safe_encrypt_snmp_community(community), asset_id),
     )
     # Asset create/import owns the surrounding transaction.  Do not let the
     # automatic status tag seed or commit release a row SAVEPOINT used by
@@ -1189,14 +1204,14 @@ def _sync_device_from_asset(conn, asset_id: str, body) -> None:
                         SET normal_username = ?, normal_password = ?,
                             enable_password = ?, snmp_community = ?
                         WHERE id = ?
-                    ''', (c_user, _safe_encrypt(dec_pwd), _safe_encrypt(dec_enable), _safe_encrypt(dec_snmp), device_id))
+                    ''', (c_user, _safe_encrypt(dec_pwd), _safe_encrypt(dec_enable), _safe_encrypt_snmp_community(dec_snmp), device_id))
                     
                     conn.execute('''
                         UPDATE physical_assets
                         SET normal_username = ?, normal_password = ?,
                             enable_password = ?, snmp_community = ?
                         WHERE id = ?
-                    ''', (c_user, _safe_encrypt(dec_pwd), _safe_encrypt(dec_enable), _safe_encrypt(dec_snmp), asset_id))
+                    ''', (c_user, _safe_encrypt(dec_pwd), _safe_encrypt(dec_enable), _safe_encrypt_snmp_community(dec_snmp), asset_id))
         else:
             # Clear binding
             if credential_id:
@@ -1257,9 +1272,9 @@ def _sync_device_from_asset(conn, asset_id: str, body) -> None:
                 from core.crypto import decrypt_credential
                 dec_snmp = decrypt_credential(cred_row['snmp_community']) or str(cred_row['snmp_community'] or '').strip()
                 conn.execute('UPDATE devices SET snmp_credential_id = ?, snmp_community = ? WHERE id = ?',
-                             (input_id, _safe_encrypt(dec_snmp), device_id))
+                             (input_id, _safe_encrypt_snmp_community(dec_snmp), device_id))
                 conn.execute('UPDATE physical_assets SET snmp_credential_id = ?, snmp_community = ? WHERE id = ?',
-                             (input_id, _safe_encrypt(dec_snmp), asset_id))
+                             (input_id, _safe_encrypt_snmp_community(dec_snmp), asset_id))
         else:
             conn.execute('UPDATE devices SET snmp_credential_id = \'\' WHERE id = ?', (device_id,))
             conn.execute('UPDATE physical_assets SET snmp_credential_id = \'\' WHERE id = ?', (asset_id,))
@@ -1279,7 +1294,7 @@ def _sync_device_from_asset(conn, asset_id: str, body) -> None:
                 local_password = normal_pwd if normal_pwd is not None else pwd
                 stored_pwd = _safe_encrypt(local_password) if local_password is not None and local_password != '' else cred_row['encrypted_password']
                 stored_enable = _safe_encrypt(enable_pwd) if enable_pwd is not None and enable_pwd != '' else cred_row['enable_password']
-                stored_snmp = _safe_encrypt(community) if community is not None and community != '' else cred_row['snmp_community']
+                stored_snmp = _safe_encrypt_snmp_community(community) if community is not None and community != '' else cred_row['snmp_community']
                 conn.execute('''
                     UPDATE credentials
                     SET username = ?, encrypted_password = ?, enable_password = ?, snmp_community = ?
@@ -1350,7 +1365,7 @@ def _sync_device_from_asset(conn, asset_id: str, body) -> None:
     }
 
     if getattr(body, 'snmp_community', None) not in (None, ''):
-        updates['snmp_community'] = _safe_encrypt(body.snmp_community)
+        updates['snmp_community'] = _safe_encrypt_snmp_community(body.snmp_community)
 
     if getattr(body, 'username', None) is not None: updates['username'] = body.username
     if getattr(body, 'normal_username', None) is not None: updates['normal_username'] = body.normal_username
@@ -1660,6 +1675,8 @@ class AssetCreate(BaseModel):
     enable_password: str = ''
     auth_model: str = 'single'
     snmp_community: str = ''
+    # Compatibility alias used by older spreadsheets/API clients.
+    community: Optional[str] = None
     snmp_port: int = 161
     management_port: int = 22
     winrm_enabled: bool = False
@@ -1826,6 +1843,8 @@ class AssetUpdate(BaseModel):
     enable_password: Optional[str] = None   # Cisco enable secret / privilege exec password
     auth_model: Optional[str] = None
     snmp_community: Optional[str] = None
+    # Compatibility alias used by older spreadsheets/API clients.
+    community: Optional[str] = None
     snmp_port: Optional[int] = None
     management_port: Optional[int] = None
     winrm_enabled: Optional[bool] = None
@@ -2425,7 +2444,7 @@ def create_asset(body: AssetCreate, _user=require_role("Operator")):
             _safe_encrypt(getattr(body, 'admin_password', '') or ''),
             _safe_encrypt(getattr(body, 'enable_password', '') or ''),
             getattr(body, 'auth_model', '') or 'single',
-            _safe_encrypt(body.snmp_community), body.snmp_port, body.device_category,
+            _safe_encrypt_snmp_community(body.snmp_community), body.snmp_port, body.device_category,
             getattr(body, 'function', '') or '', getattr(body, 'zone', 'Unknown') or 'Unknown', body.power_watts,
             body.credential_id or '',
             body.admin_credential_id or '',
@@ -2695,7 +2714,7 @@ def update_asset(asset_id: str, body: AssetUpdate, run_bg_rotate: bool = True, _
                         params.append(_safe_encrypt(val))
                 else:
                     updates.append(f'{field} = ?')
-                    params.append(_safe_encrypt(val) if field == 'snmp_community' else val)
+                    params.append(_safe_encrypt_snmp_community(val) if field == 'snmp_community' else val)
 
         if legacy_exempt:
             exempt_reason = (body.takeover_exempt_reason or '').strip()
@@ -3225,7 +3244,7 @@ def import_assets(
                 _safe_encrypt(getattr(body, 'admin_password', '') or ''),
                 _safe_encrypt(getattr(body, 'enable_password', '') or ''),
                 getattr(body, 'auth_model', '') or 'single',
-                _safe_encrypt(body.snmp_community), body.snmp_port,
+                _safe_encrypt_snmp_community(body.snmp_community), body.snmp_port,
                 _management_port_for_storage(body),
                 body.device_category, getattr(body, 'function', '') or '', getattr(body, 'zone', 'Unknown') or 'Unknown', body.power_watts,
                 'legacy_exempt' if legacy_production else 'managed',

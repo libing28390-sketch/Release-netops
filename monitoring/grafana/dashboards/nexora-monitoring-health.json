@@ -10,7 +10,7 @@
   "panels": [
     {
       "id": 1,
-      "title": "探针在线目标 (Scrape Up)",
+      "title": "SNMP 在线目标",
       "type": "stat",
       "datasource": {
         "type": "prometheus",
@@ -25,6 +25,7 @@
       "fieldConfig": {
         "defaults": {
           "unit": "",
+          "noValue": "—",
           "color": {
             "mode": "thresholds"
           },
@@ -42,8 +43,8 @@
       },
       "options": {
         "colorMode": "value",
-        "graphMode": "area",
-        "justifyMode": "auto",
+        "graphMode": "none",
+        "justifyMode": "center",
         "orientation": "auto",
         "reduceOptions": {
           "calcs": [
@@ -52,18 +53,18 @@
           "fields": "",
           "values": false
         },
-        "textMode": "auto"
+        "textMode": "value"
       },
       "targets": [
         {
-          "expr": "sum(up)",
+          "expr": "sum(up{job=\"network_snmp\"}) or vector(0)",
           "refId": "A"
         }
       ]
     },
     {
       "id": 2,
-      "title": "探测失败目标 (Scrape Down)",
+      "title": "SNMP 失败目标",
       "type": "stat",
       "datasource": {
         "type": "prometheus",
@@ -78,6 +79,7 @@
       "fieldConfig": {
         "defaults": {
           "unit": "",
+          "noValue": "—",
           "color": {
             "mode": "thresholds"
           },
@@ -99,8 +101,8 @@
       },
       "options": {
         "colorMode": "value",
-        "graphMode": "area",
-        "justifyMode": "auto",
+        "graphMode": "none",
+        "justifyMode": "center",
         "orientation": "auto",
         "reduceOptions": {
           "calcs": [
@@ -109,11 +111,11 @@
           "fields": "",
           "values": false
         },
-        "textMode": "auto"
+        "textMode": "value"
       },
       "targets": [
         {
-          "expr": "sum(up == 0) or vector(0)",
+          "expr": "sum(up{job=\"network_snmp\"} == 0) or vector(0)",
           "refId": "A"
         }
       ]
@@ -135,6 +137,7 @@
       "fieldConfig": {
         "defaults": {
           "unit": "s",
+          "noValue": "—",
           "color": {
             "mode": "thresholds"
           },
@@ -152,8 +155,8 @@
       },
       "options": {
         "colorMode": "value",
-        "graphMode": "area",
-        "justifyMode": "auto",
+        "graphMode": "none",
+        "justifyMode": "center",
         "orientation": "auto",
         "reduceOptions": {
           "calcs": [
@@ -162,11 +165,11 @@
           "fields": "",
           "values": false
         },
-        "textMode": "auto"
+        "textMode": "value"
       },
       "targets": [
         {
-          "expr": "avg(scrape_duration_seconds)",
+          "expr": "avg(scrape_duration_seconds{job=\"network_snmp\"}) or vector(0)",
           "refId": "A"
         }
       ]
@@ -188,6 +191,7 @@
       "fieldConfig": {
         "defaults": {
           "unit": "s",
+          "noValue": "—",
           "color": {
             "mode": "thresholds"
           },
@@ -213,8 +217,8 @@
       },
       "options": {
         "colorMode": "value",
-        "graphMode": "area",
-        "justifyMode": "auto",
+        "graphMode": "none",
+        "justifyMode": "center",
         "orientation": "auto",
         "reduceOptions": {
           "calcs": [
@@ -223,11 +227,11 @@
           "fields": "",
           "values": false
         },
-        "textMode": "auto"
+        "textMode": "value"
       },
       "targets": [
         {
-          "expr": "max(scrape_duration_seconds)",
+          "expr": "max(scrape_duration_seconds{job=\"network_snmp\"}) or vector(0)",
           "refId": "A"
         }
       ]
@@ -249,12 +253,13 @@
       "fieldConfig": {
         "defaults": {
           "unit": "s",
+          "noValue": "—",
           "color": {
             "mode": "palette-classic"
           },
           "custom": {
             "drawStyle": "line",
-            "lineInterpolation": "smooth",
+            "lineInterpolation": "linear",
             "fillOpacity": 10
           }
         },
@@ -273,8 +278,8 @@
       },
       "targets": [
         {
-          "expr": "scrape_duration_seconds",
-          "legendFormat": "{{instance}} ({{job}})",
+          "expr": "scrape_duration_seconds{job=\"network_snmp\"}",
+          "legendFormat": "{{site_name}} / {{hostname}}",
           "refId": "A"
         }
       ]
@@ -296,12 +301,13 @@
       "fieldConfig": {
         "defaults": {
           "unit": "short",
+          "noValue": "—",
           "color": {
             "mode": "palette-classic"
           },
           "custom": {
             "drawStyle": "line",
-            "lineInterpolation": "smooth",
+            "lineInterpolation": "linear",
             "fillOpacity": 10
           }
         },
@@ -320,8 +326,8 @@
       },
       "targets": [
         {
-          "expr": "scrape_samples_scraped",
-          "legendFormat": "{{instance}}",
+          "expr": "scrape_samples_scraped{job=\"network_snmp\"}",
+          "legendFormat": "{{site_name}} / {{hostname}}",
           "refId": "A"
         }
       ]
@@ -343,6 +349,7 @@
       "fieldConfig": {
         "defaults": {
           "unit": "none",
+          "noValue": "—",
           "color": {
             "mode": "thresholds"
           }
@@ -358,7 +365,7 @@
       },
       "targets": [
         {
-          "expr": "up == 0",
+          "expr": "up{job=\"network_snmp\"} == 0",
           "format": "table",
           "instant": true,
           "refId": "A"
@@ -385,23 +392,24 @@
               "job": true,
               "tenant_id": true,
               "site_id": true,
-              "site_name": true,
               "platform": true
             },
             "indexByName": {
               "sysName": 0,
               "hostname": 1,
-              "instance": 2,
-              "ifName": 3,
-              "ifDescr": 4,
-              "vendor": 5,
-              "role": 6,
-              "Value": 7
+              "site_name": 2,
+              "instance": 3,
+              "ifName": 4,
+              "ifDescr": 5,
+              "vendor": 6,
+              "role": 7,
+              "Value": 8
             },
             "renameByName": {
               "sysName": "设备名称",
               "hostname": "设备名称",
               "instance": "管理 IP",
+              "site_name": "站点",
               "ifName": "接口全称",
               "ifDescr": "接口描述",
               "vendor": "厂商",
@@ -429,6 +437,7 @@
       "fieldConfig": {
         "defaults": {
           "unit": "none",
+          "noValue": "—",
           "color": {
             "mode": "thresholds"
           }
@@ -457,7 +466,7 @@
       },
       "targets": [
         {
-          "expr": "topk(10, scrape_duration_seconds)",
+          "expr": "topk(10, scrape_duration_seconds{job=\"network_snmp\"})",
           "format": "table",
           "instant": true,
           "refId": "A"
@@ -484,23 +493,24 @@
               "job": true,
               "tenant_id": true,
               "site_id": true,
-              "site_name": true,
               "platform": true
             },
             "indexByName": {
               "sysName": 0,
               "hostname": 1,
-              "instance": 2,
-              "ifName": 3,
-              "ifDescr": 4,
-              "vendor": 5,
-              "role": 6,
-              "Value": 7
+              "site_name": 2,
+              "instance": 3,
+              "ifName": 4,
+              "ifDescr": 5,
+              "vendor": 6,
+              "role": 7,
+              "Value": 8
             },
             "renameByName": {
               "sysName": "设备名称",
               "hostname": "设备名称",
               "instance": "管理 IP",
+              "site_name": "站点",
               "ifName": "接口全称",
               "ifDescr": "接口描述",
               "vendor": "厂商",
@@ -529,5 +539,5 @@
   "timezone": "browser",
   "title": "05 SNMP 采集健康 (SNMP Scrape Health)",
   "uid": "nexora-monitoring-health",
-  "version": 25
+  "version": 26
 }

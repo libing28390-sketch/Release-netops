@@ -1,7 +1,7 @@
 import React, { useCallback, useEffect, useMemo, useState } from 'react';
 import { AnimatePresence, motion } from 'motion/react';
 import { ChevronDown, ChevronRight, Copy, Pencil, Plus, Power, PowerOff, RefreshCw, Save, SlidersHorizontal, Trash2, X, Search, Check, Shield } from 'lucide-react';
-import type { AlertRuleCollectionBinding, AlertRuleHistoryItem, AlertRuleListResponse, AlertRulePreview, AlertRuleSettings } from '../types';
+import type { AlertNotificationChannel, AlertRuleCollectionBinding, AlertRuleHistoryItem, AlertRuleListResponse, AlertRulePreview, AlertRuleSettings } from '../types';
 import Pagination from '../components/Pagination';
 import PageHero from '../components/PageHero';
 import { ActionButton, ActionIconButton, ActionIconGroup } from '../components/ui/ActionIconButton';
@@ -57,6 +57,12 @@ const METRIC_OPTIONS_LIST = [
   { value: 'srv_tcp_retrans', labelZh: 'TCP 重传', labelEn: 'TCP Retransmission', category: 'server' },
   { value: 'srv_tcp_conns', labelZh: '并发连接', labelEn: 'TCP Connections', category: 'server' },
   { value: 'srv_process_health', labelZh: '进程状态', labelEn: 'Process Health', category: 'server' }
+] as const;
+
+const NOTIFICATION_CHANNEL_OPTIONS = [
+  { value: 'workspace' as const, labelZh: '跟随个人设置', labelEn: 'Personal settings' },
+  { value: 'feishu' as const, labelZh: '飞书', labelEn: 'Feishu' },
+  { value: 'email' as const, labelZh: '邮件', labelEn: 'Email' },
 ] as const;
 
 const AlertRulesTab: React.FC<AlertPageCommonProps> = ({ language, currentUsername, showToast }) => {
@@ -574,6 +580,23 @@ const AlertRulesTab: React.FC<AlertPageCommonProps> = ({ language, currentUserna
     });
   };
 
+  const toggleNotificationChannel = (channel: AlertRuleSettings['notification_channels'][number]) => {
+    setRuleDraft((prev) => {
+      if (!prev) return prev;
+      const current: AlertNotificationChannel[] = Array.isArray(prev.notification_channels) && prev.notification_channels.length > 0
+        ? prev.notification_channels
+        : ['workspace'];
+      if (channel === 'workspace') {
+        return { ...prev, notification_channels: ['workspace'] };
+      }
+      const withoutWorkspace = current.filter((item) => item !== 'workspace');
+      const next = withoutWorkspace.includes(channel)
+        ? withoutWorkspace.filter((item) => item !== channel)
+        : [...withoutWorkspace, channel];
+      return { ...prev, notification_channels: next.length > 0 ? next : ['workspace'] };
+    });
+  };
+
   const handleSave = async () => {
     if (!ruleDraft) return;
     if (!skipApproval && approvalStatus !== 'verified') {
@@ -946,6 +969,7 @@ const AlertRulesTab: React.FC<AlertPageCommonProps> = ({ language, currentUserna
                 <th className="px-5 py-3">{language === 'zh' ? '范围' : 'Scope'}</th>
                 <th className="px-5 py-3">{language === 'zh' ? '阈值' : 'Threshold'}</th>
                 <th className="px-5 py-3">{language === 'zh' ? '级别' : 'Severity'}</th>
+                <th className="px-5 py-3">{language === 'zh' ? '通知' : 'Notify'}</th>
                 <th className="px-5 py-3">{language === 'zh' ? '状态' : 'Status'}</th>
                 <th className="px-5 py-3">{language === 'zh' ? '更新时间' : 'Updated'} </th>
                 <th className="px-5 py-3">{language === 'zh' ? '操作' : 'Action'}</th>
@@ -954,7 +978,7 @@ const AlertRulesTab: React.FC<AlertPageCommonProps> = ({ language, currentUserna
             <tbody>
               {loading ? (
                 <tr>
-                  <td colSpan={10} className="px-5 py-12 text-center text-sm text-black/40">
+                  <td colSpan={11} className="px-5 py-12 text-center text-sm text-black/40">
                     {language === 'zh' ? '正在加载规则...' : 'Loading rules...'}
                   </td>
                 </tr>
@@ -1043,6 +1067,15 @@ const AlertRulesTab: React.FC<AlertPageCommonProps> = ({ language, currentUserna
                       </span>
                     </td>
                     <td className="px-5 py-4 align-top">
+                      <div className="flex max-w-[150px] flex-wrap gap-1">
+                        {(rule.notification_channels || ['workspace']).map((channel) => (
+                          <span key={channel} className="rounded-md bg-indigo-50 px-1.5 py-0.5 text-[10px] font-semibold text-indigo-700">
+                            {channel === 'workspace' ? (language === 'zh' ? '个人' : 'Personal') : channel === 'email' ? (language === 'zh' ? '邮件' : 'Email') : channel === 'feishu' ? '飞书' : channel}
+                          </span>
+                        ))}
+                      </div>
+                    </td>
+                    <td className="px-5 py-4 align-top">
                       <button
                         title={rule.enabled
                           ? (language === 'zh' ? '点击停用' : 'Click to disable')
@@ -1069,7 +1102,7 @@ const AlertRulesTab: React.FC<AlertPageCommonProps> = ({ language, currentUserna
                 ))
               ) : (
                 <tr>
-                  <td colSpan={10} className="px-5 py-12 text-center text-sm text-black/40">
+                  <td colSpan={11} className="px-5 py-12 text-center text-sm text-black/40">
                     {language === 'zh' ? '当前没有规则。' : 'No rules found.'}
                   </td>
                 </tr>
@@ -1258,6 +1291,37 @@ const AlertRulesTab: React.FC<AlertPageCommonProps> = ({ language, currentUserna
                     <span>{language === 'zh' ? '重复通知窗口(秒)' : 'Quiet Window (sec)'}</span>
                     <input type="number" min="0" max="86400" value={ruleDraft.notification_repeat_window_seconds} onChange={(e) => updateRuleField('notification_repeat_window_seconds', Number(e.target.value))} className={`${alertInputClass} mt-2 rounded-xl px-3 py-2`} />
                   </label>
+                </div>
+
+                <div className="rounded-2xl border border-indigo-100 bg-indigo-50/50 px-4 py-3">
+                  <div className="flex flex-wrap items-center gap-2">
+                    <span className="text-sm font-semibold text-[#164e63]">
+                      {language === 'zh' ? '通知方式' : 'Notification channels'}
+                    </span>
+                    <span className="text-[11px] text-slate-500">
+                      {language === 'zh' ? '选择“跟随个人设置”或指定一个/多个渠道' : 'Follow personal settings or choose one or more channels'}
+                    </span>
+                  </div>
+                  <div className="mt-3 flex flex-wrap gap-2">
+                    {NOTIFICATION_CHANNEL_OPTIONS.map((option) => {
+                      const selected = (ruleDraft.notification_channels || ['workspace']).includes(option.value);
+                      return (
+                        <button
+                          key={option.value}
+                          type="button"
+                          onClick={() => toggleNotificationChannel(option.value)}
+                          className={`rounded-xl border px-3 py-2 text-xs font-semibold transition ${selected ? 'border-indigo-300 bg-indigo-600 text-white shadow-sm' : 'border-indigo-100 bg-white text-slate-600 hover:border-indigo-200'}`}
+                        >
+                          {language === 'zh' ? option.labelZh : option.labelEn}
+                        </button>
+                      );
+                    })}
+                  </div>
+                  {ruleDraft.notification_channels?.includes('email') && (
+                    <p className="mt-2 text-[11px] text-indigo-700">
+                      {language === 'zh' ? '邮件会发送给启用邮件告警且已配置邮箱的用户；SMTP 在系统设置中配置。' : 'Email is sent to users who enable email alerts and have an address; SMTP is configured in system settings.'}
+                    </p>
+                  )}
                 </div>
 
                 <label className="flex items-center gap-3 rounded-2xl bg-[#f7f8fb] px-4 py-3 text-sm text-black/65">

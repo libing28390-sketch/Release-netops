@@ -49,6 +49,23 @@ class Settings(BaseSettings):
     # Keep the application boundary aligned with nginx's 150m limit.  Route
     # models and upload handlers may impose smaller limits for their payloads.
     REQUEST_BODY_MAX_BYTES: int = 150 * 1024 * 1024
+    # Blob storage is provider-neutral.  ``local`` keeps the lightweight
+    # single-process deployment; ``s3`` targets SeaweedFS ``weed mini`` or
+    # another S3-compatible endpoint.  The application never falls back from
+    # one provider to the other at runtime.
+    STORAGE_BACKEND: str = "local"
+    STORAGE_LOCAL_ROOT: str = os.path.join(PROJECT_ROOT, "data", "storage")
+    STORAGE_SPOOL_ROOT: str = os.path.join(PROJECT_ROOT, "data", "spool")
+    STORAGE_RETRY_INTERVAL_SECONDS: int = 60
+    S3_ENDPOINT_URL: str = ""
+    S3_BUCKET: str = "nexora"
+    S3_REGION: str = "us-east-1"
+    S3_ACCESS_KEY_ID: str = ""
+    S3_SECRET_ACCESS_KEY: str = ""
+    S3_FORCE_PATH_STYLE: bool = True
+    S3_VERIFY_TLS: bool = True
+    S3_CONNECT_TIMEOUT_SECONDS: float = 5.0
+    S3_READ_TIMEOUT_SECONDS: float = 60.0
     SESSION_TTL_SECONDS: int = 7200
     TELEMETRY_RAW_RETENTION_HOURS: int = 48
     TELEMETRY_ROLLUP_RETENTION_DAYS: int = 365
@@ -164,6 +181,24 @@ class Settings(BaseSettings):
 
     @model_validator(mode="after")
     def validate_ip_locator_configuration(self) -> "Settings":
+        storage_backend = str(self.STORAGE_BACKEND or "").strip().lower()
+        if storage_backend not in {"local", "s3"}:
+            raise ValueError("STORAGE_BACKEND must be local or s3")
+        if not str(self.STORAGE_LOCAL_ROOT or "").strip():
+            raise ValueError("STORAGE_LOCAL_ROOT must be non-empty")
+        if not str(self.STORAGE_SPOOL_ROOT or "").strip():
+            raise ValueError("STORAGE_SPOOL_ROOT must be non-empty")
+        if int(self.STORAGE_RETRY_INTERVAL_SECONDS) <= 0:
+            raise ValueError("STORAGE_RETRY_INTERVAL_SECONDS must be positive")
+        if storage_backend == "s3":
+            if not str(self.S3_ENDPOINT_URL or "").strip():
+                raise ValueError("S3_ENDPOINT_URL is required when STORAGE_BACKEND=s3")
+            if not str(self.S3_BUCKET or "").strip():
+                raise ValueError("S3_BUCKET is required when STORAGE_BACKEND=s3")
+            if not str(self.S3_ACCESS_KEY_ID or "").strip() or not str(self.S3_SECRET_ACCESS_KEY or "").strip():
+                raise ValueError("S3 credentials are required when STORAGE_BACKEND=s3")
+        if float(self.S3_CONNECT_TIMEOUT_SECONDS) <= 0 or float(self.S3_READ_TIMEOUT_SECONDS) <= 0:
+            raise ValueError("S3 timeouts must be positive")
         backend = str(self.IP_LOCATOR_CACHE_BACKEND or "").strip().lower()
         if backend not in {"redis", "postgres"}:
             raise ValueError("IP_LOCATOR_CACHE_BACKEND must be redis or postgres")

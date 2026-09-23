@@ -214,6 +214,7 @@ export const buildEmptyRule = (username: string): AlertRuleSettings => ({
   enabled: true,
   aggregation_mode: 'dedupe_key',
   notification_repeat_window_seconds: 120,
+  notification_channels: ['workspace'],
   notify_on_active: true,
   notify_on_recovery: true,
   notify_on_reopen_after_maintenance: true,
@@ -221,7 +222,7 @@ export const buildEmptyRule = (username: string): AlertRuleSettings => ({
   updated_by: username,
 });
 
-export const metricTypeLabel = (metricType: AlertRuleSettings['metric_type'], language: string) => {
+export const metricTypeLabel = (metricType: string, language: string) => {
   switch (metricType) {
     case 'cpu': return language === 'zh' ? 'CPU 利用率' : 'CPU Usage';
     case 'memory': return language === 'zh' ? '内存利用率' : 'Memory Usage';
@@ -254,6 +255,16 @@ export const metricTypeLabel = (metricType: AlertRuleSettings['metric_type'], la
     case 'srv_tcp_conns': return language === 'zh' ? '并发连接' : 'TCP Connections';
     case 'srv_process_health': return language === 'zh' ? '进程状态' : 'Process Health';
     default: return metricType;
+  }
+};
+
+export const collectorSourceLabel = (source: string, language: string) => {
+  switch (source) {
+    case 'snmp': return language === 'zh' ? 'SNMP' : 'SNMP';
+    case 'ssh_cli': return language === 'zh' ? 'SSH/CLI' : 'SSH/CLI';
+    case 'icmp_tcp': return language === 'zh' ? 'ICMP/TCP' : 'ICMP/TCP';
+    case 'system': return language === 'zh' ? '系统采集' : 'System';
+    default: return source;
   }
 };
 

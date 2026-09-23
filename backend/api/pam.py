@@ -28,7 +28,7 @@ from datetime import datetime, timedelta, timezone
 from typing import Optional
 
 from fastapi import APIRouter, Body, HTTPException, WebSocket, WebSocketDisconnect, Query, Request
-from fastapi.responses import FileResponse, Response
+from fastapi.responses import FileResponse, Response, StreamingResponse
 from pydantic import BaseModel
 from core.rbac import require_permission
 
@@ -72,6 +72,14 @@ from services.pam_audit_service import (
     explain_command_risk,
     queue_external_event,
 )
+from services.pam_recording_storage import (
+    delete_pam_recording,
+    finalize_pam_recording,
+    recording_content_type,
+    recording_spool_path,
+    retry_pending_pam_recordings,
+)
+from services.storage_service import StorageError, StorageNotFound, build_storage_service, iter_stream
 
 router = APIRouter()
 # WebSocket 路由单独放在无依赖的 router，避免 FastAPI 在 WS 握手阶段
@@ -190,8 +198,9 @@ def recover_stale_sessions_on_startup():
     try:
         now = _utc_now()
         orphaned = conn.execute(
-            "SELECT id, connected_at FROM pam_sessions WHERE status IN ('connecting', 'active')"
+            "SELECT * FROM pam_sessions WHERE status IN ('connecting', 'active')"
         ).fetchall()
+        stale_spools: list[tuple[str, str, str]] = []
         for orphan in orphaned:
             oid = orphan['id']
             duration = 0
@@ -206,9 +215,21 @@ def recover_stale_sessions_on_startup():
                 "duration_seconds=?, updated_at=? WHERE id=?",
                 (now, duration, now, oid),
             )
+            spool = str(orphan['recording_spool_path'] or '') if 'recording_spool_path' in orphan.keys() else ''
+            if spool:
+                content_type = str(orphan['content_type'] or '') if 'content_type' in orphan.keys() else ''
+                stale_spools.append((oid, spool, content_type))
         if orphaned:
             conn.commit()
             logger.info(f"[PAM] Recovered {len(orphaned)} stale session(s) from previous server instance")
+            for session_id, spool, content_type in stale_spools:
+                threading.Thread(
+                    target=finalize_pam_recording,
+                    args=(session_id, spool),
+                    kwargs={'content_type': content_type or None},
+                    daemon=True,
+                    name=f'pam-recording-finalize-{session_id[:12]}',
+                ).start()
     except Exception as e:
         logger.warning(f"[PAM] Stale session recovery error: {e}")
     finally:
@@ -631,6 +652,17 @@ def list_sessions(
             'target_scheme': "''",
             'target_path': "''",
             'recording_status': "''",
+            'recording_spool_path': "''",
+            'storage_backend': "'local'",
+            'storage_bucket': "''",
+            'object_key': "''",
+            'object_version_id': "''",
+            'object_size': '0',
+            'object_sha256': "''",
+            'content_type': "''",
+            'storage_status': "'LEGACY'",
+            'storage_error': "''",
+            'storage_updated_at': "''",
             'agent_id': 'NULL',
             'last_heartbeat_at': 'NULL',
         }
@@ -641,6 +673,9 @@ def list_sessions(
             'target_ip', 'target_port', 'target_scheme', 'target_path', 'status',
             'connected_at', 'closed_at', 'close_reason', 'duration_seconds',
             'command_count', 'recording_path', 'recording_status', 'agent_id',
+            'recording_spool_path', 'storage_backend', 'storage_bucket', 'object_key',
+            'object_version_id', 'object_size', 'object_sha256', 'content_type',
+            'storage_status', 'storage_error', 'storage_updated_at',
             'last_heartbeat_at', 'risk_level', 'risk_summary',
             'target_hostname', 'archived', 'created_at', 'updated_at',
         ):
@@ -686,6 +721,11 @@ def list_sessions(
             # Normalise: if session is in memory map, always report as 'active'
             if item['id'] in _active_sessions:
                 item['status'] = 'active'
+            item['recording_available'] = bool(
+                item.get('recording_path')
+                or item.get('recording_spool_path')
+                or (item.get('object_key') and item.get('storage_status') == 'READY')
+            )
             items.append(item)
 
         return {'items': items, 'total': total, 'page': page, 'page_size': page_size}
@@ -750,7 +790,7 @@ def export_sessions_csv(
             item.get('duration_seconds', 0),
             item.get('command_count', 0),
             item.get('close_reason', ''),
-            'yes' if item.get('recording_path') else 'no',
+            'yes' if item.get('recording_available') else 'no',
         ])
     content = '\ufeff' + output.getvalue()
     return Response(
@@ -815,11 +855,11 @@ async def kill_session(session_id: str, user=require_permission('pam', 'interven
 
 @router.get('/pam/sessions/{session_id}/recording')
 def get_session_recording(session_id: str, user=require_permission('pam', 'view')):
-    """Retrieve session recording file."""
+    """Retrieve a recording from the selected provider or legacy disk path."""
     conn = get_db_connection()
     try:
-        row = conn.execute('SELECT recording_path FROM pam_sessions WHERE id = ?', (session_id,)).fetchone()
-        if not row or not row['recording_path']:
+        row = conn.execute('SELECT * FROM pam_sessions WHERE id = ?', (session_id,)).fetchone()
+        if not row:
             raise HTTPException(status_code=404, detail='Recording not found')
         if isinstance(user, dict):
             session_row = conn.execute('SELECT tenant_id FROM pam_sessions WHERE id = ?', (session_id,)).fetchone()
@@ -828,12 +868,12 @@ def get_session_recording(session_id: str, user=require_permission('pam', 'view'
                 user_tenant = str(user.get('tenant_id') or 'tenant-default')
                 if user_tenant != 'tenant-default' and row_tenant not in {user_tenant, 'tenant-default'}:
                     raise HTTPException(status_code=404, detail='Recording not found')
-        
-        path = row['recording_path']
-        if not os.path.exists(path):
-            raise HTTPException(status_code=404, detail='File not found on disk')
-
-        suffix = Path(str(path)).suffix.lower()
+        row_dict = dict(row)
+        object_key = str(row_dict.get('object_key') or '').strip()
+        storage_status = str(row_dict.get('storage_status') or 'LEGACY').upper()
+        spool_path = str(row_dict.get('recording_spool_path') or '').strip()
+        legacy_path = str(row_dict.get('recording_path') or '').strip()
+        suffix = Path(object_key or spool_path or legacy_path).suffix.lower()
         media_types = {
             '.cast': 'application/octet-stream',
             '.gif': 'image/gif',
@@ -843,11 +883,28 @@ def get_session_recording(session_id: str, user=require_permission('pam', 'view'
         }
         extension = suffix if suffix in media_types else '.bin'
         safe_session_id = ''.join(char for char in str(session_id) if char.isalnum() or char in {'-', '_'})[:100] or 'session'
-        return FileResponse(
-            path,
-            media_type=media_types.get(suffix, 'application/octet-stream'),
-            filename=f"recording_{safe_session_id}{extension}",
-        )
+        filename = f"recording_{safe_session_id}{extension}"
+        if object_key and storage_status == 'READY':
+            try:
+                service = build_storage_service(
+                    backend_name=str(row_dict.get('storage_backend') or 'local'),
+                    bucket=str(row_dict.get('storage_bucket') or ''),
+                )
+                stream = service.get_stream(object_key)
+            except StorageNotFound as exc:
+                raise HTTPException(status_code=404, detail='Recording not found') from exc
+            except StorageError as exc:
+                raise HTTPException(status_code=503, detail='Recording storage unavailable') from exc
+            return StreamingResponse(
+                iter_stream(stream),
+                media_type=media_types.get(suffix, row_dict.get('content_type') or 'application/octet-stream'),
+                headers={'Content-Disposition': f'attachment; filename="{filename}"'},
+            )
+
+        path = spool_path or legacy_path
+        if not path or not os.path.exists(path):
+            raise HTTPException(status_code=404, detail='Recording not found')
+        return FileResponse(path, media_type=media_types.get(suffix, 'application/octet-stream'), filename=filename)
     finally:
         conn.close()
 
@@ -1033,7 +1090,7 @@ async def pam_terminal_ws(websocket: WebSocket, session_token: str):
 
     # 5. Recording setup
     recording_filename = f"{session_id}.cast"
-    recording_path = f"data/pam_recordings/{recording_filename}"
+    recording_path = str(recording_spool_path(session_id, '.cast'))
     start_time = time.time()
     
     try:
@@ -1052,7 +1109,7 @@ async def pam_terminal_ws(websocket: WebSocket, session_token: str):
         logger.warning(f"Failed to initialize recording for {session_id}: {e}")
         recording_path = ""
 
-    _update_session_status(session_id, 'active', recording_path=recording_path)
+    _update_session_status(session_id, 'active', recording_spool_path=recording_path)
     # Store both the WS and the running loop so kill_session can schedule
     # close operations from any thread.
     _active_sessions[session_id] = {
@@ -1429,13 +1486,19 @@ def _strip_ansi(text: str) -> str:
     return ansi_escape.sub('', text)
 
 
+def _scan_and_finalize_recording(session_id: str, spool_path: str, content_type: str | None = None) -> None:
+    """Finish risk scanning before deleting the local recording spool."""
+    _scan_session_for_risk(session_id, spool_path)
+    finalize_pam_recording(session_id, spool_path, content_type=content_type)
+
+
 @router.get('/pam/sessions/{session_id}/commands')
 def get_session_commands(session_id: str, user=require_permission('pam', 'view')):
     """Extracts typed commands and timestamps from a recording for playback navigation."""
     conn = get_db_connection()
     try:
         row = conn.execute(
-            "SELECT recording_path, risk_level, risk_summary, tenant_id, created_at FROM pam_sessions WHERE id = ?",
+            "SELECT * FROM pam_sessions WHERE id = ?",
             (session_id,),
         ).fetchone()
         if not row:
@@ -1493,10 +1556,11 @@ def get_session_commands(session_id: str, user=require_permission('pam', 'view')
                 "risk_summary": row['risk_summary'],
             }
 
-        if not row['recording_path'] or not os.path.exists(row['recording_path']):
+        recording_path = str(row['recording_spool_path'] or row['recording_path'] or '') if 'recording_spool_path' in row.keys() else str(row['recording_path'] or '')
+        if not recording_path or not os.path.exists(recording_path):
             return {"commands": [], "risk_level": 0, "risk_summary": ""}
         
-        path = row['recording_path']
+        path = recording_path
         
         # Trigger an on-demand scan if it hasn't been done yet
         if row['risk_level'] == 0:
@@ -1881,7 +1945,11 @@ def _cleanup_old_sessions():
         
         # Find sessions to purge
         old_sessions = conn.execute(
-            "SELECT id, recording_path FROM pam_sessions WHERE created_at < ? AND recording_path IS NOT NULL AND recording_path != ''",
+            """SELECT * FROM pam_sessions
+               WHERE created_at < ?
+                 AND (COALESCE(recording_path, '') <> ''
+                      OR COALESCE(recording_spool_path, '') <> ''
+                      OR COALESCE(object_key, '') <> '')""",
             (cutoff,)
         ).fetchall()
         
@@ -1892,19 +1960,18 @@ def _cleanup_old_sessions():
         
         for s in old_sessions:
             sid = s['id']
-            path = s['recording_path']
-            if path and os.path.exists(path):
-                try:
-                    os.remove(path)
-                    logger.info(f"[PAM PURGE] Deleted recording: {path}")
-                except Exception as e:
-                    logger.error(f"[PAM PURGE] Failed to delete {path}: {e}")
-            
-            # Update DB to mark as purged
-            conn.execute(
-                "UPDATE pam_sessions SET recording_path = '' WHERE id = ?",
-                (sid,)
-            )
+            try:
+                delete_pam_recording(s)
+                conn.execute(
+                    """UPDATE pam_sessions
+                       SET recording_path = '', recording_spool_path = '', object_key = '',
+                           storage_status = 'DELETED', storage_error = '', storage_updated_at = ?
+                       WHERE id = ?""",
+                    (datetime.now(timezone.utc).isoformat(), sid),
+                )
+                logger.info(f"[PAM PURGE] Deleted recording for session: {sid}")
+            except Exception as e:
+                logger.error(f"[PAM PURGE] Failed to delete recording for {sid}: {e}")
         conn.commit()
     except Exception as e:
         logger.error(f"[PAM PURGE] Cleanup task failed: {e}")
@@ -1912,21 +1979,17 @@ def _cleanup_old_sessions():
         conn.close()
 
 
-def _update_session_status(session_id: str, status: str, close_reason: str = None, recording_path: str = None):
-    """Internal helper to update status and close info."""
+def _update_session_status(session_id: str, status: str, close_reason: str = None, recording_spool_path: str = None):
+    """Update business status and queue completed recordings for storage."""
     conn = get_db_connection()
     try:
         now = _utc_now()
         if status in ('closed', 'error', 'timeout'):
             # Fetch both timestamps to avoid KeyError and calculate duration correctly
-            row = conn.execute('SELECT created_at, connected_at FROM pam_sessions WHERE id = ?', (session_id,)).fetchone()
+            row = conn.execute('SELECT * FROM pam_sessions WHERE id = ?', (session_id,)).fetchone()
             duration = 0
-            
-            # If recording_path is NOT provided here, try to get it from the DB (existing record)
-            if not recording_path and row:
-                # Need to re-query for recording_path if not in original row
-                row_full = conn.execute('SELECT recording_path FROM pam_sessions WHERE id = ?', (session_id,)).fetchone()
-                recording_path = row_full['recording_path'] if row_full else ''
+            spool = recording_spool_path or (str(row['recording_spool_path'] or '') if row and 'recording_spool_path' in row.keys() else '')
+            legacy_path = str(row['recording_path'] or '') if row and 'recording_path' in row.keys() else ''
 
             if row:
                 start_ts = row['connected_at'] or row['created_at']
@@ -1938,21 +2001,35 @@ def _update_session_status(session_id: str, status: str, close_reason: str = Non
                         pass
             
             conn.execute(
-                "UPDATE pam_sessions SET status=?, closed_at=?, close_reason=?, duration_seconds=?, recording_path=?, updated_at=? WHERE id=?",
-                (status, now, close_reason, duration, recording_path or '', now, session_id),
+                """UPDATE pam_sessions
+                   SET status=?, closed_at=?, close_reason=?, duration_seconds=?,
+                       recording_spool_path=?,
+                       storage_status = CASE WHEN ? <> '' AND COALESCE(object_key, '') = '' THEN 'PENDING' ELSE storage_status END,
+                       updated_at=? WHERE id=?""",
+                (status, now, close_reason, duration, spool, spool, now, session_id),
             )
             conn.commit()
-            
-            if recording_path:
-                threading.Thread(target=_scan_session_for_risk, args=(session_id, recording_path), daemon=True).start()
+
+            if spool:
+                threading.Thread(
+                    target=_scan_and_finalize_recording,
+                    args=(session_id, spool),
+                    daemon=True,
+                    name=f'pam-recording-finalize-{session_id[:12]}',
+                ).start()
+            elif legacy_path:
+                threading.Thread(target=_scan_session_for_risk, args=(session_id, legacy_path), daemon=True).start()
             
             threading.Thread(target=_cleanup_old_sessions, daemon=True).start()
         else:
-            # For 'active' status, we MUST preserve/save the recording_path
-            if recording_path:
+            # Active sessions write only to the explicit local spool.  The
+            # final object is published after the session closes.
+            if recording_spool_path:
                 conn.execute(
-                    "UPDATE pam_sessions SET status=?, recording_path=?, connected_at=?, updated_at=? WHERE id=?",
-                    (status, recording_path, now, now, session_id),
+                    """UPDATE pam_sessions
+                       SET status=?, recording_spool_path=?, storage_status='PENDING',
+                           storage_error='', connected_at=?, updated_at=? WHERE id=?""",
+                    (status, recording_spool_path, now, now, session_id),
                 )
             else:
                 conn.execute(

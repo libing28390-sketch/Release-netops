@@ -27,6 +27,7 @@ from services.librenms_mib_service import (  # noqa: F401
     import_mibs_from_directory,
     logger,
 )
+from services.librenms_rule_service import sync_rules_from_repository
 
 
 def main():
@@ -51,6 +52,7 @@ def main():
         target_vendors=args.vendors,
         max_files=args.max_files,
     )
+    result["librenms_rules"] = sync_rules_from_repository(TARGET_DIR)
     print(f"\nResult: {result}")
 
 

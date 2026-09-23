@@ -320,11 +320,11 @@ const GrafanaDashboardPage: React.FC<GrafanaDashboardPageProps> = ({ language })
         }
       />
 
-      <div className="flex min-h-0 flex-1 flex-col p-3 md:p-4">
-        <div className="flex min-h-0 flex-1 flex-col gap-2.5">
+      <div className="flex min-h-0 flex-1 flex-col p-2 md:p-3">
+        <div className="flex min-h-0 flex-1 flex-col gap-2">
           {/* Dashboard Switcher Tabs */}
           {status === 'ready' && (
-            <div className="flex flex-wrap items-center gap-1.5 rounded-2xl border border-slate-200/80 dark:border-zinc-800/80 bg-white/95 dark:bg-zinc-900/95 p-1.5 shadow-2xs backdrop-blur">
+            <div className="flex flex-wrap items-center gap-1 rounded-xl border border-slate-200/80 dark:border-zinc-800/80 bg-white/95 dark:bg-zinc-900/95 p-1 shadow-2xs backdrop-blur">
               {GRAFANA_DASHBOARDS.map(db => {
                 const Icon = db.icon;
                 const isSelected = selectedDashboard === db.uid;
@@ -338,7 +338,7 @@ const GrafanaDashboardPage: React.FC<GrafanaDashboardPageProps> = ({ language })
                         setLoaded(false);
                       }
                     }}
-                    className={`inline-flex items-center gap-2 rounded-xl px-3 py-1.5 text-xs font-semibold transition-all cursor-pointer ${
+                    className={`inline-flex items-center gap-1.5 rounded-lg px-2.5 py-1 text-[11px] font-semibold transition-all cursor-pointer ${
                       isSelected
                         ? 'bg-cyan-50 dark:bg-cyan-950/50 text-cyan-700 dark:text-cyan-300 border border-cyan-200 dark:border-cyan-800/60 shadow-2xs'
                         : 'text-slate-600 dark:text-zinc-400 hover:text-slate-900 dark:hover:text-zinc-100 hover:bg-slate-100/70 dark:hover:bg-zinc-800/60 border border-transparent'
@@ -354,10 +354,10 @@ const GrafanaDashboardPage: React.FC<GrafanaDashboardPageProps> = ({ language })
           )}
 
           {/* Top Control & Status Toolbar */}
-          <div className="flex flex-wrap items-center justify-between gap-3 rounded-2xl border border-slate-200/80 dark:border-zinc-800/80 bg-white/95 dark:bg-zinc-900/95 px-4 py-2.5 shadow-2xs backdrop-blur">
-            <div className="flex flex-wrap items-center gap-2.5">
+          <div className="flex flex-wrap items-center justify-between gap-2 rounded-xl border border-slate-200/80 dark:border-zinc-800/80 bg-white/95 dark:bg-zinc-900/95 px-3 py-2 shadow-2xs backdrop-blur">
+            <div className="flex flex-wrap items-center gap-2">
               <div
-                className={`inline-flex items-center gap-1.5 rounded-xl px-2.5 py-1 text-xs font-medium ${
+                className={`inline-flex items-center gap-1.5 rounded-lg px-2 py-1 text-[11px] font-medium ${
                   status === 'ready'
                     ? 'border border-emerald-200/60 bg-emerald-50 dark:border-emerald-950/60 dark:bg-emerald-950/40 text-emerald-800 dark:text-emerald-300'
                     : 'border border-amber-200/60 bg-amber-50 dark:border-amber-950/60 dark:bg-amber-950/40 text-amber-800 dark:text-amber-300'
@@ -375,7 +375,7 @@ const GrafanaDashboardPage: React.FC<GrafanaDashboardPageProps> = ({ language })
                   <div className="h-4 w-px bg-slate-200 dark:bg-zinc-800" />
 
                   {/* View Mode Switcher */}
-                  <div className="flex items-center rounded-xl border border-slate-200 dark:border-zinc-800 bg-slate-100/80 dark:bg-zinc-800/60 p-0.5 text-xs">
+                  <div className="flex items-center rounded-lg border border-slate-200 dark:border-zinc-800 bg-slate-100/80 dark:bg-zinc-800/60 p-0.5 text-[11px]">
                     <button
                       type="button"
                       onClick={() => setViewMode('kiosk')}
@@ -421,14 +421,14 @@ const GrafanaDashboardPage: React.FC<GrafanaDashboardPageProps> = ({ language })
             </div>
 
             {status === 'ready' && (
-              <div className="flex flex-wrap items-center gap-2">
+              <div className="flex flex-wrap items-center gap-1.5">
                 {/* Time Range Selector */}
                 <div className="flex items-center gap-1 text-xs text-slate-500 dark:text-zinc-400">
                   <Clock size={13} />
                   <select
                     value={timeRange}
                     onChange={e => setTimeRange(e.target.value)}
-                    className="rounded-xl border border-slate-200 dark:border-zinc-700 bg-white dark:bg-zinc-800 px-2 py-1 text-xs font-semibold text-slate-700 dark:text-zinc-200 outline-none hover:border-cyan-300 cursor-pointer"
+                    className="rounded-lg border border-slate-200 dark:border-zinc-700 bg-white dark:bg-zinc-800 px-2 py-1 text-[11px] font-semibold text-slate-700 dark:text-zinc-200 outline-none hover:border-cyan-300 cursor-pointer"
                   >
                     {TIME_RANGES.map(item => (
                       <option key={item.value} value={item.value}>
@@ -442,7 +442,7 @@ const GrafanaDashboardPage: React.FC<GrafanaDashboardPageProps> = ({ language })
                 <select
                   value={refreshRate}
                   onChange={e => setRefreshRate(e.target.value)}
-                  className="rounded-xl border border-slate-200 dark:border-zinc-700 bg-white dark:bg-zinc-800 px-2 py-1 text-xs font-semibold text-slate-700 dark:text-zinc-200 outline-none hover:border-cyan-300 cursor-pointer"
+                  className="rounded-lg border border-slate-200 dark:border-zinc-700 bg-white dark:bg-zinc-800 px-2 py-1 text-[11px] font-semibold text-slate-700 dark:text-zinc-200 outline-none hover:border-cyan-300 cursor-pointer"
                 >
                   {REFRESH_RATES.map(item => (
                     <option key={item.value} value={item.value}>
@@ -455,7 +455,7 @@ const GrafanaDashboardPage: React.FC<GrafanaDashboardPageProps> = ({ language })
                 <button
                   type="button"
                   onClick={() => void toggleFullscreen()}
-                  className="inline-flex items-center gap-1 rounded-xl border border-slate-200 dark:border-zinc-700 bg-white dark:bg-zinc-800 px-2.5 py-1 text-xs font-semibold text-slate-700 dark:text-zinc-200 shadow-2xs hover:border-cyan-300 cursor-pointer"
+                  className="inline-flex items-center gap-1 rounded-lg border border-slate-200 dark:border-zinc-700 bg-white dark:bg-zinc-800 px-2.5 py-1 text-[11px] font-semibold text-slate-700 dark:text-zinc-200 shadow-2xs hover:border-cyan-300 cursor-pointer"
                   title={zh ? '沉浸式全屏展示' : 'Toggle Fullscreen'}
                 >
                   {isFullscreen ? <Minimize2 size={13} /> : <Maximize2 size={13} />}
@@ -469,7 +469,7 @@ const GrafanaDashboardPage: React.FC<GrafanaDashboardPageProps> = ({ language })
           {status === 'ready' && (
             <div
               ref={containerRef}
-              className="relative flex flex-1 min-h-[650px] overflow-hidden rounded-2xl border border-slate-200 dark:border-zinc-800 bg-white dark:bg-zinc-900 shadow-sm"
+              className="relative flex flex-1 min-h-[560px] md:min-h-[calc(100vh-260px)] overflow-hidden rounded-xl border border-slate-200 dark:border-zinc-800 bg-white dark:bg-zinc-900 shadow-sm"
             >
               <iframe
                 key={`${frameKey}-${theme}-${viewMode}`}

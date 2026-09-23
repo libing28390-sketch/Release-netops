@@ -111,13 +111,19 @@ resolve_compose_project_name() {
 
 compose() {
     [[ ${#COMPOSE_FILES[@]} -gt 0 ]] || configure_compose_files
-    local project_name
+    local project_name profile_args=()
     project_name="$(resolve_compose_project_name)"
-    docker compose --project-name "$project_name" "${COMPOSE_FILES[@]}" "$@"
+    if [[ "$(env_value STORAGE_BACKEND)" == "s3" ]]; then
+        profile_args+=(--profile object-storage)
+    fi
+    docker compose --project-name "$project_name" "${COMPOSE_FILES[@]}" "${profile_args[@]}" "$@"
 }
 
 compose_service_args() {
   printf '%s\n' db netops victoriametrics snmp-exporter vmagent grafana nginx
+    if [[ "$(env_value STORAGE_BACKEND)" == "s3" ]]; then
+        printf '%s\n' seaweedfs
+    fi
     if [[ "${NETOPS_REDIS_ENABLED:-1}" != "0" ]]; then
         printf '%s\n' redis
     fi

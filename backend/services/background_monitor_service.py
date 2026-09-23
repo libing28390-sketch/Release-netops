@@ -6,7 +6,7 @@ import hashlib
 import uuid
 import logging
 from datetime import datetime, timedelta, timezone
-from typing import Any
+from typing import Any, Mapping
 from urllib import request as urlrequest
 from urllib import error as urlerror
 from ping3 import ping
@@ -24,6 +24,11 @@ from services.snmp_counter_service import (
     save_interface_counter_sample,
 )
 from services.snmp_metric_profile_service import HEALTH_METRIC_KEYS, resolve_health_metric_profiles
+from services.snmp_discovery_service import (
+    discover_device_oid_config,
+    load_discovery,
+    persist_discovery,
+)
 from services.operational_data_service import collect_operational_data
 from services.network_access_limiter import get_network_access_limiter
 from services.collection_status_service import record_collection_result
@@ -34,6 +39,71 @@ from services.alert_control_service import AlertState, find_active_silence_for_a
 from core.crypto import decrypt_credential
 
 logger = logging.getLogger(__name__)
+
+
+def _sync_snmp_hostname_projection(device_id: str, raw_sys_name: Any) -> None:
+    """Project background SNMP sysName into the linked asset record."""
+
+    if not raw_sys_name:
+        return
+    conn = get_db_connection()
+    try:
+        from services.hostname_sync_service import sync_device_hostname_metadata
+
+        sync_device_hostname_metadata(conn, str(device_id), raw_sys_name)
+        conn.commit()
+    except Exception as exc:
+        conn.rollback()
+        logger.debug("[SNMP] Hostname asset projection failed for %s: %s", device_id, type(exc).__name__)
+    finally:
+        conn.close()
+
+
+def _discovery_is_stale(
+    discovery: dict[str, Any] | None,
+    *,
+    device: Mapping[str, Any] | None = None,
+    max_age_seconds: int = 21600,
+) -> bool:
+    if not discovery:
+        return True
+    if device:
+        for field in ("vendor", "platform", "model", "version"):
+            current = str(device.get(field) or "").strip().casefold()
+            observed = str(discovery.get("identity", {}).get("software_version" if field == "version" else field) or discovery.get(field) or "").strip().casefold()
+            if current and observed and current != observed:
+                return True
+    observed = discovery.get("observed_at")
+    try:
+        timestamp = datetime.fromisoformat(str(observed).replace("Z", "+00:00"))
+        if timestamp.tzinfo is None:
+            timestamp = timestamp.replace(tzinfo=timezone.utc)
+        age = (datetime.now(timezone.utc) - timestamp).total_seconds()
+        return age < 0 or age >= max_age_seconds
+    except (TypeError, ValueError):
+        return True
+
+
+def _resolved_metrics_from_discovery(discovery: dict[str, Any], device_id: str) -> dict[str, Any]:
+    status = str(discovery.get("status") or "pending")
+    usable = status in {"matched", "partial"}
+    metrics = dict(discovery.get("metrics") or {}) if usable else {}
+    interface = dict(discovery.get("interface") or {}) if usable else {}
+    return {
+        "profile_id": f"discovery:{device_id}:{discovery.get('rule_version') or 'current'}" if usable else "",
+        "metrics": metrics,
+        "metric_keys": sorted(metrics),
+        "metric_sources": {key: "snmp_discovery" for key in metrics},
+        "profile_source": "snmp_discovery" if usable else "template_not_applied",
+        "interface": interface,
+        "interface_source": "snmp_discovery" if interface else "template_not_applied",
+        "template_applied": usable and bool(metrics or interface),
+        "template_required": True,
+        "profile_status": status,
+        "profile_binding_status": status,
+        "profile_match_reason": str(discovery.get("reason") or ""),
+        "discovery_status": status,
+    }
 
 def _db_quick(sql, params=(), fetch=False, fetchall=False):
     """Execute a quick DB operation with its own connection (no long locks)."""
@@ -296,6 +366,21 @@ def _run_telemetry_maintenance():
     # Keep resolved alerts for one year while preserving open alerts.
     alert_cutoff = (now - timedelta(days=365)).replace(microsecond=0).isoformat()
     _db_quick('DELETE FROM alert_events WHERE resolved_at IS NOT NULL AND resolved_at < ?', (alert_cutoff,))
+    # Delivery attempts and terminal outbox rows follow the same one-year
+    # retention window. Open/retryable deliveries remain available for audit
+    # and recovery even when their original alert is old.
+    try:
+        _db_quick(
+            "DELETE FROM alert_delivery_attempts WHERE created_at < ?",
+            (alert_cutoff,),
+        )
+        _db_quick(
+            "DELETE FROM alert_delivery_outbox "
+            "WHERE status IN ('succeeded', 'failed') AND created_at < ?",
+            (alert_cutoff,),
+        )
+    except Exception:
+        logger.debug("Notification delivery retention cleanup skipped", exc_info=True)
 
     # Prune stale topology links not refreshed in the last 24 hours.
     link_stale_cutoff = (now - timedelta(hours=24)).replace(microsecond=0).isoformat()
@@ -326,6 +411,8 @@ prev_intf_octets = {}
 prev_intf_config_hash: dict[str, str] = {}
 webhook_last_sent = {}
 current_alert_rules = []
+current_alert_rules_loaded_at = 0.0
+ALERT_RULE_CACHE_TTL_SECONDS = 15.0
 role_poll_profiles = {
     'core': {
         'interface': 1,
@@ -383,8 +470,52 @@ def _init_telemetry_state():
             protocol_peer_cache.setdefault(_cache_key, {})[str(_row["peer"] or "")] = str(_row["object_name"] or _row["peer"] or "")
     except Exception:
         pass
-    current_alert_rules = alert_rule_service.get_runtime_rules()
+    _refresh_runtime_alert_rules(force=True)
+
+
+def _refresh_runtime_alert_rules(*, force: bool = False) -> list[dict[str, Any]]:
+    """Refresh enabled rules without making every SNMP metric query the DB.
+
+    Alert rules are edited from the UI while the monitor worker stays alive.
+    A short cache keeps the hot polling path cheap while ensuring a rule
+    change reaches the next few collection cycles instead of requiring a
+    process restart.  If the database is temporarily unavailable, retain the
+    last known-good rule set so an incidental connection failure does not
+    disable all alert evaluation.
+    """
+    global current_alert_rules, current_alert_rules_loaded_at
+    now = _time.monotonic()
+    if not force and current_alert_rules_loaded_at and (now - current_alert_rules_loaded_at) < ALERT_RULE_CACHE_TTL_SECONDS:
+        return current_alert_rules
+    try:
+        refreshed = alert_rule_service.get_runtime_rules()
+    except Exception:
+        current_alert_rules_loaded_at = now
+        logger.warning("[Alert] Runtime rule refresh failed; retaining the last known-good rules", exc_info=True)
+        return current_alert_rules
+    current_alert_rules = refreshed
+    current_alert_rules_loaded_at = now
+    return current_alert_rules
+
+
+def _component_failure_state(value: Any) -> bool | None:
+    """Normalize template/legacy fan and PSU values to failure/healthy/unknown.
+
+    The typed SNMP collector returns ``True`` for healthy and ``False`` for
+    failed status codes.  Older vendor collectors may still return labels.
+    Unknown values are deliberately ignored by the alert evaluator so a
+    missing or unsupported sensor cannot create a false failure or recovery.
+    """
+    if isinstance(value, bool):
+        return not value
+    normalized = str(value or '').strip().casefold()
+    if normalized in {'fail', 'failed', 'failure', 'warning', 'down', 'offline', 'alarm', 'false', '0'}:
+        return True
+    if normalized in {'ok', 'normal', 'redundant', 'single', 'up', 'running', 'ready', 'true', '1'}:
+        return False
+    return None
 def resolve_alert_rule(metric_type: str, *, device_row=None, ip_address: str = '', interface_name: str | None = None):
+    _refresh_runtime_alert_rules()
     context = {
         'device_id': device_row['id'] if device_row else '',
         'hostname': device_row['hostname'] if device_row else '',
@@ -817,7 +948,9 @@ def maybe_notify_webhook(dedupe_key: str, severity: str, title: str, message: st
                            status: str = 'active', last_occurrence: str = '',
                            duration_seconds=None, impact_window=None, alert_count=None,
                            reopened_after_maintenance: bool = False,
-                           rule: dict | None = None):
+                           rule: dict | None = None,
+                           alert_id: str | None = None,
+                           device_id: str = ''):
     # A development/test launcher must not replay existing alert state into a
     # real webhook while bootstrapping the background monitor. Keep this guard
     # before throttling state changes so opting back in does not inherit a
@@ -853,6 +986,10 @@ def maybe_notify_webhook(dedupe_key: str, severity: str, title: str, message: st
         'message':          message,
         'first_occurrence': created_at,
         'last_occurrence':  last_occurrence or created_at,
+        'alert_id':         alert_id or '',
+        'event_kind':       'reopened' if reopened_after_maintenance else 'resolved' if status == 'resolved' else 'active',
+        'rule_id':          str((rule or {}).get('id') or ''),
+        'destination_key':  dedupe_key,
     }
     if duration_seconds is not None:
         alert_info['duration_seconds'] = duration_seconds
@@ -874,26 +1011,53 @@ def maybe_notify_webhook(dedupe_key: str, severity: str, title: str, message: st
 
     from services.monitoring_notification_outbox_service import enqueue_alert_delivery
 
-    # 1. 全局 webhook（.env 配置，纯文字兼容）
-    if (settings.ALERT_NOTIFY_WEBHOOK_URL or '').strip():
+    configured_channels = (rule or {}).get('notification_channels')
+    if isinstance(configured_channels, str):
+        try:
+            configured_channels = json.loads(configured_channels)
+        except (TypeError, ValueError):
+            configured_channels = [part.strip() for part in configured_channels.split(',') if part.strip()]
+    if not isinstance(configured_channels, (list, tuple, set)) or not configured_channels:
+        configured_channels = ['workspace']
+    channels = []
+    for channel in configured_channels:
+        normalized_channel = str(channel or '').strip().lower()
+        if normalized_channel and normalized_channel not in channels:
+            channels.append(normalized_channel)
+
+    event_kind = str(alert_info['event_kind'])
+    common_payload = {**alert_info, 'lang': 'zh'}
+
+    # Keep the legacy .env webhook attached to workspace rules. An explicit
+    # channel policy can opt into global_webhook independently.
+    if 'workspace' in channels and (settings.ALERT_NOTIFY_WEBHOOK_URL or '').strip():
         plain = (
             f"[{severity.upper()}] {title}\n"
             f"对象: {object_name}  IP: {ip_address}\n"
             f"{message}\n"
             f"时间: {created_at}"
         )
-        payload = {"msgtype": "text", "text": {"content": plain}}
+        payload = {
+            "msgtype": "text",
+            "text": {"content": plain},
+            **common_payload,
+        }
         enqueue_alert_delivery(
-            delivery_key=f"{dedupe_key}:global_webhook:{status}:{created_at}",
+            delivery_key=f"{dedupe_key}:global_webhook:{event_kind}:{created_at}",
             channel='global_webhook',
             payload=payload,
         )
 
-    enqueue_alert_delivery(
-        delivery_key=f"{dedupe_key}:workspace:{status}:{created_at}",
-        channel='workspace',
-        payload={**alert_info, 'lang': 'zh'},
-    )
+    for channel in channels:
+        if channel == 'global_webhook' and not (settings.ALERT_NOTIFY_WEBHOOK_URL or '').strip():
+            continue
+        if channel not in {'workspace', 'feishu', 'dingtalk', 'wechat', 'email', 'global_webhook'}:
+            continue
+        enqueue_alert_delivery(
+            delivery_key=f"{dedupe_key}:{channel}:{event_kind}:{created_at}",
+            channel=channel,
+            payload=common_payload,
+        )
 
 def set_alert_state(dedupe_key: str, is_active: bool, severity: str, title: str, message: str,
                      device_id: str, interface_name: str | None = None,
@@ -966,6 +1130,8 @@ def set_alert_state(dedupe_key: str, is_active: bool, severity: str, title: str,
                 status=status or 'active',
                 last_occurrence=created_at,
                 rule=rule,
+                alert_id=alert_id,
+                device_id=device_id,
             )
     elif (not is_active) and currently_open:
         alert_row = _db_quick(
@@ -1007,6 +1173,8 @@ def set_alert_state(dedupe_key: str, is_active: bool, severity: str, title: str,
                 impact_window=_impact_window,
                 alert_count=_alert_count,
                 rule=rule,
+                alert_id=resolved_alert_id,
+                device_id=device_id,
             )
 
 def _sync_protocol_aggregate_alert(metric_type: str, title: str, device_row: dict, ip_address: str, down_peers: list[str]):
@@ -1206,6 +1374,7 @@ async def _process_device_raw(device, cycle_tick: int):
         snmp_error_message = ''
         metric_details: dict[str, Any] = {}
         resolved_metrics: dict[str, Any] = {}
+        discovery: dict[str, Any] | None = None
 
         # Try real SNMP collection (no DB lock held during await)
         cpu_usage = None
@@ -1214,7 +1383,46 @@ async def _process_device_raw(device, cycle_tick: int):
         fan = None
         psu = None
         hardware_metrics: dict[str, Any] = {}
+        if snmp_community:
+            try:
+                discovery = load_discovery(str(dev_id))
+            except Exception as discovery_store_err:
+                logger.debug(f"[SNMP] OID discovery store unavailable for {ip}: {type(discovery_store_err).__name__}")
+                discovery = None
+            if _discovery_is_stale(discovery, device=device):
+                try:
+                    discovery = await discover_device_oid_config(
+                        snmp_ip,
+                        snmp_community,
+                        snmp_port,
+                        vendor=device.get('vendor'),
+                        platform=platform,
+                        model=device.get('model'),
+                        version=device.get('version'),
+                        snmp_version=str(device.get('snmp_version') or '2c'),
+                    )
+                    persist_discovery(str(dev_id), discovery)
+                except Exception as discovery_err:
+                    logger.debug(f"[SNMP] {ip} OID discovery failed: {discovery_err}")
+                    discovery = discovery or {
+                        'status': 'snmp_error',
+                        'reason': type(discovery_err).__name__,
+                        'metrics': {},
+                        'interface': {},
+                    }
+
         resolved_metrics = resolve_health_metric_profiles(device)
+        profile_verified = str(resolved_metrics.get("profile_status") or "").casefold() in {"tested", "published", "verified", "passed", "approved"}
+        if discovery and str(discovery.get("status") or "") in {"matched", "partial"} and not profile_verified:
+            # A successful device probe is the authoritative source for this
+            # polling cycle.  An unverified model profile remains visible as
+            # metadata but cannot silently override observed table columns.
+            resolved_metrics = _resolved_metrics_from_discovery(discovery, str(dev_id))
+        elif discovery and str(resolved_metrics.get("profile_status") or "").casefold() not in {"tested", "published", "verified", "passed", "approved"}:
+            # Keep unknown or unsupported vendors on the safe generic baseline;
+            # a previously verified operator profile remains usable as an
+            # explicit exception when discovery cannot identify a table.
+            resolved_metrics = _resolved_metrics_from_discovery(discovery, str(dev_id))
         if snmp_community:
             try:
                 metrics = await collect_device_metrics(
@@ -1329,34 +1537,36 @@ async def _process_device_raw(device, cycle_tick: int):
         if fan is not None:
             fan_key = f"fan_failure:{dev_id}"
             fan_rule = resolve_alert_rule('fan_failure', device_row=device, ip_address=ip)
-            fan_failed = str(fan).strip().lower() == 'fail'
-            set_alert_state(
-                fan_key,
-                fan_failed,
-                (fan_rule or {}).get('severity', 'critical'),
-                'Fan Failure',
-                (f"{dev_label} 风扇状态异常，请尽快检查散热组件" if fan_failed else f"{dev_label} 风扇状态已恢复正常"),
-                dev_id,
-                ip_address=ip,
-                status='active' if fan_failed else 'resolved',
-                rule=fan_rule,
-            )
+            fan_failed = _component_failure_state(fan)
+            if fan_failed is not None:
+                set_alert_state(
+                    fan_key,
+                    fan_failed,
+                    (fan_rule or {}).get('severity', 'critical'),
+                    'Fan Failure',
+                    (f"{dev_label} 风扇状态异常，请尽快检查散热组件" if fan_failed else f"{dev_label} 风扇状态已恢复正常"),
+                    dev_id,
+                    ip_address=ip,
+                    status='active' if fan_failed else 'resolved',
+                    rule=fan_rule,
+                )
 
         if psu is not None:
             psu_key = f"psu_failure:{dev_id}"
             psu_rule = resolve_alert_rule('power_supply_failure', device_row=device, ip_address=ip)
-            psu_failed = str(psu).strip().lower() == 'fail'
-            set_alert_state(
-                psu_key,
-                psu_failed,
-                (psu_rule or {}).get('severity', 'critical'),
-                'Power Supply Failure',
-                (f"{dev_label} 电源状态异常，请检查供电与冗余模块" if psu_failed else f"{dev_label} 电源状态已恢复正常"),
-                dev_id,
-                ip_address=ip,
-                status='active' if psu_failed else 'resolved',
-                rule=psu_rule,
-            )
+            psu_failed = _component_failure_state(psu)
+            if psu_failed is not None:
+                set_alert_state(
+                    psu_key,
+                    psu_failed,
+                    (psu_rule or {}).get('severity', 'critical'),
+                    'Power Supply Failure',
+                    (f"{dev_label} 电源状态异常，请检查供电与冗余模块" if psu_failed else f"{dev_label} 电源状态已恢复正常"),
+                    dev_id,
+                    ip_address=ip,
+                    status='active' if psu_failed else 'resolved',
+                    rule=psu_rule,
+                )
 
         # 3. Device info collection (every ~10 minutes)
         if collect_info and snmp_community:
@@ -1367,6 +1577,7 @@ async def _process_device_raw(device, cycle_tick: int):
                 updates = {}
                 if dev_info.get('sys_name'):
                     updates['sys_name'] = dev_info['sys_name']
+                    _sync_snmp_hostname_projection(str(dev_id), dev_info['sys_name'])
                 if dev_info.get('sys_descr'):
                     descr = dev_info['sys_descr']
                     if not device['model']:

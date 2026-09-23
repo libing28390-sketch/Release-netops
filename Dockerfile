@@ -4,7 +4,7 @@ WORKDIR /app
 COPY package.json package-lock.json* ./
 # The frontend build uses devDependencies such as Vite and cross-env.
 # Install them explicitly even when the build environment sets NODE_ENV=production.
-RUN npm ci --include=dev --silent
+RUN npm ci --include=dev
 COPY . .
 RUN npm run build
 
@@ -19,7 +19,7 @@ LABEL description="Nexora NetOps Platform"
 
 # System dependencies. Build images on a connected build host, then transfer
 # the resulting images to isolated/offline deployment hosts when required.
-RUN apt-get update -qq && \
+RUN apt-get update && \
     apt-get install -y --no-install-recommends \
         build-essential \
         python3-dev \
@@ -84,7 +84,7 @@ COPY --from=frontend-build /app/dist /app/frontend-dist
 RUN mkdir -p /app/dist && cp -a /app/frontend-dist/. /app/dist/
 
 # Create runtime directories
-RUN mkdir -p /app/data /app/backup /app/data/logs /app/artifacts/monitoring/versions /app/artifacts/monitoring/queue
+RUN mkdir -p /app/data /app/backup /app/data/storage /app/data/spool /app/data/logs /app/artifacts/monitoring/versions /app/artifacts/monitoring/queue
 
 # Runtime environment
 ENV NODE_ENV=production

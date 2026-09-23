@@ -1128,7 +1128,13 @@ def resolve_metric_profiles(device: Mapping[str, Any], *, allow_auto: bool = Fal
     if profile_id and not profile:
         profile = _load_profile_cache().get(profile_id, {})
     compatibility = profile_scope_match(profile, device) if profile else {"matched": False, "reason": "profile_not_found", "score": -1}
-    profile_compatible = bool(profile) and bool(compatibility.get("matched"))
+    profile_status = str(profile.get("profile_status") or "").casefold()
+    profile_usable = profile_status in {"tested", "published", "verified", "passed", "approved"}
+    # A saved profile is metadata until a device test or an explicit verified
+    # approval confirms that its OIDs work on a real device.  Automatic SNMP
+    # discovery is responsible for unverified rows; silently using them here
+    # would recreate the old model-only OID guessing behavior.
+    profile_compatible = bool(profile) and bool(compatibility.get("matched")) and profile_usable
     # A profile with a scope mismatch is never allowed to supply OIDs. This
     # prevents an explicit stale binding from crossing vendor/platform/version
     # boundaries after a device is reclassified.
@@ -1149,7 +1155,7 @@ def resolve_metric_profiles(device: Mapping[str, Any], *, allow_auto: bool = Fal
     )
     profile_source = "snmp_template" if template_applied else "template_not_applied"
 
-    return {
+    resolved_result = {
         "profile_id": profile_id,
         "metrics": metrics,
         "sources": sources,
@@ -1160,9 +1166,9 @@ def resolve_metric_profiles(device: Mapping[str, Any], *, allow_auto: bool = Fal
         "template_name": str(effective_profile.get("template_name") or profile.get("template_name") or ""),
         "template_source": str(effective_profile.get("source") or profile.get("source") or "none"),
         "official_preset_id": str(effective_profile.get("official_preset_id") or profile.get("official_preset_id") or ""),
-        "profile_status": str(effective_profile.get("profile_status") or ("incompatible" if profile and not profile_compatible else "none")),
+        "profile_status": str(effective_profile.get("profile_status") or ("unverified" if profile and not profile_usable else "incompatible" if profile and not profile_compatible else "none")),
         "interface_profile_status": str(effective_profile.get("interface_profile_status") or ("incompatible" if profile and not profile_compatible else "none")),
-        "profile_binding_status": "matched" if profile_compatible else ("incompatible" if profile else str(candidate_result.get("status") or "none")),
+        "profile_binding_status": "matched" if profile_compatible else ("unverified" if profile and not profile_usable else "incompatible" if profile else str(candidate_result.get("status") or "none")),
         "profile_match_reason": str(compatibility.get("reason") or candidate_result.get("reason") or ""),
         "profile_match_score": int(compatibility.get("score") or candidate_result.get("score") or 0),
         "profile_scope": _profile_scope(effective_profile or profile) if (effective_profile or profile) else {},
@@ -1173,6 +1179,29 @@ def resolve_metric_profiles(device: Mapping[str, Any], *, allow_auto: bool = Fal
         "template_applied": template_applied,
         "template_required": True,
     }
+    discovery = device.get("snmp_discovery") if isinstance(device.get("snmp_discovery"), Mapping) else None
+    if not discovery and device.get("id"):
+        try:
+            from services.snmp_discovery_service import load_discovery
+
+            discovery = load_discovery(str(device.get("id")))
+        except Exception:
+            discovery = None
+    if discovery and str(discovery.get("status") or "") in {"matched", "partial"} and str(resolved_result.get("profile_status") or "").casefold() not in {"tested", "published", "verified", "passed", "approved"}:
+        verified_profile = str(resolved_result.get("profile_status") or "").casefold() in {"tested", "published", "verified", "passed", "approved"}
+        if not verified_profile:
+            discovered_metrics = dict(discovery.get("metrics") or {})
+            resolved_result["metrics"] = discovered_metrics
+            resolved_result["metric_keys"] = sorted(discovered_metrics)
+            resolved_result["metric_sources"] = {key: "snmp_discovery" for key in discovered_metrics}
+            resolved_result["profile_source"] = "snmp_discovery"
+            resolved_result["profile_id"] = f"discovery:{device.get('id')}:{discovery.get('rule_version') or 'current'}"
+            resolved_result["profile_status"] = str(discovery.get("status"))
+            resolved_result["profile_binding_status"] = str(discovery.get("status"))
+            resolved_result["interface"] = dict(discovery.get("interface") or {})
+            resolved_result["interface_source"] = "snmp_discovery" if resolved_result["interface"] else "template_not_applied"
+            resolved_result["template_applied"] = bool(discovered_metrics or resolved_result["interface"])
+    return resolved_result
 
 
 def resolve_health_metric_profiles(device: Mapping[str, Any]) -> dict[str, Any]:
@@ -1194,6 +1223,23 @@ def resolve_health_metric_profiles(device: Mapping[str, Any]) -> dict[str, Any]:
         if resolved.get("template_applied")
         else "template_not_applied"
     )
+    discovery = device.get("snmp_discovery") if isinstance(device.get("snmp_discovery"), Mapping) else None
+    if discovery and str(discovery.get("status") or "") in {"matched", "partial"} and str(resolved.get("profile_status") or "").casefold() not in {"tested", "published", "verified", "passed", "approved"}:
+        discovered_metrics = {
+            metric: config
+            for metric, config in (discovery.get("metrics") or {}).items()
+            if metric in HEALTH_METRIC_KEYS and config
+        }
+        resolved["metrics"] = discovered_metrics
+        resolved["metric_keys"] = sorted(discovered_metrics)
+        resolved["metric_sources"] = {metric: "snmp_discovery" for metric in discovered_metrics}
+        resolved["profile_source"] = "snmp_discovery"
+        resolved["profile_id"] = f"discovery:{device.get('id') or device.get('asset_id') or 'device'}:{discovery.get('rule_version') or 'current'}"
+        resolved["profile_status"] = str(discovery.get("status"))
+        resolved["profile_binding_status"] = str(discovery.get("status"))
+        resolved["interface"] = dict(discovery.get("interface") or {})
+        resolved["interface_source"] = "snmp_discovery" if resolved["interface"] else "template_not_applied"
+        resolved["template_applied"] = bool(discovered_metrics or resolved["interface"])
     resolved["collection_mode"] = "health_only"
     return resolved
 

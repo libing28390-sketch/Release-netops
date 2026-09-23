@@ -1,4 +1,5 @@
 from datetime import datetime, timedelta, timezone
+from datetime import datetime, timedelta, timezone
 import fnmatch
 import json
 from typing import Any
@@ -31,6 +32,27 @@ SCOPE_TYPES = {'global', 'site', 'device', 'interface'}
 SCOPE_MATCH_MODES = {'exact', 'contains', 'prefix', 'glob'}
 SCOPE_PRIORITY = {'global': 0, 'site': 1, 'device': 2, 'interface': 3}
 ALLOWED_SEVERITIES = {'critical', 'major', 'warning'}
+ALLOWED_NOTIFICATION_CHANNELS = {
+    'workspace', 'feishu', 'dingtalk', 'wechat', 'email', 'global_webhook',
+}
+
+
+def _normalize_notification_channels(value: Any) -> list[str]:
+    """Normalize persisted/API channel values without exposing raw JSONB."""
+    raw = value
+    if isinstance(raw, str):
+        try:
+            raw = json.loads(raw)
+        except (TypeError, ValueError):
+            raw = [part.strip() for part in raw.split(',') if part.strip()]
+    if not isinstance(raw, (list, tuple, set)):
+        raw = ['workspace']
+    normalized: list[str] = []
+    for channel in raw:
+        key = str(channel or '').strip().lower()
+        if key and key in ALLOWED_NOTIFICATION_CHANNELS and key not in normalized:
+            normalized.append(key)
+    return normalized or ['workspace']
 
 
 def _default_severity_for_metric(metric_type: str) -> str:
@@ -55,6 +77,8 @@ def _utc_now_iso() -> str:
 
 def _normalize_rule_row(row) -> dict[str, Any]:
     item = dict(row)
+    item['notification_channels'] = _normalize_notification_channels(item.get('notification_channels_json'))
+    item.pop('notification_channels_json', None)
     item['enabled'] = bool(item.get('enabled', 1))
     item['notify_on_active'] = bool(item.get('notify_on_active', 1))
     item['notify_on_recovery'] = bool(item.get('notify_on_recovery', 1))
@@ -86,7 +110,7 @@ def _history_item_from_row(row) -> dict[str, Any]:
       snapshot = {}
     return {
         'id': item['id'],
-        'rule_id': item.get('settings_id'),
+        'rule_id': item.get('rule_id') or item.get('settings_id'),
         'changed_by': item.get('changed_by') or 'system',
         'created_at': item.get('created_at') or _utc_now_iso(),
         'snapshot': snapshot,
@@ -134,6 +158,30 @@ def _validate_rule_payload(payload: dict[str, Any], existing: dict[str, Any] | N
     if aggregation_mode != 'dedupe_key':
         raise ValueError('Only dedupe_key aggregation mode is currently supported')
 
+    channels_value = payload.get('notification_channels', base.get('notification_channels', ['workspace']))
+    if channels_value is None:
+        channels_value = ['workspace']
+    if isinstance(channels_value, str):
+        try:
+            channels_value = json.loads(channels_value)
+        except (TypeError, ValueError):
+            channels_value = [part.strip() for part in channels_value.split(',') if part.strip()]
+    if not isinstance(channels_value, (list, tuple, set)):
+        raise ValueError('notification_channels must be an array')
+    notification_channels = []
+    for channel in channels_value:
+        normalized_channel = str(channel or '').strip().lower()
+        if normalized_channel not in ALLOWED_NOTIFICATION_CHANNELS:
+            raise ValueError(
+                f'notification_channels must contain only {sorted(ALLOWED_NOTIFICATION_CHANNELS)}'
+            )
+        if normalized_channel not in notification_channels:
+            notification_channels.append(normalized_channel)
+    if not notification_channels:
+        raise ValueError('notification_channels must contain at least one channel')
+    if 'workspace' in notification_channels and len(notification_channels) > 1:
+        raise ValueError('workspace cannot be combined with explicit notification channels')
+
     try:
         repeat_window = int(payload.get('notification_repeat_window_seconds', base.get('notification_repeat_window_seconds', 120)))
     except Exception as exc:
@@ -166,6 +214,7 @@ def _validate_rule_payload(payload: dict[str, Any], existing: dict[str, Any] | N
         'aggregation_mode': aggregation_mode,
         'notification_repeat_window_seconds': repeat_window,
         'for_duration_seconds': for_duration,
+        'notification_channels': notification_channels,
         'notify_on_active': bool(payload.get('notify_on_active', base.get('notify_on_active', True))),
         'notify_on_recovery': bool(payload.get('notify_on_recovery', base.get('notify_on_recovery', True))),
         'notify_on_reopen_after_maintenance': bool(payload.get('notify_on_reopen_after_maintenance', base.get('notify_on_reopen_after_maintenance', True))),
@@ -175,8 +224,8 @@ def _validate_rule_payload(payload: dict[str, Any], existing: dict[str, Any] | N
 def _write_history(conn, rule: dict[str, Any]) -> None:
     conn.execute(
         '''
-        INSERT INTO alert_rule_history (id, settings_id, snapshot_json, changed_by, created_at)
-        VALUES (?, ?, ?, ?, ?)
+        INSERT INTO alert_rule_history (id, settings_id, rule_id, snapshot_json, changed_by, created_at)
+        VALUES (?, 'default', ?, ?, ?, ?)
         ''',
         (
             str(uuid.uuid4()),
@@ -307,9 +356,10 @@ def create_rule(payload: dict[str, Any]) -> dict[str, Any]:
             INSERT INTO alert_rules (
                 id, name, metric_type, scope_type, scope_match_mode, scope_value, severity, threshold, enabled,
                 aggregation_mode, notification_repeat_window_seconds, for_duration_seconds,
+                notification_channels_json,
                 notify_on_active, notify_on_recovery, notify_on_reopen_after_maintenance,
                 created_by, created_at, updated_by, updated_at
-            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?::jsonb, ?, ?, ?, ?, ?, ?, ?)
             ''',
             (
                 created['id'],
@@ -324,6 +374,7 @@ def create_rule(payload: dict[str, Any]) -> dict[str, Any]:
                 created['aggregation_mode'],
                 created['notification_repeat_window_seconds'],
                 created['for_duration_seconds'],
+                json.dumps(created['notification_channels'], ensure_ascii=False),
                 1 if created['notify_on_active'] else 0,
                 1 if created['notify_on_recovery'] else 0,
                 1 if created['notify_on_reopen_after_maintenance'] else 0,
@@ -360,6 +411,7 @@ def update_rule(rule_id: str, payload: dict[str, Any]) -> dict[str, Any]:
             UPDATE alert_rules
             SET name = ?, metric_type = ?, scope_type = ?, scope_match_mode = ?, scope_value = ?, severity = ?, threshold = ?, enabled = ?,
                 aggregation_mode = ?, notification_repeat_window_seconds = ?, for_duration_seconds = ?,
+                notification_channels_json = ?::jsonb,
                 notify_on_active = ?, notify_on_recovery = ?, notify_on_reopen_after_maintenance = ?,
                 updated_by = ?, updated_at = ?
             WHERE id = ?
@@ -376,6 +428,7 @@ def update_rule(rule_id: str, payload: dict[str, Any]) -> dict[str, Any]:
                 updated['aggregation_mode'],
                 updated['notification_repeat_window_seconds'],
                 updated['for_duration_seconds'],
+                json.dumps(updated['notification_channels'], ensure_ascii=False),
                 1 if updated['notify_on_active'] else 0,
                 1 if updated['notify_on_recovery'] else 0,
                 1 if updated['notify_on_reopen_after_maintenance'] else 0,
@@ -460,9 +513,9 @@ def list_rule_history(limit: int = 20, rule_id: str | None = None) -> list[dict[
         if rule_id:
             rows = conn.execute(
                 '''
-                SELECT id, settings_id, snapshot_json, changed_by, created_at
+                SELECT id, settings_id, rule_id, snapshot_json, changed_by, created_at
                 FROM alert_rule_history
-                WHERE settings_id = ?
+                WHERE rule_id = ?
                 ORDER BY created_at DESC
                 LIMIT ?
                 ''',
@@ -471,7 +524,7 @@ def list_rule_history(limit: int = 20, rule_id: str | None = None) -> list[dict[
         else:
             rows = conn.execute(
                 '''
-                SELECT id, settings_id, snapshot_json, changed_by, created_at
+                SELECT id, settings_id, rule_id, snapshot_json, changed_by, created_at
                 FROM alert_rule_history
                 ORDER BY created_at DESC
                 LIMIT ?

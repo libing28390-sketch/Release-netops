@@ -39,6 +39,8 @@ interface PAMSession {
   duration_seconds: number;
   command_count: number;
   recording_path: string;
+  recording_available?: boolean;
+  storage_status?: string;
   created_at: string;
   /** Set to 1 when the underlying asset has been deleted; the session row
    *  itself is preserved for audit purposes (Plan A soft-delete). */
@@ -521,7 +523,7 @@ const PAMAuditTab: React.FC<PAMAuditTabProps> = ({
                               variant="danger"
                               onClick={() => setKillTarget(s)}
                             />
-                          ) : s.recording_path ? (
+                          ) : (s.recording_available || s.recording_path) ? (
                             <>
                               <ActionIconButton icon={Download} label={isZh ? '下载录像' : 'Download Cast'} variant="accent" onClick={() => handleDownload(s.id)} />
                               <ActionIconButton
@@ -616,7 +618,7 @@ const PAMAuditTab: React.FC<PAMAuditTabProps> = ({
                 [isZh ? '开始时间' : 'Started', formatTime(detailsTarget.connected_at || detailsTarget.created_at)],
                 [isZh ? '完成时间' : 'Completed', formatTime(detailsTarget.closed_at)],
                 [isZh ? '关闭原因' : 'Close reason', detailsTarget.close_reason || '—'],
-                [isZh ? '录像' : 'Recording', detailsTarget.recording_path ? (isZh ? '可用' : 'Available') : (isZh ? '无' : 'None')],
+                [isZh ? '录像' : 'Recording', (detailsTarget.recording_available || detailsTarget.recording_path) ? (isZh ? '可用' : 'Available') : (isZh ? '无' : 'None')],
               ].map(([label, value]) => (
                 <div key={label}>
                   <dt className="text-[10px] font-bold uppercase tracking-wider text-slate-400">{label}</dt>

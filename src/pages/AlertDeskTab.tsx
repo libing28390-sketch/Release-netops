@@ -16,8 +16,10 @@ import {
   alertSecondaryButtonClass,
   alertTableActionButtonClass,
   AlertPageCommonProps,
+  collectorSourceLabel,
   formatDuration,
   formatTs,
+  metricTypeLabel,
   severityLabel,
   useAlertOverlayDismiss,
   workflowLabel,
@@ -229,6 +231,8 @@ const AlertDeskTab: React.FC<AlertDeskTabProps> = ({ language, currentUsername, 
       if (allAlerts.length === 0) return;
       const exportData = allAlerts.map(r => ({
         Title: r.title,
+        Metric: r.metric_type || '',
+        Collector: r.collector_source || '',
         Severity: r.severity,
         Status: r.workflow_status,
         Hostname: r.hostname || '',
@@ -506,7 +510,14 @@ const AlertDeskTab: React.FC<AlertDeskTabProps> = ({ language, currentUsername, 
                             </span>
                           )}
                         </p>
-                        <p className="mt-1 line-clamp-1 text-xs text-black/45">{row.message}</p>
+                        <div className="mt-1 flex items-center gap-1.5">
+                          {row.metric_type && row.metric_type !== 'unknown' && (
+                            <span className="inline-flex shrink-0 rounded-md bg-cyan-50 px-1.5 py-0.5 text-[10px] font-semibold text-cyan-700">
+                              {metricTypeLabel(row.metric_type, language)}
+                            </span>
+                          )}
+                          <span className="truncate text-xs text-black/45">{row.message}</span>
+                        </div>
                       </button>
                     </td>
                      <td className="px-5 py-4 align-top text-sm text-black/60">
@@ -708,6 +719,11 @@ const AlertDeskTab: React.FC<AlertDeskTabProps> = ({ language, currentUsername, 
                             <span className={`inline-flex rounded-md px-2 py-0.5 text-[10px] font-bold ${alertWorkflowBadgeClass(selectedItem.workflow_status)}`}>
                               {workflowLabel(selectedItem.workflow_status, language)}
                             </span>
+                            {selectedItem.metric_type && selectedItem.metric_type !== 'unknown' && (
+                              <span className="inline-flex rounded-md bg-cyan-50 px-2 py-0.5 text-[10px] font-semibold text-cyan-700">
+                                {metricTypeLabel(selectedItem.metric_type, language)}
+                              </span>
+                            )}
                             {(selectedItem.occurrence_count ?? 1) > 1 && (
                               <span className="inline-flex items-center gap-1 rounded-md bg-violet-50 px-2 py-0.5 text-[10px] font-bold text-violet-600 ring-1 ring-violet-200/80">
                                 <Repeat size={10} />
@@ -719,6 +735,12 @@ const AlertDeskTab: React.FC<AlertDeskTabProps> = ({ language, currentUsername, 
                             {selectedItem.title}
                           </h3>
                           <div className="mt-1.5 flex flex-wrap items-center gap-x-3 gap-y-1 text-xs text-black/38">
+                            {selectedItem.collector_source && selectedItem.collector_source !== 'unknown' && (
+                              <span className="inline-flex items-center gap-1">
+                                <Activity size={11} />
+                                {language === 'zh' ? `采集：${collectorSourceLabel(selectedItem.collector_source, language)}` : `Collector: ${collectorSourceLabel(selectedItem.collector_source, language)}`}
+                              </span>
+                            )}
                             <span className="inline-flex items-center gap-1">
                               <Clock size={11} />
                               {formatTs(selectedItem.created_at)}
@@ -788,6 +810,28 @@ const AlertDeskTab: React.FC<AlertDeskTabProps> = ({ language, currentUsername, 
                           {selectedItem.message}
                         </div>
                       </div>
+
+                      {selectedDetail?.deliveries?.items?.length ? (
+                        <div>
+                          <p className="text-[10px] font-semibold uppercase tracking-wider text-black/30">{language === 'zh' ? '通知投递' : 'Notification Delivery'}</p>
+                          <div className="mt-1.5 grid gap-2 sm:grid-cols-2">
+                            {Object.entries(selectedDetail.deliveries.summary || {}).map(([channel, summary]) => (
+                              <div key={channel} className="rounded-xl border border-black/[0.06] bg-[#fafbfc] px-3 py-2.5">
+                                <div className="flex items-center gap-2">
+                                  <span className="text-xs font-semibold text-[#164e63]">{channel}</span>
+                                  <span className={`rounded-full px-1.5 py-0.5 text-[9px] font-bold ${summary.status === 'succeeded' ? 'bg-emerald-50 text-emerald-700' : summary.status === 'failed' ? 'bg-rose-50 text-rose-700' : 'bg-amber-50 text-amber-700'}`}>
+                                    {summary.status}
+                                  </span>
+                                </div>
+                                <p className="mt-1 text-[10px] text-black/45">
+                                  {language === 'zh' ? `尝试 ${summary.attempt_no || 0} 次` : `${summary.attempt_no || 0} attempt(s)`}
+                                  {summary.error_code ? ` · ${summary.error_code}` : ''}
+                                </p>
+                              </div>
+                            ))}
+                          </div>
+                        </div>
+                      ) : null}
 
                       {/* Workflow Actions */}
                       {!selectedItem.resolved_at && selectedItem.workflow_status !== 'suppressed' && (

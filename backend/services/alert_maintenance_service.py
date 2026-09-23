@@ -6,12 +6,31 @@ from typing import Any
 
 from database import get_db_connection
 from services import notification_service
+from services import alert_rule_service
+from core.config import settings
 
 
 VALID_SELECTION_MODES = {'conditions', 'resources'}
 VALID_CONDITION_LOGICS = {'all', 'any', 'none'}
 VALID_CONDITION_FIELDS = {'alert_description', 'alert_ip', 'alert_level'}
 VALID_CONDITION_OPERATORS = {'contains', 'equals', 'not_contains', 'not_equals', 'regex'}
+
+
+_DEDUPE_METRIC_TYPES = {
+    'cpu_high': 'cpu', 'mem_high': 'memory', 'if_util': 'interface_util',
+    'if_down': 'interface_down', 'interconnect_down': 'interconnect_down',
+    'temp_high': 'temperature_high', 'snmp_unreachable': 'snmp_unreachable',
+    'fan_failure': 'fan_failure', 'psu_failure': 'power_supply_failure',
+    'if_error_rate': 'interface_error_rate_high', 'if_flap': 'interface_flap',
+    'lldp_neighbor_lost': 'lldp_neighbor_lost', 'bgp_neighbor_down': 'bgp_neighbor_down',
+    'ospf_neighbor_down': 'ospf_neighbor_down', 'bfd_session_down': 'bfd_session_down',
+    'dev_offline': 'device_offline',
+}
+
+
+def _metric_type_from_dedupe_key(dedupe_key: str) -> str:
+    prefix = str(dedupe_key or '').split(':', 1)[0].strip().lower()
+    return _DEDUPE_METRIC_TYPES.get(prefix, prefix or 'snmp_unreachable')
 
 
 def utc_now_iso() -> str:
@@ -590,7 +609,28 @@ def reopen_expired_suppressed_alerts() -> list[dict[str, Any]]:
             reopened.append(item)
             try:
                 from services.monitoring_notification_outbox_service import enqueue_alert_delivery
+                metric_type = _metric_type_from_dedupe_key(item.get('dedupe_key'))
+                runtime_rule = alert_rule_service.select_rule(
+                    alert_rule_service.get_runtime_rules(),
+                    metric_type,
+                    {
+                        'device_id': item.get('device_id') or '',
+                        'hostname': item.get('hostname') or '',
+                        'ip_address': item.get('ip_address') or '',
+                        'site': item.get('site') or '',
+                        'interface_name': item.get('interface_name') or '',
+                    },
+                )
+                if runtime_rule and not runtime_rule.get('notify_on_reopen_after_maintenance', True):
+                    continue
+                channels = (runtime_rule or {}).get('notification_channels') or ['workspace']
+                if isinstance(channels, str):
+                    channels = [part.strip() for part in channels.split(',') if part.strip()]
+                channels = [str(channel).strip().lower() for channel in channels if str(channel).strip()]
+                if not channels:
+                    channels = ['workspace']
                 payload = {
+                    'alert_id': item.get('id') or '',
                     'tenant_id': str(item.get('tenant_id') or 'tenant-default'),
                     'title': item.get('title') or 'Monitoring alert reopened',
                     'object_name': item.get('interface_name') or item.get('hostname') or item.get('dedupe_key'),
@@ -600,24 +640,30 @@ def reopen_expired_suppressed_alerts() -> list[dict[str, Any]]:
                     'message': f"{item.get('title') or 'Monitoring alert'} remains active after maintenance window",
                     'first_occurrence': item.get('created_at'),
                     'last_occurrence': now_iso,
-                    'reopened_after_maintenance': True,
+                    'event_kind': 'reopened',
+                    'rule_id': str((runtime_rule or {}).get('id') or ''),
+                    'destination_key': item.get('dedupe_key') or 'maintenance-reopen',
                 }
-                enqueue_alert_delivery(
-                    delivery_key=f"{item.get('dedupe_key')}:maintenance-reopen:{now_iso}",
-                    channel='workspace',
-                    payload=payload,
-                )
-                from core.config import settings
-                if (settings.ALERT_NOTIFY_WEBHOOK_URL or '').strip():
+                if 'workspace' in channels and (settings.ALERT_NOTIFY_WEBHOOK_URL or '').strip():
                     plain = (
                         f"[{payload['severity'].upper()}] {payload['title']}\n"
                         f"对象: {payload['object_name']}  IP: {payload['ip_address']}\n"
                         f"{payload['message']}\n时间: {now_iso}"
                     )
                     enqueue_alert_delivery(
-                        delivery_key=f"{item.get('dedupe_key')}:maintenance-reopen-global:{now_iso}",
+                        delivery_key=f"{item.get('dedupe_key')}:global_webhook:reopened:{now_iso}",
                         channel='global_webhook',
-                        payload={'msgtype': 'text', 'text': {'content': plain}},
+                        payload={'msgtype': 'text', 'text': {'content': plain}, **payload},
+                    )
+                for channel in channels:
+                    if channel not in {'workspace', 'feishu', 'dingtalk', 'wechat', 'email', 'global_webhook'}:
+                        continue
+                    if channel == 'global_webhook' and not (settings.ALERT_NOTIFY_WEBHOOK_URL or '').strip():
+                        continue
+                    enqueue_alert_delivery(
+                        delivery_key=f"{item.get('dedupe_key')}:{channel}:reopened:{now_iso}",
+                        channel=channel,
+                        payload=payload,
                     )
             except Exception:
                 logger.warning('Failed to enqueue maintenance reopen notification', exc_info=True)

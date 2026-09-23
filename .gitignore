@@ -17,6 +17,8 @@ data/netops.db-wal
 backend/data/
 outputs/
 data/pam_recordings/
+data/storage/
+data/spool/
 data/pam_audit/
 data/change_order_attachments/
 data/backups/

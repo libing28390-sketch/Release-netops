@@ -366,6 +366,7 @@ export interface NotificationChannels {
   feishu?: NotificationChannel;
   dingtalk?: NotificationChannel;
   wechat?: NotificationChannel;
+  email?: NotificationChannel & { active_enabled?: boolean; recovery_enabled?: boolean };
 }
 
 export interface User {
@@ -418,6 +419,9 @@ export interface AlertRecord {
   id: string;
   dedupe_key: string;
   source: string;
+  metric_type?: string | null;
+  collector_source?: string | null;
+  notification_status?: string | null;
   severity: 'low' | 'medium' | 'high' | 'major' | 'critical' | 'warning';
   title: string;
   message: string;
@@ -468,6 +472,37 @@ export interface AlertListResponse {
 export interface AlertDetailResponse {
   item: AlertRecord;
   timeline: AlertRecord[];
+  deliveries?: {
+    items: AlertDeliveryAttempt[];
+    summary?: Record<string, AlertDeliverySummary>;
+  };
+}
+
+export interface AlertDeliveryAttempt {
+  id: string;
+  delivery_id: string;
+  alert_id?: string | null;
+  tenant_id?: string | null;
+  channel: string;
+  event_kind: string;
+  attempt_no: number;
+  status: 'queued' | 'sending' | 'retrying' | 'succeeded' | 'failed' | 'skipped' | string;
+  error_code?: string;
+  error_summary?: string;
+  provider_class?: string;
+  recipient_count?: number;
+  started_at?: string | null;
+  finished_at?: string | null;
+  created_at: string;
+}
+
+export interface AlertDeliverySummary {
+  status: string;
+  event_kind?: string;
+  attempt_no?: number;
+  error_code?: string;
+  recipient_count?: number;
+  created_at?: string | null;
 }
 
 export interface AlertMaintenanceWindow {
@@ -561,6 +596,8 @@ export type AlertRuleScopeType = 'global' | 'site' | 'device' | 'interface';
 
 export type AlertRuleScopeMatchMode = 'exact' | 'contains' | 'prefix' | 'glob';
 
+export type AlertNotificationChannel = 'workspace' | 'feishu' | 'dingtalk' | 'wechat' | 'email' | 'global_webhook';
+
 export interface AlertRuleCollectionBinding {
   collection_source: string;
   collection_label: string;
@@ -587,6 +624,7 @@ export interface AlertRuleSettings {
   enabled: boolean;
   aggregation_mode: 'dedupe_key';
   notification_repeat_window_seconds: number;
+  notification_channels: AlertNotificationChannel[];
   notify_on_active: boolean;
   notify_on_recovery: boolean;
   notify_on_reopen_after_maintenance: boolean;
