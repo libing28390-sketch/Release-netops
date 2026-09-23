@@ -486,6 +486,13 @@ const formatLayerSummary = (devices: Device[]) =>
 
 const getDeviceGlyphKind = (device: Device): DeviceGlyphKind => {
   if (device.is_group) return 'generic';
+  if (device.is_unmanaged) {
+    const compactHostname = String(device.hostname || '')
+      .toLowerCase()
+      .split('.')[0]
+      .replace(/[^a-z0-9]/g, '');
+    if (/^(?:sw|switch)\d+$/.test(compactHostname)) return 'switch';
+  }
   const fingerprint = [device.role, device.hostname, device.platform, device.model]
     .map((value) => String(value || '').toLowerCase())
     .join(' ');
@@ -564,6 +571,8 @@ const appendDeviceGlyph = (selection: d3.Selection<SVGGElement, any, any, any>, 
     .attr('width', size.width)
     .attr('height', size.height)
     .attr('preserveAspectRatio', 'xMidYMid meet')
+    .style('filter', device.is_unmanaged ? 'grayscale(1)' : null)
+    .style('opacity', device.is_unmanaged ? 0.72 : 1)
     .attr('pointer-events', 'none');
 };
 
@@ -2806,8 +2815,10 @@ const TopologyGraph: React.FC<TopologyGraphProps> = ({ devices, links, onNodeCli
           .attr('font-size', '9px')
           .attr('font-weight', 600)
           .text(`${d.group_offline_count || 0} 离线 · ${d.group_alert_count || 0} 条告警`);
+      } else if (d.is_unmanaged && getDeviceGlyphKind(d as Device) !== 'generic') {
+        appendDeviceGlyph(d3.select(this), d as Device);
       } else if (d.is_unmanaged) {
-        // Render a "?" question mark for unmanaged devices
+        // Keep an unknown marker only when the neighbor name reveals no device kind.
         d3.select(this).append('text')
           .attr('text-anchor', 'middle')
           .attr('dominant-baseline', 'central')
@@ -2903,6 +2914,10 @@ const TopologyGraph: React.FC<TopologyGraphProps> = ({ devices, links, onNodeCli
       .text((d: any) => {
         if (d.is_group) {
           return `${d.hostname}｜${d.group_member_count || 0} 台设备｜${d.group_online_count || 0} 在线｜点击展开`;
+        }
+        if (d.is_unmanaged) {
+          const address = String(d.ip_address || '').trim();
+          return `${d.hostname} | LLDP/CDP 邻居 | 尚未匹配到 CMDB 资产${address ? ` | ${address}` : ''}`;
         }
         const tone = getLayerTone(d as Device);
         const platform = String(d.platform || '').trim();

@@ -294,8 +294,8 @@ const TopologyInspectorPanel: React.FC<TopologyInspectorPanelProps> = ({
           {(selectedTopologyDevice as any).is_unmanaged ? (
             <div className="mt-3 rounded-lg bg-slate-50 p-2.5 text-xs text-slate-500 ring-1 ring-slate-200/60">
               {zh
-                ? '此设备由 LLDP 邻居发现观测到，尚未录入 CMDB。如需纳入监控与配置管理，请在资产管理中录入该设备。'
-                : 'This device was discovered via LLDP and is not in the CMDB. Add it to CMDB to enable monitoring and full management.'}
+                ? '此邻居已由 LLDP/CDP 发现，但尚未匹配到 CMDB 资产。若设备已登记，请核对通告主机名、管理 IP 和机箱 ID；若未登记，可从资产管理中录入。'
+                : 'This neighbor was discovered via LLDP/CDP but has not been matched to a CMDB asset. If it is already registered, check its advertised hostname, management IP, and chassis ID; otherwise, add it through asset management.'}
             </div>
           ) : (
             <div className="mt-3 flex gap-2">

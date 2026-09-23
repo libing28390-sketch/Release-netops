@@ -601,7 +601,15 @@ def _match_target_device_with_evidence(
     normalized_ip = str(neighbor_ip or '').strip().lower()
     normalized_chassis = re.sub(r'[^0-9a-z]', '', str(chassis_id or '').lower())
     rows = conn.execute(
-        'SELECT id, hostname, ip_address, sys_name, sn, model, site_id FROM devices'
+        '''
+        SELECT d.id, d.hostname,
+               COALESCE(NULLIF(pa.management_ip, ''), NULLIF(d.ip_address, '')) AS ip_address,
+               d.sys_name,
+               COALESCE(NULLIF(d.sn, ''), NULLIF(pa.serial_number, '')) AS sn,
+               d.model, d.site_id
+        FROM devices d
+        LEFT JOIN physical_assets pa ON pa.id = d.asset_id
+        '''
     ).fetchall()
     candidates_by_id: dict[str, dict[str, Any]] = {}
 
@@ -1571,7 +1579,12 @@ async def _collect_neighbors_with_netmiko(
     return collected, 'netmiko'
 
 
-async def _collect_device_observations(device: dict[str, Any], platform_action_session=None) -> tuple[list[dict[str, Any]], str]:
+async def _collect_device_observations(
+    device: dict[str, Any],
+    platform_action_session=None,
+    *,
+    attempted_methods: list[str] | None = None,
+) -> tuple[list[dict[str, Any]], str]:
     ip = device.get('ip_address')
 
     # 1. Primary path: Fast, non-intrusive, zero-SSH SNMP LLDP/CDP discovery
@@ -1586,6 +1599,8 @@ async def _collect_device_observations(device: dict[str, Any], platform_action_s
     snmp_port = int(snmp_credentials.get('port') or 161)
     snmp_version = str(snmp_credentials.get('version') or '2c').strip().lower() or '2c'
     if snmp_community and snmp_ip:
+        if attempted_methods is not None:
+            attempted_methods.append('snmp')
         try:
             from services.snmp_service import collect_snmp_lldp_neighbors
             snmp_records = await collect_snmp_lldp_neighbors(
@@ -1603,10 +1618,28 @@ async def _collect_device_observations(device: dict[str, Any], platform_action_s
                 if observations:
                     logger.info("Discovered %d LLDP/CDP neighbors via SNMP for %s (%s)", len(observations), device.get("hostname"), snmp_ip)
                     return _NeighborCollectionBatch(observations, "success"), "snmp"
+            logger.info(
+                'SNMP LLDP discovery returned no usable neighbors for %s (%s); '
+                'falling back to SSH CLI (SNMP may be unreachable, LLDP/CDP may be disabled, or the MIB may be empty)',
+                device.get('hostname'),
+                snmp_ip,
+            )
         except Exception as snmp_err:
-            logger.debug("SNMP LLDP discovery skipped or failed for %s, falling back to SSH: %s", device.get("hostname"), snmp_err)
+            logger.warning(
+                'SNMP LLDP discovery failed for %s (%s), falling back to SSH CLI (error_type=%s)',
+                device.get('hostname'),
+                snmp_ip,
+                type(snmp_err).__name__,
+            )
+    else:
+        logger.info(
+            'SNMP LLDP discovery skipped for %s; falling back to SSH CLI (SNMP credential or address unavailable)',
+            device.get('hostname'),
+        )
 
     # 2. Secondary path: Fallback to SSH CLI + TextFSM if SNMP produced no observations
+    if attempted_methods is not None:
+        attempted_methods.append('ssh')
     port = int(device.get('management_port') or device.get('port') or 22)
     from drivers.ssh_compat import is_ssh_port_open
     if not is_ssh_port_open(ip, port):
@@ -2376,6 +2409,8 @@ async def discover_device_neighbors(
 ) -> dict[str, Any]:
     started = time.perf_counter()
     snapshot_attempt: dict[str, Any] | None = None
+    method = 'unknown'
+    attempted_methods: list[str] = []
     try:
         device = _get_device(device_id)
         if not device:
@@ -2410,7 +2445,10 @@ async def discover_device_neighbors(
             raise RuntimeError('topology_lldp_snapshot_generation_unavailable')
 
         # Fast, non-intrusive discovery: SNMP-first LLDP/CDP, safe fallback to single-command CLI LLDP only if needed
-        observations, method = await _collect_device_observations(device)
+        observations, method = await _collect_device_observations(
+            device,
+            attempted_methods=attempted_methods,
+        )
         aggregation_summary = {'parents': 0, 'members': 0}
         if method != 'snmp' and has_ssh:
             try:
@@ -2438,7 +2476,7 @@ async def discover_device_neighbors(
             device_id,
             'topology_lldp',
             status=collection_status,
-            transport='ssh',
+            transport='snmp' if method == 'snmp' else 'ssh',
             source='lldp_playbook',
             duration_ms=(time.perf_counter() - started) * 1000,
             coverage_total=len(observations),
@@ -2511,12 +2549,15 @@ async def discover_device_neighbors(
             device_id,
             'topology_lldp',
             status='failed',
-            transport='ssh',
             source='lldp_playbook',
             duration_ms=(time.perf_counter() - started) * 1000,
             error_code=topology_error_code(exc),
             error_message=str(exc)[:500],
-            metadata={'run_id': run_id},
+            metadata={
+                'run_id': run_id,
+                'attempted_methods': attempted_methods,
+            },
+            transport=attempted_methods[-1] if attempted_methods else '',
         )
         raise
 
@@ -2693,6 +2734,7 @@ async def _execute_discovery_device(
                 logger.info(
                     'Retrying transient topology discovery failure for device %s in run %s',
                     device_id,
+                    run_id,
                 )
                 continue
             _update_run_device(
