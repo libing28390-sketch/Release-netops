@@ -1,7 +1,7 @@
 {
   "name": "nexora",
   "private": true,
-  "version": "1.0.8",
+  "version": "1.0.9",
   "type": "module",
   "scripts": {
     "dev": "node scripts/dev-internal.mjs",

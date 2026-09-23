@@ -1,11 +1,16 @@
 """Versioned release notes for the Windows desktop client."""
 
-CLIENT_VERSION = "1.0.8"
-CLIENT_BUILD = "20260916.0001"
-RELEASE_NOTES_BASELINE = "1.0.7"
+CLIENT_VERSION = "1.0.9"
+CLIENT_BUILD = "20260923.0001"
+RELEASE_NOTES_BASELINE = "1.0.8"
 
 RELEASE_NOTES = {
     "zh": (
+        "• 【新增】引入统一对象存储抽象，支持本地存储和 S3-compatible Provider；SeaweedFS 可通过 Docker Profile 以单节点模式启用，PAM 录像和配置备份支持 spool、重试、状态可视化及旧路径迁移。",
+        "• 【新增】配置备份中心增加对象存储状态面板，展示 Provider、健康状态、待处理/失败/旧路径对象数量和最近错误原因，帮助运维快速定位存储问题。",
+        "• 【新增】SNMP 主机名同步以资产管理的 physical_assets 为源数据，手工同步、批量同步、后台采集和 SNMP discovery 均会同步资产、设备和拓扑观察。",
+        "• 【新增】Docker 部署在 STORAGE_BACKEND=s3 时自动启用 object-storage Profile；构建阶段保留 npm、APT 和部署进度日志，便于定位安装失败原因。",
+        "• 【加固】PostgreSQL-only 门禁清理 SQLite PRAGMA 兼容路径；对象存储凭据仅保留在服务端环境变量，不暴露给前端。",
         "• 【新增】Windows 发布基线升级为 PostgreSQL 18.6，安装包内置匹配的 pgvector 0.8.6，并增加数据库、扩展和运行时就绪检查。",
         "• 【新增】Windows 客户端与托盘统一 Nexora 品牌，保留 NetOps.exe 兼容入口；启动前显示数据库目标并要求密码二次确认，明确在线更新与完整安装包升级的边界。",
         "• 【新增】RackVision 机柜工作台支持 2D/3D 共用布局、容量/功耗/健康概览、设备端口信息和 3D 资产目录；3D 视图保持只读，避免误操作。",
@@ -25,6 +30,11 @@ RELEASE_NOTES = {
         "• 【加固】增强认证、RBAC、凭据审计、终端安全、Redis/Docker 发布链路和 3D 静态资源加载；外部 AI 与网络写入继续默认关闭。",
     ),
     "en": (
+        "• [New] Added a provider-neutral object-storage layer with local and S3-compatible providers; SeaweedFS can be enabled through a Docker profile, while PAM recordings and config snapshots support spooling, retries, status visibility, and legacy migration.",
+        "• [New] Added an object-storage status panel to Config Backup Center with provider, health, pending/error/legacy counts, and recent error details for faster operations triage.",
+        "• [New] SNMP hostname synchronization now treats physical_assets as the inventory source of truth and projects normalized names to devices and topology observations across manual, batch, background, and discovery flows.",
+        "• [New] Docker deployments automatically enable the object-storage profile when STORAGE_BACKEND=s3; npm, APT, and deployment progress remain visible for troubleshooting.",
+        "• [Hardening] Removed the SQLite PRAGMA compatibility path from the PostgreSQL-only gate; object-storage credentials stay server-side and are never exposed to the frontend.",
         "• [New] Raised the Windows release baseline to PostgreSQL 18.6 with matching pgvector 0.8.6, plus readiness checks for the database, extensions, and runtimes.",
         "• [New] Unified the Windows client and tray under the Nexora brand while keeping NetOps.exe as a compatibility entry point; added database-target visibility, double-entry password confirmation, and clearer launcher-versus-full-package upgrade boundaries.",
         "• [New] Added the RackVision rack workbench with shared 2D/3D layout data, capacity/power/health summaries, port details, and a 3D asset catalog; the 3D view remains read-only to prevent accidental changes.",
