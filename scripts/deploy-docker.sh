@@ -69,6 +69,10 @@ Environment:
                           Default: 1. With the default Redis URL, install
                           generates a URL-safe REDIS_PASSWORD and updates
                           REDIS_URL.
+  NETOPS_STARTUP_RECOVERY_TIMEOUT_SECONDS
+                          Maximum wait after a transient Compose startup
+                          health failure before the original error is returned
+                          (default: 120).
 EOF
 }
 
@@ -116,7 +120,7 @@ compose() {
     [[ ${#COMPOSE_FILES[@]} -gt 0 ]] || configure_compose_files
     local project_name profile_args=()
     project_name="$(resolve_compose_project_name)"
-    if [[ "$(env_value STORAGE_BACKEND)" == "s3" ]]; then
+    if storage_backend_is_s3; then
         profile_args+=(--profile object-storage)
     fi
     docker compose --project-name "$project_name" "${COMPOSE_FILES[@]}" "${profile_args[@]}" "$@"
@@ -124,7 +128,7 @@ compose() {
 
 compose_service_args() {
   printf '%s\n' db netops victoriametrics snmp-exporter vmagent grafana nginx
-    if [[ "$(env_value STORAGE_BACKEND)" == "s3" ]]; then
+    if storage_backend_is_s3; then
         printf '%s\n' seaweedfs
     fi
     if [[ "${NETOPS_REDIS_ENABLED:-1}" != "0" ]]; then
@@ -149,14 +153,33 @@ set_env_value() {
     fi
 }
 
+normalize_env_value() {
+    local value="$1"
+    # Values are dotenv data, so normalize the formatting that Compose accepts
+    # without evaluating the value as shell code. This also handles CRLF files
+    # and the common outer-quote forms produced by Windows editors.
+    value="${value//$'\r'/}"
+    value="${value#"${value%%[![:space:]]*}"}"
+    value="${value%"${value##*[![:space:]]}"}"
+    case "$value" in
+        \"*\") value="${value:1:${#value}-2}" ;;
+        \'*\') value="${value:1:${#value}-2}" ;;
+    esac
+    value="${value#"${value%%[![:space:]]*}"}"
+    value="${value%"${value##*[![:space:]]}"}"
+    printf '%s' "$value"
+}
+
 env_value() {
     local key="$1" value
     value="$(grep -E "^${key}=" .env | tail -n 1 | cut -d= -f2- || true)"
-    # .env may have been edited on Windows and contain CRLF line endings.
-    # Keep dotenv values as data, but do not pass the trailing CR to Docker or
-    # PostgreSQL as part of the username/database name.
-    value="${value%$'\r'}"
-    printf '%s' "$value"
+    normalize_env_value "$value"
+}
+
+storage_backend_is_s3() {
+    local backend
+    backend="$(env_value STORAGE_BACKEND)"
+    [[ "${backend,,}" == "s3" ]]
 }
 
 is_placeholder() {
@@ -383,6 +406,59 @@ validate_compose() {
     compose config --quiet || die "Docker Compose configuration is invalid"
 }
 
+wait_for_netops_health() {
+    local timeout_seconds="${NETOPS_STARTUP_RECOVERY_TIMEOUT_SECONDS:-120}"
+    local deadline health="" last_health="" netops_id=""
+    [[ "$timeout_seconds" =~ ^[0-9]+$ ]] || timeout_seconds=120
+    deadline=$((SECONDS + timeout_seconds))
+
+    while (( SECONDS <= deadline )); do
+        netops_id="$(compose ps -aq netops 2>/dev/null || true)"
+        if [[ -n "$netops_id" ]]; then
+            health="$(docker inspect --format '{{if .State.Health}}{{.State.Health.Status}}{{else}}none{{end}}' "$netops_id" 2>/dev/null || true)"
+        else
+            health="missing"
+        fi
+        health="${health:-unknown}"
+        if [[ "$health" != "$last_health" ]]; then
+            log "Startup recovery: netops health=$health"
+            last_health="$health"
+        fi
+        [[ "$health" == "healthy" ]] && return 0
+        sleep 2
+    done
+
+    log "Startup recovery timed out after ${timeout_seconds}s; current netops health=${last_health:-unknown}"
+    return 1
+}
+
+start_compose_services() {
+    local start_mode="${1:-build}" startup_status=0 retry_status=0
+    shift || true
+    local service_args=("$@") initial_args=()
+    if [[ "$start_mode" == "build" ]]; then
+        initial_args=(--force-recreate --remove-orphans)
+    else
+        initial_args=(--no-build --pull never --remove-orphans)
+    fi
+
+    compose up -d "${initial_args[@]}" "${service_args[@]}" || startup_status=$?
+    (( startup_status == 0 )) && return 0
+    log "Initial Compose startup failed with exit status ${startup_status}; preserving the error while waiting for netops health"
+    if ! wait_for_netops_health; then
+        log "Compose startup recovery did not reach a healthy netops container; returning initial exit status ${startup_status}"
+        return "$startup_status"
+    fi
+
+    log "netops is healthy; retrying Compose startup without rebuilding or pulling images"
+    compose up -d --no-build --pull never --remove-orphans "${service_args[@]}" || retry_status=$?
+    if (( retry_status != 0 )); then
+        log "Compose startup recovery failed with exit status ${retry_status}; initial startup exit status was ${startup_status}"
+        return "$retry_status"
+    fi
+    return 0
+}
+
 build_and_start() {
     validate_compose
     local build_args=(db netops nginx)
@@ -396,7 +472,7 @@ build_and_start() {
     # Build the database image first so pgvector and pg_trgm are present before
     # the application container starts its migrations.
     compose build "${build_args[@]}"
-    compose up -d --force-recreate --remove-orphans "${service_args[@]}"
+    start_compose_services build "${service_args[@]}"
     start_deferred_vmagent
     stop_disabled_redis
     if ! prune_legacy_grafana_dashboard; then
@@ -593,7 +669,7 @@ start_offline() {
     verify_required_images
     local service_args=()
     mapfile -t service_args < <(compose_service_args)
-    compose up -d --no-build --pull never --remove-orphans "${service_args[@]}"
+    start_compose_services offline "${service_args[@]}"
     stop_disabled_redis
     if ! prune_legacy_grafana_dashboard; then
         log "Warning: legacy Grafana dashboard cleanup did not complete; retry with 'bash scripts/deploy-docker.sh prune-legacy-dashboard'"
@@ -634,6 +710,7 @@ reset_data() {
     log "NetOps Docker data reset complete"
 }
 
+if [[ "${NETOPS_DOCKER_SCRIPT_SOURCE_ONLY:-0}" != "1" ]]; then
 COMMAND="${1:-help}"
 shift || true
 DEPLOYMENT_DIR="${NETOPS_DIR:-$PWD}"
@@ -738,3 +815,4 @@ case "$COMMAND" in
         die "Unknown command: $COMMAND"
         ;;
 esac
+fi

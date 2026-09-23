@@ -36,6 +36,45 @@ PostgreSQL 18 官方容器将数据目录设为 `/var/lib/postgresql/18/docker`�
    ```
 3. 访问 `http://localhost`。
 
+## S3 对象存储与 SeaweedFS
+
+默认 `STORAGE_BACKEND=local`，不会启动对象存储 sidecar。SeaweedFS 定义在
+`object-storage` Compose profile 中，因此裸执行 `docker compose up` 不会自动
+启用它。推荐让部署脚本根据 `.env` 中的存储模式选择 profile：
+
+```dotenv
+STORAGE_BACKEND=s3
+S3_ENDPOINT_URL=http://seaweedfs:8333
+S3_BUCKET=nexora
+S3_ACCESS_KEY_ID=replace-with-a-real-access-key
+S3_SECRET_ACCESS_KEY=replace-with-a-real-secret-key
+```
+
+S3 模式必须提供 endpoint、bucket、access key 和 secret key。`seaweedfs` 是
+Compose 网络内的服务名，不能改成 `127.0.0.1`，否则后端容器会访问自身而不是
+SeaweedFS。填写好这些值后执行：
+
+```bash
+bash scripts/deploy-docker.sh install
+# 已有部署使用：
+bash scripts/deploy-docker.sh update --force
+```
+
+安装、更新和离线启动遇到 `netops` 尚未通过健康检查导致的首次 Compose
+失败时，脚本会保留原始错误上下文，显示当前 health 状态并在默认 120 秒内
+等待 `netops` 变为 healthy；恢复后自动以 `--no-build --pull never` 补启动
+其余服务，不重建容器或删除数据卷。可通过
+`NETOPS_STARTUP_RECOVERY_TIMEOUT_SECONDS` 调整等待上限。
+
+如果直接使用 Compose，请显式启用 profile：
+
+```bash
+docker compose --profile object-storage up -d
+```
+
+不要把真实凭据提交到仓库；生产环境应使用部署机上的 `.env` 或 Secret Manager，
+并按实际 S3 服务调整 endpoint 和 TLS 校验设置。
+
 Docker Compose 默认启用 Prometheus-compatible 的 VictoriaMetrics 查询路径，
 并把 `netops` 编译发布的采集目标、SNMP 认证和 vmagent 配置通过
 `nexora-monitoring-artifacts` 共享卷交给 `vmagent` 与 `snmp-exporter`。

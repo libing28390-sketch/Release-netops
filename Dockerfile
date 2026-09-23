@@ -92,8 +92,8 @@ ENV TZ=Asia/Shanghai
 EXPOSE 8003
 
 # Health check
-HEALTHCHECK --interval=30s --timeout=5s --start-period=15s --retries=3 \
-    CMD python -c "import urllib.request; urllib.request.urlopen('http://localhost:8003/api/health/live', timeout=3)" || exit 1
+HEALTHCHECK --interval=30s --timeout=5s --start-period=120s --retries=3 \
+    CMD python -c "import urllib.request; urllib.request.build_opener(urllib.request.ProxyHandler({})).open('http://127.0.0.1:8003/api/health/live', timeout=3)" || exit 1
 
 # Non-root user for security
 RUN useradd --create-home --shell /bin/bash --uid 1000 netops && \

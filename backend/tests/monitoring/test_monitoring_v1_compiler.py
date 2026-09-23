@@ -59,6 +59,13 @@ def test_compiler_builds_secret_free_snapshot_and_artifact():
     assert "private" not in artifact["files"]["vmagent/targets/snmp_targets.yml"]
     assert "auth_opaque" in artifact["files"]["vmagent/targets/snmp_targets.yml"]
     assert yaml.safe_load(artifact["files"]["snmp_exporter/auth/auth.yml"])["auths"]["auth_opaque"]["version"] == 2
+    snmp_config = yaml.safe_load(artifact["files"]["snmp_exporter/snmp.yml"])
+    if_metrics = snmp_config["modules"]["generic_ifmib_interface_std"]["metrics"]
+    if_oper_status = next(metric for metric in if_metrics if metric["name"] == "ifOperStatus")
+    assert if_oper_status["lookups"] == [
+        {"labels": ["ifIndex"], "labelname": "ifName", "oid": "1.3.6.1.2.1.31.1.1.1.1", "type": "DisplayString"},
+        {"labels": ["ifIndex"], "labelname": "ifDescr", "oid": "1.3.6.1.2.1.2.2.1.2", "type": "DisplayString"},
+    ]
     assert artifact["manifest"]["config_version"] == 7
     assert "snmp_exporter/modules/generic_ifmib_interface_std.yml" in artifact["files"]
     assert "snmp_exporter/modules/modules.yml" in artifact["files"]
@@ -272,6 +279,69 @@ def test_runtime_normalizer_repairs_legacy_exporter_copy(tmp_path):
     metric = normalized["modules"]["demo"]["metrics"][0]
     assert "unit" not in metric
     assert "source_name" not in metric
+
+
+def test_runtime_normalizer_upgrades_old_lookup_schema_in_persistent_volume(tmp_path):
+    runtime = tmp_path / "runtime" / "snmp_exporter"
+    runtime.mkdir(parents=True)
+    config = runtime / "snmp.yml"
+    config.write_text(
+        """auths: {}
+modules:
+  demo:
+    walk: [1.3.6.1.2.1.2.2]
+    metrics:
+      - name: ifName
+        oid: 1.3.6.1.2.1.31.1.1.1.1
+        type: DisplayString
+        help: Interface name
+      - name: ifDescr
+        oid: 1.3.6.1.2.1.2.2.1.2
+        type: DisplayString
+        help: Interface description
+      - name: ifOperStatus
+        oid: 1.3.6.1.2.1.2.2.1.8
+        type: gauge
+        help: Interface operational state
+        indexes:
+          - labelname: ifIndex
+            type: gauge
+        lookups:
+          - source_indexes: [ifIndex]
+            lookup: ifName
+          - source_indexes: [ifIndex]
+            lookup: ifDescr
+""",
+        encoding="utf-8",
+    )
+
+    assert normalize_snmp_runtime(tmp_path / "runtime") == 2
+    normalized = yaml.safe_load(config.read_text(encoding="utf-8"))
+    lookups = normalized["modules"]["demo"]["metrics"][2]["lookups"]
+    assert lookups == [
+        {"labels": ["ifIndex"], "labelname": "ifName", "oid": "1.3.6.1.2.1.31.1.1.1.1", "type": "DisplayString"},
+        {"labels": ["ifIndex"], "labelname": "ifDescr", "oid": "1.3.6.1.2.1.2.2.1.2", "type": "DisplayString"},
+    ]
+    assert normalize_snmp_runtime(tmp_path / "runtime") == 0
+
+
+def test_oid_config_compiler_accepts_legacy_lookups_but_emits_v026_schema():
+    config = validate_oid_config({
+        "walk": ["1.3.6.1.2.1.2.2"],
+        "metrics": [
+            {"name": "ifName", "oid": "1.3.6.1.2.1.31.1.1.1.1", "type": "DisplayString"},
+            {"name": "ifOperStatus", "oid": "1.3.6.1.2.1.2.2.1.8", "type": "gauge", "lookups": [
+                {"source_indexes": ["ifIndex"], "lookup": "ifName"},
+            ]},
+        ],
+    })
+
+    assert config["metrics"][1]["lookups"] == [{
+        "labels": ["ifIndex"],
+        "labelname": "ifName",
+        "oid": "1.3.6.1.2.1.31.1.1.1.1",
+        "type": "DisplayString",
+    }]
 
 
 def test_compiled_manifest_records_oid_module_provenance():

@@ -148,11 +148,11 @@ services:
         hard: 65536
     logging: *container-logging
     healthcheck:
-      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://localhost:8003/api/health/live', timeout=3)"]
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.build_opener(urllib.request.ProxyHandler({})).open('http://127.0.0.1:8003/api/health/live', timeout=3)"]
       interval: 30s
       timeout: 5s
       retries: 3
-      start_period: 10s
+      start_period: 120s
 
   victoriametrics:
     image: victoriametrics/victoria-metrics:v1.103.0

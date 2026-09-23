@@ -903,8 +903,10 @@ const calculateAutoLayoutPositions = (
 };
 
 const clampPosition = (value: number, min: number, max: number) => Math.max(min, Math.min(max, value));
-const TOPOLOGY_LAYOUT_STORAGE_KEY = 'nexora.topology.layout.v6';
-const TOPOLOGY_LAYOUT_SCHEMA = 'topology-role-hierarchy-v6';
+// The v8 role-row geometry follows the spacing between role layers. Keep older
+// coordinates under their existing keys while generating a fresh baseline.
+const TOPOLOGY_LAYOUT_STORAGE_KEY = 'nexora.topology.layout.v8';
+const TOPOLOGY_LAYOUT_SCHEMA = 'topology-role-hierarchy-v8';
 
 type PersistedTopologyLayout = {
   schema?: string;
@@ -969,11 +971,9 @@ const createDefaultTransform = (width: number, height: number, nodes?: { x: numb
   const cx = (minX + maxX) / 2;
   const cy = (minY + maxY) / 2;
 
-  // Reserve top margin for floating toolbar (~56px) so top nodes are not occluded
-  const topToolbarMargin = 60;
   const paddingPercent = 0.15; // occupy ~85% of viewport
   const targetWidth = width * (1 - paddingPercent);
-  const targetHeight = Math.max(120, (height - topToolbarMargin) * (1 - paddingPercent));
+  const targetHeight = Math.max(120, height * (1 - paddingPercent));
 
   let scale = Math.min(targetWidth / dx, targetHeight / dy);
 
@@ -983,7 +983,7 @@ const createDefaultTransform = (width: number, height: number, nodes?: { x: numb
   scale = Math.max(minAllowedScale, Math.min(scale, 1.35));
 
   const tx = width / 2 - cx * scale;
-  const ty = (height + topToolbarMargin) / 2 - cy * scale;
+  const ty = height / 2 - cy * scale;
 
   return d3.zoomIdentity.translate(tx, ty).scale(scale);
 };
@@ -1126,6 +1126,7 @@ const TopologyGraph: React.FC<TopologyGraphProps> = ({ devices, links, onNodeCli
   const GRID_SIZE = 16;
   const svgRef = useRef<SVGSVGElement>(null);
   const containerRef = useRef<HTMLDivElement>(null);
+  const graphViewportRef = useRef<HTMLDivElement>(null);
   const persistedPositionsRef = useRef<Record<string, { x: number; y: number }>>({});
   const zoomBehaviorRef = useRef<d3.ZoomBehavior<SVGSVGElement, unknown> | null>(null);
   const svgSelectionRef = useRef<d3.Selection<SVGSVGElement, unknown, null, undefined> | null>(null);
@@ -1233,7 +1234,7 @@ const TopologyGraph: React.FC<TopologyGraphProps> = ({ devices, links, onNodeCli
   };
 
   const updateHoverCard = (event: any, device: Device) => {
-    const container = containerRef.current;
+    const container = graphViewportRef.current;
     if (!container) return;
     clearHoverHideTimer();
     const rect = container.getBoundingClientRect();
@@ -1259,7 +1260,7 @@ const TopologyGraph: React.FC<TopologyGraphProps> = ({ devices, links, onNodeCli
   };
 
   const updateLinkHoverCard = (event: any, link: Link) => {
-    const container = containerRef.current;
+    const container = graphViewportRef.current;
     if (!container) return;
     clearHoverHideTimer();
     const rect = container.getBoundingClientRect();
@@ -1609,13 +1610,13 @@ const TopologyGraph: React.FC<TopologyGraphProps> = ({ devices, links, onNodeCli
   };
 
   useEffect(() => {
-    if (!containerRef.current) return;
+    if (!graphViewportRef.current) return;
 
     const updateViewport = () => {
-      if (!containerRef.current) return;
+      if (!graphViewportRef.current) return;
       const nextViewport = {
-        width: containerRef.current.clientWidth,
-        height: containerRef.current.clientHeight,
+        width: graphViewportRef.current.clientWidth,
+        height: graphViewportRef.current.clientHeight,
       };
       setViewport((current) => (
         current.width === nextViewport.width && current.height === nextViewport.height
@@ -1626,7 +1627,7 @@ const TopologyGraph: React.FC<TopologyGraphProps> = ({ devices, links, onNodeCli
 
     updateViewport();
     const observer = new ResizeObserver(updateViewport);
-    observer.observe(containerRef.current);
+    observer.observe(graphViewportRef.current);
     window.addEventListener('resize', updateViewport);
 
     return () => {
@@ -1824,7 +1825,7 @@ const TopologyGraph: React.FC<TopologyGraphProps> = ({ devices, links, onNodeCli
 
   /* eslint-disable react-hooks/exhaustive-deps */
   useLayoutEffect(() => {
-    if (!svgRef.current || !containerRef.current || graphDevices.length === 0 || viewport.width === 0 || viewport.height === 0) return;
+    if (!svgRef.current || !graphViewportRef.current || graphDevices.length === 0 || viewport.width === 0 || viewport.height === 0) return;
 
     const width = viewport.width;
     const height = viewport.height;
@@ -3368,13 +3369,9 @@ const TopologyGraph: React.FC<TopologyGraphProps> = ({ devices, links, onNodeCli
   /* eslint-enable react-hooks/exhaustive-deps */
 
   return (
-    <div ref={containerRef} className={`relative h-full w-full overflow-hidden rounded-[24px] border border-slate-200 bg-white shadow-inner ${spacePanActive ? 'topology-space-pan' : ''}`}>
-      {devices.length === 0 && (
-        <div className="absolute inset-0 flex items-center justify-center text-sm text-slate-500">
-          暂无拓扑数据
-        </div>
-      )}
-      <div className="absolute right-4 top-4 z-10 flex max-w-[calc(100%-2rem)] flex-wrap items-center justify-end gap-1.5 rounded-2xl border border-slate-200 bg-white/95 px-2.5 py-2 shadow-[0_10px_28px_rgba(15,23,42,0.12)] backdrop-blur-sm">
+    <div ref={containerRef} className={`relative flex h-full w-full flex-col overflow-hidden rounded-[24px] border border-slate-200 bg-white shadow-inner ${spacePanActive ? 'topology-space-pan' : ''}`}>
+      <div className="z-10 w-full shrink-0 overflow-x-auto border-b border-slate-200 bg-white/95 shadow-sm">
+      <div className="flex w-max min-w-full flex-nowrap items-center gap-1.5 px-3 py-2">
         <span
           className="inline-flex h-8 items-center rounded-xl border border-cyan-200 bg-cyan-50 px-2.5 text-[10px] font-extrabold text-cyan-700"
           title="拓扑位置优先使用有向关系；物理链路按导入角色分层"
@@ -3563,7 +3560,14 @@ const TopologyGraph: React.FC<TopologyGraphProps> = ({ devices, links, onNodeCli
           PNG
         </button>
       </div>
+      </div>
 
+      <div ref={graphViewportRef} className="relative min-h-0 flex-1 overflow-hidden">
+      {devices.length === 0 && (
+        <div className="absolute inset-0 flex items-center justify-center text-sm text-slate-500">
+          暂无拓扑数据
+        </div>
+      )}
       {minimapSnapshot && (
         <div className="absolute bottom-3 right-3 z-10">
           {!minimapOpen ? (
@@ -3787,6 +3791,7 @@ const TopologyGraph: React.FC<TopologyGraphProps> = ({ devices, links, onNodeCli
         </div>
       )}
       <svg ref={svgRef} className="topology-graph-svg h-full w-full" />
+      </div>
     </div>
   );
 };

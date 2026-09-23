@@ -39,6 +39,21 @@ def test_fixed_collector_stack_and_queue_contract():
     assert healthcheck["start_period"] == "60s"
 
 
+def test_netops_liveness_probe_bypasses_proxy_and_allows_cold_start():
+    compose = yaml.safe_load((ROOT / "docker-compose.yml").read_text(encoding="utf-8"))
+    healthcheck = compose["services"]["netops"]["healthcheck"]
+    command = " ".join(str(value) for value in healthcheck["test"])
+
+    assert "127.0.0.1:8003/api/health/live" in command
+    assert "ProxyHandler({})" in command
+    assert healthcheck["start_period"] == "120s"
+
+    dockerfile = (ROOT / "Dockerfile").read_text(encoding="utf-8")
+    assert "--start-period=120s" in dockerfile
+    assert "ProxyHandler({})" in dockerfile
+    assert "127.0.0.1:8003/api/health/live" in dockerfile
+
+
 def test_static_vmagent_and_generic_ifmib_contract():
     scrape = yaml.safe_load((ROOT / "monitoring" / "vmagent" / "scrape.yml").read_text(encoding="utf-8"))
     relabel = scrape["scrape_configs"][0]["relabel_configs"]
@@ -54,6 +69,13 @@ def test_static_vmagent_and_generic_ifmib_contract():
     assert "1.3.6.1.2.1.31.1.1" in walk
     assert "1.3.6.1.2.1.10.7.2.1" in walk
     assert "ifHCInOctets" not in str(walk)  # OIDs are intentionally module-owned, not raw label text
+    assert not {"source_indexes", "lookup"} & {
+        key
+        for module in exporter["modules"].values()
+        for metric in module.get("metrics", [])
+        for lookup in metric.get("lookups", [])
+        for key in lookup
+    }
     generic_metrics = {item["name"] for item in exporter["modules"]["generic_ifmib_interface_std"]["metrics"]}
     assert {"ifHCInUcastPkts", "ifHCInMulticastPkts", "ifHCOutUcastPkts", "ifPhysAddress"} <= generic_metrics
     assert {"h3c_common_std", "huawei_common_std", "cisco_common_std"} <= set(exporter["modules"])

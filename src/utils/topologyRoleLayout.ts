@@ -323,12 +323,14 @@ export const countTopologyLayerCrossings = (
 const buildHorizontalRowPositions = (
   ids: string[],
   width: number,
-  height: number,
   y: number,
+  layerGap: number,
 ): Record<string, TopologyRoleLayoutPoint> => {
   const sideInset = Math.min(72, Math.max(48, width * 0.06));
   const availableWidth = Math.max(0, width - sideInset * 2);
-  const maxSpacing = Math.max(250, width * 0.28);
+  // Relate horizontal row spread to the actual tier separation. Using total
+  // canvas height makes four-tier topologies look much wider than they are tall.
+  const maxSpacing = Math.max(250, Math.min(width * 0.42, layerGap * 3.2));
   const spacing = ids.length > 1
     ? Math.min(maxSpacing, availableWidth / (ids.length - 1))
     : 0;
@@ -385,7 +387,7 @@ export const buildTopologyRoleLayeredPositions = (
     const rowIds = orderedRows.get(layer) || [];
     Object.assign(
       positions,
-      buildHorizontalRowPositions(rowIds, width, height, firstLayerY + layerGap * index),
+      buildHorizontalRowPositions(rowIds, width, firstLayerY + layerGap * index, layerGap),
     );
   });
   return positions;
@@ -414,6 +416,13 @@ export const repairTopologyRoleLayeredPositions = (
     const rowKey = base.y;
     rows.set(rowKey, [...(rows.get(rowKey) || []), device]);
   });
+  const rowKeys = Array.from(rows.keys()).sort((left, right) => left - right);
+  const observedLayerGaps = rowKeys.slice(1)
+    .map((rowKey, index) => rowKey - rowKeys[index])
+    .filter((gap) => gap > 0);
+  const layerGap = observedLayerGaps.length > 0
+    ? Math.min(...observedLayerGaps)
+    : Math.min(170, Math.max(82, height * 0.22));
 
   const structuredDevices = devices.filter((device) => isFinitePoint(structuredPositions[device.id]));
   const hasCompletePreferredPositions = structuredDevices.length > 0 && structuredDevices.every((device) => (
@@ -464,8 +473,8 @@ export const repairTopologyRoleLayeredPositions = (
       const rowPositions = buildHorizontalRowPositions(
         candidates.map((entry) => entry.device.id),
         width,
-        height,
         rowKey,
+        layerGap,
       );
       Object.assign(repaired, rowPositions);
       return;

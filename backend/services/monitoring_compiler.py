@@ -33,6 +33,10 @@ _DURATION_RE = re.compile(r"^\s*(\d+(?:\.\d+)?)\s*([smh]?)\s*$", re.I)
 _NUMERIC_OID_RE = re.compile(r"^\.?\d+(?:\.\d+)+$")
 _MIB_OID_RE = re.compile(r"^[A-Za-z][A-Za-z0-9_-]*::[A-Za-z][A-Za-z0-9_-]*(?:\.\d+)*$")
 _METRIC_NAME_RE = re.compile(r"^[a-zA-Z_:][a-zA-Z0-9_:]*$")
+_LEGACY_LOOKUP_METADATA = {
+    "ifName": ("1.3.6.1.2.1.31.1.1.1.1", "DisplayString"),
+    "ifDescr": ("1.3.6.1.2.1.2.2.1.2", "DisplayString"),
+}
 
 
 def _valid_oid_token(value: str) -> bool:
@@ -110,6 +114,17 @@ def _parse_variant_oid_config(value: Any, *, include_unit: bool = True) -> dict[
         metrics = []
     if not isinstance(metrics, list) or len(metrics) > 1024:
         raise CompileError("OID_CONFIG_METRICS_INVALID")
+    lookup_metric_metadata: dict[str, tuple[str, str]] = {}
+    for candidate in metrics:
+        if not isinstance(candidate, Mapping):
+            continue
+        candidate_name = str(candidate.get("name") or "").strip()
+        candidate_oid = str(candidate.get("oid") or "").strip().lstrip(".")
+        candidate_type = str(candidate.get("type") or "gauge").strip()
+        candidate_type = {"Counter64": "counter", "Counter32": "counter", "Gauge32": "gauge", "Integer32": "gauge"}.get(candidate_type, candidate_type)
+        if candidate_name and candidate_oid and _valid_oid_token(candidate_oid):
+            lookup_metric_metadata[candidate_name] = (candidate_oid, candidate_type)
+
     normalized_metrics: list[dict[str, Any]] = []
     metric_oids: set[str] = set()
     for metric in metrics:
@@ -153,15 +168,44 @@ def _parse_variant_oid_config(value: Any, *, include_unit: bool = True) -> dict[
         if lookups is not None:
             if not isinstance(lookups, list) or len(lookups) > 16:
                 raise CompileError(f"OID_CONFIG_LOOKUPS_INVALID:{name}")
+            normalized_lookups: list[dict[str, Any]] = []
             for lookup in lookups:
                 if not isinstance(lookup, Mapping):
                     raise CompileError(f"OID_CONFIG_LOOKUP_INVALID:{name}")
-                lookup_target = str(lookup.get("lookup") or lookup.get("labelname") or "").strip()
+                is_legacy_lookup = "source_indexes" in lookup or "lookup" in lookup
+                if is_legacy_lookup:
+                    lookup_target = str(lookup.get("lookup") or "").strip()
+                    labels = lookup.get("source_indexes")
+                    target_metadata = lookup_metric_metadata.get(lookup_target) or _LEGACY_LOOKUP_METADATA.get(lookup_target)
+                    if target_metadata is None:
+                        raise CompileError(f"OID_CONFIG_LOOKUP_TARGET_NOT_FOUND:{lookup_target}")
+                    lookup_oid = str(lookup.get("oid") or target_metadata[0]).strip()
+                    lookup_type = str(lookup.get("type") or target_metadata[1]).strip()
+                else:
+                    lookup_target = str(lookup.get("labelname") or "").strip()
+                    labels = lookup.get("labels")
+                    lookup_oid = str(lookup.get("oid") or "").strip()
+                    lookup_type = str(lookup.get("type") or "").strip()
                 if not _METRIC_NAME_RE.fullmatch(lookup_target):
                     raise CompileError(f"OID_CONFIG_LOOKUP_INVALID:{name}")
-                lookup_oid = str(lookup.get("oid") or "").strip()
+                if not isinstance(labels, list) or len(labels) > 16 or any(
+                    not _METRIC_NAME_RE.fullmatch(str(label or "").strip()) for label in labels
+                ):
+                    raise CompileError(f"OID_CONFIG_LOOKUP_LABELS_INVALID:{name}")
                 if lookup_oid and not _valid_oid_token(lookup_oid):
                     raise CompileError(f"OID_CONFIG_LOOKUP_OID_INVALID:{name}")
+                normalized_lookup = {"labels": [str(label).strip() for label in labels], "labelname": lookup_target}
+                if lookup_oid:
+                    normalized_lookup["oid"] = lookup_oid.lstrip(".")
+                if lookup_type:
+                    if lookup_type not in {"gauge", "counter", "DisplayString", "OctetString", "PhysAddress48", "EnumAsInfo", "EnumAsStateSet"}:
+                        raise CompileError(f"OID_CONFIG_LOOKUP_TYPE_INVALID:{name}")
+                    normalized_lookup["type"] = lookup_type
+                for optional_key in ("display_hint", "enum_values"):
+                    if optional_key in lookup:
+                        normalized_lookup[optional_key] = lookup[optional_key]
+                normalized_lookups.append(normalized_lookup)
+            item["lookups"] = normalized_lookups
         normalized_metrics.append(item)
     config["metrics"] = normalized_metrics
     if not config.get("walk") and not config.get("get"):
@@ -175,8 +219,8 @@ def _fallback_exporter_modules() -> dict[str, dict[str, Any]]:
     """Compatibility modules for offline callers that pass no catalog rows."""
 
     _if_lookups = [
-        {"source_indexes": ["ifIndex"], "lookup": "ifName"},
-        {"source_indexes": ["ifIndex"], "lookup": "ifDescr"},
+        {"labels": ["ifIndex"], "labelname": "ifName", "oid": "1.3.6.1.2.1.31.1.1.1.1", "type": "DisplayString"},
+        {"labels": ["ifIndex"], "labelname": "ifDescr", "oid": "1.3.6.1.2.1.2.2.1.2", "type": "DisplayString"},
     ]
     return {
         GENERIC_IF_MIB_VARIANT["variant_key"]: {

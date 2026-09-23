@@ -13,17 +13,20 @@ import {
   Eye,
   Info,
   RefreshCw,
+  Download,
   Check,
   AlertTriangle,
   ChevronDown,
   ChevronRight,
 } from 'lucide-react';
 import { motion, AnimatePresence } from 'framer-motion';
+import * as XLSX from 'xlsx';
 import PageHero from '../../components/PageHero';
 import Pagination from '../../components/Pagination';
 import { ActionButton, ActionIconButton, ActionIconGroup } from '../../components/ui/ActionIconButton';
 import { useNavigate } from 'react-router-dom';
 import { isValidIPv4, isValidIPv6, toNum } from './helpers';
+import { fetchAllPrefixPages, mapPrefixesForExport, serializePrefixCsv } from './prefixExport';
 
 interface Prefix {
   id: string;
@@ -189,6 +192,10 @@ const PrefixManagementTab: React.FC<PrefixManagementTabProps> = ({ language, t }
   const [page, setPage] = useState(1);
   const [pageSize, setPageSize] = useState(20);
   const [totalPrefixes, setTotalPrefixes] = useState(0);
+  const [exportFormat, setExportFormat] = useState<'xlsx' | 'csv'>('xlsx');
+  const [exporting, setExporting] = useState(false);
+  const [exportNotice, setExportNotice] = useState('');
+  const [exportError, setExportError] = useState('');
 
   const usableIpDetails = useMemo(() => {
     const cidr = form.prefix.trim();
@@ -482,6 +489,51 @@ const PrefixManagementTab: React.FC<PrefixManagementTabProps> = ({ language, t }
       setLoading(false);
     }
   }, [search, siteFilter, statusFilter, familyFilter, page, pageSize, authHeaders]);
+
+  const exportPrefixes = async () => {
+    setExporting(true);
+    setExportNotice('');
+    setExportError('');
+    try {
+      const allPrefixes = await fetchAllPrefixPages('/api/ipam/subnets', {
+        q: search,
+        site: siteFilter,
+        status: statusFilter,
+        family: familyFilter,
+      }, authHeaders(), zh ? 'zh' : 'en');
+
+      const exportData = mapPrefixesForExport(allPrefixes, zh ? 'zh' : 'en');
+      const timestamp = new Date().toISOString().slice(0, 10);
+      const basename = zh ? `IPAM前缀_${timestamp}` : `ipam_prefixes_${timestamp}`;
+      if (exportFormat === 'xlsx') {
+        const worksheet = XLSX.utils.aoa_to_sheet([exportData.headers, ...exportData.rows]);
+        worksheet['!cols'] = exportData.headers.map((header, index) => {
+          const contentWidth = exportData.rows.reduce((width, row) => Math.max(width, String(row[index] ?? '').length), header.length);
+          return { wch: Math.min(44, Math.max(12, contentWidth + 2)) };
+        });
+        if (worksheet['!ref']) worksheet['!autofilter'] = { ref: worksheet['!ref'] };
+        const workbook = XLSX.utils.book_new();
+        XLSX.utils.book_append_sheet(workbook, worksheet, 'Prefixes');
+        XLSX.writeFile(workbook, `${basename}.xlsx`);
+      } else {
+        const blob = new Blob([serializePrefixCsv(exportData)], { type: 'text/csv;charset=utf-8;' });
+        const url = URL.createObjectURL(blob);
+        const downloadLink = document.createElement('a');
+        downloadLink.href = url;
+        downloadLink.download = `${basename}.csv`;
+        downloadLink.style.display = 'none';
+        document.body.appendChild(downloadLink);
+        downloadLink.click();
+        downloadLink.remove();
+        window.setTimeout(() => URL.revokeObjectURL(url), 0);
+      }
+      setExportNotice(zh ? `已导出 ${allPrefixes.length} 条前缀` : `Exported ${allPrefixes.length} prefixes`);
+    } catch (error) {
+      setExportError(error instanceof Error ? error.message : String(error));
+    } finally {
+      setExporting(false);
+    }
+  };
 
   const openInterfaceGeneration = async (clearResult = true) => {
     setInterfaceGenerationLoading(true);
@@ -878,6 +930,26 @@ const PrefixManagementTab: React.FC<PrefixManagementTabProps> = ({ language, t }
             >
               {zh ? '从接口 IP 生成' : 'Generate from Interfaces'}
             </ActionButton>
+            <select
+              aria-label={zh ? '导出格式' : 'Export format'}
+              title={zh ? '导出当前筛选下的全部前缀，不受列表分页影响' : 'Export all prefixes matching the current filters, across pages'}
+              value={exportFormat}
+              onChange={(event) => setExportFormat(event.target.value as 'xlsx' | 'csv')}
+              disabled={exporting}
+              className="h-9 rounded-xl border border-gray-200 bg-white px-2 text-xs font-semibold text-gray-600 outline-none focus:border-cyan-400 disabled:opacity-50"
+            >
+              <option value="xlsx">XLSX</option>
+              <option value="csv">CSV</option>
+            </select>
+            <ActionButton
+              icon={Download}
+              variant="default"
+              onClick={exportPrefixes}
+              disabled={exporting}
+              title={zh ? '导出当前筛选结果的全部前缀' : 'Export every prefix matching the current filters'}
+            >
+              {exporting ? (zh ? '导出中…' : 'Exporting…') : (zh ? '导出' : 'Export')}
+            </ActionButton>
             {selectedIds.size > 0 && (
               <ActionButton
                 icon={Trash2}
@@ -973,6 +1045,18 @@ const PrefixManagementTab: React.FC<PrefixManagementTabProps> = ({ language, t }
           </div>
         }
       />
+
+      {(exportError || exportNotice) && (
+        <div
+          role={exportError ? 'alert' : 'status'}
+          className={`flex shrink-0 items-center justify-between rounded-xl border px-4 py-2 text-xs font-semibold ${exportError ? 'border-rose-200 bg-rose-50 text-rose-700' : 'border-emerald-200 bg-emerald-50 text-emerald-700'}`}
+        >
+          <span>{exportError || exportNotice}</span>
+          <button type="button" onClick={() => { setExportError(''); setExportNotice(''); }} className="ml-3 rounded px-2 py-1 opacity-70 hover:opacity-100" aria-label={zh ? '关闭导出消息' : 'Dismiss export message'}>
+            ×
+          </button>
+        </div>
+      )}
 
       {classificationSummary && (
         <div className="grid grid-cols-2 md:grid-cols-6 gap-2">

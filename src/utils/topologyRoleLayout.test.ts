@@ -88,6 +88,19 @@ describe('topology role-tier layout', () => {
     expect(positions?.['dist-3'].y).toBeLessThan(positions?.['access-5'].y ?? 0);
   });
 
+  it('keeps horizontal row spacing proportional to role-layer separation', () => {
+    const positions = buildTopologyRoleLayeredPositions(whDc02Devices, 2000, 600);
+    expect(positions).not.toBeNull();
+
+    const firewallGap = Math.abs((positions?.['fw-10'].x ?? 0) - (positions?.['fw-9'].x ?? 0));
+    expect(firewallGap).toBeGreaterThanOrEqual(410);
+    expect(firewallGap).toBeLessThanOrEqual(430);
+
+    const ultrawidePositions = buildTopologyRoleLayeredPositions(whDc02Devices, 3000, 600);
+    const ultrawideFirewallGap = Math.abs((ultrawidePositions?.['fw-10'].x ?? 0) - (ultrawidePositions?.['fw-9'].x ?? 0));
+    expect(ultrawideFirewallGap).toBeLessThanOrEqual(430);
+  });
+
   it('repairs collapsed saved x coordinates while keeping the role rows', () => {
     const structured = buildTopologyRoleLayeredPositions(whDc02Devices, 1000, 480);
     expect(structured).not.toBeNull();

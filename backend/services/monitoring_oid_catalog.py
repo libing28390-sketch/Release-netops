@@ -59,8 +59,8 @@ def _metric(
 
 _IF_INDEX = ("ifIndex",)
 _INTERFACE_LOOKUPS = (
-    {"source_indexes": ["ifIndex"], "lookup": "ifName"},
-    {"source_indexes": ["ifIndex"], "lookup": "ifDescr"},
+    {"labels": ["ifIndex"], "labelname": "ifName", "oid": "1.3.6.1.2.1.31.1.1.1.1", "type": "DisplayString"},
+    {"labels": ["ifIndex"], "labelname": "ifDescr", "oid": "1.3.6.1.2.1.2.2.1.2", "type": "DisplayString"},
 )
 _ENTITY_INDEX = ("entity_index",)
 _FLASH_PARTITION_INDEX = ("flash_index", "partition_index")
