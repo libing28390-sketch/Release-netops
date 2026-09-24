@@ -74,3 +74,11 @@ Docker CLI not found (exit 2)
 - Artifact 校验或编译失败不得覆盖 Last Known Good。
 - 保留 Native Provider 和旧配置版本，现场失败时回滚到上一版本。
 - `.env`、真实凭据和 `.tmp/` 不应提交。
+
+## 2026-09-25 Grafana 会话与接口流量断点排查
+
+- 当前分支：`main`。Grafana 子路径/Auth Proxy 本地改动尚未提交；用户要求提交并推送全部相关改动，发布标签为 `v1.0.9`。该标签原来已指向 `f7930d0075eb27e4628e5e425b84ba9902d4915a`；用户明确授权已有标签时强制覆盖。
+- Grafana 重复 `/grafana` 的浏览器根因：普通窗口禁用缓存仍复现，无痕正常，删除浏览器的原生 `grafana_session` 后恢复。Nexora 专用 `nexora_grafana_session` 应保留。仓库改动已调整 Grafana 子路径代理并在 Nginx 上游剥离浏览器 Cookie，同时让内部鉴权子请求单独校验 Nexora 会话；这批 Cookie 隔离改动尚未在服务器部署验证。
+- 接口流量图缺样：vmagent 曾报告 R3/R4 `generic_ifmib_interface_std` 采集因 SNMP exporter 请求超时返回 HTTP 500；后续人工探测两台设备都曾返回 HTTP 200，说明故障间歇发生。
+- 近 30 分钟 VictoriaMetrics range 查询中，`topk(10, ...)` 与去掉 `topk` 的 PromQL 输出缺样时间完全一致，并同时影响所有接口及入/出方向：R3 两段 90 秒间隔；R4 多段 90–150 秒间隔。原始计数器中也存在同步采集间隔。结论：断点来自 SNMP 目标采集不连续，不是 `topk` 截断；设备响应耗时、SNMP exporter 超时与模块轮询负载仍待进一步定位，尚未修复。
+- 后续：完成本地代码与交接文档提交，推送 `main`，将 `v1.0.9` 强制指向发布提交并核实远端；本地 Cookie 隔离改动需后续在服务器部署验证。SNMP 断点需另行检查各轮 scrape 错误时间、exporter 日志及设备响应。

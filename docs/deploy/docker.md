@@ -116,9 +116,11 @@ docker compose logs --tail=200 snmp-exporter vmagent
 ```
 
 Nexora 的“监控大盘”通过同源 `/grafana/` 访问 Grafana，Grafana 数据源已自动
-指向 `http://victoriametrics:8428`。从 Nexora 登录后，Grafana 会通过同源、仅限
-`/grafana` 路径的 HttpOnly 会话 Cookie 和 Nginx Auth Proxy 复用当前登录身份；
-匿名访问仍关闭，浏览器不会获得 Grafana 管理员密码。管理员账号密码仅保留为运维恢复入口。
+指向 `http://victoriametrics:8428`。从 Nexora 登录后，Nginx 的内部鉴权子请求会读取
+`nexora_grafana_session`，将它作为 Bearer 凭据交由后端校验，再通过 Auth Proxy 身份头让
+Grafana 按请求认证；Auth Proxy 不签发 Grafana 登录令牌 Cookie。Nginx 不会把浏览器 Cookie 转发给后端或 Grafana，以免旧的
+`grafana_session` 覆盖代理身份或触发错误跳转；
+匿名访问仍关闭，浏览器不会获得 Grafana 管理员密码。
 需要在 Nexora 内嵌大盘时，保持 `GRAFANA_ALLOW_EMBEDDING=1`。
 
 Auth Proxy 白名单使用独立内部 Docker 网络的 CIDR。默认网段为
@@ -142,11 +144,9 @@ bash scripts/deploy-docker.sh prune-legacy-dashboard
 `GRAFANA_ROOT_URL` 必须填写浏览器实际访问的 HTTPS 地址并保留结尾斜杠，例如
 `https://nexora.example.com/grafana/`。不要保留 `%(domain)s`、`localhost` 或
 Grafana 内部的 `:3000`；否则 Grafana 会把 iframe 重定向到用户工作站的
-`localhost`。Nginx 会剥离 `/grafana/` 前缀后转发到 Grafana，因此 Compose 中
-保持 `GF_SERVER_SERVE_FROM_SUB_PATH=false`；浏览器侧的 `/grafana/` 前缀由
-`GRAFANA_ROOT_URL` 用于生成链接和重定向。不要同时让 Nginx 与 Grafana 处理同一
-子路径。使用 `scripts/deploy-docker.sh` 部署时，缺省占位值会自动根据
-`TLS_COMMON_NAME` 生成。
+`localhost`。Compose 启用 `GF_SERVER_SERVE_FROM_SUB_PATH=true`，Nginx 保留
+`/grafana/` 前缀原样转发给 Grafana。使用 `scripts/deploy-docker.sh` 部署时，缺省占位值会自动
+根据 `TLS_COMMON_NAME` 生成。
 
 Grafana 到 VictoriaMetrics 的请求走 Docker 内部网络；Compose 会清空
 `HTTP_PROXY`/`HTTPS_PROXY` 等主机代理变量，避免内部服务名被转发到外部代理而返回

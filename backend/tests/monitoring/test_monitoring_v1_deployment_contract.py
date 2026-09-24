@@ -29,7 +29,8 @@ def test_fixed_collector_stack_and_queue_contract():
     assert any("provisioning/datasources:/etc/grafana/provisioning/datasources" in item for item in services["grafana"]["volumes"])
     assert any("provisioning/dashboards:/etc/grafana/provisioning/dashboards" in item for item in services["grafana"]["volumes"])
     assert any("monitoring/grafana/dashboards" in item for item in services["grafana"]["volumes"])
-    assert "GF_SERVER_SERVE_FROM_SUB_PATH=false" in services["grafana"]["environment"]
+    assert "GF_SERVER_SERVE_FROM_SUB_PATH=true" in services["grafana"]["environment"]
+    assert "GF_AUTH_PROXY_ENABLE_LOGIN_TOKEN=false" in services["grafana"]["environment"]
     assert "HTTP_PROXY=" in services["grafana"]["environment"]
     assert "HTTPS_PROXY=" in services["grafana"]["environment"]
     assert "ALL_PROXY=" in services["grafana"]["environment"]
@@ -39,19 +40,25 @@ def test_fixed_collector_stack_and_queue_contract():
     assert healthcheck["start_period"] == "60s"
 
 
-def test_grafana_subpath_is_stripped_by_nginx_once():
+def test_grafana_subpath_is_preserved_and_native_session_cookie_is_stripped():
     compose = yaml.safe_load((ROOT / "docker-compose.yml").read_text(encoding="utf-8"))
     grafana_environment = compose["services"]["grafana"]["environment"]
-    assert "GF_SERVER_SERVE_FROM_SUB_PATH=false" in grafana_environment
+    assert "GF_SERVER_SERVE_FROM_SUB_PATH=true" in grafana_environment
+    assert "GF_AUTH_PROXY_ENABLE_LOGIN_TOKEN=false" in grafana_environment
     assert any(
         item.startswith("GF_SERVER_ROOT_URL=") and "/grafana/" in item
         for item in grafana_environment
     )
 
     nginx = (ROOT / "nginx" / "nginx.conf").read_text(encoding="utf-8")
+    auth_location = nginx.split("location = /_grafana_auth {", 1)[1].split("\n    location", 1)[0]
+    assert 'proxy_set_header Authorization       "Bearer $cookie_nexora_grafana_session";' in auth_location
+    assert 'proxy_set_header Cookie              "";' in auth_location
+
     grafana_location = nginx.split("location ^~ /grafana/ {", 1)[1].split("\n    location", 1)[0]
-    assert "proxy_pass http://grafana_backend/;" in grafana_location
-    assert "proxy_set_header X-Forwarded-Prefix /grafana;" in grafana_location
+    assert "proxy_pass http://grafana_backend;" in grafana_location
+    assert 'proxy_set_header Cookie              "";' in grafana_location
+    assert "X-Forwarded-Prefix" not in grafana_location
 
 
 def test_netops_liveness_probe_bypasses_proxy_and_allows_cold_start():
