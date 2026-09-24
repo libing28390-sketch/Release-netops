@@ -353,7 +353,7 @@ def test_manual_large_zip_archive_upload_triggers_background_indexing(monkeypatc
     assert response["success"] is True
     assert response["async"] is True
     assert response["extracted"] == 12
-    assert "cisco" in response["vendors"]
+    assert response["vendors"] == ["Cisco"]
 
 
 def test_zip_member_failure_does_not_abort_other_members(monkeypatch) -> None:

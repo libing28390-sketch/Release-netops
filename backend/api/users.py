@@ -1675,7 +1675,7 @@ async def mfa_disable(request: Request, payload: dict = Body(...)):
         conn.close()
 
 @router.post("/mfa/verify")
-async def mfa_verify(request: Request, response: Response, payload: dict = Body(...)):
+async def mfa_verify(request: Request, payload: dict = Body(...), response: Response = None):
     temp_token = payload.get('temp_token')
     code = payload.get('code')
     
@@ -1738,7 +1738,8 @@ async def mfa_verify(request: Request, response: Response, payload: dict = Body(
         ).fetchone()
         profile = _hydrate_user_row(profile_row)
         profile['lastLogin'] = last_login
-        _set_grafana_session_cookie(response, request, token)
+        if response is not None:
+            _set_grafana_session_cookie(response, request, token)
 
         return {
             "success": True,
