@@ -1,6 +1,7 @@
 import React, { useState, useEffect, useMemo, useRef } from 'react';
 import { X, Trash2, Database, FileText, Search, RefreshCw, Upload, Layers, CheckCircle2, AlertCircle, ChevronDown, ChevronLeft, ChevronRight, ArrowRight } from 'lucide-react';
 import { apiRequest } from '../../api/http';
+import { useEscapeClose } from '../../hooks/useEscapeClose';
 import { ALL_VENDOR_NAMES, NETWORK_VENDOR_GROUPS } from '../../pages/AssetManagement/constants';
 import type { MibNodeItem } from './OidPickerModal';
 import { ActionIconButton } from '../ui/ActionIconButton';
@@ -79,6 +80,7 @@ const MibUploadModal: React.FC<MibUploadModalProps> = ({
   showToast,
   onMapNodeToTemplate,
 }) => {
+  useEscapeClose(open, onClose);
   const zh = language === 'zh';
   const [mibs, setMibs] = useState<MibItem[]>([]);
   const [loading, setLoading] = useState(false);
@@ -315,10 +317,11 @@ const MibUploadModal: React.FC<MibUploadModalProps> = ({
     if (prevSyncRunningRef.current && !syncState.running) {
       void loadMibs(1, searchQuery);
       if (syncState.last_result?.success) {
+        const retiredUnsupported = Number(syncState.last_result.deactivated_out_of_scope ?? 0);
         showToast(
           zh
-            ? `MIB 全量同步完成：成功导入 ${syncState.last_result.imported ?? 0} 个 MIB 模块，共 ${syncState.last_result.nodes ?? 0} 个 OID 节点`
-            : `MIB sync complete: ${syncState.last_result.imported ?? 0} MIBs imported, ${syncState.last_result.nodes ?? 0} OID nodes`,
+            ? `平台厂商 MIB 同步完成：导入 ${syncState.last_result.imported ?? 0} 个模块，共 ${syncState.last_result.nodes ?? 0} 个 OID 节点${retiredUnsupported ? `；停用非平台厂商 MIB ${retiredUnsupported} 个` : ''}`
+            : `Platform vendor MIB sync complete: ${syncState.last_result.imported ?? 0} MIBs, ${syncState.last_result.nodes ?? 0} OID nodes${retiredUnsupported ? `; retired ${retiredUnsupported} unsupported vendor MIBs` : ''}`,
           'success',
         );
       }
@@ -395,7 +398,7 @@ const MibUploadModal: React.FC<MibUploadModalProps> = ({
   };
 
   const handleSyncLibreNMS = async () => {
-    if (!window.confirm(zh ? '确定从 LibreNMS 官方仓库拉取并解析全量厂商 MIB 库吗？这将在后台异步执行。' : 'Fetch and index full multi-vendor MIB library from LibreNMS repository? This runs in the background.')) {
+    if (!window.confirm(zh ? '确定从 LibreNMS 官方仓库同步 MIB 吗？只导入平台已登记厂商，并保留公共标准 MIB；平台不支持的厂商将从目录中停用。' : 'Sync MIBs from LibreNMS? Only registered platform vendors and public standard MIBs are imported; unsupported vendor entries are retired from the catalog.')) {
       return;
     }
     try {
@@ -503,8 +506,8 @@ const MibUploadModal: React.FC<MibUploadModalProps> = ({
               </div>
               <div className="mt-0.5 text-[11px] text-black/45 dark:text-white/45">
                 {zh
-                  ? '已内置 Standard RFC、Cisco、Huawei、H3C、Arista、Ruijie、Juniper、Fortinet 核心 MIB；支持上传 ZIP/MIB 自动索引或通过 LibreNMS 官方目录统一同步'
-                  : 'Pre-loaded with Standard RFC, Cisco, Huawei, H3C, Arista, Ruijie, Juniper, Fortinet MIBs. Supports ZIP/MIB uploads or official LibreNMS sync.'}
+                  ? '已内置公共标准及核心厂商 MIB；LibreNMS 同步仅导入平台已登记厂商，也可手动上传 MIB/ZIP。'
+                  : 'Includes public standards and core vendor MIBs. LibreNMS sync is limited to registered platform vendors; MIB/ZIP files can also be uploaded manually.'}
               </div>
             </div>
           </div>
@@ -524,10 +527,10 @@ const MibUploadModal: React.FC<MibUploadModalProps> = ({
               onClick={() => void handleSyncLibreNMS()}
               disabled={syncState.running || loading}
               className="inline-flex items-center gap-1.5 rounded-lg border border-[#00bceb]/30 bg-[#00bceb]/10 px-3 py-1.5 text-xs font-medium text-[#008aad] hover:bg-[#00bceb]/20 disabled:opacity-50 dark:text-[#00bceb]"
-              title={zh ? '从 LibreNMS 官方仓库拉取并解析全量 MIB' : 'Fetch all MIBs from LibreNMS'}
+              title={zh ? '同步公共标准和平台已登记厂商 MIB' : 'Sync standard and platform-registered vendor MIBs'}
             >
               <RefreshCw size={12} className={syncState.running ? 'animate-spin' : ''} />
-              {syncState.running ? (zh ? 'LibreNMS 同步中…' : 'Syncing LibreNMS…') : (zh ? '同步 LibreNMS 全量 MIB' : 'Sync LibreNMS MIBs')}
+              {syncState.running ? (zh ? 'LibreNMS 同步中…' : 'Syncing LibreNMS…') : (zh ? '同步平台厂商 MIB' : 'Sync platform vendor MIBs')}
             </button>
             <button
               type="button"
@@ -553,7 +556,7 @@ const MibUploadModal: React.FC<MibUploadModalProps> = ({
           <div className="flex items-center justify-between border-b border-[#00bceb]/20 bg-[#00bceb]/[0.06] px-5 py-2 text-xs text-[#008aad] dark:text-[#00bceb]">
             <div className="flex items-center gap-2">
               <RefreshCw size={13} className="animate-spin shrink-0" />
-              <span>{syncState.progress || (zh ? '正在从 LibreNMS 仓库拉取全量 MIB 并在后台解析入库…' : 'Syncing and indexing LibreNMS MIBs in background…')}</span>
+              <span>{syncState.progress || (zh ? '正在同步公共标准和平台已登记厂商 MIB…' : 'Syncing standard and registered platform vendor MIBs…')}</span>
             </div>
           </div>
         )}
@@ -671,7 +674,7 @@ const MibUploadModal: React.FC<MibUploadModalProps> = ({
 
           <div className="flex items-center justify-end bg-black/[.02] px-4 py-3 dark:bg-white/[.02] lg:col-span-6">
             <span className="text-[11px] text-black/45 dark:text-white/45">
-              {zh ? '支持直接上传 MIB/ZIP 自动解压索引，或一键同步 LibreNMS 官方全量库' : 'Supports uploading MIB/ZIP archives with auto-indexing, or syncing the official LibreNMS library'}
+              {zh ? '可手动上传 MIB/ZIP；LibreNMS 自动同步仅包含平台已登记厂商和公共标准。' : 'Upload MIB/ZIP manually, or sync platform-registered vendors and public standards from LibreNMS.'}
             </span>
           </div>
         </div>

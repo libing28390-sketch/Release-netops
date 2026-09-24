@@ -7,6 +7,7 @@ import {
 import { AnimatePresence, motion } from 'motion/react';
 import Pagination from '../../../components/Pagination';
 import type { UnifiedExecutionLog } from '../types';
+import { useEscapeClose } from '../../../hooks/useEscapeClose';
 
 interface HistoryListProps {
   zh: boolean;
@@ -32,6 +33,7 @@ const ExportDropdown: React.FC<{
   onExport: (logId: string, format: string, source: string) => void;
 }> = ({ zh, logId, source, onExport }) => {
   const [open, setOpen] = useState(false);
+  useEscapeClose(open, () => setOpen(false));
   const dropdownRef = useRef<HTMLDivElement>(null);
 
   useEffect(() => {

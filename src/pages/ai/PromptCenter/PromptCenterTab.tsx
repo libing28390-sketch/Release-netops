@@ -40,6 +40,7 @@ import {
 import { useCoreApp } from '../../../contexts/AppDomainContext';
 import Pagination from '../../../components/Pagination';
 import { aiAdminText } from '../../../i18n/aiAdmin';
+import { useEscapeClose } from '../../../hooks/useEscapeClose';
 
 const sceneOptions = [
   { value: 'chat', labelKey: 'ai.prompt.scene.chat.label', shortLabelKey: 'ai.prompt.scene.chat.short', descriptionKey: 'ai.prompt.scene.chat.description' },
@@ -303,6 +304,10 @@ export const PromptCenterTab: React.FC = () => {
   };
 
   const closeEditor = () => { if (!submitting) setEditorOpen(false); };
+  useEscapeClose(editorOpen, closeEditor);
+  useEscapeClose(Boolean(selectedPrompt), () => setSelectedPrompt(null));
+  useEscapeClose(copyOpen && Boolean(selectedPrompt) && !copySubmitting, () => setCopyOpen(false));
+  useEscapeClose(Boolean(restoreVersion) && Boolean(selectedPrompt) && !restoreSubmitting, () => setRestoreVersion(null));
 
   const handleSavePrompt = async (event: React.FormEvent) => {
     event.preventDefault();

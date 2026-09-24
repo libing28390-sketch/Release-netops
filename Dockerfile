@@ -28,6 +28,7 @@ RUN apt-get update && \
         libffi-dev \
         libssl-dev \
         libcap2-bin \
+        git \
         tzdata && \
     ln -snf /usr/share/zoneinfo/Asia/Shanghai /etc/localtime && \
     echo "Asia/Shanghai" > /etc/timezone && \

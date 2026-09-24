@@ -13,6 +13,7 @@ import { motion, AnimatePresence } from 'framer-motion';
 import PageHero from '../../components/PageHero';
 import Pagination from '../../components/Pagination';
 import { ActionIconButton, ActionIconGroup } from '../../components/ui/ActionIconButton';
+import { useEscapeClose } from '../../hooks/useEscapeClose';
 
 interface VIP {
   id: string;
@@ -52,6 +53,8 @@ const VIPManagementTab: React.FC<VIPManagementTabProps> = ({ language, t }) => {
   const [showAddEdit, setShowAddEdit] = useState(false);
   const [editingVip, setEditingVip] = useState<VIP | null>(null);
   const [showDeleteConfirm, setShowDeleteConfirm] = useState<string | null>(null);
+  useEscapeClose(showAddEdit, () => { setShowAddEdit(false); setEditingVip(null); });
+  useEscapeClose(Boolean(showDeleteConfirm), () => setShowDeleteConfirm(null));
 
   // Form State
   const [form, setForm] = useState({

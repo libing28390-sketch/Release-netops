@@ -143,6 +143,19 @@ def _sync_device_status_tag(device_id: str, status: str) -> None:
         conn.close()
 
 
+def _schedule_monitoring_target_sync() -> None:
+    """Refresh SNMP file-SD targets after a device reachability transition."""
+    try:
+        from services.collector_sync_service import trigger_async_monitoring_sync
+
+        trigger_async_monitoring_sync(delay_seconds=3.0)
+    except Exception:
+        logger.warning(
+            "Failed to schedule monitoring target sync after device status change",
+            exc_info=True,
+        )
+
+
 def _as_dict(row):
     if isinstance(row, dict):
         return row
@@ -1309,6 +1322,8 @@ async def _process_device_raw(device, cycle_tick: int):
 
         if not ip or ip == '0.0.0.0':
             mark_offline_and_clear_cache()
+            if str(device.get('status') or '').lower() != 'offline':
+                _schedule_monitoring_target_sync()
             return
 
         # 1. Ping Check
@@ -1342,6 +1357,7 @@ async def _process_device_raw(device, cycle_tick: int):
                 logger.info(
                     f"[Status Monitor] Device {ip} status changed to {new_status} via {probe_method}"
                 )
+                _schedule_monitoring_target_sync()
         except Exception:
             new_status = 'offline'
             if device.get('status') != 'offline':
@@ -1351,6 +1367,7 @@ async def _process_device_raw(device, cycle_tick: int):
                     f"{dev_label} ({ip}) 无法连接，Ping 超时",
                     dev_id, ip_address=ip, status='active',
                 )
+                _schedule_monitoring_target_sync()
             mark_offline_and_clear_cache()
 
         # 2. SNMP Metrics Collection (only if online)
@@ -2146,6 +2163,8 @@ async def process_device_fast(device):
 
     if not ip or ip == '0.0.0.0':
         mark_offline_and_clear_cache()
+        if str(device.get('status') or '').lower() != 'offline':
+            _schedule_monitoring_target_sync()
         record_collection_result(
             dev_id,
             'reachability',
@@ -2194,6 +2213,7 @@ async def process_device_fast(device):
             logger.info(
                 f"[Status Monitor] Device {ip} status changed to {new_status} via {probe_method}"
             )
+            _schedule_monitoring_target_sync()
     except Exception as exc:
         record_collection_result(
             dev_id,
@@ -2211,6 +2231,7 @@ async def process_device_fast(device):
                 f"{dev_label} ({ip}) 无法连接，Ping 超时",
                 dev_id, ip_address=ip, status='active',
             )
+            _schedule_monitoring_target_sync()
         mark_offline_and_clear_cache()
 
 async def process_device_slow(device, cycle_tick: int = 0):

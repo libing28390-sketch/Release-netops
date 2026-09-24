@@ -5,6 +5,7 @@ import { apiRequest } from '../api/http';
 import PlatformProfileSelector, { type PlatformProfileOption } from './PlatformProfileSelector';
 import { inferPlatformVendor, platformVendorLabel } from '../utils/platformVendor';
 import { extractSoftwareMajorVersion, getProfileAdaptationMajorVersion } from '../utils/platformVersion';
+import { useEscapeClose } from '../hooks/useEscapeClose';
 
 export { extractSoftwareMajorVersion, getProfileAdaptationMajorVersion } from '../utils/platformVersion';
 
@@ -25,6 +26,7 @@ const BatchPlatformBindingModal: React.FC<BatchPlatformBindingModalProps> = ({
   onClose,
   onCompleted,
 }) => {
+  useEscapeClose(true, onClose);
   const zh = language === 'zh';
   const [operation, setOperation] = useState<BatchPlatformOperation>('add');
   const [profiles, setProfiles] = useState<PlatformProfileOption[]>([]);

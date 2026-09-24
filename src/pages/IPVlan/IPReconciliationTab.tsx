@@ -19,6 +19,7 @@ import { motion, AnimatePresence } from 'framer-motion';
 import PageHero from '../../components/PageHero';
 import Pagination from '../../components/Pagination';
 import { ActionIconButton } from '../../components/ui/ActionIconButton';
+import { useEscapeClose } from '../../hooks/useEscapeClose';
 
 interface UndocumentedEndpoint {
   ip: string;
@@ -101,6 +102,9 @@ const IPReconciliationTab: React.FC<IPReconciliationTabProps> = ({ language, t }
   const [registeringItem, setRegisteringItem] = useState<UndocumentedEndpoint | null>(null);
   const [releasingItem, setReleasingItem] = useState<StaleIPAddress | null>(null);
   const [syncingItem, setSyncingItem] = useState<MismatchedEndpoint | null>(null);
+  useEscapeClose(Boolean(registeringItem), () => setRegisteringItem(null));
+  useEscapeClose(Boolean(releasingItem), () => setReleasingItem(null));
+  useEscapeClose(Boolean(syncingItem), () => setSyncingItem(null));
 
   // Subnet list (for registering items where subnet is not auto-matched)
   const [subnets, setSubnets] = useState<any[]>([]);

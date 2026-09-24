@@ -252,6 +252,13 @@ services:
       - GF_SECURITY_ALLOW_EMBEDDING=${GRAFANA_ALLOW_EMBEDDING:-true}
       - GF_AUTH_ANONYMOUS_ENABLED=${GRAFANA_ANONYMOUS_ENABLED:-false}
       - GF_AUTH_ANONYMOUS_ORG_ROLE=Viewer
+      - GF_AUTH_PROXY_ENABLED=true
+      - GF_AUTH_PROXY_HEADER_NAME=X-WEBAUTH-USER
+      - GF_AUTH_PROXY_HEADER_PROPERTY=username
+      - GF_AUTH_PROXY_AUTO_SIGN_UP=true
+      - GF_AUTH_PROXY_HEADERS=Role:X-WEBAUTH-ROLE
+      - GF_AUTH_PROXY_WHITELIST=${GRAFANA_AUTH_PROXY_NGINX_IP:-172.30.254.2}
+      - GF_USERS_AUTO_ASSIGN_ORG_ROLE=Viewer
       - GF_USERS_ALLOW_SIGN_UP=false
       - GF_SECURITY_ADMIN_USER=${GRAFANA_ADMIN_USER:-admin}
       - GF_SECURITY_ADMIN_PASSWORD=${GRAFANA_ADMIN_PASSWORD:?GRAFANA_ADMIN_PASSWORD must be set}
@@ -280,6 +287,11 @@ services:
     depends_on:
       victoriametrics:
         condition: service_healthy
+    networks:
+      default: {}
+      grafana_auth:
+        aliases:
+          - grafana-auth
     restart: unless-stopped
     logging: *container-logging
     healthcheck:
@@ -325,6 +337,10 @@ services:
     depends_on:
       netops:
         condition: service_healthy
+    networks:
+      default: {}
+      grafana_auth:
+        ipv4_address: ${GRAFANA_AUTH_PROXY_NGINX_IP:-172.30.254.2}
     restart: unless-stopped
     ulimits:
       nofile:
@@ -387,10 +403,11 @@ services:
     container_name: nexora-seaweedfs
     command: ["mini", "-dir=/data"]
     environment:
-      # Defaults keep the inactive profile parseable.  STORAGE_BACKEND=s3
-      # still requires real credentials in the application configuration.
-      - AWS_ACCESS_KEY_ID=${S3_ACCESS_KEY_ID:-nexora-local-access}
-      - AWS_SECRET_ACCESS_KEY=${S3_SECRET_ACCESS_KEY:-replace-with-s3-secret}
+      # Use the same values as the netops S3 client. deploy-docker.sh fills
+      # placeholders before starting the object-storage profile; keeping the
+      # interpolation identical prevents the two services from drifting.
+      - AWS_ACCESS_KEY_ID=${S3_ACCESS_KEY_ID:-}
+      - AWS_SECRET_ACCESS_KEY=${S3_SECRET_ACCESS_KEY:-}
       - S3_BUCKET=${S3_BUCKET:-nexora}
     volumes:
       - nexora-seaweedfs-data:/data
@@ -420,3 +437,10 @@ volumes:
     name: nexora-grafana-data
   nexora-seaweedfs-data:
     name: nexora-seaweedfs-data
+
+networks:
+  grafana_auth:
+    internal: true
+    ipam:
+      config:
+        - subnet: ${GRAFANA_AUTH_PROXY_SUBNET:-172.30.254.0/29}

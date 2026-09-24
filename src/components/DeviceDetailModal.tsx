@@ -25,6 +25,7 @@ import type {
 } from '../types';
 import { connectionCheckBadgeMeta, formatConnectionCheckTime } from '../utils/connectionHelpers';
 import { useChartTheme } from '../hooks/useChartTheme';
+import { useEscapeClose } from '../hooks/useEscapeClose';
 import { apiRequest } from '../api/http';
 import PlatformProfileSelector, { type PlatformProfileOption } from './PlatformProfileSelector';
 import { inferPlatformVendor, platformVendorLabel } from '../utils/platformVendor';
@@ -240,6 +241,7 @@ const DeviceDetailModal: React.FC<DeviceDetailModalProps> = ({
   onPlatformBindingSaved,
   onGoToAutomation,
 }) => {
+  useEscapeClose(true, onClose);
   const ct = useChartTheme();
   const [platformProfiles, setPlatformProfiles] = useState<PlatformProfileOption[]>([]);
   const [platformProfilesLoading, setPlatformProfilesLoading] = useState(false);

@@ -11,6 +11,7 @@ import {
   X,
 } from 'lucide-react';
 import { apiRequest } from '../../api/http';
+import { useEscapeClose } from '../../hooks/useEscapeClose';
 import { formatMetricValue, formatRawValue, summarizeRawValue } from './components/metricResultFormatters';
 
 export interface ModelPresetItem {
@@ -108,6 +109,7 @@ const PresetProfilesModal: React.FC<PresetProfilesModalProps> = ({
   language,
   showToast,
 }) => {
+  useEscapeClose(open, onClose);
   const zh = language === 'zh';
   const [presets, setPresets] = useState<ModelPresetItem[]>([]);
   const [loading, setLoading] = useState(false);

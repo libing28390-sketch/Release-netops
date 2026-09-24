@@ -48,7 +48,6 @@ scrape_configs:
     metrics_path: /metrics
     file_sd_configs:
       - files:
-          - /etc/nexora-collector/runtime/vmagent/targets/linux_targets.yml
           - /etc/nexora-collector/runtime/vmagent/targets/*linux*.yml
           - /etc/nexora-collector/runtime/vmagent/targets/*server*.yml
 
@@ -59,5 +58,4 @@ scrape_configs:
     metrics_path: /metrics
     file_sd_configs:
       - files:
-          - /etc/nexora-collector/runtime/vmagent/targets/windows_targets.yml
           - /etc/nexora-collector/runtime/vmagent/targets/*windows*.yml

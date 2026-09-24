@@ -3,6 +3,7 @@ import { RotateCcw, Monitor, Terminal, Minimize2, Maximize2, X, Search } from 'l
 import OutputActions from '../../../components/OutputActions';
 import type { Device } from '../../../types';
 import type { QuickQueryTable } from '../types';
+import { useEscapeClose } from '../../../hooks/useEscapeClose';
 
 interface QuickQueryResultOverlayProps {
   isZh: boolean;
@@ -64,6 +65,7 @@ export const QuickQueryResultOverlay: React.FC<QuickQueryResultOverlayProps> = (
   onOpenDebugger,
   onQuickQueryViewChange,
 }) => {
+  useEscapeClose(quickQueryRunning || Boolean(quickQueryOutput), onResetQuickQuery);
   if (!quickQueryRunning && !quickQueryOutput) return null;
 
   return (

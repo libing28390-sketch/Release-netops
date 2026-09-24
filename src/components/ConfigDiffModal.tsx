@@ -2,6 +2,7 @@ import React from 'react';
 import { XCircle } from 'lucide-react';
 import { motion } from 'motion/react';
 import type { Device } from '../types';
+import { useEscapeClose } from '../hooks/useEscapeClose';
 
 interface ConfigDiffModalProps {
   open: boolean;
@@ -25,6 +26,7 @@ const ConfigDiffModal: React.FC<ConfigDiffModalProps> = ({
   onClose,
   onCommit,
 }) => {
+  useEscapeClose(open, onClose);
   if (!open) return null;
 
   return (

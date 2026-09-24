@@ -477,6 +477,69 @@ def list_monitoring_network_devices(
         conn.close()
 
 
+@router.get('/monitoring/network-device-search')
+def search_monitoring_network_devices(
+    q: str = Query(..., min_length=1, max_length=120),
+    limit: int = Query(default=100, ge=10, le=200),
+    user=require_role('Viewer'),
+):
+    """Search managed network devices for a compact selector without page controls."""
+    qv = (q or '').strip()
+    if not qv:
+        return {'items': [], 'query': qv, 'has_more': False}
+
+    network_predicate = """
+        LOWER(COALESCE(d.platform, '')) NOT LIKE '%linux%'
+        AND LOWER(COALESCE(d.platform, '')) NOT LIKE '%ubuntu%'
+        AND LOWER(COALESCE(d.platform, '')) NOT LIKE '%centos%'
+        AND LOWER(COALESCE(d.platform, '')) NOT LIKE '%debian%'
+        AND LOWER(COALESCE(d.platform, '')) NOT LIKE '%redhat%'
+        AND LOWER(COALESCE(d.platform, '')) NOT LIKE '%rocky%'
+        AND LOWER(COALESCE(d.platform, '')) NOT LIKE '%alma%'
+        AND LOWER(COALESCE(d.platform, '')) NOT LIKE '%' || 'server' || '%'
+        AND LOWER(COALESCE(d.device_category, '')) NOT LIKE '%' || 'server' || '%'
+        AND LOWER(COALESCE(d.role, '')) NOT LIKE '%' || 'server' || '%'
+        AND LOWER(COALESCE(pa.asset_type, '')) NOT LIKE '%' || 'server' || '%'
+    """
+    where = [network_predicate]
+    params: list[Any] = []
+    if isinstance(user, dict):
+        role = str(user.get('role') or '')
+        tenant_id = user.get('tenant_id') if role != 'Administrator' else None
+        where.append("COALESCE(d.tenant_id, 'tenant-default') = ?")
+        params.append(str(tenant_id or 'tenant-default'))
+
+    pattern = f"%{qv}%"
+    where.append("(LOWER(COALESCE(d.hostname, '')) LIKE LOWER(?) OR LOWER(COALESCE(d.ip_address, '')) LIKE LOWER(?))")
+    params.extend([pattern, pattern])
+
+    safe_limit = max(10, min(200, int(limit)))
+    conn = get_db_connection()
+    try:
+        rows = conn.execute(
+            f"""
+            SELECT d.id, d.hostname, d.ip_address, d.platform, d.status, d.model, d.version
+            FROM devices d
+            LEFT JOIN physical_assets pa ON pa.id = d.asset_id
+            WHERE {' AND '.join(where)}
+            ORDER BY CASE WHEN LOWER(COALESCE(d.status, '')) = 'online' THEN 0 ELSE 1 END,
+                     LOWER(COALESCE(d.hostname, '')), d.id
+            LIMIT ?
+            """,
+            tuple(params + [safe_limit + 1]),
+        ).fetchall()
+        has_more = len(rows) > safe_limit
+        items = [dict(row) for row in rows[:safe_limit]]
+        return {
+            'items': items,
+            'query': qv,
+            'limit': safe_limit,
+            'has_more': has_more,
+        }
+    finally:
+        conn.close()
+
+
 @router.get('/monitoring/overview')
 def monitoring_overview(force_refresh: bool = Query(default=False), user=require_role('Viewer')):
     now_utc = datetime.now(timezone.utc).replace(microsecond=0)

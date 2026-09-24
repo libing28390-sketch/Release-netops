@@ -3,6 +3,7 @@ import { XCircle } from 'lucide-react';
 import { motion } from 'motion/react';
 import type { ComplianceFinding } from '../types';
 import { complianceStatusBadgeClass, severityBadgeClass } from './shared';
+import { useEscapeClose } from '../hooks/useEscapeClose';
 
 type ComplianceFindingDetail = ComplianceFinding & {
   observed_value?: string;
@@ -32,6 +33,7 @@ const ComplianceFindingDetailModal: React.FC<ComplianceFindingDetailModalProps> 
   onNoteChange,
   onSave,
 }) => {
+  useEscapeClose(Boolean(finding), onClose);
   if (!finding) return null;
 
   const firstSeen = finding.first_seen_at || finding.first_seen;

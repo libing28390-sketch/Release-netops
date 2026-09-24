@@ -1,4 +1,5 @@
 import React, { useState, useEffect } from 'react';
+import { useEscapeClose } from '../../../hooks/useEscapeClose';
 
 interface TextFSMDebuggerProps {
   isOpen: boolean;
@@ -17,6 +18,7 @@ export const TextFSMDebugger: React.FC<TextFSMDebuggerProps> = ({
   sampleOutput,
   onSaveSuccess,
 }) => {
+  useEscapeClose(isOpen, onClose);
   const [templateContent, setTemplateContent] = useState('');
   const [sampleText, setSampleText] = useState(sampleOutput || '');
   const [records, setRecords] = useState<any[]>([]);

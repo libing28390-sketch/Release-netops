@@ -64,7 +64,6 @@ interface TopologyContextValue {
   handleTriggerDiscovery: () => Promise<void>;
   handleCancelDiscovery: () => Promise<void>;
   hostnameSyncing: boolean;
-  handleSyncHostnames: () => Promise<void>;
   handleExportMap: () => Promise<void>;
   setTopologySearch: (search: string) => void;
   setTopologySiteFilter: (site: string) => void;

@@ -1,6 +1,7 @@
 import React, { useState } from 'react';
 import { Bot, Sparkles, AlertTriangle, ShieldCheck, CheckCircle2, ArrowRight } from 'lucide-react';
 import { analyzeCommand, analyzeConfig, analyzeDiff, analyzeAlarm } from '../../../api/ai';
+import { useEscapeClose } from '../../../hooks/useEscapeClose';
 
 interface AIAnalysisModalProps {
   type: 'command' | 'config' | 'diff' | 'alarm';
@@ -10,6 +11,7 @@ interface AIAnalysisModalProps {
 }
 
 export const AIAnalysisModal: React.FC<AIAnalysisModalProps> = ({ type, title, data, onClose }) => {
+  useEscapeClose(true, onClose);
   const [loading, setLoading] = useState(false);
   const [result, setResult] = useState<any>(null);
   const [error, setError] = useState<string | null>(null);

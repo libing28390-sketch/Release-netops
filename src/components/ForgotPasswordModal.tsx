@@ -1,6 +1,7 @@
 import React, { useState, useEffect, useCallback } from 'react';
 import { motion, AnimatePresence } from 'motion/react';
 import { X, User, KeyRound, ShieldCheck, ArrowRight, ArrowLeft, RotateCcw, CheckCircle2, Eye, EyeOff, Send } from 'lucide-react';
+import { useEscapeClose } from '../hooks/useEscapeClose';
 
 interface ForgotPasswordModalProps {
   open: boolean;
@@ -173,6 +174,7 @@ const ForgotPasswordModal: React.FC<ForgotPasswordModalProps> = ({ open, onClose
     }
   }, [newPassword, confirmPassword, recoveryMethod, username, resetTicket, code, t]);
 
+  useEscapeClose(open, onClose);
   if (!open) return null;
 
   const stepIndicators: { key: Step; icon: React.ReactNode; label: string }[] = [

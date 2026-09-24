@@ -95,6 +95,18 @@ export const useAuth = ({
               setLanguage(data.user.preferred_language);
             }
           }
+          // Existing Nexora sessions predate the Grafana bridge cookie. Refresh
+          // it in the background so opening a Grafana tab works without another
+          // login prompt.
+          void fetchWithTimeout(
+            '/api/grafana/session',
+            {
+              method: 'POST',
+              headers: { Authorization: `Bearer ${token}` },
+              credentials: 'same-origin',
+            },
+            5000
+          ).catch(() => {});
           try {
             const sr = await fetchWithTimeout('/api/setup/status', { headers: { Authorization: `Bearer ${token}` } }, 8000);
             if (sr.ok) {
@@ -148,8 +160,23 @@ export const useAuth = ({
   }, [expireLocalSession, fetchWithTimeout, setLanguage, setShowSetupWizard]);
 
   const handleLogout = useCallback(() => {
+    const token = localStorage.getItem('netops_token');
+    if (token) {
+      // Revoke the backend session and clear the Grafana-scoped HttpOnly cookie.
+      // Keep the normal UI logout immediate even if the network is unavailable.
+      void fetchWithTimeout(
+        '/api/logout',
+        {
+          method: 'POST',
+          headers: { Authorization: `Bearer ${token}` },
+          credentials: 'same-origin',
+          keepalive: true,
+        },
+        4000
+      ).catch(() => {});
+    }
     expireLocalSession();
-  }, [expireLocalSession]);
+  }, [expireLocalSession, fetchWithTimeout]);
 
   const handleLogin = async () => {
     if (!loginForm.username.trim() || !loginForm.password.trim()) {

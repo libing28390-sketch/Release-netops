@@ -4,6 +4,7 @@ import { CalendarClock, X, Trash2, Activity, CheckCircle2, RotateCcw } from 'luc
 import type { ScheduledJob } from '../types';
 import { fmtDateTime } from '../helpers';
 import { ActionButton } from '../../../components/ui/ActionIconButton';
+import { useEscapeClose } from '../../../hooks/useEscapeClose';
 
 interface ScheduleDetailProps {
   zh: boolean;
@@ -18,6 +19,7 @@ interface ScheduleDetailProps {
 const ScheduleDetail: React.FC<ScheduleDetailProps> = ({
   zh, open, schedule, onClose, onToggleEnabled, onDelete, onScheduleUpdate,
 }) => {
+  useEscapeClose(open, onClose);
   if (!schedule) return null;
 
   return (

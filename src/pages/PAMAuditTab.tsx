@@ -22,6 +22,7 @@ import {
 } from 'lucide-react';
 import CastPlayer from '../components/access/CastPlayer';
 import Pagination from '../components/Pagination';
+import { useEscapeClose } from '../hooks/useEscapeClose';
 
 interface PAMSession {
   id: string;
@@ -103,6 +104,7 @@ const PAMAuditTab: React.FC<PAMAuditTabProps> = ({
   const [showPlayback, setShowPlayback] = useState(false);
   const [selectedSession, setSelectedSession] = useState<PAMSession | null>(null);
   const [detailsTarget, setDetailsTarget] = useState<PAMSession | null>(null);
+  useEscapeClose(Boolean(detailsTarget), () => setDetailsTarget(null));
   const [commandEvents, setCommandEvents] = useState<PAMCommandEvent[]>([]);
   const [commandEventsLoading, setCommandEventsLoading] = useState(false);
   // Kill confirmation modal

@@ -12,6 +12,7 @@ import { motion, AnimatePresence } from 'framer-motion';
 import PageHero from '../../components/PageHero';
 import Pagination from '../../components/Pagination';
 import { ActionIconButton, ActionIconGroup } from '../../components/ui/ActionIconButton';
+import { useEscapeClose } from '../../hooks/useEscapeClose';
 
 interface DHCPLease {
   id: string;
@@ -46,6 +47,8 @@ const DHCPLeaseTab: React.FC<DHCPLeaseTabProps> = ({ language, t }) => {
   const [showAddEdit, setShowAddEdit] = useState(false);
   const [editingLease, setEditingLease] = useState<DHCPLease | null>(null);
   const [showDeleteConfirm, setShowDeleteConfirm] = useState<string | null>(null);
+  useEscapeClose(showAddEdit, () => { setShowAddEdit(false); setEditingLease(null); });
+  useEscapeClose(Boolean(showDeleteConfirm), () => setShowDeleteConfirm(null));
 
   // Form State
   const [form, setForm] = useState({

@@ -1,6 +1,7 @@
 import React from 'react';
 import { AnimatePresence, motion } from 'motion/react';
 import { X, Target } from 'lucide-react';
+import { useEscapeClose } from '../../../hooks/useEscapeClose';
 
 interface CandidateItem {
   ip: string;
@@ -22,6 +23,7 @@ interface CandidateModalProps {
 const CandidateModal: React.FC<CandidateModalProps> = ({
   zh, open, candidates, onClose, onToggle, onToggleAll, onConfirm,
 }) => {
+  useEscapeClose(open, onClose);
   return (
     <AnimatePresence>
       {open && (

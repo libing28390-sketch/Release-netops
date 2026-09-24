@@ -16,6 +16,7 @@ import {
   ChevronDown,
   ChevronUp,
 } from 'lucide-react';
+import { useEscapeClose } from '../hooks/useEscapeClose';
 
 interface ExportTableModalProps {
   isOpen: boolean;
@@ -115,6 +116,7 @@ export const ExportTableModal: React.FC<ExportTableModalProps> = ({
   const [errorMessage, setErrorMessage] = useState<string | null>(null);
   const [showGrafanaGuide, setShowGrafanaGuide] = useState(false);
 
+  useEscapeClose(isOpen, onClose);
   if (!isOpen) return null;
 
   const handleDownload = async (preset: ReportPreset, format: 'xlsx' | 'csv') => {

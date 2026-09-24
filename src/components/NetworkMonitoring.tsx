@@ -16,6 +16,8 @@ interface NetworkMonitoringProps {
   devices: Device[];
   showToast: (message: string, type?: string) => void;
   isAuthenticated?: boolean;
+  currentUserRole?: string;
+  onOpenSnmpWalk?: (device: Device) => void;
 }
 
 interface AlertItem {
@@ -133,7 +135,14 @@ const fmtRate = (bps?: number) => {
   return `${bps.toFixed(0)} bps`;
 };
 
-const NetworkMonitoring: React.FC<NetworkMonitoringProps> = ({ language, devices, showToast, isAuthenticated = true }) => {
+const NetworkMonitoring: React.FC<NetworkMonitoringProps> = ({
+  language,
+  devices,
+  showToast,
+  isAuthenticated = true,
+  currentUserRole = '',
+  onOpenSnmpWalk,
+}) => {
   const zh = language === 'zh';
   const ct = useChartTheme();
 
@@ -333,6 +342,7 @@ const NetworkMonitoring: React.FC<NetworkMonitoringProps> = ({ language, devices
     () => deviceRows.find((d) => d.id === selectedId) || null,
     [deviceRows, selectedId],
   );
+  const canRunSnmpWalk = ['administrator', 'operator'].includes(String(currentUserRole).trim().toLowerCase());
 
   const { monitorSelectedDevice, setMonitorSelectedDevice } = useMonitoringStore();
 
@@ -1004,6 +1014,17 @@ const NetworkMonitoring: React.FC<NetworkMonitoringProps> = ({ language, devices
                   </div>
                 </div>
                 <div className="flex items-center gap-3">
+                  {canRunSnmpWalk && (
+                    <button
+                      type="button"
+                      onClick={() => onOpenSnmpWalk?.(selectedDevice)}
+                      title={zh ? '使用该设备已关联的 SNMP 凭据执行只读 Walk' : 'Run a read-only walk with this device’s linked SNMP credential'}
+                      className="flex items-center gap-1.5 rounded-xl border border-cyan-200 bg-cyan-50/80 px-3 py-1.5 text-xs font-semibold text-cyan-800 transition hover:bg-cyan-100 dark:border-cyan-900/70 dark:bg-cyan-950/35 dark:text-cyan-200 dark:hover:bg-cyan-950/55"
+                    >
+                      <Database size={12} />
+                      <span>SNMP Walk</span>
+                    </button>
+                  )}
                   <button
                     type="button"
                     onClick={handleSyncHostname}

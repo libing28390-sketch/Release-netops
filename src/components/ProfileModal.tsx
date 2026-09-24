@@ -8,6 +8,7 @@ import {
 import { useSystem } from '../hooks/useSystem';
 import QRCode from 'react-qr-code';
 import { ActionLink } from './ui/ActionIconButton';
+import { useEscapeClose } from '../hooks/useEscapeClose';
 import { detectTerminalPlatform, getLocalTerminalConfig, TERMINAL_APP_LABELS, type TerminalApp } from '../utils/localTerminal';
 
 interface AvatarPreset {
@@ -318,6 +319,7 @@ const ProfileModal: React.FC<ProfileModalProps> = ({
 
   const terminalPlatformLabel = terminalPlatform === 'windows' ? 'Windows' : 'Ubuntu / Linux';
 
+  useEscapeClose(open, onClose);
   if (!open) return null;
 
   return (

@@ -2,6 +2,7 @@ import React, { useState, useEffect, useMemo } from 'react';
 import { motion, AnimatePresence } from 'motion/react';
 import { Terminal, X, Zap } from 'lucide-react';
 import type { Device } from '../../../types';
+import { useEscapeClose } from '../../../hooks/useEscapeClose';
 
 interface QuickQueryOverlayProps {
   isZh: boolean;
@@ -62,6 +63,7 @@ export const QuickQueryOverlay: React.FC<QuickQueryOverlayProps> = ({
   onRunQuickQuery,
   hasTargets,
 }) => {
+  useEscapeClose(hasTargets, handleClearSelection);
   const [customCommand, setCustomCommand] = useState('');
   const [suggestions, setSuggestions] = useState<CommandSuggestion[]>([]);
   const [suggestionsLoading, setSuggestionsLoading] = useState(false);

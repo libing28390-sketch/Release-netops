@@ -1181,7 +1181,7 @@ def _load_compile_inputs(conn, collector_id: str, user: Any = None):
         WHERE pa.asset_type = 'server'
           AND (pa.status IS NULL OR pa.status = 'active' OR pa.status = 'in_production' OR pa.status = 'online')
         UNION
-        SELECT d.id, 'server' AS asset_type, d.ip_address AS management_ip, d.hostname, d.platform, d.status,
+        SELECT COALESCE(d.asset_id, d.id) AS id, 'server' AS asset_type, d.ip_address AS management_ip, d.hostname, d.platform, d.status,
                COALESCE(NULLIF(s.site_name, ''), NULLIF(s.site_code, ''), CASE WHEN SUBSTR(COALESCE(d.site, ''), 1, 5) = 'site-' THEN '' ELSE COALESCE(d.site, '') END, '') AS site_name,
                d.site_id, COALESCE(d.tenant_id, 'tenant-default') AS tenant_id
         FROM devices d

@@ -6,7 +6,6 @@ import {
   MetricRowItem,
   METRIC_CATALOG,
   createDefinition,
-  metricLabel,
 } from './MetricRowItem';
 import {
   InterfaceOidConfig,
@@ -17,6 +16,7 @@ import type { InspectorTab } from './LiveWalkInspector';
 import type { SnmpHardwareTestResult } from './LiveWalkInspector';
 import { ModelPresetItem } from '../PresetProfilesModal';
 import { ActionButton } from '../../ui/ActionIconButton';
+import { useEscapeClose } from '../../../hooks/useEscapeClose';
 
 export interface ProfileForm {
   vendor: string;
@@ -84,6 +84,7 @@ export const MetricProfileEditor: React.FC<MetricProfileEditorProps> = ({
   onApplyPreset,
   showToast,
 }) => {
+  useEscapeClose(true, onClose);
   const zh = language === 'zh';
   const [addMetricKey, setAddMetricKey] = useState('');
   const [liveInspectorOpen, setLiveInspectorOpen] = useState(initialLiveInspectorOpen);
@@ -101,60 +102,6 @@ export const MetricProfileEditor: React.FC<MetricProfileEditorProps> = ({
     }));
     const next = addableMetrics.find(item => item.key !== addMetricKey);
     setAddMetricKey(next?.key || '');
-  };
-
-  const handleSelectOidFromWalk = (metricKey: string, oid: string) => {
-    if (metricKey === '__interface') {
-      onChangeForm(prev => ({
-        ...prev,
-        interfaceConfig: {
-          ...prev.interfaceConfig,
-          enabled: true,
-          if_hc_in_octets_oid: oid,
-        },
-      }));
-      showToast(zh ? `已将 OID 填入接口流量: ${oid}` : `Interface OID updated: ${oid}`, 'success');
-      return;
-    }
-
-    onChangeForm(prev => {
-      const exists = prev.metrics.some(row => row.key === metricKey);
-      const targetField = metricKey === 'storage' ? 'used_oid' : 'oid';
-      if (exists) {
-        return {
-          ...prev,
-          metrics: prev.metrics.map(row => {
-            if (row.key !== metricKey) return row;
-            return {
-              ...row,
-              definition: {
-                ...row.definition,
-                [targetField]: oid,
-              },
-            };
-          }),
-        };
-      }
-      return {
-        ...prev,
-        metrics: [
-          ...prev.metrics,
-          {
-            key: metricKey,
-            definition: {
-              ...createDefinition(metricKey),
-              [targetField]: oid,
-            },
-          },
-        ],
-      };
-    });
-    showToast(
-      zh
-        ? `已将 OID 填入【${metricLabel(metricKey, true)}】: ${oid}`
-        : `${metricLabel(metricKey, false)} OID set to: ${oid}`,
-      'success',
-    );
   };
 
   return (
@@ -375,7 +322,6 @@ export const MetricProfileEditor: React.FC<MetricProfileEditorProps> = ({
                 saving={saving}
                 showToast={showToast}
                 onTestResult={setLiveTestResult}
-                onSelectOidForMetric={handleSelectOidFromWalk}
               />
             </div>
           )}

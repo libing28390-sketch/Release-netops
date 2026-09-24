@@ -23,6 +23,7 @@ import {
 } from 'lucide-react';
 import { getAIProvidersPage, createAIProvider, updateAIProvider, deleteAIProvider, getAIProviderDeletePreview, testAIProvider, AIProvider, AIProviderDeletePreview } from '../../../api/ai';
 import { useCoreApp } from '../../../contexts/AppDomainContext';
+import { useEscapeClose } from '../../../hooks/useEscapeClose';
 import { ActionButton, ActionIconButton, ActionIconGroup, ActionLink } from '../../../components/ui/ActionIconButton';
 import Pagination from '../../../components/Pagination';
 import { aiAdminText } from '../../../i18n/aiAdmin';
@@ -276,6 +277,7 @@ export const ProviderManagementTab: React.FC = () => {
   const [selectedProviderId, setSelectedProviderId] = useState<string | null>(null);
 
   const [showModal, setShowModal] = useState(false);
+  useEscapeClose(showModal, () => setShowModal(false));
   const [editingId, setEditingId] = useState<string | null>(null);
   const [name, setName] = useState('');
   const [providerType, setProviderType] = useState('deepseek');

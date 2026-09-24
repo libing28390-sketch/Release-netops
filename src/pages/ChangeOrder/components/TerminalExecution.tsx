@@ -1,6 +1,7 @@
 import React from 'react';
 import { Zap, CheckCircle2, XCircle, RefreshCw } from 'lucide-react';
 import { AnimatePresence, motion } from 'motion/react';
+import { useEscapeClose } from '../../../hooks/useEscapeClose';
 
 interface Props {
   language: string;
@@ -23,6 +24,7 @@ export const TerminalExecution: React.FC<Props> = ({
   runOrderCommands,
   handleTransition,
 }) => {
+  useEscapeClose(Boolean(executeModal), () => setExecuteModal(null));
   const zh = language === 'zh';
 
   if (!executeModal) return null;

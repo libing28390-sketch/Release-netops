@@ -8,6 +8,7 @@ import {
   Search, FileCode, Eye, Target, FileText, Lock, ArrowUpRight, ChevronUp, Filter, ShieldAlert, User, Layers
 } from 'lucide-react';
 import { ActionIconButton, ActionIconGroup } from '../../components/ui/ActionIconButton';
+import { useEscapeClose } from '../../hooks/useEscapeClose';
 
 import Pagination from '../../components/Pagination';
 import { DataTable } from '../../components/DataTable';
@@ -44,6 +45,7 @@ const ScheduledJobsTab: React.FC<ScheduledJobsTabProps> = ({ language, showToast
   const [viewingScript, setViewingScript] = useState<any>(null);
   const [presetOpen, setPresetOpen] = useState(false);
   const [deleteConfirmId, setDeleteConfirmId] = useState<string | null>(null);
+  useEscapeClose(Boolean(deleteConfirmId), () => setDeleteConfirmId(null));
 
   // Form
   const [form, setForm] = useState<FormState>({ ...INITIAL_FORM });

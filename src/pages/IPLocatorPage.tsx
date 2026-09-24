@@ -3,6 +3,7 @@ import { Search, MapPin, ArrowRight, Loader2, Server, Monitor, Network, AlertCir
 import Pagination from '../components/Pagination';
 import PageHero from '../components/PageHero';
 import { ActionButton } from '../components/ui/ActionIconButton';
+import { useEscapeClose } from '../hooks/useEscapeClose';
 import * as XLSX from 'xlsx';
 import { formatMacAddress } from '../utils/resourceFormatters';
 import {
@@ -657,6 +658,7 @@ const IPLocatorPage: React.FC<IPLocatorPageProps> = ({ language, t, mode }) => {
 
   // ── Hop popover state ──
   const [activeHopIdx, setActiveHopIdx] = useState<number | null>(null);
+  useEscapeClose(activeHopIdx !== null, () => setActiveHopIdx(null));
   const [activeSubHopIdx, setActiveSubHopIdx] = useState<number>(0);
   const [viewMode, setViewMode] = useState<'topology' | 'sequence'>('topology');
   const [cmdbFilterQuery, setCmdbFilterQuery] = useState('');
@@ -700,6 +702,7 @@ const IPLocatorPage: React.FC<IPLocatorPageProps> = ({ language, t, mode }) => {
 
   // ── NSOT Collection Policy Modal state ──
   const [nsotPolicyModalOpen, setNsotPolicyModalOpen] = useState(false);
+  useEscapeClose(nsotPolicyModalOpen, () => setNsotPolicyModalOpen(false));
   const [nsotPlans, setNsotPlans] = useState<NsotPlanRow[]>([]);
   const [nsotSelectedPlanDeviceId, setNsotSelectedPlanDeviceId] = useState('');
   const [nsotPlansLoading, setNsotPlansLoading] = useState(false);

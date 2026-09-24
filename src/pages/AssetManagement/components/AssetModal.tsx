@@ -23,6 +23,7 @@ import { AssetTagPicker } from './AssetTagPicker';
 import { ActionIconButton } from '../../../components/ui/ActionIconButton';
 import { isReservedSystemSite } from '../../../utils/siteIdentity';
 import { authHeaders } from '../../../api/http';
+import { useEscapeClose } from '../../../hooks/useEscapeClose';
 
 interface AssetModalProps {
   isOpen: boolean;
@@ -65,6 +66,7 @@ export const AssetModal: React.FC<AssetModalProps> = ({
   setFeedbackMsg,
   allTags,
 }) => {
+  useEscapeClose(isOpen, onClose);
   const zh = language === 'zh';
 
   const [racks, setRacks] = React.useState<any[]>([]);

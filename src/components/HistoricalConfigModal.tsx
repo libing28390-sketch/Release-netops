@@ -2,6 +2,7 @@ import React from 'react';
 import { RotateCcw, XCircle } from 'lucide-react';
 import { motion } from 'motion/react';
 import type { ConfigVersion, Device } from '../types';
+import { useEscapeClose } from '../hooks/useEscapeClose';
 
 interface HistoricalConfigModalProps {
   open: boolean;
@@ -22,6 +23,7 @@ const HistoricalConfigModal: React.FC<HistoricalConfigModalProps> = ({
   onClose,
   onRollback,
 }) => {
+  useEscapeClose(open && Boolean(viewingConfig) && Boolean(selectedDevice), onClose);
   if (!open || !viewingConfig || !selectedDevice) return null;
 
   return (

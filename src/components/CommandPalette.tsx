@@ -1,6 +1,7 @@
 import React from 'react';
 import { motion } from 'motion/react';
 import { Pin, Search } from 'lucide-react';
+import { useEscapeClose } from '../hooks/useEscapeClose';
 
 interface CommandPaletteItem {
   path: string;
@@ -33,6 +34,7 @@ const CommandPalette: React.FC<CommandPaletteProps> = ({
   onNavigate,
   onTogglePin,
 }) => {
+  useEscapeClose(open, onClose);
   if (!open) return null;
 
   return (

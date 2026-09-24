@@ -13,6 +13,7 @@ import type {
   CollectionPlanFilters,
   CollectionPlanOption,
 } from '../types';
+import { useEscapeClose } from '../../../hooks/useEscapeClose';
 
 interface BulkCollectionPlanModalProps {
   language: string;
@@ -133,6 +134,7 @@ export const BulkCollectionPlanModal: React.FC<BulkCollectionPlanModalProps> = (
   onClose,
   onCreateScheduledJob,
 }) => {
+  useEscapeClose(true, onClose);
   const zh = language === 'zh';
   const [options, setOptions] = useState<CollectionPlanBulkOptions>(EMPTY_OPTIONS);
   const [optionsLoading, setOptionsLoading] = useState(true);

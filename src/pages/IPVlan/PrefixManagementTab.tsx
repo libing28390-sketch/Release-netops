@@ -24,6 +24,7 @@ import * as XLSX from 'xlsx';
 import PageHero from '../../components/PageHero';
 import Pagination from '../../components/Pagination';
 import { ActionButton, ActionIconButton, ActionIconGroup } from '../../components/ui/ActionIconButton';
+import { useEscapeClose } from '../../hooks/useEscapeClose';
 import { useNavigate } from 'react-router-dom';
 import { isValidIPv4, isValidIPv6, toNum } from './helpers';
 import { fetchAllPrefixPages, mapPrefixesForExport, serializePrefixCsv } from './prefixExport';
@@ -160,6 +161,10 @@ const PrefixManagementTab: React.FC<PrefixManagementTabProps> = ({ language, t }
   const [showDeleteConfirm, setShowDeleteConfirm] = useState<string | null>(null);
   const [showBatchDeleteConfirm, setShowBatchDeleteConfirm] = useState(false);
   const [showInterfaceGeneration, setShowInterfaceGeneration] = useState(false);
+  useEscapeClose(showAddEdit, () => { setShowAddEdit(false); setEditingPrefix(null); });
+  useEscapeClose(Boolean(showDeleteConfirm), () => setShowDeleteConfirm(null));
+  useEscapeClose(showBatchDeleteConfirm, () => setShowBatchDeleteConfirm(false));
+  useEscapeClose(showInterfaceGeneration, () => setShowInterfaceGeneration(false));
   const [interfaceCandidates, setInterfaceCandidates] = useState<InterfacePrefixCandidate[]>([]);
   const [selectedInterfaceCandidates, setSelectedInterfaceCandidates] = useState<Set<string>>(new Set());
   const [interfaceSkipped, setInterfaceSkipped] = useState<Array<{ device_name: string; interface_name: string; address: string; reason: string }>>([]);

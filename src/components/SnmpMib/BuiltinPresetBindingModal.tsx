@@ -1,6 +1,7 @@
 import React, { useEffect, useMemo, useState } from 'react';
 import { AlertTriangle, Check, CheckCircle2, Loader2, Server, X } from 'lucide-react';
 import { apiRequest } from '../../api/http';
+import { useEscapeClose } from '../../hooks/useEscapeClose';
 import type { ModelPresetItem } from './PresetProfilesModal';
 import type { CandidateDevice } from './components/LiveWalkInspector';
 
@@ -71,6 +72,7 @@ const BuiltinPresetBindingModal: React.FC<BuiltinPresetBindingModalProps> = ({
   onClose,
   onConfirm,
 }) => {
+  useEscapeClose(open && Boolean(preset), onClose);
   const zh = language === 'zh';
   const [devices, setDevices] = useState<CandidateDevice[]>([]);
   const [selectedDeviceId, setSelectedDeviceId] = useState('');

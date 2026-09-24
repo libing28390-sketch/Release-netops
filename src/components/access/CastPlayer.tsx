@@ -20,6 +20,7 @@ import {
 } from 'lucide-react';
 import 'xterm/css/xterm.css';
 import { ActionIconButton } from '../ui/ActionIconButton';
+import { useEscapeClose } from '../../hooks/useEscapeClose';
 
 interface SessionMeta {
   hostname?: string;
@@ -51,6 +52,7 @@ export default function CastPlayer({
   onClose,
   isZh = true,
 }: CastPlayerProps) {
+  useEscapeClose(true, onClose);
   const containerRef = useRef<HTMLDivElement>(null);
   const xtermRef = useRef<XTerm | null>(null);
   const fitAddonRef  = useRef<FitAddon | null>(null);

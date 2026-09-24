@@ -87,6 +87,27 @@ def normalize_vendor_from_dir(dir_name: str) -> str:
     return dir_name.capitalize()
 
 
+def _vendor_scope_token(value: str) -> str:
+    return re.sub(r"[^a-z0-9]+", "", str(value or "").casefold())
+
+
+def _relative_mib_vendor_key(relative_path: str) -> str:
+    normalized = str(relative_path or "").replace("\\", "/").strip("/")
+    return vendor_key_from_relative_path(normalized)
+
+
+def _vendor_in_scope(vendor_key: str, target_vendors: set[str] | None, target_tokens: set[str]) -> bool:
+    if target_vendors is None:
+        return True
+    key = str(vendor_key or "standard").strip().lower()
+    candidates = {
+        key,
+        vendor_name_from_key(key),
+        normalize_vendor_from_dir(key),
+    }
+    return any(_vendor_scope_token(candidate) in target_tokens for candidate in candidates if candidate)
+
+
 def fetch_librenms_mibs(target_dir: Path = TARGET_DIR) -> bool:
     """Clone or pull the LibreNMS MIB and OS discovery sources."""
     return fetch_librenms_sources(target_dir)
@@ -243,6 +264,8 @@ def import_mibs_from_directory(
     mibs_dir: Path = MIBS_DIR,
     target_vendors: list[str] | None = None,
     max_files: int | None = None,
+    retire_out_of_scope: bool = False,
+    retire_missing_files: bool = True,
 ) -> dict[str, Any]:
     """Scan and parse a local LibreNMS snapshot into the MIB repository."""
     mibs_path = Path(mibs_dir).resolve()
@@ -254,14 +277,21 @@ def import_mibs_from_directory(
     now = utc_now()
     source_commit = git_commit(mibs_path.parent)
     source_id = LIBRENMS_SOURCE_ID
-    target_vendors_set = {v.strip().lower() for v in target_vendors or [] if v.strip()} or None
+    target_vendors_set = None if target_vendors is None else {v.strip().lower() for v in target_vendors if v.strip()}
+    target_vendor_tokens = {
+        _vendor_scope_token(value)
+        for value in target_vendors_set or set()
+        if value
+    }
     all_files = iter_mib_files(mibs_path)
     files = [
         path
         for path in all_files
-        if not target_vendors_set
-        or vendor_key_from_relative_path(relative_mib_path(path, mibs_path)) in target_vendors_set
-        or vendor_name_from_key(vendor_key_from_relative_path(relative_mib_path(path, mibs_path))).lower() in target_vendors_set
+        if _vendor_in_scope(
+            _relative_mib_vendor_key(relative_mib_path(path, mibs_path)),
+            target_vendors_set,
+            target_vendor_tokens,
+        )
     ]
     if max_files is not None:
         files = files[: max(0, max_files)]
@@ -375,17 +405,15 @@ def import_mibs_from_directory(
         )
 
     def _path_is_in_scope(relative_path: str) -> bool:
-        if not target_vendors_set:
-            return True
-        vendor_key = vendor_key_from_relative_path(relative_path)
-        return (
-            vendor_key in target_vendors_set
-            or vendor_name_from_key(vendor_key).lower() in target_vendors_set
+        return _vendor_in_scope(
+            _relative_mib_vendor_key(relative_path),
+            target_vendors_set,
+            target_vendor_tokens,
         )
 
     def _deactivate_missing_files() -> int:
         """Retire removed upstream files without touching uploads or built-ins."""
-        if max_files is not None or not files:
+        if max_files is not None or not retire_missing_files or not files:
             return 0
         rows = conn.execute(
             "SELECT id, relative_path FROM snmp_mibs "
@@ -397,6 +425,34 @@ def import_mibs_from_directory(
             mib_id = str(_value(row, "id", 0) or "")
             relative_path = str(_value(row, "relative_path", 1) or "")
             if not mib_id or not _path_is_in_scope(relative_path) or relative_path in seen_relative_paths:
+                continue
+            conn.execute(
+                "UPDATE snmp_mibs SET is_active = 0, updated_at = ? WHERE id = ?",
+                (retired_at, mib_id),
+            )
+            retired += 1
+        return retired
+
+    def _deactivate_out_of_scope_files() -> int:
+        """Retire prior LibreNMS vendor rows excluded by a restricted full sync."""
+        if target_vendors_set is None or not retire_out_of_scope:
+            return 0
+        rows = conn.execute(
+            "SELECT id, relative_path, vendor FROM snmp_mibs "
+            "WHERE source_type = 'librenms' AND is_active = 1"
+        ).fetchall()
+        retired = 0
+        retired_at = utc_now()
+        for row in rows:
+            mib_id = str(_value(row, "id", 0) or "")
+            relative_path = str(_value(row, "relative_path", 1) or "")
+            vendor_name = str(_value(row, "vendor", 2) or "")
+            in_scope = _path_is_in_scope(relative_path) if relative_path else _vendor_in_scope(
+                vendor_name,
+                target_vendors_set,
+                target_vendor_tokens,
+            )
+            if not mib_id or in_scope:
                 continue
             conn.execute(
                 "UPDATE snmp_mibs SET is_active = 0, updated_at = ? WHERE id = ?",
@@ -419,8 +475,8 @@ def import_mibs_from_directory(
         for file_path in files:
             relative_path = relative_mib_path(file_path, mibs_path)
             seen_relative_paths.add(relative_path)
-            vendor_key = vendor_key_from_relative_path(relative_path)
-            vendor_name = vendor_name_from_key(vendor_key)
+            vendor_key = _relative_mib_vendor_key(relative_path)
+            vendor_name = VENDOR_DIR_MAP.get(vendor_key.lower()) or vendor_name_from_key(vendor_key)
             file_hash = sha256_file(file_path)
             file_size = file_path.stat().st_size
             manifest_entries.append(
@@ -591,8 +647,11 @@ def import_mibs_from_directory(
                 )
 
         deactivated_files = _deactivate_missing_files()
+        deactivated_out_of_scope = _deactivate_out_of_scope_files()
         if deactivated_files:
             logger.info("Retired %d MIB files removed from the current LibreNMS snapshot", deactivated_files)
+        if deactivated_out_of_scope:
+            logger.info("Retired %d LibreNMS MIBs from vendors outside the platform scope", deactivated_out_of_scope)
 
         manifest_path = write_manifest(
             source_type="librenms",
@@ -642,5 +701,6 @@ def import_mibs_from_directory(
         "duplicates": stats["duplicate_files"],
         "zero_node": stats["zero_node_files"],
         "deactivated": deactivated_files,
+        "deactivated_out_of_scope": deactivated_out_of_scope,
         "elapsed_seconds": round(elapsed, 2),
     }

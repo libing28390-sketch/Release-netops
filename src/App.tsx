@@ -33,6 +33,7 @@ import { useMonitoring } from './hooks/useMonitoring';
 import { useUserManagement } from './hooks/useUserManagement';
 import { useHistoryAuditCompliance } from './hooks/useHistoryAuditCompliance';
 import { useTopologyVisibleDevices } from './hooks/useTopologyVisibleDevices';
+import { useEscapeClose } from './hooks/useEscapeClose';
 import { useTopologySelectionSync } from './hooks/useTopologySelectionSync';
 import { useResourceSignals } from './hooks/useResourceSignals';
 import { useConfigRollbackAction } from './hooks/useConfigRollbackAction';
@@ -243,6 +244,7 @@ const App: React.FC = () => {
     handleRerun,
     handleClearSelection
   } = useAutomation({ currentUser, isAuthenticated, language, showToast, navigate, setSelectedDevice, devices, selectedDevice, activeTab, automationPage });
+  useEscapeClose(saveQuickQueryModalOpen, () => setSaveQuickQueryModalOpen(false));
 
   const {
     globalVars,
@@ -412,7 +414,6 @@ const App: React.FC = () => {
     handleTriggerDiscovery,
     handleCancelDiscovery,
     hostnameSyncing,
-    handleSyncHostnames,
     handleConfirmTopologyRelation,
     loadTopologyHistory,
   } = useTopology({
@@ -1660,7 +1661,7 @@ const App: React.FC = () => {
     selectedTopologyDeviceId, selectedTopologyLinkKey, selectedTopologyDevice, selectedTopologyLink,
     topologyNeighborDevices, topologyDeviceLinks, topologyPriorityDevices, topologyOrphanDevices, topologyRef,
     hideStaleLinks, setHideStaleLinks, hideOrphanDevices, setHideOrphanDevices,
-     handleTriggerDiscovery, handleCancelDiscovery, hostnameSyncing, handleSyncHostnames, handleExportMap,
+     handleTriggerDiscovery, handleCancelDiscovery, hostnameSyncing, handleExportMap,
     handleConfirmTopologyRelation, loadTopologyHistory,
     setTopologySearch, setTopologySiteFilter, setTopologyGraphView, setTopologyTagFilter, setTopologyRoleFilter, setTopologyStatusFilter,
     setTopologyLinkStatusFilter, setTopologyProtocolFilter,

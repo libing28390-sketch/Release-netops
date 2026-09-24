@@ -11,6 +11,7 @@ import { ChangeOrderList } from './components/ChangeOrderList';
 import { ChangeOrderDetail } from './components/ChangeOrderDetail';
 import { ChangeOrderEditor } from './components/ChangeOrderEditor';
 import { TerminalExecution } from './components/TerminalExecution';
+import { useEscapeClose } from '../../hooks/useEscapeClose';
 
 // Constants & Helpers
 import {
@@ -256,6 +257,9 @@ const ChangeOrderComponent: React.FC<Props> = ({
       navigate('/change-orders/all');
     }
   }, [isCreateView, isDirty, navigate, resetEditorState, zh]);
+  useEscapeClose(Boolean(actionPrompt), () => setActionPrompt(null));
+  useEscapeClose(Boolean(finalApproverPrompt), () => setFinalApproverPrompt(null));
+  useEscapeClose(Boolean(initialApproverPrompt), () => setInitialApproverPrompt(null));
 
   // Handle scenarioId from location state
   useEffect(() => {

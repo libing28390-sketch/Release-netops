@@ -52,6 +52,7 @@ const TextFSMTemplatesTab = lazy(() => import('../pages/TextFSMTemplatesTab'));
 const ScheduledJobsTab = lazy(() => import('../pages/ScheduledJobsTab'));
 const PlatformSettingsTab = lazy(() => import('../pages/PlatformSettingsTab'));
 const PlatformRegistryTab = lazy(() => import('../pages/PlatformRegistryTab'));
+const SnmpWalkPage = lazy(() => import('../pages/SnmpWalkPage'));
 const SnmpMetricTemplatesTab = lazy(() => import('../pages/SnmpMetricTemplatesTab'));
 const RackManagementTab = lazy(() => import('../pages/RackManagementTab'));
 const CmdbManagementTab = lazy(() => import('../pages/CmdbManagementTab'));
@@ -425,7 +426,6 @@ const AppMainContent: React.FC = () => {
     formatTopologyEvidenceLabel,
     getTopologyOperationalTone,
     hostnameSyncing,
-    handleSyncHostnames,
   } = topology;
 
   const isStandaloneScrollTab = 
@@ -435,6 +435,7 @@ const AppMainContent: React.FC = () => {
     activeTab === 'maintenance' || 
     activeTab === 'platform-registry' ||
     activeTab === 'monitoring-dashboards' ||
+    activeTab === 'snmp-walk' ||
     activeTab === 'monitoring-reports' ||
     activeTab === 'access' ||
     activeTab === 'access-favorites' ||
@@ -549,6 +550,18 @@ const AppMainContent: React.FC = () => {
             language={language}
             showToast={showToast}
             isAuthenticated={isAuthenticated}
+            currentUserRole={currentUser?.role}
+            onOpenSnmpWalk={(device) => navigate(`/monitor/snmp-walk?ip=${encodeURIComponent(device.ip_address || '')}`)}
+          />
+        </Suspense>
+      )}
+
+      {activeTab === 'snmp-walk' && (
+        <Suspense fallback={lazyPanelFallback}>
+          <SnmpWalkPage
+            language={language}
+            currentUserRole={currentUser?.role}
+            showToast={showToast}
           />
         </Suspense>
       )}
@@ -792,7 +805,6 @@ const AppMainContent: React.FC = () => {
             onTriggerDiscovery={handleTriggerDiscovery}
             onCancelDiscovery={handleCancelDiscovery}
             hostnameSyncing={hostnameSyncing}
-            onSyncHostnames={handleSyncHostnames}
             onExportMap={handleExportMap}
             onTopologySearchChange={setTopologySearch}
             onTopologySiteFilterChange={setTopologySiteFilter}

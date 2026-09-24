@@ -7,6 +7,7 @@ import {
   Key, KeyRound, Server, User, Eye, EyeOff, Copy, Check, X,
 } from 'lucide-react';
 import { ActionIconButton } from './ui/ActionIconButton';
+import { useEscapeClose } from '../hooks/useEscapeClose';
 
 interface RotationDevice {
   id: string;
@@ -105,6 +106,9 @@ export default function PasswordRotationPanel({ language, currentUser }: Passwor
   const [rotatingPassword, setRotatingPassword] = useState(false);
   const [bulkRole, setBulkRole] = useState<'normal' | 'admin' | 'enable'>('admin');
   const [showBulkConfirm, setShowBulkConfirm] = useState(false);
+  useEscapeClose(showBulkConfirm, () => setShowBulkConfirm(false));
+  useEscapeClose(Boolean(pendingRotation) && !rotatingPassword, () => setPendingRotation(null));
+  useEscapeClose(Boolean(editingCredential) && !credentialSaving, () => setEditingCredential(null));
   const [bulkProgress, setBulkProgress] = useState<any | null>(null);
 
   const credentialRoleFor = (account: any): string => {

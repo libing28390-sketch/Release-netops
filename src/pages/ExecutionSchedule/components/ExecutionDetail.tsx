@@ -10,6 +10,7 @@ import { ActionIconButton, ActionIconGroup } from '../../../components/ui/Action
 import type { UnifiedExecutionLog, InspDetailTab, PlaybookExecutionApproval } from '../types';
 import type { Device } from '../../../types';
 import { splitOutputByCommand, downloadInspExcel, downloadInspJSON } from '../helpers';
+import { useEscapeClose } from '../../../hooks/useEscapeClose';
 
 interface ExecutionDetailProps {
   zh: boolean;
@@ -66,6 +67,7 @@ const ExecutionDetail: React.FC<ExecutionDetailProps> = ({
   pbDetail, pbDevices, pbApprovals, pbApprovalsLoading, pbApprovalActionId, pbApprovalError, onPlaybookApproval,
   selectedPbDevice, pbDeviceDetail, onSelectPbDevice, devices,
 }) => {
+  useEscapeClose(open, onClose);
   if (!selectedLog) return null;
 
   return (

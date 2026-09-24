@@ -1,4 +1,4 @@
-from fastapi import APIRouter, HTTPException, Body, Request
+from fastapi import APIRouter, HTTPException, Body, Request, Response
 from slowapi import Limiter
 from slowapi.util import get_remote_address
 import os
@@ -16,7 +16,7 @@ from database import get_db_connection
 from services.audit_service import log_audit_event
 from services import notification_service
 from core.config import settings
-from core.rbac import RECOMMENDED_ROLE_PROFILES
+from core.rbac import RECOMMENDED_ROLE_PROFILES, require_role
 
 router = APIRouter()
 logger = logging.getLogger(__name__)
@@ -527,6 +527,36 @@ def _delete_session(token: str):
     finally:
         conn.close()
 
+
+GRAFANA_SESSION_COOKIE = 'nexora_grafana_session'
+
+
+def _request_is_https(request: Request) -> bool:
+    forwarded_proto = str(request.headers.get('x-forwarded-proto') or '').split(',', 1)[0].strip().lower()
+    return request.url.scheme.lower() == 'https' or forwarded_proto == 'https'
+
+
+def _set_grafana_session_cookie(response: Response, request: Request, token: str) -> None:
+    response.set_cookie(
+        key=GRAFANA_SESSION_COOKIE,
+        value=token,
+        max_age=_SESSION_TTL,
+        httponly=True,
+        secure=_request_is_https(request),
+        samesite='lax',
+        path='/grafana',
+    )
+
+
+def _clear_grafana_session_cookie(response: Response, request: Request) -> None:
+    response.delete_cookie(
+        key=GRAFANA_SESSION_COOKIE,
+        path='/grafana',
+        httponly=True,
+        secure=_request_is_https(request),
+        samesite='lax',
+    )
+
 def validate_session_token(token: str) -> dict | None:
     """Validate a session token and return session info, or None if invalid.
     Public API used by WebSocket authentication and other modules."""
@@ -643,7 +673,7 @@ async def create_user(request: Request, user: dict = Body(...)):
         conn.close()
 
 @router.post("/switch-user")
-def switch_user(request: Request, payload: dict = Body(...)):
+def switch_user(request: Request, response: Response, payload: dict = Body(...)):
     """
     GitHub-like account switcher. 
     Allows an Administrator to switch to another user session without password.
@@ -666,6 +696,7 @@ def switch_user(request: Request, payload: dict = Body(...)):
         new_token = _create_token()
         # await _store_session is not async yet but we can keep it as is or wrap it
         _store_session(new_token, user_dict)
+        _set_grafana_session_cookie(response, request, new_token)
         
         # Hydrate user data for frontend
         profile_row = conn.execute(
@@ -698,7 +729,7 @@ def switch_user(request: Request, payload: dict = Body(...)):
 
 @router.post("/login")
 @limiter.limit("20/minute")
-async def login(request: Request, payload: dict = Body(...)):
+async def login(request: Request, response: Response, payload: dict = Body(...)):
     username = payload.get('username')
     password = payload.get('password')
     safe_username = (username or '')[:64]  # truncate for logging safety
@@ -812,6 +843,7 @@ async def login(request: Request, payload: dict = Body(...)):
             ).fetchone()
             profile = _hydrate_user_row(profile_row)
             profile['lastLogin'] = last_login
+            _set_grafana_session_cookie(response, request, token)
             return {
                 "success": True,
                 "token": token,
@@ -1420,6 +1452,59 @@ def check_session(request: Request):
         conn.close()
 
 
+@router.post("/grafana/session")
+def create_grafana_session(
+    request: Request,
+    response: Response,
+    user=require_role("Viewer"),
+):
+    """Bridge an existing Nexora bearer session to a Grafana-only cookie."""
+    auth_header = request.headers.get('Authorization', '')
+    token = auth_header.replace('Bearer ', '', 1) if auth_header.startswith('Bearer ') else ''
+    if not token:
+        raise HTTPException(status_code=401, detail="Authentication required")
+    _set_grafana_session_cookie(response, request, token)
+    return {"success": True}
+
+
+@router.get("/grafana/auth")
+def authenticate_grafana_proxy(
+    response: Response,
+    user=require_role("Viewer"),
+):
+    """Validate the Nginx auth-proxy bearer and return a read-only Grafana identity."""
+    username = str(user.get('username') or '').strip()
+    if not re.fullmatch(r'[A-Za-z][A-Za-z0-9._-]{2,31}', username):
+        user_id = re.sub(r'[^A-Za-z0-9_-]', '', str(user.get('user_id') or ''))
+        if not user_id:
+            raise HTTPException(status_code=401, detail="Grafana identity is unavailable")
+        username = f'nexora-{user_id}'
+
+    response.headers['X-Grafana-User'] = username
+    response.headers['X-Grafana-Role'] = (
+        'Admin'
+        if user.get('role') == 'Administrator' or user.get('role_profile') == 'System Administrator'
+        else 'Viewer'
+    )
+    response.status_code = 204
+    return response
+
+
+@router.post("/logout")
+def logout(
+    request: Request,
+    response: Response,
+    user=require_role("Viewer"),
+):
+    """Revoke the current Nexora session and clear its Grafana bridge cookie."""
+    auth_header = request.headers.get('Authorization', '')
+    token = auth_header.replace('Bearer ', '', 1) if auth_header.startswith('Bearer ') else ''
+    if token:
+        _delete_session(token)
+    _clear_grafana_session_cookie(response, request)
+    return {"success": True}
+
+
 def _get_system_name() -> str:
     system_name = "Nexora"
     try:
@@ -1590,7 +1675,7 @@ async def mfa_disable(request: Request, payload: dict = Body(...)):
         conn.close()
 
 @router.post("/mfa/verify")
-async def mfa_verify(request: Request, payload: dict = Body(...)):
+async def mfa_verify(request: Request, response: Response, payload: dict = Body(...)):
     temp_token = payload.get('temp_token')
     code = payload.get('code')
     
@@ -1653,6 +1738,7 @@ async def mfa_verify(request: Request, payload: dict = Body(...)):
         ).fetchone()
         profile = _hydrate_user_row(profile_row)
         profile['lastLogin'] = last_login
+        _set_grafana_session_cookie(response, request, token)
 
         return {
             "success": True,

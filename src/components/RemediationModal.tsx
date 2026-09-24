@@ -2,6 +2,7 @@ import React from 'react';
 import { Play, ShieldCheck, XCircle } from 'lucide-react';
 import { motion } from 'motion/react';
 import type { Device } from '../types';
+import { useEscapeClose } from '../hooks/useEscapeClose';
 
 interface RemediationModalProps {
   open: boolean;
@@ -20,6 +21,7 @@ const RemediationModal: React.FC<RemediationModalProps> = ({
   onClose,
   onConfirm,
 }) => {
+  useEscapeClose(open && Boolean(device), onClose);
   if (!open || !device) return null;
 
   return (

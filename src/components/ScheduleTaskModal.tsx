@@ -3,6 +3,7 @@ import { XCircle } from 'lucide-react';
 import { motion } from 'motion/react';
 import type { Device } from '../types';
 import DateTimePicker from './DateTimePicker';
+import { useEscapeClose } from '../hooks/useEscapeClose';
 
 type ScheduleType = 'once' | 'recurring';
 type ScheduleInterval = 'daily' | 'weekly' | 'monthly';
@@ -37,6 +38,7 @@ const ScheduleTaskModal: React.FC<ScheduleTaskModalProps> = ({
   onClose,
   onSubmit,
 }) => {
+  useEscapeClose(open && Boolean(schedulingTask), onClose);
   if (!open || !schedulingTask) return null;
 
   return (

@@ -46,6 +46,7 @@ import PageHero from '../components/PageHero';
 import { ActionButton, ActionIconButton } from '../components/ui/ActionIconButton';
 import { apiRequest, authHeaders } from '../api/http';
 import { VENDOR_PLATFORMS } from './AssetManagement/constants';
+import { useEscapeClose } from '../hooks/useEscapeClose';
 
 type ConfigWorkspaceView = 'source' | 'rendered' | 'checks';
 type TemplateType = 'Jinja2' | 'YAML';
@@ -544,6 +545,7 @@ const PlatformSettingsTab: React.FC<PlatformSettingsTabProps> = ({
   const [versionDiff, setVersionDiff] = useState<string[]>([]);
   const [versionDiffLoading, setVersionDiffLoading] = useState(false);
   const [showCreate, setShowCreate] = useState(false);
+  useEscapeClose(showCreate, () => setShowCreate(false));
   const [editingTemplateId, setEditingTemplateId] = useState<string | null>(null);
   const [createForm, setCreateForm] = useState<TemplateEditorForm>({
     name: '', vendor: 'Cisco', platform: 'cisco_iosxe', category: 'interface',

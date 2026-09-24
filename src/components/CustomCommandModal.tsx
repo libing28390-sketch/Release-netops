@@ -2,6 +2,7 @@ import React, { useState } from 'react';
 import { motion, AnimatePresence } from 'motion/react';
 import { X, Star, History, Terminal, Trash2, ChevronRight, Bookmark } from 'lucide-react';
 import type { Device } from '../types';
+import { useEscapeClose } from '../hooks/useEscapeClose';
 
 interface CustomCommandModalProps {
   language: string;
@@ -52,6 +53,7 @@ const CustomCommandModal: React.FC<CustomCommandModalProps> = ({
   onToggleFavorites,
   onUseFavorite,
 }) => {
+  useEscapeClose(true, onClose);
   const [activeTab, setActiveTab] = useState<'favorites' | 'history'>('favorites');
   const canSubmit = (batchMode ? batchDeviceIds.length > 0 : !!selectedDevice) && customCommand.trim() && !(batchMode ? isBatchRunning : isTestingConnection);
 

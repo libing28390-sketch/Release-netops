@@ -83,7 +83,11 @@ def sync_all_monitoring_collectors(user: Any = None) -> dict[str, Any]:
 
 def _debounced_worker() -> None:
     try:
-        sync_all_monitoring_collectors()
+        result = sync_all_monitoring_collectors()
+        if result.get("status") == "SKIPPED" and result.get("reason") == "in_progress":
+            # Preserve status-triggered updates when a different collector
+            # compile/publish is still running as the debounce timer fires.
+            trigger_async_monitoring_sync(delay_seconds=5.0)
     except Exception as exc:
         logger.error(f"[CollectorAutoSync] Debounced worker error: {exc}", exc_info=True)
 

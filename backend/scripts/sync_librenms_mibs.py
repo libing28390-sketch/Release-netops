@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import argparse
+import re
 import sys
 from pathlib import Path
 
@@ -28,18 +29,44 @@ from services.librenms_mib_service import (  # noqa: F401
     logger,
 )
 from services.librenms_rule_service import sync_rules_from_repository
+from services.platform_registry_service import list_platform_vendor_names
+
+
+def _vendor_token(value: str) -> str:
+    return re.sub(r"[^a-z0-9]+", "", str(value or "").casefold())
 
 
 def main():
-    parser = argparse.ArgumentParser(description="Synchronize and import LibreNMS full MIB library into Nexora.")
+    parser = argparse.ArgumentParser(description="Synchronize LibreNMS MIBs for vendors registered in Nexora.")
     parser.add_argument("--fetch", action="store_true", default=True, help="Clone/pull from GitHub")
     parser.add_argument("--no-fetch", dest="fetch", action="store_false", help="Do not fetch from GitHub, use local files")
-    parser.add_argument("--vendors", nargs="+", help="Only import specific vendor directories (e.g. cisco huawei h3c rfc)")
+    parser.add_argument("--vendors", nargs="+", help="Narrow to specific vendors already registered in the platform")
     parser.add_argument("--max-files", type=int, default=None, help="Limit maximum number of MIB files to import")
     parser.add_argument("--dir", type=str, default=str(MIBS_DIR), help="Custom MIB directory path")
 
     args = parser.parse_args()
     mibs_path = Path(args.dir)
+
+    platform_vendors = list_platform_vendor_names()
+    if not platform_vendors:
+        parser.error("No platform vendors are registered for LibreNMS MIB synchronization")
+    allowed_vendor_map = {_vendor_token(name): name for name in platform_vendors}
+    allowed_vendor_map["standard"] = "Standard"
+    for vendor_key, vendor_name in VENDOR_DIR_MAP.items():
+        canonical_vendor = allowed_vendor_map.get(_vendor_token(vendor_name))
+        if canonical_vendor:
+            allowed_vendor_map[_vendor_token(vendor_key)] = canonical_vendor
+
+    retire_out_of_scope = not bool(args.vendors)
+    if args.vendors:
+        unknown_vendors = [name for name in args.vendors if _vendor_token(name) not in allowed_vendor_map]
+        if unknown_vendors:
+            parser.error("Only registered platform vendors are allowed: " + ", ".join(unknown_vendors))
+        target_vendors = list(dict.fromkeys(allowed_vendor_map[_vendor_token(name)] for name in args.vendors))
+        if "standard" not in {_vendor_token(name) for name in target_vendors}:
+            target_vendors.append("Standard")
+    else:
+        target_vendors = [*platform_vendors, "Standard"]
 
     if args.fetch:
         success = fetch_librenms_mibs(TARGET_DIR)
@@ -49,9 +76,11 @@ def main():
 
     result = import_mibs_from_directory(
         mibs_dir=mibs_path,
-        target_vendors=args.vendors,
+        target_vendors=target_vendors,
         max_files=args.max_files,
+        retire_out_of_scope=retire_out_of_scope,
     )
+    result["platform_vendor_scope"] = target_vendors
     result["librenms_rules"] = sync_rules_from_repository(TARGET_DIR)
     print(f"\nResult: {result}")
 

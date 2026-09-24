@@ -1,5 +1,6 @@
 import React, { useState, useRef, useEffect, useCallback } from 'react';
 import { createPortal } from 'react-dom';
+import { useEscapeClose } from '../hooks/useEscapeClose';
 import { Calendar, Clock, ChevronLeft, ChevronRight, Check, X } from 'lucide-react';
 
 interface DateTimePickerProps {
@@ -97,6 +98,7 @@ const DateTimePicker: React.FC<DateTimePickerProps> = ({
   const containerRef = useRef<HTMLDivElement>(null);
   const dropdownRef = useRef<HTMLDivElement>(null);
   const [open, setOpen] = useState(false);
+  useEscapeClose(open, () => setOpen(false));
   const [dropUp, setDropUp] = useState(false);
   const [dropdownPos, setDropdownPos] = useState<{ top: number; left: number } | null>(null);
 

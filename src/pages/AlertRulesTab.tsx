@@ -549,6 +549,7 @@ const AlertRulesTab: React.FC<AlertPageCommonProps> = ({ language, currentUserna
   }, [editingRuleId]);
 
   useAlertOverlayDismiss(Boolean(ruleDraft), closeEditor);
+  useAlertOverlayDismiss(deleteApprovalOpen, () => setDeleteApprovalOpen(false));
 
   const originalRule = useMemo(
     () => alertRules.find((item) => item.id === editingRuleId) || null,

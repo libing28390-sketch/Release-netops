@@ -16,6 +16,7 @@ import { useMonitoringStore } from '../store/monitoringStore';
 import { useMonitoring } from '../hooks/useMonitoring';
 import { useSystem } from '../hooks/useSystem';
 import { authHeaders } from '../api/http';
+import { useEscapeClose } from '../hooks/useEscapeClose';
 
 type MonitorDevice = {
   id?: string;
@@ -287,6 +288,7 @@ const MonitoringCenter: React.FC<MonitoringCenterProps> = ({ language, devices: 
   const [showAdvanced, setShowAdvanced] = useState(false);
   const [impactedShowAll, setImpactedShowAll] = useState(false);
   const [selectedIncident, setSelectedIncident] = useState<MonitoringIncident | null>(null);
+  useEscapeClose(Boolean(selectedIncident), () => setSelectedIncident(null));
   const [incidentDetailLoading, setIncidentDetailLoading] = useState(false);
   const [incidentMutationLoading, setIncidentMutationLoading] = useState(false);
   const [incidentAssignee, setIncidentAssignee] = useState('');

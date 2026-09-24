@@ -969,6 +969,34 @@ export const useTopology = ({ devices, language, showToast, isAuthenticated, ena
   }, [showToast, topologySiteFilter, topologySites]);
 
   const handleTriggerDiscovery = useCallback(async () => {
+    if (hostnameSyncing || topologyDiscoveryRunning) return;
+
+    setHostnameSyncing(true);
+    let hostnameSyncFailureCount = 0;
+    let hostnameSyncUpdatedCount = 0;
+    let hostnameSyncUnavailable = false;
+    try {
+      const syncResponse = await fetch('/api/devices/batch-sync-hostname', {
+        method: 'POST',
+        headers: {
+          ...topologyAuthHeaders(),
+          'Content-Type': 'application/json',
+        },
+        body: JSON.stringify({ device_ids: [] }),
+      });
+      const syncPayload = await syncResponse.json().catch(() => ({}));
+      if (!syncResponse.ok) {
+        throw new Error(topologyApiErrorMessage(syncPayload, 'topology_hostname_sync_failed'));
+      }
+
+      hostnameSyncFailureCount = Number(syncPayload?.failed || 0);
+      hostnameSyncUpdatedCount = Number(syncPayload?.updated || 0);
+    } catch {
+      hostnameSyncUnavailable = true;
+    } finally {
+      setHostnameSyncing(false);
+    }
+
     setTopologyDiscoveryRunning(true);
     setTopologyDiscoveryDevices([]);
     try {
@@ -1000,7 +1028,21 @@ export const useTopology = ({ devices, language, showToast, isAuthenticated, ena
         pending_devices: Number(payload.device_count || 0),
         progress_percent: 0,
       });
-      showToast(language === 'zh' ? '拓扑发现任务已启动，可实时查看进度。' : 'Topology discovery started; live progress is available.', 'success');
+      const syncStatusMessage = hostnameSyncUnavailable
+        ? (language === 'zh' ? '主机名同步暂不可用，' : 'Hostname sync was unavailable; ')
+        : hostnameSyncFailureCount > 0
+          ? (language === 'zh'
+            ? `${hostnameSyncFailureCount} 台设备主机名未能同步，`
+            : `Hostname sync did not complete for ${hostnameSyncFailureCount} devices; `)
+          : hostnameSyncUpdatedCount > 0
+            ? (language === 'zh' ? `已同步 ${hostnameSyncUpdatedCount} 台设备名称，` : `Synced ${hostnameSyncUpdatedCount} device names; `)
+            : '';
+      showToast(
+        language === 'zh'
+          ? `${syncStatusMessage}拓扑发现任务已启动，可实时查看进度。`
+          : `${syncStatusMessage}topology discovery started; live progress is available.`,
+        hostnameSyncUnavailable || hostnameSyncFailureCount > 0 ? 'info' : 'success',
+      );
     } catch (error) {
       setTopologyDiscoveryRunning(false);
       showToast(
@@ -1010,7 +1052,7 @@ export const useTopology = ({ devices, language, showToast, isAuthenticated, ena
         'error',
       );
     }
-  }, [language, showToast, topologySiteFilter]);
+  }, [hostnameSyncing, language, showToast, topologyDiscoveryRunning, topologySiteFilter]);
 
   React.useEffect(() => {
     if (!topologyDiscoveryRunId) return;
@@ -1067,45 +1109,6 @@ export const useTopology = ({ devices, language, showToast, isAuthenticated, ena
       showToast(language === 'zh' ? '取消拓扑发现失败' : 'Failed to cancel topology discovery', 'error');
     }
   }, [language, showToast, topologyDiscoveryProgress?.id, topologyDiscoveryRunId, topologyDiscoveryRunning]);
-
-  const handleSyncHostnames = useCallback(async () => {
-    if (hostnameSyncing) return;
-    setHostnameSyncing(true);
-    try {
-      const response = await fetch('/api/devices/batch-sync-hostname', {
-        method: 'POST',
-        headers: {
-          ...topologyAuthHeaders(),
-          'Content-Type': 'application/json',
-        },
-        body: JSON.stringify({ device_ids: [] }),
-      });
-      const payload = await response.json().catch(() => ({}));
-      if (!response.ok) {
-        throw new Error(topologyApiErrorMessage(payload, 'topology_hostname_sync_failed'));
-      }
-      await refreshDevices?.();
-      await refreshTopologyData();
-      const updated = Number(payload?.updated || 0);
-      const unchanged = Number(payload?.unchanged || 0);
-      const failed = Number(payload?.failed || 0);
-      showToast(
-        language === 'zh'
-          ? `全量 SNMP 主机名同步完成：更新 ${updated} 台，未变更 ${unchanged} 台${failed ? `，失败 ${failed} 台` : ''}`
-          : `Full SNMP hostname sync complete: ${updated} updated, ${unchanged} unchanged${failed ? `, ${failed} failed` : ''}`,
-        failed > 0 ? 'info' : 'success',
-      );
-    } catch (error) {
-      showToast(
-        language === 'zh'
-          ? `全量 SNMP 主机名同步失败：${error instanceof Error ? error.message : '连接错误'}`
-          : `Full SNMP hostname sync failed: ${error instanceof Error ? error.message : 'connection error'}`,
-        'error',
-      );
-    } finally {
-      setHostnameSyncing(false);
-    }
-  }, [hostnameSyncing, language, refreshDevices, refreshTopologyData, showToast]);
 
   const handleConfirmTopologyRelation = useCallback(async (edgeId: string, relationType: string) => {
     const response = await fetch(`/api/topology/graph/edges/${encodeURIComponent(edgeId)}/relation`, {
@@ -1187,7 +1190,6 @@ export const useTopology = ({ devices, language, showToast, isAuthenticated, ena
     handleTriggerDiscovery,
     handleCancelDiscovery,
     hostnameSyncing,
-    handleSyncHostnames,
     handleConfirmTopologyRelation,
     loadTopologyHistory,
     refreshTopologyData,

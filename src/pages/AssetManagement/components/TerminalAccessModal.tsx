@@ -2,6 +2,7 @@ import React from 'react';
 import { AnimatePresence, motion } from 'motion/react';
 import { Shield, Terminal, X, User, Lock, Check, Loader2 } from 'lucide-react';
 import { Asset } from '../types';
+import { useEscapeClose } from '../../../hooks/useEscapeClose';
 
 interface TerminalAccessModalProps {
   isOpen: boolean;
@@ -36,6 +37,7 @@ export const TerminalAccessModal: React.FC<TerminalAccessModalProps> = ({
   setIsApproved,
   language,
 }) => {
+  useEscapeClose(isOpen, onClose);
   const zh = language === 'zh';
 
   return (

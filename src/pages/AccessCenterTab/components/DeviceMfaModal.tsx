@@ -1,6 +1,7 @@
 import React from 'react';
 import { KeyRound, ShieldCheck, Smartphone, X } from 'lucide-react';
 import { motion } from 'framer-motion';
+import { useEscapeClose } from '../../../hooks/useEscapeClose';
 
 interface MfaTarget {
   device: { hostname: string; ip_address: string; management_port?: number };
@@ -36,6 +37,7 @@ export default function DeviceMfaModal({
   onClose,
   onVerify,
 }: DeviceMfaModalProps) {
+  useEscapeClose(true, onClose);
   const port = Number(target.device.management_port || 22) || 22;
   const canVerify = fixedPin.length === 6 && dynamicCode.length === 6;
 

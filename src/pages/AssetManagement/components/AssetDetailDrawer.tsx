@@ -3,6 +3,7 @@ import { AnimatePresence, motion } from 'motion/react';
 import { X } from 'lucide-react';
 import { Asset } from '../types';
 import { AssetReadonlyDetailInner } from '../../../components/AssetReadonlyDetail';
+import { useEscapeClose } from '../../../hooks/useEscapeClose';
 
 interface AssetDetailDrawerProps {
   isOpen: boolean;
@@ -17,6 +18,7 @@ export const AssetDetailDrawer: React.FC<AssetDetailDrawerProps> = ({
   drawerAsset,
   language,
 }) => {
+  useEscapeClose(isOpen && Boolean(drawerAsset), onClose);
   const zh = language === 'zh';
 
   return (

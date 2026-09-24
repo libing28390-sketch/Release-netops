@@ -16,6 +16,7 @@ import { motion, AnimatePresence } from 'framer-motion';
 import PageHero from '../../components/PageHero';
 import Pagination from '../../components/Pagination';
 import { ActionIconButton, ActionIconGroup } from '../../components/ui/ActionIconButton';
+import { useEscapeClose } from '../../hooks/useEscapeClose';
 import { useLocation, useNavigate } from 'react-router-dom';
 import { formatMacAddress } from '../../utils/resourceFormatters';
 
@@ -445,6 +446,8 @@ const IPAddressTab: React.FC<IPAddressTabProps> = ({ language, t }) => {
   const [isQuickAllocation, setIsQuickAllocation] = useState(false);
   const [showAdvancedFields, setShowAdvancedFields] = useState(false);
   const [showDeleteConfirm, setShowDeleteConfirm] = useState<string | null>(null);
+  useEscapeClose(showAddEdit, () => { setShowAddEdit(false); setEditingIP(null); });
+  useEscapeClose(Boolean(showDeleteConfirm), () => setShowDeleteConfirm(null));
 
   // Form State
   const [form, setForm] = useState({

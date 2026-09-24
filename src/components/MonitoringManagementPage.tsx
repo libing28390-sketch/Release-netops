@@ -6,6 +6,7 @@ import {
 } from 'lucide-react';
 import PageHero from './PageHero';
 import Pagination from './Pagination';
+import { useEscapeClose } from '../hooks/useEscapeClose';
 
 export type MonitoringManagementMode = 'plans' | 'modules' | 'collectors' | 'health';
 
@@ -623,6 +624,8 @@ const PlanSection: React.FC<PlanSectionProps> = ({
   planModuleEntries, addPlanModule, updatePlanModule, removePlanModule, planFormError,
   serializeTargetScope, modules, planVariantOptions,
 }) => {
+  useEscapeClose(planEditorOpen, resetPlanForm);
+  useEscapeClose(Boolean(planPreview), closePlanPreview);
   const [search, setSearch] = useState('');
   const [statusFilter, setStatusFilter] = useState<'all' | 'enabled' | 'disabled'>('all');
   const [page, setPage] = useState(1);
@@ -781,6 +784,8 @@ const ModuleCatalogSection: React.FC<ModuleCatalogSectionProps> = ({ zh, modules
   const closeEditor = () => { setEditorOpen(false); setEditingId(null); setVariantEditorOpen(false); };
   const openVariantManager = (module: ModuleRow, variant?: VariantRow) => { setEditorOpen(false); setDetailOpen(false); setEditingId(null); setSelectedId(module.id); setVariantEditingId(null); setVariantForm({ ...VARIANT_FORM_DEFAULT }); setVariantValidation({ state: 'idle', message: '' }); setVariantEditorOpen(false); setVariantManagerOpen(true); if (variant) { setVariantEditingId(variant.id); setVariantForm({ ...VARIANT_FORM_DEFAULT, variant_key: variant.variant_key || '', display_name: variant.display_name || '', max_repetitions: String(variant.max_repetitions ?? 25), retries: String(variant.retries ?? 2), request_timeout_ms: String(variant.request_timeout_ms ?? 3000), scrape_timeout_ms: String(variant.scrape_timeout_ms ?? 20000), supported_platforms: (variant.supported_platforms || []).join(', '), supported_models: (variant.supported_models || []).join(', '), supported_version_scope: (variant.supported_version_scope || []).join(', '), status: String(variant.status || 'DRAFT'), enabled: enabled(variant.enabled), oid_config: JSON.stringify(variantOidConfig(variant), null, 2) }); setVariantEditorOpen(true); } };
   const closeVariantManager = () => { setVariantManagerOpen(false); setSelectedId(null); setVariantEditingId(null); setVariantEditorOpen(false); setVariantValidation({ state: 'idle', message: '' }); };
+  useEscapeClose(editorOpen, closeEditor);
+  useEscapeClose(detailOpen, () => setDetailOpen(false));
   const saveModule = async (event: React.FormEvent) => {
     event.preventDefault();
     const path = editingId ? `/api/monitoring/modules/${editingId}` : '/api/monitoring/modules';
@@ -902,6 +907,8 @@ const VariantManagerModal: React.FC<VariantManagerModalProps> = ({
   onClose, onCreate, onEdit, onTest, onPublish, onDelete, onCancelEditor,
   onValidate, onFormat, onCopy, onFormChange, onSave, onSaveAndTest,
 }) => {
+  useEscapeClose(true, onClose);
+  useEscapeClose(editorOpen, onCancelEditor);
   const jsonStats = (() => {
     try {
       const parsed: unknown = JSON.parse(form.oid_config || '{}');
@@ -961,6 +968,8 @@ const CollectorManagementSection: React.FC<CollectorManagementSectionProps> = ({
   const [detail, setDetail] = useState<CollectorRow | null>(null);
   const [editingId, setEditingId] = useState<string | null>(null);
   const [form, setForm] = useState({ ...COLLECTOR_FORM_DEFAULT });
+  useEscapeClose(editorOpen, () => setEditorOpen(false));
+  useEscapeClose(Boolean(detail), () => setDetail(null));
   const query = search.trim().toLowerCase();
   const visibleCollectors = collectors.filter(collector => { const matchesSearch = !query || [collector.name, collector.code, collector.site_id, collector.collector_type, collector.status].some(value => String(value || '').toLowerCase().includes(query)); const matchesStatus = statusFilter === 'all' || (statusFilter === 'enabled' ? enabled(collector.enabled) : !enabled(collector.enabled)); return matchesSearch && matchesStatus; });
   const onlineCount = collectors.filter(item => ['ONLINE', 'OK', 'PASS'].includes(String(item.status || '').toUpperCase())).length;

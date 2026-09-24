@@ -33,6 +33,7 @@ import { DataTable } from '../../components/DataTable';
 import OutputActions from '../../components/OutputActions';
 import { ActionButton, ActionIconButton, ActionIconGroup } from '../../components/ui/ActionIconButton';
 import type { AutomationHistoryTabProps, PlaybookExecution } from './types';
+import { useEscapeClose } from '../../hooks/useEscapeClose';
 import {
   splitOutputByCommand,
   downloadExcel,
@@ -87,6 +88,7 @@ const AutomationHistoryTab: React.FC<AutomationHistoryTabProps> = ({
 }) => {
   const isZh = language === 'zh';
   const [isDetailModalOpen, setIsDetailModalOpen] = useState(false);
+  useEscapeClose(isDetailModalOpen, () => setIsDetailModalOpen(false));
   const isLive = !!(activeExecutionId && executionStatus === 'running');
   const [executionApprovals, setExecutionApprovals] = useState<ExecutionApproval[]>([]);
   const [approvalsLoading, setApprovalsLoading] = useState(false);

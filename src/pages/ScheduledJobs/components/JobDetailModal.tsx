@@ -3,6 +3,7 @@ import { AnimatePresence, motion } from 'motion/react';
 import { Info, X, CalendarClock, Target, FileText, FileCode } from 'lucide-react';
 import { NsotCollectionPreview, ScheduledJob } from '../types';
 import { describeCron } from '../helpers';
+import { useEscapeClose } from '../../../hooks/useEscapeClose';
 
 interface JobDetailModalProps {
   isOpen: boolean;
@@ -75,6 +76,7 @@ export const JobDetailModal: React.FC<JobDetailModalProps> = ({
   fetchNsotCollectionPreview,
   language,
 }) => {
+  useEscapeClose(isOpen, onClose);
   const zh = language === 'zh';
   const [nsotPreview, setNsotPreview] = useState<NsotCollectionPreview | null>(null);
   const [nsotPreviewLoading, setNsotPreviewLoading] = useState(false);

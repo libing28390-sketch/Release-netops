@@ -64,6 +64,7 @@ import BadgeCount from './BadgeCount';
 import NavItem from './NavItem';
 import NavSection from './NavSection';
 import { useSystem } from '../../hooks/useSystem';
+import { useEscapeClose } from '../../hooks/useEscapeClose';
 
 /** Map icon string keys (from navConfig) → lucide component */
 const iconMap: Record<string, React.ComponentType<any>> = {
@@ -116,6 +117,7 @@ const AppSidebar: React.FC<AppSidebarProps> = ({
   }, []);
 
   const showDrawer = isMobile ? (mobileOpen ?? false) : true;
+  useEscapeClose(isMobile && showDrawer, () => onMobileClose?.());
   const effectiveMini = !isMobile && mini;
 
   /* ─────────── "/" keyboard shortcut ─────────── */

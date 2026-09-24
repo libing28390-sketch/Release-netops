@@ -1,6 +1,7 @@
 import React from 'react';
 import { AlertTriangle, X } from 'lucide-react';
 import { motion } from 'motion/react';
+import { useEscapeClose } from '../hooks/useEscapeClose';
 
 interface DeleteConfirmModalProps {
   open: boolean;
@@ -19,6 +20,7 @@ const DeleteConfirmModal: React.FC<DeleteConfirmModalProps> = ({
   onClose,
   onConfirm,
 }) => {
+  useEscapeClose(open, onClose);
   if (!open) return null;
 
   return (

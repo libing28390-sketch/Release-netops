@@ -1,6 +1,7 @@
 import React from 'react';
 import { motion } from 'motion/react';
 import { X, type LucideIcon } from 'lucide-react';
+import { useEscapeClose } from '../hooks/useEscapeClose';
 
 interface ResultStatusModalProps {
   open: boolean;
@@ -31,6 +32,7 @@ const ResultStatusModal: React.FC<ResultStatusModalProps> = ({
   onBackdropClick,
   children,
 }) => {
+  useEscapeClose(open, onClose);
   if (!open) return null;
 
   const handleBackdropClick = () => {

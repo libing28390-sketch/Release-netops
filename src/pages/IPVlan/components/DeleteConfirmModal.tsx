@@ -1,5 +1,6 @@
 import React from 'react';
 import { AlertTriangle } from 'lucide-react';
+import { useEscapeClose } from '../../../hooks/useEscapeClose';
 
 interface DeleteConfirmModalProps {
   language: string;
@@ -18,6 +19,7 @@ const DeleteConfirmModal: React.FC<DeleteConfirmModalProps> = ({
   onClose,
   onConfirm,
 }) => {
+  useEscapeClose(true, onClose);
   return (
     <div
       className="fixed inset-0 bg-black/40 backdrop-blur-sm flex items-center justify-center z-[80]"

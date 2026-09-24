@@ -2,6 +2,7 @@ import React, { useMemo, useState } from "react";
 import { AnimatePresence, motion } from "motion/react";
 import { Check, Search, Tag, X } from "lucide-react";
 import type { TagDefinition } from "../../../types";
+import { useEscapeClose } from '../../../hooks/useEscapeClose';
 
 interface BatchTagModalProps {
   isOpen: boolean;
@@ -24,6 +25,7 @@ export const BatchTagModal: React.FC<BatchTagModalProps> = ({
   batchTag,
   language,
 }) => {
+  useEscapeClose(isOpen, onClose);
   const zh = language === "zh";
   const [search, setSearch] = useState("");
   const groupedTags = useMemo(

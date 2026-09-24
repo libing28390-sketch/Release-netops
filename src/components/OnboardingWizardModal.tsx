@@ -2,6 +2,7 @@ import React, { useState, useCallback } from 'react';
 import { motion, AnimatePresence } from 'motion/react';
 import { X, CheckCircle2, Shield, Wifi, Rocket, AlertTriangle, Loader2, RotateCcw, Eye, EyeOff } from 'lucide-react';
 import type { Device } from '../types';
+import { useEscapeClose } from '../hooks/useEscapeClose';
 
 interface OnboardingWizardModalProps {
   device: Device;
@@ -28,6 +29,7 @@ const STATUS_INDEX: Record<OnboardingStatus, number> = {
 const API_BASE = import.meta.env.VITE_API_BASE || '';
 
 export default function OnboardingWizardModal({ device, language, onClose, onComplete }: OnboardingWizardModalProps) {
+  useEscapeClose(true, onClose);
   const zh = language === 'zh';
   const currentStatus = (device.onboarding_status as OnboardingStatus) || 'pending_credentials';
   const currentIndex = STATUS_INDEX[currentStatus] ?? 0;

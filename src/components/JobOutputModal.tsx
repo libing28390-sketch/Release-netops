@@ -3,6 +3,7 @@ import { Copy } from 'lucide-react';
 import { motion } from 'motion/react';
 import type { Job } from '../types';
 import { ActionIconButton } from './ui/ActionIconButton';
+import { useEscapeClose } from '../hooks/useEscapeClose';
 
 interface JobOutputModalProps {
   job: Job | null;
@@ -12,6 +13,7 @@ interface JobOutputModalProps {
 }
 
 const JobOutputModal: React.FC<JobOutputModalProps> = ({ job, t, onClose, onCopy }) => {
+  useEscapeClose(Boolean(job), onClose);
   if (!job) return null;
 
   return (

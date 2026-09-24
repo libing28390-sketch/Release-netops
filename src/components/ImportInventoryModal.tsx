@@ -2,6 +2,7 @@ import React from 'react';
 import { Download, FileText, Upload, XCircle } from 'lucide-react';
 import { motion } from 'motion/react';
 import { ActionButton } from './ui/ActionIconButton';
+import { useEscapeClose } from '../hooks/useEscapeClose';
 
 interface ImportInventoryModalProps {
   open: boolean;
@@ -18,6 +19,7 @@ const ImportInventoryModal: React.FC<ImportInventoryModalProps> = ({
   onClose,
   onImport,
 }) => {
+  useEscapeClose(open, onClose);
   if (!open) return null;
 
   const handleDownloadTemplate = () => {

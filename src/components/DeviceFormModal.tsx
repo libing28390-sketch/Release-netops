@@ -6,6 +6,7 @@ import { TAG_CATEGORY_LABELS } from '../types';
 import { apiRequest } from '../api/http';
 import { inferPlatformVendor, platformVendorLabel } from '../utils/platformVendor';
 import { SSH_ALGORITHM_PROFILE_OPTIONS, SSH_ALGORITHM_PROFILE_VALUES } from '../pages/AssetManagement/constants';
+import { useEscapeClose } from '../hooks/useEscapeClose';
 
 type DeviceFormMode = 'add' | 'edit';
 
@@ -83,6 +84,7 @@ const DeviceFormModal: React.FC<DeviceFormModalProps> = ({
   onClose,
   onSubmit,
 }) => {
+  useEscapeClose(true, onClose);
   const isAdd = mode === 'add';
   const [enablePwdVisible, setEnablePwdVisible] = useState(false);
   const [breakGlassAcknowledged, setBreakGlassAcknowledged] = useState(false);

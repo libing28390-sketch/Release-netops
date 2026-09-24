@@ -13,6 +13,7 @@ import type {
   OutboundTarget,
 } from '../types/outbound';
 import { ActionIconButton, ActionIconGroup } from './ui/ActionIconButton';
+import { useEscapeClose } from '../hooks/useEscapeClose';
 
 const CustomTooltip = ({ active, payload, label, zh }: any) => {
   if (active && payload && payload.length) {
@@ -129,6 +130,7 @@ const OutboundHealthPanel: React.FC<OutboundHealthPanelProps> = ({
   const [saving, setSaving] = useState(false);
   const [countdown, setCountdown] = useState<string>('');
   const [showRulesModal, setShowRulesModal] = useState(false);
+  useEscapeClose(showRulesModal, () => setShowRulesModal(false));
 
   useEffect(() => {
     if (!current?.next_check_at) {

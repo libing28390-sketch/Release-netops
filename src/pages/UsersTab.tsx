@@ -6,6 +6,7 @@ import { primaryActionBtnClass } from '../components/shared';
 import PageHero from '../components/PageHero';
 import { DataTable } from '../components/DataTable';
 import { validateUserField } from '../utils/userValidation';
+import { useEscapeClose } from '../hooks/useEscapeClose';
 
 type UserFormState = {
   username: string;
@@ -68,6 +69,8 @@ const UsersTab: React.FC<UsersTabProps> = ({
   showNewUserPwd, setShowNewUserPwd, showEditUserPwd, setShowEditUserPwd,
   handleAddUser, handleEditUser, language, t,
 }) => {
+  useEscapeClose(showAddUserModal, () => setShowAddUserModal(false));
+  useEscapeClose(showEditUserModal && Boolean(editingUser), () => { setShowEditUserModal(false); setEditingUser(null); });
   const isZh = language === 'zh';
   const fieldError = (field: Parameters<typeof validateUserField>[0], value: string) => validateUserField(field, value, isZh);
   const inputClass = (error: string) => `w-full px-4 py-3 rounded-xl border ${error ? 'border-red-400 focus:border-red-500 focus:ring-red-100' : 'border-black/10 focus:border-black focus:ring-black/5'} focus:ring-4 outline-none transition-all`;

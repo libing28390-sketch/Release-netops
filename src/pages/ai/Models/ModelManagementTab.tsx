@@ -5,6 +5,7 @@ import Pagination from '../../../components/Pagination';
 import { ActionIconButton, ActionIconGroup } from '../../../components/ui/ActionIconButton';
 import { useCoreApp } from '../../../contexts/AppDomainContext';
 import { aiAdminText } from '../../../i18n/aiAdmin';
+import { useEscapeClose } from '../../../hooks/useEscapeClose';
 
 const SCENES = [
   { code: 'command_explain', labelKey: 'ai.prompt.scene.command_explain.label', shortKey: 'ai.prompt.scene.command_explain.short', descriptionKey: 'ai.prompt.scene.command_explain.description' },
@@ -53,6 +54,7 @@ export const ModelManagementTab: React.FC = () => {
 
   // Modal
   const [showModal, setShowModal] = useState(false);
+  useEscapeClose(showModal, () => setShowModal(false));
   const [name, setName] = useState('');
   const [providerId, setProviderId] = useState('');
   const [modelCode, setModelCode] = useState('');

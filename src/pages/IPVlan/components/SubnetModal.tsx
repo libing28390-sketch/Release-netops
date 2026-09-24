@@ -1,6 +1,7 @@
 import React from 'react';
 import { X } from 'lucide-react';
 import { Subnet } from '../types';
+import { useEscapeClose } from '../../../hooks/useEscapeClose';
 import {
   detectIPVersion,
   isValidIP,
@@ -49,6 +50,7 @@ const SubnetModal: React.FC<SubnetModalProps> = ({
   onClose,
   onSubmit,
 }) => {
+  useEscapeClose(true, onClose);
   const isV6 = formSubnet.network ? detectIPVersion(formSubnet.network) === 6 : false;
   const netOk = !formSubnet.network || isValidIP(formSubnet.network);
   const netMisaligned =

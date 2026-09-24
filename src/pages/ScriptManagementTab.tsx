@@ -6,6 +6,7 @@ import {
 import Pagination from '../components/Pagination';
 import PageHero from '../components/PageHero';
 import { ActionIconButton, ActionIconGroup } from '../components/ui/ActionIconButton';
+import { useEscapeClose } from '../hooks/useEscapeClose';
 import NSOTCollectionOperations from './NSOTCollectionOperations';
 import {
   TEXTFSM_VENDOR_OPTIONS,
@@ -55,6 +56,9 @@ const ScriptManagementTab: React.FC<{ language: string; showToast: (msg: string,
   
   const [showConfirmModal, setShowConfirmModal] = useState(false);
   const [showRejectPrompt, setShowRejectPrompt] = useState(false);
+  useEscapeClose(isModalOpen, () => setIsModalOpen(false));
+  useEscapeClose(showConfirmModal, () => setShowConfirmModal(false));
+  useEscapeClose(showRejectPrompt, () => setShowRejectPrompt(false));
   const [rejectReason, setRejectReason] = useState('');
   
   const [auditorSearch, setAuditorSearch] = useState('');

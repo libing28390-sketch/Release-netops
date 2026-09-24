@@ -24,6 +24,7 @@ import { ActionButton } from '../components/ui/ActionIconButton';
 import ResultStatusModal from '../components/ResultStatusModal';
 import { apiRequest } from '../api/http';
 import { ALL_VENDOR_NAMES } from './AssetManagement/constants';
+import { useEscapeClose } from '../hooks/useEscapeClose';
 
 interface ApiEnvelope<T> {
   success: boolean;
@@ -303,6 +304,7 @@ const PlatformRegistryTab: React.FC<Props> = ({ language, currentUser }) => {
   const [rejectReleaseId, setRejectReleaseId] = useState('');
   const [rejectReleaseReason, setRejectReleaseReason] = useState('');
   const [wizardOpen, setWizardOpen] = useState(false);
+  useEscapeClose(wizardOpen, () => setWizardOpen(false));
   const [wizardMode, setWizardMode] = useState<'create' | 'edit'>('create');
   const [wizardStep, setWizardStep] = useState<1 | 2>(1);
   const [createForm, setCreateForm] = useState<CreateProfileForm>(EMPTY_CREATE_PROFILE);

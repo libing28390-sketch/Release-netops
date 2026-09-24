@@ -9,6 +9,7 @@ import TagConditionPicker, {
   type TagFilterConfig,
 } from '../../components/TagConditionPicker';
 import { ActionIconButton, ActionIconGroup } from '../../components/ui/ActionIconButton';
+import { useEscapeClose } from '../../hooks/useEscapeClose';
 import type { Device } from '../../types';
 
 interface BackupScope {
@@ -242,6 +243,7 @@ const BackupPolicyManager: React.FC<BackupPolicyManagerProps> = ({
   const [expanded, setExpanded] = useState(true);
   const [draft, setDraft] = useState<PolicyDraft | null>(null);
   const [preview, setPreview] = useState<PolicyPreview | null>(null);
+  useEscapeClose(Boolean(draft), () => { setDraft(null); setPreview(null); });
   const [previewing, setPreviewing] = useState(false);
   const [saving, setSaving] = useState(false);
   const [runningId, setRunningId] = useState('');

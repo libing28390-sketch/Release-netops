@@ -38,21 +38,22 @@ PostgreSQL 18 官方容器将数据目录设为 `/var/lib/postgresql/18/docker`�
 
 ## S3 对象存储与 SeaweedFS
 
-默认 `STORAGE_BACKEND=local`，不会启动对象存储 sidecar。SeaweedFS 定义在
-`object-storage` Compose profile 中，因此裸执行 `docker compose up` 不会自动
-启用它。推荐让部署脚本根据 `.env` 中的存储模式选择 profile：
+Docker 示例配置默认使用 `STORAGE_BACKEND=s3`，部署脚本会根据该值自动启用
+`object-storage` Compose profile。SeaweedFS 使用与 `netops` 完全相同的访问密钥，
+脚本在首次安装或更新时会把示例中的占位符替换为强随机值；如果 `.env` 中已经是
+真实凭据，则会原样保留：
 
 ```dotenv
 STORAGE_BACKEND=s3
 S3_ENDPOINT_URL=http://seaweedfs:8333
 S3_BUCKET=nexora
-S3_ACCESS_KEY_ID=replace-with-a-real-access-key
-S3_SECRET_ACCESS_KEY=replace-with-a-real-secret-key
+S3_ACCESS_KEY_ID=replace-with-a-strong-s3-access-key
+S3_SECRET_ACCESS_KEY=replace-with-a-strong-s3-secret-key
 ```
 
 S3 模式必须提供 endpoint、bucket、access key 和 secret key。`seaweedfs` 是
 Compose 网络内的服务名，不能改成 `127.0.0.1`，否则后端容器会访问自身而不是
-SeaweedFS。填写好这些值后执行：
+SeaweedFS。使用部署脚本时只需执行：
 
 ```bash
 bash scripts/deploy-docker.sh install
@@ -66,7 +67,8 @@ bash scripts/deploy-docker.sh update --force
 其余服务，不重建容器或删除数据卷。可通过
 `NETOPS_STARTUP_RECOVERY_TIMEOUT_SECONDS` 调整等待上限。
 
-如果直接使用 Compose，请显式启用 profile：
+如果直接使用 Compose，请显式启用 profile，并确保 `.env` 已经填入与 `netops`
+一致的真实 S3 凭据：
 
 ```bash
 docker compose --profile object-storage up -d
@@ -74,6 +76,16 @@ docker compose --profile object-storage up -d
 
 不要把真实凭据提交到仓库；生产环境应使用部署机上的 `.env` 或 Secret Manager，
 并按实际 S3 服务调整 endpoint 和 TLS 校验设置。
+
+切换到 S3 不会自动迁移已有的本地文件。原本保存在 `STORAGE_LOCAL_ROOT` 或
+`nexora-data` 卷中的 PAM 录像、配置备份等对象仍留在本地存储；需要按仓库的
+存储迁移流程单独导入到 S3，完成核对后再清理旧数据。
+
+SeaweedFS 当前没有设置 bucket 总容量配额，Docker named volume 也没有单独的磁盘配额；
+S3 可用空间取决于 Docker 数据目录所在文件系统的剩余空间。`weed mini` 的
+`volumeSizeLimitMB` 是单个 volume 的上限，不是整个 bucket 的容量限制。
+当前应用没有前端容量设置；需要限制总容量时，应在宿主机文件系统配置磁盘配额，
+或使用带 bucket quota 的外部 S3 服务。不要把单卷大小误认为 S3 总容量。
 
 Docker Compose 默认启用 Prometheus-compatible 的 VictoriaMetrics 查询路径，
 并把 `netops` 编译发布的采集目标、SNMP 认证和 vmagent 配置通过
@@ -104,9 +116,15 @@ docker compose logs --tail=200 snmp-exporter vmagent
 ```
 
 Nexora 的“监控大盘”通过同源 `/grafana/` 访问 Grafana，Grafana 数据源已自动
-指向 `http://victoriametrics:8428`。默认关闭匿名访问；首次打开大盘时使用
-`GRAFANA_ADMIN_USER` / `GRAFANA_ADMIN_PASSWORD` 登录。需要在 Nexora 内嵌大盘时，
-保持 `GRAFANA_ALLOW_EMBEDDING=1`，不要为了省略登录而把匿名访问开放到不可信网络。
+指向 `http://victoriametrics:8428`。从 Nexora 登录后，Grafana 会通过同源、仅限
+`/grafana` 路径的 HttpOnly 会话 Cookie 和 Nginx Auth Proxy 复用当前登录身份；
+匿名访问仍关闭，浏览器不会获得 Grafana 管理员密码。管理员账号密码仅保留为运维恢复入口。
+需要在 Nexora 内嵌大盘时，保持 `GRAFANA_ALLOW_EMBEDDING=1`。
+
+Auth Proxy 只信任独立内部 Docker 网络上的 Nginx 地址。默认网段为
+`172.30.254.0/29`，Nginx 地址为 `172.30.254.2`；如果与主机现有 Docker 网段冲突，
+可在 `.env` 中同时调整 `GRAFANA_AUTH_PROXY_SUBNET` 与 `GRAFANA_AUTH_PROXY_NGINX_IP`，
+确保 Nginx 地址属于该网段且未被其他容器占用。
 
 旧版统一主机大盘 `07 服务器与主机监控`（UID `nexora-server-metrics`）已被 Linux 与
 Windows 专用大盘替代。Docker 部署脚本在安装、升级和离线启动时会尝试删除该旧 UID；

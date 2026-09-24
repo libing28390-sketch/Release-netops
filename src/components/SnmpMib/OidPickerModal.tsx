@@ -2,6 +2,7 @@ import React, { useState, useEffect, useMemo } from 'react';
 import { Search, X, Layers, Database, Check, Sparkles, Filter } from 'lucide-react';
 import { apiRequest } from '../../api/http';
 import { ALL_VENDOR_NAMES, NETWORK_VENDOR_GROUPS } from '../../pages/AssetManagement/constants';
+import { useEscapeClose } from '../../hooks/useEscapeClose';
 
 export interface MibNodeItem {
   id: string;
@@ -35,6 +36,7 @@ const OidPickerModal: React.FC<OidPickerModalProps> = ({
   initialVendor = '',
   language,
 }) => {
+  useEscapeClose(open, onClose);
   const zh = language === 'zh';
   const [query, setQuery] = useState('');
   const [vendorFilter, setVendorFilter] = useState(initialVendor || '');

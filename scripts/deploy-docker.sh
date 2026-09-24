@@ -217,6 +217,20 @@ initialize_env() {
         set_env_value GRAFANA_ADMIN_PASSWORD "$grafana_password"
     fi
 
+    # Docker deployments use the bundled SeaweedFS service by default. Keep
+    # the access and secret values in the deployment dotenv file so Compose
+    # passes the exact same credentials to both netops and SeaweedFS. Existing
+    # real values are preserved; only empty or clearly marked placeholders are
+    # replaced during initialization.
+    if storage_backend_is_s3; then
+        if is_placeholder "$(env_value S3_ACCESS_KEY_ID)"; then
+            set_env_value S3_ACCESS_KEY_ID "$(openssl rand -hex 24)"
+        fi
+        if is_placeholder "$(env_value S3_SECRET_ACCESS_KEY)"; then
+            set_env_value S3_SECRET_ACCESS_KEY "$(openssl rand -hex 32)"
+        fi
+    fi
+
     db_password="$(env_value POSTGRES_PASSWORD)"
     if [[ -z "$(env_value DATABASE_URL)" || "$(env_value DATABASE_URL)" == *127.0.0.1* || "$(env_value DATABASE_URL)" == *localhost* ]]; then
         set_env_value DATABASE_URL "postgresql://${db_user}:${db_password}@db:5432/${db_name}"

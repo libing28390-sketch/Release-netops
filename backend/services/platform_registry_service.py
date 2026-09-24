@@ -171,6 +171,32 @@ SYSTEM_PROFILES: tuple[dict[str, Any], ...] = (
     {"platform_code": "maipu_mypower_unknown", "name_zh": "迈普 MyPower 未知版本", "name_en": "Maipu MyPower Unknown", "vendor": "Maipu", "connection_driver": "maipu", "parser_platform": "maipu"},
 )
 
+
+def list_platform_vendor_names(conn=None) -> list[str]:
+    """Return vendor names supported by built-in or active platform profiles."""
+    owns_connection = conn is None
+    connection = get_db_connection() if owns_connection else conn
+    vendors: dict[str, str] = {}
+    try:
+        values = [str(profile.get("vendor") or "").strip() for profile in SYSTEM_PROFILES]
+        rows = connection.execute(
+            "SELECT DISTINCT TRIM(vendor) AS vendor FROM platform_profiles "
+            "WHERE COALESCE(UPPER(status), 'ACTIVE') <> 'ARCHIVED' "
+            "AND TRIM(COALESCE(vendor, '')) <> ''"
+        ).fetchall()
+        values.extend(
+            str((row[0] if isinstance(row, tuple) else row["vendor"]) or "").strip()
+            for row in rows
+        )
+        for value in values:
+            if value:
+                vendors.setdefault(value.casefold(), value)
+        return sorted(vendors.values(), key=str.casefold)
+    finally:
+        if owns_connection:
+            connection.close()
+
+
 PLATFORM_ALIASES = {
     "cisco": "cisco_ios", "ios": "cisco_ios", "huawei": "huawei_vrp", "vrp": "huawei_vrp",
     "huawei_vrpv8": "huawei_vrp", "h3c": "h3c_comware", "comware": "h3c_comware",

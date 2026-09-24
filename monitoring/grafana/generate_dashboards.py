@@ -9,7 +9,7 @@ null = None
 ROOT_DIR = Path(__file__).resolve().parents[2]
 DASHBOARDS_DIR = ROOT_DIR / "monitoring" / "grafana" / "dashboards"
 DS_UID = "victoriametrics"
-DASHBOARD_VERSION = 26
+DASHBOARD_VERSION = 27
 
 DEV_JOIN = ""
 IF_JOIN = "* on(instance, ifIndex) group_left(ifName) ((ifName * 0 + 1) or on(instance, ifIndex) (ifOperStatus * 0 + 1))"
@@ -39,6 +39,21 @@ def filtered_interface_join(selector, *, fallback_status=True):
     if fallback_status:
         name_expr = f"({name_expr} or on(instance, ifIndex) (ifOperStatus{{{selector}}} * 0 + 1))"
     return f"* on(instance, ifIndex) group_left(ifName) ({name_expr})"
+
+
+def interface_rate_sum(metrics, selector, interface_join):
+    """Sum optional interface counters without dropping rows for missing OIDs.
+
+    The zero vector also deduplicates repeated series for the same endpoint and
+    interface before adding counters with slightly different label sets.
+    """
+    labels = "instance, hostname, site_name, ifIndex, ifName"
+    zero = f"max by ({labels}) ((ifOperStatus{{{selector}}} {interface_join}) * 0)"
+    terms = []
+    for metric in metrics:
+        rate = f"max by ({labels}) (rate({metric}{{{selector}}}[5m]) {interface_join})"
+        terms.append(f"({rate} or {zero})")
+    return " + ".join(terms)
 
 def stat_panel(pid, title, expr, x, y, w=4, h=4, unit="", color="green", thresholds=None):
     steps = [{"color": color, "value": None}]
@@ -298,8 +313,8 @@ def build_overview_dashboard():
         stat_panel(2, "监控站点数", f'count(count by (site_name) (up{{{target_site_sel}}})) or vector(0)', 4, 0, 4, 3, color="#A352CC"),
         stat_panel(3, "全网在线数", f'count(count by (instance) (up{{{target_sel}}} == 1)) or vector(0)', 8, 0, 4, 3, color="#56A64B"),
         stat_panel(4, "无线在线客户端数", client_online_expr, 12, 0, 4, 3, color="#37872D"),
-        stat_panel(5, "采集接口总数", f"count(ifOperStatus{{{sel}}}) or vector(0)", 16, 0, 4, 3, color="#3274D9"),
-        stat_panel(6, "异常/Down接口数", f'count((ifAdminStatus{{{sel}}} == 1) and on(instance, ifIndex) (ifOperStatus{{{sel}}} != 1)) or vector(0)', 20, 0, 4, 3, thresholds=[
+        stat_panel(5, "采集接口总数", f"count(count by (instance, ifIndex) (ifOperStatus{{{sel}}})) or vector(0)", 16, 0, 4, 3, color="#3274D9"),
+        stat_panel(6, "异常/Down接口数", f'count(max by (instance, ifIndex) (ifAdminStatus{{{sel}}} == 1) and on(instance, ifIndex) max by (instance, ifIndex) (ifOperStatus{{{sel}}} != 1)) or vector(0)', 20, 0, 4, 3, thresholds=[
             {"color": "green", "value": None},
             {"color": "#E0B400", "value": 1},
             {"color": "#F2495C", "value": 5}
@@ -509,6 +524,13 @@ def build_interface_dashboard():
     out_rate = counter_rate_expr("ifHCOutOctets", "ifOutOctets", sel)
     if_join = filtered_interface_join(if_filter, fallback_status=False)
     stat_if_join = if_join
+    error_rate = interface_rate_sum(["ifInErrors", "ifOutErrors"], sel, stat_if_join)
+    discard_rate = interface_rate_sum(["ifInDiscards", "ifOutDiscards"], sel, stat_if_join)
+    error_and_discard_rate = interface_rate_sum(
+        ["ifInErrors", "ifOutErrors", "ifInDiscards", "ifOutDiscards"],
+        sel,
+        stat_if_join,
+    )
     speed_bps = f'(((ifHighSpeed{{{sel}}} > 0) * 1000000) or (ifSpeed{{{sel}}} > 0))'
     util_in = f'(({in_rate} * 8) / {speed_bps} * 100)'
     util_out = f'(({out_rate} * 8) / {speed_bps} * 100)'
@@ -516,8 +538,8 @@ def build_interface_dashboard():
     panels = [
         stat_panel(1, "全网聚合入流量 (Inbound)", f"sum({in_rate} {stat_if_join}) * 8 or vector(0)", 0, 0, 6, 4, unit="bps", color="#3274D9"),
         stat_panel(2, "全网聚合出流量 (Outbound)", f"sum({out_rate} {stat_if_join}) * 8 or vector(0)", 6, 0, 6, 4, unit="bps", color="#56A64B"),
-        stat_panel(3, "实时错误包总速率", f"(sum(rate(ifInErrors{{{sel}}}[5m]) {stat_if_join}) + sum(rate(ifOutErrors{{{sel}}}[5m]) {stat_if_join})) or vector(0)", 12, 0, 6, 4, unit="pps", thresholds=[{"color": "green", "value": None}, {"color": "#E0B400", "value": 10}, {"color": "red", "value": 100}]),
-        stat_panel(4, "实时丢弃包总速率", f"(sum(rate(ifInDiscards{{{sel}}}[5m]) {stat_if_join}) + sum(rate(ifOutDiscards{{{sel}}}[5m]) {stat_if_join})) or vector(0)", 18, 0, 6, 4, unit="pps", thresholds=[{"color": "green", "value": None}, {"color": "#E0B400", "value": 10}, {"color": "red", "value": 100}]),
+        stat_panel(3, "实时错误包总速率", f"sum({error_rate}) or vector(0)", 12, 0, 6, 4, unit="pps", thresholds=[{"color": "green", "value": None}, {"color": "#E0B400", "value": 10}, {"color": "red", "value": 100}]),
+        stat_panel(4, "实时丢弃包总速率", f"sum({discard_rate}) or vector(0)", 18, 0, 6, 4, unit="pps", thresholds=[{"color": "green", "value": None}, {"color": "#E0B400", "value": 10}, {"color": "red", "value": 100}]),
         timeseries_panel(5, "高负荷端口入流量 Top 10", [
             {"expr": f"topk(10, {in_rate} * 8 {if_join})", "legendFormat": "{{site_name}} / {{hostname}} / {{ifName}}", "refId": "A"}
         ], 0, 4, 12, 8, unit="bps"),
@@ -540,7 +562,7 @@ def build_interface_dashboard():
         ),
         table_panel(
             9, "端口错误与丢弃排行 Top 20",
-            f"topk(20, (rate(ifInErrors{{{sel}}}[5m]) + rate(ifOutErrors{{{sel}}}[5m]) + rate(ifInDiscards{{{sel}}}[5m]) + rate(ifOutDiscards{{{sel}}}[5m])) {if_join})",
+            f"topk(20, {error_and_discard_rate})",
             0, 20, 12, 8, unit="pps",
             transformations=clean_organize_transformation("错误/丢弃率 (pps)"),
             value_col_name="错误/丢弃率 (pps)"
@@ -577,8 +599,8 @@ def build_interface_dashboard():
 # 5. Monitoring Engine Health Dashboard
 def build_health_dashboard():
     panels = [
-        stat_panel(1, "SNMP 在线目标", f"sum(up{{{NETWORK_JOB}}}) or vector(0)", 0, 0, 6, 4, color="#56A64B"),
-        stat_panel(2, "SNMP 失败目标", f"sum(up{{{NETWORK_JOB}}} == 0) or vector(0)", 6, 0, 6, 4, thresholds=[{"color": "green", "value": None}, {"color": "red", "value": 1}]),
+        stat_panel(1, "SNMP 在线目标", f"count(count by (instance) (up{{{NETWORK_JOB}}})) or vector(0)", 0, 0, 6, 4, color="#56A64B"),
+        stat_panel(2, "SNMP 失败目标", f"count(count by (instance) (up{{{NETWORK_JOB}}} == 0)) or vector(0)", 6, 0, 6, 4, thresholds=[{"color": "green", "value": None}, {"color": "red", "value": 1}]),
         stat_panel(3, "平均 SNMP 采集耗时", f"avg(scrape_duration_seconds{{{NETWORK_JOB}}}) or vector(0)", 12, 0, 6, 4, unit="s", color="#3274D9"),
         stat_panel(4, "最大 SNMP 采集耗时", f"max(scrape_duration_seconds{{{NETWORK_JOB}}}) or vector(0)", 18, 0, 6, 4, unit="s", thresholds=[{"color": "green", "value": None}, {"color": "#E0B400", "value": 5}, {"color": "red", "value": 15}]),
         timeseries_panel(5, "各设备 SNMP 采集耗时分布 (秒)", [
@@ -625,6 +647,13 @@ def build_outbound_dashboard():
     in_rate = counter_rate_expr("ifHCInOctets", "ifInOctets", sel)
     out_rate = counter_rate_expr("ifHCOutOctets", "ifOutOctets", sel)
     if_join = filtered_interface_join(if_filter, fallback_status=False)
+    error_rate = interface_rate_sum(["ifInErrors", "ifOutErrors"], sel, if_join)
+    discard_rate = interface_rate_sum(["ifInDiscards", "ifOutDiscards"], sel, if_join)
+    error_and_discard_rate = interface_rate_sum(
+        ["ifInErrors", "ifOutErrors", "ifInDiscards", "ifOutDiscards"],
+        sel,
+        if_join,
+    )
     speed_bps = f'(((ifHighSpeed{{{sel}}} > 0) * 1000000) or (ifSpeed{{{sel}}} > 0))'
     util_in = f'(({in_rate} * 8) / {speed_bps} * 100)'
     util_out = f'(({out_rate} * 8) / {speed_bps} * 100)'
@@ -638,10 +667,10 @@ def build_outbound_dashboard():
         stat_panel(4, "出口最高出向利用率", f"max({util_out} {if_join}) or vector(0)", 12, 0, 4, 4, unit="percent", thresholds=[
             {"color": "green", "value": None}, {"color": "#E0B400", "value": 70}, {"color": "red", "value": 85}
         ]),
-        stat_panel(5, "出口链路错误与丢弃总速率", f"(sum(rate(ifInErrors{{{sel}}}[5m]) {if_join}) + sum(rate(ifOutErrors{{{sel}}}[5m]) {if_join}) + sum(rate(ifInDiscards{{{sel}}}[5m]) {if_join}) + sum(rate(ifOutDiscards{{{sel}}}[5m]) {if_join})) or vector(0)", 16, 0, 4, 4, unit="pps", thresholds=[
+        stat_panel(5, "出口链路错误与丢弃总速率", f"sum({error_rate} + {discard_rate}) or vector(0)", 16, 0, 4, 4, unit="pps", thresholds=[
             {"color": "green", "value": None}, {"color": "#E0B400", "value": 10}, {"color": "red", "value": 100}
         ]),
-        stat_panel(6, "筛选接口数", f"count(ifOperStatus{{{sel}}} {if_join}) or vector(0)", 20, 0, 4, 4, unit="none", color="#A352CC"),
+        stat_panel(6, "筛选接口数", f"count(count by (instance, ifIndex) (ifOperStatus{{{sel}}} {if_join})) or vector(0)", 20, 0, 4, 4, unit="none", color="#A352CC"),
         timeseries_panel(7, "出口设备入向流量趋势 (Inbound bps)", [
             {"expr": f"sum by (hostname, site_name) ({in_rate} * 8 {if_join})", "legendFormat": "{{site_name}} / {{hostname}} 入向", "refId": "A"}
         ], 0, 4, 12, 8, unit="bps"),
@@ -655,8 +684,8 @@ def build_outbound_dashboard():
             {"expr": f"topk(10, {util_out} {if_join})", "legendFormat": "{{site_name}} / {{hostname}} / {{ifName}} 出向", "refId": "A"}
         ], 12, 12, 12, 8, unit="percent"),
         timeseries_panel(11, "出口链路错误与丢弃时序 (PPS)", [
-            {"expr": f"sum by (hostname, site_name) (rate(ifInErrors{{{sel}}}[5m]) {if_join}) + sum by (hostname, site_name) (rate(ifOutErrors{{{sel}}}[5m]) {if_join})", "legendFormat": "{{site_name}} / {{hostname}} 错包/秒", "refId": "A"},
-            {"expr": f"sum by (hostname, site_name) (rate(ifInDiscards{{{sel}}}[5m]) {if_join}) + sum by (hostname, site_name) (rate(ifOutDiscards{{{sel}}}[5m]) {if_join})", "legendFormat": "{{site_name}} / {{hostname}} 丢弃/秒", "refId": "B"}
+            {"expr": f"sum by (hostname, site_name) ({error_rate})", "legendFormat": "{{site_name}} / {{hostname}} 错包/秒", "refId": "A"},
+            {"expr": f"sum by (hostname, site_name) ({discard_rate})", "legendFormat": "{{site_name}} / {{hostname}} 丢弃/秒", "refId": "B"}
         ], 0, 20, 24, 8, unit="pps"),
         table_panel(
             12, "出口端口入向利用率排行 Top 10",
@@ -674,7 +703,7 @@ def build_outbound_dashboard():
         ),
         table_panel(
             14, "出口端口错误与丢弃排行 Top 10",
-            f"topk(10, (rate(ifInErrors{{{sel}}}[5m]) + rate(ifOutErrors{{{sel}}}[5m]) + rate(ifInDiscards{{{sel}}}[5m]) + rate(ifOutDiscards{{{sel}}}[5m])) {if_join})",
+            f"topk(10, {error_and_discard_rate})",
             0, 36, 24, 8, unit="pps",
             transformations=clean_organize_transformation("错误/丢弃率 (pps)"),
             value_col_name="错误/丢弃率 (pps)"

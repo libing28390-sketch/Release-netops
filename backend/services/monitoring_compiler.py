@@ -997,8 +997,8 @@ def render_target_snapshot(assignments: Iterable[Mapping[str, Any]], *, collecto
 
 def render_server_targets(servers: Iterable[Mapping[str, Any]] = ()) -> tuple[list[dict[str, Any]], list[dict[str, Any]]]:
     """Render secret-free file-SD targets for Linux (node_exporter) and Windows servers."""
-    linux_targets: list[dict[str, Any]] = []
-    windows_targets: list[dict[str, Any]] = []
+    linux_targets_by_addr: dict[str, tuple[tuple[int, int, str], dict[str, Any]]] = {}
+    windows_targets_by_addr: dict[str, tuple[tuple[int, int, str], dict[str, Any]]] = {}
 
     for server_val in servers:
         server = _row(server_val)
@@ -1031,13 +1031,21 @@ def render_server_targets(servers: Iterable[Mapping[str, Any]] = ()) -> tuple[li
             labels["asset_id"] = asset_id
 
         entry = {"targets": [target_addr], "labels": labels}
-        if is_windows:
-            windows_targets.append(entry)
-        else:
-            linux_targets.append(entry)
+        # A managed server can appear once in physical_assets and again as a
+        # linked devices row. Scrape each exporter endpoint once, preferring
+        # the live device record's tenant/site metadata when both are present.
+        status_rank = 1 if str(server.get("status") or "").strip().lower() == "online" else 0
+        tenant_rank = 1 if tenant_id != "tenant-default" else 0
+        priority = (status_rank, tenant_rank, asset_id)
+        targets_by_addr = windows_targets_by_addr if is_windows else linux_targets_by_addr
+        existing = targets_by_addr.get(target_addr)
+        if existing is None or priority > existing[0]:
+            targets_by_addr[target_addr] = (priority, entry)
 
-    linux_targets.sort(key=lambda x: x["labels"].get("hostname", ""))
-    windows_targets.sort(key=lambda x: x["labels"].get("hostname", ""))
+    linux_targets = [item for _, item in linux_targets_by_addr.values()]
+    windows_targets = [item for _, item in windows_targets_by_addr.values()]
+    linux_targets.sort(key=lambda x: (x["labels"].get("hostname", ""), x["targets"][0]))
+    windows_targets.sort(key=lambda x: (x["labels"].get("hostname", ""), x["targets"][0]))
     return linux_targets, windows_targets
 
 
@@ -1102,7 +1110,6 @@ def render_vmagent_config(snapshot_path: str = "/etc/nexora-collector/runtime/vm
                 "metrics_path": "/metrics",
                 "file_sd_configs": [
                     {"files": [
-                        "/etc/nexora-collector/runtime/vmagent/targets/linux_targets.yml",
                         "/etc/nexora-collector/runtime/vmagent/targets/*linux*.yml",
                         "/etc/nexora-collector/runtime/vmagent/targets/*server*.yml"
                     ]}
@@ -1115,7 +1122,6 @@ def render_vmagent_config(snapshot_path: str = "/etc/nexora-collector/runtime/vm
                 "metrics_path": "/metrics",
                 "file_sd_configs": [
                     {"files": [
-                        "/etc/nexora-collector/runtime/vmagent/targets/windows_targets.yml",
                         "/etc/nexora-collector/runtime/vmagent/targets/*windows*.yml"
                     ]}
                 ],

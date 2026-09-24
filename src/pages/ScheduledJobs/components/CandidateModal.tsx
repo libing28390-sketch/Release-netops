@@ -1,6 +1,7 @@
 import React from 'react';
 import { AnimatePresence, motion } from 'motion/react';
 import { X, Target } from 'lucide-react';
+import { useEscapeClose } from '../../../hooks/useEscapeClose';
 
 interface CandidateModalProps {
   isOpen: boolean;
@@ -21,6 +22,7 @@ export const CandidateModal: React.FC<CandidateModalProps> = ({
   confirmAddCandidates,
   language,
 }) => {
+  useEscapeClose(isOpen, onClose);
   const zh = language === 'zh';
 
   return (

@@ -2,6 +2,7 @@ import React, { useEffect, useState } from 'react';
 import { AlertCircle, Cpu, Database, Plus, Sparkles, X } from 'lucide-react';
 import { apiRequest } from '../../api/http';
 import OidPickerModal, { MibNodeItem } from '../SnmpMib/OidPickerModal';
+import { useEscapeClose } from '../../hooks/useEscapeClose';
 import MibUploadModal from '../SnmpMib/MibUploadModal';
 import PresetProfilesModal, { ModelPresetItem } from '../SnmpMib/PresetProfilesModal';
 import TemplateBindingModal from '../SnmpMib/TemplateBindingModal';
@@ -157,6 +158,7 @@ const MetricOidProfilesModal: React.FC<Props> = ({
   showToast,
   embedded = false,
 }) => {
+  useEscapeClose(open, onClose);
   const zh = language === 'zh';
   const [profiles, setProfiles] = useState<MetricOidProfile[]>([]);
   const [presets, setPresets] = useState<ModelPresetItem[]>([]);

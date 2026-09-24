@@ -34,6 +34,7 @@ import {
 } from 'lucide-react';
 import type { HostResourceSnapshot } from '../types';
 import { useSystem } from '../hooks/useSystem';
+import { useEscapeClose } from '../hooks/useEscapeClose';
 
 interface RecentSidebarItem {
   path: string;
@@ -133,6 +134,7 @@ const Sidebar: React.FC<SidebarProps> = ({
   setConfigGroupOpen,
   setManagementGroupOpen,
 }) => {
+  useEscapeClose(isMobile && !sidebarCollapsed, () => setSidebarCollapsed(true));
   const { isFeatureEnabled, systemInfo } = useSystem();
   const navLabelClass = isMobile
     ? 'min-w-0 flex-1 text-left whitespace-normal break-words leading-[1.18rem] pr-1 text-[12.25px] font-medium tracking-[0.008em]'

@@ -176,6 +176,16 @@ const GrafanaDashboardPage: React.FC<GrafanaDashboardPageProps> = ({ language })
     setStatus('checking');
     setLoaded(false);
     try {
+      const token = localStorage.getItem('netops_token');
+      if (!token) throw new Error('Nexora session is missing');
+      const bridgeResponse = await fetch('/api/grafana/session', {
+        method: 'POST',
+        headers: { Authorization: `Bearer ${token}` },
+        credentials: 'same-origin',
+        cache: 'no-store',
+      });
+      if (!bridgeResponse.ok) throw new Error('Grafana session bridge failed');
+
       const response = await fetch('/grafana/api/health?_=' + Date.now(), {
         headers: { Accept: 'application/json' },
         credentials: 'same-origin',

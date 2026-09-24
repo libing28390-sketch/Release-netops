@@ -2,6 +2,7 @@ import React from 'react';
 import { AnimatePresence, motion } from 'motion/react';
 import { Shield, X, RotateCcw, AlertTriangle } from 'lucide-react';
 import { ScheduledJob, EligibleApprover } from '../types';
+import { useEscapeClose } from '../../../hooks/useEscapeClose';
 
 interface DeleteApprovalModalProps {
   isOpen: boolean;
@@ -44,6 +45,7 @@ export const DeleteApprovalModal: React.FC<DeleteApprovalModalProps> = ({
   executeDeleteJob,
   language,
 }) => {
+  useEscapeClose(isOpen && deleteStatus !== 'sending', onClose);
   const zh = language === 'zh';
 
   return (

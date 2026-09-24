@@ -3,6 +3,7 @@ import { X } from 'lucide-react';
 import { Subnet, IPAddress } from '../types';
 import { DEVICE_TYPES } from '../constants';
 import { isValidIP, detectIPVersion, ipInSubnet } from '../helpers';
+import { useEscapeClose } from '../../../hooks/useEscapeClose';
 
 interface IPModalProps {
   language: string;
@@ -41,6 +42,7 @@ const IPModal: React.FC<IPModalProps> = ({
   onClose,
   onSubmit,
 }) => {
+  useEscapeClose(true, onClose);
   return (
     <div
       className="fixed inset-0 bg-black/40 backdrop-blur-sm flex items-center justify-center z-[80]"

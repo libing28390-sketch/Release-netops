@@ -1,6 +1,6 @@
 import React from 'react';
 import { motion } from 'motion/react';
-import { Activity, AlertTriangle, ArrowRight, Clock3, Database, Download, EyeOff, GitMerge, Globe, Info, LayoutGrid, MapPin, Network, RefreshCw, RotateCcw, Search, Tag, X } from 'lucide-react';
+import { Activity, AlertTriangle, ArrowRight, Clock3, Database, Download, EyeOff, GitMerge, Globe, Info, LayoutGrid, MapPin, Network, RotateCcw, Search, Tag, X } from 'lucide-react';
 import type { Device, TagDefinition } from '../types';
 import { ActionButton } from '../components/ui/ActionIconButton';
 import TagConditionPicker, { countTagFilterConditions, EMPTY_TAG_FILTER, hasTagFilterConditions, type TagFilterConfig } from '../components/TagConditionPicker';
@@ -225,7 +225,6 @@ interface TopologyPageProps {
   topologyCanvasRef: React.RefObject<HTMLDivElement | null>;
   onTriggerDiscovery: () => void;
   onCancelDiscovery: () => void;
-  onSyncHostnames: () => Promise<void>;
   onExportMap: () => void;
   onTopologySearchChange: (value: string) => void;
   onTopologySiteFilterChange: (value: string) => void;
@@ -299,7 +298,6 @@ const TopologyPage: React.FC<TopologyPageProps> = ({
   topologyCanvasRef,
   onTriggerDiscovery,
   onCancelDiscovery,
-  onSyncHostnames,
   onExportMap,
   onTopologySearchChange,
   onTopologySiteFilterChange,
@@ -409,13 +407,15 @@ const TopologyPage: React.FC<TopologyPageProps> = ({
             <button
               type="button"
               onClick={onTriggerDiscovery}
-              disabled={topologyDiscoveryRunning}
+              disabled={topologyDiscoveryRunning || hostnameSyncing}
               className="flex items-center gap-1.5 px-3 py-1.5 rounded-xl text-xs font-semibold bg-blue-600 text-white hover:bg-blue-700 shadow-2xs transition-all cursor-pointer disabled:opacity-60"
             >
-              <RotateCcw size={13} className={topologyDiscoveryRunning ? 'animate-spin' : ''} />
-              {topologyDiscoveryRunning
-                ? (language === 'zh' ? '发现中...' : 'Discovering...')
-                : (language === 'zh' ? '刷新发现' : 'Refresh Discovery')}
+              <RotateCcw size={13} className={topologyDiscoveryRunning || hostnameSyncing ? 'animate-spin' : ''} />
+              {hostnameSyncing
+                ? (language === 'zh' ? '同步名称并刷新中…' : 'Syncing names…')
+                : topologyDiscoveryRunning
+                  ? (language === 'zh' ? '发现中...' : 'Discovering...')
+                  : (language === 'zh' ? '刷新发现' : 'Refresh Discovery')}
             </button>
             {topologyDiscoveryRunning && (
               <button
@@ -426,18 +426,6 @@ const TopologyPage: React.FC<TopologyPageProps> = ({
                 {language === 'zh' ? '取消任务' : 'Cancel Run'}
               </button>
             )}
-            <button
-              type="button"
-              onClick={onSyncHostnames}
-              disabled={hostnameSyncing || topologyDiscoveryRunning}
-              title={language === 'zh' ? '通过 SNMP sysName 同步全部网络设备主机名' : 'Sync all network device hostnames via SNMP sysName'}
-              className="flex items-center gap-1.5 px-3 py-1.5 rounded-xl text-xs font-semibold border border-indigo-200 bg-indigo-50 text-indigo-700 hover:bg-indigo-100 transition-all cursor-pointer disabled:opacity-60 disabled:cursor-not-allowed"
-            >
-              <RefreshCw size={13} className={hostnameSyncing ? 'animate-spin' : ''} />
-              {hostnameSyncing
-                ? (language === 'zh' ? '同步名称中...' : 'Syncing Names...')
-                : (language === 'zh' ? '同步全部设备名称' : 'Sync All Names')}
-            </button>
             <ActionButton
               type="button"
               icon={Download}

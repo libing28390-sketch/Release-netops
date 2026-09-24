@@ -1,4 +1,4 @@
-import { useEffect } from 'react';
+import { useEscapeClose } from '../hooks/useEscapeClose';
 import type {
   AlertMaintenanceCondition,
   AlertMaintenanceConditionLogic,
@@ -95,18 +95,7 @@ export const getAlertSectionTabs = (language: string): Array<{ id: AlertSection;
 ]);
 
 export const useAlertOverlayDismiss = (open: boolean, onClose: () => void) => {
-  useEffect(() => {
-    if (!open) return undefined;
-
-    const handleKeyDown = (event: KeyboardEvent) => {
-      if (event.key === 'Escape') {
-        onClose();
-      }
-    };
-
-    window.addEventListener('keydown', handleKeyDown);
-    return () => window.removeEventListener('keydown', handleKeyDown);
-  }, [open, onClose]);
+  useEscapeClose(open, onClose);
 };
 
 export const formatTs = (value?: string | null) => {

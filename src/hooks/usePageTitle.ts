@@ -83,6 +83,7 @@ export const usePageTitle = ({
     if (activeTab === 'users') return t('userManagement');
     if (activeTab === 'platform-registry') return language === 'zh' ? '平台注册' : 'Platform Registry';
     if (activeTab === 'snmp-metric-templates') return language === 'zh' ? 'SNMP 指标模板' : 'SNMP Metric Templates';
+    if (activeTab === 'snmp-walk') return language === 'zh' ? 'SNMP 诊断' : 'SNMP Diagnostics';
     if (activeTab === 'alerts') return language === 'zh' ? '告警信息' : 'Alert Desk';
     if (activeTab === 'alert-history') return language === 'zh' ? '历史告警' : 'Alert History';
     if (activeTab === 'alert-rules') return language === 'zh' ? '告警规则' : 'Alert Rules';

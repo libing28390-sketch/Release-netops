@@ -1,6 +1,7 @@
 import React from 'react';
 import { motion } from 'motion/react';
 import { X } from 'lucide-react';
+import { useEscapeClose } from '../hooks/useEscapeClose';
 
 interface ScenarioVariableDraft {
   key: string;
@@ -58,6 +59,7 @@ const AddScenarioModal: React.FC<AddScenarioModalProps> = ({
   onSubmit,
   onFormChange,
 }) => {
+  useEscapeClose(open, onClose);
   if (!open) return null;
 
   const isDark = resolvedTheme === 'dark';

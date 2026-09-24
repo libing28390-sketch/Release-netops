@@ -6,6 +6,7 @@ import { authHeaders as apiAuthHeaders } from '../api/http';
 import { useChartTheme } from '../hooks/useChartTheme';
 import { ActionButton, ActionIconButton, ActionIconGroup } from '../components/ui/ActionIconButton';
 import { useSystem } from '../hooks/useSystem';
+import { useEscapeClose } from '../hooks/useEscapeClose';
 import Pagination from '../components/Pagination';
 import PageHero from '../components/PageHero';
 import {
@@ -148,6 +149,7 @@ const InspectionTab: React.FC<InspectionTabProps> = ({ language, devices, overvi
   const [runs, setRuns] = useState<InspectionRun[]>([]);
   const [runsLoading, setRunsLoading] = useState(false);
   const [selectedRunDetail, setSelectedRunDetail] = useState<InspectionRunDetail | null>(null);
+  useEscapeClose(Boolean(selectedRunDetail), () => setSelectedRunDetail(null));
   const [detailLoading, setDetailLoading] = useState(false);
   const [recordSearch, setRecordSearch] = useState('');
   const [recordPage, setRecordPage] = useState(1);

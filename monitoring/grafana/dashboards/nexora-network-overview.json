@@ -273,7 +273,7 @@
       },
       "targets": [
         {
-          "expr": "count(ifOperStatus{job=\"network_snmp\",site_name=~\"$site\",vendor=~\"$vendor\",role=~\"$role\",hostname=~\"$device\"}) or vector(0)",
+          "expr": "count(count by (instance, ifIndex) (ifOperStatus{job=\"network_snmp\",site_name=~\"$site\",vendor=~\"$vendor\",role=~\"$role\",hostname=~\"$device\"})) or vector(0)",
           "refId": "A"
         }
       ]
@@ -335,7 +335,7 @@
       },
       "targets": [
         {
-          "expr": "count((ifAdminStatus{job=\"network_snmp\",site_name=~\"$site\",vendor=~\"$vendor\",role=~\"$role\",hostname=~\"$device\"} == 1) and on(instance, ifIndex) (ifOperStatus{job=\"network_snmp\",site_name=~\"$site\",vendor=~\"$vendor\",role=~\"$role\",hostname=~\"$device\"} != 1)) or vector(0)",
+          "expr": "count(max by (instance, ifIndex) (ifAdminStatus{job=\"network_snmp\",site_name=~\"$site\",vendor=~\"$vendor\",role=~\"$role\",hostname=~\"$device\"} == 1) and on(instance, ifIndex) max by (instance, ifIndex) (ifOperStatus{job=\"network_snmp\",site_name=~\"$site\",vendor=~\"$vendor\",role=~\"$role\",hostname=~\"$device\"} != 1)) or vector(0)",
           "refId": "A"
         }
       ]
@@ -947,5 +947,5 @@
   "timezone": "browser",
   "title": "01 网络总览 (Network Overview)",
   "uid": "nexora-network-overview",
-  "version": 26
+  "version": 27
 }

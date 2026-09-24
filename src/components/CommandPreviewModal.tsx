@@ -1,6 +1,7 @@
 import React from 'react';
 import { Copy, X } from 'lucide-react';
 import { ActionButton, ActionIconButton } from './ui/ActionIconButton';
+import { useEscapeClose } from '../hooks/useEscapeClose';
 
 type CommandPhase = 'pre_check' | 'execute' | 'post_check' | 'rollback';
 
@@ -34,6 +35,7 @@ const CommandPreviewModal: React.FC<CommandPreviewModalProps> = ({
   onClose,
   onCopyAll,
 }) => {
+  useEscapeClose(open && Boolean(preview), onClose);
   if (!open || !preview) return null;
 
   return (

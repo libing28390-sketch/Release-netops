@@ -2,6 +2,7 @@ import React from 'react';
 import { AnimatePresence, motion } from 'motion/react';
 import { AlertTriangle, Trash2 } from 'lucide-react';
 import { Asset } from '../types';
+import { useEscapeClose } from '../../../hooks/useEscapeClose';
 
 interface DeleteConfirmModalProps {
   isOpen: boolean;
@@ -20,6 +21,7 @@ export const DeleteConfirmModal: React.FC<DeleteConfirmModalProps> = ({
   error,
   language,
 }) => {
+  useEscapeClose(isOpen, onClose);
   const zh = language === 'zh';
 
   return (

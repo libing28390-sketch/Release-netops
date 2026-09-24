@@ -8,14 +8,14 @@ import re
 import socket
 import time
 import logging
-from typing import Annotated, Any, Optional
+from typing import Annotated, Any, Literal, Optional
 from database import get_db_connection
 from services.audit_service import log_audit_event
 from services.device_health_service import annotate_devices_with_health, normalize_hardware_status
 from services.site_identity_service import canonical_site_name
 from services.operational_data_service import collect_operational_data, collect_custom_command_data
 from services.platform_identification_service import _canonical_vendor
-from services.platform_registry_service import PLATFORM_CATALOG_METADATA
+from services.platform_registry_service import PLATFORM_CATALOG_METADATA, list_platform_vendor_names
 from services import tag_service
 from core.crypto import encrypt_credential, decrypt_credential
 from core.config import settings
@@ -25,15 +25,19 @@ from services.snmp_service import collect_device_metrics, normalize_metric_oid
 from services.snmp_mib_service import (
     list_mibs_page,
     get_mib_repository_stats,
+    count_mib_nodes,
+    list_mib_node_vendors,
     get_mib_detail,
     delete_mib,
     parse_and_store_mib,
     parse_and_store_zip,
     extract_mib_archive_to_repo,
     search_mib_nodes,
+    resolve_mib_nodes_for_oids,
     SUPPORTED_MIB_FILE_SUFFIXES,
 )
 from services.librenms_mib_service import (
+    VENDOR_DIR_MAP,
     fetch_librenms_mibs,
     fetch_librenms_sources,
     import_mibs_from_directory,
@@ -132,6 +136,20 @@ def _vendor_from_platform(platform: str) -> str:
     if 'raisecom' in p or 'ros' in p:
         return 'Raisecom'
     return ''
+
+
+def _mib_vendor_token(value: str) -> str:
+    return re.sub(r"[^a-z0-9]+", "", str(value or "").casefold())
+
+
+def _platform_mib_vendor_map(platform_vendors: list[str]) -> dict[str, str]:
+    allowed = {_mib_vendor_token(name): name for name in platform_vendors if str(name or '').strip()}
+    allowed["standard"] = "Standard"
+    for vendor_key, vendor_name in VENDOR_DIR_MAP.items():
+        canonical = allowed.get(_mib_vendor_token(vendor_name))
+        if canonical:
+            allowed[_mib_vendor_token(vendor_key)] = canonical
+    return allowed
 
 
 def _resolve_platform_binding(
@@ -1057,7 +1075,18 @@ def _prepare_snmp_walk_target(row: dict[str, Any], *, asset_only: bool = False) 
     return target
 
 
-def _find_snmp_walk_targets(*, device_id: str = '', target_query: str = '') -> list[dict[str, Any]]:
+def _snmp_walk_tenant_id(user: Any) -> str | None:
+    if not isinstance(user, dict) or str(user.get('role') or '') == 'Administrator':
+        return None
+    return str(user.get('tenant_id') or 'tenant-default').strip() or 'tenant-default'
+
+
+def _find_snmp_walk_targets(
+    *,
+    device_id: str = '',
+    target_query: str = '',
+    user: Any = None,
+) -> list[dict[str, Any]]:
     """Find SNMP test targets from the asset/device registry.
 
     Exact matching is attempted first.  If it does not identify a single
@@ -1065,6 +1094,9 @@ def _find_snmp_walk_targets(*, device_id: str = '', target_query: str = '') -> l
     fuzzy/regex-style input behavior while remaining compatible with both the
     PostgreSQL and SQLite database adapters used by the project.
     """
+    tenant_id = _snmp_walk_tenant_id(user)
+    tenant_clause = "" if tenant_id is None else " AND COALESCE(d.tenant_id, 'tenant-default') = ?"
+    tenant_params = () if tenant_id is None else (tenant_id,)
     conn = get_db_connection()
     try:
         if device_id:
@@ -1073,11 +1105,13 @@ def _find_snmp_walk_targets(*, device_id: str = '', target_query: str = '') -> l
                           pa.hostname AS _asset_hostname
                    FROM devices d
                    LEFT JOIN physical_assets pa ON pa.id = d.asset_id
-                   WHERE d.id = ? LIMIT 1''',
-                (device_id,),
+                   WHERE d.id = ?''' + tenant_clause + ' LIMIT 1',
+                (device_id, *tenant_params),
             ).fetchone()
             if device_row:
                 return [_prepare_snmp_walk_target(dict(device_row))]
+            if tenant_id is not None:
+                return []
             asset_row = conn.execute('SELECT * FROM physical_assets WHERE id = ? LIMIT 1', (device_id,)).fetchone()
             if asset_row:
                 return [_prepare_snmp_walk_target(dict(asset_row), asset_only=True)]
@@ -1092,16 +1126,17 @@ def _find_snmp_walk_targets(*, device_id: str = '', target_query: str = '') -> l
                    pa.hostname AS _asset_hostname
             FROM devices d
             LEFT JOIN physical_assets pa ON pa.id = d.asset_id
-            WHERE LOWER(COALESCE(d.ip_address, '')) = LOWER(?)
+            WHERE (LOWER(COALESCE(d.ip_address, '')) = LOWER(?)
                OR LOWER(COALESCE(d.hostname, '')) = LOWER(?)
                OR LOWER(COALESCE(pa.management_ip, '')) = LOWER(?)
-               OR LOWER(COALESCE(pa.hostname, '')) = LOWER(?)
+               OR LOWER(COALESCE(pa.hostname, '')) = LOWER(?))
+            ''' + tenant_clause + '''
             ORDER BY COALESCE(NULLIF(d.hostname, ''), pa.hostname, ''), d.id
             LIMIT 20
         '''
         exact_rows = [
             _prepare_snmp_walk_target(dict(row))
-            for row in conn.execute(exact_sql, (query, query, query, query)).fetchall()
+            for row in conn.execute(exact_sql, (query, query, query, query, *tenant_params)).fetchall()
         ]
         if exact_rows:
             return exact_rows
@@ -1112,21 +1147,22 @@ def _find_snmp_walk_targets(*, device_id: str = '', target_query: str = '') -> l
                    pa.hostname AS _asset_hostname
             FROM devices d
             LEFT JOIN physical_assets pa ON pa.id = d.asset_id
-            WHERE LOWER(COALESCE(d.ip_address, '')) LIKE LOWER(?)
+            WHERE (LOWER(COALESCE(d.ip_address, '')) LIKE LOWER(?)
                OR LOWER(COALESCE(d.hostname, '')) LIKE LOWER(?)
                OR LOWER(COALESCE(pa.management_ip, '')) LIKE LOWER(?)
-               OR LOWER(COALESCE(pa.hostname, '')) LIKE LOWER(?)
+               OR LOWER(COALESCE(pa.hostname, '')) LIKE LOWER(?))
+            ''' + tenant_clause + '''
             ORDER BY COALESCE(NULLIF(d.hostname, ''), pa.hostname, ''), d.id
             LIMIT 20
         '''
         targets = [
             _prepare_snmp_walk_target(dict(row))
-            for row in conn.execute(fuzzy_sql, (pattern, pattern, pattern, pattern)).fetchall()
+            for row in conn.execute(fuzzy_sql, (pattern, pattern, pattern, pattern, *tenant_params)).fetchall()
         ]
 
         # An asset may exist before a network-device row is linked.  It is
         # still a valid source of SNMP credentials and management IP.
-        if not targets:
+        if not targets and tenant_id is None:
             asset_sql = '''
                 SELECT pa.*
                 FROM physical_assets pa
@@ -1157,15 +1193,17 @@ def _find_snmp_walk_targets(*, device_id: str = '', target_query: str = '') -> l
                        pa.hostname AS _asset_hostname
                 FROM devices d
                 LEFT JOIN physical_assets pa ON pa.id = d.asset_id
+                WHERE 1 = 1
+                ''' + tenant_clause + '''
                 ORDER BY COALESCE(NULLIF(d.hostname, ''), pa.hostname, ''), d.id
                 LIMIT 5000
             '''
-            for row in conn.execute(candidate_sql).fetchall():
+            for row in conn.execute(candidate_sql, tenant_params).fetchall():
                 item = _prepare_snmp_walk_target(dict(row))
                 values = (item.get('ip_address'), item.get('hostname'), item.get('_asset_management_ip'), item.get('_asset_hostname'))
                 if any(matcher.search(str(value or '')) for value in values):
                     targets.append(item)
-            if not targets:
+            if not targets and tenant_id is None:
                 asset_candidates = conn.execute('SELECT * FROM physical_assets LIMIT 5000').fetchall()
                 for row in asset_candidates:
                     item = _prepare_snmp_walk_target(dict(row), asset_only=True)
@@ -1177,7 +1215,7 @@ def _find_snmp_walk_targets(*, device_id: str = '', target_query: str = '') -> l
         conn.close()
 
 
-def _find_exact_snmp_walk_target(ip: str) -> dict[str, Any] | None:
+def _find_exact_snmp_walk_target(ip: str, *, user: Any = None) -> dict[str, Any] | None:
     """Resolve one exact management IP from asset management.
 
     The confirmation field is deliberately exact: it must not use the broad
@@ -1189,6 +1227,9 @@ def _find_exact_snmp_walk_target(ip: str) -> dict[str, Any] | None:
     query = ip.strip()
     if not query:
         return None
+    tenant_id = _snmp_walk_tenant_id(user)
+    tenant_clause = "" if tenant_id is None else " AND COALESCE(d.tenant_id, 'tenant-default') = ?"
+    tenant_params = () if tenant_id is None else (tenant_id,)
     conn = get_db_connection()
     try:
         linked_row = conn.execute(
@@ -1198,16 +1239,18 @@ def _find_exact_snmp_walk_target(ip: str) -> dict[str, Any] | None:
                LEFT JOIN physical_assets pa ON pa.id = d.asset_id
                WHERE COALESCE(pa.asset_type, 'network_device') = 'network_device'
                  AND (LOWER(TRIM(COALESCE(pa.management_ip, ''))) = LOWER(TRIM(?))
-                   OR LOWER(TRIM(COALESCE(d.ip_address, ''))) = LOWER(TRIM(?)))
+                   OR LOWER(TRIM(COALESCE(d.ip_address, ''))) = LOWER(TRIM(?)))''' + tenant_clause + '''
                ORDER BY CASE WHEN LOWER(TRIM(COALESCE(pa.management_ip, ''))) = LOWER(TRIM(?)) THEN 0 ELSE 1 END,
                         CASE WHEN LOWER(TRIM(COALESCE(d.status, ''))) = 'online' THEN 0 ELSE 1 END,
                         d.id
                LIMIT 1''',
-            (query, query, query),
+            (query, query, *tenant_params, query),
         ).fetchone()
         if linked_row:
             return _prepare_snmp_walk_target(dict(linked_row))
 
+        if tenant_id is not None:
+            return None
         asset_row = conn.execute(
             '''SELECT pa.*
                FROM physical_assets pa
@@ -1231,7 +1274,7 @@ def resolve_snmp_walk_target(
     user=require_role("Operator"),
 ):
     """Confirm an exact asset-management IP before running SNMP WALK."""
-    target = _find_exact_snmp_walk_target(ip)
+    target = _find_exact_snmp_walk_target(ip, user=user)
     if not target:
         raise HTTPException(status_code=404, detail='IP not found in asset management')
     resolved_ip = str(target.get('_asset_management_ip') or target.get('management_ip') or target.get('ip_address') or '').strip()
@@ -1269,7 +1312,7 @@ async def test_snmp_walk(payload: dict = Body(default={}), user=require_role("Op
     # server; the browser never receives the secret.  The legacy structured
     # ip+community form remains available for API compatibility.
     if requested_device_id or target_query:
-        targets = _find_snmp_walk_targets(device_id=requested_device_id, target_query=target_query)
+        targets = _find_snmp_walk_targets(device_id=requested_device_id, target_query=target_query, user=user)
         if not targets:
             raise HTTPException(status_code=404, detail='No matching managed asset was found')
         if len(targets) > 1:
@@ -1322,10 +1365,30 @@ async def test_snmp_walk(payload: dict = Body(default={}), user=require_role("Op
     if not 1 <= max_rows <= 10000:
         raise HTTPException(status_code=400, detail='max_rows must be between 1 and 10000')
 
-    from services.snmp_service import _snmp_walk
+    from services.snmp_service import SnmpWalkTimeoutError, _snmp_walk
 
+    walk_status = 'ok'
+    walk_message = 'SNMP WALK succeeded'
     try:
-        rows = await _snmp_walk(host, community, oid, port=port, timeout=timeout, max_rows=max_rows, version=version)
+        rows = await _snmp_walk(
+            host,
+            community,
+            oid,
+            port=port,
+            timeout=timeout,
+            max_rows=max_rows,
+            version=version,
+            raise_on_error=True,
+        )
+    except SnmpWalkTimeoutError as exc:
+        if not exc.partial_results:
+            raise HTTPException(
+                status_code=504,
+                detail='SNMP device did not respond before timeout; check reachability, UDP/161, community/version, and device ACLs',
+            ) from exc
+        rows = exc.partial_results
+        walk_status = 'partial_timeout'
+        walk_message = 'SNMP WALK timed out after partial data; returned values may be incomplete'
     except Exception as exc:
         logger.warning('SNMP WALK test failed for %s %s: %s', host, oid, type(exc).__name__)
         raise HTTPException(status_code=502, detail='SNMP WALK request failed') from exc
@@ -1334,15 +1397,31 @@ async def test_snmp_walk(payload: dict = Body(default={}), user=require_role("Op
         {'oid': f"{oid}.{suffix}" if str(suffix).strip('.') else oid, 'value': value}
         for suffix, value in rows
     ]
+    if bool(payload.get('resolve_mib')) and formatted_rows:
+        mib_conn = None
+        try:
+            mib_conn = get_db_connection()
+            resolved_nodes = resolve_mib_nodes_for_oids(
+                mib_conn,
+                [row['oid'] for row in formatted_rows],
+                vendor=str((matched_device or {}).get('vendor') or ''),
+            )
+            for row in formatted_rows:
+                row.update(resolved_nodes.get(row['oid'], {}))
+        except Exception as exc:
+            logger.debug('SNMP WALK MIB resolution unavailable: %s', type(exc).__name__)
+        finally:
+            if mib_conn is not None:
+                mib_conn.close()
     return {
-        'success': bool(formatted_rows),
+        'success': bool(formatted_rows) and walk_status == 'ok',
         'data': {
             'host': host,
             'oid': oid,
             'version': version,
             'port': port,
-            'status': 'ok' if formatted_rows else 'no_data',
-            'message': 'SNMP WALK succeeded' if formatted_rows else 'No rows returned; check OID, view permissions, and reachability',
+            'status': walk_status if formatted_rows else 'no_data',
+            'message': walk_message if formatted_rows else 'No rows returned; check OID, view permissions, and reachability',
             'row_count': len(formatted_rows),
             'truncated': len(formatted_rows) >= max_rows,
             'rows': formatted_rows,
@@ -1369,7 +1448,7 @@ async def test_snmp_hardware_metrics(payload: dict = Body(default={}), user=requ
     if not requested_device_id and not target_query:
         raise HTTPException(status_code=400, detail='A managed device_id or target_query is required')
 
-    targets = _find_snmp_walk_targets(device_id=requested_device_id, target_query=target_query)
+    targets = _find_snmp_walk_targets(device_id=requested_device_id, target_query=target_query, user=user)
     if not targets:
         raise HTTPException(status_code=404, detail='No matching managed asset was found')
     if len(targets) > 1:
@@ -1543,7 +1622,7 @@ async def test_snmp_interface_oids(payload: dict = Body(default={}), user=requir
     if not requested_device_id and not target_query:
         raise HTTPException(status_code=400, detail='A managed device_id or target_query is required')
 
-    targets = _find_snmp_walk_targets(device_id=requested_device_id, target_query=target_query)
+    targets = _find_snmp_walk_targets(device_id=requested_device_id, target_query=target_query, user=user)
     if not targets:
         raise HTTPException(status_code=404, detail='No matching managed asset was found')
     if len(targets) > 1:
@@ -2093,6 +2172,7 @@ def get_snmp_mibs(
         count_row = conn.execute("SELECT COUNT(*) AS c FROM snmp_mibs").fetchone()
         if not count_row or int(count_row[0] if isinstance(count_row, tuple) else count_row["c"]) == 0:
             seed_builtin_mibs()
+        allowed_vendors = [*list_platform_vendor_names(conn), "Standard"]
         mibs, total = list_mibs_page(
             conn,
             search=search,
@@ -2100,6 +2180,7 @@ def get_snmp_mibs(
             page=page,
             page_size=page_size,
             status=status,
+            allowed_vendors=allowed_vendors,
         )
         return {
             "success": True,
@@ -2107,7 +2188,13 @@ def get_snmp_mibs(
             "total": total,
             "page": page,
             "page_size": page_size,
-            "stats": get_mib_repository_stats(conn, search=search, vendor=vendor, status=status),
+            "stats": get_mib_repository_stats(
+                conn,
+                search=search,
+                vendor=vendor,
+                status=status,
+                allowed_vendors=allowed_vendors,
+            ),
         }
     finally:
         conn.close()
@@ -2129,11 +2216,73 @@ def search_snmp_mib_nodes(
         count_row = conn.execute("SELECT COUNT(*) AS c FROM snmp_mibs").fetchone()
         if not count_row or int(count_row[0] if isinstance(count_row, tuple) else count_row["c"]) == 0:
             seed_builtin_mibs()
-        nodes = search_mib_nodes(conn, query=query, vendor=vendor, mib_id=mib_id, limit=limit, scope=scope)
+        nodes = search_mib_nodes(
+            conn,
+            query=query,
+            vendor=vendor,
+            mib_id=mib_id,
+            limit=limit,
+            scope=scope,
+            allowed_vendors=[*list_platform_vendor_names(conn), 'Standard'],
+        )
         return {
             "success": True,
             "data": nodes,
             "total": len(nodes),
+        }
+    finally:
+        conn.close()
+
+
+@router.get("/platform-registry/mibs/nodes")
+def list_snmp_mib_nodes(
+    q: str = Query("", max_length=128),
+    category: Literal["public", "private"] = Query("public"),
+    vendor: str = Query("", max_length=64),
+    page: int = Query(1, ge=1, le=100000),
+    page_size: int = Query(20, ge=10, le=100),
+    user=require_role("Viewer"),
+):
+    """Return a paginated public-standard or vendor-private MIB symbol catalog."""
+    conn = get_db_connection()
+    try:
+        count_row = conn.execute("SELECT COUNT(*) AS c FROM snmp_mibs").fetchone()
+        if not count_row or int(count_row[0] if isinstance(count_row, tuple) else count_row["c"]) == 0:
+            seed_builtin_mibs()
+        search = (q or "").strip()
+        allowed_vendors = list_platform_vendor_names(conn) if category == "private" else None
+        total = count_mib_nodes(
+            conn,
+            query=search,
+            vendor=vendor,
+            category=category,
+            allowed_vendors=allowed_vendors,
+        )
+        safe_page_size = max(10, min(100, int(page_size)))
+        safe_page = max(1, int(page))
+        nodes = search_mib_nodes(
+            conn,
+            query=search,
+            vendor=vendor,
+            limit=safe_page_size,
+            offset=(safe_page - 1) * safe_page_size,
+            category=category,
+            allowed_vendors=allowed_vendors,
+        )
+        return {
+            "success": True,
+            "data": nodes,
+            "total": total,
+            "page": safe_page,
+            "page_size": safe_page_size,
+            "category": category,
+            "vendor": vendor,
+            "vendors": list_mib_node_vendors(
+                conn,
+                category=category,
+                allowed_vendors=allowed_vendors,
+            ),
+            "query": search,
         }
     finally:
         conn.close()
@@ -2190,10 +2339,10 @@ _librenms_sync_state: dict[str, Any] = {
 @router.post("/platform-registry/mibs/sync-librenms")
 async def trigger_sync_librenms_mibs(
     background_tasks: BackgroundTasks,
-    vendors: str = Query("", description="Comma-separated vendor keys or empty for all"),
+    vendors: str = Query("", description="Comma-separated registered platform vendors; empty selects all platform vendors and standard MIBs"),
     user=require_role("Operator"),
 ):
-    """Trigger background full synchronization of LibreNMS MIB repository."""
+    """Sync LibreNMS MIBs for platform vendors plus standard MIBs."""
     global _librenms_sync_state
     if _librenms_sync_state["running"]:
         return {
@@ -2202,10 +2351,31 @@ async def trigger_sync_librenms_mibs(
             "state": _librenms_sync_state,
         }
 
-    def _sync_worker(target_vendors_list: list[str] | None):
+    platform_vendors = list_platform_vendor_names()
+    if not platform_vendors:
+        raise HTTPException(status_code=409, detail="No platform vendors are registered for LibreNMS MIB synchronization")
+
+    allowed_vendor_map = _platform_mib_vendor_map(platform_vendors)
+    requested_vendors = [value.strip() for value in vendors.split(",") if value.strip()]
+    if requested_vendors:
+        unknown_vendors = [value for value in requested_vendors if _mib_vendor_token(value) not in allowed_vendor_map]
+        if unknown_vendors:
+            raise HTTPException(
+                status_code=400,
+                detail="LibreNMS MIB sync only accepts vendors registered in the platform",
+            )
+        scoped_vendors = list(dict.fromkeys(allowed_vendor_map[_mib_vendor_token(value)] for value in requested_vendors))
+        retire_out_of_scope = False
+    else:
+        scoped_vendors = list(platform_vendors)
+        retire_out_of_scope = True
+    if "standard" not in {_mib_vendor_token(value) for value in scoped_vendors}:
+        scoped_vendors.append("Standard")
+
+    def _sync_worker(target_vendors_list: list[str], retire_unlisted_vendors: bool):
         global _librenms_sync_state
         _librenms_sync_state["running"] = True
-        _librenms_sync_state["progress"] = "Fetching latest MIBs from LibreNMS repository..."
+        _librenms_sync_state["progress"] = "Fetching LibreNMS MIBs for supported platform vendors..."
         _librenms_sync_state["started_at"] = time.time()
         try:
             fetch_librenms_sources(TARGET_DIR)
@@ -2213,7 +2383,9 @@ async def trigger_sync_librenms_mibs(
             result = import_mibs_from_directory(
                 mibs_dir=MIBS_DIR,
                 target_vendors=target_vendors_list,
+                retire_out_of_scope=retire_unlisted_vendors,
             )
+            result["platform_vendor_scope"] = target_vendors_list
             rule_result = sync_rules_from_repository(TARGET_DIR)
             result["librenms_rules"] = rule_result
             _librenms_sync_state["last_result"] = result
@@ -2226,12 +2398,12 @@ async def trigger_sync_librenms_mibs(
         finally:
             _librenms_sync_state["running"] = False
 
-    vendor_list = [v.strip().lower() for v in vendors.split(",") if v.strip()] if vendors else None
-    background_tasks.add_task(_sync_worker, vendor_list)
+    background_tasks.add_task(_sync_worker, scoped_vendors, retire_out_of_scope)
 
     return {
         "success": True,
-        "message": "LibreNMS MIB full synchronization started in background",
+        "message": "LibreNMS MIB sync started for registered platform vendors",
+        "vendor_scope": scoped_vendors,
         "state": _librenms_sync_state,
     }
 
@@ -2241,11 +2413,12 @@ def get_sync_librenms_mibs_status(user=require_role("Viewer")):
     """Get the current progress status of LibreNMS MIB synchronization."""
     conn = get_db_connection()
     try:
+        allowed_vendors = [*list_platform_vendor_names(conn), "Standard"]
         return {
             "success": True,
             "data": {
                 **_librenms_sync_state,
-                "repository": get_mib_repository_stats(conn),
+                "repository": get_mib_repository_stats(conn, allowed_vendors=allowed_vendors),
                 "librenms_rule_count": int((rule_count["count"] if rule_count else 0) or 0),
             },
         }
@@ -2330,14 +2503,26 @@ async def upload_snmp_mib_file(
                     status_code=400,
                     detail="No valid MIB files found in uploaded ZIP archive.",
                 )
+            platform_vendor_scope = [*list_platform_vendor_names(), "Standard"]
+            allowed_vendors = _platform_mib_vendor_map(platform_vendor_scope)
+            detected_platform_vendors = sorted({
+                allowed_vendors[_mib_vendor_token(value)]
+                for value in detected_vendors
+                if _mib_vendor_token(value) in allowed_vendors
+            })
 
             def _archive_sync_worker():
                 global _librenms_sync_state
                 _librenms_sync_state["running"] = True
-                _librenms_sync_state["progress"] = f"Unpacked {extracted_count} MIB files; building symbol index and parsing..."
+                _librenms_sync_state["progress"] = f"Unpacked {extracted_count} MIB files; importing only platform-supported vendors..."
                 _librenms_sync_state["started_at"] = time.time()
                 try:
-                    result = import_mibs_from_directory(mibs_dir=MIBS_DIR)
+                    result = import_mibs_from_directory(
+                        mibs_dir=MIBS_DIR,
+                        target_vendors=platform_vendor_scope,
+                        retire_missing_files=False,
+                    )
+                    result["platform_vendor_scope"] = platform_vendor_scope
                     _librenms_sync_state["last_result"] = result
                     _librenms_sync_state["run_id"] = result.get("run_id")
                     _librenms_sync_state["progress"] = (
@@ -2357,7 +2542,8 @@ async def upload_snmp_mib_file(
                 "async": True,
                 "message": f"Successfully unpacked {extracted_count} MIB files. Full background indexing has started.",
                 "extracted": extracted_count,
-                "vendors": sorted(list(detected_vendors)),
+                "vendors": detected_platform_vendors,
+                "platform_vendor_scope": platform_vendor_scope,
                 "state": _librenms_sync_state,
             }
 

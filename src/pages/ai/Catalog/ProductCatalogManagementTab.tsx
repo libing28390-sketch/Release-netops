@@ -33,6 +33,7 @@ import {
 } from '../../../api/ai';
 import Pagination from '../../../components/Pagination';
 import { useCoreApp } from '../../../contexts/AppDomainContext';
+import { useEscapeClose } from '../../../hooks/useEscapeClose';
 import { aiAdminText } from '../../../i18n/aiAdmin';
 
 type TextVariables = Record<string, string | number>;
@@ -106,6 +107,7 @@ export const ProductCatalogManagementTab: React.FC = () => {
   const [resolving, setResolving] = useState(false);
   const [catalogReadOnly, setCatalogReadOnly] = useState(true);
   const [catalogModalOpen, setCatalogModalOpen] = useState(false);
+  useEscapeClose(catalogModalOpen, () => setCatalogModalOpen(false));
   const [editingModel, setEditingModel] = useState<KnowledgeCatalogModel | null>(null);
   const [catalogSubmitting, setCatalogSubmitting] = useState(false);
   const [catalogForm, setCatalogForm] = useState({

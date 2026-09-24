@@ -1,6 +1,7 @@
 import React from 'react';
 import { AnimatePresence, motion } from 'motion/react';
 import { Globe2, Loader2, Shield, User, X } from 'lucide-react';
+import { useEscapeClose } from '../../../hooks/useEscapeClose';
 
 import type { WebAccessLevel } from '../../../api/pamWeb';
 import type { WebAccessProfile } from '../types';
@@ -41,6 +42,7 @@ export const WebAccessRequestModal: React.FC<WebAccessRequestModalProps> = ({
   onClose,
   onSubmit,
 }) => {
+  useEscapeClose(isOpen, onClose);
   const zh = language === 'zh';
   return (
     <AnimatePresence>

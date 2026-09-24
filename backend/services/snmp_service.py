@@ -855,6 +855,14 @@ async def _snmp_get(
       return None
 
 
+class SnmpWalkTimeoutError(Exception):
+    """A diagnostic SNMP walk timed out, optionally after collecting some values."""
+
+    def __init__(self, partial_results: list[tuple[str, str]]):
+        super().__init__('SNMP WALK timed out')
+        self.partial_results = partial_results
+
+
 async def _snmp_walk(
     ip: str,
     community: str,
@@ -863,12 +871,15 @@ async def _snmp_walk(
     timeout: float = 5,
     max_rows: int = 200,
     version: str = '2c',
+    raise_on_error: bool = False,
 ) -> list[tuple[str, str]]:
     """Walk an OID subtree via puresnmp, return list of (oid_suffix, value).
 
     The collector remains v2c by default.  The optional v1 path is used by
     the read-only template tester and keeps the same transport/error handling;
     existing collection callers do not need to change their arguments.
+    ``raise_on_error`` is reserved for interactive diagnostics that must tell a
+    timeout from a completed walk with no matching OID instances.
     """
     results: list[tuple[str, str]] = []
     base_oid = oid.rstrip('.')
@@ -897,10 +908,20 @@ async def _snmp_walk(
     async with get_network_access_limiter().async_snmp():
       try:
         await asyncio.wait_for(_collect(), timeout=timeout)
-      except asyncio.TimeoutError:
+      except asyncio.TimeoutError as exc:
         logger.debug(f"SNMP WALK {ip} {oid} timeout after {timeout}s ({len(results)} rows collected)")
-      except Exception as e:
-        logger.debug(f"SNMP WALK {ip} {oid} failed: {e}")
+        if raise_on_error:
+            raise SnmpWalkTimeoutError(results) from exc
+      except Exception as exc:
+        logger.debug(f"SNMP WALK {ip} {oid} failed: {exc}")
+        if raise_on_error:
+            is_timeout = (
+                isinstance(exc, (TimeoutError, socket.timeout, asyncio.TimeoutError))
+                or type(exc).__name__.strip().lower() in {'timeout', 'requesttimeout'}
+            )
+            if is_timeout:
+                raise SnmpWalkTimeoutError(results) from exc
+            raise
     return results
 
 

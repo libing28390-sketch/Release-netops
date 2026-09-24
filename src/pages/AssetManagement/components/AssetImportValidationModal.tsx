@@ -1,6 +1,7 @@
 import React from 'react';
 import { AnimatePresence, motion } from 'motion/react';
 import { AlertTriangle, Shield, Check, ArrowRight, X } from 'lucide-react';
+import { useEscapeClose } from '../../../hooks/useEscapeClose';
 
 export interface MissingRackInfo {
   datacenter: string;
@@ -34,6 +35,7 @@ export const AssetImportValidationModal: React.FC<AssetImportValidationModalProp
   onConfirm,
   saving,
 }) => {
+  useEscapeClose(isOpen, onClose);
   const zh = language === 'zh';
   
   // Key format: "datacenter|rack"

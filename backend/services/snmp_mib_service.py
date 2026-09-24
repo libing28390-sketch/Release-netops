@@ -721,7 +721,12 @@ _MIB_LIST_COLUMNS = (
  )
 
 
-def _mib_list_filter(search: str = "", vendor: str = "", status: str = "") -> tuple[str, list[Any]]:
+def _mib_list_filter(
+    search: str = "",
+    vendor: str = "",
+    status: str = "",
+    allowed_vendors: list[str] | None = None,
+) -> tuple[str, list[Any]]:
     """Build the shared list filter without loading MIB source text."""
     where = ["is_active = 1"]
     params: list[Any] = []
@@ -736,6 +741,18 @@ def _mib_list_filter(search: str = "", vendor: str = "", status: str = "") -> tu
     if clean_vendor:
         where.append("LOWER(vendor) LIKE ?")
         params.append(f"%{clean_vendor}%")
+
+    if allowed_vendors is not None:
+        allowed_values = sorted({str(value or "").strip().casefold() for value in allowed_vendors if str(value or "").strip()})
+        if allowed_values:
+            placeholders = ",".join("?" for _ in allowed_values)
+            where.append(
+                "(LOWER(COALESCE(source_type, '')) <> 'librenms' "
+                f"OR LOWER(TRIM(COALESCE(vendor, ''))) IN ({placeholders}))"
+            )
+            params.extend(allowed_values)
+        else:
+            where.append("LOWER(COALESCE(source_type, '')) <> 'librenms'")
 
     clean_status = status.strip().lower()
     if clean_status == "unresolved_oid":
@@ -772,11 +789,12 @@ def list_mibs_page(
     page: int = 1,
     page_size: int = 40,
     status: str = "",
+    allowed_vendors: list[str] | None = None,
 ) -> tuple[list[dict[str, Any]], int]:
     """Return one bounded MIB list page and the filtered total count."""
     safe_page = max(1, int(page))
     safe_page_size = max(10, min(100, int(page_size)))
-    where, params = _mib_list_filter(search, vendor, status)
+    where, params = _mib_list_filter(search, vendor, status, allowed_vendors)
 
     count_row = conn.execute(
         f"SELECT COUNT(*) AS total FROM snmp_mibs WHERE {where}",
@@ -798,6 +816,7 @@ def get_mib_repository_stats(
     search: str = "",
     vendor: str = "",
     status: str = "",
+    allowed_vendors: list[str] | None = None,
 ) -> dict[str, Any]:
     """Return import/parse health for the current list filters.
 
@@ -806,7 +825,7 @@ def get_mib_repository_stats(
     same filters as the paged MIB list, keeping the summary and footer totals
     consistent.
     """
-    filtered_where, filtered_params = _mib_list_filter(search, vendor, status)
+    filtered_where, filtered_params = _mib_list_filter(search, vendor, status, allowed_vendors)
     total_row = conn.execute(
         f"SELECT COUNT(*) FROM snmp_mibs WHERE {filtered_where}",
         tuple(filtered_params),
@@ -820,11 +839,24 @@ def get_mib_repository_stats(
         status_counts[str(row[0] or "unknown")] = int(row[1] or 0)
 
     vendor_counts: dict[str, int] = {}
-    for row in conn.execute(
+    vendor_count_where = "WHERE is_active = 1 AND TRIM(COALESCE(vendor, '')) <> '' "
+    vendor_count_params: list[str] = []
+    if allowed_vendors is not None:
+        allowed_values = sorted({str(value or "").strip().casefold() for value in allowed_vendors if str(value or "").strip()})
+        if allowed_values:
+            placeholders = ",".join("?" for _ in allowed_values)
+            vendor_count_where += (
+                "AND (LOWER(COALESCE(source_type, '')) <> 'librenms' "
+                f"OR LOWER(TRIM(COALESCE(vendor, ''))) IN ({placeholders})) "
+            )
+            vendor_count_params.extend(allowed_values)
+        else:
+            vendor_count_where += "AND LOWER(COALESCE(source_type, '')) <> 'librenms' "
+    vendor_count_query = (
         "SELECT TRIM(vendor), COUNT(*) FROM snmp_mibs "
-        "WHERE is_active = 1 AND TRIM(COALESCE(vendor, '')) <> '' "
-        "GROUP BY TRIM(vendor) ORDER BY LOWER(TRIM(vendor))"
-    ).fetchall():
+        f"{vendor_count_where}GROUP BY TRIM(vendor) ORDER BY LOWER(TRIM(vendor))"
+    )
+    for row in conn.execute(vendor_count_query, tuple(vendor_count_params)).fetchall():
         vendor_name = str(row[0] or "").strip()
         if vendor_name:
             vendor_counts[vendor_name] = int(row[1] or 0)
@@ -905,6 +937,9 @@ def search_mib_nodes(
     mib_id: str = "",
     limit: int = 50,
     scope: str = "all",
+    offset: int = 0,
+    category: str = "all",
+    allowed_vendors: list[str] | None = None,
 ) -> list[dict[str, Any]]:
     """Fast search for OID symbol nodes across the MIB repository.
 
@@ -914,40 +949,26 @@ def search_mib_nodes(
     which is useful when a caller needs every displayed result to match the
     node itself rather than hidden description or MIB metadata.
     """
-    sql = """
-    SELECT n.id, n.mib_id, m.name AS mib_name, m.vendor, n.node_name, n.oid,
+    where, params = _mib_node_search_filter(
+        query=query,
+        vendor=vendor,
+        mib_id=mib_id,
+        scope=scope,
+        category=category,
+        allowed_vendors=allowed_vendors,
+    )
+    sql = f"""
+    SELECT n.id, n.mib_id, m.name AS mib_name, m.vendor, m.source_type, n.node_name, n.oid,
            n.syntax_type, n.access_type, n.status, n.description
     FROM snmp_mib_nodes n
     JOIN snmp_mibs m ON n.mib_id = m.id
-    WHERE 1=1
+    WHERE {where}
     """
-    params: list[Any] = []
-
     clean_q = query.strip().lower()
-    node_scope = scope.strip().lower() == "node"
-    if clean_q:
-        if re.match(r"^[0-9.]+$", clean_q):
-            sql += " AND (n.oid LIKE ?)"
-            params.append(f"{clean_q}%")
-        elif node_scope:
-            sql += " AND LOWER(n.node_name) LIKE ?"
-            params.append(f"%{clean_q}%")
-        else:
-            sql += " AND (LOWER(n.node_name) LIKE ? OR LOWER(n.description) LIKE ? OR LOWER(m.name) LIKE ?)"
-            term = f"%{clean_q}%"
-            params.extend([term, term, term])
-
-    if vendor.strip():
-        sql += " AND LOWER(m.vendor) = ?"
-        params.append(vendor.strip().lower())
-
-    if mib_id.strip():
-        sql += " AND n.mib_id = ?"
-        params.append(mib_id.strip())
-
     safe_limit = max(1, min(200, limit))
-    sql += f" ORDER BY (CASE WHEN LOWER(n.node_name) = ? THEN 0 WHEN LOWER(n.node_name) LIKE ? THEN 1 ELSE 2 END), n.node_name LIMIT {safe_limit}"
-    params.extend([clean_q, f"{clean_q}%"])
+    safe_offset = max(0, int(offset))
+    sql += " ORDER BY (CASE WHEN LOWER(n.node_name) = ? THEN 0 WHEN LOWER(n.node_name) LIKE ? THEN 1 ELSE 2 END), n.node_name LIMIT ? OFFSET ?"
+    params.extend([clean_q, f"{clean_q}%", safe_limit, safe_offset])
 
     rows = conn.execute(sql, tuple(params)).fetchall()
     results = []
@@ -971,3 +992,188 @@ def search_mib_nodes(
             item["recommended_mode"] = "direct_value"
         results.append(item)
     return results
+
+
+def count_mib_nodes(
+    conn,
+    query: str = "",
+    vendor: str = "",
+    mib_id: str = "",
+    scope: str = "all",
+    category: str = "all",
+    allowed_vendors: list[str] | None = None,
+) -> int:
+    """Count MIB symbols for a search/category before applying pagination."""
+    where, params = _mib_node_search_filter(
+        query=query,
+        vendor=vendor,
+        mib_id=mib_id,
+        scope=scope,
+        category=category,
+        allowed_vendors=allowed_vendors,
+    )
+    row = conn.execute(
+        f"SELECT COUNT(*) AS total FROM snmp_mib_nodes n JOIN snmp_mibs m ON n.mib_id = m.id WHERE {where}",
+        tuple(params),
+    ).fetchone()
+    return int((row[0] if isinstance(row, tuple) else row["total"]) or 0) if row else 0
+
+
+def list_mib_node_vendors(
+    conn,
+    category: str = "private",
+    allowed_vendors: list[str] | None = None,
+) -> list[str]:
+    """Return vendors that have searchable MIB nodes in the requested category."""
+    where, params = _mib_node_search_filter(
+        query="",
+        vendor="",
+        mib_id="",
+        scope="all",
+        category=category,
+        allowed_vendors=allowed_vendors,
+    )
+    rows = conn.execute(
+        f"""SELECT MIN(TRIM(m.vendor)) AS vendor
+            FROM snmp_mib_nodes n
+            JOIN snmp_mibs m ON n.mib_id = m.id
+            WHERE {where} AND TRIM(COALESCE(m.vendor, '')) <> ''
+            GROUP BY LOWER(TRIM(m.vendor))
+            ORDER BY LOWER(TRIM(m.vendor))""",
+        tuple(params),
+    ).fetchall()
+    return [str(row[0] if isinstance(row, tuple) else row["vendor"]).strip() for row in rows]
+
+
+def _mib_node_search_filter(
+    *,
+    query: str,
+    vendor: str,
+    mib_id: str,
+    scope: str,
+    category: str,
+    allowed_vendors: list[str] | None = None,
+) -> tuple[str, list[Any]]:
+    """Build filters shared by paged and legacy MIB node searches."""
+    where = ["m.is_active = 1"]
+    params: list[Any] = []
+    clean_q = query.strip().lower()
+    node_scope = scope.strip().lower() == "node"
+    if clean_q:
+        if re.match(r"^[0-9.]+$", clean_q):
+            where.append("n.oid LIKE ?")
+            params.append(f"{clean_q}%")
+        elif node_scope:
+            where.append("LOWER(n.node_name) LIKE ?")
+            params.append(f"%{clean_q}%")
+        else:
+            where.append("(LOWER(n.node_name) LIKE ? OR LOWER(n.description) LIKE ? OR LOWER(m.name) LIKE ?)")
+            term = f"%{clean_q}%"
+            params.extend([term, term, term])
+
+    clean_vendor = vendor.strip().lower()
+    if clean_vendor:
+        where.append("LOWER(TRIM(COALESCE(m.vendor, ''))) = ?")
+        params.append(clean_vendor)
+
+    clean_mib_id = mib_id.strip()
+    if clean_mib_id:
+        where.append("n.mib_id = ?")
+        params.append(clean_mib_id)
+
+    clean_category = category.strip().lower()
+    if clean_category == "public":
+        where.append("LOWER(TRIM(COALESCE(m.vendor, ''))) = 'standard'")
+    elif clean_category == "private":
+        where.append("LOWER(TRIM(COALESCE(m.vendor, ''))) <> 'standard'")
+
+    if allowed_vendors is not None:
+        allowed_vendor_values = sorted({str(value or "").strip().casefold() for value in allowed_vendors if str(value or "").strip()})
+        if allowed_vendor_values:
+            placeholders = ",".join("?" for _ in allowed_vendor_values)
+            where.append(f"LOWER(TRIM(COALESCE(m.vendor, ''))) IN ({placeholders})")
+            params.extend(allowed_vendor_values)
+        else:
+            where.append("1 = 0")
+
+    return " AND ".join(where), params
+
+
+def resolve_mib_nodes_for_oids(
+    conn,
+    oids: list[str],
+    *,
+    vendor: str = "",
+) -> dict[str, dict[str, Any]]:
+    """Resolve walked numeric OIDs to their longest imported MIB node prefix.
+
+    The lookup batches all numeric OID prefixes into bounded ``IN`` queries,
+    avoiding a database request per varbind while keeping SQLite and
+    PostgreSQL parameter counts small.
+    """
+    prefixes_by_oid: dict[str, list[str]] = {}
+    oids_by_prefix: dict[str, set[str]] = {}
+    for raw_oid in oids:
+        oid = str(raw_oid or "").strip().lstrip(".").rstrip(".")
+        if not oid or not re.fullmatch(r"\d+(?:\.\d+)*", oid):
+            continue
+        parts = oid.split(".")
+        prefixes = [".".join(parts[:index]) for index in range(1, len(parts) + 1)]
+        prefixes_by_oid[oid] = prefixes
+        for prefix in prefixes:
+            oids_by_prefix.setdefault(prefix, set()).add(oid)
+
+    if not oids_by_prefix:
+        return {}
+
+    requested_vendor = str(vendor or "").strip().casefold()
+    node_by_oid: dict[str, dict[str, Any]] = {}
+    prefixes = list(oids_by_prefix)
+    for offset in range(0, len(prefixes), 500):
+        batch = prefixes[offset:offset + 500]
+        placeholders = ",".join("?" for _ in batch)
+        rows = conn.execute(
+            f"""SELECT n.oid, n.node_name, n.syntax_type, n.access_type,
+                       n.status, n.description, m.name AS mib_name, m.vendor
+                  FROM snmp_mib_nodes n
+                  JOIN snmp_mibs m ON m.id = n.mib_id
+                 WHERE m.is_active = 1 AND n.oid IN ({placeholders})""",
+            tuple(batch),
+        ).fetchall()
+        for row in rows:
+            node = dict(row)
+            node_oid = str(node.get("oid") or "")
+            previous = node_by_oid.get(node_oid)
+            rank = (
+                int(bool(requested_vendor) and str(node.get("vendor") or "").strip().casefold() == requested_vendor),
+                int(str(node.get("status") or "").strip().casefold() == "current"),
+                int(bool(str(node.get("syntax_type") or "").strip())),
+                int(bool(str(node.get("description") or "").strip())),
+                str(node.get("node_name") or "").casefold(),
+            )
+            if previous is None:
+                node["_resolve_rank"] = rank
+                node_by_oid[node_oid] = node
+            elif rank > previous.get("_resolve_rank", ()):
+                node["_resolve_rank"] = rank
+                node_by_oid[node_oid] = node
+
+    resolved: dict[str, dict[str, Any]] = {}
+    for oid, candidate_prefixes in prefixes_by_oid.items():
+        matches = [node_by_oid[prefix] for prefix in candidate_prefixes if prefix in node_by_oid]
+        if not matches:
+            continue
+        node = max(matches, key=lambda item: len(str(item.get("oid") or "")))
+        base_oid = str(node.get("oid") or "")
+        resolved[oid] = {
+            "mib_node": str(node.get("node_name") or ""),
+            "mib_name": str(node.get("mib_name") or ""),
+            "mib_vendor": str(node.get("vendor") or ""),
+            "mib_oid": base_oid,
+            "syntax_type": str(node.get("syntax_type") or ""),
+            "access_type": str(node.get("access_type") or ""),
+            "mib_status": str(node.get("status") or ""),
+            "description": str(node.get("description") or ""),
+            "instance_suffix": oid[len(base_oid):].lstrip("."),
+        }
+    return resolved

@@ -15,6 +15,7 @@ import AuditEventDetailModal from '../AuditEventDetailModal';
 import ComplianceFindingDetailModal from '../ComplianceFindingDetailModal';
 import JobOutputModal from '../JobOutputModal';
 import { User as UserIcon } from 'lucide-react';
+import { useEscapeClose } from '../../hooks/useEscapeClose';
 
 /** All global modals extracted from App.tsx to reduce its line count. */
 export const AppModals: React.FC<any> = (props) => {
@@ -65,6 +66,7 @@ export const AppModals: React.FC<any> = (props) => {
     // Navigate helper
     navigate,
   } = props;
+  useEscapeClose(Boolean(showLifecycleConfirm), () => { setShowLifecycleConfirm(null); setLifecycleConfirmChecked(false); });
 
   // Local helper for setActiveTab (navigation-based)
   const setActiveTab = (tab: string) => {

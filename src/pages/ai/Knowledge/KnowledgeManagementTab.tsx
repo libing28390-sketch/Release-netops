@@ -48,6 +48,7 @@ import KnowledgeAdminNavigation, { type KnowledgeAdminView } from './KnowledgeAd
 import { ActionButton, ActionIconButton, ActionIconGroup } from '../../../components/ui/ActionIconButton';
 import { useCoreApp } from '../../../contexts/AppDomainContext';
 import { aiAdminText, type AIAdminLanguage } from '../../../i18n/aiAdmin';
+import { useEscapeClose } from '../../../hooks/useEscapeClose';
 
 /* ── Types ── */
 interface FolderCategory {
@@ -1645,6 +1646,9 @@ export const KnowledgeManagementTab: React.FC = () => {
     setVersionAdminNotice('');
     setVersionCompareResult(null);
   };
+  useEscapeClose(showModal, closeModal);
+  useEscapeClose(Boolean(selectedDocument), closeDocument);
+  useEscapeClose(Boolean(pendingDocumentAction) && !documentActionBusy, () => setPendingDocumentAction(null));
 
   const refreshSelectedDocument = async () => {
     if (!selectedDocument) return;

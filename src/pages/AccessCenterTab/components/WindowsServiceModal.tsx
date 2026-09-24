@@ -7,6 +7,7 @@ import {
   type WindowsService,
   type WindowsServiceAction,
 } from '../../../api/windowsManagement';
+import { useEscapeClose } from '../../../hooks/useEscapeClose';
 
 interface WindowsServiceModalProps {
   isOpen: boolean;
@@ -37,6 +38,7 @@ export default function WindowsServiceModal({
   showToast,
   onClose,
 }: WindowsServiceModalProps) {
+  useEscapeClose(isOpen, onClose);
   const isZh = language === 'zh';
   const [services, setServices] = useState<WindowsService[]>([]);
   const [total, setTotal] = useState(0);

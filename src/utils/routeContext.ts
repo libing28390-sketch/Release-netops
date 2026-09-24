@@ -42,6 +42,8 @@ export function getRouteContext(pathname: string): RouteContext {
       subPage = 'devices';
     } else if (second === 'dashboards') {
       activeTab = 'monitoring-dashboards';
+    } else if (second === 'snmp-walk') {
+      activeTab = 'snmp-walk';
     } else if (second === 'reports') {
       activeTab = 'monitoring-reports';
       subPage = parts[2] || 'interfaces';

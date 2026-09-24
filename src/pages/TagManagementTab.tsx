@@ -9,6 +9,7 @@ import PageHero from '../components/PageHero';
 import Pagination from '../components/Pagination';
 import { DataTable } from '../components/DataTable';
 import { ActionButton, ActionIconButton, ActionIconGroup } from '../components/ui/ActionIconButton';
+import { useEscapeClose } from '../hooks/useEscapeClose';
 
 /* ─── Props ─── */
 interface TagManagementTabProps {
@@ -61,6 +62,7 @@ export default function TagManagementTab({ language, currentUser }: TagManagemen
 
   // Modal state
   const [showModal, setShowModal] = useState(false);
+  useEscapeClose(showModal, () => setShowModal(false));
   const [editingTag, setEditingTag] = useState<TagDefinition | null>(null);
   const [formData, setFormData] = useState({
     category: 'business' as TagCategory,
@@ -80,6 +82,7 @@ export default function TagManagementTab({ language, currentUser }: TagManagemen
 
   // Delete state
   const [deleteTarget, setDeleteTarget] = useState<TagDefinition | null>(null);
+  useEscapeClose(Boolean(deleteTarget), () => setDeleteTarget(null));
   const [deleting, setDeleting] = useState(false);
 
   /* ── Fetch tags ── */

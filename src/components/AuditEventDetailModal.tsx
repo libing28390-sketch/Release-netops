@@ -3,6 +3,7 @@ import { XCircle } from 'lucide-react';
 import { motion } from 'motion/react';
 import type { AuditEvent } from '../types';
 import { auditStatusBadgeClass, parseJsonObject, severityBadgeClass } from './shared';
+import { useEscapeClose } from '../hooks/useEscapeClose';
 
 interface AuditEventDetailModalProps {
   event: AuditEvent | null;
@@ -12,6 +13,7 @@ interface AuditEventDetailModalProps {
 }
 
 const AuditEventDetailModal: React.FC<AuditEventDetailModalProps> = ({ event, language, t, onClose }) => {
+  useEscapeClose(Boolean(event), onClose);
   if (!event) return null;
 
   return (
