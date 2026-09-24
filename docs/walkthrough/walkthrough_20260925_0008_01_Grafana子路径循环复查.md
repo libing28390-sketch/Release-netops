@@ -47,3 +47,10 @@
 - 将面板真实 PromQL 与去掉 `topk(10, ...)` 的表达式对照，结果完全相同：R3 所有接口/入出方向同时在 00:46:30–00:48:00 和 00:50:30–00:52:00 缺样，最大 90 秒；R4 所有接口/入出方向也同步缺样，最大 150 秒，并出现多段 90–150 秒间隔。
 - 结论：`topk` 不造成断点，缺样来自目标级 SNMP 采集间断；这与 exporter timeout 证据一致。该间歇超时尚未修复，需另行采集对应时段 vmagent/exporter 错误与设备响应证据，再决定是设备 SNMP 响应、轮询负载还是 timeout 参数问题。
 - 本次对照仅查询 VictoriaMetrics，不修改服务器。不要把 Grafana Cookie 隔离变更与 SNMP 采集问题混为同一根因。
+
+## v1.0.9 发布提交与标签
+
+- 发布提交 `0a8a96d3e5a14abf289503cc3510b0a54db7b653` 已推送到 `origin/main`。
+- 按用户明确授权，已有的 `v1.0.9` 标签已强制更新。远端 annotated tag 对象为 `de230ddf2ab5c0a67840f96c821469b4f30f7be3`，peeled commit 为 `0a8a96d3e5a14abf289503cc3510b0a54db7b653`。
+- `.github/workflows/release.yml` 会在 main/tag 推送时启动；本地只核实了 Git refs，没有检查异步工作流或制品发布结果。
+- 发布前后本地未运行测试套件；提交差异的 `git diff --check` 通过。服务器尚未部署本地新增的 Cookie 隔离配置。
