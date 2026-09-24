@@ -18,7 +18,12 @@ from datetime import datetime, timezone
 from typing import Any, Mapping
 
 from database import get_db_connection
-from services.snmp_vendor_registry import adapter_descriptor
+from services.snmp_vendor_registry import (
+    ASSET_NETWORK_VENDORS,
+    ASSET_SECURITY_VENDORS,
+    adapter_descriptor,
+    normalize_asset_vendor,
+)
 from services.librenms_rule_service import ensure_rules_available, resolve_rule
 
 logger = logging.getLogger(__name__)
@@ -29,6 +34,8 @@ _discovery_cache: dict[str, tuple[float, dict[str, Any] | None]] = {}
 _discovery_cache_lock = threading.Lock()
 
 SYS_OBJECT_ID = "1.3.6.1.2.1.1.2.0"
+SYS_DESCR = "1.3.6.1.2.1.1.1.0"
+SYS_NAME = "1.3.6.1.2.1.1.5.0"
 
 _CISCO_PREFIX = "1.3.6.1.4.1.9."
 _OBSERVED_VENDOR_PREFIXES = {
@@ -281,6 +288,142 @@ def classify_identity(
             if effective_vendor != "Cisco"
             else "Cisco identity matched"
         ),
+    }
+
+
+def _vendor_from_sys_descr(sys_descr: Any) -> str:
+    """Return a canonical asset vendor observed in sysDescr, if any."""
+    text = _text(sys_descr, 2048)
+    if not text:
+        return ""
+    folded = text.casefold()
+    # Prefer the same canonical names used by the asset import template.  The
+    # aliases in normalize_vendor cover common vendor spellings and Chinese
+    # names; the catalog scan covers the remaining registered vendors.
+    for candidate in (*ASSET_NETWORK_VENDORS, *ASSET_SECURITY_VENDORS):
+        if str(candidate).casefold() in folded:
+            return normalize_asset_vendor(candidate)
+    for needle, canonical in (
+        ("思科", "Cisco"), ("华为", "Huawei"), ("华三", "H3C"),
+        ("锐捷", "Ruijie"), ("中兴", "ZTE"), ("迈普", "Maipu"),
+        ("迪普", "DPtech"), ("飞塔", "Fortinet"), ("山石", "Hillstone"),
+        ("深信服", "Sangfor"), ("检查点", "Check Point"),
+        ("帕洛阿尔托", "Palo Alto"),
+    ):
+        if needle in text:
+            return canonical
+    normalized = normalize_vendor(text)
+    if normalized in set((*ASSET_NETWORK_VENDORS, *ASSET_SECURITY_VENDORS)):
+        return normalize_asset_vendor(normalized)
+    return ""
+
+
+def resolve_snmp_vendor_identity(
+    conn: Any,
+    *,
+    sys_object_id: Any = "",
+    sys_descr: Any = "",
+    sys_name: Any = "",
+    asset_vendor: Any = "",
+    asset_platform: Any = "",
+    asset_model: Any = "",
+) -> dict[str, Any]:
+    """Resolve fresh SNMP identity without exposing transport credentials.
+
+    LibreNMS rules are evaluated first.  Built-in enterprise OID mappings and
+    sysDescr matching are used only when no persisted rule matches.  Asset
+    metadata is returned separately and never presented as observed SNMP
+    evidence.
+    """
+    observed_oid = normalize_oid(sys_object_id)
+    descr = _text(sys_descr, 2048)
+    name = _text(sys_name, 256)
+    canonical_asset_vendor = normalize_asset_vendor(asset_vendor)
+    asset_platform_value = _text(asset_platform, 128)
+    model_value = _text(asset_model, 256) or _model_from_descr(descr)
+    observed_vendor = ""
+    source = "none"
+    platform = asset_platform_value
+    reason = "SNMP identity did not contain a recognized vendor"
+    rule = None
+
+    try:
+        # Keep the first-use path aligned with the regular discovery flow:
+        # LibreNMS definitions are fetched/indexed before resolving a rule.
+        # Async API callers run this service through ``asyncio.to_thread`` so
+        # a repository fetch never blocks the event loop.
+        ensure_rules_available()
+    except Exception as exc:
+        logger.debug("LibreNMS rule bootstrap unavailable: %s", type(exc).__name__)
+
+    try:
+        rule = resolve_rule(
+            conn,
+            {
+                "vendor": "",
+                "platform": "",
+                "sys_object_id": observed_oid,
+                "sys_descr": descr,
+                "sys_name": name,
+            },
+        )
+    except Exception as exc:  # Rule data is an optional enhancement path.
+        logger.debug("LibreNMS identity resolution unavailable: %s", type(exc).__name__)
+
+    if rule and str(rule.get("vendor") or "").strip():
+        observed_vendor = normalize_asset_vendor(rule.get("vendor"))
+        source = "librenms"
+        platform = _text(rule.get("platform"), 128) or platform
+        reason = "matched LibreNMS sysObjectID/sysDescr detection rule"
+    else:
+        observed_vendor = next(
+            (
+                normalize_asset_vendor(vendor)
+                for prefix, vendor in _OBSERVED_VENDOR_PREFIXES.items()
+                if observed_oid.startswith("." + prefix)
+            ),
+            "",
+        )
+        if observed_vendor:
+            source = "sysObjectID"
+            reason = "matched built-in enterprise sysObjectID mapping"
+        else:
+            observed_vendor = _vendor_from_sys_descr(descr)
+            if observed_vendor:
+                source = "sysDescr"
+                reason = "matched registered vendor name in sysDescr"
+
+    observed_vendor = normalize_asset_vendor(observed_vendor)
+    # Only registered asset vendors are valid canonical output.  This also
+    # prevents a stale LibreNMS rule from introducing a second naming scheme.
+    valid_vendors = set((*ASSET_NETWORK_VENDORS, *ASSET_SECURITY_VENDORS))
+    if observed_vendor not in valid_vendors:
+        observed_vendor = ""
+        source = "none"
+        platform = asset_platform_value
+        reason = "SNMP identity did not match an asset-import vendor"
+
+    if observed_vendor and canonical_asset_vendor and observed_vendor != canonical_asset_vendor:
+        status = "conflict"
+        reason = f"asset vendor conflicts with observed {observed_vendor} identity"
+    elif observed_vendor:
+        status = "identified"
+    else:
+        status = "unidentified"
+
+    if rule and source == "librenms":
+        model_value = model_value or _text(rule.get("display_name"), 256)
+    return {
+        "status": status,
+        "vendor": observed_vendor,
+        "asset_vendor": canonical_asset_vendor,
+        "source": source,
+        "platform": platform,
+        "sys_object_id": observed_oid,
+        "model": model_value,
+        "reason": reason,
+        "sys_descr": descr,
+        "sys_name": name,
     }
 
 

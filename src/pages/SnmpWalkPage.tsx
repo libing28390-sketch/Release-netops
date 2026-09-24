@@ -204,6 +204,8 @@ const SnmpWalkPage: React.FC<SnmpWalkPageProps> = ({ language, currentUserRole, 
           <div className="min-h-0 flex-1 overflow-y-auto p-4 sm:p-5">
             <MibNodeBrowser
               language={language}
+              deviceId={selectedTarget?.device_id}
+              assetVendor={selectedTarget?.vendor}
               showHeader={false}
               pageSize={10}
               onSelectOid={(oid, node) => {

@@ -155,6 +155,7 @@ const selectClass =
 const tinyLabelClass = 'mb-1 block text-[10px] font-medium text-black/50 dark:text-white/50';
 const DEFAULT_HARDWARE_METRIC_KEYS = ['cpu', 'memory', 'temperature', 'fan', 'power_supply'];
 const candidateStatusRank = (status?: string) => String(status || '').trim().toLowerCase() === 'online' ? 0 : 1;
+const LLDP_REMOTE_ROOT_OID = '1.0.8802.1.1.2.1.4';
 const LLDP_REMOTE_TABLE_ROOT_OID = '1.0.8802.1.1.2.1.4.1';
 const LLDP_REMOTE_ENTRY_ROOT_OID = `${LLDP_REMOTE_TABLE_ROOT_OID}.1`;
 const LLDP_KEY_FIELD_OIDS = [
@@ -163,7 +164,11 @@ const LLDP_KEY_FIELD_OIDS = [
   '1.0.8802.1.1.2.1.4.2.1.2', // lldpRemManAddr
   '1.0.8802.1.1.2.1.3.7.1.3', // lldpLocPortId
   '1.0.8802.1.1.2.1.3.7.1.4', // lldpLocPortDesc
+  '1.3.6.1.2.1.31.1.1.1.1', // ifName fallback keyed by ifIndex
 ];
+
+const isLldpRemoteWalk = (oid: string): boolean =>
+  oid === LLDP_REMOTE_ROOT_OID || oid.startsWith(`${LLDP_REMOTE_ROOT_OID}.`);
 
 const QUICK_OIDS: Array<{ label: string; labelEn?: string; oid: string; desc: string; descEn?: string }> = [
   { label: '系统基本信息 (MIB-2)', labelEn: 'System (MIB-2)', oid: '1.3.6.1.2.1.1', desc: 'sysDescr, sysName, sysUpTime' },
@@ -406,7 +411,8 @@ const parseLldpNeighbors = (rows: SnmpWalkRow[], rootOid: string, zh: boolean): 
     const node = String(inferMibNodeName(row.oid) || row.mib_node || '').toLowerCase().replace(/[^a-z0-9]/g, '');
     const rowOid = String(row.oid || '').trim().replace(/^\./, '');
     const matchingColumnRoot = LLDP_KEY_FIELD_OIDS.find(oid => rowOid.startsWith(`${oid}.`));
-    const suffix = String(row.instance_suffix || walkInstanceSuffix(rootOid, rowOid) || (matchingColumnRoot ? rowOid.slice(matchingColumnRoot.length) : '')).trim().replace(/^\./, '');
+    const columnInstanceSuffix = matchingColumnRoot ? rowOid.slice(matchingColumnRoot.length) : '';
+    const suffix = String(row.instance_suffix || columnInstanceSuffix || walkInstanceSuffix(rootOid, rowOid)).trim().replace(/^\./, '');
     const parts = suffix ? suffix.split('.') : [];
     const value = readableLldpValue(row.value);
 
@@ -839,7 +845,7 @@ export const LiveWalkInspector: React.FC<LiveWalkInspectorProps> = ({
       showToast(zh ? '请先选择设备或按回车确认 IP' : 'Select a device or confirm the IP first', 'error');
       return;
     }
-    const targetOid = walkOidInput.trim().replace(/^\./, '');
+    const targetOid = walkOidInput.trim().replace(/^\./, '').replace(/\.+$/, '');
     if (!targetOid) {
       showToast(zh ? '请输入要 WALK 的 OID 根节点' : 'Enter a root OID to walk', 'error');
       return;
@@ -867,7 +873,7 @@ export const LiveWalkInspector: React.FC<LiveWalkInspectorProps> = ({
         payload.ip = walkIp.trim();
       }
 
-      const focusedLldpWalk = targetOid === LLDP_REMOTE_TABLE_ROOT_OID || targetOid === LLDP_REMOTE_ENTRY_ROOT_OID;
+      const focusedLldpWalk = isLldpRemoteWalk(targetOid);
       const requestOids = focusedLldpWalk ? LLDP_KEY_FIELD_OIDS : [targetOid];
       const settledResponses = await Promise.allSettled(
         requestOids.map(oid => apiRequest<{ success: boolean; data: SnmpWalkResponseData }>(
@@ -1130,7 +1136,7 @@ export const LiveWalkInspector: React.FC<LiveWalkInspectorProps> = ({
   }, [visibleWalkResults, walkFilter]);
 
   const walkRootOid = (walkResultMeta?.oid || walkOidInput).trim().replace(/^\./, '');
-  const isFocusedLldpWalk = walkRootOid === LLDP_REMOTE_TABLE_ROOT_OID || walkRootOid === LLDP_REMOTE_ENTRY_ROOT_OID;
+  const isFocusedLldpWalk = isLldpRemoteWalk(walkRootOid);
   const walkSummary = useMemo(
     () => {
       const rows = publicSummaryOnly ? walkResults.filter(isPublicStandardWalkRow) : walkResults;

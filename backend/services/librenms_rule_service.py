@@ -198,6 +198,11 @@ def sync_rules_from_repository(root: Path | None = None) -> dict[str, int | str]
 
 def resolve_rule(conn: Any, identity: Mapping[str, Any]) -> dict[str, Any] | None:
     """Pick the best persisted LibreNMS rule for one observed identity."""
+    # An SNMP probe may intentionally omit the asset vendor.  In that case
+    # LibreNMS detection evidence must be allowed to identify the vendor
+    # across the complete rule catalog.  When an observed/declared vendor is
+    # present, keep the vendor constraint to avoid selecting a rule from a
+    # different family on a generic sysDescr match.
     vendor = str(identity.get("vendor") or "").casefold()
     platform = str(identity.get("platform") or "").casefold()
     sys_object_id = str(identity.get("sys_object_id") or "").casefold()
@@ -208,7 +213,7 @@ def resolve_rule(conn: Any, identity: Mapping[str, Any]) -> dict[str, Any] | Non
     best: tuple[int, dict[str, Any]] | None = None
     for row in rows:
         item = dict(row)
-        if item.get("vendor") and str(item["vendor"]).casefold() != vendor:
+        if vendor and item.get("vendor") and str(item["vendor"]).casefold() != vendor:
             continue
         try:
             detection = json.loads(item.get("detection_json") or "{}")

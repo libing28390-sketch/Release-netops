@@ -264,6 +264,9 @@ jobs:
 
       - name: Upload Linux Release to Baidu Pan (百度网盘)
         if: startsWith(github.ref, 'refs/tags/') || github.event_name == 'workflow_dispatch'
+        # Baidu Pan is an optional mirror. Token or service failures must not
+        # prevent the authoritative GitHub Release from being created below.
+        continue-on-error: true
         shell: bash
         env:
           BYPY_TOKEN_CONTENT: ${{ secrets.BAIDU_PAN_TOKEN }}

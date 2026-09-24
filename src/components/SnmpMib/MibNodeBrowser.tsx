@@ -1,6 +1,7 @@
 import React, { useCallback, useEffect, useRef, useState } from 'react';
-import { AlertCircle, Check, Database, RefreshCw, Search } from 'lucide-react';
-import { apiRequest } from '../../api/http';
+import { AlertCircle, Check, Database, Loader2, RefreshCw, Search, ShieldAlert } from 'lucide-react';
+import { ApiError, apiRequest } from '../../api/http';
+import { ALL_VENDOR_NAMES, normalizeImportedVendor } from '../../pages/AssetManagement/constants';
 import { DataTable, DataTableFrame } from '../DataTable';
 import Pagination from '../Pagination';
 
@@ -30,8 +31,25 @@ interface MibNodeListResponse {
   page_size?: number;
   category?: MibNodeCategory;
   vendor?: string;
-  vendors?: string[];
   query?: string;
+}
+
+export type MibVendorDetectionStatus = 'idle' | 'loading' | 'identified' | 'conflict' | 'unidentified' | 'error' | 'permission';
+
+export interface MibVendorDetection {
+  device_id: string;
+  status: 'identified' | 'conflict' | 'unidentified';
+  vendor?: string | null;
+  asset_vendor?: string | null;
+  source: 'librenms' | 'sysObjectID' | 'sysDescr' | 'none';
+  platform?: string | null;
+  sys_object_id?: string | null;
+  model?: string | null;
+  reason?: string | null;
+}
+
+interface MibVendorDetectionResponse {
+  data?: MibVendorDetection;
 }
 
 export interface MibNodeBrowserProps {
@@ -42,6 +60,8 @@ export interface MibNodeBrowserProps {
   initialCategory?: MibNodeCategory;
   initialQuery?: string;
   pageSize?: number;
+  deviceId?: string;
+  assetVendor?: string;
 }
 
 const DEFAULT_PAGE_SIZE = 20;
@@ -54,6 +74,8 @@ const MibNodeBrowser: React.FC<MibNodeBrowserProps> = ({
   initialCategory = 'public',
   initialQuery = '',
   pageSize: initialPageSize = DEFAULT_PAGE_SIZE,
+  deviceId,
+  assetVendor,
 }) => {
   const zh = language === 'zh';
   const [category, setCategory] = useState<MibNodeCategory>(initialCategory);
@@ -62,13 +84,19 @@ const MibNodeBrowser: React.FC<MibNodeBrowserProps> = ({
   const [page, setPage] = useState(1);
   const [pageSize, setPageSize] = useState(Math.max(10, Math.min(100, initialPageSize)));
   const [vendor, setVendor] = useState('');
-  const [vendors, setVendors] = useState<string[]>([]);
   const [nodes, setNodes] = useState<MibBrowserNode[]>([]);
   const [total, setTotal] = useState(0);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState('');
   const [selectedOid, setSelectedOid] = useState('');
+  const [vendorDetection, setVendorDetection] = useState<{ status: MibVendorDetectionStatus; result?: MibVendorDetection; message?: string }>({ status: 'idle' });
   const requestId = useRef(0);
+  const manualVendorSelection = useRef(false);
+
+  const canonicalVendor = useCallback((candidate: unknown) => {
+    const normalized = normalizeImportedVendor(String(candidate || '')).trim().toLowerCase();
+    return ALL_VENDOR_NAMES.find(name => name.toLowerCase() === normalized) || '';
+  }, []);
 
   const loadNodes = useCallback(async () => {
     const currentRequest = ++requestId.current;
@@ -89,7 +117,6 @@ const MibNodeBrowser: React.FC<MibNodeBrowserProps> = ({
       if (currentRequest !== requestId.current) return;
       setNodes(Array.isArray(response.data) ? response.data : []);
       setTotal(Number.isFinite(response.total) ? Number(response.total) : 0);
-      setVendors(Array.isArray(response.vendors) ? response.vendors : []);
     } catch (requestError) {
       if (currentRequest !== requestId.current) return;
       setNodes([]);
@@ -103,6 +130,78 @@ const MibNodeBrowser: React.FC<MibNodeBrowserProps> = ({
   useEffect(() => {
     void loadNodes();
   }, [loadNodes]);
+
+  useEffect(() => {
+    manualVendorSelection.current = false;
+    setPage(1);
+    setSelectedOid('');
+    if (category !== 'private') {
+      setVendorDetection({ status: 'idle' });
+      return;
+    }
+
+    const fallbackVendor = canonicalVendor(assetVendor);
+    setVendor(fallbackVendor);
+    if (!deviceId) {
+      setVendorDetection({ status: 'idle' });
+      return;
+    }
+
+    const controller = new AbortController();
+    setVendorDetection({ status: 'loading' });
+    const applyDetectedVendor = (nextVendor: string) => {
+      if (!manualVendorSelection.current) setVendor(nextVendor);
+    };
+    void apiRequest<MibVendorDetectionResponse>('/api/platform-registry/snmp-walk-vendor-detect', {
+      method: 'POST',
+      body: JSON.stringify({ device_id: deviceId }),
+      signal: controller.signal,
+    }).then(response => {
+      if (controller.signal.aborted) return;
+      const result = response.data;
+      if (!result) {
+        setVendorDetection({ status: 'unidentified', message: zh ? '后端未返回厂商识别结果，已使用资产厂商。' : 'The backend returned no vendor result; the asset vendor is being used.' });
+        return;
+      }
+      const detectedVendor = canonicalVendor(result.vendor);
+      const resultAssetVendor = canonicalVendor(result.asset_vendor) || fallbackVendor;
+      const selectedVendor = (result.status === 'identified' || result.status === 'conflict') && detectedVendor
+        ? detectedVendor
+        : resultAssetVendor;
+      applyDetectedVendor(selectedVendor);
+      if (result.status === 'conflict' || (detectedVendor && resultAssetVendor && detectedVendor !== resultAssetVendor)) {
+        setVendorDetection({
+          status: 'conflict',
+          result,
+          message: zh
+            ? `自动识别为 ${detectedVendor || result.vendor || '未知厂商'}，与资产厂商 ${resultAssetVendor || result.asset_vendor || '未知'} 不一致；已保留手动筛选。`
+            : `Auto-detected ${detectedVendor || result.vendor || 'an unknown vendor'}, which conflicts with asset vendor ${resultAssetVendor || result.asset_vendor || 'unknown'}; manual selection remains available.`,
+        });
+      } else if (result.status === 'identified' && detectedVendor) {
+        setVendorDetection({ status: 'identified', result });
+      } else {
+        setVendorDetection({
+          status: 'unidentified',
+          result,
+          message: zh
+            ? `未能自动识别厂商，已使用资产厂商 ${selectedVendor || '（未设置）'}；仍可手动筛选。`
+            : `The vendor could not be identified automatically. Using asset vendor ${selectedVendor || '(not set)'}; manual selection remains available.`,
+        });
+      }
+    }).catch(requestError => {
+      if (controller.signal.aborted) return;
+      const permissionDenied = requestError instanceof ApiError && (requestError.status === 401 || requestError.status === 403);
+      applyDetectedVendor(fallbackVendor);
+      setVendorDetection({
+        status: permissionDenied ? 'permission' : 'error',
+        message: permissionDenied
+          ? (zh ? '当前账号无权执行厂商自动识别；已使用资产厂商，可继续手动筛选。' : 'You are not permitted to identify the vendor automatically; the asset vendor is used and manual filtering remains available.')
+          : (zh ? '厂商自动识别失败；已使用资产厂商，可继续手动筛选。' : 'Automatic vendor identification failed; the asset vendor is used and manual filtering remains available.'),
+      });
+    });
+
+    return () => controller.abort();
+  }, [assetVendor, canonicalVendor, category, deviceId, zh]);
 
   const submitSearch = (event: React.FormEvent) => {
     event.preventDefault();
@@ -202,6 +301,7 @@ const MibNodeBrowser: React.FC<MibNodeBrowserProps> = ({
               <select
                 value={vendor}
                 onChange={event => {
+                  manualVendorSelection.current = true;
                   setVendor(event.target.value);
                   setPage(1);
                   setSelectedOid('');
@@ -210,7 +310,7 @@ const MibNodeBrowser: React.FC<MibNodeBrowserProps> = ({
                 className="max-w-[220px] rounded-lg border border-black/10 bg-[var(--card-bg)] px-2.5 py-1.5 text-xs text-black/75 outline-none focus:border-[#00bceb]/60 dark:border-white/10 dark:text-white/80"
               >
                 <option value="">{zh ? '全部厂商' : 'All vendors'}</option>
-                {vendors.filter(name => name.trim().toLowerCase() !== 'standard').map(name => (
+                {ALL_VENDOR_NAMES.map(name => (
                   <option key={name} value={name}>{name}</option>
                 ))}
               </select>
@@ -235,6 +335,28 @@ const MibNodeBrowser: React.FC<MibNodeBrowserProps> = ({
           </button>
         </form>
       </div>
+
+      {category === 'private' && vendorDetection.status !== 'idle' && (
+        <div
+          className={`flex items-start gap-2 rounded-lg border px-3 py-2 text-xs ${
+            vendorDetection.status === 'permission'
+              ? 'border-amber-200 bg-amber-50 text-amber-800 dark:border-amber-500/30 dark:bg-amber-500/10 dark:text-amber-200'
+              : vendorDetection.status === 'error' || vendorDetection.status === 'conflict'
+                ? 'border-rose-200 bg-rose-50 text-rose-700 dark:border-rose-500/30 dark:bg-rose-500/10 dark:text-rose-300'
+                : 'border-sky-200 bg-sky-50 text-sky-800 dark:border-sky-500/30 dark:bg-sky-500/10 dark:text-sky-200'
+          }`}
+          role={vendorDetection.status === 'error' || vendorDetection.status === 'permission' || vendorDetection.status === 'conflict' ? 'alert' : undefined}
+        >
+          {vendorDetection.status === 'loading' ? <Loader2 size={14} className="mt-0.5 shrink-0 animate-spin" /> : vendorDetection.status === 'permission' ? <ShieldAlert size={14} className="mt-0.5 shrink-0" /> : vendorDetection.status === 'identified' ? <Check size={14} className="mt-0.5 shrink-0" /> : <AlertCircle size={14} className="mt-0.5 shrink-0" />}
+          <span>
+            {vendorDetection.status === 'loading'
+              ? (zh ? '正在通过 LibreNMS / SNMP 信息自动识别厂商…' : 'Identifying the vendor from LibreNMS / SNMP data…')
+              : vendorDetection.status === 'identified'
+                ? (zh ? `已自动识别厂商：${canonicalVendor(vendorDetection.result?.vendor) || vendorDetection.result?.vendor || vendor}` : `Vendor identified automatically: ${canonicalVendor(vendorDetection.result?.vendor) || vendorDetection.result?.vendor || vendor}`)
+                : vendorDetection.message}
+          </span>
+        </div>
+      )}
 
       {error && (
         <div className="flex items-start gap-2 rounded-lg border border-rose-200 bg-rose-50 px-3 py-2 text-xs text-rose-700 dark:border-rose-500/30 dark:bg-rose-500/10 dark:text-rose-300" role="alert">

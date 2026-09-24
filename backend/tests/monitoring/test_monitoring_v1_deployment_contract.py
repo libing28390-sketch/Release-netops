@@ -39,6 +39,21 @@ def test_fixed_collector_stack_and_queue_contract():
     assert healthcheck["start_period"] == "60s"
 
 
+def test_grafana_subpath_is_stripped_by_nginx_once():
+    compose = yaml.safe_load((ROOT / "docker-compose.yml").read_text(encoding="utf-8"))
+    grafana_environment = compose["services"]["grafana"]["environment"]
+    assert "GF_SERVER_SERVE_FROM_SUB_PATH=false" in grafana_environment
+    assert any(
+        item.startswith("GF_SERVER_ROOT_URL=") and "/grafana/" in item
+        for item in grafana_environment
+    )
+
+    nginx = (ROOT / "nginx" / "nginx.conf").read_text(encoding="utf-8")
+    grafana_location = nginx.split("location ^~ /grafana/ {", 1)[1].split("\n    location", 1)[0]
+    assert "proxy_pass http://grafana_backend/;" in grafana_location
+    assert "proxy_set_header X-Forwarded-Prefix /grafana;" in grafana_location
+
+
 def test_netops_liveness_probe_bypasses_proxy_and_allows_cold_start():
     compose = yaml.safe_load((ROOT / "docker-compose.yml").read_text(encoding="utf-8"))
     healthcheck = compose["services"]["netops"]["healthcheck"]

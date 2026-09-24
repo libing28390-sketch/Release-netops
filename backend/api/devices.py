@@ -45,6 +45,8 @@ from services.librenms_mib_service import (
     TARGET_DIR,
 )
 from services.librenms_rule_service import sync_rules_from_repository
+from services.snmp_discovery_service import resolve_snmp_vendor_identity
+from services.snmp_vendor_registry import ASSET_NETWORK_VENDORS, ASSET_SECURITY_VENDORS
 from services.snmp_preset_service import (
     list_preset_profiles,
     seed_builtin_mibs,
@@ -1070,6 +1072,12 @@ def _prepare_snmp_walk_target(row: dict[str, Any], *, asset_only: bool = False) 
         target['ip_address'] = str(target.get('_asset_management_ip') or '').strip()
     elif not str(target.get('ip_address') or '').strip():
         target['ip_address'] = str(target.get('_asset_management_ip') or '').strip()
+    if not str(target.get('vendor') or '').strip():
+        target['vendor'] = str(target.get('_asset_vendor') or '').strip()
+    if not str(target.get('platform') or '').strip():
+        target['platform'] = str(target.get('_asset_platform') or '').strip()
+    if not str(target.get('model') or '').strip():
+        target['model'] = str(target.get('_asset_model') or '').strip()
     if not str(target.get('hostname') or '').strip():
         target['hostname'] = str(target.get('_asset_hostname') or '').strip()
     return target
@@ -1102,7 +1110,8 @@ def _find_snmp_walk_targets(
         if device_id:
             device_row = conn.execute(
                 '''SELECT d.*, pa.management_ip AS _asset_management_ip,
-                          pa.hostname AS _asset_hostname
+                          pa.hostname AS _asset_hostname, pa.vendor AS _asset_vendor,
+                          pa.platform AS _asset_platform, pa.model AS _asset_model
                    FROM devices d
                    LEFT JOIN physical_assets pa ON pa.id = d.asset_id
                    WHERE d.id = ?''' + tenant_clause + ' LIMIT 1',
@@ -1123,7 +1132,8 @@ def _find_snmp_walk_targets(
 
         exact_sql = '''
             SELECT d.*, pa.management_ip AS _asset_management_ip,
-                   pa.hostname AS _asset_hostname
+                   pa.hostname AS _asset_hostname, pa.vendor AS _asset_vendor,
+                   pa.platform AS _asset_platform, pa.model AS _asset_model
             FROM devices d
             LEFT JOIN physical_assets pa ON pa.id = d.asset_id
             WHERE (LOWER(COALESCE(d.ip_address, '')) = LOWER(?)
@@ -1144,7 +1154,8 @@ def _find_snmp_walk_targets(
         pattern = f'%{query}%'
         fuzzy_sql = '''
             SELECT d.*, pa.management_ip AS _asset_management_ip,
-                   pa.hostname AS _asset_hostname
+                   pa.hostname AS _asset_hostname, pa.vendor AS _asset_vendor,
+                   pa.platform AS _asset_platform, pa.model AS _asset_model
             FROM devices d
             LEFT JOIN physical_assets pa ON pa.id = d.asset_id
             WHERE (LOWER(COALESCE(d.ip_address, '')) LIKE LOWER(?)
@@ -1190,7 +1201,8 @@ def _find_snmp_walk_targets(
 
             candidate_sql = '''
                 SELECT d.*, pa.management_ip AS _asset_management_ip,
-                       pa.hostname AS _asset_hostname
+                       pa.hostname AS _asset_hostname, pa.vendor AS _asset_vendor,
+                       pa.platform AS _asset_platform, pa.model AS _asset_model
                 FROM devices d
                 LEFT JOIN physical_assets pa ON pa.id = d.asset_id
                 WHERE 1 = 1
@@ -1234,7 +1246,8 @@ def _find_exact_snmp_walk_target(ip: str, *, user: Any = None) -> dict[str, Any]
     try:
         linked_row = conn.execute(
             '''SELECT d.*, pa.management_ip AS _asset_management_ip,
-                      pa.hostname AS _asset_hostname
+                      pa.hostname AS _asset_hostname, pa.vendor AS _asset_vendor,
+                      pa.platform AS _asset_platform, pa.model AS _asset_model
                FROM devices d
                LEFT JOIN physical_assets pa ON pa.id = d.asset_id
                WHERE COALESCE(pa.asset_type, 'network_device') = 'network_device'
@@ -1286,6 +1299,99 @@ def resolve_snmp_walk_target(
             'ip': resolved_ip,
             'device_id': str(target.get('id') or ''),
             'hostname': str(target.get('hostname') or ''),
+        },
+    }
+
+
+@router.post("/platform-registry/snmp-walk-vendor-detect")
+async def detect_snmp_walk_vendor(payload: dict = Body(default={}), user=require_role("Operator")):
+    """Identify a managed device from fresh, read-only SNMP system OIDs."""
+    requested_device_id = str(payload.get("device_id") or "").strip()
+    if not requested_device_id:
+        raise HTTPException(status_code=400, detail="device_id is required")
+
+    targets = _find_snmp_walk_targets(device_id=requested_device_id, user=user)
+    if not targets:
+        raise HTTPException(status_code=404, detail="Device is not visible in asset management")
+    if len(targets) > 1:
+        raise HTTPException(status_code=409, detail="Target matches multiple assets; use a specific device_id")
+
+    matched_device = targets[0]
+    collector_credentials = resolve_collector_credentials(matched_device) or {}
+    snmp_credentials = collector_credentials.get("snmp") or {}
+    host = str(snmp_credentials.get("server") or matched_device.get("ip_address") or "").strip()
+    community = str(snmp_credentials.get("community") or "").strip()
+    if not host:
+        raise HTTPException(status_code=400, detail="Matched asset has no SNMP address configured")
+    if not community:
+        raise HTTPException(status_code=400, detail="Matched asset has no SNMP community configured")
+    try:
+        port = int(snmp_credentials.get("port") or matched_device.get("snmp_port") or 161)
+    except (TypeError, ValueError) as exc:
+        raise HTTPException(status_code=400, detail="SNMP port must be an integer") from exc
+    if not 1 <= port <= 65535:
+        raise HTTPException(status_code=400, detail="SNMP port must be between 1 and 65535")
+
+    # The browser submits only device_id.  Prefer the server-resolved
+    # credential/device value and keep payload values as a compatibility
+    # fallback for older callers.
+    version = str(
+        snmp_credentials.get("version")
+        or matched_device.get("snmp_version")
+        or payload.get("version")
+        or payload.get("snmp_version")
+        or "2c"
+    ).strip().lower()
+    if version in {"v1", "1"}:
+        version = "1"
+    elif version in {"v2c", "2c", "2", ""}:
+        version = "2c"
+    else:
+        raise HTTPException(status_code=400, detail="SNMP version must be 1 or 2c")
+
+    from services.snmp_service import _snmp_get_versioned
+
+    try:
+        import asyncio
+
+        sys_name, sys_descr, sys_object_id = await asyncio.gather(
+            _snmp_get_versioned(host, community, "1.3.6.1.2.1.1.5.0", port, version),
+            _snmp_get_versioned(host, community, "1.3.6.1.2.1.1.1.0", port, version),
+            _snmp_get_versioned(host, community, "1.3.6.1.2.1.1.2.0", port, version),
+        )
+    except Exception as exc:
+        logger.warning("SNMP vendor detection failed for %s: %s", host, type(exc).__name__)
+        raise HTTPException(status_code=502, detail="SNMP identity request failed") from exc
+
+    def _resolve_identity_with_connection() -> dict[str, Any]:
+        conn = get_db_connection()
+        try:
+            return resolve_snmp_vendor_identity(
+                conn,
+                sys_object_id=sys_object_id,
+                sys_descr=sys_descr,
+                sys_name=sys_name,
+                asset_vendor=(matched_device.get("vendor") or matched_device.get("asset_vendor") or ""),
+                asset_platform=matched_device.get("platform") or "",
+                asset_model=matched_device.get("model") or "",
+            )
+        finally:
+            conn.close()
+
+    identity = await asyncio.to_thread(_resolve_identity_with_connection)
+
+    return {
+        "success": True,
+        "data": {
+            "device_id": requested_device_id,
+            "status": identity["status"],
+            "vendor": identity["vendor"],
+            "asset_vendor": identity["asset_vendor"],
+            "source": identity["source"],
+            "platform": identity["platform"],
+            "sys_object_id": identity["sys_object_id"],
+            "model": identity["model"],
+            "reason": identity["reason"],
         },
     }
 
@@ -2223,7 +2329,7 @@ def search_snmp_mib_nodes(
             mib_id=mib_id,
             limit=limit,
             scope=scope,
-            allowed_vendors=[*list_platform_vendor_names(conn), 'Standard'],
+            allowed_vendors=[*ASSET_NETWORK_VENDORS, *ASSET_SECURITY_VENDORS, 'Standard'],
         )
         return {
             "success": True,
@@ -2250,7 +2356,11 @@ def list_snmp_mib_nodes(
         if not count_row or int(count_row[0] if isinstance(count_row, tuple) else count_row["c"]) == 0:
             seed_builtin_mibs()
         search = (q or "").strip()
-        allowed_vendors = list_platform_vendor_names(conn) if category == "private" else None
+        allowed_vendors = (
+            [*ASSET_NETWORK_VENDORS, *ASSET_SECURITY_VENDORS]
+            if category == "private"
+            else None
+        )
         total = count_mib_nodes(
             conn,
             query=search,

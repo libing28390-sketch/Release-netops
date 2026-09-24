@@ -246,8 +246,7 @@ services:
       - GF_SERVER_ROOT_URL=${GRAFANA_ROOT_URL:-%(protocol)s://%(domain)s/grafana/}
       # Nginx strips /grafana/ in proxy_pass, so Grafana serves its internal
       # root path and uses root_url only for browser-facing links/redirects.
-      # Enabling serve_from_sub_path here would make both layers add the
-      # prefix and cause an endless redirect loop.
+      # Do not enable serve_from_sub_path while Nginx is stripping the prefix.
       - GF_SERVER_SERVE_FROM_SUB_PATH=false
       - GF_SECURITY_ALLOW_EMBEDDING=${GRAFANA_ALLOW_EMBEDDING:-true}
       - GF_AUTH_ANONYMOUS_ENABLED=${GRAFANA_ANONYMOUS_ENABLED:-false}
@@ -257,7 +256,7 @@ services:
       - GF_AUTH_PROXY_HEADER_PROPERTY=username
       - GF_AUTH_PROXY_AUTO_SIGN_UP=true
       - GF_AUTH_PROXY_HEADERS=Role:X-WEBAUTH-ROLE
-      - GF_AUTH_PROXY_WHITELIST=${GRAFANA_AUTH_PROXY_NGINX_IP:-172.30.254.2}
+      - GF_AUTH_PROXY_WHITELIST=${GRAFANA_AUTH_PROXY_SUBNET:-172.30.254.0/29}
       - GF_USERS_AUTO_ASSIGN_ORG_ROLE=Viewer
       - GF_USERS_ALLOW_SIGN_UP=false
       - GF_SECURITY_ADMIN_USER=${GRAFANA_ADMIN_USER:-admin}
@@ -339,8 +338,7 @@ services:
         condition: service_healthy
     networks:
       default: {}
-      grafana_auth:
-        ipv4_address: ${GRAFANA_AUTH_PROXY_NGINX_IP:-172.30.254.2}
+      grafana_auth: {}
     restart: unless-stopped
     ulimits:
       nofile:

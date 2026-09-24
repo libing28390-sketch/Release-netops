@@ -16,9 +16,12 @@ Windows 网络设备的资产管理、SNMP 采集、SSH/WinRM 远程管理能力
 - SNMP 同步主机名时同步更新资产管理中的主机名，资产管理数据继续作为初始数据源。
 - Docker 构建过程保留阶段日志，便于查看构建进度和失败原因。
 - 增加 SNMP Walk 诊断与公共/厂商 MIB 查询，解析结果突出展示设备、系统和 LLDP 邻居等关键信息。
+- 高级 OID 浏览器显示资产模板中的完整厂商目录，并通过 LibreNMS 规则、sysObjectID 和 sysDescr 自动识别受管设备厂商；登记信息与探测结果冲突时明确提示。
+- LLDP 诊断补齐本地接口名映射，可结合 LLDP 本地端口表和 IF-MIB `ifName` 将邻居端口索引解析为接口名称。
 - 修正网络接口指标的序列身份与 Grafana 面板聚合，减少重复接口曲线并完善 Linux/Windows 主机监控视图。
 - Docker 新安装默认启用内置 SeaweedFS S3 并生成安装专用凭据；现有本地录像和配置备份不会自动迁移。
-- Grafana 通过同源认证代理复用 Nexora 登录会话，匿名访问保持关闭。
+- Grafana 通过同源认证代理复用 Nexora 登录会话，匿名访问保持关闭；专用认证网络使用 Docker IPAM 动态分配，并由 Nginx 统一剥离外部 `/grafana/` 前缀。
+- Docker 前端镜像只安装构建所需依赖，避免与 Promptfoo 相关的原生 SQLite 开发依赖影响离线或受限环境构建。
 
 ## 升级提示
 

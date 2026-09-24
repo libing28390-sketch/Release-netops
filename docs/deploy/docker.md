@@ -121,10 +121,13 @@ Nexora 的“监控大盘”通过同源 `/grafana/` 访问 Grafana，Grafana �
 匿名访问仍关闭，浏览器不会获得 Grafana 管理员密码。管理员账号密码仅保留为运维恢复入口。
 需要在 Nexora 内嵌大盘时，保持 `GRAFANA_ALLOW_EMBEDDING=1`。
 
-Auth Proxy 只信任独立内部 Docker 网络上的 Nginx 地址。默认网段为
-`172.30.254.0/29`，Nginx 地址为 `172.30.254.2`；如果与主机现有 Docker 网段冲突，
-可在 `.env` 中同时调整 `GRAFANA_AUTH_PROXY_SUBNET` 与 `GRAFANA_AUTH_PROXY_NGINX_IP`，
-确保 Nginx 地址属于该网段且未被其他容器占用。
+Auth Proxy 白名单使用独立内部 Docker 网络的 CIDR。默认网段为
+`172.30.254.0/29`；Grafana 和 Nginx 在该网络上由 Docker IPAM 动态分配地址，
+避免固定地址与先启动的容器冲突。由于 Grafana 信任该网段内的 Auth Proxy 请求，
+`grafana_auth` 网络只应连接 Grafana 与 Nginx，不要将其他服务接入。
+如果网段与主机现有 Docker 网络冲突，只需在 `.env` 中调整
+`GRAFANA_AUTH_PROXY_SUBNET`，Compose 会同时用它配置网络子网和 Grafana 白名单。
+旧 `.env` 中的 `GRAFANA_AUTH_PROXY_NGINX_IP` 已不再使用，可以删除。
 
 旧版统一主机大盘 `07 服务器与主机监控`（UID `nexora-server-metrics`）已被 Linux 与
 Windows 专用大盘替代。Docker 部署脚本在安装、升级和离线启动时会尝试删除该旧 UID；
@@ -140,9 +143,10 @@ bash scripts/deploy-docker.sh prune-legacy-dashboard
 `https://nexora.example.com/grafana/`。不要保留 `%(domain)s`、`localhost` 或
 Grafana 内部的 `:3000`；否则 Grafana 会把 iframe 重定向到用户工作站的
 `localhost`。Nginx 会剥离 `/grafana/` 前缀后转发到 Grafana，因此 Compose 中
-保持 `GF_SERVER_SERVE_FROM_SUB_PATH=false`，不要再让 Grafana重复处理该前缀。
-使用 `scripts/deploy-docker.sh` 部署时，缺省占位值会自动根据 `TLS_COMMON_NAME`
-生成。
+保持 `GF_SERVER_SERVE_FROM_SUB_PATH=false`；浏览器侧的 `/grafana/` 前缀由
+`GRAFANA_ROOT_URL` 用于生成链接和重定向。不要同时让 Nginx 与 Grafana 处理同一
+子路径。使用 `scripts/deploy-docker.sh` 部署时，缺省占位值会自动根据
+`TLS_COMMON_NAME` 生成。
 
 Grafana 到 VictoriaMetrics 的请求走 Docker 内部网络；Compose 会清空
 `HTTP_PROXY`/`HTTPS_PROXY` 等主机代理变量，避免内部服务名被转发到外部代理而返回
