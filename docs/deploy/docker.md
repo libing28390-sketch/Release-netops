@@ -166,6 +166,10 @@ Grafana 到 VictoriaMetrics 的请求走 Docker 内部网络；Compose 会清空
 `HTTP_PROXY`/`HTTPS_PROXY` 等主机代理变量，避免内部服务名被转发到外部代理而返回
 `502`。这与浏览器访问的域名无关。
 
+后端访问 SeaweedFS S3 时也使用 Docker 内部服务名 `seaweedfs:8333`。Compose 会将
+`seaweedfs` 和容器名 `nexora-seaweedfs` 加入后端的 `NO_PROXY`/`no_proxy`，避免内部
+S3 请求经过主机代理；外部 S3 兼容 endpoint 仍可按既有代理设置访问。
+
 局域网部署示例（假设服务器地址为 `192.168.1.100`）：
 
 ```dotenv

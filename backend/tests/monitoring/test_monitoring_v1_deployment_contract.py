@@ -76,6 +76,16 @@ def test_netops_liveness_probe_bypasses_proxy_and_allows_cold_start():
     assert "127.0.0.1:8003/api/health/live" in dockerfile
 
 
+def test_netops_bypasses_proxy_for_internal_seaweedfs_s3_endpoint():
+    compose = yaml.safe_load((ROOT / "docker-compose.yml").read_text(encoding="utf-8"))
+    environment = compose["services"]["netops"]["environment"]
+
+    for variable in ("NO_PROXY", "no_proxy"):
+        entry = next(item for item in environment if item.startswith(f"{variable}="))
+        assert "seaweedfs" in entry
+        assert "nexora-seaweedfs" in entry
+
+
 def test_static_vmagent_and_generic_ifmib_contract():
     scrape = yaml.safe_load((ROOT / "monitoring" / "vmagent" / "scrape.yml").read_text(encoding="utf-8"))
     relabel = scrape["scrape_configs"][0]["relabel_configs"]

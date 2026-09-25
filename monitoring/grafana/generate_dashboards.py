@@ -28,26 +28,28 @@ def counter_rate_expr(high_capacity_metric, legacy_metric, selector):
     return f"({high} or {legacy})"
 
 
-def filtered_interface_join(selector, *, fallback_status=True):
-    """Attach the interface name and ifDescr after filtering by ifName.
+def filtered_interface_join(selector, *, alias_selector=None, fallback_status=True):
+    """Attach the interface name and configured description after filtering.
 
-    ``ifIndex`` remains an internal join key; it is never exposed as a table
-    column or variable.  The fallback keeps rows visible when a device does
-    not return an ifName label for an interface.
+    ``ifAlias`` is the IF-MIB object populated by a device's interface
+    ``description`` command. It is exported as a separate metric with
+    ``ifIndex`` and ``ifAlias`` labels, so its selector must not require the
+    ``ifName`` lookup label. ``ifIndex`` remains an internal join key; it is
+    never exposed as a table column or variable. The name fallback keeps
+    rows visible when an interface has no alias series; the optional status
+    fallback also handles devices that do not expose an ifName series.
     """
     name_expr = f"ifName{{{selector}}} * 0 + 1"
-    # The standalone ifDescr info metric has no ifName label, so apply the
-    # interface-name variable only to the ifName side of the join.
-    description_selector = selector.replace(',ifName=~"$interface"', "")
-    description_expr = f"ifDescr{{{description_selector}}} * 0 + 1"
+    alias_selector = alias_selector or selector
+    alias_source = f"ifAlias{{{alias_selector}}} * 0 + 1"
     metadata_expr = (
-        f"({name_expr}) * on(instance, ifIndex) group_left(ifDescr) "
-        f"({description_expr})"
+        f"(({name_expr}) * on(instance, ifIndex) group_left(ifAlias) "
+        f"({alias_source})) or on(instance, ifIndex) ({name_expr})"
     )
     if fallback_status:
         status_fallback = f"(ifOperStatus{{{selector}}} * 0 + 1)"
         metadata_expr = f"({metadata_expr}) or on(instance, ifIndex) {status_fallback}"
-    return f"* on(instance, ifIndex) group_left(ifName, ifDescr) ({metadata_expr})"
+    return f"* on(instance, ifIndex) group_left(ifName, ifAlias) ({metadata_expr})"
 
 
 def interface_rate_sum(metrics, selector, interface_join):
@@ -56,7 +58,7 @@ def interface_rate_sum(metrics, selector, interface_join):
     The zero vector also deduplicates repeated series for the same endpoint and
     interface before adding counters with slightly different label sets.
     """
-    labels = "instance, hostname, site_name, ifIndex, ifName, ifDescr"
+    labels = "instance, hostname, site_name, ifIndex, ifName, ifAlias"
     zero = f"max by ({labels}) ((ifOperStatus{{{selector}}} {interface_join}) * 0)"
     terms = []
     for metric in metrics:
@@ -117,21 +119,27 @@ def timeseries_panel(pid, title, targets, x, y, w=12, h=8, unit=""):
         "targets": targets
     }
 
-def clean_organize_transformation(value_col_name="数值", extra_renames=None):
+def clean_organize_transformation(
+    value_col_name="数值",
+    extra_renames=None,
+    *,
+    interface_description_label="ifDescr",
+):
+    description_index = interface_description_label
     renames = {
         "sysName": "设备名称",
         "hostname": "设备名称",
         "instance": "管理 IP",
         "site_name": "站点",
         "ifName": "接口全称",
-        "ifDescr": "接口描述",
+        interface_description_label: "接口描述",
         "vendor": "厂商",
         "role": "角色",
         "Value": value_col_name,
     }
     if extra_renames:
         renames.update(extra_renames)
-    return [
+    result = [
         {
             "id": "organize",
             "options": {
@@ -160,7 +168,7 @@ def clean_organize_transformation(value_col_name="数值", extra_renames=None):
                     "site_name": 2,
                     "instance": 3,
                     "ifName": 4,
-                    "ifDescr": 5,
+                    description_index: 5,
                     "vendor": 6,
                     "role": 7,
                     "Value": 8,
@@ -169,6 +177,10 @@ def clean_organize_transformation(value_col_name="数值", extra_renames=None):
             }
         }
     ]
+
+    if interface_description_label != "ifDescr":
+        result[0]["options"]["excludeByName"]["ifDescr"] = True
+    return result
 
 def table_panel(pid, title, expr, x, y, w=12, h=8, unit="", transformations=None, value_col_name="数值"):
     overrides = []
@@ -432,7 +444,9 @@ def build_device_dashboard():
         ], 0, 12, 12, 8, unit="celsius"),
         table_panel(
             8, "设备端口实时状态清单", f"ifOperStatus{{{dev_sel}}} {dev_if_join}", 12, 12, 12, 8,
-            transformations=clean_organize_transformation("运行状态 (1=Up, 2=Down)")
+            transformations=clean_organize_transformation(
+                "运行状态 (1=Up, 2=Down)", interface_description_label="ifAlias"
+            )
         ),
         timeseries_panel(9, "设备接口流量走势", [
             {"expr": f"sum by (hostname, site_name, ifName) ({in_rate} * 8 {dev_if_join})", "legendFormat": "{{site_name}} / {{hostname}} / {{ifName}} 入流量", "refId": "A"},
@@ -531,7 +545,7 @@ def build_interface_dashboard():
     if_filter = f'{sel},ifName=~"$interface"'
     in_rate = counter_rate_expr("ifHCInOctets", "ifInOctets", sel)
     out_rate = counter_rate_expr("ifHCOutOctets", "ifOutOctets", sel)
-    if_join = filtered_interface_join(if_filter, fallback_status=False)
+    if_join = filtered_interface_join(if_filter, alias_selector=sel, fallback_status=False)
     stat_if_join = if_join
     error_rate = interface_rate_sum(["ifInErrors", "ifOutErrors"], sel, stat_if_join)
     discard_rate = interface_rate_sum(["ifInDiscards", "ifOutDiscards"], sel, stat_if_join)
@@ -559,28 +573,30 @@ def build_interface_dashboard():
             7, "端口入向带宽利用率 Top 20",
             f"topk(20, {util_in} {if_join})",
             0, 12, 12, 8, unit="percent",
-            transformations=clean_organize_transformation("带宽利用率"),
+            transformations=clean_organize_transformation("带宽利用率", interface_description_label="ifAlias"),
             value_col_name="带宽利用率"
         ),
         table_panel(
             8, "端口出向带宽利用率 Top 20",
             f"topk(20, {util_out} {if_join})",
             12, 12, 12, 8, unit="percent",
-            transformations=clean_organize_transformation("带宽利用率"),
+            transformations=clean_organize_transformation("带宽利用率", interface_description_label="ifAlias"),
             value_col_name="带宽利用率"
         ),
         table_panel(
             9, "端口错误与丢弃排行 Top 20",
             f"topk(20, {error_and_discard_rate})",
             0, 20, 12, 8, unit="pps",
-            transformations=clean_organize_transformation("错误/丢弃率 (pps)"),
+            transformations=clean_organize_transformation("错误/丢弃率 (pps)", interface_description_label="ifAlias"),
             value_col_name="错误/丢弃率 (pps)"
         ),
         table_panel(
             10, "接口实时状态清单",
             f"ifOperStatus{{{sel}}} {if_join}",
             12, 20, 12, 8,
-            transformations=clean_organize_transformation("运行状态 (1=Up, 2=Down)")
+            transformations=clean_organize_transformation(
+                "运行状态 (1=Up, 2=Down)", interface_description_label="ifAlias"
+            )
         )
     ]
 
@@ -655,7 +671,7 @@ def build_outbound_dashboard():
     if_filter = f'{sel},ifName=~"$interface"'
     in_rate = counter_rate_expr("ifHCInOctets", "ifInOctets", sel)
     out_rate = counter_rate_expr("ifHCOutOctets", "ifOutOctets", sel)
-    if_join = filtered_interface_join(if_filter, fallback_status=False)
+    if_join = filtered_interface_join(if_filter, alias_selector=sel, fallback_status=False)
     error_rate = interface_rate_sum(["ifInErrors", "ifOutErrors"], sel, if_join)
     discard_rate = interface_rate_sum(["ifInDiscards", "ifOutDiscards"], sel, if_join)
     error_and_discard_rate = interface_rate_sum(
@@ -700,21 +716,21 @@ def build_outbound_dashboard():
             12, "出口端口入向利用率排行 Top 10",
             f"topk(10, {util_in} {if_join})",
             0, 28, 12, 8, unit="percent",
-            transformations=clean_organize_transformation("带宽利用率"),
+            transformations=clean_organize_transformation("带宽利用率", interface_description_label="ifAlias"),
             value_col_name="带宽利用率"
         ),
         table_panel(
             13, "出口端口出向利用率排行 Top 10",
             f"topk(10, {util_out} {if_join})",
             12, 28, 12, 8, unit="percent",
-            transformations=clean_organize_transformation("带宽利用率"),
+            transformations=clean_organize_transformation("带宽利用率", interface_description_label="ifAlias"),
             value_col_name="带宽利用率"
         ),
         table_panel(
             14, "出口端口错误与丢弃排行 Top 10",
             f"topk(10, {error_and_discard_rate})",
             0, 36, 24, 8, unit="pps",
-            transformations=clean_organize_transformation("错误/丢弃率 (pps)"),
+            transformations=clean_organize_transformation("错误/丢弃率 (pps)", interface_description_label="ifAlias"),
             value_col_name="错误/丢弃率 (pps)"
         )
     ]

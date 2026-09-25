@@ -73,6 +73,10 @@ services:
       - MONITORING_METRIC_BACKEND=${MONITORING_METRIC_BACKEND:-victoriametrics}
       - VICTORIAMETRICS_URL=${VICTORIAMETRICS_URL:-http://victoriametrics:8428}
       - VICTORIAMETRICS_ALLOWED_HOSTS=${VICTORIAMETRICS_ALLOWED_HOSTS:-victoriametrics}
+      # Keep Docker-internal object storage calls off any inherited HTTP proxy.
+      # External S3-compatible endpoints can still use the configured proxy.
+      - "NO_PROXY=${NO_PROXY:-localhost,127.0.0.1},seaweedfs,nexora-seaweedfs"
+      - "no_proxy=${no_proxy:-localhost,127.0.0.1},seaweedfs,nexora-seaweedfs"
       - MONITORING_ARTIFACT_ROOT=/app/artifacts/monitoring
       - SECRET_KEY=${SECRET_KEY:?SECRET_KEY must be set to a non-default secret}
       - CREDENTIAL_ENCRYPTION_KEY=${CREDENTIAL_ENCRYPTION_KEY:?CREDENTIAL_ENCRYPTION_KEY must be set to a non-default secret}

@@ -80,3 +80,57 @@ def test_dashboards_suite_completeness():
             data = json.load(f)
             assert "uid" in data
             assert len(data.get("panels", [])) > 0
+
+    device_dashboard_path = os.path.join(dashboard_dir, "nexora-network-device.json")
+    with open(device_dashboard_path, "r", encoding="utf-8") as f:
+        device_dashboard = json.load(f)
+    port_status_panel = next(panel for panel in device_dashboard["panels"] if panel["id"] == 8)
+    port_status_query = port_status_panel["targets"][0]["expr"]
+    organize = next(
+        transformation["options"]
+        for transformation in port_status_panel["transformations"]
+        if transformation.get("id") == "organize"
+    )
+    assert "group_left(ifName, ifAlias)" in port_status_query
+    assert "group_left(ifAlias) (ifAlias{" in port_status_query
+    assert "ifDescr{" not in port_status_query
+    assert organize["renameByName"]["ifName"] == "接口全称"
+    assert organize["renameByName"]["ifAlias"] == "接口描述"
+    assert organize["excludeByName"]["ifDescr"] is True
+
+    for filename in (
+        "nexora-network-device.json",
+        "nexora-network-interface.json",
+        "nexora-network-outbound.json",
+    ):
+        with open(os.path.join(dashboard_dir, filename), "r", encoding="utf-8") as f:
+            dashboard = json.load(f)
+        joined_expressions = [
+            target.get("expr", "")
+            for panel in dashboard["panels"]
+            for target in panel.get("targets", [])
+            if "group_left(ifName, ifAlias)" in target.get("expr", "")
+        ]
+        assert joined_expressions
+        assert all("group_left(ifAlias) (ifAlias{" in expr for expr in joined_expressions)
+        assert all("or on(instance, ifIndex) (ifName{" in expr for expr in joined_expressions)
+        assert all("ifDescr{" not in expr for expr in joined_expressions)
+        assert all(
+            "ifName=~" not in expr.split("group_left(ifAlias) (ifAlias{", 1)[1].split("}", 1)[0]
+            for expr in joined_expressions
+        )
+
+        for panel in dashboard["panels"]:
+            if not any("group_left(ifName, ifAlias)" in target.get("expr", "") for target in panel.get("targets", [])):
+                continue
+            organize = next(
+                (
+                    transformation["options"]
+                    for transformation in panel.get("transformations", [])
+                    if transformation.get("id") == "organize"
+                ),
+                None,
+            )
+            if organize:
+                assert organize["renameByName"].get("ifAlias") == "接口描述"
+                assert organize["excludeByName"].get("ifDescr") is True
