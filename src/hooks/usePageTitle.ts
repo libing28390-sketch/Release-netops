@@ -81,7 +81,7 @@ export const usePageTitle = ({
       return map[activeTab] || (language === 'zh' ? 'AI 中心' : 'AI Center');
     }
     if (activeTab === 'users') return t('userManagement');
-    if (activeTab === 'storage') return language === 'zh' ? '对象存储' : 'Object Storage';
+    if (activeTab === 'storage') return language === 'zh' ? '存储设置' : 'Storage Settings';
     if (activeTab === 'platform-registry') return language === 'zh' ? '平台注册' : 'Platform Registry';
     if (activeTab === 'snmp-metric-templates') return language === 'zh' ? 'SNMP 指标模板' : 'SNMP Metric Templates';
     if (activeTab === 'snmp-walk') return language === 'zh' ? 'SNMP 诊断' : 'SNMP Diagnostics';
