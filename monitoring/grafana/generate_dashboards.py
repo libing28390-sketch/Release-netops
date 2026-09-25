@@ -29,25 +29,25 @@ def counter_rate_expr(high_capacity_metric, legacy_metric, selector):
 
 
 def filtered_interface_join(selector, *, fallback_status=True):
-    """Attach the interface name and description after filtering by ifName.
+    """Attach the interface name and ifDescr after filtering by ifName.
 
     ``ifIndex`` remains an internal join key; it is never exposed as a table
     column or variable.  The fallback keeps rows visible when a device does
     not return an ifName label for an interface.
     """
     name_expr = f"ifName{{{selector}}} * 0 + 1"
-    # The standalone ifAlias info metric has no ifName label, so apply the
+    # The standalone ifDescr info metric has no ifName label, so apply the
     # interface-name variable only to the ifName side of the join.
     description_selector = selector.replace(',ifName=~"$interface"', "")
-    description_expr = f"ifAlias{{{description_selector}}} * 0 + 1"
+    description_expr = f"ifDescr{{{description_selector}}} * 0 + 1"
     metadata_expr = (
-        f"({name_expr}) * on(instance, ifIndex) group_left(ifAlias) "
+        f"({name_expr}) * on(instance, ifIndex) group_left(ifDescr) "
         f"({description_expr})"
     )
     if fallback_status:
         status_fallback = f"(ifOperStatus{{{selector}}} * 0 + 1)"
         metadata_expr = f"({metadata_expr}) or on(instance, ifIndex) {status_fallback}"
-    return f"* on(instance, ifIndex) group_left(ifName, ifAlias) ({metadata_expr})"
+    return f"* on(instance, ifIndex) group_left(ifName, ifDescr) ({metadata_expr})"
 
 
 def interface_rate_sum(metrics, selector, interface_join):
@@ -56,7 +56,7 @@ def interface_rate_sum(metrics, selector, interface_join):
     The zero vector also deduplicates repeated series for the same endpoint and
     interface before adding counters with slightly different label sets.
     """
-    labels = "instance, hostname, site_name, ifIndex, ifName, ifAlias"
+    labels = "instance, hostname, site_name, ifIndex, ifName, ifDescr"
     zero = f"max by ({labels}) ((ifOperStatus{{{selector}}} {interface_join}) * 0)"
     terms = []
     for metric in metrics:
@@ -124,7 +124,7 @@ def clean_organize_transformation(value_col_name="数值", extra_renames=None):
         "instance": "管理 IP",
         "site_name": "站点",
         "ifName": "接口全称",
-        "ifAlias": "接口描述",
+        "ifDescr": "接口描述",
         "vendor": "厂商",
         "role": "角色",
         "Value": value_col_name,
@@ -160,7 +160,7 @@ def clean_organize_transformation(value_col_name="数值", extra_renames=None):
                     "site_name": 2,
                     "instance": 3,
                     "ifName": 4,
-                    "ifAlias": 5,
+                    "ifDescr": 5,
                     "vendor": 6,
                     "role": 7,
                     "Value": 8,

@@ -57,7 +57,7 @@
       },
       "targets": [
         {
-          "expr": "sum((rate(ifHCInOctets{job=\"network_snmp\",site_name=~\"$site\",vendor=~\"$vendor\",role=~\"$role\",hostname=~\"$device\"}[5m]) or rate(ifInOctets{job=\"network_snmp\",site_name=~\"$site\",vendor=~\"$vendor\",role=~\"$role\",hostname=~\"$device\"}[5m])) * on(instance, ifIndex) group_left(ifName, ifAlias) ((ifName{job=\"network_snmp\",site_name=~\"$site\",vendor=~\"$vendor\",role=~\"$role\",hostname=~\"$device\",ifName=~\"$interface\"} * 0 + 1) * on(instance, ifIndex) group_left(ifAlias) (ifAlias{job=\"network_snmp\",site_name=~\"$site\",vendor=~\"$vendor\",role=~\"$role\",hostname=~\"$device\"} * 0 + 1))) * 8 or vector(0)",
+          "expr": "sum((rate(ifHCInOctets{job=\"network_snmp\",site_name=~\"$site\",vendor=~\"$vendor\",role=~\"$role\",hostname=~\"$device\"}[5m]) or rate(ifInOctets{job=\"network_snmp\",site_name=~\"$site\",vendor=~\"$vendor\",role=~\"$role\",hostname=~\"$device\"}[5m])) * on(instance, ifIndex) group_left(ifName, ifDescr) ((ifName{job=\"network_snmp\",site_name=~\"$site\",vendor=~\"$vendor\",role=~\"$role\",hostname=~\"$device\",ifName=~\"$interface\"} * 0 + 1) * on(instance, ifIndex) group_left(ifDescr) (ifDescr{job=\"network_snmp\",site_name=~\"$site\",vendor=~\"$vendor\",role=~\"$role\",hostname=~\"$device\"} * 0 + 1))) * 8 or vector(0)",
           "refId": "A"
         }
       ]
@@ -111,7 +111,7 @@
       },
       "targets": [
         {
-          "expr": "sum((rate(ifHCOutOctets{job=\"network_snmp\",site_name=~\"$site\",vendor=~\"$vendor\",role=~\"$role\",hostname=~\"$device\"}[5m]) or rate(ifOutOctets{job=\"network_snmp\",site_name=~\"$site\",vendor=~\"$vendor\",role=~\"$role\",hostname=~\"$device\"}[5m])) * on(instance, ifIndex) group_left(ifName, ifAlias) ((ifName{job=\"network_snmp\",site_name=~\"$site\",vendor=~\"$vendor\",role=~\"$role\",hostname=~\"$device\",ifName=~\"$interface\"} * 0 + 1) * on(instance, ifIndex) group_left(ifAlias) (ifAlias{job=\"network_snmp\",site_name=~\"$site\",vendor=~\"$vendor\",role=~\"$role\",hostname=~\"$device\"} * 0 + 1))) * 8 or vector(0)",
+          "expr": "sum((rate(ifHCOutOctets{job=\"network_snmp\",site_name=~\"$site\",vendor=~\"$vendor\",role=~\"$role\",hostname=~\"$device\"}[5m]) or rate(ifOutOctets{job=\"network_snmp\",site_name=~\"$site\",vendor=~\"$vendor\",role=~\"$role\",hostname=~\"$device\"}[5m])) * on(instance, ifIndex) group_left(ifName, ifDescr) ((ifName{job=\"network_snmp\",site_name=~\"$site\",vendor=~\"$vendor\",role=~\"$role\",hostname=~\"$device\",ifName=~\"$interface\"} * 0 + 1) * on(instance, ifIndex) group_left(ifDescr) (ifDescr{job=\"network_snmp\",site_name=~\"$site\",vendor=~\"$vendor\",role=~\"$role\",hostname=~\"$device\"} * 0 + 1))) * 8 or vector(0)",
           "refId": "A"
         }
       ]
@@ -173,7 +173,7 @@
       },
       "targets": [
         {
-          "expr": "sum((max by (instance, hostname, site_name, ifIndex, ifName, ifAlias) (rate(ifInErrors{job=\"network_snmp\",site_name=~\"$site\",vendor=~\"$vendor\",role=~\"$role\",hostname=~\"$device\"}[5m]) * on(instance, ifIndex) group_left(ifName, ifAlias) ((ifName{job=\"network_snmp\",site_name=~\"$site\",vendor=~\"$vendor\",role=~\"$role\",hostname=~\"$device\",ifName=~\"$interface\"} * 0 + 1) * on(instance, ifIndex) group_left(ifAlias) (ifAlias{job=\"network_snmp\",site_name=~\"$site\",vendor=~\"$vendor\",role=~\"$role\",hostname=~\"$device\"} * 0 + 1))) or max by (instance, hostname, site_name, ifIndex, ifName, ifAlias) ((ifOperStatus{job=\"network_snmp\",site_name=~\"$site\",vendor=~\"$vendor\",role=~\"$role\",hostname=~\"$device\"} * on(instance, ifIndex) group_left(ifName, ifAlias) ((ifName{job=\"network_snmp\",site_name=~\"$site\",vendor=~\"$vendor\",role=~\"$role\",hostname=~\"$device\",ifName=~\"$interface\"} * 0 + 1) * on(instance, ifIndex) group_left(ifAlias) (ifAlias{job=\"network_snmp\",site_name=~\"$site\",vendor=~\"$vendor\",role=~\"$role\",hostname=~\"$device\"} * 0 + 1))) * 0)) + (max by (instance, hostname, site_name, ifIndex, ifName, ifAlias) (rate(ifOutErrors{job=\"network_snmp\",site_name=~\"$site\",vendor=~\"$vendor\",role=~\"$role\",hostname=~\"$device\"}[5m]) * on(instance, ifIndex) group_left(ifName, ifAlias) ((ifName{job=\"network_snmp\",site_name=~\"$site\",vendor=~\"$vendor\",role=~\"$role\",hostname=~\"$device\",ifName=~\"$interface\"} * 0 + 1) * on(instance, ifIndex) group_left(ifAlias) (ifAlias{job=\"network_snmp\",site_name=~\"$site\",vendor=~\"$vendor\",role=~\"$role\",hostname=~\"$device\"} * 0 + 1))) or max by (instance, hostname, site_name, ifIndex, ifName, ifAlias) ((ifOperStatus{job=\"network_snmp\",site_name=~\"$site\",vendor=~\"$vendor\",role=~\"$role\",hostname=~\"$device\"} * on(instance, ifIndex) group_left(ifName, ifAlias) ((ifName{job=\"network_snmp\",site_name=~\"$site\",vendor=~\"$vendor\",role=~\"$role\",hostname=~\"$device\",ifName=~\"$interface\"} * 0 + 1) * on(instance, ifIndex) group_left(ifAlias) (ifAlias{job=\"network_snmp\",site_name=~\"$site\",vendor=~\"$vendor\",role=~\"$role\",hostname=~\"$device\"} * 0 + 1))) * 0))) or vector(0)",
+          "expr": "sum((max by (instance, hostname, site_name, ifIndex, ifName, ifDescr) (rate(ifInErrors{job=\"network_snmp\",site_name=~\"$site\",vendor=~\"$vendor\",role=~\"$role\",hostname=~\"$device\"}[5m]) * on(instance, ifIndex) group_left(ifName, ifDescr) ((ifName{job=\"network_snmp\",site_name=~\"$site\",vendor=~\"$vendor\",role=~\"$role\",hostname=~\"$device\",ifName=~\"$interface\"} * 0 + 1) * on(instance, ifIndex) group_left(ifDescr) (ifDescr{job=\"network_snmp\",site_name=~\"$site\",vendor=~\"$vendor\",role=~\"$role\",hostname=~\"$device\"} * 0 + 1))) or max by (instance, hostname, site_name, ifIndex, ifName, ifDescr) ((ifOperStatus{job=\"network_snmp\",site_name=~\"$site\",vendor=~\"$vendor\",role=~\"$role\",hostname=~\"$device\"} * on(instance, ifIndex) group_left(ifName, ifDescr) ((ifName{job=\"network_snmp\",site_name=~\"$site\",vendor=~\"$vendor\",role=~\"$role\",hostname=~\"$device\",ifName=~\"$interface\"} * 0 + 1) * on(instance, ifIndex) group_left(ifDescr) (ifDescr{job=\"network_snmp\",site_name=~\"$site\",vendor=~\"$vendor\",role=~\"$role\",hostname=~\"$device\"} * 0 + 1))) * 0)) + (max by (instance, hostname, site_name, ifIndex, ifName, ifDescr) (rate(ifOutErrors{job=\"network_snmp\",site_name=~\"$site\",vendor=~\"$vendor\",role=~\"$role\",hostname=~\"$device\"}[5m]) * on(instance, ifIndex) group_left(ifName, ifDescr) ((ifName{job=\"network_snmp\",site_name=~\"$site\",vendor=~\"$vendor\",role=~\"$role\",hostname=~\"$device\",ifName=~\"$interface\"} * 0 + 1) * on(instance, ifIndex) group_left(ifDescr) (ifDescr{job=\"network_snmp\",site_name=~\"$site\",vendor=~\"$vendor\",role=~\"$role\",hostname=~\"$device\"} * 0 + 1))) or max by (instance, hostname, site_name, ifIndex, ifName, ifDescr) ((ifOperStatus{job=\"network_snmp\",site_name=~\"$site\",vendor=~\"$vendor\",role=~\"$role\",hostname=~\"$device\"} * on(instance, ifIndex) group_left(ifName, ifDescr) ((ifName{job=\"network_snmp\",site_name=~\"$site\",vendor=~\"$vendor\",role=~\"$role\",hostname=~\"$device\",ifName=~\"$interface\"} * 0 + 1) * on(instance, ifIndex) group_left(ifDescr) (ifDescr{job=\"network_snmp\",site_name=~\"$site\",vendor=~\"$vendor\",role=~\"$role\",hostname=~\"$device\"} * 0 + 1))) * 0))) or vector(0)",
           "refId": "A"
         }
       ]
@@ -235,7 +235,7 @@
       },
       "targets": [
         {
-          "expr": "sum((max by (instance, hostname, site_name, ifIndex, ifName, ifAlias) (rate(ifInDiscards{job=\"network_snmp\",site_name=~\"$site\",vendor=~\"$vendor\",role=~\"$role\",hostname=~\"$device\"}[5m]) * on(instance, ifIndex) group_left(ifName, ifAlias) ((ifName{job=\"network_snmp\",site_name=~\"$site\",vendor=~\"$vendor\",role=~\"$role\",hostname=~\"$device\",ifName=~\"$interface\"} * 0 + 1) * on(instance, ifIndex) group_left(ifAlias) (ifAlias{job=\"network_snmp\",site_name=~\"$site\",vendor=~\"$vendor\",role=~\"$role\",hostname=~\"$device\"} * 0 + 1))) or max by (instance, hostname, site_name, ifIndex, ifName, ifAlias) ((ifOperStatus{job=\"network_snmp\",site_name=~\"$site\",vendor=~\"$vendor\",role=~\"$role\",hostname=~\"$device\"} * on(instance, ifIndex) group_left(ifName, ifAlias) ((ifName{job=\"network_snmp\",site_name=~\"$site\",vendor=~\"$vendor\",role=~\"$role\",hostname=~\"$device\",ifName=~\"$interface\"} * 0 + 1) * on(instance, ifIndex) group_left(ifAlias) (ifAlias{job=\"network_snmp\",site_name=~\"$site\",vendor=~\"$vendor\",role=~\"$role\",hostname=~\"$device\"} * 0 + 1))) * 0)) + (max by (instance, hostname, site_name, ifIndex, ifName, ifAlias) (rate(ifOutDiscards{job=\"network_snmp\",site_name=~\"$site\",vendor=~\"$vendor\",role=~\"$role\",hostname=~\"$device\"}[5m]) * on(instance, ifIndex) group_left(ifName, ifAlias) ((ifName{job=\"network_snmp\",site_name=~\"$site\",vendor=~\"$vendor\",role=~\"$role\",hostname=~\"$device\",ifName=~\"$interface\"} * 0 + 1) * on(instance, ifIndex) group_left(ifAlias) (ifAlias{job=\"network_snmp\",site_name=~\"$site\",vendor=~\"$vendor\",role=~\"$role\",hostname=~\"$device\"} * 0 + 1))) or max by (instance, hostname, site_name, ifIndex, ifName, ifAlias) ((ifOperStatus{job=\"network_snmp\",site_name=~\"$site\",vendor=~\"$vendor\",role=~\"$role\",hostname=~\"$device\"} * on(instance, ifIndex) group_left(ifName, ifAlias) ((ifName{job=\"network_snmp\",site_name=~\"$site\",vendor=~\"$vendor\",role=~\"$role\",hostname=~\"$device\",ifName=~\"$interface\"} * 0 + 1) * on(instance, ifIndex) group_left(ifAlias) (ifAlias{job=\"network_snmp\",site_name=~\"$site\",vendor=~\"$vendor\",role=~\"$role\",hostname=~\"$device\"} * 0 + 1))) * 0))) or vector(0)",
+          "expr": "sum((max by (instance, hostname, site_name, ifIndex, ifName, ifDescr) (rate(ifInDiscards{job=\"network_snmp\",site_name=~\"$site\",vendor=~\"$vendor\",role=~\"$role\",hostname=~\"$device\"}[5m]) * on(instance, ifIndex) group_left(ifName, ifDescr) ((ifName{job=\"network_snmp\",site_name=~\"$site\",vendor=~\"$vendor\",role=~\"$role\",hostname=~\"$device\",ifName=~\"$interface\"} * 0 + 1) * on(instance, ifIndex) group_left(ifDescr) (ifDescr{job=\"network_snmp\",site_name=~\"$site\",vendor=~\"$vendor\",role=~\"$role\",hostname=~\"$device\"} * 0 + 1))) or max by (instance, hostname, site_name, ifIndex, ifName, ifDescr) ((ifOperStatus{job=\"network_snmp\",site_name=~\"$site\",vendor=~\"$vendor\",role=~\"$role\",hostname=~\"$device\"} * on(instance, ifIndex) group_left(ifName, ifDescr) ((ifName{job=\"network_snmp\",site_name=~\"$site\",vendor=~\"$vendor\",role=~\"$role\",hostname=~\"$device\",ifName=~\"$interface\"} * 0 + 1) * on(instance, ifIndex) group_left(ifDescr) (ifDescr{job=\"network_snmp\",site_name=~\"$site\",vendor=~\"$vendor\",role=~\"$role\",hostname=~\"$device\"} * 0 + 1))) * 0)) + (max by (instance, hostname, site_name, ifIndex, ifName, ifDescr) (rate(ifOutDiscards{job=\"network_snmp\",site_name=~\"$site\",vendor=~\"$vendor\",role=~\"$role\",hostname=~\"$device\"}[5m]) * on(instance, ifIndex) group_left(ifName, ifDescr) ((ifName{job=\"network_snmp\",site_name=~\"$site\",vendor=~\"$vendor\",role=~\"$role\",hostname=~\"$device\",ifName=~\"$interface\"} * 0 + 1) * on(instance, ifIndex) group_left(ifDescr) (ifDescr{job=\"network_snmp\",site_name=~\"$site\",vendor=~\"$vendor\",role=~\"$role\",hostname=~\"$device\"} * 0 + 1))) or max by (instance, hostname, site_name, ifIndex, ifName, ifDescr) ((ifOperStatus{job=\"network_snmp\",site_name=~\"$site\",vendor=~\"$vendor\",role=~\"$role\",hostname=~\"$device\"} * on(instance, ifIndex) group_left(ifName, ifDescr) ((ifName{job=\"network_snmp\",site_name=~\"$site\",vendor=~\"$vendor\",role=~\"$role\",hostname=~\"$device\",ifName=~\"$interface\"} * 0 + 1) * on(instance, ifIndex) group_left(ifDescr) (ifDescr{job=\"network_snmp\",site_name=~\"$site\",vendor=~\"$vendor\",role=~\"$role\",hostname=~\"$device\"} * 0 + 1))) * 0))) or vector(0)",
           "refId": "A"
         }
       ]
@@ -282,7 +282,7 @@
       },
       "targets": [
         {
-          "expr": "topk(10, (rate(ifHCInOctets{job=\"network_snmp\",site_name=~\"$site\",vendor=~\"$vendor\",role=~\"$role\",hostname=~\"$device\"}[5m]) or rate(ifInOctets{job=\"network_snmp\",site_name=~\"$site\",vendor=~\"$vendor\",role=~\"$role\",hostname=~\"$device\"}[5m])) * 8 * on(instance, ifIndex) group_left(ifName, ifAlias) ((ifName{job=\"network_snmp\",site_name=~\"$site\",vendor=~\"$vendor\",role=~\"$role\",hostname=~\"$device\",ifName=~\"$interface\"} * 0 + 1) * on(instance, ifIndex) group_left(ifAlias) (ifAlias{job=\"network_snmp\",site_name=~\"$site\",vendor=~\"$vendor\",role=~\"$role\",hostname=~\"$device\"} * 0 + 1)))",
+          "expr": "topk(10, (rate(ifHCInOctets{job=\"network_snmp\",site_name=~\"$site\",vendor=~\"$vendor\",role=~\"$role\",hostname=~\"$device\"}[5m]) or rate(ifInOctets{job=\"network_snmp\",site_name=~\"$site\",vendor=~\"$vendor\",role=~\"$role\",hostname=~\"$device\"}[5m])) * 8 * on(instance, ifIndex) group_left(ifName, ifDescr) ((ifName{job=\"network_snmp\",site_name=~\"$site\",vendor=~\"$vendor\",role=~\"$role\",hostname=~\"$device\",ifName=~\"$interface\"} * 0 + 1) * on(instance, ifIndex) group_left(ifDescr) (ifDescr{job=\"network_snmp\",site_name=~\"$site\",vendor=~\"$vendor\",role=~\"$role\",hostname=~\"$device\"} * 0 + 1)))",
           "legendFormat": "{{site_name}} / {{hostname}} / {{ifName}}",
           "refId": "A"
         }
@@ -330,7 +330,7 @@
       },
       "targets": [
         {
-          "expr": "topk(10, (rate(ifHCOutOctets{job=\"network_snmp\",site_name=~\"$site\",vendor=~\"$vendor\",role=~\"$role\",hostname=~\"$device\"}[5m]) or rate(ifOutOctets{job=\"network_snmp\",site_name=~\"$site\",vendor=~\"$vendor\",role=~\"$role\",hostname=~\"$device\"}[5m])) * 8 * on(instance, ifIndex) group_left(ifName, ifAlias) ((ifName{job=\"network_snmp\",site_name=~\"$site\",vendor=~\"$vendor\",role=~\"$role\",hostname=~\"$device\",ifName=~\"$interface\"} * 0 + 1) * on(instance, ifIndex) group_left(ifAlias) (ifAlias{job=\"network_snmp\",site_name=~\"$site\",vendor=~\"$vendor\",role=~\"$role\",hostname=~\"$device\"} * 0 + 1)))",
+          "expr": "topk(10, (rate(ifHCOutOctets{job=\"network_snmp\",site_name=~\"$site\",vendor=~\"$vendor\",role=~\"$role\",hostname=~\"$device\"}[5m]) or rate(ifOutOctets{job=\"network_snmp\",site_name=~\"$site\",vendor=~\"$vendor\",role=~\"$role\",hostname=~\"$device\"}[5m])) * 8 * on(instance, ifIndex) group_left(ifName, ifDescr) ((ifName{job=\"network_snmp\",site_name=~\"$site\",vendor=~\"$vendor\",role=~\"$role\",hostname=~\"$device\",ifName=~\"$interface\"} * 0 + 1) * on(instance, ifIndex) group_left(ifDescr) (ifDescr{job=\"network_snmp\",site_name=~\"$site\",vendor=~\"$vendor\",role=~\"$role\",hostname=~\"$device\"} * 0 + 1)))",
           "legendFormat": "{{site_name}} / {{hostname}} / {{ifName}}",
           "refId": "A"
         }
@@ -382,7 +382,7 @@
       },
       "targets": [
         {
-          "expr": "topk(20, (((rate(ifHCInOctets{job=\"network_snmp\",site_name=~\"$site\",vendor=~\"$vendor\",role=~\"$role\",hostname=~\"$device\"}[5m]) or rate(ifInOctets{job=\"network_snmp\",site_name=~\"$site\",vendor=~\"$vendor\",role=~\"$role\",hostname=~\"$device\"}[5m])) * 8) / (((ifHighSpeed{job=\"network_snmp\",site_name=~\"$site\",vendor=~\"$vendor\",role=~\"$role\",hostname=~\"$device\"} > 0) * 1000000) or (ifSpeed{job=\"network_snmp\",site_name=~\"$site\",vendor=~\"$vendor\",role=~\"$role\",hostname=~\"$device\"} > 0)) * 100) * on(instance, ifIndex) group_left(ifName, ifAlias) ((ifName{job=\"network_snmp\",site_name=~\"$site\",vendor=~\"$vendor\",role=~\"$role\",hostname=~\"$device\",ifName=~\"$interface\"} * 0 + 1) * on(instance, ifIndex) group_left(ifAlias) (ifAlias{job=\"network_snmp\",site_name=~\"$site\",vendor=~\"$vendor\",role=~\"$role\",hostname=~\"$device\"} * 0 + 1)))",
+          "expr": "topk(20, (((rate(ifHCInOctets{job=\"network_snmp\",site_name=~\"$site\",vendor=~\"$vendor\",role=~\"$role\",hostname=~\"$device\"}[5m]) or rate(ifInOctets{job=\"network_snmp\",site_name=~\"$site\",vendor=~\"$vendor\",role=~\"$role\",hostname=~\"$device\"}[5m])) * 8) / (((ifHighSpeed{job=\"network_snmp\",site_name=~\"$site\",vendor=~\"$vendor\",role=~\"$role\",hostname=~\"$device\"} > 0) * 1000000) or (ifSpeed{job=\"network_snmp\",site_name=~\"$site\",vendor=~\"$vendor\",role=~\"$role\",hostname=~\"$device\"} > 0)) * 100) * on(instance, ifIndex) group_left(ifName, ifDescr) ((ifName{job=\"network_snmp\",site_name=~\"$site\",vendor=~\"$vendor\",role=~\"$role\",hostname=~\"$device\",ifName=~\"$interface\"} * 0 + 1) * on(instance, ifIndex) group_left(ifDescr) (ifDescr{job=\"network_snmp\",site_name=~\"$site\",vendor=~\"$vendor\",role=~\"$role\",hostname=~\"$device\"} * 0 + 1)))",
           "format": "table",
           "instant": true,
           "refId": "A"
@@ -417,7 +417,7 @@
               "site_name": 2,
               "instance": 3,
               "ifName": 4,
-              "ifAlias": 5,
+              "ifDescr": 5,
               "vendor": 6,
               "role": 7,
               "Value": 8
@@ -428,7 +428,7 @@
               "instance": "管理 IP",
               "site_name": "站点",
               "ifName": "接口全称",
-              "ifAlias": "接口描述",
+              "ifDescr": "接口描述",
               "vendor": "厂商",
               "role": "角色",
               "Value": "带宽利用率"
@@ -483,7 +483,7 @@
       },
       "targets": [
         {
-          "expr": "topk(20, (((rate(ifHCOutOctets{job=\"network_snmp\",site_name=~\"$site\",vendor=~\"$vendor\",role=~\"$role\",hostname=~\"$device\"}[5m]) or rate(ifOutOctets{job=\"network_snmp\",site_name=~\"$site\",vendor=~\"$vendor\",role=~\"$role\",hostname=~\"$device\"}[5m])) * 8) / (((ifHighSpeed{job=\"network_snmp\",site_name=~\"$site\",vendor=~\"$vendor\",role=~\"$role\",hostname=~\"$device\"} > 0) * 1000000) or (ifSpeed{job=\"network_snmp\",site_name=~\"$site\",vendor=~\"$vendor\",role=~\"$role\",hostname=~\"$device\"} > 0)) * 100) * on(instance, ifIndex) group_left(ifName, ifAlias) ((ifName{job=\"network_snmp\",site_name=~\"$site\",vendor=~\"$vendor\",role=~\"$role\",hostname=~\"$device\",ifName=~\"$interface\"} * 0 + 1) * on(instance, ifIndex) group_left(ifAlias) (ifAlias{job=\"network_snmp\",site_name=~\"$site\",vendor=~\"$vendor\",role=~\"$role\",hostname=~\"$device\"} * 0 + 1)))",
+          "expr": "topk(20, (((rate(ifHCOutOctets{job=\"network_snmp\",site_name=~\"$site\",vendor=~\"$vendor\",role=~\"$role\",hostname=~\"$device\"}[5m]) or rate(ifOutOctets{job=\"network_snmp\",site_name=~\"$site\",vendor=~\"$vendor\",role=~\"$role\",hostname=~\"$device\"}[5m])) * 8) / (((ifHighSpeed{job=\"network_snmp\",site_name=~\"$site\",vendor=~\"$vendor\",role=~\"$role\",hostname=~\"$device\"} > 0) * 1000000) or (ifSpeed{job=\"network_snmp\",site_name=~\"$site\",vendor=~\"$vendor\",role=~\"$role\",hostname=~\"$device\"} > 0)) * 100) * on(instance, ifIndex) group_left(ifName, ifDescr) ((ifName{job=\"network_snmp\",site_name=~\"$site\",vendor=~\"$vendor\",role=~\"$role\",hostname=~\"$device\",ifName=~\"$interface\"} * 0 + 1) * on(instance, ifIndex) group_left(ifDescr) (ifDescr{job=\"network_snmp\",site_name=~\"$site\",vendor=~\"$vendor\",role=~\"$role\",hostname=~\"$device\"} * 0 + 1)))",
           "format": "table",
           "instant": true,
           "refId": "A"
@@ -518,7 +518,7 @@
               "site_name": 2,
               "instance": 3,
               "ifName": 4,
-              "ifAlias": 5,
+              "ifDescr": 5,
               "vendor": 6,
               "role": 7,
               "Value": 8
@@ -529,7 +529,7 @@
               "instance": "管理 IP",
               "site_name": "站点",
               "ifName": "接口全称",
-              "ifAlias": "接口描述",
+              "ifDescr": "接口描述",
               "vendor": "厂商",
               "role": "角色",
               "Value": "带宽利用率"
@@ -584,7 +584,7 @@
       },
       "targets": [
         {
-          "expr": "topk(20, (max by (instance, hostname, site_name, ifIndex, ifName, ifAlias) (rate(ifInErrors{job=\"network_snmp\",site_name=~\"$site\",vendor=~\"$vendor\",role=~\"$role\",hostname=~\"$device\"}[5m]) * on(instance, ifIndex) group_left(ifName, ifAlias) ((ifName{job=\"network_snmp\",site_name=~\"$site\",vendor=~\"$vendor\",role=~\"$role\",hostname=~\"$device\",ifName=~\"$interface\"} * 0 + 1) * on(instance, ifIndex) group_left(ifAlias) (ifAlias{job=\"network_snmp\",site_name=~\"$site\",vendor=~\"$vendor\",role=~\"$role\",hostname=~\"$device\"} * 0 + 1))) or max by (instance, hostname, site_name, ifIndex, ifName, ifAlias) ((ifOperStatus{job=\"network_snmp\",site_name=~\"$site\",vendor=~\"$vendor\",role=~\"$role\",hostname=~\"$device\"} * on(instance, ifIndex) group_left(ifName, ifAlias) ((ifName{job=\"network_snmp\",site_name=~\"$site\",vendor=~\"$vendor\",role=~\"$role\",hostname=~\"$device\",ifName=~\"$interface\"} * 0 + 1) * on(instance, ifIndex) group_left(ifAlias) (ifAlias{job=\"network_snmp\",site_name=~\"$site\",vendor=~\"$vendor\",role=~\"$role\",hostname=~\"$device\"} * 0 + 1))) * 0)) + (max by (instance, hostname, site_name, ifIndex, ifName, ifAlias) (rate(ifOutErrors{job=\"network_snmp\",site_name=~\"$site\",vendor=~\"$vendor\",role=~\"$role\",hostname=~\"$device\"}[5m]) * on(instance, ifIndex) group_left(ifName, ifAlias) ((ifName{job=\"network_snmp\",site_name=~\"$site\",vendor=~\"$vendor\",role=~\"$role\",hostname=~\"$device\",ifName=~\"$interface\"} * 0 + 1) * on(instance, ifIndex) group_left(ifAlias) (ifAlias{job=\"network_snmp\",site_name=~\"$site\",vendor=~\"$vendor\",role=~\"$role\",hostname=~\"$device\"} * 0 + 1))) or max by (instance, hostname, site_name, ifIndex, ifName, ifAlias) ((ifOperStatus{job=\"network_snmp\",site_name=~\"$site\",vendor=~\"$vendor\",role=~\"$role\",hostname=~\"$device\"} * on(instance, ifIndex) group_left(ifName, ifAlias) ((ifName{job=\"network_snmp\",site_name=~\"$site\",vendor=~\"$vendor\",role=~\"$role\",hostname=~\"$device\",ifName=~\"$interface\"} * 0 + 1) * on(instance, ifIndex) group_left(ifAlias) (ifAlias{job=\"network_snmp\",site_name=~\"$site\",vendor=~\"$vendor\",role=~\"$role\",hostname=~\"$device\"} * 0 + 1))) * 0)) + (max by (instance, hostname, site_name, ifIndex, ifName, ifAlias) (rate(ifInDiscards{job=\"network_snmp\",site_name=~\"$site\",vendor=~\"$vendor\",role=~\"$role\",hostname=~\"$device\"}[5m]) * on(instance, ifIndex) group_left(ifName, ifAlias) ((ifName{job=\"network_snmp\",site_name=~\"$site\",vendor=~\"$vendor\",role=~\"$role\",hostname=~\"$device\",ifName=~\"$interface\"} * 0 + 1) * on(instance, ifIndex) group_left(ifAlias) (ifAlias{job=\"network_snmp\",site_name=~\"$site\",vendor=~\"$vendor\",role=~\"$role\",hostname=~\"$device\"} * 0 + 1))) or max by (instance, hostname, site_name, ifIndex, ifName, ifAlias) ((ifOperStatus{job=\"network_snmp\",site_name=~\"$site\",vendor=~\"$vendor\",role=~\"$role\",hostname=~\"$device\"} * on(instance, ifIndex) group_left(ifName, ifAlias) ((ifName{job=\"network_snmp\",site_name=~\"$site\",vendor=~\"$vendor\",role=~\"$role\",hostname=~\"$device\",ifName=~\"$interface\"} * 0 + 1) * on(instance, ifIndex) group_left(ifAlias) (ifAlias{job=\"network_snmp\",site_name=~\"$site\",vendor=~\"$vendor\",role=~\"$role\",hostname=~\"$device\"} * 0 + 1))) * 0)) + (max by (instance, hostname, site_name, ifIndex, ifName, ifAlias) (rate(ifOutDiscards{job=\"network_snmp\",site_name=~\"$site\",vendor=~\"$vendor\",role=~\"$role\",hostname=~\"$device\"}[5m]) * on(instance, ifIndex) group_left(ifName, ifAlias) ((ifName{job=\"network_snmp\",site_name=~\"$site\",vendor=~\"$vendor\",role=~\"$role\",hostname=~\"$device\",ifName=~\"$interface\"} * 0 + 1) * on(instance, ifIndex) group_left(ifAlias) (ifAlias{job=\"network_snmp\",site_name=~\"$site\",vendor=~\"$vendor\",role=~\"$role\",hostname=~\"$device\"} * 0 + 1))) or max by (instance, hostname, site_name, ifIndex, ifName, ifAlias) ((ifOperStatus{job=\"network_snmp\",site_name=~\"$site\",vendor=~\"$vendor\",role=~\"$role\",hostname=~\"$device\"} * on(instance, ifIndex) group_left(ifName, ifAlias) ((ifName{job=\"network_snmp\",site_name=~\"$site\",vendor=~\"$vendor\",role=~\"$role\",hostname=~\"$device\",ifName=~\"$interface\"} * 0 + 1) * on(instance, ifIndex) group_left(ifAlias) (ifAlias{job=\"network_snmp\",site_name=~\"$site\",vendor=~\"$vendor\",role=~\"$role\",hostname=~\"$device\"} * 0 + 1))) * 0)))",
+          "expr": "topk(20, (max by (instance, hostname, site_name, ifIndex, ifName, ifDescr) (rate(ifInErrors{job=\"network_snmp\",site_name=~\"$site\",vendor=~\"$vendor\",role=~\"$role\",hostname=~\"$device\"}[5m]) * on(instance, ifIndex) group_left(ifName, ifDescr) ((ifName{job=\"network_snmp\",site_name=~\"$site\",vendor=~\"$vendor\",role=~\"$role\",hostname=~\"$device\",ifName=~\"$interface\"} * 0 + 1) * on(instance, ifIndex) group_left(ifDescr) (ifDescr{job=\"network_snmp\",site_name=~\"$site\",vendor=~\"$vendor\",role=~\"$role\",hostname=~\"$device\"} * 0 + 1))) or max by (instance, hostname, site_name, ifIndex, ifName, ifDescr) ((ifOperStatus{job=\"network_snmp\",site_name=~\"$site\",vendor=~\"$vendor\",role=~\"$role\",hostname=~\"$device\"} * on(instance, ifIndex) group_left(ifName, ifDescr) ((ifName{job=\"network_snmp\",site_name=~\"$site\",vendor=~\"$vendor\",role=~\"$role\",hostname=~\"$device\",ifName=~\"$interface\"} * 0 + 1) * on(instance, ifIndex) group_left(ifDescr) (ifDescr{job=\"network_snmp\",site_name=~\"$site\",vendor=~\"$vendor\",role=~\"$role\",hostname=~\"$device\"} * 0 + 1))) * 0)) + (max by (instance, hostname, site_name, ifIndex, ifName, ifDescr) (rate(ifOutErrors{job=\"network_snmp\",site_name=~\"$site\",vendor=~\"$vendor\",role=~\"$role\",hostname=~\"$device\"}[5m]) * on(instance, ifIndex) group_left(ifName, ifDescr) ((ifName{job=\"network_snmp\",site_name=~\"$site\",vendor=~\"$vendor\",role=~\"$role\",hostname=~\"$device\",ifName=~\"$interface\"} * 0 + 1) * on(instance, ifIndex) group_left(ifDescr) (ifDescr{job=\"network_snmp\",site_name=~\"$site\",vendor=~\"$vendor\",role=~\"$role\",hostname=~\"$device\"} * 0 + 1))) or max by (instance, hostname, site_name, ifIndex, ifName, ifDescr) ((ifOperStatus{job=\"network_snmp\",site_name=~\"$site\",vendor=~\"$vendor\",role=~\"$role\",hostname=~\"$device\"} * on(instance, ifIndex) group_left(ifName, ifDescr) ((ifName{job=\"network_snmp\",site_name=~\"$site\",vendor=~\"$vendor\",role=~\"$role\",hostname=~\"$device\",ifName=~\"$interface\"} * 0 + 1) * on(instance, ifIndex) group_left(ifDescr) (ifDescr{job=\"network_snmp\",site_name=~\"$site\",vendor=~\"$vendor\",role=~\"$role\",hostname=~\"$device\"} * 0 + 1))) * 0)) + (max by (instance, hostname, site_name, ifIndex, ifName, ifDescr) (rate(ifInDiscards{job=\"network_snmp\",site_name=~\"$site\",vendor=~\"$vendor\",role=~\"$role\",hostname=~\"$device\"}[5m]) * on(instance, ifIndex) group_left(ifName, ifDescr) ((ifName{job=\"network_snmp\",site_name=~\"$site\",vendor=~\"$vendor\",role=~\"$role\",hostname=~\"$device\",ifName=~\"$interface\"} * 0 + 1) * on(instance, ifIndex) group_left(ifDescr) (ifDescr{job=\"network_snmp\",site_name=~\"$site\",vendor=~\"$vendor\",role=~\"$role\",hostname=~\"$device\"} * 0 + 1))) or max by (instance, hostname, site_name, ifIndex, ifName, ifDescr) ((ifOperStatus{job=\"network_snmp\",site_name=~\"$site\",vendor=~\"$vendor\",role=~\"$role\",hostname=~\"$device\"} * on(instance, ifIndex) group_left(ifName, ifDescr) ((ifName{job=\"network_snmp\",site_name=~\"$site\",vendor=~\"$vendor\",role=~\"$role\",hostname=~\"$device\",ifName=~\"$interface\"} * 0 + 1) * on(instance, ifIndex) group_left(ifDescr) (ifDescr{job=\"network_snmp\",site_name=~\"$site\",vendor=~\"$vendor\",role=~\"$role\",hostname=~\"$device\"} * 0 + 1))) * 0)) + (max by (instance, hostname, site_name, ifIndex, ifName, ifDescr) (rate(ifOutDiscards{job=\"network_snmp\",site_name=~\"$site\",vendor=~\"$vendor\",role=~\"$role\",hostname=~\"$device\"}[5m]) * on(instance, ifIndex) group_left(ifName, ifDescr) ((ifName{job=\"network_snmp\",site_name=~\"$site\",vendor=~\"$vendor\",role=~\"$role\",hostname=~\"$device\",ifName=~\"$interface\"} * 0 + 1) * on(instance, ifIndex) group_left(ifDescr) (ifDescr{job=\"network_snmp\",site_name=~\"$site\",vendor=~\"$vendor\",role=~\"$role\",hostname=~\"$device\"} * 0 + 1))) or max by (instance, hostname, site_name, ifIndex, ifName, ifDescr) ((ifOperStatus{job=\"network_snmp\",site_name=~\"$site\",vendor=~\"$vendor\",role=~\"$role\",hostname=~\"$device\"} * on(instance, ifIndex) group_left(ifName, ifDescr) ((ifName{job=\"network_snmp\",site_name=~\"$site\",vendor=~\"$vendor\",role=~\"$role\",hostname=~\"$device\",ifName=~\"$interface\"} * 0 + 1) * on(instance, ifIndex) group_left(ifDescr) (ifDescr{job=\"network_snmp\",site_name=~\"$site\",vendor=~\"$vendor\",role=~\"$role\",hostname=~\"$device\"} * 0 + 1))) * 0)))",
           "format": "table",
           "instant": true,
           "refId": "A"
@@ -619,7 +619,7 @@
               "site_name": 2,
               "instance": 3,
               "ifName": 4,
-              "ifAlias": 5,
+              "ifDescr": 5,
               "vendor": 6,
               "role": 7,
               "Value": 8
@@ -630,7 +630,7 @@
               "instance": "管理 IP",
               "site_name": "站点",
               "ifName": "接口全称",
-              "ifAlias": "接口描述",
+              "ifDescr": "接口描述",
               "vendor": "厂商",
               "role": "角色",
               "Value": "错误/丢弃率 (pps)"
@@ -672,7 +672,7 @@
       },
       "targets": [
         {
-          "expr": "ifOperStatus{job=\"network_snmp\",site_name=~\"$site\",vendor=~\"$vendor\",role=~\"$role\",hostname=~\"$device\"} * on(instance, ifIndex) group_left(ifName, ifAlias) ((ifName{job=\"network_snmp\",site_name=~\"$site\",vendor=~\"$vendor\",role=~\"$role\",hostname=~\"$device\",ifName=~\"$interface\"} * 0 + 1) * on(instance, ifIndex) group_left(ifAlias) (ifAlias{job=\"network_snmp\",site_name=~\"$site\",vendor=~\"$vendor\",role=~\"$role\",hostname=~\"$device\"} * 0 + 1))",
+          "expr": "ifOperStatus{job=\"network_snmp\",site_name=~\"$site\",vendor=~\"$vendor\",role=~\"$role\",hostname=~\"$device\"} * on(instance, ifIndex) group_left(ifName, ifDescr) ((ifName{job=\"network_snmp\",site_name=~\"$site\",vendor=~\"$vendor\",role=~\"$role\",hostname=~\"$device\",ifName=~\"$interface\"} * 0 + 1) * on(instance, ifIndex) group_left(ifDescr) (ifDescr{job=\"network_snmp\",site_name=~\"$site\",vendor=~\"$vendor\",role=~\"$role\",hostname=~\"$device\"} * 0 + 1))",
           "format": "table",
           "instant": true,
           "refId": "A"
@@ -707,7 +707,7 @@
               "site_name": 2,
               "instance": 3,
               "ifName": 4,
-              "ifAlias": 5,
+              "ifDescr": 5,
               "vendor": 6,
               "role": 7,
               "Value": 8
@@ -718,7 +718,7 @@
               "instance": "管理 IP",
               "site_name": "站点",
               "ifName": "接口全称",
-              "ifAlias": "接口描述",
+              "ifDescr": "接口描述",
               "vendor": "厂商",
               "role": "角色",
               "Value": "运行状态 (1=Up, 2=Down)"
