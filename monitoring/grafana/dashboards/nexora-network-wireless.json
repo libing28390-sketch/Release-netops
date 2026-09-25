@@ -25,7 +25,7 @@
       "fieldConfig": {
         "defaults": {
           "unit": "",
-          "noValue": "—",
+          "noValue": "数据暂不可用",
           "color": {
             "mode": "thresholds"
           },
@@ -43,7 +43,7 @@
       },
       "options": {
         "colorMode": "value",
-        "graphMode": "none",
+        "graphMode": "area",
         "justifyMode": "center",
         "orientation": "auto",
         "reduceOptions": {
@@ -53,7 +53,7 @@
           "fields": "",
           "values": false
         },
-        "textMode": "value"
+        "textMode": "auto"
       },
       "targets": [
         {
@@ -79,7 +79,7 @@
       "fieldConfig": {
         "defaults": {
           "unit": "",
-          "noValue": "—",
+          "noValue": "数据暂不可用",
           "color": {
             "mode": "thresholds"
           },
@@ -97,7 +97,7 @@
       },
       "options": {
         "colorMode": "value",
-        "graphMode": "none",
+        "graphMode": "area",
         "justifyMode": "center",
         "orientation": "auto",
         "reduceOptions": {
@@ -107,7 +107,7 @@
           "fields": "",
           "values": false
         },
-        "textMode": "value"
+        "textMode": "auto"
       },
       "targets": [
         {
@@ -133,7 +133,7 @@
       "fieldConfig": {
         "defaults": {
           "unit": "",
-          "noValue": "—",
+          "noValue": "数据暂不可用",
           "color": {
             "mode": "thresholds"
           },
@@ -159,7 +159,7 @@
       },
       "options": {
         "colorMode": "value",
-        "graphMode": "none",
+        "graphMode": "area",
         "justifyMode": "center",
         "orientation": "auto",
         "reduceOptions": {
@@ -169,7 +169,7 @@
           "fields": "",
           "values": false
         },
-        "textMode": "value"
+        "textMode": "auto"
       },
       "targets": [
         {
@@ -195,7 +195,7 @@
       "fieldConfig": {
         "defaults": {
           "unit": "",
-          "noValue": "—",
+          "noValue": "数据暂不可用",
           "color": {
             "mode": "thresholds"
           },
@@ -213,7 +213,7 @@
       },
       "options": {
         "colorMode": "value",
-        "graphMode": "none",
+        "graphMode": "area",
         "justifyMode": "center",
         "orientation": "auto",
         "reduceOptions": {
@@ -223,7 +223,7 @@
           "fields": "",
           "values": false
         },
-        "textMode": "value"
+        "textMode": "auto"
       },
       "targets": [
         {
@@ -249,23 +249,31 @@
       "fieldConfig": {
         "defaults": {
           "unit": "short",
-          "noValue": "—",
+          "noValue": "数据暂不可用",
           "color": {
             "mode": "palette-classic"
           },
           "custom": {
             "drawStyle": "line",
             "lineInterpolation": "linear",
-            "fillOpacity": 10
+            "lineWidth": 2,
+            "fillOpacity": 10,
+            "gradientMode": "none",
+            "showPoints": "never"
           }
         },
         "overrides": []
       },
       "options": {
         "legend": {
-          "displayMode": "list",
-          "placement": "bottom",
-          "showLegend": true
+          "displayMode": "table",
+          "placement": "right",
+          "showLegend": true,
+          "calcs": [
+            "lastNotNull",
+            "max",
+            "mean"
+          ]
         },
         "tooltip": {
           "mode": "multi",
@@ -297,23 +305,31 @@
       "fieldConfig": {
         "defaults": {
           "unit": "short",
-          "noValue": "—",
+          "noValue": "数据暂不可用",
           "color": {
             "mode": "palette-classic"
           },
           "custom": {
             "drawStyle": "line",
             "lineInterpolation": "linear",
-            "fillOpacity": 10
+            "lineWidth": 2,
+            "fillOpacity": 10,
+            "gradientMode": "none",
+            "showPoints": "never"
           }
         },
         "overrides": []
       },
       "options": {
         "legend": {
-          "displayMode": "list",
-          "placement": "bottom",
-          "showLegend": true
+          "displayMode": "table",
+          "placement": "right",
+          "showLegend": true,
+          "calcs": [
+            "lastNotNull",
+            "max",
+            "mean"
+          ]
         },
         "tooltip": {
           "mode": "multi",
@@ -345,9 +361,12 @@
       "fieldConfig": {
         "defaults": {
           "unit": "none",
-          "noValue": "—",
+          "noValue": "数据暂不可用",
           "color": {
             "mode": "thresholds"
+          },
+          "custom": {
+            "filterable": true
           }
         },
         "overrides": [
@@ -370,7 +389,8 @@
         "showHeader": true,
         "footer": {
           "show": false
-        }
+        },
+        "enablePagination": true
       },
       "targets": [
         {
@@ -401,18 +421,23 @@
               "job": true,
               "tenant_id": true,
               "site_id": true,
-              "platform": true
+              "platform": true,
+              "sysName": true,
+              "nexora_interface_role": true
             },
             "indexByName": {
-              "sysName": 0,
+              "site_name": 0,
               "hostname": 1,
-              "site_name": 2,
-              "instance": 3,
-              "ifName": 4,
-              "ifDescr": 5,
-              "vendor": 6,
-              "role": 7,
-              "Value": 8
+              "instance": 2,
+              "ifName": 3,
+              "ifDescr": 4,
+              "vendor": 5,
+              "role": 6,
+              "interface_role": 7,
+              "utilization_warn_pct": 8,
+              "utilization_high_pct": 9,
+              "utilization_critical_pct": 10,
+              "Value": 11
             },
             "renameByName": {
               "sysName": "设备名称",
@@ -423,6 +448,10 @@
               "ifDescr": "接口描述",
               "vendor": "厂商",
               "role": "角色",
+              "interface_role": "接口角色",
+              "utilization_warn_pct": "预警阈值 (%)",
+              "utilization_high_pct": "高位阈值 (%)",
+              "utilization_critical_pct": "严重阈值 (%)",
               "Value": "终端数量"
             }
           }
@@ -446,9 +475,12 @@
       "fieldConfig": {
         "defaults": {
           "unit": "none",
-          "noValue": "—",
+          "noValue": "数据暂不可用",
           "color": {
             "mode": "thresholds"
+          },
+          "custom": {
+            "filterable": true
           }
         },
         "overrides": [
@@ -471,7 +503,8 @@
         "showHeader": true,
         "footer": {
           "show": false
-        }
+        },
+        "enablePagination": true
       },
       "targets": [
         {
@@ -502,18 +535,23 @@
               "job": true,
               "tenant_id": true,
               "site_id": true,
-              "platform": true
+              "platform": true,
+              "sysName": true,
+              "nexora_interface_role": true
             },
             "indexByName": {
-              "sysName": 0,
+              "site_name": 0,
               "hostname": 1,
-              "site_name": 2,
-              "instance": 3,
-              "ifName": 4,
-              "ifDescr": 5,
-              "vendor": 6,
-              "role": 7,
-              "Value": 8
+              "instance": 2,
+              "ifName": 3,
+              "ifDescr": 4,
+              "vendor": 5,
+              "role": 6,
+              "interface_role": 7,
+              "utilization_warn_pct": 8,
+              "utilization_high_pct": 9,
+              "utilization_critical_pct": 10,
+              "Value": 11
             },
             "renameByName": {
               "sysName": "设备名称",
@@ -524,6 +562,10 @@
               "ifDescr": "接口描述",
               "vendor": "厂商",
               "role": "角色",
+              "interface_role": "接口角色",
+              "utilization_warn_pct": "预警阈值 (%)",
+              "utilization_high_pct": "高位阈值 (%)",
+              "utilization_critical_pct": "严重阈值 (%)",
               "Value": "客户端 / AP"
             }
           }
@@ -547,7 +589,7 @@
       "fieldConfig": {
         "defaults": {
           "unit": "short",
-          "noValue": "—",
+          "noValue": "数据暂不可用",
           "color": {
             "mode": "thresholds"
           },
@@ -565,7 +607,7 @@
       },
       "options": {
         "colorMode": "value",
-        "graphMode": "none",
+        "graphMode": "area",
         "justifyMode": "center",
         "orientation": "auto",
         "reduceOptions": {
@@ -575,7 +617,7 @@
           "fields": "",
           "values": false
         },
-        "textMode": "value"
+        "textMode": "auto"
       },
       "targets": [
         {
@@ -601,9 +643,12 @@
       "fieldConfig": {
         "defaults": {
           "unit": "none",
-          "noValue": "—",
+          "noValue": "数据暂不可用",
           "color": {
             "mode": "thresholds"
+          },
+          "custom": {
+            "filterable": true
           }
         },
         "overrides": [
@@ -626,7 +671,8 @@
         "showHeader": true,
         "footer": {
           "show": false
-        }
+        },
+        "enablePagination": true
       },
       "targets": [
         {
@@ -657,18 +703,23 @@
               "job": true,
               "tenant_id": true,
               "site_id": true,
-              "platform": true
+              "platform": true,
+              "sysName": true,
+              "nexora_interface_role": true
             },
             "indexByName": {
-              "sysName": 0,
+              "site_name": 0,
               "hostname": 1,
-              "site_name": 2,
-              "instance": 3,
-              "ifName": 4,
-              "ifDescr": 5,
-              "vendor": 6,
-              "role": 7,
-              "Value": 8
+              "instance": 2,
+              "ifName": 3,
+              "ifDescr": 4,
+              "vendor": 5,
+              "role": 6,
+              "interface_role": 7,
+              "utilization_warn_pct": 8,
+              "utilization_high_pct": 9,
+              "utilization_critical_pct": 10,
+              "Value": 11
             },
             "renameByName": {
               "sysName": "设备名称",
@@ -679,6 +730,10 @@
               "ifDescr": "接口描述",
               "vendor": "厂商",
               "role": "角色",
+              "interface_role": "接口角色",
+              "utilization_warn_pct": "预警阈值 (%)",
+              "utilization_high_pct": "高位阈值 (%)",
+              "utilization_critical_pct": "严重阈值 (%)",
               "Value": "在线 AP 数"
             }
           }
@@ -800,5 +855,5 @@
   "timezone": "browser",
   "title": "03 无线专网监控 (Wireless AP & Clients)",
   "uid": "nexora-network-wireless",
-  "version": 27
+  "version": 29
 }

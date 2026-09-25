@@ -25,7 +25,7 @@
       "fieldConfig": {
         "defaults": {
           "unit": "s",
-          "noValue": "—",
+          "noValue": "数据暂不可用",
           "color": {
             "mode": "thresholds"
           },
@@ -43,7 +43,7 @@
       },
       "options": {
         "colorMode": "value",
-        "graphMode": "none",
+        "graphMode": "area",
         "justifyMode": "center",
         "orientation": "auto",
         "reduceOptions": {
@@ -53,7 +53,7 @@
           "fields": "",
           "values": false
         },
-        "textMode": "value"
+        "textMode": "auto"
       },
       "targets": [
         {
@@ -79,7 +79,7 @@
       "fieldConfig": {
         "defaults": {
           "unit": "percent",
-          "noValue": "—",
+          "noValue": "数据暂不可用",
           "color": {
             "mode": "thresholds"
           },
@@ -105,7 +105,7 @@
       },
       "options": {
         "colorMode": "value",
-        "graphMode": "none",
+        "graphMode": "area",
         "justifyMode": "center",
         "orientation": "auto",
         "reduceOptions": {
@@ -115,7 +115,7 @@
           "fields": "",
           "values": false
         },
-        "textMode": "value"
+        "textMode": "auto"
       },
       "targets": [
         {
@@ -141,7 +141,7 @@
       "fieldConfig": {
         "defaults": {
           "unit": "percent",
-          "noValue": "—",
+          "noValue": "数据暂不可用",
           "color": {
             "mode": "thresholds"
           },
@@ -167,7 +167,7 @@
       },
       "options": {
         "colorMode": "value",
-        "graphMode": "none",
+        "graphMode": "area",
         "justifyMode": "center",
         "orientation": "auto",
         "reduceOptions": {
@@ -177,7 +177,7 @@
           "fields": "",
           "values": false
         },
-        "textMode": "value"
+        "textMode": "auto"
       },
       "targets": [
         {
@@ -203,7 +203,7 @@
       "fieldConfig": {
         "defaults": {
           "unit": "celsius",
-          "noValue": "—",
+          "noValue": "数据暂不可用",
           "color": {
             "mode": "thresholds"
           },
@@ -229,7 +229,7 @@
       },
       "options": {
         "colorMode": "value",
-        "graphMode": "none",
+        "graphMode": "area",
         "justifyMode": "center",
         "orientation": "auto",
         "reduceOptions": {
@@ -239,7 +239,7 @@
           "fields": "",
           "values": false
         },
-        "textMode": "value"
+        "textMode": "auto"
       },
       "targets": [
         {
@@ -265,23 +265,31 @@
       "fieldConfig": {
         "defaults": {
           "unit": "percent",
-          "noValue": "—",
+          "noValue": "数据暂不可用",
           "color": {
             "mode": "palette-classic"
           },
           "custom": {
             "drawStyle": "line",
             "lineInterpolation": "linear",
-            "fillOpacity": 10
+            "lineWidth": 2,
+            "fillOpacity": 10,
+            "gradientMode": "none",
+            "showPoints": "never"
           }
         },
         "overrides": []
       },
       "options": {
         "legend": {
-          "displayMode": "list",
-          "placement": "bottom",
-          "showLegend": true
+          "displayMode": "table",
+          "placement": "right",
+          "showLegend": true,
+          "calcs": [
+            "lastNotNull",
+            "max",
+            "mean"
+          ]
         },
         "tooltip": {
           "mode": "multi",
@@ -313,23 +321,31 @@
       "fieldConfig": {
         "defaults": {
           "unit": "percent",
-          "noValue": "—",
+          "noValue": "数据暂不可用",
           "color": {
             "mode": "palette-classic"
           },
           "custom": {
             "drawStyle": "line",
             "lineInterpolation": "linear",
-            "fillOpacity": 10
+            "lineWidth": 2,
+            "fillOpacity": 10,
+            "gradientMode": "none",
+            "showPoints": "never"
           }
         },
         "overrides": []
       },
       "options": {
         "legend": {
-          "displayMode": "list",
-          "placement": "bottom",
-          "showLegend": true
+          "displayMode": "table",
+          "placement": "right",
+          "showLegend": true,
+          "calcs": [
+            "lastNotNull",
+            "max",
+            "mean"
+          ]
         },
         "tooltip": {
           "mode": "multi",
@@ -361,23 +377,31 @@
       "fieldConfig": {
         "defaults": {
           "unit": "celsius",
-          "noValue": "—",
+          "noValue": "数据暂不可用",
           "color": {
             "mode": "palette-classic"
           },
           "custom": {
             "drawStyle": "line",
             "lineInterpolation": "linear",
-            "fillOpacity": 10
+            "lineWidth": 2,
+            "fillOpacity": 10,
+            "gradientMode": "none",
+            "showPoints": "never"
           }
         },
         "overrides": []
       },
       "options": {
         "legend": {
-          "displayMode": "list",
-          "placement": "bottom",
-          "showLegend": true
+          "displayMode": "table",
+          "placement": "right",
+          "showLegend": true,
+          "calcs": [
+            "lastNotNull",
+            "max",
+            "mean"
+          ]
         },
         "tooltip": {
           "mode": "multi",
@@ -409,19 +433,126 @@
       "fieldConfig": {
         "defaults": {
           "unit": "none",
-          "noValue": "—",
+          "noValue": "数据暂不可用",
           "color": {
             "mode": "thresholds"
+          },
+          "custom": {
+            "filterable": true
           }
         },
-        "overrides": []
+        "overrides": [
+          {
+            "matcher": {
+              "id": "byName",
+              "options": "运行状态"
+            },
+            "properties": [
+              {
+                "id": "mappings",
+                "value": [
+                  {
+                    "type": "value",
+                    "options": {
+                      "1": {
+                        "text": "Up",
+                        "color": "green"
+                      },
+                      "2": {
+                        "text": "down",
+                        "color": "red"
+                      },
+                      "0": {
+                        "text": "UNKNOWN",
+                        "color": "gray"
+                      },
+                      "3": {
+                        "text": "UNKNOWN",
+                        "color": "gray"
+                      },
+                      "4": {
+                        "text": "UNKNOWN",
+                        "color": "gray"
+                      },
+                      "5": {
+                        "text": "UNKNOWN",
+                        "color": "gray"
+                      },
+                      "6": {
+                        "text": "UNKNOWN",
+                        "color": "gray"
+                      },
+                      "7": {
+                        "text": "UNKNOWN",
+                        "color": "gray"
+                      }
+                    }
+                  },
+                  {
+                    "type": "special",
+                    "options": {
+                      "match": "null",
+                      "result": {
+                        "text": "UNKNOWN",
+                        "color": "gray"
+                      }
+                    }
+                  },
+                  {
+                    "type": "special",
+                    "options": {
+                      "match": "nan",
+                      "result": {
+                        "text": "UNKNOWN",
+                        "color": "gray"
+                      }
+                    }
+                  }
+                ]
+              }
+            ]
+          },
+          {
+            "matcher": {
+              "id": "byName",
+              "options": "运行状态"
+            },
+            "properties": [
+              {
+                "id": "custom.cellOptions",
+                "value": {
+                  "type": "color-text"
+                }
+              }
+            ]
+          },
+          {
+            "matcher": {
+              "id": "byName",
+              "options": "接口全称"
+            },
+            "properties": [
+              {
+                "id": "links",
+                "value": [
+                  {
+                    "title": "打开接口详情",
+                    "url": "/d/nexora-interface-detail/interface-detail?var-site=${__data.fields[\"站点\"]}&var-vendor=${__data.fields[\"厂商\"]}&var-role=${__data.fields[\"角色\"]}&var-device=${__data.fields[\"设备名称\"]}&var-interface_role=${__data.fields[\"接口角色\"]}&var-interface=${__data.fields[\"接口全称\"]}&from=${__from}&to=${__to}",
+                    "targetBlank": false
+                  }
+                ]
+              }
+            ]
+          }
+        ]
       },
       "options": {
         "cellHeight": "sm",
         "showHeader": true,
         "footer": {
           "show": false
-        }
+        },
+        "enablePagination": true
       },
       "targets": [
         {
@@ -453,18 +584,23 @@
               "tenant_id": true,
               "site_id": true,
               "platform": true,
+              "sysName": true,
+              "nexora_interface_role": true,
               "ifDescr": true
             },
             "indexByName": {
-              "sysName": 0,
+              "site_name": 0,
               "hostname": 1,
-              "site_name": 2,
-              "instance": 3,
-              "ifName": 4,
-              "ifAlias": 5,
-              "vendor": 6,
-              "role": 7,
-              "Value": 8
+              "instance": 2,
+              "ifName": 3,
+              "ifAlias": 4,
+              "vendor": 5,
+              "role": 6,
+              "interface_role": 7,
+              "utilization_warn_pct": 8,
+              "utilization_high_pct": 9,
+              "utilization_critical_pct": 10,
+              "Value": 11
             },
             "renameByName": {
               "sysName": "设备名称",
@@ -475,7 +611,11 @@
               "ifAlias": "接口描述",
               "vendor": "厂商",
               "role": "角色",
-              "Value": "运行状态 (1=Up, 2=Down)"
+              "interface_role": "接口角色",
+              "utilization_warn_pct": "预警阈值 (%)",
+              "utilization_high_pct": "高位阈值 (%)",
+              "utilization_critical_pct": "严重阈值 (%)",
+              "Value": "运行状态"
             }
           }
         }
@@ -498,23 +638,62 @@
       "fieldConfig": {
         "defaults": {
           "unit": "bps",
-          "noValue": "—",
+          "noValue": "数据暂不可用",
           "color": {
             "mode": "palette-classic"
           },
           "custom": {
             "drawStyle": "line",
             "lineInterpolation": "linear",
-            "fillOpacity": 10
+            "lineWidth": 2,
+            "fillOpacity": 10,
+            "gradientMode": "none",
+            "showPoints": "never"
           }
         },
-        "overrides": []
+        "overrides": [
+          {
+            "matcher": {
+              "id": "byRegexp",
+              "options": ".*入流量$"
+            },
+            "properties": [
+              {
+                "id": "color",
+                "value": {
+                  "mode": "fixed",
+                  "fixedColor": "#3274D9"
+                }
+              }
+            ]
+          },
+          {
+            "matcher": {
+              "id": "byRegexp",
+              "options": ".*出流量$"
+            },
+            "properties": [
+              {
+                "id": "color",
+                "value": {
+                  "mode": "fixed",
+                  "fixedColor": "#56A64B"
+                }
+              }
+            ]
+          }
+        ]
       },
       "options": {
         "legend": {
-          "displayMode": "list",
-          "placement": "bottom",
-          "showLegend": true
+          "displayMode": "table",
+          "placement": "right",
+          "showLegend": true,
+          "calcs": [
+            "lastNotNull",
+            "max",
+            "mean"
+          ]
         },
         "tooltip": {
           "mode": "multi",
@@ -645,5 +824,5 @@
   "timezone": "browser",
   "title": "02 网络设备详情 (Network Device Detail)",
   "uid": "nexora-network-device",
-  "version": 27
+  "version": 29
 }

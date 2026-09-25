@@ -343,7 +343,36 @@ class S3StorageBackend(StorageBackend):
     def _is_not_found(exc: Exception) -> bool:
         response = getattr(exc, "response", {}) or {}
         error = response.get("Error", {}) if isinstance(response, dict) else {}
-        return str(error.get("Code", "")) in {"404", "NoSuchKey", "NoSuchBucket", "NotFound"}
+        # A missing bucket is a provider/configuration failure, not a missing
+        # object. Preserve it as StorageError so callers do not report a valid
+        # PAM/config object as a user-facing 404.
+        code = str(error.get("Code", ""))
+        if code == "NoSuchBucket":
+            return False
+        return code in {"404", "NoSuchKey", "NotFound"}
+
+    @staticmethod
+    def _safe_error_detail(exc: Exception) -> str:
+        """Return an S3 error code/status without provider-controlled text."""
+        response = getattr(exc, "response", None)
+        error = response.get("Error") if isinstance(response, dict) else None
+        code = error.get("Code") if isinstance(error, dict) else None
+        metadata = response.get("ResponseMetadata") if isinstance(response, dict) else None
+        status = metadata.get("HTTPStatusCode") if isinstance(metadata, dict) else None
+        safe_code = (
+            str(code)
+            if isinstance(code, (str, int))
+            and re.fullmatch(r"[A-Za-z0-9_.-]{1,64}", str(code))
+            else None
+        )
+        safe_status = status if isinstance(status, int) and not isinstance(status, bool) and 100 <= status <= 599 else None
+        if safe_code and safe_status:
+            return f"{safe_code} (HTTP {safe_status})"
+        if safe_code:
+            return safe_code
+        if safe_status:
+            return f"HTTP {safe_status}"
+        return type(exc).__name__
 
     def put_stream(
         self,
@@ -378,7 +407,7 @@ class S3StorageBackend(StorageBackend):
         except StorageError:
             raise
         except Exception as exc:
-            raise StorageError(f"S3 upload failed: {type(exc).__name__}") from exc
+            raise StorageError(f"S3 upload failed: {self._safe_error_detail(exc)}") from exc
         finally:
             handle.close()
 
@@ -389,14 +418,14 @@ class S3StorageBackend(StorageBackend):
         except Exception as exc:
             if self._is_not_found(exc):
                 raise StorageNotFound(normalized) from exc
-            raise StorageError(f"S3 download failed: {type(exc).__name__}") from exc
+            raise StorageError(f"S3 download failed: {self._safe_error_detail(exc)}") from exc
 
     def delete(self, key: str) -> None:
         normalized = normalize_object_key(key)
         try:
             self._client().delete_object(Bucket=self.bucket, Key=normalized)
         except Exception as exc:
-            raise StorageError(f"S3 delete failed: {type(exc).__name__}") from exc
+            raise StorageError(f"S3 delete failed: {self._safe_error_detail(exc)}") from exc
 
     def stat(self, key: str) -> StorageObjectMeta:
         normalized = normalize_object_key(key)
@@ -405,7 +434,7 @@ class S3StorageBackend(StorageBackend):
         except Exception as exc:
             if self._is_not_found(exc):
                 raise StorageNotFound(normalized) from exc
-            raise StorageError(f"S3 stat failed: {type(exc).__name__}") from exc
+            raise StorageError(f"S3 stat failed: {self._safe_error_detail(exc)}") from exc
         return StorageObject(
             backend=self.name,
             bucket=self.bucket,
@@ -421,31 +450,10 @@ class S3StorageBackend(StorageBackend):
             self._client().list_objects_v2(Bucket=self.bucket, MaxKeys=1)
             return True, "S3-compatible storage is ready"
         except Exception as exc:
-            response = getattr(exc, "response", None)
-            error = response.get("Error") if isinstance(response, dict) else None
-            code = error.get("Code") if isinstance(error, dict) else None
-            metadata = response.get("ResponseMetadata") if isinstance(response, dict) else None
-            status = metadata.get("HTTPStatusCode") if isinstance(metadata, dict) else None
-
             # S3 ClientError messages can contain provider-controlled text. Only
             # surface a compact code and numeric status; never return the raw
             # exception or response body, which may contain sensitive details.
-            safe_code = (
-                str(code)
-                if isinstance(code, (str, int))
-                and re.fullmatch(r"[A-Za-z0-9_.-]{1,64}", str(code))
-                else None
-            )
-            safe_status = status if isinstance(status, int) and not isinstance(status, bool) and 100 <= status <= 599 else None
-            if safe_code and safe_status:
-                detail = f"{safe_code} (HTTP {safe_status})"
-            elif safe_code:
-                detail = safe_code
-            elif safe_status:
-                detail = f"HTTP {safe_status}"
-            else:
-                detail = type(exc).__name__
-            return False, f"S3 storage check failed: {detail}"
+            return False, f"S3 storage check failed: {self._safe_error_detail(exc)}"
 
 
 class StorageService:

@@ -16,12 +16,79 @@ import uuid
 import logging
 import re
 import ipaddress
+import math
 from datetime import datetime, timezone
+from database import _USE_PG
 from core.interface_utils import normalize_interface_name
 
 logger = logging.getLogger(__name__)
 
 _DEFAULT_TENANT = 'tenant-default'
+
+INTERFACE_ROLES = frozenset({
+    'uplink', 'wan', 'transit', 'server', 'storage',
+    'management', 'access', 'loopback', 'other', 'unclassified',
+})
+DEFAULT_INTERFACE_ROLE = 'unclassified'
+DEFAULT_UTILIZATION_WARN_PCT = 60.0
+DEFAULT_UTILIZATION_HIGH_PCT = 75.0
+DEFAULT_UTILIZATION_CRITICAL_PCT = 90.0
+
+
+def _as_profile_pct(value: object, default: float) -> float:
+    try:
+        number = float(value)
+    except (TypeError, ValueError):
+        return default
+    return number if math.isfinite(number) else default
+
+
+def _normalize_interface_monitoring_profile(item: dict) -> dict:
+    """Ensure every CMDB interface row exposes the stable profile contract."""
+    role = str(item.get('interface_role') or DEFAULT_INTERFACE_ROLE).strip().lower()
+    item['interface_role'] = role if role in INTERFACE_ROLES else DEFAULT_INTERFACE_ROLE
+    item['utilization_warn_pct'] = _as_profile_pct(
+        item.get('utilization_warn_pct'), DEFAULT_UTILIZATION_WARN_PCT
+    )
+    item['utilization_high_pct'] = _as_profile_pct(
+        item.get('utilization_high_pct'), DEFAULT_UTILIZATION_HIGH_PCT
+    )
+    item['utilization_critical_pct'] = _as_profile_pct(
+        item.get('utilization_critical_pct'), DEFAULT_UTILIZATION_CRITICAL_PCT
+    )
+    return item
+
+
+def _validate_interface_monitoring_profile(
+    *,
+    interface_role: object,
+    utilization_warn_pct: object,
+    utilization_high_pct: object,
+    utilization_critical_pct: object,
+) -> tuple[str, float, float, float]:
+    role = str(interface_role or '').strip().lower()
+    if role not in INTERFACE_ROLES:
+        raise ValueError(
+            "interface_role must be one of: " + ', '.join(sorted(INTERFACE_ROLES))
+        )
+    percentages = tuple(
+        _as_profile_pct(value, float('nan'))
+        for value in (
+            utilization_warn_pct,
+            utilization_high_pct,
+            utilization_critical_pct,
+        )
+    )
+    if (
+        not all(math.isfinite(value) for value in percentages)
+        or not 0 <= percentages[0] < percentages[1] < percentages[2] <= 100
+    ):
+        raise ValueError(
+            "utilization thresholds must satisfy "
+            "0 <= utilization_warn_pct < utilization_high_pct "
+            "< utilization_critical_pct <= 100"
+        )
+    return role, percentages[0], percentages[1], percentages[2]
 
 
 def _format_mac_address(value: object) -> str:
@@ -341,6 +408,8 @@ def list_cmdb_interfaces(
     search: str | None = None,
     page: int | None = None,
     page_size: int | None = None,
+    tenant_id: str | None = None,
+    site_ids: tuple[str, ...] | None = None,
 ) -> list[dict] | dict:
     """Return interfaces as CMDB skeleton resources with optional has_ip, device_id, search filters."""
     # Device deletion historically did not remove the legacy IP inventory
@@ -396,6 +465,10 @@ def list_cmdb_interfaces(
             v.vrf_name,
             i.ip_enabled,
             i.last_flapped,
+            i.interface_role,
+            i.utilization_warn_pct,
+            i.utilization_high_pct,
+            i.utilization_critical_pct,
             (
                 SELECT COUNT(*)
                 FROM ip_addresses ip
@@ -413,6 +486,16 @@ def list_cmdb_interfaces(
         WHERE 1=1
     """
     params: list = []
+    if tenant_id is not None:
+        sql += " AND d.id IS NOT NULL AND COALESCE(d.tenant_id, 'tenant-default') = ?"
+        params.append(tenant_id)
+    if site_ids is not None:
+        if not site_ids:
+            sql += " AND 1 = 0"
+        else:
+            site_placeholders = ",".join("?" for _ in site_ids)
+            sql += f" AND d.site_id IN ({site_placeholders})"
+            params.extend(site_ids)
     if has_ip is True:
         sql += """ AND (
             NULLIF(i.primary_ip, '') IS NOT NULL
@@ -500,6 +583,15 @@ def list_cmdb_interfaces(
                 or str(candidate.get('allowed_vlans') or '').strip()
             ),
             int(candidate.get('link_count') or 0) > 0,
+            str(candidate.get('interface_role') or '').strip().lower() not in {'', 'unclassified'},
+            sum(
+                _as_profile_pct(candidate.get(field), default) != default
+                for field, default in (
+                    ('utilization_warn_pct', DEFAULT_UTILIZATION_WARN_PCT),
+                    ('utilization_high_pct', DEFAULT_UTILIZATION_HIGH_PCT),
+                    ('utilization_critical_pct', DEFAULT_UTILIZATION_CRITICAL_PCT),
+                )
+            ),
             -len(str(candidate.get('interface_name') or '')),
         )
         current_score = (
@@ -512,15 +604,37 @@ def list_cmdb_interfaces(
                 or str(current.get('allowed_vlans') or '').strip()
             ),
             int(current.get('link_count') or 0) > 0,
+            str(current.get('interface_role') or '').strip().lower() not in {'', 'unclassified'},
+            sum(
+                _as_profile_pct(current.get(field), default) != default
+                for field, default in (
+                    ('utilization_warn_pct', DEFAULT_UTILIZATION_WARN_PCT),
+                    ('utilization_high_pct', DEFAULT_UTILIZATION_HIGH_PCT),
+                    ('utilization_critical_pct', DEFAULT_UTILIZATION_CRITICAL_PCT),
+                )
+            ),
             -len(str(current.get('interface_name') or '')),
         )
         preferred, secondary = (candidate, current) if candidate_score > current_score else (current, candidate)
         for field in (
             'interface_ip', 'description', 'mac_address', 'speed', 'bandwidth', 'vrf_id', 'last_flapped',
             'interface_type', 'switchport_mode', 'access_vlan', 'native_vlan', 'allowed_vlans',
+            'interface_role', 'utilization_warn_pct', 'utilization_high_pct',
+            'utilization_critical_pct',
         ):
             preferred_value = str(preferred.get(field) or '').strip().lower()
             if preferred_value in {'', 'unknown', '-', '--'} and secondary.get(field) not in (None, ''):
+                preferred[field] = secondary[field]
+        if str(preferred.get('interface_role') or '').strip().lower() in {'', 'unclassified'}:
+            secondary_role = str(secondary.get('interface_role') or '').strip().lower()
+            if secondary_role not in {'', 'unclassified'}:
+                preferred['interface_role'] = secondary_role
+        for field, default in (
+            ('utilization_warn_pct', DEFAULT_UTILIZATION_WARN_PCT),
+            ('utilization_high_pct', DEFAULT_UTILIZATION_HIGH_PCT),
+            ('utilization_critical_pct', DEFAULT_UTILIZATION_CRITICAL_PCT),
+        ):
+            if _as_profile_pct(preferred.get(field), default) == default and secondary.get(field) not in (None, ''):
                 preferred[field] = secondary[field]
         for field in ('admin_status', 'oper_status'):
             if str(preferred.get(field) or '').strip().lower() in {'', 'unknown', '-', '--'}:
@@ -543,7 +657,9 @@ def list_cmdb_interfaces(
             all_interface_rows = conn.execute(
                 """SELECT device_id, interface_name, interface_type, switchport_mode,
                           access_vlan, native_vlan, allowed_vlans, admin_status, oper_status,
-                          mac_address, description, speed, bandwidth, vrf_id, ip_enabled, last_flapped
+                          mac_address, description, speed, bandwidth, vrf_id, ip_enabled, last_flapped,
+                          interface_role, utilization_warn_pct, utilization_high_pct,
+                          utilization_critical_pct
                    FROM interfaces"""
             ).fetchall()
         except Exception:
@@ -561,11 +677,26 @@ def list_cmdb_interfaces(
                 'interface_type', 'switchport_mode', 'access_vlan', 'native_vlan', 'allowed_vlans',
                 'admin_status', 'oper_status', 'mac_address', 'description', 'speed', 'bandwidth',
                 'vrf_id', 'ip_enabled', 'last_flapped',
+                'interface_role', 'utilization_warn_pct', 'utilization_high_pct',
+                'utilization_critical_pct',
             ):
                 current_value = str(current_fact.get(field) or '').strip().lower()
                 candidate_value = fact.get(field)
                 if current_value in {'', 'unknown', '-', '--'} and candidate_value not in (None, ''):
                     current_fact[field] = candidate_value
+        inventory_scope = []
+        inventory_params: list[str] = []
+        if tenant_id is not None:
+            inventory_scope.append("d.id IS NOT NULL AND COALESCE(d.tenant_id, 'tenant-default') = ?")
+            inventory_params.append(tenant_id)
+        if site_ids is not None:
+            if not site_ids:
+                inventory_scope.append("1 = 0")
+            else:
+                site_placeholders = ",".join("?" for _ in site_ids)
+                inventory_scope.append(f"d.site_id IN ({site_placeholders})")
+                inventory_params.extend(site_ids)
+        inventory_scope_sql = " AND " + " AND ".join(inventory_scope) if inventory_scope else ""
         try:
             inventory_rows = conn.execute(
                 """
@@ -586,16 +717,22 @@ def list_cmdb_interfaces(
                        i.bandwidth AS skeleton_bandwidth,
                        i.vrf_id AS skeleton_vrf_id,
                        i.ip_enabled AS skeleton_ip_enabled,
-                       i.last_flapped AS skeleton_last_flapped
+                       i.last_flapped AS skeleton_last_flapped,
+                       i.interface_role AS skeleton_interface_role,
+                       i.utilization_warn_pct AS skeleton_utilization_warn_pct,
+                       i.utilization_high_pct AS skeleton_utilization_high_pct,
+                       i.utilization_critical_pct AS skeleton_utilization_critical_pct
                 FROM ip_inventory inv
                 LEFT JOIN devices d ON d.id = inv.device_id
                 LEFT JOIN interfaces i
                   ON i.device_id = inv.device_id
                  AND LOWER(TRIM(i.interface_name)) = LOWER(TRIM(inv.interface))
-                WHERE COALESCE(inv.ip, '') <> ''
-                  AND d.id IS NOT NULL
+                 WHERE COALESCE(inv.ip, '') <> ''
+                   AND d.id IS NOT NULL
+                 """ + inventory_scope_sql + """
                 ORDER BY COALESCE(d.hostname, ''), COALESCE(inv.interface, ''), inv.ip
                 """
+                , tuple(inventory_params)
             ).fetchall()
         except Exception:
             inventory_rows = []
@@ -668,6 +805,22 @@ def list_cmdb_interfaces(
                 'vrf_name': '',
                 'ip_enabled': inventory.get('skeleton_ip_enabled') if inventory.get('skeleton_ip_enabled') is not None else 1,
                 'last_flapped': inventory.get('skeleton_last_flapped'),
+                'interface_role': inventory.get('skeleton_interface_role') or interface_fact.get('interface_role') or DEFAULT_INTERFACE_ROLE,
+                'utilization_warn_pct': (
+                    inventory.get('skeleton_utilization_warn_pct')
+                    if inventory.get('skeleton_utilization_warn_pct') is not None
+                    else interface_fact.get('utilization_warn_pct', DEFAULT_UTILIZATION_WARN_PCT)
+                ),
+                'utilization_high_pct': (
+                    inventory.get('skeleton_utilization_high_pct')
+                    if inventory.get('skeleton_utilization_high_pct') is not None
+                    else interface_fact.get('utilization_high_pct', DEFAULT_UTILIZATION_HIGH_PCT)
+                ),
+                'utilization_critical_pct': (
+                    inventory.get('skeleton_utilization_critical_pct')
+                    if inventory.get('skeleton_utilization_critical_pct') is not None
+                    else interface_fact.get('utilization_critical_pct', DEFAULT_UTILIZATION_CRITICAL_PCT)
+                ),
                 'ip_count': 1,
                 'link_count': 0,
                 'last_seen': inventory.get('last_seen'),
@@ -680,6 +833,8 @@ def list_cmdb_interfaces(
             str(item.get('interface_name') or ''),
             str(item.get('interface_ip') or ''),
         ))
+    for item in items:
+        _normalize_interface_monitoring_profile(item)
     if page is None and page_size is None:
         return items
 
@@ -710,6 +865,94 @@ def list_cmdb_interfaces(
         'summary': summary,
         'device_options': device_options,
     }
+
+
+def update_interface_monitoring_profile(
+    conn,
+    interface_id: str,
+    *,
+    tenant_id: str | None = None,
+    site_ids: tuple[str, ...] | None = None,
+    **updates,
+) -> dict:
+    """Update one CMDB interface's monitoring profile atomically.
+
+    The thresholds are validated after merging the supplied PATCH fields with
+    the current row.  PostgreSQL row locking prevents concurrent operators
+    from validating against stale threshold values.
+    """
+    interface_key = str(interface_id or '').strip()
+    if not interface_key:
+        raise ValueError('interface_id is required')
+
+    allowed = {
+        'interface_role',
+        'utilization_warn_pct',
+        'utilization_high_pct',
+        'utilization_critical_pct',
+    }
+    requested = {key: value for key, value in updates.items() if key in allowed and value is not None}
+    if not requested:
+        raise ValueError('At least one monitoring profile field is required')
+
+    where = ['i.id = ?']
+    query_params: list = [interface_key]
+    if tenant_id is not None:
+        where.append("COALESCE(d.tenant_id, 'tenant-default') = ?")
+        query_params.append(tenant_id)
+    if site_ids is not None:
+        if not site_ids:
+            raise ValueError(f'Interface {interface_key} not found')
+        placeholders = ','.join('?' for _ in site_ids)
+        where.append(f'd.site_id IN ({placeholders})')
+        query_params.extend(site_ids)
+    lock_suffix = ' FOR UPDATE OF i, d' if _USE_PG else ''
+    try:
+        row = conn.execute(
+            """
+            SELECT i.id, i.device_id, i.interface_name, i.interface_role,
+                   i.utilization_warn_pct, i.utilization_high_pct,
+                   i.utilization_critical_pct
+              FROM interfaces i
+              JOIN devices d ON d.id = i.device_id
+             WHERE """ + ' AND '.join(where) + lock_suffix,
+            tuple(query_params),
+        ).fetchone()
+        if row is None:
+            raise ValueError(f'Interface {interface_key} not found')
+        current = _row_to_dict(row)
+        merged = {
+            'interface_role': current.get('interface_role') or DEFAULT_INTERFACE_ROLE,
+            'utilization_warn_pct': current.get('utilization_warn_pct', DEFAULT_UTILIZATION_WARN_PCT),
+            'utilization_high_pct': current.get('utilization_high_pct', DEFAULT_UTILIZATION_HIGH_PCT),
+            'utilization_critical_pct': current.get('utilization_critical_pct', DEFAULT_UTILIZATION_CRITICAL_PCT),
+        }
+        merged.update(requested)
+        role, warn_pct, high_pct, critical_pct = _validate_interface_monitoring_profile(**merged)
+        conn.execute(
+            """
+            UPDATE interfaces
+               SET interface_role = ?,
+                   utilization_warn_pct = ?,
+                   utilization_high_pct = ?,
+                   utilization_critical_pct = ?
+             WHERE id = ?
+            """,
+            (role, warn_pct, high_pct, critical_pct, interface_key),
+        )
+        conn.commit()
+        return {
+            'id': current.get('id') or interface_key,
+            'device_id': current.get('device_id') or '',
+            'interface_name': current.get('interface_name') or '',
+            'interface_role': role,
+            'utilization_warn_pct': warn_pct,
+            'utilization_high_pct': high_pct,
+            'utilization_critical_pct': critical_pct,
+        }
+    except Exception:
+        conn.rollback()
+        raise
 
 
 def get_field_authority_quality(conn) -> dict:

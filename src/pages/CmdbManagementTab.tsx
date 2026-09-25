@@ -153,6 +153,57 @@ interface FieldDef {
   secretFlag?: string;
 }
 
+const INTERFACE_MONITORING_DEFAULTS = {
+  utilization_warn_pct: 60,
+  utilization_high_pct: 75,
+  utilization_critical_pct: 90,
+} as const;
+
+const INTERFACE_ROLE_OPTIONS = [
+  { value: 'uplink', label: '上联', labelEn: 'Uplink' },
+  { value: 'wan', label: 'WAN', labelEn: 'WAN' },
+  { value: 'transit', label: 'Transit', labelEn: 'Transit' },
+  { value: 'server', label: '服务器', labelEn: 'Server' },
+  { value: 'storage', label: '存储', labelEn: 'Storage' },
+  { value: 'management', label: '管理', labelEn: 'Management' },
+  { value: 'access', label: '接入', labelEn: 'Access' },
+  { value: 'loopback', label: 'Loopback', labelEn: 'Loopback' },
+  { value: 'other', label: '其他', labelEn: 'Other' },
+  { value: 'unclassified', label: '未分类', labelEn: 'Unclassified' },
+] as const;
+
+type InterfaceMonitoringProfile = {
+  interface_role: string;
+  utilization_warn_pct: number;
+  utilization_high_pct: number;
+  utilization_critical_pct: number;
+};
+
+type InterfaceMonitoringProfileForm = {
+  interface_role: string;
+  utilization_warn_pct: string;
+  utilization_high_pct: string;
+  utilization_critical_pct: string;
+};
+
+function interfaceMonitoringProfile(row: Record<string, unknown>): InterfaceMonitoringProfile {
+  const nested = row.monitoring_profile && typeof row.monitoring_profile === 'object'
+    ? row.monitoring_profile as Record<string, unknown>
+    : row;
+  const role = String(nested.interface_role || 'unclassified').trim().toLowerCase();
+  const supportedRole = INTERFACE_ROLE_OPTIONS.some(option => option.value === role) ? role : 'unclassified';
+  const percentage = (value: unknown, fallback: number) => {
+    const parsed = Number(value);
+    return Number.isFinite(parsed) && parsed >= 0 && parsed <= 100 ? parsed : fallback;
+  };
+  return {
+    interface_role: supportedRole,
+    utilization_warn_pct: percentage(nested.utilization_warn_pct, INTERFACE_MONITORING_DEFAULTS.utilization_warn_pct),
+    utilization_high_pct: percentage(nested.utilization_high_pct, INTERFACE_MONITORING_DEFAULTS.utilization_high_pct),
+    utilization_critical_pct: percentage(nested.utilization_critical_pct, INTERFACE_MONITORING_DEFAULTS.utilization_critical_pct),
+  };
+}
+
 type SiteContactField = 'contact_name' | 'contact_phone' | 'contact_email';
 
 interface PhoneRule {
@@ -1632,10 +1683,21 @@ const CmdbManagementTab: React.FC<Props> = ({ language, cmdbPage, currentUser })
     total: 0,
     summary: { total: 0, with_ip: 0, oper_up: 0, with_links: 0 },
   });
+  const [interfaceProfileModal, setInterfaceProfileModal] = useState<{ row: any; profile: InterfaceMonitoringProfile } | null>(null);
+  const [interfaceProfileForm, setInterfaceProfileForm] = useState<InterfaceMonitoringProfileForm>({
+    interface_role: 'unclassified',
+    utilization_warn_pct: String(INTERFACE_MONITORING_DEFAULTS.utilization_warn_pct),
+    utilization_high_pct: String(INTERFACE_MONITORING_DEFAULTS.utilization_high_pct),
+    utilization_critical_pct: String(INTERFACE_MONITORING_DEFAULTS.utilization_critical_pct),
+  });
+  const [interfaceProfileFieldErrors, setInterfaceProfileFieldErrors] = useState<Record<string, string>>({});
+  const [interfaceProfileError, setInterfaceProfileError] = useState('');
+  const [interfaceProfileSaving, setInterfaceProfileSaving] = useState(false);
   const [genericListMeta, setGenericListMeta] = useState({ total: 0, page: 1, page_size: 20 });
   const readOnlyTabs = useMemo(() => new Set<EntityKey>(['devices', 'interfaces']), []);
   const isReadOnlyTab = readOnlyTabs.has(tab);
   const isAdministrator = currentUser?.role === 'Administrator';
+  const canEditInterfaceProfile = currentUser?.role === 'Administrator' || currentUser?.role === 'Operator';
   const appliedSearch = tab === 'interfaces' ? interfaceSearchQuery : search;
 
   const applyInterfaceSearch = useCallback(() => {
@@ -1946,6 +2008,7 @@ const CmdbManagementTab: React.FC<Props> = ({ language, cmdbPage, currentUser })
       { key: 'interface_name', label: '接口名称', labelEn: 'Interface', hideInForm: true },
       { key: 'oper_status', label: '运行状态', labelEn: 'Oper Status', hideInForm: true },
       { key: 'admin_status', label: '管理状态', labelEn: 'Admin Status', hideInForm: true },
+      { key: 'monitoring_profile', label: '监控配置', labelEn: 'Monitoring profile', hideInForm: true },
       { key: 'mac_address', label: 'MAC', labelEn: 'MAC', hideInForm: true },
       { key: 'switchport_mode', label: '交换模式', labelEn: 'Switchport', hideInForm: true },
       { key: 'access_vlan', label: 'Access VLAN', labelEn: 'Access VLAN', hideInForm: true },
@@ -2116,6 +2179,76 @@ const CmdbManagementTab: React.FC<Props> = ({ language, cmdbPage, currentUser })
   }, [tab, appliedSearch, interfacePage, interfacePageSize, page, pageSize, vlanSiteFilter, vlanStatusFilter, vlanTreeBranch]); // eslint-disable-line react-hooks/exhaustive-deps
 
   useEffect(() => { load(); }, [load]);
+
+  const openInterfaceProfile = (row: any) => {
+    if (!canEditInterfaceProfile) return;
+    const profile = interfaceMonitoringProfile(row);
+    setInterfaceProfileModal({ row, profile });
+    setInterfaceProfileForm({
+      interface_role: profile.interface_role,
+      utilization_warn_pct: String(profile.utilization_warn_pct),
+      utilization_high_pct: String(profile.utilization_high_pct),
+      utilization_critical_pct: String(profile.utilization_critical_pct),
+    });
+    setInterfaceProfileFieldErrors({});
+    setInterfaceProfileError('');
+  };
+
+  const submitInterfaceProfile = async () => {
+    if (!interfaceProfileModal || interfaceProfileSaving) return;
+    setInterfaceProfileError('');
+    const interfaceId = String(interfaceProfileModal.row?.id || '').trim();
+    const warn = Number(interfaceProfileForm.utilization_warn_pct);
+    const high = Number(interfaceProfileForm.utilization_high_pct);
+    const critical = Number(interfaceProfileForm.utilization_critical_pct);
+    const nextErrors: Record<string, string> = {};
+    const roleValid = INTERFACE_ROLE_OPTIONS.some(option => option.value === interfaceProfileForm.interface_role);
+    if (!interfaceId) nextErrors.form = zh ? '当前接口缺少唯一标识，无法保存监控配置。' : 'This interface has no stable identifier and cannot be configured.';
+    if (!roleValid) nextErrors.interface_role = zh ? '请选择有效的接口角色。' : 'Choose a valid interface role.';
+    if (!Number.isFinite(warn) || warn < 0 || warn > 100) nextErrors.utilization_warn_pct = zh ? '预警阈值必须在 0 到 100 之间。' : 'Warning threshold must be between 0 and 100.';
+    if (!Number.isFinite(high) || high < 0 || high > 100) nextErrors.utilization_high_pct = zh ? '高位阈值必须在 0 到 100 之间。' : 'High threshold must be between 0 and 100.';
+    if (!Number.isFinite(critical) || critical < 0 || critical > 100) nextErrors.utilization_critical_pct = zh ? '严重阈值必须在 0 到 100 之间。' : 'Critical threshold must be between 0 and 100.';
+    if (!nextErrors.utilization_warn_pct && !nextErrors.utilization_high_pct && !nextErrors.utilization_critical_pct && !(warn < high && high < critical)) {
+      const message = zh ? '阈值必须满足 0 ≤ 预警 < 高位 < 严重 ≤ 100。' : 'Thresholds must satisfy 0 ≤ warning < high < critical ≤ 100.';
+      nextErrors.utilization_warn_pct = message;
+      nextErrors.utilization_high_pct = message;
+      nextErrors.utilization_critical_pct = message;
+    }
+    setInterfaceProfileFieldErrors(nextErrors);
+    if (Object.keys(nextErrors).length > 0) return;
+
+    const payload = {
+      interface_role: interfaceProfileForm.interface_role,
+      utilization_warn_pct: warn,
+      utilization_high_pct: high,
+      utilization_critical_pct: critical,
+    };
+    setInterfaceProfileSaving(true);
+    setInterfaceProfileError('');
+    setError('');
+    try {
+      const response = await fetch(`/api/cmdb/interfaces/${encodeURIComponent(interfaceId)}/monitoring-profile`, {
+        method: 'PATCH',
+        headers: authHeaders(),
+        body: JSON.stringify(payload),
+      });
+      const result = await response.json().catch(() => ({}));
+      if (!response.ok || result.success === false) {
+        throw new Error(formatErrorDetail(result.detail || result.message));
+      }
+      setRows(previous => previous.map(row => String(row.id || '') === interfaceId
+        ? { ...row, ...payload, monitoring_profile: payload }
+        : row));
+      setInterfaceProfileModal(null);
+      setNotice(zh ? '接口监控角色与利用率阈值已保存。' : 'Interface monitoring role and utilization thresholds saved.');
+      await load();
+    } catch (e: any) {
+      const message = e.message || String(e);
+      setInterfaceProfileError(message);
+    } finally {
+      setInterfaceProfileSaving(false);
+    }
+  };
 
   const downloadSiteImportTemplate = useCallback(() => {
     const headers = SITE_IMPORT_COLUMNS.map(column => column.header);
@@ -2739,6 +2872,7 @@ const CmdbManagementTab: React.FC<Props> = ({ language, cmdbPage, currentUser })
   };
 
   const tableColumns = fieldDefs[tab].filter(f => !f.hideInTable);
+  const hasTableActions = !isReadOnlyTab || (tab === 'interfaces' && canEditInterfaceProfile);
 
   const getSiteStatusStyle = (status: string) => {
     switch (status) {
@@ -3134,6 +3268,20 @@ const CmdbManagementTab: React.FC<Props> = ({ language, cmdbPage, currentUser })
         </span>
       );
     }
+    if (tab === 'interfaces' && fd.key === 'monitoring_profile') {
+      const profile = interfaceMonitoringProfile(row);
+      const roleOption = INTERFACE_ROLE_OPTIONS.find(option => option.value === profile.interface_role);
+      return (
+        <div className="min-w-[9rem] space-y-1">
+          <span className="inline-flex items-center rounded-full border border-cyan-100 bg-cyan-50 px-2 py-0.5 text-[11px] font-semibold text-cyan-700 dark:border-cyan-900/40 dark:bg-cyan-950/30 dark:text-cyan-300">
+            {zh ? roleOption?.label : roleOption?.labelEn}
+          </span>
+          <div className="whitespace-nowrap text-[10px] tabular-nums text-slate-500 dark:text-slate-400">
+            {profile.utilization_warn_pct}% / {profile.utilization_high_pct}% / {profile.utilization_critical_pct}%
+          </div>
+        </div>
+      );
+    }
     if (tab === 'sites' && ['country', 'state_province', 'city'].includes(fd.key)) {
       const val = String(row[fd.key] || '').trim();
       if (!val) return <span className="text-black/30 dark:text-white/30">—</span>;
@@ -3310,20 +3458,33 @@ const CmdbManagementTab: React.FC<Props> = ({ language, cmdbPage, currentUser })
       {tableColumns.map(c => (
         <td key={c.key} className="px-6 py-4">{renderCell(row, c)}</td>
       ))}
-      {!isReadOnlyTab && (
+      {(!isReadOnlyTab || (tab === 'interfaces' && canEditInterfaceProfile)) && (
         <td className="px-6 py-4 text-right whitespace-nowrap align-middle">
           <ActionIconGroup label={zh ? '记录操作' : 'Record actions'} className="opacity-0 transition-opacity group-hover:opacity-100">
-            <ActionIconButton
-              icon={Pencil}
-              label={zh ? '编辑' : 'Edit'}
-              onClick={() => openEdit(row)}
-            />
-            <ActionIconButton
-              icon={Trash2}
-              label={zh ? '删除' : 'Delete'}
-              variant="danger"
-              onClick={() => openDeleteConfirm(row)}
-            />
+            {tab === 'interfaces' ? (
+              canEditInterfaceProfile && !String(row.id || '').startsWith('ipinv-') ? (
+                <ActionIconButton
+                  icon={Pencil}
+                  label={zh ? '编辑监控配置' : 'Edit monitoring profile'}
+                  variant="accent"
+                  onClick={() => openInterfaceProfile(row)}
+                />
+              ) : null
+            ) : (
+              <>
+                <ActionIconButton
+                  icon={Pencil}
+                  label={zh ? '编辑' : 'Edit'}
+                  onClick={() => openEdit(row)}
+                />
+                <ActionIconButton
+                  icon={Trash2}
+                  label={zh ? '删除' : 'Delete'}
+                  variant="danger"
+                  onClick={() => openDeleteConfirm(row)}
+                />
+              </>
+            )}
           </ActionIconGroup>
         </td>
       )}
@@ -4193,9 +4354,9 @@ const CmdbManagementTab: React.FC<Props> = ({ language, cmdbPage, currentUser })
                       {zh ? c.label : c.labelEn}
                     </th>
                   ))}
-                  {!isReadOnlyTab && (
+                  {hasTableActions && (
                     <th className="px-6 py-4 text-right" style={{ width: 120 }}>
-                      {zh ? '操作' : 'Actions'}
+                      {tab === 'interfaces' ? (zh ? '配置' : 'Configure') : (zh ? '操作' : 'Actions')}
                     </th>
                   )}
                 </tr>
@@ -4203,14 +4364,14 @@ const CmdbManagementTab: React.FC<Props> = ({ language, cmdbPage, currentUser })
               <tbody className="divide-y divide-slate-100">
                 {visibleRows.length === 0 && !loading && (
                   <tr>
-                    <td colSpan={tableColumns.length + (isReadOnlyTab ? 0 : 1)} className="text-center py-16 text-black/40">
+                    <td colSpan={tableColumns.length + (hasTableActions ? 1 : 0)} className="text-center py-16 text-black/40">
                       {zh ? '无匹配的数据记录' : 'No matching records found'}
                     </td>
                   </tr>
                 )}
                 {loading && visibleRows.length === 0 && (
                   <tr>
-                    <td colSpan={tableColumns.length + (isReadOnlyTab ? 0 : 1)} className="text-center py-16 text-black/40">
+                    <td colSpan={tableColumns.length + (hasTableActions ? 1 : 0)} className="text-center py-16 text-black/40">
                       <RefreshCw size={18} className="animate-spin inline mr-2 text-cyan-600" />
                       {zh ? '正在加载数据...' : 'Loading data...'}
                     </td>
@@ -4585,6 +4746,123 @@ const CmdbManagementTab: React.FC<Props> = ({ language, cmdbPage, currentUser })
               >
                 <Check size={14} />
                 {zh ? '保存' : 'Save'}
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {interfaceProfileModal && (
+        <div className="fixed inset-0 z-[105] flex items-center justify-center p-4">
+          <div
+            className="absolute inset-0 bg-black/45 backdrop-blur-sm"
+            onClick={() => { if (!interfaceProfileSaving) setInterfaceProfileModal(null); }}
+          />
+          <div className="relative w-full max-w-lg rounded-3xl border border-black/8 bg-white p-6 shadow-2xl dark:bg-slate-900">
+            <div className="flex items-start justify-between gap-4 border-b border-black/5 pb-4 dark:border-white/10">
+              <div className="min-w-0">
+                <h3 className="text-lg font-semibold text-[#164e63] dark:text-cyan-300">
+                  {zh ? '编辑接口监控配置' : 'Edit interface monitoring profile'}
+                </h3>
+                <p className="mt-1 truncate text-xs text-black/50 dark:text-white/50" title={`${interfaceProfileModal.row.device_hostname || interfaceProfileModal.row.device_ip || '—'} · ${interfaceProfileModal.row.interface_name || '—'}`}>
+                  {interfaceProfileModal.row.device_hostname || interfaceProfileModal.row.device_ip || (zh ? '未关联设备' : 'No device')}
+                  {' · '}
+                  <span className="font-mono">{interfaceProfileModal.row.interface_name || '—'}</span>
+                  {interfaceProfileModal.row.device_ip ? ` · ${interfaceProfileModal.row.device_ip}` : ''}
+                </p>
+              </div>
+              <button
+                type="button"
+                disabled={interfaceProfileSaving}
+                onClick={() => setInterfaceProfileModal(null)}
+                className="shrink-0 rounded-xl border border-black/10 p-1.5 text-black/45 transition-colors hover:bg-black/[0.03] disabled:opacity-40 dark:border-white/10 dark:text-white/50"
+                title={zh ? '关闭' : 'Close'}
+              >
+                <X size={16} />
+              </button>
+            </div>
+
+            <div className="mt-5 space-y-4">
+              {(interfaceProfileError || interfaceProfileFieldErrors.form) && (
+                <div className="flex items-start gap-1.5 rounded-xl border border-rose-200 bg-rose-50 px-3 py-2 text-xs leading-5 text-rose-700 dark:border-rose-900/50 dark:bg-rose-950/30 dark:text-rose-300" role="alert">
+                  <ShieldAlert size={14} className="mt-0.5 shrink-0" />
+                  <span>{interfaceProfileError || interfaceProfileFieldErrors.form}</span>
+                </div>
+              )}
+
+              <div>
+                <label className="mb-1.5 block text-xs font-semibold text-slate-600 dark:text-slate-300">
+                  {zh ? '接口角色' : 'Interface role'}
+                </label>
+                <select
+                  value={interfaceProfileForm.interface_role}
+                  onChange={event => {
+                    setInterfaceProfileForm(previous => ({ ...previous, interface_role: event.target.value }));
+                    setInterfaceProfileFieldErrors(previous => ({ ...previous, interface_role: '' }));
+                  }}
+                  className={`h-11 w-full rounded-xl border bg-white px-3 text-sm text-[#164e63] outline-none transition-all focus:border-cyan-500 focus:ring-2 focus:ring-cyan-500/10 dark:bg-slate-800 dark:text-slate-100 ${interfaceProfileFieldErrors.interface_role ? 'border-rose-400' : 'border-black/10 dark:border-white/10'}`}
+                >
+                  {INTERFACE_ROLE_OPTIONS.map(option => <option key={option.value} value={option.value}>{zh ? option.label : option.labelEn}</option>)}
+                </select>
+                {interfaceProfileFieldErrors.interface_role && <p className="mt-1 text-[11px] leading-4 text-rose-600">{interfaceProfileFieldErrors.interface_role}</p>}
+              </div>
+
+              <div>
+                <div className="mb-1.5 flex items-baseline justify-between gap-3">
+                  <label className="text-xs font-semibold text-slate-600 dark:text-slate-300">{zh ? '利用率阈值' : 'Utilization thresholds'}</label>
+                  <span className="text-[11px] text-slate-400">{zh ? '百分比：预警 / 高位 / 严重' : 'Percent: warning / high / critical'}</span>
+                </div>
+                <div className="grid gap-3 sm:grid-cols-3">
+                  {([
+                    ['utilization_warn_pct', zh ? '预警' : 'Warning'],
+                    ['utilization_high_pct', zh ? '高位' : 'High'],
+                    ['utilization_critical_pct', zh ? '严重' : 'Critical'],
+                  ] as const).map(([key, label]) => (
+                    <div key={key}>
+                      <label className="mb-1 block text-[11px] font-medium text-slate-500 dark:text-slate-400">{label}</label>
+                      <div className="relative">
+                        <input
+                          type="number"
+                          min={0}
+                          max={100}
+                          step="0.1"
+                          value={interfaceProfileForm[key]}
+                          onChange={event => {
+                            setInterfaceProfileForm(previous => ({ ...previous, [key]: event.target.value }));
+                            setInterfaceProfileFieldErrors(previous => ({ ...previous, [key]: '' }));
+                            setInterfaceProfileError('');
+                          }}
+                          className={`h-11 w-full rounded-xl border bg-white px-3 pr-8 text-sm tabular-nums text-[#164e63] outline-none transition-all focus:border-cyan-500 focus:ring-2 focus:ring-cyan-500/10 dark:bg-slate-800 dark:text-slate-100 ${interfaceProfileFieldErrors[key] ? 'border-rose-400' : 'border-black/10 dark:border-white/10'}`}
+                        />
+                        <span className="pointer-events-none absolute right-3 top-1/2 -translate-y-1/2 text-xs text-slate-400">%</span>
+                      </div>
+                      {interfaceProfileFieldErrors[key] && <p className="mt-1 text-[11px] leading-4 text-rose-600">{interfaceProfileFieldErrors[key]}</p>}
+                    </div>
+                  ))}
+                </div>
+                <p className="mt-2 text-[11px] leading-4 text-slate-400">
+                  {zh ? '必须满足 0 ≤ 预警 < 高位 < 严重 ≤ 100；默认值为 60 / 75 / 90。' : 'Must satisfy 0 ≤ warning < high < critical ≤ 100; defaults are 60 / 75 / 90.'}
+                </p>
+              </div>
+            </div>
+
+            <div className="mt-6 flex justify-end gap-2 border-t border-black/5 pt-4 dark:border-white/10">
+              <button
+                type="button"
+                disabled={interfaceProfileSaving}
+                onClick={() => setInterfaceProfileModal(null)}
+                className="h-10 rounded-xl border border-black/10 bg-white px-4 text-sm font-semibold text-black/60 transition-colors hover:bg-black/[0.02] disabled:opacity-40 dark:border-white/10 dark:bg-slate-800 dark:text-white/60"
+              >
+                {zh ? '取消' : 'Cancel'}
+              </button>
+              <button
+                type="button"
+                disabled={interfaceProfileSaving}
+                onClick={() => { void submitInterfaceProfile(); }}
+                className="inline-flex h-10 items-center gap-1.5 rounded-xl bg-cyan-500 px-5 text-sm font-semibold text-white shadow-md transition-colors hover:bg-cyan-600 disabled:cursor-not-allowed disabled:opacity-50"
+              >
+                {interfaceProfileSaving ? <RefreshCw size={14} className="animate-spin" /> : <Check size={14} />}
+                {interfaceProfileSaving ? (zh ? '保存中...' : 'Saving...') : (zh ? '保存配置' : 'Save profile')}
               </button>
             </div>
           </div>

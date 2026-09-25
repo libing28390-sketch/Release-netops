@@ -9,6 +9,19 @@
   "links": [],
   "panels": [
     {
+      "id": 900,
+      "title": "网络健康与规模",
+      "type": "row",
+      "collapsed": false,
+      "gridPos": {
+        "h": 1,
+        "w": 24,
+        "x": 0,
+        "y": 0
+      },
+      "panels": []
+    },
+    {
       "id": 1,
       "title": "纳管设备数",
       "type": "stat",
@@ -20,12 +33,12 @@
         "h": 3,
         "w": 4,
         "x": 0,
-        "y": 0
+        "y": 1
       },
       "fieldConfig": {
         "defaults": {
           "unit": "",
-          "noValue": "—",
+          "noValue": "数据暂不可用",
           "color": {
             "mode": "thresholds"
           },
@@ -43,7 +56,7 @@
       },
       "options": {
         "colorMode": "value",
-        "graphMode": "none",
+        "graphMode": "area",
         "justifyMode": "center",
         "orientation": "auto",
         "reduceOptions": {
@@ -53,7 +66,7 @@
           "fields": "",
           "values": false
         },
-        "textMode": "value"
+        "textMode": "auto"
       },
       "targets": [
         {
@@ -74,12 +87,12 @@
         "h": 3,
         "w": 4,
         "x": 4,
-        "y": 0
+        "y": 1
       },
       "fieldConfig": {
         "defaults": {
           "unit": "",
-          "noValue": "—",
+          "noValue": "数据暂不可用",
           "color": {
             "mode": "thresholds"
           },
@@ -97,7 +110,7 @@
       },
       "options": {
         "colorMode": "value",
-        "graphMode": "none",
+        "graphMode": "area",
         "justifyMode": "center",
         "orientation": "auto",
         "reduceOptions": {
@@ -107,7 +120,7 @@
           "fields": "",
           "values": false
         },
-        "textMode": "value"
+        "textMode": "auto"
       },
       "targets": [
         {
@@ -128,12 +141,12 @@
         "h": 3,
         "w": 4,
         "x": 8,
-        "y": 0
+        "y": 1
       },
       "fieldConfig": {
         "defaults": {
           "unit": "",
-          "noValue": "—",
+          "noValue": "数据暂不可用",
           "color": {
             "mode": "thresholds"
           },
@@ -151,7 +164,7 @@
       },
       "options": {
         "colorMode": "value",
-        "graphMode": "none",
+        "graphMode": "area",
         "justifyMode": "center",
         "orientation": "auto",
         "reduceOptions": {
@@ -161,7 +174,7 @@
           "fields": "",
           "values": false
         },
-        "textMode": "value"
+        "textMode": "auto"
       },
       "targets": [
         {
@@ -182,12 +195,12 @@
         "h": 3,
         "w": 4,
         "x": 12,
-        "y": 0
+        "y": 1
       },
       "fieldConfig": {
         "defaults": {
           "unit": "",
-          "noValue": "—",
+          "noValue": "数据暂不可用",
           "color": {
             "mode": "thresholds"
           },
@@ -205,7 +218,7 @@
       },
       "options": {
         "colorMode": "value",
-        "graphMode": "none",
+        "graphMode": "area",
         "justifyMode": "center",
         "orientation": "auto",
         "reduceOptions": {
@@ -215,7 +228,7 @@
           "fields": "",
           "values": false
         },
-        "textMode": "value"
+        "textMode": "auto"
       },
       "targets": [
         {
@@ -236,12 +249,12 @@
         "h": 3,
         "w": 4,
         "x": 16,
-        "y": 0
+        "y": 1
       },
       "fieldConfig": {
         "defaults": {
           "unit": "",
-          "noValue": "—",
+          "noValue": "数据暂不可用",
           "color": {
             "mode": "thresholds"
           },
@@ -259,7 +272,7 @@
       },
       "options": {
         "colorMode": "value",
-        "graphMode": "none",
+        "graphMode": "area",
         "justifyMode": "center",
         "orientation": "auto",
         "reduceOptions": {
@@ -269,7 +282,7 @@
           "fields": "",
           "values": false
         },
-        "textMode": "value"
+        "textMode": "auto"
       },
       "targets": [
         {
@@ -290,12 +303,12 @@
         "h": 3,
         "w": 4,
         "x": 20,
-        "y": 0
+        "y": 1
       },
       "fieldConfig": {
         "defaults": {
           "unit": "",
-          "noValue": "—",
+          "noValue": "数据暂不可用",
           "color": {
             "mode": "thresholds"
           },
@@ -321,7 +334,7 @@
       },
       "options": {
         "colorMode": "value",
-        "graphMode": "none",
+        "graphMode": "area",
         "justifyMode": "center",
         "orientation": "auto",
         "reduceOptions": {
@@ -331,7 +344,7 @@
           "fields": "",
           "values": false
         },
-        "textMode": "value"
+        "textMode": "auto"
       },
       "targets": [
         {
@@ -341,8 +354,21 @@
       ]
     },
     {
+      "id": 901,
+      "title": "趋势与设备健康",
+      "type": "row",
+      "collapsed": false,
+      "gridPos": {
+        "h": 1,
+        "w": 24,
+        "x": 0,
+        "y": 4
+      },
+      "panels": []
+    },
+    {
       "id": 7,
-      "title": "网络接口总流量",
+      "title": "接口总流量趋势",
       "type": "timeseries",
       "datasource": {
         "type": "prometheus",
@@ -352,28 +378,67 @@
         "h": 8,
         "w": 12,
         "x": 0,
-        "y": 3
+        "y": 5
       },
       "fieldConfig": {
         "defaults": {
           "unit": "bps",
-          "noValue": "—",
+          "noValue": "数据暂不可用",
           "color": {
             "mode": "palette-classic"
           },
           "custom": {
             "drawStyle": "line",
             "lineInterpolation": "linear",
-            "fillOpacity": 10
+            "lineWidth": 2,
+            "fillOpacity": 10,
+            "gradientMode": "none",
+            "showPoints": "never"
           }
         },
-        "overrides": []
+        "overrides": [
+          {
+            "matcher": {
+              "id": "byName",
+              "options": "入流量"
+            },
+            "properties": [
+              {
+                "id": "color",
+                "value": {
+                  "mode": "fixed",
+                  "fixedColor": "#3274D9"
+                }
+              }
+            ]
+          },
+          {
+            "matcher": {
+              "id": "byName",
+              "options": "出流量"
+            },
+            "properties": [
+              {
+                "id": "color",
+                "value": {
+                  "mode": "fixed",
+                  "fixedColor": "#56A64B"
+                }
+              }
+            ]
+          }
+        ]
       },
       "options": {
         "legend": {
-          "displayMode": "list",
-          "placement": "bottom",
-          "showLegend": true
+          "displayMode": "table",
+          "placement": "right",
+          "showLegend": true,
+          "calcs": [
+            "lastNotNull",
+            "max",
+            "mean"
+          ]
         },
         "tooltip": {
           "mode": "multi",
@@ -405,28 +470,36 @@
         "h": 8,
         "w": 12,
         "x": 12,
-        "y": 3
+        "y": 5
       },
       "fieldConfig": {
         "defaults": {
           "unit": "short",
-          "noValue": "—",
+          "noValue": "数据暂不可用",
           "color": {
             "mode": "palette-classic"
           },
           "custom": {
             "drawStyle": "line",
             "lineInterpolation": "linear",
-            "fillOpacity": 10
+            "lineWidth": 2,
+            "fillOpacity": 10,
+            "gradientMode": "none",
+            "showPoints": "never"
           }
         },
         "overrides": []
       },
       "options": {
         "legend": {
-          "displayMode": "list",
-          "placement": "bottom",
-          "showLegend": true
+          "displayMode": "table",
+          "placement": "right",
+          "showLegend": true,
+          "calcs": [
+            "lastNotNull",
+            "max",
+            "mean"
+          ]
         },
         "tooltip": {
           "mode": "multi",
@@ -458,28 +531,36 @@
         "h": 8,
         "w": 8,
         "x": 0,
-        "y": 11
+        "y": 13
       },
       "fieldConfig": {
         "defaults": {
           "unit": "percent",
-          "noValue": "—",
+          "noValue": "数据暂不可用",
           "color": {
             "mode": "palette-classic"
           },
           "custom": {
             "drawStyle": "line",
             "lineInterpolation": "linear",
-            "fillOpacity": 10
+            "lineWidth": 2,
+            "fillOpacity": 10,
+            "gradientMode": "none",
+            "showPoints": "never"
           }
         },
         "overrides": []
       },
       "options": {
         "legend": {
-          "displayMode": "list",
-          "placement": "bottom",
-          "showLegend": true
+          "displayMode": "table",
+          "placement": "right",
+          "showLegend": true,
+          "calcs": [
+            "lastNotNull",
+            "max",
+            "mean"
+          ]
         },
         "tooltip": {
           "mode": "multi",
@@ -506,28 +587,36 @@
         "h": 8,
         "w": 8,
         "x": 8,
-        "y": 11
+        "y": 13
       },
       "fieldConfig": {
         "defaults": {
           "unit": "percent",
-          "noValue": "—",
+          "noValue": "数据暂不可用",
           "color": {
             "mode": "palette-classic"
           },
           "custom": {
             "drawStyle": "line",
             "lineInterpolation": "linear",
-            "fillOpacity": 10
+            "lineWidth": 2,
+            "fillOpacity": 10,
+            "gradientMode": "none",
+            "showPoints": "never"
           }
         },
         "overrides": []
       },
       "options": {
         "legend": {
-          "displayMode": "list",
-          "placement": "bottom",
-          "showLegend": true
+          "displayMode": "table",
+          "placement": "right",
+          "showLegend": true,
+          "calcs": [
+            "lastNotNull",
+            "max",
+            "mean"
+          ]
         },
         "tooltip": {
           "mode": "multi",
@@ -554,28 +643,36 @@
         "h": 8,
         "w": 8,
         "x": 16,
-        "y": 11
+        "y": 13
       },
       "fieldConfig": {
         "defaults": {
           "unit": "celsius",
-          "noValue": "—",
+          "noValue": "数据暂不可用",
           "color": {
             "mode": "palette-classic"
           },
           "custom": {
             "drawStyle": "line",
             "lineInterpolation": "linear",
-            "fillOpacity": 10
+            "lineWidth": 2,
+            "fillOpacity": 10,
+            "gradientMode": "none",
+            "showPoints": "never"
           }
         },
         "overrides": []
       },
       "options": {
         "legend": {
-          "displayMode": "list",
-          "placement": "bottom",
-          "showLegend": true
+          "displayMode": "table",
+          "placement": "right",
+          "showLegend": true,
+          "calcs": [
+            "lastNotNull",
+            "max",
+            "mean"
+          ]
         },
         "tooltip": {
           "mode": "multi",
@@ -591,8 +688,21 @@
       ]
     },
     {
+      "id": 902,
+      "title": "流量排行与链路质量",
+      "type": "row",
+      "collapsed": false,
+      "gridPos": {
+        "h": 1,
+        "w": 24,
+        "x": 0,
+        "y": 21
+      },
+      "panels": []
+    },
+    {
       "id": 12,
-      "title": "设备总流量排行 Top 10",
+      "title": "设备总流量 Top10",
       "type": "table",
       "datasource": {
         "type": "prometheus",
@@ -602,14 +712,17 @@
         "h": 8,
         "w": 12,
         "x": 0,
-        "y": 19
+        "y": 22
       },
       "fieldConfig": {
         "defaults": {
           "unit": "none",
-          "noValue": "—",
+          "noValue": "数据暂不可用",
           "color": {
             "mode": "thresholds"
+          },
+          "custom": {
+            "filterable": true
           }
         },
         "overrides": [
@@ -632,7 +745,8 @@
         "showHeader": true,
         "footer": {
           "show": false
-        }
+        },
+        "enablePagination": true
       },
       "targets": [
         {
@@ -663,18 +777,23 @@
               "job": true,
               "tenant_id": true,
               "site_id": true,
-              "platform": true
+              "platform": true,
+              "sysName": true,
+              "nexora_interface_role": true
             },
             "indexByName": {
-              "sysName": 0,
+              "site_name": 0,
               "hostname": 1,
-              "site_name": 2,
-              "instance": 3,
-              "ifName": 4,
-              "ifDescr": 5,
-              "vendor": 6,
-              "role": 7,
-              "Value": 8
+              "instance": 2,
+              "ifName": 3,
+              "ifDescr": 4,
+              "vendor": 5,
+              "role": 6,
+              "interface_role": 7,
+              "utilization_warn_pct": 8,
+              "utilization_high_pct": 9,
+              "utilization_critical_pct": 10,
+              "Value": 11
             },
             "renameByName": {
               "sysName": "设备名称",
@@ -685,6 +804,10 @@
               "ifDescr": "接口描述",
               "vendor": "厂商",
               "role": "角色",
+              "interface_role": "接口角色",
+              "utilization_warn_pct": "预警阈值 (%)",
+              "utilization_high_pct": "高位阈值 (%)",
+              "utilization_critical_pct": "严重阈值 (%)",
               "Value": "总流量"
             }
           }
@@ -693,7 +816,7 @@
     },
     {
       "id": 13,
-      "title": "接口错误与丢弃统计",
+      "title": "错误/丢弃趋势",
       "type": "timeseries",
       "datasource": {
         "type": "prometheus",
@@ -703,28 +826,67 @@
         "h": 8,
         "w": 12,
         "x": 12,
-        "y": 19
+        "y": 22
       },
       "fieldConfig": {
         "defaults": {
           "unit": "pps",
-          "noValue": "—",
+          "noValue": "数据暂不可用",
           "color": {
             "mode": "palette-classic"
           },
           "custom": {
             "drawStyle": "line",
             "lineInterpolation": "linear",
-            "fillOpacity": 10
+            "lineWidth": 2,
+            "fillOpacity": 10,
+            "gradientMode": "none",
+            "showPoints": "never"
           }
         },
-        "overrides": []
+        "overrides": [
+          {
+            "matcher": {
+              "id": "byName",
+              "options": "错误包/秒"
+            },
+            "properties": [
+              {
+                "id": "color",
+                "value": {
+                  "mode": "fixed",
+                  "fixedColor": "#FF9830"
+                }
+              }
+            ]
+          },
+          {
+            "matcher": {
+              "id": "byName",
+              "options": "丢弃包/秒"
+            },
+            "properties": [
+              {
+                "id": "color",
+                "value": {
+                  "mode": "fixed",
+                  "fixedColor": "#F2495C"
+                }
+              }
+            ]
+          }
+        ]
       },
       "options": {
         "legend": {
-          "displayMode": "list",
-          "placement": "bottom",
-          "showLegend": true
+          "displayMode": "table",
+          "placement": "right",
+          "showLegend": true,
+          "calcs": [
+            "lastNotNull",
+            "max",
+            "mean"
+          ]
         },
         "tooltip": {
           "mode": "multi",
@@ -745,8 +907,21 @@
       ]
     },
     {
+      "id": 903,
+      "title": "需要关注的接口",
+      "type": "row",
+      "collapsed": false,
+      "gridPos": {
+        "h": 1,
+        "w": 24,
+        "x": 0,
+        "y": 30
+      },
+      "panels": []
+    },
+    {
       "id": 14,
-      "title": "异常接口 Top 20",
+      "title": "异常接口 Top20",
       "type": "table",
       "datasource": {
         "type": "prometheus",
@@ -756,28 +931,91 @@
         "h": 8,
         "w": 24,
         "x": 0,
-        "y": 27
+        "y": 31
       },
       "fieldConfig": {
         "defaults": {
           "unit": "none",
-          "noValue": "—",
+          "noValue": "数据暂不可用",
           "color": {
             "mode": "thresholds"
+          },
+          "custom": {
+            "filterable": true
           }
         },
-        "overrides": []
+        "overrides": [
+          {
+            "matcher": {
+              "id": "byName",
+              "options": "运行状态"
+            },
+            "properties": [
+              {
+                "id": "mappings",
+                "value": [
+                  {
+                    "type": "value",
+                    "options": {
+                      "0": {
+                        "text": "正常",
+                        "color": "green"
+                      },
+                      "1": {
+                        "text": "DOWN",
+                        "color": "red"
+                      }
+                    }
+                  }
+                ]
+              }
+            ]
+          },
+          {
+            "matcher": {
+              "id": "byName",
+              "options": "运行状态"
+            },
+            "properties": [
+              {
+                "id": "custom.cellOptions",
+                "value": {
+                  "type": "color-text"
+                }
+              }
+            ]
+          },
+          {
+            "matcher": {
+              "id": "byName",
+              "options": "接口全称"
+            },
+            "properties": [
+              {
+                "id": "links",
+                "value": [
+                  {
+                    "title": "打开接口详情",
+                    "url": "/d/nexora-interface-detail/interface-detail?var-site=${__data.fields[\"站点\"]}&var-vendor=${__data.fields[\"厂商\"]}&var-role=${__data.fields[\"角色\"]}&var-device=${__data.fields[\"设备名称\"]}&var-interface_role=${__data.fields[\"接口角色\"]}&var-interface=${__data.fields[\"接口全称\"]}&from=${__from}&to=${__to}",
+                    "targetBlank": false
+                  }
+                ]
+              }
+            ]
+          }
+        ]
       },
       "options": {
         "cellHeight": "sm",
         "showHeader": true,
         "footer": {
           "show": false
-        }
+        },
+        "enablePagination": true
       },
       "targets": [
         {
-          "expr": "topk(20, ((ifAdminStatus{job=\"network_snmp\",site_name=~\"$site\",vendor=~\"$vendor\",role=~\"$role\",hostname=~\"$device\"} == 1) and on(instance, ifIndex) (ifOperStatus{job=\"network_snmp\",site_name=~\"$site\",vendor=~\"$vendor\",role=~\"$role\",hostname=~\"$device\"} != 1)) * on(instance, ifIndex) group_left(ifName) (ifName{job=\"network_snmp\",site_name=~\"$site\",vendor=~\"$vendor\",role=~\"$role\",hostname=~\"$device\"} * 0 + 1))",
+          "expr": "topk(20, ((ifAdminStatus{job=\"network_snmp\",site_name=~\"$site\",vendor=~\"$vendor\",role=~\"$role\",hostname=~\"$device\"} == 1) and on(instance, ifIndex) (ifOperStatus{job=\"network_snmp\",site_name=~\"$site\",vendor=~\"$vendor\",role=~\"$role\",hostname=~\"$device\"} != 1)) * on(instance, ifIndex) group_left(ifName) (ifName{job=\"network_snmp\",site_name=~\"$site\",vendor=~\"$vendor\",role=~\"$role\",hostname=~\"$device\"} * 0 + 1)) or label_replace((((count(ifOperStatus{job=\"network_snmp\",site_name=~\"$site\",vendor=~\"$vendor\",role=~\"$role\",hostname=~\"$device\"}) or vector(0)) > 0) and on() ((count(((ifAdminStatus{job=\"network_snmp\",site_name=~\"$site\",vendor=~\"$vendor\",role=~\"$role\",hostname=~\"$device\"} == 1) and on(instance, ifIndex) (ifOperStatus{job=\"network_snmp\",site_name=~\"$site\",vendor=~\"$vendor\",role=~\"$role\",hostname=~\"$device\"} != 1)) * on(instance, ifIndex) group_left(ifName) (ifName{job=\"network_snmp\",site_name=~\"$site\",vendor=~\"$vendor\",role=~\"$role\",hostname=~\"$device\"} * 0 + 1)) or vector(0)) == 0)) * 0, \"ifName\", \"当前无异常\", \"\", \"\")",
           "format": "table",
           "instant": true,
           "refId": "A"
@@ -804,18 +1042,23 @@
               "job": true,
               "tenant_id": true,
               "site_id": true,
-              "platform": true
+              "platform": true,
+              "sysName": true,
+              "nexora_interface_role": true
             },
             "indexByName": {
-              "sysName": 0,
+              "site_name": 0,
               "hostname": 1,
-              "site_name": 2,
-              "instance": 3,
-              "ifName": 4,
-              "ifDescr": 5,
-              "vendor": 6,
-              "role": 7,
-              "Value": 8
+              "instance": 2,
+              "ifName": 3,
+              "ifDescr": 4,
+              "vendor": 5,
+              "role": 6,
+              "interface_role": 7,
+              "utilization_warn_pct": 8,
+              "utilization_high_pct": 9,
+              "utilization_critical_pct": 10,
+              "Value": 11
             },
             "renameByName": {
               "sysName": "设备名称",
@@ -826,6 +1069,10 @@
               "ifDescr": "接口描述",
               "vendor": "厂商",
               "role": "角色",
+              "interface_role": "接口角色",
+              "utilization_warn_pct": "预警阈值 (%)",
+              "utilization_high_pct": "高位阈值 (%)",
+              "utilization_critical_pct": "严重阈值 (%)",
               "Value": "运行状态"
             }
           }
@@ -945,7 +1192,7 @@
     "to": "now"
   },
   "timezone": "browser",
-  "title": "01 网络总览 (Network Overview)",
+  "title": "01 网络总览（Network Overview）",
   "uid": "nexora-network-overview",
-  "version": 27
+  "version": 29
 }

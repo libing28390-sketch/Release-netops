@@ -64,7 +64,9 @@ GENERIC_IF_MIB_VARIANT = {
 GENERIC_IF_MIB_METRICS = (
     "sysUpTime", "ifName", "ifAdminStatus", "ifOperStatus", "ifHighSpeed",
     "ifHCInOctets", "ifHCOutOctets", "ifInErrors", "ifOutErrors",
-    "ifInDiscards", "ifOutDiscards",
+    "ifInDiscards", "ifOutDiscards", "ifHCInUcastPkts", "ifHCInMulticastPkts",
+    "ifHCInBroadcastPkts", "ifHCOutUcastPkts", "ifHCOutMulticastPkts",
+    "ifHCOutBroadcastPkts", "ifLastChange",
 )
 
 
@@ -232,7 +234,7 @@ def _fallback_exporter_modules() -> dict[str, dict[str, Any]]:
                 {
                     "name": name,
                     "oid": oid,
-                    "type": "DisplayString" if name in {"ifName", "ifAlias"} else ("counter" if "Octets" in name or "Errors" in name or "Discards" in name else "gauge"),
+                    "type": "DisplayString" if name in {"ifName", "ifAlias"} else ("counter" if any(token in name for token in ("Octets", "Errors", "Discards", "Pkts")) else "gauge"),
                     "help": name,
                     "indexes": [{"labelname": "ifIndex", "type": "gauge"}],
                     **({"lookups": _if_lookups} if name not in {"ifName", "ifAlias"} else {})
@@ -252,7 +254,14 @@ def _fallback_exporter_modules() -> dict[str, dict[str, Any]]:
                     ("ifName", "1.3.6.1.2.1.31.1.1.1.1"),
                     ("ifHighSpeed", "1.3.6.1.2.1.31.1.1.1.15"),
                     ("ifHCInOctets", "1.3.6.1.2.1.31.1.1.1.6"),
+                    ("ifHCInUcastPkts", "1.3.6.1.2.1.31.1.1.1.7"),
+                    ("ifHCInMulticastPkts", "1.3.6.1.2.1.31.1.1.1.8"),
+                    ("ifHCInBroadcastPkts", "1.3.6.1.2.1.31.1.1.1.9"),
                     ("ifHCOutOctets", "1.3.6.1.2.1.31.1.1.1.10"),
+                    ("ifHCOutUcastPkts", "1.3.6.1.2.1.31.1.1.1.11"),
+                    ("ifHCOutMulticastPkts", "1.3.6.1.2.1.31.1.1.1.12"),
+                    ("ifHCOutBroadcastPkts", "1.3.6.1.2.1.31.1.1.1.13"),
+                    ("ifLastChange", "1.3.6.1.2.1.2.2.1.9"),
                     ("ifAlias", "1.3.6.1.2.1.31.1.1.1.18"),
                     ("dot3StatsFCSErrors", "1.3.6.1.2.1.10.7.2.1.3"),
                 )
@@ -1076,7 +1085,71 @@ def validate_assignments(assignments: Iterable[Mapping[str, Any]]) -> list[str]:
     return sorted(set(errors))
 
 
-def render_vmagent_config(snapshot_path: str = "/etc/nexora-collector/runtime/vmagent/targets/snmp_targets.yml") -> dict[str, Any]:
+def _profile_metric_relabel_configs(interface_profiles: Iterable[Mapping[str, Any]] = ()) -> list[dict[str, Any]]:
+    """Attach CMDB interface profile labels after SNMP exporter lookup labels exist."""
+    default_rules = [
+        {
+            "source_labels": ["ifName"], "regex": ".+", "target_label": "interface_role",
+            "replacement": "unclassified", "action": "replace",
+        },
+        *[
+            {
+                "source_labels": ["ifName"], "regex": ".+", "target_label": label,
+                "replacement": value, "action": "replace",
+            }
+            for label, value in (
+                ("utilization_warn_pct", "60"),
+                ("utilization_high_pct", "75"),
+                ("utilization_critical_pct", "90"),
+            )
+        ],
+    ]
+    grouped: dict[tuple[str, str, str, str], list[tuple[str, str]]] = {}
+    for value in interface_profiles:
+        profile = _row(value)
+        asset_id = str(profile.get("asset_id") or "").strip()
+        interface_name = str(profile.get("interface_name") or "").strip()
+        if not asset_id or not interface_name:
+            continue
+        role = str(profile.get("interface_role") or "unclassified").strip().lower() or "unclassified"
+        try:
+            warn = f"{float(profile.get('utilization_warn_pct', 60)):g}"
+            high = f"{float(profile.get('utilization_high_pct', 75)):g}"
+            critical = f"{float(profile.get('utilization_critical_pct', 90)):g}"
+        except (TypeError, ValueError):
+            warn, high, critical = "60", "75", "90"
+        grouped.setdefault((role, warn, high, critical), []).append((asset_id, interface_name))
+
+    configured_rules: list[dict[str, Any]] = []
+    for (role, warn, high, critical), identities in sorted(grouped.items()):
+        alternatives = [
+            f"{re.escape(asset_id)};{re.escape(interface_name)}"
+            for asset_id, interface_name in sorted(set(identities))
+        ]
+        # Bound each RE2 expression while reducing relabel rule count for common profiles.
+        for offset in range(0, len(alternatives), 128):
+            regex = "^(?:" + "|".join(alternatives[offset:offset + 128]) + ")$"
+            for label, replacement in (
+                ("interface_role", role),
+                ("utilization_warn_pct", warn),
+                ("utilization_high_pct", high),
+                ("utilization_critical_pct", critical),
+            ):
+                configured_rules.append({
+                    "source_labels": ["asset_id", "ifName"],
+                    "separator": ";",
+                    "regex": regex,
+                    "target_label": label,
+                    "replacement": replacement,
+                    "action": "replace",
+                })
+    return default_rules + configured_rules
+
+
+def render_vmagent_config(
+    snapshot_path: str = "/etc/nexora-collector/runtime/vmagent/targets/snmp_targets.yml",
+    interface_profiles: Iterable[Mapping[str, Any]] = (),
+) -> dict[str, Any]:
     return {
         "global": {"scrape_interval": "60s", "scrape_timeout": "30s"},
         "scrape_configs": [
@@ -1102,6 +1175,7 @@ def render_vmagent_config(snapshot_path: str = "/etc/nexora-collector/runtime/vm
                     {"action": "labeldrop", "regex": "nexora_auth|nexora_.*"},
                     {"target_label": "__address__", "replacement": "snmp-exporter:9116"},
                 ],
+                "metric_relabel_configs": _profile_metric_relabel_configs(interface_profiles),
             },
             {
                 "job_name": "linux_servers",
@@ -1180,6 +1254,7 @@ def compile_artifact(
     modules: Iterable[Mapping[str, Any]] = (),
     variants: Iterable[Mapping[str, Any]] = (),
     servers: Iterable[Mapping[str, Any]] = (),
+    interface_profiles: Iterable[Mapping[str, Any]] = (),
     output_root: str | Path | None = None,
     compiler_version: str = "monitoring-compiler-1.0.0",
 ) -> dict[str, Any]:
@@ -1190,7 +1265,7 @@ def compile_artifact(
     variant_rows = list(variants)
     snapshot = render_target_snapshot(selected, collector_id=collector_id)
     target_yaml = yaml.safe_dump(snapshot, allow_unicode=True, sort_keys=False)
-    vmagent_yaml = yaml.safe_dump(render_vmagent_config(), allow_unicode=True, sort_keys=False)
+    vmagent_yaml = yaml.safe_dump(render_vmagent_config(interface_profiles=interface_profiles), allow_unicode=True, sort_keys=False)
     exporter_modules = render_exporter_modules(selected, modules=module_rows, variants=variant_rows)
     assignment_aliases = {
         str(a.get("credential_id") or ""): str(a.get("auth_alias") or "")

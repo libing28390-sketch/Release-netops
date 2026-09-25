@@ -6,9 +6,11 @@ from types import SimpleNamespace
 import pytest
 
 from api import storage_providers
+from services import config_snapshot_storage
 from services.storage_service import (
     LocalStorageBackend,
     S3StorageBackend,
+    StorageError,
     StorageNotFound,
     StorageProviderConfig,
     normalize_object_key,
@@ -98,6 +100,84 @@ def test_s3_health_check_rejects_provider_controlled_error_code(monkeypatch):
     assert not ok
     assert message == "S3 storage check failed: HTTP 403"
     assert "credential-text" not in message
+
+
+@pytest.mark.parametrize("operation", ["get_stream", "stat"])
+def test_s3_missing_bucket_is_storage_error_not_missing_object(monkeypatch, operation):
+    class FakeClientError(Exception):
+        response = {
+            "Error": {"Code": "NoSuchBucket"},
+            "ResponseMetadata": {"HTTPStatusCode": 404},
+        }
+
+    class FakeS3Client:
+        def get_object(self, **_kwargs):
+            raise FakeClientError()
+
+        def head_object(self, **_kwargs):
+            raise FakeClientError()
+
+    backend = S3StorageBackend(endpoint_url="http://storage.test:8333", bucket="nexora")
+    monkeypatch.setattr(backend, "_client", lambda: FakeS3Client())
+
+    with pytest.raises(StorageError) as raised:
+        getattr(backend, operation)("config/2026/09/snap.cfg.enc")
+
+    assert not isinstance(raised.value, StorageNotFound)
+    assert "NoSuchBucket (HTTP 404)" in str(raised.value)
+
+
+def test_s3_missing_object_remains_storage_not_found(monkeypatch):
+    class FakeClientError(Exception):
+        response = {
+            "Error": {"Code": "NoSuchKey"},
+            "ResponseMetadata": {"HTTPStatusCode": 404},
+        }
+
+    class FakeS3Client:
+        def get_object(self, **_kwargs):
+            raise FakeClientError()
+
+    backend = S3StorageBackend(endpoint_url="http://storage.test:8333", bucket="nexora")
+    monkeypatch.setattr(backend, "_client", lambda: FakeS3Client())
+
+    with pytest.raises(StorageNotFound):
+        backend.get_stream("config/2026/09/missing.cfg.enc")
+
+
+def test_config_snapshot_read_logs_safe_storage_failure(monkeypatch, caplog):
+    monkeypatch.setattr(
+        config_snapshot_storage,
+        "provider_for_row",
+        lambda _row: (_ for _ in ()).throw(StorageError("S3 download failed: NoSuchBucket (HTTP 404)")),
+    )
+
+    content = config_snapshot_storage.read_snapshot_content({
+        "id": "snapshot-1",
+        "object_key": "config/2026/09/snapshot-1.cfg.enc",
+        "storage_status": "READY",
+    })
+
+    assert content == ""
+    assert "snapshot-1" in caplog.text
+    assert "NoSuchBucket (HTTP 404)" in caplog.text
+
+
+def test_config_snapshot_strict_read_preserves_storage_failure(monkeypatch, caplog):
+    monkeypatch.setattr(
+        config_snapshot_storage,
+        "provider_for_row",
+        lambda _row: (_ for _ in ()).throw(StorageError("S3 download failed: NoSuchBucket (HTTP 404)")),
+    )
+
+    with pytest.raises(StorageError, match="NoSuchBucket"):
+        config_snapshot_storage.read_snapshot_content({
+            "id": "snapshot-2",
+            "object_key": "config/2026/09/snapshot-2.cfg.enc",
+            "storage_status": "READY",
+        }, strict_storage_errors=True)
+
+    assert "snapshot-2" in caplog.text
 
 
 def test_storage_provider_test_preserves_sanitized_health_message(monkeypatch):

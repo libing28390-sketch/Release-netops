@@ -9,9 +9,11 @@ asset model: tenants, sites, VRFs and VLANs. All routes are mounted under
 import logging
 import csv
 import io
+import math
 from typing import Optional
 from fastapi import APIRouter, BackgroundTasks, HTTPException, Query
 from fastapi.responses import Response
+from pydantic import BaseModel, ConfigDict, Field, field_validator
 from database import get_db_connection
 from core.rbac import require_role
 from core.read_cache import (
@@ -33,6 +35,41 @@ from services.audit_service import log_audit_event
 logger = logging.getLogger(__name__)
 
 router = APIRouter()
+
+
+class InterfaceMonitoringProfileUpdate(BaseModel):
+    """Operator-editable CMDB monitoring profile fields."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    interface_role: str | None = Field(default=None, min_length=1, max_length=32)
+    utilization_warn_pct: float | None = Field(default=None, ge=0, le=100)
+    utilization_high_pct: float | None = Field(default=None, ge=0, le=100)
+    utilization_critical_pct: float | None = Field(default=None, ge=0, le=100)
+
+    @field_validator("interface_role")
+    @classmethod
+    def normalize_role(cls, value: str | None) -> str | None:
+        if value is None:
+            return None
+        normalized = value.strip().lower()
+        if normalized not in cmdb_service.INTERFACE_ROLES:
+            raise ValueError(
+                "interface_role must be one of: "
+                + ", ".join(sorted(cmdb_service.INTERFACE_ROLES))
+            )
+        return normalized
+
+    @field_validator(
+        "utilization_warn_pct",
+        "utilization_high_pct",
+        "utilization_critical_pct",
+    )
+    @classmethod
+    def require_finite_percentage(cls, value: float | None) -> float | None:
+        if value is not None and not math.isfinite(value):
+            raise ValueError("utilization thresholds must be finite numbers")
+        return value
 
 
 def _asset_online_status_sql() -> str:
@@ -261,6 +298,23 @@ def _audit(user, event_type, severity, summary, target_type, target_id=None, tar
         logger.debug("audit log failed", exc_info=True)
 
 
+def _cmdb_interface_resource_scope(conn, user, action: str) -> tuple[str | None, tuple[str, ...] | None]:
+    """Resolve the caller's tenant/site scope for interface inventory access."""
+    if not isinstance(user, dict):
+        raise HTTPException(status_code=401, detail="Authentication required")
+    if user.get("role") == "Administrator":
+        return None, None
+
+    from services.rack_scope_service import allowed_resource_scope
+
+    scope = allowed_resource_scope(conn, user, "asset", action)
+    if not scope.tenant_id:
+        raise HTTPException(status_code=403, detail="Authenticated user is not assigned to a tenant")
+    if scope.site_ids == ():
+        raise HTTPException(status_code=403, detail="Insufficient permission for the interface scope")
+    return scope.tenant_id, scope.site_ids
+
+
 # ─── Network CMDB Skeleton ──────────────────────────
 
 @router.get("/cmdb/devices")
@@ -279,14 +333,49 @@ def api_list_cmdb_interfaces(
     search: Optional[str] = Query(default=None),
     page: int = Query(default=1, ge=1),
     page_size: int = Query(default=20, ge=1, le=100),
-    _user=require_role("Viewer"),
+    user=require_role("Viewer"),
 ):
     conn = get_db_connection()
     try:
+        tenant_id, site_ids = _cmdb_interface_resource_scope(conn, user, "view")
         return {"success": True, "data": cmdb_service.list_cmdb_interfaces(
             conn, has_ip=has_ip, device_id=device_id, search=search,
             page=page, page_size=page_size,
+            tenant_id=tenant_id, site_ids=site_ids,
         ), "message": ""}
+    finally:
+        conn.close()
+
+
+@router.patch("/cmdb/interfaces/{interface_id}/monitoring-profile")
+def api_update_cmdb_interface_monitoring_profile(
+    interface_id: str,
+    body: InterfaceMonitoringProfileUpdate,
+    user=require_role("Operator"),
+):
+    """Update the CMDB-owned thresholds consumed by interface monitoring."""
+    conn = get_db_connection()
+    try:
+        tenant_id, site_ids = _cmdb_interface_resource_scope(conn, user, "update")
+        profile = cmdb_service.update_interface_monitoring_profile(
+            conn,
+            interface_id,
+            tenant_id=tenant_id,
+            site_ids=site_ids,
+            **body.model_dump(exclude_unset=True),
+        )
+        _audit(
+            user,
+            "interface.monitoring_profile.update",
+            "info",
+            f"Updated monitoring profile for interface {interface_id}",
+            "interface",
+            interface_id,
+            profile.get("interface_name"),
+        )
+        return {"success": True, "data": profile, "message": "Interface monitoring profile updated"}
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
     finally:
         conn.close()
 

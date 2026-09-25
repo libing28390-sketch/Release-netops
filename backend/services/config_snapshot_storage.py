@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import gzip
 import io
+import logging
 import os
 from datetime import datetime
 from pathlib import Path
@@ -23,6 +24,7 @@ from services.storage_service import (
 
 LEGACY_BACKUP_ROOT = os.path.join(PROJECT_ROOT, "backup")
 CONFIG_CONTENT_TYPE = "application/octet-stream"
+logger = logging.getLogger(__name__)
 
 
 def _legacy_root() -> str:
@@ -155,8 +157,13 @@ def provider_for_row(row: Any) -> StorageService:
     )
 
 
-def read_snapshot_content(row: Any) -> str:
-    """Read a new object-backed snapshot or an explicitly legacy row."""
+def read_snapshot_content(row: Any, *, strict_storage_errors: bool = False) -> str:
+    """Read a new object-backed snapshot or an explicitly legacy row.
+
+    Internal analytics callers may keep the historical empty-string behavior.
+    User-facing content/download endpoints can request strict mode so storage
+    failures remain distinguishable from empty or missing config content.
+    """
 
     def value(name: str, default: Any = ""):
         if isinstance(row, dict):
@@ -176,9 +183,25 @@ def read_snapshot_content(row: Any) -> str:
                 return deserialize_config_bytes(stream.read())
             finally:
                 stream.close()
-        except (StorageError, OSError, ValueError):
+        except StorageError as exc:
             # A READY object is authoritative.  Do not silently read a stale
-            # local mirror when the configured provider reports an error.
+            # local mirror when the configured provider reports an error. Log
+            # the sanitized storage error so an operator can distinguish a
+            # missing object from an unavailable or misconfigured bucket.
+            logger.warning(
+                "[Storage] Config snapshot %s object read failed: %s",
+                str(value("id") or "unknown"),
+                str(exc),
+            )
+            if strict_storage_errors:
+                raise
+            return ""
+        except (OSError, ValueError) as exc:
+            logger.warning(
+                "[Storage] Config snapshot %s object read failed: %s",
+                str(value("id") or "unknown"),
+                type(exc).__name__,
+            )
             return ""
     return read_legacy_content(str(value("file_path") or ""))
 

@@ -422,6 +422,22 @@ def _init_db_logic(conn, *, allow_legacy_import: bool = True):
         allowed_vlans TEXT DEFAULT '',
         ip_enabled INTEGER DEFAULT 0,
         last_flapped TEXT,
+        interface_role TEXT NOT NULL DEFAULT 'unclassified',
+        utilization_warn_pct NUMERIC(5,2) NOT NULL DEFAULT 60,
+        utilization_high_pct NUMERIC(5,2) NOT NULL DEFAULT 75,
+        utilization_critical_pct NUMERIC(5,2) NOT NULL DEFAULT 90,
+        CONSTRAINT interfaces_monitoring_role_chk CHECK (
+            interface_role IN (
+                'uplink', 'wan', 'transit', 'server', 'storage',
+                'management', 'access', 'loopback', 'other', 'unclassified'
+            )
+        ),
+        CONSTRAINT interfaces_monitoring_utilization_order_chk CHECK (
+            utilization_warn_pct >= 0
+            AND utilization_warn_pct < utilization_high_pct
+            AND utilization_high_pct < utilization_critical_pct
+            AND utilization_critical_pct <= 100
+        ),
         FOREIGN KEY (device_id) REFERENCES devices (id) ON DELETE CASCADE,
         FOREIGN KEY (parent_interface_id) REFERENCES interfaces (id) ON DELETE SET NULL
     )
@@ -444,6 +460,10 @@ def _init_db_logic(conn, *, allow_legacy_import: bool = True):
     ensure_column('interfaces', 'last_seen', 'TEXT')
     ensure_column('interfaces', 'lag_id', "TEXT DEFAULT ''")
     ensure_column('interfaces', 'vlan_mode', "TEXT DEFAULT 'access'")
+    ensure_column('interfaces', 'interface_role', "TEXT NOT NULL DEFAULT 'unclassified'")
+    ensure_column('interfaces', 'utilization_warn_pct', 'NUMERIC(5,2) NOT NULL DEFAULT 60')
+    ensure_column('interfaces', 'utilization_high_pct', 'NUMERIC(5,2) NOT NULL DEFAULT 75')
+    ensure_column('interfaces', 'utilization_critical_pct', 'NUMERIC(5,2) NOT NULL DEFAULT 90')
     cursor.execute(
         "UPDATE interfaces SET name_raw = interface_name WHERE COALESCE(name_raw, '') = ''"
     )

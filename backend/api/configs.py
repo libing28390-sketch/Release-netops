@@ -16,6 +16,7 @@ from datetime import datetime, timedelta, timezone
 from fastapi import APIRouter, HTTPException, Query
 from fastapi.responses import Response
 from pydantic import BaseModel, Field
+from core.rbac import require_role
 from database import get_db_connection
 from services.audit_service import log_audit_event
 from core.config import settings
@@ -35,7 +36,7 @@ from services.config_snapshot_storage import (
     serialize_config_content,
     write_config_spool,
 )
-from services.storage_service import StorageError, build_storage_service
+from services.storage_service import StorageError, StorageNotFound, build_storage_service
 
 logger = logging.getLogger(__name__)
 
@@ -228,6 +229,79 @@ def _delete_config_file(file_path: str):
 
 def _row_to_dict(row) -> dict:
     return dict(row)
+
+
+def _snapshot_scope_filter(conn, user) -> tuple[str, list[str]]:
+    """Build the asset tenant/site predicate for a snapshot content read."""
+    from services.rack_scope_service import allowed_resource_scope
+
+    if not isinstance(user, dict):
+        return '1 = 0', []
+    if user.get('role') == 'Administrator':
+        return '', []
+
+    scope = allowed_resource_scope(conn, user, 'asset', 'view')
+    # Legacy users with no tenant assignment can otherwise receive an
+    # unbounded RackScope(None, None). Snapshot contents are sensitive, so
+    # non-admin access without an explicit tenant must fail closed.
+    if not scope.tenant_id:
+        return '1 = 0', []
+    if scope.site_ids is not None and not scope.site_ids:
+        return '1 = 0', []
+
+    clauses: list[str] = []
+    params: list[str] = [scope.tenant_id]
+    clauses.append('snapshot_scope_device.tenant_id = ?')
+    if scope.site_ids is not None:
+        placeholders = ','.join('?' for _ in scope.site_ids)
+        clauses.append(f'snapshot_scope_site.id IN ({placeholders})')
+        params.extend(scope.site_ids)
+    clauses.append('snapshot_scope_site.tenant_id = ?')
+    params.append(scope.tenant_id)
+
+    return (
+        '''EXISTS (
+               SELECT 1
+                 FROM devices snapshot_scope_device
+                 LEFT JOIN physical_assets snapshot_scope_asset
+                   ON snapshot_scope_asset.id = snapshot_scope_device.asset_id
+                 LEFT JOIN sites snapshot_scope_site ON (
+                       snapshot_scope_site.id = COALESCE(
+                           NULLIF(snapshot_scope_asset.site_id, ''),
+                           NULLIF(snapshot_scope_device.site_id, ''),
+                           NULLIF(snapshot_scope_device.site, '')
+                       )
+                       OR (
+                           COALESCE(snapshot_scope_asset.site_id, '') = ''
+                           AND COALESCE(snapshot_scope_device.site_id, '') = ''
+                           AND (
+                               snapshot_scope_site.site_code = snapshot_scope_device.site
+                               OR (
+                                   snapshot_scope_site.site_name = snapshot_scope_device.site
+                                   AND NOT EXISTS (
+                                       SELECT 1
+                                         FROM sites snapshot_scope_duplicate_site
+                                        WHERE snapshot_scope_duplicate_site.site_name = snapshot_scope_device.site
+                                          AND snapshot_scope_duplicate_site.id <> snapshot_scope_site.id
+                                   )
+                               )
+                           )
+                       )
+                   )
+                WHERE snapshot_scope_device.id = cs.device_id
+                  AND ''' + ' AND '.join(clauses) + ')',
+        params,
+    )
+
+
+def _load_snapshot_for_user(conn, snap_id: str, user):
+    scope_filter, scope_params = _snapshot_scope_filter(conn, user)
+    query = 'SELECT cs.* FROM config_snapshots cs WHERE cs.id = ?'
+    params: list[str] = [snap_id]
+    if scope_filter:
+        query += f' AND ({scope_filter})'
+        params.extend(scope_params)
+    return conn.execute(query, tuple(params)).fetchone()
 
 
 def _storage_columns(stored, *, status: str = 'READY', error: str = '') -> tuple:
@@ -984,20 +1058,23 @@ def create_snapshot(body: SnapshotCreate):
 
 
 @router.get('/configs/snapshots/{snap_id}/content')
-def get_snapshot_content(snap_id: str):
+def get_snapshot_content(snap_id: str, user=require_role('Viewer')):
     """Return full config content for a snapshot."""
     conn = get_db_connection()
     try:
-        row = conn.execute(
-            'SELECT * FROM config_snapshots WHERE id = ?', (snap_id,)
-        ).fetchone()
+        row = _load_snapshot_for_user(conn, snap_id, user)
     finally:
         conn.close()
 
     if not row:
         raise HTTPException(status_code=404, detail='Snapshot not found')
 
-    content = read_snapshot_content(row)
+    try:
+        content = read_snapshot_content(row, strict_storage_errors=True)
+    except StorageNotFound as exc:
+        raise HTTPException(status_code=404, detail='Snapshot object not found') from exc
+    except StorageError as exc:
+        raise HTTPException(status_code=503, detail='Snapshot storage unavailable') from exc
     actual_metadata = _config_snapshot_metadata(content)
     stored_hash = row['raw_hash'] or ''
     integrity_status = (
@@ -1035,20 +1112,23 @@ def get_snapshot_content(snap_id: str):
 
 
 @router.get('/configs/snapshots/{snap_id}/download')
-def download_snapshot(snap_id: str):
+def download_snapshot(snap_id: str, user=require_role('Viewer')):
     """Download config snapshot as a .cfg text file."""
     conn = get_db_connection()
     try:
-        row = conn.execute(
-            'SELECT * FROM config_snapshots WHERE id = ?', (snap_id,)
-        ).fetchone()
+        row = _load_snapshot_for_user(conn, snap_id, user)
     finally:
         conn.close()
 
     if not row:
         raise HTTPException(status_code=404, detail='Snapshot not found')
 
-    content = read_snapshot_content(row)
+    try:
+        content = read_snapshot_content(row, strict_storage_errors=True)
+    except StorageNotFound as exc:
+        raise HTTPException(status_code=404, detail='Snapshot object not found') from exc
+    except StorageError as exc:
+        raise HTTPException(status_code=503, detail='Snapshot storage unavailable') from exc
     ts_str = row['timestamp'].replace(':', '').replace('-', '').replace('T', '_').split('.')[0]
     filename = f"{row['hostname']}_{ts_str}.cfg"
     return Response(

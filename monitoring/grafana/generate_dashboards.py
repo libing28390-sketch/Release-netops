@@ -9,7 +9,64 @@ null = None
 ROOT_DIR = Path(__file__).resolve().parents[2]
 DASHBOARDS_DIR = ROOT_DIR / "monitoring" / "grafana" / "dashboards"
 DS_UID = "victoriametrics"
-DASHBOARD_VERSION = 27
+DASHBOARD_VERSION = 29
+NO_VALUE_TEXT = "数据暂不可用"
+
+INBOUND_COLOR = "#3274D9"
+OUTBOUND_COLOR = "#56A64B"
+ERROR_COLOR = "#FF9830"
+DISCARD_COLOR = "#F2495C"
+MULTICAST_COLOR = "#A352CC"
+BROADCAST_COLOR = "#E0B400"
+PPS_COLOR = "#00A6B2"
+UNKNOWN_COLOR = "gray"
+
+UTILIZATION_THRESHOLDS = [
+    {"color": "green", "value": None},
+    {"color": "yellow", "value": 60},
+    {"color": "orange", "value": 75},
+    {"color": "red", "value": 90},
+]
+
+STATUS_VALUE_MAPPINGS = [
+    {
+        "type": "value",
+        "options": {
+            "1": {"text": "Up", "color": "green"},
+            "2": {"text": "down", "color": "red"},
+            "0": {"text": "UNKNOWN", "color": UNKNOWN_COLOR},
+            "3": {"text": "UNKNOWN", "color": UNKNOWN_COLOR},
+            "4": {"text": "UNKNOWN", "color": UNKNOWN_COLOR},
+            "5": {"text": "UNKNOWN", "color": UNKNOWN_COLOR},
+            "6": {"text": "UNKNOWN", "color": UNKNOWN_COLOR},
+            "7": {"text": "UNKNOWN", "color": UNKNOWN_COLOR},
+        },
+    },
+    {
+        "type": "special",
+        "options": {
+            "match": "null",
+            "result": {"text": "UNKNOWN", "color": UNKNOWN_COLOR},
+        },
+    },
+    {
+        "type": "special",
+        "options": {
+            "match": "nan",
+            "result": {"text": "UNKNOWN", "color": UNKNOWN_COLOR},
+        },
+    },
+]
+
+ANOMALY_VALUE_MAPPINGS = [
+    {
+        "type": "value",
+        "options": {
+            "0": {"text": "正常", "color": "green"},
+            "1": {"text": "DOWN", "color": "red"},
+        },
+    },
+]
 
 DEV_JOIN = ""
 IF_JOIN = "* on(instance, ifIndex) group_left(ifName) ((ifName * 0 + 1) or on(instance, ifIndex) (ifOperStatus * 0 + 1))"
@@ -53,20 +110,31 @@ def filtered_interface_join(selector, *, alias_selector=None, fallback_status=Tr
 
 
 def interface_rate_sum(metrics, selector, interface_join):
-    """Sum optional interface counters without dropping rows for missing OIDs.
+    """Sum collected counter rates while preserving no-data when all are absent.
 
-    The zero vector also deduplicates repeated series for the same endpoint and
-    interface before adding counters with slightly different label sets.
+    Rate is evaluated before aggregation. A metric-name selector lets a device
+    contribute whichever members of an optional counter family it exports,
+    without fabricating zero samples when every member is missing.
     """
-    labels = "instance, hostname, site_name, ifIndex, ifName, ifAlias"
-    zero = f"max by ({labels}) ((ifOperStatus{{{selector}}} {interface_join}) * 0)"
-    terms = []
-    for metric in metrics:
-        rate = f"max by ({labels}) (rate({metric}{{{selector}}}[5m]) {interface_join})"
-        terms.append(f"({rate} or {zero})")
-    return " + ".join(terms)
+    labels = "instance, hostname, site_name, ifIndex, ifName, ifAlias, interface_role, utilization_warn_pct, utilization_high_pct, utilization_critical_pct"
+    metric_pattern = "|".join(str(metric) for metric in metrics)
+    family_rate = f'rate({{__name__=~"^({metric_pattern})$",{selector}}}[5m]) {interface_join}'
+    return f"sum by ({labels}) ({family_rate})"
 
-def stat_panel(pid, title, expr, x, y, w=4, h=4, unit="", color="green", thresholds=None):
+
+def interface_empty_fallback(status_expr, positive_rows_expr):
+    """Return one labelled fallback row when status exists but no rows do.
+
+    The two global counts make this a singleton row for the whole selection.
+    If the status metric is absent, the availability gate is empty and Grafana
+    correctly keeps the panel in No data state.
+    """
+    status_available = f"((count({status_expr}) or vector(0)) > 0)"
+    rows_absent = f"((count({positive_rows_expr}) or vector(0)) == 0)"
+    empty_selection = f"({status_available} and on() {rows_absent}) * 0"
+    return f'label_replace({empty_selection}, "ifName", "当前无异常", "", "")'
+
+def stat_panel(pid, title, expr, x, y, w=4, h=4, unit="", color="#3274D9", thresholds=None):
     steps = [{"color": color, "value": None}]
     if thresholds:
         steps = thresholds
@@ -79,7 +147,7 @@ def stat_panel(pid, title, expr, x, y, w=4, h=4, unit="", color="green", thresho
         "fieldConfig": {
             "defaults": {
                 "unit": unit,
-                "noValue": "—",
+                "noValue": NO_VALUE_TEXT,
                 "color": {"mode": "thresholds"},
                 "thresholds": {"mode": "absolute", "steps": steps}
             },
@@ -87,16 +155,23 @@ def stat_panel(pid, title, expr, x, y, w=4, h=4, unit="", color="green", thresho
         },
         "options": {
             "colorMode": "value",
-            "graphMode": "none",
+            "graphMode": "area",
             "justifyMode": "center",
             "orientation": "auto",
             "reduceOptions": {"calcs": ["lastNotNull"], "fields": "", "values": False},
-            "textMode": "value"
+            "textMode": "auto"
         },
         "targets": [{"expr": expr, "refId": "A"}]
     }
 
-def timeseries_panel(pid, title, targets, x, y, w=12, h=8, unit=""):
+def timeseries_color_override(matcher_id, matcher_options, color):
+    return {
+        "matcher": {"id": matcher_id, "options": matcher_options},
+        "properties": [{"id": "color", "value": {"mode": "fixed", "fixedColor": color}}],
+    }
+
+
+def timeseries_panel(pid, title, targets, x, y, w=12, h=8, unit="", color_overrides=None):
     return {
         "id": pid,
         "title": title,
@@ -106,14 +181,26 @@ def timeseries_panel(pid, title, targets, x, y, w=12, h=8, unit=""):
         "fieldConfig": {
             "defaults": {
                 "unit": unit,
-                "noValue": "—",
+                "noValue": NO_VALUE_TEXT,
                 "color": {"mode": "palette-classic"},
-                "custom": {"drawStyle": "line", "lineInterpolation": "linear", "fillOpacity": 10}
+                "custom": {
+                    "drawStyle": "line",
+                    "lineInterpolation": "linear",
+                    "lineWidth": 2,
+                    "fillOpacity": 10,
+                    "gradientMode": "none",
+                    "showPoints": "never",
+                }
             },
-            "overrides": []
+            "overrides": color_overrides or []
         },
         "options": {
-            "legend": {"displayMode": "list", "placement": "bottom", "showLegend": True},
+            "legend": {
+                "displayMode": "table",
+                "placement": "right",
+                "showLegend": True,
+                "calcs": ["lastNotNull", "max", "mean"],
+            },
             "tooltip": {"mode": "multi", "sort": "desc"}
         },
         "targets": targets
@@ -135,6 +222,10 @@ def clean_organize_transformation(
         interface_description_label: "接口描述",
         "vendor": "厂商",
         "role": "角色",
+        "interface_role": "接口角色",
+        "utilization_warn_pct": "预警阈值 (%)",
+        "utilization_high_pct": "高位阈值 (%)",
+        "utilization_critical_pct": "严重阈值 (%)",
         "Value": value_col_name,
     }
     if extra_renames:
@@ -161,17 +252,22 @@ def clean_organize_transformation(
                     "tenant_id": True,
                     "site_id": True,
                     "platform": True,
+                    "sysName": True,
+                    "nexora_interface_role": True,
                 },
                 "indexByName": {
-                    "sysName": 0,
+                    "site_name": 0,
                     "hostname": 1,
-                    "site_name": 2,
-                    "instance": 3,
-                    "ifName": 4,
-                    description_index: 5,
-                    "vendor": 6,
-                    "role": 7,
-                    "Value": 8,
+                    "instance": 2,
+                    "ifName": 3,
+                    description_index: 4,
+                    "vendor": 5,
+                    "role": 6,
+                    "interface_role": 7,
+                    "utilization_warn_pct": 8,
+                    "utilization_high_pct": 9,
+                    "utilization_critical_pct": 10,
+                    "Value": 11,
                 },
                 "renameByName": renames,
             }
@@ -182,12 +278,65 @@ def clean_organize_transformation(
         result[0]["options"]["excludeByName"]["ifDescr"] = True
     return result
 
-def table_panel(pid, title, expr, x, y, w=12, h=8, unit="", transformations=None, value_col_name="数值"):
+def table_panel(
+    pid,
+    title,
+    expr,
+    x,
+    y,
+    w=12,
+    h=8,
+    unit="",
+    transformations=None,
+    value_col_name="数值",
+    value_mappings=None,
+    gauge=False,
+    thresholds=None,
+    targets=None,
+    detail_link=False,
+    color_mapped_cells=False,
+):
     overrides = []
+    value_properties = []
     if unit:
+        value_properties.append({"id": "unit", "value": unit})
+    if gauge:
+        value_properties.extend([
+            {"id": "min", "value": 0},
+            {"id": "max", "value": 100},
+            {"id": "custom.cellOptions", "value": {"type": "gauge", "mode": "gradient"}},
+        ])
+    if thresholds:
+        value_properties.append({
+            "id": "thresholds",
+            "value": {"mode": "absolute", "steps": thresholds},
+        })
+    if value_mappings:
+        value_properties.append({"id": "mappings", "value": value_mappings})
+    if value_properties:
         overrides.append({
             "matcher": {"id": "byName", "options": value_col_name},
-            "properties": [{"id": "unit", "value": unit}]
+            "properties": value_properties,
+        })
+    if color_mapped_cells:
+        overrides.append({
+            "matcher": {"id": "byName", "options": value_col_name},
+            "properties": [{
+                "id": "custom.cellOptions",
+                "value": {"type": "color-text"},
+            }],
+        })
+    if detail_link:
+        overrides.append({
+            "matcher": {"id": "byName", "options": "接口全称"},
+            "properties": [{
+                "id": "links",
+                "value": [{
+                    "title": "打开接口详情",
+                    "url": "/d/nexora-interface-detail/interface-detail?var-site=${__data.fields[\"站点\"]}&var-vendor=${__data.fields[\"厂商\"]}&var-role=${__data.fields[\"角色\"]}&var-device=${__data.fields[\"设备名称\"]}&var-interface_role=${__data.fields[\"接口角色\"]}&var-interface=${__data.fields[\"接口全称\"]}&from=${__from}&to=${__to}",
+                    "targetBlank": False,
+                }],
+            }],
         })
     panel = {
         "id": pid,
@@ -198,21 +347,48 @@ def table_panel(pid, title, expr, x, y, w=12, h=8, unit="", transformations=None
         "fieldConfig": {
             "defaults": {
                 "unit": "none",
-                "noValue": "—",
-                "color": {"mode": "thresholds"}
+                "noValue": NO_VALUE_TEXT,
+                "color": {"mode": "thresholds"},
+                "custom": {"filterable": True},
             },
             "overrides": overrides
         },
         "options": {
             "cellHeight": "sm",
             "showHeader": True,
-            "footer": {"show": False}
+            "footer": {"show": False},
+            "enablePagination": True,
         },
-        "targets": [{"expr": expr, "format": "table", "instant": True, "refId": "A"}]
+        "targets": targets or [{"expr": expr, "format": "table", "instant": True, "refId": "A"}]
     }
     if transformations:
         panel["transformations"] = transformations
     return panel
+
+
+def row_panel(pid, title, y):
+    return {
+        "id": pid,
+        "title": title,
+        "type": "row",
+        "collapsed": False,
+        "gridPos": {"h": 1, "w": 24, "x": 0, "y": y},
+        "panels": [],
+    }
+
+
+def insert_section_rows(panels, sections):
+    """Insert visible Grafana row headings at existing grid boundaries."""
+    rows = []
+    for index, (title, before_y) in enumerate(sorted(sections, key=lambda item: item[1])):
+        shift = sum(1 for _, prior_y in sections if prior_y < before_y)
+        row_y = before_y + shift
+        rows.append(row_panel(900 + index, title, row_y))
+        for panel in panels:
+            grid = panel.get("gridPos") or {}
+            if int(grid.get("y", -1)) >= before_y:
+                grid["y"] = int(grid["y"]) + 1
+    return sorted([*panels, *rows], key=lambda panel: (panel.get("gridPos", {}).get("y", 0), panel.get("gridPos", {}).get("x", 0)))
 
 def bar_gauge_panel(pid, title, expr, x, y, w=12, h=8, unit="percent"):
     return {
@@ -228,11 +404,7 @@ def bar_gauge_panel(pid, title, expr, x, y, w=12, h=8, unit="percent"):
                 "max": 100,
                 "thresholds": {
                     "mode": "absolute",
-                    "steps": [
-                        {"color": "green", "value": None},
-                        {"color": "#E0B400", "value": 70},
-                        {"color": "red", "value": 85}
-                    ]
+                    "steps": UTILIZATION_THRESHOLDS
                 }
             },
             "overrides": []
@@ -268,17 +440,51 @@ def make_network_variables(multi_device=True, include_all_device=True, device_la
         make_query_variable("device", device_label, f'label_values({{__name__=~"ifOperStatus|up",{NETWORK_JOB},site_name=~"$site",vendor=~"$vendor",role=~"$role"}}, hostname)', multi=multi_device, include_all=include_all_device),
     ]
 
-def make_interface_variables(multi_device=True, include_all_device=True, include_all_interface=True, interface_label="接口", device_label="设备"):
+def make_interface_variables(
+    multi_device=True,
+    include_all_device=True,
+    include_all_interface=True,
+    interface_label="接口",
+    device_label="设备",
+    multi_interface=True,
+    include_threshold_values=False,
+):
     vars = make_network_variables(multi_device=multi_device, include_all_device=include_all_device, device_label=device_label)
+    vars.append(
+        make_query_variable(
+            "interface_role",
+            "接口角色",
+            f'label_values({{__name__=~"ifName",{NETWORK_JOB},site_name=~"$site",vendor=~"$vendor",role=~"$role",hostname=~"$device"}}, interface_role)',
+        )
+    )
     vars.append(
         make_query_variable(
             "interface",
             interface_label,
-            f'label_values({{__name__=~"ifName",{NETWORK_JOB},site_name=~"$site",vendor=~"$vendor",role=~"$role",hostname=~"$device"}}, ifName)',
-            multi=True,
+            f'label_values({{__name__=~"ifName",{NETWORK_JOB},site_name=~"$site",vendor=~"$vendor",role=~"$role",hostname=~"$device",interface_role=~"$interface_role"}}, ifName)',
+            multi=multi_interface,
             include_all=include_all_interface
         )
     )
+    if include_threshold_values:
+        threshold_selector = (
+            f'{{__name__=~"ifName",{NETWORK_JOB},site_name=~"$site",vendor=~"$vendor",'
+            f'role=~"$role",hostname=~"$device",ifName=~"$interface",interface_role=~"$interface_role"}}'
+        )
+        for variable, label in (
+            ("utilization_warn_pct", "预警阈值"),
+            ("utilization_high_pct", "高位阈值"),
+            ("utilization_critical_pct", "严重阈值"),
+        ):
+            vars.append(
+                make_query_variable(
+                    variable,
+                    label,
+                    f'label_values({threshold_selector}, {variable})',
+                    multi=False,
+                    include_all=False,
+                )
+            )
     return vars
 
 # 1. Overview Dashboard
@@ -328,6 +534,12 @@ def build_overview_dashboard():
         f"sum((hwWlanCurAssocUserNum{{{sel}}} or hh3cDot11CurrAssocUserNum{{{sel}}} or ruijieApcTotalStaNum{{{sel}}} or "
         f"cLSysTotalNumOfClients{{{sel}}} or wlsxSysExtStationsNum{{{sel}}} or ruckusZDTotalNumSta{{{sel}}})) or vector(0)"
     )
+    anomaly_rows = (
+        f'((ifAdminStatus{{{sel}}} == 1) and on(instance, ifIndex) '
+        f'(ifOperStatus{{{sel}}} != 1)) * on(instance, ifIndex) '
+        f'group_left(ifName) (ifName{{{sel}}} * 0 + 1)'
+    )
+    anomaly_fallback = interface_empty_fallback(f"ifOperStatus{{{sel}}}", anomaly_rows)
 
     panels = [
         stat_panel(1, "纳管设备数", f'count(count by (instance) (up{{{target_sel}}})) or vector(0)', 0, 0, 4, 3, color="#3274D9"),
@@ -340,10 +552,13 @@ def build_overview_dashboard():
             {"color": "#E0B400", "value": 1},
             {"color": "#F2495C", "value": 5}
         ]),
-        timeseries_panel(7, "网络接口总流量", [
+        timeseries_panel(7, "接口总流量趋势", [
             {"expr": f"sum({in_rate}) * 8", "legendFormat": "入流量", "refId": "A"},
             {"expr": f"sum({out_rate}) * 8", "legendFormat": "出流量", "refId": "B"}
-        ], 0, 3, 12, 8, unit="bps"),
+        ], 0, 3, 12, 8, unit="bps", color_overrides=[
+            timeseries_color_override("byName", "入流量", INBOUND_COLOR),
+            timeseries_color_override("byName", "出流量", OUTBOUND_COLOR),
+        ]),
         timeseries_panel(8, "全网无线终端与 AP 规模趋势", [
             {"expr": f"sum((hwWlanCurAssocUserNum{{{sel}}} or hh3cDot11CurrAssocUserNum{{{sel}}} or ruijieApcTotalStaNum{{{sel}}} or cLSysTotalNumOfClients{{{sel}}} or wlsxSysExtStationsNum{{{sel}}} or ruckusZDTotalNumSta{{{sel}}}))", "legendFormat": "无线客户端总数", "refId": "A"},
             {"expr": f"sum((hwWlanCurOnlineApNum{{{sel}}} or hh3cDot11CurrOnlineAPNum{{{sel}}} or ruijieApcOnlineApNum{{{sel}}} or ruijieApcTotalApNum{{{sel}}} or cLApTotalUpAPs{{{sel}}} or wlsxSysExtAccessPointsNum{{{sel}}} or ruckusZDTotalNumAP{{{sel}}}))", "legendFormat": "在线 AP 总数", "refId": "B"}
@@ -358,22 +573,36 @@ def build_overview_dashboard():
             {"expr": f"max by (hostname, site_name, instance, vendor) (hh3cEntityExtTemperature{{{sel}}} or hwEntityTemperature{{{sel}}} or ruijieDeviceTemperature{{{sel}}} or jnxOperatingTemp{{{sel}}} or zteTemperature{{{sel}}} or mpTemperature{{{sel}}} or dptechTemperature{{{sel}}} or dcnTemperature{{{sel}}})", "legendFormat": "{{site_name}} / {{hostname}} · {{vendor}}", "refId": "A"}
         ], 16, 11, 8, 8, unit="celsius"),
         table_panel(
-            12, "设备总流量排行 Top 10",
+            12, "设备总流量 Top10",
             f"topk(10, (sum by (hostname, site_name, instance, vendor) ({in_rate} * 8) + sum by (hostname, site_name, instance, vendor) ({out_rate} * 8)))",
             0, 19, 12, 8, unit="bps",
             transformations=clean_organize_transformation("总流量")
         ),
-        timeseries_panel(13, "接口错误与丢弃统计", [
+        timeseries_panel(13, "错误/丢弃趋势", [
             {"expr": f"sum(rate(ifInErrors{{{sel}}}[5m])) + sum(rate(ifOutErrors{{{sel}}}[5m]))", "legendFormat": "错误包/秒", "refId": "A"},
             {"expr": f"sum(rate(ifInDiscards{{{sel}}}[5m])) + sum(rate(ifOutDiscards{{{sel}}}[5m]))", "legendFormat": "丢弃包/秒", "refId": "B"}
-        ], 12, 19, 12, 8, unit="pps"),
+        ], 12, 19, 12, 8, unit="pps", color_overrides=[
+            timeseries_color_override("byName", "错误包/秒", ERROR_COLOR),
+            timeseries_color_override("byName", "丢弃包/秒", DISCARD_COLOR),
+        ]),
         table_panel(
-            14, "异常接口 Top 20",
-            f'topk(20, ((ifAdminStatus{{{sel}}} == 1) and on(instance, ifIndex) (ifOperStatus{{{sel}}} != 1)) * on(instance, ifIndex) group_left(ifName) (ifName{{{sel}}} * 0 + 1))',
+            14, "异常接口 Top20",
+            f"topk(20, {anomaly_rows}) or {anomaly_fallback}",
             0, 27, 24, 8,
-            transformations=clean_organize_transformation("运行状态")
+            transformations=clean_organize_transformation("运行状态"),
+            value_col_name="运行状态",
+            value_mappings=ANOMALY_VALUE_MAPPINGS,
+            detail_link=True,
+            color_mapped_cells=True,
         )
     ]
+
+    panels = insert_section_rows(panels, [
+        ("网络健康与规模", 0),
+        ("趋势与设备健康", 3),
+        ("流量排行与链路质量", 19),
+        ("需要关注的接口", 27),
+    ])
 
     return {
         "annotations": {"list": []},
@@ -391,7 +620,7 @@ def build_overview_dashboard():
         },
         "time": {"from": "now-6h", "to": "now"},
         "timezone": "browser",
-        "title": "01 网络总览 (Network Overview)",
+        "title": "01 网络总览（Network Overview）",
         "uid": "nexora-network-overview",
         "version": DASHBOARD_VERSION
     }
@@ -445,13 +674,20 @@ def build_device_dashboard():
         table_panel(
             8, "设备端口实时状态清单", f"ifOperStatus{{{dev_sel}}} {dev_if_join}", 12, 12, 12, 8,
             transformations=clean_organize_transformation(
-                "运行状态 (1=Up, 2=Down)", interface_description_label="ifAlias"
-            )
+                "运行状态", interface_description_label="ifAlias"
+            ),
+            value_col_name="运行状态",
+            value_mappings=STATUS_VALUE_MAPPINGS,
+            color_mapped_cells=True,
+            detail_link=True,
         ),
         timeseries_panel(9, "设备接口流量走势", [
             {"expr": f"sum by (hostname, site_name, ifName) ({in_rate} * 8 {dev_if_join})", "legendFormat": "{{site_name}} / {{hostname}} / {{ifName}} 入流量", "refId": "A"},
             {"expr": f"sum by (hostname, site_name, ifName) ({out_rate} * 8 {dev_if_join})", "legendFormat": "{{site_name}} / {{hostname}} / {{ifName}} 出流量", "refId": "B"}
-        ], 0, 20, 24, 8, unit="bps")
+        ], 0, 20, 24, 8, unit="bps", color_overrides=[
+            timeseries_color_override("byRegexp", ".*入流量$", INBOUND_COLOR),
+            timeseries_color_override("byRegexp", ".*出流量$", OUTBOUND_COLOR),
+        ])
     ]
 
     return {
@@ -542,62 +778,190 @@ def build_wireless_dashboard():
 # 4. Interface Traffic & Health Dashboard
 def build_interface_dashboard():
     sel = f'{NETWORK_JOB},site_name=~"$site",vendor=~"$vendor",role=~"$role",hostname=~"$device"'
-    if_filter = f'{sel},ifName=~"$interface"'
+    if_filter = f'{sel},ifName=~"$interface",interface_role=~"$interface_role"'
     in_rate = counter_rate_expr("ifHCInOctets", "ifInOctets", sel)
     out_rate = counter_rate_expr("ifHCOutOctets", "ifOutOctets", sel)
     if_join = filtered_interface_join(if_filter, alias_selector=sel, fallback_status=False)
-    stat_if_join = if_join
-    error_rate = interface_rate_sum(["ifInErrors", "ifOutErrors"], sel, stat_if_join)
-    discard_rate = interface_rate_sum(["ifInDiscards", "ifOutDiscards"], sel, stat_if_join)
-    error_and_discard_rate = interface_rate_sum(
-        ["ifInErrors", "ifOutErrors", "ifInDiscards", "ifOutDiscards"],
-        sel,
-        stat_if_join,
+    error_rate = interface_rate_sum(["ifInErrors", "ifOutErrors"], sel, if_join)
+    discard_rate = interface_rate_sum(["ifInDiscards", "ifOutDiscards"], sel, if_join)
+    in_packets = interface_rate_sum(
+        ["ifHCInUcastPkts", "ifHCInMulticastPkts", "ifHCInBroadcastPkts"], sel, if_join
     )
-    speed_bps = f'(((ifHighSpeed{{{sel}}} > 0) * 1000000) or (ifSpeed{{{sel}}} > 0))'
+    out_packets = interface_rate_sum(
+        ["ifHCOutUcastPkts", "ifHCOutMulticastPkts", "ifHCOutBroadcastPkts"], sel, if_join
+    )
+    total_packets = f"({in_packets} + {out_packets})"
+    error_pct = f"(100 * ({error_rate}) / clamp_min(({total_packets}), 1))"
+    discard_pct = f"(100 * ({discard_rate}) / clamp_min(({total_packets}), 1))"
+    speed_bps = f'(((ifHighSpeed{{{if_filter}}} > 0) * 1000000) or (ifSpeed{{{if_filter}}} > 0))'
     util_in = f'(({in_rate} * 8) / {speed_bps} * 100)'
     util_out = f'(({out_rate} * 8) / {speed_bps} * 100)'
+    profile_labels = "instance, hostname, site_name, vendor, role, ifIndex, ifName, ifAlias, interface_role, utilization_warn_pct, utilization_high_pct, utilization_critical_pct"
+    def max_across_directions(in_expr, out_expr):
+        tagged = (
+            f'label_replace({in_expr}, "direction", "in", "", "") or '
+            f'label_replace({out_expr}, "direction", "out", "", "")'
+        )
+        return f"max by ({profile_labels}) ({tagged})"
+
+    current_util = max_across_directions(f"{util_in} {if_join}", f"{util_out} {if_join}")
+    peak_util = max_across_directions(
+        f"max_over_time(({util_in} {if_join})[24h:])",
+        f"max_over_time(({util_out} {if_join})[24h:])",
+    )
+    p95_util = max_across_directions(
+        f"quantile_over_time(0.95, ({util_in} {if_join})[24h:])",
+        f"quantile_over_time(0.95, ({util_out} {if_join})[24h:])",
+    )
+    capacity_bps = f"max by ({profile_labels}) ({speed_bps} {if_join})"
+    capacity_rows = " or ".join(
+        f'label_replace(({expr}), "capacity_stat", "{label}", "", "")'
+        for expr, label in (
+            (current_util, "当前利用率"),
+            (peak_util, "24h峰值利用率"),
+            (p95_util, "24h P95利用率"),
+        )
+    )
+    quality_rows = (
+        f'label_replace(({error_pct}), "quality_type", "错误包百分比", "", "") or '
+        f'label_replace(({discard_pct}), "quality_type", "丢弃包百分比", "", "")'
+    )
+    packet_types = " or ".join(
+        f'label_replace(({expr}), "packet_type", "{label}", "", "")'
+        for expr, label in (
+            (in_packets, "入向"),
+            (out_packets, "出向"),
+            (interface_rate_sum(["ifHCInUcastPkts", "ifHCOutUcastPkts"], sel, if_join), "单播"),
+            (interface_rate_sum(["ifHCInMulticastPkts", "ifHCOutMulticastPkts"], sel, if_join), "组播"),
+            (interface_rate_sum(["ifHCInBroadcastPkts", "ifHCOutBroadcastPkts"], sel, if_join), "广播"),
+        )
+    )
+    flap_24h = f"changes(ifOperStatus{{{if_filter}}}[24h]) {if_join}"
+    flap_7d = f"changes(ifOperStatus{{{if_filter}}}[7d]) {if_join}"
+    # IF-MIB TimeTicks and sysUpTime wrap at 2^32 centiseconds. Modulo keeps
+    # the elapsed seconds non-negative across one wrap (sampling gaps still
+    # limit the flap count resolution).
+    last_change_age = (
+        f"(((sysUpTime{{{sel}}} - on(instance) group_right(ifIndex, ifName, ifAlias, interface_role, "
+        f"utilization_warn_pct, utilization_high_pct, utilization_critical_pct) ifLastChange{{{if_filter}}}) "
+        f"+ 4294967296) % 4294967296) / 100"
+    )
+    status_rows = f"ifOperStatus{{{if_filter}}} {if_join}"
 
     panels = [
-        stat_panel(1, "全网聚合入流量 (Inbound)", f"sum({in_rate} {stat_if_join}) * 8 or vector(0)", 0, 0, 6, 4, unit="bps", color="#3274D9"),
-        stat_panel(2, "全网聚合出流量 (Outbound)", f"sum({out_rate} {stat_if_join}) * 8 or vector(0)", 6, 0, 6, 4, unit="bps", color="#56A64B"),
-        stat_panel(3, "实时错误包总速率", f"sum({error_rate}) or vector(0)", 12, 0, 6, 4, unit="pps", thresholds=[{"color": "green", "value": None}, {"color": "#E0B400", "value": 10}, {"color": "red", "value": 100}]),
-        stat_panel(4, "实时丢弃包总速率", f"sum({discard_rate}) or vector(0)", 18, 0, 6, 4, unit="pps", thresholds=[{"color": "green", "value": None}, {"color": "#E0B400", "value": 10}, {"color": "red", "value": 100}]),
-        timeseries_panel(5, "高负荷端口入流量 Top 10", [
-            {"expr": f"topk(10, {in_rate} * 8 {if_join})", "legendFormat": "{{site_name}} / {{hostname}} / {{ifName}}", "refId": "A"}
-        ], 0, 4, 12, 8, unit="bps"),
-        timeseries_panel(6, "高负荷端口出流量 Top 10", [
-            {"expr": f"topk(10, {out_rate} * 8 {if_join})", "legendFormat": "{{site_name}} / {{hostname}} / {{ifName}}", "refId": "A"}
-        ], 12, 4, 12, 8, unit="bps"),
+        row_panel(901, "实时流量与吞吐", 0),
+        stat_panel(1, "接口入流量", f"sum({in_rate} {if_join}) * 8", 0, 1, 6, 3, unit="bps", color=INBOUND_COLOR),
+        stat_panel(2, "接口出流量", f"sum({out_rate} {if_join}) * 8", 6, 1, 6, 3, unit="bps", color=OUTBOUND_COLOR),
+        stat_panel(3, "错误包速率", f"sum({error_rate})", 12, 1, 6, 3, unit="pps", color=ERROR_COLOR),
+        stat_panel(4, "丢弃包速率", f"sum({discard_rate})", 18, 1, 6, 3, unit="pps", color=DISCARD_COLOR),
+        timeseries_panel(5, "接口流量趋势", [
+            {"expr": f"sum by (hostname, site_name, ifName) ({in_rate} * 8 {if_join})", "legendFormat": "{{site_name}} / {{hostname}} / {{ifName}} 入向", "refId": "A"},
+            {"expr": f"sum by (hostname, site_name, ifName) ({out_rate} * 8 {if_join})", "legendFormat": "{{site_name}} / {{hostname}} / {{ifName}} 出向", "refId": "B"},
+        ], 0, 4, 24, 7, unit="bps", color_overrides=[
+            timeseries_color_override("byRegexp", ".*入向$", INBOUND_COLOR),
+            timeseries_color_override("byRegexp", ".*出向$", OUTBOUND_COLOR),
+        ]),
+        row_panel(902, "容量与利用率", 11),
         table_panel(
-            7, "端口入向带宽利用率 Top 20",
+            6, "当前 / 24h 峰值 / 24h P95 利用率",
+            capacity_rows,
+            0, 12, 12, 7, unit="percent",
+            transformations=[{
+                "id": "organize",
+                "options": {
+                    "excludeByName": {"Time": True, "__name__": True, "ifIndex": True, "instance": True, "direction": True},
+                    "renameByName": {
+                        "capacity_stat": "指标", "ifName": "接口全称", "ifAlias": "接口描述",
+                        "hostname": "设备名称", "site_name": "站点", "vendor": "厂商", "role": "设备角色",
+                        "interface_role": "接口角色", "utilization_warn_pct": "预警阈值 (%)",
+                        "utilization_high_pct": "高位阈值 (%)", "utilization_critical_pct": "严重阈值 (%)",
+                        "Value": "利用率 (%)",
+                    },
+                    "indexByName": {"hostname": 0, "site_name": 1, "ifName": 2, "capacity_stat": 3, "Value": 4, "interface_role": 5, "utilization_warn_pct": 6, "utilization_high_pct": 7, "utilization_critical_pct": 8},
+                },
+            }],
+            value_col_name="利用率 (%)", gauge=True, thresholds=UTILIZATION_THRESHOLDS,
+            detail_link=True,
+        ),
+        table_panel(
+            16, "接口配置带宽", capacity_bps, 12, 12, 12, 7, unit="bps",
+            transformations=clean_organize_transformation("带宽 (bps)", interface_description_label="ifAlias"),
+            value_col_name="带宽 (bps)", detail_link=True,
+        ),
+        table_panel(
+            7, "入向利用率 Top20",
             f"topk(20, {util_in} {if_join})",
-            0, 12, 12, 8, unit="percent",
-            transformations=clean_organize_transformation("带宽利用率", interface_description_label="ifAlias"),
-            value_col_name="带宽利用率"
+            0, 19, 12, 7, unit="percent",
+            transformations=clean_organize_transformation("利用率 (%)", interface_description_label="ifAlias"),
+            value_col_name="利用率 (%)", gauge=True, thresholds=UTILIZATION_THRESHOLDS, detail_link=True,
         ),
         table_panel(
-            8, "端口出向带宽利用率 Top 20",
+            8, "出向利用率 Top20",
             f"topk(20, {util_out} {if_join})",
-            12, 12, 12, 8, unit="percent",
-            transformations=clean_organize_transformation("带宽利用率", interface_description_label="ifAlias"),
-            value_col_name="带宽利用率"
+            12, 19, 12, 7, unit="percent",
+            transformations=clean_organize_transformation("利用率 (%)", interface_description_label="ifAlias"),
+            value_col_name="利用率 (%)", gauge=True, thresholds=UTILIZATION_THRESHOLDS, detail_link=True,
+        ),
+        row_panel(903, "链路质量", 26),
+        table_panel(
+            9, "错误包 / 丢弃包百分比 Top20",
+            f"topk(20, ({quality_rows}))",
+            0, 27, 12, 7, unit="percent",
+            transformations=[{
+                "id": "organize", "options": {
+                    "excludeByName": {"Time": True, "__name__": True, "ifIndex": True, "instance": True, "direction": True},
+                    "renameByName": {"quality_type": "质量指标", "ifName": "接口全称", "ifAlias": "接口描述", "hostname": "设备名称", "site_name": "站点", "vendor": "厂商", "role": "设备角色", "interface_role": "接口角色", "utilization_warn_pct": "预警阈值 (%)", "utilization_high_pct": "高位阈值 (%)", "utilization_critical_pct": "严重阈值 (%)", "Value": "百分比 (%)"},
+                },
+            }],
+            value_col_name="百分比 (%)", detail_link=True,
+        ),
+        timeseries_panel(10, "错误与丢弃包速率", [
+            {"expr": f"sum by (hostname, site_name) ({error_rate})", "legendFormat": "{{site_name}} / {{hostname}} 错误 PPS", "refId": "A"},
+            {"expr": f"sum by (hostname, site_name) ({discard_rate})", "legendFormat": "{{site_name}} / {{hostname}} 丢弃 PPS", "refId": "B"},
+        ], 12, 27, 12, 7, unit="pps", color_overrides=[
+            timeseries_color_override("byRegexp", ".*错误 PPS$", ERROR_COLOR),
+            timeseries_color_override("byRegexp", ".*丢弃 PPS$", DISCARD_COLOR),
+        ]),
+        timeseries_panel(11, "入向 / 出向 / 单播 / 组播 / 广播 PPS", [
+            {"expr": f"sum by (packet_type) ({packet_types})", "legendFormat": "{{packet_type}} PPS", "refId": "A"},
+        ], 0, 34, 24, 7, unit="pps", color_overrides=[
+            timeseries_color_override("byRegexp", "入向 PPS", INBOUND_COLOR),
+            timeseries_color_override("byRegexp", "出向 PPS", OUTBOUND_COLOR),
+            timeseries_color_override("byRegexp", "单播 PPS", PPS_COLOR),
+            timeseries_color_override("byRegexp", "组播 PPS", MULTICAST_COLOR),
+            timeseries_color_override("byRegexp", "广播 PPS", BROADCAST_COLOR),
+        ]),
+        row_panel(904, "状态与抖动", 41),
+        table_panel(
+            12, "接口 Flap 次数：24h / 7d",
+            flap_24h,
+            0, 42, 12, 7,
+            targets=[
+                {"expr": flap_24h, "format": "table", "instant": True, "legendFormat": "24h", "refId": "A"},
+                {"expr": flap_7d, "format": "table", "instant": True, "legendFormat": "7d", "refId": "B"},
+            ],
+            transformations=[{
+                "id": "joinByLabels", "options": {"labels": ["instance", "hostname", "site_name", "ifIndex", "ifName", "ifAlias", "interface_role", "utilization_warn_pct", "utilization_high_pct", "utilization_critical_pct"]},
+            }, {
+                "id": "organize", "options": {"excludeByName": {"Time": True, "instance": True, "ifIndex": True}, "renameByName": {"ifName": "接口全称", "ifAlias": "接口描述", "hostname": "设备名称", "site_name": "站点", "Value #A": "24h Flap", "Value #B": "7d Flap"}},
+            }],
+            value_col_name="24h Flap", detail_link=True,
         ),
         table_panel(
-            9, "端口错误与丢弃排行 Top 20",
-            f"topk(20, {error_and_discard_rate})",
-            0, 20, 12, 8, unit="pps",
-            transformations=clean_organize_transformation("错误/丢弃率 (pps)", interface_description_label="ifAlias"),
-            value_col_name="错误/丢弃率 (pps)"
+            13, "距上次接口状态变化时间",
+            last_change_age,
+            12, 42, 12, 7, unit="s",
+            transformations=clean_organize_transformation("距上次变化 (秒)", interface_description_label="ifAlias"),
+            value_col_name="距上次变化 (秒)", detail_link=True,
         ),
         table_panel(
-            10, "接口实时状态清单",
-            f"ifOperStatus{{{sel}}} {if_join}",
-            12, 20, 12, 8,
-            transformations=clean_organize_transformation(
-                "运行状态 (1=Up, 2=Down)", interface_description_label="ifAlias"
-            )
-        )
+            14, "接口运行状态",
+            status_rows,
+            0, 49, 24, 7,
+            transformations=clean_organize_transformation("运行状态", interface_description_label="ifAlias"),
+            value_col_name="运行状态", value_mappings=STATUS_VALUE_MAPPINGS,
+            color_mapped_cells=True, detail_link=True,
+        ),
     ]
 
     return {
@@ -616,9 +980,170 @@ def build_interface_dashboard():
         },
         "time": {"from": "now-6h", "to": "now"},
         "timezone": "browser",
-        "title": "04 接口流量与健康 (Interface Traffic & Health)",
+        "title": "04 接口容量与链路质量（Interface Capacity & Health）",
         "uid": "nexora-network-interface",
         "version": DASHBOARD_VERSION
+    }
+
+# 4a. Interface detail drill-down dashboard
+def build_interface_detail_dashboard():
+    base_sel = f'{NETWORK_JOB},site_name=~"$site",vendor=~"$vendor",role=~"$role",hostname=~"$device"'
+    sel = f'{base_sel},ifName=~"$interface",interface_role=~"$interface_role"'
+    in_rate = counter_rate_expr("ifHCInOctets", "ifInOctets", sel)
+    out_rate = counter_rate_expr("ifHCOutOctets", "ifOutOctets", sel)
+    join = filtered_interface_join(sel, alias_selector=base_sel, fallback_status=False)
+    error_rate = interface_rate_sum(["ifInErrors", "ifOutErrors"], sel, join)
+    discard_rate = interface_rate_sum(["ifInDiscards", "ifOutDiscards"], sel, join)
+    in_packets = interface_rate_sum(["ifHCInUcastPkts", "ifHCInMulticastPkts", "ifHCInBroadcastPkts"], sel, join)
+    out_packets = interface_rate_sum(["ifHCOutUcastPkts", "ifHCOutMulticastPkts", "ifHCOutBroadcastPkts"], sel, join)
+    total_packets = f"({in_packets} + {out_packets})"
+    error_pct = f"(100 * ({error_rate}) / clamp_min(({total_packets}), 1))"
+    discard_pct = f"(100 * ({discard_rate}) / clamp_min(({total_packets}), 1))"
+    speed = f'(((ifHighSpeed{{{sel}}} > 0) * 1000000) or (ifSpeed{{{sel}}} > 0))'
+    util_in = f'(({in_rate} * 8) / {speed} * 100)'
+    util_out = f'(({out_rate} * 8) / {speed} * 100)'
+    labels = "instance, hostname, site_name, vendor, role, ifIndex, ifName, ifAlias, interface_role, utilization_warn_pct, utilization_high_pct, utilization_critical_pct"
+    current = f"max by ({labels}) (label_replace({util_in} {join}, \"direction\", \"in\", \"\", \"\") or label_replace({util_out} {join}, \"direction\", \"out\", \"\", \"\"))"
+    peak = f"max by ({labels}) (label_replace(max_over_time(({util_in} {join})[24h:]), \"direction\", \"in\", \"\", \"\") or label_replace(max_over_time(({util_out} {join})[24h:]), \"direction\", \"out\", \"\", \"\"))"
+    p95 = f"max by ({labels}) (label_replace(quantile_over_time(0.95, ({util_in} {join})[24h:]), \"direction\", \"in\", \"\", \"\") or label_replace(quantile_over_time(0.95, ({util_out} {join})[24h:]), \"direction\", \"out\", \"\", \"\"))"
+    packets_by_type = " or ".join(
+        f'label_replace(({expr}), "packet_type", "{name}", "", "")'
+        for expr, name in (
+            (in_packets, "入向"),
+            (out_packets, "出向"),
+            (interface_rate_sum(["ifHCInUcastPkts", "ifHCOutUcastPkts"], sel, join), "单播"),
+            (interface_rate_sum(["ifHCInMulticastPkts", "ifHCOutMulticastPkts"], sel, join), "组播"),
+            (interface_rate_sum(["ifHCInBroadcastPkts", "ifHCOutBroadcastPkts"], sel, join), "广播"),
+        )
+    )
+    quality = (
+        f'label_replace(({error_pct}), "quality_type", "错误包百分比", "", "") or '
+        f'label_replace(({discard_pct}), "quality_type", "丢弃包百分比", "", "")'
+    )
+    flap_24h = f"changes(ifOperStatus{{{sel}}}[24h]) {join}"
+    flap_7d = f"changes(ifOperStatus{{{sel}}}[7d]) {join}"
+    last_change_age = (
+        f"(((sysUpTime{{{NETWORK_JOB},site_name=~\"$site\",vendor=~\"$vendor\",role=~\"$role\",hostname=~\"$device\"}} "
+        f"- on(instance) group_right(ifIndex, ifName, ifAlias, interface_role, utilization_warn_pct, utilization_high_pct, utilization_critical_pct) ifLastChange{{{sel}}}) "
+        f"+ 4294967296) % 4294967296) / 100"
+    )
+    warn = "$utilization_warn_pct"
+    high = "$utilization_high_pct"
+    critical = "$utilization_critical_pct"
+    threshold_state = (
+        f"(({current} >= {critical}) * 0 + 3) or "
+        f"((({current} < {critical}) and ({current} >= {high})) * 0 + 2) or "
+        f"((({current} < {high}) and ({current} >= {warn})) * 0 + 1) or "
+        f"(({current} < {warn}) * 0)"
+    )
+    threshold_state_mappings = [{
+        "type": "value",
+        "options": {
+            "0": {"text": "NORMAL", "color": "green"},
+            "1": {"text": "WARNING", "color": "yellow"},
+            "2": {"text": "HIGH", "color": "orange"},
+            "3": {"text": "CRITICAL", "color": "red"},
+        },
+    }]
+
+    panels = [
+        row_panel(901, "实时状态与流量", 0),
+        stat_panel(1, "入向带宽", f"sum({in_rate} {join}) * 8", 0, 1, 4, 3, unit="bps", color=INBOUND_COLOR),
+        stat_panel(2, "出向带宽", f"sum({out_rate} {join}) * 8", 4, 1, 4, 3, unit="bps", color=OUTBOUND_COLOR),
+        stat_panel(3, "入向利用率", f"max({util_in} {join})", 8, 1, 4, 3, unit="percent", thresholds=UTILIZATION_THRESHOLDS),
+        stat_panel(4, "出向利用率", f"max({util_out} {join})", 12, 1, 4, 3, unit="percent", thresholds=UTILIZATION_THRESHOLDS),
+        stat_panel(5, "错误包速率", f"sum({error_rate})", 16, 1, 4, 3, unit="pps", color=ERROR_COLOR),
+        stat_panel(6, "丢弃包速率", f"sum({discard_rate})", 20, 1, 4, 3, unit="pps", color=DISCARD_COLOR),
+        timeseries_panel(7, "接口流量走势", [
+            {"expr": f"{in_rate} * 8 {join}", "legendFormat": "入向带宽", "refId": "A"},
+            {"expr": f"{out_rate} * 8 {join}", "legendFormat": "出向带宽", "refId": "B"},
+        ], 0, 4, 24, 7, unit="bps", color_overrides=[
+            timeseries_color_override("byName", "入向带宽", INBOUND_COLOR),
+            timeseries_color_override("byName", "出向带宽", OUTBOUND_COLOR),
+        ]),
+        timeseries_panel(15, "入向 / 出向利用率走势", [
+            {"expr": f"{util_in} {join}", "legendFormat": "入向利用率", "refId": "A"},
+            {"expr": f"{util_out} {join}", "legendFormat": "出向利用率", "refId": "B"},
+        ], 0, 11, 24, 7, unit="percent", color_overrides=[
+            timeseries_color_override("byName", "入向利用率", INBOUND_COLOR),
+            timeseries_color_override("byName", "出向利用率", OUTBOUND_COLOR),
+        ]),
+        row_panel(902, "容量画像", 18),
+        table_panel(
+            8, "当前 / 24h 峰值 / 24h P95 利用率", " or ".join(
+                f'label_replace(({expr}), "capacity_stat", "{name}", "", "")'
+                for expr, name in ((current, "当前利用率"), (peak, "24h峰值利用率"), (p95, "24h P95利用率"))
+            ), 0, 19, 12, 7, unit="percent",
+            transformations=[{
+                "id": "organize", "options": {
+                    "excludeByName": {"Time": True, "__name__": True, "ifIndex": True, "instance": True, "direction": True},
+                    "renameByName": {"capacity_stat": "指标", "ifName": "接口全称", "ifAlias": "接口描述", "hostname": "设备名称", "site_name": "站点", "vendor": "厂商", "role": "设备角色", "interface_role": "接口角色", "utilization_warn_pct": "预警阈值 (%)", "utilization_high_pct": "高位阈值 (%)", "utilization_critical_pct": "严重阈值 (%)", "Value": "利用率 (%)"},
+                },
+            }],
+            value_col_name="利用率 (%)", gauge=True, thresholds=UTILIZATION_THRESHOLDS,
+        ),
+        table_panel(
+            17, "接口配置带宽", f"max by ({labels}) ({speed} {join})", 12, 19, 12, 7, unit="bps",
+            transformations=clean_organize_transformation("带宽 (bps)", interface_description_label="ifAlias"),
+            value_col_name="带宽 (bps)",
+        ),
+        timeseries_panel(9, "入向 / 出向 / 单播 / 组播 / 广播 PPS", [
+            {"expr": f"sum by (packet_type) ({packets_by_type})", "legendFormat": "{{packet_type}} PPS", "refId": "A"},
+        ], 0, 27, 12, 7, unit="pps", color_overrides=[
+            timeseries_color_override("byRegexp", "入向 PPS", INBOUND_COLOR),
+            timeseries_color_override("byRegexp", "出向 PPS", OUTBOUND_COLOR),
+            timeseries_color_override("byRegexp", "单播 PPS", PPS_COLOR),
+            timeseries_color_override("byRegexp", "组播 PPS", MULTICAST_COLOR),
+            timeseries_color_override("byRegexp", "广播 PPS", BROADCAST_COLOR),
+        ]),
+        timeseries_panel(10, "错误 / 丢弃包速率走势", [
+            {"expr": f"sum({error_rate})", "legendFormat": "错误 PPS", "refId": "A"},
+            {"expr": f"sum({discard_rate})", "legendFormat": "丢弃 PPS", "refId": "B"},
+        ], 12, 27, 12, 7, unit="pps", color_overrides=[
+            timeseries_color_override("byRegexp", ".*错误 PPS$", ERROR_COLOR),
+            timeseries_color_override("byRegexp", ".*丢弃 PPS$", DISCARD_COLOR),
+        ]),
+        row_panel(903, "质量与稳定性", 26),
+        row_panel(904, "接口状态", 48),
+        table_panel(
+            11, "错误包 / 丢弃包百分比", quality, 0, 41, 12, 7, unit="percent",
+            transformations=[{"id": "organize", "options": {"excludeByName": {"Time": True, "__name__": True, "instance": True, "ifIndex": True}, "renameByName": {"quality_type": "质量指标", "ifName": "接口全称", "ifAlias": "接口描述", "hostname": "设备名称", "site_name": "站点", "Value": "百分比 (%)"}}}],
+            value_col_name="百分比 (%)",
+        ),
+        table_panel(
+            12, "接口 Flap 次数：24h / 7d", flap_24h, 12, 41, 12, 7,
+            targets=[{"expr": flap_24h, "format": "table", "instant": True, "refId": "A"}, {"expr": flap_7d, "format": "table", "instant": True, "refId": "B"}],
+            transformations=[{"id": "joinByLabels", "options": {"labels": ["instance", "hostname", "site_name", "ifIndex", "ifName", "ifAlias", "interface_role"]}}, {"id": "organize", "options": {"excludeByName": {"Time": True, "instance": True, "ifIndex": True}, "renameByName": {"ifName": "接口全称", "ifAlias": "接口描述", "hostname": "设备名称", "site_name": "站点", "Value #A": "24h Flap", "Value #B": "7d Flap"}}}],
+            value_col_name="24h Flap",
+        ),
+        table_panel(
+            13, "距上次接口状态变化时间", last_change_age, 0, 49, 12, 7, unit="s",
+            transformations=clean_organize_transformation("距上次变化 (秒)", interface_description_label="ifAlias"),
+            value_col_name="距上次变化 (秒)",
+        ),
+        table_panel(
+            14, "接口运行状态", f"ifOperStatus{{{sel}}} {join}", 12, 49, 12, 7,
+            transformations=clean_organize_transformation("运行状态", interface_description_label="ifAlias"),
+            value_col_name="运行状态", value_mappings=STATUS_VALUE_MAPPINGS, color_mapped_cells=True,
+        ),
+        row_panel(905, "CMDB 利用率阈值判断", 56),
+        table_panel(
+            16, "当前利用率状态（按接口配置阈值）", threshold_state, 0, 57, 24, 7,
+            transformations=clean_organize_transformation("阈值状态", interface_description_label="ifAlias"),
+            value_col_name="阈值状态", value_mappings=threshold_state_mappings,
+            color_mapped_cells=True,
+        ),
+    ]
+    return {
+        "annotations": {"list": []}, "editable": false, "fiscalYearStartMonth": 0,
+        "graphTooltip": 1, "id": None, "links": [], "panels": panels,
+        "refresh": "30s", "schemaVersion": 39,
+        "tags": ["nexora", "network", "interface", "detail"],
+        "templating": {"list": make_interface_variables(multi_device=False, include_all_device=False, include_all_interface=False, multi_interface=False, include_threshold_values=True)},
+        "time": {"from": "now-24h", "to": "now"}, "timezone": "browser",
+        "title": "09 接口详情（Interface Detail）",
+        "description": "从网络总览或接口排行进入，链接会携带站点、设备、接口筛选和时间范围。",
+        "uid": "nexora-interface-detail", "version": DASHBOARD_VERSION,
     }
 
 # 5. Monitoring Engine Health Dashboard
@@ -667,7 +1192,7 @@ def build_health_dashboard():
 def build_outbound_dashboard():
     # IF-MIB has no authoritative WAN-role label.  Require an explicit device
     # and interface selection instead of silently treating every port as WAN.
-    sel = f'{NETWORK_JOB},site_name=~"$site",vendor=~"$vendor",role=~"$role",hostname=~"$device"'
+    sel = f'{NETWORK_JOB},site_name=~"$site",vendor=~"$vendor",role=~"$role",hostname=~"$device",interface_role=~"$interface_role"'
     if_filter = f'{sel},ifName=~"$interface"'
     in_rate = counter_rate_expr("ifHCInOctets", "ifInOctets", sel)
     out_rate = counter_rate_expr("ifHCOutOctets", "ifOutOctets", sel)
@@ -684,47 +1209,58 @@ def build_outbound_dashboard():
     util_out = f'(({out_rate} * 8) / {speed_bps} * 100)'
 
     panels = [
-        stat_panel(1, "出口总入向实时带宽 (Inbound)", f"sum({in_rate} {if_join}) * 8 or vector(0)", 0, 0, 4, 4, unit="bps", color="#3274D9"),
-        stat_panel(2, "出口总出向实时带宽 (Outbound)", f"sum({out_rate} {if_join}) * 8 or vector(0)", 4, 0, 4, 4, unit="bps", color="#56A64B"),
-        stat_panel(3, "出口最高入向利用率", f"max({util_in} {if_join}) or vector(0)", 8, 0, 4, 4, unit="percent", thresholds=[
-            {"color": "green", "value": None}, {"color": "#E0B400", "value": 70}, {"color": "red", "value": 85}
-        ]),
-        stat_panel(4, "出口最高出向利用率", f"max({util_out} {if_join}) or vector(0)", 12, 0, 4, 4, unit="percent", thresholds=[
-            {"color": "green", "value": None}, {"color": "#E0B400", "value": 70}, {"color": "red", "value": 85}
-        ]),
+        stat_panel(1, "出口总入向实时带宽 (Inbound)", f"sum({in_rate} {if_join}) * 8 or vector(0)", 0, 0, 4, 4, unit="bps", color=INBOUND_COLOR),
+        stat_panel(2, "出口总出向实时带宽 (Outbound)", f"sum({out_rate} {if_join}) * 8 or vector(0)", 4, 0, 4, 4, unit="bps", color=OUTBOUND_COLOR),
+        stat_panel(3, "出口最高入向利用率", f"max({util_in} {if_join}) or vector(0)", 8, 0, 4, 4, unit="percent", thresholds=UTILIZATION_THRESHOLDS),
+        stat_panel(4, "出口最高出向利用率", f"max({util_out} {if_join}) or vector(0)", 12, 0, 4, 4, unit="percent", thresholds=UTILIZATION_THRESHOLDS),
         stat_panel(5, "出口链路错误与丢弃总速率", f"sum({error_rate} + {discard_rate}) or vector(0)", 16, 0, 4, 4, unit="pps", thresholds=[
             {"color": "green", "value": None}, {"color": "#E0B400", "value": 10}, {"color": "red", "value": 100}
         ]),
         stat_panel(6, "筛选接口数", f"count(count by (instance, ifIndex) (ifOperStatus{{{sel}}} {if_join})) or vector(0)", 20, 0, 4, 4, unit="none", color="#A352CC"),
         timeseries_panel(7, "出口设备入向流量趋势 (Inbound bps)", [
             {"expr": f"sum by (hostname, site_name) ({in_rate} * 8 {if_join})", "legendFormat": "{{site_name}} / {{hostname}} 入向", "refId": "A"}
-        ], 0, 4, 12, 8, unit="bps"),
+        ], 0, 4, 12, 8, unit="bps", color_overrides=[
+            timeseries_color_override("byRegexp", ".*入向$", INBOUND_COLOR),
+        ]),
         timeseries_panel(8, "出口设备出向流量趋势 (Outbound bps)", [
             {"expr": f"sum by (hostname, site_name) ({out_rate} * 8 {if_join})", "legendFormat": "{{site_name}} / {{hostname}} 出向", "refId": "A"}
-        ], 12, 4, 12, 8, unit="bps"),
+        ], 12, 4, 12, 8, unit="bps", color_overrides=[
+            timeseries_color_override("byRegexp", ".*出向$", OUTBOUND_COLOR),
+        ]),
         timeseries_panel(9, "出口端口入向利用率 Top 10", [
             {"expr": f"topk(10, {util_in} {if_join})", "legendFormat": "{{site_name}} / {{hostname}} / {{ifName}} 入向", "refId": "A"}
-        ], 0, 12, 12, 8, unit="percent"),
+        ], 0, 12, 12, 8, unit="percent", color_overrides=[
+            timeseries_color_override("byRegexp", ".*入向$", INBOUND_COLOR),
+        ]),
         timeseries_panel(10, "出口端口出向利用率 Top 10", [
             {"expr": f"topk(10, {util_out} {if_join})", "legendFormat": "{{site_name}} / {{hostname}} / {{ifName}} 出向", "refId": "A"}
-        ], 12, 12, 12, 8, unit="percent"),
+        ], 12, 12, 12, 8, unit="percent", color_overrides=[
+            timeseries_color_override("byRegexp", ".*出向$", OUTBOUND_COLOR),
+        ]),
         timeseries_panel(11, "出口链路错误与丢弃时序 (PPS)", [
             {"expr": f"sum by (hostname, site_name) ({error_rate})", "legendFormat": "{{site_name}} / {{hostname}} 错包/秒", "refId": "A"},
             {"expr": f"sum by (hostname, site_name) ({discard_rate})", "legendFormat": "{{site_name}} / {{hostname}} 丢弃/秒", "refId": "B"}
-        ], 0, 20, 24, 8, unit="pps"),
+        ], 0, 20, 24, 8, unit="pps", color_overrides=[
+            timeseries_color_override("byRegexp", ".*错包/秒$", ERROR_COLOR),
+            timeseries_color_override("byRegexp", ".*丢弃/秒$", DISCARD_COLOR),
+        ]),
         table_panel(
             12, "出口端口入向利用率排行 Top 10",
             f"topk(10, {util_in} {if_join})",
             0, 28, 12, 8, unit="percent",
             transformations=clean_organize_transformation("带宽利用率", interface_description_label="ifAlias"),
-            value_col_name="带宽利用率"
+            value_col_name="带宽利用率",
+            gauge=True,
+            thresholds=UTILIZATION_THRESHOLDS,
         ),
         table_panel(
             13, "出口端口出向利用率排行 Top 10",
             f"topk(10, {util_out} {if_join})",
             12, 28, 12, 8, unit="percent",
             transformations=clean_organize_transformation("带宽利用率", interface_description_label="ifAlias"),
-            value_col_name="带宽利用率"
+            value_col_name="带宽利用率",
+            gauge=True,
+            thresholds=UTILIZATION_THRESHOLDS,
         ),
         table_panel(
             14, "出口端口错误与丢弃排行 Top 10",
@@ -945,6 +1481,7 @@ def main():
         ("nexora-network-device.json", build_device_dashboard()),
         ("nexora-network-wireless.json", build_wireless_dashboard()),
         ("nexora-network-interface.json", build_interface_dashboard()),
+        ("nexora-interface-detail.json", build_interface_detail_dashboard()),
         ("nexora-monitoring-health.json", build_health_dashboard()),
         ("nexora-network-outbound.json", build_outbound_dashboard()),
         ("nexora-linux-metrics.json", build_linux_dashboard()),

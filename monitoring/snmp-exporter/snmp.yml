@@ -73,6 +73,22 @@ modules:
         labelname: ifDescr
         oid: 1.3.6.1.2.1.2.2.1.2
         type: DisplayString
+    - name: ifLastChange
+      oid: 1.3.6.1.2.1.2.2.1.9
+      type: gauge
+      help: Value of sysUpTime when the interface entered its current operational state, in hundredths of a second.
+      indexes:
+      - labelname: ifIndex
+        type: gauge
+      lookups:
+      - labels: [ifIndex]
+        labelname: ifName
+        oid: 1.3.6.1.2.1.31.1.1.1.1
+        type: DisplayString
+      - labels: [ifIndex]
+        labelname: ifDescr
+        oid: 1.3.6.1.2.1.2.2.1.2
+        type: DisplayString
     - name: ifInDiscards
       oid: 1.3.6.1.2.1.2.2.1.13
       type: counter

@@ -23,6 +23,7 @@ import {
   updateStorageProvider,
   type StorageProvider,
   type StorageProviderInput,
+  type StorageTestResponse,
 } from '../api/storage';
 import { ApiError } from '../api/http';
 import { primaryActionBtnClass, secondaryActionBtnClass } from '../components/shared';
@@ -59,6 +60,18 @@ const errorMessage = (error: unknown, zh: boolean): string => {
     return error.message.replace(/\s*\(Request ID:.*\)$/i, '') || (zh ? '请求失败，请重试。' : 'Request failed. Please try again.');
   }
   return error instanceof Error ? error.message : (zh ? '请求失败，请重试。' : 'Request failed. Please try again.');
+};
+
+const storageTestResult = (response: StorageTestResponse, zh: boolean): TestState => {
+  const success = response.ok !== false;
+  return {
+    kind: success ? 'success' : 'error',
+    message: success
+      ? (zh
+        ? 'S3 已连通且 Bucket 列表可访问；本项检查不验证文件上传和读取。'
+        : 'S3 is reachable and the bucket listing is accessible. This check does not verify object uploads or reads.')
+      : (response.message || (zh ? 'S3 连接或 Bucket 访问检查失败。' : 'S3 connection or bucket access check failed.')),
+  };
 };
 
 const formatDate = (value: string | null | undefined, zh: boolean) => {
@@ -195,7 +208,7 @@ const StorageManagementPage: React.FC<StorageManagementPageProps> = ({ language,
       const response = mode === 'edit' && !hasAccessKey && savedProfile
         ? await testSavedStorageProvider(savedProfile.id)
         : await testStorageProvider(connectionInput);
-      setFormTest({ kind: response.ok === false ? 'error' : 'success', message: response.message || (zh ? '连接测试成功。' : 'Connection test succeeded.') });
+      setFormTest(storageTestResult(response, zh));
     } catch (error) {
       setFormTest({ kind: 'error', message: errorMessage(error, zh) });
       if (error instanceof ApiError && error.status === 403) setPermissionDenied(true);
@@ -241,7 +254,7 @@ const StorageManagementPage: React.FC<StorageManagementPageProps> = ({ language,
     setSavedTests((current) => ({ ...current, [provider.id]: null }));
     try {
       const response = await testSavedStorageProvider(provider.id);
-      setSavedTests((current) => ({ ...current, [provider.id]: { kind: response.ok === false ? 'error' : 'success', message: response.message || (zh ? '连接测试成功。' : 'Connection test succeeded.') } }));
+      setSavedTests((current) => ({ ...current, [provider.id]: storageTestResult(response, zh) }));
     } catch (error) {
       setSavedTests((current) => ({ ...current, [provider.id]: { kind: 'error', message: errorMessage(error, zh) } }));
       if (error instanceof ApiError && error.status === 403) setPermissionDenied(true);
@@ -333,6 +346,19 @@ const StorageManagementPage: React.FC<StorageManagementPageProps> = ({ language,
                 </tbody>
               </table>
             </div>
+            <div className="mt-3 rounded-md border border-[var(--ui-border)] bg-[var(--ui-surface-muted)] px-3 py-2.5 text-xs text-[var(--muted-text)]">
+              <p className="font-semibold text-[var(--heading-text)]">{zh ? '存储用途' : 'Storage usage'}</p>
+              <p className="mt-1">
+                {zh
+                  ? '当前全局默认 Bucket 同时用于配置备份（config/）和 PAM 会话录像（pam/）；知识库文件目前未接入此对象存储。Bucket 需要先在 S3 服务中创建，本页只保存连接配置。'
+                  : 'The global-default bucket stores configuration backups under config/ and PAM session recordings under pam/. Knowledge-base files are not currently routed to this object store. Create the bucket in the S3 service first; this page only saves connection settings.'}
+              </p>
+              <p className="mt-1">
+                {zh
+                  ? 'Environment 配置读取自 .env；只有数据库中没有全局默认配置时才会作为回退项使用。'
+                  : 'The Environment profile reads from .env and is used as a fallback only when no database profile is set as the global default.'}
+              </p>
+            </div>
             {items.length > 0 && <p className="mt-3 text-[11px] text-[var(--muted-text)]">{zh ? '已被对象引用的配置不能删除或修改连接参数。' : 'Profiles referenced by stored objects cannot be deleted or have their connection settings changed.'}</p>}
           </div>
         </section>
@@ -351,7 +377,7 @@ const StorageManagementPage: React.FC<StorageManagementPageProps> = ({ language,
                 <div className="mb-4 border-b border-[var(--ui-border)] pb-2"><h3 className="text-sm font-semibold text-[var(--heading-text)]">{zh ? '基本设置' : 'Basic settings'}</h3></div>
                 <div className="space-y-3">
                   <div className={formRowClass}><label className={formRowLabelClass} htmlFor="storage-name">{zh ? '名称' : 'Name'} <span className="text-rose-600">*</span></label><input id="storage-name" className={inputClass} value={form.name} onChange={(event) => setField('name', event.target.value)} autoFocus placeholder={zh ? '名称' : 'Name'} /></div>
-                  <div className={formRowClass}><label className={formRowLabelClass} htmlFor="storage-backend">{zh ? '类型' : 'Type'} <span className="text-rose-600">*</span></label><select id="storage-backend" className={`${inputClass} bg-[var(--ui-surface-muted)]`} value={form.backend} disabled><option value="s3">S3</option></select></div>
+                  <div className={formRowClass}><span className={formRowLabelClass}>{zh ? '类型' : 'Type'}</span><span className="flex h-[38px] items-center rounded-lg border border-[var(--ui-border)] bg-[var(--ui-surface-muted)] px-3 text-sm text-[var(--ui-fg)]">S3</span></div>
                 </div>
               </section>
 
@@ -361,7 +387,7 @@ const StorageManagementPage: React.FC<StorageManagementPageProps> = ({ language,
                   <div className={formRowClass}><label className={formRowLabelClass} htmlFor="storage-bucket">{zh ? '桶名称' : 'Bucket name'} <span className="text-rose-600">*</span></label><input id="storage-bucket" className={inputClass} value={form.bucket} onChange={(event) => setField('bucket', event.target.value)} placeholder={zh ? '桶名称' : 'Bucket name'} /></div>
                   <div className={formRowClass}><label className={formRowLabelClass} htmlFor="storage-access-key">Access key ID {mode === 'create' && <span className="text-rose-600">*</span>}</label><div><input id="storage-access-key" className={inputClass} value={form.access_key_id} onChange={(event) => setField('access_key_id', event.target.value)} placeholder={mode === 'edit' ? (zh ? '留空保留当前值' : 'Leave blank to keep current') : 'Access key ID'} autoComplete="off" />{mode === 'edit' && <p className="mt-1 text-[11px] text-[var(--muted-text)]">{zh ? '当前值：' : 'Current: '}{items.find((item) => item.id === editingId)?.access_key_id_masked || (zh ? '已隐藏' : 'Hidden')}</p>}</div></div>
                   <div className={formRowClass}><label className={formRowLabelClass} htmlFor="storage-secret">Access key secret {mode === 'create' && <span className="text-rose-600">*</span>}</label><div><input id="storage-secret" type="password" className={inputClass} value={form.secret_access_key} onChange={(event) => setField('secret_access_key', event.target.value)} placeholder={mode === 'edit' ? (zh ? '留空保留当前值' : 'Leave blank to keep current') : 'Access key secret'} autoComplete="new-password" />{mode === 'edit' && <p className="mt-1 text-[11px] text-[var(--muted-text)]">{items.find((item) => item.id === editingId)?.has_secret_key ? (zh ? '当前 Secret 已加密保存' : 'Current secret is stored securely') : (zh ? '当前未配置 Secret' : 'No current secret')}</p>}</div></div>
-                  <div className={formRowClass}><label className={formRowLabelClass} htmlFor="storage-endpoint">{zh ? '端点' : 'Endpoint'} <span className="text-rose-600">*</span></label><input id="storage-endpoint" className={inputClass} value={form.endpoint_url} onChange={(event) => setField('endpoint_url', event.target.value)} placeholder={zh ? '端点' : 'Endpoint'} /></div>
+                  <div className={formRowClass}><label className={formRowLabelClass} htmlFor="storage-endpoint">{zh ? '端点' : 'Endpoint'} <span className="text-rose-600">*</span></label><div><input id="storage-endpoint" className={inputClass} value={form.endpoint_url} onChange={(event) => setField('endpoint_url', event.target.value)} placeholder={zh ? '端点' : 'Endpoint'} /><p className="mt-1 text-[11px] text-[var(--muted-text)]">{zh ? '填写 S3 API 地址（如 http://seaweedfs:8333）；Bucket 名和 config/、pam/ 目录不要填在 Endpoint 里，除非服务商明确要求路径前缀。' : 'Enter the S3 API URL (for example, http://seaweedfs:8333). Do not append the bucket name or config/ and pam/ folders unless your provider explicitly requires a path prefix.'}</p></div></div>
                 </div>
               </section>
 

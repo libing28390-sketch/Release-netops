@@ -1196,6 +1196,29 @@ def _load_compile_inputs(conn, collector_id: str, user: Any = None):
         conn.rollback()
         logger.warning("[CollectorCompile] Failed to query server targets: %s", exc, exc_info=True)
         servers = []
+    interface_sql = """
+        SELECT COALESCE(d.asset_id, d.id) AS asset_id,
+               i.interface_name, i.interface_role,
+               i.utilization_warn_pct, i.utilization_high_pct,
+               i.utilization_critical_pct
+        FROM interfaces i
+        JOIN devices d ON d.id = i.device_id
+        WHERE (d.status IS NULL OR LOWER(d.status) = 'online')
+    """
+    interface_params: tuple[Any, ...] = ()
+    if tenant is not None:
+        interface_sql += " AND COALESCE(d.tenant_id, 'tenant-default') = ?"
+        interface_params = (tenant,)
+    try:
+        interface_profiles = [
+            _dict(row) for row in conn.execute(interface_sql, interface_params).fetchall()
+        ]
+    except Exception as exc:
+        # Keep legacy installations compilable while their schema migration is
+        # pending; the dashboard still receives safe default interface labels.
+        conn.rollback()
+        logger.warning("[CollectorCompile] Failed to query interface profiles: %s", exc)
+        interface_profiles = []
     try:
         from services.tag_service import get_device_tags
         for device in devices:
@@ -1295,7 +1318,7 @@ def _load_compile_inputs(conn, collector_id: str, user: Any = None):
             # A legacy/incomplete CMDB row is left for the compiler to mark as
             # unconfigured; no plaintext fallback is introduced here.
             pass
-    return snmp_devices, plans, modules, variants, collectors, credentials, aliases, servers
+    return snmp_devices, plans, modules, variants, collectors, credentials, aliases, servers, interface_profiles
 
 
 @router.post("/collectors/{collector_id}/compile")
@@ -1328,6 +1351,7 @@ def compile_collector(collector_id: str, body: CompileRequest | None = None, _us
             modules=inputs[2],
             variants=inputs[3],
             servers=inputs[7],
+            interface_profiles=inputs[8],
             output_root=None,
         )
         validate_artifact(artifact)
@@ -1360,6 +1384,7 @@ def compile_collector(collector_id: str, body: CompileRequest | None = None, _us
             modules=inputs[2],
             variants=inputs[3],
             servers=inputs[7],
+            interface_profiles=inputs[8],
             output_root=artifact_root,
         )
         validate_artifact(artifact)

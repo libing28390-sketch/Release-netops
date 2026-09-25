@@ -114,6 +114,7 @@ STANDARD_INTERFACE_METRICS = [
     _metric("ifType", "1.3.6.1.2.1.2.2.1.3", "gauge", "Interface type enumeration.", source_name="ifType", indexes=_IF_INDEX, lookups=_INTERFACE_LOOKUPS),
     _metric("ifAdminStatus", "1.3.6.1.2.1.2.2.1.7", "gauge", "Administrative state of the interface.", source_name="ifAdminStatus", indexes=_IF_INDEX, lookups=_INTERFACE_LOOKUPS),
     _metric("ifOperStatus", "1.3.6.1.2.1.2.2.1.8", "gauge", "Operational state of the interface.", source_name="ifOperStatus", indexes=_IF_INDEX, lookups=_INTERFACE_LOOKUPS),
+    _metric("ifLastChange", "1.3.6.1.2.1.2.2.1.9", "gauge", "Value of sysUpTime when the interface entered its current operational state, in hundredths of a second.", source_name="ifLastChange", indexes=_IF_INDEX, lookups=_INTERFACE_LOOKUPS),
     _metric("ifInDiscards", "1.3.6.1.2.1.2.2.1.13", "counter", "Inbound packets discarded.", source_name="ifInDiscards", indexes=_IF_INDEX, lookups=_INTERFACE_LOOKUPS),
     _metric("ifInErrors", "1.3.6.1.2.1.2.2.1.14", "counter", "Inbound packets with errors.", source_name="ifInErrors", indexes=_IF_INDEX, lookups=_INTERFACE_LOOKUPS),
     _metric("ifInOctets", "1.3.6.1.2.1.2.2.1.10", "counter", "Inbound octets using the 32-bit interface counter.", source_name="ifInOctets", indexes=_IF_INDEX, lookups=_INTERFACE_LOOKUPS),
