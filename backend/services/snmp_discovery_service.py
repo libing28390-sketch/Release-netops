@@ -1118,6 +1118,7 @@ def persist_discovery(device_id: str, payload: Mapping[str, Any]) -> None:
     if payload.get("rule_source"):
         identity["rule_source"] = payload.get("rule_source")
     conn = get_db_connection()
+    hostname_sync_result = None
     try:
         conn.execute(
             """
@@ -1162,7 +1163,7 @@ def persist_discovery(device_id: str, payload: Mapping[str, Any]) -> None:
 
             # Keep inventory and discovery projections in the same transaction
             # so the Asset Management hostname cannot lag behind SNMP data.
-            sync_device_hostname_metadata(conn, str(device_id), raw_sys_name)
+            hostname_sync_result = sync_device_hostname_metadata(conn, str(device_id), raw_sys_name)
         conn.commit()
         with _discovery_cache_lock:
             _discovery_cache.pop(str(device_id), None)
@@ -1171,6 +1172,10 @@ def persist_discovery(device_id: str, payload: Mapping[str, Any]) -> None:
         raise
     finally:
         conn.close()
+    if hostname_sync_result:
+        from services.hostname_sync_service import schedule_monitoring_target_sync_if_hostname_changed
+
+        schedule_monitoring_target_sync_if_hostname_changed(hostname_sync_result)
 
 
 def _decode(row: Any) -> dict[str, Any]:

@@ -48,10 +48,14 @@ def _sync_snmp_hostname_projection(device_id: str, raw_sys_name: Any) -> None:
         return
     conn = get_db_connection()
     try:
-        from services.hostname_sync_service import sync_device_hostname_metadata
+        from services.hostname_sync_service import (
+            schedule_monitoring_target_sync_if_hostname_changed,
+            sync_device_hostname_metadata,
+        )
 
-        sync_device_hostname_metadata(conn, str(device_id), raw_sys_name)
+        sync_result = sync_device_hostname_metadata(conn, str(device_id), raw_sys_name)
         conn.commit()
+        schedule_monitoring_target_sync_if_hostname_changed(sync_result)
     except Exception as exc:
         conn.rollback()
         logger.debug("[SNMP] Hostname asset projection failed for %s: %s", device_id, type(exc).__name__)

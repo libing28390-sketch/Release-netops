@@ -2,8 +2,11 @@
 
 from __future__ import annotations
 
+import logging
 from datetime import datetime, timezone
 from typing import Any
+
+logger = logging.getLogger(__name__)
 
 
 def clean_system_hostname(raw_sys_name: Any) -> str:
@@ -63,4 +66,32 @@ def sync_device_hostname_metadata(conn, device_id: str, raw_sys_name: Any) -> di
     }
 
 
-__all__ = ["clean_system_hostname", "sync_device_hostname_metadata"]
+def schedule_monitoring_target_sync_if_hostname_changed(sync_result: dict[str, str] | None) -> bool:
+    """Queue a debounced collector target rebuild after a committed hostname change."""
+
+    if not sync_result:
+        return False
+    previous = str(sync_result.get("previous_hostname") or "").strip()
+    current = str(sync_result.get("hostname") or sync_result.get("new_hostname") or "").strip()
+    if not current or previous == current:
+        return False
+
+    try:
+        from services.collector_sync_service import trigger_async_monitoring_sync
+
+        trigger_async_monitoring_sync()
+        return True
+    except Exception as exc:
+        logger.warning(
+            "[HostnameSync] Failed to schedule collector target sync for device %s (%s)",
+            sync_result.get("device_id") or "unknown",
+            type(exc).__name__,
+        )
+        return False
+
+
+__all__ = [
+    "clean_system_hostname",
+    "schedule_monitoring_target_sync_if_hostname_changed",
+    "sync_device_hostname_metadata",
+]

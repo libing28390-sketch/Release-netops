@@ -4084,12 +4084,13 @@ async def snmp_test(device_id: str):
                 if 'psu_status' in updates and isinstance(updates['psu_status'], bool):
                     updates['psu_status'] = 'true' if updates['psu_status'] else 'false'
 
+                hostname_sync_result = None
                 conn2 = get_db_connection()
                 try:
                     if dev_info.get('sys_name'):
                         from services.hostname_sync_service import sync_device_hostname_metadata
 
-                        sync_device_hostname_metadata(conn2, device_id, dev_info['sys_name'])
+                        hostname_sync_result = sync_device_hostname_metadata(conn2, device_id, dev_info['sys_name'])
                     if updates:
                         set_clause = ', '.join(f'{k} = ?' for k in updates)
                         conn2.execute(f'UPDATE devices SET {set_clause} WHERE id = ?',
@@ -4119,6 +4120,10 @@ async def snmp_test(device_id: str):
                     conn2.commit()
                 finally:
                     conn2.close()
+                if hostname_sync_result:
+                    from services.hostname_sync_service import schedule_monitoring_target_sync_if_hostname_changed
+
+                    schedule_monitoring_target_sync_if_hostname_changed(hostname_sync_result)
                 record_collection_result(
                     device_id,
                     'snmp_interfaces',
@@ -4328,28 +4333,20 @@ async def sync_device_hostname(device_id: str, user=require_role("Operator")):
 
     clean_name = clean_system_hostname(raw_sys_name) or str(raw_sys_name).strip()
     previous_hostname = device_data.get('hostname') or ''
-    asset_id = device_data.get('asset_id')
 
+    hostname_sync_result = None
     conn2 = get_db_connection()
     try:
-        conn2.execute(
-            'UPDATE devices SET hostname = ?, sys_name = ? WHERE id = ?',
-            (clean_name, raw_sys_name, device_id),
-        )
-        if asset_id:
-            conn2.execute(
-                'UPDATE physical_assets SET hostname = ?, updated_at = ? WHERE id = ?',
-                (clean_name, _utc_now(), asset_id),
-            )
-        # Also update topology observations where this device is source or target
-        conn2.execute(
-            'UPDATE topology_observations SET source_hostname = ? WHERE source_device_id = ?',
-            (clean_name, device_id),
-        )
-        # If any observation target_device_id was matched to this device, rematch or update
+        from services.hostname_sync_service import sync_device_hostname_metadata
+
+        hostname_sync_result = sync_device_hostname_metadata(conn2, device_id, raw_sys_name)
         conn2.commit()
     finally:
         conn2.close()
+    if hostname_sync_result:
+        from services.hostname_sync_service import schedule_monitoring_target_sync_if_hostname_changed
+
+        schedule_monitoring_target_sync_if_hostname_changed(hostname_sync_result)
 
     return {
         "success": True,
@@ -4544,29 +4541,21 @@ async def batch_sync_hostname(
             }
 
         clean_name = clean_system_hostname(raw_sys_name) or str(raw_sys_name).strip()
-        asset_id = device_data.get("asset_id")
 
         # Update DB if name changed or sys_name changed
         conn_u = get_db_connection()
         try:
-            conn_u.execute(
-                "UPDATE devices SET hostname = ?, sys_name = ? WHERE id = ?",
-                (clean_name, raw_sys_name, dev_id),
-            )
-            if asset_id:
-                conn_u.execute(
-                    "UPDATE physical_assets SET hostname = ?, updated_at = ? WHERE id = ?",
-                    (clean_name, _utc_now(), asset_id),
-                )
-            conn_u.execute(
-                "UPDATE topology_observations SET source_hostname = ? WHERE source_device_id = ?",
-                (clean_name, dev_id),
-            )
+            from services.hostname_sync_service import sync_device_hostname_metadata
+
+            hostname_sync_result = sync_device_hostname_metadata(conn_u, dev_id, raw_sys_name)
             conn_u.commit()
         finally:
             conn_u.close()
 
-        is_updated = (clean_name != prev_name)
+        is_updated = bool(
+            hostname_sync_result
+            and hostname_sync_result.get("previous_hostname") != hostname_sync_result.get("hostname")
+        )
         return {
             "device_id": dev_id,
             "ip": snmp_ip,
@@ -4581,6 +4570,11 @@ async def batch_sync_hostname(
     updated_count = sum(1 for r in results if r.get("status") == "updated")
     unchanged_count = sum(1 for r in results if r.get("status") == "unchanged")
     failed_count = sum(1 for r in results if r.get("status") == "failed")
+    if updated_count:
+        from services.hostname_sync_service import schedule_monitoring_target_sync_if_hostname_changed
+
+        first_changed_result = next((result for result in results if result.get("status") == "updated"), None)
+        schedule_monitoring_target_sync_if_hostname_changed(first_changed_result)
 
     return {
         "success": True,
