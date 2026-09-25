@@ -206,7 +206,13 @@ interface TopologyGraphProps {
   onLinkClick?: (link: Link) => void;
 }
 
-const getFullInterfaceLabel = (value?: string) => String(value || '').replace(/\s+interface\s*$/i, '').trim();
+const getFullInterfaceLabel = (value?: string) => {
+  const label = String(value || '').replace(/\s+interface\s*$/i, '').trim();
+  // The SNMP collector uses Port-<index> when it cannot resolve an LLDP/CDP
+  // port index to a device interface name. Keep that fallback in topology data
+  // for correlation, but do not present it as a real interface on the graph.
+  return /^port-\d+$/i.test(label) ? '' : label;
+};
 
 const getLinkEndpointLabel = (item: any, side: 'source' | 'target') => {
   if (side === 'source' && item?.source_is_group) return '';
