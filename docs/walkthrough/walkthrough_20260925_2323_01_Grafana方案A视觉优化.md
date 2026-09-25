@@ -4,7 +4,7 @@
 
 按方案 A 完成 8 个既有看板的视觉统一，并新增 `09 接口详情` 下钻页。所有接口状态表均将 `1` 显示为绿色 `Up`、`2` 显示为红色 `down`；`0`、`3–7`、空值和 NaN 显示为灰色 `UNKNOWN`，不呈现原始状态数字。
 
-`01 网络总览` 使用摘要、趋势、热点和异常分区；设备与接口表提供详情下钻。`04` 聚焦接口利用率、容量、链路质量和稳定性，补入 Current/24h Peak/24h P95、入/出利用率 Top20、错误/丢弃百分比、入向/出向/单播/组播/广播 PPS、24h/7d Flap 和 Last Change。
+`01 网络总览` 使用摘要、趋势、热点和异常分区；设备与接口表提供详情下钻。`04 接口流量与健康（Interface Traffic & Health）` 聚焦接口利用率、容量、链路质量和稳定性，补入 Current/24h Peak/24h P95、入/出利用率 Top20、错误/丢弃百分比、入向/出向/单播/组播/广播 PPS、24h/7d Flap 和 Last Change。
 
 ## 视觉与交互
 
@@ -36,6 +36,7 @@
 
 - `.venv\Scripts\python.exe -m py_compile`：生成器、监控编译器、Monitoring V1 API、OID catalog 与两条迁移通过。
 - `.venv\Scripts\python.exe monitoring\grafana\generate_dashboards.py`：成功生成 9 份 JSON。
+- 完成对照原始方案的复核后，将 04 页标题对齐为 `04 接口流量与健康（Interface Traffic & Health）`；生成器再次输出 9 份 JSON，目标标题与生成器一致。
 - 一次性静态结构检查通过：全部 JSON 可解析、面板 ID 唯一、datasource UID 正确、接口状态映射完整、详情页变量/链接和关键 P1/P2 面板存在；面板网格无重叠。04 与详情页 PPS 图现在包含入向/出向方向总速率及单播/组播/广播分类。
 - SNMP exporter YAML 解析与 `ifLastChange` OID/索引/lookup 检查通过；vmagent profile relabel 配置静态检查通过。
 - 并行只读审查发现的 `ifAlias` selector 不匹配已改为设备级 selector；CMDB tenant/site scope 和合成库存行可编辑条件也已补齐。

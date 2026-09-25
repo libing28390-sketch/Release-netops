@@ -980,7 +980,7 @@ def build_interface_dashboard():
         },
         "time": {"from": "now-6h", "to": "now"},
         "timezone": "browser",
-        "title": "04 接口容量与链路质量（Interface Capacity & Health）",
+        "title": "04 接口流量与健康（Interface Traffic & Health）",
         "uid": "nexora-network-interface",
         "version": DASHBOARD_VERSION
     }
