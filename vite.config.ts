@@ -3,6 +3,37 @@ import react from '@vitejs/plugin-react';
 import path from 'path';
 import { defineConfig, loadEnv } from 'vite';
 
+function buildProgressPlugin() {
+  let transformedModules = 0;
+  let startedAt = 0;
+
+  const report = (message: string) => {
+    const elapsedSeconds = Math.floor((Date.now() - startedAt) / 1000);
+    console.log(`[frontend-build] ${message} (${elapsedSeconds}s elapsed)`);
+  };
+
+  return {
+    name: 'nexora-build-progress',
+    apply: 'build' as const,
+    enforce: 'post' as const,
+    buildStart() {
+      transformedModules = 0;
+      startedAt = Date.now();
+      report('Vite build started');
+    },
+    transform() {
+      transformedModules += 1;
+      if (transformedModules % 250 === 0) {
+        report(`${transformedModules} modules transformed`);
+      }
+      return null;
+    },
+    buildEnd() {
+      report(`module transform finished; ${transformedModules} modules processed, generating output`);
+    },
+  };
+}
+
 export default defineConfig(({ mode }) => {
   const env = loadEnv(mode, '.', '');
   // Windows/Hyper-V/WSL may reserve broad dynamic ranges. Keep the default
@@ -10,7 +41,7 @@ export default defineConfig(({ mode }) => {
   // explicit override for deployments or another local environment.
   const frontendPort = Number(env.VITE_PORT || process.env.VITE_PORT || '5400');
   return {
-    plugins: [react(), tailwindcss()],
+    plugins: [react(), tailwindcss(), buildProgressPlugin()],
     define: {
       'process.env.GEMINI_API_KEY': JSON.stringify(env.GEMINI_API_KEY),
     },

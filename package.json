@@ -11,7 +11,7 @@
     "dev:frontend": "node scripts/dev-frontend.mjs",
     "start:linux": "npm run build && cross-env PYTHONUNBUFFERED=1 NODE_ENV=production .venv/bin/python backend/main.py",
     "start": "npm run start:internal",
-    "build": "cross-env NODE_OPTIONS=\"--max-old-space-size=4096\" vite build",
+    "build": "node scripts/build-frontend.mjs",
     "build:geo-data": "node scripts/build-geo-data.mjs",
     "preview": "vite preview",
     "clean": "node -e \"require('fs').rmSync('dist',{recursive:true,force:true})\"",

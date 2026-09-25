@@ -6,7 +6,7 @@ COPY package.json package-lock.json* ./
 # Promptfoo pulls in native better-sqlite3, which is unrelated to the PostgreSQL runtime.
 RUN npm ci --omit=dev
 COPY . .
-RUN NODE_OPTIONS="--max-old-space-size=4096" ./node_modules/.bin/vite build
+RUN npm run build
 
 # ── Stage 2: Python Runtime ──────────────────────────────────────────
 # Pin the production runtime to Python 3.11.  The backend uses the standard
