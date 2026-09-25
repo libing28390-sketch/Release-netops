@@ -59,7 +59,6 @@ class Settings(BaseSettings):
     STORAGE_RETRY_INTERVAL_SECONDS: int = 60
     S3_ENDPOINT_URL: str = ""
     S3_BUCKET: str = "nexora"
-    S3_REGION: str = "us-east-1"
     S3_ACCESS_KEY_ID: str = ""
     S3_SECRET_ACCESS_KEY: str = ""
     S3_FORCE_PATH_STYLE: bool = True

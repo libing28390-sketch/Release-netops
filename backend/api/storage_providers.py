@@ -395,7 +395,7 @@ def _test_profile(profile: StorageProviderConfig) -> dict:
         return {
             "ok": bool(ok),
             "success": bool(ok),
-            "message": message if ok else "Storage provider health check failed",
+            "message": message,
         }
     except Exception as exc:
         return {"ok": False, "success": False, "message": f"Storage provider test failed: {type(exc).__name__}"}

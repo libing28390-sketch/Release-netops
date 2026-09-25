@@ -9,6 +9,7 @@ from pathlib import Path
 ROOT = Path(__file__).resolve().parents[3]
 SCRIPT = ROOT / "scripts" / "deploy-docker.sh"
 ENV_EXAMPLE = ROOT / ".env.example"
+DOCKER_COMPOSE = ROOT / "docker-compose.yml"
 DOCKER_DOC = ROOT / "docs" / "deploy" / "docker.md"
 BASH = Path(r"C:\Program Files\Git\bin\bash.exe") if Path(r"C:\Program Files\Git\bin\bash.exe").exists() else Path("bash")
 
@@ -93,9 +94,12 @@ def test_storage_backend_normalizes_dotenv_format_and_selects_profile(tmp_path):
 
 def test_s3_examples_use_the_compose_network_and_document_required_settings():
     env_example = ENV_EXAMPLE.read_text(encoding="utf-8")
+    compose = DOCKER_COMPOSE.read_text(encoding="utf-8")
     docker_doc = DOCKER_DOC.read_text(encoding="utf-8")
 
     assert "S3_ENDPOINT_URL=http://seaweedfs:8333" in env_example
+    assert "S3_REGION" not in env_example
+    assert "S3_REGION" not in compose
     assert "S3_ENDPOINT_URL" in docker_doc
     assert "S3_BUCKET" in docker_doc
     assert "S3_ACCESS_KEY_ID" in docker_doc

@@ -18,6 +18,7 @@ import hashlib
 import io
 import os
 import posixpath
+import re
 import tempfile
 from dataclasses import dataclass, replace
 from pathlib import Path
@@ -420,7 +421,31 @@ class S3StorageBackend(StorageBackend):
             self._client().list_objects_v2(Bucket=self.bucket, MaxKeys=1)
             return True, "S3-compatible storage is ready"
         except Exception as exc:
-            return False, f"S3 storage check failed: {type(exc).__name__}"
+            response = getattr(exc, "response", None)
+            error = response.get("Error") if isinstance(response, dict) else None
+            code = error.get("Code") if isinstance(error, dict) else None
+            metadata = response.get("ResponseMetadata") if isinstance(response, dict) else None
+            status = metadata.get("HTTPStatusCode") if isinstance(metadata, dict) else None
+
+            # S3 ClientError messages can contain provider-controlled text. Only
+            # surface a compact code and numeric status; never return the raw
+            # exception or response body, which may contain sensitive details.
+            safe_code = (
+                str(code)
+                if isinstance(code, (str, int))
+                and re.fullmatch(r"[A-Za-z0-9_.-]{1,64}", str(code))
+                else None
+            )
+            safe_status = status if isinstance(status, int) and not isinstance(status, bool) and 100 <= status <= 599 else None
+            if safe_code and safe_status:
+                detail = f"{safe_code} (HTTP {safe_status})"
+            elif safe_code:
+                detail = safe_code
+            elif safe_status:
+                detail = f"HTTP {safe_status}"
+            else:
+                detail = type(exc).__name__
+            return False, f"S3 storage check failed: {detail}"
 
 
 class StorageService:
@@ -485,7 +510,9 @@ def _environment_provider() -> StorageProviderConfig:
         backend=backend,
         endpoint_url=str(settings.S3_ENDPOINT_URL or ""),
         bucket=str(settings.S3_BUCKET or ""),
-        region=str(settings.S3_REGION or "us-east-1"),
+        # SigV4 requires a signing region; keep the S3-compatible default
+        # internal instead of exposing an unnecessary deployment variable.
+        region="us-east-1",
         access_key_id=str(settings.S3_ACCESS_KEY_ID or ""),
         secret_access_key=str(settings.S3_SECRET_ACCESS_KEY or ""),
         force_path_style=bool(settings.S3_FORCE_PATH_STYLE),
