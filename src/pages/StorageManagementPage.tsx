@@ -21,15 +21,8 @@ import {
   testSavedStorageProvider,
   testStorageProvider,
   updateStorageProvider,
-  listStorageUsages,
-  testStorageUsage,
-  updateStorageUsage,
   type StorageProvider,
   type StorageProviderInput,
-  type StorageUsage,
-  type StorageUsagePurpose,
-  type StorageUsageProviderMode,
-  type StorageUsageProfileOption,
 } from '../api/storage';
 import { ApiError } from '../api/http';
 import { primaryActionBtnClass, secondaryActionBtnClass } from '../components/shared';
@@ -41,31 +34,13 @@ interface StorageManagementPageProps {
 }
 
 type FormMode = 'create' | 'edit';
-type SettingsTab = 'profiles' | 'usages';
 type TestState = { kind: 'success' | 'error'; message: string } | null;
-type UsageDraft = {
-  provider_mode: StorageUsageProviderMode;
-  provider_id: string;
-  bucket_override: string;
-  key_prefix: string;
-};
-
-const USAGE_CATALOG: Array<{ purpose: StorageUsagePurpose; defaultPrefix: string; zh: string; en: string }> = [
-  { purpose: 'config_backup', defaultPrefix: 'config', zh: '配置备份', en: 'Config backups' },
-  { purpose: 'pam_recording', defaultPrefix: 'pam', zh: 'PAM 录像', en: 'PAM recordings' },
-];
-
-const EMPTY_USAGE_DRAFTS: Record<StorageUsagePurpose, UsageDraft> = {
-  config_backup: { provider_mode: 'default', provider_id: '', bucket_override: '', key_prefix: 'config' },
-  pam_recording: { provider_mode: 'default', provider_id: '', bucket_override: '', key_prefix: 'pam' },
-};
 
 const EMPTY_FORM: StorageProviderInput = {
   name: '',
   backend: 's3',
   endpoint_url: '',
   bucket: '',
-  region: 'us-east-1',
   access_key_id: '',
   secret_access_key: '',
   force_path_style: true,
@@ -98,7 +73,6 @@ const StorageManagementPage: React.FC<StorageManagementPageProps> = ({ language,
   const [items, setItems] = useState<StorageProvider[]>([]);
   const [effectiveDefaultId, setEffectiveDefaultId] = useState<string | null>(null);
   const [defaultSource, setDefaultSource] = useState<'database' | 'environment' | null>(null);
-  const [activeTab, setActiveTab] = useState<SettingsTab>('profiles');
   const [loading, setLoading] = useState(true);
   const [loadError, setLoadError] = useState('');
   const [permissionDenied, setPermissionDenied] = useState(false);
@@ -112,15 +86,6 @@ const StorageManagementPage: React.FC<StorageManagementPageProps> = ({ language,
   const [formTest, setFormTest] = useState<TestState>(null);
   const [savedTests, setSavedTests] = useState<Record<string, TestState>>({});
   const [formError, setFormError] = useState('');
-  const [usageItems, setUsageItems] = useState<StorageUsage[]>([]);
-  const [usageDrafts, setUsageDrafts] = useState<Record<StorageUsagePurpose, UsageDraft>>(EMPTY_USAGE_DRAFTS);
-  const [usageProfiles, setUsageProfiles] = useState<StorageUsageProfileOption[]>([]);
-  const [usageLoading, setUsageLoading] = useState(true);
-  const [usageError, setUsageError] = useState('');
-  const [usageSavingPurpose, setUsageSavingPurpose] = useState<StorageUsagePurpose | null>(null);
-  const [usageSaveError, setUsageSaveError] = useState<Record<string, string>>({});
-  const [usageTestingPurpose, setUsageTestingPurpose] = useState<StorageUsagePurpose | null>(null);
-  const [usageTestState, setUsageTestState] = useState<Record<string, TestState>>({});
 
   const clearFormCredentials = () => {
     setForm((current) => ({ ...current, access_key_id: '', secret_access_key: '' }));
@@ -151,116 +116,6 @@ const StorageManagementPage: React.FC<StorageManagementPageProps> = ({ language,
 
   useEffect(() => { void load(); }, [load]);
 
-  const loadUsages = useCallback(async () => {
-    setUsageLoading(true);
-    setUsageError('');
-    try {
-      const response = await listStorageUsages();
-      const nextItems = Array.isArray(response.items) ? response.items : [];
-      setUsageItems(nextItems);
-      const nextDrafts = { ...EMPTY_USAGE_DRAFTS };
-      nextItems.forEach((item) => {
-        if (!USAGE_CATALOG.some((entry) => entry.purpose === item.purpose)) return;
-        nextDrafts[item.purpose] = {
-          provider_mode: item.provider_mode || 'default',
-          provider_id: item.provider_id || '',
-          bucket_override: item.bucket_override || '',
-          key_prefix: item.key_prefix || USAGE_CATALOG.find((entry) => entry.purpose === item.purpose)?.defaultPrefix || '',
-        };
-      });
-      setUsageDrafts(nextDrafts);
-      const responseProfiles = Array.isArray(response.profiles) ? response.profiles : [];
-      const itemProfiles = nextItems.flatMap((item) => Array.isArray(item.profiles) ? item.profiles : []);
-      setUsageProfiles(responseProfiles.length > 0 ? responseProfiles : itemProfiles);
-      setPermissionDenied(false);
-    } catch (error) {
-      setUsageError(errorMessage(error, zh));
-      if (error instanceof ApiError && error.status === 403) setPermissionDenied(true);
-    } finally {
-      setUsageLoading(false);
-    }
-  }, [zh]);
-
-  useEffect(() => { void loadUsages(); }, [loadUsages]);
-
-  const usageProfileOptions = useMemo<StorageUsageProfileOption[]>(() => {
-    const source = usageProfiles.length > 0 ? usageProfiles : items;
-    const environment: StorageUsageProfileOption = { id: 'environment', name: zh ? '环境变量' : 'Environment variables', source: 'environment' };
-    const options = source.some((profile) => profile.id === 'environment') ? source : [environment, ...source];
-    return options.filter((profile, index, all) => all.findIndex((candidate) => candidate.id === profile.id) === index);
-  }, [items, usageProfiles, zh]);
-
-  const updateUsageDraft = (purpose: StorageUsagePurpose, patch: Partial<UsageDraft>) => {
-    setUsageDrafts((current) => ({ ...current, [purpose]: { ...current[purpose], ...patch } }));
-    setUsageSaveError((current) => ({ ...current, [purpose]: '' }));
-    setUsageTestState((current) => ({ ...current, [purpose]: null }));
-  };
-
-  const usageValidationMessage = (purpose: StorageUsagePurpose) => {
-    const draft = usageDrafts[purpose];
-    if (!draft.key_prefix.trim()) {
-      return zh ? '请填写对象 key 前缀。' : 'Enter an object key prefix.';
-    }
-    if (draft.provider_mode === 'profile' && !draft.provider_id) {
-      return zh ? '请选择一个存储 profile。' : 'Select a storage profile.';
-    }
-    return '';
-  };
-
-  const usageRequestInput = (purpose: StorageUsagePurpose) => {
-    const draft = usageDrafts[purpose];
-    return {
-      provider_mode: draft.provider_mode,
-      provider_id: draft.provider_mode === 'profile' ? (draft.provider_id || null) : null,
-      bucket_override: draft.bucket_override.trim(),
-      key_prefix: draft.key_prefix.trim().replace(/^\/+|\/+$/g, ''),
-    };
-  };
-
-  const handleUsageTest = async (purpose: StorageUsagePurpose) => {
-    const validation = usageValidationMessage(purpose);
-    if (validation) {
-      setUsageTestState((current) => ({ ...current, [purpose]: { kind: 'error', message: validation } }));
-      return;
-    }
-    setUsageTestingPurpose(purpose);
-    setUsageTestState((current) => ({ ...current, [purpose]: null }));
-    try {
-      const response = await testStorageUsage(purpose, usageRequestInput(purpose));
-      setUsageTestState((current) => ({
-        ...current,
-        [purpose]: {
-          kind: response.ok === false ? 'error' : 'success',
-          message: response.message || (zh ? '路由测试成功。' : 'Route test succeeded.'),
-        },
-      }));
-    } catch (error) {
-      setUsageTestState((current) => ({ ...current, [purpose]: { kind: 'error', message: errorMessage(error, zh) } }));
-      if (error instanceof ApiError && error.status === 403) setPermissionDenied(true);
-    } finally {
-      setUsageTestingPurpose(null);
-    }
-  };
-
-  const handleUsageSave = async (purpose: StorageUsagePurpose) => {
-    const validation = usageValidationMessage(purpose);
-    if (validation) {
-      setUsageSaveError((current) => ({ ...current, [purpose]: validation }));
-      return;
-    }
-    setUsageSavingPurpose(purpose);
-    setUsageSaveError((current) => ({ ...current, [purpose]: '' }));
-    try {
-      await updateStorageUsage(purpose, usageRequestInput(purpose));
-      await loadUsages();
-    } catch (error) {
-      setUsageSaveError((current) => ({ ...current, [purpose]: errorMessage(error, zh) }));
-      if (error instanceof ApiError && error.status === 403) setPermissionDenied(true);
-    } finally {
-      setUsageSavingPurpose(null);
-    }
-  };
-
   const openCreate = () => {
     setMode('create');
     setEditingId(null);
@@ -278,7 +133,6 @@ const StorageManagementPage: React.FC<StorageManagementPageProps> = ({ language,
       backend: provider.backend,
       endpoint_url: provider.endpoint_url,
       bucket: provider.bucket,
-      region: provider.region,
       access_key_id: '',
       secret_access_key: '',
       force_path_style: provider.force_path_style,
@@ -297,8 +151,8 @@ const StorageManagementPage: React.FC<StorageManagementPageProps> = ({ language,
   };
 
   const validate = () => {
-    if (!form.name.trim() || !form.bucket.trim() || !form.region.trim()) {
-      return zh ? '请填写名称、Bucket 和 Region。' : 'Name, bucket, and region are required.';
+    if (!form.name.trim() || !form.bucket.trim()) {
+      return zh ? '请填写名称和 Bucket。' : 'Name and bucket are required.';
     }
     if (!form.endpoint_url.trim()) return zh ? '请填写 Endpoint。' : 'Endpoint is required.';
     if (mode === 'create' && (!form.access_key_id.trim() || !form.secret_access_key.trim())) {
@@ -308,7 +162,7 @@ const StorageManagementPage: React.FC<StorageManagementPageProps> = ({ language,
   };
 
   const formConnectionInput = useMemo(() => ({
-    backend: 's3' as const, endpoint_url: form.endpoint_url.trim(), bucket: form.bucket.trim(), region: form.region.trim(),
+    backend: 's3' as const, endpoint_url: form.endpoint_url.trim(), bucket: form.bucket.trim(),
     access_key_id: form.access_key_id, secret_access_key: form.secret_access_key, force_path_style: form.force_path_style, verify_tls: form.verify_tls,
   }), [form]);
 
@@ -321,7 +175,6 @@ const StorageManagementPage: React.FC<StorageManagementPageProps> = ({ language,
     const connectionChanged = savedProfile && (
       form.endpoint_url.trim() !== savedProfile.endpoint_url
       || form.bucket.trim() !== savedProfile.bucket
-      || form.region.trim() !== savedProfile.region
       || form.force_path_style !== savedProfile.force_path_style
       || form.verify_tls !== savedProfile.verify_tls
     );
@@ -336,9 +189,12 @@ const StorageManagementPage: React.FC<StorageManagementPageProps> = ({ language,
     setTestingId('form');
     setFormTest(null);
     try {
+      const connectionInput = mode === 'edit' && savedProfile
+        ? { ...formConnectionInput, region: savedProfile.region }
+        : formConnectionInput;
       const response = mode === 'edit' && !hasAccessKey && savedProfile
         ? await testSavedStorageProvider(savedProfile.id)
-        : await testStorageProvider(formConnectionInput);
+        : await testStorageProvider(connectionInput);
       setFormTest({ kind: response.ok === false ? 'error' : 'success', message: response.message || (zh ? '连接测试成功。' : 'Connection test succeeded.') });
     } catch (error) {
       setFormTest({ kind: 'error', message: errorMessage(error, zh) });
@@ -354,10 +210,10 @@ const StorageManagementPage: React.FC<StorageManagementPageProps> = ({ language,
     setFormError('');
     try {
       if (mode === 'create') {
-        await createStorageProvider({ ...form, name: form.name.trim(), endpoint_url: form.endpoint_url.trim(), bucket: form.bucket.trim(), region: form.region.trim() });
+        await createStorageProvider({ ...form, name: form.name.trim(), endpoint_url: form.endpoint_url.trim(), bucket: form.bucket.trim() });
       } else if (editingId) {
         const update: Partial<StorageProviderInput> = {
-          name: form.name.trim(), backend: 's3', endpoint_url: form.endpoint_url.trim(), bucket: form.bucket.trim(), region: form.region.trim(),
+          name: form.name.trim(), backend: 's3', endpoint_url: form.endpoint_url.trim(), bucket: form.bucket.trim(),
           force_path_style: form.force_path_style, verify_tls: form.verify_tls, is_default: form.is_default, notes: form.notes,
         };
         if (form.access_key_id.trim()) update.access_key_id = form.access_key_id.trim();
@@ -366,7 +222,6 @@ const StorageManagementPage: React.FC<StorageManagementPageProps> = ({ language,
       }
       closeModal();
       await load();
-      await loadUsages();
     } catch (error) {
       setFormError(errorMessage(error, zh));
       if (error instanceof ApiError && error.status === 403) setPermissionDenied(true);
@@ -376,7 +231,7 @@ const StorageManagementPage: React.FC<StorageManagementPageProps> = ({ language,
   const handleDelete = async (provider: StorageProvider) => {
     if (!window.confirm(zh ? `确定删除对象存储配置“${provider.name}”吗？此操作不可撤销。` : `Delete object storage profile “${provider.name}”? This cannot be undone.`)) return;
     setDeletingId(provider.id);
-    try { await deleteStorageProvider(provider.id); await load(); await loadUsages(); }
+    try { await deleteStorageProvider(provider.id); await load(); }
     catch (error) { setLoadError(errorMessage(error, zh)); if (error instanceof ApiError && error.status === 403) setPermissionDenied(true); }
     finally { setDeletingId(null); }
   };
@@ -393,17 +248,10 @@ const StorageManagementPage: React.FC<StorageManagementPageProps> = ({ language,
     } finally { setTestingId(null); }
   };
 
-  const usageModeLabel = (mode: StorageUsageProviderMode) => ({
-    default: zh ? '当前默认' : 'Current default',
-    environment: zh ? '环境变量' : 'Environment variables',
-    profile: zh ? '指定 profile' : 'Specific profile',
-  }[mode]);
   const defaultProfileName = items.find((item) => item.id === effectiveDefaultId)?.name
     || (defaultSource === 'environment' ? (zh ? '环境变量' : 'Environment') : '—');
-  const tabButtonClass = (tab: SettingsTab) => `relative inline-flex items-center border-b-2 px-1 py-3 text-sm font-semibold transition-colors ${activeTab === tab
-    ? 'border-[var(--ui-accent)] text-[var(--ui-accent)]'
-    : 'border-transparent text-[var(--muted-text)] hover:text-[var(--ui-fg)]'}`;
-  const sectionLabelClass = 'mb-1.5 block text-xs font-semibold text-[var(--ui-fg)]';
+  const formRowClass = 'grid gap-1.5 sm:grid-cols-[150px_minmax(0,1fr)] sm:items-start sm:gap-5';
+  const formRowLabelClass = 'pt-2 text-xs font-semibold text-[var(--muted-text)]';
 
   return (
     <div className="flex h-full min-h-0 flex-col overflow-hidden">
@@ -413,22 +261,17 @@ const StorageManagementPage: React.FC<StorageManagementPageProps> = ({ language,
 
         <section className="overflow-hidden rounded-lg border border-[var(--ui-border)] bg-[var(--ui-surface)] shadow-sm">
           <div className="flex flex-wrap items-center justify-between gap-3 border-b border-[var(--ui-border)] px-5 pt-1 sm:px-6">
-            <div role="tablist" aria-label={zh ? '存储设置类别' : 'Storage settings categories'} className="flex items-center gap-7">
-              <button type="button" role="tab" aria-selected={activeTab === 'profiles'} className={tabButtonClass('profiles')} onClick={() => setActiveTab('profiles')}>{zh ? '对象存储' : 'Object Storage'}</button>
-              <button type="button" role="tab" aria-selected={activeTab === 'usages'} className={tabButtonClass('usages')} onClick={() => setActiveTab('usages')}>{zh ? '用途路由' : 'Usage Routing'}</button>
-            </div>
+            <h1 className="py-3 text-sm font-semibold text-[var(--heading-text)]">{zh ? '对象存储' : 'Object Storage'}</h1>
             <div className="mb-1 flex items-center gap-2">
-              <button type="button" className="rounded-md p-2 text-[var(--muted-text)] transition hover:bg-[var(--ui-surface-muted)] hover:text-[var(--ui-fg)] disabled:opacity-50" onClick={() => { void load(); void loadUsages(); }} disabled={loading || usageLoading} aria-label={zh ? '刷新存储设置' : 'Refresh storage settings'} title={zh ? '刷新' : 'Refresh'}><RefreshCw size={15} className={loading || usageLoading ? 'animate-spin' : ''} /></button>
-              {activeTab === 'profiles' ? <button type="button" className="inline-flex items-center gap-1.5 rounded-md bg-emerald-600 px-3.5 py-2 text-sm font-semibold text-white transition hover:bg-emerald-700 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-emerald-500 focus-visible:ring-offset-2 disabled:cursor-not-allowed disabled:opacity-50" onClick={openCreate} disabled={!isAdmin || permissionDenied}><Plus size={15} />{zh ? '新增' : 'New'}</button>
-                : <span className="rounded-full bg-[var(--ui-surface-muted)] px-2.5 py-1 text-xs text-[var(--muted-text)]">{zh ? '配置备份 · PAM 录像' : 'Config backups · PAM recordings'}</span>}
+              <button type="button" className="rounded-md p-2 text-[var(--muted-text)] transition hover:bg-[var(--ui-surface-muted)] hover:text-[var(--ui-fg)] disabled:opacity-50" onClick={() => { void load(); }} disabled={loading} aria-label={zh ? '刷新存储设置' : 'Refresh storage settings'} title={zh ? '刷新' : 'Refresh'}><RefreshCw size={15} className={loading ? 'animate-spin' : ''} /></button>
+              <button type="button" className="inline-flex items-center gap-1.5 rounded-md bg-emerald-600 px-3.5 py-2 text-sm font-semibold text-white transition hover:bg-emerald-700 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-emerald-500 focus-visible:ring-offset-2 disabled:cursor-not-allowed disabled:opacity-50" onClick={openCreate} disabled={!isAdmin || permissionDenied}><Plus size={15} />{zh ? '新增' : 'New'}</button>
             </div>
           </div>
 
-          {activeTab === 'profiles' ? <div role="tabpanel" className="p-5 sm:p-6">
+          <div className="p-5 sm:p-6">
             <div className="mb-4 flex flex-wrap items-center justify-between gap-3">
               <div>
                 <h2 className="text-sm font-semibold text-[var(--heading-text)]">{zh ? '对象存储配置' : 'Object storage profiles'}</h2>
-                <p className="mt-1 text-xs text-[var(--muted-text)]">{zh ? '配置 S3 兼容服务连接，供不同业务用途复用。' : 'Configure S3 compatible connections for reuse across storage purposes.'}</p>
               </div>
               <div className="flex items-center gap-2 text-xs text-[var(--muted-text)]">
                 <span>{zh ? `${items.length} 个配置` : `${items.length} profile${items.length === 1 ? '' : 's'}`}</span>
@@ -445,7 +288,7 @@ const StorageManagementPage: React.FC<StorageManagementPageProps> = ({ language,
                   <tr>
                     <th className="px-4 py-3 font-semibold">{zh ? '名称' : 'Name'}</th>
                     <th className="px-4 py-3 font-semibold">Endpoint</th>
-                    <th className="px-4 py-3 font-semibold">Bucket / Region</th>
+                    <th className="px-4 py-3 font-semibold">Bucket</th>
                     <th className="px-4 py-3 font-semibold">{zh ? '访问凭据' : 'Credentials'}</th>
                     <th className="px-4 py-3 font-semibold">{zh ? '状态' : 'Status'}</th>
                     <th className="px-4 py-3 font-semibold">{zh ? '更新时间' : 'Updated'}</th>
@@ -458,7 +301,6 @@ const StorageManagementPage: React.FC<StorageManagementPageProps> = ({ language,
                       <div className="mx-auto flex max-w-md flex-col items-center">
                         <span className="mb-3 flex h-11 w-11 items-center justify-center rounded-full bg-[var(--ui-surface-muted)] text-[var(--ui-accent)]"><Cloud size={21} /></span>
                         <strong className="text-sm font-semibold text-[var(--heading-text)]">{zh ? '尚未配置对象存储' : 'No object storage configured'}</strong>
-                        <span className="mt-1 text-xs text-[var(--muted-text)]">{zh ? '新增一个 S3 配置后，即可分配给配置备份和 PAM 录像。' : 'Add an S3 profile, then assign it to config backups and PAM recordings.'}</span>
                         <button type="button" onClick={openCreate} disabled={!isAdmin || permissionDenied} className={`${primaryActionBtnClass} mt-4`}><Plus size={15} />{zh ? '创建存储配置' : 'Create profile'}</button>
                       </div>
                     </td></tr>
@@ -471,11 +313,11 @@ const StorageManagementPage: React.FC<StorageManagementPageProps> = ({ language,
                           <td className="px-4 py-3.5">
                             <div className="flex items-center gap-2.5">
                               <span className="flex h-8 w-8 shrink-0 items-center justify-center rounded-md bg-sky-50 text-sky-700"><Server size={15} /></span>
-                              <span className="min-w-0"><span className="block truncate font-semibold text-[var(--ui-fg)]">{provider.name}</span><span className="mt-0.5 block text-[11px] text-[var(--muted-text)]">{isEnvironment ? (zh ? '部署环境配置' : 'Deployment environment') : (zh ? 'S3 兼容存储' : 'S3 compatible')}</span></span>
+                              <span className="min-w-0"><span className="block truncate font-semibold text-[var(--ui-fg)]">{provider.name}</span></span>
                             </div>
                           </td>
                           <td className="max-w-[220px] truncate px-4 py-3.5 font-mono text-xs text-[var(--muted-text)]" title={provider.endpoint_url}>{provider.endpoint_url || '—'}</td>
-                          <td className="px-4 py-3.5"><span className="block font-medium text-[var(--ui-fg)]">{provider.bucket || '—'}</span><span className="mt-0.5 block text-xs text-[var(--muted-text)]">{provider.region || '—'}</span></td>
+                          <td className="px-4 py-3.5"><span className="block font-medium text-[var(--ui-fg)]">{provider.bucket || '—'}</span></td>
                           <td className="px-4 py-3.5"><span className="block font-mono text-xs text-[var(--ui-fg)]">{provider.access_key_id_masked || (provider.has_access_key ? (zh ? '已配置' : 'Configured') : '—')}</span><span className={`mt-0.5 block text-[11px] ${provider.has_secret_key ? 'text-emerald-700' : 'text-[var(--muted-text)]'}`}>{provider.has_secret_key ? (zh ? 'Secret 已配置' : 'Secret configured') : (zh ? '无 Secret' : 'No secret')}</span></td>
                           <td className="px-4 py-3.5"><div className="flex flex-wrap gap-1.5">{isEffective && <span className="rounded-full bg-emerald-50 px-2 py-1 text-[10px] font-semibold text-emerald-700">{zh ? '当前默认' : 'Default'}</span>}{provider.is_default && !isEffective && <span className="rounded-full bg-slate-100 px-2 py-1 text-[10px] font-semibold text-slate-600">{zh ? '默认' : 'Default'}</span>}{isEnvironment && <span className="rounded-full bg-slate-100 px-2 py-1 text-[10px] font-semibold text-slate-600">.env</span>}</div></td>
                           <td className="px-4 py-3.5 text-xs text-[var(--muted-text)]">{formatDate(provider.updated_at || provider.created_at, zh)}</td>
@@ -491,76 +333,43 @@ const StorageManagementPage: React.FC<StorageManagementPageProps> = ({ language,
                 </tbody>
               </table>
             </div>
-            {items.length > 0 && <p className="mt-3 text-[11px] text-[var(--muted-text)]">{zh ? '被现有对象或用途路由引用的配置不能删除；已被对象引用的连接参数不能修改。' : 'Profiles referenced by objects or routes cannot be deleted. Connection settings used by stored objects cannot be changed.'}</p>}
-          </div> : <div role="tabpanel" className="p-5 sm:p-6">
-            <div className="mb-5 flex flex-wrap items-start justify-between gap-3">
-              <div><h2 className="text-sm font-semibold text-[var(--heading-text)]">{zh ? '用途路由' : 'Storage usage routing'}</h2><p className="mt-1 text-xs text-[var(--muted-text)]">{zh ? '为配置备份和 PAM 录像分别选择存储来源、Bucket 与对象 key 前缀。' : 'Choose a provider, bucket, and object key prefix for each storage purpose.'}</p></div>
-              <span className="rounded-full bg-[var(--ui-surface-muted)] px-2.5 py-1 text-xs text-[var(--muted-text)]">{zh ? 'S3 路径为虚拟目录' : 'S3 prefixes are virtual paths'}</span>
-            </div>
-            {usageLoading ? <div className="flex min-h-40 items-center justify-center text-sm text-[var(--muted-text)]"><Loader2 size={18} className="mr-2 animate-spin" />{zh ? '正在加载用途路由…' : 'Loading usage routes…'}</div>
-              : usageError ? <div className="flex items-center justify-between gap-3 rounded-md border border-rose-200 bg-rose-50 px-3 py-2.5 text-sm text-rose-800"><span>{usageError}</span><button type="button" className="font-semibold underline" onClick={() => void loadUsages()}>{zh ? '重试' : 'Retry'}</button></div>
-                : <div className="grid gap-5 xl:grid-cols-2">
-                  {USAGE_CATALOG.map((entry) => {
-                    const draft = usageDrafts[entry.purpose];
-                    const usage = usageItems.find((item) => item.purpose === entry.purpose);
-                    const previewPrefix = draft.key_prefix.trim().replace(/^\/+|\/+$/g, '');
-                    const previewObject = entry.purpose === 'config_backup' ? 'YYYY/MM/<snapshot-id>.cfg.enc' : 'YYYY/MM/<session-id>.<format>';
-                    return <article key={entry.purpose} className="rounded-md border border-[var(--ui-border)] bg-[var(--ui-surface)] p-4 sm:p-5">
-                      <div className="mb-4 flex items-start justify-between gap-3"><div><h3 className="text-sm font-semibold text-[var(--heading-text)]">{zh ? entry.zh : entry.en}</h3><p className="mt-1 text-xs text-[var(--muted-text)]">{zh ? '新写入对象会使用此路由。' : 'New objects will use this route.'}</p></div><span className="rounded-full bg-[var(--ui-surface-muted)] px-2.5 py-1 text-[10px] font-semibold text-[var(--muted-text)]">{usageModeLabel(draft.provider_mode)}</span></div>
-                      <div className="grid gap-x-4 gap-y-3 sm:grid-cols-2">
-                        <div><label className={sectionLabelClass} htmlFor={`usage-mode-${entry.purpose}`}>{zh ? '存储来源' : 'Storage source'}</label><select id={`usage-mode-${entry.purpose}`} className={inputClass} value={draft.provider_mode} onChange={(event) => updateUsageDraft(entry.purpose, { provider_mode: event.target.value as StorageUsageProviderMode })} disabled={!isAdmin || permissionDenied}><option value="default">{usageModeLabel('default')}</option><option value="environment">{usageModeLabel('environment')}</option><option value="profile">{usageModeLabel('profile')}</option></select></div>
-                        {draft.provider_mode === 'profile' && <div><label className={sectionLabelClass} htmlFor={`usage-profile-${entry.purpose}`}>{zh ? '存储配置' : 'Storage profile'}</label><select id={`usage-profile-${entry.purpose}`} className={inputClass} value={draft.provider_id} onChange={(event) => updateUsageDraft(entry.purpose, { provider_id: event.target.value })} disabled={!isAdmin || permissionDenied}><option value="">{zh ? '请选择配置' : 'Select a profile'}</option>{usageProfileOptions.filter((profile) => profile.id !== 'environment').map((profile) => <option key={profile.id} value={profile.id}>{profile.name}</option>)}</select></div>}
-                        <div><label className={sectionLabelClass} htmlFor={`usage-bucket-${entry.purpose}`}>Bucket <span className="font-normal text-[var(--muted-text)]">({zh ? '可选覆盖' : 'optional override'})</span></label><input id={`usage-bucket-${entry.purpose}`} className={inputClass} value={draft.bucket_override} onChange={(event) => updateUsageDraft(entry.purpose, { bucket_override: event.target.value })} placeholder={zh ? '留空使用配置中的 Bucket' : 'Use profile bucket when empty'} disabled={!isAdmin || permissionDenied} /></div>
-                        <div><label className={sectionLabelClass} htmlFor={`usage-prefix-${entry.purpose}`}>{zh ? '对象 key 前缀' : 'Object key prefix'} *</label><input id={`usage-prefix-${entry.purpose}`} className={inputClass} value={draft.key_prefix} onChange={(event) => updateUsageDraft(entry.purpose, { key_prefix: event.target.value })} placeholder={entry.defaultPrefix} disabled={!isAdmin || permissionDenied} /></div>
-                      </div>
-                      <div className="mt-4 grid gap-3 rounded-md bg-[var(--ui-surface-muted)] p-3 text-xs sm:grid-cols-3"><div><span className="text-[var(--muted-text)]">{zh ? '生效配置' : 'Effective profile'}</span><p className="mt-1 truncate font-semibold text-[var(--ui-fg)]">{usage?.effective_provider_name || '—'}</p></div><div><span className="text-[var(--muted-text)]">Endpoint</span><p className="mt-1 truncate font-mono text-[var(--ui-fg)]" title={usage?.effective_endpoint_url || ''}>{usage?.effective_endpoint_url || '—'}</p></div><div><span className="text-[var(--muted-text)]">Bucket</span><p className="mt-1 truncate font-semibold text-[var(--ui-fg)]">{draft.bucket_override || usage?.effective_bucket || '—'}</p></div></div>
-                      <div className="mt-3 flex flex-wrap items-center justify-between gap-3 border-t border-[var(--ui-border)] pt-3"><p className="min-w-0 text-xs text-[var(--muted-text)]"><span className="font-semibold text-[var(--ui-fg)]">{zh ? '对象 key 预览：' : 'Object key preview: '}</span><code className="break-all">{previewPrefix ? `${previewPrefix}/` : ''}{previewObject}</code></p><div className="flex shrink-0 gap-2"><button type="button" className={secondaryActionBtnClass} onClick={() => void handleUsageTest(entry.purpose)} disabled={!isAdmin || permissionDenied || usageTestingPurpose === entry.purpose || usageSavingPurpose === entry.purpose}><TestTube2 size={14} />{usageTestingPurpose === entry.purpose ? (zh ? '测试中…' : 'Testing…') : (zh ? '测试路由' : 'Test route')}</button><button type="button" className={primaryActionBtnClass} onClick={() => void handleUsageSave(entry.purpose)} disabled={!isAdmin || permissionDenied || usageSavingPurpose === entry.purpose || usageTestingPurpose === entry.purpose}><Save size={14} />{usageSavingPurpose === entry.purpose ? (zh ? '保存中…' : 'Saving…') : (zh ? '保存路由' : 'Save route')}</button></div></div>
-                      {usageTestState[entry.purpose] && <div className={`mt-3 flex items-start gap-2 rounded-md px-3 py-2 text-xs ${usageTestState[entry.purpose]?.kind === 'success' ? 'bg-emerald-50 text-emerald-700' : 'bg-rose-50 text-rose-700'}`}>{usageTestState[entry.purpose]?.kind === 'success' ? <CheckCircle2 size={14} className="mt-0.5 shrink-0" /> : <XCircle size={14} className="mt-0.5 shrink-0" />}<span>{usageTestState[entry.purpose]?.message}</span></div>}
-                      {usageSaveError[entry.purpose] && <div className="mt-3 flex items-start gap-2 rounded-md bg-rose-50 px-3 py-2 text-xs text-rose-700"><XCircle size={14} className="mt-0.5 shrink-0" /><span>{usageSaveError[entry.purpose]}</span></div>}
-                    </article>;
-                  })}
-                </div>}
-          </div>}
+            {items.length > 0 && <p className="mt-3 text-[11px] text-[var(--muted-text)]">{zh ? '已被对象引用的配置不能删除或修改连接参数。' : 'Profiles referenced by stored objects cannot be deleted or have their connection settings changed.'}</p>}
+          </div>
         </section>
       </div>
 
-      {modalOpen && <div className="fixed inset-0 z-[70] flex justify-end bg-slate-950/45" onMouseDown={(event) => { if (event.target === event.currentTarget && !saving) closeModal(); }}>
-        <div role="dialog" aria-modal="true" aria-labelledby="storage-dialog-title" className="relative z-10 flex h-full w-full flex-col border-l border-[var(--ui-border)] bg-[var(--ui-surface)] shadow-2xl sm:w-[min(72vw,880px)]">
-          <div className="flex shrink-0 items-start justify-between gap-4 border-b border-[var(--ui-border)] px-6 py-5 sm:px-8">
-            <div><p className="text-xs font-semibold uppercase tracking-wide text-[var(--ui-accent)]">{zh ? '对象存储' : 'OBJECT STORAGE'}</p><h2 id="storage-dialog-title" className="mt-1 text-lg font-semibold text-[var(--heading-text)]">{mode === 'create' ? (zh ? '创建存储设置' : 'Create storage settings') : (zh ? '编辑存储设置' : 'Edit storage settings')}</h2></div>
-            <button type="button" className="rounded-md p-2 text-[var(--muted-text)] transition hover:bg-[var(--ui-surface-muted)] hover:text-[var(--ui-fg)]" onClick={closeModal} disabled={saving} aria-label={zh ? '关闭' : 'Close'}><X size={18} /></button>
+      {modalOpen && <div className="fixed inset-0 z-[70] flex items-center justify-center bg-slate-950/50 p-4 backdrop-blur-[2px] sm:p-6" onMouseDown={(event) => { if (event.target === event.currentTarget && !saving) closeModal(); }}>
+        <div role="dialog" aria-modal="true" aria-labelledby="storage-dialog-title" className="relative z-10 flex max-h-[calc(100vh-2rem)] w-full max-w-4xl flex-col overflow-hidden rounded-xl border border-[var(--ui-border)] bg-[var(--ui-surface)] shadow-2xl sm:max-h-[calc(100vh-3rem)]">
+          <div className="flex shrink-0 items-start justify-between gap-4 border-b border-[var(--ui-border)] px-5 py-4 sm:px-7">
+            <div><h2 id="storage-dialog-title" className="text-lg font-semibold text-[var(--heading-text)]">{mode === 'create' ? (zh ? '创建存储设置' : 'Create storage settings') : (zh ? '编辑存储设置' : 'Edit storage settings')}</h2></div>
+            <button type="button" className="rounded-lg p-2 text-[var(--muted-text)] transition hover:bg-[var(--ui-surface-muted)] hover:text-[var(--ui-fg)]" onClick={closeModal} disabled={saving} aria-label={zh ? '关闭' : 'Close'}><X size={18} /></button>
           </div>
 
           <form onSubmit={handleSave} className="flex min-h-0 flex-1 flex-col">
-            <div className="min-h-0 flex-1 space-y-7 overflow-y-auto px-6 py-6 sm:px-8">
+            <div className="min-h-0 flex-1 space-y-7 overflow-y-auto px-5 py-5 sm:px-7 sm:py-6">
               <section>
                 <div className="mb-4 border-b border-[var(--ui-border)] pb-2"><h3 className="text-sm font-semibold text-[var(--heading-text)]">{zh ? '基本设置' : 'Basic settings'}</h3></div>
-                <div className="grid gap-x-5 gap-y-4 sm:grid-cols-2">
-                  <div><label className={sectionLabelClass} htmlFor="storage-name">{zh ? '名称' : 'Name'} <span className="text-rose-600">*</span></label><input id="storage-name" className={inputClass} value={form.name} onChange={(event) => setField('name', event.target.value)} autoFocus placeholder={zh ? '例如：SeaweedFS 主存储' : 'e.g. SeaweedFS primary'} /></div>
-                  <div><label className={sectionLabelClass} htmlFor="storage-backend">{zh ? '类型' : 'Type'} <span className="text-rose-600">*</span></label><select id="storage-backend" className={`${inputClass} bg-[var(--ui-surface-muted)]`} value={form.backend} disabled><option value="s3">S3</option></select></div>
+                <div className="space-y-3">
+                  <div className={formRowClass}><label className={formRowLabelClass} htmlFor="storage-name">{zh ? '名称' : 'Name'} <span className="text-rose-600">*</span></label><input id="storage-name" className={inputClass} value={form.name} onChange={(event) => setField('name', event.target.value)} autoFocus placeholder={zh ? '名称' : 'Name'} /></div>
+                  <div className={formRowClass}><label className={formRowLabelClass} htmlFor="storage-backend">{zh ? '类型' : 'Type'} <span className="text-rose-600">*</span></label><select id="storage-backend" className={`${inputClass} bg-[var(--ui-surface-muted)]`} value={form.backend} disabled><option value="s3">S3</option></select></div>
                 </div>
               </section>
 
               <section>
-                <div className="mb-4 flex items-center justify-between border-b border-[var(--ui-border)] pb-2"><h3 className="text-sm font-semibold text-[var(--heading-text)]">S3</h3><span className="text-[11px] text-[var(--muted-text)]">{zh ? 'S3 兼容服务' : 'S3 compatible service'}</span></div>
-                <div className="grid gap-x-5 gap-y-4 sm:grid-cols-2">
-                  <div><label className={sectionLabelClass} htmlFor="storage-bucket">{zh ? '桶名称' : 'Bucket name'} <span className="text-rose-600">*</span></label><input id="storage-bucket" className={inputClass} value={form.bucket} onChange={(event) => setField('bucket', event.target.value)} placeholder="nexora" /></div>
-                  <div><label className={sectionLabelClass} htmlFor="storage-region">Region <span className="text-rose-600">*</span></label><input id="storage-region" className={inputClass} value={form.region} onChange={(event) => setField('region', event.target.value)} placeholder="us-east-1" /></div>
-                  <div><label className={sectionLabelClass} htmlFor="storage-access-key">Access key ID {mode === 'create' && <span className="text-rose-600">*</span>}</label>{mode === 'edit' && <p className="mb-1 text-[11px] text-[var(--muted-text)]">{zh ? '当前值：' : 'Current: '}{items.find((item) => item.id === editingId)?.access_key_id_masked || (zh ? '已隐藏' : 'Hidden')}</p>}<input id="storage-access-key" className={inputClass} value={form.access_key_id} onChange={(event) => setField('access_key_id', event.target.value)} placeholder={mode === 'edit' ? (zh ? '留空保留当前值' : 'Leave blank to keep current') : ''} autoComplete="off" /></div>
-                  <div><label className={sectionLabelClass} htmlFor="storage-secret">Access key secret {mode === 'create' && <span className="text-rose-600">*</span>}</label>{mode === 'edit' && <p className="mb-1 text-[11px] text-[var(--muted-text)]">{items.find((item) => item.id === editingId)?.has_secret_key ? (zh ? '当前 Secret 已加密保存' : 'Current secret is stored securely') : (zh ? '当前未配置 Secret' : 'No current secret')}</p>}<input id="storage-secret" type="password" className={inputClass} value={form.secret_access_key} onChange={(event) => setField('secret_access_key', event.target.value)} placeholder={mode === 'edit' ? (zh ? '留空保留当前值' : 'Leave blank to keep current') : ''} autoComplete="new-password" /></div>
-                  <div className="sm:col-span-2"><label className={sectionLabelClass} htmlFor="storage-endpoint">{zh ? '端点' : 'Endpoint'} <span className="text-rose-600">*</span></label><input id="storage-endpoint" className={inputClass} value={form.endpoint_url} onChange={(event) => setField('endpoint_url', event.target.value)} placeholder="http://seaweedfs:8333" /><p className="mt-1 text-[11px] text-[var(--muted-text)]">{zh ? '请填写应用容器可访问的 S3 地址。' : 'Use an S3 endpoint reachable from the application container.'}</p></div>
+                <div className="mb-4 border-b border-[var(--ui-border)] pb-2"><h3 className="text-sm font-semibold text-[var(--heading-text)]">S3</h3></div>
+                <div className="space-y-3">
+                  <div className={formRowClass}><label className={formRowLabelClass} htmlFor="storage-bucket">{zh ? '桶名称' : 'Bucket name'} <span className="text-rose-600">*</span></label><input id="storage-bucket" className={inputClass} value={form.bucket} onChange={(event) => setField('bucket', event.target.value)} placeholder={zh ? '桶名称' : 'Bucket name'} /></div>
+                  <div className={formRowClass}><label className={formRowLabelClass} htmlFor="storage-access-key">Access key ID {mode === 'create' && <span className="text-rose-600">*</span>}</label><div><input id="storage-access-key" className={inputClass} value={form.access_key_id} onChange={(event) => setField('access_key_id', event.target.value)} placeholder={mode === 'edit' ? (zh ? '留空保留当前值' : 'Leave blank to keep current') : 'Access key ID'} autoComplete="off" />{mode === 'edit' && <p className="mt-1 text-[11px] text-[var(--muted-text)]">{zh ? '当前值：' : 'Current: '}{items.find((item) => item.id === editingId)?.access_key_id_masked || (zh ? '已隐藏' : 'Hidden')}</p>}</div></div>
+                  <div className={formRowClass}><label className={formRowLabelClass} htmlFor="storage-secret">Access key secret {mode === 'create' && <span className="text-rose-600">*</span>}</label><div><input id="storage-secret" type="password" className={inputClass} value={form.secret_access_key} onChange={(event) => setField('secret_access_key', event.target.value)} placeholder={mode === 'edit' ? (zh ? '留空保留当前值' : 'Leave blank to keep current') : 'Access key secret'} autoComplete="new-password" />{mode === 'edit' && <p className="mt-1 text-[11px] text-[var(--muted-text)]">{items.find((item) => item.id === editingId)?.has_secret_key ? (zh ? '当前 Secret 已加密保存' : 'Current secret is stored securely') : (zh ? '当前未配置 Secret' : 'No current secret')}</p>}</div></div>
+                  <div className={formRowClass}><label className={formRowLabelClass} htmlFor="storage-endpoint">{zh ? '端点' : 'Endpoint'} <span className="text-rose-600">*</span></label><input id="storage-endpoint" className={inputClass} value={form.endpoint_url} onChange={(event) => setField('endpoint_url', event.target.value)} placeholder={zh ? '端点' : 'Endpoint'} /></div>
                 </div>
               </section>
 
               <section>
                 <div className="mb-4 border-b border-[var(--ui-border)] pb-2"><h3 className="text-sm font-semibold text-[var(--heading-text)]">{zh ? '其他设置' : 'Other settings'}</h3></div>
                 <div className="space-y-4">
-                  <label className="flex cursor-pointer items-start gap-3 rounded-md border border-[var(--ui-border)] px-3.5 py-3 transition hover:bg-[var(--ui-surface-muted)]"><input type="checkbox" className="mt-0.5 accent-[var(--ui-accent)]" checked={form.is_default} onChange={(event) => setField('is_default', event.target.checked)} /><span><span className="block text-sm font-medium text-[var(--ui-fg)]">{zh ? '设为全局默认' : 'Set as global default'}</span><span className="mt-0.5 block text-xs text-[var(--muted-text)]">{zh ? '使用“当前默认”的用途会采用此配置。' : 'Purposes using Current default will use this profile.'}</span></span></label>
-                  <div className="flex flex-wrap gap-x-6 gap-y-3 text-sm">
-                    <label className="inline-flex cursor-pointer items-center gap-2 text-[var(--ui-fg)]"><input type="checkbox" className="accent-[var(--ui-accent)]" checked={form.force_path_style} onChange={(event) => setField('force_path_style', event.target.checked)} />{zh ? '使用 Path-style 地址' : 'Use path-style addressing'}</label>
-                    <label className="inline-flex cursor-pointer items-center gap-2 text-[var(--ui-fg)]"><input type="checkbox" className="accent-[var(--ui-accent)]" checked={form.verify_tls} onChange={(event) => setField('verify_tls', event.target.checked)} />{zh ? '校验 TLS 证书' : 'Verify TLS certificates'}</label>
-                  </div>
-                  <div><label className={sectionLabelClass} htmlFor="storage-notes">{zh ? '备注' : 'Notes'}</label><textarea id="storage-notes" className={`${inputClass} min-h-20 resize-y`} value={form.notes} onChange={(event) => setField('notes', event.target.value)} placeholder={zh ? '选填' : 'Optional'} /></div>
+                  <div className={formRowClass}><label className={formRowLabelClass}>{zh ? '默认' : 'Default'}</label><label className="flex cursor-pointer items-center gap-2 pt-2 text-sm text-[var(--ui-fg)]"><input type="checkbox" className="accent-[var(--ui-accent)]" checked={form.is_default} onChange={(event) => setField('is_default', event.target.checked)} />{zh ? '设为全局默认' : 'Set as global default'}</label></div>
+                  <div className={formRowClass}><label className={formRowLabelClass} htmlFor="storage-notes">{zh ? '备注' : 'Notes'}</label><textarea id="storage-notes" className={`${inputClass} min-h-20 resize-y`} value={form.notes} onChange={(event) => setField('notes', event.target.value)} placeholder={zh ? '选填' : 'Optional'} /></div>
                 </div>
               </section>
 
@@ -568,7 +377,7 @@ const StorageManagementPage: React.FC<StorageManagementPageProps> = ({ language,
               {formError && <div className="flex items-start gap-2 rounded-md bg-rose-50 px-3 py-2.5 text-sm text-rose-700"><XCircle size={15} className="mt-0.5 shrink-0" /><span>{formError}</span></div>}
             </div>
 
-            <div className="flex shrink-0 flex-wrap items-center justify-between gap-3 border-t border-[var(--ui-border)] bg-[var(--ui-surface)] px-6 py-4 sm:px-8">
+            <div className="flex shrink-0 flex-wrap items-center justify-between gap-3 border-t border-[var(--ui-border)] bg-[var(--ui-surface)] px-5 py-3.5 sm:px-7">
               <button type="button" className={secondaryActionBtnClass} onClick={() => void handleTestForm()} disabled={testingId === 'form' || saving}><TestTube2 size={15} />{testingId === 'form' ? (zh ? '测试中…' : 'Testing…') : (zh ? '测试连接' : 'Test connection')}</button>
               <div className="flex gap-2"><button type="button" className={secondaryActionBtnClass} onClick={closeModal} disabled={saving}>{zh ? '取消' : 'Cancel'}</button><button type="submit" className={primaryActionBtnClass} disabled={saving}><Save size={15} />{saving ? (zh ? '保存中…' : 'Saving…') : (zh ? '保存' : 'Save')}</button></div>
             </div>

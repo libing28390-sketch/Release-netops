@@ -38,10 +38,11 @@ PostgreSQL 18 官方容器将数据目录设为 `/var/lib/postgresql/18/docker`�
 
 ## S3 对象存储与 SeaweedFS
 
-Docker 示例配置默认使用 `STORAGE_BACKEND=s3`，部署脚本会根据该值自动启用
-`object-storage` Compose profile。SeaweedFS 使用与 `netops` 完全相同的访问密钥，
-脚本在首次安装或更新时会把示例中的占位符替换为强随机值；如果 `.env` 中已经是
-真实凭据，则会原样保留：
+Docker 部署默认包含本地 S3 兼容存储 SeaweedFS，不需要 AWS 账号或 AWS 服务。
+部署脚本首次运行时会从 `.env.example` 创建 `.env`；默认配置使用
+`STORAGE_BACKEND=s3`、内部地址 `http://seaweedfs:8333` 和 Bucket `nexora`，并自动
+启用 SeaweedFS Compose profile。脚本会为 `.env` 中的 Access Key ID 和 Secret
+生成强随机值；已有真实值会原样保留：
 
 ```dotenv
 STORAGE_BACKEND=s3
@@ -51,9 +52,10 @@ S3_ACCESS_KEY_ID=replace-with-a-strong-s3-access-key
 S3_SECRET_ACCESS_KEY=replace-with-a-strong-s3-secret-key
 ```
 
-S3 模式必须提供 endpoint、bucket、access key 和 secret key。`seaweedfs` 是
-Compose 网络内的服务名，不能改成 `127.0.0.1`，否则后端容器会访问自身而不是
-SeaweedFS。使用部署脚本时只需执行：
+Compose 从部署机上的 `.env` 读取这两个凭据，并把同一组值注入 `netops` 和
+`seaweedfs` 容器。后端进程据此连接本地 S3；浏览器和管理页面不读取 `.env`。
+`seaweedfs` 是 Compose 网络内的服务名，不能改成 `127.0.0.1`，否则后端容器会
+访问自身而不是 SeaweedFS。使用部署脚本安装时只需执行：
 
 ```bash
 bash scripts/deploy-docker.sh install
@@ -61,9 +63,17 @@ bash scripts/deploy-docker.sh install
 bash scripts/deploy-docker.sh update --force
 ```
 
-部署完成后，管理员可打开 **平台管理 → 对象存储**（`/management/storage`）添加或维护 S3 profile、测试连接并选择全局默认。界面中保存的 Access Key 和 Secret 会用 `CREDENTIAL_ENCRYPTION_KEY` 加密；请保持该密钥稳定。配置备份和 PAM 录像分别有一条用途路由，可选择当前默认、`.env` 环境配置或指定 profile，并可覆盖 Bucket、设置 key 前缀。初始路由使用全局默认及 `config`、`pam` 前缀。用途选择“当前默认”时使用全局默认 profile；如果尚未设置数据库全局默认，则回退到 `.env`。也可显式选择环境变量配置。
+安装后，配置备份和 PAM 录像默认都使用 `.env` 中的本地 SeaweedFS 配置、Bucket
+`nexora`，并分别写入 `config/` 和 `pam/` 对象 key 前缀。无需在管理页面再次填写
+Access Key ID 或 Secret。打开 **平台管理 → 对象存储**（`/management/storage`）可
+查看现有配置。配置备份和 PAM 录像共用当前全局默认存储；新增 S3 配置并设为默认后，
+之后的新文件会使用该配置。只有需要连接另一套 S3 服务时，才需要新增配置；新增配置
+的凭据会使用 `CREDENTIAL_ENCRYPTION_KEY` 加密保存，请保持该密钥稳定。
 
-S3 的 `/` 是 object key 的虚拟前缀，不需要预建目录；Bucket 本身应先在 SeaweedFS/S3 服务中创建，并确保所选密钥有访问权限。保存前可测试用途路由，检查选定服务与最终 Bucket。新写入对象会记录实际 provider、Bucket 和完整 object key；修改默认值或用途路由只影响之后的新对象，已有对象仍关联原位置。被对象或用途路由引用的 profile 不能删除；已有对象引用的连接参数不能修改。
+S3 的 `/` 是 object key 的虚拟前缀，不需要预建目录。本地 SeaweedFS 会按 `S3_BUCKET`
+创建默认 Bucket；连接其他 S3 服务时，需先创建对应 Bucket 并确保凭据有访问权限。
+新写入对象会记录实际存储配置、Bucket 和完整 object key；更改全局默认只影响之后的新
+文件，已有对象仍关联原位置。被已有对象引用的存储配置不能删除或修改连接参数。
 
 安装、更新和离线启动遇到 `netops` 尚未通过健康检查导致的首次 Compose
 失败时，脚本会保留原始错误上下文，显示当前 health 状态并在默认 120 秒内
@@ -71,15 +81,15 @@ S3 的 `/` 是 object key 的虚拟前缀，不需要预建目录；Bucket 本�
 其余服务，不重建容器或删除数据卷。可通过
 `NETOPS_STARTUP_RECOVERY_TIMEOUT_SECONDS` 调整等待上限。
 
-如果直接使用 Compose，请显式启用 profile，并确保 `.env` 已经填入与 `netops`
-一致的真实 S3 凭据：
+如果不通过部署脚本而直接使用 Compose，请确保 `.env` 中的 S3 ID 和 Secret 已
+设置为非占位值，并显式启用 SeaweedFS profile：
 
 ```bash
 docker compose --profile object-storage up -d
 ```
 
-不要把真实凭据提交到仓库；生产环境应使用部署机上的 `.env` 或 Secret Manager，
-并按实际 S3 服务调整 endpoint 和 TLS 校验设置。
+不要把真实凭据提交到仓库；部署脚本会把本地 S3 凭据保存在部署机的 `.env`。改接
+其他 S3 服务时，再按该服务调整 endpoint、Bucket、凭据和 TLS 校验设置。
 
 切换到 S3 不会自动迁移已有的本地文件。原本保存在 `STORAGE_LOCAL_ROOT` 或
 `nexora-data` 卷中的 PAM 录像、配置备份等对象仍留在本地存储；需要按仓库的

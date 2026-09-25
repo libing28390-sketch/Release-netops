@@ -35,7 +35,6 @@ export interface StorageUsageProfileOption {
   name: string;
   endpoint_url?: string | null;
   bucket?: string | null;
-  region?: string | null;
   source?: 'database' | 'environment' | string;
 }
 
@@ -71,7 +70,6 @@ export interface StorageProviderInput {
   backend: StorageBackend;
   endpoint_url: string;
   bucket: string;
-  region: string;
   access_key_id: string;
   secret_access_key: string;
   force_path_style: boolean;
@@ -135,7 +133,7 @@ export const deleteStorageProvider = (id: string) =>
     method: 'DELETE',
   });
 
-export type StorageConnectionInput = Omit<StorageProviderInput, 'name' | 'is_default' | 'notes'>;
+export type StorageConnectionInput = Omit<StorageProviderInput, 'name' | 'is_default' | 'notes'> & { region?: string };
 
 export const testStorageProvider = (input: StorageConnectionInput) =>
   apiRequest<StorageTestResponse>('/api/storage/providers/test', {
