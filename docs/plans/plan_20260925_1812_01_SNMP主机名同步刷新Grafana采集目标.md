@@ -33,7 +33,8 @@ SNMP 主机名同步会更新 `devices.hostname` 和关联资产名，但相关�
 
 - 审查全部主机名同步调用点，确认触发发生在提交之后，且名称未变时不触发。
 - 审查单台与批量 API 响应结构和改动 diff。
-- 本轮不运行测试命令。
+- 运行 `.venv\Scripts\python.exe -m pytest backend/tests/snmp/test_hostname_sync.py::test_batch_sync_hostname_mocked -q`，确认批量统计在数据库同步服务返回新旧名称时符合原有接口契约。
+- 若 CI mock 未覆盖同步服务新增的数据库读取，修正测试夹具来模拟明确的新旧 hostname；不改变生产统计逻辑。
 
 ## 风险与回滚
 

@@ -24,10 +24,16 @@ SNMP hostname 投影提交后，如果规范化后的 hostname 确实改变，�
 
 - `rg -n "sync_device_hostname_metadata|sync-hostname|batch-sync-hostname" backend`：确认线上调用路径包括 SNMP 发现、后台监控、运行数据采集和单台/批量 API。
 - `git diff -- backend/api/devices.py backend/services/background_monitor_service.py backend/services/hostname_sync_service.py backend/services/snmp_discovery_service.py`：已人工审查改动；调度发生在对应事务提交之后，批量只调度一次。
-- 未运行 pytest 或其他测试命令；本轮未请求测试/验证。
+- `.venv\Scripts\python.exe -m pytest backend/tests/snmp/test_hostname_sync.py::test_batch_sync_hostname_mocked -q`：`1 passed in 49.45s`。
+- CI 失败用例的测试夹具现已显式模拟 hostname 同步服务返回的新旧名称，并断言该服务对两台设备均被调用；修正仅涉及测试，未改生产逻辑。
+- 未在本机重跑完整后端测试套件；GitHub Actions 提供的全量结果为 2297 passed、1 skipped，原失败用例待本次推送后复验。
 
 ## 未验证项与剩余风险
 
 - 需要在实际 Docker 部署中观察一次改名后的采集目标发布、vmagent 新一轮采集和 Grafana `hostname` 下拉更新。
 - VictoriaMetrics 中的旧 hostname 时序可能继续保留在历史数据范围内，直到其查询范围或保留期不再包含旧序列。
 - 若目标编译或发布失败，helper 会留下告警日志，已发布的旧配置继续运行；可手动触发采集目标同步，或回滚本次后端改动。
+
+## CI 失败跟进
+
+CI 中批量接口测试期望 1 台更新、1 台未变更，实际计为 2 台更新。测试原先只模拟了批量查询使用的 `fetchall()`，没有模拟 hostname 同步服务新增的按设备 ID 查询 `fetchone()`，该调用遂返回默认 `MagicMock`，造成测试数据不真实。测试现已 mock 同步服务并按样例设备返回旧名和规范化新名，生产统计逻辑保持不变。

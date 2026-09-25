@@ -53,9 +53,22 @@ async def test_batch_sync_hostname_mocked():
         {"id": "dev-1", "hostname": "temp-01", "ip_address": "192.168.1.1", "asset_id": "ast-1"},
         {"id": "dev-2", "hostname": "core-sw-02", "ip_address": "192.168.1.2", "asset_id": "ast-2"},
     ]
+
+    def fake_sync_hostname_metadata(_conn, device_id, raw_sys_name):
+        device = next(device for device in fake_devices if device["id"] == device_id)
+        return {
+            "device_id": device_id,
+            "previous_hostname": device["hostname"],
+            "hostname": clean_system_hostname(raw_sys_name),
+        }
+
     with patch("backend.api.devices.get_db_connection") as mock_conn_fn, \
          patch("backend.api.devices.resolve_collector_credentials") as mock_creds, \
-         patch.object(services.snmp_service, "_snmp_get", new_callable=AsyncMock) as mock_snmp:
+         patch.object(services.snmp_service, "_snmp_get", new_callable=AsyncMock) as mock_snmp, \
+         patch(
+             "services.hostname_sync_service.sync_device_hostname_metadata",
+             side_effect=fake_sync_hostname_metadata,
+         ) as mock_sync_hostname:
         
         mock_conn = mock_conn_fn.return_value
         mock_conn.execute.return_value.fetchall.return_value = fake_devices
@@ -75,3 +88,4 @@ async def test_batch_sync_hostname_mocked():
         assert result["details"][0]["new_hostname"] == "core-sw-01"
         assert result["details"][1]["status"] == "unchanged"
         assert result["details"][1]["new_hostname"] == "core-sw-02"
+        assert mock_sync_hostname.call_count == 2
