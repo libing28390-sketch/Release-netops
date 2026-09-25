@@ -566,7 +566,7 @@ def _select_snapshot_rows(conn, scope: str, filters: dict[str, Any]) -> list[dic
         f"""
         SELECT cs.id, cs.device_id, cs.hostname, cs.vendor, cs.timestamp,
                cs.trigger, cs.author, cs.file_path, cs.size,
-               cs.storage_backend, cs.storage_bucket, cs.object_key,
+               cs.storage_backend, cs.storage_config_id, cs.storage_bucket, cs.object_key,
                cs.object_version_id, cs.object_size, cs.object_sha256,
                cs.content_type, cs.storage_status,
                COALESCE(cs.integrity_status, 'unknown') AS integrity_status,

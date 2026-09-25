@@ -19,9 +19,40 @@ import io
 import os
 import posixpath
 import tempfile
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from pathlib import Path
 from typing import BinaryIO, Iterator
+
+
+@dataclass(frozen=True)
+class StorageProviderConfig:
+    """Resolved storage provider settings without exposing persisted secrets."""
+
+    id: str | None
+    name: str
+    backend: str
+    endpoint_url: str
+    bucket: str
+    region: str
+    access_key_id: str
+    secret_access_key: str
+    force_path_style: bool
+    verify_tls: bool
+    is_default: bool = False
+    notes: str = ""
+    source: str = "environment"
+    created_at: str = ""
+    updated_at: str = ""
+
+
+@dataclass(frozen=True)
+class StorageUsageBinding:
+    purpose: str
+    provider_mode: str
+    provider_id: str | None
+    bucket_override: str | None
+    key_prefix: str
+    updated_at: str = ""
 
 
 class StorageError(RuntimeError):
@@ -42,6 +73,7 @@ class StorageObject:
     sha256: str | None = None
     content_type: str | None = None
     etag: str | None = None
+    storage_config_id: str | None = None
 
 
 StorageObjectMeta = StorageObject
@@ -394,15 +426,36 @@ class S3StorageBackend(StorageBackend):
 class StorageService:
     """Business-facing facade over one explicitly selected provider."""
 
-    def __init__(self, backend: StorageBackend):
+    def __init__(
+        self,
+        backend: StorageBackend,
+        *,
+        storage_config_id: str | None = None,
+        key_prefix: str = "",
+        purpose: str | None = None,
+    ):
         self.backend = backend
+        self.storage_config_id = storage_config_id
+        self.key_prefix = normalize_relative_prefix(key_prefix)
+        self.purpose = purpose
 
     @property
     def name(self) -> str:
         return self.backend.name
 
+    @property
+    def bucket(self) -> str:
+        return str(getattr(self.backend, "bucket", "") or "")
+
+    def full_key(self, key: str) -> str:
+        normalized = normalize_object_key(key)
+        if not self.key_prefix:
+            return normalized
+        return normalize_object_key(f"{self.key_prefix}/{normalized}")
+
     def put_stream(self, key: str, stream, content_type: str | None = None) -> StorageObject:
-        return self.backend.put_stream(key, stream, content_type)
+        stored = self.backend.put_stream(self.full_key(key), stream, content_type)
+        return replace(stored, storage_config_id=self.storage_config_id)
 
     def get_stream(self, key: str):
         return self.backend.get_stream(key)
@@ -420,29 +473,250 @@ class StorageService:
         return self.backend.health_check()
 
 
-def build_storage_service(*, backend_name: str | None = None, bucket: str | None = None) -> StorageService:
-    """Build the provider selected by the deployment configuration."""
-
+def _environment_provider() -> StorageProviderConfig:
     from core.config import settings
 
-    backend_name = str(backend_name or settings.STORAGE_BACKEND or "local").strip().lower()
+    backend = str(settings.STORAGE_BACKEND or "local").strip().lower()
+    return StorageProviderConfig(
+        # The environment profile is virtual and must never be persisted as a
+        # foreign-key value on object rows.
+        id=None,
+        name="Environment",
+        backend=backend,
+        endpoint_url=str(settings.S3_ENDPOINT_URL or ""),
+        bucket=str(settings.S3_BUCKET or ""),
+        region=str(settings.S3_REGION or "us-east-1"),
+        access_key_id=str(settings.S3_ACCESS_KEY_ID or ""),
+        secret_access_key=str(settings.S3_SECRET_ACCESS_KEY or ""),
+        force_path_style=bool(settings.S3_FORCE_PATH_STYLE),
+        verify_tls=bool(settings.S3_VERIFY_TLS),
+        source="environment",
+    )
+
+
+def _row_value(row, name: str, default=None):
+    try:
+        return row[name]
+    except (KeyError, IndexError, TypeError):
+        return default
+
+
+def _database_provider(provider_id: str) -> StorageProviderConfig:
+    if provider_id == "environment":
+        return _environment_provider()
+    try:
+        from core.crypto import decrypt_credential
+        from database import get_db_connection
+
+        conn = get_db_connection()
+        try:
+            row = conn.execute(
+                "SELECT * FROM storage_provider_configs WHERE id = ?", (provider_id,)
+            ).fetchone()
+        finally:
+            conn.close()
+    except Exception as exc:
+        raise StorageError("Storage provider configuration is unavailable") from exc
+    if not row:
+        raise StorageError("Storage provider configuration was not found")
+    encrypted_access_key = str(_row_value(row, "access_key_id_encrypted", "") or "")
+    encrypted_secret_key = str(_row_value(row, "secret_access_key_encrypted", "") or "")
+    try:
+        access_key = decrypt_credential(encrypted_access_key)
+        secret_key = decrypt_credential(encrypted_secret_key)
+    except Exception as exc:
+        raise StorageError("Storage provider credentials could not be decrypted") from exc
+    if (encrypted_access_key and access_key is None) or (encrypted_secret_key and secret_key is None):
+        raise StorageError("Storage provider credentials could not be decrypted")
+    if not str(access_key or "").strip() or not str(secret_key or "").strip():
+        raise StorageError("Storage provider credentials are not configured")
+    return StorageProviderConfig(
+        id=str(_row_value(row, "id", provider_id)),
+        name=str(_row_value(row, "name", "")),
+        backend=str(_row_value(row, "backend", "s3") or "s3").strip().lower(),
+        endpoint_url=str(_row_value(row, "endpoint_url", "") or ""),
+        bucket=str(_row_value(row, "bucket", "") or ""),
+        region=str(_row_value(row, "region", "us-east-1") or "us-east-1"),
+        access_key_id=access_key,
+        secret_access_key=secret_key,
+        force_path_style=bool(_row_value(row, "force_path_style", True)),
+        verify_tls=bool(_row_value(row, "verify_tls", True)),
+        is_default=bool(_row_value(row, "is_default", False)),
+        notes=str(_row_value(row, "notes", "") or ""),
+        source="database",
+        created_at=str(_row_value(row, "created_at", "") or ""),
+        updated_at=str(_row_value(row, "updated_at", "") or ""),
+    )
+
+
+def list_storage_provider_configs(*, include_environment: bool = False) -> list[StorageProviderConfig]:
+    """Return database profiles, with the environment profile when applicable."""
+    from core.config import settings
+    try:
+        from database import get_db_connection
+        conn = get_db_connection()
+        try:
+            rows = conn.execute(
+                "SELECT * FROM storage_provider_configs ORDER BY is_default DESC, name ASC"
+            ).fetchall()
+        finally:
+            conn.close()
+    except Exception as exc:
+        raise StorageError("Storage provider configuration is unavailable") from exc
+    profiles = [
+        _database_provider(str(_row_value(row, "id", "")))
+        for row in rows
+    ]
+    if str(settings.STORAGE_BACKEND or "").lower() == "s3":
+        profiles.append(_environment_provider())
+    return profiles
+
+
+def effective_storage_provider() -> StorageProviderConfig:
+    profiles = list_storage_provider_configs()
+    for profile in profiles:
+        if profile.source == "database" and profile.is_default:
+            return profile
+    return _environment_provider()
+
+
+def get_storage_provider_config(provider_id: str) -> StorageProviderConfig:
+    return _database_provider(str(provider_id or "").strip())
+
+
+def resolve_storage_usage(purpose: str) -> tuple[StorageUsageBinding, StorageProviderConfig]:
+    binding = _load_storage_usage(str(purpose).strip())
+    if binding.provider_mode == "profile":
+        profile = _database_provider(str(binding.provider_id))
+    elif binding.provider_mode == "environment":
+        profile = _environment_provider()
+    else:
+        profile = effective_storage_provider()
+    return binding, profile
+
+
+def normalize_relative_prefix(value: object) -> str:
+    """Normalize a usage prefix while rejecting absolute/traversal paths."""
+
+    raw = str(value or "").strip().replace("\\", "/")
+    if not raw:
+        return ""
+    if "\x00" in raw or ".." in raw or raw.startswith("/") or (len(raw) >= 2 and raw[1] == ":"):
+        raise ValueError("Storage key prefix must be relative")
+    parts = [part for part in raw.split("/") if part not in ("", ".")]
+    if not parts or any(part == ".." for part in parts):
+        raise ValueError("Storage key prefix traversal is not allowed")
+    return "/".join(parts)
+
+
+USAGE_PURPOSES = ("config_backup", "pam_recording")
+
+
+def _load_storage_usage(purpose: str) -> StorageUsageBinding:
+    if purpose not in USAGE_PURPOSES:
+        raise StorageError("Unsupported storage usage purpose")
+    try:
+        from database import get_db_connection
+        conn = get_db_connection()
+        try:
+            row = conn.execute(
+                "SELECT purpose, provider_mode, provider_id, bucket_override, key_prefix, updated_at "
+                "FROM storage_usage_bindings WHERE purpose = ?",
+                (purpose,),
+            ).fetchone()
+        finally:
+            conn.close()
+    except Exception as exc:
+        raise StorageError("Storage usage configuration is unavailable") from exc
+    if not row:
+        raise StorageError("Storage usage configuration was not found")
+    mode = str(_row_value(row, "provider_mode", "") or "").strip().lower()
+    provider_id = str(_row_value(row, "provider_id", "") or "").strip() or None
+    if mode not in {"default", "environment", "profile"}:
+        raise StorageError("Storage usage configuration is invalid")
+    if mode == "profile" and not provider_id:
+        raise StorageError("Storage usage profile is not configured")
+    if mode != "profile":
+        provider_id = None
+    try:
+        prefix = normalize_relative_prefix(_row_value(row, "key_prefix", "") or "")
+    except ValueError as exc:
+        raise StorageError("Storage usage key prefix is invalid") from exc
+    return StorageUsageBinding(
+        purpose=purpose,
+        provider_mode=mode,
+        provider_id=provider_id,
+        bucket_override=str(_row_value(row, "bucket_override", "") or "").strip() or None,
+        key_prefix=prefix,
+        updated_at=str(_row_value(row, "updated_at", "") or ""),
+    )
+
+
+def list_storage_usage_bindings() -> list[StorageUsageBinding]:
+    return [_load_storage_usage(purpose) for purpose in USAGE_PURPOSES]
+
+
+def _service_for_profile(
+    profile: StorageProviderConfig,
+    *,
+    bucket: str | None = None,
+    key_prefix: str = "",
+    purpose: str | None = None,
+) -> StorageService:
+    from core.config import settings
+
+    backend_name = profile.backend.strip().lower()
     if backend_name == "local":
-        return StorageService(LocalStorageBackend(settings.STORAGE_LOCAL_ROOT, bucket=bucket or None))
+        return StorageService(
+            LocalStorageBackend(settings.STORAGE_LOCAL_ROOT, bucket=bucket or None),
+            storage_config_id=profile.id,
+            key_prefix=key_prefix,
+            purpose=purpose,
+        )
     if backend_name == "s3":
         return StorageService(
             S3StorageBackend(
-                endpoint_url=settings.S3_ENDPOINT_URL,
-                bucket=bucket or settings.S3_BUCKET,
-                region=settings.S3_REGION,
-                access_key_id=settings.S3_ACCESS_KEY_ID,
-                secret_access_key=settings.S3_SECRET_ACCESS_KEY,
-                force_path_style=settings.S3_FORCE_PATH_STYLE,
-                verify_tls=settings.S3_VERIFY_TLS,
+                endpoint_url=profile.endpoint_url,
+                bucket=bucket or profile.bucket,
+                region=profile.region,
+                access_key_id=profile.access_key_id,
+                secret_access_key=profile.secret_access_key,
+                force_path_style=profile.force_path_style,
+                verify_tls=profile.verify_tls,
                 connect_timeout=settings.S3_CONNECT_TIMEOUT_SECONDS,
                 read_timeout=settings.S3_READ_TIMEOUT_SECONDS,
-            )
+            ),
+            storage_config_id=profile.id,
+            key_prefix=key_prefix,
+            purpose=purpose,
         )
     raise StorageError(f"Unsupported STORAGE_BACKEND: {backend_name}")
+
+
+def build_storage_service(
+    *,
+    backend_name: str | None = None,
+    bucket: str | None = None,
+    storage_config_id: str | None = None,
+    purpose: str | None = None,
+) -> StorageService:
+    """Build a provider by row ID, current DB default, or legacy environment."""
+
+    if purpose:
+        binding, profile = resolve_storage_usage(str(purpose).strip())
+        return _service_for_profile(
+            profile,
+            bucket=binding.bucket_override,
+            key_prefix=binding.key_prefix,
+            purpose=binding.purpose,
+        )
+    if storage_config_id:
+        return _service_for_profile(_database_provider(str(storage_config_id)), bucket=bucket)
+    if backend_name is None and bucket is None:
+        return _service_for_profile(effective_storage_provider())
+    profile = _environment_provider()
+    profile = replace(profile, backend=str(backend_name or profile.backend).strip().lower())
+    return _service_for_profile(profile, bucket=bucket)
 
 
 def iter_stream(stream, chunk_size: int = 1024 * 1024) -> Iterator[bytes]:
@@ -469,7 +743,16 @@ __all__ = [
     "StorageObject",
     "StorageObjectMeta",
     "StorageService",
+    "StorageProviderConfig",
+    "StorageUsageBinding",
+    "USAGE_PURPOSES",
     "build_storage_service",
+    "effective_storage_provider",
+    "get_storage_provider_config",
+    "list_storage_provider_configs",
+    "list_storage_usage_bindings",
+    "resolve_storage_usage",
     "iter_stream",
     "normalize_object_key",
+    "normalize_relative_prefix",
 ]

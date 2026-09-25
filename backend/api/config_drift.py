@@ -63,7 +63,7 @@ def _run_drift_scan_sync():
             current_snap = snaps[0]
             designated = conn.execute(
                 """
-                SELECT cs.id, cs.timestamp, cs.trigger, cs.file_path
+                SELECT cs.*
                 FROM config_baselines cb
                 JOIN config_snapshots cs ON cs.id = cb.snapshot_id
                 WHERE cb.device_id = ? AND cb.config_type = 'running'

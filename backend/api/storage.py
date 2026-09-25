@@ -7,10 +7,9 @@ from typing import Any
 
 from fastapi import APIRouter
 
-from core.config import settings
 from core.rbac import require_role
 from database import get_db_connection
-from services.storage_service import StorageError, build_storage_service
+from services.storage_service import StorageError, build_storage_service, resolve_storage_usage
 
 
 router = APIRouter(prefix="/storage", tags=["Storage"])
@@ -65,13 +64,27 @@ def _recent_errors(conn, limit: int = 5) -> list[dict[str, str]]:
 def get_storage_status(user=require_role("Viewer")):
     """Return sanitized provider health and object lifecycle counts."""
 
-    backend = str(settings.STORAGE_BACKEND or "local").strip().lower()
-    endpoint = settings.S3_ENDPOINT_URL if backend == "s3" else ""
-    bucket = settings.S3_BUCKET if backend == "s3" else ""
+    purpose = "config_backup"
+    profile = None
+    storage_service = None
+    backend = "unknown"
+    endpoint = ""
+    bucket = ""
+    configuration_source = "unavailable"
+    effective_default_id = None
     health_ok = False
     health_message = "Storage provider is not configured"
     try:
-        health_ok, health_message = build_storage_service().health_check()
+        _binding, profile = resolve_storage_usage(purpose)
+        storage_service = build_storage_service(purpose=purpose)
+        backend = storage_service.name
+        endpoint = profile.endpoint_url if backend == "s3" else ""
+        bucket = storage_service.bucket if backend == "s3" else ""
+        configuration_source = profile.source
+        effective_default_id = profile.id or ("environment" if profile.source == "environment" else None)
+        health_ok, health_message = storage_service.health_check()
+    except StorageError:
+        health_message = "Storage usage configuration is unavailable"
     except Exception as exc:
         health_message = f"Storage check failed: {type(exc).__name__}"
 
@@ -94,7 +107,9 @@ def get_storage_status(user=require_role("Viewer")):
         "checked_at": datetime.now(timezone.utc).isoformat(),
         "counts": counts,
         "recent_errors": recent_errors,
-        "configuration_source": "environment",
+        "configuration_source": configuration_source,
+        "effective_default_id": effective_default_id,
+        "purpose": purpose,
     }
 
 

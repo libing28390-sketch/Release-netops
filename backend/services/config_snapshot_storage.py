@@ -103,7 +103,7 @@ def delete_legacy_file(file_path: str) -> None:
 def object_key_for_snapshot(snapshot_id: str, timestamp: datetime, config_type: str = "running") -> str:
     suffix = "_startup" if str(config_type or "running") == "startup" else ""
     return normalize_object_key(
-        f"config/{timestamp:%Y/%m}/{snapshot_id}{suffix}.cfg.enc"
+        f"{timestamp:%Y/%m}/{snapshot_id}{suffix}.cfg.enc"
     )
 
 
@@ -142,10 +142,17 @@ def provider_for_row(row: Any) -> StorageService:
             return default
 
     backend_name = str(value("storage_backend") or "").strip().lower()
-    if not backend_name:
-        backend_name = "local"
     bucket = value("storage_bucket") or ""
-    return build_storage_service(backend_name=backend_name, bucket=str(bucket or ""))
+    provider_id = str(value("storage_config_id") or "").strip()
+    if provider_id:
+        return build_storage_service(storage_config_id=provider_id, bucket=str(bucket or ""))
+    # Rows created before provider profiles existed retain their environment
+    # S3 credentials and endpoint.  The explicit backend/bucket also keeps
+    # legacy local rows readable.
+    return build_storage_service(
+        backend_name=backend_name or None,
+        bucket=str(bucket or "") or None,
+    )
 
 
 def read_snapshot_content(row: Any) -> str:
@@ -184,7 +191,7 @@ def put_snapshot_content(
     config_type: str = "running",
     service: StorageService | None = None,
 ) -> StorageObject:
-    storage = service or build_storage_service()
+    storage = service or build_storage_service(purpose="config_backup")
     key = object_key_for_snapshot(snapshot_id, timestamp, config_type)
     payload = serialize_config_content(content)
     return storage.put_stream(key, io.BytesIO(payload), CONFIG_CONTENT_TYPE)
@@ -201,8 +208,8 @@ def put_legacy_snapshot(
     payload = read_legacy_bytes(file_path)
     if not payload:
         raise StorageNotFound(file_path)
-    storage = service or build_storage_service()
-    key = normalize_object_key(f"config/legacy/{snapshot_id}.cfg.enc")
+    storage = service or build_storage_service(purpose="config_backup")
+    key = normalize_object_key(f"legacy/{snapshot_id}.cfg.enc")
     return storage.put_stream(key, io.BytesIO(payload), CONFIG_CONTENT_TYPE)
 
 
@@ -246,7 +253,23 @@ def retry_pending_config_snapshots(limit: int = 50) -> dict[str, int]:
             result["failed"] += 1
             continue
         try:
-            service = build_storage_service()
+            provider_id = str(row["storage_config_id"] or "").strip()
+            if provider_id:
+                # A usage can override the profile's default bucket.  Failed
+                # rows keep the effective bucket, so retries must stay bound
+                # to that bucket along with the provider and full object key.
+                service = build_storage_service(
+                    storage_config_id=provider_id,
+                    bucket=str(row["storage_bucket"] or "").strip() or None,
+                )
+            else:
+                # Rows created before provider IDs existed remain bound to the
+                # deployment environment (and their recorded bucket), even if
+                # the database default has changed since the failed upload.
+                service = build_storage_service(
+                    backend_name=str(row["storage_backend"] or "").strip().lower() or None,
+                    bucket=str(row["storage_bucket"] or "").strip() or None,
+                )
             key = str(row["object_key"] or object_key_for_snapshot(
                 row["id"], datetime.fromisoformat(str(row["timestamp"]).replace("Z", "+00:00")), row["config_type"] or "running"
             ))
@@ -256,12 +279,12 @@ def retry_pending_config_snapshots(limit: int = 50) -> dict[str, int]:
             try:
                 conn.execute(
                     """UPDATE config_snapshots
-                       SET storage_backend=?, storage_bucket=?, object_key=?, object_version_id=?,
+                       SET storage_backend=?, storage_config_id=?, storage_bucket=?, object_key=?, object_version_id=?,
                            object_size=?, object_sha256=?, content_type=?, storage_status='READY',
                            storage_error='', storage_spool_path='', storage_updated_at=?
                        WHERE id=?""",
                     (
-                        stored.backend, stored.bucket or "", stored.object_key, stored.version_id or "",
+                        stored.backend, getattr(stored, "storage_config_id", None), stored.bucket or "", stored.object_key, stored.version_id or "",
                         stored.size, stored.sha256 or "", stored.content_type or CONFIG_CONTENT_TYPE,
                         datetime.now().astimezone().isoformat(), row["id"],
                     ),

@@ -35,7 +35,7 @@ from services.config_snapshot_storage import (
     serialize_config_content,
     write_config_spool,
 )
-from services.storage_service import StorageError
+from services.storage_service import StorageError, build_storage_service
 
 logger = logging.getLogger(__name__)
 
@@ -234,6 +234,7 @@ def _storage_columns(stored, *, status: str = 'READY', error: str = '') -> tuple
     """Return additive storage metadata for snapshot INSERT statements."""
     return (
         stored.backend,
+        getattr(stored, 'storage_config_id', None),
         stored.bucket or '',
         stored.object_key,
         stored.version_id or '',
@@ -246,12 +247,22 @@ def _storage_columns(stored, *, status: str = 'READY', error: str = '') -> tuple
     )
 
 
-def _storage_error_columns(snapshot_id: str, ts: datetime, content: str, config_type: str) -> tuple:
+def _storage_error_columns(
+    snapshot_id: str,
+    ts: datetime,
+    content: str,
+    config_type: str,
+    *,
+    service=None,
+) -> tuple:
     spool = write_config_spool(snapshot_id, content, config_type)
+    service = service or build_storage_service(purpose='config_backup')
+    relative_key = object_key_for_snapshot(snapshot_id, ts, config_type)
     return (
-        settings.STORAGE_BACKEND,
-        settings.S3_BUCKET if settings.STORAGE_BACKEND == 's3' else '',
-        object_key_for_snapshot(snapshot_id, ts, config_type),
+        service.name,
+        getattr(service, 'storage_config_id', None),
+        service.bucket if service.name == 's3' else '',
+        service.full_key(relative_key),
         '',
         spool.stat().st_size,
         '',
@@ -857,12 +868,15 @@ def create_snapshot(body: SnapshotCreate):
             },
         )
 
+    storage_service = None
     try:
+        storage_service = build_storage_service(purpose='config_backup')
         stored = put_snapshot_content(
             snapshot_id=snap_id,
             timestamp=ts,
             content=body.content,
             config_type='running',
+            service=storage_service,
         )
     except Exception as exc:
         logger.error("[Storage] Config snapshot %s upload failed: %s", snap_id, type(exc).__name__)
@@ -872,6 +886,7 @@ def create_snapshot(body: SnapshotCreate):
         # provider and is visibly marked STORAGE_ERROR.
         try:
             spool = write_config_spool(snap_id, body.content, 'running')
+            failed_service = storage_service or build_storage_service(purpose='config_backup')
             conn_error = get_db_connection()
             try:
                 conn_error.execute(
@@ -879,7 +894,7 @@ def create_snapshot(body: SnapshotCreate):
                        (id, device_id, hostname, vendor, timestamp, trigger, author, tag, file_path, size,
                         raw_hash, normalized_hash, line_count, section_count, integrity_status,
                         lifecycle_status, normalizer_version, collected_at, task_id,
-                        storage_backend, storage_bucket, object_key, object_version_id, object_size,
+                        storage_backend, storage_config_id, storage_bucket, object_key, object_version_id, object_size,
                         object_sha256, content_type, storage_status, storage_error, storage_updated_at,
                         storage_spool_path)
                        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)''',
@@ -887,8 +902,9 @@ def create_snapshot(body: SnapshotCreate):
                      body.author, body.tag or '', '', size, metadata['raw_hash'], metadata['normalized_hash'],
                      metadata['line_count'], metadata['section_count'], metadata['integrity_status'],
                      metadata['lifecycle_status'], metadata['normalizer_version'], ts.isoformat(), '',
-                     settings.STORAGE_BACKEND, settings.S3_BUCKET if settings.STORAGE_BACKEND == 's3' else '',
-                     object_key_for_snapshot(snap_id, ts, 'running'), '', spool.stat().st_size, '',
+                     failed_service.name, getattr(failed_service, 'storage_config_id', None),
+                     failed_service.bucket if failed_service.name == 's3' else '',
+                     failed_service.full_key(object_key_for_snapshot(snap_id, ts, 'running')), '', spool.stat().st_size, '',
                      CONFIG_CONTENT_TYPE, 'ERROR', 'storage upload failed', _utc_now_iso(), str(spool))
                 )
                 conn_error.commit()
@@ -911,10 +927,10 @@ def create_snapshot(body: SnapshotCreate):
                (id, device_id, hostname, vendor, timestamp, trigger, author, tag, file_path, size,
                 raw_hash, normalized_hash, line_count, section_count, integrity_status,
                 lifecycle_status, normalizer_version, collected_at, task_id,
-                storage_backend, storage_bucket, object_key, object_version_id, object_size,
+                storage_backend, storage_config_id, storage_bucket, object_key, object_version_id, object_size,
                 object_sha256, content_type, storage_status, storage_error, storage_updated_at,
                 storage_spool_path)
-               VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)''',
+               VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)''',
             (snap_id, body.device_id, body.hostname, body.vendor,
              ts.isoformat(), body.trigger, body.author, body.tag or '',
              '', size, metadata['raw_hash'], metadata['normalized_hash'],
@@ -953,6 +969,7 @@ def create_snapshot(body: SnapshotCreate):
         'tag': body.tag,
         'file_path': '',
         'storage_backend': stored.backend,
+        'storage_config_id': getattr(stored, 'storage_config_id', '') or '',
         'storage_bucket': stored.bucket or '',
         'object_key': stored.object_key,
         'object_version_id': stored.version_id or '',
@@ -1007,6 +1024,7 @@ def get_snapshot_content(snap_id: str):
         'lifecycle_status': row['lifecycle_status'] or 'stored_raw',
         'normalizer_version': row['normalizer_version'] or '',
         'storage_backend': row['storage_backend'] or 'local',
+        'storage_config_id': row['storage_config_id'] or '',
         'storage_bucket': row['storage_bucket'] or '',
         'object_key': row['object_key'] or '',
         'storage_status': row['storage_status'] or 'LEGACY',
@@ -2054,23 +2072,26 @@ async def run_scheduled_backup(
             ts = _utc_now()
             size = len(output.encode('utf-8'))
             snap_id = f"snap-{uuid.uuid4().hex[:12]}"
+            storage_service = None
             try:
+                storage_service = build_storage_service(purpose='config_backup')
                 stored = put_snapshot_content(
                     snapshot_id=snap_id,
                     timestamp=ts,
                     content=output,
                     config_type='running',
+                    service=storage_service,
                 )
                 storage_fields = _storage_columns(stored) + ('',)
             except Exception as storage_exc:
                 logger.error("[Scheduled Backup] Storage failed for %s: %s", device['hostname'], type(storage_exc).__name__)
                 stored = None
-                storage_fields = _storage_error_columns(snap_id, ts, output, 'running')
+                storage_fields = _storage_error_columns(snap_id, ts, output, 'running', service=storage_service)
             
             created_backup_items.append({
                 'local_path': '',
-                'remote_name': os.path.basename(stored.object_key if stored else storage_fields[2]),
-                'archive_name': stored.object_key if stored else storage_fields[2],
+                'remote_name': os.path.basename(stored.object_key if stored else storage_fields[3]),
+                'archive_name': stored.object_key if stored else storage_fields[3],
                 'hostname': device['hostname'],
                 # Keep local snapshots encrypted, but publish readable config
                 # text when the completed snapshot is offloaded remotely.
@@ -2093,18 +2114,27 @@ async def run_scheduled_backup(
                             unsaved_summary = "运行配置与启动配置一致"
 
                         startup_snap_id = f"snap-{uuid.uuid4().hex[:12]}"
+                        startup_storage_service = None
                         try:
+                            startup_storage_service = build_storage_service(purpose='config_backup')
                             st_stored = put_snapshot_content(
                                 snapshot_id=startup_snap_id,
                                 timestamp=ts,
                                 content=startup_output,
                                 config_type='startup',
+                                service=startup_storage_service,
                             )
                             startup_storage_fields = _storage_columns(st_stored) + ('',)
                         except Exception as storage_exc:
                             logger.error("[Scheduled Backup] Startup storage failed for %s: %s", device['hostname'], type(storage_exc).__name__)
                             st_stored = None
-                            startup_storage_fields = _storage_error_columns(startup_snap_id, ts, startup_output, 'startup')
+                            startup_storage_fields = _storage_error_columns(
+                                startup_snap_id,
+                                ts,
+                                startup_output,
+                                'startup',
+                                service=startup_storage_service,
+                            )
                         st_size = len(startup_output.encode('utf-8'))
 
                         conn_st = get_db_connection()
@@ -2115,7 +2145,7 @@ async def run_scheduled_backup(
                                     raw_hash, normalized_hash, line_count, section_count, integrity_status,
                                     lifecycle_status, normalizer_version, collected_at, task_id, policy_id, config_type,
                                     has_unsaved_changes, unsaved_diff_summary,
-                                    storage_backend, storage_bucket, object_key, object_version_id, object_size,
+                                    storage_backend, storage_config_id, storage_bucket, object_key, object_version_id, object_size,
                                     object_sha256, content_type, storage_status, storage_error, storage_updated_at,
                                     storage_spool_path)
                                    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)''',
@@ -2133,8 +2163,8 @@ async def run_scheduled_backup(
 
                         created_backup_items.append({
                             'local_path': '',
-                            'remote_name': os.path.basename(st_stored.object_key if st_stored else startup_storage_fields[2]),
-                            'archive_name': st_stored.object_key if st_stored else startup_storage_fields[2],
+                            'remote_name': os.path.basename(st_stored.object_key if st_stored else startup_storage_fields[3]),
+                            'archive_name': st_stored.object_key if st_stored else startup_storage_fields[3],
                             'hostname': device['hostname'],
                             'data': startup_output.encode('utf-8'),
                         })
@@ -2149,7 +2179,7 @@ async def run_scheduled_backup(
                         raw_hash, normalized_hash, line_count, section_count, integrity_status,
                         lifecycle_status, normalizer_version, collected_at, task_id, policy_id, config_type,
                         has_unsaved_changes, unsaved_diff_summary,
-                        storage_backend, storage_bucket, object_key, object_version_id, object_size,
+                        storage_backend, storage_config_id, storage_bucket, object_key, object_version_id, object_size,
                         object_sha256, content_type, storage_status, storage_error, storage_updated_at,
                         storage_spool_path)
                        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)''',
@@ -2177,8 +2207,8 @@ async def run_scheduled_backup(
                 'raw_hash': metadata['raw_hash'],
                 'normalized_hash': metadata['normalized_hash'],
                 'integrity_status': metadata['integrity_status'],
-                'storage_status': storage_fields[7],
-                'storage_error': storage_fields[8],
+                'storage_status': storage_fields[8],
+                'storage_error': storage_fields[9],
             }
         except Exception as e:
             failed_count += 1

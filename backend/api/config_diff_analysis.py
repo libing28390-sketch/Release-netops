@@ -801,7 +801,7 @@ def scan_config_compliance(
             device = dict(raw_device)
             snapshot = conn.execute(
                 """
-                SELECT id, file_path FROM config_snapshots
+                SELECT * FROM config_snapshots
                 WHERE device_id = ?
                   AND COALESCE(config_type, 'running') = 'running'
                   AND COALESCE(integrity_status, 'unknown') NOT IN ('invalid', 'corrupt')

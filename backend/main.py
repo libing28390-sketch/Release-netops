@@ -79,6 +79,8 @@ from api.discovery import router as discovery_router
 from api.graph import router as graph_router
 from api.system import router as system_router
 from api.storage import router as storage_router
+from api.storage_usages import router as storage_usages_router
+from api.storage_providers import router as storage_providers_router
 from api.access import router as access_router
 from api.windows_management import router as windows_management_router
 from ai.api import ai_router
@@ -691,6 +693,8 @@ app.include_router(users_router,         prefix="/api")
 app.include_router(setup_router,         prefix="/api")
 app.include_router(system_router,        prefix="/api")
 app.include_router(storage_router,       prefix="/api")
+app.include_router(storage_usages_router, prefix="/api")
+app.include_router(storage_providers_router, prefix="/api")
 app.include_router(notifications_router, prefix="/api")
 app.include_router(tags_router,          prefix="/api")
 

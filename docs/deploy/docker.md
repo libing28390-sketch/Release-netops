@@ -61,6 +61,10 @@ bash scripts/deploy-docker.sh install
 bash scripts/deploy-docker.sh update --force
 ```
 
+部署完成后，管理员可打开 **平台管理 → 对象存储**（`/management/storage`）添加或维护 S3 profile、测试连接并选择全局默认。界面中保存的 Access Key 和 Secret 会用 `CREDENTIAL_ENCRYPTION_KEY` 加密；请保持该密钥稳定。配置备份和 PAM 录像分别有一条用途路由，可选择当前默认、`.env` 环境配置或指定 profile，并可覆盖 Bucket、设置 key 前缀。初始路由使用全局默认及 `config`、`pam` 前缀。用途选择“当前默认”时使用全局默认 profile；如果尚未设置数据库全局默认，则回退到 `.env`。也可显式选择环境变量配置。
+
+S3 的 `/` 是 object key 的虚拟前缀，不需要预建目录；Bucket 本身应先在 SeaweedFS/S3 服务中创建，并确保所选密钥有访问权限。保存前可测试用途路由，检查选定服务与最终 Bucket。新写入对象会记录实际 provider、Bucket 和完整 object key；修改默认值或用途路由只影响之后的新对象，已有对象仍关联原位置。被对象或用途路由引用的 profile 不能删除；已有对象引用的连接参数不能修改。
+
 安装、更新和离线启动遇到 `netops` 尚未通过健康检查导致的首次 Compose
 失败时，脚本会保留原始错误上下文，显示当前 health 状态并在默认 120 秒内
 等待 `netops` 变为 healthy；恢复后自动以 `--no-build --pull never` 补启动

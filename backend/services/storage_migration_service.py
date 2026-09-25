@@ -62,12 +62,12 @@ def migrate_legacy_storage(*, limit: int = 100, dry_run: bool = False) -> dict[s
             try:
                 conn.execute(
                     """UPDATE config_snapshots
-                       SET storage_backend=?, storage_bucket=?, object_key=?, object_version_id=?,
+                       SET storage_backend=?, storage_config_id=?, storage_bucket=?, object_key=?, object_version_id=?,
                            object_size=?, object_sha256=?, content_type=?, storage_status='READY',
                            storage_error='', storage_updated_at=?
                        WHERE id=?""",
                     (
-                        stored.backend, stored.bucket or "", stored.object_key, stored.version_id or "",
+                        stored.backend, getattr(stored, "storage_config_id", None), stored.bucket or "", stored.object_key, stored.version_id or "",
                         stored.size, stored.sha256 or "", stored.content_type or "application/octet-stream",
                         datetime.now(timezone.utc).isoformat(), row["id"],
                     ),
@@ -87,18 +87,19 @@ def migrate_legacy_storage(*, limit: int = 100, dry_run: bool = False) -> dict[s
                 raise FileNotFoundError(str(path))
             suffix = path.suffix.lower() or ".cast"
             key = recording_object_key(str(row["id"]), row["created_at"], suffix)
+            service = build_storage_service(purpose="pam_recording")
             with path.open("rb") as handle:
-                stored = build_storage_service().put_stream(key, handle, recording_content_type(suffix))
+                stored = service.put_stream(key, handle, recording_content_type(suffix))
             conn = get_db_connection()
             try:
                 conn.execute(
                     """UPDATE pam_sessions
-                       SET storage_backend=?, storage_bucket=?, object_key=?, object_version_id=?,
+                       SET storage_backend=?, storage_config_id=?, storage_bucket=?, object_key=?, object_version_id=?,
                            object_size=?, object_sha256=?, content_type=?, storage_status='READY',
                            storage_error='', storage_updated_at=?
                        WHERE id=?""",
                     (
-                        stored.backend, stored.bucket or "", stored.object_key, stored.version_id or "",
+                        stored.backend, getattr(stored, "storage_config_id", None), stored.bucket or "", stored.object_key, stored.version_id or "",
                         stored.size, stored.sha256 or "", stored.content_type or recording_content_type(suffix),
                         datetime.now(timezone.utc).isoformat(), row["id"],
                     ),

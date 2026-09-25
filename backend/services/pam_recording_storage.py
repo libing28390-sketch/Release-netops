@@ -55,7 +55,7 @@ def recording_object_key(session_id: str, created_at: object, suffix: str) -> st
         parsed = datetime.fromisoformat(str(created_at or "").replace("Z", "+00:00"))
     except (TypeError, ValueError):
         parsed = datetime.now(timezone.utc)
-    return normalize_object_key(f"pam/{parsed:%Y/%m}/{safe}{str(suffix).lower()}")
+    return normalize_object_key(f"{parsed:%Y/%m}/{safe}{str(suffix).lower()}")
 
 
 def _row_value(row: Any, name: str, default: Any = "") -> Any:
@@ -69,15 +69,38 @@ def _row_value(row: Any, name: str, default: Any = "") -> Any:
         return default
 
 
-def _mark_storage_error(session_id: str, message: str) -> None:
+def _mark_storage_error(
+    session_id: str,
+    message: str,
+    *,
+    service: StorageService | None = None,
+    object_key: str | None = None,
+) -> None:
     conn = get_db_connection()
     try:
-        conn.execute(
-            """UPDATE pam_sessions
-               SET storage_status = 'ERROR', storage_error = ?, storage_updated_at = ?
-               WHERE id = ?""",
-            (str(message or "storage error")[:2000], datetime.now(timezone.utc).isoformat(), session_id),
-        )
+        if service is not None:
+            conn.execute(
+                """UPDATE pam_sessions
+                   SET storage_backend = ?, storage_config_id = ?, storage_bucket = ?, object_key = ?,
+                       storage_status = 'ERROR', storage_error = ?, storage_updated_at = ?
+                   WHERE id = ?""",
+                (
+                    service.name,
+                    service.storage_config_id,
+                    service.bucket or None,
+                    object_key or None,
+                    str(message or "storage error")[:2000],
+                    datetime.now(timezone.utc).isoformat(),
+                    session_id,
+                ),
+            )
+        else:
+            conn.execute(
+                """UPDATE pam_sessions
+                   SET storage_status = 'ERROR', storage_error = ?, storage_updated_at = ?
+                   WHERE id = ?""",
+                (str(message or "storage error")[:2000], datetime.now(timezone.utc).isoformat(), session_id),
+            )
         conn.commit()
     finally:
         conn.close()
@@ -111,11 +134,35 @@ def finalize_pam_recording(
         return False
 
     suffix = path.suffix.lower() or ".cast"
-    key = recording_object_key(session_id, _row_value(row, "created_at"), suffix)
+    existing_key = str(_row_value(row, "object_key") or "").strip()
+    existing_status = str(_row_value(row, "storage_status", "LEGACY") or "LEGACY").upper()
+    provider_id = str(_row_value(row, "storage_config_id", "") or "").strip()
+    service: StorageService | None = None
     try:
-        service = build_storage_service()
+        if existing_key and existing_status in {"ERROR", "PENDING", "UPLOADING", "READY"}:
+            backend_name = str(_row_value(row, "storage_backend", "") or "").strip().lower()
+            bucket = str(_row_value(row, "storage_bucket", "") or "").strip() or None
+            if provider_id:
+                service = build_storage_service(storage_config_id=provider_id, bucket=bucket)
+            else:
+                service = build_storage_service(backend_name=backend_name or None, bucket=bucket)
+            key = existing_key
+            upload_key = key
+        else:
+            service = build_storage_service(purpose="pam_recording")
+            upload_key = recording_object_key(session_id, _row_value(row, "created_at"), suffix)
+            key = service.full_key(upload_key)
+    except Exception as exc:
+        _mark_storage_error(
+            session_id,
+            f"{type(exc).__name__}: recording upload failed",
+            service=service,
+            object_key=existing_key or None,
+        )
+        return False
+    try:
         with path.open("rb") as handle:
-            stored = service.put_stream(key, handle, content_type or recording_content_type(suffix))
+            stored = service.put_stream(upload_key, handle, content_type or recording_content_type(suffix))
         if stored.size != path.stat().st_size:
             raise StorageError("PAM recording size verification failed")
         conn = get_db_connection()
@@ -123,7 +170,7 @@ def finalize_pam_recording(
             conn.execute(
                 """UPDATE pam_sessions
                        SET recording_spool_path = '', recording_path = ?,
-                       storage_backend = ?, storage_bucket = ?, object_key = ?,
+                       storage_backend = ?, storage_config_id = ?, storage_bucket = ?, object_key = ?,
                        object_version_id = ?, object_size = ?, object_sha256 = ?,
                        content_type = ?, storage_status = 'READY', storage_error = '',
                        storage_updated_at = ?, recording_status = 'uploaded', updated_at = ?
@@ -131,6 +178,7 @@ def finalize_pam_recording(
                 (
                     legacy_path or '',
                     stored.backend,
+                    getattr(stored, "storage_config_id", None),
                     stored.bucket or "",
                     stored.object_key,
                     stored.version_id or "",
@@ -152,7 +200,12 @@ def finalize_pam_recording(
                 pass
         return True
     except Exception as exc:
-        _mark_storage_error(session_id, f"{type(exc).__name__}: recording upload failed")
+        _mark_storage_error(
+            session_id,
+            f"{type(exc).__name__}: recording upload failed",
+            service=service,
+            object_key=key,
+        )
         return False
 
 
@@ -191,9 +244,13 @@ def delete_pam_recording(row: Any) -> None:
     key = str(_row_value(row, "object_key") or "")
     status = str(_row_value(row, "storage_status", "LEGACY") or "LEGACY").upper()
     if key and status in {"READY", "ERROR", "PENDING", "UPLOADING"}:
-        backend_name = str(_row_value(row, "storage_backend", "local") or "local")
+        provider_id = str(_row_value(row, "storage_config_id", "") or "").strip()
+        backend_name = str(_row_value(row, "storage_backend", "") or "").strip().lower()
         bucket = str(_row_value(row, "storage_bucket", "") or "")
-        build_storage_service(backend_name=backend_name, bucket=bucket).delete(key)
+        if provider_id:
+            build_storage_service(storage_config_id=provider_id, bucket=bucket or None).delete(key)
+        else:
+            build_storage_service(backend_name=backend_name or None, bucket=bucket or None).delete(key)
     legacy_path = str(_row_value(row, "recording_path") or "")
     if legacy_path:
         try:

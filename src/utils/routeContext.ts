@@ -180,6 +180,8 @@ export function getRouteContext(pathname: string): RouteContext {
       activeTab = 'users';
     } else if (second === 'credentials') {
       activeTab = 'credentials';
+    } else if (second === 'storage') {
+      activeTab = 'storage';
     } else {
       activeTab = 'audit';
     }

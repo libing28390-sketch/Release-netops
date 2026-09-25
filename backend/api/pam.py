@@ -886,9 +886,12 @@ def get_session_recording(session_id: str, user=require_permission('pam', 'view'
         filename = f"recording_{safe_session_id}{extension}"
         if object_key and storage_status == 'READY':
             try:
+                provider_id = str(row_dict.get('storage_config_id') or '').strip()
                 service = build_storage_service(
-                    backend_name=str(row_dict.get('storage_backend') or 'local'),
-                    bucket=str(row_dict.get('storage_bucket') or ''),
+                    storage_config_id=provider_id or None,
+                    backend_name=(str(row_dict.get('storage_backend') or '').strip().lower() or None)
+                    if not provider_id else None,
+                    bucket=str(row_dict.get('storage_bucket') or '').strip() or None,
                 )
                 stream = service.get_stream(object_key)
             except StorageNotFound as exc:
