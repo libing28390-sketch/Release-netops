@@ -1,0 +1,41 @@
+# nexora-action-code: get_transceivers
+Value Required INTERFACE (\S+)
+Value VENDOR_NAME (\S+)
+Value WAVELENGTH (\S+)
+Value TEMPERATURE (-?\d+(?:\.\d+)?|\S+)
+Value VOLTAGE (\d+(?:\.\d+)?|\S+)
+Value TX_POWER (-?\d+(?:\.\d+)?|\S+)
+Value RX_POWER (-?\d+(?:\.\d+)?|\S+)
+
+Start
+  ^.*#\s*show\s+ -> Next
+  ^\s*Name\s+VendorName\s+LaserWaveLen -> Header
+  ^\s*Interface\s+Temp\(C\)\s+Voltage\(V\) -> Header
+  # Direct data without header
+  ^\s*${INTERFACE}\s+${VENDOR_NAME}\s+${WAVELENGTH}\s+${TEMPERATURE}\s+${VOLTAGE}\s+${TX_POWER}\s+${RX_POWER}\s*$$ -> Record Table
+  ^\s*$$
+  ^. -> Next
+
+Header
+  ^\s*Voltage\(V\)\s+TxPower -> Next
+  ^\s*[-=]+ -> Table
+  ^\s*${INTERFACE}\s+${VENDOR_NAME}\s+${WAVELENGTH}\s+${TEMPERATURE}\s+${VOLTAGE}\s+${TX_POWER}\s+${RX_POWER}\s*$$ -> Record Table
+  ^\s*$$
+  ^. -> Next
+
+Table
+  # 1. Standard 7-column table row
+  ^\s*${INTERFACE}\s+${VENDOR_NAME}\s+${WAVELENGTH}\s+${TEMPERATURE}\s+${VOLTAGE}\s+${TX_POWER}\s+${RX_POWER}\s*$$ -> Record
+  # 2. Wrapped format (minus sign at end of line 1)
+  ^\s*${INTERFACE}\s+${VENDOR_NAME}\s+${WAVELENGTH}\s+${TEMPERATURE}\s+${VOLTAGE}\s*-\s*$$ -> WrappedLine
+  # 3. Wrapped format (line 1 ends with VOLTAGE)
+  ^\s*${INTERFACE}\s+${VENDOR_NAME}\s+${WAVELENGTH}\s+${TEMPERATURE}\s+${VOLTAGE}\s*$$ -> WrappedLine
+  # 4. Port with no module / absent / dashes
+  ^\s*${INTERFACE}\s+(?:--|N/A|Absent|No\s+transceiver|No\s+module)\s*$$ -> Record
+  ^\s*$$
+  ^. -> Next
+
+WrappedLine
+  ^\s*-?${TX_POWER}\s+${RX_POWER}\s*$$ -> Record Table
+  ^\s*$$
+  ^. -> Next

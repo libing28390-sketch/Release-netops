@@ -1,0 +1,9 @@
+{
+  "source_type": "official_vendor_documentation",
+  "source_url": "https://support.huawei.com/enterprise/en/doc/EDOC1100198418/468f431e/ntp-configuration-commands",
+  "vendor": "Huawei",
+  "platform": "VRP8",
+  "model_family": "CloudEngine 12800",
+  "command": "display ntp status",
+  "source_note": "Official NTP status command reference example."
+}

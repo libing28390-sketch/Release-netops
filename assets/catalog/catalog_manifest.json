@@ -1,0 +1,41 @@
+{
+  "catalog_version": "rackvision-v1",
+  "generated_at": "2026-09-06T11:31:30.911122+00:00",
+  "source_file": "Nexora_3D_Asset_Base_Catalog_v1.xlsx",
+  "source_sha256": "fa512488d5f017f07541311dc63df67fac902fb1d7e5f522d80b3100a382286e",
+  "source_was_modified": false,
+  "summary": {
+    "sheet_index": 0,
+    "sheet_title": "00_说明与统计",
+    "records": 22
+  },
+  "sheets": {
+    "network_devices": {
+      "sheet_index": 1,
+      "records": 120,
+      "incomplete_dimensions": 71
+    },
+    "rack_assets": {
+      "sheet_index": 2,
+      "records": 59
+    },
+    "cables_optics": {
+      "sheet_index": 3,
+      "records": 34
+    },
+    "modeling_priorities": {
+      "sheet_index": 4,
+      "records": 30
+    }
+  },
+  "registry": {
+    "reusable_asset_entries": 88,
+    "exact_sku_mappings": 120,
+    "glb_files_present_at_generation": 0
+  },
+  "quality_rules": {
+    "unknown_dimensions": "pending_verification",
+    "image_based_dimension_inference": false,
+    "generic_model_fallback": "allowed only when data_confidence is not verified_official"
+  }
+}

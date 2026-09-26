@@ -1,0 +1,23 @@
+Value SEQ (\d+)
+Value TIMESTAMP (\*?[A-Za-z]{3}\s+\d+\s+\d+:\d+:\d+(?:\.\d+)?|\d{4}-\d{2}-\d{2}\s+\d+:\d+:\d+(?:\.\d+)?)
+Value HOSTNAME (\S+)
+Value FACILITY (\w+)
+Value SEVERITY (\d+)
+Value MNEMONIC (\w+)
+Value MESSAGE (.*)
+
+Start
+  ^.*#\s*show\s+ -> Next
+  ^Log\s+Buffer -> Next
+  # 1. Full with SEQ, TIMESTAMP, HOSTNAME, %FACILITY-SEVERITY-MNEMONIC: MESSAGE
+  ^\s*${SEQ}:\s+${TIMESTAMP}:\s+${HOSTNAME}\s+%${FACILITY}-${SEVERITY}-${MNEMONIC}:\s+${MESSAGE}\s*$$ -> Record
+  # 2. With SEQ, TIMESTAMP, %FACILITY-SEVERITY-MNEMONIC: MESSAGE
+  ^\s*${SEQ}:\s+${TIMESTAMP}:\s+%${FACILITY}-${SEVERITY}-${MNEMONIC}:\s+${MESSAGE}\s*$$ -> Record
+  # 3. With TIMESTAMP, HOSTNAME, %FACILITY-SEVERITY-MNEMONIC: MESSAGE
+  ^\s*${TIMESTAMP}:\s+${HOSTNAME}\s+%${FACILITY}-${SEVERITY}-${MNEMONIC}:\s+${MESSAGE}\s*$$ -> Record
+  # 4. With TIMESTAMP, %FACILITY-SEVERITY-MNEMONIC: MESSAGE
+  ^\s*${TIMESTAMP}:\s+%${FACILITY}-${SEVERITY}-${MNEMONIC}:\s+${MESSAGE}\s*$$ -> Record
+  # 5. Bare %FACILITY-SEVERITY-MNEMONIC: MESSAGE
+  ^\s*%${FACILITY}-${SEVERITY}-${MNEMONIC}:\s+${MESSAGE}\s*$$ -> Record
+  ^\s*$$
+  ^. -> Next
