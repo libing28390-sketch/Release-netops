@@ -1,0 +1,13 @@
+# Comware V5 transceiver manufacture information.
+Value Filldown INTERFACE (\S+)
+Value Required SERIAL_NUMBER (\S+)
+Value Required MANUFACTURING_DATE (\d{4}-\d{2}-\d{2})
+Value Required VENDOR_NAME (\S+)
+
+Start
+  ^\s*${INTERFACE}\s+transceiver\s+manufacture\s+information:\s*$$
+  ^\s*Manu\.\s+Serial\s+Number\s*:\s*${SERIAL_NUMBER}\s*$$
+  ^\s*Manufacturing\s+Date\s*:\s*${MANUFACTURING_DATE}\s*$$
+  ^\s*Vendor\s+Name\s*:\s*${VENDOR_NAME}\s*$$ -> Record
+  ^.*$$
+

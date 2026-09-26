@@ -1,0 +1,16 @@
+# nexora-action-code: get_memory
+Value TOTAL_MEMORY (\S+)
+Value USED_MEMORY (\S+)
+Value USED_PERCENT (\d+(?:\.\d+)?)
+
+Start
+  ^.*#\s*show\s+ -> Next
+  ^\s*Total\s+memory:\s*${TOTAL_MEMORY}\s*KB,\s*Used\s+memory:\s*${USED_MEMORY}\s*KB\s*\(${USED_PERCENT}%\) -> Record
+  ^\s*Total\s+memory\s+is\s+\d+\(${TOTAL_MEMORY}\)\s+bytes
+  ^\s*Total\s+memory\s+is\s+${TOTAL_MEMORY}\s+bytes
+  ^\s*Total\s+memory\s+used\s+is\s+\d+\(${USED_MEMORY}\)\s+bytes
+  ^\s*Total\s+memory\s+used\s+is\s+${USED_MEMORY}\s+bytes
+  ^\s*Current\s+memory\s+using\s+percentage\s+is\s+${USED_PERCENT}% -> Record
+  ^\s*Current\s+memory\s+utilization\s+is\s+${USED_PERCENT}% -> Record
+  ^\s*$$
+  ^. -> Next

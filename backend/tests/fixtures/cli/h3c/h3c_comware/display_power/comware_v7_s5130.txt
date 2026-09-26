@@ -1,0 +1,6 @@
+<Sysname> display power
+Slot 1:
+Input Power: 99(W)
+PowerID State        Mode   Current(A)  Voltage(V) Power(W) FanDirection
+1       Normal       AC     5.40        12.35      66       PowerToPort
+2       Normal       AC     2.85        10.00      33       PortToPower

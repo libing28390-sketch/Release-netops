@@ -1,0 +1,8 @@
+<Sysname> display vlan brief
+Brief information about all VLANs:
+Supported Minimum VLAN ID: 1
+Supported Maximum VLAN ID: 4094
+Default VLAN ID: 1
+VLAN ID   Name                         Port
+1         VLAN 0001                   GE1/0/1  GE1/0/2  GE1/0/3  GE1/0/4
+                                      GE1/0/5  GE1/0/6  GE1/0/7  GE1/0/8

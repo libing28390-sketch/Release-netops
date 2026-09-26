@@ -1,0 +1,9 @@
+{
+  "source_type": "official_vendor_documentation",
+  "source_url": "https://support.huawei.com/enterprise/en/doc/EDOC1100248438/8def618c/lldp-configuration-commands",
+  "vendor": "Huawei",
+  "platform": "VRP8",
+  "model_family": "S12700/S12700E",
+  "command": "display lldp neighbor brief",
+  "source_note": "Official LLDP command reference, brief neighbor output example."
+}
