@@ -52,17 +52,17 @@ Nexora 本次新增 Cisco（四种平台，经 CISCO-ENTITY-SENSOR-MIB 的 dBm t
 - `git diff --check`：通过。Git 对部分既有文本文件提示 LF/CRLF 转换警告，不是 whitespace 错误。
 - 新增 Cisco、Arista、Nokia 1830 适配器和实体状态边界后，聚焦 SNMP optical 调用链：28 passed，31.03s。
 - 严格过滤实体传感器的未知、不可用、未初始化或缺失状态后，同一聚焦调用链：29 passed，31.23s。
-- 基线提交 `b8406390` 对应 Actions `36230841512` 已通过（Release Ubuntu/Linux 成功，sanitized Release tree sync 成功）。新加的三个平台适配器推送后会有新 Actions 结果。
+- 提交 `ea357b7e` 已推送到 `main`。Actions `36232897244`（run #611）通过：Release Ubuntu/Linux job 成功、后端全量 pytest 成功、Docker 输入/前端构建成功、private/development 文件清理成功、sanitized Release tree 提交成功、Linux Release archive 打包成功；新 Release tree SHA `fe317ecc9bc6ce7b940f76c3e045f00182452c0b`。Knowledge Engine 全量评测、Baidu 上传、public GitHub Release 按 push workflow 条件跳过；Windows workstation agent 也跳过。
 
 ## 未执行验证及原因
 
 - 除 H3C 以外的八家已接入厂商没有可用现场设备/凭据，本地回归使用厂商 MIB 定义及模拟返回；没有尝试连接真实设备。
-- 当前 Chrome 中的 Grafana 页面返回 `401 Authorization Required`，新版 JSON 也未同步到 Linux；因此不能在运行实例上验证新查询的实时数据和渲染。会完成 dashboard JSON、查询和变量契约的本地检查。用户已说明 Actions 通过后会自行更新服务器。
-- GitHub Actions 新运行待本次适配器提交推送后确认；目前只确认基线 Actions 成功。
+- 当前 Chrome 中的 Grafana 页面返回 `401 Authorization Required`，本次代码尚未同步到 Linux；因此不能在运行实例上验证新查询的实时数据和渲染。Dashboard JSON、查询和变量契约的静态检查已完成。用户会在 Actions 通过后自行更新服务器。
+- 本次 Actions 已通过；没有进行 Linux 部署、Baidu 上传或公共 GitHub Release 发布。
 
 ## 剩余风险与后续建议
 
 - 设备固件、模块型号可能对可选 MIB 表的实现有差异；上线后先在实际设备的 09 详情核对 DOM 值和模块信息。未支持厂商保持不支持状态，取得可靠 LibreNMS/官方 MIB 证据后再单独接入。
 - `/config/backup` 默认命令不是资产目录 41 家厂商全覆盖：11 家有已确认厂商默认命令，另外 30 家需已发布的 profile action 或进一步核实厂商和系统版本命令，避免把错误命令发到设备。
 - 把代码同步到 Linux 并刷新 Grafana 后，复核 01/04/07/09 的查询结果、筛选器选项和光模块功率趋势。
-- 推送后查看 GitHub Actions。用户自行执行 Linux 同步，本次不做生产部署或设备操作。
+- 由用户将通过 Actions 的代码同步到 Linux 后，复核 01/04/07/09 的运行数据、筛选器和光模块趋势；本次不做生产部署或设备操作。
