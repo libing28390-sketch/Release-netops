@@ -739,7 +739,7 @@
               "ifDescr": "接口描述",
               "vendor": "厂商",
               "role": "角色",
-              "interface_role": "接口角色",
+              "interface_role": "接口用途",
               "utilization_warn_pct": "预警阈值 (%)",
               "utilization_high_pct": "高位阈值 (%)",
               "utilization_critical_pct": "严重阈值 (%)",
@@ -915,7 +915,7 @@
               "ifDescr": "接口描述",
               "vendor": "厂商",
               "role": "角色",
-              "interface_role": "接口角色",
+              "interface_role": "接口用途",
               "utilization_warn_pct": "预警阈值 (%)",
               "utilization_high_pct": "高位阈值 (%)",
               "utilization_critical_pct": "严重阈值 (%)",
@@ -1008,18 +1008,19 @@
             "$__all"
           ]
         },
-        "definition": "label_values({__name__=~\"node_.*|up\",job=\"linux_servers\"}, site_name)",
+        "definition": "query_result(count by (site_name) (up{job=\"linux_servers\"}))",
         "includeAll": true,
         "label": "站点",
         "multi": true,
         "name": "site",
         "options": [],
         "query": {
-          "query": "label_values({__name__=~\"node_.*|up\",job=\"linux_servers\"}, site_name)",
+          "query": "query_result(count by (site_name) (up{job=\"linux_servers\"}))",
           "refId": "StandardVariableQuery"
         },
         "refresh": 1,
-        "type": "query"
+        "type": "query",
+        "regex": "/.*site_name=\"([^\"]+)\".*/"
       },
       {
         "allValue": ".*",
@@ -1032,18 +1033,19 @@
             "$__all"
           ]
         },
-        "definition": "label_values({__name__=~\"node_.*|up\",job=\"linux_servers\",site_name=~\"$site\"}, hostname)",
+        "definition": "query_result(count by (hostname) (up{job=\"linux_servers\",site_name=~\"$site\"}))",
         "includeAll": true,
         "label": "服务器",
         "multi": true,
         "name": "device",
         "options": [],
         "query": {
-          "query": "label_values({__name__=~\"node_.*|up\",job=\"linux_servers\",site_name=~\"$site\"}, hostname)",
+          "query": "query_result(count by (hostname) (up{job=\"linux_servers\",site_name=~\"$site\"}))",
           "refId": "StandardVariableQuery"
         },
         "refresh": 1,
-        "type": "query"
+        "type": "query",
+        "regex": "/.*hostname=\"([^\"]+)\".*/"
       }
     ]
   },

@@ -232,10 +232,11 @@
       },
       "targets": [
         {
-          "expr": "sum((hwWlanCurAssocUserNum{job=\"network_snmp\",site_name=~\"$site\",vendor=~\"$vendor\",role=~\"$role\",hostname=~\"$device\"} or hh3cDot11CurrAssocUserNum{job=\"network_snmp\",site_name=~\"$site\",vendor=~\"$vendor\",role=~\"$role\",hostname=~\"$device\"} or ruijieApcTotalStaNum{job=\"network_snmp\",site_name=~\"$site\",vendor=~\"$vendor\",role=~\"$role\",hostname=~\"$device\"} or cLSysTotalNumOfClients{job=\"network_snmp\",site_name=~\"$site\",vendor=~\"$vendor\",role=~\"$role\",hostname=~\"$device\"} or wlsxSysExtStationsNum{job=\"network_snmp\",site_name=~\"$site\",vendor=~\"$vendor\",role=~\"$role\",hostname=~\"$device\"} or ruckusZDTotalNumSta{job=\"network_snmp\",site_name=~\"$site\",vendor=~\"$vendor\",role=~\"$role\",hostname=~\"$device\"})) or vector(0)",
+          "expr": "sum((hwWlanCurAssocUserNum{job=\"network_snmp\",site_name=~\"$site\",vendor=~\"$vendor\",role=~\"$role\",hostname=~\"$device\"} or hh3cDot11CurrAssocUserNum{job=\"network_snmp\",site_name=~\"$site\",vendor=~\"$vendor\",role=~\"$role\",hostname=~\"$device\"} or ruijieApcTotalStaNum{job=\"network_snmp\",site_name=~\"$site\",vendor=~\"$vendor\",role=~\"$role\",hostname=~\"$device\"} or cLSysTotalNumOfClients{job=\"network_snmp\",site_name=~\"$site\",vendor=~\"$vendor\",role=~\"$role\",hostname=~\"$device\"} or wlsxSysExtStationsNum{job=\"network_snmp\",site_name=~\"$site\",vendor=~\"$vendor\",role=~\"$role\",hostname=~\"$device\"} or ruckusZDTotalNumSta{job=\"network_snmp\",site_name=~\"$site\",vendor=~\"$vendor\",role=~\"$role\",hostname=~\"$device\"}))",
           "refId": "A"
         }
-      ]
+      ],
+      "description": "没有匹配的无线客户端采集指标时显示数据暂不可用，不代表当前客户端数为 0。"
     },
     {
       "id": 5,
@@ -293,7 +294,7 @@
     },
     {
       "id": 6,
-      "title": "异常/Down接口数",
+      "title": "启用但链路未连通接口数",
       "type": "stat",
       "datasource": {
         "type": "prometheus",
@@ -348,10 +349,11 @@
       },
       "targets": [
         {
-          "expr": "count(max by (instance, ifIndex) (ifAdminStatus{job=\"network_snmp\",site_name=~\"$site\",vendor=~\"$vendor\",role=~\"$role\",hostname=~\"$device\"} == 1) and on(instance, ifIndex) max by (instance, ifIndex) (ifOperStatus{job=\"network_snmp\",site_name=~\"$site\",vendor=~\"$vendor\",role=~\"$role\",hostname=~\"$device\"} != 1)) or vector(0)",
+          "expr": "count(max by (instance, ifIndex) (ifAdminStatus{job=\"network_snmp\",site_name=~\"$site\",vendor=~\"$vendor\",role=~\"$role\",hostname=~\"$device\"} == 1) and on(instance, ifIndex) max by (instance, ifIndex) (ifOperStatus{job=\"network_snmp\",site_name=~\"$site\",vendor=~\"$vendor\",role=~\"$role\",hostname=~\"$device\"} == 2)) or vector(0)",
           "refId": "A"
         }
-      ]
+      ],
+      "description": "这是当前状态数量：只统计管理状态为启用、运行状态为 Down 的接口。管理状态主动关闭的端口不计入；此数字不代表接口刚刚发生故障，闲置端口请结合用途判断是否需要处理。"
     },
     {
       "id": 901,
@@ -804,7 +806,7 @@
               "ifDescr": "接口描述",
               "vendor": "厂商",
               "role": "角色",
-              "interface_role": "接口角色",
+              "interface_role": "接口用途",
               "utilization_warn_pct": "预警阈值 (%)",
               "utilization_high_pct": "高位阈值 (%)",
               "utilization_critical_pct": "严重阈值 (%)",
@@ -908,7 +910,7 @@
     },
     {
       "id": 903,
-      "title": "需要关注的接口",
+      "title": "当前状态待核查",
       "type": "row",
       "collapsed": false,
       "gridPos": {
@@ -921,7 +923,7 @@
     },
     {
       "id": 14,
-      "title": "异常接口 Top20",
+      "title": "启用但链路未连通 Top20",
       "type": "table",
       "datasource": {
         "type": "prometheus",
@@ -948,7 +950,7 @@
           {
             "matcher": {
               "id": "byName",
-              "options": "运行状态"
+              "options": "状态判断"
             },
             "properties": [
               {
@@ -958,12 +960,12 @@
                     "type": "value",
                     "options": {
                       "0": {
-                        "text": "正常",
+                        "text": "当前无此类接口",
                         "color": "green"
                       },
-                      "1": {
-                        "text": "DOWN",
-                        "color": "red"
+                      "2": {
+                        "text": "链路未连通",
+                        "color": "#E0B400"
                       }
                     }
                   }
@@ -974,7 +976,7 @@
           {
             "matcher": {
               "id": "byName",
-              "options": "运行状态"
+              "options": "状态判断"
             },
             "properties": [
               {
@@ -996,8 +998,30 @@
                 "value": [
                   {
                     "title": "打开接口详情",
-                    "url": "/d/nexora-interface-detail/interface-detail?var-site=${__data.fields[\"站点\"]}&var-vendor=${__data.fields[\"厂商\"]}&var-role=${__data.fields[\"角色\"]}&var-device=${__data.fields[\"设备名称\"]}&var-interface_role=${__data.fields[\"接口角色\"]}&var-interface=${__data.fields[\"接口全称\"]}&from=${__from}&to=${__to}",
+                    "url": "/d/nexora-interface-detail/interface-detail?var-site=${__data.fields[\"站点\"]}&var-vendor=${__data.fields[\"厂商\"]}&var-role=${__data.fields[\"角色\"]}&var-device=${__data.fields[\"设备名称\"]}&var-interface_role=${__data.fields[\"接口用途\"]}&var-interface=${__data.fields[\"接口全称\"]}&from=${__from}&to=${__to}",
                     "targetBlank": false
+                  }
+                ]
+              }
+            ]
+          },
+          {
+            "matcher": {
+              "id": "byName",
+              "options": "接口用途"
+            },
+            "properties": [
+              {
+                "id": "mappings",
+                "value": [
+                  {
+                    "type": "value",
+                    "options": {
+                      "unclassified": {
+                        "text": "用途待确认",
+                        "color": "#8A8F98"
+                      }
+                    }
                   }
                 ]
               }
@@ -1015,7 +1039,7 @@
       },
       "targets": [
         {
-          "expr": "topk(20, ((ifAdminStatus{job=\"network_snmp\",site_name=~\"$site\",vendor=~\"$vendor\",role=~\"$role\",hostname=~\"$device\"} == 1) and on(instance, ifIndex) (ifOperStatus{job=\"network_snmp\",site_name=~\"$site\",vendor=~\"$vendor\",role=~\"$role\",hostname=~\"$device\"} != 1)) * on(instance, ifIndex) group_left(ifName) (ifName{job=\"network_snmp\",site_name=~\"$site\",vendor=~\"$vendor\",role=~\"$role\",hostname=~\"$device\"} * 0 + 1)) or label_replace((((count(ifOperStatus{job=\"network_snmp\",site_name=~\"$site\",vendor=~\"$vendor\",role=~\"$role\",hostname=~\"$device\"}) or vector(0)) > 0) and on() ((count(((ifAdminStatus{job=\"network_snmp\",site_name=~\"$site\",vendor=~\"$vendor\",role=~\"$role\",hostname=~\"$device\"} == 1) and on(instance, ifIndex) (ifOperStatus{job=\"network_snmp\",site_name=~\"$site\",vendor=~\"$vendor\",role=~\"$role\",hostname=~\"$device\"} != 1)) * on(instance, ifIndex) group_left(ifName) (ifName{job=\"network_snmp\",site_name=~\"$site\",vendor=~\"$vendor\",role=~\"$role\",hostname=~\"$device\"} * 0 + 1)) or vector(0)) == 0)) * 0, \"ifName\", \"当前无异常\", \"\", \"\")",
+          "expr": "topk(20, ((ifOperStatus{job=\"network_snmp\",site_name=~\"$site\",vendor=~\"$vendor\",role=~\"$role\",hostname=~\"$device\"} == 2) and on(instance, ifIndex) max by (instance, ifIndex) (ifAdminStatus{job=\"network_snmp\",site_name=~\"$site\",vendor=~\"$vendor\",role=~\"$role\",hostname=~\"$device\"} == 1)) * on(instance, ifIndex) group_left(ifName) (max by (instance, ifIndex, ifName) (ifName{job=\"network_snmp\",site_name=~\"$site\",vendor=~\"$vendor\",role=~\"$role\",hostname=~\"$device\"} * 0 + 1))) or label_replace((((count(ifOperStatus{job=\"network_snmp\",site_name=~\"$site\",vendor=~\"$vendor\",role=~\"$role\",hostname=~\"$device\"}) or vector(0)) > 0) and on() ((count(((ifOperStatus{job=\"network_snmp\",site_name=~\"$site\",vendor=~\"$vendor\",role=~\"$role\",hostname=~\"$device\"} == 2) and on(instance, ifIndex) max by (instance, ifIndex) (ifAdminStatus{job=\"network_snmp\",site_name=~\"$site\",vendor=~\"$vendor\",role=~\"$role\",hostname=~\"$device\"} == 1)) * on(instance, ifIndex) group_left(ifName) (max by (instance, ifIndex, ifName) (ifName{job=\"network_snmp\",site_name=~\"$site\",vendor=~\"$vendor\",role=~\"$role\",hostname=~\"$device\"} * 0 + 1))) or vector(0)) == 0)) * 0, \"ifName\", \"当前无异常\", \"\", \"\")",
           "format": "table",
           "instant": true,
           "refId": "A"
@@ -1069,15 +1093,16 @@
               "ifDescr": "接口描述",
               "vendor": "厂商",
               "role": "角色",
-              "interface_role": "接口角色",
+              "interface_role": "接口用途",
               "utilization_warn_pct": "预警阈值 (%)",
               "utilization_high_pct": "高位阈值 (%)",
               "utilization_critical_pct": "严重阈值 (%)",
-              "Value": "运行状态"
+              "Value": "状态判断"
             }
           }
         }
-      ]
+      ],
+      "description": "这是当前状态清单（管理状态为启用、运行状态为 Down），不是近期故障事件列表。计划内闲置或未接线端口也会出现；请结合接口用途和配置判断是否需要处理。"
     }
   ],
   "refresh": "30s",
@@ -1100,18 +1125,19 @@
             "$__all"
           ]
         },
-        "definition": "label_values({__name__=~\"ifOperStatus|up\",job=\"network_snmp\"}, site_name)",
+        "definition": "query_result(count by (site_name) (up{job=\"network_snmp\"}))",
         "includeAll": true,
         "label": "站点",
         "multi": true,
         "name": "site",
         "options": [],
         "query": {
-          "query": "label_values({__name__=~\"ifOperStatus|up\",job=\"network_snmp\"}, site_name)",
+          "query": "query_result(count by (site_name) (up{job=\"network_snmp\"}))",
           "refId": "StandardVariableQuery"
         },
         "refresh": 1,
-        "type": "query"
+        "type": "query",
+        "regex": "/.*site_name=\"([^\"]+)\".*/"
       },
       {
         "allValue": ".*",
@@ -1124,18 +1150,19 @@
             "$__all"
           ]
         },
-        "definition": "label_values({__name__=~\"ifOperStatus|up\",job=\"network_snmp\",site_name=~\"$site\"}, vendor)",
+        "definition": "query_result(count by (vendor) (up{job=\"network_snmp\",site_name=~\"$site\"}))",
         "includeAll": true,
         "label": "厂商",
         "multi": true,
         "name": "vendor",
         "options": [],
         "query": {
-          "query": "label_values({__name__=~\"ifOperStatus|up\",job=\"network_snmp\",site_name=~\"$site\"}, vendor)",
+          "query": "query_result(count by (vendor) (up{job=\"network_snmp\",site_name=~\"$site\"}))",
           "refId": "StandardVariableQuery"
         },
         "refresh": 1,
-        "type": "query"
+        "type": "query",
+        "regex": "/.*vendor=\"([^\"]+)\".*/"
       },
       {
         "allValue": ".*",
@@ -1148,18 +1175,19 @@
             "$__all"
           ]
         },
-        "definition": "label_values({__name__=~\"ifOperStatus|up\",job=\"network_snmp\",site_name=~\"$site\",vendor=~\"$vendor\"}, role)",
+        "definition": "query_result(count by (role) (up{job=\"network_snmp\",site_name=~\"$site\",vendor=~\"$vendor\"}))",
         "includeAll": true,
         "label": "角色",
         "multi": true,
         "name": "role",
         "options": [],
         "query": {
-          "query": "label_values({__name__=~\"ifOperStatus|up\",job=\"network_snmp\",site_name=~\"$site\",vendor=~\"$vendor\"}, role)",
+          "query": "query_result(count by (role) (up{job=\"network_snmp\",site_name=~\"$site\",vendor=~\"$vendor\"}))",
           "refId": "StandardVariableQuery"
         },
         "refresh": 1,
-        "type": "query"
+        "type": "query",
+        "regex": "/.*role=\"([^\"]+)\".*/"
       },
       {
         "allValue": ".*",
@@ -1172,18 +1200,19 @@
             "$__all"
           ]
         },
-        "definition": "label_values({__name__=~\"ifOperStatus|up\",job=\"network_snmp\",site_name=~\"$site\",vendor=~\"$vendor\",role=~\"$role\"}, hostname)",
+        "definition": "query_result(count by (hostname) (up{job=\"network_snmp\",site_name=~\"$site\",vendor=~\"$vendor\",role=~\"$role\"}))",
         "includeAll": true,
         "label": "设备",
         "multi": true,
         "name": "device",
         "options": [],
         "query": {
-          "query": "label_values({__name__=~\"ifOperStatus|up\",job=\"network_snmp\",site_name=~\"$site\",vendor=~\"$vendor\",role=~\"$role\"}, hostname)",
+          "query": "query_result(count by (hostname) (up{job=\"network_snmp\",site_name=~\"$site\",vendor=~\"$vendor\",role=~\"$role\"}))",
           "refId": "StandardVariableQuery"
         },
         "refresh": 1,
-        "type": "query"
+        "type": "query",
+        "regex": "/.*hostname=\"([^\"]+)\".*/"
       }
     ]
   },
@@ -1193,6 +1222,7 @@
   },
   "timezone": "browser",
   "title": "01 网络总览（Network Overview）",
+  "description": "接口状态展示当前采集快照。启用但链路未连通的接口可能是故障，也可能是计划内闲置端口；请结合接口用途和配置判断。",
   "uid": "nexora-network-overview",
   "version": 29
 }

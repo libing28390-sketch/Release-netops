@@ -62,8 +62,18 @@ ANOMALY_VALUE_MAPPINGS = [
     {
         "type": "value",
         "options": {
-            "0": {"text": "正常", "color": "green"},
-            "1": {"text": "DOWN", "color": "red"},
+            "0": {"text": "当前无此类接口", "color": "green"},
+            "2": {"text": "链路未连通", "color": "#E0B400"},
+        },
+    },
+]
+
+INTERFACE_ROLE_LABEL = "接口用途"
+INTERFACE_ROLE_VALUE_MAPPINGS = [
+    {
+        "type": "value",
+        "options": {
+            "unclassified": {"text": "用途待确认", "color": "#8A8F98"},
         },
     },
 ]
@@ -96,15 +106,18 @@ def filtered_interface_join(selector, *, alias_selector=None, fallback_status=Tr
     rows visible when an interface has no alias series; the optional status
     fallback also handles devices that do not expose an ifName series.
     """
-    name_expr = f"ifName{{{selector}}} * 0 + 1"
+    # CMDB label changes can leave multiple series for the same interface
+    # identity, differing only in enriched labels. Normalize metadata before
+    # group_left so every (instance, ifIndex) has a unique join side.
+    name_expr = f"max by (instance, ifIndex, ifName) (ifName{{{selector}}} * 0 + 1)"
     alias_selector = alias_selector or selector
-    alias_source = f"ifAlias{{{alias_selector}}} * 0 + 1"
+    alias_source = f"max by (instance, ifIndex, ifAlias) (ifAlias{{{alias_selector}}} * 0 + 1)"
     metadata_expr = (
         f"(({name_expr}) * on(instance, ifIndex) group_left(ifAlias) "
         f"({alias_source})) or on(instance, ifIndex) ({name_expr})"
     )
     if fallback_status:
-        status_fallback = f"(ifOperStatus{{{selector}}} * 0 + 1)"
+        status_fallback = f"max by (instance, ifIndex) (ifOperStatus{{{selector}}} * 0 + 1)"
         metadata_expr = f"({metadata_expr}) or on(instance, ifIndex) {status_fallback}"
     return f"* on(instance, ifIndex) group_left(ifName, ifAlias) ({metadata_expr})"
 
@@ -134,11 +147,11 @@ def interface_empty_fallback(status_expr, positive_rows_expr):
     empty_selection = f"({status_available} and on() {rows_absent}) * 0"
     return f'label_replace({empty_selection}, "ifName", "当前无异常", "", "")'
 
-def stat_panel(pid, title, expr, x, y, w=4, h=4, unit="", color="#3274D9", thresholds=None):
+def stat_panel(pid, title, expr, x, y, w=4, h=4, unit="", color="#3274D9", thresholds=None, description=None):
     steps = [{"color": color, "value": None}]
     if thresholds:
         steps = thresholds
-    return {
+    panel = {
         "id": pid,
         "title": title,
         "type": "stat",
@@ -163,6 +176,9 @@ def stat_panel(pid, title, expr, x, y, w=4, h=4, unit="", color="#3274D9", thres
         },
         "targets": [{"expr": expr, "refId": "A"}]
     }
+    if description:
+        panel["description"] = description
+    return panel
 
 def timeseries_color_override(matcher_id, matcher_options, color):
     return {
@@ -222,7 +238,7 @@ def clean_organize_transformation(
         interface_description_label: "接口描述",
         "vendor": "厂商",
         "role": "角色",
-        "interface_role": "接口角色",
+        "interface_role": INTERFACE_ROLE_LABEL,
         "utilization_warn_pct": "预警阈值 (%)",
         "utilization_high_pct": "高位阈值 (%)",
         "utilization_critical_pct": "严重阈值 (%)",
@@ -295,6 +311,8 @@ def table_panel(
     targets=None,
     detail_link=False,
     color_mapped_cells=False,
+    description=None,
+    map_interface_role=None,
 ):
     overrides = []
     value_properties = []
@@ -333,10 +351,18 @@ def table_panel(
                 "id": "links",
                 "value": [{
                     "title": "打开接口详情",
-                    "url": "/d/nexora-interface-detail/interface-detail?var-site=${__data.fields[\"站点\"]}&var-vendor=${__data.fields[\"厂商\"]}&var-role=${__data.fields[\"角色\"]}&var-device=${__data.fields[\"设备名称\"]}&var-interface_role=${__data.fields[\"接口角色\"]}&var-interface=${__data.fields[\"接口全称\"]}&from=${__from}&to=${__to}",
+                    "url": "/d/nexora-interface-detail/interface-detail?var-site=${__data.fields[\"站点\"]}&var-vendor=${__data.fields[\"厂商\"]}&var-role=${__data.fields[\"角色\"]}&var-device=${__data.fields[\"设备名称\"]}&var-interface_role=${__data.fields[\"接口用途\"]}&var-interface=${__data.fields[\"接口全称\"]}&from=${__from}&to=${__to}",
                     "targetBlank": False,
                 }],
             }],
+        })
+    query_sources = [expr] + [target.get("expr", "") for target in (targets or [])]
+    if map_interface_role is None:
+        map_interface_role = "interface_role" in " ".join(query_sources)
+    if map_interface_role:
+        overrides.append({
+            "matcher": {"id": "byName", "options": INTERFACE_ROLE_LABEL},
+            "properties": [{"id": "mappings", "value": INTERFACE_ROLE_VALUE_MAPPINGS}],
         })
     panel = {
         "id": pid,
@@ -363,6 +389,8 @@ def table_panel(
     }
     if transformations:
         panel["transformations"] = transformations
+    if description:
+        panel["description"] = description
     return panel
 
 
@@ -417,8 +445,8 @@ def bar_gauge_panel(pid, title, expr, x, y, w=12, h=8, unit="percent"):
         "targets": [{"expr": expr, "legendFormat": "{{sysName}} {{instance}}", "refId": "A"}]
     }
 
-def make_query_variable(name, label, query_str, multi=True, include_all=True):
-    return {
+def make_query_variable(name, label, query_str, multi=True, include_all=True, regex=None):
+    variable = {
         "allValue": ".*" if include_all else None,
         "current": {"selected": True, "text": ["All"], "value": ["$__all"]} if include_all else {"selected": False, "text": "", "value": ""},
         "definition": query_str,
@@ -431,13 +459,35 @@ def make_query_variable(name, label, query_str, multi=True, include_all=True):
         "refresh": 1,
         "type": "query"
     }
+    if regex is not None:
+        variable["regex"] = regex
+    return variable
 
 def make_network_variables(multi_device=True, include_all_device=True, device_label="设备"):
+    network_targets = 'up{job="network_snmp"'
     return [
-        make_query_variable("site", "站点", f'label_values({{__name__=~"ifOperStatus|up",{NETWORK_JOB}}}, site_name)'),
-        make_query_variable("vendor", "厂商", f'label_values({{__name__=~"ifOperStatus|up",{NETWORK_JOB},site_name=~"$site"}}, vendor)'),
-        make_query_variable("role", "角色", f'label_values({{__name__=~"ifOperStatus|up",{NETWORK_JOB},site_name=~"$site",vendor=~"$vendor"}}, role)'),
-        make_query_variable("device", device_label, f'label_values({{__name__=~"ifOperStatus|up",{NETWORK_JOB},site_name=~"$site",vendor=~"$vendor",role=~"$role"}}, hostname)', multi=multi_device, include_all=include_all_device),
+        make_query_variable(
+            "site", "站点",
+            f'query_result(count by (site_name) ({network_targets}}}))',
+            regex='/.*site_name="([^"]+)".*/',
+        ),
+        make_query_variable(
+            "vendor", "厂商",
+            f'query_result(count by (vendor) ({network_targets},site_name=~"$site"}}))',
+            regex='/.*vendor="([^"]+)".*/',
+        ),
+        make_query_variable(
+            "role", "角色",
+            f'query_result(count by (role) ({network_targets},site_name=~"$site",vendor=~"$vendor"}}))',
+            regex='/.*role="([^"]+)".*/',
+        ),
+        make_query_variable(
+            "device", device_label,
+            f'query_result(count by (hostname) ({network_targets},site_name=~"$site",vendor=~"$vendor",role=~"$role"}}))',
+            multi=multi_device,
+            include_all=include_all_device,
+            regex='/.*hostname="([^"]+)".*/',
+        ),
     ]
 
 def make_interface_variables(
@@ -453,7 +503,7 @@ def make_interface_variables(
     vars.append(
         make_query_variable(
             "interface_role",
-            "接口角色",
+            INTERFACE_ROLE_LABEL,
             f'label_values({{__name__=~"ifName",{NETWORK_JOB},site_name=~"$site",vendor=~"$vendor",role=~"$role",hostname=~"$device"}}, interface_role)',
         )
     )
@@ -528,16 +578,17 @@ def build_overview_dashboard():
     )
     ap_online_expr = (
         f"sum((hwWlanCurOnlineApNum{{{sel}}} or hh3cDot11CurrOnlineAPNum{{{sel}}} or ruijieApcOnlineApNum{{{sel}}} or "
-        f"ruijieApcTotalApNum{{{sel}}} or cLApTotalUpAPs{{{sel}}} or wlsxSysExtAccessPointsNum{{{sel}}} or ruckusZDTotalNumAP{{{sel}}})) or vector(0)"
+        f"ruijieApcTotalApNum{{{sel}}} or cLApTotalUpAPs{{{sel}}} or wlsxSysExtAccessPointsNum{{{sel}}} or ruckusZDTotalNumAP{{{sel}}}))"
     )
     client_online_expr = (
         f"sum((hwWlanCurAssocUserNum{{{sel}}} or hh3cDot11CurrAssocUserNum{{{sel}}} or ruijieApcTotalStaNum{{{sel}}} or "
-        f"cLSysTotalNumOfClients{{{sel}}} or wlsxSysExtStationsNum{{{sel}}} or ruckusZDTotalNumSta{{{sel}}})) or vector(0)"
+        f"cLSysTotalNumOfClients{{{sel}}} or wlsxSysExtStationsNum{{{sel}}} or ruckusZDTotalNumSta{{{sel}}}))"
     )
     anomaly_rows = (
-        f'((ifAdminStatus{{{sel}}} == 1) and on(instance, ifIndex) '
-        f'(ifOperStatus{{{sel}}} != 1)) * on(instance, ifIndex) '
-        f'group_left(ifName) (ifName{{{sel}}} * 0 + 1)'
+        f'((ifOperStatus{{{sel}}} == 2) and on(instance, ifIndex) '
+        f'max by (instance, ifIndex) (ifAdminStatus{{{sel}}} == 1))'
+        f' * on(instance, ifIndex) group_left(ifName) '
+        f'(max by (instance, ifIndex, ifName) (ifName{{{sel}}} * 0 + 1))'
     )
     anomaly_fallback = interface_empty_fallback(f"ifOperStatus{{{sel}}}", anomaly_rows)
 
@@ -545,13 +596,16 @@ def build_overview_dashboard():
         stat_panel(1, "纳管设备数", f'count(count by (instance) (up{{{target_sel}}})) or vector(0)', 0, 0, 4, 3, color="#3274D9"),
         stat_panel(2, "监控站点数", f'count(count by (site_name) (up{{{target_site_sel}}})) or vector(0)', 4, 0, 4, 3, color="#A352CC"),
         stat_panel(3, "全网在线数", f'count(count by (instance) (up{{{target_sel}}} == 1)) or vector(0)', 8, 0, 4, 3, color="#56A64B"),
-        stat_panel(4, "无线在线客户端数", client_online_expr, 12, 0, 4, 3, color="#37872D"),
+        stat_panel(
+            4, "无线在线客户端数", client_online_expr, 12, 0, 4, 3, color="#37872D",
+            description="没有匹配的无线客户端采集指标时显示数据暂不可用，不代表当前客户端数为 0。",
+        ),
         stat_panel(5, "采集接口总数", f"count(count by (instance, ifIndex) (ifOperStatus{{{sel}}})) or vector(0)", 16, 0, 4, 3, color="#3274D9"),
-        stat_panel(6, "异常/Down接口数", f'count(max by (instance, ifIndex) (ifAdminStatus{{{sel}}} == 1) and on(instance, ifIndex) max by (instance, ifIndex) (ifOperStatus{{{sel}}} != 1)) or vector(0)', 20, 0, 4, 3, thresholds=[
+        stat_panel(6, "启用但链路未连通接口数", f'count(max by (instance, ifIndex) (ifAdminStatus{{{sel}}} == 1) and on(instance, ifIndex) max by (instance, ifIndex) (ifOperStatus{{{sel}}} == 2)) or vector(0)', 20, 0, 4, 3, thresholds=[
             {"color": "green", "value": None},
             {"color": "#E0B400", "value": 1},
             {"color": "#F2495C", "value": 5}
-        ]),
+        ], description="这是当前状态数量：只统计管理状态为启用、运行状态为 Down 的接口。管理状态主动关闭的端口不计入；此数字不代表接口刚刚发生故障，闲置端口请结合用途判断是否需要处理。"),
         timeseries_panel(7, "接口总流量趋势", [
             {"expr": f"sum({in_rate}) * 8", "legendFormat": "入流量", "refId": "A"},
             {"expr": f"sum({out_rate}) * 8", "legendFormat": "出流量", "refId": "B"}
@@ -586,14 +640,16 @@ def build_overview_dashboard():
             timeseries_color_override("byName", "丢弃包/秒", DISCARD_COLOR),
         ]),
         table_panel(
-            14, "异常接口 Top20",
+            14, "启用但链路未连通 Top20",
             f"topk(20, {anomaly_rows}) or {anomaly_fallback}",
             0, 27, 24, 8,
-            transformations=clean_organize_transformation("运行状态"),
-            value_col_name="运行状态",
+            transformations=clean_organize_transformation("状态判断"),
+            value_col_name="状态判断",
             value_mappings=ANOMALY_VALUE_MAPPINGS,
             detail_link=True,
             color_mapped_cells=True,
+            description="这是当前状态清单（管理状态为启用、运行状态为 Down），不是近期故障事件列表。计划内闲置或未接线端口也会出现；请结合接口用途和配置判断是否需要处理。",
+            map_interface_role=True,
         )
     ]
 
@@ -601,7 +657,7 @@ def build_overview_dashboard():
         ("网络健康与规模", 0),
         ("趋势与设备健康", 3),
         ("流量排行与链路质量", 19),
-        ("需要关注的接口", 27),
+        ("当前状态待核查", 27),
     ])
 
     return {
@@ -621,6 +677,7 @@ def build_overview_dashboard():
         "time": {"from": "now-6h", "to": "now"},
         "timezone": "browser",
         "title": "01 网络总览（Network Overview）",
+        "description": "接口状态展示当前采集快照。启用但链路未连通的接口可能是故障，也可能是计划内闲置端口；请结合接口用途和配置判断。",
         "uid": "nexora-network-overview",
         "version": DASHBOARD_VERSION
     }
@@ -721,12 +778,13 @@ def build_wireless_dashboard():
     ap_offline = f"((hwWlanApTotalNum{{{sel}}} - hwWlanCurOnlineApNum{{{sel}}}) or (hh3cDot11TotalAPNum{{{sel}}} - hh3cDot11CurrOnlineAPNum{{{sel}}}) or (ruijieApcTotalApNum{{{sel}}} - ruijieApcOnlineApNum{{{sel}}}))"
     clients = f"(hwWlanCurAssocUserNum{{{sel}}} or hh3cDot11CurrAssocUserNum{{{sel}}} or ruijieApcTotalStaNum{{{sel}}} or cLSysTotalNumOfClients{{{sel}}} or wlsxSysExtStationsNum{{{sel}}} or ruckusZDTotalNumSta{{{sel}}})"
     client_per_ap = f"({clients}) / clamp_min(({ap_online}), 1)"
+    wireless_missing_description = "没有匹配的无线控制器指标时显示数据暂不可用，不代表 AP 或客户端数量为 0。"
 
     panels = [
-        stat_panel(1, "已提供总量的 AP 数", f"sum({ap_all}) or vector(0)", 0, 0, 6, 4, color="#3274D9"),
-        stat_panel(2, "当前在线 AP 总数", f"sum({ap_online}) or vector(0)", 6, 0, 6, 4, color="#56A64B"),
-        stat_panel(3, "可计算的离线 AP 数", f"sum({ap_offline}) or vector(0)", 12, 0, 6, 4, thresholds=[{"color": "green", "value": None}, {"color": "#E0B400", "value": 1}, {"color": "red", "value": 5}]),
-        stat_panel(4, "全网在线关联无线终端", f"sum({clients}) or vector(0)", 18, 0, 6, 4, color="#A352CC"),
+        stat_panel(1, "已提供总量的 AP 数", f"sum({ap_all})", 0, 0, 6, 4, color="#3274D9", description=wireless_missing_description),
+        stat_panel(2, "当前在线 AP 总数", f"sum({ap_online})", 6, 0, 6, 4, color="#56A64B", description=wireless_missing_description),
+        stat_panel(3, "可计算的离线 AP 数", f"sum({ap_offline})", 12, 0, 6, 4, thresholds=[{"color": "green", "value": None}, {"color": "#E0B400", "value": 1}, {"color": "red", "value": 5}], description=wireless_missing_description),
+        stat_panel(4, "全网在线关联无线终端", f"sum({clients})", 18, 0, 6, 4, color="#A352CC", description=wireless_missing_description),
         timeseries_panel(5, "无线 AP 在线规模趋势", [
             {"expr": f"sum({ap_online})", "legendFormat": "在线 AP 数", "refId": "A"}
         ], 0, 4, 12, 8, unit="short"),
@@ -873,7 +931,7 @@ def build_interface_dashboard():
                     "renameByName": {
                         "capacity_stat": "指标", "ifName": "接口全称", "ifAlias": "接口描述",
                         "hostname": "设备名称", "site_name": "站点", "vendor": "厂商", "role": "设备角色",
-                        "interface_role": "接口角色", "utilization_warn_pct": "预警阈值 (%)",
+                        "interface_role": INTERFACE_ROLE_LABEL, "utilization_warn_pct": "预警阈值 (%)",
                         "utilization_high_pct": "高位阈值 (%)", "utilization_critical_pct": "严重阈值 (%)",
                         "Value": "利用率 (%)",
                     },
@@ -910,7 +968,7 @@ def build_interface_dashboard():
             transformations=[{
                 "id": "organize", "options": {
                     "excludeByName": {"Time": True, "__name__": True, "ifIndex": True, "instance": True, "direction": True, "ifDescr": True},
-                    "renameByName": {"quality_type": "质量指标", "ifName": "接口全称", "ifAlias": "接口描述", "hostname": "设备名称", "site_name": "站点", "vendor": "厂商", "role": "设备角色", "interface_role": "接口角色", "utilization_warn_pct": "预警阈值 (%)", "utilization_high_pct": "高位阈值 (%)", "utilization_critical_pct": "严重阈值 (%)", "Value": "百分比 (%)"},
+                    "renameByName": {"quality_type": "质量指标", "ifName": "接口全称", "ifAlias": "接口描述", "hostname": "设备名称", "site_name": "站点", "vendor": "厂商", "role": "设备角色", "interface_role": INTERFACE_ROLE_LABEL, "utilization_warn_pct": "预警阈值 (%)", "utilization_high_pct": "高位阈值 (%)", "utilization_critical_pct": "严重阈值 (%)", "Value": "百分比 (%)"},
                 },
             }],
             value_col_name="百分比 (%)", detail_link=True,
@@ -981,6 +1039,7 @@ def build_interface_dashboard():
         "time": {"from": "now-6h", "to": "now"},
         "timezone": "browser",
         "title": "04 接口流量与健康（Interface Traffic & Health）",
+        "description": "接口用途显示“用途待确认”表示 CMDB 尚未配置该端口的用途，不代表接口异常。流量与健康数据取决于设备采集到的 IF-MIB 接口计数器。",
         "uid": "nexora-network-interface",
         "version": DASHBOARD_VERSION
     }
@@ -1076,8 +1135,8 @@ def build_interface_detail_dashboard():
             ), 0, 19, 12, 7, unit="percent",
             transformations=[{
                 "id": "organize", "options": {
-                    "excludeByName": {"Time": True, "__name__": True, "ifIndex": True, "instance": True, "direction": True},
-                    "renameByName": {"capacity_stat": "指标", "ifName": "接口全称", "ifAlias": "接口描述", "hostname": "设备名称", "site_name": "站点", "vendor": "厂商", "role": "设备角色", "interface_role": "接口角色", "utilization_warn_pct": "预警阈值 (%)", "utilization_high_pct": "高位阈值 (%)", "utilization_critical_pct": "严重阈值 (%)", "Value": "利用率 (%)"},
+                    "excludeByName": {"Time": True, "__name__": True, "ifIndex": True, "instance": True, "direction": True, "ifDescr": True},
+                    "renameByName": {"capacity_stat": "指标", "ifName": "接口全称", "ifAlias": "接口描述", "hostname": "设备名称", "site_name": "站点", "vendor": "厂商", "role": "设备角色", "interface_role": INTERFACE_ROLE_LABEL, "utilization_warn_pct": "预警阈值 (%)", "utilization_high_pct": "高位阈值 (%)", "utilization_critical_pct": "严重阈值 (%)", "Value": "利用率 (%)"},
                 },
             }],
             value_col_name="利用率 (%)", gauge=True, thresholds=UTILIZATION_THRESHOLDS,
@@ -1107,13 +1166,13 @@ def build_interface_detail_dashboard():
         row_panel(904, "接口状态", 48),
         table_panel(
             11, "错误包 / 丢弃包百分比", quality, 0, 41, 12, 7, unit="percent",
-            transformations=[{"id": "organize", "options": {"excludeByName": {"Time": True, "__name__": True, "instance": True, "ifIndex": True}, "renameByName": {"quality_type": "质量指标", "ifName": "接口全称", "ifAlias": "接口描述", "hostname": "设备名称", "site_name": "站点", "Value": "百分比 (%)"}}}],
+            transformations=[{"id": "organize", "options": {"excludeByName": {"Time": True, "__name__": True, "instance": True, "ifIndex": True, "ifDescr": True}, "renameByName": {"quality_type": "质量指标", "ifName": "接口全称", "ifAlias": "接口描述", "hostname": "设备名称", "site_name": "站点", "Value": "百分比 (%)"}}}],
             value_col_name="百分比 (%)",
         ),
         table_panel(
             12, "接口 Flap 次数：24h / 7d", flap_24h, 12, 41, 12, 7,
             targets=[{"expr": flap_24h, "format": "table", "instant": True, "refId": "A"}, {"expr": flap_7d, "format": "table", "instant": True, "refId": "B"}],
-            transformations=[{"id": "joinByLabels", "options": {"labels": ["instance", "hostname", "site_name", "ifIndex", "ifName", "ifAlias", "interface_role"]}}, {"id": "organize", "options": {"excludeByName": {"Time": True, "instance": True, "ifIndex": True}, "renameByName": {"ifName": "接口全称", "ifAlias": "接口描述", "hostname": "设备名称", "site_name": "站点", "Value #A": "24h Flap", "Value #B": "7d Flap"}}}],
+            transformations=[{"id": "joinByLabels", "options": {"labels": ["instance", "hostname", "site_name", "ifIndex", "ifName", "ifAlias", "interface_role"]}}, {"id": "organize", "options": {"excludeByName": {"Time": True, "instance": True, "ifIndex": True, "ifDescr": True}, "renameByName": {"ifName": "接口全称", "ifAlias": "接口描述", "hostname": "设备名称", "site_name": "站点", "Value #A": "24h Flap", "Value #B": "7d Flap"}}}],
             value_col_name="24h Flap",
         ),
         table_panel(
@@ -1142,7 +1201,7 @@ def build_interface_detail_dashboard():
         "templating": {"list": make_interface_variables(multi_device=False, include_all_device=False, include_all_interface=False, multi_interface=False, include_threshold_values=True)},
         "time": {"from": "now-24h", "to": "now"}, "timezone": "browser",
         "title": "09 接口详情（Interface Detail）",
-        "description": "从网络总览或接口排行进入，链接会携带站点、设备、接口筛选和时间范围。",
+        "description": "从网络总览或接口排行进入，链接会携带站点、设备、接口筛选和时间范围。“用途待确认”表示 CMDB 尚未配置该端口的用途，不代表接口异常。",
         "uid": "nexora-interface-detail", "version": DASHBOARD_VERSION,
     }
 
@@ -1384,8 +1443,16 @@ def build_linux_dashboard():
         "tags": ["nexora", "server", "linux", "metrics"],
         "templating": {
             "list": [
-                make_query_variable("site", "站点", 'label_values({__name__=~"node_.*|up",job="linux_servers"}, site_name)'),
-                make_query_variable("device", "服务器", 'label_values({__name__=~"node_.*|up",job="linux_servers",site_name=~"$site"}, hostname)'),
+                make_query_variable(
+                    "site", "站点",
+                    'query_result(count by (site_name) (up{job="linux_servers"}))',
+                    regex='/.*site_name="([^"]+)".*/',
+                ),
+                make_query_variable(
+                    "device", "服务器",
+                    'query_result(count by (hostname) (up{job="linux_servers",site_name=~"$site"}))',
+                    regex='/.*hostname="([^"]+)".*/',
+                ),
             ]
         },
         "time": {"from": "now-6h", "to": "now"},
@@ -1463,8 +1530,16 @@ def build_windows_dashboard():
         "tags": ["nexora", "server", "windows", "metrics"],
         "templating": {
             "list": [
-                make_query_variable("site", "站点", 'label_values({__name__=~"windows_.*|up",job="windows_servers"}, site_name)'),
-                make_query_variable("device", "服务器", 'label_values({__name__=~"windows_.*|up",job="windows_servers",site_name=~"$site"}, hostname)'),
+                make_query_variable(
+                    "site", "站点",
+                    'query_result(count by (site_name) (up{job="windows_servers"}))',
+                    regex='/.*site_name="([^"]+)".*/',
+                ),
+                make_query_variable(
+                    "device", "服务器",
+                    'query_result(count by (hostname) (up{job="windows_servers",site_name=~"$site"}))',
+                    regex='/.*hostname="([^"]+)".*/',
+                ),
             ]
         },
         "time": {"from": "now-6h", "to": "now"},
