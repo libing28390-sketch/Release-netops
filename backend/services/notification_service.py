@@ -178,14 +178,16 @@ def _email_recipients(values) -> list[str]:
     return result
 
 
-def _email_subject(alert: dict) -> str:
+def _email_subject(alert: dict, *, test_mode: bool = False) -> str:
     severity = str(alert.get('severity') or 'info').upper()
     title = str(alert.get('title') or 'Nexora Alert').strip()
+    if test_mode:
+        return f"[SMTP TEST] {title}"[:240]
     object_name = str(alert.get('object_name') or alert.get('ip_address') or '').strip()
     return f"[{severity}] {title}{f' - {object_name}' if object_name else ''}"[:240]
 
 
-def _email_body(alert: dict, *, html: bool = False) -> str:
+def _email_body(alert: dict, *, html: bool = False, test_mode: bool = False) -> str:
     status = _status_label(str(alert.get('status') or 'active'), 'zh')
     title = str(alert.get('title') or '告警通知')
     object_name = str(alert.get('object_name') or '-')
@@ -196,6 +198,42 @@ def _email_body(alert: dict, *, html: bool = False) -> str:
     last = str(alert.get('last_occurrence') or first)
     duration = alert.get('duration_seconds')
     platform_url = str(alert.get('platform_url') or '').strip()
+
+    def escape(value: str) -> str:
+        return (
+            value.replace('&', '&amp;')
+            .replace('<', '&lt;')
+            .replace('>', '&gt;')
+            .replace('"', '&quot;')
+        )
+
+    if test_mode:
+        result = 'SMTP 服务器已接受本次测试邮件发送请求。'
+        note = '这是一封 SMTP 配置测试邮件，不是告警通知，也不会创建告警事件。'
+        if not html:
+            return '\n'.join((
+                title,
+                f'测试结果：{result}',
+                f'说明：{note}',
+                f'发起信息：{message}',
+                f'测试时间：{first}',
+            ))
+        return (
+            '<html><body style="margin:0;padding:24px;background:#f1f5f9;'
+            'font-family:Arial,sans-serif;color:#1e293b">'
+            '<div style="max-width:640px;margin:0 auto;padding:28px;background:#fff;'
+            'border:1px solid #e2e8f0;border-radius:16px">'
+            '<div style="display:inline-block;padding:5px 10px;border-radius:999px;'
+            'background:#ecfeff;color:#0e7490;font-size:12px;font-weight:700">SMTP TEST</div>'
+            f'<h2 style="margin:18px 0 10px">{escape(title)}</h2>'
+            f'<p style="margin:0 0 12px">{escape(result)}</p>'
+            f'<p style="margin:0;padding:12px 14px;border-radius:10px;'
+            f'background:#f0f9ff;color:#075985;line-height:1.6">{escape(note)}</p>'
+            f'<p style="margin:18px 0 4px;color:#475569">{escape(message)}</p>'
+            f'<p style="margin:4px 0 0;color:#64748b;font-size:12px">测试时间：{escape(first)}</p>'
+            '</div></body></html>'
+        )
+
     if not html:
         lines = [
             title,
@@ -212,14 +250,6 @@ def _email_body(alert: dict, *, html: bool = False) -> str:
         if platform_url:
             lines.append(f"处理链接：{platform_url}")
         return "\n".join(lines)
-
-    def escape(value: str) -> str:
-        return (
-            value.replace('&', '&amp;')
-            .replace('<', '&lt;')
-            .replace('>', '&gt;')
-            .replace('"', '&quot;')
-        )
 
     rows = [
         ('告警名称', title),
@@ -242,14 +272,14 @@ def _email_body(alert: dict, *, html: bool = False) -> str:
     return f'<html><body><h2>{escape(title)}</h2><table>{table}</table>{link}</body></html>'
 
 
-def send_email(smtp_config: dict, recipients, alert: dict) -> dict:
-    """Send one alert email and return a safe, structured provider result."""
+def send_email(smtp_config: dict, recipients, alert: dict, *, test_mode: bool = False) -> dict:
+    """Send an alert or explicit configuration-test email with a safe result."""
     addresses = _email_recipients(recipients)
     if not addresses:
         return {'success': False, 'error_code': 'smtp_invalid_recipient', 'recipient_count': 0}
 
     config = dict(smtp_config or {})
-    if not bool(config.get('enabled')):
+    if not bool(config.get('enabled')) and not test_mode:
         return {'success': False, 'error_code': 'smtp_config_missing', 'recipient_count': len(addresses)}
     host = str(config.get('host') or '').strip()
     from_address = str(config.get('from_address') or '').strip()
@@ -271,7 +301,8 @@ def send_email(smtp_config: dict, recipients, alert: dict) -> dict:
         _email_rate_history[rate_key] = recent
     try:
         port = int(config.get('port') or (465 if security == 'ssl' else 587))
-        timeout = max(1, min(120, int(config.get('send_timeout_seconds') or 20)))
+        connect_timeout = max(1, min(120, int(config.get('connect_timeout_seconds') or 10)))
+        send_timeout = max(1, min(120, int(config.get('send_timeout_seconds') or 20)))
     except (TypeError, ValueError):
         return {'success': False, 'error_code': 'smtp_config_missing', 'recipient_count': len(addresses)}
 
@@ -280,27 +311,31 @@ def send_email(smtp_config: dict, recipients, alert: dict) -> dict:
         password = str(decrypt_credential(config.get('password_ciphertext')) or '')
     username = str(config.get('username') or '').strip()
     message = EmailMessage()
-    message['Subject'] = _email_subject(alert)
+    message['Subject'] = _email_subject(alert, test_mode=test_mode)
     message['From'] = formataddr((str(config.get('from_name') or 'Nexora').strip(), from_address))
     message['To'] = ', '.join(addresses)
     reply_to = str(config.get('reply_to') or '').strip()
     if reply_to and _EMAIL_ADDRESS_RE.fullmatch(reply_to):
         message['Reply-To'] = reply_to
-    message.set_content(_email_body(alert, html=False))
-    message.add_alternative(_email_body(alert, html=True), subtype='html')
+    message.set_content(_email_body(alert, html=False, test_mode=test_mode))
+    message.add_alternative(_email_body(alert, html=True, test_mode=test_mode), subtype='html')
 
     smtp = None
     try:
         if security == 'ssl':
-            smtp = smtplib.SMTP_SSL(host, port, timeout=timeout, context=ssl.create_default_context())
+            smtp = smtplib.SMTP_SSL(host, port, timeout=connect_timeout, context=ssl.create_default_context())
         else:
-            smtp = smtplib.SMTP(host, port, timeout=timeout)
+            smtp = smtplib.SMTP(host, port, timeout=connect_timeout)
             smtp.ehlo()
             if security == 'starttls':
                 smtp.starttls(context=ssl.create_default_context())
-                smtp.ehlo()
+                code, response = smtp.ehlo()
+                if code >= 400:
+                    raise smtplib.SMTPHeloError(code, response)
         if username:
             smtp.login(username, password)
+        if smtp.sock is not None:
+            smtp.sock.settimeout(send_timeout)
         smtp.send_message(message)
         return {'success': True, 'error_code': '', 'recipient_count': len(addresses)}
     except smtplib.SMTPAuthenticationError:
@@ -315,6 +350,72 @@ def send_email(smtp_config: dict, recipients, alert: dict) -> dict:
         return {'success': False, 'error_code': 'smtp_dns_or_connect_failed', 'recipient_count': len(addresses)}
     except smtplib.SMTPException:
         return {'success': False, 'error_code': 'smtp_provider_error', 'recipient_count': len(addresses)}
+    finally:
+        if smtp is not None:
+            try:
+                smtp.quit()
+            except Exception:
+                try:
+                    smtp.close()
+                except Exception:
+                    pass
+
+
+def test_smtp_connection(smtp_config: dict) -> dict:
+    """Check SMTP reachability, TLS mode, and configured credentials without sending mail."""
+    config = dict(smtp_config or {})
+    host = str(config.get('host') or '').strip()
+    security = str(config.get('security') or 'starttls').strip().lower()
+    if not host or security not in {'ssl', 'starttls', 'none'}:
+        return {'success': False, 'error_code': 'smtp_config_missing', 'connected': False, 'authenticated': False}
+
+    try:
+        port = int(config.get('port') or (465 if security == 'ssl' else 587))
+        timeout = max(1, min(120, int(config.get('connect_timeout_seconds') or 10)))
+    except (TypeError, ValueError):
+        return {'success': False, 'error_code': 'smtp_config_missing', 'connected': False, 'authenticated': False}
+    if not 1 <= port <= 65535:
+        return {'success': False, 'error_code': 'smtp_config_missing', 'connected': False, 'authenticated': False}
+
+    password = str(config.get('password') or '')
+    if not password and config.get('password_ciphertext'):
+        password = str(decrypt_credential(config.get('password_ciphertext')) or '')
+    username = str(config.get('username') or '').strip()
+    smtp = None
+    try:
+        if security == 'ssl':
+            smtp = smtplib.SMTP_SSL(host, port, timeout=timeout, context=ssl.create_default_context())
+            code, response = smtp.ehlo()
+            if code >= 400:
+                raise smtplib.SMTPHeloError(code, response)
+        else:
+            smtp = smtplib.SMTP(host, port, timeout=timeout)
+            code, response = smtp.ehlo()
+            if code >= 400:
+                raise smtplib.SMTPHeloError(code, response)
+            if security == 'starttls':
+                smtp.starttls(context=ssl.create_default_context())
+                code, response = smtp.ehlo()
+                if code >= 400:
+                    raise smtplib.SMTPHeloError(code, response)
+        if username:
+            smtp.login(username, password)
+        return {
+            'success': True,
+            'error_code': '',
+            'connected': True,
+            'authenticated': bool(username),
+        }
+    except smtplib.SMTPAuthenticationError:
+        return {'success': False, 'error_code': 'smtp_auth_failed', 'connected': True, 'authenticated': False}
+    except (ssl.SSLError, smtplib.SMTPNotSupportedError):
+        return {'success': False, 'error_code': 'smtp_tls_failed', 'connected': False, 'authenticated': False}
+    except (socket.timeout, TimeoutError):
+        return {'success': False, 'error_code': 'smtp_timeout', 'connected': False, 'authenticated': False}
+    except (smtplib.SMTPConnectError, smtplib.SMTPServerDisconnected, OSError):
+        return {'success': False, 'error_code': 'smtp_dns_or_connect_failed', 'connected': False, 'authenticated': False}
+    except smtplib.SMTPException:
+        return {'success': False, 'error_code': 'smtp_provider_error', 'connected': False, 'authenticated': False}
     finally:
         if smtp is not None:
             try:

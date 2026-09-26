@@ -609,9 +609,9 @@ const ProfileModal: React.FC<ProfileModalProps> = ({
                             type="text"
                             value={profileForm.displayName}
                             onChange={(e) => onProfileFormChange((prev) => ({ ...prev, displayName: e.target.value }))}
-                            placeholder={isZh ? '如：李兵' : 'e.g. John Doe'}
+                            placeholder={isZh ? '如：韩梅梅' : 'e.g. John Doe'}
                             className={`w-full rounded-xl pl-9 pr-3.5 py-2.5 text-xs outline-none border transition-all ${
-                              isDark ? 'bg-black/20 border-white/15 text-white placeholder-white/20 focus:border-cyan-400 focus:ring-2 focus:ring-cyan-500/20' : 'bg-white border-slate-200 text-slate-800 placeholder-slate-300 focus:border-cyan-500 focus:ring-2 focus:ring-cyan-500/10'
+                              isDark ? 'bg-black/20 border-white/15 text-white placeholder-white/50 focus:border-cyan-400 focus:ring-2 focus:ring-cyan-500/20' : 'bg-white border-slate-200 text-slate-800 placeholder-slate-500 focus:border-cyan-500 focus:ring-2 focus:ring-cyan-500/10'
                             }`}
                           />
                         </div>
@@ -631,7 +631,7 @@ const ProfileModal: React.FC<ProfileModalProps> = ({
                             onChange={(e) => onProfileFormChange((prev) => ({ ...prev, phone: e.target.value }))}
                             placeholder={isZh ? '如：138xxxx8888' : 'e.g. +1 555-0100'}
                             className={`w-full rounded-xl pl-9 pr-3.5 py-2.5 text-xs outline-none border transition-all ${
-                              isDark ? 'bg-black/20 border-white/15 text-white placeholder-white/20 focus:border-cyan-400 focus:ring-2 focus:ring-cyan-500/20' : 'bg-white border-slate-200 text-slate-800 placeholder-slate-300 focus:border-cyan-500 focus:ring-2 focus:ring-cyan-500/10'
+                              isDark ? 'bg-black/20 border-white/15 text-white placeholder-white/50 focus:border-cyan-400 focus:ring-2 focus:ring-cyan-500/20' : 'bg-white border-slate-200 text-slate-800 placeholder-slate-500 focus:border-cyan-500 focus:ring-2 focus:ring-cyan-500/10'
                             }`}
                           />
                         </div>
@@ -649,9 +649,9 @@ const ProfileModal: React.FC<ProfileModalProps> = ({
                             type="email"
                             value={profileForm.email}
                             onChange={(e) => onProfileFormChange((prev) => ({ ...prev, email: e.target.value }))}
-                            placeholder={isZh ? '如：li@example.com' : 'e.g. li@example.com'}
+                            placeholder={isZh ? '如：han.meimei@example.com' : 'e.g. han.meimei@example.com'}
                             className={`w-full rounded-xl pl-9 pr-3.5 py-2.5 text-xs outline-none border transition-all ${
-                              isDark ? 'bg-black/20 border-white/15 text-white placeholder-white/20 focus:border-cyan-400 focus:ring-2 focus:ring-cyan-500/20' : 'bg-white border-slate-200 text-slate-800 placeholder-slate-300 focus:border-cyan-500 focus:ring-2 focus:ring-cyan-500/10'
+                              isDark ? 'bg-black/20 border-white/15 text-white placeholder-white/50 focus:border-cyan-400 focus:ring-2 focus:ring-cyan-500/20' : 'bg-white border-slate-200 text-slate-800 placeholder-slate-500 focus:border-cyan-500 focus:ring-2 focus:ring-cyan-500/10'
                             }`}
                           />
                         </div>

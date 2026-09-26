@@ -846,6 +846,8 @@ def update_alert_email_channel(payload: dict = Body(...), user=require_role('Adm
                 password_ciphertext = encrypt_credential(password) or ''
             except Exception as exc:
                 raise HTTPException(status_code=500, detail='SMTP password encryption is unavailable') from exc
+        elif bool(payload.get('clear_password', False)):
+            password_ciphertext = ''
         else:
             password_ciphertext = str(existing['password_ciphertext'] or '') if existing else ''
         config_id = str(existing['id']) if existing else f"smtp_{uuid.uuid4().hex[:16]}"
@@ -900,6 +902,72 @@ def update_alert_email_channel(payload: dict = Body(...), user=require_role('Adm
         conn.close()
 
 
+@router.delete('/alerts/notification-channels/email')
+def delete_alert_email_channel(user=require_role('Administrator')):
+    """Clear tenant SMTP settings and credentials without exposing a shared default."""
+    tenant_id = _notification_tenant_id(user)
+    username = str(user.get('username') or 'system')
+    now = _utc_now_iso()
+    conn = get_db_connection()
+    try:
+        # Keep an empty tenant row as an override so deleting tenant settings
+        # cannot silently re-enable a shared tenant-default SMTP configuration.
+        conn.execute(
+            """
+            INSERT INTO notification_smtp_configs (
+                id, tenant_id, name, enabled, host, port, security, username,
+                password_ciphertext, from_address, from_name, reply_to,
+                connect_timeout_seconds, send_timeout_seconds, rate_limit_per_minute,
+                created_by, created_at, updated_by, updated_at
+            ) VALUES (?, ?, 'primary', FALSE, '', 587, 'starttls', '', '', '', 'Nexora', '', 10, 20, 60, ?, ?, ?, ?)
+            ON CONFLICT (tenant_id, name) DO UPDATE SET
+                enabled = FALSE, host = '', port = 587, security = 'starttls',
+                username = '', password_ciphertext = '', from_address = '',
+                from_name = 'Nexora', reply_to = '', connect_timeout_seconds = 10,
+                send_timeout_seconds = 20, rate_limit_per_minute = 60,
+                updated_by = excluded.updated_by, updated_at = excluded.updated_at
+            """,
+            (f"smtp_{uuid.uuid4().hex[:16]}", tenant_id, username, now, username, now),
+        )
+        conn.commit()
+        row = conn.execute(
+            "SELECT * FROM notification_smtp_configs WHERE tenant_id = ? AND name = 'primary' LIMIT 1",
+            (tenant_id,),
+        ).fetchone()
+        return _safe_smtp_config(row)
+    finally:
+        conn.close()
+
+
+@router.post('/alerts/notification-channels/email/test-connection')
+def test_alert_email_connection(user=require_role('Administrator')):
+    """Check SMTP connection, TLS, and configured credentials without sending email."""
+    tenant_id = _notification_tenant_id(user)
+    conn = get_db_connection()
+    try:
+        row = conn.execute(
+            """
+            SELECT * FROM notification_smtp_configs
+            WHERE tenant_id = ? OR tenant_id = 'tenant-default'
+            ORDER BY CASE WHEN tenant_id = ? THEN 0 ELSE 1 END, updated_at DESC
+            LIMIT 1
+            """,
+            (tenant_id, tenant_id),
+        ).fetchone()
+    finally:
+        conn.close()
+    if not row:
+        raise HTTPException(status_code=400, detail='SMTP is not configured')
+    result = notification_service.test_smtp_connection(dict(row))
+    if not result.get('success'):
+        raise HTTPException(status_code=502, detail=str(result.get('error_code') or 'smtp_provider_error'))
+    return {
+        'success': True,
+        'connected': bool(result.get('connected')),
+        'authenticated': bool(result.get('authenticated')),
+    }
+
+
 @router.post('/alerts/notification-channels/email/test')
 def test_alert_email_channel(payload: dict = Body(default={}), user=require_role('Administrator')):
     """Send an explicit SMTP test; it is not an alert delivery or history event."""
@@ -932,14 +1000,11 @@ def test_alert_email_channel(payload: dict = Body(default={}), user=require_role
         [recipient],
         {
             'title': 'Nexora 邮件通道测试',
-            'object_name': 'Notification Settings',
-            'ip_address': 'smtp',
-            'status': 'active',
-            'severity': 'info',
-            'message': f'用户 {user.get("username") or "admin"} 发起了 SMTP 测试。',
+            'message': f'用户 {user.get("username") or "admin"} 发起了 SMTP 配置测试。',
             'first_occurrence': datetime.now(timezone.utc).isoformat(),
             'last_occurrence': datetime.now(timezone.utc).isoformat(),
         },
+        test_mode=True,
     )
     if not result.get('success'):
         raise HTTPException(status_code=502, detail=str(result.get('error_code') or 'smtp_provider_error'))
