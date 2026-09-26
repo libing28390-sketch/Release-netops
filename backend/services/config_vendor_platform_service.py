@@ -87,6 +87,9 @@ _VENDOR_ALIASES = {
     "palo alto": "Palo Alto",
     "paloalto": "Palo Alto",
     "hillstone": "Hillstone",
+    "stoneos": "Hillstone",
+    "hillstone stoneos": "Hillstone",
+    "山石": "Hillstone",
     "fiberhome": "FiberHome",
     "烽火": "FiberHome",
     "custom": "Custom",
@@ -119,6 +122,11 @@ _PLATFORM_ALIASES = {
     "dptech": "dptech_conplat",
     "dptech conplat": "dptech_conplat",
     "dptech conplat firewall": "dptech_conplat_fw",
+    "hillstone": "hillstone_stoneos",
+    "stoneos": "hillstone_stoneos",
+    "hillstone stoneos": "hillstone_stoneos",
+    "山石": "hillstone_stoneos",
+    "山石 stoneos": "hillstone_stoneos",
 }
 
 _CANONICAL_PLATFORM = {

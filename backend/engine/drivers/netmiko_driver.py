@@ -60,6 +60,8 @@ class NetmikoDriver(BaseDriver):
             'dptech_ios': 'dptech_ios',
             'dptech_conplat': 'dptech_ios',
             'dptech_conplat_fw': 'dptech_ios',
+            'hillstone': 'hillstone_stoneos',
+            'stoneos': 'hillstone_stoneos',
         }
         p = aliases.get(p, p)
         mapping = {
@@ -74,6 +76,7 @@ class NetmikoDriver(BaseDriver):
             'raisecom_ros': 'raisecom_ros',
             'maipu': 'maipu',
             'dptech_ios': 'dptech_ios',
+            'hillstone_stoneos': 'hillstone_stoneos',
         }
         return mapping.get(p) or p or 'cisco_ios'
 

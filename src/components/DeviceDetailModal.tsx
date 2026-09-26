@@ -34,6 +34,12 @@ import { extractSoftwareMajorVersion, getDevicePlatformAdaptation, getPlatformPr
 interface PlatformIdentificationResult {
   status?: string;
   version?: string;
+  vendor?: string;
+  detected_vendor?: string;
+  inventory_vendor?: string;
+  inventory_platform?: string;
+  vendor_source?: string;
+  reason?: string;
   commands?: string[];
   selected?: { platform_profile_id?: string; platform_code?: string; name_zh?: string; name_en?: string } | null;
   suggestions?: Array<{ platform_profile_id?: string; platform_code?: string; name_zh?: string; name_en?: string; score?: number }>;
@@ -125,6 +131,8 @@ const formatPlatformLabel = (value: unknown, language: string) => {
     h3c_comware_v3: '华三 Comware V3',
     hp_comware: '华三 Comware',
     huawei_vrp: '华为 VRP',
+    hillstone_stoneos: '山石 StoneOS',
+    dptech_ios: '迪普 DPtech',
     cisco_ios: 'Cisco IOS',
     cisco_nxos: 'Cisco NX-OS',
     generic: '通用平台',
@@ -267,6 +275,10 @@ const DeviceDetailModal: React.FC<DeviceDetailModalProps> = ({
   const identificationVersion = String(platformResult?.version || viewingDevice.version || '').trim();
   const platformAlreadyBound = Boolean(viewingDevice.platform_profile_id);
   const deviceVendor = inferPlatformVendor(viewingDevice.vendor, viewingDevice.platform);
+  const detectedVendor = inferPlatformVendor(platformResult?.detected_vendor || platformResult?.vendor);
+  const platformIdentityConflict = platformResult?.status === 'VENDOR_CONFLICT'
+    || platformResult?.status === 'INVENTORY_IDENTITY_CONFLICT';
+  const bindingVendor = platformIdentityConflict ? deviceVendor : deviceVendor || detectedVendor;
   const selectedPlatformProfile = platformProfiles.find((profile) => profile.id === selectedPlatformProfileId) || null;
   const boundPlatformProfile = platformProfiles.find((profile) => profile.id === viewingDevice.platform_profile_id)
     || viewingDevice.platform_binding
@@ -333,7 +345,7 @@ const DeviceDetailModal: React.FC<DeviceDetailModalProps> = ({
       setPlatformError(language === 'zh' ? '请选择要绑定的平台' : 'Select a platform to bind');
       return;
     }
-    if (!deviceVendor) {
+    if (!bindingVendor) {
       setPlatformMessage('');
       setPlatformError(language === 'zh' ? '设备厂商未知，不能绑定平台。请先补充厂商或完成自动识别。' : 'The device vendor is unknown; add it or run detection before binding.');
       return;
@@ -586,13 +598,15 @@ const DeviceDetailModal: React.FC<DeviceDetailModalProps> = ({
                     profiles={platformProfiles}
                     value={selectedPlatformProfileId}
                     language={language}
-                    allowedVendor={deviceVendor}
+                    allowedVendor={bindingVendor}
                     requireVendor
-                    disabled={platformProfilesLoading || platformBindingLoading}
+                    disabled={platformProfilesLoading || platformBindingLoading || platformIdentityConflict}
                     title={language === 'zh' ? '选择同厂商的平台版本' : 'Select a platform version from the same vendor'}
                     onChange={(profile) => setSelectedPlatformProfileId(profile?.id || '')}
                   />
-                  {deviceVendor && <p className="mt-1 text-[10px] text-cyan-800/70">{language === 'zh' ? `设备厂商：${platformVendorLabel(deviceVendor, language)}；只能选择同厂商平台。` : `Device vendor: ${platformVendorLabel(deviceVendor, language)}; only same-vendor platforms are available.`}</p>}
+                  {bindingVendor && <p className="mt-1 text-[10px] text-cyan-800/70">{language === 'zh' ? `设备厂商：${platformVendorLabel(bindingVendor, language)}；只能选择同厂商平台。` : `Device vendor: ${platformVendorLabel(bindingVendor, language)}; only same-vendor platforms are available.`}</p>}
+                  {platformResult?.detected_vendor && <p className="mt-1 text-[10px] text-cyan-800/80">{language === 'zh' ? `SNMP 识别厂商：${platformVendorLabel(platformResult.detected_vendor, language)}（${({ sysObjectID: 'sysObjectID', sysDescr: 'sysDescr', librenms: 'LibreNMS 规则' } as Record<string, string>)[platformResult.vendor_source || ''] || 'SNMP'}）；厂商字段不会自动修改。` : `SNMP vendor: ${platformVendorLabel(platformResult.detected_vendor, language)} (${platformResult.vendor_source || 'SNMP'}); the inventory vendor is not changed automatically.`}</p>}
+                  {(platformResult?.status === 'VENDOR_CONFLICT' || platformResult?.status === 'INVENTORY_IDENTITY_CONFLICT') && <div className="mt-2 rounded-lg border border-amber-200 bg-amber-50 px-3 py-2 text-[11px] leading-5 text-amber-800" role="alert">{language === 'zh' ? `SNMP 识别为${platformVendorLabel(platformResult.detected_vendor, language)}，但现有资产信息${platformResult.inventory_vendor ? `中的厂商为“${platformResult.inventory_vendor}”` : `中的平台为“${platformResult.inventory_platform || '未知'}”`}。请先核对并修正资产信息；本次没有生成平台候选。` : `SNMP identifies ${platformVendorLabel(platformResult.detected_vendor, language)}, but the current inventory ${platformResult.inventory_vendor ? `vendor is “${platformResult.inventory_vendor}”` : `platform is “${platformResult.inventory_platform || 'unknown'}”`}. Verify the inventory first; no platform candidate was generated.`}</div>}
                   {hasVersionConflict && selectedPlatformProfile && (
                     <div className="mt-2 rounded-lg border border-rose-200 bg-rose-50 px-3 py-2 text-[11px] leading-5 text-rose-700" role="alert">
                       {language === 'zh'
@@ -601,9 +615,9 @@ const DeviceDetailModal: React.FC<DeviceDetailModalProps> = ({
                     </div>
                   )}
                   <div className="flex justify-end">
-                    <button type="button" onClick={() => void bindPlatform()} disabled={platformBindingLoading || !selectedPlatformProfileId} className="rounded-lg border border-cyan-300 bg-white px-2.5 py-1.5 text-[11px] font-semibold text-cyan-800 disabled:opacity-50">{platformBindingLoading ? (language === 'zh' ? '保存中…' : 'Saving…') : (language === 'zh' ? '保存绑定' : 'Save binding')}</button>
+                    <button type="button" onClick={() => void bindPlatform()} disabled={platformBindingLoading || platformIdentityConflict || !selectedPlatformProfileId} className="rounded-lg border border-cyan-300 bg-white px-2.5 py-1.5 text-[11px] font-semibold text-cyan-800 disabled:opacity-50">{platformBindingLoading ? (language === 'zh' ? '保存中…' : 'Saving…') : (language === 'zh' ? '保存绑定' : 'Save binding')}</button>
                   </div>
-                  {platformResult && <div className="text-[11px] text-cyan-900/80"><span className="font-semibold">{platformResult.status || '—'}</span>{identificationVersion ? <span className="ml-2">{language === 'zh' ? '版本' : 'Version'} {identificationVersion}</span> : null}{platformResult.commands?.length ? <span className="ml-2 text-cyan-700/70">{platformResult.commands.join(', ')}</span> : null}{platformResult.suggestions?.length ? <div className="mt-1 space-y-1">{platformResult.suggestions.slice(0, 3).map((item) => <button type="button" key={item.platform_profile_id || item.platform_code} onClick={() => item.platform_profile_id && setSelectedPlatformProfileId(item.platform_profile_id)} className="block w-full rounded-md px-1.5 py-1 text-left hover:bg-cyan-50">{item.name_zh || item.platform_code} <span className="text-cyan-700/60">{identificationVersion ? `${language === 'zh' ? '· 版本' : '· Version'} ${identificationVersion}` : `${language === 'zh' ? '· 匹配分' : '· Score'} ${Number(item.score || 0).toFixed(2)}`}</span></button>)}</div> : null}</div>}
+                  {platformResult && <div className="text-[11px] text-cyan-900/80"><span className="font-semibold">{language === 'zh' ? ({ MATCHED: '已找到平台候选', NO_MATCH: '暂无平台候选', VENDOR_CONFLICT: '厂商信息冲突', INVENTORY_IDENTITY_CONFLICT: 'SNMP 与资产信息不一致', BOUND: '已绑定' } as Record<string, string>)[platformResult.status || ''] || platformResult.status || '—' : platformResult.status || '—'}</span>{identificationVersion ? <span className="ml-2">{language === 'zh' ? '版本' : 'Version'} {identificationVersion}</span> : null}{platformResult.commands?.length ? <span className="ml-2 text-cyan-700/70">{platformResult.commands.join(', ')}</span> : null}{platformResult.suggestions?.length ? <div className="mt-1 space-y-1">{platformResult.suggestions.slice(0, 3).map((item) => <button type="button" key={item.platform_profile_id || item.platform_code} onClick={() => item.platform_profile_id && setSelectedPlatformProfileId(item.platform_profile_id)} className="block w-full rounded-md px-1.5 py-1 text-left hover:bg-cyan-50">{item.name_zh || item.platform_code} <span className="text-cyan-700/60">{identificationVersion ? `${language === 'zh' ? '· 版本' : '· Version'} ${identificationVersion}` : `${language === 'zh' ? '· 匹配分' : '· Score'} ${Number(item.score || 0).toFixed(2)}`}</span></button>)}</div> : null}</div>}
                   {platformMessage && <div className="text-[11px] font-semibold text-emerald-700">{platformMessage}</div>}
                   {platformError && <div className="text-[11px] text-rose-700">{platformError}</div>}
                 </div>

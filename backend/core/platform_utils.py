@@ -19,6 +19,8 @@ def _platform_vendor(platform: str) -> str:
         return 'dptech'
     if value.startswith(('juniper', 'junos')):
         return 'juniper'
+    if value.startswith(('hillstone', 'stoneos')):
+        return 'hillstone'
     if value.startswith(('arista', 'eos')):
         return 'arista'
     if value.startswith(('cisco', 'ios', 'nxos', 'nexus', 'asa')):
@@ -29,7 +31,7 @@ def normalize_device_platform(vendor: str, platform: str) -> str:
     """
     Ensure vendor and platform are aligned and prevent silent fallback to Cisco
     when the vendor is H3C, Huawei, Ruijie, ZTE, Raisecom, Maipu, DCN,
-    DPtech, FiberHome, Juniper, or Arista.
+    DPtech, FiberHome, Juniper, Arista, or Hillstone.
     """
     v = str(vendor or '').strip().lower()
     p = str(platform or '').strip().lower()
@@ -51,6 +53,8 @@ def normalize_device_platform(vendor: str, platform: str) -> str:
         v_key = 'dptech'
     elif 'juniper' in v or 'junos' in v:
         v_key = 'juniper'
+    elif 'hillstone' in v or 'stoneos' in v or '山石' in v:
+        v_key = 'hillstone'
     elif 'arista' in v or 'eos' in v:
         v_key = 'arista'
     elif 'cisco' in v or 'ios' in v:
@@ -73,6 +77,7 @@ def normalize_device_platform(vendor: str, platform: str) -> str:
         'dptech': 'dptech_ios',
         'juniper': 'juniper_junos',
         'arista': 'arista_eos',
+        'hillstone': 'hillstone_stoneos',
         'cisco': 'cisco_ios',
     }
     if v_key and _platform_vendor(p) != v_key:
@@ -89,6 +94,7 @@ def normalize_device_platform(vendor: str, platform: str) -> str:
         'ruijie_rgos', 'ruijie_os', 'zte_zxros', 'maipu', 'maipu_network', 'maipu_mypower',
         'dptech_ios', 'dptech', 'dptech_conplat', 'dptech_conplat_fw',
         'raisecom_ros', 'raisecom_ros5', 'raisecom_ros_5',
+        'hillstone_stoneos',
     }
     if p in explicit_platforms:
         if p in {'vrp8', 'vrpv8'}:
@@ -155,6 +161,8 @@ def normalize_device_platform(vendor: str, platform: str) -> str:
         return 'dptech_ios'
     elif 'juniper' in p or 'junos' in p:
         return 'juniper_junos'
+    elif 'hillstone' in p or 'stoneos' in p or '山石' in p:
+        return 'hillstone_stoneos'
     elif 'arista' in p or 'eos' in p:
         return 'arista_eos'
     elif 'nxos' in p or 'nexus' in p:

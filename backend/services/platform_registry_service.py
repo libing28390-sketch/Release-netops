@@ -29,13 +29,13 @@ TEMPLATE_CODE_RE = re.compile(r"^[A-Z][A-Z0-9_]{0,63}$")
 ALLOWED_CONNECTION_DRIVERS = {
     "netmiko", "scrapli", "mock", "cisco_ios", "huawei_vrp", "hp_comware",
     "juniper_junos", "arista_eos", "zte_zxros", "ruijie_os", "dptech_ios", "maipu",
-    "raisecom_ros",
+    "raisecom_ros", "hillstone_stoneos",
 }
 CONNECTION_DRIVER_TO_IMPLEMENTATION = {
     "cisco_ios": "netmiko", "huawei_vrp": "netmiko", "hp_comware": "netmiko",
     "juniper_junos": "netmiko", "arista_eos": "netmiko", "zte_zxros": "netmiko",
     "ruijie_os": "netmiko", "dptech_ios": "netmiko", "maipu": "netmiko",
-    "raisecom_ros": "netmiko",
+    "raisecom_ros": "netmiko", "hillstone_stoneos": "netmiko",
 }
 
 ACTION_DEFINITIONS: tuple[dict[str, Any], ...] = (
@@ -164,6 +164,7 @@ SYSTEM_PROFILES: tuple[dict[str, Any], ...] = (
     {"platform_code": "dptech_fw_s211", "name_zh": "迪普 FW S211", "name_en": "DPtech FW S211", "vendor": "DPtech", "connection_driver": "dptech_ios", "parser_platform": "dptech_ios"},
     {"platform_code": "dptech_conplat", "name_zh": "迪普 ConPlat", "name_en": "DPtech ConPlat", "vendor": "DPtech", "connection_driver": "dptech_ios", "parser_platform": "dptech_ios"},
     {"platform_code": "dptech_conplat_unknown", "name_zh": "迪普 ConPlat 未知系统", "name_en": "DPtech ConPlat Unknown", "vendor": "DPtech", "connection_driver": "dptech_ios", "parser_platform": "dptech_ios"},
+    {"platform_code": "hillstone_stoneos", "name_zh": "山石 StoneOS", "name_en": "Hillstone StoneOS", "vendor": "Hillstone", "connection_driver": "hillstone_stoneos", "parser_platform": "hillstone_stoneos"},
     {"platform_code": "maipu_s3330_v9", "name_zh": "迈普 S3330 V9", "name_en": "Maipu S3330 V9", "vendor": "Maipu", "connection_driver": "maipu", "parser_platform": "maipu"},
     {"platform_code": "maipu_mypower_v6", "name_zh": "迈普 MyPower V6", "name_en": "Maipu MyPower V6", "vendor": "Maipu", "connection_driver": "maipu", "parser_platform": "maipu"},
     {"platform_code": "maipu_mypower_v8", "name_zh": "迈普 MyPower V8", "name_en": "Maipu MyPower V8", "vendor": "Maipu", "connection_driver": "maipu", "parser_platform": "maipu"},
@@ -207,6 +208,7 @@ PLATFORM_ALIASES = {
     "ruijie_rgos": "ruijie_s6k_rgos12", "dptech": "dptech_fw_s211", "dptech_ios": "dptech_fw_s211",
     "maipu": "maipu_s3330_v9",
     "raisecom": "raisecom_ros", "瑞斯康达": "raisecom_ros",
+    "hillstone": "hillstone_stoneos", "stoneos": "hillstone_stoneos", "山石": "hillstone_stoneos",
 }
 
 PLATFORM_CATALOG_METADATA: dict[str, dict[str, str]] = {
@@ -241,6 +243,7 @@ PLATFORM_CATALOG_METADATA: dict[str, dict[str, str]] = {
     "dptech_conplat": {"catalog_vendor": "dptech", "platform_family": "dptech_conplat", "version": "common"},
     "dptech_conplat_unknown": {"catalog_vendor": "dptech", "platform_family": "dptech_conplat_unknown", "version": "common"},
     "maipu_s3330_v9": {"catalog_vendor": "maipu", "platform_family": "maipu_mypower", "version": "v9"},
+    "hillstone_stoneos": {"catalog_vendor": "hillstone", "platform_family": "hillstone_stoneos", "version": "common"},
 }
 
 PLATFORM_FAMILY_ALIASES: dict[str, tuple[str, ...]] = {
@@ -248,6 +251,7 @@ PLATFORM_FAMILY_ALIASES: dict[str, tuple[str, ...]] = {
     "maipu_mypower": ("maipu", "maipu_mypower"),
     "ruijie_rgos": ("ruijie", "ruijie_os", "ruijie_rgos"),
     "dptech_conplat": ("dptech", "dptech_ios", "dptech_conplat"),
+    "hillstone_stoneos": ("hillstone", "stoneos", "hillstone_stoneos"),
     "zte_zxros": ("zte", "zte_zxros"),
 }
 
@@ -278,6 +282,7 @@ PLATFORM_ACTION_COMMANDS: dict[str, dict[str, str]] = {
     "raisecom_ros": {"get_version": "show version", "get_lldp_neighbors": "show lldp remote", "get_interface_brief": "show interface brief", "get_interfaces": "show interface", "get_ip_interfaces": "show ip interface brief", "get_arp_table": "show arp", "get_vlan_table": "show vlan", "get_route_table": "show ip route", "get_stp": "show spanning-tree", "get_clock": "show clock", "get_running_config": "show running-config", "get_startup_config": "show startup-config"},
     "dptech_ios": {"get_version": "show version", "get_lldp_neighbors": "show lldp neighbors", "get_interface_brief": "show interface status", "get_ip_interfaces": "show ip interface brief", "get_arp_table": "show arp all", "get_mac_table": "show mac-address-table", "get_vlan_table": "show vlan", "get_route_table": "show ip route", "get_stp": "show spanning-tree", "get_cpu": "show cpu-usage", "get_memory": "show memory", "get_temperature": "show environment", "get_ntp_status": "show ntp status", "get_bfd_sessions": "show bfd session", "get_logbuffer": "show logging operlog recent", "get_interface_description": "show ip interface brief", "get_clock": "show clock", "get_uptime": "show version", "get_running_config": "display current-configuration", "get_startup_config": "display saved-configuration"},
     "maipu": {"get_version": "show version", "get_lldp_neighbors": "show lldp neighbors", "get_interface_brief": "show interface brief", "get_ip_interfaces": "show ip interface brief", "get_arp_table": "show arp", "get_mac_table": "show mac address all", "get_vlan_table": "show vlan", "get_route_table": "show ip route", "get_bgp_neighbors": "show ip bgp summary", "get_ospf_neighbors": "show ip ospf neighbor", "get_isis_neighbors": "show isis neighbors", "get_stp": "show spanning-tree", "get_cpu": "show cpu monitor", "get_memory": "show memory utilization", "get_fans": "show system fan", "get_power": "show system power", "get_clock": "show clock", "get_running_config": "show running-config", "get_startup_config": "show startup-config"},
+    "hillstone_stoneos": {"get_running_config": "show configuration running", "get_startup_config": "show configuration startup"},
 }
 
 # Optical DOM is collected through confirmed vendor MIBs. Do not seed or
@@ -382,6 +387,7 @@ _ALLOWED_COMMAND_PREFIXES_BY_DRIVER = {
     "zte_zxros": {"show", "get"},
     "ruijie_os": {"show", "get"},
     "dptech_ios": {"show", "get"},
+    "hillstone_stoneos": {"show", "get"},
     "maipu": {"show", "get"},
     "netmiko": {"show", "display", "get"},
     "scrapli": {"show", "display", "get"},

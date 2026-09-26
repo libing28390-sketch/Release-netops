@@ -1096,15 +1096,34 @@ const ConfigBackupTab: React.FC<ConfigBackupTabProps> = ({
                 {storageStatusLoading
                   ? (zh ? '正在检查连接…' : 'Checking connection…')
                   : storageStatus
-                    ? `${storageStatus.provider}${storageStatus.bucket ? ` · ${storageStatus.bucket}` : ''}`
+                    ? storageStatus.backend === 's3'
+                      ? `${zh ? '兼容 S3 接口的对象存储' : 'S3-compatible object storage'}${storageStatus.bucket ? ` · Bucket: ${storageStatus.bucket}` : ''}`
+                      : (zh ? '本地文件存储' : 'Local file storage')
                     : (zh ? '状态暂时不可用' : 'Status unavailable')}
               </p>
+              {storageStatus && (
+                <p className="mt-1 max-w-3xl text-[10px] leading-4 text-black/50">
+                  {storageStatus.backend === 's3'
+                    ? (zh
+                      ? '“兼容 S3”表示支持 S3 接口，不代表使用 AWS。连接检查会尝试读取 Bucket 列表；下方计数包含配置备份和 PAM 录屏，不代表逐个文件都已验证。'
+                      : 'S3-compatible means the service supports the S3 API; it does not necessarily use AWS. The check lists the bucket; counts include config backups and PAM recordings, not per-object verification.')
+                    : (zh
+                      ? '连接检查目录是否存在且可写；下方计数包含配置备份和 PAM 录屏。'
+                      : 'The check confirms the storage directory exists and is writable; counts below include config backups and PAM recordings.')}
+                </p>
+              )}
             </div>
           </div>
           <div className="flex items-center gap-2">
             {storageStatus && (
               <span className={`rounded-full px-2.5 py-1 text-[10px] font-bold uppercase ${storageStatus.status === 'degraded' ? 'bg-amber-100 text-amber-700' : 'bg-emerald-100 text-emerald-700'}`}>
-                {storageStatus.status === 'degraded' ? (zh ? '需关注' : 'Degraded') : (zh ? '正常' : 'Ready')}
+                {!storageStatus.health_ok
+                  ? (zh ? '连接检查失败' : 'Connection check failed')
+                  : storageStatus.counts.error > 0
+                    ? (zh ? '有上传失败' : 'Upload failures')
+                    : storageStatus.counts.pending > 0
+                      ? (zh ? '有上传待处理' : 'Uploads pending')
+                      : (zh ? '连接检查通过' : 'Connection check passed')}
               </span>
             )}
             <button type="button" onClick={() => void loadStorageStatus()} disabled={storageStatusLoading} className="inline-flex items-center gap-1 rounded-lg border border-black/10 bg-white px-2.5 py-1.5 text-[10px] font-semibold text-[#0e7490] hover:bg-cyan-50 disabled:opacity-50">
@@ -1116,18 +1135,26 @@ const ConfigBackupTab: React.FC<ConfigBackupTabProps> = ({
         {storageStatus && (
           <div className="mt-3 grid grid-cols-2 gap-2 sm:grid-cols-5">
             {([
-              [zh ? '已就绪' : 'Ready', storageStatus.counts.ready, 'text-emerald-700'],
-              [zh ? '待处理' : 'Pending', storageStatus.counts.pending, 'text-cyan-700'],
-              [zh ? '失败' : 'Errors', storageStatus.counts.error, 'text-rose-700'],
-              [zh ? '旧路径' : 'Legacy', storageStatus.counts.legacy, 'text-slate-600'],
-              [zh ? 'Spool' : 'Spool', storageStatus.counts.spool, 'text-amber-700'],
-            ] as const).map(([label, value, tone]) => (
+              [storageStatus.backend === 's3' ? (zh ? '已存入 S3' : 'Stored in S3') : (zh ? '已存储' : 'Stored'), zh ? '可通过当前存储读取' : 'Available from the configured storage', storageStatus.counts.ready, 'text-emerald-700'],
+              [zh ? '上传待处理' : 'Upload pending', zh ? '上传中或等待重试' : 'Uploading or waiting to retry', storageStatus.counts.pending, 'text-cyan-700'],
+              [zh ? '上传失败' : 'Upload failed', zh ? '最近一次上传未成功' : 'Most recent upload did not succeed', storageStatus.counts.error, 'text-rose-700'],
+              [zh ? '旧版本地文件' : 'Older local files', zh ? '尚未迁移到对象存储' : 'Not migrated to object storage', storageStatus.counts.legacy, 'text-slate-600'],
+              [zh ? '本地暂存副本' : 'Local copies kept', zh ? '保留以便重试；可能和上方计数重叠' : 'Kept for retry; may overlap the counts above', storageStatus.counts.spool, 'text-amber-700'],
+            ] as const).map(([label, description, count, tone]) => (
               <div key={String(label)} className="rounded-xl border border-black/5 bg-white/80 px-3 py-2">
                 <p className="text-[10px] font-semibold text-black/35">{label}</p>
-                <p className={`mt-1 text-lg font-bold tabular-nums ${tone}`}>{value}</p>
+                <p className={`mt-1 text-lg font-bold tabular-nums ${tone}`}>{count}</p>
+                <p className="mt-1 min-h-7 text-[9px] leading-3 text-black/45">{description}</p>
               </div>
             ))}
           </div>
+        )}
+        {storageStatus && storageStatus.health_ok && (storageStatus.counts.pending > 0 || storageStatus.counts.error > 0) && (
+          <p className="mt-3 rounded-xl border border-amber-200/80 bg-white/70 px-3 py-2 text-[10px] leading-4 text-amber-800">
+            {zh
+              ? `存储连接正常，但有 ${storageStatus.counts.pending} 项正在上传或等待重试、${storageStatus.counts.error} 项上传失败，所以当前状态需要关注。`
+              : `Storage is reachable, but ${storageStatus.counts.pending} item(s) are uploading or awaiting retry and ${storageStatus.counts.error} upload(s) failed, so attention is needed.`}
+          </p>
         )}
         {storageStatus && (!storageStatus.health_ok || storageStatus.recent_errors.length > 0) && (
           <div className="mt-3 rounded-xl border border-amber-200/80 bg-white/70 px-3 py-2 text-[10px] text-amber-800">

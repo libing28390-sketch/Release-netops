@@ -115,7 +115,7 @@ export const AppModals: React.FC<any> = (props) => {
               method: 'POST',
               headers: {
                 'Content-Type': 'application/json',
-                'Authorization': `Bearer ${localStorage.getItem('sessionToken') || ''}`,
+                'Authorization': `Bearer ${localStorage.getItem('netops_token') || ''}`,
               },
               body: JSON.stringify({
                 platform: channel,

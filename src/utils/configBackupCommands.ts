@@ -15,6 +15,7 @@ const DEFAULT_COMMANDS: Record<string, ConfigBackupCommands> = {
   dptech: { running: 'display current-configuration', startup: 'display saved-configuration' },
   maipu: { running: 'show running-config', startup: 'show startup-config' },
   fortinet: { running: 'show full-configuration', startup: 'show full-configuration' },
+  hillstone: { running: 'show configuration running', startup: 'show configuration startup' },
 };
 
 const VENDOR_ALIASES: Array<[string, string[]]> = [
@@ -29,6 +30,7 @@ const VENDOR_ALIASES: Array<[string, string[]]> = [
   ['dptech', ['dptech', '迪普']],
   ['maipu', ['maipu', '迈普', 'mypower']],
   ['fortinet', ['fortinet', 'fortigate', 'fortios']],
+  ['hillstone', ['hillstone', 'stoneos', '山石']],
 ];
 
 const PLATFORM_ALIASES: Array<[string, string[]]> = [
@@ -43,6 +45,7 @@ const PLATFORM_ALIASES: Array<[string, string[]]> = [
   ['dptech', ['dptech', 'conplat']],
   ['maipu', ['maipu', 'mypower']],
   ['fortinet', ['fortinet', 'fortios', 'fortigate']],
+  ['hillstone', ['hillstone_stoneos', 'hillstone', 'stoneos', '山石']],
 ];
 
 function normalize(value?: string | null): string {

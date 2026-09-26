@@ -65,6 +65,7 @@ def _insert_rule(conn, profile_id: str, *, pattern: str, confidence: float = 0.9
         ("unknown", "7.1.070", "", "", ""),
         ("", "11.9(6)B13P1", "锐捷", "ruijie_rgos_v11", "ruijie_rgos_v11"),
         ("", "S211C011D007P08", "迪普", "dptech_fw_s211", "dptech_conplat"),
+        ("", "", "山石", "hillstone_stoneos", "hillstone_stoneos"),
         ("", "9.7.1.25(integrity)", "迈普", "maipu_mypower_v9", "maipu"),
         ("", "5900 V6.00.04.20P01", "中兴", "zte_5900_v6", "zte_zxros"),
         ("ruijie_rgos", "11.9(6)B13P1", "Ruijie", "ruijie_rgos_v11", "ruijie_rgos_v11"),
@@ -358,7 +359,7 @@ def test_platform_detection_probes_live_snmp_before_cli_when_version_is_not_cach
 
     result = identify_device_from_snmp(device_id, user)
     assert result is not None
-    assert result["source"] == "snmp_inventory"
+    assert result["source"] == "snmp_live"
     assert result["source_detail"] == "live"
     assert result["version"] == "7.1.070"
     assert result["parser_platform"] == "h3c_comware_v7"
@@ -380,7 +381,7 @@ def test_platform_detection_probes_live_snmp_before_cli_when_version_is_not_cach
     monkeypatch.setattr(platform_registry_api, "identify_device_live", fail_if_cli_is_called)
     response = api_device_platform_detect(device_id, PlatformDetectRequest(), user)
     assert response["success"] is True
-    assert response["message"] == "SNMP inventory version used; CLI probe skipped"
+    assert response["message"] == "Live SNMP identity used; CLI probe skipped"
 
 
 def test_platform_detection_falls_back_to_cli_when_snmp_has_no_version(isolated_db, monkeypatch):
@@ -410,6 +411,161 @@ def test_platform_detection_falls_back_to_cli_when_snmp_has_no_version(isolated_
     assert response["success"] is True
     assert response["data"] == cli_result
     assert response["message"] == ""
+
+
+@pytest.mark.parametrize(
+    ("sys_object_id", "sys_descr", "expected_vendor", "expected_platform"),
+    [
+        (
+            ".1.3.6.1.4.1.31648.1.1",
+            "DPtech ConPlat Software Version S211C011D007P08",
+            "DPtech",
+            "dptech_fw_s211",
+        ),
+        (
+            ".1.3.6.1.4.1.24681.1.1",
+            "Hillstone StoneOS",
+            "Hillstone",
+            "hillstone_stoneos",
+        ),
+        (
+            ".1.3.6.1.4.1.28557.1.1",
+            "Hillstone StoneOS",
+            "Hillstone",
+            "hillstone_stoneos",
+        ),
+    ],
+)
+def test_live_snmp_vendor_identity_suggests_dptech_and_hillstone_without_mutating_asset(
+    isolated_db, monkeypatch, sys_object_id, sys_descr, expected_vendor, expected_platform,
+):
+    user = _user("tenant-1")
+    conn = isolated_db["module"].get_db_connection()
+    try:
+        device_id = _insert_device(conn, "tenant-1", device_id=f"snmp-{expected_vendor.lower()}-device")
+        conn.execute(
+            "UPDATE devices SET platform = ?, vendor = '' WHERE id = ?",
+            ("unknown", device_id),
+        )
+        conn.commit()
+    finally:
+        conn.close()
+
+    async def fake_collect_device_info(_ip, _community, _port):
+        return {
+            "sys_name": "test-device",
+            "sys_descr": sys_descr,
+            "sys_object_id": sys_object_id,
+        }
+
+    import services.snmp_discovery_service as snmp_discovery_service
+    import services.snmp_service as snmp_service
+    import services.vault_service as vault_service
+
+    monkeypatch.setattr(snmp_service, "collect_device_info", fake_collect_device_info)
+    monkeypatch.setattr(vault_service, "resolve_collector_credentials", lambda _device: {
+        "snmp": {"server": "192.0.2.10", "community": "test", "port": 161},
+    })
+    monkeypatch.setattr(snmp_discovery_service, "ensure_rules_available", lambda: None)
+    monkeypatch.setattr(snmp_discovery_service, "resolve_rule", lambda *_args, **_kwargs: None)
+
+    result = identify_device_from_snmp(device_id, user)
+
+    assert result is not None
+    assert result["status"] == "MATCHED"
+    assert result["detected_vendor"] == expected_vendor
+    assert result["vendor_source"] == "sysObjectID"
+    assert result["selected"]["platform_code"] == expected_platform
+
+    conn = isolated_db["module"].get_db_connection()
+    try:
+        device = conn.execute(
+            "SELECT vendor, platform FROM devices WHERE id = ?",
+            (device_id,),
+        ).fetchone()
+        assert device[0] == ""
+        assert device[1] == "unknown"
+    finally:
+        conn.close()
+
+
+def test_live_snmp_vendor_conflict_does_not_suggest_or_mutate_platform(isolated_db, monkeypatch):
+    user = _user("tenant-1")
+    conn = isolated_db["module"].get_db_connection()
+    try:
+        device_id = _insert_device(conn, "tenant-1", device_id="snmp-vendor-conflict-device")
+        conn.execute(
+            "UPDATE devices SET platform = ?, vendor = ? WHERE id = ?",
+            ("unknown", "H3C", device_id),
+        )
+        conn.commit()
+    finally:
+        conn.close()
+
+    async def fake_collect_device_info(_ip, _community, _port):
+        return {
+            "sys_name": "test-device",
+            "sys_descr": "DPtech ConPlat Software Version S211C011D007P08",
+            "sys_object_id": ".1.3.6.1.4.1.31648.1.1",
+        }
+
+    import services.snmp_discovery_service as snmp_discovery_service
+    import services.snmp_service as snmp_service
+    import services.vault_service as vault_service
+
+    monkeypatch.setattr(snmp_service, "collect_device_info", fake_collect_device_info)
+    monkeypatch.setattr(vault_service, "resolve_collector_credentials", lambda _device: {
+        "snmp": {"server": "192.0.2.10", "community": "test", "port": 161},
+    })
+    monkeypatch.setattr(snmp_discovery_service, "ensure_rules_available", lambda: None)
+    monkeypatch.setattr(snmp_discovery_service, "resolve_rule", lambda *_args, **_kwargs: None)
+
+    result = identify_device_from_snmp(device_id, user)
+
+    assert result is not None
+    assert result["status"] == "VENDOR_CONFLICT"
+    assert result["detected_vendor"] == "DPtech"
+    assert result["suggestions"] == []
+    assert result["selected"] is None
+
+    conn = isolated_db["module"].get_db_connection()
+    try:
+        device = conn.execute(
+            "SELECT vendor, platform FROM devices WHERE id = ?",
+            (device_id,),
+        ).fetchone()
+        assert device[0] == "H3C"
+        assert device[1] == "unknown"
+    finally:
+        conn.close()
+
+
+def test_platform_detect_uses_live_snmp_before_cached_inventory(monkeypatch):
+    import api.platform_registry as platform_registry_api
+
+    live_result = {
+        "source": "snmp_live",
+        "status": "MATCHED",
+        "detected_vendor": "Hillstone",
+        "selected": {"platform_profile_id": "system-profile-hillstone_stoneos"},
+        "suggestions": [],
+    }
+    monkeypatch.setattr(platform_registry_api, "identify_device_from_snmp", lambda *_args: live_result)
+    monkeypatch.setattr(
+        platform_registry_api,
+        "identify_device_from_inventory",
+        lambda *_args: (_ for _ in ()).throw(AssertionError("cached inventory must follow live SNMP")),
+    )
+    monkeypatch.setattr(
+        platform_registry_api,
+        "identify_device_live",
+        lambda *_args: (_ for _ in ()).throw(AssertionError("live SNMP must precede the CLI probe")),
+    )
+
+    response = api_device_platform_detect("device-id", PlatformDetectRequest(), _user("tenant-1"))
+
+    assert response["data"] is live_result
+    assert response["message"] == "Live SNMP identity used; CLI probe skipped"
 
 
 def test_platform_identification_is_declarative_and_binding_is_locked(isolated_db, monkeypatch):

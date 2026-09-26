@@ -232,6 +232,8 @@ class NetmikoDriver(BaseDriver):
             'dptech_conplat': 'dptech_ios',
             'dptech_conplat_fw': 'dptech_ios',
             '华为vrp': 'huawei_vrp',
+            'hillstone': 'hillstone_stoneos',
+            'stoneos': 'hillstone_stoneos',
         }
         p = aliases.get(p, p)
         mapping = {
@@ -251,6 +253,7 @@ class NetmikoDriver(BaseDriver):
             'raisecom_ros': 'raisecom_ros',
             'maipu': 'maipu',
             'dptech_ios': 'dptech_ios',
+            'hillstone_stoneos': 'hillstone_stoneos',
             'linux':        'linux',
             'ubuntu':       'linux',
             'centos':       'linux',

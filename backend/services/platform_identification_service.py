@@ -222,6 +222,9 @@ _VENDOR_ALIASES: tuple[tuple[str, str], ...] = (
     ("迈普", "maipu"),
     ("dptech", "dptech"),
     ("迪普", "dptech"),
+    ("hillstone", "hillstone"),
+    ("stoneos", "hillstone"),
+    ("山石", "hillstone"),
     ("raisecom", "raisecom"),
     ("瑞斯康达", "raisecom"),
     ("fortinet", "fortinet"),
@@ -565,6 +568,7 @@ def _extract_version_from_text(value: str) -> str:
         return ""
     patterns = (
         r"\bSoftware\s+Release\s*[:：]?\s*([A-Za-z0-9][\w.()/-]*)",
+        r"\b(S211[A-Za-z0-9._/-]*)",
         r"\bZ(?:TE\s+)?ZXR10\s+Software\s*,\s*Version\s*:\s*([A-Za-z0-9][\w.()/-]*\s+V[0-9][\w.()/-]*)",
         r"\b(?:System\s+)?[Ss]oftware\s+[Vv]ersion\s*[:：]?\s*(?:[A-Za-z][A-Za-z0-9_.-]*\s+)?([0-9][\w.()/-]*)",
         r"\b[Ss]oftware\s+[Vv]ersion\s*[:：]?\s*([0-9][\w.()/-]*)",
@@ -646,6 +650,7 @@ def _inventory_profile_code(platform: str, version: str, vendor: str) -> tuple[s
             "h3c": "h3c_comware",
             "ruijie": "ruijie_rgos",
             "dptech": "dptech_ios",
+            "hillstone": "hillstone_stoneos",
             "maipu": "maipu",
             "zte": "zte_zxros",
         }.get(normalized_vendor, "")
@@ -787,6 +792,9 @@ def identify_device_from_inventory(device_id: str, user: dict[str, Any]) -> dict
         version = str(device.get("version") or device.get("os_version") or "").strip()
         if not version:
             return None
+        from services.snmp_vendor_registry import normalize_asset_vendor
+
+        asset_vendor = normalize_asset_vendor(device.get("vendor"))
         profile_code, parser_platform = _inventory_profile_code(
             str(device.get("platform") or ""),
             version,
@@ -812,6 +820,9 @@ def identify_device_from_inventory(device_id: str, user: dict[str, Any]) -> dict
         "device_id": device_id,
         "source": "snmp_inventory",
         "version": version,
+        "vendor": asset_vendor or str(device.get("vendor") or "").strip(),
+        "detected_vendor": "",
+        "vendor_source": "inventory" if asset_vendor else "none",
         "parser_platform": parser_platform,
         "commands": [],
         "success": bool(candidate),
@@ -822,12 +833,11 @@ def identify_device_from_inventory(device_id: str, user: dict[str, Any]) -> dict
 
 
 def identify_device_from_snmp(device_id: str, user: dict[str, Any]) -> dict[str, Any] | None:
-    """Probe SNMP once when the persisted inventory has no version yet.
+    """Use live SNMP system identity to suggest a registered vendor/profile.
 
-    The background collector is intentionally periodic, so a device can be
-    reachable and return ``sysDescr`` while ``devices.version`` is still
-    blank. Auto-detection must not skip a currently healthy SNMP path merely
-    because that periodic write has not happened yet.
+    Vendor and platform findings are returned as suggestions only. This path
+    may persist a newly observed software version, matching the existing SNMP
+    inventory behavior, but it never writes the device vendor or platform.
     """
     conn = get_db_connection()
     try:
@@ -860,20 +870,103 @@ def identify_device_from_snmp(device_id: str, user: dict[str, Any]) -> dict[str,
             int(snmp.get("port") or 161),
         )
     )
-    version = _extract_version_from_text(str(info.get("sys_descr") or ""))
-    if not version:
+    sys_descr = str(info.get("sys_descr") or "")
+    version = _extract_version_from_text(sys_descr)
+    if not info.get("sys_object_id") and not sys_descr.strip():
         return None
-    _persist_discovered_version(device_id, version)
+    if version:
+        _persist_discovered_version(device_id, version)
 
-    # Reuse the same profile resolution as the cached inventory path while
-    # preserving the UI-visible SNMP source label.
+    from services.snmp_discovery_service import resolve_snmp_vendor_identity
+    from services.snmp_vendor_registry import (
+        ASSET_NETWORK_VENDORS,
+        ASSET_SECURITY_VENDORS,
+        normalize_asset_vendor,
+    )
+
+    valid_asset_vendors = {
+        normalize_asset_vendor(item)
+        for item in (*ASSET_NETWORK_VENDORS, *ASSET_SECURITY_VENDORS)
+    }
     conn = get_db_connection()
     try:
         current = _inventory_device(conn, device_id, user)
+        stored_vendor = normalize_asset_vendor(current.get("vendor"))
+        recognized_stored_vendor = stored_vendor if stored_vendor in valid_asset_vendors else ""
+        identity_asset_vendor = stored_vendor if _canonical_vendor(stored_vendor) else ""
+        identity = resolve_snmp_vendor_identity(
+            conn,
+            sys_object_id=info.get("sys_object_id"),
+            sys_descr=sys_descr,
+            sys_name=info.get("sys_name"),
+            asset_vendor=identity_asset_vendor,
+            asset_platform=current.get("platform"),
+            asset_model=current.get("model"),
+        )
+        observed_vendor = str(identity.get("vendor") or "").strip()
+        if not observed_vendor and not version:
+            return None
+        if identity.get("status") == "conflict":
+            return {
+                "device_id": device_id,
+                "source": "snmp_live",
+                "source_detail": "identity_conflict",
+                "version": version or str(current.get("version") or current.get("os_version") or "").strip(),
+                "vendor": observed_vendor,
+                "detected_vendor": observed_vendor,
+                "inventory_vendor": str(current.get("vendor") or "").strip(),
+                "inventory_platform": str(current.get("platform") or current.get("device_type") or "").strip(),
+                "vendor_source": str(identity.get("source") or "none"),
+                "reason": str(identity.get("reason") or "SNMP identity conflicts with the recorded asset vendor"),
+                "parser_platform": "",
+                "commands": [],
+                "success": False,
+                "status": "VENDOR_CONFLICT",
+                "suggestions": [],
+                "selected": None,
+            }
+
+        effective_vendor = observed_vendor or recognized_stored_vendor
+        known_platform_vendors = {
+            _canonical_vendor(item)
+            for item in (*ASSET_NETWORK_VENDORS, *ASSET_SECURITY_VENDORS)
+        }
+        current_platform = str(current.get("platform") or "").strip()
+        current_platform_vendor = _canonical_vendor(current_platform)
+        if (
+            observed_vendor
+            and current_platform_vendor in known_platform_vendors
+            and current_platform_vendor != _canonical_vendor(observed_vendor)
+        ):
+            return {
+                "device_id": device_id,
+                "source": "snmp_live",
+                "source_detail": "inventory_platform_conflict",
+                "version": version or str(current.get("version") or current.get("os_version") or "").strip(),
+                "vendor": observed_vendor,
+                "detected_vendor": observed_vendor,
+                "inventory_vendor": str(current.get("vendor") or "").strip(),
+                "inventory_platform": current_platform,
+                "vendor_source": str(identity.get("source") or "none"),
+                "reason": "The SNMP vendor conflicts with the registered platform family",
+                "parser_platform": "",
+                "commands": [],
+                "success": False,
+                "status": "INVENTORY_IDENTITY_CONFLICT",
+                "suggestions": [],
+                "selected": None,
+            }
+
+        if not effective_vendor:
+            platform_vendor = _canonical_vendor(current.get("platform") or current.get("device_type"))
+            if platform_vendor in known_platform_vendors:
+                effective_vendor = platform_vendor
+        effective_platform = current_platform
+        effective_version = version or str(current.get("version") or current.get("os_version") or "").strip()
         profile_code, parser_platform = _inventory_profile_code(
-            str(current.get("platform") or device.get("platform") or ""),
-            version,
-            str(current.get("vendor") or device.get("vendor") or ""),
+            effective_platform,
+            effective_version,
+            effective_vendor,
         )
         profile = _find_inventory_profile(conn, profile_code, user)
     finally:
@@ -893,9 +986,14 @@ def identify_device_from_snmp(device_id: str, user: dict[str, Any]) -> dict[str,
         }
     return {
         "device_id": device_id,
-        "source": "snmp_inventory",
+        "source": "snmp_live",
         "source_detail": "live",
-        "version": version,
+        "version": effective_version,
+        "vendor": effective_vendor or str(current.get("vendor") or "").strip(),
+        "detected_vendor": observed_vendor,
+        "inventory_vendor": str(current.get("vendor") or "").strip(),
+        "vendor_source": str(identity.get("source") or ("inventory" if effective_vendor else "none")),
+        "reason": str(identity.get("reason") or ""),
         "parser_platform": parser_platform,
         "commands": [],
         "success": bool(candidate),

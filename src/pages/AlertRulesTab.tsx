@@ -1,6 +1,6 @@
 import React, { useCallback, useEffect, useMemo, useState } from 'react';
 import { AnimatePresence, motion } from 'motion/react';
-import { ChevronDown, ChevronRight, Copy, Pencil, Plus, Power, PowerOff, RefreshCw, Save, SlidersHorizontal, Trash2, X, Search, Check, Shield } from 'lucide-react';
+import { ChevronDown, ChevronRight, Copy, Mail, Pencil, Plus, Power, PowerOff, RefreshCw, Save, SlidersHorizontal, Trash2, UserRound, Webhook, X, Search, Check, Shield } from 'lucide-react';
 import type { AlertNotificationChannel, AlertRuleCollectionBinding, AlertRuleHistoryItem, AlertRuleListResponse, AlertRulePreview, AlertRuleSettings } from '../types';
 import Pagination from '../components/Pagination';
 import PageHero from '../components/PageHero';
@@ -60,10 +60,15 @@ const METRIC_OPTIONS_LIST = [
 ] as const;
 
 const NOTIFICATION_CHANNEL_OPTIONS = [
-  { value: 'workspace' as const, labelZh: '跟随个人设置', labelEn: 'Personal settings' },
-  { value: 'feishu' as const, labelZh: '飞书', labelEn: 'Feishu' },
-  { value: 'email' as const, labelZh: '邮件', labelEn: 'Email' },
+  { value: 'workspace' as const, labelZh: '跟随个人', labelEn: 'Personal', icon: UserRound, titleZh: '使用每位用户的通知偏好', titleEn: 'Use each user’s notification preferences' },
+  { value: 'feishu' as const, labelZh: 'Webhook', labelEn: 'Webhook', icon: Webhook, titleZh: '发送到已配置的飞书机器人 Webhook', titleEn: 'Send through the configured Feishu bot Webhook' },
+  { value: 'email' as const, labelZh: '邮件', labelEn: 'Email', icon: Mail, titleZh: '发送到已启用邮件告警的用户', titleEn: 'Send to users with email alerts enabled' },
 ] as const;
+
+const notificationChannelLabel = (channel: string, language: string) => {
+  const option = NOTIFICATION_CHANNEL_OPTIONS.find((item) => item.value === channel);
+  return option ? (language === 'zh' ? option.labelZh : option.labelEn) : channel;
+};
 
 const AlertRulesTab: React.FC<AlertPageCommonProps> = ({ language, currentUsername, showToast }) => {
   const getHeaders = (json = false) => {
@@ -1070,8 +1075,8 @@ const AlertRulesTab: React.FC<AlertPageCommonProps> = ({ language, currentUserna
                     <td className="px-5 py-4 align-top">
                       <div className="flex max-w-[150px] flex-wrap gap-1">
                         {(rule.notification_channels || ['workspace']).map((channel) => (
-                          <span key={channel} className="rounded-md bg-indigo-50 px-1.5 py-0.5 text-[10px] font-semibold text-indigo-700">
-                            {channel === 'workspace' ? (language === 'zh' ? '个人' : 'Personal') : channel === 'email' ? (language === 'zh' ? '邮件' : 'Email') : channel === 'feishu' ? '飞书' : channel}
+                          <span key={channel} className={`inline-flex items-center rounded-md border px-1.5 py-0.5 text-[10px] font-semibold ${channel === 'feishu' ? 'border-cyan-100 bg-cyan-50 text-cyan-800' : channel === 'email' ? 'border-slate-200 bg-slate-50 text-slate-700' : 'border-slate-200 bg-white text-slate-600'}`}>
+                            {notificationChannelLabel(channel, language)}
                           </span>
                         ))}
                       </div>
@@ -1294,33 +1299,39 @@ const AlertRulesTab: React.FC<AlertPageCommonProps> = ({ language, currentUserna
                   </label>
                 </div>
 
-                <div className="rounded-2xl border border-indigo-100 bg-indigo-50/50 px-4 py-3">
-                  <div className="flex flex-wrap items-center gap-2">
-                    <span className="text-sm font-semibold text-[#164e63]">
-                      {language === 'zh' ? '通知方式' : 'Notification channels'}
-                    </span>
-                    <span className="text-[11px] text-slate-500">
-                      {language === 'zh' ? '选择“跟随个人设置”或指定一个/多个渠道' : 'Follow personal settings or choose one or more channels'}
-                    </span>
-                  </div>
-                  <div className="mt-3 flex flex-wrap gap-2">
+                <div className="rounded-xl border border-slate-200 bg-slate-50/70 px-3 py-2.5">
+                  <div className="flex flex-col gap-2 sm:flex-row sm:items-center sm:justify-between">
+                    <div className="flex flex-wrap items-baseline gap-x-2 gap-y-0.5">
+                      <span className="text-sm font-semibold text-slate-800">
+                        {language === 'zh' ? '通知渠道' : 'Notifications'}
+                      </span>
+                      <span className="text-[11px] text-slate-500">
+                        {language === 'zh' ? '个人偏好或指定渠道' : 'Personal preferences or selected channels'}
+                      </span>
+                    </div>
+                    <div className="flex flex-wrap gap-1.5">
                     {NOTIFICATION_CHANNEL_OPTIONS.map((option) => {
                       const selected = (ruleDraft.notification_channels || ['workspace']).includes(option.value);
+                      const OptionIcon = option.icon;
                       return (
                         <button
                           key={option.value}
                           type="button"
                           onClick={() => toggleNotificationChannel(option.value)}
-                          className={`rounded-xl border px-3 py-2 text-xs font-semibold transition ${selected ? 'border-indigo-300 bg-indigo-600 text-white shadow-sm' : 'border-indigo-100 bg-white text-slate-600 hover:border-indigo-200'}`}
+                          aria-pressed={selected}
+                          title={language === 'zh' ? option.titleZh : option.titleEn}
+                          className={`inline-flex h-8 items-center gap-1.5 rounded-lg border px-2.5 text-xs font-semibold transition focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-cyan-500/40 ${selected ? 'border-cyan-700 bg-cyan-700 text-white shadow-sm shadow-cyan-900/10' : 'border-slate-200 bg-white text-slate-600 hover:border-cyan-300 hover:text-cyan-800'}`}
                         >
+                          <OptionIcon size={14} aria-hidden="true" />
                           {language === 'zh' ? option.labelZh : option.labelEn}
                         </button>
                       );
                     })}
+                    </div>
                   </div>
                   {ruleDraft.notification_channels?.includes('email') && (
-                    <p className="mt-2 text-[11px] text-indigo-700">
-                      {language === 'zh' ? '邮件会发送给启用邮件告警且已配置邮箱的用户；SMTP 在系统设置中配置。' : 'Email is sent to users who enable email alerts and have an address; SMTP is configured in system settings.'}
+                    <p className="mt-2 text-[11px] leading-4 text-slate-500">
+                      {language === 'zh' ? '邮件发送给已启用邮件告警的用户；SMTP 需在系统设置中配置。' : 'Email goes to users with alerts enabled; configure SMTP in system settings.'}
                     </p>
                   )}
                 </div>

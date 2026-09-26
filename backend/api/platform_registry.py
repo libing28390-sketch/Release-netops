@@ -396,15 +396,13 @@ def api_device_platform_detect(
     if request.observations:
         data = _call(identify_device, device_id, request.observations, user, platform_code=request.platform_code)
     else:
-        # SNMP/sysDescr-derived version is already inventory data. Prefer it
-        # before the gated CLI probe so auto-detection never opens SSH merely
-        # to rediscover a version that SNMP has already supplied.
-        data = _call(identify_device_from_inventory, device_id, user)
+        # Read current sysObjectID/sysDescr first so auto-detection can infer
+        # the vendor even when a periodic SNMP version is already cached.
+        data = _call(identify_device_from_snmp, device_id, user)
         if data is None:
-            # The periodic collector may not have persisted its latest
-            # sysDescr yet. Probe SNMP once before falling back to CLI so a
-            # currently reachable SNMP agent is not needlessly bypassed.
-            data = _call(identify_device_from_snmp, device_id, user)
+            # A device may have no configured/reachable SNMP agent. Reuse any
+            # persisted inventory version before trying the gated CLI probe.
+            data = _call(identify_device_from_inventory, device_id, user)
         if data is None:
             data = _call(identify_device_live, device_id, user)
     return {
@@ -412,7 +410,13 @@ def api_device_platform_detect(
         # identification outcome (MATCHED/NO_MATCH/CONFLICT) remains in data.
         "success": True,
         "data": data,
-        "message": "SNMP inventory version used; CLI probe skipped" if data.get("source") == "snmp_inventory" else "",
+        "message": (
+            "Live SNMP identity used; CLI probe skipped"
+            if data.get("source") == "snmp_live"
+            else "SNMP inventory version used; CLI probe skipped"
+            if data.get("source") == "snmp_inventory"
+            else ""
+        ),
     }
 
 

@@ -20,6 +20,7 @@ _VENDOR_PLATFORM_ALIASES: tuple[tuple[str, tuple[str, ...]], ...] = (
     ("dptech_ios", ("dptech", "迪普")),
     ("maipu", ("maipu", "迈普", "mypower")),
     ("fortinet_fortios", ("fortinet", "fortigate", "fortios")),
+    ("hillstone_stoneos", ("hillstone", "stoneos", "山石")),
 )
 
 _PLATFORM_ALIASES: tuple[tuple[str, tuple[str, ...]], ...] = (
@@ -34,6 +35,7 @@ _PLATFORM_ALIASES: tuple[tuple[str, tuple[str, ...]], ...] = (
     ("dptech_ios", ("dptech", "conplat")),
     ("maipu", ("maipu", "mypower")),
     ("fortinet_fortios", ("fortinet", "fortios", "fortigate")),
+    ("hillstone_stoneos", ("hillstone_stoneos", "hillstone", "stoneos", "山石")),
 )
 
 CONFIG_BACKUP_DEFAULT_IDENTITY_TOKENS = tuple(dict.fromkeys(
@@ -54,6 +56,7 @@ CONFIG_BACKUP_DEFAULT_PLATFORM_TOKENS = tuple(dict.fromkeys(
 
 CONFIG_BACKUP_NETWORK_IDENTITY_TOKENS = (
     "cisco", "思科", "huawei", "华为", "h3c", "华三", "juniper", "junos",
+    "山石",
     "arista", "ruijie", "锐捷", "zte", "中兴", "raisecom", "瑞斯康达",
     "dptech", "迪普", "maipu", "迈普", "fortinet", "fortigate", "fortios",
     "palo alto", "paloalto", "panos", "hillstone", "stoneos", "sangfor", "sangforos",

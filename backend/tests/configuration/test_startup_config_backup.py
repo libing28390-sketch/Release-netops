@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+import uuid
+
 from backend.tests.pg_test_utils import postgresql_test_driver
 from services.platform_registry_service import (
     ACTION_DEFINITIONS,
@@ -53,6 +55,7 @@ def test_default_backup_commands_cover_every_builtin_vendor_independent_of_bound
         "Raisecom": ("show running-config", "show startup-config"),
         "Ruijie": ("show running-config", "show startup-config"),
         "DPtech": ("display current-configuration", "display saved-configuration"),
+        "Hillstone": ("show configuration running", "show configuration startup"),
         "Maipu": ("show running-config", "show startup-config"),
     }
     supported_vendors = {str(profile["vendor"]) for profile in SYSTEM_PROFILES}
@@ -92,7 +95,7 @@ def test_backup_vendor_coverage_matches_asset_platform_catalog_and_fails_closed_
 
     default_vendors = {
         "Cisco", "Huawei", "H3C", "Juniper", "Arista", "Ruijie", "ZTE",
-        "Raisecom", "DPtech", "Maipu", "Fortinet",
+        "Raisecom", "DPtech", "Maipu", "Fortinet", "Hillstone",
     }
     assert {
         vendor for vendor in platform_vendors
@@ -187,6 +190,131 @@ def test_backup_device_list_matches_default_command_capability_and_excludes_serv
     assert "backup-h3c" in preview_ids
     assert "backup-unknown-cisco" not in preview_ids
     assert "backup-dell-server" not in preview_ids
+
+
+def test_backup_run_and_schedule_stats_exclude_non_network_assets(isolated_db, monkeypatch):
+    from datetime import datetime, timezone
+
+    from api import configs
+
+    database = isolated_db["module"]
+    run_id = f"backup-stats-{uuid.uuid4().hex}"
+    test_stamp = datetime.now(timezone.utc).replace(hour=0, minute=5, second=0, microsecond=0).isoformat()
+    asset_rows = [
+        ("network-success", "network_device"),
+        ("network-failed", "network_device"),
+        ("server", "server"),
+        ("host", "host"),
+        ("physical-server", "physical_server"),
+    ]
+    device_rows = []
+    for suffix, asset_type in asset_rows:
+        asset_id = f"{run_id}-{suffix}-asset"
+        device_id = f"{run_id}-{suffix}"
+        device_rows.append((suffix, asset_id, device_id, asset_type))
+
+    conn = database.get_db_connection()
+    try:
+        for index, (suffix, asset_id, device_id, asset_type) in enumerate(device_rows, start=10):
+            conn.execute(
+                "INSERT INTO physical_assets (id, asset_type, hostname, created_at, updated_at) "
+                "VALUES (?, ?, ?, ?, ?)",
+                (asset_id, asset_type, device_id, test_stamp, test_stamp),
+            )
+            conn.execute(
+                """INSERT INTO devices
+                   (id, asset_id, hostname, ip_address, vendor, platform, status, site)
+                   VALUES (?, ?, ?, ?, 'Cisco', 'cisco_ios', 'online', ?)""",
+                (device_id, asset_id, device_id, f"192.0.2.{index}", f"Site-{run_id}"),
+            )
+
+        conn.execute(
+            """INSERT INTO config_backup_runs
+               (id, trigger, author, status, started_at, total_devices, success_count, failed_count, skipped_count)
+               VALUES (?, 'scheduled', 'tester', 'completed', ?, 5, 2, 2, 1)""",
+            (run_id, test_stamp),
+        )
+        statuses = {
+            "network-success": "success",
+            "network-failed": "failed",
+            "server": "failed",
+            "host": "success",
+            "physical-server": "skipped",
+        }
+        for index, (suffix, _asset_id, device_id, _asset_type) in enumerate(device_rows, start=30):
+            status = statuses[suffix]
+            conn.execute(
+                """INSERT INTO config_backup_run_devices
+                   (id, run_id, device_id, hostname, ip_address, platform, status, started_at)
+                   VALUES (?, ?, ?, ?, ?, 'cisco_ios', ?, ?)""",
+                (
+                    f"{run_id}-{suffix}-result",
+                    run_id,
+                    device_id,
+                    device_id,
+                    f"192.0.2.{index}",
+                    status,
+                    test_stamp,
+                ),
+            )
+
+        for suffix, _asset_id, device_id, _asset_type in device_rows:
+            if suffix not in {"network-success", "server"}:
+                continue
+            conn.execute(
+                """INSERT INTO config_snapshots
+                   (id, device_id, hostname, vendor, timestamp, trigger, author, file_path, size)
+                   VALUES (?, ?, ?, 'Cisco', ?, 'scheduled', 'tester', '', ?)""",
+                (f"{run_id}-{suffix}-snapshot", device_id, device_id, test_stamp, 100 if suffix == "network-success" else 500),
+            )
+        conn.commit()
+    finally:
+        conn.close()
+
+    monkeypatch.setattr(configs, "get_db_connection", database.get_db_connection)
+
+    listed = configs.list_backup_runs(
+        device_id="",
+        date="",
+        start_date="",
+        end_date="",
+        page=1,
+        page_size=100,
+    )
+    listed_run = next(item for item in listed["items"] if item["id"] == run_id)
+    assert (listed_run["total_devices"], listed_run["success_count"], listed_run["failed_count"], listed_run["skipped_count"]) == (2, 1, 1, 0)
+    assert listed_run["site_summary"] == [{
+        "site": f"Site-{run_id}",
+        "total": 2,
+        "success": 1,
+        "failed": 1,
+        "skipped": 0,
+        "unknown": 0,
+    }]
+
+    detail = configs.get_backup_run(run_id, site="", status="all", search="", page=1, page_size=100)
+    assert (detail["run"]["total_devices"], detail["run"]["success_count"], detail["run"]["failed_count"], detail["run"]["skipped_count"]) == (2, 1, 1, 0)
+    assert detail["total"] == 2
+    network_device_ids = {row[2] for row in device_rows if row[3] == "network_device"}
+    assert {item["device_id"] for item in detail["devices"]} == network_device_ids
+
+    stats = configs.get_backup_stats()["data"]
+    assert stats["today"] == {
+        "total": 2,
+        "scheduled": 2,
+        "manual": 0,
+        "success": 1,
+        "failed": 1,
+        "skipped": 0,
+        "unobserved": 0,
+    }
+    assert stats["total_snapshots"] == 1
+    assert stats["total_devices_backed"] == 1
+    assert stats["storage_bytes"] == 100
+    assert len(stats["daily_history"]) == 1
+    assert stats["daily_history"][0]["total"] == 1
+    assert {item["id"] for item in stats["device_stats"]} == network_device_ids
+    assert {item["device_id"] for item in stats["recent_backups"]} == {row[2] for row in device_rows if row[0] == "network-success"}
 
 
 def test_config_backup_driver_family_follows_vendor_on_mismatched_platform():

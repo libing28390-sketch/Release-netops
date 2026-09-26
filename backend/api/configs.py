@@ -42,6 +42,11 @@ logger = logging.getLogger(__name__)
 
 router = APIRouter()
 
+_BACKUP_NON_SERVER_ASSET_SQL = (
+    "LOWER(COALESCE(NULLIF(TRIM(pa.asset_type), ''), 'network_device')) "
+    "NOT IN ('server', 'host', 'physical_server')"
+)
+
 
 def _utc_now() -> datetime:
     return datetime.now(timezone.utc).replace(microsecond=0)
@@ -822,8 +827,29 @@ def list_backup_runs(
         ).fetchall()
         run_ids = [row['id'] for row in rows]
         site_summary_map: dict[str, list[dict]] = {run_id: [] for run_id in run_ids}
+        run_counts_map: dict[str, dict[str, int]] = {}
         if run_ids:
             placeholders = ','.join('?' for _ in run_ids)
+            count_rows = conn.execute(
+                f'''SELECT rd.run_id,
+                           COUNT(*) AS ledger_total,
+                           SUM(CASE WHEN {_BACKUP_NON_SERVER_ASSET_SQL} THEN 1 ELSE 0 END) AS total_devices,
+                           SUM(CASE WHEN {_BACKUP_NON_SERVER_ASSET_SQL} AND rd.status = 'success' THEN 1 ELSE 0 END) AS success_count,
+                           SUM(CASE WHEN {_BACKUP_NON_SERVER_ASSET_SQL} AND rd.status = 'failed' THEN 1 ELSE 0 END) AS failed_count,
+                           SUM(CASE WHEN {_BACKUP_NON_SERVER_ASSET_SQL} AND rd.status = 'skipped' THEN 1 ELSE 0 END) AS skipped_count
+                    FROM config_backup_run_devices rd
+                    LEFT JOIN devices d ON d.id = rd.device_id
+                    LEFT JOIN physical_assets pa ON pa.id = d.asset_id
+                    WHERE rd.run_id IN ({placeholders})
+                    GROUP BY rd.run_id''',
+                tuple(run_ids),
+            ).fetchall()
+            for count_row in count_rows:
+                if int(count_row['ledger_total'] or 0) > 0:
+                    run_counts_map[count_row['run_id']] = {
+                        key: int(count_row[key] or 0)
+                        for key in ('total_devices', 'success_count', 'failed_count', 'skipped_count')
+                    }
             site_rows = conn.execute(
                 f'''SELECT rd.run_id,
                            COALESCE(NULLIF(TRIM(s.site_name), ''), NULLIF(TRIM(s.site_code), ''), NULLIF(TRIM(d.site), ''), 'Unassigned') AS site,
@@ -834,10 +860,11 @@ def list_backup_runs(
                            SUM(CASE WHEN rd.status IS NULL OR rd.status NOT IN ('success', 'failed', 'skipped') THEN 1 ELSE 0 END) AS unknown
                     FROM config_backup_run_devices rd
                     LEFT JOIN devices d ON d.id = rd.device_id
+                    LEFT JOIN physical_assets pa ON pa.id = d.asset_id
                     LEFT JOIN sites s ON s.id = d.site_id
                               OR (COALESCE(NULLIF(TRIM(d.site_id), ''), '') = ''
                                   AND (s.id = d.site OR s.site_code = d.site OR s.site_name = d.site))
-                    WHERE rd.run_id IN ({placeholders})
+                    WHERE rd.run_id IN ({placeholders}) AND {_BACKUP_NON_SERVER_ASSET_SQL}
                     GROUP BY rd.run_id, COALESCE(NULLIF(TRIM(s.site_name), ''), NULLIF(TRIM(s.site_code), ''), NULLIF(TRIM(d.site), ''), 'Unassigned')
                     ORDER BY rd.run_id, site''',
                 tuple(run_ids),
@@ -853,7 +880,11 @@ def list_backup_runs(
                 })
         return {
             'items': [
-                {**dict(row), 'site_summary': site_summary_map.get(row['id'], [])}
+                {
+                    **dict(row),
+                    **run_counts_map.get(row['id'], {}),
+                    'site_summary': site_summary_map.get(row['id'], []),
+                }
                 for row in rows
             ],
             'total': total,
@@ -881,9 +912,28 @@ def get_backup_run(
         ).fetchone()
         if not run:
             raise HTTPException(status_code=404, detail='Backup run not found')
+        ledger_total = conn.execute(
+            'SELECT COUNT(*) AS total FROM config_backup_run_devices WHERE run_id = ?',
+            (run_id,),
+        ).fetchone()['total']
+        run_payload = dict(run)
+        if int(ledger_total or 0) > 0:
+            run_counts = conn.execute(
+                f'''SELECT COUNT(*) AS total_devices,
+                           SUM(CASE WHEN rd.status = 'success' THEN 1 ELSE 0 END) AS success_count,
+                           SUM(CASE WHEN rd.status = 'failed' THEN 1 ELSE 0 END) AS failed_count,
+                           SUM(CASE WHEN rd.status = 'skipped' THEN 1 ELSE 0 END) AS skipped_count
+                    FROM config_backup_run_devices rd
+                    LEFT JOIN devices d ON d.id = rd.device_id
+                    LEFT JOIN physical_assets pa ON pa.id = d.asset_id
+                    WHERE rd.run_id = ? AND {_BACKUP_NON_SERVER_ASSET_SQL}''',
+                (run_id,),
+            ).fetchone()
+            for key in ('total_devices', 'success_count', 'failed_count', 'skipped_count'):
+                run_payload[key] = int(run_counts[key] or 0)
         site_expr = "COALESCE(NULLIF(TRIM(s.site_name), ''), NULLIF(TRIM(s.site_code), ''), NULLIF(TRIM(d.site), ''), 'Unassigned')"
         site_join = "s.id = d.site_id OR (COALESCE(NULLIF(TRIM(d.site_id), ''), '') = '' AND (s.id = d.site OR s.site_code = d.site OR s.site_name = d.site))"
-        where = ['rd.run_id = ?']
+        where = ['rd.run_id = ?', _BACKUP_NON_SERVER_ASSET_SQL]
         params: list = [run_id]
         requested_site = site.strip()
         if requested_site and requested_site.lower() not in ('all', '*'):
@@ -906,6 +956,7 @@ def get_backup_run(
             f'''SELECT COUNT(*) AS c
                 FROM config_backup_run_devices rd
                 LEFT JOIN devices d ON d.id = rd.device_id
+                LEFT JOIN physical_assets pa ON pa.id = d.asset_id
                 LEFT JOIN sites s ON {site_join}
                 WHERE {where_sql}''',
             tuple(params),
@@ -917,6 +968,7 @@ def get_backup_run(
                       {site_expr} AS site
                FROM config_backup_run_devices rd
                LEFT JOIN devices d ON d.id = rd.device_id
+               LEFT JOIN physical_assets pa ON pa.id = d.asset_id
                LEFT JOIN sites s ON {site_join}
                WHERE {where_sql}
                ORDER BY {site_expr}, rd.hostname, rd.ip_address
@@ -932,13 +984,13 @@ def get_backup_run(
                        SUM(CASE WHEN rd.status IS NULL OR rd.status NOT IN ('success', 'failed', 'skipped') THEN 1 ELSE 0 END) AS unknown
                 FROM config_backup_run_devices rd
                 LEFT JOIN devices d ON d.id = rd.device_id
+                LEFT JOIN physical_assets pa ON pa.id = d.asset_id
                 LEFT JOIN sites s ON {site_join}
-                WHERE rd.run_id = ?
+                WHERE rd.run_id = ? AND {_BACKUP_NON_SERVER_ASSET_SQL}
                 GROUP BY {site_expr}
                 ORDER BY site''',
             (run_id,),
         ).fetchall()
-        run_payload = dict(run)
         run_payload['site_summary'] = [
             {
                 'site': row['site'] or 'Unassigned',
@@ -1221,14 +1273,29 @@ def get_backup_stats():
 
         # Today's backups
         today_total = conn.execute(
-            "SELECT COUNT(*) as c FROM config_snapshots WHERE timestamp >= ?", (today_start,)
+            f'''SELECT COUNT(*) AS c
+                FROM config_snapshots cs
+                LEFT JOIN devices d ON d.id = cs.device_id
+                LEFT JOIN physical_assets pa ON pa.id = d.asset_id
+                WHERE cs.timestamp >= ? AND {_BACKUP_NON_SERVER_ASSET_SQL}''',
+            (today_start,),
         ).fetchone()['c']
         today_scheduled = conn.execute(
-            "SELECT COUNT(*) as c FROM config_snapshots WHERE timestamp >= ? AND trigger = 'scheduled'",
+            f'''SELECT COUNT(*) AS c
+                FROM config_snapshots cs
+                LEFT JOIN devices d ON d.id = cs.device_id
+                LEFT JOIN physical_assets pa ON pa.id = d.asset_id
+                WHERE cs.timestamp >= ? AND cs.trigger = 'scheduled'
+                  AND {_BACKUP_NON_SERVER_ASSET_SQL}''',
             (today_start,)
         ).fetchone()['c']
         today_manual = conn.execute(
-            "SELECT COUNT(*) as c FROM config_snapshots WHERE timestamp >= ? AND trigger = 'manual'",
+            f'''SELECT COUNT(*) AS c
+                FROM config_snapshots cs
+                LEFT JOIN devices d ON d.id = cs.device_id
+                LEFT JOIN physical_assets pa ON pa.id = d.asset_id
+                WHERE cs.timestamp >= ? AND cs.trigger = 'manual'
+                  AND {_BACKUP_NON_SERVER_ASSET_SQL}''',
             (today_start,)
         ).fetchone()['c']
 
@@ -1236,7 +1303,7 @@ def get_backup_stats():
         # rows represent successes only and cannot distinguish a failure from
         # an unplanned device.
         today_run_counts = conn.execute(
-            '''SELECT
+            f'''SELECT
                  COUNT(*) AS total,
                  SUM(CASE WHEN rd.status = 'success' THEN 1 ELSE 0 END) AS success_count,
                  SUM(CASE WHEN rd.status = 'failed' THEN 1 ELSE 0 END) AS failed_count,
@@ -1245,7 +1312,9 @@ def get_backup_stats():
                  SUM(CASE WHEN r.trigger = 'manual' THEN 1 ELSE 0 END) AS manual_count
                FROM config_backup_run_devices rd
                JOIN config_backup_runs r ON r.id = rd.run_id
-               WHERE r.started_at >= ?''',
+               LEFT JOIN devices d ON d.id = rd.device_id
+               LEFT JOIN physical_assets pa ON pa.id = d.asset_id
+               WHERE r.started_at >= ? AND {_BACKUP_NON_SERVER_ASSET_SQL}''',
             (today_start,),
         ).fetchone()
         has_today_ledger = int(today_run_counts['total'] or 0) > 0
@@ -1253,9 +1322,12 @@ def get_backup_stats():
         # Last 7 days history (grouped by date)
         seven_days_ago = (now - timedelta(days=7)).isoformat()
         daily_rows = conn.execute(
-            """SELECT DATE(timestamp) as day, trigger, COUNT(*) as cnt
-               FROM config_snapshots WHERE timestamp >= ?
-               GROUP BY DATE(timestamp), trigger ORDER BY day""",
+            f'''SELECT DATE(cs.timestamp) AS day, cs.trigger, COUNT(*) AS cnt
+                FROM config_snapshots cs
+                LEFT JOIN devices d ON d.id = cs.device_id
+                LEFT JOIN physical_assets pa ON pa.id = d.asset_id
+                WHERE cs.timestamp >= ? AND {_BACKUP_NON_SERVER_ASSET_SQL}
+                GROUP BY DATE(cs.timestamp), cs.trigger ORDER BY day''',
             (seven_days_ago,)
         ).fetchall()
         daily_map: dict = {}
@@ -1270,21 +1342,44 @@ def get_backup_stats():
         # Devices without a current snapshot are informational until an
         # execution ledger records an actual attempt.
         all_device_ids = conn.execute(
-            "SELECT id FROM devices WHERE status = 'online'"
+            f'''SELECT d.id
+                FROM devices d
+                LEFT JOIN physical_assets pa ON pa.id = d.asset_id
+                WHERE d.status = 'online' AND {_BACKUP_NON_SERVER_ASSET_SQL}'''
         ).fetchall()
         today_backed_ids = conn.execute(
-            "SELECT DISTINCT device_id FROM config_snapshots WHERE timestamp >= ?",
+            f'''SELECT DISTINCT cs.device_id
+                FROM config_snapshots cs
+                LEFT JOIN devices d ON d.id = cs.device_id
+                LEFT JOIN physical_assets pa ON pa.id = d.asset_id
+                WHERE cs.timestamp >= ? AND {_BACKUP_NON_SERVER_ASSET_SQL}''',
             (today_start,)
         ).fetchall()
         today_backed_set = {r['device_id'] for r in today_backed_ids}
         today_unobserved = sum(1 for r in all_device_ids if r['id'] not in today_backed_set)
 
         # Total snapshots & total storage
-        total_snapshots = conn.execute("SELECT COUNT(*) as c FROM config_snapshots").fetchone()['c']
-        total_devices_backed = conn.execute(
-            "SELECT COUNT(DISTINCT device_id) as c FROM config_snapshots"
+        total_snapshots = conn.execute(
+            f'''SELECT COUNT(*) AS c
+                FROM config_snapshots cs
+                LEFT JOIN devices d ON d.id = cs.device_id
+                LEFT JOIN physical_assets pa ON pa.id = d.asset_id
+                WHERE {_BACKUP_NON_SERVER_ASSET_SQL}'''
         ).fetchone()['c']
-        storage_row = conn.execute("SELECT COALESCE(SUM(size), 0) as s FROM config_snapshots").fetchone()
+        total_devices_backed = conn.execute(
+            f'''SELECT COUNT(DISTINCT cs.device_id) AS c
+                FROM config_snapshots cs
+                LEFT JOIN devices d ON d.id = cs.device_id
+                LEFT JOIN physical_assets pa ON pa.id = d.asset_id
+                WHERE {_BACKUP_NON_SERVER_ASSET_SQL}'''
+        ).fetchone()['c']
+        storage_row = conn.execute(
+            f'''SELECT COALESCE(SUM(cs.size), 0) AS s
+                FROM config_snapshots cs
+                LEFT JOIN devices d ON d.id = cs.device_id
+                LEFT JOIN physical_assets pa ON pa.id = d.asset_id
+                WHERE {_BACKUP_NON_SERVER_ASSET_SQL}'''
+        ).fetchone()
         storage_bytes = storage_row['s'] if storage_row else 0
 
         # Per-device latest backup & count.
@@ -1292,25 +1387,39 @@ def get_backup_stats():
         # trigger) inside a Python loop, scaling linearly with device count.
         # Replaced with two grouped queries — independent of device count.
         devices = conn.execute(
-            "SELECT id, hostname, ip_address, platform, status FROM devices"
+            f'''SELECT d.id, d.hostname, d.ip_address, d.platform, d.status
+                FROM devices d
+                LEFT JOIN physical_assets pa ON pa.id = d.asset_id
+                WHERE {_BACKUP_NON_SERVER_ASSET_SQL}'''
         ).fetchall()
 
         agg_rows = conn.execute(
-            """SELECT device_id, COUNT(*) AS cnt, MAX(timestamp) AS latest
-               FROM config_snapshots
-               GROUP BY device_id"""
+            f'''SELECT cs.device_id, COUNT(*) AS cnt, MAX(cs.timestamp) AS latest
+                FROM config_snapshots cs
+                LEFT JOIN devices d ON d.id = cs.device_id
+                LEFT JOIN physical_assets pa ON pa.id = d.asset_id
+                WHERE {_BACKUP_NON_SERVER_ASSET_SQL}
+                GROUP BY cs.device_id'''
         ).fetchall()
         agg_map = {r['device_id']: {'cnt': r['cnt'], 'latest': r['latest']} for r in agg_rows}
 
         # Last trigger per device. We compute MAX(timestamp) per device, then
         # join back to find that row's `trigger`. Works in both PG and SQLite.
         last_trigger_rows = conn.execute(
-            """SELECT cs.device_id, cs.trigger
-               FROM config_snapshots cs
-               INNER JOIN (
-                   SELECT device_id, MAX(timestamp) AS max_ts
-                   FROM config_snapshots GROUP BY device_id
-               ) m ON m.device_id = cs.device_id AND m.max_ts = cs.timestamp"""
+            f'''SELECT cs.device_id, cs.trigger
+                FROM config_snapshots cs
+                LEFT JOIN devices d ON d.id = cs.device_id
+                LEFT JOIN physical_assets pa ON pa.id = d.asset_id
+                INNER JOIN (
+                    SELECT cs_latest.device_id, MAX(cs_latest.timestamp) AS max_ts
+                    FROM config_snapshots cs_latest
+                    LEFT JOIN devices d_latest ON d_latest.id = cs_latest.device_id
+                    LEFT JOIN physical_assets pa_latest ON pa_latest.id = d_latest.asset_id
+                    WHERE LOWER(COALESCE(NULLIF(TRIM(pa_latest.asset_type), ''), 'network_device'))
+                          NOT IN ('server', 'host', 'physical_server')
+                    GROUP BY cs_latest.device_id
+                ) m ON m.device_id = cs.device_id AND m.max_ts = cs.timestamp
+                WHERE {_BACKUP_NON_SERVER_ASSET_SQL}'''
         ).fetchall()
         last_trigger_map: dict = {}
         for r in last_trigger_rows:
@@ -1334,8 +1443,13 @@ def get_backup_stats():
 
         # Recent 20 backups (execution log)
         recent = conn.execute(
-            """SELECT id, device_id, hostname, vendor, timestamp, trigger, author, tag, size
-               FROM config_snapshots ORDER BY timestamp DESC LIMIT 20"""
+            f'''SELECT cs.id, cs.device_id, cs.hostname, cs.vendor, cs.timestamp,
+                       cs.trigger, cs.author, cs.tag, cs.size
+                FROM config_snapshots cs
+                LEFT JOIN devices d ON d.id = cs.device_id
+                LEFT JOIN physical_assets pa ON pa.id = d.asset_id
+                WHERE {_BACKUP_NON_SERVER_ASSET_SQL}
+                ORDER BY cs.timestamp DESC LIMIT 20'''
         ).fetchall()
         recent_list = [dict(r) for r in recent]
 
@@ -1897,17 +2011,19 @@ async def run_scheduled_backup(
         run_concurrency,
     )
 
-    from services.config_backup_command_service import is_config_backup_candidate
+    from services.config_backup_command_service import (
+        is_config_backup_candidate,
+        is_network_device_for_config_backup,
+    )
 
-    # Filter to eligible devices upfront so progress totals are accurate
+    # Keep only identifiable network equipment in the persisted run and its
+    # denominator. Unsupported network devices remain visible as skipped; host
+    # assets and unclassified non-network devices do not become skipped rows.
+    network_devices = []
     eligible = []
     skipped_count = 0
     for device in devices:
-        if (device['ip_address'] or '') in MOCK_IPS:
-            skipped_count += 1
-            logger.info(f"[Scheduled Backup] [SKIP] {device['hostname']} (mock IP, skipped)")
-            continue
-        if not is_config_backup_candidate(
+        candidate = is_config_backup_candidate(
             device.get('vendor'),
             device.get('platform'),
             device.get('asset_type'),
@@ -1915,12 +2031,27 @@ async def run_scheduled_backup(
             profile_vendor=device.get('backup_profile_vendor'),
             profile_platform_code=device.get('backup_profile_platform_code'),
             profile_parser_platform=device.get('backup_profile_parser_platform'),
-        ):
+        )
+        is_linked_network_asset = (
+            bool(device.get('asset_id'))
+            and str(device.get('asset_type') or '').strip().lower() == 'network_device'
+        )
+        if not is_linked_network_asset and not is_network_device_for_config_backup(
+            device.get('vendor'), device.get('platform'), device.get('asset_type')
+        ) and not candidate:
+            continue
+        network_devices.append(device)
+        if (device['ip_address'] or '') in MOCK_IPS:
+            skipped_count += 1
+            logger.info(f"[Scheduled Backup] [SKIP] {device['hostname']} (mock IP, skipped)")
+            continue
+        if not candidate:
             skipped_count += 1
             logger.info(f"[Scheduled Backup] [SKIP] {device['hostname']} (no verified default command or published backup action)")
             continue
         eligible.append(device)
 
+    devices = network_devices
     total = len(eligible)
     run_device_rows: dict[str, str] = {}
     try:

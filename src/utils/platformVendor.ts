@@ -19,6 +19,9 @@ const VENDOR_ALIASES: Array<[string, string]> = [
   ['迈普', 'maipu'],
   ['dptech', 'dptech'],
   ['迪普', 'dptech'],
+  ['hillstone', 'hillstone'],
+  ['stoneos', 'hillstone'],
+  ['山石', 'hillstone'],
   ['raisecom', 'raisecom'],
   ['瑞斯康达', 'raisecom'],
   ['fortinet', 'fortinet'],
@@ -29,7 +32,7 @@ const compact = (value: unknown) => String(value ?? '').trim().toLowerCase().rep
 
 export const normalizePlatformVendor = (value: unknown): string => {
   const normalized = compact(value);
-  if (['', 'unknown', 'generic', 'none', 'null', 'na', 'n/a', 'unassigned'].includes(normalized)) return '';
+  if (['', 'unknown', 'generic', 'none', 'null', 'na', 'n/a', 'unassigned', 'other', '其他'].includes(normalized)) return '';
   const match = [...VENDOR_ALIASES]
     .sort((left, right) => right[0].length - left[0].length)
     .find(([alias]) => normalized === compact(alias) || normalized.includes(compact(alias)));
@@ -54,6 +57,7 @@ export const PLATFORM_VENDOR_LABELS: Record<string, { zh: string; en: string }> 
   zte: { zh: '中兴', en: 'ZTE' },
   maipu: { zh: '迈普', en: 'Maipu' },
   dptech: { zh: '迪普', en: 'DPTech' },
+  hillstone: { zh: '山石', en: 'Hillstone' },
   raisecom: { zh: '瑞斯康达', en: 'Raisecom' },
   fortinet: { zh: 'Fortinet', en: 'Fortinet' },
 };

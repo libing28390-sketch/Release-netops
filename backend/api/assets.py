@@ -664,6 +664,8 @@ def _platform_from_vendor(vendor: str, asset_type: str = 'network_device') -> st
         return 'raisecom_ros'
     if 'maipu' in v or '迈普' in v:
         return 'maipu'
+    if 'hillstone' in v or 'stoneos' in v or '山石' in v:
+        return 'hillstone_stoneos'
     if 'dptech' in v or '迪普' in v:
         if 'fw' in v or 'firewall' in v or '防火墙' in v or asset_type == 'firewall':
             return 'dptech_conplat_fw'
@@ -688,6 +690,9 @@ _VENDOR_PLATFORM_RULES: tuple[tuple[str, set[str], str], ...] = (
     ('raisecom', {'raisecom', 'raisecom_ros', 'raisecom_ros5', 'raisecom_ros_5'}, 'raisecom_ros'),
     ('瑞斯康达', {'raisecom', 'raisecom_ros', 'raisecom_ros5', 'raisecom_ros_5'}, 'raisecom_ros'),
     ('maipu', {'maipu', 'maipu_network', 'maipu_mypower', 'mypower'}, 'maipu'),
+    ('hillstone', {'hillstone_stoneos'}, 'hillstone_stoneos'),
+    ('stoneos', {'hillstone_stoneos'}, 'hillstone_stoneos'),
+    ('山石', {'hillstone_stoneos'}, 'hillstone_stoneos'),
     ('dptech', {'dptech', 'dptech_ios', 'dptech_conplat', 'dptech_conplat_fw', 'conplat'}, 'dptech_conplat'),
 )
 
@@ -700,7 +705,15 @@ def _normalize_asset_platform(vendor: str, platform: str, asset_type: str = 'net
     """Keep the persisted platform compatible with the selected asset vendor/type."""
     raw = str(platform or '').strip()
     normalized = raw.lower()
-    normalized = {'h3c': 'h3c_comware', 'comware': 'h3c_comware'}.get(normalized, normalized)
+    normalized = {
+        'h3c': 'h3c_comware',
+        'comware': 'h3c_comware',
+        'hillstone': 'hillstone_stoneos',
+        'stoneos': 'hillstone_stoneos',
+        'hillstone stoneos': 'hillstone_stoneos',
+        '山石': 'hillstone_stoneos',
+        '山石 stoneos': 'hillstone_stoneos',
+    }.get(normalized, normalized)
     if asset_type == 'server':
         return raw if normalized in _SERVER_PLATFORMS else 'linux'
 
@@ -708,6 +721,8 @@ def _normalize_asset_platform(vendor: str, platform: str, asset_type: str = 'net
     for vendor_marker, allowed, default_platform in _VENDOR_PLATFORM_RULES:
         if vendor_marker in vendor_normalized:
             if normalized in allowed:
+                if default_platform == 'hillstone_stoneos':
+                    return default_platform
                 return raw
             if raw:
                 logger.warning(
