@@ -27,6 +27,10 @@ describe('getRouteContext platform management routes', () => {
   it('redirects deprecated SNMP metric templates to the unified monitoring tab', () => {
     expect(getRouteContext('/management/snmp-metric-templates').activeTab).toBe('monitoring');
   });
+
+  it('maps the email notification settings route to its dedicated page', () => {
+    expect(getRouteContext('/management/notifications').activeTab).toBe('email-settings');
+  });
 });
 
 describe('getRouteContext terminal access routes', () => {

@@ -32,3 +32,32 @@
 - 推送后等待 GitHub Actions 完成并确认结果。
 - 邮件送达仍取决于管理员填写正确的 SMTP 主机、端口、TLS、发件账户和收件地址。
 - 真实 SMTP 测试成功后，可再针对一条告警规则确认邮件通知投递。
+
+## 追加记录：SMTP 设置入口纠正
+
+### 浏览器核查与修正
+- 在当前已登录浏览器检查平台管理：侧栏只有审计日志、用户管理、凭据轮换和对象存储，没有 SMTP/邮件通知入口。
+- 继续检查“配置管理 → 配置模板”后，确认 SMTP 表单实际渲染在配置模板中心，导致之前建议的“平台设置 → 邮件告警 SMTP 通道”入口不存在。
+- 新增独立“平台管理 → 邮件通知”路由 `/management/notifications`，并将现有 SMTP 配置表单迁入该页面；配置模板中心不再显示 SMTP 内容。保留加载/重试、权限提示、字段校验、密码留空保留、保存后清空密码以及保存后才能测试等行为。
+
+### 本次涉及文件
+- `src/pages/NotificationChannelSettingsPage.tsx`
+- `src/pages/NotificationChannelSettingsPage.test.tsx`
+- `src/pages/PlatformSettingsTab.tsx`
+- `src/components/AppSidebar/navConfig.ts`
+- `src/components/AppMainContent.tsx`
+- `src/utils/routeContext.ts`
+- `src/utils/routeContext.test.ts`
+- `src/hooks/usePageTitle.ts`
+- 本计划、完成记录和修复记录。
+
+### 本次验证
+- `npm run lint`：通过。
+- `npm run build`：通过，Vite 转换 4,296 个模块；构建输出中出现独立 SMTP 页面 chunk。
+- `npm run test:frontend -- --run src/utils/routeContext.test.ts src/pages/NotificationChannelSettingsPage.test.tsx`：2 个测试文件、11 项测试通过，覆盖路由、加载权限、未保存时禁止测试、保存后测试。
+- `git diff --check`：通过。
+- 浏览器实查当前实例：确认平台管理侧栏无邮件设置，配置模板中心底部有 SMTP 表单。页面源码改动尚未部署到当前实例，因此未声称新菜单已在当前线上实例可见。
+
+### 未执行项与剩余风险
+- 本次只修正页面入口与归属，未填写或发送真实测试邮件；SMTP 仍需由管理员配置有效参数后测试。
+- 未部署应用。用户已授权推送代码；当前浏览器中的旧入口要等新前端版本部署后才会更新。
