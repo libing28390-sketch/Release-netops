@@ -37,7 +37,14 @@ def test_domestic_inspection_is_read_only_and_never_uses_cisco_phases():
         assert resolved == platform
         assert phases["execute"] == []
         assert all(
-            command.lower().startswith("show ")
+            (
+                isinstance(command, str)
+                and command.lower().startswith("show ")
+            )
+            or (
+                isinstance(command, dict)
+                and command == {"action_code": "get_transceivers"}
+            )
             for command in phases["pre_check"]
         )
 

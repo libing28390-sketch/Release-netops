@@ -36,12 +36,13 @@ Grafana 相关改动一并保留并验证：01 总览不再展示跨设备硬件
 - `.venv/Scripts/python.exe scripts/validate_postgresql_only.py`：0 violation，PASS。
 - Dashboard JSON 静态检查：9 份 JSON 全部有效，134 个面板 ID 在各自 dashboard 内唯一。
 - `git diff --check`：通过。Git 对部分既有文本文件提示 LF/CRLF 转换警告，不是 whitespace 错误。
+- 首轮推送 `bb36d690` 的 Actions 全量后端门禁结果为 2335 passed、1 skipped、1 failed。唯一失败是国内设备巡检 playbook 测试将新增的 `{"action_code":"get_transceivers"}` SNMP typed action 当成字符串调用 `.lower()`；已改为只允许 `show ` CLI 字符串或该只读 SNMP action。修正后相关 3 个测试模块本地 79 passed，等待下一次 Actions 结果。
 
 ## 未执行验证及原因
 
 - 其它五家已接入厂商没有可用现场设备/凭据，本地回归使用厂商 MIB 定义及模拟返回；没有尝试连接真实设备。
 - 当前 Chrome 中的 Grafana 页面返回 `401 Authorization Required`，新版 JSON 也未同步到 Linux；因此不能在运行实例上验证新查询的实时数据和渲染。会完成 dashboard JSON、查询和变量契约的本地检查。用户已说明 Actions 通过后会自行更新服务器。
-- GitHub CLI 未安装；代码推送后将通过仓库 Actions 状态接口检查工作流结果。
+- GitHub CLI 未安装；通过 GitHub 仓库页面及 Actions API 检查。首轮全量 Actions 的该断言失败后，发布与同步步骤全部跳过；修正提交的工作流需再次确认。
 
 ## 剩余风险与后续建议
 
