@@ -122,7 +122,7 @@ export const MonitoringReportsPage: React.FC<MonitoringReportsPageProps> = ({ la
   const [sortKey, setSortKey] = useState<string>('');
   const [sortOrder, setSortOrder] = useState<'asc' | 'desc'>('desc');
   const [currentPage, setCurrentPage] = useState(1);
-  const [pageSize, setPageSize] = useState(25);
+  const [pageSize, setPageSize] = useState(20);
 
   // Count active advanced filter criteria
   const activeAdvancedFilterCount = useMemo(() => {
@@ -855,23 +855,6 @@ export const MonitoringReportsPage: React.FC<MonitoringReportsPageProps> = ({ la
               </span>
             </div>
 
-            {/* Page Size Selector */}
-            <div className="flex items-center gap-2 text-xs text-slate-500 dark:text-zinc-400">
-              <span>{zh ? '每页显示' : 'Rows per page'}:</span>
-              <select
-                value={pageSize}
-                onChange={(e) => {
-                  setPageSize(Number(e.target.value));
-                  setCurrentPage(1);
-                }}
-                className="rounded-lg border border-slate-200 dark:border-zinc-700 bg-white dark:bg-zinc-800 px-2 py-1 text-xs text-slate-700 dark:text-zinc-300 focus:outline-hidden cursor-pointer"
-              >
-                <option value={10}>10</option>
-                <option value={25}>25</option>
-                <option value={50}>50</option>
-                <option value={100}>100</option>
-              </select>
-            </div>
           </div>
 
           {/* Table Wrapper */}

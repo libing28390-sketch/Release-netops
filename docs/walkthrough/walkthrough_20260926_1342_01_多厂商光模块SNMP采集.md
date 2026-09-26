@@ -53,6 +53,7 @@ Nexora 本次新增 Cisco（四种平台，经 CISCO-ENTITY-SENSOR-MIB 的 dBm t
 - 新增 Cisco、Arista、Nokia 1830 适配器和实体状态边界后，聚焦 SNMP optical 调用链：28 passed，31.03s。
 - 严格过滤实体传感器的未知、不可用、未初始化或缺失状态后，同一聚焦调用链：29 passed，31.23s。
 - 提交 `ea357b7e` 已推送到 `main`。Actions `36232897244`（run #611）通过：Release Ubuntu/Linux job 成功、后端全量 pytest 成功、Docker 输入/前端构建成功、private/development 文件清理成功、sanitized Release tree 提交成功、Linux Release archive 打包成功；新 Release tree SHA `fe317ecc9bc6ce7b940f76c3e045f00182452c0b`。Knowledge Engine 全量评测、Baidu 上传、public GitHub Release 按 push workflow 条件跳过；Windows workstation agent 也跳过。
+- 归档这次 CI 结果的文档提交 `cce8f9f8` 对应 Actions `36233573743`（run #612）也通过，后端门禁、前端构建、sanitized Release tree 提交与 Linux archive 打包成功；`Release-netops/main` 更新至 SHA `9476e08e411401ab4d346dc822234a049742f6f2`。Knowledge Engine 评测、Baidu 上传、public GitHub Release 和 Windows agent 按 push workflow 条件跳过。
 
 ## 未执行验证及原因
 

@@ -942,7 +942,7 @@
     },
     {
       "id": 12,
-      "title": "设备总流量 Top10",
+      "title": "设备总吞吐速率 Top10",
       "type": "table",
       "datasource": {
         "type": "prometheus",
@@ -969,7 +969,7 @@
           {
             "matcher": {
               "id": "byName",
-              "options": "数值"
+              "options": "总速率 (bit/s)"
             },
             "properties": [
               {
@@ -1048,11 +1048,12 @@
               "utilization_warn_pct": "预警阈值 (%)",
               "utilization_high_pct": "高位阈值 (%)",
               "utilization_critical_pct": "严重阈值 (%)",
-              "Value": "总流量"
+              "Value": "总速率 (bit/s)"
             }
           }
         }
-      ]
+      ],
+      "description": "按设备汇总所有接口近 5 分钟平均入向与出向吞吐速率（入向 + 出向）。单位为 bit/s，Grafana 会自动换算为 kb/s、Mb/s 等；此值是速率，不是累计流量。"
     },
     {
       "id": 13,

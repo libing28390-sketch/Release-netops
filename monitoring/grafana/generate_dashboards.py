@@ -736,10 +736,12 @@ def build_overview_dashboard():
             value_col_name="内存使用率 (%)",
         ),
         table_panel(
-            12, "设备总流量 Top10",
+            12, "设备总吞吐速率 Top10",
             f"topk(10, (sum by (hostname, site_name, instance, vendor) ({in_rate} * 8) + sum by (hostname, site_name, instance, vendor) ({out_rate} * 8)))",
             0, 22, 12, 8, unit="bps",
-            transformations=clean_organize_transformation("总流量")
+            transformations=clean_organize_transformation("总速率 (bit/s)"),
+            value_col_name="总速率 (bit/s)",
+            description="按设备汇总所有接口近 5 分钟平均入向与出向吞吐速率（入向 + 出向）。单位为 bit/s，Grafana 会自动换算为 kb/s、Mb/s 等；此值是速率，不是累计流量。",
         ),
         timeseries_panel(13, "错误/丢弃趋势", [
             {"expr": f"sum(rate(ifInErrors{{{sel}}}[5m])) + sum(rate(ifOutErrors{{{sel}}}[5m]))", "legendFormat": "错误包/秒", "refId": "A"},

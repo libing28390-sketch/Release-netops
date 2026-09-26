@@ -1,6 +1,6 @@
-import { act, fireEvent, render, screen, waitFor } from '@testing-library/react';
+import { act, cleanup, fireEvent, render, screen, waitFor } from '@testing-library/react';
 import { MemoryRouter, useNavigate } from 'react-router-dom';
-import { beforeEach, describe, expect, it, vi } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import MonitoringReportsPage from './MonitoringReportsPage';
 
 const deferred = <T,>() => {
@@ -22,9 +22,76 @@ const ReportRouteControls = () => {
   return <button type="button" onClick={() => navigate('/monitor/reports/devices')}>Open device report</button>;
 };
 
+const paginatedReportCases = [
+  {
+    label: 'interface report',
+    path: '/monitor/reports/interfaces',
+    rowName: (index: number) => `interface-device-${index}`,
+    createItem: (index: number) => ({
+      id: `interface-${index}`,
+      hostname: `interface-device-${index}`,
+      vendor: 'Cisco',
+      ip_address: `192.0.2.${index + 1}`,
+      site_name: 'Lab',
+      role: 'core',
+      interface_name: `GigabitEthernet0/0/${index}`,
+      oper_status: 'UP',
+      speed_str: '1 Gbps',
+      in_bps_str: '1 kb/s',
+      out_bps_str: '1 kb/s',
+      max_util: 10,
+      total_errors: 0,
+      alert_level: 'NORMAL',
+      advice: 'Normal',
+      sample_quality: 'GOOD',
+    }),
+  },
+  {
+    label: 'device report',
+    path: '/monitor/reports/devices',
+    rowName: (index: number) => `device-host-${index}`,
+    createItem: (index: number) => ({
+      id: `device-${index}`,
+      hostname: `device-host-${index}`,
+      vendor: 'Cisco',
+      platform: 'cisco_ios',
+      ip_address: `192.0.2.${index + 1}`,
+      site_name: 'Lab',
+      role: 'core',
+      status: 'ONLINE',
+      cpu_usage: 10,
+      memory_usage: 20,
+      temperature_str: '40 °C',
+      risk_level: 'NORMAL',
+      advice: 'Normal',
+      sample_quality: 'GOOD',
+    }),
+  },
+  {
+    label: 'outbound report',
+    path: '/monitor/reports/outbound',
+    rowName: (index: number) => `outbound-probe-${index}`,
+    createItem: (index: number) => ({
+      id: `outbound-${index}`,
+      name: `outbound-probe-${index}`,
+      isp: 'Lab ISP',
+      target: '192.0.2.1',
+      target_type: 'icmp',
+      active_str: 'Enabled',
+      latency_ms: 5,
+      packet_loss: 0,
+      health_grade: 'Healthy',
+    }),
+  },
+];
+
 describe('MonitoringReportsPage requests', () => {
   beforeEach(() => {
     vi.stubGlobal('fetch', vi.fn());
+  });
+
+  afterEach(() => {
+    cleanup();
   });
 
   it('keeps data and loading state owned by the latest tab request', async () => {
@@ -111,4 +178,32 @@ describe('MonitoringReportsPage requests', () => {
     expect(screen.queryByText('Normal')).toBeNull();
     expect(screen.queryByText('All UP')).toBeNull();
   });
+
+  it.each(paginatedReportCases)(
+    '$label uses one consistent 20-row page size and shows the remaining row on the next page',
+    async ({ path, rowName, createItem }) => {
+      const items = Array.from({ length: 21 }, (_, index) => createItem(index));
+      vi.mocked(fetch).mockResolvedValue(response({
+        items,
+        summary: { sample_quality: 'GOOD' },
+        options: { vendors: [], sites: [], roles: [], isps: [] },
+      }));
+
+      const { container } = render(
+        <MemoryRouter initialEntries={[path]}>
+          <MonitoringReportsPage language="en" />
+        </MemoryRouter>,
+      );
+
+      expect(await screen.findByText(rowName(0))).toBeTruthy();
+      await waitFor(() => expect(container.querySelectorAll('tbody tr')).toHaveLength(20));
+      expect((screen.getByLabelText('Items per page') as HTMLSelectElement).value).toBe('20');
+      expect(screen.getByText('21 records found')).toBeTruthy();
+
+      fireEvent.click(screen.getByTitle('Next page'));
+
+      expect(await screen.findByText(rowName(20))).toBeTruthy();
+      await waitFor(() => expect(container.querySelectorAll('tbody tr')).toHaveLength(1));
+    },
+  );
 });
