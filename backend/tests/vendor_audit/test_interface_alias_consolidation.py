@@ -14,7 +14,11 @@ def _interface_schema(conn: postgresql_test_driver.Connection) -> None:
             access_vlan INTEGER, native_vlan INTEGER, allowed_vlans TEXT,
             primary_ip TEXT, ip_address TEXT, ip_prefix_length INTEGER,
             is_l3 INTEGER, ip_enabled INTEGER, vrf_id TEXT,
-            parent_interface_id TEXT, lag_id TEXT, last_change TEXT, last_flapped TEXT, last_seen TEXT
+            parent_interface_id TEXT, lag_id TEXT, last_change TEXT, last_flapped TEXT, last_seen TEXT,
+            interface_role TEXT NOT NULL DEFAULT 'unclassified',
+            utilization_warn_pct NUMERIC(5,2) NOT NULL DEFAULT 60,
+            utilization_high_pct NUMERIC(5,2) NOT NULL DEFAULT 75,
+            utilization_critical_pct NUMERIC(5,2) NOT NULL DEFAULT 90
         );
         CREATE TABLE devices (id TEXT PRIMARY KEY, hostname TEXT, ip_address TEXT, platform TEXT, status TEXT);
         CREATE TABLE vrfs (id TEXT PRIMARY KEY, vrf_name TEXT);
@@ -30,13 +34,23 @@ def test_migration_merges_alias_rows_and_repoints_references() -> None:
     conn = postgresql_test_driver.connect()
     _interface_schema(conn)
     conn.execute(
-        "INSERT INTO interfaces VALUES ("
+        "INSERT INTO interfaces ("
+        "id, device_id, interface_name, name_raw, name_display, description, "
+        "admin_status, oper_status, mac_address, speed, bandwidth, mtu, "
+        "interface_type, switchport_mode, access_vlan, native_vlan, allowed_vlans, "
+        "primary_ip, ip_address, ip_prefix_length, is_l3, ip_enabled, vrf_id, "
+        "parent_interface_id, lag_id, last_change, last_flapped, last_seen) VALUES ("
         "?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, "
         "?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
         ("short", "dev-1", "GE1/0/1", "GE1/0/1", "GE1/0/1", "", "up", "up", "", 0, 0, 1500, "physical", "routed", None, None, "", "10.0.0.1", "10.0.0.1", 24, 1, 1, None, None, None, None, None, None),
     )
     conn.execute(
-        "INSERT INTO interfaces VALUES ("
+        "INSERT INTO interfaces ("
+        "id, device_id, interface_name, name_raw, name_display, description, "
+        "admin_status, oper_status, mac_address, speed, bandwidth, mtu, "
+        "interface_type, switchport_mode, access_vlan, native_vlan, allowed_vlans, "
+        "primary_ip, ip_address, ip_prefix_length, is_l3, ip_enabled, vrf_id, "
+        "parent_interface_id, lag_id, last_change, last_flapped, last_seen) VALUES ("
         "?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, "
         "?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
         ("long", "dev-1", "GigabitEthernet1/0/1", "GigabitEthernet1/0/1", "GigabitEthernet1/0/1", "old", "unknown", "unknown", "", 0, 0, 1500, "physical", "routed", None, None, "", "", "", None, 0, 0, None, None, None, None, None, None),
@@ -59,7 +73,12 @@ def test_short_loop_aliases_share_one_identity() -> None:
     _interface_schema(conn)
     for interface_id, name in (("short", "Loop0"), ("long", "LoopBack0")):
         conn.execute(
-            "INSERT INTO interfaces VALUES ("
+            "INSERT INTO interfaces ("
+            "id, device_id, interface_name, name_raw, name_display, description, "
+            "admin_status, oper_status, mac_address, speed, bandwidth, mtu, "
+            "interface_type, switchport_mode, access_vlan, native_vlan, allowed_vlans, "
+            "primary_ip, ip_address, ip_prefix_length, is_l3, ip_enabled, vrf_id, "
+            "parent_interface_id, lag_id, last_change, last_flapped, last_seen) VALUES ("
             "?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, "
             "?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
             (interface_id, "dev-1", name, name, name, "", "up" if interface_id == "short" else "unknown", "up" if interface_id == "short" else "unknown", "", 0, 0, 1500, "physical", "routed", None, None, "", "10.0.0.1", "10.0.0.1", 32, 1, 1, None, None, None, None, None, None),
@@ -76,7 +95,12 @@ def test_cmdb_listing_does_not_append_inventory_alias_as_second_row() -> None:
     _interface_schema(conn)
     conn.execute("INSERT INTO devices VALUES ('dev-1', 'S6850-3', '10.254.0.3', 'h3c_comware', 'online')")
     conn.execute(
-        "INSERT INTO interfaces VALUES ("
+        "INSERT INTO interfaces ("
+        "id, device_id, interface_name, name_raw, name_display, description, "
+        "admin_status, oper_status, mac_address, speed, bandwidth, mtu, "
+        "interface_type, switchport_mode, access_vlan, native_vlan, allowed_vlans, "
+        "primary_ip, ip_address, ip_prefix_length, is_l3, ip_enabled, vrf_id, "
+        "parent_interface_id, lag_id, last_change, last_flapped, last_seen) VALUES ("
         "?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, "
         "?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
         ("intf-1", "dev-1", "GE1/0/1", "GE1/0/1", "GE1/0/1", "", "up", "up", "", 0, 0, 1500, "physical", "routed", None, None, "", "10.254.35.1", "10.254.35.1", 24, 1, 1, None, None, None, None, None, None),
