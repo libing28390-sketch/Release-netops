@@ -869,7 +869,7 @@ def build_interface_dashboard():
             transformations=[{
                 "id": "organize",
                 "options": {
-                    "excludeByName": {"Time": True, "__name__": True, "ifIndex": True, "instance": True, "direction": True},
+                    "excludeByName": {"Time": True, "__name__": True, "ifIndex": True, "instance": True, "direction": True, "ifDescr": True},
                     "renameByName": {
                         "capacity_stat": "指标", "ifName": "接口全称", "ifAlias": "接口描述",
                         "hostname": "设备名称", "site_name": "站点", "vendor": "厂商", "role": "设备角色",
@@ -909,7 +909,7 @@ def build_interface_dashboard():
             0, 27, 12, 7, unit="percent",
             transformations=[{
                 "id": "organize", "options": {
-                    "excludeByName": {"Time": True, "__name__": True, "ifIndex": True, "instance": True, "direction": True},
+                    "excludeByName": {"Time": True, "__name__": True, "ifIndex": True, "instance": True, "direction": True, "ifDescr": True},
                     "renameByName": {"quality_type": "质量指标", "ifName": "接口全称", "ifAlias": "接口描述", "hostname": "设备名称", "site_name": "站点", "vendor": "厂商", "role": "设备角色", "interface_role": "接口角色", "utilization_warn_pct": "预警阈值 (%)", "utilization_high_pct": "高位阈值 (%)", "utilization_critical_pct": "严重阈值 (%)", "Value": "百分比 (%)"},
                 },
             }],
@@ -943,7 +943,7 @@ def build_interface_dashboard():
             transformations=[{
                 "id": "joinByLabels", "options": {"labels": ["instance", "hostname", "site_name", "ifIndex", "ifName", "ifAlias", "interface_role", "utilization_warn_pct", "utilization_high_pct", "utilization_critical_pct"]},
             }, {
-                "id": "organize", "options": {"excludeByName": {"Time": True, "instance": True, "ifIndex": True}, "renameByName": {"ifName": "接口全称", "ifAlias": "接口描述", "hostname": "设备名称", "site_name": "站点", "Value #A": "24h Flap", "Value #B": "7d Flap"}},
+                "id": "organize", "options": {"excludeByName": {"Time": True, "instance": True, "ifIndex": True, "ifDescr": True}, "renameByName": {"ifName": "接口全称", "ifAlias": "接口描述", "hostname": "设备名称", "site_name": "站点", "Value #A": "24h Flap", "Value #B": "7d Flap"}},
             }],
             value_col_name="24h Flap", detail_link=True,
         ),

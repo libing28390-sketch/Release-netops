@@ -464,7 +464,8 @@
               "__name__": true,
               "ifIndex": true,
               "instance": true,
-              "direction": true
+              "direction": true,
+              "ifDescr": true
             },
             "renameByName": {
               "capacity_stat": "指标",
@@ -1068,7 +1069,8 @@
               "__name__": true,
               "ifIndex": true,
               "instance": true,
-              "direction": true
+              "direction": true,
+              "ifDescr": true
             },
             "renameByName": {
               "quality_type": "质量指标",
@@ -1419,7 +1421,8 @@
             "excludeByName": {
               "Time": true,
               "instance": true,
-              "ifIndex": true
+              "ifIndex": true,
+              "ifDescr": true
             },
             "renameByName": {
               "ifName": "接口全称",

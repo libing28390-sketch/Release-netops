@@ -37,3 +37,11 @@
 - CMDB 修复尚未由 pytest 在本地 PostgreSQL 上运行确认。
 - 若希望定位看板失败对应的具体提交，需从 Actions 页面提供 run 链接或提交 SHA；当前附件只有 pytest 摘要。
 - 后续可在获准运行测试后执行 `pytest backend/tests/vendor_audit/test_interface_alias_consolidation.py`。
+
+## 后续执行记录（用户授权推送后）
+
+- 用户授权推送代码后，提交 `1ec434f2d2a43e1769fe3b60b4fa667dcfe51240` 已推送到 `origin/main`，触发 GitHub Actions run `#605`。
+- Actions `#605` 的结果为 `1 failed, 2308 passed, 1 skipped`。CMDB 夹具失败已消失；剩余失败位于接口看板遍历断言（测试第 136 行），不是设备清单 panel 8 的直接断言。
+- 对照 `build_interface_dashboard()` 与生成 JSON 后，确认 panel 6（利用率）、panel 9（错误/丢弃百分比）、panel 12（Flap 次数）使用接口别名 join 且带 organize transformation，但未隐藏旧字段 `ifDescr`。已在生成器及 `nexora-network-interface.json` 补齐配置。
+- 使用与失败循环等价的 Python JSON 检查，核验设备、接口和出口看板中相关面板的 `ifAlias` 重命名与 `ifDescr` 排除项：通过。未在本地运行 pytest；修复推送后的 Actions 门禁与 `v1.0.9` tag 发布工作流仍待结果确认。
+- 远端已有 `v1.0.9` 指向旧提交。用户明确要求打上 `v1.0.9`，将等 `main` 门禁通过后更新该 tag 到最终修复提交。
