@@ -29,7 +29,9 @@ import {
   Pencil,
   RefreshCw,
   Save,
+  Send,
   Search,
+  Server,
   ShieldAlert,
   ShieldCheck,
   Sparkles,
@@ -44,7 +46,7 @@ import { useNavigate } from 'react-router-dom';
 import type { ConfigTemplate, Device } from '../types';
 import PageHero from '../components/PageHero';
 import { ActionButton, ActionIconButton } from '../components/ui/ActionIconButton';
-import { apiRequest, authHeaders } from '../api/http';
+import { ApiError, apiRequest, authHeaders } from '../api/http';
 import { VENDOR_PLATFORMS } from './AssetManagement/constants';
 import { useEscapeClose } from '../hooks/useEscapeClose';
 
@@ -177,7 +179,41 @@ interface SmtpSettingsDraft {
   rate_limit_per_minute: number;
   has_password?: boolean;
   configured?: boolean;
+  updated_at?: string | null;
 }
+
+const EMPTY_SMTP_SETTINGS: SmtpSettingsDraft = {
+  enabled: false,
+  host: '',
+  port: 587,
+  security: 'starttls',
+  username: '',
+  password: '',
+  from_address: '',
+  from_name: 'Nexora',
+  reply_to: '',
+  connect_timeout_seconds: 10,
+  send_timeout_seconds: 20,
+  rate_limit_per_minute: 60,
+  has_password: false,
+  configured: false,
+};
+
+const SMTP_EMAIL_PATTERN = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
+
+const smtpErrorMessage = (error: unknown, zh: boolean, action: 'load' | 'save' | 'test'): string => {
+  if (error instanceof ApiError) {
+    if (error.status === 401) return zh ? '登录已失效，请重新登录。' : 'Your session has expired. Please sign in again.';
+    if (error.status === 403) return zh ? '你没有管理 SMTP 邮件通道的权限。' : 'You do not have permission to manage the SMTP email channel.';
+    if (error.status >= 500) return zh ? '邮件服务暂时不可用，请稍后重试。' : 'The mail service is temporarily unavailable. Please try again.';
+    const cleanMessage = error.message.replace(/\s*\(Request ID:.*\)$/i, '').trim();
+    return cleanMessage || (zh ? '请求失败，请重试。' : 'Request failed. Please try again.');
+  }
+  if (error instanceof Error && error.message.trim()) return error.message;
+  if (action === 'load') return zh ? 'SMTP 配置加载失败，请重试。' : 'Failed to load SMTP settings. Please retry.';
+  if (action === 'save') return zh ? 'SMTP 配置保存失败，请重试。' : 'Failed to save SMTP settings. Please retry.';
+  return zh ? '测试邮件发送失败，请检查配置后重试。' : 'The test email could not be sent. Check the settings and retry.';
+};
 
 interface PlatformSettingsTabProps {
   t: (key: string) => string;
@@ -564,75 +600,171 @@ const PlatformSettingsTab: React.FC<PlatformSettingsTabProps> = ({
   const templateCacheRef = useRef<Map<string, { detail: TemplateDetail; profiles: ParameterProfile[] }>>(new Map());
   const detailRef = useRef<TemplateDetail | null>(null);
   const sourceContentRef = useRef('');
-  const [smtpSettings, setSmtpSettings] = useState<SmtpSettingsDraft | null>(null);
+  const [smtpSettings, setSmtpSettings] = useState<SmtpSettingsDraft>(EMPTY_SMTP_SETTINGS);
   const [smtpLoading, setSmtpLoading] = useState(false);
+  const [smtpLoaded, setSmtpLoaded] = useState(false);
+  const [smtpLoadError, setSmtpLoadError] = useState('');
+  const [smtpPermissionDenied, setSmtpPermissionDenied] = useState(false);
   const [smtpSaving, setSmtpSaving] = useState(false);
   const [smtpTesting, setSmtpTesting] = useState(false);
   const [smtpRecipient, setSmtpRecipient] = useState('');
+  const [smtpAdvancedOpen, setSmtpAdvancedOpen] = useState(false);
+  const [smtpFieldErrors, setSmtpFieldErrors] = useState<Record<string, string>>({});
+  const [smtpFeedback, setSmtpFeedback] = useState<{ tone: 'success' | 'error'; message: string } | null>(null);
+  const [smtpDirty, setSmtpDirty] = useState(false);
   const draftStorageKey = (templateId: string) => `nexora.config-template-draft.${templateId}`;
 
   detailRef.current = detail;
   sourceContentRef.current = sourceContent;
 
-  useEffect(() => {
-    let cancelled = false;
+  const loadSmtpSettings = useCallback(async () => {
     setSmtpLoading(true);
-    void apiRequest<{ smtp?: Partial<SmtpSettingsDraft> }>('/api/alerts/notification-channels')
-      .then((payload) => {
-        if (cancelled || !payload.smtp) return;
-        setSmtpSettings({
-          enabled: Boolean(payload.smtp.enabled),
-          host: String(payload.smtp.host || ''),
-          port: Number(payload.smtp.port || 587),
-          security: (payload.smtp.security === 'ssl' || payload.smtp.security === 'none') ? payload.smtp.security : 'starttls',
-          username: String(payload.smtp.username || ''),
-          password: '',
-          from_address: String(payload.smtp.from_address || ''),
-          from_name: String(payload.smtp.from_name || 'Nexora'),
-          reply_to: String(payload.smtp.reply_to || ''),
-          connect_timeout_seconds: Number(payload.smtp.connect_timeout_seconds || 10),
-          send_timeout_seconds: Number(payload.smtp.send_timeout_seconds || 20),
-          rate_limit_per_minute: Number(payload.smtp.rate_limit_per_minute || 60),
-          has_password: Boolean(payload.smtp.has_password),
-          configured: Boolean(payload.smtp.configured),
-        });
-      })
-      .catch(() => {
-        if (!cancelled) setSmtpSettings(null);
-      })
-      .finally(() => {
-        if (!cancelled) setSmtpLoading(false);
+    setSmtpLoadError('');
+    setSmtpFeedback(null);
+    try {
+      const payload = await apiRequest<{ smtp?: Partial<SmtpSettingsDraft> }>('/api/alerts/notification-channels');
+      const smtp = payload.smtp;
+      if (!smtp) throw new Error(zh ? '响应中缺少 SMTP 配置。' : 'The response did not include SMTP settings.');
+      setSmtpSettings({
+        enabled: Boolean(smtp.enabled),
+        host: String(smtp.host || ''),
+        port: Number(smtp.port || 587),
+        security: (smtp.security === 'ssl' || smtp.security === 'none') ? smtp.security : 'starttls',
+        username: String(smtp.username || ''),
+        password: '',
+        from_address: String(smtp.from_address || ''),
+        from_name: String(smtp.from_name || 'Nexora'),
+        reply_to: String(smtp.reply_to || ''),
+        connect_timeout_seconds: Number(smtp.connect_timeout_seconds || 10),
+        send_timeout_seconds: Number(smtp.send_timeout_seconds || 20),
+        rate_limit_per_minute: Number(smtp.rate_limit_per_minute || 60),
+        has_password: Boolean(smtp.has_password),
+        configured: Boolean(smtp.configured),
+        updated_at: smtp.updated_at || null,
       });
-    return () => { cancelled = true; };
-  }, []);
+      setSmtpLoaded(true);
+      setSmtpPermissionDenied(false);
+      setSmtpFieldErrors({});
+      setSmtpDirty(false);
+    } catch (error) {
+      setSmtpLoadError(smtpErrorMessage(error, zh, 'load'));
+      if (error instanceof ApiError && error.status === 403) setSmtpPermissionDenied(true);
+    } finally {
+      setSmtpLoading(false);
+    }
+  }, [zh]);
+
+  useEffect(() => {
+    void loadSmtpSettings();
+  }, [loadSmtpSettings]);
+
+  const validateSmtpSettings = useCallback((includeRecipient: boolean): Record<string, string> => {
+    const errors: Record<string, string> = {};
+    const port = Number(smtpSettings.port);
+    const connectTimeout = Number(smtpSettings.connect_timeout_seconds);
+    const sendTimeout = Number(smtpSettings.send_timeout_seconds);
+    const rateLimit = Number(smtpSettings.rate_limit_per_minute);
+    if (!smtpSettings.host.trim()) errors.host = zh ? '请输入 SMTP 主机。' : 'SMTP host is required.';
+    if (!Number.isInteger(port) || port < 1 || port > 65535) errors.port = zh ? '端口须为 1–65535 的整数。' : 'Port must be an integer from 1 to 65535.';
+    if (!smtpSettings.from_address.trim()) errors.from_address = zh ? '请输入发件人邮箱。' : 'From address is required.';
+    else if (!SMTP_EMAIL_PATTERN.test(smtpSettings.from_address.trim())) errors.from_address = zh ? '请输入有效的邮箱地址。' : 'Enter a valid email address.';
+    if (smtpSettings.reply_to.trim() && !SMTP_EMAIL_PATTERN.test(smtpSettings.reply_to.trim())) errors.reply_to = zh ? '请输入有效的回复邮箱。' : 'Enter a valid reply-to address.';
+    if (!smtpSettings.has_password && !smtpSettings.password.trim() && smtpSettings.username.trim()) errors.password = zh ? '首次配置 SMTP 用户名时请输入密码。' : 'Enter a password when configuring SMTP authentication for the first time.';
+    if (!Number.isInteger(connectTimeout) || connectTimeout < 1 || connectTimeout > 120) errors.connect_timeout_seconds = zh ? '连接超时须为 1–120 秒。' : 'Connect timeout must be 1–120 seconds.';
+    if (!Number.isInteger(sendTimeout) || sendTimeout < 1 || sendTimeout > 120) errors.send_timeout_seconds = zh ? '发送超时须为 1–120 秒。' : 'Send timeout must be 1–120 seconds.';
+    if (!Number.isInteger(rateLimit) || rateLimit < 1 || rateLimit > 10000) errors.rate_limit_per_minute = zh ? '速率上限须为 1–10000。' : 'Rate limit must be from 1 to 10000.';
+    if (includeRecipient && smtpRecipient.trim() && !SMTP_EMAIL_PATTERN.test(smtpRecipient.trim())) errors.recipient = zh ? '测试收件人须为有效的邮箱地址。' : 'Test recipient must be a valid email address.';
+    return errors;
+  }, [smtpRecipient, smtpSettings, zh]);
+
+  const updateSmtpField = <K extends keyof SmtpSettingsDraft>(field: K, value: SmtpSettingsDraft[K]) => {
+    setSmtpSettings((current) => ({ ...current, [field]: value }));
+    setSmtpFieldErrors((current) => {
+      if (!current[field]) return current;
+      const next = { ...current };
+      delete next[field];
+      return next;
+    });
+    setSmtpDirty(true);
+    setSmtpFeedback(null);
+  };
 
   const saveSmtpSettings = async () => {
-    if (!smtpSettings) return;
+    if (smtpPermissionDenied) return;
+    const errors = validateSmtpSettings(false);
+    setSmtpFieldErrors(errors);
+    if (Object.keys(errors).length > 0) {
+      setSmtpFeedback({ tone: 'error', message: zh ? '请先修正标记的字段。' : 'Fix the highlighted fields before saving.' });
+      showToast(zh ? 'SMTP 配置校验未通过' : 'SMTP settings are invalid', 'warning');
+      return;
+    }
     setSmtpSaving(true);
+    setSmtpFeedback(null);
     try {
-      const saved = await apiRequest<SmtpSettingsDraft>('/api/alerts/notification-channels/email', {
+      const payload: Record<string, unknown> = {
+        enabled: smtpSettings.enabled,
+        host: smtpSettings.host.trim(),
+        port: Number(smtpSettings.port),
+        security: smtpSettings.security,
+        username: smtpSettings.username.trim(),
+        from_address: smtpSettings.from_address.trim(),
+        from_name: smtpSettings.from_name.trim() || 'Nexora',
+        reply_to: smtpSettings.reply_to.trim(),
+        connect_timeout_seconds: Number(smtpSettings.connect_timeout_seconds),
+        send_timeout_seconds: Number(smtpSettings.send_timeout_seconds),
+        rate_limit_per_minute: Number(smtpSettings.rate_limit_per_minute),
+      };
+      if (smtpSettings.password.trim()) payload.password = smtpSettings.password.trim();
+      const saved = await apiRequest<Partial<SmtpSettingsDraft>>('/api/alerts/notification-channels/email', {
         method: 'PUT',
-        body: JSON.stringify(smtpSettings),
+        body: JSON.stringify(payload),
       });
-      setSmtpSettings((current) => current ? { ...current, ...saved, password: '' } : current);
+      setSmtpSettings((current) => ({ ...current, ...saved, password: '', has_password: saved.has_password ?? current.has_password, configured: saved.configured ?? true }));
+      setSmtpFeedback({ tone: 'success', message: zh ? 'SMTP 配置已保存，密码输入已清空。' : 'SMTP settings saved. The password field was cleared.' });
+      setSmtpPermissionDenied(false);
+      setSmtpDirty(false);
       showToast(zh ? 'SMTP 邮件通道已保存' : 'SMTP email channel saved', 'success');
     } catch (error) {
-      showToast(error instanceof Error ? error.message : (zh ? '保存 SMTP 配置失败' : 'Failed to save SMTP settings'), 'error');
+      if (error instanceof ApiError && error.status === 403) setSmtpPermissionDenied(true);
+      const message = smtpErrorMessage(error, zh, 'save');
+      setSmtpFeedback({ tone: 'error', message });
+      showToast(message, 'error');
     } finally {
       setSmtpSaving(false);
     }
   };
 
   const testSmtpSettings = async () => {
+    if (smtpPermissionDenied) return;
+    if (smtpDirty) {
+      const message = zh ? '检测到未保存的配置改动，请先保存后再发送测试邮件。' : 'There are unsaved settings changes. Save them before sending a test email.';
+      setSmtpFeedback({ tone: 'error', message });
+      showToast(message, 'warning');
+      return;
+    }
+    const errors = validateSmtpSettings(true);
+    if (!smtpSettings.enabled) errors.enabled = zh ? '请先启用 SMTP 通道。' : 'Enable the SMTP channel before testing.';
+    setSmtpFieldErrors(errors);
+    if (Object.keys(errors).length > 0) {
+      setSmtpFeedback({ tone: 'error', message: zh ? '测试前请修正标记的字段并启用 SMTP。' : 'Fix the highlighted fields and enable SMTP before testing.' });
+      showToast(zh ? '测试前校验未通过' : 'Validation failed before test', 'warning');
+      return;
+    }
     setSmtpTesting(true);
+    setSmtpFeedback(null);
     try {
       await apiRequest('/api/alerts/notification-channels/email/test', {
         method: 'POST',
         body: JSON.stringify({ recipient: smtpRecipient.trim() || undefined }),
       });
-      showToast(zh ? '测试邮件已发送' : 'Test email sent', 'success');
+      const message = zh ? '测试邮件发送调用已成功，请检查目标邮箱；API 成功不保证最终送达。' : 'The test email send call succeeded. Check the target mailbox; API success does not guarantee final delivery.';
+      setSmtpFeedback({ tone: 'success', message });
+      showToast(message, 'success');
     } catch (error) {
-      showToast(error instanceof Error ? error.message : (zh ? '测试邮件发送失败' : 'Test email failed'), 'error');
+      if (error instanceof ApiError && error.status === 403) setSmtpPermissionDenied(true);
+      const message = smtpErrorMessage(error, zh, 'test');
+      setSmtpFeedback({ tone: 'error', message });
+      showToast(message, 'error');
     } finally {
       setSmtpTesting(false);
     }
@@ -1571,56 +1703,88 @@ const PlatformSettingsTab: React.FC<PlatformSettingsTabProps> = ({
         </div>
       </div>
 
-      {smtpSettings && (
-        <div className="shrink-0 px-5 pt-3">
-          <div className="rounded-2xl border border-emerald-100 bg-white p-4 shadow-sm">
-            <div className="flex flex-wrap items-center gap-2">
-              <div className="flex-1">
-                <h2 className="text-sm font-black text-slate-800">{zh ? '邮件告警 SMTP 通道' : 'Email Alert SMTP Channel'}</h2>
-                <p className="mt-1 text-[10px] text-slate-500">{zh ? '规则选择邮件后，系统会通过此 SMTP 通道异步发送，并在告警历史中记录失败与重试。' : 'Rules selecting Email use this SMTP channel asynchronously; failures and retries remain visible in alert history.'}</p>
+      <div className="shrink-0 px-5 pt-3">
+        <section className="rounded-2xl border border-emerald-100 bg-white p-4 shadow-sm" aria-labelledby="smtp-settings-title">
+          <div className="flex flex-wrap items-start gap-3">
+            <div className="min-w-0 flex-1">
+              <div className="flex flex-wrap items-center gap-2">
+                <h2 id="smtp-settings-title" className="text-sm font-black text-slate-800">{zh ? '邮件告警 SMTP 通道' : 'Email Alert SMTP Channel'}</h2>
+                <span className={`rounded-full px-2 py-0.5 text-[9px] font-bold ${smtpLoaded ? (smtpSettings.enabled ? 'bg-emerald-50 text-emerald-700' : 'bg-slate-100 text-slate-500') : 'bg-slate-100 text-slate-500'}`}>
+                  {smtpLoaded ? (smtpSettings.enabled ? (zh ? '已启用' : 'Enabled') : (zh ? '未启用' : 'Disabled')) : (zh ? '状态待加载' : 'Status pending')}
+                </span>
+                <span className={`rounded-full px-2 py-0.5 text-[9px] font-bold ${smtpLoaded ? (smtpSettings.has_password ? 'bg-blue-50 text-blue-700' : 'bg-amber-50 text-amber-700') : 'bg-slate-100 text-slate-500'}`}>
+                  {smtpLoaded ? (smtpSettings.has_password ? (zh ? '凭据已保存' : 'Credentials saved') : (zh ? '尚无已保存密码' : 'No saved password')) : (zh ? '凭据待检查' : 'Credentials pending')}
+                </span>
+                {smtpLoaded && <span className={`rounded-full px-2 py-0.5 text-[9px] font-bold ${smtpSettings.configured ? 'bg-cyan-50 text-cyan-700' : 'bg-amber-50 text-amber-700'}`}>{smtpSettings.configured ? (zh ? '配置完整' : 'Configured') : (zh ? '待配置' : 'Needs setup')}</span>}
               </div>
-              <label className="flex items-center gap-2 text-xs font-semibold text-slate-600">
-                <input type="checkbox" checked={smtpSettings.enabled} onChange={(event) => setSmtpSettings((current) => current ? { ...current, enabled: event.target.checked } : current)} />
-                {zh ? '启用' : 'Enabled'}
-              </label>
+              <p className="mt-1 text-[10px] leading-5 text-slate-500">{zh ? '规则选择邮件后，系统会通过此 SMTP 通道异步发送，并在告警历史中记录失败与重试。' : 'Rules selecting Email use this SMTP channel asynchronously; failures and retries remain visible in alert history.'}</p>
             </div>
-            {smtpLoading ? (
-              <div className="mt-3 text-xs text-slate-400">{zh ? '正在加载 SMTP 配置…' : 'Loading SMTP settings…'}</div>
-            ) : (
-              <>
-                <div className="mt-3 grid gap-2 md:grid-cols-4">
-                  <input value={smtpSettings.host} onChange={(event) => setSmtpSettings((current) => current ? { ...current, host: event.target.value } : current)} placeholder={zh ? 'SMTP 主机' : 'SMTP host'} className={fieldClass} />
-                  <input type="number" min={1} max={65535} value={smtpSettings.port} onChange={(event) => setSmtpSettings((current) => current ? { ...current, port: Number(event.target.value) } : current)} placeholder={zh ? '端口' : 'Port'} className={fieldClass} />
-                  <select value={smtpSettings.security} onChange={(event) => setSmtpSettings((current) => current ? { ...current, security: event.target.value as SmtpSettingsDraft['security'] } : current)} className={fieldClass}>
-                    <option value="starttls">STARTTLS</option><option value="ssl">SSL</option><option value="none">{zh ? '无加密' : 'None'}</option>
-                  </select>
-                  <input value={smtpSettings.username} onChange={(event) => setSmtpSettings((current) => current ? { ...current, username: event.target.value } : current)} placeholder={zh ? 'SMTP 用户名' : 'SMTP username'} className={fieldClass} />
-                </div>
-                <div className="mt-2 grid gap-2 md:grid-cols-4">
-                  <input type="password" value={smtpSettings.password} onChange={(event) => setSmtpSettings((current) => current ? { ...current, password: event.target.value } : current)} placeholder={smtpSettings.has_password ? (zh ? '密码已保存，留空保持不变' : 'Password saved; leave blank to keep') : (zh ? 'SMTP 密码' : 'SMTP password')} className={fieldClass} autoComplete="new-password" />
-                  <input value={smtpSettings.from_address} onChange={(event) => setSmtpSettings((current) => current ? { ...current, from_address: event.target.value } : current)} placeholder={zh ? '发件人邮箱' : 'From address'} className={fieldClass} />
-                  <input value={smtpSettings.from_name} onChange={(event) => setSmtpSettings((current) => current ? { ...current, from_name: event.target.value } : current)} placeholder={zh ? '发件人名称' : 'From name'} className={fieldClass} />
-                  <input value={smtpSettings.reply_to} onChange={(event) => setSmtpSettings((current) => current ? { ...current, reply_to: event.target.value } : current)} placeholder={zh ? '回复地址（可选）' : 'Reply-To (optional)'} className={fieldClass} />
-                </div>
-                <div className="mt-2 grid gap-2 md:grid-cols-3">
-                  <input type="number" min={1} max={120} value={smtpSettings.connect_timeout_seconds} onChange={(event) => setSmtpSettings((current) => current ? { ...current, connect_timeout_seconds: Number(event.target.value) } : current)} placeholder={zh ? '连接超时(秒)' : 'Connect timeout (sec)'} className={fieldClass} />
-                  <input type="number" min={1} max={120} value={smtpSettings.send_timeout_seconds} onChange={(event) => setSmtpSettings((current) => current ? { ...current, send_timeout_seconds: Number(event.target.value) } : current)} placeholder={zh ? '发送超时(秒)' : 'Send timeout (sec)'} className={fieldClass} />
-                  <input type="number" min={1} max={10000} value={smtpSettings.rate_limit_per_minute} onChange={(event) => setSmtpSettings((current) => current ? { ...current, rate_limit_per_minute: Number(event.target.value) } : current)} placeholder={zh ? '每分钟上限' : 'Rate limit/min'} className={fieldClass} />
-                </div>
-                <div className="mt-3 flex flex-wrap items-center gap-2">
-                  <button type="button" onClick={() => void saveSmtpSettings()} disabled={smtpSaving} className="inline-flex items-center gap-1.5 rounded-xl bg-emerald-600 px-3 py-2 text-xs font-bold text-white disabled:opacity-40">
-                    {smtpSaving ? <Loader2 size={12} className="animate-spin" /> : <Save size={12} />} {zh ? '保存邮件通道' : 'Save email channel'}
-                  </button>
-                  <input value={smtpRecipient} onChange={(event) => setSmtpRecipient(event.target.value)} placeholder={zh ? '测试收件邮箱（留空使用当前用户）' : 'Test recipient (blank uses current user)'} className={`${fieldClass} min-w-[240px] flex-1`} />
-                  <button type="button" onClick={() => void testSmtpSettings()} disabled={smtpTesting || !smtpSettings.enabled} className="inline-flex items-center gap-1.5 rounded-xl border border-emerald-200 bg-emerald-50 px-3 py-2 text-xs font-bold text-emerald-700 disabled:opacity-40">
-                    {smtpTesting ? <Loader2 size={12} className="animate-spin" /> : <CheckCircle2 size={12} />} {zh ? '发送测试邮件' : 'Send test email'}
-                  </button>
-                </div>
-              </>
-            )}
+            <label className={`flex shrink-0 items-center gap-2 text-xs font-semibold ${smtpPermissionDenied ? 'text-slate-400' : 'text-slate-600'}`}>
+              <input type="checkbox" checked={smtpSettings.enabled} disabled={!smtpLoaded || smtpPermissionDenied} onChange={(event) => updateSmtpField('enabled', event.target.checked)} className="accent-emerald-600" />
+              {zh ? '启用通道' : 'Enable channel'}
+            </label>
           </div>
-        </div>
-      )}
+
+          {smtpLoading && (
+            <div className="mt-3 flex items-center gap-2 rounded-xl border border-cyan-100 bg-cyan-50 px-3 py-2 text-[10px] text-cyan-800"><Loader2 size={13} className="animate-spin" />{zh ? '正在加载 SMTP 配置…' : 'Loading SMTP settings…'}</div>
+          )}
+          {smtpLoadError && (
+            <div className="mt-3 flex flex-wrap items-center gap-2 rounded-xl border border-rose-100 bg-rose-50 px-3 py-2 text-[10px] text-rose-700">
+              <AlertCircle size={13} className="shrink-0" />
+              <span className="min-w-0 flex-1">{smtpLoadError}</span>
+              {!smtpPermissionDenied && <button type="button" onClick={() => void loadSmtpSettings()} disabled={smtpLoading} className="inline-flex items-center gap-1 rounded-lg border border-rose-200 bg-white px-2 py-1 font-bold hover:bg-rose-100 disabled:opacity-50"><RefreshCw size={11} />{zh ? '重试' : 'Retry'}</button>}
+            </div>
+          )}
+          {smtpPermissionDenied && (
+            <div className="mt-3 flex items-start gap-2 rounded-xl border border-amber-100 bg-amber-50 px-3 py-2 text-[10px] leading-5 text-amber-800"><ShieldAlert size={14} className="mt-0.5 shrink-0" /><span>{zh ? '当前账号没有管理 SMTP 配置的权限。请联系管理员，配置不会在此页面提交。' : 'Your account cannot manage SMTP settings. Ask an administrator to configure this channel.'}</span></div>
+          )}
+
+          {smtpLoaded && !smtpLoadError && (
+            <>
+              <div className="mt-4 grid gap-4 xl:grid-cols-2">
+                <div className="rounded-xl border border-slate-100 bg-slate-50/60 p-3">
+                  <div className="mb-3 flex items-center gap-2"><span className="flex h-6 w-6 items-center justify-center rounded-lg bg-cyan-100 text-cyan-700"><Server size={13} /></span><div><h3 className="text-[11px] font-black text-slate-700">{zh ? '连接参数' : 'Connection'}</h3><p className="text-[9px] text-slate-400">{zh ? '服务器和认证方式' : 'Server and authentication'}</p></div></div>
+                  <div className="grid gap-3 sm:grid-cols-2">
+                    <label className="space-y-1.5 sm:col-span-2"><span className="text-[10px] font-bold text-slate-600">{zh ? 'SMTP 主机' : 'SMTP host'} <span className="text-rose-500">*</span></span><input value={smtpSettings.host} onChange={(event) => updateSmtpField('host', event.target.value)} className={`${fieldClass} ${smtpFieldErrors.host ? 'border-rose-300 focus:border-rose-400 focus:ring-rose-100' : ''}`} placeholder="smtp.example.com" aria-invalid={Boolean(smtpFieldErrors.host)} />{smtpFieldErrors.host && <p className="text-[9px] text-rose-600">{smtpFieldErrors.host}</p>}</label>
+                    <label className="space-y-1.5"><span className="text-[10px] font-bold text-slate-600">{zh ? '端口' : 'Port'} <span className="text-rose-500">*</span></span><input type="number" min={1} max={65535} value={smtpSettings.port} onChange={(event) => updateSmtpField('port', Number(event.target.value))} className={`${fieldClass} ${smtpFieldErrors.port ? 'border-rose-300 focus:border-rose-400 focus:ring-rose-100' : ''}`} aria-invalid={Boolean(smtpFieldErrors.port)} />{smtpFieldErrors.port && <p className="text-[9px] text-rose-600">{smtpFieldErrors.port}</p>}</label>
+                    <label className="space-y-1.5"><span className="text-[10px] font-bold text-slate-600">{zh ? '安全方式' : 'Security'}</span><select value={smtpSettings.security} onChange={(event) => updateSmtpField('security', event.target.value as SmtpSettingsDraft['security'])} className={fieldClass}><option value="starttls">STARTTLS</option><option value="ssl">SSL</option><option value="none">{zh ? '无加密' : 'None'}</option></select></label>
+                    <label className="space-y-1.5 sm:col-span-2"><span className="text-[10px] font-bold text-slate-600">{zh ? 'SMTP 用户名（可选）' : 'SMTP username (optional)'}</span><input value={smtpSettings.username} onChange={(event) => updateSmtpField('username', event.target.value)} className={fieldClass} autoComplete="username" /></label>
+                    <label className="space-y-1.5 sm:col-span-2"><span className="flex items-center justify-between text-[10px] font-bold text-slate-600"><span>{zh ? 'SMTP 密码' : 'SMTP password'}</span><span className={`font-normal ${smtpSettings.has_password ? 'text-emerald-600' : 'text-amber-600'}`}>{smtpSettings.has_password ? (zh ? '已保存，留空保持不变' : 'Saved; blank keeps it') : (zh ? '尚未保存' : 'Not saved')}</span></span><input type="password" value={smtpSettings.password} onChange={(event) => updateSmtpField('password', event.target.value)} placeholder={smtpSettings.has_password ? (zh ? '留空保持已保存密码' : 'Leave blank to keep saved password') : (zh ? '输入 SMTP 密码（如需认证）' : 'Enter SMTP password if authentication is required')} className={`${fieldClass} ${smtpFieldErrors.password ? 'border-rose-300 focus:border-rose-400 focus:ring-rose-100' : ''}`} autoComplete="new-password" aria-invalid={Boolean(smtpFieldErrors.password)} />{smtpFieldErrors.password && <p className="text-[9px] text-rose-600">{smtpFieldErrors.password}</p>}</label>
+                  </div>
+                </div>
+
+                <div className="rounded-xl border border-slate-100 bg-slate-50/60 p-3">
+                  <div className="mb-3 flex items-center gap-2"><span className="flex h-6 w-6 items-center justify-center rounded-lg bg-emerald-100 text-emerald-700"><Send size={13} /></span><div><h3 className="text-[11px] font-black text-slate-700">{zh ? '发件人和测试' : 'Sender and test'}</h3><p className="text-[9px] text-slate-400">{zh ? '邮件头信息和连接测试' : 'Message headers and connection test'}</p></div></div>
+                  <div className="grid gap-3 sm:grid-cols-2">
+                    <label className="space-y-1.5 sm:col-span-2"><span className="text-[10px] font-bold text-slate-600">{zh ? '发件人邮箱' : 'From address'} <span className="text-rose-500">*</span></span><input type="email" value={smtpSettings.from_address} onChange={(event) => updateSmtpField('from_address', event.target.value)} className={`${fieldClass} ${smtpFieldErrors.from_address ? 'border-rose-300 focus:border-rose-400 focus:ring-rose-100' : ''}`} placeholder="alerts@example.com" aria-invalid={Boolean(smtpFieldErrors.from_address)} />{smtpFieldErrors.from_address && <p className="text-[9px] text-rose-600">{smtpFieldErrors.from_address}</p>}</label>
+                    <label className="space-y-1.5"><span className="text-[10px] font-bold text-slate-600">{zh ? '发件人名称' : 'From name'}</span><input value={smtpSettings.from_name} onChange={(event) => updateSmtpField('from_name', event.target.value)} className={fieldClass} placeholder="Nexora" /></label>
+                    <label className="space-y-1.5"><span className="text-[10px] font-bold text-slate-600">{zh ? '回复地址（可选）' : 'Reply-to (optional)'}</span><input type="email" value={smtpSettings.reply_to} onChange={(event) => updateSmtpField('reply_to', event.target.value)} className={`${fieldClass} ${smtpFieldErrors.reply_to ? 'border-rose-300 focus:border-rose-400 focus:ring-rose-100' : ''}`} aria-invalid={Boolean(smtpFieldErrors.reply_to)} />{smtpFieldErrors.reply_to && <p className="text-[9px] text-rose-600">{smtpFieldErrors.reply_to}</p>}</label>
+                    <label className="space-y-1.5 sm:col-span-2"><span className="text-[10px] font-bold text-slate-600">{zh ? '测试收件人（可选）' : 'Test recipient (optional)'}</span><input type="email" value={smtpRecipient} onChange={(event) => { setSmtpRecipient(event.target.value); setSmtpFieldErrors((current) => { const next = { ...current }; delete next.recipient; return next; }); }} placeholder={zh ? '留空使用当前用户邮箱' : 'Blank uses the current user email'} className={`${fieldClass} ${smtpFieldErrors.recipient ? 'border-rose-300 focus:border-rose-400 focus:ring-rose-100' : ''}`} aria-invalid={Boolean(smtpFieldErrors.recipient)} />{smtpFieldErrors.recipient && <p className="text-[9px] text-rose-600">{smtpFieldErrors.recipient}</p>}</label>
+                  </div>
+                </div>
+              </div>
+
+              <div className="mt-3 rounded-xl border border-slate-100">
+                <button type="button" onClick={() => setSmtpAdvancedOpen((current) => !current)} className="flex w-full items-center gap-2 px-3 py-2 text-left text-[10px] font-bold text-slate-600 hover:bg-slate-50"><ChevronDown size={13} className={`transition-transform ${smtpAdvancedOpen ? 'rotate-180' : ''}`} />{zh ? '高级参数' : 'Advanced settings'}<span className="font-normal text-slate-400">{zh ? '超时与发送速率' : 'Timeouts and rate limit'}</span></button>
+                {smtpAdvancedOpen && <div className="grid gap-3 border-t border-slate-100 bg-slate-50/50 p-3 sm:grid-cols-3">
+                  <label className="space-y-1.5"><span className="text-[10px] font-bold text-slate-600">{zh ? '连接超时（秒）' : 'Connect timeout (sec)'}</span><input type="number" min={1} max={120} value={smtpSettings.connect_timeout_seconds} onChange={(event) => updateSmtpField('connect_timeout_seconds', Number(event.target.value))} className={`${fieldClass} ${smtpFieldErrors.connect_timeout_seconds ? 'border-rose-300' : ''}`} />{smtpFieldErrors.connect_timeout_seconds && <p className="text-[9px] text-rose-600">{smtpFieldErrors.connect_timeout_seconds}</p>}</label>
+                  <label className="space-y-1.5"><span className="text-[10px] font-bold text-slate-600">{zh ? '发送超时（秒）' : 'Send timeout (sec)'}</span><input type="number" min={1} max={120} value={smtpSettings.send_timeout_seconds} onChange={(event) => updateSmtpField('send_timeout_seconds', Number(event.target.value))} className={`${fieldClass} ${smtpFieldErrors.send_timeout_seconds ? 'border-rose-300' : ''}`} />{smtpFieldErrors.send_timeout_seconds && <p className="text-[9px] text-rose-600">{smtpFieldErrors.send_timeout_seconds}</p>}</label>
+                  <label className="space-y-1.5"><span className="text-[10px] font-bold text-slate-600">{zh ? '每分钟发送上限' : 'Rate limit per minute'}</span><input type="number" min={1} max={10000} value={smtpSettings.rate_limit_per_minute} onChange={(event) => updateSmtpField('rate_limit_per_minute', Number(event.target.value))} className={`${fieldClass} ${smtpFieldErrors.rate_limit_per_minute ? 'border-rose-300' : ''}`} />{smtpFieldErrors.rate_limit_per_minute && <p className="text-[9px] text-rose-600">{smtpFieldErrors.rate_limit_per_minute}</p>}</label>
+                </div>}
+              </div>
+
+              {smtpFeedback && <div className={`mt-3 flex items-start gap-2 rounded-xl border px-3 py-2 text-[10px] leading-5 ${smtpFeedback.tone === 'success' ? 'border-emerald-100 bg-emerald-50 text-emerald-800' : 'border-rose-100 bg-rose-50 text-rose-700'}`}><span className="mt-0.5 shrink-0">{smtpFeedback.tone === 'success' ? <CheckCircle2 size={13} /> : <AlertCircle size={13} />}</span><span>{smtpFeedback.message}</span></div>}
+              {smtpFieldErrors.enabled && <p className="mt-2 text-[9px] text-rose-600">{smtpFieldErrors.enabled}</p>}
+
+              <div className="mt-3 flex flex-wrap items-center gap-2 border-t border-slate-100 pt-3">
+                <button type="button" onClick={() => void saveSmtpSettings()} disabled={smtpSaving || smtpTesting || smtpPermissionDenied} className="inline-flex items-center gap-1.5 rounded-xl bg-emerald-600 px-3 py-2 text-xs font-bold text-white disabled:cursor-not-allowed disabled:opacity-40">{smtpSaving ? <Loader2 size={12} className="animate-spin" /> : <Save size={12} />}{smtpSaving ? (zh ? '保存中…' : 'Saving…') : (zh ? '保存邮件通道' : 'Save email channel')}</button>
+                <button type="button" onClick={() => void testSmtpSettings()} disabled={smtpSaving || smtpTesting || smtpPermissionDenied || smtpDirty} title={smtpDirty ? (zh ? '请先保存改动' : 'Save changes first') : undefined} className="inline-flex items-center gap-1.5 rounded-xl border border-emerald-200 bg-emerald-50 px-3 py-2 text-xs font-bold text-emerald-700 disabled:cursor-not-allowed disabled:opacity-40">{smtpTesting ? <Loader2 size={12} className="animate-spin" /> : <CheckCircle2 size={12} />}{smtpTesting ? (zh ? '测试中…' : 'Testing…') : (zh ? '发送测试邮件' : 'Send test email')}</button>
+                <p className="w-full text-[9px] leading-4 text-slate-400 sm:w-auto">{smtpDirty ? (zh ? '配置有未保存改动，请保存后再测试。' : 'Save the unsaved settings before testing.') : (zh ? '测试前请先保存已启用的配置；成功表示发送调用完成，不代表收件箱最终送达。' : 'Save an enabled configuration before testing. Success confirms the send call, not final inbox delivery.')}</p>
+              </div>
+            </>
+          )}
+        </section>
+      </div>
 
       <div className="flex min-h-0 flex-1 gap-0 overflow-hidden p-5 pt-4">
         <aside

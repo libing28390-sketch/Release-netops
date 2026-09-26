@@ -36,12 +36,23 @@ def test_platform_registry_action_and_commands():
     assert PLATFORM_ACTION_COMMANDS["huawei_vrp"]["get_startup_config"] == "display saved-configuration"
     assert PLATFORM_ACTION_COMMANDS["h3c_comware"]["get_startup_config"] == "display saved-configuration"
     assert PLATFORM_ACTION_COMMANDS["dptech_ios"]["get_startup_config"] == "display saved-configuration"
-    assert PLATFORM_ACTION_COMMANDS["dptech_ios"]["get_running_config"] == "display current-configuration"
+    assert PLATFORM_ACTION_COMMANDS["dptech_ios"]["get_running_config"] == "show running-config"
     assert PLATFORM_ACTION_COMMANDS["ruijie_rgos"]["get_startup_config"] == "show startup-config"
     assert PLATFORM_ACTION_COMMANDS["zte_zxros"]["get_startup_config"] == "show startup-config"
     assert PLATFORM_ACTION_COMMANDS["maipu"]["get_startup_config"] == "show startup-config"
     assert PLATFORM_ACTION_COMMANDS["raisecom_ros"]["get_startup_config"] == "show startup-config"
     assert PLATFORM_ACTION_COMMANDS["juniper_junos"]["get_startup_config"] == "show configuration"
+
+    expected_dptech_commands = {
+        "get_running_config": "show running-config",
+        "get_startup_config": "display saved-configuration",
+    }
+    for dptech_platform in ("dptech_conplat", "dptech_conplat_fw"):
+        assert get_default_config_backup_commands("DPtech", dptech_platform) == expected_dptech_commands
+    assert get_default_config_backup_commands("Hillstone", "hillstone_stoneos") == {
+        "get_running_config": "show configuration",
+        "get_startup_config": "show configuration startup",
+    }
 
 
 def test_default_backup_commands_cover_every_builtin_vendor_independent_of_bound_platform():
@@ -54,8 +65,8 @@ def test_default_backup_commands_cover_every_builtin_vendor_independent_of_bound
         "ZTE": ("show running-config", "show startup-config"),
         "Raisecom": ("show running-config", "show startup-config"),
         "Ruijie": ("show running-config", "show startup-config"),
-        "DPtech": ("display current-configuration", "display saved-configuration"),
-        "Hillstone": ("show configuration running", "show configuration startup"),
+        "DPtech": ("show running-config", "display saved-configuration"),
+        "Hillstone": ("show configuration", "show configuration startup"),
         "Maipu": ("show running-config", "show startup-config"),
     }
     supported_vendors = {str(profile["vendor"]) for profile in SYSTEM_PROFILES}
