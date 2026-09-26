@@ -222,9 +222,115 @@ def test_missing_credentials_and_unknown_vendor_are_structured(monkeypatch):
     assert missing["error_code"] == "SNMP_CREDENTIALS_MISSING"
     assert calls == []
 
-    unsupported = optical.collect_optical_snmp({"vendor": "Cisco", "platform": "cisco_ios"})
+    unsupported = optical.collect_optical_snmp({"vendor": "Cisco", "platform": "cisco_unknown"})
     assert unsupported["success"] is False
     assert unsupported["error_code"] == "UNSUPPORTED_VENDOR"
+
+
+def test_cisco_entity_sensor_accepts_only_dbm_and_maps_entity_parent_to_port(monkeypatch):
+    _credentials(monkeypatch)
+    values = {
+        optical.IF_NAME_OID: [("7", "Ethernet1/1")],
+        optical.CISCO_ENTITY_SENSOR_TYPE_OID: [("100", "14"), ("101", "6")],
+        optical.CISCO_ENTITY_SENSOR_SCALE_OID: [("100", "9"), ("101", "9")],
+        optical.CISCO_ENTITY_SENSOR_PRECISION_OID: [("100", "2"), ("101", "0")],
+        optical.CISCO_ENTITY_SENSOR_VALUE_OID: [("100", "-1234"), ("101", "500")],
+        optical.CISCO_ENTITY_SENSOR_STATUS_OID: [("100", "1"), ("101", "1")],
+        optical.ENTITY_PHYSICAL_NAME_OID: [("100", "DOM Rx Power Sensor"), ("101", "DOM Tx Power Sensor"), ("200", "PortEntity")],
+        optical.ENTITY_PHYSICAL_CLASS_OID: [("100", "8"), ("101", "8"), ("200", "10")],
+        optical.ENTITY_PHYSICAL_CONTAINED_IN_OID: [("100", "200"), ("101", "200"), ("200", "0")],
+        optical.ENTITY_ALIAS_MAPPING_IDENTIFIER_OID: [("200.0", "1.3.6.1.2.1.2.2.1.1.7")],
+    }
+    calls = _walk_map(monkeypatch, values)
+
+    result = optical.collect_optical_snmp({"vendor": "Cisco", "platform": "cisco_ios", "ip_address": "192.0.2.10"})
+
+    assert result["success"] is True
+    assert result["count"] == 1
+    assert result["records"][0]["interface"] == "Ethernet1/1"
+    assert result["records"][0]["ifIndex"] == 7
+    assert result["records"][0]["rx_power_dbm"] == pytest.approx(-12.34)
+    assert "watts" not in str(calls)
+
+
+def test_cisco_entity_sensor_rejects_unknown_scale_enum():
+    assert optical._cisco_entity_value(
+        "100",
+        -1234,
+        {"entity_sensor_scale": {"100": "99"}, "entity_sensor_precision": {"100": "2"}},
+    ) is None
+
+
+@pytest.mark.parametrize("status", ["2", "3", "4", "5", "99", "unavailable", "notPresent", "uninitialized"])
+def test_entity_sensor_rejects_non_operational_or_unknown_status(status):
+    assert not optical._entity_sensor_status_is_valid("100", {"entity_sensor_status": {"100": status}})
+
+
+def test_entity_sensor_rejects_missing_status():
+    assert not optical._entity_sensor_status_is_valid("100", {})
+
+
+@pytest.mark.parametrize("status", ["1", "ok", "valid", "normal"])
+def test_entity_sensor_accepts_valid_status(status):
+    assert optical._entity_sensor_status_is_valid("100", {"entity_sensor_status": {"100": status}})
+
+
+def test_cisco_entity_sensor_does_not_invent_port_for_unmapped_dbm(monkeypatch):
+    _credentials(monkeypatch)
+    values = {
+        optical.CISCO_ENTITY_SENSOR_TYPE_OID: [("100", "14")],
+        optical.CISCO_ENTITY_SENSOR_VALUE_OID: [("100", "-1234")],
+        optical.ENTITY_PHYSICAL_NAME_OID: [("100", "DOM Rx Power Sensor")],
+        optical.ENTITY_PHYSICAL_CLASS_OID: [("100", "sensor")],
+    }
+    _walk_map(monkeypatch, values)
+
+    result = optical.collect_optical_snmp({"vendor": "Cisco", "platform": "cisco_nxos", "ip_address": "192.0.2.10"})
+
+    assert result["success"] is True
+    assert result["records"] == []
+
+
+def test_arista_entity_sensor_uses_dom_descriptor_and_log_conversion(monkeypatch):
+    _credentials(monkeypatch)
+    values = {
+        optical.IF_NAME_OID: [("7", "Ethernet1/1")],
+        optical.ENTITY_SENSOR_TYPE_OID: [("300", "1"), ("301", "1"), ("302", "1")],
+        optical.ENTITY_SENSOR_VALUE_OID: [("300", "10000"), ("301", "1000"), ("302", "0")],
+        optical.ENTITY_PHYSICAL_NAME_OID: [("300", "DOM Rx Power"), ("301", "DOM Tx Power"), ("302", "DOM Rx Power")],
+        optical.ENTITY_PHYSICAL_DESCR_OID: [("300", "Ethernet1/1 DOM Rx Power"), ("301", "Ethernet1/1 DOM Tx Power"), ("302", "Ethernet1/1 DOM Rx Power")],
+        optical.ENTITY_SENSOR_STATUS_OID: [("300", "1"), ("301", "1"), ("302", "1")],
+    }
+    _walk_map(monkeypatch, values)
+
+    result = optical.collect_optical_snmp({"vendor": "Arista", "platform": "arista_eos", "ip_address": "192.0.2.10"})
+
+    assert result["success"] is True
+    assert result["count"] == 2
+    metrics = {next(key for key in record if key.endswith("_power_dbm")): record for record in result["records"]}
+    assert metrics["rx_power_dbm"]["rx_power_dbm"] == pytest.approx(0)
+    assert metrics["tx_power_dbm"]["tx_power_dbm"] == pytest.approx(-10)
+    assert all(record["interface"] == "Ethernet1/1" and record["ifIndex"] == 7 for record in result["records"])
+
+
+def test_nokia_1830_uses_ifindex_columns_and_requires_admin_up(monkeypatch):
+    _credentials(monkeypatch)
+    base = optical.NOKIA_1830_DDM_BASE_OID
+    values = {
+        optical.IF_NAME_OID: [("10", "1/1/1")],
+        optical.IF_ADMIN_STATUS_OID: [("10", "up"), ("11", "down")],
+        f"{base}.4": [("10", "45"), ("11", "55")],
+        f"{base}.5": [("10", "-55"), ("11", "-65")],
+    }
+    _walk_map(monkeypatch, values)
+
+    result = optical.collect_optical_snmp({"vendor": "Nokia", "platform": "nokia_1830", "ip_address": "192.0.2.10"})
+
+    assert result["count"] == 1
+    record = result["records"][0]
+    assert record["ifIndex"] == 10
+    assert record["tx_power_dbm"] == pytest.approx(4.5)
+    assert record["rx_power_dbm"] == pytest.approx(-5.5)
 
 
 def test_collector_module_has_no_cli_or_netmiko_imports():

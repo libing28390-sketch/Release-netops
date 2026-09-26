@@ -41,7 +41,22 @@ logger = logging.getLogger(__name__)
 
 IF_NAME_OID = "1.3.6.1.2.1.31.1.1.1.1"
 IF_DESCR_OID = "1.3.6.1.2.1.2.2.1.2"
+IF_ADMIN_STATUS_OID = "1.3.6.1.2.1.2.2.1.7"
 ENTITY_PHYSICAL_NAME_OID = "1.3.6.1.2.1.47.1.1.1.1.7"
+ENTITY_PHYSICAL_DESCR_OID = "1.3.6.1.2.1.47.1.1.1.1.2"
+ENTITY_PHYSICAL_CLASS_OID = "1.3.6.1.2.1.47.1.1.1.1.5"
+ENTITY_PHYSICAL_CONTAINED_IN_OID = "1.3.6.1.2.1.47.1.1.1.1.4"
+ENTITY_ALIAS_MAPPING_IDENTIFIER_OID = "1.3.6.1.2.1.47.1.3.2.1.2"
+ENTITY_SENSOR_TYPE_OID = "1.3.6.1.2.1.99.1.1.1.1"
+ENTITY_SENSOR_SCALE_OID = "1.3.6.1.2.1.99.1.1.1.2"
+ENTITY_SENSOR_PRECISION_OID = "1.3.6.1.2.1.99.1.1.1.3"
+ENTITY_SENSOR_VALUE_OID = "1.3.6.1.2.1.99.1.1.1.4"
+ENTITY_SENSOR_STATUS_OID = "1.3.6.1.2.1.99.1.1.1.5"
+CISCO_ENTITY_SENSOR_TYPE_OID = "1.3.6.1.4.1.9.9.91.1.1.1.1.1"
+CISCO_ENTITY_SENSOR_SCALE_OID = "1.3.6.1.4.1.9.9.91.1.1.1.1.2"
+CISCO_ENTITY_SENSOR_PRECISION_OID = "1.3.6.1.4.1.9.9.91.1.1.1.1.3"
+CISCO_ENTITY_SENSOR_VALUE_OID = "1.3.6.1.4.1.9.9.91.1.1.1.1.4"
+CISCO_ENTITY_SENSOR_STATUS_OID = "1.3.6.1.4.1.9.9.91.1.1.1.1.5"
 
 # The table roots and column numbers are the vendor MIB definitions.  Keep
 # these numeric so this collector does not depend on a local MIB compiler.
@@ -53,10 +68,10 @@ HUAWEI_OPTICAL_BASE_OID = "1.3.6.1.4.1.2011.5.25.31.1.1.3.1"
 MAX_OPTICAL_WALK_ROWS = 4096
 RAISECOM_LEGACY_DDM_BASE_OID = "1.3.6.1.4.1.8886.1.18.2.2.1"
 RAISECOM_ROS_DDM_BASE_OID = "1.3.6.1.4.1.8886.60.18.1.2.2.1"
+NOKIA_1830_DDM_BASE_OID = "1.3.6.1.4.1.7483.2.2.7.3.1.4.1.2"
 
 _NUMBER = re.compile(r"[-+]?(?:\d+(?:\.\d*)?|\.\d+)(?:[eE][-+]?\d+)?")
 _SENTINELS = {2147483647.0, -2147483648.0, -32768.0, -1000000.0}
-
 
 async def _snmp_walk(*args: Any, **kwargs: Any) -> list[tuple[str, str]]:
     """Delegate to the shared SNMP transport while keeping a test seam."""
@@ -161,6 +176,12 @@ def _supported_vendor(device: dict[str, Any]) -> tuple[str, str] | None:
         "raisecom_ros", "raisecom_ros5", "raisecom_ros_5", "raisecom_ros_legacy", "raisecom_legacy", "ros", "legacy"
     }:
         return "Raisecom", "raisecom_ros" if platform in {"raisecom_ros", "ros"} else "raisecom_legacy"
+    if vendor == "cisco" and platform in {"cisco_ios", "cisco_iosxe", "cisco_iosxr", "cisco_nxos"}:
+        return "Cisco", "cisco_entity_sensor"
+    if vendor == "arista" and platform == "arista_eos":
+        return "Arista", "arista_entity_sensor"
+    if vendor == "nokia" and platform == "nokia_1830":
+        return "Nokia", "nokia_1830"
     return None
 
 
@@ -213,6 +234,42 @@ def _profile(kind: str) -> dict[str, Any]:
                 "temperature_c": (f"{ZTE_OPTICAL_BASE_OID}.8", 1000),
             }
         }
+    if kind == "cisco_entity_sensor":
+        return {
+            "entity_sensor": True,
+            "metrics": {"entity_sensor_value": (CISCO_ENTITY_SENSOR_VALUE_OID, 1)},
+            "entity_sensor_type": CISCO_ENTITY_SENSOR_TYPE_OID,
+            "entity_sensor_scale": CISCO_ENTITY_SENSOR_SCALE_OID,
+            "entity_sensor_precision": CISCO_ENTITY_SENSOR_PRECISION_OID,
+            "entity_sensor_status": CISCO_ENTITY_SENSOR_STATUS_OID,
+            "entity_name": ENTITY_PHYSICAL_NAME_OID,
+            "entity_descr": ENTITY_PHYSICAL_DESCR_OID,
+            "entity_class": ENTITY_PHYSICAL_CLASS_OID,
+            "entity_contained_in": ENTITY_PHYSICAL_CONTAINED_IN_OID,
+            "entity_alias": ENTITY_ALIAS_MAPPING_IDENTIFIER_OID,
+            "cisco_entity_sensor": True,
+        }
+    if kind == "arista_entity_sensor":
+        return {
+            "entity_sensor": True,
+            "metrics": {"entity_sensor_value": (ENTITY_SENSOR_VALUE_OID, 1)},
+            "entity_sensor_type": ENTITY_SENSOR_TYPE_OID,
+            "entity_sensor_scale": ENTITY_SENSOR_SCALE_OID,
+            "entity_sensor_precision": ENTITY_SENSOR_PRECISION_OID,
+            "entity_sensor_status": ENTITY_SENSOR_STATUS_OID,
+            "entity_name": ENTITY_PHYSICAL_NAME_OID,
+            "entity_descr": ENTITY_PHYSICAL_DESCR_OID,
+            "arista_entity_sensor": True,
+        }
+    if kind == "nokia_1830":
+        return {
+            "metrics": {
+                "tx_power_dbm": (f"{NOKIA_1830_DDM_BASE_OID}.4", 10),
+                "rx_power_dbm": (f"{NOKIA_1830_DDM_BASE_OID}.5", 10),
+            },
+            "admin_status": IF_ADMIN_STATUS_OID,
+            "nokia_1830": True,
+        }
     base = RAISECOM_ROS_DDM_BASE_OID if kind == "raisecom_ros" else RAISECOM_LEGACY_DDM_BASE_OID
     return {
         "raisecom": True,
@@ -231,8 +288,24 @@ async def _collect_walks(server: str, community: str, port: int, profile: dict[s
         oids["ddm"] = profile["ddm"]
     if profile.get("admin_status"):
         oids["admin_status"] = profile["admin_status"]
+    if profile.get("entity_sensor_type"):
+        oids["entity_sensor_type"] = profile["entity_sensor_type"]
+    if profile.get("entity_sensor_scale"):
+        oids["entity_sensor_scale"] = profile["entity_sensor_scale"]
+    if profile.get("entity_sensor_precision"):
+        oids["entity_sensor_precision"] = profile["entity_sensor_precision"]
+    if profile.get("entity_sensor_status"):
+        oids["entity_sensor_status"] = profile["entity_sensor_status"]
     if profile.get("entity_name"):
         oids["entity_name"] = profile["entity_name"]
+    if profile.get("entity_descr"):
+        oids["entity_descr"] = profile["entity_descr"]
+    if profile.get("entity_class"):
+        oids["entity_class"] = profile["entity_class"]
+    if profile.get("entity_contained_in"):
+        oids["entity_contained_in"] = profile["entity_contained_in"]
+    if profile.get("entity_alias"):
+        oids["entity_alias"] = profile["entity_alias"]
     if profile.get("serial"):
         oids["serial"] = profile["serial"]
     if profile.get("raisecom"):
@@ -266,7 +339,229 @@ async def _collect_walks(server: str, community: str, port: int, profile: dict[s
     return result
 
 
+def _exact_tokens(suffix: Any, count: int) -> tuple[str, ...] | None:
+    tokens = tuple(part for part in str(suffix or "").strip().lstrip(".").split(".") if part)
+    if len(tokens) != count or not all(token.isdigit() and int(token) > 0 for token in tokens):
+        return None
+    return tokens
+
+
+def _entity_row(mapping: dict[str, Any], index: str) -> Any:
+    return mapping.get(index, mapping.get(f"{index}.0"))
+
+
+def _status_up(value: Any) -> bool:
+    number = _number(value)
+    if number is not None:
+        return int(number) == 1
+    return str(value or "").strip().lower() in {"up", "active", "running", "ok"}
+
+
+def _entity_port_mapping(index: str, walks: dict[str, Any]) -> tuple[str, int] | None:
+    """Resolve a Cisco entity sensor to an IF-MIB port using LibreNMS' path."""
+    names = walks.get("entity_name", {})
+    descriptions = walks.get("entity_descr", {})
+    classes = walks.get("entity_class", {})
+    contained = walks.get("entity_contained_in", {})
+    aliases = walks.get("entity_alias", {})
+    if_names = walks.get("if_name", {})
+    if_descr = walks.get("if_descr", {})
+    reverse_names = {str(value).strip(): int(key) for key, value in if_names.items() if str(key).isdigit() and str(value).strip()}
+
+    current = str(index)
+    visited: set[str] = set()
+    while current and current not in visited:
+        visited.add(current)
+        entity_name = str(_entity_row(names, current) or "").strip()
+        entity_descr = str(_entity_row(descriptions, current) or "").strip()
+        for candidate in (entity_name, entity_descr):
+            if candidate in reverse_names:
+                if_index = reverse_names[candidate]
+                return str(if_names.get(str(if_index)) or if_descr.get(str(if_index)) or candidate), if_index
+
+        entity_class_value = _entity_row(classes, current)
+        entity_class = str(entity_class_value or "").strip().lower()
+        is_port = entity_class == "port" or (_number(entity_class_value) is not None and int(_number(entity_class_value) or 0) == 10)
+        if is_port:
+            alias_identifier = str(_entity_row(aliases, current) or "").strip().lstrip(".")
+            match = re.search(r"ifindex\.(\d+)", alias_identifier, re.IGNORECASE)
+            if match is None:
+                # puresnmp returns OBJECT IDENTIFIER values numerically while
+                # LibreNMS' MIB-aware walker renders the same RowPointer as
+                # ``ifIndex.<n>``. Accept only the IF-MIB ifIndex object OID.
+                match = re.fullmatch(r"1\.3\.6\.1\.2\.1\.2\.2\.1\.1\.(\d+)", alias_identifier)
+            if match and int(match.group(1)) > 0:
+                if_index = int(match.group(1))
+                name = str(if_names.get(str(if_index)) or if_descr.get(str(if_index)) or "").strip()
+                if name:
+                    return name, if_index
+
+        parent = str(contained.get(current) or "").strip().lstrip(".")
+        if not parent.isdigit() or int(parent) == 0:
+            break
+        current = parent
+    return None
+
+
+def _entity_fields(index: str, walks: dict[str, Any]) -> tuple[str, str, str]:
+    name = str(_entity_row(walks.get("entity_name", {}), index) or "").strip()
+    descr = str(_entity_row(walks.get("entity_descr", {}), index) or "").strip()
+    return name, descr, " ".join(part for part in (name, descr) if part)
+
+
+def _entity_if_mapping(index: str, walks: dict[str, Any]) -> tuple[str, int] | None:
+    """Match an entity label to a real IF-MIB ifName without guessing."""
+    name, descr, text = _entity_fields(index, walks)
+    if_names = walks.get("if_name", {})
+    candidates = [(str(value).strip(), int(key)) for key, value in if_names.items() if str(key).isdigit() and str(value).strip()]
+    for if_name, if_index in candidates:
+        if text == if_name or name == if_name or descr == if_name:
+            return if_name, if_index
+    matches = [item for item in candidates if re.search(rf"(?<![\w/.-]){re.escape(item[0])}(?![\w/.-])", text)]
+    if len(matches) == 1:
+        return matches[0]
+    return None
+
+
+def _entity_sensor_status_is_valid(index: str, walks: dict[str, Any]) -> bool:
+    status = walks.get("entity_sensor_status", {}).get(index)
+    if status is None:
+        return False
+    normalized = str(status).strip().lower()
+    # ENTITY-SENSOR-MIB uses valid(1), unavailable(2), nonoperational(3),
+    # notPresent(4), and uninitialized(5). Unknown values fail closed.
+    return normalized in {"1", "ok", "valid", "normal", "true"}
+
+
+def _entity_sensor_type(value: Any, *, cisco: bool) -> str:
+    normalized = str(value or "").strip().lower()
+    number = _number(value)
+    if number is not None:
+        code = int(number)
+        if cisco and code == 14:
+            return "dbm"
+        return {1: "other", 2: "unknown", 6: "watts"}.get(code, normalized)
+    return normalized
+
+
+def _cisco_entity_value(index: str, value: float, walks: dict[str, Any]) -> float | None:
+    scale = str(walks.get("entity_sensor_scale", {}).get(index) or "units").strip().lower()
+    scale_divisors = {
+        "yocto": 10**24, "zepto": 10**21, "atto": 10**18,
+        "femto": 10**15, "pico": 10**12, "nano": 10**9,
+        "micro": 10**6, "milli": 1000, "units": 1,
+        "kilo": 1 / 1000, "mega": 1 / 1000000, "giga": 1 / 1000000000,
+        "tera": 1 / 10**12, "exa": 1 / 10**15, "peta": 1 / 10**18,
+        "zetta": 1 / 10**21, "yotta": 1 / 10**24,
+    }
+    scale_codes = {
+        1: "yocto", 2: "zepto", 3: "atto", 4: "femto", 5: "pico",
+        6: "nano", 7: "micro", 8: "milli", 9: "units", 10: "kilo",
+        11: "mega", 12: "giga", 13: "tera", 14: "exa", 15: "peta",
+        16: "zetta", 17: "yotta",
+    }
+    scale_number = _number(scale)
+    if scale_number is not None and scale_number.is_integer():
+        scale = scale_codes.get(int(scale_number), "")
+    divisor = scale_divisors.get(scale)
+    if divisor is None:
+        return None
+    precision = _number(walks.get("entity_sensor_precision", {}).get(index))
+    if precision is not None and precision > 0 and precision != 1615384784:
+        if not precision.is_integer() or precision > 18:
+            return None
+        divisor *= 10**int(precision)
+    result = value / divisor
+    return result if math.isfinite(result) else None
+
+
 def _records(vendor: str, kind: str, profile: dict[str, Any], walks: dict[str, Any], collected_at: str) -> list[dict[str, Any]]:
+    if kind in {"cisco_entity_sensor", "arista_entity_sensor"}:
+        records: list[dict[str, Any]] = []
+        values = walks.get("entity_sensor_value", {})
+        types = walks.get("entity_sensor_type", {})
+        for index, raw in values.items():
+            index = str(index)
+            number = _number(raw)
+            if number is None or not _entity_sensor_status_is_valid(index, walks):
+                continue
+            entity_name, entity_descr, description = _entity_fields(index, walks)
+            if kind == "cisco_entity_sensor":
+                if _entity_sensor_type(types.get(index), cisco=True) != "dbm":
+                    continue
+                if number == -127:
+                    continue
+                number = _cisco_entity_value(index, number, walks)
+                if number is None:
+                    continue
+                mapping = _entity_port_mapping(index, walks)
+                if mapping is None:
+                    # A dBm entity is useful only when it can be tied to a
+                    # real port.  Do not invent interface or ifIndex fields.
+                    continue
+                interface, if_index = mapping
+                record: dict[str, Any] = {
+                    "interface": interface,
+                    "ifIndex": if_index,
+                    "vendor": vendor,
+                    "rx_power_dbm": number if re.search(r"\b(?:rx|receive)\b", description, re.IGNORECASE) else None,
+                    "tx_power_dbm": number if re.search(r"\b(?:tx|transmit)\b", description, re.IGNORECASE) else None,
+                    "collected_at": collected_at,
+                    "source": "snmp",
+                }
+                record = {key: value for key, value in record.items() if value is not None}
+                if "rx_power_dbm" not in record and "tx_power_dbm" not in record:
+                    continue
+                records.append(record)
+                continue
+
+            direction = re.search(r"\bDOM\s+(Rx|Tx)\s+Power\b", description, re.IGNORECASE)
+            sensor_type = _entity_sensor_type(types.get(index), cisco=False)
+            if not direction or sensor_type not in {"other", "power", "watt", "watts"} or number <= 0:
+                continue
+            mapping = _entity_if_mapping(index, walks)
+            if mapping is None:
+                continue
+            dbm = 10 * math.log10(number / 10000)
+            if not math.isfinite(dbm):
+                continue
+            records.append({
+                "interface": mapping[0],
+                "ifIndex": mapping[1],
+                "vendor": vendor,
+                "rx_power_dbm" if direction.group(1).lower() == "rx" else "tx_power_dbm": round(dbm, 3),
+                "collected_at": collected_at,
+                "source": "snmp",
+            })
+        return records
+
+    if kind == "nokia_1830":
+        values: dict[int, dict[str, float]] = {}
+        for field, (_oid, scale) in profile.get("metrics", {}).items():
+            for suffix, raw in walks.get(field, {}).items():
+                parts = _exact_tokens(suffix, 1)
+                number = _number(raw)
+                if parts is None or number is None or number == 0:
+                    continue
+                if_index = parts[0]
+                if not _status_up(walks.get("admin_status", {}).get(if_index)):
+                    continue
+                values.setdefault(int(if_index), {})[field] = number / scale
+        records = []
+        for if_index, metrics in sorted(values.items()):
+            interface = walks.get("if_name", {}).get(str(if_index)) or walks.get("if_descr", {}).get(str(if_index))
+            if not interface:
+                interface = f"ifIndex{if_index}"
+            records.append({
+                "interface": str(interface),
+                "ifIndex": if_index,
+                "vendor": vendor,
+                **metrics,
+                "collected_at": collected_at,
+                "source": "snmp",
+            })
+        return records
+
     names = walks.get("entity_name", {}) if kind == "huawei_vrp" else walks.get("if_name", {})
     descriptions = {} if kind == "huawei_vrp" else walks.get("if_descr", {})
     values: dict[int, dict[str, float]] = {}
