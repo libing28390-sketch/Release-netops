@@ -179,6 +179,33 @@ export const useAutomation = ({
   const formatQuickQueryRawOutput = useCallback((payload: any) => {
     const category = Array.isArray(payload?.categories) ? payload.categories[0] : null;
     if (!category) return language === 'zh' ? '没有返回可展示的数据。' : 'No displayable data returned.';
+    if (category?.source === 'snmp') {
+      if (category?.error_code === 'UNSUPPORTED_VENDOR') {
+        return language === 'zh'
+          ? '该厂商或平台尚无经过核实的 SNMP 光模块定义，已跳过采集。'
+          : 'No verified SNMP optical definition exists for this vendor or platform; collection was skipped.';
+      }
+      if (category?.error_code === 'SNMP_CREDENTIALS_MISSING') {
+        return language === 'zh'
+          ? '未配置可用的 SNMP 凭据，无法读取光模块数据。'
+          : 'SNMP credentials are not configured, so optical data could not be read.';
+      }
+      if (!category?.success) {
+        const detail = String(category?.error || '').trim();
+        return language === 'zh'
+          ? `SNMP 光模块采集失败${detail ? `：${detail}` : '。'}`
+          : `SNMP optical collection failed${detail ? `: ${detail}` : '.'}`;
+      }
+      const count = Number(category?.count || category?.records?.length || 0);
+      if (count > 0) {
+        return language === 'zh'
+          ? `SNMP 光模块采集完成，读取到 ${count} 条接口数据。`
+          : `SNMP optical collection completed with ${count} interface records.`;
+      }
+      return language === 'zh'
+        ? 'SNMP 查询已完成，但设备没有返回可用的光模块诊断数据。'
+        : 'SNMP query completed, but the device returned no usable optical diagnostics.';
+    }
     if (category?.error) return `Error: ${category.error}`;
     const rawOutputs = Array.isArray(category?.raw_outputs) ? category.raw_outputs : [];
     if (rawOutputs.length > 0) {
@@ -1129,6 +1156,9 @@ export const useAutomation = ({
       let backendCmds: string[] = [];
       let backendParseStatus = 'unmatched';
       let backendParser = '';
+      let backendSource = '';
+      let backendAdapter: any = null;
+      const backendErrors: Array<{ code?: string; message: string }> = [];
 
       results.forEach((res) => {
         if (!res.ok) {
@@ -1142,6 +1172,18 @@ export const useAutomation = ({
           }
           if (firstCat.parse_status) {
             backendParseStatus = firstCat.parse_status;
+          }
+          if (firstCat.source) {
+            backendSource = String(firstCat.source);
+          }
+          if (firstCat.adapter) {
+            backendAdapter = firstCat.adapter;
+          }
+          if (firstCat.error || firstCat.error_code) {
+            backendErrors.push({
+              code: firstCat.error_code ? String(firstCat.error_code) : undefined,
+              message: String(firstCat.error || ''),
+            });
           }
           if (Array.isArray(firstCat.commands) && firstCat.commands.length > 0) {
             backendCmds = [...backendCmds, ...firstCat.commands];
@@ -1177,6 +1219,11 @@ export const useAutomation = ({
             count: combinedRecords.length,
             records: combinedRecords,
             parse_status: backendParseStatus,
+            source: backendSource || undefined,
+            adapter: backendAdapter || undefined,
+            errors: backendErrors,
+            error_code: backendErrors[0]?.code,
+            error: backendErrors[0]?.message || undefined,
           },
         ],
       };

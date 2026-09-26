@@ -63,7 +63,7 @@ ACTION_DEFINITIONS: tuple[dict[str, Any], ...] = (
     {"action_code": "get_ospf_neighbors", "name_zh": "OSPF邻居", "name_en": "OSPF Neighbors", "purpose": "OSPF 邻居采集", "risk": "low", "consumers": ["inspection"], "fields": ["neighbor", "state", "interface"], "max_records": 1000},
     {"action_code": "get_isis_neighbors", "name_zh": "ISIS邻居", "name_en": "ISIS Neighbors", "purpose": "ISIS 邻居采集", "risk": "low", "consumers": ["topology", "inspection"], "fields": ["neighbor", "state", "interface", "system_id", "level"], "max_records": 1000},
     {"action_code": "get_stp", "name_zh": "STP状态", "name_en": "STP Status", "purpose": "二层生成树状态采集", "risk": "low", "consumers": ["topology", "inspection"], "fields": ["interface", "state", "role", "instance", "designated_bridge"], "max_records": 5000},
-    {"action_code": "get_transceivers", "name_zh": "光模块状态", "name_en": "Transceiver Status", "purpose": "光模块采集", "risk": "low", "consumers": ["inspection"], "fields": ["interface", "vendor", "serial"], "max_records": 2000},
+    {"action_code": "get_transceivers", "name_zh": "光模块状态", "name_en": "Transceiver Status", "purpose": "光模块采集", "risk": "low", "consumers": ["inspection"], "fields": ["interface"], "optional_fields": ["vendor", "serial", "ifIndex", "entityIndex", "rx_power_dbm", "tx_power_dbm", "temperature_c", "voltage_v", "bias_ma"], "field_types": {"interface": "string", "vendor": "string", "serial": "string", "ifIndex": "integer", "entityIndex": "integer", "rx_power_dbm": "number", "tx_power_dbm": "number", "temperature_c": "number", "voltage_v": "number", "bias_ma": "number"}, "max_records": 2000},
     {"action_code": "get_cpu", "name_zh": "CPU状态", "name_en": "CPU Status", "purpose": "CPU 健康度", "risk": "low", "consumers": ["inspection", "monitoring"], "fields": ["usage"], "max_records": 32},
     {"action_code": "get_memory", "name_zh": "内存状态", "name_en": "Memory Status", "purpose": "内存健康度", "risk": "low", "consumers": ["inspection", "monitoring"], "fields": ["usage", "total"], "max_records": 32},
     {"action_code": "get_fans", "name_zh": "风扇状态", "name_en": "Fan Status", "purpose": "风扇健康度", "risk": "low", "consumers": ["inspection"], "fields": ["name", "status"], "max_records": 128},
@@ -268,17 +268,23 @@ def _with_platform_catalog_metadata(profile: dict[str, Any]) -> dict[str, Any]:
 # The commands are explicit data, never inferred from a requested vendor and
 # never allowed to silently fall back to Cisco.
 PLATFORM_ACTION_COMMANDS: dict[str, dict[str, str]] = {
-    "cisco_ios": {"get_version": "show version", "get_lldp_neighbors": "show lldp neighbors", "get_interface_brief": "show ip interface brief", "get_interfaces": "show interfaces", "get_ip_interfaces": "show ip interface", "get_link_aggregation": "show etherchannel summary", "get_arp_table": "show ip arp", "get_mac_table": "show mac address-table", "get_vlan_table": "show vlan brief", "get_route_table": "show ip route", "get_bgp_neighbors": "show ip bgp summary", "get_ospf_neighbors": "show ip ospf neighbor", "get_isis_neighbors": "show isis neighbors", "get_stp": "show spanning-tree", "get_transceivers": "show interfaces transceiver", "get_cpu": "show processes cpu", "get_memory": "show processes memory", "get_fans": "show environment fan", "get_power": "show environment power", "get_temperature": "show environment temperature", "get_clock": "show clock", "get_running_config": "show running-config", "get_startup_config": "show startup-config"},
-    "huawei_vrp": {"get_version": "display version", "get_lldp_neighbors": "display lldp neighbor brief", "get_interface_brief": "display interface brief", "get_interfaces": "display interface", "get_ip_interfaces": "display ip interface brief", "get_link_aggregation": "display eth-trunk", "get_arp_table": "display arp", "get_mac_table": "display mac-address", "get_vlan_table": "display vlan", "get_route_table": "display ip routing-table", "get_bgp_neighbors": "display bgp peer", "get_ospf_neighbors": "display ospf peer brief", "get_isis_neighbors": "display isis peer", "get_stp": "display stp brief", "get_transceivers": "display transceiver interface", "get_cpu": "display cpu-usage", "get_memory": "display memory-usage", "get_fans": "dis fan", "get_power": "display power", "get_temperature": "display temperature", "get_clock": "display clock", "get_running_config": "display current-configuration", "get_startup_config": "display saved-configuration"},
-    "h3c_comware": {"get_version": "display version", "get_lldp_neighbors": "display lldp neighbor-information list", "get_interface_brief": "display interface brief", "get_interfaces": "display interface", "get_ip_interfaces": "display ip interface brief", "get_link_aggregation": "display link-aggregation verbose", "get_bfd_sessions": "display bfd session", "get_ntp_status": "display ntp-service status", "get_logbuffer": "display logbuffer", "get_interface_description": "display interface brief description", "get_irf": "display irf", "get_uptime": "display version", "get_arp_table": "display arp all", "get_mac_table": "display mac-address", "get_vlan_table": "display vlan brief", "get_route_table": "display ip routing-table", "get_bgp_neighbors": "display bgp peer ipv4 unicast", "get_ospf_neighbors": "display ospf peer", "get_isis_neighbors": "display isis peer", "get_stp": "display stp brief", "get_transceivers": "display transceiver interface", "get_cpu": "display cpu-usage", "get_memory": "display memory", "get_fans": "display fan", "get_power": "display power", "get_temperature": "display environment", "get_clock": "display clock", "get_running_config": "display current-configuration", "get_startup_config": "display saved-configuration"},
+    "cisco_ios": {"get_version": "show version", "get_lldp_neighbors": "show lldp neighbors", "get_interface_brief": "show ip interface brief", "get_interfaces": "show interfaces", "get_ip_interfaces": "show ip interface", "get_link_aggregation": "show etherchannel summary", "get_arp_table": "show ip arp", "get_mac_table": "show mac address-table", "get_vlan_table": "show vlan brief", "get_route_table": "show ip route", "get_bgp_neighbors": "show ip bgp summary", "get_ospf_neighbors": "show ip ospf neighbor", "get_isis_neighbors": "show isis neighbors", "get_stp": "show spanning-tree", "get_cpu": "show processes cpu", "get_memory": "show processes memory", "get_fans": "show environment fan", "get_power": "show environment power", "get_temperature": "show environment temperature", "get_clock": "show clock", "get_running_config": "show running-config", "get_startup_config": "show startup-config"},
+    "huawei_vrp": {"get_version": "display version", "get_lldp_neighbors": "display lldp neighbor brief", "get_interface_brief": "display interface brief", "get_interfaces": "display interface", "get_ip_interfaces": "display ip interface brief", "get_link_aggregation": "display eth-trunk", "get_arp_table": "display arp", "get_mac_table": "display mac-address", "get_vlan_table": "display vlan", "get_route_table": "display ip routing-table", "get_bgp_neighbors": "display bgp peer", "get_ospf_neighbors": "display ospf peer brief", "get_isis_neighbors": "display isis peer", "get_stp": "display stp brief", "get_cpu": "display cpu-usage", "get_memory": "display memory-usage", "get_fans": "dis fan", "get_power": "display power", "get_temperature": "display temperature", "get_clock": "display clock", "get_running_config": "display current-configuration", "get_startup_config": "display saved-configuration"},
+    "h3c_comware": {"get_version": "display version", "get_lldp_neighbors": "display lldp neighbor-information list", "get_interface_brief": "display interface brief", "get_interfaces": "display interface", "get_ip_interfaces": "display ip interface brief", "get_link_aggregation": "display link-aggregation verbose", "get_bfd_sessions": "display bfd session", "get_ntp_status": "display ntp-service status", "get_logbuffer": "display logbuffer", "get_interface_description": "display interface brief description", "get_irf": "display irf", "get_uptime": "display version", "get_arp_table": "display arp all", "get_mac_table": "display mac-address", "get_vlan_table": "display vlan brief", "get_route_table": "display ip routing-table", "get_bgp_neighbors": "display bgp peer ipv4 unicast", "get_ospf_neighbors": "display ospf peer", "get_isis_neighbors": "display isis peer", "get_stp": "display stp brief", "get_cpu": "display cpu-usage", "get_memory": "display memory", "get_fans": "display fan", "get_power": "display power", "get_temperature": "display environment", "get_clock": "display clock", "get_running_config": "display current-configuration", "get_startup_config": "display saved-configuration"},
     "juniper_junos": {"get_version": "show version", "get_lldp_neighbors": "show lldp neighbors detail", "get_interfaces": "show interfaces detail", "get_interface_brief": "show interfaces terse", "get_ip_interfaces": "show interfaces terse", "get_route_table": "show route", "get_isis_neighbors": "show isis adjacency", "get_stp": "show spanning-tree bridge", "get_clock": "show system uptime", "get_running_config": "show configuration", "get_startup_config": "show configuration"},
-    "arista_eos": {"get_version": "show version", "get_lldp_neighbors": "show lldp neighbors detail", "get_interface_brief": "show ip interface brief", "get_interfaces": "show interfaces", "get_ip_interfaces": "show ip interface", "get_link_aggregation": "show port-channel summary", "get_arp_table": "show arp", "get_mac_table": "show mac address-table", "get_vlan_table": "show vlan", "get_route_table": "show ip route", "get_bgp_neighbors": "show ip bgp summary", "get_ospf_neighbors": "show ip ospf neighbor", "get_isis_neighbors": "show isis neighbors", "get_stp": "show spanning-tree", "get_transceivers": "show interfaces transceiver", "get_cpu": "show processes top once", "get_memory": "show version", "get_clock": "show clock", "get_running_config": "show running-config", "get_startup_config": "show startup-config"},
-    "ruijie_rgos": {"get_version": "show version", "get_lldp_neighbors": "show lldp neighbors", "get_interface_brief": "show interface brief", "get_interfaces": "show interfaces", "get_ip_interfaces": "show ip interface brief", "get_arp_table": "show arp", "get_mac_table": "show mac address-table", "get_vlan_table": "show vlan", "get_route_table": "show ip route", "get_bgp_neighbors": "show ip bgp neighbors", "get_ospf_neighbors": "show ip ospf neighbor", "get_isis_neighbors": "show isis neighbors", "get_stp": "show spanning-tree", "get_transceivers": "show interfaces transceiver", "get_cpu": "show cpu", "get_memory": "show memory", "get_fans": "show fan", "get_power": "show power", "get_temperature": "show temperature", "get_clock": "show clock", "get_running_config": "show running-config", "get_startup_config": "show startup-config"},
-    "zte_zxros": {"get_version": "show version", "get_lldp_neighbors": "show lldp neighbor", "get_interface_brief": "show interface brief", "get_ip_interfaces": "show ip interface brief", "get_arp_table": "show arp", "get_mac_table": "show mac table", "get_route_table": "show ip forwarding route", "get_bgp_neighbors": "show ip bgp neighbors", "get_ospf_neighbors": "show ip ospf neighbor", "get_isis_neighbors": "show isis neighbors", "get_stp": "show spanning-tree", "get_transceivers": "show opticalinfo brief", "get_fans": "show fan", "get_power": "show power", "get_temperature": "show temperature detail", "get_clock": "show clock", "get_running_config": "show running-config", "get_startup_config": "show startup-config"},
+    "arista_eos": {"get_version": "show version", "get_lldp_neighbors": "show lldp neighbors detail", "get_interface_brief": "show ip interface brief", "get_interfaces": "show interfaces", "get_ip_interfaces": "show ip interface", "get_link_aggregation": "show port-channel summary", "get_arp_table": "show arp", "get_mac_table": "show mac address-table", "get_vlan_table": "show vlan", "get_route_table": "show ip route", "get_bgp_neighbors": "show ip bgp summary", "get_ospf_neighbors": "show ip ospf neighbor", "get_isis_neighbors": "show isis neighbors", "get_stp": "show spanning-tree", "get_cpu": "show processes top once", "get_memory": "show version", "get_clock": "show clock", "get_running_config": "show running-config", "get_startup_config": "show startup-config"},
+    "ruijie_rgos": {"get_version": "show version", "get_lldp_neighbors": "show lldp neighbors", "get_interface_brief": "show interface brief", "get_interfaces": "show interfaces", "get_ip_interfaces": "show ip interface brief", "get_arp_table": "show arp", "get_mac_table": "show mac address-table", "get_vlan_table": "show vlan", "get_route_table": "show ip route", "get_bgp_neighbors": "show ip bgp neighbors", "get_ospf_neighbors": "show ip ospf neighbor", "get_isis_neighbors": "show isis neighbors", "get_stp": "show spanning-tree", "get_cpu": "show cpu", "get_memory": "show memory", "get_fans": "show fan", "get_power": "show power", "get_temperature": "show temperature", "get_clock": "show clock", "get_running_config": "show running-config", "get_startup_config": "show startup-config"},
+    "zte_zxros": {"get_version": "show version", "get_lldp_neighbors": "show lldp neighbor", "get_interface_brief": "show interface brief", "get_ip_interfaces": "show ip interface brief", "get_arp_table": "show arp", "get_mac_table": "show mac table", "get_route_table": "show ip forwarding route", "get_bgp_neighbors": "show ip bgp neighbors", "get_ospf_neighbors": "show ip ospf neighbor", "get_isis_neighbors": "show isis neighbors", "get_stp": "show spanning-tree", "get_fans": "show fan", "get_power": "show power", "get_temperature": "show temperature detail", "get_clock": "show clock", "get_running_config": "show running-config", "get_startup_config": "show startup-config"},
     "raisecom_ros": {"get_version": "show version", "get_lldp_neighbors": "show lldp remote", "get_interface_brief": "show interface brief", "get_interfaces": "show interface", "get_ip_interfaces": "show ip interface brief", "get_arp_table": "show arp", "get_vlan_table": "show vlan", "get_route_table": "show ip route", "get_stp": "show spanning-tree", "get_clock": "show clock", "get_running_config": "show running-config", "get_startup_config": "show startup-config"},
     "dptech_ios": {"get_version": "show version", "get_lldp_neighbors": "show lldp neighbors", "get_interface_brief": "show interface status", "get_ip_interfaces": "show ip interface brief", "get_arp_table": "show arp all", "get_mac_table": "show mac-address-table", "get_vlan_table": "show vlan", "get_route_table": "show ip route", "get_stp": "show spanning-tree", "get_cpu": "show cpu-usage", "get_memory": "show memory", "get_temperature": "show environment", "get_ntp_status": "show ntp status", "get_bfd_sessions": "show bfd session", "get_logbuffer": "show logging operlog recent", "get_interface_description": "show ip interface brief", "get_clock": "show clock", "get_uptime": "show version", "get_running_config": "display current-configuration", "get_startup_config": "display saved-configuration"},
-    "maipu": {"get_version": "show version", "get_lldp_neighbors": "show lldp neighbors", "get_interface_brief": "show interface brief", "get_ip_interfaces": "show ip interface brief", "get_arp_table": "show arp", "get_mac_table": "show mac address all", "get_vlan_table": "show vlan", "get_route_table": "show ip route", "get_bgp_neighbors": "show ip bgp summary", "get_ospf_neighbors": "show ip ospf neighbor", "get_isis_neighbors": "show isis neighbors", "get_stp": "show spanning-tree", "get_transceivers": "show optical all", "get_cpu": "show cpu monitor", "get_memory": "show memory utilization", "get_fans": "show system fan", "get_power": "show system power", "get_clock": "show clock", "get_running_config": "show running-config", "get_startup_config": "show startup-config"},
+    "maipu": {"get_version": "show version", "get_lldp_neighbors": "show lldp neighbors", "get_interface_brief": "show interface brief", "get_ip_interfaces": "show ip interface brief", "get_arp_table": "show arp", "get_mac_table": "show mac address all", "get_vlan_table": "show vlan", "get_route_table": "show ip route", "get_bgp_neighbors": "show ip bgp summary", "get_ospf_neighbors": "show ip ospf neighbor", "get_isis_neighbors": "show isis neighbors", "get_stp": "show spanning-tree", "get_cpu": "show cpu monitor", "get_memory": "show memory utilization", "get_fans": "show system fan", "get_power": "show system power", "get_clock": "show clock", "get_running_config": "show running-config", "get_startup_config": "show startup-config"},
 }
+
+# Optical DOM is collected through confirmed vendor MIBs. Do not seed or
+# publish legacy CLI commands for this action; execution is intercepted by
+# the SNMP-only collector below.
+for _action_commands in PLATFORM_ACTION_COMMANDS.values():
+    _action_commands.pop("get_transceivers", None)
 
 PLATFORM_ACTION_COMMANDS["cisco_ios"].update({
     "get_route_table_vrf": "show ip route vrf {{vrf}}",
@@ -475,6 +481,23 @@ def redact_raw_output(output: str) -> str:
 def normalize_platform_code(value: str) -> str:
     code = str(value or "").strip().lower()
     return PLATFORM_ALIASES.get(code, code)
+
+
+def platform_vendors_match(device_vendor: Any, profile_vendor: Any) -> bool:
+    """Reject a Profile bound to a different explicit inventory vendor."""
+    device_value = str(device_vendor or "").strip()
+    if not device_value or device_value.lower() == "other":
+        return True
+    profile_value = str(profile_vendor or "").strip()
+    if not profile_value:
+        return False
+    from services.config_vendor_platform_service import canonical_vendor
+
+    def normalized(value: str) -> str:
+        canonical = canonical_vendor(value)
+        return re.sub(r"[^a-z0-9\u4e00-\u9fff]+", "", canonical.lower())
+
+    return normalized(device_value) == normalized(profile_value)
 
 
 def platform_codes_match(device_platform: Any, profile_platform: Any, parser_platform: Any = None) -> bool:
@@ -1321,7 +1344,7 @@ def preview_platform_action(
     conn = get_db_connection()
     try:
         row = conn.execute(
-            """SELECT d.*, p.id AS profile_id, p.platform_code, p.connection_driver, p.parser_platform, p.current_release_id,
+            """SELECT d.*, p.id AS profile_id, p.vendor AS profile_vendor, p.platform_code, p.connection_driver, p.parser_platform, p.current_release_id,
                       r.release_number, r.checksum AS release_checksum, a.command, a.command_checksum,
                       def.sensitive_level
                FROM devices d
@@ -1350,6 +1373,22 @@ def preview_platform_action(
             device_group_id=device.get("device_group_id"),
         ):
             raise PlatformRegistryError("DEVICE_SCOPE_DENIED", "Device is outside the current resource scope", status_code=403)
+        if action_code == "get_transceivers":
+            # Older published releases store a CLI command for this action;
+            # optical data is now explicitly an SNMP-only operation.
+            return {
+                "success": True,
+                "action_code": action_code,
+                "command": None,
+                "execution_mode": "snmp",
+                "message": "Optical module data is collected through SNMP.",
+            }
+        if not platform_vendors_match(device.get("vendor"), device.get("profile_vendor")):
+            raise PlatformRegistryError(
+                "PLATFORM_VENDOR_MISMATCH",
+                "Device vendor does not match its bound platform Profile",
+                status_code=409,
+            )
         if not platform_codes_match(device.get("platform"), device.get("platform_code"), device.get("parser_platform")):
             raise PlatformRegistryError(
                 "PLATFORM_PROFILE_MISMATCH",
@@ -1853,6 +1892,38 @@ def _parser_label(template: Any) -> str:
     return "platform-parser"
 
 
+def _collect_optical_snmp_action(device: dict[str, Any], *, max_records: int = 2000) -> dict[str, Any]:
+    """Execute the built-in transceiver action through SNMP only."""
+    from services.snmp_optical_service import collect_optical_snmp
+
+    collected = collect_optical_snmp(device)
+    records = (collected.get("records") or [])[:max(1, min(2000, int(max_records or 2000)))]
+    error_code = str(collected.get("error_code") or "")
+    success = bool(collected.get("success"))
+    response = {
+        "success": success,
+        "action_code": "get_transceivers",
+        "command": None,
+        "source": "snmp",
+        "adapter": collected.get("adapter") or {},
+        "parser": "snmp-optical",
+        "parse_status": (
+            "matched" if success and records
+            else "no_data" if success
+            else "unsupported_by_platform" if error_code == "UNSUPPORTED_VENDOR"
+            else "failed"
+        ),
+        "records": records,
+        "count": len(records),
+        "raw_output": None,
+    }
+    if error_code:
+        response["error_code"] = error_code
+    if collected.get("error"):
+        response["error"] = collected["error"]
+    return response
+
+
 def execute_platform_action(
     device_id: str,
     action_code: str,
@@ -1882,17 +1953,18 @@ def execute_platform_action(
             conn.rollback()
             logger.warning("Failed to persist platform action telemetry", exc_info=True)
         try:
-            conn.execute(
-                "INSERT INTO platform_release_audit_logs (id, release_id, event_type, actor_id, actor_username, metadata_json, created_at) VALUES (?, ?, ?, ?, ?, ?, ?)",
-                (str(uuid.uuid4()), str(metadata.get("platform_release_id") or ""), event_type, user.get("id"), user.get("username"), _json(metadata), _now()),
-            )
+            if metadata.get("platform_release_id"):
+                conn.execute(
+                    "INSERT INTO platform_release_audit_logs (id, release_id, event_type, actor_id, actor_username, metadata_json, created_at) VALUES (?, ?, ?, ?, ?, ?, ?)",
+                    (str(uuid.uuid4()), str(metadata["platform_release_id"]), event_type, user.get("id"), user.get("username"), _json(metadata), _now()),
+                )
             conn.commit()
         except Exception:
             conn.rollback()
             logger.warning("Failed to write platform action audit", exc_info=True)
     try:
         row = conn.execute(
-            """SELECT d.*, p.id AS profile_id, p.platform_code, p.connection_driver, p.parser_platform, p.current_release_id, r.checksum AS release_checksum,
+            """SELECT d.*, p.id AS profile_id, p.vendor AS profile_vendor, p.platform_code, p.connection_driver, p.parser_platform, p.current_release_id, r.checksum AS release_checksum,
                       r.release_number, a.command, a.field_contract_json, a.command_checksum,
                       a.parser_template_version_id,
                       def.required_fields_json, def.optional_fields_json, def.field_types_json,
@@ -1921,6 +1993,39 @@ def execute_platform_action(
             device_group_id=device.get("device_group_id"),
         ):
             raise PlatformRegistryError("DEVICE_SCOPE_DENIED", "Device is outside the current resource scope", status_code=403)
+        if device.get("sensitive_level") == "sensitive" and user.get("role") != "Administrator":
+            raise PlatformRegistryError("SENSITIVE_ACTION_FORBIDDEN", f"{action_code} requires Administrator permission", status_code=403)
+        if action_code == "get_transceivers":
+            # Optical DOM is a vendor MIB read and must not depend on a
+            # published CLI release or dispatch a legacy transceiver command.
+            response = _collect_optical_snmp_action(device, max_records=device.get("max_records") or 2000)
+            response.update({
+                "platform_release_id": device.get("current_release_id"),
+                "release_number": device.get("release_number"),
+                "release_checksum": device.get("release_checksum"),
+            })
+            _audit(
+                "ACTION_EXECUTED",
+                {
+                    "platform_release_id": device.get("current_release_id"),
+                    "device_id": device_id,
+                    "action_code": action_code,
+                    "success": response["success"],
+                    "record_count": response["count"],
+                    "parse_status": response["parse_status"],
+                    "parser": response["parser"],
+                    "source": "snmp",
+                    "error_code": response.get("error_code"),
+                    "command": None,
+                },
+            )
+            return response
+        if not platform_vendors_match(device.get("vendor"), device.get("profile_vendor")):
+            raise PlatformRegistryError(
+                "PLATFORM_VENDOR_MISMATCH",
+                "Device vendor does not match its bound platform Profile",
+                status_code=409,
+            )
         if not platform_codes_match(device.get("platform"), device.get("platform_code"), device.get("parser_platform")):
             raise PlatformRegistryError(
                 "PLATFORM_PROFILE_MISMATCH",
@@ -1931,8 +2036,6 @@ def execute_platform_action(
             raise PlatformRegistryError("NO_PUBLISHED_RELEASE", "Device has no published platform release")
         if not device.get("command"):
             raise PlatformRegistryError("UNSUPPORTED_ACTION", "The current platform release does not map this action")
-        if device.get("sensitive_level") == "sensitive" and user.get("role") != "Administrator":
-            raise PlatformRegistryError("SENSITIVE_ACTION_FORBIDDEN", "get_running_config requires Administrator permission", status_code=403)
         _validate_action_parameter_contract(action_code, device["command"])
         resolved_command = _render_action_command(device["command"], parameters)
         if not is_safe_read_command(resolved_command, device.get("connection_driver") or ""):

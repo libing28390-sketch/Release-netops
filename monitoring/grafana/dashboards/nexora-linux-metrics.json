@@ -390,14 +390,10 @@
       },
       "options": {
         "legend": {
-          "displayMode": "table",
-          "placement": "right",
+          "displayMode": "list",
+          "placement": "bottom",
           "showLegend": true,
-          "calcs": [
-            "lastNotNull",
-            "max",
-            "mean"
-          ]
+          "calcs": []
         },
         "tooltip": {
           "mode": "multi",
@@ -461,14 +457,10 @@
       },
       "options": {
         "legend": {
-          "displayMode": "table",
-          "placement": "right",
+          "displayMode": "list",
+          "placement": "bottom",
           "showLegend": true,
-          "calcs": [
-            "lastNotNull",
-            "max",
-            "mean"
-          ]
+          "calcs": []
         },
         "tooltip": {
           "mode": "multi",
@@ -537,14 +529,10 @@
       },
       "options": {
         "legend": {
-          "displayMode": "table",
-          "placement": "right",
+          "displayMode": "list",
+          "placement": "bottom",
           "showLegend": true,
-          "calcs": [
-            "lastNotNull",
-            "max",
-            "mean"
-          ]
+          "calcs": []
         },
         "tooltip": {
           "mode": "multi",
@@ -608,14 +596,10 @@
       },
       "options": {
         "legend": {
-          "displayMode": "table",
-          "placement": "right",
+          "displayMode": "list",
+          "placement": "bottom",
           "showLegend": true,
-          "calcs": [
-            "lastNotNull",
-            "max",
-            "mean"
-          ]
+          "calcs": []
         },
         "tooltip": {
           "mode": "multi",
@@ -784,14 +768,10 @@
       },
       "options": {
         "legend": {
-          "displayMode": "table",
-          "placement": "right",
+          "displayMode": "list",
+          "placement": "bottom",
           "showLegend": true,
-          "calcs": [
-            "lastNotNull",
-            "max",
-            "mean"
-          ]
+          "calcs": []
         },
         "tooltip": {
           "mode": "multi",
@@ -959,14 +939,10 @@
       },
       "options": {
         "legend": {
-          "displayMode": "table",
-          "placement": "right",
+          "displayMode": "list",
+          "placement": "bottom",
           "showLegend": true,
-          "calcs": [
-            "lastNotNull",
-            "max",
-            "mean"
-          ]
+          "calcs": []
         },
         "tooltip": {
           "mode": "multi",

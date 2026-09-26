@@ -255,22 +255,60 @@ async def _execute_registry_actions(
     for step in action_steps:
         action_code = step["action_code"]
         try:
-            result = await asyncio.to_thread(
-                preview_platform_action if dry_run else execute_platform_action,
-                str(device["id"]),
-                action_code,
-                user=user,
-                parameters=step.get("parameters") or {},
-            )
+            if action_code == "get_transceivers":
+                if dry_run:
+                    result = {
+                        "success": True,
+                        "command": None,
+                        "source": "snmp",
+                        "parse_status": "preview",
+                        "records": [],
+                    }
+                else:
+                    from services.operational_data_service import collect_operational_data
+
+                    operational = await asyncio.to_thread(
+                        collect_operational_data,
+                        device,
+                        categories=["transceiver"],
+                        auth_role="normal",
+                        policy_override_categories={"transceiver"},
+                    )
+                    category = next(
+                        (item for item in operational.get("categories", []) if item.get("key") == "transceiver"),
+                        {},
+                    )
+                    result = {
+                        "success": bool(category.get("success")),
+                        "command": None,
+                        "source": category.get("source") or "snmp",
+                        "adapter": category.get("adapter") or {},
+                        "parse_status": category.get("parse_status"),
+                        "records": category.get("records") or [],
+                        "error_code": category.get("error_code"),
+                        "error": category.get("error"),
+                    }
+            else:
+                result = await asyncio.to_thread(
+                    preview_platform_action if dry_run else execute_platform_action,
+                    str(device["id"]),
+                    action_code,
+                    user=user,
+                    parameters=step.get("parameters") or {},
+                )
             item = {
                 "action_code": action_code,
                 "success": bool(result.get("success")),
                 "command": result.get("command"),
+                "source": result.get("source"),
+                "adapter": result.get("adapter"),
+                "parse_status": result.get("parse_status"),
                 "command_checksum": result.get("command_checksum"),
                 "resolved_command_checksum": result.get("resolved_command_checksum"),
                 "platform_release_id": result.get("platform_release_id"),
                 "release_checksum": result.get("release_checksum"),
                 "records": result.get("records") or [],
+                "count": len(result.get("records") or []),
                 "error_code": result.get("error_code"),
                 "error": result.get("error"),
             }

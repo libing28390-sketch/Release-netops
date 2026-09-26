@@ -7,7 +7,7 @@ import pytest
 
 import services.operational_data_service as operational_service
 from core.textfsm import list_template_suggestions, smart_parse_cli
-from services.operational_data_service import NTC_PLATFORM_MAP, _resolve_commands
+from services.operational_data_service import COMMAND_CATALOG, NTC_PLATFORM_MAP, _resolve_commands
 from services.network_access_limiter import NetworkAccessLimiter
 
 
@@ -77,6 +77,10 @@ def test_every_official_h3c_and_cisco_fixture_has_a_working_parser(metadata_path
 
 
 def test_platform_catalog_keeps_h3c_and_cisco_command_families_separate():
+    assert all("transceiver" not in commands for commands in COMMAND_CATALOG.values())
+    assert _resolve_commands("cisco_ios", ["transceiver"]) == {"transceiver": []}
+    assert _resolve_commands("h3c_comware", ["transceiver"]) == {"transceiver": []}
+
     assert _resolve_commands("h3c_comware_v3", ["bgp", "bgp_routes"]) == {
         "bgp": ["display bgp peer"],
         "bgp_routes": ["display bgp routing-table"],
@@ -112,20 +116,18 @@ def test_platform_catalog_keeps_h3c_and_cisco_command_families_separate():
         "bfd": ["show bfd neighbors details"],
         "ntp": ["show ntp status"],
         "environment": ["show environment temperature"],
-        "transceiver": ["show interfaces transceiver"],
     }
     assert _resolve_commands("cisco_ios", list(ios_expected)) == ios_expected
     assert _resolve_commands("cisco_xe", list(ios_expected)) == ios_expected
     assert _resolve_commands(
         "cisco_nxos",
-        ["bgp", "bgp_routes", "bfd", "ntp", "environment", "transceiver", "logs"],
+        ["bgp", "bgp_routes", "bfd", "ntp", "environment", "logs"],
     ) == {
         "bgp": ["show ip bgp summary"],
         "bgp_routes": ["show ip bgp"],
         "bfd": ["show bfd neighbors"],
         "ntp": ["show ntp peer-status"],
         "environment": ["show environment"],
-        "transceiver": ["show interface transceiver"],
         "logs": ["show logging last 30"],
     }
 
@@ -652,29 +654,16 @@ def test_comware7_real_world_bfd_down_session_is_structured(platform):
                     "show_environment_temperature",
                     "iosxe_c9300",
                 ),
-                "transceiver": (
-                    "cisco",
-                    "cisco_ios",
-                    "show_interfaces_transceiver",
-                    "ios_asr",
-                ),
             },
             {
                 "ntp": ["show ntp status"],
                 "environment": ["show environment temperature"],
-                "transceiver": ["show interfaces transceiver"],
             },
         ),
         (
             "cisco_nxos",
             {
                 "ntp": ("cisco", "cisco_nxos", "show_ntp_peer_status", "nexus7000"),
-                "transceiver": (
-                    "cisco",
-                    "cisco_nxos",
-                    "show_interface_transceiver",
-                    "nexus3000",
-                ),
                 "logs": (
                     "cisco",
                     "cisco_nxos",
@@ -684,7 +673,6 @@ def test_comware7_real_world_bfd_down_session_is_structured(platform):
             },
             {
                 "ntp": ["show ntp peer-status"],
-                "transceiver": ["show interface transceiver"],
                 "logs": ["show logging last 30"],
             },
         ),

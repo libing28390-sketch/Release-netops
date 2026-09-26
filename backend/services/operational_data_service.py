@@ -502,7 +502,6 @@ COMMAND_CATALOG: dict[str, dict[str, list[str]]] = {
         'bgp_routes': ['show ip bgp'],
         'ntp': ['show ntp status'],
         'environment': ['show environment temperature'],
-        'transceiver': ['show interfaces transceiver'],
         'version': ['show version'],
         'logs': ['show logging'],
         'interface_description': ['show interfaces description'],
@@ -540,7 +539,6 @@ COMMAND_CATALOG: dict[str, dict[str, list[str]]] = {
         'bgp_routes': ['show ip bgp'],
         'ntp': ['show ntp peer-status'],
         'environment': ['show environment'],
-        'transceiver': ['show interface transceiver'],
         'version': ['show version'],
         'logs': ['show logging last 30'],
         'interface_description': ['show interface description'],
@@ -608,7 +606,6 @@ COMMAND_CATALOG: dict[str, dict[str, list[str]]] = {
         'fan': ['dis fan'],
         'power': ['display power'],
         'stack': ['display stack'],
-        'transceiver': ['display transceiver interface'],
         'eth_trunk': ['display eth-trunk'],
         'version': ['display version'],
         'logs': ['display logbuffer last 30'],
@@ -633,7 +630,6 @@ COMMAND_CATALOG: dict[str, dict[str, list[str]]] = {
         'fan': ['display fan'],
         'power': ['display power'],
         'stack': ['display stack'],
-        'transceiver': ['display transceiver interface'],
         'eth_trunk': ['display eth-trunk'],
         'version': ['display version'],
         'logs': ['display logbuffer last 30'],
@@ -658,7 +654,6 @@ COMMAND_CATALOG: dict[str, dict[str, list[str]]] = {
         'fan': ['display fan'],
         'power': ['display power'],
         'stack': ['display irf'],
-        'transceiver': ['display transceiver interface'],
         'eth_trunk': ['display link-aggregation verbose'],
         'version': ['display version'],
         'logs': ['display logbuffer'],
@@ -686,7 +681,6 @@ COMMAND_CATALOG: dict[str, dict[str, list[str]]] = {
         'fan': ['display fan'],
         'power': ['display power'],
         'stack': ['display irf'],
-        'transceiver': ['display transceiver interface'],
         'eth_trunk': ['display link-aggregation verbose'],
         'version': ['display version'],
         'logs': ['display logbuffer'],
@@ -711,7 +705,6 @@ COMMAND_CATALOG: dict[str, dict[str, list[str]]] = {
         'fan': ['display fan'],
         'power': ['display power'],
         'stack': ['display irf'],
-        'transceiver': ['display transceiver interface'],
         'eth_trunk': ['display link-aggregation verbose'],
         'version': ['display version'],
         'logs': ['display logbuffer'],
@@ -726,7 +719,6 @@ COMMAND_CATALOG: dict[str, dict[str, list[str]]] = {
         'routing_table': ['show ip route'],
         'bgp':['show ip bgp neighbors'],
         'ospf':['show ip ospf neighbor'],
-        'transceiver': ['show interfaces transceiver'],
         'environment': ['show temperature'],
         'bfd': ['show bfd neighbors'],
         'fan': ['show fan'],
@@ -750,7 +742,6 @@ COMMAND_CATALOG: dict[str, dict[str, list[str]]] = {
         'ospf': ['show ip ospf neighbor'],
         'bgp': ['show ip bgp neighbors'],
         'ntp': ['show ntp status'],
-        'transceiver': ['show opticalinfo brief'],
         'environment': ['show temperature detail'],
         'fan': ['show fan'],
         'power': ['show power'],
@@ -767,7 +758,6 @@ COMMAND_CATALOG: dict[str, dict[str, list[str]]] = {
         'mac_table': ['show mac-address all'],
         'vlan': ['show vlan'],
         'routing_table': ['show ip route'],
-        'transceiver': ['show optical all'],
         'environment': ['show environment'],
         'fan': ['show system fan'],
         'power': ['show system power'],
@@ -902,6 +892,12 @@ def _resolve_commands(platform: str, categories: list[str]) -> dict[str, list[st
     }
     resolved: dict[str, list[str]] = {}
     for category in categories:
+        if category == 'transceiver':
+            # Older persisted platform releases may still contain a CLI
+            # action. Optical DOM is SNMP-only; never return that command to
+            # a caller, even when a stale published release is present.
+            resolved[category] = []
+            continue
         action_code = action_by_category.get(category)
         if action_code and known_system_profile and registry_available and registry_profile_exists:
             try:
@@ -1351,6 +1347,10 @@ def _collect_registry_categories(
             category_result['parse_status'] = result.get('parse_status') or (
                 'matched' if category_result['records'] else 'unmatched'
             )
+            if result.get('source'):
+                category_result['source'] = result['source']
+            if result.get('adapter'):
+                category_result['adapter'] = result['adapter']
             if result.get('parser_platform'):
                 category_result['parser_platform'] = result.get('parser_platform')
             if result.get('template'):
@@ -2270,6 +2270,41 @@ def collect_operational_data(
         device_info=device_info,
         policy_override_categories=policy_override_categories,
     )
+    requested_categories = list(selected_categories)
+    optical_result: dict[str, Any] | None = None
+    if 'transceiver' in selected_categories:
+        # Optical DOM is a dedicated SNMP-only operation. Resolve it before
+        # command mapping or SSH credential lookup so unsupported vendors and
+        # devices without SNMP credentials can never fall back to CLI.
+        from services.snmp_optical_service import collect_optical_snmp
+
+        collected = collect_optical_snmp(device_info)
+        optical_success = bool(collected.get('success'))
+        optical_records = collected.get('records') or []
+        error_code = str(collected.get('error_code') or '')
+        optical_result = {
+            'key': 'transceiver',
+            'success': optical_success,
+            'commands': [],
+            'count': len(optical_records),
+            'records': optical_records,
+            'raw_outputs': [],
+            'parser': 'snmp-optical',
+            'parse_status': (
+                'matched' if optical_success and optical_records
+                else 'no_data' if optical_success
+                else 'unsupported_by_platform' if error_code == 'UNSUPPORTED_VENDOR'
+                else 'failed'
+            ),
+            'source': 'snmp',
+            'adapter': collected.get('adapter') or {},
+        }
+        if error_code:
+            optical_result['error_code'] = error_code
+        if collected.get('error'):
+            optical_result['error'] = collected['error']
+        selected_categories = [category for category in selected_categories if category != 'transceiver']
+
     from core.platform_utils import normalize_device_platform
     raw_platform = str(device_info.get('platform') or 'cisco_ios').strip().lower()
     platform = normalize_device_platform(device_info.get('vendor'), raw_platform)
@@ -2282,21 +2317,23 @@ def collect_operational_data(
         if raw_platform in {'h3c_comware_v3', 'h3c_comware_v5', 'h3c_comware_v7', 'h3c_comware_v9'}
         else platform
     )
-    commands_by_category = _resolve_commands(parser_platform, selected_categories)
-    conn_params = _build_connection_params(device_info, auth_role=auth_role)
+    commands_by_category = _resolve_commands(parser_platform, selected_categories) if selected_categories else {}
+    conn_params = _build_connection_params(device_info, auth_role=auth_role) if selected_categories else {}
 
 
     payload: dict[str, Any] = _build_base_payload(device_info, platform)
+    if optical_result is not None:
+        payload['categories'].append(optical_result)
 
     # A disabled capability must not open an SSH session just to return an
     # empty category list.  This is important for routers with BGP/OSPF
     # disabled and for servers receiving a network-only request by mistake.
     if not selected_categories:
         payload['summary'] = {
-            'requested_categories': [],
-            'successful_categories': 0,
-            'failed_categories': 0,
-            'total_records': 0,
+            'requested_categories': requested_categories,
+            'successful_categories': sum(1 for item in payload['categories'] if item.get('success')),
+            'failed_categories': sum(1 for item in payload['categories'] if not item.get('success')),
+            'total_records': sum(int(item.get('count') or 0) for item in payload['categories']),
         }
         return payload
 
@@ -2343,7 +2380,7 @@ def collect_operational_data(
         legacy_categories = list(selected_categories)
     if not legacy_categories:
         payload['summary'] = {
-            'requested_categories': selected_categories,
+            'requested_categories': requested_categories,
             'successful_categories': sum(1 for item in payload['categories'] if item.get('success')),
             'failed_categories': sum(1 for item in payload['categories'] if not item.get('success')),
             'total_records': sum(int(item.get('count') or 0) for item in payload['categories']),
@@ -2454,7 +2491,7 @@ def collect_operational_data(
             payload['categories'].append(category_result)
 
     payload['summary'] = {
-        'requested_categories': selected_categories,
+        'requested_categories': requested_categories,
         'successful_categories': sum(1 for item in payload['categories'] if item.get('success')),
         'failed_categories': sum(1 for item in payload['categories'] if not item.get('success')),
         'total_records': sum(int(item.get('count') or 0) for item in payload['categories']),

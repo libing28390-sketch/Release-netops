@@ -26,6 +26,26 @@ def test_real_application_rejects_anonymous_legacy_routes(isolated_db, method, p
     assert response.status_code == 401, response.text
 
 
+def test_config_backup_run_now_requires_administrator(monkeypatch):
+    from api import configs, users
+
+    monkeypatch.setattr(users, 'validate_session_token', lambda _: {'username': 'operator', 'role': 'Operator'})
+    app = FastAPI(dependencies=[Depends(enforce_api_access)])
+    app.include_router(configs.router, prefix='/api')
+
+    response = TestClient(app).post('/api/configs/run-now', headers={'Authorization': 'Bearer synthetic'})
+    assert response.status_code == 403, response.text
+
+
+def test_automation_cannot_select_admin_device_credentials_as_operator():
+    from api.automation import _assert_execution_auth_role_allowed
+
+    with pytest.raises(HTTPException) as error:
+        _assert_execution_auth_role_allowed({'role': 'Operator'}, 'admin')
+    assert error.value.status_code == 403
+    _assert_execution_auth_role_allowed({'role': 'Administrator'}, 'admin')
+
+
 @pytest.mark.parametrize('role,method,expected', [
     ('Viewer', 'GET', 200), ('Viewer', 'POST', 403), ('Viewer', 'PUT', 403),
     ('Operator', 'POST', 200), ('Operator', 'DELETE', 403),

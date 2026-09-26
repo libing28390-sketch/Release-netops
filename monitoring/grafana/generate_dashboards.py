@@ -58,12 +58,11 @@ STATUS_VALUE_MAPPINGS = [
     },
 ]
 
-ANOMALY_VALUE_MAPPINGS = [
+RECENT_CHANGE_VALUE_MAPPINGS = [
     {
         "type": "value",
         "options": {
-            "0": {"text": "当前无此类接口", "color": "green"},
-            "2": {"text": "链路未连通", "color": "#E0B400"},
+            "0": {"text": "当前无近期变化", "color": "green"},
         },
     },
 ]
@@ -145,7 +144,7 @@ def interface_empty_fallback(status_expr, positive_rows_expr):
     status_available = f"((count({status_expr}) or vector(0)) > 0)"
     rows_absent = f"((count({positive_rows_expr}) or vector(0)) == 0)"
     empty_selection = f"({status_available} and on() {rows_absent}) * 0"
-    return f'label_replace({empty_selection}, "ifName", "当前无异常", "", "")'
+    return f'label_replace({empty_selection}, "ifName", "近24h无近期变化", "", "")'
 
 def stat_panel(pid, title, expr, x, y, w=4, h=4, unit="", color="#3274D9", thresholds=None, description=None):
     steps = [{"color": color, "value": None}]
@@ -180,6 +179,42 @@ def stat_panel(pid, title, expr, x, y, w=4, h=4, unit="", color="#3274D9", thres
         panel["description"] = description
     return panel
 
+
+def gauge_panel(pid, title, expr, x, y, w=6, h=5, unit="percent", thresholds=None, description=None):
+    """Render one selected device's current hardware utilization as a Gauge."""
+    steps = thresholds or [
+        {"color": "green", "value": None},
+        {"color": "#E0B400", "value": 70},
+        {"color": "red", "value": 85},
+    ]
+    panel = {
+        "id": pid,
+        "title": title,
+        "type": "gauge",
+        "datasource": {"type": "prometheus", "uid": DS_UID},
+        "gridPos": {"h": h, "w": w, "x": x, "y": y},
+        "fieldConfig": {
+            "defaults": {
+                "unit": unit,
+                "min": 0,
+                "max": 100,
+                "noValue": NO_VALUE_TEXT,
+                "color": {"mode": "thresholds"},
+                "thresholds": {"mode": "absolute", "steps": steps},
+            },
+            "overrides": [],
+        },
+        "options": {
+            "reduceOptions": {"calcs": ["lastNotNull"], "fields": "", "values": False},
+            "showThresholdLabels": False,
+            "showThresholdMarkers": True,
+        },
+        "targets": [{"expr": expr, "instant": True, "refId": "A"}],
+    }
+    if description:
+        panel["description"] = description
+    return panel
+
 def timeseries_color_override(matcher_id, matcher_options, color):
     return {
         "matcher": {"id": matcher_id, "options": matcher_options},
@@ -187,7 +222,20 @@ def timeseries_color_override(matcher_id, matcher_options, color):
     }
 
 
-def timeseries_panel(pid, title, targets, x, y, w=12, h=8, unit="", color_overrides=None):
+def timeseries_panel(
+    pid,
+    title,
+    targets,
+    x,
+    y,
+    w=12,
+    h=8,
+    unit="",
+    color_overrides=None,
+    legend_display_mode="table",
+    legend_placement="right",
+    legend_calcs=None,
+):
     return {
         "id": pid,
         "title": title,
@@ -212,10 +260,10 @@ def timeseries_panel(pid, title, targets, x, y, w=12, h=8, unit="", color_overri
         },
         "options": {
             "legend": {
-                "displayMode": "table",
-                "placement": "right",
+                "displayMode": legend_display_mode,
+                "placement": legend_placement,
                 "showLegend": True,
-                "calcs": ["lastNotNull", "max", "mean"],
+                "calcs": legend_calcs if legend_calcs is not None else ["lastNotNull", "max", "mean"],
             },
             "tooltip": {"mode": "multi", "sort": "desc"}
         },
@@ -418,23 +466,41 @@ def insert_section_rows(panels, sections):
                 grid["y"] = int(grid["y"]) + 1
     return sorted([*panels, *rows], key=lambda panel: (panel.get("gridPos", {}).get("y", 0), panel.get("gridPos", {}).get("x", 0)))
 
-def bar_gauge_panel(pid, title, expr, x, y, w=12, h=8, unit="percent"):
-    return {
+def bar_gauge_panel(
+    pid,
+    title,
+    expr,
+    x,
+    y,
+    w=12,
+    h=8,
+    unit="percent",
+    *,
+    legend_format="{{sysName}} {{instance}}",
+    thresholds=None,
+    max_value=100,
+    color=None,
+    instant=False,
+    description=None,
+):
+    defaults = {"unit": unit, "min": 0, "noValue": NO_VALUE_TEXT}
+    if max_value is not None:
+        defaults["max"] = max_value
+    if color:
+        defaults["color"] = {"mode": "fixed", "fixedColor": color}
+    else:
+        defaults["color"] = {"mode": "thresholds"}
+    threshold_steps = thresholds if thresholds is not None else UTILIZATION_THRESHOLDS
+    if threshold_steps:
+        defaults["thresholds"] = {"mode": "absolute", "steps": threshold_steps}
+    panel = {
         "id": pid,
         "title": title,
         "type": "bargauge",
         "datasource": {"type": "prometheus", "uid": DS_UID},
         "gridPos": {"h": h, "w": w, "x": x, "y": y},
         "fieldConfig": {
-            "defaults": {
-                "unit": unit,
-                "min": 0,
-                "max": 100,
-                "thresholds": {
-                    "mode": "absolute",
-                    "steps": UTILIZATION_THRESHOLDS
-                }
-            },
+            "defaults": defaults,
             "overrides": []
         },
         "options": {
@@ -442,8 +508,16 @@ def bar_gauge_panel(pid, title, expr, x, y, w=12, h=8, unit="percent"):
             "orientation": "horizontal",
             "reduceOptions": {"calcs": ["lastNotNull"], "values": false}
         },
-        "targets": [{"expr": expr, "legendFormat": "{{sysName}} {{instance}}", "refId": "A"}]
+        "targets": [{
+            "expr": expr,
+            "legendFormat": legend_format,
+            "instant": instant,
+            "refId": "A",
+        }],
     }
+    if description:
+        panel["description"] = description
+    return panel
 
 def make_query_variable(name, label, query_str, multi=True, include_all=True, regex=None):
     variable = {
@@ -576,6 +650,24 @@ def build_overview_dashboard():
         f"dcnMemUsage{{{sel}}}"
         ")"
     )
+    temperature_expr = (
+        "max by (hostname, site_name, instance, vendor) ("
+        f"hh3cEntityExtTemperature{{{sel}}} or hwEntityTemperature{{{sel}}} or "
+        f"ruijieDeviceTemperature{{{sel}}} or jnxOperatingTemp{{{sel}}} or "
+        f"zteTemperature{{{sel}}} or mpTemperature{{{sel}}} or "
+        f"dptechTemperature{{{sel}}} or dcnTemperature{{{sel}}}"
+        ")"
+    )
+    online_devices_expr = f'count(count by (instance) (up{{{target_sel}}} == 1))'
+
+    def online_metric_device_count(metric_expr):
+        covered_devices = (
+            f'count(count by (instance) (({metric_expr}) '
+            f'and on(instance) (up{{{target_sel}}} == 1)))'
+        )
+        no_metric_fallback = f'(({online_devices_expr} > 0) * 0)'
+        return f'{covered_devices} or on() {no_metric_fallback}'
+
     ap_online_expr = (
         f"sum((hwWlanCurOnlineApNum{{{sel}}} or hh3cDot11CurrOnlineAPNum{{{sel}}} or ruijieApcOnlineApNum{{{sel}}} or "
         f"ruijieApcTotalApNum{{{sel}}} or cLApTotalUpAPs{{{sel}}} or wlsxSysExtAccessPointsNum{{{sel}}} or ruckusZDTotalNumAP{{{sel}}}))"
@@ -585,7 +677,9 @@ def build_overview_dashboard():
         f"cLSysTotalNumOfClients{{{sel}}} or wlsxSysExtStationsNum{{{sel}}} or ruckusZDTotalNumSta{{{sel}}}))"
     )
     anomaly_rows = (
-        f'((ifOperStatus{{{sel}}} == 2) and on(instance, ifIndex) '
+        f'((changes(ifOperStatus{{{sel}}}[24h]) > 0) '
+        f'and on(instance, ifIndex) (ifOperStatus{{{sel}}} == 2) '
+        f'and on(instance, ifIndex) '
         f'max by (instance, ifIndex) (ifAdminStatus{{{sel}}} == 1))'
         f' * on(instance, ifIndex) group_left(ifName) '
         f'(max by (instance, ifIndex, ifName) (ifName{{{sel}}} * 0 + 1))'
@@ -601,11 +695,11 @@ def build_overview_dashboard():
             description="没有匹配的无线客户端采集指标时显示数据暂不可用，不代表当前客户端数为 0。",
         ),
         stat_panel(5, "采集接口总数", f"count(count by (instance, ifIndex) (ifOperStatus{{{sel}}})) or vector(0)", 16, 0, 4, 3, color="#3274D9"),
-        stat_panel(6, "启用但链路未连通接口数", f'count(max by (instance, ifIndex) (ifAdminStatus{{{sel}}} == 1) and on(instance, ifIndex) max by (instance, ifIndex) (ifOperStatus{{{sel}}} == 2)) or vector(0)', 20, 0, 4, 3, thresholds=[
+        stat_panel(6, "近24h变动且当前 Down 接口数", f'count({anomaly_rows}) or on() ((count(ifOperStatus{{{sel}}}) > 0) * 0)', 20, 0, 4, 3, thresholds=[
             {"color": "green", "value": None},
             {"color": "#E0B400", "value": 1},
             {"color": "#F2495C", "value": 5}
-        ], description="这是当前状态数量：只统计管理状态为启用、运行状态为 Down 的接口。管理状态主动关闭的端口不计入；此数字不代表接口刚刚发生故障，闲置端口请结合用途判断是否需要处理。"),
+        ], description="只统计管理状态为启用、当前运行状态为 Down，且过去24小时运行状态有变化的接口。长期稳定 Down 的端口不会重复计入，可在设备或接口详情查看当前状态。"),
         timeseries_panel(7, "接口总流量趋势", [
             {"expr": f"sum({in_rate}) * 8", "legendFormat": "入流量", "refId": "A"},
             {"expr": f"sum({out_rate}) * 8", "legendFormat": "出流量", "refId": "B"}
@@ -617,38 +711,52 @@ def build_overview_dashboard():
             {"expr": f"sum((hwWlanCurAssocUserNum{{{sel}}} or hh3cDot11CurrAssocUserNum{{{sel}}} or ruijieApcTotalStaNum{{{sel}}} or cLSysTotalNumOfClients{{{sel}}} or wlsxSysExtStationsNum{{{sel}}} or ruckusZDTotalNumSta{{{sel}}}))", "legendFormat": "无线客户端总数", "refId": "A"},
             {"expr": f"sum((hwWlanCurOnlineApNum{{{sel}}} or hh3cDot11CurrOnlineAPNum{{{sel}}} or ruijieApcOnlineApNum{{{sel}}} or ruijieApcTotalApNum{{{sel}}} or cLApTotalUpAPs{{{sel}}} or wlsxSysExtAccessPointsNum{{{sel}}} or ruckusZDTotalNumAP{{{sel}}}))", "legendFormat": "在线 AP 总数", "refId": "B"}
         ], 12, 3, 12, 8, unit="short"),
-        timeseries_panel(9, "设备平均 CPU 使用率", [
-            {"expr": cpu_expr, "legendFormat": "{{site_name}} / {{hostname}} · {{vendor}}", "refId": "A"}
-        ], 0, 11, 8, 8, unit="percent"),
-        timeseries_panel(10, "设备平均内存使用率", [
-            {"expr": mem_expr, "legendFormat": "{{site_name}} / {{hostname}} · {{vendor}}", "refId": "A"}
-        ], 8, 11, 8, 8, unit="percent"),
-        timeseries_panel(11, "设备温度", [
-            {"expr": f"max by (hostname, site_name, instance, vendor) (hh3cEntityExtTemperature{{{sel}}} or hwEntityTemperature{{{sel}}} or ruijieDeviceTemperature{{{sel}}} or jnxOperatingTemp{{{sel}}} or zteTemperature{{{sel}}} or mpTemperature{{{sel}}} or dptechTemperature{{{sel}}} or dcnTemperature{{{sel}}})", "legendFormat": "{{site_name}} / {{hostname}} · {{vendor}}", "refId": "A"}
-        ], 16, 11, 8, 8, unit="celsius"),
+        stat_panel(
+            9, "CPU 指标覆盖设备数", online_metric_device_count(cpu_expr), 0, 11, 8, 3,
+            description="当前在线设备中，至少采集到一条 CPU 使用率指标的设备数量。该数量不是 CPU 使用率；在线设备总数见上方全网在线数。",
+        ),
+        stat_panel(
+            10, "内存指标覆盖设备数", online_metric_device_count(mem_expr), 8, 11, 8, 3,
+            description="当前在线设备中，至少采集到一条内存使用率指标的设备数量。没有指标不等于内存使用率为 0。",
+        ),
+        stat_panel(
+            11, "温度指标覆盖设备数", online_metric_device_count(temperature_expr), 16, 11, 8, 3,
+            description="当前在线设备中，至少采集到一条温度指标的设备数量。不同厂商和型号的传感器及告警阈值不同，温度详情请进入设备视图检查。",
+        ),
+        table_panel(
+            15, "设备 CPU 使用率 Top10", f"topk(10, {cpu_expr})", 0, 14, 12, 8,
+            unit="percent",
+            transformations=clean_organize_transformation("CPU 使用率 (%)"),
+            value_col_name="CPU 使用率 (%)",
+        ),
+        table_panel(
+            16, "设备内存使用率 Top10", f"topk(10, {mem_expr})", 12, 14, 12, 8,
+            unit="percent",
+            transformations=clean_organize_transformation("内存使用率 (%)"),
+            value_col_name="内存使用率 (%)",
+        ),
         table_panel(
             12, "设备总流量 Top10",
             f"topk(10, (sum by (hostname, site_name, instance, vendor) ({in_rate} * 8) + sum by (hostname, site_name, instance, vendor) ({out_rate} * 8)))",
-            0, 19, 12, 8, unit="bps",
+            0, 22, 12, 8, unit="bps",
             transformations=clean_organize_transformation("总流量")
         ),
         timeseries_panel(13, "错误/丢弃趋势", [
             {"expr": f"sum(rate(ifInErrors{{{sel}}}[5m])) + sum(rate(ifOutErrors{{{sel}}}[5m]))", "legendFormat": "错误包/秒", "refId": "A"},
             {"expr": f"sum(rate(ifInDiscards{{{sel}}}[5m])) + sum(rate(ifOutDiscards{{{sel}}}[5m]))", "legendFormat": "丢弃包/秒", "refId": "B"}
-        ], 12, 19, 12, 8, unit="pps", color_overrides=[
+        ], 12, 22, 12, 8, unit="pps", color_overrides=[
             timeseries_color_override("byName", "错误包/秒", ERROR_COLOR),
             timeseries_color_override("byName", "丢弃包/秒", DISCARD_COLOR),
         ]),
         table_panel(
-            14, "启用但链路未连通 Top20",
+            14, "近24h状态变动且当前仍 Down Top20",
             f"topk(20, {anomaly_rows}) or {anomaly_fallback}",
-            0, 27, 24, 8,
-            transformations=clean_organize_transformation("状态判断"),
-            value_col_name="状态判断",
-            value_mappings=ANOMALY_VALUE_MAPPINGS,
+            0, 30, 24, 8,
+            transformations=clean_organize_transformation("24h变化次数"),
+            value_col_name="24h变化次数",
+            value_mappings=RECENT_CHANGE_VALUE_MAPPINGS,
             detail_link=True,
-            color_mapped_cells=True,
-            description="这是当前状态清单（管理状态为启用、运行状态为 Down），不是近期故障事件列表。计划内闲置或未接线端口也会出现；请结合接口用途和配置判断是否需要处理。",
+            description="列出管理状态为启用、当前仍为 Down，且过去24小时运行状态发生过变化的接口；按24小时状态变化次数取前20项。长期稳定 Down 的端口不列入此表，不代表持续 Down 的接口一定正常。",
             map_interface_role=True,
         )
     ]
@@ -656,8 +764,9 @@ def build_overview_dashboard():
     panels = insert_section_rows(panels, [
         ("网络健康与规模", 0),
         ("趋势与设备健康", 3),
-        ("流量排行与链路质量", 19),
-        ("当前状态待核查", 27),
+        ("资源覆盖与设备热点", 11),
+        ("流量排行与链路质量", 22),
+        ("近期链路状态变动", 30),
     ])
 
     return {
@@ -677,7 +786,7 @@ def build_overview_dashboard():
         "time": {"from": "now-6h", "to": "now"},
         "timezone": "browser",
         "title": "01 网络总览（Network Overview）",
-        "description": "接口状态展示当前采集快照。启用但链路未连通的接口可能是故障，也可能是计划内闲置端口；请结合接口用途和配置判断。",
+        "description": "硬件概览展示当前在线设备的 CPU、内存、温度指标覆盖数量，以及 CPU/内存使用率 Top10；它们不是跨设备平均健康分。不同厂商和型号的温度阈值应在设备详情中核实。接口异常列表仅列出过去24小时状态有变化且当前仍为 Down 的管理启用接口；长期稳定 Down 的接口可在设备或接口详情查看。",
         "uid": "nexora-network-overview",
         "version": DASHBOARD_VERSION
     }
@@ -714,11 +823,25 @@ def build_device_dashboard():
     )
     hw_cpu_avg = f"avg by (hostname, site_name, instance, vendor) ({hw_cpu})"
     hw_mem_avg = f"avg by (hostname, site_name, instance, vendor) ({hw_mem})"
+    hw_cpu_peak = f"max({hw_cpu})"
+    hw_mem_peak = f"max({hw_mem})"
     panels = [
         stat_panel(1, "系统运行时间 (Uptime)", f"sysUpTime{{{dev_sel}}} / 100", 0, 0, 6, 4, unit="s", color="#3274D9"),
-        stat_panel(2, "平均 CPU 使用率", f"avg({hw_cpu})", 6, 0, 6, 4, unit="percent", thresholds=[{"color": "green", "value": None}, {"color": "#E0B400", "value": 70}, {"color": "red", "value": 85}]),
-        stat_panel(3, "平均内存使用率", f"avg({hw_mem})", 12, 0, 6, 4, unit="percent", thresholds=[{"color": "green", "value": None}, {"color": "#E0B400", "value": 75}, {"color": "red", "value": 90}]),
-        stat_panel(4, "设备整机温度", f"max({hw_temp})", 18, 0, 6, 4, unit="celsius", thresholds=[{"color": "green", "value": None}, {"color": "#E0B400", "value": 55}, {"color": "red", "value": 70}]),
+        gauge_panel(
+            2, "CPU 最高组件使用率", hw_cpu_peak, 6, 0, 6, 4,
+            thresholds=[{"color": "green", "value": None}, {"color": "#E0B400", "value": 70}, {"color": "red", "value": 85}],
+            description="所选设备当前已采集 CPU 实体中的最高使用率，用于发现板卡/控制平面热点；不代表整机平均值。",
+        ),
+        gauge_panel(
+            3, "内存最高资源池使用率", hw_mem_peak, 12, 0, 6, 4,
+            thresholds=[{"color": "green", "value": None}, {"color": "#E0B400", "value": 75}, {"color": "red", "value": 90}],
+            description="所选设备当前已采集内存池/实体中的最高使用率；各厂商上报的资源粒度可能不同。",
+        ),
+        stat_panel(
+            4, "最高温度传感器读数", f"max({hw_temp})", 18, 0, 6, 4,
+            unit="celsius", color="#3274D9",
+            description="显示当前采集到的最高传感器读数。不同设备的传感器位置和告警阈值不同，本卡不套用统一告警线。",
+        ),
         timeseries_panel(5, "CPU 平均使用率走势 (多核/主备控)", [
             {"expr": hw_cpu_avg, "legendFormat": "{{site_name}} / {{hostname}} · {{vendor}}", "refId": "A"}
         ], 0, 4, 12, 8, unit="percent"),
@@ -905,6 +1028,9 @@ def build_interface_dashboard():
         f"+ 4294967296) % 4294967296) / 100"
     )
     status_rows = f"ifOperStatus{{{if_filter}}} {if_join}"
+    rate_identity = "hostname, site_name, instance, ifIndex, ifName, ifAlias"
+    in_rate_top10 = f"topk(10, max by ({rate_identity}) ({in_rate} {if_join}) * 8)"
+    out_rate_top10 = f"topk(10, max by ({rate_identity}) ({out_rate} {if_join}) * 8)"
 
     panels = [
         row_panel(901, "实时流量与吞吐", 0),
@@ -960,11 +1086,26 @@ def build_interface_dashboard():
             transformations=clean_organize_transformation("利用率 (%)", interface_description_label="ifAlias"),
             value_col_name="利用率 (%)", gauge=True, thresholds=UTILIZATION_THRESHOLDS, detail_link=True,
         ),
-        row_panel(903, "链路质量", 26),
+        row_panel(905, "当前速率热点", 26),
+        bar_gauge_panel(
+            17, "近5分钟入向速率 Top10", in_rate_top10,
+            0, 27, 12, 7, unit="bps",
+            legend_format="{{site_name}} / {{hostname}} / {{ifName}}",
+            thresholds=[], max_value=None, color=INBOUND_COLOR, instant=True,
+            description="按过去5分钟窗口内的入向平均速率排序；IF-MIB 八位组每秒速率换算为 bit/s。未知带宽的接口仍可按实际速率排名。",
+        ),
+        bar_gauge_panel(
+            18, "近5分钟出向速率 Top10", out_rate_top10,
+            12, 27, 12, 7, unit="bps",
+            legend_format="{{site_name}} / {{hostname}} / {{ifName}}",
+            thresholds=[], max_value=None, color=OUTBOUND_COLOR, instant=True,
+            description="按过去5分钟窗口内的出向平均速率排序；IF-MIB 八位组每秒速率换算为 bit/s。未知带宽的接口仍可按实际速率排名。",
+        ),
+        row_panel(903, "链路质量", 34),
         table_panel(
             9, "错误包 / 丢弃包百分比 Top20",
             f"topk(20, ({quality_rows}))",
-            0, 27, 12, 7, unit="percent",
+            0, 35, 12, 7, unit="percent",
             transformations=[{
                 "id": "organize", "options": {
                     "excludeByName": {"Time": True, "__name__": True, "ifIndex": True, "instance": True, "direction": True, "ifDescr": True},
@@ -976,24 +1117,24 @@ def build_interface_dashboard():
         timeseries_panel(10, "错误与丢弃包速率", [
             {"expr": f"sum by (hostname, site_name) ({error_rate})", "legendFormat": "{{site_name}} / {{hostname}} 错误 PPS", "refId": "A"},
             {"expr": f"sum by (hostname, site_name) ({discard_rate})", "legendFormat": "{{site_name}} / {{hostname}} 丢弃 PPS", "refId": "B"},
-        ], 12, 27, 12, 7, unit="pps", color_overrides=[
+        ], 12, 35, 12, 7, unit="pps", color_overrides=[
             timeseries_color_override("byRegexp", ".*错误 PPS$", ERROR_COLOR),
             timeseries_color_override("byRegexp", ".*丢弃 PPS$", DISCARD_COLOR),
         ]),
         timeseries_panel(11, "入向 / 出向 / 单播 / 组播 / 广播 PPS", [
             {"expr": f"sum by (packet_type) ({packet_types})", "legendFormat": "{{packet_type}} PPS", "refId": "A"},
-        ], 0, 34, 24, 7, unit="pps", color_overrides=[
+        ], 0, 42, 24, 7, unit="pps", color_overrides=[
             timeseries_color_override("byRegexp", "入向 PPS", INBOUND_COLOR),
             timeseries_color_override("byRegexp", "出向 PPS", OUTBOUND_COLOR),
             timeseries_color_override("byRegexp", "单播 PPS", PPS_COLOR),
             timeseries_color_override("byRegexp", "组播 PPS", MULTICAST_COLOR),
             timeseries_color_override("byRegexp", "广播 PPS", BROADCAST_COLOR),
         ]),
-        row_panel(904, "状态与抖动", 41),
+        row_panel(904, "状态与抖动", 49),
         table_panel(
             12, "接口 Flap 次数：24h / 7d",
             flap_24h,
-            0, 42, 12, 7,
+            0, 50, 12, 7,
             targets=[
                 {"expr": flap_24h, "format": "table", "instant": True, "legendFormat": "24h", "refId": "A"},
                 {"expr": flap_7d, "format": "table", "instant": True, "legendFormat": "7d", "refId": "B"},
@@ -1008,14 +1149,14 @@ def build_interface_dashboard():
         table_panel(
             13, "距上次接口状态变化时间",
             last_change_age,
-            12, 42, 12, 7, unit="s",
+            12, 50, 12, 7, unit="s",
             transformations=clean_organize_transformation("距上次变化 (秒)", interface_description_label="ifAlias"),
             value_col_name="距上次变化 (秒)", detail_link=True,
         ),
         table_panel(
             14, "接口运行状态",
             status_rows,
-            0, 49, 24, 7,
+            0, 57, 24, 7,
             transformations=clean_organize_transformation("运行状态", interface_description_label="ifAlias"),
             value_col_name="运行状态", value_mappings=STATUS_VALUE_MAPPINGS,
             color_mapped_cells=True, detail_link=True,
@@ -1105,6 +1246,51 @@ def build_interface_detail_dashboard():
         },
     }]
 
+    # These vendor OIDs share a confirmed dBm scale and an ifIndex/ifName
+    # lookup. Keep Huawei's mixed µW/dBm encoding out of this normalized view;
+    # its dedicated SNMP action converts that encoding before returning data.
+    optical_labels = "instance, hostname, site_name, vendor, role, ifName"
+    optical_sel = f'{base_sel},ifName=~"$interface",interface_role=~"$interface_role"'
+
+    def optical_direction_query(metric_names: tuple[str, ...], invalid_values: dict[str, str]) -> str:
+        # snmp_exporter emits raw invalid sentinels as numeric samples. Filter
+        # each vendor metric before aggregation so a sentinel cannot win max()
+        # or distort the dBm trend. Huawei stays excluded because its power
+        # encoding is mixed and cannot share this normalized exporter view.
+        expressions = []
+        for metric_name in metric_names:
+            selector = f'{metric_name}{{{optical_sel}}}'
+            invalid = invalid_values.get(metric_name)
+            if invalid is not None:
+                selector = f'({selector} != {invalid})'
+            expressions.append(f'max by ({optical_labels}) ({selector})')
+        return " or ".join(expressions)
+
+    optical_rx = optical_direction_query((
+        "hh3cTransceiverCurRXPowerDbm",
+        "ruijieFiberRXpowerDbm",
+        "jnxDomCurrentRxLaserPowerDbm",
+        "zteAnOpticalIfRxPwrCurrDbm",
+    ), {
+        "hh3cTransceiverCurRXPowerDbm": "21474836.47",
+        "ruijieFiberRXpowerDbm": "-100",
+        "jnxDomCurrentRxLaserPowerDbm": "0",
+    })
+    optical_tx = optical_direction_query((
+        "hh3cTransceiverCurTXPowerDbm",
+        "ruijieFiberTXpowerDbm",
+        "jnxDomCurrentTxLaserOutputPowerDbm",
+        "zteAnOpticalIfTxPwrCurrDbm",
+    ), {
+        "hh3cTransceiverCurTXPowerDbm": "21474836.47",
+        "ruijieFiberTXpowerDbm": "-100",
+        "jnxDomCurrentTxLaserOutputPowerDbm": "0",
+    })
+    optical_power = (
+        f'label_replace(({optical_rx}), "direction", "接收", "", "") or '
+        f'label_replace(({optical_tx}), "direction", "发送", "", "")'
+    )
+
     panels = [
         row_panel(901, "实时状态与流量", 0),
         stat_panel(1, "入向带宽", f"sum({in_rate} {join}) * 8", 0, 1, 4, 3, unit="bps", color=INBOUND_COLOR),
@@ -1192,6 +1378,26 @@ def build_interface_detail_dashboard():
             value_col_name="阈值状态", value_mappings=threshold_state_mappings,
             color_mapped_cells=True,
         ),
+        row_panel(906, "光模块功率（SNMP DOM）", 64),
+        table_panel(
+            18, "当前接收 / 发送光功率", optical_power, 0, 65, 24, 7,
+            unit="dBm", value_col_name="光功率 (dBm)",
+            transformations=[{
+                "id": "organize", "options": {
+                    "excludeByName": {"Time": True, "__name__": True, "ifIndex": True, "instance": True, "role": True},
+                    "indexByName": {"site_name": 0, "hostname": 1, "vendor": 2, "ifName": 3, "direction": 4, "Value": 5},
+                    "renameByName": {"site_name": "站点", "hostname": "设备名称", "vendor": "厂商", "ifName": "接口", "direction": "方向", "Value": "光功率 (dBm)"},
+                },
+            }],
+            description="仅展示有已确认 SNMP 光模块 MIB 数据的接口。不同模块的告警阈值不同，因此此处显示实测 dBm，不套用全局阈值。",
+        ),
+        timeseries_panel(19, "接收 / 发送光功率趋势", [
+            {"expr": optical_rx, "legendFormat": "{{hostname}} / {{ifName}} 接收", "refId": "A"},
+            {"expr": optical_tx, "legendFormat": "{{hostname}} / {{ifName}} 发送", "refId": "B"},
+        ], 0, 72, 24, 8, unit="dBm", color_overrides=[
+            timeseries_color_override("byRegexp", ".*接收$", INBOUND_COLOR),
+            timeseries_color_override("byRegexp", ".*发送$", OUTBOUND_COLOR),
+        ]),
     ]
     return {
         "annotations": {"list": []}, "editable": false, "fiscalYearStartMonth": 0,
@@ -1384,7 +1590,7 @@ def build_linux_dashboard():
             {"expr": f'avg by (hostname) (rate(node_cpu_seconds_total{{{srv_sel},mode="user"}}[5m])) * 100', "legendFormat": "{{site_name}} / {{hostname}} 用户态 (user %)", "refId": "B"},
             {"expr": f'avg by (hostname) (rate(node_cpu_seconds_total{{{srv_sel},mode="system"}}[5m])) * 100', "legendFormat": "{{site_name}} / {{hostname}} 系统态 (system %)", "refId": "C"},
             {"expr": f'avg by (hostname) (rate(node_cpu_seconds_total{{{srv_sel},mode="iowait"}}[5m])) * 100', "legendFormat": "{{site_name}} / {{hostname}} I/O等待 (iowait %)", "refId": "D"}
-        ], 0, 4, 12, 8, unit="percent"),
+        ], 0, 4, 12, 8, unit="percent", legend_display_mode="list", legend_placement="bottom", legend_calcs=[]),
 
         timeseries_panel(8, "物理内存与 Swap 分布走势", [
             {"expr": f'node_memory_MemTotal_bytes{{{srv_sel}}} - node_memory_MemAvailable_bytes{{{srv_sel}}}', "legendFormat": "{{site_name}} / {{hostname}} 内存已用量", "refId": "A"},
@@ -1392,19 +1598,19 @@ def build_linux_dashboard():
             {"expr": f'node_memory_Cached_bytes{{{srv_sel}}} + node_memory_Buffers_bytes{{{srv_sel}}}', "legendFormat": "{{site_name}} / {{hostname}} 缓冲与缓存 (Buffers+Cache)", "refId": "C"},
             {"expr": f'node_memory_SwapTotal_bytes{{{srv_sel}}} - node_memory_SwapFree_bytes{{{srv_sel}}}', "legendFormat": "{{site_name}} / {{hostname}} Swap 已用量", "refId": "D"},
             {"expr": f'node_memory_MemTotal_bytes{{{srv_sel}}}', "legendFormat": "{{site_name}} / {{hostname}} 物理内存总量 (Total)", "refId": "E"}
-        ], 12, 4, 12, 8, unit="bytes"),
+        ], 12, 4, 12, 8, unit="bytes", legend_display_mode="list", legend_placement="bottom", legend_calcs=[]),
 
         timeseries_panel(9, "系统平均负载走势 (Load1 / Load5 / Load15)", [
             {"expr": f'node_load1{{{srv_sel}}}', "legendFormat": "{{site_name}} / {{hostname}} 1分钟负载 (Load1)", "refId": "A"},
             {"expr": f'node_load5{{{srv_sel}}}', "legendFormat": "{{site_name}} / {{hostname}} 5分钟负载 (Load5)", "refId": "B"},
             {"expr": f'node_load15{{{srv_sel}}}', "legendFormat": "{{site_name}} / {{hostname}} 15分钟负载 (Load15)", "refId": "C"},
             {"expr": f'count by (hostname) (node_cpu_seconds_total{{{srv_sel},mode="idle"}})', "legendFormat": "{{site_name}} / {{hostname}} 逻辑 CPU 核心数 (阈值参考)", "refId": "D"}
-        ], 0, 12, 12, 8, unit="short"),
+        ], 0, 12, 12, 8, unit="short", legend_display_mode="list", legend_placement="bottom", legend_calcs=[]),
 
         timeseries_panel(10, "磁盘读写吞吐速率 (Bytes/s)", [
             {"expr": f'sum by (hostname, device) (rate(node_disk_read_bytes_total{{{srv_sel},device!~"loop.*|ram.*"}}[5m]))', "legendFormat": "{{site_name}} / {{hostname}} - {{device}} 读吞吐", "refId": "A"},
             {"expr": f'sum by (hostname, device) (rate(node_disk_written_bytes_total{{{srv_sel},device!~"loop.*|ram.*"}}[5m]))', "legendFormat": "{{site_name}} / {{hostname}} - {{device}} 写吞吐", "refId": "B"}
-        ], 12, 12, 12, 8, unit="Bps"),
+        ], 12, 12, 12, 8, unit="Bps", legend_display_mode="list", legend_placement="bottom", legend_calcs=[]),
 
         table_panel(
             11, "主机磁盘空间利用率 Top 10",
@@ -1416,7 +1622,7 @@ def build_linux_dashboard():
         timeseries_panel(12, "服务器网卡流量走势 (bps)", [
             {"expr": f'sum by (hostname, device) (rate(node_network_receive_bytes_total{{{srv_sel},device!~"lo|docker.*|veth.*|br-.*"}}[5m]) * 8)', "legendFormat": "{{site_name}} / {{hostname}} - {{device}} 接收 (bps)", "refId": "A"},
             {"expr": f'sum by (hostname, device) (rate(node_network_transmit_bytes_total{{{srv_sel},device!~"lo|docker.*|veth.*|br-.*"}}[5m]) * 8)', "legendFormat": "{{site_name}} / {{hostname}} - {{device}} 发送 (bps)", "refId": "B"}
-        ], 12, 20, 12, 8, unit="bps"),
+        ], 12, 20, 12, 8, unit="bps", legend_display_mode="list", legend_placement="bottom", legend_calcs=[]),
 
         table_panel(
             13, "主机 TCP 活跃连接数 Top 10",
@@ -1427,7 +1633,7 @@ def build_linux_dashboard():
         timeseries_panel(14, "系统进程调度与阻塞情况", [
             {"expr": f'node_procs_running{{{srv_sel}}}', "legendFormat": "{{site_name}} / {{hostname}} 正在运行进程数", "refId": "A"},
             {"expr": f'node_procs_blocked{{{srv_sel}}}', "legendFormat": "{{site_name}} / {{hostname}} 阻塞/等待I/O进程数", "refId": "B"}
-        ], 12, 28, 12, 8, unit="short")
+        ], 12, 28, 12, 8, unit="short", legend_display_mode="list", legend_placement="bottom", legend_calcs=[])
     ]
 
     return {

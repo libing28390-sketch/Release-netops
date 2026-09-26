@@ -491,20 +491,10 @@ export const AutomationExecuteTab: React.FC<AutomationExecuteTabProps> = (props)
           labelEn: 'Transceiver',
           group: 'net',
           scope: 'network',
-          operationalCategory: isHuawei || isH3c || isCisco || isNxos || isZte || isMaipu || isRuijie ? 'transceiver' : undefined,
-          cmds: isHuawei || isH3c
-            ? 'display transceiver interface'
-            : isJuniper
-              ? 'show interfaces diagnostics transceiver'
-              : isRuijie
-                ? 'show interface transceiver'
-                : isZte
-                  ? 'show opticalinfo brief'
-                  : isMaipu
-                    ? 'show optical all'
-                    : isCisco
-                      ? 'show interfaces transceiver'
-                      : 'show interface transceiver',
+          operationalCategory: 'transceiver',
+          // Transceiver collection is SNMP-only. Keep the command empty so
+          // unsupported vendors cannot fall through to parsed-command CLI.
+          cmds: '',
         },
 
         {

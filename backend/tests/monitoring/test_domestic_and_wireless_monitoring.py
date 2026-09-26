@@ -104,17 +104,18 @@ def test_dashboards_suite_completeness():
         overview_dashboard = json.load(f)
     interface_count_panel = next(panel for panel in overview_dashboard["panels"] if panel["id"] == 6)
     interface_count_query = interface_count_panel["targets"][0]["expr"]
-    assert interface_count_panel["title"] == "启用但链路未连通接口数"
+    assert interface_count_panel["title"] == "近24h变动且当前 Down 接口数"
     assert 'ifAdminStatus{' in interface_count_query and "== 1" in interface_count_query
     assert 'ifOperStatus{' in interface_count_query and "== 2" in interface_count_query
     assert "!= 1" not in interface_count_query
-    assert "不代表接口刚刚发生故障" in interface_count_panel["description"]
+    assert "过去24小时运行状态有变化" in interface_count_panel["description"]
+    assert "长期稳定 Down" in interface_count_panel["description"]
     interface_candidates_panel = next(panel for panel in overview_dashboard["panels"] if panel["id"] == 14)
     candidate_query = interface_candidates_panel["targets"][0]["expr"]
-    assert interface_candidates_panel["title"] == "启用但链路未连通 Top20"
+    assert interface_candidates_panel["title"] == "近24h状态变动且当前仍 Down Top20"
     assert 'ifAdminStatus{' in candidate_query and "== 1" in candidate_query
     assert 'ifOperStatus{' in candidate_query and "== 2" in candidate_query
-    assert "不是近期故障事件列表" in interface_candidates_panel["description"]
+    assert "长期稳定 Down 的端口不列入此表" in interface_candidates_panel["description"]
     candidate_role_override = next(
         override
         for override in interface_candidates_panel["fieldConfig"]["overrides"]
@@ -143,6 +144,24 @@ def test_dashboards_suite_completeness():
         if override["matcher"].get("options") == "接口用途"
     )
     assert role_override["properties"][0]["value"][0]["options"]["unclassified"]["text"] == "用途待确认"
+
+    interface_detail_path = os.path.join(dashboard_dir, "nexora-interface-detail.json")
+    with open(interface_detail_path, "r", encoding="utf-8") as f:
+        interface_detail = json.load(f)
+    optical_table = next(panel for panel in interface_detail["panels"] if panel["id"] == 18)
+    optical_trend = next(panel for panel in interface_detail["panels"] if panel["id"] == 19)
+    assert optical_table["fieldConfig"]["overrides"][0]["properties"][0] == {
+        "id": "unit", "value": "dBm"
+    }
+    assert all("ifName=~\"$interface\"" in target["expr"] for target in optical_table["targets"])
+    assert all("job=\"network_snmp\"" in target["expr"] for target in optical_trend["targets"])
+    assert all("hwEntityOptical" not in target["expr"] for target in optical_trend["targets"])
+    optical_queries = " ".join(target["expr"] for target in optical_table["targets"] + optical_trend["targets"])
+    assert "!= 21474836.47" in optical_queries  # H3C invalid power sentinel, converted to dBm.
+    assert "!= -100" in optical_queries  # Ruijie invalid power sentinel.
+    assert "!= 0" in optical_queries  # Juniper's unsupported zero-power reading.
+    assert "hwEntityOptical" not in optical_queries  # Huawei's mixed encoding stays out of exporter dBm panels.
+    assert "不同模块的告警阈值不同" in optical_table["description"]
 
     for filename in (
         "nexora-network-device.json",

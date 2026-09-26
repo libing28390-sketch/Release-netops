@@ -3,12 +3,19 @@
 from __future__ import annotations
 
 from backend.tests.pg_test_utils import postgresql_test_driver
-import pytest
-
 from services.platform_registry_service import (
     ACTION_DEFINITIONS,
     PLATFORM_ACTION_COMMANDS,
+    SYSTEM_PROFILES,
 )
+from services.config_backup_command_service import (
+    get_config_backup_platform,
+    get_default_config_backup_commands,
+    is_compatible_published_config_action,
+    is_config_backup_candidate,
+    is_network_device_for_config_backup,
+)
+from core.platform_utils import normalize_device_platform
 from services import config_backup_policy_service as policy_service
 
 
@@ -33,6 +40,162 @@ def test_platform_registry_action_and_commands():
     assert PLATFORM_ACTION_COMMANDS["maipu"]["get_startup_config"] == "show startup-config"
     assert PLATFORM_ACTION_COMMANDS["raisecom_ros"]["get_startup_config"] == "show startup-config"
     assert PLATFORM_ACTION_COMMANDS["juniper_junos"]["get_startup_config"] == "show configuration"
+
+
+def test_default_backup_commands_cover_every_builtin_vendor_independent_of_bound_platform():
+    expected = {
+        "Cisco": ("show running-config", "show startup-config"),
+        "Huawei": ("display current-configuration", "display saved-configuration"),
+        "H3C": ("display current-configuration", "display saved-configuration"),
+        "Juniper": ("show configuration", "show configuration"),
+        "Arista": ("show running-config", "show startup-config"),
+        "ZTE": ("show running-config", "show startup-config"),
+        "Raisecom": ("show running-config", "show startup-config"),
+        "Ruijie": ("show running-config", "show startup-config"),
+        "DPtech": ("display current-configuration", "display saved-configuration"),
+        "Maipu": ("show running-config", "show startup-config"),
+    }
+    supported_vendors = {str(profile["vendor"]) for profile in SYSTEM_PROFILES}
+    assert supported_vendors == set(expected)
+
+    for vendor, (running, startup) in expected.items():
+        commands = get_default_config_backup_commands(vendor, "cisco_ios")
+        assert commands == {
+            "get_running_config": running,
+            "get_startup_config": startup,
+        }
+
+    assert get_default_config_backup_commands("Fortinet", "cisco_ios") == {
+        "get_running_config": "show full-configuration",
+        "get_startup_config": "show full-configuration",
+    }
+    assert get_default_config_backup_commands("Other", "fortinet_fortios")["get_running_config"] == "show full-configuration"
+    assert get_default_config_backup_commands("UnknownVendor", "cisco_ios") is None
+    assert is_network_device_for_config_backup("H3C", "linux") is True
+    assert is_network_device_for_config_backup("", "h3c_comware_v7") is True
+    assert is_network_device_for_config_backup("Linux", "ubuntu_server") is False
+    assert is_network_device_for_config_backup("NotCisco", "linux") is False
+
+
+def test_backup_vendor_coverage_matches_asset_platform_catalog_and_fails_closed_for_unverified_vendors():
+    platform_vendors = [
+        "Cisco", "Huawei", "H3C", "Arista", "Juniper", "Ruijie", "Fortinet",
+        "Palo Alto", "Hillstone", "Sangfor", "Check Point", "Sophos", "SonicWall",
+        "WatchGuard", "F5", "A10 Networks", "Barracuda", "Venustech", "NSFOCUS",
+        "Topsec", "Qi An Xin", "ZTE", "Raisecom", "Maipu", "DPtech", "DCN",
+        "FiberHome", "Nokia", "Aruba", "Extreme Networks", "Ruckus", "MikroTik",
+        "Ubiquiti", "D-Link", "TP-Link", "Dell", "Brocade", "Ciena",
+        "Alcatel-Lucent Enterprise", "Allied Telesis", "Edgecore",
+    ]
+    assert len(platform_vendors) == 41
+    assert all(is_network_device_for_config_backup(vendor) for vendor in platform_vendors)
+
+    default_vendors = {
+        "Cisco", "Huawei", "H3C", "Juniper", "Arista", "Ruijie", "ZTE",
+        "Raisecom", "DPtech", "Maipu", "Fortinet",
+    }
+    assert {
+        vendor for vendor in platform_vendors
+        if get_default_config_backup_commands(vendor, "cisco_ios") is not None
+    } == default_vendors
+    assert all(
+        get_default_config_backup_commands(vendor, "cisco_ios") is None
+        for vendor in set(platform_vendors) - default_vendors
+    )
+    assert is_config_backup_candidate(
+        "Palo Alto",
+        "paloalto_panos",
+        has_published_profile_action=True,
+        profile_vendor="Palo Alto",
+        profile_platform_code="paloalto_panos",
+        profile_parser_platform="paloalto_panos",
+    )
+    assert not is_config_backup_candidate("Palo Alto", "paloalto_panos")
+    assert not is_config_backup_candidate("UnknownVendor", "cisco_ios")
+    assert not is_config_backup_candidate(
+        "Palo Alto",
+        "paloalto_panos",
+        has_published_profile_action=True,
+        profile_vendor="Cisco",
+        profile_platform_code="paloalto_panos",
+        profile_parser_platform="paloalto_panos",
+    )
+    assert is_config_backup_candidate(
+        "Huawei",
+        "cisco_ios",
+        has_published_profile_action=False,
+        profile_vendor="Cisco",
+        profile_platform_code="cisco_ios",
+        profile_parser_platform="cisco_ios",
+    )  # A verified vendor default ignores the stale bound platform/profile.
+    assert not is_compatible_published_config_action(
+        "Palo Alto", "paloalto_panos", "Cisco", "paloalto_panos", "paloalto_panos",
+        has_published_profile_action=True,
+    )
+    assert not is_config_backup_candidate("Dell", "windows", "server", has_published_profile_action=True)
+
+
+def test_backup_device_list_matches_default_command_capability_and_excludes_server_assets(isolated_db, monkeypatch):
+    conn = isolated_db["module"].get_db_connection()
+    try:
+        conn.execute(
+            "INSERT INTO physical_assets (id, asset_type, hostname, created_at, updated_at) "
+            "VALUES ('backup-server-asset', 'server', 'backup-server', '2026-09-26', '2026-09-26')"
+        )
+        conn.execute(
+            "INSERT INTO devices (id, hostname, ip_address, vendor, platform, status) "
+            "VALUES ('backup-h3c', 'backup-h3c', '192.0.2.30', 'H3C', 'linux', 'online')"
+        )
+        conn.execute(
+            "INSERT INTO devices (id, hostname, ip_address, vendor, platform, status) "
+            "VALUES ('backup-paloalto', 'backup-paloalto', '192.0.2.31', 'Palo Alto', 'paloalto_panos', 'online')"
+        )
+        conn.execute(
+            "INSERT INTO devices (id, hostname, ip_address, vendor, platform, status) "
+            "VALUES ('backup-unknown-cisco', 'backup-unknown-cisco', '192.0.2.33', 'UnknownVendor', 'cisco_ios', 'online')"
+        )
+        conn.execute(
+            "INSERT INTO devices (id, asset_id, hostname, ip_address, vendor, platform, status) "
+            "VALUES ('backup-dell-server', 'backup-server-asset', 'backup-dell-server', '192.0.2.32', 'Dell', 'windows', 'online')"
+        )
+        conn.commit()
+    finally:
+        conn.close()
+
+    from api.configs import list_devices_with_backups
+
+    result = list_devices_with_backups(
+        search="",
+        site_id="",
+        asset_type="",
+        device_category="",
+        device_role="",
+        page=1,
+        page_size=100,
+    )
+    ids = {item["id"] for item in result["items"]}
+    assert "backup-h3c" in ids  # Explicit vendor remains enough despite an unrelated platform.
+    assert "backup-paloalto" not in ids  # No default command or published profile action.
+    assert "backup-unknown-cisco" not in ids  # Unknown explicit vendor cannot borrow the platform's default.
+    assert "backup-dell-server" not in ids  # Server assets are not network config backups.
+
+    from api.configs import preview_schedule
+
+    monkeypatch.setattr("api.configs._get_schedule_from_db", lambda: {"enabled": False})
+    preview = preview_schedule(1)
+    preview_ids = {item["id"] for item in preview["devices"]}
+    assert "backup-h3c" in preview_ids
+    assert "backup-unknown-cisco" not in preview_ids
+    assert "backup-dell-server" not in preview_ids
+
+
+def test_config_backup_driver_family_follows_vendor_on_mismatched_platform():
+    assert get_config_backup_platform("Cisco", "huawei_vrp") == "cisco_ios"
+    assert get_config_backup_platform("Huawei", "linux") == "huawei_vrp"
+    assert get_config_backup_platform("H3C", "cisco_ios") == "h3c_comware"
+    assert get_config_backup_platform("Huawei", "huawei_vrpv8") == "huawei_vrpv8"
+    assert normalize_device_platform("Cisco", "huawei_vrp") == "cisco_ios"
+    assert normalize_device_platform("Huawei", "linux") == "huawei_vrp"
 
 
 def test_backup_policy_model_with_tftp_and_startup():

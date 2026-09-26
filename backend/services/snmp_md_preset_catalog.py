@@ -163,13 +163,11 @@ ZTE_SYSTEM_OIDS = [
 ]
 
 ZTE_OPTICAL_OIDS = [
-    "1.3.6.1.4.1.3902.3.103.11.1.1.2",
-    "1.3.6.1.4.1.3902.3.103.11.1.1.3",
-    "1.3.6.1.4.1.3902.3.103.11.1.1.4",
-    "1.3.6.1.4.1.3902.3.103.11.1.1.16",
-    "1.3.6.1.4.1.3902.3.103.11.1.1.18",
-    "1.3.6.1.4.1.3902.3.103.11.1.1.20",
-    "1.3.6.1.4.1.3902.3.103.11.1.1.24",
+    "1.3.6.1.4.1.3902.1082.30.40.2.4.1.2",
+    "1.3.6.1.4.1.3902.1082.30.40.2.4.1.3",
+    "1.3.6.1.4.1.3902.1082.30.40.2.4.1.5",
+    "1.3.6.1.4.1.3902.1082.30.40.2.4.1.6",
+    "1.3.6.1.4.1.3902.1082.30.40.2.4.1.8",
 ]
 
 
@@ -314,8 +312,9 @@ _BASE_MD_OFFICIAL_MODEL_PRESETS: list[dict[str, Any]] = [
         "description": (
             "以 MD 中 zte_system、zte_interface、zte_optical 的 OID 清单为准。"
             "MD 对 zte_system 数值节点没有逐项给出稳定的指标名称，"
-            "因此保留为原始 OID 清单，不把节点猜测为 CPU、内存或温度；"
-            "光模块 DisplayString 节点也不强行转换为数值健康指标。"
+            "因此保留为原始 OID 清单，不把节点猜测为 CPU、内存或温度。"
+            "光模块数值节点则已由 ZTE-AN-OPTICAL-MODULE-MIB 核实单位和 ifIndex，"
+            "Rx/Tx、偏置电流、电压和温度都通过 SNMP 读取。"
         ),
         "metric_definitions": {
             "uptime": _direct(
@@ -330,7 +329,7 @@ _BASE_MD_OFFICIAL_MODEL_PRESETS: list[dict[str, Any]] = [
             "interface": H3C_INTERFACE_OIDS,
             "optical": ZTE_OPTICAL_OIDS,
             "optical_index_lookup": [
-                "zxr10OpticalIfIndex -> zxr10OpticalIfName",
+                "IF-MIB::ifName / ifDescr by ifIndex",
             ],
         },
     },

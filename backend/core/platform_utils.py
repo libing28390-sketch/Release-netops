@@ -1,5 +1,30 @@
 from typing import Dict, Any
 
+
+def _platform_vendor(platform: str) -> str:
+    value = str(platform or '').strip().lower().replace('-', '_').replace(' ', '_')
+    if value.startswith(('huawei', 'vrp')):
+        return 'huawei'
+    if value.startswith(('h3c', 'comware', 'hp_comware')):
+        return 'h3c'
+    if value.startswith(('ruijie', 'rgos')):
+        return 'ruijie'
+    if value.startswith(('zte', 'zxros')):
+        return 'zte'
+    if value.startswith('raisecom'):
+        return 'raisecom'
+    if value.startswith(('maipu', 'mypower')):
+        return 'maipu'
+    if value.startswith(('dptech', 'conplat')):
+        return 'dptech'
+    if value.startswith(('juniper', 'junos')):
+        return 'juniper'
+    if value.startswith(('arista', 'eos')):
+        return 'arista'
+    if value.startswith(('cisco', 'ios', 'nxos', 'nexus', 'asa')):
+        return 'cisco'
+    return ''
+
 def normalize_device_platform(vendor: str, platform: str) -> str:
     """
     Ensure vendor and platform are aligned and prevent silent fallback to Cisco
@@ -32,6 +57,28 @@ def normalize_device_platform(vendor: str, platform: str) -> str:
         v_key = 'cisco'
     else:
         v_key = ''
+
+    # Keep the transport/parser family aligned with an explicit vendor. Older
+    # device rows can contain a different vendor's platform (or a server OS),
+    # and preserving that value sends the selected vendor's command to the
+    # wrong Netmiko driver. Compatible version-specific platform names remain
+    # intact below.
+    vendor_default = {
+        'huawei': 'huawei_vrp',
+        'h3c': 'h3c_comware',
+        'ruijie': 'ruijie_rgos',
+        'zte': 'zte_zxros',
+        'raisecom': 'raisecom_ros',
+        'maipu': 'maipu',
+        'dptech': 'dptech_ios',
+        'juniper': 'juniper_junos',
+        'arista': 'arista_eos',
+        'cisco': 'cisco_ios',
+    }
+    if v_key and _platform_vendor(p) != v_key:
+        if v_key == 'dptech' and ('fw' in p or 'firewall' in p):
+            return 'dptech_conplat_fw'
+        return vendor_default[v_key]
 
     # The persisted parser/transport family is one H3C Comware key.  Concrete
     # V3/V5/V7/V9 command differences belong to Platform Profile releases, not to

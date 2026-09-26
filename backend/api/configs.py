@@ -498,26 +498,42 @@ def list_devices_with_backups(
     """Return devices eligible for config backup, with backup count and pagination.
 
     Scope:
-      - Only network devices (platforms: cisco_*, arista, juniper_*, huawei_*,
-        h3c_*, ruijie_*). Linux / server assets are excluded because they
-        don't produce a textual running-config.
+      - Only devices with a verified vendor-first default or compatible published
+        platform-profile backup action. Linux / server assets are excluded.
       - Includes devices with 0 snapshots so operators can trigger a first
         backup from the UI.
     """
     conn = get_db_connection()
     try:
-        # Platform whitelist — keep in sync with run_scheduled_backup().
-        platform_keywords = [
-            'cisco', 'arista', 'rgos', 'ruijie', 'juniper',
-            'junos', 'huawei', 'vrp', 'h3c', 'comware',
-        ]
-        platform_conditions = " OR ".join(
-            "LOWER(COALESCE(d.platform,'')) LIKE ?" for _ in platform_keywords
+        from services.config_backup_command_service import (
+            CONFIG_BACKUP_DEFAULT_PLATFORM_TOKENS,
+            CONFIG_BACKUP_DEFAULT_VENDOR_TOKENS,
+            is_config_backup_candidate,
         )
-        platform_params = [f"%{kw}%" for kw in platform_keywords]
 
-        where_sql = f"WHERE ({platform_conditions})"
-        params: list = list(platform_params)
+        vendor_conditions = ["LOWER(COALESCE(d.vendor,'')) LIKE ?" for _ in CONFIG_BACKUP_DEFAULT_VENDOR_TOKENS]
+        platform_conditions = ["LOWER(COALESCE(d.platform,'')) LIKE ?" for _ in CONFIG_BACKUP_DEFAULT_PLATFORM_TOKENS]
+        default_identity_sql = (
+            f"({' OR '.join(vendor_conditions)}) OR "
+            "(LOWER(TRIM(COALESCE(d.vendor,''))) IN ('', 'other') AND "
+            f"({' OR '.join(platform_conditions)}))"
+        )
+        identity_params = [f"{token}%" for token in CONFIG_BACKUP_DEFAULT_VENDOR_TOKENS]
+        identity_params.extend(f"{token}%" for token in CONFIG_BACKUP_DEFAULT_PLATFORM_TOKENS)
+        profile_action_sql = """
+            EXISTS (
+                SELECT 1
+                FROM platform_profiles bp
+                JOIN platform_releases br ON br.id = bp.current_release_id AND br.status = 'PUBLISHED'
+                JOIN platform_release_actions ba ON ba.release_id = br.id
+                    AND ba.action_code = 'get_running_config'
+                WHERE bp.id = d.platform_profile_id
+                    AND UPPER(COALESCE(bp.status, 'ACTIVE')) <> 'ARCHIVED'
+            )
+        """
+        asset_type_sql = "LOWER(COALESCE(NULLIF(pa.asset_type, ''), 'network_device')) NOT IN ('server', 'host', 'physical_server')"
+        where_sql = f"WHERE (({default_identity_sql}) OR ({profile_action_sql})) AND {asset_type_sql}"
+        params: list = list(identity_params)
         if site_id:
             site_expr = "COALESCE(NULLIF(pa.site_id, ''), NULLIF(d.site_id, ''), NULLIF(d.site, ''), '')"
             if site_id == 'unassigned':
@@ -547,19 +563,15 @@ def list_devices_with_backups(
             )
         """
 
-        count_sql = f'''
-            SELECT COUNT(DISTINCT d.id)
-            FROM devices d
-            {joins_sql}
-            {where_sql}
-        '''
-        total = conn.execute(count_sql, tuple(params)).fetchone()[0]
-
         offset = (page - 1) * page_size
         # Devices sorted by whether they've been backed up (backed-up first),
         # then by most recent backup time, then by hostname.
         all_rows = conn.execute(f'''
-            SELECT d.id, d.hostname, d.ip_address, d.platform, d.status,
+            SELECT d.id, d.hostname, d.ip_address, d.platform, d.vendor, d.platform_profile_id, d.status,
+                   bp.vendor AS backup_profile_vendor,
+                   bp.platform_code AS backup_profile_platform_code,
+                   bp.parser_platform AS backup_profile_parser_platform,
+                   ({profile_action_sql}) AS has_published_backup_action,
                    COALESCE(NULLIF(pa.site_id, ''), NULLIF(d.site_id, ''), NULLIF(d.site, ''), '') AS site_id,
                    COALESCE(NULLIF(s.site_name, ''), NULLIF(s.site_code, ''), NULLIF(d.site, ''), 'Unassigned site') AS site_name,
                    COALESCE(NULLIF(s.site_code, ''), '') AS site_code,
@@ -570,9 +582,11 @@ def list_devices_with_backups(
                    MAX(cs.timestamp) AS latest_backup
             FROM devices d
             {joins_sql}
+            LEFT JOIN platform_profiles bp ON bp.id = d.platform_profile_id
             LEFT JOIN config_snapshots cs ON cs.device_id = d.id
             {where_sql}
-            GROUP BY d.id, d.hostname, d.ip_address, d.platform, d.status, d.site_id, d.site,
+            GROUP BY d.id, d.hostname, d.ip_address, d.platform, d.vendor, d.platform_profile_id, d.status,
+                     bp.vendor, bp.platform_code, bp.parser_platform,
                      s.site_name, s.site_code, pa.site_id, pa.asset_type, pa.device_category,
                      pa.device_role, d.device_category, d.role
             ORDER BY
@@ -580,14 +594,35 @@ def list_devices_with_backups(
                 COALESCE(MAX(cs.timestamp), '') DESC,
                 d.hostname
         ''', tuple(params)).fetchall()
-        rows = all_rows[offset:offset + page_size]
+        eligible_rows = [
+            dict(row)
+            for row in all_rows
+            if is_config_backup_candidate(
+                row["vendor"],
+                row["platform"],
+                row["asset_type"],
+                has_published_profile_action=bool(row["has_published_backup_action"]),
+                profile_vendor=row["backup_profile_vendor"],
+                profile_platform_code=row["backup_profile_platform_code"],
+                profile_parser_platform=row["backup_profile_parser_platform"],
+            )
+        ]
+        total = len(eligible_rows)
+        rows = eligible_rows[offset:offset + page_size]
+        public_rows = [
+            {key: item[key] for key in (
+                "id", "hostname", "ip_address", "platform", "status", "site_id", "site_name", "site_code",
+                "asset_type", "device_category", "device_role", "backup_count", "latest_backup",
+            )}
+            for item in rows
+        ]
 
         return {
-            'items': [dict(r) for r in rows],
+            'items': public_rows,
             'total': total,
             'page': page,
             'page_size': page_size,
-            'tree': _build_device_scope_tree([dict(r) for r in all_rows]),
+            'tree': _build_device_scope_tree(eligible_rows),
         }
     finally:
         conn.close()
@@ -1484,7 +1519,7 @@ BACKUP_CONCURRENCY = int(_os.environ.get('BACKUP_CONCURRENCY', '10'))
 
 
 @router.post('/configs/run-now')
-async def trigger_backup_now():
+async def trigger_backup_now(user=require_role('Administrator')):
     """Trigger the same backup routine used by the scheduler, on demand.
 
     Returns a ``run_id`` that the frontend can poll via
@@ -1529,17 +1564,48 @@ def preview_schedule(n: int = Query(default=10, ge=1, le=50)):
             upcoming.append(cron.get_next(datetime).isoformat())
 
     # 备份涉及的设备列表
+    from services.config_backup_command_service import is_config_backup_candidate
+
     conn = get_db_connection()
     try:
         rows = conn.execute(
-            "SELECT id, hostname, ip_address, platform, status FROM devices WHERE status = 'online'"
+            """SELECT d.id, d.hostname, d.ip_address, d.platform, d.vendor, d.status,
+                      d.platform_profile_id,
+                      COALESCE(NULLIF(pa.asset_type, ''), 'network_device') AS asset_type,
+                      p.vendor AS backup_profile_vendor,
+                      p.platform_code AS backup_profile_platform_code,
+                      p.parser_platform AS backup_profile_parser_platform,
+                      EXISTS (
+                          SELECT 1 FROM platform_profiles bp
+                          JOIN platform_releases br ON br.id = bp.current_release_id AND br.status = 'PUBLISHED'
+                          JOIN platform_release_actions ba ON ba.release_id = br.id
+                              AND ba.action_code = 'get_running_config'
+                          WHERE bp.id = d.platform_profile_id
+                              AND UPPER(COALESCE(bp.status, 'ACTIVE')) <> 'ARCHIVED'
+                      ) AS has_published_backup_action
+               FROM devices d
+               LEFT JOIN physical_assets pa ON pa.id = d.asset_id
+               LEFT JOIN platform_profiles p ON p.id = d.platform_profile_id
+               WHERE d.status = 'online'"""
         ).fetchall()
-        devices = [dict(r) for r in rows]
+        devices = []
+        for row in rows:
+            item = dict(row)
+            if (item.get('ip_address') or '') in MOCK_IPS:
+                continue
+            if not is_config_backup_candidate(
+                item.get('vendor'),
+                item.get('platform'),
+                item.get('asset_type'),
+                has_published_profile_action=bool(item.get('has_published_backup_action')),
+                profile_vendor=item.get('backup_profile_vendor'),
+                profile_platform_code=item.get('backup_profile_platform_code'),
+                profile_parser_platform=item.get('backup_profile_parser_platform'),
+            ):
+                continue
+            devices.append({key: item[key] for key in ('id', 'hostname', 'ip_address', 'platform', 'status')})
     finally:
         conn.close()
-
-    MOCK_IPS_SET = {'127.0.0.1', '0.0.0.0', 'localhost'}
-    devices = [d for d in devices if (d.get('ip_address') or '') not in MOCK_IPS_SET]
 
     return {
         'enabled': enabled,
@@ -1780,12 +1846,20 @@ async def run_scheduled_backup(
             logger.error("[Scheduled Backup] Policy %s no longer exists", policy_id)
             return
         device_rows = conn.execute(
-            "SELECT id, asset_id, hostname, ip_address, platform, vendor, role, site, site_id, status, "
-            "platform_profile_id, "
-            "config_backup_enabled, username, password, "
-            "normal_username, normal_password, admin_username, admin_password, enable_password, "
-            "credential_id, admin_credential_id, credential_source, vault_path, management_port "
-            "FROM devices WHERE status = 'online'"
+            "SELECT d.id, d.asset_id, d.hostname, d.ip_address, d.platform, d.vendor, d.role, d.site, d.site_id, d.status, "
+            "d.platform_profile_id, COALESCE(NULLIF(pa.asset_type, ''), 'network_device') AS asset_type, "
+            "p.vendor AS backup_profile_vendor, p.platform_code AS backup_profile_platform_code, "
+            "p.parser_platform AS backup_profile_parser_platform, "
+            "EXISTS (SELECT 1 FROM platform_profiles bp "
+            "JOIN platform_releases br ON br.id = bp.current_release_id AND br.status = 'PUBLISHED' "
+            "JOIN platform_release_actions ba ON ba.release_id = br.id AND ba.action_code = 'get_running_config' "
+            "WHERE bp.id = d.platform_profile_id AND UPPER(COALESCE(bp.status, 'ACTIVE')) <> 'ARCHIVED') "
+            "AS has_published_backup_action, "
+            "d.config_backup_enabled, d.username, d.password, "
+            "d.normal_username, d.normal_password, d.admin_username, d.admin_password, d.enable_password, "
+            "d.credential_id, d.admin_credential_id, d.credential_source, d.vault_path, d.management_port "
+            "FROM devices d LEFT JOIN physical_assets pa ON pa.id = d.asset_id "
+            "LEFT JOIN platform_profiles p ON p.id = d.platform_profile_id WHERE d.status = 'online'"
         ).fetchall()
         devices = (
             config_backup_policy_service.filter_devices_by_scope(
@@ -1823,25 +1897,7 @@ async def run_scheduled_backup(
         run_concurrency,
     )
 
-    # Platforms we back up (anything producing a textual running-config).
-    NETWORK_PLATFORM_KEYWORDS = (
-        'cisco', 'arista', 'rgos', 'ruijie',
-        'juniper', 'junos',
-        'huawei', 'vrp',
-        'h3c', 'comware',
-        'zte', 'zxros',
-        'maipu',
-        'raisecom',
-        'dptech',
-        'fortinet',
-        'hillstone',
-        'sonic',
-        'centec',
-    )
-
-    def _is_network_device(platform: str) -> bool:
-        p = (platform or '').lower()
-        return any(kw in p for kw in NETWORK_PLATFORM_KEYWORDS)
+    from services.config_backup_command_service import is_config_backup_candidate
 
     # Filter to eligible devices upfront so progress totals are accurate
     eligible = []
@@ -1851,9 +1907,17 @@ async def run_scheduled_backup(
             skipped_count += 1
             logger.info(f"[Scheduled Backup] [SKIP] {device['hostname']} (mock IP, skipped)")
             continue
-        if not _is_network_device(device['platform']):
+        if not is_config_backup_candidate(
+            device.get('vendor'),
+            device.get('platform'),
+            device.get('asset_type'),
+            has_published_profile_action=bool(device.get('has_published_backup_action')),
+            profile_vendor=device.get('backup_profile_vendor'),
+            profile_platform_code=device.get('backup_profile_platform_code'),
+            profile_parser_platform=device.get('backup_profile_parser_platform'),
+        ):
             skipped_count += 1
-            logger.info(f"[Scheduled Backup] [SKIP] {device['hostname']} (platform={device['platform']} is not a network device, skipped)")
+            logger.info(f"[Scheduled Backup] [SKIP] {device['hostname']} (no verified default command or published backup action)")
             continue
         eligible.append(device)
 
@@ -1926,19 +1990,34 @@ async def run_scheduled_backup(
         nonlocal success_count, failed_count, created_backup_items
 
         from core.platform_utils import normalize_device_platform
+        from services.config_backup_command_service import (
+            get_config_backup_platform,
+            get_default_config_backup_commands,
+            is_compatible_published_config_action,
+        )
+
         _platform = normalize_device_platform(device.get('vendor'), device.get('platform'))
-        if any(k in _platform for k in ('cisco', 'arista', 'rgos', 'ruijie', 'zte', 'zxros', 'maipu', 'raisecom', 'sonic', 'centec')):
-            _running_cmd = 'show running-config'
-            _startup_cmd = 'show startup-config'
-        elif 'juniper' in _platform or 'junos' in _platform:
-            _running_cmd = 'show configuration'
-            _startup_cmd = 'show configuration'
-        elif 'fortinet' in _platform:
-            _running_cmd = 'show full-configuration'
-            _startup_cmd = 'show full-configuration'
-        else:
-            _running_cmd = 'display current-configuration'
-            _startup_cmd = 'display saved-configuration'
+        default_commands = get_default_config_backup_commands(device.get('vendor'), _platform)
+        use_profile_action = not default_commands and is_compatible_published_config_action(
+            device.get('vendor'),
+            device.get('platform'),
+            device.get('backup_profile_vendor'),
+            device.get('backup_profile_platform_code'),
+            device.get('backup_profile_parser_platform'),
+            has_published_profile_action=bool(device.get('has_published_backup_action')),
+        )
+        if default_commands:
+            _platform = get_config_backup_platform(device.get('vendor'), _platform)
+        if not default_commands and not use_profile_action:
+            failed_count += 1
+            return {
+                'hostname': device['hostname'],
+                'status': 'failed',
+                'reason': '厂商未适配',
+                'detail': '该厂商尚无默认配置备份命令，请先补充经过核实的命令映射。',
+            }
+        _running_cmd = (default_commands or {}).get('get_running_config', '')
+        _startup_cmd = (default_commands or {}).get('get_startup_config', '')
 
         d = dict(device)
         d['platform'] = _platform
@@ -1973,7 +2052,7 @@ async def run_scheduled_backup(
             for attempt in range(run_retry_count + 1):
                 try:
                     commands = [_running_cmd, _startup_cmd] if collect_startup_config else [_running_cmd]
-                    if d.get('platform_profile_id'):
+                    if use_profile_action:
                         from services.platform_registry_service import execute_platform_action
                         registry_result = await asyncio.to_thread(
                             execute_platform_action,
@@ -1989,6 +2068,7 @@ async def run_scheduled_backup(
                             include_raw_output=True,
                         )
                         output = str(registry_result.get('raw_output') or '')
+                        commands = [str(registry_result.get('command') or _running_cmd)]
                         results = [{
                             'success': bool(registry_result.get('success')),
                             'output': output,
@@ -2009,12 +2089,14 @@ async def run_scheduled_backup(
                                 include_raw_output=True,
                             )
                             st_raw = str(st_reg_result.get('raw_output') or '')
+                            commands.append(str(st_reg_result.get('command') or _startup_cmd))
                             results.append({
                                 'success': bool(st_reg_result.get('success')),
                                 'output': st_raw,
                                 'error': st_reg_result.get('error') or st_reg_result.get('error_code'),
                             })
                     else:
+                        commands = [_running_cmd, _startup_cmd] if collect_startup_config else [_running_cmd]
                         driver_type = 'mock' if d.get('ip_address') in ['127.0.0.1', '0.0.0.0'] else 'netmiko'
                         service = AutomationService(driver_type=driver_type)
                         results = await asyncio.get_event_loop().run_in_executor(

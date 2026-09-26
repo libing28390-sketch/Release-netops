@@ -4,13 +4,17 @@ import { getVendorFromPlatform } from '../types';
 import type { Language } from '../i18n.tsx';
 import { useConfigStore } from '../store/configStore';
 import { authHeaders } from '../api/http';
+import { getDefaultConfigBackupCommands } from '../utils/configBackupCommands';
 
 const MOCK_IPS = ['127.0.0.1', '0.0.0.0', 'localhost'];
-const NETWORK_PLATFORM_KEYWORDS = ['cisco', 'arista', 'rgos', 'ruijie', 'juniper', 'junos', 'huawei', 'vrp', 'h3c', 'comware'];
+const NETWORK_PLATFORM_KEYWORDS = [
+  'cisco', 'arista', 'rgos', 'ruijie', 'juniper', 'junos', 'huawei', 'vrp', 'h3c', 'comware',
+  'zte', 'zxros', 'raisecom', 'maipu', 'mypower', 'dptech', 'conplat', 'fortinet', 'fortios',
+];
 
-const isNetworkDevice = (platform?: string) => {
-  const p = (platform || '').toLowerCase();
-  return NETWORK_PLATFORM_KEYWORDS.some((kw) => p.includes(kw));
+const isNetworkDevice = (platform?: string, vendor?: string) => {
+  const identity = `${platform || ''} ${vendor || ''}`.toLowerCase();
+  return NETWORK_PLATFORM_KEYWORDS.some((kw) => identity.includes(kw));
 };
 
 interface UseConfigSnapshotsArgs {
@@ -163,7 +167,7 @@ export const useConfigSnapshots = ({
       return null;
     }
 
-    if (!isNetworkDevice(device.platform)) {
+    if (!isNetworkDevice(device.platform, device.vendor)) {
       showToast(
         language === 'zh'
           ? `${device.hostname} 不是网络设备，跳过配置备份`
@@ -178,18 +182,22 @@ export const useConfigSnapshots = ({
       let configContent = '';
       let fetchSuccess = false;
       try {
-        const _p = (device.platform || '').toLowerCase();
-        const _cmd = _p.includes('cisco') || _p.includes('arista') || _p.includes('rgos') || _p.includes('ruijie')
-          ? 'show running-config'
-          : _p.includes('juniper') || _p.includes('junos')
-            ? 'show configuration'
-            : 'display current-configuration';
+        const backupCommands = getDefaultConfigBackupCommands(device.vendor, device.platform);
+        if (!backupCommands) {
+          showToast(
+            language === 'zh'
+              ? `${device.hostname} 的厂商尚无默认配置备份命令`
+              : `No default config backup command is mapped for ${device.hostname}`,
+            'error',
+          );
+          return null;
+        }
         const execResp = await fetch('/api/execute', {
           method: 'POST',
           headers: authHeaders(true),
           body: JSON.stringify({
             device_id: device.id,
-            command: _cmd,
+            command: backupCommands.running,
             isConfig: false,
             // `show running-config` requires privileged exec mode; force admin.
             auth_role: 'admin',
@@ -315,7 +323,7 @@ export const useConfigSnapshots = ({
       (device) =>
         device.status === 'online'
         && !MOCK_IPS.includes(device.ip_address || '')
-        && isNetworkDevice(device.platform),
+        && isNetworkDevice(device.platform, device.vendor),
     );
     if (online.length === 0) {
       showToast(

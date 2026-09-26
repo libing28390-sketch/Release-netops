@@ -19,7 +19,7 @@ from copy import deepcopy
 from typing import Any
 
 
-OID_CATALOG_VERSION = "2026.09.17"
+OID_CATALOG_VERSION = "2026.09.26"
 
 
 def _indexes(*labels: str) -> list[dict[str, str]]:
@@ -36,6 +36,7 @@ def _metric(
     indexes: tuple[str, ...] = (),
     lookups: list[dict[str, Any]] | tuple[dict[str, Any], ...] | None = None,
     scale: float | None = None,
+    unit: str | None = None,
     enum_values: dict[int, str] | None = None,
 ) -> dict[str, Any]:
     item: dict[str, Any] = {
@@ -52,6 +53,8 @@ def _metric(
         item["lookups"] = [dict(lk) for lk in lookups]
     if scale is not None:
         item["scale"] = scale
+    if unit:
+        item["unit"] = unit
     if enum_values:
         item["enum_values"] = enum_values
     return item
@@ -66,6 +69,10 @@ _ENTITY_INDEX = ("entity_index",)
 _FLASH_PARTITION_INDEX = ("flash_index", "partition_index")
 _FAN_INDEX = ("fan_index",)
 _POWER_INDEX = ("power_index",)
+
+_ENTITY_LOOKUPS = (
+    {"labels": ["entity_index"], "labelname": "entityName", "oid": "1.3.6.1.2.1.47.1.1.1.1.7", "type": "DisplayString"},
+)
 
 _H3C_STATUS_VALUES = {
     1: "active",
@@ -248,6 +255,8 @@ H3C_ENTITY_CONFIG = {
         "https://www.h3c.com/cn/d_202504/2413109_30005_0.htm",
         "https://www.h3c.com/en/d_202603/2774537_294551_0.htm",
         "https://www.h3c.com/en/Support/Resource_Center/EN/Home/Public/00-Public/Technical_Documents/Reference_Guides/MIB_Companion/H3C_S6800_S6860_Switch_Series_MIB_Compan-9728/03/202303/1808889_294551_0.htm",
+        "https://github.com/librenms/librenms/blob/master/includes/discovery/sensors/dbm/comware.inc.php",
+        "https://github.com/librenms/librenms/blob/master/mibs/comware/HH3C-TRANSCEIVER-INFO-MIB",
     ],
     "walk": [
         "1.3.6.1.4.1.25506.2.6.1.1.1.1",
@@ -259,6 +268,7 @@ H3C_ENTITY_CONFIG = {
         "1.3.6.1.2.1.47.1.1.1.1.7",
         "1.3.6.1.2.1.47.1.1.1.1.10",
         "1.3.6.1.2.1.47.1.1.1.1.11",
+        "1.3.6.1.4.1.25506.2.70.1.1.1",
     ],
     "get": ["1.3.6.1.4.1.25506.8.35.5.1.12"],
     "metrics": [
@@ -289,6 +299,11 @@ H3C_ENTITY_CONFIG = {
         _metric("hh3cEntityExtNominalPower", "1.3.6.1.4.1.25506.2.6.1.3.1.1.2", "gauge", "Rated power of an H3C power entity in milliwatts.", source_name="hh3cEntityExtNominalPower", indexes=("power_index",)),
         _metric("hh3cEntityExtCurrentPower", "1.3.6.1.4.1.25506.2.6.1.3.1.1.3", "gauge", "Current power of an H3C power entity in milliwatts.", source_name="hh3cEntityExtCurrentPower", indexes=("power_index",)),
         _metric("hh3cEntityExtAveragePower", "1.3.6.1.4.1.25506.2.6.1.3.1.1.4", "gauge", "Average power of an H3C power entity in milliwatts.", source_name="hh3cEntityExtAveragePower", indexes=("power_index",)),
+        _metric("hh3cTransceiverCurTXPowerDbm", "1.3.6.1.4.1.25506.2.70.1.1.1.9", "gauge", "Current H3C transceiver transmit optical power in dBm; raw values are hundredths of dBm and 2147483647 is unsupported.", source_name="hh3cTransceiverCurTXPower", indexes=_IF_INDEX, lookups=_INTERFACE_LOOKUPS, scale=0.01, unit="dBm"),
+        _metric("hh3cTransceiverCurRXPowerDbm", "1.3.6.1.4.1.25506.2.70.1.1.1.12", "gauge", "Current H3C transceiver receive optical power in dBm; raw values are hundredths of dBm and 2147483647 is unsupported.", source_name="hh3cTransceiverCurRXPower", indexes=_IF_INDEX, lookups=_INTERFACE_LOOKUPS, scale=0.01, unit="dBm"),
+        _metric("hh3cTransceiverTemperatureCelsius", "1.3.6.1.4.1.25506.2.70.1.1.1.15", "gauge", "H3C transceiver temperature in degrees Celsius; 2147483647 is unsupported.", source_name="hh3cTransceiverTemperature", indexes=_IF_INDEX, lookups=_INTERFACE_LOOKUPS, unit="celsius"),
+        _metric("hh3cTransceiverVoltageVolts", "1.3.6.1.4.1.25506.2.70.1.1.1.16", "gauge", "H3C transceiver supply voltage in volts; raw values are hundredths of a volt and 2147483647 is unsupported.", source_name="hh3cTransceiverVoltage", indexes=_IF_INDEX, lookups=_INTERFACE_LOOKUPS, scale=0.01, unit="volts"),
+        _metric("hh3cTransceiverBiasCurrentMilliAmps", "1.3.6.1.4.1.25506.2.70.1.1.1.17", "gauge", "H3C transceiver bias current in milliamps; raw values are hundredths of a milliamp and 2147483647 is unsupported.", source_name="hh3cTransceiverBiasCurrent", indexes=_IF_INDEX, lookups=_INTERFACE_LOOKUPS, scale=0.01, unit="milliamps"),
     ],
 }
 
@@ -296,13 +311,18 @@ H3C_ENTITY_CONFIG = {
 HUAWEI_ENTITY_CONFIG = {
     "schema_version": "1",
     "mib_sources": ["HUAWEI-ENTITY-EXTENT-MIB", "HUAWEI-CPU-MIB", "HUAWEI-MEMORY-MIB", "ENTITY-MIB (RFC 4133)"],
-    "source_urls": ["https://info.support.huawei.com/enterprise/en/doc/EDOC1100410594/e704d4b7/mib-example"],
+    "source_urls": [
+        "https://info.support.huawei.com/enterprise/en/doc/EDOC1100410594/e704d4b7/mib-example",
+        "https://github.com/librenms/librenms/blob/master/resources/definitions/os_discovery/vrp.yaml",
+        "https://github.com/librenms/librenms/blob/master/mibs/huawei/HUAWEI-ENTITY-EXTENT-MIB",
+    ],
     "walk": [
         "1.3.6.1.4.1.2011.5.25.31.1.1.1",
         "1.3.6.1.4.1.2011.6.3.4",
         "1.3.6.1.4.1.2011.6.3.5",
         "1.3.6.1.4.1.2011.6.157.2.1.1",
         "1.3.6.1.2.1.47.1.1.1.1.7",
+        "1.3.6.1.4.1.2011.5.25.31.1.1.3.1",
     ],
     "get": [
         "1.3.6.1.4.1.2011.6.157.1.1",
@@ -328,6 +348,9 @@ HUAWEI_ENTITY_CONFIG = {
         _metric("hwRatedPower", "1.3.6.1.4.1.2011.6.157.1.4", "gauge", "Rated Huawei device power in milliwatts.", source_name="hwRatedPower"),
         _metric("hwCurrentPower", "1.3.6.1.4.1.2011.6.157.1.6", "gauge", "Current Huawei device power in milliwatts.", source_name="hwCurrentPower"),
         _metric("entPhysicalName", "1.3.6.1.2.1.47.1.1.1.1.7", "DisplayString", "Physical entity name used to identify Huawei board and sensor rows.", source_name="entPhysicalName", indexes=_ENTITY_INDEX),
+        _metric("hwEntityOpticalRxPowerRaw", "1.3.6.1.4.1.2011.5.25.31.1.1.3.1.8", "gauge", "Huawei VRP raw receive optical power; positive readings may be microwatts while negative readings are hundredths of dBm. Use the SNMP optical collector for normalized dBm.", source_name="hwEntityOpticalRxPower", indexes=_ENTITY_INDEX, lookups=_ENTITY_LOOKUPS, unit="mixed_raw"),
+        _metric("hwEntityOpticalTxPowerRaw", "1.3.6.1.4.1.2011.5.25.31.1.1.3.1.9", "gauge", "Huawei VRP raw transmit optical power; positive readings may be microwatts while negative readings are hundredths of dBm. Use the SNMP optical collector for normalized dBm.", source_name="hwEntityOpticalTxPower", indexes=_ENTITY_INDEX, lookups=_ENTITY_LOOKUPS, unit="mixed_raw"),
+        _metric("hwEntityOpticalTemperatureCelsius", "1.3.6.1.4.1.2011.5.25.31.1.1.3.1.5", "gauge", "Huawei VRP transceiver temperature in degrees Celsius; 2147483647 is invalid.", source_name="hwEntityOpticalTemperature", indexes=_ENTITY_INDEX, lookups=_ENTITY_LOOKUPS, unit="celsius"),
     ],
 }
 
@@ -364,10 +387,15 @@ CISCO_ENTITY_CONFIG = {
 RUIJIE_ENTITY_CONFIG = {
     "schema_version": "1",
     "mib_sources": ["RUIJIE-DEVICE-MIB", "RUIJIE-SYSTEM-MIB", "ENTITY-MIB (RFC 4133)"],
-    "source_urls": ["https://www.ruijienetworks.com"],
+    "source_urls": [
+        "https://www.ruijienetworks.com",
+        "https://github.com/librenms/librenms/blob/master/resources/definitions/os_discovery/ruijie.yaml",
+        "https://github.com/librenms/librenms/blob/master/mibs/ruijie/RUIJIE-FIBER-MIB",
+    ],
     "walk": [
         "1.3.6.1.4.1.4881.1.1.10.2.35.1.1",
         "1.3.6.1.2.1.47.1.1.1.1.7",
+        "1.3.6.1.4.1.4881.1.1.10.2.105.1.1.1",
     ],
     "metrics": [
         _metric("ruijieCpuCostRate", "1.3.6.1.4.1.4881.1.1.10.2.35.1.1.1.3", "gauge", "CPU utilization percentage for the Ruijie entity.", source_name="ruijieCpuCostRate", indexes=_ENTITY_INDEX),
@@ -376,6 +404,11 @@ RUIJIE_ENTITY_CONFIG = {
         _metric("ruijieDevicePowerStatus", "1.3.6.1.4.1.4881.1.1.10.2.35.1.1.1.5", "gauge", "Power supply status for the Ruijie entity.", source_name="ruijieDevicePowerStatus", indexes=_ENTITY_INDEX),
         _metric("ruijieDeviceFanStatus", "1.3.6.1.4.1.4881.1.1.10.2.35.1.1.1.6", "gauge", "Fan status for the Ruijie entity.", source_name="ruijieDeviceFanStatus", indexes=_ENTITY_INDEX),
         _metric("entPhysicalName", "1.3.6.1.2.1.47.1.1.1.1.7", "DisplayString", "Physical entity name used to identify Ruijie card and sensor rows.", source_name="entPhysicalName", indexes=_ENTITY_INDEX),
+        _metric("ruijieFiberRXpowerDbm", "1.3.6.1.4.1.4881.1.1.10.2.105.1.1.1.76", "gauge", "Ruijie fiber transceiver receive optical power in dBm; raw values are hundredths of dBm, -10000 is invalid, and DDMSupport must indicate support.", source_name="ruijieFiberRXpower", indexes=_IF_INDEX, lookups=_INTERFACE_LOOKUPS, scale=0.01, unit="dBm"),
+        _metric("ruijieFiberTXpowerDbm", "1.3.6.1.4.1.4881.1.1.10.2.105.1.1.1.81", "gauge", "Ruijie fiber transceiver transmit optical power in dBm; raw values are hundredths of dBm, -10000 is invalid, and DDMSupport must indicate support.", source_name="ruijieFiberTXpower", indexes=_IF_INDEX, lookups=_INTERFACE_LOOKUPS, scale=0.01, unit="dBm"),
+        _metric("ruijieFiberTemperatureCelsius", "1.3.6.1.4.1.4881.1.1.10.2.105.1.1.1.17", "gauge", "Ruijie fiber module temperature in degrees Celsius; require DDMSupport=true.", source_name="ruijieFiberTemp", indexes=_IF_INDEX, lookups=_INTERFACE_LOOKUPS, unit="celsius"),
+        _metric("ruijieFiberVoltageVolts", "1.3.6.1.4.1.4881.1.1.10.2.105.1.1.1.19", "gauge", "Ruijie fiber module voltage in volts; the raw value is millivolts and requires DDMSupport=true.", source_name="ruijieFiberVoltage", indexes=_IF_INDEX, lookups=_INTERFACE_LOOKUPS, scale=0.001, unit="volts"),
+        _metric("ruijieFiberBiasCurrentMilliAmps", "1.3.6.1.4.1.4881.1.1.10.2.105.1.1.1.21", "gauge", "Ruijie fiber module bias current in milliamps; the raw value is microamps and requires DDMSupport=true.", source_name="ruijieFiberBias", indexes=_IF_INDEX, lookups=_INTERFACE_LOOKUPS, scale=0.001, unit="milliamps"),
     ],
 }
 
@@ -383,9 +416,14 @@ RUIJIE_ENTITY_CONFIG = {
 JUNIPER_ENTITY_CONFIG = {
     "schema_version": "1",
     "mib_sources": ["JUNIPER-MIB", "JUNIPER-SMI"],
-    "source_urls": ["https://www.juniper.net"],
+    "source_urls": [
+        "https://www.juniper.net/documentation/us/en/software/junos/chassis/topics/concept/digital-optical-monitoring.html",
+        "https://github.com/librenms/librenms/blob/master/resources/definitions/os_discovery/junos.yaml",
+        "https://github.com/librenms/librenms/blob/master/mibs/juniper/JUNIPER-DOM-MIB",
+    ],
     "walk": [
         "1.3.6.1.4.1.2636.3.1.13.1",
+        "1.3.6.1.4.1.2636.3.60.1.1.1.1",
     ],
     "metrics": [
         _metric("jnxOperatingCPU", "1.3.6.1.4.1.2636.3.1.13.1.8", "gauge", "Overall CPU busy percentage for the Juniper operating entity.", source_name="jnxOperatingCPU", indexes=("operating_index",)),
@@ -393,6 +431,8 @@ JUNIPER_ENTITY_CONFIG = {
         _metric("jnxOperatingTemp", "1.3.6.1.4.1.2636.3.1.13.1.7", "gauge", "Temperature of the Juniper operating entity in degrees Celsius.", source_name="jnxOperatingTemp", indexes=("operating_index",)),
         _metric("jnxOperatingDRAMSize", "1.3.6.1.4.1.2636.3.1.13.1.10", "gauge", "Total DRAM size of the Juniper operating entity in bytes.", source_name="jnxOperatingDRAMSize", indexes=("operating_index",)),
         _metric("jnxOperatingDescr", "1.3.6.1.4.1.2636.3.1.13.1.5", "DisplayString", "Textual description of the Juniper operating entity.", source_name="jnxOperatingDescr", indexes=("operating_index",)),
+        _metric("jnxDomCurrentRxLaserPowerDbm", "1.3.6.1.4.1.2636.3.60.1.1.1.1.5", "gauge", "Juniper DOM receive laser power in dBm; raw values are hundredths of dBm and the table is indexed by ifIndex. A zero reading means unsupported.", source_name="jnxDomCurrentRxLaserPower", indexes=_IF_INDEX, lookups=_INTERFACE_LOOKUPS, scale=0.01, unit="dBm"),
+        _metric("jnxDomCurrentTxLaserOutputPowerDbm", "1.3.6.1.4.1.2636.3.60.1.1.1.1.7", "gauge", "Juniper DOM transmit laser output power in dBm; raw values are hundredths of dBm and the table is indexed by ifIndex. A zero reading means unsupported.", source_name="jnxDomCurrentTxLaserOutputPower", indexes=_IF_INDEX, lookups=_INTERFACE_LOOKUPS, scale=0.01, unit="dBm"),
     ],
 }
 
@@ -415,15 +455,24 @@ FORTINET_ENTITY_CONFIG = {
 
 ZTE_ENTITY_CONFIG = {
     "schema_version": "1",
-    "mib_sources": ["ZTE-AN-SYS-MIB", "ZTE-EQUIPMENT-MIB", "ZXR10-SMI"],
-    "source_urls": ["https://www.zte.com.cn"],
+    "mib_sources": ["ZTE-AN-SYS-MIB", "ZTE-EQUIPMENT-MIB", "ZTE-AN-OPTICAL-MODULE-MIB", "ZXR10-SMI"],
+    "source_urls": [
+        "https://support.zte.com.cn/support/docmap/00000455/en/",
+        "https://github.com/librenms/librenms/blob/master/mibs/zte/ZTE-AN-OPTICAL-MODULE-MIB",
+    ],
     "walk": [
         "1.3.6.1.4.1.3902.1082.500.1.2",
+        "1.3.6.1.4.1.3902.1082.30.40.2.4.1",
     ],
     "metrics": [
         _metric("zteCpuRate", "1.3.6.1.4.1.3902.1082.500.1.2.1.1.1", "gauge", "CPU utilization percentage for ZTE network device.", source_name="zteCpuRate", indexes=_ENTITY_INDEX),
         _metric("zteMemRate", "1.3.6.1.4.1.3902.1082.500.1.2.2.1.1", "gauge", "Memory utilization percentage for ZTE network device.", source_name="zteMemRate", indexes=_ENTITY_INDEX),
         _metric("zteTemperature", "1.3.6.1.4.1.3902.1082.500.1.2.3.1.1", "gauge", "Board temperature in degrees Celsius for ZTE network device.", source_name="zteTemperature", indexes=_ENTITY_INDEX),
+        _metric("zteAnOpticalIfRxPwrCurrDbm", "1.3.6.1.4.1.3902.1082.30.40.2.4.1.2", "gauge", "ZTE AN optical module receive power in dBm; raw values are thousandths of dBm and the table is indexed by ifIndex.", source_name="zxAnOpticalIfRxPwrCurrValue", indexes=_IF_INDEX, lookups=_INTERFACE_LOOKUPS, scale=0.001, unit="dBm"),
+        _metric("zteAnOpticalIfTxPwrCurrDbm", "1.3.6.1.4.1.3902.1082.30.40.2.4.1.3", "gauge", "ZTE AN optical module transmit power in dBm; raw values are thousandths of dBm and the table is indexed by ifIndex.", source_name="zxAnOpticalIfTxPwrCurrValue", indexes=_IF_INDEX, lookups=_INTERFACE_LOOKUPS, scale=0.001, unit="dBm"),
+        _metric("zteAnOpticalIfBiasCurrentMilliAmps", "1.3.6.1.4.1.3902.1082.30.40.2.4.1.5", "gauge", "ZTE AN optical module bias current in milliamps; raw values are thousandths of a milliamp.", source_name="zxAnOpticalBiasCurrent", indexes=_IF_INDEX, lookups=_INTERFACE_LOOKUPS, scale=0.001, unit="milliamps"),
+        _metric("zteAnOpticalIfVoltageVolts", "1.3.6.1.4.1.3902.1082.30.40.2.4.1.6", "gauge", "ZTE AN optical module supply voltage in volts; raw values are thousandths of a volt.", source_name="zxAnOpticalSupplyVoltage", indexes=_IF_INDEX, lookups=_INTERFACE_LOOKUPS, scale=0.001, unit="volts"),
+        _metric("zteAnOpticalIfTemperatureCelsius", "1.3.6.1.4.1.3902.1082.30.40.2.4.1.8", "gauge", "ZTE AN optical module temperature in degrees Celsius; raw values are thousandths of a degree.", source_name="zxAnOpticalTemperature", indexes=_IF_INDEX, lookups=_INTERFACE_LOOKUPS, scale=0.001, unit="celsius"),
     ],
 }
 

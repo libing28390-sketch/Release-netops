@@ -19,7 +19,7 @@ from services.platform_registry_service import PLATFORM_CATALOG_METADATA, list_p
 from services import tag_service
 from core.crypto import encrypt_credential, decrypt_credential
 from core.config import settings
-from core.rbac import require_role
+from core.rbac import authorize_resource, require_role
 from services.vault_service import resolve_device_credentials, resolve_collector_credentials, write_credentials as vault_write, vault_available
 from services.snmp_service import collect_device_metrics, normalize_metric_oid
 from services.snmp_mib_service import (
@@ -112,6 +112,43 @@ def _tenant_id_from_authenticated_user(user: dict) -> str:
             detail='Authenticated user is not assigned to a tenant',
         )
     return tenant_id
+
+
+def _assert_operational_data_device_scope(user: dict, device: dict) -> None:
+    """Require command execution access to the selected device's scope.
+
+    Operational-data collection resolves device credentials and may perform
+    SNMP/SSH requests.  Treat the device row as the object being authorized so
+    a caller cannot use a guessed device id to cross tenant, site, or group
+    boundaries.
+    """
+    device_id = str(device.get('id') or '')
+    is_admin = user.get('role') == 'Administrator'
+    user_tenant = str(user.get('tenant_id') or '').strip()
+    device_tenant = str(device.get('tenant_id') or '').strip()
+
+    # Non-admin users must be explicitly tenant-scoped and the device must
+    # carry the same tenant.  This also fails closed for legacy rows without a
+    # tenant instead of allowing credential-backed collection by id alone.
+    if not is_admin and (not user_tenant or not device_tenant or user_tenant != device_tenant):
+        raise HTTPException(status_code=403, detail={
+            'code': 'RESOURCE_SCOPE_DENIED',
+            'message': 'Device belongs to another or unscoped tenant',
+            'device_id': device_id,
+        })
+
+    scope = {
+        'tenant_id': device_tenant,
+        'site_id': str(device.get('site_id') or device.get('site') or '').strip(),
+        'device_group_id': str(device.get('device_group_id') or '').strip(),
+    }
+    if not authorize_resource(user, 'command', 'execute', **scope):
+        raise HTTPException(status_code=403, detail={
+            'code': 'RESOURCE_SCOPE_DENIED',
+            'message': 'Insufficient permission for this device scope',
+            'resource_type': 'command',
+            'device_id': device_id,
+        })
 
 
 def _vendor_from_platform(platform: str) -> str:
@@ -4144,7 +4181,11 @@ async def snmp_test(device_id: str):
 
 
 @router.post("/devices/{device_id}/operational-data")
-def collect_device_operational_data(device_id: str, payload: dict = Body(default={})): 
+def collect_device_operational_data(
+    device_id: str,
+    payload: dict = Body(default={}),
+    user=require_role('Operator'),
+):
     conn = get_db_connection()
     try:
         row = conn.execute('SELECT * FROM devices WHERE id = ?', (device_id,)).fetchone()
@@ -4155,6 +4196,7 @@ def collect_device_operational_data(device_id: str, payload: dict = Body(default
         raise HTTPException(status_code=404, detail='Device not found')
 
     device_info = dict(row)
+    _assert_operational_data_device_scope(user, device_info)
 
     categories = payload.get('categories') if isinstance(payload, dict) else None
     auth_role = payload.get('auth_role', 'auto') if isinstance(payload, dict) else 'auto'

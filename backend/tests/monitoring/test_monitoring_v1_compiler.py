@@ -187,6 +187,24 @@ def test_vendor_oid_catalog_renders_h3c_huawei_and_cisco_modules():
     assert rendered["fortinet_common_std"]["metrics"][0]["oid"].startswith("1.3.6.1.4.1.12356")
 
 
+def test_optical_oid_catalog_uses_verified_units_and_does_not_scale_huawei_mixed_power():
+    metrics = {
+        metric["name"]: metric
+        for item in iter_builtin_catalog()
+        for metric in item["variant"].get("oid_config", {}).get("metrics", [])
+    }
+
+    assert metrics["hh3cTransceiverCurRXPowerDbm"]["unit"] == "dBm"
+    assert metrics["hh3cTransceiverTemperatureCelsius"]["unit"] == "celsius"
+    assert metrics["hh3cTransceiverVoltageVolts"]["scale"] == 0.01
+    assert metrics["hh3cTransceiverBiasCurrentMilliAmps"]["scale"] == 0.01
+    assert metrics["hwEntityOpticalRxPowerRaw"]["unit"] == "mixed_raw"
+    assert "scale" not in metrics["hwEntityOpticalRxPowerRaw"]
+    assert metrics["ruijieFiberVoltageVolts"]["scale"] == 0.001
+    assert metrics["zteAnOpticalIfRxPwrCurrDbm"]["oid"] == "1.3.6.1.4.1.3902.1082.30.40.2.4.1.2"
+    assert metrics["zteAnOpticalIfTemperatureCelsius"]["scale"] == 0.001
+
+
 def test_multi_vendor_device_variant_matching_matrix():
     from services.monitoring_compiler import variant_matches_device
     catalog = iter_builtin_catalog()

@@ -31,6 +31,13 @@ def get_admin(user=require_role("Administrator")):
     return user
 
 
+def _assert_execution_auth_role_allowed(user: dict, auth_role: str) -> None:
+    """Prevent non-admin automation callers from selecting admin credentials."""
+    requested = str(auth_role or 'normal').lower().strip()
+    if requested == 'admin' and user.get('role') != 'Administrator':
+        raise HTTPException(status_code=403, detail="Administrator permission is required for admin device credentials")
+
+
 def _first_complete_credential_pair(*pairs: tuple[str, str]) -> tuple[str, str]:
     for username, password in pairs:
         if username and password:
@@ -38,7 +45,7 @@ def _first_complete_credential_pair(*pairs: tuple[str, str]) -> tuple[str, str]:
     return '', ''
 
 
-def _resolve_execution_credentials(device: dict, auth_role: str = 'normal') -> dict:
+def _resolve_execution_credentials(device: dict, auth_role: str = 'normal', *, allow_admin: bool = True) -> dict:
     """Resolve paired plaintext credentials for automation command execution."""
     creds = resolve_device_credentials(device)
     role = str(auth_role or 'normal').lower().strip()
@@ -48,10 +55,10 @@ def _resolve_execution_credentials(device: dict, auth_role: str = 'normal') -> d
             (creds.get('admin_username') or '', creds.get('admin_password') or ''),
         )
     elif role == 'auto':
-        username, password = _first_complete_credential_pair(
-            (creds.get('normal_username') or '', creds.get('normal_password') or ''),
-            (creds.get('admin_username') or '', creds.get('admin_password') or ''),
-        )
+        pairs = [(creds.get('normal_username') or '', creds.get('normal_password') or '')]
+        if allow_admin:
+            pairs.append((creds.get('admin_username') or '', creds.get('admin_password') or ''))
+        username, password = _first_complete_credential_pair(*pairs)
     else:
         username, password = _first_complete_credential_pair(
             (creds.get('normal_username') or '', creds.get('normal_password') or ''),
@@ -227,6 +234,8 @@ async def delete_script(script_id: str, user: dict = Depends(get_admin)):
 
 @router.post("/execute")
 async def execute_task(request: Request, payload: dict = Body(...), user: dict = Depends(get_operator)):
+    requested_auth_role = payload.get('auth_role') or payload.get('role') or 'normal'
+    _assert_execution_auth_role_allowed(user, requested_auth_role)
     device_id = payload.get('device_id')
     device_ids = payload.get('device_ids', [])
     if isinstance(device_ids, str):
@@ -335,8 +344,12 @@ async def execute_task(request: Request, payload: dict = Body(...), user: dict =
             device_row = conn.execute('SELECT * FROM devices WHERE id = ?', (dev_id,)).fetchone()
             if device_row:
                 d = dict(device_row)
-                auth_role = payload.get('auth_role') or payload.get('role') or 'normal'
-                resolved_creds = _resolve_execution_credentials(d, auth_role)
+                auth_role = requested_auth_role
+                resolved_creds = _resolve_execution_credentials(
+                    d,
+                    auth_role,
+                    allow_admin=user.get('role') == 'Administrator',
+                )
                 exec_username = resolved_creds['username']
                 d['username'] = exec_username
                 d['password'] = resolved_creds['password']

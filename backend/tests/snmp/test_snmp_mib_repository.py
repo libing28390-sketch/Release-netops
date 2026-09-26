@@ -243,7 +243,9 @@ def test_official_presets_service_and_api() -> None:
     zte = next(p for p in presets if p["vendor"] == "ZTE")
     assert zte["metric_definitions"]["uptime"]["oid"] == "1.3.6.1.2.1.1.3"
     assert "1.3.6.1.4.1.3902.3.600.2.1.1.3.0.0.1.0" in zte["source_oids"]["system"]
-    assert "1.3.6.1.4.1.3902.3.103.11.1.1.24" in zte["source_oids"]["optical"]
+    assert "1.3.6.1.4.1.3902.1082.30.40.2.4.1.2" in zte["source_oids"]["optical"]
+    assert "1.3.6.1.4.1.3902.1082.30.40.2.4.1.8" in zte["source_oids"]["optical"]
+    assert "IF-MIB::ifName / ifDescr by ifIndex" in zte["source_oids"]["optical_index_lookup"]
 
     cisco = next(p for p in presets if p["vendor"] == "Cisco")
     assert cisco["metric_definitions"]["cpu"]["oid"] == "1.3.6.1.4.1.9.9.109.1.1.1.1.3"
