@@ -57,7 +57,9 @@
 - `npm run test:frontend -- --run src/utils/routeContext.test.ts src/pages/NotificationChannelSettingsPage.test.tsx`：2 个测试文件、11 项测试通过，覆盖路由、加载权限、未保存时禁止测试、保存后测试。
 - `git diff --check`：通过。
 - 浏览器实查当前实例：确认平台管理侧栏无邮件设置，配置模板中心底部有 SMTP 表单。页面源码改动尚未部署到当前实例，因此未声称新菜单已在当前线上实例可见。
+- 推送提交 `434709a95f46dbd25ce8b5e146311a7b797b5c70` 后检查 GitHub Actions：Release run `#617`（[36248991221](https://github.com/libing28390-sketch/netsops/actions/runs/36248991221)）在 6 秒后失败；注释指出 Ubuntu job 未启动，原因是账号最近付款失败或 spending limit 需要提高，Windows job 跳过。该工作流没有运行远端构建或测试；不能据此判定代码失败。
 
 ### 未执行项与剩余风险
 - 本次只修正页面入口与归属，未填写或发送真实测试邮件；SMTP 仍需由管理员配置有效参数后测试。
 - 未部署应用。用户已授权推送代码；当前浏览器中的旧入口要等新前端版本部署后才会更新。
+- GitHub Actions runner 当前被账号计费状态阻断；需账号所有者在 GitHub Billing & plans 检查付款状态或 spending limit 后，才能重新运行远端发布验证。
