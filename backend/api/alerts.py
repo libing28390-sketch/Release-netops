@@ -18,6 +18,7 @@ from services.notification_service import send_feishu, dispatch_to_all_users
 
 
 router = APIRouter()
+_EMAIL_ADDRESS_RE = re.compile(r'^[^\s@]+@[^\s@]+\.[^\s@]+$')
 
 
 def _utc_now_iso() -> str:
@@ -777,32 +778,507 @@ def _safe_smtp_config(row) -> dict:
     }
 
 
+def _smtp_profile_targets(row) -> list[dict]:
+    raw = row.get('recipient_targets_json') if row else []
+    if isinstance(raw, str):
+        try:
+            raw = json.loads(raw or '[]')
+        except (TypeError, ValueError):
+            raw = []
+    if not isinstance(raw, list):
+        return []
+    result = []
+    seen = set()
+    for item in raw:
+        if not isinstance(item, dict):
+            continue
+        kind = str(item.get('kind') or '').strip().lower()
+        value_key = 'group_name' if kind == 'group' else 'user_id' if kind == 'user' else ''
+        value = str(item.get(value_key) or '').strip()
+        if value and value_key and (kind, value) not in seen:
+            result.append({'kind': kind, value_key: value})
+            seen.add((kind, value))
+    return result
+
+
+def _is_hidden_smtp_override(row) -> bool:
+    item = dict(row or {})
+    return (
+        str(item.get('tenant_id') or '') != 'tenant-default'
+        and str(item.get('name') or '').strip().lower() == 'primary'
+        and not bool(item.get('enabled'))
+        and not str(item.get('host') or '').strip()
+        and not str(item.get('from_address') or '').strip()
+        and not str(item.get('password_ciphertext') or '').strip()
+        and not _smtp_profile_targets(item)
+    )
+
+
+def _safe_smtp_profile(row, *, inherited: bool = False) -> dict:
+    item = dict(row or {})
+    targets = _smtp_profile_targets(item)
+    host = str(item.get('host') or '')
+    from_address = str(item.get('from_address') or '')
+    return {
+        'id': str(item.get('id') or ''),
+        'display_name': str(item.get('display_name') or item.get('name') or 'SMTP'),
+        'enabled': bool(item.get('enabled')),
+        'host': host,
+        'port': int(item.get('port') or 587),
+        'security': str(item.get('security') or 'starttls'),
+        'username': str(item.get('username') or ''),
+        'from_address': from_address,
+        'from_name': str(item.get('from_name') or 'Nexora'),
+        'reply_to': str(item.get('reply_to') or ''),
+        'connect_timeout_seconds': int(item.get('connect_timeout_seconds') or 10),
+        'send_timeout_seconds': int(item.get('send_timeout_seconds') or 20),
+        'rate_limit_per_minute': int(item.get('rate_limit_per_minute') or 60),
+        'has_password': bool(str(item.get('password_ciphertext') or '').strip()),
+        'configured': bool(host.strip() and _EMAIL_ADDRESS_RE.fullmatch(from_address)),
+        'updated_at': item.get('updated_at'),
+        'recipient_targets': targets,
+        'inherited': bool(inherited),
+        'legacy_primary': str(item.get('name') or '').strip().lower() == 'primary',
+    }
+
+
+def _smtp_profile_rows(conn, tenant_id: str) -> tuple[list[dict], list[dict]]:
+    local = [dict(row) for row in conn.execute(
+        "SELECT * FROM notification_smtp_configs WHERE tenant_id = ? ORDER BY updated_at DESC, id",
+        (tenant_id,),
+    ).fetchall()]
+    shared = []
+    if tenant_id != 'tenant-default':
+        shared = [dict(row) for row in conn.execute(
+            "SELECT * FROM notification_smtp_configs WHERE tenant_id = 'tenant-default' ORDER BY updated_at DESC, id",
+        ).fetchall()]
+    return local, shared
+
+
+def _validate_smtp_profile_payload(payload: dict, existing: dict | None = None) -> dict:
+    current = existing or {}
+    host = str(payload.get('host', current.get('host', '')) or '').strip()
+    from_address = str(payload.get('from_address', current.get('from_address', '')) or '').strip()
+    security = str(payload.get('security', current.get('security', 'starttls')) or 'starttls').strip().lower()
+    if not host:
+        raise HTTPException(status_code=400, detail='SMTP host is required')
+    if security not in {'ssl', 'starttls', 'none'}:
+        raise HTTPException(status_code=400, detail='security must be ssl, starttls, or none')
+    if not _EMAIL_ADDRESS_RE.fullmatch(from_address):
+        raise HTTPException(status_code=400, detail='from_address must be a valid email address')
+    try:
+        port = int(payload.get('port', current.get('port', 465 if security == 'ssl' else 587)) or (465 if security == 'ssl' else 587))
+        connect_timeout = int(payload.get('connect_timeout_seconds', current.get('connect_timeout_seconds', 10)) or 10)
+        send_timeout = int(payload.get('send_timeout_seconds', current.get('send_timeout_seconds', 20)) or 20)
+        rate_limit = int(payload.get('rate_limit_per_minute', current.get('rate_limit_per_minute', 60)) or 60)
+    except (TypeError, ValueError) as exc:
+        raise HTTPException(status_code=400, detail='SMTP numeric fields are invalid') from exc
+    if not 1 <= port <= 65535 or not 1 <= connect_timeout <= 120 or not 1 <= send_timeout <= 120 or not 1 <= rate_limit <= 10000:
+        raise HTTPException(status_code=400, detail='SMTP numeric fields are out of range')
+    reply_to = str(payload.get('reply_to', current.get('reply_to', '')) or '').strip()
+    if reply_to and not _EMAIL_ADDRESS_RE.fullmatch(reply_to):
+        raise HTTPException(status_code=400, detail='reply_to must be a valid email address')
+    return {
+        'enabled': bool(payload.get('enabled', current.get('enabled', False))),
+        'host': host,
+        'port': port,
+        'security': security,
+        'username': str(payload.get('username', current.get('username', '')) or '').strip(),
+        'from_address': from_address,
+        'from_name': str(payload.get('from_name', current.get('from_name', 'Nexora')) or 'Nexora').strip()[:120],
+        'reply_to': reply_to,
+        'connect_timeout_seconds': connect_timeout,
+        'send_timeout_seconds': send_timeout,
+        'rate_limit_per_minute': rate_limit,
+    }
+
+
+def _validated_recipient_targets(conn, tenant_id: str, value, *, allow_empty: bool = True) -> list[dict]:
+    if value is None:
+        return []
+    if not isinstance(value, list):
+        raise HTTPException(status_code=400, detail='recipient_targets must be an array')
+    targets = []
+    seen = set()
+    for item in value:
+        if not isinstance(item, dict):
+            raise HTTPException(status_code=400, detail='recipient_targets items must be objects')
+        kind = str(item.get('kind') or '').strip().lower()
+        if kind == 'group':
+            group_name = str(item.get('group_name') or '').strip()
+            if not group_name:
+                raise HTTPException(status_code=400, detail='group_name is required')
+            exists = conn.execute(
+                "SELECT 1 FROM users WHERE tenant_id = ? AND status = 'active' AND group_name = ? LIMIT 1",
+                (tenant_id, group_name),
+            ).fetchone()
+            if not exists:
+                raise HTTPException(status_code=400, detail=f'Unknown active user group: {group_name}')
+            key = ('group', group_name)
+            target = {'kind': 'group', 'group_name': group_name}
+        elif kind == 'user':
+            user_id = str(item.get('user_id') or '').strip()
+            if not user_id:
+                raise HTTPException(status_code=400, detail='user_id is required')
+            exists = conn.execute(
+                "SELECT 1 FROM users WHERE tenant_id = ? AND status = 'active' AND id = ? LIMIT 1",
+                (tenant_id, user_id),
+            ).fetchone()
+            if not exists:
+                raise HTTPException(status_code=400, detail=f'Unknown active tenant user: {user_id}')
+            key = ('user', user_id)
+            target = {'kind': 'user', 'user_id': user_id}
+        else:
+            raise HTTPException(status_code=400, detail="recipient_targets kind must be 'group' or 'user'")
+        if key not in seen:
+            targets.append(target)
+            seen.add(key)
+    if not allow_empty and not targets:
+        raise HTTPException(status_code=400, detail='recipient_targets must contain at least one target')
+    return targets
+
+
+def _smtp_row_for_profile(conn, tenant_id: str, profile_id: str) -> tuple[dict | None, bool]:
+    local, shared = _smtp_profile_rows(conn, tenant_id)
+    local_match = next((row for row in local if str(row.get('id') or '') == profile_id), None)
+    if local_match:
+        return local_match, False
+    if local:
+        return None, False
+    shared_match = next((row for row in shared if str(row.get('id') or '') == profile_id), None)
+    return shared_match, bool(shared_match)
+
+
+def _save_smtp_profile(payload: dict, user: dict, *, profile_id: str | None = None) -> dict:
+    tenant_id = _notification_tenant_id(user)
+    conn = get_db_connection()
+    try:
+        existing = None
+        if profile_id:
+            local_match = conn.execute(
+                "SELECT * FROM notification_smtp_configs WHERE tenant_id = ? AND id = ? LIMIT 1",
+                (tenant_id, profile_id),
+            ).fetchone()
+            if not local_match:
+                inherited_match = conn.execute(
+                    "SELECT id FROM notification_smtp_configs WHERE tenant_id = 'tenant-default' AND id = ? LIMIT 1",
+                    (profile_id,),
+                ).fetchone()
+                if inherited_match:
+                    raise HTTPException(status_code=403, detail='Inherited SMTP profiles are read-only')
+                raise HTTPException(status_code=404, detail='SMTP profile not found')
+            existing = dict(local_match)
+        values = _validate_smtp_profile_payload(payload, existing)
+        if payload.get('recipient_targets') is not None:
+            targets = _validated_recipient_targets(
+                conn,
+                tenant_id,
+                payload.get('recipient_targets'),
+                allow_empty=bool(existing),
+            )
+        elif existing:
+            targets = _smtp_profile_targets(existing)
+        else:
+            raise HTTPException(status_code=400, detail='recipient_targets must contain at least one target')
+        name = str((existing or {}).get('name') or payload.get('name') or '').strip()
+        if not name:
+            name = f"smtp_{uuid.uuid4().hex[:16]}"
+        if not re.fullmatch(r'[A-Za-z0-9_.-]{1,80}', name):
+            raise HTTPException(status_code=400, detail='name must contain only letters, numbers, dot, underscore, or hyphen')
+        display_name = str(payload.get('display_name', (existing or {}).get('display_name') or name) or name).strip()[:120]
+        if not display_name:
+            raise HTTPException(status_code=400, detail='display_name is required')
+        old_ciphertext = str((existing or {}).get('password_ciphertext') or '')
+        password = str(payload.get('password') or '').strip()
+        if password:
+            try:
+                password_ciphertext = encrypt_credential(password) or ''
+            except Exception as exc:
+                raise HTTPException(status_code=500, detail='SMTP password encryption is unavailable') from exc
+        elif bool(payload.get('clear_password', False)):
+            password_ciphertext = ''
+        else:
+            password_ciphertext = old_ciphertext
+        now = _utc_now_iso()
+        actor = str(user.get('username') or 'system')
+        config_id = str((existing or {}).get('id') or f"smtp_{uuid.uuid4().hex[:16]}")
+        conn.execute(
+            """
+            INSERT INTO notification_smtp_configs (
+                id, tenant_id, name, display_name, enabled, host, port, security, username,
+                password_ciphertext, from_address, from_name, reply_to,
+                connect_timeout_seconds, send_timeout_seconds, rate_limit_per_minute,
+                recipient_targets_json, created_by, created_at, updated_by, updated_at
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?::jsonb, ?, ?, ?, ?)
+            ON CONFLICT (tenant_id, name) DO UPDATE SET
+                display_name = excluded.display_name, enabled = excluded.enabled,
+                host = excluded.host, port = excluded.port, security = excluded.security,
+                username = excluded.username, password_ciphertext = excluded.password_ciphertext,
+                from_address = excluded.from_address, from_name = excluded.from_name,
+                reply_to = excluded.reply_to, connect_timeout_seconds = excluded.connect_timeout_seconds,
+                send_timeout_seconds = excluded.send_timeout_seconds,
+                rate_limit_per_minute = excluded.rate_limit_per_minute,
+                recipient_targets_json = excluded.recipient_targets_json,
+                updated_by = excluded.updated_by, updated_at = excluded.updated_at
+            """,
+            (
+                config_id, tenant_id, name, display_name, values['enabled'], values['host'], values['port'],
+                values['security'], values['username'], password_ciphertext, values['from_address'],
+                values['from_name'], values['reply_to'], values['connect_timeout_seconds'],
+                values['send_timeout_seconds'], values['rate_limit_per_minute'],
+                json.dumps(targets, ensure_ascii=False), actor, now, actor, now,
+            ),
+        )
+        conn.commit()
+        row = conn.execute(
+            "SELECT * FROM notification_smtp_configs WHERE tenant_id = ? AND name = ? LIMIT 1",
+            (tenant_id, name),
+        ).fetchone()
+        return _safe_smtp_profile(row)
+    except HTTPException:
+        conn.rollback()
+        raise
+    except Exception:
+        conn.rollback()
+        raise
+    finally:
+        conn.close()
+
+
+@router.get('/alerts/notification-channels/email/profiles')
+def list_alert_email_profiles(user=require_role('Viewer')):
+    tenant_id = _notification_tenant_id(user)
+    conn = get_db_connection()
+    try:
+        local, shared = _smtp_profile_rows(conn, tenant_id)
+        if local:
+            return {'items': [_safe_smtp_profile(row) for row in local if not _is_hidden_smtp_override(row)]}
+        return {'items': [_safe_smtp_profile(row, inherited=True) for row in shared]}
+    finally:
+        conn.close()
+
+
+@router.get('/alerts/notification-channels/email/recipients')
+def list_alert_email_recipients(user=require_role('Administrator')):
+    tenant_id = _notification_tenant_id(user)
+    conn = get_db_connection()
+    try:
+        rows = [dict(row) for row in conn.execute(
+            """SELECT id, username, display_name, email, group_name
+               FROM users WHERE tenant_id = ? AND status = 'active'
+               ORDER BY COALESCE(NULLIF(display_name, ''), username), username""",
+            (tenant_id,),
+        ).fetchall()]
+        groups = {}
+        for row in rows:
+            name = str(row.get('group_name') or '').strip()
+            if name:
+                groups[name] = groups.get(name, 0) + 1
+        return {
+            'groups': [{'name': name, 'member_count': count} for name, count in sorted(groups.items())],
+            'users': [
+                {
+                    'id': str(row.get('id') or ''),
+                    'username': str(row.get('username') or ''),
+                    'display_name': str(row.get('display_name') or ''),
+                    'email': str(row.get('email') or ''),
+                    'group_name': str(row.get('group_name') or ''),
+                }
+                for row in rows
+            ],
+        }
+    finally:
+        conn.close()
+
+
+@router.post('/alerts/notification-channels/email/profiles')
+def create_alert_email_profile(payload: dict = Body(...), user=require_role('Administrator')):
+    profile = _save_smtp_profile(payload, user)
+    log_audit_event(
+        event_type='ALERT_EMAIL_PROFILE_CREATE', category='monitoring', severity='medium', status='success',
+        summary=f"Created SMTP profile {profile['display_name']}", actor_username=user.get('username', 'system'),
+        actor_role=user.get('role', 'Administrator'), target_type='notification_smtp_profile',
+        target_id=profile['id'], target_name=profile['display_name'], details={'enabled': profile['enabled']},
+    )
+    return profile
+
+
+@router.put('/alerts/notification-channels/email/profiles/{profile_id}')
+def update_alert_email_profile(profile_id: str, payload: dict = Body(...), user=require_role('Administrator')):
+    profile = _save_smtp_profile(payload, user, profile_id=profile_id)
+    log_audit_event(
+        event_type='ALERT_EMAIL_PROFILE_UPDATE', category='monitoring', severity='medium', status='success',
+        summary=f"Updated SMTP profile {profile['display_name']}", actor_username=user.get('username', 'system'),
+        actor_role=user.get('role', 'Administrator'), target_type='notification_smtp_profile',
+        target_id=profile['id'], target_name=profile['display_name'], details={'enabled': profile['enabled']},
+    )
+    return profile
+
+
+@router.patch('/alerts/notification-channels/email/profiles/{profile_id}/enabled')
+def set_alert_email_profile_enabled(profile_id: str, payload: dict = Body(...), user=require_role('Administrator')):
+    if not isinstance(payload.get('enabled'), bool):
+        raise HTTPException(status_code=400, detail='enabled must be boolean')
+    tenant_id = _notification_tenant_id(user)
+    conn = get_db_connection()
+    try:
+        row, inherited = _smtp_row_for_profile(conn, tenant_id, profile_id)
+        if not row:
+            raise HTTPException(status_code=404, detail='SMTP profile not found')
+        if inherited:
+            raise HTTPException(status_code=403, detail='Inherited SMTP profiles are read-only')
+        now = _utc_now_iso()
+        conn.execute(
+            "UPDATE notification_smtp_configs SET enabled = ?, updated_by = ?, updated_at = ? WHERE tenant_id = ? AND id = ?",
+            (payload['enabled'], str(user.get('username') or 'system'), now, tenant_id, profile_id),
+        )
+        conn.commit()
+        updated = conn.execute("SELECT * FROM notification_smtp_configs WHERE tenant_id = ? AND id = ?", (tenant_id, profile_id)).fetchone()
+        safe_profile = _safe_smtp_profile(updated)
+        log_audit_event(
+            event_type='ALERT_EMAIL_PROFILE_ENABLED', category='monitoring', severity='medium', status='success',
+            summary=f"{'Enabled' if safe_profile['enabled'] else 'Disabled'} SMTP profile {safe_profile['display_name']}",
+            actor_username=user.get('username', 'system'), actor_role=user.get('role', 'Administrator'),
+            target_type='notification_smtp_profile', target_id=profile_id,
+            target_name=safe_profile['display_name'], details={'enabled': safe_profile['enabled']},
+        )
+        return safe_profile
+    finally:
+        conn.close()
+
+
+@router.delete('/alerts/notification-channels/email/profiles/{profile_id}')
+def delete_alert_email_profile(profile_id: str, user=require_role('Administrator')):
+    tenant_id = _notification_tenant_id(user)
+    conn = get_db_connection()
+    try:
+        row, inherited = _smtp_row_for_profile(conn, tenant_id, profile_id)
+        if not row:
+            raise HTTPException(status_code=404, detail='SMTP profile not found')
+        if inherited:
+            raise HTTPException(status_code=403, detail='Inherited SMTP profiles are read-only')
+        deleted_display_name = str(row.get('display_name') or row.get('name') or 'SMTP')
+        deleted_enabled = bool(row.get('enabled'))
+        shared_exists = bool(conn.execute("SELECT 1 FROM notification_smtp_configs WHERE tenant_id = 'tenant-default' LIMIT 1").fetchone())
+        conn.execute("DELETE FROM notification_smtp_configs WHERE tenant_id = ? AND id = ?", (tenant_id, profile_id))
+        remaining = conn.execute("SELECT COUNT(*) AS count FROM notification_smtp_configs WHERE tenant_id = ?", (tenant_id,)).fetchone()
+        if shared_exists and int(remaining['count'] or 0) == 0:
+            now = _utc_now_iso()
+            actor = str(user.get('username') or 'system')
+            conn.execute(
+                """
+                INSERT INTO notification_smtp_configs (
+                    id, tenant_id, name, display_name, enabled, host, port, security, username,
+                    password_ciphertext, from_address, from_name, reply_to,
+                    connect_timeout_seconds, send_timeout_seconds, rate_limit_per_minute,
+                    recipient_targets_json, created_by, created_at, updated_by, updated_at
+                ) VALUES (?, ?, 'primary', '默认邮件通道', FALSE, '', 587, 'starttls', '', '', '', 'Nexora', '', 10, 20, 60, '[]'::jsonb, ?, ?, ?, ?)
+                ON CONFLICT (tenant_id, name) DO UPDATE SET
+                    display_name = '默认邮件通道', enabled = FALSE, host = '', port = 587,
+                    security = 'starttls', username = '', password_ciphertext = '', from_address = '',
+                    from_name = 'Nexora', reply_to = '', connect_timeout_seconds = 10,
+                    send_timeout_seconds = 20, rate_limit_per_minute = 60,
+                    recipient_targets_json = '[]'::jsonb, updated_by = excluded.updated_by, updated_at = excluded.updated_at
+                """,
+                (f"smtp_{uuid.uuid4().hex[:16]}", tenant_id, actor, now, actor, now),
+            )
+        conn.commit()
+        log_audit_event(
+            event_type='ALERT_EMAIL_PROFILE_DELETE', category='monitoring', severity='medium', status='success',
+            summary=f"Deleted SMTP profile {deleted_display_name}",
+            actor_username=user.get('username', 'system'), actor_role=user.get('role', 'Administrator'),
+            target_type='notification_smtp_profile', target_id=profile_id,
+            target_name=deleted_display_name, details={'enabled': deleted_enabled},
+        )
+        return {'deleted': True, 'id': profile_id}
+    finally:
+        conn.close()
+
+
+def _test_profile_recipient(payload: dict, user: dict, conn) -> str:
+    explicit = payload.get('recipient')
+    if explicit is not None:
+        recipient = str(explicit or '').strip()
+        if not _EMAIL_ADDRESS_RE.fullmatch(recipient):
+            raise HTTPException(status_code=400, detail='recipient must be a valid email address')
+        return recipient
+    recipient = str(user.get('email') or '').strip()
+    if not recipient and user.get('user_id'):
+        row = conn.execute("SELECT email FROM users WHERE tenant_id = ? AND id = ? AND status = 'active'", (_notification_tenant_id(user), user['user_id'])).fetchone()
+        recipient = str(row['email'] or '').strip() if row else ''
+    if not _EMAIL_ADDRESS_RE.fullmatch(recipient):
+        raise HTTPException(status_code=400, detail='Administrator email is not configured')
+    return recipient
+
+
+@router.post('/alerts/notification-channels/email/profiles/{profile_id}/test-connection')
+def test_alert_email_profile_connection(profile_id: str, user=require_role('Administrator')):
+    tenant_id = _notification_tenant_id(user)
+    conn = get_db_connection()
+    try:
+        row, inherited = _smtp_row_for_profile(conn, tenant_id, profile_id)
+    finally:
+        conn.close()
+    if not row:
+        raise HTTPException(status_code=404, detail='SMTP profile not found')
+    result = notification_service.test_smtp_connection(row)
+    if not result.get('success'):
+        raise HTTPException(status_code=502, detail=str(result.get('error_code') or 'smtp_provider_error'))
+    return {'success': True, 'connected': bool(result.get('connected')), 'authenticated': bool(result.get('authenticated'))}
+
+
+@router.post('/alerts/notification-channels/email/profiles/{profile_id}/test')
+def test_alert_email_profile(profile_id: str, payload: dict = Body(default={}), user=require_role('Administrator')):
+    tenant_id = _notification_tenant_id(user)
+    conn = get_db_connection()
+    try:
+        row, inherited = _smtp_row_for_profile(conn, tenant_id, profile_id)
+        if not row:
+            raise HTTPException(status_code=404, detail='SMTP profile not found')
+        recipient = _test_profile_recipient(payload, user, conn)
+    finally:
+        conn.close()
+    result = notification_service.send_email(
+        row, [recipient], {
+            'title': 'Nexora 邮件通道测试',
+            'message': f'用户 {user.get("username") or "admin"} 发起了 SMTP 配置测试。',
+            'first_occurrence': datetime.now(timezone.utc).isoformat(),
+            'last_occurrence': datetime.now(timezone.utc).isoformat(),
+        }, test_mode=True,
+    )
+    if not result.get('success'):
+        raise HTTPException(status_code=502, detail=str(result.get('error_code') or 'smtp_provider_error'))
+    return {'success': True, 'recipient_count': result.get('recipient_count', 1)}
+
+
 @router.get('/alerts/notification-channels')
 def read_alert_notification_channels(user=require_role('Viewer')):
     """Return channel availability without returning webhook/SMTP secrets."""
     tenant_id = _notification_tenant_id(user)
     conn = get_db_connection()
     try:
-        smtp_row = conn.execute(
-            """
-            SELECT * FROM notification_smtp_configs
-            WHERE tenant_id = ? OR tenant_id = 'tenant-default'
-            ORDER BY CASE WHEN tenant_id = ? THEN 0 ELSE 1 END, updated_at DESC
-            LIMIT 1
-            """,
-            (tenant_id, tenant_id),
-        ).fetchone()
+        local_profiles, shared_profiles = _smtp_profile_rows(conn, tenant_id)
+        effective_profiles = local_profiles if local_profiles else shared_profiles
+        smtp_row = next(
+            (row for row in effective_profiles if str(row.get('name') or '').strip().lower() == 'primary'),
+            effective_profiles[0] if effective_profiles else None,
+        )
         global_rows = conn.execute(
             "SELECT platform, enabled FROM global_notification_channels"
         ).fetchall()
         configured = {str(row['platform'] or '').strip().lower(): bool(row['enabled']) for row in global_rows}
+        valid_profiles = [
+            row for row in effective_profiles
+            if str(row.get('host') or '').strip() and _EMAIL_ADDRESS_RE.fullmatch(str(row.get('from_address') or '').strip())
+        ]
+        enabled_profiles = [row for row in valid_profiles if bool(row.get('enabled'))]
         return {
             'channels': [
                 {'id': 'workspace', 'label': '跟随个人设置', 'configured': True, 'enabled': True},
                 {'id': 'feishu', 'label': '飞书', 'configured': configured.get('feishu', False), 'enabled': configured.get('feishu', False)},
                 {'id': 'dingtalk', 'label': '钉钉', 'configured': configured.get('dingtalk', False), 'enabled': configured.get('dingtalk', False)},
                 {'id': 'wechat', 'label': '企业微信', 'configured': configured.get('wechat', False), 'enabled': configured.get('wechat', False)},
-                {'id': 'email', 'label': '邮件', 'configured': bool(smtp_row and smtp_row['enabled']), 'enabled': bool(smtp_row and smtp_row['enabled'])},
+                {'id': 'email', 'label': '邮件', 'configured': bool(valid_profiles), 'enabled': bool(enabled_profiles)},
                 {'id': 'global_webhook', 'label': '全局 Webhook', 'configured': bool((settings.ALERT_NOTIFY_WEBHOOK_URL or '').strip()), 'enabled': bool((settings.ALERT_NOTIFY_WEBHOOK_URL or '').strip())},
             ],
             'smtp': _safe_smtp_config(smtp_row),
@@ -915,16 +1391,17 @@ def delete_alert_email_channel(user=require_role('Administrator')):
         conn.execute(
             """
             INSERT INTO notification_smtp_configs (
-                id, tenant_id, name, enabled, host, port, security, username,
+                id, tenant_id, name, display_name, enabled, host, port, security, username,
                 password_ciphertext, from_address, from_name, reply_to,
                 connect_timeout_seconds, send_timeout_seconds, rate_limit_per_minute,
-                created_by, created_at, updated_by, updated_at
-            ) VALUES (?, ?, 'primary', FALSE, '', 587, 'starttls', '', '', '', 'Nexora', '', 10, 20, 60, ?, ?, ?, ?)
+                recipient_targets_json, created_by, created_at, updated_by, updated_at
+            ) VALUES (?, ?, 'primary', '默认邮件通道', FALSE, '', 587, 'starttls', '', '', '', 'Nexora', '', 10, 20, 60, '[]'::jsonb, ?, ?, ?, ?)
             ON CONFLICT (tenant_id, name) DO UPDATE SET
-                enabled = FALSE, host = '', port = 587, security = 'starttls',
+                display_name = '默认邮件通道', enabled = FALSE, host = '', port = 587, security = 'starttls',
                 username = '', password_ciphertext = '', from_address = '',
                 from_name = 'Nexora', reply_to = '', connect_timeout_seconds = 10,
                 send_timeout_seconds = 20, rate_limit_per_minute = 60,
+                recipient_targets_json = '[]'::jsonb,
                 updated_by = excluded.updated_by, updated_at = excluded.updated_at
             """,
             (f"smtp_{uuid.uuid4().hex[:16]}", tenant_id, username, now, username, now),
@@ -945,15 +1422,12 @@ def test_alert_email_connection(user=require_role('Administrator')):
     tenant_id = _notification_tenant_id(user)
     conn = get_db_connection()
     try:
-        row = conn.execute(
-            """
-            SELECT * FROM notification_smtp_configs
-            WHERE tenant_id = ? OR tenant_id = 'tenant-default'
-            ORDER BY CASE WHEN tenant_id = ? THEN 0 ELSE 1 END, updated_at DESC
-            LIMIT 1
-            """,
-            (tenant_id, tenant_id),
-        ).fetchone()
+        local_profiles, shared_profiles = _smtp_profile_rows(conn, tenant_id)
+        effective_profiles = local_profiles if local_profiles else shared_profiles
+        row = next(
+            (profile for profile in effective_profiles if str(profile.get('name') or '').strip().lower() == 'primary'),
+            None,
+        )
     finally:
         conn.close()
     if not row:
@@ -974,15 +1448,12 @@ def test_alert_email_channel(payload: dict = Body(default={}), user=require_role
     tenant_id = _notification_tenant_id(user)
     conn = get_db_connection()
     try:
-        row = conn.execute(
-            """
-            SELECT * FROM notification_smtp_configs
-            WHERE tenant_id = ? OR tenant_id = 'tenant-default'
-            ORDER BY CASE WHEN tenant_id = ? THEN 0 ELSE 1 END, updated_at DESC
-            LIMIT 1
-            """,
-            (tenant_id, tenant_id),
-        ).fetchone()
+        local_profiles, shared_profiles = _smtp_profile_rows(conn, tenant_id)
+        effective_profiles = local_profiles if local_profiles else shared_profiles
+        row = next(
+            (profile for profile in effective_profiles if str(profile.get('name') or '').strip().lower() == 'primary'),
+            None,
+        )
     finally:
         conn.close()
     if not row:

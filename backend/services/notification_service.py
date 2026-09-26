@@ -427,6 +427,105 @@ def test_smtp_connection(smtp_config: dict) -> dict:
                     pass
 
 
+def _profile_targets(row: dict) -> list[dict]:
+    raw = row.get('recipient_targets_json')
+    if isinstance(raw, str):
+        try:
+            raw = json.loads(raw or '[]')
+        except (TypeError, ValueError):
+            raw = []
+    if not isinstance(raw, list):
+        return []
+    targets = []
+    seen = set()
+    for item in raw:
+        if not isinstance(item, dict):
+            continue
+        kind = str(item.get('kind') or '').strip().lower()
+        value_key = 'group_name' if kind == 'group' else 'user_id' if kind == 'user' else ''
+        value = str(item.get(value_key) or '').strip()
+        key = (kind, value)
+        if value and value_key and key not in seen:
+            targets.append({'kind': kind, value_key: value})
+            seen.add(key)
+    return targets
+
+
+def _is_hidden_primary_override(row: dict) -> bool:
+    return (
+        str(row.get('tenant_id') or '') != 'tenant-default'
+        and str(row.get('name') or '').strip().lower() == 'primary'
+        and not bool(row.get('enabled'))
+        and not str(row.get('host') or '').strip()
+        and not str(row.get('from_address') or '').strip()
+        and not str(row.get('password_ciphertext') or '').strip()
+        and not _profile_targets(row)
+    )
+
+
+def get_email_profiles_for_dispatch(
+    connection,
+    tenant_id: str,
+    *,
+    profile_id: str | None = None,
+    legacy_primary: bool = False,
+    enabled_only: bool = False,
+) -> list[dict]:
+    """Return tenant SMTP profiles with tenant-default fallback semantics.
+
+    A local row, including an intentionally empty primary override, blocks
+    shared profiles. The workspace path asks specifically for the local (or
+    shared-only) legacy primary profile so it never selects another profile by
+    update time.
+    """
+    normalized_tenant = str(tenant_id or 'tenant-default').strip() or 'tenant-default'
+    local_rows = [
+        dict(row) for row in connection.execute(
+            "SELECT * FROM notification_smtp_configs WHERE tenant_id = ? ORDER BY updated_at DESC, id",
+            (normalized_tenant,),
+        ).fetchall()
+    ]
+    shared_rows = [
+        dict(row) for row in connection.execute(
+            "SELECT * FROM notification_smtp_configs WHERE tenant_id = 'tenant-default' ORDER BY updated_at DESC, id",
+        ).fetchall()
+    ] if normalized_tenant != 'tenant-default' else []
+
+    if profile_id:
+        wanted = str(profile_id).strip()
+        rows = [row for row in local_rows if str(row.get('id') or '') == wanted]
+        if not rows and not local_rows:
+            rows = [row for row in shared_rows if str(row.get('id') or '') == wanted]
+    elif legacy_primary:
+        rows = [row for row in local_rows if str(row.get('name') or '').strip().lower() == 'primary']
+        if not rows and not local_rows:
+            rows = [row for row in shared_rows if str(row.get('name') or '').strip().lower() == 'primary']
+    else:
+        rows = local_rows if local_rows else shared_rows
+
+    if enabled_only:
+        rows = [row for row in rows if bool(row.get('enabled'))]
+    return rows
+
+
+def _profile_email_recipients(profile: dict, user_rows: list[dict]) -> list[str]:
+    targets = _profile_targets(profile)
+    if not targets:
+        return []
+    group_names = {item['group_name'] for item in targets if item['kind'] == 'group'}
+    user_ids = {item['user_id'] for item in targets if item['kind'] == 'user'}
+    recipients = []
+    for user in user_rows:
+        user_id = str(user.get('id') or '').strip()
+        group_name = str(user.get('group_name') or '').strip()
+        if user_id not in user_ids and group_name not in group_names:
+            continue
+        address = str(user.get('email') or '').strip().lower()
+        if address and _EMAIL_ADDRESS_RE.fullmatch(address) and address not in recipients:
+            recipients.append(address)
+    return recipients
+
+
 # ── 飞书 Interactive Card ─────────────────────
 
 
@@ -908,6 +1007,8 @@ def _dispatch_to_users(
     tenant_id: str | None = None,
     *,
     channels: set[str] | list[str] | tuple[str, ...] | None = None,
+    profile_id: str | None = None,
+    legacy_primary: bool = False,
     raise_on_error: bool = False,
 ) -> list[dict]:
     """Dispatch through configured channels without crossing tenant scope.
@@ -935,28 +1036,13 @@ def _dispatch_to_users(
         ).fetchall()
         global_map = {str(r['platform'] or '').strip().lower(): dict(r) for r in global_rows}
 
-        smtp_query = (
-            "SELECT * FROM notification_smtp_configs "
-            "WHERE tenant_id = ? OR tenant_id = 'tenant-default' "
-            "ORDER BY CASE WHEN tenant_id = ? THEN 0 ELSE 1 END, updated_at DESC LIMIT 1"
-        )
-        smtp_params = (tenant_id or 'tenant-default', tenant_id or 'tenant-default')
-        smtp_row = None
-        try:
-            smtp_row = conn.execute(smtp_query, smtp_params).fetchone()
-        except Exception:
-            # Older databases before m0245 have no SMTP table. Explicit email
-            # delivery will return a visible configuration error below.
-            smtp_row = None
-        smtp_config = dict(smtp_row) if smtp_row else None
-
         # 2. 获取所有用户的通知偏好
-        user_query = "SELECT id, email, notification_channels, preferred_language FROM users WHERE status = 'active'"
+        user_query = "SELECT id, email, group_name, notification_channels, preferred_language FROM users WHERE status = 'active'"
         user_params: list[str] = []
         if tenant_id:
             user_query += " AND tenant_id = ?"
             user_params.append(tenant_id)
-        user_rows = conn.execute(user_query, user_params).fetchall()
+        user_rows = [dict(row) for row in conn.execute(user_query, user_params).fetchall()]
 
         # 3. 汇总去重后的发送目标。个人设置可以覆盖全局通道；如果
         # 个人设置只保存了掩码值，则安全地回退到全局通道配置。
@@ -1065,28 +1151,69 @@ def _dispatch_to_users(
         if requested_channels is None and email_pref_seen:
             email_requested = True
         if email_requested:
-            if smtp_config is None or not bool(smtp_config.get('enabled')):
+            if profile_id:
+                email_profiles = get_email_profiles_for_dispatch(
+                    conn,
+                    tenant_id or 'tenant-default',
+                    profile_id=profile_id,
+                )
+            elif legacy_primary or requested_channels is None:
+                # Workspace notifications retain the legacy primary profile.
+                email_profiles = get_email_profiles_for_dispatch(
+                    conn,
+                    tenant_id or 'tenant-default',
+                    legacy_primary=True,
+                )
+            else:
+                email_profiles = get_email_profiles_for_dispatch(
+                    conn,
+                    tenant_id or 'tenant-default',
+                    enabled_only=True,
+                )
+
+            if not email_profiles:
                 results.append({
                     'platform': 'email',
                     'success': False,
                     'error': 'smtp_config_missing',
                     'recipient_count': len(email_recipients),
-                })
-            elif not email_recipients:
-                results.append({
-                    'platform': 'email',
-                    'success': False,
-                    'error': 'email_no_recipients',
-                    'recipient_count': 0,
+                    'destination_key': profile_id or 'primary',
                 })
             else:
-                email_result = send_email(smtp_config, email_recipients, alert)
-                results.append({
-                    'platform': 'email',
-                    'success': bool(email_result.get('success')),
-                    'error': email_result.get('error_code') or '',
-                    'recipient_count': int(email_result.get('recipient_count') or 0),
-                })
+                for smtp_config in email_profiles:
+                    if not bool(smtp_config.get('enabled')):
+                        results.append({
+                            'platform': 'email',
+                            'success': False,
+                            'error': 'smtp_config_missing',
+                            'recipient_count': 0,
+                            'destination_key': str(smtp_config.get('id') or profile_id or 'primary'),
+                        })
+                        continue
+                    targets = _profile_targets(smtp_config)
+                    if targets:
+                        profile_recipients = _profile_email_recipients(smtp_config, user_rows)
+                    elif str(smtp_config.get('name') or '').strip().lower() == 'primary':
+                        profile_recipients = email_recipients
+                    else:
+                        profile_recipients = []
+                    if not profile_recipients:
+                        results.append({
+                            'platform': 'email',
+                            'success': False,
+                            'error': 'email_no_recipients',
+                            'recipient_count': 0,
+                            'destination_key': str(smtp_config.get('id') or profile_id or 'primary'),
+                        })
+                        continue
+                    email_result = send_email(smtp_config, profile_recipients, alert)
+                    results.append({
+                        'platform': 'email',
+                        'success': bool(email_result.get('success')),
+                        'error': email_result.get('error_code') or '',
+                        'recipient_count': int(email_result.get('recipient_count') or 0),
+                        'destination_key': str(smtp_config.get('id') or profile_id or 'primary'),
+                    })
 
         return results
     except Exception as e:
@@ -1102,10 +1229,18 @@ def dispatch_to_all_users(
     alert: dict,
     *,
     channels: set[str] | list[str] | tuple[str, ...] | None = None,
+    profile_id: str | None = None,
+    legacy_primary: bool = False,
     raise_on_error: bool = False,
 ) -> list[dict]:
     """Dispatch to all configured active users (legacy alert path)."""
-    return _dispatch_to_users(alert, channels=channels, raise_on_error=raise_on_error)
+    return _dispatch_to_users(
+        alert,
+        channels=channels,
+        profile_id=profile_id,
+        legacy_primary=legacy_primary,
+        raise_on_error=raise_on_error,
+    )
 
 
 def dispatch_to_tenant_users(
@@ -1113,6 +1248,8 @@ def dispatch_to_tenant_users(
     tenant_id: str,
     *,
     channels: set[str] | list[str] | tuple[str, ...] | None = None,
+    profile_id: str | None = None,
+    legacy_primary: bool = False,
     raise_on_error: bool = False,
 ) -> list[dict]:
     """Dispatch only to active users in the Playbook execution tenant."""
@@ -1124,5 +1261,7 @@ def dispatch_to_tenant_users(
         alert,
         tenant_id=tenant_id,
         channels=channels,
+        profile_id=profile_id,
+        legacy_primary=legacy_primary,
         raise_on_error=raise_on_error,
     )

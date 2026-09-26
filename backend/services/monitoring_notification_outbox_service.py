@@ -149,43 +149,85 @@ def enqueue_alert_delivery(*, delivery_key: str, channel: str, payload: dict) ->
     if not isinstance(payload, dict):
         raise TypeError("payload must be a dictionary")
 
-    safe_payload = _sanitize_payload_value(payload)
-    payload_json = json.dumps(safe_payload, ensure_ascii=False, allow_nan=False)
     connection = get_db_connection()
     try:
-        inserted = connection.execute(
-            """
-            INSERT INTO alert_delivery_outbox (
-                id, delivery_key, channel, payload, alert_id, tenant_id,
-                event_kind, destination_key
-            ) VALUES (?, ?, ?, ?::jsonb, ?, ?, ?, ?)
-            ON CONFLICT (delivery_key) DO NOTHING
-            RETURNING id
-            """,
-            (
-                str(uuid.uuid4()),
-                normalized_key,
-                normalized_channel,
-                payload_json,
-                str(payload.get('alert_id') or '') or None,
-                str(payload.get('tenant_id') or 'tenant-default'),
-                str(payload.get('event_kind') or 'active'),
-                str(payload.get('destination_key') or normalized_channel),
-            ),
-        ).fetchone()
-        if inserted:
-            alert_id = str(payload.get('alert_id') or '') or None
-            _record_alert_activity(
-                connection,
-                alert_id,
-                'NOTIFICATION_QUEUED',
-                {
-                    'channel': normalized_channel,
-                    'event_kind': str(payload.get('event_kind') or 'active'),
-                    'destination_key': str(payload.get('destination_key') or normalized_channel),
-                    'status': 'queued',
-                },
-            )
+        if normalized_channel == 'email':
+            # A pre-m0256 worker may already have persisted the unsuffixed
+            # delivery. Keep that durable row authoritative during rollout so
+            # profile fan-out cannot duplicate the same alert transition.
+            legacy_base = connection.execute(
+                "SELECT 1 FROM alert_delivery_outbox WHERE delivery_key = ? LIMIT 1",
+                (normalized_key,),
+            ).fetchone()
+            if legacy_base:
+                connection.commit()
+                return
+        destinations = [(normalized_key, str(payload.get('destination_key') or normalized_channel), payload)]
+        if normalized_channel == 'email':
+            tenant_id = str(payload.get('tenant_id') or 'tenant-default').strip() or 'tenant-default'
+            try:
+                from services.notification_service import get_email_profiles_for_dispatch
+
+                profiles = get_email_profiles_for_dispatch(
+                    connection,
+                    tenant_id,
+                    enabled_only=True,
+                )
+            except Exception:
+                # Keep the visible smtp_config_missing outcome on installations
+                # that have not applied the SMTP profile migration yet.
+                profiles = []
+            if profiles:
+                destinations = []
+                for profile in profiles:
+                    profile_id = str(profile.get('id') or '').strip()
+                    if not profile_id:
+                        continue
+                    profile_payload = dict(payload)
+                    profile_payload['destination_key'] = profile_id
+                    profile_key = f"{normalized_key}:email:{profile_id}"
+                    if len(profile_key) > 512:
+                        profile_key = f"{normalized_key[:470]}:email:{profile_id}"
+                    destinations.append((profile_key, profile_id, profile_payload))
+                if not destinations:
+                    destinations = [(normalized_key, 'email', payload)]
+
+        for destination_delivery_key, destination_key, destination_payload in destinations:
+            safe_payload = _sanitize_payload_value(destination_payload)
+            payload_json = json.dumps(safe_payload, ensure_ascii=False, allow_nan=False)
+            inserted = connection.execute(
+                """
+                INSERT INTO alert_delivery_outbox (
+                    id, delivery_key, channel, payload, alert_id, tenant_id,
+                    event_kind, destination_key
+                ) VALUES (?, ?, ?, ?::jsonb, ?, ?, ?, ?)
+                ON CONFLICT (delivery_key) DO NOTHING
+                RETURNING id
+                """,
+                (
+                    str(uuid.uuid4()),
+                    destination_delivery_key,
+                    normalized_channel,
+                    payload_json,
+                    str(destination_payload.get('alert_id') or '') or None,
+                    str(destination_payload.get('tenant_id') or 'tenant-default'),
+                    str(destination_payload.get('event_kind') or 'active'),
+                    destination_key,
+                ),
+            ).fetchone()
+            if inserted:
+                alert_id = str(destination_payload.get('alert_id') or '') or None
+                _record_alert_activity(
+                    connection,
+                    alert_id,
+                    'NOTIFICATION_QUEUED',
+                    {
+                        'channel': normalized_channel,
+                        'event_kind': str(destination_payload.get('event_kind') or 'active'),
+                        'destination_key': destination_key,
+                        'status': 'queued',
+                    },
+                )
         connection.commit()
     except Exception:
         connection.rollback()
@@ -335,6 +377,9 @@ def _deliver(row: dict[str, Any]) -> None:
             payload,
             tenant_id,
             channels={str(row["channel"]).strip().lower()},
+            profile_id=(str(row.get('destination_key') or '').strip() or None)
+            if row["channel"] == "email" and str(row.get('destination_key') or '').strip() not in {'', 'email'} else None,
+            legacy_primary=(row["channel"] == "email" and str(row.get('destination_key') or '').strip() in {'', 'email'}),
             raise_on_error=True,
         )
         row['_recipient_count'] = sum(int(result.get('recipient_count') or 0) for result in results)
