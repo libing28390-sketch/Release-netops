@@ -12,6 +12,8 @@ vi.mock('../api/http', async (importOriginal) => {
 
 const mockedApiRequest = vi.mocked(apiRequest);
 const savedSmtpSettings = {
+  id: 'email',
+  display_name: '告警邮件',
   enabled: true,
   host: 'smtp.example.net',
   port: 587,
@@ -25,11 +27,22 @@ const savedSmtpSettings = {
   rate_limit_per_minute: 60,
   has_password: true,
   configured: true,
+  recipient_targets: [],
+  inherited: false,
+  legacy_primary: false,
 };
 
 describe('NotificationChannelSettingsPage', () => {
   beforeEach(() => {
-    mockedApiRequest.mockResolvedValue({ smtp: savedSmtpSettings } as never);
+    mockedApiRequest.mockImplementation(async (url) => {
+      if (url === '/api/alerts/notification-channels/email/profiles') {
+        return { items: [savedSmtpSettings] } as never;
+      }
+      if (url === '/api/alerts/notification-channels/email/recipients') {
+        return { groups: [], users: [] } as never;
+      }
+      return {} as never;
+    });
   });
 
   afterEach(() => {
@@ -37,24 +50,19 @@ describe('NotificationChannelSettingsPage', () => {
     vi.clearAllMocks();
   });
 
-  it('loads the saved SMTP channel and sends a test only with a clean configuration', async () => {
+  it('loads the saved SMTP channel and sends a test through the selected channel', async () => {
     const user = userEvent.setup();
     const showToast = vi.fn();
     render(<NotificationChannelSettingsPage language="zh" showToast={showToast} />);
 
-    expect(await screen.findByRole('heading', { name: 'SMTP 邮件通道' })).toBeTruthy();
-    expect(mockedApiRequest).toHaveBeenCalledWith('/api/alerts/notification-channels');
-    const testButton = screen.getByRole('button', { name: '发送测试邮件' });
+    expect(await screen.findByRole('heading', { name: '邮件通知' })).toBeTruthy();
+    expect(mockedApiRequest).toHaveBeenCalledWith('/api/alerts/notification-channels/email/profiles');
+    expect(mockedApiRequest).toHaveBeenCalledWith('/api/alerts/notification-channels/email/recipients');
+    const testButton = screen.getByRole('button', { name: '测试' });
     expect(testButton.hasAttribute('disabled')).toBe(false);
 
-    await user.type(screen.getByLabelText(/SMTP 主机/), '-updated');
-    expect(testButton.hasAttribute('disabled')).toBe(true);
-
-    await user.click(screen.getByRole('button', { name: '保存配置' }));
-    await waitFor(() => expect(mockedApiRequest).toHaveBeenCalledWith('/api/alerts/notification-channels/email', expect.objectContaining({ method: 'PUT' })));
-    await waitFor(() => expect(testButton.hasAttribute('disabled')).toBe(false));
     await user.click(testButton);
-    await waitFor(() => expect(mockedApiRequest).toHaveBeenCalledWith('/api/alerts/notification-channels/email/test', expect.objectContaining({ method: 'POST' })));
+    await waitFor(() => expect(mockedApiRequest).toHaveBeenCalledWith('/api/alerts/notification-channels/email/profiles/email/test', expect.objectContaining({ method: 'POST' })));
   });
 
   it('shows a clear permission error and hides retry when the account is forbidden', async () => {
