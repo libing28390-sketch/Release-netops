@@ -1,6 +1,6 @@
-# Nexora v1.0.10
+# Nexora v1.0.9
 
-## v1.0.10 本次更新
+## 本次更新（v1.0.9）
 
 - 定时作业等敏感审批支持按审批人可用能力选择 MFA 动态码、邮箱验证码或飞书验证码，不再限定只能通过飞书授权。
 - 修正 Grafana、vmagent 与 Nginx 子路径之间的内部采集路径，避免 Grafana `/metrics` 请求被重定向到公网 HTTPS 地址后抓取失败。
@@ -16,7 +16,7 @@ v1.0.9 起，Nexora 服务端的发布形态收敛为 **Linux / Ubuntu / Docker*
 
 Windows 网络设备的资产管理、SNMP 采集、SSH/WinRM 远程管理能力继续保留。这里的变化只针对 Nexora 平台自身的部署与发行形态。
 
-## v1.0.9 基线更新
+## v1.0.9 已有基线功能
 
 - 移除 Windows 桌面启动器、原生安装包、Windows 专用打包资源及 Windows 发布流水线。
 - 发布工作流只生成 Linux / Ubuntu / Docker 归档，并将本说明作为 GitHub Release 正文。
@@ -45,8 +45,8 @@ Windows 网络设备的资产管理、SNMP 采集、SSH/WinRM 远程管理能力
 
 ## 升级提示
 
-- Windows 原生服务端部署请继续使用 v1.0.8；Linux/Docker 新部署和升级使用 v1.0.10。
-- Windows 用户访问 v1.0.10 的 Linux 服务端时，安装同一版本 Release 中的 Windows Workstation Agent。
-- 从 v1.0.8 或更早版本迁移到 v1.0.10 前，请先备份数据库、`data/` 及现有配置备份/PAM 录像数据。
+- Windows 原生服务端部署请继续使用 v1.0.8；Linux/Docker 新部署和升级使用 v1.0.9。
+- Windows 用户访问 v1.0.9 的 Linux 服务端时，安装同一版本 Release 中的 Windows Workstation Agent。
+- 从 v1.0.8 或更早版本迁移到 v1.0.9 前，请先备份数据库、`data/` 及现有配置备份/PAM 录像数据。
 - Docker 新安装默认使用内置 SeaweedFS S3；总可用空间由 Docker 数据目录所在磁盘决定，当前没有前端 bucket 容量配额。
 - 更新现有 `.env` 时保留原有存储后端；切换到 S3 不会自动迁移本地录像和配置备份，需按单独迁移流程处理。
