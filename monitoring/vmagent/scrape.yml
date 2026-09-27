@@ -93,7 +93,9 @@ scrape_configs:
   - job_name: platform_grafana
     scrape_interval: 30s
     scrape_timeout: 10s
-    metrics_path: /metrics
+    # Grafana serves from /grafana and redirects a bare /metrics request to
+    # the public root_url. Scrape the internal service directly at its subpath.
+    metrics_path: /grafana/metrics
     static_configs:
       - targets: ["grafana:3000"]
 

@@ -111,3 +111,59 @@ Docker CLI not found (exit 2)
 - 验证：隔离 PostgreSQL 用例 2 passed；存储服务聚焦用例 15 passed；Python 编译、Grafana 生成与 JSON 静态检查、SNMP YAML 解析、`npm run lint`、PostgreSQL-only 扫描、`git diff --check` 均通过。隔离 PG 服务在本次运行前有 13 个既存 `nexora_pytest_*` 测试库；本次运行新增残留为 0，既存库未触碰。
 - 未应用数据库迁移，未做 Grafana 在线渲染/PromQL、真实设备采集或真实 S3 上传下载。PPS 缺少 Counter64 计数器时无数据。
 - 当前 `main` 改动已完成最终暂存审查，并按用户授权统一提交、推送至 `origin/main`。
+
+## 2026-09-26 Grafana 九个看板重复核查与接口流量修复
+
+- 逐一检查全部 9 个实时看板，并对无数据项和关键查询重复执行只读 Explore 验证。详细记录在 docs/plans/plan_20260926_1105_01_Grafana接口流量与状态排查.md 与对应 walkthrough。
+- 设备下拉旧名称的原因已确认：当前 live 变量仍通过历史 ifOperStatus|up 时序的 label_values 拉取 hostname。重开 04 展开后仍有 23 个选项，包括 F1090-10、R10/R11/R12/R13/R14。新生成的变量用当前 up 目标分组查询，重复验证得到 13 个当前 SNMP 目标且不含这些旧名。Grafana 未 reload 本地生成物，本次没有更改运行实例。
+- 04 实时流量卡和趋势仍显示数据暂不可用；面板 422 细节确认 SW6/Gi0/3/TO-R4 的 group_left 右侧同一 ifName 序列因 interface_role/利用率阈值标签有无形成重复。生成源已聚合 join 元数据；修正查询在 Explore 返回流量样本。
+- 01 状态条件改成管理启用且运行状态明确 DOWN，并解释统计的是当前状态；接口角色显示“接口用途”，unclassified 显示“用途待确认”。03 无线面板缺指标时不再回退为 0。
+- 采集端当前无网络设备 CPU、内存、温度和无线指标样本。05 失败数为 0 与在线状态一致；06 选择有效的 R1/Et0/0 后各流量面板有数据；02、08 与 09 的其余主要数据按计划显示。
+- D07 与 D09 表格首次观察只见表头；重复打开后 D07 显示 3 个挂载点，D09 显示 R1/Et0/0 带宽 10 Mb/s，未复现持续缺数。首次未呈现的瞬时原因不能从只读页面确认。
+- 改动：monitoring/grafana/generate_dashboards.py、9 份 monitoring/grafana/dashboards/nexora-*.json、backend/tests/monitoring/test_domestic_and_wireless_monitoring.py，以及本次 plan/walkthrough。
+- 验证：聚焦 pytest 6 passed；Python 编译与 dashboard generator 通过；git diff --check 通过。没有保存、reload、部署或发布 live Grafana。
+- 下步：待 Grafana 实例采用本次生成 JSON 后，再在 live 04 重验变量选项与流量面板，并确认新中文标签及 01 状态说明生效。
+
+## 2026-09-26 设备与接口看板参考样式及光模块支持核查
+
+- 02 设备详情把 CPU/内存当前值改为所选设备各实体中的最高值 Gauge；最高温度卡取消跨设备通用温度阈值。04 接口看板新增过去 5 分钟平均入向/出向速率 Top10 Bar gauge，原利用率表与质量/状态面板保留并重排。
+- 光模块：LibreNMS 的当前 Comware 发现配置未定义 H3C Rx/Tx 功率传感器，`mibs/h3c/HH3C-TRANSCEIVER-INFO-MIB` 路径未找到。H3C 厂商文档存在对应 MIB/OID，但用户要求以 LibreNMS 支持为准，因此没有添加 SNMP exporter 指标、CLI 采集或 Grafana 面板。
+- 验证：生成器和 Python 编译通过；9 份 dashboard JSON 结构/ID/网格/datasource 校验通过；02 Gauge 与 04 Top10 查询契约验证通过；`git diff --check` 通过（保留既有 handoff 行尾警告）。
+- Live Grafana 只读仍显示旧 01 总览：硬件平均图无数据，稳定 Down 计数仍是 216；本地生成文件尚未 reload/deploy。本次未写入 Grafana，也未操作设备。
+- 当前修改文件包括 `monitoring/grafana/generate_dashboards.py`、设备和接口 dashboard JSON，以及 plan/walkthrough：`docs/plans/plan_20260926_1315_01_设备与接口看板参考样式.md`、`docs/walkthrough/walkthrough_20260926_1315_01_设备与接口看板参考样式.md`。
+
+## 2026-09-27 Grafana 九个看板深度复核
+
+- 范围：只读核对 9 份 provisioned Grafana JSON、生成器、SNMP OID/采集器契约、Grafana 访问链及相关监控数据表；本轮未改 dashboard 或业务代码。
+- 静态健康：9/9 JSON 均与生成器内存输出相等，panel ID/变量名无重复；SNMP catalog 与 Linux/Windows exporter 指标引用未发现拼写缺项。当前 admin/oper 状态表的 1=绿色 Up、2=红色 down 背景填充符合预期。
+- 高风险待处理：SNMP/服务器目标携带 `tenant_id`，但 9 个 dashboard 查询均无 tenant selector；Grafana session/auth proxy 对 Viewer 开放且共用 VictoriaMetrics datasource。多租户下存在跨租户指标可见性风险。单纯加入可编辑 dashboard 变量不能形成安全隔离；需要 datasource/proxy 级租户约束，或先限制到全局受信角色。
+- 其他复核发现：Linux/Windows 多处按 hostname 聚合并丢弃 site_name；健康/主机资源摘要用 `or vector(0)` 混淆无数据与真实零；ifOperStatus 的 testing/dormant/notPresent/lowerLayerDown 被映射为 UNKNOWN；Outbound 固定阈值与 CMDB profile 阈值可能冲突；Windows“关键服务”查询目前覆盖全部服务。`filtered_interface_join` 的多重名称/描述冲突及无线在线 AP 大于总量导致负离线数仍缺真实数据验证。表格 unit override 的 rename 后匹配也需 Grafana 12.1 页面确认。
+- 验证：`.venv` 下 dashboard/无线测试 6 passed，编译/部署契约测试 6 passed；Agent 运行网络 dashboard + compiler 聚焦测试 28 passed；9/9 generator sync、SNMP metric selector 静态匹配及 `git diff --check` 通过。
+- 未验证：本机没有可用 Docker/promtool，localhost VictoriaMetrics/Grafana 不可访问；未执行实时 PromQL、Grafana 页面渲染、真实设备采集。
+- 后续建议：优先定义并实施 Grafana 租户隔离；新看板优先考虑设备风扇/电源/部件健康（现有 OID 有数据但厂商覆盖有限），以及 WAN 链路 SLA/容量（现有 PostgreSQL 样本、coverage、P95 基线和事件可用，但当前 Grafana 只有 VictoriaMetrics datasource）。
+- 05“SNMP 在线目标”此前发现过把 `up=0` 失败目标计为在线的缺陷；当前生成器和生成 JSON 已使用 `up == 1` 后再计数，失败目标卡片使用 `up == 0`，静态查询语义已修正，仍需随部署版本在 Grafana 页面验证。
+
+## 2026-09-27 新增 10–12 监控大盘与运行时验收
+
+- 新增 `GET /metrics` 内部聚合导出，供 collector-local 抓取 API/数据库连接、出口拨测、告警生命周期、通知投递和 outbox 指标；不导出租户、设备、目标、地址、告警正文或收件人标签。WAN 查询复用有时间索引的每轮汇总样本，导出语义限于系统级出口拨测质量。
+- vmagent 运行时编译器仅对 `collector-local` 添加 API、VictoriaMetrics、vmagent、SNMP exporter 和 Grafana scrape jobs；静态样例与编译产物一致，远端 collector 不包含这些服务 DNS。
+- 新增 10 监控平台健康、11 互联网拨测质量、12 告警运营与通知有效性三个 Grafana dashboard，并在 Nexora dashboard 选择器新增入口。探测耗时不代表 ICMP RTT；本轮没有实现线路绑定 SLA、真实丢包或抖动。
+- Agent 分工：metrics router 与 dashboard builders 分别独立实现；coordinator 完成 `main.py`/运行时 compiler 接入、验证、生成与审查。
+- 验证：后端编译、vmagent 静态/运行时配置对比、12 份 dashboard JSON 与生成器同步/唯一 panel ID/VictoriaMetrics UID 检查、26 个聚焦 pytest 和 `npm run lint` 均通过；`git diff --check` 仅保留既有 CRLF 转换提醒。
+- 运行时：已用浏览器复验并保留 `https://192.168.204.128/monitor/dashboards`。当前部署显示 `v1.0.9`、只有 01–08，仍有本地已删除的三个显示模式按钮；旧 04 流量图有实时值，但没有“接口管理与运行状态”面板。直达 `nexora-platform-health` 返回 `Dashboard not found`。Windows 环境没有 Docker CLI，WSL 无可用发行版，未执行容器重建/重启；新增看板等待目标部署更新后再做在线 smoke test。
+- 后续边界：当前三个新看板只读聚合指标，无用户/租户下钻；真实链路 SLA 仍需按 WAN binding/source route 的探测采样。此前发现的既有 Grafana 多租户 datasource 隔离问题未纳入本次修改。
+
+## 2026-09-27 本地逻辑验收边界补充
+
+- 用户明确要求：新改代码目前只验证本地逻辑；等用户更新部署后再验证运行时。本轮不再对 Docker/部署页做新代码验收。
+- 本地证据：聚焦 PostgreSQL 后端测试 44 passed，新增 P95 指标断言单测 1 passed；TypeScript lint 与独立目录 production build 成功；12/12 dashboard JSON 与生成器一致；Compose/vmagent 静态核对、PostgreSQL-only 扫描（0 violations）及 `git diff --check` 通过。
+- 浏览器此前看到的部署是更新前 `v1.0.9`，仅作为基线；它没有新大盘或新接口状态面板，不能作为新代码运行时通过/失败的证据。待用户更新后再对部署版做 smoke check。
+- pytest session fixture 在本地 source PostgreSQL 上应用了待执行的 migrations 0257–0259；其中 0257/0259 是工作区既有的告警租户/通知变更，可能已调整 source DB 告警规则或通知配置数据。本轮没有回滚。
+
+## 2026-09-27 监控平台全量容器指标排查
+
+- 大盘六行是六个 `platform_*` scrape 端点，不是 Docker 容器总数。已将 cAdvisor CPU/内存/磁盘指标查询改为按全部非空容器名聚合，并新增 `container_last_seen` 容器观测数/清单；观测不等价于容器健康状态。
+- 用户现场输出确认 vmagent 访问 `grafana:3000/metrics` 被转发到 `192.168.31.253:10808` 后返回 502；Compose 现清空 vmagent/cAdvisor 代理变量并设置内网 `NO_PROXY`。cAdvisor 重启的高概率原因是 `--disable_metrics` 带有 v0.60.6 不支持的 `accelerator` 值，已移除，仍需部署后验证。
+- VictoriaMetrics 固定 v1.103.0；`vm_total_disk_space_bytes` 从 v1.124.0 才引入，存储面板改为已用数据量 `sum(vm_data_size_bytes)`，不再显示虚假的空间占用率。
+- 聚焦部署契约测试 7 passed；12 份 dashboard JSON 解析和目标生成同步检查通过；`git diff --check` 通过。监控目录全套测试运行约 38% 后中止，不计为通过。
+- 未更新或重启目标机容器，也未在线写入 Grafana。部署后应验证 Grafana/cAdvisor scrape 状态、cAdvisor 容器资源时序和动态清单数量；详情见 `docs/plans/plan_20260927_2013_01_监控平台容器指标全量采集.md` 与对应 walkthrough。

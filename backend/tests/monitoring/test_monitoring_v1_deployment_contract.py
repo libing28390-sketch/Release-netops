@@ -65,6 +65,13 @@ def test_vmagent_and_cadvisor_bypass_proxy_for_internal_targets():
 
     cadvisor_command = " ".join(str(item) for item in services["cadvisor"]["command"])
     assert "accelerator" not in cadvisor_command
+    docker_root_mount = next(
+        item for item in services["cadvisor"]["volumes"]
+        if isinstance(item, dict) and item.get("target") == "/var/lib/docker"
+    )
+    assert docker_root_mount["source"] == "${CADVISOR_DOCKER_ROOT_DIR:-/var/lib/docker}"
+    assert docker_root_mount["read_only"] is True
+    assert docker_root_mount["bind"]["create_host_path"] is False
 
 
 def test_grafana_subpath_is_preserved_and_native_session_cookie_is_stripped():
@@ -115,6 +122,9 @@ def test_netops_bypasses_proxy_for_internal_seaweedfs_s3_endpoint():
 
 def test_static_vmagent_and_generic_ifmib_contract():
     scrape = yaml.safe_load((ROOT / "monitoring" / "vmagent" / "scrape.yml").read_text(encoding="utf-8"))
+    jobs_by_name = {job["job_name"]: job for job in scrape["scrape_configs"]}
+    assert jobs_by_name["platform_grafana"]["metrics_path"] == "/grafana/metrics"
+    assert jobs_by_name["platform_cadvisor"]["metrics_path"] == "/metrics"
     relabel = scrape["scrape_configs"][0]["relabel_configs"]
     labels = {item.get("target_label") for item in relabel}
     assert {"__param_target", "__param_module", "__param_auth", "__scrape_interval__", "__scrape_timeout__", "asset_id", "tenant_id"} <= labels

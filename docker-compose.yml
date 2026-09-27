@@ -296,6 +296,15 @@ services:
       - "--disable_metrics=percpu,sched,process,hugetlb,resctrl,tcp,udp,network"
     volumes:
       - /sys:/sys:ro
+      # cAdvisor maps Docker API container IDs to overlay2 metadata through
+      # DockerRootDir. Keep the host data read-only and make the source path
+      # configurable for daemons that do not use Docker's default directory.
+      - type: bind
+        source: ${CADVISOR_DOCKER_ROOT_DIR:-/var/lib/docker}
+        target: /var/lib/docker
+        read_only: true
+        bind:
+          create_host_path: false
     expose:
       - "8080"
     networks:

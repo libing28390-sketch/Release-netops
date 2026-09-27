@@ -129,6 +129,32 @@ docker compose ps netops victoriametrics snmp-exporter vmagent nginx
 docker compose logs --tail=200 snmp-exporter vmagent
 ```
 
+cAdvisor 通过只读 Docker Socket Proxy 发现容器，还需要读取宿主 Docker Root Dir
+中的 overlay2 元数据，才能把 Docker 容器 ID 与 cgroup 资源统计关联。Compose 默认将
+宿主机 `/var/lib/docker` 只读挂载到 cAdvisor 的同一路径；若 Docker 数据目录使用了
+自定义位置，先在宿主机查询：
+
+```bash
+docker info --format '{{.DockerRootDir}}'
+```
+
+将输出的宿主机绝对路径写入部署目录 `.env`，例如：
+
+```dotenv
+CADVISOR_DOCKER_ROOT_DIR=/mnt/docker-data
+```
+
+然后重建 cAdvisor 容器：
+
+```bash
+docker compose up -d --force-recreate cadvisor
+```
+
+该挂载为只读，Compose 不会为错误或缺失的源路径自动创建空目录。检查
+`docker logs --tail=100 nexora-cadvisor` 不再报告找不到 `layerdb/mounts/*/mount-id`，
+并在 VictoriaMetrics 中确认 `container_last_seen`、CPU 和内存序列带有容器名称标签。
+容器磁盘 I/O 指标还取决于主机内核和存储驱动是否提供对应统计。
+
 Nexora 的“监控大盘”通过同源 `/grafana/` 访问 Grafana，Grafana 数据源已自动
 指向 `http://victoriametrics:8428`。从 Nexora 登录后，Nginx 的内部鉴权子请求会读取
 `nexora_grafana_session`，将它作为 Bearer 凭据交由后端校验，再通过 Auth Proxy 身份头让

@@ -1211,7 +1211,7 @@ def render_vmagent_config(
                 "job_name": job_name,
                 "scrape_interval": "30s",
                 "scrape_timeout": "10s",
-                "metrics_path": "/metrics",
+                "metrics_path": "/grafana/metrics" if job_name == "platform_grafana" else "/metrics",
                 "static_configs": [{"targets": [target]}],
             })
     return {

@@ -88,13 +88,23 @@ def test_platform_scrape_targets_are_added_only_to_local_collector():
 
     local_jobs = render_vmagent_config(collector_id="collector-local")["scrape_configs"]
     remote_jobs = render_vmagent_config(collector_id="collector-remote")["scrape_configs"]
-    local_targets = {
-        job["job_name"]: job["static_configs"][0]["targets"][0]
+    local_platform_jobs = {
+        job["job_name"]: job
         for job in local_jobs
         if job["job_name"].startswith("platform_")
     }
+    local_targets = {
+        job["job_name"]: job["static_configs"][0]["targets"][0]
+        for job in local_platform_jobs.values()
+    }
 
     assert local_targets == platform_jobs
+    assert local_platform_jobs["platform_grafana"]["metrics_path"] == "/grafana/metrics"
+    assert all(
+        job["metrics_path"] == "/metrics"
+        for name, job in local_platform_jobs.items()
+        if name != "platform_grafana"
+    )
     assert not any(job["job_name"].startswith("platform_") for job in remote_jobs)
 
 
