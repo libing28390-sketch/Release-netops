@@ -8,7 +8,7 @@ import {
 } from 'lucide-react';
 import TagConditionPicker, { hasTagFilterConditions, type TagFilterConfig } from '../../../components/TagConditionPicker';
 import { ActionIconButton } from '../../../components/ui/ActionIconButton';
-import { ScheduledJob, EligibleApprover, FormState, ValidatedDevice, type CollectionPlanFilters } from '../types';
+import { ScheduledJob, EligibleApprover, FormState, ValidatedDevice, type ApprovalVerificationMethod, type CollectionPlanFilters } from '../types';
 import {
   CRON_PRESETS, CRON_FIELD_LABELS_ZH, CRON_FIELD_LABELS_EN,
   CRON_FIELD_HINTS_ZH, CRON_FIELD_HINTS_EN, ACTION_TYPES,
@@ -45,6 +45,8 @@ interface JobModalProps {
   approverUsername: string;
   setApproverUsername: (val: string) => void;
   approvers: EligibleApprover[];
+  approvalMethod: ApprovalVerificationMethod;
+  setApprovalMethod: (val: ApprovalVerificationMethod) => void;
   approvalStatus: 'idle' | 'sending' | 'sent' | 'verified';
   approvalCountdown: number;
   approvalCode: string;
@@ -90,6 +92,8 @@ export const JobModal: React.FC<JobModalProps> = ({
   approverUsername,
   setApproverUsername,
   approvers,
+  approvalMethod,
+  setApprovalMethod,
   approvalStatus,
   approvalCountdown,
   approvalCode,
@@ -103,6 +107,14 @@ export const JobModal: React.FC<JobModalProps> = ({
   devices = [],
 }) => {
   const zh = language === 'zh';
+  const selectedApprover = approvers.find(item => item.username === approverUsername);
+  const availableApprovalMethods = selectedApprover?.verification_methods || [];
+
+  const verificationMethodLabel = (method: ApprovalVerificationMethod) => {
+    if (method === 'mfa') return zh ? 'MFA 动态码' : 'MFA code';
+    if (method === 'email') return zh ? '邮箱验证码' : 'Email code';
+    return zh ? '飞书验证码' : 'Feishu code';
+  };
 
   // Sub-states for Inspection
   const [inspSource, setInspSource] = useState<'default' | 'network' | 'server' | 'script'>('default');
@@ -1112,26 +1124,48 @@ export const JobModal: React.FC<JobModalProps> = ({
                     ))}
                   </select>
 
+                  {approverUsername && availableApprovalMethods.length > 0 && (
+                    <div className="space-y-1">
+                      <label className="text-[10px] font-semibold text-slate-500">{zh ? '验证方式' : 'Verification method'}</label>
+                      <select
+                        value={approvalMethod}
+                        onChange={e => setApprovalMethod(e.target.value as ApprovalVerificationMethod)}
+                        disabled={approvalStatus !== 'idle'}
+                        className="w-full px-3.5 py-2 rounded-xl border border-slate-200 text-xs bg-slate-50/50 hover:bg-white focus:bg-white focus:outline-none focus:ring-2 focus:ring-cyan-500/20 focus:border-cyan-500 text-slate-700 font-medium transition-all disabled:opacity-60"
+                      >
+                        {availableApprovalMethods.map(method => (
+                          <option key={method} value={method}>{verificationMethodLabel(method)}</option>
+                        ))}
+                      </select>
+                    </div>
+                  )}
+
                   {approverUsername && approvalStatus !== 'verified' && (
                     <div className="flex items-center gap-2">
-                      <input
-                        type="text"
-                        value={approvalCode}
-                        onChange={e => setApprovalCode(e.target.value)}
-                        placeholder={zh ? '输入 6 位验证码' : 'Enter 6-digit code'}
-                        className="flex-1 px-3 py-2 rounded-xl border border-slate-200 text-xs font-mono bg-white focus:outline-none focus:ring-2 focus:ring-cyan-500/20"
-                      />
+                      {approvalStatus === 'sent' && (
+                        <input
+                          type="text"
+                          inputMode="numeric"
+                          maxLength={6}
+                          value={approvalCode}
+                          onChange={e => setApprovalCode(e.target.value.replace(/\\D/g, '').slice(0, 6))}
+                          placeholder={zh ? '输入 6 位动态码/验证码' : 'Enter 6-digit code'}
+                          className="flex-1 px-3 py-2 rounded-xl border border-slate-200 text-xs font-mono bg-white focus:outline-none focus:ring-2 focus:ring-cyan-500/20"
+                        />
+                      )}
                       <button
                         type="button"
                         onClick={approvalStatus === 'sent' ? verifyApproval : requestApproval}
-                        disabled={approvalStatus === 'sending' || (approvalStatus === 'sent' && !approvalCode.trim())}
+                        disabled={approvalStatus === 'sending' || (approvalStatus === 'sent' && approvalCode.length !== 6)}
                         className="px-4 py-2 rounded-xl text-xs font-bold bg-slate-800 text-white hover:bg-slate-900 transition-all disabled:opacity-40 shrink-0"
                       >
                         {approvalStatus === 'sent'
                           ? (zh ? '确认' : 'Verify')
                           : approvalCountdown > 0
                           ? `${approvalCountdown}s`
-                          : (zh ? '获取验证码' : 'Get Code')}
+                          : approvalMethod === 'mfa'
+                          ? (zh ? '开始 MFA 验证' : 'Start MFA verification')
+                          : (zh ? '发送验证码' : 'Send code')}
                       </button>
                     </div>
                   )}

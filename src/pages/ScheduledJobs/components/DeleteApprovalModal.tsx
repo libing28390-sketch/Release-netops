@@ -1,7 +1,7 @@
 import React from 'react';
 import { AnimatePresence, motion } from 'motion/react';
 import { Shield, X, RotateCcw, AlertTriangle } from 'lucide-react';
-import { ScheduledJob, EligibleApprover } from '../types';
+import { ScheduledJob, EligibleApprover, type ApprovalVerificationMethod } from '../types';
 import { useEscapeClose } from '../../../hooks/useEscapeClose';
 
 interface DeleteApprovalModalProps {
@@ -12,6 +12,8 @@ interface DeleteApprovalModalProps {
   setDeleteReason: (val: string) => void;
   deleteApprover: string;
   setDeleteApprover: (val: string) => void;
+  deleteApprovalMethod: ApprovalVerificationMethod;
+  setDeleteApprovalMethod: (val: ApprovalVerificationMethod) => void;
   deleteStatus: 'idle' | 'sending' | 'sent' | 'verified';
   deleteCountdown: number;
   deleteCode: string;
@@ -33,6 +35,8 @@ export const DeleteApprovalModal: React.FC<DeleteApprovalModalProps> = ({
   setDeleteReason,
   deleteApprover,
   setDeleteApprover,
+  deleteApprovalMethod,
+  setDeleteApprovalMethod,
   deleteStatus,
   deleteCountdown,
   deleteCode,
@@ -47,6 +51,13 @@ export const DeleteApprovalModal: React.FC<DeleteApprovalModalProps> = ({
 }) => {
   useEscapeClose(isOpen && deleteStatus !== 'sending', onClose);
   const zh = language === 'zh';
+  const selectedApprover = approvers.find(item => item.username === deleteApprover);
+  const availableApprovalMethods = selectedApprover?.verification_methods || [];
+  const verificationMethodLabel = (method: ApprovalVerificationMethod) => {
+    if (method === 'mfa') return zh ? 'MFA 动态码' : 'MFA code';
+    if (method === 'email') return zh ? '邮箱验证码' : 'Email code';
+    return zh ? '飞书验证码' : 'Feishu code';
+  };
 
   return (
     <AnimatePresence>
@@ -95,42 +106,61 @@ export const DeleteApprovalModal: React.FC<DeleteApprovalModalProps> = ({
 
               <div className="space-y-1.5">
                 <label className="font-bold text-slate-700 block">{zh ? '选择授权审批人' : 'Select Approver'}</label>
-                <div className="flex items-center gap-2">
+                <select
+                  value={deleteApprover}
+                  onChange={e => setDeleteApprover(e.target.value)}
+                  disabled={deleteStatus !== 'idle'}
+                  className="w-full px-3 py-2 rounded-xl border border-slate-200 bg-white outline-none focus:border-rose-500 transition-all disabled:opacity-60"
+                >
+                  <option value="">{zh ? '选择审批人...' : 'Select approver...'}</option>
+                  {approvers.map(u => (
+                    <option key={u.id} value={u.username}>{u.username} ({u.role})</option>
+                  ))}
+                </select>
+              </div>
+
+              {deleteApprover && availableApprovalMethods.length > 0 && (
+                <div className="space-y-1.5">
+                  <label className="font-bold text-slate-700 block">{zh ? '验证方式' : 'Verification method'}</label>
                   <select
-                    value={deleteApprover}
-                    onChange={e => setDeleteApprover(e.target.value)}
-                    disabled={deleteStatus === 'sending' || deleteStatus === 'sent'}
-                    className="flex-1 px-3 py-2 rounded-xl border border-slate-200 bg-white outline-none focus:border-rose-500 transition-all"
+                    value={deleteApprovalMethod}
+                    onChange={e => setDeleteApprovalMethod(e.target.value as ApprovalVerificationMethod)}
+                    disabled={deleteStatus !== 'idle'}
+                    className="w-full px-3 py-2 rounded-xl border border-slate-200 bg-white outline-none focus:border-rose-500 transition-all disabled:opacity-60"
                   >
-                    <option value="">{zh ? '选择审批人...' : 'Select approver...'}</option>
-                    {approvers.map(u => (
-                      <option key={u.id} value={u.username}>{u.username} ({u.role})</option>
+                    {availableApprovalMethods.map(method => (
+                      <option key={method} value={method}>{verificationMethodLabel(method)}</option>
                     ))}
                   </select>
-                  <button
-                    type="button"
-                    onClick={requestDeleteApproval}
-                    disabled={!deleteApprover || !deleteReason.trim() || deleteStatus === 'sending' || (deleteStatus === 'sent' && deleteCountdown > 0)}
-                    className={`px-3 py-2 rounded-xl font-bold whitespace-nowrap transition-all flex items-center gap-1 ${
-                      deleteApprover && deleteReason.trim() && !(deleteStatus === 'sent' && deleteCountdown > 0)
-                        ? 'bg-rose-600 text-white hover:bg-rose-700 shadow-sm'
-                        : 'bg-slate-100 text-slate-400 cursor-not-allowed'
-                    }`}
-                  >
-                    {deleteStatus === 'sending' ? (
-                      <RotateCcw className="w-3 h-3 animate-spin" />
-                    ) : deleteStatus === 'sent' && deleteCountdown > 0 ? (
-                      `${Math.floor(deleteCountdown / 60)}:${String(deleteCountdown % 60).padStart(2, '0')}`
-                    ) : (
-                      zh ? '发验证码' : 'Send Code'
-                    )}
-                  </button>
                 </div>
-              </div>
+              )}
+
+              {deleteApprover && deleteStatus !== 'verified' && (
+                <button
+                  type="button"
+                  onClick={requestDeleteApproval}
+                  disabled={!deleteReason.trim() || deleteStatus === 'sending' || (deleteStatus === 'sent' && deleteCountdown > 0)}
+                  className={`w-full px-3 py-2 rounded-xl font-bold whitespace-nowrap transition-all flex items-center justify-center gap-1 ${
+                    deleteReason.trim() && deleteStatus !== 'sending' && !(deleteStatus === 'sent' && deleteCountdown > 0)
+                      ? 'bg-rose-600 text-white hover:bg-rose-700 shadow-sm'
+                      : 'bg-slate-100 text-slate-400 cursor-not-allowed'
+                  }`}
+                >
+                  {deleteStatus === 'sending' ? (
+                    <RotateCcw className="w-3 h-3 animate-spin" />
+                  ) : deleteStatus === 'sent' && deleteCountdown > 0 ? (
+                    `${Math.floor(deleteCountdown / 60)}:${String(deleteCountdown % 60).padStart(2, '0')}`
+                  ) : (
+                    deleteApprovalMethod === 'mfa'
+                      ? (zh ? '开始 MFA 验证' : 'Start MFA verification')
+                      : (zh ? '发送验证码' : 'Send Code')
+                  )}
+                </button>
+              )}
 
               {deleteStatus === 'sent' && (
                 <div className="space-y-1.5 pt-2 border-t border-slate-100">
-                  <label className="text-[11px] text-slate-500 block">{zh ? '输入 6 位工单验证码' : 'Enter 6-digit verification code'}</label>
+                  <label className="text-[11px] text-slate-500 block">{deleteApprovalMethod === 'mfa' ? (zh ? '输入审批人的 6 位 MFA 动态码' : 'Enter approver’s 6-digit MFA code') : (zh ? '输入 6 位工单验证码' : 'Enter 6-digit verification code')}</label>
                   <div className="flex items-center gap-2">
                     <input
                       value={deleteCode}

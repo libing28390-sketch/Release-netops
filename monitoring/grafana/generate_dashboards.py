@@ -21,6 +21,27 @@ BROADCAST_COLOR = "#E0B400"
 PPS_COLOR = "#00A6B2"
 UNKNOWN_COLOR = "gray"
 
+ALERT_SEVERITY_LABELS = (
+    ("critical", "严重"),
+    ("major", "主要"),
+    ("warning", "警告"),
+    ("minor", "次要"),
+    ("high", "高"),
+    ("medium", "中"),
+    ("low", "低"),
+    ("info", "提示"),
+    ("unknown", "未知"),
+)
+
+NO_COMPLETED_DELIVERY_VALUE_MAPPINGS = [
+    {
+        "type": "value",
+        "options": {
+            "-1": {"text": "暂无已完成投递", "color": "#8A8F98"},
+        },
+    },
+]
+
 UTILIZATION_THRESHOLDS = [
     {"color": "green", "value": None},
     {"color": "yellow", "value": 60},
@@ -176,7 +197,21 @@ def interface_empty_fallback(status_expr, positive_rows_expr):
     empty_selection = f"({status_available} and on() {rows_absent}) * 0"
     return f'label_replace({empty_selection}, "ifName", "近24h无近期变化", "", "")'
 
-def stat_panel(pid, title, expr, x, y, w=4, h=4, unit="", color="#3274D9", thresholds=None, description=None):
+def stat_panel(
+    pid,
+    title,
+    expr,
+    x,
+    y,
+    w=4,
+    h=4,
+    unit="",
+    color="#3274D9",
+    thresholds=None,
+    description=None,
+    graph_mode="area",
+    value_mappings=None,
+):
     steps = [{"color": color, "value": None}]
     if thresholds:
         steps = thresholds
@@ -197,7 +232,7 @@ def stat_panel(pid, title, expr, x, y, w=4, h=4, unit="", color="#3274D9", thres
         },
         "options": {
             "colorMode": "value",
-            "graphMode": "area",
+            "graphMode": graph_mode,
             "justifyMode": "center",
             "orientation": "auto",
             "reduceOptions": {"calcs": ["lastNotNull"], "fields": "", "values": False},
@@ -205,6 +240,8 @@ def stat_panel(pid, title, expr, x, y, w=4, h=4, unit="", color="#3274D9", thres
         },
         "targets": [{"expr": expr, "refId": "A"}]
     }
+    if value_mappings:
+        panel["fieldConfig"]["defaults"]["mappings"] = value_mappings
     if description:
         panel["description"] = description
     return panel
@@ -895,7 +932,7 @@ def build_device_dashboard():
     hw_cpu_peak = f"max({hw_cpu})"
     hw_mem_peak = f"max({hw_mem})"
     panels = [
-        stat_panel(1, "系统运行时间 (Uptime)", f"sysUpTime{{{dev_sel}}} / 100", 0, 0, 6, 4, unit="s", color="#3274D9"),
+        stat_panel(1, "系统运行时长", f"sysUpTime{{{dev_sel}}} / 100", 0, 0, 6, 4, unit="dtdhms", color="#3274D9", graph_mode="none"),
         gauge_panel(
             2, "CPU 最高组件使用率", hw_cpu_peak, 6, 0, 6, 4,
             thresholds=[{"color": "green", "value": None}, {"color": "#E0B400", "value": 70}, {"color": "red", "value": 85}],
@@ -1670,7 +1707,7 @@ def build_linux_dashboard():
     srv_sel = 'job="linux_servers",site_name=~"$site",hostname=~"$device"'
     panels = [
         stat_panel(1, "受纳管 Linux 主机数", f'count(count by (hostname) (up{{{srv_sel}}})) or vector(0)', 0, 0, 4, 4, unit="none", color="blue"),
-        stat_panel(2, "系统平均运行时间 (Uptime)", f'avg(time() - node_boot_time_seconds{{{srv_sel}}}) or vector(0)', 4, 0, 4, 4, unit="s", color="#3274D9"),
+        stat_panel(2, "系统平均运行时长", f'avg(time() - node_boot_time_seconds{{{srv_sel}}}) or vector(0)', 4, 0, 4, 4, unit="dtdhms", color="#3274D9", graph_mode="none"),
         stat_panel(3, "平均 CPU 使用率", f'avg(100 - (avg by (hostname) (rate(node_cpu_seconds_total{{{srv_sel},mode="idle"}}[5m])) * 100)) or vector(0)', 8, 0, 4, 4, unit="percent", thresholds=[
             {"color": "green", "value": None},
             {"color": "#E0B400", "value": 70},
@@ -2591,6 +2628,13 @@ def build_alert_operations_dashboard():
         {"color": "green", "value": None},
         {"color": "red", "value": 1},
     ]
+    completed_status_selector = 'nexora_alert_delivery_attempts_24h{status=~"succeeded|retrying|failed"}'
+    completed_attempts_expr = f"sum({completed_status_selector})"
+    success_rate_expr = (
+        f'(((sum(nexora_alert_delivery_attempts_24h{{status="succeeded"}}) / {completed_attempts_expr}) '
+        f'and ({completed_attempts_expr} > 0)) or '
+        f'(vector(-1) and on() (count({completed_status_selector}) > 0)))'
+    )
     panels = [
         stat_panel(
             1,
@@ -2605,7 +2649,7 @@ def build_alert_operations_dashboard():
         ),
         stat_panel(
             2,
-            "Critical 未关闭",
+            "严重 未关闭",
             'nexora_alert_open_events{severity="critical"}',
             4,
             0,
@@ -2616,7 +2660,7 @@ def build_alert_operations_dashboard():
         ),
         stat_panel(
             3,
-            "Major 未关闭",
+            "主要 未关闭",
             'nexora_alert_open_events{severity="major"}',
             8,
             0,
@@ -2627,7 +2671,7 @@ def build_alert_operations_dashboard():
         ),
         stat_panel(
             4,
-            "Warning 未关闭",
+            "警告 未关闭",
             'nexora_alert_open_events{severity="warning"}',
             12,
             0,
@@ -2638,7 +2682,7 @@ def build_alert_operations_dashboard():
         ),
         stat_panel(
             5,
-            "Minor 未关闭",
+            "次要 未关闭",
             'nexora_alert_open_events{severity="minor"}',
             16,
             0,
@@ -2649,14 +2693,15 @@ def build_alert_operations_dashboard():
         ),
         stat_panel(
             6,
-            "24h 投递尝试成功率",
-            '((sum(nexora_alert_delivery_attempts_24h{status="succeeded"}) / (sum(nexora_alert_delivery_attempts_24h{status="succeeded"}) + sum(nexora_alert_delivery_attempts_24h{status="failed"}))) and ((sum(nexora_alert_delivery_attempts_24h{status="succeeded"}) + sum(nexora_alert_delivery_attempts_24h{status="failed"})) > 0))',
+            "24h 告警成功率",
+            success_rate_expr,
             20,
             0,
             4,
             4,
             unit="percentunit",
-            description="成功数 /（成功数 + 失败数）；排除排队、发送中、重试中和跳过，按实际投递尝试计数。",
+            description="成功的尝试数 /（成功的尝试数 + 进入重试的失败尝试数 + 终态失败的尝试数）。排除排队、发送中和跳过；暂无已完成尝试时显示对应提示，指标源缺失时保留无数据状态。",
+            value_mappings=NO_COMPLETED_DELIVERY_VALUE_MAPPINGS,
         ),
         timeseries_panel(
             7,
@@ -2693,10 +2738,11 @@ def build_alert_operations_dashboard():
             "当前未恢复告警严重度分布",
             [
                 {
-                    "expr": "sum by (severity) (nexora_alert_open_events)",
-                    "legendFormat": "{{severity}}",
-                    "refId": "A",
+                    "expr": f'sum(nexora_alert_open_events{{severity="{severity}"}})',
+                    "legendFormat": label,
+                    "refId": chr(ord("A") + index),
                 }
+                for index, (severity, label) in enumerate(ALERT_SEVERITY_LABELS)
             ],
             12,
             4,
@@ -2706,7 +2752,7 @@ def build_alert_operations_dashboard():
             legend_display_mode="list",
             legend_placement="bottom",
             legend_calcs=[],
-            description="包括 unknown 严重度在内的当前未恢复告警计数。",
+            description="按中文级别名称展示当前未恢复告警计数，包含未知级别。查询仍使用稳定的英文 severity 标签。",
         ),
         timeseries_panel(
             9,
@@ -2756,7 +2802,8 @@ def build_alert_operations_dashboard():
             20,
             4,
             4,
-            unit="s",
+            unit="dtdhms",
+            graph_mode="none",
             thresholds=[
                 {"color": "green", "value": None},
                 {"color": "#E0B400", "value": 3600},
@@ -2771,7 +2818,8 @@ def build_alert_operations_dashboard():
             20,
             4,
             4,
-            unit="s",
+            unit="dtdhms",
+            graph_mode="none",
         ),
         stat_panel(
             13,

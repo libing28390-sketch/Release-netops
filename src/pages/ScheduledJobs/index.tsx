@@ -15,7 +15,7 @@ import { DataTable } from '../../components/DataTable';
 import PageHero from '../../components/PageHero';
 import { hasTagFilterConditions, parseTagFilter, type TagFilterConfig, EMPTY_TAG_FILTER, serializeTagFilter } from '../../components/TagConditionPicker';
 
-import { ScheduledJob, EligibleApprover, SystemScheduledJob, FormState, ValidatedDevice, ScheduledJobsTabProps, type CollectionPlanFilters, type NsotCollectionPreview } from './types';
+import { ScheduledJob, EligibleApprover, SystemScheduledJob, FormState, ValidatedDevice, ScheduledJobsTabProps, type ApprovalVerificationMethod, type CollectionPlanFilters, type NsotCollectionPreview } from './types';
 import { INITIAL_FORM, ACTION_TYPES, MAJOR_CATEGORIES } from './constants';
 import { describeCron, describeScope } from './helpers';
 
@@ -65,6 +65,7 @@ const ScheduledJobsTab: React.FC<ScheduledJobsTabProps> = ({ language, showToast
   // Approval (create & update)
   const [approvers, setApprovers] = useState<EligibleApprover[]>([]);
   const [approverUsername, setApproverUsername] = useState('');
+  const [approvalMethod, setApprovalMethod] = useState<ApprovalVerificationMethod>('mfa');
   const [approvalToken, setApprovalToken] = useState('');
   const [approvalCode, setApprovalCode] = useState('');
   const [approvalStatus, setApprovalStatus] = useState<'idle' | 'sending' | 'sent' | 'verified'>('idle');
@@ -76,6 +77,7 @@ const ScheduledJobsTab: React.FC<ScheduledJobsTabProps> = ({ language, showToast
   const [deleteTarget, setDeleteTarget] = useState<ScheduledJob | null>(null);
   const [deleteReason, setDeleteReason] = useState('');
   const [deleteApprover, setDeleteApprover] = useState('');
+  const [deleteApprovalMethod, setDeleteApprovalMethod] = useState<ApprovalVerificationMethod>('mfa');
   const [deleteToken, setDeleteToken] = useState('');
   const [deleteCode, setDeleteCode] = useState('');
   const [deleteStatus, setDeleteStatus] = useState<'idle' | 'sending' | 'sent' | 'verified'>('idle');
@@ -182,11 +184,11 @@ const ScheduledJobsTab: React.FC<ScheduledJobsTabProps> = ({ language, showToast
 
   const fetchApprovers = useCallback(async () => {
     try {
-      const r = await fetch('/api/users', { headers: authHeaders });
+      const r = await fetch('/api/config-approval/approvers', { headers: authHeaders });
       if (r.ok) {
         const j = await r.json();
         const users = Array.isArray(j) ? j : (j.data || []);
-        setApprovers(users.filter((u: EligibleApprover) => u.role === 'Administrator' || u.role === 'Operator'));
+        setApprovers(users);
       }
     } catch { /* ignore */ }
   }, [authHeaders]);
@@ -249,6 +251,46 @@ const ScheduledJobsTab: React.FC<ScheduledJobsTabProps> = ({ language, showToast
   }, [deleteCountdown]);
 
   /* === MODAL HELPERS === */
+  const resetApprovalFlow = () => {
+    setApprovalToken('');
+    setApprovalCode('');
+    setApprovalStatus('idle');
+    setApprovalCountdown(0);
+    setApprovalError('');
+  };
+
+  const resetDeleteApprovalFlow = () => {
+    setDeleteToken('');
+    setDeleteCode('');
+    setDeleteStatus('idle');
+    setDeleteCountdown(0);
+    setDeleteError('');
+  };
+
+  const selectApprover = (username: string) => {
+    setApproverUsername(username);
+    const methods = approvers.find(item => item.username === username)?.verification_methods || [];
+    setApprovalMethod(methods.includes(approvalMethod) ? approvalMethod : (methods[0] || 'mfa'));
+    resetApprovalFlow();
+  };
+
+  const selectDeleteApprover = (username: string) => {
+    setDeleteApprover(username);
+    const methods = approvers.find(item => item.username === username)?.verification_methods || [];
+    setDeleteApprovalMethod(methods.includes(deleteApprovalMethod) ? deleteApprovalMethod : (methods[0] || 'mfa'));
+    resetDeleteApprovalFlow();
+  };
+
+  const changeApprovalMethod = (method: ApprovalVerificationMethod) => {
+    setApprovalMethod(method);
+    resetApprovalFlow();
+  };
+
+  const changeDeleteApprovalMethod = (method: ApprovalVerificationMethod) => {
+    setDeleteApprovalMethod(method);
+    resetDeleteApprovalFlow();
+  };
+
   const resetFormState = () => {
     setForm({ ...INITIAL_FORM });
     setTagFilter({ ...EMPTY_TAG_FILTER });
@@ -257,11 +299,8 @@ const ScheduledJobsTab: React.FC<ScheduledJobsTabProps> = ({ language, showToast
     setScriptSearch('');
     setShowScriptDropdown(false);
     setApproverUsername('');
-    setApprovalToken('');
-    setApprovalCode('');
-    setApprovalStatus('idle');
-    setApprovalCountdown(0);
-    setApprovalError('');
+    setApprovalMethod('mfa');
+    resetApprovalFlow();
   };
 
   const toggleAddJob = () => {
@@ -342,11 +381,8 @@ const ScheduledJobsTab: React.FC<ScheduledJobsTabProps> = ({ language, showToast
     }
     setIpInput('');
     setApproverUsername('');
-    setApprovalToken('');
-    setApprovalCode('');
-    setApprovalStatus('idle');
-    setApprovalCountdown(0);
-    setApprovalError('');
+    setApprovalMethod('mfa');
+    resetApprovalFlow();
     setShowAddJob(true);
   };
 
@@ -380,6 +416,7 @@ const ScheduledJobsTab: React.FC<ScheduledJobsTabProps> = ({ language, showToast
   /* === APPROVAL (create & update) === */
   const requestApproval = async () => {
     if (!approverUsername) return;
+    const approvalType = isEditMode && editingJob?.job_type === 'once' ? 'execution_plan' : 'scheduled_job';
     // 在发送验证码前先校验必填项,避免半填状态下的无效审批流
     const err = validateForm();
     if (err) { showToast(err, 'error'); return; }
@@ -395,7 +432,8 @@ const ScheduledJobsTab: React.FC<ScheduledJobsTabProps> = ({ language, showToast
           config_reason: form.config_reason || `${zh ? (isEditMode ? '修改定时作业' : '创建定时作业') : (isEditMode ? 'Update job' : 'Create job')}: ${form.name}`,
           device_hostname: form.device_scope === 'all' ? (zh ? '全部设备' : 'All devices') : form.device_filter,
           command_preview: '',
-          approval_type: 'scheduled_job',
+          approval_type: approvalType,
+          verification_method: approvalMethod,
           extra_fields: {
             action_type: zh ? (actionLabel?.labelZh || form.action_type) : (actionLabel?.labelEn || form.action_type),
             schedule_desc: describeCron(form.cron_expr, zh),
@@ -408,7 +446,12 @@ const ScheduledJobsTab: React.FC<ScheduledJobsTabProps> = ({ language, showToast
         setApprovalToken(j.approval_token);
         setApprovalStatus('sent');
         setApprovalCountdown(300);
-        showToast(zh ? '验证码已发送至审批人' : 'Code sent to approver', 'success');
+        const message = approvalMethod === 'mfa'
+          ? (zh ? '请输入审批人 MFA 验证器中的动态码' : 'Enter the approver’s authenticator code')
+          : approvalMethod === 'email'
+          ? (zh ? '邮箱验证码已发送至审批人' : 'Email code sent to approver')
+          : (zh ? '飞书验证码已发送至审批人' : 'Feishu code sent to approver');
+        showToast(message, 'success');
       } else {
         setApprovalStatus('idle');
         setApprovalError(j.detail || j.message || 'Failed');
@@ -421,11 +464,12 @@ const ScheduledJobsTab: React.FC<ScheduledJobsTabProps> = ({ language, showToast
 
   const verifyApproval = async () => {
     if (!approvalToken || !approvalCode) return;
+    const approvalType = isEditMode && editingJob?.job_type === 'once' ? 'execution_plan' : 'scheduled_job';
     try {
       const r = await fetch('/api/config-approval/verify', {
         method: 'POST',
         headers: authHeaders,
-        body: JSON.stringify({ approval_token: approvalToken, code: approvalCode }),
+        body: JSON.stringify({ approval_token: approvalToken, code: approvalCode, approval_type: approvalType }),
       });
       const j = await r.json();
       if (r.ok && j.success) {
@@ -442,6 +486,7 @@ const ScheduledJobsTab: React.FC<ScheduledJobsTabProps> = ({ language, showToast
   /* === APPROVAL (delete) === */
   const requestDeleteApproval = async () => {
     if (!deleteApprover || !deleteTarget) return;
+    const deleteApprovalType = deleteTarget.job_type === 'once' ? 'execution_plan' : 'scheduled_job_delete';
     setDeleteStatus('sending');
     setDeleteError('');
     try {
@@ -453,7 +498,8 @@ const ScheduledJobsTab: React.FC<ScheduledJobsTabProps> = ({ language, showToast
           config_reason: deleteReason || `${zh ? '删除定时作业' : 'Delete scheduled job'}: ${deleteTarget.name}`,
           device_hostname: deleteTarget.device_scope === 'all' ? (zh ? '全部设备' : 'All devices') : deleteTarget.device_filter,
           command_preview: '',
-          approval_type: 'scheduled_job_delete',
+          approval_type: deleteApprovalType,
+          verification_method: deleteApprovalMethod,
           extra_fields: { action_type: 'DELETE', job_name: deleteTarget.name },
         }),
       });
@@ -462,7 +508,12 @@ const ScheduledJobsTab: React.FC<ScheduledJobsTabProps> = ({ language, showToast
         setDeleteToken(j.approval_token);
         setDeleteStatus('sent');
         setDeleteCountdown(300);
-        showToast(zh ? '删除验证码已发至审批人' : 'Delete code sent to approver', 'success');
+        const message = deleteApprovalMethod === 'mfa'
+          ? (zh ? '请输入审批人 MFA 验证器中的动态码' : 'Enter the approver’s authenticator code')
+          : deleteApprovalMethod === 'email'
+          ? (zh ? '删除审批邮箱验证码已发送' : 'Delete approval email sent')
+          : (zh ? '删除审批飞书验证码已发送' : 'Delete approval code sent to Feishu');
+        showToast(message, 'success');
       } else {
         setDeleteStatus('idle');
         setDeleteError(j.detail || j.message || 'Failed');
@@ -474,12 +525,13 @@ const ScheduledJobsTab: React.FC<ScheduledJobsTabProps> = ({ language, showToast
   };
 
   const verifyDeleteApproval = async () => {
-    if (!deleteToken || !deleteCode) return;
+    if (!deleteToken || !deleteCode || !deleteTarget) return;
+    const deleteApprovalType = deleteTarget.job_type === 'once' ? 'execution_plan' : 'scheduled_job_delete';
     try {
       const r = await fetch('/api/config-approval/verify', {
         method: 'POST',
         headers: authHeaders,
-        body: JSON.stringify({ approval_token: deleteToken, code: deleteCode }),
+        body: JSON.stringify({ approval_token: deleteToken, code: deleteCode, approval_type: deleteApprovalType }),
       });
       const j = await r.json();
       if (r.ok && j.success) {
@@ -851,8 +903,10 @@ const ScheduledJobsTab: React.FC<ScheduledJobsTabProps> = ({ language, showToast
               availableScripts={availableScripts}
               fetchScripts={fetchScripts}
               approverUsername={approverUsername}
-              setApproverUsername={setApproverUsername}
+              setApproverUsername={selectApprover}
               approvers={approvers}
+              approvalMethod={approvalMethod}
+              setApprovalMethod={changeApprovalMethod}
               approvalStatus={approvalStatus}
               approvalCountdown={approvalCountdown}
               approvalCode={approvalCode}
@@ -1271,11 +1325,8 @@ const ScheduledJobsTab: React.FC<ScheduledJobsTabProps> = ({ language, showToast
                                       setDeleteTarget(job);
                                       setDeleteReason(`${zh ? '申请删除作业' : 'Delete job'}: ${job.name}`);
                                       setDeleteApprover('');
-                                      setDeleteToken('');
-                                      setDeleteCode('');
-                                      setDeleteStatus('idle');
-                                      setDeleteCountdown(0);
-                                      setDeleteError('');
+                                      setDeleteApprovalMethod('mfa');
+                                      resetDeleteApprovalFlow();
                                       fetchApprovers();
                                       setDeleteApprovalOpen(true);
                                     }}
@@ -1365,7 +1416,9 @@ const ScheduledJobsTab: React.FC<ScheduledJobsTabProps> = ({ language, showToast
         deleteReason={deleteReason}
         setDeleteReason={setDeleteReason}
         deleteApprover={deleteApprover}
-        setDeleteApprover={setDeleteApprover}
+        setDeleteApprover={selectDeleteApprover}
+        deleteApprovalMethod={deleteApprovalMethod}
+        setDeleteApprovalMethod={changeDeleteApprovalMethod}
         deleteStatus={deleteStatus}
         deleteCountdown={deleteCountdown}
         deleteCode={deleteCode}

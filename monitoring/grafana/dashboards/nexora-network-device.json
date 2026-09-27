@@ -10,7 +10,7 @@
   "panels": [
     {
       "id": 1,
-      "title": "系统运行时间 (Uptime)",
+      "title": "系统运行时长",
       "type": "stat",
       "datasource": {
         "type": "prometheus",
@@ -24,7 +24,7 @@
       },
       "fieldConfig": {
         "defaults": {
-          "unit": "s",
+          "unit": "dtdhms",
           "noValue": "数据暂不可用",
           "color": {
             "mode": "thresholds"
@@ -43,7 +43,7 @@
       },
       "options": {
         "colorMode": "value",
-        "graphMode": "area",
+        "graphMode": "none",
         "justifyMode": "center",
         "orientation": "auto",
         "reduceOptions": {

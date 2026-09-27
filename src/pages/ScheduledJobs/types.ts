@@ -68,7 +68,10 @@ export interface EligibleApprover {
   id: string;
   username: string;
   role: string;
+  verification_methods: ApprovalVerificationMethod[];
 }
+
+export type ApprovalVerificationMethod = 'mfa' | 'email' | 'feishu';
 
 export interface SystemScheduledJob {
   id: string;

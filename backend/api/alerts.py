@@ -25,7 +25,7 @@ def _utc_now_iso() -> str:
     return datetime.now(timezone.utc).replace(microsecond=0).isoformat()
 
 
-def _verify_alert_rule_approval(payload: dict, approval_type: str = 'alert_rule'):
+def _verify_alert_rule_approval(payload: dict, user: dict, approval_type: str = 'alert_rule'):
     is_test_env = getattr(settings, 'ENVIRONMENT', 'development') != 'production'
     skip_approval_verification = payload.get("skip_approval_verification", False) if is_test_env else False
     
@@ -41,12 +41,23 @@ def _verify_alert_rule_approval(payload: dict, approval_type: str = 'alert_rule'
             detail="安全校验失败：执行此修改必须提供有效工单审批码。请先获取验证码验证。" if not is_test_env else "安全校验失败：必须提供有效工单审批码（或在测试环境使用 skip_approval_verification=true 绕过）"
         )
         
-    ok, err = verify_code(approval_token, approval_code)
+    ok, err = verify_code(
+        approval_token,
+        approval_code,
+        requester_id=str(user.get('user_id') or ''),
+        requester_username=str(user.get('username') or ''),
+        expected_approval_type=approval_type,
+    )
     if not ok:
         raise HTTPException(status_code=403, detail=err)
         
     # Consume it
-    consume_approval(approval_token)
+    if not consume_approval(
+        approval_token,
+        requester_id=str(user.get('user_id') or ''),
+        expected_approval_type=approval_type,
+    ):
+        raise HTTPException(status_code=403, detail='审批令牌与当前操作不匹配或已被使用')
 
 
 def _normalize_workflow_status(row: dict) -> str:
@@ -1604,7 +1615,7 @@ def test_alert_email_channel(payload: dict = Body(default={}), user=require_role
 @router.post('/alerts/rules')
 def create_alert_rule(payload: dict = Body(...), user=require_role("Operator")):
     actor_username = user.get("username", "unknown")
-    _verify_alert_rule_approval(payload, approval_type='alert_rule')
+    _verify_alert_rule_approval(payload, user=user, approval_type='alert_rule')
     try:
         rule = alert_rule_service.create_rule(payload, tenant_id=_notification_tenant_id(user))
     except alert_rule_service.UnsupportedMetricTypeError as exc:
@@ -1647,7 +1658,7 @@ def read_alert_rules_history(limit: int = Query(default=20, ge=1, le=100), rule_
 @router.put('/alerts/rules/{rule_id}')
 def update_alert_rules(rule_id: str, payload: dict = Body(...), user=require_role("Operator")):
     actor_username = user.get("username", "unknown")
-    _verify_alert_rule_approval(payload, approval_type='alert_rule')
+    _verify_alert_rule_approval(payload, user=user, approval_type='alert_rule')
     try:
         rule = alert_rule_service.update_rule(rule_id, payload, tenant_id=_notification_tenant_id(user))
     except alert_rule_service.UnsupportedMetricTypeError as exc:
@@ -1692,7 +1703,7 @@ def delete_alert_rule(
         "approval_code": approval_code,
         "skip_approval_verification": skip_approval
     }
-    _verify_alert_rule_approval(payload, approval_type='alert_rule_delete')
+    _verify_alert_rule_approval(payload, user=user, approval_type='alert_rule_delete')
     try:
         tenant_id = _notification_tenant_id(user)
         existing = alert_rule_service.get_rule(rule_id, tenant_id=tenant_id)
@@ -1726,7 +1737,7 @@ def batch_toggle_alert_rules(payload: dict = Body(...), user=require_role("Opera
     if len(rule_ids) > 200:
         raise HTTPException(status_code=400, detail='Too many rule IDs (max 200)')
 
-    _verify_alert_rule_approval(payload, approval_type='alert_rule')
+    _verify_alert_rule_approval(payload, user=user, approval_type='alert_rule')
 
     conn = get_db_connection()
     try:
@@ -1792,7 +1803,7 @@ def batch_delete_alert_rules(payload: dict = Body(...), user=require_role("Admin
     if len(rule_ids) > 200:
         raise HTTPException(status_code=400, detail='Too many rule IDs (max 200)')
 
-    _verify_alert_rule_approval(payload, approval_type='alert_rule_delete')
+    _verify_alert_rule_approval(payload, user=user, approval_type='alert_rule_delete')
 
     conn = get_db_connection()
     try:

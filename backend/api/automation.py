@@ -14,7 +14,12 @@ from services.automation_service import AutomationService
 from drivers.base import CommandResult
 from services.audit_service import log_audit_event
 from api.devices import _record_instant_execution
-from services.config_approval_service import request_approval, verify_code, consume_approval
+from services.config_approval_service import (
+    list_approvers_with_methods,
+    request_approval,
+    verify_code,
+    consume_approval,
+)
 from core.rbac import require_role
 from services.vault_service import resolve_device_credentials
 from services.operational_data_service import parse_device_cli_output
@@ -335,7 +340,12 @@ async def execute_task(request: Request, payload: dict = Body(...), user: dict =
                     row = conn.execute("SELECT status FROM change_orders WHERE order_number = ?", (change_ticket,)).fetchone()
                     if row and row['status'] in {'approved', 'implementing'}: ticket_valid = True
                 if not ticket_valid:
-                    if not consume_approval(approval_token): raise HTTPException(status_code=403, detail="配置变更类命令必须关联有效的变更工单或提供授权码")
+                    if not consume_approval(
+                        approval_token,
+                        requester_id=str(user.get('user_id') or ''),
+                        expected_approval_type='config',
+                    ):
+                        raise HTTPException(status_code=403, detail="配置变更类命令必须关联有效的变更工单或提供授权码")
             else:
                 is_config = False
 
@@ -408,20 +418,54 @@ async def execute_task(request: Request, payload: dict = Body(...), user: dict =
     finally:
         conn.close()
 
+@router.get("/config-approval/approvers")
+def list_config_approval_approvers(user: dict = Depends(get_operator)):
+    """List same-tenant approvers and their configured factors without secrets."""
+    return {
+        "success": True,
+        "data": list_approvers_with_methods(str(user.get('tenant_id') or '')),
+    }
+
+
 @router.post("/config-approval/request")
 async def request_config_approval(payload: dict = Body(...), user: dict = Depends(get_operator)):
     approver_username = (payload.get('approver_username') or '').strip()
     config_reason = (payload.get('config_reason') or '').strip()
     requester = user.get('username', 'unknown')
-    token, err = request_approval(approver_username=approver_username, requester_username=requester, config_reason=config_reason, approval_type='config')
+    approval_type = str(payload.get('approval_type') or 'config').strip()
+    allowed_approval_types = {
+        'config', 'scheduled_job', 'scheduled_job_delete',
+        'execution_plan', 'alert_rule', 'alert_rule_delete',
+    }
+    if approval_type not in allowed_approval_types:
+        raise HTTPException(status_code=400, detail='不支持的审批业务类型')
+    token, err = request_approval(
+        approver_username=approver_username,
+        requester_username=requester,
+        requester_id=str(user.get('user_id') or ''),
+        requester_tenant_id=str(user.get('tenant_id') or ''),
+        config_reason=config_reason,
+        device_hostname=str(payload.get('device_hostname') or ''),
+        command_preview=str(payload.get('command_preview') or ''),
+        approval_type=approval_type,
+        extra_fields=payload.get('extra_fields') if isinstance(payload.get('extra_fields'), dict) else None,
+        verification_method=str(payload.get('verification_method') or 'feishu'),
+    )
     if err: raise HTTPException(status_code=400, detail=err)
-    return {"success": True, "approval_token": token}
+    return {"success": True, "approval_token": token, "approval_type": approval_type}
 
 @router.post("/config-approval/verify")
-async def verify_config_approval(payload: dict = Body(...)):
+async def verify_config_approval(payload: dict = Body(...), user: dict = Depends(get_operator)):
     approval_token = payload.get('approval_token', '').strip()
     code = payload.get('code', '').strip()
-    ok, err = verify_code(approval_token, code)
+    approval_type = str(payload.get('approval_type') or '').strip() or None
+    ok, err = verify_code(
+        approval_token,
+        code,
+        requester_id=str(user.get('user_id') or ''),
+        requester_username=str(user.get('username') or ''),
+        expected_approval_type=approval_type,
+    )
     if not ok: raise HTTPException(status_code=400, detail=err)
     return {"success": True}
 

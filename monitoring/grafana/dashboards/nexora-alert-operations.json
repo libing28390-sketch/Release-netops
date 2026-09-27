@@ -68,7 +68,7 @@
     },
     {
       "id": 2,
-      "title": "Critical 未关闭",
+      "title": "严重 未关闭",
       "type": "stat",
       "datasource": {
         "type": "prometheus",
@@ -126,7 +126,7 @@
     },
     {
       "id": 3,
-      "title": "Major 未关闭",
+      "title": "主要 未关闭",
       "type": "stat",
       "datasource": {
         "type": "prometheus",
@@ -184,7 +184,7 @@
     },
     {
       "id": 4,
-      "title": "Warning 未关闭",
+      "title": "警告 未关闭",
       "type": "stat",
       "datasource": {
         "type": "prometheus",
@@ -242,7 +242,7 @@
     },
     {
       "id": 5,
-      "title": "Minor 未关闭",
+      "title": "次要 未关闭",
       "type": "stat",
       "datasource": {
         "type": "prometheus",
@@ -300,7 +300,7 @@
     },
     {
       "id": 6,
-      "title": "24h 投递尝试成功率",
+      "title": "24h 告警成功率",
       "type": "stat",
       "datasource": {
         "type": "prometheus",
@@ -327,7 +327,18 @@
                 "value": null
               }
             ]
-          }
+          },
+          "mappings": [
+            {
+              "type": "value",
+              "options": {
+                "-1": {
+                  "text": "暂无已完成投递",
+                  "color": "#8A8F98"
+                }
+              }
+            }
+          ]
         },
         "overrides": []
       },
@@ -347,11 +358,11 @@
       },
       "targets": [
         {
-          "expr": "((sum(nexora_alert_delivery_attempts_24h{status=\"succeeded\"}) / (sum(nexora_alert_delivery_attempts_24h{status=\"succeeded\"}) + sum(nexora_alert_delivery_attempts_24h{status=\"failed\"}))) and ((sum(nexora_alert_delivery_attempts_24h{status=\"succeeded\"}) + sum(nexora_alert_delivery_attempts_24h{status=\"failed\"})) > 0))",
+          "expr": "(((sum(nexora_alert_delivery_attempts_24h{status=\"succeeded\"}) / sum(nexora_alert_delivery_attempts_24h{status=~\"succeeded|retrying|failed\"})) and (sum(nexora_alert_delivery_attempts_24h{status=~\"succeeded|retrying|failed\"}) > 0)) or (vector(-1) and on() (count(nexora_alert_delivery_attempts_24h{status=~\"succeeded|retrying|failed\"}) > 0)))",
           "refId": "A"
         }
       ],
-      "description": "成功数 /（成功数 + 失败数）；排除排队、发送中、重试中和跳过，按实际投递尝试计数。"
+      "description": "成功的尝试数 /（成功的尝试数 + 进入重试的失败尝试数 + 终态失败的尝试数）。排除排队、发送中和跳过；暂无已完成尝试时显示对应提示，指标源缺失时保留无数据状态。"
     },
     {
       "id": 7,
@@ -462,12 +473,52 @@
       },
       "targets": [
         {
-          "expr": "sum by (severity) (nexora_alert_open_events)",
-          "legendFormat": "{{severity}}",
+          "expr": "sum(nexora_alert_open_events{severity=\"critical\"})",
+          "legendFormat": "严重",
           "refId": "A"
+        },
+        {
+          "expr": "sum(nexora_alert_open_events{severity=\"major\"})",
+          "legendFormat": "主要",
+          "refId": "B"
+        },
+        {
+          "expr": "sum(nexora_alert_open_events{severity=\"warning\"})",
+          "legendFormat": "警告",
+          "refId": "C"
+        },
+        {
+          "expr": "sum(nexora_alert_open_events{severity=\"minor\"})",
+          "legendFormat": "次要",
+          "refId": "D"
+        },
+        {
+          "expr": "sum(nexora_alert_open_events{severity=\"high\"})",
+          "legendFormat": "高",
+          "refId": "E"
+        },
+        {
+          "expr": "sum(nexora_alert_open_events{severity=\"medium\"})",
+          "legendFormat": "中",
+          "refId": "F"
+        },
+        {
+          "expr": "sum(nexora_alert_open_events{severity=\"low\"})",
+          "legendFormat": "低",
+          "refId": "G"
+        },
+        {
+          "expr": "sum(nexora_alert_open_events{severity=\"info\"})",
+          "legendFormat": "提示",
+          "refId": "H"
+        },
+        {
+          "expr": "sum(nexora_alert_open_events{severity=\"unknown\"})",
+          "legendFormat": "未知",
+          "refId": "I"
         }
       ],
-      "description": "包括 unknown 严重度在内的当前未恢复告警计数。"
+      "description": "按中文级别名称展示当前未恢复告警计数，包含未知级别。查询仍使用稳定的英文 severity 标签。"
     },
     {
       "id": 9,
@@ -597,7 +648,7 @@
       },
       "fieldConfig": {
         "defaults": {
-          "unit": "s",
+          "unit": "dtdhms",
           "noValue": "数据暂不可用",
           "color": {
             "mode": "thresholds"
@@ -624,7 +675,7 @@
       },
       "options": {
         "colorMode": "value",
-        "graphMode": "area",
+        "graphMode": "none",
         "justifyMode": "center",
         "orientation": "auto",
         "reduceOptions": {
@@ -659,7 +710,7 @@
       },
       "fieldConfig": {
         "defaults": {
-          "unit": "s",
+          "unit": "dtdhms",
           "noValue": "数据暂不可用",
           "color": {
             "mode": "thresholds"
@@ -678,7 +729,7 @@
       },
       "options": {
         "colorMode": "value",
-        "graphMode": "area",
+        "graphMode": "none",
         "justifyMode": "center",
         "orientation": "auto",
         "reduceOptions": {

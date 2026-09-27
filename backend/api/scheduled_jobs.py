@@ -320,6 +320,7 @@ def create_scheduled_job(
     """
     is_test_env = getattr(settings, 'ENVIRONMENT', 'development') != 'production'
     skip_approval_verification = payload.get("skip_approval_verification", False) if is_test_env else False
+    required_approval_type = "execution_plan" if payload.get("job_type", "cron") == "once" else "scheduled_job"
     
     approval_token = (payload.get("approval_token") or "").strip()
     approval_code = (payload.get("approval_code") or "").strip()
@@ -334,7 +335,13 @@ def create_scheduled_job(
                 detail="审批令牌和验证码不能为空" if not is_test_env else "审批令牌和验证码不能为空（或在测试环境中使用 skip_approval_verification=true）"
             )
 
-        ok, err = verify_code(approval_token, approval_code)
+        ok, err = verify_code(
+            approval_token,
+            approval_code,
+            requester_id=str(user.get("user_id") or ""),
+            requester_username=str(user.get("username") or ""),
+            expected_approval_type=required_approval_type,
+        )
         if not ok:
             raise HTTPException(status_code=403, detail=err)
 
@@ -387,7 +394,11 @@ def create_scheduled_job(
 
     # 5. ALL VALIDATIONS PASSED -> Consume approval token
     if not skip_approval_verification:
-        approval_record = consume_approval(approval_token)
+        approval_record = consume_approval(
+            approval_token,
+            requester_id=str(user.get("user_id") or ""),
+            expected_approval_type=required_approval_type,
+        )
         if not approval_record:
             raise HTTPException(status_code=403, detail="审批令牌无效或已过期，请重新获取验证码")
 
@@ -476,6 +487,7 @@ def toggle_scheduled_job(
         # 启用时要求审批验证
         if enabled:
             if not skip_approval_verification:
+                required_approval_type = "execution_plan" if row["job_type"] == "once" else "scheduled_job"
                 approval_token = (payload.get("approval_token") or "").strip()
                 approval_code = (payload.get("approval_code") or "").strip()
                 if not approval_token or not approval_code:
@@ -483,10 +495,22 @@ def toggle_scheduled_job(
                         status_code=400, 
                         detail="启用作业需要审批验证码" if not is_test_env else "启用作业需要审批验证码（或在测试环境中使用 skip_approval_verification=true）"
                     )
-                ok, err = verify_code(approval_token, approval_code)
+                ok, err = verify_code(
+                    approval_token,
+                    approval_code,
+                    requester_id=str(user.get("user_id") or ""),
+                    requester_username=str(user.get("username") or ""),
+                    expected_approval_type=required_approval_type,
+                )
                 if not ok:
                     raise HTTPException(status_code=403, detail=err)
-                consume_approval(approval_token)
+                approval_record = consume_approval(
+                    approval_token,
+                    requester_id=str(user.get("user_id") or ""),
+                    expected_approval_type=required_approval_type,
+                )
+                if not approval_record:
+                    raise HTTPException(status_code=403, detail="审批令牌无效或已过期，请重新获取验证码")
             else:
                 logger.warning(f"Enabling scheduled job {job_id} with approval verification skipped by {user.get('username', 'unknown')}")
 
@@ -529,10 +553,23 @@ def delete_scheduled_job(
         if not skip_verification:
             if not approval_token or not approval_code:
                 raise HTTPException(status_code=400, detail="安全校验失败：删除定时作业必须提供有效工单审批码。请先申请审批。")
-            ok, err = verify_code(approval_token, approval_code)
+            required_approval_type = "execution_plan" if row["job_type"] == "once" else "scheduled_job_delete"
+            ok, err = verify_code(
+                approval_token,
+                approval_code,
+                requester_id=str(user.get("user_id") or ""),
+                requester_username=str(user.get("username") or ""),
+                expected_approval_type=required_approval_type,
+            )
             if not ok:
                 raise HTTPException(status_code=403, detail=err)
-            consume_approval(approval_token)
+            approval_record = consume_approval(
+                approval_token,
+                requester_id=str(user.get("user_id") or ""),
+                expected_approval_type=required_approval_type,
+            )
+            if not approval_record:
+                raise HTTPException(status_code=403, detail="审批令牌无效或已过期，请重新获取验证码")
         else:
             logger.warning(f"Deleting scheduled job {job_id} with approval verification skipped by {user.get('username', 'unknown')}")
 
@@ -649,6 +686,7 @@ def update_scheduled_job(
         # ── 强制工单审批校验 ──────────────────────────
         approval_record = None
         if not skip_approval_verification:
+            required_approval_type = "execution_plan" if row["job_type"] == "once" else "scheduled_job"
             approval_token = (payload.get("approval_token") or "").strip()
             approval_code = (payload.get("approval_code") or "").strip()
             if not approval_token or not approval_code:
@@ -656,10 +694,20 @@ def update_scheduled_job(
                     status_code=400,
                     detail="安全校验失败：修改定时作业配置必须提供有效工单审批码。请先发送验证码并验证。"
                 )
-            ok, err = verify_code(approval_token, approval_code)
+            ok, err = verify_code(
+                approval_token,
+                approval_code,
+                requester_id=str(user.get("user_id") or ""),
+                requester_username=str(user.get("username") or ""),
+                expected_approval_type=required_approval_type,
+            )
             if not ok:
                 raise HTTPException(status_code=403, detail=err)
-            approval_record = consume_approval(approval_token)
+            approval_record = consume_approval(
+                approval_token,
+                requester_id=str(user.get("user_id") or ""),
+                expected_approval_type=required_approval_type,
+            )
             if not approval_record:
                 raise HTTPException(status_code=403, detail="审批令牌无效或已过期，请重新获取验证码")
         else:
