@@ -464,7 +464,7 @@ const ModuleSubNav: React.FC<ModuleSubNavProps> = ({ language, userRole, current
               {zh ? '版本' : 'VER'}
             </span>
             <span className="text-[10px] font-mono font-bold" style={{ color: ACCENT }}>
-              v{systemInfo?.version || '1.0.9'}
+              v{systemInfo?.version || '1.0.10'}
             </span>
           </div>
         </div>

@@ -1,6 +1,6 @@
 # Nexora Terminal Agent
 
-Terminal Agent 运行在操作员工作站上。v1.0.9 的 Nexora 服务端只支持 Linux/Ubuntu/Docker 部署，但 Windows 操作员仍可通过浏览器访问远程服务，并在本机运行 Windows Agent。前端通过本机回环地址调用 Agent，并传递一次性短期令牌。Agent 只监听回环地址，不向局域网开放，也不会把交换到的凭据写入日志。
+Terminal Agent 运行在操作员工作站上。v1.0.9 起，Nexora 服务端只支持 Linux/Ubuntu/Docker 部署；Windows 操作员仍可通过浏览器访问远程服务，并在本机运行 Windows Agent。前端通过本机回环地址调用 Agent，并传递一次性短期令牌。Agent 只监听回环地址，不向局域网开放，也不会把交换到的凭据写入日志。
 
 ## Windows 工作站
 
