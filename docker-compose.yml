@@ -214,6 +214,17 @@ services:
     container_name: nexora-vmagent
     environment:
       - TZ=${TZ:-Asia/Shanghai}
+      # All platform scrape and remote-write targets are Docker-internal.
+      # Do not let host-wide proxy variables turn service DNS names into
+      # external proxy requests.
+      - HTTP_PROXY=
+      - HTTPS_PROXY=
+      - ALL_PROXY=
+      - http_proxy=
+      - https_proxy=
+      - all_proxy=
+      - NO_PROXY=localhost,127.0.0.1,netops,victoriametrics,snmp-exporter,vmagent,grafana,cadvisor
+      - no_proxy=localhost,127.0.0.1,netops,victoriametrics,snmp-exporter,vmagent,grafana,cadvisor
     command:
       - "-promscrape.config=/etc/nexora-collector/runtime/vmagent/scrape.yml"
       - "-remoteWrite.url=http://victoriametrics:8428/api/v1/write"
@@ -267,12 +278,22 @@ services:
   cadvisor:
     image: ghcr.io/google/cadvisor:v0.60.6
     container_name: nexora-cadvisor
+    environment:
+      # cAdvisor talks to the Docker API through the internal socket proxy.
+      - HTTP_PROXY=
+      - HTTPS_PROXY=
+      - ALL_PROXY=
+      - http_proxy=
+      - https_proxy=
+      - all_proxy=
+      - NO_PROXY=localhost,127.0.0.1,docker-socket-proxy
+      - no_proxy=localhost,127.0.0.1,docker-socket-proxy
     command:
       - "--docker=tcp://docker-socket-proxy:2375"
       - "--docker_only=true"
       - "--housekeeping_interval=30s"
       - "--store_container_labels=false"
-      - "--disable_metrics=percpu,sched,process,hugetlb,resctrl,accelerator,tcp,udp,network"
+      - "--disable_metrics=percpu,sched,process,hugetlb,resctrl,tcp,udp,network"
     volumes:
       - /sys:/sys:ro
     expose:

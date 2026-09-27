@@ -1885,7 +1885,7 @@ def build_platform_health_dashboard():
     panels = [
         stat_panel(
             1,
-            "平台在线目标",
+            "平台指标端点在线数",
             f"count({platform_up} == 1)",
             0,
             0,
@@ -1893,11 +1893,11 @@ def build_platform_health_dashboard():
             4,
             unit="none",
             color="#56A64B",
-            description="仅统计 platform_* 六类已配置采集作业中当前为 UP 的目标。",
+            description="仅统计六类 platform_* Prometheus 指标端点中当前为 UP 的目标，不代表 Docker 容器总数。",
         ),
         stat_panel(
             2,
-            "平台失败目标",
+            "平台指标端点失败数",
             f"count({platform_up} == 0)",
             4,
             0,
@@ -1908,11 +1908,11 @@ def build_platform_health_dashboard():
                 {"color": "green", "value": None},
                 {"color": "red", "value": 1},
             ],
-            description="目标 DOWN 时显示为失败；数据缺失保持为无数据。",
+            description="六类 platform_* Prometheus 指标端点 DOWN 时显示为失败；数据缺失保持为无数据。",
         ),
         stat_panel(
             3,
-            "平台采集目标数",
+            "平台指标端点数",
             f"count({platform_up})",
             8,
             0,
@@ -1920,7 +1920,7 @@ def build_platform_health_dashboard():
             4,
             unit="none",
             color="#A352CC",
-            description="已配置的 API、VictoriaMetrics、vmagent、SNMP Exporter、Grafana 和 cAdvisor 采集目标数。",
+            description="已配置的 API、VictoriaMetrics、vmagent、SNMP Exporter、Grafana 和 cAdvisor 指标端点数。",
         ),
         stat_panel(
             4,
@@ -1965,7 +1965,7 @@ def build_platform_health_dashboard():
         ),
         timeseries_panel(
             7,
-            "平台采集目标状态",
+            "平台指标端点状态趋势",
             [
                 {
                     "expr": f"max by (job) ({platform_up})",
@@ -1981,11 +1981,11 @@ def build_platform_health_dashboard():
             legend_display_mode="list",
             legend_placement="bottom",
             legend_calcs=[],
-            description="按采集作业展示 UP 值；0 表示目标不可达。",
+            description="按 platform_* 指标端点展示 UP 值；0 表示该端点不可达。",
         ),
         timeseries_panel(
             8,
-            "平台采集耗时趋势",
+            "平台指标端点采集耗时趋势",
             [
                 {
                     "expr": f"scrape_duration_seconds{{{platform_selector}}}",
@@ -2004,7 +2004,7 @@ def build_platform_health_dashboard():
         ),
         table_panel(
             9,
-            "平台采集目标明细",
+            "平台指标端点状态",
             platform_up,
             0,
             12,
@@ -2028,7 +2028,7 @@ def build_platform_health_dashboard():
                     },
                 }
             ],
-            description="包含平台服务及容器资源采集目标；数据库连通性单独来自 API SELECT 1。",
+            description="仅列出六类 platform_* Prometheus 指标端点的状态；cAdvisor 的 container_last_seen 观测清单单独展示，不冒充 Docker 健康状态。",
         ),
         stat_panel(
             10,
@@ -2087,18 +2087,14 @@ def build_platform_health_dashboard():
         ),
         stat_panel(
             14,
-            "VictoriaMetrics 存储占用率",
-            "(1 - (sum(vm_free_disk_space_bytes) / sum(vm_total_disk_space_bytes)))",
+            "VictoriaMetrics 已用数据量",
+            "sum(vm_data_size_bytes)",
             16,
             20,
             4,
             4,
-            unit="percentunit",
-            thresholds=[
-                {"color": "green", "value": None},
-                {"color": "#E0B400", "value": 0.8},
-                {"color": "red", "value": 0.9},
-            ],
+            unit="bytes",
+            description="VictoriaMetrics 当前已用数据量；使用 v1.103.0 支持的 vm_data_size_bytes，不表示所在文件系统占用率。",
         ),
         stat_panel(
             15,
@@ -2119,7 +2115,7 @@ def build_platform_health_dashboard():
             16,
             "容器 CPU 使用率（单核 = 100%）",
             [{
-                "expr": 'sum by (name) (rate(container_cpu_usage_seconds_total{name=~".*nexora-(db|netops|victoriametrics|snmp-exporter|vmagent|grafana|nginx|redis|seaweedfs)$"}[5m])) * 100',
+                "expr": 'sum by (name) (rate(container_cpu_usage_seconds_total{name!=""}[5m])) * 100',
                 "legendFormat": "{{name}}",
                 "refId": "A",
             }],
@@ -2137,7 +2133,7 @@ def build_platform_health_dashboard():
             17,
             "容器内存工作集",
             [{
-                "expr": 'sum by (name) (container_memory_working_set_bytes{name=~".*nexora-(db|netops|victoriametrics|snmp-exporter|vmagent|grafana|nginx|redis|seaweedfs)$"})',
+                "expr": 'sum by (name) (container_memory_working_set_bytes{name!=""})',
                 "legendFormat": "{{name}}",
                 "refId": "A",
             }],
@@ -2155,12 +2151,12 @@ def build_platform_health_dashboard():
             "容器磁盘读写速率",
             [
                 {
-                    "expr": 'sum by (name) (rate(container_fs_reads_bytes_total{name=~".*nexora-(db|netops|victoriametrics|snmp-exporter|vmagent|grafana|nginx|redis|seaweedfs)$"}[5m]))',
+                    "expr": 'sum by (name) (rate(container_fs_reads_bytes_total{name!=""}[5m]))',
                     "legendFormat": "{{name}} read",
                     "refId": "A",
                 },
                 {
-                    "expr": 'sum by (name) (rate(container_fs_writes_bytes_total{name=~".*nexora-(db|netops|victoriametrics|snmp-exporter|vmagent|grafana|nginx|redis|seaweedfs)$"}[5m]))',
+                    "expr": 'sum by (name) (rate(container_fs_writes_bytes_total{name!=""}[5m]))',
                     "legendFormat": "{{name}} write",
                     "refId": "B",
                 },
@@ -2173,6 +2169,49 @@ def build_platform_health_dashboard():
             legend_display_mode="list",
             legend_placement="bottom",
             legend_calcs=["lastNotNull", "max"],
+        ),
+        stat_panel(
+            19,
+            "Docker 容器采集观测数",
+            'count(count by (name) (container_last_seen{name!=""}))',
+            0,
+            40,
+            4,
+            4,
+            unit="none",
+            color="#A352CC",
+            description="按 cAdvisor container_last_seen 的非空容器名统计当前观测到的 Docker 容器数；不等同于容器健康检查。",
+        ),
+        table_panel(
+            20,
+            "Docker 容器采集观测清单",
+            'max by (name) (container_last_seen{name!=""})',
+            4,
+            40,
+            20,
+            8,
+            unit="dateTimeAsIso",
+            value_col_name="最后观测时间",
+            transformations=[
+                {
+                    "id": "organize",
+                    "options": {
+                        "excludeByName": {
+                            "Time": True,
+                            "__name__": True,
+                            "id": True,
+                            "instance": True,
+                            "job": True,
+                        },
+                        "indexByName": {"name": 0, "Value": 1},
+                        "renameByName": {
+                            "name": "容器名称",
+                            "Value": "最后观测时间",
+                        },
+                    },
+                }
+            ],
+            description="基于 cAdvisor container_last_seen 的当前容器采集观测；最后观测时间不代表 Docker 容器健康状态。",
         ),
     ]
     return {

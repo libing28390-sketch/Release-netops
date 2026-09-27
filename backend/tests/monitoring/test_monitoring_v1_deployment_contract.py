@@ -40,6 +40,33 @@ def test_fixed_collector_stack_and_queue_contract():
     assert healthcheck["start_period"] == "60s"
 
 
+def test_vmagent_and_cadvisor_bypass_proxy_for_internal_targets():
+    compose = yaml.safe_load((ROOT / "docker-compose.yml").read_text(encoding="utf-8"))
+    services = compose["services"]
+
+    vmagent_environment = services["vmagent"]["environment"]
+    cadvisor_environment = services["cadvisor"]["environment"]
+    for environment in (vmagent_environment, cadvisor_environment):
+        for variable in ("HTTP_PROXY", "HTTPS_PROXY", "ALL_PROXY", "http_proxy", "https_proxy", "all_proxy"):
+            assert f"{variable}=" in environment
+
+    for variable, expected_hosts in (
+        (
+            "vmagent",
+            {"netops", "victoriametrics", "snmp-exporter", "vmagent", "grafana", "cadvisor"},
+        ),
+        ("cadvisor", {"docker-socket-proxy"}),
+    ):
+        environment = services[variable]["environment"]
+        for proxy_variable in ("NO_PROXY", "no_proxy"):
+            entry = next(item for item in environment if item.startswith(f"{proxy_variable}="))
+            hosts = set(entry.split("=", 1)[1].split(","))
+            assert expected_hosts <= hosts
+
+    cadvisor_command = " ".join(str(item) for item in services["cadvisor"]["command"])
+    assert "accelerator" not in cadvisor_command
+
+
 def test_grafana_subpath_is_preserved_and_native_session_cookie_is_stripped():
     compose = yaml.safe_load((ROOT / "docker-compose.yml").read_text(encoding="utf-8"))
     grafana_environment = compose["services"]["grafana"]["environment"]

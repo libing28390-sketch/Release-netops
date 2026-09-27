@@ -10,7 +10,7 @@
   "panels": [
     {
       "id": 1,
-      "title": "平台在线目标",
+      "title": "平台指标端点在线数",
       "type": "stat",
       "datasource": {
         "type": "prometheus",
@@ -61,11 +61,11 @@
           "refId": "A"
         }
       ],
-      "description": "仅统计 platform_* 六类已配置采集作业中当前为 UP 的目标。"
+      "description": "仅统计六类 platform_* Prometheus 指标端点中当前为 UP 的目标，不代表 Docker 容器总数。"
     },
     {
       "id": 2,
-      "title": "平台失败目标",
+      "title": "平台指标端点失败数",
       "type": "stat",
       "datasource": {
         "type": "prometheus",
@@ -120,11 +120,11 @@
           "refId": "A"
         }
       ],
-      "description": "目标 DOWN 时显示为失败；数据缺失保持为无数据。"
+      "description": "六类 platform_* Prometheus 指标端点 DOWN 时显示为失败；数据缺失保持为无数据。"
     },
     {
       "id": 3,
-      "title": "平台采集目标数",
+      "title": "平台指标端点数",
       "type": "stat",
       "datasource": {
         "type": "prometheus",
@@ -175,7 +175,7 @@
           "refId": "A"
         }
       ],
-      "description": "已配置的 API、VictoriaMetrics、vmagent、SNMP Exporter、Grafana 和 cAdvisor 采集目标数。"
+      "description": "已配置的 API、VictoriaMetrics、vmagent、SNMP Exporter、Grafana 和 cAdvisor 指标端点数。"
     },
     {
       "id": 4,
@@ -354,7 +354,7 @@
     },
     {
       "id": 7,
-      "title": "平台采集目标状态",
+      "title": "平台指标端点状态趋势",
       "type": "timeseries",
       "datasource": {
         "type": "prometheus",
@@ -403,11 +403,11 @@
           "refId": "A"
         }
       ],
-      "description": "按采集作业展示 UP 值；0 表示目标不可达。"
+      "description": "按 platform_* 指标端点展示 UP 值；0 表示该端点不可达。"
     },
     {
       "id": 8,
-      "title": "平台采集耗时趋势",
+      "title": "平台指标端点采集耗时趋势",
       "type": "timeseries",
       "datasource": {
         "type": "prometheus",
@@ -459,7 +459,7 @@
     },
     {
       "id": 9,
-      "title": "平台采集目标明细",
+      "title": "平台指标端点状态",
       "type": "table",
       "datasource": {
         "type": "prometheus",
@@ -572,7 +572,7 @@
           }
         }
       ],
-      "description": "包含平台服务及容器资源采集目标；数据库连通性单独来自 API SELECT 1。"
+      "description": "仅列出六类 platform_* Prometheus 指标端点的状态；cAdvisor 的 container_last_seen 观测清单单独展示，不冒充 Docker 健康状态。"
     },
     {
       "id": 10,
@@ -810,7 +810,7 @@
     },
     {
       "id": 14,
-      "title": "VictoriaMetrics 存储占用率",
+      "title": "VictoriaMetrics 已用数据量",
       "type": "stat",
       "datasource": {
         "type": "prometheus",
@@ -824,7 +824,7 @@
       },
       "fieldConfig": {
         "defaults": {
-          "unit": "percentunit",
+          "unit": "bytes",
           "noValue": "数据暂不可用",
           "color": {
             "mode": "thresholds"
@@ -833,16 +833,8 @@
             "mode": "absolute",
             "steps": [
               {
-                "color": "green",
+                "color": "#3274D9",
                 "value": null
-              },
-              {
-                "color": "#E0B400",
-                "value": 0.8
-              },
-              {
-                "color": "red",
-                "value": 0.9
               }
             ]
           }
@@ -865,10 +857,11 @@
       },
       "targets": [
         {
-          "expr": "(1 - (sum(vm_free_disk_space_bytes) / sum(vm_total_disk_space_bytes)))",
+          "expr": "sum(vm_data_size_bytes)",
           "refId": "A"
         }
-      ]
+      ],
+      "description": "VictoriaMetrics 当前已用数据量；使用 v1.103.0 支持的 vm_data_size_bytes，不表示所在文件系统占用率。"
     },
     {
       "id": 15,
@@ -978,7 +971,7 @@
       },
       "targets": [
         {
-          "expr": "sum by (name) (rate(container_cpu_usage_seconds_total{name=~\".*nexora-(db|netops|victoriametrics|snmp-exporter|vmagent|grafana|nginx|redis|seaweedfs)$\"}[5m])) * 100",
+          "expr": "sum by (name) (rate(container_cpu_usage_seconds_total{name!=\"\"}[5m])) * 100",
           "legendFormat": "{{name}}",
           "refId": "A"
         }
@@ -1034,7 +1027,7 @@
       },
       "targets": [
         {
-          "expr": "sum by (name) (container_memory_working_set_bytes{name=~\".*nexora-(db|netops|victoriametrics|snmp-exporter|vmagent|grafana|nginx|redis|seaweedfs)$\"})",
+          "expr": "sum by (name) (container_memory_working_set_bytes{name!=\"\"})",
           "legendFormat": "{{name}}",
           "refId": "A"
         }
@@ -1089,16 +1082,151 @@
       },
       "targets": [
         {
-          "expr": "sum by (name) (rate(container_fs_reads_bytes_total{name=~\".*nexora-(db|netops|victoriametrics|snmp-exporter|vmagent|grafana|nginx|redis|seaweedfs)$\"}[5m]))",
+          "expr": "sum by (name) (rate(container_fs_reads_bytes_total{name!=\"\"}[5m]))",
           "legendFormat": "{{name}} read",
           "refId": "A"
         },
         {
-          "expr": "sum by (name) (rate(container_fs_writes_bytes_total{name=~\".*nexora-(db|netops|victoriametrics|snmp-exporter|vmagent|grafana|nginx|redis|seaweedfs)$\"}[5m]))",
+          "expr": "sum by (name) (rate(container_fs_writes_bytes_total{name!=\"\"}[5m]))",
           "legendFormat": "{{name}} write",
           "refId": "B"
         }
       ]
+    },
+    {
+      "id": 19,
+      "title": "Docker 容器采集观测数",
+      "type": "stat",
+      "datasource": {
+        "type": "prometheus",
+        "uid": "victoriametrics"
+      },
+      "gridPos": {
+        "h": 4,
+        "w": 4,
+        "x": 0,
+        "y": 40
+      },
+      "fieldConfig": {
+        "defaults": {
+          "unit": "none",
+          "noValue": "数据暂不可用",
+          "color": {
+            "mode": "thresholds"
+          },
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              {
+                "color": "#A352CC",
+                "value": null
+              }
+            ]
+          }
+        },
+        "overrides": []
+      },
+      "options": {
+        "colorMode": "value",
+        "graphMode": "area",
+        "justifyMode": "center",
+        "orientation": "auto",
+        "reduceOptions": {
+          "calcs": [
+            "lastNotNull"
+          ],
+          "fields": "",
+          "values": false
+        },
+        "textMode": "auto"
+      },
+      "targets": [
+        {
+          "expr": "count(count by (name) (container_last_seen{name!=\"\"}))",
+          "refId": "A"
+        }
+      ],
+      "description": "按 cAdvisor container_last_seen 的非空容器名统计当前观测到的 Docker 容器数；不等同于容器健康检查。"
+    },
+    {
+      "id": 20,
+      "title": "Docker 容器采集观测清单",
+      "type": "table",
+      "datasource": {
+        "type": "prometheus",
+        "uid": "victoriametrics"
+      },
+      "gridPos": {
+        "h": 8,
+        "w": 20,
+        "x": 4,
+        "y": 40
+      },
+      "fieldConfig": {
+        "defaults": {
+          "unit": "none",
+          "noValue": "数据暂不可用",
+          "color": {
+            "mode": "thresholds"
+          },
+          "custom": {
+            "filterable": true
+          }
+        },
+        "overrides": [
+          {
+            "matcher": {
+              "id": "byName",
+              "options": "最后观测时间"
+            },
+            "properties": [
+              {
+                "id": "unit",
+                "value": "dateTimeAsIso"
+              }
+            ]
+          }
+        ]
+      },
+      "options": {
+        "cellHeight": "sm",
+        "showHeader": true,
+        "footer": {
+          "show": false
+        },
+        "enablePagination": true
+      },
+      "targets": [
+        {
+          "expr": "max by (name) (container_last_seen{name!=\"\"})",
+          "format": "table",
+          "instant": true,
+          "refId": "A"
+        }
+      ],
+      "transformations": [
+        {
+          "id": "organize",
+          "options": {
+            "excludeByName": {
+              "Time": true,
+              "__name__": true,
+              "id": true,
+              "instance": true,
+              "job": true
+            },
+            "indexByName": {
+              "name": 0,
+              "Value": 1
+            },
+            "renameByName": {
+              "name": "容器名称",
+              "Value": "最后观测时间"
+            }
+          }
+        }
+      ],
+      "description": "基于 cAdvisor container_last_seen 的当前容器采集观测；最后观测时间不代表 Docker 容器健康状态。"
     }
   ],
   "refresh": "30s",
