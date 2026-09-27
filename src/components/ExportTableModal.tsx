@@ -327,7 +327,7 @@ export const ExportTableModal: React.FC<ExportTableModalProps> = ({
                 </p>
                 <ol className="list-decimal list-inside space-y-1.5 pl-1 text-[11px] text-slate-700 dark:text-zinc-300 font-medium">
                   <li>
-                    <span className="font-bold">{zh ? '切换视图模式' : 'Switch view mode'}</span>: {zh ? '在监控大盘顶部工具栏切换为“电视模式”或点击“在新窗口打开”。' : 'Switch to TV mode or click Open in New Tab.'}
+                    <span className="font-bold">{zh ? '打开大盘' : 'Open dashboard'}</span>: {zh ? '点击监控大盘顶部的“在新窗口打开”链接。' : 'Click Open in New Tab at the top of the dashboard.'}
                   </li>
                   <li>
                     <span className="font-bold">{zh ? '找到目标面板' : 'Locate panel'}</span>: {zh ? '鼠标悬停在需要导出的任意图表面板右上角。' : 'Hover over the top right corner of the target panel.'}

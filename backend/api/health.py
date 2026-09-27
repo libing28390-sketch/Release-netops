@@ -56,7 +56,12 @@ def _load_host_alert_rules() -> dict[str, dict]:
     try:
         for metric_key, rule_type in _HOST_METRIC_TO_RULE_TYPE.items():
             rows = conn.execute(
-                "SELECT threshold, severity, enabled FROM alert_rules WHERE metric_type = ? ORDER BY enabled DESC, updated_at DESC LIMIT 2",
+                """
+                SELECT threshold, severity, enabled
+                FROM alert_rules
+                WHERE tenant_id = 'tenant-default' AND metric_type = ?
+                ORDER BY enabled DESC, updated_at DESC, id
+                """,
                 (rule_type,),
             ).fetchall()
             defaults = _HOST_RESOURCE_DEFAULTS[metric_key]
@@ -72,13 +77,20 @@ def _load_host_alert_rules() -> dict[str, dict]:
                 if not row['enabled']:
                     continue
                 any_enabled = True
-                t = float(row['threshold']) if row['threshold'] is not None else defaults["warn"]
                 sev = str(row['severity']).lower()
                 if sev == 'critical':
-                    critical_threshold = t
+                    if critical_threshold is None:
+                        critical_threshold = (
+                            float(row['threshold'])
+                            if row['threshold'] is not None else defaults['critical']
+                        )
                 else:
                     # warning / major both act as the "warn" tier
-                    warn_threshold = t
+                    if warn_threshold is None:
+                        warn_threshold = (
+                            float(row['threshold'])
+                            if row['threshold'] is not None else defaults['warn']
+                        )
             # Fallback to defaults for tiers not covered by any rule
             if warn_threshold is None and critical_threshold is None:
                 warn_threshold = defaults["warn"]

@@ -2277,5 +2277,5 @@
   "title": "09 接口详情（Interface Detail）",
   "description": "从网络总览或接口排行进入，链接会携带站点、设备、接口筛选和时间范围。“用途待确认”表示 CMDB 尚未配置该端口的用途，不代表接口异常。",
   "uid": "nexora-interface-detail",
-  "version": 29
+  "version": 30
 }

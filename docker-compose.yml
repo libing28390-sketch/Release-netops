@@ -225,6 +225,9 @@ services:
       - nexora-vmagent-queue:/var/lib/vmagent
     expose:
       - "8429"
+    networks:
+      - default
+      - monitoring_internal
     depends_on:
       netops:
         condition: service_healthy
@@ -232,6 +235,8 @@ services:
         condition: service_healthy
       snmp-exporter:
         condition: service_healthy
+      cadvisor:
+        condition: service_started
     restart: unless-stopped
     logging: *container-logging
     healthcheck:
@@ -239,6 +244,51 @@ services:
       interval: 15s
       timeout: 5s
       retries: 5
+
+  docker-socket-proxy:
+    image: ghcr.io/tecnativa/docker-socket-proxy:v0.4.2
+    container_name: nexora-docker-socket-proxy
+    environment:
+      CONTAINERS: "1"
+      EVENTS: "1"
+      INFO: "1"
+      PING: "1"
+      VERSION: "1"
+      POST: "0"
+    volumes:
+      - /var/run/docker.sock:/var/run/docker.sock:ro
+    expose:
+      - "2375"
+    networks:
+      - monitoring_internal
+    restart: unless-stopped
+    logging: *container-logging
+
+  cadvisor:
+    image: ghcr.io/google/cadvisor:v0.60.6
+    container_name: nexora-cadvisor
+    command:
+      - "--docker=tcp://docker-socket-proxy:2375"
+      - "--docker_only=true"
+      - "--housekeeping_interval=30s"
+      - "--store_container_labels=false"
+      - "--disable_metrics=percpu,sched,process,hugetlb,resctrl,accelerator,tcp,udp,network"
+    volumes:
+      - /sys:/sys:ro
+    expose:
+      - "8080"
+    networks:
+      - monitoring_internal
+    cap_drop:
+      - ALL
+    security_opt:
+      - no-new-privileges:true
+    read_only: true
+    depends_on:
+      docker-socket-proxy:
+        condition: service_started
+    restart: unless-stopped
+    logging: *container-logging
 
   grafana:
     image: grafana/grafana:12.1.0
@@ -439,6 +489,8 @@ volumes:
     name: nexora-seaweedfs-data
 
 networks:
+  monitoring_internal:
+    internal: true
   grafana_auth:
     internal: true
     ipam:

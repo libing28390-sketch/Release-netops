@@ -334,7 +334,9 @@ def test_probe_binding_requires_enabled_target_and_records_route_evidence(isolat
         conn.close()
     binding = upsert_probe_binding({"link_id": link["id"], "target_id": "disabled-target", "route_mode": "source_ip", "source_ip": "192.0.2.10"}, {"username": "operator"})
     evidence = binding["route_evidence_json"]
-    assert "verified_source_ip" in (evidence if isinstance(evidence, str) else str(evidence.get("evidence_status", "")))
+    assert "source_ip_configured_unverified" in (
+        evidence if isinstance(evidence, str) else str(evidence.get("evidence_status", ""))
+    )
 
 
 def test_recurring_maintenance_window_is_applied_without_stopping_collection(isolated_db):

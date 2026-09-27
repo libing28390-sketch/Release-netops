@@ -2,6 +2,7 @@ import { useEscapeClose } from '../hooks/useEscapeClose';
 import type {
   AlertMaintenanceCondition,
   AlertMaintenanceConditionLogic,
+  AlertNotificationChannel,
   AlertRecord,
   AlertRuleScopeMatchMode,
   AlertRuleScopeType,
@@ -9,6 +10,31 @@ import type {
 } from '../types';
 
 export type AlertSection = 'alerts' | 'alert-history' | 'alert-rules' | 'maintenance';
+
+export const toggleAlertNotificationChannel = (
+  channels: AlertNotificationChannel[] | null | undefined,
+  selectedChannel: AlertNotificationChannel,
+): AlertNotificationChannel[] => {
+  const current: AlertNotificationChannel[] = Array.isArray(channels)
+    ? channels.filter((channel) => channel !== 'workspace')
+    : [];
+  if (selectedChannel === 'workspace') return current;
+  return current.includes(selectedChannel)
+    ? current.filter((channel) => channel !== selectedChannel)
+    : [...current, selectedChannel];
+};
+
+export const normalizeAlertRuleNotificationChannels = (
+  channels: AlertNotificationChannel[] | null | undefined,
+  isHostMetric = false,
+): AlertNotificationChannel[] => {
+  // Host metrics feed platform health status; they do not use alert notification delivery.
+  if (isHostMetric) return ['workspace'];
+  const values = Array.isArray(channels) ? channels : [];
+  const supported = values.filter((channel): channel is 'feishu' | 'email' => channel === 'feishu' || channel === 'email');
+  if (values.includes('workspace') || supported.length === 0) return ['feishu', 'email'];
+  return Array.from(new Set(supported));
+};
 
 export interface AlertPageCommonProps {
   language: string;
@@ -203,7 +229,9 @@ export const buildEmptyRule = (username: string): AlertRuleSettings => ({
   enabled: true,
   aggregation_mode: 'dedupe_key',
   notification_repeat_window_seconds: 120,
-  notification_channels: ['workspace'],
+  notification_channels: [],
+  notification_group_names: [],
+  rule_supported: true,
   notify_on_active: true,
   notify_on_recovery: true,
   notify_on_reopen_after_maintenance: true,
@@ -260,6 +288,11 @@ export const collectorSourceLabel = (source: string, language: string) => {
 export const scopeTypeLabel = (scopeType: AlertRuleScopeType, language: string) => {
   switch (scopeType) {
     case 'site': return language === 'zh' ? '站点' : 'Site';
+    case 'role': return language === 'zh' ? '设备角色' : 'Device role';
+    case 'composite': return language === 'zh' ? '复合条件' : 'Composite';
+    case 'ip': return language === 'zh' ? '指定 IP' : 'Specific IPs';
+    case 'devices': return language === 'zh' ? '指定设备' : 'Selected devices';
+    case 'tag': return language === 'zh' ? '标签条件' : 'Tag conditions';
     case 'device': return language === 'zh' ? '设备' : 'Device';
     case 'interface': return language === 'zh' ? '接口' : 'Interface';
     default: return language === 'zh' ? '全局' : 'Global';
@@ -268,9 +301,148 @@ export const scopeTypeLabel = (scopeType: AlertRuleScopeType, language: string) 
 
 export const scopeMatchModeLabel = (matchMode: AlertRuleScopeMatchMode, language: string) => {
   switch (matchMode) {
-    case 'contains': return language === 'zh' ? '包含' : 'Contains';
+    case 'contains': return language === 'zh' ? '模糊' : 'Fuzzy';
     case 'prefix': return language === 'zh' ? '前缀' : 'Prefix';
     case 'glob': return language === 'zh' ? '通配' : 'Wildcard';
     default: return language === 'zh' ? '精确' : 'Exact';
   }
+};
+
+export const scopeTargetDescription = (scopeType: AlertRuleScopeType, language: string) => {
+  if (language === 'zh') {
+    switch (scopeType) {
+      case 'site': return '按设备站点筛选；精确模式完全相同，模糊模式按包含匹配。';
+      case 'role': return '按设备角色筛选，例如 core、access；精确或模糊匹配。';
+      case 'composite': return '站点、角色、类型、平台和接口名可组合筛选；多个条件同时满足才命中。';
+      case 'ip': return '历史规则使用已保存的管理 IP；新规则请搜索 CMDB 并确认具体设备。';
+      case 'devices': return '从当前租户 CMDB 搜索并确认设备，告警只匹配已选设备 ID。';
+      case 'tag': return '复用定时作业的标签条件；按标签表达式中的 AND / OR / NOT 规则匹配。';
+      case 'device': return '匹配 device_id、hostname 或 ip_address，例如：edge-01 或 10.0.0.1。';
+      case 'interface': return '仅匹配所有设备的 interface_name（接口名），例如：GigabitEthernet0/0/1。';
+      default: return '匹配所有支持该指标的设备。';
+    }
+  }
+  switch (scopeType) {
+    case 'site': return 'Filter by device site; exact requires equality, fuzzy matches contained text.';
+    case 'role': return 'Filter by device role, such as core or access, using exact or fuzzy matching.';
+    case 'composite': return 'Combine site, role, category, platform, and interface; every configured condition must match.';
+    case 'ip': return 'Historical rules use saved management IPs; search the CMDB and confirm devices for new rules.';
+    case 'devices': return 'Search and confirm devices from this tenant’s CMDB; alerts match selected device IDs only.';
+    case 'tag': return 'Reuse scheduled-job tag conditions with their AND / OR / NOT expression.';
+    case 'device': return 'Matches device_id, hostname, or ip_address, for example: edge-01 or 10.0.0.1.';
+    case 'interface': return 'Matches interface_name on every device, for example: GigabitEthernet0/0/1.';
+    default: return 'Matches every device that supports this metric.';
+  }
+};
+
+export const scopeMatchModeDescription = (matchMode: AlertRuleScopeMatchMode, language: string) => {
+  if (language === 'zh') {
+    switch (matchMode) {
+      case 'contains': return '模糊：字段包含输入文本，例如 core 可匹配 core-uplink。';
+      case 'prefix': return '前缀：字段以输入文本开头，例如 edge- 匹配 edge-01。';
+      case 'glob': return '通配：使用 * 和 ? 匹配，例如 ge-* 匹配 ge-0/0/1。';
+      default: return '精确：字段必须与输入值完全相同。';
+    }
+  }
+  switch (matchMode) {
+    case 'contains': return 'Fuzzy: the field contains the value, for example core matches core-uplink.';
+    case 'prefix': return 'Prefix: the field starts with the value, for example edge- matches edge-01.';
+    case 'glob': return 'Glob: use * and ? wildcards, for example ge-* matches ge-0/0/1.';
+    default: return 'Exact: the field must equal the value.';
+  }
+};
+
+export interface AlertCompositeScopeFilters {
+  site?: string;
+  role?: string;
+  category?: string;
+  platform?: string;
+  interface?: string;
+}
+
+export const parseAlertCompositeScope = (value: string): AlertCompositeScopeFilters => {
+  try {
+    const parsed = JSON.parse(value || '{}') as Record<string, unknown>;
+    return {
+      site: typeof parsed.site === 'string' ? parsed.site : '',
+      role: typeof parsed.role === 'string' ? parsed.role : '',
+      category: typeof parsed.category === 'string' ? parsed.category : '',
+      platform: typeof parsed.platform === 'string' ? parsed.platform : '',
+      interface: typeof parsed.interface === 'string' ? parsed.interface : '',
+    };
+  } catch {
+    return { site: '', role: '', category: '', platform: '', interface: '' };
+  }
+};
+
+export const serializeAlertCompositeScope = (filters: AlertCompositeScopeFilters): string => {
+  const normalized = Object.fromEntries(
+    Object.entries(filters)
+      .map(([key, value]) => [key, String(value || '').trim()])
+      .filter(([, value]) => Boolean(value)),
+  );
+  return JSON.stringify(normalized);
+};
+
+export const parseAlertScopeIpValues = (value: string): string[] => Array.from(new Set(
+  String(value || '').split(/[,;\s]+/).map((item) => item.trim()).filter(Boolean),
+));
+
+export const parseAlertScopeDeviceIds = (value: string): string[] => {
+  try {
+    const parsed: unknown = JSON.parse(value || '[]');
+    if (!Array.isArray(parsed)) return [];
+    return Array.from(new Set(parsed.map((item) => String(item || '').trim()).filter(Boolean)));
+  } catch {
+    return [];
+  }
+};
+
+export const serializeAlertScopeDeviceIds = (deviceIds: string[]): string => JSON.stringify(
+  Array.from(new Set(deviceIds.map((item) => String(item || '').trim()).filter(Boolean))),
+);
+
+export const alertRuleScopeSummary = (
+  scopeType: AlertRuleScopeType,
+  scopeValue: string,
+  scopeMatchMode: AlertRuleScopeMatchMode,
+  language: string,
+): string => {
+  const zh = language === 'zh';
+  if (scopeType === 'global') return zh ? '全部支持该指标的设备' : 'All devices that support this metric';
+  if (scopeType === 'devices') {
+    const count = parseAlertScopeDeviceIds(scopeValue).length;
+    return count ? `${count} ${zh ? '台执行机器' : count === 1 ? 'execution machine' : 'execution machines'}` : (zh ? '尚未确认执行机器' : 'No confirmed execution machines');
+  }
+  let value = scopeValue.trim();
+  if (scopeType === 'composite') {
+    const filters = parseAlertCompositeScope(scopeValue);
+    const labels: Record<keyof AlertCompositeScopeFilters, string> = zh
+      ? { site: '站点', role: '角色', category: '类型', platform: '平台', interface: '接口' }
+      : { site: 'Site', role: 'Role', category: 'Type', platform: 'Platform', interface: 'Interface' };
+    value = (Object.keys(labels) as Array<keyof AlertCompositeScopeFilters>)
+      .filter((field) => filters[field])
+      .map((field) => `${labels[field]}: ${filters[field]}`)
+      .join(' · ');
+  } else if (scopeType === 'ip') {
+    const ips = parseAlertScopeIpValues(scopeValue);
+    value = ips.length <= 2 ? ips.join(', ') : `${ips.slice(0, 2).join(', ')} +${ips.length - 2}`;
+  } else if (scopeType === 'tag') {
+    try {
+      const parsed = JSON.parse(scopeValue) as { expression?: unknown };
+      const countConditions = (raw: unknown): number => {
+        if (!raw || typeof raw !== 'object') return 0;
+        const group = raw as { tag_ids?: unknown; groups?: unknown };
+        const own = Array.isArray(group.tag_ids) ? group.tag_ids.filter((id) => String(id || '').trim()).length : 0;
+        const nested = Array.isArray(group.groups) ? group.groups.reduce<number>((sum, child) => sum + countConditions(child), 0) : 0;
+        return own + nested;
+      };
+      const count = countConditions(parsed.expression);
+      value = count ? `${count} ${zh ? '项条件' : count === 1 ? 'condition' : 'conditions'}` : (zh ? '未配置条件' : 'No conditions');
+    } catch {
+      value = zh ? '条件格式错误' : 'Invalid conditions';
+    }
+  }
+  const mode = scopeMatchModeLabel(scopeMatchMode, language);
+  return value ? `${value} · ${mode}` : mode;
 };

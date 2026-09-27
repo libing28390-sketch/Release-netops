@@ -24,7 +24,7 @@ _DEDUPE_METRIC_TYPES = {
     'if_error_rate': 'interface_error_rate_high', 'if_flap': 'interface_flap',
     'lldp_neighbor_lost': 'lldp_neighbor_lost', 'bgp_neighbor_down': 'bgp_neighbor_down',
     'ospf_neighbor_down': 'ospf_neighbor_down', 'bfd_session_down': 'bfd_session_down',
-    'dev_offline': 'device_offline',
+    'dev_offline': 'ping_unreachable',
 }
 
 
@@ -610,10 +610,12 @@ def reopen_expired_suppressed_alerts() -> list[dict[str, Any]]:
             try:
                 from services.monitoring_notification_outbox_service import enqueue_alert_delivery
                 metric_type = _metric_type_from_dedupe_key(item.get('dedupe_key'))
+                tenant_id = str(item.get('tenant_id') or 'tenant-default')
                 runtime_rule = alert_rule_service.select_rule(
-                    alert_rule_service.get_runtime_rules(),
+                    alert_rule_service.get_runtime_rules(tenant_id=tenant_id),
                     metric_type,
                     {
+                        'tenant_id': tenant_id,
                         'device_id': item.get('device_id') or '',
                         'hostname': item.get('hostname') or '',
                         'ip_address': item.get('ip_address') or '',
@@ -631,7 +633,7 @@ def reopen_expired_suppressed_alerts() -> list[dict[str, Any]]:
                     channels = ['workspace']
                 payload = {
                     'alert_id': item.get('id') or '',
-                    'tenant_id': str(item.get('tenant_id') or 'tenant-default'),
+                    'tenant_id': tenant_id,
                     'title': item.get('title') or 'Monitoring alert reopened',
                     'object_name': item.get('interface_name') or item.get('hostname') or item.get('dedupe_key'),
                     'ip_address': item.get('ip_address') or '',
@@ -644,6 +646,8 @@ def reopen_expired_suppressed_alerts() -> list[dict[str, Any]]:
                     'rule_id': str((runtime_rule or {}).get('id') or ''),
                     'destination_key': item.get('dedupe_key') or 'maintenance-reopen',
                 }
+                if (runtime_rule or {}).get('notification_group_names') is not None:
+                    payload['notification_group_names'] = (runtime_rule or {}).get('notification_group_names')
                 if 'workspace' in channels and (settings.ALERT_NOTIFY_WEBHOOK_URL or '').strip():
                     plain = (
                         f"[{payload['severity'].upper()}] {payload['title']}\n"
@@ -653,7 +657,14 @@ def reopen_expired_suppressed_alerts() -> list[dict[str, Any]]:
                     enqueue_alert_delivery(
                         delivery_key=f"{item.get('dedupe_key')}:global_webhook:reopened:{now_iso}",
                         channel='global_webhook',
-                        payload={'msgtype': 'text', 'text': {'content': plain}, **payload},
+                        payload={
+                            'msgtype': 'text',
+                            'text': {'content': plain},
+                            **{
+                                key: value for key, value in payload.items()
+                                if key != 'notification_group_names'
+                            },
+                        },
                     )
                 for channel in channels:
                     if channel not in {'workspace', 'feishu', 'dingtalk', 'wechat', 'email', 'global_webhook'}:
@@ -663,7 +674,13 @@ def reopen_expired_suppressed_alerts() -> list[dict[str, Any]]:
                     enqueue_alert_delivery(
                         delivery_key=f"{item.get('dedupe_key')}:{channel}:reopened:{now_iso}",
                         channel=channel,
-                        payload=payload,
+                        payload=(
+                            {
+                                key: value for key, value in payload.items()
+                                if key != 'notification_group_names'
+                            }
+                            if channel == 'global_webhook' else payload
+                        ),
                     )
             except Exception:
                 logger.warning('Failed to enqueue maintenance reopen notification', exc_info=True)

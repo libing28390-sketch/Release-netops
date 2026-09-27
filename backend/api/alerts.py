@@ -121,11 +121,43 @@ def _row_to_alert(row) -> dict:
     return item
 
 
+def _alert_read_tenant(user: dict | None) -> str | None:
+    """Return the tenant scope for an alert API caller; administrators stay global."""
+    if not isinstance(user, dict) or str(user.get('role') or '') == 'Administrator':
+        return None
+    return str(user.get('tenant_id') or 'tenant-default').strip() or 'tenant-default'
+
+
+def _alert_tenant_predicate(user: dict | None, alias: str = 'a') -> tuple[str, tuple[str, ...]]:
+    tenant_id = _alert_read_tenant(user)
+    if tenant_id is None:
+        return '', ()
+    return (
+        f"EXISTS (SELECT 1 FROM devices alert_scope_device "
+        f"WHERE alert_scope_device.id = {alias}.device_id "
+        "AND COALESCE(alert_scope_device.tenant_id, 'tenant-default') = ?)",
+        (tenant_id,),
+    )
+
+
+def _assert_alert_visible(conn, alert_id: str, user: dict | None) -> None:
+    predicate, params = _alert_tenant_predicate(user)
+    if not predicate:
+        return
+    row = conn.execute(
+        f"SELECT 1 FROM alert_events a WHERE a.id = ? AND {predicate}",
+        (alert_id, *params),
+    ).fetchone()
+    if not row:
+        raise HTTPException(status_code=404, detail='Alert not found')
+
+
 @router.get('/alerts/{alert_id}/activity')
-def list_alert_activity(alert_id: str, limit: int = Query(default=100, ge=1, le=500), offset: int = Query(default=0, ge=0)):
+def list_alert_activity(alert_id: str, limit: int = Query(default=100, ge=1, le=500), offset: int = Query(default=0, ge=0), user=require_role("Viewer")):
     """Return metadata-only state transitions for one alert."""
     conn = get_db_connection()
     try:
+        _assert_alert_visible(conn, alert_id, user)
         rows = conn.execute(
             "SELECT id, alert_id, event_type, actor_id, from_state, to_state, note, metadata_json, created_at FROM alert_activity WHERE alert_id = ? ORDER BY created_at DESC LIMIT ? OFFSET ?",
             (alert_id, limit, offset),
@@ -184,9 +216,10 @@ def _list_alert_deliveries(conn, alert_id: str, limit: int = 100) -> dict:
 
 
 @router.get('/alerts/{alert_id}/deliveries')
-def list_alert_deliveries(alert_id: str, limit: int = Query(default=100, ge=1, le=500)):
+def list_alert_deliveries(alert_id: str, limit: int = Query(default=100, ge=1, le=500), user=require_role("Viewer")):
     conn = get_db_connection()
     try:
+        _assert_alert_visible(conn, alert_id, user)
         row = conn.execute('SELECT id FROM alert_events WHERE id = ?', (alert_id,)).fetchone()
         if not row:
             raise HTTPException(status_code=404, detail='Alert not found')
@@ -196,9 +229,10 @@ def list_alert_deliveries(alert_id: str, limit: int = Query(default=100, ge=1, l
 
 
 @router.get('/alerts/{alert_id}/correlations')
-def list_alert_correlations(alert_id: str, limit: int = Query(default=100, ge=1, le=500)):
+def list_alert_correlations(alert_id: str, limit: int = Query(default=100, ge=1, le=500), user=require_role("Viewer")):
     conn = get_db_connection()
     try:
+        _assert_alert_visible(conn, alert_id, user)
         rows = conn.execute(
             "SELECT id, alert_id, root_alert_id, correlation_type, confidence, evidence_json, created_at FROM alert_correlations WHERE alert_id = ? ORDER BY confidence DESC, created_at DESC LIMIT ?",
             (alert_id, limit),
@@ -219,13 +253,20 @@ def list_alert_correlations(alert_id: str, limit: int = Query(default=100, ge=1,
 
 
 @router.get('/alerts/storms')
-def list_alert_storms(limit: int = Query(default=50, ge=1, le=200), status: str = Query(default='open')):
+def list_alert_storms(limit: int = Query(default=50, ge=1, le=200), status: str = Query(default='open'), user=require_role("Viewer")):
     conn = get_db_connection()
     try:
-        rows = conn.execute(
-            "SELECT id, tenant_id, fingerprint, window_start, window_end, alert_count, site_count, type_count, status, metadata_json FROM alert_storms WHERE status = ? ORDER BY window_start DESC LIMIT ?",
-            (status, limit),
-        ).fetchall()
+        tenant_id = _alert_read_tenant(user)
+        if tenant_id is None:
+            rows = conn.execute(
+                "SELECT id, tenant_id, fingerprint, window_start, window_end, alert_count, site_count, type_count, status, metadata_json FROM alert_storms WHERE status = ? ORDER BY window_start DESC LIMIT ?",
+                (status, limit),
+            ).fetchall()
+        else:
+            rows = conn.execute(
+                "SELECT id, tenant_id, fingerprint, window_start, window_end, alert_count, site_count, type_count, status, metadata_json FROM alert_storms WHERE status = ? AND tenant_id = ? ORDER BY window_start DESC LIMIT ?",
+                (status, tenant_id, limit),
+            ).fetchall()
         return {'items': [dict(row) for row in rows]}
     except Exception:
         return {'items': []}
@@ -293,17 +334,22 @@ def evaluate_alert_health(payload: dict = Body(...)):
 
 
 @router.get('/alerts/silences')
-def list_alert_silences(status: str = Query(default='active'), limit: int = Query(default=100, ge=1, le=500)):
+def list_alert_silences(status: str = Query(default='active'), limit: int = Query(default=100, ge=1, le=500), user=require_role("Viewer")):
     """List notification silences separately from scheduled maintenance."""
     conn = get_db_connection()
     try:
         now = _utc_now_iso()
         conn.execute("UPDATE alert_silences SET status = 'expired' WHERE status = 'active' AND ends_at < ?", (now,))
         params: list = []
-        where = ""
+        where_parts: list[str] = []
         if status != 'all':
-            where = "WHERE status = ?"
+            where_parts.append("status = ?")
             params.append(status)
+        tenant_id = _alert_read_tenant(user)
+        if tenant_id is not None:
+            where_parts.append("tenant_id = ?")
+            params.append(tenant_id)
+        where = f"WHERE {' AND '.join(where_parts)}" if where_parts else ""
         rows = conn.execute(
             f"SELECT id, tenant_id, scope_json, reason, starts_at, ends_at, created_by, status FROM alert_silences {where} ORDER BY starts_at DESC LIMIT ?",
             tuple([*params, limit]),
@@ -325,7 +371,7 @@ def list_alert_silences(status: str = Query(default='active'), limit: int = Quer
 
 
 @router.post('/alerts/silences')
-def create_alert_silence(payload: dict = Body(...)):
+def create_alert_silence(payload: dict = Body(...), user=require_role("Operator")):
     """Create a temporary notification silence; raw alert state is preserved."""
     reason = str(payload.get('reason') or '').strip()
     if not reason:
@@ -348,8 +394,8 @@ def create_alert_silence(payload: dict = Body(...)):
         raise HTTPException(status_code=422, detail='ends_at must be later than starts_at') from exc
     silence_id = f"silence_{uuid.uuid4().hex[:16]}"
     now = _utc_now_iso()
-    created_by = str(payload.get('created_by') or 'system')[:128]
-    tenant_id = str(payload.get('tenant_id') or 'tenant-default')[:128]
+    created_by = str(user.get('username') or 'system')[:128] if isinstance(user, dict) else 'system'
+    tenant_id = _alert_read_tenant(user) or str(payload.get('tenant_id') or 'tenant-default')[:128]
     conn = get_db_connection()
     try:
         conn.execute(
@@ -365,10 +411,14 @@ def create_alert_silence(payload: dict = Body(...)):
 
 
 @router.post('/alerts/silences/{silence_id}/expire')
-def expire_alert_silence(silence_id: str, payload: dict = Body(default={} )):
+def expire_alert_silence(silence_id: str, payload: dict = Body(default={} ), user=require_role("Operator")):
     conn = get_db_connection()
     try:
-        result = conn.execute("UPDATE alert_silences SET status = 'expired' WHERE id = ? AND status = 'active'", (silence_id,))
+        tenant_id = _alert_read_tenant(user)
+        if tenant_id is None:
+            result = conn.execute("UPDATE alert_silences SET status = 'expired' WHERE id = ? AND status = 'active'", (silence_id,))
+        else:
+            result = conn.execute("UPDATE alert_silences SET status = 'expired' WHERE id = ? AND tenant_id = ? AND status = 'active'", (silence_id, tenant_id))
         if result.rowcount == 0:
             raise HTTPException(status_code=404, detail='Active silence not found')
         conn.commit()
@@ -378,28 +428,43 @@ def expire_alert_silence(silence_id: str, payload: dict = Body(default={} )):
 
 
 @router.get('/alerts/summary')
-def get_alert_summary():
+def get_alert_summary(user=require_role("Viewer")):
     conn = get_db_connection()
     try:
         now = datetime.now(timezone.utc)
         since_24h = (now - timedelta(hours=24)).replace(microsecond=0).isoformat()
-        open_count = conn.execute("SELECT COUNT(*) AS c FROM alert_events WHERE resolved_at IS NULL AND COALESCE(workflow_status, 'open') != 'suppressed'").fetchone()['c']
-        critical_open = conn.execute("SELECT COUNT(*) AS c FROM alert_events WHERE resolved_at IS NULL AND COALESCE(workflow_status, 'open') != 'suppressed' AND LOWER(severity) = 'critical'").fetchone()['c']
-        major_open = conn.execute("SELECT COUNT(*) AS c FROM alert_events WHERE resolved_at IS NULL AND COALESCE(workflow_status, 'open') != 'suppressed' AND LOWER(severity) = 'major'").fetchone()['c']
-        warning_open = conn.execute("SELECT COUNT(*) AS c FROM alert_events WHERE resolved_at IS NULL AND COALESCE(workflow_status, 'open') != 'suppressed' AND LOWER(severity) = 'warning'").fetchone()['c']
-        acknowledged_open = conn.execute("SELECT COUNT(*) AS c FROM alert_events WHERE resolved_at IS NULL AND workflow_status = 'acknowledged'").fetchone()['c']
-        suppressed_open = conn.execute("SELECT COUNT(*) AS c FROM alert_events WHERE resolved_at IS NULL AND workflow_status = 'suppressed'").fetchone()['c']
-        assigned_open = conn.execute("SELECT COUNT(*) AS c FROM alert_events WHERE resolved_at IS NULL AND assignee IS NOT NULL AND assignee != ''").fetchone()['c']
-        alerts_24h = conn.execute('SELECT COUNT(*) AS c FROM alert_events WHERE created_at >= ?', (since_24h,)).fetchone()['c']
-        resolved_24h = conn.execute('SELECT COUNT(*) AS c FROM alert_events WHERE resolved_at IS NOT NULL AND resolved_at >= ?', (since_24h,)).fetchone()['c']
+        tenant_predicate, tenant_params = _alert_tenant_predicate(user)
+
+        def scoped_where(condition: str) -> str:
+            predicates = [condition]
+            if tenant_predicate:
+                predicates.append(tenant_predicate)
+            return f"WHERE {' AND '.join(predicates)}"
+
+        def count(condition: str, params: tuple = ()) -> int:
+            row = conn.execute(
+                f"SELECT COUNT(*) AS c FROM alert_events a {scoped_where(condition)}",
+                tuple([*params, *tenant_params]),
+            ).fetchone()
+            return int(row['c'])
+
+        open_count = count("a.resolved_at IS NULL AND COALESCE(a.workflow_status, 'open') != 'suppressed'")
+        critical_open = count("a.resolved_at IS NULL AND COALESCE(a.workflow_status, 'open') != 'suppressed' AND LOWER(a.severity) = 'critical'")
+        major_open = count("a.resolved_at IS NULL AND COALESCE(a.workflow_status, 'open') != 'suppressed' AND LOWER(a.severity) = 'major'")
+        warning_open = count("a.resolved_at IS NULL AND COALESCE(a.workflow_status, 'open') != 'suppressed' AND LOWER(a.severity) = 'warning'")
+        acknowledged_open = count("a.resolved_at IS NULL AND a.workflow_status = 'acknowledged'")
+        suppressed_open = count("a.resolved_at IS NULL AND a.workflow_status = 'suppressed'")
+        assigned_open = count("a.resolved_at IS NULL AND a.assignee IS NOT NULL AND a.assignee != ''")
+        alerts_24h = count("a.created_at >= ?", (since_24h,))
+        resolved_24h = count("a.resolved_at IS NOT NULL AND a.resolved_at >= ?", (since_24h,))
         mttr_rows = conn.execute(
-            '''
-            SELECT created_at, resolved_at FROM alert_events
-            WHERE resolved_at IS NOT NULL AND resolved_at >= ?
+            f'''
+            SELECT a.created_at, a.resolved_at FROM alert_events a
+            {scoped_where('a.resolved_at IS NOT NULL AND a.resolved_at >= ?')}
             ORDER BY resolved_at DESC
             LIMIT 200
             ''',
-            (since_24h,),
+            tuple([since_24h, *tenant_params]),
         ).fetchall()
         mttr_minutes = []
         for row in mttr_rows:
@@ -410,12 +475,13 @@ def get_alert_summary():
             except Exception:
                 continue
         ack_rows = conn.execute(
-            '''
-            SELECT created_at, ack_at FROM alert_events
-            WHERE ack_at IS NOT NULL
+            f'''
+            SELECT a.created_at, a.ack_at FROM alert_events a
+            {scoped_where('a.ack_at IS NOT NULL')}
             ORDER BY ack_at DESC
             LIMIT 200
             '''
+            , tuple(tenant_params)
         ).fetchall()
         mtta_minutes = []
         for row in ack_rows:
@@ -454,11 +520,16 @@ def list_alerts(
     page_size: int = Query(default=20, ge=1, le=100),
     created_from: str = Query(default='', description='Filter alerts created on or after this ISO timestamp'),
     created_to: str = Query(default='', description='Filter alerts created on or before this ISO timestamp'),
+    user=require_role("Viewer"),
 ):
     conn = get_db_connection()
     try:
         where = []
         params = []
+        tenant_predicate, tenant_params = _alert_tenant_predicate(user)
+        if tenant_predicate:
+            where.append(tenant_predicate)
+            params.extend(tenant_params)
 
         status_value = (status or 'open').lower()
         if status_value == 'open':
@@ -533,6 +604,8 @@ def list_alerts(
         ).fetchone()['c']
 
         offset = (page - 1) * page_size
+        occurrence_predicate, occurrence_params = _alert_tenant_predicate(user, alias='a2')
+        occurrence_scope_sql = f" AND {occurrence_predicate}" if occurrence_predicate else ""
         rows = conn.execute(
             f'''
             SELECT
@@ -548,7 +621,7 @@ def list_alerts(
                 d.hostname, d.ip_address, d.site,
                 (
                     SELECT COUNT(*) FROM alert_events a2
-                    WHERE a2.dedupe_key = a.dedupe_key
+                    WHERE a2.dedupe_key = a.dedupe_key{occurrence_scope_sql}
                 ) AS occurrence_count
             FROM alert_events a
             LEFT JOIN devices d ON d.id = a.device_id
@@ -565,18 +638,39 @@ def list_alerts(
                 COALESCE(a.updated_at, a.created_at) DESC
             LIMIT ? OFFSET ?
             ''',
-            tuple([*params, page_size, offset]),
+            tuple([*occurrence_params, *params, page_size, offset]),
         ).fetchall()
 
-        sites = conn.execute("SELECT DISTINCT site FROM devices WHERE site IS NOT NULL AND site != '' ORDER BY site ASC").fetchall()
-        assignees = conn.execute("SELECT DISTINCT assignee FROM alert_events WHERE assignee IS NOT NULL AND assignee != '' ORDER BY assignee ASC").fetchall()
+        tenant_id = _alert_read_tenant(user)
+        if tenant_id is None:
+            sites = conn.execute("SELECT DISTINCT site FROM devices WHERE site IS NOT NULL AND site != '' ORDER BY site ASC").fetchall()
+            assignees = conn.execute("SELECT DISTINCT assignee FROM alert_events WHERE assignee IS NOT NULL AND assignee != '' ORDER BY assignee ASC").fetchall()
+        else:
+            sites = conn.execute(
+                "SELECT DISTINCT site FROM devices WHERE site IS NOT NULL AND site != '' AND COALESCE(tenant_id, 'tenant-default') = ? ORDER BY site ASC",
+                (tenant_id,),
+            ).fetchall()
+            assignees = conn.execute(
+                "SELECT DISTINCT a.assignee FROM alert_events a WHERE a.assignee IS NOT NULL AND a.assignee != '' "
+                "AND EXISTS (SELECT 1 FROM devices d_scope WHERE d_scope.id = a.device_id "
+                "AND COALESCE(d_scope.tenant_id, 'tenant-default') = ?) ORDER BY a.assignee ASC",
+                (tenant_id,),
+            ).fetchall()
+
+        def scoped_status_count(condition: str) -> int:
+            scoped = f" AND {tenant_predicate}" if tenant_predicate else ""
+            row = conn.execute(
+                f"SELECT COUNT(*) AS c FROM alert_events a WHERE {condition}{scoped}",
+                tuple(tenant_params),
+            ).fetchone()
+            return int(row['c'])
 
         status_counts = {
-            'open': conn.execute("SELECT COUNT(*) AS c FROM alert_events WHERE resolved_at IS NULL AND COALESCE(workflow_status, 'open') = 'open'").fetchone()['c'],
-            'acknowledged': conn.execute("SELECT COUNT(*) AS c FROM alert_events WHERE resolved_at IS NULL AND workflow_status = 'acknowledged'").fetchone()['c'],
-            'investigating': conn.execute("SELECT COUNT(*) AS c FROM alert_events WHERE resolved_at IS NULL AND workflow_status = 'investigating'").fetchone()['c'],
-            'suppressed': conn.execute("SELECT COUNT(*) AS c FROM alert_events WHERE resolved_at IS NULL AND workflow_status = 'suppressed'").fetchone()['c'],
-            'resolved': conn.execute("SELECT COUNT(*) AS c FROM alert_events WHERE resolved_at IS NOT NULL").fetchone()['c'],
+            'open': scoped_status_count("a.resolved_at IS NULL AND COALESCE(a.workflow_status, 'open') = 'open'"),
+            'acknowledged': scoped_status_count("a.resolved_at IS NULL AND a.workflow_status = 'acknowledged'"),
+            'investigating': scoped_status_count("a.resolved_at IS NULL AND a.workflow_status = 'investigating'"),
+            'suppressed': scoped_status_count("a.resolved_at IS NULL AND a.workflow_status = 'suppressed'"),
+            'resolved': scoped_status_count("a.resolved_at IS NOT NULL"),
         }
         status_counts['all_active'] = status_counts['open'] + status_counts['acknowledged'] + status_counts['investigating'] + status_counts['suppressed']
         status_counts['all'] = status_counts['all_active'] + status_counts['resolved']
@@ -726,6 +820,7 @@ def read_alert_rules(
         category=category,
         page=page,
         page_size=page_size,
+        tenant_id=_notification_tenant_id(user),
     )
 
 
@@ -735,6 +830,30 @@ def read_alert_rule_collection_catalog(user=require_role("Viewer")):
     return {
         'items': alert_rule_service.list_alert_metric_collections(),
     }
+
+
+@router.get('/alerts/rules/notification-groups')
+def read_alert_rule_notification_groups(user=require_role("Viewer")):
+    return {'items': alert_rule_service.list_notification_groups(_notification_tenant_id(user))}
+
+
+@router.get('/alerts/rules/scope-catalog')
+def read_alert_rule_scope_catalog(
+    search: str | None = Query(default=None, max_length=128),
+    device_ids: str | None = Query(default=None, max_length=8192),
+    user=require_role("Viewer"),
+):
+    search_query = search if isinstance(search, str) else ''
+    selected_id_query = device_ids if isinstance(device_ids, str) else ''
+    selected_ids = [value.strip() for value in selected_id_query.split(',') if value.strip()]
+    try:
+        return alert_rule_service.get_scope_catalog(
+            _notification_tenant_id(user),
+            search=search_query,
+            device_ids=selected_ids,
+        )
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
 
 
 def _notification_tenant_id(user: dict | None = None) -> str:
@@ -1487,7 +1606,16 @@ def create_alert_rule(payload: dict = Body(...), user=require_role("Operator")):
     actor_username = user.get("username", "unknown")
     _verify_alert_rule_approval(payload, approval_type='alert_rule')
     try:
-        rule = alert_rule_service.create_rule(payload)
+        rule = alert_rule_service.create_rule(payload, tenant_id=_notification_tenant_id(user))
+    except alert_rule_service.UnsupportedMetricTypeError as exc:
+        raise HTTPException(
+            status_code=400,
+            detail={
+                'message': str(exc),
+                'metric_type': exc.metric_type,
+                'supported_metric_types': exc.supported_metric_types,
+            },
+        ) from exc
     except ValueError as exc:
         raise HTTPException(status_code=400, detail=str(exc))
     log_audit_event(
@@ -1513,7 +1641,7 @@ def read_alert_rules_preview(user=require_role("Viewer")):
 
 @router.get('/alerts/rules/history')
 def read_alert_rules_history(limit: int = Query(default=20, ge=1, le=100), rule_id: str | None = Query(default=None), user=require_role("Viewer")):
-    return {'items': alert_rule_service.list_rule_history(limit=limit, rule_id=rule_id)}
+    return {'items': alert_rule_service.list_rule_history(limit=limit, rule_id=rule_id, tenant_id=_notification_tenant_id(user))}
 
 
 @router.put('/alerts/rules/{rule_id}')
@@ -1521,7 +1649,16 @@ def update_alert_rules(rule_id: str, payload: dict = Body(...), user=require_rol
     actor_username = user.get("username", "unknown")
     _verify_alert_rule_approval(payload, approval_type='alert_rule')
     try:
-        rule = alert_rule_service.update_rule(rule_id, payload)
+        rule = alert_rule_service.update_rule(rule_id, payload, tenant_id=_notification_tenant_id(user))
+    except alert_rule_service.UnsupportedMetricTypeError as exc:
+        raise HTTPException(
+            status_code=400,
+            detail={
+                'message': str(exc),
+                'metric_type': exc.metric_type,
+                'supported_metric_types': exc.supported_metric_types,
+            },
+        ) from exc
     except ValueError as exc:
         status_code = 404 if 'not found' in str(exc).lower() else 400
         raise HTTPException(status_code=status_code, detail=str(exc))
@@ -1557,8 +1694,9 @@ def delete_alert_rule(
     }
     _verify_alert_rule_approval(payload, approval_type='alert_rule_delete')
     try:
-        existing = alert_rule_service.get_rule(rule_id)
-        alert_rule_service.delete_rule(rule_id)
+        tenant_id = _notification_tenant_id(user)
+        existing = alert_rule_service.get_rule(rule_id, tenant_id=tenant_id)
+        alert_rule_service.delete_rule(rule_id, tenant_id=tenant_id)
     except ValueError as exc:
         raise HTTPException(status_code=404, detail=str(exc))
     log_audit_event(
@@ -1592,18 +1730,37 @@ def batch_toggle_alert_rules(payload: dict = Body(...), user=require_role("Opera
 
     conn = get_db_connection()
     try:
+        tenant_id = _notification_tenant_id(user)
+        if bool(enabled):
+            normalized_rule_ids = [str(rid).strip() for rid in rule_ids if str(rid).strip()]
+            if normalized_rule_ids:
+                placeholders = ','.join('?' for _ in normalized_rule_ids)
+                unsupported = conn.execute(
+                    f"""
+                    SELECT name FROM alert_rules
+                    WHERE tenant_id = ? AND id IN ({placeholders}) AND metric_type LIKE 'srv_%'
+                    ORDER BY name
+                    """,
+                    [tenant_id, *normalized_rule_ids],
+                ).fetchall()
+                if unsupported:
+                    names = ', '.join(str(row['name'] or '') for row in unsupported)
+                    raise HTTPException(
+                        status_code=400,
+                        detail=f'Rules without an alert executor cannot be enabled: {names}',
+                    )
         now = _utc_now_iso()
         updated = 0
         for rid in rule_ids:
             rid = str(rid).strip()
             if not rid:
                 continue
-            row = conn.execute('SELECT id, name FROM alert_rules WHERE id = ?', (rid,)).fetchone()
+            row = conn.execute('SELECT id, name FROM alert_rules WHERE id = ? AND tenant_id = ?', (rid, tenant_id)).fetchone()
             if not row:
                 continue
             conn.execute(
-                'UPDATE alert_rules SET enabled = ?, updated_by = ?, updated_at = ? WHERE id = ?',
-                (1 if enabled else 0, actor_username, now, rid),
+                'UPDATE alert_rules SET enabled = ?, updated_by = ?, updated_at = ? WHERE id = ? AND tenant_id = ?',
+                (1 if enabled else 0, actor_username, now, rid, tenant_id),
             )
             updated += 1
             log_audit_event(
@@ -1639,15 +1796,16 @@ def batch_delete_alert_rules(payload: dict = Body(...), user=require_role("Admin
 
     conn = get_db_connection()
     try:
+        tenant_id = _notification_tenant_id(user)
         deleted = 0
         for rid in rule_ids:
             rid = str(rid).strip()
             if not rid:
                 continue
-            row = conn.execute('SELECT id, name FROM alert_rules WHERE id = ?', (rid,)).fetchone()
+            row = conn.execute('SELECT id, name FROM alert_rules WHERE id = ? AND tenant_id = ?', (rid, tenant_id)).fetchone()
             if not row:
                 continue
-            conn.execute('DELETE FROM alert_rules WHERE id = ?', (rid,))
+            conn.execute('DELETE FROM alert_rules WHERE id = ? AND tenant_id = ?', (rid, tenant_id))
             deleted += 1
             log_audit_event(
                 event_type='ALERT_RULE_DELETE',
@@ -1670,9 +1828,9 @@ def batch_delete_alert_rules(payload: dict = Body(...), user=require_role("Admin
 
 
 @router.post('/alerts/batch-ack')
-def batch_acknowledge_alerts(payload: dict = Body(...)):
+def batch_acknowledge_alerts(payload: dict = Body(...), user=require_role("Operator")):
     alert_ids = payload.get('alert_ids') or []
-    actor_username = (payload.get('actor_username') or 'system').strip() or 'system'
+    actor_username = str(user.get('username') or 'system') if isinstance(user, dict) else 'system'
     next_status = (payload.get('status') or 'acknowledged').strip().lower()
     if next_status not in {'acknowledged', 'investigating'}:
         raise HTTPException(status_code=400, detail='Unsupported status')
@@ -1683,6 +1841,10 @@ def batch_acknowledge_alerts(payload: dict = Body(...)):
 
     conn = get_db_connection()
     try:
+        for aid in alert_ids:
+            normalized_id = str(aid).strip()
+            if normalized_id:
+                _assert_alert_visible(conn, normalized_id, user)
         now = _utc_now_iso()
         updated = 0
         for aid in alert_ids:
@@ -1719,10 +1881,10 @@ def batch_acknowledge_alerts(payload: dict = Body(...)):
 
 
 @router.post('/alerts/batch-assign')
-def batch_assign_alerts(payload: dict = Body(...)):
+def batch_assign_alerts(payload: dict = Body(...), user=require_role("Operator")):
     alert_ids = payload.get('alert_ids') or []
     assignee = (payload.get('assignee') or '').strip()
-    actor_username = (payload.get('actor_username') or 'system').strip() or 'system'
+    actor_username = str(user.get('username') or 'system') if isinstance(user, dict) else 'system'
     if not assignee:
         raise HTTPException(status_code=400, detail='assignee is required')
     if not alert_ids or not isinstance(alert_ids, list):
@@ -1732,6 +1894,18 @@ def batch_assign_alerts(payload: dict = Body(...)):
 
     conn = get_db_connection()
     try:
+        tenant_id = _alert_read_tenant(user)
+        if tenant_id is not None:
+            target_user = conn.execute(
+                "SELECT 1 FROM users WHERE username = ? AND status = 'active' AND tenant_id = ? LIMIT 1",
+                (assignee, tenant_id),
+            ).fetchone()
+            if not target_user:
+                raise HTTPException(status_code=400, detail='Assignee is not an active user in this tenant')
+        for aid in alert_ids:
+            normalized_id = str(aid).strip()
+            if normalized_id:
+                _assert_alert_visible(conn, normalized_id, user)
         now = _utc_now_iso()
         updated = 0
         for aid in alert_ids:
@@ -1768,9 +1942,11 @@ def batch_assign_alerts(payload: dict = Body(...)):
 
 
 @router.get('/alerts/{alert_id}')
-def get_alert_detail(alert_id: str):
+def get_alert_detail(alert_id: str, user=require_role("Viewer")):
     conn = get_db_connection()
     try:
+        tenant_predicate, tenant_params = _alert_tenant_predicate(user)
+        tenant_filter_sql = f" AND {tenant_predicate}" if tenant_predicate else ""
         row = conn.execute(
             '''
             SELECT
@@ -1780,9 +1956,9 @@ def get_alert_detail(alert_id: str):
                 d.hostname, d.ip_address, d.site
             FROM alert_events a
             LEFT JOIN devices d ON d.id = a.device_id
-            WHERE a.id = ?
+            WHERE a.id = ?{tenant_filter_sql}
             ''',
-            (alert_id,),
+            (alert_id, *tenant_params),
         ).fetchone()
         if not row:
             raise HTTPException(status_code=404, detail='Alert not found')
@@ -1791,12 +1967,12 @@ def get_alert_detail(alert_id: str):
         timeline_rows = conn.execute(
             '''
             SELECT id, dedupe_key, severity, title, message, created_at, resolved_at, workflow_status, assignee, ack_by, ack_at, note, updated_at
-            FROM alert_events
-            WHERE dedupe_key = ?
+            FROM alert_events a
+            WHERE dedupe_key = ?{f" AND {tenant_predicate}" if tenant_predicate else ""}
             ORDER BY created_at DESC
             LIMIT 30
             ''',
-            (item['dedupe_key'],),
+            (item['dedupe_key'], *tenant_params),
         ).fetchall()
         return {
             'item': item,
@@ -1808,14 +1984,15 @@ def get_alert_detail(alert_id: str):
 
 
 @router.post('/alerts/{alert_id}/ack')
-def acknowledge_alert(alert_id: str, payload: dict = Body(default={})): 
-    actor_username = (payload.get('actor_username') or 'system').strip() or 'system'
+def acknowledge_alert(alert_id: str, payload: dict = Body(default={}), user=require_role("Operator")):
+    actor_username = str(user.get('username') or 'system') if isinstance(user, dict) else 'system'
     next_status = (payload.get('status') or 'acknowledged').strip().lower()
     if next_status not in {'acknowledged', 'investigating'}:
         raise HTTPException(status_code=400, detail='Unsupported status')
 
     conn = get_db_connection()
     try:
+        _assert_alert_visible(conn, alert_id, user)
         row = conn.execute('SELECT * FROM alert_events WHERE id = ?', (alert_id,)).fetchone()
         if not row:
             raise HTTPException(status_code=404, detail='Alert not found')
@@ -1848,14 +2025,23 @@ def acknowledge_alert(alert_id: str, payload: dict = Body(default={})):
 
 
 @router.post('/alerts/{alert_id}/assign')
-def assign_alert(alert_id: str, payload: dict = Body(default={})):
+def assign_alert(alert_id: str, payload: dict = Body(default={}), user=require_role("Operator")):
     assignee = (payload.get('assignee') or '').strip()
-    actor_username = (payload.get('actor_username') or 'system').strip() or 'system'
+    actor_username = str(user.get('username') or 'system') if isinstance(user, dict) else 'system'
     if not assignee:
         raise HTTPException(status_code=400, detail='assignee is required')
 
     conn = get_db_connection()
     try:
+        _assert_alert_visible(conn, alert_id, user)
+        tenant_id = _alert_read_tenant(user)
+        if tenant_id is not None:
+            target_user = conn.execute(
+                "SELECT 1 FROM users WHERE username = ? AND status = 'active' AND tenant_id = ? LIMIT 1",
+                (assignee, tenant_id),
+            ).fetchone()
+            if not target_user:
+                raise HTTPException(status_code=400, detail='Assignee is not an active user in this tenant')
         row = conn.execute('SELECT * FROM alert_events WHERE id = ?', (alert_id,)).fetchone()
         if not row:
             raise HTTPException(status_code=404, detail='Alert not found')
@@ -1886,12 +2072,13 @@ def assign_alert(alert_id: str, payload: dict = Body(default={})):
 
 
 @router.post('/alerts/{alert_id}/note')
-def update_alert_note(alert_id: str, payload: dict = Body(default={})):
+def update_alert_note(alert_id: str, payload: dict = Body(default={}), user=require_role("Operator")):
     note = str(payload.get('note') or '').strip()
-    actor_username = (payload.get('actor_username') or 'system').strip() or 'system'
+    actor_username = str(user.get('username') or 'system') if isinstance(user, dict) else 'system'
 
     conn = get_db_connection()
     try:
+        _assert_alert_visible(conn, alert_id, user)
         row = conn.execute('SELECT * FROM alert_events WHERE id = ?', (alert_id,)).fetchone()
         if not row:
             raise HTTPException(status_code=404, detail='Alert not found')
@@ -1922,11 +2109,8 @@ def update_alert_note(alert_id: str, payload: dict = Body(default={})):
 
 
 @router.post('/alerts/webhook/grafana')
-def receive_grafana_alert_webhook(
-    payload: dict = Body(...),
-    feishu_url: str | None = Query(default=None),
-):
-    """Receive Grafana Alertmanager webhook, normalize alert, and dispatch Feishu/system notifications."""
+def receive_grafana_alert_webhook(payload: dict = Body(...)):
+    """Receive Grafana Alertmanager data and dispatch only to configured channels."""
     alerts = payload.get('alerts', [])
     if not alerts and ('title' in payload or 'ruleName' in payload):
         alerts = [payload]
@@ -2047,8 +2231,9 @@ def receive_grafana_alert_webhook(
             }
 
             dispatch_results = []
-            # Direct Feishu URL if specified in query or env
-            target_feishu = feishu_url or os.environ.get('FEISHU_WEBHOOK_URL')
+            # The Grafana callback is public by design. Never accept a caller-
+            # supplied destination URL here; use the host-configured channel.
+            target_feishu = os.environ.get('FEISHU_WEBHOOK_URL')
             if target_feishu:
                 ok, msg = send_feishu(target_feishu, alert_data)
                 dispatch_results.append({'platform': 'feishu_direct', 'success': ok, 'detail': msg})

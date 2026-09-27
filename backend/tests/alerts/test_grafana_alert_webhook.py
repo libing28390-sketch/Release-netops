@@ -11,7 +11,9 @@ from database import get_db_connection
 client = TestClient(app)
 
 
-def test_receive_grafana_alert_webhook_firing_and_resolved():
+def test_receive_grafana_alert_webhook_firing_and_resolved(monkeypatch):
+    configured_webhook = "https://open.feishu.cn/open-apis/bot/v2/hook/configured-test-token"
+    monkeypatch.setenv("FEISHU_WEBHOOK_URL", configured_webhook)
     firing_payload = {
         "receiver": "Nexora-Webhook",
         "status": "firing",
@@ -42,7 +44,7 @@ def test_receive_grafana_alert_webhook_firing_and_resolved():
          patch("api.alerts.dispatch_to_all_users", return_value=[{"platform": "feishu", "success": True}]) as mock_dispatch:
         
         resp = client.post(
-            "/api/alerts/webhook/grafana?feishu_url=https://open.feishu.cn/open-apis/bot/v2/hook/dummy-token",
+            "/api/alerts/webhook/grafana?feishu_url=https://127.0.0.1/attacker-controlled",
             json=firing_payload,
         )
         assert resp.status_code == 200
@@ -51,6 +53,7 @@ def test_receive_grafana_alert_webhook_firing_and_resolved():
         assert data["received_count"] == 1
         assert data["processed"][0]["status"] == "active"
         assert mock_feishu.called
+        assert mock_feishu.call_args.args[0] == configured_webhook
 
         # Verify insertion into alert_events table
         conn = get_db_connection()

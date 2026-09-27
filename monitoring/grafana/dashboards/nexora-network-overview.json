@@ -1445,5 +1445,5 @@
   "title": "01 网络总览（Network Overview）",
   "description": "硬件概览展示当前在线设备的 CPU、内存、温度指标覆盖数量，以及 CPU/内存使用率 Top10；它们不是跨设备平均健康分。不同厂商和型号的温度阈值应在设备详情中核实。接口异常列表仅列出过去24小时状态有变化且当前仍为 Down 的管理启用接口；长期稳定 Down 的接口可在设备或接口详情查看。",
   "uid": "nexora-network-overview",
-  "version": 29
+  "version": 30
 }

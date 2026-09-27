@@ -361,6 +361,8 @@ def _deliver(row: dict[str, Any]) -> None:
                     'feishu_unconfigured', 'dingtalk_unconfigured', 'wechat_unconfigured',
                     'email_no_recipients', 'smtp_config_missing', 'smtp_auth_failed',
                     'smtp_tls_failed', 'smtp_invalid_recipient', 'smtp_recipient_rejected',
+                    'notification_group_invalid', 'notification_group_tenant_missing',
+                    'notification_group_no_recipients',
                 },
             )
         return
@@ -392,6 +394,8 @@ def _deliver(row: dict[str, Any]) -> None:
                 'smtp_config_missing', 'email_no_recipients', 'smtp_invalid_recipient',
                 'smtp_auth_failed', 'smtp_tls_failed', 'smtp_recipient_rejected',
                 'feishu_unconfigured', 'dingtalk_unconfigured', 'wechat_unconfigured',
+                'notification_group_invalid', 'notification_group_tenant_missing',
+                'notification_group_no_recipients',
             }
             raise _DeliveryAttemptError(first_error, retryable=not non_retryable)
         return
@@ -490,6 +494,7 @@ def _finish_delivery(
         skipped = error_summary in {
             'smtp_config_missing', 'email_no_recipients', 'smtp_invalid_recipient',
             'feishu_unconfigured', 'dingtalk_unconfigured', 'wechat_unconfigured',
+            'notification_group_no_recipients',
         }
         status = 'skipped' if terminal and skipped else 'failed' if terminal else 'retrying'
         _record_delivery_attempt(

@@ -5,7 +5,6 @@ import {
   BarChart2,
   Clock,
   ExternalLink,
-  Eye,
   Layers,
   Maximize2,
   Minimize2,
@@ -13,7 +12,6 @@ import {
   RefreshCw,
   Server,
   ShieldCheck,
-  Tv,
   Wifi,
   Globe,
   HardDrive,
@@ -27,7 +25,6 @@ interface GrafanaDashboardPageProps {
 }
 
 type GrafanaStatus = 'checking' | 'ready' | 'unavailable';
-type ViewMode = 'kiosk' | 'tv' | 'full';
 
 export const GRAFANA_DASHBOARDS = [
   {
@@ -94,6 +91,30 @@ export const GRAFANA_DASHBOARDS = [
     descEn: 'Windows CPU, physical memory, logical disk latency, NIC throughput & RDP sessions',
     icon: Monitor,
   },
+  {
+    uid: 'nexora-platform-health',
+    titleZh: '10 监控平台健康',
+    titleEn: '10 Monitoring Platform Health',
+    descZh: '平台服务、写入队列、VictoriaMetrics 磁盘与容器资源',
+    descEn: 'Platform services, write queue, VictoriaMetrics storage and container resources',
+    icon: ShieldCheck,
+  },
+  {
+    uid: 'nexora-outbound-probe-quality',
+    titleZh: '11 WAN 链路健康与拨测',
+    titleEn: '11 WAN Health & Probe Quality',
+    descZh: 'WAN 接口采样、DNS/TCP/HTTP/ICMP 拨测；逐线路 SLA 需源地址选路',
+    descEn: 'WAN interface samples and DNS/TCP/HTTP/ICMP probes; per-circuit SLA needs routed probes',
+    icon: Globe,
+  },
+  {
+    uid: 'nexora-alert-operations',
+    titleZh: '12 告警处置与通知',
+    titleEn: '12 Alert Operations & Notifications',
+    descZh: '告警持续时间、MTTA/MTTR、重复事件与通知投递效果',
+    descEn: 'Alert age, MTTA/MTTR, duplicate open events and notification outcomes',
+    icon: Activity,
+  },
 ];
 
 const TIME_RANGES = [
@@ -131,7 +152,6 @@ const GrafanaDashboardPage: React.FC<GrafanaDashboardPageProps> = ({ language })
   const [loaded, setLoaded] = useState(false);
   const [status, setStatus] = useState<GrafanaStatus>('checking');
   const [theme, setTheme] = useState<'light' | 'dark'>(() => resolveSystemTheme());
-  const [viewMode, setViewMode] = useState<ViewMode>('kiosk');
   const [timeRange, setTimeRange] = useState('6h');
   const [refreshRate, setRefreshRate] = useState('30s');
   const [isFullscreen, setIsFullscreen] = useState(false);
@@ -228,16 +248,8 @@ const GrafanaDashboardPage: React.FC<GrafanaDashboardPageProps> = ({ language })
     }
     params.set('theme', theme);
 
-    let url = `/grafana/d/${selectedDashboard}/${selectedDashboard}?${params.toString()}`;
-    if (viewMode === 'kiosk') {
-      // Pure kiosk: completely removes sidebar and top navbar
-      url += '&kiosk';
-    } else if (viewMode === 'tv') {
-      // TV kiosk: keeps top controls while suppressing left sidebar
-      url += '&kiosk=tv';
-    }
-    return url;
-  }, [selectedDashboard, theme, viewMode, timeRange, refreshRate]);
+    return `/grafana/d/${selectedDashboard}/${selectedDashboard}?${params.toString()}&kiosk`;
+  }, [selectedDashboard, theme, timeRange, refreshRate]);
 
   const statusText =
     status === 'checking'
@@ -286,7 +298,7 @@ const GrafanaDashboardPage: React.FC<GrafanaDashboardPageProps> = ({ language })
                 <span>{zh ? '进程与系统明细' : 'Processes Detail'}</span>
               </button>
             )}
-            {selectedDashboard.includes('health') && (
+            {selectedDashboard === 'nexora-monitoring-health' && (
               <button
                 type="button"
                 onClick={() => navigate('/monitor/collection-health')}
@@ -380,54 +392,6 @@ const GrafanaDashboardPage: React.FC<GrafanaDashboardPageProps> = ({ language })
                 <span>{statusText}</span>
               </div>
 
-              {status === 'ready' && (
-                <>
-                  <div className="h-4 w-px bg-slate-200 dark:bg-zinc-800" />
-
-                  {/* View Mode Switcher */}
-                  <div className="flex items-center rounded-lg border border-slate-200 dark:border-zinc-800 bg-slate-100/80 dark:bg-zinc-800/60 p-0.5 text-[11px]">
-                    <button
-                      type="button"
-                      onClick={() => setViewMode('kiosk')}
-                      className={`inline-flex items-center gap-1 rounded-lg px-2.5 py-1 font-semibold transition-all ${
-                        viewMode === 'kiosk'
-                          ? 'bg-white dark:bg-zinc-700 text-cyan-700 dark:text-cyan-300 shadow-2xs'
-                          : 'text-slate-600 dark:text-zinc-400 hover:text-slate-900 dark:hover:text-zinc-100'
-                      }`}
-                      title={zh ? '彻底隐藏 Grafana 侧边栏与顶栏，纯净融入' : 'Pure kiosk without sidebars or top header'}
-                    >
-                      <Eye size={12} />
-                      {zh ? '纯净大盘' : 'Clean Kiosk'}
-                    </button>
-                    <button
-                      type="button"
-                      onClick={() => setViewMode('tv')}
-                      className={`inline-flex items-center gap-1 rounded-lg px-2.5 py-1 font-semibold transition-all ${
-                        viewMode === 'tv'
-                          ? 'bg-white dark:bg-zinc-700 text-cyan-700 dark:text-cyan-300 shadow-2xs'
-                          : 'text-slate-600 dark:text-zinc-400 hover:text-slate-900 dark:hover:text-zinc-100'
-                      }`}
-                      title={zh ? '保留 Grafana 顶部时间与状态栏' : 'TV mode with topbar'}
-                    >
-                      <Tv size={12} />
-                      {zh ? '电视模式' : 'TV Mode'}
-                    </button>
-                    <button
-                      type="button"
-                      onClick={() => setViewMode('full')}
-                      className={`inline-flex items-center gap-1 rounded-lg px-2.5 py-1 font-semibold transition-all ${
-                        viewMode === 'full'
-                          ? 'bg-white dark:bg-zinc-700 text-cyan-700 dark:text-cyan-300 shadow-2xs'
-                          : 'text-slate-600 dark:text-zinc-400 hover:text-slate-900 dark:hover:text-zinc-100'
-                      }`}
-                      title={zh ? '显示完整 Grafana 菜单与编辑控制' : 'Full Grafana controls'}
-                    >
-                      <Monitor size={12} />
-                      {zh ? '完整管理' : 'Full Admin'}
-                    </button>
-                  </div>
-                </>
-              )}
             </div>
 
             {status === 'ready' && (
@@ -482,7 +446,7 @@ const GrafanaDashboardPage: React.FC<GrafanaDashboardPageProps> = ({ language })
               className="relative flex flex-1 min-h-[560px] md:min-h-[calc(100vh-260px)] overflow-hidden rounded-xl border border-slate-200 dark:border-zinc-800 bg-white dark:bg-zinc-900 shadow-sm"
             >
               <iframe
-                key={`${frameKey}-${theme}-${viewMode}`}
+                key={`${frameKey}-${theme}`}
                 title={zh ? 'Grafana 监控大盘' : 'Grafana monitoring dashboard'}
                 src={dashboardUrl}
                 onLoad={() => setLoaded(true)}
@@ -492,7 +456,7 @@ const GrafanaDashboardPage: React.FC<GrafanaDashboardPageProps> = ({ language })
               {!loaded && (
                 <div className="pointer-events-none absolute inset-0 flex items-center justify-center bg-white/85 dark:bg-zinc-900/85 text-sm text-slate-500 dark:text-zinc-400 backdrop-blur-xs">
                   <RefreshCw size={16} className="mr-2 animate-spin text-cyan-600" />
-                  {zh ? '正在加载 Grafana 纯净大盘…' : 'Loading Grafana dashboard…'}
+                  {zh ? '正在加载 Grafana 大盘…' : 'Loading Grafana dashboard…'}
                 </div>
               )}
             </div>

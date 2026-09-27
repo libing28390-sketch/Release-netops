@@ -429,7 +429,12 @@ prev_intf_config_hash: dict[str, str] = {}
 webhook_last_sent = {}
 current_alert_rules = []
 current_alert_rules_loaded_at = 0.0
+current_alert_rules_by_tenant: dict[str, tuple[float, list[dict[str, Any]]]] = {}
 ALERT_RULE_CACHE_TTL_SECONDS = 15.0
+alert_device_tag_ids_cache: dict[str, tuple[float, set[str]]] = {}
+ALERT_DEVICE_TAG_CACHE_TTL_SECONDS = 15.0
+alert_site_name_cache: dict[str, tuple[float, str]] = {}
+ALERT_SITE_NAME_CACHE_TTL_SECONDS = 60.0
 role_poll_profiles = {
     'core': {
         'interface': 1,
@@ -490,7 +495,11 @@ def _init_telemetry_state():
     _refresh_runtime_alert_rules(force=True)
 
 
-def _refresh_runtime_alert_rules(*, force: bool = False) -> list[dict[str, Any]]:
+def _refresh_runtime_alert_rules(
+    tenant_id: str = 'tenant-default',
+    *,
+    force: bool = False,
+) -> list[dict[str, Any]]:
     """Refresh enabled rules without making every SNMP metric query the DB.
 
     Alert rules are edited from the UI while the monitor worker stays alive.
@@ -501,18 +510,30 @@ def _refresh_runtime_alert_rules(*, force: bool = False) -> list[dict[str, Any]]
     disable all alert evaluation.
     """
     global current_alert_rules, current_alert_rules_loaded_at
+    tenant_id = str(tenant_id or 'tenant-default').strip() or 'tenant-default'
     now = _time.monotonic()
-    if not force and current_alert_rules_loaded_at and (now - current_alert_rules_loaded_at) < ALERT_RULE_CACHE_TTL_SECONDS:
-        return current_alert_rules
+    cached_at, cached_rules = current_alert_rules_by_tenant.get(tenant_id, (0.0, []))
+    if tenant_id == 'tenant-default' and not cached_at and current_alert_rules_loaded_at:
+        cached_at, cached_rules = current_alert_rules_loaded_at, current_alert_rules
+    if not force and cached_at and (now - cached_at) < ALERT_RULE_CACHE_TTL_SECONDS:
+        return cached_rules
     try:
-        refreshed = alert_rule_service.get_runtime_rules()
+        refreshed = alert_rule_service.get_runtime_rules(tenant_id=tenant_id)
     except Exception:
+        logger.warning(
+            "[Alert] Runtime rule refresh failed for tenant %s; retaining its last known-good rules",
+            tenant_id,
+            exc_info=True,
+        )
+        current_alert_rules_by_tenant.setdefault(tenant_id, (now, cached_rules))
+        if tenant_id == 'tenant-default':
+            current_alert_rules_loaded_at = now
+        return cached_rules
+    current_alert_rules_by_tenant[tenant_id] = (now, refreshed)
+    if tenant_id == 'tenant-default':
+        current_alert_rules = refreshed
         current_alert_rules_loaded_at = now
-        logger.warning("[Alert] Runtime rule refresh failed; retaining the last known-good rules", exc_info=True)
-        return current_alert_rules
-    current_alert_rules = refreshed
-    current_alert_rules_loaded_at = now
-    return current_alert_rules
+    return refreshed
 
 
 def _component_failure_state(value: Any) -> bool | None:
@@ -531,16 +552,92 @@ def _component_failure_state(value: Any) -> bool | None:
     if normalized in {'ok', 'normal', 'redundant', 'single', 'up', 'running', 'ready', 'true', '1'}:
         return False
     return None
+def _get_alert_device_tag_ids(device_id: str) -> set[str] | None:
+    normalized_device_id = str(device_id or '').strip()
+    if not normalized_device_id:
+        return None
+    now = _time.monotonic()
+    cached = alert_device_tag_ids_cache.get(normalized_device_id)
+    if cached and cached[0] > now:
+        return set(cached[1])
+    conn = None
+    try:
+        conn = get_db_connection()
+        tags = tag_service.get_device_tags(conn, normalized_device_id)
+        tag_ids = {str(tag.get('id') or '').strip() for tag in tags if str(tag.get('id') or '').strip()}
+        if len(alert_device_tag_ids_cache) > 5000:
+            expired_ids = [key for key, (expires_at, _) in alert_device_tag_ids_cache.items() if expires_at <= now]
+            for key in expired_ids:
+                alert_device_tag_ids_cache.pop(key, None)
+        alert_device_tag_ids_cache[normalized_device_id] = (
+            now + ALERT_DEVICE_TAG_CACHE_TTL_SECONDS,
+            tag_ids,
+        )
+        return set(tag_ids)
+    except Exception:
+        logger.warning('[Alert] Failed to load device tags for alert scope matching', exc_info=True)
+        return None
+    finally:
+        if conn is not None:
+            conn.close()
+
+
+def _canonical_alert_site(device: dict[str, Any]) -> str:
+    for field in ('site_name', 'site_code'):
+        value = str(device.get(field) or '').strip()
+        if value:
+            return value
+    raw_site = str(device.get('site') or '').strip()
+    if raw_site and not _re.fullmatch(r'site-[a-z0-9]+', raw_site, flags=_re.IGNORECASE):
+        return raw_site
+    site_id = str(device.get('site_id') or raw_site).strip()
+    if not site_id:
+        return ''
+    now = _time.monotonic()
+    cached = alert_site_name_cache.get(site_id)
+    if cached and cached[0] > now:
+        return cached[1]
+    try:
+        site_row = _db_quick(
+            "SELECT site_name, site_code FROM sites WHERE id = ?",
+            (site_id,),
+            fetch=True,
+        )
+        site_data = _as_dict(site_row) if site_row is not None else {}
+        site_name = str(site_data.get('site_name') or site_data.get('site_code') or '').strip()
+        if len(alert_site_name_cache) > 5000:
+            expired_ids = [key for key, (expires_at, _) in alert_site_name_cache.items() if expires_at <= now]
+            for key in expired_ids:
+                alert_site_name_cache.pop(key, None)
+        alert_site_name_cache[site_id] = (now + ALERT_SITE_NAME_CACHE_TTL_SECONDS, site_name)
+        return site_name
+    except Exception:
+        logger.warning('[Alert] Failed to resolve the canonical site for alert scope matching', exc_info=True)
+        return ''
+
+
 def resolve_alert_rule(metric_type: str, *, device_row=None, ip_address: str = '', interface_name: str | None = None):
-    _refresh_runtime_alert_rules()
+    device = _as_dict(device_row) if device_row is not None else {}
+    role = str(device.get('role') or '')
+    category = str(device.get('category') or device.get('device_category') or '')
+    if not category:
+        category = 'Server' if 'server' in role.casefold() else 'Network'
     context = {
-        'device_id': device_row['id'] if device_row else '',
-        'hostname': device_row['hostname'] if device_row else '',
-        'ip_address': ip_address,
-        'site': device_row['site'] if device_row else '',
+        'tenant_id': str(device.get('tenant_id') or 'tenant-default'),
+        'device_id': device.get('id') or '',
+        'hostname': device.get('hostname') or '',
+        'ip_address': ip_address or device.get('ip_address') or '',
+        'site': _canonical_alert_site(device),
+        'role': role,
+        'category': category,
+        'device_category': device.get('device_category') or '',
+        'platform': device.get('platform') or '',
         'interface_name': interface_name or '',
     }
-    return alert_rule_service.select_rule(current_alert_rules, metric_type, context)
+    rules = _refresh_runtime_alert_rules(context['tenant_id'])
+    if any(str(rule.get('scope_type') or '') == 'tag' for rule in rules):
+        context['tag_ids'] = _get_alert_device_tag_ids(str(context['device_id'] or ''))
+    return alert_rule_service.select_rule(rules, metric_type, context)
 
 def metric_type_from_dedupe_key(dedupe_key: str) -> str | None:
     if dedupe_key.startswith('cpu_high:'):
@@ -553,6 +650,8 @@ def metric_type_from_dedupe_key(dedupe_key: str) -> str | None:
         return 'temperature_high'
     if dedupe_key.startswith('snmp_unreachable:'):
         return 'snmp_unreachable'
+    if dedupe_key.startswith('dev_offline:'):
+        return 'ping_unreachable'
     if dedupe_key.startswith('lldp_neighbor_lost:'):
         return 'lldp_neighbor_lost'
     if dedupe_key.startswith('fan_failure:'):
@@ -691,7 +790,8 @@ def persist_protocol_peer_state(metric_type: str, device_id: str, peers: dict[st
 def sync_lldp_neighbor_alerts():
     links = _db_quick(
         '''
-        SELECT l.*, s.status AS source_status, t.status AS target_status
+        SELECT l.*, s.status AS source_status, t.status AS target_status,
+               s.tenant_id AS source_tenant_id
         FROM topology_links l
         JOIN devices s ON l.source_device_id = s.id
         JOIN devices t ON l.target_device_id = t.id
@@ -708,7 +808,18 @@ def sync_lldp_neighbor_alerts():
         target_online = str(link.get('target_status') or '').lower() == 'online'
         is_lost = str(link.get('status') or '').lower() == 'stale' and source_online and target_online
         interface_name = f"{link.get('source_port_normalized') or link.get('source_port') or ''}->{link.get('target_port_normalized') or link.get('target_port') or ''}"
-        rule = resolve_alert_rule('lldp_neighbor_lost', device_row={'id': link.get('source_device_id'), 'hostname': link.get('source_hostname') or '', 'site': '', 'ip_address': ''}, ip_address='', interface_name=interface_name)
+        rule = resolve_alert_rule(
+            'lldp_neighbor_lost',
+            device_row={
+                'id': link.get('source_device_id'),
+                'hostname': link.get('source_hostname') or '',
+                'site': '',
+                'ip_address': '',
+                'tenant_id': link.get('source_tenant_id'),
+            },
+            ip_address='',
+            interface_name=interface_name,
+        )
         set_alert_state(
             dedupe_key,
             is_lost,
@@ -1044,6 +1155,9 @@ def maybe_notify_webhook(dedupe_key: str, severity: str, title: str, message: st
 
     event_kind = str(alert_info['event_kind'])
     common_payload = {**alert_info, 'lang': 'zh'}
+    rule_group_names = (rule or {}).get('notification_group_names')
+    if rule_group_names is not None:
+        common_payload['notification_group_names'] = rule_group_names
 
     # Keep the legacy .env webhook attached to workspace rules. An explicit
     # channel policy can opt into global_webhook independently.
@@ -1057,7 +1171,10 @@ def maybe_notify_webhook(dedupe_key: str, severity: str, title: str, message: st
         payload = {
             "msgtype": "text",
             "text": {"content": plain},
-            **common_payload,
+            **{
+                key: value for key, value in common_payload.items()
+                if key != 'notification_group_names'
+            },
         }
         enqueue_alert_delivery(
             delivery_key=f"{dedupe_key}:global_webhook:{event_kind}:{created_at}",
@@ -1070,10 +1187,16 @@ def maybe_notify_webhook(dedupe_key: str, severity: str, title: str, message: st
             continue
         if channel not in {'workspace', 'feishu', 'dingtalk', 'wechat', 'email', 'global_webhook'}:
             continue
+        channel_payload = common_payload
+        if channel == 'global_webhook':
+            channel_payload = {
+                key: value for key, value in common_payload.items()
+                if key != 'notification_group_names'
+            }
         enqueue_alert_delivery(
             delivery_key=f"{dedupe_key}:{channel}:{event_kind}:{created_at}",
             channel=channel,
-            payload=common_payload,
+            payload=channel_payload,
         )
 
 def set_alert_state(dedupe_key: str, is_active: bool, severity: str, title: str, message: str,
@@ -1194,6 +1317,31 @@ def set_alert_state(dedupe_key: str, is_active: bool, severity: str, title: str,
                 device_id=device_id,
             )
 
+
+def _set_device_reachability_alert(device_row: dict, ip_address: str, *, reachable: bool) -> None:
+    """Project device reachability through the configured ping alert rule.
+
+    Keep the alert event even when no rule is configured, but only dispatch
+    notifications when an enabled tenant rule matched this device.
+    """
+    device = _as_dict(device_row)
+    device_id = str(device.get('id') or '')
+    device_label = str(device.get('hostname') or ip_address or device_id)
+    rule = resolve_alert_rule('ping_unreachable', device_row=device, ip_address=ip_address)
+    active = not reachable
+    set_alert_state(
+        f"dev_offline:{device_id}",
+        active,
+        (rule or {}).get('severity', 'critical') if active else 'info',
+        'Device Offline',
+        f"{device_label} ({ip_address}) {'已恢复连接' if reachable else '无法连接，Ping 超时'}",
+        device_id,
+        ip_address=ip_address,
+        status='resolved' if reachable else 'active',
+        rule=rule,
+        notify=bool(rule),
+    )
+
 def _sync_protocol_aggregate_alert(metric_type: str, title: str, device_row: dict, ip_address: str, down_peers: list[str]):
     dedupe_key = f"{metric_type}:summary:{device_row['id']}"
     dev_label = device_row.get('hostname') or ip_address or device_row['id']
@@ -1304,6 +1452,7 @@ async def _process_device_raw(device, cycle_tick: int):
         device = _as_dict(device)
         ip = device['ip_address']
         dev_id = device['id']
+        dev_label = str(device.get('hostname') or ip or dev_id)
         poll_profile = _device_poll_profile(device)
         collect_intf = _should_collect(cycle_tick, poll_profile['interface'])
         collect_info = _should_collect(cycle_tick, poll_profile['info'])
@@ -1331,7 +1480,6 @@ async def _process_device_raw(device, cycle_tick: int):
             return
 
         # 1. Ping Check
-        dev_label = device['hostname'] or ip
         try:
             # ping() is blocking; run it off the event loop to keep API endpoints responsive.
             async with get_network_access_limiter().async_probe():
@@ -1345,19 +1493,11 @@ async def _process_device_raw(device, cycle_tick: int):
                 if new_status == 'offline':
                     _set_protocol_alerts_for_device_offline(device, ip)
                     mark_offline_and_clear_cache()
-                    set_alert_state(
-                        f"dev_offline:{dev_id}", True, 'critical', 'Device Offline',
-                        f"{dev_label} ({ip}) 无法连接，Ping 超时",
-                        dev_id, ip_address=ip, status='active',
-                    )
+                    _set_device_reachability_alert(device, ip, reachable=False)
                 else:
                     _db_quick('UPDATE devices SET status = ? WHERE id = ?', (new_status, dev_id))
                     _sync_device_status_tag(dev_id, new_status)
-                    set_alert_state(
-                        f"dev_offline:{dev_id}", False, 'info', 'Device Offline',
-                        f"{dev_label} ({ip}) 已恢复连接",
-                        dev_id, ip_address=ip, status='resolved',
-                    )
+                    _set_device_reachability_alert(device, ip, reachable=True)
                 logger.info(
                     f"[Status Monitor] Device {ip} status changed to {new_status} via {probe_method}"
                 )
@@ -1366,11 +1506,7 @@ async def _process_device_raw(device, cycle_tick: int):
             new_status = 'offline'
             if device.get('status') != 'offline':
                 _set_protocol_alerts_for_device_offline(device, ip)
-                set_alert_state(
-                    f"dev_offline:{dev_id}", True, 'critical', 'Device Offline',
-                    f"{dev_label} ({ip}) 无法连接，Ping 超时",
-                    dev_id, ip_address=ip, status='active',
-                )
+                _set_device_reachability_alert(device, ip, reachable=False)
                 _schedule_monitoring_target_sync()
             mark_offline_and_clear_cache()
 
@@ -2179,7 +2315,6 @@ async def process_device_fast(device):
         )
         return
 
-    dev_label = device['hostname'] or ip
     try:
         async with get_network_access_limiter().async_probe():
             reachable, probe_method = await _probe_device_reachability(
@@ -2201,19 +2336,11 @@ async def process_device_fast(device):
             if new_status == 'offline':
                 _set_protocol_alerts_for_device_offline(device, ip)
                 mark_offline_and_clear_cache()
-                set_alert_state(
-                    f"dev_offline:{dev_id}", True, 'critical', 'Device Offline',
-                    f"{dev_label} ({ip}) 无法连接，Ping 超时",
-                    dev_id, ip_address=ip, status='active',
-                )
+                _set_device_reachability_alert(device, ip, reachable=False)
             else:
                 _db_quick('UPDATE devices SET status = ? WHERE id = ?', (new_status, dev_id))
                 _sync_device_status_tag(dev_id, new_status)
-                set_alert_state(
-                    f"dev_offline:{dev_id}", False, 'info', 'Device Offline',
-                    f"{dev_label} ({ip}) 已恢复连接",
-                    dev_id, ip_address=ip, status='resolved',
-                )
+                _set_device_reachability_alert(device, ip, reachable=True)
             logger.info(
                 f"[Status Monitor] Device {ip} status changed to {new_status} via {probe_method}"
             )
@@ -2230,11 +2357,7 @@ async def process_device_fast(device):
         new_status = 'offline'
         if device.get('status') != 'offline':
             _set_protocol_alerts_for_device_offline(device, ip)
-            set_alert_state(
-                f"dev_offline:{dev_id}", True, 'critical', 'Device Offline',
-                f"{dev_label} ({ip}) 无法连接，Ping 超时",
-                dev_id, ip_address=ip, status='active',
-            )
+            _set_device_reachability_alert(device, ip, reachable=False)
             _schedule_monitoring_target_sync()
         mark_offline_and_clear_cache()
 

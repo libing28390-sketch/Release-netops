@@ -592,11 +592,40 @@ export type AlertRuleMetricType =
   | 'srv_tcp_conns'
   | 'srv_process_health';
 
-export type AlertRuleScopeType = 'global' | 'site' | 'device' | 'interface';
+export type AlertRuleScopeType = 'global' | 'site' | 'role' | 'composite' | 'ip' | 'devices' | 'tag' | 'device' | 'interface';
 
 export type AlertRuleScopeMatchMode = 'exact' | 'contains' | 'prefix' | 'glob';
 
 export type AlertNotificationChannel = 'workspace' | 'feishu' | 'dingtalk' | 'wechat' | 'email' | 'global_webhook';
+
+export interface AlertRuleScopeCatalogOption {
+  value: string;
+  count: number;
+}
+
+export interface AlertRuleScopeDevice {
+  id: string;
+  hostname: string;
+  management_ip: string;
+  ip_address: string;
+  serial_number: string;
+  asset_tag: string;
+  platform: string;
+  role: string;
+  site: string;
+  category: string;
+  status: string;
+}
+
+export interface AlertRuleScopeCatalog {
+  sites: AlertRuleScopeCatalogOption[];
+  roles: AlertRuleScopeCatalogOption[];
+  categories: AlertRuleScopeCatalogOption[];
+  platforms: AlertRuleScopeCatalogOption[];
+  devices?: AlertRuleScopeDevice[];
+  device_total?: number;
+  missing_device_ids?: string[];
+}
 
 export interface AlertRuleCollectionBinding {
   collection_source: string;
@@ -625,6 +654,7 @@ export interface AlertRuleSettings {
   aggregation_mode: 'dedupe_key';
   notification_repeat_window_seconds: number;
   notification_channels: AlertNotificationChannel[];
+  notification_group_names: string[];
   notify_on_active: boolean;
   notify_on_recovery: boolean;
   notify_on_reopen_after_maintenance: boolean;
@@ -632,7 +662,14 @@ export interface AlertRuleSettings {
   created_at?: string;
   updated_by?: string;
   updated_at?: string;
+  /** False when the backend keeps a historical rule whose metric has no executor. */
+  rule_supported: boolean;
   collection?: AlertRuleCollectionBinding;
+}
+
+export interface AlertRuleNotificationGroup {
+  name: string;
+  member_count: number;
 }
 
 export interface AlertRuleListResponse {
@@ -641,6 +678,7 @@ export interface AlertRuleListResponse {
   page: number;
   page_size: number;
   collection_catalog?: Record<string, AlertRuleCollectionBinding>;
+  supported_metric_types?: string[];
 }
 
 export interface AlertRulePreview {

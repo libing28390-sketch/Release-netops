@@ -2013,9 +2013,10 @@ def get_monitoring_outbound_status(
     user=require_role("Viewer"),
 ):
     from services.outbound_probe_service import get_outbound_status
-    # The status service is tenant-aware through its target/report queries;
-    # expose only the scoped target list in this compatibility response.
-    return get_outbound_status(history_hours=history_hours)
+    return get_outbound_status(
+        history_hours=history_hours,
+        tenant_id=_monitoring_tenant_id(user),
+    )
 
 
 @router.get('/monitoring/outbound-targets')

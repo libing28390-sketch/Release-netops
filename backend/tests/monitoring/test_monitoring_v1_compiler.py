@@ -11,6 +11,7 @@ from services.monitoring_compiler import (
     plan_entry_matches_device,
     plan_entry_match_reason,
     render_exporter_modules,
+    render_vmagent_config,
     validate_oid_config,
     validate_artifact,
 )
@@ -73,6 +74,28 @@ def test_compiler_builds_secret_free_snapshot_and_artifact():
     artifact["files"]["vmagent/scrape.yml"] += "# tampered\n"
     with pytest.raises(ValueError, match="CHECKSUM_MISMATCH"):
         validate_artifact(artifact)
+
+
+def test_platform_scrape_targets_are_added_only_to_local_collector():
+    platform_jobs = {
+        "platform_api": "netops:8003",
+        "platform_victoriametrics": "victoriametrics:8428",
+        "platform_vmagent": "vmagent:8429",
+        "platform_snmp_exporter": "snmp-exporter:9116",
+        "platform_grafana": "grafana:3000",
+        "platform_cadvisor": "cadvisor:8080",
+    }
+
+    local_jobs = render_vmagent_config(collector_id="collector-local")["scrape_configs"]
+    remote_jobs = render_vmagent_config(collector_id="collector-remote")["scrape_configs"]
+    local_targets = {
+        job["job_name"]: job["static_configs"][0]["targets"][0]
+        for job in local_jobs
+        if job["job_name"].startswith("platform_")
+    }
+
+    assert local_targets == platform_jobs
+    assert not any(job["job_name"].startswith("platform_") for job in remote_jobs)
 
 
 def test_monitoring_extension_reuses_device_collection_policy():

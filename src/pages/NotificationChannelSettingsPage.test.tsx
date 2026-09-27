@@ -58,7 +58,7 @@ describe('NotificationChannelSettingsPage', () => {
     expect(await screen.findByRole('heading', { name: '邮件通知' })).toBeTruthy();
     expect(mockedApiRequest).toHaveBeenCalledWith('/api/alerts/notification-channels/email/profiles');
     expect(mockedApiRequest).toHaveBeenCalledWith('/api/alerts/notification-channels/email/recipients');
-    const testButton = screen.getByRole('button', { name: '测试' });
+    const testButton = screen.getByRole('button', { name: '测试 告警邮件' });
     expect(testButton.hasAttribute('disabled')).toBe(false);
 
     await user.click(testButton);

@@ -23,6 +23,7 @@ from core.config import settings, validate_production_security
 from core.textfsm import configure_ntc_templates
 from core.logging import setup_logging, classify_request_log_level
 from api.health import router as health_router, record_host_resource_snapshot
+from api.grafana_metrics import router as grafana_metrics_router
 from api.devices import router as devices_router
 from api.jobs import router as jobs_router
 from api.templates import router as templates_router
@@ -689,6 +690,7 @@ app.add_middleware(
 # 注册路由
 # ── 无需 License 的基础路由 ──
 app.include_router(health_router,        prefix="/api")
+app.include_router(grafana_metrics_router)
 app.include_router(users_router,         prefix="/api")
 app.include_router(setup_router,         prefix="/api")
 app.include_router(system_router,        prefix="/api")

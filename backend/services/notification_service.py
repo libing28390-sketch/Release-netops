@@ -25,11 +25,11 @@ import threading
 from datetime import datetime
 from email.message import EmailMessage
 from email.utils import formataddr
-from urllib import request as urlrequest, error as urlerror
 from urllib.parse import quote
 
 from core.crypto import decrypt_credential
 from database import get_db_connection
+from services import safe_webhook_post
 
 logger = logging.getLogger(__name__)
 
@@ -144,21 +144,8 @@ def _get_system_name() -> str:
 
 
 def _post_json(url: str, payload: dict, timeout: int = 5) -> tuple[bool, str]:
-    """发送 JSON POST，返回 (success, response_body)。"""
-    data = json.dumps(payload).encode('utf-8')
-    req = urlrequest.Request(
-        url, data=data,
-        headers={'Content-Type': 'application/json'},
-        method='POST',
-    )
-    try:
-        with urlrequest.urlopen(req, timeout=timeout) as resp:
-            body = resp.read().decode('utf-8', errors='replace')
-            if resp.status >= 400:
-                return False, f"HTTP {resp.status}: {body[:300]}"
-            return True, body
-    except urlerror.URLError as exc:
-        return False, str(exc)
+    """发送经过 SSRF 边界检查的 JSON POST，返回 (success, response_body)。"""
+    return safe_webhook_post.post_json(url, payload, timeout=timeout)
 
 
 _EMAIL_ADDRESS_RE = re.compile(r"^[^\s@]+@[^\s@]+\.[^\s@]+$")
@@ -1023,6 +1010,25 @@ def _dispatch_to_users(
         return []
 
     tenant_id = str(tenant_id or '').strip()
+    group_names: set[str] = set()
+    if 'notification_group_names' in alert:
+        raw_group_names = alert.get('notification_group_names')
+        if raw_group_names is None:
+            return [{'platform': 'notification_group', 'success': False, 'error': 'notification_group_invalid'}]
+        if isinstance(raw_group_names, str):
+            try:
+                raw_group_names = json.loads(raw_group_names)
+            except (TypeError, ValueError):
+                return [{'platform': 'notification_group', 'success': False, 'error': 'notification_group_invalid'}]
+        if not isinstance(raw_group_names, (list, tuple, set)) or any(
+            not isinstance(name, str) or not name.strip()
+            for name in raw_group_names
+        ):
+            return [{'platform': 'notification_group', 'success': False, 'error': 'notification_group_invalid'}]
+        group_names = {name.strip() for name in raw_group_names}
+        if group_names and not tenant_id:
+            return [{'platform': 'notification_group', 'success': False, 'error': 'notification_group_tenant_missing'}]
+
     requested_channels = None if channels is None else {
         str(channel or '').strip().lower()
         for channel in channels
@@ -1043,6 +1049,18 @@ def _dispatch_to_users(
             user_query += " AND tenant_id = ?"
             user_params.append(tenant_id)
         user_rows = [dict(row) for row in conn.execute(user_query, user_params).fetchall()]
+        if group_names:
+            user_rows = [
+                user for user in user_rows
+                if str(user.get('group_name') or '').strip() in group_names
+            ]
+            if not user_rows:
+                return [{
+                    'platform': 'notification_group',
+                    'success': False,
+                    'error': 'notification_group_no_recipients',
+                    'recipient_count': 0,
+                }]
 
         # 3. 汇总去重后的发送目标。个人设置可以覆盖全局通道；如果
         # 个人设置只保存了掩码值，则安全地回退到全局通道配置。
@@ -1215,6 +1233,13 @@ def _dispatch_to_users(
                         'destination_key': str(smtp_config.get('id') or profile_id or 'primary'),
                     })
 
+        if group_names and not results:
+            return [{
+                'platform': 'notification_group',
+                'success': False,
+                'error': 'notification_group_no_recipients',
+                'recipient_count': 0,
+            }]
         return results
     except Exception as e:
         logger.error(f"[Notify] scoped notification dispatch error: {e}")

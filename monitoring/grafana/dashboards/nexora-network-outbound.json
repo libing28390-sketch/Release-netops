@@ -1394,5 +1394,5 @@
   "title": "06 互联网出口与 WAN（需选择出口接口） (Select WAN Interface)",
   "description": "此大盘必须先选择出口设备和一个或多个已确认的 WAN 接口；不会默认把全部设备或全部端口当作互联网出口。",
   "uid": "nexora-network-outbound",
-  "version": 29
+  "version": 30
 }

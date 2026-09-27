@@ -57,7 +57,7 @@
       },
       "targets": [
         {
-          "expr": "count(count by (instance) (up{job=\"network_snmp\"})) or vector(0)",
+          "expr": "count(count by (instance) (up{job=\"network_snmp\"} == 1)) or vector(0)",
           "refId": "A"
         }
       ]
@@ -581,5 +581,5 @@
   "timezone": "browser",
   "title": "05 SNMP 采集健康 (SNMP Scrape Health)",
   "uid": "nexora-monitoring-health",
-  "version": 29
+  "version": 30
 }

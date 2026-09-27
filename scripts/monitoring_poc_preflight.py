@@ -82,7 +82,7 @@ def _check_static() -> tuple[list[str], list[str]]:
                 errors.append(f"SNMP OID module has no metrics: {module_key}")
         dashboard = json.loads((ROOT / "monitoring" / "grafana" / "dashboards" / "nexora-network-overview.json").read_text(encoding="utf-8"))
         dashboard_titles = {str(panel.get("title") or "") for panel in dashboard.get("panels") or []}
-        for title in ("设备 CPU 使用率", "设备内存使用率", "设备温度"):
+        for title in ("设备 CPU 使用率 Top10", "设备内存使用率 Top10", "温度指标覆盖设备数"):
             if title not in dashboard_titles:
                 errors.append(f"Grafana dashboard panel missing: {title}")
     except (OSError, KeyError, TypeError, yaml.YAMLError) as exc:

@@ -51,6 +51,7 @@ _MAX_BODY_BYTES = 64 * 1024
 # seven days to keep response size and rendering latency predictable.
 OUTBOUND_MAX_HISTORY_HOURS = 7 * 24
 OUTBOUND_MAX_HISTORY_POINTS = 1500
+ICMP_ECHO_COUNT = 5
 
 
 def utc_now_iso() -> str:
@@ -247,6 +248,8 @@ def _base_result(target: dict) -> dict:
         "probe_type": target.get("probe_type") or "TCP_CONNECT",
         "success": False,
         "latency_ms": None,
+        "packet_loss_percent": None,
+        "rtt_jitter_ms": None,
         "error_type": None,
         "error_message": None,
         "resolved_ip": None,
@@ -255,11 +258,42 @@ def _base_result(target: dict) -> dict:
     }
 
 
+def _parse_icmp_quality(output: str) -> tuple[float | None, float | None, float | None]:
+    """Extract mean echo RTT, packet loss, and mean absolute RTT change."""
+
+    text = str(output or "")
+    echo_rtts = [
+        float(value)
+        for value in re.findall(r"time\s*[=<]\s*([0-9]+(?:\.[0-9]+)?)\s*ms", text, re.IGNORECASE)
+    ]
+    average_rtt = sum(echo_rtts) / len(echo_rtts) if echo_rtts else None
+    if average_rtt is None:
+        summary = re.search(
+            r"(?:rtt|round-trip).*?=\s*[0-9.]+/([0-9.]+)/[0-9.]+/[0-9.]+\s*ms",
+            text,
+            re.IGNORECASE,
+        )
+        if summary:
+            average_rtt = float(summary.group(1))
+        else:
+            windows_summary = re.search(r"Average\s*=\s*([0-9.]+)\s*ms", text, re.IGNORECASE)
+            if windows_summary:
+                average_rtt = float(windows_summary.group(1))
+
+    loss_match = re.search(r"([0-9]+(?:\.[0-9]+)?)%\s*packet loss", text, re.IGNORECASE)
+    if not loss_match:
+        loss_match = re.search(r"\(([0-9]+(?:\.[0-9]+)?)%\s*loss\)", text, re.IGNORECASE)
+    packet_loss = float(loss_match.group(1)) if loss_match else None
+    jitter = None
+    if len(echo_rtts) >= 2:
+        jitter = sum(abs(right - left) for left, right in zip(echo_rtts, echo_rtts[1:])) / (len(echo_rtts) - 1)
+    return average_rtt, packet_loss, jitter
+
+
 def _probe_icmp(target: dict) -> dict:
     import platform
     from core.subprocess_utils import run_console_command
     result = _base_result(target)
-    started = time.perf_counter()
     host = target["host"]
     timeout_ms = int(target.get("timeout_ms", 2000))
     try:
@@ -269,16 +303,22 @@ def _probe_icmp(target: dict) -> dict:
         
         system = platform.system().lower()
         if system == "windows":
-            cmd = ["ping", "-n", "1", "-w", str(timeout_ms), ip_addr]
+            per_echo_timeout_ms = max(100, int(timeout_ms / ICMP_ECHO_COUNT))
+            cmd = ["ping", "-n", str(ICMP_ECHO_COUNT), "-w", str(per_echo_timeout_ms), ip_addr]
         else:
-            timeout_sec = max(1, int(timeout_ms / 1000))
-            cmd = ["ping", "-c", "1", "-W", str(timeout_sec), ip_addr]
-            
+            timeout_sec = max(1, int((timeout_ms + 999) / 1000))
+            cmd = ["ping", "-n", "-c", str(ICMP_ECHO_COUNT), "-i", "0.2", "-W", str(timeout_sec), "-w", str(timeout_sec), ip_addr]
+
         proc = run_console_command(cmd, timeout=timeout_ms / 1000 + 1)
+        average_rtt, packet_loss, jitter = _parse_icmp_quality(
+            f"{getattr(proc, 'stdout', '')}\n{getattr(proc, 'stderr', '')}"
+        )
+        result["packet_loss_percent"] = packet_loss
+        result["rtt_jitter_ms"] = jitter
         if proc.returncode == 0:
-            result.update(success=True, latency_ms=round((time.perf_counter() - started) * 1000, 2), resolved_ip=ip_addr)
+            result.update(success=True, latency_ms=average_rtt, resolved_ip=ip_addr)
         else:
-            result["error_type"] = "PING_FAILED"
+            result["error_type"] = "CONNECT_TIMEOUT" if packet_loss == 100 else "PING_FAILED"
             result["error_message"] = proc.stderr.strip() or proc.stdout.strip() or f"Ping failed with exit code {proc.returncode}"
     except BaseException as exc:
         result["error_type"], result["error_message"] = _classify_error(exc)
@@ -984,11 +1024,13 @@ def run_outbound_probe_once(*, include_egress_ip: bool = False) -> dict:
                 """
                 INSERT INTO outbound_probe_results (
                     id, run_id, target_id, target_name, group_name, probe_type, sampled_at,
-                    success, latency_ms, error_type, error_message, resolved_ip, http_status, dns_answers_json
-                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                    success, latency_ms, packet_loss_percent, rtt_jitter_ms, error_type, error_message,
+                    resolved_ip, http_status, dns_answers_json
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                 """,
                 (str(uuid.uuid4()), run_id, result["target_id"], result["target_name"], result["group"], result["probe_type"],
-                 finished_at, bool(result["success"]), result["latency_ms"], result["error_type"],
+                 finished_at, bool(result["success"]), result["latency_ms"], result["packet_loss_percent"],
+                 result["rtt_jitter_ms"], result["error_type"],
                  result["error_message"], result["resolved_ip"], result["http_status"], json.dumps(result["dns_answers"][:8])),
             )
         # Preserve the existing aggregate table for older consumers.
@@ -1044,7 +1086,223 @@ def record_outbound_probe_snapshot() -> None:
     run_outbound_probe_once(include_egress_ip=False)
 
 
-def get_outbound_status(*, history_hours: int = 24) -> dict:
+def _get_outbound_status_for_tenant(*, history_hours: int, tenant_id: str) -> dict:
+    """Build status/history from only the caller tenant's target samples."""
+    tenant_scope = str(tenant_id or 'tenant-default').strip() or 'tenant-default'
+    requested_history_hours = _bounded_history_hours(history_hours)
+    targets_config = list_outbound_targets(tenant_id=tenant_scope)
+    conn = get_db_connection()
+    try:
+        node = _latest_node(conn)
+        current = _latest_run(conn, node['id'])
+        cutoff = (datetime.now(timezone.utc) - timedelta(hours=requested_history_hours)).isoformat()
+        history_rows = conn.execute(
+            """
+            SELECT run.id AS run_id, run.started_at, run.finished_at,
+                   result.target_id, result.target_name, result.group_name,
+                   result.success, result.latency_ms
+            FROM outbound_probe_runs AS run
+            JOIN outbound_probe_results AS result ON result.run_id = run.id
+            JOIN outbound_probe_targets AS target ON target.id = result.target_id
+            WHERE run.node_id = ?
+              AND (run.finished_at >= ? OR run.id = ?)
+              AND COALESCE(target.tenant_id, 'tenant-default') = ?
+            ORDER BY run.finished_at ASC, result.group_name, result.target_name
+            """,
+            (node['id'], cutoff, current['id'] if current else '', tenant_scope),
+        ).fetchall()
+
+        runs_by_id: dict[str, dict] = {}
+        for row in history_rows:
+            item = dict(row)
+            run_id = str(item['run_id'])
+            bucket = runs_by_id.setdefault(run_id, {
+                'id': run_id,
+                'started_at': item.get('started_at'),
+                'finished_at': item.get('finished_at'),
+                'targets': [],
+                'latencies': [],
+            })
+            target_result = {
+                'target_id': item.get('target_id'),
+                'target_name': item.get('target_name'),
+                'group': item.get('group_name') or 'business',
+                'success': bool(item.get('success')),
+                'latency_ms': item.get('latency_ms'),
+            }
+            bucket['targets'].append(target_result)
+            if target_result['success'] and target_result.get('latency_ms') is not None:
+                bucket['latencies'].append(float(target_result['latency_ms']))
+
+        history: list[dict] = []
+        previous_status: dict | None = None
+        for bucket in runs_by_id.values():
+            scoped_targets = bucket['targets']
+            success_count = sum(1 for item in scoped_targets if item['success'])
+            total_count = len(scoped_targets)
+            raw_status = _raw_status(success_count, total_count)
+            status, failure_count, recovery_count = _status_with_hysteresis(previous_status, raw_status)
+            point = {
+                'id': bucket['id'],
+                'finished_at': bucket['finished_at'],
+                'status': status,
+                'raw_status': raw_status,
+                'success_count': success_count,
+                'total_targets': total_count,
+                'availability_percent': round(success_count / total_count * 100, 2) if total_count else 0,
+                'average_latency_ms': round(sum(bucket['latencies']) / len(bucket['latencies']), 2) if bucket['latencies'] else None,
+                'groups': _group_statuses(scoped_targets),
+                'consecutive_failure_count': failure_count,
+                'consecutive_recovery_count': recovery_count,
+            }
+            history.append(point)
+            previous_status = {
+                'status': status,
+                'consecutive_failure_count': failure_count,
+                'consecutive_recovery_count': recovery_count,
+            }
+
+        current_payload = None
+        if current:
+            current_rows = conn.execute(
+                """
+                SELECT result.*
+                FROM outbound_probe_results AS result
+                JOIN outbound_probe_targets AS target ON target.id = result.target_id
+                WHERE result.run_id = ?
+                  AND COALESCE(target.tenant_id, 'tenant-default') = ?
+                ORDER BY result.group_name, result.target_name
+                """,
+                (current['id'], tenant_scope),
+            ).fetchall()
+            current_targets: list[dict] = []
+            recent_cutoff = (datetime.now(timezone.utc) - timedelta(hours=1)).isoformat()
+            recent_rows = conn.execute(
+                """
+                SELECT result.target_id,
+                       COUNT(*) AS total_count,
+                       SUM(CASE WHEN result.success IS TRUE THEN 1 ELSE 0 END) AS success_count
+                FROM outbound_probe_results AS result
+                JOIN outbound_probe_targets AS target ON target.id = result.target_id
+                WHERE result.sampled_at >= ?
+                  AND COALESCE(target.tenant_id, 'tenant-default') = ?
+                GROUP BY result.target_id
+                """,
+                (recent_cutoff, tenant_scope),
+            ).fetchall()
+            recent_availability = {
+                row['target_id']: round(int(row['success_count'] or 0) / int(row['total_count'] or 1) * 100, 2)
+                for row in recent_rows
+            }
+            for row in current_rows:
+                item = dict(row)
+                try:
+                    item['dns_answers'] = json.loads(item.pop('dns_answers_json', '[]') or '[]')
+                except (TypeError, ValueError):
+                    item['dns_answers'] = []
+                item['group'] = item.pop('group_name', 'business')
+                item['success'] = bool(item.get('success'))
+                item['recent_availability'] = recent_availability.get(item.get('target_id'), 100.0)
+                current_targets.append(item)
+
+            success_count = sum(1 for item in current_targets if item['success'])
+            total_count = len(current_targets)
+            raw_status = _raw_status(success_count, total_count)
+            latest_point = next((item for item in reversed(history) if item['id'] == current['id']), None)
+            status = latest_point['status'] if latest_point else raw_status
+            failure_count = latest_point['consecutive_failure_count'] if latest_point else 0
+            recovery_count = latest_point['consecutive_recovery_count'] if latest_point else 0
+            latencies = [
+                float(item['latency_ms']) for item in current_targets
+                if item['success'] and item.get('latency_ms') is not None
+            ]
+            if not current_targets:
+                status_reason = '当前租户在最近一次检测中没有探测样本。'
+            elif success_count == total_count:
+                status_reason = '当前租户的探测目标均可用。'
+            elif success_count == 0:
+                status_reason = '当前租户的探测目标均不可用。'
+            else:
+                status_reason = '当前租户有部分探测目标不可用。'
+
+            status_duration_seconds = 0
+            transition_point = next(
+                (item for item in reversed(history[:-1]) if item['status'] != status),
+                None,
+            )
+            transition_at = transition_point.get('finished_at') if transition_point else current.get('started_at')
+            if transition_at:
+                try:
+                    transition_dt = datetime.fromisoformat(str(transition_at).replace('Z', '+00:00'))
+                    status_duration_seconds = max(0, int((datetime.now(timezone.utc) - transition_dt).total_seconds()))
+                except ValueError:
+                    pass
+
+            next_check_at = None
+            try:
+                from core.scheduler_manager import scheduler
+                job = scheduler.get_job('outbound_probe_sampler')
+                if job and job.next_run_time:
+                    next_check_at = job.next_run_time.isoformat()
+            except Exception:
+                pass
+            scheduler_is_running = True
+            scheduler_interrupted_minutes = 0
+            if current.get('finished_at'):
+                try:
+                    last_checked = datetime.fromisoformat(str(current['finished_at']).replace('Z', '+00:00'))
+                    diff_minutes = (datetime.now(timezone.utc) - last_checked).total_seconds() / 60
+                    if diff_minutes > 3.0:
+                        scheduler_is_running = False
+                        scheduler_interrupted_minutes = int(diff_minutes)
+                except ValueError:
+                    pass
+
+            current_payload = {
+                'run_id': current['id'],
+                'node_id': node['id'],
+                'node_name': node['node_name'],
+                'status': status,
+                'raw_status': raw_status,
+                'status_reason': status_reason,
+                'success_count': success_count,
+                'total_count': total_count,
+                'availability_percent': round(success_count / total_count * 100, 2) if total_count else 0,
+                'average_latency_ms': round(sum(latencies) / len(latencies), 2) if latencies else None,
+                'p95_latency_ms': _percentile(latencies, 0.95) if latencies else None,
+                'max_latency_ms': round(max(latencies), 2) if latencies else None,
+                'status_duration_seconds': status_duration_seconds,
+                'next_check_at': next_check_at,
+                'scheduler_is_running': scheduler_is_running,
+                'scheduler_interrupted_minutes': scheduler_interrupted_minutes,
+                # Egress IP is platform-wide and is intentionally hidden from tenant viewers.
+                'public_ip': '',
+                'public_ip_changed': False,
+                'consecutive_failure_count': failure_count,
+                'consecutive_recovery_count': recovery_count,
+                'checked_at': current.get('finished_at'),
+                'groups': _group_statuses(current_targets),
+                'targets': current_targets,
+                'connectivity_status': raw_status,
+                'overall_status': status,
+                'egress_ip': None,
+                'status_reasons': [],
+            }
+
+        return {
+            'current': current_payload,
+            'history': _downsample_history(history),
+            'history_hours': requested_history_hours,
+            'history_total_points': len(history),
+            'targets': targets_config,
+        }
+    finally:
+        conn.close()
+
+
+def get_outbound_status(*, history_hours: int = 24, tenant_id: str | None = None) -> dict:
+    if tenant_id is not None:
+        return _get_outbound_status_for_tenant(history_hours=history_hours, tenant_id=tenant_id)
     conn = get_db_connection()
     try:
         node = _latest_node(conn)
@@ -1302,6 +1560,7 @@ def get_outbound_target_history(*, target_id: str, history_hours: int = 24, star
                 """
                 SELECT result.id, result.run_id, result.target_id, result.target_name, result.group_name,
                        result.probe_type, result.sampled_at, result.success, result.latency_ms,
+                       result.packet_loss_percent, result.rtt_jitter_ms,
                        result.error_type, result.error_message, result.resolved_ip, result.http_status,
                        result.dns_answers_json, run.status AS run_status, run.public_ip
                 FROM outbound_probe_results AS result
@@ -1324,6 +1583,7 @@ def get_outbound_target_history(*, target_id: str, history_hours: int = 24, star
                 """
                 SELECT result.id, result.run_id, result.target_id, result.target_name, result.group_name,
                        result.probe_type, result.sampled_at, result.success, result.latency_ms,
+                       result.packet_loss_percent, result.rtt_jitter_ms,
                        result.error_type, result.error_message, result.resolved_ip, result.http_status,
                        result.dns_answers_json, run.status AS run_status, run.public_ip
                 FROM outbound_probe_results AS result
@@ -1346,6 +1606,9 @@ def get_outbound_target_history(*, target_id: str, history_hours: int = 24, star
                 item["latency_ms"] = float(item["latency_ms"])
                 if item["success"]:
                     latencies.append(item["latency_ms"])
+            for quality_field in ("packet_loss_percent", "rtt_jitter_ms"):
+                if item.get(quality_field) is not None:
+                    item[quality_field] = float(item[quality_field])
             try:
                 item["dns_answers"] = json.loads(item.pop("dns_answers_json", "[]") or "[]")
             except (TypeError, ValueError):

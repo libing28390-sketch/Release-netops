@@ -1528,7 +1528,7 @@ def _get_system_name() -> str:
 
 
 @router.post("/users/{user_id}/notify-test")
-def test_notification_channel(user_id: str, request: Request, payload: dict = Body(...)):
+def test_notification_channel(user_id: str, request: Request, payload: dict = Body(...), user=require_role("Viewer")):
     """
     对指定平台发送一条测试消息，验证 webhook 配置是否正确。
     payload: {
@@ -1540,6 +1540,10 @@ def test_notification_channel(user_id: str, request: Request, payload: dict = Bo
     platform = (payload.get('platform') or '').strip().lower()
     if platform not in ('feishu', 'dingtalk', 'wechat'):
         raise HTTPException(status_code=400, detail="platform must be feishu | dingtalk | wechat")
+
+    actor_id = str((user or {}).get('user_id') or (user or {}).get('id') or '')
+    if str((user or {}).get('role') or '') != 'Administrator' and actor_id != str(user_id):
+        raise HTTPException(status_code=403, detail="You may only test your own notification channel")
 
     # 优先使用请求体中的 webhook_url（不保存即可测试）
     webhook_url = (payload.get('webhook_url') or '').strip()

@@ -9,7 +9,7 @@ null = None
 ROOT_DIR = Path(__file__).resolve().parents[2]
 DASHBOARDS_DIR = ROOT_DIR / "monitoring" / "grafana" / "dashboards"
 DS_UID = "victoriametrics"
-DASHBOARD_VERSION = 29
+DASHBOARD_VERSION = 30
 NO_VALUE_TEXT = "数据暂不可用"
 
 INBOUND_COLOR = "#3274D9"
@@ -54,6 +54,36 @@ STATUS_VALUE_MAPPINGS = [
         "options": {
             "match": "nan",
             "result": {"text": "UNKNOWN", "color": UNKNOWN_COLOR},
+        },
+    },
+]
+
+ADMIN_STATUS_VALUE_MAPPINGS = [
+    {
+        "type": "value",
+        "options": {
+            "1": {"text": "启用"},
+            "2": {"text": "停用"},
+            "3": {"text": "测试中"},
+            "0": {"text": "未知"},
+            "4": {"text": "未知"},
+            "5": {"text": "未知"},
+            "6": {"text": "未知"},
+            "7": {"text": "未知"},
+        },
+    },
+    {
+        "type": "special",
+        "options": {
+            "match": "null",
+            "result": {"text": "未知"},
+        },
+    },
+    {
+        "type": "special",
+        "options": {
+            "match": "nan",
+            "result": {"text": "未知"},
         },
     },
 ]
@@ -235,8 +265,9 @@ def timeseries_panel(
     legend_display_mode="table",
     legend_placement="right",
     legend_calcs=None,
+    description=None,
 ):
-    return {
+    panel = {
         "id": pid,
         "title": title,
         "type": "timeseries",
@@ -269,10 +300,14 @@ def timeseries_panel(
         },
         "targets": targets
     }
+    if description:
+        panel["description"] = description
+    return panel
 
 def clean_organize_transformation(
     value_col_name="数值",
     extra_renames=None,
+    extra_indices=None,
     *,
     interface_description_label="ifDescr",
 ):
@@ -294,6 +329,22 @@ def clean_organize_transformation(
     }
     if extra_renames:
         renames.update(extra_renames)
+    index_by_name = {
+        "site_name": 0,
+        "hostname": 1,
+        "instance": 2,
+        "ifName": 3,
+        description_index: 4,
+        "vendor": 5,
+        "role": 6,
+        "interface_role": 7,
+        "utilization_warn_pct": 8,
+        "utilization_high_pct": 9,
+        "utilization_critical_pct": 10,
+        "Value": 11,
+    }
+    if extra_indices:
+        index_by_name.update(extra_indices)
     result = [
         {
             "id": "organize",
@@ -319,20 +370,7 @@ def clean_organize_transformation(
                     "sysName": True,
                     "nexora_interface_role": True,
                 },
-                "indexByName": {
-                    "site_name": 0,
-                    "hostname": 1,
-                    "instance": 2,
-                    "ifName": 3,
-                    description_index: 4,
-                    "vendor": 5,
-                    "role": 6,
-                    "interface_role": 7,
-                    "utilization_warn_pct": 8,
-                    "utilization_high_pct": 9,
-                    "utilization_critical_pct": 10,
-                    "Value": 11,
-                },
+                "indexByName": index_by_name,
                 "renameByName": renames,
             }
         }
@@ -359,6 +397,8 @@ def table_panel(
     targets=None,
     detail_link=False,
     color_mapped_cells=False,
+    mapped_cell_mode="color-text",
+    extra_value_mappings=None,
     description=None,
     map_interface_role=None,
 ):
@@ -389,8 +429,13 @@ def table_panel(
             "matcher": {"id": "byName", "options": value_col_name},
             "properties": [{
                 "id": "custom.cellOptions",
-                "value": {"type": "color-text"},
+                "value": {"type": mapped_cell_mode},
             }],
+        })
+    for field_name, mappings in (extra_value_mappings or {}).items():
+        overrides.append({
+            "matcher": {"id": "byName", "options": field_name},
+            "properties": [{"id": "mappings", "value": mappings}],
         })
     if detail_link:
         overrides.append({
@@ -537,6 +582,25 @@ def make_query_variable(name, label, query_str, multi=True, include_all=True, re
         variable["regex"] = regex
     return variable
 
+
+def make_admin_down_variable():
+    """Expose intentionally disabled interfaces on demand in the status table."""
+    return {
+        "current": {"selected": True, "text": "隐藏管理停用", "value": "0"},
+        "hide": 0,
+        "includeAll": False,
+        "label": "接口范围",
+        "multi": False,
+        "name": "show_admin_down",
+        "options": [
+            {"selected": True, "text": "隐藏管理停用", "value": "0"},
+            {"selected": False, "text": "显示管理停用", "value": "1"},
+        ],
+        "query": "隐藏管理停用 : 0,显示管理停用 : 1",
+        "skipUrlSync": False,
+        "type": "custom",
+    }
+
 def make_network_variables(multi_device=True, include_all_device=True, device_label="设备"):
     network_targets = 'up{job="network_snmp"'
     return [
@@ -572,6 +636,7 @@ def make_interface_variables(
     device_label="设备",
     multi_interface=True,
     include_threshold_values=False,
+    include_admin_down_selector=False,
 ):
     vars = make_network_variables(multi_device=multi_device, include_all_device=include_all_device, device_label=device_label)
     vars.append(
@@ -581,6 +646,8 @@ def make_interface_variables(
             f'label_values({{__name__=~"ifName",{NETWORK_JOB},site_name=~"$site",vendor=~"$vendor",role=~"$role",hostname=~"$device"}}, interface_role)',
         )
     )
+    if include_admin_down_selector:
+        vars.append(make_admin_down_variable())
     vars.append(
         make_query_variable(
             "interface",
@@ -964,7 +1031,15 @@ def build_interface_dashboard():
     if_filter = f'{sel},ifName=~"$interface",interface_role=~"$interface_role"'
     in_rate = counter_rate_expr("ifHCInOctets", "ifInOctets", sel)
     out_rate = counter_rate_expr("ifHCOutOctets", "ifOutOctets", sel)
-    if_join = filtered_interface_join(if_filter, alias_selector=sel, fallback_status=False)
+    state_if_join = filtered_interface_join(if_filter, alias_selector=sel, fallback_status=False)
+    admin_enabled = f'(ifAdminStatus{{{if_filter}}} == 1)'
+    oper_up = f'(ifOperStatus{{{if_filter}}} == 1)'
+    # Traffic panels include enabled interfaces that are currently operational.
+    # Health and stability panels retain state_if_join so they can show DOWN states.
+    if_join = (
+        f"{state_if_join} and on(instance, ifIndex) {admin_enabled} "
+        f"and on(instance, ifIndex) {oper_up}"
+    )
     error_rate = interface_rate_sum(["ifInErrors", "ifOutErrors"], sel, if_join)
     discard_rate = interface_rate_sum(["ifInDiscards", "ifOutDiscards"], sel, if_join)
     in_packets = interface_rate_sum(
@@ -1019,17 +1094,26 @@ def build_interface_dashboard():
             (interface_rate_sum(["ifHCInBroadcastPkts", "ifHCOutBroadcastPkts"], sel, if_join), "广播"),
         )
     )
-    flap_24h = f"changes(ifOperStatus{{{if_filter}}}[24h]) {if_join}"
-    flap_7d = f"changes(ifOperStatus{{{if_filter}}}[7d]) {if_join}"
+    flap_24h = f"changes(ifOperStatus{{{if_filter}}}[24h]) {state_if_join} and on(instance, ifIndex) {admin_enabled}"
+    flap_7d = f"changes(ifOperStatus{{{if_filter}}}[7d]) {state_if_join} and on(instance, ifIndex) {admin_enabled}"
     # IF-MIB TimeTicks and sysUpTime wrap at 2^32 centiseconds. Modulo keeps
     # the elapsed seconds non-negative across one wrap (sampling gaps still
     # limit the flap count resolution).
-    last_change_age = (
+    last_change_age_raw = (
         f"(((sysUpTime{{{sel}}} - on(instance) group_right(ifIndex, ifName, ifAlias, interface_role, "
         f"utilization_warn_pct, utilization_high_pct, utilization_critical_pct) ifLastChange{{{if_filter}}}) "
         f"+ 4294967296) % 4294967296) / 100"
     )
-    status_rows = f"ifOperStatus{{{if_filter}}} {if_join}"
+    last_change_age = f"({last_change_age_raw}) and on(instance, ifIndex) {admin_enabled}"
+    admin_status = f"ifAdminStatus{{{if_filter}}}"
+    selected_admin_status = (
+        f"(({admin_status} != 2) or on(instance, ifIndex) "
+        f"(({admin_status} == 2) and on() (vector($show_admin_down) == 1)))"
+    )
+    status_admin_rows = f"({admin_status} and on(instance, ifIndex) {selected_admin_status}) {state_if_join}"
+    status_oper_rows = (
+        f"(ifOperStatus{{{if_filter}}} and on(instance, ifIndex) {selected_admin_status}) {state_if_join}"
+    )
     rate_identity = "hostname, site_name, instance, ifIndex, ifName, ifAlias"
     in_rate_top10 = f"topk(10, max by ({rate_identity}) ({in_rate} {if_join}) * 8)"
     out_rate_top10 = f"topk(10, max by ({rate_identity}) ({out_rate} {if_join}) * 8)"
@@ -1156,12 +1240,29 @@ def build_interface_dashboard():
             value_col_name="距上次变化 (秒)", detail_link=True,
         ),
         table_panel(
-            14, "接口运行状态",
-            status_rows,
+            14, "接口管理与运行状态",
+            status_admin_rows,
             0, 57, 24, 7,
-            transformations=clean_organize_transformation("运行状态", interface_description_label="ifAlias"),
+            targets=[
+                {"expr": status_admin_rows, "format": "table", "instant": True, "refId": "A"},
+                {"expr": status_oper_rows, "format": "table", "instant": True, "refId": "B"},
+            ],
+            transformations=[{
+                "id": "joinByLabels",
+                "options": {"labels": [
+                    "instance", "hostname", "site_name", "vendor", "role", "ifIndex", "ifName", "ifAlias",
+                    "interface_role", "utilization_warn_pct", "utilization_high_pct", "utilization_critical_pct",
+                ]},
+            }] + clean_organize_transformation(
+                "运行状态",
+                extra_renames={"Value #A": "管理状态", "Value #B": "运行状态"},
+                extra_indices={"Value #A": 11, "Value #B": 12},
+                interface_description_label="ifAlias",
+            ),
             value_col_name="运行状态", value_mappings=STATUS_VALUE_MAPPINGS,
-            color_mapped_cells=True, detail_link=True,
+            color_mapped_cells=True, mapped_cell_mode="color-background", detail_link=True,
+            extra_value_mappings={"管理状态": ADMIN_STATUS_VALUE_MAPPINGS},
+            description="管理状态为启用时，运行 DOWN 表示异常候选；管理状态为停用且运行 DOWN 表示管理员停用；管理停用但运行 UP 表示状态不一致。默认隐藏管理停用接口，可通过“接口范围”切换显示。",
         ),
     ]
 
@@ -1177,12 +1278,12 @@ def build_interface_dashboard():
         "schemaVersion": 39,
         "tags": ["nexora", "network", "interface"],
         "templating": {
-            "list": make_interface_variables()
+            "list": make_interface_variables(include_admin_down_selector=True)
         },
         "time": {"from": "now-6h", "to": "now"},
         "timezone": "browser",
         "title": "04 接口流量与健康（Interface Traffic & Health）",
-        "description": "接口用途显示“用途待确认”表示 CMDB 尚未配置该端口的用途，不代表接口异常。流量与健康数据取决于设备采集到的 IF-MIB 接口计数器。",
+        "description": "流量与利用率只统计管理状态启用且运行状态 UP 的接口。健康表默认隐藏管理停用接口，运行 DOWN 的接口作为异常候选；管理停用接口可通过“接口范围”切换显示。接口用途显示“用途待确认”表示 CMDB 尚未配置该端口的用途，不代表接口异常。",
         "uid": "nexora-network-interface",
         "version": DASHBOARD_VERSION
     }
@@ -1416,7 +1517,7 @@ def build_interface_detail_dashboard():
 # 5. Monitoring Engine Health Dashboard
 def build_health_dashboard():
     panels = [
-        stat_panel(1, "SNMP 在线目标", f"count(count by (instance) (up{{{NETWORK_JOB}}})) or vector(0)", 0, 0, 6, 4, color="#56A64B"),
+        stat_panel(1, "SNMP 在线目标", f"count(count by (instance) (up{{{NETWORK_JOB}}} == 1)) or vector(0)", 0, 0, 6, 4, color="#56A64B"),
         stat_panel(2, "SNMP 失败目标", f"count(count by (instance) (up{{{NETWORK_JOB}}} == 0)) or vector(0)", 6, 0, 6, 4, thresholds=[{"color": "green", "value": None}, {"color": "red", "value": 1}]),
         stat_panel(3, "平均 SNMP 采集耗时", f"avg(scrape_duration_seconds{{{NETWORK_JOB}}}) or vector(0)", 12, 0, 6, 4, unit="s", color="#3274D9"),
         stat_panel(4, "最大 SNMP 采集耗时", f"max(scrape_duration_seconds{{{NETWORK_JOB}}}) or vector(0)", 18, 0, 6, 4, unit="s", thresholds=[{"color": "green", "value": None}, {"color": "#E0B400", "value": 5}, {"color": "red", "value": 15}]),
@@ -1757,6 +1858,981 @@ def build_windows_dashboard():
         "version": DASHBOARD_VERSION
     }
 
+
+# 10. Monitoring Platform Health Dashboard
+def build_platform_health_dashboard():
+    platform_selector = (
+        'job=~"platform_api|platform_victoriametrics|platform_vmagent|'
+        'platform_snmp_exporter|platform_grafana|platform_cadvisor"'
+    )
+    platform_up = f"up{{{platform_selector}}}"
+    up_value_mappings = [
+        {
+            "type": "value",
+            "options": {
+                "1": {"text": "UP", "color": "green"},
+                "0": {"text": "DOWN", "color": "red"},
+            },
+        },
+        {
+            "type": "special",
+            "options": {
+                "match": "null",
+                "result": {"text": NO_VALUE_TEXT, "color": UNKNOWN_COLOR},
+            },
+        },
+    ]
+    panels = [
+        stat_panel(
+            1,
+            "平台在线目标",
+            f"count({platform_up} == 1)",
+            0,
+            0,
+            4,
+            4,
+            unit="none",
+            color="#56A64B",
+            description="仅统计 platform_* 六类已配置采集作业中当前为 UP 的目标。",
+        ),
+        stat_panel(
+            2,
+            "平台失败目标",
+            f"count({platform_up} == 0)",
+            4,
+            0,
+            4,
+            4,
+            unit="none",
+            thresholds=[
+                {"color": "green", "value": None},
+                {"color": "red", "value": 1},
+            ],
+            description="目标 DOWN 时显示为失败；数据缺失保持为无数据。",
+        ),
+        stat_panel(
+            3,
+            "平台采集目标数",
+            f"count({platform_up})",
+            8,
+            0,
+            4,
+            4,
+            unit="none",
+            color="#A352CC",
+            description="已配置的 API、VictoriaMetrics、vmagent、SNMP Exporter、Grafana 和 cAdvisor 采集目标数。",
+        ),
+        stat_panel(
+            4,
+            "最大采集耗时",
+            f"max(scrape_duration_seconds{{{platform_selector}}})",
+            12,
+            0,
+            4,
+            4,
+            unit="s",
+            thresholds=[
+                {"color": "green", "value": None},
+                {"color": "#E0B400", "value": 2},
+                {"color": "red", "value": 5},
+            ],
+        ),
+        stat_panel(
+            5,
+            "监控数据库连接",
+            "nexora_monitoring_database_available",
+            16,
+            0,
+            4,
+            4,
+            unit="none",
+            thresholds=[
+                {"color": "red", "value": None},
+                {"color": "green", "value": 1},
+            ],
+            description="API /metrics 的 SELECT 1 健康探测：1 表示连接与查询成功，0 表示失败；这不是 PostgreSQL exporter。",
+        ),
+        stat_panel(
+            6,
+            "平均采集耗时",
+            f"avg(scrape_duration_seconds{{{platform_selector}}})",
+            20,
+            0,
+            4,
+            4,
+            unit="s",
+            color="#3274D9",
+        ),
+        timeseries_panel(
+            7,
+            "平台采集目标状态",
+            [
+                {
+                    "expr": f"max by (job) ({platform_up})",
+                    "legendFormat": "{{job}}",
+                    "refId": "A",
+                }
+            ],
+            0,
+            4,
+            12,
+            8,
+            unit="none",
+            legend_display_mode="list",
+            legend_placement="bottom",
+            legend_calcs=[],
+            description="按采集作业展示 UP 值；0 表示目标不可达。",
+        ),
+        timeseries_panel(
+            8,
+            "平台采集耗时趋势",
+            [
+                {
+                    "expr": f"scrape_duration_seconds{{{platform_selector}}}",
+                    "legendFormat": "{{job}}",
+                    "refId": "A",
+                }
+            ],
+            12,
+            4,
+            12,
+            8,
+            unit="s",
+            legend_display_mode="list",
+            legend_placement="bottom",
+            legend_calcs=[],
+        ),
+        table_panel(
+            9,
+            "平台采集目标明细",
+            platform_up,
+            0,
+            12,
+            24,
+            8,
+            value_col_name="状态",
+            value_mappings=up_value_mappings,
+            color_mapped_cells=True,
+            mapped_cell_mode="color-background",
+            transformations=[
+                {
+                    "id": "organize",
+                    "options": {
+                        "excludeByName": {"Time": True, "__name__": True},
+                        "indexByName": {"job": 0, "instance": 1, "Value": 2},
+                        "renameByName": {
+                            "job": "采集作业",
+                            "instance": "目标",
+                            "Value": "状态",
+                        },
+                    },
+                }
+            ],
+            description="包含平台服务及容器资源采集目标；数据库连通性单独来自 API SELECT 1。",
+        ),
+        stat_panel(
+            10,
+            "vmagent Remote Write 积压",
+            "sum(vmagent_remotewrite_pending_data_bytes)",
+            0,
+            20,
+            4,
+            4,
+            unit="bytes",
+            thresholds=[
+                {"color": "green", "value": None},
+                {"color": "#E0B400", "value": 104857600},
+                {"color": "red", "value": 1073741824},
+            ],
+            description="vmagent 尚未成功写入 VictoriaMetrics 的持久化队列字节数；数据源缺失时保持无数据。",
+        ),
+        stat_panel(
+            11,
+            "5m Remote Write 推送失败",
+            "sum(increase(vmagent_remotewrite_push_failures_total[5m]))",
+            4,
+            20,
+            4,
+            4,
+            unit="none",
+            thresholds=[
+                {"color": "green", "value": None},
+                {"color": "red", "value": 1},
+            ],
+        ),
+        stat_panel(
+            12,
+            "5m Remote Write 丢弃数据块",
+            "sum(increase(vmagent_remotewrite_packets_dropped_total[5m]))",
+            8,
+            20,
+            4,
+            4,
+            unit="none",
+            thresholds=[
+                {"color": "green", "value": None},
+                {"color": "red", "value": 1},
+            ],
+        ),
+        stat_panel(
+            13,
+            "VictoriaMetrics 存储可用空间",
+            "sum(vm_free_disk_space_bytes)",
+            12,
+            20,
+            4,
+            4,
+            unit="bytes",
+            description="VictoriaMetrics storageDataPath 所在文件系统的剩余空间。",
+        ),
+        stat_panel(
+            14,
+            "VictoriaMetrics 存储占用率",
+            "(1 - (sum(vm_free_disk_space_bytes) / sum(vm_total_disk_space_bytes)))",
+            16,
+            20,
+            4,
+            4,
+            unit="percentunit",
+            thresholds=[
+                {"color": "green", "value": None},
+                {"color": "#E0B400", "value": 0.8},
+                {"color": "red", "value": 0.9},
+            ],
+        ),
+        stat_panel(
+            15,
+            "VictoriaMetrics 只读状态（0可写，1只读）",
+            "max(vm_storage_is_read_only)",
+            20,
+            20,
+            4,
+            4,
+            unit="none",
+            thresholds=[
+                {"color": "green", "value": None},
+                {"color": "red", "value": 1},
+            ],
+            description="0 表示可写，1 表示存储进入只读状态；此指标缺失时保持无数据。",
+        ),
+        timeseries_panel(
+            16,
+            "容器 CPU 使用率（单核 = 100%）",
+            [{
+                "expr": 'sum by (name) (rate(container_cpu_usage_seconds_total{name=~".*nexora-(db|netops|victoriametrics|snmp-exporter|vmagent|grafana|nginx|redis|seaweedfs)$"}[5m])) * 100',
+                "legendFormat": "{{name}}",
+                "refId": "A",
+            }],
+            0,
+            24,
+            12,
+            8,
+            unit="percent",
+            legend_display_mode="list",
+            legend_placement="bottom",
+            legend_calcs=["lastNotNull", "max"],
+            description="CPU 按单个逻辑核归一化；cAdvisor 不导出自定义容器标签。",
+        ),
+        timeseries_panel(
+            17,
+            "容器内存工作集",
+            [{
+                "expr": 'sum by (name) (container_memory_working_set_bytes{name=~".*nexora-(db|netops|victoriametrics|snmp-exporter|vmagent|grafana|nginx|redis|seaweedfs)$"})',
+                "legendFormat": "{{name}}",
+                "refId": "A",
+            }],
+            12,
+            24,
+            12,
+            8,
+            unit="bytes",
+            legend_display_mode="list",
+            legend_placement="bottom",
+            legend_calcs=["lastNotNull", "max"],
+        ),
+        timeseries_panel(
+            18,
+            "容器磁盘读写速率",
+            [
+                {
+                    "expr": 'sum by (name) (rate(container_fs_reads_bytes_total{name=~".*nexora-(db|netops|victoriametrics|snmp-exporter|vmagent|grafana|nginx|redis|seaweedfs)$"}[5m]))',
+                    "legendFormat": "{{name}} read",
+                    "refId": "A",
+                },
+                {
+                    "expr": 'sum by (name) (rate(container_fs_writes_bytes_total{name=~".*nexora-(db|netops|victoriametrics|snmp-exporter|vmagent|grafana|nginx|redis|seaweedfs)$"}[5m]))',
+                    "legendFormat": "{{name}} write",
+                    "refId": "B",
+                },
+            ],
+            0,
+            32,
+            24,
+            8,
+            unit="Bps",
+            legend_display_mode="list",
+            legend_placement="bottom",
+            legend_calcs=["lastNotNull", "max"],
+        ),
+    ]
+    return {
+        "annotations": {"list": []},
+        "editable": false,
+        "fiscalYearStartMonth": 0,
+        "graphTooltip": 1,
+        "id": None,
+        "links": [],
+        "panels": panels,
+        "refresh": "30s",
+        "schemaVersion": 39,
+        "tags": ["nexora", "monitoring", "platform", "health"],
+        "templating": {"list": []},
+        "time": {"from": "now-1h", "to": "now"},
+        "timezone": "browser",
+        "title": "10 监控平台健康（Monitoring Platform Health）",
+        "description": "覆盖平台服务可用性、remote-write 队列、VictoriaMetrics 存储和应用容器资源。数据库连接来自 API SELECT 1；Docker API 仅通过内网只读代理供 cAdvisor 获取容器元数据，cAdvisor 仅只读访问宿主 /sys cgroup，不挂载宿主根目录。",
+        "uid": "nexora-platform-health",
+        "version": DASHBOARD_VERSION,
+    }
+
+
+# 11. Internet Probe Quality Dashboard
+def build_outbound_probe_quality_dashboard():
+    samples_1h = 'nexora_outbound_probe_samples{window="1h"}'
+    availability_1h = 'nexora_outbound_probe_availability_ratio{window="1h"}'
+    latency_avg_1h = 'nexora_outbound_probe_latency_avg_ms_by_type{window="1h",probe_type="icmp_ping"}'
+    latency_max_1h = 'nexora_outbound_probe_latency_max_ms_by_type{window="1h",probe_type="icmp_ping"}'
+    samples_24h = 'nexora_outbound_probe_samples{window="24h"}'
+    availability_24h = 'nexora_outbound_probe_availability_ratio{window="24h"}'
+    latency_avg_24h = 'nexora_outbound_probe_latency_avg_ms_by_type{window="24h",probe_type="icmp_ping"}'
+    latency_max_24h = 'nexora_outbound_probe_latency_max_ms_by_type{window="24h",probe_type="icmp_ping"}'
+    panels = [
+        stat_panel(
+            1,
+            "1h 拨测样本",
+            samples_1h,
+            0,
+            0,
+            6,
+            4,
+            unit="none",
+            color="#3274D9",
+        ),
+        stat_panel(
+            2,
+            "1h 系统级拨测可用率",
+            availability_1h,
+            6,
+            0,
+            6,
+            4,
+            unit="percentunit",
+        ),
+        stat_panel(
+            3,
+            "1h ICMP 平均 RTT",
+            latency_avg_1h,
+            12,
+            0,
+            6,
+            4,
+            unit="ms",
+        ),
+        stat_panel(
+            4,
+            "1h ICMP 最大 RTT",
+            latency_max_1h,
+            18,
+            0,
+            6,
+            4,
+            unit="ms",
+        ),
+        stat_panel(
+            5,
+            "24h 拨测样本",
+            samples_24h,
+            0,
+            4,
+            6,
+            4,
+            unit="none",
+            color="#3274D9",
+        ),
+        stat_panel(
+            6,
+            "24h 系统级拨测可用率",
+            availability_24h,
+            6,
+            4,
+            6,
+            4,
+            unit="percentunit",
+        ),
+        stat_panel(
+            7,
+            "24h ICMP 平均 RTT",
+            latency_avg_24h,
+            12,
+            4,
+            6,
+            4,
+            unit="ms",
+        ),
+        stat_panel(
+            8,
+            "24h ICMP 最大 RTT",
+            latency_max_24h,
+            18,
+            4,
+            6,
+            4,
+            unit="ms",
+        ),
+        timeseries_panel(
+            9,
+            "系统级拨测可用率趋势（滚动窗口）",
+            [
+                {
+                    "expr": availability_1h,
+                    "legendFormat": "1h 可用率",
+                    "refId": "A",
+                },
+                {
+                    "expr": availability_24h,
+                    "legendFormat": "24h 可用率",
+                    "refId": "B",
+                },
+            ],
+            0,
+            8,
+            12,
+            8,
+            unit="percentunit",
+            legend_display_mode="list",
+            legend_placement="bottom",
+            legend_calcs=[],
+        ),
+        timeseries_panel(
+            10,
+            "ICMP RTT 趋势（滚动窗口）",
+            [
+                {
+                    "expr": latency_avg_1h,
+                    "legendFormat": "1h 平均 RTT",
+                    "refId": "A",
+                },
+                {
+                    "expr": latency_max_1h,
+                    "legendFormat": "1h 最大 RTT",
+                    "refId": "B",
+                },
+                {
+                    "expr": latency_avg_24h,
+                    "legendFormat": "24h 平均 RTT",
+                    "refId": "C",
+                },
+                {
+                    "expr": latency_max_24h,
+                    "legendFormat": "24h 最大 RTT",
+                    "refId": "D",
+                },
+            ],
+            12,
+            8,
+            12,
+            8,
+            unit="ms",
+            legend_display_mode="list",
+            legend_placement="bottom",
+            legend_calcs=[],
+        ),
+        timeseries_panel(
+            11,
+            "各协议拨测成功率（24h）",
+            [{
+                "expr": 'nexora_outbound_probe_success_ratio_by_type{window="24h"}',
+                "legendFormat": "{{probe_type}}",
+                "refId": "A",
+            }],
+            0,
+            16,
+            12,
+            8,
+            unit="percentunit",
+            legend_display_mode="list",
+            legend_placement="bottom",
+            legend_calcs=["lastNotNull"],
+            description="分别统计 DNS、TCP、HTTP、HTTPS 和 ICMP 探测结果；只显示有样本的协议。",
+        ),
+        timeseries_panel(
+            12,
+            "各协议平均响应时间（24h）",
+            [{
+                "expr": 'nexora_outbound_probe_latency_avg_ms_by_type{window="24h"}',
+                "legendFormat": "{{probe_type}}",
+                "refId": "A",
+            }],
+            12,
+            16,
+            12,
+            8,
+            unit="ms",
+            legend_display_mode="list",
+            legend_placement="bottom",
+            legend_calcs=["lastNotNull", "max"],
+            description="ICMP 使用多回显 RTT；DNS/TCP/HTTP 是各协议自身的响应时间，不应互相视作同一层 RTT。",
+        ),
+        stat_panel(
+            13,
+            "24h ICMP 多回显丢包率",
+            'nexora_outbound_probe_icmp_packet_loss_ratio{window="24h"}',
+            0,
+            24,
+            6,
+            4,
+            unit="percentunit",
+            description="每轮发送 5 个 ICMP Echo；按已完成探测样本的回显丢失率求平均。",
+        ),
+        stat_panel(
+            14,
+            "24h ICMP 包间时延变化",
+            'nexora_outbound_probe_icmp_jitter_avg_ms{window="24h"}',
+            6,
+            24,
+            6,
+            4,
+            unit="ms",
+            description="按每轮相邻成功 Echo RTT 的平均绝对变化聚合；这是 ICMP 探测间隔内的抖动估计。",
+        ),
+        stat_panel(
+            15,
+            "1h WAN 接口采集成功率",
+            'nexora_wan_interface_collection_success_ratio{window="1h"}',
+            12,
+            24,
+            6,
+            4,
+            unit="percentunit",
+            description="仅计算启用 WAN 链路的接口采样是否成功。",
+        ),
+        stat_panel(
+            16,
+            "24h WAN 接口 Oper UP 比例",
+            'nexora_wan_interface_oper_up_ratio{window="24h"}',
+            18,
+            24,
+            6,
+            4,
+            unit="percentunit",
+            thresholds=[
+                {"color": "red", "value": None},
+                {"color": "#E0B400", "value": 0.95},
+                {"color": "green", "value": 0.99},
+            ],
+            description="分母仅包括采集成功且管理状态为 UP 的样本，不能代表互联网端到端 SLA。",
+        ),
+        timeseries_panel(
+            17,
+            "当前 WAN 接口健康状态",
+            [{
+                "expr": 'nexora_wan_links_by_health_status',
+                "legendFormat": "{{status}}",
+                "refId": "A",
+            }],
+            0,
+            28,
+            12,
+            8,
+            unit="short",
+            legend_display_mode="list",
+            legend_placement="bottom",
+            legend_calcs=["lastNotNull"],
+        ),
+        timeseries_panel(
+            18,
+            "WAN 接口平均上下行流量（24h 滚动）",
+            [
+                {
+                    "expr": 'nexora_wan_interface_avg_download_bps{window="24h"}',
+                    "legendFormat": "下行",
+                    "refId": "A",
+                },
+                {
+                    "expr": 'nexora_wan_interface_avg_upload_bps{window="24h"}',
+                    "legendFormat": "上行",
+                    "refId": "B",
+                },
+            ],
+            12,
+            28,
+            12,
+            8,
+            unit="bps",
+            legend_display_mode="list",
+            legend_placement="bottom",
+            legend_calcs=["lastNotNull", "max"],
+            description="这是所有启用 WAN 接口采样的平均值汇总，不是物理线路总流量或逐线路 SLA。",
+        ),
+        timeseries_panel(
+            19,
+            "WAN 接口错误与丢弃（24h 累计）",
+            [
+                {
+                    "expr": 'nexora_wan_interface_errors_total{window="24h"}',
+                    "legendFormat": "错误",
+                    "refId": "A",
+                },
+                {
+                    "expr": 'nexora_wan_interface_discards_total{window="24h"}',
+                    "legendFormat": "丢弃",
+                    "refId": "B",
+                },
+            ],
+            0,
+            36,
+            24,
+            8,
+            unit="short",
+            legend_display_mode="list",
+            legend_placement="bottom",
+            legend_calcs=["lastNotNull"],
+        ),
+        stat_panel(
+            20,
+            "当前连续 DOWN 的 WAN 接口",
+            "nexora_wan_interface_active_down_links",
+            0,
+            44,
+            6,
+            4,
+            unit="none",
+            thresholds=[
+                {"color": "green", "value": None},
+                {"color": "red", "value": 1},
+            ],
+            description="只统计采样新鲜、采集成功、管理状态 UP 且运行状态 DOWN 的启用线路接口。",
+        ),
+        stat_panel(
+            21,
+            "连续 DOWN 时长估算（最长）",
+            "nexora_wan_interface_continuous_down_estimate_max_seconds",
+            6,
+            44,
+            6,
+            4,
+            unit="s",
+            description="连续 DOWN 样本数 × 配置采样间隔的估算值；不等同精确的运营商中断起点。",
+        ),
+    ]
+    return {
+        "annotations": {"list": []},
+        "editable": false,
+        "fiscalYearStartMonth": 0,
+        "graphTooltip": 1,
+        "id": None,
+        "links": [],
+        "panels": panels,
+        "refresh": "30s",
+        "schemaVersion": 39,
+        "tags": ["nexora", "monitoring", "outbound", "probe"],
+        "templating": {"list": []},
+        "time": {"from": "now-24h", "to": "now"},
+        "timezone": "browser",
+        "title": "11 WAN 链路健康与拨测质量（WAN Health & Probe Quality）",
+        "description": "分开展示 WAN 设备接口采样健康与全局出向 DNS/TCP/HTTP/ICMP 拨测质量。ICMP 使用多回显计算丢包和包间时延变化。探测执行仍未应用 wan_probe_bindings 的逐线路 source-IP 选路，因此接口侧可用率和全局探测结果不能合并解释为单线路端到端 SLA。指标只输出系统聚合值，不带租户、线路、目标或地址标识。",
+        "uid": "nexora-outbound-probe-quality",
+        "version": DASHBOARD_VERSION,
+    }
+
+
+# 12. Alert Operations & Notification Effectiveness Dashboard
+def build_alert_operations_dashboard():
+    open_thresholds = [
+        {"color": "green", "value": None},
+        {"color": "red", "value": 1},
+    ]
+    panels = [
+        stat_panel(
+            1,
+            "当前打开告警",
+            "sum(nexora_alert_open_events)",
+            0,
+            0,
+            4,
+            4,
+            unit="none",
+            thresholds=open_thresholds,
+        ),
+        stat_panel(
+            2,
+            "Critical 未关闭",
+            'nexora_alert_open_events{severity="critical"}',
+            4,
+            0,
+            4,
+            4,
+            unit="none",
+            thresholds=open_thresholds,
+        ),
+        stat_panel(
+            3,
+            "Major 未关闭",
+            'nexora_alert_open_events{severity="major"}',
+            8,
+            0,
+            4,
+            4,
+            unit="none",
+            thresholds=open_thresholds,
+        ),
+        stat_panel(
+            4,
+            "Warning 未关闭",
+            'nexora_alert_open_events{severity="warning"}',
+            12,
+            0,
+            4,
+            4,
+            unit="none",
+            thresholds=open_thresholds,
+        ),
+        stat_panel(
+            5,
+            "Minor 未关闭",
+            'nexora_alert_open_events{severity="minor"}',
+            16,
+            0,
+            4,
+            4,
+            unit="none",
+            thresholds=open_thresholds,
+        ),
+        stat_panel(
+            6,
+            "24h 投递尝试成功率",
+            '((sum(nexora_alert_delivery_attempts_24h{status="succeeded"}) / (sum(nexora_alert_delivery_attempts_24h{status="succeeded"}) + sum(nexora_alert_delivery_attempts_24h{status="failed"}))) and ((sum(nexora_alert_delivery_attempts_24h{status="succeeded"}) + sum(nexora_alert_delivery_attempts_24h{status="failed"})) > 0))',
+            20,
+            0,
+            4,
+            4,
+            unit="percentunit",
+            description="成功数 /（成功数 + 失败数）；排除排队、发送中、重试中和跳过，按实际投递尝试计数。",
+        ),
+        timeseries_panel(
+            7,
+            "近 24 小时告警生命周期",
+            [
+                {
+                    "expr": "nexora_alert_events_created_24h",
+                    "legendFormat": "新增告警",
+                    "refId": "A",
+                },
+                {
+                    "expr": "nexora_alert_events_acknowledged_24h",
+                    "legendFormat": "已确认告警",
+                    "refId": "B",
+                },
+                {
+                    "expr": "nexora_alert_events_resolved_24h",
+                    "legendFormat": "已恢复告警",
+                    "refId": "C",
+                },
+            ],
+            0,
+            4,
+            12,
+            8,
+            unit="short",
+            legend_display_mode="list",
+            legend_placement="bottom",
+            legend_calcs=[],
+            description="展示滚动 24 小时的告警创建、确认和恢复数量。",
+        ),
+        timeseries_panel(
+            8,
+            "当前未恢复告警严重度分布",
+            [
+                {
+                    "expr": "sum by (severity) (nexora_alert_open_events)",
+                    "legendFormat": "{{severity}}",
+                    "refId": "A",
+                }
+            ],
+            12,
+            4,
+            12,
+            8,
+            unit="short",
+            legend_display_mode="list",
+            legend_placement="bottom",
+            legend_calcs=[],
+            description="包括 unknown 严重度在内的当前未恢复告警计数。",
+        ),
+        timeseries_panel(
+            9,
+            "近 24 小时通知投递结果",
+            [
+                {
+                    "expr": "sum by (channel, status) (nexora_alert_delivery_attempts_24h)",
+                    "legendFormat": "{{channel}} / {{status}}",
+                    "refId": "A",
+                }
+            ],
+            0,
+            12,
+            12,
+            8,
+            unit="short",
+            legend_display_mode="table",
+            legend_placement="right",
+            legend_calcs=["lastNotNull", "max"],
+            description="按通知渠道和投递状态汇总，帮助识别发送失败或重试增加。",
+        ),
+        timeseries_panel(
+            10,
+            "通知 Outbox 当前状态",
+            [
+                {
+                    "expr": "sum by (status) (nexora_alert_outbox_items)",
+                    "legendFormat": "{{status}}",
+                    "refId": "A",
+                }
+            ],
+            12,
+            12,
+            12,
+            8,
+            unit="short",
+            legend_display_mode="table",
+            legend_placement="right",
+            legend_calcs=["lastNotNull", "max"],
+            description="按状态展示通知 outbox 中当前待处理、重试或终态条目数量。",
+        ),
+        stat_panel(
+            11,
+            "当前最久未恢复时长",
+            "nexora_alert_open_duration_oldest_seconds",
+            0,
+            20,
+            4,
+            4,
+            unit="s",
+            thresholds=[
+                {"color": "green", "value": None},
+                {"color": "#E0B400", "value": 3600},
+                {"color": "red", "value": 86400},
+            ],
+        ),
+        stat_panel(
+            12,
+            "未恢复告警时长 P95",
+            "nexora_alert_open_duration_p95_seconds",
+            4,
+            20,
+            4,
+            4,
+            unit="s",
+        ),
+        stat_panel(
+            13,
+            "24h MTTA",
+            "nexora_alert_mtta_seconds_24h",
+            8,
+            20,
+            4,
+            4,
+            unit="s",
+            description="近 24 小时已确认告警的平均创建至首次确认时间；无样本时显示无数据。",
+        ),
+        stat_panel(
+            14,
+            "24h MTTR",
+            "nexora_alert_mttr_seconds_24h",
+            12,
+            20,
+            4,
+            4,
+            unit="s",
+            description="近 24 小时已恢复告警的平均创建至恢复时间；无样本时显示无数据。",
+        ),
+        stat_panel(
+            15,
+            "重复未恢复告警",
+            "nexora_alert_duplicate_open_events",
+            16,
+            20,
+            4,
+            4,
+            unit="none",
+            thresholds=open_thresholds,
+            description="相同 dedupe key 同时存在的未恢复事件，超出 1 条的数量。",
+        ),
+        stat_panel(
+            16,
+            "24h 重试通知数",
+            "nexora_alert_retried_deliveries_24h",
+            20,
+            20,
+            4,
+            4,
+            unit="none",
+        ),
+        timeseries_panel(
+            17,
+            "告警处置时长趋势（24h 滚动均值 / P95）",
+            [
+                {"expr": "nexora_alert_mtta_seconds_24h", "legendFormat": "MTTA 均值", "refId": "A"},
+                {"expr": "nexora_alert_mtta_p95_seconds_24h", "legendFormat": "MTTA P95", "refId": "B"},
+                {"expr": "nexora_alert_mttr_seconds_24h", "legendFormat": "MTTR 均值", "refId": "C"},
+                {"expr": "nexora_alert_mttr_p95_seconds_24h", "legendFormat": "MTTR P95", "refId": "D"},
+            ],
+            0,
+            24,
+            12,
+            8,
+            unit="s",
+            legend_display_mode="list",
+            legend_placement="bottom",
+            legend_calcs=["lastNotNull", "max"],
+        ),
+        timeseries_panel(
+            18,
+            "未恢复告警持续时长（最久 / P95）",
+            [
+                {"expr": "nexora_alert_open_duration_oldest_seconds", "legendFormat": "最久未恢复", "refId": "A"},
+                {"expr": "nexora_alert_open_duration_p95_seconds", "legendFormat": "未恢复时长 P95", "refId": "B"},
+            ],
+            12,
+            24,
+            12,
+            8,
+            unit="s",
+            legend_display_mode="list",
+            legend_placement="bottom",
+            legend_calcs=["lastNotNull", "max"],
+        ),
+    ]
+    return {
+        "annotations": {"list": []},
+        "editable": false,
+        "fiscalYearStartMonth": 0,
+        "graphTooltip": 1,
+        "id": None,
+        "links": [],
+        "panels": panels,
+        "refresh": "30s",
+        "schemaVersion": 39,
+        "tags": ["nexora", "monitoring", "alerts", "notifications"],
+        "templating": {"list": []},
+        "time": {"from": "now-24h", "to": "now"},
+        "timezone": "browser",
+        "title": "12 告警处置与通知效果（Alert Operations & Notification Effectiveness）",
+        "description": "展示系统级告警持续时长、MTTA、MTTR、相同 dedupe key 的并发重复事件，以及通知终态投递成功/失败和重试；不包含租户、设备、告警标题、目标地址或收件人信息。",
+        "uid": "nexora-alert-operations",
+        "version": DASHBOARD_VERSION,
+    }
+
 def main():
     DASHBOARDS_DIR.mkdir(parents=True, exist_ok=True)
     dashboards = [
@@ -1769,6 +2845,9 @@ def main():
         ("nexora-network-outbound.json", build_outbound_dashboard()),
         ("nexora-linux-metrics.json", build_linux_dashboard()),
         ("nexora-windows-metrics.json", build_windows_dashboard()),
+        ("nexora-platform-health.json", build_platform_health_dashboard()),
+        ("nexora-outbound-probe-quality.json", build_outbound_probe_quality_dashboard()),
+        ("nexora-alert-operations.json", build_alert_operations_dashboard()),
     ]
     for fname, data in dashboards:
         path = DASHBOARDS_DIR / fname
