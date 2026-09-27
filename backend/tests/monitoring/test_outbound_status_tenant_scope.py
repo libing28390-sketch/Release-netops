@@ -37,7 +37,7 @@ def test_outbound_status_only_returns_authenticated_tenant_targets_and_samples(i
                 enabled, updated_at, tenant_id
             ) VALUES (?, ?, ?, 443, 'HTTPS_GET', TRUE, ?, 'business', '', 200, '', 2000, TRUE, ?, ?)
             """,
-            (target_a, _id("tenant-a-target"), checked_at, checked_at, tenant_a),
+            (target_a, _id("tenant-a-target"), "service-a.example.test", checked_at, checked_at, tenant_a),
         )
         conn.execute(
             """
@@ -47,7 +47,7 @@ def test_outbound_status_only_returns_authenticated_tenant_targets_and_samples(i
                 enabled, updated_at, tenant_id
             ) VALUES (?, ?, ?, 443, 'HTTPS_GET', TRUE, ?, 'business', '', 200, '', 2000, TRUE, ?, ?)
             """,
-            (target_b, _id("tenant-b-target"), checked_at, checked_at, tenant_b),
+            (target_b, _id("tenant-b-target"), "service-b.example.test", checked_at, checked_at, tenant_b),
         )
         conn.execute(
             """

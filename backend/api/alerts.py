@@ -1948,7 +1948,7 @@ def get_alert_detail(alert_id: str, user=require_role("Viewer")):
         tenant_predicate, tenant_params = _alert_tenant_predicate(user)
         tenant_filter_sql = f" AND {tenant_predicate}" if tenant_predicate else ""
         row = conn.execute(
-            '''
+            f'''
             SELECT
                 a.id, a.dedupe_key, a.source, a.severity, a.title, a.message,
                 a.device_id, a.interface_name, a.created_at, a.resolved_at,
@@ -1965,10 +1965,10 @@ def get_alert_detail(alert_id: str, user=require_role("Viewer")):
 
         item = _row_to_alert(row)
         timeline_rows = conn.execute(
-            '''
+            f'''
             SELECT id, dedupe_key, severity, title, message, created_at, resolved_at, workflow_status, assignee, ack_by, ack_at, note, updated_at
             FROM alert_events a
-            WHERE dedupe_key = ?{f" AND {tenant_predicate}" if tenant_predicate else ""}
+            WHERE dedupe_key = ?{tenant_filter_sql}
             ORDER BY created_at DESC
             LIMIT 30
             ''',
