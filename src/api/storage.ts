@@ -1,4 +1,4 @@
-import { apiRequest } from './http';
+import { apiRequest, ApiError, authHeaders, createClientRequestId } from './http';
 
 export type StorageBackend = 's3';
 
@@ -120,6 +120,48 @@ export const listStorageObjects = (
   return apiRequest<StorageObjectPage>(`/api/storage/objects?${params.toString()}`, {
     signal: options.signal,
   });
+};
+
+export const getStorageObjectContent = async (
+  providerId: string,
+  objectKey: string,
+  options: { download?: boolean; signal?: AbortSignal } = {},
+): Promise<string> => {
+  const params = new URLSearchParams({
+    provider_id: providerId,
+    object_key: objectKey,
+    download: String(options.download ?? false),
+  });
+  const headers = new Headers(authHeaders());
+  if (!headers.has('X-Request-ID')) headers.set('X-Request-ID', createClientRequestId('storage-content'));
+  const response = await fetch(`/api/storage/objects/content?${params.toString()}`, {
+    signal: options.signal,
+    headers,
+  });
+  const requestId = response.headers.get('X-Request-ID') || undefined;
+  const body = await response.text();
+  if (!response.ok) {
+    if (response.status === 401) window.dispatchEvent(new Event('netops:auth-expired'));
+    let payload: unknown;
+    try {
+      payload = body ? JSON.parse(body) : undefined;
+    } catch {
+      payload = undefined;
+    }
+    const errorContract = payload && typeof payload === 'object' && 'error' in payload && typeof payload.error === 'object'
+      ? payload.error as Record<string, unknown>
+      : undefined;
+    const rawDetail = errorContract
+      ?? (payload && typeof payload === 'object' && 'detail' in payload ? payload.detail : undefined)
+      ?? (payload && typeof payload === 'object' && 'message' in payload ? payload.message : undefined)
+      ?? body
+      ?? `HTTP ${response.status}`;
+    const code = typeof errorContract?.code === 'string' ? errorContract.code : undefined;
+    let message = typeof rawDetail === 'string' ? rawDetail : JSON.stringify(rawDetail) || String(rawDetail);
+    if (requestId) message = `${message} (Request ID: ${requestId})`;
+    throw new ApiError(response.status, message, rawDetail, requestId, code);
+  }
+  return body;
 };
 
 export const listStorageUsages = () =>

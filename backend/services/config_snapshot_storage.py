@@ -6,6 +6,7 @@ import gzip
 import io
 import logging
 import os
+import re
 from datetime import datetime
 from pathlib import Path
 from typing import Any
@@ -54,9 +55,13 @@ def serialize_config_content(content: str) -> bytes:
 
 
 def serialize_s3_config_content(content: str) -> bytes:
-    """Compress a new S3-backed config snapshot without encrypting its content."""
+    """Return a new S3-backed config snapshot as readable UTF-8 bytes.
 
-    return gzip.compress(str(content or "").encode("utf-8"))
+    Historical S3 objects may still be gzip-compressed; ``deserialize_config_bytes``
+    intentionally keeps accepting that representation.
+    """
+
+    return str(content or "").encode("utf-8")
 
 
 def deserialize_config_bytes(data: bytes) -> str:
@@ -115,12 +120,26 @@ def object_key_for_snapshot(
     timestamp: datetime,
     config_type: str = "running",
     *,
+    vendor: str = "",
+    hostname: str = "",
+    trigger: str = "",
     encrypted: bool = True,
 ) -> str:
-    suffix = "_startup" if str(config_type or "running") == "startup" else ""
-    extension = ".cfg.enc" if encrypted else ".cfg.gz"
+    extension = ".cfg.enc" if encrypted else ".cfg"
+
+    def segment(value: object, fallback: str) -> str:
+        safe = re.sub(r"[^\w.-]+", "_", str(value or "").strip(), flags=re.UNICODE).strip("._-")
+        return safe[:128] or fallback
+
+    vendor_segment = segment(vendor, "Unknown")
+    hostname_segment = segment(hostname, "device")
+    trigger_segment = segment(trigger, "manual")
+    snapshot_segment = segment(snapshot_id, "snapshot")
+    if str(config_type or "running").strip().lower() == "startup":
+        snapshot_segment = f"{snapshot_segment}_startup"
     return normalize_object_key(
-        f"{timestamp:%Y/%m}/{snapshot_id}{suffix}{extension}"
+        f"{timestamp:%Y/%m/%d}/{vendor_segment}/"
+        f"{hostname_segment}_{timestamp:%H%M%S}_{trigger_segment}_{snapshot_segment}{extension}"
     )
 
 
@@ -131,7 +150,7 @@ def config_spool_path(
     encrypted: bool = True,
 ) -> Path:
     suffix = "_startup" if str(config_type or "running") == "startup" else ""
-    extension = ".cfg.enc" if encrypted else ".cfg.gz"
+    extension = ".cfg.enc" if encrypted else ".cfg"
     directory = Path(settings.STORAGE_SPOOL_ROOT).expanduser().resolve() / "config"
     directory.mkdir(parents=True, exist_ok=True)
     return directory / f"{str(snapshot_id)}{suffix}{extension}"
@@ -239,11 +258,22 @@ def put_snapshot_content(
     timestamp: datetime,
     content: str,
     config_type: str = "running",
+    vendor: str = "",
+    hostname: str = "",
+    trigger: str = "",
     service: StorageService | None = None,
 ) -> StorageObject:
     storage = service or build_storage_service(purpose="config_backup")
     encrypted = storage.name != "s3"
-    key = object_key_for_snapshot(snapshot_id, timestamp, config_type, encrypted=encrypted)
+    key = object_key_for_snapshot(
+        snapshot_id,
+        timestamp,
+        config_type,
+        vendor=vendor,
+        hostname=hostname,
+        trigger=trigger,
+        encrypted=encrypted,
+    )
     payload = serialize_config_content(content) if encrypted else serialize_s3_config_content(content)
     return storage.put_stream(key, io.BytesIO(payload), CONFIG_CONTENT_TYPE)
 
@@ -325,6 +355,9 @@ def retry_pending_config_snapshots(limit: int = 50) -> dict[str, int]:
                 row["id"],
                 datetime.fromisoformat(str(row["timestamp"]).replace("Z", "+00:00")),
                 row["config_type"] or "running",
+                vendor=row["vendor"] or "",
+                hostname=row["hostname"] or "",
+                trigger=row["trigger"] or "",
                 encrypted=service.name != "s3",
             ))
             with spool.open("rb") as handle:

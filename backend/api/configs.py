@@ -332,12 +332,23 @@ def _storage_error_columns(
     content: str,
     config_type: str,
     *,
+    vendor: str = '',
+    hostname: str = '',
+    trigger: str = '',
     service=None,
 ) -> tuple:
     service = service or build_storage_service(purpose='config_backup')
     encrypted = service.name != 's3'
     spool = write_config_spool(snapshot_id, content, config_type, encrypted=encrypted)
-    relative_key = object_key_for_snapshot(snapshot_id, ts, config_type, encrypted=encrypted)
+    relative_key = object_key_for_snapshot(
+        snapshot_id,
+        ts,
+        config_type,
+        vendor=vendor,
+        hostname=hostname,
+        trigger=trigger,
+        encrypted=encrypted,
+    )
     return (
         service.name,
         getattr(service, 'storage_config_id', None),
@@ -1038,6 +1049,9 @@ def create_snapshot(body: SnapshotCreate):
             timestamp=ts,
             content=body.content,
             config_type='running',
+            vendor=body.vendor,
+            hostname=body.hostname,
+            trigger=body.trigger,
             service=storage_service,
         )
     except Exception as exc:
@@ -1067,7 +1081,10 @@ def create_snapshot(body: SnapshotCreate):
                      metadata['lifecycle_status'], metadata['normalizer_version'], ts.isoformat(), '',
                       failed_service.name, getattr(failed_service, 'storage_config_id', None),
                       failed_service.bucket if failed_service.name == 's3' else '',
-                      failed_service.full_key(object_key_for_snapshot(snap_id, ts, 'running', encrypted=encrypted)), '', spool.stat().st_size, '',
+                      failed_service.full_key(object_key_for_snapshot(
+                          snap_id, ts, 'running', vendor=body.vendor, hostname=body.hostname,
+                          trigger=body.trigger, encrypted=encrypted,
+                      )), '', spool.stat().st_size, '',
                      CONFIG_CONTENT_TYPE, 'ERROR', 'storage upload failed', _utc_now_iso(), str(spool))
                 )
                 conn_error.commit()
@@ -2375,13 +2392,19 @@ async def run_scheduled_backup(
                     timestamp=ts,
                     content=output,
                     config_type='running',
+                    vendor=vendor,
+                    hostname=device['hostname'],
+                    trigger=run_trigger,
                     service=storage_service,
                 )
                 storage_fields = _storage_columns(stored) + ('',)
             except Exception as storage_exc:
                 logger.error("[Scheduled Backup] Storage failed for %s: %s", device['hostname'], type(storage_exc).__name__)
                 stored = None
-                storage_fields = _storage_error_columns(snap_id, ts, output, 'running', service=storage_service)
+                storage_fields = _storage_error_columns(
+                    snap_id, ts, output, 'running', vendor=vendor,
+                    hostname=device['hostname'], trigger=run_trigger, service=storage_service,
+                )
             
             created_backup_items.append({
                 'local_path': '',
@@ -2417,6 +2440,9 @@ async def run_scheduled_backup(
                                 timestamp=ts,
                                 content=startup_output,
                                 config_type='startup',
+                                vendor=vendor,
+                                hostname=device['hostname'],
+                                trigger=run_trigger,
                                 service=startup_storage_service,
                             )
                             startup_storage_fields = _storage_columns(st_stored) + ('',)
@@ -2428,6 +2454,9 @@ async def run_scheduled_backup(
                                 ts,
                                 startup_output,
                                 'startup',
+                                vendor=vendor,
+                                hostname=device['hostname'],
+                                trigger=run_trigger,
                                 service=startup_storage_service,
                             )
                         st_size = len(startup_output.encode('utf-8'))

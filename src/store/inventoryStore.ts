@@ -172,7 +172,7 @@ interface InventoryState {
 
 export const useInventoryStore = create<InventoryState>((set, get) => ({
   inventoryPage: 1,
-  inventoryPageSize: 15,
+  inventoryPageSize: 20,
   inventorySearch: '',
   inventoryPlatformFilter: 'all',
   inventoryRoleFilter: 'all',

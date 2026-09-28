@@ -5,7 +5,7 @@ import PageHero from './PageHero';
 import { motion } from 'motion/react';
 import {
   RefreshCw, Shield, Loader2, Search, ShieldCheck, ShieldAlert, ShieldX,
-  Key, KeyRound, User, Eye, EyeOff, Copy, Check, X,
+  Key, KeyRound, User, Eye, EyeOff, Copy, Check, X, LockKeyhole, SlidersHorizontal,
 } from 'lucide-react';
 import { ActionIconButton } from './ui/ActionIconButton';
 import { PasswordInputField } from './ui/PasswordInputField';
@@ -545,18 +545,27 @@ export default function PasswordRotationPanel({ language, currentUser }: Passwor
     },
   ];
 
+  const hasActiveFilters = Boolean(search || statusFilter !== 'all' || targetFilter !== 'all' || roleFilter !== 'all');
+  const visibleGroupCount = rotationGroups.length;
+
   return (
-    <div className="flex flex-col h-full overflow-hidden">
+    <div className="flex h-full min-h-0 flex-col overflow-hidden bg-slate-50/60">
       <PageHero
         icon={Key}
+        eyebrow={zh ? '安全运营 · 凭据中心' : 'SECURITY OPERATIONS · CREDENTIAL VAULT'}
         title={zh ? '凭据轮换' : 'Credential Rotation'}
         subtitle={zh ? '管理并轮换设备的特权凭据，确保密码周期合规' : 'Manage and rotate privileged credentials across all devices'}
+        accent="var(--ui-accent)"
         actions={isAdministrator ? (
-          <div className="flex items-center gap-2">
+          <div className="flex flex-wrap items-center justify-end gap-2">
+            <span className="hidden items-center gap-1.5 rounded-full border border-emerald-200 bg-emerald-50 px-2.5 py-1.5 text-[10px] font-bold text-emerald-700 sm:inline-flex">
+              <ShieldCheck size={12} />
+              {zh ? '管理员操作已启用' : 'Administrator actions enabled'}
+            </span>
             <select
               value={bulkRole}
               onChange={event => setBulkRole(event.target.value as typeof bulkRole)}
-              className="h-10 rounded-xl border border-black/10 bg-white px-3 text-xs font-semibold text-slate-600 outline-none"
+              className="h-10 rounded-xl border border-slate-200 bg-white px-3 text-xs font-semibold text-slate-600 shadow-sm outline-none transition focus:border-cyan-400 focus:ring-2 focus:ring-cyan-400/10"
               aria-label={zh ? '批量轮换账号类型' : 'Bulk rotation account type'}
             >
               <option value="normal">{zh ? '普通账号' : 'Normal'}</option>
@@ -567,7 +576,7 @@ export default function PasswordRotationPanel({ language, currentUser }: Passwor
               type="button"
               onClick={() => setShowBulkConfirm(true)}
               disabled={bulkProgress?.status === 'running' || bulkProgress?.status === 'starting'}
-              className="inline-flex h-10 items-center gap-2 rounded-xl bg-cyan-500 px-4 text-xs font-bold text-white shadow-md hover:bg-cyan-600 disabled:cursor-wait disabled:opacity-50"
+              className="inline-flex h-10 items-center gap-2 rounded-xl bg-cyan-600 px-4 text-xs font-bold text-white shadow-sm shadow-cyan-600/20 transition hover:bg-cyan-700 disabled:cursor-wait disabled:opacity-50"
             >
               <RefreshCw size={14} className={bulkProgress?.status === 'running' ? 'animate-spin' : ''} />
               {zh ? '批量轮换' : 'Bulk Rotate'}
@@ -576,33 +585,37 @@ export default function PasswordRotationPanel({ language, currentUser }: Passwor
         ) : undefined}
       />
 
-      <div className="flex-1 overflow-auto px-6 py-5 space-y-4">
-      <div className="flex items-start gap-2 rounded-xl border border-cyan-200 bg-cyan-50 px-3 py-2 text-xs leading-5 text-cyan-800">
-        <ShieldAlert size={14} className="mt-0.5 shrink-0" />
-        <span>{zh ? '此页面展示口令轮换状态。绑定设备按凭据分组，未绑定设备单独展示；管理员可查看或更新凭据中心的权威密码，绑定凭据的更新会创建同步任务。' : 'This page shows rotation status. Bound devices are grouped by credential while unbound devices remain individual; administrators can view or update the authoritative credential-center secret, and bound updates run as synchronization jobs.'}</span>
+      <div className="min-h-0 flex-1 space-y-4 overflow-auto px-4 py-4 sm:px-6 sm:py-5 lg:px-8">
+      <div className="flex items-start gap-3 rounded-2xl border border-cyan-200/80 bg-gradient-to-r from-cyan-50 to-white px-4 py-3 text-xs leading-5 text-cyan-900 shadow-sm" role="status">
+        <span className="mt-0.5 flex h-7 w-7 shrink-0 items-center justify-center rounded-lg bg-cyan-100 text-cyan-700"><ShieldAlert size={15} /></span>
+        <div className="min-w-0">
+          <p className="font-bold">{zh ? '密码周期与同步状态' : 'Password rotation and sync status'}</p>
+          <p className="mt-0.5 text-cyan-800/75">{zh ? '绑定设备按凭据分组，未绑定设备单独展示。管理员可以查看或更新权威密码，绑定凭据的更新会创建同步任务。' : 'Bound devices are grouped by credential while unbound devices remain individual. Administrators can view or update authoritative secrets; bound updates create synchronization jobs.'}</p>
+        </div>
       </div>
       {error && (
-        <div className="flex items-start gap-2 rounded-xl border border-rose-200 bg-rose-50 px-3 py-2 text-xs leading-5 text-rose-700" role="alert">
-          <ShieldAlert size={14} className="mt-0.5 shrink-0" />
-          <span>{error}</span>
+        <div className="flex items-start gap-3 rounded-2xl border border-rose-200 bg-rose-50 px-4 py-3 text-xs leading-5 text-rose-700 shadow-sm" role="alert">
+          <ShieldAlert size={15} className="mt-0.5 shrink-0" />
+          <div><p className="font-bold">{zh ? '状态加载失败' : 'Unable to load rotation status'}</p><p className="mt-0.5 text-rose-700/80">{error}</p></div>
         </div>
       )}
       {notice && (
-        <div className="flex items-start gap-2 rounded-xl border border-emerald-200 bg-emerald-50 px-3 py-2 text-xs leading-5 text-emerald-700" role="status">
-          <Check size={14} className="mt-0.5 shrink-0" />
-          <span>{notice}</span>
+        <div className="flex items-start gap-3 rounded-2xl border border-emerald-200 bg-emerald-50 px-4 py-3 text-xs leading-5 text-emerald-700 shadow-sm" role="status">
+          <Check size={15} className="mt-0.5 shrink-0" />
+          <span className="font-medium">{notice}</span>
         </div>
       )}
       {bulkProgress && ['starting', 'running'].includes(bulkProgress.status) && (
-        <div className="rounded-xl border border-cyan-200 bg-cyan-50 px-3 py-2 text-xs text-cyan-800">
-          {zh ? '批量轮换进度' : 'Bulk rotation progress'}：
-          {bulkProgress.done || 0}/{bulkProgress.total || 0}
-          {' · '}{zh ? '成功' : 'Succeeded'} {bulkProgress.rotated || 0}
-          {' · '}{zh ? '失败' : 'Failed'} {bulkProgress.failed || 0}
+        <div className="rounded-2xl border border-cyan-200 bg-cyan-50 px-4 py-3 text-xs text-cyan-800 shadow-sm">
+          <div className="flex flex-wrap items-center justify-between gap-2 font-semibold">
+            <span>{zh ? '批量轮换进度' : 'Bulk rotation progress'}</span>
+            <span className="tabular-nums">{bulkProgress.done || 0}/{bulkProgress.total || 0} · {zh ? '成功' : 'Succeeded'} {bulkProgress.rotated || 0} · {zh ? '失败' : 'Failed'} {bulkProgress.failed || 0}</span>
+          </div>
+          <div className="mt-2 h-1.5 overflow-hidden rounded-full bg-cyan-100"><div className="h-full rounded-full bg-cyan-500 transition-all" style={{ width: `${Math.min(100, bulkProgress.total ? ((bulkProgress.done || 0) / bulkProgress.total) * 100 : 0)}%` }} /></div>
         </div>
       )}
       {/* ═══ Stat Cards ═══ */}
-      <div className="grid grid-cols-2 lg:grid-cols-5 gap-3">
+      <div className="grid grid-cols-1 gap-3 sm:grid-cols-2 xl:grid-cols-5">
         {statCards.map(c => {
           const isActive = statusFilter === c.filter;
           return (
@@ -611,7 +624,7 @@ export default function PasswordRotationPanel({ language, currentUser }: Passwor
               whileHover={{ scale: 1.01 }}
               whileTap={{ scale: 0.99 }}
               onClick={() => setStatusFilter(isActive && c.filter !== 'all' ? 'all' : c.filter)}
-              className={`group relative rounded-xl overflow-hidden shadow-sm transition-all
+              className={`group relative min-h-[96px] overflow-hidden rounded-2xl shadow-sm transition-all
                 bg-gradient-to-br ${c.gradient}
                 ${isActive ? 'ring-2 ring-white/20 shadow-lg' : 'hover:shadow-md'}`}
             >
@@ -633,28 +646,28 @@ export default function PasswordRotationPanel({ language, currentUser }: Passwor
       </div>
 
       {/* ═══ Pro Toolbar ═══ */}
-      <div className="flex items-center justify-between gap-3 mb-3 bg-white p-2 rounded-xl border border-black/[0.04] shadow-sm">
-        <div className="flex items-center gap-2">
-          <div className="h-7 px-2 rounded-lg bg-cyan-500 text-white flex items-center gap-1.5 shadow-sm shadow-cyan-500/20">
-            <Shield size={12} />
-            <span className="text-[10px] font-black uppercase tracking-tighter">{zh ? '凭据中心' : 'VAULT'}</span>
+      <div className="flex flex-col gap-3 rounded-2xl border border-slate-200/80 bg-white p-3 shadow-sm lg:flex-row lg:items-center lg:justify-between">
+        <div className="flex min-w-0 flex-1 flex-wrap items-center gap-2">
+          <div className="flex h-9 items-center gap-2 rounded-xl bg-cyan-600 px-3 text-white shadow-sm shadow-cyan-600/20">
+            <Shield size={14} />
+            <span className="text-[10px] font-black uppercase tracking-[0.12em]">{zh ? '凭据中心' : 'VAULT'}</span>
           </div>
-          <div className="h-4 w-[1px] bg-black/5 mx-1" />
-          <div className="flex flex-wrap items-center gap-2">
-             <div className="relative">
-                <Search size={12} className="absolute left-2.5 top-1/2 -translate-y-1/2 text-black/20" />
+          <div className="hidden h-6 w-px bg-slate-200 sm:block" />
+          <div className="flex min-w-0 flex-1 flex-wrap items-center gap-2">
+             <div className="relative min-w-[200px] flex-1 sm:flex-none">
+                <Search size={14} className="absolute left-3 top-1/2 -translate-y-1/2 text-slate-400" />
                 <input
                   type="text"
                   value={search}
                   onChange={e => setSearch(e.target.value)}
                   placeholder={zh ? '快速搜索设备或账号...' : 'Quick search...'}
-                  className="w-48 pl-8 pr-3 py-1.5 rounded-lg bg-black/[0.02] border-none text-[11px] text-black/70 placeholder:text-black/20 focus:ring-1 focus:ring-cyan-500/20"
+                  className="h-9 w-full rounded-xl border border-slate-200 bg-slate-50 pl-9 pr-3 text-xs text-slate-700 outline-none transition placeholder:text-slate-400 focus:border-cyan-400 focus:bg-white focus:ring-2 focus:ring-cyan-400/10 sm:w-56"
                 />
               </div>
               <select
                 value={targetFilter}
                 onChange={event => setTargetFilter(event.target.value as TargetFilter)}
-                className="h-7 rounded-lg border border-black/[0.06] bg-white px-2 text-[10px] font-semibold text-slate-600 outline-none"
+                className="h-9 rounded-xl border border-slate-200 bg-white px-2.5 text-[11px] font-semibold text-slate-600 outline-none transition focus:border-cyan-400 focus:ring-2 focus:ring-cyan-400/10"
               >
                 <option value="all">{zh ? '全部目标' : 'All targets'}</option>
                 <option value="credential">{zh ? '共享凭据' : 'Shared credentials'}</option>
@@ -663,14 +676,14 @@ export default function PasswordRotationPanel({ language, currentUser }: Passwor
               <select
                 value={roleFilter}
                 onChange={event => setRoleFilter(event.target.value as RoleFilter)}
-                className="h-7 rounded-lg border border-black/[0.06] bg-white px-2 text-[10px] font-semibold text-slate-600 outline-none"
+                className="h-9 rounded-xl border border-slate-200 bg-white px-2.5 text-[11px] font-semibold text-slate-600 outline-none transition focus:border-cyan-400 focus:ring-2 focus:ring-cyan-400/10"
               >
                 <option value="all">{zh ? '全部账号类型' : 'All account types'}</option>
                 <option value="normal">{zh ? '普通账号' : 'Normal'}</option>
                 <option value="admin">{zh ? '特权账号' : 'Privileged'}</option>
                 <option value="enable">{zh ? 'Enable 凭据' : 'Enable'}</option>
               </select>
-              {(search || statusFilter !== 'all' || targetFilter !== 'all' || roleFilter !== 'all') && (
+              {hasActiveFilters && (
                 <button
                   type="button"
                   onClick={() => {
@@ -679,38 +692,58 @@ export default function PasswordRotationPanel({ language, currentUser }: Passwor
                     setTargetFilter('all');
                     setRoleFilter('all');
                   }}
-                  className="h-7 rounded-lg px-2 text-[10px] font-bold text-cyan-700 hover:bg-cyan-50"
+                  className="inline-flex h-9 items-center gap-1 rounded-xl px-2.5 text-[11px] font-bold text-cyan-700 transition hover:bg-cyan-50"
                 >
+                  <X size={13} />
                   {zh ? '清空筛选' : 'Clear'}
                 </button>
               )}
           </div>
         </div>
 
-        <button
+        <div className="flex items-center justify-between gap-3 lg:justify-end">
+          <span className="text-[11px] font-medium text-slate-400">{zh ? `显示 ${visibleGroupCount} 个凭据组` : `${visibleGroupCount} credential groups`}</span>
+          <button
           onClick={fetchStatus}
           disabled={loading}
-          className="h-7 px-2.5 rounded-lg bg-black/[0.02] border border-black/[0.04] text-black/40 hover:bg-black/[0.05] hover:text-cyan-600 transition-all"
+          className="inline-flex h-9 items-center gap-1.5 rounded-xl border border-slate-200 bg-slate-50 px-3 text-[11px] font-semibold text-slate-500 transition hover:border-cyan-200 hover:bg-cyan-50 hover:text-cyan-700 disabled:cursor-wait disabled:opacity-60"
           title={zh ? '刷新状态' : 'Refresh status'}
+          aria-label={zh ? '刷新状态' : 'Refresh status'}
         >
-          <RefreshCw size={12} className={loading ? 'animate-spin' : ''} />
-        </button>
+            <RefreshCw size={13} className={loading ? 'animate-spin' : ''} />
+            <span className="hidden sm:inline">{zh ? '刷新' : 'Refresh'}</span>
+          </button>
+        </div>
       </div>
 
       {/* ═══ High-Density Pro Table ═══ */}
-      <div className="bg-white rounded-xl border border-black/[0.06] shadow-md overflow-hidden">
+      <div className="overflow-hidden rounded-2xl border border-slate-200/80 bg-white shadow-sm">
+        <div className="flex flex-col gap-2 border-b border-slate-100 bg-white px-4 py-3 sm:flex-row sm:items-center sm:justify-between">
+          <div className="flex items-center gap-2">
+            <span className="flex h-8 w-8 items-center justify-center rounded-lg bg-slate-100 text-slate-600"><SlidersHorizontal size={15} /></span>
+            <div>
+              <h2 className="text-sm font-bold text-slate-800">{zh ? '轮换对象' : 'Rotation targets'}</h2>
+              <p className="text-[11px] text-slate-400">{hasActiveFilters ? (zh ? '当前结果已按筛选条件收窄' : 'Results narrowed by active filters') : (zh ? '按凭据组查看设备与账号状态' : 'Review device and account status by credential group')}</p>
+            </div>
+          </div>
+          <div className="flex items-center gap-3 text-[11px] text-slate-400">
+            <span className="whitespace-nowrap">{zh ? `${visibleGroupCount} 个结果` : `${visibleGroupCount} results`}</span>
+            <span className="hidden h-4 w-px bg-slate-200 sm:block" />
+            <span className="hidden whitespace-nowrap sm:inline">{zh ? '横向滚动查看全部字段' : 'Scroll horizontally for all fields'}</span>
+          </div>
+        </div>
         <div className="overflow-x-auto">
           <DataTable unstyled exportConfig={{ filename: 'password-rotation-credentials', language: zh ? 'zh' : 'en', disabled: loading || rotationGroups.length === 0, exportData: rotationExportData }} className="nx-data-table nx-data-table--compact min-w-[2600px] w-full table-fixed">
             <thead>
-              <tr className="bg-slate-50 border-b border-black/[0.05]">
-                {rotationExportData.headers.map((header, index) => <th key={header} data-export="public" className={`px-3 py-2.5 text-[10px] font-black text-slate-400 uppercase tracking-widest ${index < rotationExportData.headers.length - 1 ? 'border-r border-black/[0.03]' : ''}`}>{header}</th>)}
+              <tr className="border-b border-slate-200 bg-slate-50/90">
+                {rotationExportData.headers.map((header, index) => <th key={header} data-export="public" className={`whitespace-nowrap px-3 py-3 text-left text-[10px] font-black uppercase tracking-[0.12em] text-slate-500 ${index < rotationExportData.headers.length - 1 ? 'border-r border-slate-200/70' : ''}`}>{header}</th>)}
               </tr>
             </thead>
-            <tbody className="divide-y divide-black/[0.03]">
+            <tbody className="divide-y divide-slate-100">
               {loading && !accountList.length ? (
-                <tr><td colSpan={rotationExportData.headers.length} className="py-20 text-center"><Loader2 className="inline animate-spin text-cyan-500" size={24} /></td></tr>
+                <tr><td colSpan={rotationExportData.headers.length} className="py-20 text-center"><div className="flex flex-col items-center gap-3 text-slate-400"><Loader2 className="animate-spin text-cyan-500" size={25} /><span className="text-xs font-medium">{zh ? '正在加载凭据状态…' : 'Loading credential status…'}</span></div></td></tr>
               ) : accountList.length === 0 ? (
-                <tr><td colSpan={rotationExportData.headers.length} className="py-20 text-center text-[11px] text-black/20 font-medium">{zh ? '未检索到凭据数据' : 'No data records found'}</td></tr>
+                <tr><td colSpan={rotationExportData.headers.length} className="py-20 text-center"><div className="mx-auto flex max-w-sm flex-col items-center gap-2 text-slate-400"><span className="flex h-11 w-11 items-center justify-center rounded-2xl bg-slate-100 text-slate-400"><LockKeyhole size={20} /></span><p className="text-sm font-bold text-slate-600">{zh ? (hasActiveFilters ? '没有符合条件的凭据' : '暂无凭据数据') : (hasActiveFilters ? 'No credentials match these filters' : 'No credential data yet')}</p><p className="text-xs leading-5">{zh ? (hasActiveFilters ? '尝试清空筛选条件，或使用设备名称、IP 和账号搜索。' : '加载设备后，这里会显示凭据周期与同步状态。') : (hasActiveFilters ? 'Clear a filter or search by device, IP, or account.' : 'Credential rotation status will appear after devices are loaded.')}</p></div></td></tr>
               ) : (
                 (() => {
                   const paginatedGroups = rotationGroups.slice((page - 1) * pageSize, page * pageSize);
@@ -728,12 +761,12 @@ export default function PasswordRotationPanel({ language, currentUser }: Passwor
                     const exportRow = buildRotationExportRow(group as RotationExportGroup, zh);
 
                     return (
-                      <tr key={group.key} className="group hover:bg-slate-50/50 transition-colors">
-                        <td className="px-3 py-2 border-r border-black/[0.02] text-xs font-semibold text-slate-700">{exportRow[0]}</td>
-                        <td className="px-3 py-2 border-r border-black/[0.02] text-xs text-slate-600"><span className="block max-w-56 truncate" title={exportRow[1]}>{exportRow[1]}</span></td>
-                        <td className="px-3 py-2 border-r border-black/[0.02] text-xs text-slate-600">{exportRow[2]}</td>
-                        <td className="px-3 py-2 border-r border-black/[0.02] text-xs font-mono text-slate-600"><span className="block max-w-48 truncate" title={exportRow[3]}>{exportRow[3]}</span></td>
-                        <td className="px-3 py-2 border-r border-black/[0.02] text-xs text-slate-600"><span className="block max-w-48 truncate" title={exportRow[4]}>{exportRow[4]}</span></td>
+                      <tr key={group.key} className="group transition-colors odd:bg-white even:bg-slate-50/30 hover:bg-cyan-50/40">
+                        <td className="border-r border-slate-100 px-3 py-3 text-xs font-semibold text-slate-800">{exportRow[0]}</td>
+                        <td className="border-r border-slate-100 px-3 py-3 text-xs text-slate-600"><span className="block max-w-56 truncate" title={exportRow[1]}>{exportRow[1]}</span></td>
+                        <td className="border-r border-slate-100 px-3 py-3 text-xs text-slate-600">{exportRow[2]}</td>
+                        <td className="border-r border-slate-100 px-3 py-3 text-xs font-mono text-slate-600"><span className="block max-w-48 truncate" title={exportRow[3]}>{exportRow[3]}</span></td>
+                        <td className="border-r border-slate-100 px-3 py-3 text-xs text-slate-600"><span className="block max-w-48 truncate" title={exportRow[4]}>{exportRow[4]}</span></td>
 
                         {/* Account Columns */}
                         {['normal', 'admin', 'enable'].map((role, roleColumnIndex) => {
@@ -744,13 +777,13 @@ export default function PasswordRotationPanel({ language, currentUser }: Passwor
                           // Optimization: Hide Enable column for servers
                           if (role === 'enable' && isDevServer) {
                             return <React.Fragment key={role}>
-                              <td className="px-3 py-2 border-r border-black/[0.02] bg-black/[0.01] text-xs text-slate-400">{exportRow[roleExportIndex]}</td>
-                              {[1, 2, 3, 4].map(offset => <td key={offset} className="px-3 py-2 border-r border-black/[0.02] bg-black/[0.01] text-xs text-slate-400">{exportRow[roleExportIndex + offset]}</td>)}
+                              <td className="border-r border-slate-100 bg-slate-50 px-3 py-3 text-xs text-slate-400">{exportRow[roleExportIndex]}</td>
+                              {[1, 2, 3, 4].map(offset => <td key={offset} className="border-r border-slate-100 bg-slate-50 px-3 py-3 text-xs text-slate-400">{exportRow[roleExportIndex + offset]}</td>)}
                             </React.Fragment>;
                           }
 
                           if (!acc) return <React.Fragment key={role}>
-                            {[0, 1, 2, 3, 4].map(offset => <td key={offset} className="px-3 py-2 border-r border-black/[0.02] text-xs text-slate-400">{exportRow[roleExportIndex + offset]}</td>)}
+                            {[0, 1, 2, 3, 4].map(offset => <td key={offset} className="border-r border-slate-100 px-3 py-3 text-xs text-slate-400">{exportRow[roleExportIndex + offset]}</td>)}
                           </React.Fragment>;
 
                           const credentialId = credentialIdFor(acc);
@@ -760,7 +793,7 @@ export default function PasswordRotationPanel({ language, currentUser }: Passwor
 
                           return (
                             <React.Fragment key={role}>
-                            <td className={`px-3 py-2 border-r border-black/[0.02] ${roleAccounts.some(account => account.currentExpired) ? 'bg-red-50/20' : ''}`}>
+                            <td className={`border-r border-slate-100 px-3 py-3 ${roleAccounts.some(account => account.currentExpired) ? 'bg-red-50/60' : ''}`}>
                               <div className="flex items-center justify-between gap-2">
                                 <div className="min-w-0 flex-1">
                                   <div className="flex items-center gap-1.5">
@@ -851,7 +884,7 @@ export default function PasswordRotationPanel({ language, currentUser }: Passwor
 
                               </div>
                             </td>
-                            {[1, 2, 3, 4].map(offset => <td key={offset} className="px-3 py-2 border-r border-black/[0.02] text-xs text-slate-600">{exportRow[roleExportIndex + offset]}</td>)}
+                            {[1, 2, 3, 4].map(offset => <td key={offset} className="border-r border-slate-100 px-3 py-3 text-xs text-slate-600">{exportRow[roleExportIndex + offset]}</td>)}
                             </React.Fragment>
                           );
                         })}
@@ -865,14 +898,15 @@ export default function PasswordRotationPanel({ language, currentUser }: Passwor
         </div>
 
         {/* Footer Info & Pagination */}
-        <div className="px-4 py-2.5 bg-slate-50 border-t border-black/[0.05] flex items-center justify-between">
-          <div className="flex items-center gap-4">
-             <div className="flex items-center gap-1.5 text-[9px] font-bold text-slate-400 uppercase">
-                <span className="w-2 h-2 rounded-full bg-emerald-500" /> {zh ? '监控正常' : 'Healthy'}
+        <div className="flex flex-col gap-2 border-t border-slate-200 bg-slate-50/80 px-4 py-3 sm:flex-row sm:items-center sm:justify-between">
+          <div className="flex flex-wrap items-center gap-3">
+             <div className="flex items-center gap-1.5 text-[10px] font-bold uppercase tracking-wide text-slate-500">
+                <span className="h-2 w-2 rounded-full bg-emerald-500" /> {zh ? '状态正常' : 'Healthy'}
              </div>
-             <div className="flex items-center gap-1.5 text-[9px] font-bold text-slate-400 uppercase">
-                <span className="w-2 h-2 rounded-full bg-red-500" /> {zh ? '凭据过期' : 'Expired'}
+             <div className="flex items-center gap-1.5 text-[10px] font-bold uppercase tracking-wide text-slate-500">
+                <span className="h-2 w-2 rounded-full bg-red-500" /> {zh ? '凭据过期' : 'Expired'}
              </div>
+             {isAdministrator ? <span className="hidden items-center gap-1.5 text-[10px] font-medium text-slate-400 sm:inline-flex"><ShieldCheck size={12} /> {zh ? '可执行轮换操作' : 'Rotation actions available'}</span> : <span className="inline-flex items-center gap-1.5 text-[10px] font-medium text-slate-400"><LockKeyhole size={12} /> {zh ? '只读视图' : 'Read-only view'}</span>}
           </div>
           
           <Pagination
@@ -882,6 +916,8 @@ export default function PasswordRotationPanel({ language, currentUser }: Passwor
             onItemsPerPageChange={(v) => { setPage(1); setPageSize(v); }}
             onPageChange={setPage}
             language={language}
+            itemLabel={zh ? '个凭据组' : 'groups'}
+            pageUnitLabel={zh ? '组/页' : 'groups/page'}
           />
         </div>
       </div>

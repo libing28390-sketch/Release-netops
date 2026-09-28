@@ -9,6 +9,7 @@ import { ActionIconButton } from '../components/ui/ActionIconButton';
 import { severityBadgeClass, alertWorkflowBadgeClass } from '../components/shared';
 import DateTimePicker from '../components/DateTimePicker';
 import { authHeaders } from '../api/http';
+import { listSites } from '../api/cmdb';
 import {
   alertInputClass,
   alertPanelClass,
@@ -24,7 +25,7 @@ import {
 import { TableActionCell, TableActionHeader } from '../components/ui/TableActionColumn';
 import type { TableExportData } from '../components/ui/TableExportMenu';
 import { fetchAllPaginatedItems } from '../utils/pagination';
-import { buildAlertHistoryExportData, getAlertHistoryExportHeaders } from './alertTableExport';
+import { buildAlertHistoryExportData, buildAlertSiteLabels, getAlertHistoryExportHeaders } from './alertTableExport';
 interface AlertHistoryTabProps extends AlertPageCommonProps {
   onNavigateToDevice?: (deviceId: string) => void;
   onNavigateToTopology?: (deviceId: string) => void;
@@ -58,7 +59,10 @@ const AlertHistoryTab: React.FC<AlertHistoryTabProps> = ({ language, showToast, 
     if (createdFrom) params.set('created_from', createdFrom);
     if (createdTo) params.set('created_to', createdTo);
 
-    const items = await fetchAllPaginatedItems<AlertRecord>('/api/alerts', params, 100);
+    const [items, sites] = await Promise.all([
+      fetchAllPaginatedItems<AlertRecord>('/api/alerts', params, 100),
+      listSites().catch(() => []),
+    ]);
     const notificationLabel = (status: string | undefined) => status === 'succeeded'
       ? (zh ? '已发送' : 'Sent')
       : status === 'failed'
@@ -75,7 +79,7 @@ const AlertHistoryTab: React.FC<AlertHistoryTabProps> = ({ language, showToast, 
       timestamp: formatTs,
       duration: (value) => formatDuration(value, language),
       unassigned: zh ? '未分派' : 'Unassigned',
-    });
+    }, buildAlertSiteLabels(sites));
   };
 
   // Detail

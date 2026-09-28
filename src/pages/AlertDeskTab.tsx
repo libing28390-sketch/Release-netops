@@ -10,8 +10,9 @@ import { TableActionCell, TableActionHeader } from '../components/ui/TableAction
 import type { TableExportData } from '../components/ui/TableExportMenu';
 import { alertWorkflowBadgeClass, severityBadgeClass } from '../components/shared';
 import { authHeaders } from '../api/http';
+import { listSites } from '../api/cmdb';
 import { fetchAllPaginatedItems } from '../utils/pagination';
-import { buildAlertDeskExportData, getAlertDeskExportHeaders } from './alertTableExport';
+import { buildAlertDeskExportData, buildAlertSiteLabels, getAlertDeskExportHeaders } from './alertTableExport';
 import {
   alertInputClass,
   alertPanelClass,
@@ -73,7 +74,10 @@ const AlertDeskTab: React.FC<AlertDeskTabProps> = ({ language, currentUsername, 
       assignee: 'all',
       search,
     });
-    const items = await fetchAllPaginatedItems<AlertRecord>('/api/alerts', params, 100);
+    const [items, sites] = await Promise.all([
+      fetchAllPaginatedItems<AlertRecord>('/api/alerts', params, 100),
+      listSites().catch(() => []),
+    ]);
     return buildAlertDeskExportData(items, language, {
       severity: (value) => severityLabel(value, language),
       workflow: (value) => workflowLabel(value, language),
@@ -81,7 +85,7 @@ const AlertDeskTab: React.FC<AlertDeskTabProps> = ({ language, currentUsername, 
       timestamp: formatTs,
       duration: (value) => formatDuration(value, language),
       unassigned: language === 'zh' ? '未分派' : 'Unassigned',
-    });
+    }, buildAlertSiteLabels(sites));
   };
 
   const loadAlerts = async () => {

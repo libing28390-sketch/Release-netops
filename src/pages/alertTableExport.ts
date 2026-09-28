@@ -1,6 +1,62 @@
 import type { TableExportData } from '../components/ui/TableExportMenu';
 import type { AlertRecord } from '../types';
 
+export interface AlertSiteDirectoryItem {
+  id?: string | null;
+  site_name?: string | null;
+  site_code?: string | null;
+}
+
+export type AlertSiteLabels = ReadonlyMap<string, string>;
+
+const normalizeSiteKey = (value: unknown): string => String(value || '').trim().toLowerCase();
+
+export function buildAlertSiteLabels(sites: AlertSiteDirectoryItem[]): AlertSiteLabels {
+  const labels = new Map<string, string>();
+  sites.forEach((site) => {
+    const label = String(site.site_name || site.site_code || '').trim();
+    if (!label) return;
+    [site.id, site.site_code, site.site_name].forEach((key) => {
+      const normalized = normalizeSiteKey(key);
+      if (normalized) labels.set(normalized, label);
+    });
+  });
+  return labels;
+}
+
+function isInternalSiteId(value: string): boolean {
+  return /^(?:site-[a-z0-9]+|default_site)$/i.test(value)
+    || /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i.test(value);
+}
+
+function alertSiteLabel(
+  alert: AlertRecord,
+  labels: AlertSiteLabels | undefined,
+  unassigned: string,
+): string {
+  const rawAlert = alert as AlertRecord & {
+    site_id?: string | null;
+    site_name?: string | null;
+    site_code?: string | null;
+  };
+  const directName = String(rawAlert.site_name || '').trim();
+  if (directName && !isInternalSiteId(directName)) return directName;
+
+  const siteCandidates = [rawAlert.site, rawAlert.site_id, rawAlert.site_code]
+    .map((value) => String(value || '').trim())
+    .filter(Boolean);
+  for (const candidate of siteCandidates) {
+    const mappedLabel = labels?.get(normalizeSiteKey(candidate));
+    if (mappedLabel) return mappedLabel;
+  }
+
+  const readableFallback = siteCandidates.find((candidate) =>
+    !isInternalSiteId(candidate)
+    && !/^(?:unassigned|unassigned site|未分配站点)$/i.test(candidate),
+  );
+  return readableFallback || unassigned;
+}
+
 interface AlertExportFormatters {
   severity: (value: AlertRecord['severity']) => string;
   timestamp: (value?: string | null) => string;
@@ -32,6 +88,7 @@ export function buildAlertDeskExportData(
   alerts: AlertRecord[],
   language: string,
   formatters: AlertDeskExportFormatters,
+  siteLabels?: AlertSiteLabels,
 ): TableExportData {
   return {
     headers: alertDeskHeaders(language),
@@ -43,7 +100,7 @@ export function buildAlertDeskExportData(
       alert.hostname || '--',
       alert.ip_address || '--',
       alert.interface_name || '--',
-      alert.site || '--',
+      alertSiteLabel(alert, siteLabels, language === 'zh' ? '未分配站点' : 'Unassigned site'),
       formatters.severity(alert.severity),
       formatters.workflow(alert.workflow_status),
       alert.assignee || formatters.unassigned,
@@ -57,6 +114,7 @@ export function buildAlertHistoryExportData(
   alerts: AlertRecord[],
   language: string,
   formatters: AlertHistoryExportFormatters,
+  siteLabels?: AlertSiteLabels,
 ): TableExportData {
   return {
     headers: alertHistoryHeaders(language),
@@ -67,7 +125,7 @@ export function buildAlertHistoryExportData(
       alert.hostname || '--',
       alert.ip_address || '--',
       alert.interface_name || '--',
-      alert.site || '--',
+      alertSiteLabel(alert, siteLabels, language === 'zh' ? '未分配站点' : 'Unassigned site'),
       formatters.severity(alert.severity),
       formatters.notification(alert.notification_status),
       alert.assignee || formatters.unassigned,

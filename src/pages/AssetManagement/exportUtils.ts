@@ -78,7 +78,10 @@ export function formatAssetExportValue(
       return site || '—';
     }
     case 'rack': return asset.rack || '—';
-    case 'rack_unit': return asset.rack_unit ? `U${asset.rack_unit}` : '—';
+    case 'rack_unit': {
+      const rackUnit = String(asset.rack_unit || '').trim().replace(/^u+/i, '');
+      return rackUnit ? `U${rackUnit}` : '—';
+    }
     case 'status': {
       const status = asset.online_status
         || (asset.status === 'active' ? 'online' : asset.status === 'inactive' ? 'offline' : 'pending');

@@ -78,4 +78,11 @@ describe('asset table export contract', () => {
     expect(exported.headers).toEqual(['Site']);
     expect(exported.rows).toEqual([['—']]);
   });
+
+  it.each(['15', 'U15', 'UU15'])('normalizes rack unit %s to one U prefix', (rackUnit) => {
+    const asset = { rack_unit: rackUnit } as Asset;
+    const exported = buildAssetExportData([asset], [splitColumns[7]], 'en');
+
+    expect(exported.rows).toEqual([['U15']]);
+  });
 });

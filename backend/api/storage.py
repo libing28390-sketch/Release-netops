@@ -3,21 +3,26 @@
 from __future__ import annotations
 
 import re
+import posixpath
 from datetime import datetime, timezone
 from typing import Any
 
 from fastapi import APIRouter, HTTPException, Query
+from fastapi.responses import Response
 
 from core.rbac import require_role
 from database import get_db_connection
 from services.storage_service import (
     StorageError,
+    StorageNotFound,
     _service_for_profile,
     build_storage_service,
     effective_storage_provider,
     get_storage_provider_config,
+    normalize_object_key,
     resolve_storage_usage,
 )
+from services.config_snapshot_storage import deserialize_config_bytes
 
 
 router = APIRouter(prefix="/storage", tags=["Storage"])
@@ -194,6 +199,75 @@ def list_storage_objects(
         "next_continuation_token": page.next_continuation_token,
         "is_truncated": page.is_truncated,
     }
+
+
+def _config_object_key(object_key: str) -> str:
+    """Validate that a browser request targets a configuration snapshot object."""
+
+    try:
+        normalized = normalize_object_key(object_key)
+    except (TypeError, ValueError) as exc:
+        raise HTTPException(status_code=422, detail="object_key is invalid") from exc
+    basename = posixpath.basename(normalized)
+    if not re.fullmatch(r".+\.cfg(?:\.(?:gz|enc))?", basename, flags=re.IGNORECASE):
+        raise HTTPException(status_code=422, detail="Only configuration snapshot objects can be read")
+    return normalized
+
+
+def _config_download_filename(object_key: str) -> str:
+    basename = posixpath.basename(object_key)
+    basename = re.sub(r"\.(?:gz|enc)$", "", basename, flags=re.IGNORECASE)
+    basename = re.sub(r"[^A-Za-z0-9._-]+", "_", basename).strip("._-") or "config_snapshot"
+    if not basename.lower().endswith(".cfg"):
+        basename = f"{basename}.cfg"
+    if len(basename) > 180:
+        basename = f"{basename[:176].rstrip('._-')}.cfg"
+    return basename
+
+
+@router.get("/objects/content")
+def get_storage_object_content(
+    provider_id: str | None = Query(default=None, max_length=128),
+    object_key: str = Query(..., min_length=1, max_length=1024),
+    download: bool = Query(default=False),
+    _user=require_role("Administrator"),
+):
+    """Read a configuration snapshot object as text for the storage browser."""
+
+    normalized_key = _config_object_key(object_key)
+    try:
+        profile = get_storage_provider_config(provider_id) if provider_id else effective_storage_provider()
+        if profile.backend.strip().lower() != "s3":
+            raise HTTPException(status_code=400, detail="Selected storage provider is not S3")
+        service = _service_for_profile(profile)
+        stream = service.get_stream(normalized_key)
+        try:
+            payload = stream.read()
+        finally:
+            stream.close()
+    except HTTPException:
+        raise
+    except StorageNotFound as exc:
+        raise HTTPException(status_code=404, detail="Configuration object not found") from exc
+    except StorageError as exc:
+        raise HTTPException(status_code=503, detail="Configuration object is unavailable") from exc
+    except Exception as exc:
+        raise HTTPException(status_code=503, detail="Configuration object is unavailable") from exc
+
+    try:
+        content = deserialize_config_bytes(payload)
+    except Exception as exc:
+        raise HTTPException(status_code=422, detail="Configuration object content is invalid") from exc
+
+    headers = {
+        "Cache-Control": "no-store",
+        "X-Content-Type-Options": "nosniff",
+    }
+    if download:
+        headers["Content-Disposition"] = (
+            f'attachment; filename="{_config_download_filename(normalized_key)}"'
+        )
+    return Response(content=content, media_type="text/plain", headers=headers)
 
 
 __all__ = ["router"]
