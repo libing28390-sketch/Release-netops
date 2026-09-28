@@ -1,3 +1,4 @@
+import { DataTable } from '../../../components/DataTable';
 import React, { useCallback, useEffect, useState } from 'react';
 import {
   AlertTriangle,
@@ -35,7 +36,10 @@ import Pagination from '../../../components/Pagination';
 import { useCoreApp } from '../../../contexts/AppDomainContext';
 import { useEscapeClose } from '../../../hooks/useEscapeClose';
 import { aiAdminText } from '../../../i18n/aiAdmin';
+import { fetchAllPaginatedItems } from '../../../utils/pagination';
 
+import { ActionIconButton } from '../../../components/ui/ActionIconButton';
+import { TableActionCell, TableActionHeader } from '../../../components/ui/TableActionColumn';
 type TextVariables = Record<string, string | number>;
 
 type CatalogPanel = 'models' | 'aliases';
@@ -286,6 +290,85 @@ export const ProductCatalogManagementTab: React.FC = () => {
     } catch (err: any) { showToast(err?.message || tx('ai.catalog.toast.archiveFailed'), 'error'); }
   };
 
+  const exportCatalogModels = async () => {
+    const params = new URLSearchParams({
+      search: appliedSearch,
+      vendor_id: vendorFilter,
+      family_code: familyFilter,
+      series_code: seriesFilter,
+      model: modelFilter,
+      software_version: softwareVersionFilter,
+      status: 'all',
+      sort_by: 'created_at',
+      sort_order: 'desc',
+    });
+    const allModels = await fetchAllPaginatedItems<KnowledgeCatalogModel>('/api/knowledge/catalog', params, 100);
+    const na = tx('ai.common.na');
+    return {
+      headers: [
+        tx('ai.catalog.filter.vendor'),
+        tx('ai.catalog.editor.familyName'),
+        tx('ai.catalog.editor.familyCode'),
+        tx('ai.catalog.editor.seriesName'),
+        tx('ai.catalog.editor.seriesCode'),
+        tx('ai.catalog.editor.modelCode'),
+        language === 'zh' ? 'OS 系列' : 'OS Family',
+        language === 'zh' ? '软件 Train' : 'Software Train',
+        tx('ai.catalog.editor.softwareVersion'),
+        tx('ai.knowledge.ingestion.compatibleVersion'),
+        tx('ai.catalog.master.status'),
+        language === 'zh' ? '审核状态' : 'Review Status',
+      ],
+      rows: allModels.map((model) => [
+        model.vendor_name || na,
+        model.family_name || na,
+        model.family_code || '',
+        model.series_name || na,
+        model.series_code || '',
+        model.model_code || '',
+        String(model.software_scope?.os_family ?? na),
+        String(model.software_scope?.software_train ?? na),
+        String(model.software_scope?.primary_version ?? na),
+        String(model.software_scope?.compatibility_version ?? na),
+        catalogLabel(tx, CATALOG_STATUS_LABELS, model.status),
+        catalogLabel(tx, CATALOG_STATUS_LABELS, model.review_status),
+      ]),
+    };
+  };
+
+  const exportCatalogAliases = async () => {
+    const params = new URLSearchParams({
+      alias: appliedSearch,
+      alias_kind: kindFilter,
+      conflict_status: 'all',
+      sort_by: 'alias',
+      sort_order: 'asc',
+    });
+    const allAliases = await fetchAllPaginatedItems<KnowledgeCatalogAlias>('/api/knowledge/catalog/aliases', params, 100);
+    return {
+      headers: [
+        tx('ai.catalog.alias.alias'),
+        language === 'zh' ? '规范化别名' : 'Normalized Alias',
+        tx('ai.catalog.alias.kind'),
+        tx('ai.catalog.alias.target'),
+        tx('ai.catalog.filter.vendor'),
+        tx('ai.catalog.editor.seriesCode'),
+        language === 'zh' ? '冲突状态' : 'Conflict Status',
+        language === 'zh' ? '种子状态' : 'Seed Status',
+      ],
+      rows: allAliases.map((alias) => [
+        alias.alias,
+        alias.normalized_alias || '',
+        catalogLabel(tx, KIND_LABELS, alias.alias_kind),
+        alias.model?.model_code || '',
+        alias.model?.vendor_name || '',
+        alias.model?.series_code || '',
+        catalogLabel(tx, CATALOG_STATUS_LABELS, alias.conflict_status),
+        catalogLabel(tx, CATALOG_STATUS_LABELS, alias.seed_status),
+      ]),
+    };
+  };
+
   return (
     <div className="w-full space-y-5 pb-8">
       <header className="flex flex-wrap items-start justify-between gap-3">
@@ -367,13 +450,58 @@ export const ProductCatalogManagementTab: React.FC = () => {
       {panel === 'models' ? (
         <section className="overflow-hidden rounded-2xl border border-gray-200 bg-white shadow-sm dark:border-gray-700 dark:bg-gray-800">
            <div className="flex items-center justify-between border-b border-gray-100 px-4 py-3 dark:border-gray-700"><div><h2 className="text-sm font-semibold text-gray-800 dark:text-gray-100">{tx('ai.catalog.master.title')}</h2><p className="text-[11px] text-gray-500">{tx('ai.catalog.master.summary', { total, page })}</p></div><Eye className="h-4 w-4 text-gray-400" /></div>
-           {loading ? <div className="flex items-center justify-center gap-2 p-10 text-xs text-gray-400"><Loader2 className="h-4 w-4 animate-spin" />{tx('ai.common.loading')}</div> : <div className="overflow-x-auto"><table className="nx-data-table min-w-full text-left"><thead><tr><th>{tx('ai.catalog.master.vendorFamily')}</th><th>{tx('ai.catalog.master.series')}</th><th>{tx('ai.catalog.master.model')}</th><th>{tx('ai.catalog.master.os')}</th><th>{tx('ai.catalog.master.version')}</th><th>{tx('ai.catalog.master.status')}</th>{canManageCatalog && <th>{tx('ai.catalog.master.actions')}</th>}</tr></thead><tbody>{models.map((item) => <tr key={item.product_model_id}><td><div className="font-semibold text-gray-800 dark:text-gray-100">{item.vendor_name}</div><div className="nx-micro-text text-gray-500">{item.family_code}</div></td><td><div className="font-medium text-gray-700 dark:text-gray-200">{item.series_name}</div><div className="nx-micro-text text-gray-500">{item.series_code}</div></td><td><div className="font-semibold text-indigo-700 dark:text-indigo-300">{item.model_code}</div><div className="nx-micro-text max-w-[260px] truncate text-gray-500">{item.product_model_id}</div></td><td><div>{scopeValue(item, 'os_family', tx('ai.common.na'))}</div><div className="nx-micro-text text-gray-500">{scopeValue(item, 'software_train', tx('ai.common.na'))}</div></td><td><div>{scopeValue(item, 'primary_version', tx('ai.common.na'))}</div><div className="nx-micro-text text-gray-500">{tx('ai.catalog.master.compatible', { value: scopeValue(item, 'compatibility_version', tx('ai.common.na')) })}</div></td><td><span className={`nx-micro-text rounded-full px-2 py-1 font-semibold ${statusTone(item.status)}`}>{catalogLabel(tx, CATALOG_STATUS_LABELS, item.status)}</span><div className="mt-1 nx-micro-text text-gray-500">{catalogLabel(tx, CATALOG_STATUS_LABELS, item.review_status)}</div></td>{canManageCatalog && <td>{item.mutable ? <div className="flex items-center gap-1"><button type="button" onClick={() => openEditCatalogModel(item)} className="rounded-lg p-1.5 text-indigo-600 hover:bg-indigo-50" aria-label={`${tx('ai.catalog.master.edit')} ${item.display_name}`} title={tx('ai.catalog.master.edit')}><Pencil className="h-4 w-4" /></button>{item.status !== 'deleted' && <button type="button" onClick={() => void archiveCatalogModel(item)} className="rounded-lg p-1.5 text-red-600 hover:bg-red-50" aria-label={`${tx('ai.catalog.master.archive')} ${item.display_name}`} title={tx('ai.catalog.master.archive')}><Trash2 className="h-4 w-4" /></button>}</div> : <span className="nx-micro-text text-gray-400">{tx('ai.catalog.master.readOnly')}</span>}</td>}</tr>)}</tbody></table></div>}
+           {loading ? <div className="flex items-center justify-center gap-2 p-10 text-xs text-gray-400"><Loader2 className="h-4 w-4 animate-spin" />{tx('ai.common.loading')}</div> : <div className="overflow-x-auto">
+             <DataTable unstyled exportConfig={{ filename: 'product-model-catalog', language, disabled: total === 0, exportData: exportCatalogModels }} className="nx-data-table min-w-full text-left">
+               <thead><tr>
+                 <th>{tx('ai.catalog.filter.vendor')}</th><th>{tx('ai.catalog.editor.familyName')}</th><th>{tx('ai.catalog.editor.familyCode')}</th>
+                 <th>{tx('ai.catalog.editor.seriesName')}</th><th>{tx('ai.catalog.editor.seriesCode')}</th><th>{tx('ai.catalog.editor.modelCode')}</th>
+                 <th>{language === 'zh' ? 'OS 系列' : 'OS Family'}</th><th>{language === 'zh' ? '软件 Train' : 'Software Train'}</th>
+                 <th>{tx('ai.catalog.editor.softwareVersion')}</th><th>{tx('ai.knowledge.ingestion.compatibleVersion')}</th>
+                 <th>{tx('ai.catalog.master.status')}</th><th>{language === 'zh' ? '审核状态' : 'Review Status'}</th>
+                 {canManageCatalog && <TableActionHeader>{tx('ai.catalog.master.actions')}</TableActionHeader>}
+               </tr></thead>
+               <tbody>{models.map((item) => <tr key={item.product_model_id}>
+                 <td className="font-semibold text-gray-800 dark:text-gray-100">{item.vendor_name}</td>
+                 <td>{item.family_name}</td><td className="font-mono text-xs">{item.family_code}</td>
+                 <td className="font-medium text-gray-700 dark:text-gray-200">{item.series_name}</td><td className="font-mono text-xs">{item.series_code}</td>
+                 <td><div data-export-primary className="font-semibold text-indigo-700 dark:text-indigo-300">{item.model_code}</div><div data-export-ignore className="nx-micro-text max-w-[260px] truncate text-gray-500">{item.product_model_id}</div></td>
+                 <td>{scopeValue(item, 'os_family', tx('ai.common.na'))}</td><td>{scopeValue(item, 'software_train', tx('ai.common.na'))}</td>
+                 <td>{scopeValue(item, 'primary_version', tx('ai.common.na'))}</td><td>{scopeValue(item, 'compatibility_version', tx('ai.common.na'))}</td>
+                 <td><span className={`nx-micro-text rounded-full px-2 py-1 font-semibold ${statusTone(item.status)}`}>{catalogLabel(tx, CATALOG_STATUS_LABELS, item.status)}</span></td>
+                 <td>{catalogLabel(tx, CATALOG_STATUS_LABELS, item.review_status)}</td>
+                 {canManageCatalog && <TableActionCell>{item.mutable ? <div className="flex items-center gap-1">
+                   <ActionIconButton icon={Pencil} label={`${tx('ai.catalog.master.edit')} ${item.display_name}`} tooltip={tx('ai.catalog.master.edit')} variant="accent" onClick={() => openEditCatalogModel(item)} />
+                   {item.status !== 'deleted' && <ActionIconButton icon={Trash2} label={`${tx('ai.catalog.master.archive')} ${item.display_name}`} tooltip={tx('ai.catalog.master.archive')} variant="danger" onClick={() => void archiveCatalogModel(item)} />}
+                 </div> : <span className="nx-micro-text text-gray-400">{tx('ai.catalog.master.readOnly')}</span>}</TableActionCell>}
+               </tr>)}</tbody>
+             </DataTable>
+           </div>}
            <Pagination currentPage={page} totalItems={total} itemsPerPage={pageSize} onPageChange={setPage} onItemsPerPageChange={(size) => { setPageSize(size); setPage(1); }} language={language} alwaysVisible />
         </section>
       ) : (
         <section className="overflow-hidden rounded-2xl border border-gray-200 bg-white shadow-sm dark:border-gray-700 dark:bg-gray-800">
            <div className="flex items-center justify-between border-b border-gray-100 px-4 py-3 dark:border-gray-700"><div><h2 className="text-sm font-semibold text-gray-800 dark:text-gray-100">{tx('ai.catalog.alias.title')}</h2><p className="text-[11px] text-gray-500">{tx('ai.catalog.alias.body')}</p></div><Tag className="h-4 w-4 text-gray-400" /></div>
-           {loading ? <div className="flex items-center justify-center gap-2 p-10 text-xs text-gray-400"><Loader2 className="h-4 w-4 animate-spin" />{tx('ai.common.loading')}</div> : <div className="overflow-x-auto"><table className="nx-data-table min-w-full text-left"><thead><tr><th>{tx('ai.catalog.alias.alias')}</th><th>{tx('ai.catalog.alias.kind')}</th><th>{tx('ai.catalog.alias.target')}</th><th>{tx('ai.catalog.alias.review')}</th><th>{tx('ai.catalog.alias.action')}</th></tr></thead><tbody>{aliases.map((item) => <tr key={item.id}><td><div className="font-semibold text-gray-800 dark:text-gray-100">{item.alias}</div><div className="nx-micro-text text-gray-500">{item.normalized_alias}</div></td><td><span className="nx-micro-text rounded-full bg-indigo-50 px-2 py-1 font-semibold text-indigo-700 dark:bg-indigo-950/40 dark:text-indigo-300">{catalogLabel(tx, KIND_LABELS, item.alias_kind)}</span></td><td><div className="font-medium text-gray-700 dark:text-gray-200">{item.model?.model_code || item.product_model_id}</div><div className="nx-micro-text text-gray-500">{item.model?.vendor_id} / {item.model?.series_code}</div></td><td><span className={`nx-micro-text rounded-full px-2 py-1 font-semibold ${statusTone(item.conflict_status)}`}>{catalogLabel(tx, CATALOG_STATUS_LABELS, item.conflict_status)}</span><div className="mt-1 nx-micro-text text-gray-500">{catalogLabel(tx, CATALOG_STATUS_LABELS, item.seed_status)}</div></td><td><button type="button" onClick={() => setQuery(item.alias)} className="nx-action-button nx-action-button--sm border-gray-200 text-gray-600 hover:border-indigo-300 dark:border-gray-600 dark:text-gray-300">{tx('ai.catalog.alias.useForResolution')}</button></td></tr>)}</tbody></table></div>}
+           {loading ? <div className="flex items-center justify-center gap-2 p-10 text-xs text-gray-400"><Loader2 className="h-4 w-4 animate-spin" />{tx('ai.common.loading')}</div> : <div className="overflow-x-auto">
+             <DataTable unstyled exportConfig={{ filename: 'product-model-aliases', language, disabled: total === 0, exportData: exportCatalogAliases }} className="nx-data-table min-w-full text-left">
+               <thead><tr>
+                 <th>{tx('ai.catalog.alias.alias')}</th><th>{language === 'zh' ? '规范化别名' : 'Normalized Alias'}</th>
+                 <th>{tx('ai.catalog.alias.kind')}</th><th>{tx('ai.catalog.alias.target')}</th>
+                 <th>{tx('ai.catalog.filter.vendor')}</th><th>{tx('ai.catalog.editor.seriesCode')}</th>
+                 <th>{language === 'zh' ? '冲突状态' : 'Conflict Status'}</th><th>{language === 'zh' ? '种子状态' : 'Seed Status'}</th>
+                 <TableActionHeader>{tx('ai.catalog.alias.action')}</TableActionHeader>
+               </tr></thead>
+               <tbody>{aliases.map((item) => <tr key={item.id}>
+                 <td className="font-semibold text-gray-800 dark:text-gray-100">{item.alias}</td>
+                 <td className="font-mono text-xs text-gray-500">{item.normalized_alias}</td>
+                 <td><span className="nx-micro-text rounded-full bg-indigo-50 px-2 py-1 font-semibold text-indigo-700 dark:bg-indigo-950/40 dark:text-indigo-300">{catalogLabel(tx, KIND_LABELS, item.alias_kind)}</span></td>
+                 <td className="font-medium text-gray-700 dark:text-gray-200">{item.model?.model_code || tx('ai.common.na')}</td>
+                 <td>{item.model?.vendor_name || tx('ai.common.na')}</td><td className="font-mono text-xs">{item.model?.series_code || ''}</td>
+                 <td><span className={`nx-micro-text rounded-full px-2 py-1 font-semibold ${statusTone(item.conflict_status)}`}>{catalogLabel(tx, CATALOG_STATUS_LABELS, item.conflict_status)}</span></td>
+                 <td>{catalogLabel(tx, CATALOG_STATUS_LABELS, item.seed_status)}</td>
+                 <TableActionCell><ActionIconButton icon={Search} label={tx('ai.catalog.alias.useForResolution')} variant="accent" onClick={() => setQuery(item.alias)} /></TableActionCell>
+               </tr>)}</tbody>
+             </DataTable>
+           </div>}
            <Pagination currentPage={page} totalItems={total} itemsPerPage={pageSize} onPageChange={setPage} onItemsPerPageChange={(size) => { setPageSize(size); setPage(1); }} language={language} alwaysVisible />
         </section>
       )}

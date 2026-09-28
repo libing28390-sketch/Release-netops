@@ -2,14 +2,22 @@
 
 from __future__ import annotations
 
+import re
 from datetime import datetime, timezone
 from typing import Any
 
-from fastapi import APIRouter
+from fastapi import APIRouter, HTTPException, Query
 
 from core.rbac import require_role
 from database import get_db_connection
-from services.storage_service import StorageError, build_storage_service, resolve_storage_usage
+from services.storage_service import (
+    StorageError,
+    _service_for_profile,
+    build_storage_service,
+    effective_storage_provider,
+    get_storage_provider_config,
+    resolve_storage_usage,
+)
 
 
 router = APIRouter(prefix="/storage", tags=["Storage"])
@@ -110,6 +118,81 @@ def get_storage_status(user=require_role("Viewer")):
         "configuration_source": configuration_source,
         "effective_default_id": effective_default_id,
         "purpose": purpose,
+    }
+
+
+@router.get("/objects")
+def list_storage_objects(
+    provider_id: str | None = Query(default=None, max_length=128),
+    prefix: str = Query(default="", max_length=512),
+    delimiter: str = Query(default="/", max_length=1),
+    continuation_token: str | None = Query(default=None, max_length=4096),
+    page_size: int = Query(default=100, ge=1, le=1000),
+    _user=require_role("Administrator"),
+):
+    """List one page of S3 object paths for an administrator-selected profile."""
+
+    if "\x00" in prefix:
+        raise HTTPException(status_code=422, detail="prefix is invalid")
+    if delimiter not in {"", "/"}:
+        raise HTTPException(status_code=422, detail="delimiter must be '/' or empty")
+    try:
+        profile = get_storage_provider_config(provider_id) if provider_id else effective_storage_provider()
+        if profile.backend.strip().lower() != "s3":
+            raise HTTPException(status_code=400, detail="Selected storage provider is not S3")
+        service = _service_for_profile(profile)
+        page = service.list_objects_page(
+            prefix=prefix,
+            delimiter=delimiter,
+            continuation_token=continuation_token,
+            max_keys=page_size,
+        )
+    except HTTPException:
+        raise
+    except StorageError as exc:
+        message = str(exc)
+        detail = "Storage provider could not be listed; verify its configuration and credentials."
+        known_safe_errors = {
+            "S3 endpoint is not configured": "The S3 endpoint is not configured.",
+            "S3 bucket is not configured": "The S3 bucket is not configured.",
+            "Storage provider credentials are not configured": "Storage credentials are not configured.",
+            "Storage provider credentials could not be decrypted": "Storage credentials could not be decrypted; verify the server encryption key.",
+            "Storage provider configuration was not found": "The selected storage profile was not found.",
+        }
+        if message in known_safe_errors:
+            detail = known_safe_errors[message]
+        else:
+            match = re.fullmatch(
+                r"S3 listing failed: ([A-Za-z0-9_.-]{1,64}(?: \(HTTP [1-5][0-9]{2}\))?|HTTP [1-5][0-9]{2}|[A-Za-z]+Error)",
+                message,
+            )
+            if match:
+                detail = f"S3 listing failed ({match.group(1)}); check endpoint connectivity, bucket access, and ListBucket permission."
+        raise HTTPException(
+            status_code=503,
+            detail=detail,
+        ) from exc
+    except Exception as exc:
+        raise HTTPException(status_code=503, detail="S3 object listing is unavailable") from exc
+
+    bucket = str(service.bucket or profile.bucket or "")
+    return {
+        "provider_id": profile.id or "environment",
+        "provider_name": profile.name,
+        "endpoint_url": profile.endpoint_url,
+        "bucket": bucket,
+        "items": [
+            {
+                "object_key": item.object_key,
+                "s3_uri": f"s3://{bucket}/{item.object_key}",
+                "size": item.size,
+                "last_modified": item.last_modified,
+            }
+            for item in page.items
+        ],
+        "folders": list(page.common_prefixes),
+        "next_continuation_token": page.next_continuation_token,
+        "is_truncated": page.is_truncated,
     }
 
 

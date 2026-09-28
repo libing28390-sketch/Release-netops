@@ -12,6 +12,7 @@ import { ChangeOrderDetail } from './components/ChangeOrderDetail';
 import { ChangeOrderEditor } from './components/ChangeOrderEditor';
 import { TerminalExecution } from './components/TerminalExecution';
 import { useEscapeClose } from '../../hooks/useEscapeClose';
+import { PasswordInputField } from '../../components/ui/PasswordInputField';
 
 // Constants & Helpers
 import {
@@ -1664,15 +1665,19 @@ const ChangeOrderComponent: React.FC<Props> = ({
                   ))}
                 </div>}
                 {actionPrompt.sensitive ? (
-                  <input
+                  <PasswordInputField
+                    id="change-order-sensitive-response"
                     autoFocus
-                    type="password"
                     inputMode="numeric"
                     autoComplete="one-time-code"
+                    showPasswordLabel={zh ? '显示验证码' : 'Show verification code'}
+                    hidePasswordLabel={zh ? '隐藏验证码' : 'Hide verification code'}
+                    aria-label={actionPrompt.placeholder || (zh ? '敏感验证码' : 'Sensitive verification code')}
                     value={actionPrompt.value}
                     onChange={(e) => setActionPrompt({ ...actionPrompt, value: e.target.value.replace(/\D/g, '').slice(0, 8) })}
                     placeholder={actionPrompt.placeholder}
-                    className="w-full rounded-xl border border-black/10 px-3 py-2 text-sm tracking-[0.35em] text-[#164e63] focus:border-cyan-400 focus:outline-none focus:ring-2 focus:ring-cyan-500/20 transition-all bg-white"
+                    maxLength={8}
+                    className="rounded-xl text-sm tracking-[0.35em] text-[#164e63] focus:border-cyan-400 focus:ring-2 focus:ring-cyan-500/20 bg-white"
                   />
                 ) : (
                   <textarea

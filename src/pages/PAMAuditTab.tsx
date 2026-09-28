@@ -1,10 +1,10 @@
+import { DataTable } from '../components/DataTable';
 import React, { useState, useEffect, useCallback } from 'react';
 import PageHero from '../components/PageHero';
-import { ActionButton, ActionIconButton, ActionIconGroup } from '../components/ui/ActionIconButton';
+import { ActionIconButton, ActionIconGroup } from '../components/ui/ActionIconButton';
 import { 
   ShieldCheck, 
   Terminal, 
-  Clock, 
   Activity, 
   User, 
   Trash2, 
@@ -24,6 +24,9 @@ import CastPlayer from '../components/access/CastPlayer';
 import Pagination from '../components/Pagination';
 import { useEscapeClose } from '../hooks/useEscapeClose';
 
+import { TableActionCell, TableActionHeader } from '../components/ui/TableActionColumn';
+import type { TableExportData } from '../components/ui/TableExportMenu';
+import { fetchAllPaginatedItems } from '../utils/pagination';
 interface PAMSession {
   id: string;
   asset_id: string;
@@ -243,34 +246,6 @@ const PAMAuditTab: React.FC<PAMAuditTabProps> = ({
     window.open(`/api/pam/sessions/${sessionId}/recording`, '_blank');
   };
 
-  const handleExport = async () => {
-    if (isMine && !currentUsername.trim()) {
-      showToast(isZh ? '当前用户信息尚未就绪' : 'Current user is not ready', 'error');
-      return;
-    }
-    try {
-      const params = new URLSearchParams({
-        status: activeTab === 'active' ? 'active' : 'history',
-      });
-      if (isMine) params.set('requester_username', currentUsername.trim());
-      if (debouncedSearch) params.set('search', debouncedSearch);
-      if (accessFilter) params.set('access_level', accessFilter);
-      if (methodFilter) params.set('connect_method', methodFilter);
-      if (riskFilter) params.set('risk_level', riskFilter);
-      const response = await fetch(`/api/pam/sessions/export.csv?${params.toString()}`, { headers: authHeaders() });
-      if (!response.ok) throw new Error(`HTTP ${response.status}`);
-      const blob = await response.blob();
-      const href = URL.createObjectURL(blob);
-      const anchor = document.createElement('a');
-      anchor.href = href;
-      anchor.download = `pam-sessions-${new Date().toISOString().slice(0, 10)}.csv`;
-      anchor.click();
-      URL.revokeObjectURL(href);
-    } catch {
-      showToast(isZh ? '导出会话审计失败' : 'Failed to export session audit', 'error');
-    }
-  };
-
   const formatDuration = (sec: number) => {
     if (!sec || sec <= 0) return '—';
     const h = Math.floor(sec / 3600);
@@ -288,6 +263,37 @@ const PAMAuditTab: React.FC<PAMAuditTabProps> = ({
         hour: '2-digit', minute: '2-digit', second: '2-digit',
       });
     } catch { return ts; }
+  };
+
+  const exportAllSessions = async (): Promise<TableExportData> => {
+    const params = new URLSearchParams({ status: activeTab === 'active' ? 'active' : 'history' });
+    if (isMine) params.set('requester_username', currentUsername.trim());
+    if (debouncedSearch) params.set('search', debouncedSearch);
+    if (accessFilter) params.set('access_level', accessFilter);
+    if (methodFilter) params.set('connect_method', methodFilter);
+    if (riskFilter) params.set('risk_level', riskFilter);
+    const items = await fetchAllPaginatedItems<PAMSession>('/api/pam/sessions', params, 100);
+    return {
+      headers: isZh
+        ? ['状态', '设备', '目标 IP', '请求者', '登录账号', '连接方式', '权限级别', '开始时间', '完成时间', '时长']
+        : ['Status', 'Device', 'Target IP', 'Requester', 'Login Account', 'Connection Method', 'Access Level', 'Started', 'Completed', 'Duration'],
+      rows: items.map((session) => {
+        const isActive = session.status === 'active' || session.status === 'connecting';
+        const status = STATUS_CONFIG[session.status] || STATUS_CONFIG.closed;
+        return [
+          isZh ? status.label : status.labelEn,
+          session.asset_hostname || '—',
+          session.target_ip || '—',
+          session.requester_username || '—',
+          session.login_username || '—',
+          session.connect_method === 'local' ? (isZh ? '本地' : 'Local') : (isZh ? '浏览器' : 'Browser'),
+          session.access_level === 'admin' ? (isZh ? '特权' : 'Admin') : (isZh ? '普通' : 'Normal'),
+          formatTime(session.connected_at || session.created_at),
+          formatTime(session.closed_at),
+          isActive ? (isZh ? '进行中' : 'Live') : formatDuration(session.duration_seconds),
+        ];
+      }),
+    };
   };
 
   // The server has already filtered + paginated the results.
@@ -317,13 +323,6 @@ const PAMAuditTab: React.FC<PAMAuditTabProps> = ({
           : (isZh ? '实时监控、强制断开及录制回放' : 'Real-time monitoring, termination & playback')}
         actions={
           <div className="flex items-center gap-2">
-            <ActionButton
-              icon={Download}
-              variant="accent"
-              onClick={() => { void handleExport(); }}
-            >
-              {isZh ? '导出当前结果' : 'Export Results'}
-            </ActionButton>
             <ActionIconButton icon={RefreshCw} label={isZh ? '刷新' : 'Refresh'} disabled={loading} iconClassName={loading ? 'animate-spin' : undefined} onClick={fetchSessions} />
           </div>
         }
@@ -384,23 +383,26 @@ const PAMAuditTab: React.FC<PAMAuditTabProps> = ({
               )}
             </div>
           ) : (
-            <table className="nx-data-table text-left">
+            <DataTable unstyled exportConfig={{ filename: 'pam-audit-history', language: isZh ? 'zh' : 'en', exportData: exportAllSessions }} className="nx-data-table text-left">
               <thead>
                 <tr className="bg-slate-50 border-b border-slate-200">
                   <th className="px-6 py-4 text-xs font-semibold text-slate-500 uppercase tracking-wider w-28">{isZh ? '状态' : 'Status'}</th>
-                  <th className="px-6 py-4 text-xs font-semibold text-slate-500 uppercase tracking-wider">{isZh ? '设备 / 资产' : 'Device / Asset'}</th>
+                  <th className="px-6 py-4 text-xs font-semibold text-slate-500 uppercase tracking-wider">{isZh ? '设备' : 'Device'}</th>
+                  <th className="px-6 py-4 text-xs font-semibold text-slate-500 uppercase tracking-wider">{isZh ? '目标 IP' : 'Target IP'}</th>
                   <th className="px-6 py-4 text-xs font-semibold text-slate-500 uppercase tracking-wider">{isZh ? '请求者' : 'Requester'}</th>
                   <th className="px-6 py-4 text-xs font-semibold text-slate-500 uppercase tracking-wider">{isZh ? '登录账号' : 'Login Account'}</th>
+                  <th className="px-6 py-4 text-xs font-semibold text-slate-500 uppercase tracking-wider">{isZh ? '连接方式' : 'Connection Method'}</th>
                   <th className="px-6 py-4 text-xs font-semibold text-slate-500 uppercase tracking-wider">{isZh ? '权限级别' : 'Access Level'}</th>
-                  <th className="px-6 py-4 text-xs font-semibold text-slate-500 uppercase tracking-wider">{isZh ? '开始 / 完成时间' : 'Started / Completed'}</th>
+                  <th className="px-6 py-4 text-xs font-semibold text-slate-500 uppercase tracking-wider">{isZh ? '开始时间' : 'Started'}</th>
+                  <th className="px-6 py-4 text-xs font-semibold text-slate-500 uppercase tracking-wider">{isZh ? '完成时间' : 'Completed'}</th>
                   <th className="px-6 py-4 text-xs font-semibold text-slate-500 uppercase tracking-wider">{isZh ? '时长' : 'Duration'}</th>
-                  <th className="px-6 py-4 text-xs font-semibold text-slate-500 uppercase tracking-wider text-right" style={{ textAlign: 'right' }}>{isZh ? '操作' : 'Actions'}</th>
+                  <TableActionHeader className="px-6 py-4 text-xs font-semibold text-slate-500 uppercase tracking-wider text-right" style={{ textAlign: 'right' }}>{isZh ? '操作' : 'Actions'}</TableActionHeader>
                 </tr>
               </thead>
               <tbody className="divide-y divide-slate-100">
                 {loading && filteredSessions.length === 0 ? (
                   <tr>
-                    <td colSpan={8} className="px-6 py-12 text-center text-slate-400 text-sm">
+                    <td colSpan={11} className="px-6 py-12 text-center text-slate-400 text-sm">
                       <RefreshCw className="w-5 h-5 animate-spin inline-block mr-2" />
                       {isZh ? '加载中...' : 'Loading...'}
                     </td>
@@ -435,7 +437,6 @@ const PAMAuditTab: React.FC<PAMAuditTabProps> = ({
                                 </span>
                               ) : null}
                             </div>
-                            <span className="text-xs text-slate-400 font-mono mt-0.5">{s.target_ip}</span>
                           </div>
                           {(s as any).risk_level > 0 && (
                             <div 
@@ -451,6 +452,7 @@ const PAMAuditTab: React.FC<PAMAuditTabProps> = ({
                           )}
                         </div>
                       </td>
+                      <td className="px-6 py-4 font-mono text-xs text-slate-500">{s.target_ip || '—'}</td>
 
                       {/* Requester */}
                       <td className="px-6 py-4">
@@ -464,16 +466,13 @@ const PAMAuditTab: React.FC<PAMAuditTabProps> = ({
 
                       {/* Login account */}
                       <td className="px-6 py-4">
-                        <div className="flex items-center gap-1.5">
-                          <span className="font-mono text-xs text-slate-600 bg-slate-100 px-2 py-1 rounded">
-                            {s.login_username || '—'}
-                          </span>
-                          {(s as any).connect_method === 'local' && (
-                            <span className="text-[9px] font-bold text-amber-600 bg-amber-50 border border-amber-200 px-1.5 py-0.5 rounded uppercase tracking-wider">
-                              {isZh ? '本地' : 'Local'}
-                            </span>
-                          )}
-                        </div>
+                        <span className="font-mono text-xs text-slate-600 bg-slate-100 px-2 py-1 rounded">
+                          {s.login_username || '—'}
+                        </span>
+                      </td>
+
+                      <td className="px-6 py-4 text-xs text-slate-600">
+                        {(s as any).connect_method === 'local' ? (isZh ? '本地' : 'Local') : (isZh ? '浏览器' : 'Browser')}
                       </td>
 
                       {/* Access level */}
@@ -487,16 +486,9 @@ const PAMAuditTab: React.FC<PAMAuditTabProps> = ({
                         </span>
                       </td>
 
-                      {/* Connected at */}
-                      <td className="px-6 py-4">
-                        <div className="flex items-start gap-1.5 text-xs text-slate-500">
-                          <Clock className="w-3.5 h-3.5 text-slate-300 flex-shrink-0" />
-                          <div>
-                            <span className="block">{formatTime(s.connected_at || s.created_at)}</span>
-                            {!isActive && <span className="mt-0.5 block text-[10px] text-slate-400">{isZh ? '完成 ' : 'Ended '}{formatTime(s.closed_at)}</span>}
-                          </div>
-                        </div>
-                      </td>
+                      {/* Start / completion timestamps are separate columns for reliable export. */}
+                      <td className="px-6 py-4 text-xs text-slate-500">{formatTime(s.connected_at || s.created_at)}</td>
+                      <td className="px-6 py-4 text-xs text-slate-500">{formatTime(s.closed_at)}</td>
 
                       {/* Duration */}
                       <td className="px-6 py-4">
@@ -511,7 +503,7 @@ const PAMAuditTab: React.FC<PAMAuditTabProps> = ({
                       </td>
 
                       {/* Actions */}
-                      <td className="px-6 py-4 text-right">
+                      <TableActionCell className="px-6 py-4 text-right">
                         <ActionIconGroup label={isZh ? '会话操作' : 'Session actions'}>
                           <ActionIconButton
                             icon={Info}
@@ -546,12 +538,12 @@ const PAMAuditTab: React.FC<PAMAuditTabProps> = ({
                             </span>
                           )}
                         </ActionIconGroup>
-                      </td>
+                      </TableActionCell>
                     </tr>
                   );
                 })}
               </tbody>
-            </table>
+            </DataTable>
           )}
         </div>
 

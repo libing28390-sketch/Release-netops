@@ -1,3 +1,4 @@
+import { DataTable } from '../DataTable';
 import React, { useState, useCallback } from 'react';
 import {
   ChevronDown, ChevronUp, ChevronRight,
@@ -5,12 +6,13 @@ import {
   Activity, WifiOff, Terminal,
 } from 'lucide-react';
 import type { Device, DeviceConnectionCheckSummary } from '../../types';
+import type { TableExportData } from '../ui/TableExportMenu';
 import { ActionIconButton, ActionIconGroup } from '../ui/ActionIconButton';
-import StatusBadge from './StatusBadge';
-import CpuMemBar from './CpuMemBar';
+import { CHECK_BADGE, HEALTH_CFG, LIFECYCLE_CFG, STATUS_CFG, formatCheckTime } from './StatusBadge';
 import DeviceRowExpand from './DeviceRowExpand';
 import { extractSoftwareMajorVersion, getDevicePlatformAdaptation, getProfileAdaptationMajorVersion } from '../../utils/platformVersion';
 
+import { TableActionCell, TableActionHeader } from '../ui/TableActionColumn';
 /* ─── Helpers ─── */
 const clampPercent = (value?: number) => {
   const n = Number(value ?? 0);
@@ -53,25 +55,66 @@ const hasVersionMismatch = (device: Device): boolean => {
 };
 
 /* ─── Column Def ─── */
-export type ColumnKey = 'device' | 'platform' | 'site' | 'tags' | 'status' | 'cpuMem' | 'actions';
+export type ColumnKey =
+  | 'hostname' | 'assetTag' | 'managementIp' | 'category' | 'role' | 'connectionMethod'
+  | 'vendor' | 'platform' | 'model' | 'version' | 'adaptation' | 'adaptationVersion' | 'adaptationSource' | 'versionMismatch'
+  | 'site' | 'rack' | 'rackUnit' | 'tags' | 'status' | 'health' | 'lifecycle' | 'checkStatus' | 'checkTime' | 'cpu' | 'memory' | 'actions';
 
 export interface ColumnVisibility {
-  device: boolean;
+  hostname: boolean;
+  assetTag: boolean;
+  managementIp: boolean;
+  category: boolean;
+  role: boolean;
+  connectionMethod: boolean;
+  vendor: boolean;
   platform: boolean;
+  model: boolean;
+  version: boolean;
+  adaptation: boolean;
+  adaptationVersion: boolean;
+  adaptationSource: boolean;
+  versionMismatch: boolean;
   site: boolean;
+  rack: boolean;
+  rackUnit: boolean;
   tags: boolean;
   status: boolean;
-  cpuMem: boolean;
+  health: boolean;
+  lifecycle: boolean;
+  checkStatus: boolean;
+  checkTime: boolean;
+  cpu: boolean;
+  memory: boolean;
   actions: boolean;
 }
 
 export const DEFAULT_COLUMNS: ColumnVisibility = {
-  device: true,
+  hostname: true,
+  assetTag: true,
+  managementIp: true,
+  category: true,
+  role: true,
+  connectionMethod: true,
+  vendor: true,
   platform: true,
+  model: true,
+  version: true,
+  adaptation: true,
+  adaptationVersion: true,
+  adaptationSource: true,
+  versionMismatch: true,
   site: true,
+  rack: true,
+  rackUnit: true,
   tags: true,
   status: true,
-  cpuMem: true,
+  health: true,
+  lifecycle: true,
+  checkStatus: true,
+  checkTime: true,
+  cpu: true,
+  memory: true,
   actions: true,
 };
 
@@ -118,6 +161,8 @@ interface DeviceTableProps {
   deviceConnectionChecks: Record<string, DeviceConnectionCheckSummary>;
   connectionTestingDeviceId: string | null;
   columns: ColumnVisibility;
+  exportData: () => Promise<TableExportData>;
+  exportDisabled?: boolean;
 }
 
 const DeviceTable: React.FC<DeviceTableProps> = ({
@@ -125,7 +170,7 @@ const DeviceTable: React.FC<DeviceTableProps> = ({
   selectedIds, onSelectChange,
   onShowDetails, onEdit, onDelete, onManage, onTestConnection,
   deviceConnectionChecks, connectionTestingDeviceId,
-  columns,
+  columns, exportData, exportDisabled = false,
 }) => {
   const [expandedIds, setExpandedIds] = useState<Set<string>>(new Set());
   const zh = language === 'zh';
@@ -153,10 +198,11 @@ const DeviceTable: React.FC<DeviceTableProps> = ({
 
   /* Calculate visible column count for colSpan */
   const visibleCount = 2 /* checkbox + expand */ + Object.values(columns).filter(Boolean).length;
+  const hasExportableColumns = Object.entries(columns).some(([key, visible]) => key !== 'actions' && visible);
 
   return (
     <div className="overflow-x-auto">
-      <table className="nx-data-table min-w-[860px]">
+      <DataTable unstyled exportConfig={{ filename: 'devices', language: zh ? 'zh' : 'en', disabled: exportDisabled || loading || !hasExportableColumns, exportData }} className="nx-data-table min-w-[2200px]">
         <thead>
           <tr className="bg-black/[.02] dark:bg-white/[.02] border-b border-black/5 dark:border-white/6">
             <th className="px-3 py-3 w-9">
@@ -170,40 +216,65 @@ const DeviceTable: React.FC<DeviceTableProps> = ({
               />
             </th>
             <th className="px-1 py-3 w-6" />
-            {columns.device && (
+            {columns.hostname && (
               <SortHeader col="hostname" sortConfig={sortConfig} onSort={onSort}>
-                {zh ? '设备' : 'Device'}
+                {zh ? '设备名称' : 'Device name'}
               </SortHeader>
             )}
+            {columns.assetTag && <th className="px-3 py-3 text-[11px] font-bold uppercase tracking-wider text-gray-400 dark:text-zinc-400">{zh ? '资产编号' : 'Asset tag'}</th>}
+            {columns.managementIp && (
+              <SortHeader col="ip_address" sortConfig={sortConfig} onSort={onSort}>
+                {zh ? '管理 IP' : 'Management IP'}
+              </SortHeader>
+            )}
+            {columns.category && <th className="px-3 py-3 text-[11px] font-bold uppercase tracking-wider text-gray-400 dark:text-zinc-400">{zh ? '设备类别' : 'Category'}</th>}
+            {columns.role && (
+              <SortHeader col="role" sortConfig={sortConfig} onSort={onSort}>
+                {zh ? '角色' : 'Role'}
+              </SortHeader>
+            )}
+            {columns.connectionMethod && <th className="px-3 py-3 text-[11px] font-bold uppercase tracking-wider text-gray-400 dark:text-zinc-400">{zh ? '连接方式' : 'Connection method'}</th>}
+            {columns.vendor && <th className="px-3 py-3 text-[11px] font-bold uppercase tracking-wider text-gray-400 dark:text-zinc-400">{zh ? '厂商' : 'Vendor'}</th>}
             {columns.platform && (
               <SortHeader col="platform" sortConfig={sortConfig} onSort={onSort}>
-                {zh ? '系统' : 'System'}
+                {zh ? '平台' : 'Platform'}
               </SortHeader>
             )}
+            {columns.model && (
+              <SortHeader col="model" sortConfig={sortConfig} onSort={onSort}>
+                {zh ? '型号' : 'Model'}
+              </SortHeader>
+            )}
+            {columns.version && <th className="px-3 py-3 text-[11px] font-bold uppercase tracking-wider text-gray-400 dark:text-zinc-400">{zh ? '软件版本' : 'Software version'}</th>}
+            {columns.adaptation && <th className="px-3 py-3 text-[11px] font-bold uppercase tracking-wider text-gray-400 dark:text-zinc-400">{zh ? '命令/解析适配' : 'Command/parser adaptation'}</th>}
+            {columns.adaptationVersion && <th className="px-3 py-3 text-[11px] font-bold uppercase tracking-wider text-gray-400 dark:text-zinc-400">{zh ? '适配版本' : 'Adaptation version'}</th>}
+            {columns.adaptationSource && <th className="px-3 py-3 text-[11px] font-bold uppercase tracking-wider text-gray-400 dark:text-zinc-400">{zh ? '适配来源' : 'Adaptation source'}</th>}
+            {columns.versionMismatch && <th className="px-3 py-3 text-[11px] font-bold uppercase tracking-wider text-gray-400 dark:text-zinc-400">{zh ? '版本校验' : 'Version check'}</th>}
             {columns.site && (
               <SortHeader col="site" sortConfig={sortConfig} onSort={onSort}>
-                {zh ? '位置' : 'Location'}
+                {zh ? '站点' : 'Site'}
               </SortHeader>
             )}
+            {columns.rack && <th className="px-3 py-3 text-[11px] font-bold uppercase tracking-wider text-gray-400 dark:text-zinc-400">{zh ? '机柜' : 'Rack'}</th>}
+            {columns.rackUnit && <th className="px-3 py-3 text-[11px] font-bold uppercase tracking-wider text-gray-400 dark:text-zinc-400">{zh ? 'U 位' : 'Rack unit'}</th>}
             {columns.tags && (
               <th className="px-3 py-3 text-[11px] font-bold uppercase tracking-wider text-gray-400 dark:text-zinc-400">
                 {zh ? '标签' : 'Tags'}
               </th>
             )}
             {columns.status && (
-              <SortHeader col="status" sortConfig={sortConfig} onSort={onSort}>
-                {zh ? '状态' : 'Status'}
-              </SortHeader>
+              <SortHeader col="status" sortConfig={sortConfig} onSort={onSort}>{zh ? '在线状态' : 'Status'}</SortHeader>
             )}
-            {columns.cpuMem && (
-              <th className="px-3 py-3 text-[11px] font-bold uppercase tracking-wider text-gray-400 dark:text-zinc-400">
-                CPU / MEM
-              </th>
-            )}
+            {columns.health && <th className="px-3 py-3 text-[11px] font-bold uppercase tracking-wider text-gray-400 dark:text-zinc-400">{zh ? '健康状态' : 'Health'}</th>}
+            {columns.lifecycle && <th className="px-3 py-3 text-[11px] font-bold uppercase tracking-wider text-gray-400 dark:text-zinc-400">{zh ? '生命周期' : 'Lifecycle'}</th>}
+            {columns.checkStatus && <th className="px-3 py-3 text-[11px] font-bold uppercase tracking-wider text-gray-400 dark:text-zinc-400">{zh ? '连通性检查' : 'Connectivity check'}</th>}
+            {columns.checkTime && <th className="px-3 py-3 text-[11px] font-bold uppercase tracking-wider text-gray-400 dark:text-zinc-400">{zh ? '检查时间' : 'Check time'}</th>}
+            {columns.cpu && <th className="px-3 py-3 text-[11px] font-bold uppercase tracking-wider text-gray-400 dark:text-zinc-400">CPU</th>}
+            {columns.memory && <th className="px-3 py-3 text-[11px] font-bold uppercase tracking-wider text-gray-400 dark:text-zinc-400">{zh ? '内存' : 'Memory'}</th>}
             {columns.actions && (
-              <th className="px-3 py-3 text-[11px] font-bold uppercase tracking-wider text-gray-400 dark:text-zinc-400 text-right pr-4">
+              <TableActionHeader className="px-3 py-3 text-[11px] font-bold uppercase tracking-wider text-gray-400 dark:text-zinc-400 text-right pr-4">
                 {zh ? '操作' : 'Actions'}
-              </th>
+              </TableActionHeader>
             )}
           </tr>
         </thead>
@@ -214,6 +285,15 @@ const DeviceTable: React.FC<DeviceTableProps> = ({
             const testing = connectionTestingDeviceId === device.id;
             const cpu = clampPercent(device.cpu_usage);
             const mem = clampPercent(device.memory_usage);
+            const assetMetadata = device as Device & { asset_vendor?: string; asset_model?: string };
+            const adaptation = getDevicePlatformAdaptation(device, zh ? 'zh' : 'en');
+            const adaptationName = platformBindingName(device, zh) || (zh ? '待自动识别' : 'Awaiting detection');
+            const adaptationVersion = adaptationVersionLabel(device) || '—';
+            const statusConfig = STATUS_CFG[device.status] || STATUS_CFG.pending;
+            const healthConfig = HEALTH_CFG[device.health_status || 'unknown'] || HEALTH_CFG.unknown;
+            const lifecycleConfig = LIFECYCLE_CFG[device.lifecycle_status || 'staging'] || LIFECYCLE_CFG.staging;
+            const connectionCheck = deviceConnectionChecks[device.id];
+            const checkConfig = connectionCheck ? (CHECK_BADGE[connectionCheck.status] || CHECK_BADGE.fail) : null;
             // Zero is a valid health value.  Only hide the bars when the
             // collection status says there is no usable snapshot.
             const metricsAvailable = device.collection_status === 'healthy'
@@ -249,67 +329,27 @@ const DeviceTable: React.FC<DeviceTableProps> = ({
                       <ChevronRight size={13} className={`transition-transform duration-200 ${expanded ? 'rotate-90' : ''}`} />
                     </button>
                   </td>
-                  {/* Device (hostname + ip + role) */}
-                  {columns.device && (
-                    <td className="px-3 py-2.5">
-                      <div className="text-left">
-                        <span className="text-xs font-bold text-gray-900 dark:text-white group-hover:text-blue-600 dark:group-hover:text-blue-400 transition-colors">
-                          {device.hostname || 'Unknown'}
-                        </span>
-                        <span className="block text-[10px] font-mono text-gray-400 dark:text-zinc-400 mt-0.5">
-                          {device.ip_address || '0.0.0.0'}
-                        </span>
-                      </div>
-                      {device.role && (
-                        <span className="inline-block mt-0.5 text-[10px] font-semibold uppercase px-1.5 py-0.5 rounded
-                          bg-gray-50 dark:bg-zinc-800/60 text-gray-500 dark:text-zinc-400 border border-gray-100 dark:border-zinc-700/80">
-                          {device.role}
-                        </span>
-                      )}
-                      {device.connection_method && (
-                        <span className={`inline-block mt-0.5 ml-1 text-[10px] font-semibold uppercase px-1.5 py-0.5 rounded
-                          ${device.connection_method === 'netconf'
-                            ? 'bg-violet-50 text-violet-700 dark:bg-violet-950/40 dark:text-violet-300'
-                            : 'bg-gray-50 dark:bg-zinc-800/60 text-gray-500 dark:text-zinc-400 border border-gray-100 dark:border-zinc-700/80'
-                          }`}>
-                          {device.connection_method === 'netconf' ? 'NETCONF' : 'SSH'}
-                        </span>
-                      )}
-                    </td>
-                  )}
-                  {/* Platform */}
+                  {columns.hostname && <td className="px-3 py-2.5 text-xs font-bold text-gray-900 dark:text-white group-hover:text-blue-600 dark:group-hover:text-blue-400">{device.hostname || (zh ? '未知' : 'Unknown')}</td>}
+                  {columns.assetTag && <td className="px-3 py-2.5 text-xs font-mono text-gray-700 dark:text-zinc-300">{device.asset_tag || '—'}</td>}
+                  {columns.managementIp && <td className="px-3 py-2.5 text-xs font-mono text-gray-700 dark:text-zinc-300">{device.ip_address || '—'}</td>}
+                  {columns.category && <td className="px-3 py-2.5 text-xs text-gray-700 dark:text-zinc-300">{device.device_category || '—'}</td>}
+                  {columns.role && <td className="px-3 py-2.5 text-xs text-gray-700 dark:text-zinc-300">{device.role || '—'}</td>}
+                  {columns.connectionMethod && <td className="px-3 py-2.5 text-xs font-semibold uppercase text-gray-600 dark:text-zinc-300">{device.connection_method || '—'}</td>}
+                  {columns.vendor && <td className="px-3 py-2.5 text-xs text-gray-700 dark:text-zinc-300">{device.vendor || assetMetadata.asset_vendor || vendorOf(device.platform)}</td>}
                   {columns.platform && (
-                    <td className="px-3 py-2.5">
-                      <span className="text-xs font-semibold text-gray-700 dark:text-zinc-300">{device.vendor || vendorOf(device.platform)}</span>
-                      <span className="block text-[11px] text-gray-500 dark:text-zinc-400 mt-0.5">{device.platform || 'unknown'}</span>
-                      {device.version && (
-                        <span className="block text-[10px] font-mono text-gray-500 dark:text-zinc-400 mt-0.5 truncate max-w-[180px]" title={device.version}>
-                          {zh ? '设备软件：' : 'Device software: '}{device.version}
-                          {extractSoftwareMajorVersion(device.version) !== null ? ` (V${extractSoftwareMajorVersion(device.version)})` : ''}
-                        </span>
-                      )}
-                      <div className={`mt-1 rounded-md border px-1.5 py-1 text-[10px] leading-4 ${hasVersionMismatch(device)
-                          ? 'border-amber-200 bg-amber-50 text-amber-800 dark:border-amber-900/60 dark:bg-amber-950/30 dark:text-amber-300'
-                          : 'border-cyan-100 bg-cyan-50/70 text-cyan-800 dark:border-cyan-900/50 dark:bg-cyan-950/30 dark:text-cyan-300'
-                        }`} title={platformBindingName(device, zh) || (zh ? '待自动识别' : 'Awaiting detection')}>
-                          <span className="font-semibold">{device.platform_profile_id || device.platform_binding ? (zh ? '命令/解析适配：' : 'Command/parser: ') : (zh ? '默认命令/解析适配：' : 'Default command/parser: ')}</span>
-                          <span>{platformBindingName(device, zh) || (zh ? '待自动识别' : 'Awaiting detection')}</span>
-                          {adaptationVersionLabel(device) && <span className="ml-1 font-bold">({adaptationVersionLabel(device)})</span>}
-                          {hasVersionMismatch(device) && <span className="ml-1 font-semibold">· {zh ? '版本不一致' : 'Mismatch'}</span>}
-                        </div>
-                    </td>
+                    <td className="px-3 py-2.5 text-xs text-gray-700 dark:text-zinc-300">{device.platform || 'unknown'}</td>
                   )}
-                  {/* Site */}
+                  {columns.model && <td className="px-3 py-2.5 text-xs text-gray-700 dark:text-zinc-300">{device.model || assetMetadata.asset_model || '—'}</td>}
+                  {columns.version && <td className="px-3 py-2.5 text-xs font-mono text-gray-700 dark:text-zinc-300">{device.version || '—'}</td>}
+                  {columns.adaptation && <td className="px-3 py-2.5 text-xs text-gray-700 dark:text-zinc-300" title={adaptationName}>{adaptationName}</td>}
+                  {columns.adaptationVersion && <td className="px-3 py-2.5 text-xs text-gray-700 dark:text-zinc-300">{adaptationVersion}</td>}
+                  {columns.adaptationSource && <td className="px-3 py-2.5 text-xs text-gray-700 dark:text-zinc-300">{adaptation.explicit ? (zh ? '手动绑定' : 'Bound') : (zh ? '默认' : 'Default')}</td>}
+                  {columns.versionMismatch && <td className="px-3 py-2.5 text-xs">{hasVersionMismatch(device) ? <span className="text-amber-700 dark:text-amber-300">{zh ? '不一致' : 'Mismatch'}</span> : <span className="text-gray-400 dark:text-zinc-500">{zh ? '一致' : 'Match'}</span>}</td>}
                   {columns.site && (
-                    <td className="px-3 py-2.5">
-                      <span className="text-xs font-medium text-gray-800 dark:text-zinc-200">{device.datacenter || device.site || '—'}</span>
-                      {device.rack && (
-                        <span className="block text-[10px] text-gray-400 dark:text-zinc-400 mt-0.5">
-                          Rack {device.rack}{device.rack_unit ? ` / U${device.rack_unit}` : ''}
-                        </span>
-                      )}
-                    </td>
+                    <td className="px-3 py-2.5 text-xs font-medium text-gray-800 dark:text-zinc-200">{device.datacenter || device.site || '—'}</td>
                   )}
+                  {columns.rack && <td className="px-3 py-2.5 text-xs text-gray-700 dark:text-zinc-300">{device.rack_code || device.rack_name || device.rack || '—'}</td>}
+                  {columns.rackUnit && <td className="px-3 py-2.5 text-xs text-gray-700 dark:text-zinc-300">{device.rack_unit || '—'}</td>}
                   {/* Tags */}
                   {columns.tags && (
                     <td className="px-3 py-2.5">
@@ -330,28 +370,17 @@ const DeviceTable: React.FC<DeviceTableProps> = ({
                             +{(device.tags || []).length - 3}
                           </span>
                         )}
+                        {(device.tags || []).length === 0 && <span className="text-xs text-gray-400 dark:text-zinc-500">—</span>}
                       </div>
                     </td>
                   )}
-                  {/* Status */}
-                  {columns.status && (
-                    <td className="px-3 py-2.5">
-                      <StatusBadge
-                        status={device.status}
-                        healthStatus={device.health_status}
-                        lifecycleStatus={device.lifecycle_status}
-                        uptime={device.uptime}
-                        connectionCheck={deviceConnectionChecks[device.id]}
-                        language={language}
-                      />
-                    </td>
-                  )}
-                  {/* CPU / MEM */}
-                  {columns.cpuMem && (
-                    <td className="px-3 py-2.5">
-                      <CpuMemBar cpu={cpu} mem={mem} language={language} empty={!metricsAvailable} />
-                    </td>
-                  )}
+                  {columns.status && <td className={`px-3 py-2.5 text-xs font-bold ${statusConfig.text}`}>{zh ? statusConfig.labelZh : statusConfig.labelEn}</td>}
+                  {columns.health && <td className={`px-3 py-2.5 text-xs font-semibold ${healthConfig.text}`}>{zh ? healthConfig.labelZh : healthConfig.labelEn}</td>}
+                  {columns.lifecycle && <td className={`px-3 py-2.5 text-xs font-semibold ${lifecycleConfig.text}`}>{zh ? lifecycleConfig.labelZh : lifecycleConfig.labelEn}</td>}
+                  {columns.checkStatus && <td className="px-3 py-2.5 text-xs">{checkConfig ? <span className={`inline-flex rounded border px-1.5 py-0.5 font-bold ${checkConfig.cls}`}>{zh ? checkConfig.zh : checkConfig.en}</span> : <span className="text-gray-400 dark:text-zinc-500">—</span>}</td>}
+                  {columns.checkTime && <td className="px-3 py-2.5 text-xs text-gray-600 dark:text-zinc-400">{connectionCheck?.checked_at ? formatCheckTime(connectionCheck.checked_at, language) : '—'}</td>}
+                  {columns.cpu && <td className="px-3 py-2.5 text-xs tabular-nums text-gray-700 dark:text-zinc-300">{metricsAvailable ? `${cpu}%` : '—'}</td>}
+                  {columns.memory && <td className="px-3 py-2.5 text-xs tabular-nums text-gray-700 dark:text-zinc-300">{metricsAvailable ? `${mem}%` : '—'}</td>}
                   {/* Actions */}
                   {columns.actions && (
                     <td className="px-3 py-2.5 text-right whitespace-nowrap" onClick={e => e.stopPropagation()}>
@@ -423,7 +452,7 @@ const DeviceTable: React.FC<DeviceTableProps> = ({
             </tr>
           )}
         </tbody>
-      </table>
+      </DataTable>
     </div>
   );
 };

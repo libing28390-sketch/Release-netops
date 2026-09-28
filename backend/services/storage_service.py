@@ -80,6 +80,21 @@ class StorageObject:
 StorageObjectMeta = StorageObject
 
 
+@dataclass(frozen=True)
+class StorageObjectListingEntry:
+    object_key: str
+    size: int
+    last_modified: str | None = None
+
+
+@dataclass(frozen=True)
+class StorageObjectListingPage:
+    items: tuple[StorageObjectListingEntry, ...]
+    common_prefixes: tuple[str, ...]
+    next_continuation_token: str | None
+    is_truncated: bool
+
+
 def normalize_object_key(value: object) -> str:
     """Return a safe, portable object key and reject traversal attempts."""
 
@@ -455,6 +470,67 @@ class S3StorageBackend(StorageBackend):
             # exception or response body, which may contain sensitive details.
             return False, f"S3 storage check failed: {self._safe_error_detail(exc)}"
 
+    def list_objects_page(
+        self,
+        *,
+        prefix: str = "",
+        delimiter: str = "/",
+        continuation_token: str | None = None,
+        max_keys: int = 100,
+    ) -> StorageObjectListingPage:
+        if not 1 <= int(max_keys) <= 1000:
+            raise ValueError("max_keys must be between 1 and 1000")
+        normalized_prefix = str(prefix or "")
+        if "\x00" in normalized_prefix:
+            raise ValueError("S3 object prefix cannot contain NUL bytes")
+        normalized_delimiter = str(delimiter or "")
+        if normalized_delimiter not in {"", "/"}:
+            raise ValueError("S3 object delimiter must be '/' or empty")
+        request: dict[str, object] = {
+            "Bucket": self.bucket,
+            "Prefix": normalized_prefix,
+            "MaxKeys": int(max_keys),
+        }
+        if normalized_delimiter:
+            request["Delimiter"] = normalized_delimiter
+        if continuation_token:
+            request["ContinuationToken"] = str(continuation_token)
+        try:
+            response = self._client().list_objects_v2(**request)
+        except Exception as exc:
+            raise StorageError(f"S3 listing failed: {self._safe_error_detail(exc)}") from exc
+
+        items: list[StorageObjectListingEntry] = []
+        for item in response.get("Contents") or []:
+            key = item.get("Key")
+            if not isinstance(key, str):
+                continue
+            modified = item.get("LastModified")
+            if hasattr(modified, "isoformat"):
+                modified = modified.isoformat()
+            items.append(
+                StorageObjectListingEntry(
+                    object_key=key,
+                    size=max(0, int(item.get("Size") or 0)),
+                    last_modified=str(modified) if modified else None,
+                )
+            )
+        common_prefixes = tuple(
+            value
+            for entry in response.get("CommonPrefixes") or []
+            if isinstance(entry, dict)
+            for value in [entry.get("Prefix")]
+            if isinstance(value, str) and value.startswith(normalized_prefix)
+        )
+        is_truncated = bool(response.get("IsTruncated"))
+        next_token = response.get("NextContinuationToken") if is_truncated else None
+        return StorageObjectListingPage(
+            items=tuple(items),
+            common_prefixes=common_prefixes,
+            next_continuation_token=str(next_token) if next_token else None,
+            is_truncated=is_truncated,
+        )
+
 
 class StorageService:
     """Business-facing facade over one explicitly selected provider."""
@@ -504,6 +580,24 @@ class StorageService:
 
     def health_check(self) -> tuple[bool, str]:
         return self.backend.health_check()
+
+    def list_objects_page(
+        self,
+        *,
+        prefix: str = "",
+        delimiter: str = "/",
+        continuation_token: str | None = None,
+        max_keys: int = 100,
+    ) -> StorageObjectListingPage:
+        method = getattr(self.backend, "list_objects_page", None)
+        if not callable(method):
+            raise StorageError("Object listing is only supported by S3 storage")
+        return method(
+            prefix=prefix,
+            delimiter=delimiter,
+            continuation_token=continuation_token,
+            max_keys=max_keys,
+        )
 
 
 def _environment_provider() -> StorageProviderConfig:
@@ -777,6 +871,8 @@ __all__ = [
     "StorageNotFound",
     "StorageObject",
     "StorageObjectMeta",
+    "StorageObjectListingEntry",
+    "StorageObjectListingPage",
     "StorageService",
     "StorageProviderConfig",
     "StorageUsageBinding",

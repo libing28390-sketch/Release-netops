@@ -1,20 +1,22 @@
-import React, { useState, useRef, useEffect } from 'react';
+import { DataTable } from '../../../components/DataTable';
+import React, { useState, useRef, useEffect, useCallback } from 'react';
 import {
   Activity, RotateCcw, Play, CalendarClock, Clock, Eye,
-  FileText, FileSpreadsheet, FileJson, ChevronDown, Download,
+  FileText, FileSpreadsheet, FileJson, Download,
   Search, Globe, User, CheckCircle2, AlertCircle, RefreshCw
 } from 'lucide-react';
 import { AnimatePresence, motion } from 'motion/react';
 import Pagination from '../../../components/Pagination';
+import { ActionIconButton } from '../../../components/ui/ActionIconButton';
 import type { UnifiedExecutionLog } from '../types';
 import { useEscapeClose } from '../../../hooks/useEscapeClose';
 
+import { TableActionCell, TableActionHeader } from '../../../components/ui/TableActionColumn';
 interface HistoryListProps {
   zh: boolean;
   language: string;
   logs: UnifiedExecutionLog[];
   loading: boolean;
-  paginatedLogs: UnifiedExecutionLog[];
   page: number;
   pageSize: number;
   onPageChange: (p: number) => void;
@@ -23,6 +25,7 @@ interface HistoryListProps {
   onFilterChange: (f: 'all' | 'manual' | 'plan' | 'job') => void;
   onSelectLog: (log: UnifiedExecutionLog) => void;
   onExport: (logId: string, format: string, source: string) => void;
+  loadAllLogs: () => Promise<UnifiedExecutionLog[]>;
 }
 
 // ── Export Dropdown Component ─────────────────────────────
@@ -52,15 +55,15 @@ const ExportDropdown: React.FC<{
 
   return (
     <div className="relative inline-block text-left" ref={dropdownRef}>
-      <button
-        type="button"
+      <ActionIconButton
+        icon={Download}
+        label={zh ? '导出执行记录' : 'Export execution log'}
+        tooltip={zh ? '导出' : 'Export'}
+        variant="accent"
+        aria-expanded={open}
+        aria-haspopup="menu"
         onClick={() => setOpen(!open)}
-        className="inline-flex items-center gap-1 px-2.5 py-1.5 rounded-xl border border-slate-200 text-xs font-semibold text-slate-700 bg-white hover:bg-slate-50 hover:text-slate-900 transition-all shadow-2xs active:scale-95"
-      >
-        <Download size={13} className="text-slate-500" />
-        <span>{zh ? '导出' : 'Export'}</span>
-        <ChevronDown size={12} className={`text-slate-400 transition-transform duration-200 ${open ? 'rotate-180' : ''}`} />
-      </button>
+      />
 
       <AnimatePresence>
         {open && (
@@ -69,6 +72,7 @@ const ExportDropdown: React.FC<{
             animate={{ opacity: 1, scale: 1, y: 0 }}
             exit={{ opacity: 0, scale: 0.95, y: -4 }}
             transition={{ duration: 0.12 }}
+            role="menu"
             className="absolute right-0 z-50 mt-1.5 w-44 rounded-xl border border-slate-200 bg-white shadow-xl py-1 overflow-hidden"
           >
             <button
@@ -134,21 +138,66 @@ const ExportDropdown: React.FC<{
 };
 
 const HistoryList: React.FC<HistoryListProps> = ({
-  zh, language, logs, loading, paginatedLogs, page, pageSize,
+  zh, language, logs, loading, page, pageSize,
   onPageChange, onPageSizeChange, executionTypeFilter, onFilterChange,
-  onSelectLog, onExport,
+  onSelectLog, onExport, loadAllLogs,
 }) => {
   const [searchQuery, setSearchQuery] = useState('');
 
-  const displayLogs = React.useMemo(() => {
-    if (!searchQuery.trim()) return paginatedLogs;
+  const searchedLogs = React.useMemo(() => {
+    if (!searchQuery.trim()) return logs;
     const q = searchQuery.toLowerCase();
-    return paginatedLogs.filter(log =>
+    return logs.filter(log =>
       (log.name || '').toLowerCase().includes(q) ||
       (log.created_by || '').toLowerCase().includes(q) ||
       (log.status || '').toLowerCase().includes(q)
     );
-  }, [paginatedLogs, searchQuery]);
+  }, [logs, searchQuery]);
+  const displayLogs = React.useMemo(() => {
+    const start = (page - 1) * pageSize;
+    return searchedLogs.slice(start, start + pageSize);
+  }, [searchedLogs, page, pageSize]);
+
+  useEffect(() => { onPageChange(1); }, [searchQuery, onPageChange]);
+
+  const exportHistory = useCallback(async () => {
+    const allLogs = (await loadAllLogs()).filter((log) => executionTypeFilter === 'all' || log.trigger_type === executionTypeFilter);
+    const query = searchQuery.trim().toLowerCase();
+    const matchingLogs = query ? allLogs.filter((log) =>
+      (log.name || '').toLowerCase().includes(query)
+      || (log.created_by || '').toLowerCase().includes(query)
+      || (log.status || '').toLowerCase().includes(query)) : allLogs;
+    const typeLabels: Record<string, string> = {
+      manual: zh ? '手动执行' : 'Manual',
+      plan: zh ? '执行计划' : 'Execution Plan',
+      job: zh ? '定时作业' : 'Scheduled Job',
+    };
+    const statusLabels: Record<string, string> = {
+      completed: zh ? '已完成' : 'Completed',
+      success: zh ? '已完成' : 'Completed',
+      running: zh ? '执行中' : 'Running',
+      failed: zh ? '已失败' : 'Failed',
+      awaiting_approval: zh ? '待审批' : 'Awaiting approval',
+      approval_rejected: zh ? '审批拒绝' : 'Approval rejected',
+    };
+    return {
+      headers: zh
+        ? ['触发时间', '任务名称', '来源', '执行方式', '状态', '设备数', '成功设备数', '失败设备数', '健康评分', '执行人']
+        : ['Triggered At', 'Task Name', 'Source', 'Type', 'Status', 'Total Devices', 'Successful Devices', 'Failed Devices', 'Health Score', 'Operator'],
+      rows: matchingLogs.map((log) => [
+        log.started_at ? new Date(log.started_at).toLocaleString(zh ? 'zh-CN' : 'en-US', { hour12: false }) : '--',
+        log.name || '--',
+        log.source === 'inspection' ? (zh ? '巡检执行' : 'Inspection') : (zh ? '自动化执行' : 'Automation'),
+        typeLabels[log.trigger_type] || log.trigger_type,
+        statusLabels[log.status] || log.status,
+        log.total_devices ?? 0,
+        log.success_count ?? 0,
+        log.failed_count ?? 0,
+        log.avg_health_score == null ? '' : Number(log.avg_health_score).toFixed(1),
+        log.created_by || 'admin',
+      ]),
+    };
+  }, [loadAllLogs, executionTypeFilter, searchQuery, zh]);
 
   return (
     <section className="bg-white rounded-2xl border border-slate-200/90 shadow-sm flex flex-col min-h-0 flex-1 overflow-hidden">
@@ -226,25 +275,33 @@ const HistoryList: React.FC<HistoryListProps> = ({
             <span className="text-xs font-medium">{zh ? '获取流水中...' : 'Loading history...'}</span>
           </div>
         ) : displayLogs.length > 0 ? (
-          <table className="w-full table-fixed border-collapse">
+          <DataTable unstyled exportConfig={{ filename: 'execution-history', language: zh ? 'zh' : 'en', disabled: displayLogs.length === 0, exportData: exportHistory }} className="w-full min-w-[1200px] table-fixed border-collapse">
             <colgroup>
-              <col style={{ width: '18%' }} /> {/* 触发时间 */}
-              <col style={{ width: '22%' }} /> {/* 任务名称 */}
-              <col style={{ width: '13%' }} /> {/* 执行方式 */}
-              <col style={{ width: '12%' }} /> {/* 状态 */}
-              <col style={{ width: '15%' }} /> {/* 执行概况 */}
-              <col style={{ width: '10%' }} /> {/* 执行人 */}
-              <col style={{ width: '10%' }} /> {/* 操作 */}
+              <col style={{ width: '12%' }} /> {/* 触发时间 */}
+              <col style={{ width: '19%' }} /> {/* 任务名称 */}
+              <col style={{ width: '8%' }} /> {/* 来源 */}
+              <col style={{ width: '10%' }} /> {/* 执行方式 */}
+              <col style={{ width: '9%' }} /> {/* 状态 */}
+              <col style={{ width: '7%' }} /> {/* 设备数 */}
+              <col style={{ width: '7%' }} /> {/* 成功 */}
+              <col style={{ width: '7%' }} /> {/* 失败 */}
+              <col style={{ width: '7%' }} /> {/* 健康评分 */}
+              <col style={{ width: '7%' }} /> {/* 执行人 */}
+              <col style={{ width: '7%' }} /> {/* 操作 */}
             </colgroup>
             <thead>
               <tr className="border-b border-slate-100 bg-slate-50/60 text-[11px] font-bold uppercase tracking-wider text-slate-500">
                 <th className="py-3.5 px-4 text-left">{zh ? '触发时间' : 'Triggered At'}</th>
                 <th className="py-3.5 px-4 text-left">{zh ? '任务名称' : 'Task Name'}</th>
+                <th className="py-3.5 px-4 text-left">{zh ? '来源' : 'Source'}</th>
                 <th className="py-3.5 px-4 text-left">{zh ? '执行方式' : 'Type'}</th>
                 <th className="py-3.5 px-4 text-left">{zh ? '状态' : 'Status'}</th>
-                <th className="py-3.5 px-4 text-left">{zh ? '执行概况' : 'Summary'}</th>
+                <th className="py-3.5 px-4 text-left">{zh ? '设备数' : 'Total Devices'}</th>
+                <th className="py-3.5 px-4 text-left">{zh ? '成功设备数' : 'Successful Devices'}</th>
+                <th className="py-3.5 px-4 text-left">{zh ? '失败设备数' : 'Failed Devices'}</th>
+                <th className="py-3.5 px-4 text-left">{zh ? '健康评分' : 'Health Score'}</th>
                 <th className="py-3.5 px-4 text-left">{zh ? '执行人' : 'Operator'}</th>
-                <th className="py-3.5 px-4 text-right pr-6">{zh ? '操作' : 'Actions'}</th>
+                <TableActionHeader className="py-3.5 px-4 text-right pr-6">{zh ? '操作' : 'Actions'}</TableActionHeader>
               </tr>
             </thead>
             <tbody className="divide-y divide-slate-100">
@@ -281,10 +338,12 @@ const HistoryList: React.FC<HistoryListProps> = ({
                     <td className="py-3.5 px-4 text-left">
                       <div className="min-w-0">
                         <div className="text-xs font-bold text-slate-900 truncate">{log.name}</div>
-                        <div className="text-[10px] text-slate-400 mt-0.5">
-                          {log.source === 'inspection' ? (zh ? '巡检执行' : 'Inspection') : (zh ? '自动化执行' : 'Automation')}
-                        </div>
                       </div>
+                    </td>
+
+                    {/* Source */}
+                    <td className="py-3.5 px-4 text-xs text-slate-500">
+                      {log.source === 'inspection' ? (zh ? '巡检执行' : 'Inspection') : (zh ? '自动化执行' : 'Automation')}
                     </td>
 
                     {/* Trigger Type */}
@@ -303,38 +362,14 @@ const HistoryList: React.FC<HistoryListProps> = ({
                       </span>
                     </td>
 
-                    {/* Execution Summary */}
-                    <td className="py-3.5 px-4 text-left">
-                      <div className="flex flex-col gap-0.5">
-                        <span className="text-xs font-bold text-slate-800 font-mono">
-                          {log.total_devices} <span className="text-[10px] font-normal text-slate-400 font-sans">{zh ? '台设备' : 'devices'}</span>
-                        </span>
-                        <div className="flex items-center gap-2 text-[11px] font-mono">
-                          {log.source === 'inspection' ? (
-                            <div className="flex items-center gap-1 text-[10px]">
-                              <span className="text-slate-400 font-sans">{zh ? '评分' : 'Score'}:</span>
-                              <span className={`font-bold tabular-nums ${
-                                (log.avg_health_score || 0) >= 80 ? 'text-emerald-600' : (log.avg_health_score || 0) >= 60 ? 'text-amber-600' : 'text-rose-600'
-                              }`}>
-                                {log.avg_health_score?.toFixed(1) ?? '—'}
-                              </span>
-                            </div>
-                          ) : (
-                            <>
-                              <span className="text-emerald-600 font-semibold flex items-center gap-0.5 text-[10px]">
-                                <span className="w-1 h-1 rounded-full bg-emerald-500" />
-                                {log.success_count} {zh ? '成功' : 'ok'}
-                              </span>
-                              {log.failed_count > 0 && (
-                                <span className="text-rose-600 font-semibold flex items-center gap-0.5 text-[10px]">
-                                  <span className="w-1 h-1 rounded-full bg-rose-500" />
-                                  {log.failed_count} {zh ? '失败' : 'failed'}
-                                </span>
-                              )}
-                            </>
-                          )}
-                        </div>
-                      </div>
+                    {/* Device counts and health score */}
+                    <td className="py-3.5 px-4 text-xs font-bold text-slate-700 font-mono">{log.total_devices}</td>
+                    <td className="py-3.5 px-4 text-xs font-semibold text-emerald-600 font-mono">{log.success_count}</td>
+                    <td className="py-3.5 px-4 text-xs font-semibold text-rose-600 font-mono">{log.failed_count}</td>
+                    <td className={`py-3.5 px-4 text-xs font-bold tabular-nums ${
+                      (log.avg_health_score || 0) >= 80 ? 'text-emerald-600' : (log.avg_health_score || 0) >= 60 ? 'text-amber-600' : 'text-rose-600'
+                    }`}>
+                      {log.source === 'inspection' ? (log.avg_health_score?.toFixed(1) ?? '—') : '—'}
                     </td>
 
                     {/* Operator */}
@@ -346,18 +381,17 @@ const HistoryList: React.FC<HistoryListProps> = ({
                     </td>
 
                     {/* Actions Column (Aligned Right with Matching Padding) */}
-                    <td className="py-3.5 px-4 text-right pr-6 whitespace-nowrap">
+                    <TableActionCell className="py-3.5 px-4 text-right pr-6 whitespace-nowrap">
                       <div className="inline-flex items-center justify-end gap-2">
                         
                         {/* Primary View Details Button */}
-                        <button
+                        <ActionIconButton
                           type="button"
+                          icon={Eye}
+                          label={zh ? '查看详情' : 'View details'}
+                          variant="accent"
                           onClick={() => onSelectLog(log)}
-                          className="inline-flex items-center gap-1 px-3 py-1.5 rounded-xl bg-cyan-50 hover:bg-cyan-100/80 text-cyan-700 border border-cyan-200/60 text-xs font-bold transition-all shadow-2xs active:scale-95"
-                        >
-                          <Eye size={13} className="text-cyan-600" />
-                          <span>{zh ? '详情' : 'Details'}</span>
-                        </button>
+                        />
 
                         {/* Elegant Export Dropdown */}
                         <ExportDropdown
@@ -367,12 +401,12 @@ const HistoryList: React.FC<HistoryListProps> = ({
                           onExport={onExport}
                         />
                       </div>
-                    </td>
+                    </TableActionCell>
                   </tr>
                 );
               })}
             </tbody>
-          </table>
+          </DataTable>
         ) : (
           <div className="flex min-h-[320px] flex-col items-center justify-center gap-3 px-6 py-20 text-center text-slate-400">
             <div className="w-12 h-12 rounded-2xl bg-slate-50 border border-slate-100 flex items-center justify-center text-slate-400 shadow-2xs">
@@ -387,11 +421,11 @@ const HistoryList: React.FC<HistoryListProps> = ({
       </div>
 
       {/* ── Pagination Footer ──────────────────────────────────────── */}
-      {logs.length > 0 && (
+      {searchedLogs.length > 0 && (
         <div className="px-6 py-3 border-t border-slate-100 bg-white">
           <Pagination
             currentPage={page}
-            totalItems={logs.length}
+            totalItems={searchedLogs.length}
             onPageChange={onPageChange}
             itemsPerPage={pageSize}
             onItemsPerPageChange={onPageSizeChange}

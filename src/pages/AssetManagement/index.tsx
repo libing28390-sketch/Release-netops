@@ -10,6 +10,7 @@ import {
   Flame, LayoutList, Lock, Terminal, Eye, EyeOff, Loader2, Shield, User, MonitorSpeaker, Settings2, Check
 } from 'lucide-react';
 import { ActionButton, ActionIconButton, ActionIconGroup } from '../../components/ui/ActionIconButton';
+import { TableActionCell, TableActionHeader } from '../../components/ui/TableActionColumn';
 import * as XLSX from 'xlsx';
 import { AnimatePresence, motion } from 'motion/react';
 
@@ -17,7 +18,6 @@ import Pagination from '../../components/Pagination';
 import { DataTable, DataTableFrame } from '../../components/DataTable';
 import PageHero from '../../components/PageHero';
 import TagFilterDropdown from '../../components/TagFilterDropdown';
-import { fetchAllPaginatedItems } from '../../utils/pagination';
 import { apiRequest, authHeaders } from '../../api/http';
 import { useSystem } from '../../hooks/useSystem';
 import { formatTerminalAgentError, getLocalTerminalConfig, TERMINAL_APP_LABELS } from '../../utils/localTerminal';
@@ -63,6 +63,7 @@ import { AssetImportValidationModal, MissingRackInfo, RackResolution } from './c
 import { TerminalAccessModal } from './components/TerminalAccessModal';
 import { AssetDetailDrawer } from './components/AssetDetailDrawer';
 import { AssetModal } from './components/AssetModal';
+import { assetCategoryLabel, buildAssetExportData, fetchAllAssetPages, type AssetExportColumnKey } from './exportUtils';
 
 type AssetImportSkippedItem = {
   asset_tag?: string;
@@ -84,20 +85,7 @@ type BatchTakeoverResult = {
   device_names?: string[];
 };
 
-type AssetColumnKey =
-  | 'hostname'
-  | 'category_role'
-  | 'site'
-  | 'status'
-  | 'tags'
-  | 'vendor'
-  | 'model'
-  | 'serial_number'
-  | 'management_ip'
-  | 'ssh_algorithm_profile'
-  | 'lifecycle'
-  | 'created_at'
-  | 'updated_at';
+type AssetColumnKey = AssetExportColumnKey;
 
 type AssetColumnDefinition = {
   key: AssetColumnKey;
@@ -107,9 +95,14 @@ type AssetColumnDefinition = {
 };
 
 const ASSET_COLUMN_DEFS: AssetColumnDefinition[] = [
-  { key: 'hostname', zh: '设备', en: 'Asset', width: 'min-w-[150px]' },
-  { key: 'category_role', zh: '分类 / 角色', en: 'Category / role', width: 'min-w-[130px]' },
-  { key: 'site', zh: '站点', en: 'Site', width: 'w-24' },
+  { key: 'hostname', zh: '设备', en: 'Device', width: 'min-w-[150px]' },
+  { key: 'asset_tag', zh: '资产编号', en: 'Asset tag', width: 'min-w-[130px]' },
+  { key: 'asset_type', zh: '资产类型', en: 'Asset type', width: 'min-w-[110px]' },
+  { key: 'device_category', zh: '设备分类', en: 'Category', width: 'min-w-[120px]' },
+  { key: 'device_role', zh: '设备角色', en: 'Role', width: 'min-w-[110px]' },
+  { key: 'site', zh: '站点', en: 'Site', width: 'min-w-[120px]' },
+  { key: 'rack', zh: '机柜', en: 'Rack', width: 'min-w-[110px]' },
+  { key: 'rack_unit', zh: 'U位', en: 'Rack U', width: 'w-20' },
   { key: 'status', zh: '在线状态', en: 'Status', width: 'w-[90px]' },
   { key: 'tags', zh: '标签', en: 'Tags', width: 'min-w-[120px]' },
   { key: 'vendor', zh: '厂商', en: 'Vendor', width: 'w-24' },
@@ -124,8 +117,13 @@ const ASSET_COLUMN_DEFS: AssetColumnDefinition[] = [
 
 const DEFAULT_ASSET_COLUMNS: Record<AssetColumnKey, boolean> = {
   hostname: true,
-  category_role: true,
+  asset_tag: true,
+  asset_type: true,
+  device_category: true,
+  device_role: true,
   site: true,
+  rack: true,
+  rack_unit: true,
   status: true,
   tags: false,
   vendor: true,
@@ -139,7 +137,8 @@ const DEFAULT_ASSET_COLUMNS: Record<AssetColumnKey, boolean> = {
 };
 
 const FIXED_ASSET_COLUMNS = new Set<AssetColumnKey>([
-  'hostname', 'category_role', 'site', 'status', 'created_at', 'updated_at',
+  'hostname', 'asset_tag', 'asset_type', 'device_category', 'device_role',
+  'site', 'rack', 'rack_unit', 'status', 'created_at', 'updated_at',
 ]);
 
 const NETWORK_TEMPLATE_ROLES = new Set<string>(NETWORK_TOPOLOGY_ROLE_OPTIONS.map(option => option.value));
@@ -155,12 +154,16 @@ const SERVER_TEMPLATE_CATEGORIES = new Set([
 ]);
 
 const normalizeAssetColumns = (columns: Partial<Record<AssetColumnKey, boolean>>): Record<AssetColumnKey, boolean> => {
-  const normalized = { ...DEFAULT_ASSET_COLUMNS, ...columns };
+  const storedColumns = Object.fromEntries(
+    Object.entries(columns).filter(([key]) => key !== 'category_role'),
+  ) as Partial<Record<AssetColumnKey, boolean>>;
+  const normalized = { ...DEFAULT_ASSET_COLUMNS, ...storedColumns };
   FIXED_ASSET_COLUMNS.forEach(key => { normalized[key] = true; });
   return normalized;
 };
 
-const ASSET_COLUMNS_STORAGE_KEY = 'assets-dashboard-columns-v3';
+const ASSET_COLUMNS_STORAGE_KEY = 'assets-dashboard-columns-v4';
+const LEGACY_ASSET_COLUMNS_STORAGE_KEY = 'assets-dashboard-columns-v3';
 
 const FALLBACK_TEMPLATE_DATE_FORMAT = 'yyyy/mm/dd';
 
@@ -297,7 +300,11 @@ const AssetManagementTab: React.FC<AssetManagementTabProps> = ({ language, setAc
   const columnsMenuRef = React.useRef<HTMLDivElement>(null);
   const [visibleColumns, setVisibleColumns] = useState<Record<AssetColumnKey, boolean>>(() => {
     try {
-      const stored = JSON.parse(localStorage.getItem(ASSET_COLUMNS_STORAGE_KEY) || '{}') as Partial<Record<AssetColumnKey, boolean>>;
+      const stored = JSON.parse(
+        localStorage.getItem(ASSET_COLUMNS_STORAGE_KEY)
+          || localStorage.getItem(LEGACY_ASSET_COLUMNS_STORAGE_KEY)
+          || '{}',
+      ) as Partial<Record<AssetColumnKey, boolean>>;
       return normalizeAssetColumns(stored);
     } catch {
       return normalizeAssetColumns({});
@@ -374,24 +381,52 @@ const AssetManagementTab: React.FC<AssetManagementTabProps> = ({ language, setAc
     }
   }, []);
 
+  const buildAssetParams = useCallback((requestedPage: number, requestedPageSize: number) => {
+    const params = new URLSearchParams({
+      page: String(requestedPage),
+      page_size: String(requestedPageSize),
+    });
+    if (search.trim()) params.set('q', search.trim());
+    if (typeFilter !== 'all') params.set('asset_type', typeFilter);
+    if (statusFilter !== 'all') params.set('status', statusFilter);
+    if (vendorFilter !== 'all') params.set('vendor', vendorFilter);
+    if (dcFilter !== 'all') params.set('site_id', dcFilter);
+    if (deptFilter !== 'all') params.set('department', deptFilter);
+    if (deviceCategoryFilter) params.set('device_category', deviceCategoryFilter);
+    if (lifecycleFilter !== 'all') params.set('lifecycle_status', lifecycleFilter);
+    if (tagFilter.length > 0) params.set('tag_ids', tagFilter.join(','));
+    return params;
+  }, [search, typeFilter, statusFilter, vendorFilter, dcFilter, deptFilter, deviceCategoryFilter, lifecycleFilter, tagFilter]);
+
   const fetchAssets = useCallback(async () => {
     setLoading(true);
     try {
-      const p = new URLSearchParams({ page: String(page), page_size: String(pageSize) });
-      if (search.trim()) p.set('q', search.trim());
-      if (typeFilter !== 'all')   p.set('asset_type', typeFilter);
-      if (statusFilter !== 'all') p.set('status', statusFilter);
-      if (vendorFilter !== 'all') p.set('vendor', vendorFilter);
-      if (dcFilter !== 'all')     p.set('site_id', dcFilter);
-      if (deptFilter !== 'all')   p.set('department', deptFilter);
-      if (deviceCategoryFilter)   p.set('device_category', deviceCategoryFilter);
-      if (lifecycleFilter !== 'all') p.set('lifecycle_status', lifecycleFilter);
-      if (tagFilter.length > 0)   p.set('tag_ids', tagFilter.join(','));
-      const r = await fetch(`/api/assets?${p}`, { headers: authHeaders() });
+      const params = buildAssetParams(page, pageSize);
+      const r = await fetch(`/api/assets?${params}`, { headers: authHeaders() });
       if (r.ok) { const d = await r.json(); setAssets(d.items); setTotal(d.total); }
     } catch { /* noop */ }
     setLoading(false);
-  }, [page, pageSize, search, typeFilter, statusFilter, vendorFilter, dcFilter, deptFilter, deviceCategoryFilter, tagFilter]);
+  }, [buildAssetParams, page, pageSize]);
+
+  const exportAssetData = useCallback(async () => {
+    const allAssets = await fetchAllAssetPages(async (requestedPage, requestedPageSize) => {
+      const params = buildAssetParams(requestedPage, requestedPageSize);
+      const response = await fetch(`/api/assets?${params}`, { headers: authHeaders() });
+      const payload = await response.json().catch(() => ({}));
+      if (!response.ok) {
+        throw new Error(payload.detail || payload.message || (zh ? '读取完整资产清单失败' : 'Failed to load the complete asset list'));
+      }
+      if (!Array.isArray(payload.items)) {
+        throw new Error(zh ? '资产清单响应格式无效' : 'Invalid asset list response');
+      }
+      return { items: payload.items as Asset[], total: Number(payload.total) || 0 };
+    });
+
+    const filteredAssets = severityFilter === 'all'
+      ? allAssets
+      : allAssets.filter((asset) => severityOf(asset) === severityFilter);
+    return buildAssetExportData(filteredAssets, activeAssetColumns, zh ? 'zh' : 'en');
+  }, [activeAssetColumns, buildAssetParams, severityFilter, zh]);
 
   useEffect(() => { fetchSummary(); }, [fetchSummary]);
   useEffect(() => { fetchSites(); }, [fetchSites]);
@@ -934,121 +969,6 @@ const AssetManagementTab: React.FC<AssetManagementTabProps> = ({ language, setAc
     }
     ws.send(`${text}\n`);
     setTerminalInput('');
-  };
-
-  const handleExport = async () => {
-    const params = new URLSearchParams({ page: '1', page_size: '200' });
-    if (search.trim()) params.set('q', search.trim());
-    if (typeFilter !== 'all') params.set('asset_type', typeFilter);
-    if (statusFilter !== 'all') params.set('status', statusFilter);
-    if (vendorFilter !== 'all') params.set('vendor', vendorFilter);
-    if (dcFilter !== 'all')     params.set('site_id', dcFilter);
-    if (deptFilter !== 'all')   params.set('department', deptFilter);
-
-    try {
-      const allAssets = await fetchAllPaginatedItems<Asset>('/api/assets', params);
-      if (!allAssets.length) return;
-      const rows = allAssets.map(a => ({
-        [zh ? '主机名' : 'Hostname']: a.hostname,
-        [zh ? '资产编号' : 'Asset Tag']: a.asset_tag,
-        [zh ? '序列号' : 'Serial Number']: a.serial_number,
-        [zh ? '资产类型' : 'Asset Type']: a.asset_type,
-        [zh ? '厂商' : 'Vendor']: a.vendor,
-        [zh ? '型号' : 'Model']: a.model,
-        [zh ? '平台' : 'Platform']: (a as any).platform || '',
-        [zh ? 'SSH算法策略' : 'SSH Algorithm Profile']: a.ssh_algorithm_profile || 'auto',
-        [zh ? '管理IP' : 'Mgmt IP']: a.management_ip,
-        [zh ? '业务IP' : 'Business IP']: a.business_ip,
-        [zh ? '状态' : 'Status']: a.status,
-        [zh ? '角色' : 'Role']: a.device_role,
-        [zh ? '设备分类' : 'Device Category']: (a as any).device_category || '',
-        [zh ? '功能' : 'Function']: (a as any).function || '',
-        [zh ? '区域' : 'Zone']: (a as any).zone || 'Unknown',
-        [zh ? 'VLAN' : 'VLAN']: a.vlan,
-        [zh ? '上联交换机' : 'Uplink Switch']: a.uplink_switch,
-        [zh ? '上联端口' : 'Uplink Port']: a.uplink_port,
-        [zh ? '站点' : 'Site']: a.site_name || a.site_code || a.site_id,
-        [zh ? '机柜' : 'Rack']: a.rack,
-        [zh ? 'U位' : 'Rack Unit']: a.rack_unit,
-        [zh ? 'U高度' : 'U Height']: a.u_height ?? 1,
-        [zh ? '规划起始U' : 'Planned Start U']: a.planned_start_u ?? '',
-        [zh ? '功耗(W)' : 'Power(W)']: (a as any).power_watts ?? '',
-        [zh ? 'SNMP社区名' : 'SNMP Community']: (a as any).snmp_community || '',
-        [zh ? 'SNMP端口' : 'SNMP Port']: (a as any).snmp_port || '161',
-        [zh ? 'SNMP凭据' : 'SNMP Credential']: (a as any).snmp_credential_name || (a as any).snmp_credential_id || '',
-        [zh ? '普通用户' : 'Normal User']: (a as any).normal_username || '',
-        [zh ? '特权用户' : 'Admin User']: (a as any).admin_username || '',
-        [zh ? '部门' : 'Department']: a.department,
-        [zh ? '购买日期' : 'Purchase Date']: a.purchase_date,
-        [zh ? '投产状态' : 'Lifecycle']: LIFECYCLE_STATUSES.find(l => l.value === a.lifecycle_status)?.label[zh ? 'zh' : 'en'] || '',
-        [zh ? '保修到期' : 'Warranty Expiry']: a.warranty_expiry,
-        [zh ? '备注' : 'Notes']: a.notes,
-      }));
-      const ws = XLSX.utils.json_to_sheet(rows);
-      const wb = XLSX.utils.book_new();
-      XLSX.utils.book_append_sheet(wb, ws, zh ? '资产信息' : 'Asset Information');
-      const methodRows = allAssets.flatMap(a => {
-        const rowsForAsset: Record<string, unknown>[] = [];
-        if (!['web', 'none'].includes(String(a.connection_method || '').toLowerCase())) {
-          rowsForAsset.push({
-            [zh ? '资产编号（手工填写）' : 'Asset Tag (manual)']: a.asset_tag,
-            [zh ? '主机名（手工填写/核对）' : 'Hostname (manual/check)']: a.hostname,
-            [zh ? '管理协议（每行一个）' : 'Management Protocol (one per row)']: String(a.connection_method || 'ssh').toUpperCase(),
-            [zh ? '入口显示名称（仅展示）' : 'Entry Display Name (label only)']: zh ? '命令行管理' : 'CLI management',
-            [zh ? '端口（可留空自动默认）' : 'Port (blank = default)']: a.management_port || (a.connection_method === 'netconf' ? 830 : 22),
-            [zh ? '登录路径（Web填写，如 /login）' : 'Login Path (Web only)']: '',
-            [zh ? '是否启用' : 'Enabled']: zh ? '是' : 'yes',
-            [zh ? '凭据模式（默认继承资产）' : 'Credential Mode (default: inherit asset)']: zh ? '继承资产凭据' : 'inherit_asset',
-            [zh ? '普通用户（可选）' : 'Normal User (optional)']: a.normal_username || '',
-            [zh ? '特权用户（可选）' : 'Admin User (optional)']: a.admin_username || '',
-          });
-        } else if (String(a.connection_method || '').toLowerCase() === 'web' && !(a.web_profiles || []).length) {
-          rowsForAsset.push({
-            [zh ? '资产编号（手工填写）' : 'Asset Tag (manual)']: a.asset_tag,
-            [zh ? '主机名（手工填写/核对）' : 'Hostname (manual/check)']: a.hostname,
-            [zh ? '管理协议（每行一个）' : 'Management Protocol (one per row)']: zh ? 'Web管理' : 'Web Management',
-            [zh ? '入口显示名称（仅展示）' : 'Entry Display Name (label only)']: zh ? 'Web管理' : 'Web management',
-            [zh ? '端口（可留空自动默认）' : 'Port (blank = default)']: 443,
-            [zh ? '登录路径（Web填写，如 /login）' : 'Login Path (Web only)']: '/',
-            [zh ? '是否启用' : 'Enabled']: zh ? '是' : 'yes',
-            [zh ? '凭据模式（默认继承资产）' : 'Credential Mode (default: inherit asset)']: zh ? '继承资产凭据' : 'inherit_asset',
-          });
-        } else if (String(a.connection_method || '').toLowerCase() === 'none') {
-          rowsForAsset.push({
-            [zh ? '资产编号（手工填写）' : 'Asset Tag (manual)']: a.asset_tag,
-            [zh ? '主机名（手工填写/核对）' : 'Hostname (manual/check)']: a.hostname,
-            [zh ? '管理协议（每行一个）' : 'Management Protocol (one per row)']: 'NONE',
-            [zh ? '入口显示名称（仅展示）' : 'Entry Display Name (label only)']: zh ? '无登录入口' : 'No login entry',
-            [zh ? '端口（可留空自动默认）' : 'Port (blank = default)']: '',
-            [zh ? '登录路径（Web填写，如 /login）' : 'Login Path (Web only)']: '',
-            [zh ? '是否启用' : 'Enabled']: zh ? '是' : 'yes',
-            [zh ? '凭据模式（默认继承资产）' : 'Credential Mode (default: inherit asset)']: zh ? '继承资产凭据' : 'inherit_asset',
-          });
-        }
-        (a.web_profiles || []).forEach(profile => rowsForAsset.push({
-          [zh ? '资产编号（手工填写）' : 'Asset Tag (manual)']: a.asset_tag,
-          [zh ? '主机名（手工填写/核对）' : 'Hostname (manual/check)']: a.hostname,
-          [zh ? '管理协议（每行一个）' : 'Management Protocol (one per row)']: profile.scheme.toUpperCase(),
-          [zh ? '入口显示名称（仅展示）' : 'Entry Display Name (label only)']: profile.profile_name,
-          [zh ? '端口（可留空自动默认）' : 'Port (blank = default)']: profile.port,
-          [zh ? '登录路径（Web填写，如 /login）' : 'Login Path (Web only)']: profile.path,
-          [zh ? '是否启用' : 'Enabled']: profile.enabled ? (zh ? '是' : 'yes') : (zh ? '否' : 'no'),
-          [zh ? '凭据模式（默认继承资产）' : 'Credential Mode (default: inherit asset)']: profile.credential_mode === 'independent' ? (zh ? '独立凭据' : 'independent') : (zh ? '继承资产凭据' : 'inherit_asset'),
-          [zh ? '普通用户（可选）' : 'Normal User (optional)']: profile.normal_username || '',
-          [zh ? '特权用户（可选）' : 'Admin User (optional)']: profile.admin_username || '',
-          [zh ? '绑定凭据（推荐）' : 'Credential ID (recommended)']: profile.credential_id || '',
-          [zh ? '绑定特权凭据（推荐）' : 'Admin Credential ID (recommended)']: profile.admin_credential_id || '',
-        }));
-        return rowsForAsset;
-      });
-      if (methodRows.length) {
-        XLSX.utils.book_append_sheet(wb, XLSX.utils.json_to_sheet(methodRows), zh ? '管理入口' : 'Management Entries');
-      }
-      const ts = new Date().toISOString().replace(/[-:]/g, '').replace('T', '_').slice(0, 15);
-      XLSX.writeFile(wb, `assets_${ts}.xlsx`);
-    } catch {
-      setFeedbackMsg({ type: 'error', text: zh ? '导出失败' : 'Export failed' });
-    }
   };
 
   const doImport = async (payload: any[]) => {
@@ -1664,24 +1584,7 @@ const AssetManagementTab: React.FC<AssetManagementTabProps> = ({ language, setAc
 
   const typeDisplay = (a: Asset) => typeMeta(a.asset_type).label[zh ? 'zh' : 'en'];
 
-  const categoryDisplay = (a: Asset) => {
-    const labels: Record<string, { zh: string; en: string }> = {
-      rack_server: { zh: '机架式服务器', en: 'Rack Server' },
-      blade_server: { zh: '刀片服务器', en: 'Blade Server' },
-      tower_server: { zh: '塔式服务器', en: 'Tower Server' },
-      high_density: { zh: '高密度服务器', en: 'High-Density Server' },
-      gpu_server: { zh: 'GPU 服务器', en: 'GPU Server' },
-      storage_server: { zh: '存储服务器', en: 'Storage Server' },
-      virtual_host: { zh: '虚拟/物理宿主机', en: 'Virtual Host' },
-      switch: { zh: '交换机', en: 'Switch' },
-      router: { zh: '路由器', en: 'Router' },
-      firewall: { zh: '防火墙', en: 'Firewall' },
-      load_balancer: { zh: '负载均衡', en: 'Load Balancer' },
-      wireless_ap: { zh: '无线 AP', en: 'Wireless AP' },
-      other: { zh: '其他', en: 'Other' },
-    };
-    return labels[a.device_category || '']?.[zh ? 'zh' : 'en'] || a.device_category || '—';
-  };
+  const categoryDisplay = (a: Asset) => assetCategoryLabel(a.device_category, zh ? 'zh' : 'en');
 
   const renderAssetCell = (column: AssetColumnKey, a: Asset): React.ReactNode => {
     const onlineStatus = a.online_status || (a.status === 'active' ? 'online' : a.status === 'inactive' ? 'offline' : 'pending');
@@ -1691,29 +1594,21 @@ const AssetManagementTab: React.FC<AssetManagementTabProps> = ({ language, setAc
         ? { label: zh ? '离线' : 'Offline', badge: 'bg-rose-50 text-rose-700 dark:bg-rose-950/40 dark:text-rose-300', dot: 'bg-rose-500' }
         : { label: zh ? '待确认' : 'Pending', badge: 'bg-amber-50 text-amber-700 dark:bg-amber-950/40 dark:text-amber-300', dot: 'bg-amber-400' };
     switch (column) {
-      case 'hostname': return (
-        <div>
-          <p className="font-bold text-xs text-gray-900 dark:text-white leading-tight truncate max-w-[200px]">{a.hostname || '—'}</p>
-          <p className="text-[10px] text-gray-400 font-mono truncate mt-0.5">{a.asset_tag || a.management_ip || a.serial_number || ''}</p>
-        </div>
+      case 'hostname': return <span className="font-bold text-xs text-gray-900 dark:text-white leading-tight">{a.hostname || '—'}</span>;
+      case 'asset_tag': return <span className="font-mono text-xs text-gray-600 dark:text-zinc-400">{a.asset_tag || '—'}</span>;
+      case 'asset_type': return (
+        <span className="inline-flex items-center gap-1.5 px-2 py-0.5 rounded-md bg-blue-50 dark:bg-blue-950/40 text-blue-700 dark:text-blue-300 text-[10px] font-semibold">
+          {a.asset_type === 'server' ? <Server size={11} /> : <Router size={11} />}
+          {typeDisplay(a)}
+        </span>
       );
-      case 'category_role': return (
-        <div className="space-y-0.5">
-          <span className="inline-flex items-center gap-1.5 px-2 py-0.5 rounded-md bg-blue-50 dark:bg-blue-950/40 text-blue-700 dark:text-blue-300 text-[10px] font-semibold">
-            {a.asset_type === 'server' ? <Server size={11} /> : <Router size={11} />}
-            {typeDisplay(a)}
-          </span>
-          <span className="block text-[11px] text-gray-500 dark:text-zinc-400 truncate max-w-[130px]">
-            {categoryDisplay(a)}{a.device_role ? ` / ${a.device_role}` : ''}
-          </span>
-        </div>
-      );
+      case 'device_category': return <span className="text-xs text-gray-700 dark:text-zinc-300">{categoryDisplay(a)}</span>;
+      case 'device_role': return <span className="text-xs text-gray-600 dark:text-zinc-400">{a.device_role || '—'}</span>;
       case 'site': return (
-        <div className="max-w-[120px]">
-          <span className="text-xs font-medium text-gray-800 dark:text-zinc-200 truncate block">{a.site_name || a.site_code || a.site_id || '—'}</span>
-          {a.rack && <span className="text-[10px] text-gray-400 font-mono block truncate">{a.rack}{a.rack_unit ? ` · U${a.rack_unit}` : ''}</span>}
-        </div>
+        <span className="text-xs font-medium text-gray-800 dark:text-zinc-200 truncate block">{a.site_name || a.site_code || '—'}</span>
       );
+      case 'rack': return <span className="font-mono text-xs text-gray-600 dark:text-zinc-400">{a.rack || '—'}</span>;
+      case 'rack_unit': return <span className="font-mono text-xs text-gray-600 dark:text-zinc-400">{a.rack_unit ? `U${a.rack_unit}` : '—'}</span>;
       case 'status': return (
         <span className={`inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-[10px] font-semibold ${onlineMeta.badge}`}>
           <span className={`h-1.5 w-1.5 rounded-full ${onlineMeta.dot}`} />
@@ -2112,12 +2007,6 @@ const AssetManagementTab: React.FC<AssetManagementTabProps> = ({ language, setAc
                 >
                   <FileText size={13} />
                 </button>
-                <ActionIconButton
-                  icon={Download}
-                  label={zh ? '导出资产' : 'Export assets'}
-                  variant="accent"
-                  onClick={handleExport}
-                />
                 <button
                   type="button"
                   onClick={() => fileInputRef.current?.click()}
@@ -2254,7 +2143,7 @@ const AssetManagementTab: React.FC<AssetManagementTabProps> = ({ language, setAc
           </div>
 
           <DataTableFrame className="rounded-none border-0 shadow-none">
-              <DataTable className="text-xs">
+              <DataTable className="text-xs" exportConfig={{ filename: 'assets', language: zh ? 'zh' : 'en', disabled: loading || displayAssets.length === 0, exportData: exportAssetData }}>
                 <thead>
                   <tr className="border-b border-gray-100 dark:border-zinc-800 bg-gray-50/50 dark:bg-zinc-800/40">
                     <th className="w-8 px-3 py-3 text-center">
@@ -2265,7 +2154,7 @@ const AssetManagementTab: React.FC<AssetManagementTabProps> = ({ language, setAc
                         {zh ? column.zh : column.en}
                       </th>
                     ))}
-                    <th className="w-24 px-3 py-3 text-right text-[11px] font-bold uppercase tracking-wider text-gray-400 pr-4">{zh ? '操作' : 'Actions'}</th>
+                    <TableActionHeader className="w-24 px-3 py-3 text-[11px] font-bold uppercase tracking-wider text-gray-400 pr-4">{zh ? '操作' : 'Actions'}</TableActionHeader>
                   </tr>
                 </thead>
                 <tbody>
@@ -2325,13 +2214,13 @@ const AssetManagementTab: React.FC<AssetManagementTabProps> = ({ language, setAc
                             {renderAssetCell(column.key, a)}
                           </td>
                         ))}
-                        <td className="px-3 py-2.5 text-right whitespace-nowrap" onClick={e => e.stopPropagation()}>
+                        <TableActionCell className="px-3 py-2.5 whitespace-nowrap" onClick={e => e.stopPropagation()}>
                           <ActionIconGroup label={zh ? '资产操作' : 'Asset actions'}>
                             <ActionIconButton icon={Copy} label={zh ? '复制' : 'Copy'} variant="accent" onClick={() => openCopy(a)} />
                             <ActionIconButton icon={Pencil} label={zh ? '编辑' : 'Edit'} onClick={() => openEdit(a)} />
                             <ActionIconButton icon={Trash2} label={zh ? '删除' : 'Delete'} variant="danger" onClick={() => { setDeleteError(null); setDeleteTarget(a); }} />
                           </ActionIconGroup>
-                        </td>
+                        </TableActionCell>
                       </tr>
                     );
                   })}

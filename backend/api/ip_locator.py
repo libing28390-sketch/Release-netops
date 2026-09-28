@@ -6,7 +6,7 @@ import asyncio
 import json
 import logging
 from datetime import datetime, timedelta, timezone
-from fastapi import APIRouter, HTTPException, BackgroundTasks
+from fastapi import APIRouter, HTTPException, BackgroundTasks, Query
 from schemas.schemas import IPLocateRequest, IPLocatorRunRequest, ConnectivityProbeRequest, PathDiagnoseRequest
 from core.config import settings
 from core.rbac import authorize_resource, require_role
@@ -406,9 +406,13 @@ async def api_trigger_nsot_sweep(background_tasks: BackgroundTasks, user=require
 
 
 @router.get('/ip-locator/mac-changes')
-async def api_get_mac_changes(limit: int = 200, user=require_role("Viewer")):
-    """获取 MAC 地址变更日志。"""
-    return await get_mac_changes_async(min(limit, 1000))
+async def api_get_mac_changes(
+    limit: int = Query(default=200, ge=1, le=1000),
+    offset: int = Query(default=0, ge=0),
+    user=require_role("Viewer"),
+):
+    """获取一页 MAC 变更记录，并返回完整结果总数。"""
+    return await get_mac_changes_async(limit, offset)
 
 
 @router.post('/ip-locator/probe')

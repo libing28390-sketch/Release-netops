@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useCallback } from 'react';
+import React, { useState, useEffect, useCallback, useRef } from 'react';
 import {
   Clock,
   Plus,
@@ -12,8 +12,11 @@ import { motion, AnimatePresence } from 'framer-motion';
 import PageHero from '../../components/PageHero';
 import Pagination from '../../components/Pagination';
 import { ActionIconButton, ActionIconGroup } from '../../components/ui/ActionIconButton';
+import { TableExportMenu } from '../../components/ui/TableExportMenu';
 import { useEscapeClose } from '../../hooks/useEscapeClose';
+import { buildVisibleIpamExportData, fetchAllIpamExportItems } from './ipamExport';
 
+import { TableActionCell, TableActionHeader } from '../../components/ui/TableActionColumn';
 interface DHCPLease {
   id: string;
   address: string;
@@ -34,6 +37,7 @@ interface DHCPLeaseTabProps {
 
 const DHCPLeaseTab: React.FC<DHCPLeaseTabProps> = ({ language, t }) => {
   const zh = language === 'zh';
+  const tableRef = useRef<HTMLTableElement>(null);
 
   const [leases, setLeases] = useState<DHCPLease[]>([]);
   const [loading, setLoading] = useState(true);
@@ -167,6 +171,20 @@ const DHCPLeaseTab: React.FC<DHCPLeaseTabProps> = ({ language, t }) => {
   const filteredLeases = leases;
   const paginatedLeases = leases;
 
+  const exportData = useCallback(async () => {
+    const params = new URLSearchParams({ q: search.trim(), state: stateFilter });
+    const allLeases = await fetchAllIpamExportItems<DHCPLease>('/api/ipam/leases', params);
+    return buildVisibleIpamExportData(tableRef.current, [
+      { header: zh ? '动态分配IP' : 'Assigned IP', value: (lease) => lease.address },
+      { header: zh ? 'MAC地址' : 'MAC Address', value: (lease) => lease.mac_address },
+      { header: zh ? '终端主机名' : 'Client Hostname', value: (lease) => lease.hostname || '-' },
+      { header: zh ? 'DHCP 服务源' : 'DHCP Server', value: (lease) => lease.dhcp_server || '-' },
+      { header: zh ? '租约状态' : 'Lease State', value: (lease) => lease.lease_state.toUpperCase() },
+      { header: zh ? '租用生效时间' : 'Lease Started', value: (lease) => lease.lease_start || '-' },
+      { header: zh ? '租用过期时间' : 'Lease Expires', value: (lease) => lease.lease_end || '-' },
+    ], allLeases);
+  }, [search, stateFilter, zh]);
+
   return (
     <div className="flex-1 flex flex-col h-full overflow-hidden px-6 py-5 space-y-4">
       <PageHero
@@ -174,13 +192,16 @@ const DHCPLeaseTab: React.FC<DHCPLeaseTabProps> = ({ language, t }) => {
         title={zh ? 'DHCP 租约分配管理' : 'DHCP Leases'}
         subtitle={zh ? '记录与管理网络动态分发中各DHCP主机的状态，跟踪IP与MAC对应关系的过期周期' : 'Monitor temporary IP mappings allocated to dynamically bound client MACs.'}
         actions={
-          <button
-            onClick={() => openForm(null)}
-            className="flex items-center gap-1.5 px-4 py-2 bg-gradient-to-r from-cyan-500 to-blue-600 hover:from-cyan-600 hover:to-blue-700 text-white rounded-xl text-xs font-bold shadow-lg shadow-cyan-500/20 active:scale-95 transition-all"
-          >
-            <Plus size={14} />
-            {zh ? '创建租约' : 'Add Lease'}
-          </button>
+          <div className="flex items-center gap-2">
+            <TableExportMenu tableRef={tableRef} exportData={exportData} filename="ipam-dhcp-leases" language={zh ? 'zh' : 'en'} disabled={loading || paginatedLeases.length === 0} />
+            <button
+              onClick={() => openForm(null)}
+              className="flex items-center gap-1.5 px-4 py-2 bg-gradient-to-r from-cyan-500 to-blue-600 hover:from-cyan-600 hover:to-blue-700 text-white rounded-xl text-xs font-bold shadow-lg shadow-cyan-500/20 active:scale-95 transition-all"
+            >
+              <Plus size={14} />
+              {zh ? '创建租约' : 'Add Lease'}
+            </button>
+          </div>
         }
         extras={
           <div className="flex items-center gap-3 w-full md:w-auto">
@@ -218,7 +239,7 @@ const DHCPLeaseTab: React.FC<DHCPLeaseTabProps> = ({ language, t }) => {
               {zh ? '加载中...' : 'Loading leases...'}
             </div>
           ) : (
-            <table className="nx-data-table text-left">
+            <table ref={tableRef} className="nx-data-table text-left">
               <thead>
                 <tr className="border-b border-gray-100 bg-gray-50/40 text-[10px] font-bold text-gray-400 uppercase tracking-wider select-none">
                   <th className="pl-6 py-4">{zh ? '动态分配IP' : 'Assigned IP'}</th>
@@ -228,7 +249,7 @@ const DHCPLeaseTab: React.FC<DHCPLeaseTabProps> = ({ language, t }) => {
                   <th className="px-4 py-4">{zh ? '租约状态' : 'Lease State'}</th>
                   <th className="px-4 py-4">{zh ? '租用生效时间' : 'Lease Started'}</th>
                   <th className="px-4 py-4">{zh ? '租用过期时间' : 'Lease Expires'}</th>
-                  <th className="pr-6 py-4 text-right">{zh ? '操作' : 'Actions'}</th>
+                  <TableActionHeader className="pr-6 py-4 text-right">{zh ? '操作' : 'Actions'}</TableActionHeader>
                 </tr>
               </thead>
               <tbody>
@@ -254,7 +275,7 @@ const DHCPLeaseTab: React.FC<DHCPLeaseTabProps> = ({ language, t }) => {
                       </td>
                       <td className="px-4 py-4 font-mono text-[10px] text-gray-500">{node.lease_start || '-'}</td>
                       <td className="px-4 py-4 font-mono text-[10px] text-gray-500">{node.lease_end || '-'}</td>
-                      <td className="pr-6 py-4 text-right">
+                      <TableActionCell className="pr-6 py-4 text-right">
                         <ActionIconGroup label={zh ? '租约操作' : 'Lease actions'} className="opacity-0 transition-opacity group-hover:opacity-100">
                           <ActionIconButton
                             icon={Pencil}
@@ -268,7 +289,7 @@ const DHCPLeaseTab: React.FC<DHCPLeaseTabProps> = ({ language, t }) => {
                             onClick={() => setShowDeleteConfirm(node.id)}
                           />
                         </ActionIconGroup>
-                      </td>
+                      </TableActionCell>
                     </tr>
                   ))
                 ) : (

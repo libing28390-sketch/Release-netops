@@ -1,8 +1,9 @@
 import React, { useState, useCallback } from 'react';
 import { motion, AnimatePresence } from 'motion/react';
-import { X, CheckCircle2, Shield, Wifi, Rocket, AlertTriangle, Loader2, RotateCcw, Eye, EyeOff } from 'lucide-react';
+import { X, CheckCircle2, Shield, Wifi, Rocket, AlertTriangle, Loader2, RotateCcw } from 'lucide-react';
 import type { Device } from '../types';
 import { useEscapeClose } from '../hooks/useEscapeClose';
+import { PasswordInputField } from './ui/PasswordInputField';
 
 interface OnboardingWizardModalProps {
   device: Device;
@@ -166,22 +167,32 @@ export default function OnboardingWizardModal({ device, language, onClose, onCom
                   <input className="w-full bg-gray-700 border border-gray-600 rounded px-3 py-2 text-sm text-gray-100 focus:border-cyan-500 outline-none" value={username} onChange={e => setUsername(e.target.value)} />
                 </div>
                 <div>
-                  <label className="block text-xs text-gray-400 mb-1">{zh ? '密码' : 'Password'}</label>
-                  <div className="relative">
-                    <input type={pwdVisible ? 'text' : 'password'} className="w-full bg-gray-700 border border-gray-600 rounded px-3 py-2 pr-10 text-sm text-gray-100 focus:border-cyan-500 outline-none" value={password} onChange={e => setPassword(e.target.value)} />
-                    <button type="button" className="absolute right-2 top-1/2 -translate-y-1/2 text-gray-400 hover:text-gray-200" onClick={() => setPwdVisible(!pwdVisible)}>
-                      {pwdVisible ? <EyeOff className="w-4 h-4" /> : <Eye className="w-4 h-4" />}
-                    </button>
-                  </div>
+                  <label htmlFor="onboarding-device-password" className="block text-xs text-gray-400 mb-1">{zh ? '密码' : 'Password'}</label>
+                  <PasswordInputField
+                    id="onboarding-device-password"
+                    autoComplete="new-password"
+                    visible={pwdVisible}
+                    onVisibilityChange={setPwdVisible}
+                    showPasswordLabel={zh ? '显示密码' : 'Show password'}
+                    hidePasswordLabel={zh ? '隐藏密码' : 'Hide password'}
+                    value={password}
+                    onChange={e => setPassword(e.target.value)}
+                    className="rounded bg-gray-700 py-2 text-sm text-gray-100 focus:border-cyan-500"
+                  />
                 </div>
                 <div>
-                  <label className="block text-xs text-gray-400 mb-1">{zh ? 'Enable 密码（可选）' : 'Enable Password (optional)'}</label>
-                  <div className="relative">
-                    <input type={enablePwdVisible ? 'text' : 'password'} className="w-full bg-gray-700 border border-gray-600 rounded px-3 py-2 pr-10 text-sm text-gray-100 focus:border-cyan-500 outline-none" value={enablePassword} onChange={e => setEnablePassword(e.target.value)} />
-                    <button type="button" className="absolute right-2 top-1/2 -translate-y-1/2 text-gray-400 hover:text-gray-200" onClick={() => setEnablePwdVisible(!enablePwdVisible)}>
-                      {enablePwdVisible ? <EyeOff className="w-4 h-4" /> : <Eye className="w-4 h-4" />}
-                    </button>
-                  </div>
+                  <label htmlFor="onboarding-enable-password" className="block text-xs text-gray-400 mb-1">{zh ? 'Enable 密码（可选）' : 'Enable Password (optional)'}</label>
+                  <PasswordInputField
+                    id="onboarding-enable-password"
+                    autoComplete="new-password"
+                    visible={enablePwdVisible}
+                    onVisibilityChange={setEnablePwdVisible}
+                    showPasswordLabel={zh ? '显示 Enable 密码' : 'Show enable password'}
+                    hidePasswordLabel={zh ? '隐藏 Enable 密码' : 'Hide enable password'}
+                    value={enablePassword}
+                    onChange={e => setEnablePassword(e.target.value)}
+                    className="rounded bg-gray-700 py-2 text-sm text-gray-100 focus:border-cyan-500"
+                  />
                 </div>
                 <div>
                   <label className="block text-xs text-gray-400 mb-1">{zh ? '特权用户名（可选）' : 'Privileged Username (optional)'}</label>

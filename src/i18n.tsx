@@ -368,6 +368,8 @@ export const translations: Translations = {
   startManaging: { en: 'Start managing your network infrastructure', zh: '开始管理您的网络基础设施' },
   username: { en: 'Username', zh: '用户名' },
   password: { en: 'Password', zh: '密码' },
+  showPassword: { en: 'Show password', zh: '显示密码' },
+  hidePassword: { en: 'Hide password', zh: '隐藏密码' },
   login: { en: 'Login', zh: '登录' },
   register: { en: 'Register', zh: '注册' },
   noAccount: { en: "Don't have an account?", zh: '还没有账户？' },

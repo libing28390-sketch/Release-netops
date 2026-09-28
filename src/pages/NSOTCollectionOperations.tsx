@@ -1,3 +1,4 @@
+import { DataTable } from '../components/DataTable';
 import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import {
   AlertCircle, CircleHelp, Copy, Database, LoaderCircle,
@@ -11,7 +12,10 @@ import {
   getVendorOption,
 } from './textfsmPlatformCatalog';
 import Pagination from '../components/Pagination';
+import { ActionIconButton } from '../components/ui/ActionIconButton';
 
+import { TableActionCell, TableActionHeader } from '../components/ui/TableActionColumn';
+import type { TableExportData } from '../components/ui/TableExportMenu';
 interface CollectionTemplate {
   id: string;
   name_zh?: string;
@@ -233,7 +237,7 @@ const profileDetails = (profile: OperationProfile, zh: boolean) => {
   const vendorLabel = vendor ? (zh ? vendor.label : vendor.labelEn) : profile.vendor || profile.catalog_vendor || selection.vendor;
   const familyLabel = family ? (zh ? family.label : family.labelEn) : (zh ? profile.name_zh : profile.name_en) || profile.platform_name || profile.platform_code;
   const versionLabel = version !== 'common' && versionMeta ? (zh ? versionMeta.label : versionMeta.labelEn) : '';
-  return { vendor: vendorLabel, platform: [familyLabel, versionLabel].filter(Boolean).join(' ') };
+  return { vendor: vendorLabel, platform: [familyLabel, versionLabel].filter(Boolean).join(' '), platformFamily: familyLabel, version: versionLabel };
 };
 
 const normalizeVendorKey = (value: string | null | undefined): string => {
@@ -534,6 +538,31 @@ const NSOTCollectionOperations: React.FC<NSOTCollectionOperationsProps> = ({ lan
     (safeCurrentPage - 1) * pageSize,
     safeCurrentPage * pageSize,
   );
+  const exportTemplateData = useMemo<TableExportData>(() => ({
+    headers: zh
+      ? ['模板名称', '厂商', '平台', '平台版本', '平台代码', '目录发布', '模板类型', '指标数量', '描述', '条件', '备注']
+      : ['Template', 'Vendor', 'Platform', 'Platform version', 'Platform code', 'Registry release', 'Template type', 'Metric count', 'Description', 'Condition', 'Note'],
+    rows: visiblePlatformRows.map(({ template, operations, profile }) => {
+      const details = profile ? profileDetails(profile, zh) : null;
+      const profileName = profile
+        ? ((zh ? profile.name_zh : profile.name_en) || profile.platform_name || profile.platform_code)
+        : (zh ? '暂无可用平台' : 'No platform profiles');
+      const description = (zh ? template.description_zh : template.description_en) || template.description_zh || template.description_en || '';
+      return [
+        (zh ? template.name_zh : template.name_en) || template.name_zh || template.name_en || '',
+        details?.vendor || '',
+        details?.platformFamily || profileName,
+        details?.version || '',
+        profile?.platform_code || '',
+        profile?.release_number || '',
+        template.builtin ? (zh ? '系统模板' : 'Built-in') : (zh ? '自定义' : 'Custom'),
+        template.collector_keys?.length ?? operations.length,
+        description,
+        template.condition || '',
+        template.note || '',
+      ];
+    }),
+  }), [visiblePlatformRows, zh]);
 
   useEffect(() => {
     setCurrentPage(1);
@@ -639,22 +668,29 @@ const NSOTCollectionOperations: React.FC<NSOTCollectionOperationsProps> = ({ lan
           {visibleTemplates.length > 0 ? (
             <div className="overflow-hidden rounded-2xl border border-slate-200 bg-white shadow-sm dark:border-white/10 dark:bg-slate-900/30">
               <div className="max-h-[min(70vh,820px)] overflow-auto">
-              <table className="nx-data-table min-w-[1280px] text-left text-sm">
+              <DataTable unstyled exportConfig={{ filename: 'nsot-collection-templates', language: zh ? 'zh' : 'en', disabled: loading || exportTemplateData.rows.length === 0, exportData: exportTemplateData }} className="nx-data-table min-w-[2400px] text-left text-sm">
                 <thead>
                   <tr className="border-b border-slate-100 bg-slate-50/95 dark:border-white/5 dark:bg-slate-950/95">
                     <th className="sticky top-0 z-10 w-52 bg-slate-50/95 px-5 py-3 text-[11px] font-bold uppercase tracking-wider text-slate-400 dark:bg-slate-950/95 dark:text-slate-500">{zh ? '模板名称' : 'Template'}</th>
                     <th className="sticky top-0 z-10 w-36 bg-slate-50/95 px-5 py-3 text-[11px] font-bold uppercase tracking-wider text-slate-400 dark:bg-slate-950/95 dark:text-slate-500">{zh ? '厂商' : 'Vendor'}</th>
-                    <th className="sticky top-0 z-10 min-w-[260px] bg-slate-50/95 px-5 py-3 text-[11px] font-bold uppercase tracking-wider text-slate-400 dark:bg-slate-950/95 dark:text-slate-500">{zh ? '平台 / 版本' : 'Platform / version'}</th>
-                    <th className="sticky top-0 z-10 min-w-64 bg-slate-50/95 px-5 py-3 text-[11px] font-bold uppercase tracking-wider text-slate-400 dark:bg-slate-950/95 dark:text-slate-500">{zh ? '模板信息' : 'Template details'}</th>
-                    <th className="sticky top-0 z-10 w-36 bg-slate-50/95 px-5 py-3 text-[11px] font-bold uppercase tracking-wider text-slate-400 dark:bg-slate-950/95 dark:text-slate-500"><span className="flex items-center gap-1.5"><Terminal size={12} />{zh ? 'CLI 命令' : 'CLI commands'}</span></th>
-                    <th className="sticky top-0 z-10 w-36 bg-slate-50/95 px-5 py-3 text-right text-[11px] font-bold uppercase tracking-wider text-slate-400 dark:bg-slate-950/95 dark:text-slate-500">{zh ? '操作' : 'Actions'}</th>
+                    <th className="sticky top-0 z-10 min-w-[220px] bg-slate-50/95 px-5 py-3 text-[11px] font-bold uppercase tracking-wider text-slate-400 dark:bg-slate-950/95 dark:text-slate-500">{zh ? '平台' : 'Platform'}</th>
+                    <th className="sticky top-0 z-10 w-32 bg-slate-50/95 px-5 py-3 text-[11px] font-bold uppercase tracking-wider text-slate-400 dark:bg-slate-950/95 dark:text-slate-500">{zh ? '平台版本' : 'Platform version'}</th>
+                    <th className="sticky top-0 z-10 w-40 bg-slate-50/95 px-5 py-3 text-[11px] font-bold uppercase tracking-wider text-slate-400 dark:bg-slate-950/95 dark:text-slate-500">{zh ? '平台代码' : 'Platform code'}</th>
+                    <th className="sticky top-0 z-10 w-32 bg-slate-50/95 px-5 py-3 text-[11px] font-bold uppercase tracking-wider text-slate-400 dark:bg-slate-950/95 dark:text-slate-500">{zh ? '目录发布' : 'Registry release'}</th>
+                    <th className="sticky top-0 z-10 w-28 bg-slate-50/95 px-5 py-3 text-[11px] font-bold uppercase tracking-wider text-slate-400 dark:bg-slate-950/95 dark:text-slate-500">{zh ? '模板类型' : 'Template type'}</th>
+                    <th className="sticky top-0 z-10 w-24 bg-slate-50/95 px-5 py-3 text-[11px] font-bold uppercase tracking-wider text-slate-400 dark:bg-slate-950/95 dark:text-slate-500">{zh ? '指标数量' : 'Metric count'}</th>
+                    <th className="sticky top-0 z-10 min-w-64 bg-slate-50/95 px-5 py-3 text-[11px] font-bold uppercase tracking-wider text-slate-400 dark:bg-slate-950/95 dark:text-slate-500">{zh ? '描述' : 'Description'}</th>
+                    <th className="sticky top-0 z-10 min-w-48 bg-slate-50/95 px-5 py-3 text-[11px] font-bold uppercase tracking-wider text-slate-400 dark:bg-slate-950/95 dark:text-slate-500">{zh ? '条件' : 'Condition'}</th>
+                    <th className="sticky top-0 z-10 min-w-48 bg-slate-50/95 px-5 py-3 text-[11px] font-bold uppercase tracking-wider text-slate-400 dark:bg-slate-950/95 dark:text-slate-500">{zh ? '备注' : 'Note'}</th>
+                    <th data-export="ignore" className="sticky top-0 z-10 w-36 bg-slate-50/95 px-5 py-3 text-[11px] font-bold uppercase tracking-wider text-slate-400 dark:bg-slate-950/95 dark:text-slate-500"><span className="flex items-center gap-1.5"><Terminal size={12} />{zh ? 'CLI 命令' : 'CLI commands'}</span></th>
+                    <TableActionHeader className="sticky top-0 z-10 w-36 bg-slate-50/95 px-5 py-3 text-right text-[11px] font-bold uppercase tracking-wider text-slate-400 dark:bg-slate-950/95 dark:text-slate-500">{zh ? '操作' : 'Actions'}</TableActionHeader>
                   </tr>
                 </thead>
                 <tbody className="divide-y divide-slate-100 dark:divide-white/5">
                   {paginatedPlatformRows.map(({ template, operations, profile }, index) => {
+                    const templateName = (zh ? template.name_zh : template.name_en) || template.name_zh || template.name_en;
                     const description = (zh ? template.description_zh : template.description_en)
                       || template.description_zh || template.description_en;
-                    const otherInfo = [template.condition, template.note].filter((value): value is string => Boolean(value) && value !== description).join(' · ');
                     const details = profile ? profileDetails(profile, zh) : null;
                     const profileName = profile
                       ? ((zh ? profile.name_zh : profile.name_en) || profile.platform_name || profile.platform_code)
@@ -663,27 +699,24 @@ const NSOTCollectionOperations: React.FC<NSOTCollectionOperationsProps> = ({ lan
                     return (
                         <tr key={`${template.id}:${profile?.id || 'no-platform'}`} className={`align-middle transition-colors hover:bg-slate-50/60 dark:hover:bg-white/[0.02] ${startsTemplateGroup ? 'border-t-2 border-t-slate-200 dark:border-t-slate-700' : ''}`}>
                           <td className="px-5 py-3">
-                            <p className="font-semibold text-slate-800 dark:text-slate-100">{templateLabel(template, zh)}</p>
-                            <p className="mt-1 font-mono text-[10px] text-slate-400 dark:text-slate-500">{template.id}</p>
+                            {templateName
+                              ? <p data-export-primary className="font-semibold text-slate-800 dark:text-slate-100">{templateName}</p>
+                              : <p data-export-ignore className="font-semibold text-slate-800 dark:text-slate-100">{template.id}</p>}
+                            <p data-export-ignore className="mt-1 font-mono text-[10px] text-slate-400 dark:text-slate-500">{template.id}</p>
                           </td>
                           <td className="px-5 py-3">
                             <span className="font-medium text-slate-700 dark:text-slate-200">{details?.vendor || '—'}</span>
                           </td>
-                          <td className="px-5 py-3">
-                            {profile ? <>
-                              <p className="font-medium text-slate-700 dark:text-slate-200">{details?.platform || profileName}</p>
-                              <p className="mt-1 break-all font-mono text-[10px] text-slate-400 dark:text-slate-500">{profile.platform_code}{profile.release_number ? ` · ${zh ? '目录发布' : 'Registry'} ${profile.release_number}` : ''}</p>
-                            </> : <span className="text-xs text-slate-400">{profileName}</span>}
-                          </td>
-                          <td className="px-5 py-3">
-                            <div className="flex flex-wrap items-center gap-1.5">
-                              <span className={`rounded-full px-2 py-0.5 text-[10px] font-semibold ${template.builtin ? 'bg-slate-100 text-slate-600 dark:bg-slate-800 dark:text-slate-300' : 'bg-cyan-50 text-cyan-700 dark:bg-cyan-500/10 dark:text-cyan-300'}`}>{template.builtin ? (zh ? '系统模板' : 'Built-in') : (zh ? '自定义' : 'Custom')}</span>
-                              <span className="rounded-full bg-slate-50 px-2 py-0.5 text-[10px] text-slate-500 dark:bg-slate-950/50 dark:text-slate-400">{zh ? `${template.collector_keys?.length ?? operations.length} 项指标` : `${template.collector_keys?.length ?? operations.length} metrics`}</span>
-                            </div>
-                            <p className="mt-1.5 text-[11px] leading-relaxed text-slate-600 dark:text-slate-300">{description || otherInfo || '—'}</p>
-                            {description && otherInfo && <p className="mt-1 text-[10px] leading-relaxed text-slate-400 dark:text-slate-500">{otherInfo}</p>}
-                          </td>
-                          <td className="px-5 py-3">
+                          <td className="px-5 py-3"><span className="font-medium text-slate-700 dark:text-slate-200">{profile ? details?.platformFamily || profileName : profileName}</span></td>
+                          <td className="px-5 py-3 text-xs text-slate-600 dark:text-slate-300">{profile ? details?.version || '—' : '—'}</td>
+                          <td className="px-5 py-3 font-mono text-xs text-slate-600 dark:text-slate-300">{profile?.platform_code || '—'}</td>
+                          <td className="px-5 py-3 text-xs text-slate-600 dark:text-slate-300">{profile?.release_number || '—'}</td>
+                          <td className="px-5 py-3"><span className={`rounded-full px-2 py-0.5 text-[10px] font-semibold ${template.builtin ? 'bg-slate-100 text-slate-600 dark:bg-slate-800 dark:text-slate-300' : 'bg-cyan-50 text-cyan-700 dark:bg-cyan-500/10 dark:text-cyan-300'}`}>{template.builtin ? (zh ? '系统模板' : 'Built-in') : (zh ? '自定义' : 'Custom')}</span></td>
+                          <td className="px-5 py-3 text-xs text-slate-600 dark:text-slate-300">{template.collector_keys?.length ?? operations.length}</td>
+                          <td className="px-5 py-3 text-[11px] leading-relaxed text-slate-600 dark:text-slate-300">{description || '—'}</td>
+                          <td className="px-5 py-3 text-[11px] leading-relaxed text-slate-500 dark:text-slate-400">{template.condition || '—'}</td>
+                          <td className="px-5 py-3 text-[11px] leading-relaxed text-slate-500 dark:text-slate-400">{template.note || '—'}</td>
+                          <td data-export-ignore className="px-5 py-3">
                             {profile ? (
                               <button
                                 type="button"
@@ -696,18 +729,16 @@ const NSOTCollectionOperations: React.FC<NSOTCollectionOperationsProps> = ({ lan
                               </button>
                             ) : <span className="text-[11px] text-slate-400">{zh ? '无平台命令' : 'No platform commands'}</span>}
                           </td>
-                          <td className="px-5 py-3 text-right">
-                            <span className="inline-flex items-center justify-end gap-1.5" aria-label={zh ? '模板操作' : 'Template actions'}>
-                              <button type="button" title={zh ? '克隆为自定义模板' : 'Clone as a custom template'} aria-label={zh ? `克隆${templateLabel(template, true)}` : `Clone ${templateLabel(template, false)}`} onClick={() => openTemplateEditor('create', template, true)} className="rounded-md border border-slate-200 bg-white p-1.5 text-cyan-700 transition hover:border-cyan-300 dark:border-slate-700 dark:bg-slate-900 dark:text-cyan-300"><Copy size={13} /></button>
-                              <button type="button" title={zh ? '编辑模板' : 'Edit template'} aria-label={zh ? `编辑${templateLabel(template, true)}` : `Edit ${templateLabel(template, false)}`} onClick={() => openTemplateEditor('edit', template)} disabled={template.editable === false} className="rounded-md border border-slate-200 bg-white p-1.5 text-slate-500 transition hover:border-cyan-300 hover:text-cyan-700 disabled:cursor-not-allowed disabled:opacity-35 dark:border-slate-700 dark:bg-slate-900 dark:text-slate-300"><Pencil size={13} /></button>
-                              <button type="button" title={zh ? '删除模板' : 'Delete template'} aria-label={zh ? `删除${templateLabel(template, true)}` : `Delete ${templateLabel(template, false)}`} onClick={() => void deleteTemplate(template)} disabled={templateDeleting || template.deletable === false} className="rounded-md border border-rose-200 bg-white p-1.5 text-rose-600 transition hover:border-rose-400 disabled:cursor-not-allowed disabled:opacity-35 dark:border-rose-500/30 dark:bg-slate-900 dark:text-rose-300"><Trash2 size={13} /></button>
-                            </span>
-                          </td>
+                          <TableActionCell className="px-5 py-3 text-right" label={zh ? '模板操作' : 'Template actions'}>
+                              <ActionIconButton icon={Copy} label={zh ? `克隆${templateLabel(template, true)}` : `Clone ${templateLabel(template, false)}`} tooltip={zh ? '克隆为自定义模板' : 'Clone as a custom template'} variant="accent" onClick={() => openTemplateEditor('create', template, true)} />
+                              <ActionIconButton icon={Pencil} label={zh ? `编辑${templateLabel(template, true)}` : `Edit ${templateLabel(template, false)}`} tooltip={zh ? '编辑模板' : 'Edit template'} onClick={() => openTemplateEditor('edit', template)} disabled={template.editable === false} />
+                              <ActionIconButton icon={Trash2} label={zh ? `删除${templateLabel(template, true)}` : `Delete ${templateLabel(template, false)}`} tooltip={zh ? '删除模板' : 'Delete template'} variant="danger" onClick={() => void deleteTemplate(template)} disabled={templateDeleting || template.deletable === false} />
+                          </TableActionCell>
                         </tr>
                       );
                   })}
                 </tbody>
-              </table>
+              </DataTable>
               </div>
               <Pagination
                 currentPage={safeCurrentPage}

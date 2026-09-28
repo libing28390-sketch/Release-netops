@@ -1,4 +1,5 @@
-import React, { useMemo } from 'react';
+import { DataTable } from '../../../components/DataTable';
+import React, { useCallback, useMemo } from 'react';
 import {
   ClipboardList, Search, X, Filter, RefreshCw, SlidersHorizontal,
   BookmarkCheck, Bookmark, Star, Eye, Pencil, Trash2,
@@ -12,6 +13,9 @@ import { STATUS_META, PRIORITY_META, ORDER_TYPE_META } from '../constants';
 import { fmtTime, typeLabel, priorityLabel, statusLabel } from '../helpers';
 import { ActionIconButton, ActionIconGroup } from '../../../components/ui/ActionIconButton';
 
+import { TableActionCell, TableActionHeader } from '../../../components/ui/TableActionColumn';
+import { fetchAllPaginatedItems } from '../../../utils/pagination';
+import type { TableExportData } from '../../../components/ui/TableExportMenu';
 interface Props {
   language: string;
   orders: ChangeOrder[];
@@ -121,6 +125,46 @@ export const ChangeOrderList: React.FC<Props> = ({
   FEATURE_TODO_SUBTABS,
 }) => {
   const zh = language === 'zh';
+  const exportAllOrders = useCallback(async (): Promise<TableExportData> => {
+    const params = new URLSearchParams();
+    if (search) params.set('search', search);
+    if (statusFilter) params.set('status', statusFilter);
+    if (priorityFilter) params.set('priority', priorityFilter);
+    if (requesterFilter) params.set('requester', requesterFilter);
+    if (assigneeFilter) params.set('assignee', assigneeFilter);
+    if (bookmarkFilter && currentUser.id) params.set('bookmarked', String(currentUser.id));
+    if (orderTypeFilter) params.set('order_type', orderTypeFilter);
+    if (createdFrom) params.set('created_from', createdFrom);
+    if (createdTo) params.set('created_to', createdTo);
+    if (completedFrom) params.set('completed_from', completedFrom);
+    if (completedTo) params.set('completed_to', completedTo);
+    if (scheduledFrom) params.set('scheduled_from', scheduledFrom);
+    if (scheduledTo) params.set('scheduled_to', scheduledTo);
+    if (viewTab === 'my_todo' && currentUser.username) {
+      params.set('my_todo', currentUser.username);
+    } else if (viewTab === 'group_todo' && Array.isArray(currentUser.change_groups) && currentUser.change_groups.length > 0) {
+      params.set('group_todo', currentUser.change_groups.join(','));
+    } else if (viewTab === 'my_focus' && currentUser.id) {
+      params.set('bookmarked', String(currentUser.id));
+    } else if (viewTab === 'my_participated' && currentUser.username) {
+      params.set('my_participated', currentUser.username);
+    } else if (viewTab === 'my_drafts' && currentUser.username) {
+      params.set('my_drafts', currentUser.username);
+    }
+    const allOrders = await fetchAllPaginatedItems<ChangeOrder>('/api/change-orders', params, 100);
+    return {
+      headers: [zh ? '工单号' : 'Order #', zh ? '标题' : 'Title', zh ? '类型' : 'Type', zh ? '优先级' : 'Priority', zh ? '状态' : 'Status', zh ? '申请人' : 'Requester', zh ? '创建时间' : 'Created'],
+      rows: allOrders.map((order) => [
+        order.order_number,
+        order.title,
+        typeLabel(order.order_type, language),
+        priorityLabel(order.priority, language),
+        statusLabel(order.status, language),
+        order.requester_username || '—',
+        fmtTime(order.created_at),
+      ]),
+    };
+  }, [search, statusFilter, priorityFilter, requesterFilter, assigneeFilter, bookmarkFilter, orderTypeFilter, createdFrom, createdTo, completedFrom, completedTo, scheduledFrom, scheduledTo, viewTab, currentUser.id, currentUser.username, currentUser.change_groups, language, zh]);
 
   const summaryCards = useMemo(() => {
     if (!summary) return [];
@@ -448,7 +492,7 @@ export const ChangeOrderList: React.FC<Props> = ({
             </div>
           ) : (
             <div className="overflow-x-auto max-h-[calc(100vh-380px)] overflow-y-auto custom-scrollbar">
-              <table className="nx-data-table text-sm">
+              <DataTable unstyled exportConfig={{ filename: 'change-orders', language: zh ? 'zh' : 'en', disabled: loading || total === 0, exportData: exportAllOrders }} className="nx-data-table text-sm">
                 <thead className="sticky top-0 z-10 bg-[#f8fafc] border-b border-black/5">
                   <tr className="text-black/50 text-xs">
                     <th className="text-left px-4 py-3 font-semibold">{zh ? '工单号' : 'Order #'}</th>
@@ -458,7 +502,7 @@ export const ChangeOrderList: React.FC<Props> = ({
                     <th className="text-center px-4 py-3 font-semibold">{zh ? '状态' : 'Status'}</th>
                     <th className="text-left px-4 py-3 font-semibold">{zh ? '申请人' : 'Requester'}</th>
                     <th className="text-left px-4 py-3 font-semibold">{zh ? '创建时间' : 'Created'}</th>
-                    <th className="text-center px-4 py-3 font-semibold">{zh ? '操作' : 'Actions'}</th>
+                    <TableActionHeader className="text-center px-4 py-3 font-semibold">{zh ? '操作' : 'Actions'}</TableActionHeader>
                   </tr>
                 </thead>
                 <tbody className="divide-y divide-black/[0.04]">
@@ -502,7 +546,7 @@ export const ChangeOrderList: React.FC<Props> = ({
                         <td className="px-4 py-3">
                           <span className="text-xs text-black/40 tabular-nums">{fmtTime(order.created_at)}</span>
                         </td>
-                        <td className="px-4 py-3 text-center">
+                        <TableActionCell className="px-4 py-3 text-center">
                           <ActionIconGroup label={zh ? '工单操作' : 'Change order actions'}>
                             <ActionIconButton
                               icon={Eye}
@@ -525,12 +569,12 @@ export const ChangeOrderList: React.FC<Props> = ({
                               />
                             )}
                           </ActionIconGroup>
-                        </td>
+                        </TableActionCell>
                       </tr>
                     );
                   })}
                 </tbody>
-              </table>
+              </DataTable>
             </div>
           )}
         </div>

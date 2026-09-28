@@ -1,3 +1,4 @@
+import { DataTable } from './DataTable';
 import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import {
   Router, Search, RefreshCw, Cpu, MemoryStick, Thermometer, Wind, Zap,
@@ -10,6 +11,7 @@ import PageHero from './PageHero';
 import { useChartTheme } from '../hooks/useChartTheme';
 import { useMonitoringStore } from '../store/monitoringStore';
 import { VirtualizedDeviceList } from './VirtualizedDeviceList';
+import type { TableExportData } from './ui/TableExportMenu';
 
 interface NetworkMonitoringProps {
   language: 'zh' | 'en';
@@ -412,6 +414,50 @@ const NetworkMonitoring: React.FC<NetworkMonitoringProps> = ({
     if (!resp.ok) throw new Error('alerts fetch failed');
     return resp.json();
   }, []);
+
+  const exportAllAlerts = useCallback(async (): Promise<TableExportData> => {
+    const headers = [zh ? '发生时间' : 'Time', zh ? '级别' : 'Severity', zh ? '状态' : 'Phase', zh ? '告警项' : 'Title', zh ? '详情' : 'Message', zh ? '恢复时间' : 'Recovered At'];
+    if (!selectedId) return { headers, rows: [] };
+
+    const pageSize = 100;
+    const allAlerts: AlertItem[] = [];
+    let total = Number.POSITIVE_INFINITY;
+    for (let page = 1; allAlerts.length < total; page += 1) {
+      const params = new URLSearchParams({
+        device_id: selectedId,
+        page: String(page),
+        page_size: String(pageSize),
+        severity: alertsSeverity,
+        phase: alertsPhase,
+      });
+      const response = await fetch(`/api/monitoring/alerts?${params.toString()}`, { headers: authHeaders() });
+      if (!response.ok) throw new Error(zh ? '导出告警列表失败' : 'Failed to fetch alerts for export');
+      const payload = await response.json() as { items?: AlertItem[]; total?: number };
+      const pageItems = Array.isArray(payload.items) ? payload.items : [];
+      allAlerts.push(...pageItems);
+      total = Number.isFinite(Number(payload.total)) ? Number(payload.total) : allAlerts.length;
+      if (pageItems.length === 0 && allAlerts.length < total) {
+        throw new Error(zh ? `告警导出不完整：已读取 ${allAlerts.length} / ${total} 条` : `Alert export incomplete: fetched ${allAlerts.length} of ${total} rows`);
+      }
+    }
+    if (allAlerts.length < total) throw new Error(zh ? `告警导出不完整：已读取 ${allAlerts.length} / ${total} 条` : `Alert export incomplete: fetched ${allAlerts.length} of ${total} rows`);
+
+    return {
+      headers,
+      rows: allAlerts.map((alert) => {
+        const severity = String(alert.severity || '').toLowerCase();
+        const resolved = Boolean(alert.resolved_at);
+        return [
+          fmtFullTime(alert.created_at),
+          severity === 'critical' ? (zh ? '严重' : 'Critical') : severity === 'major' ? (zh ? '主要' : 'Major') : (zh ? '次要' : 'Minor'),
+          resolved ? (zh ? '已恢复' : 'Recovered') : (zh ? '告警中' : 'Active'),
+          alert.title || '',
+          alert.message || '',
+          alert.resolved_at ? fmtFullTime(alert.resolved_at) : '-',
+        ];
+      }),
+    };
+  }, [alertsPhase, alertsSeverity, selectedId, zh]);
 
   const fetchCollectionStatus = useCallback(async (deviceId: string, signal?: AbortSignal) => {
     const resp = await fetch(`/api/monitoring/device/${deviceId}/collection-status`, {
@@ -1175,21 +1221,22 @@ const NetworkMonitoring: React.FC<NetworkMonitoringProps> = ({
                 </div>
 
                 <div className="max-h-[260px] overflow-auto border border-gray-100 dark:border-zinc-800 rounded-xl">
-                  <table className="nx-data-table nx-data-table--compact">
+                  <DataTable unstyled exportConfig={{ filename: 'network-interface-health' }} className="nx-data-table nx-data-table--compact">
                     <thead className="bg-gray-50 dark:bg-zinc-800 sticky top-0 backdrop-blur-md">
                       <tr>
                         <th className="px-4 py-2.5 text-left text-[10px] uppercase tracking-wider text-gray-400">{zh ? '接口' : 'Interface'}</th>
                         <th className="px-4 py-2.5 text-left text-[10px] uppercase tracking-wider text-gray-400">{zh ? '状态' : 'Status'}</th>
                         <th className="px-4 py-2.5 text-right text-[10px] uppercase tracking-wider text-gray-400">IN</th>
                         <th className="px-4 py-2.5 text-right text-[10px] uppercase tracking-wider text-gray-400">OUT</th>
-                        <th className="px-4 py-2.5 text-right text-[10px] uppercase tracking-wider text-gray-400">BW%</th>
-                        <th className="px-4 py-2.5 text-right text-[10px] uppercase tracking-wider text-gray-400">{zh ? '通用错误' : 'Errors'}</th>
-                        <th className="px-4 py-2.5 text-right text-[10px] uppercase tracking-wider text-gray-400">CRC/FCS</th>
+                        <th className="px-4 py-2.5 text-right text-[10px] uppercase tracking-wider text-gray-400">IN BW%</th>
+                        <th className="px-4 py-2.5 text-right text-[10px] uppercase tracking-wider text-gray-400">OUT BW%</th>
+                        <th className="px-4 py-2.5 text-right text-[10px] uppercase tracking-wider text-gray-400">IN errors</th>
+                        <th className="px-4 py-2.5 text-right text-[10px] uppercase tracking-wider text-gray-400">OUT errors</th>
+                        <th className="px-4 py-2.5 text-right text-[10px] uppercase tracking-wider text-gray-400">CRC/FCS errors</th>
                       </tr>
                     </thead>
                     <tbody className="divide-y divide-gray-100 dark:divide-zinc-800">
                       {upInterfaces.map((it: any, idx: number) => {
-                        const bw = Math.max(Number(it.bw_in_pct || 0), Number(it.bw_out_pct || 0));
                         return (
                           <tr key={`${it.interface_name}-${idx}`} className="hover:bg-gray-50/70 dark:hover:bg-zinc-800/40">
                             <td className="px-4 py-2 font-mono text-gray-900 dark:text-white font-semibold">{it.interface_name}</td>
@@ -1205,21 +1252,23 @@ const NetworkMonitoring: React.FC<NetworkMonitoringProps> = ({
                             <td className="px-4 py-2 text-right font-mono text-orange-600 dark:text-orange-400">
                               <div>{fmtRate(it.out_bps)}</div>
                             </td>
-                            <td className="px-4 py-2 text-right font-mono text-gray-800 dark:text-zinc-200">{`${bw.toFixed(1)}%`}</td>
-                            <td className="px-4 py-2 text-right font-mono text-gray-400">{Number(it.in_errors || 0)} / {Number(it.out_errors || 0)}</td>
+                            <td className="px-4 py-2 text-right font-mono text-gray-800 dark:text-zinc-200">{`${Number(it.bw_in_pct || 0).toFixed(1)}%`}</td>
+                            <td className="px-4 py-2 text-right font-mono text-gray-800 dark:text-zinc-200">{`${Number(it.bw_out_pct || 0).toFixed(1)}%`}</td>
+                            <td className="px-4 py-2 text-right font-mono text-gray-400">{Number(it.in_errors || 0)}</td>
+                            <td className="px-4 py-2 text-right font-mono text-gray-400">{Number(it.out_errors || 0)}</td>
                             <td className="px-4 py-2 text-right font-mono text-gray-400">{Number(it.fcs_errors || 0)}</td>
                           </tr>
                         );
                       })}
                       {upInterfaces.length === 0 && (
                         <tr>
-                          <td colSpan={7} className="px-4 py-8 text-center text-xs text-gray-400">
+                          <td colSpan={9} className="px-4 py-8 text-center text-xs text-gray-400">
                             {zh ? '暂无 UP 接口实时样本' : 'No realtime UP interface samples yet'}
                           </td>
                         </tr>
                       )}
                     </tbody>
-                  </table>
+                  </DataTable>
                 </div>
               </div>
 
@@ -1372,7 +1421,7 @@ const NetworkMonitoring: React.FC<NetworkMonitoringProps> = ({
                 </div>
 
                 <div className="overflow-auto max-h-[240px]">
-                  <table className="nx-data-table nx-data-table--compact">
+                  <DataTable unstyled exportConfig={{ filename: 'network-alert-events', language: zh ? 'zh' : 'en', disabled: loading || !alertTotal, exportData: exportAllAlerts }} className="nx-data-table nx-data-table--compact">
                     <thead className="bg-gray-50 dark:bg-zinc-800 sticky top-0">
                       <tr>
                         <th className="px-4 py-2 text-left text-[10px] uppercase tracking-wider text-gray-400">{zh ? '发生时间' : 'Time'}</th>
@@ -1414,7 +1463,7 @@ const NetworkMonitoring: React.FC<NetworkMonitoringProps> = ({
                         </tr>
                       )}
                     </tbody>
-                  </table>
+                  </DataTable>
                 </div>
 
                 {alertTotal > 10 && (

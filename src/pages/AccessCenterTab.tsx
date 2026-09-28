@@ -2,11 +2,12 @@ import React, { useState, useMemo, useEffect, useRef } from 'react';
 import { 
   Search, Terminal, Monitor, Lock, Info, 
   Copy, ShieldCheck, RefreshCw, ChevronLeft, ChevronRight, Send, ChevronDown, UserCheck,
-  Database, Server, Cpu, Key, FolderTree, Globe, X, Eye, EyeOff, MapPin, Activity, Wifi, Star, Settings
+  Database, Server, Cpu, Key, FolderTree, Globe, X, Activity, Wifi, Star, Settings
 } from 'lucide-react';
 import { motion, AnimatePresence } from 'framer-motion';
 import TerminalWindow from '../components/access/TerminalWindow';
 import { DataTable } from '../components/DataTable';
+import { PasswordInputField } from '../components/ui/PasswordInputField';
 import Pagination from '../components/Pagination';
 import PageHero from '../components/PageHero';
 import DeviceMfaModal from './AccessCenterTab/components/DeviceMfaModal';
@@ -15,6 +16,7 @@ import type { WebAccessProfile } from './AssetManagement/types';
 import { WebAccessRequestModal } from './AssetManagement/components/WebAccessRequestModal';
 import WindowsServiceModal from './AccessCenterTab/components/WindowsServiceModal';
 import { formatTerminalAgentError, getLocalTerminalConfig, TERMINAL_APP_LABELS } from '../utils/localTerminal';
+import { buildAccessCenterExportData } from './AccessCenterTab/exportData';
 
 interface Device {
   id: string;
@@ -213,14 +215,6 @@ export default function AccessCenterTab({
     dev.web_access_enabled || dev.web_http_enabled || dev.web_https_enabled,
   );
 
-  const getSupportedProtocols = (dev: Device) => {
-    const terminalProtocol = getTerminalProtocol(dev);
-    const protocols: Array<'SSH' | 'RDP' | 'HTTP' | 'HTTPS'> = terminalProtocol ? [terminalProtocol] : [];
-    if (dev.web_http_enabled) protocols.push('HTTP');
-    if (dev.web_https_enabled) protocols.push('HTTPS');
-    return protocols;
-  };
-
   const getAllAccessMethods = (dev: Device): AllAccessMethod[] => {
     const methods: AllAccessMethod[] = [];
     const terminalProtocol = getTerminalProtocol(dev);
@@ -290,6 +284,10 @@ export default function AccessCenterTab({
     const ids = new Set(node.deviceIds);
     return baseFilteredDevices.filter((device) => ids.has(device.id));
   }, [accessTreeIndex, baseFilteredDevices, selectedTreeKey]);
+  const accessExportData = useMemo(
+    () => buildAccessCenterExportData(filteredDevices, activeCategory, isZh),
+    [filteredDevices, activeCategory, isZh],
+  );
   const selectedTreeLabel = accessTreeIndex.get(selectedTreeKey)?.label || accessTree.label;
   const totalCount = filteredDevices.length;
   const totalPages = Math.ceil(totalCount / pageSize);
@@ -782,28 +780,30 @@ export default function AccessCenterTab({
     window.history.replaceState(window.history.state, '', nextUrl);
   }, [devices]);
 
-  const tableHeader = (label: string, align: 'left' | 'center' | 'right' = 'left') => (
+  const tableHeader = (label: string, align: 'left' | 'center' | 'right' = 'left', ignoreExport = false) => (
     <th
       className="px-8 py-5 text-[10px] font-black uppercase tracking-[0.15em] text-slate-400"
       style={{ textAlign: align }}
+      data-export={ignoreExport ? 'ignore' : undefined}
     >
       {label}
     </th>
   );
 
-  const renderAssetCell = (dev: Device) => (
-    <td className="px-8 py-5">
-      <div className="flex items-center gap-4">
-        <div className={`relative flex h-11 w-11 shrink-0 items-center justify-center rounded-2xl border transition-all ${dev.status === 'online' ? 'border-cyan-100 bg-gradient-to-br from-cyan-50 to-sky-50 text-cyan-600 group-hover:shadow-md group-hover:shadow-cyan-100' : 'border-slate-200 bg-slate-50 text-slate-400'}`}>
-          <Server className="h-5 w-5" />
-          <span className={`absolute -bottom-0.5 -right-0.5 h-3 w-3 rounded-full border-2 border-white ${dev.status === 'online' ? 'bg-emerald-500' : 'bg-slate-300'}`} />
-        </div>
-        <div className="min-w-0">
-          <div className="flex items-center gap-2">
-            <div className="truncate text-sm font-bold text-slate-800">{dev.hostname}</div>
-            <span className={`shrink-0 rounded-full px-1.5 py-0.5 text-[9px] font-bold ${dev.status === 'online' ? 'bg-emerald-50 text-emerald-700' : 'bg-slate-100 text-slate-400'}`}>
-              {dev.status === 'online' ? (isZh ? '在线' : 'Online') : (isZh ? '离线' : 'Offline')}
-            </span>
+  const renderFlagCell = (enabled: boolean) => (
+    <td className="px-5 py-4 text-center">
+      <span className={`rounded-full px-2 py-1 text-[10px] font-semibold ${enabled ? 'bg-emerald-50 text-emerald-700' : 'bg-slate-100 text-slate-400'}`}>
+        {enabled ? (isZh ? '已启用' : 'Enabled') : (isZh ? '未启用' : 'Disabled')}
+      </span>
+    </td>
+  );
+
+  const renderDeviceCells = (dev: Device) => (
+    <>
+      <td className="px-5 py-4">
+        <div className="flex items-center gap-2.5">
+          <div className={`relative flex h-9 w-9 shrink-0 items-center justify-center rounded-xl border ${dev.status === 'online' ? 'border-cyan-100 bg-cyan-50 text-cyan-600' : 'border-slate-200 bg-slate-50 text-slate-400'}`}>
+            <Server className="h-4 w-4" />
             <button
               type="button"
               aria-label={favoriteDeviceIds.includes(dev.id)
@@ -812,60 +812,26 @@ export default function AccessCenterTab({
               title={favoriteDeviceIds.includes(dev.id)
                 ? (isZh ? '取消收藏' : 'Remove from favorites')
                 : (isZh ? '加入收藏' : 'Add to favorites')}
-              onClick={(event) => {
-                event.stopPropagation();
-                onToggleFavorite?.(dev);
-              }}
-              className={`rounded-md p-1 transition-colors ${favoriteDeviceIds.includes(dev.id) ? 'text-amber-500 hover:bg-amber-50' : 'text-slate-300 hover:bg-amber-50 hover:text-amber-500'}`}
+              onClick={(event) => { event.stopPropagation(); onToggleFavorite?.(dev); }}
+              className={`absolute -right-2 -top-2 rounded-md bg-white p-1 transition-colors ${favoriteDeviceIds.includes(dev.id) ? 'text-amber-500' : 'text-slate-300 hover:text-amber-500'}`}
             >
-              <Star size={13} fill={favoriteDeviceIds.includes(dev.id) ? 'currentColor' : 'none'} />
+              <Star size={12} fill={favoriteDeviceIds.includes(dev.id) ? 'currentColor' : 'none'} />
             </button>
           </div>
-          <div className="mt-1 flex flex-wrap items-center gap-1.5 text-[10px] font-semibold text-slate-400">
-            <span className="rounded-md bg-slate-100 px-1.5 py-0.5 uppercase tracking-tight">{dev.platform || 'General Linux'}</span>
-            {dev.vendor && <span className="truncate">{dev.vendor}</span>}
-          </div>
+          <span className="font-bold text-slate-800">{dev.hostname}</span>
         </div>
-      </div>
-    </td>
-  );
-
-  const renderAddressCell = (dev: Device) => (
-    <td className="px-8 py-5">
-      <div className="space-y-1.5">
-        <div className="flex items-center gap-1.5">
-          <span className="rounded-lg bg-slate-50 px-2 py-1 font-mono text-xs font-bold text-slate-600">{dev.ip_address}</span>
-          <span className="font-mono text-[10px] font-semibold text-slate-400">:{dev.management_port || 22}</span>
-        </div>
-        <div className="flex items-center gap-1 text-[10px] font-medium text-slate-400">
-          <MapPin className="h-3 w-3 text-violet-400" />
-          <span className="max-w-[150px] truncate">{dev.site_name || dev.site || (isZh ? '未分配站点' : 'Unassigned site')}</span>
-        </div>
-      </div>
-    </td>
-  );
-
-  const renderCapabilityBadges = (dev: Device) => (
-    <div className="flex flex-wrap items-center justify-center gap-1.5">
-      {getSupportedProtocols(dev).length > 0
-        ? getSupportedProtocols(dev).map((protocol) => (
-            <span
-              key={protocol}
-              className={`rounded-lg px-2.5 py-1 text-[10px] font-black uppercase tracking-wider ${protocol === 'SSH' ? 'bg-emerald-50 text-emerald-700' : protocol === 'RDP' ? 'bg-violet-50 text-violet-700' : 'bg-cyan-50 text-cyan-700'}`}
-            >
-              {protocol}
-            </span>
-          ))
-        : <span className="text-[10px] font-semibold text-slate-300">—</span>}
-    </div>
-  );
-
-  const renderWebEntryBadges = (dev: Device) => (
-    <div className="flex flex-wrap items-center justify-center gap-1.5">
-      {dev.web_http_enabled && <span className="rounded-lg bg-orange-50 px-2.5 py-1 text-[10px] font-black uppercase tracking-wider text-orange-700">HTTP</span>}
-      {dev.web_https_enabled && <span className="rounded-lg bg-cyan-50 px-2.5 py-1 text-[10px] font-black uppercase tracking-wider text-cyan-700">HTTPS</span>}
-      {!hasHttpWebAccess(dev) && <span className="text-[10px] font-semibold text-slate-300">—</span>}
-    </div>
+      </td>
+      <td className="px-5 py-4">{dev.platform || 'General Linux'}</td>
+      <td className="px-5 py-4">{dev.vendor || '—'}</td>
+      <td className="px-5 py-4">
+        <span className={`rounded-full px-2 py-1 text-[10px] font-bold ${dev.status === 'online' ? 'bg-emerald-50 text-emerald-700' : 'bg-slate-100 text-slate-500'}`}>
+          {dev.status === 'online' ? (isZh ? '在线' : 'Online') : (isZh ? '离线' : 'Offline')}
+        </span>
+      </td>
+      <td className="px-5 py-4 font-mono">{dev.ip_address}</td>
+      <td className="px-5 py-4 font-mono">{dev.management_port || 22}</td>
+      <td className="px-5 py-4">{dev.site_name || dev.site || (isZh ? '未分配站点' : 'Unassigned site')}</td>
+    </>
   );
 
   const renderTerminalActions = (dev: Device, protocol: 'SSH' | 'RDP') => (
@@ -1045,22 +1011,28 @@ export default function AccessCenterTab({
 
     if (activeCategory === 'WEB') {
       return (
-        <DataTable className="text-left">
+        <DataTable className="min-w-[1500px] text-left" exportConfig={{ filename: 'access-center-web', language: isZh ? 'zh' : 'en', disabled: filteredDevices.length === 0, exportData: accessExportData }}>
           <thead>
             <tr className="border-b border-slate-200 bg-cyan-50/40">
-              {tableHeader(isZh ? '资产信息' : 'Asset')}
-              {tableHeader(isZh ? '连接地址' : 'Address')}
-              {tableHeader(isZh ? 'Web 入口' : 'Web entries', 'center')}
-              {tableHeader(isZh ? 'HTTP 登录' : 'HTTP login', 'center')}
-              {tableHeader(isZh ? 'HTTPS 登录' : 'HTTPS login', 'center')}
+              {tableHeader(isZh ? '设备名称' : 'Device')}
+              {tableHeader(isZh ? '平台' : 'Platform')}
+              {tableHeader(isZh ? '厂商' : 'Vendor')}
+              {tableHeader(isZh ? '在线状态' : 'Status')}
+              {tableHeader(isZh ? '管理 IP' : 'Management IP')}
+              {tableHeader(isZh ? '端口' : 'Port')}
+              {tableHeader(isZh ? '站点' : 'Site')}
+              {tableHeader('HTTP', 'center')}
+              {tableHeader('HTTPS', 'center')}
+              {tableHeader(isZh ? 'HTTP 登录' : 'HTTP login', 'center', true)}
+              {tableHeader(isZh ? 'HTTPS 登录' : 'HTTPS login', 'center', true)}
             </tr>
           </thead>
           <tbody className="divide-y divide-slate-100">
             {rows((dev) => (
               <tr key={dev.id} className="group transition-colors hover:bg-cyan-50/30">
-                {renderAssetCell(dev)}
-                {renderAddressCell(dev)}
-                <td className="px-8 py-5 text-center" style={{ textAlign: 'center' }}>{renderWebEntryBadges(dev)}</td>
+                {renderDeviceCells(dev)}
+                {renderFlagCell(Boolean(dev.web_http_enabled))}
+                {renderFlagCell(Boolean(dev.web_https_enabled))}
                 <td className="px-8 py-5 text-center" style={{ textAlign: 'center' }}>{renderHttpWebActions(dev, 'http')}</td>
                 <td className="px-8 py-5 text-center" style={{ textAlign: 'center' }}>{renderHttpWebActions(dev, 'https')}</td>
               </tr>
@@ -1072,20 +1044,24 @@ export default function AccessCenterTab({
 
     if (activeCategory === 'RDP') {
       return (
-        <DataTable className="text-left">
+        <DataTable className="min-w-[1320px] text-left" exportConfig={{ filename: 'access-center-rdp', language: isZh ? 'zh' : 'en', disabled: filteredDevices.length === 0, exportData: accessExportData }}>
           <thead>
             <tr className="border-b border-slate-200 bg-violet-50/40">
-              {tableHeader(isZh ? '资产信息' : 'Asset')}
-              {tableHeader(isZh ? '连接地址' : 'Address')}
+              {tableHeader(isZh ? '设备名称' : 'Device')}
+              {tableHeader(isZh ? '平台' : 'Platform')}
+              {tableHeader(isZh ? '厂商' : 'Vendor')}
+              {tableHeader(isZh ? '在线状态' : 'Status')}
+              {tableHeader(isZh ? '管理 IP' : 'Management IP')}
+              {tableHeader(isZh ? '端口' : 'Port')}
+              {tableHeader(isZh ? '站点' : 'Site')}
               {tableHeader(isZh ? '协议' : 'Protocol')}
-              {tableHeader(isZh ? 'RDP 登录' : 'RDP login', 'center')}
+              {tableHeader(isZh ? 'RDP 登录' : 'RDP login', 'center', true)}
             </tr>
           </thead>
           <tbody className="divide-y divide-slate-100">
             {rows((dev) => (
               <tr key={dev.id} className="group transition-colors hover:bg-violet-50/30">
-                {renderAssetCell(dev)}
-                {renderAddressCell(dev)}
+                {renderDeviceCells(dev)}
                 <td className="px-8 py-5"><span className="rounded-lg bg-violet-50 px-2.5 py-1 text-[10px] font-black uppercase tracking-wider text-violet-700">RDP</span></td>
                 <td className="px-8 py-5 text-center" style={{ textAlign: 'center' }}>{renderTerminalActions(dev, 'RDP')}</td>
               </tr>
@@ -1097,21 +1073,25 @@ export default function AccessCenterTab({
 
     if (activeCategory === 'SSH') {
       return (
-        <DataTable className="text-left">
+        <DataTable className="min-w-[1500px] text-left" exportConfig={{ filename: 'access-center-ssh', language: isZh ? 'zh' : 'en', disabled: filteredDevices.length === 0, exportData: accessExportData }}>
           <thead>
             <tr className="border-b border-slate-200 bg-emerald-50/40">
-              {tableHeader(isZh ? '资产信息' : 'Asset')}
-              {tableHeader(isZh ? '连接地址' : 'Address')}
+              {tableHeader(isZh ? '设备名称' : 'Device')}
+              {tableHeader(isZh ? '平台' : 'Platform')}
+              {tableHeader(isZh ? '厂商' : 'Vendor')}
+              {tableHeader(isZh ? '在线状态' : 'Status')}
+              {tableHeader(isZh ? '管理 IP' : 'Management IP')}
+              {tableHeader(isZh ? '端口' : 'Port')}
+              {tableHeader(isZh ? '站点' : 'Site')}
               {tableHeader(isZh ? '协议' : 'Protocol')}
-              {tableHeader(isZh ? '终端登录（本地）' : 'Terminal login', 'center')}
-              {tableHeader(isZh ? 'Web 终端登录' : 'Web terminal login', 'center')}
+              {tableHeader(isZh ? '终端登录（本地）' : 'Terminal login', 'center', true)}
+              {tableHeader(isZh ? 'Web 终端登录' : 'Web terminal login', 'center', true)}
             </tr>
           </thead>
           <tbody className="divide-y divide-slate-100">
             {rows((dev) => (
               <tr key={dev.id} className="group transition-colors hover:bg-emerald-50/30">
-                {renderAssetCell(dev)}
-                {renderAddressCell(dev)}
+                {renderDeviceCells(dev)}
                 <td className="px-8 py-5"><span className="rounded-lg bg-emerald-50 px-2.5 py-1 text-[10px] font-black uppercase tracking-wider text-emerald-700">SSH</span></td>
                 <td className="px-8 py-5 text-center" style={{ textAlign: 'center' }}>{renderTerminalActions(dev, 'SSH')}</td>
                 <td className="px-8 py-5 text-center" style={{ textAlign: 'center' }}>{renderSshWebActions(dev)}</td>
@@ -1123,21 +1103,31 @@ export default function AccessCenterTab({
     }
 
     return (
-      <DataTable className="text-left">
+      <DataTable className="min-w-[1640px] text-left" exportConfig={{ filename: 'access-center-all', language: isZh ? 'zh' : 'en', disabled: filteredDevices.length === 0, exportData: accessExportData }}>
         <thead>
           <tr className="border-b border-slate-200 bg-slate-50/70">
-            {tableHeader(isZh ? '资产信息' : 'Asset')}
-            {tableHeader(isZh ? '连接地址' : 'Address')}
-            {tableHeader(isZh ? '接入能力' : 'Capabilities', 'center')}
-            {tableHeader(isZh ? '登录方式' : 'Access method', 'center')}
+            {tableHeader(isZh ? '设备名称' : 'Device')}
+            {tableHeader(isZh ? '平台' : 'Platform')}
+            {tableHeader(isZh ? '厂商' : 'Vendor')}
+            {tableHeader(isZh ? '在线状态' : 'Status')}
+            {tableHeader(isZh ? '管理 IP' : 'Management IP')}
+            {tableHeader(isZh ? '端口' : 'Port')}
+            {tableHeader(isZh ? '站点' : 'Site')}
+            {tableHeader('SSH', 'center')}
+            {tableHeader('RDP', 'center')}
+            {tableHeader('HTTP', 'center')}
+            {tableHeader('HTTPS', 'center')}
+            {tableHeader(isZh ? '登录方式' : 'Access method', 'center', true)}
           </tr>
         </thead>
         <tbody className="divide-y divide-slate-100">
           {rows((dev) => (
             <tr key={dev.id} className="group transition-colors hover:bg-slate-50">
-              {renderAssetCell(dev)}
-              {renderAddressCell(dev)}
-              <td className="px-8 py-5 text-center" style={{ textAlign: 'center' }}>{renderCapabilityBadges(dev)}</td>
+              {renderDeviceCells(dev)}
+              {renderFlagCell(getTerminalProtocol(dev) === 'SSH')}
+              {renderFlagCell(getTerminalProtocol(dev) === 'RDP')}
+              {renderFlagCell(Boolean(dev.web_http_enabled))}
+              {renderFlagCell(Boolean(dev.web_https_enabled))}
               <td className="px-8 py-5 text-center" style={{ textAlign: 'center' }}>
                 {renderAllAccessActions(dev)}
               </td>
@@ -1390,21 +1380,19 @@ export default function AccessCenterTab({
                     <div className="absolute left-4 top-1/2 -translate-y-1/2 w-8 h-8 bg-white rounded-lg border border-slate-100 flex items-center justify-center text-slate-300 group-focus-within:text-[#00bceb] group-focus-within:border-cyan-100 transition-all shadow-sm">
                        <Key className="w-4 h-4" />
                     </div>
-                    <input 
-                      type={showFixedPassword ? 'text' : 'password'}
+                    <PasswordInputField
+                      visible={showFixedPassword}
+                      onVisibilityChange={setShowFixedPassword}
+                      showPasswordLabel="显示固定码"
+                      hidePasswordLabel="隐藏固定码"
+                      aria-label="个人身份固定码 (6位 PIN)"
                       maxLength={6}
                       value={fixedPassword}
                       onChange={(e) => setFixedPassword(e.target.value.replace(/\D/g, ''))}
+                      wrapperClassName="w-full"
                       className="w-full pl-14 pr-12 py-4 bg-slate-50/50 border border-slate-100 rounded-2xl outline-none focus:border-[#00bceb] focus:bg-white focus:ring-4 focus:ring-[#00bceb]/5 transition-all text-2xl font-black tracking-[0.5em] text-slate-800 placeholder:text-slate-200"
                       placeholder="••••••"
                     />
-                    <button
-                      type="button"
-                      onClick={() => setShowFixedPassword(!showFixedPassword)}
-                      className="absolute right-4 top-1/2 -translate-y-1/2 text-slate-300 hover:text-slate-500 focus:outline-none"
-                    >
-                      {showFixedPassword ? <EyeOff size={16} /> : <Eye size={16} />}
-                    </button>
                   </div>
                 </div>
 

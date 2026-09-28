@@ -1,5 +1,6 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useRef } from 'react';
 import { useEscapeClose } from '../../../hooks/useEscapeClose';
+import { TableExportMenu } from '../../../components/ui/TableExportMenu';
 
 interface TextFSMDebuggerProps {
   isOpen: boolean;
@@ -28,6 +29,7 @@ export const TextFSMDebugger: React.FC<TextFSMDebuggerProps> = ({
   const [testing, setTesting] = useState(false);
   const [saving, setSaving] = useState(false);
   const [statusMsg, setStatusMsg] = useState({ type: '', text: '' });
+  const previewTableRef = useRef<HTMLTableElement>(null);
 
   const token = localStorage.getItem('netops_token') || '';
 
@@ -270,8 +272,12 @@ export const TextFSMDebugger: React.FC<TextFSMDebuggerProps> = ({
                 </div>
 
                 {/* Table preview */}
-                <div className="flex-1 overflow-auto border border-white/10 rounded-xl bg-black/20">
-                  <table className="nx-terminal-table min-w-full text-left text-xs text-white/80 border-collapse">
+                <div className="flex min-h-0 flex-1 flex-col overflow-hidden rounded-xl border border-white/10 bg-black/20">
+                  <div className="flex justify-end border-b border-white/10 px-2 py-1.5">
+                    <TableExportMenu tableRef={previewTableRef} filename="textfsm-debug-results" language="zh" disabled={records.length === 0 || selectedFields.length === 0} />
+                  </div>
+                  <div className="min-h-0 flex-1 overflow-auto">
+                  <table ref={previewTableRef} className="nx-terminal-table min-w-full text-left text-xs text-white/80 border-collapse">
                     <thead>
                       <tr className="bg-white/5 border-b border-white/10">
                         {selectedFields.map((f) => (
@@ -289,6 +295,7 @@ export const TextFSMDebugger: React.FC<TextFSMDebuggerProps> = ({
                       ))}
                     </tbody>
                   </table>
+                  </div>
                 </div>
               </div>
             ) : (

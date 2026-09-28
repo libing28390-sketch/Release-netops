@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useCallback } from 'react';
+import React, { useState, useEffect, useCallback, useRef } from 'react';
 import {
   ShieldCheck,
   Plus,
@@ -13,8 +13,11 @@ import { motion, AnimatePresence } from 'framer-motion';
 import PageHero from '../../components/PageHero';
 import Pagination from '../../components/Pagination';
 import { ActionIconButton, ActionIconGroup } from '../../components/ui/ActionIconButton';
+import { TableExportMenu } from '../../components/ui/TableExportMenu';
 import { useEscapeClose } from '../../hooks/useEscapeClose';
+import { buildVisibleIpamExportData, fetchAllIpamExportItems } from './ipamExport';
 
+import { TableActionCell, TableActionHeader } from '../../components/ui/TableActionColumn';
 interface VIP {
   id: string;
   address: string;
@@ -38,6 +41,7 @@ interface VIPManagementTabProps {
 
 const VIPManagementTab: React.FC<VIPManagementTabProps> = ({ language, t }) => {
   const zh = language === 'zh';
+  const tableRef = useRef<HTMLTableElement>(null);
 
   const [vips, setVips] = useState<VIP[]>([]);
   const [devices, setDevices] = useState<any[]>([]);
@@ -193,11 +197,28 @@ const VIPManagementTab: React.FC<VIPManagementTabProps> = ({ language, t }) => {
 
   const getDeviceName = (devId: string) => {
     const dev = devices.find((d) => d.id === devId);
-    return dev ? dev.hostname : devId;
+    return dev?.hostname || '-';
   };
 
   const filteredVips = vips;
   const paginatedVips = vips;
+
+  const exportData = useCallback(async () => {
+    const params = new URLSearchParams({ q: search.trim(), vip_type: typeFilter, status: 'all' });
+    const allVips = await fetchAllIpamExportItems<VIP>('/api/ipam/vips', params);
+    const deviceName = (id: string | null, suppliedName: string | null) => suppliedName || (id ? devices.find((device) => device.id === id)?.hostname || '-' : '-');
+    return buildVisibleIpamExportData(tableRef.current, [
+      { header: zh ? '虚拟IP (VIP)' : 'Virtual IP', value: (vip) => vip.address },
+      { header: zh ? '高可用模式类型' : 'VIP Protocol Type', value: (vip) => vip.vip_type },
+      { header: zh ? '绑定控制设备' : 'Bound Controller', value: (vip) => deviceName(vip.device_id, vip.device_name) },
+      { header: zh ? '备用/Standby 设备' : 'Standby Device', value: (vip) => deviceName(vip.backup_device_id, vip.backup_device_name) },
+      { header: zh ? '控制接口' : 'Interface', value: (vip) => vip.interface_name || '-' },
+      { header: zh ? '物理服务器组 (Real Servers)' : 'Underlying Real Servers', value: (vip) => vip.real_servers || '-' },
+      { header: zh ? '所属租户' : 'Tenant', value: (vip) => vip.tenant_name || '-' },
+      { header: zh ? '状态' : 'Status', value: (vip) => vip.status.toUpperCase() },
+      { header: zh ? '备注说明' : 'Description', value: (vip) => vip.description || '-' },
+    ], allVips);
+  }, [devices, search, typeFilter, zh]);
 
   return (
     <div className="flex-1 flex flex-col h-full overflow-hidden px-6 py-5 space-y-4">
@@ -206,13 +227,16 @@ const VIPManagementTab: React.FC<VIPManagementTabProps> = ({ language, t }) => {
         title={zh ? 'Virtual IP (VIP) 虚拟IP管理' : 'Virtual IP (VIP) Management'}
         subtitle={zh ? '统一登记管理网络负载均衡、高可用冗余协议下的虚拟IP（VIP），并关联底层真实物理服务器(Real Servers)' : 'Manage Virtual IPs supporting HSRP, VRRP, Keepalived, or load balancers.'}
         actions={
-          <button
-            onClick={() => openForm(null)}
-            className="flex items-center gap-1.5 px-4 py-2 bg-gradient-to-r from-cyan-500 to-blue-600 hover:from-cyan-600 hover:to-blue-700 text-white rounded-xl text-xs font-bold shadow-lg shadow-cyan-500/20 active:scale-95 transition-all"
-          >
-            <Plus size={14} />
-            {zh ? '新增虚拟 IP' : 'Create VIP'}
-          </button>
+          <div className="flex items-center gap-2">
+            <TableExportMenu tableRef={tableRef} exportData={exportData} filename="ipam-vips" language={zh ? 'zh' : 'en'} disabled={loading || paginatedVips.length === 0} />
+            <button
+              onClick={() => openForm(null)}
+              className="flex items-center gap-1.5 px-4 py-2 bg-gradient-to-r from-cyan-500 to-blue-600 hover:from-cyan-600 hover:to-blue-700 text-white rounded-xl text-xs font-bold shadow-lg shadow-cyan-500/20 active:scale-95 transition-all"
+            >
+              <Plus size={14} />
+              {zh ? '新增虚拟 IP' : 'Create VIP'}
+            </button>
+          </div>
         }
         extras={
           <div className="flex items-center gap-3 w-full md:w-auto">
@@ -254,7 +278,7 @@ const VIPManagementTab: React.FC<VIPManagementTabProps> = ({ language, t }) => {
               {zh ? '加载中...' : 'Loading VIP configs...'}
             </div>
           ) : (
-            <table className="nx-data-table text-left">
+            <table ref={tableRef} className="nx-data-table text-left">
               <thead>
                 <tr className="border-b border-gray-100 bg-gray-50/40 text-[10px] font-bold text-gray-400 uppercase tracking-wider select-none">
                   <th className="pl-6 py-4">{zh ? '虚拟IP (VIP)' : 'Virtual IP'}</th>
@@ -266,7 +290,7 @@ const VIPManagementTab: React.FC<VIPManagementTabProps> = ({ language, t }) => {
                   <th className="px-4 py-4">{zh ? '所属租户' : 'Tenant'}</th>
                   <th className="px-4 py-4">{zh ? '状态' : 'Status'}</th>
                   <th className="px-4 py-4">{zh ? '备注说明' : 'Description'}</th>
-                  <th className="pr-6 py-4 text-right">{zh ? '操作' : 'Actions'}</th>
+                  <TableActionHeader className="pr-6 py-4 text-right">{zh ? '操作' : 'Actions'}</TableActionHeader>
                 </tr>
               </thead>
               <tbody>
@@ -305,7 +329,7 @@ const VIPManagementTab: React.FC<VIPManagementTabProps> = ({ language, t }) => {
                         </span>
                       </td>
                       <td className="px-4 py-4 text-xs text-gray-400 font-medium max-w-[150px] truncate">{node.description || '-'}</td>
-                      <td className="pr-6 py-4 text-right">
+                      <TableActionCell className="pr-6 py-4 text-right">
                         <ActionIconGroup label={zh ? 'VIP 操作' : 'VIP actions'} className="opacity-0 transition-opacity group-hover:opacity-100">
                           <ActionIconButton
                             icon={Pencil}
@@ -319,7 +343,7 @@ const VIPManagementTab: React.FC<VIPManagementTabProps> = ({ language, t }) => {
                             onClick={() => setShowDeleteConfirm(node.id)}
                           />
                         </ActionIconGroup>
-                      </td>
+                      </TableActionCell>
                     </tr>
                   ))
                 ) : (

@@ -1,5 +1,5 @@
 import React from 'react';
-import { Plus, Eye, EyeOff, Users } from 'lucide-react';
+import { Plus, Mail, Pencil, Phone, UserRound, Users } from 'lucide-react';
 import { motion } from 'motion/react';
 import type { User } from '../types';
 import { primaryActionBtnClass } from '../components/shared';
@@ -7,6 +7,10 @@ import PageHero from '../components/PageHero';
 import { DataTable } from '../components/DataTable';
 import { validateUserField } from '../utils/userValidation';
 import { useEscapeClose } from '../hooks/useEscapeClose';
+import { ActionIconButton } from '../components/ui/ActionIconButton';
+import { IconInputField } from '../components/ui/IconInputField';
+import { PasswordInputField } from '../components/ui/PasswordInputField';
+import { TableActionCell, TableActionHeader } from '../components/ui/TableActionColumn';
 
 type UserFormState = {
   username: string;
@@ -109,18 +113,20 @@ const UsersTab: React.FC<UsersTabProps> = ({
 
       <div className="bg-white rounded-2xl border border-black/5 shadow-sm overflow-hidden">
         <div className="overflow-x-auto">
-        <DataTable className="text-left">
+        <DataTable className="text-left" exportConfig={{ filename: 'users', language: isZh ? 'zh' : 'en', disabled: users.length === 0 }}>
           <thead>
             <tr className="bg-black/[0.01] border-b border-black/5">
               <th className="px-6 py-4 text-[10px] font-bold uppercase tracking-widest text-black/40">{t('username')}</th>
               <th className="px-6 py-4 text-[10px] font-bold uppercase tracking-widest text-black/40">{isZh ? '真实姓名' : 'Display Name'}</th>
+              <th className="px-6 py-4 text-[10px] font-bold uppercase tracking-widest text-black/40">{isZh ? '手机号' : 'Phone'}</th>
+              <th className="px-6 py-4 text-[10px] font-bold uppercase tracking-widest text-black/40">{isZh ? '邮箱' : 'Email'}</th>
               <th className="px-6 py-4 text-[10px] font-bold uppercase tracking-widest text-black/40">{t('role')}</th>
               <th className="px-6 py-4 text-[10px] font-bold uppercase tracking-widest text-black/40">{isZh ? '资源角色' : 'Resource Role'}</th>
               <th className="px-6 py-4 text-[10px] font-bold uppercase tracking-widest text-black/40">{isZh ? '所属分组' : 'Group'}</th>
               <th className="px-6 py-4 text-[10px] font-bold uppercase tracking-widest text-black/40">{isZh ? '职责组' : 'Responsibilities'}</th>
               <th className="px-6 py-4 text-[10px] font-bold uppercase tracking-widest text-black/40">{t('status')}</th>
               <th className="px-6 py-4 text-[10px] font-bold uppercase tracking-widest text-black/40">{t('lastLogin')}</th>
-              <th className="px-6 py-4 text-[10px] font-bold uppercase tracking-widest text-black/40 text-right">{t('actions')}</th>
+              <TableActionHeader className="px-6 py-4 text-[10px] font-bold uppercase tracking-widest text-black/40">{t('actions')}</TableActionHeader>
             </tr>
           </thead>
           <tbody>
@@ -134,16 +140,9 @@ const UsersTab: React.FC<UsersTabProps> = ({
                     <span className="text-sm font-medium">{user.username}</span>
                   </div>
                 </td>
-                <td className="px-6 py-4">
-                  <div className="flex flex-col gap-0.5">
-                    <span className="text-sm font-medium text-black/80">{user.display_name || <span className="text-black/25 text-xs">{isZh ? '未填写' : 'Not set'}</span>}</span>
-                    {(user.phone || user.email) && (
-                      <span className="text-[11px] text-black/40 font-mono">
-                        {[user.phone, user.email].filter(Boolean).join(' · ')}
-                      </span>
-                    )}
-                  </div>
-                </td>
+                <td className="px-6 py-4 text-sm font-medium text-black/80">{user.display_name || <span className="text-black/25 text-xs">{isZh ? '未填写' : 'Not set'}</span>}</td>
+                <td className="px-6 py-4 text-xs font-mono text-black/60">{user.phone || '—'}</td>
+                <td className="px-6 py-4 text-xs font-mono text-black/60">{user.email || '—'}</td>
                 <td className="px-6 py-4 text-xs">{user.role}</td>
                 <td className="px-6 py-4 text-xs text-black/60">{user.role_profile || (isZh ? '沿用基础角色' : 'Base role')}</td>
                 <td className="px-6 py-4 text-xs text-black/60">{user.group_name || (isZh ? '未分组' : 'Ungrouped')}</td>
@@ -166,8 +165,11 @@ const UsersTab: React.FC<UsersTabProps> = ({
                   </span>
                 </td>
                 <td className="px-6 py-4 text-xs text-black/40">{user.lastLogin}</td>
-                <td className="px-6 py-4 text-right">
-                  <button
+                <TableActionCell className="px-6 py-4" label={isZh ? `${user.username} 的操作` : `Actions for ${user.username}`}>
+                  <ActionIconButton
+                    icon={Pencil}
+                    label={isZh ? `编辑 ${user.username}` : `Edit ${user.username}`}
+                    tooltip={t('edit')}
                     onClick={() => {
                       setEditingUser(user);
                       setEditUserForm({
@@ -183,9 +185,8 @@ const UsersTab: React.FC<UsersTabProps> = ({
                       });
                       setShowEditUserModal(true);
                     }}
-                    className="text-[10px] font-bold uppercase text-black/40 hover:text-black"
-                  >{t('edit')}</button>
-                </td>
+                  />
+                </TableActionCell>
               </tr>
             ))}
           </tbody>
@@ -198,7 +199,7 @@ const UsersTab: React.FC<UsersTabProps> = ({
           <motion.div
             initial={{ scale: 0.9, opacity: 0 }}
             animate={{ scale: 1, opacity: 1 }}
-            className="bg-white w-full max-w-md rounded-3xl shadow-2xl border border-black/5 overflow-hidden"
+            className="bg-white w-full max-w-xl rounded-3xl shadow-2xl border border-black/5 overflow-hidden"
           >
             <div className="p-8">
               <h3 className="text-xl font-medium mb-6">{t('addNewUser')}</h3>
@@ -217,18 +218,18 @@ const UsersTab: React.FC<UsersTabProps> = ({
                 </div>
                 <div className="space-y-2">
                   <label className="text-xs font-semibold uppercase tracking-wider text-black/40 ml-1">{t('password')}</label>
-                  <div className="relative">
-                    <input
-                      type={showNewUserPwd ? 'text' : 'password'}
+                  <div>
+                    <PasswordInputField
+                      visible={showNewUserPwd}
+                      onVisibilityChange={setShowNewUserPwd}
+                      showPasswordLabel={isZh ? '显示密码' : 'Show password'}
+                      hidePasswordLabel={isZh ? '隐藏密码' : 'Hide password'}
                       title={t('password')}
                       value={newUserForm.password}
                       onChange={(e) => setNewUserForm({ ...newUserForm, password: e.target.value })}
-                      className={`${inputClass(fieldError('password', newUserForm.password))} pr-12`}
+                      className={inputClass(fieldError('password', newUserForm.password))}
                       placeholder="••••••••"
                     />
-                    <button type="button" onClick={() => setShowNewUserPwd(v => !v)} className="absolute right-3 top-1/2 -translate-y-1/2 text-black/30 hover:text-black/60 transition-colors">
-                      {showNewUserPwd ? <EyeOff size={16} /> : <Eye size={16} />}
-                    </button>
                   </div>
                   {fieldError('password', newUserForm.password) && <p className="text-[10px] text-red-500">{fieldError('password', newUserForm.password)}</p>}
                 </div>
@@ -264,43 +265,39 @@ const UsersTab: React.FC<UsersTabProps> = ({
                   />
                   {fieldError('group_name', newUserForm.group_name) && <p className="text-[10px] text-red-500">{fieldError('group_name', newUserForm.group_name)}</p>}
                 </div>
-                <div className="grid grid-cols-3 gap-3">
-                  <div className="space-y-2">
-                    <label className="text-xs font-semibold uppercase tracking-wider text-black/40 ml-1">{isZh ? '真实姓名' : 'Display Name'}</label>
-                    <input
-                      type="text"
-                      title={isZh ? '真实姓名' : 'Display Name'}
-                      value={newUserForm.display_name}
-                      onChange={(e) => setNewUserForm({ ...newUserForm, display_name: e.target.value })}
-                      className={inputClass(fieldError('display_name', newUserForm.display_name))}
-                      placeholder={isZh ? '如：李兵' : 'e.g. Li Bing'}
-                    />
-                    {fieldError('display_name', newUserForm.display_name) && <p className="text-[10px] text-red-500">{fieldError('display_name', newUserForm.display_name)}</p>}
-                  </div>
-                  <div className="space-y-2">
-                    <label className="text-xs font-semibold uppercase tracking-wider text-black/40 ml-1">{isZh ? '手机号' : 'Phone'}</label>
-                    <input
-                      type="tel"
-                      title={isZh ? '手机号' : 'Phone'}
-                      value={newUserForm.phone}
-                      onChange={(e) => setNewUserForm({ ...newUserForm, phone: e.target.value })}
-                      className={inputClass(fieldError('phone', newUserForm.phone))}
-                      placeholder="138xxxx8888"
-                    />
-                    {fieldError('phone', newUserForm.phone) && <p className="text-[10px] text-red-500">{fieldError('phone', newUserForm.phone)}</p>}
-                  </div>
-                  <div className="space-y-2">
-                    <label className="text-xs font-semibold uppercase tracking-wider text-black/40 ml-1">{isZh ? '邮箱' : 'Email'}</label>
-                    <input
-                      type="email"
-                      title={isZh ? '邮箱' : 'Email'}
-                      value={newUserForm.email}
-                      onChange={(e) => setNewUserForm({ ...newUserForm, email: e.target.value })}
-                      className={inputClass(fieldError('email', newUserForm.email))}
-                      placeholder="li@example.com"
-                    />
-                    {fieldError('email', newUserForm.email) && <p className="text-[10px] text-red-500">{fieldError('email', newUserForm.email)}</p>}
-                  </div>
+                <div className="grid grid-cols-1 gap-3 sm:grid-cols-3">
+                  <IconInputField
+                    id="new-user-display-name"
+                    label={isZh ? '真实姓名 / 昵称' : 'Display Name'}
+                    icon={UserRound}
+                    value={newUserForm.display_name}
+                    onChange={(e) => setNewUserForm({ ...newUserForm, display_name: e.target.value })}
+                    placeholder={isZh ? '如：韩梅梅' : 'e.g. Han Meimei'}
+                    autoComplete="name"
+                    error={fieldError('display_name', newUserForm.display_name)}
+                  />
+                  <IconInputField
+                    id="new-user-phone"
+                    label={isZh ? '手机号码' : 'Phone'}
+                    icon={Phone}
+                    type="tel"
+                    value={newUserForm.phone}
+                    onChange={(e) => setNewUserForm({ ...newUserForm, phone: e.target.value })}
+                    placeholder={isZh ? '如：138xxxx8888' : 'e.g. 138xxxx8888'}
+                    autoComplete="tel"
+                    error={fieldError('phone', newUserForm.phone)}
+                  />
+                  <IconInputField
+                    id="new-user-email"
+                    label={isZh ? '电子邮箱' : 'Email'}
+                    icon={Mail}
+                    type="email"
+                    value={newUserForm.email}
+                    onChange={(e) => setNewUserForm({ ...newUserForm, email: e.target.value })}
+                    placeholder={isZh ? '如：han.meimei@example.com' : 'e.g. han.meimei@example.com'}
+                    autoComplete="email"
+                    error={fieldError('email', newUserForm.email)}
+                  />
                 </div>
                 <div className="space-y-2">
                   <label className="text-xs font-semibold uppercase tracking-wider text-black/40 ml-1">{isZh ? '工单职责组' : 'Change Duties'}</label>
@@ -346,7 +343,7 @@ const UsersTab: React.FC<UsersTabProps> = ({
           <motion.div
             initial={{ scale: 0.9, opacity: 0 }}
             animate={{ scale: 1, opacity: 1 }}
-            className="bg-white w-full max-w-md rounded-3xl shadow-2xl border border-black/5 overflow-hidden"
+            className="bg-white w-full max-w-xl rounded-3xl shadow-2xl border border-black/5 overflow-hidden"
           >
             <div className="p-8">
               <h3 className="text-xl font-medium mb-6">编辑用户</h3>
@@ -363,18 +360,18 @@ const UsersTab: React.FC<UsersTabProps> = ({
                 </div>
                 <div className="space-y-2">
                   <label className="text-xs font-semibold uppercase tracking-wider text-black/40 ml-1">{t('password')} <span className="text-black/30 normal-case font-normal">（留空则不修改）</span></label>
-                  <div className="relative">
-                    <input
-                      type={showEditUserPwd ? 'text' : 'password'}
+                  <div>
+                    <PasswordInputField
+                      visible={showEditUserPwd}
+                      onVisibilityChange={setShowEditUserPwd}
+                      showPasswordLabel={isZh ? '显示密码' : 'Show password'}
+                      hidePasswordLabel={isZh ? '隐藏密码' : 'Hide password'}
                       title={t('password')}
                       value={editUserForm.password}
                       onChange={(e) => setEditUserForm({ ...editUserForm, password: e.target.value })}
-                      className="w-full px-4 pr-12 py-3 rounded-xl border border-black/10 focus:border-black focus:ring-4 focus:ring-black/5 outline-none transition-all"
+                      className="w-full px-4 py-3 rounded-xl border border-black/10 focus:border-black focus:ring-4 focus:ring-black/5 outline-none transition-all"
                       placeholder="••••••••"
                     />
-                    <button type="button" onClick={() => setShowEditUserPwd(v => !v)} className="absolute right-3 top-1/2 -translate-y-1/2 text-black/30 hover:text-black/60 transition-colors">
-                      {showEditUserPwd ? <EyeOff size={16} /> : <Eye size={16} />}
-                    </button>
                   </div>
                 </div>
                 <div className="space-y-2">
@@ -407,40 +404,36 @@ const UsersTab: React.FC<UsersTabProps> = ({
                     placeholder={isZh ? '例如：核心网络组 / 变更平台主管组' : 'e.g. Core Network Team'}
                   />
                 </div>
-                <div className="grid grid-cols-3 gap-3">
-                  <div className="space-y-2">
-                    <label className="text-xs font-semibold uppercase tracking-wider text-black/40 ml-1">{isZh ? '真实姓名' : 'Display Name'}</label>
-                    <input
-                      type="text"
-                      title={isZh ? '真实姓名' : 'Display Name'}
-                      value={editUserForm.display_name}
-                      onChange={(e) => setEditUserForm({ ...editUserForm, display_name: e.target.value })}
-                      className="w-full px-4 py-3 rounded-xl border border-black/10 focus:border-black focus:ring-4 focus:ring-black/5 outline-none transition-all"
-                      placeholder={isZh ? '如：李兵' : 'e.g. Li Bing'}
-                    />
-                  </div>
-                  <div className="space-y-2">
-                    <label className="text-xs font-semibold uppercase tracking-wider text-black/40 ml-1">{isZh ? '手机号' : 'Phone'}</label>
-                    <input
-                      type="tel"
-                      title={isZh ? '手机号' : 'Phone'}
-                      value={editUserForm.phone}
-                      onChange={(e) => setEditUserForm({ ...editUserForm, phone: e.target.value })}
-                      className="w-full px-4 py-3 rounded-xl border border-black/10 focus:border-black focus:ring-4 focus:ring-black/5 outline-none transition-all"
-                      placeholder="138xxxx8888"
-                    />
-                  </div>
-                  <div className="space-y-2">
-                    <label className="text-xs font-semibold uppercase tracking-wider text-black/40 ml-1">{isZh ? '邮箱' : 'Email'}</label>
-                    <input
-                      type="email"
-                      title={isZh ? '邮箱' : 'Email'}
-                      value={editUserForm.email}
-                      onChange={(e) => setEditUserForm({ ...editUserForm, email: e.target.value })}
-                      className="w-full px-4 py-3 rounded-xl border border-black/10 focus:border-black focus:ring-4 focus:ring-black/5 outline-none transition-all"
-                      placeholder="li@example.com"
-                    />
-                  </div>
+                <div className="grid grid-cols-1 gap-3 sm:grid-cols-3">
+                  <IconInputField
+                    id="edit-user-display-name"
+                    label={isZh ? '真实姓名 / 昵称' : 'Display Name'}
+                    icon={UserRound}
+                    value={editUserForm.display_name}
+                    onChange={(e) => setEditUserForm({ ...editUserForm, display_name: e.target.value })}
+                    placeholder={isZh ? '如：韩梅梅' : 'e.g. Han Meimei'}
+                    autoComplete="name"
+                  />
+                  <IconInputField
+                    id="edit-user-phone"
+                    label={isZh ? '手机号码' : 'Phone'}
+                    icon={Phone}
+                    type="tel"
+                    value={editUserForm.phone}
+                    onChange={(e) => setEditUserForm({ ...editUserForm, phone: e.target.value })}
+                    placeholder={isZh ? '如：138xxxx8888' : 'e.g. 138xxxx8888'}
+                    autoComplete="tel"
+                  />
+                  <IconInputField
+                    id="edit-user-email"
+                    label={isZh ? '电子邮箱' : 'Email'}
+                    icon={Mail}
+                    type="email"
+                    value={editUserForm.email}
+                    onChange={(e) => setEditUserForm({ ...editUserForm, email: e.target.value })}
+                    placeholder={isZh ? '如：han.meimei@example.com' : 'e.g. han.meimei@example.com'}
+                    autoComplete="email"
+                  />
                 </div>
                 <div className="space-y-2">
                   <label className="text-xs font-semibold uppercase tracking-wider text-black/40 ml-1">{isZh ? '工单职责组' : 'Change Duties'}</label>

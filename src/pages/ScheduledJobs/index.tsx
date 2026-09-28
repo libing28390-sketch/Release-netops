@@ -5,9 +5,10 @@ import {
   CalendarClock, Plus, X, Trash2, RotateCcw, Zap, Pencil,
   ChevronDown, Info, Shield, CheckCircle2, AlertTriangle,
   Database, Activity, Power, PowerOff, RefreshCw,
-  Search, FileCode, Eye, Target, FileText, Lock, ArrowUpRight, ChevronUp, Filter, ShieldAlert, User, Layers
+  Search, FileCode, Eye, Target, FileText, Lock, ChevronUp, Filter, ShieldAlert, User, Layers, Settings2
 } from 'lucide-react';
 import { ActionIconButton, ActionIconGroup } from '../../components/ui/ActionIconButton';
+import { TableActionCell, TableActionHeader } from '../../components/ui/TableActionColumn';
 import { useEscapeClose } from '../../hooks/useEscapeClose';
 
 import Pagination from '../../components/Pagination';
@@ -121,6 +122,27 @@ const ScheduledJobsTab: React.FC<ScheduledJobsTabProps> = ({ language, showToast
     });
   }, [systemJobs, searchQuery, zh]);
 
+  const exportSystemJobs = () => {
+    return {
+      headers: [
+        zh ? '任务名称' : 'Job Name',
+        zh ? '任务说明' : 'Description',
+        zh ? '触发发条 (CRON)' : 'Trigger',
+        zh ? '预计下次执行' : 'Next Run',
+      ],
+      rows: filteredSystemJobs.map((job) => [
+        zh ? job.name_zh : job.name_en,
+        zh ? job.description_zh : job.description_en,
+        job.trigger || 'CRON Daemon',
+        job.next_run_at
+          ? new Date(job.next_run_at).toLocaleString(zh ? 'zh-CN' : 'en-US', {
+              hour12: false, month: '2-digit', day: '2-digit', hour: '2-digit', minute: '2-digit',
+            })
+          : '',
+      ]),
+    };
+  };
+
   const stats = useMemo(() => {
     const backupCnt = jobs.filter(j => j.action_type === 'backup').length;
     const nsotCnt = jobs.filter(j => j.action_type === 'nsot').length;
@@ -175,7 +197,8 @@ const ScheduledJobsTab: React.FC<ScheduledJobsTabProps> = ({ language, showToast
       const r = await fetch('/api/scheduled-jobs/system', { headers: authHeaders });
       if (r.ok) {
         const j = await r.json();
-        setSystemJobs(j?.data?.items || []);
+        const items = Array.isArray(j) ? j : (j?.data?.items || (Array.isArray(j?.data) ? j.data : []));
+        setSystemJobs(items);
       }
     } catch {
       // Silently skip
@@ -1068,14 +1091,14 @@ const ScheduledJobsTab: React.FC<ScheduledJobsTabProps> = ({ language, showToast
 
                   {!systemCollapsed && (
                     <div className="overflow-x-auto">
-                      <DataTable className="text-left">
+                      <DataTable className="text-left" exportConfig={{ filename: 'scheduled-jobs-system', language: zh ? 'zh' : 'en', disabled: filteredSystemJobs.length === 0, exportData: exportSystemJobs }}>
                         <thead>
                           <tr className="border-b border-slate-100 text-[11px] font-bold text-slate-400 bg-slate-50/40 uppercase tracking-wider">
-                            <th className="py-2.5 px-4">{zh ? '任务名称 / 标识' : 'Job Name / ID'}</th>
+                            <th className="py-2.5 px-4">{zh ? '任务名称' : 'Job Name'}</th>
                             <th className="py-2.5 px-4">{zh ? '任务说明' : 'Description'}</th>
                             <th className="py-2.5 px-4">{zh ? '触发发条 (CRON)' : 'Trigger'}</th>
                             <th className="py-2.5 px-4">{zh ? '预计下次执行' : 'Next Run'}</th>
-                            <th className="py-2.5 px-4 text-right">{zh ? '规则配置管理' : 'Management'}</th>
+                            <TableActionHeader className="py-2.5 px-4">{zh ? '规则配置管理' : 'Management'}</TableActionHeader>
                           </tr>
                         </thead>
                         <tbody className="divide-y divide-slate-100 text-xs">
@@ -1108,7 +1131,6 @@ const ScheduledJobsTab: React.FC<ScheduledJobsTabProps> = ({ language, showToast
                                     </div>
                                     <div>
                                       <div className="font-bold text-xs text-slate-800">{zh ? sj.name_zh : sj.name_en}</div>
-                                      <code className="text-[10px] text-slate-400 font-mono">{sj.id}</code>
                                     </div>
                                   </div>
                                 </td>
@@ -1126,23 +1148,18 @@ const ScheduledJobsTab: React.FC<ScheduledJobsTabProps> = ({ language, showToast
                                     </span>
                                   )}
                                 </td>
-                                <td className="py-3 px-4 text-right">
+                                <TableActionCell className="py-3 px-4">
                                   {sj.deep_link ? (
-                                    <button
+                                    <ActionIconButton
+                                      icon={Settings2}
+                                      label={zh ? '配置规则' : 'Configure rule'}
+                                      variant="accent"
                                       onClick={() => navigate(sj.deep_link!)}
-                                      className={`inline-flex items-center gap-1 text-[11px] font-bold px-2.5 py-1 rounded-lg border transition-all ${
-                                        isInsp ? 'bg-emerald-50 text-emerald-700 border-emerald-200 hover:bg-emerald-100' :
-                                        isBackup ? 'bg-indigo-50 text-indigo-700 border-indigo-200 hover:bg-indigo-100' :
-                                        'bg-cyan-50 text-cyan-700 border-cyan-200 hover:bg-cyan-100'
-                                      }`}
-                                    >
-                                      <span>{zh ? '配置规则' : 'Configure'}</span>
-                                      <ArrowUpRight size={12} />
-                                    </button>
+                                    />
                                   ) : (
                                     <span className="text-[11px] text-slate-400 italic">{zh ? '内核保护' : 'Kernel Protected'}</span>
                                   )}
-                                </td>
+                                </TableActionCell>
                               </tr>
                             );
                           })}

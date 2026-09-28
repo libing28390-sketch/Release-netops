@@ -151,7 +151,9 @@ describe('TextFSMTemplatesTab', () => {
     const actionCell = table.querySelector('tbody tr td:last-child');
 
     expect(table.className).toContain('table-fixed');
-    expect(table.querySelectorAll('col')).toHaveLength(5);
+    expect(table.querySelectorAll('col')).toHaveLength(9);
+    expect(screen.getByRole('columnheader', { name: '平台系列' })).toBeTruthy();
+    expect(screen.getByRole('columnheader', { name: '平台标识' })).toBeTruthy();
     expect(actionHeader.className).toContain('w-28');
     expect((actionHeader as HTMLElement).style.textAlign).toBe('right');
     expect(actionCell?.className).toContain('w-28');

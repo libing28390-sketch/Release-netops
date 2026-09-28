@@ -1,3 +1,4 @@
+import { DataTable } from '../components/DataTable';
 import React, { useState, useEffect, useMemo, useCallback, useRef } from 'react';
 import { useLocation, useNavigate } from 'react-router-dom';
 import {
@@ -31,6 +32,7 @@ import {
 } from 'lucide-react';
 import PageHero from '../components/PageHero';
 import Pagination from '../components/Pagination';
+import { buildMonitoringReportExportData } from './monitoringReportExport';
 
 interface MonitoringReportsPageProps {
   language: 'zh' | 'en';
@@ -210,9 +212,9 @@ export const MonitoringReportsPage: React.FC<MonitoringReportsPageProps> = ({ la
     };
   }, [fetchData]);
 
-  // Handle Download (either current filtered or authoritative full)
-  const handleExport = async (format: 'xlsx' | 'csv', isFiltered: boolean = true) => {
-    const key = `${activeTab}-${format}-${isFiltered ? 'filtered' : 'full'}`;
+  // Download the authoritative full report; the shared table menu exports the current visible page.
+  const handleExport = async (format: 'xlsx' | 'csv') => {
+    const key = `${activeTab}-${format}-full`;
     setDownloadingKey(key);
     setSuccessMessage(null);
     setExportErrorMessage(null);
@@ -226,17 +228,6 @@ export const MonitoringReportsPage: React.FC<MonitoringReportsPageProps> = ({ la
       }
 
       const params = new URLSearchParams({ format });
-      if (isFiltered) {
-        if (filters.keyword.trim()) params.set('keyword', filters.keyword.trim());
-        if (filters.vendor !== 'all') params.set('vendor', filters.vendor);
-        if (filters.site !== 'all') params.set('site', filters.site);
-        if (filters.role !== 'all') params.set('role', filters.role);
-        if (filters.status !== 'all') params.set('status', filters.status);
-        if (filters.minUtil) params.set('min_util', filters.minUtil);
-        if (filters.hasErrors) params.set('has_errors', 'true');
-        if (filters.highLoadOnly) params.set('high_load_only', 'true');
-        if (filters.isp !== 'all') params.set('isp', filters.isp);
-      }
 
       const endpoint = `/api/monitoring/export/${activeTab}?${params.toString()}`;
       const response = await fetch(endpoint, {
@@ -327,6 +318,11 @@ export const MonitoringReportsPage: React.FC<MonitoringReportsPageProps> = ({ la
     const start = (currentPage - 1) * pageSize;
     return items.slice(start, start + pageSize);
   }, [items, currentPage, pageSize]);
+
+  const reportExportData = useMemo(
+    () => buildMonitoringReportExportData(items, activeTab, language),
+    [items, activeTab, language],
+  );
 
   // Options from backend
   const options = reportData?.options || { vendors: [], sites: [], roles: [], isps: [] };
@@ -428,35 +424,8 @@ export const MonitoringReportsPage: React.FC<MonitoringReportsPageProps> = ({ la
             </span>
           </div>
 
-          {/* Export Buttons */}
+          {/* Full report exports are separate from the current-page table export menu. */}
           <div className="flex items-center gap-2 relative">
-            <button
-              type="button"
-              onClick={() => void handleExport('xlsx', true)}
-              disabled={Boolean(downloadingKey)}
-              className="inline-flex items-center gap-1.5 rounded-xl bg-emerald-600 hover:bg-emerald-700 text-white px-3.5 py-2 text-xs font-bold shadow-xs hover:shadow-sm transition-all disabled:opacity-50 cursor-pointer active:scale-98"
-              title={activeTab === 'devices' && filters.highLoadOnly
-                ? (zh ? '仅导出有效采样且达到 CPU / 内存阈值的设备' : 'Export only devices with valid CPU or memory samples above the thresholds')
-                : (zh ? '导出当前表格筛选结果 (Excel .xlsx)' : 'Export current filtered table to Excel')}
-            >
-              <FileSpreadsheet size={14} className={downloadingKey?.includes('xlsx') ? 'animate-spin' : ''} />
-              <span>{zh ? '导出当前筛选 (Excel)' : 'Export Filtered (.xlsx)'}</span>
-            </button>
-
-            <button
-              type="button"
-              onClick={() => void handleExport('csv', true)}
-              disabled={Boolean(downloadingKey)}
-              className="inline-flex items-center gap-1.5 rounded-xl border border-slate-200 dark:border-zinc-700 bg-white dark:bg-zinc-900 hover:bg-slate-100 dark:hover:bg-zinc-800 text-slate-700 dark:text-zinc-200 px-3 py-2 text-xs font-semibold shadow-2xs transition-colors disabled:opacity-50 cursor-pointer"
-              title={activeTab === 'devices' && filters.highLoadOnly
-                ? (zh ? '仅导出有效采样且达到 CPU / 内存阈值的设备' : 'Export only devices with valid CPU or memory samples above the thresholds')
-                : undefined}
-              aria-label={zh ? '导出带 UTF-8 BOM 的通用 CSV 文本' : 'Export CSV with UTF-8 BOM'}
-            >
-              <Download size={13} className={downloadingKey?.includes('csv') ? 'animate-spin' : ''} />
-              <span>CSV</span>
-            </button>
-
             {/* Authoritative multi-sheet export dropdown */}
             <div className="relative">
               <button
@@ -476,7 +445,7 @@ export const MonitoringReportsPage: React.FC<MonitoringReportsPageProps> = ({ la
                   </div>
                   <button
                     type="button"
-                    onClick={() => void handleExport('xlsx', false)}
+                    onClick={() => void handleExport('xlsx')}
                     className="flex w-full items-center justify-between rounded-xl px-2.5 py-2 text-xs font-medium text-slate-700 dark:text-zinc-200 hover:bg-slate-100 dark:hover:bg-zinc-800 text-left cursor-pointer"
                   >
                     <span className="flex items-center gap-2">
@@ -489,7 +458,7 @@ export const MonitoringReportsPage: React.FC<MonitoringReportsPageProps> = ({ la
                   </button>
                   <button
                     type="button"
-                    onClick={() => void handleExport('csv', false)}
+                    onClick={() => void handleExport('csv')}
                     className="flex w-full items-center gap-2 rounded-xl px-2.5 py-2 text-xs font-medium text-slate-700 dark:text-zinc-200 hover:bg-slate-100 dark:hover:bg-zinc-800 text-left cursor-pointer"
                   >
                     <Download size={14} className="text-blue-600" />
@@ -885,7 +854,7 @@ export const MonitoringReportsPage: React.FC<MonitoringReportsPageProps> = ({ la
                 ) : null}
               </div>
             ) : (
-              <table className="w-full text-left text-xs border-collapse">
+              <DataTable unstyled exportConfig={{ filename: 'monitoring-report-results', language: zh ? 'zh' : 'en', disabled: loading || Boolean(downloadingKey) || items.length === 0, exportData: reportExportData }} className="min-w-[1760px] w-full text-left text-xs border-collapse">
                 {/* Table Header */}
                 <thead>
                   <tr className="border-b border-slate-200 dark:border-zinc-800 bg-slate-100/70 dark:bg-zinc-800/60 text-slate-600 dark:text-zinc-300 font-bold">
@@ -896,7 +865,7 @@ export const MonitoringReportsPage: React.FC<MonitoringReportsPageProps> = ({ la
                           onClick={() => handleSort('hostname')}
                         >
                           <div className="flex items-center gap-1.5">
-                            <span>{zh ? '设备 / 管理 IP' : 'Device / IP'}</span>
+                            <span>{zh ? '设备名称' : 'Device name'}</span>
                             {sortKey === 'hostname' ? (
                               sortOrder === 'asc' ? <ArrowUp size={12} /> : <ArrowDown size={12} />
                             ) : (
@@ -904,13 +873,16 @@ export const MonitoringReportsPage: React.FC<MonitoringReportsPageProps> = ({ la
                             )}
                           </div>
                         </th>
-                        <th className="py-3 px-3">{zh ? '站点 / 角色' : 'Site / Role'}</th>
+                        <th className="py-3 px-3">{zh ? '厂商' : 'Vendor'}</th>
+                        <th className="py-3 px-3">{zh ? '管理 IP' : 'Management IP'}</th>
+                        <th className="py-3 px-3">{zh ? '站点' : 'Site'}</th>
+                        <th className="py-3 px-3">{zh ? '角色' : 'Role'}</th>
                         <th
                           className="py-3 px-3 cursor-pointer hover:bg-slate-200/60 dark:hover:bg-zinc-800 transition-colors"
                           onClick={() => handleSort('interface_name')}
                         >
                           <div className="flex items-center gap-1.5">
-                            <span>{zh ? '接口名称 / 描述' : 'Interface / Desc'}</span>
+                            <span>{zh ? '接口名称' : 'Interface'}</span>
                             {sortKey === 'interface_name' ? (
                               sortOrder === 'asc' ? <ArrowUp size={12} /> : <ArrowDown size={12} />
                             ) : (
@@ -920,7 +892,9 @@ export const MonitoringReportsPage: React.FC<MonitoringReportsPageProps> = ({ la
                         </th>
                         <th className="py-3 px-3 text-center">{zh ? '运行状态' : 'Oper Status'}</th>
                         <th className="py-3 px-3 text-right">{zh ? '物理速率' : 'Speed'}</th>
-                        <th className="py-3 px-3 text-right">{zh ? '实时流量 (入/出)' : 'In / Out Traffic'}</th>
+                        <th className="py-3 px-3">{zh ? '接口描述' : 'Description'}</th>
+                        <th className="py-3 px-3 text-right">{zh ? '入方向流量' : 'Inbound traffic'}</th>
+                        <th className="py-3 px-3 text-right">{zh ? '出方向流量' : 'Outbound traffic'}</th>
                         <th
                           className="py-3 px-4 text-right cursor-pointer hover:bg-slate-200/60 dark:hover:bg-zinc-800 transition-colors"
                           onClick={() => handleSort('max_util')}
@@ -934,8 +908,11 @@ export const MonitoringReportsPage: React.FC<MonitoringReportsPageProps> = ({ la
                             )}
                           </div>
                         </th>
-                        <th className="py-3 px-3 text-center">{zh ? '错包 / 丢包' : 'Errors / Discards'}</th>
-                        <th className="py-3 px-4">{zh ? '预警评级与处置建议' : 'Alert & Advice'}</th>
+                        <th className="py-3 px-3 text-center">{zh ? '错误包' : 'Errors'}</th>
+                        <th className="py-3 px-3">{zh ? '预警等级' : 'Alert level'}</th>
+                        <th className="py-3 px-3">{zh ? '处置建议' : 'Advice'}</th>
+                        <th className="py-3 px-3">{zh ? '采样质量' : 'Sample quality'}</th>
+                        <th className="py-3 px-4">{zh ? '采样时间' : 'Sample time'}</th>
                       </>
                     )}
 
@@ -946,7 +923,7 @@ export const MonitoringReportsPage: React.FC<MonitoringReportsPageProps> = ({ la
                           onClick={() => handleSort('hostname')}
                         >
                           <div className="flex items-center gap-1.5">
-                            <span>{zh ? '设备名称 / 管理 IP' : 'Hostname / IP'}</span>
+                            <span>{zh ? '设备名称' : 'Hostname'}</span>
                             {sortKey === 'hostname' ? (
                               sortOrder === 'asc' ? <ArrowUp size={12} /> : <ArrowDown size={12} />
                             ) : (
@@ -954,8 +931,11 @@ export const MonitoringReportsPage: React.FC<MonitoringReportsPageProps> = ({ la
                             )}
                           </div>
                         </th>
-                        <th className="py-3 px-3">{zh ? '厂商 / 平台' : 'Vendor / Platform'}</th>
-                        <th className="py-3 px-3">{zh ? '站点 / 角色' : 'Site / Role'}</th>
+                        <th className="py-3 px-3">{zh ? '管理 IP' : 'Management IP'}</th>
+                        <th className="py-3 px-3">{zh ? '厂商' : 'Vendor'}</th>
+                        <th className="py-3 px-3">{zh ? '平台' : 'Platform'}</th>
+                        <th className="py-3 px-3">{zh ? '站点' : 'Site'}</th>
+                        <th className="py-3 px-3">{zh ? '角色' : 'Role'}</th>
                         <th className="py-3 px-3 text-center">{zh ? '在线状态' : 'Status'}</th>
                         <th
                           className="py-3 px-4 text-right cursor-pointer hover:bg-slate-200/60 dark:hover:bg-zinc-800 transition-colors"
@@ -984,15 +964,19 @@ export const MonitoringReportsPage: React.FC<MonitoringReportsPageProps> = ({ la
                           </div>
                         </th>
                         <th className="py-3 px-3 text-right">{zh ? '运行温度' : 'Temp'}</th>
-                        <th className="py-3 px-4">{zh ? '运行评估与采样信息' : 'Assessment & sample'}</th>
+                        <th className="py-3 px-4">{zh ? '风险等级' : 'Risk level'}</th>
+                        <th className="py-3 px-4">{zh ? '评估建议' : 'Assessment advice'}</th>
+                        <th className="py-3 px-3">{zh ? '采样质量' : 'Sample quality'}</th>
+                        <th className="py-3 px-4">{zh ? '采样时间' : 'Sample time'}</th>
                       </>
                     )}
 
                     {activeTab === 'outbound' && (
                       <>
                         <th className="py-3 px-4">{zh ? '探针目标名称' : 'Probe Name'}</th>
-                        <th className="py-3 px-3">{zh ? '运营商 / 线路' : 'ISP'}</th>
-                        <th className="py-3 px-3">{zh ? '探测地址 / 协议' : 'Target / Type'}</th>
+                        <th className="py-3 px-3">{zh ? '运营商' : 'ISP'}</th>
+                        <th className="py-3 px-3">{zh ? '探测地址' : 'Target address'}</th>
+                        <th className="py-3 px-3">{zh ? '协议类型' : 'Protocol'}</th>
                         <th className="py-3 px-3 text-center">{zh ? '启用状态' : 'Active'}</th>
                         <th className="py-3 px-3 text-right">{zh ? '实时延迟 (ms)' : 'Latency'}</th>
                         <th className="py-3 px-3 text-right">{zh ? '丢包率 (%)' : 'Loss'}</th>
@@ -1018,28 +1002,18 @@ export const MonitoringReportsPage: React.FC<MonitoringReportsPageProps> = ({ la
                           key={item.id || idx}
                           className="hover:bg-cyan-50/30 dark:hover:bg-cyan-950/20 transition-colors text-slate-700 dark:text-zinc-200"
                         >
-                          {/* Device & IP */}
-                          <td className="py-3 px-4">
-                            <div className="font-bold text-slate-900 dark:text-zinc-100 flex items-center gap-1.5">
-                              <span>{item.hostname}</span>
-                              <span className="rounded bg-slate-100 dark:bg-zinc-800 px-1 py-0.2 text-[10px] font-mono text-slate-500 uppercase">
-                                {item.vendor}
-                              </span>
-                            </div>
-                            <div className="text-[11px] font-mono text-slate-400 mt-0.5">{item.ip_address}</div>
-                          </td>
+                          <td className="py-3 px-4 font-bold text-slate-900 dark:text-zinc-100">{item.hostname}</td>
+                          <td className="py-3 px-3 font-medium uppercase text-slate-700 dark:text-zinc-300">{item.vendor}</td>
+                          <td className="py-3 px-3 font-mono text-[11px] text-slate-500">{item.ip_address}</td>
+                          <td className="py-3 px-3 font-medium text-slate-700 dark:text-zinc-300">{item.site_name}</td>
+                          <td className="py-3 px-3 text-[10px] uppercase tracking-wider text-slate-400">{item.role}</td>
 
-                          {/* Site & Role */}
-                          <td className="py-3 px-3">
-                            <div className="font-medium text-slate-700 dark:text-zinc-300">{item.site_name}</div>
-                            <div className="text-[10px] text-slate-400 uppercase tracking-wider">{item.role}</div>
-                          </td>
-
-                          {/* Interface & Desc */}
                           <td className="py-3 px-3">
                             <div className="font-mono font-semibold text-cyan-700 dark:text-cyan-400">
                               {item.interface_name}
                             </div>
+                          </td>
+                          <td className="py-3 px-3">
                             {item.description && (
                               <div className="text-[11px] text-slate-400 truncate max-w-[200px]" title={item.description}>
                                 {item.description}
@@ -1067,11 +1041,8 @@ export const MonitoringReportsPage: React.FC<MonitoringReportsPageProps> = ({ la
                             {item.speed_str ?? UNAVAILABLE_VALUE}
                           </td>
 
-                          {/* In / Out bps */}
-                          <td className="py-3 px-3 text-right font-mono">
-                            <div className="text-slate-800 dark:text-zinc-200">↓ {item.in_bps_str ?? UNAVAILABLE_VALUE}</div>
-                            <div className="text-[11px] text-slate-400">↑ {item.out_bps_str ?? UNAVAILABLE_VALUE}</div>
-                          </td>
+                          <td className="py-3 px-3 text-right font-mono text-slate-800 dark:text-zinc-200">{item.in_bps_str ?? UNAVAILABLE_VALUE}</td>
+                          <td className="py-3 px-3 text-right font-mono text-slate-800 dark:text-zinc-200">{item.out_bps_str ?? UNAVAILABLE_VALUE}</td>
 
                           {/* Bandwidth Utilization */}
                           <td className="py-3 px-4 text-right">
@@ -1117,30 +1088,14 @@ export const MonitoringReportsPage: React.FC<MonitoringReportsPageProps> = ({ la
                             )}
                           </td>
 
-                          {/* Alert Level & Advice */}
-                          <td className="py-3 px-4">
-                            <div className="flex items-center gap-1.5">
-                              {noValidSample ? (
-                                <span className="rounded bg-slate-100 dark:bg-zinc-800 px-1.5 py-0.2 text-[10px] font-bold text-slate-600 dark:text-zinc-300 shrink-0">NO_DATA</span>
-                              ) : item.alert_level === 'CRITICAL' && (
-                                <span className="rounded bg-rose-100 dark:bg-rose-950 px-1.5 py-0.2 text-[10px] font-bold text-rose-700 dark:text-rose-300 shrink-0">
-                                  {zh ? '严重' : 'Critical'}
-                                </span>
-                              )}
-                              {!noValidSample && item.alert_level === 'WARNING' && (
-                                <span className="rounded bg-amber-100 dark:bg-amber-950 px-1.5 py-0.2 text-[10px] font-bold text-amber-700 dark:text-amber-300 shrink-0">
-                                  {zh ? '预警' : 'Warning'}
-                                </span>
-                              )}
-                              <span className="text-[11px] text-slate-500 dark:text-zinc-400 truncate max-w-xs">
-                                {noValidSample ? (zh ? '无有效采样，暂不可评估' : 'No valid sample; assessment unavailable') : item.advice}
-                              </span>
-                            </div>
-                            <div className="mt-1 text-[10px] text-slate-400" title={item.sample_time || ''}>
-                              {sampleQuality || (noValidSample ? 'NO_DATA' : (zh ? '采样质量未知' : 'Sample quality unknown'))}
-                              {' · '}{formatSampleTime(item.sample_time, language)}
-                            </div>
+                          <td className="py-3 px-3 text-[10px] font-bold">
+                            {noValidSample ? <span className="text-slate-500">NO_DATA</span> : item.alert_level === 'CRITICAL'
+                              ? <span className="text-rose-700 dark:text-rose-300">{zh ? '严重' : 'Critical'}</span>
+                              : item.alert_level === 'WARNING' ? <span className="text-amber-700 dark:text-amber-300">{zh ? '预警' : 'Warning'}</span> : '—'}
                           </td>
+                          <td className="py-3 px-3 text-[11px] text-slate-500 dark:text-zinc-400">{noValidSample ? (zh ? '无有效采样，暂不可评估' : 'No valid sample; assessment unavailable') : item.advice}</td>
+                          <td className="py-3 px-3 text-[10px] text-slate-400">{sampleQuality || (noValidSample ? 'NO_DATA' : (zh ? '采样质量未知' : 'Sample quality unknown'))}</td>
+                          <td className="py-3 px-4 text-[10px] text-slate-400" title={item.sample_time || ''}>{formatSampleTime(item.sample_time, language)}</td>
                         </tr>
                       );
                     })}
@@ -1157,20 +1112,12 @@ export const MonitoringReportsPage: React.FC<MonitoringReportsPageProps> = ({ la
                           key={item.id || idx}
                           className="hover:bg-cyan-50/30 dark:hover:bg-cyan-950/20 transition-colors text-slate-700 dark:text-zinc-200"
                         >
-                          <td className="py-3 px-4">
-                            <div className="font-bold text-slate-900 dark:text-zinc-100">{item.hostname}</div>
-                            <div className="text-[11px] font-mono text-slate-400 mt-0.5">{item.ip_address}</div>
-                          </td>
-
-                          <td className="py-3 px-3">
-                            <div className="font-medium text-slate-700 dark:text-zinc-300 uppercase">{item.vendor}</div>
-                            <div className="text-[10px] font-mono text-slate-400">{item.platform}</div>
-                          </td>
-
-                          <td className="py-3 px-3">
-                            <div className="text-slate-700 dark:text-zinc-300">{item.site_name}</div>
-                            <div className="text-[10px] text-slate-400 uppercase tracking-wider">{item.role}</div>
-                          </td>
+                          <td className="py-3 px-4 font-bold text-slate-900 dark:text-zinc-100">{item.hostname}</td>
+                          <td className="py-3 px-3 font-mono text-[11px] text-slate-500">{item.ip_address}</td>
+                          <td className="py-3 px-3 font-medium uppercase text-slate-700 dark:text-zinc-300">{item.vendor}</td>
+                          <td className="py-3 px-3 font-mono text-[10px] text-slate-400">{item.platform}</td>
+                          <td className="py-3 px-3 text-slate-700 dark:text-zinc-300">{item.site_name}</td>
+                          <td className="py-3 px-3 text-[10px] uppercase tracking-wider text-slate-400">{item.role}</td>
 
                           <td className="py-3 px-3 text-center">
                             {item.status === 'ONLINE' ? (
@@ -1224,30 +1171,10 @@ export const MonitoringReportsPage: React.FC<MonitoringReportsPageProps> = ({ la
                             {item.temperature_str ?? UNAVAILABLE_VALUE}
                           </td>
 
-                          <td className="py-3 px-4">
-                            <div className="flex items-center gap-1.5">
-                              {noValidSample ? (
-                                <span className="rounded bg-slate-100 dark:bg-zinc-800 px-1.5 py-0.2 text-[10px] font-bold text-slate-600 dark:text-zinc-300 shrink-0">NO_DATA</span>
-                              ) : item.risk_level && item.risk_level !== 'NORMAL' && (
-                                <span
-                                  className={`rounded px-1.5 py-0.2 text-[10px] font-bold shrink-0 ${
-                                    item.risk_level === 'CRITICAL'
-                                      ? 'bg-rose-100 dark:bg-rose-950 text-rose-700 dark:text-rose-300'
-                                      : 'bg-amber-100 dark:bg-amber-950 text-amber-700 dark:text-amber-300'
-                                  }`}
-                                >
-                                  {item.risk_level}
-                                </span>
-                              )}
-                              <span className="text-[11px] text-slate-500 dark:text-zinc-400 truncate max-w-xs">
-                                {noValidSample ? (zh ? '无有效采样，暂不可评估' : 'No valid sample; assessment unavailable') : item.advice}
-                              </span>
-                            </div>
-                            <div className="mt-1 text-[10px] text-slate-400" title={item.sample_time || ''}>
-                              {sampleQuality || (noValidSample ? 'NO_DATA' : (zh ? '采样质量未知' : 'Sample quality unknown'))}
-                              {' · '}{formatSampleTime(item.sample_time, language)}
-                            </div>
-                          </td>
+                          <td className="py-3 px-3 text-[10px] font-bold">{noValidSample ? 'NO_DATA' : (item.risk_level || (zh ? '正常' : 'Normal'))}</td>
+                          <td className="py-3 px-4 text-[11px] text-slate-500 dark:text-zinc-400">{noValidSample ? (zh ? '无有效采样，暂不可评估' : 'No valid sample; assessment unavailable') : item.advice}</td>
+                          <td className="py-3 px-3 text-[10px] text-slate-400">{sampleQuality || (noValidSample ? 'NO_DATA' : (zh ? '采样质量未知' : 'Sample quality unknown'))}</td>
+                          <td className="py-3 px-4 text-[10px] text-slate-400" title={item.sample_time || ''}>{formatSampleTime(item.sample_time, language)}</td>
                         </tr>
                       );
                     })}
@@ -1260,9 +1187,8 @@ export const MonitoringReportsPage: React.FC<MonitoringReportsPageProps> = ({ la
                       >
                         <td className="py-3 px-4 font-bold text-slate-900 dark:text-zinc-100">{item.name}</td>
                         <td className="py-3 px-3 font-medium text-slate-700 dark:text-zinc-300">{item.isp}</td>
-                        <td className="py-3 px-3 font-mono text-cyan-700 dark:text-cyan-400">
-                          {item.target} ({item.target_type})
-                        </td>
+                        <td className="py-3 px-3 font-mono text-cyan-700 dark:text-cyan-400">{item.target}</td>
+                        <td className="py-3 px-3">{item.target_type}</td>
                         <td className="py-3 px-3 text-center">
                           <span className="rounded-full bg-emerald-100 dark:bg-emerald-950 px-2 py-0.5 text-[10px] font-bold text-emerald-700 dark:text-emerald-400">
                             {item.active_str}
@@ -1283,7 +1209,7 @@ export const MonitoringReportsPage: React.FC<MonitoringReportsPageProps> = ({ la
                       </tr>
                     ))}
                 </tbody>
-              </table>
+              </DataTable>
             )}
           </div>
 

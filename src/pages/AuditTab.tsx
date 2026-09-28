@@ -1,13 +1,16 @@
+import { DataTable } from '../components/DataTable';
 import React from 'react';
-import { Download, ClipboardList } from 'lucide-react';
-import * as XLSX from 'xlsx';
+import { ClipboardList, Eye } from 'lucide-react';
 import type { AuditEvent } from '../types';
 import { severityBadgeClass, auditStatusBadgeClass } from '../components/shared';
 import Pagination from '../components/Pagination';
 import PageHero from '../components/PageHero';
-import { ActionButton } from '../components/ui/ActionIconButton';
+import { ActionIconButton } from '../components/ui/ActionIconButton';
+import type { TableExportData } from '../components/ui/TableExportMenu';
 import { fetchAllPaginatedItems } from '../utils/pagination';
+import { buildAuditExportData, getAuditExportHeaders } from './auditTableExport';
 
+import { TableActionCell, TableActionHeader } from '../components/ui/TableActionColumn';
 interface AuditTabProps {
   auditRows: AuditEvent[];
   auditTotal: number;
@@ -39,6 +42,7 @@ const AuditTab: React.FC<AuditTabProps> = ({
   openAuditEventDetail, language, t,
 }) => {
   const zh = language === 'zh';
+  const exportHeaders = getAuditExportHeaders(language);
 
   const categoryMap: Record<string, string> = {
     auth: '身份认证', identity: '身份认证', inventory: '资产管理',
@@ -108,36 +112,23 @@ const AuditTab: React.FC<AuditTabProps> = ({
     return v;
   };
 
-  const handleExportAudit = async () => {
+  const exportAllAuditEvents = async (): Promise<TableExportData> => {
     const params = new URLSearchParams({
       category: auditCategoryFilter,
       severity: auditSeverityFilter,
       status: auditStatusFilter,
       time_range: auditTimeFilter,
     });
-
-    try {
-      const allRows = await fetchAllPaginatedItems<AuditEvent>('/api/audit/events', params);
-      if (allRows.length === 0) return;
-      const exportData = allRows.map(e => ({
-        [zh ? '时间' : 'Timestamp']: new Date(e.created_at).toLocaleString(),
-        [zh ? '操作' : 'Action']: fmtSummary(e.summary),
-        [zh ? '事件类型' : 'Event Type']: fmtEventType(e.event_type),
-        [zh ? '分类' : 'Category']: fmtCategory(e.category),
-        [zh ? '级别' : 'Severity']: fmtSeverity(e.severity),
-        [zh ? '目标' : 'Target']: e.target_name || e.target_id || e.device_id || '',
-        [zh ? '用户' : 'User']: e.actor_username || 'system',
-        [zh ? '状态' : 'Status']: fmtStatus(e.status),
-        [zh ? '来源IP' : 'Source IP']: e.source_ip || '',
-      }));
-      const ws = XLSX.utils.json_to_sheet(exportData);
-      const wb = XLSX.utils.book_new();
-      XLSX.utils.book_append_sheet(wb, ws, 'Audit Logs');
-      const ts = new Date().toISOString().replace(/[-:]/g, '').replace('T', '_').slice(0, 15);
-      XLSX.writeFile(wb, `audit_logs_${ts}.xlsx`);
-    } catch (error) {
-      console.error('Failed to export audit logs:', error);
-    }
+    const events = await fetchAllPaginatedItems<AuditEvent>('/api/audit/events', params, 100);
+    return buildAuditExportData(events, language, {
+      timestamp: (value) => new Date(value).toLocaleString(),
+      summary: fmtSummary,
+      eventType: fmtEventType,
+      category: fmtCategory,
+      status: fmtStatus,
+      severity: fmtSeverity,
+      unknownTarget: zh ? '未知' : 'Unknown',
+    });
   };
 
   return (
@@ -146,11 +137,6 @@ const AuditTab: React.FC<AuditTabProps> = ({
         icon={ClipboardList}
         title={t('auditLogsTitle')}
         subtitle={t('fullHistory')}
-        actions={
-          <ActionButton icon={Download} variant="accent" size="md" onClick={handleExportAudit} title={language === 'zh' ? '导出审计日志' : 'Export Audit Logs'}>
-            {language === 'zh' ? '导出' : 'Export'}
-          </ActionButton>
-        }
       />
 
       <div className="flex-1 overflow-auto px-6 py-5 space-y-6">
@@ -204,16 +190,11 @@ const AuditTab: React.FC<AuditTabProps> = ({
           </select>
         </div>
         <div className="overflow-x-auto">
-        <table className="nx-data-table text-left">
+        <DataTable unstyled exportConfig={{ filename: 'audit-events', language: zh ? 'zh' : 'en', disabled: auditLoading || auditRows.length === 0, exportData: exportAllAuditEvents }} className="nx-data-table text-left">
           <thead>
             <tr className="bg-black/[0.01] border-b border-black/5">
-              <th className="px-6 py-4 text-[10px] font-bold uppercase tracking-widest text-black/40">{t('timestamp')}</th>
-              <th className="px-6 py-4 text-[10px] font-bold uppercase tracking-widest text-black/40">{t('action')}</th>
-              <th className="px-6 py-4 text-[10px] font-bold uppercase tracking-widest text-black/40">{language === 'zh' ? '分类' : 'Category'}</th>
-              <th className="px-6 py-4 text-[10px] font-bold uppercase tracking-widest text-black/40">{t('target')}</th>
-              <th className="px-6 py-4 text-[10px] font-bold uppercase tracking-widest text-black/40">{t('user')}</th>
-              <th className="px-6 py-4 text-[10px] font-bold uppercase tracking-widest text-black/40">{t('status')}</th>
-              <th className="px-6 py-4 text-[10px] font-bold uppercase tracking-widest text-black/40">{language === 'zh' ? '操作' : 'Action'}</th>
+              {exportHeaders.map((header) => <th key={header} className="px-6 py-4 text-[10px] font-bold uppercase tracking-widest text-black/40">{header}</th>)}
+              <TableActionHeader className="px-6 py-4 text-[10px] font-bold uppercase tracking-widest text-black/40">{language === 'zh' ? '操作' : 'Action'}</TableActionHeader>
             </tr>
           </thead>
           <tbody>
@@ -221,44 +202,36 @@ const AuditTab: React.FC<AuditTabProps> = ({
               <tr key={event.id} className="border-b border-black/5 hover:bg-black/[0.01] transition-colors">
                 <td className="px-6 py-4 text-xs font-mono text-black/50">{new Date(event.created_at).toLocaleString()}</td>
                 <td className="px-6 py-4 align-top">
-                  <div className="text-sm font-medium text-[#0b2a3c]">{fmtSummary(event.summary)}</div>
-                  <div className="mt-1 text-[11px] text-black/35 font-mono">{fmtEventType(event.event_type)}</div>
+                  <div data-export-primary className="text-sm font-medium text-[#0b2a3c]">{fmtSummary(event.summary)}</div>
                 </td>
+                <td className="px-6 py-4 text-xs text-black/55 font-mono">{fmtEventType(event.event_type)}</td>
                 <td className="px-6 py-4 text-xs text-black/55">{fmtCategory(event.category)}</td>
-                <td className="px-6 py-4 text-xs">{event.target_name || event.target_id || event.device_id || (zh ? '未知' : 'Unknown')}</td>
+                <td className="px-6 py-4 text-xs">{event.target_name || (zh ? '未知' : 'Unknown')}</td>
                 <td className="px-6 py-4 text-xs text-black/40">{event.actor_username || 'system'}</td>
-                <td className="px-6 py-4">
-                  <div className="flex flex-col gap-2">
-                    <span className={`inline-flex w-fit px-2 py-1 rounded text-[10px] font-bold uppercase ${auditStatusBadgeClass(event.status)}`}>
-                      {fmtStatus(event.status)}
-                    </span>
-                    <span className={`inline-flex w-fit px-2 py-1 rounded text-[10px] font-bold uppercase ${severityBadgeClass(event.severity)}`}>
-                      {fmtSeverity(event.severity)}
-                    </span>
-                  </div>
-                </td>
-                <td className="px-6 py-4">
-                  <button
+                <td className="px-6 py-4"><span data-export-primary className={`inline-flex w-fit px-2 py-1 rounded text-[10px] font-bold uppercase ${auditStatusBadgeClass(event.status)}`}>{fmtStatus(event.status)}</span></td>
+                <td className="px-6 py-4"><span className={`inline-flex w-fit px-2 py-1 rounded text-[10px] font-bold uppercase ${severityBadgeClass(event.severity)}`}>{fmtSeverity(event.severity)}</span></td>
+                <TableActionCell className="px-6 py-4">
+                  <ActionIconButton
+                    icon={Eye}
+                    label={zh ? '查看详情' : 'View details'}
+                    variant="accent"
                     onClick={() => openAuditEventDetail(event)}
-                    className="text-[10px] font-bold uppercase text-blue-600 hover:underline"
-                  >
-                    {zh ? '详情' : 'Details'}
-                  </button>
-                </td>
+                  />
+                </TableActionCell>
               </tr>
             ))}
             {!auditLoading && auditRows.length === 0 && (
               <tr>
-                <td colSpan={7} className="px-6 py-8 text-center text-sm text-black/40">{zh ? '当前筛选条件下没有审计日志。' : 'No audit logs found for current filters.'}</td>
+                <td colSpan={exportHeaders.length + 1} className="px-6 py-8 text-center text-sm text-black/40">{zh ? '当前筛选条件下没有审计日志。' : 'No audit logs found for current filters.'}</td>
               </tr>
             )}
             {auditLoading && auditRows.length === 0 && (
               <tr>
-                <td colSpan={7} className="px-6 py-8 text-center text-sm text-black/40">{zh ? '正在加载审计日志...' : 'Loading audit logs...'}</td>
+                <td colSpan={exportHeaders.length + 1} className="px-6 py-8 text-center text-sm text-black/40">{zh ? '正在加载审计日志...' : 'Loading audit logs...'}</td>
               </tr>
             )}
           </tbody>
-        </table>
+        </DataTable>
         </div>
         <Pagination
           currentPage={auditPage}

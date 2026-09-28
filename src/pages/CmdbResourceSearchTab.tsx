@@ -1,8 +1,11 @@
-import React, { useCallback, useEffect, useMemo, useState } from 'react';
+import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { Database, Filter, RefreshCw, Search, Server, SlidersHorizontal, Tag as TagIcon, X } from 'lucide-react';
 import { useNavigate } from 'react-router-dom';
 import Pagination from '../components/Pagination';
 import TagFilterDropdown from '../components/TagFilterDropdown';
+import { TableExportMenu } from '../components/ui/TableExportMenu';
+import { fetchAllPaginatedItems } from '../utils/pagination';
+import { buildCmdbExportData } from './cmdbExport';
 import type { TagDefinition } from '../types';
 
 interface Props {
@@ -134,8 +137,30 @@ function formatLifecycle(value: string, zh: boolean): string {
   return match ? match[zh ? 1 : 2] : value || (zh ? '未设置' : 'Unset');
 }
 
+const RESOURCE_COLUMNS = [
+  { key: 'hostname', zh: '设备名称', en: 'Hostname', value: (row: ResourceRow) => row.hostname || '—' },
+  { key: 'asset_type', zh: '资产类型', en: 'Asset type', value: (row: ResourceRow, zh: boolean) => formatType(row.asset_type, zh) },
+  { key: 'device_category', zh: '设备分类', en: 'Device category', value: (row: ResourceRow, zh: boolean) => row.device_category || (zh ? '未分类' : 'Unclassified') },
+  { key: 'device_role', zh: '设备角色', en: 'Device role', value: (row: ResourceRow) => row.device_role || '—' },
+  { key: 'serial_number', zh: '序列号', en: 'Serial number', value: (row: ResourceRow) => row.serial_number || '—' },
+  { key: 'asset_tag', zh: '资产编号', en: 'Asset tag', value: (row: ResourceRow) => row.asset_tag || '—' },
+  { key: 'management_ip', zh: '管理 IP', en: 'Management IP', value: (row: ResourceRow) => row.management_ip || '—' },
+  { key: 'business_ip', zh: '业务 IP', en: 'Business IP', value: (row: ResourceRow) => row.business_ip || '—' },
+  { key: 'vendor', zh: '厂商', en: 'Vendor', value: (row: ResourceRow) => row.vendor || '—' },
+  { key: 'model', zh: '型号', en: 'Model', value: (row: ResourceRow) => row.model || '—' },
+  { key: 'platform', zh: '平台', en: 'Platform', value: (row: ResourceRow) => row.platform || '—' },
+  { key: 'tags', zh: '标签', en: 'Tags', value: (row: ResourceRow, zh: boolean) => row.tags?.length ? row.tags.map(tag => zh ? tag.label_zh || tag.label : tag.label).filter(Boolean).join(' · ') : '—' },
+  { key: 'online_status', zh: '在线状态', en: 'Online status', value: (row: ResourceRow, zh: boolean) => formatStatus(row.online_status, zh) },
+  { key: 'lifecycle_status', zh: '生命周期', en: 'Lifecycle', value: (row: ResourceRow, zh: boolean) => formatLifecycle(row.lifecycle_status, zh) },
+  { key: 'site_code', zh: '站点编码', en: 'Site code', value: (row: ResourceRow) => row.site_code || '—' },
+  { key: 'site_name', zh: '站点名称', en: 'Site name', value: (row: ResourceRow) => row.site_name || '—' },
+  { key: 'interface_count', zh: '接口数', en: 'Interfaces', value: (row: ResourceRow) => Number(row.interface_count || 0) },
+  { key: 'link_count', zh: '链路数', en: 'Topology links', value: (row: ResourceRow) => Number(row.link_count || 0) },
+] as const;
+
 const ResourceSearchTab: React.FC<Props> = ({ language = 'zh' }) => {
   const zh = language === 'zh';
+  const tableRef = useRef<HTMLTableElement>(null);
   const navigate = useNavigate();
   const [filters, setFilters] = useState<SearchFilters>(INITIAL_FILTERS);
   const [queryDraft, setQueryDraft] = useState('');
@@ -188,6 +213,23 @@ const ResourceSearchTab: React.FC<Props> = ({ language = 'zh' }) => {
     }
   }, []);
 
+  const buildResourceParams = useCallback((requestedPage = page, requestedPageSize = pageSize) => new URLSearchParams({
+    q: filters.q,
+    search_field: filters.search_field,
+    search_mode: filters.search_mode,
+    site_id: filters.site_id,
+    asset_type: filters.asset_type,
+    device_category: filters.device_category,
+    vendor: filters.vendor,
+    platform: filters.platform,
+    status: filters.status,
+    lifecycle_status: filters.lifecycle_status,
+    tag_ids: tagIds.join(','),
+    tag_match_all: String(filters.tag_match_all),
+    page: String(requestedPage),
+    page_size: String(requestedPageSize),
+  }), [filters, page, pageSize, tagIds]);
+
   const loadResources = useCallback(async () => {
     if (!hasSearchCriteria) {
       setRows([]);
@@ -198,22 +240,7 @@ const ResourceSearchTab: React.FC<Props> = ({ language = 'zh' }) => {
     setLoading(true);
     setError('');
     try {
-      const params = new URLSearchParams({
-        q: filters.q,
-        search_field: filters.search_field,
-        search_mode: filters.search_mode,
-        site_id: filters.site_id,
-        asset_type: filters.asset_type,
-        device_category: filters.device_category,
-        vendor: filters.vendor,
-        platform: filters.platform,
-        status: filters.status,
-        lifecycle_status: filters.lifecycle_status,
-        tag_ids: tagIds.join(','),
-        tag_match_all: String(filters.tag_match_all),
-        page: String(page),
-        page_size: String(pageSize),
-      });
+      const params = buildResourceParams();
       const response = await fetch(`/api/cmdb/resources?${params.toString()}`, { headers: authHeaders() });
       const json = await response.json().catch(() => ({}));
       if (!response.ok || json.success === false) throw new Error(json.detail || json.message || 'Resource search failed');
@@ -226,7 +253,7 @@ const ResourceSearchTab: React.FC<Props> = ({ language = 'zh' }) => {
     } finally {
       setLoading(false);
     }
-  }, [filters, hasSearchCriteria, page, pageSize, tagIds]);
+  }, [buildResourceParams, hasSearchCriteria]);
 
   useEffect(() => { void loadMetadata(); }, [loadMetadata]);
   useEffect(() => { void loadResources(); }, [loadResources]);
@@ -266,6 +293,14 @@ const ResourceSearchTab: React.FC<Props> = ({ language = 'zh' }) => {
         {tags.length > 5 && <span className="rounded-full bg-slate-100 px-2 py-1 text-[10px] text-slate-400">+{tags.length - 5}</span>}
       </div>
     );
+  };
+
+  const renderResourceCell = (row: ResourceRow, key: typeof RESOURCE_COLUMNS[number]['key']) => {
+    if (key === 'tags') return renderTags(row);
+    if (key === 'online_status') return <div className="flex items-center gap-1.5"><span className={`h-1.5 w-1.5 rounded-full ${row.online_status === 'online' ? 'bg-emerald-500' : row.online_status === 'offline' ? 'bg-slate-400' : 'bg-amber-500'}`} />{formatStatus(row.online_status, zh)}</div>;
+    const column = RESOURCE_COLUMNS.find(item => item.key === key);
+    const value = column?.value(row, zh);
+    return <span className={['serial_number', 'asset_tag', 'management_ip', 'business_ip'].includes(key) ? 'font-mono text-slate-600' : ''}>{value}</span>;
   };
 
   return (
@@ -369,38 +404,41 @@ const ResourceSearchTab: React.FC<Props> = ({ language = 'zh' }) => {
       <section className="overflow-hidden rounded-2xl border border-slate-200 bg-white shadow-sm">
         <div className="flex flex-wrap items-center justify-between gap-3 border-b border-slate-100 px-4 py-3">
           <div className="flex items-center gap-2 text-sm font-bold text-slate-800"><Server size={15} className="text-cyan-600" />{zh ? '资源检索结果' : 'Resource search results'}<span className="rounded-full bg-cyan-50 px-2 py-0.5 text-[11px] text-cyan-700">{total}</span></div>
-          <div className="flex items-center gap-2 text-[11px] text-slate-400"><TagIcon size={13} />{tagIds.length ? `${tagIds.length} ${zh ? '个标签条件' : 'tag conditions'}` : (zh ? '标签未筛选' : 'No tag filter')}</div>
+          <div className="flex items-center gap-3 text-[11px] text-slate-400">
+            <span className="flex items-center gap-2"><TagIcon size={13} />{tagIds.length ? `${tagIds.length} ${zh ? '个标签条件' : 'tag conditions'}` : (zh ? '标签未筛选' : 'No tag filter')}</span>
+            <TableExportMenu
+              tableRef={tableRef}
+              filename="cmdb-resource-search"
+              language={zh ? 'zh' : 'en'}
+              disabled={loading || total === 0}
+              exportData={async () => {
+                const allRows = await fetchAllPaginatedItems<ResourceRow>(
+                  '/api/cmdb/resources', buildResourceParams(1, 1000), 1000,
+                );
+                return buildCmdbExportData(allRows, RESOURCE_COLUMNS.map(column => ({
+                  key: column.key,
+                  header: zh ? column.zh : column.en,
+                  value: row => column.value(row, zh),
+                })));
+              }}
+            />
+          </div>
         </div>
         <div className="min-h-[360px] overflow-x-auto">
-          <table className="nx-data-table min-w-[1180px] text-left text-xs">
+          <table ref={tableRef} className="nx-data-table min-w-[1180px] text-left text-xs">
             <thead className="bg-slate-50 text-[10px] font-semibold uppercase tracking-wide text-slate-400">
               <tr>
-                <th className="px-4 py-3">{zh ? '设备资源' : 'Resource'}</th>
-                <th className="px-4 py-3">{zh ? 'SN / 资产编号' : 'SN / Asset tag'}</th>
-                <th className="px-4 py-3">{zh ? 'IP 地址' : 'IP addresses'}</th>
-                <th className="px-4 py-3">{zh ? '厂商 / 平台' : 'Vendor / platform'}</th>
-                <th className="px-4 py-3">{zh ? '标签' : 'Tags'}</th>
-                <th className="px-4 py-3">{zh ? '状态 / 站点' : 'Status / site'}</th>
-                <th className="px-4 py-3">{zh ? '关系' : 'Relations'}</th>
+                {RESOURCE_COLUMNS.map(column => <th key={column.key} className="whitespace-nowrap px-4 py-3">{zh ? column.zh : column.en}</th>)}
               </tr>
             </thead>
             <tbody className="divide-y divide-slate-100">
               {loading ? (
-                <tr><td colSpan={7} className="py-16 text-center text-slate-400"><RefreshCw size={18} className="mx-auto mb-2 animate-spin text-cyan-600" />{zh ? '检索资源中…' : 'Searching resources…'}</td></tr>
+                <tr><td colSpan={RESOURCE_COLUMNS.length} className="py-16 text-center text-slate-400"><RefreshCw size={18} className="mx-auto mb-2 animate-spin text-cyan-600" />{zh ? '检索资源中…' : 'Searching resources…'}</td></tr>
               ) : rows.length === 0 ? (
-                <tr><td colSpan={7} className="py-16 text-center text-slate-400"><Database size={22} className="mx-auto mb-2 text-slate-300" />{hasSearchCriteria ? (zh ? '没有匹配的设备资源' : 'No matching device resources') : (zh ? '请输入条件后开始检索资源' : 'Enter search criteria to load resources')}</td></tr>
+                <tr><td colSpan={RESOURCE_COLUMNS.length} className="py-16 text-center text-slate-400"><Database size={22} className="mx-auto mb-2 text-slate-300" />{hasSearchCriteria ? (zh ? '没有匹配的设备资源' : 'No matching device resources') : (zh ? '请输入条件后开始检索资源' : 'Enter search criteria to load resources')}</td></tr>
               ) : rows.map(row => (
                 <tr key={row.device_id} className="hover:bg-cyan-50/40">
-                  <td className="px-4 py-3 align-top">
-                    <div className="font-semibold text-slate-800">{row.hostname || row.device_id}</div>
-                    <div className="mt-1 text-[10px] text-slate-400">{formatType(row.asset_type, zh)} · {row.device_category || (zh ? '未分类' : 'Unclassified')}</div>
-                  </td>
-                  <td className="px-4 py-3 align-top text-slate-600"><div className="font-mono text-[11px]">{row.serial_number || '—'}</div><div className="mt-1 text-[10px] text-slate-400">{row.asset_tag || '—'}</div></td>
-                  <td className="px-4 py-3 align-top"><div className="font-mono text-[11px] text-slate-700">{row.management_ip || '—'}</div><div className="mt-1 font-mono text-[10px] text-slate-400">{row.business_ip || '—'}</div></td>
-                  <td className="px-4 py-3 align-top"><div className="text-slate-700">{row.vendor || '—'}{row.model ? ` · ${row.model}` : ''}</div><div className="mt-1 text-[10px] text-cyan-700">{row.platform || '—'}</div></td>
-                  <td className="px-4 py-3 align-top">{renderTags(row)}</td>
-                  <td className="px-4 py-3 align-top"><div className="flex items-center gap-1.5"><span className={`h-1.5 w-1.5 rounded-full ${row.online_status === 'online' ? 'bg-emerald-500' : row.online_status === 'offline' ? 'bg-slate-400' : 'bg-amber-500'}`} />{formatStatus(row.online_status, zh)}</div><div className="mt-1 text-[10px] text-slate-400">{row.site_name || row.site_code || (zh ? '未分配站点' : 'Unassigned site')}</div><div className="mt-1 text-[10px] text-slate-500">{formatLifecycle(row.lifecycle_status, zh)}</div></td>
-                  <td className="px-4 py-3 align-top text-[10px] text-slate-500"><div>{row.interface_count || 0} {zh ? '接口' : 'interfaces'}</div><div className="mt-1">{row.link_count || 0} {zh ? '拓扑关系' : 'topology links'}</div></td>
+                  {RESOURCE_COLUMNS.map(column => <td key={column.key} className="px-4 py-3 align-top">{renderResourceCell(row, column.key)}</td>)}
                 </tr>
               ))}
             </tbody>

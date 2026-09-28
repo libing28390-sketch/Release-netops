@@ -273,6 +273,20 @@ const ConfigScheduleTab: React.FC<ConfigScheduleTabProps> = ({
 
   const sevenDayTotal = backupStats?.daily_history?.reduce((a, d) => a + d.total, 0) ?? 0;
 
+  const exportRecentBackups = useCallback(async () => {
+    const backups = backupStats?.recent_backups || [];
+    return {
+      headers: zh ? ['设备', '厂商', '时间', '类型', '大小'] : ['Device', 'Vendor', 'Time', 'Type', 'Size'],
+      rows: backups.map((backup) => [
+        backup.hostname || '--',
+        backup.vendor || '--',
+        backup.timestamp ? new Date(backup.timestamp).toLocaleString(zh ? 'zh-CN' : 'en-US', { hour12: false }) : '--',
+        backup.trigger === 'scheduled' ? (zh ? '定时' : 'Sched') : (zh ? '手动' : 'Manual'),
+        fmtSize(backup.size),
+      ]),
+    };
+  }, [backupStats?.recent_backups, zh]);
+
   return (
     <div className="flex flex-col h-full overflow-hidden">
       {/* ── Sleek Compact Header (~42px) ── */}
@@ -472,32 +486,30 @@ const ConfigScheduleTab: React.FC<ConfigScheduleTabProps> = ({
                 <span className="text-[9px] font-bold text-slate-400 uppercase">{zh ? '实时更新' : 'LIVE'}</span>
               </div>
               <div className="overflow-x-auto flex-1">
-                <DataTable className="text-left">
+                <DataTable className="text-left" exportConfig={{ filename: 'config-schedule-recent-backups', language: zh ? 'zh' : 'en', disabled: !backupStats?.recent_backups?.length, exportData: exportRecentBackups }}>
                   <thead>
                     <tr className="bg-slate-50/70 border-b border-slate-100">
                       <th className="px-3 py-1.5 text-[10px] font-bold text-slate-400 uppercase">{zh ? '设备' : 'DEVICE'}</th>
+                      <th className="px-3 py-1.5 text-[10px] font-bold text-slate-400 uppercase">{zh ? '厂商' : 'VENDOR'}</th>
                       <th className="px-3 py-1.5 text-[10px] font-bold text-slate-400 uppercase">{zh ? '时间' : 'TIME'}</th>
                       <th className="px-3 py-1.5 text-[10px] font-bold text-slate-400 uppercase">{zh ? '类型' : 'TYPE'}</th>
                       <th className="px-3 py-1.5 text-[10px] font-bold text-slate-400 uppercase text-right">{zh ? '大小' : 'SIZE'}</th>
                     </tr>
                   </thead>
                   <tbody className="divide-y divide-slate-100">
-                    {backupStats?.recent_backups?.slice(0, 5).map(bk => (
+                    {backupStats?.recent_backups?.map(bk => (
                       <tr key={bk.id} className="hover:bg-slate-50/60 transition-colors text-xs">
                         <td className="px-3 py-1.5">
                           <div className="flex items-center gap-2">
                             <div className="w-5 h-5 rounded bg-slate-100 flex items-center justify-center text-slate-500 shrink-0">
                               <Server size={11} />
                             </div>
-                            <div className="min-w-0">
-                              <p className="font-bold text-slate-700 truncate">{bk.hostname}</p>
-                              <p className="text-[9px] text-slate-400">{bk.vendor}</p>
-                            </div>
+                            <p className="min-w-0 truncate font-bold text-slate-700">{bk.hostname}</p>
                           </div>
                         </td>
+                        <td className="px-3 py-1.5 text-[10px] font-semibold text-slate-500">{bk.vendor || '--'}</td>
                         <td className="px-3 py-1.5">
-                          <span className="font-mono text-slate-600 font-semibold">{new Date(bk.timestamp).toLocaleTimeString(zh ? 'zh-CN' : 'en-US', { hour12: false, hour: '2-digit', minute: '2-digit' })}</span>
-                          <span className="block text-[9px] text-slate-400">{new Date(bk.timestamp).toLocaleDateString()}</span>
+                          <span className="font-mono text-slate-600 font-semibold">{new Date(bk.timestamp).toLocaleString(zh ? 'zh-CN' : 'en-US', { hour12: false })}</span>
                         </td>
                         <td className="px-3 py-1.5">
                           <span className={`inline-flex items-center px-1.5 py-0.5 rounded text-[9px] font-bold ${bk.trigger === 'scheduled' ? 'bg-cyan-50 text-cyan-700' : 'bg-violet-50 text-violet-700'}`}>

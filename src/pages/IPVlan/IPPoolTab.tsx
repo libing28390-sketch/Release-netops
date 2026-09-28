@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useCallback } from 'react';
+import React, { useState, useEffect, useCallback, useRef } from 'react';
 import {
   Package,
   Plus,
@@ -12,8 +12,11 @@ import { motion, AnimatePresence } from 'framer-motion';
 import PageHero from '../../components/PageHero';
 import Pagination from '../../components/Pagination';
 import { ActionIconButton, ActionIconGroup } from '../../components/ui/ActionIconButton';
+import { TableExportMenu } from '../../components/ui/TableExportMenu';
 import { useEscapeClose } from '../../hooks/useEscapeClose';
+import { buildVisibleIpamExportData, fetchAllIpamExportItems } from './ipamExport';
 
+import { TableActionCell, TableActionHeader } from '../../components/ui/TableActionColumn';
 interface IPPool {
   id: string;
   name: string;
@@ -44,6 +47,7 @@ interface IPPoolTabProps {
 
 const IPPoolTab: React.FC<IPPoolTabProps> = ({ language, t }) => {
   const zh = language === 'zh';
+  const tableRef = useRef<HTMLTableElement>(null);
 
   const [pools, setPools] = useState<IPPool[]>([]);
   const [prefixes, setPrefixes] = useState<Prefix[]>([]);
@@ -185,6 +189,22 @@ const IPPoolTab: React.FC<IPPoolTabProps> = ({ language, t }) => {
   const filteredPools = pools;
   const paginatedPools = pools;
 
+  const exportData = useCallback(async () => {
+    const params = new URLSearchParams({ q: search.trim() });
+    const allPools = await fetchAllIpamExportItems<IPPool>('/api/ipam/pools', params);
+    return buildVisibleIpamExportData(tableRef.current, [
+      { header: zh ? '地址池名称' : 'Pool Name', value: (pool) => pool.name },
+      { header: zh ? '所属前缀' : 'Parent Prefix', value: (pool) => pool.prefix || '-' },
+      { header: zh ? '起始IP' : 'Start IP', value: (pool) => pool.start_ip },
+      { header: zh ? '结束IP' : 'End IP', value: (pool) => pool.end_ip },
+      { header: zh ? '已用IP数' : 'Used IPs', value: (pool) => pool.used_ips },
+      { header: zh ? '总IP数' : 'Total IPs', value: (pool) => pool.total_ips },
+      { header: zh ? '所属租户' : 'Tenant', value: (pool) => pool.tenant_name || '-' },
+      { header: zh ? '状态' : 'Status', value: (pool) => pool.status.toUpperCase() },
+      { header: zh ? '利用率' : 'Utilization', value: (pool) => `${pool.utilization}%` },
+    ], allPools);
+  }, [search, zh]);
+
   const getUtilColor = (util: number) => {
     if (util < 60) return 'from-emerald-400 to-green-500';
     if (util < 80) return 'from-amber-400 to-orange-500';
@@ -198,13 +218,16 @@ const IPPoolTab: React.FC<IPPoolTabProps> = ({ language, t }) => {
         title={zh ? 'IP地址池管理' : 'IP Pool Management'}
         subtitle={zh ? '定义网段内的连续IP范围（如办公网DHCP池、动态分配池），监控各地址池的实时水位与利用率' : 'Manage IP range sub-allocations like DHCP dynamic pools or server range pools.'}
         actions={
-          <button
-            onClick={() => openForm(null)}
-            className="flex items-center gap-1.5 px-4 py-2 bg-gradient-to-r from-cyan-500 to-blue-600 hover:from-cyan-600 hover:to-blue-700 text-white rounded-xl text-xs font-bold shadow-lg shadow-cyan-500/20 active:scale-95 transition-all"
-          >
-            <Plus size={14} />
-            {zh ? '创建地址池' : 'Create Pool'}
-          </button>
+          <div className="flex items-center gap-2">
+            <TableExportMenu tableRef={tableRef} exportData={exportData} filename="ipam-address-pools" language={zh ? 'zh' : 'en'} disabled={loading || paginatedPools.length === 0} />
+            <button
+              onClick={() => openForm(null)}
+              className="flex items-center gap-1.5 px-4 py-2 bg-gradient-to-r from-cyan-500 to-blue-600 hover:from-cyan-600 hover:to-blue-700 text-white rounded-xl text-xs font-bold shadow-lg shadow-cyan-500/20 active:scale-95 transition-all"
+            >
+              <Plus size={14} />
+              {zh ? '创建地址池' : 'Create Pool'}
+            </button>
+          </div>
         }
         extras={
           <div className="relative w-full md:w-64">
@@ -228,18 +251,19 @@ const IPPoolTab: React.FC<IPPoolTabProps> = ({ language, t }) => {
               {zh ? '加载中...' : 'Loading IP pools...'}
             </div>
           ) : (
-            <table className="nx-data-table text-left">
+            <table ref={tableRef} className="nx-data-table text-left">
               <thead>
                 <tr className="border-b border-gray-100 bg-gray-50/40 text-[10px] font-bold text-gray-400 uppercase tracking-wider select-none">
                   <th className="pl-6 py-4">{zh ? '地址池名称' : 'Pool Name'}</th>
                   <th className="px-4 py-4">{zh ? '所属前缀' : 'Parent Prefix'}</th>
                   <th className="px-4 py-4">{zh ? '起始IP' : 'Start IP'}</th>
                   <th className="px-4 py-4">{zh ? '结束IP' : 'End IP'}</th>
-                  <th className="px-4 py-4">{zh ? '池容量 (IP数)' : 'Pool Capacity'}</th>
+                  <th className="px-4 py-4">{zh ? '已用IP数' : 'Used IPs'}</th>
+                  <th className="px-4 py-4">{zh ? '总IP数' : 'Total IPs'}</th>
                   <th className="px-4 py-4">{zh ? '所属租户' : 'Tenant'}</th>
                   <th className="px-4 py-4">{zh ? '状态' : 'Status'}</th>
                   <th className="px-4 py-4">{zh ? '利用率' : 'Utilization'}</th>
-                  <th className="pr-6 py-4 text-right">{zh ? '操作' : 'Actions'}</th>
+                  <TableActionHeader className="pr-6 py-4 text-right">{zh ? '操作' : 'Actions'}</TableActionHeader>
                 </tr>
               </thead>
               <tbody>
@@ -253,7 +277,8 @@ const IPPoolTab: React.FC<IPPoolTabProps> = ({ language, t }) => {
                       <td className="px-4 py-4 text-xs font-mono font-bold text-cyan-600">{node.prefix}</td>
                       <td className="px-4 py-4 font-mono text-xs text-gray-700">{node.start_ip}</td>
                       <td className="px-4 py-4 font-mono text-xs text-gray-700">{node.end_ip}</td>
-                      <td className="px-4 py-4 text-xs text-gray-600 font-semibold">{node.total_ips} IPs</td>
+                      <td className="px-4 py-4 text-xs text-gray-600 font-semibold">{node.used_ips}</td>
+                      <td className="px-4 py-4 text-xs text-gray-600 font-semibold">{node.total_ips}</td>
                       <td className="px-4 py-4 text-xs text-gray-500 font-medium">{node.tenant_name || '-'}</td>
                       <td className="px-4 py-4">
                         <span className={`inline-flex items-center gap-1.5 px-2.5 py-0.5 rounded-full text-[10px] font-bold bg-emerald-50 text-emerald-600 border border-emerald-500/10`}>
@@ -263,10 +288,7 @@ const IPPoolTab: React.FC<IPPoolTabProps> = ({ language, t }) => {
                       </td>
                       <td className="px-4 py-4">
                         <div className="flex flex-col gap-1 w-24">
-                          <div className="flex justify-between text-[10px] font-bold text-gray-400">
-                            <span>{node.used_ips}/{node.total_ips}</span>
-                            <span>{node.utilization}%</span>
-                          </div>
+                          <span className="text-[10px] font-bold text-gray-500">{node.utilization}%</span>
                           <div className="w-full h-1.5 bg-gray-100 rounded-full overflow-hidden">
                             <div 
                               className={`h-full rounded-full bg-gradient-to-r ${getUtilColor(node.utilization)}`} 
@@ -275,7 +297,7 @@ const IPPoolTab: React.FC<IPPoolTabProps> = ({ language, t }) => {
                           </div>
                         </div>
                       </td>
-                      <td className="pr-6 py-4 text-right">
+                      <TableActionCell className="pr-6 py-4 text-right">
                         <ActionIconGroup label={zh ? '地址池操作' : 'Pool actions'} className="opacity-0 transition-opacity group-hover:opacity-100">
                           <ActionIconButton
                             icon={Pencil}
@@ -289,12 +311,12 @@ const IPPoolTab: React.FC<IPPoolTabProps> = ({ language, t }) => {
                             onClick={() => setShowDeleteConfirm(node.id)}
                           />
                         </ActionIconGroup>
-                      </td>
+                      </TableActionCell>
                     </tr>
                   ))
                 ) : (
                   <tr>
-                    <td colSpan={9} className="py-12 text-center text-xs text-gray-400 font-medium">
+                    <td colSpan={10} className="py-12 text-center text-xs text-gray-400 font-medium">
                       {zh ? '暂无动态分配地址池记录' : 'No IP pools configured'}
                     </td>
                   </tr>

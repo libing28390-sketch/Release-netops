@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useCallback, useMemo } from 'react';
+import React, { useState, useEffect, useCallback, useMemo, useRef } from 'react';
 import {
   Network,
   Plus,
@@ -13,22 +13,22 @@ import {
   Eye,
   Info,
   RefreshCw,
-  Download,
   Check,
   AlertTriangle,
   ChevronDown,
   ChevronRight,
 } from 'lucide-react';
 import { motion, AnimatePresence } from 'framer-motion';
-import * as XLSX from 'xlsx';
 import PageHero from '../../components/PageHero';
 import Pagination from '../../components/Pagination';
 import { ActionButton, ActionIconButton, ActionIconGroup } from '../../components/ui/ActionIconButton';
+import { TableExportMenu } from '../../components/ui/TableExportMenu';
+import { buildVisibleIpamExportData, fetchAllIpamExportItems } from './ipamExport';
 import { useEscapeClose } from '../../hooks/useEscapeClose';
 import { useNavigate } from 'react-router-dom';
 import { isValidIPv4, isValidIPv6, toNum } from './helpers';
-import { fetchAllPrefixPages, mapPrefixesForExport, serializePrefixCsv } from './prefixExport';
 
+import { TableActionCell, TableActionHeader } from '../../components/ui/TableActionColumn';
 interface Prefix {
   id: string;
   prefix: string;
@@ -134,6 +134,8 @@ function prefixStatusLabel(status: string, zh: boolean): string {
 }
 
 const PrefixManagementTab: React.FC<PrefixManagementTabProps> = ({ language, t }) => {
+  const treeTableRef = useRef<HTMLTableElement>(null);
+  const prefixTableRef = useRef<HTMLTableElement>(null);
   const navigate = useNavigate();
   const zh = language === 'zh';
   
@@ -197,10 +199,6 @@ const PrefixManagementTab: React.FC<PrefixManagementTabProps> = ({ language, t }
   const [page, setPage] = useState(1);
   const [pageSize, setPageSize] = useState(20);
   const [totalPrefixes, setTotalPrefixes] = useState(0);
-  const [exportFormat, setExportFormat] = useState<'xlsx' | 'csv'>('xlsx');
-  const [exporting, setExporting] = useState(false);
-  const [exportNotice, setExportNotice] = useState('');
-  const [exportError, setExportError] = useState('');
 
   const usableIpDetails = useMemo(() => {
     const cidr = form.prefix.trim();
@@ -495,51 +493,6 @@ const PrefixManagementTab: React.FC<PrefixManagementTabProps> = ({ language, t }
     }
   }, [search, siteFilter, statusFilter, familyFilter, page, pageSize, authHeaders]);
 
-  const exportPrefixes = async () => {
-    setExporting(true);
-    setExportNotice('');
-    setExportError('');
-    try {
-      const allPrefixes = await fetchAllPrefixPages('/api/ipam/subnets', {
-        q: search,
-        site: siteFilter,
-        status: statusFilter,
-        family: familyFilter,
-      }, authHeaders(), zh ? 'zh' : 'en');
-
-      const exportData = mapPrefixesForExport(allPrefixes, zh ? 'zh' : 'en');
-      const timestamp = new Date().toISOString().slice(0, 10);
-      const basename = zh ? `IPAM前缀_${timestamp}` : `ipam_prefixes_${timestamp}`;
-      if (exportFormat === 'xlsx') {
-        const worksheet = XLSX.utils.aoa_to_sheet([exportData.headers, ...exportData.rows]);
-        worksheet['!cols'] = exportData.headers.map((header, index) => {
-          const contentWidth = exportData.rows.reduce((width, row) => Math.max(width, String(row[index] ?? '').length), header.length);
-          return { wch: Math.min(44, Math.max(12, contentWidth + 2)) };
-        });
-        if (worksheet['!ref']) worksheet['!autofilter'] = { ref: worksheet['!ref'] };
-        const workbook = XLSX.utils.book_new();
-        XLSX.utils.book_append_sheet(workbook, worksheet, 'Prefixes');
-        XLSX.writeFile(workbook, `${basename}.xlsx`);
-      } else {
-        const blob = new Blob([serializePrefixCsv(exportData)], { type: 'text/csv;charset=utf-8;' });
-        const url = URL.createObjectURL(blob);
-        const downloadLink = document.createElement('a');
-        downloadLink.href = url;
-        downloadLink.download = `${basename}.csv`;
-        downloadLink.style.display = 'none';
-        document.body.appendChild(downloadLink);
-        downloadLink.click();
-        downloadLink.remove();
-        window.setTimeout(() => URL.revokeObjectURL(url), 0);
-      }
-      setExportNotice(zh ? `已导出 ${allPrefixes.length} 条前缀` : `Exported ${allPrefixes.length} prefixes`);
-    } catch (error) {
-      setExportError(error instanceof Error ? error.message : String(error));
-    } finally {
-      setExporting(false);
-    }
-  };
-
   const openInterfaceGeneration = async (clearResult = true) => {
     setInterfaceGenerationLoading(true);
     setInterfaceGenerationError('');
@@ -798,11 +751,48 @@ const PrefixManagementTab: React.FC<PrefixManagementTabProps> = ({ language, t }
   const filteredPrefixes = prefixes;
   const paginatedPrefixes = prefixes;
 
-  const getUtilColor = (util: number) => {
-    if (util < 60) return 'from-emerald-400 to-green-500';
-    if (util < 80) return 'from-amber-400 to-orange-500';
-    return 'from-rose-400 to-red-500';
-  };
+  const exportData = useCallback(async () => {
+    const table = viewMode === 'tree' ? treeTableRef.current : prefixTableRef.current;
+    let allPrefixes: Prefix[];
+    if (viewMode === 'tree') {
+      const flatten = (prefix: Prefix): Prefix[] => [prefix, ...(prefix.children || []).flatMap(flatten)];
+      allPrefixes = treeData.filter(matchFamily).flatMap(flatten);
+    } else {
+      const params = new URLSearchParams({ q: search, site: siteFilter, status: statusFilter, family: familyFilter });
+      allPrefixes = await fetchAllIpamExportItems<Prefix>('/api/ipam/subnets', params);
+    }
+
+    const roleText = (prefix: Prefix) => {
+      const networkType = NETWORK_TYPES[prefix.network_type || ''] || NETWORK_TYPES.unclassified;
+      const addressRoles = parseAddressRoles(prefix.address_roles_json);
+      const labels = [zh ? networkType.labelZh : networkType.label];
+      if (addressRoles.some((role) => role.address_role && role.address_role !== 'dhcp_lease')) labels.push('VIP');
+      if (addressRoles.some((role) => role.address_role === 'dhcp_lease')) labels.push('DHCP');
+      if (viewMode !== 'tree') {
+        if (prefix.manual_override) labels.push(zh ? '人工' : 'Manual');
+        if (prefix.mixed_network) labels.push(zh ? '混合' : 'Mixed');
+        if (prefix.conflict_status) labels.push(zh ? '冲突' : 'Conflict');
+      }
+      return labels.join(' · ');
+    };
+
+    return buildVisibleIpamExportData(table, [
+      { header: zh ? 'Prefix网段' : 'Prefix / CIDR', value: (prefix) => prefix.prefix },
+      { header: zh ? '网段名称' : 'Name', value: (prefix) => prefix.name || '-' },
+      { header: zh ? '用途' : 'Role', value: roleText },
+      { header: zh ? '所属VRF' : 'VRF', value: (prefix) => prefix.vrf_name || '-' },
+      { header: zh ? '所属VLAN' : 'VLAN', value: (prefix) => prefix.vlan_id ? `VLAN ${prefix.vlan_id}` : '-' },
+      { header: zh ? '网关IP' : 'Gateway IP', value: (prefix) => prefix.gateway || '-' },
+      { header: zh ? '网关设备' : 'Gateway Device', value: (prefix) => prefix.gateway_device_name || '-' },
+      { header: zh ? '物理站点' : 'Site', value: (prefix) => prefix.site_name || prefix.site_code || '-' },
+      { header: zh ? '创建时间' : 'Created At', value: (prefix) => formatPrefixTimestamp(prefix.created_at, language) },
+      { header: zh ? '网段状态' : 'Status', value: (prefix) => prefixStatusLabel(prefix.status, zh) },
+      { header: zh ? '已分配IP数' : 'Allocated IPs', value: (prefix) => prefix.used_ips ?? 0 },
+      { header: zh ? '活跃发现IP数' : 'Active Discovery IPs', value: (prefix) => prefix.active_ips ?? 0 },
+      { header: zh ? '可用容量' : 'Usable Capacity', value: (prefix) => prefix.total_ips ?? 0 },
+      { header: zh ? '利用率' : 'Utilization', value: (prefix) => `${prefix.utilization ?? 0}%` },
+    ], allPrefixes);
+  }, [viewMode, treeData, matchFamily, search, siteFilter, statusFilter, familyFilter, zh, language]);
 
   // Recursive tree renderer
   const renderTreeNode = (node: Prefix, depth = 0) => {
@@ -848,16 +838,8 @@ const PrefixManagementTab: React.FC<PrefixManagementTabProps> = ({ language, t }
               '-'
             )}
           </td>
-          <td className="px-4 py-4 text-xs text-gray-600 font-medium">
-            {node.gateway ? (
-              <div className="flex flex-col">
-                <span className="font-mono font-bold text-gray-700">{node.gateway}</span>
-                {node.gateway_device_name && (
-                  <span className="text-[10px] text-gray-400">{node.gateway_device_name}{node.gateway_interface_id ? ` - ${node.gateway_interface_id}` : ''}</span>
-                )}
-              </div>
-            ) : '-'}
-          </td>
+          <td className="px-4 py-4 text-xs font-mono font-bold text-gray-700">{node.gateway || '-'}</td>
+          <td className="px-4 py-4 text-xs text-gray-600 font-medium">{node.gateway_device_name || '-'}</td>
           <td className="px-4 py-4 text-xs text-gray-600 font-semibold">{node.site_name || node.site_code || '-'}</td>
           <td className="px-4 py-4 text-xs text-gray-500 whitespace-nowrap">{formatPrefixTimestamp(node.created_at, language)}</td>
           <td className="px-4 py-4">
@@ -874,24 +856,10 @@ const PrefixManagementTab: React.FC<PrefixManagementTabProps> = ({ language, t }
               {prefixStatusLabel(node.status, zh)}
             </span>
           </td>
-          <td className="px-4 py-4">
-            <div className="flex w-40 flex-col gap-1" title={zh ? '已分配：IPAM 有效分配；活跃发现：最近发现的在线地址；可用容量：扣除保留地址后的网段容量' : 'Allocated: managed IPAM allocations; Active: recently discovered addresses; Capacity: usable prefix capacity.'}>
-              <div className="grid grid-cols-3 gap-1 text-center text-[9px] text-gray-400">
-                <span><b className="block text-[10px] text-gray-600">{node.used_ips}</b>{zh ? '已分配' : 'Allocated'}</span>
-                <span><b className="block text-[10px] text-gray-600">{node.active_ips || 0}</b>{zh ? '活跃发现' : 'Active'}</span>
-                <span><b className="block text-[10px] text-gray-600">{node.total_ips}</b>{zh ? '可用容量' : 'Capacity'}</span>
-              </div>
-              <div className="flex items-center gap-2">
-                <div className="h-1.5 flex-1 overflow-hidden rounded-full bg-gray-100">
-                <div 
-                  className={`h-full rounded-full bg-gradient-to-r ${getUtilColor(node.utilization)}`} 
-                  style={{ width: `${node.utilization}%` }}
-                />
-                </div>
-                <span className="text-[9px] font-bold text-gray-500">{node.utilization}%</span>
-              </div>
-            </div>
-          </td>
+          <td className="px-4 py-4 text-xs text-gray-600 tabular-nums">{node.used_ips}</td>
+          <td className="px-4 py-4 text-xs text-gray-600 tabular-nums">{node.active_ips || 0}</td>
+          <td className="px-4 py-4 text-xs text-gray-600 tabular-nums">{node.total_ips}</td>
+          <td className="px-4 py-4 text-xs font-semibold text-gray-600 tabular-nums">{node.utilization}%</td>
           <td className="pr-6 py-4 text-right">
             <ActionIconGroup label={zh ? '前缀操作' : 'Prefix actions'} className="opacity-0 transition-opacity group-hover:opacity-100">
               <ActionIconButton
@@ -921,6 +889,7 @@ const PrefixManagementTab: React.FC<PrefixManagementTabProps> = ({ language, t }
         subtitle={zh ? '管理全局IP前缀与网段的层次树结构，并绑定所属的VRF、VLAN与物理站点' : 'Manage global IP prefixes, hierarchical routing network blocks, and CMDB associations.'}
         actions={
           <div className="flex items-center gap-2">
+            <TableExportMenu tableRef={viewMode === 'tree' ? treeTableRef : prefixTableRef} exportData={exportData} filename="ipam-prefixes" language={zh ? 'zh' : 'en'} disabled={loading} />
             <ActionButton
               icon={Plus}
               variant="primary"
@@ -934,26 +903,6 @@ const PrefixManagementTab: React.FC<PrefixManagementTabProps> = ({ language, t }
               onClick={() => openInterfaceGeneration()}
             >
               {zh ? '从接口 IP 生成' : 'Generate from Interfaces'}
-            </ActionButton>
-            <select
-              aria-label={zh ? '导出格式' : 'Export format'}
-              title={zh ? '导出当前筛选下的全部前缀，不受列表分页影响' : 'Export all prefixes matching the current filters, across pages'}
-              value={exportFormat}
-              onChange={(event) => setExportFormat(event.target.value as 'xlsx' | 'csv')}
-              disabled={exporting}
-              className="h-9 rounded-xl border border-gray-200 bg-white px-2 text-xs font-semibold text-gray-600 outline-none focus:border-cyan-400 disabled:opacity-50"
-            >
-              <option value="xlsx">XLSX</option>
-              <option value="csv">CSV</option>
-            </select>
-            <ActionButton
-              icon={Download}
-              variant="default"
-              onClick={exportPrefixes}
-              disabled={exporting}
-              title={zh ? '导出当前筛选结果的全部前缀' : 'Export every prefix matching the current filters'}
-            >
-              {exporting ? (zh ? '导出中…' : 'Exporting…') : (zh ? '导出' : 'Export')}
             </ActionButton>
             {selectedIds.size > 0 && (
               <ActionButton
@@ -1051,18 +1000,6 @@ const PrefixManagementTab: React.FC<PrefixManagementTabProps> = ({ language, t }
         }
       />
 
-      {(exportError || exportNotice) && (
-        <div
-          role={exportError ? 'alert' : 'status'}
-          className={`flex shrink-0 items-center justify-between rounded-xl border px-4 py-2 text-xs font-semibold ${exportError ? 'border-rose-200 bg-rose-50 text-rose-700' : 'border-emerald-200 bg-emerald-50 text-emerald-700'}`}
-        >
-          <span>{exportError || exportNotice}</span>
-          <button type="button" onClick={() => { setExportError(''); setExportNotice(''); }} className="ml-3 rounded px-2 py-1 opacity-70 hover:opacity-100" aria-label={zh ? '关闭导出消息' : 'Dismiss export message'}>
-            ×
-          </button>
-        </div>
-      )}
-
       {classificationSummary && (
         <div className="grid grid-cols-2 md:grid-cols-6 gap-2">
           {[
@@ -1089,7 +1026,7 @@ const PrefixManagementTab: React.FC<PrefixManagementTabProps> = ({ language, t }
               {zh ? '加载中...' : 'Loading prefixes data...'}
             </div>
           ) : viewMode === 'tree' ? (
-            <table className="nx-data-table text-left">
+            <table ref={treeTableRef} className="nx-data-table text-left">
               <thead>
                 <tr className="border-b border-gray-100 bg-gray-50/40 text-[10px] font-bold text-gray-400 uppercase tracking-wider select-none">
                   <th className="pl-6 py-4">{zh ? 'Prefix网段' : 'Prefix / CIDR'}</th>
@@ -1097,12 +1034,17 @@ const PrefixManagementTab: React.FC<PrefixManagementTabProps> = ({ language, t }
                   <th className="px-4 py-4">{zh ? '用途' : 'Role'}</th>
                   <th className="px-4 py-4">{zh ? '所属VRF' : 'VRF'}</th>
                   <th className="px-4 py-4">{zh ? '所属VLAN' : 'VLAN'}</th>
-                  <th className="px-4 py-4">{zh ? '关联网关' : 'Gateway'}</th>
+                  <th className="px-4 py-4">{zh ? '网关IP' : 'Gateway IP'}</th>
+                  <th className="px-4 py-4">{zh ? '网关设备' : 'Gateway Device'}</th>
                   <th className="px-4 py-4">{zh ? '物理站点' : 'Site'}</th>
                   <th className="px-4 py-4">{zh ? '创建时间' : 'Created At'}</th>
                   <th className="px-4 py-4">{zh ? '网段状态' : 'Status'}</th>
-                  <th className="px-4 py-4">{zh ? '利用率 (已分配/在线/可用)' : 'Utilization'}</th>
-                  <th className="pr-6 py-4 text-right">{zh ? '操作' : 'Actions'}</th>
+                  <th className="px-4 py-4">{zh ? '已分配IP数' : 'Allocated IPs'}</th>
+                  <th className="px-4 py-4">{zh ? '活跃发现IP数' : 'Active Discovery IPs'}</th>
+                  <th className="px-4 py-4">{zh ? '可用容量' : 'Usable Capacity'}</th>
+                  <th className="px-4 py-4">{zh ? '利用率' : 'Utilization'}
+                  </th>
+                  <TableActionHeader className="pr-6 py-4 text-right">{zh ? '操作' : 'Actions'}</TableActionHeader>
                 </tr>
               </thead>
               <tbody>
@@ -1110,7 +1052,7 @@ const PrefixManagementTab: React.FC<PrefixManagementTabProps> = ({ language, t }
                   treeData.filter(matchFamily).map((node) => renderTreeNode(node, 0))
                 ) : (
                   <tr>
-                    <td colSpan={10} className="py-12 text-center text-xs text-gray-400 font-medium">
+                    <td colSpan={15} className="py-12 text-center text-xs text-gray-400 font-medium">
                       {zh ? '无层次树数据' : 'No subnet structure tree available'}
                     </td>
                   </tr>
@@ -1118,7 +1060,7 @@ const PrefixManagementTab: React.FC<PrefixManagementTabProps> = ({ language, t }
               </tbody>
             </table>
           ) : (
-            <table className="nx-data-table text-left">
+            <table ref={prefixTableRef} className="nx-data-table text-left">
               <thead>
                 <tr className="border-b border-gray-100 bg-gray-50/40 text-[10px] font-bold text-gray-400 uppercase tracking-wider select-none">
                   <th className="pl-6 py-4 w-10">
@@ -1134,12 +1076,16 @@ const PrefixManagementTab: React.FC<PrefixManagementTabProps> = ({ language, t }
                   <th className="px-4 py-4">{zh ? '用途' : 'Role'}</th>
                   <th className="px-4 py-4">{zh ? '所属VRF' : 'VRF'}</th>
                   <th className="px-4 py-4">{zh ? '所属VLAN' : 'VLAN'}</th>
-                  <th className="px-4 py-4">{zh ? '关联网关' : 'Gateway'}</th>
+                  <th className="px-4 py-4">{zh ? '网关IP' : 'Gateway IP'}</th>
+                  <th className="px-4 py-4">{zh ? '网关设备' : 'Gateway Device'}</th>
                   <th className="px-4 py-4">{zh ? '物理站点' : 'Site'}</th>
                   <th className="px-4 py-4">{zh ? '创建时间' : 'Created At'}</th>
                   <th className="px-4 py-4">{zh ? '网段状态' : 'Status'}</th>
-                  <th className="px-4 py-4">{zh ? '利用率 (已分配/在线/可用)' : 'Utilization'}</th>
-                  <th className="pr-6 py-4 text-right">{zh ? '操作' : 'Actions'}</th>
+                  <th className="px-4 py-4">{zh ? '已分配IP数' : 'Allocated IPs'}</th>
+                  <th className="px-4 py-4">{zh ? '活跃发现IP数' : 'Active Discovery IPs'}</th>
+                  <th className="px-4 py-4">{zh ? '可用容量' : 'Usable Capacity'}</th>
+                  <th className="px-4 py-4">{zh ? '利用率' : 'Utilization'}</th>
+                  <TableActionHeader className="pr-6 py-4 text-right">{zh ? '操作' : 'Actions'}</TableActionHeader>
                 </tr>
               </thead>
               <tbody>
@@ -1155,7 +1101,7 @@ const PrefixManagementTab: React.FC<PrefixManagementTabProps> = ({ language, t }
                       <React.Fragment key={node.id}>
                       {showSiteHeader && (
                         <tr className="border-b border-cyan-100 bg-cyan-50/60">
-                          <td colSpan={12} className="px-5 py-2.5">
+                          <td colSpan={16} className="px-5 py-2.5">
                             <button
                               type="button"
                               onClick={() => setCollapsedSites((current) => ({ ...current, [siteKey]: !current[siteKey] }))}
@@ -1237,16 +1183,8 @@ const PrefixManagementTab: React.FC<PrefixManagementTabProps> = ({ language, t }
                             '-'
                           )}
                         </td>
-                        <td className="px-4 py-4 text-xs text-gray-600 font-medium">
-                          {node.gateway ? (
-                            <div className="flex flex-col">
-                              <span className="font-mono font-bold text-gray-700">{node.gateway}</span>
-                              {node.gateway_device_name && (
-                                <span className="text-[10px] text-gray-400">{node.gateway_device_name}{node.gateway_interface_id ? ` - ${node.gateway_interface_id}` : ''}</span>
-                              )}
-                            </div>
-                          ) : '-'}
-                        </td>
+                        <td className="px-4 py-4 text-xs font-mono font-bold text-gray-700">{node.gateway || '-'}</td>
+                        <td className="px-4 py-4 text-xs text-gray-600 font-medium">{node.gateway_device_name || '-'}</td>
                         <td className="px-4 py-4 text-xs text-gray-600 font-semibold">{node.site_name || node.site_code || '-'}</td>
                         <td className="px-4 py-4 text-xs text-gray-500 whitespace-nowrap">{formatPrefixTimestamp(node.created_at, language)}</td>
                         <td className="px-4 py-4">
@@ -1263,25 +1201,11 @@ const PrefixManagementTab: React.FC<PrefixManagementTabProps> = ({ language, t }
                             {prefixStatusLabel(node.status, zh)}
                           </span>
                         </td>
-                        <td className="px-4 py-4">
-                          <div className="flex w-40 flex-col gap-1" title={zh ? '已分配：IPAM 有效分配；活跃发现：最近发现的在线地址；可用容量：扣除保留地址后的网段容量' : 'Allocated: managed IPAM allocations; Active: recently discovered addresses; Capacity: usable prefix capacity.'}>
-                            <div className="grid grid-cols-3 gap-1 text-center text-[9px] text-gray-400">
-                              <span><b className="block text-[10px] text-gray-600">{node.used_ips}</b>{zh ? '已分配' : 'Allocated'}</span>
-                              <span><b className="block text-[10px] text-gray-600">{node.active_ips || 0}</b>{zh ? '活跃发现' : 'Active'}</span>
-                              <span><b className="block text-[10px] text-gray-600">{node.total_ips}</b>{zh ? '可用容量' : 'Capacity'}</span>
-                            </div>
-                            <div className="flex items-center gap-2">
-                              <div className="h-1.5 flex-1 overflow-hidden rounded-full bg-gray-100">
-                              <div 
-                                className={`h-full rounded-full bg-gradient-to-r ${getUtilColor(node.utilization)}`} 
-                                style={{ width: `${node.utilization}%` }}
-                              />
-                              </div>
-                              <span className="text-[9px] font-bold text-gray-500">{node.utilization}%</span>
-                            </div>
-                          </div>
-                        </td>
-                        <td className="pr-6 py-4 text-right">
+                        <td className="px-4 py-4 text-xs text-gray-600 tabular-nums">{node.used_ips}</td>
+                        <td className="px-4 py-4 text-xs text-gray-600 tabular-nums">{node.active_ips || 0}</td>
+                        <td className="px-4 py-4 text-xs text-gray-600 tabular-nums">{node.total_ips}</td>
+                        <td className="px-4 py-4 text-xs font-semibold text-gray-600 tabular-nums">{node.utilization}%</td>
+                        <TableActionCell className="pr-6 py-4 text-right">
                           <ActionIconGroup label={zh ? '前缀操作' : 'Prefix actions'} className="opacity-0 transition-opacity group-hover:opacity-100">
                             <ActionIconButton
                               icon={Pencil}
@@ -1295,14 +1219,14 @@ const PrefixManagementTab: React.FC<PrefixManagementTabProps> = ({ language, t }
                               onClick={() => setShowDeleteConfirm(node.id)}
                             />
                           </ActionIconGroup>
-                        </td>
+                        </TableActionCell>
                       </tr>}
                       </React.Fragment>
                     );
                   })
                 ) : (
                   <tr>
-                    <td colSpan={12} className="py-12 text-center text-xs text-gray-400 font-medium">
+                    <td colSpan={16} className="py-12 text-center text-xs text-gray-400 font-medium">
                       {zh ? '无前缀网段数据' : 'No prefixes data registered'}
                     </td>
                   </tr>
@@ -1343,9 +1267,24 @@ const PrefixManagementTab: React.FC<PrefixManagementTabProps> = ({ language, t }
                   <h3 className="font-bold text-gray-900">{zh ? '从接口采集生成 IPAM 网段' : 'Generate IPAM Prefixes from Interfaces'}</h3>
                   <p className="text-xs text-gray-500 mt-1">{zh ? '来源为当前接口采集结果；不会读取或恢复旧 IPAM 前缀。' : 'Uses current interface collection only; legacy IPAM prefixes are never restored.'}</p>
                 </div>
-                <button onClick={() => setShowInterfaceGeneration(false)} className="p-1.5 rounded-lg hover:bg-gray-50 text-gray-400">
-                  <X size={16} />
-                </button>
+                <div className="flex items-center gap-2">
+                  {interfaceCandidates.length > 0 && <TableExportMenu
+                    filename="ipam-interface-prefix-candidates"
+                    language={zh ? 'zh' : 'en'}
+                    disabled={interfaceGenerationLoading}
+                    exportData={{
+                      headers: [zh ? '候选前缀' : 'Candidate Prefix', zh ? '接口数' : 'Interfaces', zh ? '状态' : 'Status'],
+                      rows: interfaceCandidates.map(candidate => [
+                        candidate.prefix,
+                        candidate.interface_count,
+                        candidate.status === 'existing' ? (zh ? '已存在' : 'Existing') : (zh ? '新建项' : 'New'),
+                      ]),
+                    }}
+                  />}
+                  <button onClick={() => setShowInterfaceGeneration(false)} className="p-1.5 rounded-lg hover:bg-gray-50 text-gray-400">
+                    <X size={16} />
+                  </button>
+                </div>
               </div>
 
               <div className="flex-1 overflow-y-auto p-6 space-y-4">

@@ -1,3 +1,4 @@
+import { DataTable } from '../../../components/DataTable';
 import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { AlertCircle, CheckCircle2, ChevronLeft, ChevronRight, Loader2, Play, RefreshCw, Search, Square, X } from 'lucide-react';
 import {
@@ -8,7 +9,10 @@ import {
   type WindowsServiceAction,
 } from '../../../api/windowsManagement';
 import { useEscapeClose } from '../../../hooks/useEscapeClose';
+import { ActionIconButton } from '../../../components/ui/ActionIconButton';
 
+import { TableActionCell, TableActionHeader } from '../../../components/ui/TableActionColumn';
+import type { TableExportData } from '../../../components/ui/TableExportMenu';
 interface WindowsServiceModalProps {
   isOpen: boolean;
   assetId: string | null;
@@ -66,6 +70,9 @@ export default function WindowsServiceModal({
     paused: isZh ? '已暂停' : 'Paused',
     unknown: isZh ? '未知' : 'Unknown',
     name: isZh ? '服务' : 'Service',
+    serviceName: isZh ? '服务名称' : 'Service name',
+    displayName: isZh ? '显示名称' : 'Display name',
+    description: isZh ? '说明' : 'Description',
     status: isZh ? '状态' : 'Status',
     actions: isZh ? '操作' : 'Actions',
     start: isZh ? '启动' : 'Start',
@@ -79,6 +86,35 @@ export default function WindowsServiceModal({
     page: isZh ? '页' : 'pages',
     reason: isZh ? '操作原因（必填）' : 'Reason (required)',
   }), [isZh]);
+
+  const exportAllServices = useCallback(async (): Promise<TableExportData> => {
+    if (!assetId) throw new Error(text.loadError);
+    const allServices: WindowsService[] = [];
+    let page = 1;
+    let total = Number.POSITIVE_INFINITY;
+    while (allServices.length < total) {
+      const result = await getWindowsServices(assetId, { page, pageSize: 100, search, status });
+      allServices.push(...result.items);
+      total = result.total;
+      if (!result.items.length && allServices.length < total) {
+        throw new Error(`Windows 服务导出不完整：已读取 ${allServices.length} / ${total} 条。`);
+      }
+      page += 1;
+    }
+    return {
+      headers: [text.displayName, text.serviceName, text.description, text.status, isZh ? '启动类型' : 'Start type'],
+      rows: allServices.map((service) => {
+        const currentStatus = serviceStatus(service);
+        return [
+          service.display_name || service.name,
+          service.name,
+          service.description || '',
+          currentStatus === 'running' ? text.running : currentStatus === 'stopped' ? text.stopped : currentStatus === 'paused' ? text.paused : (service.status || text.unknown),
+          String(service.start_type || '—'),
+        ];
+      }),
+    };
+  }, [assetId, isZh, search, status, text]);
 
   const abortRequests = useCallback(() => {
     listAbortRef.current?.abort();
@@ -210,19 +246,21 @@ export default function WindowsServiceModal({
             <div className="flex min-h-[280px] flex-col items-center justify-center gap-2 text-sm text-slate-400"><Square size={24} /><span>{text.empty}</span></div>
           )}
           {viewState === 'ready' && services.length > 0 && (
-            <table className="w-full min-w-[680px] border-separate border-spacing-0 text-left text-xs">
-              <thead><tr className="text-[10px] uppercase tracking-wider text-slate-400"><th className="border-b border-slate-100 px-3 py-3">{text.name}</th><th className="border-b border-slate-100 px-3 py-3">{text.status}</th><th className="border-b border-slate-100 px-3 py-3">{isZh ? '启动类型' : 'Start type'}</th><th className="border-b border-slate-100 px-3 py-3 text-right">{text.actions}</th></tr></thead>
+            <DataTable unstyled exportConfig={{ filename: 'windows-services', language: isZh ? 'zh' : 'en', disabled: viewState !== 'ready' || services.length === 0, exportData: exportAllServices }} className="w-full min-w-[1100px] border-separate border-spacing-0 text-left text-xs">
+              <thead><tr className="text-[10px] uppercase tracking-wider text-slate-400"><th className="border-b border-slate-100 px-3 py-3">{text.displayName}</th><th className="border-b border-slate-100 px-3 py-3">{text.serviceName}</th><th className="border-b border-slate-100 px-3 py-3">{text.description}</th><th className="border-b border-slate-100 px-3 py-3">{text.status}</th><th className="border-b border-slate-100 px-3 py-3">{isZh ? '启动类型' : 'Start type'}</th><TableActionHeader className="border-b border-slate-100 px-3 py-3 text-right">{text.actions}</TableActionHeader></tr></thead>
               <tbody>{services.map((service) => {
                 const currentStatus = serviceStatus(service);
                 const isBusy = actionKey.startsWith(`${service.name}:`);
                 return <tr key={service.name} className="border-b border-slate-50 hover:bg-slate-50/70">
-                  <td className="px-3 py-3"><div className="font-semibold text-slate-700">{service.display_name || service.name}</div><div className="mt-0.5 font-mono text-[10px] text-slate-400">{service.name}</div>{service.description && <div className="mt-1 max-w-[370px] truncate text-[10px] text-slate-400">{service.description}</div>}</td>
+                  <td className="px-3 py-3 font-semibold text-slate-700">{service.display_name || service.name}</td>
+                  <td className="px-3 py-3 font-mono text-slate-500">{service.name}</td>
+                  <td className="max-w-[370px] truncate px-3 py-3 text-slate-500" title={service.description || ''}>{service.description || '—'}</td>
                   <td className="px-3 py-3"><span className={`rounded-full px-2 py-1 text-[10px] font-semibold ${statusClass[currentStatus] || 'bg-slate-100 text-slate-500'}`}>{currentStatus === 'running' ? text.running : currentStatus === 'stopped' ? text.stopped : currentStatus === 'paused' ? text.paused : (service.status || text.unknown)}</span></td>
                   <td className="px-3 py-3 text-slate-500">{String(service.start_type || '—')}</td>
-                  <td className="px-3 py-3"><div className="flex justify-end gap-1.5">{(['start', 'stop', 'restart'] as WindowsServiceAction[]).map((action) => { const ActionIcon = action === 'start' ? Play : action === 'stop' ? Square : RefreshCw; const disabled = isBusy || (action === 'start' && currentStatus === 'running') || (action === 'stop' && currentStatus === 'stopped'); return <button key={action} type="button" disabled={disabled} onClick={() => void performAction(service, action)} className="inline-flex items-center gap-1 rounded-lg border border-slate-200 px-2 py-1.5 text-[10px] font-semibold text-slate-600 transition hover:border-cyan-300 hover:bg-cyan-50 hover:text-cyan-700 disabled:cursor-not-allowed disabled:opacity-40"><ActionIcon size={12} className={isBusy ? 'animate-spin' : ''} />{action === 'start' ? text.start : action === 'stop' ? text.stop : text.restart}</button>; })}</div></td>
+                  <TableActionCell className="px-3 py-3">{(['start', 'stop', 'restart'] as WindowsServiceAction[]).map((action) => { const ActionIcon = action === 'start' ? Play : action === 'stop' ? Square : RefreshCw; const disabled = isBusy || (action === 'start' && currentStatus === 'running') || (action === 'stop' && currentStatus === 'stopped'); const label = action === 'start' ? text.start : action === 'stop' ? text.stop : text.restart; return <ActionIconButton key={action} icon={ActionIcon} label={label} iconClassName={isBusy ? 'animate-spin' : undefined} variant={action === 'start' ? 'success' : action === 'stop' ? 'danger' : 'accent'} disabled={disabled} onClick={() => void performAction(service, action)} />; })}</TableActionCell>
                 </tr>;
               })}</tbody>
-            </table>
+            </DataTable>
           )}
         </div>
 

@@ -1,12 +1,13 @@
 import React, { useState, useEffect } from 'react';
 import { motion } from 'motion/react';
-import { AlertTriangle, ChevronDown, ChevronRight, Eye, EyeOff, Pencil, Plus, Search, X } from 'lucide-react';
+import { AlertTriangle, ChevronDown, ChevronRight, Pencil, Plus, Search, X } from 'lucide-react';
 import type { Device, TagDefinition } from '../types';
 import { TAG_CATEGORY_LABELS } from '../types';
 import { apiRequest } from '../api/http';
 import { inferPlatformVendor, platformVendorLabel } from '../utils/platformVendor';
 import { SSH_ALGORITHM_PROFILE_OPTIONS, SSH_ALGORITHM_PROFILE_VALUES } from '../pages/AssetManagement/constants';
 import { useEscapeClose } from '../hooks/useEscapeClose';
+import { PasswordInputField } from './ui/PasswordInputField';
 
 type DeviceFormMode = 'add' | 'edit';
 
@@ -568,25 +569,20 @@ const DeviceFormModal: React.FC<DeviceFormModalProps> = ({
               />
             </div>
             <div>
-              <label className="mb-1.5 block text-xs font-medium uppercase tracking-wider text-black/60">Password</label>
-              <div className="relative">
-                <input
-                  type={passwordVisible ? 'text' : 'password'}
-                  value={form.password || ''}
-                  title={language === 'zh' ? 'SSH / Telnet 登录密码' : 'SSH / Telnet login password'}
-                  onChange={(event) => handleFieldChange('password', event.target.value)}
-                  placeholder={isAdd ? (language === 'zh' ? '输入 SSH 登录密码' : 'Enter SSH login password') : (language === 'zh' ? '留空则保持当前密码不变' : 'Leave blank to keep current password')}
-                  className="w-full rounded-xl border border-black/5 bg-black/[0.02] px-4 py-2.5 pr-10 text-sm outline-none transition-colors focus:border-black/20 focus:bg-white"
-                />
-                <button
-                  type="button"
-                  title={passwordVisible ? 'Hide password' : 'Show password'}
-                  onClick={onTogglePasswordVisibility}
-                  className="absolute right-3 top-1/2 -translate-y-1/2 text-black/30 transition-colors hover:text-black/60"
-                >
-                  {passwordVisible ? <EyeOff size={15} /> : <Eye size={15} />}
-                </button>
-              </div>
+              <label htmlFor="device-login-password" className="mb-1.5 block text-xs font-medium uppercase tracking-wider text-black/60">Password</label>
+              <PasswordInputField
+                id="device-login-password"
+                autoComplete="new-password"
+                visible={passwordVisible}
+                onVisibilityChange={() => onTogglePasswordVisibility()}
+                showPasswordLabel={language === 'zh' ? '显示登录密码' : 'Show login password'}
+                hidePasswordLabel={language === 'zh' ? '隐藏登录密码' : 'Hide login password'}
+                value={form.password || ''}
+                title={language === 'zh' ? 'SSH / Telnet 登录密码' : 'SSH / Telnet login password'}
+                onChange={(event) => handleFieldChange('password', event.target.value)}
+                placeholder={isAdd ? (language === 'zh' ? '输入 SSH 登录密码' : 'Enter SSH login password') : (language === 'zh' ? '留空则保持当前密码不变' : 'Leave blank to keep current password')}
+                className="rounded-xl bg-black/[0.02] py-2.5 text-sm focus:border-black/20 focus:bg-white"
+              />
             </div>
           </div>
 
@@ -639,13 +635,18 @@ const DeviceFormModal: React.FC<DeviceFormModalProps> = ({
                         />
                       </div>
                       <div>
-                        <label className="mb-1 block text-[10px] font-medium text-black/40">Password</label>
-                        <input
-                          type={passwordVisible ? 'text' : 'password'}
+                        <label htmlFor="device-normal-password" className="mb-1 block text-[10px] font-medium text-black/40">Password</label>
+                        <PasswordInputField
+                          id="device-normal-password"
+                          autoComplete="new-password"
+                          visible={passwordVisible}
+                          onVisibilityChange={() => onTogglePasswordVisibility()}
+                          showPasswordLabel={language === 'zh' ? '显示普通账户密码' : 'Show normal account password'}
+                          hidePasswordLabel={language === 'zh' ? '隐藏普通账户密码' : 'Hide normal account password'}
                           value={form.normal_password || ''}
                           onChange={(e) => handleFieldChange('normal_password', e.target.value)}
                           placeholder={!isAdd ? (language === 'zh' ? '留空保持不变' : 'Leave blank') : ''}
-                          className="w-full rounded-lg border border-black/5 bg-white px-3 py-1.5 text-xs outline-none focus:border-blue-200"
+                          className="rounded-lg bg-white py-1.5 text-xs focus:border-blue-200"
                         />
                       </div>
                     </div>
@@ -665,13 +666,18 @@ const DeviceFormModal: React.FC<DeviceFormModalProps> = ({
                         />
                       </div>
                       <div>
-                        <label className="mb-1 block text-[10px] font-medium text-black/40">Password</label>
-                        <input
-                          type={passwordVisible ? 'text' : 'password'}
+                        <label htmlFor="device-admin-password" className="mb-1 block text-[10px] font-medium text-black/40">Password</label>
+                        <PasswordInputField
+                          id="device-admin-password"
+                          autoComplete="new-password"
+                          visible={passwordVisible}
+                          onVisibilityChange={() => onTogglePasswordVisibility()}
+                          showPasswordLabel={language === 'zh' ? '显示特权账户密码' : 'Show admin account password'}
+                          hidePasswordLabel={language === 'zh' ? '隐藏特权账户密码' : 'Hide admin account password'}
                           value={form.admin_password || ''}
                           onChange={(e) => handleFieldChange('admin_password', e.target.value)}
                           placeholder={!isAdd ? (language === 'zh' ? '留空保持不变' : 'Leave blank') : ''}
-                          className="w-full rounded-lg border border-black/5 bg-white px-3 py-1.5 text-xs outline-none focus:border-orange-200"
+                          className="rounded-lg bg-white py-1.5 text-xs focus:border-orange-200"
                         />
                       </div>
                     </div>
@@ -680,7 +686,7 @@ const DeviceFormModal: React.FC<DeviceFormModalProps> = ({
               ) : (
                 <div className="grid grid-cols-1 gap-6 sm:grid-cols-2">
                   <div>
-                    <label className="mb-1.5 block text-xs font-medium uppercase tracking-wider text-black/60">
+                    <label htmlFor="device-enable-secret" className="mb-1.5 block text-xs font-medium uppercase tracking-wider text-black/60">
                       {language === 'zh' ? '特权用户名' : 'Privileged Username'}
                     </label>
                     <input
@@ -696,24 +702,19 @@ const DeviceFormModal: React.FC<DeviceFormModalProps> = ({
                     <label className="mb-1.5 block text-xs font-medium uppercase tracking-wider text-black/60">
                       {language === 'zh' ? 'Enable Secret（特权密码）' : 'Enable Secret'}
                     </label>
-                    <div className="relative">
-                      <input
-                        type={enablePwdVisible ? 'text' : 'password'}
-                        value={form.enable_password || ''}
-                        title={language === 'zh' ? '设备特权提权密码' : 'Device privilege escalation password'}
-                        onChange={(event) => handleFieldChange('enable_password', event.target.value)}
-                        placeholder={isAdd ? (language === 'zh' ? '输入特权提权密码' : 'Enter enable secret') : (language === 'zh' ? '留空则保持不变' : 'Leave blank to keep unchanged')}
-                        className="w-full rounded-xl border border-black/5 bg-black/[0.02] px-4 py-2.5 pr-10 text-sm outline-none transition-colors focus:border-black/20 focus:bg-white"
-                      />
-                      <button
-                        type="button"
-                        title={enablePwdVisible ? 'Hide' : 'Show'}
-                        onClick={() => setEnablePwdVisible(!enablePwdVisible)}
-                        className="absolute right-3 top-1/2 -translate-y-1/2 text-black/30 transition-colors hover:text-black/60"
-                      >
-                        {enablePwdVisible ? <EyeOff size={15} /> : <Eye size={15} />}
-                      </button>
-                    </div>
+                    <PasswordInputField
+                      id="device-enable-secret"
+                      autoComplete="new-password"
+                      visible={enablePwdVisible}
+                      onVisibilityChange={setEnablePwdVisible}
+                      showPasswordLabel={language === 'zh' ? '显示特权密钥' : 'Show enable secret'}
+                      hidePasswordLabel={language === 'zh' ? '隐藏特权密钥' : 'Hide enable secret'}
+                      value={form.enable_password || ''}
+                      title={language === 'zh' ? '设备特权提权密码' : 'Device privilege escalation password'}
+                      onChange={(event) => handleFieldChange('enable_password', event.target.value)}
+                      placeholder={isAdd ? (language === 'zh' ? '输入特权提权密码' : 'Enter enable secret') : (language === 'zh' ? '留空则保持不变' : 'Leave blank to keep unchanged')}
+                      className="rounded-xl bg-black/[0.02] py-2.5 text-sm focus:border-black/20 focus:bg-white"
+                    />
                   </div>
                 </div>
               )}

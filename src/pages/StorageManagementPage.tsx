@@ -1,3 +1,4 @@
+import { DataTable } from '../components/DataTable';
 import React, { useCallback, useEffect, useMemo, useState } from 'react';
 import {
   CheckCircle2,
@@ -27,6 +28,9 @@ import {
 } from '../api/storage';
 import { ApiError } from '../api/http';
 import { primaryActionBtnClass, secondaryActionBtnClass } from '../components/shared';
+import { ActionIconButton } from '../components/ui/ActionIconButton';
+import { PasswordInputField } from '../components/ui/PasswordInputField';
+import { TableActionCell, TableActionHeader } from '../components/ui/TableActionColumn';
 import { useEscapeClose } from '../hooks/useEscapeClose';
 
 interface StorageManagementPageProps {
@@ -99,7 +103,6 @@ const StorageManagementPage: React.FC<StorageManagementPageProps> = ({ language,
   const [formTest, setFormTest] = useState<TestState>(null);
   const [savedTests, setSavedTests] = useState<Record<string, TestState>>({});
   const [formError, setFormError] = useState('');
-
   const clearFormCredentials = () => {
     setForm((current) => ({ ...current, access_key_id: '', secret_access_key: '' }));
   };
@@ -274,7 +277,7 @@ const StorageManagementPage: React.FC<StorageManagementPageProps> = ({ language,
 
         <section className="overflow-hidden rounded-lg border border-[var(--ui-border)] bg-[var(--ui-surface)] shadow-sm">
           <div className="flex flex-wrap items-center justify-between gap-3 border-b border-[var(--ui-border)] px-5 pt-1 sm:px-6">
-            <h1 className="py-3 text-sm font-semibold text-[var(--heading-text)]">{zh ? '对象存储' : 'Object Storage'}</h1>
+            <h1 className="py-3 text-sm font-semibold text-[var(--heading-text)]">{zh ? '存储配置' : 'Storage Settings'}</h1>
             <div className="mb-1 flex items-center gap-2">
               <button type="button" className="rounded-md p-2 text-[var(--muted-text)] transition hover:bg-[var(--ui-surface-muted)] hover:text-[var(--ui-fg)] disabled:opacity-50" onClick={() => { void load(); }} disabled={loading} aria-label={zh ? '刷新存储设置' : 'Refresh storage settings'} title={zh ? '刷新' : 'Refresh'}><RefreshCw size={15} className={loading ? 'animate-spin' : ''} /></button>
               <button type="button" className="inline-flex items-center gap-1.5 rounded-md bg-emerald-600 px-3.5 py-2 text-sm font-semibold text-white transition hover:bg-emerald-700 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-emerald-500 focus-visible:ring-offset-2 disabled:cursor-not-allowed disabled:opacity-50" onClick={openCreate} disabled={!isAdmin || permissionDenied}><Plus size={15} />{zh ? '新增' : 'New'}</button>
@@ -296,7 +299,7 @@ const StorageManagementPage: React.FC<StorageManagementPageProps> = ({ language,
 
             {loadError && !permissionDenied && <div className="mb-4 flex items-center justify-between gap-3 rounded-md border border-rose-200 bg-rose-50 px-3 py-2.5 text-sm text-rose-800"><span>{loadError}</span><button type="button" className="font-semibold underline" onClick={() => void load()}>{zh ? '重试' : 'Retry'}</button></div>}
             <div className="overflow-x-auto rounded-md border border-[var(--ui-border)]">
-              <table className="min-w-[920px] w-full border-collapse text-left text-sm">
+              <DataTable unstyled exportConfig={{ filename: 'storage-configurations' }} className="min-w-[920px] w-full border-collapse text-left text-sm">
                 <thead className="bg-[var(--ui-surface-muted)] text-xs text-[var(--muted-text)]">
                   <tr>
                     <th className="px-4 py-3 font-semibold">{zh ? '名称' : 'Name'}</th>
@@ -305,7 +308,7 @@ const StorageManagementPage: React.FC<StorageManagementPageProps> = ({ language,
                     <th className="px-4 py-3 font-semibold">{zh ? '访问凭据' : 'Credentials'}</th>
                     <th className="px-4 py-3 font-semibold">{zh ? '状态' : 'Status'}</th>
                     <th className="px-4 py-3 font-semibold">{zh ? '更新时间' : 'Updated'}</th>
-                    <th className="px-4 py-3 text-right font-semibold">{zh ? '操作' : 'Actions'}</th>
+                    <TableActionHeader className="px-4 py-3 font-semibold">{zh ? '操作' : 'Actions'}</TableActionHeader>
                   </tr>
                 </thead>
                 <tbody className="divide-y divide-[var(--ui-border)]">
@@ -334,17 +337,17 @@ const StorageManagementPage: React.FC<StorageManagementPageProps> = ({ language,
                           <td className="px-4 py-3.5"><span className="block font-mono text-xs text-[var(--ui-fg)]">{provider.access_key_id_masked || (provider.has_access_key ? (zh ? '已配置' : 'Configured') : '—')}</span><span className={`mt-0.5 block text-[11px] ${provider.has_secret_key ? 'text-emerald-700' : 'text-[var(--muted-text)]'}`}>{provider.has_secret_key ? (zh ? 'Secret 已配置' : 'Secret configured') : (zh ? '无 Secret' : 'No secret')}</span></td>
                           <td className="px-4 py-3.5"><div className="flex flex-wrap gap-1.5">{isEffective && <span className="rounded-full bg-emerald-50 px-2 py-1 text-[10px] font-semibold text-emerald-700">{zh ? '当前默认' : 'Default'}</span>}{provider.is_default && !isEffective && <span className="rounded-full bg-slate-100 px-2 py-1 text-[10px] font-semibold text-slate-600">{zh ? '默认' : 'Default'}</span>}{isEnvironment && <span className="rounded-full bg-slate-100 px-2 py-1 text-[10px] font-semibold text-slate-600">.env</span>}</div></td>
                           <td className="px-4 py-3.5 text-xs text-[var(--muted-text)]">{formatDate(provider.updated_at || provider.created_at, zh)}</td>
-                          <td className="px-4 py-3.5"><div className="flex items-center justify-end gap-1">
-                            <button type="button" className="rounded-md p-2 text-[var(--muted-text)] transition hover:bg-sky-50 hover:text-sky-700 disabled:opacity-40" onClick={() => void handleTestSaved(provider)} disabled={!isAdmin || permissionDenied || testingId === provider.id} title={zh ? '测试连接' : 'Test connection'} aria-label={zh ? `测试 ${provider.name}` : `Test ${provider.name}`}><TestTube2 size={15} /></button>
-                            <button type="button" className="rounded-md p-2 text-[var(--muted-text)] transition hover:bg-slate-100 hover:text-[var(--ui-fg)] disabled:opacity-40" onClick={() => openEdit(provider)} disabled={!isAdmin || permissionDenied || isEnvironment} title={zh ? '编辑' : 'Edit'} aria-label={zh ? `编辑 ${provider.name}` : `Edit ${provider.name}`}><Pencil size={15} /></button>
-                            <button type="button" className="rounded-md p-2 text-[var(--muted-text)] transition hover:bg-rose-50 hover:text-rose-700 disabled:opacity-40" onClick={() => void handleDelete(provider)} disabled={!isAdmin || permissionDenied || deletingId === provider.id || isEnvironment} title={zh ? '删除' : 'Delete'} aria-label={zh ? `删除 ${provider.name}` : `Delete ${provider.name}`}><Trash2 size={15} /></button>
-                          </div></td>
+                          <TableActionCell className="px-4 py-3.5" label={zh ? `${provider.name} 的操作` : `Actions for ${provider.name}`}>
+                            <ActionIconButton icon={TestTube2} label={zh ? `测试 ${provider.name}` : `Test ${provider.name}`} tooltip={zh ? '测试连接' : 'Test connection'} variant="accent" onClick={() => void handleTestSaved(provider)} disabled={!isAdmin || permissionDenied || testingId === provider.id} />
+                            <ActionIconButton icon={Pencil} label={zh ? `编辑 ${provider.name}` : `Edit ${provider.name}`} tooltip={zh ? '编辑' : 'Edit'} onClick={() => openEdit(provider)} disabled={!isAdmin || permissionDenied || isEnvironment} />
+                            <ActionIconButton icon={Trash2} label={zh ? `删除 ${provider.name}` : `Delete ${provider.name}`} tooltip={zh ? '删除' : 'Delete'} variant="danger" onClick={() => void handleDelete(provider)} disabled={!isAdmin || permissionDenied || deletingId === provider.id || isEnvironment} />
+                          </TableActionCell>
                         </tr>
                         {rowTest && <tr><td colSpan={7} className="bg-[var(--ui-surface-muted)]/50 px-4 py-2"><span className={`inline-flex items-center gap-1.5 text-xs ${rowTest.kind === 'success' ? 'text-emerald-700' : 'text-rose-700'}`}>{rowTest.kind === 'success' ? <CheckCircle2 size={13} /> : <XCircle size={13} />}{rowTest.message}</span></td></tr>}
                       </React.Fragment>;
                     })}
                 </tbody>
-              </table>
+              </DataTable>
             </div>
             <div className="mt-3 rounded-md border border-[var(--ui-border)] bg-[var(--ui-surface-muted)] px-3 py-2.5 text-xs text-[var(--muted-text)]">
               <p className="font-semibold text-[var(--heading-text)]">{zh ? '存储用途' : 'Storage usage'}</p>
@@ -386,7 +389,7 @@ const StorageManagementPage: React.FC<StorageManagementPageProps> = ({ language,
                 <div className="space-y-3">
                   <div className={formRowClass}><label className={formRowLabelClass} htmlFor="storage-bucket">{zh ? '桶名称' : 'Bucket name'} <span className="text-rose-600">*</span></label><input id="storage-bucket" className={inputClass} value={form.bucket} onChange={(event) => setField('bucket', event.target.value)} placeholder={zh ? '桶名称' : 'Bucket name'} /></div>
                   <div className={formRowClass}><label className={formRowLabelClass} htmlFor="storage-access-key">Access key ID {mode === 'create' && <span className="text-rose-600">*</span>}</label><div><input id="storage-access-key" className={inputClass} value={form.access_key_id} onChange={(event) => setField('access_key_id', event.target.value)} placeholder={mode === 'edit' ? (zh ? '留空保留当前值' : 'Leave blank to keep current') : 'Access key ID'} autoComplete="off" />{mode === 'edit' && <p className="mt-1 text-[11px] text-[var(--muted-text)]">{zh ? '当前值：' : 'Current: '}{items.find((item) => item.id === editingId)?.access_key_id_masked || (zh ? '已隐藏' : 'Hidden')}</p>}</div></div>
-                  <div className={formRowClass}><label className={formRowLabelClass} htmlFor="storage-secret">Access key secret {mode === 'create' && <span className="text-rose-600">*</span>}</label><div><input id="storage-secret" type="password" className={inputClass} value={form.secret_access_key} onChange={(event) => setField('secret_access_key', event.target.value)} placeholder={mode === 'edit' ? (zh ? '留空保留当前值' : 'Leave blank to keep current') : 'Access key secret'} autoComplete="new-password" />{mode === 'edit' && <p className="mt-1 text-[11px] text-[var(--muted-text)]">{items.find((item) => item.id === editingId)?.has_secret_key ? (zh ? '当前 Secret 已加密保存' : 'Current secret is stored securely') : (zh ? '当前未配置 Secret' : 'No current secret')}</p>}</div></div>
+                  <div className={formRowClass}><label className={formRowLabelClass} htmlFor="storage-secret">Access key secret {mode === 'create' && <span className="text-rose-600">*</span>}</label><div><PasswordInputField id="storage-secret" className={inputClass} value={form.secret_access_key} onChange={(event) => setField('secret_access_key', event.target.value)} placeholder={mode === 'edit' ? (zh ? '留空保留当前值' : 'Leave blank to keep current') : 'Access key secret'} autoComplete="new-password" showPasswordLabel={zh ? '显示 Secret' : 'Show secret'} hidePasswordLabel={zh ? '隐藏 Secret' : 'Hide secret'} />{mode === 'edit' && <p className="mt-1 text-[11px] text-[var(--muted-text)]">{items.find((item) => item.id === editingId)?.has_secret_key ? (zh ? '当前 Secret 已加密保存' : 'Current secret is stored securely') : (zh ? '当前未配置 Secret' : 'No current secret')}</p>}</div></div>
                   <div className={formRowClass}><label className={formRowLabelClass} htmlFor="storage-endpoint">{zh ? '端点' : 'Endpoint'} <span className="text-rose-600">*</span></label><div><input id="storage-endpoint" className={inputClass} value={form.endpoint_url} onChange={(event) => setField('endpoint_url', event.target.value)} placeholder={zh ? '端点' : 'Endpoint'} /><p className="mt-1 text-[11px] text-[var(--muted-text)]">{zh ? '填写 S3 API 地址（如 http://seaweedfs:8333）；Bucket 名和 config/、pam/ 目录不要填在 Endpoint 里，除非服务商明确要求路径前缀。' : 'Enter the S3 API URL (for example, http://seaweedfs:8333). Do not append the bucket name or config/ and pam/ folders unless your provider explicitly requires a path prefix.'}</p></div></div>
                 </div>
               </section>

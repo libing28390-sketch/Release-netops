@@ -1,3 +1,4 @@
+import { DataTable } from '../../../components/DataTable';
 import React, { useCallback, useEffect, useMemo, useState } from 'react';
 import {
   AlertCircle,
@@ -28,7 +29,6 @@ import {
   getAISecurityEventsPage,
   getAISecurityIncidentsPage,
   resolveAISecurityIncident,
-  exportAISecurityEvents,
   setAIKillSwitch,
   setAIDevPassthrough,
   setAITenantKillSwitch,
@@ -36,6 +36,7 @@ import {
   updateAISecurityPolicy,
 } from '../../../api/ai';
 import Pagination from '../../../components/Pagination';
+import type { TableExportData } from '../../../components/ui/TableExportMenu';
 
 const DEFAULT_POLICY: AISecurityPolicy = {
   external_ai_enabled: false,
@@ -302,20 +303,36 @@ export const SecurityPolicyTab: React.FC = () => {
     }
   };
 
-  const exportEvents = async () => {
-    try {
-      const csv = await exportAISecurityEvents();
-      const url = URL.createObjectURL(new Blob([csv], { type: 'text/csv;charset=utf-8' }));
-      const link = document.createElement('a');
-      link.href = url;
-      link.download = `nexora-ai-security-events-${new Date().toISOString().slice(0, 10)}.csv`;
-      link.click();
-      URL.revokeObjectURL(url);
-      setNotice('安全事件审计已导出（仅元数据）。');
-    } catch (err) {
-      setError(err instanceof Error ? err.message : '安全事件导出失败');
+  const exportAllEvents = useCallback(async (): Promise<TableExportData> => {
+    const allEvents: Array<import('../../../api/ai').AISecurityEvent> = [];
+    let page = 1;
+    let total = Number.POSITIVE_INFINITY;
+    while (allEvents.length < total) {
+      const result = await getAISecurityEventsPage({
+        page,
+        page_size: 100,
+        search: eventSearchApplied,
+        decision: eventDecision,
+      });
+      allEvents.push(...result.items);
+      total = result.total;
+      if (!result.items.length && allEvents.length < total) {
+        throw new Error(`安全事件导出不完整：已读取 ${allEvents.length} / ${total} 条。`);
+      }
+      page += 1;
     }
-  };
+    return {
+      headers: ['时间', '决定', '分类', 'Provider ID', 'Model ID', '发现项'],
+      rows: allEvents.map((event) => [
+        event.created_at,
+        event.decision,
+        event.classification,
+        event.provider_id || '',
+        event.model_id || '',
+        event.finding_categories?.join('、') || '无',
+      ]),
+    };
+  }, [eventDecision, eventSearchApplied]);
 
   const gatewayReady = policy.external_ai_enabled && !policy.kill_switch;
   const devPassthroughActive = Boolean(policy.dev_passthrough?.enabled);
@@ -559,7 +576,7 @@ export const SecurityPolicyTab: React.FC = () => {
               <div className="flex items-center gap-2 text-sm font-bold text-slate-900 dark:text-white"><Database className="h-4 w-4 text-cyan-600" />安全事件审计</div>
               <p className="mt-1 text-xs leading-5 text-slate-500 dark:text-slate-400">仅展示策略版本、分类、处置、Provider/Model 和请求 ID，不返回原始提示词或秘密。</p>
             </div>
-            <div className="flex items-center gap-2"><button type="button" onClick={() => void exportEvents()} className="rounded-xl border border-slate-200 px-3 py-2 text-xs font-semibold text-slate-600 hover:border-cyan-300 dark:border-slate-700 dark:text-slate-300">导出元数据</button><button type="button" onClick={() => void loadEvents()} className="rounded-xl border border-slate-200 px-3 py-2 text-xs font-semibold text-slate-600 hover:border-cyan-300 dark:border-slate-700 dark:text-slate-300">刷新事件</button></div>
+            <div className="flex items-center gap-2"><button type="button" onClick={() => void loadEvents()} className="rounded-xl border border-slate-200 px-3 py-2 text-xs font-semibold text-slate-600 hover:border-cyan-300 dark:border-slate-700 dark:text-slate-300">刷新事件</button></div>
           </div>
           <form onSubmit={(event) => { event.preventDefault(); setEventPage(1); setEventSearchApplied(eventSearch.trim()); }} className="mt-4 flex flex-wrap gap-2">
             <div className="relative min-w-[240px] flex-1"><Search className="pointer-events-none absolute left-3 top-2.5 h-4 w-4 text-slate-400" /><input value={eventSearch} onChange={(event) => setEventSearch(event.target.value)} placeholder="搜索 Request ID、Provider、Model 或错误码" className="w-full rounded-xl border border-slate-200 bg-slate-50 py-2 pl-9 pr-3 text-xs dark:border-slate-700 dark:bg-slate-950 dark:text-white" /></div>
@@ -567,9 +584,9 @@ export const SecurityPolicyTab: React.FC = () => {
             <button type="submit" className="rounded-xl bg-cyan-600 px-4 py-2 text-xs font-semibold text-white hover:bg-cyan-700">搜索</button>
           </form>
           <div className="mt-4 overflow-x-auto">
-            <table className="min-w-full text-left text-xs"><thead className="text-slate-400"><tr><th className="px-2 py-2">时间</th><th className="px-2 py-2">决定</th><th className="px-2 py-2">分类</th><th className="px-2 py-2">Provider / Model</th><th className="px-2 py-2">发现项</th></tr></thead><tbody>
-              {!eventsLoading && events.map((event) => <tr key={event.id} className="border-t border-slate-100 dark:border-slate-800"><td className="px-2 py-2 whitespace-nowrap text-slate-500">{event.created_at}</td><td className="px-2 py-2 font-semibold">{event.decision}</td><td className="px-2 py-2">{event.classification}</td><td className="px-2 py-2">{event.provider_id || '—'} / {event.model_id || '—'}</td><td className="px-2 py-2">{event.finding_categories?.join('、') || '无'}</td></tr>)}
-            </tbody></table>
+            <DataTable unstyled exportConfig={{ filename: 'ai-security-events', language: 'zh', disabled: eventsLoading || eventTotal === 0, exportData: exportAllEvents }} className="min-w-[900px] text-left text-xs"><thead className="text-slate-400"><tr><th className="px-2 py-2">时间</th><th className="px-2 py-2">决定</th><th className="px-2 py-2">分类</th><th className="px-2 py-2">Provider ID</th><th className="px-2 py-2">Model ID</th><th className="px-2 py-2">发现项</th></tr></thead><tbody>
+              {!eventsLoading && events.map((event) => <tr key={event.id} className="border-t border-slate-100 dark:border-slate-800"><td className="px-2 py-2 whitespace-nowrap text-slate-500">{event.created_at}</td><td className="px-2 py-2 font-semibold">{event.decision}</td><td className="px-2 py-2">{event.classification}</td><td className="px-2 py-2">{event.provider_id || '—'}</td><td className="px-2 py-2">{event.model_id || '—'}</td><td className="px-2 py-2">{event.finding_categories?.join('、') || '无'}</td></tr>)}
+            </tbody></DataTable>
             {eventsLoading ? <div className="py-6 text-center text-xs text-slate-400">正在加载审计事件…</div> : events.length === 0 && <div className="py-6 text-center text-xs text-slate-400">当前筛选没有匹配的审计事件</div>}
           </div>
           <Pagination currentPage={eventPage} totalItems={eventTotal} itemsPerPage={eventPageSize} onPageChange={setEventPage} onItemsPerPageChange={(size) => { setEventPageSize(size); setEventPage(1); }} language="zh" alwaysVisible />

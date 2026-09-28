@@ -1,3 +1,4 @@
+import { DataTable } from '../components/DataTable';
 import React, { useEffect, useState, useCallback, useMemo } from 'react';
 import { AnimatePresence, motion } from 'motion/react';
 import {
@@ -8,6 +9,7 @@ import PageHero from '../components/PageHero';
 import { ActionIconButton, ActionIconGroup } from '../components/ui/ActionIconButton';
 import { useEscapeClose } from '../hooks/useEscapeClose';
 import NSOTCollectionOperations from './NSOTCollectionOperations';
+import { fetchAllPaginatedItems } from '../utils/pagination';
 import {
   TEXTFSM_VENDOR_OPTIONS,
   getEditorSelection,
@@ -16,6 +18,7 @@ import {
   TEXTFSM_VERSION_LABELS,
 } from './textfsmPlatformCatalog';
 
+import { TableActionCell, TableActionHeader } from '../components/ui/TableActionColumn';
 interface Script {
   id: string;
   name: string;
@@ -218,6 +221,41 @@ const ScriptManagementTab: React.FC<{ language: string; showToast: (msg: string,
     return `${vendorLabel || selection.vendor} ${familyLabel || selection.platformFamily}${versionLabel}`;
   };
 
+  const exportScripts = useCallback(async () => {
+    const params = new URLSearchParams({
+      q: searchQuery.trim(),
+      platform: platformFilter === 'All' ? '' : platformFilter,
+      category: categoryFilter === 'all' ? '' : categoryFilter,
+      script_type: typeFilter === 'All' ? '' : typeFilter,
+      status: statusFilter === 'All' ? '' : statusFilter,
+    });
+    const allScripts = await fetchAllPaginatedItems<Script>('/api/scripts', params);
+    return {
+      headers: [
+        zh ? '脚本名称' : 'Name',
+        zh ? '适用平台' : 'OS/Platform',
+        zh ? '分类' : 'Category',
+        zh ? '类型' : 'Type',
+        zh ? '状态' : 'Status',
+        zh ? '提交人' : 'Author',
+        zh ? '描述' : 'Description',
+      ],
+      rows: allScripts.map((script) => [
+        script.name,
+        getPlatformLabel(script.platform),
+        script.category === 'change'
+          ? (zh ? '配置下发' : 'Change')
+          : script.category === 'standard'
+            ? (zh ? '性能指标' : 'Metric')
+            : (zh ? '周期巡检' : 'Inspection'),
+        script.script_type,
+        getStatusLabel(script.status),
+        script.submitter_name || script.author || 'system',
+        script.description || '—',
+      ]),
+    };
+  }, [searchQuery, platformFilter, categoryFilter, typeFilter, statusFilter, zh]);
+
   const resetFilters = () => {
     setSearchQuery('');
     setPlatformFilter('All');
@@ -351,7 +389,7 @@ const ScriptManagementTab: React.FC<{ language: string; showToast: (msg: string,
 
         {view === 'scripts' && <div className="rounded-[24px] border border-slate-100 dark:border-white/5 overflow-hidden bg-white dark:bg-slate-900/20 shadow-lg">
           <div className="overflow-x-auto no-scrollbar">
-            <table className="nx-data-table text-left text-sm">
+            <DataTable unstyled exportConfig={{ filename: 'scripts', language: zh ? 'zh' : 'en', disabled: loading || scripts.length === 0, exportData: exportScripts }} className="nx-data-table text-left text-sm">
               <thead>
                 <tr className="bg-slate-50/50 dark:bg-slate-800/30 border-b border-slate-100 dark:border-white/5">
                   <th className="px-6 py-4 text-[11px] font-bold text-slate-400 dark:text-slate-500 uppercase tracking-wider">{zh ? '脚本名称' : 'Name'}</th>
@@ -361,7 +399,7 @@ const ScriptManagementTab: React.FC<{ language: string; showToast: (msg: string,
                   <th className="px-6 py-4 text-[11px] font-bold text-slate-400 dark:text-slate-500 uppercase tracking-wider">{zh ? '状态' : 'Status'}</th>
                   <th className="px-6 py-4 text-[11px] font-bold text-slate-400 dark:text-slate-500 uppercase tracking-wider">{zh ? '提交人' : 'Author'}</th>
                   <th className="px-6 py-4 text-[11px] font-bold text-slate-400 dark:text-slate-500 uppercase tracking-wider">{zh ? '描述' : 'Description'}</th>
-                  <th className="px-6 py-4 text-[11px] font-bold text-slate-400 dark:text-slate-500 uppercase tracking-wider w-28 text-right">{zh ? '操作' : 'Actions'}</th>
+                  <TableActionHeader className="px-6 py-4 text-[11px] font-bold text-slate-400 dark:text-slate-500 uppercase tracking-wider w-28 text-right">{zh ? '操作' : 'Actions'}</TableActionHeader>
                 </tr>
               </thead>
               <tbody className="divide-y divide-slate-100 dark:divide-white/5">
@@ -379,8 +417,8 @@ const ScriptManagementTab: React.FC<{ language: string; showToast: (msg: string,
                           className="hover:bg-slate-50/40 dark:hover:bg-slate-800/20 transition-colors group"
                         >
                           <td className="px-6 py-3.5">
-                            <div className="font-bold text-slate-700 dark:text-slate-200 text-[13px]">{script.name}</div>
-                            <div className="text-[10px] text-slate-400 dark:text-slate-500 font-mono mt-0.5">{script.id}</div>
+                            <div data-export-primary className="font-bold text-slate-700 dark:text-slate-200 text-[13px]">{script.name}</div>
+                            <div data-export-ignore className="text-[10px] text-slate-400 dark:text-slate-500 font-mono mt-0.5">{script.id}</div>
                           </td>
                           <td className="px-6 py-3.5 text-[12px] font-semibold text-slate-600 dark:text-slate-300">
                             {getPlatformLabel(script.platform)}
@@ -448,7 +486,7 @@ const ScriptManagementTab: React.FC<{ language: string; showToast: (msg: string,
                   )}
                 </AnimatePresence>
               </tbody>
-            </table>
+            </DataTable>
           </div>
         </div>}
 

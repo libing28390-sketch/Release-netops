@@ -1,3 +1,4 @@
+import { DataTable } from '../components/DataTable';
 import React, { useCallback, useEffect, useId, useMemo, useRef, useState } from 'react';
 import { AnimatePresence, motion } from 'motion/react';
 import { ChevronDown, ChevronRight, Copy, Mail, Pencil, Plus, Power, PowerOff, RefreshCw, Save, SlidersHorizontal, Trash2, Webhook, X, Search, Check, Shield } from 'lucide-react';
@@ -37,6 +38,10 @@ import {
   useAlertOverlayDismiss,
 } from './alertManagementShared';
 
+import { TableActionCell, TableActionHeader } from '../components/ui/TableActionColumn';
+import type { TableExportData } from '../components/ui/TableExportMenu';
+import { fetchAllPaginatedItems } from '../utils/pagination';
+import { buildAlertRulesExportData, getAlertRulesExportHeaders } from './alertRulesExport';
 const METRIC_OPTIONS_LIST = [
   { value: 'cpu', labelZh: 'CPU 利用率', labelEn: 'CPU Usage', category: 'network' },
   { value: 'memory', labelZh: '内存利用率', labelEn: 'Memory Usage', category: 'network' },
@@ -705,6 +710,19 @@ const AlertRulesTab: React.FC<AlertPageCommonProps> = ({ language, currentUserna
     } finally {
       setLoading(false);
     }
+  };
+
+  const alertRuleHeaders = getAlertRulesExportHeaders(language);
+
+  const exportAllAlertRules = async (): Promise<TableExportData> => {
+    const params = new URLSearchParams({
+      search,
+      enabled: enabledFilter,
+      category: categoryFilter,
+    });
+    if (metricFilter !== 'all') params.set('metric_type', metricFilter);
+    const items = await fetchAllPaginatedItems<AlertRuleSettings>('/api/alerts/rules', params, 100);
+    return buildAlertRulesExportData(items, language, (channel) => notificationChannelLabel(channel, language));
   };
 
   useEffect(() => {
@@ -1450,7 +1468,7 @@ const AlertRulesTab: React.FC<AlertPageCommonProps> = ({ language, currentUserna
         )}
 
         <div className="flex-1 min-h-0 overflow-y-auto custom-scrollbar border-b border-black/5">
-          <table className="nx-data-table text-left">
+          <DataTable unstyled exportConfig={{ filename: 'alert-rules', language: language === 'zh' ? 'zh' : 'en', disabled: loading || rulesLoadError !== null || alertRules.length === 0, exportData: exportAllAlertRules }} className="nx-data-table text-left">
             <thead className="sticky top-0 z-10">
               <tr className="border-y border-black/5 bg-[#f8fafc] text-[11px] font-bold uppercase tracking-[0.16em] text-black/40">
                 <th className="w-10 px-3 py-3">
@@ -1467,28 +1485,20 @@ const AlertRulesTab: React.FC<AlertPageCommonProps> = ({ language, currentUserna
                     className="accent-[#06b6d4]"
                   />
                 </th>
-                <th className="px-5 py-3">{language === 'zh' ? '规则名称' : 'Rule'}</th>
-                <th className="px-5 py-3">{language === 'zh' ? '监控类型' : 'Metric'}</th>
-                <th className="px-5 py-3">{language === 'zh' ? '采集来源' : 'Collector'}</th>
-                <th className="px-5 py-3">{language === 'zh' ? '范围' : 'Scope'}</th>
-                <th className="px-5 py-3">{language === 'zh' ? '阈值' : 'Threshold'}</th>
-                <th className="px-5 py-3">{language === 'zh' ? '级别' : 'Severity'}</th>
-                <th className="px-5 py-3">{language === 'zh' ? '通知' : 'Notify'}</th>
-                <th className="px-5 py-3">{language === 'zh' ? '状态' : 'Status'}</th>
-                <th className="px-5 py-3">{language === 'zh' ? '更新时间' : 'Updated'} </th>
-                <th className="px-5 py-3">{language === 'zh' ? '操作' : 'Action'}</th>
+                {alertRuleHeaders.map((header) => <th key={header} className="px-5 py-3">{header}</th>)}
+                <TableActionHeader className="px-5 py-3">{language === 'zh' ? '操作' : 'Action'}</TableActionHeader>
               </tr>
             </thead>
             <tbody>
               {loading ? (
                 <tr>
-                  <td colSpan={11} className="px-5 py-12 text-center text-sm text-black/40">
+                  <td colSpan={alertRuleHeaders.length + 2} className="px-5 py-12 text-center text-sm text-black/40">
                     {language === 'zh' ? '正在加载规则...' : 'Loading rules...'}
                   </td>
                 </tr>
               ) : rulesLoadError ? (
                 <tr>
-                  <td colSpan={11} className="px-5 py-12 text-center">
+                  <td colSpan={alertRuleHeaders.length + 2} className="px-5 py-12 text-center">
                     <p className="text-sm font-semibold text-rose-700">
                       {rulesLoadError === 'forbidden'
                         ? (language === 'zh' ? '当前账号没有查看告警规则的权限。' : 'You do not have permission to view alert rules.')
@@ -1533,13 +1543,8 @@ const AlertRulesTab: React.FC<AlertPageCommonProps> = ({ language, currentUserna
                             className={`opacity-0 group-hover/copy-name:opacity-100 ${copiedId === `${rule.id}-name` ? 'opacity-100' : ''}`}
                           />
                         </div>
-                        {(rule.rule_supported === false || isServerMetric(rule.metric_type)) && (
-                          <p className="mt-1 max-w-[190px] text-[10px] font-semibold leading-4 text-amber-700">
-                            {language === 'zh' ? '历史规则：未接入告警执行器，仅可停用或删除。' : 'Historical rule: no alert executor; disable or delete only.'}
-                          </p>
-                        )}
                         <div className="mt-1 flex items-center gap-1.5 group/copy-id">
-                          <p className="text-[10px] font-mono text-black/30">{rule.id}</p>
+                          <p data-export-ignore className="text-[10px] font-mono text-black/30">{rule.id}</p>
                           <ActionIconButton
                             icon={copiedId === `${rule.id}-id` ? Check : Copy}
                             label={language === 'zh' ? '复制 ID' : 'Copy ID'}
@@ -1554,27 +1559,25 @@ const AlertRulesTab: React.FC<AlertPageCommonProps> = ({ language, currentUserna
                     <td className="px-5 py-4 align-top text-sm text-black/60">{metricTypeLabel(rule.metric_type, language)}</td>
                     <td className="px-5 py-4 align-top">
                       {rule.collection ? (
-                        <div className="min-w-[150px]">
+                        <div>
                           <span className={`inline-flex rounded-full border px-2 py-1 text-[10px] font-semibold ${collectionBadgeClass(rule.collection.collection_source)}`}>
                             {language === 'zh' ? rule.collection.collection_label : (rule.collection.collection_label_en || rule.collection.collection_label)}
                           </span>
-                          {rule.collection.template_section && (
-                            <p className="mt-1 max-w-[210px] text-[10px] leading-4 text-black/40" title={rule.collection.description}>
-                              {rule.collection.template_section}
-                            </p>
-                          )}
                         </div>
                       ) : (
                         <span className="text-xs text-black/30">{language === 'zh' ? '未定义' : 'Undefined'}</span>
                       )}
                     </td>
+                    <td className="px-5 py-4 align-top text-xs text-black/55" title={rule.collection?.description}>
+                      {rule.collection?.template_section || '—'}
+                    </td>
                     <td className="px-5 py-4 align-top text-sm text-black/60">
-                      <div className="max-w-[260px]">
-                        <span className="font-medium text-slate-700">{scopeTypeLabel(rule.scope_type, language)}</span>
-                        <p className="mt-1 break-words text-[11px] leading-4 text-slate-500">
-                          {alertRuleScopeSummary(rule.scope_type, rule.scope_value || '', rule.scope_match_mode || 'exact', language)}
-                        </p>
-                      </div>
+                      {scopeTypeLabel(rule.scope_type, language)}
+                    </td>
+                    <td className="px-5 py-4 align-top text-sm text-black/60">
+                      <span className="break-words text-[11px] leading-4 text-slate-500">
+                        {alertRuleScopeSummary(rule.scope_type, rule.scope_value || '', rule.scope_match_mode || 'exact', language)}
+                      </span>
                     </td>
                     <td className="px-5 py-4 align-top text-sm">
                       {rule.threshold != null ? (
@@ -1584,11 +1587,11 @@ const AlertRulesTab: React.FC<AlertPageCommonProps> = ({ language, currentUserna
                           {language === 'zh' ? '状态型' : 'State'}
                         </span>
                       )}
-                      {rule.for_duration_seconds > 0 && (
-                        <span className="ml-1.5 text-[10px] text-black/35" title={language === 'zh' ? '持续时间' : 'Duration'}>
-                          {rule.for_duration_seconds >= 60 ? `${Math.floor(rule.for_duration_seconds / 60)}m` : `${rule.for_duration_seconds}s`}
-                        </span>
-                      )}
+                    </td>
+                    <td className="px-5 py-4 align-top text-xs text-black/50">
+                      {rule.for_duration_seconds > 0
+                        ? (rule.for_duration_seconds >= 60 ? `${Math.floor(rule.for_duration_seconds / 60)}m` : `${rule.for_duration_seconds}s`)
+                        : '—'}
                     </td>
                     <td className="px-5 py-4 align-top">
                       <span className={`inline-flex rounded-full px-2.5 py-1 text-[10px] font-bold uppercase ${severityBadgeClass(rule.severity)}`}>
@@ -1606,6 +1609,10 @@ const AlertRulesTab: React.FC<AlertPageCommonProps> = ({ language, currentUserna
                             {notificationChannelLabel(channel, language)}
                           </span>
                         ))}
+                      </div>
+                    </td>
+                    <td className="px-5 py-4 align-top">
+                      <div className="flex max-w-[180px] flex-wrap gap-1">
                         {!isHostMetric(rule.metric_type) && (rule.notification_group_names || []).map((groupName) => (
                           <span key={groupName} className="inline-flex items-center rounded-md border border-violet-100 bg-violet-50 px-1.5 py-0.5 text-[10px] font-semibold text-violet-700">
                             {groupName}
@@ -1628,13 +1635,17 @@ const AlertRulesTab: React.FC<AlertPageCommonProps> = ({ language, currentUserna
                             style={{ transform: rule.enabled ? 'translateX(22px)' : 'translateX(3px)' }}
                           />
                         </button>
-                        {(rule.rule_supported === false || isServerMetric(rule.metric_type)) && (
-                          <span className="rounded bg-amber-50 px-1.5 py-0.5 text-[9px] font-semibold text-amber-700">{language === 'zh' ? '未接入执行' : 'No executor'}</span>
-                        )}
                       </div>
                     </td>
-                    <td className="px-5 py-4 align-top text-sm text-black/60">{formatTs(rule.updated_at || rule.created_at)}</td>
                     <td className="px-5 py-4 align-top">
+                      {(rule.rule_supported === false || isServerMetric(rule.metric_type)) ? (
+                        <span className="rounded bg-amber-50 px-1.5 py-0.5 text-[9px] font-semibold text-amber-700">{language === 'zh' ? '未接入' : 'Unavailable'}</span>
+                      ) : (
+                        <span className="text-xs text-black/50">{language === 'zh' ? '已接入' : 'Available'}</span>
+                      )}
+                    </td>
+                    <td className="px-5 py-4 align-top text-sm text-black/60">{formatTs(rule.updated_at || rule.created_at)}</td>
+                    <TableActionCell className="px-5 py-4 align-top">
                       <ActionIconGroup label={language === 'zh' ? '告警规则操作' : 'Alert rule actions'}>
                         {!isServerMetric(rule.metric_type) && rule.rule_supported !== false && (
                           <ActionIconButton icon={Pencil} label={language === 'zh' ? '编辑' : 'Edit'} size="sm" onClick={() => openEdit(rule)} />
@@ -1644,18 +1655,18 @@ const AlertRulesTab: React.FC<AlertPageCommonProps> = ({ language, currentUserna
                         )}
                         <ActionIconButton icon={Trash2} label={language === 'zh' ? '删除' : 'Delete'} size="sm" variant="danger" onClick={() => void handleInlineDelete(rule)} />
                       </ActionIconGroup>
-                    </td>
+                    </TableActionCell>
                   </tr>
                 ))
               ) : (
                 <tr>
-                  <td colSpan={11} className="px-5 py-12 text-center text-sm text-black/40">
+                  <td colSpan={alertRuleHeaders.length + 2} className="px-5 py-12 text-center text-sm text-black/40">
                     {language === 'zh' ? '当前没有规则。' : 'No rules found.'}
                   </td>
                 </tr>
               )}
             </tbody>
-          </table>
+          </DataTable>
         </div>
 
         <div className="mt-4">

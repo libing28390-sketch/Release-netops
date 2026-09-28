@@ -259,7 +259,7 @@ describe('MetricOidProfilesModal editor', () => {
     await waitFor(() => expect(screen.getByRole('button', { name: 'Official Templates' })).toBeTruthy());
     await user.click(screen.getByRole('button', { name: 'Official Templates' }));
     await waitFor(() => expect(screen.getByText('H3C S6800')).toBeTruthy());
-    await user.click(screen.getByRole('button', { name: /Test & bind \(H3C S6800\)/ }));
+    await user.click(screen.getByRole('button', { name: 'Test & bind (H3C S6800)' }));
     await screen.findByRole('combobox', { name: 'Test device' });
     await user.click(screen.getByRole('checkbox'));
     await waitFor(() => expect((screen.getByRole('button', { name: 'Test template' }) as HTMLButtonElement).disabled).toBe(false));
@@ -340,8 +340,8 @@ describe('MetricOidProfilesModal editor', () => {
       />,
     );
 
-    await waitFor(() => expect(screen.getByRole('button', { name: 'Test & bind' })).toBeTruthy());
-    await user.click(screen.getByRole('button', { name: 'Test & bind' }));
+    await waitFor(() => expect(screen.getByRole('button', { name: 'Test and bind' })).toBeTruthy());
+    await user.click(screen.getByRole('button', { name: 'Test and bind' }));
     await screen.findByRole('combobox', { name: 'Test device' });
     await waitFor(() => expect((screen.getByRole('button', { name: 'Test template' }) as HTMLButtonElement).disabled).toBe(false));
     await user.click(screen.getByRole('button', { name: 'Test template' }));
@@ -417,7 +417,7 @@ describe('MetricOidProfilesModal editor', () => {
       />,
     );
 
-    await waitFor(() => expect(screen.getByRole('button', { name: 'Applied' })).toBeTruthy());
+    await waitFor(() => expect(screen.getByRole('button', { name: 'Official template applied' })).toBeTruthy());
     expect(screen.getByText('Official bound')).toBeTruthy();
     expect(screen.getByText('8 candidate devices')).toBeTruthy();
     expect(screen.getByText(/see the Bound Models template row for the actual binding count/i)).toBeTruthy();
@@ -484,8 +484,8 @@ describe('MetricOidProfilesModal editor', () => {
       />,
     );
 
-    await waitFor(() => expect(screen.getByRole('button', { name: 'Test & bind' })).toBeTruthy());
-    await user.click(screen.getByRole('button', { name: 'Test & bind' }));
+    await waitFor(() => expect(screen.getByRole('button', { name: 'Test and bind' })).toBeTruthy());
+    await user.click(screen.getByRole('button', { name: 'Test and bind' }));
     await screen.findByText(/live testing is unavailable; binding is still allowed/i);
     const testButton = screen.getByRole('button', { name: 'Device offline; test unavailable' }) as HTMLButtonElement;
     expect(testButton.disabled).toBe(true);
@@ -562,8 +562,8 @@ describe('MetricOidProfilesModal editor', () => {
       />,
     );
 
-    await waitFor(() => expect(screen.getByRole('button', { name: 'Collected' })).toBeTruthy());
-    await user.click(screen.getByRole('button', { name: 'Collected' }));
+    await waitFor(() => expect(screen.getByRole('button', { name: 'View template collection results' })).toBeTruthy());
+    await user.click(screen.getByRole('button', { name: 'View template collection results' }));
     await waitFor(() => expect(
       mockedApiRequest.mock.calls.some(([url]) => String(url).includes('/mapping-validation')),
     ).toBe(true));

@@ -53,6 +53,7 @@ const ScheduledJobsTab = lazy(() => import('../pages/ScheduledJobsTab'));
 const PlatformSettingsTab = lazy(() => import('../pages/PlatformSettingsTab'));
 const PlatformRegistryTab = lazy(() => import('../pages/PlatformRegistryTab'));
 const StorageManagementPage = lazy(() => import('../pages/StorageManagementPage'));
+const StorageFilesPage = lazy(() => import('../pages/StorageFilesPage'));
 const NotificationChannelSettingsPage = lazy(() => import('../pages/NotificationChannelSettingsPage'));
 const SnmpWalkPage = lazy(() => import('../pages/SnmpWalkPage'));
 const SnmpMetricTemplatesTab = lazy(() => import('../pages/SnmpMetricTemplatesTab'));
@@ -437,6 +438,7 @@ const AppMainContent: React.FC = () => {
     activeTab === 'maintenance' || 
     activeTab === 'platform-registry' ||
     activeTab === 'storage' ||
+    activeTab === 'storage-files' ||
     activeTab === 'email-settings' ||
     activeTab === 'monitoring-dashboards' ||
     activeTab === 'snmp-walk' ||
@@ -1255,6 +1257,12 @@ const AppMainContent: React.FC = () => {
       {activeTab === 'storage' && (
         <Suspense fallback={lazyPanelFallback}>
           <StorageManagementPage language={language} currentUser={currentUser} />
+        </Suspense>
+      )}
+
+      {activeTab === 'storage-files' && (
+        <Suspense fallback={lazyPanelFallback}>
+          <StorageFilesPage language={language} currentUser={currentUser} />
         </Suspense>
       )}
 

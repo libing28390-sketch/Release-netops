@@ -32,6 +32,7 @@ import {
   FileText,
   FileSpreadsheet,
   FileCode2,
+  FolderOpen,
   GitBranch,
   Globe,
   Gauge,
@@ -68,7 +69,7 @@ import { useEscapeClose } from '../../hooks/useEscapeClose';
 
 /** Map icon string keys (from navConfig) → lucide component */
 const iconMap: Record<string, React.ComponentType<any>> = {
-  Activity, BarChart2, Bell, BookOpen, Bot, Boxes, ClipboardList, Clock, CloudCog, Cpu, FileCode2, FileSpreadsheet, FileText, Gauge, GitBranch, Globe, Key, Layers3, Lock, MessageSquare, Monitor, Server, Settings, Shield, ShieldAlert, ShieldCheck, Terminal, User, Wrench, Zap,
+  Activity, BarChart2, Bell, BookOpen, Bot, Boxes, ClipboardList, Clock, CloudCog, Cpu, FileCode2, FileSpreadsheet, FileText, FolderOpen, Gauge, GitBranch, Globe, Key, Layers3, Lock, MessageSquare, Monitor, Server, Settings, Shield, ShieldAlert, ShieldCheck, Terminal, User, Wrench, Zap,
 };
 
 
@@ -275,7 +276,7 @@ const AppSidebar: React.FC<AppSidebarProps> = ({
                   <NavItem
                     key={child.id}
                     label={L(child.label, child.labelEn)}
-                    active={isActive(child)}
+                    active={itemOrChildActive(child)}
                     icon={CIcon}
                     mini
                     onClick={() => handleNav(child.path)}
@@ -335,14 +336,46 @@ const AppSidebar: React.FC<AppSidebarProps> = ({
             >
               {visibleChildren.map(child => {
                 const CIcon = child.icon ? iconMap[child.icon] : undefined;
+                const nestedChildren = child.children ? filterByRole(child.children) : [];
+                const isChildOpen = Boolean(openChildIds[child.id]);
+                const hasActiveNestedChild = nestedChildren.some(nestedChild => isActive(nestedChild));
+                const isThisChildActive = isActive(child) && !hasActiveNestedChild;
+
                 return (
-                  <NavItem
-                    key={child.id}
-                    label={L(child.label, child.labelEn)}
-                    active={isActive(child)}
-                    icon={CIcon}
-                    onClick={() => handleNav(child.path)}
-                  />
+                  <React.Fragment key={child.id}>
+                    <NavItem
+                      label={L(child.label, child.labelEn)}
+                      active={isThisChildActive}
+                      icon={CIcon}
+                      hasChildren={nestedChildren.length > 0}
+                      isOpen={isChildOpen}
+                      onToggleOpen={() => toggleChild(child.id)}
+                      onClick={() => {
+                        if (nestedChildren.length > 0 && !isChildOpen) {
+                          toggleChild(child.id);
+                        }
+                        handleNav(child.path);
+                      }}
+                    />
+                    {nestedChildren.length > 0 && isChildOpen && (
+                      <div className="ml-2 border-l border-slate-200/70 dark:border-white/10">
+                        {nestedChildren.map(nestedChild => {
+                          const NestedIcon = nestedChild.icon ? iconMap[nestedChild.icon] : undefined;
+                          return (
+                            <NavItem
+                              key={nestedChild.id}
+                              label={L(nestedChild.label, nestedChild.labelEn)}
+                              active={isActive(nestedChild)}
+                              icon={NestedIcon}
+                              indent
+                              nested
+                              onClick={() => handleNav(nestedChild.path)}
+                            />
+                          );
+                        })}
+                      </div>
+                    )}
+                  </React.Fragment>
                 );
               })}
             </NavSection>

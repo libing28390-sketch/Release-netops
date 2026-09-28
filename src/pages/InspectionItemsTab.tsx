@@ -1,3 +1,4 @@
+import { DataTable } from '../components/DataTable';
 import React, { useEffect, useState, useCallback, useMemo } from 'react';
 import { AnimatePresence, motion } from 'motion/react';
 import {
@@ -8,12 +9,15 @@ import {
 import Pagination from '../components/Pagination';
 import { ActionButton, ActionIconButton, ActionIconGroup } from '../components/ui/ActionIconButton';
 import PageHero from '../components/PageHero';
+import { fetchAllPaginatedItems } from '../utils/pagination';
 import {
   alertPanelClass,
   alertSecondaryButtonClass,
   alertTableActionButtonClass,
 } from './alertManagementShared';
 
+import { TableActionCell, TableActionHeader } from '../components/ui/TableActionColumn';
+import { buildInspectionItemsExportData, filterInspectionItems, getFriendlyInspectionVendor } from './inspectionItemsExport';
 interface InspectionItem {
   id: string;
   name: string;
@@ -71,21 +75,7 @@ const CATEGORIES = [
   { id: 'Compliance', en: 'Compliance', zh: '合规性检查' }
 ];
 
-const getFriendlyVendor = (vendor?: string | null): string => {
-  if (!vendor) return 'Generic';
-  const lower = vendor.toLowerCase();
-  if (lower.startsWith('cisco')) return 'Cisco';
-  if (lower.startsWith('huawei')) return 'Huawei';
-  if (lower.startsWith('h3c')) return 'H3C';
-  if (lower.startsWith('juniper')) return 'Juniper';
-  if (lower.startsWith('arista')) return 'Arista';
-  if (lower.startsWith('paloalto') || lower.startsWith('panos')) return 'PaloAlto';
-  if (lower.startsWith('fortinet')) return 'Fortinet';
-  if (lower.startsWith('checkpoint') || lower.startsWith('gaia')) return 'Checkpoint';
-  if (lower.startsWith('hillstone') || lower.startsWith('stoneos')) return 'Hillstone';
-  if (lower.startsWith('ruijie')) return 'Ruijie';
-  return vendor.charAt(0).toUpperCase() + vendor.slice(1);
-};
+const getFriendlyVendor = getFriendlyInspectionVendor;
 
 interface InspectionItemsTabProps {
   t: (key: string) => string;
@@ -278,88 +268,24 @@ const InspectionItemsTab: React.FC<InspectionItemsTabProps> = ({ language, showT
     }
   };
 
-  const handleExport = () => {
-    try {
-      if (items.length === 0) {
-        showToast(zh ? '没有可导出的数据' : 'No data to export', 'error');
-        return;
-      }
-      
-      const headers = [
-        zh ? '名称' : 'Name',
-        zh ? '中文名称' : 'Name (ZH)',
-        zh ? '分类' : 'Category',
-        zh ? '检查Key' : 'Check Key',
-        zh ? '方式' : 'Method',
-        zh ? '适用平台' : 'Platform',
-        zh ? 'OID' : 'OID',
-        zh ? '指令' : 'Command',
-        zh ? '创建时间' : 'Created At'
-      ];
-      
-      const rows = items.map(i => [
-        i.name,
-        i.name_zh,
-        i.category,
-        i.check_key,
-        i.method,
-        i.vendor,
-        i.oid,
-        `"${(i.command || '').replace(/"/g, '""')}"`,
-        i.created_at
-      ]);
-      
-      const csvContent = "\ufeff" + [headers.join(','), ...rows.map(r => r.join(','))].join('\n');
-      const blob = new Blob([csvContent], { type: 'text/csv;charset=utf-8;' });
-      const link = document.createElement("a");
-      const url = URL.createObjectURL(blob);
-      link.setAttribute("href", url);
-      link.setAttribute("download", `inspection_metrics_${new Date().toISOString().slice(0, 10)}.csv`);
-      link.style.visibility = 'hidden';
-      document.body.appendChild(link);
-      link.click();
-      document.body.removeChild(link);
-      showToast(zh ? '导出成功' : 'Export success', 'success');
-    } catch (err) {
-      console.error('Export failed:', err);
-      showToast(zh ? '导出失败' : 'Export failed', 'error');
-    }
-  };
+  const itemFilters = useMemo(() => ({
+    category: categoryFilter,
+    method: methodFilter,
+    vendor: vendorFilter,
+    search: searchQuery,
+  }), [categoryFilter, methodFilter, vendorFilter, searchQuery]);
+  const filteredItems = useMemo(() => filterInspectionItems(items, itemFilters), [items, itemFilters]);
 
-  const filteredItems = useMemo(() => {
-    let result = items;
-
-    // Category Filter
-    if (categoryFilter !== 'All') {
-      result = result.filter(i => i.category === categoryFilter);
-    }
-
-    // Method Filter
-    if (methodFilter !== 'All') {
-      result = result.filter(i => (i.method || '').toUpperCase() === methodFilter);
-    }
-
-    // Vendor Filter
-    if (vendorFilter !== 'All') {
-      result = result.filter(i => getFriendlyVendor(i.vendor) === vendorFilter);
-    }
-
-    // Search Query — 支持名称 / check_key / OID / 命令 / 描述 全文模糊匹配
-    if (searchQuery) {
-      const q = searchQuery.toLowerCase();
-      result = result.filter(i =>
-        (i.name || '').toLowerCase().includes(q) ||
-        (i.name_zh || '').toLowerCase().includes(q) ||
-        (i.category || '').toLowerCase().includes(q) ||
-        (i.check_key || '').toLowerCase().includes(q) ||
-        (i.oid || '').toLowerCase().includes(q) ||
-        (i.command || '').toLowerCase().includes(q) ||
-        (i.description || '').toLowerCase().includes(q) ||
-        (i.vendor || '').toLowerCase().includes(q)
-      );
-    }
-    return result;
-  }, [items, searchQuery, categoryFilter, methodFilter, vendorFilter]);
+  const exportData = useCallback(async () => {
+    const params = new URLSearchParams({
+      q: searchQuery.trim(),
+      category: categoryFilter === 'All' ? '' : categoryFilter,
+      method: methodFilter === 'All' ? '' : methodFilter,
+      vendor: vendorFilter === 'All' ? '' : vendorFilter,
+    });
+    const allItems = await fetchAllPaginatedItems<InspectionItem>('/api/inspections/items/all', params, 100);
+    return buildInspectionItemsExportData(filterInspectionItems(allItems, itemFilters), scripts, language);
+  }, [searchQuery, categoryFilter, methodFilter, vendorFilter, itemFilters, scripts, language]);
 
   // 当前展示数据涉及的厂商列表 — 用于 Vendor 下拉过滤器（按当前 category 筛选过的列表生成，避免无效选项）
   const availableVendors = useMemo(() => {
@@ -420,14 +346,6 @@ const InspectionItemsTab: React.FC<InspectionItemsTabProps> = ({ language, showT
                 className="pl-9 pr-4 py-2 rounded-xl border border-black/[0.08] bg-white text-sm focus:outline-none focus:ring-2 focus:ring-cyan-500/20 focus:border-cyan-400 transition-all w-48 lg:w-64 shadow-sm"
               />
             </div>
-            <ActionButton
-              icon={Download}
-              variant="accent"
-              onClick={handleExport}
-              title={zh ? '导出所有指标' : 'Export all items'}
-            >
-              {zh ? '导出' : 'Export'}
-            </ActionButton>
             <button
               onClick={() => setShowAdd(!showAdd)}
               className="flex items-center gap-1.5 px-4 py-2 rounded-xl bg-[#164e63] text-white text-sm font-bold shadow-sm hover:bg-[#0e3f52] transition-all active:scale-[0.97]"
@@ -718,21 +636,30 @@ const InspectionItemsTab: React.FC<InspectionItemsTabProps> = ({ language, showT
               {zh ? '暂无匹配的指标项' : 'No items found'}
             </div>
           ) : (
-            <table className="nx-data-table text-left">
+            <DataTable unstyled exportConfig={{ filename: 'inspection-items', disabled: Boolean(editingId), exportData }} className="nx-data-table text-left">
               <thead className="sticky top-0 z-10">
                 <tr className="border-y border-black/5 bg-[#f8fafc] text-[10px] font-bold uppercase tracking-widest text-black/40">
-                  <th className="px-6 py-4">{zh ? '名称 / ID' : 'Name / ID'}</th>
-                  <th className="px-6 py-4">{zh ? '分类 / 厂商' : 'Category / Vendor'}</th>
+                  <th className="px-6 py-4">{zh ? '中文名称' : 'Chinese Name'}</th>
+                  <th className="px-6 py-4">{zh ? '英文名称' : 'English Name'}</th>
+                  <th className="px-6 py-4">{zh ? '分类' : 'Category'}</th>
+                  <th className="px-6 py-4">{zh ? '厂商' : 'Vendor'}</th>
                   <th className="px-6 py-4">{zh ? '检查 Key' : 'Check Key'}</th>
-                  <th className="px-6 py-4">{zh ? '采集详情' : 'Acquisition'}</th>
+                  <th className="px-6 py-4">{zh ? '采集方式' : 'Method'}</th>
+                  <th className="px-6 py-4">{zh ? '绑定脚本' : 'Bound Script'}</th>
+                  <th className="px-6 py-4">OID</th>
+                  <th className="px-6 py-4">{zh ? '警告阈值' : 'Warning Threshold'}</th>
+                  <th className="px-6 py-4">{zh ? '严重阈值' : 'Critical Threshold'}</th>
                   <th className="px-6 py-4">{zh ? '描述' : 'Description'}</th>
-                  <th className="px-6 py-4 text-right">{zh ? '操作' : 'Actions'}</th>
+                  <TableActionHeader className="px-6 py-4 text-right">{zh ? '操作' : 'Actions'}</TableActionHeader>
                 </tr>
               </thead>
               <tbody className="divide-y divide-black/[0.04]">
                 {paginatedItems.map((item) => {
                   const isEditing = editingId === item.id;
                   const isExpanded = expandedId === item.id;
+                  const boundScriptName = item.script_id
+                    ? (scripts.find(s => s.id === item.script_id)?.name || '').replace(/（精细化）|\(精细化\)/g, '').trim()
+                    : '';
                   return (
                     <React.Fragment key={item.id}>
                       <tr
@@ -741,14 +668,19 @@ const InspectionItemsTab: React.FC<InspectionItemsTabProps> = ({ language, showT
                       >
                         <td className="px-6 py-4">
                           {isEditing ? (
-                            <div className="space-y-2" onClick={e => e.stopPropagation()}>
-                              <input
-                                type="text"
-                                value={form.name_zh || ''}
-                                onChange={e => setForm({ ...form, name_zh: e.target.value })}
-                                className="w-full px-2 py-1 rounded border border-cyan-200 text-xs focus:outline-none"
-                                placeholder="Name (ZH)"
-                              />
+                            <input
+                              type="text"
+                              value={form.name_zh || ''}
+                              onChange={e => setForm({ ...form, name_zh: e.target.value })}
+                              className="w-full px-2 py-1 rounded border border-cyan-200 text-xs focus:outline-none"
+                              placeholder="Name (ZH)"
+                              onClick={e => e.stopPropagation()}
+                            />
+                          ) : <span className="font-bold text-[#164e63]">{item.name_zh || '—'}</span>}
+                        </td>
+                        <td className="px-6 py-4">
+                          {isEditing ? (
+                            <div onClick={e => e.stopPropagation()}>
                               <input
                                 type="text"
                                 value={form.name || ''}
@@ -757,19 +689,11 @@ const InspectionItemsTab: React.FC<InspectionItemsTabProps> = ({ language, showT
                                 placeholder="Name (EN)"
                               />
                             </div>
-                          ) : (
-                            <div className="flex items-center gap-3">
-                              <div className={`w-1.5 h-1.5 rounded-full ${isExpanded ? 'bg-cyan-500 scale-150 shadow-lg' : 'bg-black/10'}`} />
-                              <div className="flex flex-col">
-                                <span className="font-bold text-[#164e63]">{zh ? item.name_zh : item.name}</span>
-                                <span className="text-[10px] text-black/30 font-mono">{item.name}</span>
-                              </div>
-                            </div>
-                          )}
+                          ) : <span className="text-[10px] text-black/45 font-mono">{item.name || '—'}</span>}
                         </td>
                         <td className="px-6 py-4">
                           {isEditing ? (
-                            <div className="space-y-2" onClick={e => e.stopPropagation()}>
+                            <div onClick={e => e.stopPropagation()}>
                               <select
                                 value={form.category || ''}
                                 onChange={e => setForm({ ...form, category: e.target.value })}
@@ -782,25 +706,20 @@ const InspectionItemsTab: React.FC<InspectionItemsTabProps> = ({ language, showT
                                 <option value="Health">Health</option>
                                 <option value="Compliance">Compliance</option>
                               </select>
-                              <select
-                                value={form.vendor || ''}
-                                onChange={e => setForm({ ...form, vendor: e.target.value })}
-                                className="w-full px-2 py-1 rounded border border-cyan-100 text-[10px] focus:outline-none bg-white"
-                              >
-                                <option value="">{zh ? '选择厂商' : 'Vendor'}</option>
-                                {VENDORS.map(v => <option key={v} value={v}>{v}</option>)}
-                              </select>
                             </div>
                           ) : (
-                            <div className="flex flex-col gap-1">
-                              <span className="px-2 py-0.5 rounded-full text-[10px] font-bold uppercase bg-cyan-50 text-cyan-600 w-fit">
-                                {zh ? (CATEGORIES.find(c => c.id === item.category)?.zh || item.category) : item.category}
-                              </span>
-                              {item.vendor && (
-                                <span className="text-[9px] text-black/30 font-bold px-2 tracking-widest">{item.vendor}</span>
-                              )}
-                            </div>
+                            <span className="px-2 py-0.5 rounded-full text-[10px] font-bold uppercase bg-cyan-50 text-cyan-600 w-fit">
+                              {zh ? (CATEGORIES.find(c => c.id === item.category)?.zh || item.category) : item.category || '—'}
+                            </span>
                           )}
+                        </td>
+                        <td className="px-6 py-4">
+                          {isEditing ? (
+                            <select value={form.vendor || ''} onChange={e => setForm({ ...form, vendor: e.target.value })} onClick={e => e.stopPropagation()} className="w-full px-2 py-1 rounded border border-cyan-100 text-[10px] focus:outline-none bg-white">
+                              <option value="">{zh ? '选择厂商' : 'Vendor'}</option>
+                              {VENDORS.map(v => <option key={v} value={v}>{v}</option>)}
+                            </select>
+                          ) : <span className="text-[10px] text-black/45 font-bold">{item.vendor || '—'}</span>}
                         </td>
                         <td className="px-6 py-4 font-mono text-[11px] text-black/50 tracking-tight">
                           {isEditing ? (
@@ -811,83 +730,30 @@ const InspectionItemsTab: React.FC<InspectionItemsTabProps> = ({ language, showT
                               className="w-full px-2 py-1 rounded border border-cyan-200 text-xs focus:outline-none"
                               onClick={e => e.stopPropagation()}
                             />
-                          ) : item.check_key}
+                          ) : item.check_key || '—'}
                         </td>
                         <td className="px-6 py-4">
                           {isEditing ? (
-                            <div className="space-y-2" onClick={e => e.stopPropagation()}>
-                              <select
-                                value={form.method || ''}
-                                onChange={e => setForm({ ...form, method: e.target.value })}
-                                className="w-full px-2 py-1 rounded border border-cyan-200 text-[10px] focus:outline-none bg-white"
-                              >
-                                <option value="SNMP">SNMP</option>
-                                <option value="SSH">SSH</option>
-                                <option value="Shell">Shell</option>
-                                <option value="ICMP">ICMP</option>
-                                <option value="TCP">TCP</option>
-                                <option value="Agent">Agent</option>
-                              </select>
-                              {form.method === 'SNMP' && (
-                                <input
-                                  type="text"
-                                  value={form.oid || ''}
-                                  onChange={e => setForm({ ...form, oid: e.target.value })}
-                                  className="w-full px-2 py-1 rounded border border-cyan-200 text-[10px] focus:outline-none"
-                                  placeholder="OID"
-                                />
-                              )}
-                              <div className="flex gap-2">
-                                <input
-                                  type="number"
-                                  value={form.warning_threshold ?? ''}
-                                  onChange={e => setForm({ ...form, warning_threshold: e.target.value ? parseFloat(e.target.value) : undefined })}
-                                  className="w-1/2 px-2 py-1 rounded border border-cyan-200 text-[10px] focus:outline-none"
-                                  placeholder="W%"
-                                />
-                                <input
-                                  type="number"
-                                  value={form.critical_threshold ?? ''}
-                                  onChange={e => setForm({ ...form, critical_threshold: e.target.value ? parseFloat(e.target.value) : undefined })}
-                                  className="w-1/2 px-2 py-1 rounded border border-cyan-200 text-[10px] focus:outline-none"
-                                  placeholder="C%"
-                                />
-                              </div>
-                            </div>
-                          ) : (
-                            <div className="flex flex-col gap-1.5">
-                              {(() => {
-                                const method = item.method?.toUpperCase();
-                                const isScript = !!item.script_id;
-                                const scriptName = isScript ? (scripts.find(s => s.id === item.script_id)?.name || item.script_id).replace(/（精细化）|\(精细化\)/g, '').trim() : null;
-                                
-                                const cfg = method === 'SNMP' ? { bg: 'bg-blue-50', text: 'text-blue-600', border: 'border-blue-100', icon: Database }
-                                          : method === 'SSH' ? { bg: 'bg-emerald-50', text: 'text-emerald-600', border: 'border-emerald-100', icon: Shield }
-                                          : method === 'ICMP' ? { bg: 'bg-amber-50', text: 'text-amber-600', border: 'border-amber-100', icon: Activity }
-                                          : isScript ? { bg: 'bg-cyan-50', text: 'text-cyan-700', border: 'border-cyan-100', icon: FileCode }
-                                          : { bg: 'bg-slate-50', text: 'text-slate-500', border: 'border-slate-100', icon: Info };
-                                const Icon = cfg.icon;
-                                return (
-                                  <span className={`inline-flex items-center gap-1 px-2 py-0.5 rounded-lg border ${cfg.bg} ${cfg.text} ${cfg.border} text-[9px] font-bold uppercase tracking-wider shadow-sm max-w-[160px] truncate`}>
-                                    <Icon size={10} className="flex-shrink-0" />
-                                    <span className="truncate">{isScript ? `${zh ? '脚本: ' : 'Script: '}${scriptName}` : method}</span>
-                                  </span>
-                                );
-                              })()}
-                              <div className="flex gap-1.5">
-                                {item.warning_threshold !== undefined && item.warning_threshold !== null && (
-                                  <span className="px-1.5 py-0.5 rounded bg-orange-50 text-orange-600 border border-orange-100 text-[9px] font-bold">
-                                    W: {item.warning_threshold}%
-                                  </span>
-                                )}
-                                {item.critical_threshold !== undefined && item.critical_threshold !== null && (
-                                  <span className="px-1.5 py-0.5 rounded bg-red-50 text-red-600 border border-red-100 text-[9px] font-bold">
-                                    C: {item.critical_threshold}%
-                                  </span>
-                                )}
-                              </div>
-                            </div>
-                          )}
+                            <select value={form.method || ''} onChange={e => setForm({ ...form, method: e.target.value })} onClick={e => e.stopPropagation()} className="w-full px-2 py-1 rounded border border-cyan-200 text-[10px] focus:outline-none bg-white">
+                              <option value="SNMP">SNMP</option><option value="SSH">SSH</option><option value="Shell">Shell</option><option value="ICMP">ICMP</option><option value="TCP">TCP</option><option value="Agent">Agent</option>
+                            </select>
+                          ) : <span className="text-[10px] font-bold uppercase">{item.method?.toUpperCase() || '—'}</span>}
+                        </td>
+                        <td className="px-6 py-4 text-[10px] text-black/45">{boundScriptName || '—'}</td>
+                        <td className="px-6 py-4 font-mono text-[10px]">
+                          {isEditing && form.method === 'SNMP' ? (
+                            <input type="text" value={form.oid || ''} onChange={e => setForm({ ...form, oid: e.target.value })} onClick={e => e.stopPropagation()} className="w-full px-2 py-1 rounded border border-cyan-200 text-[10px] focus:outline-none" placeholder="OID" />
+                          ) : item.oid || '—'}
+                        </td>
+                        <td className="px-6 py-4 font-mono text-[10px]">
+                          {isEditing ? (
+                            <input type="number" value={form.warning_threshold ?? ''} onChange={e => setForm({ ...form, warning_threshold: e.target.value ? parseFloat(e.target.value) : undefined })} onClick={e => e.stopPropagation()} className="w-full px-2 py-1 rounded border border-cyan-200 text-[10px] focus:outline-none" placeholder="%" />
+                          ) : item.warning_threshold == null ? '—' : `${item.warning_threshold}%`}
+                        </td>
+                        <td className="px-6 py-4 font-mono text-[10px]">
+                          {isEditing ? (
+                            <input type="number" value={form.critical_threshold ?? ''} onChange={e => setForm({ ...form, critical_threshold: e.target.value ? parseFloat(e.target.value) : undefined })} onClick={e => e.stopPropagation()} className="w-full px-2 py-1 rounded border border-cyan-200 text-[10px] focus:outline-none" placeholder="%" />
+                          ) : item.critical_threshold == null ? '—' : `${item.critical_threshold}%`}
                         </td>
                         <td className="px-6 py-4 text-xs text-black/60 italic">
                           {isEditing ? (
@@ -913,7 +779,7 @@ const InspectionItemsTab: React.FC<InspectionItemsTabProps> = ({ language, showT
                             </div>
                           )}
                         </td>
-                        <td className="px-6 py-4 text-right whitespace-nowrap">
+                        <TableActionCell className="px-6 py-4 text-right whitespace-nowrap">
                           <ActionIconGroup label={zh ? '指标操作' : 'Metric actions'}>
                             {isEditing ? (
                               <>
@@ -945,12 +811,12 @@ const InspectionItemsTab: React.FC<InspectionItemsTabProps> = ({ language, showT
                               </>
                             )}
                           </ActionIconGroup>
-                        </td>
+                        </TableActionCell>
                       </tr>
                       <AnimatePresence>
                         {isExpanded && !isEditing && (
                           <tr>
-                            <td colSpan={6} className="px-6 py-0 border-none">
+                            <td colSpan={12} className="px-6 py-0 border-none">
                               <motion.div initial={{ height: 0, opacity: 0 }} animate={{ height: 'auto', opacity: 1 }} exit={{ height: 0, opacity: 0 }} className="overflow-hidden">
                                 <div className="py-4 px-8 bg-black/[0.01] rounded-xl mb-4 mt-1 border border-black/[0.03] grid grid-cols-1 md:grid-cols-2 gap-8 relative">
                                   <div className="absolute top-4 left-4 w-1 h-12 bg-cyan-500/20 rounded-full" />
@@ -1036,7 +902,7 @@ const InspectionItemsTab: React.FC<InspectionItemsTabProps> = ({ language, showT
                   );
                 })}
               </tbody>
-            </table>
+            </DataTable>
           )}
         </div>
 

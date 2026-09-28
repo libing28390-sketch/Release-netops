@@ -12,8 +12,6 @@ import {
   Code2,
   Copy,
   Download,
-  Eye,
-  EyeOff,
   FileCode2,
   FileCog,
   FileJson,
@@ -40,6 +38,7 @@ import {
   WrapText,
   X,
 } from 'lucide-react';
+import { PasswordInputField } from '../components/ui/PasswordInputField';
 import { useNavigate } from 'react-router-dom';
 import type { ConfigTemplate, Device } from '../types';
 import PageHero from '../components/PageHero';
@@ -1354,26 +1353,21 @@ const PlatformSettingsTab: React.FC<PlatformSettingsTabProps> = ({
       className: `${fieldClass} ${fieldErrors.has(item.name) ? 'border-rose-400 ring-2 ring-rose-100' : ''}`,
       placeholder: item.placeholder || (item.example_value !== undefined ? String(item.example_value) : ''),
     };
-    if (sensitive) {
+    if (sensitive || item.type === 'password') {
       const revealed = Boolean(revealedSecrets[item.name]);
       return (
-        <div className="relative">
-          <input
-            {...commonProps}
-            type={revealed ? 'text' : 'password'}
-            autoComplete="new-password"
-            className={`${commonProps.className} pr-10`}
-          />
-          <button
-            type="button"
-            onClick={() => setRevealedSecrets((current) => ({ ...current, [item.name]: !revealed }))}
-            className="absolute right-2 top-1/2 -translate-y-1/2 rounded-md p-1 text-slate-400 hover:bg-slate-100 hover:text-slate-700"
-            aria-label={revealed ? (zh ? '隐藏敏感值' : 'Hide secret') : (zh ? '显示敏感值' : 'Show secret')}
-            title={revealed ? (zh ? '隐藏敏感值' : 'Hide secret') : (zh ? '显示敏感值' : 'Show secret')}
-          >
-            {revealed ? <EyeOff size={14} /> : <Eye size={14} />}
-          </button>
-        </div>
+        <PasswordInputField
+          id={`template-secret-${item.name}`}
+          value={commonProps.value}
+          onChange={commonProps.onChange as React.ChangeEventHandler<HTMLInputElement>}
+          placeholder={commonProps.placeholder}
+          className={commonProps.className}
+          autoComplete="new-password"
+          visible={revealed}
+          onVisibilityChange={(visible) => setRevealedSecrets((current) => ({ ...current, [item.name]: visible }))}
+          showPasswordLabel={zh ? '显示敏感值' : 'Show secret'}
+          hidePasswordLabel={zh ? '隐藏敏感值' : 'Hide secret'}
+        />
       );
     }
     if (item.type === 'boolean') {

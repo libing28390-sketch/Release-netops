@@ -1,3 +1,4 @@
+import { DataTable } from '../../../components/DataTable';
 import React, { useEffect, useMemo, useState } from 'react';
 import { Activity, Cpu, Plus, RefreshCw, Trash2, GitBranch, Star, Power, Search, AlertTriangle, Info, ShieldCheck } from 'lucide-react';
 import { getAIModels, createAIModel, updateAIModel, setAIUserDefaultModel, deleteAIModel, getAIModelDeletePreview, checkAIModelHealth, getAIModelRoutes, upsertAIModelRoute, getAIProviders, AIModel, AIModelDeletePreview, AIModelRoute, AIProvider } from '../../../api/ai';
@@ -7,6 +8,9 @@ import { useCoreApp } from '../../../contexts/AppDomainContext';
 import { aiAdminText } from '../../../i18n/aiAdmin';
 import { useEscapeClose } from '../../../hooks/useEscapeClose';
 
+import { TableActionCell, TableActionHeader } from '../../../components/ui/TableActionColumn';
+import type { TableExportData } from '../../../components/ui/TableExportMenu';
+import { buildAIModelExportData } from './modelExportData';
 const SCENES = [
   { code: 'command_explain', labelKey: 'ai.prompt.scene.command_explain.label', shortKey: 'ai.prompt.scene.command_explain.short', descriptionKey: 'ai.prompt.scene.command_explain.description' },
   { code: 'config_explain', labelKey: 'ai.prompt.scene.config_explain.label', shortKey: 'ai.prompt.scene.config_explain.short', descriptionKey: 'ai.prompt.scene.config_explain.description' },
@@ -312,6 +316,22 @@ export const ModelManagementTab: React.FC = () => {
     });
   }, [models, providerFilter, providers, search, statusFilter, typeFilter]);
   const visibleModels = filteredModels.slice((page - 1) * pageSize, page * pageSize);
+  const modelExportData = useMemo<TableExportData>(() => {
+    return buildAIModelExportData(filteredModels, providers, {
+      headers: [
+      tx('ai.model.table.name'), tx('ai.model.table.code'), tx('ai.model.table.provider'),
+      tx('ai.model.table.type'), tx('ai.model.table.streaming'), tx('ai.model.table.thinking'),
+      tx('ai.model.table.toolCalls'), tx('ai.model.table.json'), tx('ai.model.table.contextLength'),
+      tx('ai.model.table.health'), tx('ai.model.table.latency'), tx('ai.model.table.inputCost'),
+      tx('ai.model.table.default'), tx('ai.model.table.status'),
+      ],
+      yes: tx('ai.model.table.yes'),
+      no: tx('ai.model.table.no'),
+      enabled: tx('ai.model.status.enabled'),
+      disabled: tx('ai.model.status.disabled'),
+      health: (status) => tx(getModelHealthStatusKey(status)),
+    });
+  }, [filteredModels, providers, language]);
 
   useEffect(() => {
     const maxPage = Math.max(1, Math.ceil(filteredModels.length / pageSize));
@@ -368,15 +388,24 @@ export const ModelManagementTab: React.FC = () => {
           <div className="p-8 text-center text-gray-400">{tx('ai.model.loading')}</div>
         ) : (
           <div className="bg-white dark:bg-gray-800 border border-gray-200 dark:border-gray-700 rounded-xl overflow-hidden shadow-sm">
-            <table className="w-full text-left border-collapse text-sm">
+            <DataTable unstyled exportConfig={{ filename: 'ai-models', language: language === 'zh' ? 'zh' : 'en', disabled: loading || filteredModels.length === 0, exportData: modelExportData }} className="min-w-[1900px] w-full text-left border-collapse text-sm">
               <thead>
                 <tr className="border-b border-gray-200 dark:border-gray-700 bg-gray-50 dark:bg-gray-900/50 text-gray-500 dark:text-gray-400 text-xs font-semibold">
                   <th className="py-3 px-4">{tx('ai.model.table.name')}</th>
-                  <th className="py-3 px-4">Model Code</th>
-                  <th className="py-3 px-4">{tx('ai.model.table.providerCapability')}</th>
+                  <th className="py-3 px-4">{tx('ai.model.table.code')}</th>
+                  <th className="py-3 px-4">{tx('ai.model.table.provider')}</th>
+                  <th className="py-3 px-4">{tx('ai.model.table.type')}</th>
+                  <th className="py-3 px-4">{tx('ai.model.table.streaming')}</th>
+                  <th className="py-3 px-4">{tx('ai.model.table.thinking')}</th>
+                  <th className="py-3 px-4">{tx('ai.model.table.toolCalls')}</th>
+                  <th className="py-3 px-4">{tx('ai.model.table.json')}</th>
+                  <th className="py-3 px-4">{tx('ai.model.table.contextLength')}</th>
+                  <th className="py-3 px-4">{tx('ai.model.table.health')}</th>
+                  <th className="py-3 px-4">{tx('ai.model.table.latency')}</th>
+                  <th className="py-3 px-4">{tx('ai.model.table.inputCost')}</th>
                   <th className="py-3 px-4">{tx('ai.model.table.default')}</th>
                   <th className="py-3 px-4">{tx('ai.model.table.status')}</th>
-                  <th className="py-3 px-4 text-right">{tx('ai.model.table.actions')}</th>
+                  <TableActionHeader className="py-3 px-4 text-right">{tx('ai.model.table.actions')}</TableActionHeader>
                 </tr>
               </thead>
               <tbody className="divide-y divide-gray-200 dark:divide-gray-700 text-gray-700 dark:text-gray-300">
@@ -384,56 +413,51 @@ export const ModelManagementTab: React.FC = () => {
                   <tr key={m.id} className="hover:bg-gray-50 dark:hover:bg-gray-700/50">
                     <td className="py-3 px-4 font-semibold text-gray-900 dark:text-white">{m.name}</td>
                     <td className="py-3 px-4 font-mono text-xs text-indigo-600 dark:text-indigo-400">{m.model_code}</td>
+                    <td className="py-3 px-4"><div className="font-semibold text-gray-700 dark:text-gray-200">{providers.find((provider) => provider.id === m.provider_id)?.name || '—'}</div></td>
+                    <td className="py-3 px-4">{m.model_type}</td>
+                    <td className="py-3 px-4">{m.stream_supported ? tx('ai.model.table.yes') : tx('ai.model.table.no')}</td>
+                    <td className="py-3 px-4">{m.thinking_supported ? tx('ai.model.table.yes') : tx('ai.model.table.no')}</td>
+                    <td className="py-3 px-4">{m.tool_call_supported ? tx('ai.model.table.yes') : tx('ai.model.table.no')}</td>
+                    <td className="py-3 px-4">{m.json_supported ? tx('ai.model.table.yes') : tx('ai.model.table.no')}</td>
+                    <td className="py-3 px-4 font-mono">{m.context_length.toLocaleString()}</td>
+                    <td className="py-3 px-4">{tx(getModelHealthStatusKey(m.health_status))}</td>
+                    <td className="py-3 px-4 font-mono">{m.last_latency_ms == null ? '—' : `${m.last_latency_ms} ms`}</td>
+                    <td className="py-3 px-4 font-mono">${(m.cost_input_per_1k || 0).toFixed(4)}</td>
                     <td className="py-3 px-4">
-                      <div className="font-semibold text-gray-700 dark:text-gray-200">{providers.find((p) => p.id === m.provider_id)?.name || m.provider_id}</div>
-                      <div className="mt-1 flex flex-wrap gap-1 text-[10px]">
-                        <span className="rounded bg-indigo-50 px-1.5 py-0.5 text-indigo-700 dark:bg-indigo-950 dark:text-indigo-300">{m.model_type}</span>
-                        {m.stream_supported && <span className="rounded bg-emerald-50 px-1.5 py-0.5 text-emerald-700 dark:bg-emerald-950 dark:text-emerald-300">stream</span>}
-                        {m.thinking_supported && <span className="rounded bg-violet-50 px-1.5 py-0.5 text-violet-700 dark:bg-violet-950 dark:text-violet-300">thinking</span>}
-                        {m.tool_call_supported && <span className="rounded bg-sky-50 px-1.5 py-0.5 text-sky-700 dark:bg-sky-950 dark:text-sky-300">tools</span>}
-                        {m.json_supported && <span className="rounded bg-amber-50 px-1.5 py-0.5 text-amber-700 dark:bg-amber-950 dark:text-amber-300">JSON</span>}
-                      </div>
-                      <div className="mt-1 text-[10px] text-gray-400">{(m.context_length || 0).toLocaleString()} ctx · {tx(getModelHealthStatusKey(m.health_status))} · {m.last_latency_ms ?? '-'} ms · ${(m.cost_input_per_1k || 0).toFixed(4)}/1k in</div>
-                    </td>
-                    <td className="py-3 px-4">
-                      {m.is_default && (
+                      {m.is_default ? (
                         <span className="px-2 py-0.5 text-xs bg-amber-100 text-amber-800 dark:bg-amber-950 dark:text-amber-300 rounded-full font-medium inline-flex items-center gap-1">
-                          <Star className="w-3 h-3 fill-current text-amber-500" /> Default
+                          <Star className="w-3 h-3 fill-current text-amber-500" />{tx('ai.model.table.yes')}
                         </span>
-                      )}
+                      ) : tx('ai.model.table.no')}
                     </td>
                     <td className="py-3 px-4">
                       <div className="flex flex-wrap items-center gap-1.5">
                         <span className={`px-2 py-0.5 text-xs rounded-full font-medium ${m.enabled ? 'bg-emerald-100 text-emerald-800 dark:bg-emerald-950 dark:text-emerald-300' : 'bg-gray-100 text-gray-600'}`}>
                           {m.enabled ? tx('ai.model.status.enabled') : tx('ai.model.status.disabled')}
                         </span>
-                        <span className={`inline-flex items-center gap-1 rounded-full px-2 py-0.5 text-[10px] font-semibold ${m.health_status === 'healthy' ? 'bg-emerald-50 text-emerald-700 dark:bg-emerald-950/40 dark:text-emerald-300' : m.health_status === 'unhealthy' ? 'bg-rose-50 text-rose-700 dark:bg-rose-950/40 dark:text-rose-300' : 'bg-slate-100 text-slate-500 dark:bg-slate-800 dark:text-slate-400'}`}>
-                          <span className={`h-1.5 w-1.5 rounded-full ${m.health_status === 'healthy' ? 'bg-emerald-500' : m.health_status === 'unhealthy' ? 'bg-rose-500' : 'bg-slate-400'}`} />
-                          {tx(getModelHealthStatusKey(m.health_status))}
-                        </span>
                       </div>
-                      <div className="mt-1 text-[10px] text-gray-400">
+                      <div data-export-ignore className="mt-1 text-[10px] text-gray-400">
                         {tx('ai.model.health.sla', { hours: m.sla_window_hours || 24, value: m.sla_availability_percent == null ? '—' : `${m.sla_availability_percent.toFixed(2)}%` })}
                         {' · '}{tx('ai.model.health.checks', { success: m.sla_success_count || 0, total: m.sla_check_count || 0 })}
                         {' · '}{tx('ai.model.health.avgLatency', { value: m.sla_avg_latency_ms == null ? '—' : `${m.sla_avg_latency_ms} ms` })}
                       </div>
-                      <div className="mt-0.5 text-[10px] text-gray-400">
+                      <div data-export-ignore className="mt-0.5 text-[10px] text-gray-400">
                         {tx('ai.model.health.lastCheck', { value: m.last_health_check_at ? new Date(m.last_health_check_at).toLocaleString() : tx('ai.model.health.never') })}
                         {m.last_error_code && <span className="ml-1 font-mono text-rose-500">· {m.last_error_code}</span>}
                       </div>
                     </td>
-                    <td className="py-3 px-4 text-right">
+                    <TableActionCell className="py-3 px-4 text-right">
                       <ActionIconGroup label={tx('ai.model.actionGroup')}>
                         <ActionIconButton icon={Activity} label={checkingModelId === m.id ? tx('ai.model.health.checking') : tx('ai.model.health.checkAction')} variant="accent" disabled={!m.enabled || checkingModelId !== null} iconClassName={checkingModelId === m.id ? 'animate-spin' : undefined} onClick={() => void handleHealthCheck(m)} />
                         <ActionIconButton icon={Star} label={tx('ai.model.action.setDefault')} variant="accent" onClick={() => void handleSetDefault(m)} />
                         <ActionIconButton icon={Power} label={m.enabled ? tx('ai.model.action.disable') : tx('ai.model.action.enable')} onClick={() => void handleToggle(m)} />
                         <ActionIconButton icon={Trash2} label={tx('ai.model.action.delete')} variant="danger" onClick={() => handleDelete(m.id)} />
                       </ActionIconGroup>
-                    </td>
+                    </TableActionCell>
                   </tr>
                 ))}
               </tbody>
-            </table>
+            </DataTable>
             {!visibleModels.length && <div className="border-t border-gray-100 px-4 py-10 text-center text-sm text-gray-400 dark:border-gray-700">{tx('ai.model.empty')}</div>}
             <Pagination currentPage={page} totalItems={filteredModels.length} itemsPerPage={pageSize} onPageChange={setPage} onItemsPerPageChange={(size) => { setPageSize(size); setPage(1); }} language={language} alwaysVisible />
           </div>

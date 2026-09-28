@@ -33,11 +33,13 @@ import {
 } from 'lucide-react';
 import { useNavigate } from 'react-router-dom';
 import { ActionButton } from '../components/ui/ActionIconButton';
+import { TableExportMenu } from '../components/ui/TableExportMenu';
 import type { DiffLine } from '../types';
 import Pagination from '../components/Pagination';
 import PageHero from '../components/PageHero';
 import { GitCompare } from 'lucide-react';
 import { apiRequest, authHeaders } from '../api/http';
+import { fetchAllPaginatedItems } from '../utils/pagination';
 
 /* ── shared interfaces (kept compatible with App.tsx) ── */
 
@@ -659,6 +661,26 @@ const ConfigDiffViewTab: React.FC<ConfigDiffViewTabProps> = ({
     } catch { return ''; }
   };
 
+  const exportBackupDevices = useCallback(async () => {
+    const params = new URLSearchParams();
+    if (deviceSearch.trim()) params.set('search', deviceSearch.trim());
+    Object.entries(deviceBranch).forEach(([key, value]) => {
+      if (value) params.set(key, value);
+    });
+    const allDevices = await fetchAllPaginatedItems<BackupDevice>('/api/configs/devices-with-backups', params);
+    return {
+      headers: [zh ? '设备名称' : 'Device Name', 'IP', zh ? '平台' : 'Platform', zh ? '状态' : 'Status', zh ? '快照数' : 'Snapshots', zh ? '最后备份' : 'Last Backup'],
+      rows: allDevices.map((device) => [
+        device.hostname || '--',
+        device.ip_address || '--',
+        device.platform || '--',
+        device.status === 'online' ? (zh ? '在线' : 'Online') : (zh ? '离线' : 'Offline'),
+        device.backup_count,
+        timeSince(device.latest_backup) || '--',
+      ]),
+    };
+  }, [deviceSearch, deviceBranch, zh]);
+
   const showDiffViewer = configDiffLeft && configDiffRight;
 
   const scopeLabel = (node: DeviceScopeTreeNode) => {
@@ -767,12 +789,22 @@ const ConfigDiffViewTab: React.FC<ConfigDiffViewTabProps> = ({
                   </aside>
 
                   <div className="flex-1 min-h-0 flex flex-col rounded-xl border border-slate-200 bg-white shadow-xs overflow-hidden">
-                    <div className="grid grid-cols-[minmax(200px,1.8fr)_minmax(120px,1fr)_80px_130px_110px] items-center gap-x-3 px-4 py-2 bg-slate-50/90 text-[10px] font-bold uppercase tracking-wider text-slate-400 border-b border-slate-100 shrink-0">
-                      <span>{zh ? '设备资产' : 'Device'}</span>
+                    <div className="grid grid-cols-[minmax(150px,1.4fr)_minmax(100px,.8fr)_minmax(120px,1fr)_80px_70px_120px_110px] items-center gap-x-3 px-4 py-2 bg-slate-50/90 text-[10px] font-bold uppercase tracking-wider text-slate-400 border-b border-slate-100 shrink-0">
+                      <span>{zh ? '设备名称' : 'Device Name'}</span>
+                      <span>IP</span>
                       <span>{zh ? '平台' : 'Platform'}</span>
+                      <span>{zh ? '状态' : 'Status'}</span>
                       <span>{zh ? '快照数' : 'Snapshots'}</span>
                       <span>{zh ? '最近备份' : 'Last backup'}</span>
-                      <span className="text-right">{zh ? '操作' : 'Actions'}</span>
+                      <span className="flex items-center justify-end gap-2">
+                        <TableExportMenu
+                          filename="config-diff-device-backups"
+                          language={zh ? 'zh' : 'en'}
+                          disabled={devicesLoading || devices.length === 0}
+                          exportData={exportBackupDevices}
+                        />
+                        <span>{zh ? '操作' : 'Actions'}</span>
+                      </span>
                     </div>
 
                     <div className="flex-1 overflow-y-auto">
@@ -792,7 +824,7 @@ const ConfigDiffViewTab: React.FC<ConfigDiffViewTabProps> = ({
                             <div
                               key={dev.id}
                               onClick={() => handleSelectDevice(dev, false)}
-                              className="group w-full text-left grid grid-cols-[minmax(200px,1.8fr)_minmax(120px,1fr)_80px_130px_110px] items-center gap-x-3 px-4 py-2.5 border-b border-slate-100 last:border-b-0 hover:bg-cyan-50/40 transition-colors cursor-pointer"
+                              className="group w-full text-left grid grid-cols-[minmax(150px,1.4fr)_minmax(100px,.8fr)_minmax(120px,1fr)_80px_70px_120px_110px] items-center gap-x-3 px-4 py-2.5 border-b border-slate-100 last:border-b-0 hover:bg-cyan-50/40 transition-colors cursor-pointer"
                             >
                               <div className="flex items-center gap-2.5 min-w-0">
                                 <div className={`flex h-7 w-7 items-center justify-center rounded-lg ${online ? 'bg-emerald-50 text-emerald-600' : 'bg-amber-50 text-amber-600'} shrink-0`}>
@@ -803,10 +835,11 @@ const ConfigDiffViewTab: React.FC<ConfigDiffViewTabProps> = ({
                                     <span className="truncate text-xs font-bold text-[#123b50]">{dev.hostname}</span>
                                     <span className={`h-1.5 w-1.5 rounded-full ${online ? 'bg-emerald-500' : 'bg-amber-400'}`} />
                                   </div>
-                                  <span className="block truncate text-[10px] font-mono text-slate-400">{dev.ip_address}</span>
                                 </div>
                               </div>
+                              <span className="truncate font-mono text-[10px] text-slate-500">{dev.ip_address || '--'}</span>
                               <span className="truncate rounded bg-slate-50 px-2 py-0.5 text-[10px] font-semibold text-slate-600 max-w-[130px]">{dev.platform || '--'}</span>
+                              <span className={`text-[10px] font-semibold ${online ? 'text-emerald-600' : 'text-amber-600'}`}>{online ? (zh ? '在线' : 'Online') : (zh ? '离线' : 'Offline')}</span>
                               <span className="inline-flex w-fit items-center gap-1 rounded-full bg-cyan-50 px-2 py-0.5 text-[10px] font-bold text-cyan-700 tabular-nums">
                                 <Database size={10} />{dev.backup_count}
                               </span>

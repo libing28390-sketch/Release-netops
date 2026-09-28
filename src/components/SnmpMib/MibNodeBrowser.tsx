@@ -1,9 +1,12 @@
 import React, { useCallback, useEffect, useRef, useState } from 'react';
-import { AlertCircle, Check, Database, Loader2, RefreshCw, Search, ShieldAlert } from 'lucide-react';
+import { AlertCircle, Check, Database, Loader2, Plus, RefreshCw, Search, ShieldAlert } from 'lucide-react';
 import { ApiError, apiRequest } from '../../api/http';
 import { ALL_VENDOR_NAMES, normalizeImportedVendor } from '../../pages/AssetManagement/constants';
 import { DataTable, DataTableFrame } from '../DataTable';
+import { ActionIconButton } from '../ui/ActionIconButton';
+import { TableActionCell, TableActionHeader } from '../ui/TableActionColumn';
 import Pagination from '../Pagination';
+import type { TableExportData } from '../ui/TableExportMenu';
 
 export type MibNodeCategory = 'public' | 'private';
 
@@ -255,6 +258,44 @@ const MibNodeBrowser: React.FC<MibNodeBrowserProps> = ({
     return sourceType || (zh ? '未知来源' : 'Unknown source');
   };
 
+  const exportAllNodes = useCallback(async (): Promise<TableExportData> => {
+    const headers = zh
+      ? ['符号', '状态', 'OID', 'MIB', '厂商', '来源', '语法', '访问权限', '说明']
+      : ['Symbol', 'Status', 'OID', 'MIB', 'Vendor', 'Source', 'Syntax', 'Access', 'Description'];
+    const allNodes: MibBrowserNode[] = [];
+    let total = Number.POSITIVE_INFINITY;
+    for (let exportPage = 1; allNodes.length < total; exportPage += 1) {
+      const params = new URLSearchParams({
+        q: appliedQuery.trim(),
+        category,
+        vendor,
+        page: String(exportPage),
+        page_size: '100',
+      });
+      const response = await apiRequest<MibNodeListResponse>(`/api/platform-registry/mibs/nodes?${params.toString()}`);
+      const pageNodes = Array.isArray(response.data) ? response.data : [];
+      allNodes.push(...pageNodes);
+      total = Number.isFinite(response.total) ? Number(response.total) : allNodes.length;
+      if (pageNodes.length === 0 && allNodes.length < total) {
+        throw new Error(zh ? `MIB 导出不完整：已读取 ${allNodes.length} / ${total} 条` : `MIB export incomplete: fetched ${allNodes.length} of ${total} rows`);
+      }
+    }
+    return {
+      headers,
+      rows: allNodes.map((node) => [
+        node.node_name || '-',
+        formatStatus(node.status),
+        node.oid || '-',
+        node.mib_name || '-',
+        node.vendor || '-',
+        sourceLabel(node.source_type),
+        node.syntax_type || '-',
+        formatAccess(node.access_type),
+        node.description || '-',
+      ]),
+    };
+  }, [appliedQuery, category, vendor, zh]);
+
   return (
     <section className={`space-y-3 ${className}`.trim()}>
       {showHeader && <div className="flex flex-wrap items-center justify-between gap-3">
@@ -367,55 +408,52 @@ const MibNodeBrowser: React.FC<MibNodeBrowserProps> = ({
 
       <DataTableFrame className="overflow-hidden rounded-xl border border-black/8 shadow-sm dark:border-white/8" density="compact">
         <div className="overflow-x-auto">
-          <DataTable className="min-w-[980px] text-left text-xs">
+          <DataTable className="min-w-[1260px] text-left text-xs" exportConfig={{ filename: 'snmp-mib-nodes', language: zh ? 'zh' : 'en', disabled: loading || total === 0, exportData: exportAllNodes }}>
             <thead className="border-b border-black/8 bg-black/[.025] text-[10px] uppercase tracking-wide text-black/45 dark:border-white/8 dark:bg-white/[.025] dark:text-white/45">
               <tr>
                 <th className="px-3 py-2.5 font-medium">{zh ? '符号' : 'Symbol'}</th>
+                <th className="px-3 py-2.5 font-medium">{zh ? '状态' : 'Status'}</th>
                 <th className="px-3 py-2.5 font-medium">OID</th>
-                <th className="px-3 py-2.5 font-medium">{zh ? 'MIB / 厂商' : 'MIB / Vendor'}</th>
-                <th className="px-3 py-2.5 font-medium">{zh ? '语法 / 访问' : 'Syntax / Access'}</th>
+                <th className="px-3 py-2.5 font-medium">MIB</th>
+                <th className="px-3 py-2.5 font-medium">{zh ? '厂商' : 'Vendor'}</th>
+                <th className="px-3 py-2.5 font-medium">{zh ? '来源' : 'Source'}</th>
+                <th className="px-3 py-2.5 font-medium">{zh ? '语法' : 'Syntax'}</th>
+                <th className="px-3 py-2.5 font-medium">{zh ? '访问权限' : 'Access'}</th>
                 <th className="px-3 py-2.5 font-medium">{zh ? '说明' : 'Description'}</th>
-                <th className="px-3 py-2.5 text-right font-medium">{zh ? '操作' : 'Action'}</th>
+                <TableActionHeader className="px-3 py-2.5 font-medium">{zh ? '操作' : 'Action'}</TableActionHeader>
               </tr>
             </thead>
             <tbody className="divide-y divide-black/6 dark:divide-white/6">
               {loading ? (
                 <tr>
-                  <td colSpan={6} className="px-3 py-12 text-center text-xs text-black/40 dark:text-white/40">{zh ? '正在加载 MIB 节点…' : 'Loading MIB nodes…'}</td>
+                  <td colSpan={10} className="px-3 py-12 text-center text-xs text-black/40 dark:text-white/40">{zh ? '正在加载 MIB 节点…' : 'Loading MIB nodes…'}</td>
                 </tr>
               ) : nodes.length === 0 ? (
                 <tr>
-                  <td colSpan={6} className="px-3 py-12 text-center text-xs text-black/40 dark:text-white/40">{zh ? '当前分类下没有匹配的 MIB 节点。' : 'No MIB nodes match the current filters.'}</td>
+                  <td colSpan={10} className="px-3 py-12 text-center text-xs text-black/40 dark:text-white/40">{zh ? '当前分类下没有匹配的 MIB 节点。' : 'No MIB nodes match the current filters.'}</td>
                 </tr>
               ) : nodes.map(node => (
                 <tr key={node.id} className="transition-colors hover:bg-black/[.02] dark:hover:bg-white/[.03]">
-                  <td className="px-3 py-2.5">
-                    <div className="font-mono font-semibold text-black/80 dark:text-white/90">{node.node_name || '-'}</div>
-                    {node.status && <div className="mt-0.5 text-[10px] text-black/40 dark:text-white/40">{formatStatus(node.status)}</div>}
-                  </td>
+                  <td className="px-3 py-2.5 font-mono font-semibold text-black/80 dark:text-white/90">{node.node_name || '-'}</td>
+                  <td className="px-3 py-2.5 text-[10px] text-black/40 dark:text-white/40">{formatStatus(node.status)}</td>
                   <td className="px-3 py-2.5 font-mono text-[11px] text-[#008aad] dark:text-[#00bceb]">{node.oid || '-'}</td>
-                  <td className="px-3 py-2.5">
-                    <div className="max-w-[190px] truncate font-medium text-black/75 dark:text-white/80" title={node.mib_name}>{node.mib_name || '-'}</div>
-                    <div className="mt-0.5 text-[10px] text-black/40 dark:text-white/40">{node.vendor || '-'}</div>
-                    <span className="mt-1 inline-flex rounded-full bg-slate-500/10 px-1.5 py-0.5 text-[9px] text-slate-600 dark:text-slate-300">{sourceLabel(node.source_type)}</span>
-                  </td>
-                  <td className="px-3 py-2.5">
-                    <div className="font-mono text-[11px] text-black/75 dark:text-white/75">{node.syntax_type || '-'}</div>
-                    <div className="mt-0.5 text-[10px] text-black/45 dark:text-white/45">{formatAccess(node.access_type)}</div>
-                  </td>
+                  <td className="max-w-[190px] truncate px-3 py-2.5 font-medium text-black/75 dark:text-white/80" title={node.mib_name}>{node.mib_name || '-'}</td>
+                  <td className="px-3 py-2.5 text-[10px] text-black/40 dark:text-white/40">{node.vendor || '-'}</td>
+                  <td className="px-3 py-2.5 text-[9px] text-slate-600 dark:text-slate-300">{sourceLabel(node.source_type)}</td>
+                  <td className="px-3 py-2.5 font-mono text-[11px] text-black/75 dark:text-white/75">{node.syntax_type || '-'}</td>
+                  <td className="px-3 py-2.5 text-[10px] text-black/45 dark:text-white/45">{formatAccess(node.access_type)}</td>
                   <td className="max-w-[340px] px-3 py-2.5 text-[11px] leading-relaxed text-black/55 dark:text-white/55" title={node.description || undefined}>
                     <span className="line-clamp-2">{node.description || '-'}</span>
                   </td>
-                  <td className="px-3 py-2.5 text-right">
-                    <button
+                  <TableActionCell className="px-3 py-2.5">
+                    <ActionIconButton
                       type="button"
+                      icon={selectedOid === node.oid ? Check : Plus}
+                      label={selectedOid === node.oid ? (zh ? '已选择' : 'Selected') : (zh ? '使用 OID' : 'Use OID')}
+                      variant={selectedOid === node.oid ? 'success' : 'accent'}
                       onClick={() => selectNode(node)}
-                      className={`inline-flex items-center gap-1 rounded-md px-2.5 py-1.5 text-[11px] font-medium transition-colors ${selectedOid === node.oid ? 'bg-emerald-50 text-emerald-700 dark:bg-emerald-500/15 dark:text-emerald-300' : 'bg-[#00bceb]/10 text-[#008aad] hover:bg-[#00bceb]/20 dark:text-[#00bceb]'}`}
-                    >
-                      {selectedOid === node.oid ? <Check size={12} /> : null}
-                      {selectedOid === node.oid ? (zh ? '已选择' : 'Selected') : (zh ? '使用 OID' : 'Use OID')}
-                    </button>
-                  </td>
+                    />
+                  </TableActionCell>
                 </tr>
               ))}
             </tbody>

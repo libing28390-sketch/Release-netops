@@ -1,12 +1,17 @@
+import { DataTable } from '../../DataTable';
 import React, { useState, useEffect, useMemo } from 'react';
 import {
   Check,
+  CheckCircle2,
   Database,
   Activity,
+  Eye,
   Loader2,
+  Link2,
   Plus,
   RefreshCw,
   Search,
+  Settings2,
   Sparkles,
   Server,
   Terminal,
@@ -15,10 +20,12 @@ import {
   X,
 } from 'lucide-react';
 import Pagination from '../../Pagination';
-import { ActionButton } from '../../ui/ActionIconButton';
+import { ActionIconButton } from '../../ui/ActionIconButton';
+import { TableActionCell, TableActionHeader } from '../../ui/TableActionColumn';
 import { metricLabel } from './MetricRowItem';
 import { ModelPresetItem } from '../PresetProfilesModal';
 import type { CandidateDevice } from './LiveWalkInspector';
+import type { TableExportData } from '../../ui/TableExportMenu';
 
 export interface MetricOidProfile {
   profile_id: string | null;
@@ -92,6 +99,7 @@ interface MetricProfileListProps {
   onOpenMibs: () => void;
   onEdit: (profile: MetricOidProfile) => void;
   onDeleteProfile?: (profile: MetricOidProfile) => void;
+  loadAllProfilesForExport: (search: string) => Promise<MetricOidProfile[]>;
   onOpenSnmpWalk?: (item: MetricOidProfile | ModelPresetItem, target?: CandidateDevice) => void;
   onOpenCollectionResult?: (item: MetricOidProfile | ModelPresetItem, target?: CandidateDevice) => void;
   onValidateMapping: (profile: MetricOidProfile) => void;
@@ -128,10 +136,6 @@ const vendorDisplayLabel = (vendor: string, zh: boolean) => {
   if (!zh) return vendor;
   return ({ H3C: '华三', Huawei: '华为', ZTE: '中兴', Cisco: '思科' } as Record<string, string>)[vendor] || vendor;
 };
-
-const presetFamilyLabel = (preset: ModelPresetItem, zh: boolean) => (
-  `${vendorDisplayLabel(preset.vendor, zh)}${presetCategoryLabel(preset.category || 'Network Device', zh)}`
-);
 
 const buildPresetDisplayGroups = (items: ModelPresetItem[]): PresetDisplayGroup[] => {
   const groups = new Map<string, ModelPresetItem[]>();
@@ -176,6 +180,91 @@ const isBuiltinFallbackProfile = (profile: MetricOidProfile) => (
   !profile.profile_id && !profile.configured && !profile.interface_configured
 );
 
+const matchesProfileFilters = (profile: MetricOidProfile, vendorFilter: string, statusFilter: StatusFilterType) => {
+  if (isBuiltinFallbackProfile(profile)) return false;
+  if (vendorFilter && profile.vendor.toLowerCase() !== vendorFilter.toLowerCase()) return false;
+  if (statusFilter === 'verified') return profile.verification_status === 'verified' || profile.interface_verification_status === 'verified';
+  if (statusFilter === 'unverified') return (
+    (profile.configured && profile.verification_status === 'unverified') ||
+    (profile.interface_configured && profile.interface_verification_status === 'unverified')
+  );
+  if (statusFilter === 'failed') return profile.verification_status === 'failed' || profile.interface_verification_status === 'failed';
+  if (statusFilter === 'configured') return profile.configured || profile.interface_configured;
+  if (statusFilter === 'default') return !profile.configured && !profile.interface_configured;
+  return true;
+};
+
+export function buildMetricProfileExportData(
+  profiles: MetricOidProfile[],
+  presets: ModelPresetItem[],
+  options: { vendorFilter: string; statusFilter: StatusFilterType; activeTab: ProfileTabType; search: string; zh: boolean },
+): TableExportData {
+  const { vendorFilter, statusFilter, activeTab, search, zh } = options;
+  const headers = [
+    zh ? '厂商' : 'Vendor',
+    zh ? '模板来源' : 'Template source',
+    zh ? '分类' : 'Category',
+    zh ? '型号' : 'Model',
+    zh ? '型号匹配模式' : 'Model pattern',
+    zh ? '平台' : 'Platforms',
+    zh ? '软件版本范围' : 'Software version scope',
+    zh ? '采集指标' : 'Collected metrics',
+  ];
+  const term = search.trim().toLowerCase();
+  const groups = buildPresetDisplayGroups(presets).filter(group => (
+    (!vendorFilter || group.primary.vendor.toLowerCase() === vendorFilter.toLowerCase()) &&
+    group.items.some(item => presetMatchesSearch(item, term))
+  ));
+  const profileRows = profiles
+    .filter(profile => matchesProfileFilters(profile, vendorFilter, statusFilter))
+    .map(profile => {
+      const officialApplied = Boolean(
+        profile.source === 'official' || profile.source === 'official_preset' || profile.official_preset_id || profile.applied_preset_id,
+      );
+      const metricKeys = profile.metric_keys || Object.keys(profile.metric_definitions || {});
+      const metricNames = metricKeys.map(key => metricLabel(key, zh));
+      if (profile.interface_configured) metricNames.push(zh ? '接口 IF-MIB' : 'IF-MIB');
+      if (!profile.configured && !profile.interface_configured) metricNames.push(zh ? '默认 CPU / 内存' : 'Default CPU/Mem');
+      return [
+        profile.vendor,
+        officialApplied ? (zh ? '官方已绑定' : 'Official bound') : (zh ? '自定义模板' : 'Custom'),
+        '-',
+        profile.model,
+        profile.model_pattern && profile.model_pattern !== profile.model ? profile.model_pattern : '-',
+        profile.platforms?.length ? profile.platforms.join(', ') : '-',
+        profile.software_version_scope?.length ? profile.software_version_scope.join(', ') : '-',
+        metricNames.join(', ') || '-',
+      ];
+    });
+  const presetRows = groups.map(group => {
+    const unique = (values: string[]) => Array.from(new Set(values.map(value => value.trim()).filter(Boolean)));
+    const patterns = unique(group.items
+      .filter(item => item.model_pattern && item.model_pattern !== item.model)
+      .map(item => item.model_pattern || ''));
+    const platforms = unique(group.items.flatMap(item => item.platforms || []));
+    const versions = unique(group.items.flatMap(item => item.software_version_scope || []));
+    const metrics = group.metricKeys.map(key => metricLabel(key, zh));
+    if (group.interfaceEnabled) metrics.push(zh ? '接口 IF-MIB' : 'IF-MIB');
+    return [
+      vendorDisplayLabel(group.primary.vendor, zh),
+      zh ? '官方预置' : 'Official preset',
+      presetCategoryLabel(group.primary.category || 'Network Device', zh),
+      group.models.join(', '),
+      patterns.length ? patterns.join(', ') : '-',
+      platforms.length ? platforms.join(', ') : '-',
+      versions.length ? versions.join(', ') : '-',
+      metrics.join(', ') || (zh ? '暂无硬件指标' : 'No hardware metrics'),
+    ];
+  });
+  return {
+    headers,
+    rows: [
+      ...((activeTab === 'all' || activeTab === 'presets') ? presetRows : []),
+      ...((activeTab === 'all' || activeTab === 'custom') ? profileRows : []),
+    ],
+  };
+}
+
 export const MetricProfileList: React.FC<MetricProfileListProps> = ({
   profiles,
   presets = [],
@@ -199,6 +288,7 @@ export const MetricProfileList: React.FC<MetricProfileListProps> = ({
   onOpenSnmpWalk,
   onOpenCollectionResult,
   onValidateMapping,
+  loadAllProfilesForExport,
 }) => {
   const zh = language === 'zh';
   const [searchInput, setSearchInput] = useState(search);
@@ -237,32 +327,7 @@ export const MetricProfileList: React.FC<MetricProfileListProps> = ({
   // Client-side quick filter on saved custom profiles. Inventory-only model
   // matches (for example H3C F1090/S6800) are not templates and stay hidden.
   const filteredProfiles = useMemo(() => {
-    return profiles.filter(profile => !isBuiltinFallbackProfile(profile)).filter(profile => {
-      // Vendor filter
-      if (vendorFilter && profile.vendor.toLowerCase() !== vendorFilter.toLowerCase()) {
-        return false;
-      }
-      // Status filter
-      if (statusFilter === 'verified') {
-        return profile.verification_status === 'verified' || profile.interface_verification_status === 'verified';
-      }
-      if (statusFilter === 'unverified') {
-        return (
-          (profile.configured && profile.verification_status === 'unverified') ||
-          (profile.interface_configured && profile.interface_verification_status === 'unverified')
-        );
-      }
-      if (statusFilter === 'failed') {
-        return profile.verification_status === 'failed' || profile.interface_verification_status === 'failed';
-      }
-      if (statusFilter === 'configured') {
-        return profile.configured || profile.interface_configured;
-      }
-      if (statusFilter === 'default') {
-        return !profile.configured && !profile.interface_configured;
-      }
-      return true;
-    });
+    return profiles.filter(profile => matchesProfileFilters(profile, vendorFilter, statusFilter));
   }, [profiles, vendorFilter, statusFilter]);
 
   const hasCustomProfiles = filteredProfiles.length > 0;
@@ -466,12 +531,31 @@ export const MetricProfileList: React.FC<MetricProfileListProps> = ({
             {zh ? '未找到符合条件的型号指标模板。' : 'No matching profiles found.'}
           </div>
         ) : (
-          <table className="nx-data-table nx-data-table--compact">
+          <DataTable
+            unstyled
+            exportConfig={{
+              filename: 'snmp-metric-profiles',
+              language: zh ? 'zh' : 'en',
+              disabled: loading,
+              exportData: async () => buildMetricProfileExportData(
+                await loadAllProfilesForExport(searchInput.trim()),
+                presets,
+                { vendorFilter, statusFilter, activeTab, search: searchInput, zh },
+              ),
+            }}
+            className="nx-data-table nx-data-table--compact"
+          >
             <thead className="sticky top-0 z-10 bg-[var(--card-bg)] shadow-sm text-black/40 dark:text-white/40">
               <tr>
-                <th className="w-[34%] px-3.5 py-2.5 font-medium">{zh ? '厂商 / 平台 / 适配型号' : 'Vendor / Platform / Models'}</th>
-                <th className="w-[42%] px-3 py-2.5 font-medium">{zh ? '采集指标' : 'Collected Metrics'}</th>
-                <th className="w-[24%] px-3 py-2.5 font-medium">{zh ? '绑定与管理' : 'Binding & Management'}</th>
+                <th className="px-3.5 py-2.5 font-medium">{zh ? '厂商' : 'Vendor'}</th>
+                <th className="px-3.5 py-2.5 font-medium">{zh ? '模板来源' : 'Template source'}</th>
+                <th className="px-3.5 py-2.5 font-medium">{zh ? '分类' : 'Category'}</th>
+                <th className="px-3.5 py-2.5 font-medium">{zh ? '型号' : 'Model'}</th>
+                <th className="px-3.5 py-2.5 font-medium">{zh ? '型号匹配模式' : 'Model pattern'}</th>
+                <th className="px-3.5 py-2.5 font-medium">{zh ? '平台' : 'Platforms'}</th>
+                <th className="px-3.5 py-2.5 font-medium">{zh ? '软件版本范围' : 'Software version scope'}</th>
+                <th className="px-3 py-2.5 font-medium">{zh ? '采集指标' : 'Collected metrics'}</th>
+                <TableActionHeader className="px-3 py-2.5 font-medium">{zh ? '绑定与管理' : 'Binding & Management'}</TableActionHeader>
               </tr>
             </thead>
             <tbody>
@@ -527,27 +611,25 @@ export const MetricProfileList: React.FC<MetricProfileListProps> = ({
                       key={`preset-group:${group.key}`}
                       className="border-t border-black/5 bg-[#00bceb]/[0.02] transition-colors hover:bg-[#00bceb]/[0.05] dark:border-white/6 dark:bg-[#00bceb]/[0.03] dark:hover:bg-[#00bceb]/[0.06]"
                     >
-                      {/* Vendor and supported models */}
+                      <td className="px-3.5 py-3 align-top font-semibold text-black/80 dark:text-white/85">{vendorDisplayLabel(preset.vendor, zh)}</td>
+                      <td className="px-3.5 py-3 align-top"><span className="rounded-full bg-[#00bceb]/15 px-1.5 py-0.5 text-[9px] font-semibold text-[#008aad] dark:bg-[#00bceb]/25 dark:text-[#00bceb]">{zh ? '官方预置' : 'Official preset'}</span></td>
+                      <td className="px-3.5 py-3 align-top text-black/60 dark:text-white/60">{presetCategoryLabel(preset.category || 'Network Device', zh)}</td>
                       <td className="px-3.5 py-3 align-top">
-                        <div className="flex items-center gap-1.5">
-                          <span className="font-semibold text-black/80 dark:text-white/85">{presetFamilyLabel(preset, zh)}</span>
-                          <span className="rounded-full bg-[#00bceb]/15 px-1.5 py-0.2 text-[8px] font-semibold text-[#008aad] dark:bg-[#00bceb]/25 dark:text-[#00bceb]">
-                            {zh ? '官方预置' : 'Preset'}
-                          </span>
-                        </div>
-                        <div className="mt-1 text-[10px] font-medium text-black/45 dark:text-white/45">
-                          {zh ? `适配型号（${group.models.length}）` : `Supported models (${group.models.length})`}
-                        </div>
-                        <div className="mt-1.5 flex flex-wrap gap-1">
-                          {group.models.map(model => (
-                            <span key={model} className="rounded bg-[#00bceb]/10 px-1.5 py-0.5 font-mono text-[9px] text-[#007391] dark:text-[#00bceb]">
-                              {model}
-                            </span>
-                          ))}
+                        <div className="flex flex-wrap gap-1">
+                          {group.models.map(model => <span key={model} className="rounded bg-[#00bceb]/10 px-1.5 py-0.5 font-mono text-[9px] text-[#007391] dark:text-[#00bceb]">{model}</span>)}
                         </div>
                       </td>
+                      <td className="px-3.5 py-3 align-top font-mono text-[10px] text-black/55 dark:text-white/55">
+                        {Array.from(new Set(group.items.filter(item => item.model_pattern && item.model_pattern !== item.model).map(item => item.model_pattern))).join(', ') || '-'}
+                      </td>
+                      <td className="px-3.5 py-3 align-top font-mono text-[10px] text-black/55 dark:text-white/55">
+                        {Array.from(new Set(group.items.flatMap(item => item.platforms || []))).join(', ') || '-'}
+                      </td>
+                      <td className="px-3.5 py-3 align-top font-mono text-[10px] text-black/55 dark:text-white/55">
+                        {Array.from(new Set(group.items.flatMap(item => item.software_version_scope || []))).join(', ') || '-'}
+                      </td>
 
-                      {/* Collected metrics */}
+                      {/* Collected metrics remain one field: a set of metrics attached to this preset family. */}
                       <td className="px-3 py-3 align-top">
                         <div className="flex flex-wrap gap-1">
                           {group.metricKeys.map(key => (
@@ -564,18 +646,23 @@ export const MetricProfileList: React.FC<MetricProfileListProps> = ({
                             </span>
                           )}
                         </div>
-                        <div className="mt-1.5 text-[10px] leading-4 text-black/50 dark:text-white/50">
-                          {zh
-                            ? `硬件：${group.metricKeys.map(key => metricLabel(key, true)).join('、') || '暂无硬件指标'}${group.interfaceEnabled ? '；接口：IF-MIB 流量、状态与错误计数' : ''}`
-                            : `Hardware: ${group.metricKeys.map(key => metricLabel(key, false)).join(', ') || 'No hardware metrics'}${group.interfaceEnabled ? '; Interface: IF-MIB traffic, status and errors' : ''}`}
-                        </div>
                       </td>
 
                       {/* SNMP Walk and linked devices */}
-                      <td className="px-3 py-3 align-top">
-                        <div className="flex flex-wrap items-center gap-1.5">
-                          <button
+                      <TableActionCell className="px-3 py-3 align-top">
+                        <div className="flex flex-wrap items-center justify-end gap-1.5">
+                          <ActionIconButton
                             type="button"
+                            icon={isApplying ? Loader2 : hasAppliedProfile ? CheckCircle2 : canDirectApply ? Link2 : Settings2}
+                            label={isApplying
+                              ? (zh ? '应用中' : 'Applying')
+                              : canDirectApply
+                                ? (zh ? '测试并绑定' : 'Test and bind')
+                                : hasAppliedProfile
+                                  ? (zh ? '官方模板已应用' : 'Official template applied')
+                                  : (zh ? '选择型号并绑定' : 'Select model and bind')}
+                            iconClassName={isApplying ? 'animate-spin' : undefined}
+                            variant={hasAppliedProfile ? 'success' : 'accent'}
                             onClick={() => {
                               if (canDirectApply) {
                                 void applyOfficialPreset(targetPreset, sampleDevice);
@@ -584,26 +671,12 @@ export const MetricProfileList: React.FC<MetricProfileListProps> = ({
                               }
                             }}
                             disabled={Boolean(applyingPresetKey) || hasAppliedProfile}
-                            className={`inline-flex items-center gap-1 rounded-md px-2.5 py-1 text-[10px] font-semibold shadow-sm ${
-                              hasAppliedProfile
-                                ? 'cursor-default bg-emerald-500/12 text-emerald-700 dark:bg-emerald-400/15 dark:text-emerald-300'
-                                : 'bg-[#00a9ce] text-white hover:bg-[#008fb1]'
-                            }`}
-                            title={canDirectApply
+                            tooltip={canDirectApply
                               ? (zh ? `测试并绑定官方模板：${targetPreset.vendor} ${targetPreset.model}` : `Test and bind the official template: ${targetPreset.vendor} ${targetPreset.model}`)
                               : hasAppliedProfile
                                 ? (zh ? '官方模板已应用；实际设备绑定请在“已绑定型号”中管理或解绑' : 'The official template is applied; manage or unbind actual device bindings from Bound Models')
                                  : (zh ? '选择具体型号后进入官方模板绑定流程' : 'Choose an exact model to start the official template binding flow')}
-                          >
-                            {isApplying ? <Loader2 size={11} className="animate-spin" /> : <Check size={11} />}
-                            {isApplying
-                              ? (zh ? '应用中…' : 'Applying…')
-                              : canDirectApply
-                                ? (zh ? '测试并绑定' : 'Test & bind')
-                                : hasAppliedProfile
-                                   ? (zh ? '官方已应用' : 'Applied')
-                               : (zh ? '选择型号并绑定' : 'Select & bind')}
-                          </button>
+                          />
                           <span className="inline-flex items-center gap-1 rounded-md bg-black/[.04] px-2 py-1 text-[10px] text-black/55 dark:bg-white/[.06] dark:text-white/60" title={zh ? '按官方模板厂商和型号匹配到的设备候选数，不代表这些设备已经绑定模板' : 'Candidate devices matching the official vendor and model; this is not the number of devices bound to the template'}>
                             <Server size={11} />
                             {zh ? `候选设备 ${inventoryDeviceCount} 台` : `${inventoryDeviceCount} candidate devices`}
@@ -627,7 +700,7 @@ export const MetricProfileList: React.FC<MetricProfileListProps> = ({
                                 : (zh ? `快速读取样例：设备状态待确认 ${sampleDevice.ip_address || sampleDevice.hostname}` : `Quick-read sample: device status pending ${sampleDevice.ip_address || sampleDevice.hostname}`)}
                           </div>
                         )}
-                      </td>
+                      </TableActionCell>
                     </tr>
                   );
                 })}
@@ -635,7 +708,6 @@ export const MetricProfileList: React.FC<MetricProfileListProps> = ({
               {/* 2. Custom Model Profiles Rows (rendered if activeTab is 'all' or 'custom') */}
               {(activeTab === 'all' || activeTab === 'custom') &&
                 filteredProfiles.map(profile => {
-                  const matchedDeviceCount = Number(profile.bound_device_count ?? profile.matched_device_count ?? 0);
                   const isOfficialApplied = Boolean(
                     profile.source === 'official' ||
                     profile.source === 'official_preset' ||
@@ -648,31 +720,17 @@ export const MetricProfileList: React.FC<MetricProfileListProps> = ({
                       key={profile.profile_id || `${profile.vendor}:${profile.model}:${profile.template_name || 'template'}`}
                       className="border-t border-black/5 transition-colors hover:bg-black/[.015] dark:border-white/6 dark:hover:bg-white/[.015]"
                     >
-                      {/* Vendor and Model */}
-                      <td className="max-w-[240px] px-3.5 py-2.5">
-                        <div className="flex items-center gap-1.5">
-                          <div className="truncate font-semibold text-black/80 dark:text-white/85">{profile.vendor}</div>
-                          <span className={`shrink-0 rounded-full px-1.5 py-0.5 text-[8px] font-semibold ${
-                            isOfficialApplied
-                              ? 'bg-emerald-500/12 text-emerald-700 dark:bg-emerald-400/15 dark:text-emerald-300'
-                              : 'bg-black/[.05] text-black/45 dark:bg-white/[.08] dark:text-white/50'
-                          }`}>
-                            {isOfficialApplied
-                               ? (zh ? '官方已绑定' : 'Official bound')
-                               : (zh ? '自定义模板' : 'Custom')}
-                          </span>
-                        </div>
-                        <div className="truncate font-mono text-[10px] text-black/45 dark:text-white/45">
-                          {profile.model}
-                        </div>
-                        {(profile.platforms?.length || profile.model_pattern || profile.software_version_scope?.length) ? (
-                          <div className="mt-1 flex flex-wrap gap-1 text-[9px] text-black/45 dark:text-white/45">
-                            {profile.platforms?.map(platform => <span key={platform} className="rounded bg-cyan-500/10 px-1.5 py-0.5 font-mono text-cyan-700 dark:text-cyan-300">{platform}</span>)}
-                            {profile.model_pattern && profile.model_pattern !== profile.model && <span className="rounded bg-black/[.04] px-1.5 py-0.5 font-mono dark:bg-white/[.06]">{profile.model_pattern}</span>}
-                            {profile.software_version_scope?.map(version => <span key={version} className="rounded bg-amber-500/10 px-1.5 py-0.5 font-mono text-amber-700 dark:text-amber-300">{version}</span>)}
-                          </div>
-                        ) : null}
+                      <td className="px-3.5 py-2.5 font-semibold text-black/80 dark:text-white/85">{profile.vendor}</td>
+                      <td className="px-3.5 py-2.5">
+                        <span className={`rounded-full px-1.5 py-0.5 text-[8px] font-semibold ${isOfficialApplied ? 'bg-emerald-500/12 text-emerald-700 dark:bg-emerald-400/15 dark:text-emerald-300' : 'bg-black/[.05] text-black/45 dark:bg-white/[.08] dark:text-white/50'}`}>
+                          {isOfficialApplied ? (zh ? '官方已绑定' : 'Official bound') : (zh ? '自定义模板' : 'Custom')}
+                        </span>
                       </td>
+                      <td className="px-3.5 py-2.5 text-black/40 dark:text-white/40">-</td>
+                      <td className="px-3.5 py-2.5 font-mono text-[10px] text-black/75 dark:text-white/75">{profile.model}</td>
+                      <td className="px-3.5 py-2.5 font-mono text-[10px] text-black/55 dark:text-white/55">{profile.model_pattern && profile.model_pattern !== profile.model ? profile.model_pattern : '-'}</td>
+                      <td className="px-3.5 py-2.5 font-mono text-[10px] text-black/55 dark:text-white/55">{profile.platforms?.length ? profile.platforms.join(', ') : '-'}</td>
+                      <td className="px-3.5 py-2.5 font-mono text-[10px] text-black/55 dark:text-white/55">{profile.software_version_scope?.length ? profile.software_version_scope.join(', ') : '-'}</td>
 
                       {/* Metrics Badges */}
                       <td className="max-w-[280px] px-3 py-2.5">
@@ -699,78 +757,63 @@ export const MetricProfileList: React.FC<MetricProfileListProps> = ({
                       </td>
 
                       {/* SNMP Walk and linked devices */}
-                      <td className="px-3 py-3 align-top">
-                        <div className="flex flex-wrap items-center gap-1.5">
-                          <button
+                      <TableActionCell className="px-3 py-3 align-top" label={zh ? '模板操作' : 'Profile actions'}>
+                          <ActionIconButton
                             type="button"
+                            icon={Eye}
+                            label={zh ? '查看模板采集结果' : 'View template collection results'}
+                            tooltip={zh ? '直接查看模板采集结果' : 'View collected metric results'}
+                            variant="accent"
                             onClick={() => onOpenCollectionResult?.(profile)}
-                            className="inline-flex items-center gap-1 rounded-md border border-emerald-500/25 bg-emerald-500/10 px-2.5 py-1 text-[10px] font-semibold text-emerald-700 shadow-sm hover:bg-emerald-500/15 dark:text-emerald-300"
-                            title={zh ? '直接查看模板采集结果' : 'View collected metric results'}
-                          >
-                            <Activity size={11} />
-                            {zh ? '采集结果' : 'Collected'}
-                          </button>
-                          <button
+                          />
+                          <ActionIconButton
                             type="button"
+                            icon={Terminal}
+                            label="SNMP Walk"
+                            tooltip={zh ? '打开此型号的 SNMP Walk 调试工具' : 'Open SNMP Walk for this model'}
+                            variant="accent"
                             onClick={() => onOpenSnmpWalk?.(profile)}
-                            className="inline-flex items-center gap-1 rounded-md border border-[#00bceb]/30 bg-[#00bceb]/10 px-2.5 py-1 text-[10px] font-semibold text-[#008aad] shadow-sm hover:bg-[#00bceb]/20 dark:text-[#00bceb]"
-                            title={zh ? '打开此型号的 SNMP Walk 调试工具' : 'Open SNMP Walk for this model'}
-                          >
-                            <Terminal size={11} />
-                            {zh ? 'SNMP Walk' : 'SNMP Walk'}
-                          </button>
-                          <button
+                          />
+                          <ActionIconButton
                             type="button"
+                            icon={Eye}
+                            label={zh ? '查看关联设备清单' : 'View linked devices'}
                             onClick={() => onValidateMapping(profile)}
                             disabled={!profile.profile_id}
-                            className="inline-flex items-center gap-1 rounded-md border border-black/8 bg-black/[.02] px-2.5 py-1 text-[10px] font-medium text-black/65 hover:bg-black/5 disabled:cursor-not-allowed disabled:opacity-45 dark:border-white/10 dark:bg-white/[.03] dark:text-white/70 dark:hover:bg-white/8"
-                            title={zh ? '查看关联设备清单' : 'View linked devices'}
-                          >
-                            <Server size={11} />
-                            {matchedDeviceCount > 0
-                              ? (zh ? `已绑定 ${matchedDeviceCount} 台` : `${matchedDeviceCount} bound`)
-                              : (zh ? '未绑定设备' : 'No devices bound')}
-                          </button>
+                          />
                           {profile.profile_id && onOpenBinding && (
-                            <button
+                            <ActionIconButton
                               type="button"
+                              icon={Link2}
+                              label={zh ? '绑定或解绑设备' : 'Bind or unbind devices'}
+                              tooltip={zh ? '选择设备并绑定或解绑模板' : 'Select devices to bind or unbind this template'}
+                              variant="accent"
                               onClick={() => onOpenBinding(profile)}
-                              className="inline-flex items-center gap-1 rounded-md border border-violet-500/25 bg-violet-500/10 px-2.5 py-1 text-[10px] font-semibold text-violet-700 shadow-sm hover:bg-violet-500/15 dark:text-violet-300"
-                              title={zh ? '选择设备并绑定或解绑模板' : 'Select devices to bind or unbind this template'}
-                            >
-                              <Server size={11} />
-                              {zh ? '绑定设备' : 'Bind devices'}
-                            </button>
+                            />
                           )}
-                          <ActionButton
+                          <ActionIconButton
                             type="button"
                             icon={Pencil}
+                            label={zh ? '管理模板' : 'Manage profile'}
                             variant="accent"
-                            size="sm"
                             onClick={() => onEdit(profile)}
-                            title={zh ? '管理模板' : 'Manage profile'}
-                          >
-                            {zh ? '管理' : 'Manage'}
-                          </ActionButton>
+                          />
                           {profile.profile_id && (
-                            <ActionButton
+                            <ActionIconButton
                               type="button"
                               icon={Trash2}
+                              label={zh ? '删除已保存模板' : 'Delete saved template'}
+                              tooltip={zh ? '删除已保存模板记录（需先解绑设备）' : 'Delete saved template record (unbind devices first)'}
                               variant="danger"
-                              size="sm"
                               onClick={() => onDeleteProfile?.(profile)}
-                              title={zh ? '删除已保存模板记录（需先解绑设备）' : 'Delete saved template record (unbind devices first)'}
-                            >
-                              {zh ? '删除' : 'Delete'}
-                            </ActionButton>
+                            />
                           )}
-                        </div>
-                      </td>
+                      </TableActionCell>
                     </tr>
                   );
                 })}
             </tbody>
-          </table>
+          </DataTable>
         )}
       </div>
 

@@ -1,5 +1,6 @@
 import React, { useState, useMemo } from 'react';
 import { ChevronDown, ChevronUp, Plus, Save, Sparkles, Terminal, Trash2, Wrench, X } from 'lucide-react';
+import { DataTable } from '../../DataTable';
 import { NETWORK_VENDOR_GROUPS } from '../../../pages/AssetManagement/constants';
 import {
   MetricRow,
@@ -18,6 +19,7 @@ import { ModelPresetItem } from '../PresetProfilesModal';
 import { ActionButton } from '../../ui/ActionIconButton';
 import { useEscapeClose } from '../../../hooks/useEscapeClose';
 
+import { TableActionCell, TableActionHeader } from '../../ui/TableActionColumn';
 export interface ProfileForm {
   vendor: string;
   model: string;
@@ -328,13 +330,18 @@ export const MetricProfileEditor: React.FC<MetricProfileEditorProps> = ({
 
           {/* Clean Metrics Table */}
           <div className="overflow-x-auto rounded-xl border border-black/7 bg-white/35 shadow-sm dark:border-white/8 dark:bg-white/[.03]">
-            <table className="nx-data-table nx-data-table--compact">
+            <DataTable unstyled exportConfig={{ filename: 'snmp-metric-profile-metrics', language: zh ? 'zh' : 'en' }} className="nx-data-table nx-data-table--compact">
               <thead className="sticky top-0 z-10 bg-[var(--card-bg)] text-[10px] font-medium text-black/45 dark:text-white/45">
                 <tr>
-                  <th className="px-3.5 py-2">{zh ? '监控项' : 'Item'}</th>
-                  <th className="px-2.5 py-2">{zh ? 'SNMP OID 与源字段' : 'SNMP OID'}</th>
-                  <th className="px-2.5 py-2">{zh ? '类型/模式' : 'Type / Mode'}</th>
-                  <th className="px-3 py-2 text-right">{zh ? '操作' : 'Actions'}</th>
+                  <th className="px-3.5 py-2">{zh ? '监控项' : 'Metric'}</th>
+                  <th className="px-2.5 py-2">{zh ? '指标键' : 'Metric key'}</th>
+                  <th className="px-2.5 py-2">{zh ? '直接 / 计数器 OID' : 'Direct / counter OID'}</th>
+                  <th className="px-2.5 py-2">{zh ? '已用 OID' : 'Used OID'}</th>
+                  <th className="px-2.5 py-2">{zh ? '总量 OID' : 'Total OID'}</th>
+                  <th className="px-2.5 py-2">{zh ? '空闲 OID' : 'Free OID'}</th>
+                  <th className="px-2.5 py-2">{zh ? '容量 OID' : 'Capacity OID'}</th>
+                  <th className="px-2.5 py-2">{zh ? '模式' : 'Mode'}</th>
+                  <TableActionHeader className="px-3 py-2 text-right">{zh ? '操作' : 'Actions'}</TableActionHeader>
                 </tr>
               </thead>
               <tbody className="divide-y divide-black/5 dark:divide-white/5">
@@ -359,7 +366,7 @@ export const MetricProfileEditor: React.FC<MetricProfileEditorProps> = ({
                   />
                 ))}
               </tbody>
-            </table>
+            </DataTable>
           </div>
 
           {/* Clean Interface IF-MIB Section */}

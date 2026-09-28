@@ -1,3 +1,4 @@
+import { DataTable } from '../../../components/DataTable';
 import React, { useCallback, useEffect, useState } from 'react';
 import { AlertCircle, CheckCircle2, Clock3, Eye, ListFilter, Loader2, RefreshCw, RotateCcw, Search, ShieldAlert, XCircle } from 'lucide-react';
 import {
@@ -10,6 +11,10 @@ import {
 } from '../../../api/ai';
 import Pagination from '../../../components/Pagination';
 
+import { TableActionCell, TableActionHeader } from '../../../components/ui/TableActionColumn';
+import { ActionIconButton } from '../../../components/ui/ActionIconButton';
+import { fetchAllPaginatedItems } from '../../../utils/pagination';
+import type { TableExportData } from '../../../components/ui/TableExportMenu';
 const EXECUTION_STATES: Array<{ value: KnowledgeIngestionExecutionState; label: string }> = [
   { value: 'all', label: '全部状态' },
   { value: 'queued', label: '排队中' },
@@ -129,6 +134,31 @@ export const IngestionJobsPanel: React.FC = () => {
     }
   }, [executionState, page, pageSize, phase, search]);
 
+  const exportAllJobs = useCallback(async (): Promise<TableExportData> => {
+    const params = new URLSearchParams();
+    if (executionState !== 'all') params.set('execution_state', executionState);
+    if (phase !== 'all') params.set('phase', phase);
+    if (search) params.set('search', search);
+    const allJobs = await fetchAllPaginatedItems<KnowledgeIngestionJobSummary>(
+      '/api/knowledge/ingestion/jobs', params, 100,
+    );
+    return {
+      headers: ['任务类型', '状态', '阶段', '进度', '已处理', '总数', '成功数', '失败数', '错误码', '更新时间'],
+      rows: allJobs.map((job) => [
+        JOB_KIND_LABELS[job.job_kind] || job.job_kind,
+        EXECUTION_STATES.find((option) => option.value === job.execution_state)?.label || job.execution_state,
+        PHASE_LABELS[job.phase] || job.phase,
+        `${safeProgress(job).toFixed(2)}%`,
+        job.processed_count,
+        job.total_count,
+        job.succeeded_count,
+        job.failed_count,
+        job.last_error_code || '',
+        formatDate(job.updated_at || job.created_at),
+      ]),
+    };
+  }, [executionState, phase, search]);
+
   useEffect(() => {
     const controller = new AbortController();
     void loadJobs(controller.signal);
@@ -208,17 +238,19 @@ export const IngestionJobsPanel: React.FC = () => {
 
       {loading && !items.length ? <div className="mt-4 rounded-xl bg-slate-50 p-8 text-center text-sm text-slate-500 dark:bg-slate-900/70 dark:text-slate-400"><Loader2 className="mx-auto mb-2 h-5 w-5 animate-spin" />正在加载导入任务…</div> : !items.length ? <div className="mt-4 rounded-xl border border-dashed border-slate-300 bg-slate-50 p-8 text-center text-sm text-slate-500 dark:border-slate-700 dark:bg-slate-900/70 dark:text-slate-400"><Eye className="mx-auto mb-2 h-6 w-6 opacity-50" />{search || executionState !== 'all' || phase !== 'all' ? '当前筛选条件没有匹配任务。' : '暂无导入任务。提交官方 URL 或企业 SOP 后，任务会出现在这里。'}</div> : <>
         <div className="mt-4 overflow-x-auto rounded-xl border border-slate-200 dark:border-slate-700">
-          <table className="nx-data-table min-w-[980px] w-full text-left">
-            <thead className="border-b border-slate-200 bg-slate-50 text-slate-500 dark:border-slate-700 dark:bg-slate-900 dark:text-slate-400"><tr><th className="px-3 py-2.5 font-semibold">任务</th><th className="px-3 py-2.5 font-semibold">状态</th><th className="px-3 py-2.5 font-semibold">阶段进度</th><th className="px-3 py-2.5 font-semibold">统计</th><th className="px-3 py-2.5 font-semibold">更新时间</th><th className="px-3 py-2.5 font-semibold">操作</th></tr></thead>
+          <DataTable unstyled exportConfig={{ filename: 'knowledge-ingestion-jobs', disabled: loading || items.length === 0, exportData: exportAllJobs }} className="nx-data-table min-w-[1440px] w-full text-left">
+            <thead className="border-b border-slate-200 bg-slate-50 text-slate-500 dark:border-slate-700 dark:bg-slate-900 dark:text-slate-400"><tr><th className="px-3 py-2.5 font-semibold">任务类型</th><th className="px-3 py-2.5 font-semibold">状态</th><th className="px-3 py-2.5 font-semibold">阶段</th><th className="px-3 py-2.5 font-semibold">进度</th><th className="px-3 py-2.5 font-semibold">已处理</th><th className="px-3 py-2.5 font-semibold">总数</th><th className="px-3 py-2.5 font-semibold">成功数</th><th className="px-3 py-2.5 font-semibold">失败数</th><th className="px-3 py-2.5 font-semibold">错误码</th><th className="px-3 py-2.5 font-semibold">更新时间</th><TableActionHeader className="px-3 py-2.5 font-semibold">操作</TableActionHeader></tr></thead>
             <tbody className="divide-y divide-slate-100 dark:divide-slate-800">{items.map((job) => { const progress = safeProgress(job); const selected = selectedJobId === job.id; return <tr key={job.id} className={selected ? 'bg-indigo-50/60 dark:bg-indigo-950/20' : 'hover:bg-slate-50/70 dark:hover:bg-slate-900/40'}>
-              <td className="px-3 py-3"><button type="button" onClick={() => setSelectedJobId(job.id)} className="text-left"><span className="block font-mono text-[11px] font-semibold text-indigo-700 hover:underline dark:text-indigo-300">{job.id}</span><span className="mt-1 block text-[11px] text-slate-500">{JOB_KIND_LABELS[job.job_kind] || job.job_kind}</span></button></td>
-              <td className="px-3 py-3"><span className={`inline-flex items-center gap-1.5 rounded-full px-2.5 py-1 text-[10px] font-semibold ${statusClass(job.execution_state)}`}><StatusIcon status={job.execution_state} />{EXECUTION_STATES.find((option) => option.value === job.execution_state)?.label || job.execution_state}</span>{job.last_error_code && <span className="mt-1 block font-mono text-[10px] text-rose-600 dark:text-rose-300">{job.last_error_code}</span>}</td>
-              <td className="px-3 py-3"><div className="min-w-[180px]"><div className="mb-1 flex items-center justify-between gap-2 text-[10px] text-slate-500"><span>{PHASE_LABELS[job.phase] || job.phase}</span><span className="font-mono font-semibold text-slate-700 dark:text-slate-200">{progress.toFixed(2)}%</span></div><div className="h-2 overflow-hidden rounded-full bg-slate-100 dark:bg-slate-700" role="progressbar" aria-label={`${job.id} 阶段进度`} aria-valuemin={0} aria-valuemax={100} aria-valuenow={progress}><div className={`h-full rounded-full transition-all ${job.execution_state === 'failed' ? 'bg-rose-500' : job.execution_state === 'succeeded' ? 'bg-emerald-500' : 'bg-indigo-500'}`} style={{ width: `${progress}%` }} /></div></div></td>
-              <td className="whitespace-nowrap px-3 py-3 text-[11px] text-slate-500"><span className="font-mono text-slate-700 dark:text-slate-200">{job.processed_count}/{job.total_count}</span> 已处理<br /><span className="text-emerald-600 dark:text-emerald-300">成功 {job.succeeded_count}</span><span className="mx-1 text-slate-300">·</span><span className="text-rose-600 dark:text-rose-300">失败 {job.failed_count}</span></td>
+              <td className="px-3 py-3"><button type="button" onClick={() => setSelectedJobId(job.id)} className="text-left"><span data-export-ignore className="block font-mono text-[11px] font-semibold text-indigo-700 hover:underline dark:text-indigo-300">{job.id}</span><span className="mt-1 block text-[11px] text-slate-500">{JOB_KIND_LABELS[job.job_kind] || job.job_kind}</span></button></td>
+              <td className="px-3 py-3"><span className={`inline-flex items-center gap-1.5 rounded-full px-2.5 py-1 text-[10px] font-semibold ${statusClass(job.execution_state)}`}><StatusIcon status={job.execution_state} />{EXECUTION_STATES.find((option) => option.value === job.execution_state)?.label || job.execution_state}</span></td>
+              <td className="px-3 py-3">{PHASE_LABELS[job.phase] || job.phase}</td>
+              <td className="px-3 py-3"><div className="min-w-[120px]"><div className="mb-1 font-mono text-[10px] font-semibold text-slate-700 dark:text-slate-200">{progress.toFixed(2)}%</div><div className="h-2 overflow-hidden rounded-full bg-slate-100 dark:bg-slate-700" role="progressbar" aria-label={`${job.id} 阶段进度`} aria-valuemin={0} aria-valuemax={100} aria-valuenow={progress}><div className={`h-full rounded-full transition-all ${job.execution_state === 'failed' ? 'bg-rose-500' : job.execution_state === 'succeeded' ? 'bg-emerald-500' : 'bg-indigo-500'}`} style={{ width: `${progress}%` }} /></div></div></td>
+              <td className="px-3 py-3 font-mono">{job.processed_count}</td><td className="px-3 py-3 font-mono">{job.total_count}</td><td className="px-3 py-3 font-mono text-emerald-600 dark:text-emerald-300">{job.succeeded_count}</td><td className="px-3 py-3 font-mono text-rose-600 dark:text-rose-300">{job.failed_count}</td>
+              <td className="px-3 py-3 font-mono text-[10px] text-rose-600 dark:text-rose-300">{job.last_error_code || '—'}</td>
               <td className="whitespace-nowrap px-3 py-3 text-[11px] text-slate-500 dark:text-slate-400">{formatDate(job.updated_at || job.created_at)}</td>
-              <td className="px-3 py-3"><div className="flex flex-wrap gap-1.5"><button type="button" onClick={() => setSelectedJobId(job.id)} className="inline-flex items-center gap-1 rounded-lg border border-slate-200 px-2 py-1.5 text-[10px] font-semibold text-slate-600 hover:bg-slate-50 dark:border-slate-700 dark:text-slate-300 dark:hover:bg-slate-900"><Eye className="h-3 w-3" />错误详情</button>{jobHasRetry(job) && <button type="button" onClick={() => void retryJob(job)} disabled={Boolean(retryingJobId)} className="inline-flex items-center gap-1 rounded-lg border border-amber-200 px-2 py-1.5 text-[10px] font-semibold text-amber-700 hover:bg-amber-50 disabled:opacity-50 dark:border-amber-900/60 dark:text-amber-300 dark:hover:bg-amber-950/30"><RotateCcw className={`h-3 w-3 ${retryingJobId === job.id ? 'animate-spin' : ''}`} />{retryingJobId === job.id ? '重试中…' : '重试'}</button>}</div></td>
+              <TableActionCell className="px-3 py-3"><ActionIconButton icon={Eye} label="错误详情" variant="accent" onClick={() => setSelectedJobId(job.id)} />{jobHasRetry(job) && <ActionIconButton icon={RotateCcw} label={retryingJobId === job.id ? '重试中' : '重试'} iconClassName={retryingJobId === job.id ? 'animate-spin' : undefined} variant="accent" onClick={() => void retryJob(job)} disabled={Boolean(retryingJobId)} />}</TableActionCell>
             </tr>; })}</tbody>
-          </table>
+          </DataTable>
         </div>
         <Pagination currentPage={page} totalItems={total} onPageChange={setPage} itemsPerPage={pageSize} onItemsPerPageChange={(size) => { setPageSize(size); setPage(1); }} language="zh" alwaysVisible />
       </>}

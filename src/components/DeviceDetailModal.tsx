@@ -1,3 +1,4 @@
+import { DataTable } from './DataTable';
 import React, { useEffect, useMemo, useState } from 'react';
 import { motion } from 'motion/react';
 import {
@@ -825,18 +826,23 @@ const DeviceDetailModal: React.FC<DeviceDetailModalProps> = ({
             <div className="px-5 pb-5 sm:px-6 sm:pb-6 xl:px-8 xl:pb-6">
               <h4 className="mb-3 text-[10px] font-bold uppercase tracking-widest text-black/30">{language === 'zh' ? '接口监控' : 'Interface Monitoring'} ({viewingDevice.interface_data.length})</h4>
               <div className="max-h-60 overflow-auto rounded-xl border border-black/5">
-                <table className="nx-data-table nx-data-table--compact">
+                <DataTable unstyled exportConfig={{ filename: 'device-interface-details' }} className="nx-data-table nx-data-table--compact">
                   <thead className="sticky top-0 bg-black/[0.02]">
                     <tr>
                       <th className="px-3 py-2 text-left text-[10px] font-bold uppercase text-black/40">{language === 'zh' ? '接口' : 'Interface'}</th>
                       <th className="px-3 py-2 text-left text-[10px] font-bold uppercase text-black/40">{language === 'zh' ? '状态' : 'Status'}</th>
                       <th className="px-3 py-2 text-right text-[10px] font-bold uppercase text-black/40">{language === 'zh' ? '速率' : 'Speed'}</th>
-                      <th className="px-3 py-2 text-right text-[10px] font-bold uppercase text-black/40">IN</th>
-                      <th className="px-3 py-2 text-right text-[10px] font-bold uppercase text-black/40">OUT</th>
-                      <th className="px-3 py-2 text-right text-[10px] font-bold uppercase text-black/40">{language === 'zh' ? '带宽' : 'BW%'}</th>
-                      <th className="px-3 py-2 text-right text-[10px] font-bold uppercase text-black/40">{language === 'zh' ? '通用错误' : 'Generic Err'}</th>
+                      <th className="px-3 py-2 text-right text-[10px] font-bold uppercase text-black/40">{language === 'zh' ? '入站速率' : 'IN rate'}</th>
+                      <th className="px-3 py-2 text-right text-[10px] font-bold uppercase text-black/40">{language === 'zh' ? '入站流量' : 'IN octets'}</th>
+                      <th className="px-3 py-2 text-right text-[10px] font-bold uppercase text-black/40">{language === 'zh' ? '出站速率' : 'OUT rate'}</th>
+                      <th className="px-3 py-2 text-right text-[10px] font-bold uppercase text-black/40">{language === 'zh' ? '出站流量' : 'OUT octets'}</th>
+                      <th className="px-3 py-2 text-right text-[10px] font-bold uppercase text-black/40">{language === 'zh' ? '入站带宽' : 'IN BW%'}</th>
+                      <th className="px-3 py-2 text-right text-[10px] font-bold uppercase text-black/40">{language === 'zh' ? '出站带宽' : 'OUT BW%'}</th>
+                      <th className="px-3 py-2 text-right text-[10px] font-bold uppercase text-black/40">{language === 'zh' ? '入站错误' : 'IN errors'}</th>
+                      <th className="px-3 py-2 text-right text-[10px] font-bold uppercase text-black/40">{language === 'zh' ? '出站错误' : 'OUT errors'}</th>
                       <th className="px-3 py-2 text-right text-[10px] font-bold uppercase text-black/40">CRC/FCS</th>
-                      <th className="px-3 py-2 text-right text-[10px] font-bold uppercase text-black/40">{language === 'zh' ? '丢包' : 'Drop'}</th>
+                      <th className="px-3 py-2 text-right text-[10px] font-bold uppercase text-black/40">{language === 'zh' ? '入站丢弃' : 'IN drops'}</th>
+                      <th className="px-3 py-2 text-right text-[10px] font-bold uppercase text-black/40">{language === 'zh' ? '出站丢弃' : 'OUT drops'}</th>
                       <th className="px-3 py-2 text-left text-[10px] font-bold uppercase text-black/40">{language === 'zh' ? '描述' : 'Desc'}</th>
                     </tr>
                   </thead>
@@ -850,28 +856,31 @@ const DeviceDetailModal: React.FC<DeviceDetailModalProps> = ({
                         if (bps >= 1_000) return `${(bps / 1_000).toFixed(1)} Kbps`;
                         return `${bps.toFixed(0)} bps`;
                       };
-                      const totalErr = (intf.in_errors || 0) + (intf.out_errors || 0);
-                      const totalDrop = (intf.in_discards || 0) + (intf.out_discards || 0);
                       const fcsErrors = Number(intf.fcs_errors || 0);
-                      const maxBw = (intf.bw_in_pct != null || intf.bw_out_pct != null) ? Math.max(intf.bw_in_pct || 0, intf.bw_out_pct || 0) : null;
+                      const fmtPercent = (value?: number | null) => value != null && Number.isFinite(value) ? `${value.toFixed(1)}%` : '-';
 
                       return (
                         <tr key={index} className="hover:bg-black/[0.01]">
                           <td className="px-3 py-1.5 font-mono text-[11px]">{intf.name}</td>
                           <td className="px-3 py-1.5"><span className={`inline-flex items-center gap-1 text-[10px] font-bold ${intf.status === 'up' ? 'text-emerald-600' : 'text-red-500'}`}><span className={`h-1.5 w-1.5 rounded-full ${intf.status === 'up' ? 'bg-emerald-500' : 'bg-red-500'}`} />{formatStatusLabel(intf.status, language)}</span></td>
                           <td className="px-3 py-1.5 text-right text-black/60">{intf.speed_mbps > 0 ? `${intf.speed_mbps >= 1000 ? `${intf.speed_mbps / 1000}G` : `${intf.speed_mbps}M`}` : '-'}</td>
-                          <td className="px-3 py-1.5 text-right font-mono text-[10px]"><div className="text-blue-600">{fmtRate(intf.in_bps)}</div><div className="text-black/30">{fmtBytes(intf.in_octets || 0)}</div></td>
-                          <td className="px-3 py-1.5 text-right font-mono text-[10px]"><div className="text-orange-600">{fmtRate(intf.out_bps)}</div><div className="text-black/30">{fmtBytes(intf.out_octets || 0)}</div></td>
-                          <td className="px-3 py-1.5 text-right font-mono text-[10px]">{maxBw != null ? <span className={maxBw > 80 ? 'text-red-600' : maxBw > 50 ? 'text-orange-600' : 'text-black/50'}>{maxBw.toFixed(1)}%</span> : <span className="text-black/20">-</span>}</td>
-                          <td className="px-3 py-1.5 text-right font-mono text-[10px]"><span className={totalErr > 0 ? 'font-bold text-red-600' : 'text-black/30'}>{totalErr}</span></td>
+                          <td className="px-3 py-1.5 text-right font-mono text-[10px] text-blue-600">{fmtRate(intf.in_bps)}</td>
+                          <td className="px-3 py-1.5 text-right font-mono text-[10px] text-black/50">{fmtBytes(intf.in_octets || 0)}</td>
+                          <td className="px-3 py-1.5 text-right font-mono text-[10px] text-orange-600">{fmtRate(intf.out_bps)}</td>
+                          <td className="px-3 py-1.5 text-right font-mono text-[10px] text-black/50">{fmtBytes(intf.out_octets || 0)}</td>
+                          <td className="px-3 py-1.5 text-right font-mono text-[10px]">{intf.bw_in_pct != null ? <span className={intf.bw_in_pct > 80 ? 'text-red-600' : intf.bw_in_pct > 50 ? 'text-orange-600' : 'text-black/50'}>{fmtPercent(intf.bw_in_pct)}</span> : <span className="text-black/20">-</span>}</td>
+                          <td className="px-3 py-1.5 text-right font-mono text-[10px]">{intf.bw_out_pct != null ? <span className={intf.bw_out_pct > 80 ? 'text-red-600' : intf.bw_out_pct > 50 ? 'text-orange-600' : 'text-black/50'}>{fmtPercent(intf.bw_out_pct)}</span> : <span className="text-black/20">-</span>}</td>
+                          <td className={`px-3 py-1.5 text-right font-mono text-[10px] ${(intf.in_errors || 0) > 0 ? 'font-bold text-red-600' : 'text-black/30'}`}>{intf.in_errors || 0}</td>
+                          <td className={`px-3 py-1.5 text-right font-mono text-[10px] ${(intf.out_errors || 0) > 0 ? 'font-bold text-red-600' : 'text-black/30'}`}>{intf.out_errors || 0}</td>
                           <td className="px-3 py-1.5 text-right font-mono text-[10px]" title={intf.fcs_source || 'EtherLike-MIB'}><span className={fcsErrors > 0 ? 'font-bold text-red-600' : 'text-black/30'}>{fcsErrors}</span></td>
-                          <td className="px-3 py-1.5 text-right font-mono text-[10px]"><span className={totalDrop > 0 ? 'font-bold text-orange-600' : 'text-black/30'}>{totalDrop}</span></td>
+                          <td className={`px-3 py-1.5 text-right font-mono text-[10px] ${(intf.in_discards || 0) > 0 ? 'font-bold text-orange-600' : 'text-black/30'}`}>{intf.in_discards || 0}</td>
+                          <td className={`px-3 py-1.5 text-right font-mono text-[10px] ${(intf.out_discards || 0) > 0 ? 'font-bold text-orange-600' : 'text-black/30'}`}>{intf.out_discards || 0}</td>
                           <td className="max-w-[120px] truncate px-3 py-1.5 text-black/40">{intf.description || '-'}</td>
                         </tr>
                       );
                     })}
                   </tbody>
-                </table>
+                </DataTable>
               </div>
             </div>
           )}

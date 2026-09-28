@@ -2,9 +2,10 @@ import React, { useState } from 'react';
 import { motion, AnimatePresence } from 'motion/react';
 import {
   Shield, Globe, Bell, CheckCircle2, ChevronRight,
-  Eye, EyeOff, Send, Loader2, SkipForward, ArrowRight,
-  Rocket, Lock, Settings2,
+  Send, Loader2, SkipForward, ArrowRight,
+  Rocket, Settings2,
 } from 'lucide-react';
+import { PasswordInputField } from './ui/PasswordInputField';
 
 interface SetupWizardProps {
   language: string;
@@ -274,33 +275,37 @@ const SetupWizard: React.FC<SetupWizardProps> = ({ language, onComplete, onLangu
                   ) : (
                     <>
                       <div>
-                        <label className="mb-1 block text-xs font-semibold text-black/50">
+                        <label htmlFor="setup-current-password" className="mb-1 block text-xs font-semibold text-black/50">
                           {zh ? '当前密码' : 'Current Password'}
                         </label>
-                        <div className="relative">
-                          <Lock size={14} className="pointer-events-none absolute left-3 top-1/2 -translate-y-1/2 text-black/25" />
-                          <input
-                            type={showPwd ? 'text' : 'password'}
-                            value={currentPwd}
-                            onChange={e => setCurrentPwd(e.target.value)}
-                            placeholder={zh ? '输入当前密码（默认 admin）' : 'Enter current password (default: admin)'}
-                            className="w-full rounded-xl border border-black/10 bg-white py-3 pl-9 pr-10 text-sm outline-none focus:border-[#06b6d4]/40 focus:ring-2 focus:ring-[#06b6d4]/10"
-                          />
-                          <button type="button" tabIndex={-1} onClick={() => setShowPwd(v => !v)} className="absolute right-3 top-1/2 -translate-y-1/2 text-black/30 hover:text-black/60">
-                            {showPwd ? <EyeOff size={15} /> : <Eye size={15} />}
-                          </button>
-                        </div>
+                        <PasswordInputField
+                          id="setup-current-password"
+                          autoComplete="current-password"
+                          visible={showPwd}
+                          onVisibilityChange={(visible) => setShowPwd(visible)}
+                          showPasswordLabel={zh ? '显示当前密码' : 'Show current password'}
+                          hidePasswordLabel={zh ? '隐藏当前密码' : 'Hide current password'}
+                          value={currentPwd}
+                          onChange={e => setCurrentPwd(e.target.value)}
+                          placeholder={zh ? '输入当前密码（默认 admin）' : 'Enter current password (default: admin)'}
+                          className="rounded-xl bg-white py-3 text-sm"
+                        />
                       </div>
                       <div>
-                        <label className="mb-1 block text-xs font-semibold text-black/50">
+                        <label htmlFor="setup-new-password" className="mb-1 block text-xs font-semibold text-black/50">
                           {zh ? '新密码' : 'New Password'}
                         </label>
-                        <input
-                          type={showPwd ? 'text' : 'password'}
+                        <PasswordInputField
+                          id="setup-new-password"
+                          autoComplete="new-password"
+                          visible={showPwd}
+                          onVisibilityChange={(visible) => setShowPwd(visible)}
+                          showPasswordLabel={zh ? '显示新密码' : 'Show new password'}
+                          hidePasswordLabel={zh ? '隐藏新密码' : 'Hide new password'}
                           value={newPwd}
                           onChange={e => setNewPwd(e.target.value)}
                           placeholder={zh ? '至少10位，含大小写、数字和特殊字符' : '10+ chars, upper, lower, digit, special'}
-                          className="w-full rounded-xl border border-black/10 bg-white py-3 px-3 text-sm outline-none focus:border-[#06b6d4]/40 focus:ring-2 focus:ring-[#06b6d4]/10"
+                          className="rounded-xl bg-white py-3 text-sm"
                         />
                         {newPwd && (
                           <div className="mt-1.5 space-y-1">
@@ -332,15 +337,20 @@ const SetupWizard: React.FC<SetupWizardProps> = ({ language, onComplete, onLangu
                         )}
                       </div>
                       <div>
-                        <label className="mb-1 block text-xs font-semibold text-black/50">
+                        <label htmlFor="setup-confirm-password" className="mb-1 block text-xs font-semibold text-black/50">
                           {zh ? '确认新密码' : 'Confirm New Password'}
                         </label>
-                        <input
-                          type={showPwd ? 'text' : 'password'}
+                        <PasswordInputField
+                          id="setup-confirm-password"
+                          autoComplete="new-password"
+                          visible={showPwd}
+                          onVisibilityChange={(visible) => setShowPwd(visible)}
+                          showPasswordLabel={zh ? '显示确认密码' : 'Show confirmation password'}
+                          hidePasswordLabel={zh ? '隐藏确认密码' : 'Hide confirmation password'}
                           value={confirmPwd}
                           onChange={e => setConfirmPwd(e.target.value)}
                           placeholder={zh ? '再次输入新密码' : 'Re-enter new password'}
-                          className="w-full rounded-xl border border-black/10 bg-white py-3 px-3 text-sm outline-none focus:border-[#06b6d4]/40 focus:ring-2 focus:ring-[#06b6d4]/10"
+                          className="rounded-xl bg-white py-3 text-sm"
                         />
                         {confirmPwd && confirmPwd !== newPwd && (
                           <p className="mt-1 text-xs text-red-400">{zh ? '密码不一致' : 'Passwords do not match'}</p>

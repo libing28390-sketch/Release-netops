@@ -1,10 +1,10 @@
+import { DataTable } from '../components/DataTable';
 import React, { useState, useCallback, useEffect, useRef, useMemo } from 'react';
 import { Search, MapPin, ArrowRight, Loader2, Server, Monitor, Network, AlertCircle, ChevronDown, ChevronUp, Cable, Clock, RotateCcw, Activity, Wifi, Globe, Zap, CheckCircle2, XCircle, Minus, Database, RefreshCw, Filter, Download, X, ShieldAlert, Check, Play, FileText, Copy, Router, ExternalLink, Cpu, MemoryStick, Eye, Users, Sliders, Settings } from 'lucide-react';
 import Pagination from '../components/Pagination';
 import PageHero from '../components/PageHero';
 import { ActionButton } from '../components/ui/ActionIconButton';
 import { useEscapeClose } from '../hooks/useEscapeClose';
-import * as XLSX from 'xlsx';
 import { formatMacAddress } from '../utils/resourceFormatters';
 import {
   formatMacLookupMessage,
@@ -14,6 +14,7 @@ import {
 import { formatLocationType } from '../utils/ipLocator';
 import { locateIpWithRun, type LocatorRunStage } from '../utils/ipLocatorRuns';
 import { summarizeLocatorCache } from '../utils/ipLocatorCacheSummary';
+import { buildMacChangeExportData, filterMacChangeEntries, loadAllMacChangeEntries } from './ipLocatorExport';
 import { isValidIP } from './IPVlan/helpers';
 import { useSearchParams } from 'react-router-dom';
 
@@ -673,6 +674,25 @@ const IPLocatorPage: React.FC<IPLocatorPageProps> = ({ language, t, mode }) => {
   const [arpSweepStatus, setArpSweepStatus] = useState<ArpSweepStatus | null>(null);
   const [arpPage, setArpPage] = useState(1);
   const [arpPageSize, setArpPageSize] = useState(10);
+  const filteredArpEntries = useMemo(() => {
+    if (!arpTable) return [];
+    const q = arpFilter.trim().toLowerCase();
+    return q
+      ? arpTable.entries.filter(entry =>
+          entry.ip.toLowerCase().includes(q) ||
+          entry.mac.toLowerCase().includes(q) ||
+          entry.mac_raw.toLowerCase().includes(q) ||
+          entry.device.toLowerCase().includes(q) ||
+          entry.interface.toLowerCase().includes(q) ||
+          String(entry.vlan ?? '').toLowerCase().includes(q) ||
+          (entry.vendor || '').toLowerCase().includes(q)
+        )
+      : arpTable.entries;
+  }, [arpTable, arpFilter]);
+  const pageArpEntries = useMemo(
+    () => filteredArpEntries.slice((arpPage - 1) * arpPageSize, arpPage * arpPageSize),
+    [filteredArpEntries, arpPage, arpPageSize],
+  );
 
   // ── MAC Changes state ──
   const [macChanges, setMacChanges] = useState<MacChangesData | null>(null);
@@ -681,6 +701,24 @@ const IPLocatorPage: React.FC<IPLocatorPageProps> = ({ language, t, mode }) => {
   const [macFilter, setMacFilter] = useState('');
   const [macPage, setMacPage] = useState(1);
   const [macPageSize, setMacPageSize] = useState(10);
+  const filteredMacChanges = useMemo(() => {
+    if (!macChanges) return [];
+    return filterMacChangeEntries(macChanges.entries, macFilter);
+  }, [macChanges, macFilter]);
+  const pageMacChanges = useMemo(
+    () => filteredMacChanges.slice((macPage - 1) * macPageSize, macPage * macPageSize),
+    [filteredMacChanges, macPage, macPageSize],
+  );
+  const loadAllMacChangesForExport = useCallback(() => loadAllMacChangeEntries(async (offset, limit) => {
+    const response = await fetch(`/api/ip-locator/mac-changes?limit=${limit}&offset=${offset}`, {
+      headers: { Authorization: `Bearer ${token}` },
+    });
+    if (!response.ok) {
+      const error = await response.json().catch(() => ({}));
+      throw new Error(error.detail || `Failed to load MAC changes (HTTP ${response.status})`);
+    }
+    return response.json();
+  }, 1000), [token]);
 
   // ── NSOT (Network Source of Truth) state ──
   const [nsotSubTab, setNsotSubTab] = useState<NsotSubTab>('endpoints');
@@ -2161,22 +2199,30 @@ ${rep.repair_commands}
                   </div>
                   {probeResult.tests.traceroute.hops?.length > 0 ? (
                     <div className="bg-black/[0.02] dark:bg-white/[0.03] rounded-xl border border-black/5 dark:border-white/8 overflow-hidden">
-                      <div className="grid grid-cols-[3rem_1fr_6rem] text-[10px] font-medium text-black/40 dark:text-white/40 uppercase tracking-wider px-4 py-2 border-b border-black/5 dark:border-white/8">
-                        <span>{zh ? '跳数' : 'Hop'}</span>
-                        <span>IP</span>
-                        <span>{zh ? '延迟' : 'RTT'}</span>
+                      <div className="overflow-x-auto">
+                        <DataTable unstyled exportConfig={{ filename: 'ip-locator-traceroute', language: zh ? 'zh' : 'en' }} className="block min-w-[420px] border-collapse text-left">
+                          <thead className="block">
+                            <tr className="grid grid-cols-[3rem_1fr_6rem] text-[10px] font-medium text-black/40 dark:text-white/40 uppercase tracking-wider px-4 py-2 border-b border-black/5 dark:border-white/8">
+                              <th scope="col" className="block text-left font-medium">{zh ? '跳数' : 'Hop'}</th>
+                              <th scope="col" className="block text-left font-medium">IP</th>
+                              <th scope="col" className="block text-left font-medium">{zh ? '延迟' : 'RTT'}</th>
+                            </tr>
+                          </thead>
+                          <tbody className="block">
+                            {probeResult.tests.traceroute.hops.map((h, i) => (
+                              <tr key={i} className={`grid grid-cols-[3rem_1fr_6rem] px-4 py-2 text-xs ${i % 2 ? 'bg-black/[0.01] dark:bg-white/[0.02]' : ''} ${h.ip === probeResult.target ? 'bg-emerald-50/50 dark:bg-emerald-500/10' : ''}`}>
+                                <td className="block text-black/40 dark:text-white/40 font-mono">{h.hop}</td>
+                                <td className={`block font-mono ${h.timeout ? 'text-black/25 dark:text-white/25' : h.ip === probeResult.target ? 'text-emerald-700 dark:text-emerald-400 font-semibold' : 'text-[#164e63] dark:text-[var(--app-text)]'}`}>
+                                  {h.ip}
+                                </td>
+                                <td className="block text-black/40 dark:text-white/40 font-mono">
+                                  {h.rtt_ms.length > 0 ? h.rtt_ms.map(r => `${r}ms`).join(' / ') : (h.timeout ? '*' : '-')}
+                                </td>
+                              </tr>
+                            ))}
+                          </tbody>
+                        </DataTable>
                       </div>
-                      {probeResult.tests.traceroute.hops.map((h, i) => (
-                        <div key={i} className={`grid grid-cols-[3rem_1fr_6rem] px-4 py-2 text-xs ${i % 2 ? 'bg-black/[0.01] dark:bg-white/[0.02]' : ''} ${h.ip === probeResult.target ? 'bg-emerald-50/50 dark:bg-emerald-500/10' : ''}`}>
-                          <span className="text-black/40 dark:text-white/40 font-mono">{h.hop}</span>
-                          <span className={`font-mono ${h.timeout ? 'text-black/25 dark:text-white/25' : h.ip === probeResult.target ? 'text-emerald-700 dark:text-emerald-400 font-semibold' : 'text-[#164e63] dark:text-[var(--app-text)]'}`}>
-                            {h.ip}
-                          </span>
-                          <span className="text-black/40 dark:text-white/40 font-mono">
-                            {h.rtt_ms.length > 0 ? h.rtt_ms.map(r => `${r}ms`).join(' / ') : (h.timeout ? '*' : '-')}
-                          </span>
-                        </div>
-                      ))}
                     </div>
                   ) : (
                     <p className="text-xs text-black/35">{zh ? '未获取到路由跳数' : 'No hops captured'}</p>
@@ -2225,34 +2271,6 @@ ${rep.repair_commands}
             {arpSweeping ? <Loader2 size={13} className="animate-spin" /> : <RefreshCw size={13} />}
             {zh ? '立即采集' : 'Sweep Now'}
           </button>
-          <ActionButton
-            icon={Download}
-            variant="accent"
-            onClick={() => {
-              if (!arpTable || arpTable.entries.length === 0) return;
-              const q = arpFilter.trim().toLowerCase();
-              const rows = (q ? arpTable.entries.filter(e =>
-                e.ip.toLowerCase().includes(q) || e.mac.toLowerCase().includes(q) ||
-                e.device.toLowerCase().includes(q) || e.interface.toLowerCase().includes(q) ||
-                (e.vendor || '').toLowerCase().includes(q)
-              ) : arpTable.entries).map(e => ({
-                IP: e.ip,
-                MAC: formatMacAddress(e.mac),
-                VLAN: e.vlan || '',
-                [zh ? '厂商' : 'Vendor']: e.vendor || '',
-                [zh ? '接口' : 'Interface']: e.interface || '',
-                [zh ? '来源设备' : 'Device']: e.device || '',
-                [zh ? '采集时间' : 'Collected']: e.cached_at?.replace('T', ' ').slice(0, 19) || '',
-              }));
-              const ws = XLSX.utils.json_to_sheet(rows);
-              const wb = XLSX.utils.book_new();
-              XLSX.utils.book_append_sheet(wb, ws, 'ARP Table');
-              XLSX.writeFile(wb, `arp_table_${new Date().toISOString().slice(0, 10)}.xlsx`);
-            }}
-            disabled={!arpTable || arpTable.total === 0}
-          >
-            {zh ? '导出' : 'Export'}
-          </ActionButton>
         </div>
 
         {/* Stats bar */}
@@ -2310,74 +2328,81 @@ ${rep.repair_commands}
       )}
 
       {/* ── ARP Table ── */}
-      {!arpLoading && arpTable && arpTable.total > 0 && (() => {
-        const q = arpFilter.trim().toLowerCase();
-        const filtered = q
-          ? arpTable.entries.filter(e =>
-              e.ip.toLowerCase().includes(q) ||
-              e.mac.toLowerCase().includes(q) ||
-              e.mac_raw.toLowerCase().includes(q) ||
-              e.device.toLowerCase().includes(q) ||
-              e.interface.toLowerCase().includes(q) ||
-              String(e.vlan ?? '').toLowerCase().includes(q) ||
-              (e.vendor || '').toLowerCase().includes(q)
-            )
-          : arpTable.entries;
-        const pageStart = (arpPage - 1) * arpPageSize;
-        const pageEntries = filtered.slice(pageStart, pageStart + arpPageSize);
-
-        return (
-          <div className="bg-white rounded-2xl border border-black/5 shadow-sm overflow-hidden">
-            {/* Table header */}
-            <div className="grid grid-cols-[1fr_1fr_5rem_6rem_6rem_10rem_8rem] gap-2 px-5 py-2.5 text-[10px] font-bold text-black/40 dark:text-white/40 uppercase tracking-wider border-b border-black/5 dark:border-white/8 bg-black/[0.01] dark:bg-white/[0.02]">
-              <span>IP</span>
-              <span>MAC</span>
-              <span>VLAN</span>
-              <span>{zh ? '厂商' : 'Vendor'}</span>
-              <span>{zh ? '接口' : 'Interface'}</span>
-              <span>{zh ? '来源设备' : 'Device'}</span>
-              <span>{zh ? '采集时间' : 'Collected'}</span>
-            </div>
-
-            {/* Table body */}
-            <div>
-              {filtered.length === 0 ? (
-                <div className="px-5 py-6 text-center text-xs text-black/30">
-                  {zh ? `未找到匹配 "${arpFilter}" 的记录` : `No entries matching "${arpFilter}"`}
-                </div>
-              ) : (
-                pageEntries.map((entry, idx) => (
-                  <div
-                    key={entry.ip}
-                    className={`grid grid-cols-[1fr_1fr_5rem_6rem_6rem_10rem_8rem] gap-2 px-5 py-2 text-xs items-center border-b border-black/[0.03] dark:border-white/[0.05] hover:bg-[#ecfeff]/30 dark:hover:bg-cyan-500/5 transition-colors cursor-pointer ${idx % 2 ? 'bg-black/[0.008] dark:bg-white/[0.015]' : ''}`}
-                    onClick={() => { setIp(entry.ip); setActiveTab('locate'); }}
-                    title={zh ? '点击定位此 IP' : 'Click to locate this IP'}
-                  >
-                    <span className="font-mono font-semibold text-[#164e63]">{entry.ip}</span>
-                    <span className="font-mono text-black/50">{formatMacAddress(entry.mac)}</span>
-                    <span className="font-mono text-cyan-700 dark:text-cyan-400">{entry.vlan || '-'}</span>
-                    <span className="text-black/45 truncate" title={entry.vendor}>{entry.vendor || '-'}</span>
-                    <span className="text-black/45 truncate" title={entry.interface}>{entry.interface || '-'}</span>
-                    <span className="text-[#0891b2] truncate font-medium" title={entry.device}>{entry.device || '-'}</span>
-                    <span className={entry.freshness === 'stale' ? 'text-amber-600' : 'text-black/30'} title={`${entry.cached_at} · ${entry.vlan_source || 'unknown VLAN source'}`}>
-                      {formatRelativeTime(entry.cached_at, zh)}{entry.freshness === 'stale' ? (zh ? ' · 已过期' : ' · stale') : ''}
-                    </span>
-                  </div>
-                ))
-              )}
-            </div>
-
-            <Pagination
-              currentPage={arpPage}
-              totalItems={filtered.length}
-              itemsPerPage={arpPageSize}
-              onPageChange={setArpPage}
-              onItemsPerPageChange={(v) => { setArpPage(1); setArpPageSize(v); }}
-              language={language}
-            />
+      {!arpLoading && arpTable && arpTable.total > 0 && (
+        <div className="bg-white rounded-2xl border border-black/5 dark:border-white/5 shadow-sm overflow-hidden">
+          <div className="overflow-x-auto">
+            <DataTable
+              unstyled
+              exportConfig={{
+                filename: 'ip-locator-arp-table',
+                language: zh ? 'zh' : 'en',
+                disabled: arpLoading || filteredArpEntries.length === 0,
+                exportData: () => ({
+                  headers: ['IP', 'MAC', 'VLAN', zh ? '厂商' : 'Vendor', zh ? '接口' : 'Interface', zh ? '来源设备' : 'Device', zh ? '采集时间' : 'Collected'],
+                  rows: filteredArpEntries.map(entry => [
+                    entry.ip,
+                    formatMacAddress(entry.mac),
+                    entry.vlan || '-',
+                    entry.vendor || '-',
+                    entry.interface || '-',
+                    entry.device || '-',
+                    `${formatRelativeTime(entry.cached_at, zh)}${entry.freshness === 'stale' ? (zh ? ' · 已过期' : ' · stale') : ''}`,
+                  ]),
+                }),
+              }}
+              className="block min-w-[760px] border-collapse text-left"
+            >
+              <thead className="block">
+                <tr className="grid grid-cols-[1fr_1fr_5rem_6rem_6rem_10rem_8rem] gap-2 px-5 py-2.5 text-[10px] font-bold text-black/40 dark:text-white/40 uppercase tracking-wider border-b border-black/5 dark:border-white/8 bg-black/[0.01] dark:bg-white/[0.02]">
+                  <th scope="col" className="block text-left font-bold">IP</th>
+                  <th scope="col" className="block text-left font-bold">MAC</th>
+                  <th scope="col" className="block text-left font-bold">VLAN</th>
+                  <th scope="col" className="block text-left font-bold">{zh ? '厂商' : 'Vendor'}</th>
+                  <th scope="col" className="block text-left font-bold">{zh ? '接口' : 'Interface'}</th>
+                  <th scope="col" className="block text-left font-bold">{zh ? '来源设备' : 'Device'}</th>
+                  <th scope="col" className="block text-left font-bold">{zh ? '采集时间' : 'Collected'}</th>
+                </tr>
+              </thead>
+              <tbody className="block">
+                {filteredArpEntries.length === 0 ? (
+                  <tr className="block">
+                    <td colSpan={7} className="block px-5 py-6 text-center text-xs text-black/30">
+                      {zh ? `未找到匹配 "${arpFilter}" 的记录` : `No entries matching "${arpFilter}"`}
+                    </td>
+                  </tr>
+                ) : (
+                  pageArpEntries.map((entry, idx) => (
+                    <tr
+                      key={entry.ip}
+                      className={`grid grid-cols-[1fr_1fr_5rem_6rem_6rem_10rem_8rem] gap-2 px-5 py-2 text-xs items-center border-b border-black/[0.03] dark:border-white/[0.05] hover:bg-[#ecfeff]/30 dark:hover:bg-cyan-500/5 transition-colors cursor-pointer ${idx % 2 ? 'bg-black/[0.008] dark:bg-white/[0.015]' : ''}`}
+                      onClick={() => { setIp(entry.ip); setActiveTab('locate'); }}
+                      title={zh ? '点击定位此 IP' : 'Click to locate this IP'}
+                    >
+                      <td className="block font-mono font-semibold text-[#164e63]">{entry.ip}</td>
+                      <td className="block font-mono text-black/50">{formatMacAddress(entry.mac)}</td>
+                      <td className="block font-mono text-cyan-700 dark:text-cyan-400">{entry.vlan || '-'}</td>
+                      <td className="block text-black/45 truncate" title={entry.vendor}>{entry.vendor || '-'}</td>
+                      <td className="block text-black/45 truncate" title={entry.interface}>{entry.interface || '-'}</td>
+                      <td className="block text-[#0891b2] truncate font-medium" title={entry.device}>{entry.device || '-'}</td>
+                      <td className={entry.freshness === 'stale' ? 'block text-amber-600' : 'block text-black/30'} title={`${entry.cached_at} · ${entry.vlan_source || 'unknown VLAN source'}`}>
+                        {formatRelativeTime(entry.cached_at, zh)}{entry.freshness === 'stale' ? (zh ? ' · 已过期' : ' · stale') : ''}
+                      </td>
+                    </tr>
+                  ))
+                )}
+              </tbody>
+            </DataTable>
           </div>
-        );
-      })()}
+          <Pagination
+            currentPage={arpPage}
+            totalItems={filteredArpEntries.length}
+            itemsPerPage={arpPageSize}
+            onPageChange={setArpPage}
+            onItemsPerPageChange={(v) => { setArpPage(1); setArpPageSize(v); }}
+            language={language}
+          />
+        </div>
+      )}
 
       </>)}
 
@@ -2452,77 +2477,74 @@ ${rep.repair_commands}
       )}
 
       {/* ── Change List ── */}
-      {!macChangesLoading && macChanges && macChanges.total > 0 && (() => {
-        const q = macFilter.trim().toLowerCase();
-        const filtered = q
-          ? macChanges.entries.filter(e =>
-              e.ip.toLowerCase().includes(q) ||
-              e.old_mac.toLowerCase().includes(q) ||
-              e.new_mac.toLowerCase().includes(q) ||
-              (e.old_vendor || '').toLowerCase().includes(q) ||
-              (e.new_vendor || '').toLowerCase().includes(q) ||
-              (e.old_device || '').toLowerCase().includes(q) ||
-              (e.new_device || '').toLowerCase().includes(q)
-            )
-          : macChanges.entries;
-        const pageStart = (macPage - 1) * macPageSize;
-        const pageEntries = filtered.slice(pageStart, pageStart + macPageSize);
-
-        return (
-          <div className="bg-white rounded-2xl border border-black/5 shadow-sm overflow-hidden">
-            {/* Table header */}
-            <div className="grid grid-cols-[8rem_1fr_1fr_8rem_8rem] gap-2 px-5 py-2.5 text-[10px] font-bold text-black/40 dark:text-white/40 uppercase tracking-wider border-b border-black/5 dark:border-white/8 bg-black/[0.01] dark:bg-white/[0.02]">
-              <span>IP</span>
-              <span>{zh ? '旧 MAC → 新 MAC' : 'Old MAC → New MAC'}</span>
-              <span>{zh ? '厂商变化' : 'Vendor Change'}</span>
-              <span>{zh ? '来源设备' : 'Device'}</span>
-              <span>{zh ? '检测时间' : 'Detected'}</span>
-            </div>
-
-            <div>
-              {filtered.length === 0 ? (
-                <div className="px-5 py-6 text-center text-xs text-black/30">
-                  {zh ? `未找到匹配 "${macFilter}" 的记录` : `No entries matching "${macFilter}"`}
-                </div>
-              ) : (
-                pageEntries.map((entry, idx) => (
-                  <div
-                    key={entry.id}
-                    className={`grid grid-cols-[8rem_1fr_1fr_8rem_8rem] gap-2 px-5 py-2.5 text-xs items-center border-b border-black/[0.03] dark:border-white/[0.05] hover:bg-amber-50/30 dark:hover:bg-amber-500/5 transition-colors ${idx % 2 ? 'bg-black/[0.008] dark:bg-white/[0.015]' : ''}`}
-                  >
-                    <span
-                      className="font-mono font-semibold text-[#164e63] cursor-pointer hover:text-[#0891b2]"
-                      onClick={() => { setIp(entry.ip); setActiveTab('locate'); }}
-                      title={zh ? '点击定位此 IP' : 'Click to locate this IP'}
-                    >{entry.ip}</span>
-                    <div className="flex items-center gap-1.5 min-w-0">
-                      <span className="font-mono text-red-400 truncate" title={entry.old_mac}>{entry.old_mac}</span>
-                      <ArrowRight size={12} className="text-black/20 dark:text-white/20 flex-shrink-0" />
-                      <span className="font-mono text-emerald-600 dark:text-emerald-400 truncate" title={entry.new_mac}>{entry.new_mac}</span>
-                    </div>
-                    <div className="flex items-center gap-1.5 min-w-0 text-black/45 dark:text-white/45">
-                      <span className="truncate">{entry.old_vendor || '?'}</span>
-                      <ArrowRight size={10} className="text-black/15 dark:text-white/15 flex-shrink-0" />
-                      <span className="truncate">{entry.new_vendor || '?'}</span>
-                    </div>
-                    <span className="text-[#0891b2] truncate font-medium" title={entry.new_device}>{entry.new_device || '-'}</span>
-                    <span className="text-black/30 dark:text-white/30" title={entry.detected_at}>{formatRelativeTime(entry.detected_at, zh)}</span>
-                  </div>
-                ))
-              )}
-            </div>
-
-            <Pagination
-              currentPage={macPage}
-              totalItems={filtered.length}
-              itemsPerPage={macPageSize}
-              onPageChange={setMacPage}
-              onItemsPerPageChange={(v) => { setMacPage(1); setMacPageSize(v); }}
-              language={language}
-            />
+      {!macChangesLoading && macChanges && macChanges.total > 0 && (
+        <div className="bg-white rounded-2xl border border-black/5 dark:border-white/5 shadow-sm overflow-hidden">
+          <div className="overflow-x-auto">
+            <DataTable
+              unstyled
+              exportConfig={{
+                filename: 'ip-locator-mac-changes',
+                language: zh ? 'zh' : 'en',
+                disabled: macChangesLoading || macChanges.total === 0,
+                exportData: async () => buildMacChangeExportData(
+                  filterMacChangeEntries(await loadAllMacChangesForExport(), macFilter),
+                  zh,
+                  value => formatRelativeTime(value, zh),
+                ),
+              }}
+              className="block min-w-[1000px] border-collapse text-left"
+            >
+              <thead className="block">
+                <tr className="grid grid-cols-[8rem_1fr_1fr_1fr_1fr_8rem_8rem] gap-2 px-5 py-2.5 text-[10px] font-bold text-black/40 dark:text-white/40 uppercase tracking-wider border-b border-black/5 dark:border-white/8 bg-black/[0.01] dark:bg-white/[0.02]">
+                  <th scope="col" className="block text-left font-bold">IP</th>
+                  <th scope="col" className="block text-left font-bold">{zh ? '旧 MAC' : 'Old MAC'}</th>
+                  <th scope="col" className="block text-left font-bold">{zh ? '新 MAC' : 'New MAC'}</th>
+                  <th scope="col" className="block text-left font-bold">{zh ? '旧厂商' : 'Old vendor'}</th>
+                  <th scope="col" className="block text-left font-bold">{zh ? '新厂商' : 'New vendor'}</th>
+                  <th scope="col" className="block text-left font-bold">{zh ? '来源设备' : 'Device'}</th>
+                  <th scope="col" className="block text-left font-bold">{zh ? '检测时间' : 'Detected'}</th>
+                </tr>
+              </thead>
+              <tbody className="block">
+                {filteredMacChanges.length === 0 ? (
+                  <tr className="block">
+                    <td colSpan={7} className="block px-5 py-6 text-center text-xs text-black/30">
+                      {zh ? `未找到匹配 "${macFilter}" 的记录` : `No entries matching "${macFilter}"`}
+                    </td>
+                  </tr>
+                ) : (
+                  pageMacChanges.map((entry, idx) => (
+                    <tr
+                      key={entry.id}
+                      className={`grid grid-cols-[8rem_1fr_1fr_1fr_1fr_8rem_8rem] gap-2 px-5 py-2.5 text-xs items-center border-b border-black/[0.03] dark:border-white/[0.05] hover:bg-amber-50/30 dark:hover:bg-amber-500/5 transition-colors ${idx % 2 ? 'bg-black/[0.008] dark:bg-white/[0.015]' : ''}`}
+                    >
+                      <td
+                        className="block font-mono font-semibold text-[#164e63] cursor-pointer hover:text-[#0891b2]"
+                        onClick={() => { setIp(entry.ip); setActiveTab('locate'); }}
+                        title={zh ? '点击定位此 IP' : 'Click to locate this IP'}
+                      >{entry.ip}</td>
+                      <td className="block min-w-0 font-mono text-red-400 truncate" title={entry.old_mac}>{entry.old_mac}</td>
+                      <td className="block min-w-0 font-mono text-emerald-600 dark:text-emerald-400 truncate" title={entry.new_mac}>{entry.new_mac}</td>
+                      <td className="block min-w-0 text-black/45 dark:text-white/45 truncate" title={entry.old_vendor || '?'}>{entry.old_vendor || '?'}</td>
+                      <td className="block min-w-0 text-black/45 dark:text-white/45 truncate" title={entry.new_vendor || '?'}>{entry.new_vendor || '?'}</td>
+                      <td className="block text-[#0891b2] truncate font-medium" title={entry.new_device}>{entry.new_device || '-'}</td>
+                      <td className="block text-black/30 dark:text-white/30" title={entry.detected_at}>{formatRelativeTime(entry.detected_at, zh)}</td>
+                    </tr>
+                  ))
+                )}
+              </tbody>
+            </DataTable>
           </div>
-        );
-      })()}
+          <Pagination
+            currentPage={macPage}
+            totalItems={filteredMacChanges.length}
+            itemsPerPage={macPageSize}
+            onPageChange={setMacPage}
+            onItemsPerPageChange={(v) => { setMacPage(1); setMacPageSize(v); }}
+            language={language}
+          />
+        </div>
+      )}
 
       </>)}
 
@@ -3009,6 +3031,7 @@ ${rep.repair_commands}
               { key: 'state', label: zh ? '状态' : 'State' },
               { key: 'uptime', label: zh ? '持续时间' : 'Uptime' },
               { key: 'remote_as', label: zh ? '对端 AS' : 'Remote AS' },
+              { key: 'neighbor_type', label: zh ? '邻居类型' : 'Neighbor Type' },
               { key: 'area_id', label: zh ? 'OSPF 区域' : 'Area ID' },
               { key: 'last_update', label: zh ? '最后更新' : 'Last Update' },
             ]
@@ -3068,7 +3091,13 @@ ${rep.repair_commands}
         const filtered = (currentData.entries || []).filter((e: any) => {
           // Global filter
           if (filterLower) {
-            const matchesGlobal = columns.some(c => String(e[c.key] ?? '').toLowerCase().includes(filterLower));
+            const matchesGlobal = columns.some(c => {
+              if (c.key === 'neighbor_type') {
+                const neighborType = e.local_as && e.remote_as ? (e.local_as === e.remote_as ? 'IBGP' : 'EBGP') : '';
+                return neighborType.toLowerCase().includes(filterLower);
+              }
+              return String(e[c.key] ?? '').toLowerCase().includes(filterLower);
+            });
             if (!matchesGlobal) return false;
           }
           // Advanced filters
@@ -3114,6 +3143,22 @@ ${rep.repair_commands}
         const totalPages = Math.max(1, Math.ceil(filtered.length / nsotPageSize));
         const safePage = Math.min(nsotPage, totalPages);
         const paged = filtered.slice((safePage - 1) * nsotPageSize, safePage * nsotPageSize);
+        const exportValue = (row: any, key: string): string => {
+          const value = row[key];
+          if (key === 'neighbor_type') {
+            return row.local_as && row.remote_as ? (row.local_as === row.remote_as ? 'IBGP' : 'EBGP') : '—';
+          }
+          if (key === 'remote_as') return row.protocol === 'bgp' ? String(row.remote_as ?? '—') : '—';
+          if (key === 'area_id') return row.protocol === 'ospf' ? String(row.area_id || '0.0.0.0') : '—';
+          if (key === 'is_active' && nsotSubTab === 'bgp_routes') return value ? (zh ? '活跃' : 'Active') : (zh ? '备用' : 'Backup');
+          if (key === 'is_best' && nsotSubTab === 'bgp_routes') return value ? (zh ? '最佳' : 'Best') : '—';
+          if (key === 'as_path' && nsotSubTab === 'bgp_routes') return value || 'Local';
+          if (key === 'is_active') return value ? (zh ? '活跃' : 'Active') : (zh ? '离线' : 'Inactive');
+          if (key === 'protocol') return normalizeRouteProtocol(value) || '—';
+          if (key === 'type' && nsotSubTab === 'inventory') return value || '—';
+          if (key === 'last_seen' || key === 'last_update') return value ? formatRelativeTime(value, zh) : '—';
+          return value == null || value === '' ? '—' : String(value);
+        };
 
         const accentColor = nsotSubTab === 'endpoints' ? '#0891b2'
           : nsotSubTab === 'inventory' ? '#10b981'
@@ -3145,7 +3190,18 @@ ${rep.repair_commands}
               </div>
             ) : (
               <div className="overflow-x-auto">
-                <table className="nx-data-table text-left text-xs">
+                <DataTable
+                  unstyled
+                  exportConfig={{
+                    filename: `ip-locator-${nsotSubTab}`,
+                    language: zh ? 'zh' : 'en',
+                    exportData: () => ({
+                      headers: columns.map(col => col.label),
+                      rows: filtered.map((row: any) => columns.map(col => exportValue(row, col.key))),
+                    }),
+                  }}
+                  className="nx-data-table text-left text-xs"
+                >
                   <thead>
                     <tr className="border-b border-black/5 dark:border-white/5 bg-black/[0.02] dark:bg-white/[0.02]">
                       {columns.map(col => (
@@ -3229,16 +3285,16 @@ ${rep.repair_commands}
                             const cls = colors[(val || '').toLowerCase()] || 'bg-gray-50 dark:bg-gray-900/20 text-gray-600 dark:text-gray-400';
                             return <td key={col.key} className="px-4 py-2"><span className={`inline-block px-2 py-0.5 rounded-md text-[10px] font-semibold ${cls}`}>{val || '—'}</span></td>;
                           }
+                          if (col.key === 'neighbor_type' && nsotSubTab === 'neighbors') {
+                            const neighborType = row.local_as && row.remote_as ? (row.local_as === row.remote_as ? 'IBGP' : 'EBGP') : '—';
+                            return <td key={col.key} className="px-4 py-2 whitespace-nowrap font-mono text-black/70 dark:text-white/70">{neighborType}</td>;
+                          }
                           if (col.key === 'remote_as' && nsotSubTab === 'neighbors') {
                             if (row.protocol === 'bgp') {
                               if (row.local_as && row.remote_as) {
-                                const typeStr = row.local_as === row.remote_as ? 'IBGP' : 'EBGP';
                                 return (
                                   <td key={col.key} className="px-4 py-2 whitespace-nowrap font-mono">
                                     <span className="text-black/70 dark:text-white/70">{row.remote_as}</span>
-                                    <span className={`inline-block ml-1.5 px-1.5 py-0.5 rounded-md text-[9px] font-bold ${row.local_as === row.remote_as ? 'bg-indigo-50 dark:bg-indigo-900/30 text-indigo-600 dark:text-indigo-400' : 'bg-amber-50 dark:bg-amber-900/30 text-amber-600 dark:text-amber-400'}`}>
-                                      {typeStr}
-                                    </span>
                                   </td>
                                 );
                               }
@@ -3260,7 +3316,7 @@ ${rep.repair_commands}
                       </tr>
                     ))}
                   </tbody>
-                </table>
+                </DataTable>
               </div>
             )}
 

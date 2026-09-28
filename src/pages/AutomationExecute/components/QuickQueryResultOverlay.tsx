@@ -1,6 +1,7 @@
 import React from 'react';
 import { RotateCcw, Monitor, Terminal, Minimize2, Maximize2, X, Search } from 'lucide-react';
 import OutputActions from '../../../components/OutputActions';
+import { TableExportMenu } from '../../../components/ui/TableExportMenu';
 import type { Device } from '../../../types';
 import type { QuickQueryTable } from '../types';
 import { useEscapeClose } from '../../../hooks/useEscapeClose';
@@ -65,6 +66,7 @@ export const QuickQueryResultOverlay: React.FC<QuickQueryResultOverlayProps> = (
   onOpenDebugger,
   onQuickQueryViewChange,
 }) => {
+  const quickQueryTableRef = React.useRef<HTMLTableElement>(null);
   useEscapeClose(quickQueryRunning || Boolean(quickQueryOutput), onResetQuickQuery);
   if (!quickQueryRunning && !quickQueryOutput) return null;
 
@@ -260,11 +262,16 @@ export const QuickQueryResultOverlay: React.FC<QuickQueryResultOverlayProps> = (
                       <span className="text-[10px] uppercase tracking-[0.14em] text-white/25">{isZh ? '导出结果' : 'Export'}</span>
                       <OutputActions
                         text={JSON.stringify(filteredQuickQueryRecords, null, 2)}
-                        csvRows={filteredQuickQueryRecords as Array<Record<string, unknown>>}
                         filename={`${(quickQueryLabel || 'query').replace(/[^a-zA-Z0-9_-]+/g, '_').slice(0, 40) || 'query'}`}
                         theme="dark"
                         zh={isZh}
                         iconOnly
+                      />
+                      <TableExportMenu
+                        tableRef={quickQueryTableRef}
+                        filename={`${(quickQueryLabel || 'query').replace(/[^a-zA-Z0-9_-]+/g, '_').slice(0, 40) || 'query'}`}
+                        language={isZh ? 'zh' : 'en'}
+                        disabled={filteredQuickQueryRecords.length === 0}
                       />
                     </div>
                   </div>
@@ -278,7 +285,7 @@ export const QuickQueryResultOverlay: React.FC<QuickQueryResultOverlayProps> = (
                       : 'min-h-[12rem] max-h-[calc(100vh-18rem)] overflow-auto rounded-2xl border border-white/[0.06] bg-black/20 sm:min-h-[20rem]'
                   }
                 >
-                  <table className="nx-terminal-table min-w-full text-left text-[12px] text-[#d8e2eb]">
+                  <table ref={quickQueryTableRef} className="nx-terminal-table min-w-full text-left text-[12px] text-[#d8e2eb]">
                     <thead className="sticky top-0 bg-[#101722]">
                       <tr className="border-b border-white/[0.06]">
                         {quickQueryTable.columns.map((col) => (

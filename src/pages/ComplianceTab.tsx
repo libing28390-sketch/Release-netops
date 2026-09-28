@@ -1,13 +1,15 @@
+import { DataTable } from '../components/DataTable';
 import React from 'react';
-import { Download, RotateCcw, ShieldCheck } from 'lucide-react';
-import * as XLSX from 'xlsx';
+import { Eye, RotateCcw, ShieldCheck, Wrench } from 'lucide-react';
 import type { ComplianceFinding, ComplianceOverview } from '../types';
 import { sectionToolbarClass, primaryActionBtnClass, severityBadgeClass, complianceStatusBadgeClass } from '../components/shared';
 import Pagination from '../components/Pagination';
 import PageHero from '../components/PageHero';
-import { ActionButton } from '../components/ui/ActionIconButton';
+import { ActionIconButton } from '../components/ui/ActionIconButton';
 import { fetchAllPaginatedItems } from '../utils/pagination';
+import { buildComplianceExportData, type ComplianceExportFinding } from './complianceExport';
 
+import { TableActionCell, TableActionHeader } from '../components/ui/TableActionColumn';
 interface ComplianceTabProps {
   complianceOverview: ComplianceOverview | null;
   complianceFindings: ComplianceFinding[];
@@ -41,40 +43,15 @@ const ComplianceTab: React.FC<ComplianceTabProps> = ({
   runComplianceAudit, openComplianceFindingDetail, updateComplianceFinding,
   language, t,
 }) => {
-  const handleExportCompliance = async () => {
+  const exportData = React.useCallback(async () => {
     const params = new URLSearchParams({
       severity: complianceSeverityFilter,
       status: complianceStatusFilter,
       category: complianceCategoryFilter,
     });
-
-    try {
-      const allFindings = await fetchAllPaginatedItems<ComplianceFinding>('/api/compliance/findings', params);
-      if (allFindings.length === 0) return;
-      const exportData = allFindings.map(f => ({
-        Title: f.title,
-        'Rule ID': f.rule_id,
-        Hostname: f.hostname || '',
-        IP: f.ip_address || '',
-        Severity: f.severity,
-        Category: f.category,
-        Status: f.status,
-        Description: f.description,
-        Remediation: f.remediation || '',
-        Owner: f.owner || '',
-        'First Seen': f.first_seen ? new Date(f.first_seen).toLocaleString() : '',
-        'Last Seen': f.last_seen ? new Date(f.last_seen).toLocaleString() : '',
-        'Resolved At': f.resolved_at ? new Date(f.resolved_at).toLocaleString() : '',
-      }));
-      const ws = XLSX.utils.json_to_sheet(exportData);
-      const wb = XLSX.utils.book_new();
-      XLSX.utils.book_append_sheet(wb, ws, 'Compliance');
-      const ts = new Date().toISOString().replace(/[-:]/g, '').replace('T', '_').slice(0, 15);
-      XLSX.writeFile(wb, `compliance_findings_${ts}.xlsx`);
-    } catch (error) {
-      console.error('Failed to export compliance findings:', error);
-    }
-  };
+    const findings = await fetchAllPaginatedItems<ComplianceExportFinding>('/api/compliance/findings', params, 200);
+    return buildComplianceExportData(findings, language);
+  }, [complianceSeverityFilter, complianceStatusFilter, complianceCategoryFilter, language]);
 
   return (
     <div className="flex flex-col h-full overflow-hidden">
@@ -89,14 +66,6 @@ const ComplianceTab: React.FC<ComplianceTabProps> = ({
                 {language === 'zh' ? '最近审计' : 'Last audit'}: {new Date((complianceOverview as any).recent_runs[0].started_at).toLocaleString()}
               </span>
             )}
-            <ActionButton
-              icon={Download}
-              variant="accent"
-              onClick={handleExportCompliance}
-              title={language === 'zh' ? '导出合规报告' : 'Export Compliance'}
-            >
-              {language === 'zh' ? '导出' : 'Export'}
-            </ActionButton>
             <button
               onClick={runComplianceAudit}
               disabled={complianceRunLoading}
@@ -182,55 +151,55 @@ const ComplianceTab: React.FC<ComplianceTabProps> = ({
         </div>
 
         <div className="overflow-x-auto">
-          <table className="nx-data-table text-left">
+          <DataTable unstyled exportConfig={{ filename: 'compliance-results', exportData }} className="nx-data-table text-left">
             <thead>
               <tr className="bg-black/[0.01] border-b border-black/5">
-                <th className="px-6 py-4 text-[10px] font-bold uppercase tracking-widest text-black/40">{language === 'zh' ? '规则 / 设备' : 'Rule / Device'}</th>
+                <th className="px-6 py-4 text-[10px] font-bold uppercase tracking-widest text-black/40">{language === 'zh' ? '规则名称' : 'Rule'}</th>
+                <th className="px-6 py-4 text-[10px] font-bold uppercase tracking-widest text-black/40">{language === 'zh' ? '规则编号' : 'Rule Code'}</th>
+                <th className="px-6 py-4 text-[10px] font-bold uppercase tracking-widest text-black/40">{language === 'zh' ? '主机名' : 'Hostname'}</th>
+                <th className="px-6 py-4 text-[10px] font-bold uppercase tracking-widest text-black/40">{language === 'zh' ? '管理 IP' : 'Management IP'}</th>
+                <th className="px-6 py-4 text-[10px] font-bold uppercase tracking-widest text-black/40">{language === 'zh' ? '站点' : 'Site'}</th>
                 <th className="px-6 py-4 text-[10px] font-bold uppercase tracking-widest text-black/40">{language === 'zh' ? '级别' : 'Severity'}</th>
                 <th className="px-6 py-4 text-[10px] font-bold uppercase tracking-widest text-black/40">{language === 'zh' ? '分类' : 'Category'}</th>
                 <th className="px-6 py-4 text-[10px] font-bold uppercase tracking-widest text-black/40">{language === 'zh' ? '状态' : 'Status'}</th>
                 <th className="px-6 py-4 text-[10px] font-bold uppercase tracking-widest text-black/40">{language === 'zh' ? '最近出现' : 'Last Seen'}</th>
-                <th className="px-6 py-4 text-[10px] font-bold uppercase tracking-widest text-black/40">{language === 'zh' ? '操作' : 'Action'}</th>
+                <TableActionHeader className="px-6 py-4 text-[10px] font-bold uppercase tracking-widest text-black/40">{language === 'zh' ? '操作' : 'Action'}</TableActionHeader>
               </tr>
             </thead>
             <tbody>
               {complianceFindings.map((finding) => (
                 <tr key={finding.id} className="border-b border-black/5 hover:bg-black/[0.01] transition-colors">
-                  <td className="px-6 py-4 align-top">
-                    <div className="text-sm font-semibold text-[#0b2a3c]">{finding.title}</div>
-                    <div className="mt-1 text-xs text-black/45">{finding.rule_id} · {finding.hostname || finding.device_id}</div>
-                    <div className="mt-1 text-[11px] text-black/35">{finding.ip_address || 'N/A'} · {(finding as any).site || 'Unknown site'}</div>
-                  </td>
+                  <td className="px-6 py-4 align-top text-sm font-semibold text-[#0b2a3c]">{finding.title || '—'}</td>
+                  <td className="px-6 py-4 align-top text-xs text-black/45 font-mono">{finding.rule_id || '—'}</td>
+                  <td className="px-6 py-4 align-top text-xs text-black/55">{finding.hostname || '—'}</td>
+                  <td className="px-6 py-4 align-top text-xs text-black/55 font-mono">{finding.ip_address || '—'}</td>
+                  <td className="px-6 py-4 align-top text-xs text-black/55">{(finding as any).site || '—'}</td>
                   <td className="px-6 py-4 align-top">
                     <span className={`inline-flex px-2.5 py-1 rounded-full text-[10px] font-bold uppercase ${severityBadgeClass(finding.severity)}`}>{finding.severity}</span>
                   </td>
-                  <td className="px-6 py-4 align-top text-xs text-black/60">{finding.category}</td>
+                  <td className="px-6 py-4 align-top text-xs text-black/60">{finding.category || '—'}</td>
                   <td className="px-6 py-4 align-top">
                     <span className={`inline-flex px-2.5 py-1 rounded-full text-[10px] font-bold uppercase ${complianceStatusBadgeClass(finding.status)}`}>{finding.status.replace('_', ' ')}</span>
                   </td>
-                  <td className="px-6 py-4 align-top text-xs font-mono text-black/50">{new Date((finding as any).last_seen_at).toLocaleString()}</td>
-                  <td className="px-6 py-4 align-top">
-                    <div className="flex items-center gap-3">
-                      <button onClick={() => openComplianceFindingDetail(finding)} className="text-[10px] font-bold uppercase text-blue-600 hover:underline">
-                        {language === 'zh' ? '详情' : 'Details'}
-                      </button>
+                  <td className="px-6 py-4 align-top text-xs font-mono text-black/50">{(finding as any).last_seen_at || finding.last_seen ? new Date((finding as any).last_seen_at || finding.last_seen).toLocaleString() : '—'}</td>
+                  <TableActionCell className="px-6 py-4 align-top">
+                      <div className="flex items-center justify-end gap-2">
+                      <ActionIconButton icon={Eye} label={language === 'zh' ? '查看详情' : 'View details'} variant="accent" onClick={() => openComplianceFindingDetail(finding)} />
                       {finding.status !== 'resolved' && (
-                        <button onClick={() => updateComplianceFinding(finding.id, { status: 'in_progress' })} className="text-[10px] font-bold uppercase text-amber-600 hover:underline">
-                          {language === 'zh' ? '跟进' : 'Triage'}
-                        </button>
+                        <ActionIconButton icon={Wrench} label={language === 'zh' ? '跟进' : 'Triage'} variant="accent" onClick={() => updateComplianceFinding(finding.id, { status: 'in_progress' })} />
                       )}
                     </div>
-                  </td>
+                  </TableActionCell>
                 </tr>
               ))}
               {!complianceLoading && complianceFindings.length === 0 && (
-                <tr><td colSpan={6} className="px-6 py-10 text-center text-sm text-black/40">{language === 'zh' ? '当前筛选条件下没有审计问题。' : 'No findings match the current filters.'}</td></tr>
+                <tr><td colSpan={10} className="px-6 py-10 text-center text-sm text-black/40">{language === 'zh' ? '当前筛选条件下没有审计问题。' : 'No findings match the current filters.'}</td></tr>
               )}
               {complianceLoading && complianceFindings.length === 0 && (
-                <tr><td colSpan={6} className="px-6 py-10 text-center text-sm text-black/40">{language === 'zh' ? '正在加载审计结果...' : 'Loading compliance findings...'}</td></tr>
+                <tr><td colSpan={10} className="px-6 py-10 text-center text-sm text-black/40">{language === 'zh' ? '正在加载审计结果...' : 'Loading compliance findings...'}</td></tr>
               )}
             </tbody>
-          </table>
+          </DataTable>
         </div>
 
         <Pagination

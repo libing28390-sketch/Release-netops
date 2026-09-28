@@ -1,3 +1,4 @@
+import { DataTable } from '../components/DataTable';
 import React, { useCallback, useEffect, useMemo, useState } from 'react';
 import {
   FileCode, Plus, Search, RefreshCw, Pencil, Trash2, X, Save,
@@ -9,6 +10,7 @@ import PageHero from '../components/PageHero';
 import Pagination from '../components/Pagination';
 import { alertPanelClass } from '../components/shared';
 import { useAlertOverlayDismiss } from './alertManagementShared';
+import { fetchAllPaginatedItems } from '../utils/pagination';
 import {
   TEXTFSM_PLATFORM_FAMILIES as PLATFORM_FAMILIES,
   TEXTFSM_VENDOR_OPTIONS as VENDOR_OPTIONS,
@@ -20,6 +22,7 @@ import {
   getVendorOption,
 } from './textfsmPlatformCatalog';
 
+import { TableActionCell, TableActionHeader } from '../components/ui/TableActionColumn';
 interface Props {
   t: (key: string) => string;
   language: string;
@@ -169,6 +172,34 @@ const TextFSMTemplatesTab: React.FC<Props> = ({ language }) => {
         return TEXTFSM_VERSION_ORDER.indexOf(left) - TEXTFSM_VERSION_ORDER.indexOf(right);
       });
   }, [availablePlatformFamilies, platformFamilyFilter]);
+
+  const exportTemplates = useCallback(async () => {
+    const params = new URLSearchParams();
+    if (vendorFilter) params.set('vendor', vendorFilter);
+    if (platformFamilyFilter) params.set('platform_family', platformFamilyFilter);
+    if (versionFilter) params.set('version', versionFilter);
+    if (search.trim()) params.set('search', search.trim());
+    if (sourceFilter) params.set('source', sourceFilter);
+    const allTemplates = await fetchAllPaginatedItems<Template>('/api/textfsm/templates', params);
+    return {
+      headers: isZh
+        ? ['文件名', '厂商', '平台系列', '平台标识', '版本', '命令', '动作代码', '来源']
+        : ['Filename', 'Vendor', 'Platform Family', 'Platform', 'Version', 'Command', 'Action Code', 'Source'],
+      rows: allTemplates.map((template) => {
+        const meta = getTemplateDisplayMeta(template);
+        return [
+          template.filename,
+          isZh ? meta.vendor.label : meta.vendor.labelEn,
+          isZh ? meta.family.label : meta.family.labelEn,
+          template.platform || '—',
+          isZh ? meta.version.label : meta.version.labelEn,
+          template.command || '—',
+          template.action_code || '—',
+          template.source === 'custom' ? (isZh ? '自定义' : 'Custom') : (isZh ? '内置' : 'Built-in'),
+        ];
+      }),
+    };
+  }, [vendorFilter, platformFamilyFilter, versionFilter, search, sourceFilter, isZh]);
 
   const editorPlatform = useMemo(
     () => getConcreteEditorPlatform(editorPlatformFamily, editorVersion),
@@ -470,59 +501,52 @@ const TextFSMTemplatesTab: React.FC<Props> = ({ language }) => {
       <div className={`${alertPanelClass} flex-1 min-h-0 flex flex-col overflow-hidden`}>
         {/* Templates Table */}
         <div className="flex-1 min-h-0 overflow-y-auto custom-scrollbar">
-          <table className="nx-data-table min-w-[960px] table-fixed">
+          <DataTable unstyled exportConfig={{ filename: 'textfsm-templates', language: isZh ? 'zh' : 'en', disabled: loading || templates.length === 0, exportData: exportTemplates }} className="nx-data-table min-w-[960px] table-fixed">
             <colgroup>
-              <col className="w-[30%]" />
-              <col className="w-[23%]" />
-              <col className="w-[27%]" />
+              <col className="w-[18%]" />
               <col className="w-[12%]" />
+              <col className="w-[15%]" />
+              <col className="w-[12%]" />
+              <col className="w-[9%]" />
+              <col className="w-[18%]" />
+              <col className="w-[8%]" />
+              <col className="w-[8%]" />
               <col className="w-28" />
             </colgroup>
             <thead className="sticky top-0 z-10 border-b border-black/5">
               <tr>
                 <th className="text-left px-4 py-2.5">{isZh ? '文件名' : 'Filename'}</th>
-                <th className="text-left px-4 py-2.5">{isZh ? '厂商 / 平台 / 版本' : 'Vendor / Platform / Version'}</th>
+                <th className="text-left px-4 py-2.5">{isZh ? '厂商' : 'Vendor'}</th>
+                <th className="text-left px-4 py-2.5">{isZh ? '平台系列' : 'Platform Family'}</th>
+                <th className="text-left px-4 py-2.5">{isZh ? '平台标识' : 'Platform'}</th>
+                <th className="text-left px-4 py-2.5">{isZh ? '版本' : 'Version'}</th>
                 <th className="text-left px-4 py-2.5">{isZh ? '命令' : 'Command'}</th>
+                <th className="text-left px-4 py-2.5">{isZh ? '动作代码' : 'Action Code'}</th>
                 <th className="text-left px-4 py-2.5">{isZh ? '来源' : 'Source'}</th>
-                <th className="w-28 px-4 py-2.5 text-right" style={{ textAlign: 'right' }}>{isZh ? '操作' : 'Actions'}</th>
+                <TableActionHeader className="w-28 px-4 py-2.5 text-right" style={{ textAlign: 'right' }}>{isZh ? '操作' : 'Actions'}</TableActionHeader>
               </tr>
             </thead>
             <tbody>
               {loading && (
-                <tr><td colSpan={5} className="text-center py-10 text-black/30"><Loader2 size={20} className="animate-spin inline-block" /></td></tr>
+                <tr><td colSpan={9} className="text-center py-10 text-black/30"><Loader2 size={20} className="animate-spin inline-block" /></td></tr>
               )}
               {!loading && templates.length === 0 && (
-                <tr><td colSpan={5} className="text-center py-10 text-black/30">{isZh ? '没有匹配的模板' : 'No templates found'}</td></tr>
+                <tr><td colSpan={9} className="text-center py-10 text-black/30">{isZh ? '没有匹配的模板' : 'No templates found'}</td></tr>
               )}
                 {!loading && templates.map((tpl) => (
                 <tr key={tpl.filename} className="border-t border-black/[0.03] hover:bg-slate-50/50 transition-colors">
                   <td className="px-4 py-2.5 nx-code-text text-black/70 break-all">{tpl.filename}</td>
                   <td className="px-4 py-2.5">
-                    {(() => {
-                      const meta = getTemplateDisplayMeta(tpl);
-                      return (
-                        <div className="flex flex-col gap-1">
-                          <div className="flex items-center gap-1 nx-micro-text font-semibold">
-                            <span className="rounded bg-cyan-50 px-1.5 py-0.5 text-cyan-700">
-                              {isZh ? meta.vendor.label : meta.vendor.labelEn}
-                            </span>
-                            <span className="text-black/25">/</span>
-                            <span className="rounded bg-slate-100 px-1.5 py-0.5 text-black/65">
-                              {isZh ? meta.family.label : meta.family.labelEn}
-                            </span>
-                            <span className="text-black/25">/</span>
-                            <span className="rounded bg-indigo-50 px-1.5 py-0.5 text-indigo-700">
-                              {isZh ? meta.version.label : meta.version.labelEn}
-                            </span>
-                          </div>
-                          <span className="nx-code-text text-black/35">{tpl.platform}</span>
-                        </div>
-                      );
-                    })()}
+                    {(() => { const meta = getTemplateDisplayMeta(tpl); return isZh ? meta.vendor.label : meta.vendor.labelEn; })()}
                   </td>
-                  <td className="px-4 py-2.5 text-black/60">
-                    <div>{tpl.command || '—'}</div>
-                    {tpl.action_code && <span className="mt-1 inline-flex rounded bg-violet-50 px-1.5 py-0.5 nx-code-text text-violet-700">{tpl.action_code}</span>}
+                  <td className="px-4 py-2.5">
+                    {(() => { const meta = getTemplateDisplayMeta(tpl); return isZh ? meta.family.label : meta.family.labelEn; })()}
+                  </td>
+                  <td className="px-4 py-2.5 nx-code-text text-black/55">{tpl.platform || '—'}</td>
+                  <td className="px-4 py-2.5">{(() => { const meta = getTemplateDisplayMeta(tpl); return isZh ? meta.version.label : meta.version.labelEn; })()}</td>
+                  <td className="px-4 py-2.5 text-black/60">{tpl.command || '—'}</td>
+                  <td className="px-4 py-2.5">
+                    {tpl.action_code ? <span className="inline-flex rounded bg-violet-50 px-1.5 py-0.5 nx-code-text text-violet-700">{tpl.action_code}</span> : '—'}
                   </td>
                   <td className="px-4 py-2.5">
                     {tpl.source === 'custom' ? (
@@ -531,7 +555,7 @@ const TextFSMTemplatesTab: React.FC<Props> = ({ language }) => {
                       <span className="nx-micro-text px-2 py-0.5 rounded-full bg-cyan-100 text-cyan-700 font-bold">{isZh ? '内置' : 'Built-in'}</span>
                     )}
                   </td>
-                  <td className="w-28 whitespace-nowrap px-4 py-2.5 text-right">
+                  <TableActionCell className="w-28 whitespace-nowrap px-4 py-2.5 text-right">
                     <ActionIconGroup label={isZh ? '模板操作' : 'Template actions'} className="w-full">
                       <ActionIconButton
                         icon={Pencil}
@@ -549,11 +573,11 @@ const TextFSMTemplatesTab: React.FC<Props> = ({ language }) => {
                         />
                       )}
                     </ActionIconGroup>
-                  </td>
+                  </TableActionCell>
                 </tr>
               ))}
             </tbody>
-          </table>
+          </DataTable>
         </div>
 
         <div className="flex-shrink-0">

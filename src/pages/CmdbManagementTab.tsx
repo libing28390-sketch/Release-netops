@@ -4,9 +4,13 @@ import { Plus, Pencil, Trash2, RefreshCw, X, KeyRound, Building2, Network, Layer
 import * as XLSX from 'xlsx';
 import PageHero from '../components/PageHero';
 import Pagination from '../components/Pagination';
-import { DataTable } from '../components/DataTable';
 import { ActionButton, ActionIconButton, ActionIconGroup } from '../components/ui/ActionIconButton';
+import { TableActionCell, TableActionHeader } from '../components/ui/TableActionColumn';
+import { TableExportMenu } from '../components/ui/TableExportMenu';
+import { PasswordInputField } from '../components/ui/PasswordInputField';
 import { formatMacAddress } from '../utils/resourceFormatters';
+import { fetchAllPaginatedItems } from '../utils/pagination';
+import { buildCmdbExportData, buildCmdbVlanExportData } from './cmdbExport';
 
 /* ────────────────────────────────────────────────────────────
  * CMDB Management — unified CRUD for the foundational CMDB tables:
@@ -1611,6 +1615,16 @@ function splitVlanValues(value: unknown, separator: RegExp = /[;\n]+/): string[]
 const CmdbManagementTab: React.FC<Props> = ({ language, cmdbPage, currentUser }) => {
   const zh = language !== 'en';
   const navigate = useNavigate();
+  const vlanTableRef = useRef<HTMLTableElement>(null);
+  const managementTableRef = useRef<HTMLTableElement>(null);
+  const siteImportPreviewTableRef = useRef<HTMLTableElement>(null);
+  const credentialImportPreviewTableRefs = useMemo(
+    () => Object.fromEntries(
+      CREDENTIAL_SHEET_DEFS.map(sheet => [sheet.key, React.createRef<HTMLTableElement>()]),
+    ) as Record<CredentialSheetKey, React.RefObject<HTMLTableElement | null>>,
+    [],
+  );
+  const vlanDetailTableRef = useRef<HTMLTableElement>(null);
   const [tab, setTab] = useState<EntityKey>((cmdbPage as EntityKey) || 'credentials');
 
   useEffect(() => {
@@ -1670,7 +1684,6 @@ const CmdbManagementTab: React.FC<Props> = ({ language, cmdbPage, currentUser })
     summary: { total: 0, gateways: 0, arp: 0, mac: 0, unbound: 0 },
     site_summary: [] as Array<{ key: string; label: string; count: number }>,
   });
-  const [vlanExporting, setVlanExporting] = useState(false);
   const [credentialExporting, setCredentialExporting] = useState(false);
   const [credentialTemplateDownloading, setCredentialTemplateDownloading] = useState(false);
   const [vlanDetailRow, setVlanDetailRow] = useState<any | null>(null);
@@ -1738,7 +1751,6 @@ const CmdbManagementTab: React.FC<Props> = ({ language, cmdbPage, currentUser })
   const [siteImportRows, setSiteImportRows] = useState<SiteImportRow[]>([]);
   const [siteImportErrors, setSiteImportErrors] = useState<SiteImportError[]>([]);
   const [siteImporting, setSiteImporting] = useState(false);
-  const [siteExporting, setSiteExporting] = useState(false);
   const siteImportInputRef = useRef<HTMLInputElement | null>(null);
   const [credentialImportOpen, setCredentialImportOpen] = useState(false);
   const [credentialImportFileName, setCredentialImportFileName] = useState('');
@@ -2008,7 +2020,10 @@ const CmdbManagementTab: React.FC<Props> = ({ language, cmdbPage, currentUser })
       { key: 'interface_name', label: '接口名称', labelEn: 'Interface', hideInForm: true },
       { key: 'oper_status', label: '运行状态', labelEn: 'Oper Status', hideInForm: true },
       { key: 'admin_status', label: '管理状态', labelEn: 'Admin Status', hideInForm: true },
-      { key: 'monitoring_profile', label: '监控配置', labelEn: 'Monitoring profile', hideInForm: true },
+      { key: 'interface_role', label: '监控角色', labelEn: 'Monitoring role', hideInForm: true },
+      { key: 'utilization_warn_pct', label: '利用率预警阈值 (%)', labelEn: 'Utilization warning (%)', hideInForm: true },
+      { key: 'utilization_high_pct', label: '利用率高阈值 (%)', labelEn: 'Utilization high (%)', hideInForm: true },
+      { key: 'utilization_critical_pct', label: '利用率严重阈值 (%)', labelEn: 'Utilization critical (%)', hideInForm: true },
       { key: 'mac_address', label: 'MAC', labelEn: 'MAC', hideInForm: true },
       { key: 'switchport_mode', label: '交换模式', labelEn: 'Switchport', hideInForm: true },
       { key: 'access_vlan', label: 'Access VLAN', labelEn: 'Access VLAN', hideInForm: true },
@@ -2368,35 +2383,6 @@ const CmdbManagementTab: React.FC<Props> = ({ language, cmdbPage, currentUser })
     }
   }, [load, siteImportErrors.length, siteImportRows, siteImporting, zh]);
 
-  const exportSiteInventory = useCallback(async () => {
-    if (siteExporting) return;
-    setSiteExporting(true);
-    setError('');
-    try {
-      const params = new URLSearchParams();
-      if (search.trim()) params.set('q', search.trim());
-      const response = await fetch(`/api/cmdb/sites/export?${params.toString()}`, { headers: authHeaders() });
-      if (!response.ok) {
-        const payload = await response.json().catch(() => ({}));
-        throw new Error(formatErrorDetail(payload.detail || payload.message));
-      }
-      const blob = await response.blob();
-      const url = URL.createObjectURL(blob);
-      const anchor = document.createElement('a');
-      anchor.href = url;
-      anchor.download = `sites_export_${new Date().toISOString().slice(0, 10)}.csv`;
-      document.body.appendChild(anchor);
-      anchor.click();
-      anchor.remove();
-      URL.revokeObjectURL(url);
-      setNotice(zh ? '站点数据已导出' : 'Site data exported');
-    } catch (e: any) {
-      setError(e.message || String(e));
-    } finally {
-      setSiteExporting(false);
-    }
-  }, [search, siteExporting, zh]);
-
   const downloadCredentialImportTemplate = useCallback(async () => {
     if (credentialTemplateDownloading) return;
     setCredentialTemplateDownloading(true);
@@ -2592,35 +2578,6 @@ const CmdbManagementTab: React.FC<Props> = ({ language, cmdbPage, currentUser })
       setCredentialImporting(false);
     }
   }, [credentialImportErrors.length, credentialImportRows, credentialImporting, load, zh]);
-
-  const exportVlanInventory = useCallback(async () => {
-    if (vlanExporting) return;
-    setVlanExporting(true);
-    setError('');
-    try {
-      const params = new URLSearchParams();
-      if (vlanSiteFilter && vlanSiteFilter !== 'unassigned') params.set('site_id', vlanSiteFilter);
-      const response = await fetch(`/api/cmdb/vlans/export?${params.toString()}`, { headers: authHeaders() });
-      if (!response.ok) {
-        const payload = await response.json().catch(() => ({}));
-        throw new Error(formatErrorDetail(payload.detail || payload.message));
-      }
-      const blob = await response.blob();
-      const url = URL.createObjectURL(blob);
-      const anchor = document.createElement('a');
-      anchor.href = url;
-      anchor.download = `VLAN清单_${new Date().toISOString().slice(0, 10)}.csv`;
-      document.body.appendChild(anchor);
-      anchor.click();
-      anchor.remove();
-      URL.revokeObjectURL(url);
-      setNotice(zh ? 'VLAN 清单已导出，包含完整设备、接口和 ARP/MAC 信息。' : 'VLAN inventory exported with complete device, interface and ARP/MAC details.');
-    } catch (e: any) {
-      setError(e.message || String(e));
-    } finally {
-      setVlanExporting(false);
-    }
-  }, [vlanExporting, vlanSiteFilter, zh]);
 
   const triggerInterfaceSync = useCallback(async () => {
     if (tab !== 'interfaces') return;
@@ -3084,7 +3041,7 @@ const CmdbManagementTab: React.FC<Props> = ({ language, cmdbPage, currentUser })
       return <span className="whitespace-nowrap text-xs">{display}</span>;
     }
     if (tab === 'devices' && fd.key === 'hostname') {
-      const val = row.hostname || row.ip_address || row.id;
+      const val = row.hostname || row.ip_address || <span data-export-ignore>{row.id}</span>;
       return (
         <button
           onClick={() => navigate('/assets/network-devices')}
@@ -3097,7 +3054,7 @@ const CmdbManagementTab: React.FC<Props> = ({ language, cmdbPage, currentUser })
       );
     }
     if (tab === 'interfaces' && fd.key === 'device_hostname') {
-      const val = row.device_hostname || row.device_ip || row.device_id;
+      const val = row.device_hostname || row.device_ip || <span data-export-ignore>{row.device_id}</span>;
       return (
         <button
           onClick={() => navigate('/assets/network-devices')}
@@ -3167,7 +3124,7 @@ const CmdbManagementTab: React.FC<Props> = ({ language, cmdbPage, currentUser })
                 className="inline-flex items-center gap-1 rounded-l border border-slate-200/50 bg-slate-100 px-2 py-0.5 text-xs font-medium text-slate-700 transition-colors hover:bg-slate-200 dark:border-slate-700 dark:bg-slate-800 dark:text-slate-350 dark:hover:bg-slate-750"
               >
                 <Server size={11} className="text-slate-400" />
-                {d.hostname || d.ip_address || d.id}
+                {d.hostname || d.ip_address || <span data-export-ignore>{d.id}</span>}
               </button>
               {isAdministrator && (
                 <button
@@ -3240,7 +3197,7 @@ const CmdbManagementTab: React.FC<Props> = ({ language, cmdbPage, currentUser })
     }
     if (fd.key === 'vrf_id') {
       const vrf = vrfs.find(x => x.id === row.vrf_id);
-      return <span>{vrf?.vrf_name || row.vrf_id || '-'}</span>;
+      return <span>{vrf?.vrf_name || (row.vrf_id ? <span data-export-ignore>{row.vrf_id}</span> : '-')}</span>;
     }
     if (['device_count', 'port_count', 'mac_count', 'arp_count', 'prefix_count', 'undocumented_port_count'].includes(fd.key)) {
       const count = Number(row[fd.key] || 0);
@@ -3268,19 +3225,11 @@ const CmdbManagementTab: React.FC<Props> = ({ language, cmdbPage, currentUser })
         </span>
       );
     }
-    if (tab === 'interfaces' && fd.key === 'monitoring_profile') {
+    if (tab === 'interfaces' && ['interface_role', 'utilization_warn_pct', 'utilization_high_pct', 'utilization_critical_pct'].includes(fd.key)) {
       const profile = interfaceMonitoringProfile(row);
       const roleOption = INTERFACE_ROLE_OPTIONS.find(option => option.value === profile.interface_role);
-      return (
-        <div className="min-w-[9rem] space-y-1">
-          <span className="inline-flex items-center rounded-full border border-cyan-100 bg-cyan-50 px-2 py-0.5 text-[11px] font-semibold text-cyan-700 dark:border-cyan-900/40 dark:bg-cyan-950/30 dark:text-cyan-300">
-            {zh ? roleOption?.label : roleOption?.labelEn}
-          </span>
-          <div className="whitespace-nowrap text-[10px] tabular-nums text-slate-500 dark:text-slate-400">
-            {profile.utilization_warn_pct}% / {profile.utilization_high_pct}% / {profile.utilization_critical_pct}%
-          </div>
-        </div>
-      );
+      if (fd.key === 'interface_role') return <span className="inline-flex items-center rounded-full border border-cyan-100 bg-cyan-50 px-2 py-0.5 text-[11px] font-semibold text-cyan-700 dark:border-cyan-900/40 dark:bg-cyan-950/30 dark:text-cyan-300">{zh ? roleOption?.label : roleOption?.labelEn}</span>;
+      return <span className="whitespace-nowrap text-[11px] tabular-nums text-slate-600 dark:text-slate-300">{profile[fd.key as keyof InterfaceMonitoringProfile]}%</span>;
     }
     if (tab === 'sites' && ['country', 'state_province', 'city'].includes(fd.key)) {
       const val = String(row[fd.key] || '').trim();
@@ -3459,7 +3408,7 @@ const CmdbManagementTab: React.FC<Props> = ({ language, cmdbPage, currentUser })
         <td key={c.key} className="px-6 py-4">{renderCell(row, c)}</td>
       ))}
       {(!isReadOnlyTab || (tab === 'interfaces' && canEditInterfaceProfile)) && (
-        <td className="px-6 py-4 text-right whitespace-nowrap align-middle">
+        <TableActionCell className="px-6 py-4 align-middle">
           <ActionIconGroup label={zh ? '记录操作' : 'Record actions'} className="opacity-0 transition-opacity group-hover:opacity-100">
             {tab === 'interfaces' ? (
               canEditInterfaceProfile && !String(row.id || '').startsWith('ipinv-') ? (
@@ -3486,10 +3435,76 @@ const CmdbManagementTab: React.FC<Props> = ({ language, cmdbPage, currentUser })
               </>
             )}
           </ActionIconGroup>
-        </td>
+        </TableActionCell>
       )}
     </tr>
   );
+
+  const buildManagementExport = async () => {
+    let exportRows = filteredRows;
+    if (tab === 'interfaces') {
+      const params = new URLSearchParams({ has_ip: 'true' });
+      if (appliedSearch.trim()) params.set('search', appliedSearch.trim());
+      exportRows = await fetchAllPaginatedItems<any>('/api/cmdb/interfaces', params, 100);
+    } else if (tab === 'sites' || tab === 'vrfs') {
+      const params = new URLSearchParams({ q: search.trim() });
+      const allRows = await fetchAllPaginatedItems<any>(endpointFor(tab), params, 100);
+      exportRows = tab === 'sites' ? dedupeSiteRows(allRows) : allRows;
+      const q = search.trim().toLowerCase();
+      if (q) {
+        const searchableFields = fieldDefs[tab];
+        exportRows = exportRows.filter(row => searchableFields.some(field => String(row[field.key] ?? '').toLowerCase().includes(q)));
+      }
+    }
+
+    return buildCmdbExportData(exportRows, tableColumns.map(field => ({
+      key: field.key,
+      header: zh ? field.label : field.labelEn,
+      marker: field.secretFlag ? 'sensitive' as const : undefined,
+      value: (row: any) => {
+        if (field.secretFlag || ['password', 'old_password', 'old_enable_password', 'enable_password', 'snmp_community', 'snmpv3_auth_password', 'snmpv3_priv_password'].includes(field.key)) return '';
+        if (field.key === 'site_id') return sites.find(site => String(site.id) === String(row.site_id))?.site_name || '';
+        if (field.key === 'vrf_id') return vrfs.find(vrf => String(vrf.id) === String(row.vrf_id))?.vrf_name || '';
+        if (field.key === 'devices') return (Array.isArray(row.devices) ? row.devices : []).map((device: any) => device.hostname || device.ip_address).filter(Boolean).join(' · ') || '—';
+        if (tab === 'interfaces' && field.key === 'device_hostname') return row.device_hostname || row.device_ip || '—';
+        if (tab === 'interfaces' && field.key === 'description') return interfaceDescription(row) || '—';
+        if (tab === 'interfaces' && ['interface_role', 'utilization_warn_pct', 'utilization_high_pct', 'utilization_critical_pct'].includes(field.key)) {
+          const profile = interfaceMonitoringProfile(row);
+          if (field.key === 'interface_role') {
+            const role = INTERFACE_ROLE_OPTIONS.find(option => option.value === profile.interface_role);
+            return zh ? role?.label || profile.interface_role : role?.labelEn || profile.interface_role;
+          }
+          return `${profile[field.key as keyof InterfaceMonitoringProfile]}%`;
+        }
+        if (field.key === 'credential_type') return row[field.key] ? getCredTypeLabel(row[field.key]) : '—';
+        if (field.key === 'account_role') return getAccountRoleLabel(row.account_role || 'login');
+        if (field.key === 'mac_address') return formatMacAddress(row[field.key]) || '—';
+        if (field.key === 'status') {
+          const statusValue = row.status || 'active';
+          const option = SITE_STATUS_OPTS.find(candidate => candidate.value === statusValue);
+          return zh && option ? option.label : !zh && option ? option.labelEn : statusValue;
+        }
+        if (tab === 'sites' && ['country', 'state_province', 'city'].includes(field.key)) {
+          const raw = String(row[field.key] || '').trim();
+          if (!raw) return '—';
+          const isChina = CHINA_LEGACY_COUNTRY_VALUES.has(String(row.country || '').trim());
+          if (field.key === 'country') {
+            const country = geoCatalog?.countries.find(item => matchesGeoValue(raw, item.name, item.isoCode, countryDisplayName(item)));
+            return country ? countryDisplayName(country) : raw;
+          }
+          if (!isChina) return raw;
+          if (field.key === 'state_province') {
+            const state = geoCatalog?.states.find(item => item.countryCode === 'CN' && matchesGeoValue(raw, item.name, item.isoCode, stateDisplayName(item)));
+            return state ? stateDisplayName(state) : raw;
+          }
+          const state = geoCatalog?.states.find(item => item.countryCode === 'CN' && matchesGeoValue(String(row.state_province || ''), item.name, item.isoCode, stateDisplayName(item)));
+          return cityDisplayName({ name: raw, stateCode: state?.isoCode || '', countryCode: 'CN' });
+        }
+        const value = row[field.key];
+        return value === '' || value == null ? '—' : value;
+      },
+    })));
+  };
 
   return (
     <div className="flex flex-col h-full overflow-hidden">
@@ -3531,7 +3546,6 @@ const CmdbManagementTab: React.FC<Props> = ({ language, cmdbPage, currentUser })
                 <ActionIconGroup label={zh ? '站点导入导出' : 'Site import and export'}>
                   <ActionIconButton icon={FileSpreadsheet} label={zh ? '下载导入模板' : 'Download template'} variant="accent" onClick={downloadSiteImportTemplate} />
                   <ActionIconButton icon={Upload} label={zh ? '导入站点' : 'Import sites'} variant="accent" onClick={() => siteImportInputRef.current?.click()} />
-                  <ActionIconButton icon={Download} label={zh ? '导出站点' : 'Export sites'} variant="accent" disabled={siteExporting} iconClassName={siteExporting ? 'animate-pulse' : undefined} onClick={exportSiteInventory} />
                 </ActionIconGroup>
               </>
             )}
@@ -3876,18 +3890,21 @@ const CmdbManagementTab: React.FC<Props> = ({ language, cmdbPage, currentUser })
                       {zh ? '清除站点筛选' : 'Clear filter'}
                     </button>
                   )}
-                  <ActionButton
-                    type="button"
-                    icon={vlanExporting ? RefreshCw : Download}
-                    iconClassName={vlanExporting ? 'animate-spin' : undefined}
-                    variant="accent"
-                    size="sm"
-                    onClick={() => void exportVlanInventory()}
-                    disabled={vlanExporting}
-                    title={zh ? '导出完整 VLAN 信息' : 'Export complete VLAN inventory'}
-                  >
-                    {vlanExporting ? (zh ? '导出中...' : 'Exporting...') : (zh ? '导出 VLAN' : 'Export VLAN')}
-                  </ActionButton>
+                  <TableExportMenu
+                    tableRef={vlanTableRef}
+                    filename="cmdb-vlan-inventory"
+                    language={zh ? 'zh' : 'en'}
+                    disabled={loading}
+                    exportData={async () => {
+                      const params = new URLSearchParams({ q: search.trim(), status: vlanStatusFilter });
+                      if (vlanSiteFilter) params.set('site_id', vlanSiteFilter);
+                      Object.entries(vlanTreeBranch).forEach(([key, value]) => {
+                        if (value && key !== 'site_id') params.set(key, value);
+                      });
+                      const allVlanRows = await fetchAllPaginatedItems<any>('/api/cmdb/vlans', params, 100);
+                      return buildCmdbVlanExportData(allVlanRows, zh);
+                    }}
+                  />
                 </div>
               </div>
 
@@ -3971,22 +3988,17 @@ const CmdbManagementTab: React.FC<Props> = ({ language, cmdbPage, currentUser })
 
               {/* Main VLAN Table */}
               <div className="overflow-x-auto">
-                <DataTable className="min-w-[1080px] text-left">
+                <table ref={vlanTableRef} className="nx-data-table min-w-[2600px] text-left">
                   <thead>
                     <tr className="border-b border-black/5 bg-slate-50/80 text-[11px] font-bold tracking-wider text-slate-400 uppercase dark:border-slate-800 dark:bg-slate-900/60">
-                      <th className="px-6 py-4">{zh ? 'VLAN / 设备' : 'VLAN / Device'}</th>
-                      <th className="px-6 py-4">{zh ? '网络与网段' : 'Prefix & Network'}</th>
-                      <th className="px-6 py-4">{zh ? '网关与 SVI' : 'Gateway & SVI'}</th>
-                      <th className="px-6 py-4">{zh ? '接入端口' : 'Access Ports'}</th>
-                      <th className="px-6 py-4">{zh ? '终端定位 (ARP/MAC)' : 'Endpoints'}</th>
-                      <th className="px-6 py-4">{zh ? '业务归属' : 'Business'}</th>
-                      <th className="px-6 py-4 text-right whitespace-nowrap" style={{ width: 150 }}>{zh ? '操作' : 'Actions'}</th>
+                      {buildCmdbVlanExportData([], zh).headers.map(header => <th key={header} className="whitespace-nowrap px-4 py-4">{header}</th>)}
+                      <TableActionHeader className="px-6 py-4 whitespace-nowrap" style={{ width: 150 }}>{zh ? '操作' : 'Actions'}</TableActionHeader>
                     </tr>
                   </thead>
                   <tbody className="divide-y divide-slate-100 dark:divide-slate-800/60">
                     {loading && vlanFilteredRows.length === 0 && (
                       <tr>
-                        <td colSpan={7} className="py-20 text-center text-sm text-slate-400">
+                        <td colSpan={22} className="py-20 text-center text-sm text-slate-400">
                           <RefreshCw size={20} className="mr-2 inline animate-spin text-cyan-600" />
                           {zh ? '正在加载 VLAN 资产数据...' : 'Loading VLAN data...'}
                         </td>
@@ -3994,7 +4006,7 @@ const CmdbManagementTab: React.FC<Props> = ({ language, cmdbPage, currentUser })
                     )}
                     {!loading && vlanFilteredRows.length === 0 && (
                       <tr>
-                        <td colSpan={7} className="py-20 text-center text-sm text-slate-400">
+                        <td colSpan={22} className="py-20 text-center text-sm text-slate-400">
                           <Layers size={28} className="mx-auto mb-2 text-slate-300 dark:text-slate-600" />
                           {zh ? '没有匹配的 VLAN 记录' : 'No matching VLAN records found'}
                         </td>
@@ -4003,249 +4015,101 @@ const CmdbManagementTab: React.FC<Props> = ({ language, cmdbPage, currentUser })
                     {paginatedVlanRows.map((row, index) => {
                       const rowKey = String(`${row.device_id || row.device_hostname || row.site_id || row.site_name || 'device'}-${row.vlan_id}-${idOf(row) || index}`);
                       const expanded = Boolean(expandedVlans[rowKey]);
-                      const prefixes = splitVlanValues(row.prefixes, /[,;\n]+/);
                       const ports = splitVlanValues(row.port_details);
                       const svi = splitVlanValues(row.svi_interfaces, /[,;\n]+/);
-                      const businesses = splitVlanValues(row.business_systems, /[,;\n]+/);
                       const endpointDetails = Array.isArray(row.endpoint_details) ? row.endpoint_details : [];
-                      const allArpEndpoints = endpointDetails.filter((item: any) => String(item?.source || '').toLowerCase() === 'arp' && item?.ip_address);
-                      const gatewayIp = String(row.gateway || '').trim();
-                      const gatewayMacs = new Set(allArpEndpoints.filter((item: any) => String(item.ip_address) === gatewayIp).map((item: any) => String(item.mac_address || '')));
-                      const arpEndpoints = allArpEndpoints.filter((item: any) => String(item.ip_address) !== gatewayIp);
-                      const clientEndpoints = arpEndpoints;
-                      const macEndpoints = endpointDetails.filter((item: any) => item?.mac_address && !gatewayMacs.has(String(item.mac_address)));
-                      const terminalRecords = clientEndpoints.length ? clientEndpoints : macEndpoints;
-                      const accessInterfaces = Array.from(new Set([
-                        ...ports.map(value => value.match(/^[^:]+:([^ ]+)/)?.[1] || '').filter(Boolean),
-                        ...macEndpoints.map((item: any) => String(item.interface_name || '')).filter(value => value && !/^vlan/i.test(value)),
-                      ]));
-                      const businessLevel = String(row.highest_business_level || '').trim();
-                      const businessOwner = String(row.business_owners || row.owner || '').trim();
-                      const businessDepartment = String(row.business_departments || row.department || '').trim();
-                      const displayedAccessInterfaces = accessInterfaces.slice(0, 3);
-                      const hiddenAccessInterfaceCount = Math.max(0, accessInterfaces.length - displayedAccessInterfaces.length);
+                      const vlanRowValues = buildCmdbVlanExportData([row], zh).rows[0] || [];
                       const displayedPortDetails = ports.slice(0, 50);
                       const hiddenPortDetailCount = Math.max(0, ports.length - displayedPortDetails.length);
                       return (
                         <React.Fragment key={rowKey}>
                           <tr className={`group align-top transition-colors ${expanded ? 'bg-cyan-50/30 dark:bg-cyan-950/20' : 'hover:bg-slate-50/70 dark:hover:bg-slate-800/40'}`}>
-                            {/* Column 1: VLAN / 设备 */}
-                            <td className="px-6 py-4">
-                              <div className="flex items-start gap-2.5">
-                                <button
-                                  type="button"
-                                  onClick={() => setExpandedVlans(previous => ({ ...previous, [rowKey]: !previous[rowKey] }))}
-                                  className={`mt-0.5 flex h-6 w-6 shrink-0 items-center justify-center rounded-lg border transition-all ${expanded ? 'border-cyan-300 bg-cyan-500 text-white shadow-sm' : 'border-slate-200 bg-white text-slate-500 hover:border-cyan-300 hover:bg-cyan-50 hover:text-cyan-700 dark:border-slate-700 dark:bg-slate-800 dark:text-slate-400'}`}
-                                  title={expanded ? (zh ? '收起明细' : 'Collapse') : (zh ? '展开明细' : 'Expand')}
-                                >
-                                  {expanded ? <ChevronUp size={13} strokeWidth={2.5} /> : <ChevronDown size={13} strokeWidth={2.5} />}
-                                </button>
-                                <div className="space-y-1">
-                                  <div className="inline-flex items-center gap-1.5 rounded-lg border border-cyan-500/25 bg-gradient-to-r from-cyan-500/15 via-sky-500/10 to-transparent px-2.5 py-0.5 font-mono text-sm font-bold text-cyan-900 shadow-sm/5 dark:text-cyan-300">
-                                    <span>VLAN {row.vlan_id}</span>
+                            {vlanRowValues.map((value, valueIndex) => (
+                              <td key={valueIndex} className="max-w-64 px-4 py-4 align-top text-xs text-slate-700 dark:text-slate-300">
+                                {valueIndex === 0 ? (
+                                  <div className="flex items-center gap-2">
+                                    <button
+                                      type="button"
+                                      onClick={() => setExpandedVlans(previous => ({ ...previous, [rowKey]: !previous[rowKey] }))}
+                                      className={`flex h-6 w-6 shrink-0 items-center justify-center rounded-lg border transition-all ${expanded ? 'border-cyan-300 bg-cyan-500 text-white shadow-sm' : 'border-slate-200 bg-white text-slate-500 hover:border-cyan-300 hover:bg-cyan-50 hover:text-cyan-700 dark:border-slate-700 dark:bg-slate-800 dark:text-slate-400'}`}
+                                      title={expanded ? (zh ? '收起明细' : 'Collapse') : (zh ? '展开明细' : 'Expand')}
+                                    >
+                                      {expanded ? <ChevronUp size={13} strokeWidth={2.5} /> : <ChevronDown size={13} strokeWidth={2.5} />}
+                                    </button>
+                                    <span className="font-mono font-bold text-cyan-800 dark:text-cyan-300">{String(value)}</span>
                                   </div>
-                                  <div className="flex items-center gap-1.5 text-xs font-semibold text-slate-800 dark:text-slate-200">
-                                    <Server size={12} className="text-slate-400" />
-                                    <span>{row.device_hostname || (zh ? '未关联设备' : 'No device')}</span>
-                                  </div>
-                                  {row.device_ip && (
-                                    <div className="font-mono text-[11px] text-slate-400 dark:text-slate-500">
-                                      {row.device_ip}
-                                    </div>
-                                  )}
-                                  {row.description && (
-                                    <div className="inline-block max-w-[200px] truncate rounded bg-slate-100/80 px-1.5 py-0.5 text-[11px] font-medium text-slate-600 dark:bg-slate-800 dark:text-slate-400" title={String(row.description)}>
-                                      {row.description}
-                                    </div>
-                                  )}
-                                  {row.vrf_name && (
-                                    <div className="text-[10px] font-medium text-slate-400">
-                                      VRF: <span className="font-mono text-slate-600 dark:text-slate-300">{row.vrf_name}</span>
-                                    </div>
-                                  )}
-                                </div>
-                              </div>
-                            </td>
-
-                            {/* Column 2: 网络 */}
-                            <td className="px-6 py-4">
-                              <div className="space-y-1.5">
-                                <div className="inline-block rounded-md border border-slate-200/70 bg-slate-100/80 px-2 py-0.5 font-mono text-xs font-bold text-slate-800 dark:border-slate-700 dark:bg-slate-800 dark:text-slate-200">
-                                  {prefixes[0] || (zh ? '暂无网段' : 'No prefix')}
-                                </div>
-                                {prefixes.length > 1 && (
-                                  <div className="text-[11px] font-medium text-cyan-700 dark:text-cyan-400">
-                                    +{prefixes.length - 1} {zh ? '个网段' : 'more'}
-                                  </div>
-                                )}
-                                <div className="flex items-center gap-1.5 text-xs text-slate-500 dark:text-slate-400">
-                                  <Route size={12} className={row.gateway ? 'text-emerald-500' : 'text-slate-400'} />
-                                  <span className="font-mono">{row.gateway ? `${zh ? '网关' : 'GW'} ${row.gateway}` : (zh ? '暂无网关' : 'No gateway')}</span>
-                                </div>
-                              </div>
-                            </td>
-
-                            {/* Column 3: 网关 */}
-                            <td className="px-6 py-4">
-                              <div className="space-y-1.5">
-                                <div className="flex items-center gap-1.5 text-xs font-semibold text-slate-800 dark:text-slate-200">
-                                  <ShieldCheck size={14} className={row.gateway_device ? 'text-emerald-600 dark:text-emerald-400' : 'text-slate-300 dark:text-slate-600'} />
-                                  <span>{row.gateway_device || (zh ? '未发现网关' : 'No gateway')}</span>
-                                </div>
-                                {svi.length ? (
-                                  <div className="inline-block rounded border border-emerald-200/70 bg-emerald-50/80 px-1.5 py-0.5 font-mono text-[11px] font-semibold text-emerald-700 dark:border-emerald-800/40 dark:bg-emerald-950/30 dark:text-emerald-400">
-                                    {svi[0]}{svi.length > 1 ? ` +${svi.length - 1}` : ''}
-                                  </div>
-                                ) : (
-                                  <div className="text-xs text-slate-300 dark:text-slate-600">{zh ? '暂无三层接口' : 'No SVI'}</div>
-                                )}
-                              </div>
-                            </td>
-
-                            {/* Column 4: 接入端口 */}
-                            <td className="px-6 py-4">
-                              <div className="space-y-1.5">
-                                <div className="flex flex-wrap items-center gap-1 text-xs font-medium text-slate-700 dark:text-slate-300">
-                                  {displayedAccessInterfaces.length ? (
-                                    displayedAccessInterfaces.map((iface, idx) => (
-                                      <span key={idx} className="rounded bg-slate-100 px-1.5 py-0.5 font-mono text-[11px] font-semibold text-slate-700 dark:bg-slate-800 dark:text-slate-300">
-                                        {iface}
-                                      </span>
-                                    ))
-                                  ) : (
-                                    <span className="text-slate-400">{zh ? '未发现端口' : 'No ports'}</span>
-                                  )}
-                                  {hiddenAccessInterfaceCount > 0 && (
-                                    <span className="rounded bg-cyan-50 px-1.5 py-0.5 text-[11px] font-semibold text-cyan-700 dark:bg-cyan-950/40 dark:text-cyan-400">
-                                      +{hiddenAccessInterfaceCount}
-                                    </span>
-                                  )}
-                                </div>
-                                <div className="text-[11px] text-slate-400">
-                                  {Number(row.port_count || 0)} {zh ? '个端口' : 'ports'} · {Number(row.device_count || 0)} {zh ? '台设备' : 'devices'}
-                                </div>
-                                {Number(row.undocumented_port_count || 0) > 0 && (
-                                  <div className="inline-flex items-center gap-1 text-[10px] font-medium text-amber-600 dark:text-amber-400">
-                                    <AlertCircle size={10} />
-                                    <span>{Number(row.undocumented_port_count)} {zh ? '个缺少描述' : 'missing desc'}</span>
-                                  </div>
-                                )}
-                              </div>
-                            </td>
-
-                            {/* Column 5: 终端定位 */}
-                            <td className="px-6 py-4">
-                              {terminalRecords.length ? (
-                                <div className="space-y-1.5">
-                                  <div className="inline-flex items-center gap-1 rounded-full bg-cyan-50 px-2 py-0.5 text-[11px] font-semibold text-cyan-700 dark:bg-cyan-950/30 dark:text-cyan-400">
-                                    <Monitor size={11} />
-                                    <span>{zh ? `终端 ${terminalRecords.length}` : `${terminalRecords.length} endpoints`}</span>
-                                  </div>
-                                  <div className="space-y-1">
-                                    {terminalRecords.slice(0, 2).map((item: any, endpointIndex: number) => (
-                                      <div key={`${item.ip_address || item.mac_address}-${endpointIndex}`} className="rounded-lg bg-slate-50/80 px-2 py-1 dark:bg-slate-800/50">
-                                        <div className="font-mono text-xs font-bold text-slate-800 dark:text-slate-200">
-                                          {item.ip_address || (zh ? '未发现 IP' : 'No IP')}
-                                        </div>
-                                        {item.mac_address && (
-                                          <div className="font-mono text-[10px] text-slate-400">
-                                            {formatMacAddress(item.mac_address)}
-                                          </div>
-                                        )}
-                                      </div>
-                                    ))}
-                                    {terminalRecords.length > 2 && (
-                                      <div className="text-[10px] font-semibold text-cyan-700 dark:text-cyan-400">
-                                        +{terminalRecords.length - 2} {zh ? '个终端' : 'more'}
-                                      </div>
-                                    )}
-                                  </div>
-                                </div>
-                              ) : (
-                                <div className="text-xs text-slate-400">{zh ? '暂无终端' : 'No endpoints'}</div>
-                              )}
-                            </td>
-
-                            {/* Column 6: 业务 */}
-                            <td className="px-6 py-4">
-                              <div className="space-y-1.5">
-                                <div className="flex flex-wrap gap-1.5">
-                                  <span className={`inline-flex items-center gap-1 rounded-full border px-2 py-0.5 text-[11px] font-semibold ${businesses.length ? 'border-emerald-200 bg-emerald-50 text-emerald-700 dark:border-emerald-800 dark:bg-emerald-950/30 dark:text-emerald-400' : 'border-amber-200 bg-amber-50 text-amber-700 dark:border-amber-800 dark:bg-amber-950/30 dark:text-amber-400'}`}>
-                                    <span className={`h-1.5 w-1.5 rounded-full ${businesses.length ? 'bg-emerald-500' : 'bg-amber-500 animate-pulse'}`} />
-                                    {businesses.length ? (zh ? `已关联 ${businesses.length} 个业务` : `${businesses.length} linked`) : (zh ? '待补充业务' : 'Unmapped')}
-                                  </span>
-                                </div>
-                                {businesses.slice(0, 2).map(value => (
-                                  <div key={value} className="max-w-[180px] truncate text-xs font-semibold text-slate-700 dark:text-slate-300" title={value}>
-                                    {value}
-                                  </div>
-                                ))}
-                                {businesses.length > 2 && (
-                                  <div className="text-[10px] font-medium text-cyan-700 dark:text-cyan-400">+{businesses.length - 2} {zh ? '个' : 'more'}</div>
-                                )}
-                                {(businessDepartment || businessOwner || businessLevel) && (
-                                  <div className="space-y-0.5 rounded-lg bg-slate-50 p-1.5 text-[10px] text-slate-500 dark:bg-slate-800/60 dark:text-slate-400">
-                                    {businessDepartment && <div>{zh ? '部门：' : 'Dept: '}<span className="font-medium text-slate-700 dark:text-slate-300">{businessDepartment}</span></div>}
-                                    {businessOwner && <div>{zh ? '负责人：' : 'Owner: '}<span className="font-medium text-slate-700 dark:text-slate-300">{businessOwner}</span></div>}
-                                    {businessLevel && <div>{zh ? '等级：' : 'Level: '}<span className="font-semibold text-amber-600 dark:text-amber-400">{businessLevel}</span></div>}
-                                  </div>
-                                )}
-                              </div>
-                            </td>
+                                ) : <span className="whitespace-pre-wrap break-words">{String(value)}</span>}
+                              </td>
+                            ))}
 
                             {/* Column 7: 操作 */}
-                            <td className="px-6 py-4 text-right whitespace-nowrap align-top">
-                              <div className="flex items-center justify-end gap-1.5 pt-0.5">
-                                <button
-                                  type="button"
+                            <TableActionCell className="px-6 py-4 align-top">
+                                <ActionIconButton
+                                  icon={Eye}
+                                  label={zh ? '查看明细' : 'View details'}
+                                  variant="accent"
                                   onClick={() => setVlanDetailRow(row)}
-                                  className="inline-flex h-8 items-center justify-center gap-1 rounded-lg border border-cyan-200/80 bg-cyan-50/60 px-2.5 text-xs font-semibold text-cyan-700 shadow-sm transition-all hover:bg-cyan-100 hover:border-cyan-300 dark:border-cyan-800 dark:bg-cyan-950/40 dark:text-cyan-300"
-                                  title={zh ? '查看明细' : 'View details'}
-                                >
-                                  <Eye size={14} strokeWidth={2} />
-                                  <span>{zh ? '明细' : 'Detail'}</span>
-                                </button>
+                                />
                                 {!isReadOnlyTab && (
-                                  <ActionIconGroup label={zh ? '记录操作' : 'Record actions'}>
+                                  <>
                                     <ActionIconButton icon={Pencil} label={zh ? '编辑' : 'Edit'} onClick={() => openEdit(row)} size="sm" />
                                     <ActionIconButton icon={Trash2} label={zh ? '删除' : 'Delete'} variant="danger" onClick={() => openDeleteConfirm(row)} size="sm" />
-                                  </ActionIconGroup>
+                                  </>
                                 )}
-                              </div>
-                            </td>
+                            </TableActionCell>
                           </tr>
 
                           {/* Expanded Detail Panel */}
                           {expanded && (
                             <tr className="bg-slate-50/80 dark:bg-slate-900/60">
-                              <td colSpan={7} className="px-8 py-5">
+                              <td colSpan={22} className="px-8 py-5">
                                 <div className="space-y-4">
                                   {/* Top Row: Terminal Records */}
                                   <div>
-                                    <div className="mb-2.5 flex items-center justify-between">
+                                    <div className="mb-2.5 flex items-center justify-between gap-2">
                                       <div className="flex items-center gap-2">
                                         <Monitor size={15} className="text-cyan-600 dark:text-cyan-400" />
                                         <span className="text-xs font-bold text-slate-700 dark:text-slate-200">
                                           {zh ? '终端定位明细（IP / MAC / 设备 / 接口）' : 'Terminal Endpoint Evidence (IP / MAC / Device / Interface)'}
                                         </span>
                                       </div>
-                                      <span className="rounded-full bg-slate-200/60 px-2 py-0.5 text-[10px] font-medium text-slate-600 dark:bg-slate-800 dark:text-slate-400">
-                                        {zh ? '基于 ARP 表与 MAC 转发表' : 'From ARP & MAC tables'}
-                                      </span>
+                                      <div className="flex shrink-0 items-center gap-2">
+                                        <span className="rounded-full bg-slate-200/60 px-2 py-0.5 text-[10px] font-medium text-slate-600 dark:bg-slate-800 dark:text-slate-400">
+                                          {zh ? '基于 ARP 表与 MAC 转发表' : 'From ARP & MAC tables'}
+                                        </span>
+                                        <TableExportMenu
+                                          filename="cmdb-terminal-endpoint-evidence"
+                                          language={zh ? 'zh' : 'en'}
+                                          disabled={endpointDetails.length === 0}
+                                          exportData={{
+                                            headers: [zh ? '来源' : 'Source', zh ? 'IP 地址' : 'IP Address', zh ? 'MAC 地址' : 'MAC Address', zh ? '设备名称' : 'Device', zh ? '接口名称' : 'Interface', zh ? '采集时间' : 'Collected At'],
+                                            rows: endpointDetails.map((item: any) => [
+                                              String(item.source || '').toUpperCase(),
+                                              item.ip_address || '—',
+                                              formatMacAddress(item.mac_address) || '—',
+                                              item.device_hostname || '—',
+                                              item.interface_name || '—',
+                                              item.last_updated ? new Date(item.last_updated).toLocaleString(zh ? 'zh-CN' : 'en-US', { hour12: false }) : '—',
+                                            ]),
+                                          }}
+                                        />
+                                      </div>
                                     </div>
                                     {endpointDetails.length ? (
-                                      <div className="max-h-[360px] overflow-auto rounded-2xl border border-slate-200/80 bg-white shadow-sm dark:border-slate-800 dark:bg-slate-900">
-                                        <div className="grid grid-cols-[100px_160px_minmax(140px,1fr)_minmax(140px,1fr)_120px] gap-3 border-b border-slate-100 bg-slate-50/80 px-4 py-2.5 text-[11px] font-bold text-slate-500 uppercase dark:border-slate-800 dark:bg-slate-800/50 dark:text-slate-400">
+                                      <>
+                                        <div className="max-h-[360px] overflow-auto rounded-2xl border border-slate-200/80 bg-white shadow-sm dark:border-slate-800 dark:bg-slate-900">
+                                        <div className="grid grid-cols-[100px_140px_160px_minmax(140px,1fr)_minmax(140px,1fr)_120px] gap-3 border-b border-slate-100 bg-slate-50/80 px-4 py-2.5 text-[11px] font-bold text-slate-500 uppercase dark:border-slate-800 dark:bg-slate-800/50 dark:text-slate-400">
                                           <span>{zh ? '来源' : 'Source'}</span>
                                           <span>{zh ? 'IP 地址' : 'IP Address'}</span>
                                           <span>{zh ? 'MAC 地址' : 'MAC Address'}</span>
-                                          <span>{zh ? '设备 / 接口' : 'Device / Interface'}</span>
+                                          <span>{zh ? '设备名称' : 'Device'}</span>
+                                          <span>{zh ? '接口名称' : 'Interface'}</span>
                                           <span>{zh ? '采集时间' : 'Collected At'}</span>
                                         </div>
                                         {endpointDetails.map((item: any, endpointIndex: number) => (
                                           <div
                                             key={`${item.source}-${item.ip_address || item.mac_address || endpointIndex}`}
-                                            className="grid grid-cols-[100px_160px_minmax(140px,1fr)_minmax(140px,1fr)_120px] gap-3 border-b border-slate-100 px-4 py-2 text-xs transition-colors hover:bg-slate-50/60 last:border-b-0 dark:border-slate-800 dark:hover:bg-slate-800/40"
+                                            className="grid grid-cols-[100px_140px_160px_minmax(140px,1fr)_minmax(140px,1fr)_120px] gap-3 border-b border-slate-100 px-4 py-2 text-xs transition-colors hover:bg-slate-50/60 last:border-b-0 dark:border-slate-800 dark:hover:bg-slate-800/40"
                                           >
                                             <div>
                                               <span className={`inline-flex items-center rounded-full px-2 py-0.5 text-[10px] font-bold ${String(item.source).toLowerCase() === 'arp' ? 'bg-blue-50 text-blue-700 border border-blue-200/60 dark:bg-blue-950/30 dark:text-blue-400 dark:border-blue-800/40' : 'bg-slate-100 text-slate-600 border border-slate-200 dark:bg-slate-800 dark:text-slate-400 dark:border-slate-700'}`}>
@@ -4254,15 +4118,15 @@ const CmdbManagementTab: React.FC<Props> = ({ language, cmdbPage, currentUser })
                                             </div>
                                             <span className="font-mono font-semibold text-slate-800 dark:text-slate-200">{item.ip_address || '—'}</span>
                                             <span className="font-mono text-slate-600 dark:text-slate-400">{formatMacAddress(item.mac_address) || '—'}</span>
-                                            <span className="text-slate-700 dark:text-slate-300">
-                                              {item.device_hostname || '—'}{item.interface_name ? ` / ${item.interface_name}` : ''}
-                                            </span>
+                                            <span className="text-slate-700 dark:text-slate-300">{item.device_hostname || '—'}</span>
+                                            <span className="font-mono text-slate-700 dark:text-slate-300">{item.interface_name || '—'}</span>
                                             <span className="text-[11px] text-slate-400">
                                               {item.last_updated ? new Date(item.last_updated).toLocaleString(zh ? 'zh-CN' : 'en-US', { hour12: false }) : '—'}
                                             </span>
                                           </div>
                                         ))}
                                       </div>
+                                      </>
                                     ) : (
                                       <div className="rounded-2xl border border-dashed border-slate-200 bg-white px-4 py-6 text-center text-xs text-slate-400 dark:border-slate-800 dark:bg-slate-900">
                                         {zh ? '暂无 ARP / MAC 终端明细' : 'No ARP/MAC endpoint evidence'}
@@ -4338,7 +4202,7 @@ const CmdbManagementTab: React.FC<Props> = ({ language, cmdbPage, currentUser })
                       );
                     })}
                   </tbody>
-                </DataTable>
+                </table>
               </div>
               <Pagination currentPage={page} totalItems={vlanListMeta.total} onPageChange={setPage} itemsPerPage={pageSize} onItemsPerPageChange={(size) => { setPageSize(size); setPage(1); }} language={zh ? 'zh' : 'en'} />
             </section>
@@ -4346,18 +4210,38 @@ const CmdbManagementTab: React.FC<Props> = ({ language, cmdbPage, currentUser })
         ) : (
         <div className="rounded-[28px] border border-black/5 bg-white shadow-[0_16px_36px_rgba(11,35,64,0.06)] overflow-hidden">
           <div className="overflow-x-auto">
-            <DataTable className="text-left">
+            <table ref={managementTableRef} className="nx-data-table text-left">
               <thead>
                 <tr className="border-b border-black/5 bg-slate-50 text-[11px] font-bold uppercase tracking-[0.16em] text-black/40">
-                  {tableColumns.map(c => (
+                  {tableColumns.map((c, index) => (
                     <th key={c.key} className="px-6 py-4">
-                      {zh ? c.label : c.labelEn}
+                      {index === tableColumns.length - 1 && !hasTableActions ? (
+                        <div className="flex w-full items-center justify-between gap-2">
+                          <span>{zh ? c.label : c.labelEn}</span>
+                          <TableExportMenu
+                            tableRef={managementTableRef}
+                            filename={`cmdb-${tab}`}
+                            language={zh ? 'zh' : 'en'}
+                            disabled={loading}
+                            exportData={buildManagementExport}
+                          />
+                        </div>
+                      ) : zh ? c.label : c.labelEn}
                     </th>
                   ))}
                   {hasTableActions && (
-                    <th className="px-6 py-4 text-right" style={{ width: 120 }}>
-                      {tab === 'interfaces' ? (zh ? '配置' : 'Configure') : (zh ? '操作' : 'Actions')}
-                    </th>
+                    <TableActionHeader className="px-6 py-4" style={{ width: 120 }}>
+                      <div className="flex items-center justify-end gap-2">
+                        {tab === 'interfaces' ? (zh ? '配置' : 'Configure') : (zh ? '操作' : 'Actions')}
+                        <TableExportMenu
+                          tableRef={managementTableRef}
+                          filename={`cmdb-${tab}`}
+                          language={zh ? 'zh' : 'en'}
+                          disabled={loading}
+                          exportData={buildManagementExport}
+                        />
+                      </div>
+                    </TableActionHeader>
                   )}
                 </tr>
               </thead>
@@ -4379,7 +4263,7 @@ const CmdbManagementTab: React.FC<Props> = ({ language, cmdbPage, currentUser })
                 )}
                 {visibleRows.map((row, i) => renderDataRow(row, i))}
               </tbody>
-            </DataTable>
+            </table>
           </div>
 
           <Pagination
@@ -4436,13 +4320,28 @@ const CmdbManagementTab: React.FC<Props> = ({ language, cmdbPage, currentUser })
                     <div key={sheet.key} className="overflow-hidden rounded-2xl border border-slate-200">
                       <div className="flex items-center justify-between bg-slate-50 px-4 py-2.5">
                         <span className="text-sm font-semibold text-[#164e63]">{sheet.name}</span>
-                        <span className="text-xs text-slate-400">{sheetRows.length} {zh ? '条' : 'row(s)'}</span>
+                        <div className="flex items-center gap-2">
+                          <span className="text-xs text-slate-400">{sheetRows.length} {zh ? '条' : 'row(s)'}</span>
+                          {sheetRows.length > 0 && (
+                            <TableExportMenu
+                              tableRef={credentialImportPreviewTableRefs[sheet.key]}
+                              filename={`cmdb-credential-import-preview-${sheet.key}`}
+                              language={zh ? 'zh' : 'en'}
+                              exportData={buildCmdbExportData(sheetRows, sheet.columns.map(column => ({
+                                key: column.key,
+                                header: column.label,
+                                marker: CREDENTIAL_SECRET_FIELDS.has(column.key) ? 'sensitive' as const : undefined,
+                                value: (item: CredentialImportRow) => String(item.values[column.key] || '-') ,
+                              })))}
+                            />
+                          )}
+                        </div>
                       </div>
                       {sheetRows.length > 0 ? (
                         <div className="overflow-x-auto">
-                          <table className="nx-data-table nx-data-table--compact text-left text-xs">
+                          <table ref={credentialImportPreviewTableRefs[sheet.key]} className="nx-data-table nx-data-table--compact text-left text-xs">
                             <thead className="bg-white text-slate-500">
-                              <tr>{sheet.columns.map(column => <th key={column.key} className="whitespace-nowrap px-3 py-2 font-semibold">{column.label}</th>)}</tr>
+                              <tr>{sheet.columns.map(column => <th key={column.key} data-export={CREDENTIAL_SECRET_FIELDS.has(column.key) ? 'sensitive' : undefined} className="whitespace-nowrap px-3 py-2 font-semibold">{column.label}</th>)}</tr>
                             </thead>
                             <tbody className="divide-y divide-slate-100">
                               {sheetRows.slice(0, 10).map((item, index) => (
@@ -4505,20 +4404,22 @@ const CmdbManagementTab: React.FC<Props> = ({ language, cmdbPage, currentUser })
                 </div>
               )}
               {siteImportRows.length > 0 && (
-                <div className="overflow-x-auto rounded-2xl border border-slate-200">
-                  <table className="nx-data-table nx-data-table--compact text-left text-xs">
-                    <thead className="bg-slate-50 text-slate-500">
-                      <tr>{SITE_IMPORT_COLUMNS.map(column => <th key={column.key} className="whitespace-nowrap px-3 py-2 font-semibold">{column.header}</th>)}</tr>
-                    </thead>
-                    <tbody className="divide-y divide-slate-100">
-                      {siteImportRows.slice(0, 10).map((row, index) => (
-                        <tr key={index}>
-                          {SITE_IMPORT_COLUMNS.map(column => <td key={column.key} className="max-w-48 truncate whitespace-nowrap px-3 py-2 text-slate-600">{row[column.key] || '-'}</td>)}
-                        </tr>
-                      ))}
-                    </tbody>
-                  </table>
-                  {siteImportRows.length > 10 && <div className="border-t border-slate-100 px-3 py-2 text-xs text-slate-400">仅预览前 10 行，共 {siteImportRows.length} 行</div>}
+                <div>
+                  <div className="overflow-x-auto rounded-2xl border border-slate-200">
+                    <table ref={siteImportPreviewTableRef} className="nx-data-table nx-data-table--compact text-left text-xs">
+                      <thead className="bg-slate-50 text-slate-500">
+                        <tr>{SITE_IMPORT_COLUMNS.map((column, index) => <th key={column.key} className="whitespace-nowrap px-3 py-2 font-semibold">{index === SITE_IMPORT_COLUMNS.length - 1 ? <div className="flex w-full items-center justify-between gap-2"><span>{column.header}</span><TableExportMenu tableRef={siteImportPreviewTableRef} filename="cmdb-site-import-preview" language={zh ? 'zh' : 'en'} exportData={buildCmdbExportData(siteImportRows, SITE_IMPORT_COLUMNS.map(siteColumn => ({ key: siteColumn.key, header: siteColumn.header, value: (row: SiteImportRow) => row[siteColumn.key] || '-' })))} /></div> : column.header}</th>)}</tr>
+                      </thead>
+                      <tbody className="divide-y divide-slate-100">
+                        {siteImportRows.slice(0, 10).map((row, index) => (
+                          <tr key={index}>
+                            {SITE_IMPORT_COLUMNS.map(column => <td key={column.key} className="max-w-48 truncate whitespace-nowrap px-3 py-2 text-slate-600">{row[column.key] || '-'}</td>)}
+                          </tr>
+                        ))}
+                      </tbody>
+                    </table>
+                    {siteImportRows.length > 10 && <div className="border-t border-slate-100 px-3 py-2 text-xs text-slate-400">仅预览前 10 行，共 {siteImportRows.length} 行</div>}
+                  </div>
                 </div>
               )}
             </div>
@@ -4592,7 +4493,7 @@ const CmdbManagementTab: React.FC<Props> = ({ language, cmdbPage, currentUser })
                   && ['old_password', 'old_enable_password', 'password', 'enable_password', 'snmp_community'].includes(fd.key);
                 return (
                   <div key={fd.key} className={tab === 'credentials' && !isCredentialSecret ? 'col-span-2' : ''}>
-                    <label className="block text-xs font-semibold mb-1 text-black/50">
+                    <label htmlFor={fd.type === 'password' ? `cmdb-secret-${fd.key}` : undefined} className="block text-xs font-semibold mb-1 text-black/50">
                       {zh ? fd.label : fd.labelEn}{fd.required && <span className="text-rose-500"> *</span>}
                       {fd.secretFlag && editing && (
                         <span className="ml-1 text-[10px] text-black/30 font-normal">
@@ -4670,27 +4571,24 @@ const CmdbManagementTab: React.FC<Props> = ({ language, cmdbPage, currentUser })
                         />
                       </div>
                     ) : fd.type === 'password' ? (
-                      <div className="relative">
-                        <input
-                          type={visiblePasswordFields[fd.key] ? 'text' : 'password'}
-                          value={form[fd.key] ?? ''}
-                          placeholder={fd.placeholder}
-                          maxLength={fd.maxLength}
-                          inputMode={fd.inputMode}
-                          required={fd.required && !editing}
-                          autoComplete="new-password"
-                          onChange={e => setForm({ ...form, [fd.key]: e.target.value })}
-                          className={`w-full px-3 py-2 pr-10 rounded-xl text-sm border bg-white text-[#164e63] outline-none transition-all ${fieldError ? 'border-rose-400 focus:border-rose-400 focus:ring-2 focus:ring-rose-500/10' : 'border-black/10 focus:border-[#06b6d4]/45 focus:ring-2 focus:ring-[#06b6d4]/10'}`}
-                        />
-                        <button
-                          type="button"
-                          onClick={() => setVisiblePasswordFields(prev => ({ ...prev, [fd.key]: !prev[fd.key] }))}
-                          className="absolute right-3 top-1/2 -translate-y-1/2 text-black/30 hover:text-black/60 focus:outline-none"
-                          title={visiblePasswordFields[fd.key] ? (zh ? '隐藏密码' : 'Hide Password') : (zh ? '显示密码' : 'Show Password')}
-                        >
-                          {visiblePasswordFields[fd.key] ? <EyeOff size={16} /> : <Eye size={16} />}
-                        </button>
-                      </div>
+                      <PasswordInputField
+                        id={`cmdb-secret-${fd.key}`}
+                        value={form[fd.key] ?? ''}
+                        placeholder={fd.placeholder}
+                        maxLength={fd.maxLength}
+                        inputMode={fd.inputMode}
+                        required={fd.required && !editing}
+                        autoComplete="new-password"
+                        aria-invalid={Boolean(fieldError)}
+                        visible={Boolean(visiblePasswordFields[fd.key])}
+                        onVisibilityChange={visible => setVisiblePasswordFields(previous => ({ ...previous, [fd.key]: visible }))}
+                        onChange={event => setForm({ ...form, [fd.key]: event.target.value })}
+                        showPasswordLabel={zh ? '显示密码' : 'Show Password'}
+                        hidePasswordLabel={zh ? '隐藏密码' : 'Hide Password'}
+                        className={fieldError
+                          ? 'border-rose-400 focus:border-rose-400 focus:ring-2 focus:ring-rose-500/10'
+                          : 'border-black/10 focus:border-[#06b6d4]/45 focus:ring-2 focus:ring-[#06b6d4]/10'}
+                      />
                     ) : (
                       <input
                         type={fd.type === 'number' ? 'number' : fd.type === 'email' ? 'email' : fd.type === 'tel' ? 'tel' : 'text'}
@@ -4878,7 +4776,17 @@ const CmdbManagementTab: React.FC<Props> = ({ language, cmdbPage, currentUser })
                 <h3 className="text-lg font-semibold text-[#164e63]">VLAN {vlanDetailRow.vlan_id} 明细表</h3>
                 <p className="mt-1 text-xs text-slate-500">{vlanDetailRow.device_hostname || '未关联设备'} · {vlanDetailRow.device_ip || '—'} · {vlanDetailRow.description || '暂无描述'} · 网段 {vlanDetailRow.prefixes || '—'} · 网关 {vlanDetailRow.gateway || '—'}</p>
               </div>
-              <button type="button" onClick={() => setVlanDetailRow(null)} className="rounded-lg p-1.5 text-slate-400 hover:bg-slate-100 hover:text-slate-700" title="关闭"><X size={18} /></button>
+              <div className="flex items-center gap-2">
+                <TableExportMenu
+                  tableRef={vlanDetailTableRef}
+                  filename={`cmdb-vlan-${vlanDetailRow.vlan_id}-details`}
+                  language={zh ? 'zh' : 'en'}
+                  disabled={!((Array.isArray(vlanDetailRow.port_detail_rows) && vlanDetailRow.port_detail_rows.length > 0)
+                    || (Array.isArray(vlanDetailRow.endpoint_details) && vlanDetailRow.endpoint_details.length > 0)
+                    || String(vlanDetailRow.port_details || '').trim())}
+                />
+                <button type="button" onClick={() => setVlanDetailRow(null)} className="rounded-lg p-1.5 text-slate-400 hover:bg-slate-100 hover:text-slate-700" title="关闭"><X size={18} /></button>
+              </div>
             </div>
             <div className="overflow-auto p-5">
               {(() => {
@@ -4910,7 +4818,7 @@ const CmdbManagementTab: React.FC<Props> = ({ language, cmdbPage, currentUser })
                 });
                 const detailRows = [...portRows, ...endpointRows];
                 return detailRows.length ? (
-                  <table className="nx-data-table nx-data-table--compact min-w-[980px] text-left text-xs">
+                  <table ref={vlanDetailTableRef} className="nx-data-table nx-data-table--compact min-w-[980px] text-left text-xs">
                     <thead className="sticky top-0 bg-slate-50 text-[11px] font-semibold text-slate-500">
                       <tr className="border-b border-slate-200"><th className="px-3 py-3">来源</th><th className="px-3 py-3">设备名称</th><th className="px-3 py-3">设备 IP</th><th className="px-3 py-3">接口</th><th className="px-3 py-3">接口描述</th><th className="px-3 py-3">IP 地址</th><th className="px-3 py-3">MAC 地址</th><th className="px-3 py-3">来源时间</th></tr>
                     </thead>

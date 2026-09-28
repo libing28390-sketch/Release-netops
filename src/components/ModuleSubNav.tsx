@@ -130,7 +130,10 @@ const ModuleSubNav: React.FC<ModuleSubNavProps> = ({ language, userRole, current
       const prefixes = child.activeMatch.split(',');
       if (prefixes.some((p: string) => path === p || path.startsWith(p + '/'))) return true;
     }
-    if (path === child.path || path.startsWith(child.path + '/')) return true;
+    // Leaf routes match exactly. Prefix matching is opt-in through activeMatch,
+    // otherwise sibling routes like /management/storage and /management/storage/files
+    // incorrectly appear active at the same time.
+    if (path === child.path) return true;
     if (child.children && Array.isArray(child.children)) {
       return child.children.some((sub: any) => checkChildActive(sub, path));
     }

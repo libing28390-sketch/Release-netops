@@ -1,13 +1,12 @@
+import { DataTable } from '../components/DataTable';
 import React, { useEffect, useState, useCallback } from 'react';
 import { AnimatePresence, motion } from 'motion/react';
-import { Search, X, Download, RefreshCw, Eye, Repeat, ChevronDown, ChevronUp, Calendar, MapPin, Wrench, History } from 'lucide-react';
-import * as XLSX from 'xlsx';
+import { Search, X, RefreshCw, Eye, Repeat, ChevronDown, ChevronUp, Calendar, MapPin, Wrench, History } from 'lucide-react';
 import type { AlertListResponse, AlertRecord, AlertDetailResponse } from '../types';
 import Pagination from '../components/Pagination';
 import PageHero from '../components/PageHero';
-import { ActionButton } from '../components/ui/ActionIconButton';
+import { ActionIconButton } from '../components/ui/ActionIconButton';
 import { severityBadgeClass, alertWorkflowBadgeClass } from '../components/shared';
-import { fetchAllPaginatedItems } from '../utils/pagination';
 import DateTimePicker from '../components/DateTimePicker';
 import { authHeaders } from '../api/http';
 import {
@@ -22,6 +21,10 @@ import {
   workflowLabel,
 } from './alertManagementShared';
 
+import { TableActionCell, TableActionHeader } from '../components/ui/TableActionColumn';
+import type { TableExportData } from '../components/ui/TableExportMenu';
+import { fetchAllPaginatedItems } from '../utils/pagination';
+import { buildAlertHistoryExportData, getAlertHistoryExportHeaders } from './alertTableExport';
 interface AlertHistoryTabProps extends AlertPageCommonProps {
   onNavigateToDevice?: (deviceId: string) => void;
   onNavigateToTopology?: (deviceId: string) => void;
@@ -41,6 +44,39 @@ const AlertHistoryTab: React.FC<AlertHistoryTabProps> = ({ language, showToast, 
   const [createdFrom, setCreatedFrom] = useState('');
   const [createdTo, setCreatedTo] = useState('');
   const [showAdvanced, setShowAdvanced] = useState(false);
+  const exportHeaders = getAlertHistoryExportHeaders(language);
+
+  const exportAllAlerts = async (): Promise<TableExportData> => {
+    const params = new URLSearchParams({
+      status: 'resolved',
+      severity: severityFilter,
+      notification_status: notificationStatusFilter,
+      site: 'all',
+      assignee: 'all',
+      search,
+    });
+    if (createdFrom) params.set('created_from', createdFrom);
+    if (createdTo) params.set('created_to', createdTo);
+
+    const items = await fetchAllPaginatedItems<AlertRecord>('/api/alerts', params, 100);
+    const notificationLabel = (status: string | undefined) => status === 'succeeded'
+      ? (zh ? '已发送' : 'Sent')
+      : status === 'failed'
+        ? (zh ? '失败' : 'Failed')
+        : status === 'retrying'
+          ? (zh ? '重试中' : 'Retrying')
+          : status === 'none'
+            ? (zh ? '无' : 'None')
+            : status || '--';
+
+    return buildAlertHistoryExportData(items, language, {
+      severity: (value) => severityLabel(value, language),
+      notification: notificationLabel,
+      timestamp: formatTs,
+      duration: (value) => formatDuration(value, language),
+      unassigned: zh ? '未分派' : 'Unassigned',
+    });
+  };
 
   // Detail
   const [selectedAlertId, setSelectedAlertId] = useState<string | null>(null);
@@ -114,46 +150,6 @@ const AlertHistoryTab: React.FC<AlertHistoryTabProps> = ({ language, showToast, 
     setSelectedDetail(null);
   };
 
-  const handleExport = async () => {
-    const params = new URLSearchParams({
-      status: 'resolved',
-      severity: severityFilter,
-      notification_status: notificationStatusFilter,
-      site: 'all',
-      assignee: 'all',
-      search,
-    });
-    if (createdFrom) params.set('created_from', createdFrom);
-    if (createdTo) params.set('created_to', createdTo);
-
-    try {
-      const allRows = await fetchAllPaginatedItems<AlertRecord>('/api/alerts', params);
-      if (allRows.length === 0) return;
-      const data = allRows.map(r => ({
-        [zh ? '告警标题' : 'Title']: r.title,
-        [zh ? '设备' : 'Device']: r.hostname || r.ip_address || '--',
-        [zh ? '站点' : 'Site']: r.site || '--',
-        [zh ? '级别' : 'Severity']: severityLabel(r.severity, language),
-        [zh ? '通知状态' : 'Notification']: r.notification_status || '--',
-        [zh ? '状态' : 'Status']: workflowLabel(r.workflow_status, language),
-        [zh ? '责任人' : 'Assignee']: r.assignee || '--',
-        [zh ? '创建时间' : 'Created']: formatTs(r.created_at),
-        [zh ? '恢复时间' : 'Resolved']: formatTs(r.resolved_at),
-        [zh ? '持续时间' : 'Duration']: formatDuration(r.duration_seconds, language),
-        [zh ? '出现次数' : 'Occurrences']: r.occurrence_count ?? 1,
-        [zh ? '备注' : 'Note']: r.note || '',
-      }));
-      const wb = XLSX.utils.book_new();
-      XLSX.utils.book_append_sheet(wb, XLSX.utils.json_to_sheet(data), zh ? '历史告警' : 'Alert History');
-      const ts = new Date().toISOString().replace(/[-:]/g, '').replace('T', '_').slice(0, 15);
-      XLSX.writeFile(wb, `alert_history_${ts}.xlsx`);
-      showToast(zh ? '导出成功' : 'Exported', 'success');
-    } catch (error) {
-      console.error('Failed to export alert history:', error);
-      showToast(zh ? '导出失败' : 'Export failed', 'error');
-    }
-  };
-
   const clearTimeRange = () => {
     setCreatedFrom('');
     setCreatedTo('');
@@ -179,9 +175,6 @@ const AlertHistoryTab: React.FC<AlertHistoryTabProps> = ({ language, showToast, 
         subtitle={zh ? '查询并溯源历史告警，复盘故障处理生命周期与时长记录。' : 'Trace historical alerts and review incident lifecycles and resolution metrics.'}
         actions={
           <>
-            <ActionButton icon={Download} variant="accent" size="md" onClick={handleExport} title={zh ? '导出' : 'Export'}>
-              {zh ? '导出' : 'Export'}
-            </ActionButton>
             <button onClick={() => void loadAlerts()} className={alertSecondaryButtonClass}>
               <RefreshCw size={14} />
               {zh ? '刷新' : 'Refresh'}
@@ -315,24 +308,17 @@ const AlertHistoryTab: React.FC<AlertHistoryTabProps> = ({ language, showToast, 
 
         {/* Table */}
         <div className="flex-1 min-h-0 overflow-y-auto custom-scrollbar border-b border-black/5">
-          <table className="nx-data-table text-left">
+          <DataTable unstyled exportConfig={{ filename: 'alert-history', language: zh ? 'zh' : 'en', disabled: loading || rows.length === 0, exportData: exportAllAlerts }} className="nx-data-table text-left">
             <thead className="sticky top-0 z-10">
               <tr className="border-y border-black/5 bg-[#f8fafc] text-[11px] font-bold uppercase tracking-[0.16em] text-black/40">
-                <th className="px-5 py-3">{zh ? '告警标题' : 'Alert'}</th>
-                <th className="px-5 py-3">{zh ? '对象' : 'Object'}</th>
-                <th className="px-5 py-3">{zh ? '级别' : 'Severity'}</th>
-                <th className="px-5 py-3">{zh ? '通知' : 'Notify'}</th>
-                <th className="px-5 py-3">{zh ? '责任人' : 'Assignee'}</th>
-                <th className="px-5 py-3">{zh ? '发生时间' : 'Created'}</th>
-                <th className="px-5 py-3">{zh ? '恢复时间' : 'Resolved'}</th>
-                <th className="px-5 py-3">{zh ? '持续时间' : 'Duration'}</th>
-                <th className="px-5 py-3">{zh ? '操作' : 'Action'}</th>
+                {exportHeaders.map((header) => <th key={header} className="px-5 py-3">{header}</th>)}
+                <TableActionHeader className="px-5 py-3">{zh ? '操作' : 'Action'}</TableActionHeader>
               </tr>
             </thead>
             <tbody>
               {loading ? (
                 <tr>
-                  <td colSpan={9} className="px-5 py-12 text-center text-sm text-black/40">
+                  <td colSpan={exportHeaders.length + 1} className="px-5 py-12 text-center text-sm text-black/40">
                     {zh ? '正在加载...' : 'Loading...'}
                   </td>
                 </tr>
@@ -342,33 +328,27 @@ const AlertHistoryTab: React.FC<AlertHistoryTabProps> = ({ language, showToast, 
                     <td className="px-5 py-4 align-top">
                       <button onClick={() => setSelectedAlertId(row.id)} className="text-left" title={zh ? '查看详情' : 'View detail'}>
                         <p className="text-sm font-semibold text-[#164e63]">
-                          {row.title}
-                          {(row.occurrence_count ?? 1) > 1 && (
-                            <span className="ml-1.5 inline-flex items-center gap-0.5 rounded-full bg-indigo-50 px-1.5 py-0.5 text-[10px] font-bold text-indigo-600">
-                              <Repeat size={9} />
-                              {row.occurrence_count}
-                            </span>
-                          )}
+                          {row.title || '--'}
                         </p>
-                        <p className="mt-1 line-clamp-1 text-xs text-black/45">{row.message}</p>
                       </button>
                     </td>
+                    <td className="px-5 py-4 align-top text-sm text-black/60">{row.message || '--'}</td>
+                    <td className="px-5 py-4 align-top text-sm text-black/60">{row.occurrence_count ?? 1}</td>
                     <td className="px-5 py-4 align-top text-sm text-black/60">
                       {row.device_id ? (
                         <button
                           onClick={() => onNavigateToDevice?.(row.device_id!)}
                           className="text-left text-[#2b6b8f] hover:underline"
                         >
-                          <div>{row.hostname || row.ip_address || '--'}</div>
-                          <div className="mt-1 text-xs text-black/40">{row.interface_name || row.site || '--'}</div>
+                          {row.hostname || '--'}
                         </button>
                       ) : (
-                        <>
-                          <div>{row.hostname || row.ip_address || '--'}</div>
-                          <div className="mt-1 text-xs text-black/40">{row.interface_name || row.site || '--'}</div>
-                        </>
+                        row.hostname || '--'
                       )}
                     </td>
+                    <td className="px-5 py-4 align-top text-sm text-black/60">{row.ip_address || '--'}</td>
+                    <td className="px-5 py-4 align-top text-sm text-black/60">{row.interface_name || '--'}</td>
+                    <td className="px-5 py-4 align-top text-sm text-black/60">{row.site || '--'}</td>
                     <td className="px-5 py-4 align-top">
                       <span className={`inline-flex rounded-full px-2.5 py-1 text-[10px] font-bold uppercase ${severityBadgeClass(row.severity)}`}>
                         {severityLabel(row.severity, language)}
@@ -391,27 +371,25 @@ const AlertHistoryTab: React.FC<AlertHistoryTabProps> = ({ language, showToast, 
                     <td className="px-5 py-4 align-top text-sm text-black/60">
                       {formatDuration(row.duration_seconds, language)}
                     </td>
-                    <td className="px-5 py-4 align-top">
-                      <button
+                    <TableActionCell className="px-5 py-4 align-top">
+                      <ActionIconButton
+                        icon={Eye}
+                        label={zh ? '查看详情' : 'View detail'}
+                        variant="accent"
                         onClick={() => setSelectedAlertId(row.id)}
-                        className="inline-flex h-9 items-center justify-center gap-1.5 rounded-xl border border-transparent bg-white px-3 text-xs font-semibold text-[#0e7490] shadow-[0_1px_2px_rgba(6,182,212,0.08)] transition-all hover:-translate-y-0.5 hover:bg-[#ecfeff] hover:text-[#0891b2]"
-                        title={zh ? '查看详情' : 'View detail'}
-                      >
-                        <Eye size={14} />
-                        {zh ? '查看' : 'View'}
-                      </button>
-                    </td>
+                      />
+                    </TableActionCell>
                   </tr>
                 ))
               ) : (
                 <tr>
-                  <td colSpan={9} className="px-5 py-12 text-center text-sm text-black/40">
+                  <td colSpan={exportHeaders.length + 1} className="px-5 py-12 text-center text-sm text-black/40">
                     {zh ? '当前筛选条件下没有历史告警。' : 'No historical alerts found.'}
                   </td>
                 </tr>
               )}
             </tbody>
-          </table>
+          </DataTable>
         </div>
 
         <div className="mt-4">

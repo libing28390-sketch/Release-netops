@@ -5018,15 +5018,20 @@ async def get_arp_table_async() -> dict[str, Any]:
 
 # ── MAC 变更日志查询 ────────────────────────────────────────────────
 
-def get_mac_changes(limit: int = 200) -> dict[str, Any]:
-    """查询最近的 MAC 变更记录。"""
+def get_mac_changes(limit: int = 200, offset: int = 0) -> dict[str, Any]:
+    """查询 MAC 变更记录的一页，同时返回完整匹配总数。"""
+    safe_limit = max(1, min(int(limit), 1000))
+    safe_offset = max(0, int(offset))
+    total = 0
     try:
         conn = get_db_connection()
         try:
+            count_row = conn.execute('SELECT COUNT(*) AS total FROM mac_change_log').fetchone()
+            total = int(count_row['total'] or 0) if count_row else 0
             rows = conn.execute(
                 'SELECT id, ip, old_mac, new_mac, old_vendor, new_vendor, old_device, new_device, detected_at '
-                'FROM mac_change_log ORDER BY detected_at DESC, id DESC LIMIT ?',
-                (limit,),
+                'FROM mac_change_log ORDER BY detected_at DESC, id DESC LIMIT ? OFFSET ?',
+                (safe_limit, safe_offset),
             ).fetchall()
         finally:
             conn.close()
@@ -5049,14 +5054,14 @@ def get_mac_changes(limit: int = 200) -> dict[str, Any]:
             'detected_at': row['detected_at'],
         })
     return {
-        'total': len(entries),
+        'total': total,
         'entries': entries,
         'timestamp': _beijing_now_iso(),
     }
 
 
-async def get_mac_changes_async(limit: int = 200) -> dict[str, Any]:
-    return await asyncio.to_thread(get_mac_changes, limit)
+async def get_mac_changes_async(limit: int = 200, offset: int = 0) -> dict[str, Any]:
+    return await asyncio.to_thread(get_mac_changes, limit, offset)
 
 
 # === RESTORED MISSING FUNCTIONS ===

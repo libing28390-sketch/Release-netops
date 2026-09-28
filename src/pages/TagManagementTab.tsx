@@ -9,6 +9,7 @@ import PageHero from '../components/PageHero';
 import Pagination from '../components/Pagination';
 import { DataTable } from '../components/DataTable';
 import { ActionButton, ActionIconButton, ActionIconGroup } from '../components/ui/ActionIconButton';
+import { TableActionCell, TableActionHeader } from '../components/ui/TableActionColumn';
 import { useEscapeClose } from '../hooks/useEscapeClose';
 
 /* ─── Props ─── */
@@ -139,6 +140,27 @@ export default function TagManagementTab({ language, currentUser }: TagManagemen
     const start = (safePage - 1) * pageSize;
     return filtered.slice(start, start + pageSize);
   }, [filtered, pageSize, safePage]);
+
+  const tagExportData = useMemo(() => ({
+    headers: [
+      zh ? '标签' : 'Tag',
+      zh ? '描述' : 'Description',
+      zh ? '代码' : 'Code',
+      zh ? '分类' : 'Category',
+      zh ? '来源' : 'Source',
+      zh ? '分配数' : 'Assignments',
+      zh ? '状态' : 'Status',
+    ],
+    rows: filtered.map((tag) => [
+      zh ? (tag.label_zh || tag.label) : tag.label,
+      tag.description || (zh ? '暂无描述' : 'No description'),
+      tag.code,
+      zh ? TAG_CATEGORY_LABELS[tag.category]?.zh : TAG_CATEGORY_LABELS[tag.category]?.en,
+      tag.is_system === 1 ? (zh ? '系统' : 'System') : tag.built_in === 1 ? (zh ? '内置' : 'Built-in') : (zh ? '自定义' : 'Custom'),
+      tag.assignment_count || 0,
+      tag.is_active === 0 ? (zh ? '已停用' : 'Inactive') : (zh ? '已启用' : 'Active'),
+    ]),
+  }), [filtered, zh]);
 
   useEffect(() => {
     setPage(1);
@@ -399,16 +421,17 @@ export default function TagManagementTab({ language, currentUser }: TagManagemen
             </div>
 
             <div className="overflow-x-auto">
-              <DataTable className="min-w-[820px] text-left">
+              <DataTable className="min-w-[980px] text-left" exportConfig={{ filename: 'tags', language: zh ? 'zh' : 'en', disabled: loading || filtered.length === 0, exportData: tagExportData }}>
                 <thead className="bg-slate-50/80 text-[11px] font-bold uppercase tracking-wider text-black/40">
                   <tr>
                     <th className="px-4 py-3">{zh ? '标签' : 'Tag'}</th>
+                    <th className="px-4 py-3">{zh ? '描述' : 'Description'}</th>
                     <th className="px-4 py-3">{zh ? '代码' : 'Code'}</th>
                     <th className="px-4 py-3">{zh ? '分类' : 'Category'}</th>
                     <th className="px-4 py-3">{zh ? '来源' : 'Source'}</th>
                     <th className="px-4 py-3 text-right">{zh ? '分配数' : 'Assignments'}</th>
                     <th className="px-4 py-3">{zh ? '状态' : 'Status'}</th>
-                    <th className="px-4 py-3 text-right">{zh ? '操作' : 'Actions'}</th>
+                    <TableActionHeader className="px-4 py-3">{zh ? '操作' : 'Actions'}</TableActionHeader>
                   </tr>
                 </thead>
                 <tbody className="divide-y divide-black/5">
@@ -677,11 +700,11 @@ function TagTableRow({ tag, zh, canManage, onEdit, onDelete }: TagTableRowProps)
           <span className="mt-1 h-2.5 w-2.5 flex-none rounded-full" style={{ backgroundColor: chipColor }} />
           <div className="min-w-0">
             <p className="truncate font-semibold" title={displayLabel}>{displayLabel}</p>
-            <p className="mt-0.5 max-w-[300px] truncate text-[11px] text-black/35" title={tag.description || ''}>
-              {tag.description || (zh ? '暂无描述' : 'No description')}
-            </p>
           </div>
         </div>
+      </td>
+      <td className="max-w-[320px] px-4 py-3 text-[11px] text-black/45" title={tag.description || ''}>
+        <span className="block truncate">{tag.description || (zh ? '暂无描述' : 'No description')}</span>
       </td>
       <td className="px-4 py-3 font-mono text-[11px] text-black/55">{tag.code}</td>
       <td className="px-4 py-3">{zh ? categoryLabel?.zh : categoryLabel?.en}</td>
@@ -703,7 +726,7 @@ function TagTableRow({ tag, zh, canManage, onEdit, onDelete }: TagTableRowProps)
           {tag.is_active === 0 ? (zh ? '已停用' : 'Inactive') : (zh ? '已启用' : 'Active')}
         </span>
       </td>
-      <td className="px-4 py-3">
+      <TableActionCell className="px-4 py-3">
         <ActionIconGroup label={zh ? '标签操作' : 'Tag actions'}>
           {canManage && tag.is_system !== 1 && (
             <ActionIconButton
@@ -723,7 +746,7 @@ function TagTableRow({ tag, zh, canManage, onEdit, onDelete }: TagTableRowProps)
           )}
           {!canManage && <span className="text-black/25">—</span>}
         </ActionIconGroup>
-      </td>
+      </TableActionCell>
     </tr>
   );
 }

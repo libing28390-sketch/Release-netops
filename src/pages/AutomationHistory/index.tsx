@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useCallback } from 'react';
+import React, { useRef, useState, useEffect, useCallback } from 'react';
 import { AnimatePresence, motion } from 'motion/react';
 import {
   AlertCircle,
@@ -10,7 +10,6 @@ import {
   History,
   RotateCcw,
   Search,
-  Server,
   Trash2,
   User,
   X,
@@ -30,18 +29,73 @@ import type { Device } from '../../types';
 import PageHero from '../../components/PageHero';
 import Pagination from '../../components/Pagination';
 import { DataTable } from '../../components/DataTable';
+import { TableExportMenu } from '../../components/ui/TableExportMenu';
 import OutputActions from '../../components/OutputActions';
 import { ActionButton, ActionIconButton, ActionIconGroup } from '../../components/ui/ActionIconButton';
-import type { AutomationHistoryTabProps, PlaybookExecution } from './types';
+import { TableActionCell, TableActionHeader } from '../../components/ui/TableActionColumn';
+import type { AutomationHistoryTabProps, ExecutionDevice, PlaybookExecution } from './types';
 import { useEscapeClose } from '../../hooks/useEscapeClose';
+import { fetchAllPaginatedItems } from '../../utils/pagination';
 import {
   splitOutputByCommand,
-  downloadExcel,
   downloadJSON,
   copyToClipboard,
   downloadTextFile,
-  getStatusMap,
 } from './helpers';
+import { buildAutomationHistoryExportData, getAutomationHistoryStatusLabel, getAutomationHistoryTypeLabel } from './automationHistoryExport';
+
+type ParsedOutputData = { fields: string[]; records: Record<string, string>[]; count: number };
+
+const ParsedOutputTable: React.FC<{
+  data: ParsedOutputData;
+  filename: string;
+  isZh: boolean;
+  onDownloadJson: () => void;
+}> = ({ data, filename, isZh, onDownloadJson }) => {
+  const tableRef = useRef<HTMLTableElement>(null);
+
+  return (
+    <div className="p-3 space-y-2">
+      <div className="flex items-center justify-between px-1">
+        <div className="flex items-center gap-2 text-[10px] text-emerald-600 font-semibold">
+          <CheckCircle2 size={11} />
+          {isZh ? `${data.count} 条记录` : `${data.count} record(s)`}
+          <span className="text-black/25 font-normal">{data.fields.join(' · ')}</span>
+        </div>
+        <div className="flex items-center gap-1.5">
+          <TableExportMenu tableRef={tableRef} filename={filename} language={isZh ? 'zh' : 'en'} disabled={data.records.length === 0} />
+          <ActionIconButton
+            icon={FileJson}
+            label={isZh ? '下载解析结果 (JSON)' : 'Download parsed as JSON'}
+            variant="accent"
+            disabled={data.records.length === 0}
+            onClick={onDownloadJson}
+          />
+        </div>
+      </div>
+      <div className="overflow-auto rounded-lg border border-black/[0.06]">
+        <table ref={tableRef} className="nx-data-table nx-data-table--compact text-[11px] font-mono">
+          <thead className="bg-[#f6f8fa] border-b border-black/[0.06]">
+            <tr>
+              {data.fields.map((field) => (
+                <th key={field} className="px-3 py-1.5 text-left text-[10px] font-bold text-black/40 uppercase tracking-wider whitespace-nowrap">{field}</th>
+              ))}
+            </tr>
+          </thead>
+          <tbody className="divide-y divide-black/[0.04]">
+            {data.records.map((record, index) => (
+              <tr key={index} className="hover:bg-[#f6f8fa]/60 transition-colors">
+                {data.fields.map((field) => (
+                  <td key={field} className="px-3 py-1.5 text-black/65 whitespace-nowrap max-w-[180px] truncate" title={record[field]}>{record[field] || '—'}</td>
+                ))}
+              </tr>
+            ))}
+          </tbody>
+        </table>
+      </div>
+    </div>
+  );
+};
 
 type ExecutionApproval = {
   id: string;
@@ -520,7 +574,7 @@ const AutomationHistoryTab: React.FC<AutomationHistoryTabProps> = ({
    * Download an Excel summary of the whole execution:
    *   - Sheet 1: 概览 (execution + devices summary)
    *   - Sheet 2..N: per-device per-command raw output
-   * Requires a loaded execution detail and devices list.
+   * Requires a loaded execution detail; device results are fetched across all pages.
    */
   const handleDownloadExecutionExcel = useCallback(async () => {
     const execution = selectedExecutionDetail;
@@ -532,7 +586,6 @@ const AutomationHistoryTab: React.FC<AutomationHistoryTabProps> = ({
     // ── Sheet 1: 概览 ──
     const overviewRows: Record<string, any>[] = [
       { 字段: isZh ? '作业名称' : 'Job Name', 值: execution.scenario_name || execution.task_name || '-' },
-      { 字段: 'Execution ID', 值: execId },
       { 字段: isZh ? '执行人' : 'Operator', 值: execution.author || 'admin' },
       { 字段: isZh ? '触发时间' : 'Triggered At', 值: new Date(execution.created_at).toLocaleString() },
       { 字段: isZh ? '状态' : 'Status', 值: execution.status || '-' },
@@ -546,7 +599,12 @@ const AutomationHistoryTab: React.FC<AutomationHistoryTabProps> = ({
     XLSX.utils.book_append_sheet(wb, wsOverview, isZh ? '概览' : 'Overview');
 
     // ── Sheet 2: 设备汇总 ──
-    const deviceSummary = selectedExecDevices.map(d => ({
+    const devices = await fetchAllPaginatedItems<ExecutionDevice>(
+      `/api/playbooks/${encodeURIComponent(execId)}/devices`,
+      new URLSearchParams({ status: selectedExecDevicesStatusFilter }),
+      100,
+    );
+    const deviceSummary = devices.map(d => ({
       [isZh ? '主机名' : 'Hostname']: d.hostname,
       [isZh ? 'IP 地址' : 'IP Address']: d.ip_address || '',
       [isZh ? '状态' : 'Status']: d.status || '',
@@ -568,13 +626,16 @@ const AutomationHistoryTab: React.FC<AutomationHistoryTabProps> = ({
     const token = localStorage.getItem('netops_token');
     const hdr: Record<string, string> = token ? { Authorization: `Bearer ${token}` } : {};
 
-    for (const dev of selectedExecDevices) {
+    for (const dev of devices) {
       try {
         const res = await fetch(`/api/playbooks/${execId}/devices/${dev.device_id}`, { headers: hdr });
         if (!res.ok) continue;
         const detail = await res.json();
         let phases: Record<string, any> = {};
-        try { phases = JSON.parse(detail.phases_json || '{}'); } catch { phases = {}; }
+        const phasesValue = detail.phases ?? detail.phases_json ?? '{}';
+        try {
+          phases = typeof phasesValue === 'string' ? JSON.parse(phasesValue) : phasesValue;
+        } catch { phases = {}; }
 
         const rows: Record<string, any>[] = [];
         for (const [phaseName, pdata] of Object.entries(phases)) {
@@ -607,7 +668,7 @@ const AutomationHistoryTab: React.FC<AutomationHistoryTabProps> = ({
           { wch: 80 },
         ];
         // Sheet name max 31 chars, no special chars
-        const rawName = (dev.hostname || dev.ip_address || dev.device_id || 'device').replace(/[\\/?*[\]:]/g, '_');
+        const rawName = (dev.hostname || dev.ip_address || 'device').replace(/[\\/?*[\]:]/g, '_');
         const sheetName = rawName.slice(0, 31);
         // Avoid duplicate sheet names
         let unique = sheetName;
@@ -621,35 +682,52 @@ const AutomationHistoryTab: React.FC<AutomationHistoryTabProps> = ({
       }
     }
 
-    const filename = `execution_${(execution.scenario_name || 'summary').replace(/[^a-zA-Z0-9\u4e00-\u9fa5]+/g, '_').slice(0, 50)}_${execId.slice(0, 8)}.xlsx`;
+    const filename = `execution_${(execution.scenario_name || 'summary').replace(/[^a-zA-Z0-9\u4e00-\u9fa5]+/g, '_').slice(0, 50)}.xlsx`;
     XLSX.writeFile(wb, filename);
-  }, [selectedExecutionDetail, selectedExecDevices, splitOutputByCommand, isZh]);
+  }, [selectedExecutionDetail, selectedExecDevicesStatusFilter, splitOutputByCommand, isZh]);
 
   // Helper mapping for execution status badge
   const getStatusMap = (status?: string) => {
     const statusMap: Record<string, { label: string; cls: string; dot: string }> = {
-      success: { label: isZh ? '执行成功' : 'Success', cls: 'bg-emerald-50 text-emerald-700', dot: 'bg-emerald-500' },
-      running: { label: isZh ? '执行中' : 'Running', cls: 'bg-cyan-50 text-cyan-700', dot: 'bg-cyan-500 animate-pulse' },
-      pending: { label: isZh ? '排队中' : 'Pending', cls: 'bg-blue-50 text-blue-700', dot: 'bg-blue-500' },
-      awaiting_approval: { label: isZh ? '待审批' : 'Awaiting approval', cls: 'bg-violet-50 text-violet-700', dot: 'bg-violet-500' },
-      approval_rejected: { label: isZh ? '审批拒绝' : 'Approval rejected', cls: 'bg-rose-50 text-rose-700', dot: 'bg-rose-500' },
-      dry_run_complete: { label: isZh ? '模拟完成' : 'Dry-Run', cls: 'bg-amber-50 text-amber-700', dot: 'bg-amber-500' },
+      success: { label: '', cls: 'bg-emerald-50 text-emerald-700', dot: 'bg-emerald-500' },
+      running: { label: '', cls: 'bg-cyan-50 text-cyan-700', dot: 'bg-cyan-500 animate-pulse' },
+      pending: { label: '', cls: 'bg-blue-50 text-blue-700', dot: 'bg-blue-500' },
+      awaiting_approval: { label: '', cls: 'bg-violet-50 text-violet-700', dot: 'bg-violet-500' },
+      approval_rejected: { label: '', cls: 'bg-rose-50 text-rose-700', dot: 'bg-rose-500' },
+      dry_run_complete: { label: '', cls: 'bg-amber-50 text-amber-700', dot: 'bg-amber-500' },
     };
-    return statusMap[status || ''] || { 
-      label: isZh ? '执行失败' : 'Failed', 
-      cls: 'bg-red-50 text-red-700 border-red-100', 
-      dot: 'bg-red-500' 
-    };
+    const style = statusMap[status || ''] || { cls: 'bg-red-50 text-red-700 border-red-100', dot: 'bg-red-500' };
+    return { ...style, label: getAutomationHistoryStatusLabel(status, isZh ? 'zh' : 'en') };
   };
+
+  const exportPlaybookHistory = useCallback(async () => {
+    const params = new URLSearchParams({
+      status: playbookHistoryStatusFilter,
+      scenario: playbookHistoryScenarioSearch.trim(),
+    });
+    const allExecutions = await fetchAllPaginatedItems<PlaybookExecution>('/api/playbooks', params);
+    return buildAutomationHistoryExportData(allExecutions, isZh ? 'zh' : 'en');
+  }, [playbookHistoryStatusFilter, playbookHistoryScenarioSearch, isZh]);
 
   const handleDownloadSummary = () => {
     if (!selectedExecutionDetail) return;
-    const dataStr = JSON.stringify(selectedExecutionDetail, null, 2);
+    const execution = selectedExecutionDetail;
+    const summary = {
+      task_name: execution.scenario_name || execution.task_name || '',
+      operator: execution.author || 'admin',
+      triggered_at: execution.created_at,
+      status: execution.status || '',
+      total_devices: execution.total_devices ?? 0,
+      success_count: execution.success_count ?? 0,
+      failed_count: execution.failed_count ?? 0,
+      partial_count: execution.partial_count ?? 0,
+    };
+    const dataStr = JSON.stringify(summary, null, 2);
     const blob = new Blob([dataStr], { type: 'application/json' });
     const url = URL.createObjectURL(blob);
     const a = document.createElement('a');
     a.href = url;
-    a.download = `execution_summary_${selectedExecutionDetail.id}.json`;
+    a.download = `execution_summary_${(execution.scenario_name || 'summary').replace(/[^a-zA-Z0-9\u4e00-\u9fa5]+/g, '_').slice(0, 50)}.json`;
     a.click();
     URL.revokeObjectURL(url);
   };
@@ -788,15 +866,18 @@ const AutomationHistoryTab: React.FC<AutomationHistoryTabProps> = ({
               <p className="mt-3 text-sm font-medium">{t('noExecutions')}</p>
             </div>
           ) : (
-            <DataTable className="min-w-[900px] text-left">
+            <DataTable className="min-w-[1000px] text-left" exportConfig={{ filename: 'automation-execution-history', language: isZh ? 'zh' : 'en', disabled: playbookExecutions.length === 0, exportData: exportPlaybookHistory }}>
               <thead className="sticky top-0 bg-slate-50 border-b border-black/5 z-10">
                 <tr className="bg-black/[0.01]">
                   <th className="px-6 py-4 text-[11px] font-bold text-black/35 uppercase tracking-wider">{isZh ? '任务名称' : 'Scenario Name'}</th>
+                  <th className="px-6 py-4 text-[11px] font-bold text-black/35 uppercase tracking-wider">{isZh ? '执行方式' : 'Execution Type'}</th>
                   <th className="px-6 py-4 text-[11px] font-bold text-black/35 uppercase tracking-wider">{isZh ? '触发时间' : 'Triggered At'}</th>
                   <th className="px-6 py-4 text-[11px] font-bold text-black/35 uppercase tracking-wider">{isZh ? '状态' : 'Status'}</th>
-                  <th className="px-6 py-4 text-[11px] font-bold text-black/35 uppercase tracking-wider">{isZh ? '设备概况' : 'Devices Info'}</th>
+                  <th className="px-6 py-4 text-[11px] font-bold text-black/35 uppercase tracking-wider">{isZh ? '设备数' : 'Total Devices'}</th>
+                  <th className="px-6 py-4 text-[11px] font-bold text-black/35 uppercase tracking-wider">{isZh ? '成功设备数' : 'Successful Devices'}</th>
+                  <th className="px-6 py-4 text-[11px] font-bold text-black/35 uppercase tracking-wider">{isZh ? '失败设备数' : 'Failed Devices'}</th>
                   <th className="px-6 py-4 text-[11px] font-bold text-black/35 uppercase tracking-wider">{isZh ? '执行人' : 'Operator'}</th>
-                  <th className="px-6 py-4 text-[11px] font-bold text-black/35 uppercase tracking-wider text-right">{isZh ? '操作' : 'Actions'}</th>
+                  <TableActionHeader className="px-6 py-4 text-[11px] font-bold text-black/35 uppercase tracking-wider">{isZh ? '操作' : 'Actions'}</TableActionHeader>
                 </tr>
               </thead>
               <tbody className="divide-y divide-black/[0.03]">
@@ -810,17 +891,15 @@ const AutomationHistoryTab: React.FC<AutomationHistoryTabProps> = ({
                   return (
                     <tr key={execution.id} className="group hover:bg-indigo-50/20 transition-colors">
                       <td className="px-6 py-4">
-                        <div className="flex flex-col">
-                          <span className="text-sm font-bold text-[#164e63] group-hover:text-cyan-700 transition-colors">
-                            {execution.scenario_name || execution.task_name || (isZh ? '快捷命令' : 'Direct Command')}
-                          </span>
-                          {execution._type === 'job' && (
-                            <span className="text-[8px] font-bold uppercase tracking-wider px-1.5 py-0.5 rounded bg-cyan-50 text-cyan-600 self-start mt-1">DIRECT</span>
-                          )}
-                        </div>
+                        <span className="text-sm font-bold text-[#164e63] group-hover:text-cyan-700 transition-colors">
+                          {execution.scenario_name || execution.task_name || (isZh ? '快捷命令' : 'Direct Command')}
+                        </span>
+                      </td>
+                      <td className="px-6 py-4">
+                        <span className="text-[9px] font-bold uppercase tracking-wider px-1.5 py-0.5 rounded bg-cyan-50 text-cyan-600">{getAutomationHistoryTypeLabel(execution, isZh ? 'zh' : 'en')}</span>
                       </td>
                       <td className="px-6 py-4 text-xs font-mono text-black/60 whitespace-nowrap">
-                        {new Date(execution.created_at).toLocaleString()}
+                        {new Date(execution.created_at).toLocaleString(isZh ? 'zh-CN' : 'en-US')}
                       </td>
                       <td className="px-6 py-4">
                         <span className={`inline-flex items-center gap-1.5 px-2.5 py-1 rounded-lg text-xs font-bold ${st.cls}`}>
@@ -828,17 +907,13 @@ const AutomationHistoryTab: React.FC<AutomationHistoryTabProps> = ({
                           {st.label}
                         </span>
                       </td>
-                      <td className="px-6 py-4">
-                        <div className="flex items-center gap-2 text-xs font-bold text-black/60">
-                          <span className="flex items-center gap-1"><Server size={12} />{deviceCount}</span>
-                          {(execution.success_count || 0) > 0 && <span className="text-emerald-500">✓{execution.success_count}</span>}
-                          {(execution.failed_count || 0) > 0 && <span className="text-red-500">✗{execution.failed_count}</span>}
-                        </div>
-                      </td>
+                      <td className="px-6 py-4 text-xs font-bold text-black/60">{deviceCount}</td>
+                      <td className="px-6 py-4 text-xs font-bold text-emerald-600">{execution.success_count || 0}</td>
+                      <td className="px-6 py-4 text-xs font-bold text-rose-600">{execution.failed_count || 0}</td>
                       <td className="px-6 py-4 text-xs text-black/60 font-medium">
                         {execution.author || 'admin'}
                       </td>
-                      <td className="px-6 py-4 text-right whitespace-nowrap">
+                      <TableActionCell className="px-6 py-4 whitespace-nowrap">
                         <ActionIconGroup label={isZh ? '执行操作' : 'Execution actions'}>
                           <ActionIconButton
                             icon={RotateCcw}
@@ -866,7 +941,7 @@ const AutomationHistoryTab: React.FC<AutomationHistoryTabProps> = ({
                             }}
                           />
                         </ActionIconGroup>
-                      </td>
+                      </TableActionCell>
                     </tr>
                   );
                 })}
@@ -1402,30 +1477,6 @@ const AutomationHistoryTab: React.FC<AutomationHistoryTabProps> = ({
                                                           downloadText(block.output, `${hostname}_${safeCmd}_raw.txt`);
                                                         }}
                                                       />
-                                                      {/* Download parsed .xlsx — only when parsed data available */}
-                                                      {parseState?.data && (
-                                                        <ActionIconButton
-                                                          icon={FileSpreadsheet}
-                                                          label={isZh ? '下载解析结果 (Excel)' : 'Download parsed as Excel'}
-                                                          variant="success"
-                                                          onClick={() => {
-                                                            const safeCmd = displayCmd.replace(/[^a-z0-9_]/gi, '_').slice(0, 40);
-                                                            downloadExcel(parseState.data.records, parseState.data.fields, `${hostname}_${safeCmd}_parsed`);
-                                                          }}
-                                                        />
-                                                      )}
-                                                      {/* Download parsed .json — only when parsed data available */}
-                                                      {parseState?.data && (
-                                                        <ActionIconButton
-                                                          icon={FileJson}
-                                                          label={isZh ? '下载解析结果 (JSON)' : 'Download parsed as JSON'}
-                                                          variant="accent"
-                                                          onClick={() => {
-                                                            const safeCmd = displayCmd.replace(/[^a-z0-9_]/gi, '_').slice(0, 40);
-                                                            downloadJSON(parseState.data.records, `${hostname}_${safeCmd}_parsed`);
-                                                          }}
-                                                        />
-                                                      )}
                                                     </div>
                                                   )}
                                                 </div>
@@ -1449,60 +1500,15 @@ const AutomationHistoryTab: React.FC<AutomationHistoryTabProps> = ({
                                                         </div>
                                                       </div>
                                                     ) : parseState?.data ? (
-                                                      <div className="p-3 space-y-2">
-                                                        <div className="flex items-center justify-between px-1">
-                                                          <div className="flex items-center gap-2 text-[10px] text-emerald-600 font-semibold">
-                                                            <CheckCircle2 size={11} />
-                                                            {isZh ? `${parseState.data.count} 条记录` : `${parseState.data.count} record(s)`}
-                                                            <span className="text-black/25 font-normal">{parseState.data.fields.join(' · ')}</span>
-                                                          </div>
-                                                          {/* Excel download button inside table header */}
-                                                          <div className="flex items-center gap-1.5">
-                                                            <button
-                                                              onClick={() => {
-                                                                const safeCmd = displayCmd.replace(/[^a-z0-9_]/gi, '_').slice(0, 40);
-                                                                downloadExcel(parseState.data.records, parseState.data.fields, `${hostname}_${safeCmd}_parsed`);
-                                                              }}
-                                                              className="flex items-center gap-1 px-2 py-0.5 rounded border bg-emerald-50 border-emerald-200 text-emerald-700 text-[10px] font-semibold hover:bg-emerald-100 transition-all"
-                                                              title={isZh ? '导出 Excel (.xlsx)' : 'Export as Excel (.xlsx)'}
-                                                            >
-                                                              <FileSpreadsheet size={10} />
-                                                              {isZh ? '导出 Excel' : 'Export Excel'}
-                                                            </button>
-                                                            <button
-                                                              onClick={() => {
-                                                                const safeCmd = displayCmd.replace(/[^a-z0-9_]/gi, '_').slice(0, 40);
-                                                                downloadJSON(parseState.data.records, `${hostname}_${safeCmd}_parsed`);
-                                                              }}
-                                                              className="flex items-center gap-1 px-2 py-0.5 rounded border bg-indigo-50 border-indigo-200 text-indigo-700 text-[10px] font-semibold hover:bg-indigo-100 transition-all"
-                                                              title={isZh ? '导出 JSON (.json)' : 'Export as JSON (.json)'}
-                                                            >
-                                                              <FileJson size={10} />
-                                                              {isZh ? '导出 JSON' : 'Export JSON'}
-                                                            </button>
-                                                          </div>
-                                                        </div>
-                                                        <div className="overflow-auto rounded-lg border border-black/[0.06]">
-                                                          <table className="nx-data-table nx-data-table--compact text-[11px] font-mono">
-                                                            <thead className="bg-[#f6f8fa] border-b border-black/[0.06]">
-                                                              <tr>
-                                                                {parseState.data.fields.map((f: string) => (
-                                                                  <th key={f} className="px-3 py-1.5 text-left text-[10px] font-bold text-black/40 uppercase tracking-wider whitespace-nowrap">{f}</th>
-                                                                ))}
-                                                              </tr>
-                                                            </thead>
-                                                            <tbody className="divide-y divide-black/[0.04]">
-                                                              {parseState.data.records.map((rec: Record<string, string>, ri: number) => (
-                                                                <tr key={ri} className="hover:bg-[#f6f8fa]/60 transition-colors">
-                                                                  {parseState.data.fields.map((f: string) => (
-                                                                    <td key={f} className="px-3 py-1.5 text-black/65 whitespace-nowrap max-w-[180px] truncate" title={rec[f]}>{rec[f] || '—'}</td>
-                                                                  ))}
-                                                                </tr>
-                                                              ))}
-                                                            </tbody>
-                                                          </table>
-                                                        </div>
-                                                      </div>
+                                                      <ParsedOutputTable
+                                                        data={parseState.data as ParsedOutputData}
+                                                        filename={`${hostname}_${displayCmd.replace(/[^a-z0-9_]/gi, '_').slice(0, 40)}_parsed`}
+                                                        isZh={isZh}
+                                                        onDownloadJson={() => {
+                                                          const safeCmd = displayCmd.replace(/[^a-z0-9_]/gi, '_').slice(0, 40);
+                                                          downloadJSON(parseState.data.records, `${hostname}_${safeCmd}_parsed`);
+                                                        }}
+                                                      />
                                                     ) : null
                                                   ) : (
                                                     /* Raw view — dark terminal style */

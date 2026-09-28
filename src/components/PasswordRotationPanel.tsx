@@ -1,13 +1,16 @@
+import { DataTable } from './DataTable';
 import React, { useState, useCallback, useEffect, useMemo } from 'react';
 import Pagination from './Pagination';
 import PageHero from './PageHero';
 import { motion } from 'motion/react';
 import {
   RefreshCw, Shield, Loader2, Search, ShieldCheck, ShieldAlert, ShieldX,
-  Key, KeyRound, Server, User, Eye, EyeOff, Copy, Check, X,
+  Key, KeyRound, User, Eye, EyeOff, Copy, Check, X,
 } from 'lucide-react';
 import { ActionIconButton } from './ui/ActionIconButton';
+import { PasswordInputField } from './ui/PasswordInputField';
 import { useEscapeClose } from '../hooks/useEscapeClose';
+import { buildPasswordRotationExportData, buildRotationExportRow, type RotationExportGroup } from './PasswordRotationPanel.export';
 
 interface RotationDevice {
   id: string;
@@ -46,28 +49,6 @@ interface PasswordRotationPanelProps {
 }
 
 const API_BASE = import.meta.env.VITE_API_BASE || '';
-
-/* ── platform display helper ── */
-const platformLabel = (p: string): string => {
-  const map: Record<string, string> = {
-    cisco_ios: 'Cisco IOS', cisco_nxos: 'Cisco NX-OS', cisco_xe: 'Cisco IOS-XE',
-    huawei_vrp: 'Huawei VRP', h3c_comware: 'H3C Comware', h3c_comware_v3: 'H3C Comware V3',
-    arista_eos: 'Arista EOS', juniper_junos: 'Juniper JunOS',
-    linux: 'Linux', ubuntu: 'Ubuntu', centos: 'CentOS', debian: 'Debian',
-    esxi: 'VMware ESXi',
-  };
-  return map[p] || p || '-';
-};
-
-const platformColor = (p: string): string => {
-  if (p?.startsWith('cisco')) return 'bg-blue-50 text-blue-600 border-blue-200';
-  if (p?.startsWith('huawei')) return 'bg-red-50 text-red-600 border-red-200';
-  if (p?.startsWith('h3c')) return 'bg-orange-50 text-orange-600 border-orange-200';
-  if (p?.startsWith('arista')) return 'bg-cyan-50 text-cyan-600 border-cyan-200';
-  if (p?.startsWith('juniper')) return 'bg-green-50 text-green-600 border-green-200';
-  if (['linux', 'ubuntu', 'centos', 'debian'].includes(p)) return 'bg-slate-100 text-slate-700 border-slate-300';
-  return 'bg-slate-50 text-slate-600 border-slate-200';
-};
 
 const isServer = (p: string): boolean => {
   const platform = (p || '').toLowerCase();
@@ -521,6 +502,8 @@ export default function PasswordRotationPanel({ language, currentUser }: Passwor
     return Array.from(groups.values());
   }, [accountList]);
 
+  const rotationExportData = useMemo(() => buildPasswordRotationExportData(rotationGroups, zh), [rotationGroups, zh]);
+
   /* ══════════ Stat card data ══════════ */
   const statCards = [
     {
@@ -717,28 +700,23 @@ export default function PasswordRotationPanel({ language, currentUser }: Passwor
       {/* ═══ High-Density Pro Table ═══ */}
       <div className="bg-white rounded-xl border border-black/[0.06] shadow-md overflow-hidden">
         <div className="overflow-x-auto">
-          <table className="nx-data-table nx-data-table--compact table-fixed">
+          <DataTable unstyled exportConfig={{ filename: 'password-rotation-credentials', language: zh ? 'zh' : 'en', disabled: loading || rotationGroups.length === 0, exportData: rotationExportData }} className="nx-data-table nx-data-table--compact min-w-[2600px] w-full table-fixed">
             <thead>
               <tr className="bg-slate-50 border-b border-black/[0.05]">
-                <th className="w-[260px] px-4 py-2.5 text-[10px] font-black text-slate-400 uppercase tracking-widest border-r border-black/[0.03]">{zh ? '凭据分组 / 未绑定设备' : 'CREDENTIAL / UNBOUND DEVICE'}</th>
-                <th className="px-4 py-2.5 text-[10px] font-black text-slate-400 uppercase tracking-widest border-r border-black/[0.03]">{zh ? '普通账号 (Normal)' : 'NORMAL IDENTITY'}</th>
-                <th className="px-4 py-2.5 text-[10px] font-black text-slate-400 uppercase tracking-widest border-r border-black/[0.03]">{zh ? '特权账号 (Admin)' : 'PRIVILEGED IDENTITY'}</th>
-                <th className="px-4 py-2.5 text-[10px] font-black text-slate-400 uppercase tracking-widest">{zh ? '提权凭据 (Enable)' : 'ENABLE SECRET'}</th>
+                {rotationExportData.headers.map((header, index) => <th key={header} data-export="public" className={`px-3 py-2.5 text-[10px] font-black text-slate-400 uppercase tracking-widest ${index < rotationExportData.headers.length - 1 ? 'border-r border-black/[0.03]' : ''}`}>{header}</th>)}
               </tr>
             </thead>
             <tbody className="divide-y divide-black/[0.03]">
               {loading && !accountList.length ? (
-                <tr><td colSpan={4} className="py-20 text-center"><Loader2 className="inline animate-spin text-cyan-500" size={24} /></td></tr>
+                <tr><td colSpan={rotationExportData.headers.length} className="py-20 text-center"><Loader2 className="inline animate-spin text-cyan-500" size={24} /></td></tr>
               ) : accountList.length === 0 ? (
-                <tr><td colSpan={4} className="py-20 text-center text-[11px] text-black/20 font-medium">{zh ? '未检索到凭据数据' : 'No data records found'}</td></tr>
+                <tr><td colSpan={rotationExportData.headers.length} className="py-20 text-center text-[11px] text-black/20 font-medium">{zh ? '未检索到凭据数据' : 'No data records found'}</td></tr>
               ) : (
                 (() => {
                   const paginatedGroups = rotationGroups.slice((page - 1) * pageSize, page * pageSize);
 
                   return paginatedGroups.map((group) => {
                     const accounts = group.accounts;
-                    const first = accounts[0];
-                    
                     // Map accounts to specific columns
                     const roles = {
                       normal: accounts.find(a => a.roleKey === 'normal'),
@@ -747,67 +725,33 @@ export default function PasswordRotationPanel({ language, currentUser }: Passwor
                     };
 
                     const isDevServer = accounts.every(account => isServer(account.platform || ''));
+                    const exportRow = buildRotationExportRow(group as RotationExportGroup, zh);
 
                     return (
                       <tr key={group.key} className="group hover:bg-slate-50/50 transition-colors">
-                        {/* Device Info */}
-                        <td className="px-4 py-2 border-r border-black/[0.02]">
-                          <div className="flex items-center gap-2.5">
-                            <div className="h-8 w-8 rounded-lg bg-white border border-black/5 shadow-sm flex items-center justify-center text-slate-300 group-hover:text-cyan-500 transition-colors">
-                              {group.isCredential ? <KeyRound size={14} /> : <Server size={14} />}
-                            </div>
-                            <div className="min-w-0">
-                              {group.isCredential ? (
-                                <>
-                                  <div className="text-[12px] font-bold text-slate-700 truncate leading-tight tracking-tight">{group.credentialName || (zh ? '已绑定凭据' : 'Bound credential')}</div>
-                                  <div className="mt-0.5 flex items-center gap-1.5">
-                                    <span className="text-[10px] font-mono text-cyan-600">{group.username || '—'}</span>
-                                    <span className="rounded bg-cyan-50 px-1 py-0.5 text-[8px] font-bold text-cyan-600">{zh ? `${group.devices.length} 台设备` : `${group.devices.length} devices`}</span>
-                                  </div>
-                                </>
-                              ) : (
-                                <>
-                                  <div className="text-[12px] font-bold text-slate-700 truncate leading-tight tracking-tight">{first.hostname}</div>
-                                  <div className="flex items-center gap-1.5 mt-0.5">
-                                    <span className="text-[10px] font-mono text-slate-400">{first.ip_address}</span>
-                                    <span className={`px-1 rounded text-[8px] font-black uppercase ${platformColor(first.platform)}`}>
-                                      {platformLabel(first.platform)}
-                                    </span>
-                                  </div>
-                                </>
-                              )}
-                            </div>
-                          </div>
-                          {group.isCredential ? (
-                            <div className="mt-2 flex flex-wrap gap-1 pl-10">
-                              {group.devices.slice(0, 3).map(device => (
-                                <span key={device.id} className="max-w-[112px] truncate rounded bg-slate-50 px-1.5 py-0.5 text-[8px] text-slate-500" title={`${device.hostname} ${device.ip_address}`}>
-                                  {device.hostname} · {device.ip_address}
-                                </span>
-                              ))}
-                              {group.devices.length > 3 && <span className="rounded bg-slate-50 px-1.5 py-0.5 text-[8px] text-slate-400">+{group.devices.length - 3}</span>}
-                            </div>
-                          ) : null}
-                        </td>
+                        <td className="px-3 py-2 border-r border-black/[0.02] text-xs font-semibold text-slate-700">{exportRow[0]}</td>
+                        <td className="px-3 py-2 border-r border-black/[0.02] text-xs text-slate-600"><span className="block max-w-56 truncate" title={exportRow[1]}>{exportRow[1]}</span></td>
+                        <td className="px-3 py-2 border-r border-black/[0.02] text-xs text-slate-600">{exportRow[2]}</td>
+                        <td className="px-3 py-2 border-r border-black/[0.02] text-xs font-mono text-slate-600"><span className="block max-w-48 truncate" title={exportRow[3]}>{exportRow[3]}</span></td>
+                        <td className="px-3 py-2 border-r border-black/[0.02] text-xs text-slate-600"><span className="block max-w-48 truncate" title={exportRow[4]}>{exportRow[4]}</span></td>
 
                         {/* Account Columns */}
-                        {['normal', 'admin', 'enable'].map((role) => {
+                        {['normal', 'admin', 'enable'].map((role, roleColumnIndex) => {
                           const roleAccounts = accounts.filter(account => account.roleKey === role);
                           const acc = roleAccounts[0] || roles[role as keyof typeof roles];
+                          const roleExportIndex = 5 + roleColumnIndex * 5;
                           
                           // Optimization: Hide Enable column for servers
                           if (role === 'enable' && isDevServer) {
-                            return (
-                              <td key={role} className="px-4 py-2 border-r border-black/[0.02] bg-black/[0.01]">
-                                <div className="flex items-center justify-center gap-1.5 opacity-20 grayscale">
-                                  <Shield size={10} />
-                                  <span className="text-[9px] font-black tracking-widest">{zh ? '不适用' : 'N/A'}</span>
-                                </div>
-                              </td>
-                            );
+                            return <React.Fragment key={role}>
+                              <td className="px-3 py-2 border-r border-black/[0.02] bg-black/[0.01] text-xs text-slate-400">{exportRow[roleExportIndex]}</td>
+                              {[1, 2, 3, 4].map(offset => <td key={offset} className="px-3 py-2 border-r border-black/[0.02] bg-black/[0.01] text-xs text-slate-400">{exportRow[roleExportIndex + offset]}</td>)}
+                            </React.Fragment>;
                           }
 
-                          if (!acc) return <td key={role} className="px-4 py-2 border-r border-black/[0.02] text-center"><span className="text-[10px] text-black/5 font-black">N/A</span></td>;
+                          if (!acc) return <React.Fragment key={role}>
+                            {[0, 1, 2, 3, 4].map(offset => <td key={offset} className="px-3 py-2 border-r border-black/[0.02] text-xs text-slate-400">{exportRow[roleExportIndex + offset]}</td>)}
+                          </React.Fragment>;
 
                           const credentialId = credentialIdFor(acc);
                           const secretType: 'password' | 'enable_password' = role === 'enable' ? 'enable_password' : 'password';
@@ -815,29 +759,12 @@ export default function PasswordRotationPanel({ language, currentUser }: Passwor
                           const isRevealed = Boolean(credentialId && revealedSecret?.id === credentialId && revealedSecret.type === secretType);
 
                           return (
-                            <td key={role} className={`px-4 py-2 border-r border-black/[0.02] ${roleAccounts.some(account => account.currentExpired) ? 'bg-red-50/20' : ''}`}>
+                            <React.Fragment key={role}>
+                            <td className={`px-3 py-2 border-r border-black/[0.02] ${roleAccounts.some(account => account.currentExpired) ? 'bg-red-50/20' : ''}`}>
                               <div className="flex items-center justify-between gap-2">
                                 <div className="min-w-0 flex-1">
                                   <div className="flex items-center gap-1.5">
                                     <span className="text-[11px] font-mono font-bold text-slate-600 truncate">{acc.currentUsername || '—'}</span>
-                                    {group.isCredential && roleAccounts.length > 1 && <span className="rounded bg-slate-100 px-1 py-0.5 text-[8px] font-bold text-slate-400">{zh ? `${roleAccounts.length} 台` : `${roleAccounts.length} devices`}</span>}
-                                    {acc.currentExpiresAt && (
-                                      <span className={`text-[9px] font-black ${acc.currentExpired ? 'text-red-500' : 'text-emerald-500/60'}`}>
-                                        {acc.currentExpired ? 'EXP' : `${acc.currentDays}d`}
-                                      </span>
-                                    )}
-                                  </div>
-                                  <div className="flex items-center justify-between text-[8px] font-bold uppercase tracking-tighter mt-0.5">
-                                    <span className="text-slate-300">
-                                      {acc.currentLastRotated 
-                                        ? `ROT: ${new Date(acc.currentLastRotated).toLocaleDateString()}` 
-                                        : (zh ? '未曾轮换' : 'NOT ROTATED')}
-                                    </span>
-                                    <span className={acc.currentExpired ? 'text-red-400' : 'text-slate-300'}>
-                                      {acc.currentExpiresAt 
-                                        ? `EXP: ${new Date(acc.currentExpiresAt).toLocaleDateString()}` 
-                                        : (zh ? '到期时间待定' : 'EXP: PENDING')}
-                                    </span>
                                   </div>
                                   {isAdministrator && credentialId && (
                                     <div className="mt-1 flex items-center gap-1">
@@ -924,6 +851,8 @@ export default function PasswordRotationPanel({ language, currentUser }: Passwor
 
                               </div>
                             </td>
+                            {[1, 2, 3, 4].map(offset => <td key={offset} className="px-3 py-2 border-r border-black/[0.02] text-xs text-slate-600">{exportRow[roleExportIndex + offset]}</td>)}
+                            </React.Fragment>
                           );
                         })}
                       </tr>
@@ -932,7 +861,7 @@ export default function PasswordRotationPanel({ language, currentUser }: Passwor
                 })()
               )}
             </tbody>
-          </table>
+          </DataTable>
         </div>
 
         {/* Footer Info & Pagination */}
@@ -1010,8 +939,9 @@ export default function PasswordRotationPanel({ language, currentUser }: Passwor
             <div className="mt-5 space-y-4">
               <div>
                 <label className="mb-1 block text-xs font-semibold text-black/55">{editingCredential.type === 'enable_password' ? (zh ? '旧 Enable 密码' : 'Current Enable password') : (zh ? '旧密码' : 'Current password')}</label>
-                <input
-                  type="password"
+                <PasswordInputField
+                  showPasswordLabel={zh ? '显示旧密码' : 'Show current password'}
+                  hidePasswordLabel={zh ? '隐藏旧密码' : 'Hide current password'}
                   value={credentialForm.oldSecret}
                   onChange={event => setCredentialForm(previous => ({ ...previous, oldSecret: event.target.value }))}
                   autoComplete="current-password"
@@ -1020,8 +950,9 @@ export default function PasswordRotationPanel({ language, currentUser }: Passwor
               </div>
               <div>
                 <label className="mb-1 block text-xs font-semibold text-black/55">{editingCredential.type === 'enable_password' ? (zh ? '新 Enable 密码' : 'New Enable password') : (zh ? '新密码' : 'New password')}</label>
-                <input
-                  type="password"
+                <PasswordInputField
+                  showPasswordLabel={zh ? '显示新密码' : 'Show new password'}
+                  hidePasswordLabel={zh ? '隐藏新密码' : 'Hide new password'}
                   value={credentialForm.newSecret}
                   onChange={event => setCredentialForm(previous => ({ ...previous, newSecret: event.target.value }))}
                   autoComplete="new-password"

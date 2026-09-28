@@ -1,3 +1,4 @@
+import { DataTable } from '../../../components/DataTable';
 import React, { useState, useEffect, useMemo, useRef } from 'react';
 import {
   ClipboardList, X, Plus, Search, RefreshCw, CheckCircle2,
@@ -13,6 +14,8 @@ import {
   riskLabel, variableLabel, getVariableHelpText, fmtTime, inferVariableMeta
 } from '../helpers';
 
+import { TableActionCell, TableActionHeader } from '../../../components/ui/TableActionColumn';
+import { ActionIconButton } from '../../../components/ui/ActionIconButton';
 interface Props {
   language: string;
   currentUser: SessionUser;
@@ -728,15 +731,16 @@ export const ChangeOrderEditor: React.FC<Props> = ({
             </div>
             {form.target_devices.length > 0 && (
               <div className="mt-2 overflow-x-auto rounded-3xl border border-black/10 bg-slate-50">
-                <table className="nx-data-table nx-data-table--compact text-sm text-left">
+                <DataTable unstyled exportConfig={{ filename: 'change-order-target-devices', language: zh ? 'zh' : 'en', disabled: form.target_devices.length === 0 }} className="nx-data-table nx-data-table--compact text-sm text-left">
                   <thead>
                     <tr className="text-xs text-black/50 uppercase tracking-[0.04em]">
                       <th className="px-3 py-3">{zh ? 'IP地址' : 'IP Address'}</th>
                       <th className="px-3 py-3">{zh ? '设备名称' : 'Device Name'}</th>
                       <th className="px-3 py-3">{zh ? '用户名' : 'Username'}</th>
-                      <th className="px-3 py-3">{zh ? '开始/结束' : 'Start / End'}</th>
+                      <th className="px-3 py-3">{zh ? '开始时间' : 'Start time'}</th>
+                      <th className="px-3 py-3">{zh ? '结束时间' : 'End time'}</th>
                       <th className="px-3 py-3">{zh ? '执行人' : 'Executor'}</th>
-                      <th className="px-3 py-3">{zh ? '操作' : 'Actions'}</th>
+                      <TableActionHeader className="px-3 py-3">{zh ? '操作' : 'Actions'}</TableActionHeader>
                     </tr>
                   </thead>
                   <tbody>
@@ -745,21 +749,21 @@ export const ChangeOrderEditor: React.FC<Props> = ({
                         <td className="px-3 py-3 text-black/80">{dev.ip_address || '—'}</td>
                         <td className="px-3 py-3 text-black/80">{dev.hostname || '—'}</td>
                         <td className="px-3 py-3 text-black/80">{dev.username || currentUser.username || '—'}</td>
-                        <td className="px-3 py-3 text-black/80">{fmtTime(form.scheduled_start)} / {fmtTime(form.scheduled_end)}</td>
+                        <td className="px-3 py-3 text-black/80">{fmtTime(form.scheduled_start)}</td>
+                        <td className="px-3 py-3 text-black/80">{fmtTime(form.scheduled_end)}</td>
                         <td className="px-3 py-3 text-black/80">{currentUser.username || '—'}</td>
-                        <td className="px-3 py-3">
-                          <button
-                            title={zh ? '移除目标设备' : 'Remove target device'}
+                        <TableActionCell className="px-3 py-3">
+                          <ActionIconButton
+                            icon={X}
+                            label={zh ? '移除目标设备' : 'Remove target device'}
+                            variant="danger"
                             onClick={() => setForm((f: any) => ({ ...f, target_devices: f.target_devices.filter((_: any, j: number) => j !== i) }))}
-                            className="text-cyan-400 hover:text-cyan-700"
-                          >
-                            <X size={14} />
-                          </button>
-                        </td>
+                          />
+                        </TableActionCell>
                       </tr>
                     ))}
                   </tbody>
-                </table>
+                </DataTable>
               </div>
             )}
           </div>

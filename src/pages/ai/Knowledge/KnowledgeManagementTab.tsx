@@ -1,3 +1,4 @@
+import { DataTable } from '../../../components/DataTable';
 import React, { useEffect, useState, useRef, useCallback, useMemo } from 'react';
 import JSZip from 'jszip';
 import {
@@ -37,6 +38,7 @@ import {
 } from 'lucide-react';
 import { getKnowledgeStats, getKnowledgeDocuments, exportKnowledgeDocuments, importKnowledgeBundle, getKnowledgeDocument, getKnowledgeDocumentFacets, getKnowledgeAssetOptions, getKnowledgeDirectories, createKnowledgeDirectory, renameKnowledgeDirectory, deleteKnowledgeDirectory, addKnowledgeDocument, importKnowledgeEnterpriseSop, importKnowledgeEnterpriseSopBatch, previewKnowledgeDocumentMetadata, clearSampleKnowledge, getKnowledgeDocumentActionImpact, deleteKnowledgeDocument, disableKnowledgeDocument, enableKnowledgeDocument, reparseKnowledgeDocument, rechunkKnowledgeDocument, reindexKnowledgeDocument, batchDeleteKnowledgeDocuments, compareKnowledgeDocumentVersions, publishKnowledgeDocumentVersion, supersedeKnowledgeDocumentVersion, rollbackKnowledgeDocumentVersion, type KnowledgeAssetOptionsResponse, type KnowledgeDirectoryNode, type KnowledgeDocument, type KnowledgeDocumentDetail, type KnowledgeDocumentFacets, type KnowledgeDocumentAction, type KnowledgeDocumentActionImpact, type KnowledgeDocumentVersionComparison, type KnowledgeMetadataPreview } from '../../../api/ai';
 import Pagination from '../../../components/Pagination';
+import type { TableExportData } from '../../../components/ui/TableExportMenu';
 import { VENDOR_PLATFORMS } from '../../AssetManagement/constants';
 import SourceRegistryPanel from './SourceRegistryPanel';
 import RagEvaluationPanel from './RagEvaluationPanel';
@@ -50,6 +52,7 @@ import { useCoreApp } from '../../../contexts/AppDomainContext';
 import { aiAdminText, type AIAdminLanguage } from '../../../i18n/aiAdmin';
 import { useEscapeClose } from '../../../hooks/useEscapeClose';
 
+import { TableActionCell, TableActionHeader } from '../../../components/ui/TableActionColumn';
 /* ── Types ── */
 interface FolderCategory {
   id: string;
@@ -710,6 +713,62 @@ export const KnowledgeManagementTab: React.FC = () => {
       setExporting(false);
     }
   }, [exporting, knowledgeScope, language, searchQuery, selectedDirectoryPath, selectedFolder, semanticFilters]);
+
+  const exportKnowledgeTable = useCallback(async (): Promise<TableExportData> => {
+    const allDocuments: KnowledgeDocument[] = [];
+    let page = 1;
+    let total = Number.POSITIVE_INFINITY;
+    while (allDocuments.length < total) {
+      const result = await getKnowledgeDocuments({
+        sourceType: selectedFolder === 'all' ? undefined : selectedFolder,
+        knowledgeScope,
+        directoryPath: selectedDirectoryPath || undefined,
+        search: searchQuery,
+        ...semanticFilters,
+        page,
+        pageSize: 100,
+      });
+      allDocuments.push(...result.items);
+      total = result.total;
+      if (!result.items.length && allDocuments.length < total) {
+        throw new Error(`知识文档导出不完整：已读取 ${allDocuments.length} / ${total} 条。`);
+      }
+      page += 1;
+    }
+
+    const headers = [
+      tx('ai.knowledge.table.name'),
+      tx('ai.knowledge.table.source'),
+      tx('ai.knowledge.table.category'),
+      tx('ai.knowledge.table.family'),
+      tx('ai.knowledge.table.model'),
+      tx('ai.knowledge.table.vendor'),
+      tx('ai.knowledge.table.platform'),
+      tx('ai.knowledge.table.osFamily'),
+      tx('ai.knowledge.table.release'),
+      tx('ai.knowledge.table.chunks'),
+      tx('ai.knowledge.table.index'),
+      tx('ai.knowledge.table.created'),
+    ];
+    const rows = allDocuments.map((doc) => {
+      const badge = sourceBadges[doc.knowledge_source_type] || sourceBadges.user_document;
+      return [
+        doc.name,
+        badge.label,
+        doc.document_category || '',
+        doc.product_family || '',
+        doc.product_model || '',
+        doc.vendor ? getVendorDisplayLabel(doc.vendor, language) : '',
+        getPlatformDisplayLabel(doc.vendor, doc.platform, language),
+        doc.os_family || '',
+        doc.software_release || '',
+        tx('ai.knowledge.table.chunkCount', { count: doc.chunk_count || 1 }),
+        getDocumentStatusLabel(doc),
+        new Date(doc.created_at).toLocaleDateString(),
+      ];
+    });
+    return { headers, rows };
+  }, [knowledgeScope, language, searchQuery, selectedDirectoryPath, selectedFolder, semanticFilters]);
 
   useEffect(() => {
     const timer = window.setTimeout(() => {
@@ -2306,7 +2365,7 @@ export const KnowledgeManagementTab: React.FC = () => {
               </div>
             ) : (
               <div className="overflow-x-auto">
-                <table className="nx-data-table min-w-full text-left">
+                <DataTable unstyled exportConfig={{ filename: 'knowledge-documents', language: language === 'zh' ? 'zh' : 'en', disabled: loading || permissionDenied || totalDocuments === 0, exportData: exportKnowledgeTable }} className="nx-data-table min-w-[1900px] text-left">
                 <thead className="sticky top-0 z-10 bg-gray-50 shadow-sm dark:bg-gray-900/95 text-gray-500 dark:text-gray-400 font-semibold">
                   <tr>
                     <th className="px-3 py-3 w-10">
@@ -2319,12 +2378,18 @@ export const KnowledgeManagementTab: React.FC = () => {
                       />
                     </th>
                     <th className="px-4 py-3">{tx('ai.knowledge.table.name')}</th>
-                    <th className="px-4 py-3">{tx('ai.knowledge.table.directory')}</th>
+                    <th className="px-4 py-3">{tx('ai.knowledge.table.source')}</th>
+                    <th className="px-4 py-3">{tx('ai.knowledge.table.category')}</th>
+                    <th className="px-4 py-3">{tx('ai.knowledge.table.family')}</th>
+                    <th className="px-4 py-3">{tx('ai.knowledge.table.model')}</th>
                     <th className="px-4 py-3">{tx('ai.knowledge.table.vendor')}</th>
+                    <th className="px-4 py-3">{tx('ai.knowledge.table.platform')}</th>
+                    <th className="px-4 py-3">{tx('ai.knowledge.table.osFamily')}</th>
+                    <th className="px-4 py-3">{tx('ai.knowledge.table.release')}</th>
                     <th className="px-4 py-3">{tx('ai.knowledge.table.chunks')}</th>
                     <th className="px-4 py-3">{tx('ai.knowledge.table.index')}</th>
                     <th className="px-4 py-3">{tx('ai.knowledge.table.created')}</th>
-                    <th className="px-4 py-3 text-center">{tx('ai.knowledge.table.actions')}</th>
+                    <TableActionHeader className="px-4 py-3 text-center">{tx('ai.knowledge.table.actions')}</TableActionHeader>
                   </tr>
                 </thead>
                 <tbody className="divide-y divide-gray-200 dark:divide-gray-700 bg-white dark:bg-gray-800">
@@ -2351,11 +2416,6 @@ export const KnowledgeManagementTab: React.FC = () => {
                             <FileCode className="w-4 h-4 flex-shrink-0 text-indigo-500" />
                             <span className="min-w-0">
                               <span className="block truncate underline-offset-4 group-hover:underline">{doc.name}</span>
-                              {(doc.product_family || doc.product_model || doc.document_category) && (
-                                <span className="mt-0.5 block truncate text-[10px] font-normal text-gray-400">
-                                  {[doc.product_family, doc.product_model, doc.document_category].filter(Boolean).join(' · ')}
-                                </span>
-                              )}
                             </span>
                             <Eye className="h-3.5 w-3.5 flex-shrink-0 text-slate-300 opacity-0 transition group-hover:text-indigo-400 group-hover:opacity-100" />
                           </button>
@@ -2365,12 +2425,13 @@ export const KnowledgeManagementTab: React.FC = () => {
                             {badge.label}
                           </span>
                         </td>
-                        <td className="px-4 py-3 font-mono text-gray-600 dark:text-gray-300">
-                          <span className="block">{getVendorDisplayLabel(doc.vendor, language)} / {getPlatformDisplayLabel(doc.vendor, doc.platform, language)}</span>
-                          {(doc.os_family || doc.software_release) && (
-                            <span className="mt-0.5 block text-[10px] text-gray-400">{[doc.os_family, doc.software_release].filter(Boolean).join(' · ')}</span>
-                          )}
-                        </td>
+                        <td className="px-4 py-3">{doc.document_category || '—'}</td>
+                        <td className="px-4 py-3">{doc.product_family || '—'}</td>
+                        <td className="px-4 py-3">{doc.product_model || '—'}</td>
+                        <td className="px-4 py-3 font-mono text-gray-600 dark:text-gray-300">{doc.vendor ? getVendorDisplayLabel(doc.vendor, language) : '—'}</td>
+                        <td className="px-4 py-3 font-mono text-gray-600 dark:text-gray-300">{getPlatformDisplayLabel(doc.vendor, doc.platform, language)}</td>
+                        <td className="px-4 py-3">{doc.os_family || '—'}</td>
+                        <td className="px-4 py-3">{doc.software_release || '—'}</td>
                         <td className="px-4 py-3 font-mono text-gray-700 dark:text-gray-200">
                           {tx('ai.knowledge.table.chunkCount', { count: doc.chunk_count || 1 })}
                         </td>
@@ -2383,48 +2444,40 @@ export const KnowledgeManagementTab: React.FC = () => {
                         <td className="px-4 py-3 text-gray-400 font-mono text-[11px]">
                           {new Date(doc.created_at).toLocaleDateString()}
                         </td>
-                        <td className="px-4 py-3 text-center">
-                          <div className="flex items-center justify-center gap-1">
-                            <button
-                              type="button"
+                        <TableActionCell className="px-4 py-3 text-center">
+                          <div className="flex items-center justify-end gap-1">
+                            <ActionIconButton
+                              icon={doc.status === 'disabled' ? CheckCircle2 : Archive}
+                              label={doc.status === 'disabled' ? tx('ai.knowledge.action.enable') : tx('ai.knowledge.action.disable')}
+                              tooltip={doc.status === 'disabled' ? tx('ai.knowledge.action.enableIndependent') : tx('ai.knowledge.action.disableIndependent')}
+                              variant={doc.status === 'disabled' ? 'success' : 'danger'}
+                              disabled={Boolean(documentActionBusy)}
                               onClick={() => void requestDocumentAction(doc, doc.status === 'disabled' ? 'enable' : 'disable')}
+                            />
+                            <ActionIconButton
+                              icon={FileText}
+                              label={tx('ai.knowledge.action.reparse')}
+                              tooltip={tx('ai.knowledge.action.reparseIndependent')}
+                              variant="accent"
                               disabled={Boolean(documentActionBusy)}
-                              className="rounded-lg p-1.5 text-gray-400 transition hover:bg-amber-50 hover:text-amber-600 disabled:cursor-wait disabled:opacity-40 dark:hover:bg-amber-950/40"
-                              title={doc.status === 'disabled' ? tx('ai.knowledge.action.enableIndependent') : tx('ai.knowledge.action.disableIndependent')}
-                              aria-label={doc.status === 'disabled' ? tx('ai.knowledge.action.enable') : tx('ai.knowledge.action.disable')}
-                            >
-                              {doc.status === 'disabled' ? <CheckCircle2 className="h-3.5 w-3.5" /> : <Archive className="h-3.5 w-3.5" />}
-                            </button>
-                            <button
-                              type="button"
                               onClick={() => void requestDocumentAction(doc, 'reparse')}
+                            />
+                            <ActionIconButton
+                              icon={Layers}
+                              label={tx('ai.knowledge.action.rechunk')}
+                              tooltip={tx('ai.knowledge.action.rechunkIndependent')}
+                              variant="accent"
                               disabled={Boolean(documentActionBusy)}
-                              className="rounded-lg p-1.5 text-gray-400 transition hover:bg-blue-50 hover:text-blue-600 disabled:cursor-wait disabled:opacity-40 dark:hover:bg-blue-950/40"
-                              title={tx('ai.knowledge.action.reparseIndependent')}
-                              aria-label={tx('ai.knowledge.action.reparse')}
-                            >
-                              <FileText className="h-3.5 w-3.5" />
-                            </button>
-                            <button
-                              type="button"
                               onClick={() => void requestDocumentAction(doc, 'rechunk')}
+                            />
+                            <ActionIconButton
+                              icon={RefreshCw}
+                              label={tx('ai.knowledge.action.reindex')}
+                              tooltip={tx('ai.knowledge.action.reindexIndependent')}
+                              variant="accent"
                               disabled={Boolean(documentActionBusy)}
-                              className="rounded-lg p-1.5 text-gray-400 transition hover:bg-violet-50 hover:text-violet-600 disabled:cursor-wait disabled:opacity-40 dark:hover:bg-violet-950/40"
-                              title={tx('ai.knowledge.action.rechunkIndependent')}
-                              aria-label={tx('ai.knowledge.action.rechunk')}
-                            >
-                              <Layers className="h-3.5 w-3.5" />
-                            </button>
-                            <button
-                              type="button"
                               onClick={() => void requestDocumentAction(doc, 'reindex')}
-                              disabled={Boolean(documentActionBusy)}
-                              className="rounded-lg p-1.5 text-gray-400 transition hover:bg-indigo-50 hover:text-indigo-600 disabled:cursor-wait disabled:opacity-40 dark:hover:bg-indigo-950/40"
-                              title={tx('ai.knowledge.action.reindexIndependent')}
-                              aria-label={tx('ai.knowledge.action.reindex')}
-                            >
-                              <RefreshCw className="h-3.5 w-3.5" />
-                            </button>
+                            />
                             <ActionIconButton
                               icon={Trash2}
                               label={tx('ai.knowledge.action.deleteIndependent')}
@@ -2434,12 +2487,12 @@ export const KnowledgeManagementTab: React.FC = () => {
                               disabled={Boolean(documentActionBusy)}
                             />
                           </div>
-                        </td>
+                        </TableActionCell>
                       </tr>
                     );
                   })}
                 </tbody>
-                </table>
+                </DataTable>
               </div>
             )}
             {!loading && totalDocuments > 0 && (

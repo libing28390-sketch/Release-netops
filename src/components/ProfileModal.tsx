@@ -1,13 +1,15 @@
 import React from 'react';
 import { motion, AnimatePresence } from 'motion/react';
 import {
-  Bell, Eye, EyeOff, Terminal, MonitorSpeaker, Shield, Download, Lock,
-  Info, UserRound, KeyRound, X, CheckCircle2, AlertCircle, Phone, Mail,
-  Clock, ExternalLink, Sparkles, Check, ChevronRight
+  Bell, Terminal, MonitorSpeaker, Shield, Download, Lock,
+  Info, UserRound, KeyRound, X, CheckCircle2, AlertCircle, Phone, Mail, Copy,
+  Clock, Sparkles, Check, ChevronRight
 } from 'lucide-react';
 import { useSystem } from '../hooks/useSystem';
 import QRCode from 'react-qr-code';
-import { ActionLink } from './ui/ActionIconButton';
+import { ActionButton, ActionIconButton, ActionLink } from './ui/ActionIconButton';
+import { IconInputField } from './ui/IconInputField';
+import { PasswordInputField } from './ui/PasswordInputField';
 import { useEscapeClose } from '../hooks/useEscapeClose';
 import { detectTerminalPlatform, getLocalTerminalConfig, TERMINAL_APP_LABELS, type TerminalApp } from '../utils/localTerminal';
 
@@ -352,16 +354,7 @@ const ProfileModal: React.FC<ProfileModalProps> = ({
               </p>
             </div>
           </div>
-          <button
-            type="button"
-            onClick={onClose}
-            title={isZh ? '关闭' : 'Close'}
-            className={`p-2 rounded-xl transition-colors ${
-              isDark ? 'text-white/40 hover:text-white hover:bg-white/10' : 'text-slate-400 hover:text-slate-700 hover:bg-slate-100'
-            }`}
-          >
-            <X size={18} />
-          </button>
+          <ActionIconButton icon={X} label={isZh ? '关闭' : 'Close'} size="md" onClick={onClose} />
         </div>
 
         {/* Master-Detail Dual Column Body */}
@@ -596,66 +589,39 @@ const ProfileModal: React.FC<ProfileModalProps> = ({
                     </div>
 
                     {/* Display Name / Phone / Email */}
-                    <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
-                      <div>
-                        <label className={`block text-[11px] font-medium mb-1.5 ${isDark ? 'text-white/50' : 'text-slate-600'}`}>
-                          {isZh ? '真实姓名 / 昵称' : 'Display Name'}
-                        </label>
-                        <div className="relative">
-                          <div className={`absolute left-3.5 top-1/2 -translate-y-1/2 ${isDark ? 'text-white/30' : 'text-slate-400'}`}>
-                            <UserRound size={14} />
-                          </div>
-                          <input
-                            type="text"
-                            value={profileForm.displayName}
-                            onChange={(e) => onProfileFormChange((prev) => ({ ...prev, displayName: e.target.value }))}
-                            placeholder={isZh ? '如：韩梅梅' : 'e.g. John Doe'}
-                            className={`w-full rounded-xl pl-9 pr-3.5 py-2.5 text-xs outline-none border transition-all ${
-                              isDark ? 'bg-black/20 border-white/15 text-white placeholder-white/50 focus:border-cyan-400 focus:ring-2 focus:ring-cyan-500/20' : 'bg-white border-slate-200 text-slate-800 placeholder-slate-500 focus:border-cyan-500 focus:ring-2 focus:ring-cyan-500/10'
-                            }`}
-                          />
-                        </div>
-                      </div>
-
-                      <div>
-                        <label className={`block text-[11px] font-medium mb-1.5 ${isDark ? 'text-white/50' : 'text-slate-600'}`}>
-                          {isZh ? '手机号码' : 'Phone'}
-                        </label>
-                        <div className="relative">
-                          <div className={`absolute left-3.5 top-1/2 -translate-y-1/2 ${isDark ? 'text-white/30' : 'text-slate-400'}`}>
-                            <Phone size={14} />
-                          </div>
-                          <input
-                            type="tel"
-                            value={profileForm.phone}
-                            onChange={(e) => onProfileFormChange((prev) => ({ ...prev, phone: e.target.value }))}
-                            placeholder={isZh ? '如：138xxxx8888' : 'e.g. +1 555-0100'}
-                            className={`w-full rounded-xl pl-9 pr-3.5 py-2.5 text-xs outline-none border transition-all ${
-                              isDark ? 'bg-black/20 border-white/15 text-white placeholder-white/50 focus:border-cyan-400 focus:ring-2 focus:ring-cyan-500/20' : 'bg-white border-slate-200 text-slate-800 placeholder-slate-500 focus:border-cyan-500 focus:ring-2 focus:ring-cyan-500/10'
-                            }`}
-                          />
-                        </div>
-                      </div>
-
-                      <div>
-                        <label className={`block text-[11px] font-medium mb-1.5 ${isDark ? 'text-white/50' : 'text-slate-600'}`}>
-                          {isZh ? '电子邮箱' : 'Email'}
-                        </label>
-                        <div className="relative">
-                          <div className={`absolute left-3.5 top-1/2 -translate-y-1/2 ${isDark ? 'text-white/30' : 'text-slate-400'}`}>
-                            <Mail size={14} />
-                          </div>
-                          <input
-                            type="email"
-                            value={profileForm.email}
-                            onChange={(e) => onProfileFormChange((prev) => ({ ...prev, email: e.target.value }))}
-                            placeholder={isZh ? '如：han.meimei@example.com' : 'e.g. han.meimei@example.com'}
-                            className={`w-full rounded-xl pl-9 pr-3.5 py-2.5 text-xs outline-none border transition-all ${
-                              isDark ? 'bg-black/20 border-white/15 text-white placeholder-white/50 focus:border-cyan-400 focus:ring-2 focus:ring-cyan-500/20' : 'bg-white border-slate-200 text-slate-800 placeholder-slate-500 focus:border-cyan-500 focus:ring-2 focus:ring-cyan-500/10'
-                            }`}
-                          />
-                        </div>
-                      </div>
+                    <div className="grid grid-cols-1 gap-3 sm:grid-cols-3">
+                      <IconInputField
+                        id="profile-display-name"
+                        label={isZh ? '真实姓名 / 昵称' : 'Display Name'}
+                        icon={UserRound}
+                        value={profileForm.displayName}
+                        onChange={(e) => onProfileFormChange((prev) => ({ ...prev, displayName: e.target.value }))}
+                        placeholder={isZh ? '如：韩梅梅' : 'e.g. John Doe'}
+                        autoComplete="name"
+                        theme={isDark ? 'dark' : 'light'}
+                      />
+                      <IconInputField
+                        id="profile-phone"
+                        label={isZh ? '手机号码' : 'Phone'}
+                        icon={Phone}
+                        type="tel"
+                        value={profileForm.phone}
+                        onChange={(e) => onProfileFormChange((prev) => ({ ...prev, phone: e.target.value }))}
+                        placeholder={isZh ? '如：138xxxx8888' : 'e.g. +1 555-0100'}
+                        autoComplete="tel"
+                        theme={isDark ? 'dark' : 'light'}
+                      />
+                      <IconInputField
+                        id="profile-email"
+                        label={isZh ? '电子邮箱' : 'Email'}
+                        icon={Mail}
+                        type="email"
+                        value={profileForm.email}
+                        onChange={(e) => onProfileFormChange((prev) => ({ ...prev, email: e.target.value }))}
+                        placeholder={isZh ? '如：han.meimei@example.com' : 'e.g. han.meimei@example.com'}
+                        autoComplete="email"
+                        theme={isDark ? 'dark' : 'light'}
+                      />
                     </div>
                   </div>
                 </motion.div>
@@ -695,65 +661,60 @@ const ProfileModal: React.FC<ProfileModalProps> = ({
 
                     {/* Current Password */}
                     <div>
-                      <label className={`block text-[11px] font-medium mb-1 ${isDark ? 'text-white/50' : 'text-slate-600'}`}>
+                      <label htmlFor="profile-current-password" className={`block text-[11px] font-medium mb-1 ${isDark ? 'text-white/50' : 'text-slate-600'}`}>
                         {isZh ? '当前密码' : 'Current Password'}
                       </label>
-                      <div className="relative">
-                        <input
-                          type={showProfilePwd ? 'text' : 'password'}
-                          value={profileForm.oldPassword || ''}
-                          onChange={(e) => onProfileFormChange((prev) => ({ ...prev, oldPassword: e.target.value }))}
-                          placeholder={isZh ? '修改密码前请先输入当前密码' : 'Enter current password'}
-                          className={`w-full rounded-xl px-3.5 pr-10 py-2.5 text-xs outline-none border transition-all ${
-                            isDark ? 'bg-black/20 border-white/15 text-white placeholder-white/20 focus:border-cyan-400 focus:ring-2 focus:ring-cyan-500/20' : 'bg-white border-slate-200 text-slate-800 placeholder-slate-300 focus:border-cyan-500 focus:ring-2 focus:ring-cyan-500/10'
-                          }`}
-                        />
-                        <button
-                          type="button"
-                          onClick={onToggleProfilePassword}
-                          className={`absolute right-3 top-1/2 -translate-y-1/2 p-1 ${isDark ? 'text-white/30 hover:text-white/60' : 'text-slate-400 hover:text-slate-600'}`}
-                        >
-                          {showProfilePwd ? <EyeOff size={14} /> : <Eye size={14} />}
-                        </button>
-                      </div>
+                      <PasswordInputField
+                        id="profile-current-password"
+                        autoComplete="current-password"
+                        visible={showProfilePwd}
+                        onVisibilityChange={() => onToggleProfilePassword()}
+                        showPasswordLabel={isZh ? '显示当前密码' : 'Show current password'}
+                        hidePasswordLabel={isZh ? '隐藏当前密码' : 'Hide current password'}
+                        value={profileForm.oldPassword || ''}
+                        onChange={(e) => onProfileFormChange((prev) => ({ ...prev, oldPassword: e.target.value }))}
+                        placeholder={isZh ? '修改密码前请先输入当前密码' : 'Enter current password'}
+                        className={`text-xs ${isDark ? 'bg-black/20 border-white/15 text-white placeholder-white/20 focus:border-cyan-400 focus:ring-2 focus:ring-cyan-500/20' : 'bg-white border-slate-200 text-slate-800 placeholder-slate-300 focus:border-cyan-500 focus:ring-2 focus:ring-cyan-500/10'}`}
+                      />
                     </div>
 
                     {/* New Password & Confirm Password */}
                     <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
                       <div>
-                        <label className={`block text-[11px] font-medium mb-1 ${isDark ? 'text-white/50' : 'text-slate-600'}`}>
+                        <label htmlFor="profile-new-password" className={`block text-[11px] font-medium mb-1 ${isDark ? 'text-white/50' : 'text-slate-600'}`}>
                           {isZh ? '新密码' : 'New Password'}
                         </label>
-                        <div className="relative">
-                          <input
-                            type={showProfilePwd ? 'text' : 'password'}
-                            value={profileForm.password}
-                            onChange={(e) => onProfileFormChange((prev) => ({ ...prev, password: e.target.value }))}
-                            placeholder={isZh ? '输入新密码' : 'Enter new password'}
-                            className={`w-full rounded-xl px-3.5 pr-10 py-2.5 text-xs outline-none border transition-all ${
-                              isDark ? 'bg-black/20 border-white/15 text-white placeholder-white/20 focus:border-cyan-400 focus:ring-2 focus:ring-cyan-500/20' : 'bg-white border-slate-200 text-slate-800 placeholder-slate-300 focus:border-cyan-500 focus:ring-2 focus:ring-cyan-500/10'
-                            }`}
-                          />
-                          <button
-                            type="button"
-                            onClick={onToggleProfilePassword}
-                            className={`absolute right-3 top-1/2 -translate-y-1/2 p-1 ${isDark ? 'text-white/30 hover:text-white/60' : 'text-slate-400 hover:text-slate-600'}`}
-                          >
-                            {showProfilePwd ? <EyeOff size={14} /> : <Eye size={14} />}
-                          </button>
-                        </div>
+                        <PasswordInputField
+                          id="profile-new-password"
+                          autoComplete="new-password"
+                          visible={showProfilePwd}
+                          onVisibilityChange={() => onToggleProfilePassword()}
+                          showPasswordLabel={isZh ? '显示新密码' : 'Show new password'}
+                          hidePasswordLabel={isZh ? '隐藏新密码' : 'Hide new password'}
+                          value={profileForm.password}
+                          onChange={(e) => onProfileFormChange((prev) => ({ ...prev, password: e.target.value }))}
+                          placeholder={isZh ? '输入新密码' : 'Enter new password'}
+                          className={`text-xs ${isDark ? 'bg-black/20 border-white/15 text-white placeholder-white/20 focus:border-cyan-400 focus:ring-2 focus:ring-cyan-500/20' : 'bg-white border-slate-200 text-slate-800 placeholder-slate-300 focus:border-cyan-500 focus:ring-2 focus:ring-cyan-500/10'}`}
+                        />
                       </div>
 
                       <div>
-                        <label className={`block text-[11px] font-medium mb-1 ${isDark ? 'text-white/50' : 'text-slate-600'}`}>
+                        <label htmlFor="profile-confirm-password" className={`block text-[11px] font-medium mb-1 ${isDark ? 'text-white/50' : 'text-slate-600'}`}>
                           {isZh ? '确认新密码' : 'Confirm New Password'}
                         </label>
-                        <input
-                          type={showProfilePwd ? 'text' : 'password'}
+                        <PasswordInputField
+                          id="profile-confirm-password"
+                          autoComplete="new-password"
+                          visible={showProfilePwd}
+                          onVisibilityChange={() => onToggleProfilePassword()}
+                          showPasswordLabel={isZh ? '显示确认密码' : 'Show confirmation password'}
+                          hidePasswordLabel={isZh ? '隐藏确认密码' : 'Hide confirmation password'}
                           value={profileForm.confirmPassword}
                           onChange={(e) => onProfileFormChange((prev) => ({ ...prev, confirmPassword: e.target.value }))}
                           placeholder={isZh ? '再次输入新密码' : 'Re-enter new password'}
-                          className={`w-full rounded-xl px-3.5 py-2.5 text-xs outline-none border transition-all ${
+                          aria-invalid={Boolean(passwordConfirmationError)}
+                        aria-describedby={passwordConfirmationError ? 'profile-confirm-password-error' : undefined}
+                          className={`text-xs ${
                             passwordConfirmationError
                               ? (isDark ? 'border-rose-400 bg-rose-500/5 text-white' : 'border-rose-400 bg-rose-50 text-slate-900')
                               : isDark ? 'bg-black/20 border-white/15 text-white placeholder-white/20 focus:border-cyan-400 focus:ring-2 focus:ring-cyan-500/20' : 'bg-white border-slate-200 text-slate-800 placeholder-slate-300 focus:border-cyan-500 focus:ring-2 focus:ring-cyan-500/10'
@@ -763,7 +724,7 @@ const ProfileModal: React.FC<ProfileModalProps> = ({
                     </div>
 
                     {passwordConfirmationError && (
-                      <p className="text-[11px] font-semibold text-rose-500 flex items-center gap-1.5 mt-1">
+                      <p id="profile-confirm-password-error" className="text-[11px] font-semibold text-rose-500 flex items-center gap-1.5 mt-1">
                         <AlertCircle size={13} />
                         {passwordConfirmationError}
                       </p>
@@ -786,25 +747,22 @@ const ProfileModal: React.FC<ProfileModalProps> = ({
                           ? '用于特权终端登录及双人复核时的快速固定 PIN 码（6 位纯数字）。如已开启 TOTP 动态认证，系统将自动升级为动态验证码。'
                           : 'Used for privileged terminal approval. 6-digit number.'}
                       </p>
-                      <div className="relative max-w-xs">
-                        <input
-                          type={showFixedPin ? 'text' : 'password'}
-                          maxLength={6}
-                          value={profileForm.fixedPin || ''}
-                          onChange={(e) => onProfileFormChange((prev) => ({ ...prev, fixedPin: e.target.value.replace(/\D/g, '') }))}
-                          placeholder={isZh ? '6 位纯数字安全码' : '6-digit PIN'}
-                          className={`w-full rounded-xl px-3.5 pr-10 py-2 text-sm font-mono font-bold tracking-widest outline-none border transition-all ${
-                            isDark ? 'bg-black/30 border-amber-500/30 text-amber-200 placeholder-white/20 focus:border-amber-400' : 'bg-white border-amber-300 text-amber-900 placeholder-slate-300 focus:border-amber-500'
-                          }`}
-                        />
-                        <button
-                          type="button"
-                          onClick={() => setShowFixedPin(!showFixedPin)}
-                          className={`absolute right-3 top-1/2 -translate-y-1/2 p-1 ${isDark ? 'text-amber-400/60 hover:text-amber-300' : 'text-amber-600 hover:text-amber-800'}`}
-                        >
-                          {showFixedPin ? <EyeOff size={14} /> : <Eye size={14} />}
-                        </button>
-                      </div>
+                      <PasswordInputField
+                        id="profile-fixed-pin"
+                        inputMode="numeric"
+                        autoComplete="off"
+                        maxLength={6}
+                        visible={showFixedPin}
+                        onVisibilityChange={setShowFixedPin}
+                        showPasswordLabel={isZh ? '显示固定安全码' : 'Show fixed PIN'}
+                        hidePasswordLabel={isZh ? '隐藏固定安全码' : 'Hide fixed PIN'}
+                        value={profileForm.fixedPin || ''}
+                        onChange={(e) => onProfileFormChange((prev) => ({ ...prev, fixedPin: e.target.value.replace(/\D/g, '') }))}
+                        aria-label={isZh ? '特权审批固定安全码' : 'Fixed PIN for admin approvals'}
+                        placeholder={isZh ? '6 位纯数字安全码' : '6-digit PIN'}
+                        className={`font-mono text-sm font-bold tracking-widest ${isDark ? 'bg-black/30 border-amber-500/30 text-amber-200 placeholder-white/20 focus:border-amber-400' : 'bg-white border-amber-300 text-amber-900 placeholder-slate-300 focus:border-amber-500'}`}
+                        wrapperClassName="max-w-xs"
+                      />
                     </div>
                   )}
 
@@ -836,15 +794,14 @@ const ProfileModal: React.FC<ProfileModalProps> = ({
 
                     {!mfaActive ? (
                       !setupMode ? (
-                        <button
-                          type="button"
+                        <ActionButton
+                          icon={Shield}
+                          variant="accent"
                           disabled={mfaLoading}
                           onClick={handleStartSetup}
-                          className="px-4 py-2 rounded-xl text-xs font-bold text-white bg-cyan-600 hover:bg-cyan-500 transition-all shadow-md shadow-cyan-600/20 flex items-center gap-2"
                         >
-                          <Shield size={14} />
                           {mfaLoading ? (isZh ? '初始化中...' : 'Initializing...') : (isZh ? '绑定并启用二次认证' : 'Set up & Enable MFA')}
-                        </button>
+                        </ActionButton>
                       ) : (
                         <div className="space-y-4 pt-2 border-t border-cyan-500/15">
                           <p className={`text-xs font-medium ${isDark ? 'text-cyan-200' : 'text-cyan-800'}`}>
@@ -865,16 +822,12 @@ const ProfileModal: React.FC<ProfileModalProps> = ({
                                 }`}>
                                   {mfaSecret}
                                 </code>
-                                <button
-                                  type="button"
+                                <ActionIconButton
+                                  icon={secretCopied ? Check : Copy}
+                                  label={isZh ? '复制密钥' : 'Copy secret'}
+                                  variant={secretCopied ? 'success' : 'default'}
                                   onClick={handleCopySecret}
-                                  className={`p-1.5 rounded-lg border text-xs transition-colors ${
-                                    isDark ? 'border-white/10 hover:bg-white/10' : 'border-slate-200 hover:bg-slate-100'
-                                  }`}
-                                  title={isZh ? '复制密钥' : 'Copy secret'}
-                                >
-                                  {secretCopied ? <Check size={13} className="text-emerald-400" /> : <ExternalLink size={13} />}
-                                </button>
+                                />
                               </div>
                               <p className={`text-[10px] ${isDark ? 'text-white/35' : 'text-slate-400'}`}>
                                 {isZh ? '提示：请妥善保存此密钥，换手机或重置时可用于恢复认证器。' : 'Store this key safely for account recovery.'}
@@ -897,23 +850,16 @@ const ProfileModal: React.FC<ProfileModalProps> = ({
                                   isDark ? 'bg-black/30 border-cyan-500/40 text-cyan-300 focus:border-cyan-400' : 'bg-white border-cyan-300 text-cyan-900 focus:border-cyan-500'
                                 }`}
                               />
-                              <button
-                                type="button"
+                              <ActionButton
+                                variant="success"
                                 disabled={mfaLoading || mfaCodeInput.length < 6}
                                 onClick={handleEnableMfa}
-                                className="px-4 py-2 rounded-xl text-xs font-bold text-white bg-emerald-600 hover:bg-emerald-500 disabled:opacity-50 disabled:cursor-not-allowed transition-all shadow-md shadow-emerald-600/20"
                               >
                                 {mfaLoading ? (isZh ? '验证中...' : 'Verifying...') : (isZh ? '确认开启' : 'Verify & Enable')}
-                              </button>
-                              <button
-                                type="button"
-                                onClick={() => { setSetupMode(false); setMfaCodeInput(''); setMfaErrorMsg(''); }}
-                                className={`px-3 py-2 rounded-xl text-xs font-medium transition-colors ${
-                                  isDark ? 'bg-white/10 text-white/80 hover:bg-white/15' : 'bg-slate-100 text-slate-600 hover:bg-slate-200'
-                                }`}
-                              >
+                              </ActionButton>
+                              <ActionButton onClick={() => { setSetupMode(false); setMfaCodeInput(''); setMfaErrorMsg(''); }}>
                                 {isZh ? '取消' : 'Cancel'}
-                              </button>
+                              </ActionButton>
                             </div>
                             {mfaErrorMsg && <p className="text-xs text-rose-500 font-semibold mt-1.5">{mfaErrorMsg}</p>}
                           </div>
@@ -926,57 +872,43 @@ const ProfileModal: React.FC<ProfileModalProps> = ({
                             <CheckCircle2 size={16} />
                             {isZh ? '您的账号已受 TOTP 二次认证严密保护' : 'Account is protected by TOTP MFA'}
                           </div>
-                          <button
-                            type="button"
+                          <ActionButton
+                            variant="danger"
                             onClick={() => { setDisableMode(true); setMfaErrorMsg(''); }}
-                            className={`px-3 py-1.5 rounded-xl text-xs font-semibold border transition-all ${
-                              isDark ? 'bg-rose-500/10 text-rose-300 border-rose-500/20 hover:bg-rose-500/20' : 'bg-rose-50 text-rose-700 border-rose-200 hover:bg-rose-100'
-                            }`}
                           >
                             {isZh ? '关闭二次认证' : 'Disable MFA'}
-                          </button>
+                          </ActionButton>
                         </div>
                       ) : (
                         <div className="space-y-3 pt-2 border-t border-cyan-500/15">
-                          <label className={`block text-[11px] font-bold ${isDark ? 'text-white/70' : 'text-slate-700'}`}>
+                          <label htmlFor="profile-mfa-disable-password" className={`block text-[11px] font-bold ${isDark ? 'text-white/70' : 'text-slate-700'}`}>
                             {isZh ? '请输入当前登录密码以关闭二次认证：' : 'Enter current password to disable MFA:'}
                           </label>
                           <div className="flex gap-2.5 items-center">
-                            <div className="relative flex-1 max-w-sm">
-                              <input
-                                type={showDisablePassword ? 'text' : 'password'}
-                                placeholder={isZh ? '您的登录密码' : 'Your password'}
-                                value={disablePasswordInput}
-                                onChange={(e) => setDisablePasswordInput(e.target.value)}
-                                className={`w-full rounded-xl px-3.5 pr-9 py-2 text-xs outline-none border transition-all ${
-                                  isDark ? 'bg-black/20 border-white/15 text-white placeholder-white/20 focus:border-cyan-400' : 'bg-white border-slate-200 text-slate-900 placeholder-slate-300 focus:border-cyan-500'
-                                }`}
-                              />
-                              <button
-                                type="button"
-                                onClick={() => setShowDisablePassword(!showDisablePassword)}
-                                className={`absolute right-2.5 top-1/2 -translate-y-1/2 p-1 ${isDark ? 'text-white/30 hover:text-white/60' : 'text-slate-400 hover:text-slate-600'}`}
-                              >
-                                {showDisablePassword ? <EyeOff size={13} /> : <Eye size={13} />}
-                              </button>
-                            </div>
-                            <button
-                              type="button"
+                            <PasswordInputField
+                              id="profile-mfa-disable-password"
+                              aria-label={isZh ? '当前登录密码' : 'Current password'}
+                              autoComplete="current-password"
+                              wrapperClassName="flex-1 max-w-sm"
+                              visible={showDisablePassword}
+                              onVisibilityChange={setShowDisablePassword}
+                              showPasswordLabel={isZh ? '显示登录密码' : 'Show password'}
+                              hidePasswordLabel={isZh ? '隐藏登录密码' : 'Hide password'}
+                              placeholder={isZh ? '您的登录密码' : 'Your password'}
+                              value={disablePasswordInput}
+                              onChange={(e) => setDisablePasswordInput(e.target.value)}
+                              className={`text-xs ${isDark ? 'bg-black/20 border-white/15 text-white placeholder-white/20 focus:border-cyan-400' : 'bg-white border-slate-200 text-slate-900 placeholder-slate-300 focus:border-cyan-500'}`}
+                            />
+                            <ActionButton
+                              variant="danger"
                               disabled={mfaLoading || !disablePasswordInput}
                               onClick={handleDisableMfa}
-                              className="px-4 py-2 rounded-xl text-xs font-bold text-white bg-rose-600 hover:bg-rose-500 disabled:opacity-50 transition-all shadow-sm"
                             >
                               {mfaLoading ? (isZh ? '验证中...' : 'Verifying...') : (isZh ? '确认关闭' : 'Confirm')}
-                            </button>
-                            <button
-                              type="button"
-                              onClick={() => { setDisableMode(false); setDisablePasswordInput(''); setShowDisablePassword(false); setMfaErrorMsg(''); }}
-                              className={`px-3 py-2 rounded-xl text-xs font-medium transition-colors ${
-                                isDark ? 'bg-white/10 text-white/80 hover:bg-white/15' : 'bg-slate-100 text-slate-600 hover:bg-slate-200'
-                              }`}
-                            >
+                            </ActionButton>
+                            <ActionButton onClick={() => { setDisableMode(false); setDisablePasswordInput(''); setShowDisablePassword(false); setMfaErrorMsg(''); }}>
                               {isZh ? '取消' : 'Cancel'}
-                            </button>
+                            </ActionButton>
                           </div>
                           {mfaErrorMsg && <p className="text-xs text-rose-500 font-semibold">{mfaErrorMsg}</p>}
                         </div>
@@ -1076,29 +1008,24 @@ const ProfileModal: React.FC<ProfileModalProps> = ({
                             </div>
 
                             {hasSecret && (
-                              <div className="relative">
-                                <input
-                                  type={showDingtalkSecret ? 'text' : 'password'}
-                                  disabled={!isCreator}
-                                  value={notificationChannels.dingtalk.secret}
-                                  onChange={(e) => onNotificationSecretChange(e.target.value)}
-                                  placeholder={isZh ? '加签密钥 Secret（可选，留空则不验签）' : 'Sign Secret (Optional)'}
-                                  className={`w-full rounded-xl px-3.5 pr-9 py-2 text-xs font-mono outline-none border transition-all ${
-                                    !isCreator
-                                      ? (isDark ? 'bg-black/40 text-white/30 cursor-not-allowed border-white/5' : 'bg-slate-100 text-slate-400 cursor-not-allowed border-slate-200')
-                                      : (isDark ? 'bg-black/20 border-white/15 text-white placeholder-white/20 focus:border-cyan-400' : 'bg-white border-slate-200 text-slate-800 placeholder-slate-300 focus:border-cyan-500')
-                                  }`}
-                                />
-                                {isCreator && (
-                                  <button
-                                    type="button"
-                                    onClick={() => setShowDingtalkSecret(!showDingtalkSecret)}
-                                    className={`absolute right-2.5 top-1/2 -translate-y-1/2 p-1 ${isDark ? 'text-white/30 hover:text-white/60' : 'text-slate-400 hover:text-slate-600'}`}
-                                  >
-                                    {showDingtalkSecret ? <EyeOff size={13} /> : <Eye size={13} />}
-                                  </button>
-                                )}
-                              </div>
+                              <PasswordInputField
+                                id="profile-dingtalk-secret"
+                                autoComplete="off"
+                                disabled={!isCreator}
+                                visible={showDingtalkSecret}
+                                onVisibilityChange={setShowDingtalkSecret}
+                                showPasswordLabel={isZh ? '显示加签密钥' : 'Show signing secret'}
+                                hidePasswordLabel={isZh ? '隐藏加签密钥' : 'Hide signing secret'}
+                                value={notificationChannels.dingtalk.secret}
+                                aria-label={isZh ? '钉钉机器人加签密钥' : 'DingTalk signing secret'}
+                                onChange={(e) => onNotificationSecretChange(e.target.value)}
+                                placeholder={isZh ? '加签密钥 Secret（可选，留空则不验签）' : 'Sign Secret (Optional)'}
+                                className={`font-mono text-xs ${
+                                  !isCreator
+                                    ? (isDark ? 'bg-black/40 text-white/30 cursor-not-allowed border-white/5' : 'bg-slate-100 text-slate-400 cursor-not-allowed border-slate-200')
+                                    : (isDark ? 'bg-black/20 border-white/15 text-white placeholder-white/20 focus:border-cyan-400' : 'bg-white border-slate-200 text-slate-800 placeholder-slate-300 focus:border-cyan-500')
+                                }`}
+                              />
                             )}
 
                             <div className="flex justify-end pt-1">
@@ -1345,27 +1272,17 @@ const ProfileModal: React.FC<ProfileModalProps> = ({
         <div className={`flex items-center justify-end gap-3 px-6 py-4 border-t shrink-0 ${
           isDark ? 'border-white/10 bg-[#141e33]' : 'border-slate-100 bg-slate-50/80'
         }`}>
-          <button
-            type="button"
-            onClick={onClose}
-            className={`px-5 py-2.5 rounded-xl text-xs font-semibold transition-all ${
-              isDark ? 'bg-white/10 text-white/80 hover:bg-white/15' : 'bg-slate-200/80 text-slate-700 hover:bg-slate-300/80'
-            }`}
-          >
+          <ActionButton size="md" onClick={onClose}>
             {isZh ? '取消' : 'Cancel'}
-          </button>
-          <button
-            type="button"
+          </ActionButton>
+          <ActionButton
+            size="md"
+            variant="primary"
             disabled={Boolean(passwordConfirmationError)}
             onClick={onSave}
-            className={`px-6 py-2.5 rounded-xl text-xs font-bold text-white transition-all shadow-lg ${
-              passwordConfirmationError
-                ? 'bg-slate-400 cursor-not-allowed opacity-50 shadow-none'
-                : 'bg-gradient-to-r from-[#008bb0] to-[#00bceb] hover:from-[#00769a] hover:to-[#00a8d4] shadow-cyan-500/25'
-            }`}
           >
             {isZh ? '保存个人设置' : 'Save Changes'}
-          </button>
+          </ActionButton>
         </div>
       </motion.div>
     </div>

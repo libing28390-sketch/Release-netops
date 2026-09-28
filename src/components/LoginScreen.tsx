@@ -1,8 +1,9 @@
 import React, { useEffect, useState } from 'react';
-import { Activity, Eye, EyeOff, Lock, RotateCcw, ArrowRight, User, XCircle, Shield, HelpCircle, Clock, Server, CheckCircle2, Cpu } from 'lucide-react';
+import { Activity, RotateCcw, ArrowRight, User, XCircle, Shield, HelpCircle, Clock, Server, CheckCircle2, Cpu } from 'lucide-react';
 import { motion, AnimatePresence } from 'motion/react';
 import ForgotPasswordModal from './ForgotPasswordModal';
 import ThreeCyberNetwork from './home/ThreeCyberNetwork';
+import { PasswordInputField } from './ui/PasswordInputField';
 
 interface LoginScreenProps {
   isDark: boolean;
@@ -303,29 +304,19 @@ const LoginScreen: React.FC<LoginScreenProps> = ({
                   <label htmlFor="login-password" className="block text-xs font-medium text-gray-700">
                     {t('password')}
                   </label>
-                  <div className="relative group">
-                    <div className="absolute left-3.5 top-1/2 -translate-y-1/2 text-gray-400 group-focus-within:text-blue-600 transition-colors">
-                      <Lock size={16} />
-                    </div>
-                    <input
-                      id="login-password"
-                      name="password"
-                      type={showLoginPwd ? 'text' : 'password'}
-                      autoComplete="current-password"
-                      placeholder="••••••••"
-                      value={loginForm.password}
-                      onChange={(e) => onPasswordChange(e.target.value)}
-                      className="w-full rounded-2xl border border-gray-200/80 bg-white/70 py-3 pl-10 pr-11 text-sm text-gray-900 placeholder:text-gray-400 outline-none transition-all focus:bg-white focus:border-blue-600 focus:ring-4 focus:ring-blue-600/10"
-                    />
-                    <button
-                      type="button"
-                      onClick={onTogglePassword}
-                      aria-label={showLoginPwd ? 'Hide password' : 'Show password'}
-                      className="absolute right-3.5 top-1/2 -translate-y-1/2 text-gray-400 hover:text-gray-600 transition-colors"
-                    >
-                      {showLoginPwd ? <EyeOff size={15} /> : <Eye size={15} />}
-                    </button>
-                  </div>
+                  <PasswordInputField
+                    id="login-password"
+                    name="password"
+                    visible={showLoginPwd}
+                    onVisibilityChange={() => onTogglePassword()}
+                    showPasswordLabel={t('showPassword')}
+                    hidePasswordLabel={t('hidePassword')}
+                    autoComplete="current-password"
+                    placeholder="••••••••"
+                    value={loginForm.password}
+                    onChange={(e) => onPasswordChange(e.target.value)}
+                    className="rounded-2xl bg-white/70 py-3 pl-10 text-sm text-gray-900 placeholder:text-gray-400 focus:bg-white focus:border-blue-600 focus:ring-4 focus:ring-blue-600/10"
+                  />
                 </div>
 
                 {/* Captcha Block (Unified & Elegant) */}

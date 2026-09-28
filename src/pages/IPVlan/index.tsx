@@ -1,10 +1,9 @@
-import React, { useState, useEffect, useCallback, useMemo } from 'react';
+import React, { useState, useEffect, useCallback, useMemo, useRef } from 'react';
 import {
   Network,
   Plus,
   Trash2,
   AlertTriangle,
-  Download,
   Search,
   X,
   ChevronLeft,
@@ -19,10 +18,11 @@ import {
   ChevronDown,
   TableProperties,
 } from 'lucide-react';
-import * as XLSX from 'xlsx';
 import Pagination from '../../components/Pagination';
 import PageHero from '../../components/PageHero';
 import { ActionButton, ActionIconButton, ActionIconGroup } from '../../components/ui/ActionIconButton';
+import { TableExportMenu } from '../../components/ui/TableExportMenu';
+import { buildVisibleIpamExportData, fetchAllIpamExportItems } from './ipamExport';
 
 import { Subnet, IPAddress, Conflict, IPVlanTabProps } from './types';
 import { DEVICE_TYPES } from './constants';
@@ -46,6 +46,8 @@ import IPModal from './components/IPModal';
 import DeleteConfirmModal from './components/DeleteConfirmModal';
 
 const IPVlanTab: React.FC<IPVlanTabProps> = ({ language, t }) => {
+  const subnetTableRef = useRef<HTMLTableElement>(null);
+  const subnetAddressTableRef = useRef<HTMLTableElement>(null);
   const [subnets, setSubnets] = useState<Subnet[]>([]);
   const [selectedSubnet, setSelectedSubnet] = useState<Subnet | null>(null);
   const [addresses, setAddresses] = useState<IPAddress[]>([]);
@@ -449,39 +451,6 @@ const IPVlanTab: React.FC<IPVlanTabProps> = ({ language, t }) => {
   const safeAddrPage = Math.min(addrPage, addrTotalPages);
   const pagedAddresses = filteredAddresses;
 
-  const handleExport = () => {
-    const zh = language === 'zh';
-    const wb = XLSX.utils.book_new();
-    if (subnets.length > 0) {
-      const subData = subnets.map((s) => ({
-        [zh ? '名称' : 'Name']: s.name,
-        [zh ? '网段' : 'Network']: `${s.network}/${s.prefix_len}`,
-        'VLAN ID': s.vlan_id || '',
-        [zh ? 'VLAN名称' : 'VLAN Name']: s.vlan_name,
-        [zh ? '网关' : 'Gateway']: s.gateway,
-        [zh ? '站点' : 'Site']: s.site,
-        [zh ? '总IP数' : 'Total IPs']: s.total_ips,
-        [zh ? '已用IP数' : 'Used IPs']: s.used_ips,
-        [zh ? '利用率' : 'Utilization']: `${s.utilization}%`,
-        [zh ? '描述' : 'Description']: s.description,
-      }));
-      XLSX.utils.book_append_sheet(wb, XLSX.utils.json_to_sheet(subData), zh ? '子网' : 'Subnets');
-    }
-    if (addresses.length > 0) {
-      const addrData = addresses.map((a) => ({
-        [zh ? 'IP地址' : 'Address']: a.address,
-        [zh ? '主机名' : 'Hostname']: a.hostname,
-        [zh ? '接口' : 'Interface']: a.interface_name,
-        MAC: a.mac_address,
-        [zh ? '状态' : 'Status']: a.status,
-        [zh ? '描述' : 'Description']: a.description,
-      }));
-      XLSX.utils.book_append_sheet(wb, XLSX.utils.json_to_sheet(addrData), zh ? 'IP地址' : 'Addresses');
-    }
-    const ts = new Date().toISOString().replace(/[-:]/g, '').replace('T', '_').slice(0, 15);
-    XLSX.writeFile(wb, zh ? `IP资源管理导出_${ts}.xlsx` : `ipam_export_${ts}.xlsx`);
-  };
-
   const overallUtil = summary.total_capacity > 0 ? Math.round((summary.total_used / summary.total_capacity) * 100) : 0;
   const highUtilSubnets = subnets.filter((subnet) => subnet.utilization >= 80).length;
   const criticalUtilSubnets = subnets.filter((subnet) => subnet.utilization >= 90).length;
@@ -540,6 +509,43 @@ const IPVlanTab: React.FC<IPVlanTabProps> = ({ language, t }) => {
   const safeSubnetPage = Math.min(subnetPage, subnetTotalPages);
   const pagedVisibleSubnets = visibleSubnets.slice((safeSubnetPage - 1) * subnetPageSizeOpt, safeSubnetPage * subnetPageSizeOpt);
 
+  const subnetExportData = useCallback(async () => buildVisibleIpamExportData(subnetTableRef.current, [
+    { header: language === 'zh' ? '名称' : 'Name', value: (subnet: Subnet) => subnet.name || '-' },
+    { header: language === 'zh' ? '网段' : 'CIDR', value: (subnet: Subnet) => `${subnet.network}/${subnet.prefix_len}` },
+    { header: 'VLAN', value: (subnet: Subnet) => subnet.vlan_id || '-' },
+    { header: language === 'zh' ? '站点' : 'Site', value: (subnet: Subnet) => subnet.site || '-' },
+    { header: language === 'zh' ? '利用率' : 'Util', value: (subnet: Subnet) => `${subnet.utilization}%` },
+    { header: language === 'zh' ? '已用IP数' : 'Used IPs', value: (subnet: Subnet) => subnet.used_ips },
+    { header: language === 'zh' ? '总IP数' : 'Total IPs', value: (subnet: Subnet) => subnet.total_ips },
+    { header: 'RISK', value: (subnet: Subnet) => subnetRiskScoreMap.get(subnet.id) || 0 },
+  ], visibleSubnets), [language, visibleSubnets, subnetRiskScoreMap]);
+
+  const addressExportData = useCallback(async () => {
+    if (!selectedSubnet) throw new Error('Select a subnet before exporting its IP addresses');
+    const params = new URLSearchParams({
+      q: addrSearch.trim(),
+      status: addrStatusFilter,
+      device_type: addrDeviceTypeFilter || 'all',
+      purpose: 'all',
+    });
+    const allAddresses = await fetchAllIpamExportItems<IPAddress>(`/api/ipam/subnets/${selectedSubnet.id}/addresses`, params);
+    const normalizedSearch = addrSearch.trim().toLowerCase();
+    const exportAddresses = allAddresses.filter((address) => {
+      if (addrStatusFilter !== 'all' && address.status !== addrStatusFilter) return false;
+      if (addrDeviceTypeFilter && (address.device_type || '') !== addrDeviceTypeFilter) return false;
+      return !normalizedSearch || [address.address, address.hostname, address.mac_address, address.interface_name, address.device_type]
+        .some((value) => String(value || '').toLowerCase().includes(normalizedSearch));
+    });
+    const lang = language === 'zh' ? 'zh' : 'en';
+    return buildVisibleIpamExportData(subnetAddressTableRef.current, [
+      { header: lang === 'zh' ? 'IP地址' : 'Address', value: (address) => address.address },
+      { header: lang === 'zh' ? '主机名' : 'Hostname', value: (address) => address.hostname || '-' },
+      { header: lang === 'zh' ? '类型' : 'Type', value: (address) => DEVICE_TYPES.find((type) => type.value === address.device_type)?.label[lang] || (lang === 'zh' ? '未分类' : 'Unclassified') },
+      { header: lang === 'zh' ? '接口' : 'Interface', value: (address) => address.interface_name || '-' },
+      { header: lang === 'zh' ? '状态' : 'Status', value: (address) => address.status === 'reserved' ? (lang === 'zh' ? '预留' : 'Reserved') : address.status === 'deprecated' ? (lang === 'zh' ? '停用' : 'Deprecated') : (lang === 'zh' ? '在用' : 'Active') },
+    ], exportAddresses);
+  }, [selectedSubnet, addrSearch, addrStatusFilter, addrDeviceTypeFilter, language]);
+
   const groupedSubnets = useMemo(() => {
     if (subnetGroupBy !== 'site') return null;
     const groups: Record<string, Subnet[]> = {};
@@ -596,13 +602,7 @@ const IPVlanTab: React.FC<IPVlanTabProps> = ({ language, t }) => {
         title={language === 'zh' ? 'IP/VLAN 资源管理' : 'IP/VLAN Management'}
         subtitle={language === 'zh' ? '子网与IP地址分配管理，冲突检测' : 'Subnet & IP address management with conflict detection'}
         actions={
-          <>
-            <ActionIconButton
-              icon={Download}
-              label={language === 'zh' ? '导出' : 'Export'}
-              variant="accent"
-              onClick={handleExport}
-            />
+          <div className="flex items-center gap-2">
             <ActionButton
               icon={Plus}
               variant="primary"
@@ -610,7 +610,7 @@ const IPVlanTab: React.FC<IPVlanTabProps> = ({ language, t }) => {
             >
               {language === 'zh' ? '添加子网' : 'Add Subnet'}
             </ActionButton>
-          </>
+          </div>
         }
       />
 
@@ -857,6 +857,15 @@ const IPVlanTab: React.FC<IPVlanTabProps> = ({ language, t }) => {
                           <CheckCircle2 size={11} />
                           {language === 'zh' ? '仅高风险' : 'High Risk Only'}
                         </button>
+                        {subnetViewMode === 'table' && (
+                          <TableExportMenu
+                            tableRef={subnetTableRef}
+                            exportData={subnetExportData}
+                            filename="ipam-subnets"
+                            language={language === 'zh' ? 'zh' : 'en'}
+                            disabled={loading || visibleSubnets.length === 0}
+                          />
+                        )}
                       </div>
                     )}
                     {/* Batch delete toolbar */}
@@ -922,7 +931,7 @@ const IPVlanTab: React.FC<IPVlanTabProps> = ({ language, t }) => {
                     )}
                     {subnetViewMode === 'table' || selectedSubnet ? (
                       /* ── Subnet Table View (always table when detail is open) ── */
-                      <table className="nx-data-table text-left">
+                      <table ref={subnetTableRef} className="nx-data-table text-left">
                         {!selectedSubnet && (
                           <thead>
                             <tr className="bg-black/[0.02] border-b border-black/5">
@@ -958,7 +967,10 @@ const IPVlanTab: React.FC<IPVlanTabProps> = ({ language, t }) => {
                                 {language === 'zh' ? '利用率' : 'Util'}
                               </th>
                               <th className="px-3 py-2 text-[10px] font-bold uppercase tracking-widest text-black/40 text-right hidden sm:table-cell">
-                                {language === 'zh' ? '已用/总量' : 'Used/Total'}
+                                {language === 'zh' ? '已用IP数' : 'Used IPs'}
+                              </th>
+                              <th className="px-3 py-2 text-[10px] font-bold uppercase tracking-widest text-black/40 text-right hidden sm:table-cell">
+                                {language === 'zh' ? '总IP数' : 'Total IPs'}
                               </th>
                               <th className="px-3 py-2 text-[10px] font-bold uppercase tracking-widest text-black/40 text-right hidden md:table-cell">
                                 RISK
@@ -1073,7 +1085,10 @@ const IPVlanTab: React.FC<IPVlanTabProps> = ({ language, t }) => {
                                   </div>
                                 </td>
                                 <td className="px-3 py-2 text-[11px] text-black/40 tabular-nums text-right hidden sm:table-cell">
-                                  {subnet.used_ips}/{subnet.total_ips}
+                                  {subnet.used_ips}
+                                </td>
+                                <td className="px-3 py-2 text-[11px] text-black/40 tabular-nums text-right hidden sm:table-cell">
+                                  {subnet.total_ips}
                                 </td>
                                 <td
                                   className={`px-3 py-2 text-[11px] font-semibold tabular-nums text-right hidden md:table-cell ${
@@ -1513,6 +1528,15 @@ const IPVlanTab: React.FC<IPVlanTabProps> = ({ language, t }) => {
                               </button>
                             )}
                           </div>
+                          {addrViewMode === 'table' && (
+                            <TableExportMenu
+                              tableRef={subnetAddressTableRef}
+                              exportData={addressExportData}
+                              filename="ipam-subnet-addresses"
+                              language={language === 'zh' ? 'zh' : 'en'}
+                              disabled={addrTotal === 0}
+                            />
+                          )}
                         </div>
                       </div>
 
@@ -1521,7 +1545,7 @@ const IPVlanTab: React.FC<IPVlanTabProps> = ({ language, t }) => {
                           /* ── IP Block Map (Heatmap) ── */
                           <IPBlockMap language={language} blockMapData={blockMapData} onSelectAddress={openEditIP} />
                         ) : addrViewMode === 'table' ? (
-                          <table className="nx-data-table text-left">
+                          <table ref={subnetAddressTableRef} className="nx-data-table text-left">
                             <thead>
                               <tr className="bg-black/[0.01] border-b border-black/5">
                                 <th className="px-3 py-2.5 text-[10px] font-bold uppercase tracking-widest text-black/40">

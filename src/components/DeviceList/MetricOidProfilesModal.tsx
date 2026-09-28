@@ -1,6 +1,7 @@
 import React, { useEffect, useState } from 'react';
 import { AlertCircle, Cpu, Database, Plus, Sparkles, X } from 'lucide-react';
 import { apiRequest } from '../../api/http';
+import { fetchAllPaginatedItems } from '../../utils/pagination';
 import OidPickerModal, { MibNodeItem } from '../SnmpMib/OidPickerModal';
 import { useEscapeClose } from '../../hooks/useEscapeClose';
 import MibUploadModal from '../SnmpMib/MibUploadModal';
@@ -271,6 +272,17 @@ const MetricOidProfilesModal: React.FC<Props> = ({
     } finally {
       setLoading(false);
     }
+  };
+
+  const loadAllProfilesForExport = (searchTerm: string) => {
+    const params = new URLSearchParams();
+    if (searchTerm.trim()) params.set('search', searchTerm.trim());
+    return fetchAllPaginatedItems<MetricOidProfile>(
+      '/api/platform-registry/snmp-metric-profiles',
+      params,
+      100,
+      { itemsKey: 'data' },
+    );
   };
 
   useEffect(() => {
@@ -1008,6 +1020,7 @@ const MetricOidProfilesModal: React.FC<Props> = ({
               }
             }}
             onValidateMapping={validateMapping}
+            loadAllProfilesForExport={loadAllProfilesForExport}
           />
         </div>
       </div>

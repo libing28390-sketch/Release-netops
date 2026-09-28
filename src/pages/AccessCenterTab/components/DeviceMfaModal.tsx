@@ -2,6 +2,7 @@ import React from 'react';
 import { KeyRound, ShieldCheck, Smartphone, X } from 'lucide-react';
 import { motion } from 'framer-motion';
 import { useEscapeClose } from '../../../hooks/useEscapeClose';
+import { PasswordInputField } from '../../../components/ui/PasswordInputField';
 
 interface MfaTarget {
   device: { hostname: string; ip_address: string; management_port?: number };
@@ -91,22 +92,22 @@ export default function DeviceMfaModal({
               <KeyRound size={14} className="text-cyan-600" />
               {isZh ? '固定安全码（6 位）' : 'Fixed PIN (6 digits)'}
             </span>
-            <div className="relative">
-              <input
-                autoFocus
-                type={showFixedPin ? 'text' : 'password'}
-                inputMode="numeric"
-                maxLength={6}
-                value={fixedPin}
-                onChange={(event) => onFixedPinChange(event.target.value.replace(/\D/g, ''))}
-                onKeyDown={(event) => { if (event.key === 'Enter' && canVerify) onVerify(); }}
-                placeholder="••••••"
-                className="w-full rounded-xl border border-slate-200 bg-white px-4 py-3 pr-12 text-center text-lg font-black tracking-[0.45em] text-slate-800 outline-none transition focus:border-cyan-500 focus:ring-4 focus:ring-cyan-500/10"
-              />
-              <button type="button" tabIndex={-1} onClick={onToggleFixedPin} className="absolute right-3 top-1/2 -translate-y-1/2 text-[11px] font-bold text-slate-400 hover:text-cyan-600">
-                {showFixedPin ? (isZh ? '隐藏' : 'Hide') : (isZh ? '显示' : 'Show')}
-              </button>
-            </div>
+            <PasswordInputField
+              id="device-mfa-fixed-pin"
+              autoFocus
+              inputMode="numeric"
+              maxLength={6}
+              autoComplete="off"
+              visible={showFixedPin}
+              onVisibilityChange={onToggleFixedPin}
+              showPasswordLabel={isZh ? '显示固定安全码' : 'Show fixed PIN'}
+              hidePasswordLabel={isZh ? '隐藏固定安全码' : 'Hide fixed PIN'}
+              value={fixedPin}
+              onChange={(event) => onFixedPinChange(event.target.value.replace(/\D/g, ''))}
+              onKeyDown={(event) => { if (event.key === 'Enter' && canVerify) onVerify(); }}
+              placeholder="••••••"
+              className="rounded-xl border-slate-200 bg-white py-3 text-center text-lg font-black tracking-[0.45em] text-slate-800 focus:border-cyan-500 focus:ring-4 focus:ring-cyan-500/10"
+            />
           </label>
 
           <label className="block">

@@ -181,7 +181,7 @@ export function getRouteContext(pathname: string): RouteContext {
     } else if (second === 'credentials') {
       activeTab = 'credentials';
     } else if (second === 'storage') {
-      activeTab = 'storage';
+      activeTab = parts[2] === 'files' ? 'storage-files' : 'storage';
     } else if (second === 'notifications') {
       activeTab = 'email-settings';
     } else {

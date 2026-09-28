@@ -1,12 +1,15 @@
 import React, { useEffect, useState, useCallback, useRef } from 'react';
 import { AnimatePresence, motion } from 'motion/react';
-import * as XLSX from 'xlsx';
 import { Database, Download, Eye, RefreshCw, Search, X, FileText, Copy, ArrowLeftRight, Trash2, CheckCircle2, AlertTriangle, ChevronDown, ChevronUp, ChevronLeft, ChevronRight, BarChart3, CalendarDays, UploadCloud, Server, Check } from 'lucide-react';
 import Pagination from '../components/Pagination';
 import PageHero from '../components/PageHero';
 import { DataTable } from '../components/DataTable';
 import { ActionButton, ActionIconButton, ActionIconGroup } from '../components/ui/ActionIconButton';
+import { TableActionCell, TableActionHeader } from '../components/ui/TableActionColumn';
+import { PasswordInputField } from '../components/ui/PasswordInputField';
 import { authHeaders } from '../api/http';
+import { fetchAllPaginatedItems } from '../utils/pagination';
+import { buildBackupRunExportData } from './configBackupExport';
 
 interface LatestBackup {
   id: string;
@@ -275,6 +278,7 @@ const ConfigBackupTab: React.FC<ConfigBackupTabProps> = ({
   const [detailSiteFilter, setDetailSiteFilter] = useState('all');
   const [detailStatusFilter, setDetailStatusFilter] = useState<DetailStatusFilter>('all');
   const [detailSearch, setDetailSearch] = useState('');
+  const [loadedDetailFilters, setLoadedDetailFilters] = useState({ site: 'all', status: 'all' as DetailStatusFilter, search: '' });
   const [detailPage, setDetailPage] = useState(1);
   const [detailPageSize, setDetailPageSize] = useState(20);
   const [detailExpanded, setDetailExpanded] = useState(false);
@@ -669,105 +673,16 @@ const ConfigBackupTab: React.FC<ConfigBackupTabProps> = ({
     }
   }, [backupStartDate, backupEndDate, runsPage, runsPageSize, zh, showToast]);
 
-  const exportBackupRuns = async () => {
-    try {
-      const token = localStorage.getItem('netops_token');
-      const headers = token ? { Authorization: `Bearer ${token}` } : {};
-      const params = new URLSearchParams({ page: '1', page_size: '100' });
-      if (backupStartDate) params.set('start_date', backupStartDate);
-      if (backupEndDate) params.set('end_date', backupEndDate);
-      const resp = await fetch(`/api/configs/backup-runs?${params.toString()}`, {
-        headers,
-      });
-      if (!resp.ok) throw new Error('Failed');
-      const data = await resp.json();
-      const batchItems = (data.items || []) as BackupRun[];
-      const details = await Promise.all(batchItems.map(async (run) => {
-        try {
-          const detailResp = await fetch(`/api/configs/backup-runs/${encodeURIComponent(run.id)}?site=all&status=all&page=1&page_size=100`, { headers });
-          if (!detailResp.ok) return [] as BackupRunDevice[];
-          const detailData = await detailResp.json();
-          const devices = [...((detailData.devices || []) as BackupRunDevice[])];
-          const totalDevices = Number(detailData.total || devices.length);
-          for (let pageNumber = 2; pageNumber <= Math.ceil(totalDevices / 100); pageNumber += 1) {
-            const pageResp = await fetch(`/api/configs/backup-runs/${encodeURIComponent(run.id)}?site=all&status=all&page=${pageNumber}&page_size=100`, { headers });
-            if (!pageResp.ok) break;
-            const pageData = await pageResp.json();
-            devices.push(...((pageData.devices || []) as BackupRunDevice[]));
-          }
-          return devices;
-        } catch {
-          return [] as BackupRunDevice[];
-        }
-      }));
-      const formatExportTime = (value?: string | null) => {
-        if (!value) return '';
-        const date = parseIsoDate(value);
-        if (!date) return value;
-        return date.toLocaleString(zh ? 'zh-CN' : 'en-US', {
-          year: 'numeric', month: '2-digit', day: '2-digit',
-          hour: '2-digit', minute: '2-digit', second: '2-digit', hour12: false,
-        });
-      };
-      const statusLabel = (status: string) => {
-        const normalized = String(status || '').toLowerCase();
-        if (normalized === 'success') return zh ? '成功' : 'Success';
-        if (normalized === 'skipped') return zh ? '跳过' : 'Skipped';
-        if (normalized === 'unknown' || normalized === 'pending') return zh ? '未知' : 'Unknown';
-        if (zh) return normalized === 'completed' ? '已完成' : normalized === 'partial' ? '部分成功' : normalized === 'running' ? '执行中' : normalized === 'failed' ? '失败' : (status || '未知');
-        return normalized === 'completed' ? 'Completed' : normalized === 'partial' ? 'Partial' : normalized === 'running' ? 'Running' : normalized === 'failed' ? 'Failed' : (status || 'Unknown');
-      };
-      const parserPlatform = (platform: string) => /(?:h3c|comware)/i.test(String(platform || '')) ? 'h3c_comware' : (platform || '');
-      const batchHeader = zh
-        ? ['批次ID', '开始时间', '结束时间', '耗时(ms)', '触发方式', '执行人', '状态', '设备总数', '成功', '失败', '未知', '跳过', '成功率', 'Site汇总', '错误信息']
-        : ['Batch ID', 'Started', 'Finished', 'Duration(ms)', 'Trigger', 'Author', 'Status', 'Total Devices', 'Success', 'Failed', 'Unknown', 'Skipped', 'Success Rate', 'Site Summary', 'Error'];
-      batchHeader.pop();
-      const batchRows = batchItems.map((run) => {
-        const duration = run.started_at && run.finished_at
-          ? Math.max(0, new Date(run.finished_at).getTime() - new Date(run.started_at).getTime())
-          : '';
-        const unknown = (run.site_summary || []).reduce((sum, site) => sum + Number(site.unknown || 0), 0);
-        const rate = Number(run.total_devices || 0) > 0 ? `${Math.round((Number(run.success_count || 0) / Number(run.total_devices)) * 100)}%` : '0%';
-        const siteSummary = (run.site_summary || []).map((site) => `${site.site}: ${zh ? `成功${site.success}/失败${site.failed}/未知${site.unknown}/跳过${site.skipped}` : `ok ${site.success}/failed ${site.failed}/unknown ${site.unknown}/skipped ${site.skipped}`}`).join('；');
-        return [run.id, formatExportTime(run.started_at), formatExportTime(run.finished_at), duration, run.trigger, run.author, statusLabel(run.status), run.total_devices, run.success_count, run.failed_count, unknown, run.skipped_count, rate, siteSummary, run.error_message || ''];
-      });
-      const deviceHeader = zh
-        ? ['批次ID', '批次开始时间', 'Site', '设备', 'IP地址', '平台', '结果', '原因', '详细说明', '耗时(ms)']
-        : ['Batch ID', 'Batch Started', 'Site', 'Device', 'IP Address', 'Platform', 'Result', 'Reason', 'Detail', 'Duration(ms)'];
-      deviceHeader.splice(6, 0, zh ? '解析器平台' : 'Parser Platform');
-      const deviceRows = batchItems.flatMap((run, index) => details[index].map((device) => [
-        run.id, formatExportTime(run.started_at), device.site || 'Unassigned', device.hostname, device.ip_address,
-        device.platform, parserPlatform(device.platform), statusLabel(device.status), device.reason || '', device.detail || '', device.duration_ms ?? '',
-      ]));
-      const workbook = XLSX.utils.book_new();
-      const summarySheet = XLSX.utils.aoa_to_sheet([batchHeader, ...batchRows.map((row) => row.slice(0, -1))]);
-      const deviceSheet = XLSX.utils.aoa_to_sheet([deviceHeader, ...deviceRows]);
-      summarySheet['!cols'] = [
-        { wch: 34 }, { wch: 20 }, { wch: 20 }, { wch: 12 }, { wch: 12 }, { wch: 12 },
-        { wch: 14 }, { wch: 12 }, { wch: 10 }, { wch: 10 }, { wch: 10 }, { wch: 10 },
-        { wch: 12 }, { wch: 70 }, { wch: 35 },
-      ];
-      deviceSheet['!cols'] = [
-        { wch: 34 }, { wch: 20 }, { wch: 18 }, { wch: 22 }, { wch: 18 }, { wch: 18 },
-        { wch: 14 }, { wch: 18 }, { wch: 24 }, { wch: 54 }, { wch: 12 },
-      ];
-      summarySheet['!autofilter'] = { ref: `A1:${XLSX.utils.encode_col(batchHeader.length - 1)}${batchRows.length + 1}` };
-      deviceSheet['!autofilter'] = { ref: `A1:${XLSX.utils.encode_col(deviceHeader.length - 1)}${deviceRows.length + 1}` };
-      XLSX.utils.book_append_sheet(workbook, summarySheet, zh ? '批次汇总' : 'Batch Summary');
-      XLSX.utils.book_append_sheet(workbook, deviceSheet, zh ? '设备明细' : 'Device Details');
-      XLSX.writeFile(workbook, `backup-runs-${new Date().toISOString().slice(0, 10)}.xlsx`);
-      return;
-
-    } catch {
-      showToast(zh ? '备份报告导出失败' : 'Failed to export backup report', 'error');
-    }
-  };
-
   const loadBackupRunDetails = async (
     runId: string,
     filters: { site?: string; status?: DetailStatusFilter; search?: string; page?: number; pageSize?: number } = {},
   ) => {
     setRunDetailsLoading(true);
+    const appliedFilters = {
+      site: filters.site ?? detailSiteFilter,
+      status: filters.status ?? detailStatusFilter,
+      search: filters.search ?? detailSearch,
+    };
     let controller: AbortController | null = null;
     try {
       detailRequestRef.current?.abort();
@@ -775,9 +690,9 @@ const ConfigBackupTab: React.FC<ConfigBackupTabProps> = ({
       detailRequestRef.current = controller;
       const token = localStorage.getItem('netops_token');
       const params = new URLSearchParams({
-        site: filters.site ?? detailSiteFilter,
-        status: filters.status ?? detailStatusFilter,
-        search: filters.search ?? detailSearch,
+        site: appliedFilters.site,
+        status: appliedFilters.status,
+        search: appliedFilters.search,
         page: String(filters.page ?? detailPage),
         page_size: String(filters.pageSize ?? detailPageSize),
       });
@@ -788,6 +703,7 @@ const ConfigBackupTab: React.FC<ConfigBackupTabProps> = ({
       if (!resp.ok) throw new Error('Failed');
       const data = await resp.json();
       setSelectedRun(data);
+      setLoadedDetailFilters(appliedFilters);
     } catch (error) {
       if (error instanceof DOMException && error.name === 'AbortError') return;
       showToast(zh ? '备份批次详情加载失败' : 'Failed to load backup batch details', 'error');
@@ -1038,6 +954,73 @@ const ConfigBackupTab: React.FC<ConfigBackupTabProps> = ({
     success: detailStatusSummary.success,
     skipped: detailStatusSummary.skipped,
   };
+
+  const exportLatestBackups = useCallback(async () => {
+    const params = new URLSearchParams();
+    if (search.trim()) params.set('search', search.trim());
+    const allRows = await fetchAllPaginatedItems<LatestBackup>('/api/configs/latest-backups', params);
+    const headers = zh
+      ? ['设备名称', 'IP', '厂商', '设备状态', '配置类型', '未保存变更', '最后备份时间', '完整性', 'SHA-256', '大小']
+      : ['Device', 'IP', 'Vendor', 'Device Status', 'Config Type', 'Unsaved Changes', 'Last Backup', 'Integrity', 'SHA-256', 'Size'];
+    return {
+      headers,
+      rows: allRows.map((row) => [
+        row.hostname,
+        row.ip_address || '--',
+        row.vendor || '--',
+        row.device_status === 'online' ? (zh ? '在线' : 'Online') : (zh ? '离线' : 'Offline'),
+        row.config_type === 'startup' ? (zh ? '启动配置' : 'Startup') : (zh ? '运行配置' : 'Running'),
+        Boolean(row.has_unsaved_changes) ? (zh ? '是' : 'Yes') : (zh ? '否' : 'No'),
+        formatTime(row.timestamp),
+        row.integrity_status === 'verified' ? (zh ? '已校验' : 'Verified') : (zh ? '待校验' : 'Unverified'),
+        row.raw_hash || '',
+        formatSize(row.size),
+      ]),
+    };
+  }, [search, zh]);
+
+  const exportBackupRuns = useCallback(async () => {
+    const params = new URLSearchParams();
+    if (backupStartDate) params.set('start_date', backupStartDate);
+    if (backupEndDate) params.set('end_date', backupEndDate);
+    const allRuns = await fetchAllPaginatedItems<BackupRun>('/api/configs/backup-runs', params);
+    return buildBackupRunExportData(allRuns, zh ? 'zh' : 'en', formatTime);
+  }, [backupStartDate, backupEndDate, zh]);
+
+  const exportBackupRunDetails = useCallback(async () => {
+    if (!selectedRun?.run.id) throw new Error('Select a backup batch before exporting its details');
+    const params = new URLSearchParams({
+      site: loadedDetailFilters.site,
+      status: loadedDetailFilters.status,
+      search: loadedDetailFilters.search,
+    });
+    const devices = await fetchAllPaginatedItems<BackupRunDevice>(
+      `/api/configs/backup-runs/${encodeURIComponent(selectedRun.run.id)}`,
+      params,
+      100,
+      { itemsKey: 'devices' },
+    );
+    return {
+      headers: zh
+        ? ['站点', '设备', '平台', 'IP', '结果', '原因', '详细说明', '耗时']
+        : ['Site', 'Device', 'Platform', 'IP', 'Result', 'Reason', 'Detail', 'Duration'],
+      rows: devices.map((device) => {
+        const ok = device.status === 'success';
+        const failed = device.status === 'failed';
+        const skipped = device.status === 'skipped';
+        return [
+          device.site || (zh ? '未分配' : 'Unassigned'),
+          device.hostname || '--',
+          device.platform || '--',
+          device.ip_address || '--',
+          ok ? (zh ? '成功' : 'Success') : failed ? (zh ? '失败' : 'Failed') : skipped ? (zh ? '跳过' : 'Skipped') : (zh ? '未知' : 'Unknown'),
+          device.reason || '--',
+          device.detail || '--',
+          device.duration_ms != null ? `${device.duration_ms} ms` : '--',
+        ];
+      }),
+    };
+  }, [selectedRun?.run.id, loadedDetailFilters, zh]);
 
   return (
     <div className="flex flex-col h-full overflow-hidden">
@@ -1451,22 +1434,26 @@ const ConfigBackupTab: React.FC<ConfigBackupTabProps> = ({
 
         {/* Table */}
         <div className="overflow-x-auto">
-          <DataTable className="min-w-full text-left">
+          <DataTable className="min-w-full text-left" exportConfig={{ filename: 'config-backup-latest', language: zh ? 'zh' : 'en', disabled: loading || rows.length === 0, exportData: exportLatestBackups }}>
             <thead>
               <tr className="border-y border-black/5 bg-[#f8fafc] text-[11px] font-bold uppercase tracking-[0.16em] text-black/40">
                 <th className="px-5 py-3">{zh ? '设备名称' : 'Device'}</th>
                 <th className="px-5 py-3">IP</th>
                 <th className="px-5 py-3">{zh ? '厂商' : 'Vendor'}</th>
+                <th className="px-5 py-3">{zh ? '设备状态' : 'Device Status'}</th>
+                <th className="px-5 py-3">{zh ? '配置类型' : 'Config Type'}</th>
+                <th className="px-5 py-3">{zh ? '未保存变更' : 'Unsaved Changes'}</th>
                 <th className="px-5 py-3">{zh ? '最后备份时间' : 'Last Backup'}</th>
-                <th className="px-5 py-3">{zh ? '完整性 / 指纹' : 'Integrity / Hash'}</th>
+                <th className="px-5 py-3">{zh ? '完整性' : 'Integrity'}</th>
+                <th className="px-5 py-3">{zh ? 'SHA-256' : 'SHA-256'}</th>
                 <th className="px-5 py-3">{zh ? '大小' : 'Size'}</th>
-                <th className="px-5 py-3 text-right">{zh ? '操作' : 'Actions'}</th>
+                <TableActionHeader className="px-5 py-3">{zh ? '操作' : 'Actions'}</TableActionHeader>
               </tr>
             </thead>
             <tbody>
               {loading ? (
                 <tr>
-                  <td colSpan={7} className="px-5 py-12 text-center text-sm text-black/40">
+                  <td colSpan={11} className="px-5 py-12 text-center text-sm text-black/40">
                     {zh ? '正在加载...' : 'Loading...'}
                   </td>
                 </tr>
@@ -1474,28 +1461,7 @@ const ConfigBackupTab: React.FC<ConfigBackupTabProps> = ({
                 rows.map(row => (
                   <tr key={row.device_id} className="border-b border-black/5 hover:bg-black/[0.02] transition-colors">
                     <td className="px-5 py-4 align-top">
-                      <div className="flex flex-wrap items-center gap-1.5">
-                        <div className={`h-2 w-2 flex-shrink-0 rounded-full ${row.device_status === 'online' ? 'bg-emerald-500' : 'bg-red-400'}`} />
-                        <span className="text-sm font-semibold text-[#164e63]">{row.hostname}</span>
-                        {row.config_type === 'startup' ? (
-                          <span className="rounded-full bg-blue-50 px-2 py-0.5 text-[9px] font-bold text-blue-600 border border-blue-100">
-                            {zh ? '启动配置' : 'Startup'}
-                          </span>
-                        ) : (
-                          <span className="rounded-full bg-emerald-50 px-2 py-0.5 text-[9px] font-bold text-emerald-600 border border-emerald-100">
-                            {zh ? '运行配置' : 'Running'}
-                          </span>
-                        )}
-                        {Boolean(row.has_unsaved_changes) && (
-                          <span
-                            className="inline-flex items-center gap-1 rounded-full bg-amber-50 px-2 py-0.5 text-[9px] font-bold text-amber-700 border border-amber-200"
-                            title={row.unsaved_diff_summary || (zh ? '存在未保存运行配置' : 'Unsaved changes detected')}
-                          >
-                            <AlertTriangle size={10} />
-                            {zh ? '未保存' : 'Unsaved'}
-                          </span>
-                        )}
-                      </div>
+                      <span data-export-primary className="text-sm font-semibold text-[#164e63]">{row.hostname}</span>
                     </td>
                     <td className="px-5 py-4 align-top text-sm font-mono text-black/55">{row.ip_address || '--'}</td>
                     <td className="px-5 py-4 align-top">
@@ -1503,9 +1469,12 @@ const ConfigBackupTab: React.FC<ConfigBackupTabProps> = ({
                         {row.vendor || '--'}
                       </span>
                     </td>
+                    <td className="px-5 py-4 align-top text-sm text-black/50">{row.device_status === 'online' ? (zh ? '在线' : 'Online') : (zh ? '离线' : 'Offline')}</td>
+                    <td className="px-5 py-4 align-top text-sm text-black/50">{row.config_type === 'startup' ? (zh ? '启动配置' : 'Startup') : (zh ? '运行配置' : 'Running')}</td>
+                    <td className="px-5 py-4 align-top text-sm text-black/50">{Boolean(row.has_unsaved_changes) ? (zh ? '是' : 'Yes') : (zh ? '否' : 'No')}</td>
                     <td className="px-5 py-4 align-top">
-                      <div className="text-sm text-black/60">{formatTime(row.timestamp)}</div>
-                      <div className="mt-0.5 text-xs text-black/35">{timeSince(row.timestamp)}</div>
+                      <div data-export-primary className="text-sm text-black/60">{formatTime(row.timestamp)}</div>
+                      <div data-export-ignore className="mt-0.5 text-xs text-black/35">{timeSince(row.timestamp)}</div>
                     </td>
                     <td className="px-5 py-4 align-top">
                       <span className={`inline-flex rounded-full px-2 py-0.5 text-[10px] font-semibold ${
@@ -1517,13 +1486,11 @@ const ConfigBackupTab: React.FC<ConfigBackupTabProps> = ({
                           ? (zh ? '已校验' : 'Verified')
                           : (zh ? '待校验' : 'Unverified')}
                       </span>
-                      <div className="mt-1 max-w-[140px] truncate font-mono text-[10px] text-black/35" title={row.raw_hash || ''}>
-                        {row.raw_hash ? `sha256:${row.raw_hash.slice(0, 12)}…` : 'sha256:—'}
-                      </div>
-                      <div className="text-[10px] text-black/30">{row.line_count || 0} {zh ? '行' : 'lines'} · {row.section_count || 0} sections</div>
+                      <div data-export-ignore className="text-[10px] text-black/30">{row.line_count || 0} {zh ? '行' : 'lines'} · {row.section_count || 0} sections</div>
                     </td>
+                    <td className="px-5 py-4 align-top font-mono text-[10px] text-black/50 break-all" title={row.raw_hash || ''}>{row.raw_hash || '—'}</td>
                     <td className="px-5 py-4 align-top text-sm text-black/50 font-mono">{formatSize(row.size)}</td>
-                    <td className="px-5 py-4 align-top text-right">
+                    <TableActionCell className="px-5 py-4 align-top">
                       <ActionIconGroup label={zh ? '备份操作' : 'Backup actions'}>
                         <ActionIconButton
                           icon={tftpSyncingSnapshotId === row.id ? RefreshCw : UploadCloud}
@@ -1569,12 +1536,12 @@ const ConfigBackupTab: React.FC<ConfigBackupTabProps> = ({
                           disabled={!row.id}
                         />
                       </ActionIconGroup>
-                    </td>
+                    </TableActionCell>
                   </tr>
                 ))
               ) : (
                 <tr>
-                  <td colSpan={7} className="px-5 py-16 text-center">
+                  <td colSpan={11} className="px-5 py-16 text-center">
                     <div className="flex flex-col items-center gap-3 text-black/25">
                       <FileText size={36} strokeWidth={1} />
                       <p className="text-sm font-medium">{zh ? '暂无配置备份' : 'No config backups yet'}</p>
@@ -1658,9 +1625,6 @@ const ConfigBackupTab: React.FC<ConfigBackupTabProps> = ({
                 {zh ? '清除日期' : 'Clear date'}
               </button>
             )}
-            <ActionButton icon={Download} variant="accent" size="sm" onClick={() => void exportBackupRuns()}>
-              {zh ? '导出' : 'Export'}
-            </ActionButton>
             <button
               type="button"
               onClick={() => setShowHistory((visible) => !visible)}
@@ -1685,15 +1649,21 @@ const ConfigBackupTab: React.FC<ConfigBackupTabProps> = ({
           <div className="px-5 py-8 text-center text-sm text-black/35">{zh ? '暂无备份批次记录' : 'No backup batches recorded yet.'}</div>
         ) : showHistory ? (
           <div className="max-h-[420px] overflow-auto">
-            <DataTable className="min-w-full text-left">
+            <DataTable className="min-w-full text-left" exportConfig={{ filename: 'config-backup-history', language: zh ? 'zh' : 'en', disabled: runsLoading || historyRuns.length === 0, exportData: exportBackupRuns }}>
               <thead className="sticky top-0 z-10">
                 <tr className="border-b border-black/5 bg-[#f8fafc] text-[10px] font-bold uppercase tracking-[0.14em] text-black/40">
                   <th className="px-5 py-3">{zh ? '开始时间' : 'Started'}</th>
                   <th className="px-5 py-3">{zh ? '触发方式' : 'Trigger'}</th>
+                  <th className="px-5 py-3">{zh ? '执行人' : 'Operator'}</th>
                   <th className="px-5 py-3">{zh ? 'Site' : 'Sites'}</th>
-                  <th className="px-5 py-3">{zh ? '结果' : 'Result'}</th>
-                  <th className="px-5 py-3 text-right">{zh ? '设备数' : 'Devices'}</th>
-                  <th className="px-5 py-3 text-right">{zh ? '操作' : 'Action'}</th>
+                  <th className="px-5 py-3">{zh ? '站点结果' : 'Site Results'}</th>
+                  <th className="px-5 py-3">{zh ? '状态' : 'Status'}</th>
+                  <th className="px-5 py-3 text-right">{zh ? '成功设备数' : 'Successful Devices'}</th>
+                  <th className="px-5 py-3 text-right">{zh ? '失败设备数' : 'Failed Devices'}</th>
+                  <th className="px-5 py-3 text-right">{zh ? '未知设备数' : 'Unknown Devices'}</th>
+                  <th className="px-5 py-3 text-right">{zh ? '跳过设备数' : 'Skipped Devices'}</th>
+                  <th className="px-5 py-3 text-right">{zh ? '设备总数' : 'Total Devices'}</th>
+                  <TableActionHeader className="px-5 py-3">{zh ? '操作' : 'Action'}</TableActionHeader>
                 </tr>
               </thead>
               <tbody>
@@ -1706,49 +1676,55 @@ const ConfigBackupTab: React.FC<ConfigBackupTabProps> = ({
                     <tr key={run.id} className="border-b border-black/5 last:border-0 hover:bg-black/[0.02]">
                       <td className="px-5 py-3 text-sm text-black/60">{formatTime(run.started_at)}</td>
                       <td className="px-5 py-3 text-xs font-semibold text-black/55">
-                        <div>{run.trigger || '--'}</div>
-                        <div className="mt-0.5 text-[10px] font-normal text-black/35">{run.author || '--'}</div>
+                        {run.trigger || '--'}
                       </td>
+                      <td className="px-5 py-3 text-xs text-black/50">{run.author || '--'}</td>
                       <td className="px-5 py-3 text-xs text-black/50">
                         <div className="flex max-w-[280px] flex-wrap gap-1">
-                          {(run.site_summary || []).slice(0, 3).map((site) => {
+                          {(run.site_summary || []).map((site) => (
+                            <span key={site.site} className="rounded-full bg-slate-100 px-2 py-0.5 text-[10px] font-semibold text-slate-600">
+                              {site.site}
+                            </span>
+                          ))}
+                          {(run.site_summary || []).length === 0 && '--'}
+                        </div>
+                      </td>
+                      <td className="px-5 py-3 text-xs text-black/50">
+                        <div className="flex max-w-[360px] flex-wrap gap-1">
+                          {(run.site_summary || []).map((site) => {
                             const siteAttention = Number(site.failed || 0) + Number(site.unknown || 0);
                             return (
                               <span
                                 key={site.site}
-                                title={`${site.site}: ${site.success} success, ${site.failed} failed, ${site.unknown} unknown`}
+                                title={`${site.site}: ${site.success} success, ${site.failed} failed, ${site.unknown} unknown, ${site.skipped} skipped`}
                                 className={`rounded-full px-2 py-0.5 text-[10px] font-semibold ${siteAttention > 0 ? 'bg-red-50 text-red-700' : 'bg-emerald-50 text-emerald-700'}`}
                               >
-                                {site.site} · {siteAttention > 0 ? `${zh ? '异常' : 'attention'} ${siteAttention}` : `${zh ? '成功' : 'ok'} ${site.success}`}
+                                {siteAttention > 0 ? `${zh ? '异常' : 'Attention'} ${siteAttention}` : `${zh ? '成功' : 'Success'} ${site.success}`}
                               </span>
                             );
                           })}
-                          {(run.site_summary?.length || 0) > 3 && (
-                            <span className="rounded-full bg-slate-100 px-2 py-0.5 text-[10px] font-semibold text-slate-500">
-                              +{(run.site_summary?.length || 0) - 3} {zh ? '个 Site' : 'sites'}
-                            </span>
-                          )}
+                          {(run.site_summary || []).length === 0 && '--'}
                         </div>
                       </td>
                       <td className="px-5 py-3">
-                        <div className="flex flex-wrap items-center gap-1.5">
-                          <span className={`inline-flex items-center gap-1 rounded-full px-2 py-0.5 text-[10px] font-semibold ${failed > 0 || unknown > 0 ? 'bg-amber-50 text-amber-700' : 'bg-emerald-50 text-emerald-700'}`}>
-                            {failed > 0 || unknown > 0 ? <AlertTriangle size={11} /> : <CheckCircle2 size={11} />}
-                            {statusLabel}
-                          </span>
-                          <span className="text-[10px] text-black/35">{run.success_count || 0} ✓ / {failed} ! / {unknown} ? / {run.skipped_count || 0} {zh ? '跳过' : 'skipped'}</span>
-                        </div>
+                        <span className={`inline-flex items-center gap-1 rounded-full px-2 py-0.5 text-[10px] font-semibold ${failed > 0 || unknown > 0 ? 'bg-amber-50 text-amber-700' : 'bg-emerald-50 text-emerald-700'}`}>
+                          {failed > 0 || unknown > 0 ? <AlertTriangle size={11} /> : <CheckCircle2 size={11} />}
+                          {statusLabel}
+                        </span>
                       </td>
+                      <td className="px-5 py-3 text-right text-xs font-mono text-black/50">{run.success_count || 0}</td>
+                      <td className="px-5 py-3 text-right text-xs font-mono text-black/50">{failed}</td>
+                      <td className="px-5 py-3 text-right text-xs font-mono text-black/50">{unknown}</td>
+                      <td className="px-5 py-3 text-right text-xs font-mono text-black/50">{run.skipped_count || 0}</td>
                       <td className="px-5 py-3 text-right text-xs font-mono text-black/50">{run.total_devices || 0}</td>
-                      <td className="px-5 py-3 text-right">
-                        <button
+                      <TableActionCell className="px-5 py-3">
+                        <ActionIconButton
+                          icon={Eye}
+                          label={zh ? '查看详情' : 'View details'}
+                          variant="accent"
                           onClick={() => openBackupRunDetails(run.id)}
-                          className="inline-flex h-8 items-center gap-1 rounded-lg border border-black/10 bg-white px-2.5 text-[11px] font-semibold text-[#0e7490] hover:bg-[#ecfeff]"
-                        >
-                          <Eye size={12} />
-                          {zh ? '详情' : 'Details'}
-                        </button>
-                      </td>
+                        />
+                      </TableActionCell>
                     </tr>
                   );
                 })}
@@ -1893,13 +1869,16 @@ const ConfigBackupTab: React.FC<ConfigBackupTabProps> = ({
                       })}
                     </div>}
                     <div className="overflow-x-auto rounded-2xl border border-black/5">
-                    <DataTable className="min-w-full text-left">
+                    <DataTable className="min-w-full text-left" exportConfig={{ filename: 'config-backup-run-details', language: zh ? 'zh' : 'en', disabled: runDetailsLoading || !selectedRun || selectedRun.total === 0, exportData: exportBackupRunDetails }}>
                       <thead>
                         <tr className="border-b border-black/5 bg-[#f8fafc] text-[10px] font-bold uppercase tracking-[0.14em] text-black/40">
+                          <th className="px-4 py-3">{zh ? '站点' : 'Site'}</th>
                           <th className="px-4 py-3">{zh ? '设备' : 'Device'}</th>
+                          <th className="px-4 py-3">{zh ? '平台' : 'Platform'}</th>
                           <th className="px-4 py-3">IP</th>
                           <th className="px-4 py-3">{zh ? '结果' : 'Result'}</th>
-                          <th className="px-4 py-3">{zh ? '原因/说明' : 'Reason / Detail'}</th>
+                          <th className="px-4 py-3">{zh ? '原因' : 'Reason'}</th>
+                          <th className="px-4 py-3">{zh ? '详细说明' : 'Detail'}</th>
                           <th className="px-4 py-3 text-right">{zh ? '耗时' : 'Duration'}</th>
                         </tr>
                       </thead>
@@ -1907,7 +1886,7 @@ const ConfigBackupTab: React.FC<ConfigBackupTabProps> = ({
                         {selectedRunSiteGroups.map(([site, devices]) => (
                           <React.Fragment key={site}>
                             {detailSiteFilter === 'all' && <tr className="border-b border-black/5 bg-slate-50/80">
-                              <td colSpan={5} className="px-4 py-2.5">
+                              <td colSpan={8} className="px-4 py-2.5">
                                 <div className="flex flex-wrap items-center gap-2">
                                   <span className="text-xs font-bold text-[#164e63]">{site === 'Unassigned' && zh ? '未分配 Site' : site}</span>
                                   <span className="text-[10px] text-black/40">{devices.length} {zh ? '台设备' : 'devices'}</span>
@@ -1921,12 +1900,13 @@ const ConfigBackupTab: React.FC<ConfigBackupTabProps> = ({
                            const unknown = !ok && !failed && !skipped;
                           return (
                             <tr key={device.id} onClick={() => void handleViewBackupDevice(device)} className="cursor-pointer border-b border-black/5 last:border-0 hover:bg-cyan-50/40">
+                              <td className="px-4 py-3 text-xs text-black/50">{device.site || (zh ? '未分配' : 'Unassigned')}</td>
                               <td className="px-4 py-3">
-                                <button type="button" onClick={(event) => { event.stopPropagation(); void handleViewBackupDevice(device); }} className="text-left text-sm font-semibold text-[#0e7490] hover:underline">
+                                <button data-export-primary type="button" onClick={(event) => { event.stopPropagation(); void handleViewBackupDevice(device); }} className="text-left text-sm font-semibold text-[#0e7490] hover:underline">
                                   {device.hostname || '--'}
                                 </button>
-                                <div className="mt-0.5 text-[10px] text-black/35">{device.platform || '--'}</div>
                               </td>
+                              <td className="px-4 py-3 text-xs text-black/50">{device.platform || '--'}</td>
                               <td className="px-4 py-3 text-xs font-mono text-black/50">{device.ip_address || '--'}</td>
                               <td className="px-4 py-3">
                                 <span className={`inline-flex items-center gap-1 rounded-full px-2 py-0.5 text-[10px] font-semibold ${ok ? 'bg-emerald-50 text-emerald-700' : failed ? 'bg-red-50 text-red-700' : unknown ? 'bg-amber-50 text-amber-700' : 'bg-slate-100 text-slate-600'}`}>
@@ -1934,14 +1914,8 @@ const ConfigBackupTab: React.FC<ConfigBackupTabProps> = ({
                                   {ok ? (zh ? '成功' : 'Success') : failed ? (zh ? '失败' : 'Failed') : skipped ? (zh ? '跳过' : 'Skipped') : (zh ? '未知' : 'Unknown')}
                                 </span>
                               </td>
-                              <td className="max-w-[420px] px-4 py-3">
-                                <div className="text-xs font-semibold text-black/75">{device.reason || '--'}</div>
-                                {device.detail && (
-                                  <div className="mt-0.5 text-[11px] leading-relaxed text-black/45 break-words" title={device.detail}>
-                                    {device.detail}
-                                  </div>
-                                )}
-                              </td>
+                              <td className="max-w-[240px] px-4 py-3 text-xs font-semibold text-black/75">{device.reason || '--'}</td>
+                              <td className="max-w-[420px] px-4 py-3 text-[11px] leading-relaxed text-black/45 break-words" title={device.detail}>{device.detail || '--'}</td>
                               <td className="px-4 py-3 text-right text-xs font-mono text-black/45">{device.duration_ms != null ? `${device.duration_ms} ms` : '--'}</td>
                             </tr>
                           );
@@ -2162,8 +2136,9 @@ const ConfigBackupTab: React.FC<ConfigBackupTabProps> = ({
                     </div>
                     <div className="space-y-1.5">
                       <label className="text-xs font-semibold text-slate-700">{zh ? '密码' : 'Password'}</label>
-                      <input
-                        type="password"
+                      <PasswordInputField
+                        showPasswordLabel={zh ? '显示密码' : 'Show password'}
+                        hidePasswordLabel={zh ? '隐藏密码' : 'Hide password'}
                         placeholder={tftpSettings.password_configured ? (zh ? '已配置，留空保持不变' : 'Configured; leave blank to keep') : ''}
                         value={tftpSettings.password}
                         onChange={(e) => setTftpSettings({ ...tftpSettings, password: e.target.value })}

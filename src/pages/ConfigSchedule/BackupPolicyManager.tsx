@@ -9,6 +9,7 @@ import TagConditionPicker, {
   type TagFilterConfig,
 } from '../../components/TagConditionPicker';
 import { ActionIconButton, ActionIconGroup } from '../../components/ui/ActionIconButton';
+import { PasswordInputField } from '../../components/ui/PasswordInputField';
 import { useEscapeClose } from '../../hooks/useEscapeClose';
 import type { Device } from '../../types';
 
@@ -639,8 +640,9 @@ const BackupPolicyManager: React.FC<BackupPolicyManagerProps> = ({
                             </label>
                             <label className="text-[11px] font-semibold text-slate-500">
                               {zh ? '密码' : 'Password'}
-                              <input
-                                type="password"
+                              <PasswordInputField
+                                showPasswordLabel={zh ? '显示密码' : 'Show password'}
+                                hidePasswordLabel={zh ? '隐藏密码' : 'Hide password'}
                                 placeholder={draft.tftp_password ? '' : (zh ? '留空保持已配置密码' : 'Leave blank to keep configured password')}
                                 value={draft.tftp_password}
                                 onChange={(event) => updateDraft({ tftp_password: event.target.value })}

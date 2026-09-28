@@ -334,9 +334,10 @@ def _storage_error_columns(
     *,
     service=None,
 ) -> tuple:
-    spool = write_config_spool(snapshot_id, content, config_type)
     service = service or build_storage_service(purpose='config_backup')
-    relative_key = object_key_for_snapshot(snapshot_id, ts, config_type)
+    encrypted = service.name != 's3'
+    spool = write_config_spool(snapshot_id, content, config_type, encrypted=encrypted)
+    relative_key = object_key_for_snapshot(snapshot_id, ts, config_type, encrypted=encrypted)
     return (
         service.name,
         getattr(service, 'storage_config_id', None),
@@ -1041,13 +1042,14 @@ def create_snapshot(body: SnapshotCreate):
         )
     except Exception as exc:
         logger.error("[Storage] Config snapshot %s upload failed: %s", snap_id, type(exc).__name__)
-        # Preserve the already-validated encrypted payload as an explicit
-        # spool so the scheduled retry job can publish it later.  This is not
+        # Preserve the prepared storage payload as an explicit spool so the
+        # scheduled retry job can publish it later. This is not
         # a provider fallback: the row remains bound to the configured
         # provider and is visibly marked STORAGE_ERROR.
         try:
-            spool = write_config_spool(snap_id, body.content, 'running')
             failed_service = storage_service or build_storage_service(purpose='config_backup')
+            encrypted = failed_service.name != 's3'
+            spool = write_config_spool(snap_id, body.content, 'running', encrypted=encrypted)
             conn_error = get_db_connection()
             try:
                 conn_error.execute(
@@ -1063,9 +1065,9 @@ def create_snapshot(body: SnapshotCreate):
                      body.author, body.tag or '', '', size, metadata['raw_hash'], metadata['normalized_hash'],
                      metadata['line_count'], metadata['section_count'], metadata['integrity_status'],
                      metadata['lifecycle_status'], metadata['normalizer_version'], ts.isoformat(), '',
-                     failed_service.name, getattr(failed_service, 'storage_config_id', None),
-                     failed_service.bucket if failed_service.name == 's3' else '',
-                     failed_service.full_key(object_key_for_snapshot(snap_id, ts, 'running')), '', spool.stat().st_size, '',
+                      failed_service.name, getattr(failed_service, 'storage_config_id', None),
+                      failed_service.bucket if failed_service.name == 's3' else '',
+                      failed_service.full_key(object_key_for_snapshot(snap_id, ts, 'running', encrypted=encrypted)), '', spool.stat().st_size, '',
                      CONFIG_CONTENT_TYPE, 'ERROR', 'storage upload failed', _utc_now_iso(), str(spool))
                 )
                 conn_error.commit()

@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useCallback, useMemo } from 'react';
+import React, { useState, useEffect, useCallback, useMemo, useRef } from 'react';
 import {
   ClipboardCheck,
   AlertTriangle,
@@ -19,8 +19,11 @@ import { motion, AnimatePresence } from 'framer-motion';
 import PageHero from '../../components/PageHero';
 import Pagination from '../../components/Pagination';
 import { ActionIconButton } from '../../components/ui/ActionIconButton';
+import { TableExportMenu } from '../../components/ui/TableExportMenu';
 import { useEscapeClose } from '../../hooks/useEscapeClose';
+import { buildVisibleIpamExportData, fetchAllIpamReconciliationItems } from './ipamExport';
 
+import { TableActionCell, TableActionHeader } from '../../components/ui/TableActionColumn';
 interface UndocumentedEndpoint {
   ip: string;
   mac: string;
@@ -82,6 +85,7 @@ interface IPReconciliationTabProps {
 }
 
 const IPReconciliationTab: React.FC<IPReconciliationTabProps> = ({ language, t }) => {
+  const tableRef = useRef<HTMLTableElement>(null);
   const zh = language === 'zh';
   const [data, setData] = useState<ReconciliationData>({
     undocumented_endpoints: [],
@@ -296,6 +300,67 @@ const IPReconciliationTab: React.FC<IPReconciliationTabProps> = ({ language, t }
 
   const paginatedList = filteredList;
 
+  const exportData = useCallback(async () => {
+    const params = new URLSearchParams({ active_tab: activeTab, q: search.trim() });
+    if (activeTab === 'undocumented') {
+      const allItems = await fetchAllIpamReconciliationItems<UndocumentedEndpoint>('/api/ipam/reconciliation', params, activeTab);
+      const query = search.trim().toLowerCase();
+      const matchingItems = allItems.filter((item) => !query
+        || item.ip.includes(query)
+        || (item.hostname || '').toLowerCase().includes(query)
+        || (item.mac || '').toLowerCase().includes(query)
+        || (item.subnet_prefix || '').toLowerCase().includes(query));
+      return buildVisibleIpamExportData(tableRef.current, [
+        { header: zh ? 'IP地址' : 'IP Address', value: (item) => item.ip },
+        { header: zh ? '发现 MAC' : 'Discovered MAC', value: (item) => item.mac || '-' },
+        { header: zh ? '发现主机名' : 'Hostname', value: (item) => item.hostname || '-' },
+        { header: zh ? '接入交换机' : 'Access Switch', value: (item) => item.switch_name || '-' },
+        { header: zh ? '交换机端口' : 'Switch Port', value: (item) => item.switch_port || '-' },
+        { header: 'VLAN', value: (item) => item.vlan || '-' },
+        { header: zh ? '网段前缀' : 'Prefix', value: (item) => item.subnet_prefix || '-' },
+        { header: zh ? '网段名称' : 'Subnet Name', value: (item) => item.subnet_name || '-' },
+        { header: zh ? '发现来源' : 'Source Type', value: (item) => item.source_type || '-' },
+        { header: zh ? '置信度' : 'Confidence', value: (item) => item.confidence || '-' },
+        { header: zh ? '最后活跃时间' : 'Last Seen', value: (item) => item.last_seen || '-' },
+      ], matchingItems);
+    }
+    if (activeTab === 'stale') {
+      const allItems = await fetchAllIpamReconciliationItems<StaleIPAddress>('/api/ipam/reconciliation', params, activeTab);
+      const query = search.trim().toLowerCase();
+      const matchingItems = allItems.filter((item) => !query
+        || item.address.includes(query)
+        || (item.hostname || '').toLowerCase().includes(query)
+        || (item.mac_address || '').toLowerCase().includes(query)
+        || (item.subnet_prefix || '').toLowerCase().includes(query));
+      return buildVisibleIpamExportData(tableRef.current, [
+        { header: zh ? 'IP地址' : 'IP Address', value: (item) => item.address },
+        { header: zh ? '登记 MAC' : 'Documented MAC', value: (item) => item.mac_address || '-' },
+        { header: zh ? '登记主机名' : 'Hostname', value: (item) => item.hostname || '-' },
+        { header: zh ? '网段前缀' : 'Prefix', value: (item) => item.subnet_prefix || '-' },
+        { header: zh ? '网段名称' : 'Subnet Name', value: (item) => item.subnet_name || '-' },
+        { header: zh ? '登记状态' : 'Status', value: (item) => item.status.toUpperCase() },
+      ], matchingItems);
+    }
+
+    const allItems = await fetchAllIpamReconciliationItems<MismatchedEndpoint>('/api/ipam/reconciliation', params, activeTab);
+    const query = search.trim().toLowerCase();
+    const matchingItems = allItems.filter((item) => !query
+      || item.ip.includes(query)
+      || (item.ipam_hostname || '').toLowerCase().includes(query)
+      || (item.endpoint_hostname || '').toLowerCase().includes(query)
+      || (item.ipam_mac || '').toLowerCase().includes(query)
+      || (item.endpoint_mac || '').toLowerCase().includes(query));
+    return buildVisibleIpamExportData(tableRef.current, [
+      { header: zh ? 'IP地址' : 'IP Address', value: (item) => item.ip },
+      { header: zh ? '登记 MAC' : 'IPAM MAC', value: (item) => item.ipam_mac || '(Empty)' },
+      { header: zh ? '发现 MAC' : 'Discovered MAC', value: (item) => item.endpoint_mac || '(Empty)' },
+      { header: zh ? '登记主机名' : 'IPAM Hostname', value: (item) => item.ipam_hostname || '(Empty)' },
+      { header: zh ? '发现主机名' : 'Discovered Hostname', value: (item) => item.endpoint_hostname || '(Empty)' },
+      { header: zh ? '网段前缀' : 'Prefix', value: (item) => item.subnet_prefix || '-' },
+      { header: zh ? '网段名称' : 'Subnet Name', value: (item) => item.subnet_name || '-' },
+    ], matchingItems);
+  }, [activeTab, search, zh]);
+
   useEffect(() => {
     setPage(1);
   }, [activeTab, search]);
@@ -422,7 +487,8 @@ const IPReconciliationTab: React.FC<IPReconciliationTabProps> = ({ language, t }
           </h4>
 
           {/* Search */}
-          <div className="relative w-full md:w-64">
+          <div className="flex w-full items-center gap-2 md:w-auto">
+            <div className="relative w-full md:w-64">
             <Search size={14} className="absolute left-3.5 top-1/2 -translate-y-1/2 text-gray-400" />
             <input
               type="text"
@@ -431,6 +497,8 @@ const IPReconciliationTab: React.FC<IPReconciliationTabProps> = ({ language, t }
               placeholder={zh ? '过滤搜索 IP / MAC / 描述...' : 'Filter IP / MAC...'}
               className="w-full pl-10 pr-4 py-1.5 text-xs rounded-xl border border-black/5 bg-gray-50/50 outline-none focus:border-cyan-400 focus:bg-white transition-all font-medium"
             />
+            </div>
+            <TableExportMenu tableRef={tableRef} exportData={exportData} filename="ipam-reconciliation" language={zh ? 'zh' : 'en'} disabled={loading || resultTotal === 0} />
           </div>
         </div>
 
@@ -442,7 +510,7 @@ const IPReconciliationTab: React.FC<IPReconciliationTabProps> = ({ language, t }
               {zh ? '正在执行网络对账分析...' : 'Auditing databases...'}
             </div>
           ) : (
-            <table className="nx-data-table text-left">
+            <table ref={tableRef} className="nx-data-table text-left">
               {/* Tab 1: Undocumented */}
               {activeTab === 'undocumented' && (
                 <>
@@ -451,11 +519,15 @@ const IPReconciliationTab: React.FC<IPReconciliationTabProps> = ({ language, t }
                       <th className="pl-6 py-4">{zh ? 'IP地址' : 'IP Address'}</th>
                       <th className="px-4 py-4">{zh ? '发现 MAC' : 'Discovered MAC'}</th>
                       <th className="px-4 py-4">{zh ? '发现主机名' : 'Hostname'}</th>
-                      <th className="px-4 py-4">{zh ? '接入交换机 / 端口' : 'Access Switch / Port'}</th>
+                      <th className="px-4 py-4">{zh ? '接入交换机' : 'Access Switch'}</th>
+                      <th className="px-4 py-4">{zh ? '交换机端口' : 'Switch Port'}</th>
                       <th className="px-4 py-4">{zh ? 'VLAN' : 'VLAN'}</th>
-                      <th className="px-4 py-4">{zh ? '匹配的网段前缀' : 'Resolved Prefix'}</th>
+                      <th className="px-4 py-4">{zh ? '网段前缀' : 'Prefix'}</th>
+                      <th className="px-4 py-4">{zh ? '网段名称' : 'Subnet Name'}</th>
+                      <th className="px-4 py-4">{zh ? '发现来源' : 'Source Type'}</th>
+                      <th className="px-4 py-4">{zh ? '置信度' : 'Confidence'}</th>
                       <th className="px-4 py-4">{zh ? '最后活跃时间' : 'Last Seen'}</th>
-                      <th className="pr-6 py-4 text-right">{zh ? '操作' : 'Actions'}</th>
+                      <TableActionHeader className="pr-6 py-4 text-right">{zh ? '操作' : 'Actions'}</TableActionHeader>
                     </tr>
                   </thead>
                   <tbody>
@@ -465,35 +537,27 @@ const IPReconciliationTab: React.FC<IPReconciliationTabProps> = ({ language, t }
                           <td className="pl-6 py-4 font-mono font-bold text-xs text-gray-800">{node.ip}</td>
                           <td className="px-4 py-4 font-mono text-xs text-gray-500">{node.mac}</td>
                           <td className="px-4 py-4 text-xs font-semibold text-gray-600">{node.hostname || '-'}</td>
-                          <td className="px-4 py-4 text-xs font-semibold text-cyan-600">
-                            {node.switch_name ? (
-                              <div>
-                                <span>{node.switch_name} [{node.switch_port}]</span>
-                                <span className="mt-0.5 block text-[9px] font-medium text-gray-400">
-                                  {node.source_type || 'unknown'} · {node.confidence || (zh ? '置信度未知' : 'unknown confidence')}
-                                </span>
-                              </div>
-                            ) : '-'}
-                          </td>
+                          <td className="px-4 py-4 text-xs font-semibold text-cyan-600">{node.switch_name || '-'}</td>
+                          <td className="px-4 py-4 text-xs font-mono text-gray-600">{node.switch_port || '-'}</td>
                           <td className="px-4 py-4 text-xs text-gray-500 font-bold">{node.vlan || '-'}</td>
-                          <td className="px-4 py-4 text-xs">
-                            <span className="font-mono text-gray-600 font-semibold">{node.subnet_prefix || '-'}</span>
-                            {node.subnet_name && <span className="text-[10px] text-gray-400 block">{node.subnet_name}</span>}
-                          </td>
+                          <td className="px-4 py-4 text-xs font-mono text-gray-600 font-semibold">{node.subnet_prefix || '-'}</td>
+                          <td className="px-4 py-4 text-xs text-gray-500">{node.subnet_name || '-'}</td>
+                          <td className="px-4 py-4 text-xs text-gray-500">{node.source_type || '-'}</td>
+                          <td className="px-4 py-4 text-xs text-gray-500">{node.confidence || '-'}</td>
                           <td className="px-4 py-4 font-mono text-[10px] text-gray-400">{node.last_seen || '-'}</td>
-                          <td className="pr-6 py-4 text-right">
-                            <button
+                          <TableActionCell className="pr-6 py-4 text-right">
+                            <ActionIconButton
+                              icon={UserCheck}
+                              label={zh ? '标准登记' : 'Register'}
+                              variant="accent"
                               onClick={() => handleOpenRegister(node)}
-                              className="px-2.5 py-1 bg-cyan-50 hover:bg-cyan-500 text-cyan-700 hover:text-white rounded-lg text-[10px] font-extrabold transition-all active:scale-95"
-                            >
-                              {zh ? '标准登记' : 'Register'}
-                            </button>
-                          </td>
+                            />
+                          </TableActionCell>
                         </tr>
                       ))
                     ) : (
                       <tr>
-                        <td colSpan={8} className="py-12 text-center text-xs text-gray-400 font-medium">
+                        <td colSpan={12} className="py-12 text-center text-xs text-gray-400 font-medium">
                           {zh ? '暂无未登记的在线活跃主机' : 'No undocumented active endpoints found'}
                         </td>
                       </tr>
@@ -510,9 +574,10 @@ const IPReconciliationTab: React.FC<IPReconciliationTabProps> = ({ language, t }
                       <th className="pl-6 py-4">{zh ? 'IP地址' : 'IP Address'}</th>
                       <th className="px-4 py-4">{zh ? '登记 MAC' : 'Documented MAC'}</th>
                       <th className="px-4 py-4">{zh ? '登记主机名' : 'Hostname'}</th>
-                      <th className="px-4 py-4">{zh ? '归属子网' : 'Subnet'}</th>
+                      <th className="px-4 py-4">{zh ? '网段前缀' : 'Prefix'}</th>
+                      <th className="px-4 py-4">{zh ? '网段名称' : 'Subnet Name'}</th>
                       <th className="px-4 py-4">{zh ? '登记状态' : 'Status'}</th>
-                      <th className="pr-6 py-4 text-right">{zh ? '操作' : 'Actions'}</th>
+                      <TableActionHeader className="pr-6 py-4 text-right">{zh ? '操作' : 'Actions'}</TableActionHeader>
                     </tr>
                   </thead>
                   <tbody>
@@ -522,28 +587,26 @@ const IPReconciliationTab: React.FC<IPReconciliationTabProps> = ({ language, t }
                           <td className="pl-6 py-4 font-mono font-bold text-xs text-gray-800">{node.address}</td>
                           <td className="px-4 py-4 font-mono text-xs text-gray-500">{node.mac_address || '-'}</td>
                           <td className="px-4 py-4 text-xs font-semibold text-gray-500">{node.hostname || '-'}</td>
-                          <td className="px-4 py-4 text-xs">
-                            <span className="font-mono text-gray-600 font-semibold">{node.subnet_prefix || '-'}</span>
-                            {node.subnet_name && <span className="text-[10px] text-gray-400 block">{node.subnet_name}</span>}
-                          </td>
+                          <td className="px-4 py-4 text-xs font-mono text-gray-600 font-semibold">{node.subnet_prefix || '-'}</td>
+                          <td className="px-4 py-4 text-xs text-gray-500">{node.subnet_name || '-'}</td>
                           <td className="px-4 py-4 text-xs">
                             <span className={`px-2 py-0.5 rounded-full text-[10px] font-bold bg-amber-50 text-amber-600 border border-amber-500/10`}>
                               {node.status.toUpperCase()}
                             </span>
                           </td>
-                          <td className="pr-6 py-4 text-right">
+                          <TableActionCell className="pr-6 py-4 text-right">
                             <ActionIconButton
                               icon={Trash2}
                               label={zh ? '释放此 IP' : 'Release IP'}
                               variant="danger"
                               onClick={() => setReleasingItem(node)}
                             />
-                          </td>
+                          </TableActionCell>
                         </tr>
                       ))
                     ) : (
                       <tr>
-                        <td colSpan={6} className="py-12 text-center text-xs text-gray-400 font-medium">
+                        <td colSpan={7} className="py-12 text-center text-xs text-gray-400 font-medium">
                           {zh ? '暂无长时间离线的僵尸IP' : 'No stale documented IPs discovered'}
                         </td>
                       </tr>
@@ -558,10 +621,13 @@ const IPReconciliationTab: React.FC<IPReconciliationTabProps> = ({ language, t }
                   <thead>
                     <tr className="border-b border-gray-100 bg-gray-50/20 text-[10px] font-bold text-gray-400 uppercase tracking-wider select-none">
                       <th className="pl-6 py-4">{zh ? 'IP地址' : 'IP Address'}</th>
-                      <th className="px-4 py-4">{zh ? 'MAC对比 (IPAM -> Discovered)' : 'MAC (IPAM -> Discovered)'}</th>
-                      <th className="px-4 py-4">{zh ? '主机名对比 (IPAM -> Discovered)' : 'Hostname (IPAM -> Discovered)'}</th>
-                      <th className="px-4 py-4">{zh ? '归属子网' : 'Subnet'}</th>
-                      <th className="pr-6 py-4 text-right">{zh ? '操作' : 'Actions'}</th>
+                      <th className="px-4 py-4">{zh ? '登记 MAC' : 'IPAM MAC'}</th>
+                      <th className="px-4 py-4">{zh ? '发现 MAC' : 'Discovered MAC'}</th>
+                      <th className="px-4 py-4">{zh ? '登记主机名' : 'IPAM Hostname'}</th>
+                      <th className="px-4 py-4">{zh ? '发现主机名' : 'Discovered Hostname'}</th>
+                      <th className="px-4 py-4">{zh ? '网段前缀' : 'Prefix'}</th>
+                      <th className="px-4 py-4">{zh ? '网段名称' : 'Subnet Name'}</th>
+                      <TableActionHeader className="pr-6 py-4 text-right">{zh ? '操作' : 'Actions'}</TableActionHeader>
                     </tr>
                   </thead>
                   <tbody>
@@ -569,49 +635,25 @@ const IPReconciliationTab: React.FC<IPReconciliationTabProps> = ({ language, t }
                       (paginatedList as MismatchedEndpoint[]).map((node) => (
                         <tr key={node.ip} className="hover:bg-gray-50/50 transition-colors border-b border-gray-100 group">
                           <td className="pl-6 py-4 font-mono font-bold text-xs text-gray-800">{node.ip}</td>
-                          <td className="px-4 py-4 text-xs font-mono">
-                            <div className="flex items-center gap-1.5">
-                              <span className={node.mac_mismatch ? 'text-rose-600 line-through bg-rose-50 px-1 rounded' : 'text-gray-500'}>
-                                {node.ipam_mac || '(Empty)'}
-                              </span>
-                              {node.mac_mismatch && (
-                                <>
-                                  <ArrowRight size={11} className="text-gray-400" />
-                                  <span className="text-emerald-600 font-bold bg-emerald-50 px-1 rounded">{node.endpoint_mac}</span>
-                                </>
-                              )}
-                            </div>
-                          </td>
-                          <td className="px-4 py-4 text-xs font-medium">
-                            <div className="flex items-center gap-1.5">
-                              <span className={node.hostname_mismatch ? 'text-rose-600 line-through bg-rose-50 px-1 rounded' : 'text-gray-500'}>
-                                {node.ipam_hostname || '(Empty)'}
-                              </span>
-                              {node.hostname_mismatch && (
-                                <>
-                                  <ArrowRight size={11} className="text-gray-400" />
-                                  <span className="text-emerald-600 font-bold bg-emerald-50 px-1 rounded">{node.endpoint_hostname}</span>
-                                </>
-                              )}
-                            </div>
-                          </td>
-                          <td className="px-4 py-4 text-xs">
-                            <span className="font-mono text-gray-600 font-semibold">{node.subnet_prefix || '-'}</span>
-                            {node.subnet_name && <span className="text-[10px] text-gray-400 block">{node.subnet_name}</span>}
-                          </td>
-                          <td className="pr-6 py-4 text-right">
-                            <button
+                          <td className={`px-4 py-4 text-xs font-mono ${node.mac_mismatch ? 'text-rose-600 line-through' : 'text-gray-500'}`}>{node.ipam_mac || '(Empty)'}</td>
+                          <td className={`px-4 py-4 text-xs font-mono ${node.mac_mismatch ? 'text-emerald-600 font-bold' : 'text-gray-500'}`}>{node.endpoint_mac || '(Empty)'}</td>
+                          <td className={`px-4 py-4 text-xs ${node.hostname_mismatch ? 'text-rose-600 line-through' : 'text-gray-500'}`}>{node.ipam_hostname || '(Empty)'}</td>
+                          <td className={`px-4 py-4 text-xs ${node.hostname_mismatch ? 'text-emerald-600 font-bold' : 'text-gray-500'}`}>{node.endpoint_hostname || '(Empty)'}</td>
+                          <td className="px-4 py-4 text-xs font-mono text-gray-600 font-semibold">{node.subnet_prefix || '-'}</td>
+                          <td className="px-4 py-4 text-xs text-gray-500">{node.subnet_name || '-'}</td>
+                          <TableActionCell className="pr-6 py-4 text-right">
+                            <ActionIconButton
+                              icon={RefreshCw}
+                              label={zh ? '校准同步' : 'Sync Info'}
+                              variant="accent"
                               onClick={() => setSyncingItem(node)}
-                              className="px-2.5 py-1 bg-cyan-50 hover:bg-cyan-500 text-cyan-700 hover:text-white rounded-lg text-[10px] font-extrabold transition-all active:scale-95"
-                            >
-                              {zh ? '校准同步' : 'Sync Info'}
-                            </button>
-                          </td>
+                            />
+                          </TableActionCell>
                         </tr>
                       ))
                     ) : (
                       <tr>
-                        <td colSpan={5} className="py-12 text-center text-xs text-gray-400 font-medium">
+                        <td colSpan={8} className="py-12 text-center text-xs text-gray-400 font-medium">
                           {zh ? '暂无建档信息不吻合的IP' : 'No mismatched IPs discovered'}
                         </td>
                       </tr>

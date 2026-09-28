@@ -1,3 +1,4 @@
+import { DataTable } from '../../../components/DataTable';
 import React from 'react';
 import { AnimatePresence, motion } from 'motion/react';
 import {
@@ -7,11 +8,14 @@ import {
 import { LineChart, Line, XAxis, YAxis, CartesianGrid, Tooltip as RTooltip, ResponsiveContainer } from 'recharts';
 import OutputActions from '../../../components/OutputActions';
 import { ActionIconButton, ActionIconGroup } from '../../../components/ui/ActionIconButton';
+import { TableExportMenu } from '../../../components/ui/TableExportMenu';
 import type { UnifiedExecutionLog, InspDetailTab, PlaybookExecutionApproval } from '../types';
 import type { Device } from '../../../types';
-import { splitOutputByCommand, downloadInspExcel, downloadInspJSON } from '../helpers';
+import { splitOutputByCommand, downloadInspJSON } from '../helpers';
+import { buildExecutionSnapshotExportData, getExecutionSnapshotCells } from '../executionSnapshotExport';
 import { useEscapeClose } from '../../../hooks/useEscapeClose';
 
+import { TableActionCell, TableActionHeader } from '../../../components/ui/TableActionColumn';
 interface ExecutionDetailProps {
   zh: boolean;
   open: boolean;
@@ -54,6 +58,46 @@ interface ExecutionDetailProps {
   onSelectPbDevice: (deviceId: string) => void;
   devices: Device[];
 }
+
+interface ParsedInspectionOutputTableProps {
+  data: { fields: string[]; records: Array<Record<string, unknown>> };
+  filename: string;
+  zh: boolean;
+  onDownloadJson: () => void;
+}
+
+const ParsedInspectionOutputTable: React.FC<ParsedInspectionOutputTableProps> = ({ data, filename, zh, onDownloadJson }) => {
+  const tableRef = React.useRef<HTMLTableElement>(null);
+
+  return (
+    <div className="space-y-2">
+      <div className="flex justify-end gap-1">
+        <TableExportMenu tableRef={tableRef} filename={filename} language={zh ? 'zh' : 'en'} disabled={data.records.length === 0} />
+        <ActionIconButton icon={FileJson} label={zh ? '下载解析结果 (JSON)' : 'Download parsed as JSON'} variant="accent" onClick={onDownloadJson} disabled={data.records.length === 0} />
+      </div>
+      <div className="overflow-x-auto custom-scrollbar-dark pb-2">
+        <table ref={tableRef} className="nx-terminal-table w-full text-left border-collapse border border-white/10">
+          <thead>
+            <tr className="bg-white/5 border-b border-white/10">
+              {data.fields.map((field) => (
+                <th key={field} scope="col" className="px-3 py-2 text-[10px] font-bold text-cyan-400/80 uppercase tracking-wider border-r border-white/10 last:border-r-0">{field}</th>
+              ))}
+            </tr>
+          </thead>
+          <tbody className="divide-y divide-white/5">
+            {data.records.map((record, index) => (
+              <tr key={index} className="hover:bg-white/[0.03]">
+                {data.fields.map((field) => (
+                  <td key={field} className="px-3 py-2 text-[10px] text-white/60 whitespace-nowrap border-r border-white/5 last:border-r-0">{String(record[field] ?? '—')}</td>
+                ))}
+              </tr>
+            ))}
+          </tbody>
+        </table>
+      </div>
+    </div>
+  );
+};
 
 const ExecutionDetail: React.FC<ExecutionDetailProps> = ({
   zh, open, selectedLog, logDetailLoading, onClose, onExport,
@@ -448,7 +492,7 @@ const AnalysisTab: React.FC<{
     )}
 
     {analysis.length > 0 ? (
-      <table className="nx-data-table nx-data-table--compact text-[11px]">
+      <DataTable unstyled exportConfig={{ filename: 'execution-analysis-results' }} className="nx-data-table nx-data-table--compact text-[11px]">
         <thead>
           <tr className="text-white/50 border-b border-white/10">
             <th className="text-left py-2 px-2 font-bold uppercase tracking-wider">{zh ? '指标' : 'Metric'}</th>
@@ -456,7 +500,7 @@ const AnalysisTab: React.FC<{
             <th className="text-left py-2 px-2 font-bold uppercase tracking-wider">{zh ? '状态' : 'Status'}</th>
             <th className="text-left py-2 px-2 font-bold uppercase tracking-wider">{zh ? '诊断结论' : 'Conclusion'}</th>
             <th className="text-left py-2 px-2 font-bold uppercase tracking-wider">{zh ? '建议' : 'Suggestion'}</th>
-            <th className="text-right py-2 px-2 font-bold uppercase tracking-wider">{zh ? '操作' : 'Actions'}</th>
+            <TableActionHeader className="text-right py-2 px-2 font-bold uppercase tracking-wider">{zh ? '操作' : 'Actions'}</TableActionHeader>
           </tr>
         </thead>
         <tbody>
@@ -474,7 +518,7 @@ const AnalysisTab: React.FC<{
                 </td>
                 <td className="py-2 px-2 text-white/50">{a.conclusion}</td>
                 <td className="py-2 px-2 text-white/50">{a.suggestion}</td>
-                <td className="py-2 px-2 text-right whitespace-nowrap">
+                <TableActionCell className="py-2 px-2 text-right whitespace-nowrap">
                   {isNumeric && a.key && (
                     <ActionIconGroup label={zh ? '指标操作' : 'Metric actions'}>
                       <ActionIconButton
@@ -485,12 +529,12 @@ const AnalysisTab: React.FC<{
                       />
                     </ActionIconGroup>
                   )}
-                </td>
+                </TableActionCell>
               </tr>
             );
           })}
         </tbody>
-      </table>
+      </DataTable>
     ) : (
       <div className="text-white/30 text-center py-6 text-xs italic">{zh ? '暂无分析结果' : 'No analysis available'}</div>
     )}
@@ -506,31 +550,27 @@ const SnapshotTab: React.FC<{ zh: boolean; metricsObj: Record<string, any> }> = 
     {Object.keys(metricsObj).length === 0 ? (
       <div className="text-white/30 text-center py-6 text-xs italic">{zh ? '暂无指标数据' : 'No metrics'}</div>
     ) : (
-      <table className="nx-data-table nx-data-table--compact text-[11px]">
+      <DataTable unstyled exportConfig={{ filename: 'execution-collected-metrics', exportData: buildExecutionSnapshotExportData(metricsObj, zh ? 'zh' : 'en') }} className="nx-data-table nx-data-table--compact text-[11px]">
         <thead>
           <tr className="text-white/50 border-b border-white/10">
             <th className="text-left py-2 px-2 font-bold uppercase tracking-wider">{zh ? '指标键' : 'Metric Key'}</th>
-            <th className="text-left py-2 px-2 font-bold uppercase tracking-wider">{zh ? '值 / 错误' : 'Value / Error'}</th>
+            <th className="text-left py-2 px-2 font-bold uppercase tracking-wider">{zh ? '值' : 'Value'}</th>
+            <th className="text-left py-2 px-2 font-bold uppercase tracking-wider">{zh ? '错误' : 'Error'}</th>
           </tr>
         </thead>
         <tbody>
           {Object.entries(metricsObj).map(([key, val]) => {
-            const isError = val && typeof val === 'object' && 'error' in (val as any);
+            const { value, error, isError } = getExecutionSnapshotCells(key, val);
             return (
               <tr key={key} className="border-b border-white/5">
                 <td className={`py-2 px-2 font-mono ${isError ? 'text-red-400' : 'text-white/80'}`}>{key}</td>
-                <td className="py-2 px-2">
-                  {isError ? (
-                    <span className="text-red-400 text-[10px]">⚠ {(val as any).error}</span>
-                  ) : (
-                    <span className="text-white/70 font-mono">{String(val)}</span>
-                  )}
-                </td>
+                <td className="py-2 px-2 text-white/70 font-mono">{value || '—'}</td>
+                <td className="py-2 px-2 text-red-400 text-[10px]">{error ? `⚠ ${error}` : '—'}</td>
               </tr>
             );
           })}
         </tbody>
-      </table>
+      </DataTable>
     )}
   </div>
 );
@@ -544,7 +584,7 @@ const ComplianceTab: React.FC<{ zh: boolean; complianceItems: any[] }> = ({ zh, 
     {complianceItems.length === 0 ? (
       <div className="text-white/30 text-center py-6 text-xs italic">{zh ? '暂无合规检查项' : 'No compliance checks defined'}</div>
     ) : (
-      <table className="nx-data-table nx-data-table--compact text-[11px]">
+      <DataTable unstyled exportConfig={{ filename: 'execution-compliance-results' }} className="nx-data-table nx-data-table--compact text-[11px]">
         <thead>
           <tr className="text-white/50 border-b border-white/10">
             <th className="text-left py-2 px-2 font-bold uppercase tracking-wider">{zh ? '合规项' : 'Item'}</th>
@@ -572,7 +612,7 @@ const ComplianceTab: React.FC<{ zh: boolean; complianceItems: any[] }> = ({ zh, 
             );
           })}
         </tbody>
-      </table>
+      </DataTable>
     )}
   </div>
 );
@@ -680,12 +720,6 @@ const RawOutputTab: React.FC<{
                         {parseState?.loading ? <Loader2 size={11} className="animate-spin" /> : <Table2 size={11} />}
                         <span>{parseState?.data ? (zh ? '已解析' : 'Parsed') : (zh ? '解析' : 'Parse')}</span>
                       </button>
-                      {parseState?.data?.count > 0 && (
-                        <ActionIconButton icon={FileSpreadsheet} label={zh ? '下载解析结果 (Excel)' : 'Download parsed as Excel'} variant="success" onClick={() => { const safeCmd = cmd.replace(/[^a-z0-9_]/gi, '_').slice(0, 40); downloadInspExcel(parseState.data.records, parseState.data.fields, `${res.hostname}_${safeCmd}_parsed`); }} />
-                      )}
-                      {parseState?.data?.count > 0 && (
-                        <ActionIconButton icon={FileJson} label={zh ? '下载解析结果 (JSON)' : 'Download parsed as JSON'} variant="accent" onClick={() => { const safeCmd = cmd.replace(/[^a-z0-9_]/gi, '_').slice(0, 40); downloadInspJSON(parseState.data.records, `${res.hostname}_${safeCmd}_parsed`); }} />
-                      )}
                     </div>
                   )}
                   {isCollapsed && (
@@ -703,26 +737,19 @@ const RawOutputTab: React.FC<{
                         ) : parseState?.error ? (
                           <div className="py-4 text-amber-500/80 italic">⚠ {parseState.error}</div>
                         ) : parseState?.data?.records ? (
-                          <div className="overflow-x-auto custom-scrollbar-dark pb-2">
-                            <table className="nx-terminal-table w-full text-left border-collapse border border-white/10">
-                              <thead>
-                                <tr className="bg-white/5 border-b border-white/10">
-                                  {parseState.data.fields.map((f: string) => (
-                                    <th key={f} className="px-3 py-2 text-[10px] font-bold text-cyan-400/80 uppercase tracking-wider border-r border-white/10 last:border-r-0">{f}</th>
-                                  ))}
-                                </tr>
-                              </thead>
-                              <tbody className="divide-y divide-white/5">
-                                {parseState.data.records.map((rec: any, idx: number) => (
-                                  <tr key={idx} className="hover:bg-white/[0.03]">
-                                    {parseState.data.fields.map((f: string) => (
-                                      <td key={f} className="px-3 py-2 text-[10px] text-white/60 whitespace-nowrap border-r border-white/5 last:border-r-0">{String(rec[f] ?? '—')}</td>
-                                    ))}
-                                  </tr>
-                                ))}
-                              </tbody>
-                            </table>
-                          </div>
+                          parseState.data.records.length > 0 ? (
+                            <ParsedInspectionOutputTable
+                              data={parseState.data}
+                              filename={`${res.hostname}_${cmd.replace(/[^a-z0-9_]/gi, '_').slice(0, 40)}_parsed`}
+                              zh={zh}
+                              onDownloadJson={() => {
+                                const safeCmd = cmd.replace(/[^a-z0-9_]/gi, '_').slice(0, 40);
+                                downloadInspJSON(parseState.data.records, `${res.hostname}_${safeCmd}_parsed`);
+                              }}
+                            />
+                          ) : (
+                            <div className="py-4 text-white/20 italic">{zh ? '未解析或解析无结果' : 'Not parsed or no results'}</div>
+                          )
                         ) : (
                           <div className="py-4 text-white/20 italic">{zh ? '未解析或解析无结果' : 'Not parsed or no results'}</div>
                         )}

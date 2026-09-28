@@ -1,7 +1,8 @@
 import React, { useState, useEffect, useCallback } from 'react';
 import { motion, AnimatePresence } from 'motion/react';
-import { X, User, KeyRound, ShieldCheck, ArrowRight, ArrowLeft, RotateCcw, CheckCircle2, Eye, EyeOff, Send } from 'lucide-react';
+import { X, User, KeyRound, ShieldCheck, ArrowRight, ArrowLeft, RotateCcw, CheckCircle2, Send } from 'lucide-react';
 import { useEscapeClose } from '../hooks/useEscapeClose';
+import { PasswordInputField } from './ui/PasswordInputField';
 
 interface ForgotPasswordModalProps {
   open: boolean;
@@ -442,50 +443,37 @@ const ForgotPasswordModal: React.FC<ForgotPasswordModalProps> = ({ open, onClose
                       <label htmlFor="fp-newpwd" className="block ml-0.5 mb-1.5 text-[10px] font-bold uppercase tracking-[0.2em] text-[#06b6d4]/60">
                         {t('fpNewPassword')}
                       </label>
-                      <div className="relative group">
-                        <div className="absolute left-4 top-1/2 -translate-y-1/2 text-white/20 group-focus-within:text-[#06b6d4]/70 transition-colors">
-                          <KeyRound size={16} />
-                        </div>
-                        <input
-                          id="fp-newpwd"
-                          type={showPwd ? 'text' : 'password'}
-                          value={newPassword}
-                          onChange={(e) => { setNewPassword(e.target.value); setError(null); }}
-                          placeholder={t('fpNewPasswordPlaceholder')}
-                          autoFocus
-                          autoComplete="new-password"
-                          className="w-full rounded-xl border border-white/[0.08] py-3 pl-11 pr-12 text-sm text-white placeholder-white/15 outline-none transition-all bg-white/[0.04] focus:bg-white/[0.07] focus:border-[#06b6d4]/50 focus:shadow-[0_0_0_3px_rgba(6,182,212,0.12)]"
-                        />
-                        <button
-                          tabIndex={-1}
-                          type="button"
-                          onClick={() => setShowPwd(!showPwd)}
-                          aria-label={showPwd ? 'Hide password' : 'Show password'}
-                          className="absolute right-4 top-1/2 -translate-y-1/2 text-white/20 hover:text-white/50 transition-colors"
-                        >
-                          {showPwd ? <EyeOff size={15} /> : <Eye size={15} />}
-                        </button>
-                      </div>
+                      <PasswordInputField
+                        id="fp-newpwd"
+                        visible={showPwd}
+                        onVisibilityChange={() => setShowPwd((visible) => !visible)}
+                        showPasswordLabel={t('showPassword')}
+                        hidePasswordLabel={t('hidePassword')}
+                        value={newPassword}
+                        onChange={(e) => { setNewPassword(e.target.value); setError(null); }}
+                        placeholder={t('fpNewPasswordPlaceholder')}
+                        autoFocus
+                        autoComplete="new-password"
+                        className="rounded-xl border-white/[0.08] py-3 pl-11 text-sm text-white placeholder-white/15 bg-white/[0.04] focus:bg-white/[0.07] focus:border-[#06b6d4]/50 focus:shadow-[0_0_0_3px_rgba(6,182,212,0.12)]"
+                      />
                     </div>
                     <div>
                       <label htmlFor="fp-confirm" className="block ml-0.5 mb-1.5 text-[10px] font-bold uppercase tracking-[0.2em] text-[#06b6d4]/60">
                         {t('fpConfirmPassword')}
                       </label>
-                      <div className="relative group">
-                        <div className="absolute left-4 top-1/2 -translate-y-1/2 text-white/20 group-focus-within:text-[#06b6d4]/70 transition-colors">
-                          <KeyRound size={16} />
-                        </div>
-                        <input
-                          id="fp-confirm"
-                          type={showPwd ? 'text' : 'password'}
-                          value={confirmPassword}
-                          onChange={(e) => { setConfirmPassword(e.target.value); setError(null); }}
-                          onKeyDown={(e) => { if (e.key === 'Enter') handleVerifyAndReset(); }}
-                          placeholder={t('fpConfirmPlaceholder')}
-                          autoComplete="new-password"
-                          className="w-full rounded-xl border border-white/[0.08] py-3 pl-11 pr-4 text-sm text-white placeholder-white/15 outline-none transition-all bg-white/[0.04] focus:bg-white/[0.07] focus:border-[#06b6d4]/50 focus:shadow-[0_0_0_3px_rgba(6,182,212,0.12)]"
-                        />
-                      </div>
+                      <PasswordInputField
+                        id="fp-confirm"
+                        visible={showPwd}
+                        onVisibilityChange={() => setShowPwd((visible) => !visible)}
+                        showPasswordLabel={t('showPassword')}
+                        hidePasswordLabel={t('hidePassword')}
+                        value={confirmPassword}
+                        onChange={(e) => { setConfirmPassword(e.target.value); setError(null); }}
+                        onKeyDown={(e) => { if (e.key === 'Enter') handleVerifyAndReset(); }}
+                        placeholder={t('fpConfirmPlaceholder')}
+                        autoComplete="new-password"
+                        className="rounded-xl border-white/[0.08] py-3 pl-11 text-sm text-white placeholder-white/15 bg-white/[0.04] focus:bg-white/[0.07] focus:border-[#06b6d4]/50 focus:shadow-[0_0_0_3px_rgba(6,182,212,0.12)]"
+                      />
                     </div>
 
                     {/* Password criteria checklist */}

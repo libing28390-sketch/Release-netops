@@ -1,3 +1,4 @@
+import { DataTable } from '../../../components/DataTable';
 import React from 'react';
 import { AnimatePresence, motion } from 'motion/react';
 import { AlertTriangle, Shield, Check, ArrowRight, X } from 'lucide-react';
@@ -118,7 +119,7 @@ export const AssetImportValidationModal: React.FC<AssetImportValidationModalProp
             </p>
 
             <div className="border border-black/8 rounded-xl overflow-hidden bg-black/[0.01]">
-              <table className="nx-data-table nx-data-table--compact text-xs text-left">
+              <DataTable unstyled exportConfig={{ filename: 'asset-import-validation' }} className="nx-data-table nx-data-table--compact text-xs text-left">
                 <thead>
                   <tr className="bg-black/[0.03] border-b border-black/8 font-bold text-black/50">
                     <th className="px-4 py-2.5">{zh ? '站点' : 'Site'}</th>
@@ -173,7 +174,7 @@ export const AssetImportValidationModal: React.FC<AssetImportValidationModalProp
                     );
                   })}
                 </tbody>
-              </table>
+              </DataTable>
             </div>
           </div>
 

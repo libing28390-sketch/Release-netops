@@ -47,8 +47,16 @@ def _fernet():
 
 
 def serialize_config_content(content: str) -> bytes:
+    """Compress and encrypt a local-provider config snapshot."""
+
     compressed = gzip.compress(str(content or "").encode("utf-8"))
     return b"ENCRYPTED:" + _fernet().encrypt(compressed)
+
+
+def serialize_s3_config_content(content: str) -> bytes:
+    """Compress a new S3-backed config snapshot without encrypting its content."""
+
+    return gzip.compress(str(content or "").encode("utf-8"))
 
 
 def deserialize_config_bytes(data: bytes) -> str:
@@ -102,24 +110,43 @@ def delete_legacy_file(file_path: str) -> None:
         parent = os.path.dirname(parent)
 
 
-def object_key_for_snapshot(snapshot_id: str, timestamp: datetime, config_type: str = "running") -> str:
+def object_key_for_snapshot(
+    snapshot_id: str,
+    timestamp: datetime,
+    config_type: str = "running",
+    *,
+    encrypted: bool = True,
+) -> str:
     suffix = "_startup" if str(config_type or "running") == "startup" else ""
+    extension = ".cfg.enc" if encrypted else ".cfg.gz"
     return normalize_object_key(
-        f"{timestamp:%Y/%m}/{snapshot_id}{suffix}.cfg.enc"
+        f"{timestamp:%Y/%m}/{snapshot_id}{suffix}{extension}"
     )
 
 
-def config_spool_path(snapshot_id: str, config_type: str = "running") -> Path:
+def config_spool_path(
+    snapshot_id: str,
+    config_type: str = "running",
+    *,
+    encrypted: bool = True,
+) -> Path:
     suffix = "_startup" if str(config_type or "running") == "startup" else ""
+    extension = ".cfg.enc" if encrypted else ".cfg.gz"
     directory = Path(settings.STORAGE_SPOOL_ROOT).expanduser().resolve() / "config"
     directory.mkdir(parents=True, exist_ok=True)
-    return directory / f"{str(snapshot_id)}{suffix}.cfg.enc"
+    return directory / f"{str(snapshot_id)}{suffix}{extension}"
 
 
-def write_config_spool(snapshot_id: str, content: str, config_type: str = "running") -> Path:
-    destination = config_spool_path(snapshot_id, config_type)
+def write_config_spool(
+    snapshot_id: str,
+    content: str,
+    config_type: str = "running",
+    *,
+    encrypted: bool = True,
+) -> Path:
+    destination = config_spool_path(snapshot_id, config_type, encrypted=encrypted)
     temporary = destination.with_name(f".{destination.name}.uploading")
-    payload = serialize_config_content(content)
+    payload = serialize_config_content(content) if encrypted else serialize_s3_config_content(content)
     try:
         with temporary.open("wb") as handle:
             handle.write(payload)
@@ -215,8 +242,9 @@ def put_snapshot_content(
     service: StorageService | None = None,
 ) -> StorageObject:
     storage = service or build_storage_service(purpose="config_backup")
-    key = object_key_for_snapshot(snapshot_id, timestamp, config_type)
-    payload = serialize_config_content(content)
+    encrypted = storage.name != "s3"
+    key = object_key_for_snapshot(snapshot_id, timestamp, config_type, encrypted=encrypted)
+    payload = serialize_config_content(content) if encrypted else serialize_s3_config_content(content)
     return storage.put_stream(key, io.BytesIO(payload), CONFIG_CONTENT_TYPE)
 
 
@@ -294,7 +322,10 @@ def retry_pending_config_snapshots(limit: int = 50) -> dict[str, int]:
                     bucket=str(row["storage_bucket"] or "").strip() or None,
                 )
             key = str(row["object_key"] or object_key_for_snapshot(
-                row["id"], datetime.fromisoformat(str(row["timestamp"]).replace("Z", "+00:00")), row["config_type"] or "running"
+                row["id"],
+                datetime.fromisoformat(str(row["timestamp"]).replace("Z", "+00:00")),
+                row["config_type"] or "running",
+                encrypted=service.name != "s3",
             ))
             with spool.open("rb") as handle:
                 stored = service.put_stream(key, handle, CONFIG_CONTENT_TYPE)
@@ -341,5 +372,6 @@ __all__ = [
     "config_spool_path",
     "retry_pending_config_snapshots",
     "serialize_config_content",
+    "serialize_s3_config_content",
     "write_config_spool",
 ]

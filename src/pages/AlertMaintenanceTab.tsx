@@ -1,3 +1,4 @@
+import { DataTable } from '../components/DataTable';
 import React, { useEffect, useMemo, useState, useRef } from 'react';
 import { AnimatePresence, motion } from 'motion/react';
 import { Check, Copy, Eye, Plus, RefreshCw, Search, Trash2, Wrench, X } from 'lucide-react';
@@ -41,6 +42,9 @@ import {
   useAlertOverlayDismiss,
 } from './alertManagementShared';
 
+import { TableActionCell, TableActionHeader } from '../components/ui/TableActionColumn';
+import type { TableExportData } from '../components/ui/TableExportMenu';
+import { fetchAllPaginatedItems } from '../utils/pagination';
 type RuntimeFilter = 'all' | AlertMaintenanceWindow['runtime_status'];
 
 type SelectionMode = MaintenanceFormState['selection_mode'];
@@ -295,6 +299,42 @@ const AlertMaintenanceTab: React.FC<AlertPageCommonProps> = ({ language, current
     } finally {
       setLoading(false);
     }
+  };
+
+  const exportAllMaintenanceWindows = async (): Promise<TableExportData> => {
+    const params = new URLSearchParams({ status: statusFilter, search: searchQuery });
+    const items = await fetchAllPaginatedItems<AlertMaintenanceWindow>('/api/alerts/maintenance-windows', params, 100);
+
+    const scopeValue = (window: AlertMaintenanceWindow) => {
+      if ((window.selection_mode || 'resources') === 'resources') {
+        const targets = window.target_ips || (window.target_ip ? [window.target_ip] : []);
+        const firstTarget = targets[0] || '--';
+        const firstAsset = assetByIp.get(firstTarget);
+        return [firstTarget, firstAsset?.hostname || (targets.length > 1 ? `+${targets.length - 1}` : '--')]
+          .filter(Boolean).join(' — ');
+      }
+      const activeConditions = (window.match_conditions || []).filter((item) => item.value.trim());
+      return [
+        conditionLogicLabel(window.condition_logic, language),
+        activeConditions[0] ? conditionSummary(activeConditions[0], language) : '--',
+        activeConditions.length > 1 ? `+${activeConditions.length - 1}` : '',
+      ].filter(Boolean).join(' — ');
+    };
+
+    return {
+      headers: language === 'zh'
+        ? ['维护名称', '原因', '作用范围', '开始时间', '结束时间', '状态', '创建人']
+        : ['Name', 'Reason', 'Scope', 'Start Time', 'End Time', 'Status', 'Created By'],
+      rows: items.map((window) => [
+        window.name || '',
+        window.reason || (language === 'zh' ? '未填写原因' : 'No reason'),
+        scopeValue(window),
+        formatTs(window.starts_at),
+        formatTs(window.ends_at),
+        maintenanceStatusLabel(window.runtime_status, language),
+        window.created_by || '',
+      ]),
+    };
   };
 
   useEffect(() => {
@@ -592,22 +632,23 @@ const AlertMaintenanceTab: React.FC<AlertPageCommonProps> = ({ language, current
         </div>
 
         <div className="flex-1 min-h-0 overflow-y-auto custom-scrollbar border-b border-black/5">
-          <table className="nx-data-table text-left">
+          <DataTable unstyled exportConfig={{ filename: 'alert-maintenance-windows', language: language === 'zh' ? 'zh' : 'en', disabled: loading || windows.length === 0, exportData: exportAllMaintenanceWindows }} className="nx-data-table text-left">
             <thead className="sticky top-0 z-10">
               <tr className="border-y border-black/5 bg-[#f8fafc] text-[11px] font-bold uppercase tracking-[0.16em] text-black/40">
                 <th className="px-5 py-3">{language === 'zh' ? '维护名称' : 'Name'}</th>
+                <th className="px-5 py-3">{language === 'zh' ? '原因' : 'Reason'}</th>
                 <th className="px-5 py-3">{language === 'zh' ? '作用范围' : 'Scope'}</th>
                 <th className="px-5 py-3">{language === 'zh' ? '开始时间' : 'Start Time'}</th>
                 <th className="px-5 py-3">{language === 'zh' ? '结束时间' : 'End Time'}</th>
                 <th className="px-5 py-3">{language === 'zh' ? '状态' : 'Status'}</th>
                 <th className="px-5 py-3">{language === 'zh' ? '创建人' : 'Created By'}</th>
-                <th className="px-5 py-3">{language === 'zh' ? '操作' : 'Action'}</th>
+                <TableActionHeader className="px-5 py-3">{language === 'zh' ? '操作' : 'Action'}</TableActionHeader>
               </tr>
             </thead>
             <tbody>
               {loading ? (
                 <tr>
-                  <td colSpan={7} className="px-5 py-12 text-center text-sm text-black/40">
+                  <td colSpan={8} className="px-5 py-12 text-center text-sm text-black/40">
                     {language === 'zh' ? '正在加载维护窗...' : 'Loading maintenance windows...'}
                   </td>
                 </tr>
@@ -617,9 +658,9 @@ const AlertMaintenanceTab: React.FC<AlertPageCommonProps> = ({ language, current
                     <td className="px-5 py-4 align-top">
                       <button title={language === 'zh' ? `查看维护窗 ${window.name}` : `View maintenance window ${window.name}`} onClick={() => setSelectedWindowId(window.id)} className="text-left">
                         <p className="text-sm font-semibold text-[#164e63]">{window.name}</p>
-                        <p className="mt-1 line-clamp-1 text-xs text-black/45">{window.reason || (language === 'zh' ? '未填写原因' : 'No reason')}</p>
                       </button>
                     </td>
+                    <td className="px-5 py-4 align-top text-sm text-black/60">{window.reason || (language === 'zh' ? '未填写原因' : 'No reason')}</td>
                     <td className="px-5 py-4 align-top text-sm text-black/60">{renderWindowScope(window)}</td>
                     <td className="px-5 py-4 align-top text-sm text-black/60">{formatTs(window.starts_at)}</td>
                     <td className="px-5 py-4 align-top text-sm text-black/60">{formatTs(window.ends_at)}</td>
@@ -629,7 +670,7 @@ const AlertMaintenanceTab: React.FC<AlertPageCommonProps> = ({ language, current
                       </span>
                     </td>
                     <td className="px-5 py-4 align-top text-sm text-black/60">{window.created_by}</td>
-                    <td className="px-5 py-4 align-top">
+                    <TableActionCell className="px-5 py-4 align-top">
                       <ActionIconGroup className={alertTableActionBarClass} label={language === 'zh' ? '维护窗操作' : 'Maintenance window actions'}>
                         <ActionIconButton
                           icon={Eye}
@@ -653,18 +694,18 @@ const AlertMaintenanceTab: React.FC<AlertPageCommonProps> = ({ language, current
                           disabled={maintenanceCancelingId === window.id}
                         />
                       </ActionIconGroup>
-                    </td>
+                    </TableActionCell>
                   </tr>
                 ))
               ) : (
                 <tr>
-                  <td colSpan={7} className="px-5 py-12 text-center text-sm text-black/40">
+                  <td colSpan={8} className="px-5 py-12 text-center text-sm text-black/40">
                     {language === 'zh' ? '当前没有维护窗。' : 'No maintenance windows found.'}
                   </td>
                 </tr>
               )}
             </tbody>
-          </table>
+          </DataTable>
         </div>
 
         <div className="mt-4">

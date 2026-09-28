@@ -207,7 +207,18 @@ export const navConfig: NavGroup[] = [
       { id: 'users',        label: '用户管理', labelEn: 'Users',             icon: 'User',   path: '/management/users',       requiredRole: 'Administrator' },
       { id: 'credentials',  label: '凭据轮换', labelEn: 'Password Rotation', icon: 'Key',    path: '/management/credentials', requiredRole: 'Administrator' },
       { id: 'email-settings', label: '邮件通知', labelEn: 'Email Notifications', icon: 'Bell', path: '/management/notifications', requiredRole: 'Administrator' },
-      { id: 'storage',      label: '对象存储', labelEn: 'Object Storage',     icon: 'CloudCog', path: '/management/storage', requiredRole: 'Administrator' },
+      {
+        id: 'storage',
+        label: '对象存储',
+        labelEn: 'Object Storage',
+        icon: 'CloudCog',
+        path: '/management/storage',
+        requiredRole: 'Administrator',
+        children: [
+          { id: 'storage-settings', label: '存储配置', labelEn: 'Storage Settings', icon: 'Settings', path: '/management/storage', requiredRole: 'Administrator' },
+          { id: 'storage-files', label: '文件浏览', labelEn: 'File Browser', icon: 'FolderOpen', path: '/management/storage/files', requiredRole: 'Administrator' },
+        ],
+      },
     ],
   },
 ];

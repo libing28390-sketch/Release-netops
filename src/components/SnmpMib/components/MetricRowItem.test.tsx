@@ -1,4 +1,9 @@
-import { describe, it, expect } from 'vitest';
+import { cleanup, render } from '@testing-library/react';
+import { afterEach, describe, it, expect } from 'vitest';
+import { DataTable } from '../../DataTable';
+import { TableActionHeader } from '../../ui/TableActionColumn';
+import { readVisibleTableData } from '../../ui/TableExportMenu';
+import { MetricRowItem } from './MetricRowItem';
 import {
   METRIC_CATALOG,
   catalogEntry,
@@ -10,6 +15,8 @@ import {
   hasDefinition,
 } from './MetricRowItem';
 import { DEFAULT_INTERFACE_CONFIG, INTERFACE_OID_FIELDS } from './InterfaceConfigSection';
+
+afterEach(() => cleanup());
 
 describe('MetricRowItem & InterfaceConfig tests', () => {
   it('should return catalog entries correctly', () => {
@@ -53,5 +60,45 @@ describe('MetricRowItem & InterfaceConfig tests', () => {
     expect(DEFAULT_INTERFACE_CONFIG.if_hc_in_ucast_pkts_oid).toBe('1.3.6.1.2.1.31.1.1.1.7');
     expect(DEFAULT_INTERFACE_CONFIG.dot3_hc_fcs_errors_oid).toBe('1.3.6.1.2.1.10.7.11.1.2');
     expect(DEFAULT_INTERFACE_CONFIG.if_oper_status_oid).toBe('1.3.6.1.2.1.2.2.1.8');
+  });
+
+  it('exports metric label, key, and individual OIDs as separate columns', () => {
+    const definition = createDefinition('storage');
+    definition.mode = 'used_total_percent';
+    definition.used_oid = '1.3.6.1.4.1.1.1';
+    definition.total_oid = '1.3.6.1.4.1.1.2';
+    const { container } = render(
+      <DataTable unstyled exportConfig={{ filename: 'metric-row-test' }}>
+        <thead>
+          <tr>
+            <th>监控项</th>
+            <th>指标键</th>
+            <th>直接 / 计数器 OID</th>
+            <th>已用 OID</th>
+            <th>总量 OID</th>
+            <th>空闲 OID</th>
+            <th>容量 OID</th>
+            <th>模式</th>
+            <TableActionHeader>操作</TableActionHeader>
+          </tr>
+        </thead>
+        <tbody>
+          <MetricRowItem
+            row={{ key: 'storage', definition }}
+            zh
+            onChange={() => undefined}
+            onRemove={() => undefined}
+            onPickOid={() => undefined}
+          />
+        </tbody>
+      </DataTable>,
+    );
+
+    const table = container.querySelector('table');
+    expect(table).not.toBeNull();
+    expect(container.querySelector('select')?.value).toBe('used_total_percent');
+    const exported = readVisibleTableData(table!);
+    expect(exported.headers).toEqual(['监控项', '指标键', '直接 / 计数器 OID', '已用 OID', '总量 OID', '空闲 OID', '容量 OID', '模式']);
+    expect(exported.rows).toEqual([['存储使用率', 'storage', '-', '1.3.6.1.4.1.1.1', '1.3.6.1.4.1.1.2', '-', '-', '已用/总量 (%)']]);
   });
 });

@@ -1,7 +1,8 @@
 import React from 'react';
 import { AnimatePresence, motion } from 'motion/react';
-import { Terminal, Shield, Lock, Wifi, Network, Building2, AlertCircle, AlertTriangle, Eye, EyeOff, Globe2, Plus, Trash2, X, RefreshCw } from 'lucide-react';
+import { Terminal, Shield, Lock, Wifi, Network, Building2, AlertCircle, AlertTriangle, Globe2, Plus, Trash2, X, RefreshCw } from 'lucide-react';
 import DateTimePicker from '../../../components/DateTimePicker';
+import { PasswordInputField } from '../../../components/ui/PasswordInputField';
 import { Asset } from '../types';
 import type { TagDefinition } from '../../../types';
 import {
@@ -558,9 +559,9 @@ export const AssetModal: React.FC<AssetModalProps> = ({
                           {(profile.credential_mode || 'inherit_asset') === 'independent' && (
                             <>
                               <Field label={zh ? '普通用户' : 'Normal user'} value={profile.normal_username || ''} onChange={value => setForm(f => ({ ...f, web_profiles: (f.web_profiles || []).map((item: any, itemIndex: number) => itemIndex === index ? { ...item, normal_username: value } : item) }))} />
-                              <PasswordField label={zh ? '普通密码' : 'Normal password'} value={profile.normal_password || ''} onChange={value => setForm(f => ({ ...f, web_profiles: (f.web_profiles || []).map((item: any, itemIndex: number) => itemIndex === index ? { ...item, normal_password: value } : item) }))} placeholder={profile.normal_password_set ? (zh ? '已配置，留空不变' : 'Configured; leave blank to keep') : ''} />
+                              <PasswordField label={zh ? '普通密码' : 'Normal password'} language={zh ? 'zh' : 'en'} value={profile.normal_password || ''} onChange={value => setForm(f => ({ ...f, web_profiles: (f.web_profiles || []).map((item: any, itemIndex: number) => itemIndex === index ? { ...item, normal_password: value } : item) }))} placeholder={profile.normal_password_set ? (zh ? '已配置，留空不变' : 'Configured; leave blank to keep') : ''} />
                               <Field label={zh ? '特权用户' : 'Admin user'} value={profile.admin_username || ''} onChange={value => setForm(f => ({ ...f, web_profiles: (f.web_profiles || []).map((item: any, itemIndex: number) => itemIndex === index ? { ...item, admin_username: value } : item) }))} />
-                              <PasswordField label={zh ? '特权密码' : 'Admin password'} value={profile.admin_password || ''} onChange={value => setForm(f => ({ ...f, web_profiles: (f.web_profiles || []).map((item: any, itemIndex: number) => itemIndex === index ? { ...item, admin_password: value } : item) }))} placeholder={profile.admin_password_set ? (zh ? '已配置，留空不变' : 'Configured; leave blank to keep') : ''} />
+                              <PasswordField label={zh ? '特权密码' : 'Admin password'} language={zh ? 'zh' : 'en'} value={profile.admin_password || ''} onChange={value => setForm(f => ({ ...f, web_profiles: (f.web_profiles || []).map((item: any, itemIndex: number) => itemIndex === index ? { ...item, admin_password: value } : item) }))} placeholder={profile.admin_password_set ? (zh ? '已配置，留空不变' : 'Configured; leave blank to keep') : ''} />
                               <div>
                                 <label className="mb-0.5 block text-[9px] text-black/30">{zh ? '绑定普通凭据' : 'Normal credential'}</label>
                                 <select value={profile.credential_id || ''} onChange={event => setForm(f => ({ ...f, web_profiles: (f.web_profiles || []).map((item: any, itemIndex: number) => itemIndex === index ? { ...item, credential_id: event.target.value } : item) }))} className="w-full rounded-lg border border-black/8 bg-white px-2 py-1.5 text-xs text-black/65 outline-none">
@@ -967,12 +968,12 @@ export const AssetModal: React.FC<AssetModalProps> = ({
                     <div className="space-y-2">
                       <p className="text-[9px] font-black uppercase tracking-widest text-blue-500">{zh ? '普通账户' : 'Normal Account'}</p>
                       <Field label={zh ? '用户名' : 'Username'} value={form.normal_username} onChange={v => setForm(f => ({ ...f, normal_username: v }))} placeholder="user" />
-                      <PasswordField label={zh ? '密码' : 'Password'} value={form.normal_password} onChange={v => setForm(f => ({ ...f, normal_password: v }))} placeholder={editingAsset ? (zh ? '留空不变' : 'Leave empty to keep') : ''} />
+                      <PasswordField label={zh ? '密码' : 'Password'} language={zh ? 'zh' : 'en'} value={form.normal_password} onChange={v => setForm(f => ({ ...f, normal_password: v }))} placeholder={editingAsset ? (zh ? '留空不变' : 'Leave empty to keep') : ''} />
                     </div>
                     <div className="space-y-2">
                       <p className="text-[9px] font-black uppercase tracking-widest text-orange-500">{zh ? '特权账户' : 'Admin Account'}</p>
                       <Field label={zh ? '用户名' : 'Username'} value={form.admin_username} onChange={v => setForm(f => ({ ...f, admin_username: v }))} placeholder={form.asset_type === 'network_device' ? 'admin' : 'root'} />
-                      <PasswordField label={zh ? '密码' : 'Password'} value={form.admin_password} onChange={v => setForm(f => ({ ...f, admin_password: v }))} placeholder={editingAsset ? (zh ? '留空不变' : 'Leave empty to keep') : ''} />
+                      <PasswordField label={zh ? '密码' : 'Password'} language={zh ? 'zh' : 'en'} value={form.admin_password} onChange={v => setForm(f => ({ ...f, admin_password: v }))} placeholder={editingAsset ? (zh ? '留空不变' : 'Leave blank to keep') : ''} />
                     </div>
                   </div>
                 )}
@@ -1008,6 +1009,7 @@ export const AssetModal: React.FC<AssetModalProps> = ({
                       <div className="px-3 pb-2.5">
                         <PasswordField
                           label={zh ? '密码' : 'Password'}
+                          language={zh ? 'zh' : 'en'}
                           value={form.enable_password}
                           onChange={v => setForm(f => ({ ...f, enable_password: v }))}
                           placeholder={editingAsset ? (zh ? '留空不变' : 'Leave empty to keep') : (zh ? '输入 enable secret' : 'Enter enable secret')}
@@ -1268,29 +1270,23 @@ function SelectField({ label, value, onChange, options, language }: {
 }
 
 /* --- Password field --- */
-function PasswordField({ label, value, onChange, placeholder }: {
-  label: string; value: string; onChange: (v: string) => void; placeholder?: string;
+function PasswordField({ label, value, onChange, placeholder, language }: {
+  label: string; value: string; onChange: (v: string) => void; placeholder?: string; language: 'zh' | 'en';
 }) {
-  const [show, setShow] = React.useState(false);
+  const inputId = React.useId();
   return (
     <div>
-      <label className="block text-[10px] text-black/30 mb-0.5">{label}</label>
-      <div className="relative">
-        <input
-          type={show ? 'text' : 'password'}
-          value={value}
-          onChange={e => onChange(e.target.value)}
-          placeholder={placeholder}
-          className="w-full bg-white border border-black/8 rounded-lg px-2.5 py-1.5 pr-7 text-xs text-black/65 placeholder:text-black/12 focus:outline-none focus:border-[#00bceb]/25"
-        />
-        <button
-          type="button"
-          onClick={() => setShow(!show)}
-          className="absolute right-1.5 top-1/2 -translate-y-1/2 p-0.5 text-black/15 hover:text-black/30"
-        >
-          {show ? <EyeOff size={12} /> : <Eye size={12} />}
-        </button>
-      </div>
+      <label htmlFor={inputId} className="block text-[10px] text-black/30 mb-0.5">{label}</label>
+      <PasswordInputField
+        id={inputId}
+        autoComplete="new-password"
+        showPasswordLabel={language === 'zh' ? `显示${label}` : `Show ${label}`}
+        hidePasswordLabel={language === 'zh' ? `隐藏${label}` : `Hide ${label}`}
+        value={value}
+        onChange={e => onChange(e.target.value)}
+        placeholder={placeholder}
+        className="rounded-lg bg-white text-xs text-black/65 placeholder:text-black/12 focus:border-[#00bceb]/25"
+      />
     </div>
   );
 }

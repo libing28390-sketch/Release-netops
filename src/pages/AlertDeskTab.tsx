@@ -1,15 +1,17 @@
 import React, { useEffect, useState } from 'react';
 import { AnimatePresence, motion } from 'motion/react';
-import { Activity, AlertTriangle, Bell, CheckCircle2, CheckSquare, Clock, Download, Eye, ExternalLink, MapPin, Network, RefreshCw, Repeat, Search, Square, UserCheck, Wrench, X } from 'lucide-react';
-import * as XLSX from 'xlsx';
+import { Activity, AlertTriangle, Bell, CheckCircle2, CheckSquare, Clock, Eye, ExternalLink, MapPin, Network, RefreshCw, Repeat, Search, Square, UserCheck, Wrench, X } from 'lucide-react';
 import type { AlertDetailResponse, AlertListResponse, AlertRecord } from '../types';
 import Pagination from '../components/Pagination';
 import { DataTable } from '../components/DataTable';
 import PageHero from '../components/PageHero';
 import { ActionButton, ActionIconButton, ActionIconGroup } from '../components/ui/ActionIconButton';
+import { TableActionCell, TableActionHeader } from '../components/ui/TableActionColumn';
+import type { TableExportData } from '../components/ui/TableExportMenu';
 import { alertWorkflowBadgeClass, severityBadgeClass } from '../components/shared';
-import { fetchAllPaginatedItems } from '../utils/pagination';
 import { authHeaders } from '../api/http';
+import { fetchAllPaginatedItems } from '../utils/pagination';
+import { buildAlertDeskExportData, getAlertDeskExportHeaders } from './alertTableExport';
 import {
   alertInputClass,
   alertPanelClass,
@@ -61,6 +63,26 @@ const AlertDeskTab: React.FC<AlertDeskTabProps> = ({ language, currentUsername, 
   const [selectedIds, setSelectedIds] = useState<Set<string>>(new Set());
   const [statusCounts, setStatusCounts] = useState<Record<string, number>>({});
   const [autoRefresh, setAutoRefresh] = useState(false);
+  const exportHeaders = getAlertDeskExportHeaders(language);
+
+  const exportAllAlerts = async (): Promise<TableExportData> => {
+    const params = new URLSearchParams({
+      status: statusFilter,
+      severity: severityFilter,
+      site: 'all',
+      assignee: 'all',
+      search,
+    });
+    const items = await fetchAllPaginatedItems<AlertRecord>('/api/alerts', params, 100);
+    return buildAlertDeskExportData(items, language, {
+      severity: (value) => severityLabel(value, language),
+      workflow: (value) => workflowLabel(value, language),
+      metricType: (value) => metricTypeLabel(value, language),
+      timestamp: formatTs,
+      duration: (value) => formatDuration(value, language),
+      unassigned: language === 'zh' ? '未分派' : 'Unassigned',
+    });
+  };
 
   const loadAlerts = async () => {
     setLoading(true);
@@ -217,47 +239,6 @@ const AlertDeskTab: React.FC<AlertDeskTabProps> = ({ language, currentUsername, 
 
   const selectedItem = selectedDetail?.item || null;
 
-  const handleExportAlerts = async () => {
-    const params = new URLSearchParams({
-      status: statusFilter,
-      severity: severityFilter,
-      site: 'all',
-      assignee: 'all',
-      search,
-    });
-
-    try {
-      const allAlerts = await fetchAllPaginatedItems<AlertRecord>('/api/alerts', params);
-      if (allAlerts.length === 0) return;
-      const exportData = allAlerts.map(r => ({
-        Title: r.title,
-        Metric: r.metric_type || '',
-        Collector: r.collector_source || '',
-        Severity: r.severity,
-        Status: r.workflow_status,
-        Hostname: r.hostname || '',
-        IP: r.ip_address || '',
-        Interface: r.interface_name || '',
-        Site: r.site || '',
-        Assignee: r.assignee || '',
-        'Ack By': r.ack_by || '',
-        Occurrences: r.occurrence_count ?? 1,
-        'Created At': r.created_at ? new Date(r.created_at).toLocaleString() : '',
-        'Resolved At': r.resolved_at ? new Date(r.resolved_at).toLocaleString() : '',
-        Message: r.message,
-      }));
-      const ws = XLSX.utils.json_to_sheet(exportData);
-      const wb = XLSX.utils.book_new();
-      XLSX.utils.book_append_sheet(wb, ws, 'Alerts');
-      const ts = new Date().toISOString().replace(/[-:]/g, '').replace('T', '_').slice(0, 15);
-      XLSX.writeFile(wb, `alerts_export_${ts}.xlsx`);
-      showToast(language === 'zh' ? '导出成功' : 'Exported', 'success');
-    } catch (error) {
-      console.error('Failed to export alerts:', error);
-      showToast(language === 'zh' ? '导出失败' : 'Export failed', 'error');
-    }
-  };
-
   const handleBatchAck = async (nextStatus: 'acknowledged' | 'investigating') => {
     if (selectedIds.size === 0) return;
     setActionLoading('ack');
@@ -365,9 +346,6 @@ const AlertDeskTab: React.FC<AlertDeskTabProps> = ({ language, currentUsername, 
         subtitle={language === 'zh' ? '实时监控全网设备与业务异常，快速进行故障确认、分派和处置。' : 'Real-time monitoring of network anomalies, facilitating quick triage and response.'}
         actions={
           <>
-            <ActionButton icon={Download} variant="accent" size="md" onClick={handleExportAlerts} title={language === 'zh' ? '导出告警' : 'Export Alerts'}>
-              {language === 'zh' ? '导出' : 'Export'}
-            </ActionButton>
             <button
               onClick={() => setAutoRefresh(!autoRefresh)}
               className={`${alertSecondaryButtonClass} ${autoRefresh ? '!border-green-400 !bg-green-50 !text-green-700' : ''}`}
@@ -458,7 +436,7 @@ const AlertDeskTab: React.FC<AlertDeskTabProps> = ({ language, currentUsername, 
         )}
 
         <div className="flex-1 min-h-0 overflow-y-auto custom-scrollbar border-b border-black/5">
-          <DataTable className="text-left">
+          <DataTable className="text-left" exportConfig={{ filename: 'alert-desk', language: language === 'zh' ? 'zh' : 'en', disabled: loading || rows.length === 0, exportData: exportAllAlerts }}>
             <thead className="sticky top-0 z-10">
               <tr className="border-y border-black/5 bg-[#f8fafc] text-[11px] font-bold uppercase tracking-[0.16em] text-black/40">
                 <th className="w-10 px-3 py-3">
@@ -466,19 +444,14 @@ const AlertDeskTab: React.FC<AlertDeskTabProps> = ({ language, currentUsername, 
                     {rows.length > 0 && rows.every(r => selectedIds.has(r.id)) ? <CheckSquare size={16} /> : <Square size={16} />}
                   </button>
                 </th>
-                <th className="px-5 py-3">{language === 'zh' ? '告警标题' : 'Alert'}</th>
-                <th className="px-5 py-3">{language === 'zh' ? '对象' : 'Object'}</th>
-                <th className="px-5 py-3">{language === 'zh' ? '级别' : 'Severity'}</th>
-                <th className="px-5 py-3">{language === 'zh' ? '状态' : 'Status'}</th>
-                <th className="px-5 py-3">{language === 'zh' ? '责任人' : 'Assignee'}</th>
-                <th className="px-5 py-3">{language === 'zh' ? '时间' : 'Time'}</th>
-                <th className="px-5 py-3">{language === 'zh' ? '操作' : 'Action'}</th>
+                {exportHeaders.map((header) => <th key={header} className="px-5 py-3">{header}</th>)}
+                <TableActionHeader className="px-5 py-3">{language === 'zh' ? '操作' : 'Action'}</TableActionHeader>
               </tr>
             </thead>
             <tbody>
               {loading ? (
                 <tr>
-                  <td colSpan={8} className="px-5 py-12 text-center text-sm text-black/40">
+                  <td colSpan={exportHeaders.length + 2} className="px-5 py-12 text-center text-sm text-black/40">
                     {language === 'zh' ? '正在加载告警...' : 'Loading alerts...'}
                   </td>
                 </tr>
@@ -501,51 +474,40 @@ const AlertDeskTab: React.FC<AlertDeskTabProps> = ({ language, currentUsername, 
                         className="text-left"
                         title={language === 'zh' ? `查看告警 ${row.title}` : `View alert ${row.title}`}
                       >
-                        <p className="text-sm font-semibold text-[#164e63]">
-                          {row.title}
-                          {(row.occurrence_count ?? 1) > 1 && (
-                            <span className="ml-1.5 inline-flex items-center gap-0.5 rounded-full bg-indigo-50 px-1.5 py-0.5 text-[10px] font-bold text-indigo-600" title={language === 'zh' ? `出现 ${row.occurrence_count} 次` : `${row.occurrence_count} occurrences`}>
-                              <Repeat size={9} />
-                              {row.occurrence_count}
-                            </span>
-                          )}
+                        <p data-export-primary className="text-sm font-semibold text-[#164e63]">
+                          {row.title || '--'}
                         </p>
-                        <div className="mt-1 flex items-center gap-1.5">
-                          {row.metric_type && row.metric_type !== 'unknown' && (
-                            <span className="inline-flex shrink-0 rounded-md bg-cyan-50 px-1.5 py-0.5 text-[10px] font-semibold text-cyan-700">
-                              {metricTypeLabel(row.metric_type, language)}
-                            </span>
-                          )}
-                          <span className="truncate text-xs text-black/45">{row.message}</span>
-                        </div>
                       </button>
                     </td>
-                     <td className="px-5 py-4 align-top text-sm text-black/60">
-                      <div className="flex flex-col">
-                        <div className="flex items-center gap-1.5 font-semibold text-[#164e63]">
-                          <span>{row.hostname || row.ip_address || '--'}</span>
-                          {row.device_id && (
-                            <div className="flex items-center gap-1">
-                              <button
-                                onClick={() => onNavigateToDevice?.(row.device_id!)}
-                                className="text-cyan-500 hover:text-cyan-700 transition-colors p-0.5"
-                                title={language === 'zh' ? '跳转设备详情' : 'Jump to device details'}
-                              >
-                                <ExternalLink size={12} />
-                              </button>
-                              <button
-                                onClick={() => onNavigateToTopology?.(row.device_id!)}
-                                className="text-indigo-500 hover:text-indigo-700 transition-colors p-0.5"
-                                title={language === 'zh' ? '在拓扑图上定位' : 'Locate on topology'}
-                              >
-                                <Network size={12} />
-                              </button>
-                            </div>
-                          )}
-                        </div>
-                        <div className="mt-1 text-xs text-black/40">{row.interface_name || row.site || '--'}</div>
+                    <td className="px-5 py-4 align-top text-sm text-black/60">{row.message || '--'}</td>
+                    <td className="px-5 py-4 align-top text-sm text-black/60">{row.metric_type && row.metric_type !== 'unknown' ? metricTypeLabel(row.metric_type, language) : '--'}</td>
+                    <td className="px-5 py-4 align-top text-sm text-black/60">{row.occurrence_count ?? 1}</td>
+                    <td className="px-5 py-4 align-top text-sm font-semibold text-[#164e63]">
+                      <div className="flex items-center gap-1.5">
+                        <span>{row.hostname || '--'}</span>
+                        {row.device_id && (
+                          <div className="flex items-center gap-1">
+                            <button
+                              onClick={() => onNavigateToDevice?.(row.device_id!)}
+                              className="text-cyan-500 hover:text-cyan-700 transition-colors p-0.5"
+                              title={language === 'zh' ? '跳转设备详情' : 'Jump to device details'}
+                            >
+                              <ExternalLink size={12} />
+                            </button>
+                            <button
+                              onClick={() => onNavigateToTopology?.(row.device_id!)}
+                              className="text-indigo-500 hover:text-indigo-700 transition-colors p-0.5"
+                              title={language === 'zh' ? '在拓扑图上定位' : 'Locate on topology'}
+                            >
+                              <Network size={12} />
+                            </button>
+                          </div>
+                        )}
                       </div>
                     </td>
+                    <td className="px-5 py-4 align-top text-sm text-black/60">{row.ip_address || '--'}</td>
+                    <td className="px-5 py-4 align-top text-sm text-black/60">{row.interface_name || '--'}</td>
+                    <td className="px-5 py-4 align-top text-sm text-black/60">{row.site || '--'}</td>
                     <td className="px-5 py-4 align-top">
                       <span className={`inline-flex items-center gap-1.5 rounded-full px-2.5 py-0.5 text-[10px] font-extrabold uppercase shadow-sm ${
                         row.severity === 'critical'
@@ -565,29 +527,26 @@ const AlertDeskTab: React.FC<AlertDeskTabProps> = ({ language, currentUsername, 
                       </span>
                     </td>
                     <td className="px-5 py-4 align-top">
-                      <span className={`inline-flex rounded-full px-2.5 py-0.5 text-[10px] font-bold uppercase ${alertWorkflowBadgeClass(row.workflow_status)}`}>
+                      <span data-export-primary className={`inline-flex rounded-full px-2.5 py-0.5 text-[10px] font-bold uppercase ${alertWorkflowBadgeClass(row.workflow_status)}`}>
                         {workflowLabel(row.workflow_status, language)}
                       </span>
                     </td>
                     <td className="px-5 py-4 align-top text-sm text-black/60">
                       {row.assignee || (language === 'zh' ? '未分派' : 'Unassigned')}
                     </td>
-                    <td className="px-5 py-4 align-top text-sm text-black/60">
-                      <div>{formatTs(row.created_at)}</div>
-                      <div className={`mt-1 flex items-center gap-1 text-xs ${
-                        !row.resolved_at && (row.duration_seconds ?? 0) > 86400
-                          ? 'font-semibold text-red-600'
-                          : !row.resolved_at && (row.duration_seconds ?? 0) > 14400
-                            ? 'font-medium text-amber-600'
-                            : !row.resolved_at && (row.duration_seconds ?? 0) > 3600
-                              ? 'text-amber-500'
-                              : 'text-black/40'
-                      }`}>
-                        {!row.resolved_at && (row.duration_seconds ?? 0) > 3600 && <Clock size={11} />}
-                        {formatDuration(row.duration_seconds, language)}
-                      </div>
+                    <td className="px-5 py-4 align-top text-sm text-black/60">{formatTs(row.created_at)}</td>
+                    <td className={`px-5 py-4 align-top text-sm ${
+                      !row.resolved_at && (row.duration_seconds ?? 0) > 86400
+                        ? 'font-semibold text-red-600'
+                        : !row.resolved_at && (row.duration_seconds ?? 0) > 14400
+                          ? 'font-medium text-amber-600'
+                          : !row.resolved_at && (row.duration_seconds ?? 0) > 3600
+                            ? 'text-amber-500'
+                            : 'text-black/40'
+                    }`}>
+                      <span className="inline-flex items-center gap-1">{!row.resolved_at && (row.duration_seconds ?? 0) > 3600 && <Clock size={11} />}{formatDuration(row.duration_seconds, language)}</span>
                     </td>
-                    <td className="px-5 py-4 align-top">
+                    <TableActionCell className="px-5 py-4 align-top">
                       <ActionIconGroup label={language === 'zh' ? '告警操作' : 'Alert actions'}>
                         <ActionIconButton
                           icon={Eye}
@@ -611,12 +570,12 @@ const AlertDeskTab: React.FC<AlertDeskTabProps> = ({ language, currentUsername, 
                           />
                         )}
                       </ActionIconGroup>
-                    </td>
+                    </TableActionCell>
                   </tr>
                 ))
               ) : (
                 <tr>
-                  <td colSpan={8} className="px-5 py-12 text-center text-sm text-black/40">
+                  <td colSpan={exportHeaders.length + 2} className="px-5 py-12 text-center text-sm text-black/40">
                     {language === 'zh' ? '当前筛选条件下没有告警。' : 'No alerts found for the current filter.'}
                   </td>
                 </tr>

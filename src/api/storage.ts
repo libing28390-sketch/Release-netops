@@ -88,8 +88,39 @@ export interface StorageTestResponse {
   [key: string]: unknown;
 }
 
-export const listStorageProviders = () =>
-  apiRequest<StorageProvidersResponse>('/api/storage/providers');
+export interface StorageObjectPath {
+  object_key: string;
+  s3_uri: string;
+  size: number;
+  last_modified?: string | null;
+}
+
+export interface StorageObjectPage {
+  provider_id: string;
+  provider_name: string;
+  endpoint_url: string;
+  bucket: string;
+  items: StorageObjectPath[];
+  folders: string[];
+  next_continuation_token?: string | null;
+  is_truncated: boolean;
+}
+
+export const listStorageProviders = (signal?: AbortSignal) =>
+  apiRequest<StorageProvidersResponse>('/api/storage/providers', { signal });
+
+export const listStorageObjects = (
+  providerId: string,
+  options: { prefix?: string; delimiter?: string; continuationToken?: string | null; pageSize?: number; signal?: AbortSignal } = {},
+) => {
+  const params = new URLSearchParams({ provider_id: providerId, page_size: String(options.pageSize ?? 100) });
+  if (options.prefix) params.set('prefix', options.prefix);
+  if (options.delimiter !== undefined) params.set('delimiter', options.delimiter);
+  if (options.continuationToken) params.set('continuation_token', options.continuationToken);
+  return apiRequest<StorageObjectPage>(`/api/storage/objects?${params.toString()}`, {
+    signal: options.signal,
+  });
+};
 
 export const listStorageUsages = () =>
   apiRequest<StorageUsagesResponse>('/api/storage/usages');

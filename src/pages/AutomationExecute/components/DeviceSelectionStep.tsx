@@ -1,3 +1,4 @@
+import { DataTable } from '../../../components/DataTable';
 import React, { useState } from 'react';
 import { motion, AnimatePresence } from 'motion/react';
 import { Search, CheckCircle2, LayoutGrid, List, Server, Terminal, Cpu, X, ChevronDown, ChevronRight, Filter } from 'lucide-react';
@@ -80,6 +81,26 @@ export const DeviceSelectionStep: React.FC<DeviceSelectionStepProps> = ({
   devices,
 }) => {
   const [filterCollapsed, setFilterCollapsed] = useState(false);
+  const deviceExportData = {
+    headers: [
+      isZh ? '状态' : 'Status',
+      isZh ? '主机名' : 'Hostname',
+      'IP',
+      isZh ? '厂商' : 'Vendor',
+      isZh ? '类型' : 'Type',
+      isZh ? '角色' : 'Role',
+      isZh ? '站点' : 'Site',
+    ],
+    rows: filteredDevices.map((device) => [
+      device.status === 'online' ? (isZh ? '在线' : 'Online') : (isZh ? '离线' : 'Offline'),
+      device.hostname,
+      device.ip_address,
+      getVendor(device),
+      getDeviceCategory(device) === 'server' ? (isZh ? '服务器' : 'Server') : (isZh ? '网络设备' : 'Network'),
+      device.role || '—',
+      device.site || '—',
+    ]),
+  };
 
   return (
     <motion.div
@@ -315,7 +336,7 @@ export const DeviceSelectionStep: React.FC<DeviceSelectionStepProps> = ({
               </div>
             ) : (
               <div className="rounded-xl border border-gray-100 bg-white overflow-hidden">
-                <table className="nx-data-table nx-data-table--compact text-left">
+                <DataTable unstyled exportConfig={{ filename: 'automation-device-selection', language: isZh ? 'zh' : 'en', disabled: filteredDevices.length === 0, exportData: deviceExportData }} className="nx-data-table nx-data-table--compact text-left">
                   <thead>
                     <tr className="border-b border-gray-100 bg-gray-50/60">
                       <th className="w-10 px-3 py-2">
@@ -418,7 +439,7 @@ export const DeviceSelectionStep: React.FC<DeviceSelectionStepProps> = ({
                       );
                     })}
                   </tbody>
-                </table>
+                </DataTable>
                 {filteredDevices.length === 0 && (
                   <div className="py-16 text-center text-gray-300">
                     <Server size={32} strokeWidth={1} className="mx-auto mb-3 opacity-50" />

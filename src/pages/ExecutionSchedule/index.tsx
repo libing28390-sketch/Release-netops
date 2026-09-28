@@ -7,6 +7,8 @@ import type { ExecutionScheduleTabProps, ScheduledJob, FormState, ValidatedDevic
 import { INITIAL_FORM } from './constants';
 import { serializeTagFilter, EMPTY_TAG_FILTER } from '../../components/TagConditionPicker';
 import { fmtDateTime } from './helpers';
+import { fetchAllPaginatedItems } from '../../utils/pagination';
+import { fetchAllInspectionRuns, type InspectionRunExportRecord } from '../inspectionExport';
 
 // Components
 import ScheduleEditor from './components/ScheduleEditor';
@@ -358,6 +360,54 @@ const ExecutionScheduleCoordinator: React.FC<ExecutionScheduleTabProps> = ({
     }
   }, [authHeaders, zh, showToast]);
 
+  const loadAllExecutionLogs = useCallback(async (): Promise<UnifiedExecutionLog[]> => {
+    interface InspectionHistoryRecord extends InspectionRunExportRecord {
+      status?: string | null;
+      success_count?: number | null;
+      failed_count?: number | null;
+      schedule_name?: string | null;
+      name?: string | null;
+    }
+    const inspections = await fetchAllInspectionRuns<InspectionHistoryRecord>(authHeaders);
+
+    const playbooks = await fetchAllPaginatedItems<any>('/api/playbooks', new URLSearchParams({ status: 'all' }));
+    const normalizedInspections: UnifiedExecutionLog[] = inspections.map((run) => ({
+      id: run.id,
+      source: 'inspection',
+      started_at: run.started_at || '',
+      trigger_type: run.trigger_type === 'manual' ? 'manual' : 'plan',
+      status: run.status,
+      total_devices: run.total_devices || 0,
+      success_count: run.success_count || 0,
+      failed_count: run.failed_count || 0,
+      avg_health_score: run.avg_health_score,
+      created_by: run.created_by || 'system',
+      name: run.schedule_name || run.name || (zh ? '网络巡检' : 'Network Inspection'),
+    }));
+    const normalizedPlaybooks: UnifiedExecutionLog[] = playbooks.map((playbook) => {
+      const isScheduled = playbook.author === 'scheduler' || playbook.author === 'system'
+        || (playbook.scenario_id && String(playbook.scenario_id).startsWith('scheduled:'));
+      return {
+        id: playbook.id,
+        source: 'playbook',
+        started_at: playbook.created_at,
+        trigger_type: isScheduled ? 'job' : 'manual',
+        status: playbook.status,
+        total_devices: playbook.total_devices || 0,
+        success_count: playbook.success_count || 0,
+        failed_count: playbook.failed_count || 0,
+        partial_count: playbook.partial_count || 0,
+        created_by: playbook.author || 'admin',
+        name: playbook.scenario_name || playbook.task_name || (zh ? '快捷命令执行' : 'Quick Playbook'),
+      };
+    });
+    return [...normalizedInspections, ...normalizedPlaybooks].sort((left, right) => {
+      const timeLeft = left.started_at ? new Date(left.started_at).getTime() : 0;
+      const timeRight = right.started_at ? new Date(right.started_at).getTime() : 0;
+      return (Number.isNaN(timeRight) ? 0 : timeRight) - (Number.isNaN(timeLeft) ? 0 : timeLeft);
+    });
+  }, [authHeaders, zh]);
+
   const filteredLogs = useMemo(() => {
     return unifiedLogs.filter(log => {
       if (executionTypeFilter === 'all') return true;
@@ -383,11 +433,6 @@ const ExecutionScheduleCoordinator: React.FC<ExecutionScheduleTabProps> = ({
     window.addEventListener('keydown', handler);
     return () => window.removeEventListener('keydown', handler);
   }, [isDetailModalOpen, showScheduleDetail]);
-
-  const paginatedLogs = useMemo(() => {
-    const start = (inspRunPage - 1) * inspRunPageSize;
-    return filteredLogs.slice(start, start + inspRunPageSize);
-  }, [filteredLogs, inspRunPage, inspRunPageSize]);
 
   const handleSelectLog = async (log: UnifiedExecutionLog) => {
     setSelectedLog(log);
@@ -999,7 +1044,6 @@ const ExecutionScheduleCoordinator: React.FC<ExecutionScheduleTabProps> = ({
             language={language}
             loading={inspRunsLoading}
             logs={filteredLogs}
-            paginatedLogs={paginatedLogs}
             page={inspRunPage}
             pageSize={inspRunPageSize}
             onPageChange={setInspRunPage}
@@ -1008,6 +1052,7 @@ const ExecutionScheduleCoordinator: React.FC<ExecutionScheduleTabProps> = ({
             onFilterChange={setExecutionTypeFilter}
             onSelectLog={handleSelectLog}
             onExport={handleExportReport}
+            loadAllLogs={loadAllExecutionLogs}
           />
         )}
       </div>

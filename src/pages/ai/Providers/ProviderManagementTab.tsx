@@ -7,7 +7,6 @@ import {
   Clock3,
   Download,
   Eye,
-  EyeOff,
   Globe2,
   KeyRound,
   LockKeyhole,
@@ -21,6 +20,7 @@ import {
   XCircle,
   type LucideIcon,
 } from 'lucide-react';
+import { PasswordInputField } from '../../../components/ui/PasswordInputField';
 import { getAIProvidersPage, createAIProvider, updateAIProvider, deleteAIProvider, getAIProviderDeletePreview, testAIProvider, AIProvider, AIProviderDeletePreview } from '../../../api/ai';
 import { useCoreApp } from '../../../contexts/AppDomainContext';
 import { useEscapeClose } from '../../../hooks/useEscapeClose';
@@ -730,18 +730,19 @@ export const ProviderManagementTab: React.FC = () => {
                     <label htmlFor="provider-api-key" className="block text-xs font-bold text-slate-700 dark:text-slate-300">API Key</label>
                     <span className="inline-flex items-center gap-1 text-[10px] font-semibold text-emerald-600 dark:text-emerald-400"><LockKeyhole className="h-3 w-3" />AES-256-GCM</span>
                   </div>
-                  <div className="relative">
-                    <input id="provider-api-key" type={showApiKey ? 'text' : 'password'} required={providerType !== 'ollama' && providerType !== 'local' && !editingId} placeholder={editingId ? tx('ai.provider.editor.keyOptionalOnEdit') : providerType === 'ollama' || providerType === 'local' ? tx('ai.provider.editor.apiKeyOptional') : 'sk-...'} value={apiKey} onChange={(e) => setApiKey(e.target.value)} className="w-full rounded-xl border border-slate-200 bg-white px-3.5 py-2.5 pr-11 font-mono text-sm text-slate-900 outline-none transition placeholder:text-slate-400 focus:border-indigo-500 focus:ring-4 focus:ring-indigo-500/10 dark:border-slate-700 dark:bg-slate-950 dark:text-white" />
-                    <button
-                      type="button"
-                      onClick={() => setShowApiKey((visible) => !visible)}
-                      aria-label={tx(showApiKey ? 'ai.provider.editor.keyVisibility.hide' : 'ai.provider.editor.keyVisibility.show')}
-                      title={tx(showApiKey ? 'ai.provider.editor.keyVisibility.hideTitle' : 'ai.provider.editor.keyVisibility.showTitle')}
-                      className="absolute right-2 top-1/2 flex h-8 w-8 -translate-y-1/2 items-center justify-center rounded-lg text-slate-400 transition hover:bg-slate-100 hover:text-indigo-600 dark:hover:bg-slate-800 dark:hover:text-indigo-300"
-                    >
-                      {showApiKey ? <EyeOff className="h-4 w-4" /> : <Eye className="h-4 w-4" />}
-                    </button>
-                  </div>
+                  <PasswordInputField
+                    id="provider-api-key"
+                    autoComplete="new-password"
+                    required={providerType !== 'ollama' && providerType !== 'local' && !editingId}
+                    visible={showApiKey}
+                    onVisibilityChange={setShowApiKey}
+                    showPasswordLabel={tx('ai.provider.editor.keyVisibility.show')}
+                    hidePasswordLabel={tx('ai.provider.editor.keyVisibility.hide')}
+                    placeholder={editingId ? tx('ai.provider.editor.keyOptionalOnEdit') : providerType === 'ollama' || providerType === 'local' ? tx('ai.provider.editor.apiKeyOptional') : 'sk-...'}
+                    value={apiKey}
+                    onChange={(e) => setApiKey(e.target.value)}
+                    className="rounded-xl font-mono text-sm text-slate-900 placeholder:text-slate-400 dark:text-white"
+                  />
                 </div>
 
                 <div className="grid gap-4 sm:grid-cols-[1fr_150px]">

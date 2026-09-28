@@ -1,15 +1,19 @@
+import { DataTable } from '../components/DataTable';
 import React, { useState, useEffect, useCallback, useMemo } from 'react';
 import {
-  Search, Plus, Download, Upload, Trash2, Pencil,
+  Search, Plus, Upload, Trash2, Pencil,
   Server, ChevronDown, ChevronUp, ChevronRight,
-  CheckCircle2, XCircle, AlertTriangle, Wrench, X, Activity, ShieldCheck, ShieldAlert, RefreshCw, Terminal,
+  CheckCircle2, XCircle, AlertTriangle, Wrench, X, Activity, RefreshCw, Settings2,
 } from 'lucide-react';
 import { AnimatePresence, motion } from 'motion/react';
 import Pagination from '../components/Pagination';
 import PageHero from '../components/PageHero';
-import { ActionButton } from '../components/ui/ActionIconButton';
+import { ActionButton, ActionIconButton } from '../components/ui/ActionIconButton';
 import { authHeaders } from '../api/http';
+import { fetchAllPaginatedItems } from '../utils/pagination';
+import { buildInventoryServersExportData, filterInventoryServers } from './inventoryServersExport';
 
+import { TableActionCell, TableActionHeader } from '../components/ui/TableActionColumn';
 /* ═══════════════════════════════════════════════════════
    Types
    ═══════════════════════════════════════════════════════ */
@@ -258,11 +262,33 @@ const InventoryServersTab: React.FC<Props> = ({ language, t, setActiveTab, setSe
   }, [servers]);
 
   const displayRows = useMemo(() => {
-    if (quickFilter === 'all') return sortedServers;
-    if (quickFilter === 'offline') return sortedServers.filter(s => s.status === 'inactive');
-    if (quickFilter === 'warning') return sortedServers.filter(s => s.status === 'maintenance');
-    return sortedServers.filter(s => s.status === 'active');
-  }, [sortedServers, quickFilter]);
+    return filterInventoryServers(sortedServers, {
+      quickFilter,
+      statusFilter,
+      vendorFilter,
+      datacenterFilter: dcFilter,
+    });
+  }, [sortedServers, quickFilter, statusFilter, vendorFilter, dcFilter]);
+
+  const exportData = useCallback(async () => {
+    const params = new URLSearchParams({
+      asset_type: 'server',
+      status: statusFilter,
+      vendor: vendorFilter,
+      datacenter: dcFilter,
+      q: search,
+    });
+    const allFilteredServers = await fetchAllPaginatedItems<ServerAsset>('/api/assets', params, 1000);
+    return buildInventoryServersExportData(allFilteredServers, {
+      language,
+      quickFilter,
+      statusFilter,
+      vendorFilter,
+      datacenterFilter: dcFilter,
+      sortConfig,
+      verification: verifyResults,
+    });
+  }, [statusFilter, vendorFilter, dcFilter, search, language, quickFilter, sortConfig, verifyResults]);
 
   /* ─── Actions ─── */
   const handleDelete = async (server: ServerAsset) => {
@@ -341,8 +367,8 @@ const InventoryServersTab: React.FC<Props> = ({ language, t, setActiveTab, setSe
         title={zh ? '服务器管理' : 'Server Management'}
         subtitle={zh ? '管理和查看数据中心服务器资产。' : 'Manage and view datacenter server assets.'}
         actions={
-          <ActionButton icon={Download} variant="accent" onClick={fetchServers} title={zh ? '刷新' : 'Refresh'}>
-            {t('export')}
+          <ActionButton icon={RefreshCw} iconClassName={loading ? 'animate-spin' : undefined} variant="accent" onClick={fetchServers} title={zh ? '刷新' : 'Refresh'}>
+            {zh ? '刷新' : 'Refresh'}
           </ActionButton>
         }
       />
@@ -428,7 +454,7 @@ const InventoryServersTab: React.FC<Props> = ({ language, t, setActiveTab, setSe
       {/* ════ Table ════ */}
       <div className="rounded-xl border border-black/5 dark:border-white/8 bg-[var(--card-bg)] overflow-hidden">
         <div className="overflow-x-auto">
-          <table className="nx-data-table min-w-[860px] text-left">
+          <DataTable unstyled exportConfig={{ filename: 'inventory-servers', exportData }} className="nx-data-table min-w-[1320px] text-left">
             <thead>
               <tr className="bg-black/[.02] dark:bg-white/[.02] border-b border-black/5 dark:border-white/6">
                 <th className="px-3 py-2.5 w-9">
@@ -442,29 +468,38 @@ const InventoryServersTab: React.FC<Props> = ({ language, t, setActiveTab, setSe
                   />
                 </th>
                 <SortHeader col="hostname" sortConfig={sortConfig} onSort={handleSort}>
-                  {zh ? '服务器' : 'Server'}
+                  {zh ? '主机名' : 'Hostname'}
                 </SortHeader>
+                <th className="px-3 py-2.5 text-[10px] font-bold uppercase tracking-wider text-black/35 dark:text-white/30">{zh ? '管理 IP' : 'Management IP'}</th>
+                <th className="px-3 py-2.5 text-[10px] font-bold uppercase tracking-wider text-black/35 dark:text-white/30">{zh ? '角色' : 'Role'}</th>
                 <SortHeader col="vendor" sortConfig={sortConfig} onSort={handleSort}>
-                  {zh ? '厂商 / 型号' : 'Vendor / Model'}
+                  {zh ? '厂商' : 'Vendor'}
                 </SortHeader>
+                <th className="px-3 py-2.5 text-[10px] font-bold uppercase tracking-wider text-black/35 dark:text-white/30">{zh ? '型号' : 'Model'}</th>
                 <SortHeader col="datacenter" sortConfig={sortConfig} onSort={handleSort}>
                   {zh ? '数据中心' : 'Datacenter'}
                 </SortHeader>
+                <th className="px-3 py-2.5 text-[10px] font-bold uppercase tracking-wider text-black/35 dark:text-white/30">{zh ? '机柜' : 'Rack'}</th>
+                <th className="px-3 py-2.5 text-[10px] font-bold uppercase tracking-wider text-black/35 dark:text-white/30">{zh ? 'U 位' : 'Rack Unit'}</th>
                 <SortHeader col="status" sortConfig={sortConfig} onSort={handleSort}>
                   {zh ? '状态' : 'Status'}
                 </SortHeader>
+                <th className="px-3 py-2.5 text-[10px] font-bold uppercase tracking-wider text-black/35 dark:text-white/30">Ping</th>
+                <th className="px-3 py-2.5 text-[10px] font-bold uppercase tracking-wider text-black/35 dark:text-white/30">SSH</th>
                 <th className="px-3 py-2.5 text-[10px] font-bold uppercase tracking-wider text-black/35 dark:text-white/30">
                   {zh ? '部门' : 'Dept'}
                 </th>
-                <th className="px-3 py-2.5 text-[10px] font-bold uppercase tracking-wider text-black/35 dark:text-white/30 text-right pr-4">
+                <TableActionHeader className="px-3 py-2.5 text-[10px] font-bold uppercase tracking-wider text-black/35 dark:text-white/30 text-right pr-4">
                   {zh ? '操作' : 'Actions'}
-                </th>
+                </TableActionHeader>
               </tr>
             </thead>
             <tbody>
               {displayRows.map(server => {
                 const selected = selectedIds.has(server.id);
                 const st = statusMeta(server.status);
+                const verifyResult = verifyResults[server.id];
+                const verificationSucceeded = Boolean(verifyResult?.ping && verifyResult?.ssh);
 
                 return (
                   <tr
@@ -490,37 +525,30 @@ const InventoryServersTab: React.FC<Props> = ({ language, t, setActiveTab, setSe
                         }}
                       />
                     </td>
-                    {/* Hostname + IP */}
+                    {/* Hostname */}
                     <td className="px-3 py-2">
                       <div className="text-left">
                         <span className="text-[12px] font-semibold text-black/80 dark:text-white/85 group-hover:text-[#00bceb] transition-colors">
                           {server.hostname || 'Unknown'}
                         </span>
-                        <span className="block text-[10px] font-mono text-black/35 dark:text-white/30 mt-0.5">
-                          {server.management_ip || '0.0.0.0'}
-                        </span>
                       </div>
-                      {server.device_role && (
-                        <span className="inline-block mt-0.5 text-[9px] font-semibold uppercase px-1.5 py-0.5 rounded
-                          bg-black/[.04] dark:bg-white/6 text-black/30 dark:text-white/30">
+                    </td>
+                    <td className="px-3 py-2 text-[10px] font-mono text-black/55 dark:text-white/55">{server.management_ip || '0.0.0.0'}</td>
+                    <td className="px-3 py-2">
+                      {server.device_role ? (
+                        <span className="inline-block text-[9px] font-semibold uppercase px-1.5 py-0.5 rounded bg-black/[.04] dark:bg-white/6 text-black/45 dark:text-white/45">
                           {server.device_role}
                         </span>
-                      )}
+                      ) : '—'}
                     </td>
-                    {/* Vendor / Model */}
                     <td className="px-3 py-2">
                       <span className="text-[11px] font-medium text-black/65 dark:text-white/65">{server.vendor || '—'}</span>
-                      <span className="block text-[10px] text-black/35 dark:text-white/30 mt-0.5">{server.model || '—'}</span>
                     </td>
+                    <td className="px-3 py-2 text-[10px] text-black/45 dark:text-white/45">{server.model || '—'}</td>
                     {/* Datacenter */}
-                    <td className="px-3 py-2">
-                      <span className="text-[11px] text-black/55 dark:text-white/55">{server.datacenter || '—'}</span>
-                      {server.rack && (
-                        <span className="block text-[10px] text-black/30 dark:text-white/25 mt-0.5">
-                          {server.rack}{server.rack_unit ? ` / U${server.rack_unit}` : ''}
-                        </span>
-                      )}
-                    </td>
+                    <td className="px-3 py-2 text-[11px] text-black/55 dark:text-white/55">{server.datacenter || '—'}</td>
+                    <td className="px-3 py-2 text-[10px] text-black/45 dark:text-white/45">{server.rack || '—'}</td>
+                    <td className="px-3 py-2 text-[10px] text-black/45 dark:text-white/45">{server.rack_unit ? `U${server.rack_unit}` : '—'}</td>
                     {/* Status */}
                     <td className="px-3 py-2">
                       <div className="flex flex-col gap-1.5">
@@ -529,105 +557,38 @@ const InventoryServersTab: React.FC<Props> = ({ language, t, setActiveTab, setSe
                           {zh ? st.zh : st.en}
                         </span>
                         
-                        {verifyResults[server.id] && (
-                          <div className="flex flex-col gap-1 w-full max-w-[200px]">
-                            {/* General Ping/SSH status */}
-                            <div className="flex flex-wrap gap-1">
-                              <div 
-                                title={verifyResults[server.id].ping_error || (zh ? 'Ping 正常' : 'Ping OK')}
-                                className={`inline-flex items-center gap-1 px-1.5 py-0.5 rounded text-[9px] font-bold uppercase tracking-tight
-                                  ${verifyResults[server.id].ping 
-                                    ? 'bg-emerald-500/10 text-emerald-600 border border-emerald-500/20' 
-                                    : 'bg-red-500/10 text-red-600 border border-red-500/20'}`}>
-                                PING: {verifyResults[server.id].ping ? 'OK' : 'FAIL'}
-                              </div>
-                              <div 
-                                className={`inline-flex items-center gap-1 px-1.5 py-0.5 rounded text-[9px] font-bold uppercase tracking-tight
-                                  ${verifyResults[server.id].ssh 
-                                    ? 'bg-emerald-500/10 text-emerald-600 border border-emerald-500/20' 
-                                    : 'bg-red-500/10 text-red-600 border border-red-500/20'}`}>
-                                SSH: {verifyResults[server.id].ssh ? 'OK' : 'FAIL'}
-                              </div>
-                            </div>
-
-                            {/* Role-specific details if Dual Auth */}
-                            {verifyResults[server.id].auth_model === 'dual' && verifyResults[server.id].roles && (
-                              <div className="flex flex-col gap-1 mt-1 p-1.5 rounded bg-black/5 dark:bg-white/5 border border-black/5 dark:border-white/5">
-                                {Object.entries(verifyResults[server.id].roles).map(([role, res]: [string, any]) => (
-                                  <div key={role} className="flex items-center justify-between gap-2">
-                                    <span className="text-[8px] font-bold uppercase text-black/40 dark:text-white/40">{role}</span>
-                                    <div className="flex items-center gap-1">
-                                      {res.success ? (
-                                        <CheckCircle2 size={10} className="text-emerald-500" />
-                                      ) : (
-                                        <XCircle size={10} className="text-red-500" />
-                                      )}
-                                      <span className={`text-[8px] font-medium ${res.success ? 'text-emerald-600' : 'text-red-500'}`}>
-                                        {res.success ? (zh ? '成功' : 'OK') : (zh ? '失败' : 'FAIL')}
-                                      </span>
-                                    </div>
-                                  </div>
-                                ))}
-                              </div>
-                            )}
-
-                            {/* Summary / Error */}
-                            {verifyResults[server.id].ssh_summary && (
-                              <div className="w-full flex items-center gap-1 mt-0.5">
-                                <span className="w-1 h-1 rounded-full bg-emerald-400" />
-                                <p className="text-[9px] text-emerald-600/80 leading-tight">
-                                  {verifyResults[server.id].ssh_summary}
-                                </p>
-                              </div>
-                            )}
-                            {verifyResults[server.id].ssh_error && (
-                              <div className="w-full flex items-center gap-1 mt-0.5 group/err">
-                                <AlertTriangle size={10} className="text-red-400 shrink-0" />
-                                <p className="text-[9px] text-red-500/80 leading-tight truncate cursor-help" title={verifyResults[server.id].ssh_error}>
-                                  {verifyResults[server.id].ssh_error}
-                                </p>
-                              </div>
-                            )}
-                            <p className="w-full text-[8px] text-slate-300 dark:text-slate-600 mt-1 font-mono uppercase tracking-tighter">
-                              {zh ? '最后验证' : 'LAST VERIFIED'}: {new Date().toLocaleTimeString()}
-                            </p>
-                          </div>
-                        )}
                       </div>
+                    </td>
+                    <td className="px-3 py-2 text-[10px] font-semibold text-black/55 dark:text-white/55" title={verifyResults[server.id]?.ping_error || undefined}>
+                      {verifyResults[server.id] ? (verifyResults[server.id].ping ? 'OK' : 'FAIL') : '—'}
+                    </td>
+                    <td className="px-3 py-2 text-[10px] font-semibold text-black/55 dark:text-white/55" title={verifyResults[server.id]?.ssh_error || undefined}>
+                      {verifyResults[server.id] ? (verifyResults[server.id].ssh ? 'OK' : 'FAIL') : '—'}
                     </td>
                     {/* Department */}
                     <td className="px-3 py-2">
                       <span className="text-[11px] text-black/55 dark:text-white/55">{server.department || '—'}</span>
                     </td>
                     {/* Actions */}
-                    <td className="px-3 py-2" onClick={e => e.stopPropagation()}>
-                      <div className="flex items-center justify-end gap-1">
-                        <button
-                          onClick={(e) => { e.stopPropagation(); handleManage(server); }}
-                          title={zh ? '配置连接' : 'Config Connection'}
-                          className="inline-flex items-center justify-center w-7 h-7 rounded-md text-[10px] font-semibold bg-[#00bceb]/10 text-[#0096bd] dark:text-[#5dd8f0] hover:bg-[#00bceb]/20 transition-all">
-                          <Terminal size={13} />
-                        </button>
-                        <button
-                          onClick={(e) => { e.stopPropagation(); handleVerify(server); }}
-                          disabled={verifyingIds.has(server.id)}
-                          title={zh ? '测试连接' : 'Test Connection'}
-                          className={`inline-flex items-center justify-center w-7 h-7 rounded-md text-[10px] font-semibold transition-all
-                            ${verifyingIds.has(server.id) ? 'bg-blue-500/10 text-blue-600 dark:text-blue-400' : 'bg-violet-500/10 text-violet-600 dark:text-violet-400 hover:bg-violet-500/20'}`}>
-                          {verifyingIds.has(server.id) ? (
-                            <RefreshCw size={13} className="animate-spin" />
-                          ) : verifyResults[server.id] ? (
-                            verifyResults[server.id].ping && verifyResults[server.id].ssh ? (
-                              <ShieldCheck size={13} className="text-emerald-500" />
-                            ) : (
-                              <ShieldAlert size={13} className="text-red-500" />
-                            )
-                          ) : (
-                            <Activity size={13} />
-                          )}
-                        </button>
-                      </div>
-                    </td>
+                    <TableActionCell className="px-3 py-2" onClick={e => e.stopPropagation()} label={zh ? '服务器操作' : 'Server actions'}>
+                      <ActionIconButton
+                        icon={Settings2}
+                        label={zh ? '配置连接' : 'Configure connection'}
+                        variant="accent"
+                        onClick={(e) => { e.stopPropagation(); handleManage(server); }}
+                      />
+                      <ActionIconButton
+                        icon={verifyingIds.has(server.id) ? RefreshCw : Activity}
+                        iconClassName={verifyingIds.has(server.id) ? 'animate-spin' : undefined}
+                        label={zh ? '测试连接' : 'Test connection'}
+                        tooltip={verifyResult
+                          ? (verificationSucceeded ? (zh ? '上次连接测试成功；点击重新测试' : 'Last connection test succeeded; click to retest') : (zh ? '上次连接测试失败；点击重新测试' : 'Last connection test failed; click to retest'))
+                          : (zh ? '测试连接' : 'Test connection')}
+                        variant={verifyResult ? (verificationSucceeded ? 'success' : 'danger') : 'accent'}
+                        disabled={verifyingIds.has(server.id)}
+                        onClick={(e) => { e.stopPropagation(); handleVerify(server); }}
+                      />
+                    </TableActionCell>
                   </tr>
                 );
               })}
@@ -635,7 +596,7 @@ const InventoryServersTab: React.FC<Props> = ({ language, t, setActiveTab, setSe
               {/* Empty state */}
               {!loading && displayRows.length === 0 && (
                 <tr>
-                  <td colSpan={7} className="px-6 py-12 text-center">
+                  <td colSpan={14} className="px-6 py-12 text-center">
                     <Server size={28} className="mx-auto mb-2 text-black/15 dark:text-white/15" />
                     <p className="text-sm text-black/35 dark:text-white/30">
                       {zh ? '没有匹配的服务器' : 'No servers found for current filters.'}
@@ -647,7 +608,7 @@ const InventoryServersTab: React.FC<Props> = ({ language, t, setActiveTab, setSe
               {/* Loading state */}
               {loading && displayRows.length === 0 && (
                 <tr>
-                  <td colSpan={7} className="px-6 py-12 text-center">
+                  <td colSpan={14} className="px-6 py-12 text-center">
                     <div className="inline-block w-5 h-5 border-2 border-[#00bceb]/30 border-t-[#00bceb] rounded-full animate-spin mb-2" />
                     <p className="text-sm text-black/35 dark:text-white/30">
                       {zh ? '加载中…' : 'Loading servers...'}
@@ -656,7 +617,7 @@ const InventoryServersTab: React.FC<Props> = ({ language, t, setActiveTab, setSe
                 </tr>
               )}
             </tbody>
-          </table>
+          </DataTable>
         </div>
         <Pagination
           currentPage={page}

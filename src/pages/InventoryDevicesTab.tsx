@@ -1,28 +1,49 @@
-import React, { useState, useRef, useEffect, useMemo } from 'react';
+import React, { useState, useRef, useEffect, useMemo, useCallback } from 'react';
 import { useInventoryStore } from '../store/inventoryStore';
 import { useInventoryTableActions } from '../hooks/useInventoryTableActions';
 import {
-  Upload, Download, Plus, Search, Activity,
+  Upload, Plus, Search, Activity,
   AlertTriangle, CheckCircle2, XCircle, Server, Router,
   Shield, Trash2, SlidersHorizontal, Tag, RefreshCw, X, WifiOff, Settings2,
 } from 'lucide-react';
 import type { Device, DeviceConnectionCheckSummary, TagDefinition } from '../types';
 import Pagination from '../components/Pagination';
-import { ActionButton } from '../components/ui/ActionIconButton';
 import DeviceTable, { DEFAULT_COLUMNS, type ColumnVisibility, type ColumnKey } from '../components/DeviceList/DeviceTable';
+import { apiRequest } from '../api/http';
+import { buildNetworkDeviceExportData, fetchAllNetworkDevicePages, filterNetworkDevicesForExport } from '../components/DeviceList/deviceExport';
+import type { TableExportData } from '../components/ui/TableExportMenu';
 import TagFilterDropdown from '../components/TagFilterDropdown';
 import PageHero from '../components/PageHero';
 import BatchPlatformBindingModal from '../components/BatchPlatformBindingModal';
 
 /* ─── Column Visibility Toggle ─── */
 const COLUMN_LABELS: Record<ColumnKey, { zh: string; en: string }> = {
-  device:   { zh: '设备',   en: 'Device' },
-  platform: { zh: '系统',   en: 'System' },
-  site:     { zh: '位置',   en: 'Location' },
-  tags:     { zh: '标签',   en: 'Tags' },
-  status:   { zh: '状态',   en: 'Status' },
-  cpuMem:   { zh: 'CPU/MEM', en: 'CPU/MEM' },
-  actions:  { zh: '操作',   en: 'Actions' },
+  hostname: { zh: '设备名称', en: 'Device name' },
+  assetTag: { zh: '资产编号', en: 'Asset tag' },
+  managementIp: { zh: '管理 IP', en: 'Management IP' },
+  category: { zh: '设备类别', en: 'Category' },
+  role: { zh: '角色', en: 'Role' },
+  connectionMethod: { zh: '连接方式', en: 'Connection method' },
+  vendor: { zh: '厂商', en: 'Vendor' },
+  platform: { zh: '平台', en: 'Platform' },
+  model: { zh: '型号', en: 'Model' },
+  version: { zh: '软件版本', en: 'Software version' },
+  adaptation: { zh: '命令/解析适配', en: 'Command/parser adaptation' },
+  adaptationVersion: { zh: '适配版本', en: 'Adaptation version' },
+  adaptationSource: { zh: '适配来源', en: 'Adaptation source' },
+  versionMismatch: { zh: '版本校验', en: 'Version check' },
+  site: { zh: '站点', en: 'Site' },
+  rack: { zh: '机柜', en: 'Rack' },
+  rackUnit: { zh: 'U 位', en: 'Rack unit' },
+  tags: { zh: '标签', en: 'Tags' },
+  status: { zh: '在线状态', en: 'Status' },
+  health: { zh: '健康状态', en: 'Health' },
+  lifecycle: { zh: '生命周期', en: 'Lifecycle' },
+  checkStatus: { zh: '连通性检查', en: 'Connectivity check' },
+  checkTime: { zh: '检查时间', en: 'Check time' },
+  cpu: { zh: 'CPU', en: 'CPU' },
+  memory: { zh: '内存', en: 'Memory' },
+  actions: { zh: '操作', en: 'Actions' },
 };
 
 const ColumnToggle: React.FC<{
@@ -54,7 +75,7 @@ const ColumnToggle: React.FC<{
         <span>{zh ? '列设置' : 'Columns'}</span>
       </button>
       {open && (
-        <div className="absolute right-0 top-full mt-1.5 z-50 w-44 rounded-2xl border border-gray-100 dark:border-zinc-800
+        <div className="absolute right-0 top-full mt-1.5 z-50 w-56 max-h-[70vh] overflow-y-auto rounded-2xl border border-gray-100 dark:border-zinc-800
           bg-white dark:bg-zinc-900 shadow-xl shadow-black/10 dark:shadow-black/40 py-2">
           <div className="px-3 pb-1.5 mb-1 border-b border-gray-100 dark:border-zinc-800 text-[10px] font-bold uppercase tracking-wider text-gray-400">
             {zh ? '自定义展示列' : 'Visible Columns'}
@@ -99,7 +120,7 @@ interface InventoryDevicesTabProps {
 }
 
 const InventoryDevicesTab: React.FC<InventoryDevicesTabProps> = ({
-  handleImport, handleExport,
+  handleImport,
   handleShowDetails,
   handleTestConnection,
   deviceConnectionChecks, connectionTestingDeviceId,
@@ -255,6 +276,52 @@ const InventoryDevicesTab: React.FC<InventoryDevicesTabProps> = ({
     return baseRows;
   }, [baseRows, quickFilter]);
 
+  const exportAllFilteredDevices = useCallback(async (): Promise<TableExportData> => {
+    const pageSize = 1000;
+    const params = new URLSearchParams({
+      mode: 'light',
+      search: inventorySearch,
+      platform: inventoryPlatformFilter,
+      role: inventoryRoleFilter,
+      status: inventoryStatusFilter,
+      sort_key: inventorySortConfig?.key || 'hostname',
+      sort_direction: inventorySortConfig?.direction || 'asc',
+      asset_type: 'network_device',
+      page: '1',
+      page_size: String(pageSize),
+    });
+
+    type DevicePageResponse = { items?: unknown[]; total?: number };
+    const devices = await fetchAllNetworkDevicePages(async (page, size) => {
+      params.set('page', String(page));
+      params.set('page_size', String(size));
+      return apiRequest<DevicePageResponse>(`/api/devices?${params.toString()}`);
+    }, pageSize);
+
+    const filteredDevices = filterNetworkDevicesForExport(devices, {
+      quickFilter,
+      lifecycleFilter: inventoryLifecycleFilter,
+      tagFilterIds,
+    });
+    return buildNetworkDeviceExportData(filteredDevices, {
+      columns,
+      language,
+      connectionChecks: deviceConnectionChecks,
+    });
+  }, [
+    columns,
+    deviceConnectionChecks,
+    inventoryLifecycleFilter,
+    inventoryPlatformFilter,
+    inventoryRoleFilter,
+    inventorySearch,
+    inventorySortConfig,
+    inventoryStatusFilter,
+    language,
+    quickFilter,
+    tagFilterIds,
+  ]);
+
   const hasFilters = Boolean(
     inventorySearch.trim() ||
     inventoryPlatformFilter !== 'all' ||
@@ -342,14 +409,6 @@ const InventoryDevicesTab: React.FC<InventoryDevicesTabProps> = ({
               <span>{zh ? '刷新' : 'Refresh'}</span>
             </button>
             <ColumnToggle columns={columns} onChange={handleColumnToggle} language={language} />
-            <ActionButton
-              icon={Download}
-              variant="accent"
-              onClick={handleExport}
-              title={zh ? '导出设备清单' : 'Export device inventory'}
-            >
-              <span>{zh ? '导出' : t('export')}</span>
-            </ActionButton>
           </div>
         }
       />
@@ -744,6 +803,8 @@ const InventoryDevicesTab: React.FC<InventoryDevicesTabProps> = ({
             deviceConnectionChecks={deviceConnectionChecks}
             connectionTestingDeviceId={connectionTestingDeviceId}
             columns={columns}
+            exportData={exportAllFilteredDevices}
+            exportDisabled={inventoryTotal === 0}
           />
           <Pagination
             currentPage={inventoryPage}

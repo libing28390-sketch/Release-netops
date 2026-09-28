@@ -14,6 +14,7 @@ import type {
   CollectionPlanOption,
 } from '../types';
 import { useEscapeClose } from '../../../hooks/useEscapeClose';
+import { DataTable } from '../../../components/DataTable';
 
 interface BulkCollectionPlanModalProps {
   language: string;
@@ -439,18 +440,20 @@ export const BulkCollectionPlanModal: React.FC<BulkCollectionPlanModalProps> = (
                     ) : (
                       <>
                         <div className="max-h-64 overflow-auto rounded-xl border border-slate-100">
-                          <table className="w-full min-w-[680px] text-left text-xs">
+                          <DataTable unstyled exportConfig={{ filename: 'scheduled-collection-preview' }} className="w-full min-w-[680px] text-left text-xs">
                             <thead className="sticky top-0 bg-slate-50 text-[10px] uppercase tracking-wide text-slate-500"><tr>
-                              <th className="px-3 py-2">{zh ? '设备 / IP' : 'Device / IP'}</th><th className="px-3 py-2">{zh ? '站点 / 角色' : 'Site / Role'}</th><th className="px-3 py-2">{zh ? '平台' : 'Platform'}</th><th className="px-3 py-2">{zh ? '当前模板' : 'Current template'}</th>
+                              <th className="px-3 py-2">{zh ? '设备' : 'Device'}</th><th className="px-3 py-2">IP</th><th className="px-3 py-2">{zh ? '站点' : 'Site'}</th><th className="px-3 py-2">{zh ? '角色' : 'Role'}</th><th className="px-3 py-2">{zh ? '平台' : 'Platform'}</th><th className="px-3 py-2">{zh ? '当前模板' : 'Current template'}</th>
                             </tr></thead>
                             <tbody className="divide-y divide-slate-100">
                               {preview.sample.map((device, index) => <tr key={`${device.device_id}-${index}`} className="text-slate-700">
-                                <td className="px-3 py-2.5"><span className="block max-w-64 truncate font-semibold text-slate-800">{device.hostname || String(device.device_id)}</span><span className="block font-mono text-[10px] text-slate-500">ID {device.device_id} · {device.ip_address || '—'}</span></td>
-                                <td className="px-3 py-2.5"><span>{device.site || '—'}</span><span className="block text-[10px] text-slate-500">{device.role || '—'}</span></td>
+                                <td className="px-3 py-2.5 font-semibold text-slate-800">{device.hostname || '—'}<span data-export-ignore className="sr-only">ID {device.device_id}</span></td>
+                                <td className="px-3 py-2.5 font-mono text-[10px] text-slate-500">{device.ip_address || '—'}</td>
+                                <td className="px-3 py-2.5">{device.site || '—'}</td>
+                                <td className="px-3 py-2.5 text-[10px] text-slate-500">{device.role || '—'}</td>
                                 <td className="px-3 py-2.5 font-mono">{device.platform || '—'}</td><td className="px-3 py-2.5">{device.current_template || '—'}</td>
                               </tr>)}
                             </tbody>
-                          </table>
+                          </DataTable>
                         </div>
                         <p className="text-[11px] text-slate-500">{zh ? `显示 ${preview.sample.length} 台样例（最多 10 台），操作范围仍以服务端预览快照为准。` : `Showing ${preview.sample.length} sample(s), at most 10; the server preview snapshot defines the operation scope.`}</p>
 

@@ -28,6 +28,7 @@ import * as XLSX from 'xlsx';
 import { AssetReadonlyDetailInner, normalizeAssetApiRow } from '../../components/AssetReadonlyDetail';
 import PageHero from '../../components/PageHero';
 import { ActionButton, ActionIconButton, ActionIconGroup } from '../../components/ui/ActionIconButton';
+import { TableExportMenu } from '../../components/ui/TableExportMenu';
 import { Rack, RackType, DeviceType, RackDevice, RackLayout, RackStats, Props } from './types';
 import { ROLE_COLORS, U_PX, RACK_W, LABEL_W, API, INSTALL_ASSET_PAGE_SIZE, STATUS_LABEL } from './constants';
 import {
@@ -132,6 +133,7 @@ export const RackManagementTab: React.FC<Props> = ({ language }) => {
   const [drawerAssetDetail, setDrawerAssetDetail] = useState<ReturnType<typeof normalizeAssetApiRow> | null>(null);
   const [drawerAssetLoading, setDrawerAssetLoading] = useState(false);
   const rackScrollRef = useRef<HTMLDivElement>(null);
+  const deviceTypeTableRef = useRef<HTMLTableElement>(null);
   const fileInputRef = useRef<HTMLInputElement>(null);
   const rackWorkspaceRef = useRef<HTMLDivElement>(null);
   const installAssetsAbortRef = useRef<AbortController | null>(null);
@@ -561,37 +563,6 @@ export const RackManagementTab: React.FC<Props> = ({ language }) => {
     ws['!cols'] = templateHeaders.map(() => ({ wch: 15 }));
     XLSX.utils.book_append_sheet(wb, ws, zh ? '机柜模板' : 'Rack Template');
     XLSX.writeFile(wb, zh ? '机柜导入模板.xlsx' : 'rack_import_template.xlsx');
-  };
-
-  const handleExport = () => {
-    try {
-      const rows = filteredRacks.map(r => ({
-          [zh ? '机柜类型' : 'Rack Type']: getRackTypeName(r.rack_type_id),
-          [zh ? '宽度(mm)' : 'Width(mm)']: r.width_mm || 0,
-          [zh ? '深度(mm)' : 'Depth(mm)']: r.depth_mm || 0,
-          [zh ? '最大承重(kg)' : 'Max Weight(kg)']: r.max_weight_kg || 0,
-          [zh ? '允许正反面' : 'Allow Front/Rear']: r.allow_front_rear_mount === false || r.allow_front_rear_mount === 0 ? (zh ? '否' : 'no') : (zh ? '是' : 'yes'),
-          [zh ? '机柜名称' : 'Name']: r.name,
-          [zh ? '站点' : 'Site']: siteLabel(r),
-          [zh ? '楼层' : 'Floor']: r.floor || '',
-          [zh ? '机房' : 'Room']: r.room || '',
-          [zh ? '列' : 'Row']: r.row || '',
-          [zh ? '总U位' : 'Total U']: r.total_u,
-          [zh ? '最大功率(W)' : 'Max Power(W)']: r.power_capacity_watts || (r as any).power_capacity_w || 0,
-          [zh ? '已用U位' : 'Used U']: r.used_u,
-          [zh ? '可用U位' : 'Available U']: r.available_u,
-          [zh ? '散热区域' : 'Cooling Zone']: (r as any).cooling_zone || '',
-          [zh ? '状态' : 'Status']: r.status || 'active',
-          [zh ? '备注' : 'Remarks']: r.remarks || r.description || ''
-        }));
-      const ws = XLSX.utils.json_to_sheet(rows);
-      const wb = XLSX.utils.book_new();
-      XLSX.utils.book_append_sheet(wb, ws, 'Racks');
-      const ts = new Date().toISOString().replace(/[-:]/g, '').replace('T', '_').slice(0, 15);
-      XLSX.writeFile(wb, `racks_${ts}.xlsx`);
-    } catch (err: any) {
-      setError(zh ? `导出失败: ${err.message}` : `Export failed: ${err.message}`);
-    }
   };
 
   const handleImport = (e: React.ChangeEvent<HTMLInputElement>) => {
@@ -1291,7 +1262,6 @@ export const RackManagementTab: React.FC<Props> = ({ language }) => {
                   <ActionIconButton icon={Upload} label={zh ? '导入机柜' : 'Import racks'} variant="accent" onClick={() => fileInputRef.current?.click()} />
                 </>
               )}
-              <ActionIconButton icon={Download} label={zh ? '导出机柜' : 'Export racks'} variant="accent" onClick={handleExport} />
               <ActionIconButton icon={RefreshCw} label={zh ? '刷新' : 'Refresh'} onClick={refresh} />
             </ActionIconGroup>
           </>
@@ -2623,11 +2593,19 @@ export const RackManagementTab: React.FC<Props> = ({ language }) => {
         {showDeviceTypeModal && (
           <motion.div initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }} className="fixed inset-0 z-50 flex items-center justify-center bg-black/50 backdrop-blur-sm" onClick={() => setShowDeviceTypeModal(false)}>
             <motion.div initial={{ scale: 0.95, opacity: 0 }} animate={{ scale: 1, opacity: 1 }} exit={{ scale: 0.95, opacity: 0 }} transition={{ duration: 0.15 }} className="w-full max-w-lg rounded-2xl shadow-2xl p-6" style={{ background: 'var(--card-bg)', border: '1px solid var(--card-border)' }} onClick={e => e.stopPropagation()}>
-              <h3 className="text-base font-bold mb-4" style={{ color: 'var(--heading-text)' }}>
-                {zh ? '设备型号管理' : 'Device Type Management'}
-              </h3>
+              <div className="mb-4 flex items-center justify-between gap-3">
+                <h3 className="text-base font-bold" style={{ color: 'var(--heading-text)' }}>
+                  {zh ? '设备型号管理' : 'Device Type Management'}
+                </h3>
+                <TableExportMenu
+                  tableRef={deviceTypeTableRef}
+                  filename="rack-device-types"
+                  language={zh ? 'zh' : 'en'}
+                  disabled={deviceTypes.length === 0}
+                />
+              </div>
               <div className="max-h-48 overflow-auto mb-4 rounded-lg" style={{ border: '1px solid var(--card-border)' }}>
-                <table className="nx-data-table nx-data-table--compact text-[11px]">
+                <table ref={deviceTypeTableRef} className="nx-data-table nx-data-table--compact text-[11px]">
                   <thead>
                     <tr style={{ background: 'var(--app-hover-bg)' }}>
                       <th className="px-2 py-1.5 text-left font-semibold" style={{ color: 'var(--muted-text)' }}>{zh ? '型号' : 'Model'}</th>

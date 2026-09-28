@@ -81,7 +81,8 @@ export const usePageTitle = ({
       return map[activeTab] || (language === 'zh' ? 'AI 中心' : 'AI Center');
     }
     if (activeTab === 'users') return t('userManagement');
-    if (activeTab === 'storage') return language === 'zh' ? '存储设置' : 'Storage Settings';
+    if (activeTab === 'storage') return language === 'zh' ? '存储配置' : 'Storage Settings';
+    if (activeTab === 'storage-files') return language === 'zh' ? '文件浏览' : 'File Browser';
     if (activeTab === 'email-settings') return language === 'zh' ? '邮件通知' : 'Email Notifications';
     if (activeTab === 'platform-registry') return language === 'zh' ? '平台注册' : 'Platform Registry';
     if (activeTab === 'snmp-metric-templates') return language === 'zh' ? 'SNMP 指标模板' : 'SNMP Metric Templates';

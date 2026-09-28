@@ -1,3 +1,4 @@
+import { DataTable } from '../components/DataTable';
 import React, { useCallback, useEffect, useMemo, useState } from 'react';
 import { Activity, AlertTriangle, ArrowRight, CheckCircle2, ChevronRight, ClipboardCheck, Clock, Cpu, Download, Eye, FileText, Loader2, Play, RefreshCw, Search, Server, Shield, Wifi, WifiOff, X, XCircle, Zap, BarChart3, CalendarClock, ExternalLink, HardDrive, Layers } from 'lucide-react';
 import { Bar, CartesianGrid, ComposedChart, Line, ResponsiveContainer, Tooltip, XAxis, YAxis } from 'recharts';
@@ -5,6 +6,7 @@ import type { Device, DeviceHealthHistoryResponse, DeviceHealthOverview } from '
 import { authHeaders as apiAuthHeaders } from '../api/http';
 import { useChartTheme } from '../hooks/useChartTheme';
 import { ActionButton, ActionIconButton, ActionIconGroup } from '../components/ui/ActionIconButton';
+import { TableActionCell, TableActionHeader } from '../components/ui/TableActionColumn';
 import { useSystem } from '../hooks/useSystem';
 import { useEscapeClose } from '../hooks/useEscapeClose';
 import Pagination from '../components/Pagination';
@@ -13,6 +15,7 @@ import {
   alertPanelClass,
   alertSecondaryButtonClass,
 } from './alertManagementShared';
+import { buildInspectionResultExportData, buildInspectionRunExportData, buildRecentInspectionRunExportData, fetchAllInspectionRuns, filterInspectionRuns } from './inspectionExport';
 
 /* ────────────────────────────────────────── */
 /* Types                                      */
@@ -117,8 +120,8 @@ const ScoreGauge: React.FC<{ score: number | null; size?: number }> = ({ score, 
 };
 
 /* ── Th helper ── */
-const Th: React.FC<{ children?: React.ReactNode; className?: string }> = ({ children, className = '' }) => (
-  <th className={`px-4 py-3 text-[10px] font-bold uppercase tracking-[0.12em] text-black/35 whitespace-nowrap ${className}`}>{children}</th>
+const Th: React.FC<{ children?: React.ReactNode; className?: string; 'data-export'?: string }> = ({ children, className = '', 'data-export': exportMode }) => (
+  <th data-export={exportMode} className={`px-4 py-3 text-[10px] font-bold uppercase tracking-[0.12em] text-black/35 whitespace-nowrap ${className}`}>{children}</th>
 );
 
 /* ────────────────────────────────────────── */
@@ -230,72 +233,6 @@ const InspectionTab: React.FC<InspectionTabProps> = ({ language, devices, overvi
   // Reset page when search changes
   useEffect(() => { setRecordPage(1); }, [recordSearch]);
 
-  /* ─── Export records ─── */
-
-  const handleExportRecords = async () => {
-    try {
-      const allRecords: InspectionRun[] = [];
-      let offset = 0;
-      const limit = 100;
-      
-      while (true) {
-        const resp = await fetch(`/api/inspections?limit=${limit}&offset=${offset}`, { headers: authHeaders });
-        if (!resp.ok) break;
-        const json = await resp.json();
-        const items = Array.isArray(json.data?.items) ? json.data.items : Array.isArray(json.data) ? json.data : [];
-        if (!items.length) break;
-        allRecords.push(...items);
-        if (items.length < limit) break;
-        offset += limit;
-      }
-
-      if (!allRecords.length) {
-        alert(isZh ? '暂无巡检记录可导出' : 'No inspection records to export');
-        return;
-      }
-
-      const headers = isZh 
-        ? ['执行批次ID', '触发方式', '范围类型', '范围过滤', '状态', '开始时间', '完成时间', '设备总数', '成功数', '失败数', '不可达数', '健康数', '告警数', '严重数', '平均得分', '创建人']
-        : ['Run ID', 'Trigger Type', 'Scope Type', 'Scope Filter', 'Status', 'Started At', 'Completed At', 'Total Devices', 'Success', 'Failed', 'Unreachable', 'Healthy', 'Warning', 'Critical', 'Avg Score', 'Created By'];
-
-      const rows = allRecords.map(r => [
-        r.id,
-        r.trigger_type,
-        r.scope_type,
-        r.scope_filter || '-',
-        r.status,
-        r.started_at,
-        r.completed_at || '-',
-        r.total_devices,
-        r.success_count,
-        r.failed_count,
-        r.unreachable_count,
-        r.healthy_count,
-        r.warning_count,
-        r.critical_count,
-        r.avg_health_score ?? '-',
-        r.created_by
-      ]);
-
-      const csvContent = '\uFEFF' + [
-        headers.join(','),
-        ...rows.map(row => row.map(cell => `"${String(cell).replace(/"/g, '""')}"`).join(','))
-      ].join('\n');
-
-      const blob = new Blob([csvContent], { type: 'text/csv;charset=utf-8;' });
-      const url = URL.createObjectURL(blob);
-      const link = document.createElement('a');
-      link.setAttribute('href', url);
-      link.setAttribute('download', `inspection_runs_${new Date().toISOString().slice(0, 10)}.csv`);
-      document.body.appendChild(link);
-      link.click();
-      document.body.removeChild(link);
-    } catch (e) {
-      console.error('Export failed:', e);
-      alert(isZh ? '导出失败' : 'Export failed');
-    }
-  };
-
   const downloadReport = async (runId: string, format: 'excel' | 'pdf' | 'html' | 'json') => {
     setExportingReportId(runId);
     try {
@@ -323,16 +260,22 @@ const InspectionTab: React.FC<InspectionTabProps> = ({ language, devices, overvi
 
   const historySeries = useMemo(() => history?.series || [], [history]);
 
-  const filteredRuns = useMemo(() => {
-    if (!recordSearch.trim()) return runs;
-    const q = recordSearch.toLowerCase();
-    return runs.filter((r) =>
-      r.id.toLowerCase().includes(q) ||
-      r.created_by.toLowerCase().includes(q) ||
-      r.trigger_type.toLowerCase().includes(q) ||
-      r.scope_type.toLowerCase().includes(q)
-    );
-  }, [runs, recordSearch]);
+  const filteredRuns = useMemo(() => filterInspectionRuns(runs, recordSearch), [runs, recordSearch]);
+
+  const recentRunsExportData = useMemo(
+    () => buildRecentInspectionRunExportData(recentRuns, language),
+    [recentRuns, language],
+  );
+
+  const historyExportData = useCallback(async () => {
+    const allRuns = await fetchAllInspectionRuns(authHeaders);
+    return buildInspectionRunExportData(allRuns, language, recordSearch);
+  }, [authHeaders, language, recordSearch]);
+
+  const detailResultsExportData = useMemo(
+    () => buildInspectionResultExportData(selectedRunDetail?.results || [], language),
+    [selectedRunDetail, language],
+  );
 
   const riskyDevices = useMemo(() => {
     return [...devices]
@@ -364,15 +307,6 @@ const InspectionTab: React.FC<InspectionTabProps> = ({ language, devices, overvi
         }
         actions={
           <div className="flex items-center gap-2">
-            {subTab === 'records' && (
-              <button
-                onClick={handleExportRecords}
-                className="flex items-center gap-1.5 px-4 py-2 rounded-xl text-xs font-bold bg-[#06b6d4] hover:bg-[#0891b2] text-white transition-all shadow-md shadow-cyan-500/20"
-              >
-                <Download size={13} />
-                {isZh ? '导出巡检台账' : 'Export CSV'}
-              </button>
-            )}
             <a
               href="/automation/scheduled-jobs"
               className="flex items-center gap-1.5 px-3.5 py-2 rounded-xl text-xs font-bold bg-[#00172d] text-white hover:bg-[#00284f] transition-all shadow-md"
@@ -596,23 +530,26 @@ const InspectionTab: React.FC<InspectionTabProps> = ({ language, devices, overvi
                 </div>
 
                 <div className="overflow-x-auto">
-                  <table className="w-full text-left">
+                  <DataTable unstyled exportConfig={{ filename: 'inspection-latest-results', exportData: recentRunsExportData }} className="w-full text-left">
                     <thead>
                       <tr className="border-b border-black/5 dark:border-white/5">
-                        <Th>{isZh ? '批次 ID' : 'Run ID'}</Th>
+                        <Th data-export="ignore">{isZh ? '批次 ID' : 'Run ID'}</Th>
                         <Th>{isZh ? '触发类型' : 'Trigger'}</Th>
+                        <Th>{isZh ? '范围类型' : 'Scope Type'}</Th>
                         <Th>{isZh ? '范围' : 'Scope'}</Th>
                         <Th>{isZh ? '设备总数' : 'Devices'}</Th>
-                        <Th>{isZh ? '健康分布' : 'Healthy / Warn / Crit'}</Th>
+                        <Th>{isZh ? '正常设备' : 'Healthy'}</Th>
+                        <Th>{isZh ? '告警设备' : 'Warning'}</Th>
+                        <Th>{isZh ? '严重设备' : 'Critical'}</Th>
                         <Th>{isZh ? '平均得分' : 'Avg Score'}</Th>
                         <Th>{isZh ? '执行时间' : 'Time'}</Th>
-                        <Th className="text-right">{isZh ? '操作' : 'Actions'}</Th>
+                        <TableActionHeader>{isZh ? '操作' : 'Actions'}</TableActionHeader>
                       </tr>
                     </thead>
                     <tbody className="divide-y divide-black/[0.03] dark:divide-white/[0.03] text-xs">
                       {recentRuns.length === 0 ? (
                         <tr>
-                          <td colSpan={8} className="py-8 text-center text-slate-400 text-xs">
+                          <td colSpan={11} className="py-8 text-center text-slate-400 text-xs">
                             {isZh ? '暂无巡检记录' : 'No inspection runs found'}
                           </td>
                         </tr>
@@ -627,39 +564,36 @@ const InspectionTab: React.FC<InspectionTabProps> = ({ language, devices, overvi
                                 {run.trigger_type}
                               </span>
                             </td>
-                            <td className="px-4 py-3 text-slate-600 dark:text-slate-400 text-[11px]">
-                              {run.scope_type}: {run.scope_filter || (isZh ? '全部' : 'all')}
-                            </td>
+                            <td className="px-4 py-3 text-slate-600 dark:text-slate-400 text-[11px]">{run.scope_type}</td>
+                            <td className="px-4 py-3 text-slate-600 dark:text-slate-400 text-[11px]">{run.scope_filter || (isZh ? '全部' : 'all')}</td>
                             <td className="px-4 py-3 font-bold font-mono text-slate-800 dark:text-slate-200">
                               {run.total_devices}
                             </td>
-                            <td className="px-4 py-3 font-mono text-[11px]">
-                              <span className="text-emerald-600 font-semibold">{run.healthy_count}</span> /{' '}
-                              <span className="text-amber-600 font-semibold">{run.warning_count}</span> /{' '}
-                              <span className="text-red-600 font-semibold">{run.critical_count}</span>
-                            </td>
+                            <td className="px-4 py-3 font-mono text-[11px] text-emerald-600 font-semibold">{run.healthy_count}</td>
+                            <td className="px-4 py-3 font-mono text-[11px] text-amber-600 font-semibold">{run.warning_count}</td>
+                            <td className="px-4 py-3 font-mono text-[11px] text-red-600 font-semibold">{run.critical_count}</td>
                             <td className="px-4 py-3 font-mono font-bold text-slate-800 dark:text-slate-200">
                               {run.avg_health_score ?? '—'}
                             </td>
                             <td className="px-4 py-3 text-slate-400 text-[11px] whitespace-nowrap">
                               {run.started_at?.replace('T', ' ').slice(0, 19) || '-'}
                             </td>
-                            <td className="px-4 py-3 text-right">
-                              <button
+                            <TableActionCell className="px-4 py-3">
+                              <ActionIconButton
+                                icon={Eye}
+                                label={isZh ? '查看明细与报告' : 'View details and report'}
                                 onClick={() => {
                                   setSubTab('records');
                                   fetchRunDetail(run.id);
                                 }}
-                                className="text-xs font-semibold text-cyan-600 hover:text-cyan-700 px-2 py-1 rounded-lg hover:bg-cyan-50 dark:hover:bg-cyan-950 transition-colors"
-                              >
-                                {isZh ? '明细与报告' : 'Detail & Report'}
-                              </button>
-                            </td>
+                                variant="accent"
+                              />
+                            </TableActionCell>
                           </tr>
                         ))
                       )}
                     </tbody>
-                  </table>
+                  </DataTable>
                 </div>
               </div>
             </div>
@@ -690,31 +624,34 @@ const InspectionTab: React.FC<InspectionTabProps> = ({ language, devices, overvi
 
               {/* Table */}
               <div className="flex-1 overflow-auto rounded-2xl border border-black/5 dark:border-white/5 bg-white dark:bg-[#111827]">
-                <table className="w-full text-left">
+                <DataTable unstyled exportConfig={{ filename: 'inspection-history', exportData: historyExportData }} className="w-full text-left">
                   <thead className="sticky top-0 bg-slate-50/90 dark:bg-slate-900/90 backdrop-blur-sm z-10">
                     <tr className="border-b border-black/5 dark:border-white/5">
-                      <Th>{isZh ? '批次 ID' : 'Run ID'}</Th>
+                      <Th data-export="ignore">{isZh ? '批次 ID' : 'Run ID'}</Th>
                       <Th>{isZh ? '触发方式' : 'Trigger'}</Th>
-                      <Th>{isZh ? '设备范围' : 'Scope'}</Th>
-                      <Th>{isZh ? '创建人 / 来源' : 'Created By'}</Th>
+                      <Th>{isZh ? '范围类型' : 'Scope Type'}</Th>
+                      <Th>{isZh ? '范围' : 'Scope'}</Th>
+                      <Th>{isZh ? '创建人' : 'Created By'}</Th>
                       <Th>{isZh ? '设备总数' : 'Total'}</Th>
-                      <Th>{isZh ? '健康分布 (正常/告警/严重)' : 'Healthy / Warn / Crit'}</Th>
+                      <Th>{isZh ? '正常设备' : 'Healthy'}</Th>
+                      <Th>{isZh ? '告警设备' : 'Warning'}</Th>
+                      <Th>{isZh ? '严重设备' : 'Critical'}</Th>
                       <Th>{isZh ? '平均得分' : 'Avg Score'}</Th>
                       <Th>{isZh ? '开始时间' : 'Started At'}</Th>
-                      <Th className="text-right">{isZh ? '操作与报告导出' : 'Actions & Export'}</Th>
+                      <TableActionHeader>{isZh ? '操作与报告导出' : 'Actions & Export'}</TableActionHeader>
                     </tr>
                   </thead>
                   <tbody className="divide-y divide-black/[0.03] dark:divide-white/[0.03] text-xs">
                     {runsLoading ? (
                       <tr>
-                        <td colSpan={9} className="py-16 text-center text-slate-400">
+                        <td colSpan={12} className="py-16 text-center text-slate-400">
                           <Loader2 className="w-6 h-6 animate-spin mx-auto mb-2 text-cyan-500" />
                           {isZh ? '加载巡检记录中...' : 'Loading inspection runs...'}
                         </td>
                       </tr>
                     ) : filteredRuns.length === 0 ? (
                       <tr>
-                        <td colSpan={9} className="py-16 text-center text-slate-400">
+                        <td colSpan={12} className="py-16 text-center text-slate-400">
                           {isZh ? '未找到符合条件的巡检记录' : 'No inspection records found'}
                         </td>
                       </tr>
@@ -729,57 +666,50 @@ const InspectionTab: React.FC<InspectionTabProps> = ({ language, devices, overvi
                               {run.trigger_type}
                             </span>
                           </td>
-                          <td className="px-4 py-3 text-slate-600 dark:text-slate-400 text-[11px]">
-                            {run.scope_type}: {run.scope_filter || (isZh ? '全部' : 'all')}
-                          </td>
+                          <td className="px-4 py-3 text-slate-600 dark:text-slate-400 text-[11px]">{run.scope_type}</td>
+                          <td className="px-4 py-3 text-slate-600 dark:text-slate-400 text-[11px]">{run.scope_filter || (isZh ? '全部' : 'all')}</td>
                           <td className="px-4 py-3 text-slate-600 dark:text-slate-400 text-[11px]">
                             {run.created_by || 'system'}
                           </td>
                           <td className="px-4 py-3 font-bold font-mono text-slate-800 dark:text-slate-200">
                             {run.total_devices}
                           </td>
-                          <td className="px-4 py-3 font-mono text-[11px]">
-                            <span className="text-emerald-600 font-semibold">{run.healthy_count}</span> /{' '}
-                            <span className="text-amber-600 font-semibold">{run.warning_count}</span> /{' '}
-                            <span className="text-red-600 font-semibold">{run.critical_count}</span>
-                          </td>
+                          <td className="px-4 py-3 font-mono text-[11px] text-emerald-600 font-semibold">{run.healthy_count}</td>
+                          <td className="px-4 py-3 font-mono text-[11px] text-amber-600 font-semibold">{run.warning_count}</td>
+                          <td className="px-4 py-3 font-mono text-[11px] text-red-600 font-semibold">{run.critical_count}</td>
                           <td className="px-4 py-3 font-mono font-bold text-slate-800 dark:text-slate-200">
                             {run.avg_health_score ?? '—'}
                           </td>
                           <td className="px-4 py-3 text-slate-400 text-[11px] whitespace-nowrap">
                             {run.started_at?.replace('T', ' ').slice(0, 19) || '-'}
                           </td>
-                          <td className="px-4 py-3 text-right">
-                            <div className="inline-flex items-center gap-1.5">
-                              <button
+                          <TableActionCell className="px-4 py-3">
+                              <ActionIconButton
+                                icon={Eye}
+                                label={isZh ? '查看详情' : 'View details'}
+                                variant="accent"
                                 onClick={() => fetchRunDetail(run.id)}
-                                className="px-2.5 py-1 text-xs font-semibold rounded-lg bg-slate-100 hover:bg-slate-200 dark:bg-slate-800 dark:hover:bg-slate-700 text-slate-700 dark:text-slate-200 transition-colors"
-                              >
-                                {isZh ? '查看详情' : 'Details'}
-                              </button>
-                              <button
+                              />
+                              <ActionIconButton
+                                icon={Download}
+                                label={isZh ? '下载 Excel 巡检报表' : 'Download Excel report'}
+                                variant="accent"
                                 onClick={() => downloadReport(run.id, 'excel')}
                                 disabled={exportingReportId === run.id}
-                                className="p-1.5 text-xs rounded-lg text-emerald-600 hover:bg-emerald-50 dark:hover:bg-emerald-950 transition-colors"
-                                title={isZh ? '下载 Excel 巡检报表' : 'Download Excel Report'}
-                              >
-                                <Download size={13} />
-                              </button>
-                              <button
+                              />
+                              <ActionIconButton
+                                icon={Download}
+                                label={isZh ? '下载 PDF 巡检报表' : 'Download PDF report'}
+                                variant="accent"
                                 onClick={() => downloadReport(run.id, 'pdf')}
                                 disabled={exportingReportId === run.id}
-                                className="p-1.5 text-xs rounded-lg text-rose-600 hover:bg-rose-50 dark:hover:bg-rose-950 transition-colors"
-                                title={isZh ? '下载 PDF 巡检报表' : 'Download PDF Report'}
-                              >
-                                <FileText size={13} />
-                              </button>
-                            </div>
-                          </td>
+                              />
+                          </TableActionCell>
                         </tr>
                       ))
                     )}
                   </tbody>
-                </table>
+                </DataTable>
               </div>
 
               {/* Pagination */}
@@ -863,30 +793,36 @@ const InspectionTab: React.FC<InspectionTabProps> = ({ language, devices, overvi
               </div>
 
               <div className="overflow-x-auto rounded-xl border border-black/5 dark:border-white/5">
-                <table className="w-full text-left">
+                <DataTable unstyled exportConfig={{ filename: 'inspection-device-results', exportData: detailResultsExportData }} className="w-full text-left">
                   <thead className="bg-slate-50 dark:bg-slate-900/80">
                     <tr className="border-b border-black/5 dark:border-white/5">
-                      <Th>{isZh ? '设备主机名 / IP' : 'Device'}</Th>
+                      <Th>{isZh ? '主机名' : 'Hostname'}</Th>
+                      <Th>{isZh ? 'IP 地址' : 'IP Address'}</Th>
                       <Th>{isZh ? '厂商平台' : 'Platform'}</Th>
                       <Th>{isZh ? '健康状态' : 'Status'}</Th>
                       <Th>{isZh ? '得分' : 'Score'}</Th>
-                      <Th>{isZh ? 'CPU / 内存' : 'CPU / Mem'}</Th>
-                      <Th>{isZh ? '环境/电源' : 'Env / PSU'}</Th>
-                      <Th>{isZh ? '接口总/Down' : 'Ports / Down'}</Th>
-                      <Th>{isZh ? 'Ping / SSH' : 'Connectivity'}</Th>
+                      <Th>CPU</Th>
+                      <Th>{isZh ? '内存' : 'Memory'}</Th>
+                      <Th>{isZh ? '温度' : 'Temperature'}</Th>
+                      <Th>{isZh ? '风扇状态' : 'Fan Status'}</Th>
+                      <Th>{isZh ? '电源状态' : 'PSU Status'}</Th>
+                      <Th>{isZh ? '接口总数' : 'Total Interfaces'}</Th>
+                      <Th>{isZh ? '接口 Down 数' : 'Down Interfaces'}</Th>
+                      <Th>Ping</Th>
+                      <Th>SSH</Th>
                     </tr>
                   </thead>
                   <tbody className="divide-y divide-black/[0.03] dark:divide-white/[0.03] text-xs">
                     {detailLoading ? (
                       <tr>
-                        <td colSpan={8} className="py-12 text-center text-slate-400">
+                        <td colSpan={14} className="py-12 text-center text-slate-400">
                           <Loader2 className="w-5 h-5 animate-spin mx-auto mb-2 text-cyan-500" />
                           {isZh ? '加载明细数据中...' : 'Loading results...'}
                         </td>
                       </tr>
                     ) : (selectedRunDetail.results || []).length === 0 ? (
                       <tr>
-                        <td colSpan={8} className="py-12 text-center text-slate-400">
+                        <td colSpan={14} className="py-12 text-center text-slate-400">
                           {isZh ? '无单设备执行结果' : 'No result rows'}
                         </td>
                       </tr>
@@ -895,44 +831,34 @@ const InspectionTab: React.FC<InspectionTabProps> = ({ language, devices, overvi
                         const tone = statusToneMap[res.health_status] || statusToneMap.unknown;
                         return (
                           <tr key={res.id} className="hover:bg-black/[0.01] dark:hover:bg-white/[0.01]">
-                            <td className="px-4 py-3">
-                              <div className="font-bold text-slate-800 dark:text-slate-200">{res.hostname || res.ip_address}</div>
-                              <div className="text-[10px] text-slate-400 font-mono">{res.ip_address}</div>
-                            </td>
+                            <td className="px-4 py-3 font-bold text-slate-800 dark:text-slate-200">{res.hostname || '—'}</td>
+                            <td className="px-4 py-3 text-[10px] text-slate-400 font-mono">{res.ip_address || '—'}</td>
                             <td className="px-4 py-3 text-slate-600 dark:text-slate-400 font-mono text-[11px]">
-                              {res.platform || '-'}
+                              {res.platform || '—'}
                             </td>
                             <td className="px-4 py-3">
                               <span className={`text-[10px] font-bold px-2 py-0.5 rounded-full ${tone}`}>
-                                {res.health_status}
+                                {res.health_status || '—'}
                               </span>
                             </td>
                             <td className="px-4 py-3 font-mono font-bold text-slate-800 dark:text-slate-200">
                               {res.health_score ?? '—'}
                             </td>
-                            <td className="px-4 py-3 font-mono text-[11px] text-slate-700 dark:text-slate-300">
-                              {res.cpu_usage != null ? `${res.cpu_usage}%` : '—'} / {res.memory_usage != null ? `${res.memory_usage}%` : '—'}
-                            </td>
-                            <td className="px-4 py-3 text-[11px] text-slate-600 dark:text-slate-400 font-mono">
-                              {res.temperature != null ? `${res.temperature}°C` : '—'} · {res.fan_status ? 'Fan✓' : 'Fan—'}
-                            </td>
-                            <td className="px-4 py-3 text-[11px] font-mono text-slate-700 dark:text-slate-300">
-                              {res.interface_total} / <span className={res.interface_down > 0 ? 'text-rose-500 font-bold' : ''}>{res.interface_down}</span>
-                            </td>
-                            <td className="px-4 py-3 text-[11px]">
-                              <span className={res.ping_ok ? 'text-emerald-600 font-semibold' : 'text-rose-500 font-semibold'}>
-                                {res.ping_ok ? 'Ping✓' : 'Ping✗'}
-                              </span> ·{' '}
-                              <span className={res.ssh_ok ? 'text-emerald-600 font-semibold' : 'text-rose-500 font-semibold'}>
-                                {res.ssh_ok ? 'SSH✓' : 'SSH✗'}
-                              </span>
-                            </td>
+                            <td className="px-4 py-3 font-mono text-[11px] text-slate-700 dark:text-slate-300">{res.cpu_usage != null ? `${res.cpu_usage}%` : '—'}</td>
+                            <td className="px-4 py-3 font-mono text-[11px] text-slate-700 dark:text-slate-300">{res.memory_usage != null ? `${res.memory_usage}%` : '—'}</td>
+                            <td className="px-4 py-3 text-[11px] text-slate-600 dark:text-slate-400 font-mono">{res.temperature != null ? `${res.temperature}°C` : '—'}</td>
+                            <td className="px-4 py-3 text-[11px] text-slate-600 dark:text-slate-400 font-mono">{res.fan_status === true || res.fan_status === 1 || res.fan_status === '1' ? '✓' : res.fan_status === false || res.fan_status === 0 || res.fan_status === '0' ? '✗' : res.fan_status || '—'}</td>
+                            <td className="px-4 py-3 text-[11px] text-slate-600 dark:text-slate-400 font-mono">{res.psu_status === true || res.psu_status === 1 || res.psu_status === '1' ? '✓' : res.psu_status === false || res.psu_status === 0 || res.psu_status === '0' ? '✗' : res.psu_status || '—'}</td>
+                            <td className="px-4 py-3 text-[11px] font-mono text-slate-700 dark:text-slate-300">{res.interface_total}</td>
+                            <td className="px-4 py-3 text-[11px] font-mono text-slate-700 dark:text-slate-300">{res.interface_down}</td>
+                            <td className={`px-4 py-3 text-[11px] font-semibold ${res.ping_ok ? 'text-emerald-600' : 'text-rose-500'}`}>{res.ping_ok ? '✓' : '✗'}</td>
+                            <td className={`px-4 py-3 text-[11px] font-semibold ${res.ssh_ok ? 'text-emerald-600' : 'text-rose-500'}`}>{res.ssh_ok ? '✓' : '✗'}</td>
                           </tr>
                         );
                       })
                     )}
                   </tbody>
-                </table>
+                </DataTable>
               </div>
             </div>
 

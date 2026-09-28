@@ -190,64 +190,60 @@ export const MetricRowItem: React.FC<MetricRowItemProps> = React.memo(
     const [advancedOpen, setAdvancedOpen] = useState(() => hasAdvancedSettings(row.key, definition));
     const set = (patch: Partial<MetricDefinition>) => onChange({ ...definition, ...patch });
     const advancedConfigured = hasAdvancedSettings(row.key, definition);
+    const oidFieldActive = (field: 'oid' | 'used_oid' | 'total_oid' | 'free_oid' | 'capacity_oid') => {
+      if (definition.mode === 'used_total_percent') return field === 'used_oid' || field === 'total_oid';
+      if (definition.mode === 'used_free_percent') return field === 'used_oid' || field === 'free_oid';
+      if (definition.mode === 'counter_rate_percent') return field === 'oid' || field === 'capacity_oid';
+      return field === 'oid';
+    };
+    const renderOidCell = (
+      field: 'used_oid' | 'total_oid' | 'free_oid' | 'capacity_oid',
+      label: string,
+      placeholder: string,
+    ) => (
+      <td key={field} className="min-w-[170px] px-2 py-2.5 align-top">
+        {oidFieldActive(field) ? (
+          <div className="relative">
+            <input
+              aria-label={`${metricLabel(row.key, zh)} ${label}`}
+              value={definition[field]}
+              onChange={e => set({ [field]: e.target.value })}
+              placeholder={placeholder}
+              className={`${inputClass} pr-7`}
+            />
+            <button
+              type="button"
+              data-export-ignore
+              onClick={() => onPickOid(row.key, field)}
+              className="absolute right-1.5 top-2 text-[#008aad] hover:text-[#00bceb] dark:text-[#00bceb]"
+              title={zh ? `从 MIB 库拾取${label}` : `Pick ${label} from MIB`}
+            >
+              <Search size={12} />
+            </button>
+          </div>
+        ) : <span className="text-black/20 dark:text-white/20">-</span>}
+      </td>
+    );
 
     return (
       <tr className="border-t border-black/5 hover:bg-black/[.01] dark:border-white/6 dark:hover:bg-white/[.01]">
-        {/* Metric Name */}
-        <td className="w-[180px] px-3.5 py-2.5 align-top">
-          <div className="flex items-center gap-1.5">
-            <span className="font-semibold text-black/80 dark:text-white/85">{metricLabel(row.key, zh)}</span>
-          </div>
-          <div className="font-mono text-[10px] text-black/35 dark:text-white/35">{row.key}</div>
-        </td>
+        <td className="w-[150px] px-3.5 py-2.5 align-top font-semibold text-black/80 dark:text-white/85">{metricLabel(row.key, zh)}</td>
+        <td className="px-2.5 py-2.5 align-top font-mono text-[10px] text-black/40 dark:text-white/40">{row.key}</td>
 
         {/* OID Input Area */}
         <td className="px-2.5 py-2.5 align-top">
-          {definition.mode === 'used_total_percent' ? (
-            <div className="grid gap-1.5 sm:grid-cols-2">
-              <div className="relative">
-                <input
-                  value={definition.used_oid}
-                  onChange={e => set({ used_oid: e.target.value })}
-                  placeholder="已用 OID (例如 1.3.6.1.2.1.25.2.3.1.6)"
-                  className={`${inputClass} pr-7`}
-                />
-                <button
-                  type="button"
-                  onClick={() => onPickOid(row.key, 'used_oid')}
-                  className="absolute right-1.5 top-2 text-[#008aad] hover:text-[#00bceb] dark:text-[#00bceb]"
-                  title={zh ? '从 MIB 库拾取已用 OID' : 'Pick Used OID'}
-                >
-                  <Search size={12} />
-                </button>
-              </div>
-              <div className="relative">
-                <input
-                  value={definition.total_oid}
-                  onChange={e => set({ total_oid: e.target.value })}
-                  placeholder="总量 OID (例如 1.3.6.1.2.1.25.2.3.1.5)"
-                  className={`${inputClass} pr-7`}
-                />
-                <button
-                  type="button"
-                  onClick={() => onPickOid(row.key, 'total_oid')}
-                  className="absolute right-1.5 top-2 text-[#008aad] hover:text-[#00bceb] dark:text-[#00bceb]"
-                  title={zh ? '从 MIB 库拾取总量 OID' : 'Pick Total OID'}
-                >
-                  <Search size={12} />
-                </button>
-              </div>
-            </div>
-          ) : (
+          {oidFieldActive('oid') ? (
             <div className="relative">
               <input
+                aria-label={`${metricLabel(row.key, zh)} ${zh ? '直接或计数器 OID' : 'Direct or counter OID'}`}
                 value={definition.oid}
                 onChange={e => set({ oid: e.target.value })}
-                placeholder="SNMP OID，例如 1.3.6.1.4.1.25506.2.6.1.1.1.1.6"
+                placeholder={zh ? 'SNMP OID' : 'SNMP OID'}
                 className={`${inputClass} pr-7`}
               />
               <button
                 type="button"
+                data-export-ignore
                 onClick={() => onPickOid(row.key, 'oid')}
                 className="absolute right-2 top-2 text-[#008aad] hover:text-[#00bceb] dark:text-[#00bceb]"
                 title={zh ? '从 MIB 库拾取 OID' : 'Pick OID from MIB'}
@@ -255,11 +251,11 @@ export const MetricRowItem: React.FC<MetricRowItemProps> = React.memo(
                 <Search size={13} />
               </button>
             </div>
-          )}
+          ) : <span className="text-black/20 dark:text-white/20">-</span>}
 
           {/* Collapsible Advanced Parameters */}
           {advancedOpen && (
-            <div className="mt-2.5 rounded-lg border border-black/8 bg-black/[.02] p-2.5 dark:border-white/10 dark:bg-white/[.02]">
+            <div data-export-ignore className="mt-2.5 rounded-lg border border-black/8 bg-black/[.02] p-2.5 dark:border-white/10 dark:bg-white/[.02]">
               <div className="grid gap-2 sm:grid-cols-3">
                 <label className="block">
                   <span className="mb-0.5 block text-[10px] text-black/45 dark:text-white/45">{zh ? '聚合方式' : 'Aggregation'}</span>
@@ -330,8 +326,13 @@ export const MetricRowItem: React.FC<MetricRowItemProps> = React.memo(
           )}
         </td>
 
+        {renderOidCell('used_oid', zh ? '已用 OID' : 'Used OID', zh ? '已用 OID' : 'Used OID')}
+        {renderOidCell('total_oid', zh ? '总量 OID' : 'Total OID', zh ? '总量 OID' : 'Total OID')}
+        {renderOidCell('free_oid', zh ? '空闲 OID' : 'Free OID', zh ? '空闲 OID' : 'Free OID')}
+        {renderOidCell('capacity_oid', zh ? '容量 OID' : 'Capacity OID', zh ? '容量 OID' : 'Capacity OID')}
+
         {/* Mode & Unit */}
-        <td className="w-[180px] px-2.5 py-2.5 align-top">
+        <td data-export-value={modeLabel(definition.mode, zh)} className="w-[180px] px-2.5 py-2.5 align-top">
           {modes.length > 1 ? (
             <select
               value={definition.mode}

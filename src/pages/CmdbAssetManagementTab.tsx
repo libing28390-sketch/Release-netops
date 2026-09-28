@@ -5,11 +5,9 @@ import React, {
   useRef,
   useState,
 } from "react";
-import * as XLSX from "xlsx";
 import {
   Check,
   ChevronRight,
-  Download,
   Filter,
   FolderTree,
   Package,
@@ -22,8 +20,9 @@ import {
 } from "lucide-react";
 import TagFilterDropdown from "../components/TagFilterDropdown";
 import Pagination from "../components/Pagination";
-import { DataTable } from "../components/DataTable";
-import { ActionButton } from "../components/ui/ActionIconButton";
+import { TableExportMenu } from "../components/ui/TableExportMenu";
+import { fetchAllPaginatedItems } from "../utils/pagination";
+import { buildCmdbExportData } from "./cmdbExport";
 import { BatchTagModal } from "./AssetManagement/components/BatchTagModal";
 import type { SessionUser, TagDefinition } from "../types";
 
@@ -84,9 +83,13 @@ interface TreeNode {
 }
 
 type ColumnKey =
-  | "asset"
+  | "hostname"
+  | "asset_tag"
+  | "asset_type"
   | "category"
-  | "site"
+  | "role"
+  | "site_code"
+  | "site_name"
   | "status"
   | "tags"
   | "vendor"
@@ -124,9 +127,13 @@ const LIFECYCLE_LABELS: Record<string, [string, string]> = {
   decommissioned: ["已退役", "Decommissioned"],
 };
 const COLUMN_DEFS: Array<{ key: ColumnKey; zh: string; en: string }> = [
-  { key: "asset", zh: "设备", en: "Asset" },
-  { key: "category", zh: "分类 / 角色", en: "Category / role" },
-  { key: "site", zh: "站点", en: "Site" },
+  { key: "hostname", zh: "设备名称", en: "Hostname" },
+  { key: "asset_tag", zh: "资产编号", en: "Asset tag" },
+  { key: "asset_type", zh: "资产类型", en: "Asset type" },
+  { key: "category", zh: "设备分类", en: "Device category" },
+  { key: "role", zh: "设备角色", en: "Device role" },
+  { key: "site_code", zh: "站点编码", en: "Site code" },
+  { key: "site_name", zh: "站点名称", en: "Site name" },
   { key: "status", zh: "在线状态", en: "Status" },
   { key: "tags", zh: "标签", en: "Tags" },
   { key: "vendor", zh: "厂商", en: "Vendor" },
@@ -138,9 +145,13 @@ const COLUMN_DEFS: Array<{ key: ColumnKey; zh: string; en: string }> = [
   { key: "updated", zh: "更新时间", en: "Updated" },
 ];
 const DEFAULT_COLUMNS: ColumnVisibility = {
-  asset: true,
+  hostname: true,
+  asset_tag: true,
+  asset_type: true,
   category: true,
-  site: true,
+  role: true,
+  site_code: true,
+  site_name: true,
   status: true,
   tags: true,
   vendor: false,
@@ -151,7 +162,7 @@ const DEFAULT_COLUMNS: ColumnVisibility = {
   created: true,
   updated: true,
 };
-const COLUMN_STORAGE_KEY = "cmdb-asset-catalog-columns-v1";
+const COLUMN_STORAGE_KEY = "cmdb-asset-catalog-columns-v2";
 
 function authHeaders(): Record<string, string> {
   const token = localStorage.getItem("netops_token") || "";
@@ -276,6 +287,7 @@ const CmdbAssetManagementTab: React.FC<Props> = ({
   const [tagModalOpen, setTagModalOpen] = useState(false);
   const [columnsOpen, setColumnsOpen] = useState(false);
   const columnsMenuRef = useRef<HTMLDivElement>(null);
+  const assetTableRef = useRef<HTMLTableElement>(null);
   const [visibleColumns, setVisibleColumns] = useState<ColumnVisibility>(() => {
     try {
       const stored = JSON.parse(
@@ -284,13 +296,6 @@ const CmdbAssetManagementTab: React.FC<Props> = ({
       return {
         ...DEFAULT_COLUMNS,
         ...stored,
-        asset: true,
-        category: true,
-        site: true,
-        status: true,
-        tags: true,
-        created: true,
-        updated: true,
       };
     } catch {
       return DEFAULT_COLUMNS;
@@ -440,88 +445,6 @@ const CmdbAssetManagementTab: React.FC<Props> = ({
     await loadTree();
   };
 
-  const exportExcel = async () => {
-    try {
-      const firstResponse = await fetch(
-        `/api/cmdb/assets?${buildParams(1, 1000).toString()}`,
-        { headers: authHeaders() },
-      );
-      const firstJson = await firstResponse.json();
-      if (!firstResponse.ok || firstJson.success === false)
-        throw new Error(
-          firstJson.detail || firstJson.message || "Export failed",
-        );
-      const rows: AssetRow[] = [...(firstJson.data?.items || [])];
-      const totalExportPages = Math.min(
-        Number(firstJson.data?.total_pages || 1),
-        100,
-      );
-      for (
-        let exportPage = 2;
-        exportPage <= totalExportPages;
-        exportPage += 1
-      ) {
-        const response = await fetch(
-          `/api/cmdb/assets?${buildParams(exportPage, 1000).toString()}`,
-          { headers: authHeaders() },
-        );
-        const json = await response.json();
-        if (!response.ok || json.success === false)
-          throw new Error(json.detail || json.message || "Export failed");
-        rows.push(...(json.data?.items || []));
-      }
-      const data = rows.map((asset) =>
-        Object.fromEntries(
-          activeColumns.map((column) => {
-            const title = zh ? column.zh : column.en;
-            const value =
-              column.key === "asset"
-                ? asset.hostname
-                : column.key === "category"
-                  ? `${labelOf(CATEGORY_LABELS, asset.device_category || "other", zh)} / ${asset.device_role || (zh ? "未分配" : "Unassigned")}`
-                  : column.key === "site"
-                    ? asset.site_name || asset.site_code || asset.site_id || "—"
-                    : column.key === "status"
-                      ? labelOf(STATUS_LABELS, asset.online_status, zh)
-                      : column.key === "tags"
-                        ? (asset.tags || [])
-                            .map((tag) =>
-                              zh ? tag.label_zh || tag.label : tag.label,
-                            )
-                            .join(", ")
-                        : column.key === "vendor"
-                          ? asset.vendor
-                          : column.key === "model"
-                            ? asset.model
-                            : column.key === "serial"
-                              ? asset.serial_number
-                              : column.key === "management_ip"
-                                ? asset.management_ip
-                                : column.key === "lifecycle"
-                                  ? labelOf(LIFECYCLE_LABELS, asset.lifecycle_status, zh)
-                                  : column.key === "created"
-                                    ? formatDate(asset.created_at)
-                                    : formatDate(asset.updated_at);
-            return [title, value];
-          }),
-        ),
-      );
-      const worksheet = XLSX.utils.json_to_sheet(data);
-      const workbook = XLSX.utils.book_new();
-      XLSX.utils.book_append_sheet(
-        workbook,
-        worksheet,
-        zh ? "资产目录" : "Asset catalog",
-      );
-      XLSX.writeFile(
-        workbook,
-        `cmdb_asset_catalog_${new Date().toISOString().slice(0, 10)}.xlsx`,
-      );
-    } catch (err) {
-      setError(err instanceof Error ? err.message : String(err));
-    }
-  };
-
   const renderNode = (node: TreeNode, depth = 0): React.ReactNode => {
     const isExpanded = expanded.has(node.id);
     const isSelected =
@@ -575,37 +498,13 @@ const CmdbAssetManagementTab: React.FC<Props> = ({
   };
 
   const renderCell = (asset: AssetRow, key: ColumnKey): React.ReactNode => {
-    if (key === "asset")
-      return (
-        <>
-          <div className="font-semibold text-slate-800">
-            {asset.hostname || "—"}
-          </div>
-          <div className="mt-1 font-mono text-[10px] text-slate-400">
-            {asset.management_ip ||
-              asset.asset_tag ||
-              asset.serial_number ||
-              asset.id}
-          </div>
-        </>
-      );
-    if (key === "category")
-      return (
-        <>
-          <div className="text-slate-700">
-            {labelOf(CATEGORY_LABELS, asset.device_category || "other", zh)}
-          </div>
-          <div className="mt-1 text-[10px] text-slate-400">
-            {asset.device_role || (zh ? "未分配角色" : "Unassigned role")}
-          </div>
-        </>
-      );
-    if (key === "site")
-      return (
-        <>
-          <div className="text-slate-700">{asset.site_name || asset.site_code || asset.site_id || "—"}</div>
-        </>
-      );
+    if (key === "hostname") return <span className="font-semibold text-slate-800">{asset.hostname || "—"}</span>;
+    if (key === "asset_tag") return <span className="font-mono text-slate-600">{asset.asset_tag || "—"}</span>;
+    if (key === "asset_type") return <span className="text-slate-700">{labelOf(TYPE_LABELS, asset.asset_type, zh)}</span>;
+    if (key === "category") return <span className="text-slate-700">{labelOf(CATEGORY_LABELS, asset.device_category || "other", zh)}</span>;
+    if (key === "role") return <span className="text-slate-600">{asset.device_role || (zh ? "未分配角色" : "Unassigned role")}</span>;
+    if (key === "site_code") return <span className="text-slate-600">{asset.site_code || "—"}</span>;
+    if (key === "site_name") return <span className="text-slate-700">{asset.site_name || "—"}</span>;
     if (key === "status")
       return (
         <span
@@ -636,7 +535,7 @@ const CmdbAssetManagementTab: React.FC<Props> = ({
         </div>
       );
     const values: Record<
-      Exclude<ColumnKey, "asset" | "category" | "site" | "status" | "tags">,
+      Exclude<ColumnKey, "hostname" | "asset_tag" | "asset_type" | "category" | "role" | "site_code" | "site_name" | "status" | "tags">,
       string | undefined
     > = {
       vendor: asset.vendor,
@@ -652,6 +551,27 @@ const CmdbAssetManagementTab: React.FC<Props> = ({
         {values[key as keyof typeof values] || "—"}
       </span>
     );
+  };
+
+  const assetExportValue = (asset: AssetRow, key: ColumnKey): string => {
+    if (key === "hostname") return asset.hostname || "—";
+    if (key === "asset_tag") return asset.asset_tag || "—";
+    if (key === "asset_type") return labelOf(TYPE_LABELS, asset.asset_type, zh);
+    if (key === "category") return labelOf(CATEGORY_LABELS, asset.device_category || "other", zh);
+    if (key === "role") return asset.device_role || (zh ? "未分配角色" : "Unassigned role");
+    if (key === "site_code") return asset.site_code || "—";
+    if (key === "site_name") return asset.site_name || "—";
+    if (key === "status") return labelOf(STATUS_LABELS, asset.online_status, zh);
+    if (key === "tags") return asset.tags?.length
+      ? asset.tags.map((tag) => zh ? tag.label_zh || tag.label : tag.label).filter(Boolean).join(" · ")
+      : "—";
+    if (key === "vendor") return asset.vendor || "—";
+    if (key === "model") return asset.model || "—";
+    if (key === "serial") return asset.serial_number || "—";
+    if (key === "management_ip") return asset.management_ip || "—";
+    if (key === "lifecycle") return labelOf(LIFECYCLE_LABELS, asset.lifecycle_status, zh);
+    if (key === "created") return formatDate(asset.created_at);
+    return formatDate(asset.updated_at);
   };
 
   return (
@@ -836,9 +756,24 @@ const CmdbAssetManagementTab: React.FC<Props> = ({
                 </div>
               )}
             </div>
-            <ActionButton icon={Download} variant="accent" size="sm" onClick={() => void exportExcel()}>
-              {zh ? "导出 Excel" : "Export Excel"}
-            </ActionButton>
+            <TableExportMenu
+              tableRef={assetTableRef}
+              filename="cmdb-asset-catalog"
+              language={zh ? "zh" : "en"}
+              disabled={loading}
+              exportData={async () => {
+                const allAssets = await fetchAllPaginatedItems<AssetRow>(
+                  "/api/cmdb/assets",
+                  buildParams(1, 1000),
+                  1000,
+                );
+                return buildCmdbExportData(allAssets, activeColumns.map((column) => ({
+                  key: column.key,
+                  header: zh ? column.zh : column.en,
+                  value: (asset: AssetRow) => assetExportValue(asset, column.key),
+                })));
+              }}
+            />
             {canManageTags && (
               <button
                 disabled={!selectedIds.length}
@@ -862,7 +797,7 @@ const CmdbAssetManagementTab: React.FC<Props> = ({
             </span>
           </div>
           <div className="min-h-0 flex-1 overflow-auto">
-            <DataTable className="min-w-[920px] text-left text-xs">
+            <table ref={assetTableRef} className="nx-data-table min-w-[920px] text-left text-xs">
               <thead className="sticky top-0 z-10 bg-slate-50 text-[11px] font-semibold uppercase tracking-wide text-slate-400">
                 <tr>
                   <th className="w-10 px-4 py-3">
@@ -939,7 +874,7 @@ const CmdbAssetManagementTab: React.FC<Props> = ({
                   ))
                 )}
               </tbody>
-            </DataTable>
+            </table>
           </div>
           <div className="hidden">
             <span>

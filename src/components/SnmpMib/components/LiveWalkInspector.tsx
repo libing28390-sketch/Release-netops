@@ -1,3 +1,4 @@
+import { DataTable } from '../../DataTable';
 import React, { useEffect, useMemo, useRef, useState } from 'react';
 import {
   Activity,
@@ -1561,7 +1562,7 @@ export const LiveWalkInspector: React.FC<LiveWalkInspectorProps> = ({
                     </div>
                   </div>
                   <div className="overflow-x-auto">
-                    <table className="nx-data-table nx-data-table--compact min-w-[420px] text-left">
+                    <DataTable unstyled exportConfig={{ filename: 'snmp-live-walk-neighbors' }} className="nx-data-table nx-data-table--compact min-w-[420px] text-left">
                       <thead>
                         <tr>
                           <th>{zh ? '邻居设备' : 'Neighbor'}</th>
@@ -1580,7 +1581,7 @@ export const LiveWalkInspector: React.FC<LiveWalkInspectorProps> = ({
                           </tr>
                         ))}
                       </tbody>
-                    </table>
+                    </DataTable>
                   </div>
                 </section>
               )}
@@ -1700,16 +1701,23 @@ export const LiveWalkInspector: React.FC<LiveWalkInspectorProps> = ({
 
               {/* Table */}
               <div className="mt-2 max-h-[360px] overflow-y-auto rounded-lg border border-black/6 bg-white/40 dark:border-white/8 dark:bg-white/[.02]">
-                <table className="nx-data-table nx-data-table--compact">
+                <DataTable unstyled exportConfig={{ filename: 'snmp-live-walk-values' }} className="nx-data-table nx-data-table--compact">
                   <thead className="sticky top-0 z-10 bg-[var(--card-bg)] text-[10px] font-medium text-black/45 dark:text-white/45">
                     <tr>
-                      <th className="px-3 py-2">OID 路径 / 实例索引 / 推断含义</th>
-                      <th className="px-3 py-2">返回值 (Value)</th>
+                      <th className="px-3 py-2">OID {zh ? '路径' : 'path'}</th>
+                      <th className="px-3 py-2">{zh ? 'MIB 节点' : 'MIB node'}</th>
+                      <th className="px-3 py-2">{zh ? 'MIB 模块' : 'MIB module'}</th>
+                      <th className="px-3 py-2">{zh ? 'OID 分类' : 'OID category'}</th>
+                      <th className="px-3 py-2">{zh ? '实例索引' : 'Instance index'}</th>
+                      <th className="px-3 py-2">{zh ? '语法类型' : 'Syntax'}</th>
+                      <th className="px-3 py-2">{zh ? '访问类型' : 'Access'}</th>
+                      <th className="px-3 py-2">{zh ? '描述' : 'Description'}</th>
+                      <th className="px-3 py-2">{zh ? '返回值' : 'Value'}</th>
                     </tr>
                   </thead>
                   <tbody className="divide-y divide-black/5 font-mono dark:divide-white/5">
                     {filteredWalkResults.length === 0 && (
-                      <tr><td colSpan={2} className="px-3 py-8 text-center font-sans text-xs text-black/45 dark:text-white/45">
+                      <tr><td colSpan={9} className="px-3 py-8 text-center font-sans text-xs text-black/45 dark:text-white/45">
                         {zh
                           ? publicSummaryOnly
                             ? walkResultScope === 'private' ? '当前没有匹配的厂商私有 OID 返回值。' : '当前没有匹配的公共标准 OID 返回值。'
@@ -1726,37 +1734,31 @@ export const LiveWalkInspector: React.FC<LiveWalkInspectorProps> = ({
                       const instance = row.instance_suffix ?? walkInstanceSuffix(walkRootOid, row.oid);
                       return (
                         <tr key={`${row.oid}-${idx}`} className="hover:bg-[#00bceb]/[0.04]">
-                          <td className="px-3 py-2">
+                          <td className="px-3 py-2 font-semibold text-[#007391] dark:text-[#00c2e8]">
                             <div className="flex items-center gap-1.5">
-                              <span className="font-semibold text-[#007391] dark:text-[#00c2e8]">{row.oid}</span>
-                              <ActionIconButton
-                                icon={Copy}
-                                label={zh ? '复制 OID' : 'Copy OID'}
-                                size="xs"
-                                variant="accent"
-                                onClick={() => copyToClipboard(row.oid, 'OID')}
-                              />
+                              <span>{row.oid}</span>
+                              <span data-export-ignore>
+                                <ActionIconButton
+                                  icon={Copy}
+                                  label={zh ? '复制 OID' : 'Copy OID'}
+                                  size="xs"
+                                  variant="accent"
+                                  onClick={() => copyToClipboard(row.oid, 'OID')}
+                                />
+                              </span>
                             </div>
-                            {inferred && (
-                              <div className="mt-0.5 font-sans text-[10px] text-[#008aad] dark:text-[#00bceb]">
-                                🏷️ {inferred}{row.mib_name ? ` · ${row.mib_name}` : ''}{publicSummaryOnly && walkResultScope === 'private' ? ` · ${row.mib_vendor || (isVendorSpecificWalkRow(row) ? (zh ? '厂商私有' : 'Vendor-specific') : (zh ? '未分类' : 'Unclassified'))}` : ''}
-                              </div>
-                            )}
-                            {row.syntax_type && (!publicSummaryOnly || walkResultScope === 'private') && (
-                              <div className="mt-0.5 font-sans text-[10px] text-black/55 dark:text-white/55">
-                                {zh ? '类型' : 'Type'}: {row.syntax_type}
-                                {row.access_type ? ` · ${row.access_type}` : ''}
-                              </div>
-                            )}
-                            <div className="mt-0.5 font-sans text-[10px] text-black/45 dark:text-white/45">
-                              {instance ? `${zh ? '实例索引' : 'Instance'}: ${instance}` : (zh ? '标量/根节点' : 'Scalar/root')}
-                            </div>
-                            {row.description && (!publicSummaryOnly || walkResultScope === 'private') && (
-                              <div className="mt-0.5 max-w-[620px] font-sans text-[10px] leading-4 text-black/45 dark:text-white/45">
-                                {row.description}
-                              </div>
-                            )}
                           </td>
+                          <td className="px-3 py-2 font-sans text-[#008aad] dark:text-[#00bceb]">{inferred || '-'}</td>
+                          <td className="px-3 py-2 font-sans text-black/55 dark:text-white/55">{row.mib_name || '-'}</td>
+                          <td className="px-3 py-2 font-sans text-black/55 dark:text-white/55">
+                            {isPublicStandardWalkRow(row)
+                              ? (zh ? '公共标准' : 'Public standard')
+                              : row.mib_vendor || (isVendorSpecificWalkRow(row) ? (zh ? '厂商私有' : 'Vendor-specific') : (zh ? '未分类' : 'Unclassified'))}
+                          </td>
+                          <td className="px-3 py-2 font-sans text-black/45 dark:text-white/45">{instance || (zh ? '标量/根节点' : 'Scalar/root')}</td>
+                          <td className="px-3 py-2 font-sans text-black/55 dark:text-white/55">{!publicSummaryOnly || walkResultScope === 'private' ? row.syntax_type || '-' : '-'}</td>
+                          <td className="px-3 py-2 font-sans text-black/55 dark:text-white/55">{!publicSummaryOnly || walkResultScope === 'private' ? row.access_type || '-' : '-'}</td>
+                          <td className="max-w-[620px] px-3 py-2 font-sans text-[10px] leading-4 text-black/45 dark:text-white/45">{!publicSummaryOnly || walkResultScope === 'private' ? row.description || '-' : '-'}</td>
                           <td className="max-w-[320px] break-all px-3 py-2 font-sans font-medium text-black/75 dark:text-white/80">
                             {String(row.value)}
                           </td>
@@ -1764,7 +1766,7 @@ export const LiveWalkInspector: React.FC<LiveWalkInspectorProps> = ({
                       );
                     })}
                   </tbody>
-                </table>
+                </DataTable>
               </div>
                 </div>
               </details>

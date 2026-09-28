@@ -16,10 +16,13 @@ import { motion, AnimatePresence } from 'framer-motion';
 import PageHero from '../../components/PageHero';
 import Pagination from '../../components/Pagination';
 import { ActionIconButton, ActionIconGroup } from '../../components/ui/ActionIconButton';
+import { TableExportMenu } from '../../components/ui/TableExportMenu';
 import { useEscapeClose } from '../../hooks/useEscapeClose';
 import { useLocation, useNavigate } from 'react-router-dom';
 import { formatMacAddress } from '../../utils/resourceFormatters';
+import { buildVisibleIpamExportData, fetchAllIpamExportItems } from './ipamExport';
 
+import { TableActionCell, TableActionHeader } from '../../components/ui/TableActionColumn';
 interface IPAddress {
   id: string;
   subnet_id: string;
@@ -415,6 +418,7 @@ const IPAddressTab: React.FC<IPAddressTabProps> = ({ language, t }) => {
   const location = useLocation();
   const navigate = useNavigate();
   const zh = language === 'zh';
+  const addressTableRef = useRef<HTMLTableElement>(null);
 
   // Get search params
   const params = new URLSearchParams(location.search);
@@ -663,6 +667,37 @@ const IPAddressTab: React.FC<IPAddressTabProps> = ({ language, t }) => {
 
   const paginatedAddresses = filteredAddresses;
 
+  const exportData = useCallback(async () => {
+    const params = new URLSearchParams({ site_id: selectedSiteId });
+    if (selectedPrefixId) params.set('prefix_id', selectedPrefixId);
+    if (search.trim()) params.set('q', search.trim());
+    if (statusFilter !== 'all' && (!isMatrixView || statusFilter !== 'available')) params.set('status', statusFilter);
+    if (typeFilter !== 'all' && (!isMatrixView || statusFilter !== 'available')) params.set('device_type', typeFilter);
+    if (purposeFilter !== 'all' && (!isMatrixView || statusFilter !== 'available')) params.set('purpose', purposeFilter);
+    const allAddresses = await fetchAllIpamExportItems<IPAddress>('/api/ipam/addresses', params);
+    const linkedDeviceName = (node: IPAddress) => {
+      if (node.switch_name || node.bound_device_hostname) return node.switch_name || node.bound_device_hostname || '-';
+      const device = devices.find((candidate) => candidate.id === node.device_id);
+      return device ? deviceHostLabel(device) : '-';
+    };
+    return buildVisibleIpamExportData(addressTableRef.current, [
+      { header: zh ? '站点' : 'Site', value: (node) => node.site_name || '-' },
+      { header: zh ? '网段' : 'Prefix', value: (node) => node.subnet_prefix || '-' },
+      { header: zh ? 'IP地址' : 'IP Address', value: (node) => node.address },
+      { header: zh ? '用途' : 'Purpose', value: (node) => purposeLabel(node.purpose || inferIpPurpose(node.network_type), zh) },
+      { header: zh ? '类型' : 'Role Type', value: (node) => roleLabel(node.device_type, zh) },
+      { header: zh ? '主机名 / 域名' : 'DNS Hostname', value: (node) => node.hostname || '-' },
+      { header: zh ? '关联设备' : 'Linked Device', value: linkedDeviceName },
+      { header: zh ? '资产编号' : 'Asset Tag', value: (node) => node.asset_tag || '-' },
+      { header: zh ? '资产序列号' : 'Asset Serial', value: (node) => node.asset_serial_number || '-' },
+      { header: zh ? '接口' : 'Interface', value: (node) => node.switch_port || node.interface_name || '-' },
+      { header: zh ? 'MAC地址' : 'MAC Address', value: (node) => formatMacAddress(node.mac_address) || '-' },
+      { header: zh ? '状态' : 'Status', value: (node) => statusLabel(node.status, zh) },
+      { header: zh ? '备注描述' : 'Description', value: (node) => node.description || '-' },
+      { header: zh ? '发现时间' : 'Last Seen', value: (node) => (node.discovered_last_seen || node.last_seen) ? (node.discovered_last_seen || node.last_seen).replace('T', ' ').slice(0, 19) : '-' },
+    ], allAddresses);
+  }, [selectedSiteId, selectedPrefixId, search, statusFilter, isMatrixView, typeFilter, purposeFilter, zh, devices]);
+
   // Form handling
   const openForm = (ipItem: IPAddress | null = null, quickAllocation = false) => {
     setErrorMsg('');
@@ -777,7 +812,7 @@ const IPAddressTab: React.FC<IPAddressTabProps> = ({ language, t }) => {
   // Find hostname for device selection
   const getDeviceName = (devId: string) => {
     const dev = devices.find((d) => d.id === devId);
-    return dev ? deviceHostLabel(dev) : devId;
+    return dev ? deviceHostLabel(dev) : '-';
   };
 
   return (
@@ -787,18 +822,21 @@ const IPAddressTab: React.FC<IPAddressTabProps> = ({ language, t }) => {
         title={zh ? 'IP地址分配管理' : 'IP Address Management'}
         subtitle={zh ? '精细管理每一个网段内的IP分配，区分网段用途、IP用途、设备角色与生命周期' : 'Manage prefix and IP purposes separately from device roles and lifecycle.'}
         actions={
-          <button
-            onClick={() => openForm(null)}
-            disabled={!selectedPrefixId}
-            className={`flex items-center gap-1.5 px-4 py-2 text-white rounded-xl text-xs font-bold shadow-lg transition-all ${
-              selectedPrefixId 
-                ? 'bg-gradient-to-r from-cyan-500 to-blue-600 hover:from-cyan-600 hover:to-blue-700 shadow-cyan-500/20 active:scale-95 cursor-pointer'
-                : 'bg-gray-200 cursor-not-allowed shadow-none'
-            }`}
-          >
-            <Plus size={14} />
-            {zh ? '分配IP地址' : 'Allocate IP'}
-          </button>
+          <div className="flex items-center gap-2">
+            {!loading && (!isMatrixView || !canUseMatrix) && <TableExportMenu tableRef={addressTableRef} exportData={exportData} filename="ipam-addresses" language={zh ? 'zh' : 'en'} disabled={paginatedAddresses.length === 0} />}
+            <button
+              onClick={() => openForm(null)}
+              disabled={!selectedPrefixId}
+              className={`flex items-center gap-1.5 px-4 py-2 text-white rounded-xl text-xs font-bold shadow-lg transition-all ${
+                selectedPrefixId
+                  ? 'bg-gradient-to-r from-cyan-500 to-blue-600 hover:from-cyan-600 hover:to-blue-700 shadow-cyan-500/20 active:scale-95 cursor-pointer'
+                  : 'bg-gray-200 cursor-not-allowed shadow-none'
+              }`}
+            >
+              <Plus size={14} />
+              {zh ? '分配IP地址' : 'Allocate IP'}
+            </button>
+          </div>
         }
         extras={
           <div className="flex flex-wrap items-center gap-3 w-full md:w-auto">
@@ -1004,21 +1042,24 @@ const IPAddressTab: React.FC<IPAddressTabProps> = ({ language, t }) => {
               </div>
             </div>
           ) : (
-            <table className="nx-data-table text-left">
+            <table ref={addressTableRef} className="nx-data-table text-left">
               <thead>
                 <tr className="border-b border-gray-100 bg-gray-50/40 text-[10px] font-bold text-gray-400 uppercase tracking-wider select-none">
-                  <th className="pl-6 py-4">{zh ? '站点 / 网段' : 'Site / Prefix'}</th>
+                  <th className="pl-6 py-4">{zh ? '站点' : 'Site'}</th>
+                  <th className="px-4 py-4">{zh ? '网段' : 'Prefix'}</th>
                   <th className="pl-6 py-4">{zh ? 'IP地址' : 'IP Address'}</th>
                   <th className="px-4 py-4">{zh ? '用途' : 'Purpose'}</th>
                   <th className="px-4 py-4">{zh ? '类型' : 'Role Type'}</th>
                   <th className="px-4 py-4">{zh ? '主机名 / 域名' : 'DNS Hostname'}</th>
-                  <th className="px-4 py-4">{zh ? '关联资产 / 设备' : 'Linked Asset / Device'}</th>
+                  <th className="px-4 py-4">{zh ? '关联设备' : 'Linked Device'}</th>
+                  <th className="px-4 py-4">{zh ? '资产编号' : 'Asset Tag'}</th>
+                  <th className="px-4 py-4">{zh ? '资产序列号' : 'Asset Serial'}</th>
                   <th className="px-4 py-4">{zh ? '接口' : 'Interface'}</th>
                   <th className="px-4 py-4">{zh ? 'MAC地址' : 'MAC Address'}</th>
                   <th className="px-4 py-4">{zh ? '状态' : 'Status'}</th>
                   <th className="px-4 py-4">{zh ? '备注描述' : 'Description'}</th>
                   <th className="px-4 py-4">{zh ? '发现时间' : 'Last Seen'}</th>
-                  <th className="pr-6 py-4 text-right">{zh ? '操作' : 'Actions'}</th>
+                  <TableActionHeader className="pr-6 py-4 text-right">{zh ? '操作' : 'Actions'}</TableActionHeader>
                 </tr>
               </thead>
               <tbody>
@@ -1028,10 +1069,8 @@ const IPAddressTab: React.FC<IPAddressTabProps> = ({ language, t }) => {
                       key={node.id} 
                       className="hover:bg-gray-50/50 transition-colors border-b border-gray-100 group"
                     >
-                      <td className="pl-6 py-4 min-w-[160px]">
-                        <div className="text-xs font-bold text-cyan-700">{node.site_name || '-'}</div>
-                        <div className="mt-1 font-mono text-[10px] text-gray-400">{node.subnet_prefix || '-'}</div>
-                      </td>
+                      <td className="pl-6 py-4 min-w-[120px] text-xs font-bold text-cyan-700">{node.site_name || '-'}</td>
+                      <td className="px-4 py-4 min-w-[130px] font-mono text-[10px] text-gray-500">{node.subnet_prefix || '-'}</td>
                       <td className="pl-6 py-4 font-mono font-bold text-xs text-gray-800">
                         <button
                           type="button"
@@ -1074,15 +1113,9 @@ const IPAddressTab: React.FC<IPAddressTabProps> = ({ language, t }) => {
                         </span>
                       </td>
                       <td className="px-4 py-4 text-xs font-semibold text-gray-500">{node.hostname || '-'}</td>
-                      <td className="px-4 py-4 text-xs text-cyan-600 font-bold hover:underline cursor-pointer">
-                        <div>{node.switch_name || node.bound_device_hostname || (node.device_id ? getDeviceName(node.device_id) : '-')}</div>
-                        {node.asset_tag && (
-                          <div className="mt-1 text-[10px] font-semibold text-slate-400">
-                            {zh ? '资产' : 'Asset'} · {node.asset_tag}
-                            {node.asset_serial_number ? ` · SN ${node.asset_serial_number}` : ''}
-                          </div>
-                        )}
-                      </td>
+                      <td className="px-4 py-4 text-xs text-cyan-600 font-bold hover:underline cursor-pointer">{node.switch_name || node.bound_device_hostname || (node.device_id ? getDeviceName(node.device_id) : '-')}</td>
+                      <td className="px-4 py-4 text-xs text-gray-500 font-medium">{node.asset_tag || '-'}</td>
+                      <td className="px-4 py-4 text-xs text-gray-500 font-mono">{node.asset_serial_number || '-'}</td>
                       <td className="px-4 py-4 text-xs text-gray-600 font-semibold">{node.switch_port || node.interface_name || '-'}</td>
                       <td className="px-4 py-4 font-mono text-xs text-gray-500">{formatMacAddress(node.mac_address) || '-'}</td>
                       <td className="px-4 py-4">
@@ -1101,7 +1134,7 @@ const IPAddressTab: React.FC<IPAddressTabProps> = ({ language, t }) => {
                       </td>
                       <td className="px-4 py-4 text-xs text-gray-400 font-medium max-w-[150px] truncate">{node.description || '-'}</td>
                       <td className="px-4 py-4 font-mono text-[10px] text-gray-400">{(node.discovered_last_seen || node.last_seen) ? (node.discovered_last_seen || node.last_seen).replace('T', ' ').slice(0, 19) : '-'}</td>
-                      <td className="pr-6 py-4 text-right">
+                      <TableActionCell className="pr-6 py-4 text-right">
                         {!node.is_discovered ? (
                           <ActionIconGroup label={zh ? '地址操作' : 'Address actions'} className="opacity-0 transition-opacity group-hover:opacity-100">
                             <ActionIconButton
@@ -1117,7 +1150,7 @@ const IPAddressTab: React.FC<IPAddressTabProps> = ({ language, t }) => {
                             />
                           </ActionIconGroup>
                         ) : <span className="text-[10px] font-semibold text-cyan-500">{zh ? '只读采集' : 'Read-only'}</span>}
-                      </td>
+                      </TableActionCell>
                     </tr>
                   ))
                 ) : (

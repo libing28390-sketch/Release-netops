@@ -424,6 +424,56 @@ textarea {
 	opacity: 0.45;
 }
 
+/* Password and secret fields use the same input geometry and reveal control
+ * wherever credentials are entered. */
+.nx-password-field {
+	position: relative;
+	width: 100%;
+}
+
+.nx-password-input {
+	display: block;
+	width: 100%;
+	min-height: 40px;
+	padding: 9px 42px 9px 12px;
+	border: 1px solid var(--ui-border);
+	border-radius: 10px;
+	background: var(--ui-surface);
+	color: var(--ui-fg);
+	font-family: inherit;
+	font-size: var(--ui-text-body);
+	line-height: 1.4;
+	outline: none;
+	transition: border-color 140ms ease, box-shadow 140ms ease, background-color 140ms ease;
+}
+
+.nx-password-input::placeholder {
+	color: var(--ui-fg-subtle);
+	opacity: 1;
+}
+
+.nx-password-input:focus {
+	border-color: var(--ui-accent);
+	box-shadow: 0 0 0 3px color-mix(in srgb, var(--ui-accent) 16%, transparent);
+}
+
+.nx-password-input[aria-invalid='true'] {
+	border-color: var(--ui-danger);
+}
+
+.nx-password-input:disabled {
+	background: var(--ui-surface-muted);
+	color: var(--ui-fg-muted);
+	cursor: not-allowed;
+}
+
+.nx-password-field__toggle {
+	position: absolute;
+	right: 5px;
+	top: 50%;
+	transform: translateY(-50%);
+}
+
 .nx-action-button {
 	display: inline-flex;
 	align-items: center;
@@ -570,6 +620,10 @@ textarea {
 	text-transform: none;
 	white-space: nowrap;
 	text-align: left;
+}
+
+.app-shell :where(table:not(.nx-terminal-table)) thead th.nx-action-column-header {
+	text-align: right;
 }
 
 .app-shell :where(table:not(.nx-terminal-table)) tbody tr {
