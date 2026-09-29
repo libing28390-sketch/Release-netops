@@ -235,11 +235,18 @@ def test_dashboard_device_variables_use_current_up_targets():
             asset_variable = variables["asset_id"]
             asset_query = asset_variable["query"]["query"]
             assert asset_variable["definition"] == asset_query
-            assert asset_query.startswith('query_result(label_join(max by (asset_id,hostname,instance,site_name) (up{job="network_snmp",asset_id!=""})')
+            assert asset_query.startswith(
+                'query_result(label_join(max by (asset_id,hostname,instance,site_name) '
+                '(up{job="network_snmp",asset_id!=""'
+            )
+            assert 'site_name=~"$site"' in asset_query
+            assert 'vendor=~"$vendor"' in asset_query
+            assert 'role=~"$role"' in asset_query
             assert 'asset_id="(?<value>[^\"]+)"' in asset_variable["regex"]
             assert 'device_label="(?<text>[^\"]+)"' in asset_variable["regex"]
             assert "label_values(" not in asset_query
             assert "== 1" not in asset_query  # Keep configured assets selectable when SNMP is down.
+            assert {"site", "vendor", "role"} <= variables.keys()
             assert {
                 "cpu_window", "hardware_group", "sensor_name", "component_class",
             } <= variables.keys()
