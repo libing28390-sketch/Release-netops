@@ -122,7 +122,7 @@ export const usePageTitle = ({
     if (activeTab === 'assets') return language === 'zh' ? '资产管理' : 'Asset Management';
     if (activeTab === 'tags') return language === 'zh' ? '标签管理' : 'Tag Management';
     if (activeTab === 'racks') return language === 'zh' ? '机柜管理' : 'Rack Management';
-    if (activeTab === 'credentials') return language === 'zh' ? '凭据管理' : 'Credential Management';
+    if (activeTab === 'credentials') return language === 'zh' ? '凭据轮换' : 'Credential Rotation';
     if (activeTab === 'change-orders') {
       if (changeOrderPage === 'all') return language === 'zh' ? '全部工单' : 'All Orders';
       if (changeOrderPage === 'my-todo') return language === 'zh' ? '个人待办' : 'My Todo';

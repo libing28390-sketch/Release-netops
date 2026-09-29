@@ -7,7 +7,7 @@ import {
   Server, Router, AlertTriangle, SlidersHorizontal,
   Wifi, Upload, FileText,
   AlertCircle, CheckCircle2, Info,
-  Flame, LayoutList, Lock, Terminal, Eye, EyeOff, Loader2, Shield, User, MonitorSpeaker, Settings2, Check
+  Flame, LayoutList, Lock, Terminal, Eye, EyeOff, Loader2, Shield, User, MonitorSpeaker
 } from 'lucide-react';
 import { ActionButton, ActionIconButton, ActionIconGroup } from '../../components/ui/ActionIconButton';
 import { TableActionCell, TableActionHeader } from '../../components/ui/TableActionColumn';
@@ -136,10 +136,7 @@ const DEFAULT_ASSET_COLUMNS: Record<AssetColumnKey, boolean> = {
   updated_at: true,
 };
 
-const FIXED_ASSET_COLUMNS = new Set<AssetColumnKey>([
-  'hostname', 'asset_tag', 'asset_type', 'device_category', 'device_role',
-  'site', 'rack', 'rack_unit', 'status', 'created_at', 'updated_at',
-]);
+const DEFAULT_VISIBLE_ASSET_COLUMNS = ASSET_COLUMN_DEFS.filter(column => DEFAULT_ASSET_COLUMNS[column.key]);
 
 const NETWORK_TEMPLATE_ROLES = new Set<string>(NETWORK_TOPOLOGY_ROLE_OPTIONS.map(option => option.value));
 const NETWORK_TEMPLATE_CATEGORIES = new Set([
@@ -152,18 +149,6 @@ const SERVER_TEMPLATE_ROLES = new Set([
 const SERVER_TEMPLATE_CATEGORIES = new Set([
   'rack_server', 'blade_server', 'tower_server', 'high_density', 'gpu_server', 'storage_server', 'virtual_host', 'other_server',
 ]);
-
-const normalizeAssetColumns = (columns: Partial<Record<AssetColumnKey, boolean>>): Record<AssetColumnKey, boolean> => {
-  const storedColumns = Object.fromEntries(
-    Object.entries(columns).filter(([key]) => key !== 'category_role'),
-  ) as Partial<Record<AssetColumnKey, boolean>>;
-  const normalized = { ...DEFAULT_ASSET_COLUMNS, ...storedColumns };
-  FIXED_ASSET_COLUMNS.forEach(key => { normalized[key] = true; });
-  return normalized;
-};
-
-const ASSET_COLUMNS_STORAGE_KEY = 'assets-dashboard-columns-v4';
-const LEGACY_ASSET_COLUMNS_STORAGE_KEY = 'assets-dashboard-columns-v3';
 
 const FALLBACK_TEMPLATE_DATE_FORMAT = 'yyyy/mm/dd';
 
@@ -296,42 +281,6 @@ const AssetManagementTab: React.FC<AssetManagementTabProps> = ({ language, setAc
   const [pendingImportPayload, setPendingImportPayload] = useState<any[]>([]);
   const [validationModalSaving, setValidationModalSaving] = useState(false);
   const [allTags, setAllTags] = useState<TagDefinition[]>([]);
-  const [columnsOpen, setColumnsOpen] = useState(false);
-  const columnsMenuRef = React.useRef<HTMLDivElement>(null);
-  const [visibleColumns, setVisibleColumns] = useState<Record<AssetColumnKey, boolean>>(() => {
-    try {
-      const stored = JSON.parse(
-        localStorage.getItem(ASSET_COLUMNS_STORAGE_KEY)
-          || localStorage.getItem(LEGACY_ASSET_COLUMNS_STORAGE_KEY)
-          || '{}',
-      ) as Partial<Record<AssetColumnKey, boolean>>;
-      return normalizeAssetColumns(stored);
-    } catch {
-      return normalizeAssetColumns({});
-    }
-  });
-
-  useEffect(() => {
-    localStorage.setItem(ASSET_COLUMNS_STORAGE_KEY, JSON.stringify(visibleColumns));
-  }, [visibleColumns]);
-
-  useEffect(() => {
-    if (!columnsOpen) return;
-    const handleOutsideClick = (event: MouseEvent) => {
-      if (columnsMenuRef.current && !columnsMenuRef.current.contains(event.target as Node)) {
-        setColumnsOpen(false);
-      }
-    };
-    document.addEventListener('mousedown', handleOutsideClick);
-    return () => document.removeEventListener('mousedown', handleOutsideClick);
-  }, [columnsOpen]);
-
-  const activeAssetColumns = useMemo(
-    () => ASSET_COLUMN_DEFS.filter(column => visibleColumns[column.key]),
-    [visibleColumns],
-  );
-  const allAssetColumnsSelected = activeAssetColumns.length === ASSET_COLUMN_DEFS.length;
-
   const fetchAllRacks = useCallback(async () => {
     try {
       const token = localStorage.getItem('netops_token');
@@ -425,8 +374,8 @@ const AssetManagementTab: React.FC<AssetManagementTabProps> = ({ language, setAc
     const filteredAssets = severityFilter === 'all'
       ? allAssets
       : allAssets.filter((asset) => severityOf(asset) === severityFilter);
-    return buildAssetExportData(filteredAssets, activeAssetColumns, zh ? 'zh' : 'en');
-  }, [activeAssetColumns, buildAssetParams, severityFilter, zh]);
+    return buildAssetExportData(filteredAssets, ASSET_COLUMN_DEFS, zh ? 'zh' : 'en');
+  }, [buildAssetParams, severityFilter, zh]);
 
   useEffect(() => { fetchSummary(); }, [fetchSummary]);
   useEffect(() => { fetchSites(); }, [fetchSites]);
@@ -1923,63 +1872,6 @@ const AssetManagementTab: React.FC<AssetManagementTabProps> = ({ language, setAc
             </div>
 
             <div className="flex flex-wrap items-center gap-2">
-              <div ref={columnsMenuRef} className="relative">
-                <button
-                  type="button"
-                  onClick={() => setColumnsOpen(open => !open)}
-                  className={`flex items-center gap-1.5 px-3 py-1.5 rounded-xl border text-xs font-semibold transition-all cursor-pointer ${
-                    columnsOpen
-                      ? 'border-blue-500 bg-blue-50 text-blue-600 dark:bg-blue-950/40 dark:text-blue-400'
-                      : 'border-gray-200/80 dark:border-zinc-700 bg-white dark:bg-zinc-800 text-gray-700 dark:text-zinc-200 hover:bg-gray-50'
-                  }`}
-                  title={zh ? '配置展示列' : 'Configure columns'}
-                >
-                  <Settings2 size={13} />
-                  <span>{zh ? '展示列' : 'Columns'}</span>
-                </button>
-                {columnsOpen && (
-                  <div className="absolute right-0 top-full z-40 mt-2 w-64 rounded-2xl border border-gray-200 dark:border-zinc-700 bg-white dark:bg-zinc-900 p-3.5 shadow-xl">
-                    <div className="mb-2.5 flex items-center justify-between">
-                      <span className="text-xs font-bold text-gray-800 dark:text-zinc-200">{zh ? '选择展示列' : 'Visible columns'}</span>
-                      <span className="text-[11px] font-mono text-gray-400">{activeAssetColumns.length}/{ASSET_COLUMN_DEFS.length}</span>
-                    </div>
-                    <button
-                      type="button"
-                      onClick={() => setVisibleColumns(normalizeAssetColumns(Object.fromEntries(ASSET_COLUMN_DEFS.map(column => [column.key, true]))))}
-                      disabled={allAssetColumnsSelected}
-                      className="mb-2 w-full rounded-xl bg-blue-50 dark:bg-blue-950/40 px-2.5 py-1.5 text-left text-xs font-semibold text-blue-600 dark:text-blue-400 disabled:cursor-default disabled:opacity-50 cursor-pointer"
-                    >
-                      {zh ? '一键全选' : 'Select all'}
-                    </button>
-                    <div className="max-h-80 overflow-y-auto pr-1 space-y-0.5">
-                      {ASSET_COLUMN_DEFS.map(column => {
-                        const fixed = FIXED_ASSET_COLUMNS.has(column.key);
-                        return (
-                          <label key={column.key} className={`flex items-center gap-2 rounded-xl px-2.5 py-1.5 text-xs ${fixed ? 'cursor-default text-gray-400' : 'cursor-pointer text-gray-700 dark:text-zinc-200 hover:bg-gray-50 dark:hover:bg-zinc-800'}`}>
-                            <input
-                              type="checkbox"
-                              checked={visibleColumns[column.key]}
-                              disabled={fixed}
-                              onChange={() => { if (!fixed) setVisibleColumns(current => normalizeAssetColumns({ ...current, [column.key]: !current[column.key] })); }}
-                              className="accent-blue-600 disabled:opacity-50 cursor-pointer"
-                            />
-                            <span className="flex-1">{zh ? column.zh : column.en}</span>
-                            {visibleColumns[column.key] && <Check size={13} className={fixed ? 'text-blue-600/60' : 'text-blue-600'} />}
-                          </label>
-                        );
-                      })}
-                    </div>
-                    <button
-                      type="button"
-                      onClick={() => setVisibleColumns(normalizeAssetColumns({}))}
-                      className="mt-2.5 w-full border-t border-gray-100 dark:border-zinc-800 pt-2 text-left text-xs font-semibold text-blue-600 hover:underline cursor-pointer"
-                    >
-                      {zh ? '恢复默认展示' : 'Reset to default'}
-                    </button>
-                  </div>
-                )}
-              </div>
-
               <button
                 type="button"
                 onClick={openAdd}
@@ -2149,7 +2041,7 @@ const AssetManagementTab: React.FC<AssetManagementTabProps> = ({ language, setAc
                     <th className="w-8 px-3 py-3 text-center">
                       <input type="checkbox" checked={selectedIds.size === displayAssets.length && displayAssets.length > 0} onChange={toggleAll} className="h-3.5 w-3.5 rounded border-gray-300 accent-blue-600 cursor-pointer" />
                     </th>
-                    {activeAssetColumns.map(column => (
+                    {DEFAULT_VISIBLE_ASSET_COLUMNS.map(column => (
                       <th key={column.key} className={`text-left px-3 py-3 text-[11px] font-bold uppercase tracking-wider text-gray-400 ${column.width}`}>
                         {zh ? column.zh : column.en}
                       </th>
@@ -2159,12 +2051,12 @@ const AssetManagementTab: React.FC<AssetManagementTabProps> = ({ language, setAc
                 </thead>
                 <tbody>
                   {loading ? (
-                    <tr><td colSpan={activeAssetColumns.length + 2} className="text-center py-20 text-gray-400">
+                    <tr><td colSpan={DEFAULT_VISIBLE_ASSET_COLUMNS.length + 2} className="text-center py-20 text-gray-400">
                       <RefreshCw size={18} className="mx-auto mb-2 animate-spin text-blue-500" />
                       <p className="text-xs font-medium">{zh ? '加载资产中...' : 'Loading...'}</p>
                     </td></tr>
                   ) : displayAssets.length === 0 ? (
-                    <tr><td colSpan={activeAssetColumns.length + 2} className="py-20">
+                    <tr><td colSpan={DEFAULT_VISIBLE_ASSET_COLUMNS.length + 2} className="py-20">
                       <div className="text-center max-w-lg mx-auto">
                         <div className="relative h-20 w-20 mx-auto mb-4">
                           <div className="absolute inset-0 rounded-2xl bg-blue-50 dark:bg-blue-950/40 flex items-center justify-center">
@@ -2209,7 +2101,7 @@ const AssetManagementTab: React.FC<AssetManagementTabProps> = ({ language, setAc
                         <td className="px-3 py-2.5 text-right" onClick={e => e.stopPropagation()}>
                           <input type="checkbox" checked={sel} onChange={() => toggle(a.id)} className="h-3.5 w-3.5 rounded border-gray-300 accent-blue-600 cursor-pointer" />
                         </td>
-                        {activeAssetColumns.map(column => (
+                        {DEFAULT_VISIBLE_ASSET_COLUMNS.map(column => (
                           <td key={column.key} className="px-3 py-2.5 text-xs">
                             {renderAssetCell(column.key, a)}
                           </td>

@@ -1174,6 +1174,8 @@ def _resolve_identity_oid(conn: Any, token: Any, *, mib_dir: Any = "") -> str:
     module = match.group("module").casefold()
     symbol = match.group("symbol")
     preferred_dir = str(mib_dir or "").strip().replace("\\", "/").casefold()
+    savepoint = "snmp_identity_oid_resolution"
+    conn.execute(f"SAVEPOINT {savepoint}")
     try:
         rows = conn.execute(
             """
@@ -1191,7 +1193,15 @@ def _resolve_identity_oid(conn: Any, token: Any, *, mib_dir: Any = "") -> str:
             (module, symbol, preferred_dir, preferred_dir),
         ).fetchall()
     except Exception:
+        try:
+            conn.execute(f"ROLLBACK TO SAVEPOINT {savepoint}")
+            conn.execute(f"RELEASE SAVEPOINT {savepoint}")
+        except Exception:
+            # Let the enclosing optional identity lookup recover its savepoint.
+            raise
         return ""
+    else:
+        conn.execute(f"RELEASE SAVEPOINT {savepoint}")
     if not rows:
         return ""
     base = _numeric_oid(rows[0][0]).lstrip(".")

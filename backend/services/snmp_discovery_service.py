@@ -354,6 +354,31 @@ async def _resolve_live_librenms_rule(
     return resolved or best_system_rule
 
 
+def _resolve_optional_identity_rule(conn: Any, identity: Mapping[str, Any]) -> dict[str, Any] | None:
+    """Resolve an optional LibreNMS rule without poisoning the caller transaction."""
+    savepoint = "snmp_identity_rule_resolution"
+    conn.execute(f"SAVEPOINT {savepoint}")
+    try:
+        rule = resolve_rule(conn, identity)
+    except Exception as exc:
+        try:
+            conn.execute(f"ROLLBACK TO SAVEPOINT {savepoint}")
+            conn.execute(f"RELEASE SAVEPOINT {savepoint}")
+        except Exception as recovery_exc:
+            # All current callers open a read-only identity lookup connection.
+            # If the adapter cannot restore the savepoint, clear the failed
+            # transaction so later inventory reads can still proceed.
+            logger.warning(
+                "Savepoint recovery failed after LibreNMS identity lookup: %s",
+                type(recovery_exc).__name__,
+            )
+            conn.rollback()
+        logger.debug("LibreNMS identity resolution unavailable: %s", type(exc).__name__)
+        return None
+    conn.execute(f"RELEASE SAVEPOINT {savepoint}")
+    return rule
+
+
 def resolve_snmp_vendor_identity(
     conn: Any,
     *,
@@ -392,19 +417,16 @@ def resolve_snmp_vendor_identity(
     except Exception as exc:
         logger.debug("LibreNMS rule bootstrap unavailable: %s", type(exc).__name__)
 
-    try:
-        rule = resolve_rule(
-            conn,
-            {
-                "vendor": "",
-                "platform": "",
-                "sys_object_id": observed_oid,
-                "sys_descr": descr,
-                "sys_name": name,
-            },
-        )
-    except Exception as exc:  # Rule data is an optional enhancement path.
-        logger.debug("LibreNMS identity resolution unavailable: %s", type(exc).__name__)
+    rule = _resolve_optional_identity_rule(
+        conn,
+        {
+            "vendor": "",
+            "platform": "",
+            "sys_object_id": observed_oid,
+            "sys_descr": descr,
+            "sys_name": name,
+        },
+    )
 
     if rule and str(rule.get("vendor") or "").strip():
         observed_vendor = normalize_asset_vendor(rule.get("vendor"))

@@ -3,7 +3,8 @@ from __future__ import annotations
 import asyncio
 
 import pytest
-from fastapi import HTTPException
+from fastapi import FastAPI, HTTPException
+from fastapi.testclient import TestClient
 
 import api.devices as devices_api
 from api.devices import resolve_snmp_walk_target, test_snmp_walk as run_snmp_walk_test
@@ -454,3 +455,166 @@ def test_snmp_walk_target_reports_ip_not_found(monkeypatch) -> None:
 
     assert error.value.status_code == 404
     assert 'IP not found' in str(error.value.detail)
+
+
+def test_snmp_hardware_discovery_test_uses_collection_discovery_and_bounds_response(monkeypatch) -> None:
+    from services import snmp_discovery_service
+
+    calls: list[dict] = []
+    device = {
+        'id': 'device-hw-1', 'hostname': 'edge-hw-01', 'ip_address': '192.0.2.10',
+        'vendor': 'H3C', 'platform': 'h3c_comware', 'model': 'S6800', 'version': '7.1.070',
+    }
+    monkeypatch.setattr(devices_api, '_find_snmp_walk_targets', lambda **_kwargs: [device])
+    monkeypatch.setattr(
+        devices_api,
+        'resolve_collector_credentials',
+        lambda _device: {'snmp': {'server': '192.0.2.11', 'community': 'test-community', 'port': 1161}},
+    )
+
+    async def fake_discovery(host, community, port, **kwargs):
+        calls.append({'host': host, 'community': community, 'port': port, **kwargs})
+        return {
+            'status': 'supported',
+            'identity': {'status': 'identified', 'vendor': 'H3C', 'platform': 'h3c_comware', 'model': 'S6800'},
+            'librenms_rule_id': 'h3c-comware',
+            'librenms_source_path': 'definitions/os_discovery/comware.yaml',
+            'hardware_support_status': 'partial',
+            'hardware_compatibility': {'reason': 'One optional category is unavailable'},
+            'hardware_category_results': [{
+                'source_type': 'librenms', 'component_class': 'temperature', 'status': 'available',
+                'coverage_complete': False, 'reason_code': 'partial', 'reason': 'Some sensors did not answer',
+            }],
+            'hardware_sensors': [
+                {'source_type': 'librenms', 'component_class': 'temperature', 'measurement_type': 'temperature',
+                 'sensor_name': f'Temperature {index}', 'value': index, 'raw_value': str(index), 'unit': 'celsius',
+                 'quality': 'good', 'oid': '1.3.6.1.4.1.25506.2', 'index': [index]}
+                for index in range(205)
+            ],
+        }
+
+    monkeypatch.setattr(snmp_discovery_service, 'discover_device_oid_config', fake_discovery)
+    response = asyncio.run(devices_api.test_snmp_hardware_discovery(
+        {'device_id': 'device-hw-1', 'version': 'v1'}, user={'role': 'Operator'},
+    ))
+
+    data = response['data']
+    assert calls == [{
+        'host': '192.0.2.11', 'community': 'test-community', 'port': 1161,
+        'vendor': 'H3C', 'platform': 'h3c_comware', 'model': 'S6800', 'version': '7.1.070',
+        'snmp_version': '1',
+    }]
+    assert data['version'] == '1'
+    assert data['librenms_rule_id'] == 'h3c-comware'
+    assert data['hardware_support_status'] == 'partial'
+    assert data['category_results'][0]['reason_code'] == 'partial'
+    assert data['sensor_count'] == 205
+    assert len(data['hardware_sensors']) == 200
+    assert data['sensors_truncated'] is True
+    assert 'community' not in data
+
+
+def test_snmp_system_info_test_reports_live_identity_and_asset_fallback(monkeypatch) -> None:
+    from services import snmp_discovery_service, snmp_service
+
+    device = {
+        'id': 'device-system-1', 'hostname': 'edge-system-01', 'ip_address': '192.0.2.20',
+        'vendor': 'Cisco', 'platform': 'cisco_ios', 'model': 'C9300', 'version': '17.9.4',
+    }
+    monkeypatch.setattr(devices_api, '_find_snmp_walk_targets', lambda **_kwargs: [device])
+    monkeypatch.setattr(
+        devices_api,
+        'resolve_collector_credentials',
+        lambda _device: {'snmp': {'server': '192.0.2.21', 'community': 'test-community', 'port': 161}},
+    )
+    requested_oids: list[str] = []
+    values = {
+        snmp_service.SYS_NAME: 'edge-live-01',
+        snmp_service.SYS_DESCR: 'Cisco IOS XE Software, Version 17.12.1',
+        snmp_service.SYS_OBJECT_ID: '.1.3.6.1.4.1.9.1.9999',
+        snmp_service.SYS_UPTIME: 0,
+    }
+
+    async def fake_get(_host, _community, oid, _port, _version):
+        requested_oids.append(oid)
+        return values[oid]
+
+    monkeypatch.setattr(snmp_service, '_snmp_get_versioned', fake_get)
+
+    class Connection:
+        closed = False
+
+        def close(self):
+            self.closed = True
+
+    connection = Connection()
+    monkeypatch.setattr(devices_api, 'get_db_connection', lambda: connection)
+    monkeypatch.setattr(
+        devices_api,
+        'resolve_snmp_vendor_identity',
+        lambda conn, **identity: {
+            'status': 'identified', 'vendor': 'Cisco', 'platform': 'cisco_ios',
+            'model': 'C9300', 'reason': 'matched live sysObjectID',
+        } if conn is connection and identity['sys_name'] == 'edge-live-01' else {},
+    )
+    monkeypatch.setattr(
+        snmp_discovery_service,
+        'classify_identity',
+        lambda **_kwargs: {'sys_name': 'edge-live-01', 'sys_descr': values[snmp_service.SYS_DESCR],
+                           'sys_object_id': values[snmp_service.SYS_OBJECT_ID], 'software_version': ''},
+    )
+
+    response = asyncio.run(devices_api.test_snmp_system_info(
+        {'device_id': 'device-system-1'}, user={'role': 'Operator'},
+    ))
+
+    data = response['data']
+    assert set(requested_oids) == set(values)
+    assert data['sys_name'] == 'edge-live-01'
+    assert data['sys_uptime'] == '0'
+    assert data['vendor'] == 'Cisco' and data['field_sources']['vendor'] == 'snmp_identity'
+    assert data['platform'] == 'cisco_ios' and data['field_sources']['platform'] == 'snmp_identity'
+    assert data['model'] == 'C9300' and data['field_sources']['model'] == 'snmp_identity'
+    assert data['software_version'] == '17.9.4' and data['field_sources']['software_version'] == 'asset'
+    assert 'community' not in data
+    assert connection.closed is True
+
+
+def test_snmp_system_info_test_rejects_empty_response(monkeypatch) -> None:
+    from services import snmp_service
+
+    monkeypatch.setattr(
+        devices_api,
+        '_find_snmp_walk_targets',
+        lambda **_kwargs: [{'id': 'device-system-1', 'ip_address': '192.0.2.20'}],
+    )
+    monkeypatch.setattr(
+        devices_api,
+        'resolve_collector_credentials',
+        lambda _device: {'snmp': {'server': '192.0.2.20', 'community': 'test-community', 'port': 161}},
+    )
+
+    async def empty_get(*_args, **_kwargs):
+        return None
+
+    monkeypatch.setattr(snmp_service, '_snmp_get_versioned', empty_get)
+    with pytest.raises(HTTPException) as error:
+        asyncio.run(devices_api.test_snmp_system_info(
+            {'device_id': 'device-system-1'}, user={'role': 'Operator'},
+        ))
+
+    assert error.value.status_code == 504
+
+
+def test_new_snmp_diagnostics_require_operator_role(monkeypatch) -> None:
+    from api import users
+
+    app = FastAPI()
+    app.include_router(devices_api.router, prefix='/api')
+    client = TestClient(app)
+    path = '/api/platform-registry/snmp-system-info-test'
+
+    assert client.post(path, json={}).status_code == 401
+    monkeypatch.setattr(users, 'validate_session_token', lambda _token: {'username': 'viewer', 'role': 'Viewer'})
+    response = client.post(path, json={}, headers={'Authorization': 'Bearer synthetic'})
+    assert response.status_code == 403

@@ -1750,6 +1750,220 @@ async def test_snmp_hardware_metrics(payload: dict = Body(default={}), user=requ
     }
 
 
+@router.post("/platform-registry/snmp-hardware-discovery-test")
+async def test_snmp_hardware_discovery(payload: dict = Body(default={}), user=require_role("Operator")):
+    """Run the same read-only standard-MIB and LibreNMS hardware discovery used by collection."""
+    requested_device_id = str(payload.get('device_id') or '').strip()
+    if not requested_device_id:
+        raise HTTPException(status_code=400, detail='A managed device_id is required')
+
+    targets = _find_snmp_walk_targets(device_id=requested_device_id, user=user)
+    if not targets:
+        raise HTTPException(status_code=404, detail='No matching managed asset was found')
+    if len(targets) > 1:
+        raise HTTPException(status_code=409, detail='Target matches multiple assets')
+
+    device = targets[0]
+    collector_credentials = resolve_collector_credentials(device) or {}
+    snmp_credentials = collector_credentials.get('snmp') or {}
+    host = str(snmp_credentials.get('server') or device.get('ip_address') or '').strip()
+    community = str(snmp_credentials.get('community') or '').strip()
+    if not host or not community:
+        raise HTTPException(status_code=400, detail='Matched asset has no SNMP address or community configured')
+    try:
+        port = int(snmp_credentials.get('port') or 161)
+    except (TypeError, ValueError) as exc:
+        raise HTTPException(status_code=400, detail='SNMP port must be an integer') from exc
+    if not 1 <= port <= 65535:
+        raise HTTPException(status_code=400, detail='SNMP port must be between 1 and 65535')
+
+    version = str(payload.get('version') or payload.get('snmp_version') or '2c').strip().lower()
+    if version in {'v1', '1'}:
+        version = '1'
+    elif version in {'v2c', '2c', '2'}:
+        version = '2c'
+    else:
+        raise HTTPException(status_code=400, detail='SNMP version must be 1 or 2c')
+
+    from services.snmp_discovery_service import discover_device_oid_config
+
+    try:
+        discovery = await discover_device_oid_config(
+            host,
+            community,
+            port,
+            vendor=device.get('vendor'),
+            platform=device.get('platform'),
+            model=device.get('model'),
+            version=device.get('version'),
+            snmp_version=version,
+        )
+    except Exception as exc:
+        logger.warning('SNMP hardware discovery test failed for %s: %s', host, type(exc).__name__)
+        raise HTTPException(status_code=502, detail='SNMP hardware discovery test failed') from exc
+
+    identity = discovery.get('identity') if isinstance(discovery.get('identity'), dict) else {}
+    categories = [
+        {
+            'source_type': str(item.get('source_type') or ''),
+            'component_class': str(item.get('component_class') or ''),
+            'status': str(item.get('status') or ''),
+            'coverage_complete': bool(item.get('coverage_complete')),
+            'reason_code': str(item.get('reason_code') or ''),
+            'reason': str(item.get('reason') or ''),
+        }
+        for item in discovery.get('hardware_category_results') or []
+        if isinstance(item, dict)
+    ]
+    sensors = [
+        {
+            key: item.get(key)
+            for key in (
+                'source_type', 'component_class', 'measurement_type', 'sensor_name',
+                'entity_name', 'group_name', 'value', 'raw_value', 'unit', 'quality',
+                'oid', 'index', 'presence_status',
+            )
+        }
+        for item in discovery.get('hardware_sensors') or []
+        if isinstance(item, dict)
+    ]
+    hardware_compatibility = discovery.get('hardware_compatibility')
+    if not isinstance(hardware_compatibility, dict):
+        hardware_compatibility = {}
+    hardware_support_status = str(discovery.get('hardware_support_status') or '')
+    if not hardware_support_status:
+        hardware_support_status = 'available' if sensors else 'no_hardware_data'
+    sensor_limit = 200
+    return {
+        'success': True,
+        'data': {
+            'host': host,
+            'port': port,
+            'version': version,
+            'matched_device_id': str(device.get('id') or ''),
+            'matched_hostname': str(device.get('hostname') or device.get('ip_address') or ''),
+            'discovery_status': str(discovery.get('status') or 'unknown'),
+            'discovery_reason': str(discovery.get('reason') or ''),
+            'identity': {
+                'status': str(identity.get('status') or ''),
+                'vendor': str(identity.get('vendor') or ''),
+                'platform': str(identity.get('platform') or ''),
+                'model': str(identity.get('model') or ''),
+                'sys_object_id': str(identity.get('sys_object_id') or ''),
+            },
+            'librenms_rule_id': str(discovery.get('librenms_rule_id') or ''),
+            'librenms_source_path': str(discovery.get('librenms_source_path') or ''),
+            'hardware_support_status': hardware_support_status,
+            'hardware_support_reason': str(hardware_compatibility.get('reason') or discovery.get('reason') or ''),
+            'category_results': categories,
+            'hardware_sensors': sensors[:sensor_limit],
+            'sensor_count': len(sensors),
+            'sensor_limit': sensor_limit,
+            'sensors_truncated': len(sensors) > sensor_limit,
+        },
+    }
+
+
+@router.post("/platform-registry/snmp-system-info-test")
+async def test_snmp_system_info(payload: dict = Body(default={}), user=require_role("Operator")):
+    """Read standard SNMP system identity fields without changing asset data."""
+    requested_device_id = str(payload.get('device_id') or '').strip()
+    if not requested_device_id:
+        raise HTTPException(status_code=400, detail='A managed device_id is required')
+
+    targets = _find_snmp_walk_targets(device_id=requested_device_id, user=user)
+    if not targets:
+        raise HTTPException(status_code=404, detail='No matching managed asset was found')
+    if len(targets) > 1:
+        raise HTTPException(status_code=409, detail='Target matches multiple assets')
+
+    device = targets[0]
+    collector_credentials = resolve_collector_credentials(device) or {}
+    snmp_credentials = collector_credentials.get('snmp') or {}
+    host = str(snmp_credentials.get('server') or device.get('ip_address') or '').strip()
+    community = str(snmp_credentials.get('community') or '').strip()
+    if not host or not community:
+        raise HTTPException(status_code=400, detail='Matched asset has no SNMP address or community configured')
+    try:
+        port = int(snmp_credentials.get('port') or 161)
+    except (TypeError, ValueError) as exc:
+        raise HTTPException(status_code=400, detail='SNMP port must be an integer') from exc
+    if not 1 <= port <= 65535:
+        raise HTTPException(status_code=400, detail='SNMP port must be between 1 and 65535')
+
+    version = str(payload.get('version') or payload.get('snmp_version') or '2c').strip().lower()
+    if version in {'v1', '1'}:
+        version = '1'
+    elif version in {'v2c', '2c', '2'}:
+        version = '2c'
+    else:
+        raise HTTPException(status_code=400, detail='SNMP version must be 1 or 2c')
+
+    import asyncio
+
+    from services.snmp_discovery_service import classify_identity
+    from services.snmp_service import SYS_DESCR, SYS_NAME, SYS_OBJECT_ID, SYS_UPTIME, _snmp_get_versioned
+
+    try:
+        sys_name, sys_descr, sys_object_id, sys_uptime = await asyncio.gather(
+            _snmp_get_versioned(host, community, SYS_NAME, port, version),
+            _snmp_get_versioned(host, community, SYS_DESCR, port, version),
+            _snmp_get_versioned(host, community, SYS_OBJECT_ID, port, version),
+            _snmp_get_versioned(host, community, SYS_UPTIME, port, version),
+        )
+    except Exception as exc:
+        logger.warning('SNMP system information test failed for %s: %s', host, type(exc).__name__)
+        raise HTTPException(status_code=502, detail='SNMP system information test failed') from exc
+
+    if not any(value is not None and str(value).strip() for value in (sys_name, sys_descr, sys_object_id, sys_uptime)):
+        raise HTTPException(status_code=504, detail='No SNMP system objects were returned; check reachability, credentials, version, and SNMP access rules')
+
+    def resolve_observed_identity() -> dict[str, Any]:
+        conn = get_db_connection()
+        try:
+            return resolve_snmp_vendor_identity(
+                conn, sys_name=sys_name, sys_descr=sys_descr, sys_object_id=sys_object_id,
+            )
+        finally:
+            conn.close()
+
+    observed_identity = await asyncio.to_thread(resolve_observed_identity)
+    identity = classify_identity(
+        sys_name=sys_name,
+        sys_descr=sys_descr,
+        sys_object_id=sys_object_id,
+    )
+    system_fields = {
+        'vendor': observed_identity.get('vendor'),
+        'platform': observed_identity.get('platform'),
+        'model': observed_identity.get('model'),
+        'software_version': identity.get('software_version'),
+    }
+    field_sources = {}
+    for field, value in system_fields.items():
+        fallback = device.get('version' if field == 'software_version' else field)
+        field_sources[field] = 'snmp_identity' if value else 'asset' if fallback else 'missing'
+        system_fields[field] = str(value or fallback or '')
+    return {
+        'success': True,
+        'data': {
+            'host': host,
+            'port': port,
+            'version': version,
+            'matched_device_id': str(device.get('id') or ''),
+            'matched_hostname': str(device.get('hostname') or device.get('ip_address') or ''),
+            'sys_name': str(identity.get('sys_name') or ''),
+            'sys_descr': str(identity.get('sys_descr') or ''),
+            'sys_object_id': str(identity.get('sys_object_id') or ''),
+            'sys_uptime': str(sys_uptime) if sys_uptime is not None else '',
+            'identity_status': str(observed_identity.get('status') or ''),
+            **system_fields,
+            'field_sources': field_sources,
+            'identity_reason': str(observed_identity.get('reason') or ''),
+        },
+    }
+
+
 @router.post("/platform-registry/snmp-interface-test")
 async def test_snmp_interface_oids(payload: dict = Body(default={}), user=require_role("Operator")):
     """Validate the draft interface MIB mapping against a managed device.
@@ -3436,6 +3650,29 @@ def rotation_status(user=require_role("Administrator")):
     """密码轮换状态概览（仅管理员）。"""
     from services.password_rotation_service import get_rotation_status
     return {"success": True, "data": get_rotation_status()}
+
+
+@router.get("/devices/rotation/credentials/{credential_id}/devices")
+def rotation_credential_devices(
+    credential_id: str,
+    page: int = Query(default=1, ge=1),
+    page_size: int = Query(default=20, ge=1, le=100),
+    keyword: str = Query(default='', max_length=200),
+    platform: str = Query(default='', max_length=100),
+    user=require_role("Administrator"),
+):
+    """Search and page through device metadata bound to one shared credential."""
+    from services.password_rotation_service import list_credential_bound_devices
+    return {
+        "success": True,
+        "data": list_credential_bound_devices(
+            credential_id=credential_id,
+            page=page,
+            page_size=page_size,
+            keyword=keyword,
+            platform=platform,
+        ),
+    }
 
 
 @router.get("/devices/rotation/expiring")

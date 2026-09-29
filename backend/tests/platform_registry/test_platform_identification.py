@@ -414,30 +414,34 @@ def test_platform_detection_falls_back_to_cli_when_snmp_has_no_version(isolated_
 
 
 @pytest.mark.parametrize(
-    ("sys_object_id", "sys_descr", "expected_vendor", "expected_platform"),
+    ("sys_object_id", "sys_descr", "expected_vendor", "expected_platform", "expected_vendor_source"),
     [
         (
             ".1.3.6.1.4.1.31648.1.1",
             "DPtech ConPlat Software Version S211C011D007P08",
             "DPtech",
             "dptech_fw_s211",
+            "sysObjectID",
         ),
         (
+            # IANA assigns PEN 24681 to QNAP, so StoneOS here is identified by sysDescr.
             ".1.3.6.1.4.1.24681.1.1",
             "Hillstone StoneOS",
             "Hillstone",
             "hillstone_stoneos",
+            "sysDescr",
         ),
         (
             ".1.3.6.1.4.1.28557.1.1",
             "Hillstone StoneOS",
             "Hillstone",
             "hillstone_stoneos",
+            "sysObjectID",
         ),
     ],
 )
 def test_live_snmp_vendor_identity_suggests_dptech_and_hillstone_without_mutating_asset(
-    isolated_db, monkeypatch, sys_object_id, sys_descr, expected_vendor, expected_platform,
+    isolated_db, monkeypatch, sys_object_id, sys_descr, expected_vendor, expected_platform, expected_vendor_source,
 ):
     user = _user("tenant-1")
     conn = isolated_db["module"].get_db_connection()
@@ -474,7 +478,7 @@ def test_live_snmp_vendor_identity_suggests_dptech_and_hillstone_without_mutatin
     assert result is not None
     assert result["status"] == "MATCHED"
     assert result["detected_vendor"] == expected_vendor
-    assert result["vendor_source"] == "sysObjectID"
+    assert result["vendor_source"] == expected_vendor_source
     assert result["selected"]["platform_code"] == expected_platform
 
     conn = isolated_db["module"].get_db_connection()

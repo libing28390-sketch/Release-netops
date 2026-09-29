@@ -75,8 +75,8 @@ const SnmpWalkPage: React.FC<SnmpWalkPageProps> = ({ language, currentUserRole, 
               <div className="text-xs font-semibold">{zh ? '诊断思路' : 'Diagnostic flow'}</div>
               <p className="mt-0.5 text-[11px] leading-5 text-sky-900/75 dark:text-sky-100/75">
                 {zh
-                  ? '选择目标设备后，依次检查 SYS、IF-MIB 和 LLDP；这些公共 OID 有数据但 Grafana 无数据时，再检查采集链路和面板查询。'
-                  : 'Choose a device, then check SYS, IF-MIB, and LLDP. If these standard OIDs return data but Grafana does not, inspect the scrape path and panel query.'}
+                  ? '选择设备后，可通过 SNMPWALK 查询接口和 LLDP，通过系统信息读取设备名称、软件平台及版本，通过硬件指标查看传感器读数。'
+                  : 'Select a device: use SNMP Walk for interfaces and LLDP, System Info for device identity and software, and Hardware Metrics for sensor readings.'}
               </p>
             </div>
             <span className="inline-flex shrink-0 items-center gap-1.5 rounded-full border border-sky-200/80 bg-white/80 px-2.5 py-1 text-[10px] font-medium text-sky-800/80 dark:border-sky-800 dark:bg-sky-950/60 dark:text-sky-200/80">
@@ -140,7 +140,9 @@ const SnmpWalkPage: React.FC<SnmpWalkPageProps> = ({ language, currentUserRole, 
                   selectedDevice={selectedTarget || undefined}
                   candidateDevices={[]}
                   showCandidateSelector={false}
-                  showHardwareValidationTab={false}
+                  showHardwareValidationTab
+                  showSystemInfoTab
+                  librenmsHardwareDiscoveryTest
                   diagnosticPresetOnly
                   hideMaxRowsSelector
                   publicSummaryOnly

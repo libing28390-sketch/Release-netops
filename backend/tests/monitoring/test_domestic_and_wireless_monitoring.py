@@ -85,11 +85,19 @@ def test_dashboards_suite_completeness():
     device_dashboard_path = os.path.join(dashboard_dir, "nexora-network-device.json")
     with open(device_dashboard_path, "r", encoding="utf-8") as f:
         device_dashboard = json.load(f)
-    port_status_panel = next(panel for panel in device_dashboard["panels"] if panel["id"] == 8)
+    port_status_panel = next(
+        panel
+        for panel in device_dashboard["panels"]
+        if any(
+            target.get("expr", "").startswith("ifOperStatus{")
+            and "group_left(ifName, ifAlias)" in target.get("expr", "")
+            for target in panel.get("targets", [])
+        )
+    )
     port_status_query = port_status_panel["targets"][0]["expr"]
     organize = next(
         transformation["options"]
-        for transformation in port_status_panel["transformations"]
+        for transformation in port_status_panel.get("transformations", [])
         if transformation.get("id") == "organize"
     )
     assert "group_left(ifName, ifAlias)" in port_status_query
@@ -223,6 +231,23 @@ def test_dashboard_device_variables_use_current_up_targets():
         with open(os.path.join(dashboard_dir, filename), "r", encoding="utf-8") as dashboard_file:
             dashboard = json.load(dashboard_file)
         variables = {variable["name"]: variable for variable in dashboard["templating"]["list"]}
+        if filename == "nexora-network-device.json":
+            asset_variable = variables["asset_id"]
+            asset_query = asset_variable["query"]["query"]
+            assert asset_variable["definition"] == asset_query
+            assert asset_query.startswith('query_result(label_join(max by (asset_id,hostname,instance,site_name) (up{job="network_snmp",asset_id!=""})')
+            assert 'asset_id="(?<value>[^\"]+)"' in asset_variable["regex"]
+            assert 'device_label="(?<text>[^\"]+)"' in asset_variable["regex"]
+            assert "label_values(" not in asset_query
+            assert "== 1" not in asset_query  # Keep configured assets selectable when SNMP is down.
+            assert {
+                "cpu_window", "hardware_group", "sensor_name", "component_class",
+            } <= variables.keys()
+            assert all(
+                'asset_id="$asset_id"' in variables[name]["query"]["query"]
+                for name in ("cpu_window", "hardware_group", "sensor_name", "component_class")
+            )
+            continue
         for variable_name, (label, regex) in network_variable_specs.items():
             variable = variables[variable_name]
             query = variable["query"]["query"]

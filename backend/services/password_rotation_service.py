@@ -885,6 +885,63 @@ def get_rotation_status() -> list[dict[str, Any]]:
         conn.close()
 
 
+def list_credential_bound_devices(
+    credential_id: str,
+    page: int = 1,
+    page_size: int = 20,
+    keyword: str = '',
+    platform: str = '',
+) -> dict[str, Any]:
+    """Return one searchable page of device metadata bound to a shared credential."""
+    normalized_credential_id = str(credential_id or '').strip()
+    safe_page = max(1, int(page or 1))
+    safe_page_size = min(100, max(1, int(page_size or 20)))
+    normalized_keyword = str(keyword or '').strip().lower()
+    normalized_platform = str(platform or '').strip().lower()
+
+    conditions = [
+        "d.status != 'decommissioned'",
+        '(d.credential_id = ? OR d.admin_credential_id = ?)',
+    ]
+    parameters: list[Any] = [normalized_credential_id, normalized_credential_id]
+    if normalized_keyword:
+        pattern = f'%{normalized_keyword}%'
+        conditions.append(
+            "(LOWER(COALESCE(d.hostname, '')) LIKE ? "
+            "OR LOWER(COALESCE(d.ip_address, '')) LIKE ?)"
+        )
+        parameters.extend([pattern, pattern])
+    if normalized_platform:
+        conditions.append("LOWER(COALESCE(d.platform, '')) = ?")
+        parameters.append(normalized_platform)
+
+    where_clause = ' AND '.join(conditions)
+    conn = get_db_connection()
+    try:
+        total_row = conn.execute(
+            f'SELECT COUNT(*) AS total FROM devices d WHERE {where_clause}',
+            tuple(parameters),
+        ).fetchone()
+        total = int((dict(total_row).get('total') if total_row else 0) or 0)
+        offset = (safe_page - 1) * safe_page_size
+        rows = conn.execute(
+            'SELECT d.id, d.hostname, d.ip_address, d.platform '
+            f'FROM devices d WHERE {where_clause} '
+            "ORDER BY LOWER(COALESCE(d.hostname, '')), "
+            "LOWER(COALESCE(d.ip_address, '')), d.id "
+            'LIMIT ? OFFSET ?',
+            tuple(parameters + [safe_page_size, offset]),
+        ).fetchall()
+        return {
+            'items': [dict(row) for row in rows],
+            'total': total,
+            'page': safe_page,
+            'page_size': safe_page_size,
+        }
+    finally:
+        conn.close()
+
+
 def run_rotation_sweep():
     """
     定时调度入口：扫描到期设备并自动轮换。
