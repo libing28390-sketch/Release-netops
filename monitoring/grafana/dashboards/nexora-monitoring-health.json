@@ -25,7 +25,7 @@
       "fieldConfig": {
         "defaults": {
           "unit": "",
-          "noValue": "数据暂不可用",
+          "noValue": "暂无采集数据",
           "color": {
             "mode": "thresholds"
           },
@@ -57,7 +57,7 @@
       },
       "targets": [
         {
-          "expr": "count(count by (instance) (up{job=\"network_snmp\"} == 1)) or vector(0)",
+          "expr": "count(count by (instance) (up{job=\"network_snmp\"} == 1)) or on() ((count(up{job=\"network_snmp\"}) > 0) * 0)",
           "refId": "A"
         }
       ]
@@ -79,7 +79,7 @@
       "fieldConfig": {
         "defaults": {
           "unit": "",
-          "noValue": "数据暂不可用",
+          "noValue": "暂无采集数据",
           "color": {
             "mode": "thresholds"
           },
@@ -115,7 +115,7 @@
       },
       "targets": [
         {
-          "expr": "count(count by (instance) (up{job=\"network_snmp\"} == 0)) or vector(0)",
+          "expr": "count(count by (instance) (up{job=\"network_snmp\"} == 0)) or on() ((count(up{job=\"network_snmp\"}) > 0) * 0)",
           "refId": "A"
         }
       ]
@@ -137,7 +137,7 @@
       "fieldConfig": {
         "defaults": {
           "unit": "s",
-          "noValue": "数据暂不可用",
+          "noValue": "暂无采集数据",
           "color": {
             "mode": "thresholds"
           },
@@ -169,7 +169,7 @@
       },
       "targets": [
         {
-          "expr": "avg(scrape_duration_seconds{job=\"network_snmp\"}) or vector(0)",
+          "expr": "avg(scrape_duration_seconds{job=\"network_snmp\"})",
           "refId": "A"
         }
       ]
@@ -191,7 +191,7 @@
       "fieldConfig": {
         "defaults": {
           "unit": "s",
-          "noValue": "数据暂不可用",
+          "noValue": "暂无采集数据",
           "color": {
             "mode": "thresholds"
           },
@@ -231,7 +231,7 @@
       },
       "targets": [
         {
-          "expr": "max(scrape_duration_seconds{job=\"network_snmp\"}) or vector(0)",
+          "expr": "max(scrape_duration_seconds{job=\"network_snmp\"})",
           "refId": "A"
         }
       ]
@@ -253,7 +253,7 @@
       "fieldConfig": {
         "defaults": {
           "unit": "s",
-          "noValue": "数据暂不可用",
+          "noValue": "暂无采集数据",
           "color": {
             "mode": "palette-classic"
           },
@@ -309,7 +309,7 @@
       "fieldConfig": {
         "defaults": {
           "unit": "short",
-          "noValue": "数据暂不可用",
+          "noValue": "暂无采集数据",
           "color": {
             "mode": "palette-classic"
           },
@@ -365,7 +365,7 @@
       "fieldConfig": {
         "defaults": {
           "unit": "none",
-          "noValue": "数据暂不可用",
+          "noValue": "暂无采集数据",
           "color": {
             "mode": "thresholds"
           },
@@ -466,7 +466,7 @@
       "fieldConfig": {
         "defaults": {
           "unit": "none",
-          "noValue": "数据暂不可用",
+          "noValue": "暂无采集数据",
           "color": {
             "mode": "thresholds"
           },

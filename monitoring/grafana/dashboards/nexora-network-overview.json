@@ -38,7 +38,7 @@
       "fieldConfig": {
         "defaults": {
           "unit": "",
-          "noValue": "数据暂不可用",
+          "noValue": "暂无采集数据",
           "color": {
             "mode": "thresholds"
           },
@@ -70,7 +70,7 @@
       },
       "targets": [
         {
-          "expr": "count(count by (instance) (up{job=\"network_snmp\",site_name=~\"$site\",vendor=~\"$vendor\",role=~\"$role\",hostname=~\"$device\"})) or vector(0)",
+          "expr": "count(count by (instance) (up{job=\"network_snmp\",site_name=~\"$site\",vendor=~\"$vendor\",role=~\"$role\",hostname=~\"$device\"}))",
           "refId": "A"
         }
       ]
@@ -92,7 +92,7 @@
       "fieldConfig": {
         "defaults": {
           "unit": "",
-          "noValue": "数据暂不可用",
+          "noValue": "暂无采集数据",
           "color": {
             "mode": "thresholds"
           },
@@ -124,7 +124,7 @@
       },
       "targets": [
         {
-          "expr": "count(count by (site_name) (up{job=\"network_snmp\",site_name!=\"\",site_name=~\"$site\",vendor=~\"$vendor\",role=~\"$role\",hostname=~\"$device\"})) or vector(0)",
+          "expr": "count(count by (site_name) (up{job=\"network_snmp\",site_name!=\"\",site_name=~\"$site\",vendor=~\"$vendor\",role=~\"$role\",hostname=~\"$device\"}))",
           "refId": "A"
         }
       ]
@@ -146,7 +146,7 @@
       "fieldConfig": {
         "defaults": {
           "unit": "",
-          "noValue": "数据暂不可用",
+          "noValue": "暂无采集数据",
           "color": {
             "mode": "thresholds"
           },
@@ -178,7 +178,7 @@
       },
       "targets": [
         {
-          "expr": "count(count by (instance) (up{job=\"network_snmp\",site_name=~\"$site\",vendor=~\"$vendor\",role=~\"$role\",hostname=~\"$device\"} == 1)) or vector(0)",
+          "expr": "count(count by (instance) (up{job=\"network_snmp\",site_name=~\"$site\",vendor=~\"$vendor\",role=~\"$role\",hostname=~\"$device\"} == 1)) or on() ((count(up{job=\"network_snmp\",site_name=~\"$site\",vendor=~\"$vendor\",role=~\"$role\",hostname=~\"$device\"}) > 0) * 0)",
           "refId": "A"
         }
       ]
@@ -200,7 +200,7 @@
       "fieldConfig": {
         "defaults": {
           "unit": "",
-          "noValue": "数据暂不可用",
+          "noValue": "暂无采集数据",
           "color": {
             "mode": "thresholds"
           },
@@ -236,7 +236,7 @@
           "refId": "A"
         }
       ],
-      "description": "没有匹配的无线客户端采集指标时显示数据暂不可用，不代表当前客户端数为 0。"
+      "description": "没有匹配的无线客户端采集指标时显示暂无采集数据，不代表当前客户端数为 0。"
     },
     {
       "id": 5,
@@ -255,7 +255,7 @@
       "fieldConfig": {
         "defaults": {
           "unit": "",
-          "noValue": "数据暂不可用",
+          "noValue": "暂无采集数据",
           "color": {
             "mode": "thresholds"
           },
@@ -287,7 +287,7 @@
       },
       "targets": [
         {
-          "expr": "count(count by (instance, ifIndex) (ifOperStatus{job=\"network_snmp\",site_name=~\"$site\",vendor=~\"$vendor\",role=~\"$role\",hostname=~\"$device\"})) or vector(0)",
+          "expr": "count(count by (instance, ifIndex) (ifOperStatus{job=\"network_snmp\",site_name=~\"$site\",vendor=~\"$vendor\",role=~\"$role\",hostname=~\"$device\"}))",
           "refId": "A"
         }
       ]
@@ -309,7 +309,7 @@
       "fieldConfig": {
         "defaults": {
           "unit": "",
-          "noValue": "数据暂不可用",
+          "noValue": "暂无采集数据",
           "color": {
             "mode": "thresholds"
           },
@@ -385,7 +385,7 @@
       "fieldConfig": {
         "defaults": {
           "unit": "bps",
-          "noValue": "数据暂不可用",
+          "noValue": "暂无采集数据",
           "color": {
             "mode": "palette-classic"
           },
@@ -477,7 +477,7 @@
       "fieldConfig": {
         "defaults": {
           "unit": "short",
-          "noValue": "数据暂不可用",
+          "noValue": "暂无采集数据",
           "color": {
             "mode": "palette-classic"
           },
@@ -551,7 +551,7 @@
       "fieldConfig": {
         "defaults": {
           "unit": "",
-          "noValue": "数据暂不可用",
+          "noValue": "暂无采集数据",
           "color": {
             "mode": "thresholds"
           },
@@ -606,7 +606,7 @@
       "fieldConfig": {
         "defaults": {
           "unit": "",
-          "noValue": "数据暂不可用",
+          "noValue": "暂无采集数据",
           "color": {
             "mode": "thresholds"
           },
@@ -661,7 +661,7 @@
       "fieldConfig": {
         "defaults": {
           "unit": "",
-          "noValue": "数据暂不可用",
+          "noValue": "暂无采集数据",
           "color": {
             "mode": "thresholds"
           },
@@ -716,7 +716,7 @@
       "fieldConfig": {
         "defaults": {
           "unit": "none",
-          "noValue": "数据暂不可用",
+          "noValue": "暂无采集数据",
           "color": {
             "mode": "thresholds"
           },
@@ -802,6 +802,7 @@
               "component_class": true,
               "source_type": true,
               "source_id": true,
+              "rule_version": true,
               "measurement_type": true
             },
             "indexByName": {
@@ -859,7 +860,7 @@
       "fieldConfig": {
         "defaults": {
           "unit": "none",
-          "noValue": "数据暂不可用",
+          "noValue": "暂无采集数据",
           "color": {
             "mode": "thresholds"
           },
@@ -945,8 +946,10 @@
               "component_class": true,
               "source_type": true,
               "source_id": true,
+              "rule_version": true,
               "measurement_type": true,
-              "window": true
+              "window": true,
+              "index": true
             },
             "indexByName": {
               "site_name": 0,
@@ -960,11 +963,10 @@
               "utilization_warn_pct": 8,
               "utilization_high_pct": 9,
               "utilization_critical_pct": 10,
-              "Value": 8,
+              "Value": 7,
               "asset_id": 2,
               "sensor_name": 5,
-              "group": 6,
-              "index": 7
+              "group": 6
             },
             "renameByName": {
               "sysName": "设备名称",
@@ -982,13 +984,12 @@
               "Value": "数值",
               "asset_id": "资产 ID",
               "sensor_name": "部件名称",
-              "group": "部件分组",
-              "index": "索引"
+              "group": "部件分组"
             }
           }
         }
       ],
-      "description": "按单个内存池的规范使用率排列，展示传感器名称、分组和完整索引，不对不同容量内存池取平均。资产 ID 可打开设备详情。"
+      "description": "按单个内存池的规范使用率排列，展示传感器名称和分组，不对不同容量内存池取平均。资产 ID 可打开设备详情。"
     },
     {
       "id": 25,
@@ -1007,7 +1008,7 @@
       "fieldConfig": {
         "defaults": {
           "unit": "none",
-          "noValue": "数据暂不可用",
+          "noValue": "暂无采集数据",
           "color": {
             "mode": "thresholds"
           },
@@ -1093,8 +1094,10 @@
               "component_class": true,
               "source_type": true,
               "source_id": true,
+              "rule_version": true,
               "measurement_type": true,
-              "window": true
+              "window": true,
+              "index": true
             },
             "indexByName": {
               "site_name": 0,
@@ -1108,11 +1111,10 @@
               "utilization_warn_pct": 8,
               "utilization_high_pct": 9,
               "utilization_critical_pct": 10,
-              "Value": 8,
+              "Value": 7,
               "asset_id": 2,
               "sensor_name": 5,
-              "group": 6,
-              "index": 7
+              "group": 6
             },
             "renameByName": {
               "sysName": "设备名称",
@@ -1130,13 +1132,12 @@
               "Value": "数值",
               "asset_id": "资产 ID",
               "sensor_name": "部件名称",
-              "group": "部件分组",
-              "index": "索引"
+              "group": "部件分组"
             }
           }
         }
       ],
-      "description": "按单个规范温度传感器读数排列，保留传感器名称、分组和完整索引。资产 ID 可打开设备详情。"
+      "description": "按单个规范温度传感器读数排列，保留传感器名称和分组。资产 ID 可打开设备详情。"
     },
     {
       "id": 903,
@@ -1168,7 +1169,7 @@
       "fieldConfig": {
         "defaults": {
           "unit": "none",
-          "noValue": "数据暂不可用",
+          "noValue": "暂无采集数据",
           "color": {
             "mode": "thresholds"
           },
@@ -1283,7 +1284,7 @@
       "fieldConfig": {
         "defaults": {
           "unit": "pps",
-          "noValue": "数据暂不可用",
+          "noValue": "暂无采集数据",
           "color": {
             "mode": "palette-classic"
           },
@@ -1388,7 +1389,7 @@
       "fieldConfig": {
         "defaults": {
           "unit": "none",
-          "noValue": "数据暂不可用",
+          "noValue": "暂无采集数据",
           "color": {
             "mode": "thresholds"
           },

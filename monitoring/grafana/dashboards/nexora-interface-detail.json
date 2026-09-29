@@ -38,7 +38,7 @@
       "fieldConfig": {
         "defaults": {
           "unit": "bps",
-          "noValue": "数据暂不可用",
+          "noValue": "暂无采集数据",
           "color": {
             "mode": "thresholds"
           },
@@ -92,7 +92,7 @@
       "fieldConfig": {
         "defaults": {
           "unit": "bps",
-          "noValue": "数据暂不可用",
+          "noValue": "暂无采集数据",
           "color": {
             "mode": "thresholds"
           },
@@ -146,7 +146,7 @@
       "fieldConfig": {
         "defaults": {
           "unit": "percent",
-          "noValue": "数据暂不可用",
+          "noValue": "暂无采集数据",
           "color": {
             "mode": "thresholds"
           },
@@ -212,7 +212,7 @@
       "fieldConfig": {
         "defaults": {
           "unit": "percent",
-          "noValue": "数据暂不可用",
+          "noValue": "暂无采集数据",
           "color": {
             "mode": "thresholds"
           },
@@ -278,7 +278,7 @@
       "fieldConfig": {
         "defaults": {
           "unit": "pps",
-          "noValue": "数据暂不可用",
+          "noValue": "暂无采集数据",
           "color": {
             "mode": "thresholds"
           },
@@ -332,7 +332,7 @@
       "fieldConfig": {
         "defaults": {
           "unit": "pps",
-          "noValue": "数据暂不可用",
+          "noValue": "暂无采集数据",
           "color": {
             "mode": "thresholds"
           },
@@ -386,7 +386,7 @@
       "fieldConfig": {
         "defaults": {
           "unit": "bps",
-          "noValue": "数据暂不可用",
+          "noValue": "暂无采集数据",
           "color": {
             "mode": "palette-classic"
           },
@@ -478,7 +478,7 @@
       "fieldConfig": {
         "defaults": {
           "unit": "percent",
-          "noValue": "数据暂不可用",
+          "noValue": "暂无采集数据",
           "color": {
             "mode": "palette-classic"
           },
@@ -583,7 +583,7 @@
       "fieldConfig": {
         "defaults": {
           "unit": "none",
-          "noValue": "数据暂不可用",
+          "noValue": "暂无采集数据",
           "color": {
             "mode": "thresholds"
           },
@@ -730,7 +730,7 @@
       "fieldConfig": {
         "defaults": {
           "unit": "none",
-          "noValue": "数据暂不可用",
+          "noValue": "暂无采集数据",
           "color": {
             "mode": "thresholds"
           },
@@ -867,7 +867,7 @@
       "fieldConfig": {
         "defaults": {
           "unit": "pps",
-          "noValue": "数据暂不可用",
+          "noValue": "暂无采集数据",
           "color": {
             "mode": "palette-classic"
           },
@@ -999,7 +999,7 @@
       "fieldConfig": {
         "defaults": {
           "unit": "pps",
-          "noValue": "数据暂不可用",
+          "noValue": "暂无采集数据",
           "color": {
             "mode": "palette-classic"
           },
@@ -1117,7 +1117,7 @@
       "fieldConfig": {
         "defaults": {
           "unit": "none",
-          "noValue": "数据暂不可用",
+          "noValue": "暂无采集数据",
           "color": {
             "mode": "thresholds"
           },
@@ -1218,7 +1218,7 @@
       "fieldConfig": {
         "defaults": {
           "unit": "none",
-          "noValue": "数据暂不可用",
+          "noValue": "暂无采集数据",
           "color": {
             "mode": "thresholds"
           },
@@ -1326,7 +1326,7 @@
       "fieldConfig": {
         "defaults": {
           "unit": "none",
-          "noValue": "数据暂不可用",
+          "noValue": "暂无采集数据",
           "color": {
             "mode": "thresholds"
           },
@@ -1463,7 +1463,7 @@
       "fieldConfig": {
         "defaults": {
           "unit": "none",
-          "noValue": "数据暂不可用",
+          "noValue": "暂无采集数据",
           "color": {
             "mode": "thresholds"
           },
@@ -1685,7 +1685,7 @@
       "fieldConfig": {
         "defaults": {
           "unit": "none",
-          "noValue": "数据暂不可用",
+          "noValue": "暂无采集数据",
           "color": {
             "mode": "thresholds"
           },
@@ -1871,7 +1871,7 @@
       "fieldConfig": {
         "defaults": {
           "unit": "none",
-          "noValue": "数据暂不可用",
+          "noValue": "暂无采集数据",
           "color": {
             "mode": "thresholds"
           },
@@ -1981,7 +1981,7 @@
       "fieldConfig": {
         "defaults": {
           "unit": "dBm",
-          "noValue": "数据暂不可用",
+          "noValue": "暂无采集数据",
           "color": {
             "mode": "palette-classic"
           },

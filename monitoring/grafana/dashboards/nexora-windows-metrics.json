@@ -25,7 +25,7 @@
       "fieldConfig": {
         "defaults": {
           "unit": "none",
-          "noValue": "数据暂不可用",
+          "noValue": "暂无采集数据",
           "color": {
             "mode": "thresholds"
           },
@@ -57,7 +57,7 @@
       },
       "targets": [
         {
-          "expr": "count(count by (hostname) (up{job=\"windows_servers\",site_name=~\"$site\",hostname=~\"$device\"})) or vector(0)",
+          "expr": "count(count by (hostname) (up{job=\"windows_servers\",site_name=~\"$site\",hostname=~\"$device\"}))",
           "refId": "A"
         }
       ]
@@ -79,7 +79,7 @@
       "fieldConfig": {
         "defaults": {
           "unit": "percent",
-          "noValue": "数据暂不可用",
+          "noValue": "暂无采集数据",
           "color": {
             "mode": "thresholds"
           },
@@ -119,7 +119,7 @@
       },
       "targets": [
         {
-          "expr": "avg(100 - (avg by (hostname) (rate(windows_cpu_time_total{job=\"windows_servers\",site_name=~\"$site\",hostname=~\"$device\",mode=\"idle\"}[5m])) * 100)) or vector(0)",
+          "expr": "avg(100 - (avg by (hostname) (rate(windows_cpu_time_total{job=\"windows_servers\",site_name=~\"$site\",hostname=~\"$device\",mode=\"idle\"}[5m])) * 100))",
           "refId": "A"
         }
       ]
@@ -141,7 +141,7 @@
       "fieldConfig": {
         "defaults": {
           "unit": "percent",
-          "noValue": "数据暂不可用",
+          "noValue": "暂无采集数据",
           "color": {
             "mode": "thresholds"
           },
@@ -181,7 +181,7 @@
       },
       "targets": [
         {
-          "expr": "avg((1 - (windows_os_physical_memory_free_bytes{job=\"windows_servers\",site_name=~\"$site\",hostname=~\"$device\"} / windows_cs_physical_memory_bytes{job=\"windows_servers\",site_name=~\"$site\",hostname=~\"$device\"})) * 100) or vector(0)",
+          "expr": "avg((1 - (windows_os_physical_memory_free_bytes{job=\"windows_servers\",site_name=~\"$site\",hostname=~\"$device\"} / windows_cs_physical_memory_bytes{job=\"windows_servers\",site_name=~\"$site\",hostname=~\"$device\"})) * 100)",
           "refId": "A"
         }
       ]
@@ -203,7 +203,7 @@
       "fieldConfig": {
         "defaults": {
           "unit": "none",
-          "noValue": "数据暂不可用",
+          "noValue": "暂无采集数据",
           "color": {
             "mode": "thresholds"
           },
@@ -235,7 +235,7 @@
       },
       "targets": [
         {
-          "expr": "sum(windows_terminal_services_active_sessions{job=\"windows_servers\",site_name=~\"$site\",hostname=~\"$device\"}) or vector(0)",
+          "expr": "sum(windows_terminal_services_active_sessions{job=\"windows_servers\",site_name=~\"$site\",hostname=~\"$device\"})",
           "refId": "A"
         }
       ]
@@ -257,7 +257,7 @@
       "fieldConfig": {
         "defaults": {
           "unit": "percent",
-          "noValue": "数据暂不可用",
+          "noValue": "暂无采集数据",
           "color": {
             "mode": "palette-classic"
           },
@@ -313,7 +313,7 @@
       "fieldConfig": {
         "defaults": {
           "unit": "bytes",
-          "noValue": "数据暂不可用",
+          "noValue": "暂无采集数据",
           "color": {
             "mode": "palette-classic"
           },
@@ -384,7 +384,7 @@
       "fieldConfig": {
         "defaults": {
           "unit": "none",
-          "noValue": "数据暂不可用",
+          "noValue": "暂无采集数据",
           "color": {
             "mode": "thresholds"
           },
@@ -499,7 +499,7 @@
       "fieldConfig": {
         "defaults": {
           "unit": "short",
-          "noValue": "数据暂不可用",
+          "noValue": "暂无采集数据",
           "color": {
             "mode": "palette-classic"
           },
@@ -560,7 +560,7 @@
       "fieldConfig": {
         "defaults": {
           "unit": "bps",
-          "noValue": "数据暂不可用",
+          "noValue": "暂无采集数据",
           "color": {
             "mode": "palette-classic"
           },
@@ -621,7 +621,7 @@
       "fieldConfig": {
         "defaults": {
           "unit": "none",
-          "noValue": "数据暂不可用",
+          "noValue": "暂无采集数据",
           "color": {
             "mode": "thresholds"
           },
@@ -736,7 +736,7 @@
       "fieldConfig": {
         "defaults": {
           "unit": "none",
-          "noValue": "数据暂不可用",
+          "noValue": "暂无采集数据",
           "color": {
             "mode": "thresholds"
           },

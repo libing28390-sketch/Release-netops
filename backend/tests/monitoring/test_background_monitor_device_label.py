@@ -44,6 +44,7 @@ def test_online_health_collection_keeps_device_label_for_alert_messages(isolated
     monkeypatch.setattr(monitor, "resolve_collector_credentials", lambda _device: {"snmp": {"server": "192.0.2.10", "community": "test-only", "port": 161}})
     monkeypatch.setattr(monitor, "load_discovery", lambda _device_id: {"status": "matched", "metrics": {}, "interface": {}})
     monkeypatch.setattr(monitor, "_discovery_is_stale", lambda *_args, **_kwargs: False)
+    monkeypatch.setattr(monitor, "_hardware_inventory_discovery_is_stale", lambda _device_id: False)
     monkeypatch.setattr(monitor, "resolve_health_metric_profiles", lambda _device: {"profile_status": "verified", "metrics": {"cpu": "1", "memory": "2"}, "profile_id": "test-profile"})
     monkeypatch.setattr(monitor, "collect_device_metrics", collect_metrics)
     monkeypatch.setattr(monitor, "resolve_alert_rule", lambda *_args, **_kwargs: {"threshold": 80, "severity": "major"})

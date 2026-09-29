@@ -88,6 +88,25 @@ def _discovery_is_stale(
         return True
 
 
+def _hardware_inventory_discovery_is_stale(device_id: str) -> bool:
+    """Return whether this device lacks a current persisted hardware discovery."""
+    from services.snmp_discovery_service import HARDWARE_DISCOVERY_VERSION
+    from services.snmp_hardware_inventory_service import list_hardware_capabilities
+
+    conn = get_db_connection()
+    try:
+        capabilities = list_hardware_capabilities(conn, str(device_id))
+    finally:
+        conn.close()
+
+    if not capabilities:
+        return True
+    return any(
+        str(capability.get("discovery_version") or "") != HARDWARE_DISCOVERY_VERSION
+        for capability in capabilities
+    )
+
+
 def _resolved_metrics_from_discovery(discovery: dict[str, Any], device_id: str) -> dict[str, Any]:
     status = str(discovery.get("status") or "pending")
     usable = status in {"matched", "partial"}
@@ -1546,7 +1565,21 @@ async def _process_device_raw(device, cycle_tick: int):
             except Exception as discovery_store_err:
                 logger.debug(f"[SNMP] OID discovery store unavailable for {ip}: {type(discovery_store_err).__name__}")
                 discovery = None
-            if _discovery_is_stale(discovery, device=device):
+            discovery_is_stale = _discovery_is_stale(discovery, device=device)
+            if not discovery_is_stale:
+                try:
+                    # Older SNMP identity rows can still be fresh while their
+                    # hardware categories were never persisted. In that case,
+                    # run the hardware discovery once instead of leaving the
+                    # Grafana hardware inventory empty until the identity TTL.
+                    discovery_is_stale = _hardware_inventory_discovery_is_stale(str(dev_id))
+                except Exception as hardware_discovery_check_err:
+                    logger.debug(
+                        "[SNMP] %s hardware discovery state unavailable: %s",
+                        ip,
+                        type(hardware_discovery_check_err).__name__,
+                    )
+            if discovery_is_stale:
                 try:
                     discovery = await discover_device_oid_config(
                         snmp_ip,

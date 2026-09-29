@@ -17,8 +17,20 @@ class _Result:
 
 
 class _MetricsConnection:
-    def __init__(self, *, outbound_available=True):
+    def __init__(
+        self,
+        *,
+        outbound_available=True,
+        outbox_available=True,
+        outbox_rows=None,
+    ):
         self.outbound_available = outbound_available
+        self.outbox_available = outbox_available
+        self.outbox_rows = (
+            outbox_rows
+            if outbox_rows is not None
+            else [{"status": "pending", "item_count": 1}]
+        )
         self.closed = False
 
     def execute(self, sql, params=()):
@@ -85,7 +97,9 @@ class _MetricsConnection:
                 return _Result([(1,)])
             return _Result([{"channel": "email", "status": "failed", "item_count": 2}])
         if "FROM alert_delivery_outbox" in sql:
-            return _Result([{"status": "pending", "item_count": 1}])
+            if not self.outbox_available:
+                raise RuntimeError("table missing")
+            return _Result(self.outbox_rows)
         raise AssertionError(f"Unexpected metrics query: {sql}")
 
     def rollback(self):
@@ -135,6 +149,30 @@ def test_metrics_export_omits_unavailable_optional_source_instead_of_zero(monkey
     assert "# TYPE nexora_outbound_probe_samples gauge" not in body
     assert "# TYPE nexora_outbound_probe_availability_ratio gauge" not in body
     assert "nexora_alert_events_created_24h" in body
+
+
+def test_metrics_export_reports_zero_for_empty_outbox_after_successful_query(monkeypatch):
+    connection = _MetricsConnection(outbox_rows=[])
+    monkeypatch.setattr(grafana_metrics, "get_db_connection", lambda: connection)
+
+    body = grafana_metrics.grafana_metrics().body.decode("utf-8")
+
+    assert "# TYPE nexora_alert_outbox_items gauge" in body
+    for status in grafana_metrics._OUTBOX_STATUSES:
+        assert (
+            f'nexora_alert_outbox_items{{status="{status}"}} 0' in body
+        )
+
+
+def test_metrics_export_omits_outbox_when_query_fails(monkeypatch):
+    connection = _MetricsConnection(outbox_available=False)
+    monkeypatch.setattr(grafana_metrics, "get_db_connection", lambda: connection)
+
+    body = grafana_metrics.grafana_metrics().body.decode("utf-8")
+
+    assert "nexora_monitoring_database_available 1" in body
+    assert "# TYPE nexora_alert_outbox_items gauge" not in body
+    assert "nexora_alert_outbox_items{" not in body
 
 
 def test_metrics_export_runs_aggregate_queries_on_postgres(monkeypatch, isolated_db):

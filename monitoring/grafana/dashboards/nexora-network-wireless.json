@@ -25,7 +25,7 @@
       "fieldConfig": {
         "defaults": {
           "unit": "",
-          "noValue": "数据暂不可用",
+          "noValue": "暂无采集数据",
           "color": {
             "mode": "thresholds"
           },
@@ -61,7 +61,7 @@
           "refId": "A"
         }
       ],
-      "description": "没有匹配的无线控制器指标时显示数据暂不可用，不代表 AP 或客户端数量为 0。"
+      "description": "没有匹配的无线控制器指标时显示暂无采集数据，不代表 AP 或客户端数量为 0。"
     },
     {
       "id": 2,
@@ -80,7 +80,7 @@
       "fieldConfig": {
         "defaults": {
           "unit": "",
-          "noValue": "数据暂不可用",
+          "noValue": "暂无采集数据",
           "color": {
             "mode": "thresholds"
           },
@@ -116,7 +116,7 @@
           "refId": "A"
         }
       ],
-      "description": "没有匹配的无线控制器指标时显示数据暂不可用，不代表 AP 或客户端数量为 0。"
+      "description": "没有匹配的无线控制器指标时显示暂无采集数据，不代表 AP 或客户端数量为 0。"
     },
     {
       "id": 3,
@@ -135,7 +135,7 @@
       "fieldConfig": {
         "defaults": {
           "unit": "",
-          "noValue": "数据暂不可用",
+          "noValue": "暂无采集数据",
           "color": {
             "mode": "thresholds"
           },
@@ -179,7 +179,7 @@
           "refId": "A"
         }
       ],
-      "description": "没有匹配的无线控制器指标时显示数据暂不可用，不代表 AP 或客户端数量为 0。"
+      "description": "没有匹配的无线控制器指标时显示暂无采集数据，不代表 AP 或客户端数量为 0。"
     },
     {
       "id": 4,
@@ -198,7 +198,7 @@
       "fieldConfig": {
         "defaults": {
           "unit": "",
-          "noValue": "数据暂不可用",
+          "noValue": "暂无采集数据",
           "color": {
             "mode": "thresholds"
           },
@@ -234,7 +234,7 @@
           "refId": "A"
         }
       ],
-      "description": "没有匹配的无线控制器指标时显示数据暂不可用，不代表 AP 或客户端数量为 0。"
+      "description": "没有匹配的无线控制器指标时显示暂无采集数据，不代表 AP 或客户端数量为 0。"
     },
     {
       "id": 5,
@@ -253,7 +253,7 @@
       "fieldConfig": {
         "defaults": {
           "unit": "short",
-          "noValue": "数据暂不可用",
+          "noValue": "暂无采集数据",
           "color": {
             "mode": "palette-classic"
           },
@@ -309,7 +309,7 @@
       "fieldConfig": {
         "defaults": {
           "unit": "short",
-          "noValue": "数据暂不可用",
+          "noValue": "暂无采集数据",
           "color": {
             "mode": "palette-classic"
           },
@@ -365,7 +365,7 @@
       "fieldConfig": {
         "defaults": {
           "unit": "none",
-          "noValue": "数据暂不可用",
+          "noValue": "暂无采集数据",
           "color": {
             "mode": "thresholds"
           },
@@ -479,7 +479,7 @@
       "fieldConfig": {
         "defaults": {
           "unit": "none",
-          "noValue": "数据暂不可用",
+          "noValue": "暂无采集数据",
           "color": {
             "mode": "thresholds"
           },
@@ -593,7 +593,7 @@
       "fieldConfig": {
         "defaults": {
           "unit": "short",
-          "noValue": "数据暂不可用",
+          "noValue": "暂无采集数据",
           "color": {
             "mode": "thresholds"
           },
@@ -647,7 +647,7 @@
       "fieldConfig": {
         "defaults": {
           "unit": "none",
-          "noValue": "数据暂不可用",
+          "noValue": "暂无采集数据",
           "color": {
             "mode": "thresholds"
           },

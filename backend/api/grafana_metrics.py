@@ -660,11 +660,20 @@ def _collect_delivery(lines: list[str], conn: Any, cutoff_24h: str) -> None:
     if outbox_rows is None:
         del lines[-2:]
     else:
+        counts = {status: 0 for status in _OUTBOX_STATUSES}
         for row in outbox_rows:
             status = str(_row_value(row, "status", 0, "unknown") or "unknown").lower()
             if status not in _OUTBOX_STATUSES:
                 status = "unknown"
-            lines.append(_metric_line(outbox_name, int(_numeric(_row_value(row, "item_count", 1, 0))), {"status": status}))
+            counts[status] += int(_numeric(_row_value(row, "item_count", 1, 0)))
+        for status in _OUTBOX_STATUSES:
+            lines.append(
+                _metric_line(
+                    outbox_name,
+                    counts[status],
+                    {"status": status},
+                )
+            )
 
 
 def _hardware_stale_after_seconds(sensor: dict[str, Any]) -> float:

@@ -10,7 +10,7 @@ ROOT_DIR = Path(__file__).resolve().parents[2]
 DASHBOARDS_DIR = ROOT_DIR / "monitoring" / "grafana" / "dashboards"
 DS_UID = "victoriametrics"
 DASHBOARD_VERSION = 30
-NO_VALUE_TEXT = "数据暂不可用"
+NO_VALUE_TEXT = "暂无采集数据"
 
 INBOUND_COLOR = "#3274D9"
 OUTBOUND_COLOR = "#56A64B"
@@ -806,6 +806,7 @@ def build_overview_dashboard():
         "component_class": True,
         "source_type": True,
         "source_id": True,
+        "rule_version": True,
         "measurement_type": True,
     }
     cpu_overview_transform = clean_organize_transformation(
@@ -821,26 +822,26 @@ def build_overview_dashboard():
     hardware_sensor_transform = clean_organize_transformation(
         extra_renames={
             "asset_id": "资产 ID", "sensor_name": "部件名称",
-            "group": "部件分组", "index": "索引",
+            "group": "部件分组",
         },
         extra_indices={
             "site_name": 0, "hostname": 1, "asset_id": 2,
             "vendor": 3, "role": 4, "sensor_name": 5,
-            "group": 6, "index": 7, "Value": 8,
+            "group": 6, "Value": 7,
         },
         keep_asset_id=True,
-        extra_excludes={**hardware_asset_excludes, "window": True},
+        extra_excludes={**hardware_asset_excludes, "window": True, "index": True},
     )
 
     panels = [
-        stat_panel(1, "纳管设备数", f'count(count by (instance) (up{{{target_sel}}})) or vector(0)', 0, 0, 4, 3, color="#3274D9"),
-        stat_panel(2, "监控站点数", f'count(count by (site_name) (up{{{target_site_sel}}})) or vector(0)', 4, 0, 4, 3, color="#A352CC"),
-        stat_panel(3, "全网在线数", f'count(count by (instance) (up{{{target_sel}}} == 1)) or vector(0)', 8, 0, 4, 3, color="#56A64B"),
+        stat_panel(1, "纳管设备数", f'count(count by (instance) (up{{{target_sel}}}))', 0, 0, 4, 3, color="#3274D9"),
+        stat_panel(2, "监控站点数", f'count(count by (site_name) (up{{{target_site_sel}}}))', 4, 0, 4, 3, color="#A352CC"),
+        stat_panel(3, "全网在线数", f'count(count by (instance) (up{{{target_sel}}} == 1)) or on() ((count(up{{{target_sel}}}) > 0) * 0)', 8, 0, 4, 3, color="#56A64B"),
         stat_panel(
             4, "无线在线客户端数", client_online_expr, 12, 0, 4, 3, color="#37872D",
-            description="没有匹配的无线客户端采集指标时显示数据暂不可用，不代表当前客户端数为 0。",
+            description="没有匹配的无线客户端采集指标时显示暂无采集数据，不代表当前客户端数为 0。",
         ),
-        stat_panel(5, "采集接口总数", f"count(count by (instance, ifIndex) (ifOperStatus{{{sel}}})) or vector(0)", 16, 0, 4, 3, color="#3274D9"),
+        stat_panel(5, "采集接口总数", f"count(count by (instance, ifIndex) (ifOperStatus{{{sel}}}))", 16, 0, 4, 3, color="#3274D9"),
         stat_panel(6, "近24h变动且当前 Down 接口数", f'count({anomaly_rows}) or on() ((count(ifOperStatus{{{sel}}}) > 0) * 0)', 20, 0, 4, 3, thresholds=[
             {"color": "green", "value": None},
             {"color": "#E0B400", "value": 1},
@@ -883,7 +884,7 @@ def build_overview_dashboard():
             transformations=hardware_sensor_transform,
             value_col_name="数值",
             device_detail_link=True,
-            description="按单个内存池的规范使用率排列，展示传感器名称、分组和完整索引，不对不同容量内存池取平均。资产 ID 可打开设备详情。",
+            description="按单个内存池的规范使用率排列，展示传感器名称和分组，不对不同容量内存池取平均。资产 ID 可打开设备详情。",
         ),
         table_panel(
             25, "温度传感器 Top10", f"topk(10, {temperature_expr})", 16, 14, 8, 8,
@@ -891,7 +892,7 @@ def build_overview_dashboard():
             transformations=hardware_sensor_transform,
             value_col_name="数值",
             device_detail_link=True,
-            description="按单个规范温度传感器读数排列，保留传感器名称、分组和完整索引。资产 ID 可打开设备详情。",
+            description="按单个规范温度传感器读数排列，保留传感器名称和分组。资产 ID 可打开设备详情。",
         ),
         table_panel(
             12, "设备总吞吐速率 Top10",
@@ -1022,9 +1023,13 @@ def build_device_dashboard():
     )
     cpu_overflow_count = f"clamp_min(({cpu_sensor_count}) - 10, 0)"
     abnormal_count = (
-        f"count(({component_state} == 1) or ({component_state} == 2))"
+        f"count(({component_state} == 1) or ({component_state} == 2)) "
+        f"or on() ((count({component_state}) > 0) * 0)"
     )
-    unknown_count = f"count({component_state} == 3)"
+    unknown_count = (
+        f"count({component_state} == 3) "
+        f"or on() ((count({component_state}) > 0) * 0)"
+    )
 
     def details_transform(value_name=None, *, keep_asset_id=False):
         excludes = {
@@ -1033,6 +1038,13 @@ def build_device_dashboard():
             "tenant_id": True,
             "asset_id": not keep_asset_id,
             "sensor_key": True,
+            "source_id": True,
+            "source_type": True,
+            "rule_version": True,
+            "index": True,
+            "ent_physical_index": True,
+            "measured_entity_type": True,
+            "measurement_type": True,
             "instance": True,
             "hostname": True,
             "site_name": True,
@@ -1042,23 +1054,17 @@ def build_device_dashboard():
         rename = {
             "sensor_name": "部件名称",
             "group": "分组",
-            "index": "索引",
             "component_class": "部件类别",
-            "ent_physical_index": "实体索引",
-            "measured_entity_type": "测量对象",
             "unit": "单位",
             "window": "CPU窗口",
         }
         order = {
             "sensor_name": 0,
             "group": 1,
-            "index": 2,
-            "component_class": 3,
-            "ent_physical_index": 4,
-            "measured_entity_type": 5,
-            "unit": 6,
-            "window": 7,
-            "Value": 8,
+            "component_class": 2,
+            "unit": 3,
+            "window": 4,
+            "Value": 5,
         }
         if value_name:
             rename["Value"] = value_name
@@ -1104,11 +1110,17 @@ def build_device_dashboard():
         0,
         0,
         24,
-        3,
+        4,
         transformations=[{
             "id": "organize",
             "options": {
-                "excludeByName": {"Time": True, "__name__": True, "job": True},
+                "excludeByName": {
+                    "Time": True,
+                    "__name__": True,
+                    "job": True,
+                    "site_id": True,
+                    "tenant_id": True,
+                },
                 "indexByName": {
                     "hostname": 0, "asset_id": 1, "instance": 2, "site_name": 3,
                     "vendor": 4, "platform": 5, "role": 6, "Value": 7,
@@ -1146,7 +1158,7 @@ def build_device_dashboard():
         ],
         description="先在上方选择设备实际提供的 CPU 采样窗口，再显示该窗口内使用率最高的部件；不会将不同窗口混合。",
     )
-    cpu_gauge["targets"][0]["legendFormat"] = "{{sensor_name}} · {{group}} · {{index}} · {{window}}"
+    cpu_gauge["targets"][0]["legendFormat"] = "{{sensor_name}} · {{group}} · {{window}}"
     memory_gauge = gauge_panel(
         4,
         "最高内存池使用率",
@@ -1162,7 +1174,7 @@ def build_device_dashboard():
         ],
         description="显示所选设备最高内存池占用及其部件标签，不把不同容量的内存池简单平均成整机使用率。",
     )
-    memory_gauge["targets"][0]["legendFormat"] = "{{sensor_name}} · {{group}} · {{index}}"
+    memory_gauge["targets"][0]["legendFormat"] = "{{sensor_name}} · {{group}}"
     temp_stat = stat_panel(
         5,
         "最高温度",
@@ -1173,10 +1185,10 @@ def build_device_dashboard():
         3,
         unit="celsius",
         color="#3274D9",
-        description="优先显示非光模块温度；若仅发现光模块温度则回退显示该读数。具体传感器、分组和索引见图例与明细。",
+        description="优先显示非光模块温度；若仅发现光模块温度则回退显示该读数。具体传感器和分组见图例与明细。",
         graph_mode="none",
     )
-    temp_stat["targets"][0]["legendFormat"] = "{{sensor_name}} · {{group}} · {{index}}"
+    temp_stat["targets"][0]["legendFormat"] = "{{sensor_name}} · {{group}}"
     memory_pool_labels = (
         "tenant_id, asset_id, device_id, source_type, "
         "sensor_name, group, index, component_class"
@@ -1215,18 +1227,20 @@ def build_device_dashboard():
                     "excludeByName": {
                         "Time": True, "__name__": True, "tenant_id": True,
                         "device_id": True, "sensor_key": True, "source_type": True,
-                        "source_id": True, "measurement_type": True,
+                        "source_id": True, "rule_version": True, "index": True,
+                        "ent_physical_index": True, "measured_entity_type": True,
+                        "measurement_type": True,
                         "hostname": True, "site_name": True, "vendor": True,
                         "platform": True, "role": True, "window": True,
                     },
                     "indexByName": {
                         "asset_id": 0, "sensor_name": 1, "group": 2,
-                        "index": 3, "component_class": 4,
-                        "Value #A": 5, "Value #B": 6, "Value #C": 7,
+                        "component_class": 3, "Value #A": 4,
+                        "Value #B": 5, "Value #C": 6,
                     },
                     "renameByName": {
                         "asset_id": "资产 ID", "sensor_name": "内存池",
-                        "group": "分组", "index": "索引",
+                        "group": "分组",
                         "component_class": "部件类别",
                         "Value #A": "已用容量", "Value #B": "总容量",
                         "Value #C": "使用率 (%)",
@@ -1234,7 +1248,7 @@ def build_device_dashboard():
                 },
             },
         ],
-        description="三列分别来自同一个内存池的已用字节、总字节和规范使用率，并按设备、来源类型、名称、分组及完整索引关联。不会把不同内存池合并。",
+        description="三列分别来自同一个内存池的已用字节、总字节和规范使用率，并按设备、名称、分组和硬件类别关联。不会把不同内存池合并。",
     )
     memory_detail_table["fieldConfig"]["overrides"].extend([
         {
@@ -1307,20 +1321,22 @@ def build_device_dashboard():
                     "excludeByName": {
                         "Time": True, "__name__": True, "tenant_id": True,
                         "device_id": True, "sensor_key": True, "source_type": True,
-                        "source_id": True, "measurement_type": True,
+                        "source_id": True, "rule_version": True, "index": True,
+                        "ent_physical_index": True, "measured_entity_type": True,
+                        "measurement_type": True,
                         "hostname": True, "site_name": True, "vendor": True,
                         "platform": True, "role": True, "window": True,
                         "Value #B": True,
                     },
                     "indexByName": {
                         "asset_id": 0, "sensor_name": 1, "group": 2,
-                        "index": 3, "component_class": 4, "raw_state": 5,
-                        "state_description": 6, "Value #A": 7,
-                        "quality": 8, "Value #C": 9,
+                        "component_class": 3, "raw_state": 4,
+                        "state_description": 5, "Value #A": 6,
+                        "quality": 7, "Value #C": 8,
                     },
                     "renameByName": {
                         "asset_id": "资产 ID", "sensor_name": "部件名称",
-                        "group": "分组", "index": "索引",
+                        "group": "分组",
                         "component_class": "部件类别",
                         "raw_state": "原始状态", "state_description": "状态说明",
                         "Value #A": "规范状态", "quality": "采集质量",
@@ -1354,8 +1370,7 @@ def build_device_dashboard():
         f"(nexora_hw_capability_last_discovered_count{{{capability_selector}}})"
     )
     capability_info_expr = (
-        f"max by ({capability_identity}, reason, reason_code, rule_version, "
-        "discovery_version, artifact_version) "
+        f"max by ({capability_identity}, reason, reason_code) "
         f"(nexora_hw_capability_info{{{capability_selector}}})"
     )
     capability_success_age_expr = (
@@ -1385,7 +1400,7 @@ def build_device_dashboard():
     }]
     capability_table = table_panel(
         20,
-        "硬件发现能力、数量与版本",
+        "硬件发现能力与数量",
         capability_status_expr,
         0,
         54,
@@ -1410,23 +1425,23 @@ def build_device_dashboard():
                 "options": {
                     "excludeByName": {
                         "Time": True, "__name__": True, "tenant_id": True,
-                        "device_id": True, "Value #A": True, "Value #D": True,
+                        "device_id": True, "source_type": True,
+                        "rule_version": True, "discovery_version": True,
+                        "artifact_version": True,
+                        "Value #A": True, "Value #D": True,
                     },
                     "indexByName": {
-                        "asset_id": 0, "source_type": 1, "component_class": 2,
-                        "status": 3, "coverage_complete": 4, "Value #B": 5,
-                        "Value #C": 6, "reason_code": 7, "reason": 8,
-                        "rule_version": 9, "discovery_version": 10,
-                        "artifact_version": 11, "Value #E": 12,
+                        "asset_id": 0, "component_class": 1,
+                        "status": 2, "coverage_complete": 3, "Value #B": 4,
+                        "Value #C": 5, "reason_code": 6, "reason": 7,
+                        "Value #E": 8,
                     },
                     "renameByName": {
-                        "asset_id": "资产 ID", "source_type": "来源类型",
-                        "component_class": "硬件类别", "status": "发现状态",
+                        "asset_id": "资产 ID", "component_class": "硬件类别",
+                        "status": "发现状态",
                         "coverage_complete": "覆盖完整性",
                         "Value #B": "活动传感器数", "Value #C": "最近发现数",
                         "reason_code": "原因码", "reason": "原因说明",
-                        "rule_version": "规则版本", "discovery_version": "发现版本",
-                        "artifact_version": "采集包版本",
                         "Value #E": "距最近成功（秒）",
                     },
                 },
@@ -1442,7 +1457,7 @@ def build_device_dashboard():
                 "options": {"-1": {"text": "无成功记录", "color": "red"}},
             }],
         },
-        description="每行按 tenant、asset、设备、来源类型和硬件类别合并。显示发现状态、活动/最近发现数量、原因及版本；最近成功以距今秒数显示，无历史成功时标为“无成功记录”。",
+        description="每行按资产、设备和硬件类别汇总。显示发现状态、活动/最近发现数量及原因；最近成功以距今秒数显示，无历史成功时标为“无成功记录”。",
     )
     capability_table["fieldConfig"]["overrides"].extend([
         {
@@ -1470,19 +1485,19 @@ def build_device_dashboard():
         stat_panel(
             6, "异常部件数", abnormal_count, 16, 3, 4, 3,
             unit="short", color="#E02F44",
-            description="只计入明确映射为警告或严重的部件状态；无状态样本不会补成健康。",
+            description="采集到部件状态后才统计；状态均正常时显示 0，无状态样本显示暂无采集数据。",
             graph_mode="none",
         ),
         stat_panel(
             7, "状态未知部件数", unknown_count, 20, 3, 4, 3,
             unit="short", color="#8A8F98",
-            description="未知状态单独计数；没有硬件清单或无采样时显示无数据。",
+            description="采集到部件状态后才统计；没有未知部件时显示 0，无状态样本显示暂无采集数据。",
             graph_mode="none",
         ),
         timeseries_panel(
             8, "CPU 各部件使用率走势（最多10条）", [{
                 "expr": f"topk(10, max by (tenant_id, asset_id, sensor_key, sensor_name, group, index, component_class, window) ({cpu}))",
-                "legendFormat": "{{sensor_name}} · {{group}} · {{index}} · {{window}}",
+                "legendFormat": "{{sensor_name}} · {{group}} · {{window}}",
                 "refId": "A",
             }],
             0, 6, 9, 8, unit="percent",
@@ -1497,7 +1512,7 @@ def build_device_dashboard():
         timeseries_panel(
             9, "各内存池使用率走势", [{
                 "expr": f"max by (tenant_id, asset_id, sensor_key, sensor_name, group, index, component_class) ({memory})",
-                "legendFormat": "{{sensor_name}} · {{group}} · {{index}}",
+                "legendFormat": "{{sensor_name}} · {{group}}",
                 "refId": "A",
             }],
             12, 6, 12, 8, unit="percent",
@@ -1506,7 +1521,7 @@ def build_device_dashboard():
         timeseries_panel(
             10, "板卡与环境温度走势", [{
                 "expr": f"max by (tenant_id, asset_id, sensor_key, sensor_name, group, index, component_class) ({temperature})",
-                "legendFormat": "{{sensor_name}} · {{group}} · {{index}}",
+                "legendFormat": "{{sensor_name}} · {{group}}",
                 "refId": "A",
             }],
             0, 14, 12, 8, unit="celsius",
@@ -1515,7 +1530,7 @@ def build_device_dashboard():
         timeseries_panel(
             11, "风扇转速走势", [{
                 "expr": f"max by (tenant_id, asset_id, sensor_key, sensor_name, group, index, component_class) ({fan_speed})",
-                "legendFormat": "{{sensor_name}} · {{group}} · {{index}}",
+                "legendFormat": "{{sensor_name}} · {{group}}",
                 "refId": "A",
             }],
             12, 14, 12, 8, unit="rpm",
@@ -1524,7 +1539,7 @@ def build_device_dashboard():
         timeseries_panel(
             12, "电源功率读数走势", [{
                 "expr": f"max by (tenant_id, asset_id, sensor_key, sensor_name, group, index, component_class) ({power})",
-                "legendFormat": "{{sensor_name}} · {{group}} · {{index}}",
+                "legendFormat": "{{sensor_name}} · {{group}}",
                 "refId": "A",
             }],
             0, 22, 12, 8, unit="watt",
@@ -1533,7 +1548,7 @@ def build_device_dashboard():
         timeseries_panel(
             27, "光模块收发功率走势（dBm）", [{
                 "expr": f"max by (tenant_id, asset_id, sensor_key, sensor_name, group, index, component_class) ({optical_power})",
-                "legendFormat": "{{sensor_name}} · {{group}} · {{index}}",
+                "legendFormat": "{{sensor_name}} · {{group}}",
                 "refId": "A",
             }],
             12, 22, 12, 8, unit="dBm",
@@ -1542,7 +1557,7 @@ def build_device_dashboard():
         current_table(
             13, "CPU 部件当前读数", cpu, 0, 30,
             unit="percent", value_name="CPU 使用率",
-            description="每一行对应独立 CPU/处理单元，并保留 window、传感器名称、分组和索引。",
+            description="每一行对应独立 CPU/处理单元，并保留 window、传感器名称和分组。",
         ),
         memory_detail_table,
         current_table(
@@ -1588,6 +1603,7 @@ def build_device_dashboard():
             value_col_name="运行状态",
             value_mappings=STATUS_VALUE_MAPPINGS,
             color_mapped_cells=True,
+            mapped_cell_mode="color-background",
             detail_link=True,
             description="接口行同样使用所选 asset_id 限定，并保留现有接口详情跳转。",
         ),
@@ -1614,29 +1630,36 @@ def build_device_dashboard():
         current_table(
             28, "光模块功率当前读数（dBm）", optical_power, 0, 78, 12,
             unit="dBm", value_name="光功率",
-            description="展示设备当前已采集到的光功率读数，并保留传感器名称、分组、完整索引与实体索引。",
+            description="展示设备当前已采集到的光功率读数，并保留传感器名称和分组。",
         ),
         current_table(
             29, "其他 LibreNMS 传感器读数", generic_sensor, 12, 78, 12,
             value_name="当前值",
-            description="保留 Nexora 暂无规范单位换算的 LibreNMS 传感器类别，逐行展示其类别、上游单位、索引和测量对象。",
+            description="保留 Nexora 暂无规范单位换算的 LibreNMS 传感器类别，逐行展示其类别和上游单位。",
         ),
     ]
+    # Reserve one additional grid row for the identity table and move all
+    # following panels down with it, preserving the dashboard's row spacing.
+    for panel in panels[1:]:
+        grid = panel.get("gridPos") or {}
+        grid["y"] = int(grid.get("y", 0)) + 1
     panels = insert_section_rows(
         panels,
         [
-            ("硬件部件趋势", 6),
-            ("硬件部件当前读数", 30),
-            ("发现状态与采集质量", 54),
-            ("接口诊断", 70),
+            ("硬件部件趋势", 7),
+            ("硬件部件当前读数", 31),
+            ("发现状态与采集质量", 55),
+            ("接口诊断", 71),
         ],
     )
 
     asset_query = (
         'query_result(label_join(max by (asset_id,hostname,instance,site_name) '
-        '(up{job="network_snmp",asset_id!=""}), "device_label", " · ", "hostname", "instance", "site_name"))'
+        '(up{job="network_snmp",asset_id!="",site_name=~"$site",vendor=~"$vendor",role=~"$role"}), '
+        '"device_label", " · ", "hostname", "instance", "site_name"))'
     )
-    variables = [
+    variables = make_network_variables()[:3]
+    variables.extend([
         make_query_variable(
             "asset_id",
             "设备",
@@ -1673,7 +1696,7 @@ def build_device_dashboard():
             multi=False,
             include_all=True,
         ),
-    ]
+    ])
 
     return {
         "annotations": {"list": []},
@@ -1706,7 +1729,7 @@ def build_wireless_dashboard():
     ap_offline = f"((hwWlanApTotalNum{{{sel}}} - hwWlanCurOnlineApNum{{{sel}}}) or (hh3cDot11TotalAPNum{{{sel}}} - hh3cDot11CurrOnlineAPNum{{{sel}}}) or (ruijieApcTotalApNum{{{sel}}} - ruijieApcOnlineApNum{{{sel}}}))"
     clients = f"(hwWlanCurAssocUserNum{{{sel}}} or hh3cDot11CurrAssocUserNum{{{sel}}} or ruijieApcTotalStaNum{{{sel}}} or cLSysTotalNumOfClients{{{sel}}} or wlsxSysExtStationsNum{{{sel}}} or ruckusZDTotalNumSta{{{sel}}})"
     client_per_ap = f"({clients}) / clamp_min(({ap_online}), 1)"
-    wireless_missing_description = "没有匹配的无线控制器指标时显示数据暂不可用，不代表 AP 或客户端数量为 0。"
+    wireless_missing_description = "没有匹配的无线控制器指标时显示暂无采集数据，不代表 AP 或客户端数量为 0。"
 
     panels = [
         stat_panel(1, "已提供总量的 AP 数", f"sum({ap_all})", 0, 0, 6, 4, color="#3274D9", description=wireless_missing_description),
@@ -2253,10 +2276,10 @@ def build_interface_detail_dashboard():
 # 5. Monitoring Engine Health Dashboard
 def build_health_dashboard():
     panels = [
-        stat_panel(1, "SNMP 在线目标", f"count(count by (instance) (up{{{NETWORK_JOB}}} == 1)) or vector(0)", 0, 0, 6, 4, color="#56A64B"),
-        stat_panel(2, "SNMP 失败目标", f"count(count by (instance) (up{{{NETWORK_JOB}}} == 0)) or vector(0)", 6, 0, 6, 4, thresholds=[{"color": "green", "value": None}, {"color": "red", "value": 1}]),
-        stat_panel(3, "平均 SNMP 采集耗时", f"avg(scrape_duration_seconds{{{NETWORK_JOB}}}) or vector(0)", 12, 0, 6, 4, unit="s", color="#3274D9"),
-        stat_panel(4, "最大 SNMP 采集耗时", f"max(scrape_duration_seconds{{{NETWORK_JOB}}}) or vector(0)", 18, 0, 6, 4, unit="s", thresholds=[{"color": "green", "value": None}, {"color": "#E0B400", "value": 5}, {"color": "red", "value": 15}]),
+        stat_panel(1, "SNMP 在线目标", f"count(count by (instance) (up{{{NETWORK_JOB}}} == 1)) or on() ((count(up{{{NETWORK_JOB}}}) > 0) * 0)", 0, 0, 6, 4, color="#56A64B"),
+        stat_panel(2, "SNMP 失败目标", f"count(count by (instance) (up{{{NETWORK_JOB}}} == 0)) or on() ((count(up{{{NETWORK_JOB}}}) > 0) * 0)", 6, 0, 6, 4, thresholds=[{"color": "green", "value": None}, {"color": "red", "value": 1}]),
+        stat_panel(3, "平均 SNMP 采集耗时", f"avg(scrape_duration_seconds{{{NETWORK_JOB}}})", 12, 0, 6, 4, unit="s", color="#3274D9"),
+        stat_panel(4, "最大 SNMP 采集耗时", f"max(scrape_duration_seconds{{{NETWORK_JOB}}})", 18, 0, 6, 4, unit="s", thresholds=[{"color": "green", "value": None}, {"color": "#E0B400", "value": 5}, {"color": "red", "value": 15}]),
         timeseries_panel(5, "各设备 SNMP 采集耗时分布 (秒)", [
             {"expr": f"scrape_duration_seconds{{{NETWORK_JOB}}}", "legendFormat": "{{site_name}} / {{hostname}}", "refId": "A"}
         ], 0, 4, 12, 8, unit="s"),
@@ -2313,14 +2336,14 @@ def build_outbound_dashboard():
     util_out = f'(({out_rate} * 8) / {speed_bps} * 100)'
 
     panels = [
-        stat_panel(1, "出口总入向实时带宽 (Inbound)", f"sum({in_rate} {if_join}) * 8 or vector(0)", 0, 0, 4, 4, unit="bps", color=INBOUND_COLOR),
-        stat_panel(2, "出口总出向实时带宽 (Outbound)", f"sum({out_rate} {if_join}) * 8 or vector(0)", 4, 0, 4, 4, unit="bps", color=OUTBOUND_COLOR),
-        stat_panel(3, "出口最高入向利用率", f"max({util_in} {if_join}) or vector(0)", 8, 0, 4, 4, unit="percent", thresholds=UTILIZATION_THRESHOLDS),
-        stat_panel(4, "出口最高出向利用率", f"max({util_out} {if_join}) or vector(0)", 12, 0, 4, 4, unit="percent", thresholds=UTILIZATION_THRESHOLDS),
-        stat_panel(5, "出口链路错误与丢弃总速率", f"sum({error_rate} + {discard_rate}) or vector(0)", 16, 0, 4, 4, unit="pps", thresholds=[
+        stat_panel(1, "出口总入向实时带宽 (Inbound)", f"sum({in_rate} {if_join}) * 8", 0, 0, 4, 4, unit="bps", color=INBOUND_COLOR),
+        stat_panel(2, "出口总出向实时带宽 (Outbound)", f"sum({out_rate} {if_join}) * 8", 4, 0, 4, 4, unit="bps", color=OUTBOUND_COLOR),
+        stat_panel(3, "出口最高入向利用率", f"max({util_in} {if_join})", 8, 0, 4, 4, unit="percent", thresholds=UTILIZATION_THRESHOLDS),
+        stat_panel(4, "出口最高出向利用率", f"max({util_out} {if_join})", 12, 0, 4, 4, unit="percent", thresholds=UTILIZATION_THRESHOLDS),
+        stat_panel(5, "出口链路错误与丢弃总速率", f"sum({error_rate} + {discard_rate})", 16, 0, 4, 4, unit="pps", thresholds=[
             {"color": "green", "value": None}, {"color": "#E0B400", "value": 10}, {"color": "red", "value": 100}
         ]),
-        stat_panel(6, "筛选接口数", f"count(count by (instance, ifIndex) (ifOperStatus{{{sel}}} {if_join})) or vector(0)", 20, 0, 4, 4, unit="none", color="#A352CC"),
+        stat_panel(6, "筛选接口数", f"count(count by (instance, ifIndex) (ifOperStatus{{{sel}}} {if_join})) or on() ((count(ifOperStatus{{{sel}}}) > 0) * 0)", 20, 0, 4, 4, unit="none", color="#A352CC"),
         timeseries_panel(7, "出口设备入向流量趋势 (Inbound bps)", [
             {"expr": f"sum by (hostname, site_name) ({in_rate} * 8 {if_join})", "legendFormat": "{{site_name}} / {{hostname}} 入向", "refId": "A"}
         ], 0, 4, 12, 8, unit="bps", color_overrides=[
@@ -2405,20 +2428,20 @@ def build_outbound_dashboard():
 def build_linux_dashboard():
     srv_sel = 'job="linux_servers",site_name=~"$site",hostname=~"$device"'
     panels = [
-        stat_panel(1, "受纳管 Linux 主机数", f'count(count by (hostname) (up{{{srv_sel}}})) or vector(0)', 0, 0, 4, 4, unit="none", color="blue"),
-        stat_panel(2, "系统平均运行时长", f'avg(time() - node_boot_time_seconds{{{srv_sel}}}) or vector(0)', 4, 0, 4, 4, unit="dtdhms", color="#3274D9", graph_mode="none"),
-        stat_panel(3, "平均 CPU 使用率", f'avg(100 - (avg by (hostname) (rate(node_cpu_seconds_total{{{srv_sel},mode="idle"}}[5m])) * 100)) or vector(0)', 8, 0, 4, 4, unit="percent", thresholds=[
+        stat_panel(1, "受纳管 Linux 主机数", f'count(count by (hostname) (up{{{srv_sel}}}))', 0, 0, 4, 4, unit="none", color="blue"),
+        stat_panel(2, "系统平均运行时长", f'avg(time() - node_boot_time_seconds{{{srv_sel}}})', 4, 0, 4, 4, unit="dtdhms", color="#3274D9", graph_mode="none"),
+        stat_panel(3, "平均 CPU 使用率", f'avg(100 - (avg by (hostname) (rate(node_cpu_seconds_total{{{srv_sel},mode="idle"}}[5m])) * 100))', 8, 0, 4, 4, unit="percent", thresholds=[
             {"color": "green", "value": None},
             {"color": "#E0B400", "value": 70},
             {"color": "red", "value": 85}
         ]),
-        stat_panel(4, "平均物理内存利用率", f'avg((1 - (node_memory_MemAvailable_bytes{{{srv_sel}}} / node_memory_MemTotal_bytes{{{srv_sel}}})) * 100) or vector(0)', 12, 0, 4, 4, unit="percent", thresholds=[
+        stat_panel(4, "平均物理内存利用率", f'avg((1 - (node_memory_MemAvailable_bytes{{{srv_sel}}} / node_memory_MemTotal_bytes{{{srv_sel}}})) * 100)', 12, 0, 4, 4, unit="percent", thresholds=[
             {"color": "green", "value": None},
             {"color": "#E0B400", "value": 80},
             {"color": "red", "value": 90}
         ]),
-        stat_panel(5, "TCP 活跃连接总数", f'sum(node_netstat_Tcp_CurrEstab{{{srv_sel}}}) or vector(0)', 16, 0, 4, 4, unit="none", color="purple"),
-        stat_panel(6, "已打开文件句柄数", f'sum(node_filefd_allocated{{{srv_sel}}}) or vector(0)', 20, 0, 4, 4, unit="short", color="#56A64B", thresholds=[
+        stat_panel(5, "TCP 活跃连接总数", f'sum(node_netstat_Tcp_CurrEstab{{{srv_sel}}})', 16, 0, 4, 4, unit="none", color="purple"),
+        stat_panel(6, "已打开文件句柄数", f'sum(node_filefd_allocated{{{srv_sel}}})', 20, 0, 4, 4, unit="short", color="#56A64B", thresholds=[
             {"color": "green", "value": None},
             {"color": "#E0B400", "value": 20000},
             {"color": "red", "value": 100000}
@@ -2510,18 +2533,18 @@ def build_linux_dashboard():
 def build_windows_dashboard():
     srv_sel = 'job="windows_servers",site_name=~"$site",hostname=~"$device"'
     panels = [
-        stat_panel(1, "受纳管 Windows 主机数", f'count(count by (hostname) (up{{{srv_sel}}})) or vector(0)', 0, 0, 6, 4, unit="none", color="blue"),
-        stat_panel(2, "平均 CPU 使用率", f'avg(100 - (avg by (hostname) (rate(windows_cpu_time_total{{{srv_sel},mode="idle"}}[5m])) * 100)) or vector(0)', 6, 0, 6, 4, unit="percent", thresholds=[
+        stat_panel(1, "受纳管 Windows 主机数", f'count(count by (hostname) (up{{{srv_sel}}}))', 0, 0, 6, 4, unit="none", color="blue"),
+        stat_panel(2, "平均 CPU 使用率", f'avg(100 - (avg by (hostname) (rate(windows_cpu_time_total{{{srv_sel},mode="idle"}}[5m])) * 100))', 6, 0, 6, 4, unit="percent", thresholds=[
             {"color": "green", "value": None},
             {"color": "#E0B400", "value": 70},
             {"color": "red", "value": 85}
         ]),
-        stat_panel(3, "平均物理内存使用率", f'avg((1 - (windows_os_physical_memory_free_bytes{{{srv_sel}}} / windows_cs_physical_memory_bytes{{{srv_sel}}})) * 100) or vector(0)', 12, 0, 6, 4, unit="percent", thresholds=[
+        stat_panel(3, "平均物理内存使用率", f'avg((1 - (windows_os_physical_memory_free_bytes{{{srv_sel}}} / windows_cs_physical_memory_bytes{{{srv_sel}}})) * 100)', 12, 0, 6, 4, unit="percent", thresholds=[
             {"color": "green", "value": None},
             {"color": "#E0B400", "value": 80},
             {"color": "red", "value": 90}
         ]),
-        stat_panel(4, "远程桌面活跃会话", f'sum(windows_terminal_services_active_sessions{{{srv_sel}}}) or vector(0)', 18, 0, 6, 4, unit="none", color="purple"),
+        stat_panel(4, "远程桌面活跃会话", f'sum(windows_terminal_services_active_sessions{{{srv_sel}}})', 18, 0, 6, 4, unit="none", color="purple"),
 
         timeseries_panel(5, "CPU 占用率走势 (%)", [
             {"expr": f'100 - (avg by (hostname) (rate(windows_cpu_time_total{{{srv_sel},mode="idle"}}[5m])) * 100)', "legendFormat": "{{site_name}} / {{hostname}} CPU 利用率 (%)", "refId": "A"}
@@ -3499,7 +3522,7 @@ def build_alert_operations_dashboard():
             "nexora_alert_open_duration_oldest_seconds",
             0,
             20,
-            4,
+            6,
             4,
             unit="dtdhms",
             graph_mode="none",
@@ -3513,9 +3536,9 @@ def build_alert_operations_dashboard():
             12,
             "未恢复告警时长 P95",
             "nexora_alert_open_duration_p95_seconds",
-            4,
+            6,
             20,
-            4,
+            6,
             4,
             unit="dtdhms",
             graph_mode="none",
@@ -3524,9 +3547,9 @@ def build_alert_operations_dashboard():
             13,
             "24h MTTA",
             "nexora_alert_mtta_seconds_24h",
-            8,
+            12,
             20,
-            4,
+            3,
             4,
             unit="s",
             description="近 24 小时已确认告警的平均创建至首次确认时间；无样本时显示无数据。",
@@ -3535,9 +3558,9 @@ def build_alert_operations_dashboard():
             14,
             "24h MTTR",
             "nexora_alert_mttr_seconds_24h",
-            12,
+            15,
             20,
-            4,
+            3,
             4,
             unit="s",
             description="近 24 小时已恢复告警的平均创建至恢复时间；无样本时显示无数据。",
@@ -3546,9 +3569,9 @@ def build_alert_operations_dashboard():
             15,
             "重复未恢复告警",
             "nexora_alert_duplicate_open_events",
-            16,
+            18,
             20,
-            4,
+            3,
             4,
             unit="none",
             thresholds=open_thresholds,
@@ -3558,9 +3581,9 @@ def build_alert_operations_dashboard():
             16,
             "24h 重试通知数",
             "nexora_alert_retried_deliveries_24h",
+            21,
             20,
-            20,
-            4,
+            3,
             4,
             unit="none",
         ),
