@@ -38,11 +38,9 @@ from services.snmp_mib_service import (
 )
 from services.librenms_mib_service import (
     VENDOR_DIR_MAP,
-    fetch_librenms_mibs,
-    fetch_librenms_sources,
     import_mibs_from_directory,
+    LIBRENMS_BUNDLE_DIR,
     MIBS_DIR,
-    TARGET_DIR,
 )
 from services.librenms_rule_service import sync_rules_from_repository
 from services.snmp_discovery_service import resolve_snmp_vendor_identity
@@ -2489,7 +2487,7 @@ async def trigger_sync_librenms_mibs(
     vendors: str = Query("", description="Comma-separated registered platform vendors; empty selects all platform vendors and standard MIBs"),
     user=require_role("Operator"),
 ):
-    """Sync LibreNMS MIBs for platform vendors plus standard MIBs."""
+    """Index the project-bundled LibreNMS MIB snapshot for platform vendors."""
     global _librenms_sync_state
     if _librenms_sync_state["running"]:
         return {
@@ -2522,18 +2520,18 @@ async def trigger_sync_librenms_mibs(
     def _sync_worker(target_vendors_list: list[str], retire_unlisted_vendors: bool):
         global _librenms_sync_state
         _librenms_sync_state["running"] = True
-        _librenms_sync_state["progress"] = "Fetching LibreNMS MIBs for supported platform vendors..."
+        _librenms_sync_state["progress"] = "Loading the project-local LibreNMS source bundle..."
         _librenms_sync_state["started_at"] = time.time()
         try:
-            fetch_librenms_sources(TARGET_DIR)
-            _librenms_sync_state["progress"] = "Parsing and indexing MIB definitions into database..."
+            _librenms_sync_state["progress"] = "Parsing bundled MIB definitions into the local catalog..."
             result = import_mibs_from_directory(
                 mibs_dir=MIBS_DIR,
                 target_vendors=target_vendors_list,
                 retire_out_of_scope=retire_unlisted_vendors,
+                retire_missing_files=False,
             )
             result["platform_vendor_scope"] = target_vendors_list
-            rule_result = sync_rules_from_repository(TARGET_DIR)
+            rule_result = sync_rules_from_repository(LIBRENMS_BUNDLE_DIR)
             result["librenms_rules"] = rule_result
             _librenms_sync_state["last_result"] = result
             _librenms_sync_state["run_id"] = result.get("run_id")
@@ -2549,7 +2547,7 @@ async def trigger_sync_librenms_mibs(
 
     return {
         "success": True,
-        "message": "LibreNMS MIB sync started for registered platform vendors",
+        "message": "Project-local LibreNMS MIB indexing started for registered platform vendors",
         "vendor_scope": scoped_vendors,
         "state": _librenms_sync_state,
     }

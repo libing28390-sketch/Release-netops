@@ -1,10 +1,10 @@
 """Read-only SNMP identity and per-device OID discovery.
 
 The service deliberately keeps discovery evidence separate from operator-created
-metric profiles.  A profile can describe a family of devices, while this module
+metric profiles. A profile can describe a family of devices, while this module
 records which table columns and row indexes the current device actually exposes.
-Only the supported vendor adapters are enabled; an unknown vendor never falls
-through to Cisco OIDs.
+Generic standards-based hardware probes run independently of vendor recognition;
+private OIDs require a matching LibreNMS rule, catalog, or reviewed adapter.
 """
 
 from __future__ import annotations
@@ -19,16 +19,24 @@ from typing import Any, Mapping
 
 from database import get_db_connection
 from services.snmp_vendor_registry import (
+    ASSET_VENDOR_ENTERPRISE_PREFIXES,
     ASSET_NETWORK_VENDORS,
     ASSET_SECURITY_VENDORS,
     adapter_descriptor,
     normalize_asset_vendor,
+    vendor_from_asset_platform,
 )
-from services.librenms_rule_service import ensure_rules_available, resolve_rule
+from services.librenms_rule_service import (
+    ensure_rules_available,
+    identity_snmp_probe_plan,
+    resolve_rule,
+)
 
 logger = logging.getLogger(__name__)
 
 RULE_VERSION = "snmp-discovery-catalog-2"
+HARDWARE_DISCOVERY_VERSION = "nexora.hardware.discovery.v1"
+HARDWARE_ARTIFACT_VERSION = "nexora.hardware.direct-poll.v1"
 _DISCOVERY_CACHE_TTL_SECONDS = 30.0
 _discovery_cache: dict[str, tuple[float, dict[str, Any] | None]] = {}
 _discovery_cache_lock = threading.Lock()
@@ -38,63 +46,12 @@ SYS_DESCR = "1.3.6.1.2.1.1.1.0"
 SYS_NAME = "1.3.6.1.2.1.1.5.0"
 
 _CISCO_PREFIX = "1.3.6.1.4.1.9."
-_OBSERVED_VENDOR_PREFIXES = {
-    "1.3.6.1.4.1.9.": "Cisco",
-    "1.3.6.1.4.1.2011.": "Huawei",
-    "1.3.6.1.4.1.25506.": "H3C",
-    "1.3.6.1.4.1.4881.": "Ruijie",
-    "1.3.6.1.4.1.2636.": "Juniper",
-    "1.3.6.1.4.1.12356.": "Fortinet",
-    "1.3.6.1.4.1.3902.": "ZTE",
-    "1.3.6.1.4.1.5651.": "Maipu",
-    "1.3.6.1.4.1.31648.": "DPtech",
-    "1.3.6.1.4.1.24681.": "Hillstone",
-    "1.3.6.1.4.1.35047.": "Sangfor",
-    "1.3.6.1.4.1.6339.": "DCN",
-    "1.3.6.1.4.1.14823.": "Aruba",
-    "1.3.6.1.4.1.25053.": "Ruckus",
-    # Enterprise roots sourced from the LibreNMS OS detection definitions.
-    # These identify the vendor only; model-specific metrics still require a
-    # catalog variant to return rows before they are selected.
-    "1.3.6.1.4.1.3807.": "FiberHome",
-    "1.3.6.1.4.1.11408.": "FiberHome",
-    "1.3.6.1.4.1.7483.": "Nokia",
-    "1.3.6.1.4.1.637.": "Nokia",
-    "1.3.6.1.4.1.6527.": "Nokia",
-    "1.3.6.1.4.1.1916.": "Extreme Networks",
-    "1.3.6.1.4.1.14988.": "MikroTik",
-    "1.3.6.1.4.1.41112.": "Ubiquiti",
-    "1.3.6.1.4.1.4413.": "Ubiquiti",
-    "1.3.6.1.4.1.10002.": "Ubiquiti",
-    "1.3.6.1.4.1.171.": "D-Link",
-    "1.3.6.1.4.1.11863.": "TP-Link",
-    "1.3.6.1.4.1.16972.": "TP-Link",
-    "1.3.6.1.4.1.674.": "Dell",
-    "1.3.6.1.4.1.1588.": "Brocade",
-    "1.3.6.1.4.1.562.": "Ciena",
-    "1.3.6.1.4.1.6486.": "Alcatel-Lucent Enterprise",
-    "1.3.6.1.4.1.207.": "Allied Telesis",
-    "1.3.6.1.4.1.259.": "Edgecore",
-    "1.3.6.1.4.1.30065.": "Arista",
-    "1.3.6.1.4.1.8886.": "Raisecom",
-    # Security and application delivery enterprise roots are sourced from the
-    # vendor MIBs shipped in the local LibreNMS repository. These mappings
-    # establish identity; health metrics still require a catalog variant.
-    "1.3.6.1.4.1.2620.": "Check Point",
-    "1.3.6.1.4.1.2604.": "Sophos",
-    "1.3.6.1.4.1.8741.": "SonicWall",
-    "1.3.6.1.4.1.3097.": "WatchGuard",
-    "1.3.6.1.4.1.3375.": "F5",
-    "1.3.6.1.4.1.12276.": "F5",
-    "1.3.6.1.4.1.22610.": "A10 Networks",
-    "1.3.6.1.4.1.20632.": "Barracuda",
-    "1.3.6.1.4.1.10704.": "Barracuda",
-    "1.3.6.1.4.1.28557.": "Hillstone",
-}
+_OBSERVED_VENDOR_PREFIXES = ASSET_VENDOR_ENTERPRISE_PREFIXES
 _CISCO_CPU_COLUMNS = (
     ("cpmCPUTotal5minRev", "1.3.6.1.4.1.9.9.109.1.1.1.1.8"),
     ("cpmCPUTotal5min", "1.3.6.1.4.1.9.9.109.1.1.1.1.5"),
     ("cpmCPUTotal1minRev", "1.3.6.1.4.1.9.9.109.1.1.1.1.7"),
+    ("cpmCPUTotal1min", "1.3.6.1.4.1.9.9.109.1.1.1.1.6"),
     ("avgBusy5", "1.3.6.1.4.1.9.2.1.58.0"),
 )
 _CISCO_MEMORY_PAIRS = (
@@ -136,16 +93,29 @@ def normalize_oid(value: Any) -> str:
 
 
 def normalize_vendor(value: Any) -> str:
-    token = _text(value, 128).casefold()
+    raw = _text(value, 128)
+    canonical = normalize_asset_vendor(raw)
+    if canonical in set((*ASSET_NETWORK_VENDORS, *ASSET_SECURITY_VENDORS)):
+        return canonical
+    token = raw.casefold()
+    if token in {"alcatel lucent enterprise", "alcatel-lucent enterprise", "ale"}:
+        return "Alcatel-Lucent Enterprise"
     if token in {"cisco", "思科"} or "cisco" in token:
         return "Cisco"
     if token in {"huawei", "华为"} or "huawei" in token:
         return "Huawei"
+    if "aruba" in token or "procurve" in token:
+        return "Aruba"
     if token in {"h3c", "华三", "hpe", "hp"} or "comware" in token:
         return "H3C"
+    registered_vendors = (*ASSET_NETWORK_VENDORS, *ASSET_SECURITY_VENDORS)
+    for registered_vendor in sorted(registered_vendors, key=len, reverse=True):
+        if registered_vendor.casefold() in token:
+            return registered_vendor
     aliases = (
+        (("juniper", "瞻博"), "Juniper"),
         (("fiberhome", "烽火", "fiber home"), "FiberHome"),
-        (("nokia", "诺基亚", "alcatel lucent", "alcatel-lucent"), "Nokia"),
+        (("nokia", "诺基亚"), "Nokia"),
         (("extreme", "极进"), "Extreme Networks"),
         (("mikrotik", "mikro tik"), "MikroTik"),
         (("ubiquiti", "优比快", "ubnt"), "Ubiquiti"),
@@ -155,10 +125,19 @@ def normalize_vendor(value: Any) -> str:
         (("brocade", "博科"), "Brocade"),
         (("ciena", "思亚"), "Ciena"),
         (("alcatel", "阿尔卡特"), "Alcatel-Lucent Enterprise"),
+        (("启明星辰", "venustech"), "Venustech"),
+        (("绿盟", "nsfocus"), "NSFOCUS"),
+        (("天融信", "topsec"), "Topsec"),
+        (("奇安信", "qianxin"), "Qi An Xin"),
         (("allied", "allied telesis", "安奈特"), "Allied Telesis"),
         (("edgecore", "edge core", "智邦"), "Edgecore"),
         (("arista", "阿里斯塔"), "Arista"),
-        (("raisecom", "瑞斯康达"), "Raisecom"),
+        (("raisecom", "瑞斯康达", "瑞斯康达通信"), "Raisecom"),
+        (("迈普", "maipu"), "Maipu"),
+        (("迪普", "dptech"), "DPtech"),
+        (("神州数码", "dcn"), "DCN"),
+        (("锐捷", "ruijie"), "Ruijie"),
+        (("中兴", "zte"), "ZTE"),
         (("checkpoint", "check point", "检查点"), "Check Point"),
         (("paloalto", "palo alto", "palo alto networks", "帕洛阿尔托"), "Palo Alto"),
         (("sonicwall", "sonic wall"), "SonicWall"),
@@ -206,7 +185,7 @@ def classify_identity(
 
     observed_oid = normalize_oid(sys_object_id)
     descr = _text(sys_descr, 2048)
-    declared_vendor = normalize_vendor(vendor)
+    declared_vendor = normalize_vendor(vendor) or vendor_from_asset_platform(platform)
     observed_vendor = ""
     if observed_oid:
         observed_vendor = next(
@@ -308,7 +287,8 @@ def _vendor_from_sys_descr(sys_descr: Any) -> str:
         ("锐捷", "Ruijie"), ("中兴", "ZTE"), ("迈普", "Maipu"),
         ("迪普", "DPtech"), ("飞塔", "Fortinet"), ("山石", "Hillstone"),
         ("深信服", "Sangfor"), ("检查点", "Check Point"),
-        ("帕洛阿尔托", "Palo Alto"),
+        ("帕洛阿尔托", "Palo Alto"), ("启明星辰", "Venustech"),
+        ("绿盟", "NSFOCUS"), ("天融信", "Topsec"), ("奇安信", "Qi An Xin"),
     ):
         if needle in text:
             return canonical
@@ -316,6 +296,62 @@ def _vendor_from_sys_descr(sys_descr: Any) -> str:
     if normalized in set((*ASSET_NETWORK_VENDORS, *ASSET_SECURITY_VENDORS)):
         return normalize_asset_vendor(normalized)
     return ""
+
+
+async def _resolve_live_librenms_rule(
+    conn: Any,
+    *,
+    ip: str,
+    community: str,
+    port: int,
+    snmp_version: str,
+    identity: Mapping[str, Any],
+) -> dict[str, Any] | None:
+    """Resolve system identity first, then only plausible LibreNMS GET/WALK clauses."""
+    from services.snmp_service import _snmp_get_versioned, _snmp_walk_versioned
+
+    base = {
+        "vendor": "",
+        "platform": "",
+        "sys_object_id": identity.get("sys_object_id", ""),
+        "sys_descr": identity.get("sys_descr", ""),
+        "sys_name": identity.get("sys_name", ""),
+        "sys_contact": identity.get("sys_contact", ""),
+        "sys_location": identity.get("sys_location", ""),
+    }
+    best_system_rule = resolve_rule(conn, base)
+    best_score = int(((best_system_rule or {}).get("identity_match") or {}).get("score") or 0)
+    planned = identity_snmp_probe_plan(conn, identity, minimum_score=best_score)
+    if not planned:
+        return best_system_rule
+
+    asyncio_module = __import__("asyncio")
+    semaphore = asyncio_module.Semaphore(8)
+
+    async def read(item: Mapping[str, Any]) -> tuple[str, str, Any]:
+        field = str(item.get("field") or "")
+        oid = str(item.get("oid") or "")
+        async with semaphore:
+            try:
+                if field == "snmp_get":
+                    value = await _snmp_get_versioned(ip, community, oid, port, snmp_version)
+                    return field, oid, value
+                rows = await _snmp_walk_versioned(ip, community, oid, port, snmp_version)
+                values = [str(value) for _row_oid, value in rows if value is not None]
+                return field, oid, values
+            except Exception as exc:
+                logger.debug("LibreNMS identity %s %s failed: %s", field, oid, type(exc).__name__)
+                return field, oid, None
+
+    reads = await asyncio_module.gather(*(read(item) for item in planned))
+    enriched = dict(base)
+    enriched["snmp_get"] = {}
+    enriched["snmp_walk"] = {}
+    for field, oid, value in reads:
+        if value is not None:
+            enriched[field][oid] = value
+    resolved = resolve_rule(conn, enriched)
+    return resolved or best_system_rule
 
 
 def resolve_snmp_vendor_identity(
@@ -338,7 +374,7 @@ def resolve_snmp_vendor_identity(
     observed_oid = normalize_oid(sys_object_id)
     descr = _text(sys_descr, 2048)
     name = _text(sys_name, 256)
-    canonical_asset_vendor = normalize_asset_vendor(asset_vendor)
+    canonical_asset_vendor = normalize_asset_vendor(asset_vendor) or vendor_from_asset_platform(asset_platform)
     asset_platform_value = _text(asset_platform, 128)
     model_value = _text(asset_model, 256) or _model_from_descr(descr)
     observed_vendor = ""
@@ -470,6 +506,191 @@ def _metric_config(
         "discovery_source": "snmp_walk",
         "discovery_rule_version": RULE_VERSION,
     }
+
+
+def _cisco_cpu_window(metric_name: str) -> str:
+    token = str(metric_name or "").casefold()
+    return "1m" if "1min" in token else "5m"
+
+
+def _index_parts(suffix: str) -> list[int] | None:
+    token = str(suffix or "").strip().strip(".")
+    if not token or not re.fullmatch(r"\d+(?:\.\d+)*", token):
+        return None
+    return [int(part) for part in token.split(".")]
+
+
+def _cisco_sensor(
+    *,
+    source_id: str,
+    component_class: str,
+    measurement_type: str,
+    oid: str,
+    suffix: str,
+    sensor_name: str,
+    group_name: str,
+    unit: str,
+    poll_plan: Mapping[str, Any],
+    metadata: Mapping[str, Any] | None = None,
+    states: Mapping[str, str] | None = None,
+) -> dict[str, Any] | None:
+    """Build a per-instance Cisco inventory definition for the normal poller."""
+    scalar = bool(poll_plan.get("kind") == "get")
+    index = [] if scalar else _index_parts(suffix)
+    if index is None:
+        return None
+    info = dict(metadata or {})
+    info["poll_plan"] = dict(poll_plan)
+    return {
+        "source_type": "cisco_adapter",
+        "source_id": source_id,
+        "component_class": component_class,
+        "measurement_type": measurement_type,
+        "index": index,
+        "index_labels": {"index": suffix or "scalar"},
+        "oid": normalize_oid(oid),
+        "unit": unit,
+        "scale": 1.0,
+        "offset": 0.0,
+        "states": dict(states or {}),
+        "thresholds": {},
+        "metadata": info,
+        "sensor_name": sensor_name,
+        "entity_name": "",
+        "group_name": group_name,
+    }
+
+
+def _build_cisco_cpu_sensors(
+    rows_by_metric: Mapping[str, list[tuple[str, float]]],
+) -> list[dict[str, Any]]:
+    """Keep the preferred Cisco CPU source for each real sample window.
+
+    Enhanced/legacy five-minute columns are alternatives for one window, not
+    separate series. One-minute and five-minute sources remain independent.
+    The scalar avgBusy5 source is used only when no five-minute table exists.
+    """
+    selected_by_window: dict[str, tuple[str, str, list[tuple[str, float]]]] = {}
+    for metric_name, oid in _CISCO_CPU_COLUMNS:
+        rows = rows_by_metric.get(metric_name) or []
+        if not rows:
+            continue
+        window = _cisco_cpu_window(metric_name)
+        if window not in selected_by_window:
+            selected_by_window[window] = (metric_name, oid, rows)
+
+    sensors: list[dict[str, Any]] = []
+    for window, (metric_name, oid, rows) in sorted(selected_by_window.items()):
+        scalar = metric_name == "avgBusy5"
+        for suffix, _value in rows:
+            poll_plan = (
+                {"kind": "get", "oid": oid}
+                if scalar
+                else {"kind": "direct", "oid": oid, "index": suffix, "factor": 1.0, "offset": 0.0}
+            )
+            index_label = "scalar" if scalar else suffix
+            sensor = _cisco_sensor(
+                source_id=metric_name,
+                component_class="processor",
+                measurement_type="cpu_usage_percent",
+                oid=oid,
+                suffix="" if scalar else suffix,
+                sensor_name=f"CPU {window}" if scalar else f"CPU {window} {index_label}",
+                group_name="CPU",
+                unit="percent",
+                poll_plan=poll_plan,
+                metadata={"window": window, "metric_name": metric_name},
+            )
+            if sensor:
+                sensors.append(sensor)
+    return sensors
+
+
+def _build_cisco_memory_sensors(
+    family: str,
+    used_oid: str,
+    free_oid: str,
+    suffixes: list[str],
+) -> list[dict[str, Any]]:
+    """Create canonical used/total/ratio measurements for each paired pool."""
+    sensors: list[dict[str, Any]] = []
+    for suffix in suffixes:
+        used = {"oid": used_oid, "index": suffix, "factor": 1.0, "offset": 0.0}
+        free = {"oid": free_oid, "index": suffix, "factor": 1.0, "offset": 0.0}
+        measurements = (
+            (
+                "memory_used_bytes",
+                "bytes",
+                {"kind": "memory_component", "used": used},
+            ),
+            (
+                "memory_total_bytes",
+                "bytes",
+                {"kind": "memory_sum", "used": used, "free": free},
+            ),
+            (
+                "memory_usage_percent",
+                "percent",
+                {"kind": "memory_ratio", "used": used, "free": free},
+            ),
+        )
+        for measurement_type, unit, poll_plan in measurements:
+            sensor = _cisco_sensor(
+                source_id=family,
+                component_class="memory_pool",
+                measurement_type=measurement_type,
+                oid=used_oid,
+                suffix=suffix,
+                sensor_name=f"{family} memory pool {suffix}",
+                group_name="Memory",
+                unit=unit,
+                poll_plan=poll_plan,
+                metadata={"family": family, "pool_index": suffix},
+            )
+            if sensor:
+                sensors.append(sensor)
+    return sensors
+
+
+_CISCO_ENVIRONMENT_STATES = {
+    "1": "normal",
+    "2": "warning",
+    "3": "critical",
+    "4": "critical",
+    "5": "unknown",
+    "6": "critical",
+}
+
+
+def _build_cisco_environment_sensors(
+    metric_key: str,
+    oid: str,
+    rows: list[tuple[str, float]],
+) -> list[dict[str, Any]]:
+    is_temperature = metric_key == "temperature"
+    component_class = (
+        "temperature" if is_temperature else
+        "fan_state" if metric_key == "fan" else
+        "power_supply_state"
+    )
+    sensors: list[dict[str, Any]] = []
+    for suffix, _value in rows:
+        sensor = _cisco_sensor(
+            source_id=f"ciscoEnvMon{metric_key.title().replace('_', '')}",
+            component_class=component_class,
+            measurement_type="temperature_celsius" if is_temperature else "component_state",
+            oid=oid,
+            suffix=suffix,
+            sensor_name=f"{'Temperature' if is_temperature else 'Fan' if metric_key == 'fan' else 'Power supply'} {suffix}",
+            group_name="Environment",
+            unit="celsius" if is_temperature else "state",
+            poll_plan={"kind": "direct", "oid": oid, "index": suffix, "factor": 1.0, "offset": 0.0},
+            metadata={"metric_name": metric_key, "source_mib": "CISCO-ENVMON-MIB"},
+            states={} if is_temperature else _CISCO_ENVIRONMENT_STATES,
+        )
+        if sensor:
+            sensors.append(sensor)
+    return sensors
 
 
 def build_cisco_exporter_module(
@@ -764,7 +985,14 @@ async def _discover_static_platform_device(
     from services.snmp_service import DEFAULT_INTERFACE_CONFIG, VENDOR_OIDS, _snmp_get_versioned, _snmp_walk_versioned
 
     platform = str(identity.get("platform") or "").casefold()
-    platform_key = next((key for key in VENDOR_OIDS if key == platform), "")
+    platform_aliases = {
+        "raisecom": "raisecom_ros",
+        "raisecom-ros": "raisecom_ros",
+        "raisecom_ros": "raisecom_ros",
+    }
+    platform_key = platform_aliases.get(platform, platform)
+    if platform_key not in VENDOR_OIDS:
+        platform_key = ""
     if not platform_key:
         return None
     raw = VENDOR_OIDS[platform_key]
@@ -860,6 +1088,7 @@ async def _discover_librenms_rule(
 ) -> dict[str, Any]:
     """Probe numeric candidates parsed from a LibreNMS OS discovery rule."""
     from services.snmp_service import DEFAULT_INTERFACE_CONFIG, _snmp_get_versioned, _snmp_walk_versioned
+    from services.snmp_hardware_probe_service import probe_librenms_hardware
 
     selected: dict[str, dict[str, Any]] = {}
     for candidate in rule.get("oid_candidates") or []:
@@ -904,20 +1133,122 @@ async def _discover_librenms_rule(
         logger.debug("LibreNMS interface discovery failed for %s: %s", ip, exc)
 
     exporter = _build_catalog_exporter_module(selected)
+    hardware_probe = await probe_librenms_hardware(
+        ip,
+        community,
+        port,
+        rule=rule,
+        identity=identity,
+        version=snmp_version,
+    )
+    hardware_sensors = hardware_probe.get("sensors") or []
+    category_results = hardware_probe.get("category_results") or []
+    compatibility = rule.get("compatibility") or {}
+    compatibility_level = str(
+        compatibility.get("hardware_level") or compatibility.get("level") or "partial"
+    ).casefold()
+    support_rank = {"supported": 0, "partial": 1, "requires_adapter": 2, "unsupported": 3}
+    hardware_support_status = compatibility_level if compatibility_level in support_rank else "partial"
+    for category in category_results:
+        category_status = str(category.get("status") or "partial").casefold()
+        observed_level = (
+            "requires_adapter" if category_status == "unsupported"
+            else "partial" if category_status in {"partial", "failed"}
+            else "supported"
+        )
+        if support_rank[observed_level] > support_rank[hardware_support_status]:
+            hardware_support_status = observed_level
+    reason_by_status = {
+        "supported": "LibreNMS hardware definitions and probed categories are supported",
+        "partial": "LibreNMS hardware support is partial; inspect per-category discovery results",
+        "requires_adapter": "One or more LibreNMS hardware definitions need a native adapter or resolvable mapping",
+        "unsupported": "The LibreNMS hardware contract is not supported by the native probe",
+    }
+    hardware_support_reason = reason_by_status[hardware_support_status]
     return {
-        "status": "matched" if selected and interface else "partial" if selected or interface else "no_supported_oid",
-        "reason": f"LibreNMS rule {rule.get('os_key') or rule.get('id')} returned device rows" if selected else "LibreNMS rule matched but no candidate rows were returned",
+        "status": "matched" if (selected or hardware_sensors) and interface else "partial" if selected or interface or hardware_sensors else "no_supported_oid",
+        "reason": f"LibreNMS rule {rule.get('os_key') or rule.get('id')} returned {len(hardware_sensors)} hardware measurements" if hardware_sensors else f"LibreNMS rule {rule.get('os_key') or rule.get('id')} returned device rows" if selected else "LibreNMS rule matched but no candidate rows were returned",
         "rule_version": str(rule.get("source_commit") or RULE_VERSION),
         "rule_source": "librenms",
         "librenms_rule_id": rule.get("id") or "",
         "librenms_source_path": rule.get("source_path") or "",
-        "adapter": {"vendor": identity.get("vendor") or "", "mode": "librenms", "supported": True, "reason": "LibreNMS rule"},
+        "hardware_rule_version": str(rule.get("source_commit") or RULE_VERSION),
+        "hardware_rule_contract_version": str(rule.get("rule_contract_version") or ""),
+        "hardware_compatibility": rule.get("compatibility") or {},
+        "hardware_support_status": hardware_support_status,
+        "hardware_discovery_version": HARDWARE_DISCOVERY_VERSION,
+        "hardware_artifact_version": HARDWARE_ARTIFACT_VERSION,
+        "hardware_sensors": hardware_sensors,
+        "hardware_category_results": category_results,
+        "adapter": {
+            "vendor": identity.get("vendor") or "",
+            "mode": "librenms",
+            "supported": hardware_support_status in {"supported", "partial"},
+            "support_status": hardware_support_status,
+            "reason": hardware_support_reason,
+        },
         "identity": dict(identity),
         "metrics": selected,
         "interface": interface,
         "exporter_module": exporter,
         "observed_at": _now(),
     }
+
+
+def _merge_hardware_discovery(target: dict[str, Any], *sources: Mapping[str, Any] | None) -> dict[str, Any]:
+    """Merge independent hardware sources without dropping partial categories."""
+    sensors: list[dict[str, Any]] = []
+    seen_sensors: set[tuple[str, str, str, str, str]] = set()
+    categories: dict[tuple[str, str], dict[str, Any]] = {}
+    for source in (target, *sources):
+        if not isinstance(source, Mapping):
+            continue
+        for sensor_value in source.get("hardware_sensors") or source.get("sensors") or []:
+            if not isinstance(sensor_value, Mapping):
+                continue
+            sensor = dict(sensor_value)
+            index = json.dumps(sensor.get("index") or [], ensure_ascii=False, sort_keys=True, separators=(",", ":"))
+            metadata = sensor.get("metadata") if isinstance(sensor.get("metadata"), Mapping) else {}
+            series_variant = str(sensor.get("series_variant") or metadata.get("series_variant") or "")
+            if str(sensor.get("measurement_type") or "") == "cpu_usage_percent" and not series_variant:
+                series_variant = str(metadata.get("window") or "unknown")
+            key = (
+                str(sensor.get("source_type") or ""),
+                str(sensor.get("component_class") or ""),
+                str(sensor.get("measurement_type") or ""),
+                index,
+                series_variant,
+            )
+            if key in seen_sensors:
+                continue
+            seen_sensors.add(key)
+            sensors.append(sensor)
+        for category_value in source.get("hardware_category_results") or source.get("category_results") or []:
+            if not isinstance(category_value, Mapping):
+                continue
+            category = dict(category_value)
+            key = (str(category.get("source_type") or ""), str(category.get("component_class") or ""))
+            if key:
+                categories[key] = category
+        for key, value in (source.get("metrics") or {}).items():
+            target.setdefault("metrics", {}).setdefault(key, value)
+        if not target.get("interface") and source.get("interface"):
+            target["interface"] = source.get("interface")
+        if not target.get("exporter_module", {}).get("metrics") and source.get("exporter_module", {}).get("metrics"):
+            target["exporter_module"] = source.get("exporter_module")
+        for field in ("librenms_rule_id", "librenms_source_path", "hardware_rule_version", "hardware_rule_contract_version", "hardware_compatibility", "hardware_support_status", "hardware_discovery_version", "hardware_artifact_version"):
+            if not target.get(field) and source.get(field):
+                target[field] = source[field]
+
+    target["hardware_sensors"] = sensors
+    target["hardware_category_results"] = [categories[key] for key in sorted(categories)]
+    if sensors and target.get("status") in {"no_supported_oid", "identity_missing", "unsupported_vendor", "identified"}:
+        target["status"] = "partial"
+        target["reason"] = "Standard or LibreNMS hardware tables returned per-component measurements"
+    if sensors:
+        target["hardware_discovery_version"] = HARDWARE_DISCOVERY_VERSION
+        target.setdefault("hardware_artifact_version", HARDWARE_ARTIFACT_VERSION)
+    return target
 
 
 async def discover_device_oid_config(
@@ -957,6 +1288,58 @@ async def discover_device_oid_config(
         sys_name=values[0],
     )
     identity["uptime_raw"] = _text(values[3], 128)
+
+    # Resolve LibreNMS OS rules against observed SNMP fields before the legacy
+    # static vendor classifier rejects an unknown enterprise root. Asset
+    # metadata remains separate and an actual vendor conflict still blocks the
+    # vendor-specific rule.
+    librenms_rule = None
+    try:
+        await __import__("asyncio").to_thread(ensure_rules_available)
+        conn = get_db_connection()
+        try:
+            librenms_rule = await _resolve_live_librenms_rule(
+                conn,
+                ip=ip,
+                community=community,
+                port=port,
+                snmp_version=snmp_version,
+                identity=identity,
+            )
+        finally:
+            conn.close()
+    except Exception as exc:
+        logger.debug("LibreNMS rule resolution unavailable for %s: %s", ip, type(exc).__name__)
+
+    if librenms_rule and str(librenms_rule.get("vendor") or "").strip():
+        rule_vendor = normalize_vendor(librenms_rule.get("vendor"))
+        declared_vendor = normalize_vendor(vendor) or vendor_from_asset_platform(platform)
+        observed_vendor = normalize_vendor(identity.get("vendor"))
+        conflict_vendors = {
+            normalize_vendor(item.get("vendor"))
+            for item in (librenms_rule.get("identity_match") or {}).get("conflicts", [])
+            if isinstance(item, Mapping) and item.get("vendor")
+        }
+        if declared_vendor and rule_vendor and declared_vendor != rule_vendor:
+            identity["status"] = "conflict"
+            identity["reason"] = f"asset vendor {declared_vendor} conflicts with LibreNMS rule vendor {rule_vendor}"
+        elif observed_vendor and observed_vendor not in {"unknown", rule_vendor}:
+            identity["status"] = "conflict"
+            identity["reason"] = f"observed {observed_vendor} identity conflicts with LibreNMS rule vendor {rule_vendor}"
+        elif any(value and value != rule_vendor for value in conflict_vendors):
+            identity["status"] = "conflict"
+            identity["reason"] = "LibreNMS identity matched equally ranked rules from different vendors"
+        else:
+            identity["vendor"] = rule_vendor
+            identity["platform"] = _text(librenms_rule.get("platform"), 128) or identity.get("platform")
+            if identity.get("status") in {"unsupported_vendor", "identity_missing"}:
+                identity["status"] = "identified"
+                identity["reason"] = "LibreNMS OS detection rule matched observed SNMP identity"
+        identity["librenms_rule_id"] = librenms_rule.get("id") or ""
+        identity["librenms_os_key"] = librenms_rule.get("os_key") or ""
+        identity["identity_match"] = librenms_rule.get("identity_match") or {}
+        identity["identity_rule_compatibility"] = librenms_rule.get("compatibility") or {}
+
     result: dict[str, Any] = {
         "status": identity["status"],
         "reason": identity["reason"],
@@ -966,23 +1349,36 @@ async def discover_device_oid_config(
         "metrics": {},
         "interface": {},
         "exporter_module": {},
+        "hardware_sensors": [],
+        "hardware_category_results": [],
+        "hardware_rule_version": str((librenms_rule or {}).get("source_commit") or RULE_VERSION),
+        "hardware_rule_contract_version": str((librenms_rule or {}).get("rule_contract_version") or ""),
+        "hardware_discovery_version": HARDWARE_DISCOVERY_VERSION,
+        "hardware_artifact_version": HARDWARE_ARTIFACT_VERSION,
         "adapter": adapter_descriptor(identity.get("vendor"), catalog_available=False, static_available=False),
         "observed_at": _now(),
     }
-    if identity["status"] in {"unsupported_vendor", "identity_missing", "conflict"}:
-        return result
-    librenms_rule = None
+    from services.snmp_hardware_probe_service import probe_standard_hardware
+
+    standard_result: dict[str, Any] = {"sensors": [], "category_results": []}
     try:
-        await __import__("asyncio").to_thread(ensure_rules_available)
-        conn = get_db_connection()
-        try:
-            librenms_rule = resolve_rule(conn, identity)
-        finally:
-            conn.close()
+        standard_result = await probe_standard_hardware(
+            ip,
+            community,
+            port,
+            version=snmp_version,
+            cisco_iosxr=bool(
+                librenms_rule
+                and str(librenms_rule.get("os_key") or "").casefold() == "iosxr"
+                and str(identity.get("vendor") or "").casefold() == "cisco"
+                and identity.get("status") != "conflict"
+            ),
+        )
     except Exception as exc:
-        logger.debug("LibreNMS rule resolution unavailable for %s: %s", ip, type(exc).__name__)
-    if librenms_rule and str(identity.get("vendor") or "") != "Cisco":
-        librenms_result = await _discover_librenms_rule(
+        logger.debug("Standard MIB hardware discovery failed for %s: %s", ip, type(exc).__name__)
+    rule_result: dict[str, Any] | None = None
+    if librenms_rule and identity.get("status") != "conflict":
+        rule_result = await _discover_librenms_rule(
             ip,
             community,
             port,
@@ -990,8 +1386,8 @@ async def discover_device_oid_config(
             rule=librenms_rule,
             snmp_version=snmp_version,
         )
-        if librenms_result.get("metrics") or librenms_result.get("exporter_module"):
-            return librenms_result
+    if identity["status"] in {"unsupported_vendor", "identity_missing", "conflict"}:
+        return _merge_hardware_discovery(result, standard_result, rule_result)
     if str(identity.get("vendor") or "") != "Cisco":
         catalog_result = await _discover_catalog_device(
             ip,
@@ -1000,8 +1396,6 @@ async def discover_device_oid_config(
             identity=identity,
             snmp_version=snmp_version,
         )
-        if catalog_result.get("metrics") or catalog_result.get("exporter_module"):
-            return catalog_result
         static_result = await _discover_static_platform_device(
             ip,
             community,
@@ -1009,9 +1403,16 @@ async def discover_device_oid_config(
             identity=identity,
             snmp_version=snmp_version,
         )
-        return static_result or catalog_result
+        if rule_result and (rule_result.get("metrics") or rule_result.get("exporter_module") or rule_result.get("hardware_sensors")):
+            selected = rule_result
+        elif catalog_result.get("metrics") or catalog_result.get("exporter_module"):
+            selected = catalog_result
+        else:
+            selected = static_result or catalog_result
+        return _merge_hardware_discovery(selected, standard_result, rule_result, catalog_result, static_result)
 
     cpu_choice: dict[str, Any] | None = None
+    cpu_rows_by_metric: dict[str, list[tuple[str, float]]] = {}
     for metric_name, oid in _CISCO_CPU_COLUMNS:
         if oid.endswith(".0"):
             scalar = await _snmp_get_versioned(ip, community, oid, port, snmp_version)
@@ -1024,23 +1425,37 @@ async def discover_device_oid_config(
             rows = await _snmp_walk_versioned(ip, community, oid, port, snmp_version)
             valid = _numeric_rows(rows)
         if valid:
-            suffix, _ = valid[0]
-            selector = "" if oid.endswith(".0") else suffix
-            cpu_choice = {
-                "metric_name": metric_name,
-                "oid": oid,
-                "selector": selector,
-                "rows": len(valid),
-            }
-            result["metrics"]["cpu"] = _metric_config(
-                mode="direct_percent",
-                oid=oid,
-                selector=selector,
-                aggregation="max",
-            ) | {"metric_name": metric_name, "rows": len(valid)}
-            break
+            cpu_rows_by_metric[metric_name] = valid
+            if cpu_choice is None:
+                suffix, _ = valid[0]
+                selector = "" if oid.endswith(".0") else suffix
+                cpu_choice = {
+                    "metric_name": metric_name,
+                    "oid": oid,
+                    "selector": selector,
+                    "rows": len(valid),
+                }
+                result["metrics"]["cpu"] = _metric_config(
+                    mode="direct_percent",
+                    oid=oid,
+                    selector=selector,
+                    aggregation="max",
+                ) | {"metric_name": metric_name, "rows": len(valid)}
+
+    cisco_cpu_sensors = _build_cisco_cpu_sensors(cpu_rows_by_metric)
+    if cisco_cpu_sensors:
+        result["hardware_sensors"].extend(cisco_cpu_sensors)
+        result["hardware_category_results"].append({
+            "source_type": "cisco_adapter",
+            "component_class": "processor",
+            "status": "success",
+            "coverage_complete": True,
+            "reason_code": "cisco_cpu_rows",
+            "reason": "Cisco CPU rows were discovered for each supported measurement window",
+        })
 
     memory_choice: dict[str, Any] | None = None
+    cisco_memory_sensors: list[dict[str, Any]] = []
     for family, used_oid, free_oid in _CISCO_MEMORY_PAIRS:
         used_rows = await _snmp_walk_versioned(ip, community, used_oid, port, snmp_version)
         free_rows = await _snmp_walk_versioned(ip, community, free_oid, port, snmp_version)
@@ -1054,7 +1469,19 @@ async def discover_device_oid_config(
                 free_oid=free_oid,
                 selector=selector,
             ) | {"family": family, "rows": len(selectors)}
+            cisco_memory_sensors = _build_cisco_memory_sensors(family, used_oid, free_oid, selectors)
             break
+
+    if cisco_memory_sensors:
+        result["hardware_sensors"].extend(cisco_memory_sensors)
+        result["hardware_category_results"].append({
+            "source_type": "cisco_adapter",
+            "component_class": "memory_pool",
+            "status": "success",
+            "coverage_complete": True,
+            "reason_code": "cisco_memory_pools",
+            "reason": "Cisco used/free memory columns returned matched pool indexes",
+        })
 
     sensor_candidates = {
         "temperature": ("1.3.6.1.4.1.9.9.13.1.3.1.3", "direct_value", "°C"),
@@ -1062,6 +1489,7 @@ async def discover_device_oid_config(
         "power_supply": ("1.3.6.1.4.1.9.9.13.1.5.1.3", "status_code", "bool"),
     }
     sensor_definitions: dict[str, dict[str, Any]] = {}
+    cisco_environment_sensors: list[dict[str, Any]] = []
     for metric_key, (oid, mode, unit) in sensor_candidates.items():
         sensor_rows = await _snmp_walk_versioned(ip, community, oid, port, snmp_version)
         valid_sensor_rows = _numeric_rows(sensor_rows)
@@ -1074,6 +1502,22 @@ async def discover_device_oid_config(
                 unit=unit,
                 aggregation="max" if metric_key == "temperature" else "first",
             ) | {"rows": len(valid_sensor_rows)}
+            cisco_environment_sensors.extend(
+                _build_cisco_environment_sensors(metric_key, oid, valid_sensor_rows)
+            )
+
+    if cisco_environment_sensors:
+        result["hardware_sensors"].extend(cisco_environment_sensors)
+        for component_class in sorted({str(item["component_class"]) for item in cisco_environment_sensors}):
+            count = sum(1 for item in cisco_environment_sensors if item["component_class"] == component_class)
+            result["hardware_category_results"].append({
+                "source_type": "cisco_adapter",
+                "component_class": component_class,
+                "status": "success",
+                "coverage_complete": True,
+                "reason_code": "cisco_environment_rows",
+                "reason": f"Cisco environmental table returned {count} {component_class} rows",
+            })
     result["metrics"].update(sensor_definitions)
 
     try:
@@ -1108,7 +1552,7 @@ async def discover_device_oid_config(
     else:
         result["status"] = "no_supported_oid"
         result["reason"] = "Cisco identity matched but no supported CPU, memory, or interface rows were returned"
-    return result
+    return _merge_hardware_discovery(result, standard_result, rule_result)
 
 
 def persist_discovery(device_id: str, payload: Mapping[str, Any]) -> None:
@@ -1164,6 +1608,37 @@ def persist_discovery(device_id: str, payload: Mapping[str, Any]) -> None:
             # Keep inventory and discovery projections in the same transaction
             # so the Asset Management hostname cannot lag behind SNMP data.
             hostname_sync_result = sync_device_hostname_metadata(conn, str(device_id), raw_sys_name)
+
+        hardware_sensors = payload.get("hardware_sensors") or []
+        hardware_categories = payload.get("hardware_category_results") or []
+        if hardware_categories:
+            import hashlib
+
+            from services.snmp_hardware_inventory_service import upsert_discovery_run
+
+            observed_at = payload.get("observed_at") or _now()
+            run_payload = {
+                "device_id": str(device_id),
+                "observed_at": str(observed_at),
+                "rule_version": str(payload.get("hardware_rule_version") or payload.get("rule_version") or RULE_VERSION),
+                "sensors": hardware_sensors,
+                "categories": hardware_categories,
+            }
+            run_id = hashlib.sha256(
+                json.dumps(run_payload, ensure_ascii=False, sort_keys=True, default=str, separators=(",", ":")).encode("utf-8")
+            ).hexdigest()
+            upsert_discovery_run(
+                conn,
+                str(device_id),
+                run_id,
+                str(payload.get("hardware_rule_version") or payload.get("rule_version") or RULE_VERSION),
+                hardware_sensors,
+                hardware_categories,
+                observed_at,
+                discovery_version=str(payload.get("hardware_discovery_version") or HARDWARE_DISCOVERY_VERSION),
+                artifact_version=str(payload.get("hardware_artifact_version") or ""),
+                started_at=payload.get("started_at") or observed_at,
+            )
         conn.commit()
         with _discovery_cache_lock:
             _discovery_cache.pop(str(device_id), None)

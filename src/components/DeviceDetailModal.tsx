@@ -889,6 +889,14 @@ const DeviceDetailModal: React.FC<DeviceDetailModalProps> = ({
         <div className="shrink-0 border-t border-black/5 bg-black/[0.01] px-5 py-4 sm:px-6">
           <div className="flex flex-col gap-3 xl:flex-row xl:items-center xl:justify-between">
             <div className="flex flex-wrap gap-3">
+              <a
+                href={`/monitor/grafana?asset_id=${encodeURIComponent(viewingDevice.asset_id || viewingDevice.id)}`}
+                className="flex items-center gap-2 rounded-xl border border-cyan-500/20 bg-cyan-50 px-6 py-2 text-sm font-medium text-cyan-700 transition-all hover:bg-cyan-100 dark:bg-cyan-950/30 dark:text-cyan-300"
+                title={language === 'zh' ? '打开这台设备的 Grafana 硬件详情' : 'Open this device hardware detail in Grafana'}
+              >
+                <Activity size={16} />
+                {language === 'zh' ? 'Grafana 设备详情' : 'Grafana Device Details'}
+              </a>
               <button onClick={() => onTestConnection(viewingDevice, 'quick')} disabled={isTestingConnection} className="flex items-center gap-2 rounded-xl bg-blue-50 px-6 py-2 text-sm font-medium text-blue-600 transition-all hover:bg-blue-100 disabled:opacity-50"><Activity size={16} />{isTestingConnection ? (language === 'zh' ? '检测中…' : 'Testing...') : (language === 'zh' ? '快速连通性' : 'Reachability Check')}</button>
               <button onClick={() => onTestConnection(viewingDevice, 'deep')} disabled={isTestingConnection} className="flex items-center gap-2 rounded-xl bg-violet-50 px-6 py-2 text-sm font-medium text-violet-700 transition-all hover:bg-violet-100 disabled:opacity-50"><ShieldCheck size={16} />{isTestingConnection ? (language === 'zh' ? '检测中…' : 'Testing...') : (language === 'zh' ? 'SSH 登录校验' : 'SSH Login Check')}</button>
               <button onClick={() => onSnmpTest(viewingDevice.id)} disabled={snmpTestingId === viewingDevice.id} className="flex items-center gap-2 rounded-xl bg-emerald-50 px-6 py-2 text-sm font-medium text-emerald-600 transition-all hover:bg-emerald-100 disabled:opacity-50"><Activity size={16} />{snmpTestingId === viewingDevice.id ? (language === 'zh' ? '检测中…' : 'Testing...') : (language === 'zh' ? 'SNMP 检测' : 'SNMP Test')}</button>

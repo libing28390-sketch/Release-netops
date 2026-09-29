@@ -2276,9 +2276,9 @@ def collect_operational_data(
         # Optical DOM is a dedicated SNMP-only operation. Resolve it before
         # command mapping or SSH credential lookup so unsupported vendors and
         # devices without SNMP credentials can never fall back to CLI.
-        from services.snmp_optical_service import collect_optical_snmp
+        from services.snmp_librenms_optical_service import collect_librenms_optical
 
-        collected = collect_optical_snmp(device_info)
+        collected = collect_librenms_optical(device_info)
         optical_success = bool(collected.get('success'))
         optical_records = collected.get('records') or []
         error_code = str(collected.get('error_code') or '')

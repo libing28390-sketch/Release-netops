@@ -147,7 +147,21 @@ const GrafanaDashboardPage: React.FC<GrafanaDashboardPageProps> = ({ language })
   const navigate = useNavigate();
   const containerRef = useRef<HTMLDivElement>(null);
 
-  const [selectedDashboard, setSelectedDashboard] = useState(GRAFANA_DASHBOARDS[0].uid);
+  const [dashboardContext] = useState(() => {
+    const query = new URLSearchParams(window.location.search);
+    const assetId = (query.get('asset_id') || query.get('var-asset_id') || '').trim();
+    const requestedDashboard = query.get('dashboard');
+    const validDashboard = GRAFANA_DASHBOARDS.some(item => item.uid === requestedDashboard);
+    return {
+      assetId,
+      dashboard: validDashboard
+        ? requestedDashboard!
+        : assetId
+          ? 'nexora-network-device'
+          : GRAFANA_DASHBOARDS[0].uid,
+    };
+  });
+  const [selectedDashboard, setSelectedDashboard] = useState(dashboardContext.dashboard);
   const [frameKey, setFrameKey] = useState(0);
   const [loaded, setLoaded] = useState(false);
   const [status, setStatus] = useState<GrafanaStatus>('checking');
@@ -247,9 +261,12 @@ const GrafanaDashboardPage: React.FC<GrafanaDashboardPageProps> = ({ language })
       params.set('to', 'now');
     }
     params.set('theme', theme);
+    if (selectedDashboard === 'nexora-network-device' && dashboardContext.assetId) {
+      params.set('var-asset_id', dashboardContext.assetId);
+    }
 
     return `/grafana/d/${selectedDashboard}/${selectedDashboard}?${params.toString()}&kiosk`;
-  }, [selectedDashboard, theme, timeRange, refreshRate]);
+  }, [selectedDashboard, theme, timeRange, refreshRate, dashboardContext.assetId]);
 
   const statusText =
     status === 'checking'

@@ -2,6 +2,7 @@ from datetime import datetime, timedelta, timezone
 
 import database
 from api import grafana_metrics
+from services.snmp_hardware_inventory_service import upsert_discovery_run
 
 
 class _Result:
@@ -201,3 +202,73 @@ def test_metrics_export_runs_aggregate_queries_on_postgres(monkeypatch, isolated
     assert 'nexora_alert_open_events{severity="major"} 1' in body
     assert 'nexora_alert_delivery_attempts_24h{channel="email",status="succeeded"} 1' in body
     assert 'nexora_alert_outbox_items{status="pending"} 1' in body
+
+
+def test_metrics_export_includes_normalized_hardware_and_capability_without_addresses(monkeypatch, isolated_db):
+    from database.migrations.m0260_snmp_hardware_inventory import upgrade
+
+    conn = database.get_db_connection()
+    upgrade(conn.cursor(), use_pg=True)
+    conn.execute(
+        """
+        INSERT INTO devices (id, hostname, tenant_id, asset_id, platform, vendor, role)
+        VALUES (?, ?, ?, ?, ?, ?, ?)
+        ON CONFLICT (id) DO NOTHING
+        """,
+        ("grafana-hardware-device", "router-hw-01", "tenant-hw", "asset-hw-01", "example_os", "Example", "switch"),
+    )
+    sampled_at = datetime.now(timezone.utc)
+    outcome = upsert_discovery_run(
+        conn,
+        "grafana-hardware-device",
+        "grafana-hardware-run-1",
+        "rules-abc123",
+        [{
+            "source_type": "standard_mib",
+            "source_id": "HOST-RESOURCES-MIB::hrProcessorLoad",
+            "component_class": "processor",
+            "measurement_type": "cpu_usage_percent",
+            "index": [1],
+            "oid": "1.3.6.1.2.1.25.3.3.1.2",
+            "unit": "percent",
+            "sensor_name": "CPU 1",
+            "group_name": "processor",
+            "value": 26.5,
+            "raw_value": "26.5",
+            "quality": "good",
+            "sample_at": sampled_at,
+            "metadata": {"window": "unknown"},
+        }],
+        [{
+            "source_type": "standard_mib",
+            "component_class": "processor",
+            "status": "success",
+            "coverage_complete": True,
+        }],
+        sampled_at,
+        discovery_version="nexora.hardware.discovery.v1",
+        artifact_version="nexora.hardware.direct-poll.v1",
+    )
+    assert outcome["results"][0]["active_sensor_count"] == 1
+    conn.commit()
+    conn.close()
+    monkeypatch.setattr(grafana_metrics, "get_db_connection", database.get_db_connection)
+
+    body = grafana_metrics.grafana_hardware_metrics().body.decode("utf-8")
+
+    assert 'nexora_hw_cpu_usage_percent{asset_id="asset-hw-01",component_class="processor",device_id="grafana-hardware-device"' in body
+    assert 'hostname="router-hw-01"' in body
+    assert 'window="unknown"' in body
+    assert 'nexora_hw_sensor_quality{' in body and 'quality="good"' in body
+    assert 'nexora_hw_capability_status{' in body and 'status="success"' in body
+    assert 'nexora_hw_capability_active_sensor_count{' in body and '} 1' in body
+    assert 'nexora_hw_capability_last_discovered_count{' in body and '} 1' in body
+    assert 'artifact_version="nexora.hardware.direct-poll.v1"' in body
+    assert 'nexora_hw_capability_info{' in body
+    assert 'nexora_hw_capability_last_success_timestamp_seconds{' in body
+    assert 'nexora_hw_sensor_render_errors 0' in body
+    assert "192.0.2." not in body
+    assert 'ip_address=' not in body
+
+    aggregate_body = grafana_metrics.grafana_metrics().body.decode("utf-8")
+    assert "nexora_hw_" not in aggregate_body

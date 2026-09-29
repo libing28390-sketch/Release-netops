@@ -1,16 +1,16 @@
-"""Internal, aggregate-only Prometheus metrics for Grafana dashboards.
+"""Internal aggregate and per-device hardware Prometheus metrics for Grafana.
 
-This endpoint is intended to be reachable only from the internal monitoring
-network.  It deliberately exports no tenant, customer, target, device, IP,
-alert-title, recipient, or error-text labels.  The outbound series describe
-aggregate probe quality and probe execution timing; they are not per-circuit
-WAN SLA measurements.
+The aggregate endpoint avoids device-level series. Hardware inventory is
+exported from a separate route keyed by stable asset/device IDs. Neither route
+exports device addresses, raw sysDescr, alert text, recipient data, credentials,
+or raw errors; both are intended for the internal monitoring network only.
 """
 
 from __future__ import annotations
 
 import logging
 import math
+import os
 from datetime import datetime, timedelta, timezone
 from typing import Any
 
@@ -667,6 +667,132 @@ def _collect_delivery(lines: list[str], conn: Any, cutoff_24h: str) -> None:
             lines.append(_metric_line(outbox_name, int(_numeric(_row_value(row, "item_count", 1, 0))), {"status": status}))
 
 
+def _hardware_stale_after_seconds(sensor: dict[str, Any]) -> float:
+    metadata = sensor.get("metadata") if isinstance(sensor.get("metadata"), dict) else {}
+    interval = _numeric(metadata.get("poll_interval_seconds"), 60.0)
+    configured = _numeric(os.environ.get("SNMP_HARDWARE_STALE_SECONDS"), 180.0)
+    return max(3.0 * max(1.0, interval), max(180.0, configured))
+
+
+def _collect_hardware(lines: list[str], conn: Any, now: datetime) -> None:
+    """Expose current normalized hardware samples and per-category capability."""
+    from services.snmp_hardware_inventory_service import (
+        list_hardware_metric_rows,
+        render_hardware_metrics,
+    )
+
+    rows = list_hardware_metric_rows(conn)
+
+    by_device: dict[str, tuple[dict[str, Any], list[dict[str, Any]]]] = {}
+    for row in rows:
+        device_id = str(row.get("device_id") or "")
+        if not device_id:
+            continue
+        labels = {
+            "tenant_id": row.get("tenant_id"),
+            "asset_id": row.get("asset_id") or device_id,
+            "device_id": device_id,
+            "hostname": row.get("hostname"),
+            "site_name": row.get("site_name"),
+            "vendor": row.get("vendor"),
+            "platform": row.get("platform"),
+            "role": row.get("role"),
+        }
+        if device_id not in by_device:
+            by_device[device_id] = (labels, [])
+        sensor = dict(row)
+        last_success = _parse_utc(sensor.get("last_success"))
+        if str(sensor.get("last_quality") or "").casefold() == "good" and last_success is not None:
+            if (now - last_success).total_seconds() > _hardware_stale_after_seconds(sensor):
+                sensor["last_quality"] = "stale"
+        by_device[device_id][1].append(sensor)
+
+    seen_headers: set[tuple[str, str]] = set()
+    render_errors = 0
+    for device_id in sorted(by_device):
+        labels, sensors = by_device[device_id]
+        try:
+            rendered = render_hardware_metrics(sensors, labels)
+        except Exception as exc:
+            logger.warning("Grafana hardware renderer failed for device %s (%s)", device_id, type(exc).__name__)
+            render_errors += 1
+            continue
+        for line in rendered.splitlines():
+            if line.startswith("# HELP ") or line.startswith("# TYPE "):
+                parts = line.split(" ", 3)
+                key = (parts[1], parts[2]) if len(parts) >= 3 else (line, "")
+                if key in seen_headers:
+                    continue
+                seen_headers.add(key)
+            lines.append(line)
+
+    capability_rows = _safe_query(
+        conn,
+        """
+        SELECT c.tenant_id, c.asset_id, c.device_id, d.hostname,
+               COALESCE(NULLIF(s.site_name, ''), NULLIF(s.site_code, ''), NULLIF(d.site, ''), '') AS site_name,
+               d.vendor, d.platform, d.role, c.source_type, c.component_class,
+               c.last_status, c.coverage_complete, c.active_sensor_count,
+               c.last_discovered_count, c.reason, c.reason_code, c.rule_version,
+               c.discovery_version, c.artifact_version, c.last_success_at
+          FROM snmp_hardware_capabilities c
+          JOIN devices d ON d.id = c.device_id
+          LEFT JOIN physical_assets pa ON pa.id = d.asset_id
+          LEFT JOIN sites s ON s.id = COALESCE(NULLIF(pa.site_id, ''), NULLIF(d.site_id, ''))
+         ORDER BY c.device_id, c.component_class, c.source_type
+        """,
+    )
+    if capability_rows is None:
+        raise RuntimeError("hardware capability inventory query failed")
+    capability_name = "nexora_hw_capability_status"
+    _append_header(lines, capability_name, "Last discovery status for one hardware source and component category.")
+    active_count_name = "nexora_hw_capability_active_sensor_count"
+    _append_header(lines, active_count_name, "Number of currently active discovered sensors in one hardware category.")
+    discovered_count_name = "nexora_hw_capability_last_discovered_count"
+    _append_header(lines, discovered_count_name, "Number of sensors in the latest accepted hardware discovery for one category.")
+    capability_info_name = "nexora_hw_capability_info"
+    _append_header(lines, capability_info_name, "Hardware capability versions and the last discovery reason code.")
+    capability_success_name = "nexora_hw_capability_last_success_timestamp_seconds"
+    _append_header(lines, capability_success_name, "Unix timestamp of the last complete successful hardware category discovery.")
+    allowed_statuses = {"success", "partial", "failed", "unsupported", "not_found"}
+    for row in capability_rows:
+        status = str(_row_value(row, "last_status", 10, "unknown") or "unknown").casefold()
+        if status not in allowed_statuses:
+            status = "unknown"
+        labels = {
+            "tenant_id": _row_value(row, "tenant_id", 0),
+            "asset_id": _row_value(row, "asset_id", 1) or _row_value(row, "device_id", 2),
+            "device_id": _row_value(row, "device_id", 2),
+            "hostname": _row_value(row, "hostname", 3),
+            "site_name": _row_value(row, "site_name", 4),
+            "vendor": _row_value(row, "vendor", 5),
+            "platform": _row_value(row, "platform", 6),
+            "role": _row_value(row, "role", 7),
+            "source_type": _row_value(row, "source_type", 8),
+            "component_class": _row_value(row, "component_class", 9),
+            "status": status,
+            "coverage_complete": str(bool(_row_value(row, "coverage_complete", 11))).lower(),
+            "reason": str(_row_value(row, "reason", 14, "") or "")[:300],
+            "reason_code": str(_row_value(row, "reason_code", 15, "") or ""),
+            "rule_version": str(_row_value(row, "rule_version", 16, "") or ""),
+            "discovery_version": str(_row_value(row, "discovery_version", 17, "") or ""),
+            "artifact_version": str(_row_value(row, "artifact_version", 18, "") or ""),
+        }
+        lines.append(_metric_line(capability_name, 1, labels))
+        active_count = max(0, int(_numeric(_row_value(row, "active_sensor_count", 12, 0))))
+        discovered_count = max(0, int(_numeric(_row_value(row, "last_discovered_count", 13, 0))))
+        lines.append(_metric_line(active_count_name, active_count, labels))
+        lines.append(_metric_line(discovered_count_name, discovered_count, labels))
+        lines.append(_metric_line(capability_info_name, 1, labels))
+        successful_at = _parse_utc(_row_value(row, "last_success_at", 19))
+        if successful_at is not None:
+            lines.append(_metric_line(capability_success_name, successful_at.timestamp(), labels))
+
+    render_error_name = "nexora_hw_sensor_render_errors"
+    _append_header(lines, render_error_name, "Number of devices whose hardware metrics could not be rendered during this scrape.")
+    lines.append(_metric_line(render_error_name, render_errors))
+
+
 @router.get("/metrics", include_in_schema=False)
 def grafana_metrics() -> Response:
     """Return aggregate-only Prometheus text for the internal Grafana scraper."""
@@ -710,4 +836,32 @@ def grafana_metrics() -> Response:
     return Response(content=body, media_type="text/plain; version=0.0.4; charset=utf-8")
 
 
-__all__ = ["router", "grafana_metrics"]
+@router.get("/hardware-metrics", include_in_schema=False)
+def grafana_hardware_metrics() -> Response:
+    """Export per-device hardware series separately from low-cardinality API metrics."""
+
+    lines: list[str] = []
+    conn = None
+    try:
+        conn = get_db_connection()
+        conn.execute("SELECT 1").fetchone()
+        _collect_hardware(lines, conn, datetime.now(timezone.utc))
+    except Exception as exc:
+        logger.warning("Grafana hardware metrics unavailable (%s)", type(exc).__name__)
+        return Response(
+            content="hardware metrics temporarily unavailable\n",
+            status_code=503,
+            media_type="text/plain; charset=utf-8",
+        )
+    finally:
+        if conn is not None:
+            try:
+                conn.close()
+            except Exception:
+                pass
+
+    body = "\n".join(line for line in lines if line) + ("\n" if lines else "")
+    return Response(content=body, media_type="text/plain; version=0.0.4; charset=utf-8")
+
+
+__all__ = ["router", "grafana_metrics", "grafana_hardware_metrics"]

@@ -1,0 +1,47 @@
+# Focused excerpt of LibreNMS resources/definitions/os_discovery/vrp.yaml.
+modules:
+  processors:
+    data:
+      - oid: HUAWEI-ENTITY-EXTENT-MIB::hwEntityStateEntry
+        value: HUAWEI-ENTITY-EXTENT-MIB::hwEntityCpuUsage
+        num_oid: .1.3.6.1.4.1.2011.5.25.31.1.1.1.1.5.{{ $index }}
+        descr: '{{ ENTITY-MIB::entPhysicalName }} Processor'
+        skip_values:
+          - oid: HUAWEI-ENTITY-EXTENT-MIB::hwEntityOperStatus
+            op: '!='
+            value: 3
+          - oid: HUAWEI-ENTITY-EXTENT-MIB::hwEntityCpuUsageThreshold
+            op: '='
+            value: 0
+  mempools:
+    data:
+      - oid: HUAWEI-ENTITY-EXTENT-MIB::hwEntityStateEntry
+        used: HUAWEI-ENTITY-EXTENT-MIB::hwEntityMemoryUsage
+        free: HUAWEI-ENTITY-EXTENT-MIB::hwEntityMemoryFree
+        total: HUAWEI-ENTITY-EXTENT-MIB::hwEntityMemorySize
+        percent_used: HUAWEI-ENTITY-EXTENT-MIB::hwEntityMemoryUsage
+        num_oid: .1.3.6.1.4.1.2011.5.25.31.1.1.1.1.6.{{ $index }}
+        descr: '{{ ENTITY-MIB::entPhysicalName }} Memory'
+        index: '{{ $index }}'
+        units: 1024
+  sensors:
+    temperature:
+      data:
+        - oid: HUAWEI-ENTITY-EXTENT-MIB::hwOpticalModuleInfoTable
+          value: HUAWEI-ENTITY-EXTENT-MIB::hwEntityOpticalTemperature
+          num_oid: .1.3.6.1.4.1.2011.5.25.31.1.1.3.1.5.{{ $index }}
+          descr: '{{ ENTITY-MIB::entPhysicalName }}'
+          index: '{{ $index }}'
+          entPhysicalIndex: '{{ $index }}'
+          entPhysicalIndex_measured: ports
+          group: transceiver
+          skip_values:
+            - oid: HUAWEI-ENTITY-EXTENT-MIB::hwEntityOpticalMode
+              op: '='
+              value: '1'
+            - oid: HUAWEI-ENTITY-EXTENT-MIB::hwEntityOpticalTemperature
+              op: '>='
+              value: '2147483646'
+          warn_limit: HUAWEI-ENTITY-EXTENT-MIB::hwEntityTempMinorAlmThreshold
+          high_limit: HUAWEI-ENTITY-EXTENT-MIB::hwEntityTempMajorAlmThreshold
+          divisor: 1

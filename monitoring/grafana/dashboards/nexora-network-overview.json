@@ -583,11 +583,11 @@
       },
       "targets": [
         {
-          "expr": "count(count by (instance) ((avg by (hostname, site_name, instance, vendor) (cpmCPUTotal1minRev{job=\"network_snmp\",site_name=~\"$site\",vendor=~\"$vendor\",role=~\"$role\",hostname=~\"$device\"} or hh3cEntityExtCpuUsage{job=\"network_snmp\",site_name=~\"$site\",vendor=~\"$vendor\",role=~\"$role\",hostname=~\"$device\"} or hwEntityCpuUsage{job=\"network_snmp\",site_name=~\"$site\",vendor=~\"$vendor\",role=~\"$role\",hostname=~\"$device\"} or ruijieCpuCostRate{job=\"network_snmp\",site_name=~\"$site\",vendor=~\"$vendor\",role=~\"$role\",hostname=~\"$device\"} or jnxOperatingCPU{job=\"network_snmp\",site_name=~\"$site\",vendor=~\"$vendor\",role=~\"$role\",hostname=~\"$device\"} or fnSysCpuUsage{job=\"network_snmp\",site_name=~\"$site\",vendor=~\"$vendor\",role=~\"$role\",hostname=~\"$device\"} or zteCpuRate{job=\"network_snmp\",site_name=~\"$site\",vendor=~\"$vendor\",role=~\"$role\",hostname=~\"$device\"} or mpCpuUtilization5Min{job=\"network_snmp\",site_name=~\"$site\",vendor=~\"$vendor\",role=~\"$role\",hostname=~\"$device\"} or dptechCpuUsage{job=\"network_snmp\",site_name=~\"$site\",vendor=~\"$vendor\",role=~\"$role\",hostname=~\"$device\"} or hillstoneCPUUtilization{job=\"network_snmp\",site_name=~\"$site\",vendor=~\"$vendor\",role=~\"$role\",hostname=~\"$device\"} or sangforCpuUsage{job=\"network_snmp\",site_name=~\"$site\",vendor=~\"$vendor\",role=~\"$role\",hostname=~\"$device\"} or dcnCpuUsage{job=\"network_snmp\",site_name=~\"$site\",vendor=~\"$vendor\",role=~\"$role\",hostname=~\"$device\"})) and on(instance) (up{job=\"network_snmp\",site_name=~\"$site\",vendor=~\"$vendor\",role=~\"$role\",hostname=~\"$device\"} == 1))) or on() ((count(count by (instance) (up{job=\"network_snmp\",site_name=~\"$site\",vendor=~\"$vendor\",role=~\"$role\",hostname=~\"$device\"} == 1)) > 0) * 0)",
+          "expr": "count(count by (asset_id) ((nexora_hw_cpu_usage_percent{asset_id!=\"\",site_name=~\"$site\",vendor=~\"$vendor\",role=~\"$role\",hostname=~\"$device\"}) and on(asset_id) (up{job=\"network_snmp\",site_name=~\"$site\",vendor=~\"$vendor\",role=~\"$role\",hostname=~\"$device\",asset_id!=\"\"} == 1))) or on() ((count(count by (instance) (up{job=\"network_snmp\",site_name=~\"$site\",vendor=~\"$vendor\",role=~\"$role\",hostname=~\"$device\"} == 1)) > 0) * 0)",
           "refId": "A"
         }
       ],
-      "description": "当前在线设备中，至少采集到一条 CPU 使用率指标的设备数量。该数量不是 CPU 使用率；在线设备总数见上方全网在线数。"
+      "description": "当前在线设备中至少采集到一条规范 CPU 指标的设备数量。不同 window 作为独立样本保留，设备只按资产 ID 计数一次。"
     },
     {
       "id": 10,
@@ -638,11 +638,11 @@
       },
       "targets": [
         {
-          "expr": "count(count by (instance) ((avg by (hostname, site_name, instance, vendor) (hh3cEntityExtMemUsage{job=\"network_snmp\",site_name=~\"$site\",vendor=~\"$vendor\",role=~\"$role\",hostname=~\"$device\"} or hwEntityMemUsage{job=\"network_snmp\",site_name=~\"$site\",vendor=~\"$vendor\",role=~\"$role\",hostname=~\"$device\"} or (100 * ciscoMemoryPoolUsed{job=\"network_snmp\",site_name=~\"$site\",vendor=~\"$vendor\",role=~\"$role\",hostname=~\"$device\"} / (ciscoMemoryPoolUsed{job=\"network_snmp\",site_name=~\"$site\",vendor=~\"$vendor\",role=~\"$role\",hostname=~\"$device\"} + ciscoMemoryPoolFree{job=\"network_snmp\",site_name=~\"$site\",vendor=~\"$vendor\",role=~\"$role\",hostname=~\"$device\"})) or ruijieMemoryPoolCurrentUtilization{job=\"network_snmp\",site_name=~\"$site\",vendor=~\"$vendor\",role=~\"$role\",hostname=~\"$device\"} or jnxOperatingBuffer{job=\"network_snmp\",site_name=~\"$site\",vendor=~\"$vendor\",role=~\"$role\",hostname=~\"$device\"} or fnSysMemUsage{job=\"network_snmp\",site_name=~\"$site\",vendor=~\"$vendor\",role=~\"$role\",hostname=~\"$device\"} or zteMemRate{job=\"network_snmp\",site_name=~\"$site\",vendor=~\"$vendor\",role=~\"$role\",hostname=~\"$device\"} or mpMemoryUtilization{job=\"network_snmp\",site_name=~\"$site\",vendor=~\"$vendor\",role=~\"$role\",hostname=~\"$device\"} or dptechMemUsage{job=\"network_snmp\",site_name=~\"$site\",vendor=~\"$vendor\",role=~\"$role\",hostname=~\"$device\"} or hillstoneMemoryUtilization{job=\"network_snmp\",site_name=~\"$site\",vendor=~\"$vendor\",role=~\"$role\",hostname=~\"$device\"} or sangforMemUsage{job=\"network_snmp\",site_name=~\"$site\",vendor=~\"$vendor\",role=~\"$role\",hostname=~\"$device\"} or dcnMemUsage{job=\"network_snmp\",site_name=~\"$site\",vendor=~\"$vendor\",role=~\"$role\",hostname=~\"$device\"})) and on(instance) (up{job=\"network_snmp\",site_name=~\"$site\",vendor=~\"$vendor\",role=~\"$role\",hostname=~\"$device\"} == 1))) or on() ((count(count by (instance) (up{job=\"network_snmp\",site_name=~\"$site\",vendor=~\"$vendor\",role=~\"$role\",hostname=~\"$device\"} == 1)) > 0) * 0)",
+          "expr": "count(count by (asset_id) ((nexora_hw_memory_usage_percent{asset_id!=\"\",site_name=~\"$site\",vendor=~\"$vendor\",role=~\"$role\",hostname=~\"$device\"}) and on(asset_id) (up{job=\"network_snmp\",site_name=~\"$site\",vendor=~\"$vendor\",role=~\"$role\",hostname=~\"$device\",asset_id!=\"\"} == 1))) or on() ((count(count by (instance) (up{job=\"network_snmp\",site_name=~\"$site\",vendor=~\"$vendor\",role=~\"$role\",hostname=~\"$device\"} == 1)) > 0) * 0)",
           "refId": "A"
         }
       ],
-      "description": "当前在线设备中，至少采集到一条内存使用率指标的设备数量。没有指标不等于内存使用率为 0。"
+      "description": "当前在线设备中至少采集到一条规范内存池使用率指标的设备数量。没有指标不等于内存使用率为 0。"
     },
     {
       "id": 11,
@@ -693,15 +693,15 @@
       },
       "targets": [
         {
-          "expr": "count(count by (instance) ((max by (hostname, site_name, instance, vendor) (hh3cEntityExtTemperature{job=\"network_snmp\",site_name=~\"$site\",vendor=~\"$vendor\",role=~\"$role\",hostname=~\"$device\"} or hwEntityTemperature{job=\"network_snmp\",site_name=~\"$site\",vendor=~\"$vendor\",role=~\"$role\",hostname=~\"$device\"} or ruijieDeviceTemperature{job=\"network_snmp\",site_name=~\"$site\",vendor=~\"$vendor\",role=~\"$role\",hostname=~\"$device\"} or jnxOperatingTemp{job=\"network_snmp\",site_name=~\"$site\",vendor=~\"$vendor\",role=~\"$role\",hostname=~\"$device\"} or zteTemperature{job=\"network_snmp\",site_name=~\"$site\",vendor=~\"$vendor\",role=~\"$role\",hostname=~\"$device\"} or mpTemperature{job=\"network_snmp\",site_name=~\"$site\",vendor=~\"$vendor\",role=~\"$role\",hostname=~\"$device\"} or dptechTemperature{job=\"network_snmp\",site_name=~\"$site\",vendor=~\"$vendor\",role=~\"$role\",hostname=~\"$device\"} or dcnTemperature{job=\"network_snmp\",site_name=~\"$site\",vendor=~\"$vendor\",role=~\"$role\",hostname=~\"$device\"})) and on(instance) (up{job=\"network_snmp\",site_name=~\"$site\",vendor=~\"$vendor\",role=~\"$role\",hostname=~\"$device\"} == 1))) or on() ((count(count by (instance) (up{job=\"network_snmp\",site_name=~\"$site\",vendor=~\"$vendor\",role=~\"$role\",hostname=~\"$device\"} == 1)) > 0) * 0)",
+          "expr": "count(count by (asset_id) ((nexora_hw_temperature_celsius{asset_id!=\"\",site_name=~\"$site\",vendor=~\"$vendor\",role=~\"$role\",hostname=~\"$device\"}) and on(asset_id) (up{job=\"network_snmp\",site_name=~\"$site\",vendor=~\"$vendor\",role=~\"$role\",hostname=~\"$device\",asset_id!=\"\"} == 1))) or on() ((count(count by (instance) (up{job=\"network_snmp\",site_name=~\"$site\",vendor=~\"$vendor\",role=~\"$role\",hostname=~\"$device\"} == 1)) > 0) * 0)",
           "refId": "A"
         }
       ],
-      "description": "当前在线设备中，至少采集到一条温度指标的设备数量。不同厂商和型号的传感器及告警阈值不同，温度详情请进入设备视图检查。"
+      "description": "当前在线设备中至少采集到一条规范温度传感器指标的设备数量。温度阈值因设备而异，请进入设备视图检查具体传感器。"
     },
     {
       "id": 15,
-      "title": "设备 CPU 使用率 Top10",
+      "title": "设备 CPU 使用率 Top10（按 window）",
       "type": "table",
       "datasource": {
         "type": "prometheus",
@@ -709,7 +709,7 @@
       },
       "gridPos": {
         "h": 8,
-        "w": 12,
+        "w": 8,
         "x": 0,
         "y": 17
       },
@@ -736,6 +736,24 @@
                 "value": "percent"
               }
             ]
+          },
+          {
+            "matcher": {
+              "id": "byName",
+              "options": "资产 ID"
+            },
+            "properties": [
+              {
+                "id": "links",
+                "value": [
+                  {
+                    "title": "打开设备详情",
+                    "url": "/d/nexora-network-device/device-detail?var-asset_id=${__data.fields[\"资产 ID\"]}&from=${__from}&to=${__to}",
+                    "targetBlank": false
+                  }
+                ]
+              }
+            ]
           }
         ]
       },
@@ -749,7 +767,7 @@
       },
       "targets": [
         {
-          "expr": "topk(10, avg by (hostname, site_name, instance, vendor) (cpmCPUTotal1minRev{job=\"network_snmp\",site_name=~\"$site\",vendor=~\"$vendor\",role=~\"$role\",hostname=~\"$device\"} or hh3cEntityExtCpuUsage{job=\"network_snmp\",site_name=~\"$site\",vendor=~\"$vendor\",role=~\"$role\",hostname=~\"$device\"} or hwEntityCpuUsage{job=\"network_snmp\",site_name=~\"$site\",vendor=~\"$vendor\",role=~\"$role\",hostname=~\"$device\"} or ruijieCpuCostRate{job=\"network_snmp\",site_name=~\"$site\",vendor=~\"$vendor\",role=~\"$role\",hostname=~\"$device\"} or jnxOperatingCPU{job=\"network_snmp\",site_name=~\"$site\",vendor=~\"$vendor\",role=~\"$role\",hostname=~\"$device\"} or fnSysCpuUsage{job=\"network_snmp\",site_name=~\"$site\",vendor=~\"$vendor\",role=~\"$role\",hostname=~\"$device\"} or zteCpuRate{job=\"network_snmp\",site_name=~\"$site\",vendor=~\"$vendor\",role=~\"$role\",hostname=~\"$device\"} or mpCpuUtilization5Min{job=\"network_snmp\",site_name=~\"$site\",vendor=~\"$vendor\",role=~\"$role\",hostname=~\"$device\"} or dptechCpuUsage{job=\"network_snmp\",site_name=~\"$site\",vendor=~\"$vendor\",role=~\"$role\",hostname=~\"$device\"} or hillstoneCPUUtilization{job=\"network_snmp\",site_name=~\"$site\",vendor=~\"$vendor\",role=~\"$role\",hostname=~\"$device\"} or sangforCpuUsage{job=\"network_snmp\",site_name=~\"$site\",vendor=~\"$vendor\",role=~\"$role\",hostname=~\"$device\"} or dcnCpuUsage{job=\"network_snmp\",site_name=~\"$site\",vendor=~\"$vendor\",role=~\"$role\",hostname=~\"$device\"}))",
+          "expr": "topk by (window) (10, max by (tenant_id, asset_id, hostname, site_name, vendor, role, window) (nexora_hw_cpu_usage_percent{asset_id!=\"\",site_name=~\"$site\",vendor=~\"$vendor\",role=~\"$role\",hostname=~\"$device\"}))",
           "format": "table",
           "instant": true,
           "refId": "A"
@@ -763,7 +781,7 @@
               "Time": true,
               "__name__": true,
               "ifIndex": true,
-              "asset_id": true,
+              "asset_id": false,
               "nexora_asset_id": true,
               "nexora_hostname": true,
               "nexora_module": true,
@@ -778,7 +796,13 @@
               "site_id": true,
               "platform": true,
               "sysName": true,
-              "nexora_interface_role": true
+              "nexora_interface_role": true,
+              "device_id": true,
+              "sensor_key": true,
+              "component_class": true,
+              "source_type": true,
+              "source_id": true,
+              "measurement_type": true
             },
             "indexByName": {
               "site_name": 0,
@@ -786,13 +810,15 @@
               "instance": 2,
               "ifName": 3,
               "ifDescr": 4,
-              "vendor": 5,
-              "role": 6,
+              "vendor": 3,
+              "role": 4,
               "interface_role": 7,
               "utilization_warn_pct": 8,
               "utilization_high_pct": 9,
               "utilization_critical_pct": 10,
-              "Value": 11
+              "Value": 6,
+              "asset_id": 2,
+              "window": 5
             },
             "renameByName": {
               "sysName": "设备名称",
@@ -807,15 +833,18 @@
               "utilization_warn_pct": "预警阈值 (%)",
               "utilization_high_pct": "高位阈值 (%)",
               "utilization_critical_pct": "严重阈值 (%)",
-              "Value": "CPU 使用率 (%)"
+              "Value": "CPU 使用率 (%)",
+              "asset_id": "资产 ID",
+              "window": "CPU 窗口"
             }
           }
         }
-      ]
+      ],
+      "description": "每台设备在每个实际采样 window 中取最高 CPU 部件使用率，再分别排列前10台设备；window 标签始终保留，不会把不同采样窗口求平均。资产 ID 可直接打开对应设备详情。"
     },
     {
       "id": 16,
-      "title": "设备内存使用率 Top10",
+      "title": "内存池使用率 Top10",
       "type": "table",
       "datasource": {
         "type": "prometheus",
@@ -823,8 +852,8 @@
       },
       "gridPos": {
         "h": 8,
-        "w": 12,
-        "x": 12,
+        "w": 8,
+        "x": 8,
         "y": 17
       },
       "fieldConfig": {
@@ -842,12 +871,30 @@
           {
             "matcher": {
               "id": "byName",
-              "options": "内存使用率 (%)"
+              "options": "数值"
             },
             "properties": [
               {
                 "id": "unit",
                 "value": "percent"
+              }
+            ]
+          },
+          {
+            "matcher": {
+              "id": "byName",
+              "options": "资产 ID"
+            },
+            "properties": [
+              {
+                "id": "links",
+                "value": [
+                  {
+                    "title": "打开设备详情",
+                    "url": "/d/nexora-network-device/device-detail?var-asset_id=${__data.fields[\"资产 ID\"]}&from=${__from}&to=${__to}",
+                    "targetBlank": false
+                  }
+                ]
               }
             ]
           }
@@ -863,7 +910,7 @@
       },
       "targets": [
         {
-          "expr": "topk(10, avg by (hostname, site_name, instance, vendor) (hh3cEntityExtMemUsage{job=\"network_snmp\",site_name=~\"$site\",vendor=~\"$vendor\",role=~\"$role\",hostname=~\"$device\"} or hwEntityMemUsage{job=\"network_snmp\",site_name=~\"$site\",vendor=~\"$vendor\",role=~\"$role\",hostname=~\"$device\"} or (100 * ciscoMemoryPoolUsed{job=\"network_snmp\",site_name=~\"$site\",vendor=~\"$vendor\",role=~\"$role\",hostname=~\"$device\"} / (ciscoMemoryPoolUsed{job=\"network_snmp\",site_name=~\"$site\",vendor=~\"$vendor\",role=~\"$role\",hostname=~\"$device\"} + ciscoMemoryPoolFree{job=\"network_snmp\",site_name=~\"$site\",vendor=~\"$vendor\",role=~\"$role\",hostname=~\"$device\"})) or ruijieMemoryPoolCurrentUtilization{job=\"network_snmp\",site_name=~\"$site\",vendor=~\"$vendor\",role=~\"$role\",hostname=~\"$device\"} or jnxOperatingBuffer{job=\"network_snmp\",site_name=~\"$site\",vendor=~\"$vendor\",role=~\"$role\",hostname=~\"$device\"} or fnSysMemUsage{job=\"network_snmp\",site_name=~\"$site\",vendor=~\"$vendor\",role=~\"$role\",hostname=~\"$device\"} or zteMemRate{job=\"network_snmp\",site_name=~\"$site\",vendor=~\"$vendor\",role=~\"$role\",hostname=~\"$device\"} or mpMemoryUtilization{job=\"network_snmp\",site_name=~\"$site\",vendor=~\"$vendor\",role=~\"$role\",hostname=~\"$device\"} or dptechMemUsage{job=\"network_snmp\",site_name=~\"$site\",vendor=~\"$vendor\",role=~\"$role\",hostname=~\"$device\"} or hillstoneMemoryUtilization{job=\"network_snmp\",site_name=~\"$site\",vendor=~\"$vendor\",role=~\"$role\",hostname=~\"$device\"} or sangforMemUsage{job=\"network_snmp\",site_name=~\"$site\",vendor=~\"$vendor\",role=~\"$role\",hostname=~\"$device\"} or dcnMemUsage{job=\"network_snmp\",site_name=~\"$site\",vendor=~\"$vendor\",role=~\"$role\",hostname=~\"$device\"}))",
+          "expr": "topk(10, (nexora_hw_memory_usage_percent{asset_id!=\"\",site_name=~\"$site\",vendor=~\"$vendor\",role=~\"$role\",hostname=~\"$device\"} * on(tenant_id, asset_id, sensor_key) group_left(sensor_name, group, index, component_class, source_id) (max by (tenant_id, asset_id, sensor_key, sensor_name, group, index, component_class, source_id, hostname, site_name, vendor, role, platform) (nexora_hw_sensor_info{asset_id!=\"\",site_name=~\"$site\",vendor=~\"$vendor\",role=~\"$role\",hostname=~\"$device\"}))))",
           "format": "table",
           "instant": true,
           "refId": "A"
@@ -877,7 +924,7 @@
               "Time": true,
               "__name__": true,
               "ifIndex": true,
-              "asset_id": true,
+              "asset_id": false,
               "nexora_asset_id": true,
               "nexora_hostname": true,
               "nexora_module": true,
@@ -892,7 +939,14 @@
               "site_id": true,
               "platform": true,
               "sysName": true,
-              "nexora_interface_role": true
+              "nexora_interface_role": true,
+              "device_id": true,
+              "sensor_key": true,
+              "component_class": true,
+              "source_type": true,
+              "source_id": true,
+              "measurement_type": true,
+              "window": true
             },
             "indexByName": {
               "site_name": 0,
@@ -900,13 +954,17 @@
               "instance": 2,
               "ifName": 3,
               "ifDescr": 4,
-              "vendor": 5,
-              "role": 6,
+              "vendor": 3,
+              "role": 4,
               "interface_role": 7,
               "utilization_warn_pct": 8,
               "utilization_high_pct": 9,
               "utilization_critical_pct": 10,
-              "Value": 11
+              "Value": 8,
+              "asset_id": 2,
+              "sensor_name": 5,
+              "group": 6,
+              "index": 7
             },
             "renameByName": {
               "sysName": "设备名称",
@@ -921,11 +979,164 @@
               "utilization_warn_pct": "预警阈值 (%)",
               "utilization_high_pct": "高位阈值 (%)",
               "utilization_critical_pct": "严重阈值 (%)",
-              "Value": "内存使用率 (%)"
+              "Value": "数值",
+              "asset_id": "资产 ID",
+              "sensor_name": "部件名称",
+              "group": "部件分组",
+              "index": "索引"
             }
           }
         }
-      ]
+      ],
+      "description": "按单个内存池的规范使用率排列，展示传感器名称、分组和完整索引，不对不同容量内存池取平均。资产 ID 可打开设备详情。"
+    },
+    {
+      "id": 25,
+      "title": "温度传感器 Top10",
+      "type": "table",
+      "datasource": {
+        "type": "prometheus",
+        "uid": "victoriametrics"
+      },
+      "gridPos": {
+        "h": 8,
+        "w": 8,
+        "x": 16,
+        "y": 17
+      },
+      "fieldConfig": {
+        "defaults": {
+          "unit": "none",
+          "noValue": "数据暂不可用",
+          "color": {
+            "mode": "thresholds"
+          },
+          "custom": {
+            "filterable": true
+          }
+        },
+        "overrides": [
+          {
+            "matcher": {
+              "id": "byName",
+              "options": "数值"
+            },
+            "properties": [
+              {
+                "id": "unit",
+                "value": "celsius"
+              }
+            ]
+          },
+          {
+            "matcher": {
+              "id": "byName",
+              "options": "资产 ID"
+            },
+            "properties": [
+              {
+                "id": "links",
+                "value": [
+                  {
+                    "title": "打开设备详情",
+                    "url": "/d/nexora-network-device/device-detail?var-asset_id=${__data.fields[\"资产 ID\"]}&from=${__from}&to=${__to}",
+                    "targetBlank": false
+                  }
+                ]
+              }
+            ]
+          }
+        ]
+      },
+      "options": {
+        "cellHeight": "sm",
+        "showHeader": true,
+        "footer": {
+          "show": false
+        },
+        "enablePagination": true
+      },
+      "targets": [
+        {
+          "expr": "topk(10, (nexora_hw_temperature_celsius{asset_id!=\"\",site_name=~\"$site\",vendor=~\"$vendor\",role=~\"$role\",hostname=~\"$device\"} * on(tenant_id, asset_id, sensor_key) group_left(sensor_name, group, index, component_class, source_id) (max by (tenant_id, asset_id, sensor_key, sensor_name, group, index, component_class, source_id, hostname, site_name, vendor, role, platform) (nexora_hw_sensor_info{asset_id!=\"\",site_name=~\"$site\",vendor=~\"$vendor\",role=~\"$role\",hostname=~\"$device\"}))))",
+          "format": "table",
+          "instant": true,
+          "refId": "A"
+        }
+      ],
+      "transformations": [
+        {
+          "id": "organize",
+          "options": {
+            "excludeByName": {
+              "Time": true,
+              "__name__": true,
+              "ifIndex": true,
+              "asset_id": false,
+              "nexora_asset_id": true,
+              "nexora_hostname": true,
+              "nexora_module": true,
+              "nexora_platform": true,
+              "nexora_role": true,
+              "nexora_site_id": true,
+              "nexora_site_name": true,
+              "nexora_tenant_id": true,
+              "nexora_vendor": true,
+              "job": true,
+              "tenant_id": true,
+              "site_id": true,
+              "platform": true,
+              "sysName": true,
+              "nexora_interface_role": true,
+              "device_id": true,
+              "sensor_key": true,
+              "component_class": true,
+              "source_type": true,
+              "source_id": true,
+              "measurement_type": true,
+              "window": true
+            },
+            "indexByName": {
+              "site_name": 0,
+              "hostname": 1,
+              "instance": 2,
+              "ifName": 3,
+              "ifDescr": 4,
+              "vendor": 3,
+              "role": 4,
+              "interface_role": 7,
+              "utilization_warn_pct": 8,
+              "utilization_high_pct": 9,
+              "utilization_critical_pct": 10,
+              "Value": 8,
+              "asset_id": 2,
+              "sensor_name": 5,
+              "group": 6,
+              "index": 7
+            },
+            "renameByName": {
+              "sysName": "设备名称",
+              "hostname": "设备名称",
+              "instance": "管理 IP",
+              "site_name": "站点",
+              "ifName": "接口全称",
+              "ifDescr": "接口描述",
+              "vendor": "厂商",
+              "role": "角色",
+              "interface_role": "接口用途",
+              "utilization_warn_pct": "预警阈值 (%)",
+              "utilization_high_pct": "高位阈值 (%)",
+              "utilization_critical_pct": "严重阈值 (%)",
+              "Value": "数值",
+              "asset_id": "资产 ID",
+              "sensor_name": "部件名称",
+              "group": "部件分组",
+              "index": "索引"
+            }
+          }
+        }
+      ],
+      "description": "按单个规范温度传感器读数排列，保留传感器名称、分组和完整索引。资产 ID 可打开设备详情。"
     },
     {
       "id": 903,
@@ -1443,7 +1654,7 @@
   },
   "timezone": "browser",
   "title": "01 网络总览（Network Overview）",
-  "description": "硬件概览展示当前在线设备的 CPU、内存、温度指标覆盖数量，以及 CPU/内存使用率 Top10；它们不是跨设备平均健康分。不同厂商和型号的温度阈值应在设备详情中核实。接口异常列表仅列出过去24小时状态有变化且当前仍为 Down 的管理启用接口；长期稳定 Down 的接口可在设备或接口详情查看。",
+  "description": "硬件概览使用 LibreNMS 规则采集后规范化的 nexora_hw_* 指标展示在线设备 CPU、内存池和温度传感器覆盖及热点排行。CPU Top10 按实际 window 分组，设备取窗口内最高处理器读数；内存池和温度按各自部件排序，不跨部件求平均。排行表资产 ID 可打开单设备详情。接口异常列表仅列出过去24小时状态有变化且当前仍为 Down 的管理启用接口；长期稳定 Down 的接口可在设备或接口详情查看。",
   "uid": "nexora-network-overview",
   "version": 30
 }

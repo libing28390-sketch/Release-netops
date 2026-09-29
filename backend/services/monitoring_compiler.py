@@ -1201,6 +1201,7 @@ def render_vmagent_config(
         # Remote collectors must never receive control-plane service targets.
         for job_name, target in (
             ("platform_api", "netops:8003"),
+            ("platform_hardware_inventory", "netops:8003"),
             ("platform_victoriametrics", "victoriametrics:8428"),
             ("platform_vmagent", "vmagent:8429"),
             ("platform_snmp_exporter", "snmp-exporter:9116"),
@@ -1209,9 +1210,13 @@ def render_vmagent_config(
         ):
             scrape_configs.append({
                 "job_name": job_name,
-                "scrape_interval": "30s",
-                "scrape_timeout": "10s",
-                "metrics_path": "/grafana/metrics" if job_name == "platform_grafana" else "/metrics",
+                "scrape_interval": "60s" if job_name == "platform_hardware_inventory" else "30s",
+                "scrape_timeout": "30s" if job_name == "platform_hardware_inventory" else "10s",
+                "metrics_path": (
+                    "/grafana/metrics" if job_name == "platform_grafana"
+                    else "/hardware-metrics" if job_name == "platform_hardware_inventory"
+                    else "/metrics"
+                ),
                 "static_configs": [{"targets": [target]}],
             })
     return {

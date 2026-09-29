@@ -35,14 +35,18 @@ logger = logging.getLogger("librenms_mib_service")
 
 BACKEND_DIR = Path(__file__).resolve().parent.parent
 LIBRENMS_REPO_URL = "https://github.com/librenms/librenms.git"
+# Runtime collectors and the explicit import action use this tracked snapshot.
+# TARGET_DIR remains an optional scratch checkout for source-maintenance tools.
+LIBRENMS_BUNDLE_DIR = BACKEND_DIR / "vendor" / "librenms"
 TARGET_DIR = BACKEND_DIR / "data" / "librenms_repo"
-MIBS_DIR = TARGET_DIR / "mibs"
+MIBS_DIR = LIBRENMS_BUNDLE_DIR / "mibs"
 SYMBOL_INDEX_MAX_PASSES = 8
 LIBRENMS_SPARSE_PATHS = (
     "mibs/",
     "resources/definitions/os_detection/",
     "resources/definitions/os_discovery/",
     "LibreNMS/OS/",
+    "includes/discovery/sensors/",
 )
 
 # Vendor folder name normalizer
@@ -51,9 +55,23 @@ VENDOR_DIR_MAP: dict[str, str] = {
     "huawei": "Huawei",
     "h3c": "H3C",
     "comware": "H3C",
+    "edgecore": "Edgecore",
+    "edgecos": "Edgecore",
     "juniper": "Juniper",
     "arista": "Arista",
     "ruijie": "Ruijie",
+    "dcn": "DCN",
+    "dptech": "DPtech",
+    "fiberhome": "FiberHome",
+    "maipu": "Maipu",
+    "nokia": "Nokia",
+    "extreme": "Extreme Networks",
+    "ruckus": "Ruckus",
+    "ubnt": "Ubiquiti",
+    "ubiquiti": "Ubiquiti",
+    "edgeswitch": "Ubiquiti",
+    "allied": "Allied Telesis",
+    "awplus": "Allied Telesis",
     "fortinet": "Fortinet",
     "mikrotik": "MikroTik",
     "paloalto": "Palo Alto",
@@ -68,6 +86,11 @@ VENDOR_DIR_MAP: dict[str, str] = {
     "raisecom": "Raisecom",
     "raisecom-mibs": "Raisecom",
     "dlink": "D-Link",
+    "dlink_dgs1250": "D-Link",
+    "tplink": "TP-Link",
+    "brocade": "Brocade",
+    "ciena": "Ciena",
+    "alcatel": "Alcatel-Lucent Enterprise",
     "zyxel": "Zyxel",
     "netgear": "Netgear",
     "rad": "RAD",
@@ -114,18 +137,61 @@ def fetch_librenms_mibs(target_dir: Path = TARGET_DIR) -> bool:
 
 
 def fetch_librenms_sources(target_dir: Path = TARGET_DIR) -> bool:
-    """Fetch the trusted LibreNMS source paths used for OID discovery."""
+    """Refresh a scratch upstream checkout for explicit source maintenance only.
+
+    Device discovery and collection must use ``LIBRENMS_BUNDLE_DIR`` and never
+    call this network-backed helper as part of a monitoring request.
+    """
     target_dir.parent.mkdir(parents=True, exist_ok=True)
     mibs_path = target_dir / "mibs"
+    detection_path = target_dir / "resources" / "definitions" / "os_detection"
+    discovery_path = target_dir / "resources" / "definitions" / "os_discovery"
 
     if (target_dir / ".git").exists():
         logger.info("Existing LibreNMS repository found at %s. Pulling latest updates...", target_dir)
         try:
-            subprocess.run(["git", "pull", "--depth", "1"], cwd=target_dir, check=True, capture_output=True, text=True)
-            return (target_dir / "mibs").exists()
+            # Older Nexora checkouts may have been created for MIB import only.
+            # Refresh their sparse patterns so the rule importer can see the
+            # LibreNMS OS detection and discovery YAML as well.
+            subprocess.run(
+                ["git", "sparse-checkout", "set", "--no-cone", *LIBRENMS_SPARSE_PATHS],
+                cwd=target_dir,
+                check=True,
+                capture_output=True,
+                text=True,
+            )
+            # Existing source checkouts are not guaranteed to have an upstream
+            # branch configured. Fetch the authoritative LibreNMS master and
+            # update the source worktree directly; checkout refuses to replace
+            # conflicting untracked files and tracked edits are never forced.
+            dirty_tracked = subprocess.run(
+                ["git", "status", "--porcelain", "--untracked-files=no"],
+                cwd=target_dir,
+                check=True,
+                capture_output=True,
+                text=True,
+            ).stdout.strip()
+            if dirty_tracked:
+                logger.warning("LibreNMS source checkout has tracked edits; keeping the current revision")
+                return mibs_path.exists() and detection_path.exists() and discovery_path.exists()
+            subprocess.run(
+                ["git", "fetch", "--depth", "1", "origin", "master"],
+                cwd=target_dir,
+                check=True,
+                capture_output=True,
+                text=True,
+            )
+            subprocess.run(
+                ["git", "checkout", "--detach", "FETCH_HEAD"],
+                cwd=target_dir,
+                check=True,
+                capture_output=True,
+                text=True,
+            )
+            return mibs_path.exists() and detection_path.exists() and discovery_path.exists()
         except Exception as exc:
-            logger.warning("Git pull failed: %s; using existing local MIB files", exc)
-            return mibs_path.exists()
+            logger.warning("LibreNMS source refresh failed: %s; using existing local sources", exc)
+            return mibs_path.exists() and detection_path.exists() and discovery_path.exists()
 
     logger.info("Cloning LibreNMS repository (MIB and OS discovery sources) from %s...", LIBRENMS_REPO_URL)
     try:
@@ -138,9 +204,9 @@ def fetch_librenms_sources(target_dir: Path = TARGET_DIR) -> bool:
         sparse_file.write_text("".join(f"{path}\n" for path in LIBRENMS_SPARSE_PATHS), encoding="utf-8")
         subprocess.run(["git", "pull", "--depth", "1", "origin", "master"], cwd=target_dir, check=True, capture_output=True, text=True)
         logger.info("Successfully fetched LibreNMS sources to %s", target_dir)
-        return True
+        return mibs_path.exists() and detection_path.exists() and discovery_path.exists()
     except Exception as exc:
-        logger.error("Failed to clone LibreNMS mibs directory: %s", exc)
+        logger.error("Failed to fetch LibreNMS sources: %s", exc)
         return False
 
 

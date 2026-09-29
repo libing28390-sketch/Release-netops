@@ -1898,11 +1898,11 @@ def _parser_label(template: Any) -> str:
     return "platform-parser"
 
 
-def _collect_optical_snmp_action(device: dict[str, Any], *, max_records: int = 2000) -> dict[str, Any]:
-    """Execute the built-in transceiver action through SNMP only."""
-    from services.snmp_optical_service import collect_optical_snmp
+def _collect_librenms_optical_action(device: dict[str, Any], *, max_records: int = 2000) -> dict[str, Any]:
+    """Execute the built-in transceiver action through local LibreNMS rules."""
+    from services.snmp_librenms_optical_service import collect_librenms_optical
 
-    collected = collect_optical_snmp(device)
+    collected = collect_librenms_optical(device)
     records = (collected.get("records") or [])[:max(1, min(2000, int(max_records or 2000)))]
     error_code = str(collected.get("error_code") or "")
     success = bool(collected.get("success"))
@@ -2004,7 +2004,7 @@ def execute_platform_action(
         if action_code == "get_transceivers":
             # Optical DOM is a vendor MIB read and must not depend on a
             # published CLI release or dispatch a legacy transceiver command.
-            response = _collect_optical_snmp_action(device, max_records=device.get("max_records") or 2000)
+            response = _collect_librenms_optical_action(device, max_records=device.get("max_records") or 2000)
             response.update({
                 "platform_release_id": device.get("current_release_id"),
                 "release_number": device.get("release_number"),

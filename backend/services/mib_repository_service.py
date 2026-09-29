@@ -88,6 +88,14 @@ def source_snapshot_dir(source_type: str, source_name: str, source_commit: str) 
 
 
 def git_commit(repo_dir: Path) -> str:
+    manifest_path = Path(repo_dir) / "source-manifest.json"
+    try:
+        manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
+        commit = str(manifest.get("upstream_commit") or "").strip()
+        if commit:
+            return commit[:64]
+    except (OSError, ValueError, AttributeError):
+        pass
     try:
         result = subprocess.run(
             ["git", "rev-parse", "HEAD"],

@@ -1582,6 +1582,36 @@ async def _process_device_raw(device, cycle_tick: int):
             resolved_metrics = _resolved_metrics_from_discovery(discovery, str(dev_id))
         if snmp_community:
             try:
+                from services.snmp_hardware_inventory_service import list_hardware_sensors
+                from services.snmp_hardware_probe_service import poll_hardware_inventory
+
+                inventory_conn = get_db_connection()
+                try:
+                    active_hardware_sensors = list_hardware_sensors(
+                        inventory_conn, str(dev_id), include_retired=False,
+                    )
+                finally:
+                    inventory_conn.close()
+                if active_hardware_sensors:
+                    sensor_poll_result = await poll_hardware_inventory(
+                        snmp_ip,
+                        snmp_community,
+                        int(snmp_port),
+                        str(device.get("snmp_version") or "2c"),
+                        active_hardware_sensors,
+                    )
+                    logger.debug(
+                        "[SNMP] %s hardware inventory poll: good=%s missing=%s invalid=%s unsupported=%s",
+                        ip,
+                        sensor_poll_result.get("good", 0),
+                        sensor_poll_result.get("missing", 0),
+                        sensor_poll_result.get("invalid", 0),
+                        sensor_poll_result.get("unsupported_mapping", 0),
+                    )
+            except Exception as hardware_poll_err:
+                logger.debug("[SNMP] %s hardware inventory poll failed: %s", ip, type(hardware_poll_err).__name__)
+        if snmp_community:
+            try:
                 metrics = await collect_device_metrics(
                     snmp_ip,
                     platform,

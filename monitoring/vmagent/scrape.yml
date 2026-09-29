@@ -69,6 +69,13 @@ scrape_configs:
     static_configs:
       - targets: ["netops:8003"]
 
+  - job_name: platform_hardware_inventory
+    scrape_interval: 60s
+    scrape_timeout: 30s
+    metrics_path: /hardware-metrics
+    static_configs:
+      - targets: ["netops:8003"]
+
   - job_name: platform_victoriametrics
     scrape_interval: 30s
     scrape_timeout: 10s

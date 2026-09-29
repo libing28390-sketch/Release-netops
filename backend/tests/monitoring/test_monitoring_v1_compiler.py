@@ -79,6 +79,7 @@ def test_compiler_builds_secret_free_snapshot_and_artifact():
 def test_platform_scrape_targets_are_added_only_to_local_collector():
     platform_jobs = {
         "platform_api": "netops:8003",
+        "platform_hardware_inventory": "netops:8003",
         "platform_victoriametrics": "victoriametrics:8428",
         "platform_vmagent": "vmagent:8429",
         "platform_snmp_exporter": "snmp-exporter:9116",
@@ -100,10 +101,12 @@ def test_platform_scrape_targets_are_added_only_to_local_collector():
 
     assert local_targets == platform_jobs
     assert local_platform_jobs["platform_grafana"]["metrics_path"] == "/grafana/metrics"
+    assert local_platform_jobs["platform_hardware_inventory"]["metrics_path"] == "/hardware-metrics"
+    assert local_platform_jobs["platform_hardware_inventory"]["scrape_interval"] == "60s"
     assert all(
         job["metrics_path"] == "/metrics"
         for name, job in local_platform_jobs.items()
-        if name != "platform_grafana"
+        if name not in {"platform_grafana", "platform_hardware_inventory"}
     )
     assert not any(job["job_name"].startswith("platform_") for job in remote_jobs)
 

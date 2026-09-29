@@ -37,7 +37,7 @@ def test_transceiver_category_uses_snmp_and_skips_cli_setup(monkeypatch):
             "records": [{"interface": "Ten-GigabitEthernet1/0/49", "rx_power_dbm": -0.15}],
         }
 
-    monkeypatch.setattr("services.snmp_optical_service.collect_optical_snmp", collect)
+    monkeypatch.setattr("services.snmp_librenms_optical_service.collect_librenms_optical", collect)
 
     result = operational_data_service.collect_operational_data(device, categories=["transceiver"])
 
@@ -80,7 +80,7 @@ def test_unsupported_transceiver_vendor_is_reported_without_cli_fallback(monkeyp
         lambda *_args, **_kwargs: (_ for _ in ()).throw(AssertionError("unsupported optics must not resolve CLI credentials")),
     )
     monkeypatch.setattr(
-        "services.snmp_optical_service.collect_optical_snmp",
+        "services.snmp_librenms_optical_service.collect_librenms_optical",
         lambda _target: {
             "success": False,
             "source": "snmp",

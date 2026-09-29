@@ -81,7 +81,7 @@ def test_registry_transceiver_action_uses_snmp_and_never_dispatches_driver(isola
             "count": 2005,
         }
 
-    monkeypatch.setattr("services.snmp_optical_service.collect_optical_snmp", collect)
+    monkeypatch.setattr("services.snmp_librenms_optical_service.collect_librenms_optical", collect)
 
     def reject_cli(*_args, **_kwargs):
         raise AssertionError("transceiver action must not create a CLI driver")
@@ -131,7 +131,7 @@ def test_registry_transceiver_action_works_without_platform_profile_or_release(i
             "count": 1,
         }
 
-    monkeypatch.setattr("services.snmp_optical_service.collect_optical_snmp", collect)
+    monkeypatch.setattr("services.snmp_librenms_optical_service.collect_librenms_optical", collect)
     user = {"id": "operator-1", "username": "operator", "role": "Operator", "tenant_id": "tenant-1"}
 
     def reject_cli(*_args, **_kwargs):

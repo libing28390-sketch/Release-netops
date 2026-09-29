@@ -140,6 +140,8 @@ tools/node/
 !**/.agents/skills/**/references/**/*.md
 !**/.agents/roles/*.md
 !**/docs/plans/plan_*.md
+!docs/hardware-mib-source-audit-handoff.md
+!docs/librenms-hardware-profile-capability-matrix.md
 !**/docs/architecture/*.md
 !**/docs/walkthrough_*.md
 !**/docs/walkthrough/**/*.md

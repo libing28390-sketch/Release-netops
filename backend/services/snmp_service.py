@@ -53,6 +53,11 @@ from services.snmp_counter_service import (
     load_counter_sample,
     save_counter_sample,
 )
+from services.snmp_hardware_normalization import (
+    normalize_percentage,
+    normalize_scaled_value,
+    normalize_temperature_celsius,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -1274,12 +1279,7 @@ def _absolute_value_allowed(value: SnmpTypedValue) -> bool:
 
 
 def _scaled(raw: float, config: Mapping[str, Any]) -> float | None:
-    scale = _numeric(config.get("scale", 1))
-    offset = _numeric(config.get("offset", 0))
-    if scale is None or offset is None or scale <= 0:
-        return None
-    value = raw * scale + offset
-    return value if math.isfinite(value) else None
+    return normalize_scaled_value(raw, config.get("scale", 1), config.get("offset", 0))
 
 
 def _parse_sample_time(value: Any) -> datetime | None:
@@ -1381,8 +1381,11 @@ async def _collect_metric_definition(
                 rows=len(points),
             )
         raw_values = [float(point.number) for _, point in points if point.number is not None]
-        values = [_scaled(raw, normalized) for raw in raw_values]
-        if any(value is None or value < 0 or value > 100 for value in values) or not values:
+        values = [
+            normalize_percentage(raw, normalized.get("scale", 1), normalized.get("offset", 0))
+            for raw in raw_values
+        ]
+        if any(value is None for value in values) or not values:
             return _definition_result(
                 normalized,
                 value=None,
@@ -1438,9 +1441,10 @@ async def _collect_metric_definition(
         # of a degree remain valid.
         if metric_name == "temperature":
             valid_pairs = [
-                (raw, scaled)
+                (raw, valid_temperature)
                 for raw, scaled in zip(raw_values, values)
-                if scaled is not None and -80 <= scaled <= 200
+                if scaled is not None
+                and (valid_temperature := normalize_temperature_celsius(scaled)) is not None
             ]
             if not valid_pairs:
                 return _definition_result(
@@ -1550,8 +1554,8 @@ async def _collect_metric_definition(
             if mode == "used_free_percent":
                 denominator_value += used_value
             ratio = used_value / denominator_value * 100
-            scaled = _scaled(ratio, normalized)
-            if scaled is None or scaled < 0 or scaled > 100:
+            scaled = normalize_percentage(ratio, normalized.get("scale", 1), normalized.get("offset", 0))
+            if scaled is None:
                 return _definition_result(normalized, value=None, status="out_of_range", passed=False, message="Calculated ratio must be within 0..100", snmp_types=types, rows=len(pairs))
             percentages.append(scaled)
         return _definition_result(normalized, value=_aggregate(percentages, aggregation), status="ok", passed=True, snmp_types=types, rows=len(pairs))
