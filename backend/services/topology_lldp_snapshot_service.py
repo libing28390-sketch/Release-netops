@@ -50,13 +50,32 @@ def _source_fingerprint(function: Any) -> str:
     return hashlib.sha256(str(material).encode("utf-8")).hexdigest()
 
 
+def _normalize_lldp_commands(commands: Any) -> list[tuple[str, str]]:
+    """Accept current string commands and legacy ``(protocol, command)`` entries."""
+    normalized: list[tuple[str, str]] = []
+    for item in commands or []:
+        if isinstance(item, (tuple, list)):
+            if len(item) == 2:
+                kind, command = item
+            elif len(item) == 1:
+                kind, command = "lldp", item[0]
+            else:
+                continue
+        else:
+            kind, command = "lldp", item
+        command_text = str(command or "").strip()
+        if command_text:
+            normalized.append((str(kind or "lldp"), command_text))
+    return normalized
+
+
 def lldp_snapshot_versions(device: Mapping[str, Any]) -> dict[str, str]:
     """Fingerprint the selected LLDP command/parser and the cache schema."""
     from services import topology_service
     from services.neighbor_collection_contract import classify_lldp_status, normalize_neighbor_record
 
     platform = topology_service.normalize_topology_platform(device.get("platform"))
-    commands = topology_service.DISCOVERY_COMMANDS.get(platform) or []
+    commands = _normalize_lldp_commands(topology_service.DISCOVERY_COMMANDS.get(platform))
     profile: dict[str, str] = {
         "platform_profile_id": str(device.get("platform_profile_id") or ""),
         "current_release_id": "",
@@ -99,7 +118,7 @@ def lldp_snapshot_versions(device: Mapping[str, Any]) -> dict[str, str]:
     action_material = {
         "contract": "topology-lldp-action-v1",
         "platform": platform,
-        "commands": [(str(kind), str(command)) for kind, command in commands],
+        "commands": commands,
         "profile": profile,
     }
     parser_functions = (

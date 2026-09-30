@@ -78,6 +78,23 @@ def _create_device(isolated_db, *, site_id: str = "site-lldp-test") -> dict:
     }
 
 
+def test_snapshot_fingerprint_accepts_string_and_legacy_tuple_commands(monkeypatch):
+    from services import topology_service
+
+    device = {"platform": "h3c_comware"}
+    command = "display lldp neighbor-information list"
+
+    monkeypatch.setitem(topology_service.DISCOVERY_COMMANDS, "h3c_comware", [command])
+    string_versions = lldp_snapshot_versions(device)
+
+    monkeypatch.setitem(topology_service.DISCOVERY_COMMANDS, "h3c_comware", [("lldp", command)])
+    tuple_versions = lldp_snapshot_versions(device)
+
+    assert string_versions == tuple_versions
+    assert len(string_versions["action_version"]) == 64
+    assert len(string_versions["parser_version"]) == 64
+
+
 def _complete(device: dict, generation: int, count: int) -> dict:
     conn = get_db_connection()
     try:
