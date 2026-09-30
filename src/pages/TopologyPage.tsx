@@ -325,7 +325,7 @@ const TopologyPage: React.FC<TopologyPageProps> = ({
   formatTopologyEvidenceLabel,
   getTopologyOperationalTone,
 }) => {
-  const [canvasView, setCanvasView] = React.useState<'overview' | 'site'>('site');
+  const [canvasView, setCanvasView] = React.useState<'overview' | 'site'>('overview');
   const [tagPickerOpen, setTagPickerOpen] = React.useState(false);
   const [draftTopologyTagFilter, setDraftTopologyTagFilter] = React.useState<TagFilterConfig>(topologyTagFilter);
   const topologyNetworkScope = React.useMemo(
