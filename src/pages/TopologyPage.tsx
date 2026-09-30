@@ -340,6 +340,10 @@ const TopologyPage: React.FC<TopologyPageProps> = ({
   );
   const handleSiteFilterChange = (value: string) => {
     onTopologySiteFilterChange(value);
+    setCanvasView(value === 'all' ? 'overview' : 'site');
+  };
+  const handleOpenSite = (value: string) => {
+    onTopologySiteFilterChange(value);
     setCanvasView('site');
   };
   React.useEffect(() => {
@@ -655,27 +659,6 @@ const TopologyPage: React.FC<TopologyPageProps> = ({
                   : 'Offline devices remain visible by default; stale links indicate 30m without refresh.'}
               </p>
             </div>
-            <div className="flex flex-wrap items-center justify-end gap-2 text-xs">
-              <div className="flex items-center rounded-xl bg-gray-100 dark:bg-zinc-800 p-0.5">
-                <button
-                  type="button"
-                  onClick={() => {
-                    onTopologySiteFilterChange('all');
-                    setCanvasView('overview');
-                  }}
-                  className={`inline-flex items-center gap-1.5 rounded-lg px-2.5 py-1 text-xs font-semibold transition-all cursor-pointer ${canvasView === 'overview' ? 'bg-white dark:bg-zinc-700 text-gray-900 dark:text-white shadow-2xs' : 'text-gray-500 hover:text-gray-800'}`}
-                >
-                  <LayoutGrid size={12} /> {language === 'zh' ? 'Site 总览' : 'Overview'}
-                </button>
-                <button
-                  type="button"
-                  onClick={() => setCanvasView('site')}
-                  className={`inline-flex items-center gap-1.5 rounded-lg px-2.5 py-1 text-xs font-semibold transition-all cursor-pointer ${canvasView === 'site' ? 'bg-white dark:bg-zinc-700 text-gray-900 dark:text-white shadow-2xs' : 'text-gray-500 hover:text-gray-800'}`}
-                >
-                  <Network size={12} /> {language === 'zh' ? (topologySiteFilter === 'all' ? '设备拓扑' : '站点拓扑') : (topologySiteFilter === 'all' ? 'Device topology' : 'Site topology')}
-                </button>
-              </div>
-            </div>
           </div>
 
           <div className="relative flex-1 min-h-0">
@@ -685,7 +668,7 @@ const TopologyPage: React.FC<TopologyPageProps> = ({
                 sites={topologySites}
                 devices={topologyNetworkScope.devices}
                 links={topologyMapLinks}
-                onSelectSite={handleSiteFilterChange}
+                onSelectSite={handleOpenSite}
               />
             ) : topologyNetworkScope.devices.length === 0 ? (
               <div className="absolute inset-0 flex flex-col items-center justify-center gap-3 text-center">
