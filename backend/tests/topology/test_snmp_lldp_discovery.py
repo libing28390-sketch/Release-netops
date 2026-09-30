@@ -45,8 +45,8 @@ def test_collect_snmp_lldp_neighbors_success():
         assert 'Huawei' in n['neighbor_platform']
 
 
-def test_collect_snmp_cdp_fallback_when_lldp_empty():
-    """Test fallback to CISCO-CDP-MIB when LLDP returns no entries."""
+def test_collect_snmp_lldp_returns_empty_when_lldp_is_unavailable():
+    """SNMP collection stays LLDP-only so the caller can fall back to CLI LLDP."""
     async def mock_walk(ip, community, oid, port=161, timeout=4.0, version='2c'):
         if oid.startswith('1.0.8802.'):
             return []
@@ -64,14 +64,7 @@ def test_collect_snmp_cdp_fallback_when_lldp_empty():
 
     with patch('services.snmp_service._snmp_walk', side_effect=mock_walk):
         neighbors = asyncio.run(collect_snmp_lldp_neighbors('192.168.100.1', 'cisco-ro'))
-        assert len(neighbors) == 1
-        n = neighbors[0]
-        assert n['protocol'] == 'cdp'
-        assert n['local_interface'] == 'TenGigabitEthernet1/0/1'
-        assert n['neighbor_name'] == 'CISCO-CATALYST-3850'
-        assert n['neighbor_interface'] == 'TenGigabitEthernet1/1/1'
-        assert n['mgmt_address'] == '192.168.100.5'
-        assert 'cisco' in n['neighbor_platform'].lower()
+        assert neighbors == []
 
 
 def test_topology_service_collects_snmp_first():
@@ -128,8 +121,39 @@ def test_topology_service_collects_snmp_first():
     )
 
 
-def test_match_target_device_relaxed_delimiter():
-    """Test _match_target_device_with_evidence matches S6850_1 to S6850-1."""
+def test_topology_service_keeps_snmp_neighbor_with_management_ip_but_no_name():
+    device = {
+        'id': 'dev-test-ip-only',
+        'hostname': 'Switch-A',
+        'ip_address': '10.20.30.40',
+        'platform': 'huawei_vrp',
+    }
+    mock_collect = AsyncMock(return_value=[{
+        'protocol': 'lldp',
+        'local_interface': 'GigabitEthernet0/0/1',
+        'neighbor_name': '',
+        'neighbor_interface': 'GigabitEthernet0/0/2',
+        'mgmt_address': '10.20.30.41',
+        'chassis_id': '',
+    }])
+    resolved_credentials = {
+        'ssh': {},
+        'snmp': {'server': '10.20.30.40', 'community': 'public', 'port': 161, 'version': '2c'},
+    }
+
+    with patch('services.topology_service.resolve_collector_credentials', return_value=resolved_credentials):
+        with patch('services.snmp_service.collect_snmp_lldp_neighbors', new=mock_collect):
+            with patch('drivers.ssh_compat.is_ssh_port_open') as mock_ssh_check:
+                batch, method = asyncio.run(_collect_device_observations(device))
+
+    assert method == 'snmp'
+    assert len(batch) == 1
+    assert batch[0]['neighbor_ip_address'] == '10.20.30.41'
+    mock_ssh_check.assert_not_called()
+
+
+def test_match_target_device_requires_synchronized_hostname():
+    """Punctuation changes are not treated as a hostname match."""
     from services.topology_service import _match_target_device_with_evidence
     from unittest.mock import MagicMock
 
@@ -139,9 +163,92 @@ def test_match_target_device_relaxed_delimiter():
     ]
 
     res = _match_target_device_with_evidence(mock_conn, 'S6850_1', '10.254.100.4', '')
-    assert res['status'] == 'matched'
-    assert res['method'] == 'system_name_relaxed'
-    assert res['device']['id'] == 'dev-1'
+    assert res['status'] == 'unmatched'
+    assert res['device'] is None
+
+
+def test_match_target_device_prefers_unique_management_ip_and_flags_name_mismatch():
+    from services.topology_service import _match_target_device_with_evidence
+
+    result = _match_target_device_with_evidence(
+        None,
+        'old-switch-name',
+        '192.0.2.10',
+        device_rows=[
+            {'id': 'device-a', 'hostname': 'core-a', 'ip_address': '192.0.2.10', 'sn': 'SERIAL-A'},
+            {'id': 'device-b', 'hostname': 'old-switch-name', 'ip_address': '192.0.2.11', 'sn': 'SERIAL-B'},
+        ],
+    )
+
+    assert result['device']['id'] == 'device-a'
+    assert result['method'] == 'management_ip'
+    assert result['status'] == 'hostname_mismatch'
+
+
+def test_match_target_device_case_only_hostname_mismatch_does_not_create_duplicate_peer():
+    from services.topology_service import _match_target_device_with_evidence
+
+    result = _match_target_device_with_evidence(
+        None,
+        'CORE-SW-01',
+        '',
+        device_rows=[{'id': 'device-a', 'hostname': 'core-sw-01', 'ip_address': '', 'sn': ''}],
+    )
+
+    assert result['device']['id'] == 'device-a'
+    assert result['method'] == 'system_name_case_mismatch'
+    assert result['status'] == 'hostname_mismatch'
+
+
+def test_match_target_device_normalizes_serial_separators():
+    from services.topology_service import _match_target_device_with_evidence
+
+    result = _match_target_device_with_evidence(
+        None,
+        '',
+        '',
+        '00:11-AA.22',
+        device_rows=[{'id': 'device-a', 'hostname': '', 'ip_address': '', 'sn': '0011aa22'}],
+    )
+
+    assert result['device']['id'] == 'device-a'
+    assert result['method'] == 'serial_number'
+
+
+def test_match_target_device_marks_management_ip_and_serial_conflict_ambiguous():
+    from services.topology_service import _match_target_device_with_evidence
+
+    result = _match_target_device_with_evidence(
+        None,
+        '',
+        '192.0.2.10',
+        'SERIAL-B',
+        device_rows=[
+            {'id': 'device-a', 'hostname': 'core-a', 'ip_address': '192.0.2.10', 'sn': 'SERIAL-A'},
+            {'id': 'device-b', 'hostname': 'core-b', 'ip_address': '192.0.2.11', 'sn': 'SERIAL-B'},
+        ],
+    )
+
+    assert result['device'] is None
+    assert result['status'] == 'ambiguous'
+    assert result['method'] == 'management_ip_serial_conflict'
+
+
+def test_target_identity_rows_are_scoped_to_the_source_tenant():
+    from services.topology_service import _load_target_device_identity_rows
+    from unittest.mock import MagicMock
+
+    conn = MagicMock()
+    conn.execute.return_value.fetchall.return_value = [
+        {'id': 'tenant-a-device', 'hostname': 'switch-a', 'tenant_id': 'tenant-a'},
+    ]
+
+    rows = _load_target_device_identity_rows(conn, tenant_id='tenant-a')
+
+    sql, params = conn.execute.call_args.args
+    assert "COALESCE(NULLIF(d.tenant_id, ''), 'tenant-default') = ?" in sql
+    assert params == ('tenant-a',)
+    assert rows == [{'id': 'tenant-a-device', 'hostname': 'switch-a', 'tenant_id': 'tenant-a'}]
 
 
 def test_get_unmanaged_neighbors_filters_stale():
@@ -158,6 +265,8 @@ def test_get_unmanaged_neighbors_filters_stale():
         called_sql = mock_conn.execute.call_args[0][0]
         assert "COALESCE(o.is_active, 1) = 1" in called_sql
         assert "COALESCE(o.status, 'active') <> 'stale'" in called_sql
+        assert "o.neighbor_ip_address" in called_sql
+        assert "o.raw_payload_json" in called_sql
 
         get_unmanaged_neighbors(include_stale=True)
         called_sql_stale = mock_conn.execute.call_args[0][0]

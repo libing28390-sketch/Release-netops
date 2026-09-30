@@ -152,53 +152,7 @@ const InventoryDevicesTab: React.FC<InventoryDevicesTabProps> = ({
   const [batchTagIds, setBatchTagIds] = useState<string[]>([]);
   const [batchTagLoading, setBatchTagLoading] = useState(false);
   const [batchPlatformOpen, setBatchPlatformOpen] = useState(false);
-  const [batchSyncing, setBatchSyncing] = useState(false);
-  const [syncResultToast, setSyncResultToast] = useState<{ message: string; type: 'success' | 'warning' | 'error' } | null>(null);
   const batchTagRef = useRef<HTMLDivElement>(null);
-
-  useEffect(() => {
-    if (!syncResultToast) return;
-    const timer = setTimeout(() => setSyncResultToast(null), 5000);
-    return () => clearTimeout(timer);
-  }, [syncResultToast]);
-
-  const handleBatchSyncHostnames = async (specificIds?: string[]) => {
-    if (batchSyncing) return;
-    const ids = specificIds !== undefined ? specificIds : (selectedDeviceIds.length > 0 ? selectedDeviceIds : []);
-    setBatchSyncing(true);
-    setSyncResultToast(null);
-    try {
-      const token = localStorage.getItem('netops_token');
-      const resp = await fetch('/api/devices/batch-sync-hostname', {
-        method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-          ...(token ? { Authorization: `Bearer ${token}` } : {}),
-        },
-        body: JSON.stringify({ device_ids: ids }),
-      });
-      const data = await resp.json().catch(() => ({}));
-      if (!resp.ok) {
-        throw new Error(data.detail || (zh ? 'SNMP 同步主机名失败' : 'SNMP hostname sync failed'));
-      }
-      const msg = data.message || (zh
-        ? `SNMP 同步主机名完成：更新 ${data.updated || 0} 台，未变更 ${data.unchanged || 0} 台${data.failed ? `，失败 ${data.failed} 台` : ''}`
-        : `SNMP sync complete: ${data.updated || 0} updated, ${data.unchanged || 0} unchanged${data.failed ? `, ${data.failed} failed` : ''}`);
-      setSyncResultToast({
-        message: msg,
-        type: data.failed > 0 ? 'warning' : 'success',
-      });
-      await fetchInventory();
-      onRefresh();
-    } catch (err: any) {
-      setSyncResultToast({
-        message: err.message || (zh ? '同步请求异常' : 'Sync request error'),
-        type: 'error',
-      });
-    } finally {
-      setBatchSyncing(false);
-    }
-  };
 
   useEffect(() => {
     const token = localStorage.getItem('netops_token');
@@ -386,17 +340,6 @@ const InventoryDevicesTab: React.FC<InventoryDevicesTabProps> = ({
             >
               <Plus size={13} />
               <span>{zh ? '添加设备' : 'Add Device'}</span>
-            </button>
-            <button
-              onClick={() => handleBatchSyncHostnames()}
-              disabled={batchSyncing}
-              title={zh ? '通过 SNMP 探测并同步网络设备真实主机名' : 'Sync real device hostnames via SNMP'}
-              className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-xl border border-indigo-200 dark:border-indigo-800/80
-                bg-indigo-50/70 dark:bg-indigo-950/40 text-xs font-semibold text-indigo-700 dark:text-indigo-300
-                hover:bg-indigo-100 dark:hover:bg-indigo-900/60 transition-all cursor-pointer shadow-2xs disabled:opacity-50 disabled:cursor-not-allowed"
-            >
-              <RefreshCw size={13} className={batchSyncing ? 'animate-spin text-indigo-500' : 'text-indigo-500'} />
-              <span>{batchSyncing ? (zh ? '同步中…' : 'Syncing…') : (zh ? 'SNMP 同步主机名' : 'SNMP Sync')}</span>
             </button>
             <button
               onClick={onRefresh}
@@ -669,19 +612,6 @@ const InventoryDevicesTab: React.FC<InventoryDevicesTabProps> = ({
 
             <div className="flex items-center gap-2">
               <button
-                type="button"
-                onClick={() => handleBatchSyncHostnames(selectedDeviceIds)}
-                disabled={batchSyncing}
-                className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-xl text-xs font-semibold
-                  border border-indigo-200 dark:border-indigo-500/30 bg-white dark:bg-zinc-800 text-indigo-700 dark:text-indigo-300
-                  hover:bg-indigo-50 dark:hover:bg-indigo-950/40 transition-all cursor-pointer shadow-2xs disabled:opacity-50 disabled:cursor-not-allowed"
-                title={zh ? `为选中的 ${selectedDeviceIds.length} 台设备探测并更新主机名` : `Probe and update hostnames for ${selectedDeviceIds.length} selected devices`}
-              >
-                <RefreshCw size={13} className={batchSyncing ? 'animate-spin text-indigo-500' : 'text-indigo-500'} />
-                <span>{batchSyncing ? (zh ? '同步中…' : 'Syncing…') : (zh ? '批量同步主机名' : 'Batch Sync Hostname')}</span>
-              </button>
-
-              <button
                 onClick={() => {
                   const selected = inventoryRows.filter(d => selectedDeviceIds.includes(d.id));
                   selected.forEach(d => handleTestConnection(d, 'quick'));
@@ -830,21 +760,6 @@ const InventoryDevicesTab: React.FC<InventoryDevicesTabProps> = ({
             onRefresh();
           }}
         />
-      )}
-      {syncResultToast && (
-        <div className={`fixed bottom-6 right-6 z-50 flex items-center gap-2.5 px-4 py-3 rounded-2xl shadow-xl border backdrop-blur-md transition-all animate-in fade-in slide-in-from-bottom-2 ${
-          syncResultToast.type === 'success'
-            ? 'bg-emerald-600/95 text-white border-emerald-400/50 shadow-emerald-950/20'
-            : syncResultToast.type === 'warning'
-            ? 'bg-amber-600/95 text-white border-amber-400/50 shadow-amber-950/20'
-            : 'bg-rose-600/95 text-white border-rose-400/50 shadow-rose-950/20'
-        }`}>
-          {syncResultToast.type === 'success' ? <CheckCircle2 size={16} /> : <AlertTriangle size={16} />}
-          <span className="text-xs font-semibold">{syncResultToast.message}</span>
-          <button onClick={() => setSyncResultToast(null)} className="ml-2 hover:opacity-80 cursor-pointer">
-            <X size={14} />
-          </button>
-        </div>
       )}
     </div>
   );

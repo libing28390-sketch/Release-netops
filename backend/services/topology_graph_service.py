@@ -5,9 +5,9 @@ The graph deliberately keeps four concerns separate:
 * asset identity (role, function, site and zone);
 * observed facts (protocol evidence);
 * semantic relations (physical, peer, hierarchy, OOB, ...);
-* visual layout (dynamic ranks and user overrides).
+* visual layout (explicit user overrides).
 
-LLDP/CDP is the only automatic source that can create a PHYSICAL relation.
+LLDP is the only automatic source that can create a PHYSICAL relation.
 Other protocols create logical or semantic evidence and are never promoted to
 physical links by name matching or by device role.
 """
@@ -18,7 +18,7 @@ import hashlib
 import json
 import math
 import uuid
-from collections import defaultdict, deque
+from collections import defaultdict
 from datetime import datetime, timezone
 from typing import Any, Iterable
 
@@ -42,7 +42,6 @@ RELATION_TYPES = {
 SOURCE_PRIORITY = {
     "manual": 100,
     "lldp": 95,
-    "cdp": 92,
     "lag": 85,
     "stp": 80,
     "ha": 75,
@@ -66,15 +65,6 @@ SOURCE_PRIORITY = {
     "mac": 20,
 }
 
-_EQUAL_RANK_RELATIONS = {
-    "PEER", "L3_NEIGHBOR", "L2_NEIGHBOR", "HA", "HA_PEER", "VRRP_HSRP",
-    "STACK", "IRF", "CSS", "VC", "MLAG_PEER", "VPC_PEER", "RING",
-}
-_RANK_EXCLUDED_RELATIONS = {
-    "HA", "HA_PEER", "VRRP_HSRP", "STACK", "IRF", "CSS", "VC",
-    "MLAG_PEER", "VPC_PEER", "OOB", "INTER_SITE", "UNKNOWN",
-}
-_DIRECTED_RELATIONS = {"HIERARCHICAL", "LOGICAL", "BRANCH", "TUNNEL", "WAN"}
 _UNDIRECTED_RELATIONS = {
     "PHYSICAL", "PEER", "L2_NEIGHBOR", "ENDPOINT", "HA", "HA_PEER",
     "VRRP_HSRP", "STACK", "IRF", "CSS", "VC", "MLAG_PEER", "VPC_PEER",
@@ -202,7 +192,6 @@ def normalize_node(raw: dict[str, Any], *, tenant_id: str = "tenant-default") ->
         "metadata": metadata,
         "first_seen": raw.get("first_seen") or now_iso(),
         "last_seen": raw.get("last_seen") or now_iso(),
-        "rank": raw.get("rank", 0),
         "layout_override": dict(raw.get("layout_override") or {}),
     }
 
@@ -261,7 +250,7 @@ def normalize_observation(raw: dict[str, Any]) -> dict[str, Any]:
         semantic_relation = semantic_relation or "OUT_OF_BAND"
     elif explicit:
         relation_type = explicit
-    elif source_type in {"lldp", "cdp"} or protocol in {"lldp", "cdp"}:
+    elif source_type == "lldp" or protocol == "lldp":
         relation_type = "PHYSICAL"
     elif protocol in {"ha", "ha_peer", "firewall_ha", "cluster"} or source_type in {"ha", "ha_peer", "firewall_ha"}:
         relation_type = "HA_PEER"
@@ -305,8 +294,8 @@ def normalize_observation(raw: dict[str, Any]) -> dict[str, Any]:
     else:
         relation_type = "UNKNOWN"
 
-    # Only LLDP/CDP/manual evidence may assert physical existence.
-    if relation_type == "PHYSICAL" and source_type not in {"lldp", "cdp", "manual"} and protocol not in {"lldp", "cdp"}:
+    # Only LLDP/manual evidence may assert physical existence.
+    if relation_type == "PHYSICAL" and source_type not in {"lldp", "manual"} and protocol != "lldp":
         relation_type = "UNKNOWN"
         semantic_relation = semantic_relation or "UNTRUSTED_PHYSICAL_ASSERTION"
 
@@ -389,9 +378,10 @@ def detect_topology_anchors(
 ) -> list[dict[str, Any]]:
     """Find zero-or-more topology anchors from explicit semantic evidence.
 
-    Anchors are navigation/layout hints, not parents and not rank sources. The
-    detector intentionally uses function, zone, external-node type, route/WAN
-    metadata, and manual flags; it never promotes a device role into a root.
+    Anchors are navigation/layout hints, not parents or inferred topology
+    tiers. The detector intentionally uses function, zone, external-node type,
+    route/WAN metadata, and manual flags; it never promotes a device role into
+    a root.
     """
     node_list = list(nodes)
     node_map = {str(node.get("id")): node for node in node_list if node.get("id")}
@@ -440,148 +430,6 @@ def detect_topology_anchors(
             "reasons": sorted(node_reasons),
         })
     return sorted(anchors, key=lambda item: (-float(item["confidence"]), str(item["node_id"])))
-
-
-class _DisjointSet:
-    def __init__(self, items: Iterable[str]):
-        self.parent = {str(item): str(item) for item in items}
-
-    def find(self, item: str) -> str:
-        item = str(item)
-        self.parent.setdefault(item, item)
-        while self.parent[item] != item:
-            self.parent[item] = self.parent[self.parent[item]]
-            item = self.parent[item]
-        return item
-
-    def union(self, left: str, right: str) -> None:
-        a, b = self.find(left), self.find(right)
-        if a != b:
-            self.parent[b] = a
-
-
-def calculate_dynamic_ranks(nodes: list[dict[str, Any]], edges: list[dict[str, Any]]) -> dict[str, int]:
-    """Calculate stable ranks from relation constraints, never from role labels.
-
-    Directed cycles are collapsed into strongly connected components before
-    ranks are propagated.  This makes a loop a single equal-rank unit instead
-    of allowing bounded relaxation to produce order-dependent values.
-    """
-    node_ids = sorted({str(node["id"]) for node in nodes})
-    node_id_set = set(node_ids)
-    dsu = _DisjointSet(node_ids)
-    for edge in edges:
-        relation = str(edge.get("relation_type") or "").upper()
-        source_id = str(edge.get("source_node_id") or "")
-        target_id = str(edge.get("target_node_id") or "")
-        if (
-            source_id in node_id_set
-            and target_id in node_id_set
-            and relation in _EQUAL_RANK_RELATIONS
-            and not int(edge.get("rank_excluded") or 0)
-        ):
-            dsu.union(source_id, target_id)
-
-    components = {dsu.find(node_id) for node_id in node_ids}
-    component_rank = {component: 0 for component in components}
-    for node in nodes:
-        try:
-            component_rank[dsu.find(str(node["id"]))] = max(
-                component_rank[dsu.find(str(node["id"]))], int(float(node.get("rank") or 0)),
-            )
-        except (TypeError, ValueError):
-            pass
-
-    adjacency: dict[str, set[str]] = {component: set() for component in components}
-    for edge in edges:
-        relation = str(edge.get("relation_type") or "").upper()
-        source_id = str(edge.get("source_node_id") or "")
-        target_id = str(edge.get("target_node_id") or "")
-        if (
-            edge.get("direction") == "directed"
-            and relation in _DIRECTED_RELATIONS
-            and not int(edge.get("rank_excluded") or 0)
-            and relation not in _RANK_EXCLUDED_RELATIONS
-            and source_id in node_id_set
-            and target_id in node_id_set
-        ):
-            source_component = dsu.find(source_id)
-            target_component = dsu.find(target_id)
-            if source_component == target_component:
-                continue
-            adjacency.setdefault(source_component, set()).add(target_component)
-
-    # Tarjan SCC traversal is sorted at every boundary so node/edge input
-    # order cannot change either the components or their final ranks.
-    index = 0
-    indices: dict[str, int] = {}
-    lowlinks: dict[str, int] = {}
-    stack: list[str] = []
-    on_stack: set[str] = set()
-    strongly_connected: list[tuple[str, ...]] = []
-
-    def visit(component: str) -> None:
-        nonlocal index
-        indices[component] = index
-        lowlinks[component] = index
-        index += 1
-        stack.append(component)
-        on_stack.add(component)
-        for target in sorted(adjacency.get(component, set())):
-            if target not in indices:
-                visit(target)
-                lowlinks[component] = min(lowlinks[component], lowlinks[target])
-            elif target in on_stack:
-                lowlinks[component] = min(lowlinks[component], indices[target])
-        if lowlinks[component] != indices[component]:
-            return
-        members: list[str] = []
-        while stack:
-            member = stack.pop()
-            on_stack.remove(member)
-            members.append(member)
-            if member == component:
-                break
-        strongly_connected.append(tuple(sorted(members)))
-
-    for component in sorted(components):
-        if component not in indices:
-            visit(component)
-    strongly_connected.sort()
-    scc_by_component = {
-        component: scc_index
-        for scc_index, members in enumerate(strongly_connected)
-        for component in members
-    }
-    scc_rank = {
-        scc_index: max((component_rank.get(component, 0) for component in members), default=0)
-        for scc_index, members in enumerate(strongly_connected)
-    }
-    scc_adjacency: dict[int, set[int]] = {index: set() for index in range(len(strongly_connected))}
-    indegree = {index: 0 for index in range(len(strongly_connected))}
-    for source_component, targets in adjacency.items():
-        source_scc = scc_by_component[source_component]
-        for target_component in targets:
-            target_scc = scc_by_component[target_component]
-            if source_scc == target_scc or target_scc in scc_adjacency[source_scc]:
-                continue
-            scc_adjacency[source_scc].add(target_scc)
-            indegree[target_scc] += 1
-
-    ready = sorted(index for index, degree in indegree.items() if degree == 0)
-    while ready:
-        source_scc = ready.pop(0)
-        for target_scc in sorted(scc_adjacency[source_scc]):
-            scc_rank[target_scc] = max(scc_rank[target_scc], min(20, scc_rank[source_scc] + 1))
-            indegree[target_scc] -= 1
-            if indegree[target_scc] == 0:
-                ready.append(target_scc)
-                ready.sort()
-
-    return {
-        node_id: int(scc_rank[scc_by_component[dsu.find(node_id)]])
-        for node_id in node_ids
-    }
 
 
 def _resolve_node(
@@ -691,7 +539,6 @@ def build_graph(
             "existence": "observed",
             "status": "active",
             "is_manual": int(item.get("is_manual") or 0),
-            "rank_excluded": int(item["relation_type"] in _RANK_EXCLUDED_RELATIONS),
             "evidence": [],
         })
         edge["is_manual"] = max(int(edge.get("is_manual") or 0), int(item.get("is_manual") or 0))
@@ -781,7 +628,6 @@ def build_graph(
             "semantic_confidence": edge.get("semantic_confidence", 0),
             "status": "active",
             "is_manual": 0,
-            "rank_excluded": 1,
             "metadata": {"derived_from_edge": edge["id"], "source_sites": [source_site, target_site]},
             "evidence": [{
                 "source_type": "site_interconnect",
@@ -803,9 +649,6 @@ def build_graph(
             node["metadata"]["anchor_type"] = anchor["anchor_type"]
             node["metadata"]["anchor_reasons"] = anchor["reasons"]
 
-    ranks = calculate_dynamic_ranks(list(node_map.values()), edges)
-    for node in node_map.values():
-        node["rank"] = ranks.get(node["id"], 0)
     deduplicated_members: dict[tuple[str, str], dict[str, Any]] = {}
     for member in group_members:
         key = (str(member["group_id"]), str(member["node_id"]))
@@ -816,47 +659,10 @@ def build_graph(
     return {
         "nodes": list(node_map.values()),
         "edges": edges,
-        "ranks": ranks,
         "groups": list(group_defs.values()),
         "group_members": list(deduplicated_members.values()),
         "anchors": anchors,
     }
-
-
-def _visual_rank_map(graph: dict[str, Any]) -> dict[str, int]:
-    nodes = graph.get("nodes") or []
-    edges = graph.get("edges") or []
-    ranks = {str(node["id"]): max(0, int(float(node.get("rank") or 0))) for node in nodes}
-    if any(value > 0 for value in ranks.values()):
-        return ranks
-
-    adjacency: dict[str, set[str]] = defaultdict(set)
-    for edge in edges:
-        relation = str(edge.get("relation_type") or "").upper()
-        if relation in {"OOB", "INTER_SITE"} or int(edge.get("rank_excluded") or 0):
-            continue
-        left, right = str(edge["source_node_id"]), str(edge["target_node_id"])
-        if left in ranks and right in ranks:
-            adjacency[left].add(right)
-            adjacency[right].add(left)
-    visited: set[str] = set()
-    for start in sorted(adjacency):
-        if start in visited:
-            continue
-        distances = {start: 0}
-        queue = deque([start])
-        visited.add(start)
-        while queue:
-            current = queue.popleft()
-            for neighbor in sorted(adjacency[current]):
-                if neighbor in distances:
-                    continue
-                distances[neighbor] = min(20, distances[current] + 1)
-                visited.add(neighbor)
-                queue.append(neighbor)
-        for node_id, distance in distances.items():
-            ranks[node_id] = distance
-    return ranks
 
 
 def layout_graph(
@@ -864,105 +670,19 @@ def layout_graph(
     *,
     overrides: dict[str, dict[str, Any]] | None = None,
 ) -> dict[str, dict[str, float]]:
-    """Create a stable layered layout with no role-based fixed tiers.
-
-    Explicit relation ranks win. For an unconstrained physical component, a
-    topology-derived BFS depth is used only as a visual seed; role labels are
-    never inspected. A small barycentre pass makes peer/mesh crossings less
-    severe while manual coordinates always win.
-    """
+    """Return explicit user positions without deriving coordinates from graph structure."""
     overrides = overrides or {}
     nodes = list(graph.get("nodes") or [])
-    edges = list(graph.get("edges") or [])
-    visual_ranks = _visual_rank_map(graph)
-    by_rank: dict[int, list[dict[str, Any]]] = defaultdict(list)
-    node_map = {str(node["id"]): node for node in nodes}
-    adjacency: dict[str, set[str]] = defaultdict(set)
-    for edge in edges:
-        if str(edge.get("relation_type") or "").upper() in {"OOB", "INTER_SITE"}:
-            continue
-        left, right = str(edge["source_node_id"]), str(edge["target_node_id"])
-        adjacency[left].add(right)
-        adjacency[right].add(left)
-    for node in nodes:
-        by_rank[visual_ranks.get(str(node["id"]), 0)].append(node)
-
-    # Stable order followed by two barycentre sweeps.
-    for rank, layer in by_rank.items():
-        layer.sort(key=lambda item: (
-            str(item.get("site_id") or ""),
-            str(item.get("zone") or ""),
-            -len(adjacency.get(str(item["id"]), set())),
-            str(item.get("display_name") or item["id"]),
-        ))
-    for _ in range(2):
-        for rank in sorted(by_rank):
-            if rank == min(by_rank):
-                continue
-            previous = {str(node["id"]): index for index, node in enumerate(by_rank[rank - 1])}
-            by_rank[rank].sort(key=lambda node: (
-                sum(previous.get(neighbor, 0) for neighbor in adjacency.get(str(node["id"]), set()))
-                / max(1, len([neighbor for neighbor in adjacency.get(str(node["id"]), set()) if neighbor in previous])),
-                str(node.get("display_name") or node["id"]),
-            ))
-
     layout: dict[str, dict[str, float]] = {}
-    site_lanes = {site: index for index, site in enumerate(sorted({
-        str(node.get("site_id") or "") for node in nodes if node.get("site_id")
-    }))}
-    for rank in sorted(by_rank):
-        for row, node in enumerate(by_rank[rank]):
-            node_id = str(node["id"])
-            override = overrides.get(node_id) or node.get("layout_override") or {}
-            try:
-                x, y = float(override["x"]), float(override["y"])
-                if math.isfinite(x) and math.isfinite(y):
-                    layout[node_id] = {"x": x, "y": y, "manual": 1.0}
-                    continue
-            except (KeyError, TypeError, ValueError):
-                pass
-            site_lane = site_lanes.get(str(node.get("site_id") or ""), 0)
-            zone = str(node.get("zone") or "").lower()
-            zone_offset = 700 if zone in {"oob", "out_of_band", "management"} else 0
-            node_offset = 100 if str(node.get("node_type") or "") in {"SITE", "GROUP"} else 0
-            layout[node_id] = {
-                "x": float(rank * 280 + site_lane * 1100 + zone_offset + node_offset),
-                "y": float(row * 120),
-                "manual": 0.0,
-            }
-
-    # Ring groups are semantic objects, so render their members as a stable
-    # circle instead of letting the generic layered seed flatten the loop.
-    group_members_by_id: dict[str, set[str]] = defaultdict(set)
-    for member in graph.get("group_members") or []:
-        group_members_by_id[str(member.get("group_id") or "")].add(str(member.get("node_id") or ""))
-    for group in sorted(graph.get("groups") or [], key=lambda item: str(item.get("id") or "")):
-        if str(group.get("group_type") or "").upper() != "RING":
+    for node in nodes:
+        node_id = str(node.get("id") or "")
+        override = overrides.get(node_id) or node.get("layout_override") or {}
+        try:
+            x, y = float(override["x"]), float(override["y"])
+        except (KeyError, TypeError, ValueError):
             continue
-        group_id = str(group.get("id") or "")
-        members = sorted(
-            (member_id for member_id in group_members_by_id.get(group_id, set()) if member_id in layout),
-            key=lambda member_id: (
-                str(node_map.get(member_id, {}).get("display_name") or member_id),
-                member_id,
-            ),
-        )
-        if len(members) < 3:
-            continue
-        center_x = sum(layout[member_id]["x"] for member_id in members) / len(members)
-        center_y = sum(layout[member_id]["y"] for member_id in members) / len(members)
-        radius = min(320.0, max(150.0, len(members) * 42.0))
-        for member_index, member_id in enumerate(members):
-            if layout[member_id].get("manual"):
-                continue
-            angle = -math.pi / 2 + 2 * math.pi * member_index / len(members)
-            layout[member_id] = {
-                "x": center_x + math.cos(angle) * radius,
-                "y": center_y + math.sin(angle) * radius,
-                "manual": 0.0,
-            }
-        if group_id in layout and not layout[group_id].get("manual"):
-            layout[group_id] = {"x": center_x, "y": center_y, "manual": 0.0}
+        if math.isfinite(x) and math.isfinite(y):
+            layout[node_id] = {"x": x, "y": y, "manual": 1.0}
     return layout
 
 
@@ -976,7 +696,6 @@ def apply_relation_override(edge: dict[str, Any], *, relation_type: str, actor: 
     edge["semantic_relation"] = edge.get("semantic_relation") or relation
     edge["is_manual"] = 1
     edge["manual_confirmed"] = 1
-    edge["rank_excluded"] = int(relation in _RANK_EXCLUDED_RELATIONS)
     edge["metadata"] = {
         **dict(edge.get("metadata") or {}),
         "relation_override_by": actor,
@@ -1113,7 +832,7 @@ def persist_graph(graph: dict[str, Any]) -> dict[str, int]:
         ]
         for node in nodes:
             existing = conn.execute(
-                "SELECT id, rank, layout_override_json, role_identity, function, zone, status FROM topology_nodes WHERE tenant_id = ? AND canonical_key = ?",
+                "SELECT id FROM topology_nodes WHERE tenant_id = ? AND canonical_key = ?",
                 (tenant_id, node["canonical_key"]),
             ).fetchone()
             created_at = now_iso()
@@ -1122,8 +841,8 @@ def persist_graph(graph: dict[str, Any]) -> dict[str, int]:
                 INSERT INTO topology_nodes
                     (id, tenant_id, node_type, canonical_key, display_name, device_id,
                      site_id, role_identity, function, zone, status, metadata_json,
-                     rank, first_seen, last_seen, created_at, updated_at)
-                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                     first_seen, last_seen, created_at, updated_at)
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                 ON CONFLICT(tenant_id, canonical_key) DO UPDATE SET
                     display_name = excluded.display_name,
                     device_id = excluded.device_id,
@@ -1133,7 +852,6 @@ def persist_graph(graph: dict[str, Any]) -> dict[str, int]:
                     zone = excluded.zone,
                     status = excluded.status,
                     metadata_json = excluded.metadata_json,
-                    rank = excluded.rank,
                     last_seen = excluded.last_seen,
                     updated_at = excluded.updated_at
                 """,
@@ -1142,7 +860,7 @@ def persist_graph(graph: dict[str, Any]) -> dict[str, int]:
                     node["display_name"], node.get("device_id"), node.get("site_id"),
                     node.get("role_identity"), node.get("function"), node.get("zone"),
                     node.get("status", "active"), json.dumps(node.get("metadata") or {}, ensure_ascii=False),
-                    node.get("rank", 0), node.get("first_seen") or created_at,
+                    node.get("first_seen") or created_at,
                     node.get("last_seen") or created_at, created_at, created_at,
                 ),
             )
@@ -1214,7 +932,6 @@ def persist_graph(graph: dict[str, Any]) -> dict[str, int]:
                 edge["relation_type"] = old["relation_type"]
                 edge["semantic_relation"] = old.get("semantic_relation") or edge.get("semantic_relation") or ""
                 edge["is_manual"] = 1
-                edge["rank_excluded"] = int(old.get("rank_excluded") or 0)
                 edge["metadata"] = {
                     **dict(edge.get("metadata") or {}),
                     **(_json_load(old.get("metadata_json"), {}) or {}),
@@ -1227,9 +944,9 @@ def persist_graph(graph: dict[str, Any]) -> dict[str, int]:
                     (id, tenant_id, source_node_id, target_node_id, source_interface,
                      target_interface, relation_type, direction, existence,
                      existence_confidence, semantic_confidence, status, is_manual,
-                     manual_confirmed, semantic_relation, rank_excluded, metadata_json,
+                      manual_confirmed, semantic_relation, metadata_json,
                      first_seen, last_seen, created_at, updated_at)
-                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                 ON CONFLICT(tenant_id, source_node_id, target_node_id, source_interface, target_interface, relation_type)
                 DO UPDATE SET
                     existence = excluded.existence,
@@ -1243,7 +960,6 @@ def persist_graph(graph: dict[str, Any]) -> dict[str, int]:
                         WHEN topology_edges.manual_confirmed > excluded.manual_confirmed
                         THEN topology_edges.manual_confirmed ELSE excluded.manual_confirmed END,
                     semantic_relation = excluded.semantic_relation,
-                    rank_excluded = excluded.rank_excluded,
                     metadata_json = excluded.metadata_json,
                     last_seen = excluded.last_seen,
                     stale_at = NULL,
@@ -1256,7 +972,7 @@ def persist_graph(graph: dict[str, Any]) -> dict[str, int]:
                     edge.get("existence", "observed"), edge.get("existence_confidence", 0),
                     edge.get("semantic_confidence", 0), edge.get("status", "active"),
                     int(edge.get("is_manual") or 0), int(edge.get("manual_confirmed") or edge.get("is_manual") or 0),
-                    edge.get("semantic_relation") or "", int(edge.get("rank_excluded") or 0),
+                    edge.get("semantic_relation") or "",
                     json.dumps(edge.get("metadata") or {}, ensure_ascii=False),
                     edge.get("first_seen") or created_at, edge.get("last_seen") or created_at,
                     created_at, created_at,
@@ -1281,16 +997,15 @@ def persist_graph(graph: dict[str, Any]) -> dict[str, int]:
                     """
                     INSERT INTO topology_relations
                         (id, tenant_id, edge_id, relation_type, semantic_relation, direction,
-                         existence_confidence, semantic_confidence, rank_excluded, is_manual,
+                         existence_confidence, semantic_confidence, is_manual,
                          status, metadata_json, first_seen, last_seen, created_at, updated_at)
-                    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                     ON CONFLICT(tenant_id, edge_id) DO UPDATE SET
                         relation_type = excluded.relation_type,
                         semantic_relation = excluded.semantic_relation,
                         direction = excluded.direction,
                         existence_confidence = excluded.existence_confidence,
                         semantic_confidence = excluded.semantic_confidence,
-                        rank_excluded = excluded.rank_excluded,
                         is_manual = CASE
                             WHEN topology_relations.is_manual > excluded.is_manual
                             THEN topology_relations.is_manual ELSE excluded.is_manual END,
@@ -1303,7 +1018,7 @@ def persist_graph(graph: dict[str, Any]) -> dict[str, int]:
                         relation_id, tenant_id, edge["id"], edge["relation_type"],
                         edge.get("semantic_relation") or "", edge.get("direction") or "undirected",
                         edge.get("existence_confidence", 0), edge.get("semantic_confidence", 0),
-                        int(edge.get("rank_excluded") or 0), int(edge.get("is_manual") or 0),
+                        int(edge.get("is_manual") or 0),
                         edge.get("status", "active"), json.dumps(edge.get("metadata") or {}, ensure_ascii=False),
                         edge.get("first_seen"), edge.get("last_seen"), created_at, created_at,
                     ),
@@ -1457,7 +1172,7 @@ def _graph_rows(
         node_where.append(f"device_id IN ({device_placeholders})")
         node_params.extend(normalized_device_ids)
     rows = conn.execute(
-        "SELECT id, tenant_id, node_type, canonical_key, display_name, device_id, site_id, role_identity, function, zone, status, metadata_json, layout_override_json, rank, first_seen, last_seen FROM topology_nodes WHERE "
+        "SELECT id, tenant_id, node_type, canonical_key, display_name, device_id, site_id, role_identity, function, zone, status, metadata_json, layout_override_json, first_seen, last_seen FROM topology_nodes WHERE "
         + " AND ".join(node_where) + " ORDER BY display_name LIMIT ?",
         (*node_params, limit),
     ).fetchall()
@@ -1499,7 +1214,7 @@ def _graph_rows(
         edge_where.append(f"relation_type IN ({relation_placeholders})")
         edge_params.extend(sorted(relation_types))
     edge_rows = conn.execute(
-        "SELECT topology_edges.id, source_node_id, target_node_id, source_interface, target_interface, relation_type, direction, existence, existence_confidence, semantic_confidence, status, is_manual, manual_confirmed, semantic_relation, rank_excluded, metadata_json, first_seen, last_seen, stale_at, COALESCE(evidence_counts.evidence_count, 0) AS evidence_count FROM topology_edges LEFT JOIN (SELECT edge_id, COUNT(*) AS evidence_count FROM topology_edge_evidence GROUP BY edge_id) AS evidence_counts ON evidence_counts.edge_id = topology_edges.id WHERE "
+        "SELECT topology_edges.id, source_node_id, target_node_id, source_interface, target_interface, relation_type, direction, existence, existence_confidence, semantic_confidence, status, is_manual, manual_confirmed, semantic_relation, metadata_json, first_seen, last_seen, stale_at, COALESCE(evidence_counts.evidence_count, 0) AS evidence_count FROM topology_edges LEFT JOIN (SELECT edge_id, COUNT(*) AS evidence_count FROM topology_edge_evidence GROUP BY edge_id) AS evidence_counts ON evidence_counts.edge_id = topology_edges.id WHERE "
         + " AND ".join(edge_where) + " ORDER BY last_seen DESC LIMIT ?",
         (*edge_params, limit),
     ).fetchall()
@@ -1507,6 +1222,15 @@ def _graph_rows(
     for row in edge_rows:
         item = dict(row)
         item["metadata"] = _json_load(item.pop("metadata_json", None), {}) or {}
+        source_types = item["metadata"].get("source_types") or []
+        active_source_types = [
+            source_type for source_type in source_types
+            if str(source_type).strip().lower() != "cdp"
+        ]
+        if source_types and not active_source_types:
+            continue
+        if active_source_types != source_types:
+            item["metadata"]["source_types"] = active_source_types
         item["evidence_count"] = int(item.get("evidence_count") or 0)
         edges.append(item)
     return nodes, edges
@@ -1803,9 +1527,6 @@ def get_physical_links(
             "is_manual": edge.get("is_manual", 0),
             "manual_confirmed": edge.get("manual_confirmed", 0),
             "operational_state": "stale" if edge.get("status") == "stale" else "up",
-            "topology_rank": source.get("rank", 0),
-            "source_topology_rank": source.get("rank", 0),
-            "target_topology_rank": target.get("rank", 0),
             "topology_node_type": source.get("node_type", "DEVICE"),
         })
     return links

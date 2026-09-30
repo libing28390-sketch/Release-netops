@@ -117,10 +117,6 @@ interface InventoryContextValue {
   setEditForm: (form: Partial<Device>) => void;
   setSelectedDevice: (device: Device | null) => void;
   selectedDevice: Device | null;
-  snmpTestingId: string | null;
-  snmpSyncingId: string | null;
-  handleSnmpTest: (deviceId: string) => Promise<void>;
-  handleSnmpSyncNow: (deviceId: string) => Promise<void>;
 }
 
 const InventoryContext = createContext<InventoryContextValue | null>(null);

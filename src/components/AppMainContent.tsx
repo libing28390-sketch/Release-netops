@@ -144,10 +144,6 @@ const AppMainContent: React.FC = () => {
     setEditForm,
     setSelectedDevice,
     selectedDevice,
-    snmpTestingId,
-    snmpSyncingId,
-    handleSnmpTest,
-    handleSnmpSyncNow,
   } = inventory;
   
   const {
@@ -428,7 +424,6 @@ const AppMainContent: React.FC = () => {
     formatTopologyOperationalState,
     formatTopologyEvidenceLabel,
     getTopologyOperationalTone,
-    hostnameSyncing,
   } = topology;
 
   const isStandaloneScrollTab = 
@@ -810,7 +805,6 @@ const AppMainContent: React.FC = () => {
             onHideOrphanDevicesChange={setHideOrphanDevices}
             onTriggerDiscovery={handleTriggerDiscovery}
             onCancelDiscovery={handleCancelDiscovery}
-            hostnameSyncing={hostnameSyncing}
             onExportMap={handleExportMap}
             onTopologySearchChange={setTopologySearch}
             onTopologySiteFilterChange={setTopologySiteFilter}

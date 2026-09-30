@@ -123,6 +123,21 @@ def _authorized_topology_device_ids(conn, scope) -> list[str] | None:
     return result_ids
 
 
+def _filter_resolved_topology_links_to_scope(
+    links: list[dict],
+    device_ids: list[str] | None,
+) -> list[dict]:
+    """Do not expose a re-resolved CMDB endpoint outside this caller's device scope."""
+    if device_ids is None:
+        return links
+    allowed_ids = set(device_ids)
+    return [
+        link for link in links
+        if str(link.get('source_device_id') or '') in allowed_ids
+        and str(link.get('target_device_id') or '') in allowed_ids
+    ]
+
+
 def _enforce_topology_site_scope(conn, user, site_id: str) -> None:
     if isinstance(user, dict) and str(site_id or '').strip():
         rack_scope_service.enforce_site(
@@ -269,7 +284,7 @@ def get_links(
         conn.close()
 
     scope_key = scope.cache_key if scope is not None else 'legacy'
-    cache_key = f'links:v5:{limit}:{site_id or ""}:{normalized_rack_id}:{int(include_stale)}:{scope_key}'
+    cache_key = f'links:v6:{limit}:{site_id or ""}:{normalized_rack_id}:{int(include_stale)}:{scope_key}'
     cache_hit, cached = read_cache.get('topology', cache_key)
     if cache_hit:
         return cached
@@ -324,6 +339,22 @@ def get_links(
         if normalized_rack_id or (device_ids is not None and not device_ids)
         else get_unmanaged_neighbors(site_id=site_id, source_device_ids=device_ids, include_stale=include_stale)
     )
+    resolved_links = unmanaged.get('resolved_links', [])
+    # Re-resolving an old orphan may identify a CMDB peer outside the caller's
+    # authorized device scope. Keep those endpoints out of the response.
+    resolved_links = _filter_resolved_topology_links_to_scope(resolved_links, device_ids)
+    if resolved_links:
+        existing_link_keys = {
+            str(link.get('link_key') or link.get('id') or '')
+            for link in managed_links
+        }
+        for link in resolved_links:
+            link_key = str(link.get('link_key') or link.get('id') or '')
+            if link_key and link_key not in existing_link_keys:
+                managed_links.append(link)
+                existing_link_keys.add(link_key)
+    links_truncated = len(managed_links) > limit
+    managed_links = managed_links[:limit]
     node_metadata = get_topology_node_metadata(site_id=site_id, device_ids=device_ids)
     if device_ids is not None:
         scoped_ids = set(device_ids)
@@ -333,7 +364,7 @@ def get_links(
         'node_metadata': node_metadata,
         'unmanaged_nodes': unmanaged.get('unmanaged_nodes', []),
         'unmanaged_links': unmanaged.get('unmanaged_links', []),
-        'truncated': len(managed_links) >= limit,
+        'truncated': links_truncated or len(managed_links) >= limit,
         'limit': limit,
         'graph_read_model': graph_read_model,
     }
@@ -514,7 +545,7 @@ def get_evidence_graph(
     include_stale: bool = Query(default=False),
     tenant_id: str | None = Query(default=None),
 ):
-    """Return a paged graph read model with evidence-derived layout ranks."""
+    """Return a paged topology graph read model."""
     session = _get_authenticated_session(request)
     tenant_id = _resolve_graph_tenant(session, tenant_id)
     scope_conn = get_db_connection()
@@ -554,7 +585,7 @@ def rebuild_evidence_graph(request: Request, payload: dict = Body(...), _user=re
     observations = payload.get('observations') if isinstance(payload.get('observations'), list) else []
     graph = build_graph(nodes, observations, tenant_id=tenant_id)
     counts = persist_graph(graph)
-    return {"success": True, **counts, "layout": graph.get("ranks", {})}
+    return {"success": True, **counts}
 
 
 @router.get('/topology/graph/edges/{edge_id}/evidence')
@@ -635,19 +666,17 @@ def override_graph_relation(edge_id: str, request: Request, payload: dict = Body
             "source_node_id": before['source_node_id'], "target_node_id": before['target_node_id'],
             "relation_type": before['relation_type'], "direction": before['direction'],
             "semantic_relation": before.get('semantic_relation') or '',
-            "rank_excluded": before.get('rank_excluded') or 0,
             "metadata": metadata, "is_manual": before.get('is_manual') or 0,
         }, relation_type=relation, actor=str(session.get('username') or 'api'))
         conn.execute(
             """
             UPDATE topology_edges
-            SET relation_type = ?, semantic_relation = ?, rank_excluded = ?,
+            SET relation_type = ?, semantic_relation = ?,
                 is_manual = 1, manual_confirmed = 1, metadata_json = ?, updated_at = ?
             WHERE id = ? AND tenant_id = ?
             """,
             (
                 updated['relation_type'], updated.get('semantic_relation') or '',
-                int(updated.get('rank_excluded') or 0),
                 json.dumps(updated['metadata'], ensure_ascii=False),
                 datetime.now(timezone.utc).isoformat(), edge_id, tenant_id,
             ),
@@ -656,13 +685,12 @@ def override_graph_relation(edge_id: str, request: Request, payload: dict = Body
             conn.execute(
                 """
                 UPDATE topology_relations
-                SET relation_type = ?, semantic_relation = ?, rank_excluded = ?,
+                SET relation_type = ?, semantic_relation = ?,
                     is_manual = 1, metadata_json = ?, updated_at = ?
                 WHERE edge_id = ? AND tenant_id = ?
                 """,
                 (
                     updated['relation_type'], updated.get('semantic_relation') or '',
-                    int(updated.get('rank_excluded') or 0),
                     json.dumps(updated['metadata'], ensure_ascii=False),
                     datetime.now(timezone.utc).isoformat(), edge_id, tenant_id,
                 ),
@@ -673,7 +701,6 @@ def override_graph_relation(edge_id: str, request: Request, payload: dict = Body
         after = {
             'relation_type': updated['relation_type'],
             'semantic_relation': updated.get('semantic_relation') or '',
-            'rank_excluded': int(updated.get('rank_excluded') or 0),
             'is_manual': 1,
             'manual_confirmed': 1,
         }

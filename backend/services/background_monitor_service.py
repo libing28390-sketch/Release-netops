@@ -41,28 +41,6 @@ from core.crypto import decrypt_credential
 logger = logging.getLogger(__name__)
 
 
-def _sync_snmp_hostname_projection(device_id: str, raw_sys_name: Any) -> None:
-    """Project background SNMP sysName into the linked asset record."""
-
-    if not raw_sys_name:
-        return
-    conn = get_db_connection()
-    try:
-        from services.hostname_sync_service import (
-            schedule_monitoring_target_sync_if_hostname_changed,
-            sync_device_hostname_metadata,
-        )
-
-        sync_result = sync_device_hostname_metadata(conn, str(device_id), raw_sys_name)
-        conn.commit()
-        schedule_monitoring_target_sync_if_hostname_changed(sync_result)
-    except Exception as exc:
-        conn.rollback()
-        logger.debug("[SNMP] Hostname asset projection failed for %s: %s", device_id, type(exc).__name__)
-    finally:
-        conn.close()
-
-
 def _discovery_is_stale(
     discovery: dict[str, Any] | None,
     *,
@@ -1797,7 +1775,6 @@ async def _process_device_raw(device, cycle_tick: int):
                 updates = {}
                 if dev_info.get('sys_name'):
                     updates['sys_name'] = dev_info['sys_name']
-                    _sync_snmp_hostname_projection(str(dev_id), dev_info['sys_name'])
                 if dev_info.get('sys_descr'):
                     descr = dev_info['sys_descr']
                     if not device['model']:

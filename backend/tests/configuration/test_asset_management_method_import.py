@@ -54,7 +54,13 @@ def test_batch_import_persists_web_only_management_method_and_sanitizes_password
     assert stored["normal_password"] != "web-secret"
 
 
-def test_batch_import_binds_snmp_credential_name_to_asset_and_device(isolated_db):
+def test_batch_import_binds_snmp_credential_name_to_asset_and_device(isolated_db, monkeypatch):
+    async def fake_snmp_get(*_args, **_kwargs):
+        return "imported-snmp-by-name.CCIE"
+
+    import services.snmp_service as snmp_service
+    monkeypatch.setattr(snmp_service, "_snmp_get", fake_snmp_get)
+
     with get_db_connection() as conn:
         conn.execute(
             """INSERT INTO credentials (
@@ -87,17 +93,25 @@ def test_batch_import_binds_snmp_credential_name_to_asset_and_device(isolated_db
     ])
 
     assert result["created"] == 1
+    assert result["hostname_sync"] == {
+        "total": 1,
+        "succeeded": 1,
+        "failed": 0,
+        "failed_items": [],
+    }
     with get_db_connection() as conn:
         asset = conn.execute(
-            "SELECT snmp_credential_id, snmp_community FROM physical_assets WHERE hostname = ?",
-            ("imported-snmp-by-name",),
+            "SELECT id, snmp_credential_id, snmp_community, hostname FROM physical_assets WHERE management_ip = ?",
+            ("192.0.2.82",),
         ).fetchone()
         device = conn.execute(
-            "SELECT snmp_credential_id, snmp_community FROM devices WHERE hostname = ?",
-            ("imported-snmp-by-name",),
+            "SELECT snmp_credential_id, snmp_community, hostname FROM devices WHERE asset_id = ?",
+            (asset["id"],),
         ).fetchone()
     assert asset["snmp_credential_id"] == "cred-import-snmp"
     assert device["snmp_credential_id"] == "cred-import-snmp"
+    assert asset["hostname"] == "imported-snmp-by-name"
+    assert device["hostname"] == "imported-snmp-by-name"
     from core.crypto import decrypt_credential
     assert decrypt_credential(asset["snmp_community"]) == "community-import-only"
     assert decrypt_credential(device["snmp_community"]) == "community-import-only"

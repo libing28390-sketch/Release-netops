@@ -230,7 +230,6 @@ export const useTopologyDerivedData = ({
     degraded: topologyVisibleLinks.filter((link: TopologyDecoratedLink) => link.operational_state === 'degraded').length,
     down: topologyVisibleLinks.filter((link: TopologyDecoratedLink) => link.operational_state === 'down').length,
     stale: topologyVisibleLinks.filter((link: TopologyDecoratedLink) => link.operational_state === 'stale').length,
-    multiSource: topologyVisibleLinks.filter((link: TopologyDecoratedLink) => link.evidence_sources.length > 1 || link.reverse_confirmed || Number(link.evidence_count || 0) > 1).length,
   }), [topologyVisibleLinks]);
 
   const selectedTopologyDevice = useMemo(

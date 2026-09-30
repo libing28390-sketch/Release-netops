@@ -20,7 +20,6 @@ interface TopologyContextValue {
     degraded: number;
     down: number;
     stale: number;
-    multiSource: number;
   };
   topologySearch: string;
   topologySiteFilter: string;
@@ -63,7 +62,6 @@ interface TopologyContextValue {
   setHideOrphanDevices: (value: boolean) => void;
   handleTriggerDiscovery: () => Promise<void>;
   handleCancelDiscovery: () => Promise<void>;
-  hostnameSyncing: boolean;
   handleExportMap: () => Promise<void>;
   setTopologySearch: (search: string) => void;
   setTopologySiteFilter: (site: string) => void;

@@ -4,13 +4,12 @@ from backend.tests.pg_test_utils import postgresql_test_driver
 import pytest
 from fastapi import HTTPException
 
-from api.topology import _resolve_graph_tenant
+from api.topology import _filter_resolved_topology_links_to_scope, _resolve_graph_tenant
 from database.migrations.m0105_ai_security_operations_graph import upgrade as upgrade_graph_base
 from database.migrations.m0115_topology_graph_completion import upgrade as upgrade_graph_completion
 from services import topology_graph_service as graph_service
 from services.topology_graph_service import (
     build_graph,
-    calculate_dynamic_ranks,
     detect_topology_anchors,
     get_edge_evidence,
     get_graph,
@@ -30,6 +29,16 @@ def test_graph_tenant_scope_defaults_to_session_and_rejects_cross_tenant_access(
         _resolve_graph_tenant(operator, "tenant-b")
     assert exc_info.value.status_code == 403
     assert _resolve_graph_tenant({"role": "Administrator"}, "tenant-b") == "tenant-b"
+
+
+def test_resolved_topology_links_do_not_escape_authorized_device_scope():
+    links = [
+        {"source_device_id": "allowed-a", "target_device_id": "allowed-b"},
+        {"source_device_id": "allowed-a", "target_device_id": "other-tenant-device"},
+    ]
+
+    assert _filter_resolved_topology_links_to_scope(links, ["allowed-a", "allowed-b"]) == [links[0]]
+    assert _filter_resolved_topology_links_to_scope(links, None) == links
 
 
 def test_relation_classification_keeps_protocols_out_of_physical_edges():
@@ -130,58 +139,19 @@ def test_interface_ip_is_l3_only_even_for_point_to_point_prefixes():
     assert observation["relation_type"] != "PHYSICAL"
 
 
-def test_dynamic_rank_uses_relation_constraints_not_role_names():
-    nodes = [
-        {"id": "fw", "role": "Firewall"},
-        {"id": "core", "role": "Core Switch"},
-        {"id": "access", "role": "Access Switch"},
-        {"id": "oob", "role": "OOB Switch"},
-    ]
-    ranks = calculate_dynamic_ranks(nodes, [
-        {"source_node_id": "fw", "target_node_id": "core", "relation_type": "PEER", "direction": "undirected"},
-        {"source_node_id": "core", "target_node_id": "access", "relation_type": "HIERARCHICAL", "direction": "directed"},
-        {"source_node_id": "oob", "target_node_id": "access", "relation_type": "OOB", "direction": "undirected", "rank_excluded": 1},
-    ])
-    assert ranks["fw"] == ranks["core"]
-    assert ranks["access"] == ranks["core"] + 1
-    assert ranks["oob"] == 0
-
-
-def test_dynamic_rank_collapses_directed_cycles_and_is_input_order_invariant():
-    nodes = [{"id": "a"}, {"id": "b"}, {"id": "c"}, {"id": "isolated"}]
-    edges = [
-        {"source_node_id": "a", "target_node_id": "b", "relation_type": "HIERARCHICAL", "direction": "directed"},
-        {"source_node_id": "b", "target_node_id": "a", "relation_type": "HIERARCHICAL", "direction": "directed"},
-        {"source_node_id": "b", "target_node_id": "c", "relation_type": "HIERARCHICAL", "direction": "directed"},
-    ]
-    forward = calculate_dynamic_ranks(nodes, edges)
-    reversed_input = calculate_dynamic_ranks(list(reversed(nodes)), list(reversed(edges)))
-    without_isolated = calculate_dynamic_ranks(nodes[:-1], edges)
-
-    assert forward == reversed_input
-    assert forward["a"] == forward["b"]
-    assert forward["c"] == forward["b"] + 1
-    assert forward["isolated"] == 0
-    assert {key: forward[key] for key in without_isolated} == without_isolated
-
-
-def test_layout_uses_rank_and_manual_coordinates_without_role_tiers():
+def test_layout_returns_only_explicit_coordinates():
     graph = {
         "nodes": [
-            {"id": "firewall", "display_name": "FW", "role_identity": "FIREWALL", "rank": 0},
-            {"id": "access", "display_name": "ACCESS", "role_identity": "ACCESS_SWITCH", "rank": 2},
-        ],
-        "edges": [{
-            "source_node_id": "firewall", "target_node_id": "access",
-            "relation_type": "HIERARCHICAL", "direction": "directed", "rank_excluded": 0,
-        }],
+            {"id": "firewall", "display_name": "FW", "role_identity": "FIREWALL"},
+            {"id": "access", "display_name": "ACCESS", "role_identity": "ACCESS_SWITCH"},
+        ]
     }
     layout = layout_graph(graph, overrides={"firewall": {"x": 42, "y": 84}})
     assert layout["firewall"] == {"x": 42, "y": 84, "manual": 1.0}
-    assert layout["access"]["y"] != layout["firewall"]["y"]
+    assert "access" not in layout
 
 
-def test_ring_group_tracks_both_edge_ends_and_uses_circular_layout():
+def test_ring_group_tracks_both_edge_ends_without_calculating_layout():
     node_ids = ["ring-a", "ring-b", "ring-c", "ring-d"]
     observations = [
         {
@@ -198,17 +168,8 @@ def test_ring_group_tracks_both_edge_ends_and_uses_circular_layout():
         member["node_id"] for member in graph["group_members"]
         if member["group_id"] == "group:campus-ring"
     }
-    layout = layout_graph(graph)
-
     assert members == set(node_ids)
     assert len(graph["group_members"]) == 4
-    assert len({(round(layout[node_id]["x"], 3), round(layout[node_id]["y"], 3)) for node_id in node_ids}) == 4
-    center = layout["group:campus-ring"]
-    radii = [
-        round(((layout[node_id]["x"] - center["x"]) ** 2 + (layout[node_id]["y"] - center["y"]) ** 2) ** 0.5, 3)
-        for node_id in node_ids
-    ]
-    assert len(set(radii)) == 1
 
 
 @pytest.fixture()

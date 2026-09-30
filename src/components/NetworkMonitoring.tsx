@@ -216,8 +216,6 @@ const NetworkMonitoring: React.FC<NetworkMonitoringProps> = ({
 
   const [loading, setLoading] = useState(false);
   const [refreshing, setRefreshing] = useState(false);
-  const [syncingHostname, setSyncingHostname] = useState(false);
-  const [batchSyncing, setBatchSyncing] = useState(false);
   const [rangeHours, setRangeHours] = useState<number>(24);
   const [autoRefresh, setAutoRefresh] = useState(true);
   const [metricProvider, setMetricProvider] = useState<MetricProvider>('native');
@@ -489,33 +487,6 @@ const NetworkMonitoring: React.FC<NetworkMonitoringProps> = ({
     }
   }, [diagnosticsLoading, fetchCollectionStatus, selectedId, showToast, zh]);
 
-  const handleSyncHostname = useCallback(async () => {
-    if (!selectedId || syncingHostname) return;
-    setSyncingHostname(true);
-    try {
-      const resp = await fetch(`/api/devices/${selectedId}/sync-hostname`, {
-        method: 'POST',
-        headers: authHeaders(),
-      });
-      const data = await resp.json().catch(() => ({}));
-      if (!resp.ok) {
-        throw new Error(data.detail || (zh ? '同步失败' : 'Failed to sync hostname'));
-      }
-      showToast(data.message || (zh ? '主机名同步成功' : 'Hostname synced successfully'), 'success');
-      setDeviceRows((prev) =>
-        prev.map((d) =>
-          d.id === selectedId
-            ? { ...d, hostname: data.new_hostname, sys_name: data.raw_sys_name }
-            : d
-        )
-      );
-    } catch (err: any) {
-      showToast(err?.message || (zh ? '主机名同步失败' : 'Failed to sync hostname'), 'error');
-    } finally {
-      setSyncingHostname(false);
-    }
-  }, [selectedId, syncingHostname, showToast, zh]);
-
   // Load telemetry data when selected device changes or range changes
   const loadDeviceData = useCallback(async (deviceId: string, hours: number, iface: string, page: number, sev: string, ph: string, showSpinner = true, signal?: AbortSignal, includeTrend = true) => {
     if (showSpinner) setLoading(true);
@@ -540,63 +511,6 @@ const NetworkMonitoring: React.FC<NetworkMonitoringProps> = ({
       if (showSpinner) setLoading(false);
     }
   }, [fetchRealtime, fetchTrend, fetchAlerts, fetchCollectionStatus]);
-
-  const handleBatchSyncHostnames = useCallback(async () => {
-    if (batchSyncing) return;
-    setBatchSyncing(true);
-    try {
-      const resp = await fetch('/api/devices/batch-sync-hostname', {
-        method: 'POST',
-        headers: { ...authHeaders(), 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          device_ids: deviceRows.map((d) => d.id),
-        }),
-      });
-      const data = await resp.json().catch(() => ({}));
-      if (!resp.ok) {
-        throw new Error(data.detail || (zh ? '批量同步失败' : 'Batch sync failed'));
-      }
-      showToast(
-        data.message ||
-          (zh
-            ? `批量同步完成：更新 ${data.updated || 0} 台，未变更 ${data.unchanged || 0} 台`
-            : `Batch sync complete: ${data.updated || 0} updated, ${data.unchanged || 0} unchanged`),
-        data.failed > 0 ? 'warning' : 'success'
-      );
-      if (Array.isArray(data.details)) {
-        const detailMap = new Map<string, { new_hostname?: string; raw_sys_name?: string }>();
-        data.details.forEach((item: any) => {
-          if (item?.device_id) {
-            detailMap.set(String(item.device_id), item);
-          }
-        });
-        setDeviceRows((prev) =>
-          prev.map((d) => {
-            const match = detailMap.get(d.id);
-            if (match && match.new_hostname) {
-              return { ...d, hostname: match.new_hostname, sys_name: match.raw_sys_name };
-            }
-            return d;
-          })
-        );
-      }
-      if (selectedId) {
-        loadDeviceData(
-          selectedId,
-          rangeHours,
-          trendInterface,
-          alertsPage,
-          alertsSeverity,
-          alertsPhase,
-          false
-        );
-      }
-    } catch (err: any) {
-      showToast(err?.message || (zh ? '批量同步主机名失败' : 'Failed to batch sync hostnames'), 'error');
-    } finally {
-      setBatchSyncing(false);
-    }
-  }, [alertsPage, alertsPhase, alertsSeverity, batchSyncing, deviceRows, loadDeviceData, rangeHours, selectedId, showToast, trendInterface, zh]);
 
   useEffect(() => {
     if (!isAuthenticated || !selectedId) {
@@ -952,16 +866,6 @@ const NetworkMonitoring: React.FC<NetworkMonitoringProps> = ({
 
             <div className="flex items-center justify-between text-[11px] font-medium text-gray-400 px-0.5">
               <span>{deviceListLoading ? (zh ? '正在加载设备…' : 'Loading…') : `${deviceTotal} ${zh ? '台在管网络设备' : 'switches'}`}</span>
-              <button
-                type="button"
-                onClick={handleBatchSyncHostnames}
-                disabled={batchSyncing || deviceListLoading || deviceTotal === 0}
-                title={zh ? '通过 RFC 1213 通用 SNMP sysName 一键批量校准在管设备主机名' : 'Batch sync hostnames via standard SNMP sysName'}
-                className="flex items-center gap-1 text-[11px] font-semibold text-blue-600 hover:text-blue-700 dark:text-blue-400 dark:hover:text-blue-300 disabled:opacity-40 transition cursor-pointer"
-              >
-                <RefreshCw size={11} className={batchSyncing ? 'animate-spin' : ''} />
-                <span>{batchSyncing ? (zh ? '同步中…' : 'Syncing…') : (zh ? '批量同步' : 'Batch Sync')}</span>
-              </button>
             </div>
             {deviceListError && <p className="truncate text-[9px] text-amber-700" title={deviceListError}>{zh ? '列表接口暂时不可用，显示本地缓存' : 'List API unavailable; showing local fallback'}</p>}
           </div>
@@ -1071,16 +975,6 @@ const NetworkMonitoring: React.FC<NetworkMonitoringProps> = ({
                       <span>SNMP Walk</span>
                     </button>
                   )}
-                  <button
-                    type="button"
-                    onClick={handleSyncHostname}
-                    disabled={syncingHostname}
-                    title={zh ? '通过通用 SNMP sysName 校验并同步设备主机名' : 'Validate and sync hostname from device via universal SNMP sysName'}
-                    className="flex items-center gap-1.5 px-3 py-1.5 rounded-xl text-xs font-semibold border border-blue-200 bg-blue-50/80 text-blue-700 hover:bg-blue-100 transition cursor-pointer disabled:cursor-wait disabled:opacity-60"
-                  >
-                    <RefreshCw size={12} className={syncingHostname ? 'animate-spin text-blue-600' : ''} />
-                    <span>{syncingHostname ? (zh ? '同步中…' : 'Syncing…') : (zh ? '同步主机名' : 'Sync Hostname')}</span>
-                  </button>
                   <div className="flex items-center gap-2 text-xs text-gray-400">
                     <Clock size={13} />
                     {lastSampleAt ? (zh ? `最近采样 ${fmtTime(lastSampleAt)}` : `Last sample ${fmtTime(lastSampleAt)}`) : (zh ? '等待数据' : 'Awaiting data')}

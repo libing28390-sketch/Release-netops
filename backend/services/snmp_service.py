@@ -1751,13 +1751,14 @@ async def collect_snmp_lldp_neighbors(
     version: str = '2c',
     timeout: float = 4.0,
 ) -> list[dict[str, Any]]:
-    """Collect LLDP and CDP neighbor relationships via standard IEEE 802.1AB LLDP-MIB
+    """Collect LLDP neighbor relationships via the standard IEEE 802.1AB LLDP-MIB.
 
-    and CISCO-CDP-MIB using lightweight, zero-SSH SNMP walk.
-    Universal across all hardware vendors (Cisco, Huawei, H3C, Ruijie, Arista, Juniper, ZTE, DPtech, Maipu).
+    Uses lightweight, zero-SSH SNMP walks and returns an empty list when LLDP
+    is unavailable or no neighbors are reported. The topology caller can then
+    use its CLI LLDP fallback.
     Returns a list of neighbor dicts with:
         local_interface, neighbor_name, neighbor_interface, mgmt_address,
-        chassis_id, neighbor_platform, protocol ('lldp' or 'cdp')
+        chassis_id, neighbor_platform, protocol ('lldp')
     """
     # LLDP discovery must use the credential resolved for the target asset.
     # Never silently probe with the well-known ``public`` community: callers
@@ -1787,7 +1788,7 @@ async def collect_snmp_lldp_neighbors(
             return parts[0], parts[1]
         return parts[0] if parts else '1', '1'
 
-    # 1. First, attempt IEEE 802.1AB LLDP-MIB tables
+    # Read the related IEEE 802.1AB LLDP-MIB columns in parallel.
     try:
         lldp_tasks = [
             _snmp_walk(ip, community, '1.0.8802.1.1.2.1.4.1.1.9', port, timeout=timeout, version=version),  # lldpRemSysName (standard col 9)
@@ -1891,57 +1892,6 @@ async def collect_snmp_lldp_neighbors(
             })
     except Exception as exc:
         logger.debug("SNMP LLDP walk encounter error on %s: %s", ip, exc)
-
-    # 2. If no LLDP neighbors found, attempt CISCO-CDP-MIB tables
-    if not neighbors:
-        try:
-            cdp_tasks = [
-                _snmp_walk(ip, community, '1.3.6.1.4.1.9.9.23.1.2.1.1.6', port, timeout=timeout, version=version),  # cdpCacheDeviceId
-                _snmp_walk(ip, community, '1.3.6.1.4.1.9.9.23.1.2.1.1.7', port, timeout=timeout, version=version),  # cdpCacheDevicePort
-                _snmp_walk(ip, community, '1.3.6.1.4.1.9.9.23.1.2.1.1.8', port, timeout=timeout, version=version),  # cdpCachePlatform
-                _snmp_walk(ip, community, '1.3.6.1.4.1.9.9.23.1.2.1.1.4', port, timeout=timeout, version=version),  # cdpCacheAddress
-                _snmp_walk(ip, community, '1.3.6.1.2.1.31.1.1.1.1', port, timeout=timeout, version=version),        # ifName
-            ]
-            cdp_results = await asyncio.gather(*cdp_tasks, return_exceptions=True)
-            cdp_dev_ids = cdp_results[0] if isinstance(cdp_results[0], list) else []
-            cdp_dev_ports = dict(cdp_results[1]) if isinstance(cdp_results[1], list) else {}
-            cdp_platforms = dict(cdp_results[2]) if isinstance(cdp_results[2], list) else {}
-            cdp_addrs = dict(cdp_results[3]) if isinstance(cdp_results[3], list) else {}
-            cdp_if_names = dict(cdp_results[4]) if isinstance(cdp_results[4], list) else {}
-
-            for s, raw_dev_id in cdp_dev_ids:
-                if not raw_dev_id:
-                    continue
-                parts = s.strip('.').split('.')
-                if_idx = parts[0]
-                loc_port = cdp_if_names.get(if_idx) or f"Port-{if_idx}"
-                rem_port = cdp_dev_ports.get(s) or 'Unknown'
-                platform_str = cdp_platforms.get(s) or ''
-                addr_raw = cdp_addrs.get(s) or ''
-                mgmt_ip = ''
-                if addr_raw:
-                    if len(addr_raw) == 4:
-                        mgmt_ip = '.'.join(str(ord(c)) for c in addr_raw)
-                    elif re.match(r'^[0-9a-fA-F]{8}$', addr_raw):
-                        try:
-                            mgmt_ip = '.'.join(str(int(addr_raw[i:i+2], 16)) for i in (0, 2, 4, 6))
-                        except Exception:
-                            pass
-                    elif re.match(r'^\d+\.\d+\.\d+\.\d+$', addr_raw):
-                        mgmt_ip = addr_raw
-
-                neighbors.append({
-                    'protocol': 'cdp',
-                    'local_interface': loc_port,
-                    'neighbor_name': _clean_host(raw_dev_id),
-                    'neighbor_interface': rem_port,
-                    'mgmt_address': mgmt_ip,
-                    'chassis_id': '',
-                    'neighbor_platform': platform_str,
-                    'system_description': platform_str,
-                })
-        except Exception as exc:
-            logger.debug("SNMP CDP walk encounter error on %s: %s", ip, exc)
 
     return neighbors
 

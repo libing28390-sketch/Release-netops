@@ -6,9 +6,6 @@ export type TopologyRoleLayoutDevice = {
   role?: unknown;
   role_identity?: unknown;
   device_category?: unknown;
-  topology_rank?: unknown;
-  relation_rank?: unknown;
-  rank?: unknown;
 };
 export type TopologyRoleLayoutPoint = {
   x: number;
@@ -24,21 +21,12 @@ export type TopologyRoleLayoutLink = {
   inferred?: unknown;
 };
 
-export type TopologyLayerSource = 'evidence' | 'role';
+export type TopologyLayerSource = 'role';
 
 export type TopologyLayerSelection = {
   layers: Array<number | null>;
   source: TopologyLayerSource;
 };
-
-const toFiniteLayer = (value: unknown): number | null => {
-  const parsed = Number(value);
-  return Number.isFinite(parsed) ? Math.max(0, Math.round(parsed)) : null;
-};
-
-const getEvidenceLayer = (device: TopologyRoleLayoutDevice): number | null => (
-  toFiniteLayer(device.topology_rank ?? device.relation_rank ?? device.rank)
-);
 
 const getRoleLayer = (device: TopologyRoleLayoutDevice): number | null => {
   for (const value of [device.role_identity, device.role, device.device_category]) {
@@ -51,10 +39,8 @@ const getRoleLayer = (device: TopologyRoleLayoutDevice): number | null => {
 };
 
 /**
- * Select the visual layer source without changing the graph's semantic rank
- * data. Recognized role tiers define the human-facing hierarchy (core,
- * distribution, access); relation ranks remain the fallback for graphs whose
- * devices do not carry enough role information.
+ * Use only explicit device roles for visual hierarchy. Link structure does
+ * not create user-facing hierarchy rows.
  */
 export const selectTopologyLayoutLayers = (
   devices: TopologyRoleLayoutDevice[],
@@ -73,12 +59,6 @@ export const selectTopologyLayoutLayers = (
     };
   }
 
-  const evidenceLayers = devices.map(getEvidenceLayer);
-  const evidenceValues = evidenceLayers.filter((layer): layer is number => layer !== null);
-  const evidenceDistinct = new Set(evidenceValues);
-  if (evidenceValues.some((layer) => layer > 0) && evidenceDistinct.size > 1) {
-    return { layers: evidenceLayers, source: 'evidence' };
-  }
   return null;
 };
 
@@ -131,7 +111,7 @@ const isPhysicalLayoutLink = (link: TopologyRoleLayoutLink): boolean => {
   if (link.inferred === true || Number(link.inferred) === 1) return false;
   const relation = String(link.relation_type || '').trim().toUpperCase();
   const sources = normalizeLinkSources(link);
-  const hasDiscoveryEvidence = sources.some((source) => source === 'LLDP' || source === 'CDP');
+  const hasDiscoveryEvidence = sources.some((source) => source === 'LLDP');
   if (relation === 'PHYSICAL' || hasDiscoveryEvidence) return true;
   // Legacy physical-link responses may not expose relation_type, but they are
   // still safe to use when they are explicitly marked as non-inferred.
@@ -347,7 +327,7 @@ const buildHorizontalRowPositions = (
 
 /**
  * Build the deterministic role-tier layout used by hierarchy mode. When
- * physical LLDP/CDP links are available, their adjacency orders each row to
+ * physical LLDP links are available, their adjacency orders each row to
  * reduce crossings; the returned null means that this graph has no usable
  * hierarchy signal and should continue through the existing force/chain
  * fallback.

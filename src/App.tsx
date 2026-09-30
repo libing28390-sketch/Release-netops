@@ -7,7 +7,7 @@ import { useConfigStore } from './store/configStore';
 import { useAutomationStore } from './store/automationStore';
 import { useI18n } from './i18n.tsx';
 import { ResponsiveContainer, AreaChart, Area, XAxis, YAxis, CartesianGrid, Tooltip, PieChart, Pie, Cell } from 'recharts';
-import type { ConfigVersion, Device, Job, AuditEvent, ComplianceFinding, ComplianceRunPoint, ComplianceOverview, ScheduledTask, Script, ConfigTemplate, ConfigSnapshot, DiffLine, User as UserType, ThemeMode, SessionUser, NotificationItem, HostResourceSnapshot, DeviceHealthAlertItem, DeviceHealthDetailResponse, DeviceHealthTrendResponse, DeviceConnectionCheckSummary } from './types';
+import type { ConfigVersion, Device, Job, AuditEvent, ComplianceFinding, ComplianceRunPoint, ComplianceOverview, ScheduledTask, Script, ConfigTemplate, ConfigSnapshot, DiffLine, User as UserType, ThemeMode, SessionUser, NotificationItem, HostResourceSnapshot } from './types';
 import { PLATFORM_LABELS, getPlatformLabel, getVendorFromPlatform } from './types';
 import { sectionHeaderRowClass, sectionToolbarClass, primaryActionBtnClass, secondaryActionBtnClass, darkActionBtnClass, severityBadgeClass, complianceStatusBadgeClass, auditStatusBadgeClass } from './components/shared';
 import Pagination from './components/Pagination';
@@ -413,7 +413,6 @@ const App: React.FC = () => {
     handleExportMap,
     handleTriggerDiscovery,
     handleCancelDiscovery,
-    hostnameSyncing,
     handleConfirmTopologyRelation,
     loadTopologyHistory,
   } = useTopology({
@@ -1180,30 +1179,20 @@ const App: React.FC = () => {
     connectionTestMode,
     connectionTestingDeviceId,
     deviceConnectionChecks,
-    snmpTestingId,
     snmpSyncingId,
-    snmpTestResult,
-    showSnmpTestResult, setShowSnmpTestResult,
     showTestResult, setShowTestResult,
     testResult,
     handleTestConnection,
-    handleSnmpTest,
     handleSnmpSyncNow,
   } = useDeviceConnectionAndSnmp({
     language,
     showToast,
     selectedDevice,
-    setDevices,
     fetchDevicesData,
   });
   const {
     showDetailsModal, setShowDetailsModal,
     viewingDevice, setViewingDevice,
-    viewingDeviceAlerts,
-    deviceDetailLoading,
-    deviceTrendRangeHours, setDeviceTrendRangeHours,
-    deviceHealthTrend,
-    deviceHealthTrendLoading,
     handleShowDetails,
   } = useDeviceDetail({ language, showToast, normalizeDeviceRecord });
 
@@ -1357,7 +1346,7 @@ const App: React.FC = () => {
 
   // Deleted hook for delete actions
   // handleSaveEdit / handleAddDevice moved to useDeviceFormActions
-  // handleTestConnection / handleSnmpTest / handleSnmpSyncNow moved to useDeviceConnectionAndSnmp
+  // Connection and SNMP sync actions moved to useDeviceConnectionAndSnmp
 
   const { handleImport, handleExport } = useInventoryImportExport({ devices, setDevices, showToast, t });
 
@@ -1585,7 +1574,6 @@ const App: React.FC = () => {
   const inventoryValue = {
     handleImport, handleExport, handleShowDetails, handleTestConnection, deviceConnectionChecks, connectionTestingDeviceId,
     setShowAddModal, setShowEditModal, setEditingDevice, setEditForm, setSelectedDevice, selectedDevice,
-    snmpTestingId, snmpSyncingId, handleSnmpTest, handleSnmpSyncNow,
   };
 
   const automationValue = {
@@ -1661,7 +1649,7 @@ const App: React.FC = () => {
     selectedTopologyDeviceId, selectedTopologyLinkKey, selectedTopologyDevice, selectedTopologyLink,
     topologyNeighborDevices, topologyDeviceLinks, topologyPriorityDevices, topologyOrphanDevices, topologyRef,
     hideStaleLinks, setHideStaleLinks, hideOrphanDevices, setHideOrphanDevices,
-     handleTriggerDiscovery, handleCancelDiscovery, hostnameSyncing, handleExportMap,
+     handleTriggerDiscovery, handleCancelDiscovery, handleExportMap,
     handleConfirmTopologyRelation, loadTopologyHistory,
     setTopologySearch, setTopologySiteFilter, setTopologyGraphView, setTopologyTagFilter, setTopologyRoleFilter, setTopologyStatusFilter,
     setTopologyLinkStatusFilter, setTopologyProtocolFilter,
@@ -1913,11 +1901,9 @@ const App: React.FC = () => {
           showAddModal, addForm, showAddDevicePwd, setAddForm, setShowAddDevicePwd, setShowAddModal, handleAddDevice,
           showEditModal, editingDevice, editForm, showEditDevicePwd, setEditForm, setShowEditDevicePwd, setShowEditModal, handleSaveEdit,
           showLifecycleConfirm, lifecycleConfirmChecked, setLifecycleConfirmChecked, setShowLifecycleConfirm,
-          showDetailsModal, viewingDevice, viewingDeviceAlerts, deviceDetailLoading, deviceConnectionChecks,
-          connectionTestingDeviceId, deviceTrendRangeHours, setDeviceTrendRangeHours, deviceHealthTrend, deviceHealthTrendLoading,
-          handleSnmpTest, snmpTestingId, handleSnmpSyncNow, snmpSyncingId,
+          showDetailsModal, viewingDevice, deviceConnectionChecks,
+          connectionTestingDeviceId, handleSnmpSyncNow, snmpSyncingId,
           setSelectedDevice, setViewingDevice, setShowDetailsModal,
-          showSnmpTestResult, snmpTestResult, setShowSnmpTestResult,
           selectedAuditEvent, setSelectedAuditEvent,
           selectedFinding, setSelectedFinding, updateComplianceFinding,
           selectedJob, setSelectedJob, copyTextWithFallback,

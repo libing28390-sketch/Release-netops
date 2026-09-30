@@ -80,20 +80,16 @@ PLATFORM_MAP = {
 }
 
 DISCOVERY_COMMANDS = {
-    'cisco_ios': [
-        ('lldp', 'show lldp neighbors'),
-    ],
-    'cisco_nxos': [
-        ('lldp', 'show lldp neighbors detail'),
-    ],
-    'juniper_junos': [('lldp', 'show lldp neighbors detail')],
-    'arista_eos': [('lldp', 'show lldp neighbors detail')],
-    'huawei_vrp': [('lldp', 'display lldp neighbor brief')],
-    'h3c_comware': [('lldp', 'display lldp neighbor-information list')],
-    'ruijie_rgos': [('lldp', 'show lldp neighbors detail')],
-    'zte_zxros': [('lldp', 'show lldp neighbor')],
-    'dptech_ios': [('lldp', 'show lldp neighbors')],
-    'maipu': [('lldp', 'show lldp neighbors')],
+    'cisco_ios': ['show lldp neighbors'],
+    'cisco_nxos': ['show lldp neighbors detail'],
+    'juniper_junos': ['show lldp neighbors detail'],
+    'arista_eos': ['show lldp neighbors detail'],
+    'huawei_vrp': ['display lldp neighbor brief'],
+    'h3c_comware': ['display lldp neighbor-information list'],
+    'ruijie_rgos': ['show lldp neighbors detail'],
+    'zte_zxros': ['show lldp neighbor'],
+    'dptech_ios': ['show lldp neighbors'],
+    'maipu': ['show lldp neighbors'],
 }
 
 
@@ -375,11 +371,6 @@ def _regex_parse_lldp_detail(raw_text: str) -> list[dict[str, str]]:
         m = re.search(r'(?:Management\s+Address(?:es)?|Management\s+address\s+value|IP)\s*[:\-]\s*([\d.]+)', block, re.IGNORECASE)
         if m:
             entry['mgmt_address'] = m.group(1).strip()
-        # Device ID (CDP style)
-        m = re.search(r'Device\s+ID\s*:\s*(.+?)$', block, re.IGNORECASE | re.MULTILINE)
-        if m and 'neighbor_name' not in entry:
-            entry['neighbor_name'] = m.group(1).strip()
-            
         # Clean chassis_id, neighbor_interface, and neighbor_name from extra comments in parenthesis
         for field in ('chassis_id', 'neighbor_interface', 'neighbor_name'):
             if field in entry:
@@ -402,17 +393,14 @@ def _extract_first(raw: dict[str, Any], *keys: str) -> str:
     return ''
 
 
-def _extract_observation_fields(raw: dict[str, Any], protocol: str) -> dict[str, Any]:
-    common = normalize_neighbor_record(raw, protocol=protocol)
+def _extract_observation_fields(raw: dict[str, Any]) -> dict[str, Any]:
+    common = normalize_neighbor_record(raw, protocol='lldp')
     neighbor_name = _extract_first(
         raw,
         'neighbor_name',        # Cisco IOS/NX-OS detail, Arista EOS, Huawei VRP, H3C Comware
         'neighbor',             # some textfsm variants
         'neighbor_id',          # older templates
         'remote_system_name',   # alternative naming
-        'destination_host',     # CDP
-        'dest_host',            # CDP short
-        'device_id',            # CDP
         'system_name',          # generic
     )
     local_port = _extract_first(
@@ -450,7 +438,6 @@ def _extract_observation_fields(raw: dict[str, Any], protocol: str) -> dict[str,
     # Some LLDP implementations omit System Name but still expose a stable
     # chassis ID. Keep that evidence instead of silently dropping the peer.
     neighbor_identity = strip_domain_suffix(neighbor_name) or chassis_id
-    confidence = 0.9 if protocol == 'lldp' else 0.82
     return {
         **common,
         'protocol': 'lldp',
@@ -468,7 +455,7 @@ def _extract_observation_fields(raw: dict[str, Any], protocol: str) -> dict[str,
         'source_port_normalized': normalize_interface_name(local_port),
         'target_port_raw': remote_port,
         'target_port_normalized': normalize_interface_name(remote_port),
-        'confidence': confidence,
+        'confidence': 0.9,
         'raw_payload_json': _safe_json(raw),
     }
 
@@ -567,9 +554,9 @@ def _get_device(device_id: str) -> dict[str, Any] | None:
         if not row:
             return None
         device = dict(row)
-        # Topology discovery is a read-only workflow and must use the
-        # ordinary account stored on the linked CMDB asset. Administrative
-        # credentials are reserved for backup/configuration workflows.
+        # Topology collection uses the ordinary account stored on the linked
+        # CMDB asset. Administrative credentials are reserved for backup and
+        # configuration workflows.
         collector_credentials = _collector_credentials_for_device(device)
         ssh_credentials = collector_credentials['ssh']
         device['username'] = ssh_credentials['username'] or device.get('username', '')
@@ -590,92 +577,199 @@ def _collector_credentials_for_device(device: dict[str, Any]) -> dict[str, Any]:
     return resolved
 
 
+def _load_target_device_identity_rows(
+    conn,
+    *,
+    tenant_id: str | None = None,
+) -> list[dict[str, Any]]:
+    tenant_clause = "WHERE COALESCE(NULLIF(d.tenant_id, ''), 'tenant-default') = ?" if tenant_id else ''
+    params = (str(tenant_id),) if tenant_id else ()
+    rows = conn.execute(
+        f'''
+        SELECT d.id, d.hostname,
+               COALESCE(NULLIF(pa.management_ip, ''), NULLIF(d.ip_address, '')) AS ip_address,
+               COALESCE(NULLIF(d.sn, ''), NULLIF(pa.serial_number, '')) AS sn,
+               d.model,
+               COALESCE(NULLIF(pa.site_id, ''), NULLIF(d.site_id, '')) AS site_id,
+               COALESCE(NULLIF(d.tenant_id, ''), 'tenant-default') AS tenant_id
+        FROM devices d
+        LEFT JOIN physical_assets pa ON pa.id = d.asset_id
+        {tenant_clause}
+        ''',
+        params,
+    ).fetchall()
+    return [dict(row) for row in rows]
+
+
+def _normalize_management_ip(value: Any) -> str:
+    raw = str(value or '').strip()
+    if not raw:
+        return ''
+    try:
+        return str(ipaddress.ip_address(raw))
+    except ValueError:
+        return raw.lower()
+
+
+def _normalize_device_serial(value: Any) -> str:
+    """Normalize LLDP chassis/serial identifiers without case or separator noise."""
+    return re.sub(r'[^0-9a-z]', '', str(value or '').strip().lower())
+
+
+def _build_target_device_identity_indexes(
+    device_rows: list[dict[str, Any]],
+) -> dict[str, dict[str, list[dict[str, Any]]]]:
+    indexes: dict[str, dict[str, list[dict[str, Any]]]] = {
+        'ip': {},
+        'serial': {},
+        'hostname': {},
+        'hostname_casefold': {},
+    }
+    for raw_device in device_rows:
+        device = dict(raw_device)
+        ip_address = _normalize_management_ip(device.get('ip_address'))
+        serial = _normalize_device_serial(device.get('sn'))
+        hostname = strip_domain_suffix(device.get('hostname'))
+        if ip_address:
+            indexes['ip'].setdefault(ip_address, []).append(device)
+        if serial:
+            indexes['serial'].setdefault(serial, []).append(device)
+        if hostname:
+            indexes['hostname'].setdefault(hostname, []).append(device)
+            indexes['hostname_casefold'].setdefault(hostname.casefold(), []).append(device)
+    return indexes
+
+
 def _match_target_device_with_evidence(
     conn,
     neighbor_name: str,
     neighbor_ip: str,
     chassis_id: str = '',
+    *,
+    device_rows: list[dict[str, Any]] | None = None,
+    device_indexes: dict[str, dict[str, list[dict[str, Any]]]] | None = None,
 ) -> dict[str, Any]:
-    """Score all candidates and refuse ambiguous prefix matches."""
-    normalized_name = normalize_hostname(neighbor_name)
-    normalized_ip = str(neighbor_ip or '').strip().lower()
-    normalized_chassis = re.sub(r'[^0-9a-z]', '', str(chassis_id or '').lower())
-    rows = conn.execute(
-        '''
-        SELECT d.id, d.hostname,
-               COALESCE(NULLIF(pa.management_ip, ''), NULLIF(d.ip_address, '')) AS ip_address,
-               d.sys_name,
-               COALESCE(NULLIF(d.sn, ''), NULLIF(pa.serial_number, '')) AS sn,
-               d.model, d.site_id
-        FROM devices d
-        LEFT JOIN physical_assets pa ON pa.id = d.asset_id
-        '''
-    ).fetchall()
-    candidates_by_id: dict[str, dict[str, Any]] = {}
+    """Prefer a unique management IP; otherwise use serial or hostname evidence."""
+    reported_name = strip_domain_suffix(neighbor_name)
+    normalized_ip = _normalize_management_ip(neighbor_ip)
+    reported_serial = _normalize_device_serial(chassis_id)
+    if device_indexes is None:
+        rows = device_rows if device_rows is not None else _load_target_device_identity_rows(conn)
+        device_indexes = _build_target_device_identity_indexes(rows)
 
-    def add_candidate(device: dict[str, Any], score: float, method: str) -> None:
-        current = candidates_by_id.get(str(device['id']))
-        if current is None or score > float(current['score']):
-            candidates_by_id[str(device['id'])] = {
-                'device': device,
-                'device_id': device['id'],
+    def unique_devices(items: list[dict[str, Any]]) -> dict[str, dict[str, Any]]:
+        return {str(item['id']): item for item in items if item.get('id') is not None}
+
+    def public_candidates(
+        devices: dict[str, dict[str, Any]],
+        method: str,
+        confidence: float,
+    ) -> list[dict[str, Any]]:
+        return [
+            {
+                'device_id': device_id,
                 'hostname': device.get('hostname') or '',
-                'score': score,
+                'score': confidence,
                 'method': method,
             }
+            for device_id, device in sorted(
+                devices.items(),
+                key=lambda item: (str(item[1].get('hostname') or ''), item[0]),
+            )[:5]
+        ]
 
-    for row in rows:
-        device = dict(row)
-        device_ip = str(device.get('ip_address') or '').strip().lower()
-        hostname = normalize_hostname(device.get('hostname'))
-        sys_name = normalize_hostname(device.get('sys_name'))
-        serial = re.sub(r'[^0-9a-z]', '', str(device.get('sn') or '').lower())
-
-        if normalized_ip and device_ip and normalized_ip == device_ip:
-            add_candidate(device, 1.0, 'management_ip')
-        if normalized_chassis and serial and normalized_chassis == serial:
-            add_candidate(device, 0.98, 'chassis_serial')
-        if normalized_name and normalized_name in {hostname, sys_name}:
-            add_candidate(device, 0.94, 'system_name')
-        norm_clean = re.sub(r'[-_\s]', '', normalized_name)
-        host_clean = re.sub(r'[-_\s]', '', hostname)
-        sys_clean = re.sub(r'[-_\s]', '', sys_name)
-        if norm_clean and (norm_clean == host_clean or (sys_clean and norm_clean == sys_clean)):
-            add_candidate(device, 0.93, 'system_name_relaxed')
-        if len(normalized_name) >= 4:
-            names = [value for value in (hostname, sys_name) if value]
-            if any(value.startswith(normalized_name) or normalized_name.startswith(value) for value in names):
-                add_candidate(device, 0.72, 'name_prefix')
-
-    ordered = sorted(candidates_by_id.values(), key=lambda item: (-float(item['score']), str(item['hostname'])))
-    public_candidates = [
-        {
-            'device_id': item['device_id'],
-            'hostname': item['hostname'],
-            'score': item['score'],
-            'method': item['method'],
-        }
-        for item in ordered[:5]
-    ]
-    if not ordered:
-        return {'device': None, 'status': 'unmatched', 'method': '', 'confidence': 0.0, 'candidates': []}
-
-    best = ordered[0]
-    if len(ordered) > 1 and float(best['score']) - float(ordered[1]['score']) < 0.05:
+    def ambiguous_result(
+        devices: dict[str, dict[str, Any]],
+        method: str,
+        confidence: float,
+    ) -> dict[str, Any]:
         return {
             'device': None,
             'status': 'ambiguous',
-            'method': best['method'],
-            'confidence': float(best['score']),
-            'candidates': public_candidates,
+            'method': method,
+            'confidence': confidence,
+            'candidates': public_candidates(devices, method, confidence),
         }
-    return {
-        'device': best['device'],
-        'status': 'matched',
-        'method': best['method'],
-        'confidence': float(best['score']),
-        'candidates': public_candidates,
+
+    def matched_result(
+        device: dict[str, Any],
+        method: str,
+        confidence: float,
+    ) -> dict[str, Any]:
+        hostname_mismatch = bool(
+            reported_name
+            and reported_name != strip_domain_suffix(device.get('hostname'))
+        )
+        return {
+            'device': device,
+            'status': 'hostname_mismatch' if hostname_mismatch else 'matched',
+            'method': method,
+            'confidence': confidence,
+            'candidates': public_candidates({str(device['id']): device}, method, confidence),
+        }
+
+    # Management IP is the preferred identity. Conflicting serial evidence is
+    # strong enough to make this peer ambiguous instead of drawing a false link.
+    ip_matches = unique_devices(device_indexes['ip'].get(normalized_ip, [])) if normalized_ip else {}
+    serial_matches = unique_devices(device_indexes['serial'].get(reported_serial, [])) if reported_serial else {}
+    hostname_matches = unique_devices(device_indexes['hostname'].get(reported_name, [])) if reported_name else {}
+    if ip_matches:
+        if len(ip_matches) != 1:
+            return ambiguous_result(ip_matches, 'management_ip', 1.0)
+        if serial_matches and set(ip_matches).isdisjoint(serial_matches):
+            return ambiguous_result(
+                {**ip_matches, **serial_matches},
+                'management_ip_serial_conflict',
+                0.9,
+            )
+        return matched_result(next(iter(ip_matches.values())), 'management_ip', 1.0)
+
+    evidence_sets = [matches for matches in (serial_matches, hostname_matches) if matches]
+
+    if evidence_sets:
+        candidate_ids = set(evidence_sets[0])
+        for matches in evidence_sets[1:]:
+            candidate_ids &= set(matches)
+        if len(candidate_ids) == 1:
+            selected_id = next(iter(candidate_ids))
+            selected = serial_matches.get(selected_id) or hostname_matches[selected_id]
+            method = 'serial_number+system_name' if serial_matches and hostname_matches else (
+                'serial_number' if serial_matches else 'system_name'
+            )
+            confidence = 0.99 if serial_matches and hostname_matches else (0.98 if serial_matches else 0.94)
+            return matched_result(selected, method, confidence)
+
+        combined_candidates: dict[str, dict[str, Any]] = {}
+        combined_candidates.update(serial_matches)
+        combined_candidates.update(hostname_matches)
+        if len(candidate_ids) > 1 or len(combined_candidates) > 1:
+            return ambiguous_result(combined_candidates, 'conflicting_identity_evidence', 0.9)
+        if len(combined_candidates) == 1:
+            selected_id, selected = next(iter(combined_candidates.items()))
+            method = 'serial_number' if selected_id in serial_matches else 'system_name'
+            confidence = 0.98 if method == 'serial_number' else 0.94
+            return matched_result(selected, method, confidence)
+
+    # A unique case-insensitive hostname match prevents a duplicate pseudo-node,
+    # while its mismatch status remains available for hostname-sync diagnostics.
+    case_matches = unique_devices(
+        device_indexes['hostname_casefold'].get(reported_name.casefold(), [])
+    ) if reported_name else {}
+    case_matches = {
+        device_id: device
+        for device_id, device in case_matches.items()
+        if strip_domain_suffix(device.get('hostname')) != reported_name
     }
+    if len(case_matches) > 1:
+        return ambiguous_result(case_matches, 'system_name_case_mismatch', 0.75)
+    if case_matches:
+        return matched_result(
+            next(iter(case_matches.values())),
+            'system_name_case_mismatch',
+            0.75,
+        )
+
+    return {'device': None, 'status': 'unmatched', 'method': '', 'confidence': 0.0, 'candidates': []}
 
 
 def _match_target_device(conn, neighbor_name: str, neighbor_ip: str, chassis_id: str = '') -> dict[str, Any] | None:
@@ -1442,7 +1536,7 @@ def _collapse_aggregation_groups(
 
 async def _collect_neighbors_with_netmiko(
     device: dict[str, Any],
-    commands: list[tuple[str, str]],
+    commands: list[str],
     platform_action_session=None,
 ) -> tuple[_NeighborCollectionBatch, str]:
     if device.get('platform_profile_id'):
@@ -1482,7 +1576,7 @@ async def _collect_neighbors_with_netmiko(
         if parse_status in {"failed", "parse_failed", "device_error"}:
             collection_status = "parse_failed"
         for item in records:
-            observation = _extract_observation_fields(item, 'lldp')
+            observation = _extract_observation_fields(item)
             if observation['neighbor_name_raw'] and observation['source_port_raw']:
                 observations.append(observation)
         if records and len(observations) != len(records):
@@ -1511,7 +1605,7 @@ async def _collect_neighbors_with_netmiko(
         collected: list[dict[str, Any]] = []
         statuses: list[str] = []
         with limited_connect_handler(device, ConnectHandler, **netmiko_device) as client:
-            for protocol, command in commands:
+            for command in commands:
                 assert_lldp_command(platform, command, scenario_id='topology_lldp')
                 is_comware = 'comware' in device_type or 'hp_comware' in device_type or 'h3c' in str(device.get('platform', '')).lower()
                 parsed = None
@@ -1529,7 +1623,7 @@ async def _collect_neighbors_with_netmiko(
                     # TextFSM parsed successfully
                     before = len(collected)
                     for item in parsed:
-                        observation = _extract_observation_fields(item, protocol)
+                        observation = _extract_observation_fields(item)
                         if observation['neighbor_name_raw'] and observation['source_port_raw']:
                             collected.append(observation)
                     statuses.append(
@@ -1542,7 +1636,7 @@ async def _collect_neighbors_with_netmiko(
                     regex_entries = _regex_parse_lldp_detail(raw_text)
                     before = len(collected)
                     for item in regex_entries:
-                        observation = _extract_observation_fields(item, protocol)
+                        observation = _extract_observation_fields(item)
                         if observation['neighbor_name_raw'] and observation['source_port_raw']:
                             collected.append(observation)
                     if regex_entries:
@@ -1587,7 +1681,7 @@ async def _collect_device_observations(
 ) -> tuple[list[dict[str, Any]], str]:
     ip = device.get('ip_address')
 
-    # 1. Primary path: Fast, non-intrusive, zero-SSH SNMP LLDP/CDP discovery
+    # 1. Primary path: Fast, non-intrusive, zero-SSH SNMP LLDP discovery
     # ``resolve_collector_credentials`` follows the linked physical asset and
     # its SNMP credential binding, then falls back to the legacy asset-local
     # community.  Reading ``devices.snmp_community`` directly here can use a
@@ -1612,15 +1706,18 @@ async def _collect_device_observations(
             if snmp_records:
                 observations: list[dict[str, Any]] = []
                 for item in snmp_records:
-                    obs = _extract_observation_fields(item, item.get("protocol", "lldp"))
-                    if obs.get("neighbor_name_raw") and obs.get("source_port_raw"):
+                    obs = _extract_observation_fields(item)
+                    if (
+                        obs.get("source_port_raw")
+                        and (obs.get("neighbor_name_raw") or obs.get("neighbor_ip_address") or obs.get("neighbor_chassis_id"))
+                    ):
                         observations.append(obs)
                 if observations:
-                    logger.info("Discovered %d LLDP/CDP neighbors via SNMP for %s (%s)", len(observations), device.get("hostname"), snmp_ip)
+                    logger.info("Discovered %d LLDP neighbors via SNMP for %s (%s)", len(observations), device.get("hostname"), snmp_ip)
                     return _NeighborCollectionBatch(observations, "success"), "snmp"
             logger.info(
                 'SNMP LLDP discovery returned no usable neighbors for %s (%s); '
-                'falling back to SSH CLI (SNMP may be unreachable, LLDP/CDP may be disabled, or the MIB may be empty)',
+                'falling back to SSH CLI (SNMP may be unreachable, LLDP may be disabled, or the MIB may be empty)',
                 device.get('hostname'),
                 snmp_ip,
             )
@@ -1648,7 +1745,7 @@ async def _collect_device_observations(
 
     platform = normalize_topology_platform(device.get('platform'))
     commands = DISCOVERY_COMMANDS[platform]
-    for protocol, command in commands:
+    for command in commands:
         assert_lldp_command(platform, command, scenario_id='topology_lldp')
     try:
         observations, method = await _collect_neighbors_with_netmiko(
@@ -1672,10 +1769,15 @@ def _replace_device_observations(
     now = _utc_now_iso()
     matched = 0
     ambiguous = 0
+    hostname_mismatch = 0
     unmatched = 0
     conn = get_db_connection()
     try:
         source_site_id = str(device.get('site_id') or '')
+        tenant_id = str(device.get('tenant_id') or 'tenant-default')
+        target_device_indexes = _build_target_device_identity_indexes(
+            _load_target_device_identity_rows(conn, tenant_id=tenant_id) if observations else []
+        )
         observed_keys: set[tuple[str, str, str, str]] = set()
         for observation in observations:
             protocol = str(observation.get('protocol') or 'lldp').strip().lower()
@@ -1691,6 +1793,7 @@ def _replace_device_observations(
                 observation['neighbor_name_raw'],
                 observation['neighbor_ip_address'],
                 observation.get('neighbor_chassis_id', ''),
+                device_indexes=target_device_indexes,
             )
             target_device = evidence.get('device')
             if target_device and target_device.get('id') == device.get('id'):
@@ -1702,6 +1805,8 @@ def _replace_device_observations(
                 matched += 1
             elif match_status == 'ambiguous':
                 ambiguous += 1
+            elif match_status == 'hostname_mismatch':
+                hostname_mismatch += 1
             else:
                 unmatched += 1
 
@@ -1716,7 +1821,7 @@ def _replace_device_observations(
                   AND source_port_normalized = ?
                   AND neighbor_name_normalized = ?
                   AND target_port_normalized = ?
-                  AND protocol = 'lldp'
+                  AND COALESCE(protocol, 'lldp') = 'lldp'
                 ORDER BY updated_at DESC
                 LIMIT 1
                 ''',
@@ -1837,7 +1942,12 @@ def _replace_device_observations(
             observation_count=len(observations),
         )
         conn.commit()
-        return {'matched': matched, 'ambiguous': ambiguous, 'unmatched': unmatched}
+        return {
+            'matched': matched,
+            'ambiguous': ambiguous,
+            'hostname_mismatch': hostname_mismatch,
+            'unmatched': unmatched,
+        }
     finally:
         conn.close()
 
@@ -1860,7 +1970,7 @@ def _rebuild_links_from_observations_unlocked() -> int:
             SELECT * FROM topology_observations
             WHERE target_device_id IS NOT NULL
               AND COALESCE(source_port_normalized, '') <> ''
-              AND COALESCE(match_status, 'matched') = 'matched'
+              AND COALESCE(match_status, 'matched') IN ('matched', 'hostname_mismatch')
               AND COALESCE(is_active, 1) = 1
             '''
         ).fetchall()
@@ -2017,6 +2127,18 @@ def _rebuild_links_from_observations_unlocked() -> int:
                 'reverse_seen': reverse_seen,
                 'match_methods': sorted({obs.get('match_method') or '' for obs in observations if obs.get('match_method')}),
             }
+            identity_warnings = [
+                {
+                    'code': 'lldp_hostname_mismatch',
+                    'reported_name': str(obs.get('neighbor_name_raw') or ''),
+                    'cmdb_hostname': str(obs.get('target_hostname') or ''),
+                    'target_device_id': str(obs.get('target_device_id') or ''),
+                }
+                for obs in observations
+                if str(obs.get('match_status') or '') == 'hostname_mismatch'
+            ]
+            if identity_warnings:
+                metadata['identity_warnings'] = identity_warnings
             if is_aggregation:
                 metadata.update({
                     'link_kind': 'aggregation',
@@ -2444,7 +2566,7 @@ async def discover_device_neighbors(
         if snapshot_generation <= 0:
             raise RuntimeError('topology_lldp_snapshot_generation_unavailable')
 
-        # Fast, non-intrusive discovery: SNMP-first LLDP/CDP, safe fallback to single-command CLI LLDP only if needed
+        # Collect LLDP over SNMP first; use CLI LLDP only when SNMP has no usable neighbors.
         observations, method = await _collect_device_observations(
             device,
             attempted_methods=attempted_methods,
@@ -2480,10 +2602,11 @@ async def discover_device_neighbors(
             source='lldp_playbook',
             duration_ms=(time.perf_counter() - started) * 1000,
             coverage_total=len(observations),
-            coverage_supported=match_summary['matched'],
+            coverage_supported=match_summary['matched'] + match_summary['hostname_mismatch'],
             metadata={
                 'method': method,
                 'ambiguous': match_summary['ambiguous'],
+                'hostname_mismatch': match_summary['hostname_mismatch'],
                 'unmatched': match_summary['unmatched'],
                 'aggregation': aggregation_summary,
                 'protocols': protocol_summary,
@@ -2527,6 +2650,7 @@ async def discover_device_neighbors(
             'discovery_method': method,
             'observations_count': len(observations),
             'matched_links_count': match_summary['matched'],
+            'hostname_mismatch_count': match_summary['hostname_mismatch'],
             'ambiguous_count': match_summary['ambiguous'],
             'unmatched_count': match_summary['unmatched'],
             'total_links': total_links,
@@ -2935,6 +3059,17 @@ async def execute_discovery_run(run_id: str, device_ids: list[str]):
             lease_expires_at=None,
             heartbeat_at=_utc_now_iso(),
         )
+        logger.info(
+            'Topology discovery run %s finished: status=%s total_devices=%d '
+            'success_devices=%d failed_devices=%d total_observations=%d total_links=%d',
+            run_id,
+            final_status,
+            len(device_ids),
+            success_devices,
+            failed_devices,
+            total_observations,
+            total_links,
+        )
     except Exception as exc:  # noqa: BLE001
         logger.exception('Discovery run %s crashed', run_id)
         _update_run(
@@ -2980,6 +3115,7 @@ def get_current_links(
         params.extend(normalized_device_ids)
     if not include_stale:
         clauses.append("COALESCE(l.status, 'unknown') <> 'stale'")
+    clauses.append("LOWER(COALESCE(l.discovery_source, '')) NOT LIKE '%cdp%'")
     cutoff_iso = (datetime.now(timezone.utc) - timedelta(seconds=TOPOLOGY_LINK_TTL_SECONDS)).replace(microsecond=0).isoformat()
     if not include_stale:
         clauses.append("COALESCE(l.last_seen, '') >= ?")
@@ -3154,7 +3290,7 @@ def _route_table_graph_observations(conn: Any, current_device_ids: set[str]) -> 
 
     A route learned through OSPF/BGP is not proof of a cable-level adjacency,
     so these observations are deliberately classified as ``LOGICAL``.  The
-    physical LLDP/CDP read model is not involved here.
+    physical LLDP read model is not involved here.
     """
     try:
         rows = conn.execute(
@@ -3282,6 +3418,7 @@ def _sync_evidence_graph_from_observations() -> None:
                        neighbor_ip_address
                 FROM topology_observations
                 WHERE COALESCE(is_active, 1) = 1
+                  AND protocol = 'lldp'
                 """
             ).fetchall()
             observations = []
@@ -3308,6 +3445,14 @@ def _sync_evidence_graph_from_observations() -> None:
                     'metadata': {
                         'match_status': row['match_status'] or 'unmatched',
                         'target_identity': row['neighbor_name_normalized'] or '',
+                        **({
+                            'identity_warnings': [{
+                                'code': 'lldp_hostname_mismatch',
+                                'target_device_id': target_device_id,
+                            }]
+                            if str(row['match_status'] or '') == 'hostname_mismatch'
+                            else {}
+                        }),
                     },
                 })
             # Protocol observations are normalized facts, not topology_links.
@@ -3442,12 +3587,12 @@ def get_topology_node_metadata(
     *,
     device_ids: list[str] | tuple[str, ...] | None = None,
 ) -> dict[str, dict[str, Any]]:
-    """Return evidence-derived node rank/layout metadata for the legacy link API.
+    """Return node role and saved-layout metadata for the legacy link API.
 
     The canvas still consumes ``/topology/links`` for backwards compatibility,
     while the evidence graph is persisted in ``topology_nodes``. Keeping this
     small read model on the link response lets existing clients receive the
-    graph rank without rebuilding their device inventory contract. Missing
+    topology metadata without rebuilding their device inventory contract. Missing
     migration tables are treated as an empty metadata set so older deployments
     continue to render physical LLDP links during upgrade.
     """
@@ -3469,7 +3614,7 @@ def get_topology_node_metadata(
             params.extend(device_params)
         rows = conn.execute(
             """
-            SELECT n.device_id, n.rank, n.layout_override_json, n.role_identity, n.node_type
+            SELECT n.device_id, n.layout_override_json, n.role_identity, n.node_type
             FROM topology_nodes n
             WHERE """ + " AND ".join(clauses),
             tuple(params),
@@ -3485,7 +3630,6 @@ def get_topology_node_metadata(
             except (TypeError, ValueError):
                 layout = {}
             result[device_id] = {
-                'topology_rank': max(0, int(item.get('rank') or 0)),
                 'role_identity': str(item.get('role_identity') or 'UNKNOWN'),
                 'topology_node_type': str(item.get('node_type') or 'DEVICE'),
                 'layout_override': layout if isinstance(layout, dict) else {},
@@ -3505,19 +3649,21 @@ def get_unmanaged_neighbors(
     source_device_ids: list[str] | tuple[str, ...] | None = None,
     include_stale: bool = False,
 ) -> dict[str, Any]:
-    """Aggregate topology observations where the neighbor was not matched to any managed device.
+    """Project unresolved LLDP observations, rechecking current CMDB identities.
 
-    Returns a dict with:
-      - unmanaged_nodes: list of pseudo-device dicts for each unique unmanaged neighbor
-      - unmanaged_links: list of link dicts connecting managed source → unmanaged neighbor
+    Old unmatched observations can become resolvable after an asset is imported
+    or its synchronized hostname changes. Recheck those observations at read
+    time so a managed device is rendered once under its CMDB ID, without
+    mutating discovery evidence from this GET path.
     """
     conn = get_db_connection()
     try:
         if source_device_ids is not None and not source_device_ids:
-            return {'unmanaged_nodes': [], 'unmanaged_links': []}
+            return {'unmanaged_nodes': [], 'unmanaged_links': [], 'resolved_links': []}
         clauses = [
             'o.target_device_id IS NULL',
-            "COALESCE(o.neighbor_name_raw, '') <> ''",
+            "COALESCE(o.protocol, 'lldp') = 'lldp'",
+            "(COALESCE(o.neighbor_name_raw, '') <> '' OR COALESCE(o.neighbor_ip_address, '') <> '' OR COALESCE(o.raw_payload_json, '{}') <> '{}')",
         ]
         if not include_stale:
             clauses.append("COALESCE(o.is_active, 1) = 1")
@@ -3534,36 +3680,171 @@ def get_unmanaged_neighbors(
             params.extend(source_params)
         rows = conn.execute(
             f'''
-            SELECT o.source_device_id, o.source_hostname, o.source_port_raw, o.source_port_normalized,
+            SELECT o.id, o.source_device_id, o.source_hostname, d.hostname AS source_hostname_current,
+                   COALESCE(NULLIF(d.tenant_id, ''), 'tenant-default') AS source_tenant_id,
+                   o.source_port_raw, o.source_port_normalized,
                    o.neighbor_name_raw, o.neighbor_name_normalized, o.neighbor_ip_address,
                    o.target_port_raw, o.target_port_normalized, o.protocol, o.confidence,
-                   o.collected_at, o.match_status, o.match_candidates_json,
-                   COALESCE(NULLIF(d.site_id, ''), NULLIF(o.source_site_id, ''), '') AS source_site_id,
+                   o.collected_at, o.match_status, o.match_candidates_json, o.raw_payload_json,
+                   COALESCE(NULLIF(pa.site_id, ''), NULLIF(d.site_id, ''), NULLIF(o.source_site_id, ''), '') AS source_site_id,
                    COALESCE(s.site_name, d.site, '') AS source_site_name
             FROM topology_observations o
             JOIN devices d ON d.id = o.source_device_id
-            LEFT JOIN sites s ON s.id = COALESCE(NULLIF(d.site_id, ''), NULLIF(o.source_site_id, ''))
+            LEFT JOIN physical_assets pa ON pa.id = d.asset_id
+            LEFT JOIN sites s ON s.id = COALESCE(NULLIF(pa.site_id, ''), NULLIF(d.site_id, ''), NULLIF(o.source_site_id, ''))
             WHERE {' AND '.join(clauses)}
             ORDER BY source_site_name, o.source_hostname, o.neighbor_name_raw
             ''',
             tuple(params),
         ).fetchall()
 
-        # Group by unique unmanaged neighbor identity (normalized name + ip)
+        target_device_indexes_by_tenant: dict[str, dict[str, dict[str, list[dict[str, Any]]]]] = {}
+        # An orphan observation may now resolve to a current CMDB device. Keep
+        # these as managed links, keyed by canonical endpoints, and reserve the
+        # pseudo-node path for identities that are still genuinely unresolved.
+        resolved_observations: dict[str, list[dict[str, Any]]] = {}
         neighbor_groups: dict[str, list[dict[str, Any]]] = {}
         for row in rows:
             obs = dict(row)
+            try:
+                raw_payload = json.loads(obs.get('raw_payload_json') or '{}')
+            except (TypeError, ValueError):
+                raw_payload = {}
+            chassis_id = ''
+            if isinstance(raw_payload, dict):
+                chassis_id = _extract_first(raw_payload, 'chassis_id', 'serial')
+            obs['_chassis_id'] = chassis_id
+            source_tenant_id = str(obs.get('source_tenant_id') or 'tenant-default')
+            if source_tenant_id not in target_device_indexes_by_tenant:
+                target_device_indexes_by_tenant[source_tenant_id] = _build_target_device_identity_indexes(
+                    _load_target_device_identity_rows(conn, tenant_id=source_tenant_id)
+                )
+            evidence = _match_target_device_with_evidence(
+                conn,
+                str(obs.get('neighbor_name_raw') or ''),
+                str(obs.get('neighbor_ip_address') or ''),
+                chassis_id,
+                device_indexes=target_device_indexes_by_tenant[source_tenant_id],
+            )
+            target_device = evidence.get('device')
+            target_device_id = str((target_device or {}).get('id') or '')
+            if (
+                target_device_id
+                and target_device_id != str(obs.get('source_device_id') or '')
+            ):
+                obs['_resolved_target_device'] = target_device
+                obs['_identity_evidence'] = evidence
+                source_port = str(obs.get('source_port_raw') or obs.get('source_port_normalized') or '')
+                target_port = str(obs.get('target_port_raw') or obs.get('target_port_normalized') or '')
+                link_key = _build_link_key(
+                    str(obs.get('source_device_id') or ''), source_port,
+                    target_device_id, target_port,
+                )
+                resolved_observations.setdefault(link_key, []).append(obs)
+                continue
+
+            if evidence.get('status') in {'ambiguous', 'hostname_mismatch'}:
+                obs['match_status'] = evidence['status']
+                obs['match_candidates_json'] = _safe_json(evidence.get('candidates') or [])
+
             # Build a stable ID for this unmanaged neighbor
             norm_name = obs.get('neighbor_name_normalized') or ''
             ip = obs.get('neighbor_ip_address') or ''
             # Prefer IP-based key for uniqueness, fall back to normalized name
             source_site_id = obs.get('source_site_id') or 'unassigned'
-            identity = ip or norm_name
+            identity = (
+                ip
+                or _normalize_device_serial(obs.get('_chassis_id'))
+                or norm_name
+                or str(obs.get('id') or 'unknown')
+            )
             neighbor_key = f'unmanaged::{source_site_id}::{identity}'
             neighbor_groups.setdefault(neighbor_key, []).append(obs)
 
         unmanaged_nodes: list[dict[str, Any]] = []
         unmanaged_links: list[dict[str, Any]] = []
+        resolved_links: list[dict[str, Any]] = []
+
+        for link_key, observations in sorted(resolved_observations.items()):
+            first = max(
+                observations,
+                key=lambda obs: float(obs.get('confidence') or 0.0),
+            )
+            target_device = first['_resolved_target_device']
+            target_id = str(target_device.get('id') or '')
+            endpoints = [
+                {
+                    'device_id': str(first.get('source_device_id') or ''),
+                    'hostname': str(first.get('source_hostname_current') or first.get('source_hostname') or ''),
+                    'site_id': str(first.get('source_site_id') or ''),
+                    'port': str(first.get('source_port_raw') or ''),
+                    'port_normalized': _observation_port_normalized(first, 'source_port_raw', 'source_port_normalized'),
+                },
+                {
+                    'device_id': target_id,
+                    'hostname': str(target_device.get('hostname') or ''),
+                    'site_id': str(target_device.get('site_id') or ''),
+                    'port': str(first.get('target_port_raw') or ''),
+                    'port_normalized': _observation_port_normalized(first, 'target_port_raw', 'target_port_normalized'),
+                },
+            ]
+            endpoints.sort(key=lambda item: (item['device_id'], item['port_normalized'] or item['port']))
+            first_source_id = str(first.get('source_device_id') or '')
+            first_target_id = str(target_device.get('id') or '')
+            reverse_seen = any(
+                str(obs.get('source_device_id') or '') == first_target_id
+                and str(obs.get('_resolved_target_device', {}).get('id') or '') == first_source_id
+                for obs in observations
+            )
+            identity_warnings = [
+                {
+                    'code': 'lldp_hostname_mismatch',
+                    'reported_name': str(obs.get('neighbor_name_raw') or ''),
+                    'cmdb_hostname': str(obs.get('_resolved_target_device', {}).get('hostname') or ''),
+                    'target_device_id': str(obs.get('_resolved_target_device', {}).get('id') or ''),
+                }
+                for obs in observations
+                if str(obs.get('_identity_evidence', {}).get('status') or '') == 'hostname_mismatch'
+            ]
+            metadata = {
+                'protocols': ['lldp'],
+                'reverse_seen': reverse_seen,
+                'match_methods': sorted({
+                    str(obs.get('_identity_evidence', {}).get('method') or '')
+                    for obs in observations
+                    if obs.get('_identity_evidence', {}).get('method')
+                }),
+            }
+            if identity_warnings:
+                metadata['identity_warnings'] = identity_warnings
+            identity_hash = hashlib.sha256(link_key.encode('utf-8')).hexdigest()[:24]
+            resolved_links.append({
+                'id': f'resolved-lldp-{identity_hash}',
+                'link_key': link_key,
+                'source_device_id': endpoints[0]['device_id'],
+                'source_hostname': endpoints[0]['hostname'],
+                'source_hostname_resolved': endpoints[0]['hostname'],
+                'source_port': endpoints[0]['port'],
+                'source_port_normalized': endpoints[0]['port_normalized'],
+                'target_device_id': endpoints[1]['device_id'],
+                'target_hostname': endpoints[1]['hostname'],
+                'target_hostname_resolved': endpoints[1]['hostname'],
+                'target_port': endpoints[1]['port'],
+                'target_port_normalized': endpoints[1]['port_normalized'],
+                'discovery_source': 'lldp',
+                'confidence': max(float(obs.get('confidence') or 0.0) for obs in observations),
+                'status': 'up',
+                'operational_state': 'up',
+                'is_inferred': 0,
+                'evidence_count': len(observations),
+                'metadata_json': _safe_json(metadata),
+                'link_kind': 'physical',
+                'last_seen': max(str(obs.get('collected_at') or '') for obs in observations),
+                'source_site_id': endpoints[0]['site_id'],
+                'target_site_id': endpoints[1]['site_id'],
+                'match_status': str(first.get('_identity_evidence', {}).get('status') or 'matched'),
+                'identity_warnings': identity_warnings,
+            })
 
         for neighbor_key, observations in neighbor_groups.items():
             first = observations[0]
@@ -3623,6 +3904,7 @@ def get_unmanaged_neighbors(
         return {
             'unmanaged_nodes': unmanaged_nodes,
             'unmanaged_links': unmanaged_links,
+            'resolved_links': resolved_links,
         }
     finally:
         conn.close()
@@ -3668,6 +3950,7 @@ def get_topology_site_summaries(
             LEFT JOIN devices td ON td.id = l.target_device_id
             LEFT JOIN physical_assets spa ON spa.id = sd.asset_id
             LEFT JOIN physical_assets tpa ON tpa.id = td.asset_id
+            WHERE LOWER(COALESCE(l.discovery_source, '')) NOT LIKE '%cdp%'
             '''
         ).fetchall()
         orphan_rows = conn.execute(
@@ -3677,6 +3960,7 @@ def get_topology_site_summaries(
             FROM topology_observations o
             LEFT JOIN devices d ON d.id = o.source_device_id
             WHERE o.target_device_id IS NULL
+              AND COALESCE(o.protocol, 'lldp') = 'lldp'
               AND COALESCE(o.match_status, 'unmatched') IN ('unmatched', 'ambiguous')
             GROUP BY COALESCE(NULLIF(d.site_id, ''), NULLIF(o.source_site_id, ''), '')
             """
@@ -3854,7 +4138,11 @@ def get_topology_generation_status(
             tuple(device_params),
         ).fetchone()
         observation_filter, observation_params = _device_id_filter('o.source_device_id', device_ids)
-        obs_clauses = ["COALESCE(o.is_active, 1) = 1", "COALESCE(o.status, 'active') <> 'stale'"]
+        obs_clauses = [
+            "COALESCE(o.protocol, 'lldp') = 'lldp'",
+            "COALESCE(o.is_active, 1) = 1",
+            "COALESCE(o.status, 'active') <> 'stale'",
+        ]
         if observation_filter:
             obs_clauses.append(observation_filter)
         observation_where = f'WHERE {" AND ".join(obs_clauses)}'
@@ -3862,6 +4150,7 @@ def get_topology_generation_status(
             f'''
             SELECT COUNT(*) AS total_observations,
                    SUM(CASE WHEN COALESCE(match_status, 'unmatched') = 'matched' THEN 1 ELSE 0 END) AS matched_observations,
+                   SUM(CASE WHEN COALESCE(match_status, 'unmatched') = 'hostname_mismatch' THEN 1 ELSE 0 END) AS hostname_mismatch_observations,
                    SUM(CASE WHEN COALESCE(match_status, 'unmatched') = 'ambiguous' THEN 1 ELSE 0 END) AS ambiguous_observations,
                    SUM(CASE WHEN COALESCE(match_status, 'unmatched') = 'unmatched' THEN 1 ELSE 0 END) AS unmatched_observations,
                    MAX(collected_at) AS last_observation_at
@@ -3872,8 +4161,11 @@ def get_topology_generation_status(
         ).fetchone()
         link_filter_source, link_source_params = _device_id_filter('source_device_id', device_ids)
         link_filter_target, link_target_params = _device_id_filter('target_device_id', device_ids)
-        link_where_parts = [item for item in (link_filter_source, link_filter_target) if item]
-        link_where = f"WHERE {' AND '.join(link_where_parts)}" if link_where_parts else ''
+        link_where_parts = [
+            "LOWER(COALESCE(discovery_source, '')) NOT LIKE '%cdp%'",
+            *[item for item in (link_filter_source, link_filter_target) if item],
+        ]
+        link_where = f"WHERE {' AND '.join(link_where_parts)}"
         link_rows = conn.execute(
             f'SELECT status, last_seen, evidence_count FROM topology_links {link_where}',
             tuple([*link_source_params, *link_target_params]),
@@ -3923,6 +4215,7 @@ def get_topology_generation_status(
             latest_run['summary'] = {}
 
     total_observations = int(observations.get('total_observations') or 0)
+    hostname_mismatch_observations = int(observations.get('hostname_mismatch_observations') or 0)
     ambiguous_observations = int(observations.get('ambiguous_observations') or 0)
     unmatched_observations = int(observations.get('unmatched_observations') or 0)
     warnings: list[dict[str, Any]] = []
@@ -3936,13 +4229,21 @@ def get_topology_generation_status(
         warnings.append({
             'code': 'ambiguous_neighbors',
             'count': ambiguous_observations,
-            'message': 'Some neighbor identities match more than one managed device.',
+            'message': 'Some neighbor identity evidence is conflicting or matches multiple CMDB devices.',
+        })
+    if hostname_mismatch_observations:
+        warnings.append({
+            'code': 'hostname_mismatch',
+            'count': hostname_mismatch_observations,
+            'message': 'Some LLDP neighbor names differ from the identified CMDB hostnames; review hostname synchronization.',
+            'severity': 'warning',
+            'blocking': False,
         })
     if unmatched_observations:
         warnings.append({
             'code': 'unmanaged_neighbors',
             'count': unmatched_observations,
-            'message': 'Some neighbors are not present in managed device inventory.',
+            'message': 'Some LLDP neighbors could not be uniquely matched to a CMDB device.',
             'severity': 'info',
             'blocking': False,
         })
@@ -3973,7 +4274,7 @@ def get_topology_generation_status(
                 {'stage': 'select', 'description': 'Select online devices with a management IP.'},
                 {'stage': 'collect', 'description': 'Run vendor-specific read-only LLDP commands over SSH.'},
                 {'stage': 'normalize', 'description': 'Normalize platform, hostname, chassis ID, and interface names.'},
-                {'stage': 'match', 'description': 'Match peers by management IP, chassis/serial, then exact system name.'},
+                {'stage': 'match', 'description': 'Prefer an exact management IP match; otherwise use a unique serial number or exact synchronized hostname. Keep case-only hostname mismatches and conflicting evidence unresolved.'},
                 {'stage': 'deduplicate', 'description': 'Merge directional evidence into one canonical physical link.'},
                 {'stage': 'publish', 'description': 'Publish managed links and retain unmatched peers as unmanaged nodes.'},
             ],
@@ -3983,6 +4284,7 @@ def get_topology_generation_status(
             'eligible_devices': int(devices.get('eligible_devices') or 0),
             'total_observations': total_observations,
             'matched_observations': int(observations.get('matched_observations') or 0),
+            'hostname_mismatch_observations': hostname_mismatch_observations,
             'ambiguous_observations': ambiguous_observations,
             'unmatched_observations': unmatched_observations,
             'managed_links': len(link_rows),
@@ -4135,7 +4437,7 @@ def get_discovery_evidence(
     if device_ids is not None:
         clauses.append(device_filter)
         params.extend(device_params)
-    if match_status in {'matched', 'ambiguous', 'unmatched'}:
+    if match_status in {'matched', 'hostname_mismatch', 'ambiguous', 'unmatched'}:
         clauses.append('COALESCE(o.match_status, \'unmatched\') = ?')
         params.append(match_status)
     where_sql = ' AND '.join(clauses)

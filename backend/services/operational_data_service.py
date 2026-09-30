@@ -288,7 +288,12 @@ def resolve_device_platform_context(device_info: dict[str, Any]) -> dict[str, An
     ``hp_comware`` driver but select independent V3/V5/V7/V9 template namespaces.
     """
     from core.platform_utils import normalize_device_platform
-    from core.textfsm import resolve_textfsm_parser_platform, resolve_textfsm_platform
+    from core.textfsm import (
+        resolve_textfsm_parser_platform,
+        resolve_textfsm_platform,
+        resolve_textfsm_template_namespace,
+    )
+    from services.platform_registry_service import PLATFORM_CATALOG_METADATA
 
     raw_platform = str(device_info.get('platform') or '').strip().lower()
     profile = _load_platform_profile_context(device_info)
@@ -300,14 +305,32 @@ def resolve_device_platform_context(device_info: dict[str, Any]) -> dict[str, An
     if raw_platform in {'hp_comware', 'h3c_comware9'} or profile_code in _H3C_PROFILE_VARIANTS:
         public_platform = 'h3c_comware'
 
-    # The concrete profile code (hp_comware / h3c_comware9) outranks the
-    # shared parser family.  Otherwise every H3C device carrying the family
-    # value ``h3c_comware`` would be incorrectly routed to the V7 grammar.
-    explicit_candidates = (profile_code, profile_parser, raw_platform, public_platform)
-    parser_platform = next(
-        (_PROFILE_PARSER_VARIANTS[item] for item in explicit_candidates if item in _PROFILE_PARSER_VARIANTS),
-        '',
-    )
+    # A bound profile is authoritative. Prefer an explicit profile-code
+    # mapping first, then derive the parser selector from the profile's
+    # declared family/version metadata. The inventory software version can be
+    # stale after a profile rebind, so it must not override a known profile
+    # version (for example Ruijie EG RGOS 11 or Maipu S3330 V9).
+    parser_platform = _PROFILE_PARSER_VARIANTS.get(profile_code, '')
+    if not parser_platform and profile_code:
+        profile_metadata = PLATFORM_CATALOG_METADATA.get(profile_code) or {}
+        profile_family = str(profile_metadata.get('platform_family') or '').strip().lower()
+        profile_version = str(profile_metadata.get('version') or '').strip().lower()
+        if profile_family and profile_version and profile_version != 'common':
+            template_namespace = resolve_textfsm_template_namespace(
+                profile_family,
+                platform_family=profile_family,
+                version=profile_version,
+            )
+            parser_platform = _PROFILE_PARSER_VARIANTS.get(template_namespace, '')
+
+    # Legacy and custom profiles may not have catalog version metadata. Keep
+    # their explicit parser/platform aliases working as before.
+    if not parser_platform:
+        explicit_candidates = (profile_parser, raw_platform, public_platform)
+        parser_platform = next(
+            (_PROFILE_PARSER_VARIANTS[item] for item in explicit_candidates if item in _PROFILE_PARSER_VARIANTS),
+            '',
+        )
     if not parser_platform:
         version = (
             device_info.get('platform_version')

@@ -26,7 +26,6 @@ interface UseDeviceConnectionAndSnmpArgs {
   language: Language;
   showToast: (message: string, type?: 'success' | 'error' | 'info') => void;
   selectedDevice: Device | null;
-  setDevices: React.Dispatch<React.SetStateAction<Device[]>>;
   fetchDevicesData: () => Promise<void> | void;
 }
 
@@ -34,7 +33,6 @@ export const useDeviceConnectionAndSnmp = ({
   language,
   showToast,
   selectedDevice,
-  setDevices,
   fetchDevicesData,
 }: UseDeviceConnectionAndSnmpArgs) => {
   const [isTestingConnection, setIsTestingConnection] = useState(false);
@@ -43,10 +41,7 @@ export const useDeviceConnectionAndSnmp = ({
   const [connectionTestingDeviceId, setConnectionTestingDeviceId] = useState<string | null>(null);
   const [deviceConnectionChecks, setDeviceConnectionChecks] = useState<Record<string, DeviceConnectionCheckSummary>>({});
 
-  const [snmpTestingId, setSnmpTestingId] = useState<string | null>(null);
   const [snmpSyncingId, setSnmpSyncingId] = useState<string | null>(null);
-  const [snmpTestResult, setSnmpTestResult] = useState<any>(null);
-  const [showSnmpTestResult, setShowSnmpTestResult] = useState(false);
 
   const [showTestResult, setShowTestResult] = useState(false);
   const [testResult, setTestResult] = useState<ConnectionTestResult | null>(null);
@@ -123,27 +118,6 @@ export const useDeviceConnectionAndSnmp = ({
     }
   }, [selectedDevice]);
 
-  const handleSnmpTest = useCallback(async (deviceId: string) => {
-    setSnmpTestingId(deviceId);
-    setSnmpTestResult(null);
-    setShowSnmpTestResult(true);
-    try {
-      const resp = await fetch(`/api/devices/${deviceId}/snmp-test`, { method: 'POST', headers: authHeaders() });
-      const data = await resp.json();
-      setSnmpTestResult(data);
-      if (data.success) {
-        if (data.sys_name) {
-          setDevices((prev) => prev.map((d) => (d.id !== deviceId ? d : { ...d, hostname: d.hostname || data.sys_name })));
-        }
-        setTimeout(() => fetchDevicesData(), 5000);
-      }
-    } catch (err: any) {
-      setSnmpTestResult({ success: false, error: err.message || 'Network error' });
-    } finally {
-      setSnmpTestingId(null);
-    }
-  }, [setDevices, fetchDevicesData]);
-
   const handleSnmpSyncNow = useCallback(async (deviceId: string) => {
     setSnmpSyncingId(deviceId);
     try {
@@ -168,17 +142,11 @@ export const useDeviceConnectionAndSnmp = ({
     connectionTestMode,
     connectionTestingDeviceId,
     deviceConnectionChecks,
-    snmpTestingId,
     snmpSyncingId,
-    snmpTestResult,
-    setSnmpTestResult,
-    showSnmpTestResult,
-    setShowSnmpTestResult,
     showTestResult,
     setShowTestResult,
     testResult,
     handleTestConnection,
-    handleSnmpTest,
     handleSnmpSyncNow,
   };
 };

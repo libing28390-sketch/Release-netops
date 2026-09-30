@@ -20,8 +20,6 @@ type TopologyGraphView = 'all' | 'physical' | 'l2' | 'l3' | 'logical' | 'site' |
 interface TopologyStats {
   nodeCount: number;
   linkCount: number;
-  managedLinkCount?: number;
-  externalLinkCount?: number;
   siteCount: number;
   atRiskCount: number;
   orphanCount: number;
@@ -32,7 +30,6 @@ interface TopologyLinkStats {
   degraded: number;
   down: number;
   stale: number;
-  multiSource: number;
 }
 
 interface TopologyOperationalTone {
@@ -65,8 +62,13 @@ interface TopologyDecoratedLinkLike {
   semantic_confidence?: number;
   is_manual?: number | boolean;
   manual_confirmed?: number | boolean;
-  rank_excluded?: number | boolean;
   reverse_confirmed?: boolean;
+  identity_warnings?: Array<{
+    code: string;
+    reported_name: string;
+    cmdb_hostname: string;
+    target_device_id: string;
+  }>;
   link_kind?: string;
   aggregation_protocol?: string;
   member_count?: number;
@@ -195,7 +197,6 @@ interface TopologyPageProps {
     last_error_code?: string;
   } | null;
   topologyDiscoveryDevices: any[];
-  hostnameSyncing: boolean;
   topologySites: any[];
   topologyDataError: string;
   topologyStats: TopologyStats;
@@ -268,7 +269,6 @@ const TopologyPage: React.FC<TopologyPageProps> = ({
   topologyDiscoveryRunning,
   topologyDiscoveryProgress,
   topologyDiscoveryDevices,
-  hostnameSyncing,
   topologySites,
   topologyDataError,
   topologyStats,
@@ -325,7 +325,7 @@ const TopologyPage: React.FC<TopologyPageProps> = ({
   formatTopologyEvidenceLabel,
   getTopologyOperationalTone,
 }) => {
-  const [canvasView, setCanvasView] = React.useState<'overview' | 'site'>(topologySiteFilter === 'all' ? 'overview' : 'site');
+  const [canvasView, setCanvasView] = React.useState<'overview' | 'site'>('site');
   const [tagPickerOpen, setTagPickerOpen] = React.useState(false);
   const [draftTopologyTagFilter, setDraftTopologyTagFilter] = React.useState<TagFilterConfig>(topologyTagFilter);
   const topologyNetworkScope = React.useMemo(
@@ -340,11 +340,8 @@ const TopologyPage: React.FC<TopologyPageProps> = ({
   );
   const handleSiteFilterChange = (value: string) => {
     onTopologySiteFilterChange(value);
-    setCanvasView(value === 'all' ? 'overview' : 'site');
+    setCanvasView('site');
   };
-  React.useEffect(() => {
-    setCanvasView(topologySiteFilter === 'all' ? 'overview' : 'site');
-  }, [topologySiteFilter]);
   React.useEffect(() => {
     setDraftTopologyTagFilter(topologyTagFilter);
   }, [topologyTagFilter]);
@@ -379,17 +376,17 @@ const TopologyPage: React.FC<TopologyPageProps> = ({
         select: '筛选在线设备',
         collect: '只读采集 xDP/LLDP (SNMP优先)',
         normalize: '规范化厂商与端口',
-        match: '匹配受管设备',
+        match: '匹配设备资产',
         deduplicate: '合并双向证据与链路聚合',
-        publish: '发布链路与未纳管节点',
+        publish: '发布链路与未匹配到 CMDB 的邻居',
       }
     : {
         select: 'Select eligible devices',
         collect: 'Read-only xDP/LLDP (SNMP First)',
         normalize: 'Normalize vendor and ports',
-        match: 'Match managed devices',
+        match: 'Match device assets',
         deduplicate: 'Merge directional evidence & LAGs',
-        publish: 'Publish links and unmanaged peers',
+        publish: 'Publish links and neighbors unmatched to CMDB',
       };
   const pipelineStages = generationStatus?.generation.pipeline.map((stage) => stage.stage)
     || ['select', 'collect', 'normalize', 'match', 'deduplicate', 'publish'];
@@ -407,15 +404,13 @@ const TopologyPage: React.FC<TopologyPageProps> = ({
             <button
               type="button"
               onClick={onTriggerDiscovery}
-              disabled={topologyDiscoveryRunning || hostnameSyncing}
+              disabled={topologyDiscoveryRunning}
               className="flex items-center gap-1.5 px-3 py-1.5 rounded-xl text-xs font-semibold bg-blue-600 text-white hover:bg-blue-700 shadow-2xs transition-all cursor-pointer disabled:opacity-60"
             >
-              <RotateCcw size={13} className={topologyDiscoveryRunning || hostnameSyncing ? 'animate-spin' : ''} />
-              {hostnameSyncing
-                ? (language === 'zh' ? '同步名称并刷新中…' : 'Syncing names…')
-                : topologyDiscoveryRunning
-                  ? (language === 'zh' ? '发现中...' : 'Discovering...')
-                  : (language === 'zh' ? '刷新发现' : 'Refresh Discovery')}
+              <RotateCcw size={13} className={topologyDiscoveryRunning ? 'animate-spin' : ''} />
+              {topologyDiscoveryRunning
+                ? (language === 'zh' ? '发现中...' : 'Discovering...')
+                : (language === 'zh' ? '刷新发现' : 'Refresh Discovery')}
             </button>
             {topologyDiscoveryRunning && (
               <button
@@ -472,7 +467,8 @@ const TopologyPage: React.FC<TopologyPageProps> = ({
                   title={item.error_message || item.error_code || item.status}
                   className={`rounded-full px-2 py-0.5 text-[10px] font-semibold ${item.status === 'success' ? 'bg-emerald-50 text-emerald-700 dark:bg-emerald-950/40 dark:text-emerald-400' : item.status === 'failed' ? 'bg-rose-50 text-rose-700 dark:bg-rose-950/40 dark:text-rose-400' : 'bg-gray-100 text-gray-600 dark:bg-zinc-800 dark:text-zinc-400'}`}
                 >
-                  {item.hostname || item.device_id}: {item.status}{item.error_code ? ` (${item.error_code})` : ''}
+                  {item.hostname || item.device_id}: {item.status}
+                  {item.error_code ? ` (${item.error_code})` : ''}
                 </span>
               ))}
             </div>
@@ -492,8 +488,7 @@ const TopologyPage: React.FC<TopologyPageProps> = ({
         <div className="flex flex-wrap items-center gap-x-6 gap-y-2">
           {[
             { label: language === 'zh' ? '节点' : 'Nodes', value: topologyStats.nodeCount, color: 'text-blue-600 dark:text-blue-400' },
-            { label: language === 'zh' ? '管理链路' : 'Managed Links', value: topologyStats.managedLinkCount ?? topologyStats.linkCount, color: 'text-gray-800 dark:text-zinc-200' },
-            { label: language === 'zh' ? '外部链路' : 'External Links', value: topologyStats.externalLinkCount ?? 0, color: 'text-sky-600 dark:text-sky-400' },
+            { label: language === 'zh' ? '物理链路' : 'Physical Links', value: topologyStats.linkCount, color: 'text-gray-800 dark:text-zinc-200' },
             { label: language === 'zh' ? '站点' : 'Sites', value: topologyStats.siteCount, color: 'text-emerald-600 dark:text-emerald-400' },
             { label: language === 'zh' ? '风险' : 'Risk', value: topologyStats.atRiskCount, color: topologyStats.atRiskCount > 0 ? 'text-amber-600' : 'text-gray-400' },
             { label: language === 'zh' ? '孤立' : 'Orphans', value: topologyStats.orphanCount, color: topologyStats.orphanCount > 0 ? 'text-rose-600' : 'text-gray-400' },
@@ -510,7 +505,6 @@ const TopologyPage: React.FC<TopologyPageProps> = ({
             { label: language === 'zh' ? '退化' : 'Degraded', value: topologyLinkStats.degraded, dot: 'bg-amber-500' },
             { label: language === 'zh' ? '中断' : 'Down', value: topologyLinkStats.down, dot: 'bg-rose-500' },
             { label: language === 'zh' ? '陈旧' : 'Stale', value: topologyLinkStats.stale, dot: 'bg-gray-300 dark:bg-zinc-600' },
-            { label: language === 'zh' ? '多源' : 'Multi', value: topologyLinkStats.multiSource, dot: 'bg-blue-500' },
           ].map((item) => (
             <div key={item.label} className="flex items-center gap-1.5 bg-gray-50 dark:bg-zinc-800 px-2 py-1 rounded-lg">
               <span className={`h-1.5 w-1.5 rounded-full ${item.dot}`} />
@@ -665,7 +659,10 @@ const TopologyPage: React.FC<TopologyPageProps> = ({
               <div className="flex items-center rounded-xl bg-gray-100 dark:bg-zinc-800 p-0.5">
                 <button
                   type="button"
-                  onClick={() => handleSiteFilterChange('all')}
+                  onClick={() => {
+                    onTopologySiteFilterChange('all');
+                    setCanvasView('overview');
+                  }}
                   className={`inline-flex items-center gap-1.5 rounded-lg px-2.5 py-1 text-xs font-semibold transition-all cursor-pointer ${canvasView === 'overview' ? 'bg-white dark:bg-zinc-700 text-gray-900 dark:text-white shadow-2xs' : 'text-gray-500 hover:text-gray-800'}`}
                 >
                   <LayoutGrid size={12} /> {language === 'zh' ? 'Site 总览' : 'Overview'}
@@ -673,10 +670,9 @@ const TopologyPage: React.FC<TopologyPageProps> = ({
                 <button
                   type="button"
                   onClick={() => setCanvasView('site')}
-                  disabled={topologySiteFilter === 'all'}
-                  className={`inline-flex items-center gap-1.5 rounded-lg px-2.5 py-1 text-xs font-semibold transition-all cursor-pointer ${canvasView === 'site' ? 'bg-white dark:bg-zinc-700 text-gray-900 dark:text-white shadow-2xs' : 'text-gray-500 hover:text-gray-800'} disabled:cursor-not-allowed disabled:opacity-40`}
+                  className={`inline-flex items-center gap-1.5 rounded-lg px-2.5 py-1 text-xs font-semibold transition-all cursor-pointer ${canvasView === 'site' ? 'bg-white dark:bg-zinc-700 text-gray-900 dark:text-white shadow-2xs' : 'text-gray-500 hover:text-gray-800'}`}
                 >
-                  <Network size={12} /> {language === 'zh' ? '站点拓扑' : 'Site topology'}
+                  <Network size={12} /> {language === 'zh' ? (topologySiteFilter === 'all' ? '设备拓扑' : '站点拓扑') : (topologySiteFilter === 'all' ? 'Device topology' : 'Site topology')}
                 </button>
               </div>
             </div>

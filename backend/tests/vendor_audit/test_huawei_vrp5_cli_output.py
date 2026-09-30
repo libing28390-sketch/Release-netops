@@ -220,7 +220,7 @@ ge0/0/2 105 ge0/0/3 lsw4
     )
     for output in outputs:
         parsed = _parse_shared_lldp_output("huawei_vrp", "display lldp neighbor brief", output)
-        observation = _extract_observation_fields(parsed[0], "lldp")
+        observation = _extract_observation_fields(parsed[0])
         assert observation["neighbor_name"]
         assert observation["source_port_normalized"]
         assert observation["target_port_normalized"]

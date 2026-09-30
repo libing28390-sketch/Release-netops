@@ -9,7 +9,7 @@ def test_lldp_is_physical_but_l3_and_arp_are_not_physical():
     assert normalize_observation({"source_node": "a", "target_node": "host", "source_type": "arp"})["relation_type"] == "ENDPOINT"
 
 
-def test_graph_fuses_evidence_and_does_not_use_role_for_rank():
+def test_graph_fuses_evidence_without_adding_computed_rank_fields():
     graph = build_graph(
         [
             {"id": "a", "hostname": "edge-a", "role": "access", "site_id": "site-1"},
@@ -24,7 +24,8 @@ def test_graph_fuses_evidence_and_does_not_use_role_for_rank():
     assert len(graph["edges"]) == 2
     physical = next(edge for edge in graph["edges"] if edge["relation_type"] == "PHYSICAL")
     assert physical["semantic_confidence"] > 0.8
-    assert all(node["rank"] == 0 for node in graph["nodes"])
+    assert all("rank" not in node for node in graph["nodes"])
+    assert "ranks" not in graph
 
 
 def test_server_assets_and_links_are_excluded_from_topology_graph():
@@ -40,12 +41,10 @@ def test_server_assets_and_links_are_excluded_from_topology_graph():
     assert graph["edges"] == []
 
 
-def test_layout_override_wins_without_role_layer_heuristics():
-    graph = {"nodes": [{"id": "a", "rank": 3, "role_identity": "SWITCH"}]}
+def test_layout_override_wins_without_derived_positions():
+    graph = {"nodes": [{"id": "a", "role_identity": "SWITCH"}]}
     layout = layout_graph(graph, overrides={"a": {"x": 42, "y": 84}})
-    assert layout["a"]["x"] == 42
-    assert layout["a"]["y"] == 84
-    assert layout["a"]["manual"] == 1
+    assert layout == {"a": {"x": 42, "y": 84, "manual": 1.0}}
 
 
 def test_reverse_undirected_observations_share_one_physical_edge_key():

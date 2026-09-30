@@ -42,6 +42,65 @@ def test_h3c_profiles_share_hp_comware_transport_but_select_concrete_parser_name
         assert context['parser_platform'] == parser_platform
 
 
+def test_bound_ruijie_profile_version_overrides_stale_inventory_software_version():
+    cases = (
+        ('ruijie_eg_rgos11', '12.5(1)', 'ruijie_rgos_v11'),
+        ('ruijie_s6k_rgos12', '11.9(6)B13P1', 'ruijie_rgos_v12'),
+    )
+
+    for profile_code, stale_version, expected_parser in cases:
+        context = resolve_device_platform_context({
+            'id': f'device-{profile_code}',
+            'platform': 'ruijie_rgos',
+            'vendor': 'Ruijie',
+            'version': stale_version,
+            'profile_platform_code': profile_code,
+            'profile_parser_platform': 'ruijie_rgos',
+            'profile_connection_driver': 'ruijie_os',
+        })
+
+        assert context['parser_platform'] == expected_parser
+
+
+def test_bound_maipu_s3330_profile_uses_declared_v9_parser_with_stale_inventory_version():
+    context = resolve_device_platform_context({
+        'id': 'device-maipu-s3330',
+        'platform': 'maipu',
+        'vendor': 'Maipu',
+        'version': '8.3.0',
+        'profile_platform_code': 'maipu_s3330_v9',
+        'profile_parser_platform': 'maipu',
+        'profile_connection_driver': 'maipu',
+    })
+
+    assert context['parser_platform'] == 'maipu_mypower_v9'
+
+
+def test_bound_generic_huawei_vrp_profile_uses_its_declared_v5_variant():
+    context = resolve_device_platform_context({
+        'id': 'device-huawei-vrp-v5',
+        'platform': 'huawei_vrp',
+        'vendor': 'Huawei',
+        'version': '8.180',
+        'profile_platform_code': 'huawei_vrp',
+        'profile_parser_platform': 'huawei_vrp',
+        'profile_connection_driver': 'huawei_vrp',
+    })
+
+    assert context['parser_platform'] == 'huawei_vrp5'
+
+
+def test_unbound_ruijie_device_still_uses_detected_software_version():
+    context = resolve_device_platform_context({
+        'id': 'unbound-ruijie-v11',
+        'platform': 'ruijie_rgos',
+        'vendor': 'Ruijie',
+        'version': '11.9(6)B13P1',
+    })
+
+    assert context['parser_platform'] == 'ruijie_rgos_v11'
+
+
 def test_v7_action_command_uses_exact_template_without_registry_binding():
     result = parse_device_cli_output(
         _h3c_device('h3c_comware'),

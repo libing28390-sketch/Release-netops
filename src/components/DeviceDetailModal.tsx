@@ -1,5 +1,5 @@
 import { DataTable } from './DataTable';
-import React, { useEffect, useMemo, useState } from 'react';
+import React, { useEffect, useState } from 'react';
 import { motion } from 'motion/react';
 import {
   Activity,
@@ -9,23 +9,11 @@ import {
   XCircle,
   Zap,
 } from 'lucide-react';
-import {
-  Area,
-  AreaChart,
-  CartesianGrid,
-  ResponsiveContainer,
-  Tooltip,
-  XAxis,
-  YAxis,
-} from 'recharts';
 import type {
   Device,
   DeviceConnectionCheckSummary,
-  DeviceHealthAlertItem,
-  DeviceHealthTrendResponse,
 } from '../types';
 import { connectionCheckBadgeMeta, formatConnectionCheckTime } from '../utils/connectionHelpers';
-import { useChartTheme } from '../hooks/useChartTheme';
 import { useEscapeClose } from '../hooks/useEscapeClose';
 import { apiRequest } from '../api/http';
 import PlatformProfileSelector, { type PlatformProfileOption } from './PlatformProfileSelector';
@@ -50,19 +38,11 @@ interface DeviceDetailModalProps {
   language: string;
   t: (key: string) => string;
   viewingDevice: Device;
-  viewingDeviceAlerts: DeviceHealthAlertItem[];
-  deviceDetailLoading: boolean;
   viewingDeviceConnectionSummary: DeviceConnectionCheckSummary | null;
   connectionTestingDeviceId: string | null;
   onClose: () => void;
-  deviceTrendRangeHours: number;
-  onDeviceTrendRangeHoursChange: (hours: number) => void;
-  deviceHealthTrend: DeviceHealthTrendResponse | null;
-  deviceHealthTrendLoading: boolean;
   onTestConnection: (device: Device, mode: 'quick' | 'deep') => void;
   isTestingConnection: boolean;
-  onSnmpTest: (deviceId: string) => void;
-  snmpTestingId: string | null;
   onSnmpSyncNow: (deviceId: string) => void;
   snmpSyncingId: string | null;
   onPlatformBindingSaved?: (binding: Pick<Device, 'platform' | 'platform_profile_id' | 'platform_locked' | 'platform_binding'>) => void;
@@ -232,26 +212,17 @@ const DeviceDetailModal: React.FC<DeviceDetailModalProps> = ({
   language,
   t,
   viewingDevice,
-  viewingDeviceAlerts,
-  deviceDetailLoading,
   viewingDeviceConnectionSummary,
   connectionTestingDeviceId,
   onClose,
-  deviceTrendRangeHours,
-  onDeviceTrendRangeHoursChange,
-  deviceHealthTrend,
-  deviceHealthTrendLoading,
   onTestConnection,
   isTestingConnection,
-  onSnmpTest,
-  snmpTestingId,
   onSnmpSyncNow,
   snmpSyncingId,
   onPlatformBindingSaved,
   onGoToAutomation,
 }) => {
   useEscapeClose(true, onClose);
-  const ct = useChartTheme();
   const [platformProfiles, setPlatformProfiles] = useState<PlatformProfileOption[]>([]);
   const [platformProfilesLoading, setPlatformProfilesLoading] = useState(false);
   const [platformDetectionLoading, setPlatformDetectionLoading] = useState(false);
@@ -427,34 +398,6 @@ const DeviceDetailModal: React.FC<DeviceDetailModalProps> = ({
       setPlatformBindingLoading(false);
     }
   };
-  const deviceTrendInsights = useMemo(() => {
-    const series = deviceHealthTrend?.series || [];
-    if (series.length === 0) {
-      return {
-        latest: null,
-        previous: null,
-        scoreDelta: 0,
-        alertDelta: 0,
-        addedReasons: [] as string[],
-        removedReasons: [] as string[],
-      };
-    }
-
-    const latest = series[series.length - 1];
-    const previous = series.length > 1 ? series[series.length - 2] : null;
-    const latestReasons = Array.isArray(latest.health_reasons) ? latest.health_reasons : [];
-    const previousReasons = previous && Array.isArray(previous.health_reasons) ? previous.health_reasons : [];
-
-    return {
-      latest,
-      previous,
-      scoreDelta: latest && previous ? Number(latest.health_score || 0) - Number(previous.health_score || 0) : 0,
-      alertDelta: latest && previous ? Number(latest.open_alert_count || 0) - Number(previous.open_alert_count || 0) : 0,
-      addedReasons: latestReasons.filter((reason) => !previousReasons.includes(reason)),
-      removedReasons: previousReasons.filter((reason) => !latestReasons.includes(reason)),
-    };
-  }, [deviceHealthTrend]);
-
   return (
     <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 p-4 backdrop-blur-sm">
       <motion.div
@@ -493,11 +436,6 @@ const DeviceDetailModal: React.FC<DeviceDetailModalProps> = ({
             </div>
           </div>
           <div className="flex items-center gap-3 self-start sm:self-center">
-            <span className="hidden text-[11px] text-black/40 sm:inline">
-              {deviceDetailLoading
-                ? (language === 'zh' ? '健康详情加载中...' : 'Loading health detail...')
-                : (language === 'zh' ? '健康详情已更新' : 'Health detail updated')}
-            </span>
             <button onClick={onClose} title={language === 'zh' ? '关闭设备详情' : 'Close device details'} className="text-black/20 hover:text-black">
               <XCircle size={24} />
             </button>
@@ -505,7 +443,7 @@ const DeviceDetailModal: React.FC<DeviceDetailModalProps> = ({
         </div>
 
         <div className="min-h-0 flex-1 overflow-y-auto overscroll-contain">
-          <div className="grid grid-cols-1 gap-5 p-4 sm:p-5 xl:grid-cols-[1.05fr_1.05fr_0.95fr] xl:items-start xl:gap-5 xl:p-6">
+          <div className="grid grid-cols-1 gap-5 p-4 sm:p-5 xl:grid-cols-[1.05fr_1.05fr] xl:items-start xl:gap-5 xl:p-6">
             <div className="space-y-4 self-start xl:sticky xl:top-0">
               <div>
                 <h4 className="mb-2 text-[10px] font-bold uppercase tracking-widest text-black/30">{language === 'zh' ? '健康概览' : 'Health Overview'}</h4>
@@ -669,157 +607,6 @@ const DeviceDetailModal: React.FC<DeviceDetailModalProps> = ({
               </div>
             </div>
 
-            <div className="space-y-4">
-              <div>
-                <h4 className="mb-2 text-[10px] font-bold uppercase tracking-widest text-black/30">{language === 'zh' ? '开放告警' : 'Open Alerts'}</h4>
-                <div className="max-h-[520px] space-y-2 overflow-auto rounded-2xl border border-black/5 bg-black/[0.01] p-4">
-                  {viewingDeviceAlerts.length > 0 ? viewingDeviceAlerts.map((alert) => {
-                    const tone = String(alert.severity || '').toLowerCase() === 'critical' ? 'bg-red-100 text-red-700' : 'bg-amber-100 text-amber-700';
-                    return (
-                      <div key={alert.id} className="rounded-xl border border-black/5 bg-white p-3">
-                        <div className="flex items-center justify-between gap-2">
-                          <span className={`rounded-full px-2 py-1 text-[10px] font-bold ${tone}`}>{formatStatusLabel(alert.severity, language)}</span>
-                          <span className="text-[11px] text-black/40">{new Date(alert.created_at).toLocaleString(language === 'zh' ? 'zh-CN' : 'en-US', { hour12: false })}</span>
-                        </div>
-                        <p className="mt-2 text-sm font-semibold text-[#0b2340]">{localizeHealthText(alert.title, language)}</p>
-                        <p className="mt-1 text-[11px] text-black/55">{localizeHealthText(alert.message, language)}</p>
-                        {alert.interface_name && <p className="mt-2 text-[11px] font-mono text-black/35">{alert.interface_name}</p>}
-                      </div>
-                    );
-                  }) : (
-                    <div className="rounded-xl border border-dashed border-black/10 bg-white px-3 py-4 text-sm text-black/40">
-                      {deviceDetailLoading
-                        ? (language === 'zh' ? '正在加载告警详情...' : 'Loading alert detail...')
-                        : (language === 'zh' ? '当前没有未恢复告警。' : 'There are no open alerts right now.')}
-                    </div>
-                  )}
-                </div>
-              </div>
-
-              <div>
-                <div className="mb-2 flex items-center justify-between gap-3">
-                  <h4 className="text-[10px] font-bold uppercase tracking-widest text-black/30">{language === 'zh' ? '健康趋势' : 'Health Trend'}</h4>
-                  <div className="flex items-center gap-2">
-                    {[1, 24, 168].map((hours) => (
-                      <button
-                        key={hours}
-                        type="button"
-                        onClick={() => onDeviceTrendRangeHoursChange(hours)}
-                        className={`rounded-lg px-2.5 py-1 text-[10px] font-bold uppercase tracking-[0.14em] transition-all ${deviceTrendRangeHours === hours ? 'bg-black text-white' : 'border border-black/10 text-black/50 hover:bg-black/[0.03]'}`}
-                      >
-                        {hours === 1 ? (language === 'zh' ? '1 小时' : '1h') : hours === 24 ? (language === 'zh' ? '24 小时' : '24h') : (language === 'zh' ? '7 天' : '7d')}
-                      </button>
-                    ))}
-                  </div>
-                </div>
-                <div className="space-y-3 rounded-2xl border border-black/5 bg-[linear-gradient(180deg,rgba(0,0,0,0.01),rgba(0,0,0,0.03))] p-4">
-                  <div className="flex items-center justify-between gap-3 text-[11px] text-black/45">
-                    <span>
-                      {deviceHealthTrendLoading
-                        ? (language === 'zh' ? '趋势加载中...' : 'Loading trend...')
-                        : `${deviceHealthTrend?.sample_count || 0} ${language === 'zh' ? '个采样点' : 'samples'}`}
-                    </span>
-                    <span>{language === 'zh' ? '开放告警' : 'Open alerts'} {Number(viewingDevice.open_alert_count || 0)}</span>
-                  </div>
-                  <div className="h-[220px] rounded-xl border border-black/5 bg-white p-3">
-                    {deviceHealthTrend?.series?.length ? (
-                      <ResponsiveContainer width="100%" height="100%">
-                        <AreaChart data={deviceHealthTrend.series} margin={{ top: 8, right: 8, left: 0, bottom: 0 }}>
-                          <CartesianGrid strokeDasharray="2 4" vertical={false} stroke={ct.gridAlt} />
-                          <XAxis
-                            dataKey="ts"
-                            axisLine={false}
-                            tickLine={false}
-                            tick={{ fontSize: 11, fill: ct.axisAlt }}
-                            tickFormatter={(value) => new Date(String(value)).toLocaleString(language === 'zh' ? 'zh-CN' : 'en-US', { month: '2-digit', day: '2-digit', hour: '2-digit', minute: '2-digit', hour12: false })}
-                            minTickGap={28}
-                          />
-                          <YAxis yAxisId="score" axisLine={false} tickLine={false} tick={{ fontSize: 11, fill: ct.axisAlt }} domain={[0, 100]} width={32} />
-                          <YAxis yAxisId="alerts" orientation="right" axisLine={false} tickLine={false} tick={{ fontSize: 11, fill: ct.axisAlt }} width={28} />
-                          <Tooltip
-                            contentStyle={{ borderRadius: 14, borderColor: ct.tooltipBorder, boxShadow: ct.tooltipShadow, padding: '14px 16px', background: ct.tooltipBg, color: ct.tooltipText }}
-                            labelFormatter={(value) => new Date(String(value)).toLocaleString(language === 'zh' ? 'zh-CN' : 'en-US', { hour12: false })}
-                          />
-                          <Area yAxisId="score" type="monotone" dataKey="health_score" name={language === 'zh' ? '健康分' : 'Health score'} stroke="#2563eb" fill="#2563eb1f" strokeWidth={2.1} isAnimationActive={false} />
-                          <Area yAxisId="alerts" type="monotone" dataKey="open_alert_count" name={language === 'zh' ? '开放告警' : 'Open alerts'} stroke="#dc2626" fill="#dc262618" strokeWidth={1.8} isAnimationActive={false} />
-                        </AreaChart>
-                      </ResponsiveContainer>
-                    ) : (
-                      <div className="flex h-full items-center justify-center text-sm text-black/35">
-                        {deviceHealthTrendLoading
-                          ? (language === 'zh' ? '正在拉取设备趋势...' : 'Loading device trend...')
-                          : (language === 'zh' ? '当前没有该设备的健康趋势样本。' : 'No health trend samples are available for this device yet.')}
-                      </div>
-                    )}
-                  </div>
-                  {deviceHealthTrend?.series?.length ? (
-                    <div className="grid grid-cols-1 gap-2 text-xs text-black/55">
-                      {[...deviceHealthTrend.series].slice(-2).reverse().map((point) => (
-                        <div key={point.ts} className="rounded-xl border border-black/5 bg-white px-3 py-2">
-                          <div className="flex items-center justify-between gap-3">
-                            <span className="font-medium text-[#00172D]">{new Date(point.ts).toLocaleString(language === 'zh' ? 'zh-CN' : 'en-US', { hour12: false })}</span>
-                            <span className={`rounded-full px-2 py-1 text-[10px] font-bold ${getHealthToneClass(point.health_status)}`}>{formatStatusLabel(point.health_status, language)}</span>
-                          </div>
-                          <div className="mt-1 flex flex-wrap gap-3 text-[11px] text-black/45">
-                            <span>{language === 'zh' ? '健康分' : 'Score'} {Number(point.health_score || 0)}</span>
-                            <span>{language === 'zh' ? '开放告警' : 'Open alerts'} {Number(point.open_alert_count || 0)}</span>
-                            <span>{language === 'zh' ? 'Down 接口' : 'Down links'} {Number(point.interface_down_count || 0)}</span>
-                          </div>
-                        </div>
-                      ))}
-                    </div>
-                  ) : null}
-                  <div className="space-y-3 rounded-xl border border-black/5 bg-white p-4">
-                    <div className="flex items-center justify-between gap-3">
-                      <p className="text-[10px] font-bold uppercase tracking-[0.14em] text-black/35">{language === 'zh' ? '最近一次变化' : 'Latest Change'}</p>
-                      <span className="text-[11px] text-black/40">
-                        {deviceTrendInsights.latest
-                          ? new Date(deviceTrendInsights.latest.ts).toLocaleString(language === 'zh' ? 'zh-CN' : 'en-US', { hour12: false })
-                          : (language === 'zh' ? '暂无样本' : 'No samples')}
-                      </span>
-                    </div>
-                    {deviceTrendInsights.latest ? (
-                      <>
-                        <div className="grid grid-cols-2 gap-3 text-xs">
-                          <div className="rounded-xl border border-black/5 bg-black/[0.015] px-3 py-2 text-black/55">
-                            <span className="block text-[10px] font-bold uppercase tracking-[0.14em] text-black/35">{language === 'zh' ? '健康分变化' : 'Score delta'}</span>
-                            <span className={`mt-1 block text-sm font-semibold ${deviceTrendInsights.scoreDelta < 0 ? 'text-red-600' : deviceTrendInsights.scoreDelta > 0 ? 'text-emerald-600' : 'text-[#00172D]'}`}>{deviceTrendInsights.scoreDelta > 0 ? '+' : ''}{deviceTrendInsights.scoreDelta}</span>
-                          </div>
-                          <div className="rounded-xl border border-black/5 bg-black/[0.015] px-3 py-2 text-black/55">
-                            <span className="block text-[10px] font-bold uppercase tracking-[0.14em] text-black/35">{language === 'zh' ? '告警数变化' : 'Alert delta'}</span>
-                            <span className={`mt-1 block text-sm font-semibold ${deviceTrendInsights.alertDelta > 0 ? 'text-red-600' : deviceTrendInsights.alertDelta < 0 ? 'text-emerald-600' : 'text-[#00172D]'}`}>{deviceTrendInsights.alertDelta > 0 ? '+' : ''}{deviceTrendInsights.alertDelta}</span>
-                          </div>
-                        </div>
-                        <div className="grid grid-cols-1 gap-3 xl:grid-cols-2">
-                          <div className="rounded-xl border border-red-100 bg-red-50/50 p-3">
-                            <p className="text-[10px] font-bold uppercase tracking-[0.14em] text-red-600">{language === 'zh' ? '新增风险原因' : 'New risk reasons'}</p>
-                            <div className="mt-2 space-y-2">
-                              {deviceTrendInsights.addedReasons.length > 0 ? deviceTrendInsights.addedReasons.slice(0, 4).map((reason) => (
-                                <div key={reason} className="rounded-lg border border-red-100 bg-white px-3 py-2 text-xs text-red-700">{localizeHealthText(reason, language)}</div>
-                              )) : (
-                                <div className="rounded-lg border border-dashed border-red-200 bg-white/80 px-3 py-2 text-xs text-red-400">{language === 'zh' ? '最近一次采样没有新增风险原因。' : 'No new risk reasons appeared in the latest sample.'}</div>
-                              )}
-                            </div>
-                          </div>
-                          <div className="rounded-xl border border-emerald-100 bg-emerald-50/50 p-3">
-                            <p className="text-[10px] font-bold uppercase tracking-[0.14em] text-emerald-700">{language === 'zh' ? '已缓解原因' : 'Cleared reasons'}</p>
-                            <div className="mt-2 space-y-2">
-                              {deviceTrendInsights.removedReasons.length > 0 ? deviceTrendInsights.removedReasons.slice(0, 4).map((reason) => (
-                                <div key={reason} className="rounded-lg border border-emerald-100 bg-white px-3 py-2 text-xs text-emerald-700">{localizeHealthText(reason, language)}</div>
-                              )) : (
-                                <div className="rounded-lg border border-dashed border-emerald-200 bg-white/80 px-3 py-2 text-xs text-emerald-500">{language === 'zh' ? '最近一次采样没有观察到已缓解原因。' : 'No reasons were cleared in the latest sample.'}</div>
-                              )}
-                            </div>
-                          </div>
-                        </div>
-                      </>
-                    ) : (
-                      <div className="rounded-xl border border-dashed border-black/10 bg-black/[0.015] px-3 py-4 text-sm text-black/40">{language === 'zh' ? '至少需要一次健康采样后才能比较原因变化。' : 'At least one health sample is required before reason changes can be compared.'}</div>
-                    )}
-                  </div>
-                </div>
-              </div>
-            </div>
           </div>
 
           {viewingDevice.interface_data && viewingDevice.interface_data.length > 0 && (
@@ -899,7 +686,6 @@ const DeviceDetailModal: React.FC<DeviceDetailModalProps> = ({
               </a>
               <button onClick={() => onTestConnection(viewingDevice, 'quick')} disabled={isTestingConnection} className="flex items-center gap-2 rounded-xl bg-blue-50 px-6 py-2 text-sm font-medium text-blue-600 transition-all hover:bg-blue-100 disabled:opacity-50"><Activity size={16} />{isTestingConnection ? (language === 'zh' ? '检测中…' : 'Testing...') : (language === 'zh' ? '快速连通性' : 'Reachability Check')}</button>
               <button onClick={() => onTestConnection(viewingDevice, 'deep')} disabled={isTestingConnection} className="flex items-center gap-2 rounded-xl bg-violet-50 px-6 py-2 text-sm font-medium text-violet-700 transition-all hover:bg-violet-100 disabled:opacity-50"><ShieldCheck size={16} />{isTestingConnection ? (language === 'zh' ? '检测中…' : 'Testing...') : (language === 'zh' ? 'SSH 登录校验' : 'SSH Login Check')}</button>
-              <button onClick={() => onSnmpTest(viewingDevice.id)} disabled={snmpTestingId === viewingDevice.id} className="flex items-center gap-2 rounded-xl bg-emerald-50 px-6 py-2 text-sm font-medium text-emerald-600 transition-all hover:bg-emerald-100 disabled:opacity-50"><Activity size={16} />{snmpTestingId === viewingDevice.id ? (language === 'zh' ? '检测中…' : 'Testing...') : (language === 'zh' ? 'SNMP 检测' : 'SNMP Test')}</button>
               <button onClick={() => onSnmpSyncNow(viewingDevice.id)} disabled={snmpSyncingId === viewingDevice.id} className="flex items-center gap-2 rounded-xl bg-cyan-50 px-6 py-2 text-sm font-medium text-cyan-700 transition-all hover:bg-cyan-100 disabled:opacity-50"><RotateCcw size={16} className={snmpSyncingId === viewingDevice.id ? 'animate-spin' : ''} />{snmpSyncingId === viewingDevice.id ? (language === 'zh' ? '同步中...' : 'Syncing...') : (language === 'zh' ? '立即同步SNMP' : 'SNMP Sync Now')}</button>
               <button onClick={() => onGoToAutomation(viewingDevice)} className="flex items-center gap-2 rounded-xl border border-black/10 px-6 py-2 text-sm font-medium text-black transition-all hover:bg-black/5"><Zap size={16} />{language === 'zh' ? '进入自动化' : 'Go to Automation'}</button>
             </div>

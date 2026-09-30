@@ -123,17 +123,22 @@ def _resolve_target_device(conn: Any, identity: str, ip: str) -> str | None:
     if not identity and not ip:
         return None
     rows = conn.execute(
-        "SELECT id, hostname, sys_name, ip_address, sn FROM devices"
+        "SELECT id, hostname, ip_address, sn FROM devices"
     ).fetchall()
-    identity_lower = str(identity or "").strip().lower()
+    identity_text = str(identity or "").strip()
+    identity_lower = identity_text.lower()
     ip_lower = str(ip or "").strip().lower()
     for row in rows:
-        values = {
-            str(row[key] or "").strip().lower()
-            for key in ("hostname", "sys_name", "ip_address", "sn")
-            if key in row.keys()
-        }
-        if (ip_lower and ip_lower in values) or (identity_lower and identity_lower in values):
+        hostname = str(row["hostname"] or "").strip()
+        device_ip = str(row["ip_address"] or "").strip().lower()
+        serial = str(row["sn"] or "").strip().lower()
+        if ip_lower and ip_lower == device_ip:
+            return str(row["id"])
+        if identity_lower and identity_lower == device_ip:
+            return str(row["id"])
+        if identity_text and identity_text == hostname:
+            return str(row["id"])
+        if identity_lower and identity_lower == serial:
             return str(row["id"])
     return None
 

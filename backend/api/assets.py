@@ -3233,7 +3233,7 @@ def import_assets(
         skipped_items = []
         failed_items: list[dict] = []
         row_results: list[dict] = []
-        pending_hostname_sync: list[str] = []
+        pending_hostname_sync: list[dict] = []
 
         def _safe_import_error(exc: Exception) -> dict:
             detail = exc.detail if isinstance(exc, HTTPException) else None
@@ -3315,6 +3315,30 @@ def import_assets(
                     })
             duplicates = _find_asset_identity_duplicates(conn, body.model_dump())
             if duplicates:
+                duplicate_device_id = ''
+                if body.asset_type == 'network_device':
+                    existing_asset_ids = {str(item['existing_id']) for item in duplicates}
+                    if len(existing_asset_ids) == 1:
+                        existing_asset_id = next(iter(existing_asset_ids))
+                        existing_network_device = conn.execute(
+                            '''SELECT pa.id AS asset_id, pa.asset_tag, pa.hostname,
+                                      COALESCE(NULLIF(pa.management_ip, ''), NULLIF(d.ip_address, '')) AS ip,
+                                      d.id AS device_id
+                               FROM physical_assets pa
+                               JOIN devices d ON d.asset_id = pa.id
+                               WHERE pa.id = ? AND pa.asset_type = 'network_device'
+                               LIMIT 1''',
+                            (existing_asset_id,),
+                        ).fetchone()
+                        if existing_network_device:
+                            duplicate_device_id = str(existing_network_device['device_id'])
+                            pending_hostname_sync.append({
+                                'device_id': duplicate_device_id,
+                                'row': row_number,
+                                'asset_tag': existing_network_device['asset_tag'] or body.asset_tag or '',
+                                'hostname': existing_network_device['hostname'] or body.hostname or '',
+                                'ip': existing_network_device['ip'] or body.management_ip or '',
+                            })
                 skipped_item = {
                     'row': row_number,
                     'asset_tag': body.asset_tag,
@@ -3328,6 +3352,8 @@ def import_assets(
                         '',
                     ),
                 }
+                if duplicate_device_id:
+                    skipped_item['device_id'] = duplicate_device_id
                 skipped_items.append(skipped_item)
                 return {'status': 'skipped', **skipped_item}
 
@@ -3397,8 +3423,14 @@ def import_assets(
             if body.asset_type in ('network_device', 'server'):
                 device_id = _create_linked_device(conn, asset_id, body, _user)
                 _sync_asset_tags(conn, asset_id, requested_tag_ids)
-                if was_hostname_empty and device_id:
-                    pending_hostname_sync.append(device_id)
+                if body.asset_type == 'network_device' and device_id:
+                    pending_hostname_sync.append({
+                        'device_id': device_id,
+                        'row': row_number,
+                        'asset_tag': body.asset_tag or '',
+                        'hostname': body.hostname or '',
+                        'ip': body.management_ip or '',
+                    })
                 if legacy_production:
                     conn.execute(
                         "UPDATE devices SET lifecycle_status = 'production', rotation_status = 'exempt', is_managed = 0 WHERE id = ?",
@@ -3481,30 +3513,161 @@ def import_assets(
                 conn.rollback()
                 raise
         conn.commit()
+
+        async def _sync_imported_hostname(item: dict, semaphore) -> dict:
+            result = {
+                **item,
+                'status': 'failed',
+                'error': '',
+            }
+
+            conn_read = get_db_connection()
+            try:
+                device_row = conn_read.execute(
+                    'SELECT * FROM devices WHERE id = ?', (item['device_id'],)
+                ).fetchone()
+                if not device_row:
+                    result['error'] = '设备记录不存在'
+                    return result
+                device = dict(device_row)
+            finally:
+                conn_read.close()
+
+            result['previous_hostname'] = str(device.get('hostname') or '')
+            try:
+                credentials = resolve_collector_credentials(device)
+                snmp = credentials.get('snmp') or {}
+                snmp_ip = str(snmp.get('server') or device.get('ip_address') or '').strip()
+                community = str(snmp.get('community') or '').strip()
+                port = int(snmp.get('port') or 161)
+                if not snmp_ip:
+                    result['error'] = '缺少管理 IP'
+                    return result
+                result['ip'] = snmp_ip
+                if not community:
+                    result['error'] = '未配置 SNMP 凭据'
+                    return result
+
+                from services.snmp_service import _snmp_get
+                async with semaphore:
+                    raw_sys_name = await _snmp_get(
+                        snmp_ip,
+                        community,
+                        '1.3.6.1.2.1.1.5.0',
+                        port,
+                        timeout=3,
+                    )
+                if not str(raw_sys_name or '').strip():
+                    result['error'] = '设备未返回 SNMP sysName.0'
+                    return result
+            except Exception as exc:
+                logger.warning(
+                    'Asset import SNMP hostname read failed for device %s (%s)',
+                    item['device_id'],
+                    type(exc).__name__,
+                )
+                result['error'] = f'SNMP 主机名读取失败（{type(exc).__name__}）'
+                return result
+
+            from services.hostname_sync_service import (
+                clean_system_hostname,
+                schedule_monitoring_target_sync_if_hostname_changed,
+                sync_device_hostname_metadata,
+            )
+            clean_name = clean_system_hostname(raw_sys_name)
+            if not clean_name:
+                result['error'] = '设备未返回有效的 SNMP sysName.0'
+                return result
+
+            conn_write = get_db_connection()
+            try:
+                sync_result = sync_device_hostname_metadata(conn_write, item['device_id'], raw_sys_name)
+                if not sync_result:
+                    conn_write.rollback()
+                    result['error'] = '主机名无法写回 CMDB：设备记录不存在'
+                    return result
+                conn_write.commit()
+            except Exception as exc:
+                conn_write.rollback()
+                logger.warning(
+                    'Asset import hostname write failed for device %s (%s)',
+                    item['device_id'],
+                    type(exc).__name__,
+                )
+                result['error'] = 'SNMP 主机名无法写回 CMDB'
+                return result
+            finally:
+                conn_write.close()
+
+            schedule_monitoring_target_sync_if_hostname_changed(sync_result)
+            result.update({
+                'status': 'synced',
+                'hostname': clean_name,
+                'error': '',
+            })
+            return result
+
+        hostname_sync_results: list[dict] = []
+        if pending_hostname_sync:
+            import asyncio as _aio
+            pending_hostname_sync = list({item['device_id']: item for item in pending_hostname_sync}.values())
+
+            async def _sync_all_imported_hostnames() -> list:
+                semaphore = _aio.Semaphore(min(10, len(pending_hostname_sync)))
+                return await _aio.gather(
+                    *(_sync_imported_hostname(item, semaphore) for item in pending_hostname_sync),
+                    return_exceptions=True,
+                )
+
+            sync_outputs = _aio.run(_sync_all_imported_hostnames())
+            for item, output in zip(pending_hostname_sync, sync_outputs):
+                if isinstance(output, BaseException):
+                    logger.warning(
+                        'Asset import hostname sync failed for device %s (%s)',
+                        item['device_id'],
+                        type(output).__name__,
+                    )
+                    hostname_sync_results.append({
+                        **item,
+                        'status': 'failed',
+                        'error': f'主机名同步任务异常（{type(output).__name__}）',
+                    })
+                else:
+                    hostname_sync_results.append(output)
+
+        hostname_sync_by_device = {
+            item['device_id']: item for item in hostname_sync_results
+        }
+        for row_result in row_results:
+            hostname_result = hostname_sync_by_device.get(row_result.get('device_id'))
+            if hostname_result:
+                row_result['hostname_sync'] = {
+                    'status': hostname_result['status'],
+                    'hostname': hostname_result.get('hostname') or '',
+                    'error': hostname_result.get('error') or '',
+                }
+                if hostname_result['status'] == 'synced':
+                    row_result['hostname'] = hostname_result['hostname']
+
         if created > 0:
             try:
                 from services.collector_sync_service import trigger_async_monitoring_sync
                 trigger_async_monitoring_sync()
             except Exception:
                 pass
-        if pending_hostname_sync:
-            import asyncio as _aio
-            async def _bg_auto_sync(dids: list[str]):
-                for did in dids:
-                    try:
-                        from api.devices import sync_device_hostname
-                        await sync_device_hostname(did)
-                    except Exception as e:
-                        logger.debug("Auto hostname sync skipped for %s: %s", did, e)
-            try:
-                loop = _aio.get_running_loop()
-                loop.create_task(_bg_auto_sync(pending_hostname_sync))
-            except RuntimeError:
-                pass
+        hostname_sync_failures = [
+            item for item in hostname_sync_results if item['status'] == 'failed'
+        ]
         response = {
             'created': created,
             'skipped': skipped,
             'skipped_items': skipped_items,
+            'hostname_sync': {
+                'total': len(hostname_sync_results),
+                'succeeded': len(hostname_sync_results) - len(hostname_sync_failures),
+                'failed': len(hostname_sync_failures),
+                'failed_items': hostname_sync_failures,
+            },
         }
         if detailed or atomic:
             response.update({

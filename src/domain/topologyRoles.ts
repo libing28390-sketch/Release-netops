@@ -21,9 +21,8 @@ export const NETWORK_TOPOLOGY_ROLE_VALUES: string[] = NETWORK_TOPOLOGY_ROLE_OPTI
 
 /**
  * Visual tiers define the presentation order for imported topology roles.
- * They must not be written back as evidence-derived `topology_rank` values;
- * relationship ranks remain semantic data and the layout can fall back to
- * them when role information is unavailable.
+ * They are presentation metadata only and are not persisted as graph-derived
+ * relationship data.
  *
  * The import/API contract uses the canonical English keys, but accepting the
  * previous Chinese labels and legacy keys here keeps already imported assets

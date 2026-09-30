@@ -68,7 +68,12 @@ export type TopologyDecoratedLink = {
   semantic_confidence?: number;
   manual_confirmed?: boolean | number;
   is_manual?: boolean | number;
-  rank_excluded?: boolean | number;
+  identity_warnings?: Array<{
+    code: string;
+    reported_name: string;
+    cmdb_hostname: string;
+    target_device_id: string;
+  }>;
 };
 
 export type TopologySiteSummary = {
@@ -244,7 +249,6 @@ export const useTopology = ({ devices, language, showToast, isAuthenticated, ena
   const [topologyDiscoveryRunId, setTopologyDiscoveryRunId] = useState<string | null>(null);
   const [topologyDiscoveryProgress, setTopologyDiscoveryProgress] = useState<TopologyDiscoveryProgress | null>(null);
   const [topologyDiscoveryDevices, setTopologyDiscoveryDevices] = useState<any[]>([]);
-  const [hostnameSyncing, setHostnameSyncing] = useState(false);
   const [topologySites, setTopologySites] = useState<TopologySiteSummary[]>([]);
   const [topologyNodeMetadata, setTopologyNodeMetadata] = useState<Record<string, Partial<Device>>>({});
   const [topologyGraphNodeDevices, setTopologyGraphNodeDevices] = useState<Device[]>([]);
@@ -328,8 +332,6 @@ export const useTopology = ({ devices, language, showToast, isAuthenticated, ena
         if (!deviceId) return;
         graphNodeMetadata[deviceId] = {
           topology_node_id: nodeId,
-          topology_rank: Number(node.rank || 0),
-          relation_rank: Number(node.rank || 0),
           role_identity: node.role_identity,
           topology_node_type: node.node_type,
           function: node.function || '',
@@ -371,7 +373,6 @@ export const useTopology = ({ devices, language, showToast, isAuthenticated, ena
             last_seen: edge.last_seen,
             is_manual: Number(edge.is_manual || 0),
             manual_confirmed: Number(edge.manual_confirmed || 0),
-            rank_excluded: Number(edge.rank_excluded || 0),
             inferred: String(edge.relation_type || '').toUpperCase() !== 'PHYSICAL',
             operational_state: edge.status === 'stale' ? 'stale' : 'unknown',
           };
@@ -397,38 +398,15 @@ export const useTopology = ({ devices, language, showToast, isAuthenticated, ena
       // devices have parallel LLDP rows; the API now supplies an explicit
       // link_kind/member contract when the inventory proves it.
       const foldedPhysicalLinks = physicalLinks;
-      const collapseRelationLinks = (items: any[]) => {
-        const collapsed = new Map<string, any>();
-        items.forEach((link) => {
-          const source = String(link.source_device_id || '');
-          const target = String(link.target_device_id || '');
-          const relation = String(link.relation_type || link.semantic_relation || 'LOGICAL').toUpperCase();
-          const pair = [source, target].sort().join('::');
-          const key = `${relation}::${pair}`;
-          const existing = collapsed.get(key);
-          if (!existing) {
-            collapsed.set(key, { ...link, grouped_link_count: 1 });
-            return;
-          }
-          existing.grouped_link_count = Number(existing.grouped_link_count || 1) + 1;
-          existing.evidence_count = Math.max(Number(existing.evidence_count || 0), Number(link.evidence_count || 0));
-          existing.confidence = Math.max(Number(existing.confidence || 0), Number(link.confidence || 0));
-          existing.discovery_sources = Array.from(new Set([
-            ...(Array.isArray(existing.discovery_sources) ? existing.discovery_sources : []),
-            ...(Array.isArray(link.discovery_sources) ? link.discovery_sources : []),
-          ]));
-        });
-        return Array.from(collapsed.values());
-      };
       if (topologyGraphView === 'physical') {
         nextLinks = [...(foldedPhysicalLinks.length > 0 ? foldedPhysicalLinks : graphLinks), ...externalLinksForView];
       } else if (topologyGraphView === 'all') {
-        const logicalLinks = collapseRelationLinks(graphLinks.filter((link: any) => String(link.relation_type || '').toUpperCase() !== 'PHYSICAL'));
+        const logicalLinks = graphLinks.filter((link: any) => String(link.relation_type || '').toUpperCase() !== 'PHYSICAL');
         nextLinks = [...foldedPhysicalLinks, ...logicalLinks, ...externalLinksForView];
       } else if (topologyGraphView === 'external') {
         nextLinks = externalLinksForView;
       } else {
-        nextLinks = collapseRelationLinks(graphLinks.filter((link: any) => String(link.relation_type || '').toUpperCase() !== 'PHYSICAL'));
+        nextLinks = graphLinks.filter((link: any) => String(link.relation_type || '').toUpperCase() !== 'PHYSICAL');
       }
     } else {
       setTopologyGraphNodeDevices([]);
@@ -541,6 +519,22 @@ export const useTopology = ({ devices, language, showToast, isAuthenticated, ena
     (link: any, sourceDevice?: Device, targetDevice?: Device): TopologyDecoratedLink => {
       const metadata = parseJsonObject(link.metadata_json);
       const metadataProtocols = Array.isArray(metadata.protocols) ? metadata.protocols : [];
+      const identityWarnings = Array.isArray(metadata.identity_warnings)
+        ? metadata.identity_warnings
+          .filter((item: any) => item && item.code === 'lldp_hostname_mismatch')
+          .map((item: any) => {
+            const targetDeviceId = String(item.target_device_id || '');
+            const warnedDevice = targetDeviceId === String(link.source_device_id || '')
+              ? sourceDevice
+              : targetDevice;
+            return {
+              code: String(item.code),
+              reported_name: String(item.reported_name || metadata.target_identity || ''),
+              cmdb_hostname: String(warnedDevice?.hostname || item.cmdb_hostname || ''),
+              target_device_id: targetDeviceId,
+            };
+          })
+        : [];
       const discoverySources = String(link.discovery_source || '')
         .split('+')
         .map((item) => item.trim().toLowerCase())
@@ -586,8 +580,8 @@ export const useTopology = ({ devices, language, showToast, isAuthenticated, ena
       if (isUnmanaged) {
         operationalState = 'unknown';
         operationalSummary = language === 'zh'
-          ? '未纳管邻居：已发现但尚未匹配到 CMDB 设备。'
-          : 'Unmanaged neighbor: discovered but not matched to a CMDB device.';
+          ? 'LLDP 已发现该邻居，但系统未能通过管理 IP、序列号或主机名将其唯一匹配到 CMDB 设备。'
+          : 'LLDP discovered this neighbor, but its management IP, serial number, or hostname did not uniquely match a CMDB device.';
       } else if (inferred) {
         operationalState = 'unknown';
         operationalSummary = language === 'zh'
@@ -644,11 +638,14 @@ export const useTopology = ({ devices, language, showToast, isAuthenticated, ena
 
       return {
         ...link,
+        source_hostname: link.source_hostname_resolved || sourceDevice?.hostname || link.source_hostname || '',
+        target_hostname: link.target_hostname_resolved || targetDevice?.hostname || link.target_hostname || '',
         inferred,
         operational_state: operationalState,
         operational_summary: operationalSummary,
         evidence_sources: evidenceSources,
         reverse_confirmed: Boolean(metadata.reverse_seen),
+        identity_warnings: identityWarnings,
         source_interface_snapshot: sourceInterfaceSnapshot,
         target_interface_snapshot: targetInterfaceSnapshot,
         bandwidth_mbps: bandwidthMbps,
@@ -771,8 +768,6 @@ export const useTopology = ({ devices, language, showToast, isAuthenticated, ena
   const topologyStats = useMemo(() => ({
     nodeCount: topologyFilteredDevices.length,
     linkCount: topologyVisibleLinks.length,
-    managedLinkCount: topologyVisibleLinks.filter((link) => !link.is_unmanaged).length,
-    externalLinkCount: topologyVisibleLinks.filter((link) => Boolean(link.is_unmanaged)).length,
     siteCount: new Set(topologyFilteredDevices.map((device) => String(device.site_id || device.site || '').trim()).filter(Boolean)).size,
     atRiskCount: topologyFilteredDevices.filter((device) => device.status !== 'online' || device.health_status === 'critical' || (device.open_alert_count || 0) > 0).length,
     orphanCount: topologyFilteredDevices.filter((device) => !topologyConnectedDeviceIds.has(device.id)).length,
@@ -783,7 +778,6 @@ export const useTopology = ({ devices, language, showToast, isAuthenticated, ena
     degraded: topologyVisibleLinks.filter((link) => link.operational_state === 'degraded').length,
     down: topologyVisibleLinks.filter((link) => link.operational_state === 'down').length,
     stale: topologyVisibleLinks.filter((link) => link.operational_state === 'stale').length,
-    multiSource: topologyVisibleLinks.filter((link) => link.evidence_sources.length > 1 || link.reverse_confirmed || Number(link.evidence_count || 0) > 1).length,
   }), [topologyVisibleLinks]);
 
   const selectedTopologyDevice = useMemo(
@@ -969,33 +963,7 @@ export const useTopology = ({ devices, language, showToast, isAuthenticated, ena
   }, [showToast, topologySiteFilter, topologySites]);
 
   const handleTriggerDiscovery = useCallback(async () => {
-    if (hostnameSyncing || topologyDiscoveryRunning) return;
-
-    setHostnameSyncing(true);
-    let hostnameSyncFailureCount = 0;
-    let hostnameSyncUpdatedCount = 0;
-    let hostnameSyncUnavailable = false;
-    try {
-      const syncResponse = await fetch('/api/devices/batch-sync-hostname', {
-        method: 'POST',
-        headers: {
-          ...topologyAuthHeaders(),
-          'Content-Type': 'application/json',
-        },
-        body: JSON.stringify({ device_ids: [] }),
-      });
-      const syncPayload = await syncResponse.json().catch(() => ({}));
-      if (!syncResponse.ok) {
-        throw new Error(topologyApiErrorMessage(syncPayload, 'topology_hostname_sync_failed'));
-      }
-
-      hostnameSyncFailureCount = Number(syncPayload?.failed || 0);
-      hostnameSyncUpdatedCount = Number(syncPayload?.updated || 0);
-    } catch {
-      hostnameSyncUnavailable = true;
-    } finally {
-      setHostnameSyncing(false);
-    }
+    if (topologyDiscoveryRunning) return;
 
     setTopologyDiscoveryRunning(true);
     setTopologyDiscoveryDevices([]);
@@ -1028,20 +996,11 @@ export const useTopology = ({ devices, language, showToast, isAuthenticated, ena
         pending_devices: Number(payload.device_count || 0),
         progress_percent: 0,
       });
-      const syncStatusMessage = hostnameSyncUnavailable
-        ? (language === 'zh' ? '主机名同步暂不可用，' : 'Hostname sync was unavailable; ')
-        : hostnameSyncFailureCount > 0
-          ? (language === 'zh'
-            ? `${hostnameSyncFailureCount} 台设备主机名未能同步，`
-            : `Hostname sync did not complete for ${hostnameSyncFailureCount} devices; `)
-          : hostnameSyncUpdatedCount > 0
-            ? (language === 'zh' ? `已同步 ${hostnameSyncUpdatedCount} 台设备名称，` : `Synced ${hostnameSyncUpdatedCount} device names; `)
-            : '';
       showToast(
         language === 'zh'
-          ? `${syncStatusMessage}拓扑发现任务已启动，可实时查看进度。`
-          : `${syncStatusMessage}topology discovery started; live progress is available.`,
-        hostnameSyncUnavailable || hostnameSyncFailureCount > 0 ? 'info' : 'success',
+          ? '拓扑发现任务已启动，将优先按管理 IP 匹配邻居，再使用序列号或主机名。'
+          : 'Topology discovery started; neighbors are matched by management IP first, then serial number or hostname.',
+        'success',
       );
     } catch (error) {
       setTopologyDiscoveryRunning(false);
@@ -1052,7 +1011,7 @@ export const useTopology = ({ devices, language, showToast, isAuthenticated, ena
         'error',
       );
     }
-  }, [hostnameSyncing, language, showToast, topologyDiscoveryRunning, topologySiteFilter]);
+  }, [language, showToast, topologyDiscoveryRunning, topologySiteFilter]);
 
   React.useEffect(() => {
     if (!topologyDiscoveryRunId) return;
@@ -1062,7 +1021,7 @@ export const useTopology = ({ devices, language, showToast, isAuthenticated, ena
 
     const poll = async () => {
       try {
-        const response = await fetch(`/api/topology/discovery-runs/${topologyDiscoveryRunId}`, {
+        const response = await fetch(`/api/topology/discovery-runs/${topologyDiscoveryRunId}?device_limit=500`, {
           headers: topologyAuthHeaders(),
         });
         if (!response.ok) throw new Error(`discovery_progress_${response.status}`);
@@ -1189,7 +1148,6 @@ export const useTopology = ({ devices, language, showToast, isAuthenticated, ena
     handleExportMap,
     handleTriggerDiscovery,
     handleCancelDiscovery,
-    hostnameSyncing,
     handleConfirmTopologyRelation,
     loadTopologyHistory,
     refreshTopologyData,

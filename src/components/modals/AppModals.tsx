@@ -10,7 +10,6 @@ import RemediationModal from '../RemediationModal';
 import DeleteConfirmModal from '../DeleteConfirmModal';
 import DeviceFormModal from '../DeviceFormModal';
 import DeviceDetailModal from '../DeviceDetailModal';
-import SnmpTestResultModal from '../SnmpTestResultModal';
 import AuditEventDetailModal from '../AuditEventDetailModal';
 import ComplianceFindingDetailModal from '../ComplianceFindingDetailModal';
 import JobOutputModal from '../JobOutputModal';
@@ -51,12 +50,9 @@ export const AppModals: React.FC<any> = (props) => {
     // Lifecycle confirm
     showLifecycleConfirm, lifecycleConfirmChecked, setLifecycleConfirmChecked, setShowLifecycleConfirm,
     // DeviceDetailModal
-    showDetailsModal, viewingDevice, viewingDeviceAlerts, deviceDetailLoading, deviceConnectionChecks,
-    connectionTestingDeviceId, deviceTrendRangeHours, setDeviceTrendRangeHours, deviceHealthTrend, deviceHealthTrendLoading,
-    handleSnmpTest, snmpTestingId, handleSnmpSyncNow, snmpSyncingId,
+    showDetailsModal, viewingDevice, deviceConnectionChecks,
+    connectionTestingDeviceId, handleSnmpSyncNow, snmpSyncingId,
     setSelectedDevice, setViewingDevice, setShowDetailsModal,
-    // SnmpTestResultModal
-    showSnmpTestResult, snmpTestResult, setShowSnmpTestResult,
     // AuditEventDetailModal
     selectedAuditEvent, setSelectedAuditEvent,
     // ComplianceFindingDetailModal
@@ -315,19 +311,11 @@ export const AppModals: React.FC<any> = (props) => {
           language={language}
           t={t}
           viewingDevice={viewingDevice}
-          viewingDeviceAlerts={viewingDeviceAlerts}
-          deviceDetailLoading={deviceDetailLoading}
           viewingDeviceConnectionSummary={viewingDevice.id ? deviceConnectionChecks[viewingDevice.id] : null}
           connectionTestingDeviceId={connectionTestingDeviceId}
           onClose={() => setShowDetailsModal(false)}
-          deviceTrendRangeHours={deviceTrendRangeHours}
-          onDeviceTrendRangeHoursChange={setDeviceTrendRangeHours}
-          deviceHealthTrend={deviceHealthTrend}
-          deviceHealthTrendLoading={deviceHealthTrendLoading}
           onTestConnection={handleTestConnection}
           isTestingConnection={isTestingConnection}
-          onSnmpTest={handleSnmpTest}
-          snmpTestingId={snmpTestingId}
           onSnmpSyncNow={handleSnmpSyncNow}
           snmpSyncingId={snmpSyncingId}
           onPlatformBindingSaved={(binding) => {
@@ -340,16 +328,6 @@ export const AppModals: React.FC<any> = (props) => {
             setActiveTab('automation');
             setShowDetailsModal(false);
           }}
-        />
-      )}
-
-      {/* SNMP Test Result Modal */}
-      {showSnmpTestResult && (
-        <SnmpTestResultModal
-          open={showSnmpTestResult}
-          language={language}
-          result={snmpTestResult}
-          onClose={() => setShowSnmpTestResult(false)}
         />
       )}
 

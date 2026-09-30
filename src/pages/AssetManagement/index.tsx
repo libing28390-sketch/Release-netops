@@ -392,6 +392,7 @@ const AssetManagementTab: React.FC<AssetManagementTabProps> = ({ language, setAc
   useEffect(() => {
     if (!feedbackMsg) return;
     if (rotatingAssetId) return;
+    if (feedbackMsg.type === 'warning' && feedbackMsg.details?.length) return;
     const t = setTimeout(() => setFeedbackMsg(null), feedbackMsg.type === 'error' || feedbackMsg.type === 'warning' ? 10000 : 5000);
     return () => clearTimeout(t);
   }, [feedbackMsg, rotatingAssetId]);
@@ -956,11 +957,35 @@ const AssetManagementTab: React.FC<AssetManagementTabProps> = ({ language, setAc
             ? `另有 ${res.skipped - skippedDetails.length} 条跳过记录未展开`
             : `${res.skipped - skippedDetails.length} more skipped rows are not shown`);
         }
+        const hostnameSync = res.hostname_sync || {};
+        const hostnameSyncFailures = Array.isArray(hostnameSync.failed_items) ? hostnameSync.failed_items : [];
+        const hostnameSyncDetails = hostnameSyncFailures.map((item: any) => {
+          const identity = [item.previous_hostname || item.hostname, item.asset_tag]
+            .filter(Boolean)
+            .join(' / ') || (item.device_id || 'Unknown device');
+          const ip = item.ip ? ` (${item.ip})` : '';
+          const error = item.error || (zh ? '未知错误' : 'unknown error');
+          const failureLabel = error.includes('写回 CMDB')
+            ? (zh ? '主机名写回 CMDB 失败' : 'failed to save hostname to CMDB')
+            : (zh ? 'SNMP 获取主机名失败' : 'failed to read hostname via SNMP');
+          return zh
+            ? `${identity}${ip}：${failureLabel}（${error}）`
+            : `${identity}${ip}: ${failureLabel} (${error})`;
+        });
         const hasSkipped = Number(res.skipped || 0) > 0;
+        const hasHostnameSyncFailures = hostnameSyncFailures.length > 0;
+        const syncSummary = Number(hostnameSync.total || 0) > 0
+          ? (zh
+            ? `；SNMP 主机名已同步 ${hostnameSync.succeeded || 0}/${hostnameSync.total} 台${hasHostnameSyncFailures ? `，失败 ${hostnameSync.failed} 台` : ''}`
+            : `; SNMP hostnames synced for ${hostnameSync.succeeded || 0}/${hostnameSync.total} devices${hasHostnameSyncFailures ? `, ${hostnameSync.failed} failed` : ''}`)
+          : '';
+        const details = [...skippedDetails, ...hostnameSyncDetails];
         setFeedbackMsg({
-          type: hasSkipped ? 'warning' : 'success',
-          text: zh ? `导入完成：新增 ${res.created} 条，跳过 ${res.skipped} 条${hasSkipped ? '（请查看跳过原因）' : ''}` : `Import done: ${res.created} created, ${res.skipped} skipped${hasSkipped ? ' (review skipped rows)' : ''}`,
-          details: skippedDetails.length > 0 ? skippedDetails : undefined,
+          type: hasSkipped || hasHostnameSyncFailures ? 'warning' : 'success',
+          text: zh
+            ? `导入完成：新增 ${res.created} 条，跳过 ${res.skipped} 条${hasSkipped ? '（请查看跳过原因）' : ''}${syncSummary}`
+            : `Import done: ${res.created} created, ${res.skipped} skipped${hasSkipped ? ' (review skipped rows)' : ''}${syncSummary}`,
+          details: details.length > 0 ? details : undefined,
         });
         fetchAssets();
         fetchSummary();
@@ -1620,7 +1645,9 @@ const AssetManagementTab: React.FC<AssetManagementTabProps> = ({ language, setAc
       <PageHero
         icon={Package}
         title={zh ? '资产管理' : 'Asset Management'}
-        subtitle={zh ? '设备台账 · 资产生命周期 · 租户归属' : 'Device inventory, lifecycle and tenant ownership'}
+        subtitle={zh
+          ? '设备台账 · 资产生命周期 · 网络设备导入时通过 SNMP 校准主机名'
+          : 'Device inventory and lifecycle · SNMP hostname sync runs during network device import'}
       />
 
       <div className="flex-1 overflow-auto p-5 space-y-4">
@@ -1648,7 +1675,7 @@ const AssetManagementTab: React.FC<AssetManagementTabProps> = ({ language, setAc
               <div className="flex-1 min-w-0">
                 <div className="text-sm font-bold">{feedbackMsg.text}</div>
                 {feedbackMsg.details?.length ? (
-                  <ul className="mt-1 space-y-0.5 text-xs font-normal leading-4 opacity-90">
+                  <ul className="mt-1 max-h-52 space-y-0.5 overflow-auto text-xs font-normal leading-4 opacity-90">
                     {feedbackMsg.details.map((detail, index) => <li key={`${detail}-${index}`}>{detail}</li>)}
                   </ul>
                 ) : null}

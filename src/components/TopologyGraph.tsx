@@ -1,13 +1,7 @@
 import React, { useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
 import * as d3 from 'd3';
-import {
-  aggregateTopologyGraph,
-  type TopologyDrillSegment,
-  type TopologyHierarchyLevel,
-  resolveTopologyDisplayMode,
-  type TopologyDisplayMode,
-} from '../utils/topologyAggregation';
 import { buildTopologyExportFilename, getTopologyExportPixelRatio } from '../utils/topologyExport';
+import { buildTopologyGraphLinks } from '../utils/topologyGraphLinks';
 import { buildFoldedChainPositions, buildRingGroupPositions, repairTopologyLayout } from '../utils/topologyLayout';
 import {
   buildTopologyRoleLayeredPositions,
@@ -55,24 +49,6 @@ interface Device {
   open_alert_count?: number;
   critical_open_alerts?: number;
   is_unmanaged?: boolean;
-  is_group?: boolean;
-  group_id?: string;
-  group_label?: string;
-  group_site?: string;
-  group_layer?: string;
-  group_member_count?: number;
-  group_online_count?: number;
-  group_offline_count?: number;
-  group_warning_count?: number;
-  group_alert_count?: number;
-  group_member_ids?: string[];
-  group_level?: TopologyHierarchyLevel;
-  group_path?: TopologyDrillSegment[];
-  group_can_drill?: boolean;
-  /** Evidence-derived rank; role remains an identity attribute only. */
-  topology_rank?: number;
-  relation_rank?: number;
-  rank?: number;
   topology_node_id?: string;
 }
 
@@ -104,7 +80,6 @@ interface Link {
   members?: Array<Record<string, unknown>>;
   evidence_count?: number;
   is_unmanaged?: boolean;
-  group_link?: boolean;
   grouped_link_count?: number;
   relation_type?: string;
   semantic_relation?: string;
@@ -112,7 +87,6 @@ interface Link {
   semantic_confidence?: number;
   manual_confirmed?: boolean | number;
   is_manual?: boolean | number;
-  rank_excluded?: boolean | number;
 }
 
 type BandwidthTierKey = '10m' | '100m' | '1g' | '10g' | '40g' | '80g' | '100g' | '200g' | 'unknown';
@@ -208,15 +182,13 @@ interface TopologyGraphProps {
 
 const getFullInterfaceLabel = (value?: string) => {
   const label = String(value || '').replace(/\s+interface\s*$/i, '').trim();
-  // The SNMP collector uses Port-<index> when it cannot resolve an LLDP/CDP
+  // The SNMP collector uses Port-<index> when it cannot resolve an LLDP
   // port index to a device interface name. Keep that fallback in topology data
   // for correlation, but do not present it as a real interface on the graph.
   return /^port-\d+$/i.test(label) ? '' : label;
 };
 
 const getLinkEndpointLabel = (item: any, side: 'source' | 'target') => {
-  if (side === 'source' && item?.source_is_group) return '';
-  if (side === 'target' && item?.target_is_group) return '';
   if (String(item?.link_kind || '').toLowerCase() === 'aggregation') {
     const aggregationName = side === 'source' ? item.source_aggregation_name : item.target_aggregation_name;
     if (aggregationName) return getFullInterfaceLabel(aggregationName);
@@ -418,17 +390,14 @@ type PortLabelMode = 'auto' | 'visible' | 'hidden';
 
 const getLayerTone = (device: Device) => {
   if (device.is_unmanaged) {
-    return { color: '#64748b', soft: 'rgba(100,116,139,0.14)', label: '外部' };
+    return { color: '#64748b', soft: 'rgba(100,116,139,0.14)', label: '未匹配到 CMDB' };
   }
   const roleCandidates = [device.role_identity, device.role, device.device_category];
   const roleKey = roleCandidates
     .map((value) => canonicalTopologyRole(value))
     .find((value) => value && value !== 'unknown') || canonicalTopologyRole(roleCandidates[0]);
   const roleLabel = roleKey ? topologyRoleLabel(roleKey, 'zh') : '';
-  const layer = getDeviceTopologyLayer(device);
-  // Keep the imported topology role readable beside the node. Role tiers
-  // control the visual hierarchy when they are available; evidence ranks are
-  // still retained for semantic topology data and fallback layouts.
+  // Use only the role configured on the device for its visual label.
   if (roleLabel) {
     const roleTone = roleKey === 'firewall'
       ? { color: '#b91c1c', soft: 'rgba(185,28,28,0.14)' }
@@ -442,14 +411,6 @@ const getLayerTone = (device: Device) => {
               ? { color: '#7c3aed', soft: 'rgba(124,58,237,0.14)' }
               : { color: '#475569', soft: 'rgba(71,85,105,0.12)' };
     return { ...roleTone, label: roleLabel };
-  }
-  if (layer != null) {
-    const hue = (layer * 47) % 360;
-    return { color: `hsl(${hue} 62% 38%)`, soft: `hsla(${hue} 62% 48% / 0.14)`, label: `RANK_${layer}` };
-  }
-  if (device.is_group) {
-    const groupLayer = String(device.group_layer || device.group_label || '').toUpperCase();
-    return { color: '#475569', soft: 'rgba(71,85,105,0.12)', label: groupLayer || 'GROUP' };
   }
   const kind = getDeviceGlyphKind(device);
   if (kind === 'firewall') return { color: '#b91c1c', soft: 'rgba(185,28,28,0.14)', label: '防火墙' };
@@ -473,12 +434,12 @@ const buildLayerSummary = (devices: Device[]): LayerSummary[] => {
     const tone = getLayerTone(device);
     const current = summary.get(tone.label);
     if (current) {
-      current.count += device.is_group ? Math.max(1, Number(device.group_member_count || 0)) : 1;
+      current.count += 1;
     } else {
       summary.set(tone.label, {
         label: tone.label,
         color: tone.color,
-        count: device.is_group ? Math.max(1, Number(device.group_member_count || 0)) : 1,
+        count: 1,
       });
     }
   });
@@ -491,7 +452,6 @@ const formatLayerSummary = (devices: Device[]) =>
   buildLayerSummary(devices).map((item) => `${item.label} ${item.count}`).join(' / ');
 
 const getDeviceGlyphKind = (device: Device): DeviceGlyphKind => {
-  if (device.is_group) return 'generic';
   if (device.is_unmanaged) {
     const compactHostname = String(device.hostname || '')
       .toLowerCase()
@@ -615,18 +575,12 @@ const getDeviceStatusColor = (device: Device): string => {
 };
 
 const getDeviceStatusLabel = (device: Device): string => {
-  if (device.is_unmanaged) return '未纳管';
+  if (device.is_unmanaged) return '未匹配到 CMDB';
   if (device.status === 'offline') return '离线';
   if (device.health_status === 'critical' || (device.critical_open_alerts || 0) > 0) return '严重告警';
   if (device.health_status === 'warning' || (device.open_alert_count || 0) > 0 || device.status === 'pending') return '预警';
   if (device.status === 'unknown') return '状态未知';
   return '在线';
-};
-
-const getDisplayModeLabel = (mode: TopologyDisplayMode): string => {
-  if (mode === 'overview') return '站点总览';
-  if (mode === 'grouped') return '分组拓扑';
-  return '全部设备';
 };
 
 const buildSiteAnchors = (devices: Device[], width: number) => {
@@ -636,13 +590,13 @@ const buildSiteAnchors = (devices: Device[], width: number) => {
     const key = getSiteKey(device.site_id || device.site);
     const current = siteMap.get(key);
     if (current) {
-      current.count += device.is_group ? Math.max(1, Number(device.group_member_count || 0)) : 1;
+      current.count += 1;
       return;
     }
     siteMap.set(key, {
       key,
       label: String(device.site || '').trim() || '未分配站点',
-      count: device.is_group ? Math.max(1, Number(device.group_member_count || 0)) : 1,
+      count: 1,
     });
   });
 
@@ -700,26 +654,7 @@ const buildSeedPositions = (devices: Device[], width: number, height: number) =>
 type LayoutNode = Device & { x: number; y: number };
 
 const buildGraphLinks = (nodes: LayoutNode[], links: Link[]) => {
-  const nodeMap = new Map(nodes.map((node) => [node.id, node]));
-  const seen = new Set<string>();
-  return links
-    .map((link) => ({
-      ...link,
-      source: nodeMap.get(link.source_device_id),
-      target: nodeMap.get(link.target_device_id),
-    }))
-    .filter((link) => link.source && link.target)
-    .filter((link) => {
-      const pair = [String(link.source_device_id || ''), String(link.target_device_id || '')].sort().join('::');
-      const portKey = [
-        normalizeGraphInterface(link.source_port || link.source_port_normalized),
-        normalizeGraphInterface(link.target_port || link.target_port_normalized),
-      ].sort().join('::');
-      const key = `${pair}::${portKey}`;
-      if (seen.has(key)) return false;
-      seen.add(key);
-      return true;
-    });
+  return buildTopologyGraphLinks(nodes, links);
 };
 
 /**
@@ -789,12 +724,6 @@ const buildHorizontalRowPositions = (ids: string[], width: number, height: numbe
     x: clampPosition(startX + index * spacing, 48, Math.max(48, width - 48)),
     y,
   }]));
-};
-
-const getDeviceTopologyLayer = (device: Device): number | null => {
-  const candidate = device.topology_rank ?? device.relation_rank ?? device.rank;
-  const parsed = Number(candidate);
-  return Number.isFinite(parsed) ? Math.max(0, Math.round(parsed)) : null;
 };
 
 const getTopologyExportSiteLabel = (devices: Device[]): string => {
@@ -1166,10 +1095,7 @@ const TopologyGraph: React.FC<TopologyGraphProps> = ({ devices, links, onNodeCli
   const [boxSelectMode, setBoxSelectMode] = useState(false);
   const [layoutMode, setLayoutMode] = useState<TopologyLayoutMode>('hierarchy');
   const [routingMode, setRoutingMode] = useState<'straight' | 'orthogonal'>('straight');
-  const [displayScope, setDisplayScope] = useState<'auto' | TopologyDisplayMode>('auto');
   const [portLabelMode, setPortLabelMode] = useState<PortLabelMode>('auto');
-  const [expandedGroupIds, setExpandedGroupIds] = useState<Set<string>>(new Set());
-  const [drillPath, setDrillPath] = useState<TopologyDrillSegment[]>([]);
   const [historyState, setHistoryState] = useState({ canUndo: false, canRedo: false });
   const [hoveredDeviceId, setHoveredDeviceId] = useState<string | null>(null);
   const [hoveredLinkId, setHoveredLinkId] = useState<string | null>(null);
@@ -1178,16 +1104,8 @@ const TopologyGraph: React.FC<TopologyGraphProps> = ({ devices, links, onNodeCli
   const hoverFocusIdRef = useRef<string | null>(null);
   const applyHoverFocusRef = useRef<(deviceId: string | null) => void>(() => {});
   const selectedNodeIdsKey = selectedNodeIds.join('|');
-  const resolvedDisplayMode = useMemo(
-    () => resolveTopologyDisplayMode(devices.length, displayScope),
-    [devices.length, displayScope],
-  );
-  const displayGraph = useMemo(
-    () => aggregateTopologyGraph<Device, Link>(devices, links, resolvedDisplayMode, expandedGroupIds, drillPath),
-    [devices, drillPath, expandedGroupIds, links, resolvedDisplayMode],
-  );
-  const graphDevices = displayGraph.devices;
-  const graphLinks = displayGraph.links;
+  const graphDevices = devices;
+  const graphLinks = links;
   const hoveredDevice = useMemo(
     () => graphDevices.find((device) => device.id === hoveredDeviceId) || null,
     [graphDevices, hoveredDeviceId],
@@ -1200,14 +1118,6 @@ const TopologyGraph: React.FC<TopologyGraphProps> = ({ devices, links, onNodeCli
     if (!hoveredLink || !isRealAggregationLink(hoveredLink)) return [];
     return Array.isArray(hoveredLink.members) ? hoveredLink.members : [];
   }, [hoveredLink]);
-
-  useEffect(() => {
-    const validIds = new Set(displayGraph.groups.map((group) => group.id));
-    setExpandedGroupIds((current) => {
-      const next = new Set(Array.from(current).filter((id) => validIds.has(id)));
-      return next.size === current.size ? current : next;
-    });
-  }, [displayGraph.groups]);
 
   const clearHoverHideTimer = () => {
     if (hoverHideTimerRef.current !== null) {
@@ -1278,43 +1188,6 @@ const TopologyGraph: React.FC<TopologyGraphProps> = ({ devices, links, onNodeCli
     clearDeviceHoverFocus();
     setHoveredLinkId(link.link_key || link.id || '');
     setHoveredDeviceId(null); // hide device hover card
-  };
-
-  const toggleGroup = (group: Device) => {
-    if (!group.is_group || !group.group_id) return;
-    if (group.group_can_drill && group.group_path?.length) {
-      setDrillPath(group.group_path);
-      setExpandedGroupIds(new Set());
-      hoverFocusIdRef.current = null;
-      applyHoverFocusRef.current(null);
-      setHoveredDeviceId(null);
-      return;
-    }
-    setExpandedGroupIds((current) => {
-      const next = new Set(current);
-      if (next.has(group.group_id)) next.delete(group.group_id);
-      else next.add(group.group_id);
-      return next;
-    });
-    hoverFocusIdRef.current = null;
-    applyHoverFocusRef.current(null);
-    setHoveredDeviceId(null);
-  };
-
-  const resetDrillPath = () => {
-    setDrillPath([]);
-    setExpandedGroupIds(new Set());
-    hoverFocusIdRef.current = null;
-    applyHoverFocusRef.current(null);
-    setHoveredDeviceId(null);
-  };
-
-  const jumpToDrillPath = (index: number) => {
-    setDrillPath((current) => current.slice(0, index));
-    setExpandedGroupIds(new Set());
-    hoverFocusIdRef.current = null;
-    applyHoverFocusRef.current(null);
-    setHoveredDeviceId(null);
   };
 
   const clonePositions = (positions: Record<string, { x: number; y: number }>) => Object.fromEntries(
@@ -1541,7 +1414,7 @@ const TopologyGraph: React.FC<TopologyGraphProps> = ({ devices, links, onNodeCli
       if (!position) return Promise.resolve();
       const graphNode = graphDevices.find((device: any) => String(device.id) === String(nodeId)) as any;
       const graphNodeId = String(graphNode?.topology_node_id || (
-        String(nodeId).startsWith('device:') || String(nodeId).startsWith('unknown:') || String(nodeId).startsWith('site:') || String(nodeId).startsWith('group:')
+        String(nodeId).startsWith('device:') || String(nodeId).startsWith('unknown:') || String(nodeId).startsWith('site:')
           ? nodeId
           : `device:${nodeId}`
       ));
@@ -1644,8 +1517,8 @@ const TopologyGraph: React.FC<TopologyGraphProps> = ({ devices, links, onNodeCli
 
   useEffect(() => {
     const persistedLayout = readPersistedLayout();
-    // The canvas intentionally has one supported layout: role-tier hierarchy
-    // with LLDP-aware horizontal ordering and evidence-rank fallback.
+    // The canvas uses a role-tier hierarchy with LLDP-aware horizontal
+    // ordering while preserving every device node and input link row.
     // Keep the schema check so incompatible saved coordinates do not override
     // a newly imported role hierarchy.
     setLayoutMode('hierarchy');
@@ -2036,7 +1909,7 @@ const TopologyGraph: React.FC<TopologyGraphProps> = ({ devices, links, onNodeCli
       return getHoverEndpointId(item.source) === deviceId || getHoverEndpointId(item.target) === deviceId;
     };
     const layerSummary = buildLayerSummary(graphDevices);
-    // Repeating rank labels below every node is useful for a small mixed graph,
+    // Repeating role labels below every node is useful for a small mixed graph,
     // but becomes visual noise when the graph contains many nodes.
     const showNodeRoleLabels = !structuredPositions && layerSummary.length > 1 && graphDevices.length <= 20;
     const showLayerLegend = graphDevices.length > 12 || (!structuredPositions && layerSummary.length > 1);
@@ -2103,12 +1976,11 @@ const TopologyGraph: React.FC<TopologyGraphProps> = ({ devices, links, onNodeCli
         const sitePhysicalLinkCount = siteLinks.length;
         const siteLogicalLinkCount = new Set(siteLinks.map((link: any) => [link.source_device_id, link.target_device_id].sort().join('::'))).size;
         const hasAggregation = siteLinks.some((link: any) => String(link.link_kind || '').toLowerCase() === 'aggregation');
-        const siteLayerCount = new Set(site.nodes.map((node: any) => getLayerTone(node as Device).label)).size;
-        const siteNodeCount = site.nodes.reduce((total: number, node: any) => total + (node.is_group ? Number(node.group_member_count || 0) : 1), 0);
+        const siteNodeCount = site.nodes.length;
         const siteName = site.label.length > 18 ? `${site.label.slice(0, 18)}...` : site.label;
         const label = hasAggregation
-          ? `▣ ${siteName} · ${siteNodeCount} 台设备 · ${siteLogicalLinkCount} 条逻辑链路 · ${sitePhysicalLinkCount} 条物理链路 · ${siteLayerCount} 个层级`
-          : `▣ ${siteName} · ${siteNodeCount} 台设备 · ${sitePhysicalLinkCount} 条物理链路 · ${siteLayerCount} 个层级`;
+          ? `▣ ${siteName} · ${siteNodeCount} 台设备 · ${siteLogicalLinkCount} 条逻辑链路 · ${sitePhysicalLinkCount} 条物理链路`
+          : `▣ ${siteName} · ${siteNodeCount} 台设备 · ${sitePhysicalLinkCount} 条物理链路`;
         const availableLabelWidth = Math.max(72, right - left - 20);
         const labelWidth = Math.min(Math.max(120, estimateTopologyTextWidth(label) + 28), availableLabelWidth);
         const displayLabel = fitTopologyLabelText(label, labelWidth - 28);
@@ -2656,10 +2528,6 @@ const TopologyGraph: React.FC<TopologyGraphProps> = ({ devices, links, onNodeCli
             : [...current, d.id]);
           return;
         }
-        if (d.is_group) {
-          toggleGroup(d as Device);
-          return;
-        }
         setSelectedNodeIds([d.id]);
         updateHoverCard(event, d as Device);
         if (onNodeClick) onNodeClick(d as Device);
@@ -2717,7 +2585,6 @@ const TopologyGraph: React.FC<TopologyGraphProps> = ({ devices, links, onNodeCli
 
     node.append("circle")
       .attr("r", (d: any) => {
-        if (d.is_group) return 0;
         if (d.is_unmanaged) return 20;
         return shouldRenderDeviceGlyph(d as Device) ? 0 : 20;
       })
@@ -2742,18 +2609,6 @@ const TopologyGraph: React.FC<TopologyGraphProps> = ({ devices, links, onNodeCli
         return isNodeSelected(d.id) || selectedNeighbors.has(d.id) ? 1 : 0.35;
       });
 
-    node.append('rect')
-      .attr('class', 'topology-group-hit')
-      .attr('x', -96)
-      .attr('y', -42)
-      .attr('width', 192)
-      .attr('height', 84)
-      .attr('rx', 16)
-      .attr('fill', 'transparent')
-      .attr('stroke', 'none')
-      .style('display', (d: any) => (d.is_group ? null : 'none'))
-      .style('cursor', 'pointer');
-
     node.append('circle')
       .attr('r', 0)
       .attr('fill', 'rgba(248,250,252,0.96)')
@@ -2766,7 +2621,7 @@ const TopologyGraph: React.FC<TopologyGraphProps> = ({ devices, links, onNodeCli
       // Keep status inside the device glyph.  The former position sat on the
       // right-hand port anchor and was easily mistaken for, or covered, an
       // interface label on the right column.
-      .attr('r', (d: any) => (d.is_group ? 0 : 4.5))
+      .attr('r', 4.5)
       .attr('cx', 13)
       .attr('cy', -17)
       .attr('fill', (d: any) => getDeviceStatusColor(d as Device))
@@ -2782,47 +2637,7 @@ const TopologyGraph: React.FC<TopologyGraphProps> = ({ devices, links, onNodeCli
     const nodeGlyph = node.append('g').attr('opacity', 1);
 
     nodeGlyph.each(function (d: any) {
-      if (d.is_group) {
-        const tone = getLayerTone(d as Device);
-        const group = d3.select(this).append('g').attr('transform', 'translate(-88,-34)');
-        group.append('rect')
-          .attr('width', 176)
-          .attr('height', 68)
-          .attr('rx', 14)
-          .attr('fill', '#f8fafc')
-          .attr('stroke', tone.color)
-          .attr('stroke-width', 1.5)
-          .attr('stroke-dasharray', '5,3');
-        group.append('circle')
-          .attr('cx', 15)
-          .attr('cy', 17)
-          .attr('r', 4)
-          .attr('fill', getNodeTone(d as Device).fill);
-        group.append('text')
-          .attr('x', 26)
-          .attr('y', 21)
-          .attr('fill', '#0f172a')
-          .attr('font-family', '"Segoe UI Variable Text", "Microsoft YaHei UI", sans-serif')
-          .attr('font-size', '12px')
-          .attr('font-weight', 800)
-          .text(String(d.hostname || '分组').slice(0, 24));
-        group.append('text')
-          .attr('x', 14)
-          .attr('y', 41)
-          .attr('fill', tone.color)
-          .attr('font-family', '"Segoe UI Variable Text", "Microsoft YaHei UI", sans-serif')
-          .attr('font-size', '10px')
-          .attr('font-weight', 700)
-          .text(`${d.group_member_count || 0} 台设备 · ${d.group_online_count || 0} 在线`);
-        group.append('text')
-          .attr('x', 14)
-          .attr('y', 56)
-          .attr('fill', '#64748b')
-          .attr('font-family', '"Segoe UI Variable Text", "Microsoft YaHei UI", sans-serif')
-          .attr('font-size', '9px')
-          .attr('font-weight', 600)
-          .text(`${d.group_offline_count || 0} 离线 · ${d.group_alert_count || 0} 条告警`);
-      } else if (d.is_unmanaged && getDeviceGlyphKind(d as Device) !== 'generic') {
+      if (d.is_unmanaged && getDeviceGlyphKind(d as Device) !== 'generic') {
         appendDeviceGlyph(d3.select(this), d as Device);
       } else if (d.is_unmanaged) {
         // Keep an unknown marker only when the neighbor name reveals no device kind.
@@ -2845,8 +2660,7 @@ const TopologyGraph: React.FC<TopologyGraphProps> = ({ devices, links, onNodeCli
       // Keep identity and layer text readable even while a node is focused.
       // Links and glyphs still provide focus context; fading labels makes
       // healthy devices look offline and is especially confusing in exports.
-      .attr('opacity', 1)
-      .style('display', (d: any) => (d.is_group ? 'none' : null));
+      .attr('opacity', 1);
 
     const boxHeight = 20;
     const deviceLabelObstacles = new Map<string, { x: number; y: number; width: number; height: number }>();
@@ -2892,7 +2706,7 @@ const TopologyGraph: React.FC<TopologyGraphProps> = ({ devices, links, onNodeCli
         .select('rect')
         .attr('x', -boxWidth / 2)
         .attr('width', boxWidth);
-      if (!d.is_group && String(d.hostname || '').trim()) {
+      if (String(d.hostname || '').trim()) {
         const obstacleHeight = showNodeRoleLabels ? 43 : boxHeight;
         deviceLabelObstacles.set(String(d.id), {
           x: Number(d.x),
@@ -2919,12 +2733,9 @@ const TopologyGraph: React.FC<TopologyGraphProps> = ({ devices, links, onNodeCli
 
     node.append('title')
       .text((d: any) => {
-        if (d.is_group) {
-          return `${d.hostname}｜${d.group_member_count || 0} 台设备｜${d.group_online_count || 0} 在线｜点击展开`;
-        }
         if (d.is_unmanaged) {
           const address = String(d.ip_address || '').trim();
-          return `${d.hostname} | LLDP/CDP 邻居 | 尚未匹配到 CMDB 资产${address ? ` | ${address}` : ''}`;
+          return `${d.hostname} | LLDP 邻居 | 未通过管理 IP、序列号或主机名匹配到 CMDB 设备${address ? ` | ${address}` : ''}`;
         }
         const tone = getLayerTone(d as Device);
         const platform = String(d.platform || '').trim();
@@ -3047,7 +2858,6 @@ const TopologyGraph: React.FC<TopologyGraphProps> = ({ devices, links, onNodeCli
       });
       const topologyLabelObstacles = [
         ...nodes
-          .filter((item: any) => !item.is_group)
           .map((item: any) => ({ x: item.x, y: item.y, width: 52, height: 52 })),
         ...Array.from(deviceLabelObstacles.values()),
       ];
@@ -3384,55 +3194,6 @@ const TopologyGraph: React.FC<TopologyGraphProps> = ({ devices, links, onNodeCli
         >
           角色分层 · 关系优先
         </span>
-        <select
-          value={displayScope}
-          onChange={(event) => {
-            setExpandedGroupIds(new Set());
-            setDrillPath([]);
-            setDisplayScope(event.target.value as 'auto' | TopologyDisplayMode);
-          }}
-          className="h-8 rounded-xl border border-slate-200 bg-white px-2 text-[10px] font-bold text-slate-600 outline-none transition-colors hover:border-cyan-300"
-          aria-label="拓扑显示范围"
-          title="自动汇总大型拓扑，或切换为站点、分组和全部设备视图"
-        >
-          <option value="auto">自动 · {getDisplayModeLabel(resolvedDisplayMode)}</option>
-          <option value="overview">站点总览</option>
-          <option value="grouped">分组拓扑</option>
-          <option value="detail">全部设备</option>
-        </select>
-        {displayGraph.groups.length > 0 && (
-          <button
-            type="button"
-            onClick={() => setExpandedGroupIds(new Set())}
-            className="rounded-xl border border-violet-200 bg-violet-50 px-2.5 py-2 text-[10px] font-bold text-violet-700 transition-all hover:bg-violet-100"
-            title="收起全部拓扑分组"
-          >
-            {expandedGroupIds.size > 0 ? '收起分组' : `${displayGraph.groups.length} 个分组`}
-          </button>
-        )}
-        {drillPath.length > 0 && (
-          <div className="flex max-w-[360px] items-center gap-1 overflow-x-auto rounded-xl border border-cyan-100 bg-cyan-50 px-2 py-1">
-            <button type="button" onClick={resetDrillPath} className="shrink-0 text-[10px] font-extrabold text-cyan-700 hover:text-cyan-900">全部</button>
-            {drillPath.map((segment, index) => (
-              <React.Fragment key={`${segment.level}:${segment.key}`}>
-                <span className="shrink-0 text-[10px] text-cyan-400">/</span>
-                <button
-                  type="button"
-                  onClick={() => jumpToDrillPath(index + 1)}
-                  className="max-w-[140px] shrink-0 truncate text-[10px] font-bold text-cyan-700 hover:text-cyan-900"
-                  title={`${segment.level}: ${segment.label}`}
-                >
-                  {segment.label}
-                </button>
-              </React.Fragment>
-            ))}
-          </div>
-        )}
-        {graphDevices.length !== devices.length && (
-          <span className="rounded-xl border border-slate-200 bg-slate-50 px-2.5 py-2 text-[10px] font-semibold text-slate-500">
-            可见 {graphDevices.length} / 共 {devices.length}
-          </span>
-        )}
         <button
           type="button"
           onClick={() => setPortLabelMode((mode) => mode === 'auto' ? 'hidden' : mode === 'hidden' ? 'visible' : 'auto')}
@@ -3653,19 +3414,12 @@ const TopologyGraph: React.FC<TopologyGraphProps> = ({ devices, links, onNodeCli
             <div className="truncate text-sm font-extrabold text-slate-900" title={hoveredDevice.hostname}>{hoveredDevice.hostname}</div>
             <div className="mt-1 flex items-center gap-1.5 text-[10px] font-bold tracking-[0.08em] text-sky-700">
               <span className="h-1.5 w-1.5 rounded-full" style={{ backgroundColor: getLayerTone(hoveredDevice).color }} />
-              {hoveredDevice.is_group ? `${getLayerTone(hoveredDevice).label}分组` : getLayerTone(hoveredDevice).label}
+              {getLayerTone(hoveredDevice).label}
             </div>
             <div className="mt-2 rounded-lg border border-cyan-100 bg-cyan-50 px-2 py-1.5 text-[10px] font-semibold leading-4 text-cyan-700">
               关联链路聚焦：仅显示直接邻居与关联链路
             </div>
           </div>
-          {hoveredDevice.is_group ? (
-            <dl className="mt-2.5 space-y-2 text-[10px]">
-              <div><dt className="font-semibold text-slate-400">设备数</dt><dd className="mt-0.5 font-bold text-slate-700">{hoveredDevice.group_member_count || 0}</dd></div>
-              <div><dt className="font-semibold text-slate-400">健康状态</dt><dd className="mt-0.5 font-bold text-slate-700">{hoveredDevice.group_online_count || 0} 在线 · {hoveredDevice.group_offline_count || 0} 离线</dd></div>
-              <div><dt className="font-semibold text-slate-400">告警数</dt><dd className="mt-0.5 font-bold text-slate-700">{hoveredDevice.group_alert_count || 0}</dd></div>
-            </dl>
-          ) : (
           <dl className="mt-2.5 space-y-2 text-[10px]">
             <div>
               <dt className="font-semibold uppercase tracking-[0.12em] text-slate-400">管理地址</dt>
@@ -3706,16 +3460,11 @@ const TopologyGraph: React.FC<TopologyGraphProps> = ({ devices, links, onNodeCli
               </div>
             )}
           </dl>
-          )}
           <button
             type="button"
-            disabled={!hoveredDevice.is_group && !onOpenWorkspace}
+            disabled={!onOpenWorkspace}
             onClick={(event) => {
               event.stopPropagation();
-              if (hoveredDevice.is_group) {
-                toggleGroup(hoveredDevice);
-                return;
-              }
               if (!onOpenWorkspace) return;
               clearHoverHideTimer();
               setHoveredDeviceId(null);
@@ -3723,7 +3472,7 @@ const TopologyGraph: React.FC<TopologyGraphProps> = ({ devices, links, onNodeCli
             }}
             className="mt-3 flex w-full items-center justify-center gap-1.5 rounded-xl bg-sky-600 px-3 py-2 text-[10px] font-extrabold text-white shadow-sm transition-colors hover:bg-sky-700 disabled:cursor-not-allowed disabled:opacity-50"
           >
-            {hoveredDevice.is_group ? (hoveredDevice.group_can_drill ? '进入下一级' : '展开设备') : '登录'}
+            登录
           </button>
         </div>
       )}

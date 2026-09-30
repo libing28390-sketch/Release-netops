@@ -34,11 +34,11 @@ describe('topology role-tier layout', () => {
     expect(positions?.['core-1'].x).toBeLessThan(positions?.['core-2'].x ?? 0);
   });
 
-  it('uses the defined role tiers before evidence ranks for visual ordering', () => {
+  it('uses explicit device role tiers for visual ordering', () => {
     const selection = selectTopologyLayoutLayers([
-      { id: 'a', role: 'core', topology_rank: 2 },
-      { id: 'b', role: 'distribution', topology_rank: 1 },
-      { id: 'c', role: 'access', topology_rank: 0 },
+      { id: 'a', role: 'core' },
+      { id: 'b', role: 'distribution' },
+      { id: 'c', role: 'access' },
     ]);
     expect(selection).toEqual({ layers: [1, 2, 3], source: 'role' });
   });
@@ -62,12 +62,12 @@ describe('topology role-tier layout', () => {
     expect(selection).toEqual({ layers: [1, 2, 3], source: 'role' });
   });
 
-  it('falls back to evidence ranks when role tiers cannot form a hierarchy', () => {
-    const selection = selectTopologyLayoutLayers([
-      { id: 'a', role: 'unknown', topology_rank: 0 },
-      { id: 'b', role: 'unknown', topology_rank: 1 },
-    ]);
-    expect(selection).toEqual({ layers: [0, 1], source: 'evidence' });
+  it('does not invent role tiers for devices with unknown roles', () => {
+    const unknownRoleDevices: TopologyRoleLayoutDevice[] = [
+      { id: 'a', role: 'unknown' },
+      { id: 'b', role: 'unknown' },
+    ];
+    expect(selectTopologyLayoutLayers(unknownRoleDevices)).toBeNull();
   });
 
   it('does not invent rows when every device has the same role', () => {

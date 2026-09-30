@@ -67,10 +67,6 @@ export interface Device {
   site_city?: string;
   site_district?: string;
   region?: string;
-  /** Evidence-derived graph rank; role remains identity metadata only. */
-  topology_rank?: number;
-  relation_rank?: number;
-  rank?: number;
   role_identity?: string;
   topology_node_type?: string;
   layout_override?: { x?: number; y?: number; manual?: number };

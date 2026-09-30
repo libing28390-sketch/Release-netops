@@ -32,6 +32,12 @@ interface TopologyDecoratedLinkLike {
   is_manual?: number | boolean;
   manual_confirmed?: number | boolean;
   reverse_confirmed?: boolean;
+  identity_warnings?: Array<{
+    code: string;
+    reported_name: string;
+    cmdb_hostname: string;
+    target_device_id: string;
+  }>;
   link_kind?: string;
   aggregation_protocol?: string;
   member_count?: number;
@@ -274,7 +280,7 @@ const TopologyInspectorPanel: React.FC<TopologyInspectorPanelProps> = ({
               </p>
             </div>
             <span className={`shrink-0 rounded-full border px-2.5 py-[3px] text-[10px] font-bold uppercase tracking-wide ${statusBadgeClass(selectedTopologyDevice.status, (selectedTopologyDevice as any).is_unmanaged)}`}>
-              {(selectedTopologyDevice as any).is_unmanaged ? (zh ? '未纳管' : 'Unmanaged') : selectedTopologyDevice.status}
+              {(selectedTopologyDevice as any).is_unmanaged ? (zh ? '未匹配到 CMDB' : 'Unmatched to CMDB') : selectedTopologyDevice.status}
             </span>
           </div>
 
@@ -294,8 +300,8 @@ const TopologyInspectorPanel: React.FC<TopologyInspectorPanelProps> = ({
           {(selectedTopologyDevice as any).is_unmanaged ? (
             <div className="mt-3 rounded-lg bg-slate-50 p-2.5 text-xs text-slate-500 ring-1 ring-slate-200/60">
               {zh
-                ? '此邻居已由 LLDP/CDP 发现，但尚未匹配到 CMDB 资产。若设备已登记，请核对通告主机名、管理 IP 和机箱 ID；若未登记，可从资产管理中录入。'
-                : 'This neighbor was discovered via LLDP/CDP but has not been matched to a CMDB asset. If it is already registered, check its advertised hostname, management IP, and chassis ID; otherwise, add it through asset management.'}
+                ? 'LLDP 已发现该邻居。系统优先按管理 IP 匹配；未命中时再用序列号或精确主机名匹配。若线索指向不同设备，或只有主机名且仅大小写不同，系统不会猜测对应资产。可能是资产未导入或信息不一致，请核对资产记录。'
+                : 'LLDP discovered this neighbor. The system matches by management IP first, then by serial number or exact hostname. If identity clues conflict, or hostname is the only clue and differs only by case, the system will not guess the asset. The asset may be missing or have inconsistent identity data; verify its record.'}
             </div>
           ) : (
             <div className="mt-3 flex gap-2">
@@ -341,6 +347,20 @@ const TopologyInspectorPanel: React.FC<TopologyInspectorPanelProps> = ({
             {selectedTopologyLink.operational_summary && (
               <p className="mt-1.5 text-[11px] leading-relaxed text-slate-500">{selectedTopologyLink.operational_summary}</p>
             )}
+            {selectedTopologyLink.identity_warnings?.map((warning, index) => (
+              <div
+                key={`identity-warning-${warning.target_device_id}-${index}`}
+                className="mt-2 flex items-start gap-1.5 rounded-md border border-amber-200 bg-amber-50 px-2.5 py-2 text-[10px] leading-relaxed text-amber-800"
+                role="note"
+              >
+                <AlertCircle size={13} className="mt-0.5 shrink-0" />
+                <span>
+                  {zh
+                    ? `LLDP 报告的邻居名「${warning.reported_name}」与 CMDB 主机名「${warning.cmdb_hostname}」不一致。链路已连到可识别的 CMDB 设备，请核对该设备的主机名同步。`
+                    : `LLDP neighbor name “${warning.reported_name}” differs from CMDB hostname “${warning.cmdb_hostname}”. The link is attached to the identified CMDB device; check hostname synchronization for this device.`}
+                </span>
+              </div>
+            ))}
             {selectedTopologyLink.link_kind === 'aggregation' && (
               <div className="mt-2.5 rounded-lg bg-white/70 px-2.5 py-2 ring-1 ring-cyan-200/60">
                 <div className="flex items-center justify-between text-[10px] font-bold text-cyan-700">
