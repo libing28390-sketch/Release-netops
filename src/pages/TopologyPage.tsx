@@ -91,8 +91,8 @@ const TopologySiteOverview: React.FC<TopologySiteOverviewProps> = ({ language, s
     [devices, language, links, sites],
   );
   return (
-    <div className="h-full overflow-auto bg-slate-50/70 p-5">
-      <div className="mx-auto max-w-[1500px]">
+    <div className="h-full overflow-auto bg-slate-50/70 p-4 sm:p-5">
+      <div className="mx-auto w-full max-w-[1800px]">
         <div className="flex flex-wrap items-end justify-between gap-3">
           <div>
             <div className="flex items-center gap-2 text-[11px] font-extrabold uppercase tracking-[0.16em] text-sky-700">
@@ -117,40 +117,46 @@ const TopologySiteOverview: React.FC<TopologySiteOverviewProps> = ({ language, s
           </div>
         ) : (
           <>
-          <div className={`mx-auto mt-5 grid w-full gap-4 ${
-            overview.sites.length <= 1
-              ? 'max-w-2xl grid-cols-1'
+          <div className={`mt-5 grid w-full grid-cols-1 gap-4 ${
+            overview.sites.length === 1
+              ? 'mx-auto max-w-2xl'
               : overview.sites.length === 2
-                ? 'max-w-5xl grid-cols-1 md:grid-cols-2'
-                : 'max-w-[1500px] grid-cols-1 md:grid-cols-2 xl:grid-cols-3 2xl:grid-cols-4'
+                ? 'md:grid-cols-2'
+                : 'md:grid-cols-2 xl:grid-cols-3 2xl:grid-cols-4'
           }`}>
             {overview.sites.map((site) => {
               const healthy = site.offlineCount === 0 && site.staleCount === 0 && site.orphanCount === 0;
+              const attentionCount = site.offlineCount + site.staleCount + site.orphanCount;
               return (
                 <button
                   key={site.id}
                   type="button"
                   onClick={() => onSelectSite(site.id === 'unassigned' ? 'all' : site.id)}
-                  className="group rounded-2xl border border-slate-200 bg-white p-4 text-left shadow-sm transition-all hover:-translate-y-0.5 hover:border-sky-300 hover:shadow-lg"
+                  className="group rounded-2xl border border-slate-200 bg-white p-5 text-left shadow-sm transition-all hover:-translate-y-0.5 hover:border-sky-300 hover:shadow-lg focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-sky-500 focus-visible:ring-offset-2"
                 >
                   <div className="flex items-start justify-between gap-3">
                     <div className="flex min-w-0 items-center gap-2.5">
-                      <span className={`flex h-9 w-9 shrink-0 items-center justify-center rounded-xl ${healthy ? 'bg-emerald-50 text-emerald-600' : 'bg-amber-50 text-amber-600'}`}>
+                      <span className={`flex h-10 w-10 shrink-0 items-center justify-center rounded-xl ${healthy ? 'bg-emerald-50 text-emerald-600' : 'bg-amber-50 text-amber-600'}`}>
                         <MapPin size={17} />
                       </span>
                       <div className="min-w-0">
-                        <div className="truncate text-sm font-extrabold text-slate-900">{site.name}</div>
+                        <div className="truncate text-base font-extrabold text-slate-900">{site.name}</div>
                       </div>
                      </div>
-                    <span className={`h-2.5 w-2.5 shrink-0 rounded-full ${healthy ? 'bg-emerald-500' : 'bg-amber-500'}`} title={healthy ? 'Healthy' : 'Needs attention'} />
+                    <span className={`inline-flex shrink-0 items-center gap-1.5 rounded-full px-2.5 py-1 text-[10px] font-bold ${healthy ? 'bg-emerald-50 text-emerald-700' : 'bg-amber-50 text-amber-700'}`}>
+                      <span className={`h-1.5 w-1.5 rounded-full ${healthy ? 'bg-emerald-500' : 'bg-amber-500'}`} />
+                      {healthy
+                        ? (language === 'zh' ? '运行正常' : 'Healthy')
+                        : `${attentionCount} ${language === 'zh' ? '项需关注' : 'need attention'}`}
+                    </span>
                   </div>
-                  <div className="mt-4 grid grid-cols-3 gap-2 border-t border-slate-100 pt-3">
-                    <span><b className="block text-lg font-extrabold tabular-nums text-slate-900">{site.deviceCount}</b><small className="text-[10px] font-semibold text-slate-400">{language === 'zh' ? '设备' : 'Devices'}</small></span>
-                    <span><b className="block text-lg font-extrabold tabular-nums text-slate-900">{site.linkCount}</b><small className="text-[10px] font-semibold text-slate-400">{language === 'zh' ? '链路' : 'Links'}</small></span>
-                    <span><b className={`block text-lg font-extrabold tabular-nums ${site.offlineCount || site.orphanCount || site.staleCount ? 'text-rose-600' : 'text-emerald-600'}`}>{site.offlineCount + site.orphanCount + site.staleCount}</b><small className="text-[10px] font-semibold text-slate-400">{language === 'zh' ? '需关注' : 'Attention'}</small></span>
+                  <div className="mt-5 grid grid-cols-3 divide-x divide-slate-100 border-t border-slate-100 pt-4">
+                    <span className="px-2 first:pl-0"><b className="block text-xl font-extrabold tabular-nums text-slate-900">{site.deviceCount}</b><small className="text-[11px] font-semibold text-slate-400">{language === 'zh' ? '设备' : 'Devices'}</small></span>
+                    <span className="px-3"><b className="block text-xl font-extrabold tabular-nums text-slate-900">{site.linkCount}</b><small className="text-[11px] font-semibold text-slate-400">{language === 'zh' ? '链路' : 'Links'}</small></span>
+                    <span className="px-3"><b className={`block text-xl font-extrabold tabular-nums ${attentionCount ? 'text-rose-600' : 'text-emerald-600'}`}>{attentionCount}</b><small className="text-[11px] font-semibold text-slate-400">{language === 'zh' ? '需关注' : 'Attention'}</small></span>
                   </div>
-                  <div className="mt-3 flex items-center justify-between text-[11px] font-bold text-sky-700">
-                    <span>{language === 'zh' ? '进入站点拓扑' : 'Open site topology'}</span>
+                  <div className="mt-4 flex items-center justify-between border-t border-slate-100 pt-3 text-xs font-bold text-sky-700">
+                    <span>{language === 'zh' ? '查看站点拓扑' : 'View site topology'}</span>
                     <ArrowRight size={14} className="transition-transform group-hover:translate-x-1" />
                   </div>
                 </button>
@@ -346,6 +352,9 @@ const TopologyPage: React.FC<TopologyPageProps> = ({
     onTopologySiteFilterChange(value);
     setCanvasView('site');
   };
+  const topologyCanvasSize = canvasView === 'overview'
+    ? 'min-h-[360px]'
+    : 'h-[calc(100vh-270px)] min-h-[660px]';
   React.useEffect(() => {
     setDraftTopologyTagFilter(topologyTagFilter);
   }, [topologyTagFilter]);
@@ -647,7 +656,11 @@ const TopologyPage: React.FC<TopologyPageProps> = ({
 
       {/* Full-width Canvas */}
       <div className="flex min-h-0 flex-1 flex-col">
-        <div className="bg-white dark:bg-zinc-900/90 border border-gray-200/70 dark:border-zinc-800/80 relative flex h-[calc(100vh-270px)] min-h-[660px] flex-col overflow-hidden rounded-2xl shadow-2xs" ref={topologyCanvasRef}>
+        <div
+          className={`bg-white dark:bg-zinc-900/90 border border-gray-200/70 dark:border-zinc-800/80 relative flex ${topologyCanvasSize} flex-col overflow-hidden rounded-2xl shadow-2xs`}
+          style={canvasView === 'overview' ? { height: 'clamp(360px, calc(100vh - 620px), 500px)' } : undefined}
+          ref={topologyCanvasRef}
+        >
           <div className="relative flex items-center justify-between border-b border-gray-100 dark:border-zinc-800 px-4 py-3">
             <div>
               <h3 className="text-sm font-bold text-gray-900 dark:text-white">
