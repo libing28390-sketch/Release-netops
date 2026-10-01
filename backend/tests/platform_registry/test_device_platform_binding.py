@@ -74,6 +74,8 @@ def test_existing_profile_cannot_be_changed_through_legacy_device_update():
             },
         )
     assert changed.value.status_code == 409
+    assert changed.value.detail['code'] == 'PLATFORM_BINDING_LOCKED'
+    assert 'administrator platform binding endpoint' in changed.value.detail['message']
 
 
 def test_existing_profile_lock_and_source_are_preserved_when_legacy_update_omits_binding():
@@ -91,17 +93,71 @@ def test_existing_profile_lock_and_source_are_preserved_when_legacy_update_omits
     ) == ('zte_zsrv2_v3', 'profile-zsrv2', 'SYSTEM', 1)
 
 
-def test_explicit_legacy_selection_clears_existing_binding():
+def test_explicit_legacy_selection_cannot_clear_existing_binding():
     conn = _Connection({'id': 'profile-zsrv2', 'platform_code': 'zte_zsrv2_v3', 'status': 'ACTIVE'})
+
+    with pytest.raises(HTTPException) as cleared:
+        _resolve_platform_binding(
+            conn,
+            None,
+            'cisco_ios',
+            existing={
+                'platform_profile_id': 'profile-zsrv2',
+                'platform_source': 'MANUAL',
+                'platform_locked': 0,
+            },
+            clear_existing=True,
+        )
+    assert cleared.value.status_code == 409
+    assert cleared.value.detail['code'] == 'PLATFORM_BINDING_LOCKED'
+    assert 'administrator platform binding unbind endpoint' in cleared.value.detail['message']
+
+
+def test_system_sourced_unlocked_profile_cannot_be_cleared_through_legacy_update():
+    conn = _Connection({'id': 'profile-zsrv2', 'platform_code': 'zte_zsrv2_v3', 'status': 'ACTIVE'})
+
+    with pytest.raises(HTTPException) as cleared:
+        _resolve_platform_binding(
+            conn,
+            None,
+            'cisco_ios',
+            existing={
+                'platform_profile_id': 'profile-zsrv2',
+                'platform_source': 'SYSTEM',
+                'platform_locked': 0,
+            },
+            clear_existing=True,
+        )
+    assert cleared.value.status_code == 409
+    assert cleared.value.detail['code'] == 'PLATFORM_BINDING_LOCKED'
+
+
+def test_unbound_legacy_selection_can_still_be_saved():
+    conn = _Connection(None)
 
     assert _resolve_platform_binding(
         conn,
         None,
         'cisco_ios',
         existing={
-            'platform_profile_id': 'profile-zsrv2',
-            'platform_source': 'MANUAL',
+            'platform_profile_id': '',
+            'platform_source': 'LEGACY',
             'platform_locked': 0,
         },
         clear_existing=True,
     ) == ('cisco_ios', '', 'LEGACY', 0)
+
+
+def test_resaving_the_same_profile_is_idempotent():
+    conn = _Connection({'id': 'profile-zsrv2', 'platform_code': 'zte_zsrv2_v3', 'status': 'ACTIVE'})
+
+    assert _resolve_platform_binding(
+        conn,
+        'profile-zsrv2',
+        'cisco_ios',
+        existing={
+            'platform_profile_id': 'profile-zsrv2',
+            'platform_source': 'SYSTEM',
+            'platform_locked': 0,
+        },
+    ) == ('zte_zsrv2_v3', 'profile-zsrv2', 'SYSTEM', 0)

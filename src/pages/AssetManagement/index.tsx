@@ -959,6 +959,7 @@ const AssetManagementTab: React.FC<AssetManagementTabProps> = ({ language, setAc
         }
         const hostnameSync = res.hostname_sync || {};
         const hostnameSyncFailures = Array.isArray(hostnameSync.failed_items) ? hostnameSync.failed_items : [];
+        const hostnameSyncFailedCount = Math.max(hostnameSyncFailures.length, Number(hostnameSync.failed) || 0);
         const hostnameSyncDetails = hostnameSyncFailures.map((item: any) => {
           const identity = [item.previous_hostname || item.hostname, item.asset_tag]
             .filter(Boolean)
@@ -973,18 +974,23 @@ const AssetManagementTab: React.FC<AssetManagementTabProps> = ({ language, setAc
             : `${identity}${ip}: ${failureLabel} (${error})`;
         });
         const hasSkipped = Number(res.skipped || 0) > 0;
-        const hasHostnameSyncFailures = hostnameSyncFailures.length > 0;
-        const syncSummary = Number(hostnameSync.total || 0) > 0
+        const hasHostnameSyncFailures = hostnameSyncFailedCount > 0;
+        const syncSummary = Number(hostnameSync.total || 0) > 0 && !hasHostnameSyncFailures
           ? (zh
-            ? `；SNMP 主机名已同步 ${hostnameSync.succeeded || 0}/${hostnameSync.total} 台${hasHostnameSyncFailures ? `，失败 ${hostnameSync.failed} 台` : ''}`
-            : `; SNMP hostnames synced for ${hostnameSync.succeeded || 0}/${hostnameSync.total} devices${hasHostnameSyncFailures ? `, ${hostnameSync.failed} failed` : ''}`)
+            ? `；SNMP 主机名已同步 ${hostnameSync.succeeded || 0}/${hostnameSync.total} 台`
+            : `; SNMP hostnames synced for ${hostnameSync.succeeded || 0}/${hostnameSync.total} devices`)
+          : '';
+        const hostnameSyncFailureSummary = hasHostnameSyncFailures
+          ? (zh
+            ? `；${hostnameSyncFailedCount} 台设备主机名未自动同步，已保留现有名称。请检查 SNMP Community，并确认 CMDB 主机名与实际设备一致。`
+            : `; ${hostnameSyncFailedCount} device${hostnameSyncFailedCount === 1 ? '' : 's'} could not sync the hostname automatically, so the existing name was kept. Check the SNMP Community and confirm that CMDB hostnames match the actual device names.`)
           : '';
         const details = [...skippedDetails, ...hostnameSyncDetails];
         setFeedbackMsg({
           type: hasSkipped || hasHostnameSyncFailures ? 'warning' : 'success',
           text: zh
-            ? `导入完成：新增 ${res.created} 条，跳过 ${res.skipped} 条${hasSkipped ? '（请查看跳过原因）' : ''}${syncSummary}`
-            : `Import done: ${res.created} created, ${res.skipped} skipped${hasSkipped ? ' (review skipped rows)' : ''}${syncSummary}`,
+            ? `导入完成：新增 ${res.created} 条，跳过 ${res.skipped} 条${hasSkipped ? '（请查看跳过原因）' : ''}${syncSummary}${hostnameSyncFailureSummary}`
+            : `Import done: ${res.created} created, ${res.skipped} skipped${hasSkipped ? ' (review skipped rows)' : ''}${syncSummary}${hostnameSyncFailureSummary}`,
           details: details.length > 0 ? details : undefined,
         });
         fetchAssets();

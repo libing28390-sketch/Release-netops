@@ -32,6 +32,16 @@ interface TopologyDecoratedLinkLike {
   is_manual?: number | boolean;
   manual_confirmed?: number | boolean;
   reverse_confirmed?: boolean;
+  evidence_status?: 'bidirectional_confirmed' | 'single_sided_evidence' | 'neighbor_mismatch' | 'stale' | 'unknown' | 'not_applicable' | string;
+  evidence_directions?: Array<{
+    source_device_id?: string;
+    target_device_id?: string;
+    source_port?: string;
+    target_port?: string;
+    collection_sources?: string[];
+  }>;
+  source_collection_evidence?: TopologyCollectionEvidence;
+  target_collection_evidence?: TopologyCollectionEvidence;
   identity_warnings?: Array<{
     code: string;
     reported_name: string;
@@ -47,6 +57,12 @@ interface TopologyDecoratedLinkLike {
     source?: { name?: string; speed_mbps?: number; up?: boolean };
     target?: { name?: string; speed_mbps?: number; up?: boolean };
   }>;
+}
+
+interface TopologyCollectionEvidence {
+  state?: 'complete' | 'failed' | 'collecting' | 'expired' | 'unknown' | string;
+  completed_at?: string | null;
+  protocol_results?: Partial<Record<'snmp' | 'ssh', { status?: string; detail?: string }>>;
 }
 
 interface TopologyInspectorPanelProps {
@@ -96,6 +112,51 @@ const statusBadgeClass = (status?: string, isUnmanaged?: boolean) => {
   if (status === 'online') return 'border-emerald-200/60 bg-emerald-50 text-emerald-600';
   if (status === 'pending') return 'border-amber-200/60 bg-amber-50 text-amber-600';
   return 'border-rose-200/60 bg-rose-50 text-rose-600';
+};
+
+const topologyEvidenceStatusLabel = (status: string | undefined, zh: boolean) => {
+  switch (String(status || '').toLowerCase()) {
+    case 'bidirectional_confirmed': return zh ? '双向确认' : 'Bidirectional confirmed';
+    case 'single_sided_evidence': return zh ? '单侧证据' : 'One-sided evidence';
+    case 'neighbor_mismatch': return zh ? '邻居不一致' : 'Neighbor mismatch';
+    case 'stale': return zh ? '已过期' : 'Stale';
+    case 'not_applicable': return zh ? '不适用' : 'N/A';
+    default: return zh ? '证据未知' : 'Evidence unknown';
+  }
+};
+
+const topologyEvidenceStatusClass = (status: string | undefined) => {
+  switch (String(status || '').toLowerCase()) {
+    case 'bidirectional_confirmed': return 'border-emerald-200 bg-emerald-50 text-emerald-700';
+    case 'single_sided_evidence': return 'border-sky-200 bg-sky-50 text-sky-700';
+    case 'neighbor_mismatch': return 'border-amber-200 bg-amber-50 text-amber-700';
+    case 'stale': return 'border-slate-200 bg-slate-100 text-slate-600';
+    default: return 'border-slate-200 bg-slate-50 text-slate-500';
+  }
+};
+
+const topologyCollectionStateLabel = (state: string | undefined, zh: boolean) => {
+  switch (String(state || '').toLowerCase()) {
+    case 'complete': return zh ? '采集完成' : 'Complete';
+    case 'failed': return zh ? '采集失败' : 'Failed';
+    case 'collecting': return zh ? '采集中' : 'Collecting';
+    case 'expired': return zh ? '已过期' : 'Expired';
+    default: return zh ? '未知' : 'Unknown';
+  }
+};
+
+const topologyEvidenceDirectionLabels = (link: TopologyDecoratedLinkLike, direction: NonNullable<TopologyDecoratedLinkLike['evidence_directions']>[number]) => {
+  const sourceId = String(direction.source_device_id || '').trim();
+  const targetId = String(direction.target_device_id || '').trim();
+  const itemSourceId = String(link.source_device_id || '').trim();
+  const itemTargetId = String(link.target_device_id || '').trim();
+  const isReverse = Boolean(sourceId && targetId && sourceId === itemTargetId && targetId === itemSourceId);
+  return {
+    sourceHostname: (isReverse ? link.target_hostname || link.target_hostname_resolved : link.source_hostname || link.source_hostname_resolved) || (isReverse ? targetId : sourceId) || '-',
+    targetHostname: (isReverse ? link.source_hostname || link.source_hostname_resolved : link.target_hostname || link.target_hostname_resolved) || (isReverse ? sourceId : targetId) || '-',
+    sourcePort: (isReverse ? direction.source_port || link.target_port : direction.source_port || link.source_port) || '-',
+    targetPort: (isReverse ? direction.target_port || link.source_port : direction.target_port || link.target_port) || '-',
+  };
 };
 
 /* ── collapsible section ── */
@@ -211,6 +272,14 @@ const TopologyInspectorPanel: React.FC<TopologyInspectorPanelProps> = ({
   };
 
   const selectedRelationType = String(selectedTopologyLink?.relation_type || 'UNKNOWN').toUpperCase();
+  const collectionProtocolResults = selectedTopologyDevice?.topology_collection_protocol_results || {};
+  const collectionStatus = String(selectedTopologyDevice?.topology_collection_status || '').toLowerCase();
+  const hasCollectionAnomaly = Boolean(selectedTopologyDevice && (
+    ['failed', 'partial', 'not_configured'].includes(collectionStatus)
+    || ['snmp', 'ssh'].some((protocol) => ['failed', 'partial', 'error'].includes(
+      String(collectionProtocolResults[protocol as 'snmp' | 'ssh']?.status || '').toLowerCase(),
+    ))
+  ));
   const showRelationConfirmation = Boolean(
     selectedTopologyLink
     && (
@@ -318,6 +387,51 @@ const TopologyInspectorPanel: React.FC<TopologyInspectorPanelProps> = ({
         </div>
       </div>
 
+      {hasCollectionAnomaly && selectedTopologyDevice && (
+        <div className="rounded-xl border border-amber-200 bg-amber-50 px-3.5 py-3 text-[11px] text-amber-900">
+          <div className="flex items-center gap-1.5 font-extrabold">
+            <AlertCircle size={14} className="shrink-0" />
+            {zh ? '拓扑采集异常' : 'Topology collection anomaly'}
+            {selectedTopologyDevice.topology_collection_method
+              ? ` · ${selectedTopologyDevice.topology_collection_method.toUpperCase()}`
+              : ''}
+          </div>
+          {(['snmp', 'ssh'] as const).map((protocol) => {
+            const result = collectionProtocolResults[protocol];
+            if (!result) return null;
+            const protocolStatus = String(result.status || 'unknown').toLowerCase();
+            const statusLabel = protocolStatus === 'failed' || protocolStatus === 'error'
+              ? (zh ? '失败' : 'Failed')
+              : protocolStatus === 'partial'
+                ? (zh ? '部分异常' : 'Partial')
+                : protocolStatus === 'not_configured'
+                  ? (zh ? '未配置' : 'Not configured')
+                  : protocolStatus === 'not_attempted'
+                    ? (zh ? '未尝试' : 'Not attempted')
+                    : protocolStatus === 'no_neighbors'
+                      ? (zh ? '无邻居' : 'No neighbors')
+                      : (zh ? '成功' : 'Succeeded');
+            return (
+              <p key={protocol} className="mt-1 break-words">
+                <span className="font-bold">{protocol.toUpperCase()} · {statusLabel}</span>
+                {result.detail ? `：${result.detail}` : ''}
+              </p>
+            );
+          })}
+          {selectedTopologyDevice.topology_collection_error_code && (
+            <p className="mt-1 font-mono">{selectedTopologyDevice.topology_collection_error_code}</p>
+          )}
+          {selectedTopologyDevice.topology_collection_error_message && (
+            <p className="mt-1 break-words">{selectedTopologyDevice.topology_collection_error_message}</p>
+          )}
+          {selectedTopologyDevice.topology_collection_last_attempt_at && (
+            <p className="mt-1 text-[10px] text-amber-700">
+              {zh ? '最近尝试' : 'Last attempt'} · {formatTopologyLastSeen(selectedTopologyDevice.topology_collection_last_attempt_at)}
+            </p>
+          )}
+        </div>
+      )}
+
       {/* ─── accordion sections ─── */}
       <div className="overflow-hidden rounded-2xl bg-white shadow-sm ring-1 ring-black/[0.04]">
 
@@ -346,6 +460,75 @@ const TopologyInspectorPanel: React.FC<TopologyInspectorPanelProps> = ({
             </div>
             {selectedTopologyLink.operational_summary && (
               <p className="mt-1.5 text-[11px] leading-relaxed text-slate-500">{selectedTopologyLink.operational_summary}</p>
+            )}
+            {selectedTopologyLink.evidence_status && !['unknown', 'not_applicable'].includes(String(selectedTopologyLink.evidence_status).toLowerCase()) && (
+              <div className="mt-2.5 rounded-lg border border-slate-200 bg-white/70 p-2.5 ring-1 ring-black/[0.02]">
+                <div className="flex items-center justify-between gap-2">
+                  <div>
+                    <p className="text-[9px] font-bold uppercase tracking-[0.12em] text-slate-400">{zh ? 'LLDP 证据' : 'LLDP Evidence'}</p>
+                    <p className="mt-0.5 text-[11px] leading-relaxed text-slate-500">
+                      {String(selectedTopologyLink.evidence_status).toLowerCase() === 'single_sided_evidence'
+                        ? (zh ? '只有一侧提供了邻居记录，这表示证据单侧存在，不代表物理链路是单向的。' : 'Only one endpoint supplied a neighbor record; this is one-sided evidence, not a one-way physical link.')
+                        : String(selectedTopologyLink.evidence_status).toLowerCase() === 'neighbor_mismatch'
+                          ? (zh ? '两侧都完成了采集，但邻居记录没有互相对应。' : 'Both endpoints completed collection, but their neighbor records do not agree.')
+                          : String(selectedTopologyLink.evidence_status).toLowerCase() === 'stale'
+                            ? (zh ? '这条关系来自过期观测，当前采集周期尚未重新确认。' : 'This relationship comes from an expired observation and was not reconfirmed in the current cycle.')
+                            : ''}
+                    </p>
+                  </div>
+                  <span className={`shrink-0 rounded-full border px-2 py-0.5 text-[9px] font-bold ${topologyEvidenceStatusClass(selectedTopologyLink.evidence_status)}`}>
+                    {topologyEvidenceStatusLabel(selectedTopologyLink.evidence_status, zh)}
+                  </span>
+                </div>
+                {Array.isArray(selectedTopologyLink.evidence_directions) && selectedTopologyLink.evidence_directions.length > 0 && (
+                  <div className="mt-2 space-y-1 border-t border-slate-100 pt-2">
+                    <p className="text-[9px] font-bold uppercase tracking-[0.12em] text-slate-400">{zh ? '观测方向' : 'Observed directions'}</p>
+                    {selectedTopologyLink.evidence_directions.map((direction, index) => {
+                      const labels = topologyEvidenceDirectionLabels(selectedTopologyLink, direction);
+                      return (
+                        <div key={`selected-evidence-direction-${index}`} className="flex items-center justify-between gap-2 text-[10px] text-slate-600">
+                          <span className="min-w-0 truncate">{labels.sourceHostname} → {labels.targetHostname}</span>
+                          <span className="shrink-0 font-mono text-[9px] text-slate-400">
+                            {labels.sourcePort}
+                            {' → '}
+                            {labels.targetPort}
+                          </span>
+                          <span className="shrink-0 rounded bg-slate-100 px-1.5 py-0.5 text-[9px] font-bold uppercase tracking-wider text-slate-500">
+                            {direction.collection_sources?.length ? direction.collection_sources.join(' + ') : 'LLDP'}
+                          </span>
+                        </div>
+                      );
+                    })}
+                  </div>
+                )}
+                <div className="mt-2 grid grid-cols-2 gap-2">
+                  {([
+                    ['source', selectedTopologyLink.source_collection_evidence, zh ? '源端采集' : 'Source collection'],
+                    ['target', selectedTopologyLink.target_collection_evidence, zh ? '对端采集' : 'Target collection'],
+                  ] as const).map(([endpoint, evidence, title]) => evidence ? (
+                    <div key={`selected-collection-${endpoint}`} className="rounded-md bg-slate-50 px-2 py-1.5 ring-1 ring-slate-200/70">
+                      <div className="flex items-center justify-between gap-1">
+                        <span className="text-[9px] font-bold uppercase tracking-wider text-slate-400">{title}</span>
+                        <span className="text-[9px] font-semibold text-slate-600">{topologyCollectionStateLabel(evidence.state, zh)}</span>
+                      </div>
+                      <div className="mt-1 flex flex-wrap gap-1">
+                        {(['snmp', 'ssh'] as const).map((protocol) => {
+                          const result = evidence.protocol_results?.[protocol];
+                          if (!result?.status) return null;
+                          const status = String(result.status).toLowerCase();
+                          const statusClass = ['success', 'complete', 'ok'].includes(status)
+                            ? 'bg-emerald-50 text-emerald-700'
+                            : ['failed', 'error', 'timeout'].includes(status)
+                              ? 'bg-rose-50 text-rose-700'
+                              : 'bg-amber-50 text-amber-700';
+                          return <span key={protocol} className={`rounded px-1.5 py-0.5 text-[9px] font-bold uppercase ${statusClass}`}>{protocol} · {result.status}</span>;
+                        })}
+                      </div>
+                      {evidence.completed_at && <p className="mt-1 text-[9px] text-slate-400">{zh ? '完成于' : 'Completed'} {formatTopologyLastSeen(evidence.completed_at)}</p>}
+                    </div>
+                  ) : null)}
+                </div>
+              </div>
             )}
             {selectedTopologyLink.identity_warnings?.map((warning, index) => (
               <div
@@ -541,6 +724,11 @@ const TopologyInspectorPanel: React.FC<TopologyInspectorPanelProps> = ({
                         {link.reverse_confirmed && (
                           <span className="rounded bg-cyan-50 px-1.5 py-0.5 text-[9px] font-bold uppercase tracking-wider text-cyan-600">
                             {zh ? '双向' : 'Bi'}
+                          </span>
+                        )}
+                        {link.evidence_status && !['unknown', 'not_applicable'].includes(String(link.evidence_status).toLowerCase()) && (
+                          <span className={`rounded border px-1.5 py-0.5 text-[9px] font-bold ${topologyEvidenceStatusClass(link.evidence_status)}`}>
+                            {topologyEvidenceStatusLabel(link.evidence_status, zh)}
                           </span>
                         )}
                       </div>

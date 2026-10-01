@@ -3,6 +3,7 @@ import type { Device } from '../types';
 import { authHeaders } from '../api/http';
 import { useInventoryStore } from '../store/inventoryStore';
 import { SSH_ALGORITHM_PROFILE_VALUES } from '../pages/AssetManagement/constants';
+import { getPlatformBindingErrorMessage } from '../utils/platformBindingErrors';
 
 const normalizeSshAlgorithmProfile = (value: unknown): Device['ssh_algorithm_profile'] => {
   const normalized = String(value || 'auto').trim().toLowerCase().replace(/-/g, '_');
@@ -86,7 +87,14 @@ export const useDeviceFormActions = ({ devices, setDevices, showToast }: UseDevi
         showToast('Device updated successfully', 'success');
       } else {
         const data = await response.json();
-        showToast(`Failed to update device: ${data.detail || data.error || response.statusText}`, 'error');
+        const detail = data.error ?? data.detail;
+        const message = typeof detail === 'string' ? detail : detail?.message || response.statusText;
+        const explanation = getPlatformBindingErrorMessage({
+          detail,
+          message,
+          requestId: response.headers.get('X-Request-ID'),
+        }, 'en');
+        showToast(`Failed to update device: ${explanation}`, 'error');
       }
     } catch (error) {
       showToast(`Error updating device: ${error}`, 'error');

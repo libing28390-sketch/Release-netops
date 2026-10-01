@@ -734,6 +734,7 @@ const AppMainContent: React.FC = () => {
             setActiveTab={setActiveTab}
             onRefresh={fetchDevicesData}
             language={language}
+            currentUserRole={currentUser?.role}
             t={t}
           />
         </Suspense>

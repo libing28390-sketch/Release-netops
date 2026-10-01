@@ -248,6 +248,22 @@ def complete_lldp_snapshot_in_transaction(
     return _marker_dict(updated)
 
 
+def validate_lldp_snapshot_attempt_in_transaction(
+    conn: Any,
+    *,
+    device_id: str,
+    generation: int,
+) -> None:
+    """Fence a partial observation merge without claiming a complete snapshot."""
+    row = conn.execute(
+        """SELECT generation, state FROM topology_device_lldp_snapshots
+             WHERE device_id = ? FOR UPDATE""",
+        (str(device_id),),
+    ).fetchone()
+    if row is None or int(row[0] or 0) != int(generation) or str(row[1] or "") != "collecting":
+        raise LLDPAttemptSuperseded("LLDP snapshot attempt no longer owns this device")
+
+
 def get_lldp_snapshot_marker(device_id: str) -> dict[str, Any] | None:
     conn = get_db_connection()
     try:
@@ -365,6 +381,7 @@ def load_complete_lldp_snapshot(
     *,
     cache: Any = None,
     marker: Mapping[str, Any] | None = None,
+    refresh_from_postgres: bool = False,
 ) -> dict[str, Any] | None:
     """Read a current Redis snapshot, rebuilding it from committed PG facts on miss."""
     device_id = str(device.get("id") or "").strip()
@@ -387,7 +404,7 @@ def load_complete_lldp_snapshot(
         return None
 
     cache_key = _snapshot_cache_key(cache, device, int(selected_marker["generation"])) if cache is not None else ""
-    if cache is not None and cache_key:
+    if cache is not None and cache_key and not refresh_from_postgres:
         cached = cache.get_json(cache_key)
         if isinstance(cached, dict) and all(
             cached.get(key) == expected
@@ -477,6 +494,7 @@ def publish_completed_lldp_snapshot(
     *,
     generation: int,
     cache: Any = None,
+    refresh_from_postgres: bool = False,
 ) -> bool:
     """Prime one generation-qualified Redis key after the PG commit succeeds."""
     if cache is None:
@@ -493,7 +511,9 @@ def publish_completed_lldp_snapshot(
         or not _marker_is_current_for_device(marker, device)
     ):
         return False
-    snapshot = load_complete_lldp_snapshot(device, cache=cache, marker=marker)
+    snapshot = load_complete_lldp_snapshot(
+        device, cache=cache, marker=marker, refresh_from_postgres=refresh_from_postgres,
+    )
     if not snapshot:
         return False
     return snapshot.get("source") == "redis" or snapshot.get("redis_written") is True
@@ -510,4 +530,5 @@ __all__ = [
     "lldp_snapshot_versions",
     "publish_completed_lldp_snapshot",
     "snapshot_dependency",
+    "validate_lldp_snapshot_attempt_in_transaction",
 ]

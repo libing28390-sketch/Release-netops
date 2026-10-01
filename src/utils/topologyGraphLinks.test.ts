@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { buildTopologyGraphLinks } from './topologyGraphLinks';
+import { buildTopologyGraphLinks, getTopologyLinkEvidenceDash } from './topologyGraphLinks';
 
 describe('buildTopologyGraphLinks', () => {
   it('preserves distinct physical links between the same devices', () => {
@@ -24,5 +24,17 @@ describe('buildTopologyGraphLinks', () => {
     ];
 
     expect(buildTopologyGraphLinks(devices, links).map((link) => link.id)).toEqual(['visible']);
+  });
+});
+
+describe('getTopologyLinkEvidenceDash', () => {
+  it('uses a solid line only for mutual confirmation and one dashed pattern otherwise', () => {
+    expect(getTopologyLinkEvidenceDash({ evidence_status: 'bidirectional_confirmed' })).toBe('');
+    expect(getTopologyLinkEvidenceDash({ evidence_status: 'single_sided_evidence' })).toBe('6,5');
+    expect(getTopologyLinkEvidenceDash({ evidence_status: 'neighbor_mismatch' })).toBe('6,5');
+    expect(getTopologyLinkEvidenceDash({ evidence_status: 'stale' })).toBe('6,5');
+    expect(getTopologyLinkEvidenceDash({ evidence_status: 'unknown' })).toBe('6,5');
+    expect(getTopologyLinkEvidenceDash({ reverse_confirmed: true })).toBe('');
+    expect(getTopologyLinkEvidenceDash({ metadata: { reverse_seen: true } })).toBe('');
   });
 });

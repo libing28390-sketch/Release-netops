@@ -93,4 +93,58 @@ describe('DeviceFormModal platform registry selector', () => {
     expect(onSubmit).toHaveBeenCalledTimes(1);
     expect(onFormChange).toHaveBeenLastCalledWith(expect.objectContaining({ ssh_algorithm_profile: 'legacy_break_glass' }));
   });
+
+  it('keeps an existing binding read-only in ordinary editing while allowing other fields', async () => {
+    const user = userEvent.setup();
+    const onFormChange = vi.fn();
+    render(<DeviceFormModal
+      mode="edit" language="en"
+      form={{ platform: 'zte_zsrv2_v3', platform_profile_id: 'profile-zte-zsrv2', vendor: 'ZTE' }}
+      platformBindingReadOnly passwordVisible={false}
+      onFormChange={onFormChange} onTogglePasswordVisibility={vi.fn()}
+      onClose={vi.fn()} onSubmit={vi.fn()}
+    />);
+    await screen.findByRole('option', { name: 'ZTE 5900 V6 · ZTE' });
+    const selector = screen.getByTitle('Select device platform') as HTMLSelectElement;
+    expect(selector.disabled).toBe(true);
+    expect(screen.getByText(/An existing platform binding can only be changed/)).toBeTruthy();
+    await user.selectOptions(selector, 'profile-zte-5900');
+    expect(onFormChange).not.toHaveBeenCalled();
+    await user.type(screen.getByTitle('Device IP address'), '192.0.2.5');
+    expect(onFormChange).toHaveBeenCalled();
+  });
+
+  it('keeps the hostname read-only when the device is linked to a CMDB asset', () => {
+    const onFormChange = vi.fn();
+    render(<DeviceFormModal
+      mode="edit" language="en"
+      form={{ hostname: 'cmdb-core-01', asset_id: 'asset-1' } as Partial<Device>}
+      passwordVisible={false}
+      onFormChange={onFormChange} onTogglePasswordVisibility={vi.fn()}
+      onClose={vi.fn()} onSubmit={vi.fn()}
+    />);
+
+    const hostnameInput = screen.getByTitle('Device hostname') as HTMLInputElement;
+    expect(hostnameInput.value).toBe('cmdb-core-01');
+    expect(hostnameInput.readOnly).toBe(true);
+    expect(screen.getByText('Hostname is maintained by CMDB; edit it in Asset Management.')).toBeTruthy();
+  });
+
+  it('keeps the hostname editable when the device has no CMDB asset', async () => {
+    const user = userEvent.setup();
+    const onFormChange = vi.fn();
+    render(<DeviceFormModal
+      mode="edit" language="en"
+      form={{ hostname: 'legacy-core-01' }}
+      passwordVisible={false}
+      onFormChange={onFormChange} onTogglePasswordVisibility={vi.fn()}
+      onClose={vi.fn()} onSubmit={vi.fn()}
+    />);
+
+    const hostnameInput = screen.getByTitle('Device hostname') as HTMLInputElement;
+    expect(hostnameInput.readOnly).toBe(false);
+    await user.type(hostnameInput, '-updated');
+    expect(onFormChange).toHaveBeenCalled();
+    expect(screen.queryByText('Hostname is maintained by CMDB; edit it in Asset Management.')).toBeNull();
+  });
 });

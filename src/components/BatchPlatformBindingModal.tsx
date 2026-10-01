@@ -6,6 +6,7 @@ import PlatformProfileSelector, { type PlatformProfileOption } from './PlatformP
 import { inferPlatformVendor, platformVendorLabel } from '../utils/platformVendor';
 import { extractSoftwareMajorVersion, getProfileAdaptationMajorVersion } from '../utils/platformVersion';
 import { useEscapeClose } from '../hooks/useEscapeClose';
+import { getPlatformBindingErrorMessage } from '../utils/platformBindingErrors';
 
 export { extractSoftwareMajorVersion, getProfileAdaptationMajorVersion } from '../utils/platformVersion';
 
@@ -15,6 +16,7 @@ interface BatchPlatformBindingModalProps {
   deviceIds: string[];
   devices: Device[];
   language: string;
+  currentUserRole?: string;
   onClose: () => void;
   onCompleted: () => Promise<void> | void;
 }
@@ -23,11 +25,13 @@ const BatchPlatformBindingModal: React.FC<BatchPlatformBindingModalProps> = ({
   deviceIds,
   devices,
   language,
+  currentUserRole,
   onClose,
   onCompleted,
 }) => {
   useEscapeClose(true, onClose);
   const zh = language === 'zh';
+  const isAdministrator = currentUserRole === 'Administrator';
   const [operation, setOperation] = useState<BatchPlatformOperation>('add');
   const [profiles, setProfiles] = useState<PlatformProfileOption[]>([]);
   const [profilesLoading, setProfilesLoading] = useState(true);
@@ -73,7 +77,7 @@ const BatchPlatformBindingModal: React.FC<BatchPlatformBindingModalProps> = ({
         if (active) setProfiles(response.data || []);
       })
       .catch((cause) => {
-        if (active) setError(cause instanceof Error ? cause.message : (zh ? '平台列表加载失败' : 'Failed to load platform profiles'));
+        if (active) setError(cause instanceof Error ? cause.message : (zh ? '平台列表加载失败，请稍后重试' : 'Failed to load platform profiles; try again later'));
       })
       .finally(() => {
         if (active) setProfilesLoading(false);
@@ -82,21 +86,28 @@ const BatchPlatformBindingModal: React.FC<BatchPlatformBindingModalProps> = ({
   }, [zh]);
 
   useEffect(() => {
-    setOperation(hasExistingBinding ? 'modify' : 'add');
+    setOperation(hasExistingBinding && isAdministrator ? 'modify' : 'add');
     setSelectedProfileId('');
     setError('');
     setMessage('');
     setVersionMismatchOverride(false);
-  }, [deviceIds.join(','), hasExistingBinding]);
+  }, [deviceIds.join(','), hasExistingBinding, isAdministrator]);
 
-  const canBind = sameVendor && selectedProfileId && !profilesLoading && (operation === 'modify' || !hasExistingBinding);
+  const canBind = sameVendor
+    && selectedProfileId
+    && !profilesLoading
+    && (operation === 'modify' ? isAdministrator && hasExistingBinding : !hasExistingBinding);
   const canSubmit = operation === 'remove'
-    ? !submitting
-    : Boolean(canBind) && (!hasVersionConflict || versionMismatchOverride) && !submitting;
+    ? isAdministrator && hasExistingBinding && !submitting
+    : Boolean(canBind) && (!hasVersionConflict || (isAdministrator && versionMismatchOverride)) && !submitting;
 
   const submit = async () => {
     setError('');
     setMessage('');
+    if ((operation === 'modify' || operation === 'remove') && !isAdministrator) {
+      setError(zh ? '已有平台绑定的修改或解除操作仅限管理员。' : 'Changing or removing an existing platform binding is restricted to Administrators.');
+      return;
+    }
     if (operation !== 'remove' && !sameVendor) {
       setError(zh ? '批量绑定要求所选设备属于同一厂商，且每台设备都能确认厂商。' : 'Batch binding requires all selected devices to belong to the same known vendor.');
       return;
@@ -105,13 +116,13 @@ const BatchPlatformBindingModal: React.FC<BatchPlatformBindingModalProps> = ({
       setError(zh ? '请选择目标平台。' : 'Select a target platform.');
       return;
     }
-    if (operation !== 'remove' && hasVersionConflict && !versionMismatchOverride) {
+    if (operation !== 'remove' && hasVersionConflict && (!isAdministrator || !versionMismatchOverride)) {
       setError(zh
         ? '目标平台的命令/解析适配版本与所选设备的软件主版本不一致；如确需人工覆盖，请先勾选确认。'
         : 'The target command/parser adaptation version does not match the selected devices\' software major version. Confirm the explicit override before submitting.');
       return;
     }
-    const force = (operation === 'modify' || operation === 'remove') && hasExistingBinding;
+    const force = isAdministrator && (operation === 'modify' || operation === 'remove') && hasExistingBinding;
     if (force) {
       const confirmed = window.confirm(zh
         ? `${operation === 'remove' ? '解除' : '修改'} ${deviceIds.length} 台设备的平台绑定？已有绑定会被覆盖/清除，且会影响后续自动化驱动、命令和解析模板。`
@@ -135,14 +146,14 @@ const BatchPlatformBindingModal: React.FC<BatchPlatformBindingModalProps> = ({
             platform_profile_id: selectedProfileId,
             lock: true,
             force,
-            allow_version_mismatch: hasVersionConflict && versionMismatchOverride,
+            allow_version_mismatch: isAdministrator && hasVersionConflict && versionMismatchOverride,
           }),
         });
         setMessage(zh ? `已为 ${deviceIds.length} 台设备保存平台绑定。` : `Saved platform bindings for ${deviceIds.length} devices.`);
       }
       await onCompleted();
     } catch (cause) {
-      setError(cause instanceof Error ? cause.message : (zh ? '批量平台操作失败' : 'Batch platform operation failed'));
+      setError(getPlatformBindingErrorMessage(cause, language));
     } finally {
       setSubmitting(false);
     }
@@ -175,6 +186,10 @@ const BatchPlatformBindingModal: React.FC<BatchPlatformBindingModalProps> = ({
                 key={value}
                 type="button"
                 onClick={() => { setOperation(value); setError(''); setMessage(''); setVersionMismatchOverride(false); }}
+                disabled={(value === 'modify' || value === 'remove') && !isAdministrator}
+                title={(value === 'modify' || value === 'remove') && !isAdministrator
+                  ? (zh ? '已有绑定的修改和解除仅限管理员' : 'Only Administrators may change or remove an existing binding')
+                  : undefined}
                 className={`rounded-lg px-3 py-2 text-xs font-semibold transition-colors ${operation === value ? 'bg-white text-cyan-700 shadow-sm dark:bg-zinc-700 dark:text-cyan-300' : 'text-slate-500 hover:text-slate-800 dark:text-zinc-400 dark:hover:text-zinc-200'}`}
               >
                 {value === 'remove' && <Unlink size={13} className="mr-1 inline" />}
@@ -190,7 +205,7 @@ const BatchPlatformBindingModal: React.FC<BatchPlatformBindingModalProps> = ({
                 {sameVendor
                   ? (zh ? `厂商范围：${platformVendorLabel(allowedVendor, language)}，批量绑定只展示该厂商的平台。` : `Vendor scope: ${platformVendorLabel(allowedVendor, language)}. Only this vendor's platforms are available.`)
                   : (zh ? '当前选择包含多个厂商或存在未知厂商，不能批量新增/修改平台；请按同厂商重新选择。解除绑定仍可执行。' : 'The selection contains multiple or unknown vendors. Add/modify is disabled; select devices from one vendor. Remove remains available.')}
-                {hasExistingBinding && <span className="ml-1">{zh ? `已有 ${existingDeviceCount} 台存在绑定，修改/解除需要管理员权限；如需修正错误绑定，请选择与设备实际软件版本一致的适配版本。` : `${existingDeviceCount} devices already have bindings; modifying/removing them requires Administrator permission. To correct a wrong binding, select the adaptation version matching the device software.`}</span>}
+                {hasExistingBinding && <span className="ml-1">{zh ? `已有 ${existingDeviceCount} 台存在绑定，修改/解除需要管理员权限；${isAdministrator ? '如需修正错误绑定，请选择与设备实际软件版本一致的适配版本。' : '当前账号为只读绑定视图，不能修改或解除已有绑定。'}` : `${existingDeviceCount} devices already have bindings; modifying/removing them requires Administrator permission. ${isAdministrator ? 'To correct a wrong binding, select the adaptation version matching the device software.' : 'The current account can view bindings but cannot change or remove them.'}`}</span>}
               </div>
             </div>
           </div>
@@ -203,7 +218,7 @@ const BatchPlatformBindingModal: React.FC<BatchPlatformBindingModalProps> = ({
                 value={selectedProfileId}
                 language={language}
                 allowedVendor={allowedVendor}
-                disabled={!sameVendor || profilesLoading || submitting}
+                disabled={!sameVendor || profilesLoading || submitting || (hasExistingBinding && !isAdministrator)}
                 onChange={(profile) => { setSelectedProfileId(profile?.id || ''); setVersionMismatchOverride(false); }}
               />
               <p className="mt-1.5 text-[11px] text-slate-500 dark:text-zinc-400">
@@ -224,6 +239,7 @@ const BatchPlatformBindingModal: React.FC<BatchPlatformBindingModalProps> = ({
                         type="checkbox"
                         checked={versionMismatchOverride}
                         onChange={(event) => setVersionMismatchOverride(event.target.checked)}
+                        disabled={!isAdministrator || submitting}
                         className="mt-0.5 h-3 w-3 accent-rose-600"
                       />
                       <span>{zh ? '管理员确认：我明确要使用该不一致的命令/解析适配版本。' : 'Administrator confirmation: use this mismatched command/parser adaptation version intentionally.'}</span>
@@ -234,7 +250,7 @@ const BatchPlatformBindingModal: React.FC<BatchPlatformBindingModalProps> = ({
             </div>
           )}
 
-          {error && <div className="rounded-lg bg-rose-50 px-3 py-2 text-xs text-rose-700">{error}</div>}
+          {error && <div role="alert" className="rounded-lg bg-rose-50 px-3 py-2 text-xs text-rose-700">{error}</div>}
           {message && <div className="rounded-lg bg-emerald-50 px-3 py-2 text-xs font-semibold text-emerald-700">{message}</div>}
         </div>
 

@@ -209,10 +209,27 @@ def _resolve_platform_binding(
     existing_profile_id = str(existing.get('platform_profile_id') or '').strip() if existing is not None else ''
     submitted_profile_id = str(platform_profile_id or '').strip()
     if existing_profile_id:
+        if clear_existing:
+            raise HTTPException(
+                status_code=409,
+                detail={
+                    'code': 'PLATFORM_BINDING_LOCKED',
+                    'message': (
+                        'Existing device platform binding cannot be cleared through ordinary device update; '
+                        'use the administrator platform binding unbind endpoint.'
+                    ),
+                },
+            )
         if submitted_profile_id and submitted_profile_id != existing_profile_id:
             raise HTTPException(
                 status_code=409,
-                detail='Device platform binding is immutable after first assignment',
+                detail={
+                    'code': 'PLATFORM_BINDING_LOCKED',
+                    'message': (
+                        'Existing device platform binding cannot be replaced through ordinary device update; '
+                        'use the administrator platform binding endpoint.'
+                    ),
+                },
             )
         if not submitted_profile_id and not clear_existing:
             platform_profile_id = existing_profile_id
@@ -431,6 +448,11 @@ def _build_probe_stage(stage: str, ok: bool, summary: str, detail: str, latency_
 
 def _sanitize_device_item(item: dict) -> dict:
     sanitized = dict(item)
+    # A linked physical asset is the CMDB source of truth for the display
+    # hostname. Keep the legacy device column as a fallback for unlinked rows.
+    cmdb_hostname = str(sanitized.get('asset_hostname') or '').strip()
+    if cmdb_hostname:
+        sanitized['hostname'] = cmdb_hostname
     sanitized['ssh_algorithm_profile'] = normalize_ssh_algorithm_profile(
         sanitized.get('ssh_algorithm_profile')
     )
@@ -630,7 +652,13 @@ def _resolve_connection_target(payload: dict) -> dict:
 
     conn = get_db_connection()
     try:
-        row = conn.execute('SELECT * FROM devices WHERE id = ?', (device_id,)).fetchone()
+        row = conn.execute(
+            '''SELECT d.*, pa.hostname AS asset_hostname
+               FROM devices d
+               LEFT JOIN physical_assets pa ON pa.id = d.asset_id
+               WHERE d.id = ?''',
+            (device_id,),
+        ).fetchone()
     finally:
         conn.close()
 
@@ -641,7 +669,11 @@ def _resolve_connection_target(payload: dict) -> dict:
     creds = resolve_device_credentials(stored)
     payload_password = payload.get('password')
 
-    resolved['hostname'] = resolved['hostname'] or stored.get('hostname')
+    resolved['hostname'] = (
+        stored.get('asset_hostname')
+        or resolved['hostname']
+        or stored.get('hostname')
+    )
     resolved['ip_address'] = resolved['ip_address'] or stored.get('ip_address')
     resolved['username'] = resolved['username'] or creds['username'] or ''
     resolved['method'] = payload.get('method') or stored.get('connection_method') or 'ssh'
@@ -923,7 +955,7 @@ def read_devices(
         if search and search.strip():
             q = f"%{search.strip()}%"
             where_clauses.append('('
-                'd.hostname LIKE ? OR d.ip_address LIKE ? OR d.sn LIKE ? OR '
+                "COALESCE(NULLIF(pa.hostname, ''), d.hostname) LIKE ? OR d.ip_address LIKE ? OR d.sn LIKE ? OR "
                 'pa.asset_tag LIKE ? OR pa.management_ip LIKE ? OR pa.business_ip LIKE ? OR '
                 'pa.site_id LIKE ? OR pa.vendor LIKE ? OR pa.model LIKE ?'
                 ')')
@@ -944,7 +976,7 @@ def read_devices(
         where_sql = f"WHERE {' AND '.join(where_clauses)}" if where_clauses else ''
 
         sortable_columns = {
-            'hostname': 'd.hostname',
+            'hostname': "COALESCE(NULLIF(pa.hostname, ''), d.hostname)",
             'model': 'd.model',
             'platform': 'd.platform',
             'site': "COALESCE(NULLIF(s.site_name, ''), NULLIF(s.site_code, ''), d.site)",
@@ -953,7 +985,10 @@ def read_devices(
             'ip_address': 'd.ip_address',
             'role': 'd.role',
         }
-        order_col = sortable_columns.get(sort_key or '', 'd.hostname')
+        order_col = sortable_columns.get(
+            sort_key or '',
+            "COALESCE(NULLIF(pa.hostname, ''), d.hostname)",
+        )
         order_dir = 'DESC' if str(sort_direction).lower() == 'desc' else 'ASC'
 
         # Plan-A: LEFT JOIN physical_assets to surface asset metadata
@@ -1113,8 +1148,11 @@ def _prepare_snmp_walk_target(row: dict[str, Any], *, asset_only: bool = False) 
         target['platform'] = str(target.get('_asset_platform') or '').strip()
     if not str(target.get('model') or '').strip():
         target['model'] = str(target.get('_asset_model') or '').strip()
-    if not str(target.get('hostname') or '').strip():
-        target['hostname'] = str(target.get('_asset_hostname') or '').strip()
+    asset_hostname = str(target.get('_asset_hostname') or '').strip()
+    if asset_hostname:
+        target['hostname'] = asset_hostname
+    elif not str(target.get('hostname') or '').strip():
+        target['hostname'] = asset_hostname
     return target
 
 
@@ -3237,7 +3275,13 @@ def delete_device(device_id: str):
 def update_device(device_id: str, device: dict = Body(...)):
     conn = get_db_connection()
     try:
-        existing_row = conn.execute('SELECT * FROM devices WHERE id = ?', (device_id,)).fetchone()
+        existing_row = conn.execute(
+            '''SELECT d.*, pa.hostname AS asset_hostname
+               FROM devices d
+               LEFT JOIN physical_assets pa ON pa.id = d.asset_id
+               WHERE d.id = ?''',
+            (device_id,),
+        ).fetchone()
         if not existing_row:
             raise HTTPException(status_code=404, detail='Device not found')
 
@@ -3326,6 +3370,16 @@ def update_device(device_id: str, device: dict = Body(...)):
                 ''', (credential_id, cred_name, 'ssh_password', username, enc_pwd, enc_enable, enc_snmp, now))
 
         new_lifecycle = device.get('lifecycle_status') or existing_row['lifecycle_status'] or 'staging'
+        cmdb_hostname = ''
+        if existing_device.get('asset_id'):
+            # Serialize the mirror with asset/SNMP name updates. Lock the
+            # CMDB asset before UPDATE devices, matching hostname sync order.
+            current_asset = conn.execute(
+                'SELECT hostname FROM physical_assets WHERE id = ? FOR UPDATE',
+                (existing_device['asset_id'],),
+            ).fetchone()
+            cmdb_hostname = str(current_asset['hostname'] or '').strip() if current_asset else ''
+        effective_hostname = cmdb_hostname or device.get('hostname', '')
 
         conn.execute('''
             UPDATE devices 
@@ -3337,7 +3391,7 @@ def update_device(device_id: str, device: dict = Body(...)):
                 snmp_cpu_oid = ?, snmp_memory_oid = ?
             WHERE id = ?
         ''', (
-            device.get('hostname', ''),
+            effective_hostname,
             device.get('ip_address', ''),
             platform,
             device.get('sn', ''),
@@ -3433,12 +3487,12 @@ def update_device(device_id: str, device: dict = Body(...)):
             category='inventory',
             severity='high' if new_lifecycle == 'production' and old_lifecycle != 'production' else 'medium',
             status='success',
-            summary=f"Updated device {device.get('hostname', device_id)}" + (f" [lifecycle: {old_lifecycle} → {new_lifecycle}]" if old_lifecycle != new_lifecycle else ''),
+            summary=f"Updated device {effective_hostname or device_id}" + (f" [lifecycle: {old_lifecycle} → {new_lifecycle}]" if old_lifecycle != new_lifecycle else ''),
             actor_username=device.get('actor_username') or 'admin',
             actor_role=device.get('actor_role') or 'Administrator',
             target_type='device',
             target_id=device_id,
-            target_name=device.get('hostname', device_id),
+            target_name=effective_hostname or device_id,
             device_id=device_id,
             details=audit_details,
         )

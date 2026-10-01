@@ -71,6 +71,15 @@ export interface Device {
   topology_node_type?: string;
   layout_override?: { x?: number; y?: number; manual?: number };
   topology_node_id?: string;
+  topology_collection_status?: string;
+  topology_collection_error_code?: string;
+  topology_collection_error_message?: string;
+  topology_collection_method?: string;
+  topology_collection_protocol_results?: Partial<Record<'snmp' | 'ssh', { status: string; detail?: string }>>;
+  topology_collection_last_attempt_at?: string | null;
+  topology_match_status?: string;
+  topology_match_method?: string;
+  topology_match_reason_code?: string;
   is_unmanaged?: boolean;
   observation_count?: number;
   protocols?: string[];

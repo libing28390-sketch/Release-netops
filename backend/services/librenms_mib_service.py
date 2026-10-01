@@ -7,6 +7,7 @@ all vendor MIB definition files into the Nexora SNMP MIB repository.
 
 from __future__ import annotations
 
+import json
 import logging
 import os
 import re
@@ -41,6 +42,7 @@ LIBRENMS_BUNDLE_DIR = BACKEND_DIR / "vendor" / "librenms"
 TARGET_DIR = BACKEND_DIR / "data" / "librenms_repo"
 MIBS_DIR = LIBRENMS_BUNDLE_DIR / "mibs"
 SYMBOL_INDEX_MAX_PASSES = 8
+MIB_CACHE_VERSION = "librenms-mib-import-v1"
 LIBRENMS_SPARSE_PATHS = (
     "mibs/",
     "resources/definitions/os_detection/",
@@ -326,14 +328,264 @@ def build_symbol_index(
     return global_symbols, symbols_by_vendor
 
 
+def _source_manifest_entries(mibs_path: Path) -> dict[str, tuple[str, int]] | None:
+    """Read the pinned bundle manifest used as the source snapshot identity.
+
+    The bundled source manifest records the inventory of the pinned MIB
+    snapshot.  The cache check separately hashes the current files because a
+    local bundle can be edited without changing the upstream commit.  A
+    missing or malformed manifest deliberately disables the fast path; the
+    importer then falls back to its existing full scan and can create a new
+    authoritative run.
+    """
+    manifest_path = mibs_path.parent / "source-manifest.json"
+    try:
+        payload = json.loads(manifest_path.read_text(encoding="utf-8"))
+    except (OSError, UnicodeError, ValueError, TypeError):
+        return None
+    raw_entries = payload.get("mibs") if isinstance(payload, dict) else None
+    if not isinstance(raw_entries, list):
+        return None
+
+    entries: dict[str, tuple[str, int]] = {}
+    for item in raw_entries:
+        if not isinstance(item, dict):
+            return None
+        bundle_path = str(item.get("bundle_path") or "").replace("\\", "/").strip("/")
+        if bundle_path.startswith("mibs/"):
+            relative_path = bundle_path[5:]
+        else:
+            relative_path = bundle_path
+        file_hash = str(item.get("sha256") or "").strip().lower()
+        try:
+            file_size = int(item.get("size_bytes"))
+        except (TypeError, ValueError):
+            return None
+        if not relative_path or len(file_hash) != 64 or file_size < 0:
+            return None
+        if relative_path in entries and entries[relative_path] != (file_hash, file_size):
+            return None
+        entries[relative_path] = (file_hash, file_size)
+    return entries or None
+
+
+def _row_value(row: Any, index: int, key: str | None = None) -> Any:
+    """Read a tuple or PostgreSQL DictRow without coupling cache checks to it."""
+    if row is None:
+        return None
+    if key is not None:
+        try:
+            return row[key]
+        except (KeyError, IndexError, TypeError):
+            pass
+    try:
+        return row[index]
+    except (KeyError, IndexError, TypeError):
+        return None
+
+
+def _rules_dependency_is_current(
+    conn: Any,
+    *,
+    source_commit: str,
+    contract_version: str,
+) -> bool:
+    """Ensure a MIB cache cannot hide a rule source/contract change."""
+    if not source_commit and not contract_version:
+        return True
+    try:
+        rows = conn.execute(
+            "SELECT source_commit, detection_json FROM snmp_librenms_rules "
+            "WHERE id LIKE 'librenms-%' AND rule_status IN ('active', 'identity_only')"
+        ).fetchall()
+    except Exception:
+        # A rules table missing from an incompletely migrated database must not
+        # turn a potentially stale MIB catalog into a cache hit.
+        return False
+    if not rows:
+        return False
+
+    for row in rows:
+        row_source_commit = str(_row_value(row, 0, "source_commit") or "")
+        if source_commit and row_source_commit != source_commit:
+            return False
+        if contract_version:
+            try:
+                detection = json.loads(str(_row_value(row, 1, "detection_json") or "{}"))
+            except (TypeError, ValueError):
+                return False
+            if str(detection.get("rule_contract_version") or "") != contract_version:
+                return False
+    return True
+
+
+def _persistent_cache_marker(
+    conn: Any,
+    *,
+    mibs_path: Path,
+    files: list[Path],
+    source_id: str,
+    source_commit: str,
+    rules_source_commit: str = "",
+    rules_contract_version: str = "",
+    max_files: int | None = None,
+) -> dict[str, Any] | None:
+    """Return the last completed snapshot when it is safe to reuse.
+
+    The marker is entirely derived from durable PostgreSQL rows plus the
+    pinned source manifest.  It is intentionally conservative: partial runs,
+    parser changes, missing files, stale rule rows, duplicate active paths and
+    missing node records force the normal importer path.  Unresolved OIDs are
+    part of the stable parser output and are not a reason to repeat the same
+    import when the source and parser inputs are unchanged.
+    """
+    if max_files is not None:
+        return None
+    manifest_entries = _source_manifest_entries(mibs_path)
+    if not manifest_entries:
+        return None
+    relative_paths = {relative_mib_path(path, mibs_path) for path in files}
+    if not relative_paths or not relative_paths.issubset(manifest_entries):
+        return None
+
+    source_row = conn.execute(
+        "SELECT source_commit, file_count, status, error FROM snmp_mib_sources "
+        "WHERE id = ? AND source_type = 'librenms' LIMIT 1",
+        (source_id,),
+    ).fetchone()
+    if not source_row:
+        return None
+    if str(_row_value(source_row, 0, "source_commit") or "") != source_commit:
+        return None
+    if int(_row_value(source_row, 1, "file_count") or 0) != len(files):
+        return None
+    if str(_row_value(source_row, 2, "status") or "").lower() != "ready":
+        return None
+    if str(_row_value(source_row, 3, "error") or ""):
+        return None
+    if not _rules_dependency_is_current(
+        conn,
+        source_commit=rules_source_commit,
+        contract_version=rules_contract_version,
+    ):
+        return None
+
+    run_row = conn.execute(
+        "SELECT id, total_nodes, zero_node_files, status, total_files, failed_files "
+        "FROM snmp_mib_import_runs "
+        "WHERE source_id = ? AND source_type = 'librenms' AND source_commit = ? "
+        "AND parser_version = ? ORDER BY started_at DESC, updated_at DESC LIMIT 1",
+        (source_id, source_commit, PARSER_VERSION),
+    ).fetchone()
+    if (
+        not run_row
+        or str(_row_value(run_row, 3, "status") or "") != "completed"
+        or int(_row_value(run_row, 4, "total_files") or 0) != len(files)
+        or int(_row_value(run_row, 5, "failed_files") or 0) != 0
+    ):
+        return None
+
+    current_files: dict[str, str] = {}
+    for file_path in files:
+        relative_path = relative_mib_path(file_path, mibs_path)
+        try:
+            file_hash = sha256_file(file_path)
+        except OSError:
+            return None
+        current_files[relative_path] = file_hash
+
+    rows = conn.execute(
+        "SELECT m.relative_path, m.sha256, m.parse_status, "
+        "m.parser_version, m.source_commit, m.node_count, "
+        "(SELECT COUNT(*) FROM snmp_mib_nodes AS n "
+        " WHERE n.mib_id = m.id) AS node_record_count "
+        "FROM snmp_mibs AS m "
+        "WHERE m.source_type = 'librenms' AND m.source_id = ? AND m.is_active = 1 "
+        "AND m.relative_path <> ''",
+        (source_id,),
+    ).fetchall()
+    rows_by_path: dict[str, Any] = {}
+    for row in rows:
+        relative_path = str(_row_value(row, 0, "relative_path") or "")
+        if relative_path in relative_paths:
+            if relative_path in rows_by_path:
+                return None
+            rows_by_path[relative_path] = row
+    if set(rows_by_path) != relative_paths:
+        return None
+
+    for relative_path in relative_paths:
+        row = rows_by_path[relative_path]
+        current_hash = current_files[relative_path]
+        node_count = int(_row_value(row, 5, "node_count") or 0)
+        node_record_count = int(_row_value(row, 6, "node_record_count") or 0)
+        if str(_row_value(row, 1, "sha256") or "").strip().lower() != current_hash:
+            return None
+        if str(_row_value(row, 2, "parse_status") or "") not in {"parsed", "zero_node"}:
+            return None
+        if str(_row_value(row, 3, "parser_version") or "") != PARSER_VERSION:
+            return None
+        if str(_row_value(row, 4, "source_commit") or "") != source_commit:
+            return None
+        if node_record_count != node_count:
+            return None
+
+    return {
+        "run_id": str(_row_value(run_row, 0, "id") or ""),
+        "nodes": int(_row_value(run_row, 1, "total_nodes") or 0),
+        "zero_node": int(_row_value(run_row, 2, "zero_node_files") or 0),
+    }
+
+
+def _acquire_import_lock(conn: Any, source_id: str) -> bool:
+    """Serialize source initialization across backend workers."""
+    conn.execute(
+        "SELECT pg_advisory_lock(hashtext(?))",
+        (f"nexora:{MIB_CACHE_VERSION}:{source_id}",),
+    )
+    return True
+
+
+def _release_import_lock(conn: Any, source_id: str, held: bool) -> None:
+    if not held:
+        return
+    try:
+        conn.rollback()
+    except Exception:
+        pass
+    try:
+        conn.execute(
+            "SELECT pg_advisory_unlock(hashtext(?))",
+            (f"nexora:{MIB_CACHE_VERSION}:{source_id}",),
+        )
+        conn.commit()
+    except Exception:
+        # Closing a PostgreSQL session also releases a session advisory lock.
+        # Keep this best-effort path free of a second exception that could hide
+        # the original import failure.
+        try:
+            conn.rollback()
+        except Exception:
+            pass
+
+
 def import_mibs_from_directory(
     mibs_dir: Path = MIBS_DIR,
     target_vendors: list[str] | None = None,
     max_files: int | None = None,
     retire_out_of_scope: bool = False,
     retire_missing_files: bool = True,
+    rules_source_commit: str = "",
+    rules_contract_version: str = "",
 ) -> dict[str, Any]:
-    """Scan and parse a local LibreNMS snapshot into the MIB repository."""
+    """Scan and parse a local LibreNMS snapshot into the MIB repository.
+
+    A completed snapshot is reused across process restarts when its durable
+    PostgreSQL marker still matches the pinned source and parser/rule
+    dependencies.  The lock and marker are acquired before building the
+    dependency symbol index so concurrent workers cannot duplicate the
+    expensive initialization.
+    """
     mibs_path = Path(mibs_dir).resolve()
     if not mibs_path.exists():
         logger.error("MIBs directory does not exist: %s", mibs_path)
@@ -362,9 +614,8 @@ def import_mibs_from_directory(
     if max_files is not None:
         files = files[: max(0, max_files)]
 
-    global_symbols, symbols_by_vendor = build_symbol_index(all_files, mibs_path)
     conn = get_db_connection()
-
+    lock_held = False
     run_id = new_id("mib-run")
     manifest_entries: list[dict[str, Any]] = []
     seen_relative_paths: set[str] = set()
@@ -527,8 +778,46 @@ def import_mibs_from_directory(
             retired += 1
         return retired
 
-    logger.info("Scanning %d MIB candidates in %s...", len(files), mibs_path)
     try:
+        lock_held = _acquire_import_lock(conn, source_id)
+        cache_marker = _persistent_cache_marker(
+            conn,
+            mibs_path=mibs_path,
+            files=files,
+            source_id=source_id,
+            source_commit=source_commit,
+            rules_source_commit=rules_source_commit,
+            rules_contract_version=rules_contract_version,
+            max_files=max_files,
+        )
+        if cache_marker is not None:
+            logger.info(
+                "Reusing completed LibreNMS MIB snapshot %s (%d files, parser %s)",
+                cache_marker["run_id"],
+                len(files),
+                PARSER_VERSION,
+            )
+            return {
+                "success": True,
+                "cached": True,
+                "run_id": cache_marker["run_id"],
+                "source_id": source_id,
+                "source_commit": source_commit,
+                "imported": 0,
+                "updated": 0,
+                "processed": 0,
+                "total_files": len(files),
+                "nodes": cache_marker["nodes"],
+                "errors": 0,
+                "skipped": len(files),
+                "duplicates": len(files),
+                "zero_node": cache_marker["zero_node"],
+                "deactivated": 0,
+                "deactivated_out_of_scope": 0,
+                "elapsed_seconds": round(time.time() - start_time, 2),
+            }
+
+        logger.info("Scanning %d MIB candidates in %s...", len(files), mibs_path)
         _upsert_source()
         conn.execute(
             "INSERT INTO snmp_mib_import_runs "
@@ -537,6 +826,10 @@ def import_mibs_from_directory(
             (run_id, source_id, source_commit, str(mibs_path.resolve()), PARSER_VERSION, len(files), now, now, now),
         )
         conn.commit()
+
+        # Build the dependency index only after the durable cache check and
+        # while the session advisory lock is held.
+        global_symbols, symbols_by_vendor = build_symbol_index(all_files, mibs_path)
 
         for file_path in files:
             relative_path = relative_mib_path(file_path, mibs_path)
@@ -558,6 +851,7 @@ def import_mibs_from_directory(
             try:
                 exact_row = conn.execute(
                     "SELECT m.id, m.name, m.node_count, m.parse_status, "
+                    "m.parser_version, m.source_commit, "
                     "(SELECT COUNT(*) FROM snmp_mib_nodes AS n "
                     " WHERE n.mib_id = m.id AND TRIM(COALESCE(n.oid, '')) <> '') AS resolved_node_count "
                     "FROM snmp_mibs AS m "
@@ -568,9 +862,14 @@ def import_mibs_from_directory(
                 ).fetchone()
                 exact_mib_id = str(_value(exact_row, "id", 0) or "") if exact_row else ""
                 exact_node_count = int(_value(exact_row, "node_count", 2) or 0) if exact_row else 0
-                exact_resolved_count = int(_value(exact_row, "resolved_node_count", 4) or 0) if exact_row else 0
+                exact_resolved_count = int(_value(exact_row, "resolved_node_count", 6) or 0) if exact_row else 0
                 needs_oid_repair = bool(exact_row and exact_node_count > 0 and exact_resolved_count < exact_node_count)
-                if exact_row and str(_value(exact_row, "parse_status", 3) or "") in {"parsed", "zero_node"} and not needs_oid_repair:
+                exact_is_current = bool(
+                    exact_row
+                    and str(_value(exact_row, "parser_version", 4) or "") == PARSER_VERSION
+                    and str(_value(exact_row, "source_commit", 5) or "") == source_commit
+                )
+                if exact_is_current and str(_value(exact_row, "parse_status", 3) or "") in {"parsed", "zero_node"} and not needs_oid_repair:
                     mib_id = str(_value(exact_row, "id", 0))
                     node_count = int(_value(exact_row, "node_count", 2) or 0)
                     stats["processed_files"] += 1
@@ -738,6 +1037,7 @@ def import_mibs_from_directory(
         conn.commit()
         raise
     finally:
+        _release_import_lock(conn, source_id, lock_held)
         conn.close()
 
     elapsed = time.time() - start_time

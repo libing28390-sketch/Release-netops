@@ -16,6 +16,7 @@ interface DeviceFormModalProps {
   language: string;
   form: Partial<Device>;
   passwordVisible: boolean;
+  platformBindingReadOnly?: boolean;
   onFormChange: (nextForm: Partial<Device>) => void;
   onTogglePasswordVisibility: () => void;
   onClose: () => void;
@@ -80,6 +81,7 @@ const DeviceFormModal: React.FC<DeviceFormModalProps> = ({
   language,
   form,
   passwordVisible,
+  platformBindingReadOnly = false,
   onFormChange,
   onTogglePasswordVisibility,
   onClose,
@@ -158,6 +160,8 @@ const DeviceFormModal: React.FC<DeviceFormModalProps> = ({
   ];
 
   const selectedPlatformValue = form.platform_profile_id || form.platform || 'cisco_ios';
+  const existingBindingReadOnly = mode === 'edit' && platformBindingReadOnly;
+  const hasCmdbAsset = Boolean(form.asset_id);
   const selectedRegistryProfile = registryPlatforms.find((profile) => profile.id === form.platform_profile_id);
   const missingRegistryProfile = form.platform_profile_id && !selectedRegistryProfile;
   const formVendor = inferPlatformVendor(form.vendor, form.platform);
@@ -171,6 +175,7 @@ const DeviceFormModal: React.FC<DeviceFormModalProps> = ({
   });
 
   const handlePlatformChange = (value: string) => {
+    if (existingBindingReadOnly) return;
     const profile = registryPlatforms.find((item) => item.id === value);
     if (profile) {
       onFormChange({
@@ -241,10 +246,16 @@ const DeviceFormModal: React.FC<DeviceFormModalProps> = ({
                 type="text"
                 value={form.hostname || ''}
                 title="Device hostname"
+                readOnly={hasCmdbAsset}
                 onChange={(event) => handleFieldChange('hostname', event.target.value)}
-                className="w-full rounded-xl border border-black/5 bg-black/[0.02] px-4 py-2.5 text-sm outline-none transition-colors focus:border-black/20 focus:bg-white"
+                className={`w-full rounded-xl border border-black/5 px-4 py-2.5 text-sm outline-none transition-colors ${hasCmdbAsset
+                  ? 'cursor-not-allowed bg-black/[0.04] text-black/60'
+                  : 'bg-black/[0.02] focus:border-black/20 focus:bg-white'}`}
                 placeholder="e.g. Core-SW-01"
               />
+              {hasCmdbAsset && <p className="mt-1 text-[11px] text-cyan-700">
+                {language === 'zh' ? '主机名由 CMDB 维护，请在资产管理中修改。' : 'Hostname is maintained by CMDB; edit it in Asset Management.'}
+              </p>}
             </div>
             <div>
               <label className="mb-1.5 block text-xs font-medium uppercase tracking-wider text-black/60">IP Address</label>
@@ -272,6 +283,7 @@ const DeviceFormModal: React.FC<DeviceFormModalProps> = ({
               <select
                 value={selectedPlatformValue}
                 title={language === 'zh' ? '选择设备平台' : 'Select device platform'}
+                disabled={existingBindingReadOnly}
                 onChange={(event) => handlePlatformChange(event.target.value)}
                 className="w-full rounded-xl border border-black/5 bg-black/[0.02] px-4 py-2.5 text-sm outline-none transition-colors focus:border-black/20 focus:bg-white"
               >
@@ -296,6 +308,9 @@ const DeviceFormModal: React.FC<DeviceFormModalProps> = ({
                   ))}
                 </optgroup>
               </select>
+              {existingBindingReadOnly && <p className="mt-1 text-[11px] text-cyan-700">{language === 'zh'
+                ? '已有平台绑定只能由管理员在设备详情或“批量管理平台绑定”中修改、解除。'
+                : 'An existing platform binding can only be changed or removed by an Administrator through device details or batch platform bindings.'}</p>}
               <p className="mt-1 text-[10px] text-black/40">
                 {selectedRegistryProfile
                   ? (language === 'zh' ? `已绑定：${selectedRegistryProfile.platform_code}` : `Bound to ${selectedRegistryProfile.platform_code}`)

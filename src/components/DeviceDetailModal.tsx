@@ -19,6 +19,7 @@ import { apiRequest } from '../api/http';
 import PlatformProfileSelector, { type PlatformProfileOption } from './PlatformProfileSelector';
 import { inferPlatformVendor, platformVendorLabel } from '../utils/platformVendor';
 import { extractSoftwareMajorVersion, getDevicePlatformAdaptation, getPlatformProfileDisplayLabel, getProfileAdaptationMajorVersion, getProfileAdaptationVersion } from '../utils/platformVersion';
+import { getPlatformBindingErrorMessage } from '../utils/platformBindingErrors';
 
 interface PlatformIdentificationResult {
   status?: string;
@@ -38,6 +39,7 @@ interface DeviceDetailModalProps {
   language: string;
   t: (key: string) => string;
   viewingDevice: Device;
+  currentUserRole?: string;
   viewingDeviceConnectionSummary: DeviceConnectionCheckSummary | null;
   connectionTestingDeviceId: string | null;
   onClose: () => void;
@@ -212,6 +214,7 @@ const DeviceDetailModal: React.FC<DeviceDetailModalProps> = ({
   language,
   t,
   viewingDevice,
+  currentUserRole,
   viewingDeviceConnectionSummary,
   connectionTestingDeviceId,
   onClose,
@@ -232,6 +235,7 @@ const DeviceDetailModal: React.FC<DeviceDetailModalProps> = ({
   const [platformMessage, setPlatformMessage] = useState('');
   const [selectedPlatformProfileId, setSelectedPlatformProfileId] = useState(viewingDevice.platform_profile_id || '');
   const [lockPlatformBinding, setLockPlatformBinding] = useState(Boolean(viewingDevice.platform_locked));
+  const isAdministrator = currentUserRole === 'Administrator';
   const snmpProfile = viewingDevice.snmp_metric_profile;
   const snmpProfileStatus = snmpProfile?.status || 'none';
   const snmpProfileSource = snmpProfile?.template_source || snmpProfile?.source || 'template_not_applied';
@@ -274,6 +278,11 @@ const DeviceDetailModal: React.FC<DeviceDetailModalProps> = ({
   const hasVersionConflict = deviceSoftwareMajor !== null
     && profileAdaptationMajor !== null
     && deviceSoftwareMajor !== profileAdaptationMajor;
+  const platformSelectionChanged = Boolean(viewingDevice.platform_profile_id)
+    && String(viewingDevice.platform_profile_id) !== String(selectedPlatformProfileId);
+  const isUnchangedBinding = platformAlreadyBound
+    && !platformSelectionChanged
+    && Boolean(viewingDevice.platform_locked) === Boolean(lockPlatformBinding);
 
   useEffect(() => {
     let active = true;
@@ -285,10 +294,17 @@ const DeviceDetailModal: React.FC<DeviceDetailModalProps> = ({
     setPlatformProfilesLoading(true);
     void apiRequest<{ data: PlatformProfileOption[] }>('/api/platform-registry/profiles')
       .then((response) => { if (active) setPlatformProfiles(response.data || []); })
-      .catch(() => { if (active) setPlatformProfiles([]); })
+      .catch((cause) => {
+        if (active) {
+          setPlatformProfiles([]);
+          setPlatformError(cause instanceof Error
+            ? cause.message
+            : (language === 'zh' ? '平台目录加载失败，请稍后重试' : 'Failed to load the platform catalog; try again later'));
+        }
+      })
       .finally(() => { if (active) setPlatformProfilesLoading(false); });
     return () => { active = false; };
-  }, [viewingDevice.id, viewingDevice.platform_locked, viewingDevice.platform_profile_id]);
+  }, [language, viewingDevice.id, viewingDevice.platform_locked, viewingDevice.platform_profile_id]);
 
   const detectPlatform = async () => {
     setPlatformDetectionLoading(true);
@@ -340,8 +356,15 @@ const DeviceDetailModal: React.FC<DeviceDetailModalProps> = ({
       setPlatformResult((current) => current ? { ...current, status: 'BOUND' } : { status: 'BOUND' });
       return;
     }
-    const platformChanged = Boolean(viewingDevice.platform_profile_id)
-      && String(viewingDevice.platform_profile_id) !== String(selectedPlatformProfileId);
+    const platformChanged = platformSelectionChanged;
+    if (platformChanged && !isAdministrator) {
+      setPlatformError(language === 'zh' ? '已有平台绑定的修改仅限管理员。' : 'Changing an existing platform binding is restricted to Administrators.');
+      return;
+    }
+    if (hasVersionConflict && !isAdministrator) {
+      setPlatformError(language === 'zh' ? '版本不一致覆盖仅限管理员，请选择匹配设备软件版本的适配平台。' : 'Only Administrators may override a version mismatch; select an adaptation matching the device software.');
+      return;
+    }
     if (platformChanged || hasVersionConflict) {
       const versionWarning = hasVersionConflict
         ? (language === 'zh'
@@ -363,7 +386,7 @@ const DeviceDetailModal: React.FC<DeviceDetailModalProps> = ({
         body: JSON.stringify({
           platform_profile_id: selectedPlatformProfileId,
           lock: bindingLock,
-          force: platformChanged,
+          force: platformChanged && isAdministrator,
           allow_version_mismatch: hasVersionConflict,
         }),
       });
@@ -393,7 +416,7 @@ const DeviceDetailModal: React.FC<DeviceDetailModalProps> = ({
         : (bindingUnchanged ? `Already bound to ${selectedProfileName}; no duplicate binding is needed.` : `Platform binding saved: ${selectedProfileName}`));
       setPlatformResult((current) => current ? { ...current, status: 'BOUND' } : { status: 'BOUND' });
     } catch (cause) {
-      setPlatformError(cause instanceof Error ? cause.message : (language === 'zh' ? '平台绑定失败' : 'Platform binding failed'));
+      setPlatformError(getPlatformBindingErrorMessage(cause, language));
     } finally {
       setPlatformBindingLoading(false);
     }
@@ -525,7 +548,7 @@ const DeviceDetailModal: React.FC<DeviceDetailModalProps> = ({
                 <div className="mb-3 flex items-center justify-between gap-2">
                   <div>
                     <h4 className="text-[10px] font-bold uppercase tracking-widest text-cyan-900">{language === 'zh' ? '平台识别与绑定' : 'Platform identification & binding'}</h4>
-                    <p className="mt-1 text-[11px] text-cyan-800/70">{platformAlreadyBound ? (language === 'zh' ? '当前绑定控制自动化驱动、命令和解析模板；修改已有绑定需要管理员确认。' : 'The current binding controls the automation driver, commands, and parser; changing it requires Administrator confirmation.') : (language === 'zh' ? '首次绑定后自动锁定，并决定自动化驱动、命令和解析模板。' : 'The first binding is locked automatically and controls the automation driver, commands, and parser.')}</p>
+                    <p className="mt-1 text-[11px] text-cyan-800/70">{platformAlreadyBound ? (language === 'zh' ? `当前绑定控制自动化驱动、命令和解析模板；修改已有绑定需要管理员确认。${isAdministrator ? '' : '当前账号不能修改或解除已有绑定。'}` : `The current binding controls the automation driver, commands, and parser; changing it requires Administrator confirmation.${isAdministrator ? '' : ' The current account cannot change or remove an existing binding.'}`) : (language === 'zh' ? '首次绑定后自动锁定，并决定自动化驱动、命令和解析模板。' : 'The first binding is locked automatically and controls the automation driver, commands, and parser.')}</p>
                   </div>
                   <button type="button" onClick={() => void detectPlatform()} disabled={platformDetectionLoading} className="inline-flex shrink-0 items-center gap-1 rounded-lg bg-cyan-700 px-2.5 py-1.5 text-[11px] font-semibold text-white disabled:opacity-50">
                     {platformDetectionLoading ? <RotateCcw size={12} className="animate-spin" /> : <Activity size={12} />}
@@ -539,7 +562,7 @@ const DeviceDetailModal: React.FC<DeviceDetailModalProps> = ({
                     language={language}
                     allowedVendor={bindingVendor}
                     requireVendor
-                    disabled={platformProfilesLoading || platformBindingLoading || platformIdentityConflict}
+                    disabled={platformProfilesLoading || platformBindingLoading || platformIdentityConflict || (platformAlreadyBound && !isAdministrator)}
                     title={language === 'zh' ? '选择同厂商的平台版本' : 'Select a platform version from the same vendor'}
                     onChange={(profile) => setSelectedPlatformProfileId(profile?.id || '')}
                   />
@@ -549,16 +572,16 @@ const DeviceDetailModal: React.FC<DeviceDetailModalProps> = ({
                   {hasVersionConflict && selectedPlatformProfile && (
                     <div className="mt-2 rounded-lg border border-rose-200 bg-rose-50 px-3 py-2 text-[11px] leading-5 text-rose-700" role="alert">
                       {language === 'zh'
-                        ? `版本提示：设备软件主版本为 v${deviceSoftwareMajor}，目标命令/解析适配版本为 v${profileAdaptationMajor}。保存时会要求管理员明确确认，且不会修改设备实际软件版本。`
-                        : `Version notice: device software major is v${deviceSoftwareMajor}, while the target command/parser adaptation is v${profileAdaptationMajor}. Saving requires explicit Administrator confirmation and does not change the device software version.`}
+                        ? `版本提示：设备软件主版本为 v${deviceSoftwareMajor}，目标命令/解析适配版本为 v${profileAdaptationMajor}。${isAdministrator ? '保存时会要求管理员明确确认，且不会修改设备实际软件版本。' : '当前账号无权覆盖版本不一致，请选择匹配版本。'}`
+                        : `Version notice: device software major is v${deviceSoftwareMajor}, while the target command/parser adaptation is v${profileAdaptationMajor}. ${isAdministrator ? 'Saving requires explicit Administrator confirmation and does not change the device software version.' : 'The current account cannot override this mismatch; select a matching version.'}`}
                     </div>
                   )}
                   <div className="flex justify-end">
-                    <button type="button" onClick={() => void bindPlatform()} disabled={platformBindingLoading || platformIdentityConflict || !selectedPlatformProfileId} className="rounded-lg border border-cyan-300 bg-white px-2.5 py-1.5 text-[11px] font-semibold text-cyan-800 disabled:opacity-50">{platformBindingLoading ? (language === 'zh' ? '保存中…' : 'Saving…') : (language === 'zh' ? '保存绑定' : 'Save binding')}</button>
+                    <button type="button" onClick={() => void bindPlatform()} disabled={platformBindingLoading || platformIdentityConflict || !selectedPlatformProfileId || (platformSelectionChanged && !isAdministrator) || (hasVersionConflict && !isAdministrator && !isUnchangedBinding)} className="rounded-lg border border-cyan-300 bg-white px-2.5 py-1.5 text-[11px] font-semibold text-cyan-800 disabled:opacity-50">{platformBindingLoading ? (language === 'zh' ? '保存中…' : 'Saving…') : (language === 'zh' ? '保存绑定' : 'Save binding')}</button>
                   </div>
-                  {platformResult && <div className="text-[11px] text-cyan-900/80"><span className="font-semibold">{language === 'zh' ? ({ MATCHED: '已找到平台候选', NO_MATCH: '暂无平台候选', VENDOR_CONFLICT: '厂商信息冲突', INVENTORY_IDENTITY_CONFLICT: 'SNMP 与资产信息不一致', BOUND: '已绑定' } as Record<string, string>)[platformResult.status || ''] || platformResult.status || '—' : platformResult.status || '—'}</span>{identificationVersion ? <span className="ml-2">{language === 'zh' ? '版本' : 'Version'} {identificationVersion}</span> : null}{platformResult.commands?.length ? <span className="ml-2 text-cyan-700/70">{platformResult.commands.join(', ')}</span> : null}{platformResult.suggestions?.length ? <div className="mt-1 space-y-1">{platformResult.suggestions.slice(0, 3).map((item) => <button type="button" key={item.platform_profile_id || item.platform_code} onClick={() => item.platform_profile_id && setSelectedPlatformProfileId(item.platform_profile_id)} className="block w-full rounded-md px-1.5 py-1 text-left hover:bg-cyan-50">{item.name_zh || item.platform_code} <span className="text-cyan-700/60">{identificationVersion ? `${language === 'zh' ? '· 版本' : '· Version'} ${identificationVersion}` : `${language === 'zh' ? '· 匹配分' : '· Score'} ${Number(item.score || 0).toFixed(2)}`}</span></button>)}</div> : null}</div>}
+                  {platformResult && <div className="text-[11px] text-cyan-900/80"><span className="font-semibold">{language === 'zh' ? ({ MATCHED: '已找到平台候选', NO_MATCH: '暂无平台候选', VENDOR_CONFLICT: '厂商信息冲突', INVENTORY_IDENTITY_CONFLICT: 'SNMP 与资产信息不一致', BOUND: '已绑定' } as Record<string, string>)[platformResult.status || ''] || platformResult.status || '—' : platformResult.status || '—'}</span>{identificationVersion ? <span className="ml-2">{language === 'zh' ? '版本' : 'Version'} {identificationVersion}</span> : null}{platformResult.commands?.length ? <span className="ml-2 text-cyan-700/70">{platformResult.commands.join(', ')}</span> : null}{platformResult.suggestions?.length ? <div className="mt-1 space-y-1">{platformResult.suggestions.slice(0, 3).map((item) => <button type="button" key={item.platform_profile_id || item.platform_code} onClick={() => item.platform_profile_id && setSelectedPlatformProfileId(item.platform_profile_id)} disabled={platformAlreadyBound && !isAdministrator} className="block w-full rounded-md px-1.5 py-1 text-left hover:bg-cyan-50 disabled:cursor-not-allowed disabled:opacity-50">{item.name_zh || item.platform_code} <span className="text-cyan-700/60">{identificationVersion ? `${language === 'zh' ? '· 版本' : '· Version'} ${identificationVersion}` : `${language === 'zh' ? '· 匹配分' : '· Score'} ${Number(item.score || 0).toFixed(2)}`}</span></button>)}</div> : null}</div>}
                   {platformMessage && <div className="text-[11px] font-semibold text-emerald-700">{platformMessage}</div>}
-                  {platformError && <div className="text-[11px] text-rose-700">{platformError}</div>}
+                  {platformError && <div role="alert" className="text-[11px] text-rose-700">{platformError}</div>}
                 </div>
               </div>
 

@@ -25,3 +25,19 @@ export const excludeServerTopologyDevices = <T extends Pick<Device, 'id' | 'role
     excludedIds,
   };
 };
+
+/** Keep LLDP-only, unmatched peers in diagnostics, but never draw them as extra assets. */
+export const projectManagedTopologyCanvas = <
+  D extends { id: string; is_unmanaged?: boolean },
+  L extends { source_device_id?: string; target_device_id?: string; is_unmanaged?: boolean },
+>(devices: D[], links: L[]) => {
+  const managedDevices = devices.filter((device) => !device.is_unmanaged);
+  const managedDeviceIds = new Set(managedDevices.map((device) => device.id));
+  const managedLinks = links.filter((link) => (
+    !link.is_unmanaged
+    && Boolean(link.source_device_id && managedDeviceIds.has(link.source_device_id))
+    && Boolean(link.target_device_id && managedDeviceIds.has(link.target_device_id))
+  ));
+
+  return { devices: managedDevices, links: managedLinks };
+};

@@ -237,6 +237,7 @@ export const AppModals: React.FC<any> = (props) => {
           mode="edit"
           language={language}
           form={editForm}
+          platformBindingReadOnly={Boolean(editingDevice.platform_profile_id)}
           passwordVisible={showEditDevicePwd}
           onFormChange={setEditForm}
           onTogglePasswordVisibility={() => setShowEditDevicePwd((value) => !value)}
@@ -311,6 +312,7 @@ export const AppModals: React.FC<any> = (props) => {
           language={language}
           t={t}
           viewingDevice={viewingDevice}
+          currentUserRole={currentUser?.role}
           viewingDeviceConnectionSummary={viewingDevice.id ? deviceConnectionChecks[viewingDevice.id] : null}
           connectionTestingDeviceId={connectionTestingDeviceId}
           onClose={() => setShowDetailsModal(false)}

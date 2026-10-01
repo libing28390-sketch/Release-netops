@@ -116,6 +116,7 @@ interface InventoryDevicesTabProps {
   setActiveTab: (tab: string) => void;
   onRefresh: () => void;
   language: string;
+  currentUserRole?: string;
   t: (key: string) => string;
 }
 
@@ -125,7 +126,7 @@ const InventoryDevicesTab: React.FC<InventoryDevicesTabProps> = ({
   handleTestConnection,
   deviceConnectionChecks, connectionTestingDeviceId,
   setShowAddModal, setShowEditModal, setEditingDevice, setEditForm,
-  setSelectedDevice, setActiveTab, onRefresh, language, t,
+  setSelectedDevice, setActiveTab, onRefresh, language, currentUserRole, t,
 }) => {
   const zh = language === 'zh';
 
@@ -752,6 +753,7 @@ const InventoryDevicesTab: React.FC<InventoryDevicesTabProps> = ({
           deviceIds={selectedDeviceIds}
           devices={inventoryRows}
           language={language}
+          currentUserRole={currentUserRole}
           onClose={() => setBatchPlatformOpen(false)}
           onCompleted={async () => {
             setBatchPlatformOpen(false);

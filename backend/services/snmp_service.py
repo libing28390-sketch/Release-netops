@@ -36,6 +36,7 @@ Raisecom ROS（接口使用 IF-MIB，CPU/内存优先使用 HOST-RESOURCES-MIB�
 
 import asyncio
 import hashlib
+import inspect
 import json
 import math
 import re
@@ -1753,9 +1754,11 @@ async def collect_snmp_lldp_neighbors(
 ) -> list[dict[str, Any]]:
     """Collect LLDP neighbor relationships via the standard IEEE 802.1AB LLDP-MIB.
 
-    Uses lightweight, zero-SSH SNMP walks and returns an empty list when LLDP
-    is unavailable or no neighbors are reported. The topology caller can then
-    use its CLI LLDP fallback.
+    Uses lightweight, zero-SSH SNMP walks. A usable neighbor table survives
+    failures in optional LLDP columns; the caller records it as partial and
+    merges the evidence without expiring unseen links. If no usable neighbor
+    can be formed, a failed walk remains an error so it cannot be mistaken for
+    a complete empty topology snapshot.
     Returns a list of neighbor dicts with:
         local_interface, neighbor_name, neighbor_interface, mgmt_address,
         chassis_id, neighbor_platform, protocol ('lldp')
@@ -1766,6 +1769,11 @@ async def collect_snmp_lldp_neighbors(
     # configured fallback (for example, SSH) instead.
     if not str(community or '').strip():
         raise ValueError('SNMP community is required for LLDP discovery')
+
+    class _SnmpLLDPBatch(list[dict[str, Any]]):
+        def __init__(self, records: list[dict[str, Any]], collection_status: str) -> None:
+            super().__init__(records)
+            self.collection_status = collection_status
 
     neighbors: list[dict[str, Any]] = []
 
@@ -1789,28 +1797,70 @@ async def collect_snmp_lldp_neighbors(
         return parts[0] if parts else '1', '1'
 
     # Read the related IEEE 802.1AB LLDP-MIB columns in parallel.
+    walk_errors: list[BaseException] = []
+    walk_signature_target = getattr(_snmp_walk, 'side_effect', None)
+    if not callable(walk_signature_target):
+        walk_signature_target = _snmp_walk
+    try:
+        walk_parameters = inspect.signature(walk_signature_target).parameters.values()
+        supports_error_flag = any(
+            item.name == 'raise_on_error' or item.kind == inspect.Parameter.VAR_KEYWORD
+            for item in walk_parameters
+        )
+    except (TypeError, ValueError):
+        supports_error_flag = False
+
+    async def _walk_lldp_column(oid: str) -> list[tuple[str, str]]:
+        # The LLDP collector needs to distinguish an empty table from a failed
+        # walk. Keep compatibility with older test doubles and plugins that
+        # expose the historical _snmp_walk signature without raise_on_error.
+        kwargs: dict[str, Any] = {'timeout': timeout, 'version': version}
+        if supports_error_flag:
+            kwargs['raise_on_error'] = True
+        return await _snmp_walk(ip, community, oid, port, **kwargs)
+
     try:
         lldp_tasks = [
-            _snmp_walk(ip, community, '1.0.8802.1.1.2.1.4.1.1.9', port, timeout=timeout, version=version),  # lldpRemSysName (standard col 9)
-            _snmp_walk(ip, community, '1.0.8802.1.1.2.1.4.1.1.7', port, timeout=timeout, version=version),  # lldpRemPortId (standard col 7)
-            _snmp_walk(ip, community, '1.0.8802.1.1.2.1.4.1.1.8', port, timeout=timeout, version=version),  # lldpRemPortDesc (col 8)
-            _snmp_walk(ip, community, '1.0.8802.1.1.2.1.4.1.1.2', port, timeout=timeout, version=version),  # lldpRemChassisId (col 2)
-            _snmp_walk(ip, community, '1.0.8802.1.1.2.1.4.1.1.10', port, timeout=timeout, version=version), # lldpRemSysDesc (col 10)
-            _snmp_walk(ip, community, '1.0.8802.1.1.2.1.4.2.1', port, timeout=timeout, version=version),    # lldpRemManAddrTable
-            _snmp_walk(ip, community, '1.0.8802.1.1.2.1.3.7.1.3', port, timeout=timeout, version=version),  # lldpLocPortId
-            _snmp_walk(ip, community, '1.3.6.1.2.1.31.1.1.1.1', port, timeout=timeout, version=version),    # ifName
-            _snmp_walk(ip, community, '1.0.8802.1.1.2.1.4.1.1.4', port, timeout=timeout, version=version),  # lldpRemPortId (fallback col 4)
+            _walk_lldp_column('1.0.8802.1.1.2.1.4.1.1.9'),  # lldpRemSysName (standard col 9)
+            _walk_lldp_column('1.0.8802.1.1.2.1.4.1.1.7'),  # lldpRemPortId (standard col 7)
+            _walk_lldp_column('1.0.8802.1.1.2.1.4.1.1.8'),  # lldpRemPortDesc (col 8)
+            _walk_lldp_column('1.0.8802.1.1.2.1.4.1.1.2'),  # lldpRemChassisId (col 2)
+            _walk_lldp_column('1.0.8802.1.1.2.1.4.1.1.10'), # lldpRemSysDesc (col 10)
+            _walk_lldp_column('1.0.8802.1.1.2.1.4.2.1'),    # lldpRemManAddrTable
+            _walk_lldp_column('1.0.8802.1.1.2.1.3.7.1.3'),  # lldpLocPortId
+            _walk_lldp_column('1.3.6.1.2.1.31.1.1.1.1'),    # ifName
+            _walk_lldp_column('1.0.8802.1.1.2.1.4.1.1.4'),  # lldpRemPortId (fallback col 4)
         ]
         results = await asyncio.gather(*lldp_tasks, return_exceptions=True)
-        rem_sys_names = results[0] if isinstance(results[0], list) else []
-        rem_port_ids = results[1] if isinstance(results[1], list) else []
-        rem_port_descs = results[2] if isinstance(results[2], list) else []
-        rem_chassis_ids = results[3] if isinstance(results[3], list) else []
-        rem_sys_descs = results[4] if isinstance(results[4], list) else []
-        rem_man_addrs = results[5] if isinstance(results[5], list) else []
-        loc_port_ids = dict(results[6]) if isinstance(results[6], list) else {}
-        if_names = dict(results[7]) if isinstance(results[7], list) else {}
-        rem_port_ids_fallback = results[8] if len(results) > 8 and isinstance(results[8], list) else []
+        if any(isinstance(result, asyncio.CancelledError) for result in results):
+            raise asyncio.CancelledError
+        walk_errors = [result for result in results if isinstance(result, Exception)]
+        if walk_errors:
+            error_types = ','.join(sorted({type(error).__name__ for error in walk_errors}))
+            logger.warning(
+                'SNMP LLDP MIB walks had failures on %s (%s/%s, error_types=%s)',
+                ip,
+                len(walk_errors),
+                len(results),
+                error_types,
+            )
+
+        def _rows_at(index: int) -> list[tuple[str, str]]:
+            result = results[index]
+            if isinstance(result, list):
+                return result
+            partial_rows = getattr(result, 'partial_results', None)
+            return partial_rows if isinstance(partial_rows, list) else []
+
+        rem_sys_names = _rows_at(0)
+        rem_port_ids = _rows_at(1)
+        rem_port_descs = _rows_at(2)
+        rem_chassis_ids = _rows_at(3)
+        rem_sys_descs = _rows_at(4)
+        rem_man_addrs = _rows_at(5)
+        loc_port_ids = dict(_rows_at(6))
+        if_names = dict(_rows_at(7))
+        rem_port_ids_fallback = _rows_at(8)
 
         sys_name_map = { _parse_lldp_suffix(s): v for s, v in rem_sys_names }
         port_id_map = { _parse_lldp_suffix(s): v for s, v in rem_port_ids }
@@ -1893,7 +1943,19 @@ async def collect_snmp_lldp_neighbors(
     except Exception as exc:
         logger.debug("SNMP LLDP walk encounter error on %s: %s", ip, exc)
 
-    return neighbors
+    if walk_errors:
+        error_types = ','.join(sorted({type(error).__name__ for error in walk_errors}))
+        if neighbors:
+            logger.warning(
+                'Using %d SNMP LLDP neighbor(s) from partial MIB data on %s; '
+                'the topology snapshot will be merged without aging old links (error_types=%s)',
+                len(neighbors), ip, error_types,
+            )
+            return _SnmpLLDPBatch(neighbors, 'partial')
+        failure_scope = 'all_mib_walks_failed' if len(walk_errors) == len(results) else 'partial_mib_walks_failed'
+        raise RuntimeError(f'snmp_lldp_walk_failed:{failure_scope}:{error_types}')
+
+    return _SnmpLLDPBatch(neighbors, 'success')
 
 
 async def _collect_h3c_fan_psu_status(

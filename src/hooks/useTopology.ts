@@ -24,6 +24,28 @@ export type TopologyInterfaceSnapshot = {
   operationalState: TopologyOperationalState;
 };
 
+export type TopologyEvidenceStatus =
+  | 'bidirectional_confirmed'
+  | 'single_sided_evidence'
+  | 'neighbor_mismatch'
+  | 'stale'
+  | 'unknown'
+  | 'not_applicable';
+
+export type TopologyCollectionEvidence = {
+  state: 'complete' | 'failed' | 'collecting' | 'expired' | 'unknown';
+  completed_at?: string | null;
+  protocol_results?: Partial<Record<'snmp' | 'ssh', { status: string; detail?: string }>>;
+};
+
+export type TopologyEvidenceDirection = {
+  source_device_id: string;
+  target_device_id: string;
+  source_port?: string;
+  target_port?: string;
+  collection_sources: string[];
+};
+
 export type TopologyDecoratedLink = {
   id?: string;
   link_key?: string;
@@ -74,6 +96,10 @@ export type TopologyDecoratedLink = {
     cmdb_hostname: string;
     target_device_id: string;
   }>;
+  evidence_status?: TopologyEvidenceStatus;
+  evidence_directions?: TopologyEvidenceDirection[];
+  source_collection_evidence?: TopologyCollectionEvidence;
+  target_collection_evidence?: TopologyCollectionEvidence;
 };
 
 export type TopologySiteSummary = {
@@ -97,6 +123,7 @@ export type TopologyDiscoveryProgress = {
   total_devices: number;
   processed_devices: number;
   success_devices: number;
+  partial_devices?: number;
   failed_devices: number;
   running_devices: number;
   pending_devices: number;
@@ -168,6 +195,9 @@ const toUnmanagedTopologyDevice = (node: any): Device => ({
   observation_count: Number(node?.observation_count || 0),
   protocols: Array.isArray(node?.protocols) ? node.protocols : [],
   connected_device_ids: Array.isArray(node?.connected_device_ids) ? node.connected_device_ids : [],
+  topology_match_status: String(node?.match_status || 'unmatched'),
+  topology_match_method: String(node?.match_method || ''),
+  topology_match_reason_code: String(node?.match_reason_code || ''),
 } as Device);
 
 const normalizeUnmanagedTopologyLink = (link: any) => ({
@@ -251,6 +281,7 @@ export const useTopology = ({ devices, language, showToast, isAuthenticated, ena
   const [topologyDiscoveryDevices, setTopologyDiscoveryDevices] = useState<any[]>([]);
   const [topologySites, setTopologySites] = useState<TopologySiteSummary[]>([]);
   const [topologyNodeMetadata, setTopologyNodeMetadata] = useState<Record<string, Partial<Device>>>({});
+  const [topologyCollectionStatuses, setTopologyCollectionStatuses] = useState<Record<string, Partial<Device>>>({});
   const [topologyGraphNodeDevices, setTopologyGraphNodeDevices] = useState<Device[]>([]);
   const [topologyDataError, setTopologyDataError] = useState('');
   // A topology canvas represents the currently verified graph. Historical
@@ -301,6 +332,12 @@ export const useTopology = ({ devices, language, showToast, isAuthenticated, ena
     authExpiredSignaledRef.current = false;
     if (!linksResponse.ok) throw new Error(`topology_links_${linksResponse.status}`);
     const linksPayload = await linksResponse.json();
+    const collectionStatuses = linksPayload?.device_collection_status;
+    setTopologyCollectionStatuses(
+      collectionStatuses && typeof collectionStatuses === 'object' && !Array.isArray(collectionStatuses)
+        ? collectionStatuses as Record<string, Partial<Device>>
+        : {},
+    );
     const legacyLinks = Array.isArray(linksPayload?.links) ? linksPayload.links : [];
     const unmanagedNodes = (Array.isArray(linksPayload?.unmanaged_nodes) ? linksPayload.unmanaged_nodes : [])
       .map(toUnmanagedTopologyDevice)
@@ -370,6 +407,8 @@ export const useTopology = ({ devices, language, showToast, isAuthenticated, ena
             relation_type: edge.relation_type,
             semantic_relation: edge.semantic_relation || '',
             status: edge.status || 'active',
+            evidence_status: edge.evidence_status || (metadata.reverse_seen ? 'bidirectional_confirmed' : 'unknown'),
+            evidence_directions: Array.isArray(metadata.evidence_directions) ? metadata.evidence_directions : [],
             last_seen: edge.last_seen,
             is_manual: Number(edge.is_manual || 0),
             manual_confirmed: Number(edge.manual_confirmed || 0),
@@ -448,6 +487,7 @@ export const useTopology = ({ devices, language, showToast, isAuthenticated, ena
       setTopologyUnmanagedLinks([]);
       setTopologySites([]);
       setTopologyNodeMetadata({});
+      setTopologyCollectionStatuses({});
       setTopologyGraphNodeDevices([]);
       setTopologyDataError('');
       return;
@@ -540,6 +580,9 @@ export const useTopology = ({ devices, language, showToast, isAuthenticated, ena
         .map((item) => item.trim().toLowerCase())
         .filter(Boolean);
       const evidenceSources = Array.from(new Set([...metadataProtocols, ...discoverySources]));
+      const evidenceDirections = Array.isArray(link.evidence_directions)
+        ? link.evidence_directions
+        : (Array.isArray(metadata.evidence_directions) ? metadata.evidence_directions : []);
       const sourceInterfaceSnapshot = evaluateTopologyInterfaceSnapshot(sourceDevice, link.source_port_normalized || link.source_port);
       const targetInterfaceSnapshot = evaluateTopologyInterfaceSnapshot(targetDevice, link.target_port_normalized || link.target_port);
       const endpointSpeeds = [
@@ -645,6 +688,10 @@ export const useTopology = ({ devices, language, showToast, isAuthenticated, ena
         operational_summary: operationalSummary,
         evidence_sources: evidenceSources,
         reverse_confirmed: Boolean(metadata.reverse_seen),
+        evidence_status: (link.evidence_status || (metadata.reverse_seen ? 'bidirectional_confirmed' : 'unknown')) as TopologyEvidenceStatus,
+        evidence_directions: evidenceDirections,
+        source_collection_evidence: link.source_collection_evidence || { state: 'unknown' },
+        target_collection_evidence: link.target_collection_evidence || { state: 'unknown' },
         identity_warnings: identityWarnings,
         source_interface_snapshot: sourceInterfaceSnapshot,
         target_interface_snapshot: targetInterfaceSnapshot,
@@ -676,12 +723,16 @@ export const useTopology = ({ devices, language, showToast, isAuthenticated, ena
   const graphInventory = useMemo(() => {
     const existingIds = new Set(devices.map((device) => String(device.id)));
     topologyGraphNodeDevices.forEach((device) => existingIds.add(String(device.id)));
-    return [
+    const inventory = [
       ...devices,
       ...topologyGraphNodeDevices.filter((device) => !devices.some((item) => String(item.id) === String(device.id))),
       ...topologyUnmanagedNodes.filter((device) => !existingIds.has(String(device.id))),
     ];
-  }, [devices, topologyGraphNodeDevices, topologyUnmanagedNodes]);
+    return inventory.map((device) => ({
+      ...device,
+      ...(topologyCollectionStatuses[String(device.id)] || {}),
+    }));
+  }, [devices, topologyCollectionStatuses, topologyGraphNodeDevices, topologyUnmanagedNodes]);
 
   const {
     topologySiteOptions,
@@ -1038,8 +1089,8 @@ export const useTopology = ({ devices, language, showToast, isAuthenticated, ena
           await refreshTopologyData();
           showToast(
             language === 'zh'
-              ? `拓扑发现${run.status === 'completed' ? '完成' : '结束'}：成功 ${run.success_devices || 0}，失败 ${run.failed_devices || 0}`
-              : `Topology discovery ${run.status}: ${run.success_devices || 0} succeeded, ${run.failed_devices || 0} failed`,
+              ? `拓扑发现${run.status === 'completed' ? '完成' : '结束'}：成功 ${run.success_devices || 0}，部分 ${run.partial_devices || 0}，失败 ${run.failed_devices || 0}`
+              : `Topology discovery ${run.status}: ${run.success_devices || 0} succeeded, ${run.partial_devices || 0} partial, ${run.failed_devices || 0} failed`,
             run.status === 'failed' ? 'error' : (run.status === 'partial' || run.status === 'cancelled' ? 'info' : 'success'),
           );
           return;

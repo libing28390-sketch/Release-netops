@@ -81,7 +81,7 @@ def test_batch_import_binds_snmp_credential_name_to_asset_and_device(isolated_db
     result = assets.import_assets([
         assets.AssetCreate(
             asset_type="network_device",
-            hostname="imported-snmp-by-name",
+            hostname="imported-placeholder-name",
             management_ip="192.0.2.82",
             vendor="Cisco",
             model="C9300",
@@ -119,6 +119,43 @@ def test_batch_import_binds_snmp_credential_name_to_asset_and_device(isolated_db
     listed = assets.list_assets(q="imported-snmp-by-name", page=1, page_size=10)
     assert listed["items"][0]["snmp_credential_name"] == "import-snmp-monitor"
     assert listed["items"][0]["snmp_community_set"] is True
+
+
+def test_batch_import_keeps_imported_hostname_and_reports_snmp_sync_failure(isolated_db, monkeypatch):
+    async def fake_snmp_get(*_args, **_kwargs):
+        raise TimeoutError('test-only timeout')
+
+    import services.snmp_service as snmp_service
+    monkeypatch.setattr(snmp_service, '_snmp_get', fake_snmp_get)
+    result = assets.import_assets([
+        assets.AssetCreate(
+            asset_type='network_device',
+            hostname='manual-device-name',
+            management_ip='192.0.2.86',
+            vendor='H3C',
+            platform='h3c_comware',
+            lifecycle_status='staging',
+            asset_origin='new',
+            snmp_community='test-community-only',
+        )
+    ], detailed=True)
+
+    assert result['created'] == 1
+    assert result['hostname_sync']['succeeded'] == 0
+    assert result['hostname_sync']['failed'] == 1
+    failure = result['hostname_sync']['failed_items'][0]
+    assert failure['previous_hostname'] == 'manual-device-name'
+    assert failure['status'] == 'failed'
+    assert 'TimeoutError' in failure['error']
+    assert 'test-community-only' not in str(result)
+    with get_db_connection() as conn:
+        row = conn.execute(
+            '''SELECT pa.hostname AS asset_hostname, d.hostname AS device_hostname
+               FROM physical_assets pa JOIN devices d ON d.asset_id = pa.id
+               WHERE pa.management_ip = ?''',
+            ('192.0.2.86',),
+        ).fetchone()
+    assert row['asset_hostname'] == row['device_hostname'] == 'manual-device-name'
 
 
 def test_batch_import_rejects_non_snmp_credential_name(isolated_db):

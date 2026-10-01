@@ -3255,6 +3255,15 @@ def import_assets(
             return {'code': 'ASSET_IMPORT_ROW_FAILED', 'message': '资产导入行处理失败，请检查数据后重试。'}
 
         def _import_one(body: AssetCreate, row_number: int) -> dict:
+            imported_hostname = str(body.hostname or '').strip()
+            if not imported_hostname:
+                raise HTTPException(status_code=422, detail={
+                    'code': 'ASSET_HOSTNAME_REQUIRED',
+                    'message': '导入资产必须填写主机名',
+                    'row': row_number,
+                    'field': 'hostname',
+                })
+            body.hostname = imported_hostname
             _pre_resolve_credential(conn, body)
             _resolve_snmp_credential_binding(conn, body)
             requested_tag_ids = _resolve_asset_tag_ids(conn, body)
@@ -3288,17 +3297,6 @@ def import_assets(
             asset_origin = body.asset_origin if body.asset_origin in ('new', 'legacy') else 'new'
             legacy_production = asset_origin == 'legacy' and body.lifecycle_status == 'production'
             initial_lifecycle = 'production' if legacy_production else 'staging'
-            was_hostname_empty = not (body.hostname or '').strip()
-            if was_hostname_empty:
-                if (body.management_ip or '').strip():
-                    body.hostname = body.management_ip.strip()
-                elif (body.asset_tag or '').strip():
-                    body.hostname = body.asset_tag.strip()
-                else:
-                    raise HTTPException(status_code=422, detail={
-                        'code': 'ASSET_IDENTITY_REQUIRED',
-                        'message': '导入资产必须至少填写主机名、资产编号或管理IP',
-                    })
             if legacy_production:
                 reason = (body.takeover_exempt_reason or '').strip()
                 normal_username = (body.normal_username or body.username or '').strip()

@@ -13,11 +13,13 @@ from core.read_cache import (
 )
 from services.topology_service import (
     create_discovery_run,
+    decorate_topology_link_evidence,
     execute_discovery_run,
     get_current_links,
     get_discovery_evidence,
     get_discovery_run,
     get_unmanaged_neighbors,
+    get_topology_collection_status,
     get_topology_generation_status,
     get_topology_node_metadata,
     get_topology_site_summaries,
@@ -284,10 +286,15 @@ def get_links(
         conn.close()
 
     scope_key = scope.cache_key if scope is not None else 'legacy'
-    cache_key = f'links:v6:{limit}:{site_id or ""}:{normalized_rack_id}:{int(include_stale)}:{scope_key}'
+    cache_key = f'links:v7:{limit}:{site_id or ""}:{normalized_rack_id}:{int(include_stale)}:{scope_key}'
     cache_hit, cached = read_cache.get('topology', cache_key)
     if cache_hit:
-        return cached
+        cached_response = dict(cached)
+        cached_response['device_collection_status'] = get_topology_collection_status(
+            device_ids=device_ids,
+            site_id=site_id,
+        )
+        return cached_response
 
     # Physical links must come from the read model that carries the LAG
     # contract (aggregation name, member count and member pairs).  The
@@ -355,6 +362,10 @@ def get_links(
                 existing_link_keys.add(link_key)
     links_truncated = len(managed_links) > limit
     managed_links = managed_links[:limit]
+    unmanaged_links = unmanaged.get('unmanaged_links', [])
+    decorated_links = decorate_topology_link_evidence([*managed_links, *unmanaged_links])
+    managed_links = decorated_links[:len(managed_links)]
+    unmanaged_links = decorated_links[len(managed_links):]
     node_metadata = get_topology_node_metadata(site_id=site_id, device_ids=device_ids)
     if device_ids is not None:
         scoped_ids = set(device_ids)
@@ -362,8 +373,12 @@ def get_links(
     response = {
         'links': managed_links,
         'node_metadata': node_metadata,
+        'device_collection_status': get_topology_collection_status(
+            device_ids=device_ids,
+            site_id=site_id,
+        ),
         'unmanaged_nodes': unmanaged.get('unmanaged_nodes', []),
-        'unmanaged_links': unmanaged.get('unmanaged_links', []),
+        'unmanaged_links': unmanaged_links,
         'truncated': links_truncated or len(managed_links) >= limit,
         'limit': limit,
         'graph_read_model': graph_read_model,

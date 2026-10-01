@@ -7,6 +7,18 @@ export interface TopologyGraphLinkRef {
   target_device_id: string;
 }
 
+/** The canvas uses one visual rule: mutual evidence is solid, otherwise dashed. */
+export const getTopologyLinkEvidenceDash = (link: {
+  evidence_status?: string;
+  reverse_confirmed?: boolean;
+  metadata?: { reverse_seen?: boolean };
+}): string => {
+  const status = String(link.evidence_status || '').trim().toLowerCase();
+  const confirmedBothWays = status === 'bidirectional_confirmed'
+    || Boolean(link.reverse_confirmed || link.metadata?.reverse_seen);
+  return confirmedBothWays ? '' : '6,5';
+};
+
 /**
  * Resolve link endpoints for D3 without merging rows. The API read model owns
  * link identity and de-duplication; the canvas must render every link row that

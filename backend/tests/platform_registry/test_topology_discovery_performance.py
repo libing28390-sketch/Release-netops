@@ -21,9 +21,12 @@ async def test_execute_discovery_run_uses_bounded_device_concurrency(monkeypatch
     peak_active = 0
     completed_devices: list[str] = []
     run_updates: list[dict] = []
+    run_events: list[str] = []
 
     async def fake_discover(device_id: str, run_id: str, *, rebuild_links: bool) -> dict:
         nonlocal active, peak_active
+        assert run_events and run_events[0] == 'history-cleared'
+        run_events.append(f'collect:{device_id}')
         active += 1
         peak_active = max(peak_active, active)
         await asyncio.sleep(0.01)
@@ -45,12 +48,23 @@ async def test_execute_discovery_run_uses_bounded_device_concurrency(monkeypatch
 
     monkeypatch.setattr(topology_service, 'DISCOVERY_DEVICE_CONCURRENCY', 2)
     monkeypatch.setattr(topology_service, '_claim_discovery_run', lambda run_id, worker_id: True)
+    monkeypatch.setattr(
+        topology_service,
+        '_clear_lldp_observation_history_for_run',
+        lambda device_ids: run_events.append('history-cleared'),
+    )
     monkeypatch.setattr(topology_service, '_get_discovery_run_settings', lambda run_id: (30, 2))
     monkeypatch.setattr(topology_service, '_renew_discovery_lease', lambda run_id, worker_id: True)
     monkeypatch.setattr(topology_service, '_is_run_cancel_requested', lambda run_id: False)
     monkeypatch.setattr(topology_service, '_update_run_device', fake_update_run_device)
     monkeypatch.setattr(topology_service, '_update_run', fake_update_run)
     monkeypatch.setattr(topology_service, 'discover_device_neighbors', fake_discover)
+    def fake_refresh_identities(run_id):
+        assert len([item for item in completed_devices if not item.startswith('status:')]) == 4
+        run_events.append('identities-refreshed')
+        return {'matched': 4, 'hostname_mismatch': 0, 'ambiguous': 0, 'unmatched': 0}
+
+    monkeypatch.setattr(topology_service, '_refresh_run_observation_identities', fake_refresh_identities)
     monkeypatch.setattr(topology_service, 'rebuild_links_from_observations', lambda: 0)
 
     await execute_discovery_run('run-test', ['dev-a', 'dev-b', 'dev-c', 'dev-d'])
@@ -61,3 +75,5 @@ async def test_execute_discovery_run_uses_bounded_device_concurrency(monkeypatch
     }
     assert run_updates[-1]['status'] == 'completed'
     assert run_updates[-1]['success_devices'] == 4
+    assert run_events[0] == 'history-cleared'
+    assert run_events[-1] == 'identities-refreshed'

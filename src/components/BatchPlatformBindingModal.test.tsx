@@ -40,6 +40,15 @@ const profiles = [{
   version: 'v5',
   name_zh: 'Comware V5',
   name_en: 'Comware V5',
+}, {
+  id: 'h3c-v7',
+  platform_code: 'h3c_comware_v7',
+  vendor: 'H3C',
+  catalog_vendor: 'h3c',
+  platform_family: 'h3c_comware',
+  version: 'v7',
+  name_zh: 'Comware V7',
+  name_en: 'Comware V7',
 }];
 
 afterEach(() => {
@@ -94,6 +103,7 @@ describe('BatchPlatformBindingModal version guard', () => {
         deviceIds={['device-1']}
         devices={[makeDevice('7.1.064')]}
         language="zh"
+        currentUserRole="Administrator"
         onClose={vi.fn()}
         onCompleted={vi.fn()}
       />,
@@ -105,6 +115,163 @@ describe('BatchPlatformBindingModal version guard', () => {
     fireEvent.click(await screen.findByRole('checkbox'));
 
     await waitFor(() => expect((screen.getAllByRole('button', { name: '新增绑定' })[1] as HTMLButtonElement).disabled).toBe(false));
+  });
+
+  it('keeps first binding available and sends force false without a role', async () => {
+    mockedApiRequest.mockResolvedValue({ data: profiles });
+    render(
+      <BatchPlatformBindingModal
+        deviceIds={['device-1']}
+        devices={[makeDevice('unknown')]}
+        language="zh"
+        onClose={vi.fn()}
+        onCompleted={vi.fn()}
+      />,
+    );
+
+    fireEvent.change(await screen.findByLabelText('平台厂商'), { target: { value: 'h3c' } });
+    fireEvent.change(screen.getByLabelText('平台类型'), { target: { value: 'h3c_comware' } });
+    fireEvent.change(screen.getByLabelText('平台版本'), { target: { value: 'v5' } });
+    const submit = screen.getAllByRole('button', { name: '新增绑定' })[1] as HTMLButtonElement;
+    await waitFor(() => expect(submit.disabled).toBe(false));
+    fireEvent.click(submit);
+    await waitFor(() => expect(mockedApiRequest).toHaveBeenCalledWith('/api/devices/platform-binding/batch', expect.objectContaining({
+      method: 'POST',
+      body: expect.stringContaining('"force":false'),
+    })));
+  });
+
+  it('disables existing binding changes and version override without Administrator role', async () => {
+    mockedApiRequest.mockResolvedValue({ data: profiles });
+    const device = { ...makeDevice('7.1.064'), platform_profile_id: 'h3c-v5' };
+    const { unmount } = render(
+      <BatchPlatformBindingModal
+        deviceIds={['device-1']}
+        devices={[device]}
+        language="zh"
+        currentUserRole="Operator"
+        onClose={vi.fn()}
+        onCompleted={vi.fn()}
+      />,
+    );
+
+    const modify = await screen.findByRole('button', { name: '修改绑定' });
+    const remove = screen.getByRole('button', { name: '解除绑定' });
+    expect((modify as HTMLButtonElement).disabled).toBe(true);
+    expect((remove as HTMLButtonElement).disabled).toBe(true);
+    unmount();
+    render(
+      <BatchPlatformBindingModal
+        deviceIds={['device-1']}
+        devices={[makeDevice('7.1.064')]}
+        language="zh"
+        currentUserRole="Operator"
+        onClose={vi.fn()}
+        onCompleted={vi.fn()}
+      />,
+    );
+    fireEvent.change(await screen.findByLabelText('平台厂商'), { target: { value: 'h3c' } });
+    fireEvent.change(screen.getByLabelText('平台类型'), { target: { value: 'h3c_comware' } });
+    fireEvent.change(screen.getByLabelText('平台版本'), { target: { value: 'v5' } });
+    expect((await screen.findByRole('checkbox')) as HTMLInputElement).toHaveProperty('disabled', true);
+  });
+
+  it('does not treat a missing role as Administrator for an existing binding', async () => {
+    mockedApiRequest.mockResolvedValue({ data: profiles });
+    const device = { ...makeDevice('unknown'), platform_profile_id: 'h3c-v5' };
+    render(
+      <BatchPlatformBindingModal
+        deviceIds={['device-1']}
+        devices={[device]}
+        language="zh"
+        onClose={vi.fn()}
+        onCompleted={vi.fn()}
+      />,
+    );
+
+    expect((await screen.findByRole('button', { name: '修改绑定' }) as HTMLButtonElement).disabled).toBe(true);
+    expect((screen.getByRole('button', { name: '解除绑定' }) as HTMLButtonElement).disabled).toBe(true);
+  });
+
+  it('sends force true only for an Administrator replacing an existing binding', async () => {
+    mockedApiRequest.mockResolvedValue({ data: profiles });
+    const device = { ...makeDevice('7.1.064'), platform_profile_id: 'h3c-v5' };
+    const confirm = vi.spyOn(window, 'confirm').mockReturnValue(true);
+    render(
+      <BatchPlatformBindingModal
+        deviceIds={['device-1']}
+        devices={[device]}
+        language="zh"
+        currentUserRole="Administrator"
+        onClose={vi.fn()}
+        onCompleted={vi.fn()}
+      />,
+    );
+
+    fireEvent.change(await screen.findByLabelText('平台类型'), { target: { value: 'h3c_comware' } });
+    await waitFor(() => expect((screen.getByLabelText('平台版本') as HTMLSelectElement).disabled).toBe(false));
+    fireEvent.change(screen.getByLabelText('平台版本'), { target: { value: 'v7' } });
+    const submit = screen.getAllByRole('button', { name: '修改绑定' })[1] as HTMLButtonElement;
+    await waitFor(() => expect(submit.disabled).toBe(false));
+    fireEvent.click(submit);
+    await waitFor(() => expect(mockedApiRequest).toHaveBeenCalledWith('/api/devices/platform-binding/batch', expect.objectContaining({
+      body: expect.stringContaining('"force":true'),
+    })));
+    expect(confirm).toHaveBeenCalled();
+    confirm.mockRestore();
+  });
+
+  it('does not submit a replacement when Administrator confirmation is cancelled', async () => {
+    mockedApiRequest.mockResolvedValue({ data: profiles });
+    const device = { ...makeDevice('7.1.064'), platform_profile_id: 'h3c-v5' };
+    vi.spyOn(window, 'confirm').mockReturnValue(false);
+    render(
+      <BatchPlatformBindingModal
+        deviceIds={['device-1']}
+        devices={[device]}
+        language="zh"
+        currentUserRole="Administrator"
+        onClose={vi.fn()}
+        onCompleted={vi.fn()}
+      />,
+    );
+
+    fireEvent.change(await screen.findByLabelText('平台类型'), { target: { value: 'h3c_comware' } });
+    await waitFor(() => expect((screen.getByLabelText('平台版本') as HTMLSelectElement).disabled).toBe(false));
+    fireEvent.change(screen.getByLabelText('平台版本'), { target: { value: 'v7' } });
+    const submit = screen.getAllByRole('button', { name: '修改绑定' })[1] as HTMLButtonElement;
+    await waitFor(() => expect(submit.disabled).toBe(false));
+    fireEvent.click(submit);
+    await waitFor(() => expect(mockedApiRequest).toHaveBeenCalledTimes(1));
+    expect(mockedApiRequest.mock.calls.some(([url]) => url === '/api/devices/platform-binding/batch')).toBe(false);
+    vi.restoreAllMocks();
+  });
+
+  it('maps a lock conflict to refresh guidance without retrying', async () => {
+    mockedApiRequest.mockResolvedValueOnce({ data: profiles }).mockRejectedValueOnce({
+      code: 'PLATFORM_BINDING_LOCKED',
+      message: 'Device platform binding is immutable after first assignment',
+      requestId: 'req-lock',
+    });
+    const device = makeDevice('unknown');
+    render(
+      <BatchPlatformBindingModal
+        deviceIds={['device-1']}
+        devices={[device]}
+        language="zh"
+        onClose={vi.fn()}
+        onCompleted={vi.fn()}
+      />,
+    );
+    fireEvent.change(await screen.findByLabelText('平台厂商'), { target: { value: 'h3c' } });
+    fireEvent.change(screen.getByLabelText('平台类型'), { target: { value: 'h3c_comware' } });
+    fireEvent.change(screen.getByLabelText('平台版本'), { target: { value: 'v5' } });
+    const submit = screen.getAllByRole('button', { name: '新增绑定' })[1] as HTMLButtonElement;
+    await waitFor(() => expect(submit.disabled).toBe(false));
+    fireEvent.click(submit);
+    const alert = await screen.findByRole('alert');
+    expect(alert.textContent).toContain('请刷新设备列表');
+    expect(mockedApiRequest).toHaveBeenCalledTimes(2);
   });
 
   it('does not block when the device version is empty or unknown', async () => {

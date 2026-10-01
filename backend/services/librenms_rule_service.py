@@ -87,6 +87,7 @@ _SUPPORTED_SKIP_OPERATORS = {
 }
 _AUTO_SYNC_LOCK = threading.Lock()
 _AUTO_SYNC_DONE = False
+_AUTO_SYNC_KEY: tuple[str, str, str] | None = None
 
 
 def _now() -> str:
@@ -1698,18 +1699,27 @@ def resolve_rule(conn: Any, identity: Mapping[str, Any]) -> dict[str, Any] | Non
 
 def ensure_rules_available() -> dict[str, Any]:
     """Index the project-bundled LibreNMS source once, without network access."""
-    global _AUTO_SYNC_DONE
-    if _AUTO_SYNC_DONE:
+    global _AUTO_SYNC_DONE, _AUTO_SYNC_KEY
+    from services.librenms_mib_service import PARSER_VERSION, import_mibs_from_directory
+
+    root = source_root()
+    current_source_commit = source_commit(root)
+    sync_key = (current_source_commit, PARSER_VERSION, RULE_CONTRACT_VERSION)
+
+    if _AUTO_SYNC_DONE and _AUTO_SYNC_KEY == sync_key:
         return {"status": "cached"}
     with _AUTO_SYNC_LOCK:
-        if _AUTO_SYNC_DONE:
-            return {"status": "cached"}
         root = source_root()
+        current_source_commit = source_commit(root)
+        sync_key = (current_source_commit, PARSER_VERSION, RULE_CONTRACT_VERSION)
+        if _AUTO_SYNC_DONE and _AUTO_SYNC_KEY == sync_key:
+            return {"status": "cached"}
         detection_dir = root / "resources" / "definitions" / "os_detection"
         discovery_dir = root / "resources" / "definitions" / "os_discovery"
         mibs_dir = root / "mibs"
         if not detection_dir.is_dir() or not discovery_dir.is_dir() or not mibs_dir.is_dir():
-            _AUTO_SYNC_DONE = True
+            _AUTO_SYNC_DONE = False
+            _AUTO_SYNC_KEY = None
             logger.error("Project-local LibreNMS source bundle is incomplete at %s", root)
             return {"status": "local_bundle_missing", "source_root": str(root)}
         result = sync_rules_from_repository(root)
@@ -1718,15 +1728,23 @@ def ensure_rules_available() -> dict[str, Any]:
             # Private symbolic OIDs in LibreNMS sensor definitions (notably
             # skip conditions and descriptions) must resolve from the same
             # pinned local snapshot before the first hardware collection.
-            from services.librenms_mib_service import import_mibs_from_directory
-
             mib_result = import_mibs_from_directory(
                 mibs_dir=mibs_dir,
                 target_vendors=[*ASSET_NETWORK_VENDORS, "Standard"],
                 retire_missing_files=False,
                 retire_out_of_scope=False,
+                rules_source_commit=str(result.get("source_commit") or current_source_commit),
+                rules_contract_version=RULE_CONTRACT_VERSION,
             )
         except Exception as exc:
             logger.warning("Bundled LibreNMS MIB indexing unavailable: %s", type(exc).__name__)
+            _AUTO_SYNC_DONE = False
+            _AUTO_SYNC_KEY = None
+            return {"status": "synced_local", **result, "mib_import": mib_result, "retryable": True}
+        if not mib_result.get("success"):
+            _AUTO_SYNC_DONE = False
+            _AUTO_SYNC_KEY = None
+            return {"status": "synced_local", **result, "mib_import": mib_result, "retryable": True}
         _AUTO_SYNC_DONE = True
+        _AUTO_SYNC_KEY = sync_key
         return {"status": "synced_local", **result, "mib_import": mib_result}

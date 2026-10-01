@@ -1,6 +1,6 @@
 import React from 'react';
 import { motion } from 'motion/react';
-import { Activity, AlertTriangle, ArrowRight, Clock3, Database, Download, EyeOff, GitMerge, Globe, Info, LayoutGrid, MapPin, Network, RotateCcw, Search, Tag, X } from 'lucide-react';
+import { Activity, AlertTriangle, ArrowRight, Clock3, Database, Download, EyeOff, GitMerge, Globe, LayoutGrid, MapPin, Network, RotateCcw, Search, Tag, X } from 'lucide-react';
 import type { Device, TagDefinition } from '../types';
 import { ActionButton } from '../components/ui/ActionIconButton';
 import TagConditionPicker, { countTagFilterConditions, EMPTY_TAG_FILTER, hasTagFilterConditions, type TagFilterConfig } from '../components/TagConditionPicker';
@@ -10,7 +10,7 @@ import { useTopologyGenerationStatus } from '../hooks/useTopologyGenerationStatu
 import { matchesTopologyTagConditions } from '../hooks/useTopologyVisibleDevices';
 import { topologyRoleLabel } from '../domain/topologyRoles';
 import { buildTopologySiteOverview } from '../utils/topologySiteOverview';
-import { excludeServerTopologyDevices } from '../utils/topologyDevices';
+import { excludeServerTopologyDevices, projectManagedTopologyCanvas } from '../utils/topologyDevices';
 
 type TopologyStatusFilter = 'all' | 'online' | 'offline' | 'pending';
 type TopologyLinkStatusFilter = 'all' | 'up' | 'degraded' | 'down' | 'stale' | 'unknown';
@@ -36,6 +36,106 @@ interface TopologyOperationalTone {
   badge: string;
   panel: string;
 }
+
+interface TopologyCollectionIssue {
+  protocol: 'snmp' | 'ssh' | 'topology';
+  label: string;
+}
+
+const topologyProtocolLabel = (protocol: string, language: string): string => {
+  if (protocol === 'snmp') return language === 'zh' ? 'SNMP' : 'SNMP';
+  if (protocol === 'ssh') return language === 'zh' ? 'SSH' : 'SSH';
+  return language === 'zh' ? '拓扑采集' : 'Topology collection';
+};
+
+const topologyCollectionIssueLabel = (
+  protocol: 'snmp' | 'ssh' | 'topology',
+  status: string,
+  errorCode: string,
+  detail: string,
+  language: string,
+): string => {
+  const token = `${errorCode} ${detail}`.toLowerCase();
+  const protocolName = topologyProtocolLabel(protocol, language);
+  if (/authentication|auth(?:entication)?[_ -]?failed/.test(token)) {
+    return language === 'zh' ? `${protocolName} 认证失败` : `${protocolName} authentication failed`;
+  }
+  if (/timeout|timed[ _-]?out/.test(token)) {
+    return language === 'zh' ? `${protocolName} 超时` : `${protocolName} timed out`;
+  }
+  if (status === 'not_configured' || /not[_ -]?configured|credentials[_ -]?incomplete|credential/.test(token)) {
+    return language === 'zh' ? `${protocolName} 未配置` : `${protocolName} not configured`;
+  }
+  if (/unreachable|connection[_ -]?(?:refused|failed|reset)|closed/.test(token)) {
+    return language === 'zh' ? `${protocolName} 连接失败` : `${protocolName} connection failed`;
+  }
+  if (status === 'partial') {
+    return language === 'zh' ? `${protocolName} 部分失败` : `${protocolName} partially failed`;
+  }
+  return language === 'zh' ? `${protocolName} 采集失败` : `${protocolName} collection failed`;
+};
+
+const topologyCollectionIssues = (device: Device, language: string): TopologyCollectionIssue[] => {
+  const protocolResults = device.topology_collection_protocol_results || {};
+  const deviceStatus = String(device.topology_collection_status || '').toLowerCase();
+  const errorCode = String(device.topology_collection_error_code || '');
+  const errorMessage = String(device.topology_collection_error_message || '');
+  const issues: TopologyCollectionIssue[] = [];
+
+  (['snmp', 'ssh'] as const).forEach((protocol) => {
+    const result = protocolResults[protocol];
+    const status = String(result?.status || '').toLowerCase();
+    if (!['failed', 'partial', 'error', 'not_configured'].includes(status)) return;
+    issues.push({
+      protocol,
+      label: topologyCollectionIssueLabel(protocol, status, errorCode, result?.detail || errorMessage, language),
+    });
+  });
+
+  if (issues.length === 0 && ['failed', 'partial', 'not_configured'].includes(deviceStatus)) {
+    issues.push({
+      protocol: 'topology',
+      label: topologyCollectionIssueLabel('topology', deviceStatus, errorCode, errorMessage, language),
+    });
+  }
+  return issues;
+};
+
+const topologyUnmatchedReason = (reasonCode: string, language: string): string => {
+  if (reasonCode === 'cli_system_name_not_found_in_cmdb') {
+    return language === 'zh'
+      ? 'CLI 邻居名称未匹配 CMDB，请核对主机名'
+      : 'CLI neighbor name does not match CMDB; check the hostname';
+  }
+  if (reasonCode === 'cli_system_name_missing') {
+    return language === 'zh'
+      ? 'CLI 未返回邻居名称，请检查解析模板'
+      : 'CLI returned no neighbor name; check the parsing template';
+  }
+  if (reasonCode === 'reported_management_ip_not_found_in_cmdb') {
+    return language === 'zh'
+      ? '上报 IP 尚未确认归属，可能是设备接口地址'
+      : 'Reported IP ownership is unverified; it may be an interface address';
+  }
+  if (reasonCode === 'reported_ip_serial_conflict') {
+    return language === 'zh'
+      ? 'IP 与序列号冲突'
+      : 'IP and serial conflict';
+  }
+  if (reasonCode === 'conflicting_cmdb_identity_evidence') {
+    return language === 'zh'
+      ? '名称与序列号冲突'
+      : 'Hostname and serial conflict';
+  }
+  if (reasonCode === 'multiple_cmdb_identity_candidates') {
+    return language === 'zh'
+      ? '匹配到多个 CMDB 设备'
+      : 'Multiple CMDB matches';
+  }
+  return language === 'zh'
+    ? '未找到唯一 CMDB 设备'
+    : 'No unique CMDB match';
+};
 
 interface TopologyDecoratedLinkLike {
   id?: string;
@@ -195,6 +295,7 @@ interface TopologyPageProps {
     total_devices: number;
     processed_devices: number;
     success_devices: number;
+    partial_devices?: number;
     failed_devices: number;
     running_devices?: number;
     pending_devices?: number;
@@ -338,12 +439,55 @@ const TopologyPage: React.FC<TopologyPageProps> = ({
     () => excludeServerTopologyDevices(topologyVisibleDevices),
     [topologyVisibleDevices],
   );
-  const topologyMapLinks = React.useMemo(
+  const topologyEligibleLinks = React.useMemo(
     () => topologyVisibleLinks.filter((link) =>
       !topologyNetworkScope.excludedIds.has(link.source_device_id)
       && !topologyNetworkScope.excludedIds.has(link.target_device_id)),
     [topologyNetworkScope.excludedIds, topologyVisibleLinks],
   );
+  const topologyCanvas = React.useMemo(
+    () => projectManagedTopologyCanvas(topologyNetworkScope.devices, topologyEligibleLinks),
+    [topologyEligibleLinks, topologyNetworkScope.devices],
+  );
+  const topologyCanvasDevices = topologyCanvas.devices;
+  const topologyMapLinks = topologyCanvas.links;
+  const topologyDiagnostics = React.useMemo(() => {
+    const collectionFailures = topologyNetworkScope.devices
+      .map((device) => ({
+        device,
+        issues: topologyCollectionIssues(device, language),
+      }))
+      .filter((item) => item.issues.length > 0);
+    const unmatchedNeighbors = topologyNetworkScope.devices.filter((device) => Boolean(device.is_unmanaged));
+    return { collectionFailures, unmatchedNeighbors };
+  }, [language, topologyNetworkScope.devices]);
+  const topologyCanvasStats = React.useMemo(() => {
+    const connectedDeviceIds = new Set<string>();
+    topologyMapLinks.forEach((link) => {
+      if (link.source_device_id) connectedDeviceIds.add(link.source_device_id);
+      if (link.target_device_id) connectedDeviceIds.add(link.target_device_id);
+    });
+    const physicalLinks = topologyMapLinks.filter((link) => {
+      const relation = String(link.relation_type || '').toUpperCase();
+      return !relation || relation === 'PHYSICAL';
+    });
+    return {
+      ...topologyStats,
+      nodeCount: topologyCanvasDevices.length,
+      linkCount: physicalLinks.length,
+      siteCount: new Set(topologyCanvasDevices.map((device) => String(device.site_id || device.site || '').trim()).filter(Boolean)).size,
+      atRiskCount: topologyCanvasDevices.filter((device) => (
+        device.status !== 'online' || device.health_status === 'critical' || (device.open_alert_count || 0) > 0
+      )).length,
+      orphanCount: topologyCanvasDevices.filter((device) => !connectedDeviceIds.has(device.id)).length,
+    };
+  }, [topologyCanvasDevices, topologyMapLinks, topologyStats]);
+  const topologyCanvasLinkStats = React.useMemo(() => ({
+    up: topologyMapLinks.filter((link) => link.operational_state === 'up').length,
+    degraded: topologyMapLinks.filter((link) => link.operational_state === 'degraded').length,
+    down: topologyMapLinks.filter((link) => link.operational_state === 'down').length,
+    stale: topologyMapLinks.filter((link) => link.operational_state === 'stale').length,
+  }), [topologyMapLinks]);
   const handleSiteFilterChange = (value: string) => {
     onTopologySiteFilterChange(value);
     setCanvasView(value === 'all' ? 'overview' : 'site');
@@ -361,6 +505,15 @@ const TopologyPage: React.FC<TopologyPageProps> = ({
   const terminalDiscoveryStatus = topologyDiscoveryProgress && ['completed', 'partial', 'failed', 'cancelled'].includes(topologyDiscoveryProgress.status)
     ? `${topologyDiscoveryProgress.id}:${topologyDiscoveryProgress.status}`
     : undefined;
+  const discoveryIsTerminal = Boolean(topologyDiscoveryProgress && ['completed', 'partial', 'failed', 'cancelled'].includes(topologyDiscoveryProgress.status));
+  const discoveryProgressPercent = Math.max(
+    0,
+    Math.min(discoveryIsTerminal ? 100 : 99, Number(topologyDiscoveryProgress?.progress_percent || 0)),
+  );
+  const discoveryAnomalies = topologyDiscoveryDevices.filter((item: any) => (
+    ['failed', 'partial', 'cancelled', 'skipped'].includes(String(item.status || '').toLowerCase())
+    || Boolean(item.error_code || item.error_message)
+  ));
   const {
     status: generationStatus,
     error: generationStatusError,
@@ -460,37 +613,30 @@ const TopologyPage: React.FC<TopologyPageProps> = ({
         <div className={`bg-white dark:bg-zinc-900/90 border border-gray-200/70 dark:border-zinc-800/80 rounded-2xl p-4 shadow-2xs ${topologyDiscoveryProgress.status === 'failed' ? 'border-l-4 border-l-rose-500' : topologyDiscoveryProgress.status === 'partial' ? 'border-l-4 border-l-amber-500' : 'border-l-4 border-l-blue-500'}`}>
           <div className="flex flex-wrap items-center justify-between gap-3">
             <div>
-              <h3 className="text-sm font-bold text-gray-900 dark:text-white">{language === 'zh' ? '拓扑发现任务执行中' : 'Topology Discovery Run'}</h3>
+              <h3 className="text-sm font-bold text-gray-900 dark:text-white">
+                {language === 'zh'
+                  ? (discoveryIsTerminal
+                    ? (topologyDiscoveryProgress.status === 'completed' ? '拓扑发现已完成' : topologyDiscoveryProgress.status === 'partial' ? '拓扑发现完成，有异常' : topologyDiscoveryProgress.status === 'cancelled' ? '拓扑发现已取消' : '拓扑发现失败')
+                    : '拓扑发现任务执行中')
+                  : (discoveryIsTerminal
+                    ? (topologyDiscoveryProgress.status === 'completed' ? 'Topology discovery completed' : topologyDiscoveryProgress.status === 'partial' ? 'Topology discovery completed with anomalies' : topologyDiscoveryProgress.status === 'cancelled' ? 'Topology discovery cancelled' : 'Topology discovery failed')
+                    : 'Topology discovery in progress')}
+              </h3>
               <p className="mt-0.5 text-xs text-gray-400 font-mono">
                 {topologyDiscoveryProgress.status} · {topologyDiscoveryProgress.processed_devices}/{topologyDiscoveryProgress.total_devices}
                 {' · '}{language === 'zh' ? '成功' : 'Succeeded'} {topologyDiscoveryProgress.success_devices || 0}
+                {' · '}{language === 'zh' ? '部分' : 'Partial'} {topologyDiscoveryProgress.partial_devices || 0}
                 {' · '}{language === 'zh' ? '失败' : 'Failed'} {topologyDiscoveryProgress.failed_devices || 0}
               </p>
             </div>
-            <span className="text-lg font-extrabold tabular-nums text-blue-600 font-mono">{topologyDiscoveryProgress.progress_percent}%</span>
+            <span className="text-lg font-extrabold tabular-nums text-blue-600 font-mono">{discoveryProgressPercent}%</span>
           </div>
           <div className="mt-2.5 h-1.5 overflow-hidden rounded-full bg-gray-100 dark:bg-zinc-800">
-            <div className="h-full rounded-full bg-blue-600 transition-all duration-300" style={{ width: `${Math.min(100, Math.max(0, topologyDiscoveryProgress.progress_percent))}%` }} />
+            <div className="h-full rounded-full bg-blue-600 transition-all duration-300" style={{ width: `${discoveryProgressPercent}%` }} />
           </div>
-          {topologyDiscoveryDevices.length > 0 && (
-            <div className="mt-2.5 flex flex-wrap gap-1.5">
-              {topologyDiscoveryDevices.slice(0, 8).map((item: any) => (
-                <span
-                  key={item.device_id}
-                  title={item.error_message || item.error_code || item.status}
-                  className={`rounded-full px-2 py-0.5 text-[10px] font-semibold ${item.status === 'success' ? 'bg-emerald-50 text-emerald-700 dark:bg-emerald-950/40 dark:text-emerald-400' : item.status === 'failed' ? 'bg-rose-50 text-rose-700 dark:bg-rose-950/40 dark:text-rose-400' : 'bg-gray-100 text-gray-600 dark:bg-zinc-800 dark:text-zinc-400'}`}
-                >
-                  {item.hostname || item.device_id}: {item.status}
-                  {item.error_code ? ` (${item.error_code})` : ''}
-                </span>
-              ))}
-            </div>
-          )}
-          {(topologyDiscoveryProgress.failed_devices || 0) > 0 && (
-            <p className="mt-2 text-[11px] text-rose-600">
-              {language === 'zh'
-                ? '失败设备会保留上一轮有效邻居证据；将鼠标停留在设备状态上可查看错误详情。'
-                : 'Failed devices retain their last valid neighbor evidence. Hover a device status to inspect the error.'}
+          {discoveryIsTerminal && discoveryAnomalies.length === 0 && topologyDiscoveryProgress.status === 'completed' && (
+            <p className="mt-2 text-[11px] text-emerald-700 dark:text-emerald-400">
+              {language === 'zh' ? '本轮没有采集异常。' : 'No collection anomalies in this run.'}
             </p>
           )}
         </div>
@@ -500,11 +646,11 @@ const TopologyPage: React.FC<TopologyPageProps> = ({
       <div className="bg-white dark:bg-zinc-900/90 border border-gray-200/70 dark:border-zinc-800/80 rounded-2xl p-3.5 shadow-2xs flex flex-wrap items-center justify-between gap-4">
         <div className="flex flex-wrap items-center gap-x-6 gap-y-2">
           {[
-            { label: language === 'zh' ? '节点' : 'Nodes', value: topologyStats.nodeCount, color: 'text-blue-600 dark:text-blue-400' },
-            { label: language === 'zh' ? '物理链路' : 'Physical Links', value: topologyStats.linkCount, color: 'text-gray-800 dark:text-zinc-200' },
-            { label: language === 'zh' ? '站点' : 'Sites', value: topologyStats.siteCount, color: 'text-emerald-600 dark:text-emerald-400' },
-            { label: language === 'zh' ? '风险' : 'Risk', value: topologyStats.atRiskCount, color: topologyStats.atRiskCount > 0 ? 'text-amber-600' : 'text-gray-400' },
-            { label: language === 'zh' ? '孤立' : 'Orphans', value: topologyStats.orphanCount, color: topologyStats.orphanCount > 0 ? 'text-rose-600' : 'text-gray-400' },
+            { label: language === 'zh' ? '节点' : 'Nodes', value: topologyCanvasStats.nodeCount, color: 'text-blue-600 dark:text-blue-400' },
+            { label: language === 'zh' ? '链路' : 'Links', value: topologyCanvasStats.linkCount, color: 'text-gray-800 dark:text-zinc-200' },
+            { label: language === 'zh' ? '站点' : 'Sites', value: topologyCanvasStats.siteCount, color: 'text-emerald-600 dark:text-emerald-400' },
+            { label: language === 'zh' ? '风险' : 'Risk', value: topologyCanvasStats.atRiskCount, color: topologyCanvasStats.atRiskCount > 0 ? 'text-amber-600' : 'text-gray-400' },
+            { label: language === 'zh' ? '孤立' : 'Orphans', value: topologyCanvasStats.orphanCount, color: topologyCanvasStats.orphanCount > 0 ? 'text-rose-600' : 'text-gray-400' },
           ].map((item) => (
             <div key={item.label} className="flex items-baseline gap-1.5">
               <span className={`text-xl font-extrabold tabular-nums tracking-tight font-mono ${item.color}`}>{item.value}</span>
@@ -654,6 +800,69 @@ const TopologyPage: React.FC<TopologyPageProps> = ({
         </div>
       </div>
 
+      {topologyDiagnostics.collectionFailures.length > 0 || topologyDiagnostics.unmatchedNeighbors.length > 0 ? (
+        <section
+          aria-live="polite"
+          className="rounded-xl border border-amber-200/80 bg-amber-50/70 px-3.5 py-3 shadow-2xs dark:border-amber-900/60 dark:bg-amber-950/20"
+        >
+          <div className="flex flex-wrap items-center gap-x-2 gap-y-1 text-xs">
+            <AlertTriangle size={14} className="shrink-0 text-amber-700 dark:text-amber-300" />
+            <h3 className="font-bold text-amber-950 dark:text-amber-100">
+              {language === 'zh' ? '需要关注' : 'Needs attention'}
+            </h3>
+            {topologyDiagnostics.collectionFailures.length > 0 && (
+              <span className="text-rose-700 dark:text-rose-300">
+                {topologyDiagnostics.collectionFailures.length} {language === 'zh' ? '台采集异常' : 'collection issues'}
+              </span>
+            )}
+            {topologyDiagnostics.collectionFailures.length > 0 && topologyDiagnostics.unmatchedNeighbors.length > 0 && (
+              <span className="text-amber-700/60 dark:text-amber-300/60">·</span>
+            )}
+            {topologyDiagnostics.unmatchedNeighbors.length > 0 && (
+              <span className="text-slate-700 dark:text-zinc-300">
+                {topologyDiagnostics.unmatchedNeighbors.length} {language === 'zh' ? '个邻居身份待确认' : 'neighbor identities to verify'}
+              </span>
+            )}
+          </div>
+
+          <p className="mt-2 text-[11px] leading-5 text-slate-700 dark:text-zinc-300">
+            {language === 'zh'
+              ? '请检查 SNMP Community 和 CLI 解析模板，并核对 CMDB 主机名。'
+              : 'Check the SNMP community, CLI parsing template, and CMDB hostname.'}
+          </p>
+
+          <details className="mt-2 text-[10px] text-slate-600 dark:text-zinc-400">
+            <summary className="w-fit cursor-pointer font-semibold hover:text-slate-900 dark:hover:text-zinc-200">
+              {language === 'zh' ? '查看异常与待确认邻居' : 'Show issues and identities to verify'}
+            </summary>
+            <div className="mt-2 grid gap-2 md:grid-cols-2">
+              {topologyDiagnostics.collectionFailures.length > 0 && (
+                <ul className="space-y-1">
+                  {topologyDiagnostics.collectionFailures.map(({ device, issues }) => (
+                    <li key={device.id}>
+                      <span className="font-semibold">{device.hostname || device.ip_address}</span>
+                      {device.ip_address && device.ip_address !== device.hostname ? ` (${device.ip_address})` : ''}
+                      {' · '}{issues.map((issue) => issue.label).join('、')}
+                    </li>
+                  ))}
+                </ul>
+              )}
+              {topologyDiagnostics.unmatchedNeighbors.length > 0 && (
+                <ul className="space-y-1">
+                  {topologyDiagnostics.unmatchedNeighbors.map((device) => (
+                    <li key={device.id}>
+                      <span className="font-semibold">{device.hostname || (language === 'zh' ? '未知邻居' : 'Unknown neighbor')}</span>
+                      {device.ip_address ? ` (${device.ip_address})` : ''}
+                      {' · '}{topologyUnmatchedReason(device.topology_match_reason_code || '', language)}
+                    </li>
+                  ))}
+                </ul>
+              )}
+            </div>
+          </details>
+        </section>
+      ) : null}
+
       {/* Full-width Canvas */}
       <div className="flex min-h-0 flex-1 flex-col">
         <div
@@ -668,8 +877,8 @@ const TopologyPage: React.FC<TopologyPageProps> = ({
               </h3>
               <p className="text-xs text-gray-400">
                 {language === 'zh'
-                  ? '离线设备默认保留展示；陈旧链路表示最近 30 分钟未刷新。'
-                  : 'Offline devices remain visible by default; stale links indicate 30m without refresh.'}
+                  ? '每台纳管设备只显示一个图标；双向确认用实线，单向确认用虚线。'
+                  : 'One icon per managed device; solid links have two-sided evidence, dashed links have one-sided evidence.'}
               </p>
             </div>
           </div>
@@ -679,11 +888,11 @@ const TopologyPage: React.FC<TopologyPageProps> = ({
               <TopologySiteOverview
                 language={language}
                 sites={topologySites}
-                devices={topologyNetworkScope.devices}
+                devices={topologyCanvasDevices}
                 links={topologyMapLinks}
                 onSelectSite={handleOpenSite}
               />
-            ) : topologyNetworkScope.devices.length === 0 ? (
+            ) : topologyCanvasDevices.length === 0 ? (
               <div className="absolute inset-0 flex flex-col items-center justify-center gap-3 text-center">
                 <div className="rounded-full border border-gray-200 dark:border-zinc-800 bg-gray-50 dark:bg-zinc-800 p-4 text-gray-400">
                   <Globe size={26} />
@@ -700,8 +909,9 @@ const TopologyPage: React.FC<TopologyPageProps> = ({
             ) : (
               <motion.div initial={{ opacity: 0 }} animate={{ opacity: 1 }} className="relative h-full w-full">
                 <TopologyGraph
-                  devices={topologyNetworkScope.devices}
+                  devices={topologyCanvasDevices}
                   links={topologyMapLinks}
+                  language={language}
                   selectedNodeId={selectedTopologyDeviceId}
                   selectedLinkKey={selectedTopologyLinkKey}
                   onNodeClick={(device) => {
@@ -718,11 +928,18 @@ const TopologyPage: React.FC<TopologyPageProps> = ({
           </div>
 
           <div className="relative flex flex-wrap items-center gap-3 border-t border-gray-100 dark:border-zinc-800 px-4 py-2.5 text-xs font-mono text-gray-400">
-            <span>{language === 'zh' ? `当前展示 ${topologyStats.nodeCount} 节点 · ${topologyStats.linkCount} 链路` : `Showing ${topologyStats.nodeCount} nodes / ${topologyStats.linkCount} links`}</span>
+            <span>{language === 'zh' ? `当前展示 ${topologyCanvasStats.nodeCount} 节点 · ${topologyCanvasStats.linkCount} 链路` : `Showing ${topologyCanvasStats.nodeCount} nodes / ${topologyCanvasStats.linkCount} links`}</span>
             <span className="h-3 w-px bg-gray-200 dark:bg-zinc-700" />
-            <span>{language === 'zh' ? `${topologyLinkStats.up} 正常 · ${topologyLinkStats.degraded} 退化 · ${topologyLinkStats.down} 中断 · ${topologyLinkStats.stale} 陈旧` : `${topologyLinkStats.up} up · ${topologyLinkStats.degraded} degraded · ${topologyLinkStats.down} down · ${topologyLinkStats.stale} stale`}</span>
+            <span>{language === 'zh' ? `${topologyCanvasLinkStats.up} 正常 · ${topologyCanvasLinkStats.degraded} 退化 · ${topologyCanvasLinkStats.down} 中断 · ${topologyCanvasLinkStats.stale} 陈旧` : `${topologyCanvasLinkStats.up} up · ${topologyCanvasLinkStats.degraded} degraded · ${topologyCanvasLinkStats.down} down · ${topologyCanvasLinkStats.stale} stale`}</span>
             <span className="h-3 w-px bg-gray-200 dark:bg-zinc-700" />
-            <span>{language === 'zh' ? '虚线代表推断链路' : 'Dashed: inferred'}</span>
+            <span className="flex items-center gap-1.5">
+              <span className="inline-block w-5 border-t border-solid border-slate-500" />
+              {language === 'zh' ? '双向确认' : 'Bidirectional'}
+            </span>
+            <span className="flex items-center gap-1.5">
+              <span className="inline-block w-5 border-t border-dashed border-slate-500" />
+              {language === 'zh' ? '单向确认' : 'One-sided'}
+            </span>
           </div>
         </div>
       </div>

@@ -13,7 +13,8 @@ on:
 # the complete Linux/Docker gate; v1.0.9 and later publish the Linux server
 # artifacts plus the separate Windows workstation Agent when a version tag is built.
 concurrency:
-  group: release-${{ github.ref }}
+  # All refs synchronize the same public main branch; serialize them.
+  group: release-public-netops
   cancel-in-progress: false
 
 permissions:
@@ -40,6 +41,29 @@ jobs:
     steps:
       - name: Checkout source repository
         uses: actions/checkout@v4
+
+      - name: Validate release version and tag
+        shell: bash
+        env:
+          RELEASE_REF: ${{ github.ref }}
+          RELEASE_TAG: ${{ github.ref_name }}
+        run: |
+          set -euo pipefail
+          node --input-type=module <<'NODE'
+          import fs from 'node:fs';
+          const pkg = JSON.parse(fs.readFileSync('package.json', 'utf8'));
+          const lock = JSON.parse(fs.readFileSync('package-lock.json', 'utf8'));
+          const backend = fs.readFileSync('backend/core/version.py', 'utf8');
+          const backendVersion = backend.match(/^VERSION\s*=\s*["']([^"']+)["']/m)?.[1];
+          if (!pkg.version || lock.version !== pkg.version || lock.packages?.['']?.version !== pkg.version || backendVersion !== pkg.version) {
+            throw new Error('Frontend, lockfile and backend release versions must match');
+          }
+          const expectedTag = `v${pkg.version}`;
+          if (process.env.RELEASE_REF?.startsWith('refs/tags/') && process.env.RELEASE_TAG !== expectedTag) {
+            throw new Error(`Release tag must be ${expectedTag}`);
+          }
+          console.log(`Release version verified: ${expectedTag}`);
+          NODE
 
       - name: Start PostgreSQL with pgvector
         uses: ./.github/actions/postgres

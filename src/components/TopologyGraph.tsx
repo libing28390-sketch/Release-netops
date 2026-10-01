@@ -1,7 +1,7 @@
 import React, { useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
 import * as d3 from 'd3';
 import { buildTopologyExportFilename, getTopologyExportPixelRatio } from '../utils/topologyExport';
-import { buildTopologyGraphLinks } from '../utils/topologyGraphLinks';
+import { buildTopologyGraphLinks, getTopologyLinkEvidenceDash } from '../utils/topologyGraphLinks';
 import { buildFoldedChainPositions, buildRingGroupPositions, repairTopologyLayout } from '../utils/topologyLayout';
 import {
   buildTopologyRoleLayeredPositions,
@@ -50,6 +50,11 @@ interface Device {
   critical_open_alerts?: number;
   is_unmanaged?: boolean;
   topology_node_id?: string;
+  topology_collection_status?: string;
+  topology_collection_error_code?: string;
+  topology_collection_error_message?: string;
+  topology_collection_method?: string;
+  topology_collection_protocol_results?: Partial<Record<'snmp' | 'ssh', { status: string; detail?: string }>>;
 }
 
 interface Link {
@@ -87,6 +92,22 @@ interface Link {
   semantic_confidence?: number;
   manual_confirmed?: boolean | number;
   is_manual?: boolean | number;
+  evidence_status?: 'bidirectional_confirmed' | 'single_sided_evidence' | 'neighbor_mismatch' | 'stale' | 'unknown' | 'not_applicable' | string;
+  evidence_directions?: Array<{
+    source_device_id?: string;
+    target_device_id?: string;
+    source_port?: string;
+    target_port?: string;
+    collection_sources?: string[];
+  }>;
+  source_collection_evidence?: TopologyCollectionEvidence;
+  target_collection_evidence?: TopologyCollectionEvidence;
+}
+
+interface TopologyCollectionEvidence {
+  state?: 'complete' | 'failed' | 'collecting' | 'expired' | 'unknown' | string;
+  completed_at?: string | null;
+  protocol_results?: Partial<Record<'snmp' | 'ssh', { status?: string; detail?: string }>>;
 }
 
 type BandwidthTierKey = '10m' | '100m' | '1g' | '10g' | '40g' | '80g' | '100g' | '200g' | 'unknown';
@@ -173,6 +194,7 @@ const formatTopologyUptime = (value?: string): string => {
 interface TopologyGraphProps {
   devices: Device[];
   links: Link[];
+  language?: string;
   onNodeClick?: (device: Device) => void;
   onOpenWorkspace?: (device: Device) => void;
   selectedNodeId?: string | null;
@@ -244,7 +266,6 @@ const getLinkDisplayBandwidthMbps = (item: any): number =>
 type TopologyLinkStyle = {
   relationType: string;
   color: string;
-  dash: string;
   width: number;
 };
 
@@ -259,34 +280,34 @@ const normalizeTopologyRelationType = (item: any): string => {
 const getTopologyLinkStyle = (item: any): TopologyLinkStyle => {
   const relationType = normalizeTopologyRelationType(item);
   if (item?.is_unmanaged) {
-    return { relationType: 'UNMANAGED', color: '#94a3b8', dash: '4,3', width: 2.2 };
+    return { relationType: 'UNMANAGED', color: '#94a3b8', width: 2.2 };
   }
   if (relationType === 'PHYSICAL') {
     const bandwidth = getBandwidthTier(getLinkDisplayBandwidthMbps(item));
-    return { relationType, color: bandwidth.color, dash: 'none', width: 3 };
+    return { relationType, color: bandwidth.color, width: 3 };
   }
 
   const styles: Record<string, Omit<TopologyLinkStyle, 'relationType'>> = {
-    HIERARCHICAL: { color: '#2563eb', dash: '8,5', width: 2.8 },
-    PEER: { color: '#7c3aed', dash: '9,5', width: 2.6 },
-    HA: { color: '#dc2626', dash: '3,4', width: 2.8 },
-    HA_PEER: { color: '#dc2626', dash: '3,4', width: 2.8 },
-    STACK: { color: '#be123c', dash: '2,4', width: 2.8 },
-    IRF: { color: '#be123c', dash: '2,4', width: 2.8 },
-    CSS: { color: '#be123c', dash: '2,4', width: 2.8 },
-    VC: { color: '#be123c', dash: '2,4', width: 2.8 },
-    MLAG_PEER: { color: '#be123c', dash: '2,4', width: 2.8 },
-    VPC_PEER: { color: '#be123c', dash: '2,4', width: 2.8 },
-    L2_NEIGHBOR: { color: '#d97706', dash: '7,4', width: 2.5 },
-    STP: { color: '#d97706', dash: '7,4', width: 2.5 },
-    L3_NEIGHBOR: { color: '#0891b2', dash: '8,5', width: 2.5 },
-    ROUTING: { color: '#0891b2', dash: '8,5', width: 2.5 },
-    WAN: { color: '#db2777', dash: '10,5', width: 2.8 },
-    INTER_SITE: { color: '#db2777', dash: '10,5', width: 2.8 },
-    CONTROL: { color: '#16a34a', dash: '3,5', width: 2.5 },
-    TUNNEL: { color: '#9333ea', dash: '2,6', width: 2.8 },
-    OOB: { color: '#64748b', dash: '2,5', width: 2.5 },
-    UNKNOWN: { color: '#64748b', dash: '4,6', width: 2.2 },
+    HIERARCHICAL: { color: '#2563eb', width: 2.8 },
+    PEER: { color: '#7c3aed', width: 2.6 },
+    HA: { color: '#dc2626', width: 2.8 },
+    HA_PEER: { color: '#dc2626', width: 2.8 },
+    STACK: { color: '#be123c', width: 2.8 },
+    IRF: { color: '#be123c', width: 2.8 },
+    CSS: { color: '#be123c', width: 2.8 },
+    VC: { color: '#be123c', width: 2.8 },
+    MLAG_PEER: { color: '#be123c', width: 2.8 },
+    VPC_PEER: { color: '#be123c', width: 2.8 },
+    L2_NEIGHBOR: { color: '#d97706', width: 2.5 },
+    STP: { color: '#d97706', width: 2.5 },
+    L3_NEIGHBOR: { color: '#0891b2', width: 2.5 },
+    ROUTING: { color: '#0891b2', width: 2.5 },
+    WAN: { color: '#db2777', width: 2.8 },
+    INTER_SITE: { color: '#db2777', width: 2.8 },
+    CONTROL: { color: '#16a34a', width: 2.5 },
+    TUNNEL: { color: '#9333ea', width: 2.8 },
+    OOB: { color: '#64748b', width: 2.5 },
+    UNKNOWN: { color: '#64748b', width: 2.2 },
   };
   return {
     relationType,
@@ -294,13 +315,20 @@ const getTopologyLinkStyle = (item: any): TopologyLinkStyle => {
   };
 };
 
-const getTopologyLinkDash = (item: any): string => {
-  if (item.inferred) return '6,5';
-  if (item.is_unmanaged) return '4,3';
-  if (item.operational_state === 'down') return '8,4';
-  if (String(item.link_kind || '').toLowerCase() === 'aggregation'
-    && Number(item.member_count || 0) > Number(item.active_member_count || 0)) return '9,4';
-  return getTopologyLinkStyle(item).dash;
+const getTopologyEvidenceStatus = (item: any): string => (
+  String(item?.evidence_status || '').trim().toLowerCase() || 'unknown'
+);
+
+const getTopologyEvidenceLabel = (item: any, language = 'zh'): string => {
+  const zh = !String(language || '').toLowerCase().startsWith('en');
+  switch (getTopologyEvidenceStatus(item)) {
+    case 'bidirectional_confirmed': return zh ? '双向确认' : 'Bidirectional confirmed';
+    case 'single_sided_evidence':
+    case 'neighbor_mismatch':
+    case 'stale': return zh ? '单向确认' : 'One-sided confirmed';
+    case 'not_applicable': return zh ? '不适用' : 'N/A';
+    default: return zh ? '单向确认' : 'One-sided confirmed';
+  }
 };
 
 const abbreviateInterface = (value?: string) => {
@@ -581,6 +609,45 @@ const getDeviceStatusLabel = (device: Device): string => {
   if (device.health_status === 'warning' || (device.open_alert_count || 0) > 0 || device.status === 'pending') return '预警';
   if (device.status === 'unknown') return '状态未知';
   return '在线';
+};
+
+const hasTopologyCollectionAnomaly = (device: Device): boolean => {
+  const status = String(device.topology_collection_status || '').toLowerCase();
+  const protocolResults = device.topology_collection_protocol_results || {};
+  return ['failed', 'partial', 'not_configured'].includes(status)
+    || ['snmp', 'ssh'].some((protocol) => ['failed', 'partial', 'error'].includes(
+      String(protocolResults[protocol as 'snmp' | 'ssh']?.status || '').toLowerCase(),
+    ));
+};
+
+const topologyCollectionBadgeColor = (device: Device): string =>
+  String(device.topology_collection_status || '').toLowerCase() === 'failed' ? '#e11d48' : '#d97706';
+
+const topologyCollectionStatusLabel = (status?: string): string => {
+  const normalized = String(status || 'unknown').toLowerCase();
+  if (normalized === 'failed' || normalized === 'error') return '失败';
+  if (normalized === 'partial') return '部分异常';
+  if (normalized === 'not_configured') return '未配置';
+  if (normalized === 'no_neighbors') return '无邻居';
+  if (normalized === 'not_attempted') return '未尝试';
+  if (normalized === 'success') return '成功';
+  return normalized;
+};
+
+const topologyCollectionTooltip = (device: Device): string => {
+  const details = (['snmp', 'ssh'] as const).flatMap((protocol) => {
+    const result = device.topology_collection_protocol_results?.[protocol];
+    if (!result) return [];
+    const protocolLabel = protocol.toUpperCase();
+    const suffix = result.detail ? `：${result.detail}` : '';
+    return [`${protocolLabel} ${topologyCollectionStatusLabel(result.status)}${suffix}`];
+  });
+  return [
+    `拓扑采集${topologyCollectionStatusLabel(device.topology_collection_status)}`,
+    ...details,
+    device.topology_collection_error_code,
+    device.topology_collection_error_message,
+  ].filter(Boolean).join(' · ');
 };
 
 const buildSiteAnchors = (devices: Device[], width: number) => {
@@ -1057,7 +1124,9 @@ const buildMinimapSnapshot = (
   };
 };
 
-const TopologyGraph: React.FC<TopologyGraphProps> = ({ devices, links, onNodeClick, onOpenWorkspace, selectedNodeId, selectedLinkKey, onLinkClick }) => {
+const TopologyGraph: React.FC<TopologyGraphProps> = ({ devices, links, language, onNodeClick, onOpenWorkspace, selectedNodeId, selectedLinkKey, onLinkClick }) => {
+  const graphLanguage = language || (typeof document !== 'undefined' ? document.documentElement.lang : 'zh');
+  const graphZh = !String(graphLanguage || '').toLowerCase().startsWith('en');
   const GRID_SIZE = 16;
   const svgRef = useRef<SVGSVGElement>(null);
   const containerRef = useRef<HTMLDivElement>(null);
@@ -1110,15 +1179,6 @@ const TopologyGraph: React.FC<TopologyGraphProps> = ({ devices, links, onNodeCli
     () => graphDevices.find((device) => device.id === hoveredDeviceId) || null,
     [graphDevices, hoveredDeviceId],
   );
-  const hoveredLink = useMemo(
-    () => graphLinks.find((link) => (link.link_key || link.id) === hoveredLinkId) || null,
-    [graphLinks, hoveredLinkId],
-  );
-  const hoveredLinkMembers = useMemo(() => {
-    if (!hoveredLink || !isRealAggregationLink(hoveredLink)) return [];
-    return Array.isArray(hoveredLink.members) ? hoveredLink.members : [];
-  }, [hoveredLink]);
-
   const clearHoverHideTimer = () => {
     if (hoverHideTimerRef.current !== null) {
       window.clearTimeout(hoverHideTimerRef.current);
@@ -1175,16 +1235,8 @@ const TopologyGraph: React.FC<TopologyGraphProps> = ({ devices, links, onNodeCli
     setHoveredLinkId(null); // hide link hover card
   };
 
-  const updateLinkHoverCard = (event: any, link: Link) => {
-    const container = graphViewportRef.current;
-    if (!container) return;
+  const updateLinkHoverFocus = (_event: any, link: Link) => {
     clearHoverHideTimer();
-    const rect = container.getBoundingClientRect();
-    const cardWidth = 240;
-    const cardHeight = 300;
-    const x = Math.min(Math.max(event.clientX - rect.left + 14, 8), Math.max(8, rect.width - cardWidth - 8));
-    const y = Math.min(Math.max(event.clientY - rect.top + 14, 8), Math.max(8, rect.height - cardHeight - 8));
-    setHoverCardPosition({ x, y });
     clearDeviceHoverFocus();
     setHoveredLinkId(link.link_key || link.id || '');
     setHoveredDeviceId(null); // hide device hover card
@@ -1979,8 +2031,8 @@ const TopologyGraph: React.FC<TopologyGraphProps> = ({ devices, links, onNodeCli
         const siteNodeCount = site.nodes.length;
         const siteName = site.label.length > 18 ? `${site.label.slice(0, 18)}...` : site.label;
         const label = hasAggregation
-          ? `▣ ${siteName} · ${siteNodeCount} 台设备 · ${siteLogicalLinkCount} 条逻辑链路 · ${sitePhysicalLinkCount} 条物理链路`
-          : `▣ ${siteName} · ${siteNodeCount} 台设备 · ${sitePhysicalLinkCount} 条物理链路`;
+          ? `▣ ${siteName} · ${siteNodeCount} 台设备 · ${siteLogicalLinkCount} 条逻辑链路 · ${sitePhysicalLinkCount} 条设备链路`
+          : `▣ ${siteName} · ${siteNodeCount} 台设备 · ${sitePhysicalLinkCount} 条链路`;
         const availableLabelWidth = Math.max(72, right - left - 20);
         const labelWidth = Math.min(Math.max(120, estimateTopologyTextWidth(label) + 28), availableLabelWidth);
         const displayLabel = fitTopologyLabelText(label, labelWidth - 28);
@@ -2213,6 +2265,31 @@ const TopologyGraph: React.FC<TopologyGraphProps> = ({ devices, links, onNodeCli
       return parallelOffsetMap.get(getLinkIdentity(link, fallbackIndex)) || 0;
     };
 
+    const getAggregationMemberLines = (item: any): string[] => (
+      (Array.isArray(item?.members) ? item.members : []).map((member: any) => {
+        const source = getFullInterfaceLabel(member?.source?.name || member?.source?.normalized) || '-';
+        const target = getFullInterfaceLabel(member?.target?.name || member?.target?.normalized) || '-';
+        return `${source} ↔ ${target}`;
+      })
+    );
+
+    const getAggregationLinkTitle = (item: any): string => {
+      const source = getLinkEndpointLabel(item, 'source') || '-';
+      const target = getLinkEndpointLabel(item, 'target') || '-';
+      const bandwidth = getBandwidthTier(getLinkDisplayBandwidthMbps(item)).label;
+      const evidence = getTopologyEvidenceLabel(item, graphLanguage);
+      if (!isRealAggregationLink(item)) return `${source} ↔ ${target} · ${bandwidth} · ${evidence}`;
+
+      const protocol = String(item.aggregation_protocol || 'LAG').trim() || 'LAG';
+      const activeMembers = Number(item.active_member_count || 0);
+      const memberCount = Number(item.member_count || (Array.isArray(item.members) ? item.members.length : 0));
+      const memberLines = getAggregationMemberLines(item);
+      return [
+        `${source} ↔ ${target} · ${protocol} · ${bandwidth} · ${activeMembers}/${memberCount} ${graphZh ? '个成员' : 'members'} · ${evidence}`,
+        ...memberLines,
+      ].join('\n');
+    };
+
     const linkHitArea = linkLayer
       .selectAll('path.link-hit')
       .data(d3Links)
@@ -2229,14 +2306,17 @@ const TopologyGraph: React.FC<TopologyGraphProps> = ({ devices, links, onNodeCli
         onLinkClick(item as Link);
       })
       .on('pointerenter', (event, item: any) => {
-        updateLinkHoverCard(event, item as Link);
+        updateLinkHoverFocus(event, item as Link);
       })
       .on('pointermove', (event, item: any) => {
-        updateLinkHoverCard(event, item as Link);
+        updateLinkHoverFocus(event, item as Link);
       })
       .on('pointerleave', () => {
         scheduleHoverCardHide();
       });
+
+    linkHitArea.append('title')
+      .text((item: any) => getAggregationLinkTitle(item));
 
     const link = linkLayer
       .selectAll('path.link-visible')
@@ -2251,22 +2331,15 @@ const TopologyGraph: React.FC<TopologyGraphProps> = ({ devices, links, onNodeCli
       .attr('stroke-width', (item: any) => getTopologyLinkStyle(item).width)
       .attr('vector-effect', 'non-scaling-stroke')
       .attr('stroke-dasharray', (item: any) => {
-        return getTopologyLinkDash(item);
+        return getTopologyLinkEvidenceDash(item);
       })
       .attr('stroke-linejoin', 'round')
       // Keep every visible link equally clear. Selection is shown by the
       // surrounding UI, not by changing a link's apparent thickness/opacity.
       .attr('opacity', 0.92);
+
     link.append('title')
-      .text((item: any) => {
-        const source = getLinkEndpointLabel(item, 'source') || '-';
-        const target = getLinkEndpointLabel(item, 'target') || '-';
-        const bandwidth = getBandwidthTier(getLinkDisplayBandwidthMbps(item)).label;
-        if (String(item.link_kind || '').toLowerCase() === 'aggregation') {
-          return `${source} ↔ ${target} · ${bandwidth} · ${Number(item.active_member_count || 0)}/${Number(item.member_count || 0)} 个成员`;
-        }
-        return `${source} ↔ ${target} · ${bandwidth}`;
-      });
+      .text((item: any) => getAggregationLinkTitle(item));
 
     // A small white break plus a redraw of the crossing line makes diagonal
     // intersections read as crossings, never as an accidental junction.
@@ -2305,11 +2378,7 @@ const TopologyGraph: React.FC<TopologyGraphProps> = ({ devices, links, onNodeCli
         const target = getFullInterfaceLabel(item.target_port || item.target_port_normalized) || '-';
         return `${source} ↔ ${target}`;
       }
-      const memberLines = (Array.isArray(item.members) ? item.members : []).map((member: any) => {
-        const source = getFullInterfaceLabel(member?.source?.name || member?.source?.normalized) || '-';
-        const target = getFullInterfaceLabel(member?.target?.name || member?.target?.normalized) || '-';
-        return `${source} ↔ ${target}`;
-      });
+      const memberLines = getAggregationMemberLines(item);
       return `${getPortDisplayLabel(item, 'source')} / ${getPortDisplayLabel(item, 'target')}\n${memberLines.join('\n')}`;
     };
 
@@ -2399,7 +2468,7 @@ const TopologyGraph: React.FC<TopologyGraphProps> = ({ devices, links, onNodeCli
         return `${source} ↔ ${target}`;
       });
 
-    const showPortLabels = portLabelMode === 'visible' || (portLabelMode === 'auto' && graphDevices.length <= 8);
+    const showPortLabels = portLabelMode === 'visible';
     const shouldDisplayPortLabels = (item: any) => {
       if (portLabelMode === 'hidden') return false;
       const itemKey = item.link_key || item.id;
@@ -2420,10 +2489,10 @@ const TopologyGraph: React.FC<TopologyGraphProps> = ({ devices, links, onNodeCli
         return shouldDisplayPortLabels(item) ? null : 'none';
       })
       .on('pointerenter', (event, item: any) => {
-        updateLinkHoverCard(event, item as Link);
+        updateLinkHoverFocus(event, item as Link);
       })
       .on('pointermove', (event, item: any) => {
-        updateLinkHoverCard(event, item as Link);
+        updateLinkHoverFocus(event, item as Link);
       })
       .on('pointerleave', () => {
         scheduleHoverCardHide();
@@ -2654,6 +2723,27 @@ const TopologyGraph: React.FC<TopologyGraphProps> = ({ devices, links, onNodeCli
         appendDeviceGlyph(d3.select(this), d as Device);
       }
     });
+
+    const collectionAnomalyBadge = node.append('g')
+      .attr('class', 'node-collection-anomaly-badge')
+      .attr('transform', 'translate(18,18)')
+      .style('display', (d: any) => hasTopologyCollectionAnomaly(d as Device) ? null : 'none');
+    collectionAnomalyBadge.append('circle')
+      .attr('r', 6.5)
+      .attr('fill', (d: any) => topologyCollectionBadgeColor(d as Device))
+      .attr('stroke', '#ffffff')
+      .attr('stroke-width', 1.5);
+    collectionAnomalyBadge.append('text')
+      .attr('text-anchor', 'middle')
+      .attr('dominant-baseline', 'central')
+      .attr('y', -0.3)
+      .attr('fill', '#ffffff')
+      .attr('font-size', '9px')
+      .attr('font-weight', '900')
+      .attr('pointer-events', 'none')
+      .text('!');
+    collectionAnomalyBadge.append('title')
+      .text((d: any) => topologyCollectionTooltip(d as Device));
 
     const nodeLabelGroup = node.append('g')
       .attr('transform', 'translate(0,39)')
@@ -2908,7 +2998,7 @@ const TopologyGraph: React.FC<TopologyGraphProps> = ({ devices, links, onNodeCli
         },
       );
 
-      link
+        link
         .attr('d', (d: any, i: number) => {
           const offset = getParallelOffset(d, i);
           return routingMode === 'straight'
@@ -3419,6 +3509,29 @@ const TopologyGraph: React.FC<TopologyGraphProps> = ({ devices, links, onNodeCli
             <div className="mt-2 rounded-lg border border-cyan-100 bg-cyan-50 px-2 py-1.5 text-[10px] font-semibold leading-4 text-cyan-700">
               关联链路聚焦：仅显示直接邻居与关联链路
             </div>
+            {hasTopologyCollectionAnomaly(hoveredDevice) && (
+              <div className="mt-2 rounded-lg border border-amber-200 bg-amber-50 px-2 py-2 text-[10px] leading-4 text-amber-900">
+                <div className="font-extrabold">
+                  拓扑采集异常{hoveredDevice.topology_collection_method ? ` · ${hoveredDevice.topology_collection_method.toUpperCase()}` : ''}
+                </div>
+                {(['snmp', 'ssh'] as const).map((protocol) => {
+                  const result = hoveredDevice.topology_collection_protocol_results?.[protocol];
+                  if (!result) return null;
+                  return (
+                    <div key={protocol} className="mt-1 break-words">
+                      <span className="font-bold">{protocol.toUpperCase()} {topologyCollectionStatusLabel(result.status)}</span>
+                      {result.detail ? ` · ${result.detail}` : ''}
+                    </div>
+                  );
+                })}
+                {hoveredDevice.topology_collection_error_code && (
+                  <div className="mt-1 break-words font-mono">{hoveredDevice.topology_collection_error_code}</div>
+                )}
+                {hoveredDevice.topology_collection_error_message && (
+                  <div className="mt-1 break-words">{hoveredDevice.topology_collection_error_message}</div>
+                )}
+              </div>
+            )}
           </div>
           <dl className="mt-2.5 space-y-2 text-[10px]">
             <div>
@@ -3474,75 +3587,6 @@ const TopologyGraph: React.FC<TopologyGraphProps> = ({ devices, links, onNodeCli
           >
             登录
           </button>
-        </div>
-      )}
-      {hoveredLink && (
-        <div
-          className="pointer-events-auto absolute z-30 w-[240px] rounded-2xl border border-slate-200 bg-white/98 p-3 shadow-[0_18px_45px_rgba(15,23,42,0.22)] backdrop-blur-sm"
-          style={{ left: hoverCardPosition.x, top: hoverCardPosition.y }}
-          onPointerEnter={clearHoverHideTimer}
-          onPointerLeave={scheduleHoverCardHide}
-        >
-          <div className="border-b border-slate-100 pb-2.5">
-            <div className="truncate text-sm font-extrabold text-slate-900">链路详情</div>
-            <div className="mt-1 flex items-center gap-1.5 text-[10px] font-bold tracking-[0.08em] text-sky-700">
-              {hoveredLinkMembers.length > 1 || hoveredLink.link_kind === 'aggregation'
-                ? `聚合链路 · ${hoveredLinkMembers.length || hoveredLink.member_count || 0} 个成员`
-                : '物理链路'}
-            </div>
-          </div>
-          <dl className="mt-2.5 space-y-2 text-[10px]">
-            <div>
-              <dt className="font-semibold uppercase tracking-[0.12em] text-slate-400">本端设备及接口</dt>
-              <dd className="mt-0.5 font-bold text-slate-700">
-                {hoveredLink.source_hostname || (hoveredLink.source as any)?.hostname || '-'} · {getLinkEndpointLabel(hoveredLink, 'source') || '-'}
-              </dd>
-            </div>
-            <div>
-              <dt className="font-semibold uppercase tracking-[0.12em] text-slate-400">对端设备及接口</dt>
-              <dd className="mt-0.5 font-bold text-slate-700">
-                {hoveredLink.target_hostname || (hoveredLink.target as any)?.hostname || '-'} · {getLinkEndpointLabel(hoveredLink, 'target') || '-'}
-              </dd>
-            </div>
-            {isRealAggregationLink(hoveredLink) && (
-              <div>
-                <dt className="font-semibold uppercase tracking-[0.12em] text-slate-400">聚合口编号</dt>
-                <dd className="mt-0.5 font-mono font-bold text-slate-700">
-                  {getFullInterfaceLabel(hoveredLink.source_aggregation_name) || getLinkEndpointLabel(hoveredLink, 'source') || '-'}
-                  {' ↔ '}
-                  {getFullInterfaceLabel(hoveredLink.target_aggregation_name) || getLinkEndpointLabel(hoveredLink, 'target') || '-'}
-                </dd>
-                <dt className="mt-2 font-semibold uppercase tracking-[0.12em] text-slate-400">成员口（全部）</dt>
-                <dd className="mt-1 space-y-1 rounded-lg border border-slate-100 bg-slate-50 p-2 font-mono text-[9px] font-semibold leading-4 text-slate-600">
-                  {hoveredLinkMembers.map((member: any, index) => (
-                    <div key={`${member?.source?.device_id || 'source'}-${member?.source?.name || index}-${member?.target?.name || index}`}>
-                      {(member?.source?.name || member?.source?.normalized || '-')}
-                      {' ↔ '}
-                      {(member?.target?.name || member?.target?.normalized || '-')}
-                    </div>
-                  ))}
-                </dd>
-              </div>
-            )}
-            <div>
-              <dt className="font-semibold uppercase tracking-[0.12em] text-slate-400">链路带宽</dt>
-              <dd className="mt-0.5 font-bold text-slate-700">
-                {getBandwidthTier(hoveredLink.bandwidth_mbps || hoveredLink.aggregation_bandwidth_mbps).label}
-              </dd>
-            </div>
-            <div>
-              <dt className="font-semibold uppercase tracking-[0.12em] text-slate-400">双工模式</dt>
-              <dd className="mt-0.5 font-semibold text-slate-700">全双工（自协商）</dd>
-            </div>
-            <div>
-              <dt className="font-semibold uppercase tracking-[0.12em] text-slate-400">所属 VLAN</dt>
-              <dd className="mt-0.5 font-semibold text-slate-700">VLAN 1（默认）</dd>
-            </div>
-            <div>
-              <dt className="font-semibold uppercase tracking-[0.12em] text-slate-400">CRC/错误包</dt>
-              <dd className="mt-0.5 font-semibold text-emerald-600">0 (正常)</dd>
-            </div>
-          </dl>
         </div>
       )}
       <svg ref={svgRef} className="topology-graph-svg h-full w-full" />
