@@ -271,7 +271,13 @@ def test_topology_route_passes_rack_scope_and_filters_metadata(isolated_db, monk
     response = topology_api.get_links(limit=500, site_id=seed['site_id'], rack_id=f' {rack_id} ', include_stale=False)
 
     assert captured['device_ids'] == sorted([device_one, device_two])
-    assert response['links'] == [{'id': 'link-1'}]
+    assert response['links'] == [{
+        'id': 'link-1',
+        'evidence_directions': [],
+        'source_collection_evidence': {'state': 'unknown', 'completed_at': None, 'protocol_results': {}},
+        'target_collection_evidence': {'state': 'unknown', 'completed_at': None, 'protocol_results': {}},
+        'evidence_status': 'not_applicable',
+    }]
     assert response['node_metadata'] == {device_one: {'topology_rank': 1}}
     assert response['unmanaged_nodes'] == []
 
