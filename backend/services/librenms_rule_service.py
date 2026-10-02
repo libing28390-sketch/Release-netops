@@ -1161,20 +1161,36 @@ def _oid_prefix_matches(observed: Any, prefix: str) -> bool:
     return len(actual_parts) >= len(expected_parts) and actual_parts[:len(expected_parts)] == expected_parts
 
 
-def _resolve_identity_oid(conn: Any, token: Any, *, mib_dir: Any = "") -> str:
+def _resolve_identity_oid(
+    conn: Any,
+    token: Any,
+    *,
+    mib_dir: Any = "",
+    cache: dict[tuple[str, str], str] | None = None,
+) -> str:
     raw = str(token or "").strip()
+    preferred_dir = str(mib_dir or "").strip().replace("\\", "/").casefold()
+    # Keep the token's exact spelling: quoted ASCII indexes are case-sensitive
+    # even though the MIB directory preference is not.
+    cache_key = (raw, preferred_dir)
+    if cache is not None and cache_key in cache:
+        return cache[cache_key]
     numeric = _numeric_oid(raw)
     if numeric:
-        return numeric.lstrip(".")
+        resolved_numeric = numeric.lstrip(".")
+        if cache is not None:
+            cache[cache_key] = resolved_numeric
+        return resolved_numeric
     match = re.fullmatch(
         r"(?P<module>[A-Za-z][A-Za-z0-9_-]*)::(?P<symbol>[A-Za-z][A-Za-z0-9_-]*)(?P<suffix>(?:\.(?:\d+|\"[^\"\\]*\"|'[^'\\]*'))*)",
         raw,
     )
     if not match:
+        if cache is not None:
+            cache[cache_key] = ""
         return ""
     module = match.group("module").casefold()
     symbol = match.group("symbol")
-    preferred_dir = str(mib_dir or "").strip().replace("\\", "/").casefold()
     savepoint = "snmp_identity_oid_resolution"
     conn.execute(f"SAVEPOINT {savepoint}")
     try:
@@ -1183,7 +1199,7 @@ def _resolve_identity_oid(conn: Any, token: Any, *, mib_dir: Any = "") -> str:
             SELECT n.oid, m.relative_path
               FROM snmp_mib_nodes n
               JOIN snmp_mibs m ON m.id = n.mib_id
-             WHERE m.is_active = TRUE
+             WHERE m.is_active = 1
                AND LOWER(m.name) = ?
                AND LOWER(n.node_name) = LOWER(?)
                AND TRIM(COALESCE(n.oid, '')) <> ''
@@ -1200,13 +1216,19 @@ def _resolve_identity_oid(conn: Any, token: Any, *, mib_dir: Any = "") -> str:
         except Exception:
             # Let the enclosing optional identity lookup recover its savepoint.
             raise
+        if cache is not None:
+            cache[cache_key] = ""
         return ""
     else:
         conn.execute(f"RELEASE SAVEPOINT {savepoint}")
     if not rows:
+        if cache is not None:
+            cache[cache_key] = ""
         return ""
     base = _numeric_oid(rows[0][0]).lstrip(".")
     if not base:
+        if cache is not None:
+            cache[cache_key] = ""
         return ""
 
     suffix = match.group("suffix")
@@ -1214,9 +1236,13 @@ def _resolve_identity_oid(conn: Any, token: Any, *, mib_dir: Any = "") -> str:
     cursor = 0
     while cursor < len(suffix):
         if suffix[cursor] != ".":
+            if cache is not None:
+                cache[cache_key] = ""
             return ""
         cursor += 1
         if cursor >= len(suffix):
+            if cache is not None:
+                cache[cache_key] = ""
             return ""
         if suffix[cursor] in {"'", '"'}:
             quote = suffix[cursor]
@@ -1228,10 +1254,14 @@ def _resolve_identity_oid(conn: Any, token: Any, *, mib_dir: Any = "") -> str:
                 chars.append(suffix[end])
                 end += 1
             if end >= len(suffix):
+                if cache is not None:
+                    cache[cache_key] = ""
                 return ""
             try:
                 encoded = "".join(chars).encode("ascii")
             except UnicodeEncodeError:
+                if cache is not None:
+                    cache[cache_key] = ""
                 return ""
             indexes.extend((len(encoded), *encoded))
             cursor = end + 1
@@ -1240,32 +1270,85 @@ def _resolve_identity_oid(conn: Any, token: Any, *, mib_dir: Any = "") -> str:
             while end < len(suffix) and suffix[end].isdigit():
                 end += 1
             if end == cursor:
+                if cache is not None:
+                    cache[cache_key] = ""
                 return ""
             indexes.append(int(suffix[cursor:end]))
             cursor = end
-    return ".".join((base, *(str(index) for index in indexes)))
+    resolved = ".".join((base, *(str(index) for index in indexes)))
+    if cache is not None:
+        cache[cache_key] = resolved
+    return resolved
 
 
-def _runtime_identity_definition(conn: Any, definition: Mapping[str, Any]) -> dict[str, Any]:
+def _runtime_identity_definition(
+    conn: Any,
+    definition: Mapping[str, Any],
+    *,
+    identity: Mapping[str, Any] | None = None,
+    rule_vendor: Any = "",
+    minimum_score: int = 0,
+    require_pure_snmp_vendor: bool = False,
+    cache: dict[tuple[str, str], str] | None = None,
+) -> dict[str, Any]:
     resolved = dict(definition)
     clauses = definition.get("clauses") if isinstance(definition.get("clauses"), list) else []
-    runtime_clauses: list[dict[str, Any]] = []
+    runtime_clauses: list[Any] = []
+    known_vendor = normalize_asset_vendor((identity or {}).get("vendor")) if identity else ""
+    normalized_rule_vendor = normalize_asset_vendor(rule_vendor)
     for clause in clauses:
         if not isinstance(clause, Mapping):
+            runtime_clauses.append(clause)
             continue
         runtime_clause = dict(clause)
         predicates = clause.get("all") if isinstance(clause.get("all"), list) else []
-        runtime_clause["all"] = [
-            {
+        eligible_for_snmp = identity is None and clause.get("supported") is not False
+        if identity is not None:
+            eligible_for_snmp = bool(predicates) and clause.get("supported") is not False
+            has_system_predicate = False
+            for predicate in predicates:
+                if not isinstance(predicate, Mapping):
+                    eligible_for_snmp = False
+                    break
+                field = str(predicate.get("field") or "")
+                if field in {"snmp_get", "snmp_walk"}:
+                    continue
+                has_system_predicate = True
+                matched, _evidence, _score = _predicate_matches(predicate, identity)
+                if not matched:
+                    eligible_for_snmp = False
+                    break
+            if (
+                eligible_for_snmp
+                and not has_system_predicate
+                and require_pure_snmp_vendor
+                and not (known_vendor and normalized_rule_vendor == known_vendor)
+            ):
+                eligible_for_snmp = False
+            if minimum_score > 1200:
+                eligible_for_snmp = False
+
+        runtime_predicates: list[Any] = []
+        for predicate in predicates:
+            if not isinstance(predicate, Mapping):
+                runtime_predicates.append(predicate)
+                continue
+            if predicate.get("field") not in {"snmp_get", "snmp_walk"} or not eligible_for_snmp:
+                # Preserve every original predicate when a clause is not
+                # eligible. Keeping the clause prevents platform fallback from
+                # treating a rule with unmet identity conditions as unconditional.
+                runtime_predicates.append(dict(predicate))
+                continue
+            runtime_predicates.append({
                 **dict(predicate),
                 "resolved_oid": _resolve_identity_oid(
-                    conn, predicate.get("oid"), mib_dir=predicate.get("mib_dir"),
+                    conn,
+                    predicate.get("oid"),
+                    mib_dir=predicate.get("mib_dir"),
+                    cache=cache,
                 ),
-            }
-            if isinstance(predicate, Mapping) and predicate.get("field") in {"snmp_get", "snmp_walk"}
-            else dict(predicate) if isinstance(predicate, Mapping) else predicate
-            for predicate in predicates
-        ]
+            })
+        runtime_clause["all"] = runtime_predicates
         runtime_clauses.append(runtime_clause)
     resolved["clauses"] = runtime_clauses
     return resolved
@@ -1543,6 +1626,7 @@ def identity_snmp_probe_plan(
     known_vendor = normalize_asset_vendor(identity.get("vendor"))
     conflict = str(identity.get("status") or "").casefold() == "conflict"
     needed: set[tuple[str, str]] = set()
+    mib_cache: dict[tuple[str, str], str] = {}
     for row in rows:
         item = dict(row)
         rule_vendor = normalize_asset_vendor(item.get("vendor"))
@@ -1557,7 +1641,15 @@ def identity_snmp_probe_plan(
         definition = detection.get("identity_match")
         if not isinstance(definition, Mapping):
             definition = _legacy_identity_definition(detection)
-        runtime_definition = _runtime_identity_definition(conn, definition)
+        runtime_definition = _runtime_identity_definition(
+            conn,
+            definition,
+            identity=identity,
+            rule_vendor=rule_vendor,
+            minimum_score=minimum_score,
+            require_pure_snmp_vendor=True,
+            cache=mib_cache,
+        )
         clauses = runtime_definition.get("clauses") if isinstance(runtime_definition.get("clauses"), list) else []
         for clause in clauses:
             if not isinstance(clause, Mapping) or clause.get("supported") is False:
@@ -1609,6 +1701,7 @@ def resolve_rule(conn: Any, identity: Mapping[str, Any]) -> dict[str, Any] | Non
         "SELECT * FROM snmp_librenms_rules WHERE rule_status IN ('active','identity_only') ORDER BY vendor, os_key"
     ).fetchall()
     matches: list[tuple[int, dict[str, Any]]] = []
+    mib_cache: dict[tuple[str, str], str] = {}
     for row in rows:
         item = dict(row)
         if vendor and item.get("vendor") and str(item["vendor"]).casefold() != vendor:
@@ -1625,7 +1718,13 @@ def resolve_rule(conn: Any, identity: Mapping[str, Any]) -> dict[str, Any] | Non
         identity_definition = detection.get("identity_match")
         if not isinstance(identity_definition, Mapping):
             identity_definition = _legacy_identity_definition(detection)
-        identity_definition = _runtime_identity_definition(conn, identity_definition)
+        identity_definition = _runtime_identity_definition(
+            conn,
+            identity_definition,
+            identity=identity,
+            rule_vendor=item.get("vendor"),
+            cache=mib_cache,
+        )
         match = match_identity(identity_definition, identity)
         # Keep the old explicit platform fallback only for records that have no
         # identity predicates at all; it must not bypass an upstream condition.

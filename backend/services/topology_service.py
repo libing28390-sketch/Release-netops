@@ -2439,6 +2439,14 @@ async def _collect_device_observations(
             if snmp_records is not None:
                 raw_snmp_records = list(snmp_records)
                 snmp_status = str(getattr(snmp_records, 'collection_status', 'success') or 'success')
+                truncated_oids = list(getattr(snmp_records, 'truncated_oids', []) or [])
+                partial_detail = 'SNMP LLDP MIB walk returned incomplete data'
+                if truncated_oids:
+                    snmp_status = 'partial'
+                    partial_detail += (
+                        f"; walk_row_limit={getattr(snmp_records, 'max_rows', 'unknown')}"
+                        f"; truncated_oids={','.join(str(oid) for oid in truncated_oids)}"
+                    )
                 observations: list[dict[str, Any]] = []
                 for item in raw_snmp_records:
                     obs = _mark_observation_collection_source(_extract_observation_fields(item), 'snmp')
@@ -2461,7 +2469,7 @@ async def _collect_device_observations(
                         snmp_failure_reason = 'partial_mib_walks_failed'
                         snmp_protocol_result = {
                             'status': 'partial',
-                            'detail': 'SNMP LLDP MIB walk returned incomplete data',
+                            'detail': partial_detail,
                             'observations_count': len(observations),
                         }
                         logger.warning(

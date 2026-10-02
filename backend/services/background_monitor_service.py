@@ -5,6 +5,7 @@ import json
 import hashlib
 import uuid
 import logging
+import threading
 from datetime import datetime, timedelta, timezone
 from typing import Any, Mapping
 from urllib import request as urlrequest
@@ -25,6 +26,8 @@ from services.snmp_counter_service import (
 )
 from services.snmp_metric_profile_service import HEALTH_METRIC_KEYS, resolve_health_metric_profiles
 from services.snmp_discovery_service import (
+    HARDWARE_DISCOVERY_VERSION,
+    RULE_VERSION,
     discover_device_oid_config,
     load_discovery,
     persist_discovery,
@@ -39,6 +42,225 @@ from services.alert_control_service import AlertState, find_active_silence_for_a
 from core.crypto import decrypt_credential
 
 logger = logging.getLogger(__name__)
+
+
+# Automatic hardware discovery runs from the B-loop.  A device that has no
+# persisted capability rows must remain eligible for discovery, but retrying a
+# failing/empty probe on every 60-second tick can turn one bad target into a
+# process-wide hot loop.  Keep this state local to the worker: persisted
+# discovery remains the source of truth for normal six-hour freshness, while
+# this guard only bounds repeated automatic retries in the current process.
+_AUTOMATIC_DISCOVERY_FAILURE_DELAY_SECONDS = 120.0
+_AUTOMATIC_DISCOVERY_EMPTY_DELAY_SECONDS = 900.0
+_AUTOMATIC_DISCOVERY_MAX_DELAY_SECONDS = 900.0
+_AUTOMATIC_DISCOVERY_STATE_TTL_SECONDS = 3600.0
+_AUTOMATIC_DISCOVERY_MAX_STATE_ENTRIES = 256
+_automatic_discovery_retry_state: dict[str, dict[str, Any]] = {}
+_automatic_discovery_retry_lock = threading.Lock()
+_AUTOMATIC_DISCOVERY_SKIPPED = object()
+
+
+def _automatic_discovery_now() -> float:
+    """Return the monotonic clock used by the automatic discovery guard."""
+    return _time.monotonic()
+
+
+def _prune_automatic_discovery_retry_state_locked(now: float) -> None:
+    expired = [
+        signature
+        for signature, state in _automatic_discovery_retry_state.items()
+        if not state.get("in_flight")
+        and now - float(state.get("last_touched", now)) >= _AUTOMATIC_DISCOVERY_STATE_TTL_SECONDS
+    ]
+    for signature in expired:
+        _automatic_discovery_retry_state.pop(signature, None)
+
+    overflow = len(_automatic_discovery_retry_state) - _AUTOMATIC_DISCOVERY_MAX_STATE_ENTRIES
+    if overflow <= 0:
+        return
+    candidates = sorted(
+        (
+            (float(state.get("last_touched", now)), signature)
+            for signature, state in _automatic_discovery_retry_state.items()
+            if not state.get("in_flight")
+        ),
+    )
+    for _last_touched, signature in candidates[:overflow]:
+        _automatic_discovery_retry_state.pop(signature, None)
+
+
+def _automatic_discovery_signature(
+    device: Mapping[str, Any],
+    *,
+    snmp_ip: Any,
+    snmp_port: Any,
+    snmp_version: Any,
+    community: Any,
+    profile: Mapping[str, Any] | Any = None,
+) -> str:
+    """Build a credential-safe signature of the automatic discovery inputs.
+
+    The signature is a digest rather than a tuple kept in process state, so a
+    community string (or any other sensitive input) cannot be recovered from
+    the retry map.  Changing an address, credential digest, identity field,
+    poll/profile input, or discovery rule version naturally selects a new
+    retry bucket and is therefore immediately eligible.
+    """
+    profile_value: Any
+    if isinstance(profile, Mapping):
+        profile_value = dict(profile)
+    else:
+        profile_value = str(profile or "")
+    metric_profile = (
+        device.get("metric_profile_id")
+        or device.get("health_metric_profile_id")
+        or device.get("profile_id")
+        or device.get("profile")
+        or ""
+    )
+    signature_input = {
+        "device_id": str(device.get("id") or ""),
+        "snmp_ip": str(snmp_ip or "").strip(),
+        "snmp_port": str(snmp_port or 161).strip(),
+        "snmp_version": str(snmp_version or "2c").strip().casefold(),
+        "community_digest": hashlib.sha256(str(community or "").encode("utf-8")).hexdigest(),
+        "vendor": str(device.get("vendor") or "").strip().casefold(),
+        "platform": str(device.get("platform") or "").strip().casefold(),
+        "model": str(device.get("model") or "").strip().casefold(),
+        "software": str(device.get("version") or device.get("software_version") or "").strip().casefold(),
+        "profile": {
+            "poll": profile_value,
+            "device": str(metric_profile or ""),
+            "role": str(device.get("role") or "").strip().casefold(),
+        },
+        "rule_version": RULE_VERSION,
+        "hardware_discovery_version": HARDWARE_DISCOVERY_VERSION,
+    }
+    encoded = json.dumps(
+        signature_input,
+        ensure_ascii=False,
+        sort_keys=True,
+        separators=(",", ":"),
+        default=str,
+    ).encode("utf-8")
+    return hashlib.sha256(encoded).hexdigest()
+
+
+def _begin_automatic_discovery(signature: str) -> str | None:
+    """Claim one automatic discovery attempt for a signature, if eligible."""
+    now = _automatic_discovery_now()
+    with _automatic_discovery_retry_lock:
+        _prune_automatic_discovery_retry_state_locked(now)
+        state = _automatic_discovery_retry_state.get(signature)
+        if state is not None:
+            state["last_touched"] = now
+            if state.get("in_flight") or now < float(state.get("next_retry_at", 0.0)):
+                return None
+        else:
+            if len(_automatic_discovery_retry_state) >= _AUTOMATIC_DISCOVERY_MAX_STATE_ENTRIES:
+                # The prune above normally frees expired entries.  If every
+                # remaining entry is in flight, refuse this new attempt rather
+                # than allowing an unbounded map during a discovery storm.
+                candidates = [
+                    (float(item.get("last_touched", now)), key)
+                    for key, item in _automatic_discovery_retry_state.items()
+                    if not item.get("in_flight")
+                ]
+                if not candidates:
+                    return None
+                _last_touched, oldest = min(candidates)
+                _automatic_discovery_retry_state.pop(oldest, None)
+            state = {
+                "failure_count": 0,
+                "in_flight": False,
+                "last_touched": now,
+                "next_retry_at": 0.0,
+            }
+            _automatic_discovery_retry_state[signature] = state
+        state["in_flight"] = True
+        state["last_touched"] = now
+        return signature
+
+
+def _record_automatic_discovery_failure(signature: str) -> None:
+    """Release a failed attempt and apply bounded exponential backoff."""
+    now = _automatic_discovery_now()
+    with _automatic_discovery_retry_lock:
+        state = _automatic_discovery_retry_state.get(signature)
+        if state is None:
+            return
+        failure_count = int(state.get("failure_count", 0)) + 1
+        exponent = min(failure_count - 1, 3)
+        delay = min(
+            _AUTOMATIC_DISCOVERY_MAX_DELAY_SECONDS,
+            _AUTOMATIC_DISCOVERY_FAILURE_DELAY_SECONDS * (2 ** exponent),
+        )
+        state.update(
+            failure_count=failure_count,
+            in_flight=False,
+            last_touched=now,
+            next_retry_at=now + delay,
+        )
+        _prune_automatic_discovery_retry_state_locked(now)
+
+
+def _record_automatic_discovery_empty(signature: str) -> None:
+    """Release an empty discovery result with the longer retry delay."""
+    now = _automatic_discovery_now()
+    with _automatic_discovery_retry_lock:
+        state = _automatic_discovery_retry_state.get(signature)
+        if state is None:
+            return
+        state.update(
+            failure_count=0,
+            in_flight=False,
+            last_touched=now,
+            next_retry_at=now + _AUTOMATIC_DISCOVERY_EMPTY_DELAY_SECONDS,
+        )
+        _prune_automatic_discovery_retry_state_locked(now)
+
+
+def _record_automatic_discovery_success(signature: str) -> None:
+    """Forget a successful attempt so persisted discovery controls freshness."""
+    with _automatic_discovery_retry_lock:
+        _automatic_discovery_retry_state.pop(signature, None)
+
+
+def _release_automatic_discovery_cancelled(signature: str) -> None:
+    """Release an interrupted attempt without counting cancellation as failure."""
+    now = _automatic_discovery_now()
+    with _automatic_discovery_retry_lock:
+        state = _automatic_discovery_retry_state.get(signature)
+        if state is None:
+            return
+        state.update(in_flight=False, last_touched=now, next_retry_at=0.0)
+        _prune_automatic_discovery_retry_state_locked(now)
+
+
+async def _run_automatic_oid_discovery(signature: str, operation):
+    """Run one guarded automatic discovery operation.
+
+    The operation includes persistence at the call site.  This means a DB
+    failure after a network probe is still retried with the failure backoff,
+    while an ordinary payload without hardware categories gets the explicit
+    900-second empty-result delay.
+    """
+    token = _begin_automatic_discovery(signature)
+    if token is None:
+        return _AUTOMATIC_DISCOVERY_SKIPPED
+    try:
+        payload = await operation()
+    except asyncio.CancelledError:
+        _release_automatic_discovery_cancelled(token)
+        raise
+    except Exception:
+        _record_automatic_discovery_failure(token)
+        raise
+    if isinstance(payload, Mapping) and payload.get("hardware_category_results"):
+        _record_automatic_discovery_success(token)
+    else:
+        _record_automatic_discovery_empty(token)
+    return payload
 
 
 def _discovery_is_stale(
@@ -129,6 +351,41 @@ def _db_many(sql, rows):
         conn.commit()
     finally:
         conn.close()
+
+
+def _store_interface_sample(
+    *, device_id: str, profile_id: str, config_hash: str,
+    values: dict[str, Any], sampled_at: str,
+    device_uptime_cs: int | None, raw_rows: list,
+) -> None:
+    # Raw data and durable baseline must commit together before memory advances.
+    if not raw_rows:
+        return
+    conn = get_db_connection()
+    try:
+        conn.executemany('''
+        INSERT INTO interface_telemetry_raw (
+            ts, device_id, interface_name, status, speed_mbps,
+            in_bps, out_bps, bw_in_pct, bw_out_pct,
+            in_pkts, out_pkts,
+            in_errors, out_errors, in_discards, out_discards,
+            fcs_errors, frame_too_long_errors, mac_rx_errors, symbol_errors,
+            packet_counter_source, fcs_source
+        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+        ''', raw_rows)
+        save_interface_counter_sample(
+            device_id=device_id, profile_id=profile_id, config_hash=config_hash,
+            values=values, sampled_at=sampled_at, device_uptime_cs=device_uptime_cs,
+            connection=conn,
+        )
+        conn.commit()
+    except Exception:
+        conn.rollback()
+        raise
+    finally:
+        conn.close()
+    prev_intf_octets[device_id] = values
+    prev_intf_config_hash[device_id] = config_hash
 
 
 def _sync_device_status_tag(device_id: str, status: str) -> None:
@@ -1559,17 +1816,35 @@ async def _process_device_raw(device, cycle_tick: int):
                     )
             if discovery_is_stale:
                 try:
-                    discovery = await discover_device_oid_config(
-                        snmp_ip,
-                        snmp_community,
-                        snmp_port,
-                        vendor=device.get('vendor'),
-                        platform=platform,
-                        model=device.get('model'),
-                        version=device.get('version'),
+                    discovery_signature = _automatic_discovery_signature(
+                        device,
+                        snmp_ip=snmp_ip,
+                        snmp_port=snmp_port,
                         snmp_version=str(device.get('snmp_version') or '2c'),
+                        community=snmp_community,
+                        profile=poll_profile,
                     )
-                    persist_discovery(str(dev_id), discovery)
+
+                    async def _discover_and_persist_automatically():
+                        payload = await discover_device_oid_config(
+                            snmp_ip,
+                            snmp_community,
+                            snmp_port,
+                            vendor=device.get('vendor'),
+                            platform=platform,
+                            model=device.get('model'),
+                            version=device.get('version'),
+                            snmp_version=str(device.get('snmp_version') or '2c'),
+                        )
+                        persist_discovery(str(dev_id), payload)
+                        return payload
+
+                    automatic_discovery = await _run_automatic_oid_discovery(
+                        discovery_signature,
+                        _discover_and_persist_automatically,
+                    )
+                    if automatic_discovery is not _AUTOMATIC_DISCOVERY_SKIPPED:
+                        discovery = automatic_discovery
                 except Exception as discovery_err:
                     logger.debug(f"[SNMP] {ip} OID discovery failed: {discovery_err}")
                     discovery = discovery or {
@@ -2152,9 +2427,7 @@ async def _process_device_raw(device, cycle_tick: int):
                                 ip_address=ip, status='resolved', rule=util_rule,
                                 )
 
-                    prev_intf_octets[dev_id] = cur_snapshot
-                    prev_intf_config_hash[str(dev_id)] = interface_config_hash
-                    save_interface_counter_sample(
+                    _store_interface_sample(
                         device_id=str(dev_id),
                         profile_id=interface_profile_id,
                         config_hash=interface_config_hash,
@@ -2164,17 +2437,8 @@ async def _process_device_raw(device, cycle_tick: int):
                             (row.get('device_uptime_cs') for row in intf_data if row.get('device_uptime_cs') is not None),
                             None,
                         ),
+                        raw_rows=raw_rows,
                     )
-                    _db_many('''
-                        INSERT INTO interface_telemetry_raw (
-                            ts, device_id, interface_name, status, speed_mbps,
-                            in_bps, out_bps, bw_in_pct, bw_out_pct,
-                            in_pkts, out_pkts,
-                            in_errors, out_errors, in_discards, out_discards,
-                            fcs_errors, frame_too_long_errors, mac_rx_errors, symbol_errors,
-                            packet_counter_source, fcs_source
-                        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-                    ''', raw_rows)
 
                     # Update interfaces table with discovered interfaces
                     conn = get_db_connection()

@@ -12,6 +12,7 @@ from typing import Any
 
 from database import get_db_connection
 from core.interface_utils import normalize_interface_name
+from services.collection_plan_service import should_collect
 from services.read_only_collection_adapter import collect_read_only_evidence
 from services.vlan_discovery_service import is_svi_interface
 
@@ -606,30 +607,127 @@ def persist_prefix_candidates(candidates: list[dict[str, Any]], *, collection_ru
         conn.close()
 
 
-def age_missing_prefixes(*, collection_run_id: str, started_at: str) -> int:
-    """Age discovery-owned prefixes after a complete successful sweep only."""
+def _normalise_device_ids(value: Any) -> tuple[set[str], bool]:
+    """Decode a device-id collection and flag malformed/unknown ownership."""
+    if value is None:
+        return set(), False
+    if isinstance(value, str):
+        raw = value.strip()
+        if not raw:
+            return set(), False
+        try:
+            value = json.loads(raw)
+        except (TypeError, ValueError, json.JSONDecodeError):
+            return set(), True
+    if not isinstance(value, (list, tuple, set)):
+        return set(), True
+
+    device_ids: set[str] = set()
+    unknown = False
+    for item in value:
+        if isinstance(item, (str, int)) and str(item).strip():
+            device_ids.add(str(item).strip())
+        else:
+            unknown = True
+    return device_ids, unknown
+
+
+def _normalise_covered_device_ids(value: Any) -> set[str]:
+    """Normalize the explicit complete-collection coverage boundary."""
+    if isinstance(value, (str, int)):
+        value = [value]
+    if value is None:
+        return set()
+    try:
+        return {
+            str(item).strip()
+            for item in value
+            if isinstance(item, (str, int)) and str(item).strip()
+        }
+    except TypeError:
+        return set()
+
+
+def age_missing_prefixes(
+    *,
+    collection_run_id: str,
+    started_at: str,
+    covered_device_ids: set[str] | list[str] | tuple[str, ...] | None = None,
+) -> int:
+    """Age only prefixes whose complete owner set was covered by this run.
+
+    ``covered_device_ids`` is deliberately explicit.  Without a complete
+    collection result for at least one device there is no safe aging scope.
+    Historical observation owners are retained as a conservative boundary:
+    deleted devices and stale ownership records must be explicitly cleaned up
+    before a prefix can be considered fully covered again.
+    """
+    covered_ids = _normalise_covered_device_ids(covered_device_ids)
+    if not covered_ids:
+        return 0
+
     conn = get_db_connection()
     try:
         rows = conn.execute(
             """
-            SELECT id, miss_count FROM prefixes
+            SELECT id, miss_count, discovered_devices_json
+            FROM prefixes
             WHERE COALESCE(source_type, '') = 'discovery'
               AND COALESCE(manual_override, 0) = 0
               AND COALESCE(last_seen_at, '') < ?
               AND COALESCE(is_active, 1) = 1
+              AND NOT EXISTS (
+                  SELECT 1
+                  FROM prefix_observations current_observation
+                  WHERE current_observation.prefix_id = prefixes.id
+                    AND current_observation.collection_run_id = ?
+              )
             """,
-            (started_at,),
+            (started_at, collection_run_id),
         ).fetchall()
+        observation_rows = conn.execute(
+            """
+            SELECT prefix_id, source_device_id
+            FROM prefix_observations
+            """
+        ).fetchall()
+        observation_owners: dict[str, tuple[set[str], bool]] = {}
+        for observation in observation_rows:
+            prefix_id = str(observation["prefix_id"] or "")
+            owner_ids, unknown = observation_owners.setdefault(prefix_id, (set(), False))
+            source_device_id = str(observation["source_device_id"] or "").strip()
+            if source_device_id:
+                owner_ids.add(source_device_id)
+            else:
+                unknown = True
+            observation_owners[prefix_id] = (owner_ids, unknown)
+
         now = _now()
+        aged_count = 0
         for row in rows:
+            discovered_owner_ids, discovered_unknown = _normalise_device_ids(
+                row["discovered_devices_json"]
+            )
+            observation_owner_ids, observation_unknown = observation_owners.get(
+                str(row["id"]), (set(), False)
+            )
+            owner_ids = discovered_owner_ids | observation_owner_ids
+            if (
+                discovered_unknown
+                or observation_unknown
+                or not owner_ids
+                or not owner_ids.issubset(covered_ids)
+            ):
+                continue
             miss_count = int(row["miss_count"] or 0) + 1
             stale = miss_count >= 3
             conn.execute(
                 "UPDATE prefixes SET miss_count = ?, is_active = ?, status = ?, updated_at = ? WHERE id = ?",
                 (miss_count, 0 if stale else 1, "stale" if stale else "active", now, row["id"]),
             )
+            aged_count += 1
         conn.commit()
-        return len(rows)
+        return aged_count
     finally:
         conn.close()
 
@@ -819,23 +917,46 @@ def run_prefix_discovery_job() -> dict[str, Any]:
 
     started_at = _now()
     run_id = f"prefix-discovery-{uuid.uuid4().hex[:12]}"
-    result = {"collection_run_id": run_id, "devices": 0, "successful_devices": 0, "failed_devices": 0, "created": 0, "updated": 0}
+    result = {
+        "collection_run_id": run_id,
+        "devices": 0,
+        "successful_devices": 0,
+        "failed_devices": 0,
+        "created": 0,
+        "updated": 0,
+        "skipped_devices": 0,
+        "partial_devices": 0,
+    }
+    covered_device_ids: set[str] = set()
     for device in devices:
         result["devices"] += 1
         try:
+            if not should_collect(device, "prefix_projection"):
+                result["skipped_devices"] += 1
+                continue
             item = discover_prefixes_for_device(
                 device,
                 tenant_id=str(device.get("tenant_id") or "tenant-default"),
                 site_id=str(device.get("site_id") or ""),
                 collection_run_id=run_id,
             )
-            result["successful_devices"] += 1
             result["created"] += int(item.get("created") or 0)
             result["updated"] += int(item.get("updated") or 0)
+            collection_status = str(item.get("collection_status") or "unknown").strip().lower()
+            if collection_status == "success":
+                result["successful_devices"] += 1
+                device_id = str(device.get("id") or "").strip()
+                if device_id:
+                    covered_device_ids.add(device_id)
+            elif collection_status == "partial":
+                result["partial_devices"] += 1
+            else:
+                result["failed_devices"] += 1
         except Exception:
             result["failed_devices"] += 1
-    if result["devices"] and result["failed_devices"] == 0:
-        result["aged_prefixes"] = age_missing_prefixes(collection_run_id=run_id, started_at=started_at)
-    else:
-        result["aged_prefixes"] = 0
+    result["aged_prefixes"] = age_missing_prefixes(
+        collection_run_id=run_id,
+        started_at=started_at,
+        covered_device_ids=covered_device_ids,
+    )
     return result

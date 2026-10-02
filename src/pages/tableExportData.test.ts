@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import type { AlertRecord, AuditEvent } from '../types';
-import { buildAlertDeskExportData, buildAlertHistoryExportData, getAlertDeskExportHeaders, getAlertHistoryExportHeaders } from './alertTableExport';
+import { buildAlertDeskExportData, buildAlertHistoryExportData, buildAlertSiteLabels, getAlertDeskExportHeaders, getAlertHistoryExportHeaders } from './alertTableExport';
 import { buildAuditExportData, getAuditExportHeaders } from './auditTableExport';
 
 const alertFormatters = {
@@ -26,7 +26,8 @@ const alertFixture: AlertRecord = {
   interface_name: 'Ethernet1/1',
   hostname: 'core-01',
   ip_address: '192.0.2.10',
-  site: 'DC-1',
+  site_id: 'site-cmdb-1',
+  site: 'site-cmdb-1',
   created_at: '2026-09-28 12:00:00',
   resolved_at: '2026-09-28 12:10:00',
   workflow_status: 'resolved',
@@ -35,9 +36,11 @@ const alertFixture: AlertRecord = {
   duration_seconds: 600,
 };
 
+const alertSiteLabels = buildAlertSiteLabels([{ id: 'site-cmdb-1', site_name: 'DC-1' }]);
+
 describe('alert table exports', () => {
   it('splits every visible alert-desk value into a matching business column', () => {
-    const data = buildAlertDeskExportData([alertFixture], 'zh', alertFormatters);
+    const data = buildAlertDeskExportData([alertFixture], 'zh', alertFormatters, alertSiteLabels);
 
     expect(data.headers).toEqual(getAlertDeskExportHeaders('zh'));
     expect(data.rows[0]).toHaveLength(data.headers.length);
@@ -52,7 +55,7 @@ describe('alert table exports', () => {
   });
 
   it('keeps historical alert notification, times, and object attributes in separate columns', () => {
-    const data = buildAlertHistoryExportData([alertFixture], 'en', alertFormatters);
+    const data = buildAlertHistoryExportData([alertFixture], 'en', alertFormatters, alertSiteLabels);
 
     expect(data.headers).toEqual(getAlertHistoryExportHeaders('en'));
     expect(data.rows[0]).toHaveLength(data.headers.length);

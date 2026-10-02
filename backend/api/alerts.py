@@ -629,7 +629,7 @@ def list_alerts(
                     ORDER BY da.created_at DESC
                     LIMIT 1
                 ), 'none') AS notification_status,
-                d.hostname, d.ip_address, d.site,
+                d.hostname, d.ip_address, d.site_id, d.site,
                 (
                     SELECT COUNT(*) FROM alert_events a2
                     WHERE a2.dedupe_key = a.dedupe_key{occurrence_scope_sql}
@@ -1964,7 +1964,7 @@ def get_alert_detail(alert_id: str, user=require_role("Viewer")):
                 a.id, a.dedupe_key, a.source, a.severity, a.title, a.message,
                 a.device_id, a.interface_name, a.created_at, a.resolved_at,
                 a.workflow_status, a.assignee, a.ack_by, a.ack_at, a.note, a.updated_at,
-                d.hostname, d.ip_address, d.site
+                d.hostname, d.ip_address, d.site_id, d.site
             FROM alert_events a
             LEFT JOIN devices d ON d.id = a.device_id
             WHERE a.id = ?{tenant_filter_sql}

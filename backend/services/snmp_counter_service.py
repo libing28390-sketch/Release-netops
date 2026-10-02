@@ -242,12 +242,19 @@ def save_interface_counter_sample(
     values: dict[str, Any],
     sampled_at: str,
     device_uptime_cs: int | None = None,
+    connection: Any = None,
 ) -> None:
-    """Persist a complete interface snapshot without storing credentials."""
+    """Persist a snapshot, optionally joining the caller's transaction.
+
+    With a supplied connection, propagate failures and leave transaction and
+    connection ownership to the caller. Standalone callers retain the existing
+    optional durable-cache behavior.
+    """
     if not device_id or not profile_id or not values:
         return
     now = _utc_now()
-    conn = get_db_connection()
+    owns_connection = connection is None
+    conn = get_db_connection() if owns_connection else connection
     try:
         conn.execute(
             """
@@ -272,11 +279,15 @@ def save_interface_counter_sample(
                 now,
             ),
         )
-        conn.commit()
+        if owns_connection:
+            conn.commit()
     except Exception:
+        if not owns_connection:
+            raise
         conn.rollback()
     finally:
-        conn.close()
+        if owns_connection:
+            conn.close()
 
 
 __all__ = [

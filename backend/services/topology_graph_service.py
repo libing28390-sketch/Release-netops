@@ -830,6 +830,9 @@ def persist_graph(graph: dict[str, Any]) -> dict[str, int]:
             if str(edge.get("source_node_id") or "") not in excluded_node_ids
             and str(edge.get("target_node_id") or "") not in excluded_node_ids
         ]
+        # Serialize graph snapshots for a tenant so NULL-port fact lookup,
+        # primary-key upsert and stale marking form one consistent transaction.
+        conn.execute("SELECT pg_advisory_xact_lock(hashtext(?))", (f"topology_graph:{tenant_id}",))
         for node in nodes:
             existing = conn.execute(
                 "SELECT id FROM topology_nodes WHERE tenant_id = ? AND canonical_key = ?",
@@ -876,20 +879,6 @@ def persist_graph(graph: dict[str, Any]) -> dict[str, int]:
             "SELECT * FROM topology_edges WHERE tenant_id = ? AND status = 'active' AND is_manual = 0",
             (tenant_id,),
         ).fetchall()
-        active_ids = {str(edge["id"]) for edge in edges}
-        for row in existing_rows:
-            if str(row["id"]) not in active_ids:
-                before = _safe_edge_snapshot(dict(row))
-                conn.execute(
-                    "UPDATE topology_edges SET status = 'stale', existence = 'historical', stale_at = ?, updated_at = ? WHERE id = ? AND tenant_id = ?",
-                    (now_iso(), now_iso(), row["id"], tenant_id),
-                )
-                _record_history(
-                    conn, tenant_id=tenant_id, entity_type="edge", entity_id=str(row["id"]),
-                    event_type="edge_stale", before=before,
-                    after={**before, "status": "stale"}, edge_id=str(row["id"]),
-                )
-
         stored_edges: list[dict[str, Any]] = []
         for raw_edge in edges:
             edge = dict(raw_edge)
@@ -901,11 +890,13 @@ def persist_graph(graph: dict[str, Any]) -> dict[str, int]:
                 WHERE tenant_id = ? AND source_node_id = ? AND target_node_id = ?
                   AND COALESCE(source_interface, '') = COALESCE(?, '')
                   AND COALESCE(target_interface, '') = COALESCE(?, '')
+                  AND (is_manual = 1 OR relation_type = ?)
                 ORDER BY is_manual DESC, updated_at DESC LIMIT 1
                 """,
                 (
                     tenant_id, edge["source_node_id"], edge["target_node_id"],
                     edge.get("source_interface"), edge.get("target_interface"),
+                    edge["relation_type"],
                 ),
             ).fetchone()
             if existing is None and edge.get("direction") == "undirected":
@@ -919,13 +910,21 @@ def persist_graph(graph: dict[str, Any]) -> dict[str, int]:
                     WHERE tenant_id = ? AND source_node_id = ? AND target_node_id = ?
                       AND COALESCE(source_interface, '') = COALESCE(?, '')
                       AND COALESCE(target_interface, '') = COALESCE(?, '')
+                      AND (is_manual = 1 OR relation_type = ?)
                     ORDER BY is_manual DESC, updated_at DESC LIMIT 1
                     """,
                     (
                         tenant_id, edge["target_node_id"], edge["source_node_id"],
                         edge.get("target_interface"), edge.get("source_interface"),
+                        edge["relation_type"],
                     ),
                 ).fetchone()
+            if existing is not None:
+                # PostgreSQL natural-key uniqueness does not equate NULL ports.
+                # Reuse the persisted fact's primary key for every observation.
+                edge["id"] = existing["id"]
+                for field in ("source_node_id", "target_node_id", "source_interface", "target_interface"):
+                    edge[field] = existing[field]
             if existing is not None and int(existing["is_manual"] or 0):
                 old = dict(existing)
                 edge["id"] = old["id"]
@@ -938,7 +937,7 @@ def persist_graph(graph: dict[str, Any]) -> dict[str, int]:
                 }
             before = _safe_edge_snapshot(dict(existing)) if existing is not None else None
             created_at = now_iso()
-            conn.execute(
+            upsert = conn.execute(
                 """
                 INSERT INTO topology_edges
                     (id, tenant_id, source_node_id, target_node_id, source_interface,
@@ -947,7 +946,7 @@ def persist_graph(graph: dict[str, Any]) -> dict[str, int]:
                       manual_confirmed, semantic_relation, metadata_json,
                      first_seen, last_seen, created_at, updated_at)
                 VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-                ON CONFLICT(tenant_id, source_node_id, target_node_id, source_interface, target_interface, relation_type)
+                ON CONFLICT(id)
                 DO UPDATE SET
                     existence = excluded.existence,
                     existence_confidence = excluded.existence_confidence,
@@ -964,6 +963,12 @@ def persist_graph(graph: dict[str, Any]) -> dict[str, int]:
                     last_seen = excluded.last_seen,
                     stale_at = NULL,
                     updated_at = excluded.updated_at
+                WHERE topology_edges.tenant_id = excluded.tenant_id
+                  AND topology_edges.source_node_id = excluded.source_node_id
+                  AND topology_edges.target_node_id = excluded.target_node_id
+                  AND COALESCE(topology_edges.source_interface, '') = COALESCE(excluded.source_interface, '')
+                  AND COALESCE(topology_edges.target_interface, '') = COALESCE(excluded.target_interface, '')
+                  AND topology_edges.relation_type = excluded.relation_type
                 """,
                 (
                     edge["id"], tenant_id, edge["source_node_id"], edge["target_node_id"],
@@ -978,6 +983,8 @@ def persist_graph(graph: dict[str, Any]) -> dict[str, int]:
                     created_at, created_at,
                 ),
             )
+            if upsert.rowcount != 1:
+                raise ValueError("topology_edge_id_conflict")
             after = _safe_edge_snapshot(edge)
             if existing is None:
                 _record_history(
@@ -1070,6 +1077,20 @@ def persist_graph(graph: dict[str, Any]) -> dict[str, int]:
                     ),
                 )
             stored_edges.append(edge)
+
+        active_ids = {str(edge["id"]) for edge in stored_edges}
+        for row in existing_rows:
+            if str(row["id"]) not in active_ids:
+                before = _safe_edge_snapshot(dict(row))
+                conn.execute(
+                    "UPDATE topology_edges SET status = 'stale', existence = 'historical', stale_at = ?, updated_at = ? WHERE id = ? AND tenant_id = ?",
+                    (now_iso(), now_iso(), row["id"], tenant_id),
+                )
+                _record_history(
+                    conn, tenant_id=tenant_id, entity_type="edge", entity_id=str(row["id"]),
+                    event_type="edge_stale", before=before,
+                    after={**before, "status": "stale"}, edge_id=str(row["id"]),
+                )
 
         for group in graph.get("groups") or []:
             group_id = str(group.get("id") or group.get("node_id"))

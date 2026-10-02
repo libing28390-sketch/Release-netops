@@ -861,6 +861,25 @@ async def _snmp_get(
       return None
 
 
+class SnmpWalkResult(list[tuple[str, str]]):
+    """List-compatible SNMP walk result with an explicit row-limit marker."""
+
+    def __init__(
+        self,
+        values: Optional[list[tuple[str, str]]] = None,
+        *,
+        truncated: bool = False,
+        octet_values: Optional[Mapping[str, bytes]] = None,
+    ) -> None:
+        super().__init__(values or [])
+        self.truncated = bool(truncated)
+        self.octet_values: dict[str, bytes] = {
+            str(suffix): bytes(value)
+            for suffix, value in (octet_values or {}).items()
+            if isinstance(value, (bytes, bytearray))
+        }
+
+
 class SnmpWalkTimeoutError(Exception):
     """A diagnostic SNMP walk timed out, optionally after collecting some values."""
 
@@ -878,16 +897,22 @@ async def _snmp_walk(
     max_rows: int = 200,
     version: str = '2c',
     raise_on_error: bool = False,
-) -> list[tuple[str, str]]:
+    preserve_octets: bool = False,
+) -> SnmpWalkResult:
     """Walk an OID subtree via puresnmp, return list of (oid_suffix, value).
 
     The collector remains v2c by default.  The optional v1 path is used by
     the read-only template tester and keeps the same transport/error handling;
     existing collection callers do not need to change their arguments.
-    ``raise_on_error`` is reserved for interactive diagnostics that must tell a
-    timeout from a completed walk with no matching OID instances.
+    ``raise_on_error`` is reserved for interactive diagnostics and
+    completeness-sensitive collectors that must tell a timeout from a
+    completed walk with no matching OID instances.  The returned list remains
+    backward compatible while exposing ``truncated`` when the row budget was
+    reached before the subtree walk completed.  ``preserve_octets`` keeps raw
+    OCTET STRING bytes in ``octet_values`` for callers that need lossless
+    binary handling without changing the normal string result.
     """
-    results: list[tuple[str, str]] = []
+    results = SnmpWalkResult()
     base_oid = oid.rstrip('.')
     version_key = str(version or '2c').strip().lower()
     if version_key in {'v1', '1'}:
@@ -908,7 +933,10 @@ async def _snmp_walk(
             if 'endOfMibView' in v:
                 return
             results.append((suffix, v))
+            if preserve_octets and isinstance(varbind.value, (bytes, bytearray)):
+                results.octet_values[suffix] = bytes(varbind.value)
             if len(results) >= max_rows:
+                results.truncated = True
                 return
 
     async with get_network_access_limiter().async_snmp():
@@ -1750,7 +1778,8 @@ async def collect_snmp_lldp_neighbors(
     community: str,
     port: int = 161,
     version: str = '2c',
-    timeout: float = 4.0,
+    timeout: float = 30.0,
+    max_rows: int = 10000,
 ) -> list[dict[str, Any]]:
     """Collect LLDP neighbor relationships via the standard IEEE 802.1AB LLDP-MIB.
 
@@ -1771,9 +1800,18 @@ async def collect_snmp_lldp_neighbors(
         raise ValueError('SNMP community is required for LLDP discovery')
 
     class _SnmpLLDPBatch(list[dict[str, Any]]):
-        def __init__(self, records: list[dict[str, Any]], collection_status: str) -> None:
+        def __init__(
+            self,
+            records: list[dict[str, Any]],
+            collection_status: str,
+            *,
+            truncated_oids: Optional[list[str]] = None,
+            max_rows: int = 10000,
+        ) -> None:
             super().__init__(records)
             self.collection_status = collection_status
+            self.truncated_oids = list(truncated_oids or [])
+            self.max_rows = max_rows
 
     neighbors: list[dict[str, Any]] = []
 
@@ -1797,52 +1835,98 @@ async def collect_snmp_lldp_neighbors(
         return parts[0] if parts else '1', '1'
 
     # Read the related IEEE 802.1AB LLDP-MIB columns in parallel.
+    lldp_chassis_id_oid = '1.0.8802.1.1.2.1.4.1.1.5'
     walk_errors: list[BaseException] = []
+    truncated_oids: list[str] = []
+    truncated_rows: dict[str, int] = {}
     walk_signature_target = getattr(_snmp_walk, 'side_effect', None)
     if not callable(walk_signature_target):
         walk_signature_target = _snmp_walk
     try:
-        walk_parameters = inspect.signature(walk_signature_target).parameters.values()
+        walk_parameters = tuple(inspect.signature(walk_signature_target).parameters.values())
         supports_error_flag = any(
             item.name == 'raise_on_error' or item.kind == inspect.Parameter.VAR_KEYWORD
             for item in walk_parameters
         )
+        supports_max_rows = any(
+            item.name == 'max_rows' or item.kind == inspect.Parameter.VAR_KEYWORD
+            for item in walk_parameters
+        )
+        supports_octet_preservation = any(
+            item.name == 'preserve_octets' or item.kind == inspect.Parameter.VAR_KEYWORD
+            for item in walk_parameters
+        )
     except (TypeError, ValueError):
         supports_error_flag = False
+        supports_max_rows = False
+        supports_octet_preservation = False
 
     async def _walk_lldp_column(oid: str) -> list[tuple[str, str]]:
         # The LLDP collector needs to distinguish an empty table from a failed
         # walk. Keep compatibility with older test doubles and plugins that
-        # expose the historical _snmp_walk signature without raise_on_error.
+        # expose the historical _snmp_walk signature without the newer
+        # raise_on_error/max_rows keyword arguments.
         kwargs: dict[str, Any] = {'timeout': timeout, 'version': version}
         if supports_error_flag:
             kwargs['raise_on_error'] = True
+        if supports_max_rows:
+            kwargs['max_rows'] = max_rows
+        if supports_octet_preservation and oid == lldp_chassis_id_oid:
+            kwargs['preserve_octets'] = True
         return await _snmp_walk(ip, community, oid, port, **kwargs)
 
     try:
-        lldp_tasks = [
-            _walk_lldp_column('1.0.8802.1.1.2.1.4.1.1.9'),  # lldpRemSysName (standard col 9)
-            _walk_lldp_column('1.0.8802.1.1.2.1.4.1.1.7'),  # lldpRemPortId (standard col 7)
-            _walk_lldp_column('1.0.8802.1.1.2.1.4.1.1.8'),  # lldpRemPortDesc (col 8)
-            _walk_lldp_column('1.0.8802.1.1.2.1.4.1.1.2'),  # lldpRemChassisId (col 2)
-            _walk_lldp_column('1.0.8802.1.1.2.1.4.1.1.10'), # lldpRemSysDesc (col 10)
-            _walk_lldp_column('1.0.8802.1.1.2.1.4.2.1'),    # lldpRemManAddrTable
-            _walk_lldp_column('1.0.8802.1.1.2.1.3.7.1.3'),  # lldpLocPortId
-            _walk_lldp_column('1.3.6.1.2.1.31.1.1.1.1'),    # ifName
-            _walk_lldp_column('1.0.8802.1.1.2.1.4.1.1.4'),  # lldpRemPortId (fallback col 4)
+        walk_specs = [
+            ('1.0.8802.1.1.2.1.4.1.1.9', 'lldpRemSysName'),
+            ('1.0.8802.1.1.2.1.4.1.1.7', 'lldpRemPortId'),
+            ('1.0.8802.1.1.2.1.4.1.1.8', 'lldpRemPortDesc'),
+            (lldp_chassis_id_oid, 'lldpRemChassisId'),
+            ('1.0.8802.1.1.2.1.4.1.1.4', 'lldpRemChassisIdSubtype'),
+            ('1.0.8802.1.1.2.1.4.1.1.10', 'lldpRemSysDesc'),
+            ('1.0.8802.1.1.2.1.4.2.1', 'lldpRemManAddrTable'),
+            ('1.0.8802.1.1.2.1.3.7.1.3', 'lldpLocPortId'),
+            ('1.3.6.1.2.1.31.1.1.1.1', 'ifName'),
         ]
+        lldp_tasks = [_walk_lldp_column(oid) for oid, _label in walk_specs]
         results = await asyncio.gather(*lldp_tasks, return_exceptions=True)
         if any(isinstance(result, asyncio.CancelledError) for result in results):
             raise asyncio.CancelledError
         walk_errors = [result for result in results if isinstance(result, Exception)]
+
+        def _row_count(value: Any) -> int:
+            if isinstance(value, (list, tuple)):
+                return len(value)
+            return 0
+
+        for (oid, _label), result in zip(walk_specs, results):
+            partial_rows = getattr(result, 'partial_results', None)
+            result_truncated = bool(getattr(result, 'truncated', False))
+            partial_truncated = bool(getattr(partial_rows, 'truncated', False))
+            if result_truncated or partial_truncated:
+                truncated_oids.append(oid)
+                truncated_rows[oid] = _row_count(partial_rows if partial_rows is not None else result)
+
         if walk_errors:
             error_types = ','.join(sorted({type(error).__name__ for error in walk_errors}))
+            failure_oids = [
+                oid for (oid, _label), result in zip(walk_specs, results)
+                if isinstance(result, Exception)
+            ]
             logger.warning(
-                'SNMP LLDP MIB walks had failures on %s (%s/%s, error_types=%s)',
+                'SNMP LLDP MIB walks had failures on %s (oids=%s, %s/%s, error_types=%s)',
                 ip,
+                ','.join(failure_oids),
                 len(walk_errors),
                 len(results),
                 error_types,
+            )
+        if truncated_oids:
+            logger.warning(
+                'SNMP LLDP MIB walks reached row budget on %s (oids=%s, rows=%s, max_rows=%s)',
+                ip,
+                ','.join(truncated_oids),
+                ','.join(f'{oid}={truncated_rows.get(oid, 0)}' for oid in truncated_oids),
+                max_rows,
             )
 
         def _rows_at(index: int) -> list[tuple[str, str]]:
@@ -1856,19 +1940,58 @@ async def collect_snmp_lldp_neighbors(
         rem_port_ids = _rows_at(1)
         rem_port_descs = _rows_at(2)
         rem_chassis_ids = _rows_at(3)
-        rem_sys_descs = _rows_at(4)
-        rem_man_addrs = _rows_at(5)
-        loc_port_ids = dict(_rows_at(6))
-        if_names = dict(_rows_at(7))
-        rem_port_ids_fallback = _rows_at(8)
+        rem_chassis_subtypes = _rows_at(4)
+        rem_sys_descs = _rows_at(5)
+        rem_man_addrs = _rows_at(6)
+        loc_port_ids = dict(_rows_at(7))
+        if_names = dict(_rows_at(8))
 
         sys_name_map = { _parse_lldp_suffix(s): v for s, v in rem_sys_names }
         port_id_map = { _parse_lldp_suffix(s): v for s, v in rem_port_ids }
-        if not port_id_map and rem_port_ids_fallback:
-            port_id_map = { _parse_lldp_suffix(s): v for s, v in rem_port_ids_fallback }
         port_desc_map = { _parse_lldp_suffix(s): v for s, v in rem_port_descs }
         chassis_id_map = { _parse_lldp_suffix(s): v for s, v in rem_chassis_ids }
+        chassis_subtype_map = { _parse_lldp_suffix(s): v for s, v in rem_chassis_subtypes }
         sys_desc_map = { _parse_lldp_suffix(s): v for s, v in rem_sys_descs }
+
+        def _octets_at(index: int) -> dict[str, bytes]:
+            result = results[index]
+            if not isinstance(result, list):
+                result = getattr(result, 'partial_results', None)
+            octets = getattr(result, 'octet_values', None)
+            if not isinstance(octets, Mapping):
+                return {}
+            return {
+                str(suffix): bytes(value)
+                for suffix, value in octets.items()
+                if isinstance(value, (bytes, bytearray))
+            }
+
+        chassis_octet_values = {
+            _parse_lldp_suffix(suffix): value
+            for suffix, value in _octets_at(3).items()
+        }
+
+        def _parse_chassis_subtype(value: Any) -> Optional[int]:
+            try:
+                return int(str(value).strip())
+            except (TypeError, ValueError):
+                return None
+
+        def _format_chassis_id(key: tuple[str, str]) -> str:
+            raw_value = chassis_octet_values.get(key)
+            fallback = chassis_id_map.get(key) or ''
+            if raw_value is None:
+                return str(fallback).strip()
+            if not raw_value:
+                return ''
+            subtype = _parse_chassis_subtype(chassis_subtype_map.get(key))
+            if subtype == 4:
+                return raw_value.hex(':')
+            try:
+                text_value = raw_value.decode('utf-8', errors='strict').strip('\r\n \x00')
+            except UnicodeDecodeError:
+                return raw_value.hex(':')
+            return text_value if text_value and text_value.isprintable() else raw_value.hex(':')
 
         # Extract management IP addresses from lldpRemManAddrTable
         # IEEE 802.1AB Index: timeMark.localPortNum.remIndex.manAddrSubtype(1).manAddrLen(4).a.b.c.d
@@ -1893,10 +2016,11 @@ async def collect_snmp_lldp_neighbors(
                         man_addr_map[parts[-6]] = ip_cand
 
         all_keys = set(sys_name_map.keys()) | set(port_id_map.keys()) | set(chassis_id_map.keys())
+        chassis_value_map = {key: _format_chassis_id(key) for key in all_keys}
         for key in all_keys:
             loc_port_num, rem_idx = key
             loc_port = loc_port_ids.get(loc_port_num) or if_names.get(loc_port_num) or f"Port-{loc_port_num}"
-            raw_peer_name = sys_name_map.get(key) or chassis_id_map.get(key) or ''
+            raw_peer_name = sys_name_map.get(key) or chassis_value_map.get(key) or ''
             peer_name = _clean_host(raw_peer_name)
             if not peer_name:
                 continue
@@ -1927,7 +2051,7 @@ async def collect_snmp_lldp_neighbors(
                 remote_port = r_desc or 'Unknown'
 
             sys_desc = sys_desc_map.get(key) or ''
-            chassis_val = chassis_id_map.get(key) or ''
+            chassis_val = chassis_value_map.get(key) or ''
             mgmt_ip = man_addr_map.get(key) or man_addr_map.get(loc_port_num) or ''
 
             neighbors.append({
@@ -1943,19 +2067,41 @@ async def collect_snmp_lldp_neighbors(
     except Exception as exc:
         logger.debug("SNMP LLDP walk encounter error on %s: %s", ip, exc)
 
-    if walk_errors:
+    if walk_errors or truncated_oids:
         error_types = ','.join(sorted({type(error).__name__ for error in walk_errors}))
+        if not truncated_oids:
+            # Keep the established machine-readable error suffix unchanged for
+            # ordinary walk failures; row-limit details are additive only for
+            # the new truncation condition.
+            anomaly_detail = error_types or 'unknown'
+        else:
+            anomaly_parts: list[str] = []
+            if error_types:
+                anomaly_parts.append(f'error_types={error_types}')
+            anomaly_parts.append('row_limit_exceeded:' + ','.join(truncated_oids))
+            anomaly_detail = ':'.join(anomaly_parts)
         if neighbors:
             logger.warning(
                 'Using %d SNMP LLDP neighbor(s) from partial MIB data on %s; '
-                'the topology snapshot will be merged without aging old links (error_types=%s)',
-                len(neighbors), ip, error_types,
+                'the topology snapshot will be merged without aging old links (%s)',
+                len(neighbors), ip, anomaly_detail,
             )
-            return _SnmpLLDPBatch(neighbors, 'partial')
-        failure_scope = 'all_mib_walks_failed' if len(walk_errors) == len(results) else 'partial_mib_walks_failed'
-        raise RuntimeError(f'snmp_lldp_walk_failed:{failure_scope}:{error_types}')
+            return _SnmpLLDPBatch(
+                neighbors,
+                'partial',
+                truncated_oids=truncated_oids,
+                max_rows=max_rows,
+            )
+        failure_scope = (
+            'all_mib_walks_failed'
+            if walk_errors and len(walk_errors) == len(results)
+            else 'partial_mib_walks_failed'
+            if walk_errors
+            else 'row_limit_exceeded'
+        )
+        raise RuntimeError(f'snmp_lldp_walk_failed:{failure_scope}:{anomaly_detail}')
 
-    return _SnmpLLDPBatch(neighbors, 'success')
+    return _SnmpLLDPBatch(neighbors, 'success', max_rows=max_rows)
 
 
 async def _collect_h3c_fan_psu_status(

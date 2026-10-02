@@ -435,6 +435,7 @@ export interface AlertRecord {
   hostname?: string | null;
   ip_address?: string | null;
   site?: string | null;
+  site_id?: string | null;
   created_at: string;
   resolved_at?: string | null;
   workflow_status: AlertWorkflowStatus;

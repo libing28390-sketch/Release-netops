@@ -275,7 +275,7 @@ def test_vrp_fixture_executes_external_and_self_oid_skip_conditions(monkeypatch)
     monkeypatch.setattr(probe, "get_db_connection", lambda: Connection())
     monkeypatch.setattr(
         probe, "_resolve_mib_symbol",
-        lambda _conn, token, vendor="": symbol_oids.get(str(token).rsplit("::", 1)[-1], ""),
+        lambda _conn, token, vendor="", cache=None: symbol_oids.get(str(token).rsplit("::", 1)[-1], ""),
     )
 
     async def walk(_ip, _community, oid, _port, _version):
@@ -482,7 +482,7 @@ def test_librenms_skip_conditions_handle_missing_rows_and_fixed_oid_indexes(monk
     monkeypatch.setattr(probe, "get_db_connection", lambda: None)
     monkeypatch.setattr(
         probe, "_resolve_mib_symbol",
-        lambda _conn, token, vendor="": symbols.get(str(token).rsplit("::", 1)[-1], ""),
+        lambda _conn, token, vendor="", cache=None: symbols.get(str(token).rsplit("::", 1)[-1], ""),
     )
     rows = {
         temp_oid: [("1", "35"), ("2", "36")],

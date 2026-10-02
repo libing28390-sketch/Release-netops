@@ -111,15 +111,28 @@ def _numeric_oid(value: Any) -> str:
     return match.group(1) if match else ""
 
 
-def _resolve_mib_symbol(conn: Any, token: Any, *, vendor: str = "") -> str:
+def _resolve_mib_symbol(
+    conn: Any,
+    token: Any,
+    *,
+    vendor: str = "",
+    cache: dict[tuple[str, str], str] | None = None,
+) -> str:
     raw = str(token or "").strip()
     if not raw:
         return ""
+    cache_key = (raw.casefold(), str(vendor or "").strip().casefold())
+    if cache is not None and cache_key in cache:
+        return cache[cache_key]
     numeric = _numeric_oid(raw)
     if numeric:
+        if cache is not None:
+            cache[cache_key] = numeric
         return numeric
     symbol = raw.rsplit("::", 1)[-1].strip()
     if not re.fullmatch(r"[A-Za-z][A-Za-z0-9_-]*", symbol):
+        if cache is not None:
+            cache[cache_key] = ""
         return ""
     try:
         rows = conn.execute(
@@ -127,7 +140,7 @@ def _resolve_mib_symbol(conn: Any, token: Any, *, vendor: str = "") -> str:
             SELECT n.oid, m.vendor, n.node_name
               FROM snmp_mib_nodes n
               JOIN snmp_mibs m ON m.id = n.mib_id
-             WHERE m.is_active = TRUE AND LOWER(n.node_name) = LOWER(?)
+             WHERE m.is_active = 1 AND LOWER(n.node_name) = LOWER(?)
                AND TRIM(COALESCE(n.oid, '')) <> ''
              ORDER BY CASE WHEN LOWER(TRIM(COALESCE(m.vendor, ''))) = LOWER(?) THEN 0
                            WHEN LOWER(TRIM(COALESCE(m.vendor, ''))) = 'standard' THEN 1
@@ -138,13 +151,26 @@ def _resolve_mib_symbol(conn: Any, token: Any, *, vendor: str = "") -> str:
             (symbol, vendor),
         ).fetchall()
     except Exception:
+        if cache is not None:
+            cache[cache_key] = ""
         return ""
     if not rows:
+        if cache is not None:
+            cache[cache_key] = ""
         return ""
-    return _numeric_oid(rows[0][0])
+    resolved = _numeric_oid(rows[0][0])
+    if cache is not None:
+        cache[cache_key] = resolved
+    return resolved
 
 
-def _resolve_definition_oid(conn: Any, definition: Mapping[str, Any], *, vendor: str) -> str:
+def _resolve_definition_oid(
+    conn: Any,
+    definition: Mapping[str, Any],
+    *,
+    vendor: str,
+    cache: dict[tuple[str, str], str] | None = None,
+) -> str:
     for candidate in (
         definition.get("numeric_oid_prefix"),
         definition.get("num_oid"),
@@ -154,7 +180,7 @@ def _resolve_definition_oid(conn: Any, definition: Mapping[str, Any], *, vendor:
         numeric = _numeric_oid(candidate)
         if numeric:
             return numeric
-        resolved = _resolve_mib_symbol(conn, candidate, vendor=vendor)
+        resolved = _resolve_mib_symbol(conn, candidate, vendor=vendor, cache=cache)
         if resolved:
             return resolved
     return ""
@@ -921,6 +947,7 @@ def _resolve_skip_oid(
     token: Any,
     *,
     vendor: str,
+    cache: dict[tuple[str, str], str] | None = None,
 ) -> tuple[str, str | None, bool]:
     """Resolve a condition OID and any explicit LibreNMS row-index suffix."""
     raw = str(token or "").strip()
@@ -932,7 +959,12 @@ def _resolve_skip_oid(
         match = re.fullmatch(r"([A-Za-z][A-Za-z0-9_-]*)(?:\.([0-9]+(?:\.[0-9]+)*))?", symbol_path)
         if not match:
             return "", None, False
-        oid = _resolve_mib_symbol(conn, f"{mib}::{match.group(1)}", vendor=vendor)
+        oid = _resolve_mib_symbol(
+            conn,
+            f"{mib}::{match.group(1)}",
+            vendor=vendor,
+            cache=cache,
+        )
         if not oid:
             return "", None, False
         return oid, match.group(2), True
@@ -945,7 +977,7 @@ def _resolve_skip_oid(
             return numeric[:-2], "0", True
         return numeric, None, True
 
-    oid = _resolve_mib_symbol(conn, raw, vendor=vendor)
+    oid = _resolve_mib_symbol(conn, raw, vendor=vendor, cache=cache)
     return oid, None, bool(oid)
 
 
@@ -955,6 +987,7 @@ def _compile_skip_conditions(
     db_conn: Any,
     vendor: str,
     identity: Mapping[str, Any] | None = None,
+    cache: dict[tuple[str, str], str] | None = None,
 ) -> tuple[list[Any], set[str], bool]:
     """Resolve rule skip conditions to walkable OIDs and an honest support bit."""
     if conditions is None or conditions == []:
@@ -993,7 +1026,12 @@ def _compile_skip_conditions(
                 item["_device_value"] = str(actual)
         raw_oid = item.get("oid")
         if raw_oid:
-            oid, target_index, resolved = _resolve_skip_oid(db_conn, raw_oid, vendor=vendor)
+            oid, target_index, resolved = _resolve_skip_oid(
+                db_conn,
+                raw_oid,
+                vendor=vendor,
+                cache=cache,
+            )
             if not resolved:
                 supported = False
             else:
@@ -1372,9 +1410,15 @@ async def probe_librenms_hardware(
     try:
         resolved: list[dict[str, Any]] = []
         needed_oids: set[str] = set()
+        mib_cache: dict[tuple[str, str], str] = {}
         for definition in definitions:
             item = dict(definition)
-            oid = _resolve_definition_oid(db_conn, item, vendor=vendor) if db_conn is not None else _numeric_oid(
+            oid = _resolve_definition_oid(
+                db_conn,
+                item,
+                vendor=vendor,
+                cache=mib_cache,
+            ) if db_conn is not None else _numeric_oid(
                 item.get("numeric_oid_prefix") or item.get("num_oid") or item.get("value_oid") or item.get("table_oid")
             )
             item["_probe_oid"] = oid
@@ -1383,6 +1427,7 @@ async def probe_librenms_hardware(
             skip_conditions, skip_oids, skip_supported = _compile_skip_conditions(
                 item.get("skip_values"), db_conn=db_conn, vendor=vendor,
                 identity=identity,
+                cache=mib_cache,
             )
             for condition in skip_conditions:
                 if isinstance(condition, dict) and condition.get("_oid") == oid:
@@ -1394,7 +1439,12 @@ async def probe_librenms_hardware(
             for key in ("used_oid", "free_oid", "total_oid", "percent_used_oid"):
                 memory_oid = _numeric_oid(memory.get(key))
                 if not memory_oid and db_conn is not None:
-                    memory_oid = _resolve_mib_symbol(db_conn, memory.get(key), vendor=vendor)
+                    memory_oid = _resolve_mib_symbol(
+                        db_conn,
+                        memory.get(key),
+                        vendor=vendor,
+                        cache=mib_cache,
+                    )
                 item[f"_{key}"] = memory_oid
                 if memory_oid:
                     needed_oids.add(memory_oid)
@@ -1403,7 +1453,12 @@ async def probe_librenms_hardware(
             if isinstance(memory.get("allocation_unit"), str):
                 unit_oid = _numeric_oid(memory.get("allocation_unit"))
                 if not unit_oid and db_conn is not None:
-                    unit_oid = _resolve_mib_symbol(db_conn, memory.get("allocation_unit"), vendor=vendor)
+                    unit_oid = _resolve_mib_symbol(
+                        db_conn,
+                        memory.get("allocation_unit"),
+                        vendor=vendor,
+                        cache=mib_cache,
+                    )
                 item["_allocation_unit_oid"] = unit_oid
                 if unit_oid:
                     needed_oids.add(unit_oid)

@@ -14,7 +14,9 @@ const normalizeSiteKey = (value: unknown): string => String(value || '').trim().
 export function buildAlertSiteLabels(sites: AlertSiteDirectoryItem[]): AlertSiteLabels {
   const labels = new Map<string, string>();
   sites.forEach((site) => {
-    const label = String(site.site_name || site.site_code || '').trim();
+    const label = String(site.site_name || '').trim();
+    // site_name comes from the CMDB directory and is authoritative even if
+    // a user has chosen a name that resembles a generated identifier.
     if (!label) return;
     [site.id, site.site_code, site.site_name].forEach((key) => {
       const normalized = normalizeSiteKey(key);
@@ -29,7 +31,7 @@ function isInternalSiteId(value: string): boolean {
     || /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i.test(value);
 }
 
-function alertSiteLabel(
+export function alertSiteLabel(
   alert: AlertRecord,
   labels: AlertSiteLabels | undefined,
   unassigned: string,
@@ -40,9 +42,11 @@ function alertSiteLabel(
     site_code?: string | null;
   };
   const directName = String(rawAlert.site_name || '').trim();
-  if (directName && !isInternalSiteId(directName)) return directName;
+  if (directName && !isInternalSiteId(directName)) {
+    return labels?.get(normalizeSiteKey(directName)) || directName;
+  }
 
-  const siteCandidates = [rawAlert.site, rawAlert.site_id, rawAlert.site_code]
+  const siteCandidates = [rawAlert.site, rawAlert.site_id, rawAlert.site_code, rawAlert.site_name]
     .map((value) => String(value || '').trim())
     .filter(Boolean);
   for (const candidate of siteCandidates) {
@@ -50,11 +54,7 @@ function alertSiteLabel(
     if (mappedLabel) return mappedLabel;
   }
 
-  const readableFallback = siteCandidates.find((candidate) =>
-    !isInternalSiteId(candidate)
-    && !/^(?:unassigned|unassigned site|未分配站点)$/i.test(candidate),
-  );
-  return readableFallback || unassigned;
+  return unassigned;
 }
 
 interface AlertExportFormatters {

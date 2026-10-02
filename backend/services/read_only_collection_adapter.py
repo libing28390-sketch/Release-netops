@@ -70,7 +70,7 @@ def collect_read_only_evidence(
             "platform": device_info.get("platform"),
         },
         "collected_at": payload.get("collected_at") or _now(),
-        "status": "success" if successful == len(categories_out) else "partial",
+        "status": "success" if categories_out and successful == len(categories_out) else "partial",
         "categories": categories_out,
         "summary": {
             "requested_categories": requested,

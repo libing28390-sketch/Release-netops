@@ -29,6 +29,16 @@ const alert = (overrides: Record<string, unknown> = {}) => ({
 } as AlertRecord);
 
 describe('alert export site labels', () => {
+  it.each(['site-abc123', 'default_site', 'b0212392-4778-47bd-8bfe-6c325cd69e61'])(
+    'preserves the canonical CMDB site name %s even when it resembles an ID',
+    (siteName) => {
+      const siteLabels = buildAlertSiteLabels([{ id: 'site-directory-1', site_name: siteName }]);
+      const item = alert({ site_id: 'site-directory-1' });
+      expect(buildAlertDeskExportData([item], 'zh', formatters, siteLabels).rows[0][7]).toBe(siteName);
+      expect(buildAlertHistoryExportData([item], 'zh', formatters, siteLabels).rows[0][6]).toBe(siteName);
+    },
+  );
+
   it('uses the site name for internal site IDs and site codes in both alert exports', () => {
     const siteLabels = buildAlertSiteLabels([{
       id: 'site-abc123',

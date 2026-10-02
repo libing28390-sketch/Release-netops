@@ -5144,6 +5144,81 @@ def _get_cached_endpoint(ip: str) -> dict[str, Any] | None:
     return res
 
 
+def _resolve_endpoint_site_id(
+    conn,
+    device_id: str | None = None,
+    site_hint: str | None = None,
+) -> str:
+    """Resolve an endpoint observation to the CMDB's canonical site id.
+
+    Endpoint rows are derived observations.  The switch hostname (or the
+    device label carried by an ARP record) is evidence about *which device*
+    supplied the observation, but it is not a site identifier.  Prefer the
+    linked physical asset's site, then the device's normalized site, and only
+    accept legacy device text after it resolves to an existing ``sites`` row.
+    A caller supplied hint is considered only when the device itself is not
+    present in the CMDB; this keeps an unassigned device from being assigned
+    by a stale hostname in a collector payload.
+    """
+
+    def lookup_site(candidate: object) -> str:
+        value = str(candidate or '').strip()
+        if not value:
+            return ''
+        rows = conn.execute(
+            """SELECT id, site_code, site_name
+               FROM sites
+               WHERE id = ? OR site_code = ? OR site_name = ?""",
+            (value, value, value),
+        ).fetchall()
+        if not rows:
+            return ''
+        # site_code is unique in the schema.  site_name is not, so only use
+        # a name when it identifies exactly one directory row; otherwise the
+        # observation remains unassigned instead of selecting arbitrarily.
+        for row in rows:
+            if row['id'] == value:
+                return str(row['id']).strip()
+        for row in rows:
+            if row['site_code'] == value:
+                return str(row['id']).strip()
+        name_matches = [row for row in rows if row['site_name'] == value]
+        if len(name_matches) == 1:
+            return str(name_matches[0]['id']).strip()
+        return ''
+
+    normalized_device_id = str(device_id or '').strip()
+    if normalized_device_id:
+        device_row = conn.execute(
+            """SELECT pa.site_id AS asset_site_id,
+                      d.site_id AS device_site_id,
+                      d.site AS legacy_site
+               FROM devices d
+               LEFT JOIN physical_assets pa ON pa.id = d.asset_id
+               WHERE d.id = ?""",
+            (normalized_device_id,),
+        ).fetchone()
+        if device_row:
+            # physical_assets.site_id is the canonical placement when a
+            # device is linked to an asset.  devices.site_id remains the
+            # fallback for legacy/unlinked device rows.
+            for candidate in (
+                device_row['asset_site_id'],
+                device_row['device_site_id'],
+                device_row['legacy_site'],
+            ):
+                resolved = lookup_site(candidate)
+                if resolved:
+                    return resolved
+            # A known CMDB device with no valid placement is explicitly
+            # unassigned; never promote a collector hostname hint.
+            return ''
+
+    # Direct callers without a device row may still supply a canonical
+    # site id/code/name.  It must resolve through the sites directory.
+    return lookup_site(site_hint)
+
+
 def _set_cached_endpoint(
     ip: str, mac: str, device_id: str, port: str,
     vlan: str = '', site: str = '', confidence: str = '95%',
@@ -5160,6 +5235,7 @@ def _set_cached_endpoint(
     try:
         conn = get_db_connection()
         try:
+            canonical_site_id = _resolve_endpoint_site_id(conn, device_id, site)
             existing = conn.execute("SELECT first_seen, switch_id, switch_port, vlan FROM network_endpoints WHERE ip = ?", (ip,)).fetchone()
             if existing:
                 first_seen = existing['first_seen']
@@ -5192,9 +5268,12 @@ def _set_cached_endpoint(
                        confidence = excluded.confidence,
                        last_seen = excluded.last_seen,
                        is_active = 1''',
-                (uid, ip, mac, hostname, vendor or lookup_vendor(mac), os_type, asset_type, device_id, port, vlan, vrf, site, source_type, confidence, first_seen, last_seen),
+                (uid, ip, mac, hostname, vendor or lookup_vendor(mac), os_type, asset_type, device_id, port, vlan, vrf, canonical_site_id, source_type, confidence, first_seen, last_seen),
             )
             conn.commit()
+        except Exception:
+            conn.rollback()
+            raise
         finally:
             conn.close()
     except Exception as exc:
@@ -6202,7 +6281,9 @@ def run_endpoint_collector(
                     'device_id': arp['device_id'],
                     'port': arp['interface'],
                     'vlan': '',
-                    'site': arp.get('device', ''),
+                    # The ARP source device label is not a site.  Resolve the
+                    # canonical site id from CMDB at the write boundary.
+                    'site': '',
                     'confidence': '80% (基于 ARP 学习源)',
                 })
             continue
@@ -6220,7 +6301,9 @@ def run_endpoint_collector(
             'device_id': best_loc['switch_id'],
             'port': best_loc['port'],
             'vlan': best_loc['vlan'],
-            'site': best_loc['switch_name'],
+            # The switch hostname is not a site.  Resolve the canonical site
+            # id from the CMDB device/asset relationship at write time.
+            'site': '',
             'confidence': confidence,
         })
 
@@ -6271,6 +6354,11 @@ def run_endpoint_collector(
                     else:
                         first_seen = last_seen
                     uid = f"{ep['ip']}_{ep['mac']}"
+                    canonical_site_id = _resolve_endpoint_site_id(
+                        conn,
+                        ep.get('device_id'),
+                        ep.get('site'),
+                    )
 
                     conn.execute(
                         '''INSERT INTO network_endpoints (id, ip, mac, hostname, vendor, os_type, asset_type, switch_id, switch_port, vlan, vrf, site, source_type, confidence, first_seen, last_seen, is_active)
@@ -6290,10 +6378,13 @@ def run_endpoint_collector(
                                confidence = excluded.confidence,
                                last_seen = excluded.last_seen,
                                is_active = 1''',
-                        (uid, ep['ip'], ep['mac'], ep.get('hostname', ''), lookup_vendor(ep['mac']), ep.get('os_type', ''), ep.get('asset_type', 'host'), ep['device_id'], ep['port'], ep['vlan'], ep.get('vrf', ''), ep['site'], ep.get('source_type', 'arp'), ep['confidence'], first_seen, last_seen),
+                        (uid, ep['ip'], ep['mac'], ep.get('hostname', ''), lookup_vendor(ep['mac']), ep.get('os_type', ''), ep.get('asset_type', 'host'), ep['device_id'], ep['port'], ep['vlan'], ep.get('vrf', ''), canonical_site_id, ep.get('source_type', 'arp'), ep['confidence'], first_seen, last_seen),
                     )
                 conn.commit()
                 logger.info(f"[Endpoint Collector] Successfully synced {len(endpoints_to_save)} endpoints to Network Source of Truth cache.")
+            except Exception:
+                conn.rollback()
+                raise
             finally:
                 conn.close()
         except Exception as e:

@@ -11,6 +11,10 @@ from datetime import datetime, timedelta, timezone
 from typing import Optional
 
 from core.interface_utils import normalize_interface_name
+from services.ipam_inventory_scope import (
+    endpoint_address_key, endpoint_site_id, load_inventory_catalog,
+    manual_address_key, match_inventory_prefix,
+)
 
 from database import get_db_connection
 
@@ -1027,42 +1031,18 @@ def list_ip_inventory(*, site_id: str = 'all', prefix_id: str = '', q: str = '',
     """Return manual IPAM records merged with active discovered endpoints.
 
     Manual records remain the authoritative editable record.  Discovery facts
-    fill its empty L2 fields; endpoints without a manual record are returned as
-    read-only discovered inventory.  Prefix and site are resolved by longest
-    prefix match so the view can be used without pre-registering every IP.
+    fill its empty L2 fields within the same tenant and VRF; endpoints without
+    a manual record are returned as read-only discovered inventory. Prefixes
+    are matched within that scope and site names come from the CMDB directory.
     """
     conn = get_db_connection()
     try:
-        prefix_rows = conn.execute(
-            '''SELECT p.id, p.prefix, p.name, p.site_id, p.network_type,
-                      s.site_name, s.site_code
-               FROM prefixes p
-               LEFT JOIN sites s ON s.id = p.site_id'''
-        ).fetchall()
-        prefix_catalog: list[dict] = []
-        for row in prefix_rows:
-            try:
-                network = ipaddress.ip_network(row['prefix'], strict=False)
-            except (TypeError, ValueError):
-                continue
-            prefix_catalog.append({
-                'id': row['id'], 'prefix': row['prefix'], 'name': row['name'] or '',
-                'site_id': row['site_id'] or '', 'network_type': row['network_type'] or '',
-                'site_name': row['site_name'] or row['site_code'] or row['site_id'] or '未分配站点',
-                'site_code': row['site_code'] or '', 'network': network,
-            })
-        prefix_catalog.sort(key=lambda item: item['network'].prefixlen, reverse=True)
-
-        def match_prefix(address: str) -> dict | None:
-            try:
-                ip_obj = ipaddress.ip_address(address)
-            except ValueError:
-                return None
-            return next((item for item in prefix_catalog if ip_obj in item['network']), None)
+        prefix_catalog, sites, vrfs = load_inventory_catalog(conn)
 
         manual_rows = conn.execute(
             '''SELECT ip.*, p.prefix AS subnet_prefix, p.name AS subnet_name,
                       p.site_id AS prefix_site_id, p.network_type,
+                      p.tenant_id AS prefix_tenant_id, p.vrf_id AS prefix_vrf_id,
                       s.site_name AS prefix_site_name, s.site_code AS prefix_site_code,
                       d.hostname AS bound_device_hostname, d.asset_id AS linked_asset_id,
                       pa.asset_tag, pa.serial_number AS asset_serial_number,
@@ -1077,9 +1057,12 @@ def list_ip_inventory(*, site_id: str = 'all', prefix_id: str = '', q: str = '',
                ORDER BY ip.address'''
         ).fetchall()
         endpoint_rows = conn.execute(
-            '''SELECT ne.ip, ne.mac, ne.hostname, ne.switch_id, ne.switch_port,
+            '''SELECT ne.id, ne.ip, ne.mac, ne.hostname, ne.switch_id, ne.switch_port,
                       ne.vlan, ne.vrf, ne.site, ne.last_seen, ne.source_type,
                       ne.confidence, d.hostname AS switch_name, d.site AS device_site,
+                      d.id AS cmdb_device_id,
+                      d.site_id AS device_site_id, d.tenant_id AS device_tenant_id,
+                      pa.site_id AS asset_site_id,
                       d.asset_id AS linked_asset_id, pa.asset_tag,
                       pa.serial_number AS asset_serial_number,
                       pa.hostname AS asset_hostname, pa.vendor AS asset_vendor,
@@ -1092,47 +1075,37 @@ def list_ip_inventory(*, site_id: str = 'all', prefix_id: str = '', q: str = '',
                ORDER BY ne.last_seen DESC'''
         ).fetchall()
 
-        sites = {
-            str(row['id']): {
-                'id': row['id'], 'name': row['site_name'] or row['site_code'] or row['id'],
-                'code': row['site_code'] or '', 'count': 0, 'ip_count': 0,
-            }
-            for row in conn.execute('SELECT id, site_name, site_code FROM sites ORDER BY site_name').fetchall()
-        }
-        for prefix in prefix_catalog:
-            site_key = str(prefix.get('site_id') or '')
-            if site_key in sites:
-                sites[site_key]['count'] += 1
-
-        def normalized_mac(value: str | None) -> str:
-            return str(value or '').replace(':', '').replace('-', '').replace('.', '').lower()
-
-        items_by_ip: dict[str, dict] = {}
+        all_items: list[dict] = []
+        manual_by_scope: dict[tuple, list[dict]] = {}
         for row in manual_rows:
             item = dict(row)
-            address = str(item.get('address') or '')
-            if prefix_id and str(item.get('subnet_id') or '') != prefix_id:
-                continue
+            scope_key = manual_address_key(item)
+            manual_site = sites.get(str(item.get('prefix_site_id') or item.get('site_id') or ''))
             item.update({
-                'site_id': item.get('prefix_site_id') or item.get('site_id') or '',
-                'site_name': item.get('prefix_site_name') or item.get('prefix_site_code') or '未分配站点',
+                'tenant_id': scope_key[0], 'vrf_id': scope_key[1],
+                'site_id': manual_site['id'] if manual_site else '',
+                'site_name': manual_site['name'] if manual_site else '未分配站点',
                 'purpose': item.get('purpose') or _infer_ip_purpose(item.get('network_type')),
                 'source': 'manual', 'is_discovered': False,
                 'discovered_last_seen': '', 'switch_name': '', 'switch_port': '', 'vlan': '',
             })
-            items_by_ip[address] = item
+            all_items.append(item)
+            manual_by_scope.setdefault(scope_key, []).append(item)
 
         for row in endpoint_rows:
             endpoint = dict(row)
             address = str(endpoint.get('ip') or '')
-            prefix = match_prefix(address)
-            if not address or (prefix_id and (not prefix or prefix['id'] != prefix_id)):
+            if not address:
                 continue
-            manual = items_by_ip.get(address)
-            endpoint_site = str(endpoint.get('site') or endpoint.get('device_site') or '')
+            scope_key = endpoint_address_key(endpoint, vrfs)
+            endpoint_site = endpoint_site_id(endpoint, sites)
+            prefix = match_inventory_prefix(address, scope_key, endpoint_site, prefix_catalog)
+            manuals = manual_by_scope.get(scope_key, [])
+            manual = manuals[0] if len(manuals) == 1 else None
             resolved_site_id = (prefix or {}).get('site_id') or endpoint_site
-            resolved_site_name = (prefix or {}).get('site_name') or endpoint_site or '未分配站点'
-            if manual:
+            resolved_site = sites.get(resolved_site_id)
+            resolved_site_name = resolved_site['name'] if resolved_site else '未分配站点'
+            if manual is not None:
                 manual.update({
                     'source': 'manual+discovered',
                     'discovered_last_seen': endpoint.get('last_seen') or '',
@@ -1142,7 +1115,7 @@ def list_ip_inventory(*, site_id: str = 'all', prefix_id: str = '', q: str = '',
                     'discovered_vrf': endpoint.get('vrf') or '',
                     'discovered_confidence': endpoint.get('confidence') or '',
                     'site_id': manual.get('site_id') or resolved_site_id,
-                    'site_name': manual.get('site_name') or resolved_site_name,
+                    'site_name': manual.get('site_name') if manual.get('site_id') else resolved_site_name,
                 })
                 if not manual.get('mac_address'):
                     manual['mac_address'] = endpoint.get('mac') or ''
@@ -1161,7 +1134,9 @@ def list_ip_inventory(*, site_id: str = 'all', prefix_id: str = '', q: str = '',
                 continue
 
             item = {
-                'id': f'discovered-{address}', 'subnet_id': (prefix or {}).get('id') or '',
+                'id': f"discovered-{endpoint['id']}", 'subnet_id': (prefix or {}).get('id') or '',
+                'tenant_id': scope_key[0] if scope_key else str(endpoint.get('device_tenant_id') or ''),
+                'vrf_id': scope_key[1] if scope_key else str(endpoint.get('vrf') or ''),
                 'address': address, 'hostname': endpoint.get('hostname') or '',
                 'device_id': endpoint.get('switch_id') or '',
                 'interface_name': endpoint.get('switch_port') or '',
@@ -1188,10 +1163,11 @@ def list_ip_inventory(*, site_id: str = 'all', prefix_id: str = '', q: str = '',
                 'asset_management_ip': endpoint.get('asset_management_ip') or '',
                 'asset_business_ip': endpoint.get('asset_business_ip') or '',
             }
-            items_by_ip[address] = item
+            all_items.append(item)
 
-        all_items = list(items_by_ip.values())
         for item in all_items:
+            if prefix_id and str(item.get('subnet_id') or '') != prefix_id:
+                continue
             site_key = str(item.get('site_id') or '')
             if site_key in sites:
                 sites[site_key]['ip_count'] += 1
@@ -1199,6 +1175,8 @@ def list_ip_inventory(*, site_id: str = 'all', prefix_id: str = '', q: str = '',
         normalized_query = q.strip().lower()
         items = []
         for item in all_items:
+            if prefix_id and str(item.get('subnet_id') or '') != prefix_id:
+                continue
             item_site = str(item.get('site_id') or '')
             if site_id != 'all' and site_id and item_site != site_id:
                 continue
@@ -2353,36 +2331,12 @@ def get_ipam_reconciliation(*, active_tab: str = '', q: str = '', page: int | No
     """
     conn = get_db_connection()
     try:
-        prefix_rows = conn.execute(
-            'SELECT id, prefix, name FROM prefixes'
-        ).fetchall()
-        
-        prefixes_list = []
-        for r in prefix_rows:
-            try:
-                prefixes_list.append({
-                    'id': r['id'],
-                    'prefix': r['prefix'],
-                    'name': r['name'] or '',
-                    'net': ipaddress.ip_network(r['prefix'], strict=False)
-                })
-            except ValueError:
-                continue
-        prefixes_list.sort(key=lambda x: x['net'].prefixlen, reverse=True)
-        
-        def find_matching_subnet(ip_str: str) -> Optional[dict]:
-            try:
-                ip_obj = ipaddress.ip_address(ip_str)
-            except ValueError:
-                return None
-            for p in prefixes_list:
-                if ip_obj in p['net']:
-                    return p
-            return None
+        prefixes_list, sites, vrfs = load_inventory_catalog(conn)
 
         ip_rows = conn.execute(f'''
             SELECT ip.id, ip.address, ip.hostname, ip.mac_address, ip.subnet_id, ip.status,
-                   ip.device_type, ip.interface_name,
+                   ip.device_type, ip.interface_name, ip.tenant_id, ip.vrf_id,
+                   p.tenant_id AS prefix_tenant_id, p.vrf_id AS prefix_vrf_id,
                    p.prefix AS subnet_prefix, p.name AS subnet_name, p.network_type
             FROM ip_addresses ip
             LEFT JOIN prefixes p ON ip.subnet_id = p.id
@@ -2392,9 +2346,13 @@ def get_ipam_reconciliation(*, active_tab: str = '', q: str = '', page: int | No
             SELECT ne.id, ne.ip, ne.mac, ne.hostname, ne.vendor,
                    ne.switch_id, ne.switch_port, ne.vlan, ne.vrf, ne.site,
                    ne.last_seen, ne.source_type, ne.confidence,
+                   d.tenant_id AS device_tenant_id, d.site_id AS device_site_id,
+                   d.id AS cmdb_device_id,
+                   d.site AS device_site, pa.site_id AS asset_site_id,
                    COALESCE(NULLIF(d.hostname, ''), ne.switch_id) AS switch_name
             FROM network_endpoints ne
             LEFT JOIN devices d ON d.id = ne.switch_id
+            LEFT JOIN physical_assets pa ON pa.id = d.asset_id
             WHERE ne.is_active = 1 AND ne.ip IS NOT NULL AND ne.ip != ''
         ''').fetchall()
         
@@ -2403,16 +2361,28 @@ def get_ipam_reconciliation(*, active_tab: str = '', q: str = '', page: int | No
                 return ''
             return mac_str.replace(':', '').replace('-', '').replace('.', '').strip().lower()
 
-        ipam_map = {r['address']: dict(r) for r in ip_rows}
-        endpoints_map = {r['ip']: dict(r) for r in endpoint_rows}
+        ipam_records = [dict(row) for row in ip_rows]
+        ipam_by_scope: dict[tuple, list[dict]] = {}
+        endpoints_by_scope: dict[tuple, list[dict]] = {}
+        for item in ipam_records:
+            ipam_by_scope.setdefault(manual_address_key(item), []).append(item)
+        for row in endpoint_rows:
+            endpoint = dict(row)
+            key = endpoint_address_key(endpoint, vrfs)
+            if key is not None:
+                endpoints_by_scope.setdefault(key, []).append(endpoint)
         
         undocumented_endpoints = []
         stale_ip_addresses = []
         mismatched_endpoints = []
         
-        for ip, ep in endpoints_map.items():
-            if ip not in ipam_map:
-                p = find_matching_subnet(ip)
+        for row in endpoint_rows:
+            ep = dict(row)
+            ip = ep['ip']
+            key = endpoint_address_key(ep, vrfs)
+            resolved_site_id = endpoint_site_id(ep, sites)
+            if key is None or not ipam_by_scope.get(key):
+                p = match_inventory_prefix(ip, key, resolved_site_id, prefixes_list)
                 undocumented_endpoints.append({
                     'ip': ip,
                     'mac': ep['mac'],
@@ -2423,7 +2393,7 @@ def get_ipam_reconciliation(*, active_tab: str = '', q: str = '', page: int | No
                     'switch_port': ep['switch_port'] or '',
                     'vlan': ep['vlan'] or '',
                     'vrf': ep['vrf'] or '',
-                    'site': ep['site'] or '',
+                    'site': sites[resolved_site_id]['name'] if resolved_site_id else '',
                     'last_seen': ep['last_seen'] or '',
                     'source_type': ep['source_type'] or '',
                     'confidence': ep['confidence'] or '',
@@ -2432,8 +2402,11 @@ def get_ipam_reconciliation(*, active_tab: str = '', q: str = '', page: int | No
                     'subnet_name': p['name'] if p else (p['prefix'] if p else '')
                 })
                 
-        for ip, ipam in ipam_map.items():
-            if ip not in endpoints_map:
+        for ipam in ipam_records:
+            ip = ipam['address']
+            key = manual_address_key(ipam)
+            matches = endpoints_by_scope.get(key, [])
+            if not matches:
                 # Exclude loopbacks and VIPs because they don't have switch port endpoints/ARP
                 is_loopback_or_vip = (
                     (ipam.get('device_type') or '').lower() in ('loopback', 'vip') or
@@ -2454,7 +2427,9 @@ def get_ipam_reconciliation(*, active_tab: str = '', q: str = '', page: int | No
                     'status': ipam['status'] or 'active'
                 })
             else:
-                ep = endpoints_map[ip]
+                # A scope can have historical duplicate authoritative rows;
+                # each retains its own finding identity instead of being lost.
+                ep = matches[0]
                 mac_mismatch = False
                 hostname_mismatch = False
                 

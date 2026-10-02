@@ -25,7 +25,7 @@ def test_collect_snmp_lldp_neighbors_success():
             return [('0.1.1', 'GigabitEthernet0/0/24')]
         elif oid == '1.0.8802.1.1.2.1.4.1.1.8': # lldpRemPortDesc
             return [('0.1.1', 'Uplink to Core A')]
-        elif oid == '1.0.8802.1.1.2.1.4.1.1.2': # lldpRemChassisId
+        elif oid == '1.0.8802.1.1.2.1.4.1.1.5': # lldpRemChassisId
             return [('0.1.1', '00:11:22:33:44:55')]
         elif oid == '1.0.8802.1.1.2.1.4.1.1.10': # lldpRemSysDesc
             return [('0.1.1', 'Huawei Versatile Routing Platform Software')]
@@ -46,6 +46,7 @@ def test_collect_snmp_lldp_neighbors_success():
         assert n['neighbor_name'] == 'SW-CORE-B'
         assert n['neighbor_interface'] == 'GigabitEthernet0/0/24'
         assert n['mgmt_address'] == '10.10.10.2'
+        assert n['chassis_id'] == '00:11:22:33:44:55'
         assert 'Huawei' in n['neighbor_platform']
 
 
@@ -764,7 +765,7 @@ def test_collect_snmp_lldp_prefers_port_id_over_description():
             return [('0.1.1', 'GigabitEthernet1/0/1')]
         elif oid == '1.0.8802.1.1.2.1.4.1.1.8': # lldpRemPortDesc (User description)
             return [('0.1.1', 'TO-S6850-4-GE1/0/1')]
-        elif oid == '1.0.8802.1.1.2.1.4.1.1.2': # lldpRemChassisId
+        elif oid == '1.0.8802.1.1.2.1.4.1.1.5': # lldpRemChassisId
             return [('0.1.1', '8e44-40f8-0400')]
         return []
 
@@ -775,5 +776,6 @@ def test_collect_snmp_lldp_prefers_port_id_over_description():
         # Must prefer the standard GigabitEthernet1/0/1 over TO-S6850-4-GE1/0/1
         assert neighbor['neighbor_interface'] == 'GigabitEthernet1/0/1'
         assert neighbor['neighbor_name'] == 'S6850-4'
+        assert neighbor['chassis_id'] == '8e44-40f8-0400'
 
 

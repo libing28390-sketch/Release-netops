@@ -178,6 +178,9 @@ jobs:
               ! -name 'install-terminal-agent.sh' \
               ! -name 'install-terminal-agent.ps1' \
               ! -name 'sync-frontend-dist.sh' \
+              ! -name 'collect_container_errors.sh' \
+              ! -name 'capture_netops_cpu.sh' \
+              ! -name 'README_diagnostics.md' \
               -exec rm -rf {} +
           fi
 

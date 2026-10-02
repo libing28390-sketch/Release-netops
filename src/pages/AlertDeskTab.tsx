@@ -12,7 +12,8 @@ import { alertWorkflowBadgeClass, severityBadgeClass } from '../components/share
 import { authHeaders } from '../api/http';
 import { listSites } from '../api/cmdb';
 import { fetchAllPaginatedItems } from '../utils/pagination';
-import { buildAlertDeskExportData, buildAlertSiteLabels, getAlertDeskExportHeaders } from './alertTableExport';
+import { alertSiteLabel, buildAlertDeskExportData, buildAlertSiteLabels, getAlertDeskExportHeaders } from './alertTableExport';
+import { useAlertSiteLabels } from './useAlertSiteLabels';
 import {
   alertInputClass,
   alertPanelClass,
@@ -44,6 +45,22 @@ interface AlertActivityItem {
   metadata?: Record<string, unknown>;
 }
 
+const alertDeskColumnMinWidths = [
+  'min-w-[160px]', // Alert title
+  'min-w-[250px]', // Alert message
+  'min-w-[125px]', // Metric type
+  'min-w-[88px]', // Occurrences
+  'min-w-[140px]', // Hostname
+  'min-w-[125px]', // IP address
+  'min-w-[100px]', // Interface
+  'min-w-[120px]', // Site
+  'min-w-[100px]', // Severity
+  'min-w-[105px]', // Status
+  'min-w-[100px]', // Assignee
+  'min-w-[180px]', // Created at
+  'min-w-[155px]', // Duration
+] as const;
+
 const AlertDeskTab: React.FC<AlertDeskTabProps> = ({ language, currentUsername, showToast, onOpenMaintenanceForAlert, onNavigateToDevice, onNavigateToTopology }) => {
   const [rows, setRows] = useState<AlertRecord[]>([]);
   const [total, setTotal] = useState(0);
@@ -64,6 +81,7 @@ const AlertDeskTab: React.FC<AlertDeskTabProps> = ({ language, currentUsername, 
   const [selectedIds, setSelectedIds] = useState<Set<string>>(new Set());
   const [statusCounts, setStatusCounts] = useState<Record<string, number>>({});
   const [autoRefresh, setAutoRefresh] = useState(false);
+  const siteLabels = useAlertSiteLabels();
   const exportHeaders = getAlertDeskExportHeaders(language);
 
   const exportAllAlerts = async (): Promise<TableExportData> => {
@@ -440,7 +458,7 @@ const AlertDeskTab: React.FC<AlertDeskTabProps> = ({ language, currentUsername, 
         )}
 
         <div className="flex-1 min-h-0 overflow-y-auto custom-scrollbar border-b border-black/5">
-          <DataTable className="text-left" exportConfig={{ filename: 'alert-desk', language: language === 'zh' ? 'zh' : 'en', disabled: loading || rows.length === 0, exportData: exportAllAlerts }}>
+          <DataTable className="min-w-[1900px] text-left" exportConfig={{ filename: 'alert-desk', language: language === 'zh' ? 'zh' : 'en', disabled: loading || rows.length === 0, exportData: exportAllAlerts }}>
             <thead className="sticky top-0 z-10">
               <tr className="border-y border-black/5 bg-[#f8fafc] text-[11px] font-bold uppercase tracking-[0.16em] text-black/40">
                 <th className="w-10 px-3 py-3">
@@ -448,8 +466,8 @@ const AlertDeskTab: React.FC<AlertDeskTabProps> = ({ language, currentUsername, 
                     {rows.length > 0 && rows.every(r => selectedIds.has(r.id)) ? <CheckSquare size={16} /> : <Square size={16} />}
                   </button>
                 </th>
-                {exportHeaders.map((header) => <th key={header} className="px-5 py-3">{header}</th>)}
-                <TableActionHeader className="px-5 py-3">{language === 'zh' ? '操作' : 'Action'}</TableActionHeader>
+                {exportHeaders.map((header, index) => <th key={header} className={`px-5 py-3 ${alertDeskColumnMinWidths[index] || ''}`}>{header}</th>)}
+                <TableActionHeader className="min-w-[120px] whitespace-nowrap px-5 py-3">{language === 'zh' ? '操作' : 'Action'}</TableActionHeader>
               </tr>
             </thead>
             <tbody>
@@ -472,7 +490,7 @@ const AlertDeskTab: React.FC<AlertDeskTabProps> = ({ language, currentUsername, 
                         {selectedIds.has(row.id) ? <CheckSquare size={16} /> : <Square size={16} />}
                       </button>
                     </td>
-                    <td className="px-5 py-4 align-top">
+                    <td className="min-w-[160px] px-5 py-4 align-top">
                       <button
                         onClick={() => setSelectedAlertId(row.id)}
                         className="text-left"
@@ -483,11 +501,11 @@ const AlertDeskTab: React.FC<AlertDeskTabProps> = ({ language, currentUsername, 
                         </p>
                       </button>
                     </td>
-                    <td className="px-5 py-4 align-top text-sm text-black/60">{row.message || '--'}</td>
-                    <td className="px-5 py-4 align-top text-sm text-black/60">{row.metric_type && row.metric_type !== 'unknown' ? metricTypeLabel(row.metric_type, language) : '--'}</td>
-                    <td className="px-5 py-4 align-top text-sm text-black/60">{row.occurrence_count ?? 1}</td>
-                    <td className="px-5 py-4 align-top text-sm font-semibold text-[#164e63]">
-                      <div className="flex items-center gap-1.5">
+                    <td className="min-w-[250px] px-5 py-4 align-top text-sm text-black/60">{row.message || '--'}</td>
+                    <td className="min-w-[125px] whitespace-nowrap px-5 py-4 align-top text-sm text-black/60">{row.metric_type && row.metric_type !== 'unknown' ? metricTypeLabel(row.metric_type, language) : '--'}</td>
+                    <td className="min-w-[88px] whitespace-nowrap px-5 py-4 align-top text-sm text-black/60">{row.occurrence_count ?? 1}</td>
+                    <td className="min-w-[140px] whitespace-nowrap px-5 py-4 align-top text-sm font-semibold text-[#164e63]">
+                      <div className="flex items-center gap-1.5 whitespace-nowrap">
                         <span>{row.hostname || '--'}</span>
                         {row.device_id && (
                           <div className="flex items-center gap-1">
@@ -509,11 +527,11 @@ const AlertDeskTab: React.FC<AlertDeskTabProps> = ({ language, currentUsername, 
                         )}
                       </div>
                     </td>
-                    <td className="px-5 py-4 align-top text-sm text-black/60">{row.ip_address || '--'}</td>
-                    <td className="px-5 py-4 align-top text-sm text-black/60">{row.interface_name || '--'}</td>
-                    <td className="px-5 py-4 align-top text-sm text-black/60">{row.site || '--'}</td>
-                    <td className="px-5 py-4 align-top">
-                      <span className={`inline-flex items-center gap-1.5 rounded-full px-2.5 py-0.5 text-[10px] font-extrabold uppercase shadow-sm ${
+                    <td className="min-w-[125px] whitespace-nowrap px-5 py-4 align-top text-sm text-black/60">{row.ip_address || '--'}</td>
+                    <td className="min-w-[100px] whitespace-nowrap px-5 py-4 align-top text-sm text-black/60">{row.interface_name || '--'}</td>
+                    <td className="min-w-[120px] whitespace-nowrap px-5 py-4 align-top text-sm text-black/60">{alertSiteLabel(row, siteLabels, language === 'zh' ? '未分配站点' : 'Unassigned site')}</td>
+                    <td className="min-w-[100px] whitespace-nowrap px-5 py-4 align-top">
+                      <span className={`inline-flex whitespace-nowrap items-center gap-1.5 rounded-full px-2.5 py-0.5 text-[10px] font-extrabold uppercase shadow-sm ${
                         row.severity === 'critical'
                           ? 'bg-rose-50 text-rose-700 border border-rose-200/50 shadow-rose-100'
                           : row.severity === 'major'
@@ -530,16 +548,16 @@ const AlertDeskTab: React.FC<AlertDeskTabProps> = ({ language, currentUsername, 
                         {severityLabel(row.severity, language)}
                       </span>
                     </td>
-                    <td className="px-5 py-4 align-top">
-                      <span data-export-primary className={`inline-flex rounded-full px-2.5 py-0.5 text-[10px] font-bold uppercase ${alertWorkflowBadgeClass(row.workflow_status)}`}>
+                    <td className="min-w-[105px] whitespace-nowrap px-5 py-4 align-top">
+                      <span data-export-primary className={`inline-flex whitespace-nowrap rounded-full px-2.5 py-0.5 text-[10px] font-bold uppercase ${alertWorkflowBadgeClass(row.workflow_status)}`}>
                         {workflowLabel(row.workflow_status, language)}
                       </span>
                     </td>
-                    <td className="px-5 py-4 align-top text-sm text-black/60">
+                    <td className="min-w-[100px] whitespace-nowrap px-5 py-4 align-top text-sm text-black/60">
                       {row.assignee || (language === 'zh' ? '未分派' : 'Unassigned')}
                     </td>
-                    <td className="px-5 py-4 align-top text-sm text-black/60">{formatTs(row.created_at)}</td>
-                    <td className={`px-5 py-4 align-top text-sm ${
+                    <td className="min-w-[180px] whitespace-nowrap px-5 py-4 align-top text-sm text-black/60">{formatTs(row.created_at)}</td>
+                    <td className={`min-w-[155px] whitespace-nowrap px-5 py-4 align-top text-sm ${
                       !row.resolved_at && (row.duration_seconds ?? 0) > 86400
                         ? 'font-semibold text-red-600'
                         : !row.resolved_at && (row.duration_seconds ?? 0) > 14400
@@ -548,7 +566,7 @@ const AlertDeskTab: React.FC<AlertDeskTabProps> = ({ language, currentUsername, 
                             ? 'text-amber-500'
                             : 'text-black/40'
                     }`}>
-                      <span className="inline-flex items-center gap-1">{!row.resolved_at && (row.duration_seconds ?? 0) > 3600 && <Clock size={11} />}{formatDuration(row.duration_seconds, language)}</span>
+                      <span className="inline-flex items-center gap-1 whitespace-nowrap">{!row.resolved_at && (row.duration_seconds ?? 0) > 3600 && <Clock size={11} />}{formatDuration(row.duration_seconds, language)}</span>
                     </td>
                     <TableActionCell className="px-5 py-4 align-top">
                       <ActionIconGroup label={language === 'zh' ? '告警操作' : 'Alert actions'}>
@@ -747,7 +765,7 @@ const AlertDeskTab: React.FC<AlertDeskTabProps> = ({ language, currentUsername, 
                         </div>
                         <div className="rounded-xl bg-gradient-to-b from-[#f8f9fb] to-[#f4f5f8] px-3 py-2.5 ring-1 ring-black/[0.04]">
                           <p className="text-[10px] font-semibold uppercase tracking-wider text-black/30">{language === 'zh' ? '站点' : 'Site'}</p>
-                          <p className="mt-0.5 truncate text-sm font-semibold text-[#164e63]">{selectedItem.site || '--'}</p>
+                          <p className="mt-0.5 truncate text-sm font-semibold text-[#164e63]">{alertSiteLabel(selectedItem, siteLabels, language === 'zh' ? '未分配站点' : 'Unassigned site')}</p>
                         </div>
                         <div className="rounded-xl bg-gradient-to-b from-[#f8f9fb] to-[#f4f5f8] px-3 py-2.5 ring-1 ring-black/[0.04]">
                           <p className="text-[10px] font-semibold uppercase tracking-wider text-black/30">{language === 'zh' ? '接口' : 'Interface'}</p>

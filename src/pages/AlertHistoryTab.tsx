@@ -25,7 +25,8 @@ import {
 import { TableActionCell, TableActionHeader } from '../components/ui/TableActionColumn';
 import type { TableExportData } from '../components/ui/TableExportMenu';
 import { fetchAllPaginatedItems } from '../utils/pagination';
-import { buildAlertHistoryExportData, buildAlertSiteLabels, getAlertHistoryExportHeaders } from './alertTableExport';
+import { alertSiteLabel, buildAlertHistoryExportData, buildAlertSiteLabels, getAlertHistoryExportHeaders } from './alertTableExport';
+import { useAlertSiteLabels } from './useAlertSiteLabels';
 interface AlertHistoryTabProps extends AlertPageCommonProps {
   onNavigateToDevice?: (deviceId: string) => void;
   onNavigateToTopology?: (deviceId: string) => void;
@@ -45,6 +46,7 @@ const AlertHistoryTab: React.FC<AlertHistoryTabProps> = ({ language, showToast, 
   const [createdFrom, setCreatedFrom] = useState('');
   const [createdTo, setCreatedTo] = useState('');
   const [showAdvanced, setShowAdvanced] = useState(false);
+  const siteLabels = useAlertSiteLabels();
   const exportHeaders = getAlertHistoryExportHeaders(language);
 
   const exportAllAlerts = async (): Promise<TableExportData> => {
@@ -352,7 +354,7 @@ const AlertHistoryTab: React.FC<AlertHistoryTabProps> = ({ language, showToast, 
                     </td>
                     <td className="px-5 py-4 align-top text-sm text-black/60">{row.ip_address || '--'}</td>
                     <td className="px-5 py-4 align-top text-sm text-black/60">{row.interface_name || '--'}</td>
-                    <td className="px-5 py-4 align-top text-sm text-black/60">{row.site || '--'}</td>
+                    <td className="px-5 py-4 align-top text-sm text-black/60">{alertSiteLabel(row, siteLabels, zh ? '未分配站点' : 'Unassigned site')}</td>
                     <td className="px-5 py-4 align-top">
                       <span className={`inline-flex rounded-full px-2.5 py-1 text-[10px] font-bold uppercase ${severityBadgeClass(row.severity)}`}>
                         {severityLabel(row.severity, language)}
@@ -468,7 +470,7 @@ const AlertHistoryTab: React.FC<AlertHistoryTabProps> = ({ language, showToast, 
                             </button>
                           ) : (selectedItem.hostname || '--')}
                         </p>
-                        <p><span className="text-black/35">Site:</span> {selectedItem.site || '--'}</p>
+                        <p><span className="text-black/35">Site:</span> {alertSiteLabel(selectedItem, siteLabels, zh ? '未分配站点' : 'Unassigned site')}</p>
                         <p><span className="text-black/35">Interface:</span> {selectedItem.interface_name || '--'}</p>
                       </div>
                       {selectedItem.device_id && (

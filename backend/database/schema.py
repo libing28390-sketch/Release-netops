@@ -2350,16 +2350,16 @@ def _init_db_logic(conn, *, allow_legacy_import: bool = True):
         out_bps REAL,
         bw_in_pct REAL,
         bw_out_pct REAL,
-        in_pkts INTEGER,
-        out_pkts INTEGER,
-        in_errors INTEGER,
-        out_errors INTEGER,
-        in_discards INTEGER,
-        out_discards INTEGER,
-        fcs_errors INTEGER,
-        frame_too_long_errors INTEGER,
-        mac_rx_errors INTEGER,
-        symbol_errors INTEGER,
+        in_pkts NUMERIC(20, 0),
+        out_pkts NUMERIC(20, 0),
+        in_errors BIGINT,
+        out_errors BIGINT,
+        in_discards BIGINT,
+        out_discards BIGINT,
+        fcs_errors NUMERIC(20, 0),
+        frame_too_long_errors NUMERIC(20, 0),
+        mac_rx_errors NUMERIC(20, 0),
+        symbol_errors NUMERIC(20, 0),
         packet_counter_source TEXT,
         fcs_source TEXT
     )
@@ -2382,11 +2382,11 @@ def _init_db_logic(conn, *, allow_legacy_import: bool = True):
         max_bw_in_pct REAL,
         avg_bw_out_pct REAL,
         max_bw_out_pct REAL,
-        in_pkts_sum INTEGER DEFAULT 0,
-        out_pkts_sum INTEGER DEFAULT 0,
-        err_delta_sum INTEGER DEFAULT 0,
-        discard_delta_sum INTEGER DEFAULT 0,
-        fcs_sum INTEGER DEFAULT 0,
+        in_pkts_sum NUMERIC DEFAULT 0,
+        out_pkts_sum NUMERIC DEFAULT 0,
+        err_delta_sum NUMERIC DEFAULT 0,
+        discard_delta_sum NUMERIC DEFAULT 0,
+        fcs_sum NUMERIC DEFAULT 0,
         PRIMARY KEY (ts_minute, device_id, interface_name)
     )
     ''')
@@ -2985,17 +2985,25 @@ def _init_db_logic(conn, *, allow_legacy_import: bool = True):
     raw_columns = _table_columns(cursor, 'interface_telemetry_raw')
     if raw_columns:
         if 'in_pkts' not in raw_columns:
-            cursor.execute('ALTER TABLE interface_telemetry_raw ADD COLUMN in_pkts INTEGER')
+            cursor.execute('ALTER TABLE interface_telemetry_raw ADD COLUMN in_pkts NUMERIC(20, 0)')
         if 'out_pkts' not in raw_columns:
-            cursor.execute('ALTER TABLE interface_telemetry_raw ADD COLUMN out_pkts INTEGER')
+            cursor.execute('ALTER TABLE interface_telemetry_raw ADD COLUMN out_pkts NUMERIC(20, 0)')
+        if 'in_errors' not in raw_columns:
+            cursor.execute('ALTER TABLE interface_telemetry_raw ADD COLUMN in_errors BIGINT')
+        if 'out_errors' not in raw_columns:
+            cursor.execute('ALTER TABLE interface_telemetry_raw ADD COLUMN out_errors BIGINT')
+        if 'in_discards' not in raw_columns:
+            cursor.execute('ALTER TABLE interface_telemetry_raw ADD COLUMN in_discards BIGINT')
+        if 'out_discards' not in raw_columns:
+            cursor.execute('ALTER TABLE interface_telemetry_raw ADD COLUMN out_discards BIGINT')
         if 'fcs_errors' not in raw_columns:
-            cursor.execute('ALTER TABLE interface_telemetry_raw ADD COLUMN fcs_errors INTEGER')
+            cursor.execute('ALTER TABLE interface_telemetry_raw ADD COLUMN fcs_errors NUMERIC(20, 0)')
         if 'frame_too_long_errors' not in raw_columns:
-            cursor.execute('ALTER TABLE interface_telemetry_raw ADD COLUMN frame_too_long_errors INTEGER')
+            cursor.execute('ALTER TABLE interface_telemetry_raw ADD COLUMN frame_too_long_errors NUMERIC(20, 0)')
         if 'mac_rx_errors' not in raw_columns:
-            cursor.execute('ALTER TABLE interface_telemetry_raw ADD COLUMN mac_rx_errors INTEGER')
+            cursor.execute('ALTER TABLE interface_telemetry_raw ADD COLUMN mac_rx_errors NUMERIC(20, 0)')
         if 'symbol_errors' not in raw_columns:
-            cursor.execute('ALTER TABLE interface_telemetry_raw ADD COLUMN symbol_errors INTEGER')
+            cursor.execute('ALTER TABLE interface_telemetry_raw ADD COLUMN symbol_errors NUMERIC(20, 0)')
         if 'packet_counter_source' not in raw_columns:
             cursor.execute('ALTER TABLE interface_telemetry_raw ADD COLUMN packet_counter_source TEXT')
         if 'fcs_source' not in raw_columns:
@@ -3005,11 +3013,15 @@ def _init_db_logic(conn, *, allow_legacy_import: bool = True):
     rollup_columns = _table_columns(cursor, 'interface_telemetry_1m')
     if rollup_columns:
         if 'in_pkts_sum' not in rollup_columns:
-            cursor.execute('ALTER TABLE interface_telemetry_1m ADD COLUMN in_pkts_sum INTEGER DEFAULT 0')
+            cursor.execute('ALTER TABLE interface_telemetry_1m ADD COLUMN in_pkts_sum NUMERIC DEFAULT 0')
         if 'out_pkts_sum' not in rollup_columns:
-            cursor.execute('ALTER TABLE interface_telemetry_1m ADD COLUMN out_pkts_sum INTEGER DEFAULT 0')
+            cursor.execute('ALTER TABLE interface_telemetry_1m ADD COLUMN out_pkts_sum NUMERIC DEFAULT 0')
+        if 'err_delta_sum' not in rollup_columns:
+            cursor.execute('ALTER TABLE interface_telemetry_1m ADD COLUMN err_delta_sum NUMERIC DEFAULT 0')
+        if 'discard_delta_sum' not in rollup_columns:
+            cursor.execute('ALTER TABLE interface_telemetry_1m ADD COLUMN discard_delta_sum NUMERIC DEFAULT 0')
         if 'fcs_sum' not in rollup_columns:
-            cursor.execute('ALTER TABLE interface_telemetry_1m ADD COLUMN fcs_sum INTEGER DEFAULT 0')
+            cursor.execute('ALTER TABLE interface_telemetry_1m ADD COLUMN fcs_sum NUMERIC DEFAULT 0')
 
     # Config drift detection results
     cursor.execute('''
