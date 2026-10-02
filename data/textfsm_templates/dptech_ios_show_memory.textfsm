@@ -1,0 +1,14 @@
+Value SLOT (\d+(?:\([^\)]+\))?)
+Value TOTAL_MEMORY (\d+)
+Value RESERVED_MEMORY (\d+)
+Value AVAILABLE_MEMORY (\d+)
+Value USED_MEMORY (\d+)
+Value USAGE_PCT (\d+)
+
+Start
+  ^Slot\s+${SLOT}
+  ^Total\s+Memory\s+:\s+${TOTAL_MEMORY}\s+KB
+  ^Reserved\s+Memory\s+:\s+${RESERVED_MEMORY}\s+KB
+  ^Available\s+Memory\s+:\s+${AVAILABLE_MEMORY}\s+KB
+  ^Total\s+Used\s+Memory\s+:\s+${USED_MEMORY}\s+KB
+  ^Usage\s+:\s+${USAGE_PCT}% -> Record

@@ -1,0 +1,8 @@
+[RouterB] display bgp routing-table ipv4
+ Total number of routes: 1
+ BGP local router ID is 2.2.2.2
+ Status codes: * - valid, > - best, d - dampened, h - history,
+               s - suppressed, S - stale, i - internal, e - external
+               Origin: i - IGP, e - EGP, ? - incomplete
+     Network            NextHop         MED        LocPrf     PrefVal Path/Ogn
+* >e 8.1.1.0/24         3.1.1.2         0                     0       65008i

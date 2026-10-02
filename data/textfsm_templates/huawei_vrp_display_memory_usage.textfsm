@@ -1,0 +1,18 @@
+# Auto-generated TextFSM template skeleton (Key-Value Format)
+# Review the generated regexes before production use.
+Value RECORD_TIME (\d{4}[-/]\d{2}[-/]\d{2}(?:\s+\d{2}:\d{2}:\d{2})?(?:\s*[+-]\d{2}:?\d{2})?)
+Value SYSTEM_TOTAL_MEMORY (\d+(?:\.\d+)?)
+Value TOTAL_MEMORY_USED (\d+(?:\.\d+)?)
+Value MEMORY_USING_PERCENTAGE (\d+(?:\.\d+)?)
+Value TOTAL_MEMORY_MB (\d+)
+Value MEMORY_USING_PCT (\d+)
+
+Start
+  # Format 1 (Bytes Key-Value Format)
+  ^\s*Memory\s+utilization\s+statistics\s+at\s+${RECORD_TIME}\s*$$
+  ^\s*System\s+Total\s+Memory\s*Is:\s*${SYSTEM_TOTAL_MEMORY}\s+bytes\s*$$
+  ^\s*Total\s+Memory\s+Used\s*Is:\s*${TOTAL_MEMORY_USED}\s+bytes\s*$$
+  ^\s*Memory\s+Using\s+Percentage\s*Is:\s*${MEMORY_USING_PERCENTAGE}%\s*$$ -> Record
+  # Format 2 (MB Format)
+  ^\s*Memory\s+Using\s+Percentage:\s+${MEMORY_USING_PCT}%
+  ^\s*Total\s+Memory:\s+${TOTAL_MEMORY_MB}\s+MB -> Record

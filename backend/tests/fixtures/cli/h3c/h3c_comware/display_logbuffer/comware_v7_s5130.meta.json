@@ -1,0 +1,9 @@
+{
+  "source_type": "official_vendor_documentation",
+  "source_url": "https://www.h3c.com/en/Support/Resource_Center/HK/Switches/H3C_S5130/H3C_S5130_Series_Switches/Technical_Documents/Reference_Guides/Command_References/H3C_S5130-HI_CR-Release_1312-6W101/10/202001/1265327_294551_0.htm",
+  "vendor": "H3C",
+  "platform": "Comware7",
+  "model_family": "S5130-HI",
+  "command": "display logbuffer",
+  "source_note": "Official Comware V7 information center command reference example."
+}

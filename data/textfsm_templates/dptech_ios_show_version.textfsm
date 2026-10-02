@@ -1,0 +1,11 @@
+Value SOFTWARE_VERSION (\S+)
+Value CONPLAT_VERSION (\S+)
+Value HARDWARE (.*)
+Value UPTIME (.*)
+Value SERIAL_NUMBER (\S+)
+
+Start
+  ^\s*Software Release\s+${SOFTWARE_VERSION}\s*$$
+  ^\s*Conplat Version is\s+${CONPLAT_VERSION}\s*$$
+  ^\s*${HARDWARE}\s+Uptime is\s+${UPTIME}\s*$$
+  ^\s*Serial Number:\s+${SERIAL_NUMBER}\s*$$ -> Record

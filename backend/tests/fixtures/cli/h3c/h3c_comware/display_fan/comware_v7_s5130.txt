@@ -1,0 +1,7 @@
+<Sysname> display fan
+Fan 1:
+State    : Normal
+Airflow Direction: Fan-Panel-Exhaust
+Fan 2:
+State    : Normal
+Airflow Direction: Fan-Panel-Exhaust

@@ -1,0 +1,6 @@
+backend/data/librenms_repo/mibs/** filter=lfs diff=lfs merge=lfs -text
+
+# Container entrypoint and deployment scripts must keep POSIX LF endings even
+# when a Windows checkout has core.autocrlf enabled.
+scripts/*.sh text eol=lf
+nginx/**/*.sh text eol=lf

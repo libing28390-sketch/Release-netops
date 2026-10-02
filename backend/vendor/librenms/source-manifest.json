@@ -1,0 +1,3657 @@
+{
+  "upstream_repository": "https://github.com/librenms/librenms",
+  "upstream_revision": "master",
+  "upstream_commit": "6c26b4fe4a40f7b392c19c36a44257212736e38c",
+  "upstream_commit_date": "2026-09-29T08:08:05+01:00",
+  "generated_at_utc": "2026-09-29T07:46:30+00:00",
+  "scope": "Network-asset OS identity and hardware sensor sources only; common interface collection is not changed.",
+  "asset_network_vendors": [
+    "Cisco",
+    "Huawei",
+    "H3C",
+    "Arista",
+    "Juniper",
+    "Ruijie",
+    "ZTE",
+    "Raisecom",
+    "Maipu",
+    "DPtech",
+    "DCN",
+    "FiberHome",
+    "Nokia",
+    "Aruba",
+    "Extreme Networks",
+    "Ruckus",
+    "MikroTik",
+    "Ubiquiti",
+    "D-Link",
+    "TP-Link",
+    "Dell",
+    "Brocade",
+    "Ciena",
+    "Alcatel-Lucent Enterprise",
+    "Allied Telesis",
+    "Edgecore"
+  ],
+  "vendors_with_upstream_os_profiles": [
+    "Alcatel-Lucent Enterprise",
+    "Allied Telesis",
+    "Arista",
+    "Aruba",
+    "Brocade",
+    "Ciena",
+    "Cisco",
+    "D-Link",
+    "DCN",
+    "Dell",
+    "Edgecore",
+    "Extreme Networks",
+    "FiberHome",
+    "H3C",
+    "Huawei",
+    "Juniper",
+    "Maipu",
+    "MikroTik",
+    "Nokia",
+    "Raisecom",
+    "Ruckus",
+    "Ruijie",
+    "TP-Link",
+    "Ubiquiti",
+    "ZTE"
+  ],
+  "asset_vendors_without_upstream_os_profiles": [
+    "DPtech"
+  ],
+  "profiles": [
+    {
+      "os_key": "acano",
+      "vendor": "Cisco"
+    },
+    {
+      "os_key": "acs",
+      "vendor": "Cisco"
+    },
+    {
+      "os_key": "acsw",
+      "vendor": "Cisco"
+    },
+    {
+      "os_key": "airos-af-ltu",
+      "vendor": "Ubiquiti"
+    },
+    {
+      "os_key": "airos-af",
+      "vendor": "Ubiquiti"
+    },
+    {
+      "os_key": "airos-af60",
+      "vendor": "Ubiquiti"
+    },
+    {
+      "os_key": "airos",
+      "vendor": "Ubiquiti"
+    },
+    {
+      "os_key": "allied-tq",
+      "vendor": "Allied Telesis"
+    },
+    {
+      "os_key": "allied",
+      "vendor": "Allied Telesis"
+    },
+    {
+      "os_key": "aos",
+      "vendor": "Alcatel-Lucent Enterprise"
+    },
+    {
+      "os_key": "aos6",
+      "vendor": "Alcatel-Lucent Enterprise"
+    },
+    {
+      "os_key": "aos7",
+      "vendor": "Alcatel-Lucent Enterprise"
+    },
+    {
+      "os_key": "apic",
+      "vendor": "Cisco"
+    },
+    {
+      "os_key": "arista-mos",
+      "vendor": "Arista"
+    },
+    {
+      "os_key": "arista_eos",
+      "vendor": "Arista"
+    },
+    {
+      "os_key": "aruba-instant",
+      "vendor": "Aruba"
+    },
+    {
+      "os_key": "arubaos-cx",
+      "vendor": "Aruba"
+    },
+    {
+      "os_key": "arubaos",
+      "vendor": "Aruba"
+    },
+    {
+      "os_key": "asa",
+      "vendor": "Cisco"
+    },
+    {
+      "os_key": "asyncos",
+      "vendor": "Cisco"
+    },
+    {
+      "os_key": "awplus",
+      "vendor": "Allied Telesis"
+    },
+    {
+      "os_key": "boss",
+      "vendor": "Extreme Networks"
+    },
+    {
+      "os_key": "broadworks",
+      "vendor": "Cisco"
+    },
+    {
+      "os_key": "cat1900",
+      "vendor": "Cisco"
+    },
+    {
+      "os_key": "catos",
+      "vendor": "Cisco"
+    },
+    {
+      "os_key": "ciena-rls",
+      "vendor": "Ciena"
+    },
+    {
+      "os_key": "ciena-saos",
+      "vendor": "Ciena"
+    },
+    {
+      "os_key": "ciena-sds",
+      "vendor": "Ciena"
+    },
+    {
+      "os_key": "ciena-waveserver",
+      "vendor": "Ciena"
+    },
+    {
+      "os_key": "cimc",
+      "vendor": "Cisco"
+    },
+    {
+      "os_key": "cips",
+      "vendor": "Cisco"
+    },
+    {
+      "os_key": "ciscoepc",
+      "vendor": "Cisco"
+    },
+    {
+      "os_key": "ciscome1200",
+      "vendor": "Cisco"
+    },
+    {
+      "os_key": "ciscosat",
+      "vendor": "Cisco"
+    },
+    {
+      "os_key": "ciscosb",
+      "vendor": "Cisco"
+    },
+    {
+      "os_key": "ciscosce",
+      "vendor": "Cisco"
+    },
+    {
+      "os_key": "ciscospa",
+      "vendor": "Cisco"
+    },
+    {
+      "os_key": "ciscosrp",
+      "vendor": "Cisco"
+    },
+    {
+      "os_key": "ciscowap",
+      "vendor": "Cisco"
+    },
+    {
+      "os_key": "ciscowlc",
+      "vendor": "Cisco"
+    },
+    {
+      "os_key": "clearpass",
+      "vendor": "Aruba"
+    },
+    {
+      "os_key": "comware",
+      "vendor": "H3C"
+    },
+    {
+      "os_key": "cyan",
+      "vendor": "Ciena"
+    },
+    {
+      "os_key": "dcn-software",
+      "vendor": "DCN"
+    },
+    {
+      "os_key": "dell-compellent",
+      "vendor": "Dell"
+    },
+    {
+      "os_key": "dell-laser",
+      "vendor": "Dell"
+    },
+    {
+      "os_key": "dell-ome-m",
+      "vendor": "Dell"
+    },
+    {
+      "os_key": "dell-os10",
+      "vendor": "Dell"
+    },
+    {
+      "os_key": "dell-powervault",
+      "vendor": "Dell"
+    },
+    {
+      "os_key": "dell-rcs",
+      "vendor": "Dell"
+    },
+    {
+      "os_key": "dell-rpdu",
+      "vendor": "Dell"
+    },
+    {
+      "os_key": "dell-sonic",
+      "vendor": "Dell"
+    },
+    {
+      "os_key": "dell-ups",
+      "vendor": "Dell"
+    },
+    {
+      "os_key": "dlink-dgs1250",
+      "vendor": "D-Link"
+    },
+    {
+      "os_key": "dlink",
+      "vendor": "D-Link"
+    },
+    {
+      "os_key": "dlinkap",
+      "vendor": "D-Link"
+    },
+    {
+      "os_key": "dnos",
+      "vendor": "Dell"
+    },
+    {
+      "os_key": "drac",
+      "vendor": "Dell"
+    },
+    {
+      "os_key": "edgecos",
+      "vendor": "Edgecore"
+    },
+    {
+      "os_key": "edgeos-ep",
+      "vendor": "Ubiquiti"
+    },
+    {
+      "os_key": "edgeos",
+      "vendor": "Ubiquiti"
+    },
+    {
+      "os_key": "edgeosolt",
+      "vendor": "Ubiquiti"
+    },
+    {
+      "os_key": "edgeswitch",
+      "vendor": "Ubiquiti"
+    },
+    {
+      "os_key": "equallogic",
+      "vendor": "Dell"
+    },
+    {
+      "os_key": "ewc",
+      "vendor": "Extreme Networks"
+    },
+    {
+      "os_key": "exalink-fusion",
+      "vendor": "Cisco"
+    },
+    {
+      "os_key": "exos",
+      "vendor": "Extreme Networks"
+    },
+    {
+      "os_key": "extremeware",
+      "vendor": "Extreme Networks"
+    },
+    {
+      "os_key": "fabos",
+      "vendor": "Brocade"
+    },
+    {
+      "os_key": "fiberhome-switch",
+      "vendor": "FiberHome"
+    },
+    {
+      "os_key": "fiberhome",
+      "vendor": "FiberHome"
+    },
+    {
+      "os_key": "fluidfs",
+      "vendor": "Dell"
+    },
+    {
+      "os_key": "fs-ruijie",
+      "vendor": "Ruijie"
+    },
+    {
+      "os_key": "ftd",
+      "vendor": "Cisco"
+    },
+    {
+      "os_key": "fxos",
+      "vendor": "Cisco"
+    },
+    {
+      "os_key": "huawei-optixrtn",
+      "vendor": "Huawei"
+    },
+    {
+      "os_key": "huawei-smu",
+      "vendor": "Huawei"
+    },
+    {
+      "os_key": "huaweiups",
+      "vendor": "Huawei"
+    },
+    {
+      "os_key": "ibmc",
+      "vendor": "Huawei"
+    },
+    {
+      "os_key": "ios",
+      "vendor": "Cisco"
+    },
+    {
+      "os_key": "iosxe",
+      "vendor": "Cisco"
+    },
+    {
+      "os_key": "iosxr",
+      "vendor": "Cisco"
+    },
+    {
+      "os_key": "ironware",
+      "vendor": "Brocade"
+    },
+    {
+      "os_key": "ise",
+      "vendor": "Cisco"
+    },
+    {
+      "os_key": "jetstream",
+      "vendor": "TP-Link"
+    },
+    {
+      "os_key": "juniper-mss",
+      "vendor": "Juniper"
+    },
+    {
+      "os_key": "juniperex2500os",
+      "vendor": "Juniper"
+    },
+    {
+      "os_key": "junos",
+      "vendor": "Juniper"
+    },
+    {
+      "os_key": "junose",
+      "vendor": "Juniper"
+    },
+    {
+      "os_key": "jwos",
+      "vendor": "Juniper"
+    },
+    {
+      "os_key": "mypoweros",
+      "vendor": "Maipu"
+    },
+    {
+      "os_key": "nokia-1830",
+      "vendor": "Nokia"
+    },
+    {
+      "os_key": "nokia-isam",
+      "vendor": "Nokia"
+    },
+    {
+      "os_key": "nos",
+      "vendor": "Brocade"
+    },
+    {
+      "os_key": "nxos",
+      "vendor": "Cisco"
+    },
+    {
+      "os_key": "oceanstor",
+      "vendor": "Huawei"
+    },
+    {
+      "os_key": "omnipcx",
+      "vendor": "Alcatel-Lucent Enterprise"
+    },
+    {
+      "os_key": "ons",
+      "vendor": "Cisco"
+    },
+    {
+      "os_key": "pixos",
+      "vendor": "Cisco"
+    },
+    {
+      "os_key": "powerconnect",
+      "vendor": "Dell"
+    },
+    {
+      "os_key": "powervault",
+      "vendor": "Dell"
+    },
+    {
+      "os_key": "primeinfrastructure",
+      "vendor": "Cisco"
+    },
+    {
+      "os_key": "procurve",
+      "vendor": "Aruba"
+    },
+    {
+      "os_key": "radlan",
+      "vendor": "Allied Telesis"
+    },
+    {
+      "os_key": "raisecom-ros",
+      "vendor": "Raisecom"
+    },
+    {
+      "os_key": "raisecom",
+      "vendor": "Raisecom"
+    },
+    {
+      "os_key": "routeros",
+      "vendor": "MikroTik"
+    },
+    {
+      "os_key": "ruckuswireless-hotzone",
+      "vendor": "Ruckus"
+    },
+    {
+      "os_key": "ruckuswireless-sz",
+      "vendor": "Ruckus"
+    },
+    {
+      "os_key": "ruckuswireless-unleashed",
+      "vendor": "Ruckus"
+    },
+    {
+      "os_key": "ruckuswireless",
+      "vendor": "Ruckus"
+    },
+    {
+      "os_key": "ruijie",
+      "vendor": "Ruijie"
+    },
+    {
+      "os_key": "sanos",
+      "vendor": "Cisco"
+    },
+    {
+      "os_key": "screenos",
+      "vendor": "Juniper"
+    },
+    {
+      "os_key": "serveriron",
+      "vendor": "Brocade"
+    },
+    {
+      "os_key": "slxos",
+      "vendor": "Extreme Networks"
+    },
+    {
+      "os_key": "smartax-mdu",
+      "vendor": "Huawei"
+    },
+    {
+      "os_key": "smartax",
+      "vendor": "Huawei"
+    },
+    {
+      "os_key": "srlinux",
+      "vendor": "Nokia"
+    },
+    {
+      "os_key": "stellar",
+      "vendor": "Alcatel-Lucent Enterprise"
+    },
+    {
+      "os_key": "swos",
+      "vendor": "MikroTik"
+    },
+    {
+      "os_key": "timos",
+      "vendor": "Nokia"
+    },
+    {
+      "os_key": "tplink",
+      "vendor": "TP-Link"
+    },
+    {
+      "os_key": "ucos",
+      "vendor": "Cisco"
+    },
+    {
+      "os_key": "unifi-usp",
+      "vendor": "Ubiquiti"
+    },
+    {
+      "os_key": "unifi",
+      "vendor": "Ubiquiti"
+    },
+    {
+      "os_key": "viptela",
+      "vendor": "Cisco"
+    },
+    {
+      "os_key": "voss",
+      "vendor": "Extreme Networks"
+    },
+    {
+      "os_key": "vrp",
+      "vendor": "Huawei"
+    },
+    {
+      "os_key": "waas",
+      "vendor": "Cisco"
+    },
+    {
+      "os_key": "wavence",
+      "vendor": "Nokia"
+    },
+    {
+      "os_key": "xos",
+      "vendor": "Extreme Networks"
+    },
+    {
+      "os_key": "yunshan",
+      "vendor": "Huawei"
+    },
+    {
+      "os_key": "zxa10",
+      "vendor": "ZTE"
+    },
+    {
+      "os_key": "zxdsl",
+      "vendor": "ZTE"
+    },
+    {
+      "os_key": "zxr10",
+      "vendor": "ZTE"
+    }
+  ],
+  "rule_files": [
+    {
+      "bundle_path": "resources/definitions/os_detection/acano.yaml",
+      "upstream_path": "resources/definitions/os_detection/acano.yaml",
+      "sha256": "7931e8a0678e8b4e07005a42a54414fb1fe7774392f5056fb37185ae3bb372fe"
+    },
+    {
+      "bundle_path": "resources/definitions/os_discovery/acano.yaml",
+      "upstream_path": "resources/definitions/os_discovery/acano.yaml",
+      "sha256": "f859e75a8045f4c54477415ed1044e6eedc803e4e3755c1fd68684344598a09f"
+    },
+    {
+      "bundle_path": "resources/definitions/os_detection/acs.yaml",
+      "upstream_path": "resources/definitions/os_detection/acs.yaml",
+      "sha256": "3df1be072b337f64150230f85e4cda7781051923608ae818df280800a1cfc45b"
+    },
+    {
+      "bundle_path": "resources/definitions/os_discovery/acs.yaml",
+      "upstream_path": "resources/definitions/os_discovery/acs.yaml",
+      "sha256": "1c9a3dd2583d5aa4b39f2e66b7e707d2a6bcd99e044df58bdcd9be0cd49edbb2"
+    },
+    {
+      "bundle_path": "resources/definitions/os_detection/acsw.yaml",
+      "upstream_path": "resources/definitions/os_detection/acsw.yaml",
+      "sha256": "8a8f7413507d5e757b061618ca7a30a7a5ad79b9af5b9b1aaaf56ab52a45bdaf"
+    },
+    {
+      "bundle_path": "resources/definitions/os_detection/airos-af-ltu.yaml",
+      "upstream_path": "resources/definitions/os_detection/airos-af-ltu.yaml",
+      "sha256": "61c1e9e0de4e27b325129dfcbe4ba61e9be91ed58366f79a4a5ab158f3cb8643"
+    },
+    {
+      "bundle_path": "resources/definitions/os_discovery/airos-af-ltu.yaml",
+      "upstream_path": "resources/definitions/os_discovery/airos-af-ltu.yaml",
+      "sha256": "fa8b9bc8934274e6322ad7c7f84f2529b5062ece9e05849ae349be70c6aaa36a"
+    },
+    {
+      "bundle_path": "resources/definitions/os_detection/airos-af.yaml",
+      "upstream_path": "resources/definitions/os_detection/airos-af.yaml",
+      "sha256": "2e15611108b13851e9419ce2dc4865e904b3a26e880b747848d1792cce0d634b"
+    },
+    {
+      "bundle_path": "resources/definitions/os_discovery/airos-af.yaml",
+      "upstream_path": "resources/definitions/os_discovery/airos-af.yaml",
+      "sha256": "bb2ea5e3212ca21468e3eb0e52c31f30e5f833a296f534e7bfbc7d10605c7780"
+    },
+    {
+      "bundle_path": "resources/definitions/os_detection/airos-af60.yaml",
+      "upstream_path": "resources/definitions/os_detection/airos-af60.yaml",
+      "sha256": "8c9c4d5dfcd06b7f0debe36f67f02d42b270b40d5c8e71dfe7b328aafea3f965"
+    },
+    {
+      "bundle_path": "resources/definitions/os_discovery/airos-af60.yaml",
+      "upstream_path": "resources/definitions/os_discovery/airos-af60.yaml",
+      "sha256": "d7a5b7df76e2c0d7898bb88825a61f1248a2aaa544e5b70e2ea1481a0848e134"
+    },
+    {
+      "bundle_path": "resources/definitions/os_detection/airos.yaml",
+      "upstream_path": "resources/definitions/os_detection/airos.yaml",
+      "sha256": "87debb6b10ed691d05abc0d51cb7a5fe0893a34f0a142d9cd8ab73aca127ebf7"
+    },
+    {
+      "bundle_path": "resources/definitions/os_discovery/airos.yaml",
+      "upstream_path": "resources/definitions/os_discovery/airos.yaml",
+      "sha256": "d2b02d8161dda51c79677ff4d7a1bb9fd25689e8142f9009351c75c1c251837e"
+    },
+    {
+      "bundle_path": "resources/definitions/os_detection/allied-tq.yaml",
+      "upstream_path": "resources/definitions/os_detection/allied-tq.yaml",
+      "sha256": "6895763e4b4996e5074ae10eab8ecb8114fa7b3334267843604138b989dc2535"
+    },
+    {
+      "bundle_path": "resources/definitions/os_discovery/allied-tq.yaml",
+      "upstream_path": "resources/definitions/os_discovery/allied-tq.yaml",
+      "sha256": "d2b57e7051aa0facbee557bb6d8fb1f90b9db20bf6fcc5d0554b0c54e7f6fb48"
+    },
+    {
+      "bundle_path": "resources/definitions/os_detection/allied.yaml",
+      "upstream_path": "resources/definitions/os_detection/allied.yaml",
+      "sha256": "aad548ac54d53ef5c8a04108c8f4054a0b0d348af4d82c143bb3aeb7241a61f5"
+    },
+    {
+      "bundle_path": "resources/definitions/os_detection/aos.yaml",
+      "upstream_path": "resources/definitions/os_detection/aos.yaml",
+      "sha256": "2dd33ee8edc129b607956fb0a311eefc8d4f750e15941ad66419134179e9d244"
+    },
+    {
+      "bundle_path": "resources/definitions/os_discovery/aos.yaml",
+      "upstream_path": "resources/definitions/os_discovery/aos.yaml",
+      "sha256": "6fcf4b60004cc8cb27856a1acd72a9f0a54842cc1d029953878c2ee7aaf89412"
+    },
+    {
+      "bundle_path": "resources/definitions/os_detection/aos6.yaml",
+      "upstream_path": "resources/definitions/os_detection/aos6.yaml",
+      "sha256": "736b6d433699825ae3f263fa1b0902c75ddbfff9a6098c930633abbec7e84e14"
+    },
+    {
+      "bundle_path": "resources/definitions/os_discovery/aos6.yaml",
+      "upstream_path": "resources/definitions/os_discovery/aos6.yaml",
+      "sha256": "24265766c42e7222be0cd85b82a3e63f50bf4d82a0f0c510bf423ac8b2deac0b"
+    },
+    {
+      "bundle_path": "resources/definitions/os_detection/aos7.yaml",
+      "upstream_path": "resources/definitions/os_detection/aos7.yaml",
+      "sha256": "c36627a20bc0ec2054e01701c7b3220d8d048bb2a1af075c0181734657a341a6"
+    },
+    {
+      "bundle_path": "resources/definitions/os_discovery/aos7.yaml",
+      "upstream_path": "resources/definitions/os_discovery/aos7.yaml",
+      "sha256": "d8332d8e128db5027a683d22d46f62b2babea673dd013da2170e039022436d0a"
+    },
+    {
+      "bundle_path": "resources/definitions/os_detection/apic.yaml",
+      "upstream_path": "resources/definitions/os_detection/apic.yaml",
+      "sha256": "8af56068d16aba0b789addd971f717442f8afc9753108b83cb4825caca662011"
+    },
+    {
+      "bundle_path": "resources/definitions/os_discovery/apic.yaml",
+      "upstream_path": "resources/definitions/os_discovery/apic.yaml",
+      "sha256": "7f6a39b6e082d10384910025bbe67ebd0ad1b77eef1b266229705409de7acb0f"
+    },
+    {
+      "bundle_path": "resources/definitions/os_detection/arista-mos.yaml",
+      "upstream_path": "resources/definitions/os_detection/arista-mos.yaml",
+      "sha256": "c18f79edebc5f8cd6b44e9e7745620b8236d5c7c31a296924b85d383502d85a3"
+    },
+    {
+      "bundle_path": "resources/definitions/os_discovery/arista-mos.yaml",
+      "upstream_path": "resources/definitions/os_discovery/arista-mos.yaml",
+      "sha256": "968dadd689981eed6941c219f54f106c9230d9b6b6e38690e150413501dac690"
+    },
+    {
+      "bundle_path": "resources/definitions/os_detection/arista_eos.yaml",
+      "upstream_path": "resources/definitions/os_detection/arista_eos.yaml",
+      "sha256": "b23f86c03731a1ddc0c0ee82df96cb757f07eb1f6a1fcbd631b08cff978dd13b"
+    },
+    {
+      "bundle_path": "resources/definitions/os_discovery/arista_eos.yaml",
+      "upstream_path": "resources/definitions/os_discovery/arista_eos.yaml",
+      "sha256": "7f1101be2da4231dc864adcd179c809a7a682a10c2cecee2ad4a81eff7f61faf"
+    },
+    {
+      "bundle_path": "resources/definitions/os_detection/aruba-instant.yaml",
+      "upstream_path": "resources/definitions/os_detection/aruba-instant.yaml",
+      "sha256": "b74ff56df876b3e3064d1d7be6ffd796cb2e3139b4363b6325d1f3064ec9c602"
+    },
+    {
+      "bundle_path": "resources/definitions/os_discovery/aruba-instant.yaml",
+      "upstream_path": "resources/definitions/os_discovery/aruba-instant.yaml",
+      "sha256": "b1cb7a147017983964cec244128f14f1fb64b97c66a33b7fb42c48bbd3e85dde"
+    },
+    {
+      "bundle_path": "resources/definitions/os_detection/arubaos-cx.yaml",
+      "upstream_path": "resources/definitions/os_detection/arubaos-cx.yaml",
+      "sha256": "8f76b688223c73b6ada9036ae582d6328ac99b21ce56fb9771e126057f206057"
+    },
+    {
+      "bundle_path": "resources/definitions/os_discovery/arubaos-cx.yaml",
+      "upstream_path": "resources/definitions/os_discovery/arubaos-cx.yaml",
+      "sha256": "3233d866453c8edc150f89d2c42c42987b4ca300a3fb79c2ae3167e731322505"
+    },
+    {
+      "bundle_path": "resources/definitions/os_detection/arubaos.yaml",
+      "upstream_path": "resources/definitions/os_detection/arubaos.yaml",
+      "sha256": "94e48a305484a6b395d80c1a041b86d38818ed740666f5afbd0855eb4311556c"
+    },
+    {
+      "bundle_path": "resources/definitions/os_discovery/arubaos.yaml",
+      "upstream_path": "resources/definitions/os_discovery/arubaos.yaml",
+      "sha256": "cc5e02d9c79677680de54a9cc1fd8db47be4a684868362be771111b1e4bf69b4"
+    },
+    {
+      "bundle_path": "resources/definitions/os_detection/asa.yaml",
+      "upstream_path": "resources/definitions/os_detection/asa.yaml",
+      "sha256": "b4be054e2a915ae7714a4def21d85af8bf9b2c7a931c1d1fe922175d304f46c9"
+    },
+    {
+      "bundle_path": "resources/definitions/os_discovery/asa.yaml",
+      "upstream_path": "resources/definitions/os_discovery/asa.yaml",
+      "sha256": "6241a7d8517124c6f47536b422ef32247d4ce4c678a6b3a516c9254dfe11b594"
+    },
+    {
+      "bundle_path": "resources/definitions/os_detection/asyncos.yaml",
+      "upstream_path": "resources/definitions/os_detection/asyncos.yaml",
+      "sha256": "cb62e3c374193f045d5e7cbcab142ba51567a3ea0bdcd15aa5649c5999d208a1"
+    },
+    {
+      "bundle_path": "resources/definitions/os_discovery/asyncos.yaml",
+      "upstream_path": "resources/definitions/os_discovery/asyncos.yaml",
+      "sha256": "2a914fe3c09bdf851b7e113580bb00069dc7b5398f344263fe9ee2a8604c715c"
+    },
+    {
+      "bundle_path": "resources/definitions/os_detection/awplus.yaml",
+      "upstream_path": "resources/definitions/os_detection/awplus.yaml",
+      "sha256": "bb22d9ee578cd57d005bf4aad83293206c40cf194ed8eae4d0a255b8a72d8bb8"
+    },
+    {
+      "bundle_path": "resources/definitions/os_discovery/awplus.yaml",
+      "upstream_path": "resources/definitions/os_discovery/awplus.yaml",
+      "sha256": "33eab37f7183816b026dd214f19c5fc0380bbe8663f87e1a9d4e1d005810efaf"
+    },
+    {
+      "bundle_path": "resources/definitions/os_detection/boss.yaml",
+      "upstream_path": "resources/definitions/os_detection/boss.yaml",
+      "sha256": "d6d5a19fc878f79bba1a7cd1e0a29935de9a4e1077de4ba0ca04a3423f4690f9"
+    },
+    {
+      "bundle_path": "resources/definitions/os_discovery/boss.yaml",
+      "upstream_path": "resources/definitions/os_discovery/boss.yaml",
+      "sha256": "975fa8b88c215fcc36141a04fbb9d97e5ec8c451d0515760299427875d79597a"
+    },
+    {
+      "bundle_path": "resources/definitions/os_detection/broadworks.yaml",
+      "upstream_path": "resources/definitions/os_detection/broadworks.yaml",
+      "sha256": "2785107a8a81025f5fdf984e6c8454842cf430e131d92704eff4157073b1473d"
+    },
+    {
+      "bundle_path": "resources/definitions/os_discovery/broadworks.yaml",
+      "upstream_path": "resources/definitions/os_discovery/broadworks.yaml",
+      "sha256": "d8c3fee942e3152f6889977ca6667a53020a06bd3411025929bec81a8ac73677"
+    },
+    {
+      "bundle_path": "resources/definitions/os_detection/cat1900.yaml",
+      "upstream_path": "resources/definitions/os_detection/cat1900.yaml",
+      "sha256": "21504abeb09381e04c0d5092a16010d8aaef7ecb5dcd4c5ea6f759ff26378f81"
+    },
+    {
+      "bundle_path": "resources/definitions/os_discovery/cat1900.yaml",
+      "upstream_path": "resources/definitions/os_discovery/cat1900.yaml",
+      "sha256": "f2ae6012c38fbecf3f3c491ac7628cbc65d482b22192d5e3df889380b05fb370"
+    },
+    {
+      "bundle_path": "resources/definitions/os_detection/catos.yaml",
+      "upstream_path": "resources/definitions/os_detection/catos.yaml",
+      "sha256": "44dc7d20195befae7f9921dca772096ec23a40508993de6ad15bde8942bc478f"
+    },
+    {
+      "bundle_path": "resources/definitions/os_discovery/catos.yaml",
+      "upstream_path": "resources/definitions/os_discovery/catos.yaml",
+      "sha256": "9ec82caed5ff07bd1178944fade7d3d00b9f143a9b18f56c9a54e2a91587278a"
+    },
+    {
+      "bundle_path": "resources/definitions/os_detection/ciena-rls.yaml",
+      "upstream_path": "resources/definitions/os_detection/ciena-rls.yaml",
+      "sha256": "3a34dc173ac4350de41cee1853dd3ac479566fdd341e662e6ed25c08a16a56f6"
+    },
+    {
+      "bundle_path": "resources/definitions/os_discovery/ciena-rls.yaml",
+      "upstream_path": "resources/definitions/os_discovery/ciena-rls.yaml",
+      "sha256": "4bd272ebcf0bd79b0e15729448318cb63f273747b32f97a6316e579a5a316877"
+    },
+    {
+      "bundle_path": "resources/definitions/os_detection/ciena-saos.yaml",
+      "upstream_path": "resources/definitions/os_detection/ciena-saos.yaml",
+      "sha256": "5b4aa3fd90297a2fc4b5ed8a3b4a94cc5129d95ea868f8a00a36e5279275ec78"
+    },
+    {
+      "bundle_path": "resources/definitions/os_discovery/ciena-saos.yaml",
+      "upstream_path": "resources/definitions/os_discovery/ciena-saos.yaml",
+      "sha256": "c158b841c695af5dfe1b7146a709e3be35162782a14ea8d3498d09f4e5ab6221"
+    },
+    {
+      "bundle_path": "resources/definitions/os_detection/ciena-sds.yaml",
+      "upstream_path": "resources/definitions/os_detection/ciena-sds.yaml",
+      "sha256": "fb1b28d12196dfd9f3204bd82330a8ac1b2e385196df9faab0a4d415c97a568c"
+    },
+    {
+      "bundle_path": "resources/definitions/os_discovery/ciena-sds.yaml",
+      "upstream_path": "resources/definitions/os_discovery/ciena-sds.yaml",
+      "sha256": "3e1e932521e75d68ebece260c7e85acfbd31973eadf1d9bbfbc014cbc83f96b6"
+    },
+    {
+      "bundle_path": "resources/definitions/os_detection/ciena-waveserver.yaml",
+      "upstream_path": "resources/definitions/os_detection/ciena-waveserver.yaml",
+      "sha256": "a969cdb48eee2b8da1b19a6776c389b3d5d5bb177c95dd23ec56824071bb8f6e"
+    },
+    {
+      "bundle_path": "resources/definitions/os_discovery/ciena-waveserver.yaml",
+      "upstream_path": "resources/definitions/os_discovery/ciena-waveserver.yaml",
+      "sha256": "eb54fa518ea4e274729855eec370b437ccc0fd52fefeaa7c14296c0e67c7e1e4"
+    },
+    {
+      "bundle_path": "resources/definitions/os_detection/cimc.yaml",
+      "upstream_path": "resources/definitions/os_detection/cimc.yaml",
+      "sha256": "b41634bd0cbf632f1a9ae05f41804ee8f8f0994a2e579c650ece09b1624cff7a"
+    },
+    {
+      "bundle_path": "resources/definitions/os_discovery/cimc.yaml",
+      "upstream_path": "resources/definitions/os_discovery/cimc.yaml",
+      "sha256": "d567c017cca78c92d777b91c0b610b235eb24918fbc08bea7307a125df973490"
+    },
+    {
+      "bundle_path": "resources/definitions/os_detection/cips.yaml",
+      "upstream_path": "resources/definitions/os_detection/cips.yaml",
+      "sha256": "e65b31f30d01a6c5c156eb9a2a430f2a1f0a26308d1b1b4588be1a47faa71055"
+    },
+    {
+      "bundle_path": "resources/definitions/os_discovery/cips.yaml",
+      "upstream_path": "resources/definitions/os_discovery/cips.yaml",
+      "sha256": "4d0a124d465a7b81ff4b45d12166d5374d897fb837ff0dd973e5ab7b8c22ced8"
+    },
+    {
+      "bundle_path": "resources/definitions/os_detection/ciscoepc.yaml",
+      "upstream_path": "resources/definitions/os_detection/ciscoepc.yaml",
+      "sha256": "c0150aa847e38d94cb8b67fd5f06762ec15dd80a16eb16feba69bec76c37a923"
+    },
+    {
+      "bundle_path": "resources/definitions/os_discovery/ciscoepc.yaml",
+      "upstream_path": "resources/definitions/os_discovery/ciscoepc.yaml",
+      "sha256": "dfc3a0e6445a35afda34ff31fa4f00000d657a66c351b63a32dda1f7e9dffeb8"
+    },
+    {
+      "bundle_path": "resources/definitions/os_detection/ciscome1200.yaml",
+      "upstream_path": "resources/definitions/os_detection/ciscome1200.yaml",
+      "sha256": "8d4d0ebba1c183ebbb566e8ac4a6d2d208efd8810df4b80c4919f1fc98ab1211"
+    },
+    {
+      "bundle_path": "resources/definitions/os_detection/ciscosat.yaml",
+      "upstream_path": "resources/definitions/os_detection/ciscosat.yaml",
+      "sha256": "8c17ed38d48a9d04270de87177fa801d63b3339dba406117c62ff72fdb541d2c"
+    },
+    {
+      "bundle_path": "resources/definitions/os_discovery/ciscosat.yaml",
+      "upstream_path": "resources/definitions/os_discovery/ciscosat.yaml",
+      "sha256": "a1299951fad47710b2723095cd93cbbd969928a45c7a5ef5b7c51418bb31bfc7"
+    },
+    {
+      "bundle_path": "resources/definitions/os_detection/ciscosb.yaml",
+      "upstream_path": "resources/definitions/os_detection/ciscosb.yaml",
+      "sha256": "02a5a80c22582a7b19d7c00120d8b66350d39c50b69596c23c0ef1d000def74f"
+    },
+    {
+      "bundle_path": "resources/definitions/os_discovery/ciscosb.yaml",
+      "upstream_path": "resources/definitions/os_discovery/ciscosb.yaml",
+      "sha256": "448c73a9f33ca1cb13442dc3af2be887c77b83a9f5f7819fcd1496a539ef4c9f"
+    },
+    {
+      "bundle_path": "resources/definitions/os_detection/ciscosce.yaml",
+      "upstream_path": "resources/definitions/os_detection/ciscosce.yaml",
+      "sha256": "a46776f0f493ed214af16017628c0576fb6a33f81303b6c38439d8084a837f08"
+    },
+    {
+      "bundle_path": "resources/definitions/os_discovery/ciscosce.yaml",
+      "upstream_path": "resources/definitions/os_discovery/ciscosce.yaml",
+      "sha256": "1d26cddd17e0552261451c99642e432b021fc58d50cf845f1b3339c080af287f"
+    },
+    {
+      "bundle_path": "resources/definitions/os_detection/ciscospa.yaml",
+      "upstream_path": "resources/definitions/os_detection/ciscospa.yaml",
+      "sha256": "ce5c8914f0bf1bf15baad80866641c0a07158c1d600fcd0c17019dab196e31dc"
+    },
+    {
+      "bundle_path": "resources/definitions/os_detection/ciscosrp.yaml",
+      "upstream_path": "resources/definitions/os_detection/ciscosrp.yaml",
+      "sha256": "06d5875643e620e30674b9562be5b0220bf50c68737168b60e016cca86390475"
+    },
+    {
+      "bundle_path": "resources/definitions/os_discovery/ciscosrp.yaml",
+      "upstream_path": "resources/definitions/os_discovery/ciscosrp.yaml",
+      "sha256": "156bb85839063feb131e610809fdeba3f91e050609b8ae6f37bd8a7e2b7fc4f0"
+    },
+    {
+      "bundle_path": "resources/definitions/os_detection/ciscowap.yaml",
+      "upstream_path": "resources/definitions/os_detection/ciscowap.yaml",
+      "sha256": "3dd8f8af6d3f4ef1aa01ea48bd7475f6f32d410844f374dee4394b380ed8c623"
+    },
+    {
+      "bundle_path": "resources/definitions/os_discovery/ciscowap.yaml",
+      "upstream_path": "resources/definitions/os_discovery/ciscowap.yaml",
+      "sha256": "24b88d2d04f9f08aeabd5d4b47317c6bbb8fde208e70668144cfda650f400af7"
+    },
+    {
+      "bundle_path": "resources/definitions/os_detection/ciscowlc.yaml",
+      "upstream_path": "resources/definitions/os_detection/ciscowlc.yaml",
+      "sha256": "9d647ae075bb1f018c4aadd9bcb9d51a2e931996ff474eef8f42b3264533c3f7"
+    },
+    {
+      "bundle_path": "resources/definitions/os_discovery/ciscowlc.yaml",
+      "upstream_path": "resources/definitions/os_discovery/ciscowlc.yaml",
+      "sha256": "9e0667a9c5396ebb8f2360382d1e56f6748951580f33555cda03e7ab85855514"
+    },
+    {
+      "bundle_path": "resources/definitions/os_detection/clearpass.yaml",
+      "upstream_path": "resources/definitions/os_detection/clearpass.yaml",
+      "sha256": "4a39954c41e1bf19192cb87509dfbfb1b61893a521ff23a32f33cbb1caad5c39"
+    },
+    {
+      "bundle_path": "resources/definitions/os_discovery/clearpass.yaml",
+      "upstream_path": "resources/definitions/os_discovery/clearpass.yaml",
+      "sha256": "1f395a54a64b57299294b083de85d48c068f52cd32fa9f0b51fc970aaf1a48c3"
+    },
+    {
+      "bundle_path": "resources/definitions/os_detection/comware.yaml",
+      "upstream_path": "resources/definitions/os_detection/comware.yaml",
+      "sha256": "f0c74268a08703985dda4d1a35ba8ebcaa7ee9f30dd5d4a296a8d34e3e922d73"
+    },
+    {
+      "bundle_path": "resources/definitions/os_discovery/comware.yaml",
+      "upstream_path": "resources/definitions/os_discovery/comware.yaml",
+      "sha256": "6bcac3c830deeb0521267d18511b199994b272a25714817d27a6ac4751c17be8"
+    },
+    {
+      "bundle_path": "resources/definitions/os_detection/cyan.yaml",
+      "upstream_path": "resources/definitions/os_detection/cyan.yaml",
+      "sha256": "473f85bac04adf96fafddcdbf044091e7b6f320c212775dfcaf95df18d7ee405"
+    },
+    {
+      "bundle_path": "resources/definitions/os_detection/dcn-software.yaml",
+      "upstream_path": "resources/definitions/os_detection/dcn-software.yaml",
+      "sha256": "4ce72259be5203baadb97213068af5ec39fd49fdf6fbdc8998efea13408695c4"
+    },
+    {
+      "bundle_path": "resources/definitions/os_discovery/dcn-software.yaml",
+      "upstream_path": "resources/definitions/os_discovery/dcn-software.yaml",
+      "sha256": "39279ba36edba4eb99632c5de7a522ad1f526ce89df663ef28851d685232e2a9"
+    },
+    {
+      "bundle_path": "resources/definitions/os_detection/dell-compellent.yaml",
+      "upstream_path": "resources/definitions/os_detection/dell-compellent.yaml",
+      "sha256": "bf6388567cc57136cf4fc071b32c78fffa8725e0011cbb88d28fa40e7a536558"
+    },
+    {
+      "bundle_path": "resources/definitions/os_discovery/dell-compellent.yaml",
+      "upstream_path": "resources/definitions/os_discovery/dell-compellent.yaml",
+      "sha256": "5e495cfb1ef6437ad23c48ff4b6d7bfb72d6bf2ef5ae82975ffe7859456677eb"
+    },
+    {
+      "bundle_path": "resources/definitions/os_detection/dell-laser.yaml",
+      "upstream_path": "resources/definitions/os_detection/dell-laser.yaml",
+      "sha256": "6ec8fd5d9a723eaeac00cc914810b0ecb000d200d724561441c057662fb7b794"
+    },
+    {
+      "bundle_path": "resources/definitions/os_discovery/dell-laser.yaml",
+      "upstream_path": "resources/definitions/os_discovery/dell-laser.yaml",
+      "sha256": "f548b6011976c062cdcccbcb15a9e91575c133d986161e04a624a25c16c71953"
+    },
+    {
+      "bundle_path": "resources/definitions/os_detection/dell-ome-m.yaml",
+      "upstream_path": "resources/definitions/os_detection/dell-ome-m.yaml",
+      "sha256": "54b9174635551621de4bbc709f257215a135ae00e4d713e7ac81cddd6b60f3a6"
+    },
+    {
+      "bundle_path": "resources/definitions/os_discovery/dell-ome-m.yaml",
+      "upstream_path": "resources/definitions/os_discovery/dell-ome-m.yaml",
+      "sha256": "d535ac9caeb818baf37d8b64aecceaa2942e80979324e4ba9d89881698b0e7b6"
+    },
+    {
+      "bundle_path": "resources/definitions/os_detection/dell-os10.yaml",
+      "upstream_path": "resources/definitions/os_detection/dell-os10.yaml",
+      "sha256": "e36a63297a92de7432f7243c4191b24152078717283f00220d4f0cff3c5fd31f"
+    },
+    {
+      "bundle_path": "resources/definitions/os_discovery/dell-os10.yaml",
+      "upstream_path": "resources/definitions/os_discovery/dell-os10.yaml",
+      "sha256": "5a15eba855be73eeaf79acb90f3806cc13c3f12cf80c7c3a67033273246143c1"
+    },
+    {
+      "bundle_path": "resources/definitions/os_detection/dell-powervault.yaml",
+      "upstream_path": "resources/definitions/os_detection/dell-powervault.yaml",
+      "sha256": "e5768bb329f2ac08ee7cd73dba673eeeb7fd270114657802dff888e20e495380"
+    },
+    {
+      "bundle_path": "resources/definitions/os_discovery/dell-powervault.yaml",
+      "upstream_path": "resources/definitions/os_discovery/dell-powervault.yaml",
+      "sha256": "2ed8cedd1b72babe10853e41c1a13b87537611ec0e37a4411ce2bf167320b4ab"
+    },
+    {
+      "bundle_path": "resources/definitions/os_detection/dell-rcs.yaml",
+      "upstream_path": "resources/definitions/os_detection/dell-rcs.yaml",
+      "sha256": "eb160acb8f5cfe44175e04902338608ad58d27bfe691ede597e5d7865ce4af7a"
+    },
+    {
+      "bundle_path": "resources/definitions/os_discovery/dell-rcs.yaml",
+      "upstream_path": "resources/definitions/os_discovery/dell-rcs.yaml",
+      "sha256": "0c25ff304a9a77b116cd9ce2ab114992f031eec1968b0329cb82ac952b9759dd"
+    },
+    {
+      "bundle_path": "resources/definitions/os_detection/dell-rpdu.yaml",
+      "upstream_path": "resources/definitions/os_detection/dell-rpdu.yaml",
+      "sha256": "71508a64e303079d3f15f8e68fa3460dd00d36aac2a99e3793b33cbf9424683f"
+    },
+    {
+      "bundle_path": "resources/definitions/os_discovery/dell-rpdu.yaml",
+      "upstream_path": "resources/definitions/os_discovery/dell-rpdu.yaml",
+      "sha256": "f77f20f4789a30d2f428e76cde32769419fcfdeaa2b18e23d3f4977dd0fcf419"
+    },
+    {
+      "bundle_path": "resources/definitions/os_detection/dell-sonic.yaml",
+      "upstream_path": "resources/definitions/os_detection/dell-sonic.yaml",
+      "sha256": "47caf843c94250fd81427fcfabd3390a6d460543022d03fbea851b58a33157a6"
+    },
+    {
+      "bundle_path": "resources/definitions/os_detection/dell-ups.yaml",
+      "upstream_path": "resources/definitions/os_detection/dell-ups.yaml",
+      "sha256": "004e8e457b5c9fa6943527ed3cd8bde0934dbe8c445273c5b9d5414df28b2e10"
+    },
+    {
+      "bundle_path": "resources/definitions/os_discovery/dell-ups.yaml",
+      "upstream_path": "resources/definitions/os_discovery/dell-ups.yaml",
+      "sha256": "f287c4d6e721c29290450aee0732468794dd09798fe0de4a2a553e45e1393a43"
+    },
+    {
+      "bundle_path": "resources/definitions/os_detection/dlink-dgs1250.yaml",
+      "upstream_path": "resources/definitions/os_detection/dlink-dgs1250.yaml",
+      "sha256": "d026a81df53fb4d3ca1f69a8813dcf6f994328f8041ccb86c1916a6af59332de"
+    },
+    {
+      "bundle_path": "resources/definitions/os_discovery/dlink-dgs1250.yaml",
+      "upstream_path": "resources/definitions/os_discovery/dlink-dgs1250.yaml",
+      "sha256": "e84f060c41fa2238e6cd0a80b9c82af9d8ba7a5f2488ee409988713cc22bcf63"
+    },
+    {
+      "bundle_path": "resources/definitions/os_detection/dlink.yaml",
+      "upstream_path": "resources/definitions/os_detection/dlink.yaml",
+      "sha256": "06f838b40e8208032099459dbf372833708d3de6b3fc80a0514f210f6dec0b58"
+    },
+    {
+      "bundle_path": "resources/definitions/os_discovery/dlink.yaml",
+      "upstream_path": "resources/definitions/os_discovery/dlink.yaml",
+      "sha256": "fe1d891dd2294ff893d78a5dea595227c1eb8f2ced8463fb3dc52bdd0c72020e"
+    },
+    {
+      "bundle_path": "resources/definitions/os_detection/dlinkap.yaml",
+      "upstream_path": "resources/definitions/os_detection/dlinkap.yaml",
+      "sha256": "4ea9d94907a51c6b2ee814084ec249e7e2acc4cfbdce4183170297a2fc9b3bfb"
+    },
+    {
+      "bundle_path": "resources/definitions/os_detection/dnos.yaml",
+      "upstream_path": "resources/definitions/os_detection/dnos.yaml",
+      "sha256": "52df79374b55178f11f77fcefc854968f9d300008fd578dc98c85e51a51b9491"
+    },
+    {
+      "bundle_path": "resources/definitions/os_discovery/dnos.yaml",
+      "upstream_path": "resources/definitions/os_discovery/dnos.yaml",
+      "sha256": "0364428e93cebb4ba06f06b12e1ab53901d3d35decc619ca2310ea417dc61f90"
+    },
+    {
+      "bundle_path": "resources/definitions/os_detection/drac.yaml",
+      "upstream_path": "resources/definitions/os_detection/drac.yaml",
+      "sha256": "50b772abc6e58d8c1efdff108adb91dca39211b6a806d10b112ef6a2eb7ecd61"
+    },
+    {
+      "bundle_path": "resources/definitions/os_discovery/drac.yaml",
+      "upstream_path": "resources/definitions/os_discovery/drac.yaml",
+      "sha256": "b5cc3fa8f11c1664b5a90a86a5cb10b41d2fff48448625c71ce43486edbda8a5"
+    },
+    {
+      "bundle_path": "resources/definitions/os_detection/edgecos.yaml",
+      "upstream_path": "resources/definitions/os_detection/edgecos.yaml",
+      "sha256": "5cdb9b0b5fa720c1585f81aa07caffbc2e0e12bd0875c9b3fa177e419086bb21"
+    },
+    {
+      "bundle_path": "resources/definitions/os_detection/edgeos-ep.yaml",
+      "upstream_path": "resources/definitions/os_detection/edgeos-ep.yaml",
+      "sha256": "a1cbe46b068880aa73352587b5374bc87809bdd5f85d4c241f7d7d1d30ae1334"
+    },
+    {
+      "bundle_path": "resources/definitions/os_discovery/edgeos-ep.yaml",
+      "upstream_path": "resources/definitions/os_discovery/edgeos-ep.yaml",
+      "sha256": "bf4459a546b3aa61a0715a65c361a9851b00b1569835cea3efc9f68d5bd1ba17"
+    },
+    {
+      "bundle_path": "resources/definitions/os_detection/edgeos.yaml",
+      "upstream_path": "resources/definitions/os_detection/edgeos.yaml",
+      "sha256": "880c67724c321954a36a1c24f1fc96ec70dd7e9ee367234f5318c1b55ce6dd2a"
+    },
+    {
+      "bundle_path": "resources/definitions/os_discovery/edgeos.yaml",
+      "upstream_path": "resources/definitions/os_discovery/edgeos.yaml",
+      "sha256": "c9fd2b844c9c7e49fc1a0f0faaea07649a2b66b5b2e40850da9128f8a3f6a07a"
+    },
+    {
+      "bundle_path": "resources/definitions/os_detection/edgeosolt.yaml",
+      "upstream_path": "resources/definitions/os_detection/edgeosolt.yaml",
+      "sha256": "2fd4e4ec527c487a660b52aba1d1c38728defa3ac0347eca1e98767fd2d4bf2f"
+    },
+    {
+      "bundle_path": "resources/definitions/os_discovery/edgeosolt.yaml",
+      "upstream_path": "resources/definitions/os_discovery/edgeosolt.yaml",
+      "sha256": "d0623b9be836f65e2bba79ba5648967f9a7a7e1609987198c48e2253c4fd2a3a"
+    },
+    {
+      "bundle_path": "resources/definitions/os_detection/edgeswitch.yaml",
+      "upstream_path": "resources/definitions/os_detection/edgeswitch.yaml",
+      "sha256": "d850bd7bc99f5fc6b4f012d9ba2c1ca34c6bd95e67b612f46c7663a88eca44fd"
+    },
+    {
+      "bundle_path": "resources/definitions/os_discovery/edgeswitch.yaml",
+      "upstream_path": "resources/definitions/os_discovery/edgeswitch.yaml",
+      "sha256": "f4869f1ef5265db68afd7784ae894ad468feb4bc8c26ccfefbce2b151bdd9573"
+    },
+    {
+      "bundle_path": "resources/definitions/os_detection/equallogic.yaml",
+      "upstream_path": "resources/definitions/os_detection/equallogic.yaml",
+      "sha256": "57fb9e1c6fac31f846aa35bbb2c8923b867c887bca79a021cce74fcb59db713b"
+    },
+    {
+      "bundle_path": "resources/definitions/os_detection/ewc.yaml",
+      "upstream_path": "resources/definitions/os_detection/ewc.yaml",
+      "sha256": "fa3d64bba5ff76cbc6225050be19929c4f1281cfa4bf3757df3b921472ab7f46"
+    },
+    {
+      "bundle_path": "resources/definitions/os_discovery/ewc.yaml",
+      "upstream_path": "resources/definitions/os_discovery/ewc.yaml",
+      "sha256": "1df85700616d02c2779750a10ad8ce796caf865e4ac271a664aa1382ff72a37a"
+    },
+    {
+      "bundle_path": "resources/definitions/os_detection/exalink-fusion.yaml",
+      "upstream_path": "resources/definitions/os_detection/exalink-fusion.yaml",
+      "sha256": "0ee23dec6cc2b5326c0eb118661939182911aaed9cf94e7049c22fa3b99059c5"
+    },
+    {
+      "bundle_path": "resources/definitions/os_discovery/exalink-fusion.yaml",
+      "upstream_path": "resources/definitions/os_discovery/exalink-fusion.yaml",
+      "sha256": "9df4f84b388ab24a3d0b380fc3fdf2855937fbe5e4b079c4906e34867cc7deac"
+    },
+    {
+      "bundle_path": "resources/definitions/os_detection/exos.yaml",
+      "upstream_path": "resources/definitions/os_detection/exos.yaml",
+      "sha256": "b37866ae2a6ae88e47a8216b20b985bb4da4472c088239b7db717520b77572f8"
+    },
+    {
+      "bundle_path": "resources/definitions/os_discovery/exos.yaml",
+      "upstream_path": "resources/definitions/os_discovery/exos.yaml",
+      "sha256": "0ceac7eef4a403f177bfc32ab8aad3e230edc00aeee106f0032ebfd05274cee3"
+    },
+    {
+      "bundle_path": "resources/definitions/os_detection/extremeware.yaml",
+      "upstream_path": "resources/definitions/os_detection/extremeware.yaml",
+      "sha256": "f3d603823619a7ac35eb72c9bd67e4322aaceb9a8963b5d01621e9cfacb11530"
+    },
+    {
+      "bundle_path": "resources/definitions/os_discovery/extremeware.yaml",
+      "upstream_path": "resources/definitions/os_discovery/extremeware.yaml",
+      "sha256": "eb8d6f9210183243bc79ecc1f5649d722ea090dbdc0057ad97a0e2d6bea420c7"
+    },
+    {
+      "bundle_path": "resources/definitions/os_detection/fabos.yaml",
+      "upstream_path": "resources/definitions/os_detection/fabos.yaml",
+      "sha256": "c4774b6bf7f89c66835ca4102e09c73091e07a0c26d77bf1be29c213c2f3abe5"
+    },
+    {
+      "bundle_path": "resources/definitions/os_discovery/fabos.yaml",
+      "upstream_path": "resources/definitions/os_discovery/fabos.yaml",
+      "sha256": "a71ed877d3f4c2c42123abad2786d8473a567dec9c042059c85266b77e6bdf3f"
+    },
+    {
+      "bundle_path": "resources/definitions/os_detection/fiberhome-switch.yaml",
+      "upstream_path": "resources/definitions/os_detection/fiberhome-switch.yaml",
+      "sha256": "74218180b4dd6da7cfb62503dc7b611b34a67104b01067b852334f8cd543b74a"
+    },
+    {
+      "bundle_path": "resources/definitions/os_discovery/fiberhome-switch.yaml",
+      "upstream_path": "resources/definitions/os_discovery/fiberhome-switch.yaml",
+      "sha256": "f415a59dec485f4683bbbd57baf06e0162b795f147781e02df13f5559f137342"
+    },
+    {
+      "bundle_path": "resources/definitions/os_detection/fiberhome.yaml",
+      "upstream_path": "resources/definitions/os_detection/fiberhome.yaml",
+      "sha256": "44b3872ab7e11847f82939ca138eebbf23cacf5fe70423e2ff0edc696c56a011"
+    },
+    {
+      "bundle_path": "resources/definitions/os_discovery/fiberhome.yaml",
+      "upstream_path": "resources/definitions/os_discovery/fiberhome.yaml",
+      "sha256": "fe097e4297c6c3622df2b5574933207f721b68f5ec16262e987f103392171538"
+    },
+    {
+      "bundle_path": "resources/definitions/os_detection/fluidfs.yaml",
+      "upstream_path": "resources/definitions/os_detection/fluidfs.yaml",
+      "sha256": "64bd6c969e81dee45b0eaf6808d43af49fbf592a3c356f9ada3ca0c4ceb984be"
+    },
+    {
+      "bundle_path": "resources/definitions/os_discovery/fluidfs.yaml",
+      "upstream_path": "resources/definitions/os_discovery/fluidfs.yaml",
+      "sha256": "f54e9f24aebec0e8f6f8618d0e723f1602b70b9c801c77f3a8365b3b0e9b1b17"
+    },
+    {
+      "bundle_path": "resources/definitions/os_detection/fs-ruijie.yaml",
+      "upstream_path": "resources/definitions/os_detection/fs-ruijie.yaml",
+      "sha256": "00624f6f16de45d75e39ec04d7e29c60f7c15552920d5daa2d4ad905a1f24f3b"
+    },
+    {
+      "bundle_path": "resources/definitions/os_discovery/fs-ruijie.yaml",
+      "upstream_path": "resources/definitions/os_discovery/fs-ruijie.yaml",
+      "sha256": "b7a080605e1b725a724fdef6542f0054d1842c6d70b8bafdb1767c5ee538a464"
+    },
+    {
+      "bundle_path": "resources/definitions/os_detection/ftd.yaml",
+      "upstream_path": "resources/definitions/os_detection/ftd.yaml",
+      "sha256": "4c2db5cef8e266544dbc851042be0afc419ccf828f0158ba4d79720fa460caeb"
+    },
+    {
+      "bundle_path": "resources/definitions/os_discovery/ftd.yaml",
+      "upstream_path": "resources/definitions/os_discovery/ftd.yaml",
+      "sha256": "1ee45b2b6313f4abac8708e79400a089c7ec35f7ee7af7352612bf1fc5d5ddae"
+    },
+    {
+      "bundle_path": "resources/definitions/os_detection/fxos.yaml",
+      "upstream_path": "resources/definitions/os_detection/fxos.yaml",
+      "sha256": "f4cd91cc84289e36940698dcd2c3dff9d6c244410a7f44faf93ba09ea7fc17df"
+    },
+    {
+      "bundle_path": "resources/definitions/os_discovery/fxos.yaml",
+      "upstream_path": "resources/definitions/os_discovery/fxos.yaml",
+      "sha256": "4ad883d89f5e146293748bb57c9644af6916a931fd9b86b254b628ae9e98ef02"
+    },
+    {
+      "bundle_path": "resources/definitions/os_detection/huawei-optixrtn.yaml",
+      "upstream_path": "resources/definitions/os_detection/huawei-optixrtn.yaml",
+      "sha256": "fc25c54d25318f71af3cfae82b4baa62248fda7973aef395e73bc51ee5d786fa"
+    },
+    {
+      "bundle_path": "resources/definitions/os_discovery/huawei-optixrtn.yaml",
+      "upstream_path": "resources/definitions/os_discovery/huawei-optixrtn.yaml",
+      "sha256": "c8feffb5a52f0bb938703c34ead74bfcbe185cf7a6601c23accab3aedec74fb6"
+    },
+    {
+      "bundle_path": "resources/definitions/os_detection/huawei-smu.yaml",
+      "upstream_path": "resources/definitions/os_detection/huawei-smu.yaml",
+      "sha256": "00f69a56c1901eceef39e00ba53689e4a3741741de54d3a3608fb2fe03fa9fa7"
+    },
+    {
+      "bundle_path": "resources/definitions/os_discovery/huawei-smu.yaml",
+      "upstream_path": "resources/definitions/os_discovery/huawei-smu.yaml",
+      "sha256": "06c0a1bec12bef3fe3cda40a44df26a26737840b2e7e40c6f11c5685d6104577"
+    },
+    {
+      "bundle_path": "resources/definitions/os_detection/huaweiups.yaml",
+      "upstream_path": "resources/definitions/os_detection/huaweiups.yaml",
+      "sha256": "994f99486b4e7277325cd58bade7bd80ad59d4aaecccb68bf05ae5debba7b8bd"
+    },
+    {
+      "bundle_path": "resources/definitions/os_discovery/huaweiups.yaml",
+      "upstream_path": "resources/definitions/os_discovery/huaweiups.yaml",
+      "sha256": "9652fb6ac8e6e597306862d532ef7021351abdf3bc179cdb56d27f14ce75357e"
+    },
+    {
+      "bundle_path": "resources/definitions/os_detection/ibmc.yaml",
+      "upstream_path": "resources/definitions/os_detection/ibmc.yaml",
+      "sha256": "e593c18f838f47c9c9678ea1bd580695e7f73407019c2028c755d1d8e052584c"
+    },
+    {
+      "bundle_path": "resources/definitions/os_discovery/ibmc.yaml",
+      "upstream_path": "resources/definitions/os_discovery/ibmc.yaml",
+      "sha256": "8e9cea2e2e759a47316f02b7e99d0de659483b20474b531ee38aff24a30528f4"
+    },
+    {
+      "bundle_path": "resources/definitions/os_detection/ios.yaml",
+      "upstream_path": "resources/definitions/os_detection/ios.yaml",
+      "sha256": "339a6473ff5a1cfd82631bee72cf664ad837f2aab3cf3d80090e06bd50188dbd"
+    },
+    {
+      "bundle_path": "resources/definitions/os_discovery/ios.yaml",
+      "upstream_path": "resources/definitions/os_discovery/ios.yaml",
+      "sha256": "d11f840f1abf87583f16fde11fe6cb1618b873f13553fc78a62c5005d5696a46"
+    },
+    {
+      "bundle_path": "resources/definitions/os_detection/iosxe.yaml",
+      "upstream_path": "resources/definitions/os_detection/iosxe.yaml",
+      "sha256": "5b8173df37e9ddf634619030c1f3127bc028e25155f84405f6cb8896b656b425"
+    },
+    {
+      "bundle_path": "resources/definitions/os_discovery/iosxe.yaml",
+      "upstream_path": "resources/definitions/os_discovery/iosxe.yaml",
+      "sha256": "a7d63e97d055865fe869c3fee5448a96fdd929ad154590a08749eb26a80e89dc"
+    },
+    {
+      "bundle_path": "resources/definitions/os_detection/iosxr.yaml",
+      "upstream_path": "resources/definitions/os_detection/iosxr.yaml",
+      "sha256": "36b8379e74d6d23d80d10bd8c5bd4d9f1859551ec6ce4a05f759d2ae4fa08b54"
+    },
+    {
+      "bundle_path": "resources/definitions/os_discovery/iosxr.yaml",
+      "upstream_path": "resources/definitions/os_discovery/iosxr.yaml",
+      "sha256": "0d60af57d7d098bbb0bfa7a878c66465aea328b8554088c2927ecacdf5fe17e8"
+    },
+    {
+      "bundle_path": "resources/definitions/os_detection/ironware.yaml",
+      "upstream_path": "resources/definitions/os_detection/ironware.yaml",
+      "sha256": "49ffd935ba040fa7500112518f0c2c2ba20bc0a3f95b7fb87b0f6461243c82fd"
+    },
+    {
+      "bundle_path": "resources/definitions/os_discovery/ironware.yaml",
+      "upstream_path": "resources/definitions/os_discovery/ironware.yaml",
+      "sha256": "64719c0a5721192d12b91c9e4040dfc5fc0d9ea6bf38a79ccc7eaed0a09f86d3"
+    },
+    {
+      "bundle_path": "resources/definitions/os_detection/ise.yaml",
+      "upstream_path": "resources/definitions/os_detection/ise.yaml",
+      "sha256": "5a457a3fcf49df46b5c36cf7077c17523b8d0b882be81b54ee149046baeb770e"
+    },
+    {
+      "bundle_path": "resources/definitions/os_discovery/ise.yaml",
+      "upstream_path": "resources/definitions/os_discovery/ise.yaml",
+      "sha256": "62898a97ca4a8b46a58aff076aab3c5722aecbcc67eb50f315c9ca003e37b764"
+    },
+    {
+      "bundle_path": "resources/definitions/os_detection/jetstream.yaml",
+      "upstream_path": "resources/definitions/os_detection/jetstream.yaml",
+      "sha256": "87b0233d8cc1832164b2055ccef148cc8fd4068a67717e85eaa0005a1f313b7d"
+    },
+    {
+      "bundle_path": "resources/definitions/os_discovery/jetstream.yaml",
+      "upstream_path": "resources/definitions/os_discovery/jetstream.yaml",
+      "sha256": "1256943a6b0f681ffd434ca350e58dd83afce8b4a10069bb8fb9ba3334b365dc"
+    },
+    {
+      "bundle_path": "resources/definitions/os_detection/juniper-mss.yaml",
+      "upstream_path": "resources/definitions/os_detection/juniper-mss.yaml",
+      "sha256": "ba4bd2ef15cc69ff4212f2204b17ec5bbe1798582821d4d75f6e59a76955826a"
+    },
+    {
+      "bundle_path": "resources/definitions/os_discovery/juniper-mss.yaml",
+      "upstream_path": "resources/definitions/os_discovery/juniper-mss.yaml",
+      "sha256": "eced6d1ee0d2c3de5d7bf814637bed264f8da785044181db798804ef8f63b4cc"
+    },
+    {
+      "bundle_path": "resources/definitions/os_detection/juniperex2500os.yaml",
+      "upstream_path": "resources/definitions/os_detection/juniperex2500os.yaml",
+      "sha256": "2047750088526adc8274981260e206a5e92cdf9b32e24d693a1a724cec477dc0"
+    },
+    {
+      "bundle_path": "resources/definitions/os_detection/junos.yaml",
+      "upstream_path": "resources/definitions/os_detection/junos.yaml",
+      "sha256": "0dd6dcd57d4928a8dcca6502eb50f970f4980d97e6b14cb2bc0ca44d8f8376bd"
+    },
+    {
+      "bundle_path": "resources/definitions/os_discovery/junos.yaml",
+      "upstream_path": "resources/definitions/os_discovery/junos.yaml",
+      "sha256": "6241d8345e8e720cb4c5e5b2426dd2052c2f7f45ac65d74fda47fd38c6fbda5c"
+    },
+    {
+      "bundle_path": "resources/definitions/os_detection/junose.yaml",
+      "upstream_path": "resources/definitions/os_detection/junose.yaml",
+      "sha256": "6777f2514ee064f2d09b74021e7261150ae43b96fdf70ca7b8832e5d105fdac0"
+    },
+    {
+      "bundle_path": "resources/definitions/os_discovery/junose.yaml",
+      "upstream_path": "resources/definitions/os_discovery/junose.yaml",
+      "sha256": "0bda030ac065c9f82702f429543181709c49eb53335fd342f08a35a5c4abe7ea"
+    },
+    {
+      "bundle_path": "resources/definitions/os_detection/jwos.yaml",
+      "upstream_path": "resources/definitions/os_detection/jwos.yaml",
+      "sha256": "c5559c753d8de1334ec85acd4f080e5f4e5acb3e5172b576fa51a4a3f688ed3e"
+    },
+    {
+      "bundle_path": "resources/definitions/os_discovery/jwos.yaml",
+      "upstream_path": "resources/definitions/os_discovery/jwos.yaml",
+      "sha256": "13434eef8cd4cec5c08306d1e53f82e6b39b9baaa3a96ab0946f25f7a2bb1822"
+    },
+    {
+      "bundle_path": "resources/definitions/os_detection/mypoweros.yaml",
+      "upstream_path": "resources/definitions/os_detection/mypoweros.yaml",
+      "sha256": "839d0f26925564bba555412650de020677240d6a3d178bd9ddf57592d6acb929"
+    },
+    {
+      "bundle_path": "resources/definitions/os_discovery/mypoweros.yaml",
+      "upstream_path": "resources/definitions/os_discovery/mypoweros.yaml",
+      "sha256": "798141b618593ca0bdc5d20eb07678323705624af483f0628e38c35b0cd44405"
+    },
+    {
+      "bundle_path": "resources/definitions/os_detection/nokia-1830.yaml",
+      "upstream_path": "resources/definitions/os_detection/nokia-1830.yaml",
+      "sha256": "6ddbff8c527d151409441aea8a2e7b848f2342bcb888e32763a126ef2a29b7d7"
+    },
+    {
+      "bundle_path": "resources/definitions/os_discovery/nokia-1830.yaml",
+      "upstream_path": "resources/definitions/os_discovery/nokia-1830.yaml",
+      "sha256": "266e230f6a012fb90bad624399a246e14e5df84299039f3e144933af1ccdfbef"
+    },
+    {
+      "bundle_path": "resources/definitions/os_detection/nokia-isam.yaml",
+      "upstream_path": "resources/definitions/os_detection/nokia-isam.yaml",
+      "sha256": "627bc696660fda24a3ceab9001ac7794437b0be9eee2c645ef68fd4dd349c94a"
+    },
+    {
+      "bundle_path": "resources/definitions/os_discovery/nokia-isam.yaml",
+      "upstream_path": "resources/definitions/os_discovery/nokia-isam.yaml",
+      "sha256": "e0750457411c3629b5fdc36613c2fb4ba8269b66b158fed83c784dd5edc87fec"
+    },
+    {
+      "bundle_path": "resources/definitions/os_detection/nos.yaml",
+      "upstream_path": "resources/definitions/os_detection/nos.yaml",
+      "sha256": "1d35a1b01dc18fcaec2c28fe0ceae3a1eb14edacf771a6827c34789ce0d07982"
+    },
+    {
+      "bundle_path": "resources/definitions/os_discovery/nos.yaml",
+      "upstream_path": "resources/definitions/os_discovery/nos.yaml",
+      "sha256": "cf62bccd5b481f3b30def770a739923926a95e492b7c3cfeb203ab492d89c3ab"
+    },
+    {
+      "bundle_path": "resources/definitions/os_detection/nxos.yaml",
+      "upstream_path": "resources/definitions/os_detection/nxos.yaml",
+      "sha256": "06055d35413fbb9cf3add3d2263bede052dc7cab1063967a6fc01d1fc9489d4a"
+    },
+    {
+      "bundle_path": "resources/definitions/os_discovery/nxos.yaml",
+      "upstream_path": "resources/definitions/os_discovery/nxos.yaml",
+      "sha256": "34001cdbe07683d36161931271367ec3ba6a7eb98f42152f62e907669ddee682"
+    },
+    {
+      "bundle_path": "resources/definitions/os_detection/oceanstor.yaml",
+      "upstream_path": "resources/definitions/os_detection/oceanstor.yaml",
+      "sha256": "f29b23b4e784bd918cd91f922c62d6047641f117aa8ad020899fa56b4a28af3a"
+    },
+    {
+      "bundle_path": "resources/definitions/os_discovery/oceanstor.yaml",
+      "upstream_path": "resources/definitions/os_discovery/oceanstor.yaml",
+      "sha256": "b2986e0eebc0a5f91324df9f088b80c23e2958e234c420008ff0c93883d0c6a3"
+    },
+    {
+      "bundle_path": "resources/definitions/os_detection/omnipcx.yaml",
+      "upstream_path": "resources/definitions/os_detection/omnipcx.yaml",
+      "sha256": "f00eccf2d4b3b5fcbf1ca941434785836452fb13bf614c7414e4c93ee9e6a9c0"
+    },
+    {
+      "bundle_path": "resources/definitions/os_discovery/omnipcx.yaml",
+      "upstream_path": "resources/definitions/os_discovery/omnipcx.yaml",
+      "sha256": "5158f3c32bc9469795fc23eeb5b004e3bdaec30fe3ffe8b87adba6652fc9465c"
+    },
+    {
+      "bundle_path": "resources/definitions/os_detection/ons.yaml",
+      "upstream_path": "resources/definitions/os_detection/ons.yaml",
+      "sha256": "56298aa6cb30c45c306492f57510fafdddf5efc2335c158f35b27db90fcb1eee"
+    },
+    {
+      "bundle_path": "resources/definitions/os_discovery/ons.yaml",
+      "upstream_path": "resources/definitions/os_discovery/ons.yaml",
+      "sha256": "c26951aa9ca306eed72f9aeb706815964dd3bf5875e99ba767bb4684f44d0120"
+    },
+    {
+      "bundle_path": "resources/definitions/os_detection/pixos.yaml",
+      "upstream_path": "resources/definitions/os_detection/pixos.yaml",
+      "sha256": "a8490a420d4f9135692e1773e9128fdf05b4c57fa22cc8097adecef8d7b67c61"
+    },
+    {
+      "bundle_path": "resources/definitions/os_detection/powerconnect.yaml",
+      "upstream_path": "resources/definitions/os_detection/powerconnect.yaml",
+      "sha256": "937bedfd7213874dbe647dd6e71b499c0d3929807f9872b24eee88be0f7c2d96"
+    },
+    {
+      "bundle_path": "resources/definitions/os_discovery/powerconnect.yaml",
+      "upstream_path": "resources/definitions/os_discovery/powerconnect.yaml",
+      "sha256": "a7051ed1e51657f731afd42020b8cecf9bc319e36f687a8ade717bd0304a22ec"
+    },
+    {
+      "bundle_path": "resources/definitions/os_detection/powervault.yaml",
+      "upstream_path": "resources/definitions/os_detection/powervault.yaml",
+      "sha256": "3e9acf018018885af043edc18c92e973deda3f5cf3ba28453006b801575bd117"
+    },
+    {
+      "bundle_path": "resources/definitions/os_discovery/powervault.yaml",
+      "upstream_path": "resources/definitions/os_discovery/powervault.yaml",
+      "sha256": "3a0691d39d5db85e82afec8546d1f5546d900a8127b67ae06dfa612a42638eee"
+    },
+    {
+      "bundle_path": "resources/definitions/os_detection/primeinfrastructure.yaml",
+      "upstream_path": "resources/definitions/os_detection/primeinfrastructure.yaml",
+      "sha256": "00eb8e9cd5d9b09a0544d932029acf15ccdffd6009830135b9a5da25203a2d3b"
+    },
+    {
+      "bundle_path": "resources/definitions/os_discovery/primeinfrastructure.yaml",
+      "upstream_path": "resources/definitions/os_discovery/primeinfrastructure.yaml",
+      "sha256": "9fe8b9c57605a19ed9aa9a72b1ae21e8ed6a0cd0cff89f467a4fa19c1a98e0ae"
+    },
+    {
+      "bundle_path": "resources/definitions/os_detection/procurve.yaml",
+      "upstream_path": "resources/definitions/os_detection/procurve.yaml",
+      "sha256": "5288e728775e7d5b3142ba6d05e2bf0b384f9765993265084fab59fc79384b00"
+    },
+    {
+      "bundle_path": "resources/definitions/os_discovery/procurve.yaml",
+      "upstream_path": "resources/definitions/os_discovery/procurve.yaml",
+      "sha256": "d031142b7667c40aaf805be04d5b4438cd2f9662d7f2e11c46509dced7c606de"
+    },
+    {
+      "bundle_path": "resources/definitions/os_detection/radlan.yaml",
+      "upstream_path": "resources/definitions/os_detection/radlan.yaml",
+      "sha256": "1624b6ca82d6c7680389ee55691620fef8cff2a412b83fa12c578f6d16d1f0b2"
+    },
+    {
+      "bundle_path": "resources/definitions/os_discovery/radlan.yaml",
+      "upstream_path": "resources/definitions/os_discovery/radlan.yaml",
+      "sha256": "93a38026913bf8d98d1b291a196ea2167350db4a0c5dd5b9e9ff710d3ce39aa3"
+    },
+    {
+      "bundle_path": "resources/definitions/os_detection/raisecom-ros.yaml",
+      "upstream_path": "resources/definitions/os_detection/raisecom-ros.yaml",
+      "sha256": "4804b76fb049391122026ac4e6cf1576bdfd93c4165fce1ed21f816430a32a7a"
+    },
+    {
+      "bundle_path": "resources/definitions/os_discovery/raisecom-ros.yaml",
+      "upstream_path": "resources/definitions/os_discovery/raisecom-ros.yaml",
+      "sha256": "d5f1a97dcf466f2b168c5e5fec9fec84edb678b2502fcddb476ec5b33b31afd4"
+    },
+    {
+      "bundle_path": "resources/definitions/os_detection/raisecom.yaml",
+      "upstream_path": "resources/definitions/os_detection/raisecom.yaml",
+      "sha256": "a147543a25af05a725e84510598eff1de15fa4f009dcc42cf8b39dfc06221046"
+    },
+    {
+      "bundle_path": "resources/definitions/os_discovery/raisecom.yaml",
+      "upstream_path": "resources/definitions/os_discovery/raisecom.yaml",
+      "sha256": "d01cc893933ee44736afb600024c5712adb4d4c279fdc8cdfc8cc94152e58a76"
+    },
+    {
+      "bundle_path": "resources/definitions/os_detection/routeros.yaml",
+      "upstream_path": "resources/definitions/os_detection/routeros.yaml",
+      "sha256": "3671fe5c83eea1de3f69046ad5d0045f274d27fda960f1741fc6f00c5c2d9173"
+    },
+    {
+      "bundle_path": "resources/definitions/os_discovery/routeros.yaml",
+      "upstream_path": "resources/definitions/os_discovery/routeros.yaml",
+      "sha256": "462a1697a82ac58d26d5f6065e74b3d1ac57ca5ce184e94d18e775244eef64bd"
+    },
+    {
+      "bundle_path": "resources/definitions/os_detection/ruckuswireless-hotzone.yaml",
+      "upstream_path": "resources/definitions/os_detection/ruckuswireless-hotzone.yaml",
+      "sha256": "afcb077657e38cfecf5bd9bbaba2eaa4b1c5ea08132f8e2aa168061b325cd993"
+    },
+    {
+      "bundle_path": "resources/definitions/os_discovery/ruckuswireless-hotzone.yaml",
+      "upstream_path": "resources/definitions/os_discovery/ruckuswireless-hotzone.yaml",
+      "sha256": "783f1252ca37d00243ee0673077b2d3ce80d27ebe9f52986efab823e365198f3"
+    },
+    {
+      "bundle_path": "resources/definitions/os_detection/ruckuswireless-sz.yaml",
+      "upstream_path": "resources/definitions/os_detection/ruckuswireless-sz.yaml",
+      "sha256": "10fba20557da1489c9313c52d373e574aa0ee142a3da0b29543cd11e65790b36"
+    },
+    {
+      "bundle_path": "resources/definitions/os_detection/ruckuswireless-unleashed.yaml",
+      "upstream_path": "resources/definitions/os_detection/ruckuswireless-unleashed.yaml",
+      "sha256": "6e82e6e370d972926a7f5b9d005fc56b4f8cd58b471c0362370daed1ece7e724"
+    },
+    {
+      "bundle_path": "resources/definitions/os_discovery/ruckuswireless-unleashed.yaml",
+      "upstream_path": "resources/definitions/os_discovery/ruckuswireless-unleashed.yaml",
+      "sha256": "934b81116a47d276575d17b12cb158b93cbdcbab133b6f9971483980773033ec"
+    },
+    {
+      "bundle_path": "resources/definitions/os_detection/ruckuswireless.yaml",
+      "upstream_path": "resources/definitions/os_detection/ruckuswireless.yaml",
+      "sha256": "3c245b53b88b45971f6b1ea87121f5cd752231ffdab85a7c95dfe2decfe8c3ee"
+    },
+    {
+      "bundle_path": "resources/definitions/os_discovery/ruckuswireless.yaml",
+      "upstream_path": "resources/definitions/os_discovery/ruckuswireless.yaml",
+      "sha256": "0d3584961ce11238b0c43a4bb06236254a4e7f7d400761bcd132b295454c5d35"
+    },
+    {
+      "bundle_path": "resources/definitions/os_detection/ruijie.yaml",
+      "upstream_path": "resources/definitions/os_detection/ruijie.yaml",
+      "sha256": "9faef02d0387c9d7c61456559cf8fe59ff94dd3d7d74e25ad36dfaef25b46a2c"
+    },
+    {
+      "bundle_path": "resources/definitions/os_discovery/ruijie.yaml",
+      "upstream_path": "resources/definitions/os_discovery/ruijie.yaml",
+      "sha256": "609a55699b706391f7d3745acc8157b08a4c11f1fe7dd3c7356b64a6caa7d46f"
+    },
+    {
+      "bundle_path": "resources/definitions/os_detection/sanos.yaml",
+      "upstream_path": "resources/definitions/os_detection/sanos.yaml",
+      "sha256": "d47421fbddc7f0d2641c6f8bec5af8282e22c30a4369d3eeb2499b43b1d5b054"
+    },
+    {
+      "bundle_path": "resources/definitions/os_detection/screenos.yaml",
+      "upstream_path": "resources/definitions/os_detection/screenos.yaml",
+      "sha256": "284d6f700d3ec67141570696e4753d23a979563fce48bfda9e767d6819bfb9f6"
+    },
+    {
+      "bundle_path": "resources/definitions/os_discovery/screenos.yaml",
+      "upstream_path": "resources/definitions/os_discovery/screenos.yaml",
+      "sha256": "35548e3ecc1afffcb61406e758ec9003c25a1e69f012cfe3fab068a55c47e8a0"
+    },
+    {
+      "bundle_path": "resources/definitions/os_detection/serveriron.yaml",
+      "upstream_path": "resources/definitions/os_detection/serveriron.yaml",
+      "sha256": "21fec00826c08046d05e77ed2575bba5f51466e032f0cbd38da2e059b34455d9"
+    },
+    {
+      "bundle_path": "resources/definitions/os_discovery/serveriron.yaml",
+      "upstream_path": "resources/definitions/os_discovery/serveriron.yaml",
+      "sha256": "359093bf40e641ecd9c562e777f1826059f415571c21f1392999d324a0e16268"
+    },
+    {
+      "bundle_path": "resources/definitions/os_detection/slxos.yaml",
+      "upstream_path": "resources/definitions/os_detection/slxos.yaml",
+      "sha256": "b72d528287c9e6c7f22d978d4834740135f6f4db37b85880ca31494adc50e2da"
+    },
+    {
+      "bundle_path": "resources/definitions/os_discovery/slxos.yaml",
+      "upstream_path": "resources/definitions/os_discovery/slxos.yaml",
+      "sha256": "c08a719131a8957c0ad2c662ba315e32ab5fdd46c8ad677c9d26e184b9862b29"
+    },
+    {
+      "bundle_path": "resources/definitions/os_detection/smartax-mdu.yaml",
+      "upstream_path": "resources/definitions/os_detection/smartax-mdu.yaml",
+      "sha256": "d02e5b82ee7f7bd9a3764e2ecab2de69e4e06ed63c2d7f61bef538a912e833c4"
+    },
+    {
+      "bundle_path": "resources/definitions/os_detection/smartax.yaml",
+      "upstream_path": "resources/definitions/os_detection/smartax.yaml",
+      "sha256": "8fc00c590143fa274318fc119972e320c66f16472716c5cc1c35f7241b8cd9a0"
+    },
+    {
+      "bundle_path": "resources/definitions/os_discovery/smartax.yaml",
+      "upstream_path": "resources/definitions/os_discovery/smartax.yaml",
+      "sha256": "d137d1cfaa8a4a18bcb612dca4507b52f02f1a00e8a33e1178c0c4186f72f248"
+    },
+    {
+      "bundle_path": "resources/definitions/os_detection/srlinux.yaml",
+      "upstream_path": "resources/definitions/os_detection/srlinux.yaml",
+      "sha256": "633c2bece5fb3d6996e4b71eba813cdcd52827da5d67a101987a8899afa16d11"
+    },
+    {
+      "bundle_path": "resources/definitions/os_discovery/srlinux.yaml",
+      "upstream_path": "resources/definitions/os_discovery/srlinux.yaml",
+      "sha256": "7ceab43315eec8390d7d2de24b6986c63456d454d5ebfc2149b51139242f6ff4"
+    },
+    {
+      "bundle_path": "resources/definitions/os_detection/stellar.yaml",
+      "upstream_path": "resources/definitions/os_detection/stellar.yaml",
+      "sha256": "d9503e035fab23ba1335634d9394ce6cbb2535d8574afd31d836da9cece9aabe"
+    },
+    {
+      "bundle_path": "resources/definitions/os_discovery/stellar.yaml",
+      "upstream_path": "resources/definitions/os_discovery/stellar.yaml",
+      "sha256": "f3a9beab097c77ae6689a7c0d9c5d35d170eebe6bb4123409ae4c8b0157d639a"
+    },
+    {
+      "bundle_path": "resources/definitions/os_detection/swos.yaml",
+      "upstream_path": "resources/definitions/os_detection/swos.yaml",
+      "sha256": "880742b75df50e2181720d9a55147f4fbde787eb87253c5522358ceee20c6b2b"
+    },
+    {
+      "bundle_path": "resources/definitions/os_discovery/swos.yaml",
+      "upstream_path": "resources/definitions/os_discovery/swos.yaml",
+      "sha256": "3668819a6c88176b062aca24156f38130a72ff47453f4665fb91fcba83129933"
+    },
+    {
+      "bundle_path": "resources/definitions/os_detection/timos.yaml",
+      "upstream_path": "resources/definitions/os_detection/timos.yaml",
+      "sha256": "bb79ea987a53dccd99aef653516d4d0b2b55a1363287366b18174aef24551cea"
+    },
+    {
+      "bundle_path": "resources/definitions/os_discovery/timos.yaml",
+      "upstream_path": "resources/definitions/os_discovery/timos.yaml",
+      "sha256": "546817dd00caf8959a4a5d3695047ca494679a77f7378604d096b6ea44f6dbf3"
+    },
+    {
+      "bundle_path": "resources/definitions/os_detection/tplink.yaml",
+      "upstream_path": "resources/definitions/os_detection/tplink.yaml",
+      "sha256": "172219d5c81cffbefc2382ae13a9d199b7f5f1e892acd113cd51bb13a8772b00"
+    },
+    {
+      "bundle_path": "resources/definitions/os_discovery/tplink.yaml",
+      "upstream_path": "resources/definitions/os_discovery/tplink.yaml",
+      "sha256": "73a915ce4fb5683225d156a483e529b994b9cab0fa06f826cb1f71b06c56d0e8"
+    },
+    {
+      "bundle_path": "resources/definitions/os_detection/ucos.yaml",
+      "upstream_path": "resources/definitions/os_detection/ucos.yaml",
+      "sha256": "3a2ef5be9adb07b4947d2185fdef92d042a90d9ab28a1525d1900c03998a6b65"
+    },
+    {
+      "bundle_path": "resources/definitions/os_discovery/ucos.yaml",
+      "upstream_path": "resources/definitions/os_discovery/ucos.yaml",
+      "sha256": "2d0732a4df158c580ae11ea051bc42a9a8d15e5584d7a8a146576267a0dc11df"
+    },
+    {
+      "bundle_path": "resources/definitions/os_detection/unifi-usp.yaml",
+      "upstream_path": "resources/definitions/os_detection/unifi-usp.yaml",
+      "sha256": "4c93ef53006338dd8c65eeb886e014d1f5eea6ba4c8934e38e59a33497d8bdb3"
+    },
+    {
+      "bundle_path": "resources/definitions/os_discovery/unifi-usp.yaml",
+      "upstream_path": "resources/definitions/os_discovery/unifi-usp.yaml",
+      "sha256": "67e3d849a22e7333051cf6d2a917db9376c1123a67c7933278d9b2abc0c9d4e9"
+    },
+    {
+      "bundle_path": "resources/definitions/os_detection/unifi.yaml",
+      "upstream_path": "resources/definitions/os_detection/unifi.yaml",
+      "sha256": "5da291dded22460c1e65f602867b8ad756c144cca37297fe5fb68fdbf1d99e43"
+    },
+    {
+      "bundle_path": "resources/definitions/os_discovery/unifi.yaml",
+      "upstream_path": "resources/definitions/os_discovery/unifi.yaml",
+      "sha256": "b480a1026b67899d36b1e6d3ea3a2dae851e4b39c5837f25758d2b6757cf9444"
+    },
+    {
+      "bundle_path": "resources/definitions/os_detection/viptela.yaml",
+      "upstream_path": "resources/definitions/os_detection/viptela.yaml",
+      "sha256": "457a1c146d050fcde74a14eec35a7e825532c2a4d94fdba37b5c0a47081cf3ba"
+    },
+    {
+      "bundle_path": "resources/definitions/os_discovery/viptela.yaml",
+      "upstream_path": "resources/definitions/os_discovery/viptela.yaml",
+      "sha256": "9119a971a23d37bd5bd3b9117e957d6dd236e75924d741fd2233e2b79e8db976"
+    },
+    {
+      "bundle_path": "resources/definitions/os_detection/voss.yaml",
+      "upstream_path": "resources/definitions/os_detection/voss.yaml",
+      "sha256": "d958009b80e59782809b1183dd8a569206d90200c849408f18b4a729108417ba"
+    },
+    {
+      "bundle_path": "resources/definitions/os_discovery/voss.yaml",
+      "upstream_path": "resources/definitions/os_discovery/voss.yaml",
+      "sha256": "958f6c5a3a9d3eb9fa3175e6690097dddf435eb20f86b64a676f77b75cee5971"
+    },
+    {
+      "bundle_path": "resources/definitions/os_detection/vrp.yaml",
+      "upstream_path": "resources/definitions/os_detection/vrp.yaml",
+      "sha256": "1def2c90f4edeeea851f8bd60a2ec235407ea78e760a1c9dd0ce0b1ef1dba7be"
+    },
+    {
+      "bundle_path": "resources/definitions/os_discovery/vrp.yaml",
+      "upstream_path": "resources/definitions/os_discovery/vrp.yaml",
+      "sha256": "c818f6968e659f57c06f58c822e84ac4bfd1bb294d815c0b1f2c0e3784b83df9"
+    },
+    {
+      "bundle_path": "resources/definitions/os_detection/waas.yaml",
+      "upstream_path": "resources/definitions/os_detection/waas.yaml",
+      "sha256": "4b9c55ee40a885cecf609139ec4f1d4169d2e28f189eae8332e904ee3bdb7c45"
+    },
+    {
+      "bundle_path": "resources/definitions/os_discovery/waas.yaml",
+      "upstream_path": "resources/definitions/os_discovery/waas.yaml",
+      "sha256": "4ccb8524cbf4b66f8429d7b1ab18679dfe3839013fb166a5e527fa4fc10bcfe3"
+    },
+    {
+      "bundle_path": "resources/definitions/os_detection/wavence.yaml",
+      "upstream_path": "resources/definitions/os_detection/wavence.yaml",
+      "sha256": "a5e40bd2fae8b93f7fa17b5191843798d961ec54fcc80d0fb1d1ea2d916dc2bb"
+    },
+    {
+      "bundle_path": "resources/definitions/os_discovery/wavence.yaml",
+      "upstream_path": "resources/definitions/os_discovery/wavence.yaml",
+      "sha256": "35fb50587d64f067de7f8c3839a05aa8d7ba4c797e0d5449ea968b8f2c1d76d1"
+    },
+    {
+      "bundle_path": "resources/definitions/os_detection/xos.yaml",
+      "upstream_path": "resources/definitions/os_detection/xos.yaml",
+      "sha256": "b098d862cc9244c25b90e73c3d8a60fa3ffc8f0aa58eaf635b214cb252855e2a"
+    },
+    {
+      "bundle_path": "resources/definitions/os_discovery/xos.yaml",
+      "upstream_path": "resources/definitions/os_discovery/xos.yaml",
+      "sha256": "b9c795fc6ca02c40d88ceebf454c3e4d91e78c079a0e279b9924886ce99de98e"
+    },
+    {
+      "bundle_path": "resources/definitions/os_detection/yunshan.yaml",
+      "upstream_path": "resources/definitions/os_detection/yunshan.yaml",
+      "sha256": "2d6abfb71f29401a1f5d4292def7eec0e606c291e3a60dad989b5a307f1a2c30"
+    },
+    {
+      "bundle_path": "resources/definitions/os_discovery/yunshan.yaml",
+      "upstream_path": "resources/definitions/os_discovery/yunshan.yaml",
+      "sha256": "643f2d96ec77fb2b3b68684e50068d699724fcc3b5523fe543d89f7fab4ac581"
+    },
+    {
+      "bundle_path": "resources/definitions/os_detection/zxa10.yaml",
+      "upstream_path": "resources/definitions/os_detection/zxa10.yaml",
+      "sha256": "4cbe137c23b5c5f04c79a89468dd0777e895bc34bd14ad2bec30e800467beb4c"
+    },
+    {
+      "bundle_path": "resources/definitions/os_discovery/zxa10.yaml",
+      "upstream_path": "resources/definitions/os_discovery/zxa10.yaml",
+      "sha256": "3cefa8fd72109b84c9d85a68e62902892e9b55a45ad84aa9660e62c630e95dcf"
+    },
+    {
+      "bundle_path": "resources/definitions/os_detection/zxdsl.yaml",
+      "upstream_path": "resources/definitions/os_detection/zxdsl.yaml",
+      "sha256": "d2e41468ac3dc0fa4e6e96838aca2e316a6ec9255986f09ee8fbb75a46b8701f"
+    },
+    {
+      "bundle_path": "resources/definitions/os_discovery/zxdsl.yaml",
+      "upstream_path": "resources/definitions/os_discovery/zxdsl.yaml",
+      "sha256": "5503c8945b39032a55c77e56d4624a2df3cbeb09a560529f847e4b003b1b0b26"
+    },
+    {
+      "bundle_path": "resources/definitions/os_detection/zxr10.yaml",
+      "upstream_path": "resources/definitions/os_detection/zxr10.yaml",
+      "sha256": "20f64e71b15748331685f36938db4f9898ef0f68e935ddfe22c66326b3a352b2"
+    },
+    {
+      "bundle_path": "resources/definitions/os_discovery/zxr10.yaml",
+      "upstream_path": "resources/definitions/os_discovery/zxr10.yaml",
+      "sha256": "3e9bbdae876ab839db98042b82b484e5fc8468c4a7731a63bb6eb4a2b6fc2213"
+    }
+  ],
+  "mib_module_references_missing_from_upstream_tree": [
+    "FROGFOOT-RESOURCES-MIB"
+  ],
+  "mibs": [
+    {
+      "module": "A4400-CPU-MIB",
+      "vendor_scope": "Alcatel-Lucent Enterprise",
+      "bundle_path": "mibs/alcatel-lucent-enterprise/_upstream/alcatel/A4400-CPU-MIB",
+      "upstream_path": "mibs/alcatel/A4400-CPU-MIB",
+      "sha256": "eb3e3140c9c8faf4bfbb6c31b898df079277d46057e521c26cf4db7c71c3abfe",
+      "size_bytes": 1846
+    },
+    {
+      "module": "A4400-RTM-MIB",
+      "vendor_scope": "Alcatel-Lucent Enterprise",
+      "bundle_path": "mibs/alcatel-lucent-enterprise/_upstream/alcatel/A4400-RTM-MIB",
+      "upstream_path": "mibs/alcatel/A4400-RTM-MIB",
+      "sha256": "68f930849be14575bb132ee4f3461956fd9078a2bcc99a47cf873b8b6b0a7089",
+      "size_bytes": 9334
+    },
+    {
+      "module": "ALCATEL-IND1-CHASSIS-MIB",
+      "vendor_scope": "Alcatel-Lucent Enterprise",
+      "bundle_path": "mibs/alcatel-lucent-enterprise/_upstream/nokia/aos6/ALCATEL-IND1-CHASSIS-MIB",
+      "upstream_path": "mibs/nokia/aos6/ALCATEL-IND1-CHASSIS-MIB",
+      "sha256": "d8762fdbb5294c18df48986b3b3575deeba6054f4758d4e50b873660bc149adf",
+      "size_bytes": 105751
+    },
+    {
+      "module": "ALCATEL-IND1-HEALTH-MIB",
+      "vendor_scope": "Alcatel-Lucent Enterprise",
+      "bundle_path": "mibs/alcatel-lucent-enterprise/_upstream/nokia/aos6/ALCATEL-IND1-HEALTH-MIB",
+      "upstream_path": "mibs/nokia/aos6/ALCATEL-IND1-HEALTH-MIB",
+      "sha256": "8f79230e18d46a4ad3063e3b0111a3a29c0177ddfe6488b29b7ab3b686a52580",
+      "size_bytes": 54978
+    },
+    {
+      "module": "ALCATEL-IND1-LAG-MIB",
+      "vendor_scope": "Alcatel-Lucent Enterprise",
+      "bundle_path": "mibs/alcatel-lucent-enterprise/_upstream/nokia/aos6/ALCATEL-IND1-LAG-MIB",
+      "upstream_path": "mibs/nokia/aos6/ALCATEL-IND1-LAG-MIB",
+      "sha256": "044a40201e457231ce4b027551d4de85b84f2e46e6870ca99d17a5628a79ce0e",
+      "size_bytes": 87545
+    },
+    {
+      "module": "ALCATEL-IND1-PORT-MIB",
+      "vendor_scope": "Alcatel-Lucent Enterprise",
+      "bundle_path": "mibs/alcatel-lucent-enterprise/_upstream/nokia/aos6/ALCATEL-IND1-PORT-MIB",
+      "upstream_path": "mibs/nokia/aos6/ALCATEL-IND1-PORT-MIB",
+      "sha256": "423481c1cebabaa5962973e92b8034ed135de935c1d95f88848bc94dfe819387",
+      "size_bytes": 158636
+    },
+    {
+      "module": "ALCATEL-IND1-SYSTEM-MIB",
+      "vendor_scope": "Alcatel-Lucent Enterprise",
+      "bundle_path": "mibs/alcatel-lucent-enterprise/_upstream/nokia/aos6/ALCATEL-IND1-SYSTEM-MIB",
+      "upstream_path": "mibs/nokia/aos6/ALCATEL-IND1-SYSTEM-MIB",
+      "sha256": "3714db55365dad9dc8e1075d07b4602bb16b06b57e23f9764d9c68f2a65fb52e",
+      "size_bytes": 71695
+    },
+    {
+      "module": "ALCATEL-IND1-VIRTUAL-CHASSIS-MIB",
+      "vendor_scope": "Alcatel-Lucent Enterprise",
+      "bundle_path": "mibs/alcatel-lucent-enterprise/_upstream/nokia/aos7/ALCATEL-IND1-VIRTUAL-CHASSIS-MIB",
+      "upstream_path": "mibs/nokia/aos7/ALCATEL-IND1-VIRTUAL-CHASSIS-MIB",
+      "sha256": "6024c9a675e5b9e6c5a1d85994f93b44f154b58ee3804f5e11fa7eb4af53f2fb",
+      "size_bytes": 55671
+    },
+    {
+      "module": "ENTITY-MIB",
+      "vendor_scope": "Standard",
+      "bundle_path": "mibs/standard/_upstream/ENTITY-MIB",
+      "upstream_path": "mibs/ENTITY-MIB",
+      "sha256": "de64367aeb33facdd43b2ccabb87d722588ef40fc2cd7ee25f7ac5bca99715e5",
+      "size_bytes": 67536
+    },
+    {
+      "module": "IF-MIB",
+      "vendor_scope": "Standard",
+      "bundle_path": "mibs/standard/_upstream/IF-MIB",
+      "upstream_path": "mibs/IF-MIB",
+      "sha256": "ebaca56d0146fd8246a202c68b96f36a10688b77b74b70f268a927d118bd366a",
+      "size_bytes": 73505
+    },
+    {
+      "module": "RADLAN-HWENVIROMENT",
+      "vendor_scope": "Alcatel-Lucent Enterprise",
+      "bundle_path": "mibs/alcatel-lucent-enterprise/_upstream/radlan/RADLAN-HWENVIROMENT",
+      "upstream_path": "mibs/radlan/RADLAN-HWENVIROMENT",
+      "sha256": "0932095628fc032ddcf0ee0531aa71dbb0cd82b901db420824aaf98e9f36f3e7",
+      "size_bytes": 7449
+    },
+    {
+      "module": "RADLAN-rndMng",
+      "vendor_scope": "Alcatel-Lucent Enterprise",
+      "bundle_path": "mibs/alcatel-lucent-enterprise/_upstream/radlan/RADLAN-rndMng",
+      "upstream_path": "mibs/radlan/RADLAN-rndMng",
+      "sha256": "affa950ae40808ae8425b92602655d39cd3480d11ab004842750c642643186de",
+      "size_bytes": 17091
+    },
+    {
+      "module": "AT-ENVMONv2-MIB",
+      "vendor_scope": "Allied Telesis",
+      "bundle_path": "mibs/allied-telesis/_upstream/awplus/AT-ENVMONv2-MIB",
+      "upstream_path": "mibs/awplus/AT-ENVMONv2-MIB",
+      "sha256": "2c38a9b3fdeebfd4eb0d3206dee8018ce31bfa68a6ad90645d55df478bc79dc3",
+      "size_bytes": 54890
+    },
+    {
+      "module": "AT-PLUGGABLE-DIAGNOSTICS-MIB",
+      "vendor_scope": "Allied Telesis",
+      "bundle_path": "mibs/allied-telesis/_upstream/awplus/AT-PLUGGABLE-DIAGNOSTICS-MIB",
+      "upstream_path": "mibs/awplus/AT-PLUGGABLE-DIAGNOSTICS-MIB",
+      "sha256": "1da53f7de7e0238102fbe76633e2d709f9e207fb83aba067e0cfc15b1cbff4e3",
+      "size_bytes": 23741
+    },
+    {
+      "module": "AT-SYSINFO-MIB",
+      "vendor_scope": "Allied Telesis",
+      "bundle_path": "mibs/allied-telesis/_upstream/allied/AT-SYSINFO-MIB",
+      "upstream_path": "mibs/allied/AT-SYSINFO-MIB",
+      "sha256": "cad853539fff9d2c7856046c1b95d81f3bfb3a9a60d84cca39ac9b7a91beac42",
+      "size_bytes": 47383
+    },
+    {
+      "module": "RADLAN-rndMng",
+      "vendor_scope": "Allied Telesis",
+      "bundle_path": "mibs/allied-telesis/_upstream/radlan/RADLAN-rndMng",
+      "upstream_path": "mibs/radlan/RADLAN-rndMng",
+      "sha256": "affa950ae40808ae8425b92602655d39cd3480d11ab004842750c642643186de",
+      "size_bytes": 17091
+    },
+    {
+      "module": "AI-AP-MIB",
+      "vendor_scope": "Aruba",
+      "bundle_path": "mibs/aruba/_upstream/arubaos/AI-AP-MIB",
+      "upstream_path": "mibs/arubaos/AI-AP-MIB",
+      "sha256": "56c8a1fd9cd2e91cf47d60a529f0a6b470791635b56190697683e2d10f072a05",
+      "size_bytes": 156972
+    },
+    {
+      "module": "ARUBAWIRED-PM-MIB",
+      "vendor_scope": "Aruba",
+      "bundle_path": "mibs/aruba/_upstream/arubaos-cx/ARUBAWIRED-PM-MIB",
+      "upstream_path": "mibs/arubaos-cx/ARUBAWIRED-PM-MIB",
+      "sha256": "78fb7b5cd07683fe8e32b420f62999388687e6037e50da1d1231130088b1eb1e",
+      "size_bytes": 42847
+    },
+    {
+      "module": "ARUBAWIRED-POWERSUPPLY-MIB",
+      "vendor_scope": "Aruba",
+      "bundle_path": "mibs/aruba/_upstream/arubaos-cx/ARUBAWIRED-POWERSUPPLY-MIB",
+      "upstream_path": "mibs/arubaos-cx/ARUBAWIRED-POWERSUPPLY-MIB",
+      "sha256": "9a4dfec090e41cb61acd19f475de3fbfdc9a79322cb8614479b7adacd9c37ece",
+      "size_bytes": 11404
+    },
+    {
+      "module": "ARUBAWIRED-TEMPSENSOR-MIB",
+      "vendor_scope": "Aruba",
+      "bundle_path": "mibs/aruba/_upstream/arubaos-cx/ARUBAWIRED-TEMPSENSOR-MIB",
+      "upstream_path": "mibs/arubaos-cx/ARUBAWIRED-TEMPSENSOR-MIB",
+      "sha256": "3564d510d6bb71b4b8b3c31c764204b5105c2e6e607b0bee27da2490ea1f7032",
+      "size_bytes": 8731
+    },
+    {
+      "module": "ARUBAWIRED-VSFv2-MIB",
+      "vendor_scope": "Aruba",
+      "bundle_path": "mibs/aruba/_upstream/arubaos-cx/ARUBAWIRED-VSFv2-MIB",
+      "upstream_path": "mibs/arubaos-cx/ARUBAWIRED-VSFv2-MIB",
+      "sha256": "79b6131d0b4c97591fb5c27173c58dabdc0375803f296c6b6df40ba92d1b2d76",
+      "size_bytes": 30875
+    },
+    {
+      "module": "ARUBAWIRED-VSX-MIB",
+      "vendor_scope": "Aruba",
+      "bundle_path": "mibs/aruba/_upstream/arubaos-cx/ARUBAWIRED-VSX-MIB",
+      "upstream_path": "mibs/arubaos-cx/ARUBAWIRED-VSX-MIB",
+      "sha256": "ae66a9804ae7802601006175c886de772c24632aa5b2c8ca3bf9cdb937826fc2",
+      "size_bytes": 21174
+    },
+    {
+      "module": "ENTITY-SENSOR-MIB",
+      "vendor_scope": "Standard",
+      "bundle_path": "mibs/standard/_upstream/ENTITY-SENSOR-MIB",
+      "upstream_path": "mibs/ENTITY-SENSOR-MIB",
+      "sha256": "0477e3ead394092970ae4e2328a4f10e2ac5a515892900eb6ecad8dfdd4eee47",
+      "size_bytes": 16708
+    },
+    {
+      "module": "ENTITY-STATE-MIB",
+      "vendor_scope": "Aruba",
+      "bundle_path": "mibs/aruba/_upstream/ENTITY-STATE-MIB",
+      "upstream_path": "mibs/ENTITY-STATE-MIB",
+      "sha256": "1fe8a71e1de18e79c89ea169de7db81874c6e4bc631bf7305ce3c4c7ba84fe27",
+      "size_bytes": 18860
+    },
+    {
+      "module": "FAN-MIB",
+      "vendor_scope": "Aruba",
+      "bundle_path": "mibs/aruba/_upstream/hp/FAN-MIB",
+      "upstream_path": "mibs/hp/FAN-MIB",
+      "sha256": "2aa6acbc85a616114cc509ecfe281ad100673f4bdc0d2ca268d21743e8a2de65",
+      "size_bytes": 8004
+    },
+    {
+      "module": "HP-ICF-POE-MIB",
+      "vendor_scope": "Aruba",
+      "bundle_path": "mibs/aruba/_upstream/hp/HP-ICF-POE-MIB",
+      "upstream_path": "mibs/hp/HP-ICF-POE-MIB",
+      "sha256": "6b48cb6dd94f413195b7c27c8f156fc7a743569c921a8dbddbec0aa38be2f5bf",
+      "size_bytes": 61212
+    },
+    {
+      "module": "HP-STACK-MIB",
+      "vendor_scope": "Aruba",
+      "bundle_path": "mibs/aruba/_upstream/hp/HP-STACK-MIB",
+      "upstream_path": "mibs/hp/HP-STACK-MIB",
+      "sha256": "c42c45c6b2d98588dc6f92687347baec405d7bfb83c0050391d789324a58b7c1",
+      "size_bytes": 40375
+    },
+    {
+      "module": "NETSWITCH-MIB",
+      "vendor_scope": "Aruba",
+      "bundle_path": "mibs/aruba/_upstream/hp/NETSWITCH-MIB",
+      "upstream_path": "mibs/hp/NETSWITCH-MIB",
+      "sha256": "d4ebc5590a7dc47010cce9db878c13e9a150c3308afd3487c564d02b50706602",
+      "size_bytes": 17369
+    },
+    {
+      "module": "POWER-ETHERNET-MIB",
+      "vendor_scope": "Standard",
+      "bundle_path": "mibs/standard/_upstream/POWER-ETHERNET-MIB",
+      "upstream_path": "mibs/POWER-ETHERNET-MIB",
+      "sha256": "dfa7ee7185cadeab1a532c6486f752e7ac0dbbcd3895d2bd338f8c51ad377f22",
+      "size_bytes": 22545
+    },
+    {
+      "module": "POWERSUPPLY-MIB",
+      "vendor_scope": "Aruba",
+      "bundle_path": "mibs/aruba/_upstream/hp/POWERSUPPLY-MIB",
+      "upstream_path": "mibs/hp/POWERSUPPLY-MIB",
+      "sha256": "d139a8ce5ff2185c7c9e4014c068d33a7d1f2d3fa7287e56bfc65735d6d2d815",
+      "size_bytes": 5845
+    },
+    {
+      "module": "STATISTICS-MIB",
+      "vendor_scope": "Aruba",
+      "bundle_path": "mibs/aruba/_upstream/hp/STATISTICS-MIB",
+      "upstream_path": "mibs/hp/STATISTICS-MIB",
+      "sha256": "8a7af7b51677aa0c56fb14271aecececa5184a31472ccfc8b79a9ec7e956d9fd",
+      "size_bytes": 55767
+    },
+    {
+      "module": "WLSX-SWITCH-MIB",
+      "vendor_scope": "Aruba",
+      "bundle_path": "mibs/aruba/_upstream/arubaos/WLSX-SWITCH-MIB",
+      "upstream_path": "mibs/arubaos/WLSX-SWITCH-MIB",
+      "sha256": "b8ffae4f547859cfb42717593c49a21654c65de309683cd28ab4daced36659c7",
+      "size_bytes": 69818
+    },
+    {
+      "module": "WLSX-SYSTEMEXT-MIB",
+      "vendor_scope": "Aruba",
+      "bundle_path": "mibs/aruba/_upstream/arubaos/WLSX-SYSTEMEXT-MIB",
+      "upstream_path": "mibs/arubaos/WLSX-SYSTEMEXT-MIB",
+      "sha256": "02eaf030b5fdd631aa4f50de0a1156eb038207907bd6000d97f9d4c1ebf7ea9c",
+      "size_bytes": 37298
+    },
+    {
+      "module": "WLSX-USER-MIB",
+      "vendor_scope": "Aruba",
+      "bundle_path": "mibs/aruba/_upstream/arubaos/WLSX-USER-MIB",
+      "upstream_path": "mibs/arubaos/WLSX-USER-MIB",
+      "sha256": "7aff8b7a6a9f818378cf53a7f6fc85ef71d712f332d274b482c059a1041b955d",
+      "size_bytes": 20898
+    },
+    {
+      "module": "FA-EXT-MIB",
+      "vendor_scope": "Brocade",
+      "bundle_path": "mibs/brocade/_upstream/brocade/FA-EXT-MIB",
+      "upstream_path": "mibs/brocade/FA-EXT-MIB",
+      "sha256": "1ce30687fa6b89441fe767a52affe0385776f7d55fa34956c846e745ee74205b",
+      "size_bytes": 11255
+    },
+    {
+      "module": "FOUNDRY-POE-MIB",
+      "vendor_scope": "Brocade",
+      "bundle_path": "mibs/brocade/_upstream/brocade/FOUNDRY-POE-MIB",
+      "upstream_path": "mibs/brocade/FOUNDRY-POE-MIB",
+      "sha256": "f78d4065ab1566c83776a160fab94dce29fb06994488c433fc6604044895054c",
+      "size_bytes": 9672
+    },
+    {
+      "module": "FOUNDRY-SN-AGENT-MIB",
+      "vendor_scope": "Brocade",
+      "bundle_path": "mibs/brocade/_upstream/brocade/FOUNDRY-SN-AGENT-MIB",
+      "upstream_path": "mibs/brocade/FOUNDRY-SN-AGENT-MIB",
+      "sha256": "e9fd94c7764a34bbe6629635e57cffaa7c9d0389172ded1049bb02bc497774c3",
+      "size_bytes": 187993
+    },
+    {
+      "module": "FOUNDRY-SN-STACKING-MIB",
+      "vendor_scope": "Brocade",
+      "bundle_path": "mibs/brocade/_upstream/brocade/FOUNDRY-SN-STACKING-MIB",
+      "upstream_path": "mibs/brocade/FOUNDRY-SN-STACKING-MIB",
+      "sha256": "7e3ab485feeba1e47f8451d10040851d97eaa3c5fb9dfc57fb58111477059a34",
+      "size_bytes": 29509
+    },
+    {
+      "module": "FOUNDRY-SN-SWITCH-GROUP-MIB",
+      "vendor_scope": "Brocade",
+      "bundle_path": "mibs/brocade/_upstream/brocade/FOUNDRY-SN-SWITCH-GROUP-MIB",
+      "upstream_path": "mibs/brocade/FOUNDRY-SN-SWITCH-GROUP-MIB",
+      "sha256": "6dbf72270188eb46d2eac9d37af472084c39331ad0908d280198ed50696e20e2",
+      "size_bytes": 279763
+    },
+    {
+      "module": "SW-MIB",
+      "vendor_scope": "Brocade",
+      "bundle_path": "mibs/brocade/_upstream/brocade/SW-MIB",
+      "upstream_path": "mibs/brocade/SW-MIB",
+      "sha256": "7493a9b6dbc7804db9add20795b024036b4092a4e07b1a8b3d59489c49bd2f0f",
+      "size_bytes": 154361
+    },
+    {
+      "module": "BRIDGE-MIB",
+      "vendor_scope": "Standard",
+      "bundle_path": "mibs/standard/_upstream/BRIDGE-MIB",
+      "upstream_path": "mibs/BRIDGE-MIB",
+      "sha256": "4ebb92ff13f8eff7729d3bad286726bfd8dcd2ba28bfe155a7f2315403535022",
+      "size_bytes": 52420
+    },
+    {
+      "module": "CIENA-6500R-INVENTORY-AMPS-MIB",
+      "vendor_scope": "Ciena",
+      "bundle_path": "mibs/ciena/_upstream/ciena/CIENA-6500R-INVENTORY-AMPS-MIB",
+      "upstream_path": "mibs/ciena/CIENA-6500R-INVENTORY-AMPS-MIB",
+      "sha256": "620e07206e68fb3e57b9d35a3e2e71df2ff6cad510648d93d1a6e592a14668e8",
+      "size_bytes": 21706
+    },
+    {
+      "module": "CIENA-6500R-INVENTORY-MIB",
+      "vendor_scope": "Ciena",
+      "bundle_path": "mibs/ciena/_upstream/ciena/CIENA-6500R-INVENTORY-MIB",
+      "upstream_path": "mibs/ciena/CIENA-6500R-INVENTORY-MIB",
+      "sha256": "e5204f976248f8c498c7cf813df9a093683c628a8f1b1ed04dfb86c3645048ed",
+      "size_bytes": 12901
+    },
+    {
+      "module": "CIENA-CES-CHASSIS-MIB",
+      "vendor_scope": "Ciena",
+      "bundle_path": "mibs/ciena/_upstream/ciena/CIENA-CES-CHASSIS-MIB",
+      "upstream_path": "mibs/ciena/CIENA-CES-CHASSIS-MIB",
+      "sha256": "9cfd332bcbc50c4434d7ac226a6f8616d1192fc9cd3b8c3b85833d3bc67ceaed",
+      "size_bytes": 255551
+    },
+    {
+      "module": "CIENA-CES-FEATURE-LICENSE-MIB",
+      "vendor_scope": "Ciena",
+      "bundle_path": "mibs/ciena/_upstream/ciena/CIENA-CES-FEATURE-LICENSE-MIB",
+      "upstream_path": "mibs/ciena/CIENA-CES-FEATURE-LICENSE-MIB",
+      "sha256": "65e78464941a46f28b701bcfe727ae4c0a97f7fa7d762da0ebd1591b0d8876b0",
+      "size_bytes": 21280
+    },
+    {
+      "module": "CIENA-CES-MODULE-MIB",
+      "vendor_scope": "Ciena",
+      "bundle_path": "mibs/ciena/_upstream/ciena/CIENA-CES-MODULE-MIB",
+      "upstream_path": "mibs/ciena/CIENA-CES-MODULE-MIB",
+      "sha256": "08016074ec35a5cc3969fee2e3661025d1ea9b012ab4a3355e19461b308347f8",
+      "size_bytes": 95058
+    },
+    {
+      "module": "CIENA-CES-PORT-MIB",
+      "vendor_scope": "Ciena",
+      "bundle_path": "mibs/ciena/_upstream/ciena/CIENA-CES-PORT-MIB",
+      "upstream_path": "mibs/ciena/CIENA-CES-PORT-MIB",
+      "sha256": "526a5c80136ce6852508c4fd4e549db76578861615ed6ef8bf14befae7553f0d",
+      "size_bytes": 69468
+    },
+    {
+      "module": "CIENA-CES-PORT-XCVR-MIB",
+      "vendor_scope": "Ciena",
+      "bundle_path": "mibs/ciena/_upstream/ciena/CIENA-CES-PORT-XCVR-MIB",
+      "upstream_path": "mibs/ciena/CIENA-CES-PORT-XCVR-MIB",
+      "sha256": "a7df407cdfae54de315e6289432be0524aafc7cd259ffe0648a64e96018bdbac",
+      "size_bytes": 43320
+    },
+    {
+      "module": "CIENA-CES-RAPS-MIB",
+      "vendor_scope": "Ciena",
+      "bundle_path": "mibs/ciena/_upstream/ciena/CIENA-CES-RAPS-MIB",
+      "upstream_path": "mibs/ciena/CIENA-CES-RAPS-MIB",
+      "sha256": "d3074393afce57a64f452f8e7c4c5338ed967a732fe29ad5ec19f4b7c762a595",
+      "size_bytes": 34882
+    },
+    {
+      "module": "CIENA-WS-PLATFORM-ALARM-MIB",
+      "vendor_scope": "Ciena",
+      "bundle_path": "mibs/ciena/_upstream/ciena/CIENA-WS-PLATFORM-ALARM-MIB",
+      "upstream_path": "mibs/ciena/CIENA-WS-PLATFORM-ALARM-MIB",
+      "sha256": "732be2a4e358a4ab978755d53553e94ca275a1c605104622b17e2306a1b5d377",
+      "size_bytes": 14022
+    },
+    {
+      "module": "CIENA-WS-PLATFORM-PM-MIB",
+      "vendor_scope": "Ciena",
+      "bundle_path": "mibs/ciena/_upstream/ciena/CIENA-WS-PLATFORM-PM-MIB",
+      "upstream_path": "mibs/ciena/CIENA-WS-PLATFORM-PM-MIB",
+      "sha256": "b48cbf00897e55f75f26c72810c77ecfbb23c5572ce969ddb57bb98e980f29b4",
+      "size_bytes": 156350
+    },
+    {
+      "module": "CIENA-WS-XCVR-MIB",
+      "vendor_scope": "Ciena",
+      "bundle_path": "mibs/ciena/_upstream/ciena/CIENA-WS-XCVR-MIB",
+      "upstream_path": "mibs/ciena/CIENA-WS-XCVR-MIB",
+      "sha256": "55f80d5f29bac464a2abdad2fde4cd2e4cc0018fea9a0ffbd123a9831045c763",
+      "size_bytes": 42686
+    },
+    {
+      "module": "NORTEL-OPTICAL-PM-MIB",
+      "vendor_scope": "Ciena",
+      "bundle_path": "mibs/ciena/_upstream/nortel/NORTEL-OPTICAL-PM-MIB",
+      "upstream_path": "mibs/nortel/NORTEL-OPTICAL-PM-MIB",
+      "sha256": "6e7f578c7f8b6403dff96d5b1adef5e02cb937ca3a80b6bab7b07c8c45939c3f",
+      "size_bytes": 32866
+    },
+    {
+      "module": "WWP-LEOS-PORT-XCVR-MIB",
+      "vendor_scope": "Ciena",
+      "bundle_path": "mibs/ciena/_upstream/ciena/WWP-LEOS-PORT-XCVR-MIB",
+      "upstream_path": "mibs/ciena/WWP-LEOS-PORT-XCVR-MIB",
+      "sha256": "e7ad0cfd768bf846e3360f0b860d370ecfae2ba87f3b3ae6007d45e866710a99",
+      "size_bytes": 44074
+    },
+    {
+      "module": "WWP-LEOS-SYSTEM-CONFIG-MIB",
+      "vendor_scope": "Ciena",
+      "bundle_path": "mibs/ciena/_upstream/ciena/WWP-LEOS-SYSTEM-CONFIG-MIB",
+      "upstream_path": "mibs/ciena/WWP-LEOS-SYSTEM-CONFIG-MIB",
+      "sha256": "549245c6a2b6b3f0cbd78696caad1743efee0ca60bb45c1c19f467015593c282",
+      "size_bytes": 83853
+    },
+    {
+      "module": "AIRESPACE-SWITCHING-MIB",
+      "vendor_scope": "Cisco",
+      "bundle_path": "mibs/cisco/_upstream/cisco/AIRESPACE-SWITCHING-MIB",
+      "upstream_path": "mibs/cisco/AIRESPACE-SWITCHING-MIB",
+      "sha256": "b63672c993aded430a77ee5053f3f17f32f4b6d528b90c4f56f72a0b1c8efda2",
+      "size_bytes": 154404
+    },
+    {
+      "module": "ALTIGA-LBSSF-STATS-MIB",
+      "vendor_scope": "Cisco",
+      "bundle_path": "mibs/cisco/_upstream/cisco/ALTIGA-LBSSF-STATS-MIB",
+      "upstream_path": "mibs/cisco/ALTIGA-LBSSF-STATS-MIB",
+      "sha256": "b8a8da87e222dd25a566d30faabc48740a4e24888a7ad500467630e79af72da2",
+      "size_bytes": 8848
+    },
+    {
+      "module": "BW-BroadworksApplicationServer",
+      "vendor_scope": "Cisco",
+      "bundle_path": "mibs/cisco/_upstream/broadworks/BW-BroadworksApplicationServer",
+      "upstream_path": "mibs/broadworks/BW-BroadworksApplicationServer",
+      "sha256": "9a08f65a70c4ab1db28bdfad22214cdee2a32b0439cac680190a04023989e106",
+      "size_bytes": 918967
+    },
+    {
+      "module": "BW-BroadworksMediaServer",
+      "vendor_scope": "Cisco",
+      "bundle_path": "mibs/cisco/_upstream/broadworks/BW-BroadworksMediaServer",
+      "upstream_path": "mibs/broadworks/BW-BroadworksMediaServer",
+      "sha256": "4705a8f9e87cb592ef4431403ab65618d1daebf425dbfaf06fdcbeb361a4bba6",
+      "size_bytes": 35659
+    },
+    {
+      "module": "BW-BroadworksNetworkServer",
+      "vendor_scope": "Cisco",
+      "bundle_path": "mibs/cisco/_upstream/broadworks/BW-BroadworksNetworkServer",
+      "upstream_path": "mibs/broadworks/BW-BroadworksNetworkServer",
+      "sha256": "9f71794bd5fa0b29876770423ea5177c4880c60f470f9e14b7b64dc10ec63331",
+      "size_bytes": 119922
+    },
+    {
+      "module": "BroadworksMaintenance",
+      "vendor_scope": "Cisco",
+      "bundle_path": "mibs/cisco/_upstream/broadworks/BroadworksMaintenance",
+      "upstream_path": "mibs/broadworks/BroadworksMaintenance",
+      "sha256": "a1d7ae62c8a44de36bff9126e5afe6c8b8936c8706acda36eba77352ebf4c698",
+      "size_bytes": 36236
+    },
+    {
+      "module": "CERENT-ENVMON-MIB",
+      "vendor_scope": "Cisco",
+      "bundle_path": "mibs/cisco/_upstream/cisco/CERENT-ENVMON-MIB",
+      "upstream_path": "mibs/cisco/CERENT-ENVMON-MIB",
+      "sha256": "c3239651f31a747fad89a772c2bdb4dae8cb4a173587a6954a2666d94fc933bd",
+      "size_bytes": 8182
+    },
+    {
+      "module": "CISCO-DMN-DSG-DIAG-MIB",
+      "vendor_scope": "Cisco",
+      "bundle_path": "mibs/cisco/_upstream/cisco/CISCO-DMN-DSG-DIAG-MIB",
+      "upstream_path": "mibs/cisco/CISCO-DMN-DSG-DIAG-MIB",
+      "sha256": "08df94abe43a165b6b4cb34cf7d95ef45dc13b266f3f41af2f96da54c0afa796",
+      "size_bytes": 11697
+    },
+    {
+      "module": "CISCO-DMN-DSG-TUNING-MIB",
+      "vendor_scope": "Cisco",
+      "bundle_path": "mibs/cisco/_upstream/cisco/CISCO-DMN-DSG-TUNING-MIB",
+      "upstream_path": "mibs/cisco/CISCO-DMN-DSG-TUNING-MIB",
+      "sha256": "80b1681f2e6c615e6e710b7caa385d36c437a7049f9cb337ed0626500adbfa0b",
+      "size_bytes": 57462
+    },
+    {
+      "module": "CISCO-ENTITY-FRU-CONTROL-MIB",
+      "vendor_scope": "Cisco",
+      "bundle_path": "mibs/cisco/_upstream/cisco/CISCO-ENTITY-FRU-CONTROL-MIB",
+      "upstream_path": "mibs/cisco/CISCO-ENTITY-FRU-CONTROL-MIB",
+      "sha256": "6bd4119648d34a0aa64f29c840755d7db3f5039036c4a9aaa8a8ff8d12936933",
+      "size_bytes": 125586
+    },
+    {
+      "module": "CISCO-FIREWALL-MIB",
+      "vendor_scope": "Cisco",
+      "bundle_path": "mibs/cisco/_upstream/cisco/CISCO-FIREWALL-MIB",
+      "upstream_path": "mibs/cisco/CISCO-FIREWALL-MIB",
+      "sha256": "1ffcc70e4bc819f3356641e7b2106f1e42a327ea82ea7cb2b4c8a30f9b8dfcc6",
+      "size_bytes": 53670
+    },
+    {
+      "module": "CISCO-GNSS-MIB",
+      "vendor_scope": "Cisco",
+      "bundle_path": "mibs/cisco/_upstream/cisco/CISCO-GNSS-MIB",
+      "upstream_path": "mibs/cisco/CISCO-GNSS-MIB",
+      "sha256": "60ff6dbbc710045550e4450fb3f41c4667b7689811f83330deddd5a6054b4e85",
+      "size_bytes": 17827
+    },
+    {
+      "module": "CISCO-HSRP-MIB",
+      "vendor_scope": "Cisco",
+      "bundle_path": "mibs/cisco/_upstream/cisco/CISCO-HSRP-MIB",
+      "upstream_path": "mibs/cisco/CISCO-HSRP-MIB",
+      "sha256": "a1a420e643ffdecdc763cf639413a6d414bb2ed91fb41b7d7c1088b66fdab48a",
+      "size_bytes": 22048
+    },
+    {
+      "module": "CISCO-POWER-ETHERNET-EXT-MIB",
+      "vendor_scope": "Cisco",
+      "bundle_path": "mibs/cisco/_upstream/cisco/CISCO-POWER-ETHERNET-EXT-MIB",
+      "upstream_path": "mibs/cisco/CISCO-POWER-ETHERNET-EXT-MIB",
+      "sha256": "bc79a932ab07b638aedd0839ad276741d011afe673669ae0b0e4b9f666238dd0",
+      "size_bytes": 62291
+    },
+    {
+      "module": "CISCO-REMOTE-ACCESS-MONITOR-MIB",
+      "vendor_scope": "Cisco",
+      "bundle_path": "mibs/cisco/_upstream/cisco/CISCO-REMOTE-ACCESS-MONITOR-MIB",
+      "upstream_path": "mibs/cisco/CISCO-REMOTE-ACCESS-MONITOR-MIB",
+      "sha256": "e1f5955fefe58e973fa3dcc3b0985021cb17aabc8c37c3f62a7f004a1eb4a1e0",
+      "size_bytes": 79159
+    },
+    {
+      "module": "CISCO-SYSLOG-MIB",
+      "vendor_scope": "Cisco",
+      "bundle_path": "mibs/cisco/_upstream/cisco/CISCO-SYSLOG-MIB",
+      "upstream_path": "mibs/cisco/CISCO-SYSLOG-MIB",
+      "sha256": "826d31e1b5e5983c80eac6b7cda5958e8b7d8894a5e52c127bc9859833e372e7",
+      "size_bytes": 22252
+    },
+    {
+      "module": "CISCO-UNIFIED-COMPUTING-COMPUTE-MIB",
+      "vendor_scope": "Cisco",
+      "bundle_path": "mibs/cisco/_upstream/cisco/CISCO-UNIFIED-COMPUTING-COMPUTE-MIB",
+      "upstream_path": "mibs/cisco/CISCO-UNIFIED-COMPUTING-COMPUTE-MIB",
+      "sha256": "07306f6dcd08482e0b708c583526897277fd12f6da46c29b2310c51b87b0d6dd",
+      "size_bytes": 520186
+    },
+    {
+      "module": "CISCO-UNIFIED-COMPUTING-EQUIPMENT-MIB",
+      "vendor_scope": "Cisco",
+      "bundle_path": "mibs/cisco/_upstream/cisco/CISCO-UNIFIED-COMPUTING-EQUIPMENT-MIB",
+      "upstream_path": "mibs/cisco/CISCO-UNIFIED-COMPUTING-EQUIPMENT-MIB",
+      "sha256": "a0aca4fe8324213a3f59ac47c225b9088edb7badca206f2e4f5e8ac08a948e0c",
+      "size_bytes": 1260659
+    },
+    {
+      "module": "CISCO-UNIFIED-COMPUTING-MEMORY-MIB",
+      "vendor_scope": "Cisco",
+      "bundle_path": "mibs/cisco/_upstream/cisco/CISCO-UNIFIED-COMPUTING-MEMORY-MIB",
+      "upstream_path": "mibs/cisco/CISCO-UNIFIED-COMPUTING-MEMORY-MIB",
+      "sha256": "6963e9836715a8519f86681c2320e951e4093c5c67df5cd09743db9dd2d62b26",
+      "size_bytes": 98326
+    },
+    {
+      "module": "CISCO-UNIFIED-COMPUTING-PROCESSOR-MIB",
+      "vendor_scope": "Cisco",
+      "bundle_path": "mibs/cisco/_upstream/cisco/CISCO-UNIFIED-COMPUTING-PROCESSOR-MIB",
+      "upstream_path": "mibs/cisco/CISCO-UNIFIED-COMPUTING-PROCESSOR-MIB",
+      "sha256": "ad3cfa3f277edc8d2608307a470ae5e734e4569b6927cc569718c95f26503155",
+      "size_bytes": 70469
+    },
+    {
+      "module": "CISCO-UNIFIED-COMPUTING-STORAGE-MIB",
+      "vendor_scope": "Cisco",
+      "bundle_path": "mibs/cisco/_upstream/cisco/CISCO-UNIFIED-COMPUTING-STORAGE-MIB",
+      "upstream_path": "mibs/cisco/CISCO-UNIFIED-COMPUTING-STORAGE-MIB",
+      "sha256": "bee4dfd76d8723fb1373dd2f58b086c1edb8bb9edb907e98e0027548647a5468",
+      "size_bytes": 482548
+    },
+    {
+      "module": "CISCO-VOICE-DIAL-CONTROL-MIB",
+      "vendor_scope": "Cisco",
+      "bundle_path": "mibs/cisco/_upstream/cisco/CISCO-VOICE-DIAL-CONTROL-MIB",
+      "upstream_path": "mibs/cisco/CISCO-VOICE-DIAL-CONTROL-MIB",
+      "sha256": "515933821a723b979741dfcb9261aba05993ec70710e181b1df842838a487d65",
+      "size_bytes": 283262
+    },
+    {
+      "module": "CISCO-WAN-OPTIMIZATION-MIB",
+      "vendor_scope": "Cisco",
+      "bundle_path": "mibs/cisco/_upstream/cisco/CISCO-WAN-OPTIMIZATION-MIB",
+      "upstream_path": "mibs/cisco/CISCO-WAN-OPTIMIZATION-MIB",
+      "sha256": "427f4a5e8d85e9b3e24e5eaff88eda23acec93b9641051c3190cc2ef49477dae",
+      "size_bytes": 146091
+    },
+    {
+      "module": "CISCOSB-HWENVIROMENT",
+      "vendor_scope": "Cisco",
+      "bundle_path": "mibs/cisco/_upstream/cisco/CISCOSB-HWENVIROMENT",
+      "upstream_path": "mibs/cisco/CISCOSB-HWENVIROMENT",
+      "sha256": "8fe5ffb96a8425f0a95ecaed857768f473f11dc5ac66b3dfc9c9c8b9b5c67ce6",
+      "size_bytes": 13905
+    },
+    {
+      "module": "CISCOSB-Physicaldescription-MIB",
+      "vendor_scope": "Cisco",
+      "bundle_path": "mibs/cisco/_upstream/cisco/CISCOSB-Physicaldescription-MIB",
+      "upstream_path": "mibs/cisco/CISCOSB-Physicaldescription-MIB",
+      "sha256": "10b3bde58ef98b3410fc7fcc84ef8c82b5bc3a9f18dd3717f8a9b56f2b359f3e",
+      "size_bytes": 50344
+    },
+    {
+      "module": "CISCOSB-rndMng",
+      "vendor_scope": "Cisco",
+      "bundle_path": "mibs/cisco/_upstream/cisco/CISCOSB-rndMng",
+      "upstream_path": "mibs/cisco/CISCOSB-rndMng",
+      "sha256": "358dadfc7e666e1c622c1d8b461fddbb65aadda9cf8f32ed1e2583e4c4940f68",
+      "size_bytes": 17907
+    },
+    {
+      "module": "EXALINK-FUSION-MIB",
+      "vendor_scope": "Cisco",
+      "bundle_path": "mibs/cisco/_upstream/exalink-fusion/EXALINK-FUSION-MIB",
+      "upstream_path": "mibs/exalink-fusion/EXALINK-FUSION-MIB",
+      "sha256": "c0af16288c14ccbdd4966a60d24f8b1e3305cd5ffc11e1ab441306853b40340c",
+      "size_bytes": 18478
+    },
+    {
+      "module": "OLD-CISCO-TS-MIB",
+      "vendor_scope": "Cisco",
+      "bundle_path": "mibs/cisco/_upstream/cisco/OLD-CISCO-TS-MIB",
+      "upstream_path": "mibs/cisco/OLD-CISCO-TS-MIB",
+      "sha256": "62b3e4de282fd8c4c727008a4b4fd3a81ce94064dbaa9c3057b50c58d2e99376",
+      "size_bytes": 19512
+    },
+    {
+      "module": "VIPTELA-OPER-SYSTEM",
+      "vendor_scope": "Cisco",
+      "bundle_path": "mibs/cisco/_upstream/viptela/VIPTELA-OPER-SYSTEM",
+      "upstream_path": "mibs/viptela/VIPTELA-OPER-SYSTEM",
+      "sha256": "be0a8cd64e8f049f5f69b7b38102861c655358ec1e0dd3b9820b81750dcc2773",
+      "size_bytes": 178470
+    },
+    {
+      "module": "AGENT-GENERAL-MIB",
+      "vendor_scope": "D-Link",
+      "bundle_path": "mibs/d-link/_upstream/dlink/AGENT-GENERAL-MIB",
+      "upstream_path": "mibs/dlink/AGENT-GENERAL-MIB",
+      "sha256": "6d95d99f27d7d01c4cb4626e10a52fd0b5d9363de769695ce3414a0cc342f919",
+      "size_bytes": 130424
+    },
+    {
+      "module": "DLINKSW-DDM-MIB",
+      "vendor_scope": "D-Link",
+      "bundle_path": "mibs/d-link/_upstream/dlink/DLINKSW-DDM-MIB",
+      "upstream_path": "mibs/dlink/DLINKSW-DDM-MIB",
+      "sha256": "68c8d86a888e102eed36787a75ebf28ac80119471b2ad8c6e0e7d13728c4ae83",
+      "size_bytes": 31367
+    },
+    {
+      "module": "DLINKSW-ENTITY-EXT-MIB",
+      "vendor_scope": "D-Link",
+      "bundle_path": "mibs/d-link/_upstream/dlink/DLINKSW-ENTITY-EXT-MIB",
+      "upstream_path": "mibs/dlink/DLINKSW-ENTITY-EXT-MIB",
+      "sha256": "1f52a8c46b309e910512ea168b25acfcde5c4019632017f7c49e27291cca9b7b",
+      "size_bytes": 34319
+    },
+    {
+      "module": "EQUIPMENT-MIB",
+      "vendor_scope": "D-Link",
+      "bundle_path": "mibs/d-link/_upstream/dlink/EQUIPMENT-MIB",
+      "upstream_path": "mibs/dlink/EQUIPMENT-MIB",
+      "sha256": "5906c8d308b01a4444630204eec20a934a7ca033c4b060af5ba41804bb5887e3",
+      "size_bytes": 48680
+    },
+    {
+      "module": "DCN-MIB",
+      "vendor_scope": "DCN",
+      "bundle_path": "mibs/dcn/_upstream/dcn/DCN-MIB",
+      "upstream_path": "mibs/dcn/DCN-MIB",
+      "sha256": "19da60030dc04228e8197db9c1d60dbbe4373759263672a9796c3f905681e770",
+      "size_bytes": 793393
+    },
+    {
+      "module": "DELL-MM-MIB-SMIv2",
+      "vendor_scope": "Dell",
+      "bundle_path": "mibs/dell/_upstream/dell/DELL-MM-MIB-SMIv2",
+      "upstream_path": "mibs/dell/DELL-MM-MIB-SMIv2",
+      "sha256": "e6a29d96a7a02ed65d1c9a57c4ddd0cd2eb6eefeda467af27800a6f8e615458c",
+      "size_bytes": 449670
+    },
+    {
+      "module": "DELL-NETWORKING-CHASSIS-MIB",
+      "vendor_scope": "Dell",
+      "bundle_path": "mibs/dell/_upstream/dell/DELL-NETWORKING-CHASSIS-MIB",
+      "upstream_path": "mibs/dell/DELL-NETWORKING-CHASSIS-MIB",
+      "sha256": "5baf095195cef6eeccf26bef45483e857584e66b22f583edb7e8a6cd288eeb69",
+      "size_bytes": 110646
+    },
+    {
+      "module": "DELL-NETWORKING-IF-EXTENSION-MIB",
+      "vendor_scope": "Dell",
+      "bundle_path": "mibs/dell/_upstream/dell/DELL-NETWORKING-IF-EXTENSION-MIB",
+      "upstream_path": "mibs/dell/DELL-NETWORKING-IF-EXTENSION-MIB",
+      "sha256": "4ff1ed181c81525f34f883c22b56fe3d176482927a2617404053b4cd14d0d468",
+      "size_bytes": 35924
+    },
+    {
+      "module": "DELL-NETWORKING-VIRTUAL-LINK-TRUNK-MIB",
+      "vendor_scope": "Dell",
+      "bundle_path": "mibs/dell/_upstream/dell/DELL-NETWORKING-VIRTUAL-LINK-TRUNK-MIB",
+      "upstream_path": "mibs/dell/DELL-NETWORKING-VIRTUAL-LINK-TRUNK-MIB",
+      "sha256": "42ca906c548ccb9234142a4c19006190ce1cec4c170d0c0d7ed3e28d4e948032",
+      "size_bytes": 39485
+    },
+    {
+      "module": "DELL-RAC-MIB",
+      "vendor_scope": "Dell",
+      "bundle_path": "mibs/dell/_upstream/dell/DELL-RAC-MIB",
+      "upstream_path": "mibs/dell/DELL-RAC-MIB",
+      "sha256": "c15e90f7f30d15d720a1530c8875ebd029c365a0dd4ac68b6755d0a0e76f4434",
+      "size_bytes": 273093
+    },
+    {
+      "module": "DELL-SNMP-UPS-MIB",
+      "vendor_scope": "Dell",
+      "bundle_path": "mibs/dell/_upstream/dell/DELL-SNMP-UPS-MIB",
+      "upstream_path": "mibs/dell/DELL-SNMP-UPS-MIB",
+      "sha256": "88ba0cb2926ab8d843f7d48ed98948e5bbce5ba7071603a99a8bb88ea1b97c1d",
+      "size_bytes": 46883
+    },
+    {
+      "module": "DELL-STORAGE-SC-MIB",
+      "vendor_scope": "Dell",
+      "bundle_path": "mibs/dell/_upstream/dell/DELL-STORAGE-SC-MIB",
+      "upstream_path": "mibs/dell/DELL-STORAGE-SC-MIB",
+      "sha256": "163e9a37a1cf830b4fe4902d2f59cee1abda6aa824e57e1e76d2a0cad44cd390",
+      "size_bytes": 128228
+    },
+    {
+      "module": "DELLEMC-OS10-CHASSIS-MIB",
+      "vendor_scope": "Dell",
+      "bundle_path": "mibs/dell/_upstream/dell/DELLEMC-OS10-CHASSIS-MIB",
+      "upstream_path": "mibs/dell/DELLEMC-OS10-CHASSIS-MIB",
+      "sha256": "217ce84cea44119750ba45d095f36cabc2f4aab5e0014dd23024f9fa1d92d269",
+      "size_bytes": 31893
+    },
+    {
+      "module": "DellrPDU-MIB",
+      "vendor_scope": "Dell",
+      "bundle_path": "mibs/dell/_upstream/dell/DellrPDU-MIB",
+      "upstream_path": "mibs/dell/DellrPDU-MIB",
+      "sha256": "e4249676a770e8651ce852e5ed0523f8ba5a4490e1f79f8c9593f5313c10054c",
+      "size_bytes": 94042
+    },
+    {
+      "module": "FLUIDFS-MIB",
+      "vendor_scope": "Dell",
+      "bundle_path": "mibs/dell/_upstream/dell/FLUIDFS-MIB",
+      "upstream_path": "mibs/dell/FLUIDFS-MIB",
+      "sha256": "399b61fa2fde020cc71b596e8df04b291ab62942a9152aded193f00e1b813e5f",
+      "size_bytes": 46826
+    },
+    {
+      "module": "IDRAC-MIB",
+      "vendor_scope": "Dell",
+      "bundle_path": "mibs/dell/_upstream/dell/IDRAC-MIB",
+      "upstream_path": "mibs/dell/IDRAC-MIB",
+      "sha256": "59e7246453cfa0ba75299adf73e3247aee1ef21044d75e4e95c4361496bd0a32",
+      "size_bytes": 515184
+    },
+    {
+      "module": "IDRAC-MIB-SMIv2",
+      "vendor_scope": "Dell",
+      "bundle_path": "mibs/dell/_upstream/dell/IDRAC-MIB-SMIv2",
+      "upstream_path": "mibs/dell/IDRAC-MIB-SMIv2",
+      "sha256": "d68f323a1cb6af00bd87c3340deddef8899292e45a0d7ec15621f05cdd2a998f",
+      "size_bytes": 616780
+    },
+    {
+      "module": "BROCADE-MODULE-MEM-UTIL-MIB",
+      "vendor_scope": "Extreme Networks",
+      "bundle_path": "mibs/extreme-networks/_upstream/extreme/BROCADE-MODULE-MEM-UTIL-MIB",
+      "upstream_path": "mibs/extreme/BROCADE-MODULE-MEM-UTIL-MIB",
+      "sha256": "1c60894fcb4b55ef1abe271805294b572ef44b7519e5a581816048ec6c674755",
+      "size_bytes": 4664
+    },
+    {
+      "module": "ENTERASYS-RESOURCE-UTILIZATION-MIB",
+      "vendor_scope": "Extreme Networks",
+      "bundle_path": "mibs/extreme-networks/_upstream/enterasys/ENTERASYS-RESOURCE-UTILIZATION-MIB",
+      "upstream_path": "mibs/enterasys/ENTERASYS-RESOURCE-UTILIZATION-MIB",
+      "sha256": "c31a0dbb0b36d7ec32f85f771103a69d0e2dc86e57b770fb8d65dcfa21d4125f",
+      "size_bytes": 16777
+    },
+    {
+      "module": "EXTREME-SOFTWARE-MONITOR-MIB",
+      "vendor_scope": "Extreme Networks",
+      "bundle_path": "mibs/extreme-networks/_upstream/extreme/EXTREME-SOFTWARE-MONITOR-MIB",
+      "upstream_path": "mibs/extreme/EXTREME-SOFTWARE-MONITOR-MIB",
+      "sha256": "816a37ec3b7216117b0eab01a8df8aa76ef8e6a71767c2f1951be78bc747a090",
+      "size_bytes": 26078
+    },
+    {
+      "module": "EXTREME-SYSTEM-MIB",
+      "vendor_scope": "Extreme Networks",
+      "bundle_path": "mibs/extreme-networks/_upstream/extreme/EXTREME-SYSTEM-MIB",
+      "upstream_path": "mibs/extreme/EXTREME-SYSTEM-MIB",
+      "sha256": "419a7a6f32604d950d949d74b7d883c81a92f7b8df7d5bcc7c061274261654b2",
+      "size_bytes": 89967
+    },
+    {
+      "module": "FCMGMT-MIB",
+      "vendor_scope": "Extreme Networks",
+      "bundle_path": "mibs/extreme-networks/_upstream/FCMGMT-MIB",
+      "upstream_path": "mibs/FCMGMT-MIB",
+      "sha256": "607d204502a20e25ef8362e12e9c17ed867f9eab5f0ae19485969612627b221b",
+      "size_bytes": 110789
+    },
+    {
+      "module": "RAPID-CITY",
+      "vendor_scope": "Extreme Networks",
+      "bundle_path": "mibs/extreme-networks/_upstream/nortel/RAPID-CITY",
+      "upstream_path": "mibs/nortel/RAPID-CITY",
+      "sha256": "d3ffb45cf7ae22dae90849fc3f82dcc49cf78d2e12e3d1f461ddc7158f458fd5",
+      "size_bytes": 3716725
+    },
+    {
+      "module": "S5-CHASSIS-MIB",
+      "vendor_scope": "Extreme Networks",
+      "bundle_path": "mibs/extreme-networks/_upstream/nortel/S5-CHASSIS-MIB",
+      "upstream_path": "mibs/nortel/S5-CHASSIS-MIB",
+      "sha256": "8bbeb37f3952f72eb12b71acd66c6ae6cdd18a169049edc2efbdb8a4d4b497cf",
+      "size_bytes": 69638
+    },
+    {
+      "module": "SYSTEM-MIB",
+      "vendor_scope": "Extreme Networks",
+      "bundle_path": "mibs/extreme-networks/_upstream/extreme/SYSTEM-MIB",
+      "upstream_path": "mibs/extreme/SYSTEM-MIB",
+      "sha256": "fe05a8e0388d7ec79757ea16b15583d07944493ff9ada6b2bd612c1ff05768d5",
+      "size_bytes": 17256
+    },
+    {
+      "module": "FAN-MIB",
+      "vendor_scope": "FiberHome",
+      "bundle_path": "mibs/fiberhome/_upstream/fiberhome/FAN-MIB",
+      "upstream_path": "mibs/fiberhome/FAN-MIB",
+      "sha256": "3f7b49f38d630abfe0b9f7716704642c0b779fed2c2e7394fc697fa28784c6ea",
+      "size_bytes": 10259
+    },
+    {
+      "module": "GEPON-OLT-COMMON-MIB",
+      "vendor_scope": "FiberHome",
+      "bundle_path": "mibs/fiberhome/_upstream/fiberhome/GEPON-OLT-COMMON-MIB",
+      "upstream_path": "mibs/fiberhome/GEPON-OLT-COMMON-MIB",
+      "sha256": "b60876f12ebbf58a53fef77c584c1533c3456540d908563debed6d87c249454f",
+      "size_bytes": 162478
+    },
+    {
+      "module": "WRI-CPU-MIB",
+      "vendor_scope": "FiberHome",
+      "bundle_path": "mibs/fiberhome/_upstream/fiberhome/WRI-CPU-MIB",
+      "upstream_path": "mibs/fiberhome/WRI-CPU-MIB",
+      "sha256": "78caec4b1301195dbf2fa066e20de2d2809f33de0a57a352e8ef6dfcc215df48",
+      "size_bytes": 5723
+    },
+    {
+      "module": "WRI-MEMORY-MIB",
+      "vendor_scope": "FiberHome",
+      "bundle_path": "mibs/fiberhome/_upstream/fiberhome/WRI-MEMORY-MIB",
+      "upstream_path": "mibs/fiberhome/WRI-MEMORY-MIB",
+      "sha256": "4d4d3d3c301ffb747d51b1a7218af06a99f46f94a8e241a56b8f07fdc710acd0",
+      "size_bytes": 9800
+    },
+    {
+      "module": "WRI-POWER-MIB",
+      "vendor_scope": "FiberHome",
+      "bundle_path": "mibs/fiberhome/_upstream/fiberhome/WRI-POWER-MIB",
+      "upstream_path": "mibs/fiberhome/WRI-POWER-MIB",
+      "sha256": "4fb37a52934f6d84f6f1d66a1bdda0b220d8b05fecd55b08fc403921886388b5",
+      "size_bytes": 6409
+    },
+    {
+      "module": "WRI-TEMPERATURE-MIB",
+      "vendor_scope": "FiberHome",
+      "bundle_path": "mibs/fiberhome/_upstream/fiberhome/WRI-TEMPERATURE-MIB",
+      "upstream_path": "mibs/fiberhome/WRI-TEMPERATURE-MIB",
+      "sha256": "39fdf452fdb7d0e63117900b42ad7d7214ff5d2268b4ac2768b8f4298a027c1e",
+      "size_bytes": 5868
+    },
+    {
+      "module": "WRI-VOLTAGE-MIB",
+      "vendor_scope": "FiberHome",
+      "bundle_path": "mibs/fiberhome/_upstream/fiberhome/WRI-VOLTAGE-MIB",
+      "upstream_path": "mibs/fiberhome/WRI-VOLTAGE-MIB",
+      "sha256": "466425a7e3848f9be2283043ad583d150b263f6d57ac2cba8bca1039b2f1e93e",
+      "size_bytes": 5252
+    },
+    {
+      "module": "HH3C-ENTITY-EXT-MIB",
+      "vendor_scope": "H3C",
+      "bundle_path": "mibs/h3c/_upstream/comware/HH3C-ENTITY-EXT-MIB",
+      "upstream_path": "mibs/comware/HH3C-ENTITY-EXT-MIB",
+      "sha256": "ec3826d799d27a5121680ac2f857a38076fa0fba32de325feacf54d7ca8ad58d",
+      "size_bytes": 69970
+    },
+    {
+      "module": "HH3C-LswDEVM-MIB",
+      "vendor_scope": "H3C",
+      "bundle_path": "mibs/h3c/_upstream/comware/HH3C-LswDEVM-MIB",
+      "upstream_path": "mibs/comware/HH3C-LswDEVM-MIB",
+      "sha256": "50304e99ab13306818bfe98dd95ea9ac5b94726d707ce1c0f441a850fc5f336d",
+      "size_bytes": 23628
+    },
+    {
+      "module": "HH3C-OID-MIB",
+      "vendor_scope": "H3C",
+      "bundle_path": "mibs/h3c/_upstream/comware/HH3C-OID-MIB",
+      "upstream_path": "mibs/comware/HH3C-OID-MIB",
+      "sha256": "2f75b70cf3922377135544d36cab5f3e87feef2f6ac0f91af2d14d1529b20f4a",
+      "size_bytes": 20140
+    },
+    {
+      "module": "HH3C-TRANSCEIVER-INFO-MIB",
+      "vendor_scope": "H3C",
+      "bundle_path": "mibs/h3c/_upstream/comware/HH3C-TRANSCEIVER-INFO-MIB",
+      "upstream_path": "mibs/comware/HH3C-TRANSCEIVER-INFO-MIB",
+      "sha256": "574e358a20300ae93eac00ccd5ed1f554a90f87b3449fd3541f8c807469ae5c1",
+      "size_bytes": 44424
+    },
+    {
+      "module": "HUAWEI-DEVICE-MIB",
+      "vendor_scope": "Huawei",
+      "bundle_path": "mibs/huawei/_upstream/huawei/HUAWEI-DEVICE-MIB",
+      "upstream_path": "mibs/huawei/HUAWEI-DEVICE-MIB",
+      "sha256": "3bc9e1d78bf45fd6277b5fe9ef06b74da13e408eb87bfe55e96e765c61be0fcf",
+      "size_bytes": 444516
+    },
+    {
+      "module": "HUAWEI-ENERGYMNGT-MIB",
+      "vendor_scope": "Huawei",
+      "bundle_path": "mibs/huawei/_upstream/huawei/HUAWEI-ENERGYMNGT-MIB",
+      "upstream_path": "mibs/huawei/HUAWEI-ENERGYMNGT-MIB",
+      "sha256": "40fb13e425e1d283edbbf06d57eeaba07442471093fda26f003f75395dff9147",
+      "size_bytes": 32865
+    },
+    {
+      "module": "HUAWEI-ENTITY-EXTENT-MIB",
+      "vendor_scope": "Huawei",
+      "bundle_path": "mibs/huawei/_upstream/huawei/HUAWEI-ENTITY-EXTENT-MIB",
+      "upstream_path": "mibs/huawei/HUAWEI-ENTITY-EXTENT-MIB",
+      "sha256": "fbb95fb6eb1c17f8238704fae598589876d2ee2b9efe0673cb84a6df414d398c",
+      "size_bytes": 299776
+    },
+    {
+      "module": "HUAWEI-POWER-MIB",
+      "vendor_scope": "Huawei",
+      "bundle_path": "mibs/huawei/_upstream/huawei/HUAWEI-POWER-MIB",
+      "upstream_path": "mibs/huawei/HUAWEI-POWER-MIB",
+      "sha256": "bfd98bc181b7239bd804e431ed207dce38973e0538f8c3cd283e0bd58ccc0757",
+      "size_bytes": 154460
+    },
+    {
+      "module": "HUAWEI-SERVER-IBMC-MIB",
+      "vendor_scope": "Huawei",
+      "bundle_path": "mibs/huawei/_upstream/huawei/HUAWEI-SERVER-IBMC-MIB",
+      "upstream_path": "mibs/huawei/HUAWEI-SERVER-IBMC-MIB",
+      "sha256": "1f7aab30c333387e42f08d143c62730ac3e67561c8988c30a5a37eda8030b079",
+      "size_bytes": 681139
+    },
+    {
+      "module": "HUAWEI-SITE-MONITOR-MIB",
+      "vendor_scope": "Huawei",
+      "bundle_path": "mibs/huawei/_upstream/huawei/HUAWEI-SITE-MONITOR-MIB",
+      "upstream_path": "mibs/huawei/HUAWEI-SITE-MONITOR-MIB",
+      "sha256": "9d997646d71abcc34fe7706aace242732ce15bfad8b63ac79681961b4e084e8b",
+      "size_bytes": 222294
+    },
+    {
+      "module": "HUAWEI-STACK-MIB",
+      "vendor_scope": "Huawei",
+      "bundle_path": "mibs/huawei/_upstream/huawei/HUAWEI-STACK-MIB",
+      "upstream_path": "mibs/huawei/HUAWEI-STACK-MIB",
+      "sha256": "c6664527d5863e30662b988870227e7428df8f3ab04bdd93ee77eee0f0ad6e64",
+      "size_bytes": 122991
+    },
+    {
+      "module": "HUAWEI-STORAGE-HARDWARE-MIB",
+      "vendor_scope": "Huawei",
+      "bundle_path": "mibs/huawei/_upstream/huawei/HUAWEI-STORAGE-HARDWARE-MIB",
+      "upstream_path": "mibs/huawei/HUAWEI-STORAGE-HARDWARE-MIB",
+      "sha256": "e098481ab1eac067556f2d6502818bb11029c636bf0a2784b742176491880709",
+      "size_bytes": 53418
+    },
+    {
+      "module": "HUAWEI-STORAGE-SPACE-MIB",
+      "vendor_scope": "Huawei",
+      "bundle_path": "mibs/huawei/_upstream/huawei/HUAWEI-STORAGE-SPACE-MIB",
+      "upstream_path": "mibs/huawei/HUAWEI-STORAGE-SPACE-MIB",
+      "sha256": "6ccbd7464143b7cc9e03328335a85ac44223774991be292ad9c7c595e77cbf72",
+      "size_bytes": 35875
+    },
+    {
+      "module": "HUAWEI-WAN-MIB",
+      "vendor_scope": "Huawei",
+      "bundle_path": "mibs/huawei/_upstream/huawei/HUAWEI-WAN-MIB",
+      "upstream_path": "mibs/huawei/HUAWEI-WAN-MIB",
+      "sha256": "02a297746b962733376aadff77ed998d6a80b8912ed65a04bce3d0a626bbdd21",
+      "size_bytes": 70333
+    },
+    {
+      "module": "HUAWEI-WLAN-CONFIGURATION-MIB",
+      "vendor_scope": "Huawei",
+      "bundle_path": "mibs/huawei/_upstream/huawei/HUAWEI-WLAN-CONFIGURATION-MIB",
+      "upstream_path": "mibs/huawei/HUAWEI-WLAN-CONFIGURATION-MIB",
+      "sha256": "bbdd29f72f805bb1dcdaf9c0671fa7fc3dc6677f0f8e4c1a265fc278cfd5c9bf",
+      "size_bytes": 905423
+    },
+    {
+      "module": "HUAWEI-XPON-MIB",
+      "vendor_scope": "Huawei",
+      "bundle_path": "mibs/huawei/_upstream/huawei/HUAWEI-XPON-MIB",
+      "upstream_path": "mibs/huawei/HUAWEI-XPON-MIB",
+      "sha256": "563f678d0437927489be25d09924579236bedbe01ed57c177642f3d064f62507",
+      "size_bytes": 970792
+    },
+    {
+      "module": "HWMUSA-DEV-MIB",
+      "vendor_scope": "Huawei",
+      "bundle_path": "mibs/huawei/_upstream/huawei/HWMUSA-DEV-MIB",
+      "upstream_path": "mibs/huawei/HWMUSA-DEV-MIB",
+      "sha256": "94997fa04fb3b133a89dccc99ae2c79634c8465e308f9b2621d3c84c8f94c229",
+      "size_bytes": 29283
+    },
+    {
+      "module": "OPTIX-BOARD-MANAGE-MIB",
+      "vendor_scope": "Huawei",
+      "bundle_path": "mibs/huawei/_upstream/huawei/OPTIX-BOARD-MANAGE-MIB",
+      "upstream_path": "mibs/huawei/OPTIX-BOARD-MANAGE-MIB",
+      "sha256": "092e3dfe1d44721928a9b4c1399d491a2b88c24326896f3190cec74efd5d41e1",
+      "size_bytes": 15409
+    },
+    {
+      "module": "OPTIX-MISC-MIB",
+      "vendor_scope": "Huawei",
+      "bundle_path": "mibs/huawei/_upstream/huawei/OPTIX-MISC-MIB",
+      "upstream_path": "mibs/huawei/OPTIX-MISC-MIB",
+      "sha256": "c4d2a76abea8add66528acf8ee85fd894da983cacfd5c59261b164575bb069d5",
+      "size_bytes": 21292
+    },
+    {
+      "module": "OPTIX-NE-MIB",
+      "vendor_scope": "Huawei",
+      "bundle_path": "mibs/huawei/_upstream/huawei/OPTIX-NE-MIB",
+      "upstream_path": "mibs/huawei/OPTIX-NE-MIB",
+      "sha256": "31d4592ced74a08c8d3fb7157f3091a43635adcc1070ab74667ead53f0f864f4",
+      "size_bytes": 12668
+    },
+    {
+      "module": "OPTIX-RTN-ODU-MGR-MIB",
+      "vendor_scope": "Huawei",
+      "bundle_path": "mibs/huawei/_upstream/huawei/OPTIX-RTN-ODU-MGR-MIB",
+      "upstream_path": "mibs/huawei/OPTIX-RTN-ODU-MGR-MIB",
+      "sha256": "171769c722936853a13a29b996f140deda78ceaba8ad9b38b1f32c87a750ed93",
+      "size_bytes": 63654
+    },
+    {
+      "module": "UPS-MIB",
+      "vendor_scope": "Huawei",
+      "bundle_path": "mibs/huawei/_upstream/UPS-MIB",
+      "upstream_path": "mibs/UPS-MIB",
+      "sha256": "01cddd2c38286ca4f8748b509e0228161e8717f6935a954bd7f7d766ec757ee3",
+      "size_bytes": 66892
+    },
+    {
+      "module": "JNX-OPT-IF-EXT-MIB",
+      "vendor_scope": "Juniper",
+      "bundle_path": "mibs/juniper/_upstream/juniper/junos/JNX-OPT-IF-EXT-MIB",
+      "upstream_path": "mibs/juniper/junos/JNX-OPT-IF-EXT-MIB",
+      "sha256": "63cb8f6c9529a02d475346d1e20d1818dad824ab128875fdec20cbb8b082311f",
+      "size_bytes": 108388
+    },
+    {
+      "module": "JUNIPER-ALARM-MIB",
+      "vendor_scope": "Juniper",
+      "bundle_path": "mibs/juniper/_upstream/juniper/junos/JUNIPER-ALARM-MIB",
+      "upstream_path": "mibs/juniper/junos/JUNIPER-ALARM-MIB",
+      "sha256": "788b45cfbe4918e0a3854d9241d43c0ee0ba6224d3facb90d8980d0185f6fb87",
+      "size_bytes": 4434
+    },
+    {
+      "module": "JUNIPER-DOM-MIB",
+      "vendor_scope": "Juniper",
+      "bundle_path": "mibs/juniper/_upstream/juniper/junos/JUNIPER-DOM-MIB",
+      "upstream_path": "mibs/juniper/junos/JUNIPER-DOM-MIB",
+      "sha256": "20b308276d242ae1462a042b96c6ed4674724c48670093e57325639b0baf71b3",
+      "size_bytes": 23707
+    },
+    {
+      "module": "JUNIPER-IFOPTICS-MIB",
+      "vendor_scope": "Juniper",
+      "bundle_path": "mibs/juniper/_upstream/juniper/junos/JUNIPER-IFOPTICS-MIB",
+      "upstream_path": "mibs/juniper/junos/JUNIPER-IFOPTICS-MIB",
+      "sha256": "d105a327c9e6eee46e8770f98851970c8deda89e0f7bf7b37f6738a5d0787c6b",
+      "size_bytes": 309367
+    },
+    {
+      "module": "JUNIPER-MIB",
+      "vendor_scope": "Juniper",
+      "bundle_path": "mibs/juniper/_upstream/juniper/JUNIPER-MIB",
+      "upstream_path": "mibs/juniper/JUNIPER-MIB",
+      "sha256": "d3b027c8a21aa1411ad41ae7e08ea826005f9d27ec294a4201ba19aa271b6ecd",
+      "size_bytes": 94439
+    },
+    {
+      "module": "JUNIPER-RPM-MIB",
+      "vendor_scope": "Juniper",
+      "bundle_path": "mibs/juniper/_upstream/juniper/junos/JUNIPER-RPM-MIB",
+      "upstream_path": "mibs/juniper/junos/JUNIPER-RPM-MIB",
+      "sha256": "530ef5696d0dc1679f52c959a784f4d6ecf13f1e2a82f5d8e8efdba4111c3797",
+      "size_bytes": 28916
+    },
+    {
+      "module": "JUNIPER-SRX5000-SPU-MONITORING-MIB",
+      "vendor_scope": "Juniper",
+      "bundle_path": "mibs/juniper/_upstream/juniper/junos/JUNIPER-SRX5000-SPU-MONITORING-MIB",
+      "upstream_path": "mibs/juniper/junos/JUNIPER-SRX5000-SPU-MONITORING-MIB",
+      "sha256": "ea70a033ff5c99132f5c087746614ae3d1fdab528941272e817966233d00b2eb",
+      "size_bytes": 14857
+    },
+    {
+      "module": "JUNIPER-VIRTUALCHASSIS-MIB",
+      "vendor_scope": "Juniper",
+      "bundle_path": "mibs/juniper/_upstream/juniper/junos/JUNIPER-VIRTUALCHASSIS-MIB",
+      "upstream_path": "mibs/juniper/junos/JUNIPER-VIRTUALCHASSIS-MIB",
+      "sha256": "40621fd4513da2a48019cf810099af5cc30887899825a75d0606cb8566f20383",
+      "size_bytes": 20082
+    },
+    {
+      "module": "Juniper-System-MIB",
+      "vendor_scope": "Juniper",
+      "bundle_path": "mibs/juniper/_upstream/juniper/junose/Juniper-System-MIB",
+      "upstream_path": "mibs/juniper/junose/Juniper-System-MIB",
+      "sha256": "6b9c603031e657fe00cebd172094bec6d53bfe78260782119f91cd0e3c7c587f",
+      "size_bytes": 163226
+    },
+    {
+      "module": "NETSCREEN-RESOURCE-MIB",
+      "vendor_scope": "Juniper",
+      "bundle_path": "mibs/juniper/_upstream/screenos/NETSCREEN-RESOURCE-MIB",
+      "upstream_path": "mibs/screenos/NETSCREEN-RESOURCE-MIB",
+      "sha256": "75d1e2b496363a2a0b2c45f46d9e6ee3d75ec35aea9ec8fb37e1358a7947175b",
+      "size_bytes": 8281
+    },
+    {
+      "module": "TRAPEZE-NETWORKS-SYSTEM-MIB",
+      "vendor_scope": "Juniper",
+      "bundle_path": "mibs/juniper/_upstream/juniper/TRAPEZE-NETWORKS-SYSTEM-MIB",
+      "upstream_path": "mibs/juniper/TRAPEZE-NETWORKS-SYSTEM-MIB",
+      "sha256": "ae4446c80ef09940fac74b9eb758ae4a45faaff59ef552f33abae26bb8cff02f",
+      "size_bytes": 10116
+    },
+    {
+      "module": "MPIOS-MIB",
+      "vendor_scope": "Maipu",
+      "bundle_path": "mibs/maipu/_upstream/maipu/MPIOS-MIB",
+      "upstream_path": "mibs/maipu/MPIOS-MIB",
+      "sha256": "2bd06dcab458d546cd95c0d7831b440172acaf8eae1576559faffe91aad4bd5d",
+      "size_bytes": 83586
+    },
+    {
+      "module": "IP-FORWARD-MIB",
+      "vendor_scope": "Standard",
+      "bundle_path": "mibs/standard/_upstream/IP-FORWARD-MIB",
+      "upstream_path": "mibs/IP-FORWARD-MIB",
+      "sha256": "db7d4e1d57263c6862018a65298e958766ffe15ac6d37de159d206662648b21f",
+      "size_bytes": 47563
+    },
+    {
+      "module": "IPV6-MIB",
+      "vendor_scope": "Standard",
+      "bundle_path": "mibs/standard/_upstream/IPV6-MIB",
+      "upstream_path": "mibs/IPV6-MIB",
+      "sha256": "4387d54f518e85fa37c770c6998568000d049b68c90c1cd02a0ffde3fcde0f63",
+      "size_bytes": 58124
+    },
+    {
+      "module": "MIKROTIK-MIB",
+      "vendor_scope": "MikroTik",
+      "bundle_path": "mibs/mikrotik/_upstream/mikrotik/MIKROTIK-MIB",
+      "upstream_path": "mibs/mikrotik/MIKROTIK-MIB",
+      "sha256": "8d4ab34298d10bdcec05c69502371c0d0c4d3934f0745ec45e81d0f07dd170dd",
+      "size_bytes": 123756
+    },
+    {
+      "module": "ALU-MICROWAVE-MIB",
+      "vendor_scope": "Nokia",
+      "bundle_path": "mibs/nokia/_upstream/nokia/ALU-MICROWAVE-MIB",
+      "upstream_path": "mibs/nokia/ALU-MICROWAVE-MIB",
+      "sha256": "eb3dcd7f7610ce6f4921a2a48d31d6b208287f0ef631fcdf58c3b36dc6b88c91",
+      "size_bytes": 100713
+    },
+    {
+      "module": "ASAM-ALARM-MIB",
+      "vendor_scope": "Nokia",
+      "bundle_path": "mibs/nokia/_upstream/nokia/ASAM-ALARM-MIB",
+      "upstream_path": "mibs/nokia/ASAM-ALARM-MIB",
+      "sha256": "5b42626f91ee6739ec2b237b046e813dde87ce4ca1d9e0898f865022b5b32f0d",
+      "size_bytes": 121333
+    },
+    {
+      "module": "ASAM-EQUIP-MIB",
+      "vendor_scope": "Nokia",
+      "bundle_path": "mibs/nokia/_upstream/nokia/ASAM-EQUIP-MIB",
+      "upstream_path": "mibs/nokia/ASAM-EQUIP-MIB",
+      "sha256": "baa1ca0b2f183b2c5eb623846d8f6111c45a37ed59eabd720c079493f7055381",
+      "size_bytes": 191353
+    },
+    {
+      "module": "ASAM-SYSTEM-MIB",
+      "vendor_scope": "Nokia",
+      "bundle_path": "mibs/nokia/_upstream/nokia/ASAM-SYSTEM-MIB",
+      "upstream_path": "mibs/nokia/ASAM-SYSTEM-MIB",
+      "sha256": "f2b3d0974a1258278ecbb8dda7d0b6c6f8b5d42b59a8f2af670dbdb683f27533",
+      "size_bytes": 148043
+    },
+    {
+      "module": "OPTICSIM-RADIO-TRS-COMMON-MIB",
+      "vendor_scope": "Nokia",
+      "bundle_path": "mibs/nokia/_upstream/nokia/wavence/OPTICSIM-RADIO-TRS-COMMON-MIB",
+      "upstream_path": "mibs/nokia/wavence/OPTICSIM-RADIO-TRS-COMMON-MIB",
+      "sha256": "d56a6f00279e3790143cc6dac37542c0e58b2cbefbd7ffecd143e98c1e0b3fe5",
+      "size_bytes": 151184
+    },
+    {
+      "module": "TIMETRA-BGP-MIB",
+      "vendor_scope": "Nokia",
+      "bundle_path": "mibs/nokia/_upstream/nokia/TIMETRA-BGP-MIB",
+      "upstream_path": "mibs/nokia/TIMETRA-BGP-MIB",
+      "sha256": "661939506a2a5c6caaa84c3071689a8479e8d5ecc0f03a45e533449a15193632",
+      "size_bytes": 1020326
+    },
+    {
+      "module": "TIMETRA-CELLULAR-MIB",
+      "vendor_scope": "Nokia",
+      "bundle_path": "mibs/nokia/_upstream/nokia/TIMETRA-CELLULAR-MIB",
+      "upstream_path": "mibs/nokia/TIMETRA-CELLULAR-MIB",
+      "sha256": "12062dd524222cc7c7e1075c99de081b3fdfdf3a93190cd6f72e3e8d5bc77cd6",
+      "size_bytes": 121037
+    },
+    {
+      "module": "TIMETRA-CHASSIS-MIB",
+      "vendor_scope": "Nokia",
+      "bundle_path": "mibs/nokia/_upstream/nokia/TIMETRA-CHASSIS-MIB",
+      "upstream_path": "mibs/nokia/TIMETRA-CHASSIS-MIB",
+      "sha256": "7c1f277309a646bbb0fcf35f4b86cc1169b9cd2f36b42b02a95ba441bfc0fa7e",
+      "size_bytes": 1648410
+    },
+    {
+      "module": "TIMETRA-NAT-MIB",
+      "vendor_scope": "Nokia",
+      "bundle_path": "mibs/nokia/_upstream/nokia/TIMETRA-NAT-MIB",
+      "upstream_path": "mibs/nokia/TIMETRA-NAT-MIB",
+      "sha256": "a2e041d885e5be111f8eed5787170f8f892ff224ffbc73791e616b615888cb57",
+      "size_bytes": 826310
+    },
+    {
+      "module": "TIMETRA-PORT-MIB",
+      "vendor_scope": "Nokia",
+      "bundle_path": "mibs/nokia/_upstream/nokia/TIMETRA-PORT-MIB",
+      "upstream_path": "mibs/nokia/TIMETRA-PORT-MIB",
+      "sha256": "72e0f4a99ba3d2edbc33cf344adf4f03991affd75dcd2198ac2b6a4429394090",
+      "size_bytes": 1423291
+    },
+    {
+      "module": "TIMETRA-SUBSCRIBER-MGMT-MIB",
+      "vendor_scope": "Nokia",
+      "bundle_path": "mibs/nokia/_upstream/nokia/TIMETRA-SUBSCRIBER-MGMT-MIB",
+      "upstream_path": "mibs/nokia/TIMETRA-SUBSCRIBER-MGMT-MIB",
+      "sha256": "b20177760e089943c95b7290a0773ec9d031e96103b627b4bbfa8a5ef0e0c0ff",
+      "size_bytes": 2588526
+    },
+    {
+      "module": "TIMETRA-SYSTEM-MIB",
+      "vendor_scope": "Nokia",
+      "bundle_path": "mibs/nokia/_upstream/nokia/TIMETRA-SYSTEM-MIB",
+      "upstream_path": "mibs/nokia/TIMETRA-SYSTEM-MIB",
+      "sha256": "cd45be71133a07d4b7598c5b629c180e7ef235dd724cd2f899d9f20f4d2d922c",
+      "size_bytes": 782396
+    },
+    {
+      "module": "TROPIC-ALARMPANEL-MIB",
+      "vendor_scope": "Nokia",
+      "bundle_path": "mibs/nokia/_upstream/nokia/1830/TROPIC-ALARMPANEL-MIB",
+      "upstream_path": "mibs/nokia/1830/TROPIC-ALARMPANEL-MIB",
+      "sha256": "c22c2d54257009196428a9211ef0fd8625cdb680ddc64ae1a0fb4d54e8ee954c",
+      "size_bytes": 20690
+    },
+    {
+      "module": "TROPIC-AMPLIFIER-MIB",
+      "vendor_scope": "Nokia",
+      "bundle_path": "mibs/nokia/_upstream/nokia/1830/TROPIC-AMPLIFIER-MIB",
+      "upstream_path": "mibs/nokia/1830/TROPIC-AMPLIFIER-MIB",
+      "sha256": "4cce226fe9f29db71ab075b4429e6e6a76018e88c4cf11ba5ba695b67a96326c",
+      "size_bytes": 123220
+    },
+    {
+      "module": "TROPIC-CARD-MIB",
+      "vendor_scope": "Nokia",
+      "bundle_path": "mibs/nokia/_upstream/nokia/1830/TROPIC-CARD-MIB",
+      "upstream_path": "mibs/nokia/1830/TROPIC-CARD-MIB",
+      "sha256": "0640c6036435de7f9743b2ecd0204da39c6a669ab04e4e4db60578898a9353ca",
+      "size_bytes": 53173
+    },
+    {
+      "module": "TROPIC-CONTROLCARD-MIB",
+      "vendor_scope": "Nokia",
+      "bundle_path": "mibs/nokia/_upstream/nokia/1830/TROPIC-CONTROLCARD-MIB",
+      "upstream_path": "mibs/nokia/1830/TROPIC-CONTROLCARD-MIB",
+      "sha256": "79650c03575700d83103365a4e032dab28bbaf7aba9131deeecfb2fea5642ab4",
+      "size_bytes": 9696
+    },
+    {
+      "module": "TROPIC-FAN-MIB",
+      "vendor_scope": "Nokia",
+      "bundle_path": "mibs/nokia/_upstream/nokia/1830/TROPIC-FAN-MIB",
+      "upstream_path": "mibs/nokia/1830/TROPIC-FAN-MIB",
+      "sha256": "e8fe0ef3cccd9596969fee0879eb85f19792a114c3dc92eae2af0765e6b85ed0",
+      "size_bytes": 8777
+    },
+    {
+      "module": "TROPIC-OCH-MIB",
+      "vendor_scope": "Nokia",
+      "bundle_path": "mibs/nokia/_upstream/nokia/1830/TROPIC-OCH-MIB",
+      "upstream_path": "mibs/nokia/1830/TROPIC-OCH-MIB",
+      "sha256": "92d410250a4050c15c88dd3a014fff9cdc44074199c76fff04caa82554409729",
+      "size_bytes": 89437
+    },
+    {
+      "module": "TROPIC-OPTICALPORT-MIB",
+      "vendor_scope": "Nokia",
+      "bundle_path": "mibs/nokia/_upstream/nokia/1830/TROPIC-OPTICALPORT-MIB",
+      "upstream_path": "mibs/nokia/1830/TROPIC-OPTICALPORT-MIB",
+      "sha256": "295f61bb7eeef6687e8f1c3153bff5b5d96b2ecf1dd145761e13d4560283a97c",
+      "size_bytes": 1836871
+    },
+    {
+      "module": "TROPIC-PSD-MIB",
+      "vendor_scope": "Nokia",
+      "bundle_path": "mibs/nokia/_upstream/nokia/1830/TROPIC-PSD-MIB",
+      "upstream_path": "mibs/nokia/1830/TROPIC-PSD-MIB",
+      "sha256": "5319b8268b4aa0c37114b73b19577f2eac83ee404cd66a3f37875f4d939568f1",
+      "size_bytes": 213029
+    },
+    {
+      "module": "RAISECOM-COMMON-MANAGEMENT-MIB",
+      "vendor_scope": "Raisecom",
+      "bundle_path": "mibs/raisecom/_upstream/raisecom/RAISECOM-COMMON-MANAGEMENT-MIB",
+      "upstream_path": "mibs/raisecom/RAISECOM-COMMON-MANAGEMENT-MIB",
+      "sha256": "287d281d212785c29952809e32e3dd644edd61af4e76148307e5e8b28849d2f5",
+      "size_bytes": 18895
+    },
+    {
+      "module": "RAISECOM-FANMONITOR-MIB",
+      "vendor_scope": "Raisecom",
+      "bundle_path": "mibs/raisecom/_upstream/raisecom/RAISECOM-FANMONITOR-MIB",
+      "upstream_path": "mibs/raisecom/RAISECOM-FANMONITOR-MIB",
+      "sha256": "2f3daf3681398722bf0105a11d95eacdfde8643e116ba4e40e8588668dc5162b",
+      "size_bytes": 10934
+    },
+    {
+      "module": "RAISECOM-OPTICAL-TRANSCEIVER-MIB",
+      "vendor_scope": "Raisecom",
+      "bundle_path": "mibs/raisecom/_upstream/raisecom/RAISECOM-OPTICAL-TRANSCEIVER-MIB",
+      "upstream_path": "mibs/raisecom/RAISECOM-OPTICAL-TRANSCEIVER-MIB",
+      "sha256": "8fad5eec3add5023056ead45f8ab4b335f006558ae31a0f45be16a18e70050ae",
+      "size_bytes": 116677
+    },
+    {
+      "module": "RAISECOM-POWERMONITOR-MIB",
+      "vendor_scope": "Raisecom",
+      "bundle_path": "mibs/raisecom/_upstream/raisecom/RAISECOM-POWERMONITOR-MIB",
+      "upstream_path": "mibs/raisecom/RAISECOM-POWERMONITOR-MIB",
+      "sha256": "7fddd95ad1e7022e0ccd869be3a8a2d660251ec30f03d89e37c8ea8c47f2939c",
+      "size_bytes": 6022
+    },
+    {
+      "module": "RAISECOM-SYSTEM-MIB",
+      "vendor_scope": "Raisecom",
+      "bundle_path": "mibs/raisecom/_upstream/raisecom/RAISECOM-SYSTEM-MIB",
+      "upstream_path": "mibs/raisecom/RAISECOM-SYSTEM-MIB",
+      "sha256": "e01ba6ac7a182816f6f029b0e25beba935c582a8cb89f940b32613e98ed0e4a9",
+      "size_bytes": 57192
+    },
+    {
+      "module": "ROSMGMT-ALARM-MGMT-MIB",
+      "vendor_scope": "Raisecom",
+      "bundle_path": "mibs/raisecom/_upstream/raisecom/ROSMGMT-ALARM-MGMT-MIB",
+      "upstream_path": "mibs/raisecom/ROSMGMT-ALARM-MGMT-MIB",
+      "sha256": "c28adcddb18ff3a99a45f8dfa42757d8a2bd31d71b95d0378bc631b866896584",
+      "size_bytes": 16988
+    },
+    {
+      "module": "ROSMGMT-COMMON-MANAGEMENT-MIB",
+      "vendor_scope": "Raisecom",
+      "bundle_path": "mibs/raisecom/_upstream/raisecom/ROSMGMT-COMMON-MANAGEMENT-MIB",
+      "upstream_path": "mibs/raisecom/ROSMGMT-COMMON-MANAGEMENT-MIB",
+      "sha256": "33987ed08e7a4fb68578227ccbb91a8a3000cb5446fa33cdb8310a041dc83108",
+      "size_bytes": 4950
+    },
+    {
+      "module": "ROSMGMT-MEMORY-MIB",
+      "vendor_scope": "Raisecom",
+      "bundle_path": "mibs/raisecom/_upstream/raisecom/ROSMGMT-MEMORY-MIB",
+      "upstream_path": "mibs/raisecom/ROSMGMT-MEMORY-MIB",
+      "sha256": "4c5eeb77048639e0be5d5618b709155714d7a95f9696b6f66d24ba69d820cf9d",
+      "size_bytes": 4653
+    },
+    {
+      "module": "ROSMGMT-OPTICAL-TRANSCEIVER-MIB",
+      "vendor_scope": "Raisecom",
+      "bundle_path": "mibs/raisecom/_upstream/raisecom/ROSMGMT-OPTICAL-TRANSCEIVER-MIB",
+      "upstream_path": "mibs/raisecom/ROSMGMT-OPTICAL-TRANSCEIVER-MIB",
+      "sha256": "c8a82fcef4da35b8103d37dcaadc55a20c7d75ab6e06caa94265de90f0aab96e",
+      "size_bytes": 83926
+    },
+    {
+      "module": "ROSMGMT-SYSTEM-MIB",
+      "vendor_scope": "Raisecom",
+      "bundle_path": "mibs/raisecom/_upstream/raisecom/ROSMGMT-SYSTEM-MIB",
+      "upstream_path": "mibs/raisecom/ROSMGMT-SYSTEM-MIB",
+      "sha256": "2c4ccc0beb81334c39e8631e43c455b4deca6e0f1f53692cf7373c990a0ab10f",
+      "size_bytes": 27514
+    },
+    {
+      "module": "ROSMGMT-VERSION-MIB",
+      "vendor_scope": "Raisecom",
+      "bundle_path": "mibs/raisecom/_upstream/raisecom/ROSMGMT-VERSION-MIB",
+      "upstream_path": "mibs/raisecom/ROSMGMT-VERSION-MIB",
+      "sha256": "c703ee50f66966dfe13d880e366269dcccf6dc31116a7fbb085136a9b434a78d",
+      "size_bytes": 4121
+    },
+    {
+      "module": "RUCKUS-SYSTEM-MIB",
+      "vendor_scope": "Ruckus",
+      "bundle_path": "mibs/ruckus/_upstream/ruckus/RUCKUS-SYSTEM-MIB",
+      "upstream_path": "mibs/ruckus/RUCKUS-SYSTEM-MIB",
+      "sha256": "5f485d2d1fa35548028e5e1da0831f8f4013386aad9c87b27151d450d727be74",
+      "size_bytes": 5812
+    },
+    {
+      "module": "RUCKUS-UNLEASHED-SYSTEM-MIB",
+      "vendor_scope": "Ruckus",
+      "bundle_path": "mibs/ruckus/_upstream/ruckus/RUCKUS-UNLEASHED-SYSTEM-MIB",
+      "upstream_path": "mibs/ruckus/RUCKUS-UNLEASHED-SYSTEM-MIB",
+      "sha256": "fb5157cbbf0c7a9a80bebf7ec3d1be0e0e4adc2ca1b9901f3fea1c612fd08873",
+      "size_bytes": 12933
+    },
+    {
+      "module": "RUCKUS-ZD-SYSTEM-MIB",
+      "vendor_scope": "Ruckus",
+      "bundle_path": "mibs/ruckus/_upstream/ruckus/RUCKUS-ZD-SYSTEM-MIB",
+      "upstream_path": "mibs/ruckus/RUCKUS-ZD-SYSTEM-MIB",
+      "sha256": "658d24c7d4ec43ab7ea6ac2312e00dd240ac695b9cf0d4ede8f296d94f528d75",
+      "size_bytes": 45603
+    },
+    {
+      "module": "FS-FIBER-MIB",
+      "vendor_scope": "Ruijie",
+      "bundle_path": "mibs/ruijie/_upstream/fs/FS-FIBER-MIB",
+      "upstream_path": "mibs/fs/FS-FIBER-MIB",
+      "sha256": "5087bd4eb8f62ae6fa46aeae3110de84a59441cfc087904d8f91320375630a6c",
+      "size_bytes": 119055
+    },
+    {
+      "module": "FS-MEMORY-MIB",
+      "vendor_scope": "Ruijie",
+      "bundle_path": "mibs/ruijie/_upstream/fs/FS-MEMORY-MIB",
+      "upstream_path": "mibs/fs/FS-MEMORY-MIB",
+      "sha256": "5051ec901b2b24679b96bc1431ed63eb3c993a71e8593c6bdfadab947083947c",
+      "size_bytes": 15034
+    },
+    {
+      "module": "FS-POE-MIB",
+      "vendor_scope": "Ruijie",
+      "bundle_path": "mibs/ruijie/_upstream/fs/FS-POE-MIB",
+      "upstream_path": "mibs/fs/FS-POE-MIB",
+      "sha256": "9373809d05843597f5202993343048ef54cfe907438fe8d49fc2d12b022163e3",
+      "size_bytes": 4106
+    },
+    {
+      "module": "FS-PROCESS-MIB",
+      "vendor_scope": "Ruijie",
+      "bundle_path": "mibs/ruijie/_upstream/fs/FS-PROCESS-MIB",
+      "upstream_path": "mibs/fs/FS-PROCESS-MIB",
+      "sha256": "f8dd267311629cded5299e64aea63d2be37b06ed5d19822e42ab812843ba7f67",
+      "size_bytes": 10623
+    },
+    {
+      "module": "FS-SYSTEM-MIB",
+      "vendor_scope": "Ruijie",
+      "bundle_path": "mibs/ruijie/_upstream/fs/FS-SYSTEM-MIB",
+      "upstream_path": "mibs/fs/FS-SYSTEM-MIB",
+      "sha256": "df3a0b283ddd7aafd680f4ccdf61876c3c882d958b9ddc4f8df3386dc34c75d9",
+      "size_bytes": 80688
+    },
+    {
+      "module": "RUIJIE-FIBER-MIB",
+      "vendor_scope": "Ruijie",
+      "bundle_path": "mibs/ruijie/_upstream/ruijie/RUIJIE-FIBER-MIB",
+      "upstream_path": "mibs/ruijie/RUIJIE-FIBER-MIB",
+      "sha256": "b1a20f17301da6c95cd76a46dd5d4060052e99b766d8d3100f26eb0047e9a13e",
+      "size_bytes": 134139
+    },
+    {
+      "module": "RUIJIE-MEMORY-MIB",
+      "vendor_scope": "Ruijie",
+      "bundle_path": "mibs/ruijie/_upstream/ruijie/RUIJIE-MEMORY-MIB",
+      "upstream_path": "mibs/ruijie/RUIJIE-MEMORY-MIB",
+      "sha256": "40952841c55571549293b7430e1222926ff7bc06266c023046a6065de5f63e63",
+      "size_bytes": 15741
+    },
+    {
+      "module": "RUIJIE-PROCESS-MIB",
+      "vendor_scope": "Ruijie",
+      "bundle_path": "mibs/ruijie/_upstream/ruijie/RUIJIE-PROCESS-MIB",
+      "upstream_path": "mibs/ruijie/RUIJIE-PROCESS-MIB",
+      "sha256": "734a218b4220cd614676ea062e2ae4706a4a879f5d401371afee74f4194651ee",
+      "size_bytes": 11132
+    },
+    {
+      "module": "RUIJIE-SYSTEM-MIB",
+      "vendor_scope": "Ruijie",
+      "bundle_path": "mibs/ruijie/_upstream/ruijie/RUIJIE-SYSTEM-MIB",
+      "upstream_path": "mibs/ruijie/RUIJIE-SYSTEM-MIB",
+      "sha256": "7829ef50b7617107bb81bf40bd837fefedb277cc8f778d9f167613547fafb91c",
+      "size_bytes": 112193
+    },
+    {
+      "module": "LLDP-MIB",
+      "vendor_scope": "Standard",
+      "bundle_path": "mibs/standard/_upstream/LLDP-MIB",
+      "upstream_path": "mibs/LLDP-MIB",
+      "sha256": "858de40260221b01854fb686f82fb4e23a3c0838052c4119dc3a015aa0cb478c",
+      "size_bytes": 78932
+    },
+    {
+      "module": "TPLINK-DDMBIASCURTHRESHOLD-MIB",
+      "vendor_scope": "TP-Link",
+      "bundle_path": "mibs/tp-link/_upstream/tplink/TPLINK-DDMBIASCURTHRESHOLD-MIB",
+      "upstream_path": "mibs/tplink/TPLINK-DDMBIASCURTHRESHOLD-MIB",
+      "sha256": "e8df3843d01381e88e8c83badba1e200bce9b5dc9c45cbfbe98911f5944fb121",
+      "size_bytes": 3407
+    },
+    {
+      "module": "TPLINK-DDMRXPOWTHRESHOLD-MIB",
+      "vendor_scope": "TP-Link",
+      "bundle_path": "mibs/tp-link/_upstream/tplink/TPLINK-DDMRXPOWTHRESHOLD-MIB",
+      "upstream_path": "mibs/tplink/TPLINK-DDMRXPOWTHRESHOLD-MIB",
+      "sha256": "97be9c74d4e60f94e7f02cf2aa0e871f13f6221c9db72bf18417b79b849edfec",
+      "size_bytes": 3340
+    },
+    {
+      "module": "TPLINK-DDMSTATUS-MIB",
+      "vendor_scope": "TP-Link",
+      "bundle_path": "mibs/tp-link/_upstream/tplink/TPLINK-DDMSTATUS-MIB",
+      "upstream_path": "mibs/tplink/TPLINK-DDMSTATUS-MIB",
+      "sha256": "27466125da00639b6a54664d7f81901041a0dbc8471102aff86effe03d619c6e",
+      "size_bytes": 3993
+    },
+    {
+      "module": "TPLINK-DDMTEMPTHRESHOLD-MIB",
+      "vendor_scope": "TP-Link",
+      "bundle_path": "mibs/tp-link/_upstream/tplink/TPLINK-DDMTEMPTHRESHOLD-MIB",
+      "upstream_path": "mibs/tplink/TPLINK-DDMTEMPTHRESHOLD-MIB",
+      "sha256": "cad0f069a7288e6d10952ba86fef896efecb8c923bfa82129c8785a8ec3fb03a",
+      "size_bytes": 3321
+    },
+    {
+      "module": "TPLINK-DDMTXPOWTHRESHOLD-MIB",
+      "vendor_scope": "TP-Link",
+      "bundle_path": "mibs/tp-link/_upstream/tplink/TPLINK-DDMTXPOWTHRESHOLD-MIB",
+      "upstream_path": "mibs/tplink/TPLINK-DDMTXPOWTHRESHOLD-MIB",
+      "sha256": "dd4f16e4655450e62430a3ab1235ae60bc9b3c2f5f2bf240cb157a7f25b405c6",
+      "size_bytes": 3340
+    },
+    {
+      "module": "TPLINK-DDMVOLTHRESHOLD-MIB",
+      "vendor_scope": "TP-Link",
+      "bundle_path": "mibs/tp-link/_upstream/tplink/TPLINK-DDMVOLTHRESHOLD-MIB",
+      "upstream_path": "mibs/tplink/TPLINK-DDMVOLTHRESHOLD-MIB",
+      "sha256": "8bca006b2752e60e95c2e5658a8576692a59e015942f4b90aa80cde3c47d7c9d",
+      "size_bytes": 3289
+    },
+    {
+      "module": "TPLINK-POWER-OVER-ETHERNET-MIB",
+      "vendor_scope": "TP-Link",
+      "bundle_path": "mibs/tp-link/_upstream/tplink/TPLINK-POWER-OVER-ETHERNET-MIB",
+      "upstream_path": "mibs/tplink/TPLINK-POWER-OVER-ETHERNET-MIB",
+      "sha256": "02c0c9ac6eae78431492ffba5730ed7ea4e0654381b882286061cccde1d309ca",
+      "size_bytes": 23816
+    },
+    {
+      "module": "TPLINK-SYSMONITOR-MIB",
+      "vendor_scope": "TP-Link",
+      "bundle_path": "mibs/tp-link/_upstream/tplink/TPLINK-SYSMONITOR-MIB",
+      "upstream_path": "mibs/tplink/TPLINK-SYSMONITOR-MIB",
+      "sha256": "ab517e93f41c6da2abfe57cbf42b05b419d63ed3bb739564badf6891b9263fc7",
+      "size_bytes": 7629
+    },
+    {
+      "module": "EdgeSwitch-BOXSERVICES-PRIVATE-MIB",
+      "vendor_scope": "Ubiquiti",
+      "bundle_path": "mibs/ubiquiti/_upstream/edgeswitch/EdgeSwitch-BOXSERVICES-PRIVATE-MIB",
+      "upstream_path": "mibs/edgeswitch/EdgeSwitch-BOXSERVICES-PRIVATE-MIB",
+      "sha256": "ee5f9f39ce3caefe6dd6e3bcdfe635f1336369ebcb7454cf4b3580821f36649f",
+      "size_bytes": 23230
+    },
+    {
+      "module": "EdgeSwitch-SWITCHING-MIB",
+      "vendor_scope": "Ubiquiti",
+      "bundle_path": "mibs/ubiquiti/_upstream/edgeswitch/EdgeSwitch-SWITCHING-MIB",
+      "upstream_path": "mibs/edgeswitch/EdgeSwitch-SWITCHING-MIB",
+      "sha256": "6989c4ec8bcf1cc21621e82664351d4f0080b0915f658191c537a278dca73eb3",
+      "size_bytes": 472934
+    },
+    {
+      "module": "IEEE802dot11-MIB",
+      "vendor_scope": "Ubiquiti",
+      "bundle_path": "mibs/ubiquiti/_upstream/IEEE802dot11-MIB",
+      "upstream_path": "mibs/IEEE802dot11-MIB",
+      "sha256": "638f81d7292b428a84de3a9fadea51ed283b11cf01122f3993ddfc50b3eb57f7",
+      "size_bytes": 115073
+    },
+    {
+      "module": "UBNT-AFLTU-MIB",
+      "vendor_scope": "Ubiquiti",
+      "bundle_path": "mibs/ubiquiti/_upstream/ubnt/UBNT-AFLTU-MIB",
+      "upstream_path": "mibs/ubnt/UBNT-AFLTU-MIB",
+      "sha256": "15c7d0460480b1530d6771dab7144a71365c759d7a2ec0a4e4d7f4d3d65a6130",
+      "size_bytes": 18919
+    },
+    {
+      "module": "UBNT-AirFIBER-MIB",
+      "vendor_scope": "Ubiquiti",
+      "bundle_path": "mibs/ubiquiti/_upstream/ubnt/UBNT-AirFIBER-MIB",
+      "upstream_path": "mibs/ubnt/UBNT-AirFIBER-MIB",
+      "sha256": "bcd9c47d6d4cd8aaeab6e6ca2e977dc7a6978a1f2717ab33e11304f91b6fd4b4",
+      "size_bytes": 43641
+    },
+    {
+      "module": "UBNT-AirMAX-MIB",
+      "vendor_scope": "Ubiquiti",
+      "bundle_path": "mibs/ubiquiti/_upstream/ubnt/UBNT-AirMAX-MIB",
+      "upstream_path": "mibs/ubnt/UBNT-AirMAX-MIB",
+      "sha256": "21aff0a385964b223ac95a9580330369dd8781fea19eedebc84c627be3d35d0a",
+      "size_bytes": 27769
+    },
+    {
+      "module": "UBNT-EdgeMAX-MIB",
+      "vendor_scope": "Ubiquiti",
+      "bundle_path": "mibs/ubiquiti/_upstream/ubnt/UBNT-EdgeMAX-MIB",
+      "upstream_path": "mibs/ubnt/UBNT-EdgeMAX-MIB",
+      "sha256": "daa221df406bb008b0d852b9efc992c87012cb889aad60ef32bf97fd050a672e",
+      "size_bytes": 12070
+    },
+    {
+      "module": "UBNT-UFIBER-MIB",
+      "vendor_scope": "Ubiquiti",
+      "bundle_path": "mibs/ubiquiti/_upstream/ubnt/UBNT-UFIBER-MIB",
+      "upstream_path": "mibs/ubnt/UBNT-UFIBER-MIB",
+      "sha256": "78908362375cc636103f57b7064ce87de4eef87628c1c9c457338002989bb20a",
+      "size_bytes": 18024
+    },
+    {
+      "module": "UI-AF60-MIB",
+      "vendor_scope": "Ubiquiti",
+      "bundle_path": "mibs/ubiquiti/_upstream/ubnt/UI-AF60-MIB",
+      "upstream_path": "mibs/ubnt/UI-AF60-MIB",
+      "sha256": "d7215c1a0f1b3b5be4e682a70cfb9618d299eed81fa6ca22ed957f57fcf63557",
+      "size_bytes": 13153
+    },
+    {
+      "module": "ZTE-AN-CHASSIS-MIB",
+      "vendor_scope": "ZTE",
+      "bundle_path": "mibs/zte/_upstream/zte/ZTE-AN-CHASSIS-MIB",
+      "upstream_path": "mibs/zte/ZTE-AN-CHASSIS-MIB",
+      "sha256": "d2696122e7d3a20f87da7802e56e857464a24f308400772e8b7527d533e4b73f",
+      "size_bytes": 56376
+    },
+    {
+      "module": "ZTE-AN-ENVMON-MIB",
+      "vendor_scope": "ZTE",
+      "bundle_path": "mibs/zte/_upstream/zte/ZTE-AN-ENVMON-MIB",
+      "upstream_path": "mibs/zte/ZTE-AN-ENVMON-MIB",
+      "sha256": "58564502e13bc46ab416fb64d9df585f872c13dba12c707c89af84985dfcfe9d",
+      "size_bytes": 92866
+    },
+    {
+      "module": "ZXR10-MIB",
+      "vendor_scope": "ZTE",
+      "bundle_path": "mibs/zte/_upstream/zte/ZXR10-MIB",
+      "upstream_path": "mibs/zte/ZXR10-MIB",
+      "sha256": "6da118c571ae05918cac6f5d1993d53863d9d602b703c6165c2ff5e94c14fcf0",
+      "size_bytes": 121378
+    }
+  ],
+  "pinned_upstream_adapter_references": [
+    "includes/discovery/sensors/dbm/comware.inc.php",
+    "includes/discovery/sensors/temperature/comware.inc.php",
+    "includes/discovery/sensors/voltage/comware.inc.php",
+    "includes/discovery/sensors/current/comware.inc.php"
+  ],
+  "notes": [
+    "MIB files are copied byte-for-byte from the pinned LibreNMS commit; upstream paths and SHA-256 are recorded per file.",
+    "MIBs are grouped under the asset vendor scope for offline indexing. Standard MIB definitions are grouped under mibs/standard/.",
+    "This is a curated source bundle for hardware polling. It is not a full LibreNMS checkout or a complete all-vendor MIB archive.",
+    "The upstream LibreNMS OS discovery YAML files are retained unchanged and are covered by their upstream license."
+  ]
+}

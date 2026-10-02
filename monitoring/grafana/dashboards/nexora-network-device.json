@@ -1,0 +1,2915 @@
+{
+  "annotations": {
+    "list": []
+  },
+  "editable": false,
+  "fiscalYearStartMonth": 0,
+  "graphTooltip": 1,
+  "id": null,
+  "links": [],
+  "panels": [
+    {
+      "id": 1,
+      "title": "设备身份与 SNMP 连通性",
+      "type": "table",
+      "datasource": {
+        "type": "prometheus",
+        "uid": "victoriametrics"
+      },
+      "gridPos": {
+        "h": 4,
+        "w": 24,
+        "x": 0,
+        "y": 0
+      },
+      "fieldConfig": {
+        "defaults": {
+          "unit": "none",
+          "noValue": "暂无采集数据",
+          "color": {
+            "mode": "thresholds"
+          },
+          "custom": {
+            "filterable": true
+          }
+        },
+        "overrides": [
+          {
+            "matcher": {
+              "id": "byName",
+              "options": "SNMP 连通"
+            },
+            "properties": [
+              {
+                "id": "mappings",
+                "value": [
+                  {
+                    "type": "value",
+                    "options": {
+                      "0": {
+                        "text": "不可达",
+                        "color": "red"
+                      },
+                      "1": {
+                        "text": "在线",
+                        "color": "green"
+                      }
+                    }
+                  }
+                ]
+              }
+            ]
+          },
+          {
+            "matcher": {
+              "id": "byName",
+              "options": "SNMP 连通"
+            },
+            "properties": [
+              {
+                "id": "custom.cellOptions",
+                "value": {
+                  "type": "color-text"
+                }
+              }
+            ]
+          }
+        ]
+      },
+      "options": {
+        "cellHeight": "sm",
+        "showHeader": true,
+        "footer": {
+          "show": false
+        },
+        "enablePagination": true
+      },
+      "targets": [
+        {
+          "expr": "up{job=\"network_snmp\",asset_id=\"$asset_id\",asset_id!=\"\"}",
+          "format": "table",
+          "instant": true,
+          "refId": "A"
+        }
+      ],
+      "transformations": [
+        {
+          "id": "organize",
+          "options": {
+            "excludeByName": {
+              "Time": true,
+              "__name__": true,
+              "job": true,
+              "site_id": true,
+              "tenant_id": true
+            },
+            "indexByName": {
+              "hostname": 0,
+              "asset_id": 1,
+              "instance": 2,
+              "site_name": 3,
+              "vendor": 4,
+              "platform": 5,
+              "role": 6,
+              "Value": 7
+            },
+            "renameByName": {
+              "hostname": "设备名称",
+              "asset_id": "资产 ID",
+              "instance": "管理地址",
+              "site_name": "站点",
+              "vendor": "厂商",
+              "platform": "系统平台",
+              "role": "角色",
+              "Value": "SNMP 连通"
+            }
+          }
+        }
+      ],
+      "description": "设备范围固定为一个 asset_id。未选择设备时不显示跨设备数据；SNMP 不可达与硬件指标缺失分开显示。"
+    },
+    {
+      "id": 2,
+      "title": "系统运行时长",
+      "type": "stat",
+      "datasource": {
+        "type": "prometheus",
+        "uid": "victoriametrics"
+      },
+      "gridPos": {
+        "h": 3,
+        "w": 4,
+        "x": 0,
+        "y": 4
+      },
+      "fieldConfig": {
+        "defaults": {
+          "unit": "dtdhms",
+          "noValue": "暂无采集数据",
+          "color": {
+            "mode": "thresholds"
+          },
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              {
+                "color": "#3274D9",
+                "value": null
+              }
+            ]
+          }
+        },
+        "overrides": []
+      },
+      "options": {
+        "colorMode": "value",
+        "graphMode": "none",
+        "justifyMode": "center",
+        "orientation": "auto",
+        "reduceOptions": {
+          "calcs": [
+            "lastNotNull"
+          ],
+          "fields": "",
+          "values": false
+        },
+        "textMode": "auto"
+      },
+      "targets": [
+        {
+          "expr": "sysUpTime{job=\"network_snmp\",asset_id=\"$asset_id\",asset_id!=\"\"} / 100",
+          "refId": "A"
+        }
+      ]
+    },
+    {
+      "id": 3,
+      "title": "所选 CPU 采样窗口最高部件使用率",
+      "type": "gauge",
+      "datasource": {
+        "type": "prometheus",
+        "uid": "victoriametrics"
+      },
+      "gridPos": {
+        "h": 3,
+        "w": 4,
+        "x": 4,
+        "y": 4
+      },
+      "fieldConfig": {
+        "defaults": {
+          "unit": "percent",
+          "min": 0,
+          "max": 100,
+          "noValue": "暂无采集数据",
+          "color": {
+            "mode": "thresholds"
+          },
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              {
+                "color": "green",
+                "value": null
+              },
+              {
+                "color": "#E0B400",
+                "value": 70
+              },
+              {
+                "color": "red",
+                "value": 85
+              }
+            ]
+          }
+        },
+        "overrides": []
+      },
+      "options": {
+        "reduceOptions": {
+          "calcs": [
+            "lastNotNull"
+          ],
+          "fields": "",
+          "values": false
+        },
+        "showThresholdLabels": false,
+        "showThresholdMarkers": true
+      },
+      "targets": [
+        {
+          "expr": "topk(1, (nexora_hw_cpu_usage_percent{asset_id=\"$asset_id\",asset_id!=\"\",window=\"$cpu_window\"}  * on(tenant_id, asset_id, sensor_key) group_left(sensor_name, group, index, component_class, source_id, hostname, site_name, vendor, platform, ent_physical_index, measured_entity_type) (max by (tenant_id, asset_id, sensor_key, sensor_name, group, index, component_class, source_id, hostname, site_name, vendor, platform, ent_physical_index, measured_entity_type) (nexora_hw_sensor_info{asset_id=\"$asset_id\",asset_id!=\"\",group=~\"$hardware_group\",sensor_name=~\"$sensor_name\",component_class=~\"$component_class\"}))))",
+          "instant": true,
+          "refId": "A",
+          "legendFormat": "{{sensor_name}} · {{group}} · {{window}}"
+        }
+      ],
+      "description": "先在上方选择设备实际提供的 CPU 采样窗口，再显示该窗口内使用率最高的部件；不会将不同窗口混合。"
+    },
+    {
+      "id": 4,
+      "title": "最高内存池使用率",
+      "type": "gauge",
+      "datasource": {
+        "type": "prometheus",
+        "uid": "victoriametrics"
+      },
+      "gridPos": {
+        "h": 3,
+        "w": 4,
+        "x": 8,
+        "y": 4
+      },
+      "fieldConfig": {
+        "defaults": {
+          "unit": "percent",
+          "min": 0,
+          "max": 100,
+          "noValue": "暂无采集数据",
+          "color": {
+            "mode": "thresholds"
+          },
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              {
+                "color": "green",
+                "value": null
+              },
+              {
+                "color": "#E0B400",
+                "value": 75
+              },
+              {
+                "color": "red",
+                "value": 90
+              }
+            ]
+          }
+        },
+        "overrides": []
+      },
+      "options": {
+        "reduceOptions": {
+          "calcs": [
+            "lastNotNull"
+          ],
+          "fields": "",
+          "values": false
+        },
+        "showThresholdLabels": false,
+        "showThresholdMarkers": true
+      },
+      "targets": [
+        {
+          "expr": "topk(1, (nexora_hw_memory_usage_percent{asset_id=\"$asset_id\",asset_id!=\"\"}  * on(tenant_id, asset_id, sensor_key) group_left(sensor_name, group, index, component_class, source_id, hostname, site_name, vendor, platform, ent_physical_index, measured_entity_type) (max by (tenant_id, asset_id, sensor_key, sensor_name, group, index, component_class, source_id, hostname, site_name, vendor, platform, ent_physical_index, measured_entity_type) (nexora_hw_sensor_info{asset_id=\"$asset_id\",asset_id!=\"\",group=~\"$hardware_group\",sensor_name=~\"$sensor_name\",component_class=~\"$component_class\"}))))",
+          "instant": true,
+          "refId": "A",
+          "legendFormat": "{{sensor_name}} · {{group}}"
+        }
+      ],
+      "description": "显示所选设备最高内存池占用及其部件标签，不把不同容量的内存池简单平均成整机使用率。"
+    },
+    {
+      "id": 5,
+      "title": "最高温度",
+      "type": "stat",
+      "datasource": {
+        "type": "prometheus",
+        "uid": "victoriametrics"
+      },
+      "gridPos": {
+        "h": 3,
+        "w": 4,
+        "x": 12,
+        "y": 4
+      },
+      "fieldConfig": {
+        "defaults": {
+          "unit": "celsius",
+          "noValue": "暂无采集数据",
+          "color": {
+            "mode": "thresholds"
+          },
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              {
+                "color": "#3274D9",
+                "value": null
+              }
+            ]
+          }
+        },
+        "overrides": []
+      },
+      "options": {
+        "colorMode": "value",
+        "graphMode": "none",
+        "justifyMode": "center",
+        "orientation": "auto",
+        "reduceOptions": {
+          "calcs": [
+            "lastNotNull"
+          ],
+          "fields": "",
+          "values": false
+        },
+        "textMode": "auto"
+      },
+      "targets": [
+        {
+          "expr": "topk(1, (nexora_hw_temperature_celsius{asset_id=\"$asset_id\",asset_id!=\"\"}  * on(tenant_id, asset_id, sensor_key) group_left(sensor_name, group, index, component_class, source_id, hostname, site_name, vendor, platform, ent_physical_index, measured_entity_type) (max by (tenant_id, asset_id, sensor_key, sensor_name, group, index, component_class, source_id, hostname, site_name, vendor, platform, ent_physical_index, measured_entity_type) (nexora_hw_sensor_info{asset_id=\"$asset_id\",asset_id!=\"\",group=~\"$hardware_group\",sensor_name=~\"$sensor_name\",component_class=~\"$component_class\",group!~\"(?i).*(transceiver|optical).*\"})))) or on() (topk(1, (nexora_hw_temperature_celsius{asset_id=\"$asset_id\",asset_id!=\"\"}  * on(tenant_id, asset_id, sensor_key) group_left(sensor_name, group, index, component_class, source_id, hostname, site_name, vendor, platform, ent_physical_index, measured_entity_type) (max by (tenant_id, asset_id, sensor_key, sensor_name, group, index, component_class, source_id, hostname, site_name, vendor, platform, ent_physical_index, measured_entity_type) (nexora_hw_sensor_info{asset_id=\"$asset_id\",asset_id!=\"\",group=~\"$hardware_group\",sensor_name=~\"$sensor_name\",component_class=~\"$component_class\",group=~\"(?i).*(transceiver|optical).*\"})))) unless on() count((nexora_hw_temperature_celsius{asset_id=\"$asset_id\",asset_id!=\"\"}  * on(tenant_id, asset_id, sensor_key) group_left(sensor_name, group, index, component_class, source_id, hostname, site_name, vendor, platform, ent_physical_index, measured_entity_type) (max by (tenant_id, asset_id, sensor_key, sensor_name, group, index, component_class, source_id, hostname, site_name, vendor, platform, ent_physical_index, measured_entity_type) (nexora_hw_sensor_info{asset_id=\"$asset_id\",asset_id!=\"\",group=~\"$hardware_group\",sensor_name=~\"$sensor_name\",component_class=~\"$component_class\",group!~\"(?i).*(transceiver|optical).*\"})))))",
+          "refId": "A",
+          "legendFormat": "{{sensor_name}} · {{group}}"
+        }
+      ],
+      "description": "优先显示非光模块温度；若仅发现光模块温度则回退显示该读数。具体传感器和分组见图例与明细。"
+    },
+    {
+      "id": 6,
+      "title": "异常部件数",
+      "type": "stat",
+      "datasource": {
+        "type": "prometheus",
+        "uid": "victoriametrics"
+      },
+      "gridPos": {
+        "h": 3,
+        "w": 4,
+        "x": 16,
+        "y": 4
+      },
+      "fieldConfig": {
+        "defaults": {
+          "unit": "short",
+          "noValue": "暂无采集数据",
+          "color": {
+            "mode": "thresholds"
+          },
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              {
+                "color": "#E02F44",
+                "value": null
+              }
+            ]
+          }
+        },
+        "overrides": []
+      },
+      "options": {
+        "colorMode": "value",
+        "graphMode": "none",
+        "justifyMode": "center",
+        "orientation": "auto",
+        "reduceOptions": {
+          "calcs": [
+            "lastNotNull"
+          ],
+          "fields": "",
+          "values": false
+        },
+        "textMode": "auto"
+      },
+      "targets": [
+        {
+          "expr": "count(((nexora_hw_component_state{asset_id=\"$asset_id\",asset_id!=\"\"}  * on(tenant_id, asset_id, sensor_key) group_left(sensor_name, group, index, component_class, source_id, hostname, site_name, vendor, platform, ent_physical_index, measured_entity_type) (max by (tenant_id, asset_id, sensor_key, sensor_name, group, index, component_class, source_id, hostname, site_name, vendor, platform, ent_physical_index, measured_entity_type) (nexora_hw_sensor_info{asset_id=\"$asset_id\",asset_id!=\"\",group=~\"$hardware_group\",sensor_name=~\"$sensor_name\",component_class=~\"$component_class\"}))) == 1) or ((nexora_hw_component_state{asset_id=\"$asset_id\",asset_id!=\"\"}  * on(tenant_id, asset_id, sensor_key) group_left(sensor_name, group, index, component_class, source_id, hostname, site_name, vendor, platform, ent_physical_index, measured_entity_type) (max by (tenant_id, asset_id, sensor_key, sensor_name, group, index, component_class, source_id, hostname, site_name, vendor, platform, ent_physical_index, measured_entity_type) (nexora_hw_sensor_info{asset_id=\"$asset_id\",asset_id!=\"\",group=~\"$hardware_group\",sensor_name=~\"$sensor_name\",component_class=~\"$component_class\"}))) == 2)) or on() ((count((nexora_hw_component_state{asset_id=\"$asset_id\",asset_id!=\"\"}  * on(tenant_id, asset_id, sensor_key) group_left(sensor_name, group, index, component_class, source_id, hostname, site_name, vendor, platform, ent_physical_index, measured_entity_type) (max by (tenant_id, asset_id, sensor_key, sensor_name, group, index, component_class, source_id, hostname, site_name, vendor, platform, ent_physical_index, measured_entity_type) (nexora_hw_sensor_info{asset_id=\"$asset_id\",asset_id!=\"\",group=~\"$hardware_group\",sensor_name=~\"$sensor_name\",component_class=~\"$component_class\"})))) > 0) * 0)",
+          "refId": "A"
+        }
+      ],
+      "description": "采集到部件状态后才统计；状态均正常时显示 0，无状态样本显示暂无采集数据。"
+    },
+    {
+      "id": 7,
+      "title": "状态未知部件数",
+      "type": "stat",
+      "datasource": {
+        "type": "prometheus",
+        "uid": "victoriametrics"
+      },
+      "gridPos": {
+        "h": 3,
+        "w": 4,
+        "x": 20,
+        "y": 4
+      },
+      "fieldConfig": {
+        "defaults": {
+          "unit": "short",
+          "noValue": "暂无采集数据",
+          "color": {
+            "mode": "thresholds"
+          },
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              {
+                "color": "#8A8F98",
+                "value": null
+              }
+            ]
+          }
+        },
+        "overrides": []
+      },
+      "options": {
+        "colorMode": "value",
+        "graphMode": "none",
+        "justifyMode": "center",
+        "orientation": "auto",
+        "reduceOptions": {
+          "calcs": [
+            "lastNotNull"
+          ],
+          "fields": "",
+          "values": false
+        },
+        "textMode": "auto"
+      },
+      "targets": [
+        {
+          "expr": "count((nexora_hw_component_state{asset_id=\"$asset_id\",asset_id!=\"\"}  * on(tenant_id, asset_id, sensor_key) group_left(sensor_name, group, index, component_class, source_id, hostname, site_name, vendor, platform, ent_physical_index, measured_entity_type) (max by (tenant_id, asset_id, sensor_key, sensor_name, group, index, component_class, source_id, hostname, site_name, vendor, platform, ent_physical_index, measured_entity_type) (nexora_hw_sensor_info{asset_id=\"$asset_id\",asset_id!=\"\",group=~\"$hardware_group\",sensor_name=~\"$sensor_name\",component_class=~\"$component_class\"}))) == 3) or on() ((count((nexora_hw_component_state{asset_id=\"$asset_id\",asset_id!=\"\"}  * on(tenant_id, asset_id, sensor_key) group_left(sensor_name, group, index, component_class, source_id, hostname, site_name, vendor, platform, ent_physical_index, measured_entity_type) (max by (tenant_id, asset_id, sensor_key, sensor_name, group, index, component_class, source_id, hostname, site_name, vendor, platform, ent_physical_index, measured_entity_type) (nexora_hw_sensor_info{asset_id=\"$asset_id\",asset_id!=\"\",group=~\"$hardware_group\",sensor_name=~\"$sensor_name\",component_class=~\"$component_class\"})))) > 0) * 0)",
+          "refId": "A"
+        }
+      ],
+      "description": "采集到部件状态后才统计；没有未知部件时显示 0，无状态样本显示暂无采集数据。"
+    },
+    {
+      "id": 900,
+      "title": "硬件部件趋势",
+      "type": "row",
+      "collapsed": false,
+      "gridPos": {
+        "h": 1,
+        "w": 24,
+        "x": 0,
+        "y": 7
+      },
+      "panels": []
+    },
+    {
+      "id": 8,
+      "title": "CPU 各部件使用率走势（最多10条）",
+      "type": "timeseries",
+      "datasource": {
+        "type": "prometheus",
+        "uid": "victoriametrics"
+      },
+      "gridPos": {
+        "h": 8,
+        "w": 9,
+        "x": 0,
+        "y": 8
+      },
+      "fieldConfig": {
+        "defaults": {
+          "unit": "percent",
+          "noValue": "暂无采集数据",
+          "color": {
+            "mode": "palette-classic"
+          },
+          "custom": {
+            "drawStyle": "line",
+            "lineInterpolation": "linear",
+            "lineWidth": 2,
+            "fillOpacity": 10,
+            "gradientMode": "none",
+            "showPoints": "never"
+          }
+        },
+        "overrides": []
+      },
+      "options": {
+        "legend": {
+          "displayMode": "table",
+          "placement": "right",
+          "showLegend": true,
+          "calcs": [
+            "lastNotNull",
+            "max",
+            "mean"
+          ]
+        },
+        "tooltip": {
+          "mode": "multi",
+          "sort": "desc"
+        }
+      },
+      "targets": [
+        {
+          "expr": "topk(10, max by (tenant_id, asset_id, sensor_key, sensor_name, group, index, component_class, window) ((nexora_hw_cpu_usage_percent{asset_id=\"$asset_id\",asset_id!=\"\",window=\"$cpu_window\"}  * on(tenant_id, asset_id, sensor_key) group_left(sensor_name, group, index, component_class, source_id, hostname, site_name, vendor, platform, ent_physical_index, measured_entity_type) (max by (tenant_id, asset_id, sensor_key, sensor_name, group, index, component_class, source_id, hostname, site_name, vendor, platform, ent_physical_index, measured_entity_type) (nexora_hw_sensor_info{asset_id=\"$asset_id\",asset_id!=\"\",group=~\"$hardware_group\",sensor_name=~\"$sensor_name\",component_class=~\"$component_class\"})))))",
+          "legendFormat": "{{sensor_name}} · {{group}} · {{window}}",
+          "refId": "A"
+        }
+      ],
+      "description": "当前 CPU 窗口内按部件展示，趋势最多返回10条 CPU 部件序列。超过10条时只显示每个时点使用率最高的10条；用上方部件筛选查看其余部件。不同 window 不混合。"
+    },
+    {
+      "id": 26,
+      "title": "超出10条的 CPU 部件数",
+      "type": "stat",
+      "datasource": {
+        "type": "prometheus",
+        "uid": "victoriametrics"
+      },
+      "gridPos": {
+        "h": 8,
+        "w": 3,
+        "x": 9,
+        "y": 8
+      },
+      "fieldConfig": {
+        "defaults": {
+          "unit": "short",
+          "noValue": "暂无采集数据",
+          "color": {
+            "mode": "thresholds"
+          },
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              {
+                "color": "#E02F44",
+                "value": null
+              }
+            ]
+          }
+        },
+        "overrides": []
+      },
+      "options": {
+        "colorMode": "value",
+        "graphMode": "none",
+        "justifyMode": "center",
+        "orientation": "auto",
+        "reduceOptions": {
+          "calcs": [
+            "lastNotNull"
+          ],
+          "fields": "",
+          "values": false
+        },
+        "textMode": "auto"
+      },
+      "targets": [
+        {
+          "expr": "clamp_min((count(max by (tenant_id, asset_id, sensor_key, window) ((nexora_hw_cpu_usage_percent{asset_id=\"$asset_id\",asset_id!=\"\",window=\"$cpu_window\"}  * on(tenant_id, asset_id, sensor_key) group_left(sensor_name, group, index, component_class, source_id, hostname, site_name, vendor, platform, ent_physical_index, measured_entity_type) (max by (tenant_id, asset_id, sensor_key, sensor_name, group, index, component_class, source_id, hostname, site_name, vendor, platform, ent_physical_index, measured_entity_type) (nexora_hw_sensor_info{asset_id=\"$asset_id\",asset_id!=\"\",group=~\"$hardware_group\",sensor_name=~\"$sensor_name\",component_class=~\"$component_class\"})))))) - 10, 0)",
+          "refId": "A"
+        }
+      ],
+      "description": "按当前所选设备和 CPU window 计数。大于0时，CPU 趋势只展示前10条，其余部件可用上方部件筛选查看。"
+    },
+    {
+      "id": 9,
+      "title": "各内存池使用率走势",
+      "type": "timeseries",
+      "datasource": {
+        "type": "prometheus",
+        "uid": "victoriametrics"
+      },
+      "gridPos": {
+        "h": 8,
+        "w": 12,
+        "x": 12,
+        "y": 8
+      },
+      "fieldConfig": {
+        "defaults": {
+          "unit": "percent",
+          "noValue": "暂无采集数据",
+          "color": {
+            "mode": "palette-classic"
+          },
+          "custom": {
+            "drawStyle": "line",
+            "lineInterpolation": "linear",
+            "lineWidth": 2,
+            "fillOpacity": 10,
+            "gradientMode": "none",
+            "showPoints": "never"
+          }
+        },
+        "overrides": []
+      },
+      "options": {
+        "legend": {
+          "displayMode": "table",
+          "placement": "right",
+          "showLegend": true,
+          "calcs": [
+            "lastNotNull",
+            "max",
+            "mean"
+          ]
+        },
+        "tooltip": {
+          "mode": "multi",
+          "sort": "desc"
+        }
+      },
+      "targets": [
+        {
+          "expr": "max by (tenant_id, asset_id, sensor_key, sensor_name, group, index, component_class) ((nexora_hw_memory_usage_percent{asset_id=\"$asset_id\",asset_id!=\"\"}  * on(tenant_id, asset_id, sensor_key) group_left(sensor_name, group, index, component_class, source_id, hostname, site_name, vendor, platform, ent_physical_index, measured_entity_type) (max by (tenant_id, asset_id, sensor_key, sensor_name, group, index, component_class, source_id, hostname, site_name, vendor, platform, ent_physical_index, measured_entity_type) (nexora_hw_sensor_info{asset_id=\"$asset_id\",asset_id!=\"\",group=~\"$hardware_group\",sensor_name=~\"$sensor_name\",component_class=~\"$component_class\"}))))",
+          "legendFormat": "{{sensor_name}} · {{group}}",
+          "refId": "A"
+        }
+      ],
+      "description": "每个内存池单独绘制，不对不同容量的池取平均。"
+    },
+    {
+      "id": 10,
+      "title": "板卡与环境温度走势",
+      "type": "timeseries",
+      "datasource": {
+        "type": "prometheus",
+        "uid": "victoriametrics"
+      },
+      "gridPos": {
+        "h": 8,
+        "w": 12,
+        "x": 0,
+        "y": 16
+      },
+      "fieldConfig": {
+        "defaults": {
+          "unit": "celsius",
+          "noValue": "暂无采集数据",
+          "color": {
+            "mode": "palette-classic"
+          },
+          "custom": {
+            "drawStyle": "line",
+            "lineInterpolation": "linear",
+            "lineWidth": 2,
+            "fillOpacity": 10,
+            "gradientMode": "none",
+            "showPoints": "never"
+          }
+        },
+        "overrides": []
+      },
+      "options": {
+        "legend": {
+          "displayMode": "table",
+          "placement": "right",
+          "showLegend": true,
+          "calcs": [
+            "lastNotNull",
+            "max",
+            "mean"
+          ]
+        },
+        "tooltip": {
+          "mode": "multi",
+          "sort": "desc"
+        }
+      },
+      "targets": [
+        {
+          "expr": "max by (tenant_id, asset_id, sensor_key, sensor_name, group, index, component_class) ((nexora_hw_temperature_celsius{asset_id=\"$asset_id\",asset_id!=\"\"}  * on(tenant_id, asset_id, sensor_key) group_left(sensor_name, group, index, component_class, source_id, hostname, site_name, vendor, platform, ent_physical_index, measured_entity_type) (max by (tenant_id, asset_id, sensor_key, sensor_name, group, index, component_class, source_id, hostname, site_name, vendor, platform, ent_physical_index, measured_entity_type) (nexora_hw_sensor_info{asset_id=\"$asset_id\",asset_id!=\"\",group=~\"$hardware_group\",sensor_name=~\"$sensor_name\",component_class=~\"$component_class\"}))))",
+          "legendFormat": "{{sensor_name}} · {{group}}",
+          "refId": "A"
+        }
+      ],
+      "description": "温度按传感器保留，0°C 与负温度均作为有效读数；光模块可用分组筛选。"
+    },
+    {
+      "id": 11,
+      "title": "风扇转速走势",
+      "type": "timeseries",
+      "datasource": {
+        "type": "prometheus",
+        "uid": "victoriametrics"
+      },
+      "gridPos": {
+        "h": 8,
+        "w": 12,
+        "x": 12,
+        "y": 16
+      },
+      "fieldConfig": {
+        "defaults": {
+          "unit": "rpm",
+          "noValue": "暂无采集数据",
+          "color": {
+            "mode": "palette-classic"
+          },
+          "custom": {
+            "drawStyle": "line",
+            "lineInterpolation": "linear",
+            "lineWidth": 2,
+            "fillOpacity": 10,
+            "gradientMode": "none",
+            "showPoints": "never"
+          }
+        },
+        "overrides": []
+      },
+      "options": {
+        "legend": {
+          "displayMode": "table",
+          "placement": "right",
+          "showLegend": true,
+          "calcs": [
+            "lastNotNull",
+            "max",
+            "mean"
+          ]
+        },
+        "tooltip": {
+          "mode": "multi",
+          "sort": "desc"
+        }
+      },
+      "targets": [
+        {
+          "expr": "max by (tenant_id, asset_id, sensor_key, sensor_name, group, index, component_class) ((nexora_hw_fan_speed_rpm{asset_id=\"$asset_id\",asset_id!=\"\"}  * on(tenant_id, asset_id, sensor_key) group_left(sensor_name, group, index, component_class, source_id, hostname, site_name, vendor, platform, ent_physical_index, measured_entity_type) (max by (tenant_id, asset_id, sensor_key, sensor_name, group, index, component_class, source_id, hostname, site_name, vendor, platform, ent_physical_index, measured_entity_type) (nexora_hw_sensor_info{asset_id=\"$asset_id\",asset_id!=\"\",group=~\"$hardware_group\",sensor_name=~\"$sensor_name\",component_class=~\"$component_class\"}))))",
+          "legendFormat": "{{sensor_name}} · {{group}}",
+          "refId": "A"
+        }
+      ],
+      "description": "只有设备明确提供 RPM 数值时绘制转速曲线；仅有运行状态的风扇请查看状态明细。"
+    },
+    {
+      "id": 12,
+      "title": "电源功率读数走势",
+      "type": "timeseries",
+      "datasource": {
+        "type": "prometheus",
+        "uid": "victoriametrics"
+      },
+      "gridPos": {
+        "h": 8,
+        "w": 12,
+        "x": 0,
+        "y": 24
+      },
+      "fieldConfig": {
+        "defaults": {
+          "unit": "watt",
+          "noValue": "暂无采集数据",
+          "color": {
+            "mode": "palette-classic"
+          },
+          "custom": {
+            "drawStyle": "line",
+            "lineInterpolation": "linear",
+            "lineWidth": 2,
+            "fillOpacity": 10,
+            "gradientMode": "none",
+            "showPoints": "never"
+          }
+        },
+        "overrides": []
+      },
+      "options": {
+        "legend": {
+          "displayMode": "table",
+          "placement": "right",
+          "showLegend": true,
+          "calcs": [
+            "lastNotNull",
+            "max",
+            "mean"
+          ]
+        },
+        "tooltip": {
+          "mode": "multi",
+          "sort": "desc"
+        }
+      },
+      "targets": [
+        {
+          "expr": "max by (tenant_id, asset_id, sensor_key, sensor_name, group, index, component_class) ((nexora_hw_power_watts{asset_id=\"$asset_id\",asset_id!=\"\"}  * on(tenant_id, asset_id, sensor_key) group_left(sensor_name, group, index, component_class, source_id, hostname, site_name, vendor, platform, ent_physical_index, measured_entity_type) (max by (tenant_id, asset_id, sensor_key, sensor_name, group, index, component_class, source_id, hostname, site_name, vendor, platform, ent_physical_index, measured_entity_type) (nexora_hw_sensor_info{asset_id=\"$asset_id\",asset_id!=\"\",group=~\"$hardware_group\",sensor_name=~\"$sensor_name\",component_class=~\"$component_class\"}))))",
+          "legendFormat": "{{sensor_name}} · {{group}}",
+          "refId": "A"
+        }
+      ],
+      "description": "只展示功率测量值；它与电源运行状态分开采集和判断。"
+    },
+    {
+      "id": 27,
+      "title": "光模块收发功率走势（dBm）",
+      "type": "timeseries",
+      "datasource": {
+        "type": "prometheus",
+        "uid": "victoriametrics"
+      },
+      "gridPos": {
+        "h": 8,
+        "w": 12,
+        "x": 12,
+        "y": 24
+      },
+      "fieldConfig": {
+        "defaults": {
+          "unit": "dBm",
+          "noValue": "暂无采集数据",
+          "color": {
+            "mode": "palette-classic"
+          },
+          "custom": {
+            "drawStyle": "line",
+            "lineInterpolation": "linear",
+            "lineWidth": 2,
+            "fillOpacity": 10,
+            "gradientMode": "none",
+            "showPoints": "never"
+          }
+        },
+        "overrides": []
+      },
+      "options": {
+        "legend": {
+          "displayMode": "table",
+          "placement": "right",
+          "showLegend": true,
+          "calcs": [
+            "lastNotNull",
+            "max",
+            "mean"
+          ]
+        },
+        "tooltip": {
+          "mode": "multi",
+          "sort": "desc"
+        }
+      },
+      "targets": [
+        {
+          "expr": "max by (tenant_id, asset_id, sensor_key, sensor_name, group, index, component_class) ((nexora_hw_optical_power_dbm{asset_id=\"$asset_id\",asset_id!=\"\"}  * on(tenant_id, asset_id, sensor_key) group_left(sensor_name, group, index, component_class, source_id, hostname, site_name, vendor, platform, ent_physical_index, measured_entity_type) (max by (tenant_id, asset_id, sensor_key, sensor_name, group, index, component_class, source_id, hostname, site_name, vendor, platform, ent_physical_index, measured_entity_type) (nexora_hw_sensor_info{asset_id=\"$asset_id\",asset_id!=\"\",group=~\"$hardware_group\",sensor_name=~\"$sensor_name\",component_class=~\"$component_class\"}))))",
+          "legendFormat": "{{sensor_name}} · {{group}}",
+          "refId": "A"
+        }
+      ],
+      "description": "展示经 LibreNMS 原生 user_func 转换的光功率读数，保留 dBm 的正负值语义。"
+    },
+    {
+      "id": 901,
+      "title": "硬件部件当前读数",
+      "type": "row",
+      "collapsed": false,
+      "gridPos": {
+        "h": 1,
+        "w": 24,
+        "x": 0,
+        "y": 32
+      },
+      "panels": []
+    },
+    {
+      "id": 13,
+      "title": "CPU 部件当前读数",
+      "type": "table",
+      "datasource": {
+        "type": "prometheus",
+        "uid": "victoriametrics"
+      },
+      "gridPos": {
+        "h": 8,
+        "w": 12,
+        "x": 0,
+        "y": 33
+      },
+      "fieldConfig": {
+        "defaults": {
+          "unit": "none",
+          "noValue": "暂无采集数据",
+          "color": {
+            "mode": "thresholds"
+          },
+          "custom": {
+            "filterable": true
+          }
+        },
+        "overrides": [
+          {
+            "matcher": {
+              "id": "byName",
+              "options": "CPU 使用率"
+            },
+            "properties": [
+              {
+                "id": "unit",
+                "value": "percent"
+              }
+            ]
+          }
+        ]
+      },
+      "options": {
+        "cellHeight": "sm",
+        "showHeader": true,
+        "footer": {
+          "show": false
+        },
+        "enablePagination": true
+      },
+      "targets": [
+        {
+          "expr": "(nexora_hw_cpu_usage_percent{asset_id=\"$asset_id\",asset_id!=\"\",window=\"$cpu_window\"}  * on(tenant_id, asset_id, sensor_key) group_left(sensor_name, group, index, component_class, source_id, hostname, site_name, vendor, platform, ent_physical_index, measured_entity_type) (max by (tenant_id, asset_id, sensor_key, sensor_name, group, index, component_class, source_id, hostname, site_name, vendor, platform, ent_physical_index, measured_entity_type) (nexora_hw_sensor_info{asset_id=\"$asset_id\",asset_id!=\"\",group=~\"$hardware_group\",sensor_name=~\"$sensor_name\",component_class=~\"$component_class\"})))",
+          "format": "table",
+          "instant": true,
+          "refId": "A"
+        }
+      ],
+      "transformations": [
+        {
+          "id": "organize",
+          "options": {
+            "excludeByName": {
+              "Time": true,
+              "__name__": true,
+              "tenant_id": true,
+              "asset_id": true,
+              "sensor_key": true,
+              "source_id": true,
+              "source_type": true,
+              "rule_version": true,
+              "index": true,
+              "ent_physical_index": true,
+              "measured_entity_type": true,
+              "measurement_type": true,
+              "instance": true,
+              "hostname": true,
+              "site_name": true,
+              "vendor": true,
+              "platform": true
+            },
+            "indexByName": {
+              "sensor_name": 0,
+              "group": 1,
+              "component_class": 2,
+              "unit": 3,
+              "window": 4,
+              "Value": 5
+            },
+            "renameByName": {
+              "sensor_name": "部件名称",
+              "group": "分组",
+              "component_class": "部件类别",
+              "unit": "单位",
+              "window": "CPU窗口",
+              "Value": "CPU 使用率"
+            }
+          }
+        }
+      ],
+      "description": "每一行对应独立 CPU/处理单元，并保留 window、传感器名称和分组。"
+    },
+    {
+      "id": 14,
+      "title": "内存池当前读数",
+      "type": "table",
+      "datasource": {
+        "type": "prometheus",
+        "uid": "victoriametrics"
+      },
+      "gridPos": {
+        "h": 8,
+        "w": 12,
+        "x": 12,
+        "y": 33
+      },
+      "fieldConfig": {
+        "defaults": {
+          "unit": "none",
+          "noValue": "暂无采集数据",
+          "color": {
+            "mode": "thresholds"
+          },
+          "custom": {
+            "filterable": true
+          }
+        },
+        "overrides": [
+          {
+            "matcher": {
+              "id": "byName",
+              "options": "已用容量"
+            },
+            "properties": [
+              {
+                "id": "unit",
+                "value": "bytes"
+              }
+            ]
+          },
+          {
+            "matcher": {
+              "id": "byName",
+              "options": "总容量"
+            },
+            "properties": [
+              {
+                "id": "unit",
+                "value": "bytes"
+              }
+            ]
+          },
+          {
+            "matcher": {
+              "id": "byName",
+              "options": "使用率 (%)"
+            },
+            "properties": [
+              {
+                "id": "unit",
+                "value": "percent"
+              },
+              {
+                "id": "min",
+                "value": 0
+              },
+              {
+                "id": "max",
+                "value": 100
+              },
+              {
+                "id": "custom.cellOptions",
+                "value": {
+                  "type": "gauge",
+                  "mode": "gradient"
+                }
+              }
+            ]
+          }
+        ]
+      },
+      "options": {
+        "cellHeight": "sm",
+        "showHeader": true,
+        "footer": {
+          "show": false
+        },
+        "enablePagination": true
+      },
+      "targets": [
+        {
+          "expr": "max by (tenant_id, asset_id, device_id, source_type, sensor_name, group, index, component_class) ((nexora_hw_memory_used_bytes{asset_id=\"$asset_id\",asset_id!=\"\"}  * on(tenant_id, asset_id, sensor_key) group_left(sensor_name, group, index, component_class, source_id, hostname, site_name, vendor, platform, ent_physical_index, measured_entity_type) (max by (tenant_id, asset_id, sensor_key, sensor_name, group, index, component_class, source_id, hostname, site_name, vendor, platform, ent_physical_index, measured_entity_type) (nexora_hw_sensor_info{asset_id=\"$asset_id\",asset_id!=\"\",group=~\"$hardware_group\",sensor_name=~\"$sensor_name\",component_class=~\"$component_class\"}))))",
+          "format": "table",
+          "instant": true,
+          "refId": "A"
+        },
+        {
+          "expr": "max by (tenant_id, asset_id, device_id, source_type, sensor_name, group, index, component_class) ((nexora_hw_memory_total_bytes{asset_id=\"$asset_id\",asset_id!=\"\"}  * on(tenant_id, asset_id, sensor_key) group_left(sensor_name, group, index, component_class, source_id, hostname, site_name, vendor, platform, ent_physical_index, measured_entity_type) (max by (tenant_id, asset_id, sensor_key, sensor_name, group, index, component_class, source_id, hostname, site_name, vendor, platform, ent_physical_index, measured_entity_type) (nexora_hw_sensor_info{asset_id=\"$asset_id\",asset_id!=\"\",group=~\"$hardware_group\",sensor_name=~\"$sensor_name\",component_class=~\"$component_class\"}))))",
+          "format": "table",
+          "instant": true,
+          "refId": "B"
+        },
+        {
+          "expr": "max by (tenant_id, asset_id, device_id, source_type, sensor_name, group, index, component_class) ((nexora_hw_memory_usage_percent{asset_id=\"$asset_id\",asset_id!=\"\"}  * on(tenant_id, asset_id, sensor_key) group_left(sensor_name, group, index, component_class, source_id, hostname, site_name, vendor, platform, ent_physical_index, measured_entity_type) (max by (tenant_id, asset_id, sensor_key, sensor_name, group, index, component_class, source_id, hostname, site_name, vendor, platform, ent_physical_index, measured_entity_type) (nexora_hw_sensor_info{asset_id=\"$asset_id\",asset_id!=\"\",group=~\"$hardware_group\",sensor_name=~\"$sensor_name\",component_class=~\"$component_class\"}))))",
+          "format": "table",
+          "instant": true,
+          "refId": "C"
+        }
+      ],
+      "transformations": [
+        {
+          "id": "joinByLabels",
+          "options": {
+            "labels": [
+              "tenant_id",
+              "asset_id",
+              "device_id",
+              "source_type",
+              "sensor_name",
+              "group",
+              "index",
+              "component_class"
+            ]
+          }
+        },
+        {
+          "id": "organize",
+          "options": {
+            "excludeByName": {
+              "Time": true,
+              "__name__": true,
+              "tenant_id": true,
+              "device_id": true,
+              "sensor_key": true,
+              "source_type": true,
+              "source_id": true,
+              "rule_version": true,
+              "index": true,
+              "ent_physical_index": true,
+              "measured_entity_type": true,
+              "measurement_type": true,
+              "hostname": true,
+              "site_name": true,
+              "vendor": true,
+              "platform": true,
+              "role": true,
+              "window": true
+            },
+            "indexByName": {
+              "asset_id": 0,
+              "sensor_name": 1,
+              "group": 2,
+              "component_class": 3,
+              "Value #A": 4,
+              "Value #B": 5,
+              "Value #C": 6
+            },
+            "renameByName": {
+              "asset_id": "资产 ID",
+              "sensor_name": "内存池",
+              "group": "分组",
+              "component_class": "部件类别",
+              "Value #A": "已用容量",
+              "Value #B": "总容量",
+              "Value #C": "使用率 (%)"
+            }
+          }
+        }
+      ],
+      "description": "三列分别来自同一个内存池的已用字节、总字节和规范使用率，并按设备、名称、分组和硬件类别关联。不会把不同内存池合并。"
+    },
+    {
+      "id": 15,
+      "title": "温度传感器明细",
+      "type": "table",
+      "datasource": {
+        "type": "prometheus",
+        "uid": "victoriametrics"
+      },
+      "gridPos": {
+        "h": 8,
+        "w": 12,
+        "x": 0,
+        "y": 41
+      },
+      "fieldConfig": {
+        "defaults": {
+          "unit": "none",
+          "noValue": "暂无采集数据",
+          "color": {
+            "mode": "thresholds"
+          },
+          "custom": {
+            "filterable": true
+          }
+        },
+        "overrides": [
+          {
+            "matcher": {
+              "id": "byName",
+              "options": "温度"
+            },
+            "properties": [
+              {
+                "id": "unit",
+                "value": "celsius"
+              }
+            ]
+          }
+        ]
+      },
+      "options": {
+        "cellHeight": "sm",
+        "showHeader": true,
+        "footer": {
+          "show": false
+        },
+        "enablePagination": true
+      },
+      "targets": [
+        {
+          "expr": "(nexora_hw_temperature_celsius{asset_id=\"$asset_id\",asset_id!=\"\"}  * on(tenant_id, asset_id, sensor_key) group_left(sensor_name, group, index, component_class, source_id, hostname, site_name, vendor, platform, ent_physical_index, measured_entity_type) (max by (tenant_id, asset_id, sensor_key, sensor_name, group, index, component_class, source_id, hostname, site_name, vendor, platform, ent_physical_index, measured_entity_type) (nexora_hw_sensor_info{asset_id=\"$asset_id\",asset_id!=\"\",group=~\"$hardware_group\",sensor_name=~\"$sensor_name\",component_class=~\"$component_class\"})))",
+          "format": "table",
+          "instant": true,
+          "refId": "A"
+        }
+      ],
+      "transformations": [
+        {
+          "id": "organize",
+          "options": {
+            "excludeByName": {
+              "Time": true,
+              "__name__": true,
+              "tenant_id": true,
+              "asset_id": true,
+              "sensor_key": true,
+              "source_id": true,
+              "source_type": true,
+              "rule_version": true,
+              "index": true,
+              "ent_physical_index": true,
+              "measured_entity_type": true,
+              "measurement_type": true,
+              "instance": true,
+              "hostname": true,
+              "site_name": true,
+              "vendor": true,
+              "platform": true
+            },
+            "indexByName": {
+              "sensor_name": 0,
+              "group": 1,
+              "component_class": 2,
+              "unit": 3,
+              "window": 4,
+              "Value": 5
+            },
+            "renameByName": {
+              "sensor_name": "部件名称",
+              "group": "分组",
+              "component_class": "部件类别",
+              "unit": "单位",
+              "window": "CPU窗口",
+              "Value": "温度"
+            }
+          }
+        }
+      ],
+      "description": "含板卡、环境与光模块传感器；使用分组筛选定位部件。"
+    },
+    {
+      "id": 16,
+      "title": "风扇转速当前读数",
+      "type": "table",
+      "datasource": {
+        "type": "prometheus",
+        "uid": "victoriametrics"
+      },
+      "gridPos": {
+        "h": 8,
+        "w": 12,
+        "x": 12,
+        "y": 41
+      },
+      "fieldConfig": {
+        "defaults": {
+          "unit": "none",
+          "noValue": "暂无采集数据",
+          "color": {
+            "mode": "thresholds"
+          },
+          "custom": {
+            "filterable": true
+          }
+        },
+        "overrides": [
+          {
+            "matcher": {
+              "id": "byName",
+              "options": "转速"
+            },
+            "properties": [
+              {
+                "id": "unit",
+                "value": "rpm"
+              }
+            ]
+          }
+        ]
+      },
+      "options": {
+        "cellHeight": "sm",
+        "showHeader": true,
+        "footer": {
+          "show": false
+        },
+        "enablePagination": true
+      },
+      "targets": [
+        {
+          "expr": "(nexora_hw_fan_speed_rpm{asset_id=\"$asset_id\",asset_id!=\"\"}  * on(tenant_id, asset_id, sensor_key) group_left(sensor_name, group, index, component_class, source_id, hostname, site_name, vendor, platform, ent_physical_index, measured_entity_type) (max by (tenant_id, asset_id, sensor_key, sensor_name, group, index, component_class, source_id, hostname, site_name, vendor, platform, ent_physical_index, measured_entity_type) (nexora_hw_sensor_info{asset_id=\"$asset_id\",asset_id!=\"\",group=~\"$hardware_group\",sensor_name=~\"$sensor_name\",component_class=~\"$component_class\"})))",
+          "format": "table",
+          "instant": true,
+          "refId": "A"
+        }
+      ],
+      "transformations": [
+        {
+          "id": "organize",
+          "options": {
+            "excludeByName": {
+              "Time": true,
+              "__name__": true,
+              "tenant_id": true,
+              "asset_id": true,
+              "sensor_key": true,
+              "source_id": true,
+              "source_type": true,
+              "rule_version": true,
+              "index": true,
+              "ent_physical_index": true,
+              "measured_entity_type": true,
+              "measurement_type": true,
+              "instance": true,
+              "hostname": true,
+              "site_name": true,
+              "vendor": true,
+              "platform": true
+            },
+            "indexByName": {
+              "sensor_name": 0,
+              "group": 1,
+              "component_class": 2,
+              "unit": 3,
+              "window": 4,
+              "Value": 5
+            },
+            "renameByName": {
+              "sensor_name": "部件名称",
+              "group": "分组",
+              "component_class": "部件类别",
+              "unit": "单位",
+              "window": "CPU窗口",
+              "Value": "转速"
+            }
+          }
+        }
+      ],
+      "description": "RPM 与风扇状态是不同测量；设备不提供转速时此表为空。"
+    },
+    {
+      "id": 17,
+      "title": "风扇、电源与部件状态、原始值及存在性",
+      "type": "table",
+      "datasource": {
+        "type": "prometheus",
+        "uid": "victoriametrics"
+      },
+      "gridPos": {
+        "h": 8,
+        "w": 16,
+        "x": 0,
+        "y": 49
+      },
+      "fieldConfig": {
+        "defaults": {
+          "unit": "none",
+          "noValue": "暂无采集数据",
+          "color": {
+            "mode": "thresholds"
+          },
+          "custom": {
+            "filterable": true
+          }
+        },
+        "overrides": [
+          {
+            "matcher": {
+              "id": "byName",
+              "options": "规范状态"
+            },
+            "properties": [
+              {
+                "id": "mappings",
+                "value": [
+                  {
+                    "type": "value",
+                    "options": {
+                      "0": {
+                        "text": "正常",
+                        "color": "green"
+                      },
+                      "1": {
+                        "text": "警告",
+                        "color": "#E0B400"
+                      },
+                      "2": {
+                        "text": "严重",
+                        "color": "red"
+                      },
+                      "3": {
+                        "text": "未知",
+                        "color": "#8A8F98"
+                      }
+                    }
+                  }
+                ]
+              }
+            ]
+          },
+          {
+            "matcher": {
+              "id": "byName",
+              "options": "规范状态"
+            },
+            "properties": [
+              {
+                "id": "custom.cellOptions",
+                "value": {
+                  "type": "color-text"
+                }
+              }
+            ]
+          },
+          {
+            "matcher": {
+              "id": "byName",
+              "options": "明确存在性"
+            },
+            "properties": [
+              {
+                "id": "mappings",
+                "value": [
+                  {
+                    "type": "value",
+                    "options": {
+                      "0": {
+                        "text": "未安装",
+                        "color": "red"
+                      },
+                      "1": {
+                        "text": "已安装",
+                        "color": "green"
+                      },
+                      "-1": {
+                        "text": "无法判断",
+                        "color": "gray"
+                      }
+                    }
+                  }
+                ]
+              }
+            ]
+          },
+          {
+            "matcher": {
+              "id": "byName",
+              "options": "明确存在性"
+            },
+            "properties": [
+              {
+                "id": "custom.cellOptions",
+                "value": {
+                  "type": "color-text"
+                }
+              }
+            ]
+          }
+        ]
+      },
+      "options": {
+        "cellHeight": "sm",
+        "showHeader": true,
+        "footer": {
+          "show": false
+        },
+        "enablePagination": true
+      },
+      "targets": [
+        {
+          "expr": "max by (tenant_id, asset_id, device_id, sensor_key, sensor_name, group, index, component_class, raw_state, state_description) ((nexora_hw_component_state{asset_id=\"$asset_id\",asset_id!=\"\"}  * on(tenant_id, asset_id, sensor_key) group_left(sensor_name, group, index, component_class, source_id, hostname, site_name, vendor, platform, ent_physical_index, measured_entity_type) (max by (tenant_id, asset_id, sensor_key, sensor_name, group, index, component_class, source_id, hostname, site_name, vendor, platform, ent_physical_index, measured_entity_type) (nexora_hw_sensor_info{asset_id=\"$asset_id\",asset_id!=\"\",group=~\"$hardware_group\",sensor_name=~\"$sensor_name\",component_class=~\"$component_class\"}))))",
+          "format": "table",
+          "instant": true,
+          "refId": "A"
+        },
+        {
+          "expr": "max by (tenant_id, asset_id, device_id, sensor_key, sensor_name, group, index, component_class, quality) ((nexora_hw_sensor_quality{asset_id=\"$asset_id\",asset_id!=\"\",measurement_type=\"component_state\"}  * on(tenant_id, asset_id, sensor_key) group_left(sensor_name, group, index, component_class, source_id, hostname, site_name, vendor, platform, ent_physical_index, measured_entity_type) (max by (tenant_id, asset_id, sensor_key, sensor_name, group, index, component_class, source_id, hostname, site_name, vendor, platform, ent_physical_index, measured_entity_type) (nexora_hw_sensor_info{asset_id=\"$asset_id\",asset_id!=\"\",group=~\"$hardware_group\",sensor_name=~\"$sensor_name\",component_class=~\"$component_class\"}))))",
+          "format": "table",
+          "instant": true,
+          "refId": "B"
+        },
+        {
+          "expr": "(max by (tenant_id, asset_id, device_id, sensor_key, sensor_name, group, index, component_class, raw_state, state_description) ((nexora_hw_component_present{asset_id=\"$asset_id\",asset_id!=\"\"}  * on(tenant_id, asset_id, sensor_key) group_left(sensor_name, group, index, component_class, source_id, hostname, site_name, vendor, platform, ent_physical_index, measured_entity_type) (max by (tenant_id, asset_id, sensor_key, sensor_name, group, index, component_class, source_id, hostname, site_name, vendor, platform, ent_physical_index, measured_entity_type) (nexora_hw_sensor_info{asset_id=\"$asset_id\",asset_id!=\"\",group=~\"$hardware_group\",sensor_name=~\"$sensor_name\",component_class=~\"$component_class\"})))) or on(tenant_id, asset_id, device_id, sensor_key, sensor_name, group, index, component_class) (max by (tenant_id, asset_id, device_id, sensor_key, sensor_name, group, index, component_class) ((nexora_hw_component_state{asset_id=\"$asset_id\",asset_id!=\"\"}  * on(tenant_id, asset_id, sensor_key) group_left(sensor_name, group, index, component_class, source_id, hostname, site_name, vendor, platform, ent_physical_index, measured_entity_type) (max by (tenant_id, asset_id, sensor_key, sensor_name, group, index, component_class, source_id, hostname, site_name, vendor, platform, ent_physical_index, measured_entity_type) (nexora_hw_sensor_info{asset_id=\"$asset_id\",asset_id!=\"\",group=~\"$hardware_group\",sensor_name=~\"$sensor_name\",component_class=~\"$component_class\"})))) * 0 - 1))",
+          "format": "table",
+          "instant": true,
+          "refId": "C"
+        }
+      ],
+      "transformations": [
+        {
+          "id": "joinByLabels",
+          "options": {
+            "labels": [
+              "tenant_id",
+              "asset_id",
+              "device_id",
+              "sensor_key",
+              "sensor_name",
+              "group",
+              "index",
+              "component_class"
+            ]
+          }
+        },
+        {
+          "id": "organize",
+          "options": {
+            "excludeByName": {
+              "Time": true,
+              "__name__": true,
+              "tenant_id": true,
+              "device_id": true,
+              "sensor_key": true,
+              "source_type": true,
+              "source_id": true,
+              "rule_version": true,
+              "index": true,
+              "ent_physical_index": true,
+              "measured_entity_type": true,
+              "measurement_type": true,
+              "hostname": true,
+              "site_name": true,
+              "vendor": true,
+              "platform": true,
+              "role": true,
+              "window": true,
+              "Value #B": true
+            },
+            "indexByName": {
+              "asset_id": 0,
+              "sensor_name": 1,
+              "group": 2,
+              "component_class": 3,
+              "raw_state": 4,
+              "state_description": 5,
+              "Value #A": 6,
+              "quality": 7,
+              "Value #C": 8
+            },
+            "renameByName": {
+              "asset_id": "资产 ID",
+              "sensor_name": "部件名称",
+              "group": "分组",
+              "component_class": "部件类别",
+              "raw_state": "原始状态",
+              "state_description": "状态说明",
+              "Value #A": "规范状态",
+              "quality": "采集质量",
+              "Value #C": "明确存在性"
+            }
+          }
+        }
+      ],
+      "description": "显示已验证状态映射对应的原始状态值、状态说明、规范状态、采集质量和明确存在性。仅已验证的 active/not-install 描述会映射为已安装/未安装；未知映射不会推断原始说明，明确存在性显示无法判断。"
+    },
+    {
+      "id": 18,
+      "title": "电源功率当前读数",
+      "type": "table",
+      "datasource": {
+        "type": "prometheus",
+        "uid": "victoriametrics"
+      },
+      "gridPos": {
+        "h": 8,
+        "w": 8,
+        "x": 16,
+        "y": 49
+      },
+      "fieldConfig": {
+        "defaults": {
+          "unit": "none",
+          "noValue": "暂无采集数据",
+          "color": {
+            "mode": "thresholds"
+          },
+          "custom": {
+            "filterable": true
+          }
+        },
+        "overrides": [
+          {
+            "matcher": {
+              "id": "byName",
+              "options": "功率"
+            },
+            "properties": [
+              {
+                "id": "unit",
+                "value": "watt"
+              }
+            ]
+          }
+        ]
+      },
+      "options": {
+        "cellHeight": "sm",
+        "showHeader": true,
+        "footer": {
+          "show": false
+        },
+        "enablePagination": true
+      },
+      "targets": [
+        {
+          "expr": "(nexora_hw_power_watts{asset_id=\"$asset_id\",asset_id!=\"\"}  * on(tenant_id, asset_id, sensor_key) group_left(sensor_name, group, index, component_class, source_id, hostname, site_name, vendor, platform, ent_physical_index, measured_entity_type) (max by (tenant_id, asset_id, sensor_key, sensor_name, group, index, component_class, source_id, hostname, site_name, vendor, platform, ent_physical_index, measured_entity_type) (nexora_hw_sensor_info{asset_id=\"$asset_id\",asset_id!=\"\",group=~\"$hardware_group\",sensor_name=~\"$sensor_name\",component_class=~\"$component_class\"})))",
+          "format": "table",
+          "instant": true,
+          "refId": "A"
+        }
+      ],
+      "transformations": [
+        {
+          "id": "organize",
+          "options": {
+            "excludeByName": {
+              "Time": true,
+              "__name__": true,
+              "tenant_id": true,
+              "asset_id": true,
+              "sensor_key": true,
+              "source_id": true,
+              "source_type": true,
+              "rule_version": true,
+              "index": true,
+              "ent_physical_index": true,
+              "measured_entity_type": true,
+              "measurement_type": true,
+              "instance": true,
+              "hostname": true,
+              "site_name": true,
+              "vendor": true,
+              "platform": true
+            },
+            "indexByName": {
+              "sensor_name": 0,
+              "group": 1,
+              "component_class": 2,
+              "unit": 3,
+              "window": 4,
+              "Value": 5
+            },
+            "renameByName": {
+              "sensor_name": "部件名称",
+              "group": "分组",
+              "component_class": "部件类别",
+              "unit": "单位",
+              "window": "CPU窗口",
+              "Value": "功率"
+            }
+          }
+        }
+      ],
+      "description": "功率值不会被解释为电源是否正常。"
+    },
+    {
+      "id": 902,
+      "title": "发现状态与采集质量",
+      "type": "row",
+      "collapsed": false,
+      "gridPos": {
+        "h": 1,
+        "w": 24,
+        "x": 0,
+        "y": 57
+      },
+      "panels": []
+    },
+    {
+      "id": 20,
+      "title": "硬件发现能力与数量",
+      "type": "table",
+      "datasource": {
+        "type": "prometheus",
+        "uid": "victoriametrics"
+      },
+      "gridPos": {
+        "h": 8,
+        "w": 24,
+        "x": 0,
+        "y": 58
+      },
+      "fieldConfig": {
+        "defaults": {
+          "unit": "none",
+          "noValue": "暂无采集数据",
+          "color": {
+            "mode": "thresholds"
+          },
+          "custom": {
+            "filterable": true
+          }
+        },
+        "overrides": [
+          {
+            "matcher": {
+              "id": "byName",
+              "options": "距最近成功（秒）"
+            },
+            "properties": [
+              {
+                "id": "unit",
+                "value": "s"
+              }
+            ]
+          },
+          {
+            "matcher": {
+              "id": "byName",
+              "options": "发现状态"
+            },
+            "properties": [
+              {
+                "id": "mappings",
+                "value": [
+                  {
+                    "type": "value",
+                    "options": {
+                      "success": {
+                        "text": "成功",
+                        "color": "green"
+                      },
+                      "partial": {
+                        "text": "部分成功",
+                        "color": "yellow"
+                      },
+                      "failed": {
+                        "text": "失败",
+                        "color": "red"
+                      },
+                      "unsupported": {
+                        "text": "不支持",
+                        "color": "gray"
+                      },
+                      "not_found": {
+                        "text": "未发现",
+                        "color": "gray"
+                      },
+                      "unknown": {
+                        "text": "未知",
+                        "color": "gray"
+                      }
+                    }
+                  }
+                ]
+              }
+            ]
+          },
+          {
+            "matcher": {
+              "id": "byName",
+              "options": "覆盖完整性"
+            },
+            "properties": [
+              {
+                "id": "mappings",
+                "value": [
+                  {
+                    "type": "value",
+                    "options": {
+                      "true": {
+                        "text": "完整",
+                        "color": "green"
+                      },
+                      "false": {
+                        "text": "不完整",
+                        "color": "yellow"
+                      }
+                    }
+                  }
+                ]
+              }
+            ]
+          },
+          {
+            "matcher": {
+              "id": "byName",
+              "options": "距最近成功（秒）"
+            },
+            "properties": [
+              {
+                "id": "mappings",
+                "value": [
+                  {
+                    "type": "value",
+                    "options": {
+                      "-1": {
+                        "text": "无成功记录",
+                        "color": "red"
+                      }
+                    }
+                  }
+                ]
+              }
+            ]
+          },
+          {
+            "matcher": {
+              "id": "byName",
+              "options": "发现状态"
+            },
+            "properties": [
+              {
+                "id": "custom.cellOptions",
+                "value": {
+                  "type": "color-text"
+                }
+              }
+            ]
+          },
+          {
+            "matcher": {
+              "id": "byName",
+              "options": "覆盖完整性"
+            },
+            "properties": [
+              {
+                "id": "custom.cellOptions",
+                "value": {
+                  "type": "color-text"
+                }
+              }
+            ]
+          },
+          {
+            "matcher": {
+              "id": "byName",
+              "options": "距最近成功（秒）"
+            },
+            "properties": [
+              {
+                "id": "custom.cellOptions",
+                "value": {
+                  "type": "color-text"
+                }
+              }
+            ]
+          }
+        ]
+      },
+      "options": {
+        "cellHeight": "sm",
+        "showHeader": true,
+        "footer": {
+          "show": false
+        },
+        "enablePagination": true
+      },
+      "targets": [
+        {
+          "expr": "max by (tenant_id, asset_id, device_id, source_type, component_class, status, coverage_complete) (nexora_hw_capability_status{asset_id=\"$asset_id\",asset_id!=\"\"})",
+          "format": "table",
+          "instant": true,
+          "refId": "A"
+        },
+        {
+          "expr": "max by (tenant_id, asset_id, device_id, source_type, component_class) (nexora_hw_capability_active_sensor_count{asset_id=\"$asset_id\",asset_id!=\"\"})",
+          "format": "table",
+          "instant": true,
+          "refId": "B"
+        },
+        {
+          "expr": "max by (tenant_id, asset_id, device_id, source_type, component_class) (nexora_hw_capability_last_discovered_count{asset_id=\"$asset_id\",asset_id!=\"\"})",
+          "format": "table",
+          "instant": true,
+          "refId": "C"
+        },
+        {
+          "expr": "max by (tenant_id, asset_id, device_id, source_type, component_class, reason, reason_code) (nexora_hw_capability_info{asset_id=\"$asset_id\",asset_id!=\"\"})",
+          "format": "table",
+          "instant": true,
+          "refId": "D"
+        },
+        {
+          "expr": "(max by (tenant_id, asset_id, device_id, source_type, component_class) (time() - nexora_hw_capability_last_success_timestamp_seconds{asset_id=\"$asset_id\",asset_id!=\"\"}) or on(tenant_id, asset_id, device_id, source_type, component_class) (max by (tenant_id, asset_id, device_id, source_type, component_class) (nexora_hw_capability_info{asset_id=\"$asset_id\",asset_id!=\"\"}) * 0 - 1))",
+          "format": "table",
+          "instant": true,
+          "refId": "E"
+        }
+      ],
+      "transformations": [
+        {
+          "id": "joinByLabels",
+          "options": {
+            "labels": [
+              "tenant_id",
+              "asset_id",
+              "device_id",
+              "source_type",
+              "component_class"
+            ]
+          }
+        },
+        {
+          "id": "organize",
+          "options": {
+            "excludeByName": {
+              "Time": true,
+              "__name__": true,
+              "tenant_id": true,
+              "device_id": true,
+              "source_type": true,
+              "rule_version": true,
+              "discovery_version": true,
+              "artifact_version": true,
+              "Value #A": true,
+              "Value #D": true
+            },
+            "indexByName": {
+              "asset_id": 0,
+              "component_class": 1,
+              "status": 2,
+              "coverage_complete": 3,
+              "Value #B": 4,
+              "Value #C": 5,
+              "reason_code": 6,
+              "reason": 7,
+              "Value #E": 8
+            },
+            "renameByName": {
+              "asset_id": "资产 ID",
+              "component_class": "硬件类别",
+              "status": "发现状态",
+              "coverage_complete": "覆盖完整性",
+              "Value #B": "活动传感器数",
+              "Value #C": "最近发现数",
+              "reason_code": "原因码",
+              "reason": "原因说明",
+              "Value #E": "距最近成功（秒）"
+            }
+          }
+        }
+      ],
+      "description": "每行按资产、设备和硬件类别汇总。显示发现状态、活动/最近发现数量及原因；最近成功以距今秒数显示，无历史成功时标为“无成功记录”。"
+    },
+    {
+      "id": 21,
+      "title": "传感器数据质量",
+      "type": "table",
+      "datasource": {
+        "type": "prometheus",
+        "uid": "victoriametrics"
+      },
+      "gridPos": {
+        "h": 8,
+        "w": 8,
+        "x": 0,
+        "y": 66
+      },
+      "fieldConfig": {
+        "defaults": {
+          "unit": "none",
+          "noValue": "暂无采集数据",
+          "color": {
+            "mode": "thresholds"
+          },
+          "custom": {
+            "filterable": true
+          }
+        },
+        "overrides": []
+      },
+      "options": {
+        "cellHeight": "sm",
+        "showHeader": true,
+        "footer": {
+          "show": false
+        },
+        "enablePagination": true
+      },
+      "targets": [
+        {
+          "expr": "(nexora_hw_sensor_quality{asset_id=\"$asset_id\",asset_id!=\"\"}  * on(tenant_id, asset_id, sensor_key) group_left(sensor_name, group, index, component_class, source_id, hostname, site_name, vendor, platform, ent_physical_index, measured_entity_type) (max by (tenant_id, asset_id, sensor_key, sensor_name, group, index, component_class, source_id, hostname, site_name, vendor, platform, ent_physical_index, measured_entity_type) (nexora_hw_sensor_info{asset_id=\"$asset_id\",asset_id!=\"\",group=~\"$hardware_group\",sensor_name=~\"$sensor_name\",component_class=~\"$component_class\"})))",
+          "format": "table",
+          "instant": true,
+          "refId": "A"
+        }
+      ],
+      "transformations": [
+        {
+          "id": "organize",
+          "options": {
+            "excludeByName": {
+              "Time": true,
+              "__name__": true,
+              "tenant_id": true,
+              "asset_id": true,
+              "sensor_key": true,
+              "source_id": true,
+              "source_type": true,
+              "rule_version": true,
+              "index": true,
+              "ent_physical_index": true,
+              "measured_entity_type": true,
+              "measurement_type": true,
+              "instance": true,
+              "hostname": true,
+              "site_name": true,
+              "vendor": true,
+              "platform": true
+            },
+            "indexByName": {
+              "sensor_name": 0,
+              "group": 1,
+              "component_class": 2,
+              "unit": 3,
+              "window": 4,
+              "Value": 5
+            },
+            "renameByName": {
+              "sensor_name": "部件名称",
+              "group": "分组",
+              "component_class": "部件类别",
+              "unit": "单位",
+              "window": "CPU窗口",
+              "Value": "质量值"
+            }
+          }
+        }
+      ],
+      "description": "显示采集链路输出的原始质量枚举值；尚未在看板中猜测数值编码。"
+    },
+    {
+      "id": 22,
+      "title": "距最近一次成功采集",
+      "type": "table",
+      "datasource": {
+        "type": "prometheus",
+        "uid": "victoriametrics"
+      },
+      "gridPos": {
+        "h": 8,
+        "w": 8,
+        "x": 8,
+        "y": 66
+      },
+      "fieldConfig": {
+        "defaults": {
+          "unit": "none",
+          "noValue": "暂无采集数据",
+          "color": {
+            "mode": "thresholds"
+          },
+          "custom": {
+            "filterable": true
+          }
+        },
+        "overrides": [
+          {
+            "matcher": {
+              "id": "byName",
+              "options": "距上次成功"
+            },
+            "properties": [
+              {
+                "id": "unit",
+                "value": "s"
+              }
+            ]
+          }
+        ]
+      },
+      "options": {
+        "cellHeight": "sm",
+        "showHeader": true,
+        "footer": {
+          "show": false
+        },
+        "enablePagination": true
+      },
+      "targets": [
+        {
+          "expr": "(time() - (nexora_hw_sensor_last_success_timestamp_seconds{asset_id=\"$asset_id\",asset_id!=\"\"}  * on(tenant_id, asset_id, sensor_key) group_left(sensor_name, group, index, component_class, source_id, hostname, site_name, vendor, platform, ent_physical_index, measured_entity_type) (max by (tenant_id, asset_id, sensor_key, sensor_name, group, index, component_class, source_id, hostname, site_name, vendor, platform, ent_physical_index, measured_entity_type) (nexora_hw_sensor_info{asset_id=\"$asset_id\",asset_id!=\"\",group=~\"$hardware_group\",sensor_name=~\"$sensor_name\",component_class=~\"$component_class\"}))))",
+          "format": "table",
+          "instant": true,
+          "refId": "A"
+        }
+      ],
+      "transformations": [
+        {
+          "id": "organize",
+          "options": {
+            "excludeByName": {
+              "Time": true,
+              "__name__": true,
+              "tenant_id": true,
+              "asset_id": true,
+              "sensor_key": true,
+              "source_id": true,
+              "source_type": true,
+              "rule_version": true,
+              "index": true,
+              "ent_physical_index": true,
+              "measured_entity_type": true,
+              "measurement_type": true,
+              "instance": true,
+              "hostname": true,
+              "site_name": true,
+              "vendor": true,
+              "platform": true
+            },
+            "indexByName": {
+              "sensor_name": 0,
+              "group": 1,
+              "component_class": 2,
+              "unit": 3,
+              "window": 4,
+              "Value": 5
+            },
+            "renameByName": {
+              "sensor_name": "部件名称",
+              "group": "分组",
+              "component_class": "部件类别",
+              "unit": "单位",
+              "window": "CPU窗口",
+              "Value": "距上次成功"
+            }
+          }
+        }
+      ],
+      "description": "按传感器显示距最后有效原始样本的秒数；不会用 recording rule 的写入时间替代原始成功时间。"
+    },
+    {
+      "id": 24,
+      "title": "全局硬件指标渲染错误数",
+      "type": "stat",
+      "datasource": {
+        "type": "prometheus",
+        "uid": "victoriametrics"
+      },
+      "gridPos": {
+        "h": 8,
+        "w": 8,
+        "x": 16,
+        "y": 66
+      },
+      "fieldConfig": {
+        "defaults": {
+          "unit": "short",
+          "noValue": "暂无采集数据",
+          "color": {
+            "mode": "thresholds"
+          },
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              {
+                "color": "#E02F44",
+                "value": null
+              }
+            ]
+          }
+        },
+        "overrides": []
+      },
+      "options": {
+        "colorMode": "value",
+        "graphMode": "none",
+        "justifyMode": "center",
+        "orientation": "auto",
+        "reduceOptions": {
+          "calcs": [
+            "lastNotNull"
+          ],
+          "fields": "",
+          "values": false
+        },
+        "textMode": "auto"
+      },
+      "targets": [
+        {
+          "expr": "nexora_hw_sensor_render_errors",
+          "refId": "A"
+        }
+      ],
+      "description": "这是 exporter 每次抓取汇总的全局错误数，没有 asset_id 标签，因此不代表所选设备的错误数。"
+    },
+    {
+      "id": 903,
+      "title": "接口诊断",
+      "type": "row",
+      "collapsed": false,
+      "gridPos": {
+        "h": 1,
+        "w": 24,
+        "x": 0,
+        "y": 74
+      },
+      "panels": []
+    },
+    {
+      "id": 23,
+      "title": "设备端口实时状态清单",
+      "type": "table",
+      "datasource": {
+        "type": "prometheus",
+        "uid": "victoriametrics"
+      },
+      "gridPos": {
+        "h": 8,
+        "w": 12,
+        "x": 0,
+        "y": 75
+      },
+      "fieldConfig": {
+        "defaults": {
+          "unit": "none",
+          "noValue": "暂无采集数据",
+          "color": {
+            "mode": "thresholds"
+          },
+          "custom": {
+            "filterable": true
+          }
+        },
+        "overrides": [
+          {
+            "matcher": {
+              "id": "byName",
+              "options": "运行状态"
+            },
+            "properties": [
+              {
+                "id": "mappings",
+                "value": [
+                  {
+                    "type": "value",
+                    "options": {
+                      "1": {
+                        "text": "Up",
+                        "color": "green"
+                      },
+                      "2": {
+                        "text": "down",
+                        "color": "red"
+                      },
+                      "0": {
+                        "text": "UNKNOWN",
+                        "color": "gray"
+                      },
+                      "3": {
+                        "text": "UNKNOWN",
+                        "color": "gray"
+                      },
+                      "4": {
+                        "text": "UNKNOWN",
+                        "color": "gray"
+                      },
+                      "5": {
+                        "text": "UNKNOWN",
+                        "color": "gray"
+                      },
+                      "6": {
+                        "text": "UNKNOWN",
+                        "color": "gray"
+                      },
+                      "7": {
+                        "text": "UNKNOWN",
+                        "color": "gray"
+                      }
+                    }
+                  },
+                  {
+                    "type": "special",
+                    "options": {
+                      "match": "null",
+                      "result": {
+                        "text": "UNKNOWN",
+                        "color": "gray"
+                      }
+                    }
+                  },
+                  {
+                    "type": "special",
+                    "options": {
+                      "match": "nan",
+                      "result": {
+                        "text": "UNKNOWN",
+                        "color": "gray"
+                      }
+                    }
+                  }
+                ]
+              }
+            ]
+          },
+          {
+            "matcher": {
+              "id": "byName",
+              "options": "运行状态"
+            },
+            "properties": [
+              {
+                "id": "custom.cellOptions",
+                "value": {
+                  "type": "color-background"
+                }
+              }
+            ]
+          },
+          {
+            "matcher": {
+              "id": "byName",
+              "options": "接口全称"
+            },
+            "properties": [
+              {
+                "id": "links",
+                "value": [
+                  {
+                    "title": "打开接口详情",
+                    "url": "/d/nexora-interface-detail/interface-detail?var-site=${__data.fields[\"站点\"]}&var-vendor=${__data.fields[\"厂商\"]}&var-role=${__data.fields[\"角色\"]}&var-device=${__data.fields[\"设备名称\"]}&var-interface_role=${__data.fields[\"接口用途\"]}&var-interface=${__data.fields[\"接口全称\"]}&from=${__from}&to=${__to}",
+                    "targetBlank": false
+                  }
+                ]
+              }
+            ]
+          }
+        ]
+      },
+      "options": {
+        "cellHeight": "sm",
+        "showHeader": true,
+        "footer": {
+          "show": false
+        },
+        "enablePagination": true
+      },
+      "targets": [
+        {
+          "expr": "ifOperStatus{job=\"network_snmp\",asset_id=\"$asset_id\",asset_id!=\"\"} * on(instance, ifIndex) group_left(ifName, ifAlias) ((((max by (instance, ifIndex, ifName) (ifName{job=\"network_snmp\",asset_id=\"$asset_id\",asset_id!=\"\"} * 0 + 1)) * on(instance, ifIndex) group_left(ifAlias) (max by (instance, ifIndex, ifAlias) (ifAlias{job=\"network_snmp\",asset_id=\"$asset_id\",asset_id!=\"\"} * 0 + 1))) or on(instance, ifIndex) (max by (instance, ifIndex, ifName) (ifName{job=\"network_snmp\",asset_id=\"$asset_id\",asset_id!=\"\"} * 0 + 1))) or on(instance, ifIndex) max by (instance, ifIndex) (ifOperStatus{job=\"network_snmp\",asset_id=\"$asset_id\",asset_id!=\"\"} * 0 + 1))",
+          "format": "table",
+          "instant": true,
+          "refId": "A"
+        }
+      ],
+      "transformations": [
+        {
+          "id": "organize",
+          "options": {
+            "excludeByName": {
+              "Time": true,
+              "__name__": true,
+              "ifIndex": true,
+              "asset_id": true,
+              "nexora_asset_id": true,
+              "nexora_hostname": true,
+              "nexora_module": true,
+              "nexora_platform": true,
+              "nexora_role": true,
+              "nexora_site_id": true,
+              "nexora_site_name": true,
+              "nexora_tenant_id": true,
+              "nexora_vendor": true,
+              "job": true,
+              "tenant_id": true,
+              "site_id": true,
+              "platform": true,
+              "sysName": true,
+              "nexora_interface_role": true,
+              "ifDescr": true
+            },
+            "indexByName": {
+              "site_name": 0,
+              "hostname": 1,
+              "instance": 2,
+              "ifName": 3,
+              "ifAlias": 4,
+              "vendor": 5,
+              "role": 6,
+              "interface_role": 7,
+              "utilization_warn_pct": 8,
+              "utilization_high_pct": 9,
+              "utilization_critical_pct": 10,
+              "Value": 11
+            },
+            "renameByName": {
+              "sysName": "设备名称",
+              "hostname": "设备名称",
+              "instance": "管理 IP",
+              "site_name": "站点",
+              "ifName": "接口全称",
+              "ifAlias": "接口描述",
+              "vendor": "厂商",
+              "role": "角色",
+              "interface_role": "接口用途",
+              "utilization_warn_pct": "预警阈值 (%)",
+              "utilization_high_pct": "高位阈值 (%)",
+              "utilization_critical_pct": "严重阈值 (%)",
+              "Value": "运行状态"
+            }
+          }
+        }
+      ],
+      "description": "接口行同样使用所选 asset_id 限定，并保留现有接口详情跳转。"
+    },
+    {
+      "id": 25,
+      "title": "设备接口流量走势",
+      "type": "timeseries",
+      "datasource": {
+        "type": "prometheus",
+        "uid": "victoriametrics"
+      },
+      "gridPos": {
+        "h": 8,
+        "w": 12,
+        "x": 12,
+        "y": 75
+      },
+      "fieldConfig": {
+        "defaults": {
+          "unit": "bps",
+          "noValue": "暂无采集数据",
+          "color": {
+            "mode": "palette-classic"
+          },
+          "custom": {
+            "drawStyle": "line",
+            "lineInterpolation": "linear",
+            "lineWidth": 2,
+            "fillOpacity": 10,
+            "gradientMode": "none",
+            "showPoints": "never"
+          }
+        },
+        "overrides": [
+          {
+            "matcher": {
+              "id": "byRegexp",
+              "options": ".*入流量$"
+            },
+            "properties": [
+              {
+                "id": "color",
+                "value": {
+                  "mode": "fixed",
+                  "fixedColor": "#3274D9"
+                }
+              }
+            ]
+          },
+          {
+            "matcher": {
+              "id": "byRegexp",
+              "options": ".*出流量$"
+            },
+            "properties": [
+              {
+                "id": "color",
+                "value": {
+                  "mode": "fixed",
+                  "fixedColor": "#56A64B"
+                }
+              }
+            ]
+          }
+        ]
+      },
+      "options": {
+        "legend": {
+          "displayMode": "table",
+          "placement": "right",
+          "showLegend": true,
+          "calcs": [
+            "lastNotNull",
+            "max",
+            "mean"
+          ]
+        },
+        "tooltip": {
+          "mode": "multi",
+          "sort": "desc"
+        }
+      },
+      "targets": [
+        {
+          "expr": "sum by (asset_id, hostname, ifName) ((rate(ifHCInOctets{job=\"network_snmp\",asset_id=\"$asset_id\",asset_id!=\"\"}[5m]) or rate(ifInOctets{job=\"network_snmp\",asset_id=\"$asset_id\",asset_id!=\"\"}[5m])) * 8 * on(instance, ifIndex) group_left(ifName, ifAlias) ((((max by (instance, ifIndex, ifName) (ifName{job=\"network_snmp\",asset_id=\"$asset_id\",asset_id!=\"\"} * 0 + 1)) * on(instance, ifIndex) group_left(ifAlias) (max by (instance, ifIndex, ifAlias) (ifAlias{job=\"network_snmp\",asset_id=\"$asset_id\",asset_id!=\"\"} * 0 + 1))) or on(instance, ifIndex) (max by (instance, ifIndex, ifName) (ifName{job=\"network_snmp\",asset_id=\"$asset_id\",asset_id!=\"\"} * 0 + 1))) or on(instance, ifIndex) max by (instance, ifIndex) (ifOperStatus{job=\"network_snmp\",asset_id=\"$asset_id\",asset_id!=\"\"} * 0 + 1)))",
+          "legendFormat": "{{hostname}} / {{ifName}} 入流量",
+          "refId": "A"
+        },
+        {
+          "expr": "sum by (asset_id, hostname, ifName) ((rate(ifHCOutOctets{job=\"network_snmp\",asset_id=\"$asset_id\",asset_id!=\"\"}[5m]) or rate(ifOutOctets{job=\"network_snmp\",asset_id=\"$asset_id\",asset_id!=\"\"}[5m])) * 8 * on(instance, ifIndex) group_left(ifName, ifAlias) ((((max by (instance, ifIndex, ifName) (ifName{job=\"network_snmp\",asset_id=\"$asset_id\",asset_id!=\"\"} * 0 + 1)) * on(instance, ifIndex) group_left(ifAlias) (max by (instance, ifIndex, ifAlias) (ifAlias{job=\"network_snmp\",asset_id=\"$asset_id\",asset_id!=\"\"} * 0 + 1))) or on(instance, ifIndex) (max by (instance, ifIndex, ifName) (ifName{job=\"network_snmp\",asset_id=\"$asset_id\",asset_id!=\"\"} * 0 + 1))) or on(instance, ifIndex) max by (instance, ifIndex) (ifOperStatus{job=\"network_snmp\",asset_id=\"$asset_id\",asset_id!=\"\"} * 0 + 1)))",
+          "legendFormat": "{{hostname}} / {{ifName}} 出流量",
+          "refId": "B"
+        }
+      ],
+      "description": "接口流量仍按选定资产过滤，入向/出向分开显示。"
+    },
+    {
+      "id": 28,
+      "title": "光模块功率当前读数（dBm）",
+      "type": "table",
+      "datasource": {
+        "type": "prometheus",
+        "uid": "victoriametrics"
+      },
+      "gridPos": {
+        "h": 8,
+        "w": 12,
+        "x": 0,
+        "y": 83
+      },
+      "fieldConfig": {
+        "defaults": {
+          "unit": "none",
+          "noValue": "暂无采集数据",
+          "color": {
+            "mode": "thresholds"
+          },
+          "custom": {
+            "filterable": true
+          }
+        },
+        "overrides": [
+          {
+            "matcher": {
+              "id": "byName",
+              "options": "光功率"
+            },
+            "properties": [
+              {
+                "id": "unit",
+                "value": "dBm"
+              }
+            ]
+          }
+        ]
+      },
+      "options": {
+        "cellHeight": "sm",
+        "showHeader": true,
+        "footer": {
+          "show": false
+        },
+        "enablePagination": true
+      },
+      "targets": [
+        {
+          "expr": "(nexora_hw_optical_power_dbm{asset_id=\"$asset_id\",asset_id!=\"\"}  * on(tenant_id, asset_id, sensor_key) group_left(sensor_name, group, index, component_class, source_id, hostname, site_name, vendor, platform, ent_physical_index, measured_entity_type) (max by (tenant_id, asset_id, sensor_key, sensor_name, group, index, component_class, source_id, hostname, site_name, vendor, platform, ent_physical_index, measured_entity_type) (nexora_hw_sensor_info{asset_id=\"$asset_id\",asset_id!=\"\",group=~\"$hardware_group\",sensor_name=~\"$sensor_name\",component_class=~\"$component_class\"})))",
+          "format": "table",
+          "instant": true,
+          "refId": "A"
+        }
+      ],
+      "transformations": [
+        {
+          "id": "organize",
+          "options": {
+            "excludeByName": {
+              "Time": true,
+              "__name__": true,
+              "tenant_id": true,
+              "asset_id": true,
+              "sensor_key": true,
+              "source_id": true,
+              "source_type": true,
+              "rule_version": true,
+              "index": true,
+              "ent_physical_index": true,
+              "measured_entity_type": true,
+              "measurement_type": true,
+              "instance": true,
+              "hostname": true,
+              "site_name": true,
+              "vendor": true,
+              "platform": true
+            },
+            "indexByName": {
+              "sensor_name": 0,
+              "group": 1,
+              "component_class": 2,
+              "unit": 3,
+              "window": 4,
+              "Value": 5
+            },
+            "renameByName": {
+              "sensor_name": "部件名称",
+              "group": "分组",
+              "component_class": "部件类别",
+              "unit": "单位",
+              "window": "CPU窗口",
+              "Value": "光功率"
+            }
+          }
+        }
+      ],
+      "description": "展示设备当前已采集到的光功率读数，并保留传感器名称和分组。"
+    },
+    {
+      "id": 29,
+      "title": "其他 LibreNMS 传感器读数",
+      "type": "table",
+      "datasource": {
+        "type": "prometheus",
+        "uid": "victoriametrics"
+      },
+      "gridPos": {
+        "h": 8,
+        "w": 12,
+        "x": 12,
+        "y": 83
+      },
+      "fieldConfig": {
+        "defaults": {
+          "unit": "none",
+          "noValue": "暂无采集数据",
+          "color": {
+            "mode": "thresholds"
+          },
+          "custom": {
+            "filterable": true
+          }
+        },
+        "overrides": []
+      },
+      "options": {
+        "cellHeight": "sm",
+        "showHeader": true,
+        "footer": {
+          "show": false
+        },
+        "enablePagination": true
+      },
+      "targets": [
+        {
+          "expr": "(nexora_hw_sensor_value{asset_id=\"$asset_id\",asset_id!=\"\"}  * on(tenant_id, asset_id, sensor_key) group_left(sensor_name, group, index, component_class, source_id, hostname, site_name, vendor, platform, ent_physical_index, measured_entity_type) (max by (tenant_id, asset_id, sensor_key, sensor_name, group, index, component_class, source_id, hostname, site_name, vendor, platform, ent_physical_index, measured_entity_type) (nexora_hw_sensor_info{asset_id=\"$asset_id\",asset_id!=\"\",group=~\"$hardware_group\",sensor_name=~\"$sensor_name\",component_class=~\"$component_class\"})))",
+          "format": "table",
+          "instant": true,
+          "refId": "A"
+        }
+      ],
+      "transformations": [
+        {
+          "id": "organize",
+          "options": {
+            "excludeByName": {
+              "Time": true,
+              "__name__": true,
+              "tenant_id": true,
+              "asset_id": true,
+              "sensor_key": true,
+              "source_id": true,
+              "source_type": true,
+              "rule_version": true,
+              "index": true,
+              "ent_physical_index": true,
+              "measured_entity_type": true,
+              "measurement_type": true,
+              "instance": true,
+              "hostname": true,
+              "site_name": true,
+              "vendor": true,
+              "platform": true
+            },
+            "indexByName": {
+              "sensor_name": 0,
+              "group": 1,
+              "component_class": 2,
+              "unit": 3,
+              "window": 4,
+              "Value": 5
+            },
+            "renameByName": {
+              "sensor_name": "部件名称",
+              "group": "分组",
+              "component_class": "部件类别",
+              "unit": "单位",
+              "window": "CPU窗口",
+              "Value": "当前值"
+            }
+          }
+        }
+      ],
+      "description": "保留 Nexora 暂无规范单位换算的 LibreNMS 传感器类别，逐行展示其类别和上游单位。"
+    }
+  ],
+  "refresh": "30s",
+  "schemaVersion": 39,
+  "tags": [
+    "nexora",
+    "network",
+    "device"
+  ],
+  "templating": {
+    "list": [
+      {
+        "allValue": ".*",
+        "current": {
+          "selected": true,
+          "text": [
+            "All"
+          ],
+          "value": [
+            "$__all"
+          ]
+        },
+        "definition": "query_result(count by (site_name) (up{job=\"network_snmp\"}))",
+        "includeAll": true,
+        "label": "站点",
+        "multi": true,
+        "name": "site",
+        "options": [],
+        "query": {
+          "query": "query_result(count by (site_name) (up{job=\"network_snmp\"}))",
+          "refId": "StandardVariableQuery"
+        },
+        "refresh": 1,
+        "type": "query",
+        "regex": "/.*site_name=\"([^\"]+)\".*/"
+      },
+      {
+        "allValue": ".*",
+        "current": {
+          "selected": true,
+          "text": [
+            "All"
+          ],
+          "value": [
+            "$__all"
+          ]
+        },
+        "definition": "query_result(count by (vendor) (up{job=\"network_snmp\",site_name=~\"$site\"}))",
+        "includeAll": true,
+        "label": "厂商",
+        "multi": true,
+        "name": "vendor",
+        "options": [],
+        "query": {
+          "query": "query_result(count by (vendor) (up{job=\"network_snmp\",site_name=~\"$site\"}))",
+          "refId": "StandardVariableQuery"
+        },
+        "refresh": 1,
+        "type": "query",
+        "regex": "/.*vendor=\"([^\"]+)\".*/"
+      },
+      {
+        "allValue": ".*",
+        "current": {
+          "selected": true,
+          "text": [
+            "All"
+          ],
+          "value": [
+            "$__all"
+          ]
+        },
+        "definition": "query_result(count by (role) (up{job=\"network_snmp\",site_name=~\"$site\",vendor=~\"$vendor\"}))",
+        "includeAll": true,
+        "label": "角色",
+        "multi": true,
+        "name": "role",
+        "options": [],
+        "query": {
+          "query": "query_result(count by (role) (up{job=\"network_snmp\",site_name=~\"$site\",vendor=~\"$vendor\"}))",
+          "refId": "StandardVariableQuery"
+        },
+        "refresh": 1,
+        "type": "query",
+        "regex": "/.*role=\"([^\"]+)\".*/"
+      },
+      {
+        "allValue": null,
+        "current": {
+          "selected": false,
+          "text": "",
+          "value": ""
+        },
+        "definition": "query_result(label_join(max by (asset_id,hostname,instance,site_name) (up{job=\"network_snmp\",asset_id!=\"\",site_name=~\"$site\",vendor=~\"$vendor\",role=~\"$role\"}), \"device_label\", \" · \", \"hostname\", \"instance\", \"site_name\"))",
+        "includeAll": false,
+        "label": "设备",
+        "multi": false,
+        "name": "asset_id",
+        "options": [],
+        "query": {
+          "query": "query_result(label_join(max by (asset_id,hostname,instance,site_name) (up{job=\"network_snmp\",asset_id!=\"\",site_name=~\"$site\",vendor=~\"$vendor\",role=~\"$role\"}), \"device_label\", \" · \", \"hostname\", \"instance\", \"site_name\"))",
+          "refId": "StandardVariableQuery"
+        },
+        "refresh": 1,
+        "type": "query",
+        "regex": "/.*asset_id=\"(?<value>[^\"]+)\".*device_label=\"(?<text>[^\"]+)\".*/"
+      },
+      {
+        "allValue": null,
+        "current": {
+          "selected": false,
+          "text": "",
+          "value": ""
+        },
+        "definition": "label_values(nexora_hw_cpu_usage_percent{asset_id=\"$asset_id\",asset_id!=\"\"}, window)",
+        "includeAll": false,
+        "label": "CPU 采样窗口",
+        "multi": false,
+        "name": "cpu_window",
+        "options": [],
+        "query": {
+          "query": "label_values(nexora_hw_cpu_usage_percent{asset_id=\"$asset_id\",asset_id!=\"\"}, window)",
+          "refId": "StandardVariableQuery"
+        },
+        "refresh": 1,
+        "type": "query"
+      },
+      {
+        "allValue": ".*",
+        "current": {
+          "selected": true,
+          "text": [
+            "All"
+          ],
+          "value": [
+            "$__all"
+          ]
+        },
+        "definition": "label_values(nexora_hw_sensor_info{asset_id=\"$asset_id\",asset_id!=\"\"}, group)",
+        "includeAll": true,
+        "label": "部件分组",
+        "multi": false,
+        "name": "hardware_group",
+        "options": [],
+        "query": {
+          "query": "label_values(nexora_hw_sensor_info{asset_id=\"$asset_id\",asset_id!=\"\"}, group)",
+          "refId": "StandardVariableQuery"
+        },
+        "refresh": 1,
+        "type": "query"
+      },
+      {
+        "allValue": ".*",
+        "current": {
+          "selected": true,
+          "text": [
+            "All"
+          ],
+          "value": [
+            "$__all"
+          ]
+        },
+        "definition": "label_values(nexora_hw_sensor_info{asset_id=\"$asset_id\",asset_id!=\"\",group=~\"$hardware_group\"}, sensor_name)",
+        "includeAll": true,
+        "label": "部件",
+        "multi": true,
+        "name": "sensor_name",
+        "options": [],
+        "query": {
+          "query": "label_values(nexora_hw_sensor_info{asset_id=\"$asset_id\",asset_id!=\"\",group=~\"$hardware_group\"}, sensor_name)",
+          "refId": "StandardVariableQuery"
+        },
+        "refresh": 1,
+        "type": "query"
+      },
+      {
+        "allValue": ".*",
+        "current": {
+          "selected": true,
+          "text": [
+            "All"
+          ],
+          "value": [
+            "$__all"
+          ]
+        },
+        "definition": "label_values(nexora_hw_sensor_info{asset_id=\"$asset_id\",asset_id!=\"\",group=~\"$hardware_group\",sensor_name=~\"$sensor_name\"}, component_class)",
+        "includeAll": true,
+        "label": "部件类别",
+        "multi": false,
+        "name": "component_class",
+        "options": [],
+        "query": {
+          "query": "label_values(nexora_hw_sensor_info{asset_id=\"$asset_id\",asset_id!=\"\",group=~\"$hardware_group\",sensor_name=~\"$sensor_name\"}, component_class)",
+          "refId": "StandardVariableQuery"
+        },
+        "refresh": 1,
+        "type": "query"
+      }
+    ]
+  },
+  "time": {
+    "from": "now-6h",
+    "to": "now"
+  },
+  "timezone": "browser",
+  "title": "02 网络设备详情 (Network Device Detail)",
+  "uid": "nexora-network-device",
+  "version": 30
+}

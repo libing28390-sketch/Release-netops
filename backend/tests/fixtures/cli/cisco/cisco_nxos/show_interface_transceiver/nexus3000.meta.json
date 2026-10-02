@@ -1,0 +1,9 @@
+{
+  "source_type": "official_vendor_documentation",
+  "source_url": "https://www.cisco.com/c/en/us/td/docs/switches/datacenter/nexus3000/sw/command/reference/5_0_3/interfaces/3k_cmd_ref_if/3k_cmd_ref_if_cmds.pdf",
+  "vendor": "Cisco",
+  "platform": "NX-OS",
+  "model_family": "Nexus 3000",
+  "command": "show interface transceiver",
+  "source_note": "Official Cisco Nexus 3000 interface command reference example."
+}

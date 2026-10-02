@@ -1,0 +1,16 @@
+Value Required IP_ADDRESS (\d+\.\d+\.\d+\.\d+)
+Value Required MAC_ADDRESS (\S+)
+Value VLAN_ID (\d+)
+Value INTERFACE (\S+)
+Value AGING (\S+)
+Value TYPE (\S+)
+
+Start
+  ^IP\s+ADDRESS\s+MAC\s+ADDRESS\s+EXPIRE\(M\)\s+TYPE\s+INTERFACE\s+VPN-INSTANCE
+  ^\s+VLAN/CEVLAN\s+PVC
+  ^-+
+  ^${IP_ADDRESS}\s+${MAC_ADDRESS}\s+${TYPE}\s* -> Record
+  ^${IP_ADDRESS}\s+${MAC_ADDRESS}\s+${VLAN_ID}\s+${INTERFACE}\s+${AGING}\s+${TYPE}\s* -> Record
+  ^Total:\d+\s+Dynamic:\d+\s+Static:\d+\s+Interface:\d+\s+Remote:\d+
+  ^\s*$$
+  ^. -> Error

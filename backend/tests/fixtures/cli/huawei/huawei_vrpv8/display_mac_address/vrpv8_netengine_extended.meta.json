@@ -1,0 +1,9 @@
+{
+  "source_type": "official_vendor_documentation",
+  "source_url": "https://support.huawei.com/enterprise/en/doc/EDOC1100278979/57db85b9/mac-configuration",
+  "vendor": "Huawei",
+  "platform": "VRP8",
+  "model_family": "NE08E/NE05E",
+  "command": "display mac-address static vlan 2",
+  "source_note": "Official extended MAC table example with PEVLAN, CEVLAN, and LSP/LSR-ID columns."
+}

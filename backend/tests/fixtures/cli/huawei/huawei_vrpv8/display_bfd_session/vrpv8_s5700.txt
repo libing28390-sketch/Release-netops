@@ -1,0 +1,14 @@
+<HUAWEI> display bfd session all
+S: Static session
+D: Dynamic session
+IP: IP session
+IF: Single-hop session
+PEER: Multi-hop session
+AUTO: Automatically negotiated session
+(w): State in WTR
+(*): State is invalid
+Total UP/DOWN Session Number : 1/0
+--------------------------------------------------------------------------------
+Local      Remote     PeerIpAddr      State     Type        InterfaceName
+--------------------------------------------------------------------------------
+1          1          10.1.1.2        Up        S/IP-PEER    -

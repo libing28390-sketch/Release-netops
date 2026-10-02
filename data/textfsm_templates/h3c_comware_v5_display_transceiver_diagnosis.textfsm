@@ -1,0 +1,15 @@
+# Comware V5 transceiver digital diagnostic values.
+Value Filldown INTERFACE (\S+)
+Value Required TEMPERATURE (-?\d+(?:\.\d+)?)
+Value Required VOLTAGE (-?\d+(?:\.\d+)?)
+Value Required BIAS (-?\d+(?:\.\d+)?)
+Value Required RX_POWER (-?\d+(?:\.\d+)?)
+Value Required TX_POWER (-?\d+(?:\.\d+)?)
+
+Start
+  ^\s*${INTERFACE}\s+transceiver\s+diagnostic\s+information:\s*$$
+  ^\s*Current\s+diagnostic\s+parameters:\s*$$
+  ^\s*Temp\([^)]*\)\s+Voltage\(V\)\s+Bias\(mA\)\s+RX\s+power\(dBm\)\s+TX\s+power\(dBm\)\s*$$
+  ^\s*${TEMPERATURE}\s+${VOLTAGE}\s+${BIAS}\s+${RX_POWER}\s+${TX_POWER}\s*$$ -> Record
+  ^.*$$
+

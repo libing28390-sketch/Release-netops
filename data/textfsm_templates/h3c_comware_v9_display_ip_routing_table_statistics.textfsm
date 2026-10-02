@@ -1,0 +1,14 @@
+Value TOTAL_PREFIXES (\d+)
+Value ACTIVE_PREFIXES (\d+)
+Value PROTO (\S+)
+Value TOTAL (\d+)
+Value ACTIVE (\d+)
+Value ADDED (\d+)
+Value DELETED (\d+)
+
+Start
+  ^\s*Total\s+prefixes:\s+${TOTAL_PREFIXES}\s+Active\s+prefixes:\s+${ACTIVE_PREFIXES}\s*$$
+  ^\s*Proto\s+Routes\s+Active\s+Added\s+Deleted\s*$$
+  ^\s*${PROTO}\s+${TOTAL}\s+${ACTIVE}\s+${ADDED}\s+${DELETED}\s*$$ -> Record
+  ^\s*-+$$
+  ^\s*$$

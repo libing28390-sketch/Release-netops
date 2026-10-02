@@ -1,0 +1,14 @@
+# nexora-action-code: get_bfd_sessions
+Value Filldown TOTAL_SESSIONS (\d+)
+Value Filldown UP_SESSIONS (\d+)
+Value Filldown INIT_MODE (\S+)
+Value Required LD_RD (\d+/\d+)
+Value SOURCE_ADDR (\S+)
+Value DEST_ADDR (\S+)
+Value STATE (\S+)
+Value HOLDTIME (\S+)
+Value INTERFACE (\S+)
+
+Start
+  ^\s*Total\s+sessions:\s+${TOTAL_SESSIONS}\s+Up\s+sessions:\s+${UP_SESSIONS}\s+Init\s+mode:\s+${INIT_MODE}\s*$$
+  ^\s*${LD_RD}\s+${SOURCE_ADDR}\s+${DEST_ADDR}\s+${STATE}\s+${HOLDTIME}\s+${INTERFACE}\s*$$ -> Record

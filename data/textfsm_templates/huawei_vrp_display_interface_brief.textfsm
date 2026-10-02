@@ -1,0 +1,25 @@
+Value INTERFACE (\S+)
+Value PHY (down|[\*\^]down|up|up\(\w+\))
+Value PROTOCOL (down|[\*\^]down|up|up\(\w+\))
+Value INUTI (\d*\.?\d*%|--)
+Value OUTUTI (\d*\.?\d*%|--)
+Value INERRORS (\d+)
+Value OUTERRORS (\d+)
+
+Start
+  ^\s*${INTERFACE}\s+${PHY}\s+${PROTOCOL}\s+${INUTI}\s+${OUTUTI}\s+${INERRORS}\s+${OUTERRORS}\s*$$ -> Record
+  ^\s*PHY:\s+Physical\s*$$
+  ^\s*\*down:\s+administratively\s+down\s*$$
+  ^\s*\^down:\s+standby\s*$$
+  ^\s*\(l\):\s+loopback\s*$$
+  ^\s*\(s\):\s+spoofing\s*$$
+  ^\s*\(b\):\s+BFD\s+down\s*$$
+  ^\s*\(e\):\s+ETHOAM\s+down\s*$$
+  ^\s*\(dl\):\s+DLDP\s+down\s*$$
+  ^\s*\(d\):\s+Dampening\s+Suppressed\s*$$
+  ^\s*InUti/OutUti:\s+input\s+utility/output\s+utility\s*$$
+  ^\s*Interface\s+PHY\s+Protocol\s+InUti\s+OutUti\s+inErrors\s+outErrors\s*$$
+  ^\s*<[A-Za-z0-9_\-\.]+>\s*$$
+  ^\s*<[A-Za-z0-9_\-\.]+\s*$$
+  ^\s*$$
+  ^. -> Error

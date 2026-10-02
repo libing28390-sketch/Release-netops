@@ -1,0 +1,322 @@
+schema_version: "1.0"
+pack_id: "nexora-kb-official-local-4vendor-v1"
+title: "Nexora 四厂商本地官网知识摘要包"
+description: >-
+  Huawei、Cisco、H3C、Ruijie 的本地官网来源摘要，用于离线知识检索、
+  50-anchor 与测试专用 400-case 的候选覆盖验证。
+test_only: true
+production_eligible: false
+external_network: forbidden
+source_policy: official_reference_backed_local_summary
+source_checked_at: "2026-09-05"
+core_features:
+  - vlan
+  - access_port
+  - trunk
+  - ospf
+  - bgp
+  - lacp
+  - acl
+  - ssh
+  - ntp
+  - static_route
+vendors:
+  - Huawei
+  - Cisco
+  - H3C
+  - Ruijie
+supplemental_tracks:
+  - track_id: "four_vendor_feature_verification"
+    title: "四厂商核心主题只读核验与排障伴随摘要"
+    document_count: 40
+    document_category: "troubleshooting"
+    source_policy: "reuse_each_vendor_feature_official_source"
+special_documents:
+  - document_id: "local.huawei.vrp.vxlan_evpn.v1"
+    vendor: "Huawei"
+    feature: "vxlan"
+    subfeature: "bgp_evpn"
+    title: "Huawei CE12800 VXLAN/EVPN 网关配置核验摘要"
+    document_category: "configuration"
+    source_urls:
+      - "https://support.huawei.com/enterprise/en/doc/EDOC1000039339/5e782f6/example-for-configuring-nfvi-distributed-gateways-symmetric-mode"
+      - "https://support.huawei.com/enterprise/en/doc/EDOC1100334532/a74c6374/vxlan-basics"
+    commands:
+      - "system-view"
+      - "bridge-domain 10"
+      - "vxlan vni 5010"
+      - "interface Nve1"
+      - "source 1.1.1.1"
+      - "bgp 65000"
+      - "l2vpn-family evpn"
+      - "peer 192.0.2.2 as-number 65001"
+      - "peer 192.0.2.2 enable"
+    verification_commands:
+      - "display vxlan tunnel"
+      - "display bgp evpn peer"
+    scope_note: >-
+      官网示例明确涉及 CE12800/CE16800 A 系列卡，但该来源是分布式网关示例；
+      不得据此把“集中式网关”当成已验证事实，集中式/分布式模式和软件版本需要逐项核对。
+  - document_id: "local.huawei.vrp.port_security.v1"
+    vendor: "Huawei"
+    feature: "port_security"
+    subfeature: "secure_dynamic_mac"
+    title: "Huawei VRP 端口安全与安全动态 MAC 摘要"
+    document_category: "configuration"
+    source_urls:
+      - "https://info.support.huawei.com/hedex/api/pages/EDOC1000053358/YEF0907R/25/resources/en-us_task_0133020498.html"
+    commands:
+      - "system-view"
+      - "interface GigabitEthernet 0/0/1"
+      - "port-security enable"
+      - "port-security maximum 2"
+      - "port-security protect-action restrict"
+      - "commit"
+    verification_commands:
+      - "display current-configuration interface GigabitEthernet 0/0/1"
+      - "display mac-address interface GigabitEthernet 0/0/1"
+    scope_note: >-
+      官网页面覆盖 port-security enable、最大 MAC 数量和违规动作等命令；
+      端口类型、版本支持、保护动作含义必须以目标设备的命令参考为准。
+  - document_id: "local.huawei.vrp.cpu_memory_diagnostic.v1"
+    vendor: "Huawei"
+    feature: "diagnostic"
+    subfeature: "cpu_memory"
+    title: "Huawei VRP CPU 与内存排障命令摘要"
+    document_category: "troubleshooting"
+    source_urls:
+      - "https://info.support.huawei.com/enterprise/en/doc/EDOC1100333828/91652f17/device-status-checking-commands"
+      - "https://info.support.huawei.com/network/ptmngsys/Web/tsrev_s/en/content/s/15_edesk_high_cpu_usage/edesk_high_cpu_usage_edesk002.html"
+    commands:
+      - "display cpu-usage"
+      - "display memory-usage"
+      - "display memory-usage threshold"
+      - "display device"
+    verification_commands:
+      - "display cpu-usage"
+      - "display memory-usage"
+      - "display logbuffer"
+    scope_note: >-
+      先记录设备版本、板卡和进程占用，再按时间序列复核；不能仅凭一次 CPU
+      百分比输出判断故障根因，也不能把 CPU 命令当成配置变更。
+  - document_id: "local.cisco.iosxe.arp_mac_diagnostic.v1"
+    vendor: "Cisco"
+    feature: "diagnostic"
+    subfeature: "arp_mac"
+    title: "Cisco IOS-XE ARP 与 MAC 表排障摘要"
+    document_category: "troubleshooting"
+    source_urls:
+      - "https://www.cisco.com/c/en/us/td/docs/ios-xml/ios/ipaddr_arp/configuration/xe-3s/arp-xe-3s-book.pdf"
+      - "https://www.cisco.com/c/en/us/support/ios-nx-os-software/ios-xe-17/products-command-reference-list.html"
+    commands:
+      - "show ip arp"
+      - "show ip arp <ip-address>"
+      - "show mac address-table"
+      - "show mac address-table dynamic"
+      - "show interfaces status"
+    verification_commands:
+      - "show ip arp"
+      - "show mac address-table address <mac-address>"
+      - "show interfaces <interface-id> switchport"
+    scope_note: >-
+      ARP 表用于三层 IP 到 MAC 的解析观察，MAC 表用于二层学习路径观察；
+      要结合 VLAN、接口状态和设备角色判断，不能将一个表的结果直接当作另一个表的结论。
+  - document_id: "local.cisco.iosxe.hsrp.v1"
+    vendor: "Cisco"
+    feature: "hsrp"
+    subfeature: "virtual_gateway"
+    title: "Cisco IOS-XE HSRP 虚拟网关配置摘要"
+    document_category: "configuration"
+    source_urls:
+      - "https://www.cisco.com/c/en/us/td/docs/routers/ios/config/17-x/ntw-servs/b-network-services/m_fhp-hsrp-0.html"
+    commands:
+      - "interface Vlan10"
+      - "ip address 192.0.2.2 255.255.255.0"
+      - "standby 10 ip 192.0.2.1"
+      - "standby 10 priority 110"
+      - "standby 10 preempt"
+    verification_commands:
+      - "show standby brief"
+      - "show standby Vlan10"
+    scope_note: >-
+      HSRP 优先级、抢占和跟踪参数会影响主备切换；接口地址、组号和软件版本
+      需按实际拓扑核对，实施前必须有变更审批与回滚方案。
+  - document_id: "local.cisco.iosxe.interface_status.v1"
+    vendor: "Cisco"
+    feature: "interface"
+    subfeature: "status_switchport"
+    title: "Cisco IOS-XE 接口状态与交换端口核验摘要"
+    document_category: "cli_output"
+    source_urls:
+      - "https://www.cisco.com/c/en/us/td/docs/switches/lan/c9000/infra/interface-characteristics/interface-characteristics-configuration-guide.html"
+      - "https://www.cisco.com/c/en/us/td/docs/switches/lan/catalyst9600/software/release/17-11/command_reference/b_1711_9600_cr/system_management_commands.html"
+    commands:
+      - "show interfaces status"
+      - "show interfaces <interface-id> status"
+      - "show interfaces <interface-id> switchport"
+      - "show running-config interface <interface-id>"
+    verification_commands:
+      - "show interfaces <interface-id>"
+      - "show interfaces counters errors"
+    scope_note: >-
+      这是只读核验摘要；show 命令输出字段和接口命名会随平台/版本变化，
+      不应把 IOS-XE 的 show 语法移植到 Huawei/H3C/Ruijie。
+  - document_id: "local.h3c.comware7.interface_brief.v1"
+    vendor: "H3C"
+    feature: "interface"
+    subfeature: "brief_status"
+    title: "H3C Comware 7 display interface brief 状态摘要"
+    document_category: "cli_output"
+    source_urls:
+      - "https://www.h3c.com/en/Support/Resource_Center/EN/Home/Routers/00-Public/Reference_Guides/Command_References/H3C_MSR_Comware_7_CR-R0615/03/202210/1709588_294551_0.htm"
+      - "https://www.h3c.com/en/d_202602/2765425_294551_0.htm"
+    commands:
+      - "display interface brief"
+      - "display interface GigabitEthernet 1/0/1"
+      - "display counters inbound interface"
+    verification_commands:
+      - "display interface brief"
+      - "display logbuffer"
+    scope_note: >-
+      display interface brief 会同时呈现路由接口和桥接口摘要；应关注 Link、
+      Protocol、速率/双工、Type、PVID 等字段，并按目标 Comware 版本核对输出格式。
+  - document_id: "local.h3c.comware7.arp_mac_diagnostic.v1"
+    vendor: "H3C"
+    feature: "diagnostic"
+    subfeature: "arp_mac"
+    title: "H3C Comware 7 ARP 与 MAC 表排障摘要"
+    document_category: "troubleshooting"
+    source_urls:
+      - "https://www.h3c.com/en/Support/Resource_Center/EN/Home/Security/00-Public/Reference_Guides/Command_References/H3C_IPS_Comware_7_CR%28R8560_R8660%29/10/202205/1607637_294551_0.htm"
+      - "https://www.h3c.com/en/d_202602/2752476_294551_0.htm"
+    commands:
+      - "display arp"
+      - "display arp all"
+      - "display mac-address"
+      - "display mac-address vlan 10"
+    verification_commands:
+      - "display arp all"
+      - "display mac-address interface GigabitEthernet 1/0/1"
+      - "display interface brief"
+    scope_note: >-
+      ARP 与 MAC 输出要结合 VLAN、接口和网关角色判断；文章只提供排障顺序，
+      不承诺所有 Comware 7 型号都支持完全相同的过滤参数。
+  - document_id: "local.ruijie.rgos.lldp_neighbor.v1"
+    vendor: "Ruijie"
+    feature: "lldp"
+    subfeature: "neighbor_discovery"
+    title: "Ruijie RGOS LLDP 邻居信息排障摘要"
+    document_category: "cli_output"
+    source_urls:
+      - "https://www.ruijie.com.cn/fw/wt/18543/"
+      - "https://www.ruijie.com.cn/fw/wt/38021/"
+    commands:
+      - "show lldp"
+      - "show lldp neighbor"
+      - "show lldp neighbor interface GigabitEthernet 0/1 detail"
+    verification_commands:
+      - "show lldp status"
+      - "show lldp neighbor"
+      - "show interface status"
+    scope_note: >-
+      锐捷官网页面确认 LLDP 的邻居发现和 Native VLAN 告警语义；不同 RGOS
+      系列的命令参数可能不同，show lldp neighbor 的精确形式必须查对应型号命令参考。
+  - document_id: "local.ruijie.rgos.interface_status.v1"
+    vendor: "Ruijie"
+    feature: "interface"
+    subfeature: "status"
+    title: "Ruijie RGOS 接口状态核验摘要"
+    document_category: "cli_output"
+    source_urls:
+      - "https://www.ruijie.com.cn/fw/wt/35641/"
+      - "https://www.ruijie.com.cn/fw/wt/18515/"
+    commands:
+      - "show interface status"
+      - "show interfaces"
+      - "show vlan"
+    verification_commands:
+      - "show interface status"
+      - "show interface counters"
+      - "show logging"
+    scope_note: >-
+      先用 show interface status 确认接口名称和链路状态，再核对 VLAN/聚合成员；
+      设备系列和 RGOS 版本不同可能使用不同的复数或过滤参数。
+  - document_id: "local.huawei.vrp.interface_status_ce6885.v1"
+    vendor: "Huawei"
+    feature: "interface"
+    subfeature: "ce6885_status_and_uplink"
+    title: "Huawei CE6885 接口状态与上联核验摘要"
+    document_category: "cli_output"
+    source_urls:
+      - "https://info.support.huawei.com/info-finder/search-center/en/enterprise/wlan/ce6885-48ys8cq-pid-257795345/commands"
+      - "https://info.support.huawei.com/enterprise/en/doc/EDOC1100333403/cdd85713/basic-interface-configuration-commands"
+    commands:
+      - "display interface brief"
+      - "display interface <uplink-interface>"
+      - "display ip interface brief"
+    verification_commands:
+      - "display interface brief"
+      - "display interface <uplink-interface>"
+      - "display ip interface brief"
+    scope_note: >-
+      Huawei 官方命令中心将 CE6885-48YS8CQ 作为具体产品范围；本候选用于接口状态、
+      上联接口和 IP 接口摘要的检索定位。命令参数、板卡接口名称和软件版本仍需在目标设备
+      的对应版本命令参考中逐项确认。
+  - document_id: "local.huawei.vrp.ospf_bfd.v1"
+    vendor: "Huawei"
+    feature: "bfd"
+    subfeature: "ospf_fast_detection"
+    title: "Huawei VRP OSPF 联动 BFD 配置核验摘要"
+    document_category: "configuration"
+    source_urls:
+      - "https://info.support.huawei.com/hedex/api/pages/EDOC1100149311/AZJ0713J/18/resources/admin/sec_admin_router_ospf_0065.html"
+      - "https://info.support.huawei.com/hedex/api/pages/EDOC1100363264/AEN0403J/05/resources/vrp/dc_vrp_ospf_cfg_0054.html"
+    commands:
+      - "system-view"
+      - "bfd"
+      - "ospf 1"
+      - "bfd all-interfaces enable"
+    verification_commands:
+      - "display ospf 1 bfd session all"
+      - "display ospf peer"
+      - "display bfd session all"
+    scope_note: >-
+      Huawei 官方页面说明 OSPF 与 BFD 联动的前置条件、全接口启用方式和会话核验方向；
+      具体接口、进程号、定时器、版本支持以及是否需要逐接口配置，必须按目标 VRP 版本复核。
+  - document_id: "local.huawei.vrp.super_password.v1"
+    vendor: "Huawei"
+    feature: "pam"
+    subfeature: "privilege_level_switch"
+    title: "Huawei VRP 特权级别切换命令摘要"
+    document_category: "configuration"
+    source_urls:
+      - "https://info.support.huawei.com/hedex/api/pages/EDOC1100149308/AEJ0713J/18/resources/cli_vrp/super_password_pesudo.html"
+    commands:
+      - "system-view"
+      - "super password level 3 cipher <REDACTED>"
+    verification_commands:
+      - "display current-configuration | include super"
+      - "display users"
+    scope_note: >-
+      Huawei 官方页面描述 super 命令的可选权限级别与 cipher/simple 形式；本候选只保留
+      命令结构，认证值始终使用 <REDACTED> 占位且不会写入真实材料。目标版本的权限级别、
+      存储形式和变更流程必须由授权管理员复核。
+  - document_id: "local.cisco.iosxe.aaa_authentication.v1"
+    vendor: "Cisco"
+    feature: "pam"
+    subfeature: "aaa_login_fallback"
+    title: "Cisco IOS-XE AAA 登录认证与本地回退配置摘要"
+    document_category: "configuration"
+    source_urls:
+      - "https://www.cisco.com/c/en/us/td/docs/switches/lan/catalyst9300/software/release/17-13/configuration_guide/sec/b_1713_sec_9300_cg/configuring_authentication.html"
+    commands:
+      - "aaa new-model"
+      - "aaa authentication login default group tacacs+ local"
+      - "aaa authorization exec default local"
+    verification_commands:
+      - "show running-config | include aaa"
+      - "show aaa servers"
+    scope_note: >-
+      Cisco Catalyst 9300 IOS-XE 官方认证指南覆盖 AAA 登录认证方法列表以及 TACACS+ 到本地
+      的回退关系；服务器组、授权策略、VTY 应用范围和软件版本必须按目标设备配置复核，
+      变更前要保留带外登录与回滚路径。

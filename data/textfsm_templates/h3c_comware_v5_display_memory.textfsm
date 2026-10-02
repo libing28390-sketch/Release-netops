@@ -1,0 +1,9 @@
+# nexora-action-code: get_memory
+Value TOTAL_BYTES (\d+)
+Value USED_BYTES (\d+)
+Value USED_RATE (\d+(?:\.\d+)?%)
+
+Start
+  ^\s*System\s+Total\s+Memory\(bytes\):\s+${TOTAL_BYTES}\s*$$
+  ^\s*Total\s+Used\s+Memory\(bytes\):\s+${USED_BYTES}\s*$$
+  ^\s*Used\s+Rate:\s+${USED_RATE}\s*$$ -> Record

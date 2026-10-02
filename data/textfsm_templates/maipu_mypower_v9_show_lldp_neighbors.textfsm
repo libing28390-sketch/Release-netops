@@ -1,0 +1,33 @@
+# nexora-action-code: get_lldp_neighbors
+Value Required DEVICE_ID (\S+)
+Value LOCAL_INTERFACE (\S+)
+Value HOLD_TIME (\d+)
+Value CAPABILITY (\S+)
+Value PORT_ID (\S+(?:\s+[0-9\/\.\:\-_]+)?)
+
+Start
+  ^Capability\s+codes: -> Header
+  ^\s*Index\s+Local\s+Intf -> TableIndex
+  ^\s*Device\s+ID\s+Local\s+Intf -> TableDeviceFirst
+  ^.*#\s*show\s+ -> Next
+  ^\s*$$
+  ^. -> Next
+
+Header
+  ^\s*Index\s+Local\s+Intf -> TableIndex
+  ^\s*Device\s+ID\s+Local\s+Intf -> TableDeviceFirst
+  ^\s*$$
+  ^. -> Next
+
+TableIndex
+  ^\s*\d+\s+${LOCAL_INTERFACE}\s+${HOLD_TIME}\s+${CAPABILITY}\s+${PORT_ID}\s+${DEVICE_ID}\s*$$ -> Record
+  ^\s*${LOCAL_INTERFACE}\s+${HOLD_TIME}\s+${CAPABILITY}\s+${PORT_ID}\s+${DEVICE_ID}\s*$$ -> Record
+  ^\s*Total\s+entries\s+displayed -> Next
+  ^\s*$$
+  ^. -> Next
+
+TableDeviceFirst
+  ^\s*${DEVICE_ID}\s+${LOCAL_INTERFACE}\s+${HOLD_TIME}\s+${CAPABILITY}\s+${PORT_ID}\s*$$ -> Record
+  ^\s*Total\s+entries\s+displayed -> Next
+  ^\s*$$
+  ^. -> Next
