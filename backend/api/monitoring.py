@@ -13,7 +13,7 @@ from pydantic import BaseModel, Field
 from fastapi import APIRouter, Body, Depends, HTTPException, Query, Request
 
 from api.users import validate_session_token
-from core.rbac import require_role
+from core.rbac import enforce_resource_scope, require_role, resource_action_allowed
 from database import get_db_connection, fetch_interface_data
 from services.audit_service import log_audit_event
 from services.device_health_service import annotate_devices_with_health, build_health_overview, load_devices_for_health
@@ -29,6 +29,7 @@ from services.monitoring_incident_service import (
     update_incident_status,
 )
 from services.metric_provider import extract_instant_metric_value, provider_from_environment
+from services.rack_scope_service import allowed_resource_scope
 
 router = APIRouter()
 logger = logging.getLogger(__name__)
@@ -1902,6 +1903,18 @@ class OutboundTargetPayload(BaseModel):
     enabled: bool = True
 
 
+class WanCircuitEndpointPayload(BaseModel):
+    side: Literal['A', 'Z']
+    endpoint_type: Literal['managed', 'unmanaged'] = 'managed'
+    site_id: str = ''
+    device_id: str | None = None
+    interface_id: str | None = None
+    site_name: str = ''
+    endpoint_name: str = ''
+    counter_orientation: Literal['normal', 'reversed'] = 'normal'
+    measurement_scope: Literal['dedicated', 'shared_interface'] = 'dedicated'
+
+
 class WanLinkPayload(BaseModel):
     id: Optional[str] = None
     link_name: str = Field(min_length=1, max_length=128)
@@ -1924,6 +1937,29 @@ class WanLinkPayload(BaseModel):
     enabled: bool = True
     maintenance_window: str = ""
     notes: str = ""
+    endpoints: list['WanCircuitEndpointPayload'] = Field(default_factory=list)
+    expected_version: int | None = Field(default=None, ge=1)
+
+
+class WanCircuitEndpointsPayload(BaseModel):
+    expected_version: int = Field(ge=1)
+    endpoints: list[WanCircuitEndpointPayload] = Field(min_length=2, max_length=2)
+
+
+class WanSlaPolicyPayload(BaseModel):
+    # 0 is the expected version before the first policy exists; subsequent
+    # writes must send the version returned by the prior save.
+    expected_version: int = Field(default=0, ge=0)
+    availability_target_pct: float = Field(default=99.9, gt=0, le=100)
+    latency_target_ms: float | None = Field(default=None, gt=0, le=60_000)
+    loss_target_pct: float | None = Field(default=None, ge=0, le=100)
+    measurement_window_days: int = Field(default=30, ge=1, le=366)
+    minimum_coverage_pct: float = Field(default=99, gt=0, le=100)
+    minimum_rtt_samples: int = Field(default=100, ge=1, le=10_000_000)
+    minimum_loss_packets: int = Field(default=1000, ge=1, le=100_000_000)
+    availability_rule: Literal['any_success', 'all_success'] = 'any_success'
+    timezone: str = Field(default='Asia/Shanghai', min_length=1, max_length=64)
+    maintenance_excluded: bool = False
 
 
 class WanMaintenancePayload(BaseModel):
@@ -1956,6 +1992,7 @@ class WanProbeBindingPayload(BaseModel):
     id: Optional[str] = None
     link_id: str = Field(min_length=1)
     target_id: str = Field(min_length=1)
+    purpose: Literal['availability', 'quality', 'application'] = 'availability'
     route_mode: str = 'default'
     source_ip: str = ''
     priority: int = Field(default=100, ge=1, le=10000)
@@ -2175,10 +2212,131 @@ def trigger_outbound_probe_manual(request: Request, user=require_role("Operator"
 # ── P0 internet egress link APIs ──
 
 
+def _wan_effective_scope(user: dict, action: str = 'view'):
+    """Build a tenant/site filter once for a WAN list request."""
+    if not resource_action_allowed(user, 'wan_link', action):
+        enforce_resource_scope(user, 'wan_link', action)
+    conn = get_db_connection()
+    try:
+        return allowed_resource_scope(conn, user, 'wan_link', action)
+    finally:
+        conn.close()
+
+
+def _enforce_wan_link_scope(user: dict, item: dict | None, action: str = 'view') -> dict:
+    """Hide cross-tenant/site links as not found while preserving action denial."""
+    if not item:
+        raise HTTPException(status_code=404, detail={'code': 'WAN_LINK_NOT_FOUND', 'message': 'WAN link not found'})
+    if not resource_action_allowed(user, 'wan_link', action):
+        enforce_resource_scope(user, 'wan_link', action)
+    scope = _wan_effective_scope(user, action)
+    tenant_id = str(item.get('tenant_id') or 'tenant-default')
+    site_id = str(item.get('site_id') or '')
+    if scope.tenant_id and tenant_id != scope.tenant_id:
+        raise HTTPException(status_code=404, detail={'code': 'WAN_LINK_NOT_FOUND', 'message': 'WAN link not found'})
+    if scope.site_ids is not None and site_id not in scope.site_ids:
+        raise HTTPException(status_code=404, detail={'code': 'WAN_LINK_NOT_FOUND', 'message': 'WAN link not found'})
+    return item
+
+
+def _wan_actor_id(user: dict) -> str:
+    return str(user.get('id') or user.get('user_id') or user.get('username') or '')
+
+
+def _wan_circuit_payload(payload: WanLinkPayload) -> dict[str, Any]:
+    values = payload.model_dump(exclude_none=True)
+    if not values.get('endpoints'):
+        # Older WAN clients only configure the measured A-side interface.
+        # The service expands that legacy shape to A plus an unmanaged Z side.
+        values['endpoints'] = None
+    if values.get('expected_version') is not None:
+        values['expected_configuration_version'] = values['expected_version']
+    return values
+
+
+def _wan_tenant_filter(user: dict) -> str | None:
+    return _monitoring_tenant_id(user)
+
+
+def _wan_scope_kwargs(user: dict, action: str = 'view') -> dict[str, Any]:
+    scope = _wan_effective_scope(user, action)
+    return {
+        'tenant_id': scope.tenant_id or _wan_tenant_filter(user) or '',
+        'site_ids': scope.site_ids,
+    }
+
+
+def _wan_scoped_actor(user: dict, action: str = 'update') -> dict[str, Any]:
+    scope = _wan_effective_scope(user, action)
+    if scope.site_ids is not None and not scope.site_ids:
+        raise HTTPException(status_code=404, detail={'code': 'WAN_RESOURCE_NOT_FOUND', 'message': 'WAN resource not found'})
+    return {
+        **user,
+        'tenant_id': scope.tenant_id or _wan_tenant_filter(user) or '',
+        'site_ids': scope.site_ids,
+    }
+
+
+def _wan_require_global_scope(user: dict, action: str = 'update') -> None:
+    scope = _wan_effective_scope(user, action)
+    if scope.tenant_id or scope.site_ids is not None:
+        raise HTTPException(status_code=403, detail={
+            'code': 'WAN_GLOBAL_SCOPE_REQUIRED',
+            'message': 'This operation requires an unrestricted cross-tenant WAN resource scope',
+        })
+
+
+def _hide_wan_scope_denial(exc: ValueError, *, resource: str = 'WAN resource') -> None:
+    message = str(exc).strip().lower()
+    markers = (
+        'another tenant',
+        'actor tenant',
+        'allowed resource scope',
+        'authorized resource scope',
+        'authorized wan resource sites',
+        'outside the selected site',
+        'outside the allowed site',
+    )
+    if any(marker in message for marker in markers):
+        raise HTTPException(status_code=404, detail={
+            'code': 'WAN_RESOURCE_NOT_FOUND',
+            'message': f'{resource} not found',
+        }) from exc
+
+
 @router.get('/monitoring/wan-options')
 def get_monitoring_wan_options(site_id: str = Query(default=''), device_id: str = Query(default=''), user=require_role("Viewer")):
-    from services.wan_link_service import list_wan_link_options
-    return list_wan_link_options(site_id=site_id, device_id=device_id)
+    from services.wan_circuit_service import list_wan_link_options_scoped
+    scope = _wan_effective_scope(user, 'view')
+    if site_id and scope.site_ids is not None and site_id not in scope.site_ids:
+        raise HTTPException(status_code=404, detail={'code': 'WAN_OPTIONS_NOT_FOUND', 'message': 'Monitoring options not found'})
+    return list_wan_link_options_scoped(
+        site_id=site_id,
+        device_id=device_id,
+        tenant_id=scope.tenant_id,
+        site_ids=scope.site_ids,
+    )
+
+
+@router.get('/monitoring/wan-links/summary')
+def get_monitoring_wan_circuit_summary(
+    keyword: str = Query(default=''),
+    site_id: str = Query(default=''),
+    user=require_role('Viewer'),
+):
+    from services.wan_circuit_service import list_wan_circuits
+    scope = _wan_effective_scope(user, 'view')
+    if site_id and scope.site_ids is not None and site_id not in scope.site_ids:
+        raise HTTPException(status_code=404, detail={'code': 'WAN_LINK_NOT_FOUND', 'message': 'WAN link not found'})
+    result = list_wan_circuits(
+        tenant_id=scope.tenant_id,
+        site_ids=scope.site_ids,
+        page=1,
+        page_size=1,
+        keyword=keyword,
+        site_id=site_id,
+    )
+    return {'summary': result.get('summary', {}), 'generated_at': result.get('generated_at')}
 
 
 @router.get('/monitoring/wan-links')
@@ -2193,9 +2351,23 @@ def get_monitoring_wan_links(
     keyword: str = Query(default=''),
     user=require_role("Viewer"),
 ):
-    from services.wan_link_service import list_wan_links
+    from services.wan_circuit_service import list_wan_circuits
     try:
-        return list_wan_links(page=page, page_size=page_size, site_id=site_id, provider=provider, health_status=health_status, link_role=link_role, group_id=group_id, keyword=keyword)
+        scope = _wan_effective_scope(user, 'view')
+        if site_id and scope.site_ids is not None and site_id not in scope.site_ids:
+            return {'items': [], 'total': 0, 'page': page, 'page_size': page_size, 'summary': {}}
+        return list_wan_circuits(
+            tenant_id=scope.tenant_id,
+            site_ids=scope.site_ids,
+            page=page,
+            page_size=page_size,
+            site_id=site_id,
+            provider=provider,
+            health_status=health_status,
+            link_role=link_role,
+            group_id=group_id,
+            keyword=keyword,
+        )
     except ValueError as exc:
         raise HTTPException(status_code=400, detail={'code': 'INVALID_WAN_FILTER', 'message': str(exc)}) from exc
 
@@ -2208,6 +2380,8 @@ def get_monitoring_wan_link_history(
     user=require_role("Viewer"),
 ):
     from services.wan_link_service import get_wan_link_history
+    from services.wan_circuit_service import get_wan_circuit
+    _enforce_wan_link_scope(user, get_wan_circuit(link_id, tenant_id=_wan_tenant_filter(user)))
     duration_minutes = history_minutes if history_minutes is not None else (history_hours * 60 if history_hours is not None else 60)
     payload = get_wan_link_history(link_id, history_minutes=duration_minutes)
     if payload is None:
@@ -2217,17 +2391,125 @@ def get_monitoring_wan_link_history(
 
 @router.get('/monitoring/wan-links/{link_id}')
 def get_monitoring_wan_link(link_id: str, user=require_role('Viewer')):
-    from services.wan_link_service import get_wan_link
-    payload = get_wan_link(link_id)
+    from services.wan_circuit_service import get_wan_circuit
+    payload = _enforce_wan_link_scope(user, get_wan_circuit(link_id, tenant_id=_wan_tenant_filter(user)))
+    return {'item': payload}
+
+
+@router.get('/monitoring/wan-links/{link_id}/sla')
+def get_monitoring_wan_circuit_sla(
+    link_id: str,
+    window: str = Query(default='24h', pattern=r'^(24h|7d|30d|90d)$'),
+    user=require_role('Viewer'),
+):
+    from services.wan_circuit_service import get_wan_circuit
+    _enforce_wan_link_scope(user, get_wan_circuit(link_id, tenant_id=_wan_tenant_filter(user)))
+    from services.wan_line_probe_service import get_wan_line_sla
+    payload = get_wan_line_sla(link_id, tenant_id=_wan_tenant_filter(user), window=window, persist_snapshot=False)
     if payload is None:
         raise HTTPException(status_code=404, detail={'code': 'WAN_LINK_NOT_FOUND', 'message': 'WAN link not found'})
-    return {'item': payload}
+    slot_stats = payload.get('slot_stats') or {}
+    return {
+        **payload,
+        'availability_pct': payload.get('observed_availability'),
+        'coverage_pct': payload.get('coverage_percent'),
+        'slots': {
+            'up': slot_stats.get('up', 0),
+            'down': slot_stats.get('down', 0),
+            'unknown': slot_stats.get('unknown', 0),
+            'maintenance': slot_stats.get('maintenance', 0),
+        },
+    }
+
+
+@router.get('/monitoring/wan-links/{link_id}/endpoint-history')
+def get_monitoring_wan_circuit_endpoint_history(link_id: str, user=require_role('Viewer')):
+    from services.wan_circuit_service import get_wan_circuit, list_wan_circuit_endpoint_history
+    _enforce_wan_link_scope(user, get_wan_circuit(link_id, tenant_id=_wan_tenant_filter(user)))
+    items = list_wan_circuit_endpoint_history(link_id, tenant_id=_wan_tenant_filter(user))
+    if items is None:
+        raise HTTPException(status_code=404, detail={'code': 'WAN_LINK_NOT_FOUND', 'message': 'WAN link not found'})
+    return {'items': items, 'total': len(items)}
+
+
+@router.put('/monitoring/wan-links/{link_id}/endpoints')
+def update_monitoring_wan_circuit_endpoints(
+    link_id: str,
+    payload: WanCircuitEndpointsPayload,
+    request: Request,
+    user=require_role('Operator'),
+):
+    from services.wan_circuit_service import get_wan_circuit, replace_wan_circuit_endpoints
+    _enforce_wan_link_scope(user, get_wan_circuit(link_id, tenant_id=_wan_tenant_filter(user)), 'update')
+    try:
+        item = replace_wan_circuit_endpoints(
+            link_id,
+            [endpoint.model_dump(exclude_none=True) for endpoint in payload.endpoints],
+            expected_version=payload.expected_version,
+            tenant_id=_wan_tenant_filter(user),
+            actor_id=_wan_actor_id(user),
+        )
+    except ValueError as exc:
+        _hide_wan_scope_denial(exc, resource='WAN link')
+        status = 409 if 'version' in str(exc).lower() or 'conflict' in str(exc).lower() else 422
+        raise HTTPException(status_code=status, detail={'code': 'WAN_CIRCUIT_UPDATE_CONFLICT' if status == 409 else 'INVALID_WAN_ENDPOINTS', 'message': str(exc)}) from exc
+    _outbound_audit(request, user, 'WAN_CIRCUIT_ENDPOINTS_UPDATE', f'Updated endpoints for WAN link {link_id}', target_type='wan_link', target_id=link_id)
+    return {'success': True, 'item': item}
+
+
+@router.put('/monitoring/wan-links/{link_id}/sla-policy')
+def update_monitoring_wan_circuit_sla_policy(
+    link_id: str,
+    payload: WanSlaPolicyPayload,
+    request: Request,
+    user=require_role('Operator'),
+):
+    from services.wan_circuit_service import get_wan_circuit, upsert_wan_circuit_sla_policy
+    _enforce_wan_link_scope(user, get_wan_circuit(link_id, tenant_id=_wan_tenant_filter(user)), 'update')
+    try:
+        policy_payload = payload.model_dump()
+        policy_payload['expected_policy_version'] = policy_payload.pop('expected_version')
+        result = upsert_wan_circuit_sla_policy(
+            link_id,
+            policy_payload,
+            tenant_id=_wan_tenant_filter(user),
+            actor_id=_wan_actor_id(user),
+        )
+    except ValueError as exc:
+        _hide_wan_scope_denial(exc, resource='WAN SLA policy')
+        status = 409 if 'version' in str(exc).lower() or 'conflict' in str(exc).lower() else 422
+        raise HTTPException(status_code=status, detail={'code': 'WAN_CIRCUIT_POLICY_CONFLICT' if status == 409 else 'INVALID_WAN_SLA_POLICY', 'message': str(exc)}) from exc
+    _outbound_audit(request, user, 'WAN_CIRCUIT_SLA_POLICY_UPDATE', f'Updated SLA policy for WAN link {link_id}', target_type='wan_link', target_id=link_id)
+    return {'success': True, 'item': result}
+
+
+@router.post('/monitoring/wan-links/{link_id}/archive')
+def archive_monitoring_wan_circuit(link_id: str, request: Request, user=require_role('Operator')):
+    from services.wan_circuit_service import archive_wan_circuit, get_wan_circuit
+    _enforce_wan_link_scope(user, get_wan_circuit(link_id, tenant_id=_wan_tenant_filter(user)), 'archive')
+    result = archive_wan_circuit(link_id, tenant_id=_wan_tenant_filter(user), actor_id=_wan_actor_id(user))
+    if not result:
+        raise HTTPException(status_code=404, detail={'code': 'WAN_LINK_NOT_FOUND', 'message': 'WAN link not found'})
+    _outbound_audit(request, user, 'WAN_CIRCUIT_ARCHIVE', f'Archived WAN link {link_id}', target_type='wan_link', target_id=link_id)
+    return {'success': True, 'item': result}
 
 
 @router.post('/monitoring/wan-links/test-config')
 def test_monitoring_wan_link_configuration(payload: WanLinkPayload, request: Request, user=require_role('Operator')):
     """Read-only pre-save test for a selected device/interface binding."""
     from services.wan_link_service import test_wan_link_configuration
+    conn = get_db_connection()
+    try:
+        _assert_monitoring_device_visible(conn, payload.device_id, user)
+    finally:
+        conn.close()
+    enforce_resource_scope(
+        user,
+        'wan_link',
+        'test',
+        tenant_id=_wan_tenant_filter(user),
+        site_id=payload.site_id or None,
+    )
     result = asyncio.run(test_wan_link_configuration(payload.model_dump(exclude_none=True)))
     _outbound_audit(request, user, 'WAN_LINK_TEST_CONFIG', 'Tested an unsaved WAN link configuration', target_type='wan_link_configuration', target_id=payload.interface_id, details={'status': result.get('status'), 'error_code': result.get('error_code')})
     return result
@@ -2239,10 +2521,22 @@ def create_monitoring_wan_link(
     payload: WanLinkPayload,
     user=require_role("Operator"),
 ):
-    from services.wan_link_service import upsert_wan_link
+    from services.wan_circuit_service import save_wan_circuit
+    enforce_resource_scope(
+        user,
+        'wan_link',
+        'create',
+        tenant_id=_wan_tenant_filter(user),
+        site_id=payload.site_id or None,
+    )
     try:
-        item = upsert_wan_link(payload.model_dump(exclude_none=True))
+        item = save_wan_circuit(
+            _wan_circuit_payload(payload),
+            tenant_id=_wan_tenant_filter(user) or '',
+            actor_id=_wan_actor_id(user),
+        )
     except ValueError as exc:
+        _hide_wan_scope_denial(exc, resource='WAN link')
         raise HTTPException(status_code=400, detail={"code": "INVALID_WAN_LINK", "message": str(exc)}) from exc
     except Exception as exc:
         if 'UNIQUE' in str(exc).upper():
@@ -2259,11 +2553,30 @@ def update_monitoring_wan_link(
     payload: WanLinkPayload,
     user=require_role("Operator"),
 ):
-    from services.wan_link_service import upsert_wan_link
+    from services.wan_circuit_service import get_wan_circuit, save_wan_circuit
+    current = _enforce_wan_link_scope(
+        user,
+        get_wan_circuit(link_id, tenant_id=_wan_tenant_filter(user)),
+        'update',
+    )
+    enforce_resource_scope(
+        user,
+        'wan_link',
+        'update',
+        tenant_id=str(current.get('tenant_id') or _wan_tenant_filter(user) or 'tenant-default'),
+        site_id=payload.site_id or None,
+    )
     try:
-        item = upsert_wan_link(payload.model_dump(exclude_none=True), link_id=link_id)
+        item = save_wan_circuit(
+            _wan_circuit_payload(payload),
+            tenant_id=_wan_tenant_filter(user) or '',
+            actor_id=_wan_actor_id(user),
+            link_id=link_id,
+        )
     except ValueError as exc:
-        raise HTTPException(status_code=400, detail={"code": "INVALID_WAN_LINK", "message": str(exc)}) from exc
+        _hide_wan_scope_denial(exc, resource='WAN link')
+        status = 409 if 'version' in str(exc).lower() or 'conflict' in str(exc).lower() else 400
+        raise HTTPException(status_code=status, detail={"code": "WAN_CIRCUIT_UPDATE_CONFLICT" if status == 409 else "INVALID_WAN_LINK", "message": str(exc)}) from exc
     except Exception as exc:
         if 'UNIQUE' in str(exc).upper():
             raise HTTPException(status_code=409, detail={"code": "WAN_LINK_EXISTS", "message": "The device interface is already bound to a WAN link"}) from exc
@@ -2274,10 +2587,11 @@ def update_monitoring_wan_link(
 
 @router.delete('/monitoring/wan-links/{link_id}')
 def delete_monitoring_wan_link(link_id: str, request: Request, user=require_role("Operator")):
-    from services.wan_link_service import delete_wan_link
-    if not delete_wan_link(link_id):
+    from services.wan_circuit_service import archive_wan_circuit, get_wan_circuit
+    _enforce_wan_link_scope(user, get_wan_circuit(link_id, tenant_id=_wan_tenant_filter(user)), 'archive')
+    if not archive_wan_circuit(link_id, tenant_id=_wan_tenant_filter(user), actor_id=_wan_actor_id(user)):
         raise HTTPException(status_code=404, detail={"code": "WAN_LINK_NOT_FOUND", "message": "WAN link not found"})
-    _outbound_audit(request, user, "WAN_LINK_DELETE", f"Deleted WAN link {link_id}", target_type="wan_link", target_id=link_id)
+    _outbound_audit(request, user, "WAN_LINK_ARCHIVE", f"Archived WAN link {link_id}", target_type="wan_link", target_id=link_id)
     return {"success": True, "id": link_id}
 
 
@@ -2293,6 +2607,7 @@ def trigger_monitoring_wan_collection(request: Request, user=require_role("Opera
     if not _wan_collection_lock.acquire(blocking=False):
         raise HTTPException(status_code=409, detail={'code': 'WAN_COLLECTION_ALREADY_RUNNING', 'message': 'A WAN collection is already running'})
     try:
+        _wan_require_global_scope(user, 'test')
         from services.wan_link_service import run_wan_collection_once
         result = run_wan_collection_once()
         _outbound_audit(request, user, "WAN_COLLECTION_TRIGGER", "Manually triggered WAN link collection", target_type="wan_link_collection")
@@ -2307,6 +2622,12 @@ def trigger_monitoring_wan_collection(request: Request, user=require_role("Opera
 @router.post('/monitoring/wan-links/{link_id}/test')
 def test_monitoring_wan_link(link_id: str, request: Request, user=require_role('Operator')):
     from services.wan_link_service import test_wan_link_collection
+    from services.wan_circuit_service import get_wan_circuit
+    _enforce_wan_link_scope(
+        user,
+        get_wan_circuit(link_id, tenant_id=_wan_tenant_filter(user)),
+        'test',
+    )
     result = asyncio.run(test_wan_link_collection(link_id))
     if result is None:
         raise HTTPException(status_code=404, detail={'code': 'WAN_LINK_NOT_FOUND', 'message': 'WAN link not found'})
@@ -2330,6 +2651,9 @@ def get_monitoring_wan_alert_events(
 ):
     from services.wan_link_service import list_wan_alert_events
     try:
+        scope = _wan_scope_kwargs(user, 'view')
+        if site_id and scope['site_ids'] is not None and site_id not in scope['site_ids']:
+            return {'items': [], 'total': 0, 'page': page, 'page_size': page_size, 'pages': 1}
         return list_wan_alert_events(
             page=page,
             page_size=page_size,
@@ -2341,6 +2665,7 @@ def get_monitoring_wan_alert_events(
             keyword=keyword,
             start_at=start_at,
             end_at=end_at,
+            **scope,
         )
     except ValueError as exc:
         raise HTTPException(status_code=400, detail={'code': 'INVALID_ALERT_FILTER', 'message': str(exc)}) from exc
@@ -2350,8 +2675,10 @@ def get_monitoring_wan_alert_events(
 def update_monitoring_wan_alert(event_id: str, payload: WanAlertWorkflowPayload, request: Request, user=require_role('Operator')):
     from services.wan_p1_service import update_wan_alert_workflow
     try:
-        item = update_wan_alert_workflow(event_id, payload.action, {**user, 'note': payload.note})
+        actor = _wan_scoped_actor(user, 'update')
+        item = update_wan_alert_workflow(event_id, payload.action, {**actor, 'note': payload.note})
     except ValueError as exc:
+        _hide_wan_scope_denial(exc, resource='WAN alert')
         raise HTTPException(status_code=400, detail={'code': 'INVALID_ALERT_ACTION', 'message': str(exc)}) from exc
     if item is None:
         raise HTTPException(status_code=404, detail={'code': 'WAN_ALERT_NOT_FOUND', 'message': 'WAN alert event not found'})
@@ -2362,15 +2689,17 @@ def update_monitoring_wan_alert(event_id: str, payload: WanAlertWorkflowPayload,
 @router.get('/monitoring/wan-maintenance-windows')
 def get_monitoring_wan_maintenance_windows(user=require_role('Viewer')):
     from services.wan_p1_service import list_wan_maintenance_windows
-    return {'items': list_wan_maintenance_windows()}
+    return {'items': list_wan_maintenance_windows(**_wan_scope_kwargs(user, 'view'))}
 
 
 @router.post('/monitoring/wan-maintenance-windows')
 def create_monitoring_wan_maintenance_window(payload: WanMaintenancePayload, request: Request, user=require_role('Operator')):
     from services.wan_p1_service import upsert_wan_maintenance_window
     try:
-        item = upsert_wan_maintenance_window(payload.model_dump(exclude_none=True), user)
+        actor = _wan_scoped_actor(user, 'create')
+        item = upsert_wan_maintenance_window(payload.model_dump(exclude_none=True), actor)
     except ValueError as exc:
+        _hide_wan_scope_denial(exc, resource='WAN maintenance window')
         raise HTTPException(status_code=400, detail={'code': 'INVALID_MAINTENANCE_WINDOW', 'message': str(exc)}) from exc
     _outbound_audit(request, user, 'WAN_MAINTENANCE_CREATE', f'Created WAN maintenance window {item.get("name")}', target_type='wan_maintenance_window', target_id=item.get('id'))
     return {'success': True, 'item': item}
@@ -2379,7 +2708,13 @@ def create_monitoring_wan_maintenance_window(payload: WanMaintenancePayload, req
 @router.delete('/monitoring/wan-maintenance-windows/{window_id}')
 def delete_monitoring_wan_maintenance_window(window_id: str, request: Request, user=require_role('Operator')):
     from services.wan_p1_service import delete_wan_maintenance_window
-    if not delete_wan_maintenance_window(window_id):
+    scope = _wan_scope_kwargs(user, 'archive')
+    try:
+        deleted = delete_wan_maintenance_window(window_id, **scope)
+    except ValueError as exc:
+        _hide_wan_scope_denial(exc, resource='WAN maintenance window')
+        raise HTTPException(status_code=400, detail={'code': 'INVALID_MAINTENANCE_WINDOW', 'message': str(exc)}) from exc
+    if not deleted:
         raise HTTPException(status_code=404, detail={'code': 'WAN_MAINTENANCE_NOT_FOUND', 'message': 'WAN maintenance window not found'})
     _outbound_audit(request, user, 'WAN_MAINTENANCE_DELETE', f'Deleted WAN maintenance window {window_id}', target_type='wan_maintenance_window', target_id=window_id)
     return {'success': True, 'id': window_id}
@@ -2389,8 +2724,10 @@ def delete_monitoring_wan_maintenance_window(window_id: str, request: Request, u
 def update_monitoring_wan_maintenance_window(window_id: str, payload: WanMaintenancePayload, request: Request, user=require_role('Operator')):
     from services.wan_p1_service import upsert_wan_maintenance_window
     try:
-        item = upsert_wan_maintenance_window(payload.model_dump(exclude_none=True), user, window_id=window_id)
+        actor = _wan_scoped_actor(user, 'update')
+        item = upsert_wan_maintenance_window(payload.model_dump(exclude_none=True), actor, window_id=window_id)
     except ValueError as exc:
+        _hide_wan_scope_denial(exc, resource='WAN maintenance window')
         raise HTTPException(status_code=400, detail={'code': 'INVALID_MAINTENANCE_WINDOW', 'message': str(exc)}) from exc
     _outbound_audit(request, user, 'WAN_MAINTENANCE_UPDATE', f'Updated WAN maintenance window {window_id}', target_type='wan_maintenance_window', target_id=window_id)
     return {'success': True, 'item': item}
@@ -2400,8 +2737,10 @@ def update_monitoring_wan_maintenance_window(window_id: str, payload: WanMainten
 def create_monitoring_wan_report(payload: WanReportPayload, request: Request, user=require_role('Operator')):
     from services.wan_p1_service import generate_wan_report
     try:
-        result = generate_wan_report(payload.report_type, payload.period_start, payload.period_end, user)
+        actor = _wan_scoped_actor(user, 'create')
+        result = generate_wan_report(payload.report_type, payload.period_start, payload.period_end, actor)
     except ValueError as exc:
+        _hide_wan_scope_denial(exc, resource='WAN report')
         raise HTTPException(status_code=400, detail={'code': 'INVALID_WAN_REPORT', 'message': str(exc)}) from exc
     _outbound_audit(request, user, 'WAN_REPORT_GENERATE', f'Generated {payload.report_type} WAN report', target_type='wan_report', target_id=result.get('report_id'))
     return {'success': True, 'item': result}
@@ -2410,13 +2749,13 @@ def create_monitoring_wan_report(payload: WanReportPayload, request: Request, us
 @router.get('/monitoring/wan-reports')
 def get_monitoring_wan_reports(report_type: str = Query(default=''), limit: int = Query(default=20, ge=1, le=100), user=require_role('Viewer')):
     from services.wan_p1_service import list_wan_reports
-    return {'items': list_wan_reports(report_type=report_type, limit=limit)}
+    return {'items': list_wan_reports(report_type=report_type, limit=limit, **_wan_scope_kwargs(user, 'view'))}
 
 
 @router.get('/monitoring/wan-reports/{report_id}')
 def get_monitoring_wan_report(report_id: str, user=require_role('Viewer')):
     from services.wan_p1_service import get_wan_report
-    item = get_wan_report(report_id)
+    item = get_wan_report(report_id, **_wan_scope_kwargs(user, 'view'))
     if item is None:
         raise HTTPException(status_code=404, detail={'code': 'WAN_REPORT_NOT_FOUND', 'message': 'WAN report not found'})
     return {'item': item}
@@ -2425,7 +2764,9 @@ def get_monitoring_wan_report(report_id: str, user=require_role('Viewer')):
 @router.post('/monitoring/wan-reports/{report_id}/export')
 def export_monitoring_wan_report(report_id: str, request: Request, user=require_role('Operator')):
     from services.wan_p1_service import mark_wan_report_exported
-    item = mark_wan_report_exported(report_id, user)
+    actor = _wan_scoped_actor(user, 'update')
+    scope = _wan_scope_kwargs(user, 'update')
+    item = mark_wan_report_exported(report_id, actor, **scope)
     if item is None:
         raise HTTPException(status_code=404, detail={'code': 'WAN_REPORT_NOT_FOUND', 'message': 'Completed WAN report not found'})
     _outbound_audit(request, user, 'WAN_REPORT_EXPORT', f'Exported WAN report {report_id}', target_type='wan_report', target_id=report_id)
@@ -2433,17 +2774,21 @@ def export_monitoring_wan_report(report_id: str, request: Request, user=require_
 
 
 @router.get('/monitoring/wan-probe-bindings')
-def get_monitoring_wan_probe_bindings(link_id: str = Query(default=''), target_id: str = Query(default=''), user=require_role('Viewer')):
+def get_monitoring_wan_probe_bindings(link_id: str = Query(default=''), target_id: str = Query(default=''), purpose: str = Query(default=''), user=require_role('Viewer')):
     from services.wan_p2_service import list_probe_bindings
-    return {'items': list_probe_bindings(link_id=link_id, target_id=target_id)}
+    return {'items': list_probe_bindings(link_id=link_id, target_id=target_id, purpose=purpose, **_wan_scope_kwargs(user, 'view'))}
 
 
 @router.post('/monitoring/wan-probe-bindings')
 def create_monitoring_wan_probe_binding(payload: WanProbeBindingPayload, request: Request, user=require_role('Operator')):
     from services.wan_p2_service import upsert_probe_binding
     try:
-        item = upsert_probe_binding(payload.model_dump(exclude_none=True), user)
+        actor = _wan_scoped_actor(user, 'create')
+        from services.wan_circuit_service import get_wan_circuit
+        _enforce_wan_link_scope(user, get_wan_circuit(payload.link_id, tenant_id=_wan_tenant_filter(user)), 'create')
+        item = upsert_probe_binding(payload.model_dump(exclude_none=True), actor)
     except ValueError as exc:
+        _hide_wan_scope_denial(exc, resource='WAN probe binding')
         raise HTTPException(status_code=400, detail={'code': 'INVALID_WAN_BINDING', 'message': str(exc)}) from exc
     except Exception as exc:
         if 'UNIQUE' in str(exc).upper():
@@ -2457,8 +2802,12 @@ def create_monitoring_wan_probe_binding(payload: WanProbeBindingPayload, request
 def update_monitoring_wan_probe_binding(binding_id: str, payload: WanProbeBindingPayload, request: Request, user=require_role('Operator')):
     from services.wan_p2_service import upsert_probe_binding
     try:
-        item = upsert_probe_binding(payload.model_dump(exclude_none=True), user, binding_id=binding_id)
+        actor = _wan_scoped_actor(user, 'update')
+        from services.wan_circuit_service import get_wan_circuit
+        _enforce_wan_link_scope(user, get_wan_circuit(payload.link_id, tenant_id=_wan_tenant_filter(user)), 'update')
+        item = upsert_probe_binding(payload.model_dump(exclude_none=True), actor, binding_id=binding_id)
     except ValueError as exc:
+        _hide_wan_scope_denial(exc, resource='WAN probe binding')
         raise HTTPException(status_code=400, detail={'code': 'INVALID_WAN_BINDING', 'message': str(exc)}) from exc
     _outbound_audit(request, user, 'WAN_PROBE_BINDING_UPDATE', f'Updated WAN probe binding {binding_id}', target_type='wan_probe_binding', target_id=binding_id)
     return {'success': True, 'item': item}
@@ -2467,7 +2816,13 @@ def update_monitoring_wan_probe_binding(binding_id: str, payload: WanProbeBindin
 @router.delete('/monitoring/wan-probe-bindings/{binding_id}')
 def delete_monitoring_wan_probe_binding(binding_id: str, request: Request, user=require_role('Operator')):
     from services.wan_p2_service import delete_probe_binding
-    if not delete_probe_binding(binding_id, user):
+    actor = _wan_scoped_actor(user, 'archive')
+    try:
+        deleted = delete_probe_binding(binding_id, actor)
+    except ValueError as exc:
+        _hide_wan_scope_denial(exc, resource='WAN probe binding')
+        raise HTTPException(status_code=400, detail={'code': 'INVALID_WAN_BINDING', 'message': str(exc)}) from exc
+    if not deleted:
         raise HTTPException(status_code=404, detail={'code': 'WAN_BINDING_NOT_FOUND', 'message': 'WAN probe binding not found'})
     _outbound_audit(request, user, 'WAN_PROBE_BINDING_DELETE', f'Deleted WAN probe binding {binding_id}', target_type='wan_probe_binding', target_id=binding_id)
     return {'success': True, 'id': binding_id}
@@ -2476,13 +2831,16 @@ def delete_monitoring_wan_probe_binding(binding_id: str, request: Request, user=
 @router.get('/monitoring/wan-correlations')
 def get_monitoring_wan_correlations(page: int = Query(default=1, ge=1), page_size: int = Query(default=20, ge=1, le=100), status: str = Query(default=''), code: str = Query(default=''), severity: str = Query(default=''), site_id: str = Query(default=''), provider: str = Query(default=''), keyword: str = Query(default=''), start_at: str = Query(default=''), end_at: str = Query(default=''), user=require_role('Viewer')):
     from services.wan_p2_service import list_wan_correlation_events
-    return list_wan_correlation_events(page=page, page_size=page_size, status=status, code=code, severity=severity, site_id=site_id, provider=provider, keyword=keyword, start_at=start_at, end_at=end_at)
+    scope = _wan_scope_kwargs(user, 'view')
+    if site_id and scope['site_ids'] is not None and site_id not in scope['site_ids']:
+        return {'items': [], 'total': 0, 'page': page, 'page_size': page_size, 'pages': 1}
+    return list_wan_correlation_events(page=page, page_size=page_size, status=status, code=code, severity=severity, site_id=site_id, provider=provider, keyword=keyword, start_at=start_at, end_at=end_at, **scope)
 
 
 @router.get('/monitoring/wan-correlations/{event_id}')
 def get_monitoring_wan_correlation(event_id: str, user=require_role('Viewer')):
     from services.wan_p2_service import get_wan_correlation_event
-    item = get_wan_correlation_event(event_id)
+    item = get_wan_correlation_event(event_id, **_wan_scope_kwargs(user, 'view'))
     if item is None:
         raise HTTPException(status_code=404, detail={'code': 'WAN_CORRELATION_NOT_FOUND', 'message': 'WAN correlation event not found'})
     return {'item': item}
@@ -2491,15 +2849,17 @@ def get_monitoring_wan_correlation(event_id: str, user=require_role('Viewer')):
 @router.get('/monitoring/wan-capacity-recommendations')
 def get_monitoring_wan_capacity_recommendations(link_id: str = Query(default=''), user=require_role('Viewer')):
     from services.wan_p2_service import list_wan_capacity_recommendations
-    return {'items': list_wan_capacity_recommendations(link_id)}
+    return {'items': list_wan_capacity_recommendations(link_id, **_wan_scope_kwargs(user, 'view'))}
 
 
 @router.patch('/monitoring/wan-capacity-recommendations/{recommendation_id}')
 def review_monitoring_wan_capacity(recommendation_id: str, payload: WanCapacityReviewPayload, request: Request, user=require_role('Operator')):
     from services.wan_p2_service import update_wan_capacity_recommendation
     try:
-        item = update_wan_capacity_recommendation(recommendation_id, payload.status, user, payload.note)
+        actor = _wan_scoped_actor(user, 'update')
+        item = update_wan_capacity_recommendation(recommendation_id, payload.status, actor, payload.note)
     except ValueError as exc:
+        _hide_wan_scope_denial(exc, resource='WAN capacity recommendation')
         raise HTTPException(status_code=400, detail={'code': 'INVALID_WAN_CAPACITY_STATUS', 'message': str(exc)}) from exc
     if item is None:
         raise HTTPException(status_code=404, detail={'code': 'WAN_CAPACITY_NOT_FOUND', 'message': 'WAN capacity recommendation not found'})
@@ -2510,12 +2870,13 @@ def review_monitoring_wan_capacity(recommendation_id: str, payload: WanCapacityR
 @router.get('/monitoring/wan-cockpit')
 def get_monitoring_wan_cockpit(user=require_role('Viewer')):
     from services.wan_p2_service import get_wan_cockpit
-    return get_wan_cockpit()
+    return get_wan_cockpit(**_wan_scope_kwargs(user, 'view'))
 
 
 @router.post('/monitoring/wan-correlation-recompute')
 def recompute_monitoring_wan_correlations(request: Request, user=require_role('Operator')):
     from services.wan_p2_service import recompute_wan_correlations
+    _wan_require_global_scope(user, 'update')
     result = recompute_wan_correlations()
     _outbound_audit(request, user, 'WAN_CORRELATION_RECOMPUTE', 'Recomputed WAN correlation events', target_type='wan_correlation')
     return result
@@ -2524,6 +2885,7 @@ def recompute_monitoring_wan_correlations(request: Request, user=require_role('O
 @router.post('/monitoring/wan-capacity-recompute')
 def recompute_monitoring_wan_capacity(request: Request, user=require_role('Operator')):
     from services.wan_p2_service import build_capacity_recommendations
+    _wan_require_global_scope(user, 'update')
     result = build_capacity_recommendations()
     _outbound_audit(request, user, 'WAN_CAPACITY_RECOMPUTE', 'Recomputed WAN capacity recommendations', target_type='wan_capacity')
     return result
@@ -2532,7 +2894,7 @@ def recompute_monitoring_wan_capacity(request: Request, user=require_role('Opera
 @router.get('/monitoring/wan-link-groups')
 def get_monitoring_wan_link_groups(user=require_role('Viewer')):
     from services.wan_p1_service import list_wan_link_groups
-    return {'items': list_wan_link_groups()}
+    return {'items': list_wan_link_groups(**_wan_scope_kwargs(user, 'view'))}
 
 
 @router.post('/monitoring/wan-link-groups')
@@ -2541,8 +2903,9 @@ def create_monitoring_wan_link_group(payload: WanLinkGroupPayload, request: Requ
     try:
         data = payload.model_dump(exclude_none=True)
         data['members'] = [item.model_dump() for item in payload.members]
-        item = upsert_wan_link_group(data, user)
+        item = upsert_wan_link_group(data, _wan_scoped_actor(user, 'create'))
     except ValueError as exc:
+        _hide_wan_scope_denial(exc, resource='WAN link group')
         raise HTTPException(status_code=400, detail={'code': 'INVALID_WAN_GROUP', 'message': str(exc)}) from exc
     _outbound_audit(request, user, 'WAN_GROUP_CREATE', f'Created WAN link group {item.get("group_name")}', target_type='wan_link_group', target_id=item.get('id'))
     return {'success': True, 'item': item}
@@ -2554,8 +2917,9 @@ def update_monitoring_wan_link_group(group_id: str, payload: WanLinkGroupPayload
     try:
         data = payload.model_dump(exclude_none=True)
         data['members'] = [item.model_dump() for item in payload.members]
-        item = upsert_wan_link_group(data, user, group_id=group_id)
+        item = upsert_wan_link_group(data, _wan_scoped_actor(user, 'update'), group_id=group_id)
     except ValueError as exc:
+        _hide_wan_scope_denial(exc, resource='WAN link group')
         raise HTTPException(status_code=400, detail={'code': 'INVALID_WAN_GROUP', 'message': str(exc)}) from exc
     _outbound_audit(request, user, 'WAN_GROUP_UPDATE', f'Updated WAN link group {group_id}', target_type='wan_link_group', target_id=group_id)
     return {'success': True, 'item': item}

@@ -18,6 +18,7 @@ export const navConfig: NavGroup[] = [
     children: [
       { id: 'dashboard',         label: '运营总览',   labelEn: 'Overview',          path: '/monitor/overview',    icon: 'LayoutDashboard' },
       { id: 'monitoring-dashboards', label: '监控大盘', labelEn: 'Monitoring Dashboards', path: '/monitor/dashboards', icon: 'BarChart2' },
+      { id: 'wan-circuits', label: '专线中心', labelEn: 'WAN Circuits', path: '/monitor/circuits', activeMatch: '/monitor/circuits', icon: 'Globe' },
       { id: 'snmp-walk', label: 'SNMP 诊断', labelEn: 'SNMP Diagnostics', path: '/monitor/snmp-walk', icon: 'Search', requiredRole: 'Operator' },
       {
         id: 'monitoring-reports',

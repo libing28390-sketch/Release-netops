@@ -47,6 +47,8 @@ describe('getRouteContext monitoring routes', () => {
     expect(getRouteContext('/monitor/networks').activeTab).toBe('inventory');
     expect(getRouteContext('/monitor/networks').subPage).toBe('devices');
     expect(getRouteContext('/monitor/dashboards').activeTab).toBe('monitoring-dashboards');
+    expect(getRouteContext('/monitor/circuits').activeTab).toBe('wan-circuits');
+    expect(getRouteContext('/monitor/circuits/link-123').subPage).toBe('link-123');
     expect(getRouteContext('/monitor/reports').activeTab).toBe('monitoring-reports');
     expect(getRouteContext('/monitor/reports/interfaces').subPage).toBe('interfaces');
     expect(getRouteContext('/monitor/reports/devices').subPage).toBe('devices');

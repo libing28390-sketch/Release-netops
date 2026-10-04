@@ -2,6 +2,7 @@ import { useEffect, useMemo, useState } from 'react';
 import { Activity, AlertTriangle, Globe2, Loader2, Plus } from 'lucide-react';
 import { Area, AreaChart, CartesianGrid, ResponsiveContainer, Tooltip, XAxis, YAxis, Legend, ReferenceArea } from 'recharts';
 import PageHero from '../components/PageHero';
+import { ActionLink } from '../components/ui/ActionIconButton';
 import OutboundHealthPanel from '../components/OutboundHealthPanel';
 import WanLinkPanel from '../components/WanLinkPanel';
 import WanAlertEventsPanel from '../components/WanAlertEventsPanel';
@@ -545,14 +546,15 @@ const OutboundHealthPage: React.FC = () => {
         subtitle={zh ? '独立查看平台服务器的公网连通性、目标结果和历史趋势' : 'Platform server egress connectivity, target results, and historical trends'}
         eyebrow={zh ? '实时监控' : 'Real-time monitoring'}
         actions={
-          <a
-            href="/monitor/grafana"
-            className="inline-flex items-center gap-1.5 rounded-xl border border-cyan-500/20 bg-cyan-500/10 px-3 py-2 text-xs font-bold text-cyan-700 transition-colors hover:bg-cyan-500/20 dark:text-cyan-300"
+          <ActionLink
+            href="/monitor/dashboards"
+            variant="accent"
+            size="sm"
+            icon={Activity}
             title={zh ? '在 Grafana 中查看出口链路、网关流量与带宽利用率时序' : 'View WAN link, gateway traffic and bandwidth utilization in Grafana'}
           >
-            <Activity size={14} />
             {zh ? 'Grafana 出口流量大盘' : 'Grafana Outbound Dashboard'}
-          </a>
+          </ActionLink>
         }
       />
       <div className="border-b border-[var(--card-border)] bg-[var(--app-bg)] px-4 pt-3 md:px-6">

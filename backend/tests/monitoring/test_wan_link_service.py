@@ -9,7 +9,7 @@ from database.migrations.m0064_wan_link_monitoring import upgrade
 from database.migrations.m0065_wan_p0_hardening import upgrade as upgrade_p0
 from database.migrations.m0162_wan_alert_ack_uniqueness import upgrade as upgrade_ack_uniqueness
 from database.migrations.m0163_wan_error_discard_rates import upgrade as upgrade_rates
-from services.wan_link_service import _calculate_rates, _deduplicate_interface_options, _match_interface, _sample_value
+from services.wan_link_service import _apply_contract_utilization, _calculate_rates, _deduplicate_interface_options, _match_interface, _sample_value
 from services.wan_p1_service import _valid_sample
 
 
@@ -244,9 +244,9 @@ def test_interface_options_deduplicate_vendor_aliases() -> None:
 
 def test_counter_delta_uses_actual_interval_and_contracted_bandwidth() -> None:
     sampled_at = datetime.now(timezone.utc).replace(microsecond=0)
-    link = {"contracted_download_bps": 200_000_000, "contracted_upload_bps": 100_000_000, "collection_interval_sec": 60}
+    link = {"contracted_download_bps": 200_000_000, "contracted_upload_bps": 100_000_000, "collection_interval_sec": 60, "measurement_scope": "dedicated"}
     current = {"in_octets": 1_500_000_000, "out_octets": 750_000_000, "speed_mbps": 1000}
-    previous = {"in_octets": 0, "out_octets": 0, "sampled_at": (sampled_at - timedelta(seconds=60)).isoformat(), "collection_status": "success"}
+    previous = {"in_octets": 0, "out_octets": 0, "sampled_at": (sampled_at - timedelta(seconds=60)).isoformat(), "collection_status": "success", "quality_flags": '{"measurement_scope":"dedicated"}'}
 
     rates, flags = _calculate_rates(link, current, previous, sampled_at)
 
@@ -259,9 +259,9 @@ def test_counter_delta_uses_actual_interval_and_contracted_bandwidth() -> None:
 
 def test_counter_reset_never_becomes_zero_rate() -> None:
     sampled_at = datetime.now(timezone.utc).replace(microsecond=0)
-    link = {"contracted_download_bps": 1_000_000_000, "contracted_upload_bps": 1_000_000_000, "collection_interval_sec": 60}
+    link = {"contracted_download_bps": 1_000_000_000, "contracted_upload_bps": 1_000_000_000, "collection_interval_sec": 60, "measurement_scope": "dedicated"}
     current = {"in_octets": 10, "out_octets": 10, "speed_mbps": 1000}
-    previous = {"in_octets": 1000, "out_octets": 1000, "sampled_at": (sampled_at - timedelta(seconds=60)).isoformat(), "collection_status": "success"}
+    previous = {"in_octets": 1000, "out_octets": 1000, "sampled_at": (sampled_at - timedelta(seconds=60)).isoformat(), "collection_status": "success", "quality_flags": '{"measurement_scope":"dedicated"}'}
 
     rates, flags = _calculate_rates(link, current, previous, sampled_at)
 
@@ -273,9 +273,9 @@ def test_counter_reset_never_becomes_zero_rate() -> None:
 
 def test_rate_above_reported_interface_speed_is_retained_with_quality_flag() -> None:
     sampled_at = datetime.now(timezone.utc).replace(microsecond=0)
-    link = {"contracted_download_bps": 10_000_000, "contracted_upload_bps": 10_000_000, "collection_interval_sec": 60}
+    link = {"contracted_download_bps": 10_000_000, "contracted_upload_bps": 10_000_000, "collection_interval_sec": 60, "measurement_scope": "dedicated"}
     current = {"in_octets": 150_000_000, "out_octets": 150_000_000, "speed_mbps": 10}
-    previous = {"in_octets": 0, "out_octets": 0, "sampled_at": (sampled_at - timedelta(seconds=60)).isoformat(), "collection_status": "success"}
+    previous = {"in_octets": 0, "out_octets": 0, "sampled_at": (sampled_at - timedelta(seconds=60)).isoformat(), "collection_status": "success", "quality_flags": '{"measurement_scope":"dedicated"}'}
 
     rates, flags = _calculate_rates(link, current, previous, sampled_at)
 
@@ -285,6 +285,30 @@ def test_rate_above_reported_interface_speed_is_retained_with_quality_flag() -> 
     assert rates["upload_util_pct"] == 200
     assert flags["download_over_interface_speed"] is True
     assert flags["upload_over_interface_speed"] is True
+
+
+def test_shared_interface_keeps_aggregate_rates_but_disables_line_utilization() -> None:
+    sampled_at = datetime.now(timezone.utc).replace(microsecond=0)
+    link = {"contracted_download_bps": 10_000_000, "contracted_upload_bps": 10_000_000, "collection_interval_sec": 60, "measurement_scope": "shared_interface"}
+    current = {"in_octets": 150_000_000, "out_octets": 75_000_000, "speed_mbps": 1000}
+    previous = {"in_octets": 0, "out_octets": 0, "sampled_at": (sampled_at - timedelta(seconds=60)).isoformat(), "collection_status": "success", "quality_flags": '{"measurement_scope":"shared_interface"}'}
+
+    rates, flags = _calculate_rates(link, current, previous, sampled_at)
+
+    assert rates["download_bps"] == 20_000_000
+    assert rates["upload_bps"] == 10_000_000
+    assert rates["download_util_pct"] is None
+    assert rates["upload_util_pct"] is None
+    assert flags["measurement_scope_shared_interface"] is True
+    assert _sample_value({"quality_flags": '{"measurement_scope":"shared_interface"}', "download_util_pct": 99}, "util_95") is None
+    assert _sample_value({"quality_flags": '{"measurement_scope":"dedicated"}', "download_util_pct": 99}, "util_95") == 99
+
+
+def test_unknown_measurement_scope_suppresses_contract_utilization() -> None:
+    item = _apply_contract_utilization({"download_bps": 50_000_000, "upload_bps": 10_000_000, "contracted_download_bps": 100_000_000, "contracted_upload_bps": 100_000_000})
+    assert item["measurement_scope"] == "shared_interface"
+    assert item["download_util_pct"] is None
+    assert item["upload_util_pct"] is None
 
 
 def test_wan_link_upsert_persists_contract_bandwidth_and_default_rules(isolated_db) -> None:

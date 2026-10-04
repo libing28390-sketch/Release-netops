@@ -334,6 +334,12 @@ async def lifespan(app: FastAPI):
         'interval', minutes=1, id='outbound_probe_sampler', replace_existing=True,
         max_instances=1, coalesce=True,
     )
+    from services.wan_line_probe_service import run_wan_line_probe_once
+    scheduler.add_job(
+        synchronized_scheduler_job('wan_line_probe_sampler', expire_seconds=55)(run_wan_line_probe_once),
+        'interval', seconds=60, id='wan_line_probe_sampler', replace_existing=True,
+        max_instances=1, coalesce=True,
+    )
     from services.monitoring_notification_outbox_service import process_alert_delivery_outbox
     scheduler.add_job(
         synchronized_scheduler_job('monitoring_alert_delivery_outbox', expire_seconds=55)(process_alert_delivery_outbox),

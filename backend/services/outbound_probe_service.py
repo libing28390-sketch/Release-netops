@@ -225,6 +225,8 @@ def normalize_target_payload(payload: dict, *, target_id: str | None = None) -> 
 def _classify_error(exc: BaseException) -> tuple[str, str]:
     if isinstance(exc, PermissionError) and str(exc) == "SSRF_BLOCKED":
         return "SSRF_BLOCKED", "Target address is not allowed"
+    if isinstance(exc, OSError) and str(exc) in {"SOURCE_FAMILY_MISMATCH", "SOURCE_BIND_UNSUPPORTED"}:
+        return "SOURCE_BIND_UNSUPPORTED", "The requested source address cannot be bound for this probe path"
     if isinstance(exc, OSError) and str(exc) == "DNS_FAILED":
         return "DNS_FAILED", "Target name could not be resolved"
     if isinstance(exc, socket.timeout) or isinstance(exc, TimeoutError):
@@ -255,6 +257,13 @@ def _base_result(target: dict) -> dict:
         "resolved_ip": None,
         "http_status": None,
         "dns_answers": [],
+        # ICMP quality consumers must use measured packet counts.  Keep these
+        # nullable because DNS/TCP/HTTP probes do not have echo semantics.
+        "sent_count": None,
+        "received_count": None,
+        "source_ip_requested": "",
+        "source_ip_used": "",
+        "unsupported": False,
     }
 
 
@@ -290,33 +299,122 @@ def _parse_icmp_quality(output: str) -> tuple[float | None, float | None, float 
     return average_rtt, packet_loss, jitter
 
 
-def _probe_icmp(target: dict) -> dict:
+def _parse_icmp_counts(output: str) -> tuple[int | None, int | None]:
+    """Return actual echo request/reply counts from common ping formats.
+
+    Packet loss is intentionally derived from these counts when available;
+    the summary percentage is retained only as a compatibility fallback for
+    older platform output that omits the two counters.
+    """
+
+    text = str(output or "")
+    linux = re.search(
+        r"(?P<sent>\d+)\s+packets?\s+transmitted,\s*(?P<received>\d+)\s+(?:packets?\s+)?received",
+        text,
+        re.IGNORECASE,
+    )
+    if linux:
+        return int(linux.group("sent")), int(linux.group("received"))
+    windows = re.search(
+        r"Sent\s*=\s*(?P<sent>\d+)\s*,\s*Received\s*=\s*(?P<received>\d+)",
+        text,
+        re.IGNORECASE,
+    )
+    if windows:
+        return int(windows.group("sent")), int(windows.group("received"))
+    return None, None
+
+
+def _socket_family_for_address(address: str) -> int:
+    return socket.AF_INET6 if ":" in str(address) else socket.AF_INET
+
+
+def _socket_endpoint(address: str, port: int) -> tuple:
+    return (address, port, 0, 0) if _socket_family_for_address(address) == socket.AF_INET6 else (address, port)
+
+
+def _create_connected_socket(address: str, port: int, timeout: float, *, source_ip: str | None = None):
+    """Connect to a validated address, optionally binding the local source.
+
+    The destination has already passed ``_resolve_and_validate``.  Binding is
+    performed on the socket before connect, so a requested source cannot be
+    silently ignored.  Route verification remains a separate concern owned by
+    the WAN line probe service.
+    """
+
+    family = _socket_family_for_address(address)
+    sock = socket.socket(family, socket.SOCK_STREAM)
+    try:
+        sock.settimeout(timeout)
+        if source_ip:
+            source = str(source_ip).strip()
+            ipaddress.ip_address(source)
+            if _socket_family_for_address(source) != family:
+                raise OSError("SOURCE_FAMILY_MISMATCH")
+            sock.bind(_socket_endpoint(source, 0))
+        sock.connect(_socket_endpoint(address, port))
+        return sock
+    except Exception:
+        sock.close()
+        raise
+
+
+def _probe_icmp(target: dict, *, source_ip: str | None = None) -> dict:
     import platform
     from core.subprocess_utils import run_console_command
     result = _base_result(target)
     host = target["host"]
     timeout_ms = int(target.get("timeout_ms", 2000))
+    result["source_ip_requested"] = str(source_ip or "")
     try:
         # Check SSRF/Allowed destination first (resolve IP)
         addresses = _resolve_and_validate(host, 80)
         ip_addr = addresses[0]
+        if source_ip:
+            source = str(source_ip).strip()
+            try:
+                ipaddress.ip_address(source)
+            except ValueError:
+                result.update(
+                    unsupported=True,
+                    error_type="SOURCE_BIND_UNSUPPORTED",
+                    error_message="Source-IP binding requires a valid IP address",
+                )
+                return result
+            if _socket_family_for_address(source) != _socket_family_for_address(ip_addr):
+                result.update(
+                    unsupported=True,
+                    error_type="SOURCE_BIND_UNSUPPORTED",
+                    error_message="Source and destination address families do not match",
+                )
+                return result
         
         system = platform.system().lower()
         if system == "windows":
             per_echo_timeout_ms = max(100, int(timeout_ms / ICMP_ECHO_COUNT))
-            cmd = ["ping", "-n", str(ICMP_ECHO_COUNT), "-w", str(per_echo_timeout_ms), ip_addr]
+            cmd = ["ping", "-n", str(ICMP_ECHO_COUNT), "-w", str(per_echo_timeout_ms)]
+            if source_ip:
+                cmd.extend(["-S", str(source_ip)])
+            cmd.append(ip_addr)
         else:
             timeout_sec = max(1, int((timeout_ms + 999) / 1000))
-            cmd = ["ping", "-n", "-c", str(ICMP_ECHO_COUNT), "-i", "0.2", "-W", str(timeout_sec), "-w", str(timeout_sec), ip_addr]
+            cmd = ["ping", "-n", "-c", str(ICMP_ECHO_COUNT), "-i", "0.2", "-W", str(timeout_sec), "-w", str(timeout_sec)]
+            if source_ip:
+                cmd.extend(["-I", str(source_ip)])
+            cmd.append(ip_addr)
 
         proc = run_console_command(cmd, timeout=timeout_ms / 1000 + 1)
-        average_rtt, packet_loss, jitter = _parse_icmp_quality(
-            f"{getattr(proc, 'stdout', '')}\n{getattr(proc, 'stderr', '')}"
-        )
+        output = f"{getattr(proc, 'stdout', '')}\n{getattr(proc, 'stderr', '')}"
+        average_rtt, packet_loss, jitter = _parse_icmp_quality(output)
+        sent_count, received_count = _parse_icmp_counts(output)
+        result["sent_count"] = sent_count
+        result["received_count"] = received_count
+        if sent_count is not None and received_count is not None and sent_count > 0:
+            packet_loss = round((sent_count - min(received_count, sent_count)) / sent_count * 100, 2)
         result["packet_loss_percent"] = packet_loss
         result["rtt_jitter_ms"] = jitter
         if proc.returncode == 0:
-            result.update(success=True, latency_ms=average_rtt, resolved_ip=ip_addr)
+            result.update(success=True, latency_ms=average_rtt, resolved_ip=ip_addr, source_ip_used=str(source_ip or ""))
         else:
             result["error_type"] = "CONNECT_TIMEOUT" if packet_loss == 100 else "PING_FAILED"
             result["error_message"] = proc.stderr.strip() or proc.stdout.strip() or f"Ping failed with exit code {proc.returncode}"
@@ -325,17 +423,26 @@ def _probe_icmp(target: dict) -> dict:
     return result
 
 
-def _probe_tcp(target: dict) -> dict:
+def _probe_tcp(target: dict, *, source_ip: str | None = None) -> dict:
     result = _base_result(target)
+    result["source_ip_requested"] = str(source_ip or "")
     started = time.perf_counter()
     try:
         addresses = _resolve_and_validate(target["host"], int(target["port"]))
         last_error: BaseException | None = None
         for address in addresses:
             try:
-                with socket.create_connection((address, int(target["port"])), timeout=int(target["timeout_ms"]) / 1000):
-                    result.update(success=True, latency_ms=round((time.perf_counter() - started) * 1000, 2), resolved_ip=address)
+                sock = _create_connected_socket(
+                    address,
+                    int(target["port"]),
+                    int(target["timeout_ms"]) / 1000,
+                    source_ip=source_ip,
+                )
+                try:
+                    result.update(success=True, latency_ms=round((time.perf_counter() - started) * 1000, 2), resolved_ip=address, source_ip_used=str(source_ip or ""))
                     return result
+                finally:
+                    sock.close()
             except BaseException as exc:  # one address may fail while another works
                 last_error = exc
         raise last_error or OSError("Connection failed")
@@ -344,8 +451,9 @@ def _probe_tcp(target: dict) -> dict:
         return result
 
 
-def _probe_dns(target: dict) -> dict:
+def _probe_dns(target: dict, *, source_ip: str | None = None) -> dict:
     result = _base_result(target)
+    result["source_ip_requested"] = str(source_ip or "")
     started = time.perf_counter()
     try:
         host = _validate_host_syntax(target["host"])
@@ -375,21 +483,39 @@ def _probe_dns(target: dict) -> dict:
             question = qname + struct.pack("!HH", 1, 1)
             packet = header + question
             
-            sock = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
+            family = _socket_family_for_address(host)
+            sock = socket.socket(family, socket.SOCK_DGRAM)
             sock.settimeout(timeout)
             try:
-                sock.sendto(packet, (host, int(target.get("port") or 53)))
+                if source_ip:
+                    source = str(source_ip).strip()
+                    ipaddress.ip_address(source)
+                    if _socket_family_for_address(source) != family:
+                        raise OSError("SOURCE_FAMILY_MISMATCH")
+                    sock.bind(_socket_endpoint(source, 0))
+                destination = _socket_endpoint(host, int(target.get("port") or 53))
+                sock.sendto(packet, destination)
                 data, _ = sock.recvfrom(512)
                 if len(data) >= 12:
                     tx_id, flags = struct.unpack("!HH", data[:4])
                     if tx_id == 0x1a2b:
                         latency = round((time.perf_counter() - started) * 1000, 2)
-                        result.update(success=True, latency_ms=latency, resolved_ip=host)
+                        result.update(success=True, latency_ms=latency, resolved_ip=host, source_ip_used=str(source_ip or ""))
                         return result
                 raise ValueError("Invalid DNS response")
             finally:
                 sock.close()
         else:
+            if source_ip:
+                # System resolver calls do not expose a local source binding;
+                # claiming that a source-specific route was exercised would
+                # turn a target DNS answer into false circuit evidence.
+                result.update(
+                    unsupported=True,
+                    error_type="SOURCE_BIND_UNSUPPORTED",
+                    error_message="Source-IP binding is unsupported for hostname DNS resolution",
+                )
+                return result
             answers = socket.getaddrinfo(host, None, type=socket.SOCK_STREAM)
             ips = list(dict.fromkeys(str(item[4][0]) for item in answers if item[4]))
             allowed = [ip for ip in ips if _is_allowed_ip(ip)]
@@ -401,8 +527,9 @@ def _probe_dns(target: dict) -> dict:
     return result
 
 
-def _http_request(target: dict) -> dict:
+def _http_request(target: dict, *, source_ip: str | None = None) -> dict:
     result = _base_result(target)
+    result["source_ip_requested"] = str(source_ip or "")
     started = time.perf_counter()
     parsed = urlsplit(target.get("url") or "")
     try:
@@ -412,7 +539,12 @@ def _http_request(target: dict) -> dict:
         port = parsed.port or (443 if parsed.scheme == "https" else 80)
         addresses = _resolve_and_validate(host, port)
         address = addresses[0]
-        raw_sock = socket.create_connection((address, port), timeout=int(target["timeout_ms"]) / 1000)
+        raw_sock = _create_connected_socket(
+            address,
+            port,
+            int(target["timeout_ms"]) / 1000,
+            source_ip=source_ip,
+        )
         connection = None
         try:
             if parsed.scheme == "https":
@@ -440,7 +572,7 @@ def _http_request(target: dict) -> dict:
                 result["error_type"] = "HTTP_STATUS_ERROR"
                 result["error_message"] = "Expected response keyword was not found"
             else:
-                result.update(success=True, latency_ms=round((time.perf_counter() - started) * 1000, 2), resolved_ip=address)
+                result.update(success=True, latency_ms=round((time.perf_counter() - started) * 1000, 2), resolved_ip=address, source_ip_used=str(source_ip or ""))
         finally:
             try:
                 if connection is not None:
@@ -455,15 +587,15 @@ def _http_request(target: dict) -> dict:
     return result
 
 
-def _probe_target(target: dict) -> dict:
+def _probe_target(target: dict, *, source_ip: str | None = None) -> dict:
     probe_type = str(target.get("probe_type") or "TCP_CONNECT").upper()
     if probe_type == "DNS_RESOLVE":
-        return _probe_dns(target)
+        return _probe_dns(target, source_ip=source_ip) if source_ip else _probe_dns(target)
     if probe_type in {"HTTP_GET", "HTTPS_GET"}:
-        return _http_request(target)
+        return _http_request(target, source_ip=source_ip) if source_ip else _http_request(target)
     if probe_type == "ICMP_PING":
-        return _probe_icmp(target)
-    return _probe_tcp(target)
+        return _probe_icmp(target, source_ip=source_ip) if source_ip else _probe_icmp(target)
+    return _probe_tcp(target, source_ip=source_ip) if source_ip else _probe_tcp(target)
 
 
 def _raw_status(success_count: int, total_targets: int) -> str:

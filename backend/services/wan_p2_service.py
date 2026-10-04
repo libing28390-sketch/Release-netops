@@ -15,6 +15,36 @@ from database import _USE_PG, get_db_connection
 
 RULE_VERSION = "wan-correlation-v1"
 
+_PROBE_PURPOSES = {"availability", "quality", "application"}
+_PURPOSE_PROTOCOLS = {
+    "availability": {"ICMP_PING", "TCP_CONNECT"},
+    "quality": {"ICMP_PING"},
+    "application": {"HTTP_GET", "HTTPS_GET", "DNS_RESOLVE"},
+}
+
+
+def _canonical_probe_protocol(value: Any) -> str:
+    normalized = str(value or "").strip().upper().replace("-", "_").replace(" ", "_")
+    return {
+        "ICMP": "ICMP_PING",
+        "PING": "ICMP_PING",
+        "TCP": "TCP_CONNECT",
+        "HTTP": "HTTP_GET",
+        "HTTPS": "HTTPS_GET",
+        "DNS": "DNS_RESOLVE",
+    }.get(normalized, normalized)
+
+
+def _validate_probe_purpose(purpose: Any, probe_type: Any) -> tuple[str, str]:
+    normalized_purpose = str(purpose or "availability").strip().lower()
+    if normalized_purpose not in _PROBE_PURPOSES:
+        raise ValueError("purpose must be availability, quality or application")
+    protocol = _canonical_probe_protocol(probe_type)
+    if protocol not in _PURPOSE_PROTOCOLS[normalized_purpose]:
+        allowed = ", ".join(sorted(_PURPOSE_PROTOCOLS[normalized_purpose]))
+        raise ValueError(f"purpose {normalized_purpose} is incompatible with target protocol {protocol or 'unknown'}; allowed protocols: {allowed}")
+    return normalized_purpose, protocol
+
 
 def _sample_table() -> str:
     return "wan_link_samples_1m_partitioned" if _USE_PG else "wan_link_samples_1m"
@@ -45,19 +75,56 @@ def _json_object(value: Any) -> dict[str, Any]:
         return {}
 
 
+def _actor_site_ids(actor: dict[str, Any]) -> tuple[str, ...] | None:
+    if "site_ids" in actor:
+        raw = actor.get("site_ids")
+    elif "allowed_site_ids" in actor:
+        raw = actor.get("allowed_site_ids")
+    else:
+        return None
+    if raw is None:
+        return ()
+    return tuple(str(value).strip() for value in raw if str(value).strip())
+
+
 def upsert_probe_binding(payload: dict[str, Any], actor: dict[str, Any], binding_id: str | None = None) -> dict[str, Any]:
     link_id, target_id = str(payload.get("link_id") or "").strip(), str(payload.get("target_id") or "").strip()
     if not link_id or not target_id:
         raise ValueError("link_id and target_id are required")
     conn = get_db_connection()
     try:
-        if not conn.execute("SELECT 1 FROM wan_links WHERE id = ?", (link_id,)).fetchone():
+        link_row = conn.execute("SELECT tenant_id FROM wan_links WHERE id = ?", (link_id,)).fetchone()
+        actor_tenant = str(actor.get("tenant_id") or "").strip()
+        actor_site_ids = _actor_site_ids(actor)
+        if actor_site_ids == ():
+            raise ValueError("No authorized WAN resource sites")
+        if binding_id:
+            existing_binding = conn.execute("SELECT link_id, target_id FROM wan_probe_bindings WHERE id = ?", (binding_id,)).fetchone()
+            if existing_binding:
+                old_link = conn.execute("SELECT tenant_id, site_id FROM wan_links WHERE id = ?", (existing_binding[0],)).fetchone()
+                old_target = conn.execute("SELECT tenant_id FROM outbound_probe_targets WHERE id = ?", (existing_binding[1],)).fetchone()
+                if actor_tenant and (not old_link or str(old_link[0] or "tenant-default") != actor_tenant):
+                    raise ValueError("Existing probe binding belongs to another tenant")
+                if actor_tenant and (not old_target or str(old_target[0] or "tenant-default") != actor_tenant):
+                    raise ValueError("Existing probe target belongs to another tenant")
+                if actor_site_ids is not None and (not old_link or str(old_link[1] or "") not in actor_site_ids):
+                    raise ValueError("Existing probe binding is outside the allowed resource scope")
+        if not link_row:
             raise ValueError("WAN link does not exist")
-        target = conn.execute("SELECT id, is_active FROM outbound_probe_targets WHERE id = ?", (target_id,)).fetchone()
+        if actor_tenant and str(link_row[0] or "tenant-default") != actor_tenant:
+            raise ValueError("WAN link belongs to another tenant")
+        if actor_site_ids is not None:
+            link_site = conn.execute("SELECT site_id FROM wan_links WHERE id = ?", (link_id,)).fetchone()
+            if not link_site or str(link_site[0] or "") not in actor_site_ids:
+                raise ValueError("WAN link is outside the allowed resource scope")
+        target = conn.execute("SELECT id, is_active, tenant_id, probe_type FROM outbound_probe_targets WHERE id = ?", (target_id,)).fetchone()
         if not target:
             raise ValueError("Probe target does not exist")
+        if actor_tenant and str(target[2] or "tenant-default") != actor_tenant:
+            raise ValueError("Probe target belongs to another tenant")
         if not bool(target[1]):
             raise ValueError("Probe target is disabled")
+        purpose, protocol = _validate_probe_purpose(payload.get("purpose", "availability"), target[3])
         route_mode = str(payload.get("route_mode") or "default").strip().lower()
         if route_mode not in {"default", "source_ip"}:
             raise ValueError("route_mode must be default or source_ip")
@@ -72,10 +139,12 @@ def upsert_probe_binding(payload: dict[str, Any], actor: dict[str, Any], binding
         before_row = conn.execute("SELECT * FROM wan_probe_bindings WHERE id = ?", (item_id,)).fetchone()
         route_evidence = {
             "mode": route_mode,
+            "purpose": purpose,
+            "protocol": protocol,
             "source_ip_configured": bool(source_ip),
             "evidence_status": "source_ip_configured_unverified" if route_mode == "source_ip" else "insufficient_default_route",
         }
-        conn.execute("""INSERT INTO wan_probe_bindings (id, link_id, target_id, route_mode, source_ip, priority, enabled, created_by, created_at, updated_at, route_evidence_json, updated_by) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?) ON CONFLICT(id) DO UPDATE SET link_id=excluded.link_id, target_id=excluded.target_id, route_mode=excluded.route_mode, source_ip=excluded.source_ip, priority=excluded.priority, enabled=excluded.enabled, updated_at=excluded.updated_at, route_evidence_json=excluded.route_evidence_json, updated_by=excluded.updated_by""", (item_id, link_id, target_id, route_mode, source_ip, int(payload.get("priority") or 100), bool(payload.get("enabled", True)), str(actor.get("username") or actor.get("id") or ""), now, now, json.dumps(route_evidence), str(actor.get("username") or actor.get("id") or "")))
+        conn.execute("""INSERT INTO wan_probe_bindings (id, link_id, target_id, purpose, route_mode, source_ip, priority, enabled, created_by, created_at, updated_at, route_evidence_json, updated_by) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?) ON CONFLICT(id) DO UPDATE SET link_id=excluded.link_id, target_id=excluded.target_id, purpose=excluded.purpose, route_mode=excluded.route_mode, source_ip=excluded.source_ip, priority=excluded.priority, enabled=excluded.enabled, updated_at=excluded.updated_at, route_evidence_json=excluded.route_evidence_json, updated_by=excluded.updated_by""", (item_id, link_id, target_id, purpose, route_mode, source_ip, int(payload.get("priority") or 100), bool(payload.get("enabled", True)), str(actor.get("username") or actor.get("id") or ""), now, now, json.dumps(route_evidence), str(actor.get("username") or actor.get("id") or "")))
         after_row = conn.execute("SELECT * FROM wan_probe_bindings WHERE id = ?", (item_id,)).fetchone()
         conn.execute("INSERT INTO wan_probe_binding_audit (id, binding_id, action, actor_id, actor_name, before_json, after_json, created_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?)", (f"wan-binding-audit-{uuid.uuid4().hex}", item_id, "update" if before_row else "create", str(actor.get("id") or ""), str(actor.get("username") or ""), json.dumps(dict(before_row) if before_row else {}, default=str), json.dumps(dict(after_row) if after_row else {}, default=str), now))
         conn.commit()
@@ -84,9 +153,11 @@ def upsert_probe_binding(payload: dict[str, Any], actor: dict[str, Any], binding
         conn.close()
 
 
-def list_probe_bindings(link_id: str = "", target_id: str = "") -> list[dict[str, Any]]:
+def list_probe_bindings(link_id: str = "", target_id: str = "", *, tenant_id: str = "", site_ids: tuple[str, ...] | None = None, purpose: str = "") -> list[dict[str, Any]]:
     conn = get_db_connection()
     try:
+        if site_ids is not None and len(site_ids) == 0:
+            return []
         clauses, params = [], []
         if link_id:
             clauses.append("b.link_id = ?")
@@ -94,6 +165,21 @@ def list_probe_bindings(link_id: str = "", target_id: str = "") -> list[dict[str
         if target_id:
             clauses.append("b.target_id = ?")
             params.append(target_id)
+        if purpose:
+            normalized_purpose = str(purpose).strip().lower()
+            if normalized_purpose not in _PROBE_PURPOSES:
+                raise ValueError("purpose must be availability, quality or application")
+            clauses.append("b.purpose = ?")
+            params.append(normalized_purpose)
+        if tenant_id:
+            clauses.append("l.tenant_id = ?")
+            params.append(tenant_id)
+        if site_ids is not None:
+            normalized = tuple(str(value).strip() for value in site_ids if str(value).strip())
+            if not normalized:
+                return []
+            clauses.append("l.site_id IN (" + ",".join("?" for _ in normalized) + ")")
+            params.extend(normalized)
         where = f"WHERE {' AND '.join(clauses)}" if clauses else ""
         result = []
         for row in conn.execute(f"""SELECT b.*, l.link_name, l.site_name, t.target_name, t.host, t.probe_type FROM wan_probe_bindings b JOIN wan_links l ON l.id = b.link_id JOIN outbound_probe_targets t ON t.id = b.target_id {where} ORDER BY l.site_name, l.link_name, b.priority""", tuple(params)).fetchall():
@@ -122,6 +208,18 @@ def delete_probe_binding(binding_id: str, actor: dict[str, Any]) -> bool:
         before = conn.execute("SELECT * FROM wan_probe_bindings WHERE id = ?", (binding_id,)).fetchone()
         if not before:
             return False
+        actor_tenant = str(actor.get("tenant_id") or "").strip()
+        if actor_tenant:
+            link_tenant = conn.execute("SELECT tenant_id FROM wan_links WHERE id = ?", (before["link_id"],)).fetchone()
+            if not link_tenant or str(link_tenant[0] or "tenant-default") != actor_tenant:
+                raise ValueError("Probe binding belongs to another tenant")
+        actor_site_ids = _actor_site_ids(actor)
+        if actor_site_ids == ():
+            raise ValueError("No authorized WAN resource sites")
+        if actor_site_ids is not None:
+            link_site = conn.execute("SELECT site_id FROM wan_links WHERE id = ?", (before["link_id"],)).fetchone()
+            if not link_site or str(link_site[0] or "") not in actor_site_ids:
+                raise ValueError("Probe binding is outside the allowed resource scope")
         now = _now()
         conn.execute("DELETE FROM wan_probe_bindings WHERE id = ?", (binding_id,))
         conn.execute("INSERT INTO wan_probe_binding_audit (id, binding_id, action, actor_id, actor_name, before_json, after_json, created_at) VALUES (?, ?, 'delete', ?, ?, ?, '{}', ?)", (f"wan-binding-audit-{uuid.uuid4().hex}", binding_id, str(actor.get("id") or ""), str(actor.get("username") or ""), json.dumps(dict(before), default=str), now))
@@ -153,7 +251,7 @@ def recompute_wan_correlations() -> dict[str, Any]:
         for link in links:
             current = dict(conn.execute("SELECT * FROM wan_link_current_status WHERE link_id = ?", (link["id"],)).fetchone() or {})
             latest_sample = dict(conn.execute(f"SELECT * FROM {_sample_table()} WHERE link_id = ? ORDER BY sampled_at DESC LIMIT 1", (link["id"],)).fetchone() or {})
-            bindings = [dict(row) for row in conn.execute("SELECT * FROM wan_probe_bindings WHERE link_id = ? AND enabled = TRUE", (link["id"],)).fetchall()]
+            bindings = [dict(row) for row in conn.execute("SELECT * FROM wan_probe_bindings WHERE link_id = ? AND enabled = TRUE AND purpose = 'availability'", (link["id"],)).fetchall()]
             target_results = _latest_target_results(conn, [str(item["target_id"]) for item in bindings], cutoff)
             failed = [item for item in target_results if not bool(item.get("success"))]
             successful = [item for item in target_results if bool(item.get("success"))]
@@ -285,7 +383,7 @@ def build_capacity_recommendations() -> dict[str, Any]:
         conn.close()
 
 
-def list_wan_correlation_events(*, page: int = 1, page_size: int = 20, status: str = "", code: str = "", severity: str = "", site_id: str = "", provider: str = "", keyword: str = "", start_at: str = "", end_at: str = "") -> dict[str, Any]:
+def list_wan_correlation_events(*, page: int = 1, page_size: int = 20, status: str = "", code: str = "", severity: str = "", site_id: str = "", provider: str = "", keyword: str = "", start_at: str = "", end_at: str = "", tenant_id: str = "", site_ids: tuple[str, ...] | None = None) -> dict[str, Any]:
     conn = get_db_connection()
     try:
         clauses, params = [], []
@@ -304,6 +402,15 @@ def list_wan_correlation_events(*, page: int = 1, page_size: int = 20, status: s
         if provider:
             clauses.append("l.provider = ?")
             params.append(provider)
+        if tenant_id:
+            clauses.append("l.tenant_id = ?")
+            params.append(tenant_id)
+        if site_ids is not None:
+            normalized = tuple(str(value).strip() for value in site_ids if str(value).strip())
+            if not normalized:
+                return {"items": [], "total": 0, "page": max(1, int(page)), "page_size": max(1, min(100, int(page_size))), "pages": 1}
+            clauses.append("l.site_id IN (" + ",".join("?" for _ in normalized) + ")")
+            params.extend(normalized)
         if start_at:
             clauses.append("e.starts_at >= ?")
             params.append(start_at)
@@ -323,10 +430,24 @@ def list_wan_correlation_events(*, page: int = 1, page_size: int = 20, status: s
         conn.close()
 
 
-def get_wan_correlation_event(event_id: str) -> dict[str, Any] | None:
+def get_wan_correlation_event(event_id: str, *, tenant_id: str = "", site_ids: tuple[str, ...] | None = None) -> dict[str, Any] | None:
     conn = get_db_connection()
     try:
-        row = conn.execute("SELECT * FROM wan_correlation_events WHERE id = ?", (event_id,)).fetchone()
+        if site_ids is not None and not tuple(str(value).strip() for value in site_ids if str(value).strip()):
+            return None
+        clauses = ["e.id = ?"]
+        params: list[Any] = [event_id]
+        if tenant_id:
+            clauses.append("l.tenant_id = ?")
+            params.append(tenant_id)
+        if site_ids is not None:
+            normalized = tuple(str(value).strip() for value in site_ids if str(value).strip())
+            clauses.append("l.site_id IN (" + ",".join("?" for _ in normalized) + ")")
+            params.extend(normalized)
+        row = conn.execute(
+            "SELECT e.* FROM wan_correlation_events e LEFT JOIN wan_links l ON l.id = CASE WHEN e.correlation_group LIKE 'link:%' THEN SUBSTR(e.correlation_group, 6) ELSE '' END WHERE " + " AND ".join(clauses),
+            tuple(params),
+        ).fetchone()
         if not row:
             return None
         item = dict(row)
@@ -342,13 +463,26 @@ def get_wan_correlation_event(event_id: str) -> dict[str, Any] | None:
         conn.close()
 
 
-def list_wan_capacity_recommendations(link_id: str = "") -> list[dict[str, Any]]:
+def list_wan_capacity_recommendations(link_id: str = "", *, tenant_id: str = "", site_ids: tuple[str, ...] | None = None) -> list[dict[str, Any]]:
     conn = get_db_connection()
     try:
+        if site_ids is not None and len(site_ids) == 0:
+            return []
+        clauses, params = [], []
         if link_id:
-            rows = conn.execute("SELECT * FROM wan_capacity_recommendations WHERE link_id = ? ORDER BY period_end DESC", (link_id,)).fetchall()
-        else:
-            rows = conn.execute("SELECT * FROM wan_capacity_recommendations ORDER BY period_end DESC").fetchall()
+            clauses.append("r.link_id = ?")
+            params.append(link_id)
+        if tenant_id:
+            clauses.append("l.tenant_id = ?")
+            params.append(tenant_id)
+        if site_ids is not None:
+            normalized = tuple(str(value).strip() for value in site_ids if str(value).strip())
+            if not normalized:
+                return []
+            clauses.append("l.site_id IN (" + ",".join("?" for _ in normalized) + ")")
+            params.extend(normalized)
+        where = "WHERE " + " AND ".join(clauses) if clauses else ""
+        rows = conn.execute(f"SELECT r.* FROM wan_capacity_recommendations r JOIN wan_links l ON l.id = r.link_id {where} ORDER BY r.period_end DESC", tuple(params)).fetchall()
         result = []
         for row in rows:
             item = dict(row)
@@ -370,6 +504,17 @@ def update_wan_capacity_recommendation(recommendation_id: str, status: str, acto
         row = conn.execute("SELECT * FROM wan_capacity_recommendations WHERE id = ?", (recommendation_id,)).fetchone()
         if not row:
             return None
+        actor_tenant = str(actor.get("tenant_id") or "").strip()
+        actor_site_ids = _actor_site_ids(actor)
+        if actor_site_ids == ():
+            raise ValueError("No authorized WAN resource sites")
+        link_scope = conn.execute("SELECT tenant_id, site_id FROM wan_links WHERE id = ?", (row["link_id"],)).fetchone()
+        if not link_scope:
+            return None
+        if actor_tenant and str(link_scope[0] or "tenant-default") != actor_tenant:
+            raise ValueError("Capacity recommendation belongs to another tenant")
+        if actor_site_ids is not None and str(link_scope[1] or "") not in actor_site_ids:
+            raise ValueError("Capacity recommendation is outside the allowed resource scope")
         evidence = _json_object(dict(row).get("evidence_json"))
         if note:
             evidence["review_note"] = note
@@ -385,19 +530,32 @@ def update_wan_capacity_recommendation(recommendation_id: str, status: str, acto
         conn.close()
 
 
-def get_wan_cockpit() -> dict[str, Any]:
+def get_wan_cockpit(*, tenant_id: str = "", site_ids: tuple[str, ...] | None = None) -> dict[str, Any]:
     conn = get_db_connection()
     try:
-        summary = conn.execute("SELECT COUNT(*) AS total, SUM(CASE WHEN health_status = 'healthy' THEN 1 ELSE 0 END) AS healthy, SUM(CASE WHEN health_status IN ('critical', 'unavailable') THEN 1 ELSE 0 END) AS risky, SUM(active_alert_count) AS active_alerts FROM wan_link_current_status").fetchone()
-        correlations = conn.execute("SELECT root_cause_code, COUNT(*) AS count FROM wan_correlation_events WHERE status IN ('open', 'acknowledged') GROUP BY root_cause_code ORDER BY count DESC").fetchall()
-        recommendations = conn.execute("SELECT status, COUNT(*) AS count FROM wan_capacity_recommendations GROUP BY status").fetchall()
-        active = [dict(row) for row in conn.execute("SELECT id, correlation_group, root_cause_code, severity, status, confidence, title, summary, starts_at, last_seen_at, scope_json FROM wan_correlation_events WHERE status IN ('open', 'acknowledged') ORDER BY starts_at DESC LIMIT 20").fetchall()]
+        if site_ids is not None and len(site_ids) == 0:
+            return {"summary": {"total": 0, "healthy": 0, "risky": 0, "active_alerts": 0}, "correlations": [], "recommendations": [], "active_events": [], "latest_capacity": []}
+        normalized = tuple(str(value).strip() for value in (site_ids or ()) if str(value).strip())
+        scope_clauses, scope_params = [], []
+        if tenant_id:
+            scope_clauses.append("l.tenant_id = ?")
+            scope_params.append(tenant_id)
+        if site_ids is not None:
+            if not normalized:
+                return {"summary": {"total": 0, "healthy": 0, "risky": 0, "active_alerts": 0}, "correlations": [], "recommendations": [], "active_events": [], "latest_capacity": []}
+            scope_clauses.append("l.site_id IN (" + ",".join("?" for _ in normalized) + ")")
+            scope_params.extend(normalized)
+        scope_where = " AND ".join(scope_clauses)
+        summary = conn.execute("SELECT COUNT(*) AS total, COALESCE(SUM(CASE WHEN c.health_status = 'healthy' THEN 1 ELSE 0 END), 0) AS healthy, COALESCE(SUM(CASE WHEN c.health_status IN ('critical', 'unavailable') THEN 1 ELSE 0 END), 0) AS risky, COALESCE(SUM(c.active_alert_count), 0) AS active_alerts FROM wan_links l LEFT JOIN wan_link_current_status c ON c.link_id = l.id" + (" WHERE " + scope_where if scope_where else ""), tuple(scope_params)).fetchone()
+        correlations = conn.execute("SELECT e.root_cause_code, COUNT(*) AS count FROM wan_correlation_events e LEFT JOIN wan_links l ON l.id = CASE WHEN e.correlation_group LIKE 'link:%' THEN SUBSTR(e.correlation_group, 6) ELSE '' END WHERE e.status IN ('open', 'acknowledged')" + (" AND " + scope_where if scope_where else "") + " GROUP BY e.root_cause_code ORDER BY count DESC", tuple(scope_params)).fetchall()
+        recommendations = conn.execute("SELECT r.status, COUNT(*) AS count FROM wan_capacity_recommendations r JOIN wan_links l ON l.id = r.link_id" + (" WHERE " + scope_where if scope_where else "") + " GROUP BY r.status", tuple(scope_params)).fetchall()
+        active = [dict(row) for row in conn.execute("SELECT e.id, e.correlation_group, e.root_cause_code, e.severity, e.status, e.confidence, e.title, e.summary, e.starts_at, e.last_seen_at, e.scope_json FROM wan_correlation_events e LEFT JOIN wan_links l ON l.id = CASE WHEN e.correlation_group LIKE 'link:%' THEN SUBSTR(e.correlation_group, 6) ELSE '' END WHERE e.status IN ('open', 'acknowledged')" + (" AND " + scope_where if scope_where else "") + " ORDER BY e.starts_at DESC LIMIT 20", tuple(scope_params)).fetchall()]
         for item in active:
             try:
                 item["scope"] = json.loads(item.pop("scope_json") or "{}")
             except (TypeError, ValueError):
                 item["scope"] = {}
-        latest_capacity = [dict(row) for row in conn.execute("SELECT r.* FROM wan_capacity_recommendations r JOIN (SELECT link_id, MAX(period_end) AS latest FROM wan_capacity_recommendations GROUP BY link_id) x ON x.link_id = r.link_id AND x.latest = r.period_end ORDER BY r.updated_at DESC LIMIT 30").fetchall()]
+        latest_capacity = [dict(row) for row in conn.execute("SELECT r.* FROM wan_capacity_recommendations r JOIN (SELECT r2.link_id, MAX(r2.period_end) AS latest FROM wan_capacity_recommendations r2 JOIN wan_links l2 ON l2.id = r2.link_id" + (" WHERE " + scope_where.replace("l.", "l2.") if scope_where else "") + " GROUP BY r2.link_id) x ON x.link_id = r.link_id AND x.latest = r.period_end JOIN wan_links l ON l.id = r.link_id ORDER BY r.updated_at DESC LIMIT 30", tuple(scope_params)).fetchall()]
         for item in latest_capacity:
             try:
                 item["evidence"] = json.loads(item.pop("evidence_json") or "{}")

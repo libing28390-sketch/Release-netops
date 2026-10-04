@@ -6,6 +6,7 @@ import json
 import math
 import re
 import uuid
+from copy import deepcopy
 from datetime import datetime, timedelta, timezone
 from typing import Any
 from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
@@ -35,6 +36,18 @@ def _parse_json_object(value: Any) -> dict[str, Any]:
         return parsed if isinstance(parsed, dict) else {}
     except (TypeError, ValueError):
         return {}
+
+
+def _actor_site_ids(actor: dict[str, Any]) -> tuple[str, ...] | None:
+    if "site_ids" in actor:
+        raw = actor.get("site_ids")
+    elif "allowed_site_ids" in actor:
+        raw = actor.get("allowed_site_ids")
+    else:
+        return None
+    if raw is None:
+        return ()
+    return tuple(str(value).strip() for value in raw if str(value).strip())
 
 
 def _zone(value: Any) -> ZoneInfo | None:
@@ -375,6 +388,16 @@ def update_wan_alert_workflow(event_id: str, action: str, actor: dict[str, Any])
         row = conn.execute("SELECT * FROM wan_alert_events WHERE id = ?", (event_id,)).fetchone()
         if not row:
             return None
+        actor_tenant = str(actor.get("tenant_id") or "").strip()
+        actor_site_ids = _actor_site_ids(actor)
+        if actor_tenant or actor_site_ids is not None:
+            link_scope = conn.execute("SELECT tenant_id, site_id FROM wan_links WHERE id = ?", (row["link_id"],)).fetchone()
+            if not link_scope:
+                return None
+            if actor_tenant and str(link_scope[0] or "tenant-default") != actor_tenant:
+                raise ValueError("WAN alert belongs to another tenant")
+            if actor_site_ids is not None and str(link_scope[1] or "") not in actor_site_ids:
+                raise ValueError("WAN alert is outside the allowed resource scope")
         before = dict(row)
         now = _now()
         note = str(actor.get("note") or "").strip()
@@ -397,10 +420,23 @@ def update_wan_alert_workflow(event_id: str, action: str, actor: dict[str, Any])
         conn.close()
 
 
-def list_wan_maintenance_windows() -> list[dict[str, Any]]:
+def list_wan_maintenance_windows(*, tenant_id: str = "", site_ids: tuple[str, ...] | None = None) -> list[dict[str, Any]]:
     conn = get_db_connection()
     try:
-        return [dict(row) for row in conn.execute("SELECT * FROM wan_maintenance_windows WHERE deleted_at IS NULL ORDER BY starts_at DESC").fetchall()]
+        if site_ids is not None and len(site_ids) == 0:
+            return []
+        clauses = ["m.deleted_at IS NULL"]
+        params: list[Any] = []
+        if tenant_id:
+            clauses.append("(EXISTS (SELECT 1 FROM wan_links l_scope WHERE l_scope.id = m.link_id AND l_scope.tenant_id = ?) OR (COALESCE(m.link_id, '') = '' AND EXISTS (SELECT 1 FROM sites s WHERE s.id = m.site_id AND COALESCE(NULLIF(s.tenant_id, ''), 'tenant-default') = ?)))")
+            params.extend([tenant_id, tenant_id])
+        if site_ids is not None:
+            normalized = tuple(str(value).strip() for value in site_ids if str(value).strip())
+            if not normalized:
+                return []
+            clauses.append("COALESCE(NULLIF(m.site_id, ''), l.site_id) IN (" + ",".join("?" for _ in normalized) + ")")
+            params.extend(normalized)
+        return [dict(row) for row in conn.execute("SELECT m.* FROM wan_maintenance_windows m LEFT JOIN wan_links l ON l.id = m.link_id WHERE " + " AND ".join(clauses) + " ORDER BY m.starts_at DESC", tuple(params)).fetchall()]
     finally:
         conn.close()
 
@@ -422,6 +458,21 @@ def upsert_wan_maintenance_window(payload: dict[str, Any], actor: dict[str, Any]
     try:
         now = _now()
         item_id = window_id or str(payload.get("id") or f"wan-maint-{uuid.uuid4().hex}")
+        actor_tenant = str(actor.get("tenant_id") or "").strip()
+        actor_site_ids = _actor_site_ids(actor)
+        if actor_site_ids == ():
+            raise ValueError("No authorized WAN resource sites")
+        if window_id:
+            existing_window = conn.execute("SELECT site_id, link_id, device_id, link_group_id FROM wan_maintenance_windows WHERE id = ? AND deleted_at IS NULL", (window_id,)).fetchone()
+            if not existing_window:
+                raise ValueError("maintenance window does not exist")
+            existing_link = conn.execute("SELECT tenant_id, site_id FROM wan_links WHERE id = ?", (existing_window[1],)).fetchone() if existing_window[1] else None
+            existing_tenant = (existing_link[0] if existing_link else None)
+            existing_site = (existing_link[1] if existing_link else existing_window[0])
+            if actor_tenant and str(existing_tenant or "tenant-default") != actor_tenant:
+                raise ValueError("maintenance window belongs to another tenant")
+            if actor_site_ids is not None and str(existing_site or "") not in actor_site_ids:
+                raise ValueError("maintenance window is outside the allowed resource scope")
         scope_checks = (
             ("link_id", "wan_links"),
             ("device_id", "devices"),
@@ -432,6 +483,29 @@ def upsert_wan_maintenance_window(payload: dict[str, Any], actor: dict[str, Any]
             scope_id = str(payload.get(field) or "").strip()
             if scope_id and not conn.execute(f"SELECT 1 FROM {table} WHERE id = ?", (scope_id,)).fetchone():
                 raise ValueError(f"maintenance scope {field} does not exist")
+            if scope_id and actor_tenant:
+                if field == "link_id":
+                    scope_row = conn.execute("SELECT tenant_id FROM wan_links WHERE id = ?", (scope_id,)).fetchone()
+                    scope_tenant = scope_row[0] if scope_row else None
+                elif field == "device_id":
+                    scope_row = conn.execute("SELECT tenant_id FROM devices WHERE id = ?", (scope_id,)).fetchone()
+                    scope_tenant = scope_row[0] if scope_row else None
+                elif field == "site_id":
+                    scope_row = conn.execute("SELECT tenant_id FROM sites WHERE id = ?", (scope_id,)).fetchone()
+                    scope_tenant = scope_row[0] if scope_row else None
+                else:
+                    scope_tenant = actor_tenant
+                    group_links = conn.execute("SELECT l.tenant_id FROM wan_link_group_members m JOIN wan_links l ON l.id = m.link_id WHERE m.group_id = ? LIMIT 1", (scope_id,)).fetchone()
+                    if group_links:
+                        scope_tenant = group_links[0]
+                if str(scope_tenant or "tenant-default") != actor_tenant:
+                    raise ValueError(f"maintenance scope {field} belongs to another tenant")
+            if actor_site_ids is not None and field == "site_id" and scope_id not in actor_site_ids:
+                raise ValueError("maintenance site is outside the allowed resource scope")
+            if actor_site_ids is not None and field == "link_id":
+                link_site = conn.execute("SELECT site_id FROM wan_links WHERE id = ?", (scope_id,)).fetchone()
+                if link_site and str(link_site[0] or "") not in actor_site_ids:
+                    raise ValueError("maintenance link is outside the allowed resource scope")
         values = (item_id, str(payload.get("site_id") or ""), str(payload.get("link_id") or ""), str(payload.get("device_id") or ""), str(payload.get("link_group_id") or ""), str(payload.get("name") or ""), start.isoformat(), end.isoformat(), timezone_name, recurrence, str(payload.get("reason") or ""), bool(payload.get("enabled", True)), str(actor.get("username") or actor.get("id") or ""), now, now)
         conn.execute("""INSERT INTO wan_maintenance_windows (id, site_id, link_id, device_id, link_group_id, name, starts_at, ends_at, timezone, recurrence, reason, enabled, created_by, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?) ON CONFLICT(id) DO UPDATE SET site_id=excluded.site_id, link_id=excluded.link_id, device_id=excluded.device_id, link_group_id=excluded.link_group_id, name=excluded.name, starts_at=excluded.starts_at, ends_at=excluded.ends_at, timezone=excluded.timezone, recurrence=excluded.recurrence, reason=excluded.reason, enabled=excluded.enabled, updated_at=excluded.updated_at""", values)
         conn.commit()
@@ -440,10 +514,20 @@ def upsert_wan_maintenance_window(payload: dict[str, Any], actor: dict[str, Any]
         conn.close()
 
 
-def delete_wan_maintenance_window(window_id: str) -> bool:
+def delete_wan_maintenance_window(window_id: str, *, tenant_id: str = "", site_ids: tuple[str, ...] | None = None) -> bool:
     conn = get_db_connection()
     try:
         now = _now()
+        scope = conn.execute("SELECT m.site_id, l.tenant_id, l.site_id AS link_site_id FROM wan_maintenance_windows m LEFT JOIN wan_links l ON l.id = m.link_id WHERE m.id = ?", (window_id,)).fetchone()
+        if not scope:
+            return False
+        effective_tenant = scope[1] or "tenant-default"
+        if tenant_id and str(effective_tenant) != tenant_id:
+            raise ValueError("maintenance window belongs to another tenant")
+        if site_ids is not None:
+            normalized = {str(value).strip() for value in site_ids if str(value).strip()}
+            if not normalized or str(scope[0] or scope[2] or "") not in normalized:
+                raise ValueError("maintenance window is outside the allowed resource scope")
         cur = conn.execute("UPDATE wan_maintenance_windows SET enabled = FALSE, deleted_at = ?, updated_at = ? WHERE id = ? AND deleted_at IS NULL", (now, now, window_id))
         conn.commit()
         return bool(cur.rowcount)
@@ -459,11 +543,16 @@ def generate_wan_report(report_type: str, period_start: str, period_end: str, ac
         raise ValueError("report period is invalid")
     conn = get_db_connection()
     try:
+        actor_tenant = str(actor.get("tenant_id") or "").strip()
+        actor_site_ids = _actor_site_ids(actor)
+        if actor_site_ids == ():
+            raise ValueError("No authorized WAN resource sites")
+        scope_sites = tuple(actor_site_ids or ())
         existing = conn.execute(
             "SELECT result_json FROM wan_report_runs WHERE report_type = ? AND period_start = ? AND period_end = ? AND status = 'completed' ORDER BY created_at DESC LIMIT 1",
             (report_type, start.isoformat(), end.isoformat()),
         ).fetchone()
-        if existing:
+        if existing and not actor_tenant and actor_site_ids is None:
             stored = existing[0] if not isinstance(existing, dict) else existing.get("result_json")
             if isinstance(stored, dict):
                 return stored
@@ -472,10 +561,13 @@ def generate_wan_report(report_type: str, period_start: str, period_end: str, ac
             except (TypeError, ValueError):
                 pass
         report_id, now = f"wan-report-{uuid.uuid4().hex}", _now()
-        conn.execute("INSERT INTO wan_report_runs (id, report_type, period_start, period_end, status, scope_json, result_json, generated_by, created_at, report_version, data_cutoff_at) VALUES (?, ?, ?, ?, 'running', '{}', '{}', ?, ?, 'wan-report-v2', ?)", (report_id, report_type, start.isoformat(), end.isoformat(), str(actor.get("username") or actor.get("id") or ""), now, now))
-        rows = [dict(row) for row in conn.execute("SELECT * FROM wan_link_samples_1h WHERE bucket_start >= ? AND bucket_start < ?", (start.isoformat(), end.isoformat())).fetchall()]
-        events = [dict(row) for row in conn.execute("SELECT severity, status, COUNT(*) AS count FROM wan_alert_events WHERE started_at >= ? AND started_at < ? GROUP BY severity, status", (start.isoformat(), end.isoformat())).fetchall()]
-        links = [dict(row) for row in conn.execute("SELECT id, link_name, provider, site_name FROM wan_links ORDER BY site_name, link_name").fetchall()]
+        report_scope = {"tenant_id": actor_tenant or None, "site_ids": list(actor_site_ids) if actor_site_ids is not None else None}
+        conn.execute("INSERT INTO wan_report_runs (id, report_type, period_start, period_end, status, scope_json, result_json, generated_by, created_at, report_version, data_cutoff_at) VALUES (?, ?, ?, ?, 'running', ?::jsonb, '{}', ?, ?, 'wan-report-v2', ?)", (report_id, report_type, start.isoformat(), end.isoformat(), json.dumps(report_scope), str(actor.get("username") or actor.get("id") or ""), now, now))
+        scope_sql = (" AND l.tenant_id = ?" if actor_tenant else "") + ((" AND l.site_id IN (" + ",".join("?" for _ in scope_sites) + ")") if actor_site_ids is not None else "")
+        scope_values = ([actor_tenant] if actor_tenant else []) + list(scope_sites)
+        rows = [dict(row) for row in conn.execute("SELECT s.* FROM wan_link_samples_1h s JOIN wan_links l ON l.id = s.link_id WHERE s.bucket_start >= ? AND s.bucket_start < ?" + scope_sql, tuple([start.isoformat(), end.isoformat()] + scope_values)).fetchall()]
+        events = [dict(row) for row in conn.execute("SELECT e.severity, e.status, COUNT(*) AS count FROM wan_alert_events e JOIN wan_links l ON l.id = e.link_id WHERE e.started_at >= ? AND e.started_at < ?" + scope_sql + " GROUP BY e.severity, e.status", tuple([start.isoformat(), end.isoformat()] + scope_values)).fetchall()]
+        links = [dict(row) for row in conn.execute("SELECT id, link_name, provider, site_id, site_name, tenant_id FROM wan_links l WHERE 1=1" + scope_sql + " ORDER BY site_name, link_name", tuple(scope_values)).fetchall()]
         by_link: dict[str, list[dict[str, Any]]] = {}
         for row in rows:
             by_link.setdefault(str(row.get("link_id")), []).append(row)
@@ -492,13 +584,9 @@ def generate_wan_report(report_type: str, period_start: str, period_end: str, ac
                 "high_load_hours": sum(1 for value in util if value >= 85),
                 "critical_load_hours": sum(1 for value in util if value >= 95),
             })
-        probe_summary = []
-        binding_rows = conn.execute("SELECT link_id, target_id FROM wan_probe_bindings WHERE enabled = TRUE").fetchall()
-        for binding in binding_rows:
-            total = int(conn.execute("SELECT COUNT(*) FROM outbound_probe_results WHERE target_id = ? AND sampled_at >= ? AND sampled_at < ?", (binding[1], start.isoformat(), end.isoformat())).fetchone()[0])
-            success = int(conn.execute("SELECT COUNT(*) FROM outbound_probe_results WHERE target_id = ? AND success = TRUE AND sampled_at >= ? AND sampled_at < ?", (binding[1], start.isoformat(), end.isoformat())).fetchone()[0])
-            probe_summary.append({"link_id": binding[0], "target_id": binding[1], "sample_count": total, "availability_pct": round(success / total * 100, 2) if total else None})
-        result = {"report_id": report_id, "report_type": report_type, "period_start": start.isoformat(), "period_end": end.isoformat(), "data_cutoff_at": now, "report_version": "wan-report-v2", "links": links, "link_metrics": link_metrics, "rollups": rows, "alerts": events, "probe_availability": probe_summary, "generated_at": now}
+        # Outbound probe results are keyed by target rather than circuit
+        # execution context, so they cannot support per-circuit availability.
+        result = {"report_id": report_id, "report_type": report_type, "period_start": start.isoformat(), "period_end": end.isoformat(), "data_cutoff_at": now, "report_version": "wan-report-v2", "scope": report_scope, "links": links, "link_metrics": link_metrics, "rollups": rows, "alerts": events, "probe_availability": [], "probe_evidence_status": "line_context_unavailable", "generated_at": now}
         conn.execute("UPDATE wan_report_runs SET status = 'completed', result_json = ?, completed_at = ? WHERE id = ?", (json.dumps(result, default=str), _now(), report_id))
         conn.commit()
         return result
@@ -522,7 +610,47 @@ def _decode_report(row: Any) -> dict[str, Any]:
     return item
 
 
-def list_wan_reports(*, report_type: str = "", limit: int = 20) -> list[dict[str, Any]]:
+def _scope_wan_report_item(item: dict[str, Any], *, tenant_id: str = "", site_ids: tuple[str, ...] | None = None) -> dict[str, Any] | None:
+    """Filter embedded report records and redact aggregates without line keys."""
+    if not tenant_id and site_ids is None:
+        return item
+    allowed_sites = {str(value).strip() for value in (site_ids or ()) if str(value).strip()}
+    if site_ids is not None and not allowed_sites:
+        return None
+    scoped_item = deepcopy(item)
+    result = scoped_item.get("result") if isinstance(scoped_item.get("result"), dict) else {}
+    links = result.get("links") if isinstance(result.get("links"), list) else []
+    allowed_links = [
+        link for link in links
+        if isinstance(link, dict)
+        and (not tenant_id or str(link.get("tenant_id") or "") == tenant_id)
+        and (site_ids is None or str(link.get("site_id") or "") in allowed_sites)
+    ]
+    if not allowed_links:
+        return None
+    allowed_link_ids = {str(link.get("id") or "") for link in allowed_links}
+    result["links"] = allowed_links
+    result["link_metrics"] = [
+        row for row in (result.get("link_metrics") or [])
+        if isinstance(row, dict) and str(row.get("id") or "") in allowed_link_ids
+    ]
+    result["rollups"] = [
+        row for row in (result.get("rollups") or [])
+        if isinstance(row, dict) and str(row.get("link_id") or "") in allowed_link_ids
+    ]
+    # The stored alert totals have no per-link key; target-only probes are
+    # shared evidence and cannot be reported as circuit availability.
+    result["alerts"] = []
+    result["probe_availability"] = []
+    result["probe_evidence_status"] = "line_context_unavailable"
+    result["scope"] = {"tenant_id": tenant_id or None, "site_ids": sorted(allowed_sites) if site_ids is not None else None}
+    scoped_item["result"] = result
+    scoped_item["result_json"] = json.dumps(result, ensure_ascii=False, default=str)
+    scoped_item["scope_json"] = json.dumps(result["scope"], ensure_ascii=False)
+    return scoped_item
+
+
+def list_wan_reports(*, report_type: str = "", limit: int = 20, tenant_id: str = "", site_ids: tuple[str, ...] | None = None) -> list[dict[str, Any]]:
     conn = get_db_connection()
     try:
         clauses, params = [], []
@@ -531,45 +659,83 @@ def list_wan_reports(*, report_type: str = "", limit: int = 20) -> list[dict[str
             params.append(report_type)
         where = f"WHERE {' AND '.join(clauses)}" if clauses else ""
         rows = conn.execute(f"SELECT * FROM wan_report_runs {where} ORDER BY created_at DESC LIMIT ?", tuple(params + [max(1, min(100, int(limit)))]),).fetchall()
-        return [_decode_report(row) for row in rows]
+        result = [_decode_report(row) for row in rows]
+        return [
+            scoped
+            for item in result
+            if (scoped := _scope_wan_report_item(item, tenant_id=tenant_id, site_ids=site_ids)) is not None
+        ]
     finally:
         conn.close()
 
 
-def get_wan_report(report_id: str) -> dict[str, Any] | None:
+def get_wan_report(report_id: str, *, tenant_id: str = "", site_ids: tuple[str, ...] | None = None) -> dict[str, Any] | None:
     conn = get_db_connection()
     try:
         row = conn.execute("SELECT * FROM wan_report_runs WHERE id = ?", (report_id,)).fetchone()
-        return _decode_report(row) if row else None
+        item = _decode_report(row) if row else None
+        return _scope_wan_report_item(item, tenant_id=tenant_id, site_ids=site_ids) if item else None
     finally:
         conn.close()
 
 
-def mark_wan_report_exported(report_id: str, actor: dict[str, Any]) -> dict[str, Any] | None:
+def mark_wan_report_exported(report_id: str, actor: dict[str, Any], *, tenant_id: str = "", site_ids: tuple[str, ...] | None = None) -> dict[str, Any] | None:
     conn = get_db_connection()
     try:
+        effective_tenant = tenant_id or str(actor.get("tenant_id") or "")
+        actor_sites = _actor_site_ids(actor)
+        effective_sites = site_ids if site_ids is not None else actor_sites
+        if effective_sites == ():
+            return None
+        if effective_tenant or effective_sites is not None:
+            scoped = get_wan_report(report_id, tenant_id=effective_tenant, site_ids=effective_sites)
+            if not scoped:
+                return None
         now = _now()
         cur = conn.execute("UPDATE wan_report_runs SET exported_at = ?, exported_by = ? WHERE id = ? AND status = 'completed'", (now, str(actor.get("username") or actor.get("id") or ""), report_id))
         if not cur.rowcount:
             return None
         conn.commit()
         row = conn.execute("SELECT * FROM wan_report_runs WHERE id = ?", (report_id,)).fetchone()
-        return _decode_report(row) if row else None
+        item = _decode_report(row) if row else None
+        return _scope_wan_report_item(item, tenant_id=effective_tenant, site_ids=effective_sites) if item else None
     finally:
         conn.close()
 
 
-def list_wan_link_groups() -> list[dict[str, Any]]:
+def list_wan_link_groups(*, tenant_id: str = "", site_ids: tuple[str, ...] | None = None) -> list[dict[str, Any]]:
     conn = get_db_connection()
     try:
-        groups = [dict(row) for row in conn.execute("SELECT * FROM wan_link_groups ORDER BY group_name").fetchall()]
+        if site_ids is not None and len(site_ids) == 0:
+            return []
+        clauses, params = [], []
+        if tenant_id:
+            clauses.append("EXISTS (SELECT 1 FROM wan_link_group_members gm_scope JOIN wan_links l_scope ON l_scope.id = gm_scope.link_id WHERE gm_scope.group_id = g.id AND l_scope.tenant_id = ?)")
+            params.append(tenant_id)
+        if site_ids is not None:
+            normalized = tuple(str(value).strip() for value in site_ids if str(value).strip())
+            if not normalized:
+                return []
+            clauses.append("g.site_id IN (" + ",".join("?" for _ in normalized) + ")")
+            params.extend(normalized)
+        where = "WHERE " + " AND ".join(clauses) if clauses else ""
+        groups = [dict(row) for row in conn.execute("SELECT g.* FROM wan_link_groups g " + where + " ORDER BY g.group_name", tuple(params)).fetchall()]
         for group in groups:
-            members = [dict(row) for row in conn.execute("""SELECT m.*, l.link_name, l.link_role, l.site_name, l.provider,
+            member_clauses = ["m.group_id = ?"]
+            member_params: list[Any] = [group["id"]]
+            if tenant_id:
+                member_clauses.append("l.tenant_id = ?")
+                member_params.append(tenant_id)
+            if site_ids is not None:
+                member_clauses.append("l.site_id IN (" + ",".join("?" for _ in normalized) + ")")
+                member_params.extend(normalized)
+            member_sql = """SELECT m.*, l.link_name, l.link_role, l.site_name, l.provider,
                     l.contracted_download_bps, l.contracted_upload_bps,
                     c.health_status, c.oper_status, c.download_bps, c.upload_bps, c.sampled_at
                     FROM wan_link_group_members m JOIN wan_links l ON l.id = m.link_id
                     LEFT JOIN wan_link_current_status c ON c.link_id = l.id
-                    WHERE m.group_id = ? ORDER BY m.priority, l.link_name""", (group["id"],)).fetchall()]
+                    WHERE """ + " AND ".join(member_clauses) + " ORDER BY m.priority, l.link_name"
+            members = [dict(row) for row in conn.execute(member_sql, tuple(member_params)).fetchall()]
             primary = [item for item in members if item.get("role") == "primary"]
             backups = [item for item in members if item.get("role") == "backup"]
             switched = bool(primary and backups and all(item.get("health_status") in {"critical", "unavailable", "unknown"} for item in primary) and any(item.get("health_status") == "healthy" and float(item.get("download_bps") or 0) + float(item.get("upload_bps") or 0) > 0 for item in backups))
@@ -598,6 +764,27 @@ def upsert_wan_link_group(payload: dict[str, Any], actor: dict[str, Any], group_
         now, item_id = _now(), group_id or str(payload.get("id") or f"wan-group-{uuid.uuid4().hex}")
         group_site_id = str(payload.get("site_id") or "").strip()
         group_provider = str(payload.get("provider") or "").strip()
+        actor_tenant = str(actor.get("tenant_id") or "").strip()
+        actor_site_ids = _actor_site_ids(actor)
+        if actor_site_ids == ():
+            raise ValueError("No authorized WAN resource sites")
+        if group_id:
+            existing_group = conn.execute("SELECT site_id FROM wan_link_groups WHERE id = ?", (group_id,)).fetchone()
+            if not existing_group:
+                raise ValueError("WAN link group does not exist")
+            existing_member = conn.execute("SELECT l.tenant_id, l.site_id FROM wan_link_group_members m JOIN wan_links l ON l.id = m.link_id WHERE m.group_id = ? ORDER BY m.link_id LIMIT 1", (group_id,)).fetchone()
+            existing_tenant = existing_member[0] if existing_member else None
+            existing_site = existing_member[1] if existing_member else existing_group[0]
+            if actor_tenant and str(existing_tenant or "tenant-default") != actor_tenant:
+                raise ValueError("WAN link group belongs to another tenant")
+            if actor_site_ids is not None and str(existing_site or "") not in actor_site_ids:
+                raise ValueError("WAN link group is outside the allowed resource scope")
+        if actor_site_ids is not None and group_site_id and group_site_id not in actor_site_ids:
+            raise ValueError("Group site is outside the allowed resource scope")
+        if group_site_id and actor_tenant:
+            site_row = conn.execute("SELECT tenant_id FROM sites WHERE id = ?", (group_site_id,)).fetchone()
+            if not site_row or str(site_row[0] or "tenant-default") != actor_tenant:
+                raise ValueError("Group site belongs to another tenant")
         seen_links: set[str] = set()
         primary_count = 0
         for member in members:
@@ -605,9 +792,13 @@ def upsert_wan_link_group(payload: dict[str, Any], actor: dict[str, Any], group_
             if not link_id or link_id in seen_links:
                 raise ValueError("A link may appear only once in a group")
             seen_links.add(link_id)
-            row = conn.execute("SELECT site_id, provider FROM wan_links WHERE id = ?", (link_id,)).fetchone()
+            row = conn.execute("SELECT site_id, provider, tenant_id FROM wan_links WHERE id = ?", (link_id,)).fetchone()
             if not row:
                 raise ValueError("Every group member must reference an existing WAN link")
+            if actor_tenant and str(row[2] or "tenant-default") != actor_tenant:
+                raise ValueError("Every group member must belong to the actor tenant")
+            if actor_site_ids is not None and str(row[0] or "") not in actor_site_ids:
+                raise ValueError("Every group member is outside the allowed resource scope")
             if group_site_id and str(row[0] or "") not in {"", group_site_id}:
                 raise ValueError("Every group member must belong to the selected site")
             if group_provider and str(row[1] or "") not in {"", group_provider}:

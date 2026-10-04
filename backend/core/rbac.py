@@ -43,6 +43,7 @@ ADMIN_ONLY_PATHS = {
 
 RESOURCE_ACTION_CATALOG = {
     'rack': {'read', 'view', 'create', 'update', 'delete'},
+    'wan_link': {'read', 'view', 'create', 'update', 'archive', 'test'},
     'asset': {'read', 'view', 'create', 'update', 'delete', 'verify', 'import'},
     'platform': {'view', 'create', 'update', 'delete', 'edit_draft', 'submit', 'approve', 'publish', 'rollback', 'bind_device'},
     'knowledge_source': {'read', 'view', 'create', 'update', 'delete', 'validate', 'enable', 'disable'},
@@ -68,6 +69,7 @@ RECOMMENDED_ROLE_PROFILES = {
     'Platform Viewer': {
         'rack': {'read', 'view'},
         'asset': {'read', 'view'},
+        'wan_link': {'read', 'view'},
         'platform': {'view'}, 'knowledge_source': {'read', 'view'}, 'knowledge_import': {'read', 'view'}, 'knowledge_catalog': {'read', 'view', 'resolve'}, 'knowledge_collection': {'read', 'view'}, 'command': {'view'}, 'textfsm': {'view'},
         'sample_output': {'view'}, 'playbook': {'view'}, 'knowledge_uat': {'read', 'view'},
     },
@@ -79,6 +81,7 @@ RECOMMENDED_ROLE_PROFILES = {
     'Platform Maintainer': {
         'rack': {'read', 'view', 'create', 'update', 'delete'},
         'asset': {'read', 'view', 'create', 'update', 'delete', 'verify', 'import'},
+        'wan_link': {'read', 'view', 'create', 'update', 'archive', 'test'},
         'platform': {'view', 'create', 'update', 'delete', 'edit_draft', 'submit', 'bind_device'},
         'knowledge_source': {'read', 'view', 'create', 'update', 'delete', 'validate', 'enable', 'disable'},
         'knowledge_import': {'read', 'view', 'create', 'manage', 'cancel', 'retry'},

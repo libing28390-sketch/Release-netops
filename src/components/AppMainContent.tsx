@@ -12,6 +12,7 @@ import { sectionHeaderRowClass } from './shared';
 
 const MonitoringCenter = lazy(() => import('./MonitoringCenter.tsx'));
 const OutboundHealthPage = lazy(() => import('../pages/OutboundHealthPage'));
+const WanCircuitsPage = lazy(() => import('../pages/WanCircuitsPage'));
 const ServerMonitoring = lazy(() => import('./ServerMonitoring.tsx'));
 const NetworkMonitoring = lazy(() => import('./NetworkMonitoring.tsx'));
 const GrafanaDashboardPage = lazy(() => import('../pages/GrafanaDashboardPage'));
@@ -438,6 +439,7 @@ const AppMainContent: React.FC = () => {
     activeTab === 'monitoring-dashboards' ||
     activeTab === 'snmp-walk' ||
     activeTab === 'monitoring-reports' ||
+    activeTab === 'wan-circuits' ||
     activeTab === 'access' ||
     activeTab === 'access-favorites' ||
     activeTab === 'access-history' ||
@@ -529,6 +531,12 @@ const AppMainContent: React.FC = () => {
       {activeTab === 'outbound-monitoring' && (
         <Suspense fallback={lazyPanelFallback}>
           <OutboundHealthPage />
+        </Suspense>
+      )}
+
+      {activeTab === 'wan-circuits' && (
+        <Suspense fallback={lazyPanelFallback}>
+          <WanCircuitsPage />
         </Suspense>
       )}
 

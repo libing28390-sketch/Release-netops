@@ -24,8 +24,9 @@ def _seed_link(conn):
     conn.execute("INSERT INTO devices (id, hostname, ip_address, site, snmp_community, snmp_port) VALUES (?, ?, ?, ?, ?, ?)", ("wan-device", "edge", "192.0.2.10", "HQ", "public", 161))
     conn.execute("INSERT INTO interfaces (id, device_id, interface_name, if_index, speed, oper_status) VALUES (?, ?, ?, ?, ?, ?)", ("wan-interface", "wan-device", "GigabitEthernet0/0", 7, 1_000_000_000, "up"))
     conn.execute("INSERT INTO wan_links (id, link_name, site_id, site_name, device_id, interface_id, interface_name, if_index, contracted_download_bps, contracted_upload_bps, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)", ("wan-link", "HQ", "site-default", "HQ", "wan-device", "wan-interface", "GigabitEthernet0/0", 7, 200_000_000, 100_000_000, now, now))
+    conn.execute("INSERT INTO wan_link_endpoints (id, link_id, side, endpoint_type, tenant_id, site_id, device_id, interface_id, if_index, endpoint_name, counter_orientation, measurement_scope, created_at, updated_at) VALUES (?, ?, 'A', 'managed', 'tenant-default', ?, ?, ?, ?, ?, 'normal', 'dedicated', ?, ?)", ("wan-endpoint-a", "wan-link", "site-default", "wan-device", "wan-interface", 7, "GigabitEthernet0/0", now, now))
     conn.commit()
-    return {"id": "wan-link", "device_id": "wan-device", "interface_id": "wan-interface", "if_index": 7, "interface_name": "GigabitEthernet0/0", "contracted_download_bps": 200_000_000, "contracted_upload_bps": 100_000_000, "collection_interval_sec": 60, "direction_mode": "normal"}
+    return {"id": "wan-link", "device_id": "wan-device", "interface_id": "wan-interface", "if_index": 7, "interface_name": "GigabitEthernet0/0", "contracted_download_bps": 200_000_000, "contracted_upload_bps": 100_000_000, "collection_interval_sec": 60, "direction_mode": "normal", "measurement_scope": "dedicated"}
 
 
 def test_failed_collection_keeps_last_valid_rate_and_does_not_increment_down(isolated_db):
@@ -59,6 +60,63 @@ def test_failed_collection_keeps_last_valid_rate_and_does_not_increment_down(iso
     assert status["consecutive_down_count"] == 0
 
 
+def test_shared_interface_collection_hides_contract_utilization_and_resolves_util_alert(isolated_db):
+    from database import get_db_connection
+    from services.wan_link_service import _collect_link
+
+    conn = get_db_connection()
+    try:
+        link = _seed_link(conn)
+        now = datetime.now(timezone.utc).replace(second=0, microsecond=0)
+        conn.execute(
+            "UPDATE wan_link_endpoints SET measurement_scope = 'shared_interface', binding_version = 2 WHERE link_id = ? AND side = 'A'",
+            (link["id"],),
+        )
+        conn.execute(
+            "INSERT INTO wan_link_current_status (link_id, sampled_at, download_bps, upload_bps, download_util_pct, upload_util_pct, health_status, oper_status, collection_status, active_alert_count, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+            (link["id"], now.isoformat(), 100_000_000, 50_000_000, 50, 50, "critical", "up", "success", 1, now.isoformat()),
+        )
+        conn.execute(
+            "INSERT INTO wan_alert_events (id, event_key, link_id, metric, severity, status, title, message, started_at, last_seen_at, created_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+            ("shared-util-event", "shared-util-key", link["id"], "util_95", "critical", "firing", "High utilization", "stale dedicated alert", now.isoformat(), now.isoformat(), now.isoformat()),
+        )
+        conn.commit()
+    finally:
+        conn.close()
+
+    link["measurement_scope"] = "shared_interface"
+    link["measurement_scope_version"] = 2
+    first = _run_async(_collect_link(
+        link,
+        {"status": "success", "items": [{"if_index": 7, "name": "GigabitEthernet0/0", "status": "up", "speed_mbps": 1000, "in_octets": 1_000_000_000, "out_octets": 500_000_000, "counter_width": 64}]},
+        now - timedelta(minutes=1),
+    ))
+    second = _run_async(_collect_link(
+        link,
+        {"status": "success", "items": [{"if_index": 7, "name": "GigabitEthernet0/0", "status": "up", "speed_mbps": 1000, "in_octets": 2_500_000_000, "out_octets": 1_250_000_000, "counter_width": 64}]},
+        now,
+    ))
+
+    assert first["health_status"] == "unknown"
+    assert second["health_status"] == "unknown"
+    conn = get_db_connection()
+    try:
+        sample = dict(conn.execute(f"SELECT * FROM {_sample_table()} WHERE link_id = ? ORDER BY sampled_at DESC LIMIT 1", (link["id"],)).fetchone())
+        status = dict(conn.execute("SELECT * FROM wan_link_current_status WHERE link_id = ?", (link["id"],)).fetchone())
+        alert = dict(conn.execute("SELECT status, details FROM wan_alert_events WHERE id = ?", ("shared-util-event",)).fetchone())
+    finally:
+        conn.close()
+    assert sample["download_bps"] == 200_000_000
+    assert sample["upload_bps"] == 100_000_000
+    assert sample["download_util_pct"] is None
+    assert sample["upload_util_pct"] is None
+    assert sample["quality_flags"]["measurement_scope_shared_interface"] is True
+    assert status["download_bps"] == 200_000_000
+    assert status["download_util_pct"] is None
+    assert status["health_status"] == "unknown"
+    assert alert["status"] == "resolved"
+
+
 def test_error_and_discard_rates_use_actual_sample_interval(isolated_db):
     from database import get_db_connection
     from services.wan_link_service import _collect_link
@@ -86,7 +144,7 @@ def test_error_and_discard_rates_use_actual_sample_interval(isolated_db):
 def test_p1_rollup_and_p2_binding_contract(isolated_db):
     from database import get_db_connection
     from services.wan_p1_service import rollup_wan_samples_once
-    from services.wan_p2_service import upsert_probe_binding
+    from services.wan_p2_service import list_probe_bindings, upsert_probe_binding
 
     conn = get_db_connection()
     try:
@@ -105,8 +163,10 @@ def test_p1_rollup_and_p2_binding_contract(isolated_db):
     rollup = rollup_wan_samples_once()
     assert rollup["five_min"]["buckets"] > 0
 
-    binding = upsert_probe_binding({"link_id": "wan-link", "target_id": target_id, "route_mode": "default"}, {"username": "operator"})
+    binding = upsert_probe_binding({"link_id": "wan-link", "target_id": target_id, "purpose": "application", "route_mode": "default"}, {"username": "operator"})
     assert binding["link_id"] == "wan-link"
+    assert binding["purpose"] == "application"
+    assert [item["purpose"] for item in list_probe_bindings(link_id="wan-link", purpose="application")] == ["application"]
 
 
 def test_alert_episode_can_recover_and_fire_again(isolated_db):
@@ -321,7 +381,7 @@ def test_probe_binding_requires_enabled_target_and_records_route_evidence(isolat
     finally:
         conn.close()
     try:
-        upsert_probe_binding({"link_id": link["id"], "target_id": "disabled-target"}, {"username": "operator"})
+        upsert_probe_binding({"link_id": link["id"], "target_id": "disabled-target", "purpose": "application"}, {"username": "operator"})
         assert False, "disabled targets must not be bindable"
     except ValueError as exc:
         assert "disabled" in str(exc).lower()
@@ -332,7 +392,7 @@ def test_probe_binding_requires_enabled_target_and_records_route_evidence(isolat
         conn.commit()
     finally:
         conn.close()
-    binding = upsert_probe_binding({"link_id": link["id"], "target_id": "disabled-target", "route_mode": "source_ip", "source_ip": "192.0.2.10"}, {"username": "operator"})
+    binding = upsert_probe_binding({"link_id": link["id"], "target_id": "disabled-target", "purpose": "application", "route_mode": "source_ip", "source_ip": "192.0.2.10"}, {"username": "operator"})
     evidence = binding["route_evidence_json"]
     assert "source_ip_configured_unverified" in (
         evidence if isinstance(evidence, str) else str(evidence.get("evidence_status", ""))

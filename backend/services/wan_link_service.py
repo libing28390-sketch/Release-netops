@@ -48,8 +48,38 @@ def _bps(value: Any) -> int | None:
     return None if number is None else max(0, int(round(number)))
 
 
+def _measurement_scope(item: dict[str, Any] | None) -> str:
+    """Return the verified A-side counter scope, failing closed when absent."""
+    if not item:
+        return "shared_interface"
+    flags = _json_object(item.get("quality_flags"))
+    flagged_scope = str(flags.get("measurement_scope") or "").strip().lower()
+    if flagged_scope in {"dedicated", "shared_interface"}:
+        return flagged_scope
+    if flags.get("measurement_scope_shared_interface"):
+        return "shared_interface"
+    explicit = str(item.get("measurement_scope") or "").strip().lower()
+    if explicit in {"dedicated", "shared_interface"}:
+        return explicit
+    endpoints = item.get("endpoints") or []
+    if isinstance(endpoints, list):
+        a_endpoint = next((endpoint for endpoint in endpoints if isinstance(endpoint, dict) and str(endpoint.get("side") or "").upper() == "A"), None)
+        if a_endpoint:
+            scope = str(a_endpoint.get("measurement_scope") or "").strip().lower()
+            if scope in {"dedicated", "shared_interface"}:
+                return scope
+    return "shared_interface"
+
+
 def _apply_contract_utilization(item: dict[str, Any]) -> dict[str, Any]:
-    """Calculate utilization from the displayed rate and current contract."""
+    """Calculate circuit utilization only for an explicitly dedicated A port."""
+    if _measurement_scope(item) != "dedicated":
+        item["download_util_pct"] = None
+        item["upload_util_pct"] = None
+        item["measurement_scope"] = _measurement_scope(item)
+        if "health_status" in item:
+            item["health_status"] = "unavailable" if str(item.get("oper_status") or "").lower() == "down" else "unknown"
+        return item
     for direction in ("download", "upload"):
         rate = _num(item.get(f"{direction}_bps"))
         contract = _num(item.get(f"contracted_{direction}_bps"))
@@ -139,9 +169,20 @@ def _match_interface(link: dict[str, Any], items: list[dict[str, Any]]) -> dict[
 
 
 def _calculate_rates(link: dict[str, Any], current: dict[str, Any], previous: dict[str, Any] | None, sampled_at: datetime) -> tuple[dict[str, Any], dict[str, Any]]:
-    flags: dict[str, Any] = {}
+    shared_scope = _measurement_scope(link) == "shared_interface"
+    flags: dict[str, Any] = {"measurement_scope_shared_interface": True} if shared_scope else {}
     if not previous or str(previous.get("collection_status")) != "success":
         flags["baseline"] = True
+        return {"download_bps": None, "upload_bps": None, "download_util_pct": None, "upload_util_pct": None}, flags
+
+    previous_flags = _json_object(previous.get("quality_flags"))
+    current_scope = _measurement_scope(link)
+    current_scope_version = link.get("measurement_scope_version")
+    previous_scope_version = previous_flags.get("measurement_scope_version")
+    if previous_flags.get("measurement_scope") != current_scope or (
+        current_scope_version not in (None, "") and str(previous_scope_version or "") != str(current_scope_version)
+    ):
+        flags["endpoint_binding_baseline"] = True
         return {"download_bps": None, "upload_bps": None, "download_util_pct": None, "upload_util_pct": None}, flags
 
     elapsed = (sampled_at - datetime.fromisoformat(str(previous["sampled_at"]).replace("Z", "+00:00"))).total_seconds()
@@ -209,6 +250,9 @@ def _calculate_rates(link: dict[str, Any], current: dict[str, Any], previous: di
         contracted = _bps(link.get(f"contracted_{direction}_bps")) or 0
         values[f"{direction}_bps"] = rate
         values[f"{direction}_util_pct"] = round(rate / contracted * 100, 3) if contracted else None
+    if shared_scope:
+        values["download_util_pct"] = None
+        values["upload_util_pct"] = None
     return values, flags
 
 
@@ -237,6 +281,11 @@ def _sample_value(sample: dict[str, Any], metric: str) -> float | bool | None:
         # failures must never be promoted to an interface-down alarm.
         return str(sample.get("oper_status") or "unknown").lower() == "down" and str(sample.get("collection_status")) == "success"
     if metric.startswith("util_"):
+        if _measurement_scope(sample) == "shared_interface":
+            return None
+        flags = _json_object(sample.get("quality_flags"))
+        if flags.get("measurement_scope_shared_interface"):
+            return None
         download = _num(sample.get("download_util_pct"))
         upload = _num(sample.get("upload_util_pct"))
         values = [value for value in (download, upload) if value is not None]
@@ -253,9 +302,28 @@ def _evaluate_alerts(conn, link: dict[str, Any], now: str) -> int:
     interval = int(link.get("collection_interval_sec") or 60)
     from services.wan_p1_service import is_wan_link_in_maintenance
     in_maintenance = is_wan_link_in_maintenance(conn, str(link["id"]), str(link.get("site_id") or ""), now)
+    shared_scope = _measurement_scope(link) == "shared_interface"
+    if shared_scope:
+        # Utilization events raised under a previous dedicated binding are no
+        # longer actionable once the source counter is known to aggregate
+        # multiple circuits.
+        active_util_events = conn.execute(
+            "SELECT id, details FROM wan_alert_events WHERE link_id = ? AND metric LIKE 'util_%' AND status IN ('firing', 'acknowledged')",
+            (link["id"],),
+        ).fetchall()
+        for event_row in active_util_events:
+            event = dict(event_row)
+            details = _json_object(event.get("details"))
+            details.update({"resolution_reason": "measurement_scope_shared_interface"})
+            conn.execute(
+                "UPDATE wan_alert_events SET status = 'resolved', recovered_at = ?, last_seen_at = ?, details = ?, updated_at = ? WHERE id = ?",
+                (now, now, json.dumps(details, ensure_ascii=False), now, event["id"]),
+            )
     for rule_row in rules:
         rule = dict(rule_row)
         metric = str(rule["metric"])
+        if shared_scope and metric.startswith("util_"):
+            continue
         trigger_value = _num(rule.get("threshold_value"))
         recovery_value = _num(rule.get("recovery_threshold"))
         triggered = 0
@@ -355,7 +423,12 @@ async def _collect_link(link: dict[str, Any], collected: dict[str, Any] | None =
         previous = _row_dict(previous_row)
         item: dict[str, Any] | None = None
         collection_status = "success"
-        quality_flags: dict[str, Any] = {}
+        scope = _measurement_scope(link)
+        quality_flags: dict[str, Any] = {"measurement_scope": scope}
+        if scope == "shared_interface":
+            quality_flags["measurement_scope_shared_interface"] = True
+        if link.get("measurement_scope_version") not in (None, ""):
+            quality_flags["measurement_scope_version"] = link.get("measurement_scope_version")
         if not snmp_ip or not community:
             collection_status = "not_configured"
             quality_flags["reason"] = "SNMP credentials are not configured"
@@ -488,7 +561,7 @@ async def _collect_link(link: dict[str, Any], collected: dict[str, Any] | None =
             (link["id"],),
         ).fetchone()
         previous_down_count = int((dict(previous_current_row).get("consecutive_down_count") or 0) if previous_current_row else 0)
-        health = "unknown" if collection_status != "success" or status == "unknown" else "unavailable" if status == "down" else "critical" if max(_num(derived.get("download_util_pct")) or 0, _num(derived.get("upload_util_pct")) or 0) >= 95 else "degraded" if max(_num(derived.get("download_util_pct")) or 0, _num(derived.get("upload_util_pct")) or 0) >= 85 else "healthy"
+        health = "unknown" if collection_status != "success" or status == "unknown" or scope == "shared_interface" else "unavailable" if status == "down" else "critical" if max(_num(derived.get("download_util_pct")) or 0, _num(derived.get("upload_util_pct")) or 0) >= 95 else "degraded" if max(_num(derived.get("download_util_pct")) or 0, _num(derived.get("upload_util_pct")) or 0) >= 85 else "healthy"
         conn.execute(
             """INSERT INTO wan_link_current_status
                 (link_id, sampled_at, download_bps, upload_bps, download_util_pct, upload_util_pct,
@@ -499,8 +572,8 @@ async def _collect_link(link: dict[str, Any], collected: dict[str, Any] | None =
                  sampled_at = excluded.sampled_at,
                  download_bps = COALESCE(excluded.download_bps, wan_link_current_status.download_bps),
                  upload_bps = COALESCE(excluded.upload_bps, wan_link_current_status.upload_bps),
-                 download_util_pct = COALESCE(excluded.download_util_pct, wan_link_current_status.download_util_pct),
-                 upload_util_pct = COALESCE(excluded.upload_util_pct, wan_link_current_status.upload_util_pct),
+                 download_util_pct = CASE WHEN ? = 'shared_interface' THEN NULL ELSE COALESCE(excluded.download_util_pct, wan_link_current_status.download_util_pct) END,
+                 upload_util_pct = CASE WHEN ? = 'shared_interface' THEN NULL ELSE COALESCE(excluded.upload_util_pct, wan_link_current_status.upload_util_pct) END,
                  admin_status = excluded.admin_status, oper_status = excluded.oper_status,
                  collection_status = excluded.collection_status, health_status = excluded.health_status,
                  active_alert_count = excluded.active_alert_count,
@@ -508,7 +581,7 @@ async def _collect_link(link: dict[str, Any], collected: dict[str, Any] | None =
                  consecutive_down_count = excluded.consecutive_down_count, updated_at = excluded.updated_at""",
             (link["id"], sampled_at, derived["download_bps"], derived["upload_bps"], derived["download_util_pct"], derived["upload_util_pct"],
              current.get("admin_status") or "unknown", status, collection_status, health, active_alerts, sampled_at if collection_status == "success" else None,
-             previous_down_count + 1 if status == "down" else 0, sampled_at),
+             previous_down_count + 1 if status == "down" else 0, sampled_at, scope, scope),
         )
         conn.commit()
         return {"link_id": link["id"], "collection_status": collection_status, "health_status": health}
@@ -523,10 +596,21 @@ async def _collect_link(link: dict[str, Any], collected: dict[str, Any] | None =
         conn.close()
 
 
-def list_wan_link_options(*, site_id: str = "", device_id: str = "") -> dict[str, Any]:
+def list_wan_link_options(*, site_id: str = "", device_id: str = "", tenant_id: str = "", site_ids: tuple[str, ...] | None = None) -> dict[str, Any]:
     conn = get_db_connection()
     try:
+        if site_ids is not None and len(site_ids) == 0:
+            return {"devices": [], "interfaces": [], "sites": []}
         device_clauses, device_params = [], []
+        if tenant_id:
+            device_clauses.append("COALESCE(NULLIF(d.tenant_id, ''), 'tenant-default') = ?")
+            device_params.append(tenant_id)
+        if site_ids is not None:
+            normalized_site_ids = tuple(str(value).strip() for value in site_ids if str(value).strip())
+            if not normalized_site_ids:
+                return {"devices": [], "interfaces": [], "sites": []}
+            device_clauses.append("COALESCE(NULLIF(d.site_id, ''), s.id, NULLIF(d.site, '')) IN (" + ",".join("?" for _ in normalized_site_ids) + ")")
+            device_params.extend(normalized_site_ids)
         if site_id:
             # Devices historically stored the site relation in either `site_id`
             # or the legacy `site` column. Resolve both forms by stable site ID;
@@ -558,65 +642,52 @@ def list_wan_link_options(*, site_id: str = "", device_id: str = "") -> dict[str
               ORDER BY d.hostname, d.ip_address""",
             tuple(device_params),
         ).fetchall()]
-        interface_params: list[Any] = []
-        if device_id:
-            interface_where = """WHERE device_id IN (
-                SELECT d.id
-                  FROM devices d
-                 WHERE d.id = ?
-                   AND (LOWER(COALESCE(d.role, '')) IN ({roles}) OR LOWER(COALESCE(d.device_category, '')) IN ({categories}))
-            )""".format(
-                roles=','.join('?' for _ in _WAN_DEVICE_ROLES),
-                categories=','.join('?' for _ in _WAN_DEVICE_CATEGORIES),
-            )
-            interface_params.extend([device_id, *_WAN_DEVICE_ROLES, *_WAN_DEVICE_CATEGORIES])
-        elif site_id:
-            interface_where = """WHERE device_id IN (
-                SELECT d.id
-                  FROM devices d
-             LEFT JOIN sites s
-                    ON s.id = NULLIF(d.site_id, '')
-                    OR s.id = NULLIF(d.site, '')
-                    OR s.site_name = NULLIF(d.site, '')
-                 WHERE (d.site_id = ? OR d.site = ? OR s.id = ?)
-                   AND (LOWER(COALESCE(d.role, '')) IN ({roles}) OR LOWER(COALESCE(d.device_category, '')) IN ({categories}))
-            )""".format(
-                roles=','.join('?' for _ in _WAN_DEVICE_ROLES),
-                categories=','.join('?' for _ in _WAN_DEVICE_CATEGORIES),
-            )
-            interface_params.extend([site_id, site_id, site_id, *_WAN_DEVICE_ROLES, *_WAN_DEVICE_CATEGORIES])
-        elif not device_id:
-            interface_where = """WHERE device_id IN (
-                SELECT d.id
-                  FROM devices d
-             LEFT JOIN sites s
-                    ON s.id = NULLIF(d.site_id, '')
-                    OR s.id = NULLIF(d.site, '')
-                    OR s.site_name = NULLIF(d.site, '')
-                 WHERE LOWER(COALESCE(d.role, '')) IN ({roles})
-                    OR LOWER(COALESCE(d.device_category, '')) IN ({categories})
-            )""".format(
-                roles=','.join('?' for _ in _WAN_DEVICE_ROLES),
-                categories=','.join('?' for _ in _WAN_DEVICE_CATEGORIES),
-            )
-            interface_params.extend([*_WAN_DEVICE_ROLES, *_WAN_DEVICE_CATEGORIES])
+        allowed_device_ids = [str(device.get("id")) for device in devices if device.get("id")]
+        if allowed_device_ids:
+            interface_rows = [dict(row) for row in conn.execute(
+                "SELECT id, device_id, interface_name, if_index, description, speed, oper_status FROM interfaces WHERE device_id IN (" + ",".join("?" for _ in allowed_device_ids) + ") ORDER BY device_id, interface_name",
+                tuple(allowed_device_ids),
+            ).fetchall()]
         else:
-            interface_where = ""
-        interface_rows = [dict(row) for row in conn.execute(f"SELECT id, device_id, interface_name, if_index, description, speed, oper_status FROM interfaces {interface_where} ORDER BY device_id, interface_name", tuple(interface_params)).fetchall()]
+            interface_rows = []
         interfaces = _deduplicate_interface_options(interface_rows)
-        sites = [dict(row) for row in conn.execute("SELECT id, site_name, site_code, timezone FROM sites ORDER BY site_name").fetchall()]
+        site_clauses: list[str] = []
+        site_params: list[Any] = []
+        if tenant_id:
+            site_clauses.append("COALESCE(NULLIF(tenant_id, ''), 'tenant-default') = ?")
+            site_params.append(tenant_id)
+        if site_ids is not None:
+            normalized_site_ids = tuple(str(value).strip() for value in site_ids if str(value).strip())
+            site_clauses.append("id IN (" + ",".join("?" for _ in normalized_site_ids) + ")")
+            site_params.extend(normalized_site_ids)
+        elif site_id:
+            site_clauses.append("id = ?")
+            site_params.append(site_id)
+        site_where = "WHERE " + " AND ".join(site_clauses) if site_clauses else ""
+        sites = [dict(row) for row in conn.execute(f"SELECT id, site_name, site_code, timezone FROM sites {site_where} ORDER BY site_name", tuple(site_params)).fetchall()]
         return {"devices": devices, "interfaces": interfaces, "sites": sites}
     finally:
         conn.close()
 
 
-def list_wan_links(*, page: int = 1, page_size: int = 20, site_id: str = "", provider: str = "", health_status: str = "", link_role: str = "", group_id: str = "", keyword: str = "") -> dict[str, Any]:
+def list_wan_links(*, page: int = 1, page_size: int = 20, site_id: str = "", provider: str = "", health_status: str = "", link_role: str = "", group_id: str = "", keyword: str = "", tenant_id: str = "", site_ids: tuple[str, ...] | None = None) -> dict[str, Any]:
     conn = get_db_connection()
     try:
         page = max(1, int(page))
         page_size = max(1, min(100, int(page_size)))
+        if site_ids is not None and len(site_ids) == 0:
+            return {"items": [], "total": 0, "summary": {"total_links": 0, "healthy_links": 0, "active_alerts": 0, "download_bps": 0, "upload_bps": 0, "max_util_pct": None}, "page": page, "page_size": page_size, "pages": 1}
         clauses: list[str] = []
         params: list[Any] = []
+        if tenant_id:
+            clauses.append("l.tenant_id = ?")
+            params.append(tenant_id)
+        if site_ids is not None:
+            normalized_sites = tuple(str(value).strip() for value in site_ids if str(value).strip())
+            if not normalized_sites:
+                return {"items": [], "total": 0, "summary": {"total_links": 0, "healthy_links": 0, "active_alerts": 0, "download_bps": 0, "upload_bps": 0, "max_util_pct": None}, "page": page, "page_size": page_size, "pages": 1}
+            clauses.append("l.site_id IN (" + ",".join("?" for _ in normalized_sites) + ")")
+            params.extend(normalized_sites)
         if site_id:
             clauses.append("l.site_id = ?")
             params.append(site_id)
@@ -642,24 +713,27 @@ def list_wan_links(*, page: int = 1, page_size: int = 20, site_id: str = "", pro
         total = int(conn.execute(f"SELECT COUNT(*) FROM wan_links l LEFT JOIN wan_link_current_status c ON c.link_id = l.id {where}", tuple(params)).fetchone()[0])
         summary_row = conn.execute(
             f"""SELECT COUNT(*) AS total_links,
-                       SUM(CASE WHEN COALESCE(c.health_status, 'unknown') = 'healthy' THEN 1 ELSE 0 END) AS healthy_links,
+                       SUM(CASE WHEN COALESCE(a.measurement_scope, 'shared_interface') = 'dedicated' AND COALESCE(c.health_status, 'unknown') = 'healthy' THEN 1 ELSE 0 END) AS healthy_links,
                        COALESCE(SUM(c.active_alert_count), 0) AS active_alerts,
-                       SUM(c.download_bps) AS download_bps,
-                       SUM(c.upload_bps) AS upload_bps,
-                       MAX(CASE
-                           WHEN COALESCE(c.download_bps * 100.0 / NULLIF(l.contracted_download_bps, 0), 0)
-                              > COALESCE(c.upload_bps * 100.0 / NULLIF(l.contracted_upload_bps, 0), 0)
-                           THEN c.download_bps * 100.0 / NULLIF(l.contracted_download_bps, 0)
-                           ELSE c.upload_bps * 100.0 / NULLIF(l.contracted_upload_bps, 0)
-                       END) AS max_util_pct
-                  FROM wan_links l LEFT JOIN wan_link_current_status c ON c.link_id = l.id {where}""",
+                       SUM(CASE WHEN COALESCE(a.measurement_scope, 'shared_interface') = 'dedicated' THEN c.download_bps END) AS download_bps,
+                       SUM(CASE WHEN COALESCE(a.measurement_scope, 'shared_interface') = 'dedicated' THEN c.upload_bps END) AS upload_bps,
+                       MAX(CASE WHEN COALESCE(a.measurement_scope, 'shared_interface') = 'dedicated'
+                                THEN GREATEST(c.download_bps * 100.0 / NULLIF(l.contracted_download_bps, 0), c.upload_bps * 100.0 / NULLIF(l.contracted_upload_bps, 0))
+                           END) AS max_util_pct
+                  FROM wan_links l
+                  LEFT JOIN wan_link_current_status c ON c.link_id = l.id
+                  LEFT JOIN wan_link_endpoints a ON a.link_id = l.id AND a.side = 'A'
+                  {where}""",
             tuple(params),
         ).fetchone()
         rows = conn.execute(
-            f"""SELECT l.*, c.sampled_at, c.download_bps, c.upload_bps, c.download_util_pct,
+            f"""SELECT l.*, COALESCE(a.measurement_scope, 'shared_interface') AS measurement_scope,
+                      a.binding_version AS measurement_scope_version,
+                      c.sampled_at, c.download_bps, c.upload_bps, c.download_util_pct,
                       c.upload_util_pct, c.admin_status, c.oper_status, c.collection_status,
                       c.health_status, c.active_alert_count, c.last_success_at
                  FROM wan_links l LEFT JOIN wan_link_current_status c ON c.link_id = l.id
+                 LEFT JOIN wan_link_endpoints a ON a.link_id = l.id AND a.side = 'A'
                 {where} ORDER BY l.site_name, l.link_name LIMIT ? OFFSET ?""",
             tuple(params + [page_size, (page - 1) * page_size]),
         ).fetchall()
@@ -713,10 +787,29 @@ def _aggregate_history(rows: list[dict[str, Any]], step_seconds: int) -> list[di
     return result
 
 
-def get_wan_link_history(link_id: str, history_hours: int = 1, *, history_minutes: int | None = None) -> dict[str, Any] | None:
+def get_wan_link_history(link_id: str, history_hours: int = 1, *, history_minutes: int | None = None, tenant_id: str = "", site_ids: tuple[str, ...] | None = None) -> dict[str, Any] | None:
     conn = get_db_connection()
     try:
-        link = conn.execute("SELECT * FROM wan_links WHERE id = ?", (link_id,)).fetchone()
+        if site_ids is not None and len(site_ids) == 0:
+            return None
+        link_clauses = ["id = ?"]
+        link_params: list[Any] = [link_id]
+        if tenant_id:
+            link_clauses.append("tenant_id = ?")
+            link_params.append(tenant_id)
+        if site_ids is not None:
+            normalized_sites = tuple(str(value).strip() for value in site_ids if str(value).strip())
+            if not normalized_sites:
+                return None
+            link_clauses.append("site_id IN (" + ",".join("?" for _ in normalized_sites) + ")")
+            link_params.extend(normalized_sites)
+        link = conn.execute(
+            """SELECT l.*, COALESCE(a.measurement_scope, 'shared_interface') AS measurement_scope,
+                      a.binding_version AS measurement_scope_version
+                 FROM wan_links l LEFT JOIN wan_link_endpoints a ON a.link_id = l.id AND a.side = 'A'
+                WHERE """ + " AND ".join(f"l.{clause}" if clause.startswith("id =") or clause.startswith("tenant_id =") or clause.startswith("site_id IN") else clause for clause in link_clauses),
+            tuple(link_params),
+        ).fetchone()
         if not link:
             return None
         duration_minutes = max(5, min(int(history_minutes if history_minutes is not None else history_hours * 60), 43_200))
@@ -758,7 +851,24 @@ def get_wan_link_history(link_id: str, history_hours: int = 1, *, history_minute
             ).fetchall()
         events = conn.execute("SELECT * FROM wan_alert_events WHERE link_id = ? ORDER BY started_at DESC LIMIT 50", (link_id,)).fetchall()
         link_dict = dict(link)
-        history_rows = [_apply_contract_utilization(dict(row)) for row in rows]
+        endpoint_versions = [dict(row) for row in conn.execute(
+            """SELECT measurement_scope, valid_from, valid_to
+                 FROM wan_link_endpoint_history
+                WHERE link_id = ? AND side = 'A'
+                ORDER BY valid_from""",
+            (link_id,),
+        ).fetchall()]
+        history_rows = []
+        for sample_row in rows:
+            sample = dict(sample_row)
+            sample_time = datetime.fromisoformat(str(sample.get("sampled_at")).replace("Z", "+00:00"))
+            if sample_time.tzinfo is None:
+                sample_time = sample_time.replace(tzinfo=timezone.utc)
+            effective = next((version for version in reversed(endpoint_versions)
+                              if datetime.fromisoformat(str(version["valid_from"]).replace("Z", "+00:00")) <= sample_time
+                              and (version.get("valid_to") is None or sample_time < datetime.fromisoformat(str(version["valid_to"]).replace("Z", "+00:00")))), None)
+            sample["measurement_scope"] = str((effective or {}).get("measurement_scope") or "shared_interface")
+            history_rows.append(_apply_contract_utilization(sample))
         return {
             "link": link_dict, "history_hours": round(duration_minutes / 60, 4), "history_minutes": duration_minutes, "resolution": _history_resolution(duration_minutes),
             "start_time": cutoff_dt.isoformat(), "end_time": _iso(),
@@ -769,16 +879,32 @@ def get_wan_link_history(link_id: str, history_hours: int = 1, *, history_minute
         conn.close()
 
 
-def get_wan_link(link_id: str) -> dict[str, Any] | None:
+def get_wan_link(link_id: str, *, tenant_id: str = "", site_ids: tuple[str, ...] | None = None) -> dict[str, Any] | None:
     conn = get_db_connection()
     try:
+        if site_ids is not None and len(site_ids) == 0:
+            return None
+        clauses = ["l.id = ?"]
+        params: list[Any] = [link_id]
+        if tenant_id:
+            clauses.append("l.tenant_id = ?")
+            params.append(tenant_id)
+        if site_ids is not None:
+            normalized_sites = tuple(str(value).strip() for value in site_ids if str(value).strip())
+            if not normalized_sites:
+                return None
+            clauses.append("l.site_id IN (" + ",".join("?" for _ in normalized_sites) + ")")
+            params.extend(normalized_sites)
         row = conn.execute(
-            """SELECT l.*, c.sampled_at, c.download_bps, c.upload_bps, c.download_util_pct,
+            """SELECT l.*, COALESCE(a.measurement_scope, 'shared_interface') AS measurement_scope,
+                      a.binding_version AS measurement_scope_version,
+                      c.sampled_at, c.download_bps, c.upload_bps, c.download_util_pct,
                       c.upload_util_pct, c.admin_status, c.oper_status, c.collection_status,
                       c.health_status, c.active_alert_count, c.last_success_at
                  FROM wan_links l LEFT JOIN wan_link_current_status c ON c.link_id = l.id
-                WHERE l.id = ?""",
-            (link_id,),
+                 LEFT JOIN wan_link_endpoints a ON a.link_id = l.id AND a.side = 'A'
+                WHERE """ + " AND ".join(f"l.{clause}" if clause.startswith("id =") or clause.startswith("tenant_id =") or clause.startswith("site_id IN") else clause for clause in clauses),
+            tuple(params),
         ).fetchone()
         item = _row_dict(row)
         return _apply_contract_utilization(item) if item else None
@@ -808,13 +934,26 @@ def list_wan_alert_events(
     keyword: str = "",
     start_at: str = "",
     end_at: str = "",
+    tenant_id: str = "",
+    site_ids: tuple[str, ...] | None = None,
 ) -> dict[str, Any]:
     conn = get_db_connection()
     try:
         page = max(1, int(page))
         page_size = max(1, min(100, int(page_size)))
+        if site_ids is not None and len(site_ids) == 0:
+            return {"items": [], "total": 0, "page": page, "page_size": page_size, "pages": 1}
         clauses: list[str] = []
         params: list[Any] = []
+        if tenant_id:
+            clauses.append("l.tenant_id = ?")
+            params.append(tenant_id)
+        if site_ids is not None:
+            normalized_sites = tuple(str(value).strip() for value in site_ids if str(value).strip())
+            if not normalized_sites:
+                return {"items": [], "total": 0, "page": page, "page_size": page_size, "pages": 1}
+            clauses.append("l.site_id IN (" + ",".join("?" for _ in normalized_sites) + ")")
+            params.extend(normalized_sites)
         for column, value in (("e.status", status), ("e.severity", severity), ("l.site_id", site_id), ("l.provider", provider), ("e.link_id", link_id)):
             if value:
                 clauses.append(f"{column} = ?")
@@ -970,6 +1109,17 @@ def upsert_wan_link(payload: dict[str, Any], link_id: str | None = None) -> dict
             existing = _row_dict(conn.execute("SELECT * FROM wan_links WHERE id = ?", (link_id,)).fetchone())
             if not existing:
                 raise ValueError("WAN link not found")
+            current_a_endpoint = _row_dict(conn.execute(
+                "SELECT device_id, interface_id, if_index, counter_orientation FROM wan_link_endpoints WHERE link_id = ? AND side = 'A'",
+                (link_id,),
+            ).fetchone())
+            if current_a_endpoint and (
+                str(current_a_endpoint.get("device_id") or "") != device_id
+                or str(current_a_endpoint.get("interface_id") or "") != interface_id
+                or int(current_a_endpoint.get("if_index") or 0) != int(canonical_if_index)
+                or str(current_a_endpoint.get("counter_orientation") or "normal") != str(payload.get("direction_mode") or "normal")
+            ):
+                raise ValueError("A endpoint is versioned; update the circuit endpoint through the circuit configuration API")
         link_id = link_id or str(payload.get("id") or f"wan-link-{uuid.uuid4().hex}")
         site_name = str(payload.get("site_name") or (site.get("site_name") if site else "") or device.get("site") or "").strip()
         down_mbps = _num(payload.get("contracted_download_mbps"))
@@ -996,20 +1146,24 @@ def upsert_wan_link(payload: dict[str, Any], link_id: str | None = None) -> dict
         updates = ", ".join(f"{column} = excluded.{column}" for column in columns if column not in {"id", "created_at"})
         conn.execute(f"INSERT INTO wan_links ({', '.join(columns)}) VALUES ({placeholders}) ON CONFLICT(id) DO UPDATE SET {updates}", tuple(values[column] for column in columns))
         _ensure_alert_rules(conn, values, now)
-        conn.execute(
-            """UPDATE wan_link_current_status
-                  SET download_util_pct = CASE
-                          WHEN download_bps IS NULL THEN NULL
-                          ELSE download_bps * 100.0 / NULLIF(?, 0)
-                      END,
-                      upload_util_pct = CASE
-                          WHEN upload_bps IS NULL THEN NULL
-                          ELSE upload_bps * 100.0 / NULLIF(?, 0)
-                      END,
-                      updated_at = ?
-                WHERE link_id = ?""",
-            (values["contracted_download_bps"], values["contracted_upload_bps"], now, link_id),
-        )
+        a_endpoint = _row_dict(conn.execute(
+            "SELECT measurement_scope FROM wan_link_endpoints WHERE link_id = ? AND side = 'A'",
+            (link_id,),
+        ).fetchone())
+        if str((a_endpoint or {}).get("measurement_scope") or "shared_interface") != "dedicated":
+            conn.execute(
+                "UPDATE wan_link_current_status SET download_util_pct = NULL, upload_util_pct = NULL, health_status = CASE WHEN oper_status = 'down' THEN 'unavailable' ELSE 'unknown' END, updated_at = ? WHERE link_id = ?",
+                (now, link_id),
+            )
+        else:
+            conn.execute(
+                """UPDATE wan_link_current_status
+                      SET download_util_pct = CASE WHEN download_bps IS NULL THEN NULL ELSE download_bps * 100.0 / NULLIF(?, 0) END,
+                          upload_util_pct = CASE WHEN upload_bps IS NULL THEN NULL ELSE upload_bps * 100.0 / NULLIF(?, 0) END,
+                          updated_at = ?
+                    WHERE link_id = ?""",
+                (values["contracted_download_bps"], values["contracted_upload_bps"], now, link_id),
+            )
         conn.commit()
         return _row_dict(conn.execute("SELECT * FROM wan_links WHERE id = ?", (link_id,)).fetchone()) or values
     finally:
@@ -1112,7 +1266,13 @@ def delete_wan_link(link_id: str) -> bool:
 def run_wan_collection_once() -> dict[str, Any]:
     conn = get_db_connection()
     try:
-        links = [dict(row) for row in conn.execute("SELECT * FROM wan_links WHERE enabled = TRUE ORDER BY id").fetchall()]
+        links = [dict(row) for row in conn.execute(
+            """SELECT l.*, COALESCE(a.measurement_scope, 'shared_interface') AS measurement_scope,
+                      a.binding_version AS measurement_scope_version
+                 FROM wan_links l
+                 LEFT JOIN wan_link_endpoints a ON a.link_id = l.id AND a.side = 'A'
+                WHERE l.enabled = TRUE ORDER BY l.id"""
+        ).fetchall()]
     finally:
         conn.close()
     if not links:
