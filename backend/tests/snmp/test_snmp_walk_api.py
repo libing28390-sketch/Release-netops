@@ -464,6 +464,7 @@ def test_snmp_hardware_discovery_test_uses_collection_discovery_and_bounds_respo
     device = {
         'id': 'device-hw-1', 'hostname': 'edge-hw-01', 'ip_address': '192.0.2.10',
         'vendor': 'H3C', 'platform': 'h3c_comware', 'model': 'S6800', 'version': '7.1.070',
+        'role': 'access_switch',
     }
     monkeypatch.setattr(devices_api, '_find_snmp_walk_targets', lambda **_kwargs: [device])
     monkeypatch.setattr(
@@ -502,7 +503,7 @@ def test_snmp_hardware_discovery_test_uses_collection_discovery_and_bounds_respo
     assert calls == [{
         'host': '192.0.2.11', 'community': 'test-community', 'port': 1161,
         'vendor': 'H3C', 'platform': 'h3c_comware', 'model': 'S6800', 'version': '7.1.070',
-        'snmp_version': '1',
+        'role': 'access_switch', 'snmp_version': '1',
     }]
     assert data['version'] == '1'
     assert data['librenms_rule_id'] == 'h3c-comware'

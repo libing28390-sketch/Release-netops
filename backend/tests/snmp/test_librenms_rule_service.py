@@ -70,6 +70,25 @@ def test_vrp_fixture_preserves_processor_mempool_and_sensor_semantics():
         "free_oid": "HUAWEI-ENTITY-EXTENT-MIB::hwEntityMemoryFree",
         "total_oid": "HUAWEI-ENTITY-EXTENT-MIB::hwEntityMemorySize",
         "percent_used_oid": "HUAWEI-ENTITY-EXTENT-MIB::hwEntityMemoryUsage",
+        "relations": {
+            "used": {
+                "kind": "oid",
+                "value": "HUAWEI-ENTITY-EXTENT-MIB::hwEntityMemoryUsage",
+            },
+            "free": {
+                "kind": "oid",
+                "value": "HUAWEI-ENTITY-EXTENT-MIB::hwEntityMemoryFree",
+            },
+            "total": {
+                "kind": "oid",
+                "value": "HUAWEI-ENTITY-EXTENT-MIB::hwEntityMemorySize",
+            },
+            "percent_used": {
+                "kind": "oid",
+                "value": "HUAWEI-ENTITY-EXTENT-MIB::hwEntityMemoryUsage",
+            },
+        },
+        "precision": None,
         "allocation_unit": 1024,
         "pool_class": None,
     }
