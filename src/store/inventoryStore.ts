@@ -120,6 +120,8 @@ const normalizeDeviceRecord = (raw: any): Device => {
   } as Device;
 };
 
+let latestInventoryRequestId = 0;
+
 // ─── Store ────────────────────────────────────────────────────────────────────
 
 interface InventoryState {
@@ -221,6 +223,7 @@ export const useInventoryStore = create<InventoryState>((set, get) => ({
 
   fetchInventory: async () => {
     const state = get();
+    const requestId = ++latestInventoryRequestId;
     set({ inventoryLoading: true, inventoryError: null });
     try {
       const params = new URLSearchParams({
@@ -237,6 +240,7 @@ export const useInventoryStore = create<InventoryState>((set, get) => ({
       });
 
       const resp = await fetch(`/api/devices?${params.toString()}`, { headers: authHeaders() });
+      if (requestId !== latestInventoryRequestId) return;
       if (!resp.ok) {
         const errorBody = await resp.json().catch(() => null);
         const detail = typeof errorBody?.detail === 'string' ? errorBody.detail : '';
@@ -247,6 +251,7 @@ export const useInventoryStore = create<InventoryState>((set, get) => ({
             : `加载网络设备失败（${resp.status}）`));
       }
       const data = await resp.json();
+      if (requestId !== latestInventoryRequestId) return;
 
       if (Array.isArray(data)) {
         set({
@@ -271,7 +276,11 @@ export const useInventoryStore = create<InventoryState>((set, get) => ({
         });
       }
     } catch (error) {
+      if (requestId !== latestInventoryRequestId) return;
       set({
+        inventoryRows: [],
+        inventoryTotal: 0,
+        inventoryStatusCounts: {},
         inventoryError: error instanceof Error ? error.message : '加载网络设备失败',
         inventoryLoading: false,
       });

@@ -42,7 +42,7 @@ def test_snmp_first_collection_upserts_l2_and_l3_interfaces(mock_device, monkeyp
             "admin_status": "up",
             "speed_mbps": 1000,
             "description": "Uplink-To-Spine",
-            "index": 1,
+            "if_index": 1,
         },
         {
             "name": "GigabitEthernet1/0/2",
@@ -50,7 +50,7 @@ def test_snmp_first_collection_upserts_l2_and_l3_interfaces(mock_device, monkeyp
             "admin_status": "down",
             "speed_mbps": 1000,
             "description": "Unused-Access",
-            "index": 2,
+            "if_index": 2,
         },
         {
             "name": "Vlan-interface10",
@@ -58,7 +58,7 @@ def test_snmp_first_collection_upserts_l2_and_l3_interfaces(mock_device, monkeyp
             "admin_status": "up",
             "speed_mbps": 0,
             "description": "Mgmt-VLAN",
-            "index": 10,
+            "if_index": 10,
         },
     ]
 
@@ -92,7 +92,7 @@ def test_snmp_first_collection_upserts_l2_and_l3_interfaces(mock_device, monkeyp
         assert updated == 3
 
         rows = conn.execute(
-            "SELECT interface_name, admin_status, oper_status, speed, description FROM interfaces WHERE device_id = ?",
+            "SELECT interface_name, if_index, admin_status, oper_status, speed, description FROM interfaces WHERE device_id = ?",
             (mock_device["id"],),
         ).fetchall()
 
@@ -102,10 +102,12 @@ def test_snmp_first_collection_upserts_l2_and_l3_interfaces(mock_device, monkeyp
         assert by_name["GigabitEthernet1/0/1"]["oper_status"] == "up"
         assert by_name["GigabitEthernet1/0/1"]["speed"] == 1_000_000_000
         assert by_name["GigabitEthernet1/0/1"]["description"] == "Uplink-To-Spine"
+        assert by_name["GigabitEthernet1/0/1"]["if_index"] == 1
 
         assert "GigabitEthernet1/0/2" in by_name
         assert by_name["GigabitEthernet1/0/2"]["admin_status"] == "down"
         assert by_name["GigabitEthernet1/0/2"]["oper_status"] == "down"
+        assert by_name["GigabitEthernet1/0/2"]["if_index"] == 2
 
         # 3. Test that subsequent CLI L3 collection does NOT clobber GE1/0/1 or GE1/0/2 to unknown
         cli_l3_rows = [
@@ -140,3 +142,48 @@ def test_snmp_first_collection_upserts_l2_and_l3_interfaces(mock_device, monkeyp
         conn.commit()
     finally:
         conn.close()
+
+
+def test_on_demand_wan_interface_refresh_collects_and_persists_one_device(monkeypatch):
+    import asyncio
+
+    from services import interface_collection_service
+
+    device = {
+        "id": "wan-refresh-device",
+        "hostname": "edge-router",
+        "ip_address": "192.0.2.10",
+    }
+    credentials = {
+        "snmp": {
+            "configured": True,
+            "server": "192.0.2.11",
+            "community": "test-only-community",
+            "port": 1161,
+        }
+    }
+    calls = {}
+    collected = [{"name": "GigabitEthernet0/0", "if_index": 42, "status": "up", "speed_mbps": 1000}]
+
+    monkeypatch.setattr(interface_collection_service, "_load_device", lambda device_id: device)
+    monkeypatch.setattr("services.vault_service.resolve_collector_credentials", lambda _device: credentials)
+
+    async def fake_collect(ip, community, port):
+        calls["collector"] = (ip, community, port)
+        return collected
+
+    monkeypatch.setattr("services.snmp_service.collect_interface_inventory", fake_collect)
+    monkeypatch.setattr(interface_collection_service, "_run_async", lambda coroutine: asyncio.run(coroutine))
+
+    def capture_upsert(upsert_device, interfaces):
+        calls["upsert"] = (upsert_device, interfaces)
+        return len(interfaces)
+
+    monkeypatch.setattr(interface_collection_service, "_upsert_snmp_interfaces", capture_upsert)
+
+    result = interface_collection_service.refresh_snmp_interface_inventory("wan-refresh-device")
+
+    assert result == {"device_id": "wan-refresh-device", "interface_count": 1, "updated_count": 1}
+    assert calls["collector"] == ("192.0.2.11", "test-only-community", 1161)
+    assert calls["upsert"][0] is device
+    assert calls["upsert"][1][0]["if_index"] == 42

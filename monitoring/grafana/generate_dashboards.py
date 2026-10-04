@@ -1722,14 +1722,29 @@ def build_device_dashboard():
 # 3. Wireless Monitoring Dashboard
 def build_wireless_dashboard():
     sel = f'{NETWORK_JOB},site_name=~"$site",vendor=~"$vendor",role=~"$role",hostname=~"$device"'
+    h3c_sel = f'{sel},vendor=~"(?i)(h3c|comware)"'
+    huawei_sel = f'{sel},vendor=~"(?i).*huawei.*"'
+    wireless_client_sel = f'{sel},vendor=~"(?i)(h3c|comware|huawei)"'
+    device_labels = "job,site_name,vendor,role,hostname"
     # Cisco/Aruba/Ruckus expose active/up APs but not a configured total in the
     # catalog, so they must not be used as the denominator for offline APs.
-    ap_all = f"(hwWlanApTotalNum{{{sel}}} or hh3cDot11TotalAPNum{{{sel}}} or ruijieApcTotalApNum{{{sel}}})"
-    ap_online = f"(hwWlanCurOnlineApNum{{{sel}}} or hh3cDot11CurrOnlineAPNum{{{sel}}} or ruijieApcOnlineApNum{{{sel}}} or cLApTotalUpAPs{{{sel}}} or wlsxSysExtAccessPointsNum{{{sel}}} or ruckusZDTotalNumAP{{{sel}}})"
-    ap_offline = f"((hwWlanApTotalNum{{{sel}}} - hwWlanCurOnlineApNum{{{sel}}}) or (hh3cDot11TotalAPNum{{{sel}}} - hh3cDot11CurrOnlineAPNum{{{sel}}}) or (ruijieApcTotalApNum{{{sel}}} - ruijieApcOnlineApNum{{{sel}}}))"
-    clients = f"(hwWlanCurAssocUserNum{{{sel}}} or hh3cDot11CurrAssocUserNum{{{sel}}} or ruijieApcTotalStaNum{{{sel}}} or cLSysTotalNumOfClients{{{sel}}} or wlsxSysExtStationsNum{{{sel}}} or ruckusZDTotalNumSta{{{sel}}})"
+    ap_all = f"sum by ({device_labels}) (hwWlanApTotalNum{{{sel}}} or hh3cDot11TotalAPNum{{{sel}}} or ruijieApcTotalApNum{{{sel}}})"
+    legacy_ap_online = f"(hh3cDot11CurrOnlineAPNum{{{sel}}} or cLApTotalUpAPs{{{sel}}} or wlsxSysExtAccessPointsNum{{{sel}}} or ruckusZDTotalNumAP{{{sel}}})"
+    inventory_ap_online = f'nexora_wireless_sensor_value{{{sel},component_class="wireless_controller",sensor_class="ap-count"}}'
+    ap_online = f"sum by ({device_labels}) ((({legacy_ap_online}) unless on({device_labels}) ({inventory_ap_online})) or ({inventory_ap_online}))"
+    ap_offline = f"({ap_all} - {ap_online})"
+    legacy_clients = f"(hh3cDot11CurrAssocUserNum{{{sel}}} or cLSysTotalNumOfClients{{{sel}}} or wlsxSysExtStationsNum{{{sel}}} or ruckusZDTotalNumSta{{{sel}}})"
+    controller_clients = f'sum by ({device_labels}) (nexora_wireless_sensor_value{{{sel},component_class="wireless_controller",sensor_class="clients"}})'
+    ssid_clients = f'sum by ({device_labels}) (nexora_wireless_sensor_value{{{sel},component_class="wireless_ssid",sensor_class="clients"}})'
+    inventory_clients = f"({controller_clients} or on({device_labels}) {ssid_clients})"
+    clients = f"sum by ({device_labels}) ((({legacy_clients}) unless on({device_labels}) ({inventory_clients})) or ({inventory_clients}))"
     client_per_ap = f"({clients}) / clamp_min(({ap_online}), 1)"
     wireless_missing_description = "没有匹配的无线控制器指标时显示暂无采集数据，不代表 AP 或客户端数量为 0。"
+    ap_client_rows = f'topk(20, nexora_wireless_sensor_value{{{h3c_sel},component_class="wireless_access_point",sensor_class="clients"}})'
+    radio_utilization_rows = f'nexora_wireless_sensor_value{{{sel},component_class="wireless_radio",sensor_class="utilization"}}'
+    bss_client_rows = f'topk(20, nexora_wireless_sensor_value{{{wireless_client_sel},component_class="wireless_bss",sensor_class="clients"}})'
+    ap_state_rows = f'nexora_hw_component_state{{{h3c_sel},component_class="wireless_access_point"}}'
+    huawei_ssid_rows = f'topk(20, sum by ({device_labels},ssid) (nexora_wireless_sensor_value{{{huawei_sel},component_class="wireless_ssid",sensor_class="clients"}}))'
 
     panels = [
         stat_panel(1, "已提供总量的 AP 数", f"sum({ap_all})", 0, 0, 6, 4, color="#3274D9", description=wireless_missing_description),
@@ -1760,7 +1775,41 @@ def build_wireless_dashboard():
             f"topk(10, {ap_online})",
             6, 20, 18, 8, unit="short",
             transformations=clean_organize_transformation("在线 AP 数")
-        )
+        ),
+        table_panel(
+            11, "H3C AP 在线状态",
+            ap_state_rows,
+            0, 28, 12, 8, unit="short",
+            transformations=clean_organize_transformation("状态"),
+            description="AP 名称来自 HH3C-DOT11 AP 名称索引；内部 AP element ID 只用于采集关联。没有 AP 状态数据表示未采到该 MIB 表。",
+        ),
+        table_panel(
+            12, "H3C AP 当前客户端数 Top 20",
+            ap_client_rows,
+            12, 28, 12, 8, unit="short",
+            transformations=clean_organize_transformation("客户端数"),
+            description="按官方 HH3C-DOT11 AP 表的当前关联客户端计数展示，不与控制器汇总重复相加。",
+        ),
+        timeseries_panel(
+            13, "无线射频信道利用率",
+            [{"expr": radio_utilization_rows, "legendFormat": "{{ap_name}} / Radio {{radio_id}}", "refId": "A"}],
+            0, 36, 12, 8, unit="percent",
+            description="展示已接入厂商的无线 Radio 利用率；仅使用官方 MIB 定义为百分比的值，非百分比哨兵值不写入指标。",
+        ),
+        table_panel(
+            14, "H3C / 华为 AP 无线单元客户端数 Top 20",
+            bss_client_rows,
+            12, 36, 12, 8, unit="short",
+            transformations=clean_organize_transformation("客户端数"),
+            description="按 AP 名称、射频和 WLAN ID 展示 H3C BSS 与华为 VAP 当前客户端计数。华为 VAP 表没有由 LibreNMS 关联的 SSID 文本列，因此只显示其 WLAN ID。",
+        ),
+        table_panel(
+            15, "华为 SSID 当前客户端数 Top 20",
+            huawei_ssid_rows,
+            0, 44, 24, 8, unit="short",
+            transformations=clean_organize_transformation("客户端数"),
+            description="按固定 LibreNMS VRP WirelessClientsDiscovery 规则，对同一 SSID 的 2.4 GHz 与 5 GHz 客户端数求和。",
+        ),
     ]
 
     return {

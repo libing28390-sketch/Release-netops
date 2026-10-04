@@ -4,6 +4,7 @@ import { extractSoftwareMajorVersion, getDevicePlatformAdaptation, getProfileAda
 import { normalizeDeviceRecord } from '../../utils/deviceUtils';
 import { CHECK_BADGE, formatCheckTime } from './StatusBadge';
 import type { ColumnVisibility } from './DeviceTable';
+import { rackDisplayName } from './deviceColumns';
 
 export type DeviceQuickFilter = 'all' | 'offline' | 'warning' | 'staging_maintenance' | 'healthy';
 
@@ -153,7 +154,7 @@ export function buildNetworkDeviceExportData(devices: Device[], view: NetworkDev
     { key: 'adaptationSource', header: zh ? '适配来源' : 'Adaptation source', value: (device) => platformAdaptation(device, view.language).source },
     { key: 'versionMismatch', header: zh ? '版本校验' : 'Version check', value: (device) => platformAdaptation(device, view.language).versionMismatch ? (zh ? '不一致' : 'Mismatch') : (zh ? '一致' : 'Match') },
     { key: 'site', header: zh ? '站点' : 'Site', value: (device) => trim(device.datacenter || device.site) || '—' },
-    { key: 'rack', header: zh ? '机柜' : 'Rack', value: (device) => trim(device.rack_code || device.rack_name || device.rack) || '—' },
+    { key: 'rack', header: zh ? '机柜' : 'Rack', value: rackDisplayName },
     { key: 'rackUnit', header: zh ? 'U 位' : 'Rack unit', value: (device) => trim(device.rack_unit) || '—' },
     { key: 'tags', header: zh ? '标签' : 'Tags', value: (device) => tagValue(device, zh) || '—' },
     { key: 'status', header: zh ? '在线状态' : 'Status', value: (device) => device.status === 'online' ? (zh ? '在线' : 'Online') : device.status === 'offline' ? (zh ? '离线' : 'Offline') : device.status === 'pending' ? (zh ? '等待中' : 'Pending') : trim(device.status) || '—' },

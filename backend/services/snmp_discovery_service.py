@@ -35,7 +35,9 @@ from services.librenms_rule_service import (
 logger = logging.getLogger(__name__)
 
 RULE_VERSION = "snmp-discovery-catalog-2"
-HARDWARE_DISCOVERY_VERSION = "nexora.hardware.discovery.v1"
+# v2 adds Comware processor/mempool adapters; v3 persists H3C HH3C-DOT11 tables.
+# v4 scopes wireless probes to controller identities and adds VRP per-SSID clients.
+HARDWARE_DISCOVERY_VERSION = "nexora.hardware.discovery.v4"
 HARDWARE_ARTIFACT_VERSION = "nexora.hardware.direct-poll.v1"
 _DISCOVERY_CACHE_TTL_SECONDS = 30.0
 _discovery_cache: dict[str, tuple[float, dict[str, Any] | None]] = {}
@@ -857,6 +859,8 @@ def _catalog_variant_for_identity(identity: Mapping[str, Any]) -> tuple[dict[str
     for item in iter_builtin_catalog():
         module = dict(item)
         variant = dict(module.get("variant") or {})
+        if not bool(variant.get("enabled", True)) or str(variant.get("status") or "PUBLISHED").upper() not in {"TESTED", "PUBLISHED"}:
+            continue
         if not _catalog_vendor_match(module.get("vendor"), vendor):
             continue
         feature_domain = str(module.get("feature_domain") or "").casefold()
@@ -1282,6 +1286,7 @@ async def discover_device_oid_config(
     platform: Any = "",
     model: Any = "",
     version: Any = "",
+    role: Any = "",
     snmp_version: str = "2c",
 ) -> dict[str, Any]:
     """Probe identity and Cisco CPU/memory tables without changing the device."""
@@ -1309,6 +1314,7 @@ async def discover_device_oid_config(
         sys_descr=values[1],
         sys_name=values[0],
     )
+    identity["role"] = _text(role, 64)
     identity["uptime_raw"] = _text(values[3], 128)
 
     # Resolve LibreNMS OS rules against observed SNMP fields before the legacy

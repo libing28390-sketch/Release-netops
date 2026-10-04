@@ -2665,6 +2665,39 @@ async def collect_device_metrics(
     return result
 
 
+async def collect_interface_inventory(
+    ip: str,
+    community: str = 'public',
+    port: int = 161,
+    interface_config: Mapping[str, Any] | None = None,
+) -> list[dict[str, Any]]:
+    """Read only interface names and IF-MIB indexes for a device inventory refresh."""
+    config = normalize_interface_config(interface_config) if interface_config else dict(DEFAULT_INTERFACE_CONFIG)
+    if not config.get('enabled', True):
+        config = dict(DEFAULT_INTERFACE_CONFIG)
+
+    name_rows = await _snmp_bulk_walk(ip, community, config.get('if_name_oid') or '', port) if config.get('if_name_oid') else []
+    if not name_rows and config.get('if_descr_oid'):
+        name_rows = await _snmp_bulk_walk(ip, community, config['if_descr_oid'], port)
+
+    interfaces: list[dict[str, Any]] = []
+    for raw_index, raw_name in name_rows:
+        name = str(raw_name or '').strip()
+        try:
+            if_index = int(raw_index)
+        except (TypeError, ValueError, OverflowError):
+            continue
+        if name and if_index > 0:
+            interfaces.append({
+                'name': name,
+                'if_index': if_index,
+                'status': 'unknown',
+                'admin_status': 'unknown',
+                'description': '',
+            })
+    return interfaces
+
+
 async def collect_interface_data(
     ip: str,
     community: str = 'public',

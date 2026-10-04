@@ -9,6 +9,7 @@ from __future__ import annotations
 
 import json
 import logging
+import math
 import re
 import subprocess
 import threading
@@ -656,7 +657,12 @@ def _sensor_component_class(sensor_class: str, definition: Mapping[str, Any]) ->
     return sensor_class or "sensor", sensor_class or "measurement"
 
 
-def _definition_diagnostics(entry: Mapping[str, Any], path: str) -> list[tuple[str, dict[str, str]]]:
+def _definition_diagnostics(
+    entry: Mapping[str, Any],
+    path: str,
+    *,
+    module: str = "",
+) -> list[tuple[str, dict[str, str]]]:
     findings: list[tuple[str, dict[str, str]]] = []
     if entry.get("user_func") and not supports_librenms_user_func(entry.get("user_func")):
         findings.append(("requires_adapter", _diagnostic(
@@ -736,7 +742,21 @@ def _definition_diagnostics(entry: Mapping[str, Any], path: str) -> list[tuple[s
                         "Array skip operators require a non-empty values or list-valued value field.",
                         feature=operator,
                     )))
-    if not entry.get("num_oid"):
+    if module == "mempools":
+        relations = {key for key in ("used", "total", "free", "percent_used") if entry.get(key) not in (None, "")}
+        if not relations:
+            findings.append(("partial", _diagnostic(
+                "mempool_relations_missing",
+                path,
+                "Mempool definition has no used, total, free, or percent_used relation.",
+            )))
+        elif len(relations) < 2 and relations != {"percent_used"}:
+            findings.append(("partial", _diagnostic(
+                "mempool_relations_incomplete",
+                path,
+                "Mempool byte quantities require at least two LibreNMS relations; percent_used alone is allowed.",
+            )))
+    elif not entry.get("num_oid"):
         findings.append(("partial", _diagnostic(
             "definition_without_num_oid",
             path,
@@ -751,6 +771,34 @@ def _definition_diagnostics(entry: Mapping[str, Any], path: str) -> list[tuple[s
             feature="num_oid",
         )))
     return findings
+
+
+def _memory_relation(value: Any) -> dict[str, Any] | None:
+    """Tag LibreNMS mempool relation values as constants or OID references."""
+    if value is None or value == "":
+        return None
+    if isinstance(value, bool):
+        return {"kind": "unsupported", "value": value}
+    if isinstance(value, (int, float)):
+        number = float(value)
+        if math.isfinite(number):
+            return {"kind": "constant", "value": number}
+        return {"kind": "unsupported", "value": str(value)}
+
+    token = str(value).strip()
+    if not token:
+        return None
+    # LibreNMS numeric OIDs are normally dot-prefixed or have multiple arcs;
+    # a scalar such as "268435456" is a constant byte quantity.
+    if token.startswith(".") or re.fullmatch(r"\d+(?:\.\d+){2,}", token):
+        return {"kind": "oid", "value": token}
+    try:
+        number = float(token)
+    except (TypeError, ValueError):
+        return {"kind": "oid", "value": token}
+    if math.isfinite(number):
+        return {"kind": "constant", "value": number}
+    return {"kind": "unsupported", "value": token}
 
 
 def _hardware_entry(
@@ -801,6 +849,12 @@ def _hardware_entry(
             "free_oid": raw.get("free"),
             "total_oid": raw.get("total"),
             "percent_used_oid": raw.get("percent_used"),
+            "relations": {
+                name: relation
+                for name in ("used", "free", "total", "percent_used")
+                if (relation := _memory_relation(raw.get(name))) is not None
+            },
+            "precision": raw.get("precision"),
             "allocation_unit": raw.get("units"),
             "pool_class": raw.get("mib"),
         }
@@ -956,7 +1010,7 @@ def _parse_hardware_definitions(discovery: Mapping[str, Any], *, source_path: st
             effective_definition = _merge_group_options(group_options, definition)
             entry = _hardware_entry(module, source_class, effective_definition, definition_path)
             entries[module].append(entry)
-            for level, item in _definition_diagnostics(effective_definition, definition_path):
+            for level, item in _definition_diagnostics(effective_definition, definition_path, module=module):
                 diagnostics.append(item)
                 compatibility_levels.append(level)
 

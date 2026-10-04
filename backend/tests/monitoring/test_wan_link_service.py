@@ -232,14 +232,15 @@ def test_interface_selection_prefers_ifindex_over_name() -> None:
 
 def test_interface_options_deduplicate_vendor_aliases() -> None:
     rows = [
-        {"id": "short", "device_id": "device-1", "interface_name": "Et0/0"},
-        {"id": "long", "device_id": "device-1", "interface_name": "Ethernet0/0"},
-        {"id": "other-device", "device_id": "device-2", "interface_name": "Ethernet0/0"},
+        {"id": "unverified-short", "device_id": "device-1", "interface_name": "Et0/0", "if_index": None},
+        {"id": "verified-long", "device_id": "device-1", "interface_name": "Ethernet0/0", "if_index": 7},
+        {"id": "other-device", "device_id": "device-2", "interface_name": "Ethernet0/0", "if_index": 8},
+        {"id": "invalid-index", "device_id": "device-2", "interface_name": "Ethernet0/1", "if_index": 0},
     ]
 
     result = _deduplicate_interface_options(rows)
 
-    assert [row["id"] for row in result] == ["short", "other-device"]
+    assert [row["id"] for row in result] == ["verified-long", "other-device"]
 
 
 def test_counter_delta_uses_actual_interval_and_contracted_bandwidth() -> None:
@@ -363,6 +364,10 @@ def test_wan_link_options_match_devices_by_site_id(isolated_db) -> None:
         conn.execute(
             "INSERT INTO interfaces (id, device_id, interface_name, if_index, speed, oper_status) VALUES (?, ?, ?, ?, ?, ?)",
             ("interface-hq", "device-hq", "GigabitEthernet0/0", 7, 1_000_000_000, "up"),
+        )
+        conn.execute(
+            "INSERT INTO interfaces (id, device_id, interface_name, if_index, oper_status) VALUES (?, ?, ?, ?, ?)",
+            ("interface-unverified", "device-hq", "Et0/1", None, "up"),
         )
         conn.commit()
     finally:

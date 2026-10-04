@@ -48,7 +48,10 @@ describe('network device table export', () => {
   });
 
   it('exports each visible network-device field to its own matching column', () => {
-    const result = buildNetworkDeviceExportData([device()], { columns: DEFAULT_COLUMNS, language: 'zh' });
+    const allColumns = Object.fromEntries(
+      Object.keys(DEFAULT_COLUMNS).map((key) => [key, true]),
+    ) as typeof DEFAULT_COLUMNS;
+    const result = buildNetworkDeviceExportData([device()], { columns: allColumns, language: 'zh' });
     const row = result.rows[0].map(String);
 
     expect(result.headers).toEqual([
@@ -59,7 +62,7 @@ describe('network device table export', () => {
     expect(row.slice(0, 10)).toEqual([
       'core-sw-01', 'NET-WH-001', '192.168.18.201', 'switch', 'core', 'SSH', 'Cisco', 'cisco_ios', 'C2960', '15.2',
     ]);
-    expect(row.slice(14, 18)).toEqual(['WH-DC-02J-01', 'R1', 'U1', '核心']);
+    expect(row.slice(14, 18)).toEqual(['WH-DC-02J-01', '—', 'U1', '核心']);
     expect(row.slice(18)).toEqual(['在线', '健康', '已投产', '—', '—', '10%', '45%']);
     expect(result.headers).not.toContain('ID');
     expect(row).not.toContain('internal-device-id');
@@ -84,5 +87,28 @@ describe('network device table export', () => {
     expect(filterNetworkDevicesForExport(rows, {
       quickFilter: 'offline', lifecycleFilter: 'all', tagFilterIds: [],
     }).map((item) => item.hostname)).toEqual(['offline']);
+  });
+
+  it('exports the rack name instead of a rack code or internal rack id', () => {
+    const result = buildNetworkDeviceExportData(
+      [device({ rack: 'internal-rack-id', rack_id: 'internal-rack-id', rack_code: 'RACK-CODE', rack_name: 'Server Room A-01' })],
+      { columns: DEFAULT_COLUMNS, language: 'en' },
+    );
+    const rackIndex = result.headers.indexOf('Rack');
+
+    expect(rackIndex).toBeGreaterThanOrEqual(0);
+    expect(result.rows[0][rackIndex]).toBe('Server Room A-01');
+    expect(result.rows[0]).not.toContain('internal-rack-id');
+  });
+
+  it('does not show a legacy rack code or id as a substitute for a missing rack name', () => {
+    const result = buildNetworkDeviceExportData(
+      [device({ rack: 'internal-rack-id', rack_id: 'internal-rack-id', rack_code: 'RACK-CODE-01', rack_name: '' })],
+      { columns: DEFAULT_COLUMNS, language: 'en' },
+    );
+    const rackIndex = result.headers.indexOf('Rack');
+
+    expect(result.rows[0][rackIndex]).toBe('—');
+    expect(result.rows[0]).not.toContain('internal-rack-id');
   });
 });

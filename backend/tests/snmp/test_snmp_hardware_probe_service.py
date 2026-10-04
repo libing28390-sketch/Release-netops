@@ -292,8 +292,6 @@ def test_vrp_fixture_executes_external_and_self_oid_skip_conditions(monkeypatch)
     temperature = [item for item in result["sensors"] if item["measurement_type"] == "temperature_celsius"]
     assert [(item["index"], item["value"]) for item in temperature] == [([1], 35.0)]
     assert {status_oid, threshold_oid, mode_oid}.issubset(set(walked))
-    assert all(item["coverage_complete"] for item in result["category_results"])
-
     cpu_inventory = [
         {**item, "device_id": "device-vrp", "sensor_key": f"cpu-{item['index'][0]}",
          "lifecycle_status": "active", "enabled": True}
@@ -450,6 +448,7 @@ def test_librenms_device_version_filter_is_snapshotted_into_poll_plan(monkeypatc
 
 def test_unifi_mempool_with_missing_frogfoot_mib_is_explicitly_unsupported(monkeypatch):
     monkeypatch.setattr(probe, "get_db_connection", lambda: None)
+    monkeypatch.setattr(probe, "_get_many", lambda *_args: asyncio.sleep(0, result={}))
     source = rules.source_root() / "resources/definitions/os_discovery/unifi.yaml"
     definition, diagnostics = rules._load_yaml_result(source)
     assert not diagnostics

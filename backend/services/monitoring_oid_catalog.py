@@ -22,8 +22,14 @@ from typing import Any
 OID_CATALOG_VERSION = "2026.09.26"
 
 
-def _indexes(*labels: str) -> list[dict[str, str]]:
-    return [{"labelname": label, "type": "gauge"} for label in labels]
+def _indexes(*labels: str, types: tuple[str, ...] | None = None) -> list[dict[str, str]]:
+    resolved_types = types or tuple("gauge" for _ in labels)
+    if len(resolved_types) != len(labels):
+        raise ValueError("SNMP index labels and types must have the same length")
+    return [
+        {"labelname": label, "type": index_type}
+        for label, index_type in zip(labels, resolved_types)
+    ]
 
 
 def _metric(
@@ -34,6 +40,7 @@ def _metric(
     *,
     source_name: str = "",
     indexes: tuple[str, ...] = (),
+    index_types: tuple[str, ...] | None = None,
     lookups: list[dict[str, Any]] | tuple[dict[str, Any], ...] | None = None,
     scale: float | None = None,
     unit: str | None = None,
@@ -48,7 +55,7 @@ def _metric(
     if source_name:
         item["source_name"] = source_name
     if indexes:
-        item["indexes"] = _indexes(*indexes)
+        item["indexes"] = _indexes(*indexes, types=index_types)
     if lookups:
         item["lookups"] = [dict(lk) for lk in lookups]
     if scale is not None:
@@ -190,6 +197,8 @@ def _variant(
     supported_platforms: list[str] | None = None,
     supported_models: list[str] | None = None,
     supported_version_scope: list[str] | None = None,
+    status: str = "PUBLISHED",
+    enabled: bool = True,
 ) -> dict[str, Any]:
     return {
         "id": variant_id,
@@ -206,8 +215,8 @@ def _variant(
         "verified_versions": [],
         "mib_bundle_id": mib_bundle_id,
         "generator_version": f"snmp_exporter-config-v1/{OID_CATALOG_VERSION}",
-        "status": "PUBLISHED",
-        "enabled": True,
+        "status": status,
+        "enabled": enabled,
         "oid_config": oid_config,
     }
 
@@ -557,52 +566,111 @@ DCN_ENTITY_CONFIG = {
 
 HUAWEI_WIRELESS_CONFIG = {
     "schema_version": "1",
-    "mib_sources": ["HUAWEI-WLAN-MIB", "HUAWEI-WLAN-AP-MIB"],
-    "source_urls": ["https://support.huawei.com"],
-    "get": [
-        "1.3.6.1.4.1.2011.6.139.13.1.2.1.0",
-        "1.3.6.1.4.1.2011.6.139.13.1.2.2.0",
-        "1.3.6.1.4.1.2011.6.139.13.1.2.3.0",
+    "mib_sources": [
+        "HUAWEI-WLAN-GLOBAL-MIB",
+        "HUAWEI-WLAN-VAP-MIB",
+        "HUAWEI-WLAN-AP-MIB",
+        "HUAWEI-WLAN-AP-RADIO-MIB",
+    ],
+    "source_urls": [
+        "https://github.com/librenms/librenms/blob/6c26b4fe4a40f7b392c19c36a44257212736e38c/LibreNMS/OS/Vrp.php",
+        "https://support.huawei.com/enterprise/zh/doc/EDOC1100211095/c45d3d50",
+        "https://support.huawei.com/enterprise/en/doc/EDOC1100271775/22d975c9/huawei-wlan-ap-radio-mib-for-ac",
+    ],
+    "get": ["1.3.6.1.4.1.2011.6.139.12.1.2.1.0"],
+    "walk": [
+        "1.3.6.1.4.1.2011.6.139.17.1.2.1.2",
+        "1.3.6.1.4.1.2011.6.139.17.1.2.1.3",
+        "1.3.6.1.4.1.2011.6.139.13.3.3.1.4",
+        "1.3.6.1.4.1.2011.6.139.13.3.3.1.2",
+        "1.3.6.1.4.1.2011.6.139.13.3.3.1.3",
+        "1.3.6.1.4.1.2011.6.139.13.3.3.1.40",
+        "1.3.6.1.4.1.2011.6.139.13.3.3.1.41",
+        "1.3.6.1.4.1.2011.6.139.16.1.2.1.4",
+        "1.3.6.1.4.1.2011.6.139.16.1.2.1.7",
+        "1.3.6.1.4.1.2011.6.139.16.1.2.1.20",
+        "1.3.6.1.4.1.2011.6.139.16.1.2.1.25",
+        "1.3.6.1.4.1.2011.6.139.16.1.2.1.29",
+        "1.3.6.1.4.1.2011.6.139.16.1.2.1.45",
+        "1.3.6.1.4.1.2011.6.139.17.1.1.1.9",
     ],
     "metrics": [
-        _metric("hwWlanCurOnlineApNum", "1.3.6.1.4.1.2011.6.139.13.1.2.1", "gauge", "Current online AP count managed by Huawei WLAN AC.", source_name="hwWlanCurOnlineApNum"),
-        _metric("hwWlanCurAssocUserNum", "1.3.6.1.4.1.2011.6.139.13.1.2.2", "gauge", "Current associated wireless clients count on Huawei WLAN AC.", source_name="hwWlanCurAssocUserNum"),
-        _metric("hwWlanApTotalNum", "1.3.6.1.4.1.2011.6.139.13.1.2.3", "gauge", "Total configured AP count on Huawei WLAN AC.", source_name="hwWlanApTotalNum"),
+        _metric("hwWlanCurJointApNum", "1.3.6.1.4.1.2011.6.139.12.1.2.1.0", "gauge", "Current joined AP count discovered by LibreNMS VRP WirelessApCountDiscovery.", source_name="hwWlanCurJointApNum"),
+        _metric("hwWlanApSn", "1.3.6.1.4.1.2011.6.139.13.3.3.1.2", "DisplayString", "AP serial number indexed by the fixed six-octet AP MAC.", source_name="hwWlanApSn", indexes=("ap_mac",), index_types=("PhysAddress48",)),
+        _metric("hwWlanApTypeInfo", "1.3.6.1.4.1.2011.6.139.13.3.3.1.3", "DisplayString", "AP model/type indexed by the fixed six-octet AP MAC.", source_name="hwWlanApTypeInfo", indexes=("ap_mac",), index_types=("PhysAddress48",)),
+        _metric("hwWlanApName", "1.3.6.1.4.1.2011.6.139.13.3.3.1.4", "DisplayString", "AP name indexed by the fixed six-octet AP MAC.", source_name="hwWlanApName", indexes=("ap_mac",), index_types=("PhysAddress48",)),
+        _metric("hwWlanApMemoryUseRate", "1.3.6.1.4.1.2011.6.139.13.3.3.1.40", "gauge", "Per-AP memory usage percentage from HUAWEI-WLAN-AP-MIB.", source_name="hwWlanApMemoryUseRate", indexes=("ap_mac",), index_types=("PhysAddress48",)),
+        _metric("hwWlanApCpuUseRate", "1.3.6.1.4.1.2011.6.139.13.3.3.1.41", "gauge", "Per-AP CPU usage percentage from HUAWEI-WLAN-AP-MIB.", source_name="hwWlanApCpuUseRate", indexes=("ap_mac",), index_types=("PhysAddress48",)),
+        _metric("hwWlanRadioType", "1.3.6.1.4.1.2011.6.139.16.1.2.1.4", "gauge", "Huawei WLAN radio type bitmask as polled by LibreNMS VRP.", source_name="hwWlanRadioType", indexes=("ap_mac", "radio_id"), index_types=("PhysAddress48", "gauge")),
+        _metric("hwWlanRadioWorkingChannel", "1.3.6.1.4.1.2011.6.139.16.1.2.1.7", "gauge", "Current working channel for the AP radio.", source_name="hwWlanRadioWorkingChannel", indexes=("ap_mac", "radio_id"), index_types=("PhysAddress48", "gauge")),
+        _metric("hwWlanRadioMac", "1.3.6.1.4.1.2011.6.139.16.1.2.1.20", "OctetString", "Radio interface MAC value; table row identity remains AP MAC plus radio ID.", source_name="hwWlanRadioMac", indexes=("ap_mac", "radio_id"), index_types=("PhysAddress48", "gauge")),
+        _metric("hwWlanRadioChUtilizationRate", "1.3.6.1.4.1.2011.6.139.16.1.2.1.25", "gauge", "Current radio-channel utilization in percent.", source_name="hwWlanRadioChUtilizationRate", indexes=("ap_mac", "radio_id"), index_types=("PhysAddress48", "gauge"), unit="percent"),
+        _metric("hwWlanRadioChInterferenceRate", "1.3.6.1.4.1.2011.6.139.16.1.2.1.29", "gauge", "Current radio-channel interference rate in percent.", source_name="hwWlanRadioChInterferenceRate", indexes=("ap_mac", "radio_id"), index_types=("PhysAddress48", "gauge"), unit="percent"),
+        _metric("hwWlanRadioActualEIRP", "1.3.6.1.4.1.2011.6.139.16.1.2.1.45", "gauge", "Current radio effective isotropic radiated power in dBm; values above 127 indicate invalid/disabled readings.", source_name="hwWlanRadioActualEIRP", indexes=("ap_mac", "radio_id"), index_types=("PhysAddress48", "gauge"), unit="dBm"),
+        _metric("hwWlanVapStaOnlineCnt", "1.3.6.1.4.1.2011.6.139.17.1.1.1.9", "gauge", "Online stations on one VAP, indexed by AP MAC, radio index and WLAN ID.", source_name="hwWlanVapStaOnlineCnt", indexes=("ap_mac", "radio_index", "wlan_id"), index_types=("PhysAddress48", "gauge", "gauge"), unit="count"),
+        _metric("hwWlanSsid2gStaCnt", "1.3.6.1.4.1.2011.6.139.17.1.2.1.2", "gauge", "Online stations per length-prefixed SSID index on the 2.4 GHz band.", source_name="hwWlanSsid2gStaCnt", indexes=("ssid",), index_types=("DisplayString",), unit="count"),
+        _metric("hwWlanSsid5gStaCnt", "1.3.6.1.4.1.2011.6.139.17.1.2.1.3", "gauge", "Online stations per length-prefixed SSID index on the 5 GHz band.", source_name="hwWlanSsid5gStaCnt", indexes=("ssid",), index_types=("DisplayString",), unit="count"),
     ],
 }
 
 
 H3C_WIRELESS_CONFIG = {
     "schema_version": "1",
-    "mib_sources": ["HH3C-DOT11-AC-MIB", "HH3C-DOT11-AP-MIB"],
-    "source_urls": ["https://www.h3c.com"],
+    "mib_sources": ["HH3C-DOT11-ACMT-MIB", "HH3C-DOT11-APMT-MIB", "HH3C-DOT11-STATION-MIB"],
+    "source_urls": [
+        "https://www.h3c.com/en/d_202410/2282358_294551_0.htm",
+        "https://www.h3c.com/en/d_202410/2281922_294551_0.htm",
+        "https://www.h3c.com/en/Support/Resource_Center/EN/Home/Wireless/00-Public/Reference_Guides/MIB_Companion/H3C_Wireless_Access_Controllers_MIB_Reference_R16x/12/202606/2850302_294551_0.htm",
+        "https://www.h3c.com/en/d_202604/2834085_294551_0.htm",
+    ],
     "get": [
-        "1.3.6.1.4.1.25506.2.75.1.1.1.0",
-        "1.3.6.1.4.1.25506.2.75.1.1.2.0",
-        "1.3.6.1.4.1.25506.2.75.1.1.3.0",
+        "1.3.6.1.4.1.25506.2.75.1.1.2.21.0",
+        "1.3.6.1.4.1.25506.2.75.1.1.3.6.0",
+        "1.3.6.1.4.1.25506.2.75.1.1.1.1.0",
+        "1.3.6.1.4.1.25506.2.75.1.1.1.2.0",
+        "1.3.6.1.4.1.25506.2.75.1.1.1.3.0",
+        "1.3.6.1.4.1.25506.2.75.1.1.2.1.0",
+        "1.3.6.1.4.1.25506.2.75.1.1.2.2.0",
+        "1.3.6.1.4.1.25506.2.75.1.1.2.4.0",
+        "1.3.6.1.4.1.25506.2.75.1.1.2.5.0",
+        "1.3.6.1.4.1.25506.2.75.1.1.2.6.0",
+        "1.3.6.1.4.1.25506.2.75.1.1.2.7.0",
+    ],
+    "walk": [
+        "1.3.6.1.4.1.25506.2.75.2.1.2.1",
+        "1.3.6.1.4.1.25506.2.75.2.1.12.1",
+        "1.3.6.1.4.1.25506.2.75.2.1.3.1",
+        "1.3.6.1.4.1.25506.2.75.2.1.4.1",
+        "1.3.6.1.4.1.25506.2.75.2.1.8.1",
+        "1.3.6.1.4.1.25506.2.75.2.1.10.1",
+        "1.3.6.1.4.1.25506.2.75.2.2.1.1",
+        "1.3.6.1.4.1.25506.2.75.2.2.2.1",
+        "1.3.6.1.4.1.25506.2.75.2.2.8.1",
+        "1.3.6.1.4.1.25506.2.75.2.2.6.1",
+        "1.3.6.1.4.1.25506.2.75.3.1.1.1",
     ],
     "metrics": [
-        _metric("hh3cDot11CurrOnlineAPNum", "1.3.6.1.4.1.25506.2.75.1.1.1", "gauge", "Current online AP count managed by H3C wireless controller.", source_name="hh3cDot11CurrOnlineAPNum"),
-        _metric("hh3cDot11CurrAssocUserNum", "1.3.6.1.4.1.25506.2.75.1.1.2", "gauge", "Current associated wireless stations on H3C wireless controller.", source_name="hh3cDot11CurrAssocUserNum"),
-        _metric("hh3cDot11TotalAPNum", "1.3.6.1.4.1.25506.2.75.1.1.3", "gauge", "Total AP count connected to H3C wireless controller.", source_name="hh3cDot11TotalAPNum"),
+        _metric("hh3Dot11CurrenACMACMode", "1.3.6.1.4.1.25506.2.75.1.1.1.1", "gauge", "Current AC CAPWAP MAC mode from HH3C-DOT11-ACMT-MIB.", source_name="hh3Dot11CurrenACMACMode"),
+        _metric("hh3cDot11MaxAPNumPermitted", "1.3.6.1.4.1.25506.2.75.1.1.1.2", "gauge", "Maximum number of associated APs supported by the AC.", source_name="hh3cDot11MaxAPNumPermitted"),
+        _metric("hh3cDot11MaxStationNumPermitted", "1.3.6.1.4.1.25506.2.75.1.1.1.3", "gauge", "Maximum number of wireless clients supported by the AC.", source_name="hh3cDot11MaxStationNumPermitted"),
+        _metric("hh3cDot11CurrOnlineAPNum", "1.3.6.1.4.1.25506.2.75.1.1.2.21", "gauge", "Current AP count connected to the H3C wireless controller (HH3C-DOT11-ACMT-MIB::hh3cDot11TotalAPconnected).", source_name="hh3cDot11CurrOnlineAPNum"),
+        _metric("hh3cDot11CurrAssocUserNum", "1.3.6.1.4.1.25506.2.75.1.1.3.6", "gauge", "Current associated wireless station count on the H3C wireless controller (HH3C-DOT11-ACMT-MIB::hh3cDot11StationCurAssocSum).", source_name="hh3cDot11CurrAssocUserNum"),
+        _metric("hh3cDot11APConnectCount", "1.3.6.1.4.1.25506.2.75.1.1.2.1", "gauge", "Legacy-compatible total AP association count from HH3C-DOT11-ACMT-MIB.", source_name="hh3cDot11APConnectCount"),
+        _metric("hh3cDot11StationConnectCount", "1.3.6.1.4.1.25506.2.75.1.1.2.2", "gauge", "Legacy-compatible total wireless station count from HH3C-DOT11-ACMT-MIB.", source_name="hh3cDot11StationConnectCount"),
+        _metric("hh3cDot11MasterAPCount", "1.3.6.1.4.1.25506.2.75.1.1.2.4", "gauge", "Number of APs with stable master tunnels to the AC.", source_name="hh3cDot11MasterAPCount"),
+        _metric("hh3cDot11SlaveAPCount", "1.3.6.1.4.1.25506.2.75.1.1.2.5", "gauge", "Number of APs with stable backup tunnels to the AC.", source_name="hh3cDot11SlaveAPCount"),
+        _metric("hh3cDot11ConnectAutoAPCount", "1.3.6.1.4.1.25506.2.75.1.1.2.6", "gauge", "Number of automatically associated APs.", source_name="hh3cDot11ConnectAutoAPCount"),
+        _metric("hh3cDot11PersistentAPCount", "1.3.6.1.4.1.25506.2.75.1.1.2.7", "gauge", "Number of APs converted from auto APs.", source_name="hh3cDot11PersistentAPCount"),
     ],
 }
 
 
 RUIJIE_WIRELESS_CONFIG = {
     "schema_version": "1",
-    "mib_sources": ["RUIJIE-WLAN-AC-MIB", "RUIJIE-AC-MGMT-MIB"],
-    "source_urls": ["https://www.ruijienetworks.com"],
-    "get": [
-        "1.3.6.1.4.1.4881.1.1.10.2.75.1.1.1.0",
-        "1.3.6.1.4.1.4881.1.1.10.2.75.1.1.2.0",
-        "1.3.6.1.4.1.4881.1.1.10.2.75.1.1.3.0",
-    ],
-    "metrics": [
-        _metric("ruijieApcTotalApNum", "1.3.6.1.4.1.4881.1.1.10.2.75.1.1.1", "gauge", "Total managed AP count for Ruijie AC.", source_name="ruijieApcTotalApNum"),
-        _metric("ruijieApcOnlineApNum", "1.3.6.1.4.1.4881.1.1.10.2.75.1.1.2", "gauge", "Current online AP count for Ruijie AC.", source_name="ruijieApcOnlineApNum"),
-        _metric("ruijieApcTotalStaNum", "1.3.6.1.4.1.4881.1.1.10.2.75.1.1.3", "gauge", "Total associated wireless stations on Ruijie AC.", source_name="ruijieApcTotalStaNum"),
-    ],
+    "mib_sources": [],
+    "source_urls": [],
+    "get": [],
+    "metrics": [],
 }
 
 
@@ -840,8 +908,8 @@ BUILTIN_OID_CATALOG: tuple[dict[str, Any], ...] = (
         "wireless",
         "wireless",
         "huawei-wlan:1.3.6.1.4.1.2011.6.139",
-        "华为 WLAN AC 在线 AP 数、离线 AP 数与关联无线客户端用户数。",
-        _variant("variant-huawei-wireless-std", "huawei_wireless_std", "华为无线标准版本", HUAWEI_WIRELESS_CONFIG, mib_bundle_id="huawei-wlan-2024", supported_platforms=["huawei_vrp", "huawei_wlan", "huawei"], supported_models=["AC6", "AC9", "AirEngine"], supported_version_scope=["VRP WLAN"]),
+        "华为 VRP WLAN AP 数与按 SSID/频段采集的关联客户端数，规则来自固定 LibreNMS Vrp.php。",
+        _variant("variant-huawei-wireless-std", "huawei_wireless_std", "华为无线标准规则", HUAWEI_WIRELESS_CONFIG, mib_bundle_id="huawei-wlan-2024", supported_platforms=["huawei_vrp", "huawei_wlan", "huawei"], supported_models=["AC6", "AC9", "AirEngine"]),
     ),
     _module(
         "module-h3c-wireless",
@@ -852,8 +920,8 @@ BUILTIN_OID_CATALOG: tuple[dict[str, Any], ...] = (
         "wireless",
         "wireless",
         "h3c-dot11:1.3.6.1.4.1.25506.2.75",
-        "华三 Comware 无线 AC 在线 AP 总数与关联无线终端客户端数。",
-        _variant("variant-h3c-wireless-std", "h3c_wireless_std", "华三无线标准版本", H3C_WIRELESS_CONFIG, mib_bundle_id="hh3c-dot11-2024", supported_platforms=["h3c_comware_v7", "h3c_comware_v5", "h3c_wlan", "h3c"], supported_models=["WX", "MSG", "WAP"], supported_version_scope=["Comware Dot11"]),
+        "华三 Comware 无线 AC/AP/Radio 与关联客户端遥测，客户端映射 IP、用户名、TxRateSet 和 SSID。",
+        _variant("variant-h3c-wireless-std", "h3c_wireless_std", "华三无线标准版本", H3C_WIRELESS_CONFIG, mib_bundle_id="hh3c-dot11-2024", supported_platforms=["h3c_comware_v7", "h3c_comware_v5", "h3c_wlan", "h3c"], supported_models=["WX", "MSG", "WAP"]),
     ),
     _module(
         "module-ruijie-wireless",
@@ -864,8 +932,8 @@ BUILTIN_OID_CATALOG: tuple[dict[str, Any], ...] = (
         "wireless",
         "wireless",
         "ruijie-wlan:1.3.6.1.4.1.4881.1.1.10.2.75",
-        "锐捷无线控制器纳管 AP 总数、在线 AP 数与在线关联终端数。",
-        _variant("variant-ruijie-wireless-std", "ruijie_wireless_std", "锐捷无线标准版本", RUIJIE_WIRELESS_CONFIG, mib_bundle_id="ruijie-wlan-2024", supported_platforms=["ruijie_rgos", "ruijie_wlan", "ruijie"], supported_models=["RG-WS", "WS6", "RG-M"], supported_version_scope=["RGOS WLAN"]),
+        "固定 LibreNMS 快照未提供 Ruijie 无线 handler，仓库亦无对应厂商 WLAN MIB；保持草稿禁用，等待按具体型号核验。",
+        _variant("variant-ruijie-wireless-std", "ruijie_wireless_std", "锐捷无线待核验规则", RUIJIE_WIRELESS_CONFIG, mib_bundle_id="ruijie-wlan-unverified", supported_platforms=["ruijie_rgos", "ruijie_wlan", "ruijie"], supported_models=["RG-WS", "WS6", "RG-M"], status="DRAFT", enabled=False),
     ),
     _module(
         "module-cisco-wireless",
@@ -877,7 +945,7 @@ BUILTIN_OID_CATALOG: tuple[dict[str, Any], ...] = (
         "wireless",
         "cisco-lwapp:1.3.6.1.4.1.9.9.513",
         "思科 AireOS / Catalyst 9800 WLC 在线 AP 总数与无线客户端总数。",
-        _variant("variant-cisco-wireless-std", "cisco_wireless_std", "思科无线标准版本", CISCO_WIRELESS_CONFIG, mib_bundle_id="cisco-lwapp-2024", supported_platforms=["cisco_iosxe", "cisco_aireos", "cisco_wlc", "cisco"], supported_models=["Catalyst 9800", "AIR-CT", "WLC"], supported_version_scope=["IOS-XE Wireless", "AireOS"]),
+        _variant("variant-cisco-wireless-std", "cisco_wireless_std", "思科无线标准规则", CISCO_WIRELESS_CONFIG, mib_bundle_id="cisco-lwapp-2024", supported_platforms=["cisco_iosxe", "cisco_aireos", "cisco_wlc", "cisco"], supported_models=["Catalyst 9800", "AIR-CT", "WLC"]),
     ),
     _module(
         "module-aruba-wireless",
@@ -889,7 +957,7 @@ BUILTIN_OID_CATALOG: tuple[dict[str, Any], ...] = (
         "wireless",
         "aruba-wlsx:1.3.6.1.4.1.14823.2.2.1",
         "Aruba Mobility Controller 在线 AP 数与活跃无线客户端站点数。",
-        _variant("variant-aruba-wireless-std", "aruba_wireless_std", "Aruba 无线标准版本", ARUBA_WIRELESS_CONFIG, mib_bundle_id="aruba-wlsx-2024", supported_platforms=["aruba_arubaos", "arubaos", "aruba"], supported_models=["Aruba 7", "Aruba 9", "Controller"], supported_version_scope=["ArubaOS"]),
+        _variant("variant-aruba-wireless-std", "aruba_wireless_std", "Aruba 无线标准规则", ARUBA_WIRELESS_CONFIG, mib_bundle_id="aruba-wlsx-2024", supported_platforms=["aruba_arubaos", "arubaos", "aruba"], supported_models=["Aruba 7", "Aruba 9", "Controller"]),
     ),
     _module(
         "module-ruckus-wireless",
@@ -901,7 +969,7 @@ BUILTIN_OID_CATALOG: tuple[dict[str, Any], ...] = (
         "wireless",
         "ruckus-zd:1.3.6.1.4.1.25053.1",
         "Ruckus 优科 ZoneDirector / SmartZone 控制器纳管 AP 总数与无线终端数。",
-        _variant("variant-ruckus-wireless-std", "ruckus_wireless_std", "优科无线标准版本", RUCKUS_WIRELESS_CONFIG, mib_bundle_id="ruckus-zd-2024", supported_platforms=["ruckus_smartzone", "smartzone", "ruckus"], supported_models=["ZoneDirector", "SmartZone", "SZ-", "ZD-"], supported_version_scope=["SmartZone"]),
+        _variant("variant-ruckus-wireless-std", "ruckus_wireless_std", "优科无线标准规则", RUCKUS_WIRELESS_CONFIG, mib_bundle_id="ruckus-zd-2024", supported_platforms=["ruckus_smartzone", "smartzone", "ruckus"], supported_models=["ZoneDirector", "SmartZone", "SZ-", "ZD-"]),
     ),
 )
 

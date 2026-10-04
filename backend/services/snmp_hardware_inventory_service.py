@@ -28,6 +28,7 @@ _METRIC_FAMILIES = {
     "current_amperes": "nexora_hw_current_amperes",
     "optical_power_dbm": "nexora_hw_optical_power_dbm",
     "sensor_value": "nexora_hw_sensor_value",
+    "wireless_sensor_value": "nexora_wireless_sensor_value",
 }
 _FAMILY_HELP = {
     "nexora_hw_sensor_info": "Discovered hardware sensor metadata.",
@@ -46,6 +47,7 @@ _FAMILY_HELP = {
     "nexora_hw_current_amperes": "Current measurement in amperes.",
     "nexora_hw_optical_power_dbm": "Optical receive or transmit power in dBm.",
     "nexora_hw_sensor_value": "Numeric LibreNMS sensor value without Nexora unit conversion.",
+    "nexora_wireless_sensor_value": "Current LibreNMS-compatible wireless sensor value for one controller, AP, radio, or BSS entity.",
 }
 
 
@@ -152,7 +154,7 @@ def _normalize_category_result(result: Mapping[str, Any]) -> dict[str, Any]:
     status = _clean_text(result.get("status"), field="status", required=True).lower()
     if status not in _DISCOVERY_STATUSES:
         raise HardwareInventoryError(f"unsupported discovery status: {status}")
-    coverage_complete = bool(result.get("coverage_complete", False)) and status == "success"
+    coverage_complete = bool(result.get("coverage_complete", False)) and status in {"success", "not_found"}
     return {
         "source_type": source_type,
         "component_class": component_class,
@@ -440,8 +442,9 @@ def upsert_discovery_run(
     """Persist one device's per-source/category discovery attempt atomically.
 
     ``category_results`` is authoritative for coverage. Sensors are upserted for
-    successful/partial scopes. Retirement requires a successful result with
-    ``coverage_complete=True``; two distinct complete runs must miss a sensor.
+    successful/partial scopes. Retirement requires a complete result with
+    ``coverage_complete=True``; this includes an authoritative empty
+    ``not_found`` result. Two distinct complete runs must miss a sensor.
     The caller owns the connection transaction and should commit or roll back.
     """
     resolved_device_id = _clean_text(device_id, field="device_id", required=True)
@@ -545,7 +548,7 @@ def upsert_discovery_run(
                     run_id=resolved_run_id,
                     observed_at=at,
                 )
-            if result["status"] == "success" and result["coverage_complete"]:
+            if result["status"] in {"success", "not_found"} and result["coverage_complete"]:
                 _retire_unseen_sensors(
                     conn,
                     device_id=resolved_device_id,
@@ -573,6 +576,7 @@ def upsert_discovery_run(
                 active_sensor_count = EXCLUDED.active_sensor_count,
                 last_discovered_count = CASE
                     WHEN EXCLUDED.last_status IN ('success', 'partial')
+                      OR (EXCLUDED.last_status = 'not_found' AND EXCLUDED.coverage_complete)
                     THEN EXCLUDED.last_discovered_count
                     ELSE snmp_hardware_capabilities.last_discovered_count
                 END,
@@ -582,7 +586,7 @@ def upsert_discovery_run(
                 last_run_id = EXCLUDED.last_run_id,
                 last_attempt_at = EXCLUDED.last_attempt_at,
                 last_success_at = CASE
-                    WHEN EXCLUDED.last_status = 'success' AND EXCLUDED.coverage_complete
+                    WHEN EXCLUDED.last_status IN ('success', 'not_found') AND EXCLUDED.coverage_complete
                     THEN CASE
                         WHEN snmp_hardware_capabilities.last_success_at IS NULL
                         THEN EXCLUDED.last_attempt_at
@@ -600,7 +604,7 @@ def upsert_discovery_run(
                 len(discovered) if result["status"] in {"success", "partial"} else 0,
                 resolved_rule_version, _clean_text(discovery_version, field="discovery_version", limit=200),
                 _clean_text(artifact_version, field="artifact_version", limit=200), resolved_run_id,
-                at, at if result["status"] == "success" and result["coverage_complete"] else None,
+                at, at if result["status"] in {"success", "not_found"} and result["coverage_complete"] else None,
                 result["reason_code"], result["reason"], at,
             ),
         )
@@ -902,6 +906,11 @@ def render_hardware_metrics(sensors: Sequence[Mapping[str, Any]], device_labels:
         index_labels = _decode_json_field(sensor.get("index_labels", sensor.get("index_labels_json")), fallback={})
         if isinstance(index_labels, dict) and index_labels.get("ent_physical_index") not in (None, ""):
             base["ent_physical_index"] = index_labels["ent_physical_index"]
+        if isinstance(index_labels, dict):
+            for label_name in ("ap_id", "ap_name", "ap_model", "ap_ip", "ap_mac", "ap_serial", "radio_id", "radio_index", "radio_ifindex", "radio_mac", "radio_mode", "wlan_id", "ssid", "ssid_index", "radio_band", "bssid", "vlan_id"):
+                label_value = index_labels.get(label_name)
+                if label_value not in (None, ""):
+                    base[label_name] = _clean_text(label_value, field=label_name, limit=120)
         if isinstance(metadata, dict) and metadata.get("ent_physical_index_measured"):
             base["measured_entity_type"] = metadata["ent_physical_index_measured"]
         if sensor.get("rule_version"):
@@ -949,6 +958,11 @@ def render_hardware_metrics(sensors: Sequence[Mapping[str, Any]], device_labels:
             if value is not None:
                 sample_labels = dict(base)
                 if measurement_type in {"optical_power_dbm", "sensor_value"}:
+                    sample_labels["unit"] = sensor.get("unit", "")
+                if measurement_type == "wireless_sensor_value":
+                    sample_labels["sensor_class"] = _clean_text(
+                        metadata.get("wireless_sensor_class"), field="wireless sensor class", limit=64,
+                    )
                     sample_labels["unit"] = sensor.get("unit", "")
                 if measurement_type == "component_state":
                     raw_state = sensor.get("last_raw_value")

@@ -352,7 +352,7 @@ class VictoriaMetricsMetricProvider(MetricProvider):
 
         if key == "wireless_ap_online_count":
             candidates = (
-                "hwWlanCurOnlineApNum",
+                "hwWlanCurJointApNum",
                 "hh3cDot11CurrOnlineAPNum",
                 "ruijieApcOnlineApNum",
                 "ruijieApcTotalApNum",
@@ -365,7 +365,6 @@ class VictoriaMetricsMetricProvider(MetricProvider):
 
         if key == "wireless_client_online_count":
             candidates = (
-                "hwWlanCurAssocUserNum",
                 "hh3cDot11CurrAssocUserNum",
                 "ruijieApcTotalStaNum",
                 "cLSysTotalNumOfClients",
@@ -373,7 +372,12 @@ class VictoriaMetricsMetricProvider(MetricProvider):
                 "ruckusZDTotalNumSta",
                 "wireless_client_online_count",
             )
-            return " or ".join(f"{name}{selector}" for name in candidates)
+            legacy = " or ".join(f"{name}{selector}" for name in candidates)
+            huawei_clients = (
+                f"(sum by (asset_id) (hwWlanSsid2gStaCnt{selector}) "
+                f"+ on (asset_id) sum by (asset_id) (hwWlanSsid5gStaCnt{selector}))"
+            )
+            return f"({legacy}) or ({huawei_clients})"
 
         metric = CANONICAL_PROMQL.get(key)
         if metric is None:

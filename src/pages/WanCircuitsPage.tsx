@@ -140,6 +140,24 @@ export const WanCircuitsPage: React.FC = () => {
   const openEdit = (item: WanCircuitItem) => setFormItem(item);
   const openCreate = () => setFormItem(null);
 
+  const refreshDeviceInterfaces = useCallback(async (deviceId: string, action: 'create' | 'update') => {
+    const query = new URLSearchParams({ action });
+    const response = await fetch(
+      `/api/monitoring/wan-options/devices/${encodeURIComponent(deviceId)}/interfaces/refresh?${query.toString()}`,
+      { method: 'POST', headers: authHeaders() },
+    );
+    if (!response.ok) throw await responseError(response, zh ? '自动读取设备端口失败' : 'Failed to refresh device ports');
+    const body = await response.json() as { interfaces?: WanCircuitOptions['interfaces'] };
+    const refreshedInterfaces = Array.isArray(body.interfaces) ? body.interfaces : [];
+    setOptions((current) => ({
+      ...current,
+      interfaces: [
+        ...current.interfaces.filter((entry) => entry.device_id !== deviceId),
+        ...refreshedInterfaces,
+      ],
+    }));
+  }, [zh]);
+
   const saveCircuit = async (payload: WanCircuitFormPayload) => {
     setSaving(true);
     try {
@@ -187,7 +205,7 @@ export const WanCircuitsPage: React.FC = () => {
           {!detailLoading && selectedListItem && (historyError || slaError) && <div className="rounded-lg border border-amber-200 bg-amber-50/60 px-3 py-2 text-xs text-amber-800">{historyError && <span>{historyError}</span>}{historyError && slaError && <span> · </span>}{slaError && <span>{slaError}</span>}</div>}
         </>}
       </main>
-      {formItem !== undefined && <WanCircuitForm item={formItem} options={options} language={language} saving={saving} onSubmit={saveCircuit} onClose={() => setFormItem(undefined)} />}
+      {formItem !== undefined && <WanCircuitForm item={formItem} options={options} language={language} saving={saving} onRefreshDeviceInterfaces={refreshDeviceInterfaces} onSubmit={saveCircuit} onClose={() => setFormItem(undefined)} />}
     </div>
   );
 };

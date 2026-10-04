@@ -1834,6 +1834,7 @@ async def test_snmp_hardware_discovery(payload: dict = Body(default={}), user=re
             platform=device.get('platform'),
             model=device.get('model'),
             version=device.get('version'),
+            role=device.get('role'),
             snmp_version=version,
         )
     except Exception as exc:
@@ -4203,6 +4204,7 @@ async def snmp_test(device_id: str):
             platform=device_data.get('platform'),
             model=device_data.get('model'),
             version=device_data.get('version'),
+            role=device_data.get('role'),
             snmp_version=str(device_data.get('snmp_version') or '2c'),
         )
         persist_discovery(device_id, discovery)

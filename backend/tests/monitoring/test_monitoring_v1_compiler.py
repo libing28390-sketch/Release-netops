@@ -12,6 +12,7 @@ from services.monitoring_compiler import (
     plan_entry_match_reason,
     render_exporter_modules,
     render_vmagent_config,
+    variant_matches_device,
     validate_oid_config,
     validate_artifact,
 )
@@ -210,7 +211,8 @@ def test_vendor_oid_catalog_renders_h3c_huawei_and_cisco_modules():
         variant = dict(item["variant"])
         variant["module_id"] = item["id"]
         variants.append(variant)
-        assignments.append({"variant_key": variant["variant_key"], "enabled": True})
+        if str(variant.get("status") or "PUBLISHED").upper() != "DRAFT" and variant.get("enabled") is not False:
+            assignments.append({"variant_key": variant["variant_key"], "enabled": True})
 
     rendered = render_exporter_modules(assignments, modules=modules, variants=variants)
 
@@ -242,14 +244,20 @@ def test_optical_oid_catalog_uses_verified_units_and_does_not_scale_huawei_mixed
 
 
 def test_multi_vendor_device_variant_matching_matrix():
-    from services.monitoring_compiler import variant_matches_device
     catalog = iter_builtin_catalog()
     variant_by_key = {item["variant"]["variant_key"]: item["variant"] for item in catalog}
 
+    h3c_wireless_device = {
+        "vendor": "H3C",
+        "platform": "h3c_comware",
+        "model": "WX5540H",
+        "version": "7.1.064",
+    }
     ruijie_device = {"platform": "ruijie_rgos", "model": "RG-S6220-48XT4QXS", "version": "RGOS 11.4"}
     juniper_device = {"platform": "juniper_junos", "model": "QFX5100-48S-6Q", "version": "JUNOS 20.4R3"}
     fortinet_device = {"platform": "fortinet_fortios", "model": "FortiGate-100F", "version": "FortiOS 7.2"}
 
+    assert variant_matches_device(variant_by_key["h3c_wireless_std"], h3c_wireless_device)
     assert variant_matches_device(variant_by_key["ruijie_common_std"], ruijie_device)
     assert variant_matches_device(variant_by_key["juniper_common_std"], juniper_device)
     assert variant_matches_device(variant_by_key["fortinet_common_std"], fortinet_device)

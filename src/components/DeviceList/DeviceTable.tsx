@@ -13,6 +13,13 @@ import DeviceRowExpand from './DeviceRowExpand';
 import { extractSoftwareMajorVersion, getDevicePlatformAdaptation, getProfileAdaptationMajorVersion } from '../../utils/platformVersion';
 
 import { TableActionCell, TableActionHeader } from '../ui/TableActionColumn';
+import {
+  DEFAULT_COLUMNS,
+  rackDisplayName,
+  type ColumnVisibility,
+} from './deviceColumns';
+export { DEFAULT_COLUMNS } from './deviceColumns';
+export type { ColumnKey, ColumnVisibility } from './deviceColumns';
 /* ─── Helpers ─── */
 const clampPercent = (value?: number) => {
   const n = Number(value ?? 0);
@@ -52,70 +59,6 @@ const hasVersionMismatch = (device: Device): boolean => {
       ? getProfileAdaptationMajorVersion({ id: device.platform_profile_id, platform_code: '' })
       : null;
   return softwareMajor !== null && adaptationMajor !== null && softwareMajor !== adaptationMajor;
-};
-
-/* ─── Column Def ─── */
-export type ColumnKey =
-  | 'hostname' | 'assetTag' | 'managementIp' | 'category' | 'role' | 'connectionMethod'
-  | 'vendor' | 'platform' | 'model' | 'version' | 'adaptation' | 'adaptationVersion' | 'adaptationSource' | 'versionMismatch'
-  | 'site' | 'rack' | 'rackUnit' | 'tags' | 'status' | 'health' | 'lifecycle' | 'checkStatus' | 'checkTime' | 'cpu' | 'memory' | 'actions';
-
-export interface ColumnVisibility {
-  hostname: boolean;
-  assetTag: boolean;
-  managementIp: boolean;
-  category: boolean;
-  role: boolean;
-  connectionMethod: boolean;
-  vendor: boolean;
-  platform: boolean;
-  model: boolean;
-  version: boolean;
-  adaptation: boolean;
-  adaptationVersion: boolean;
-  adaptationSource: boolean;
-  versionMismatch: boolean;
-  site: boolean;
-  rack: boolean;
-  rackUnit: boolean;
-  tags: boolean;
-  status: boolean;
-  health: boolean;
-  lifecycle: boolean;
-  checkStatus: boolean;
-  checkTime: boolean;
-  cpu: boolean;
-  memory: boolean;
-  actions: boolean;
-}
-
-export const DEFAULT_COLUMNS: ColumnVisibility = {
-  hostname: true,
-  assetTag: true,
-  managementIp: true,
-  category: true,
-  role: true,
-  connectionMethod: true,
-  vendor: true,
-  platform: true,
-  model: true,
-  version: true,
-  adaptation: true,
-  adaptationVersion: true,
-  adaptationSource: true,
-  versionMismatch: true,
-  site: true,
-  rack: true,
-  rackUnit: true,
-  tags: true,
-  status: true,
-  health: true,
-  lifecycle: true,
-  checkStatus: true,
-  checkTime: true,
-  cpu: true,
-  memory: true,
-  actions: true,
 };
 
 /* ─── SortHeader ─── */
@@ -202,7 +145,7 @@ const DeviceTable: React.FC<DeviceTableProps> = ({
 
   return (
     <div className="overflow-x-auto">
-      <DataTable unstyled exportConfig={{ filename: 'devices', language: zh ? 'zh' : 'en', disabled: exportDisabled || loading || !hasExportableColumns, exportData }} className="nx-data-table min-w-[2200px]">
+      <DataTable unstyled exportConfig={{ filename: 'devices', language: zh ? 'zh' : 'en', disabled: exportDisabled || loading || !hasExportableColumns, exportData }} className="nx-data-table w-full">
         <thead>
           <tr className="bg-black/[.02] dark:bg-white/[.02] border-b border-black/5 dark:border-white/6">
             <th className="px-3 py-3 w-9">
@@ -348,7 +291,7 @@ const DeviceTable: React.FC<DeviceTableProps> = ({
                   {columns.site && (
                     <td className="px-3 py-2.5 text-xs font-medium text-gray-800 dark:text-zinc-200">{device.datacenter || device.site || '—'}</td>
                   )}
-                  {columns.rack && <td className="px-3 py-2.5 text-xs text-gray-700 dark:text-zinc-300">{device.rack_code || device.rack_name || device.rack || '—'}</td>}
+                  {columns.rack && <td className="px-3 py-2.5 text-xs text-gray-700 dark:text-zinc-300">{rackDisplayName(device)}</td>}
                   {columns.rackUnit && <td className="px-3 py-2.5 text-xs text-gray-700 dark:text-zinc-300">{device.rack_unit || '—'}</td>}
                   {/* Tags */}
                   {columns.tags && (

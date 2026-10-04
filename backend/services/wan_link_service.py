@@ -129,6 +129,12 @@ def _deduplicate_interface_options(rows: list[dict[str, Any]]) -> list[dict[str,
     seen: set[tuple[str, str]] = set()
     result: list[dict[str, Any]] = []
     for row in rows:
+        try:
+            if_index = int(row.get("if_index"))
+        except (TypeError, ValueError):
+            continue
+        if if_index <= 0:
+            continue
         key = (str(row.get("device_id") or ""), _normalize_interface_name(row.get("interface_name")))
         if key in seen:
             continue
@@ -645,7 +651,7 @@ def list_wan_link_options(*, site_id: str = "", device_id: str = "", tenant_id: 
         allowed_device_ids = [str(device.get("id")) for device in devices if device.get("id")]
         if allowed_device_ids:
             interface_rows = [dict(row) for row in conn.execute(
-                "SELECT id, device_id, interface_name, if_index, description, speed, oper_status FROM interfaces WHERE device_id IN (" + ",".join("?" for _ in allowed_device_ids) + ") ORDER BY device_id, interface_name",
+                "SELECT id, device_id, interface_name, if_index, description, speed, oper_status FROM interfaces WHERE device_id IN (" + ",".join("?" for _ in allowed_device_ids) + ") AND if_index IS NOT NULL AND if_index > 0 ORDER BY device_id, interface_name",
                 tuple(allowed_device_ids),
             ).fetchall()]
         else:
@@ -702,8 +708,8 @@ def list_wan_links(*, page: int = 1, page_size: int = 20, site_id: str = "", pro
             clauses.append("COALESCE(c.health_status, 'unknown') = ?")
             params.append(health_status)
         if link_role:
-            if link_role not in {"primary", "backup", "load_balanced"}:
-                raise ValueError("link_role must be primary, backup or load_balanced")
+            if link_role not in {"standalone", "primary", "backup", "load_balanced"}:
+                raise ValueError("link_role must be standalone, primary, backup or load_balanced")
             clauses.append("l.link_role = ?")
             params.append(link_role)
         if group_id:
@@ -1101,8 +1107,8 @@ def upsert_wan_link(payload: dict[str, Any], link_id: str | None = None) -> dict
         canonical_if_index = iface.get("if_index")
         if canonical_if_index is None:
             raise ValueError("if_index is required; run an SNMP interface sync first")
-        if str(payload.get("link_role") or "primary") not in {"primary", "backup", "load_balanced"}:
-            raise ValueError("link_role must be primary, backup or load_balanced")
+        if str(payload.get("link_role") or "standalone") not in {"standalone", "primary", "backup", "load_balanced"}:
+            raise ValueError("link_role must be standalone, primary, backup or load_balanced")
         if str(payload.get("direction_mode") or "normal") not in {"normal", "reversed"}:
             raise ValueError("direction_mode must be normal or reversed")
         if link_id:
@@ -1132,7 +1138,7 @@ def upsert_wan_link(payload: dict[str, Any], link_id: str | None = None) -> dict
             "interface_name": str(payload.get("interface_name") or iface.get("interface_name") or ""),
             "if_index": int(canonical_if_index), "provider": str(payload.get("provider") or ""),
             "circuit_number": str(payload.get("circuit_number") or ""), "public_ip": str(payload.get("public_ip") or ""),
-            "link_type": str(payload.get("link_type") or "Internet"), "link_role": str(payload.get("link_role") or "primary"),
+            "link_type": str(payload.get("link_type") or "Internet"), "link_role": str(payload.get("link_role") or "standalone"),
             "direction_mode": str(payload.get("direction_mode") or "normal"), "contracted_download_bps": int(round(down_mbps * 1_000_000)),
             "contracted_upload_bps": int(round(up_mbps * 1_000_000)), "collection_interval_sec": int(payload.get("collection_interval_sec") or 60),
             "timezone": str(payload.get("timezone") or (site.get("timezone") if site else None) or "Asia/Shanghai"), "enabled": bool(payload.get("enabled", True)),

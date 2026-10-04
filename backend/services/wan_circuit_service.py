@@ -406,7 +406,7 @@ def save_wan_circuit(payload: dict, *, tenant_id: str, actor_id: str, link_id: s
             "interface_name": a_endpoint["endpoint_name"], "if_index": a_endpoint["if_index"],
             "provider": _text(payload.get("provider")), "circuit_number": _text(payload.get("circuit_number")),
             "public_ip": _text(payload.get("public_ip")), "link_type": _text(payload.get("link_type") or "Internet"),
-            "link_role": _text(payload.get("link_role") or "primary"), "direction_mode": _text(payload.get("direction_mode") or a_endpoint["counter_orientation"] or "normal"),
+            "link_role": _text(payload.get("link_role") or "standalone"), "direction_mode": _text(payload.get("direction_mode") or a_endpoint["counter_orientation"] or "normal"),
             "contracted_download_bps": down_bps, "contracted_upload_bps": up_bps,
             "collection_interval_sec": int(payload.get("collection_interval_sec") or 60),
             "timezone": _text(payload.get("timezone") or (site or {}).get("timezone") or "Asia/Shanghai"),
@@ -416,8 +416,8 @@ def save_wan_circuit(payload: dict, *, tenant_id: str, actor_id: str, link_id: s
         }
         if not values["link_name"]:
             raise ValueError("link_name is required")
-        if values["link_role"] not in {"primary", "backup", "load_balanced"}:
-            raise ValueError("link_role must be primary, backup or load_balanced")
+        if values["link_role"] not in {"standalone", "primary", "backup", "load_balanced"}:
+            raise ValueError("link_role must be standalone, primary, backup or load_balanced")
         if values["direction_mode"] not in {"normal", "reversed"}:
             raise ValueError("direction_mode must be normal or reversed")
         columns = list(values)
@@ -496,8 +496,8 @@ def list_wan_circuits(*, tenant_id: str | None, page: int, page_size: int, keywo
             clauses.append("COALESCE(c.health_status, 'unknown') = ?")
             params.append(health_status)
         if link_role:
-            if link_role not in {"primary", "backup", "load_balanced"}:
-                raise ValueError("link_role must be primary, backup or load_balanced")
+            if link_role not in {"standalone", "primary", "backup", "load_balanced"}:
+                raise ValueError("link_role must be standalone, primary, backup or load_balanced")
             clauses.append("l.link_role = ?")
             params.append(link_role)
         if group_id:

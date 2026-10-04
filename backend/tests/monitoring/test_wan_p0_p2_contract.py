@@ -255,6 +255,21 @@ def test_wan_link_list_supports_role_and_group_filters(isolated_db):
     assert list_wan_links(link_role="primary")["total"] == 0
 
 
+def test_wan_link_list_accepts_standalone_role_filter(isolated_db):
+    from database import get_db_connection
+    from services.wan_link_service import list_wan_links
+
+    conn = get_db_connection()
+    try:
+        link = _seed_link(conn)
+        conn.execute("UPDATE wan_links SET link_role = ? WHERE id = ?", ("standalone", link["id"]))
+        conn.commit()
+    finally:
+        conn.close()
+
+    assert list_wan_links(link_role="standalone")["total"] == 1
+
+
 def test_long_history_is_server_downsampled_with_contract_metadata(isolated_db):
     from database import get_db_connection
     from services.wan_link_service import get_wan_link_history

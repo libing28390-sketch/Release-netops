@@ -47,6 +47,16 @@ def test_save_and_read_circuit_are_tenant_scoped(isolated_db):
     assert sla["availability_pct"] is None
 
 
+def test_standalone_is_a_valid_default_circuit_role(isolated_db):
+    from services.wan_circuit_service import list_wan_circuits, save_wan_circuit
+
+    _seed_inventory()
+    item = save_wan_circuit(_payload(), tenant_id="tenant-circuit", actor_id="operator-1")
+
+    assert item["link_role"] == "standalone"
+    assert list_wan_circuits(tenant_id="tenant-circuit", page=1, page_size=20, link_role="standalone")["total"] == 1
+
+
 def test_endpoint_history_is_append_only_and_only_versions_changed_sides(isolated_db):
     from database import get_db_connection
     from services.wan_circuit_service import (

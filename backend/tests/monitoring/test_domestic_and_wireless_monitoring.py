@@ -33,15 +33,18 @@ def test_promql_selector_domestic_vendors():
 
 def test_promql_selector_wireless_metrics():
     ap_selector = VictoriaMetricsMetricProvider._selector("wireless_ap_online_count", "wlc-1")
-    assert "hwWlanCurOnlineApNum" in ap_selector
     assert "hh3cDot11CurrOnlineAPNum" in ap_selector
     assert "ruijieApcOnlineApNum" in ap_selector
     assert "cLApTotalUpAPs" in ap_selector
     assert "wlsxSysExtAccessPointsNum" in ap_selector
     assert "ruckusZDTotalNumAP" in ap_selector
+    assert "hwWlanCurJointApNum" in ap_selector
+    assert "hwWlanCurOnlineApNum" not in ap_selector
 
     client_selector = VictoriaMetricsMetricProvider._selector("wireless_client_online_count", "wlc-1")
-    assert "hwWlanCurAssocUserNum" in client_selector
+    assert "hwWlanSsid2gStaCnt" in client_selector
+    assert "hwWlanSsid5gStaCnt" in client_selector
+    assert "hwWlanCurAssocUserNum" not in client_selector
     assert "hh3cDot11CurrAssocUserNum" in client_selector
     assert "ruijieApcTotalStaNum" in client_selector
     assert "cLSysTotalNumOfClients" in client_selector
@@ -141,6 +144,18 @@ def test_dashboards_suite_completeness():
         panel = next(panel for panel in wireless_dashboard["panels"] if panel["id"] == panel_id)
         assert "or vector(0)" not in panel["targets"][0]["expr"]
         assert "不代表 AP 或客户端数量为 0" in panel["description"]
+    h3c_panel_queries = " ".join(
+        target["expr"]
+        for panel in wireless_dashboard["panels"]
+        if panel["id"] in {11, 12}
+        for target in panel.get("targets", [])
+    )
+    assert 'vendor=~"(?i)(h3c|comware)"' in h3c_panel_queries
+    huawei_ssid_panel = next(panel for panel in wireless_dashboard["panels"] if panel["id"] == 15)
+    assert 'vendor=~"(?i).*huawei.*"' in huawei_ssid_panel["targets"][0]["expr"]
+    ap_wireless_client_panel = next(panel for panel in wireless_dashboard["panels"] if panel["id"] == 14)
+    assert 'vendor=~"(?i)(h3c|comware|huawei)"' in ap_wireless_client_panel["targets"][0]["expr"]
+    assert "无线单元客户端数" in ap_wireless_client_panel["title"]
 
     interface_dashboard_path = os.path.join(dashboard_dir, "nexora-network-interface.json")
     with open(interface_dashboard_path, "r", encoding="utf-8") as f:

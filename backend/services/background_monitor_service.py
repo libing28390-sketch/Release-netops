@@ -1834,6 +1834,7 @@ async def _process_device_raw(device, cycle_tick: int):
                             platform=platform,
                             model=device.get('model'),
                             version=device.get('version'),
+                            role=device.get('role'),
                             snmp_version=str(device.get('snmp_version') or '2c'),
                         )
                         persist_discovery(str(dev_id), payload)

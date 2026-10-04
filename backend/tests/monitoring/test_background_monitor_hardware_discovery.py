@@ -19,6 +19,7 @@ class _Connection:
     ("capabilities", "expected_stale"),
     [
         ([], True),
+        ([{"discovery_version": "nexora.hardware.discovery.v1"}], True),
         ([{"discovery_version": "older.hardware.discovery"}], True),
         ([{"discovery_version": HARDWARE_DISCOVERY_VERSION}], False),
     ],

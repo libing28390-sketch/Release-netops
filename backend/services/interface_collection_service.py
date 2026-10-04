@@ -27,6 +27,14 @@ from services.normalizers.common import interface_type as infer_interface_type
 logger = logging.getLogger(__name__)
 
 
+class InterfaceInventorySyncError(RuntimeError):
+    """Safe, user-facing failure from an on-demand SNMP interface refresh."""
+
+    def __init__(self, code: str, message: str):
+        super().__init__(message)
+        self.code = code
+
+
 def _run_async(coro: Any) -> Any:
     """Run an async coroutine synchronously and safely within existing event loops."""
     try:
@@ -391,6 +399,87 @@ def _collect_snmp_interfaces(device: dict[str, Any]) -> list[dict[str, Any]] | N
         return None
 
 
+def refresh_snmp_interface_inventory(device_id: str) -> dict[str, Any]:
+    """Read one device's IF-MIB inventory and persist its interface names/indexes.
+
+    This narrow, user-triggered operation intentionally avoids the all-device
+    CLI interface-status job and does not collect unrelated health metrics.
+    """
+    device = _load_device(device_id)
+    try:
+        from services.vault_service import resolve_collector_credentials
+
+        credentials = resolve_collector_credentials(device)
+    except Exception as exc:
+        logger.warning("SNMP interface credential resolution failed for %s (%s)", device_id, type(exc).__name__)
+        raise InterfaceInventorySyncError(
+            "snmp_credentials_unavailable",
+            "无法读取设备的 SNMP 凭据，请检查该设备的凭据配置。",
+        ) from exc
+
+    snmp_credentials = (credentials or {}).get("snmp") or {}
+    if not snmp_credentials.get("configured") or not snmp_credentials.get("community"):
+        raise InterfaceInventorySyncError(
+            "snmp_not_configured",
+            "该设备尚未配置可用的 SNMP 只读凭据。",
+        )
+
+    target_ip = str(snmp_credentials.get("server") or device.get("ip_address") or "").strip()
+    if not target_ip:
+        raise InterfaceInventorySyncError("device_ip_missing", "设备未配置可用于 SNMP 采集的地址。")
+    try:
+        port = int(snmp_credentials.get("port") or 161)
+    except (TypeError, ValueError) as exc:
+        raise InterfaceInventorySyncError("snmp_port_invalid", "设备的 SNMP 端口配置无效。") from exc
+
+    try:
+        from services.snmp_service import collect_interface_inventory
+
+        collected = _run_async(
+            collect_interface_inventory(
+                target_ip,
+                community=str(snmp_credentials["community"]),
+                port=port,
+            )
+        )
+    except Exception as exc:
+        logger.info("On-demand SNMP interface refresh failed for %s (%s)", device_id, type(exc).__name__)
+        raise InterfaceInventorySyncError(
+            "snmp_interface_read_failed",
+            "读取设备端口失败，请检查 SNMP 连通性和只读权限。",
+        ) from exc
+
+    valid_interfaces = []
+    for item in collected or []:
+        if not isinstance(item, dict):
+            continue
+        name = str(item.get("name") or "").strip()
+        raw_index = item.get("if_index", item.get("index"))
+        try:
+            if_index = int(raw_index)
+        except (TypeError, ValueError, OverflowError):
+            continue
+        if name and if_index > 0 and _looks_like_interface_name(name):
+            valid_interfaces.append({**item, "if_index": if_index})
+    if not valid_interfaces:
+        raise InterfaceInventorySyncError(
+            "snmp_no_valid_interfaces",
+            "设备没有返回可用于监控的端口，请检查 SNMP 只读视图是否开放 IF-MIB。",
+        )
+
+    updated_count = _upsert_snmp_interfaces(device, valid_interfaces)
+    if updated_count <= 0:
+        raise InterfaceInventorySyncError(
+            "snmp_interface_persist_failed",
+            "读取到了端口，但未能保存到设备清单，请稍后重试。",
+        )
+    return {
+        "device_id": device_id,
+        "interface_count": len(valid_interfaces),
+        "updated_count": updated_count,
+    }
+
+
 def _upsert_snmp_interfaces(device: dict[str, Any], snmp_interfaces: list[dict[str, Any]]) -> int:
     """Synchronize raw SNMP IF-MIB interface inventory and physical status into CMDB."""
     if not snmp_interfaces:
@@ -430,9 +519,10 @@ def _upsert_snmp_interfaces(device: dict[str, Any], snmp_interfaces: list[dict[s
                 speed_bps = None
 
             description = str(item.get("description") or "").strip()
-            if_index = item.get("index")
+            if_index = item.get("if_index", item.get("index"))
             try:
-                if_index_val = int(if_index) if str(if_index or "").isdigit() else None
+                parsed_if_index = int(if_index) if str(if_index or "").isdigit() else 0
+                if_index_val = parsed_if_index if parsed_if_index > 0 else None
             except (TypeError, ValueError):
                 if_index_val = None
 

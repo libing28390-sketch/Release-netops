@@ -1928,7 +1928,7 @@ class WanLinkPayload(BaseModel):
     circuit_number: str = ""
     public_ip: str = ""
     link_type: str = "Internet"
-    link_role: Literal['primary', 'backup', 'load_balanced'] = "primary"
+    link_role: Literal['standalone', 'primary', 'backup', 'load_balanced'] = "standalone"
     direction_mode: Literal['normal', 'reversed'] = "normal"
     contracted_download_mbps: float = Field(gt=0, le=10_000_000)
     contracted_upload_mbps: float = Field(gt=0, le=10_000_000)
@@ -2316,6 +2316,57 @@ def get_monitoring_wan_options(site_id: str = Query(default=''), device_id: str 
         tenant_id=scope.tenant_id,
         site_ids=scope.site_ids,
     )
+
+
+@router.post('/monitoring/wan-options/devices/{device_id}/interfaces/refresh')
+def refresh_monitoring_wan_device_interfaces(
+    device_id: str,
+    request: Request,
+    action: Literal['create', 'update'] = Query(default='create'),
+    user=require_role('Operator'),
+):
+    """Read and persist only the selected device's SNMP interface inventory."""
+    from services.interface_collection_service import InterfaceInventorySyncError, refresh_snmp_interface_inventory
+    from services.wan_circuit_service import list_wan_link_options_scoped
+
+    scope = _wan_effective_scope(user, action)
+    scoped_options = list_wan_link_options_scoped(
+        tenant_id=scope.tenant_id or _wan_tenant_filter(user) or '',
+        site_ids=scope.site_ids,
+        device_id=device_id,
+    )
+    device = next((item for item in scoped_options.get('devices', []) if str(item.get('id') or '') == device_id), None)
+    if not device:
+        raise HTTPException(status_code=404, detail='Device not found')
+
+    try:
+        refresh_result = refresh_snmp_interface_inventory(device_id)
+    except InterfaceInventorySyncError as exc:
+        status_code = 409 if exc.code in {'snmp_not_configured', 'device_ip_missing', 'snmp_port_invalid'} else 502
+        raise HTTPException(status_code=status_code, detail=str(exc)) from exc
+    except ValueError as exc:
+        raise HTTPException(status_code=404, detail='Device not found') from exc
+
+    refreshed_options = list_wan_link_options_scoped(
+        tenant_id=scope.tenant_id or _wan_tenant_filter(user) or '',
+        site_ids=scope.site_ids,
+        device_id=device_id,
+    )
+    interfaces = refreshed_options.get('interfaces', [])
+    if not interfaces:
+        raise HTTPException(status_code=502, detail='SNMP 没有返回可用于专线监控的端口。')
+
+    _outbound_audit(
+        request,
+        user,
+        'WAN_DEVICE_INTERFACE_REFRESH',
+        f"Refreshed WAN interface inventory for {device.get('hostname') or device_id}",
+        target_type='device',
+        target_id=device_id,
+        target_name=device.get('hostname') or device.get('ip_address') or device_id,
+        details={'interface_count': len(interfaces), 'updated_count': refresh_result.get('updated_count')},
+    )
+    return {'success': True, 'device_id': device_id, 'interfaces': interfaces, 'total': len(interfaces)}
 
 
 @router.get('/monitoring/wan-links/summary')

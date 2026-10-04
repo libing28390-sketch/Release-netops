@@ -9,6 +9,12 @@ import {
 import type { Device, DeviceConnectionCheckSummary, TagDefinition } from '../types';
 import Pagination from '../components/Pagination';
 import DeviceTable, { DEFAULT_COLUMNS, type ColumnVisibility, type ColumnKey } from '../components/DeviceList/DeviceTable';
+import {
+  loadColumnVisibility,
+  saveColumnVisibility,
+  setColumnVisibility,
+  defaultColumnVisibility,
+} from '../components/DeviceList/deviceColumns';
 import { apiRequest } from '../api/http';
 import { buildNetworkDeviceExportData, fetchAllNetworkDevicePages, filterNetworkDevicesForExport } from '../components/DeviceList/deviceExport';
 import type { TableExportData } from '../components/ui/TableExportMenu';
@@ -49,8 +55,9 @@ const COLUMN_LABELS: Record<ColumnKey, { zh: string; en: string }> = {
 const ColumnToggle: React.FC<{
   columns: ColumnVisibility;
   onChange: (key: ColumnKey, val: boolean) => void;
+  onReset: () => void;
   language: string;
-}> = ({ columns, onChange, language }) => {
+}> = ({ columns, onChange, onReset, language }) => {
   const [open, setOpen] = useState(false);
   const ref = useRef<HTMLDivElement>(null);
   const zh = language === 'zh';
@@ -65,6 +72,9 @@ const ColumnToggle: React.FC<{
   return (
     <div ref={ref} className="relative">
       <button
+        type="button"
+        aria-expanded={open}
+        aria-controls="network-device-column-options"
         onClick={() => setOpen(!open)}
         title={zh ? '列显示设置' : 'Column visibility'}
         className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-xl border border-gray-200/80 dark:border-zinc-700/80
@@ -77,21 +87,36 @@ const ColumnToggle: React.FC<{
       {open && (
         <div className="absolute right-0 top-full mt-1.5 z-50 w-56 max-h-[70vh] overflow-y-auto rounded-2xl border border-gray-100 dark:border-zinc-800
           bg-white dark:bg-zinc-900 shadow-xl shadow-black/10 dark:shadow-black/40 py-2">
-          <div className="px-3 pb-1.5 mb-1 border-b border-gray-100 dark:border-zinc-800 text-[10px] font-bold uppercase tracking-wider text-gray-400">
+          <div id="network-device-column-options" className="px-3 pb-1.5 mb-1 border-b border-gray-100 dark:border-zinc-800 text-[10px] font-bold uppercase tracking-wider text-gray-400">
             {zh ? '自定义展示列' : 'Visible Columns'}
           </div>
-          {(Object.keys(COLUMN_LABELS) as ColumnKey[]).map(key => (
+          <div className="border-b border-gray-100 dark:border-zinc-800 pb-1">
+          {(Object.keys(COLUMN_LABELS) as ColumnKey[]).map(key => {
+            const visibleDataColumns = Object.entries(columns).filter(([column, visible]) => column !== 'actions' && visible).length;
+            const required = key === 'actions';
+            return (
             <label key={key} className="flex items-center gap-2.5 px-3 py-1.5 text-xs text-gray-700 dark:text-zinc-300
               hover:bg-gray-50 dark:hover:bg-zinc-800 cursor-pointer transition-colors">
               <input
                 type="checkbox"
                 checked={columns[key]}
+                disabled={required || (columns[key] && visibleDataColumns <= 1)}
+                aria-label={zh ? COLUMN_LABELS[key].zh : COLUMN_LABELS[key].en}
                 onChange={e => onChange(key, e.target.checked)}
                 className="h-3.5 w-3.5 rounded border-gray-300 accent-blue-600 cursor-pointer"
               />
               <span className="font-medium">{zh ? COLUMN_LABELS[key].zh : COLUMN_LABELS[key].en}</span>
             </label>
-          ))}
+            );
+          })}
+          </div>
+          <button
+            type="button"
+            onClick={onReset}
+            className="w-full px-3 py-2 mt-1 text-left text-xs font-semibold text-blue-600 dark:text-blue-400 hover:bg-blue-50 dark:hover:bg-blue-950/30 cursor-pointer"
+          >
+            {zh ? '恢复默认列' : 'Restore default columns'}
+          </button>
         </div>
       )}
     </div>
@@ -146,7 +171,7 @@ const InventoryDevicesTab: React.FC<InventoryDevicesTabProps> = ({
   const { handleSort, handleDeleteDevice, handleDeleteSelected } = useInventoryTableActions();
 
   const [quickFilter, setQuickFilter] = useState<'all' | 'offline' | 'warning' | 'staging_maintenance' | 'healthy'>('all');
-  const [columns, setColumns] = useState<ColumnVisibility>({ ...DEFAULT_COLUMNS });
+  const [columns, setColumns] = useState<ColumnVisibility>(() => loadColumnVisibility());
   const [allTags, setAllTags] = useState<TagDefinition[]>([]);
   const [tagFilterIds, setTagFilterIds] = useState<string[]>([]);
   const [batchTagOpen, setBatchTagOpen] = useState(false);
@@ -154,6 +179,10 @@ const InventoryDevicesTab: React.FC<InventoryDevicesTabProps> = ({
   const [batchTagLoading, setBatchTagLoading] = useState(false);
   const [batchPlatformOpen, setBatchPlatformOpen] = useState(false);
   const batchTagRef = useRef<HTMLDivElement>(null);
+
+  useEffect(() => {
+    saveColumnVisibility(columns);
+  }, [columns]);
 
   useEffect(() => {
     const token = localStorage.getItem('netops_token');
@@ -185,6 +214,10 @@ const InventoryDevicesTab: React.FC<InventoryDevicesTabProps> = ({
   ]);
 
   useEffect(() => {
+    setInventoryPage(1);
+  }, [quickFilter, inventoryLifecycleFilter, tagFilterIds, setInventoryPage]);
+
+  useEffect(() => {
     if (!batchTagOpen) return;
     const handler = (e: MouseEvent) => {
       if (batchTagRef.current && !batchTagRef.current.contains(e.target as Node)) setBatchTagOpen(false);
@@ -194,8 +227,10 @@ const InventoryDevicesTab: React.FC<InventoryDevicesTabProps> = ({
   }, [batchTagOpen]);
 
   const handleColumnToggle = (key: ColumnKey, val: boolean) => {
-    setColumns(prev => ({ ...prev, [key]: val }));
+    setColumns(prev => setColumnVisibility(prev, key, val));
   };
+
+  const handleColumnReset = () => setColumns(defaultColumnVisibility());
 
   // Status & Health Counts
   const totalDevices = inventoryTotal || 0;
@@ -352,7 +387,7 @@ const InventoryDevicesTab: React.FC<InventoryDevicesTabProps> = ({
               <RefreshCw size={13} className={inventoryLoading ? 'animate-spin text-blue-500' : 'text-gray-500'} />
               <span>{zh ? '刷新' : 'Refresh'}</span>
             </button>
-            <ColumnToggle columns={columns} onChange={handleColumnToggle} language={language} />
+            <ColumnToggle columns={columns} onChange={handleColumnToggle} onReset={handleColumnReset} language={language} />
           </div>
         }
       />
@@ -594,7 +629,9 @@ const InventoryDevicesTab: React.FC<InventoryDevicesTabProps> = ({
 
             <div className="flex-1" />
             <span className="text-xs font-mono text-gray-400 tabular-nums whitespace-nowrap">
-              {zh ? `共 ${displayRows.length} 台设备` : `${displayRows.length} devices`}
+              {zh
+                ? `本页显示 ${displayRows.length} 台 / 列表共 ${inventoryTotal} 台`
+                : `Showing ${displayRows.length} on this page / ${inventoryTotal} devices`}
             </span>
           </div>
         </div>
@@ -739,7 +776,7 @@ const InventoryDevicesTab: React.FC<InventoryDevicesTabProps> = ({
           />
           <Pagination
             currentPage={inventoryPage}
-            totalItems={quickFilter !== 'all' || tagFilterIds.length > 0 || (inventoryLifecycleFilter && inventoryLifecycleFilter !== 'all') ? displayRows.length : inventoryTotal}
+            totalItems={inventoryTotal}
             itemsPerPage={inventoryPageSize}
             onItemsPerPageChange={setInventoryPageSize}
             onPageChange={setInventoryPage}
