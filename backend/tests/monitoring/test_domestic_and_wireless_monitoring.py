@@ -6,6 +6,7 @@ from backend.services.metric_provider import (
 from backend.services.monitoring_oid_catalog import BUILTIN_OID_CATALOG
 import os
 import json
+from monitoring.grafana.generate_dashboards import build_wireless_dashboard
 
 
 def test_allowed_metrics_includes_wireless():
@@ -223,6 +224,36 @@ def test_dashboards_suite_completeness():
             if organize:
                 assert organize["renameByName"].get("ifAlias") == "接口描述"
                 assert organize["excludeByName"].get("ifDescr") is True
+
+
+def test_wireless_dashboard_uses_hardware_inventory_job_and_joins_by_device():
+    dashboard = build_wireless_dashboard()
+    panels = {panel["title"]: panel for panel in dashboard["panels"]}
+
+    def query(title):
+        return panels[title]["targets"][0]["expr"]
+
+    for title in (
+        "H3C AP 在线状态",
+        "H3C AP 当前客户端数 Top 20",
+        "无线射频信道利用率",
+        "H3C / 华为 AP 无线单元客户端数 Top 20",
+        "华为 SSID 当前客户端数 Top 20",
+    ):
+        expression = query(title)
+        assert 'job="platform_hardware_inventory"' in expression
+        assert 'job="network_snmp"' not in expression
+
+    online_ap_expression = query("当前在线 AP 总数")
+    assert 'job="network_snmp"' in online_ap_expression
+    assert 'job="platform_hardware_inventory"' in online_ap_expression
+    assert "unless on(site_name,vendor,role,hostname)" in online_ap_expression
+    assert "or on(site_name,vendor,role,hostname)" in online_ap_expression
+
+    clients_expression = query("全网在线关联无线终端")
+    assert 'job="network_snmp"' in clients_expression
+    assert 'job="platform_hardware_inventory"' in clients_expression
+    assert "unless on(site_name,vendor,role,hostname)" in clients_expression
 
 
 def test_dashboard_device_variables_use_current_up_targets():

@@ -131,6 +131,7 @@ INTERFACE_ROLE_VALUE_MAPPINGS = [
 DEV_JOIN = ""
 IF_JOIN = "* on(instance, ifIndex) group_left(ifName) ((ifName * 0 + 1) or on(instance, ifIndex) (ifOperStatus * 0 + 1))"
 NETWORK_JOB = 'job="network_snmp"'
+HARDWARE_INVENTORY_JOB = 'job="platform_hardware_inventory"'
 
 
 def counter_rate_expr(high_capacity_metric, legacy_metric, selector):
@@ -1722,29 +1723,33 @@ def build_device_dashboard():
 # 3. Wireless Monitoring Dashboard
 def build_wireless_dashboard():
     sel = f'{NETWORK_JOB},site_name=~"$site",vendor=~"$vendor",role=~"$role",hostname=~"$device"'
-    h3c_sel = f'{sel},vendor=~"(?i)(h3c|comware)"'
-    huawei_sel = f'{sel},vendor=~"(?i).*huawei.*"'
-    wireless_client_sel = f'{sel},vendor=~"(?i)(h3c|comware|huawei)"'
-    device_labels = "job,site_name,vendor,role,hostname"
+    inventory_sel = f'{HARDWARE_INVENTORY_JOB},site_name=~"$site",vendor=~"$vendor",role=~"$role",hostname=~"$device"'
+    h3c_inventory_sel = f'{inventory_sel},vendor=~"(?i)(h3c|comware)"'
+    huawei_inventory_sel = f'{inventory_sel},vendor=~"(?i).*huawei.*"'
+    wireless_inventory_sel = f'{inventory_sel},vendor=~"(?i)(h3c|comware|huawei)"'
+    # The wireless dashboard combines SNMP-exporter series and normalized
+    # hardware-inventory series. Their job labels differ, so device identity
+    # must not include `job` when de-duplicating or joining these sources.
+    device_labels = "site_name,vendor,role,hostname"
     # Cisco/Aruba/Ruckus expose active/up APs but not a configured total in the
     # catalog, so they must not be used as the denominator for offline APs.
     ap_all = f"sum by ({device_labels}) (hwWlanApTotalNum{{{sel}}} or hh3cDot11TotalAPNum{{{sel}}} or ruijieApcTotalApNum{{{sel}}})"
-    legacy_ap_online = f"(hh3cDot11CurrOnlineAPNum{{{sel}}} or cLApTotalUpAPs{{{sel}}} or wlsxSysExtAccessPointsNum{{{sel}}} or ruckusZDTotalNumAP{{{sel}}})"
-    inventory_ap_online = f'nexora_wireless_sensor_value{{{sel},component_class="wireless_controller",sensor_class="ap-count"}}'
-    ap_online = f"sum by ({device_labels}) ((({legacy_ap_online}) unless on({device_labels}) ({inventory_ap_online})) or ({inventory_ap_online}))"
+    legacy_ap_online = f"sum by ({device_labels}) (hh3cDot11CurrOnlineAPNum{{{sel}}} or cLApTotalUpAPs{{{sel}}} or wlsxSysExtAccessPointsNum{{{sel}}} or ruckusZDTotalNumAP{{{sel}}})"
+    inventory_ap_online = f'sum by ({device_labels}) (nexora_wireless_sensor_value{{{inventory_sel},component_class="wireless_controller",sensor_class="ap-count"}})'
+    ap_online = f"({legacy_ap_online} unless on({device_labels}) ({inventory_ap_online})) or on({device_labels}) ({inventory_ap_online})"
     ap_offline = f"({ap_all} - {ap_online})"
-    legacy_clients = f"(hh3cDot11CurrAssocUserNum{{{sel}}} or cLSysTotalNumOfClients{{{sel}}} or wlsxSysExtStationsNum{{{sel}}} or ruckusZDTotalNumSta{{{sel}}})"
-    controller_clients = f'sum by ({device_labels}) (nexora_wireless_sensor_value{{{sel},component_class="wireless_controller",sensor_class="clients"}})'
-    ssid_clients = f'sum by ({device_labels}) (nexora_wireless_sensor_value{{{sel},component_class="wireless_ssid",sensor_class="clients"}})'
+    legacy_clients = f"sum by ({device_labels}) (hh3cDot11CurrAssocUserNum{{{sel}}} or cLSysTotalNumOfClients{{{sel}}} or wlsxSysExtStationsNum{{{sel}}} or ruckusZDTotalNumSta{{{sel}}})"
+    controller_clients = f'sum by ({device_labels}) (nexora_wireless_sensor_value{{{inventory_sel},component_class="wireless_controller",sensor_class="clients"}})'
+    ssid_clients = f'sum by ({device_labels}) (nexora_wireless_sensor_value{{{inventory_sel},component_class="wireless_ssid",sensor_class="clients"}})'
     inventory_clients = f"({controller_clients} or on({device_labels}) {ssid_clients})"
-    clients = f"sum by ({device_labels}) ((({legacy_clients}) unless on({device_labels}) ({inventory_clients})) or ({inventory_clients}))"
+    clients = f"({legacy_clients} unless on({device_labels}) ({inventory_clients})) or on({device_labels}) ({inventory_clients})"
     client_per_ap = f"({clients}) / clamp_min(({ap_online}), 1)"
     wireless_missing_description = "没有匹配的无线控制器指标时显示暂无采集数据，不代表 AP 或客户端数量为 0。"
-    ap_client_rows = f'topk(20, nexora_wireless_sensor_value{{{h3c_sel},component_class="wireless_access_point",sensor_class="clients"}})'
-    radio_utilization_rows = f'nexora_wireless_sensor_value{{{sel},component_class="wireless_radio",sensor_class="utilization"}}'
-    bss_client_rows = f'topk(20, nexora_wireless_sensor_value{{{wireless_client_sel},component_class="wireless_bss",sensor_class="clients"}})'
-    ap_state_rows = f'nexora_hw_component_state{{{h3c_sel},component_class="wireless_access_point"}}'
-    huawei_ssid_rows = f'topk(20, sum by ({device_labels},ssid) (nexora_wireless_sensor_value{{{huawei_sel},component_class="wireless_ssid",sensor_class="clients"}}))'
+    ap_client_rows = f'topk(20, nexora_wireless_sensor_value{{{h3c_inventory_sel},component_class="wireless_access_point",sensor_class="clients"}})'
+    radio_utilization_rows = f'nexora_wireless_sensor_value{{{inventory_sel},component_class="wireless_radio",sensor_class="utilization"}}'
+    bss_client_rows = f'topk(20, nexora_wireless_sensor_value{{{wireless_inventory_sel},component_class="wireless_bss",sensor_class="clients"}})'
+    ap_state_rows = f'nexora_hw_component_state{{{h3c_inventory_sel},component_class="wireless_access_point"}}'
+    huawei_ssid_rows = f'topk(20, sum by ({device_labels},ssid) (nexora_wireless_sensor_value{{{huawei_inventory_sel},component_class="wireless_ssid",sensor_class="clients"}}))'
 
     panels = [
         stat_panel(1, "已提供总量的 AP 数", f"sum({ap_all})", 0, 0, 6, 4, color="#3274D9", description=wireless_missing_description),
