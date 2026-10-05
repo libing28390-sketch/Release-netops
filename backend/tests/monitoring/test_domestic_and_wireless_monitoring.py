@@ -9,6 +9,7 @@ import json
 from monitoring.grafana.generate_dashboards import (
     CLIENT_COLOR,
     CRITICAL_COLOR,
+    CYAN_COLOR,
     HEALTHY_COLOR,
     HIGH_COLOR,
     INFO_COLOR,
@@ -19,9 +20,6 @@ from monitoring.grafana.generate_dashboards import (
     UTILIZATION_THRESHOLDS,
     NO_VALUE_TEXT,
     build_dashboard_catalog,
-    build_interface_dashboard,
-    build_interface_detail_dashboard,
-    build_overview_dashboard,
     build_wireless_dashboard,
     validate_dashboard,
 )
@@ -362,16 +360,20 @@ def test_wireless_dashboard_homepage_groups_actual_metrics_by_wireless_layer():
 
 def test_wireless_and_interface_dashboards_share_reference_semantic_colors():
     assert (HEALTHY_COLOR, WARNING_COLOR, HIGH_COLOR, CRITICAL_COLOR, INFO_COLOR, NEUTRAL_COLOR) == (
-        "#2AD4A7", "#F5C451", "#FF985C", "#FF5D73", "#49B5FF", "#9AA8B8"
+        "#22C55E", "#F59E0B", "#F97316", "#F43F5E", "#3B82F6", "#64748B"
     )
     assert [step["value"] for step in UTILIZATION_THRESHOLDS] == [None, 60, 75, 90]
 
-    wireless = build_wireless_dashboard()
+    dashboards_by_uid = {
+        dashboard["uid"]: dashboard
+        for _, dashboard in build_dashboard_catalog()
+    }
+    wireless = dashboards_by_uid["nexora-network-wireless"]
     wireless_panels = {panel["id"]: panel for panel in wireless["panels"]}
     assert wireless["time"] == {"from": "now-15m", "to": "now"}
     assert wireless["refresh"] == "30s"
 
-    assert wireless_panels[1]["fieldConfig"]["defaults"]["thresholds"]["steps"][0]["color"] == NEUTRAL_COLOR
+    assert wireless_panels[1]["fieldConfig"]["defaults"]["thresholds"]["steps"][0]["color"] == CLIENT_COLOR
     assert wireless_panels[2]["fieldConfig"]["defaults"]["thresholds"]["steps"][0]["color"] == HEALTHY_COLOR
     assert wireless_panels[3]["fieldConfig"]["defaults"]["thresholds"]["steps"] == [
         {"color": HEALTHY_COLOR, "value": None},
@@ -382,7 +384,7 @@ def test_wireless_and_interface_dashboards_share_reference_semantic_colors():
         override["matcher"]["options"]: override["properties"][0]["value"]["fixedColor"]
         for override in wireless_panels[7]["fieldConfig"]["overrides"]
     }
-    assert trend_colors == {"在线 AP": HEALTHY_COLOR, "关联终端": CLIENT_COLOR}
+    assert trend_colors == {"在线 AP": CYAN_COLOR, "关联终端": CLIENT_COLOR}
 
     ap_state_distribution = wireless_panels[8]
     assert ap_state_distribution["fieldConfig"]["defaults"]["color"] == {
@@ -412,17 +414,21 @@ def test_wireless_and_interface_dashboards_share_reference_semantic_colors():
     assert state_options["join"] == {"text": "接入中", "color": WARNING_COLOR}
     assert any(
         override["matcher"] == {"id": "byName", "options": "状态说明"}
-        and override["properties"][0]["value"] == {"type": "color-background"}
+        and any(
+            prop["id"] == "custom.cellOptions"
+            and prop["value"] == {"type": "color-text"}
+            for prop in override["properties"]
+        )
         for override in ap_state_table["fieldConfig"]["overrides"]
     )
     organized_fields = ap_state_table["transformations"][0]["options"]["excludeByName"]
     assert organized_fields["Value"] is True
 
-    interface = build_interface_dashboard()
+    interface = dashboards_by_uid["nexora-network-interface"]
     interface_panels = {panel["id"]: panel for panel in interface["panels"]}
     assert interface_panels[1]["fieldConfig"]["defaults"]["thresholds"]["steps"][0]["color"] == INBOUND_COLOR
     assert interface_panels[2]["fieldConfig"]["defaults"]["thresholds"]["steps"][0]["color"] == OUTBOUND_COLOR
-    assert interface_panels[3]["fieldConfig"]["defaults"]["thresholds"]["steps"][0]["color"] == HIGH_COLOR
+    assert interface_panels[3]["fieldConfig"]["defaults"]["thresholds"]["steps"][0]["color"] == WARNING_COLOR
     assert interface_panels[4]["fieldConfig"]["defaults"]["thresholds"]["steps"][0]["color"] == CRITICAL_COLOR
     flow_colors = {
         override["matcher"]["options"]: override["properties"][0]["value"]["fixedColor"]
@@ -439,9 +445,9 @@ def test_wireless_and_interface_dashboards_share_reference_semantic_colors():
         for prop in override["properties"]
         if prop["id"] == "thresholds"
     )
-    assert interface_utilization_thresholds == UTILIZATION_THRESHOLDS
+    assert interface_utilization_thresholds == [{"color": INFO_COLOR, "value": None}]
 
-    detail = build_interface_detail_dashboard()
+    detail = dashboards_by_uid["nexora-interface-detail"]
     detail_panels = {panel["id"]: panel for panel in detail["panels"]}
     assert detail_panels[1]["fieldConfig"]["defaults"]["thresholds"]["steps"][0]["color"] == INBOUND_COLOR
     assert detail_panels[2]["fieldConfig"]["defaults"]["thresholds"]["steps"][0]["color"] == OUTBOUND_COLOR
@@ -452,7 +458,10 @@ def test_wireless_and_interface_dashboards_share_reference_semantic_colors():
     assert detail_flow_colors["入向带宽"] == INBOUND_COLOR
     assert detail_flow_colors["出向带宽"] == OUTBOUND_COLOR
 
-    overview = {panel["id"]: panel for panel in build_overview_dashboard()["panels"]}
+    overview = {
+        panel["id"]: panel
+        for panel in _iter_panels(dashboards_by_uid["nexora-network-overview"]["panels"])
+    }
     overview_client_expr = overview[4]["targets"][0]["expr"]
     wireless_client_expr = wireless_panels[4]["targets"][0]["expr"]
     assert overview_client_expr == wireless_client_expr
@@ -460,7 +469,7 @@ def test_wireless_and_interface_dashboards_share_reference_semantic_colors():
     assert 'component_class="wireless_ssid",sensor_class="clients"' in overview_client_expr
     assert "unless on(site_name,vendor,role,hostname)" in overview_client_expr
     assert "or vector(0)" not in overview_client_expr
-    assert overview[4]["fieldConfig"]["defaults"]["thresholds"]["steps"][0]["color"] == NEUTRAL_COLOR
+    assert overview[4]["fieldConfig"]["defaults"]["thresholds"]["steps"][0]["color"] == CLIENT_COLOR
     assert overview[8]["targets"][0]["expr"] == overview_client_expr
 
 
