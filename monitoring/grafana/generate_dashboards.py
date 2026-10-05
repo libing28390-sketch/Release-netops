@@ -1744,10 +1744,11 @@ def build_wireless_dashboard():
     inventory_clients = f"({controller_clients} or on({device_labels}) {ssid_clients})"
     clients = f"({legacy_clients} unless on({device_labels}) ({inventory_clients})) or on({device_labels}) ({inventory_clients})"
     client_per_ap = f"({clients}) / clamp_min(({ap_online}), 1)"
-    ap_total_description = "统计已采到 AP 总量的控制器。"
-    ap_online_description = "显示当前在线 AP 数。"
-    ap_offline_description = "总量减在线数；缺少任一数据时不显示。"
-    client_count_description = "显示当前已关联无线终端数。"
+    missing_wireless_data_note = "未显示不代表 AP 或客户端数量为 0。"
+    ap_total_description = f"统计已采到 AP 总量的控制器。{missing_wireless_data_note}"
+    ap_online_description = f"显示当前在线 AP 数。{missing_wireless_data_note}"
+    ap_offline_description = f"总量减在线数；缺少任一数据时不显示。{missing_wireless_data_note}"
+    client_count_description = f"显示当前已关联无线终端数。{missing_wireless_data_note}"
     ap_client_rows = f'topk(20, nexora_wireless_sensor_value{{{h3c_inventory_sel},component_class="wireless_access_point",sensor_class="clients"}})'
     radio_utilization_rows = f'nexora_wireless_sensor_value{{{inventory_sel},component_class="wireless_radio",sensor_class="utilization"}}'
     bss_client_rows = f'topk(20, nexora_wireless_sensor_value{{{wireless_inventory_sel},component_class="wireless_bss",sensor_class="clients"}})'
