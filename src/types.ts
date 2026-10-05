@@ -193,6 +193,20 @@ export interface Device {
   tag_ids?: string[];
 }
 
+export interface DeviceSummaryPlatform {
+  platform: string;
+  count: number;
+}
+
+export interface DeviceSummary {
+  total: number;
+  online: number;
+  offline: number;
+  pending: number;
+  unknown: number;
+  by_platform: DeviceSummaryPlatform[];
+}
+
 export interface DeviceConnectionCheckSummary {
   status: 'ok' | 'tcp_fail' | 'ssh_auth_fail' | 'ssh_timeout' | 'ssh_transport' | 'ssh_legacy' | 'fail';
   mode: 'quick' | 'deep';

@@ -1100,6 +1100,87 @@ def read_devices(
         conn.close()
 
 
+@router.get("/devices/summary")
+def read_devices_summary(
+    asset_type: Optional[str] = Query(default='network_device'),
+    user=require_role("Viewer"),
+):
+    """Return database-only device counters for the complete asset filter set.
+
+    Keep this endpoint independent from the device-list enrichment pipeline:
+    dashboard callers only need aggregate state and platform counts, and the
+    joined asset rows must never turn one device into multiple counts.
+    """
+    conn = get_db_connection()
+    try:
+        where_clauses = []
+        params = []
+
+        if asset_type and asset_type != 'all':
+            # Match /devices: an unlinked device is treated as a network
+            # device, while a linked asset keeps its explicit asset_type.
+            where_clauses.append(
+                "(CASE WHEN pa.asset_type IS NOT NULL THEN pa.asset_type "
+                "ELSE 'network_device' END) = ?"
+            )
+            params.append(asset_type)
+
+        # Device rows are tenant-owned.  Administrators retain the existing
+        # cross-tenant read behavior; all other sessions use the same default
+        # tenant fallback as the monitoring read APIs.
+        if isinstance(user, dict) and user.get('role') != 'Administrator':
+            tenant_id = str(user.get('tenant_id') or 'tenant-default').strip() or 'tenant-default'
+            where_clauses.append("COALESCE(d.tenant_id, 'tenant-default') = ?")
+            params.append(tenant_id)
+
+        where_sql = f"WHERE {' AND '.join(where_clauses)}" if where_clauses else ''
+        platform_expr = "COALESCE(NULLIF(TRIM(d.platform), ''), 'unknown')"
+        status_expr = "LOWER(TRIM(COALESCE(d.status, '')))"
+
+        # Aggregate status and platform counts in one query.  COUNT(DISTINCT)
+        # keeps the result stable if a legacy/auxiliary join ever yields more
+        # than one matching row for a device.
+        rows = conn.execute(
+            f'''
+            SELECT {platform_expr} AS platform,
+                   COUNT(DISTINCT d.id) AS platform_count,
+                   COUNT(DISTINCT CASE WHEN {status_expr} = 'online' THEN d.id END) AS online_count,
+                   COUNT(DISTINCT CASE WHEN {status_expr} = 'offline' THEN d.id END) AS offline_count,
+                   COUNT(DISTINCT CASE WHEN {status_expr} = 'pending' THEN d.id END) AS pending_count,
+                   COUNT(DISTINCT CASE WHEN {status_expr} NOT IN ('online', 'offline', 'pending')
+                                       THEN d.id END) AS unknown_count
+              FROM devices d
+              LEFT JOIN physical_assets pa ON pa.id = d.asset_id
+              {where_sql}
+             GROUP BY {platform_expr}
+             ORDER BY {platform_expr}
+            ''',
+            tuple(params),
+        ).fetchall()
+
+        summary = {
+            'total': 0,
+            'online': 0,
+            'offline': 0,
+            'pending': 0,
+            'unknown': 0,
+            'by_platform': [],
+        }
+        for row in rows:
+            summary['total'] += int(row['platform_count'] or 0)
+            summary['online'] += int(row['online_count'] or 0)
+            summary['offline'] += int(row['offline_count'] or 0)
+            summary['pending'] += int(row['pending_count'] or 0)
+            summary['unknown'] += int(row['unknown_count'] or 0)
+            summary['by_platform'].append({
+                'platform': str(row['platform'] or 'unknown'),
+                'count': int(row['platform_count'] or 0),
+            })
+        return summary
+    finally:
+        conn.close()
+
+
 @router.get("/platform-registry/snmp-metric-profiles")
 def list_snmp_metric_profiles(
     search: Optional[str] = Query(default=None),

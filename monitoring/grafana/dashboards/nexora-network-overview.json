@@ -46,11 +46,33 @@
             "mode": "absolute",
             "steps": [
               {
-                "color": "#9AA8B8",
+                "color": "#3B82F6",
                 "value": null
               }
             ]
-          }
+          },
+          "mappings": [
+            {
+              "type": "special",
+              "options": {
+                "match": "null",
+                "result": {
+                  "text": "暂无采集数据",
+                  "color": "#64748B"
+                }
+              }
+            },
+            {
+              "type": "special",
+              "options": {
+                "match": "nan",
+                "result": {
+                  "text": "暂无采集数据",
+                  "color": "#64748B"
+                }
+              }
+            }
+          ]
         },
         "overrides": []
       },
@@ -101,11 +123,33 @@
             "mode": "absolute",
             "steps": [
               {
-                "color": "#9AA8B8",
+                "color": "#A78BFA",
                 "value": null
               }
             ]
-          }
+          },
+          "mappings": [
+            {
+              "type": "special",
+              "options": {
+                "match": "null",
+                "result": {
+                  "text": "暂无采集数据",
+                  "color": "#64748B"
+                }
+              }
+            },
+            {
+              "type": "special",
+              "options": {
+                "match": "nan",
+                "result": {
+                  "text": "暂无采集数据",
+                  "color": "#64748B"
+                }
+              }
+            }
+          ]
         },
         "overrides": []
       },
@@ -156,11 +200,33 @@
             "mode": "absolute",
             "steps": [
               {
-                "color": "#9AA8B8",
+                "color": "#22C55E",
                 "value": null
               }
             ]
-          }
+          },
+          "mappings": [
+            {
+              "type": "special",
+              "options": {
+                "match": "null",
+                "result": {
+                  "text": "暂无采集数据",
+                  "color": "#64748B"
+                }
+              }
+            },
+            {
+              "type": "special",
+              "options": {
+                "match": "nan",
+                "result": {
+                  "text": "暂无采集数据",
+                  "color": "#64748B"
+                }
+              }
+            }
+          ]
         },
         "overrides": []
       },
@@ -211,11 +277,33 @@
             "mode": "absolute",
             "steps": [
               {
-                "color": "#9AA8B8",
+                "color": "#A78BFA",
                 "value": null
               }
             ]
-          }
+          },
+          "mappings": [
+            {
+              "type": "special",
+              "options": {
+                "match": "null",
+                "result": {
+                  "text": "暂无采集数据",
+                  "color": "#64748B"
+                }
+              }
+            },
+            {
+              "type": "special",
+              "options": {
+                "match": "nan",
+                "result": {
+                  "text": "暂无采集数据",
+                  "color": "#64748B"
+                }
+              }
+            }
+          ]
         },
         "overrides": []
       },
@@ -266,11 +354,33 @@
             "mode": "absolute",
             "steps": [
               {
-                "color": "#9AA8B8",
+                "color": "#3B82F6",
                 "value": null
               }
             ]
-          }
+          },
+          "mappings": [
+            {
+              "type": "special",
+              "options": {
+                "match": "null",
+                "result": {
+                  "text": "暂无采集数据",
+                  "color": "#64748B"
+                }
+              }
+            },
+            {
+              "type": "special",
+              "options": {
+                "match": "nan",
+                "result": {
+                  "text": "暂无采集数据",
+                  "color": "#64748B"
+                }
+              }
+            }
+          ]
         },
         "overrides": []
       },
@@ -321,19 +431,41 @@
             "mode": "absolute",
             "steps": [
               {
-                "color": "#9AA8B8",
+                "color": "#22C55E",
                 "value": null
               },
               {
-                "color": "#F5C451",
+                "color": "#F59E0B",
                 "value": 1
               },
               {
-                "color": "#FF5D73",
+                "color": "#F43F5E",
                 "value": 5
               }
             ]
-          }
+          },
+          "mappings": [
+            {
+              "type": "special",
+              "options": {
+                "match": "null",
+                "result": {
+                  "text": "暂无采集数据",
+                  "color": "#64748B"
+                }
+              }
+            },
+            {
+              "type": "special",
+              "options": {
+                "match": "nan",
+                "result": {
+                  "text": "暂无采集数据",
+                  "color": "#64748B"
+                }
+              }
+            }
+          ]
         },
         "overrides": []
       },
@@ -398,7 +530,7 @@
             "drawStyle": "line",
             "lineInterpolation": "linear",
             "lineWidth": 2,
-            "fillOpacity": 10,
+            "fillOpacity": 12,
             "gradientMode": "none",
             "showPoints": "never"
           }
@@ -414,7 +546,7 @@
                 "id": "color",
                 "value": {
                   "mode": "fixed",
-                  "fixedColor": "#49B5FF"
+                  "fixedColor": "#22D3EE"
                 }
               }
             ]
@@ -429,7 +561,7 @@
                 "id": "color",
                 "value": {
                   "mode": "fixed",
-                  "fixedColor": "#2AD4A7"
+                  "fixedColor": "#3B82F6"
                 }
               }
             ]
@@ -486,12 +618,43 @@
             "drawStyle": "line",
             "lineInterpolation": "linear",
             "lineWidth": 2,
-            "fillOpacity": 10,
+            "fillOpacity": 12,
             "gradientMode": "none",
             "showPoints": "never"
           }
         },
-        "overrides": []
+        "overrides": [
+          {
+            "matcher": {
+              "id": "byName",
+              "options": "控制器统计的在线终端"
+            },
+            "properties": [
+              {
+                "id": "color",
+                "value": {
+                  "mode": "fixed",
+                  "fixedColor": "#A78BFA"
+                }
+              }
+            ]
+          },
+          {
+            "matcher": {
+              "id": "byName",
+              "options": "在线 AP 总数"
+            },
+            "properties": [
+              {
+                "id": "color",
+                "value": {
+                  "mode": "fixed",
+                  "fixedColor": "#22D3EE"
+                }
+              }
+            ]
+          }
+        ]
       },
       "options": {
         "legend": {
@@ -556,11 +719,33 @@
             "mode": "absolute",
             "steps": [
               {
-                "color": "#9AA8B8",
+                "color": "#3B82F6",
                 "value": null
               }
             ]
-          }
+          },
+          "mappings": [
+            {
+              "type": "special",
+              "options": {
+                "match": "null",
+                "result": {
+                  "text": "暂无采集数据",
+                  "color": "#64748B"
+                }
+              }
+            },
+            {
+              "type": "special",
+              "options": {
+                "match": "nan",
+                "result": {
+                  "text": "暂无采集数据",
+                  "color": "#64748B"
+                }
+              }
+            }
+          ]
         },
         "overrides": []
       },
@@ -611,11 +796,33 @@
             "mode": "absolute",
             "steps": [
               {
-                "color": "#9AA8B8",
+                "color": "#22D3EE",
                 "value": null
               }
             ]
-          }
+          },
+          "mappings": [
+            {
+              "type": "special",
+              "options": {
+                "match": "null",
+                "result": {
+                  "text": "暂无采集数据",
+                  "color": "#64748B"
+                }
+              }
+            },
+            {
+              "type": "special",
+              "options": {
+                "match": "nan",
+                "result": {
+                  "text": "暂无采集数据",
+                  "color": "#64748B"
+                }
+              }
+            }
+          ]
         },
         "overrides": []
       },
@@ -667,11 +874,33 @@
             "mode": "absolute",
             "steps": [
               {
-                "color": "#9AA8B8",
+                "color": "#A78BFA",
                 "value": null
               }
             ]
-          }
+          },
+          "mappings": [
+            {
+              "type": "special",
+              "options": {
+                "match": "null",
+                "result": {
+                  "text": "暂无采集数据",
+                  "color": "#64748B"
+                }
+              }
+            },
+            {
+              "type": "special",
+              "options": {
+                "match": "nan",
+                "result": {
+                  "text": "暂无采集数据",
+                  "color": "#64748B"
+                }
+              }
+            }
+          ]
         },
         "overrides": []
       },
@@ -733,6 +962,33 @@
               {
                 "id": "unit",
                 "value": "percent"
+              },
+              {
+                "id": "custom.cellOptions",
+                "value": {
+                  "type": "gauge",
+                  "mode": "gradient"
+                }
+              },
+              {
+                "id": "thresholds",
+                "value": {
+                  "mode": "absolute",
+                  "steps": [
+                    {
+                      "color": "#22C55E",
+                      "value": null
+                    },
+                    {
+                      "color": "#F59E0B",
+                      "value": 70
+                    },
+                    {
+                      "color": "#F43F5E",
+                      "value": 85
+                    }
+                  ]
+                }
               }
             ]
           },
@@ -877,6 +1133,33 @@
               {
                 "id": "unit",
                 "value": "percent"
+              },
+              {
+                "id": "custom.cellOptions",
+                "value": {
+                  "type": "gauge",
+                  "mode": "gradient"
+                }
+              },
+              {
+                "id": "thresholds",
+                "value": {
+                  "mode": "absolute",
+                  "steps": [
+                    {
+                      "color": "#22C55E",
+                      "value": null
+                    },
+                    {
+                      "color": "#F59E0B",
+                      "value": 80
+                    },
+                    {
+                      "color": "#F43F5E",
+                      "value": 90
+                    }
+                  ]
+                }
               }
             ]
           },
@@ -1168,10 +1451,20 @@
           "unit": "none",
           "noValue": "暂无采集数据",
           "color": {
-            "mode": "thresholds"
+            "mode": "fixed",
+            "fixedColor": "#3B82F6"
           },
           "custom": {
             "filterable": true
+          },
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              {
+                "color": "#3B82F6",
+                "value": null
+              }
+            ]
           }
         },
         "overrides": [
@@ -1184,6 +1477,19 @@
               {
                 "id": "unit",
                 "value": "bps"
+              },
+              {
+                "id": "color",
+                "value": {
+                  "mode": "fixed",
+                  "fixedColor": "#22D3EE"
+                }
+              },
+              {
+                "id": "custom.cellOptions",
+                "value": {
+                  "type": "color-text"
+                }
               }
             ]
           }
@@ -1289,7 +1595,7 @@
             "drawStyle": "line",
             "lineInterpolation": "linear",
             "lineWidth": 2,
-            "fillOpacity": 10,
+            "fillOpacity": 12,
             "gradientMode": "none",
             "showPoints": "never"
           }
@@ -1305,7 +1611,7 @@
                 "id": "color",
                 "value": {
                   "mode": "fixed",
-                  "fixedColor": "#FF985C"
+                  "fixedColor": "#F59E0B"
                 }
               }
             ]
@@ -1320,7 +1626,7 @@
                 "id": "color",
                 "value": {
                   "mode": "fixed",
-                  "fixedColor": "#FF5D73"
+                  "fixedColor": "#F43F5E"
                 }
               }
             ]
@@ -1405,11 +1711,37 @@
                     "options": {
                       "0": {
                         "text": "当前无近期变化",
-                        "color": "#2AD4A7"
+                        "color": "#22C55E"
                       }
                     }
                   }
                 ]
+              },
+              {
+                "id": "thresholds",
+                "value": {
+                  "mode": "absolute",
+                  "steps": [
+                    {
+                      "color": "#22C55E",
+                      "value": null
+                    },
+                    {
+                      "color": "#F59E0B",
+                      "value": 1
+                    },
+                    {
+                      "color": "#F43F5E",
+                      "value": 5
+                    }
+                  ]
+                }
+              },
+              {
+                "id": "custom.cellOptions",
+                "value": {
+                  "type": "color-text"
+                }
               }
             ]
           },
@@ -1445,7 +1777,7 @@
                     "options": {
                       "unclassified": {
                         "text": "用途待确认",
-                        "color": "#9AA8B8"
+                        "color": "#64748B"
                       }
                     }
                   }

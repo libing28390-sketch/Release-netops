@@ -164,7 +164,9 @@ services:
       - TZ=${TZ:-Asia/Shanghai}
     command:
       - "-storageDataPath=/storage"
-      - "-retentionPeriod=${VM_RETENTION_PERIOD:-90d}"
+      - "-retentionPeriod=${VM_RETENTION_PERIOD:-30d}"
+      # Stop accepting samples before this filesystem falls below 10 GiB free.
+      - "-storage.minFreeDiskSpaceBytes=${VM_MIN_FREE_DISK_SPACE_BYTES:-10737418240}"
       - "-httpListenAddr=:8428"
     volumes:
       - nexora-vmdata:/storage
@@ -229,7 +231,8 @@ services:
       - "-promscrape.config=/etc/nexora-collector/runtime/vmagent/scrape.yml"
       - "-remoteWrite.url=http://victoriametrics:8428/api/v1/write"
       - "-remoteWrite.tmpDataPath=/var/lib/vmagent"
-      - "-remoteWrite.maxDiskUsagePerURL=${VMAGENT_MAX_DISK_USAGE:-10GB}"
+      # Bound retry buffering when VictoriaMetrics enters read-only mode.
+      - "-remoteWrite.maxDiskUsagePerURL=${VMAGENT_MAX_DISK_USAGE:-1GB}"
       - "-httpListenAddr=:8429"
     volumes:
       - nexora-monitoring-artifacts:/etc/nexora-collector:ro

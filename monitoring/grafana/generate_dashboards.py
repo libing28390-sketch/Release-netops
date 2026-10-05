@@ -1,5 +1,6 @@
 import json
 import os
+from copy import deepcopy
 from pathlib import Path
 
 false = False
@@ -8,32 +9,33 @@ null = None
 
 ROOT_DIR = Path(__file__).resolve().parents[2]
 DASHBOARDS_DIR = ROOT_DIR / "monitoring" / "grafana" / "dashboards"
+PRESENTATION_CONFIG_PATH = ROOT_DIR / "monitoring" / "grafana" / "dashboard_presentation_v2.json"
 DS_UID = "victoriametrics"
 DASHBOARD_VERSION = 30
 NO_VALUE_TEXT = "暂无采集数据"
 
-# Nexora's high-contrast operations palette: vivid on Grafana's dark theme,
-# while preserving familiar status and traffic-direction semantics.
-HEALTHY_COLOR = "#2AD4A7"
-WARNING_COLOR = "#F5C451"
-HIGH_COLOR = "#FF985C"
-CRITICAL_COLOR = "#FF5D73"
-INFO_COLOR = "#49B5FF"
-CLIENT_COLOR = INFO_COLOR
-PURPLE_COLOR = "#B18CFF"
-NEUTRAL_COLOR = "#9AA8B8"
+# Nexora NOC Dark V2 palette. These defaults also keep newly authored panels
+# aligned with the checked-in V2 presentation source below.
+INFO_COLOR = "#3B82F6"
+PRIMARY_BLUE_COLOR = INFO_COLOR
+CYAN_COLOR = "#22D3EE"
+HEALTHY_COLOR = "#22C55E"
+PURPLE_COLOR = "#A78BFA"
+WARNING_COLOR = "#F59E0B"
+HIGH_COLOR = "#F97316"
+CRITICAL_COLOR = "#F43F5E"
+NEUTRAL_COLOR = "#64748B"
+SOFT_GRAY_COLOR = "#94A3B8"
+CLIENT_COLOR = PURPLE_COLOR
 
-# Keep interface direction consistent across summary, detail, and overview
-# dashboards: inbound is blue, outbound is green, errors are orange, and
-# discards are red.  Direction is a visual category; it is independent from
-# health thresholds used by the same panel.
-INBOUND_COLOR = INFO_COLOR
-OUTBOUND_COLOR = HEALTHY_COLOR
-ERROR_COLOR = HIGH_COLOR
+# Direction and fault colors are fixed by the V2 semantic palette.
+INBOUND_COLOR = CYAN_COLOR
+OUTBOUND_COLOR = PRIMARY_BLUE_COLOR
+ERROR_COLOR = WARNING_COLOR
 DISCARD_COLOR = CRITICAL_COLOR
 MULTICAST_COLOR = PURPLE_COLOR
 BROADCAST_COLOR = WARNING_COLOR
-PPS_COLOR = INFO_COLOR
+PPS_COLOR = CYAN_COLOR
 UNKNOWN_COLOR = NEUTRAL_COLOR
 
 ALERT_SEVERITY_LABELS = (
@@ -52,7 +54,7 @@ ALERT_SEVERITY_COLORS = {
     "critical": CRITICAL_COLOR,
     "major": HIGH_COLOR,
     "warning": WARNING_COLOR,
-    "minor": NEUTRAL_COLOR,
+    "minor": PURPLE_COLOR,
     "high": HIGH_COLOR,
     "medium": WARNING_COLOR,
     "low": NEUTRAL_COLOR,
@@ -64,8 +66,8 @@ ALERT_SEVERITY_COLORS = {
 def alert_severity_thresholds(severity):
     """Color an open-alert count by severity without coloring zero as bad."""
     color = ALERT_SEVERITY_COLORS.get(severity, NEUTRAL_COLOR)
-    steps = [{"color": NEUTRAL_COLOR, "value": None}]
-    if color != NEUTRAL_COLOR:
+    steps = [{"color": HEALTHY_COLOR, "value": None}]
+    if color != HEALTHY_COLOR:
         steps.append({"color": color, "value": 1})
     return steps
 
@@ -320,7 +322,7 @@ def stat_panel(
     w=4,
     h=4,
     unit="",
-    color=NEUTRAL_COLOR,
+    color=INFO_COLOR,
     thresholds=None,
     description=None,
     graph_mode="none",
@@ -330,6 +332,23 @@ def stat_panel(
     steps = [{"color": color, "value": None}]
     if thresholds:
         steps = thresholds
+    no_value_text = NO_VALUE_TEXT if no_value is None else no_value
+    mappings = deepcopy(value_mappings or [])
+    mapped_specials = {
+        (item.get("options") or {}).get("match")
+        for item in mappings
+        if item.get("type") == "special"
+    }
+    for match in ("null", "nan"):
+        if match not in mapped_specials:
+            mappings.append({
+                "type": "special",
+                "options": {
+                    "match": match,
+                    "result": {"text": no_value_text, "color": NEUTRAL_COLOR},
+                },
+            })
+
     panel = {
         "id": pid,
         "title": title,
@@ -339,7 +358,7 @@ def stat_panel(
         "fieldConfig": {
             "defaults": {
                 "unit": unit,
-                "noValue": NO_VALUE_TEXT if no_value is None else no_value,
+                "noValue": no_value_text,
                 "color": {"mode": "thresholds"},
                 "thresholds": {"mode": "absolute", "steps": steps}
             },
@@ -358,8 +377,8 @@ def stat_panel(
         # the source series disappears.
         "targets": [{"expr": expr, "refId": "A", "instant": True}]
     }
-    if value_mappings:
-        panel["fieldConfig"]["defaults"]["mappings"] = value_mappings
+    if mappings:
+        panel["fieldConfig"]["defaults"]["mappings"] = mappings
     if description:
         panel["description"] = description
     return panel
@@ -4028,6 +4047,70 @@ def build_alert_operations_dashboard():
     }
 
 
+def iter_panels(panels):
+    """Yield dashboard panels recursively, including any nested row panels."""
+    for panel in panels or []:
+        yield panel
+        yield from iter_panels(panel.get("panels"))
+
+
+def apply_v2_presentation(dashboards):
+    """Apply the checked-in V2 field presentation without changing queries."""
+    try:
+        with PRESENTATION_CONFIG_PATH.open(encoding="utf-8") as source:
+            presentation = json.load(source)
+    except (OSError, json.JSONDecodeError) as exc:
+        raise RuntimeError(
+            f"Unable to load V2 dashboard presentation config: {PRESENTATION_CONFIG_PATH}"
+        ) from exc
+
+    if presentation.get("schema_version") != 1 or presentation.get("skill_version") != "2.0.0":
+        raise ValueError("Unsupported or missing V2 dashboard presentation schema/version")
+
+    presentation_dashboards = presentation.get("dashboards")
+    if not isinstance(presentation_dashboards, dict):
+        raise ValueError("V2 dashboard presentation config must contain a dashboards map")
+
+    catalog_by_uid = {data.get("uid"): (name, data) for name, data in dashboards}
+    if set(catalog_by_uid) != set(presentation_dashboards):
+        missing = sorted(set(catalog_by_uid) - set(presentation_dashboards))
+        unknown = sorted(set(presentation_dashboards) - set(catalog_by_uid))
+        raise ValueError(f"V2 dashboard UID mismatch; missing={missing}, unknown={unknown}")
+
+    for uid, expected_dashboard in presentation_dashboards.items():
+        source_name, dashboard = catalog_by_uid[uid]
+        if dashboard.get("title") != expected_dashboard.get("title"):
+            raise ValueError(f"{source_name}: V2 dashboard title mismatch for UID {uid}")
+
+        actual_panels = {}
+        for panel in iter_panels(dashboard.get("panels")):
+            panel_id = str(panel.get("id"))
+            if panel_id in actual_panels:
+                raise ValueError(f"{source_name}: duplicate panel ID {panel_id}")
+            actual_panels[panel_id] = panel
+
+        expected_panels = expected_dashboard.get("panels")
+        if not isinstance(expected_panels, dict) or set(actual_panels) != set(expected_panels):
+            expected_ids = set(expected_panels or {})
+            actual_ids = set(actual_panels)
+            raise ValueError(
+                f"{source_name}: V2 panel ID mismatch; "
+                f"missing={sorted(expected_ids - actual_ids)}, "
+                f"unknown={sorted(actual_ids - expected_ids)}"
+            )
+
+        for panel_id, expected_panel in expected_panels.items():
+            panel = actual_panels[panel_id]
+            if panel.get("title", "") != expected_panel.get("title", ""):
+                raise ValueError(f"{source_name}: title mismatch for panel {panel_id}")
+            if panel.get("type", "") != expected_panel.get("type", ""):
+                raise ValueError(f"{source_name}: type mismatch for panel {panel_id}")
+            if "fieldConfig" in expected_panel:
+                panel["fieldConfig"] = deepcopy(expected_panel["fieldConfig"])
+            else:
+                panel.pop("fieldConfig", None)
+
+
 def validate_dashboard(source_name, dashboard):
     """Validate the generated top-level dashboard contract before writing it."""
     uid = dashboard.get("uid")
@@ -4037,7 +4120,7 @@ def validate_dashboard(source_name, dashboard):
     assert dashboard.get("version") == DASHBOARD_VERSION, f"{source_name}: stale version"
 
     panels = dashboard.get("panels") or []
-    panel_ids = [panel.get("id") for panel in panels]
+    panel_ids = [panel.get("id") for panel in iter_panels(panels)]
     assert all(panel_id is not None for panel_id in panel_ids), f"{source_name}: panel without id"
     assert len(panel_ids) == len(set(panel_ids)), f"{source_name}: duplicate panel id"
 
@@ -4079,6 +4162,7 @@ def build_dashboard_catalog():
     assert len(dashboards) == 12, "dashboard catalog must contain exactly 12 dashboards"
     uids = [data.get("uid") for _, data in dashboards]
     assert len(uids) == len(set(uids)), "dashboard catalog contains duplicate UIDs"
+    apply_v2_presentation(dashboards)
     return dashboards
 
 
@@ -4094,4 +4178,3 @@ def main():
 
 if __name__ == "__main__":
     main()
-

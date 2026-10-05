@@ -46,11 +46,33 @@
             "mode": "absolute",
             "steps": [
               {
-                "color": "#9AA8B8",
+                "color": "#A78BFA",
                 "value": null
               }
             ]
-          }
+          },
+          "mappings": [
+            {
+              "type": "special",
+              "options": {
+                "match": "null",
+                "result": {
+                  "text": "暂无采集数据",
+                  "color": "#64748B"
+                }
+              }
+            },
+            {
+              "type": "special",
+              "options": {
+                "match": "nan",
+                "result": {
+                  "text": "暂无采集数据",
+                  "color": "#64748B"
+                }
+              }
+            }
+          ]
         },
         "overrides": []
       },
@@ -102,11 +124,33 @@
             "mode": "absolute",
             "steps": [
               {
-                "color": "#2AD4A7",
+                "color": "#22C55E",
                 "value": null
               }
             ]
-          }
+          },
+          "mappings": [
+            {
+              "type": "special",
+              "options": {
+                "match": "null",
+                "result": {
+                  "text": "暂无采集数据",
+                  "color": "#64748B"
+                }
+              }
+            },
+            {
+              "type": "special",
+              "options": {
+                "match": "nan",
+                "result": {
+                  "text": "暂无采集数据",
+                  "color": "#64748B"
+                }
+              }
+            }
+          ]
         },
         "overrides": []
       },
@@ -158,19 +202,41 @@
             "mode": "absolute",
             "steps": [
               {
-                "color": "#2AD4A7",
+                "color": "#22C55E",
                 "value": null
               },
               {
-                "color": "#F5C451",
+                "color": "#F59E0B",
                 "value": 1
               },
               {
-                "color": "#FF5D73",
+                "color": "#F43F5E",
                 "value": 5
               }
             ]
-          }
+          },
+          "mappings": [
+            {
+              "type": "special",
+              "options": {
+                "match": "null",
+                "result": {
+                  "text": "暂无采集数据",
+                  "color": "#64748B"
+                }
+              }
+            },
+            {
+              "type": "special",
+              "options": {
+                "match": "nan",
+                "result": {
+                  "text": "暂无采集数据",
+                  "color": "#64748B"
+                }
+              }
+            }
+          ]
         },
         "overrides": []
       },
@@ -222,11 +288,33 @@
             "mode": "absolute",
             "steps": [
               {
-                "color": "#9AA8B8",
+                "color": "#A78BFA",
                 "value": null
               }
             ]
-          }
+          },
+          "mappings": [
+            {
+              "type": "special",
+              "options": {
+                "match": "null",
+                "result": {
+                  "text": "暂无采集数据",
+                  "color": "#64748B"
+                }
+              }
+            },
+            {
+              "type": "special",
+              "options": {
+                "match": "nan",
+                "result": {
+                  "text": "暂无采集数据",
+                  "color": "#64748B"
+                }
+              }
+            }
+          ]
         },
         "overrides": []
       },
@@ -277,19 +365,41 @@
             "mode": "absolute",
             "steps": [
               {
-                "color": "#2AD4A7",
+                "color": "#22C55E",
                 "value": null
               },
               {
-                "color": "#F5C451",
+                "color": "#F59E0B",
                 "value": 1
               },
               {
-                "color": "#FF5D73",
+                "color": "#F43F5E",
                 "value": 5
               }
             ]
-          }
+          },
+          "mappings": [
+            {
+              "type": "special",
+              "options": {
+                "match": "null",
+                "result": {
+                  "text": "暂无采集数据",
+                  "color": "#64748B"
+                }
+              }
+            },
+            {
+              "type": "special",
+              "options": {
+                "match": "nan",
+                "result": {
+                  "text": "暂无采集数据",
+                  "color": "#64748B"
+                }
+              }
+            }
+          ]
         },
         "overrides": []
       },
@@ -341,23 +451,45 @@
             "mode": "absolute",
             "steps": [
               {
-                "color": "#2AD4A7",
+                "color": "#22C55E",
                 "value": null
               },
               {
-                "color": "#F5C451",
+                "color": "#F59E0B",
                 "value": 60
               },
               {
-                "color": "#FF985C",
+                "color": "#F97316",
                 "value": 75
               },
               {
-                "color": "#FF5D73",
+                "color": "#F43F5E",
                 "value": 90
               }
             ]
-          }
+          },
+          "mappings": [
+            {
+              "type": "special",
+              "options": {
+                "match": "null",
+                "result": {
+                  "text": "暂无采集数据",
+                  "color": "#64748B"
+                }
+              }
+            },
+            {
+              "type": "special",
+              "options": {
+                "match": "nan",
+                "result": {
+                  "text": "暂无采集数据",
+                  "color": "#64748B"
+                }
+              }
+            }
+          ]
         },
         "overrides": []
       },
@@ -421,7 +553,7 @@
             "drawStyle": "line",
             "lineInterpolation": "linear",
             "lineWidth": 2,
-            "fillOpacity": 10,
+            "fillOpacity": 12,
             "gradientMode": "none",
             "showPoints": "never"
           }
@@ -437,7 +569,7 @@
                 "id": "color",
                 "value": {
                   "mode": "fixed",
-                  "fixedColor": "#2AD4A7"
+                  "fixedColor": "#22D3EE"
                 }
               }
             ]
@@ -452,7 +584,7 @@
                 "id": "color",
                 "value": {
                   "mode": "fixed",
-                  "fixedColor": "#49B5FF"
+                  "fixedColor": "#A78BFA"
                 }
               }
             ]
@@ -505,7 +637,7 @@
           "noValue": "暂无采集数据",
           "color": {
             "mode": "fixed",
-            "fixedColor": "#9AA8B8"
+            "fixedColor": "#64748B"
           }
         },
         "overrides": [
@@ -519,7 +651,7 @@
                 "id": "color",
                 "value": {
                   "mode": "fixed",
-                  "fixedColor": "#2AD4A7"
+                  "fixedColor": "#22C55E"
                 }
               }
             ]
@@ -534,7 +666,7 @@
                 "id": "color",
                 "value": {
                   "mode": "fixed",
-                  "fixedColor": "#2AD4A7"
+                  "fixedColor": "#22C55E"
                 }
               }
             ]
@@ -549,7 +681,7 @@
                 "id": "color",
                 "value": {
                   "mode": "fixed",
-                  "fixedColor": "#2AD4A7"
+                  "fixedColor": "#22C55E"
                 }
               }
             ]
@@ -564,7 +696,7 @@
                 "id": "color",
                 "value": {
                   "mode": "fixed",
-                  "fixedColor": "#FF5D73"
+                  "fixedColor": "#F43F5E"
                 }
               }
             ]
@@ -579,7 +711,7 @@
                 "id": "color",
                 "value": {
                   "mode": "fixed",
-                  "fixedColor": "#FF5D73"
+                  "fixedColor": "#F43F5E"
                 }
               }
             ]
@@ -594,7 +726,7 @@
                 "id": "color",
                 "value": {
                   "mode": "fixed",
-                  "fixedColor": "#FF5D73"
+                  "fixedColor": "#F43F5E"
                 }
               }
             ]
@@ -609,7 +741,7 @@
                 "id": "color",
                 "value": {
                   "mode": "fixed",
-                  "fixedColor": "#F5C451"
+                  "fixedColor": "#F59E0B"
                 }
               }
             ]
@@ -624,7 +756,7 @@
                 "id": "color",
                 "value": {
                   "mode": "fixed",
-                  "fixedColor": "#F5C451"
+                  "fixedColor": "#F59E0B"
                 }
               }
             ]
@@ -639,7 +771,7 @@
                 "id": "color",
                 "value": {
                   "mode": "fixed",
-                  "fixedColor": "#F5C451"
+                  "fixedColor": "#F59E0B"
                 }
               }
             ]
@@ -654,7 +786,7 @@
                 "id": "color",
                 "value": {
                   "mode": "fixed",
-                  "fixedColor": "#F5C451"
+                  "fixedColor": "#F59E0B"
                 }
               }
             ]
@@ -669,7 +801,7 @@
                 "id": "color",
                 "value": {
                   "mode": "fixed",
-                  "fixedColor": "#F5C451"
+                  "fixedColor": "#F59E0B"
                 }
               }
             ]
@@ -684,7 +816,7 @@
                 "id": "color",
                 "value": {
                   "mode": "fixed",
-                  "fixedColor": "#F5C451"
+                  "fixedColor": "#F59E0B"
                 }
               }
             ]
@@ -699,7 +831,7 @@
                 "id": "color",
                 "value": {
                   "mode": "fixed",
-                  "fixedColor": "#F5C451"
+                  "fixedColor": "#F59E0B"
                 }
               }
             ]
@@ -767,7 +899,7 @@
           {
             "matcher": {
               "id": "byName",
-              "options": "数值"
+              "options": "状态"
             },
             "properties": [
               {
@@ -790,72 +922,97 @@
                     "options": {
                       "associated": {
                         "text": "在线",
-                        "color": "#2AD4A7"
+                        "color": "#22C55E"
                       },
                       "run": {
                         "text": "在线",
-                        "color": "#2AD4A7"
+                        "color": "#22C55E"
                       },
                       "active": {
                         "text": "在线",
-                        "color": "#2AD4A7"
+                        "color": "#22C55E"
                       },
                       "deassociated": {
                         "text": "离线",
-                        "color": "#FF5D73"
+                        "color": "#F43F5E"
                       },
                       "idle": {
                         "text": "离线",
-                        "color": "#FF5D73"
+                        "color": "#F43F5E"
                       },
                       "down": {
                         "text": "离线",
-                        "color": "#FF5D73"
+                        "color": "#F43F5E"
                       },
                       "join": {
                         "text": "接入中",
-                        "color": "#F5C451"
+                        "color": "#F59E0B"
                       },
                       "joining": {
                         "text": "接入中",
-                        "color": "#F5C451"
+                        "color": "#F59E0B"
                       },
                       "joinack": {
                         "text": "接入中",
-                        "color": "#F5C451"
+                        "color": "#F59E0B"
                       },
                       "config": {
                         "text": "接入中",
-                        "color": "#F5C451"
+                        "color": "#F59E0B"
                       },
                       "data check": {
                         "text": "接入中",
-                        "color": "#F5C451"
+                        "color": "#F59E0B"
                       },
                       "image load": {
                         "text": "接入中",
-                        "color": "#F5C451"
+                        "color": "#F59E0B"
                       },
                       "downloading image": {
                         "text": "接入中",
-                        "color": "#F5C451"
+                        "color": "#F59E0B"
+                      }
+                    }
+                  },
+                  {
+                    "type": "value",
+                    "options": {
+                      "unknown": {
+                        "text": "未知",
+                        "color": "#64748B"
+                      },
+                      "unclassified": {
+                        "text": "未分类",
+                        "color": "#64748B"
+                      }
+                    }
+                  },
+                  {
+                    "type": "special",
+                    "options": {
+                      "match": "null",
+                      "result": {
+                        "text": "暂无采集数据",
+                        "color": "#64748B"
+                      }
+                    }
+                  },
+                  {
+                    "type": "special",
+                    "options": {
+                      "match": "nan",
+                      "result": {
+                        "text": "暂无采集数据",
+                        "color": "#64748B"
                       }
                     }
                   }
                 ]
-              }
-            ]
-          },
-          {
-            "matcher": {
-              "id": "byName",
-              "options": "状态说明"
-            },
-            "properties": [
+              },
               {
                 "id": "custom.cellOptions",
                 "value": {
-                  "type": "color-background"
+                  "type": "color-text"
                 }
               }
             ]
@@ -988,12 +1145,25 @@
           {
             "matcher": {
               "id": "byName",
-              "options": "数值"
+              "options": "客户端数"
             },
             "properties": [
               {
                 "id": "unit",
                 "value": "short"
+              },
+              {
+                "id": "color",
+                "value": {
+                  "mode": "fixed",
+                  "fixedColor": "#A78BFA"
+                }
+              },
+              {
+                "id": "custom.cellOptions",
+                "value": {
+                  "type": "color-text"
+                }
               }
             ]
           }
@@ -1132,19 +1302,19 @@
             "mode": "absolute",
             "steps": [
               {
-                "color": "#2AD4A7",
+                "color": "#22C55E",
                 "value": null
               },
               {
-                "color": "#F5C451",
+                "color": "#F59E0B",
                 "value": 60
               },
               {
-                "color": "#FF985C",
+                "color": "#F97316",
                 "value": 75
               },
               {
-                "color": "#FF5D73",
+                "color": "#F43F5E",
                 "value": 90
               }
             ]
@@ -1213,12 +1383,25 @@
           {
             "matcher": {
               "id": "byName",
-              "options": "数值"
+              "options": "客户端数"
             },
             "properties": [
               {
                 "id": "unit",
                 "value": "short"
+              },
+              {
+                "id": "color",
+                "value": {
+                  "mode": "fixed",
+                  "fixedColor": "#A78BFA"
+                }
+              },
+              {
+                "id": "custom.cellOptions",
+                "value": {
+                  "type": "color-text"
+                }
               }
             ]
           }
@@ -1343,12 +1526,25 @@
           {
             "matcher": {
               "id": "byName",
-              "options": "数值"
+              "options": "客户端数"
             },
             "properties": [
               {
                 "id": "unit",
                 "value": "short"
+              },
+              {
+                "id": "color",
+                "value": {
+                  "mode": "fixed",
+                  "fixedColor": "#A78BFA"
+                }
+              },
+              {
+                "id": "custom.cellOptions",
+                "value": {
+                  "type": "color-text"
+                }
               }
             ]
           }

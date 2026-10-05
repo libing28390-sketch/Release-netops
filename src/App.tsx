@@ -917,8 +917,15 @@ const App: React.FC = () => {
     // same lookup/hot/device requests are not issued twice.
     skipNextRouteRefreshRef.current = true;
     setIsLoading(true);
-    // Initial load: lookups (rarely change) + hot data (recent activity) + devices.
-    Promise.all([fetchSharedLookups(), fetchHotData(), fetchDevicesData()])
+    // Initial load: lookups (rarely change) + hot data (recent activity).
+    // The dashboard owns its lightweight summary request, while the inventory
+    // devices page owns its paginated query. Neither needs the shared detail list.
+    const shouldFetchSharedDevices = activeTab !== 'dashboard'
+      && !(activeTab === 'inventory' && inventorySubPage === 'devices');
+    const sharedDevicesLoad = shouldFetchSharedDevices
+      ? fetchDevicesData()
+      : Promise.resolve();
+    Promise.all([fetchSharedLookups(), fetchHotData(), sharedDevicesLoad])
       .finally(() => setIsLoading(false));
 
     let hotInterval: any;
@@ -937,12 +944,10 @@ const App: React.FC = () => {
       // the left-hand list and its site fallback to re-render, without adding
       // any data to the monitoring view. Keep the shared poll for the pages
       // that still consume the global inventory snapshot.
-      if (activeTab !== 'network-monitoring') {
-        // Reduce heavy full device refresh pressure while inventory table uses server-side paging.
-        const devicePollMs = activeTab === 'inventory' && inventorySubPage === 'devices'
-          ? 30000
-          : 15000;
-        devicesInterval = setInterval(fetchDevicesData, devicePollMs);
+      if (activeTab !== 'network-monitoring'
+        && activeTab !== 'dashboard'
+        && !(activeTab === 'inventory' && inventorySubPage === 'devices')) {
+        devicesInterval = setInterval(fetchDevicesData, 15000);
       }
     }
 
@@ -964,7 +969,9 @@ const App: React.FC = () => {
     }
     fetchSharedLookups();
     fetchHotData();
-    if (activeTab !== 'network-monitoring' && !(activeTab === 'inventory' && inventorySubPage === 'devices')) {
+    if (activeTab !== 'network-monitoring'
+      && activeTab !== 'dashboard'
+      && !(activeTab === 'inventory' && inventorySubPage === 'devices')) {
       fetchDevicesData();
     }
   }, [isAuthenticated, location.pathname, fetchSharedLookups, fetchHotData, fetchDevicesData, activeTab, inventorySubPage]);

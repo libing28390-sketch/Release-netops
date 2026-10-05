@@ -46,11 +46,33 @@
             "mode": "absolute",
             "steps": [
               {
-                "color": "#9AA8B8",
+                "color": "#22C55E",
                 "value": null
               }
             ]
-          }
+          },
+          "mappings": [
+            {
+              "type": "special",
+              "options": {
+                "match": "null",
+                "result": {
+                  "text": "暂无采集数据",
+                  "color": "#64748B"
+                }
+              }
+            },
+            {
+              "type": "special",
+              "options": {
+                "match": "nan",
+                "result": {
+                  "text": "暂无采集数据",
+                  "color": "#64748B"
+                }
+              }
+            }
+          ]
         },
         "overrides": []
       },
@@ -102,15 +124,37 @@
             "mode": "absolute",
             "steps": [
               {
-                "color": "#9AA8B8",
+                "color": "#22C55E",
                 "value": null
               },
               {
-                "color": "#FF5D73",
+                "color": "#F43F5E",
                 "value": 1
               }
             ]
-          }
+          },
+          "mappings": [
+            {
+              "type": "special",
+              "options": {
+                "match": "null",
+                "result": {
+                  "text": "暂无采集数据",
+                  "color": "#64748B"
+                }
+              }
+            },
+            {
+              "type": "special",
+              "options": {
+                "match": "nan",
+                "result": {
+                  "text": "暂无采集数据",
+                  "color": "#64748B"
+                }
+              }
+            }
+          ]
         },
         "overrides": []
       },
@@ -161,11 +205,33 @@
             "mode": "absolute",
             "steps": [
               {
-                "color": "#9AA8B8",
+                "color": "#3B82F6",
                 "value": null
               }
             ]
-          }
+          },
+          "mappings": [
+            {
+              "type": "special",
+              "options": {
+                "match": "null",
+                "result": {
+                  "text": "暂无采集数据",
+                  "color": "#64748B"
+                }
+              }
+            },
+            {
+              "type": "special",
+              "options": {
+                "match": "nan",
+                "result": {
+                  "text": "暂无采集数据",
+                  "color": "#64748B"
+                }
+              }
+            }
+          ]
         },
         "overrides": []
       },
@@ -216,19 +282,41 @@
             "mode": "absolute",
             "steps": [
               {
-                "color": "#9AA8B8",
+                "color": "#22C55E",
                 "value": null
               },
               {
-                "color": "#F5C451",
+                "color": "#F59E0B",
                 "value": 2
               },
               {
-                "color": "#FF5D73",
+                "color": "#F43F5E",
                 "value": 5
               }
             ]
-          }
+          },
+          "mappings": [
+            {
+              "type": "special",
+              "options": {
+                "match": "null",
+                "result": {
+                  "text": "暂无采集数据",
+                  "color": "#64748B"
+                }
+              }
+            },
+            {
+              "type": "special",
+              "options": {
+                "match": "nan",
+                "result": {
+                  "text": "暂无采集数据",
+                  "color": "#64748B"
+                }
+              }
+            }
+          ]
         },
         "overrides": []
       },
@@ -279,19 +367,37 @@
             "mode": "absolute",
             "steps": [
               {
-                "color": "#9AA8B8",
+                "color": "#F43F5E",
                 "value": null
               },
               {
-                "color": "#FF5D73",
-                "value": 0
-              },
-              {
-                "color": "#2AD4A7",
+                "color": "#22C55E",
                 "value": 1
               }
             ]
-          }
+          },
+          "mappings": [
+            {
+              "type": "special",
+              "options": {
+                "match": "null",
+                "result": {
+                  "text": "暂无采集数据",
+                  "color": "#64748B"
+                }
+              }
+            },
+            {
+              "type": "special",
+              "options": {
+                "match": "nan",
+                "result": {
+                  "text": "暂无采集数据",
+                  "color": "#64748B"
+                }
+              }
+            }
+          ]
         },
         "overrides": []
       },
@@ -343,11 +449,33 @@
             "mode": "absolute",
             "steps": [
               {
-                "color": "#9AA8B8",
+                "color": "#3B82F6",
                 "value": null
               }
             ]
-          }
+          },
+          "mappings": [
+            {
+              "type": "special",
+              "options": {
+                "match": "null",
+                "result": {
+                  "text": "暂无采集数据",
+                  "color": "#64748B"
+                }
+              }
+            },
+            {
+              "type": "special",
+              "options": {
+                "match": "nan",
+                "result": {
+                  "text": "暂无采集数据",
+                  "color": "#64748B"
+                }
+              }
+            }
+          ]
         },
         "overrides": []
       },
@@ -411,7 +539,7 @@
             "drawStyle": "line",
             "lineInterpolation": "stepAfter",
             "lineWidth": 2,
-            "fillOpacity": 10,
+            "fillOpacity": 12,
             "gradientMode": "none",
             "showPoints": "never"
           }
@@ -464,7 +592,7 @@
             "drawStyle": "line",
             "lineInterpolation": "linear",
             "lineWidth": 2,
-            "fillOpacity": 10,
+            "fillOpacity": 12,
             "gradientMode": "none",
             "showPoints": "never"
           }
@@ -531,11 +659,11 @@
                     "options": {
                       "1": {
                         "text": "UP",
-                        "color": "#2AD4A7"
+                        "color": "#22C55E"
                       },
                       "0": {
                         "text": "DOWN",
-                        "color": "#FF5D73"
+                        "color": "#F43F5E"
                       }
                     }
                   },
@@ -545,24 +673,16 @@
                       "match": "null",
                       "result": {
                         "text": "暂无采集数据",
-                        "color": "#9AA8B8"
+                        "color": "#64748B"
                       }
                     }
                   }
                 ]
-              }
-            ]
-          },
-          {
-            "matcher": {
-              "id": "byName",
-              "options": "状态"
-            },
-            "properties": [
+              },
               {
                 "id": "custom.cellOptions",
                 "value": {
-                  "type": "color-background"
+                  "type": "color-text"
                 }
               }
             ]
@@ -646,19 +766,41 @@
             "mode": "absolute",
             "steps": [
               {
-                "color": "#9AA8B8",
+                "color": "#22C55E",
                 "value": null
               },
               {
-                "color": "#F5C451",
+                "color": "#F59E0B",
                 "value": 104857600
               },
               {
-                "color": "#FF5D73",
+                "color": "#F43F5E",
                 "value": 1073741824
               }
             ]
-          }
+          },
+          "mappings": [
+            {
+              "type": "special",
+              "options": {
+                "match": "null",
+                "result": {
+                  "text": "暂无采集数据",
+                  "color": "#64748B"
+                }
+              }
+            },
+            {
+              "type": "special",
+              "options": {
+                "match": "nan",
+                "result": {
+                  "text": "暂无采集数据",
+                  "color": "#64748B"
+                }
+              }
+            }
+          ]
         },
         "overrides": []
       },
@@ -710,15 +852,37 @@
             "mode": "absolute",
             "steps": [
               {
-                "color": "#9AA8B8",
+                "color": "#22C55E",
                 "value": null
               },
               {
-                "color": "#FF5D73",
+                "color": "#F43F5E",
                 "value": 1
               }
             ]
-          }
+          },
+          "mappings": [
+            {
+              "type": "special",
+              "options": {
+                "match": "null",
+                "result": {
+                  "text": "暂无采集数据",
+                  "color": "#64748B"
+                }
+              }
+            },
+            {
+              "type": "special",
+              "options": {
+                "match": "nan",
+                "result": {
+                  "text": "暂无采集数据",
+                  "color": "#64748B"
+                }
+              }
+            }
+          ]
         },
         "overrides": []
       },
@@ -769,15 +933,37 @@
             "mode": "absolute",
             "steps": [
               {
-                "color": "#9AA8B8",
+                "color": "#22C55E",
                 "value": null
               },
               {
-                "color": "#FF5D73",
+                "color": "#F43F5E",
                 "value": 1
               }
             ]
-          }
+          },
+          "mappings": [
+            {
+              "type": "special",
+              "options": {
+                "match": "null",
+                "result": {
+                  "text": "暂无采集数据",
+                  "color": "#64748B"
+                }
+              }
+            },
+            {
+              "type": "special",
+              "options": {
+                "match": "nan",
+                "result": {
+                  "text": "暂无采集数据",
+                  "color": "#64748B"
+                }
+              }
+            }
+          ]
         },
         "overrides": []
       },
@@ -828,11 +1014,33 @@
             "mode": "absolute",
             "steps": [
               {
-                "color": "#9AA8B8",
+                "color": "#22D3EE",
                 "value": null
               }
             ]
-          }
+          },
+          "mappings": [
+            {
+              "type": "special",
+              "options": {
+                "match": "null",
+                "result": {
+                  "text": "暂无采集数据",
+                  "color": "#64748B"
+                }
+              }
+            },
+            {
+              "type": "special",
+              "options": {
+                "match": "nan",
+                "result": {
+                  "text": "暂无采集数据",
+                  "color": "#64748B"
+                }
+              }
+            }
+          ]
         },
         "overrides": []
       },
@@ -883,11 +1091,33 @@
             "mode": "absolute",
             "steps": [
               {
-                "color": "#9AA8B8",
+                "color": "#A78BFA",
                 "value": null
               }
             ]
-          }
+          },
+          "mappings": [
+            {
+              "type": "special",
+              "options": {
+                "match": "null",
+                "result": {
+                  "text": "暂无采集数据",
+                  "color": "#64748B"
+                }
+              }
+            },
+            {
+              "type": "special",
+              "options": {
+                "match": "nan",
+                "result": {
+                  "text": "暂无采集数据",
+                  "color": "#64748B"
+                }
+              }
+            }
+          ]
         },
         "overrides": []
       },
@@ -939,15 +1169,37 @@
             "mode": "absolute",
             "steps": [
               {
-                "color": "#9AA8B8",
+                "color": "#22C55E",
                 "value": null
               },
               {
-                "color": "#FF5D73",
+                "color": "#F43F5E",
                 "value": 1
               }
             ]
-          }
+          },
+          "mappings": [
+            {
+              "type": "special",
+              "options": {
+                "match": "null",
+                "result": {
+                  "text": "暂无采集数据",
+                  "color": "#64748B"
+                }
+              }
+            },
+            {
+              "type": "special",
+              "options": {
+                "match": "nan",
+                "result": {
+                  "text": "暂无采集数据",
+                  "color": "#64748B"
+                }
+              }
+            }
+          ]
         },
         "overrides": []
       },
@@ -999,7 +1251,7 @@
             "drawStyle": "line",
             "lineInterpolation": "linear",
             "lineWidth": 2,
-            "fillOpacity": 10,
+            "fillOpacity": 12,
             "gradientMode": "none",
             "showPoints": "never"
           }
@@ -1054,7 +1306,7 @@
             "drawStyle": "line",
             "lineInterpolation": "linear",
             "lineWidth": 2,
-            "fillOpacity": 10,
+            "fillOpacity": 12,
             "gradientMode": "none",
             "showPoints": "never"
           }
@@ -1109,12 +1361,43 @@
             "drawStyle": "line",
             "lineInterpolation": "linear",
             "lineWidth": 2,
-            "fillOpacity": 10,
+            "fillOpacity": 12,
             "gradientMode": "none",
             "showPoints": "never"
           }
         },
-        "overrides": []
+        "overrides": [
+          {
+            "matcher": {
+              "id": "byRegexp",
+              "options": ".* read$"
+            },
+            "properties": [
+              {
+                "id": "color",
+                "value": {
+                  "mode": "fixed",
+                  "fixedColor": "#22D3EE"
+                }
+              }
+            ]
+          },
+          {
+            "matcher": {
+              "id": "byRegexp",
+              "options": ".* write$"
+            },
+            "properties": [
+              {
+                "id": "color",
+                "value": {
+                  "mode": "fixed",
+                  "fixedColor": "#3B82F6"
+                }
+              }
+            ]
+          }
+        ]
       },
       "options": {
         "legend": {
@@ -1182,11 +1465,33 @@
             "mode": "absolute",
             "steps": [
               {
-                "color": "#9AA8B8",
+                "color": "#3B82F6",
                 "value": null
               }
             ]
-          }
+          },
+          "mappings": [
+            {
+              "type": "special",
+              "options": {
+                "match": "null",
+                "result": {
+                  "text": "暂无采集数据",
+                  "color": "#64748B"
+                }
+              }
+            },
+            {
+              "type": "special",
+              "options": {
+                "match": "nan",
+                "result": {
+                  "text": "暂无采集数据",
+                  "color": "#64748B"
+                }
+              }
+            }
+          ]
         },
         "overrides": []
       },

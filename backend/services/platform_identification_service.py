@@ -583,7 +583,7 @@ def _extract_version_from_text(value: str) -> str:
 
 
 def _persist_discovered_version(device_id: str, version: str) -> None:
-    """Persist a discovered version without overwriting a deliberate value."""
+    """Persist a discovered version on the device without overwriting a value."""
     normalized = str(version or "").strip()
     if not normalized:
         return
@@ -592,26 +592,15 @@ def _persist_discovered_version(device_id: str, version: str) -> None:
         available_columns = _table_columns(conn, "devices")
         if "version" not in available_columns:
             return
-        projection = ["version"]
-        if "asset_id" in available_columns:
-            projection.insert(0, "asset_id")
         row = conn.execute(
-            f"SELECT {', '.join(projection)} FROM devices WHERE id = ?",
+            "SELECT version FROM devices WHERE id = ?",
             (device_id,),
         ).fetchone()
         if not row:
             return
-        asset_id = str(row[0] or "").strip() if "asset_id" in available_columns else ""
-        current = str(row[1] or "").strip() if "asset_id" in available_columns else str(row[0] or "").strip()
+        current = str(row[0] or "").strip()
         if not current:
             conn.execute("UPDATE devices SET version = ? WHERE id = ?", (normalized, device_id))
-            if asset_id:
-                conn.execute(
-                    """UPDATE physical_assets
-                       SET version = ?
-                       WHERE id = ? AND COALESCE(version, '') = ''""",
-                    (normalized, asset_id),
-                )
             conn.commit()
     finally:
         conn.close()

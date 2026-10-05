@@ -465,7 +465,8 @@ const AppMainContent: React.FC = () => {
             language={language}
             navigate={navigate}
             userRole={currentUser?.role}
-            devices={devices}
+            isAuthenticated={isAuthenticated}
+            autoRefreshEnabled={autoRefreshEnabled}
             jobs={jobs}
             notifications={notifications}
             hostResources={hostResources}

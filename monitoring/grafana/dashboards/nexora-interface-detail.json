@@ -46,11 +46,33 @@
             "mode": "absolute",
             "steps": [
               {
-                "color": "#49B5FF",
+                "color": "#22D3EE",
                 "value": null
               }
             ]
-          }
+          },
+          "mappings": [
+            {
+              "type": "special",
+              "options": {
+                "match": "null",
+                "result": {
+                  "text": "暂无采集数据",
+                  "color": "#64748B"
+                }
+              }
+            },
+            {
+              "type": "special",
+              "options": {
+                "match": "nan",
+                "result": {
+                  "text": "暂无采集数据",
+                  "color": "#64748B"
+                }
+              }
+            }
+          ]
         },
         "overrides": []
       },
@@ -101,11 +123,33 @@
             "mode": "absolute",
             "steps": [
               {
-                "color": "#2AD4A7",
+                "color": "#3B82F6",
                 "value": null
               }
             ]
-          }
+          },
+          "mappings": [
+            {
+              "type": "special",
+              "options": {
+                "match": "null",
+                "result": {
+                  "text": "暂无采集数据",
+                  "color": "#64748B"
+                }
+              }
+            },
+            {
+              "type": "special",
+              "options": {
+                "match": "nan",
+                "result": {
+                  "text": "暂无采集数据",
+                  "color": "#64748B"
+                }
+              }
+            }
+          ]
         },
         "overrides": []
       },
@@ -150,29 +194,40 @@
           "unit": "percent",
           "noValue": "暂无采集数据",
           "color": {
-            "mode": "thresholds"
+            "mode": "fixed",
+            "fixedColor": "#22D3EE"
           },
           "thresholds": {
             "mode": "absolute",
             "steps": [
               {
-                "color": "#2AD4A7",
+                "color": "#22D3EE",
                 "value": null
-              },
-              {
-                "color": "#F5C451",
-                "value": 60
-              },
-              {
-                "color": "#FF985C",
-                "value": 75
-              },
-              {
-                "color": "#FF5D73",
-                "value": 90
               }
             ]
-          }
+          },
+          "mappings": [
+            {
+              "type": "special",
+              "options": {
+                "match": "null",
+                "result": {
+                  "text": "暂无采集数据",
+                  "color": "#64748B"
+                }
+              }
+            },
+            {
+              "type": "special",
+              "options": {
+                "match": "nan",
+                "result": {
+                  "text": "暂无采集数据",
+                  "color": "#64748B"
+                }
+              }
+            }
+          ]
         },
         "overrides": []
       },
@@ -217,29 +272,40 @@
           "unit": "percent",
           "noValue": "暂无采集数据",
           "color": {
-            "mode": "thresholds"
+            "mode": "fixed",
+            "fixedColor": "#3B82F6"
           },
           "thresholds": {
             "mode": "absolute",
             "steps": [
               {
-                "color": "#2AD4A7",
+                "color": "#3B82F6",
                 "value": null
-              },
-              {
-                "color": "#F5C451",
-                "value": 60
-              },
-              {
-                "color": "#FF985C",
-                "value": 75
-              },
-              {
-                "color": "#FF5D73",
-                "value": 90
               }
             ]
-          }
+          },
+          "mappings": [
+            {
+              "type": "special",
+              "options": {
+                "match": "null",
+                "result": {
+                  "text": "暂无采集数据",
+                  "color": "#64748B"
+                }
+              }
+            },
+            {
+              "type": "special",
+              "options": {
+                "match": "nan",
+                "result": {
+                  "text": "暂无采集数据",
+                  "color": "#64748B"
+                }
+              }
+            }
+          ]
         },
         "overrides": []
       },
@@ -290,11 +356,42 @@
             "mode": "absolute",
             "steps": [
               {
-                "color": "#FF985C",
+                "color": "#F59E0B",
                 "value": null
               }
             ]
-          }
+          },
+          "mappings": [
+            {
+              "type": "value",
+              "options": {
+                "0": {
+                  "text": "0",
+                  "color": "#22C55E"
+                }
+              }
+            },
+            {
+              "type": "special",
+              "options": {
+                "match": "null",
+                "result": {
+                  "text": "暂无采集数据",
+                  "color": "#64748B"
+                }
+              }
+            },
+            {
+              "type": "special",
+              "options": {
+                "match": "nan",
+                "result": {
+                  "text": "暂无采集数据",
+                  "color": "#64748B"
+                }
+              }
+            }
+          ]
         },
         "overrides": []
       },
@@ -345,11 +442,42 @@
             "mode": "absolute",
             "steps": [
               {
-                "color": "#FF5D73",
+                "color": "#F43F5E",
                 "value": null
               }
             ]
-          }
+          },
+          "mappings": [
+            {
+              "type": "value",
+              "options": {
+                "0": {
+                  "text": "0",
+                  "color": "#22C55E"
+                }
+              }
+            },
+            {
+              "type": "special",
+              "options": {
+                "match": "null",
+                "result": {
+                  "text": "暂无采集数据",
+                  "color": "#64748B"
+                }
+              }
+            },
+            {
+              "type": "special",
+              "options": {
+                "match": "nan",
+                "result": {
+                  "text": "暂无采集数据",
+                  "color": "#64748B"
+                }
+              }
+            }
+          ]
         },
         "overrides": []
       },
@@ -400,7 +528,7 @@
             "drawStyle": "line",
             "lineInterpolation": "linear",
             "lineWidth": 2,
-            "fillOpacity": 10,
+            "fillOpacity": 12,
             "gradientMode": "none",
             "showPoints": "never"
           }
@@ -416,7 +544,7 @@
                 "id": "color",
                 "value": {
                   "mode": "fixed",
-                  "fixedColor": "#49B5FF"
+                  "fixedColor": "#22D3EE"
                 }
               }
             ]
@@ -431,7 +559,7 @@
                 "id": "color",
                 "value": {
                   "mode": "fixed",
-                  "fixedColor": "#2AD4A7"
+                  "fixedColor": "#3B82F6"
                 }
               }
             ]
@@ -492,7 +620,7 @@
             "drawStyle": "line",
             "lineInterpolation": "linear",
             "lineWidth": 2,
-            "fillOpacity": 10,
+            "fillOpacity": 12,
             "gradientMode": "none",
             "showPoints": "never"
           }
@@ -508,7 +636,7 @@
                 "id": "color",
                 "value": {
                   "mode": "fixed",
-                  "fixedColor": "#49B5FF"
+                  "fixedColor": "#22D3EE"
                 }
               }
             ]
@@ -523,7 +651,7 @@
                 "id": "color",
                 "value": {
                   "mode": "fixed",
-                  "fixedColor": "#2AD4A7"
+                  "fixedColor": "#3B82F6"
                 }
               }
             ]
@@ -624,25 +752,20 @@
                 }
               },
               {
+                "id": "color",
+                "value": {
+                  "mode": "fixed",
+                  "fixedColor": "#3B82F6"
+                }
+              },
+              {
                 "id": "thresholds",
                 "value": {
                   "mode": "absolute",
                   "steps": [
                     {
-                      "color": "#2AD4A7",
+                      "color": "#3B82F6",
                       "value": null
-                    },
-                    {
-                      "color": "#F5C451",
-                      "value": 60
-                    },
-                    {
-                      "color": "#FF985C",
-                      "value": 75
-                    },
-                    {
-                      "color": "#FF5D73",
-                      "value": 90
                     }
                   ]
                 }
@@ -663,7 +786,7 @@
                     "options": {
                       "unclassified": {
                         "text": "用途待确认",
-                        "color": "#9AA8B8"
+                        "color": "#64748B"
                       }
                     }
                   }
@@ -771,7 +894,7 @@
                     "options": {
                       "unclassified": {
                         "text": "用途待确认",
-                        "color": "#9AA8B8"
+                        "color": "#64748B"
                       }
                     }
                   }
@@ -881,7 +1004,7 @@
             "drawStyle": "line",
             "lineInterpolation": "linear",
             "lineWidth": 2,
-            "fillOpacity": 10,
+            "fillOpacity": 12,
             "gradientMode": "none",
             "showPoints": "never"
           }
@@ -897,7 +1020,7 @@
                 "id": "color",
                 "value": {
                   "mode": "fixed",
-                  "fixedColor": "#49B5FF"
+                  "fixedColor": "#22D3EE"
                 }
               }
             ]
@@ -912,7 +1035,7 @@
                 "id": "color",
                 "value": {
                   "mode": "fixed",
-                  "fixedColor": "#2AD4A7"
+                  "fixedColor": "#3B82F6"
                 }
               }
             ]
@@ -927,7 +1050,7 @@
                 "id": "color",
                 "value": {
                   "mode": "fixed",
-                  "fixedColor": "#49B5FF"
+                  "fixedColor": "#3B82F6"
                 }
               }
             ]
@@ -942,7 +1065,7 @@
                 "id": "color",
                 "value": {
                   "mode": "fixed",
-                  "fixedColor": "#B18CFF"
+                  "fixedColor": "#A78BFA"
                 }
               }
             ]
@@ -957,7 +1080,7 @@
                 "id": "color",
                 "value": {
                   "mode": "fixed",
-                  "fixedColor": "#F5C451"
+                  "fixedColor": "#F59E0B"
                 }
               }
             ]
@@ -1009,7 +1132,7 @@
             "drawStyle": "line",
             "lineInterpolation": "linear",
             "lineWidth": 2,
-            "fillOpacity": 10,
+            "fillOpacity": 12,
             "gradientMode": "none",
             "showPoints": "never"
           }
@@ -1025,7 +1148,7 @@
                 "id": "color",
                 "value": {
                   "mode": "fixed",
-                  "fixedColor": "#FF985C"
+                  "fixedColor": "#F59E0B"
                 }
               }
             ]
@@ -1040,7 +1163,7 @@
                 "id": "color",
                 "value": {
                   "mode": "fixed",
-                  "fixedColor": "#FF5D73"
+                  "fixedColor": "#F43F5E"
                 }
               }
             ]
@@ -1137,13 +1260,60 @@
               {
                 "id": "unit",
                 "value": "percent"
+              },
+              {
+                "id": "color",
+                "value": {
+                  "mode": "fixed",
+                  "fixedColor": "#3B82F6"
+                }
+              },
+              {
+                "id": "mappings",
+                "value": [
+                  {
+                    "type": "value",
+                    "options": {
+                      "0": {
+                        "text": "0%",
+                        "color": "#22C55E"
+                      }
+                    }
+                  },
+                  {
+                    "type": "special",
+                    "options": {
+                      "match": "null",
+                      "result": {
+                        "text": "暂无采集数据",
+                        "color": "#64748B"
+                      }
+                    }
+                  },
+                  {
+                    "type": "special",
+                    "options": {
+                      "match": "nan",
+                      "result": {
+                        "text": "暂无采集数据",
+                        "color": "#64748B"
+                      }
+                    }
+                  }
+                ]
+              },
+              {
+                "id": "custom.cellOptions",
+                "value": {
+                  "type": "color-text"
+                }
               }
             ]
           },
           {
             "matcher": {
               "id": "byName",
-              "options": "接口用途"
+              "options": "interface_role"
             },
             "properties": [
               {
@@ -1154,11 +1324,63 @@
                     "options": {
                       "unclassified": {
                         "text": "用途待确认",
-                        "color": "#9AA8B8"
+                        "color": "#64748B"
                       }
                     }
                   }
                 ]
+              }
+            ]
+          },
+          {
+            "matcher": {
+              "id": "byName",
+              "options": "质量指标"
+            },
+            "properties": [
+              {
+                "id": "mappings",
+                "value": [
+                  {
+                    "type": "value",
+                    "options": {
+                      "错误包百分比": {
+                        "text": "错误包百分比",
+                        "color": "#F59E0B"
+                      },
+                      "丢弃包百分比": {
+                        "text": "丢弃包百分比",
+                        "color": "#F43F5E"
+                      }
+                    }
+                  },
+                  {
+                    "type": "special",
+                    "options": {
+                      "match": "null",
+                      "result": {
+                        "text": "暂无采集数据",
+                        "color": "#64748B"
+                      }
+                    }
+                  },
+                  {
+                    "type": "special",
+                    "options": {
+                      "match": "nan",
+                      "result": {
+                        "text": "暂无采集数据",
+                        "color": "#64748B"
+                      }
+                    }
+                  }
+                ]
+              },
+              {
+                "id": "custom.cellOptions",
+                "value": {
+                  "type": "color-text"
+                }
               }
             ]
           }
@@ -1232,7 +1454,7 @@
           {
             "matcher": {
               "id": "byName",
-              "options": "接口用途"
+              "options": "interface_role"
             },
             "properties": [
               {
@@ -1243,7 +1465,7 @@
                     "options": {
                       "unclassified": {
                         "text": "用途待确认",
-                        "color": "#9AA8B8"
+                        "color": "#64748B"
                       }
                     }
                   }
@@ -1363,7 +1585,7 @@
                     "options": {
                       "unclassified": {
                         "text": "用途待确认",
-                        "color": "#9AA8B8"
+                        "color": "#64748B"
                       }
                     }
                   }
@@ -1488,35 +1710,31 @@
                     "options": {
                       "1": {
                         "text": "Up",
-                        "color": "#2AD4A7"
+                        "color": "#22C55E"
                       },
                       "2": {
-                        "text": "down",
-                        "color": "#FF5D73"
-                      },
-                      "0": {
-                        "text": "UNKNOWN",
-                        "color": "#9AA8B8"
+                        "text": "Down",
+                        "color": "#F43F5E"
                       },
                       "3": {
-                        "text": "UNKNOWN",
-                        "color": "#9AA8B8"
+                        "text": "Testing",
+                        "color": "#3B82F6"
                       },
                       "4": {
-                        "text": "UNKNOWN",
-                        "color": "#9AA8B8"
+                        "text": "Unknown",
+                        "color": "#64748B"
                       },
                       "5": {
-                        "text": "UNKNOWN",
-                        "color": "#9AA8B8"
+                        "text": "Dormant",
+                        "color": "#3B82F6"
                       },
                       "6": {
-                        "text": "UNKNOWN",
-                        "color": "#9AA8B8"
+                        "text": "Not present",
+                        "color": "#3B82F6"
                       },
                       "7": {
-                        "text": "UNKNOWN",
-                        "color": "#9AA8B8"
+                        "text": "Lower layer down",
+                        "color": "#F43F5E"
                       }
                     }
                   },
@@ -1525,8 +1743,8 @@
                     "options": {
                       "match": "null",
                       "result": {
-                        "text": "UNKNOWN",
-                        "color": "#9AA8B8"
+                        "text": "暂无采集数据",
+                        "color": "#64748B"
                       }
                     }
                   },
@@ -1535,21 +1753,13 @@
                     "options": {
                       "match": "nan",
                       "result": {
-                        "text": "UNKNOWN",
-                        "color": "#9AA8B8"
+                        "text": "暂无采集数据",
+                        "color": "#64748B"
                       }
                     }
                   }
                 ]
-              }
-            ]
-          },
-          {
-            "matcher": {
-              "id": "byName",
-              "options": "运行状态"
-            },
-            "properties": [
+              },
               {
                 "id": "custom.cellOptions",
                 "value": {
@@ -1572,7 +1782,7 @@
                     "options": {
                       "unclassified": {
                         "text": "用途待确认",
-                        "color": "#9AA8B8"
+                        "color": "#64748B"
                       }
                     }
                   }
@@ -1710,32 +1920,24 @@
                     "options": {
                       "0": {
                         "text": "NORMAL",
-                        "color": "#2AD4A7"
+                        "color": "#22C55E"
                       },
                       "1": {
                         "text": "WARNING",
-                        "color": "#F5C451"
+                        "color": "#F59E0B"
                       },
                       "2": {
                         "text": "HIGH",
-                        "color": "#FF985C"
+                        "color": "#F97316"
                       },
                       "3": {
                         "text": "CRITICAL",
-                        "color": "#FF5D73"
+                        "color": "#F43F5E"
                       }
                     }
                   }
                 ]
-              }
-            ]
-          },
-          {
-            "matcher": {
-              "id": "byName",
-              "options": "阈值状态"
-            },
-            "properties": [
+              },
               {
                 "id": "custom.cellOptions",
                 "value": {
@@ -1758,7 +1960,7 @@
                     "options": {
                       "unclassified": {
                         "text": "用途待确认",
-                        "color": "#9AA8B8"
+                        "color": "#64748B"
                       }
                     }
                   }
@@ -1897,7 +2099,7 @@
           {
             "matcher": {
               "id": "byName",
-              "options": "接口用途"
+              "options": "interface_role"
             },
             "properties": [
               {
@@ -1908,7 +2110,7 @@
                     "options": {
                       "unclassified": {
                         "text": "用途待确认",
-                        "color": "#9AA8B8"
+                        "color": "#64748B"
                       }
                     }
                   }
@@ -1991,7 +2193,7 @@
             "drawStyle": "line",
             "lineInterpolation": "linear",
             "lineWidth": 2,
-            "fillOpacity": 10,
+            "fillOpacity": 12,
             "gradientMode": "none",
             "showPoints": "never"
           }
@@ -2007,7 +2209,7 @@
                 "id": "color",
                 "value": {
                   "mode": "fixed",
-                  "fixedColor": "#49B5FF"
+                  "fixedColor": "#22D3EE"
                 }
               }
             ]
@@ -2022,7 +2224,7 @@
                 "id": "color",
                 "value": {
                   "mode": "fixed",
-                  "fixedColor": "#2AD4A7"
+                  "fixedColor": "#3B82F6"
                 }
               }
             ]

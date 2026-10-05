@@ -1,4 +1,4 @@
-import React, { useMemo, useState, useEffect } from 'react';
+import React, { useMemo, useState, useEffect, useRef } from 'react';
 import { motion } from 'motion/react';
 import {
   Activity,
@@ -24,7 +24,8 @@ import {
   Bot,
   Sparkles,
 } from 'lucide-react';
-import type { Device, Job, NotificationItem, HostResourceSnapshot } from '../types';
+import type { DeviceSummary, Job, NotificationItem, HostResourceSnapshot } from '../types';
+import { authHeaders } from '../api/http';
 
 /* ─────────────── Types ─────────────── */
 
@@ -32,12 +33,58 @@ interface HomePageProps {
   language: string;
   navigate: (path: string) => void;
   userRole?: string;
-  devices: Device[];
+  isAuthenticated: boolean;
+  autoRefreshEnabled?: boolean;
   jobs: Job[];
   notifications: NotificationItem[];
   hostResources: HostResourceSnapshot | null;
   userCount: number;
 }
+
+const EMPTY_DEVICE_SUMMARY: DeviceSummary = {
+  total: 0,
+  online: 0,
+  offline: 0,
+  pending: 0,
+  unknown: 0,
+  by_platform: [],
+};
+
+const isRecord = (value: unknown): value is Record<string, unknown> => (
+  typeof value === 'object' && value !== null
+);
+
+const parseDeviceSummary = (payload: unknown): DeviceSummary => {
+  if (!isRecord(payload)) throw new Error('Invalid device summary response');
+
+  const count = (key: string): number => {
+    const value = payload[key];
+    if (typeof value !== 'number' || !Number.isFinite(value) || value < 0) {
+      throw new Error(`Invalid device summary field: ${key}`);
+    }
+    return Math.floor(value);
+  };
+
+  if (!Array.isArray(payload.by_platform)) {
+    throw new Error('Invalid device summary field: by_platform');
+  }
+
+  const by_platform = payload.by_platform.map((item): DeviceSummary['by_platform'][number] => {
+    if (!isRecord(item) || typeof item.platform !== 'string' || typeof item.count !== 'number' || !Number.isFinite(item.count) || item.count < 0) {
+      throw new Error('Invalid device summary platform entry');
+    }
+    return { platform: item.platform.trim() || 'unknown', count: Math.floor(item.count) };
+  });
+
+  return {
+    total: count('total'),
+    online: count('online'),
+    offline: count('offline'),
+    pending: count('pending'),
+    unknown: count('unknown'),
+    by_platform,
+  };
+};
 
 interface AppEntry {
   id: string;
@@ -85,7 +132,8 @@ function timeAgo(ts: string, zh: boolean): string {
 const HomePage: React.FC<HomePageProps> = ({
   language,
   navigate,
-  devices,
+  isAuthenticated,
+  autoRefreshEnabled = true,
   jobs,
   notifications,
   hostResources,
@@ -93,6 +141,64 @@ const HomePage: React.FC<HomePageProps> = ({
 }) => {
   const zh = language === 'zh';
   const [isDark, setIsDark] = useState(() => document.documentElement.classList.contains('dark'));
+  const [deviceSummary, setDeviceSummary] = useState<DeviceSummary | null>(null);
+  const [deviceSummaryLoading, setDeviceSummaryLoading] = useState(true);
+  const [deviceSummaryError, setDeviceSummaryError] = useState<string | null>(null);
+  const hasLoadedSummaryRef = useRef(false);
+
+  useEffect(() => {
+    if (!isAuthenticated) {
+      setDeviceSummaryLoading(false);
+      return;
+    }
+
+    let disposed = false;
+    let requestInFlight = false;
+    let activeController: AbortController | null = null;
+
+    const loadDeviceSummary = async () => {
+      if (disposed || requestInFlight) return;
+      requestInFlight = true;
+      const controller = new AbortController();
+      activeController = controller;
+      if (!hasLoadedSummaryRef.current) setDeviceSummaryLoading(true);
+
+      try {
+        const response = await fetch('/api/devices/summary?asset_type=network_device', {
+          headers: authHeaders(),
+          signal: controller.signal,
+        });
+        if (!response.ok) {
+          throw new Error(`Failed to load device summary (${response.status})`);
+        }
+        const nextSummary = parseDeviceSummary(await response.json());
+        if (disposed) return;
+        setDeviceSummary(nextSummary);
+        setDeviceSummaryError(null);
+        hasLoadedSummaryRef.current = true;
+      } catch (error) {
+        if (disposed || controller.signal.aborted) return;
+        const message = error instanceof Error ? error.message : 'Failed to load device summary';
+        setDeviceSummaryError(message);
+        console.error('Failed to fetch device summary:', error);
+      } finally {
+        if (activeController === controller) activeController = null;
+        requestInFlight = false;
+        if (!disposed) setDeviceSummaryLoading(false);
+      }
+    };
+
+    void loadDeviceSummary();
+    const refreshTimer = autoRefreshEnabled
+      ? window.setInterval(() => { void loadDeviceSummary(); }, 30000)
+      : undefined;
+
+    return () => {
+      disposed = true;
+      if (refreshTimer !== undefined) window.clearInterval(refreshTimer);
+      activeController?.abort();
+    };
+  }, [isAuthenticated, autoRefreshEnabled]);
 
   useEffect(() => {
     const observer = new MutationObserver(() => {
@@ -103,9 +209,10 @@ const HomePage: React.FC<HomePageProps> = ({
   }, []);
 
   const stats = useMemo(() => {
-    const online = devices.filter(d => d.status === 'online').length;
-    const offline = devices.filter(d => d.status === 'offline').length;
-    const pending = devices.filter(d => d.status === 'pending').length;
+    const summary = deviceSummary || EMPTY_DEVICE_SUMMARY;
+    const online = summary.online;
+    const offline = summary.offline;
+    const pending = summary.pending;
     const now = Date.now();
     const todayJobs = jobs.filter(j => new Date(j.created_at).getTime() > now - 86400000);
     const successJobs = todayJobs.filter(j => j.status === 'success').length;
@@ -116,18 +223,17 @@ const HomePage: React.FC<HomePageProps> = ({
     const critical = notifications.filter(n => !n.read && (n.severity === 'critical' || n.severity === 'high')).length;
 
     // Platform distribution
-    const platformMap: Record<string, number> = {};
-    devices.forEach(d => {
-      const key = d.platform || (zh ? '未知' : 'Unknown');
-      platformMap[key] = (platformMap[key] || 0) + 1;
-    });
-    const platforms = Object.entries(platformMap)
+    const platforms = summary.by_platform
+      .map(({ platform, count }) => [
+        !platform || platform.toLowerCase() === 'unknown' ? (zh ? '未知' : 'Unknown') : platform,
+        count,
+      ] as [string, number])
       .sort((a, b) => b[1] - a[1])
       .slice(0, 6);
 
     return {
-      total: devices.length, online, offline, pending,
-      onlineRate: devices.length > 0 ? Math.round((online / devices.length) * 100) : 0,
+      total: summary.total, online, offline, pending,
+      onlineRate: summary.total > 0 ? Math.round((online / summary.total) * 100) : 0,
       cpuPercent: hostResources?.cpu_percent ?? null,
       memPercent: hostResources?.memory_percent ?? null,
       diskPercent: hostResources?.disk_percent ?? null,
@@ -144,7 +250,7 @@ const HomePage: React.FC<HomePageProps> = ({
       successJobs, failedJobs, runningJobs, pendingJobs,
       platforms,
     };
-  }, [devices, jobs, notifications, hostResources, userCount, zh]);
+  }, [deviceSummary, jobs, notifications, hostResources, userCount, zh]);
 
   /* ── Stat blocks data ── */
   const statBlocks = [
@@ -181,6 +287,18 @@ const HomePage: React.FC<HomePageProps> = ({
               ? `今日网络 · ${stats.total} 台设备 · ${stats.online} 台在线 · ${stats.critical} 条严重告警`
               : `Today · ${stats.total} devices · ${stats.online} online · ${stats.critical} critical alerts`}
           </p>
+          {deviceSummaryLoading && !deviceSummary && (
+            <p className="mt-1 text-[11px]" style={{ color: 'var(--dim-text)' }} role="status">
+              {zh ? '正在加载设备统计…' : 'Loading device summary…'}
+            </p>
+          )}
+          {!deviceSummaryLoading && deviceSummaryError && (
+            <p className="mt-1 text-[11px] text-amber-600 dark:text-amber-400" role="status">
+              {deviceSummary
+                ? (zh ? '设备统计刷新失败，显示最近一次数据' : 'Device summary refresh failed; showing the latest data')
+                : (zh ? '设备统计加载失败，请稍后重试' : 'Device summary failed to load; try again later')}
+            </p>
+          )}
         </div>
         <div className="flex items-center gap-2 text-[11px]" style={{ color: 'var(--dim-text)' }}>
           {stats.hostname && (

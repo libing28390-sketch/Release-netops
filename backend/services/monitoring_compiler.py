@@ -48,6 +48,41 @@ def _valid_oid_token(value: str) -> bool:
         return len(parts) >= 2 and parts[0] in {0, 1, 2} and (parts[0] == 2 or parts[1] < 40) and all(0 <= part <= 4_294_967_295 for part in parts)
     return bool(_MIB_OID_RE.fullmatch(token))
 
+
+def _normalize_enum_values(value: Any) -> dict[int, str] | None:
+    if value is None:
+        return None
+    if not isinstance(value, Mapping):
+        raise CompileError("OID_CONFIG_ENUM_VALUES_INVALID")
+    normalized: dict[int, str] = {}
+    for raw_key, enum_value in value.items():
+        key_text = str(raw_key).strip()
+        if isinstance(raw_key, bool) or not re.fullmatch(r"[+-]?\d+", key_text):
+            raise CompileError("OID_CONFIG_ENUM_VALUE_KEY_INVALID")
+        numeric_key = int(key_text)
+        if numeric_key in normalized:
+            raise CompileError("OID_CONFIG_ENUM_VALUE_KEY_CONFLICT")
+        if not isinstance(enum_value, str):
+            raise CompileError("OID_CONFIG_ENUM_VALUE_INVALID")
+        normalized[numeric_key] = enum_value
+    return normalized
+
+
+def _normalize_exporter_enum_value_keys(value: Any) -> Any:
+    """Convert JSON enum keys to integers only in exporter runtime config."""
+    if isinstance(value, Mapping):
+        normalized: dict[Any, Any] = {}
+        for key, item in value.items():
+            normalized[key] = (
+                _normalize_enum_values(item)
+                if key == "enum_values"
+                else _normalize_exporter_enum_value_keys(item)
+            )
+        return normalized
+    if isinstance(value, list):
+        return [_normalize_exporter_enum_value_keys(item) for item in value]
+    return value
+
 GENERIC_IF_MIB_MODULE = {
     "module_key": "generic_ifmib_interface",
     "display_name": "Generic IF-MIB interface",
@@ -214,7 +249,7 @@ def _parse_variant_oid_config(value: Any, *, include_unit: bool = True) -> dict[
         raise CompileError("OID_CONFIG_HAS_NO_OIDS")
     if not normalized_metrics:
         raise CompileError("OID_CONFIG_HAS_NO_METRICS")
-    return config
+    return config if include_unit else _normalize_exporter_enum_value_keys(config)
 
 
 def _fallback_exporter_modules() -> dict[str, dict[str, Any]]:
