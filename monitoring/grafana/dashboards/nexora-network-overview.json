@@ -46,7 +46,7 @@
             "mode": "absolute",
             "steps": [
               {
-                "color": "#3274D9",
+                "color": "#8A8F98",
                 "value": null
               }
             ]
@@ -71,7 +71,8 @@
       "targets": [
         {
           "expr": "count(count by (instance) (up{job=\"network_snmp\",site_name=~\"$site\",vendor=~\"$vendor\",role=~\"$role\",hostname=~\"$device\"}))",
-          "refId": "A"
+          "refId": "A",
+          "instant": true
         }
       ]
     },
@@ -100,7 +101,7 @@
             "mode": "absolute",
             "steps": [
               {
-                "color": "#A352CC",
+                "color": "#8A8F98",
                 "value": null
               }
             ]
@@ -125,7 +126,8 @@
       "targets": [
         {
           "expr": "count(count by (site_name) (up{job=\"network_snmp\",site_name!=\"\",site_name=~\"$site\",vendor=~\"$vendor\",role=~\"$role\",hostname=~\"$device\"}))",
-          "refId": "A"
+          "refId": "A",
+          "instant": true
         }
       ]
     },
@@ -154,7 +156,7 @@
             "mode": "absolute",
             "steps": [
               {
-                "color": "#56A64B",
+                "color": "#8A8F98",
                 "value": null
               }
             ]
@@ -179,7 +181,8 @@
       "targets": [
         {
           "expr": "count(count by (instance) (up{job=\"network_snmp\",site_name=~\"$site\",vendor=~\"$vendor\",role=~\"$role\",hostname=~\"$device\"} == 1)) or on() ((count(up{job=\"network_snmp\",site_name=~\"$site\",vendor=~\"$vendor\",role=~\"$role\",hostname=~\"$device\"}) > 0) * 0)",
-          "refId": "A"
+          "refId": "A",
+          "instant": true
         }
       ]
     },
@@ -208,7 +211,7 @@
             "mode": "absolute",
             "steps": [
               {
-                "color": "#5794F2",
+                "color": "#8A8F98",
                 "value": null
               }
             ]
@@ -232,8 +235,9 @@
       },
       "targets": [
         {
-          "expr": "sum((hwWlanCurAssocUserNum{job=\"network_snmp\",site_name=~\"$site\",vendor=~\"$vendor\",role=~\"$role\",hostname=~\"$device\"} or hh3cDot11CurrAssocUserNum{job=\"network_snmp\",site_name=~\"$site\",vendor=~\"$vendor\",role=~\"$role\",hostname=~\"$device\"} or ruijieApcTotalStaNum{job=\"network_snmp\",site_name=~\"$site\",vendor=~\"$vendor\",role=~\"$role\",hostname=~\"$device\"} or cLSysTotalNumOfClients{job=\"network_snmp\",site_name=~\"$site\",vendor=~\"$vendor\",role=~\"$role\",hostname=~\"$device\"} or wlsxSysExtStationsNum{job=\"network_snmp\",site_name=~\"$site\",vendor=~\"$vendor\",role=~\"$role\",hostname=~\"$device\"} or ruckusZDTotalNumSta{job=\"network_snmp\",site_name=~\"$site\",vendor=~\"$vendor\",role=~\"$role\",hostname=~\"$device\"}))",
-          "refId": "A"
+          "expr": "sum(((sum by (site_name,vendor,role,hostname) (hwWlanCurAssocUserNum{job=\"network_snmp\",site_name=~\"$site\",vendor=~\"$vendor\",role=~\"$role\",hostname=~\"$device\"} or hh3cDot11CurrAssocUserNum{job=\"network_snmp\",site_name=~\"$site\",vendor=~\"$vendor\",role=~\"$role\",hostname=~\"$device\"} or ruijieApcTotalStaNum{job=\"network_snmp\",site_name=~\"$site\",vendor=~\"$vendor\",role=~\"$role\",hostname=~\"$device\"} or cLSysTotalNumOfClients{job=\"network_snmp\",site_name=~\"$site\",vendor=~\"$vendor\",role=~\"$role\",hostname=~\"$device\"} or wlsxSysExtStationsNum{job=\"network_snmp\",site_name=~\"$site\",vendor=~\"$vendor\",role=~\"$role\",hostname=~\"$device\"} or ruckusZDTotalNumSta{job=\"network_snmp\",site_name=~\"$site\",vendor=~\"$vendor\",role=~\"$role\",hostname=~\"$device\"}) unless on(site_name,vendor,role,hostname) ((sum by (site_name,vendor,role,hostname) (nexora_wireless_sensor_value{job=\"platform_hardware_inventory\",site_name=~\"$site\",vendor=~\"$vendor\",role=~\"$role\",hostname=~\"$device\",component_class=\"wireless_controller\",sensor_class=\"clients\"})) or on(site_name,vendor,role,hostname) sum by (site_name,vendor,role,hostname) (nexora_wireless_sensor_value{job=\"platform_hardware_inventory\",site_name=~\"$site\",vendor=~\"$vendor\",role=~\"$role\",hostname=~\"$device\",component_class=\"wireless_ssid\",sensor_class=\"clients\"}))))) or on(site_name,vendor,role,hostname) ((sum by (site_name,vendor,role,hostname) (nexora_wireless_sensor_value{job=\"platform_hardware_inventory\",site_name=~\"$site\",vendor=~\"$vendor\",role=~\"$role\",hostname=~\"$device\",component_class=\"wireless_controller\",sensor_class=\"clients\"})) or on(site_name,vendor,role,hostname) sum by (site_name,vendor,role,hostname) (nexora_wireless_sensor_value{job=\"platform_hardware_inventory\",site_name=~\"$site\",vendor=~\"$vendor\",role=~\"$role\",hostname=~\"$device\",component_class=\"wireless_ssid\",sensor_class=\"clients\"}))))))",
+          "refId": "A",
+          "instant": true
         }
       ]
     },
@@ -262,7 +266,7 @@
             "mode": "absolute",
             "steps": [
               {
-                "color": "#3274D9",
+                "color": "#8A8F98",
                 "value": null
               }
             ]
@@ -287,7 +291,8 @@
       "targets": [
         {
           "expr": "count(count by (instance, ifIndex) (ifOperStatus{job=\"network_snmp\",site_name=~\"$site\",vendor=~\"$vendor\",role=~\"$role\",hostname=~\"$device\"}))",
-          "refId": "A"
+          "refId": "A",
+          "instant": true
         }
       ]
     },
@@ -316,7 +321,7 @@
             "mode": "absolute",
             "steps": [
               {
-                "color": "green",
+                "color": "#8A8F98",
                 "value": null
               },
               {
@@ -349,7 +354,8 @@
       "targets": [
         {
           "expr": "count(((changes(ifOperStatus{job=\"network_snmp\",site_name=~\"$site\",vendor=~\"$vendor\",role=~\"$role\",hostname=~\"$device\"}[24h]) > 0) and on(instance, ifIndex) (ifOperStatus{job=\"network_snmp\",site_name=~\"$site\",vendor=~\"$vendor\",role=~\"$role\",hostname=~\"$device\"} == 2) and on(instance, ifIndex) max by (instance, ifIndex) (ifAdminStatus{job=\"network_snmp\",site_name=~\"$site\",vendor=~\"$vendor\",role=~\"$role\",hostname=~\"$device\"} == 1)) * on(instance, ifIndex) group_left(ifName) (max by (instance, ifIndex, ifName) (ifName{job=\"network_snmp\",site_name=~\"$site\",vendor=~\"$vendor\",role=~\"$role\",hostname=~\"$device\"} * 0 + 1))) or on() ((count(ifOperStatus{job=\"network_snmp\",site_name=~\"$site\",vendor=~\"$vendor\",role=~\"$role\",hostname=~\"$device\"}) > 0) * 0)",
-          "refId": "A"
+          "refId": "A",
+          "instant": true
         }
       ],
       "description": "只统计已启用、当前 Down 且24小时内状态有变化的接口。"
@@ -408,7 +414,7 @@
                 "id": "color",
                 "value": {
                   "mode": "fixed",
-                  "fixedColor": "#73BF69"
+                  "fixedColor": "#5794F2"
                 }
               }
             ]
@@ -423,7 +429,7 @@
                 "id": "color",
                 "value": {
                   "mode": "fixed",
-                  "fixedColor": "#FF9830"
+                  "fixedColor": "#73BF69"
                 }
               }
             ]
@@ -509,7 +515,7 @@
       },
       "targets": [
         {
-          "expr": "sum((hwWlanCurAssocUserNum{job=\"network_snmp\",site_name=~\"$site\",vendor=~\"$vendor\",role=~\"$role\",hostname=~\"$device\"} or hh3cDot11CurrAssocUserNum{job=\"network_snmp\",site_name=~\"$site\",vendor=~\"$vendor\",role=~\"$role\",hostname=~\"$device\"} or ruijieApcTotalStaNum{job=\"network_snmp\",site_name=~\"$site\",vendor=~\"$vendor\",role=~\"$role\",hostname=~\"$device\"} or cLSysTotalNumOfClients{job=\"network_snmp\",site_name=~\"$site\",vendor=~\"$vendor\",role=~\"$role\",hostname=~\"$device\"} or wlsxSysExtStationsNum{job=\"network_snmp\",site_name=~\"$site\",vendor=~\"$vendor\",role=~\"$role\",hostname=~\"$device\"} or ruckusZDTotalNumSta{job=\"network_snmp\",site_name=~\"$site\",vendor=~\"$vendor\",role=~\"$role\",hostname=~\"$device\"}))",
+          "expr": "sum(((sum by (site_name,vendor,role,hostname) (hwWlanCurAssocUserNum{job=\"network_snmp\",site_name=~\"$site\",vendor=~\"$vendor\",role=~\"$role\",hostname=~\"$device\"} or hh3cDot11CurrAssocUserNum{job=\"network_snmp\",site_name=~\"$site\",vendor=~\"$vendor\",role=~\"$role\",hostname=~\"$device\"} or ruijieApcTotalStaNum{job=\"network_snmp\",site_name=~\"$site\",vendor=~\"$vendor\",role=~\"$role\",hostname=~\"$device\"} or cLSysTotalNumOfClients{job=\"network_snmp\",site_name=~\"$site\",vendor=~\"$vendor\",role=~\"$role\",hostname=~\"$device\"} or wlsxSysExtStationsNum{job=\"network_snmp\",site_name=~\"$site\",vendor=~\"$vendor\",role=~\"$role\",hostname=~\"$device\"} or ruckusZDTotalNumSta{job=\"network_snmp\",site_name=~\"$site\",vendor=~\"$vendor\",role=~\"$role\",hostname=~\"$device\"}) unless on(site_name,vendor,role,hostname) ((sum by (site_name,vendor,role,hostname) (nexora_wireless_sensor_value{job=\"platform_hardware_inventory\",site_name=~\"$site\",vendor=~\"$vendor\",role=~\"$role\",hostname=~\"$device\",component_class=\"wireless_controller\",sensor_class=\"clients\"})) or on(site_name,vendor,role,hostname) sum by (site_name,vendor,role,hostname) (nexora_wireless_sensor_value{job=\"platform_hardware_inventory\",site_name=~\"$site\",vendor=~\"$vendor\",role=~\"$role\",hostname=~\"$device\",component_class=\"wireless_ssid\",sensor_class=\"clients\"}))))) or on(site_name,vendor,role,hostname) ((sum by (site_name,vendor,role,hostname) (nexora_wireless_sensor_value{job=\"platform_hardware_inventory\",site_name=~\"$site\",vendor=~\"$vendor\",role=~\"$role\",hostname=~\"$device\",component_class=\"wireless_controller\",sensor_class=\"clients\"})) or on(site_name,vendor,role,hostname) sum by (site_name,vendor,role,hostname) (nexora_wireless_sensor_value{job=\"platform_hardware_inventory\",site_name=~\"$site\",vendor=~\"$vendor\",role=~\"$role\",hostname=~\"$device\",component_class=\"wireless_ssid\",sensor_class=\"clients\"}))))))",
           "legendFormat": "控制器统计的在线终端",
           "refId": "A"
         },
@@ -558,7 +564,7 @@
             "mode": "absolute",
             "steps": [
               {
-                "color": "#3274D9",
+                "color": "#8A8F98",
                 "value": null
               }
             ]
@@ -583,7 +589,8 @@
       "targets": [
         {
           "expr": "count(count by (asset_id) ((nexora_hw_cpu_usage_percent{asset_id!=\"\",site_name=~\"$site\",vendor=~\"$vendor\",role=~\"$role\",hostname=~\"$device\"}) and on(asset_id) (up{job=\"network_snmp\",site_name=~\"$site\",vendor=~\"$vendor\",role=~\"$role\",hostname=~\"$device\",asset_id!=\"\"} == 1))) or on() ((count(count by (instance) (up{job=\"network_snmp\",site_name=~\"$site\",vendor=~\"$vendor\",role=~\"$role\",hostname=~\"$device\"} == 1)) > 0) * 0)",
-          "refId": "A"
+          "refId": "A",
+          "instant": true
         }
       ]
     },
@@ -612,7 +619,7 @@
             "mode": "absolute",
             "steps": [
               {
-                "color": "#3274D9",
+                "color": "#8A8F98",
                 "value": null
               }
             ]
@@ -637,7 +644,8 @@
       "targets": [
         {
           "expr": "count(count by (asset_id) ((nexora_hw_memory_usage_percent{asset_id!=\"\",site_name=~\"$site\",vendor=~\"$vendor\",role=~\"$role\",hostname=~\"$device\"}) and on(asset_id) (up{job=\"network_snmp\",site_name=~\"$site\",vendor=~\"$vendor\",role=~\"$role\",hostname=~\"$device\",asset_id!=\"\"} == 1))) or on() ((count(count by (instance) (up{job=\"network_snmp\",site_name=~\"$site\",vendor=~\"$vendor\",role=~\"$role\",hostname=~\"$device\"} == 1)) > 0) * 0)",
-          "refId": "A"
+          "refId": "A",
+          "instant": true
         }
       ],
       "description": "没有采到指标不代表使用率为 0。"
@@ -667,7 +675,7 @@
             "mode": "absolute",
             "steps": [
               {
-                "color": "#3274D9",
+                "color": "#8A8F98",
                 "value": null
               }
             ]
@@ -692,7 +700,8 @@
       "targets": [
         {
           "expr": "count(count by (asset_id) ((nexora_hw_temperature_celsius{asset_id!=\"\",site_name=~\"$site\",vendor=~\"$vendor\",role=~\"$role\",hostname=~\"$device\"}) and on(asset_id) (up{job=\"network_snmp\",site_name=~\"$site\",vendor=~\"$vendor\",role=~\"$role\",hostname=~\"$device\",asset_id!=\"\"} == 1))) or on() ((count(count by (instance) (up{job=\"network_snmp\",site_name=~\"$site\",vendor=~\"$vendor\",role=~\"$role\",hostname=~\"$device\"} == 1)) > 0) * 0)",
-          "refId": "A"
+          "refId": "A",
+          "instant": true
         }
       ],
       "description": "温度阈值因设备而异，请查看设备详情。"
@@ -822,7 +831,7 @@
             "renameByName": {
               "sysName": "设备名称",
               "hostname": "设备名称",
-              "instance": "管理 IP",
+              "instance": "采集目标",
               "site_name": "站点",
               "ifName": "接口全称",
               "ifDescr": "接口描述",
@@ -969,7 +978,7 @@
             "renameByName": {
               "sysName": "设备名称",
               "hostname": "设备名称",
-              "instance": "管理 IP",
+              "instance": "采集目标",
               "site_name": "站点",
               "ifName": "接口全称",
               "ifDescr": "接口描述",
@@ -1116,7 +1125,7 @@
             "renameByName": {
               "sysName": "设备名称",
               "hostname": "设备名称",
-              "instance": "管理 IP",
+              "instance": "采集目标",
               "site_name": "站点",
               "ifName": "接口全称",
               "ifDescr": "接口描述",
@@ -1246,7 +1255,7 @@
             "renameByName": {
               "sysName": "设备名称",
               "hostname": "设备名称",
-              "instance": "管理 IP",
+              "instance": "采集目标",
               "site_name": "站点",
               "ifName": "接口全称",
               "ifDescr": "接口描述",
@@ -1304,7 +1313,7 @@
                 "id": "color",
                 "value": {
                   "mode": "fixed",
-                  "fixedColor": "#F2495C"
+                  "fixedColor": "#FF9830"
                 }
               }
             ]
@@ -1319,7 +1328,7 @@
                 "id": "color",
                 "value": {
                   "mode": "fixed",
-                  "fixedColor": "#E0B400"
+                  "fixedColor": "#F2495C"
                 }
               }
             ]
@@ -1408,7 +1417,7 @@
                     "options": {
                       "0": {
                         "text": "当前无近期变化",
-                        "color": "green"
+                        "color": "#73BF69"
                       }
                     }
                   }
@@ -1516,7 +1525,7 @@
             "renameByName": {
               "sysName": "设备名称",
               "hostname": "设备名称",
-              "instance": "管理 IP",
+              "instance": "采集目标",
               "site_name": "站点",
               "ifName": "接口全称",
               "ifDescr": "接口描述",

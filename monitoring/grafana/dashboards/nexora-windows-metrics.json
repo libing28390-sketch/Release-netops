@@ -33,7 +33,7 @@
             "mode": "absolute",
             "steps": [
               {
-                "color": "blue",
+                "color": "#8A8F98",
                 "value": null
               }
             ]
@@ -58,7 +58,8 @@
       "targets": [
         {
           "expr": "count(count by (hostname) (up{job=\"windows_servers\",site_name=~\"$site\",hostname=~\"$device\"}))",
-          "refId": "A"
+          "refId": "A",
+          "instant": true
         }
       ]
     },
@@ -87,7 +88,7 @@
             "mode": "absolute",
             "steps": [
               {
-                "color": "green",
+                "color": "#73BF69",
                 "value": null
               },
               {
@@ -95,7 +96,7 @@
                 "value": 70
               },
               {
-                "color": "red",
+                "color": "#F2495C",
                 "value": 85
               }
             ]
@@ -120,7 +121,8 @@
       "targets": [
         {
           "expr": "avg(100 - (avg by (hostname) (rate(windows_cpu_time_total{job=\"windows_servers\",site_name=~\"$site\",hostname=~\"$device\",mode=\"idle\"}[5m])) * 100))",
-          "refId": "A"
+          "refId": "A",
+          "instant": true
         }
       ]
     },
@@ -149,7 +151,7 @@
             "mode": "absolute",
             "steps": [
               {
-                "color": "green",
+                "color": "#73BF69",
                 "value": null
               },
               {
@@ -157,7 +159,7 @@
                 "value": 80
               },
               {
-                "color": "red",
+                "color": "#F2495C",
                 "value": 90
               }
             ]
@@ -182,7 +184,8 @@
       "targets": [
         {
           "expr": "avg((1 - (windows_os_physical_memory_free_bytes{job=\"windows_servers\",site_name=~\"$site\",hostname=~\"$device\"} / windows_cs_physical_memory_bytes{job=\"windows_servers\",site_name=~\"$site\",hostname=~\"$device\"})) * 100)",
-          "refId": "A"
+          "refId": "A",
+          "instant": true
         }
       ]
     },
@@ -211,7 +214,7 @@
             "mode": "absolute",
             "steps": [
               {
-                "color": "purple",
+                "color": "#8A8F98",
                 "value": null
               }
             ]
@@ -236,7 +239,8 @@
       "targets": [
         {
           "expr": "sum(windows_terminal_services_active_sessions{job=\"windows_servers\",site_name=~\"$site\",hostname=~\"$device\"})",
-          "refId": "A"
+          "refId": "A",
+          "instant": true
         }
       ]
     },
@@ -396,7 +400,7 @@
           {
             "matcher": {
               "id": "byName",
-              "options": "数值"
+              "options": "剩余空间 (%)"
             },
             "properties": [
               {
@@ -465,7 +469,7 @@
             "renameByName": {
               "sysName": "设备名称",
               "hostname": "设备名称",
-              "instance": "管理 IP",
+              "instance": "采集目标",
               "site_name": "站点",
               "ifName": "接口全称",
               "ifDescr": "接口描述",
@@ -573,7 +577,38 @@
             "showPoints": "never"
           }
         },
-        "overrides": []
+        "overrides": [
+          {
+            "matcher": {
+              "id": "byRegexp",
+              "options": ".*接收.*"
+            },
+            "properties": [
+              {
+                "id": "color",
+                "value": {
+                  "mode": "fixed",
+                  "fixedColor": "#5794F2"
+                }
+              }
+            ]
+          },
+          {
+            "matcher": {
+              "id": "byRegexp",
+              "options": ".*发送.*"
+            },
+            "properties": [
+              {
+                "id": "color",
+                "value": {
+                  "mode": "fixed",
+                  "fixedColor": "#73BF69"
+                }
+              }
+            ]
+          }
+        ]
       },
       "options": {
         "legend": {
@@ -702,7 +737,7 @@
             "renameByName": {
               "sysName": "设备名称",
               "hostname": "设备名称",
-              "instance": "管理 IP",
+              "instance": "采集目标",
               "site_name": "站点",
               "ifName": "接口全称",
               "ifDescr": "接口描述",
@@ -817,7 +852,7 @@
             "renameByName": {
               "sysName": "设备名称",
               "hostname": "设备名称",
-              "instance": "管理 IP",
+              "instance": "采集目标",
               "site_name": "站点",
               "ifName": "接口全称",
               "ifDescr": "接口描述",

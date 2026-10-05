@@ -33,7 +33,7 @@
             "mode": "absolute",
             "steps": [
               {
-                "color": "#56A64B",
+                "color": "#8A8F98",
                 "value": null
               }
             ]
@@ -58,7 +58,8 @@
       "targets": [
         {
           "expr": "count(up{job=~\"platform_api|platform_victoriametrics|platform_vmagent|platform_snmp_exporter|platform_grafana|platform_cadvisor\"} == 1)",
-          "refId": "A"
+          "refId": "A",
+          "instant": true
         }
       ],
       "description": "统计可访问的监控端点，不代表容器数。"
@@ -88,11 +89,11 @@
             "mode": "absolute",
             "steps": [
               {
-                "color": "green",
+                "color": "#8A8F98",
                 "value": null
               },
               {
-                "color": "red",
+                "color": "#F2495C",
                 "value": 1
               }
             ]
@@ -117,7 +118,8 @@
       "targets": [
         {
           "expr": "count(up{job=~\"platform_api|platform_victoriametrics|platform_vmagent|platform_snmp_exporter|platform_grafana|platform_cadvisor\"} == 0)",
-          "refId": "A"
+          "refId": "A",
+          "instant": true
         }
       ]
     },
@@ -146,7 +148,7 @@
             "mode": "absolute",
             "steps": [
               {
-                "color": "#A352CC",
+                "color": "#8A8F98",
                 "value": null
               }
             ]
@@ -171,7 +173,8 @@
       "targets": [
         {
           "expr": "count(up{job=~\"platform_api|platform_victoriametrics|platform_vmagent|platform_snmp_exporter|platform_grafana|platform_cadvisor\"})",
-          "refId": "A"
+          "refId": "A",
+          "instant": true
         }
       ]
     },
@@ -200,7 +203,7 @@
             "mode": "absolute",
             "steps": [
               {
-                "color": "green",
+                "color": "#8A8F98",
                 "value": null
               },
               {
@@ -208,7 +211,7 @@
                 "value": 2
               },
               {
-                "color": "red",
+                "color": "#F2495C",
                 "value": 5
               }
             ]
@@ -233,7 +236,8 @@
       "targets": [
         {
           "expr": "max(scrape_duration_seconds{job=~\"platform_api|platform_victoriametrics|platform_vmagent|platform_snmp_exporter|platform_grafana|platform_cadvisor\"})",
-          "refId": "A"
+          "refId": "A",
+          "instant": true
         }
       ]
     },
@@ -262,11 +266,15 @@
             "mode": "absolute",
             "steps": [
               {
-                "color": "red",
+                "color": "#8A8F98",
                 "value": null
               },
               {
-                "color": "green",
+                "color": "#F2495C",
+                "value": 0
+              },
+              {
+                "color": "#73BF69",
                 "value": 1
               }
             ]
@@ -291,7 +299,8 @@
       "targets": [
         {
           "expr": "nexora_monitoring_database_available",
-          "refId": "A"
+          "refId": "A",
+          "instant": true
         }
       ],
       "description": "1 表示连接与查询成功，0 表示失败。"
@@ -321,7 +330,7 @@
             "mode": "absolute",
             "steps": [
               {
-                "color": "#3274D9",
+                "color": "#8A8F98",
                 "value": null
               }
             ]
@@ -346,7 +355,8 @@
       "targets": [
         {
           "expr": "avg(scrape_duration_seconds{job=~\"platform_api|platform_victoriametrics|platform_vmagent|platform_snmp_exporter|platform_grafana|platform_cadvisor\"})",
-          "refId": "A"
+          "refId": "A",
+          "instant": true
         }
       ]
     },
@@ -495,11 +505,11 @@
                     "options": {
                       "1": {
                         "text": "UP",
-                        "color": "green"
+                        "color": "#73BF69"
                       },
                       "0": {
                         "text": "DOWN",
-                        "color": "red"
+                        "color": "#F2495C"
                       }
                     }
                   },
@@ -509,7 +519,7 @@
                       "match": "null",
                       "result": {
                         "text": "暂无采集数据",
-                        "color": "gray"
+                        "color": "#8A8F98"
                       }
                     }
                   }
@@ -597,7 +607,7 @@
             "mode": "absolute",
             "steps": [
               {
-                "color": "green",
+                "color": "#8A8F98",
                 "value": null
               },
               {
@@ -605,7 +615,7 @@
                 "value": 104857600
               },
               {
-                "color": "red",
+                "color": "#F2495C",
                 "value": 1073741824
               }
             ]
@@ -630,7 +640,8 @@
       "targets": [
         {
           "expr": "sum(vmagent_remotewrite_pending_data_bytes)",
-          "refId": "A"
+          "refId": "A",
+          "instant": true
         }
       ],
       "description": "显示等待写入的数据量；无数据时状态未知。"
@@ -660,11 +671,11 @@
             "mode": "absolute",
             "steps": [
               {
-                "color": "green",
+                "color": "#8A8F98",
                 "value": null
               },
               {
-                "color": "red",
+                "color": "#F2495C",
                 "value": 1
               }
             ]
@@ -689,7 +700,8 @@
       "targets": [
         {
           "expr": "sum(increase(vmagent_remotewrite_push_failures_total[5m]))",
-          "refId": "A"
+          "refId": "A",
+          "instant": true
         }
       ]
     },
@@ -718,11 +730,11 @@
             "mode": "absolute",
             "steps": [
               {
-                "color": "green",
+                "color": "#8A8F98",
                 "value": null
               },
               {
-                "color": "red",
+                "color": "#F2495C",
                 "value": 1
               }
             ]
@@ -747,7 +759,8 @@
       "targets": [
         {
           "expr": "sum(increase(vmagent_remotewrite_packets_dropped_total[5m]))",
-          "refId": "A"
+          "refId": "A",
+          "instant": true
         }
       ]
     },
@@ -776,7 +789,7 @@
             "mode": "absolute",
             "steps": [
               {
-                "color": "#3274D9",
+                "color": "#8A8F98",
                 "value": null
               }
             ]
@@ -801,7 +814,8 @@
       "targets": [
         {
           "expr": "sum(vm_free_disk_space_bytes)",
-          "refId": "A"
+          "refId": "A",
+          "instant": true
         }
       ]
     },
@@ -830,7 +844,7 @@
             "mode": "absolute",
             "steps": [
               {
-                "color": "#3274D9",
+                "color": "#8A8F98",
                 "value": null
               }
             ]
@@ -855,7 +869,8 @@
       "targets": [
         {
           "expr": "sum(vm_data_size_bytes)",
-          "refId": "A"
+          "refId": "A",
+          "instant": true
         }
       ],
       "description": "显示监控数据量，不代表磁盘使用率。"
@@ -885,11 +900,11 @@
             "mode": "absolute",
             "steps": [
               {
-                "color": "green",
+                "color": "#8A8F98",
                 "value": null
               },
               {
-                "color": "red",
+                "color": "#F2495C",
                 "value": 1
               }
             ]
@@ -914,7 +929,8 @@
       "targets": [
         {
           "expr": "max(vm_storage_is_read_only)",
-          "refId": "A"
+          "refId": "A",
+          "instant": true
         }
       ],
       "description": "0 表示可写，1 表示只读；无数据时状态未知。"
@@ -1114,7 +1130,7 @@
             "mode": "absolute",
             "steps": [
               {
-                "color": "#A352CC",
+                "color": "#8A8F98",
                 "value": null
               }
             ]
@@ -1139,7 +1155,8 @@
       "targets": [
         {
           "expr": "count(count by (name) (container_last_seen{name!=\"\"}))",
-          "refId": "A"
+          "refId": "A",
+          "instant": true
         }
       ],
       "description": "统计已观测到的容器，不代表容器健康。"

@@ -33,7 +33,7 @@
             "mode": "absolute",
             "steps": [
               {
-                "color": "#3274D9",
+                "color": "#8A8F98",
                 "value": null
               }
             ]
@@ -58,7 +58,8 @@
       "targets": [
         {
           "expr": "nexora_outbound_probe_samples{window=\"1h\"}",
-          "refId": "A"
+          "refId": "A",
+          "instant": true
         }
       ]
     },
@@ -87,7 +88,7 @@
             "mode": "absolute",
             "steps": [
               {
-                "color": "#3274D9",
+                "color": "#8A8F98",
                 "value": null
               }
             ]
@@ -112,7 +113,8 @@
       "targets": [
         {
           "expr": "nexora_outbound_probe_availability_ratio{window=\"1h\"}",
-          "refId": "A"
+          "refId": "A",
+          "instant": true
         }
       ]
     },
@@ -141,7 +143,7 @@
             "mode": "absolute",
             "steps": [
               {
-                "color": "#3274D9",
+                "color": "#8A8F98",
                 "value": null
               }
             ]
@@ -166,7 +168,8 @@
       "targets": [
         {
           "expr": "nexora_outbound_probe_latency_avg_ms_by_type{window=\"1h\",probe_type=\"icmp_ping\"}",
-          "refId": "A"
+          "refId": "A",
+          "instant": true
         }
       ]
     },
@@ -195,7 +198,7 @@
             "mode": "absolute",
             "steps": [
               {
-                "color": "#3274D9",
+                "color": "#8A8F98",
                 "value": null
               }
             ]
@@ -220,7 +223,8 @@
       "targets": [
         {
           "expr": "nexora_outbound_probe_latency_max_ms_by_type{window=\"1h\",probe_type=\"icmp_ping\"}",
-          "refId": "A"
+          "refId": "A",
+          "instant": true
         }
       ]
     },
@@ -249,7 +253,7 @@
             "mode": "absolute",
             "steps": [
               {
-                "color": "#3274D9",
+                "color": "#8A8F98",
                 "value": null
               }
             ]
@@ -274,7 +278,8 @@
       "targets": [
         {
           "expr": "nexora_outbound_probe_samples{window=\"24h\"}",
-          "refId": "A"
+          "refId": "A",
+          "instant": true
         }
       ]
     },
@@ -303,7 +308,7 @@
             "mode": "absolute",
             "steps": [
               {
-                "color": "#3274D9",
+                "color": "#8A8F98",
                 "value": null
               }
             ]
@@ -328,7 +333,8 @@
       "targets": [
         {
           "expr": "nexora_outbound_probe_availability_ratio{window=\"24h\"}",
-          "refId": "A"
+          "refId": "A",
+          "instant": true
         }
       ]
     },
@@ -357,7 +363,7 @@
             "mode": "absolute",
             "steps": [
               {
-                "color": "#3274D9",
+                "color": "#8A8F98",
                 "value": null
               }
             ]
@@ -382,7 +388,8 @@
       "targets": [
         {
           "expr": "nexora_outbound_probe_latency_avg_ms_by_type{window=\"24h\",probe_type=\"icmp_ping\"}",
-          "refId": "A"
+          "refId": "A",
+          "instant": true
         }
       ]
     },
@@ -411,7 +418,7 @@
             "mode": "absolute",
             "steps": [
               {
-                "color": "#3274D9",
+                "color": "#8A8F98",
                 "value": null
               }
             ]
@@ -436,7 +443,8 @@
       "targets": [
         {
           "expr": "nexora_outbound_probe_latency_max_ms_by_type{window=\"24h\",probe_type=\"icmp_ping\"}",
-          "refId": "A"
+          "refId": "A",
+          "instant": true
         }
       ]
     },
@@ -699,7 +707,7 @@
             "mode": "absolute",
             "steps": [
               {
-                "color": "#3274D9",
+                "color": "#8A8F98",
                 "value": null
               }
             ]
@@ -724,7 +732,8 @@
       "targets": [
         {
           "expr": "nexora_outbound_probe_icmp_packet_loss_ratio{window=\"24h\"}",
-          "refId": "A"
+          "refId": "A",
+          "instant": true
         }
       ]
     },
@@ -753,7 +762,7 @@
             "mode": "absolute",
             "steps": [
               {
-                "color": "#3274D9",
+                "color": "#8A8F98",
                 "value": null
               }
             ]
@@ -778,7 +787,8 @@
       "targets": [
         {
           "expr": "nexora_outbound_probe_icmp_jitter_avg_ms{window=\"24h\"}",
-          "refId": "A"
+          "refId": "A",
+          "instant": true
         }
       ]
     },
@@ -807,7 +817,7 @@
             "mode": "absolute",
             "steps": [
               {
-                "color": "#3274D9",
+                "color": "#8A8F98",
                 "value": null
               }
             ]
@@ -832,7 +842,8 @@
       "targets": [
         {
           "expr": "nexora_wan_interface_collection_success_ratio{window=\"1h\"}",
-          "refId": "A"
+          "refId": "A",
+          "instant": true
         }
       ],
       "description": "仅统计已启用的 WAN 接口。"
@@ -862,15 +873,19 @@
             "mode": "absolute",
             "steps": [
               {
-                "color": "red",
+                "color": "#8A8F98",
                 "value": null
+              },
+              {
+                "color": "#F2495C",
+                "value": 0
               },
               {
                 "color": "#E0B400",
                 "value": 0.95
               },
               {
-                "color": "green",
+                "color": "#73BF69",
                 "value": 0.99
               }
             ]
@@ -895,7 +910,8 @@
       "targets": [
         {
           "expr": "nexora_wan_interface_oper_up_ratio{window=\"24h\"}",
-          "refId": "A"
+          "refId": "A",
+          "instant": true
         }
       ],
       "description": "只按采集成功样本计算，不代表端到端 SLA。"
@@ -984,7 +1000,38 @@
             "showPoints": "never"
           }
         },
-        "overrides": []
+        "overrides": [
+          {
+            "matcher": {
+              "id": "byName",
+              "options": "下行"
+            },
+            "properties": [
+              {
+                "id": "color",
+                "value": {
+                  "mode": "fixed",
+                  "fixedColor": "#5794F2"
+                }
+              }
+            ]
+          },
+          {
+            "matcher": {
+              "id": "byName",
+              "options": "上行"
+            },
+            "properties": [
+              {
+                "id": "color",
+                "value": {
+                  "mode": "fixed",
+                  "fixedColor": "#73BF69"
+                }
+              }
+            ]
+          }
+        ]
       },
       "options": {
         "legend": {
@@ -1045,7 +1092,38 @@
             "showPoints": "never"
           }
         },
-        "overrides": []
+        "overrides": [
+          {
+            "matcher": {
+              "id": "byName",
+              "options": "错误"
+            },
+            "properties": [
+              {
+                "id": "color",
+                "value": {
+                  "mode": "fixed",
+                  "fixedColor": "#FF9830"
+                }
+              }
+            ]
+          },
+          {
+            "matcher": {
+              "id": "byName",
+              "options": "丢弃"
+            },
+            "properties": [
+              {
+                "id": "color",
+                "value": {
+                  "mode": "fixed",
+                  "fixedColor": "#F2495C"
+                }
+              }
+            ]
+          }
+        ]
       },
       "options": {
         "legend": {
@@ -1099,11 +1177,11 @@
             "mode": "absolute",
             "steps": [
               {
-                "color": "green",
+                "color": "#8A8F98",
                 "value": null
               },
               {
-                "color": "red",
+                "color": "#F2495C",
                 "value": 1
               }
             ]
@@ -1128,7 +1206,8 @@
       "targets": [
         {
           "expr": "nexora_wan_interface_active_down_links",
-          "refId": "A"
+          "refId": "A",
+          "instant": true
         }
       ],
       "description": "仅统计采集正常、管理启用且运行 Down 的线路。"
@@ -1158,7 +1237,7 @@
             "mode": "absolute",
             "steps": [
               {
-                "color": "#3274D9",
+                "color": "#8A8F98",
                 "value": null
               }
             ]
@@ -1183,7 +1262,8 @@
       "targets": [
         {
           "expr": "nexora_wan_interface_continuous_down_estimate_max_seconds",
-          "refId": "A"
+          "refId": "A",
+          "instant": true
         }
       ],
       "description": "按采样结果估算，实际故障起点可能不同。"

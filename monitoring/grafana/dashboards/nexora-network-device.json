@@ -48,11 +48,11 @@
                     "options": {
                       "0": {
                         "text": "不可达",
-                        "color": "red"
+                        "color": "#F2495C"
                       },
                       "1": {
                         "text": "在线",
-                        "color": "green"
+                        "color": "#73BF69"
                       }
                     }
                   }
@@ -116,7 +116,7 @@
             "renameByName": {
               "hostname": "设备名称",
               "asset_id": "资产 ID",
-              "instance": "管理地址",
+              "instance": "采集目标",
               "site_name": "站点",
               "vendor": "厂商",
               "platform": "系统平台",
@@ -153,7 +153,7 @@
             "mode": "absolute",
             "steps": [
               {
-                "color": "#3274D9",
+                "color": "#8A8F98",
                 "value": null
               }
             ]
@@ -178,7 +178,8 @@
       "targets": [
         {
           "expr": "sysUpTime{job=\"network_snmp\",asset_id=\"$asset_id\",asset_id!=\"\"} / 100",
-          "refId": "A"
+          "refId": "A",
+          "instant": true
         }
       ]
     },
@@ -209,7 +210,7 @@
             "mode": "absolute",
             "steps": [
               {
-                "color": "green",
+                "color": "#73BF69",
                 "value": null
               },
               {
@@ -217,7 +218,7 @@
                 "value": 70
               },
               {
-                "color": "red",
+                "color": "#F2495C",
                 "value": 85
               }
             ]
@@ -272,7 +273,7 @@
             "mode": "absolute",
             "steps": [
               {
-                "color": "green",
+                "color": "#73BF69",
                 "value": null
               },
               {
@@ -280,7 +281,7 @@
                 "value": 75
               },
               {
-                "color": "red",
+                "color": "#F2495C",
                 "value": 90
               }
             ]
@@ -333,7 +334,7 @@
             "mode": "absolute",
             "steps": [
               {
-                "color": "#3274D9",
+                "color": "#8A8F98",
                 "value": null
               }
             ]
@@ -359,6 +360,7 @@
         {
           "expr": "topk(1, (nexora_hw_temperature_celsius{asset_id=\"$asset_id\",asset_id!=\"\"}  * on(tenant_id, asset_id, sensor_key) group_left(sensor_name, group, index, component_class, source_id, hostname, site_name, vendor, platform, ent_physical_index, measured_entity_type) (max by (tenant_id, asset_id, sensor_key, sensor_name, group, index, component_class, source_id, hostname, site_name, vendor, platform, ent_physical_index, measured_entity_type) (nexora_hw_sensor_info{asset_id=\"$asset_id\",asset_id!=\"\",group=~\"$hardware_group\",sensor_name=~\"$sensor_name\",component_class=~\"$component_class\",group!~\"(?i).*(transceiver|optical).*\"})))) or on() (topk(1, (nexora_hw_temperature_celsius{asset_id=\"$asset_id\",asset_id!=\"\"}  * on(tenant_id, asset_id, sensor_key) group_left(sensor_name, group, index, component_class, source_id, hostname, site_name, vendor, platform, ent_physical_index, measured_entity_type) (max by (tenant_id, asset_id, sensor_key, sensor_name, group, index, component_class, source_id, hostname, site_name, vendor, platform, ent_physical_index, measured_entity_type) (nexora_hw_sensor_info{asset_id=\"$asset_id\",asset_id!=\"\",group=~\"$hardware_group\",sensor_name=~\"$sensor_name\",component_class=~\"$component_class\",group=~\"(?i).*(transceiver|optical).*\"})))) unless on() count((nexora_hw_temperature_celsius{asset_id=\"$asset_id\",asset_id!=\"\"}  * on(tenant_id, asset_id, sensor_key) group_left(sensor_name, group, index, component_class, source_id, hostname, site_name, vendor, platform, ent_physical_index, measured_entity_type) (max by (tenant_id, asset_id, sensor_key, sensor_name, group, index, component_class, source_id, hostname, site_name, vendor, platform, ent_physical_index, measured_entity_type) (nexora_hw_sensor_info{asset_id=\"$asset_id\",asset_id!=\"\",group=~\"$hardware_group\",sensor_name=~\"$sensor_name\",component_class=~\"$component_class\",group!~\"(?i).*(transceiver|optical).*\"})))))",
           "refId": "A",
+          "instant": true,
           "legendFormat": "{{sensor_name}} · {{group}}"
         }
       ]
@@ -388,8 +390,12 @@
             "mode": "absolute",
             "steps": [
               {
-                "color": "#E02F44",
+                "color": "#8A8F98",
                 "value": null
+              },
+              {
+                "color": "#F2495C",
+                "value": 1
               }
             ]
           }
@@ -413,7 +419,8 @@
       "targets": [
         {
           "expr": "count(((nexora_hw_component_state{asset_id=\"$asset_id\",asset_id!=\"\"}  * on(tenant_id, asset_id, sensor_key) group_left(sensor_name, group, index, component_class, source_id, hostname, site_name, vendor, platform, ent_physical_index, measured_entity_type) (max by (tenant_id, asset_id, sensor_key, sensor_name, group, index, component_class, source_id, hostname, site_name, vendor, platform, ent_physical_index, measured_entity_type) (nexora_hw_sensor_info{asset_id=\"$asset_id\",asset_id!=\"\",group=~\"$hardware_group\",sensor_name=~\"$sensor_name\",component_class=~\"$component_class\"}))) == 1) or ((nexora_hw_component_state{asset_id=\"$asset_id\",asset_id!=\"\"}  * on(tenant_id, asset_id, sensor_key) group_left(sensor_name, group, index, component_class, source_id, hostname, site_name, vendor, platform, ent_physical_index, measured_entity_type) (max by (tenant_id, asset_id, sensor_key, sensor_name, group, index, component_class, source_id, hostname, site_name, vendor, platform, ent_physical_index, measured_entity_type) (nexora_hw_sensor_info{asset_id=\"$asset_id\",asset_id!=\"\",group=~\"$hardware_group\",sensor_name=~\"$sensor_name\",component_class=~\"$component_class\"}))) == 2)) or on() ((count((nexora_hw_component_state{asset_id=\"$asset_id\",asset_id!=\"\"}  * on(tenant_id, asset_id, sensor_key) group_left(sensor_name, group, index, component_class, source_id, hostname, site_name, vendor, platform, ent_physical_index, measured_entity_type) (max by (tenant_id, asset_id, sensor_key, sensor_name, group, index, component_class, source_id, hostname, site_name, vendor, platform, ent_physical_index, measured_entity_type) (nexora_hw_sensor_info{asset_id=\"$asset_id\",asset_id!=\"\",group=~\"$hardware_group\",sensor_name=~\"$sensor_name\",component_class=~\"$component_class\"})))) > 0) * 0)",
-          "refId": "A"
+          "refId": "A",
+          "instant": true
         }
       ],
       "description": "无异常时显示 0；没有状态数据时显示 —。"
@@ -468,7 +475,8 @@
       "targets": [
         {
           "expr": "count((nexora_hw_component_state{asset_id=\"$asset_id\",asset_id!=\"\"}  * on(tenant_id, asset_id, sensor_key) group_left(sensor_name, group, index, component_class, source_id, hostname, site_name, vendor, platform, ent_physical_index, measured_entity_type) (max by (tenant_id, asset_id, sensor_key, sensor_name, group, index, component_class, source_id, hostname, site_name, vendor, platform, ent_physical_index, measured_entity_type) (nexora_hw_sensor_info{asset_id=\"$asset_id\",asset_id!=\"\",group=~\"$hardware_group\",sensor_name=~\"$sensor_name\",component_class=~\"$component_class\"}))) == 3) or on() ((count((nexora_hw_component_state{asset_id=\"$asset_id\",asset_id!=\"\"}  * on(tenant_id, asset_id, sensor_key) group_left(sensor_name, group, index, component_class, source_id, hostname, site_name, vendor, platform, ent_physical_index, measured_entity_type) (max by (tenant_id, asset_id, sensor_key, sensor_name, group, index, component_class, source_id, hostname, site_name, vendor, platform, ent_physical_index, measured_entity_type) (nexora_hw_sensor_info{asset_id=\"$asset_id\",asset_id!=\"\",group=~\"$hardware_group\",sensor_name=~\"$sensor_name\",component_class=~\"$component_class\"})))) > 0) * 0)",
-          "refId": "A"
+          "refId": "A",
+          "instant": true
         }
       ],
       "description": "没有未知状态时显示 0；没有状态数据时显示 —。"
@@ -567,8 +575,12 @@
             "mode": "absolute",
             "steps": [
               {
-                "color": "#E02F44",
+                "color": "#8A8F98",
                 "value": null
+              },
+              {
+                "color": "#E0B400",
+                "value": 1
               }
             ]
           }
@@ -592,7 +604,8 @@
       "targets": [
         {
           "expr": "clamp_min((count(max by (tenant_id, asset_id, sensor_key, window) ((nexora_hw_cpu_usage_percent{asset_id=\"$asset_id\",asset_id!=\"\",window=\"$cpu_window\"}  * on(tenant_id, asset_id, sensor_key) group_left(sensor_name, group, index, component_class, source_id, hostname, site_name, vendor, platform, ent_physical_index, measured_entity_type) (max by (tenant_id, asset_id, sensor_key, sensor_name, group, index, component_class, source_id, hostname, site_name, vendor, platform, ent_physical_index, measured_entity_type) (nexora_hw_sensor_info{asset_id=\"$asset_id\",asset_id!=\"\",group=~\"$hardware_group\",sensor_name=~\"$sensor_name\",component_class=~\"$component_class\"})))))) - 10, 0)",
-          "refId": "A"
+          "refId": "A",
+          "instant": true
         }
       ]
     },
@@ -1395,7 +1408,7 @@
                     "options": {
                       "0": {
                         "text": "正常",
-                        "color": "green"
+                        "color": "#73BF69"
                       },
                       "1": {
                         "text": "警告",
@@ -1403,7 +1416,7 @@
                       },
                       "2": {
                         "text": "严重",
-                        "color": "red"
+                        "color": "#F2495C"
                       },
                       "3": {
                         "text": "未知",
@@ -1443,15 +1456,15 @@
                     "options": {
                       "0": {
                         "text": "未安装",
-                        "color": "red"
+                        "color": "#F2495C"
                       },
                       "1": {
                         "text": "已安装",
-                        "color": "green"
+                        "color": "#73BF69"
                       },
                       "-1": {
                         "text": "无法判断",
-                        "color": "gray"
+                        "color": "#8A8F98"
                       }
                     }
                   }
@@ -1735,27 +1748,27 @@
                     "options": {
                       "success": {
                         "text": "成功",
-                        "color": "green"
+                        "color": "#73BF69"
                       },
                       "partial": {
                         "text": "部分成功",
-                        "color": "yellow"
+                        "color": "#E0B400"
                       },
                       "failed": {
                         "text": "失败",
-                        "color": "red"
+                        "color": "#F2495C"
                       },
                       "unsupported": {
                         "text": "不支持",
-                        "color": "gray"
+                        "color": "#8A8F98"
                       },
                       "not_found": {
                         "text": "未发现",
-                        "color": "gray"
+                        "color": "#8A8F98"
                       },
                       "unknown": {
                         "text": "未知",
-                        "color": "gray"
+                        "color": "#8A8F98"
                       }
                     }
                   }
@@ -1777,11 +1790,11 @@
                     "options": {
                       "true": {
                         "text": "完整",
-                        "color": "green"
+                        "color": "#73BF69"
                       },
                       "false": {
                         "text": "不完整",
-                        "color": "yellow"
+                        "color": "#E0B400"
                       }
                     }
                   }
@@ -1803,7 +1816,7 @@
                     "options": {
                       "-1": {
                         "text": "无成功记录",
-                        "color": "red"
+                        "color": "#8A8F98"
                       }
                     }
                   }
@@ -2161,8 +2174,12 @@
             "mode": "absolute",
             "steps": [
               {
-                "color": "#E02F44",
+                "color": "#8A8F98",
                 "value": null
+              },
+              {
+                "color": "#F2495C",
+                "value": 1
               }
             ]
           }
@@ -2186,7 +2203,8 @@
       "targets": [
         {
           "expr": "nexora_hw_sensor_render_errors",
-          "refId": "A"
+          "refId": "A",
+          "instant": true
         }
       ],
       "description": "这是全局采集错误数，不是所选设备错误数。"
@@ -2393,7 +2411,7 @@
             "renameByName": {
               "sysName": "设备名称",
               "hostname": "设备名称",
-              "instance": "管理 IP",
+              "instance": "采集目标",
               "site_name": "站点",
               "ifName": "接口全称",
               "ifAlias": "接口描述",
@@ -2450,7 +2468,7 @@
                 "id": "color",
                 "value": {
                   "mode": "fixed",
-                  "fixedColor": "#73BF69"
+                  "fixedColor": "#5794F2"
                 }
               }
             ]
@@ -2465,7 +2483,7 @@
                 "id": "color",
                 "value": {
                   "mode": "fixed",
-                  "fixedColor": "#FF9830"
+                  "fixedColor": "#73BF69"
                 }
               }
             ]

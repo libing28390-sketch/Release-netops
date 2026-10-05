@@ -22,15 +22,17 @@ PURPLE_COLOR = "#A352CC"
 NEUTRAL_COLOR = "#8A8F98"
 
 # Keep interface direction consistent across summary, detail, and overview
-# dashboards: receive/inbound is green and send/outbound is orange.
-INBOUND_COLOR = HEALTHY_COLOR
-OUTBOUND_COLOR = HIGH_COLOR
-ERROR_COLOR = CRITICAL_COLOR
-DISCARD_COLOR = WARNING_COLOR
+# dashboards: inbound is blue, outbound is green, errors are orange, and
+# discards are red.  Direction is a visual category; it is independent from
+# health thresholds used by the same panel.
+INBOUND_COLOR = INFO_COLOR
+OUTBOUND_COLOR = HEALTHY_COLOR
+ERROR_COLOR = HIGH_COLOR
+DISCARD_COLOR = CRITICAL_COLOR
 MULTICAST_COLOR = PURPLE_COLOR
 BROADCAST_COLOR = WARNING_COLOR
 PPS_COLOR = INFO_COLOR
-UNKNOWN_COLOR = "gray"
+UNKNOWN_COLOR = NEUTRAL_COLOR
 
 ALERT_SEVERITY_LABELS = (
     ("critical", "严重"),
@@ -44,11 +46,32 @@ ALERT_SEVERITY_LABELS = (
     ("unknown", "未知"),
 )
 
+ALERT_SEVERITY_COLORS = {
+    "critical": CRITICAL_COLOR,
+    "major": HIGH_COLOR,
+    "warning": WARNING_COLOR,
+    "minor": NEUTRAL_COLOR,
+    "high": HIGH_COLOR,
+    "medium": WARNING_COLOR,
+    "low": NEUTRAL_COLOR,
+    "info": INFO_COLOR,
+    "unknown": NEUTRAL_COLOR,
+}
+
+
+def alert_severity_thresholds(severity):
+    """Color an open-alert count by severity without coloring zero as bad."""
+    color = ALERT_SEVERITY_COLORS.get(severity, NEUTRAL_COLOR)
+    steps = [{"color": NEUTRAL_COLOR, "value": None}]
+    if color != NEUTRAL_COLOR:
+        steps.append({"color": color, "value": 1})
+    return steps
+
 NO_COMPLETED_DELIVERY_VALUE_MAPPINGS = [
     {
         "type": "value",
         "options": {
-            "-1": {"text": "暂无已完成投递", "color": "#8A8F98"},
+            "-1": {"text": "暂无已完成投递", "color": NEUTRAL_COLOR},
         },
     },
 ]
@@ -151,7 +174,7 @@ RECENT_CHANGE_VALUE_MAPPINGS = [
     {
         "type": "value",
         "options": {
-            "0": {"text": "当前无近期变化", "color": "green"},
+            "0": {"text": "当前无近期变化", "color": HEALTHY_COLOR},
         },
     },
 ]
@@ -161,7 +184,7 @@ INTERFACE_ROLE_VALUE_MAPPINGS = [
     {
         "type": "value",
         "options": {
-            "unclassified": {"text": "用途待确认", "color": "#8A8F98"},
+            "unclassified": {"text": "用途待确认", "color": NEUTRAL_COLOR},
         },
     },
 ]
@@ -170,6 +193,56 @@ DEV_JOIN = ""
 IF_JOIN = "* on(instance, ifIndex) group_left(ifName) ((ifName * 0 + 1) or on(instance, ifIndex) (ifOperStatus * 0 + 1))"
 NETWORK_JOB = 'job="network_snmp"'
 HARDWARE_INVENTORY_JOB = 'job="platform_hardware_inventory"'
+WIRELESS_DEVICE_LABELS = "site_name,vendor,role,hostname"
+
+
+def wireless_clients_by_device(network_selector, inventory_selector):
+    """Return the shared controller/SSID client contract by device.
+
+    The normalized inventory can expose both a controller total and one row
+    per SSID. Prefer the controller series, fall back to the SSID aggregate,
+    and only use the legacy SNMP counters when inventory has no client
+    series. Grouping on the four stable device labels prevents duplicate
+    controller/SSID rows from being counted together. No zero fallback is
+    introduced, so a missing source remains No data while a real zero stays
+    visible as zero.
+    """
+    legacy_clients = (
+        f"sum by ({WIRELESS_DEVICE_LABELS}) ("
+        f"hwWlanCurAssocUserNum{{{network_selector}}} or "
+        f"hh3cDot11CurrAssocUserNum{{{network_selector}}} or "
+        f"ruijieApcTotalStaNum{{{network_selector}}} or "
+        f"cLSysTotalNumOfClients{{{network_selector}}} or "
+        f"wlsxSysExtStationsNum{{{network_selector}}} or "
+        f"ruckusZDTotalNumSta{{{network_selector}}})"
+    )
+    controller_clients = (
+        f"sum by ({WIRELESS_DEVICE_LABELS}) ("
+        f"nexora_wireless_sensor_value{{{inventory_selector},"
+        'component_class="wireless_controller",sensor_class="clients"})'
+        ")"
+    )
+    ssid_clients = (
+        f"sum by ({WIRELESS_DEVICE_LABELS}) ("
+        f"nexora_wireless_sensor_value{{{inventory_selector},"
+        'component_class="wireless_ssid",sensor_class="clients"})'
+        ")"
+    )
+    inventory_clients = (
+        f"({controller_clients} or on({WIRELESS_DEVICE_LABELS}) {ssid_clients})"
+    )
+    expression = (
+        f"(({legacy_clients} unless on({WIRELESS_DEVICE_LABELS}) "
+        f"({inventory_clients})) or on({WIRELESS_DEVICE_LABELS}) "
+        f"({inventory_clients}))"
+    )
+    # Keep the query contract executable and reviewable: this guard catches a
+    # future edit that accidentally drops the SSID fallback or fabricates 0.
+    assert f"sum by ({WIRELESS_DEVICE_LABELS})" in expression
+    assert 'component_class="wireless_controller",sensor_class="clients"' in expression
+    assert 'component_class="wireless_ssid",sensor_class="clients"' in expression
+    assert "vector(0)" not in expression
+    return expression
 
 
 def counter_rate_expr(high_capacity_metric, legacy_metric, selector):
@@ -245,7 +318,7 @@ def stat_panel(
     w=4,
     h=4,
     unit="",
-    color="#3274D9",
+    color=NEUTRAL_COLOR,
     thresholds=None,
     description=None,
     graph_mode="area",
@@ -278,7 +351,10 @@ def stat_panel(
             "reduceOptions": {"calcs": ["lastNotNull"], "fields": "", "values": False},
             "textMode": "auto"
         },
-        "targets": [{"expr": expr, "refId": "A"}]
+        # Stat cards represent current state or a rolling aggregate's current
+        # sample; a range query plus lastNotNull can retain a stale value after
+        # the source series disappears.
+        "targets": [{"expr": expr, "refId": "A", "instant": True}]
     }
     if value_mappings:
         panel["fieldConfig"]["defaults"]["mappings"] = value_mappings
@@ -290,9 +366,9 @@ def stat_panel(
 def gauge_panel(pid, title, expr, x, y, w=6, h=5, unit="percent", thresholds=None, description=None):
     """Render one selected device's current hardware utilization as a Gauge."""
     steps = thresholds or [
-        {"color": "green", "value": None},
-        {"color": "#E0B400", "value": 70},
-        {"color": "red", "value": 85},
+        {"color": HEALTHY_COLOR, "value": None},
+        {"color": WARNING_COLOR, "value": 70},
+        {"color": CRITICAL_COLOR, "value": 85},
     ]
     panel = {
         "id": pid,
@@ -394,7 +470,7 @@ def clean_organize_transformation(
     renames = {
         "sysName": "设备名称",
         "hostname": "设备名称",
-        "instance": "管理 IP",
+        "instance": "采集目标",
         "site_name": "站点",
         "ifName": "接口全称",
         interface_description_label: "接口描述",
@@ -791,6 +867,7 @@ def make_interface_variables(
 def build_overview_dashboard():
     sel = f'{NETWORK_JOB},site_name=~"$site",vendor=~"$vendor",role=~"$role",hostname=~"$device"'
     target_sel = f'{NETWORK_JOB},site_name=~"$site",vendor=~"$vendor",role=~"$role",hostname=~"$device"'
+    inventory_sel = f'{HARDWARE_INVENTORY_JOB},site_name=~"$site",vendor=~"$vendor",role=~"$role",hostname=~"$device"'
     hardware_target_sel = f'{target_sel},asset_id!=""'
     target_site_sel = f'{NETWORK_JOB},site_name!="",site_name=~"$site",vendor=~"$vendor",role=~"$role",hostname=~"$device"'
     in_rate = counter_rate_expr("ifHCInOctets", "ifInOctets", sel)
@@ -836,10 +913,8 @@ def build_overview_dashboard():
         f"sum((hwWlanCurOnlineApNum{{{sel}}} or hh3cDot11CurrOnlineAPNum{{{sel}}} or ruijieApcOnlineApNum{{{sel}}} or "
         f"ruijieApcTotalApNum{{{sel}}} or cLApTotalUpAPs{{{sel}}} or wlsxSysExtAccessPointsNum{{{sel}}} or ruckusZDTotalNumAP{{{sel}}}))"
     )
-    client_online_expr = (
-        f"sum((hwWlanCurAssocUserNum{{{sel}}} or hh3cDot11CurrAssocUserNum{{{sel}}} or ruijieApcTotalStaNum{{{sel}}} or "
-        f"cLSysTotalNumOfClients{{{sel}}} or wlsxSysExtStationsNum{{{sel}}} or ruckusZDTotalNumSta{{{sel}}}))"
-    )
+    client_online_by_device = wireless_clients_by_device(sel, inventory_sel)
+    client_online_expr = f"sum({client_online_by_device})"
     anomaly_rows = (
         f'((changes(ifOperStatus{{{sel}}}[24h]) > 0) '
         f'and on(instance, ifIndex) (ifOperStatus{{{sel}}} == 2) '
@@ -884,17 +959,17 @@ def build_overview_dashboard():
     )
 
     panels = [
-        stat_panel(1, "纳管设备数", f'count(count by (instance) (up{{{target_sel}}}))', 0, 0, 4, 3, color="#3274D9"),
-        stat_panel(2, "监控站点数", f'count(count by (site_name) (up{{{target_site_sel}}}))', 4, 0, 4, 3, color="#A352CC"),
-        stat_panel(3, "全网在线数", f'count(count by (instance) (up{{{target_sel}}} == 1)) or on() ((count(up{{{target_sel}}}) > 0) * 0)', 8, 0, 4, 3, color="#56A64B"),
+        stat_panel(1, "纳管设备数", f'count(count by (instance) (up{{{target_sel}}}))', 0, 0, 4, 3),
+        stat_panel(2, "监控站点数", f'count(count by (site_name) (up{{{target_site_sel}}}))', 4, 0, 4, 3),
+        stat_panel(3, "全网在线数", f'count(count by (instance) (up{{{target_sel}}} == 1)) or on() ((count(up{{{target_sel}}}) > 0) * 0)', 8, 0, 4, 3),
         stat_panel(
-            4, "控制器汇总在线终端数", client_online_expr, 12, 0, 4, 3, color=CLIENT_COLOR,
+            4, "控制器汇总在线终端数", client_online_expr, 12, 0, 4, 3,
         ),
-        stat_panel(5, "采集接口总数", f"count(count by (instance, ifIndex) (ifOperStatus{{{sel}}}))", 16, 0, 4, 3, color="#3274D9"),
+        stat_panel(5, "采集接口总数", f"count(count by (instance, ifIndex) (ifOperStatus{{{sel}}}))", 16, 0, 4, 3),
         stat_panel(6, "近24h变动且当前 Down 接口数", f'count({anomaly_rows}) or on() ((count(ifOperStatus{{{sel}}}) > 0) * 0)', 20, 0, 4, 3, thresholds=[
-            {"color": "green", "value": None},
-            {"color": "#E0B400", "value": 1},
-            {"color": "#F2495C", "value": 5}
+            {"color": NEUTRAL_COLOR, "value": None},
+            {"color": WARNING_COLOR, "value": 1},
+            {"color": CRITICAL_COLOR, "value": 5}
         ], description="只统计已启用、当前 Down 且24小时内状态有变化的接口。"),
         timeseries_panel(7, "接口总流量趋势", [
             {"expr": f"sum({in_rate}) * 8", "legendFormat": "入流量", "refId": "A"},
@@ -904,7 +979,7 @@ def build_overview_dashboard():
             timeseries_color_override("byName", "出流量", OUTBOUND_COLOR),
         ]),
         timeseries_panel(8, "全网无线终端与 AP 规模趋势", [
-            {"expr": f"sum((hwWlanCurAssocUserNum{{{sel}}} or hh3cDot11CurrAssocUserNum{{{sel}}} or ruijieApcTotalStaNum{{{sel}}} or cLSysTotalNumOfClients{{{sel}}} or wlsxSysExtStationsNum{{{sel}}} or ruckusZDTotalNumSta{{{sel}}}))", "legendFormat": "控制器统计的在线终端", "refId": "A"},
+            {"expr": f"sum({client_online_by_device})", "legendFormat": "控制器统计的在线终端", "refId": "A"},
             {"expr": f"sum((hwWlanCurOnlineApNum{{{sel}}} or hh3cDot11CurrOnlineAPNum{{{sel}}} or ruijieApcOnlineApNum{{{sel}}} or ruijieApcTotalApNum{{{sel}}} or cLApTotalUpAPs{{{sel}}} or wlsxSysExtAccessPointsNum{{{sel}}} or ruckusZDTotalNumAP{{{sel}}}))", "legendFormat": "在线 AP 总数", "refId": "B"}
         ], 12, 3, 12, 8, unit="short"),
         stat_panel(
@@ -1146,10 +1221,10 @@ def build_device_dashboard():
     state_mappings = [{
         "type": "value",
         "options": {
-            "0": {"text": "正常", "color": "green"},
-            "1": {"text": "警告", "color": "#E0B400"},
-            "2": {"text": "严重", "color": "red"},
-            "3": {"text": "未知", "color": "#8A8F98"},
+            "0": {"text": "正常", "color": HEALTHY_COLOR},
+            "1": {"text": "警告", "color": WARNING_COLOR},
+            "2": {"text": "严重", "color": CRITICAL_COLOR},
+            "3": {"text": "未知", "color": NEUTRAL_COLOR},
         },
     }]
     identity_panel = table_panel(
@@ -1175,7 +1250,7 @@ def build_device_dashboard():
                     "vendor": 4, "platform": 5, "role": 6, "Value": 7,
                 },
                 "renameByName": {
-                    "hostname": "设备名称", "asset_id": "资产 ID", "instance": "管理地址",
+                    "hostname": "设备名称", "asset_id": "资产 ID", "instance": "采集目标",
                     "site_name": "站点", "vendor": "厂商", "platform": "系统平台",
                     "role": "角色", "Value": "SNMP 连通",
                 },
@@ -1185,8 +1260,8 @@ def build_device_dashboard():
         value_mappings=[{
             "type": "value",
             "options": {
-                "0": {"text": "不可达", "color": "red"},
-                "1": {"text": "在线", "color": "green"},
+                "0": {"text": "不可达", "color": CRITICAL_COLOR},
+                "1": {"text": "在线", "color": HEALTHY_COLOR},
             },
         }],
         color_mapped_cells=True,
@@ -1201,9 +1276,9 @@ def build_device_dashboard():
         4,
         3,
         thresholds=[
-            {"color": "green", "value": None},
-            {"color": "#E0B400", "value": 70},
-            {"color": "red", "value": 85},
+            {"color": HEALTHY_COLOR, "value": None},
+            {"color": WARNING_COLOR, "value": 70},
+            {"color": CRITICAL_COLOR, "value": 85},
         ],
         description=None,
     )
@@ -1217,9 +1292,9 @@ def build_device_dashboard():
         4,
         3,
         thresholds=[
-            {"color": "green", "value": None},
-            {"color": "#E0B400", "value": 75},
-            {"color": "red", "value": 90},
+            {"color": HEALTHY_COLOR, "value": None},
+            {"color": WARNING_COLOR, "value": 75},
+            {"color": CRITICAL_COLOR, "value": 90},
         ],
         description=None,
     )
@@ -1233,7 +1308,7 @@ def build_device_dashboard():
         4,
         3,
         unit="celsius",
-        color="#3274D9",
+        color=NEUTRAL_COLOR,
         description=None,
         graph_mode="none",
     )
@@ -1335,9 +1410,9 @@ def build_device_dashboard():
     presence_state_mappings = [{
         "type": "value",
         "options": {
-            "0": {"text": "未安装", "color": "red"},
-            "1": {"text": "已安装", "color": "green"},
-            "-1": {"text": "无法判断", "color": "gray"},
+            "0": {"text": "未安装", "color": CRITICAL_COLOR},
+            "1": {"text": "已安装", "color": HEALTHY_COLOR},
+            "-1": {"text": "无法判断", "color": NEUTRAL_COLOR},
         },
     }]
     component_state_table = table_panel(
@@ -1432,19 +1507,19 @@ def build_device_dashboard():
     capability_status_mappings = [{
         "type": "value",
         "options": {
-            "success": {"text": "成功", "color": "green"},
-            "partial": {"text": "部分成功", "color": "yellow"},
-            "failed": {"text": "失败", "color": "red"},
-            "unsupported": {"text": "不支持", "color": "gray"},
-            "not_found": {"text": "未发现", "color": "gray"},
-            "unknown": {"text": "未知", "color": "gray"},
+            "success": {"text": "成功", "color": HEALTHY_COLOR},
+            "partial": {"text": "部分成功", "color": WARNING_COLOR},
+            "failed": {"text": "失败", "color": CRITICAL_COLOR},
+            "unsupported": {"text": "不支持", "color": NEUTRAL_COLOR},
+            "not_found": {"text": "未发现", "color": NEUTRAL_COLOR},
+            "unknown": {"text": "未知", "color": NEUTRAL_COLOR},
         },
     }]
     capability_complete_mappings = [{
         "type": "value",
         "options": {
-            "true": {"text": "完整", "color": "green"},
-            "false": {"text": "不完整", "color": "yellow"},
+            "true": {"text": "完整", "color": HEALTHY_COLOR},
+            "false": {"text": "不完整", "color": WARNING_COLOR},
         },
     }]
     capability_table = table_panel(
@@ -1503,7 +1578,7 @@ def build_device_dashboard():
             "覆盖完整性": capability_complete_mappings,
             "距最近成功（秒）": [{
                 "type": "value",
-                "options": {"-1": {"text": "无成功记录", "color": "red"}},
+                "options": {"-1": {"text": "无成功记录", "color": NEUTRAL_COLOR}},
             }],
         },
         description="显示各类硬件的发现状态、数量和最近采集时间。",
@@ -1526,20 +1601,23 @@ def build_device_dashboard():
         identity_panel,
         stat_panel(
             2, "系统运行时长", f"sysUpTime{{{dev_sel}}} / 100", 0, 3, 4, 3,
-            unit="dtdhms", color="#3274D9", graph_mode="none",
+            unit="dtdhms", color=NEUTRAL_COLOR, graph_mode="none",
         ),
         cpu_gauge,
         memory_gauge,
         temp_stat,
         stat_panel(
             6, "异常部件数", abnormal_count, 16, 3, 4, 3,
-            unit="short", color="#E02F44",
+            unit="short", thresholds=[
+                {"color": NEUTRAL_COLOR, "value": None},
+                {"color": CRITICAL_COLOR, "value": 1},
+            ],
             description="无异常时显示 0；没有状态数据时显示 —。",
             graph_mode="none",
         ),
         stat_panel(
             7, "状态未知部件数", unknown_count, 20, 3, 4, 3,
-            unit="short", color="#8A8F98",
+            unit="short", color=NEUTRAL_COLOR,
             description="没有未知状态时显示 0；没有状态数据时显示 —。",
             graph_mode="none",
         ),
@@ -1555,7 +1633,10 @@ def build_device_dashboard():
         stat_panel(
             26, "超出10条的 CPU 部件数", cpu_overflow_count,
             9, 6, 3, 8,
-            unit="short", color="#E02F44", graph_mode="none",
+            unit="short", thresholds=[
+                {"color": NEUTRAL_COLOR, "value": None},
+                {"color": WARNING_COLOR, "value": 1},
+            ], graph_mode="none",
             description=None,
         ),
         timeseries_panel(
@@ -1639,7 +1720,10 @@ def build_device_dashboard():
         stat_panel(
             24, "全局硬件指标渲染错误数", "nexora_hw_sensor_render_errors",
             16, 62, 8, 8,
-            unit="short", color="#E02F44", graph_mode="none",
+            unit="short", thresholds=[
+                {"color": NEUTRAL_COLOR, "value": None},
+                {"color": CRITICAL_COLOR, "value": 1},
+            ], graph_mode="none",
             description="这是全局采集错误数，不是所选设备错误数。",
         ),
         table_panel(
@@ -1777,7 +1861,7 @@ def build_wireless_dashboard():
     # The wireless dashboard combines SNMP-exporter series and normalized
     # hardware-inventory series. Their job labels differ, so device identity
     # must not include `job` when de-duplicating or joining these sources.
-    device_labels = "site_name,vendor,role,hostname"
+    device_labels = WIRELESS_DEVICE_LABELS
     # Prefer the collected per-AP state rows for AP totals and status counts.
     # The controller-level online counters remain a fallback for platforms
     # that do not expose a complete AP state inventory.
@@ -1813,11 +1897,7 @@ def build_wireless_dashboard():
         f"({ap_state_offline_count}) or on({device_labels}) "
         f"(({ap_state_detail_coverage}) * 0)"
     )
-    legacy_clients = f"sum by ({device_labels}) (hh3cDot11CurrAssocUserNum{{{sel}}} or cLSysTotalNumOfClients{{{sel}}} or wlsxSysExtStationsNum{{{sel}}} or ruckusZDTotalNumSta{{{sel}}})"
-    controller_clients = f'sum by ({device_labels}) (nexora_wireless_sensor_value{{{inventory_sel},component_class="wireless_controller",sensor_class="clients"}})'
-    ssid_clients = f'sum by ({device_labels}) (nexora_wireless_sensor_value{{{inventory_sel},component_class="wireless_ssid",sensor_class="clients"}})'
-    inventory_clients = f"({controller_clients} or on({device_labels}) {ssid_clients})"
-    clients = f"({legacy_clients} unless on({device_labels}) ({inventory_clients})) or on({device_labels}) ({inventory_clients})"
+    clients = wireless_clients_by_device(sel, inventory_sel)
     missing_wireless_data_note = "暂无数据不代表数量为 0。"
     ap_total_description = f"统计已采到状态的 AP，不等于控制器配置总数。{missing_wireless_data_note}"
     ap_online_description = "优先按 AP 状态统计；明细不完整时采用控制器上报数。"
@@ -1834,10 +1914,10 @@ def build_wireless_dashboard():
     huawei_ssid_rows = f'topk(20, sum by ({device_labels},ssid) (nexora_wireless_sensor_value{{{huawei_inventory_sel},component_class="wireless_ssid",sensor_class="clients"}}))'
 
     panels = [
-        stat_panel(1, "采集 AP", f"sum({ap_state_count})", 0, 0, 4, 3, color=INFO_COLOR, description=ap_total_description, no_value="—"),
+        stat_panel(1, "采集 AP", f"sum({ap_state_count})", 0, 0, 4, 3, color=NEUTRAL_COLOR, description=ap_total_description, no_value="—"),
         stat_panel(2, "在线 AP", f"sum({ap_online})", 4, 0, 4, 3, color=HEALTHY_COLOR, description=ap_online_description, no_value="—"),
         stat_panel(3, "明确离线 AP", f"sum({ap_offline})", 8, 0, 4, 3, thresholds=OFFLINE_COUNT_THRESHOLDS, description=ap_offline_description, no_value="—"),
-        stat_panel(4, "控制器汇总在线终端数", f"sum({clients})", 12, 0, 4, 3, color=CLIENT_COLOR, no_value="—"),
+        stat_panel(4, "控制器汇总在线终端数", f"sum({clients})", 12, 0, 4, 3, color=NEUTRAL_COLOR, no_value=NO_VALUE_TEXT),
         stat_panel(5, "高利用率 Radio", high_utilization_radio_count, 16, 0, 4, 3, thresholds=OFFLINE_COUNT_THRESHOLDS, description="统计利用率达到 75% 的 Radio，仅用于定位热点。", no_value="—"),
         stat_panel(6, "平均 Radio 利用率", f"avg({radio_utilization_rows})", 20, 0, 4, 3, unit="percent", thresholds=UTILIZATION_THRESHOLDS, description=None, no_value="—"),
         row_panel(900, "趋势与 AP 状态", 3),
@@ -2046,7 +2126,8 @@ def build_interface_dashboard():
         timeseries_panel(5, "接口流量趋势", [
             {"expr": f"sum by (hostname, site_name, ifName) ({in_rate} * 8 {if_join})", "legendFormat": "{{site_name}} / {{hostname}} / {{ifName}} 入向", "refId": "A"},
             {"expr": f"sum by (hostname, site_name, ifName) ({out_rate} * 8 {if_join})", "legendFormat": "{{site_name}} / {{hostname}} / {{ifName}} 出向", "refId": "B"},
-        ], 0, 4, 24, 7, unit="bps", color_overrides=[
+        ], 0, 4, 24, 7, unit="bps", legend_display_mode="table", legend_placement="bottom",
+            legend_calcs=["lastNotNull", "max"], color_overrides=[
             timeseries_color_override("byRegexp", ".*入向$", INBOUND_COLOR),
             timeseries_color_override("byRegexp", ".*出向$", OUTBOUND_COLOR),
         ]),
@@ -2261,10 +2342,10 @@ def build_interface_detail_dashboard():
     threshold_state_mappings = [{
         "type": "value",
         "options": {
-            "0": {"text": "NORMAL", "color": "green"},
-            "1": {"text": "WARNING", "color": "yellow"},
-            "2": {"text": "HIGH", "color": "orange"},
-            "3": {"text": "CRITICAL", "color": "red"},
+            "0": {"text": "NORMAL", "color": HEALTHY_COLOR},
+            "1": {"text": "WARNING", "color": WARNING_COLOR},
+            "2": {"text": "HIGH", "color": HIGH_COLOR},
+            "3": {"text": "CRITICAL", "color": CRITICAL_COLOR},
         },
     }]
 
@@ -2371,38 +2452,38 @@ def build_interface_detail_dashboard():
             timeseries_color_override("byRegexp", ".*丢弃 PPS$", DISCARD_COLOR),
         ]),
         row_panel(903, "质量与稳定性", 26),
-        row_panel(904, "接口状态", 48),
+        row_panel(904, "接口状态", 41),
         table_panel(
-            11, "错误包 / 丢弃包百分比", quality, 0, 41, 12, 7, unit="percent",
+            11, "错误包 / 丢弃包百分比", quality, 0, 34, 12, 7, unit="percent",
             transformations=[{"id": "organize", "options": {"excludeByName": {"Time": True, "__name__": True, "instance": True, "ifIndex": True, "ifDescr": True}, "renameByName": {"quality_type": "质量指标", "ifName": "接口全称", "ifAlias": "接口描述", "hostname": "设备名称", "site_name": "站点", "Value": "百分比 (%)"}}}],
             value_col_name="百分比 (%)",
         ),
         table_panel(
-            12, "接口 Flap 次数：24h / 7d", flap_24h, 12, 41, 12, 7,
+            12, "接口 Flap 次数：24h / 7d", flap_24h, 12, 34, 12, 7,
             targets=[{"expr": flap_24h, "format": "table", "instant": True, "refId": "A"}, {"expr": flap_7d, "format": "table", "instant": True, "refId": "B"}],
             transformations=[{"id": "joinByLabels", "options": {"labels": ["instance", "hostname", "site_name", "ifIndex", "ifName", "ifAlias", "interface_role"]}}, {"id": "organize", "options": {"excludeByName": {"Time": True, "instance": True, "ifIndex": True, "ifDescr": True}, "renameByName": {"ifName": "接口全称", "ifAlias": "接口描述", "hostname": "设备名称", "site_name": "站点", "Value #A": "24h Flap", "Value #B": "7d Flap"}}}],
             value_col_name="24h Flap",
         ),
         table_panel(
-            13, "距上次接口状态变化时间", last_change_age, 0, 49, 12, 7, unit="s",
+            13, "距上次接口状态变化时间", last_change_age, 0, 42, 12, 7, unit="s",
             transformations=clean_organize_transformation("距上次变化 (秒)", interface_description_label="ifAlias"),
             value_col_name="距上次变化 (秒)",
         ),
         table_panel(
-            14, "接口运行状态", f"ifOperStatus{{{sel}}} {join}", 12, 49, 12, 7,
+            14, "接口运行状态", f"ifOperStatus{{{sel}}} {join}", 12, 42, 12, 7,
             transformations=clean_organize_transformation("运行状态", interface_description_label="ifAlias"),
             value_col_name="运行状态", value_mappings=STATUS_VALUE_MAPPINGS, color_mapped_cells=True,
         ),
-        row_panel(905, "CMDB 利用率阈值判断", 56),
+        row_panel(905, "CMDB 利用率阈值判断", 49),
         table_panel(
-            16, "当前利用率状态（按接口配置阈值）", threshold_state, 0, 57, 24, 7,
+            16, "当前利用率状态（按接口配置阈值）", threshold_state, 0, 50, 24, 7,
             transformations=clean_organize_transformation("阈值状态", interface_description_label="ifAlias"),
             value_col_name="阈值状态", value_mappings=threshold_state_mappings,
             color_mapped_cells=True,
         ),
-        row_panel(906, "光模块功率（SNMP DOM）", 64),
+        row_panel(906, "光模块功率（SNMP DOM）", 57),
         table_panel(
-            18, "当前接收 / 发送光功率", optical_power, 0, 65, 24, 7,
+            18, "当前接收 / 发送光功率", optical_power, 0, 58, 24, 7,
             unit="dBm", value_col_name="光功率 (dBm)",
             transformations=[{
                 "id": "organize", "options": {
@@ -2416,7 +2497,7 @@ def build_interface_detail_dashboard():
         timeseries_panel(19, "接收 / 发送光功率趋势", [
             {"expr": optical_rx, "legendFormat": "{{hostname}} / {{ifName}} 接收", "refId": "A"},
             {"expr": optical_tx, "legendFormat": "{{hostname}} / {{ifName}} 发送", "refId": "B"},
-        ], 0, 72, 24, 8, unit="dBm", color_overrides=[
+        ], 0, 65, 24, 8, unit="dBm", color_overrides=[
             timeseries_color_override("byRegexp", ".*接收$", INBOUND_COLOR),
             timeseries_color_override("byRegexp", ".*发送$", OUTBOUND_COLOR),
         ]),
@@ -2436,10 +2517,10 @@ def build_interface_detail_dashboard():
 # 5. Monitoring Engine Health Dashboard
 def build_health_dashboard():
     panels = [
-        stat_panel(1, "SNMP 在线目标", f"count(count by (instance) (up{{{NETWORK_JOB}}} == 1)) or on() ((count(up{{{NETWORK_JOB}}}) > 0) * 0)", 0, 0, 6, 4, color="#56A64B"),
-        stat_panel(2, "SNMP 失败目标", f"count(count by (instance) (up{{{NETWORK_JOB}}} == 0)) or on() ((count(up{{{NETWORK_JOB}}}) > 0) * 0)", 6, 0, 6, 4, thresholds=[{"color": "green", "value": None}, {"color": "red", "value": 1}]),
-        stat_panel(3, "平均 SNMP 采集耗时", f"avg(scrape_duration_seconds{{{NETWORK_JOB}}})", 12, 0, 6, 4, unit="s", color="#3274D9"),
-        stat_panel(4, "最大 SNMP 采集耗时", f"max(scrape_duration_seconds{{{NETWORK_JOB}}})", 18, 0, 6, 4, unit="s", thresholds=[{"color": "green", "value": None}, {"color": "#E0B400", "value": 5}, {"color": "red", "value": 15}]),
+        stat_panel(1, "SNMP 在线目标", f"count(count by (instance) (up{{{NETWORK_JOB}}} == 1)) or on() ((count(up{{{NETWORK_JOB}}}) > 0) * 0)", 0, 0, 6, 4),
+        stat_panel(2, "SNMP 失败目标", f"count(count by (instance) (up{{{NETWORK_JOB}}} == 0)) or on() ((count(up{{{NETWORK_JOB}}}) > 0) * 0)", 6, 0, 6, 4, thresholds=[{"color": NEUTRAL_COLOR, "value": None}, {"color": CRITICAL_COLOR, "value": 1}]),
+        stat_panel(3, "平均 SNMP 采集耗时", f"avg(scrape_duration_seconds{{{NETWORK_JOB}}})", 12, 0, 6, 4, unit="s"),
+        stat_panel(4, "最大 SNMP 采集耗时", f"max(scrape_duration_seconds{{{NETWORK_JOB}}})", 18, 0, 6, 4, unit="s", thresholds=[{"color": NEUTRAL_COLOR, "value": None}, {"color": WARNING_COLOR, "value": 5}, {"color": CRITICAL_COLOR, "value": 15}]),
         timeseries_panel(5, "各设备 SNMP 采集耗时分布 (秒)", [
             {"expr": f"scrape_duration_seconds{{{NETWORK_JOB}}}", "legendFormat": "{{site_name}} / {{hostname}}", "refId": "A"}
         ], 0, 4, 12, 8, unit="s"),
@@ -2452,6 +2533,7 @@ def build_health_dashboard():
         ),
         table_panel(
             8, "采集最慢目标排行 Top 10", f"topk(10, scrape_duration_seconds{{{NETWORK_JOB}}})", 12, 12, 12, 8, unit="s",
+            value_col_name="采集耗时 (秒)",
             transformations=clean_organize_transformation("采集耗时 (秒)")
         )
     ]
@@ -2501,9 +2583,9 @@ def build_outbound_dashboard():
         stat_panel(3, "出口最高入向利用率", f"max({util_in} {if_join})", 8, 0, 4, 4, unit="percent", thresholds=UTILIZATION_THRESHOLDS),
         stat_panel(4, "出口最高出向利用率", f"max({util_out} {if_join})", 12, 0, 4, 4, unit="percent", thresholds=UTILIZATION_THRESHOLDS),
         stat_panel(5, "出口链路错误与丢弃总速率", f"sum({error_rate} + {discard_rate})", 16, 0, 4, 4, unit="pps", thresholds=[
-            {"color": "green", "value": None}, {"color": "#E0B400", "value": 10}, {"color": "red", "value": 100}
+            {"color": NEUTRAL_COLOR, "value": None}, {"color": WARNING_COLOR, "value": 10}, {"color": CRITICAL_COLOR, "value": 100}
         ]),
-        stat_panel(6, "筛选接口数", f"count(count by (instance, ifIndex) (ifOperStatus{{{sel}}} {if_join})) or on() ((count(ifOperStatus{{{sel}}}) > 0) * 0)", 20, 0, 4, 4, unit="none", color="#A352CC"),
+        stat_panel(6, "筛选接口数", f"count(count by (instance, ifIndex) (ifOperStatus{{{sel}}} {if_join})) or on() ((count(ifOperStatus{{{sel}}}) > 0) * 0)", 20, 0, 4, 4, unit="none"),
         timeseries_panel(7, "出口设备入向流量趋势 (Inbound bps)", [
             {"expr": f"sum by (hostname, site_name) ({in_rate} * 8 {if_join})", "legendFormat": "{{site_name}} / {{hostname}} 入向", "refId": "A"}
         ], 0, 4, 12, 8, unit="bps", color_overrides=[
@@ -2588,23 +2670,23 @@ def build_outbound_dashboard():
 def build_linux_dashboard():
     srv_sel = 'job="linux_servers",site_name=~"$site",hostname=~"$device"'
     panels = [
-        stat_panel(1, "受纳管 Linux 主机数", f'count(count by (hostname) (up{{{srv_sel}}}))', 0, 0, 4, 4, unit="none", color="blue"),
-        stat_panel(2, "系统平均运行时长", f'avg(time() - node_boot_time_seconds{{{srv_sel}}})', 4, 0, 4, 4, unit="dtdhms", color="#3274D9", graph_mode="none"),
+        stat_panel(1, "受纳管 Linux 主机数", f'count(count by (hostname) (up{{{srv_sel}}}))', 0, 0, 4, 4, unit="none"),
+        stat_panel(2, "系统平均运行时长", f'avg(time() - node_boot_time_seconds{{{srv_sel}}})', 4, 0, 4, 4, unit="dtdhms", graph_mode="none"),
         stat_panel(3, "平均 CPU 使用率", f'avg(100 - (avg by (hostname) (rate(node_cpu_seconds_total{{{srv_sel},mode="idle"}}[5m])) * 100))', 8, 0, 4, 4, unit="percent", thresholds=[
-            {"color": "green", "value": None},
-            {"color": "#E0B400", "value": 70},
-            {"color": "red", "value": 85}
+            {"color": HEALTHY_COLOR, "value": None},
+            {"color": WARNING_COLOR, "value": 70},
+            {"color": CRITICAL_COLOR, "value": 85}
         ]),
         stat_panel(4, "平均物理内存利用率", f'avg((1 - (node_memory_MemAvailable_bytes{{{srv_sel}}} / node_memory_MemTotal_bytes{{{srv_sel}}})) * 100)', 12, 0, 4, 4, unit="percent", thresholds=[
-            {"color": "green", "value": None},
-            {"color": "#E0B400", "value": 80},
-            {"color": "red", "value": 90}
+            {"color": HEALTHY_COLOR, "value": None},
+            {"color": WARNING_COLOR, "value": 80},
+            {"color": CRITICAL_COLOR, "value": 90}
         ]),
-        stat_panel(5, "TCP 活跃连接总数", f'sum(node_netstat_Tcp_CurrEstab{{{srv_sel}}})', 16, 0, 4, 4, unit="none", color="purple"),
-        stat_panel(6, "已打开文件句柄数", f'sum(node_filefd_allocated{{{srv_sel}}})', 20, 0, 4, 4, unit="short", color="#56A64B", thresholds=[
-            {"color": "green", "value": None},
-            {"color": "#E0B400", "value": 20000},
-            {"color": "red", "value": 100000}
+        stat_panel(5, "TCP 活跃连接总数", f'sum(node_netstat_Tcp_CurrEstab{{{srv_sel}}})', 16, 0, 4, 4, unit="none"),
+        stat_panel(6, "已打开文件句柄数", f'sum(node_filefd_allocated{{{srv_sel}}})', 20, 0, 4, 4, unit="short", thresholds=[
+            {"color": NEUTRAL_COLOR, "value": None},
+            {"color": WARNING_COLOR, "value": 20000},
+            {"color": CRITICAL_COLOR, "value": 100000}
         ]),
 
         timeseries_panel(7, "CPU 各状态利用率走势 (%)", [
@@ -2638,13 +2720,17 @@ def build_linux_dashboard():
             11, "主机磁盘空间利用率 Top 10",
             f'topk(10, max by (hostname, mountpoint) ((1 - (node_filesystem_avail_bytes{{{srv_sel},fstype!~"tmpfs|iso9660|squashfs",fstype!=""}} / node_filesystem_size_bytes{{{srv_sel}}})) * 100))',
             0, 20, 12, 8, unit="percent",
+            value_col_name="磁盘使用率",
             transformations=clean_organize_transformation("磁盘使用率", {"mountpoint": "挂载点"})
         ),
 
         timeseries_panel(12, "服务器网卡流量走势 (bps)", [
             {"expr": f'sum by (hostname, device) (rate(node_network_receive_bytes_total{{{srv_sel},device!~"lo|docker.*|veth.*|br-.*"}}[5m]) * 8)', "legendFormat": "{{site_name}} / {{hostname}} - {{device}} 接收 (bps)", "refId": "A"},
             {"expr": f'sum by (hostname, device) (rate(node_network_transmit_bytes_total{{{srv_sel},device!~"lo|docker.*|veth.*|br-.*"}}[5m]) * 8)', "legendFormat": "{{site_name}} / {{hostname}} - {{device}} 发送 (bps)", "refId": "B"}
-        ], 12, 20, 12, 8, unit="bps", legend_display_mode="list", legend_placement="bottom", legend_calcs=[]),
+        ], 12, 20, 12, 8, unit="bps", legend_display_mode="list", legend_placement="bottom", legend_calcs=[], color_overrides=[
+            timeseries_color_override("byRegexp", ".*接收.*", INBOUND_COLOR),
+            timeseries_color_override("byRegexp", ".*发送.*", OUTBOUND_COLOR),
+        ]),
 
         table_panel(
             13, "主机 TCP 活跃连接数 Top 10",
@@ -2693,18 +2779,18 @@ def build_linux_dashboard():
 def build_windows_dashboard():
     srv_sel = 'job="windows_servers",site_name=~"$site",hostname=~"$device"'
     panels = [
-        stat_panel(1, "受纳管 Windows 主机数", f'count(count by (hostname) (up{{{srv_sel}}}))', 0, 0, 6, 4, unit="none", color="blue"),
+        stat_panel(1, "受纳管 Windows 主机数", f'count(count by (hostname) (up{{{srv_sel}}}))', 0, 0, 6, 4, unit="none"),
         stat_panel(2, "平均 CPU 使用率", f'avg(100 - (avg by (hostname) (rate(windows_cpu_time_total{{{srv_sel},mode="idle"}}[5m])) * 100))', 6, 0, 6, 4, unit="percent", thresholds=[
-            {"color": "green", "value": None},
-            {"color": "#E0B400", "value": 70},
-            {"color": "red", "value": 85}
+            {"color": HEALTHY_COLOR, "value": None},
+            {"color": WARNING_COLOR, "value": 70},
+            {"color": CRITICAL_COLOR, "value": 85}
         ]),
         stat_panel(3, "平均物理内存使用率", f'avg((1 - (windows_os_physical_memory_free_bytes{{{srv_sel}}} / windows_cs_physical_memory_bytes{{{srv_sel}}})) * 100)', 12, 0, 6, 4, unit="percent", thresholds=[
-            {"color": "green", "value": None},
-            {"color": "#E0B400", "value": 80},
-            {"color": "red", "value": 90}
+            {"color": HEALTHY_COLOR, "value": None},
+            {"color": WARNING_COLOR, "value": 80},
+            {"color": CRITICAL_COLOR, "value": 90}
         ]),
-        stat_panel(4, "远程桌面活跃会话", f'sum(windows_terminal_services_active_sessions{{{srv_sel}}})', 18, 0, 6, 4, unit="none", color="purple"),
+        stat_panel(4, "远程桌面活跃会话", f'sum(windows_terminal_services_active_sessions{{{srv_sel}}})', 18, 0, 6, 4, unit="none"),
 
         timeseries_panel(5, "CPU 占用率走势 (%)", [
             {"expr": f'100 - (avg by (hostname) (rate(windows_cpu_time_total{{{srv_sel},mode="idle"}}[5m])) * 100)', "legendFormat": "{{site_name}} / {{hostname}} CPU 利用率 (%)", "refId": "A"}
@@ -2720,6 +2806,7 @@ def build_windows_dashboard():
             7, "逻辑磁盘剩余空间最低 Top 10",
             f'bottomk(10, min by (hostname, volume) ((windows_logical_disk_free_bytes{{{srv_sel}}} / windows_logical_disk_size_bytes{{{srv_sel}}}) * 100))',
             0, 12, 12, 8, unit="percent",
+            value_col_name="剩余空间 (%)",
             transformations=clean_organize_transformation("剩余空间 (%)", {"volume": "盘符"})
         ),
         timeseries_panel(8, "系统进程数与线程数", [
@@ -2730,7 +2817,10 @@ def build_windows_dashboard():
         timeseries_panel(9, "网卡收发流量走势 (bps)", [
             {"expr": f'sum by (hostname, nic) (rate(windows_net_bytes_received_total{{{srv_sel}}}[5m]) * 8)', "legendFormat": "{{site_name}} / {{hostname}} - {{nic}} 接收", "refId": "A"},
             {"expr": f'sum by (hostname, nic) (rate(windows_net_bytes_sent_total{{{srv_sel}}}[5m]) * 8)', "legendFormat": "{{site_name}} / {{hostname}} - {{nic}} 发送", "refId": "B"}
-        ], 0, 20, 12, 8, unit="bps"),
+        ], 0, 20, 12, 8, unit="bps", color_overrides=[
+            timeseries_color_override("byRegexp", ".*接收.*", INBOUND_COLOR),
+            timeseries_color_override("byRegexp", ".*发送.*", OUTBOUND_COLOR),
+        ]),
         table_panel(
             10, "系统关键服务运行状态",
             f'windows_service_state{{{srv_sel},state="running"}} == 1',
@@ -2789,8 +2879,8 @@ def build_platform_health_dashboard():
         {
             "type": "value",
             "options": {
-                "1": {"text": "UP", "color": "green"},
-                "0": {"text": "DOWN", "color": "red"},
+                "1": {"text": "UP", "color": HEALTHY_COLOR},
+                "0": {"text": "DOWN", "color": CRITICAL_COLOR},
             },
         },
         {
@@ -2811,7 +2901,6 @@ def build_platform_health_dashboard():
             4,
             4,
             unit="none",
-            color="#56A64B",
             description="统计可访问的监控端点，不代表容器数。",
         ),
         stat_panel(
@@ -2824,8 +2913,8 @@ def build_platform_health_dashboard():
             4,
             unit="none",
             thresholds=[
-                {"color": "green", "value": None},
-                {"color": "red", "value": 1},
+                {"color": NEUTRAL_COLOR, "value": None},
+                {"color": CRITICAL_COLOR, "value": 1},
             ],
             description=None,
         ),
@@ -2838,7 +2927,6 @@ def build_platform_health_dashboard():
             4,
             4,
             unit="none",
-            color="#A352CC",
             description=None,
         ),
         stat_panel(
@@ -2851,9 +2939,9 @@ def build_platform_health_dashboard():
             4,
             unit="s",
             thresholds=[
-                {"color": "green", "value": None},
-                {"color": "#E0B400", "value": 2},
-                {"color": "red", "value": 5},
+                {"color": NEUTRAL_COLOR, "value": None},
+                {"color": WARNING_COLOR, "value": 2},
+                {"color": CRITICAL_COLOR, "value": 5},
             ],
         ),
         stat_panel(
@@ -2866,8 +2954,9 @@ def build_platform_health_dashboard():
             4,
             unit="none",
             thresholds=[
-                {"color": "red", "value": None},
-                {"color": "green", "value": 1},
+                {"color": NEUTRAL_COLOR, "value": None},
+                {"color": CRITICAL_COLOR, "value": 0},
+                {"color": HEALTHY_COLOR, "value": 1},
             ],
             description="1 表示连接与查询成功，0 表示失败。",
         ),
@@ -2880,7 +2969,6 @@ def build_platform_health_dashboard():
             4,
             4,
             unit="s",
-            color="#3274D9",
         ),
         timeseries_panel(
             7,
@@ -2959,9 +3047,9 @@ def build_platform_health_dashboard():
             4,
             unit="bytes",
             thresholds=[
-                {"color": "green", "value": None},
-                {"color": "#E0B400", "value": 104857600},
-                {"color": "red", "value": 1073741824},
+                {"color": NEUTRAL_COLOR, "value": None},
+                {"color": WARNING_COLOR, "value": 104857600},
+                {"color": CRITICAL_COLOR, "value": 1073741824},
             ],
             description="显示等待写入的数据量；无数据时状态未知。",
         ),
@@ -2975,8 +3063,8 @@ def build_platform_health_dashboard():
             4,
             unit="none",
             thresholds=[
-                {"color": "green", "value": None},
-                {"color": "red", "value": 1},
+                {"color": NEUTRAL_COLOR, "value": None},
+                {"color": CRITICAL_COLOR, "value": 1},
             ],
         ),
         stat_panel(
@@ -2989,8 +3077,8 @@ def build_platform_health_dashboard():
             4,
             unit="none",
             thresholds=[
-                {"color": "green", "value": None},
-                {"color": "red", "value": 1},
+                {"color": NEUTRAL_COLOR, "value": None},
+                {"color": CRITICAL_COLOR, "value": 1},
             ],
         ),
         stat_panel(
@@ -3025,8 +3113,8 @@ def build_platform_health_dashboard():
             4,
             unit="none",
             thresholds=[
-                {"color": "green", "value": None},
-                {"color": "red", "value": 1},
+                {"color": NEUTRAL_COLOR, "value": None},
+                {"color": CRITICAL_COLOR, "value": 1},
             ],
             description="0 表示可写，1 表示只读；无数据时状态未知。",
         ),
@@ -3098,7 +3186,6 @@ def build_platform_health_dashboard():
             4,
             4,
             unit="none",
-            color="#A352CC",
             description="统计已观测到的容器，不代表容器健康。",
         ),
         table_panel(
@@ -3174,7 +3261,6 @@ def build_outbound_probe_quality_dashboard():
             6,
             4,
             unit="none",
-            color="#3274D9",
         ),
         stat_panel(
             2,
@@ -3215,7 +3301,6 @@ def build_outbound_probe_quality_dashboard():
             6,
             4,
             unit="none",
-            color="#3274D9",
         ),
         stat_panel(
             6,
@@ -3384,9 +3469,10 @@ def build_outbound_probe_quality_dashboard():
             4,
             unit="percentunit",
             thresholds=[
-                {"color": "red", "value": None},
-                {"color": "#E0B400", "value": 0.95},
-                {"color": "green", "value": 0.99},
+                {"color": NEUTRAL_COLOR, "value": None},
+                {"color": CRITICAL_COLOR, "value": 0},
+                {"color": WARNING_COLOR, "value": 0.95},
+                {"color": HEALTHY_COLOR, "value": 0.99},
             ],
             description="只按采集成功样本计算，不代表端到端 SLA。",
         ),
@@ -3430,6 +3516,10 @@ def build_outbound_probe_quality_dashboard():
             legend_display_mode="list",
             legend_placement="bottom",
             legend_calcs=["lastNotNull", "max"],
+            color_overrides=[
+                timeseries_color_override("byName", "下行", INBOUND_COLOR),
+                timeseries_color_override("byName", "上行", OUTBOUND_COLOR),
+            ],
             description="显示启用接口的平均速率，不是线路总流量。",
         ),
         timeseries_panel(
@@ -3455,6 +3545,10 @@ def build_outbound_probe_quality_dashboard():
             legend_display_mode="list",
             legend_placement="bottom",
             legend_calcs=["lastNotNull"],
+            color_overrides=[
+                timeseries_color_override("byName", "错误", ERROR_COLOR),
+                timeseries_color_override("byName", "丢弃", DISCARD_COLOR),
+            ],
         ),
         stat_panel(
             20,
@@ -3466,8 +3560,8 @@ def build_outbound_probe_quality_dashboard():
             4,
             unit="none",
             thresholds=[
-                {"color": "green", "value": None},
-                {"color": "red", "value": 1},
+                {"color": NEUTRAL_COLOR, "value": None},
+                {"color": CRITICAL_COLOR, "value": 1},
             ],
             description="仅统计采集正常、管理启用且运行 Down 的线路。",
         ),
@@ -3507,8 +3601,9 @@ def build_outbound_probe_quality_dashboard():
 # 12. Alert Operations & Notification Effectiveness Dashboard
 def build_alert_operations_dashboard():
     open_thresholds = [
-        {"color": "green", "value": None},
-        {"color": "red", "value": 1},
+        {"color": NEUTRAL_COLOR, "value": None},
+        {"color": WARNING_COLOR, "value": 1},
+        {"color": CRITICAL_COLOR, "value": 5},
     ]
     completed_status_selector = 'nexora_alert_delivery_attempts_24h{status=~"succeeded|retrying|failed"}'
     completed_attempts_expr = f"sum({completed_status_selector})"
@@ -3538,7 +3633,7 @@ def build_alert_operations_dashboard():
             4,
             4,
             unit="none",
-            thresholds=open_thresholds,
+            thresholds=alert_severity_thresholds("critical"),
         ),
         stat_panel(
             3,
@@ -3549,7 +3644,7 @@ def build_alert_operations_dashboard():
             4,
             4,
             unit="none",
-            thresholds=open_thresholds,
+            thresholds=alert_severity_thresholds("major"),
         ),
         stat_panel(
             4,
@@ -3560,7 +3655,7 @@ def build_alert_operations_dashboard():
             4,
             4,
             unit="none",
-            thresholds=open_thresholds,
+            thresholds=alert_severity_thresholds("warning"),
         ),
         stat_panel(
             5,
@@ -3571,7 +3666,7 @@ def build_alert_operations_dashboard():
             4,
             4,
             unit="none",
-            thresholds=open_thresholds,
+            thresholds=alert_severity_thresholds("minor"),
         ),
         stat_panel(
             6,
@@ -3634,6 +3729,20 @@ def build_alert_operations_dashboard():
             legend_display_mode="list",
             legend_placement="bottom",
             legend_calcs=[],
+            color_overrides=[
+                timeseries_color_override(
+                    "byRegexp", ".*严重.*", ALERT_SEVERITY_COLORS["critical"]
+                ),
+                timeseries_color_override(
+                    "byRegexp", ".*主要.*", ALERT_SEVERITY_COLORS["major"]
+                ),
+                timeseries_color_override(
+                    "byRegexp", ".*警告.*", ALERT_SEVERITY_COLORS["warning"]
+                ),
+                timeseries_color_override(
+                    "byRegexp", ".*次要.*", ALERT_SEVERITY_COLORS["minor"]
+                ),
+            ],
             description=None,
         ),
         timeseries_panel(
@@ -3687,9 +3796,9 @@ def build_alert_operations_dashboard():
             unit="dtdhms",
             graph_mode="none",
             thresholds=[
-                {"color": "green", "value": None},
-                {"color": "#E0B400", "value": 3600},
-                {"color": "red", "value": 86400},
+                {"color": NEUTRAL_COLOR, "value": None},
+                {"color": WARNING_COLOR, "value": 3600},
+                {"color": CRITICAL_COLOR, "value": 86400},
             ],
         ),
         stat_panel(
@@ -3802,6 +3911,40 @@ def build_alert_operations_dashboard():
         "version": DASHBOARD_VERSION,
     }
 
+
+def validate_dashboard(source_name, dashboard):
+    """Validate the generated top-level dashboard contract before writing it."""
+    uid = dashboard.get("uid")
+    title = dashboard.get("title")
+    assert isinstance(uid, str) and uid, f"{source_name}: missing uid"
+    assert isinstance(title, str) and title, f"{source_name}: missing title"
+    assert dashboard.get("version") == DASHBOARD_VERSION, f"{source_name}: stale version"
+
+    panels = dashboard.get("panels") or []
+    panel_ids = [panel.get("id") for panel in panels]
+    assert all(panel_id is not None for panel_id in panel_ids), f"{source_name}: panel without id"
+    assert len(panel_ids) == len(set(panel_ids)), f"{source_name}: duplicate panel id"
+
+    occupied = {}
+    for panel in panels:
+        grid = panel.get("gridPos") or {}
+        try:
+            x, y, width, height = (int(grid[key]) for key in ("x", "y", "w", "h"))
+        except (KeyError, TypeError, ValueError) as exc:
+            raise AssertionError(f"{source_name}: invalid grid for panel {panel.get('id')}") from exc
+        assert 0 <= x < 24 and 0 < width <= 24 and x + width <= 24, (
+            f"{source_name}: panel {panel.get('id')} outside grid width"
+        )
+        assert y >= 0 and height > 0, f"{source_name}: invalid grid height"
+        for cell_y in range(y, y + height):
+            for cell_x in range(x, x + width):
+                previous = occupied.get((cell_x, cell_y))
+                assert previous is None, (
+                    f"{source_name}: panel {panel.get('id')} overlaps panel {previous}"
+                )
+                occupied[(cell_x, cell_y)] = panel.get("id")
+
+
 def main():
     DASHBOARDS_DIR.mkdir(parents=True, exist_ok=True)
     dashboards = [
@@ -3818,7 +3961,11 @@ def main():
         ("nexora-outbound-probe-quality.json", build_outbound_probe_quality_dashboard()),
         ("nexora-alert-operations.json", build_alert_operations_dashboard()),
     ]
+    assert len(dashboards) == 12, "dashboard catalog must contain exactly 12 dashboards"
+    uids = [data.get("uid") for _, data in dashboards]
+    assert len(uids) == len(set(uids)), "dashboard catalog contains duplicate UIDs"
     for fname, data in dashboards:
+        validate_dashboard(fname, data)
         path = DASHBOARDS_DIR / fname
         with open(path, "w", encoding="utf-8") as f:
             json.dump(data, f, indent=2, ensure_ascii=False)

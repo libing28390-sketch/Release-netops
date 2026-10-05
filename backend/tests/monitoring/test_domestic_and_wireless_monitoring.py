@@ -12,10 +12,12 @@ from monitoring.grafana.generate_dashboards import (
     HEALTHY_COLOR,
     HIGH_COLOR,
     INFO_COLOR,
+    INBOUND_COLOR,
     NEUTRAL_COLOR,
     OUTBOUND_COLOR,
     WARNING_COLOR,
     UTILIZATION_THRESHOLDS,
+    NO_VALUE_TEXT,
     build_interface_dashboard,
     build_interface_detail_dashboard,
     build_overview_dashboard,
@@ -108,6 +110,12 @@ def test_dashboards_suite_completeness():
             data = json.load(f)
             assert "uid" in data
             assert len(data.get("panels", [])) > 0
+            for panel in _iter_panels(data.get("panels", [])):
+                if panel.get("type") == "stat":
+                    assert panel.get("targets") and all(
+                        target.get("instant") is True
+                        for target in panel["targets"]
+                    ), f"{filename}: Stat panel {panel.get('title')} must query current state"
 
     device_dashboard_path = os.path.join(dashboard_dir, "nexora-network-device.json")
     with open(device_dashboard_path, "r", encoding="utf-8") as f:
@@ -310,7 +318,8 @@ def test_wireless_dashboard_homepage_groups_actual_metrics_by_wireless_layer():
         assert panel["type"] == "stat"
         assert panel["gridPos"]["w"] == 4
         assert panel["gridPos"]["h"] == 3
-        assert panel["fieldConfig"]["defaults"]["noValue"] == "—"
+        expected_no_value = NO_VALUE_TEXT if panel_id == 4 else "—"
+        assert panel["fieldConfig"]["defaults"]["noValue"] == expected_no_value
 
     assert panels[5]["title"] == "高利用率 Radio"
     assert 'sensor_class="utilization"' in panels[5]["targets"][0]["expr"]
@@ -355,7 +364,7 @@ def test_wireless_and_interface_dashboards_share_reference_semantic_colors():
     assert wireless["time"] == {"from": "now-15m", "to": "now"}
     assert wireless["refresh"] == "30s"
 
-    assert wireless_panels[1]["fieldConfig"]["defaults"]["thresholds"]["steps"][0]["color"] == INFO_COLOR
+    assert wireless_panels[1]["fieldConfig"]["defaults"]["thresholds"]["steps"][0]["color"] == NEUTRAL_COLOR
     assert wireless_panels[2]["fieldConfig"]["defaults"]["thresholds"]["steps"][0]["color"] == HEALTHY_COLOR
     assert wireless_panels[3]["fieldConfig"]["defaults"]["thresholds"]["steps"] == [
         {"color": HEALTHY_COLOR, "value": None},
@@ -404,17 +413,17 @@ def test_wireless_and_interface_dashboards_share_reference_semantic_colors():
 
     interface = build_interface_dashboard()
     interface_panels = {panel["id"]: panel for panel in interface["panels"]}
-    assert interface_panels[1]["fieldConfig"]["defaults"]["thresholds"]["steps"][0]["color"] == HEALTHY_COLOR
+    assert interface_panels[1]["fieldConfig"]["defaults"]["thresholds"]["steps"][0]["color"] == INBOUND_COLOR
     assert interface_panels[2]["fieldConfig"]["defaults"]["thresholds"]["steps"][0]["color"] == OUTBOUND_COLOR
-    assert interface_panels[3]["fieldConfig"]["defaults"]["thresholds"]["steps"][0]["color"] == CRITICAL_COLOR
-    assert interface_panels[4]["fieldConfig"]["defaults"]["thresholds"]["steps"][0]["color"] == WARNING_COLOR
+    assert interface_panels[3]["fieldConfig"]["defaults"]["thresholds"]["steps"][0]["color"] == HIGH_COLOR
+    assert interface_panels[4]["fieldConfig"]["defaults"]["thresholds"]["steps"][0]["color"] == CRITICAL_COLOR
     flow_colors = {
         override["matcher"]["options"]: override["properties"][0]["value"]["fixedColor"]
         for override in interface_panels[5]["fieldConfig"]["overrides"]
     }
-    assert flow_colors[".*入向$"] == HEALTHY_COLOR
-    assert flow_colors[".*出向$"] == HIGH_COLOR
-    assert interface_panels[17]["fieldConfig"]["defaults"]["color"]["fixedColor"] == HEALTHY_COLOR
+    assert flow_colors[".*入向$"] == INBOUND_COLOR
+    assert flow_colors[".*出向$"] == OUTBOUND_COLOR
+    assert interface_panels[17]["fieldConfig"]["defaults"]["color"]["fixedColor"] == INBOUND_COLOR
     assert interface_panels[18]["fieldConfig"]["defaults"]["color"]["fixedColor"] == OUTBOUND_COLOR
     interface_utilization_thresholds = next(
         prop["value"]["steps"]
@@ -427,17 +436,25 @@ def test_wireless_and_interface_dashboards_share_reference_semantic_colors():
 
     detail = build_interface_detail_dashboard()
     detail_panels = {panel["id"]: panel for panel in detail["panels"]}
-    assert detail_panels[1]["fieldConfig"]["defaults"]["thresholds"]["steps"][0]["color"] == HEALTHY_COLOR
+    assert detail_panels[1]["fieldConfig"]["defaults"]["thresholds"]["steps"][0]["color"] == INBOUND_COLOR
     assert detail_panels[2]["fieldConfig"]["defaults"]["thresholds"]["steps"][0]["color"] == OUTBOUND_COLOR
     detail_flow_colors = {
         override["matcher"]["options"]: override["properties"][0]["value"]["fixedColor"]
         for override in detail_panels[7]["fieldConfig"]["overrides"]
     }
-    assert detail_flow_colors["入向带宽"] == HEALTHY_COLOR
+    assert detail_flow_colors["入向带宽"] == INBOUND_COLOR
     assert detail_flow_colors["出向带宽"] == OUTBOUND_COLOR
 
     overview = {panel["id"]: panel for panel in build_overview_dashboard()["panels"]}
-    assert overview[4]["fieldConfig"]["defaults"]["thresholds"]["steps"][0]["color"] == CLIENT_COLOR
+    overview_client_expr = overview[4]["targets"][0]["expr"]
+    wireless_client_expr = wireless_panels[4]["targets"][0]["expr"]
+    assert overview_client_expr == wireless_client_expr
+    assert 'component_class="wireless_controller",sensor_class="clients"' in overview_client_expr
+    assert 'component_class="wireless_ssid",sensor_class="clients"' in overview_client_expr
+    assert "unless on(site_name,vendor,role,hostname)" in overview_client_expr
+    assert "or vector(0)" not in overview_client_expr
+    assert overview[4]["fieldConfig"]["defaults"]["thresholds"]["steps"][0]["color"] == NEUTRAL_COLOR
+    assert overview[8]["targets"][0]["expr"] == overview_client_expr
 
 
 def test_wireless_ap_counts_use_collected_state_rows_and_explicit_statuses():

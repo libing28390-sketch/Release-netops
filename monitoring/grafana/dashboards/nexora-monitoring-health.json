@@ -33,7 +33,7 @@
             "mode": "absolute",
             "steps": [
               {
-                "color": "#56A64B",
+                "color": "#8A8F98",
                 "value": null
               }
             ]
@@ -58,7 +58,8 @@
       "targets": [
         {
           "expr": "count(count by (instance) (up{job=\"network_snmp\"} == 1)) or on() ((count(up{job=\"network_snmp\"}) > 0) * 0)",
-          "refId": "A"
+          "refId": "A",
+          "instant": true
         }
       ]
     },
@@ -87,11 +88,11 @@
             "mode": "absolute",
             "steps": [
               {
-                "color": "green",
+                "color": "#8A8F98",
                 "value": null
               },
               {
-                "color": "red",
+                "color": "#F2495C",
                 "value": 1
               }
             ]
@@ -116,7 +117,8 @@
       "targets": [
         {
           "expr": "count(count by (instance) (up{job=\"network_snmp\"} == 0)) or on() ((count(up{job=\"network_snmp\"}) > 0) * 0)",
-          "refId": "A"
+          "refId": "A",
+          "instant": true
         }
       ]
     },
@@ -145,7 +147,7 @@
             "mode": "absolute",
             "steps": [
               {
-                "color": "#3274D9",
+                "color": "#8A8F98",
                 "value": null
               }
             ]
@@ -170,7 +172,8 @@
       "targets": [
         {
           "expr": "avg(scrape_duration_seconds{job=\"network_snmp\"})",
-          "refId": "A"
+          "refId": "A",
+          "instant": true
         }
       ]
     },
@@ -199,7 +202,7 @@
             "mode": "absolute",
             "steps": [
               {
-                "color": "green",
+                "color": "#8A8F98",
                 "value": null
               },
               {
@@ -207,7 +210,7 @@
                 "value": 5
               },
               {
-                "color": "red",
+                "color": "#F2495C",
                 "value": 15
               }
             ]
@@ -232,7 +235,8 @@
       "targets": [
         {
           "expr": "max(scrape_duration_seconds{job=\"network_snmp\"})",
-          "refId": "A"
+          "refId": "A",
+          "instant": true
         }
       ]
     },
@@ -433,7 +437,7 @@
             "renameByName": {
               "sysName": "设备名称",
               "hostname": "设备名称",
-              "instance": "管理 IP",
+              "instance": "采集目标",
               "site_name": "站点",
               "ifName": "接口全称",
               "ifDescr": "接口描述",
@@ -478,7 +482,7 @@
           {
             "matcher": {
               "id": "byName",
-              "options": "数值"
+              "options": "采集耗时 (秒)"
             },
             "properties": [
               {
@@ -547,7 +551,7 @@
             "renameByName": {
               "sysName": "设备名称",
               "hostname": "设备名称",
-              "instance": "管理 IP",
+              "instance": "采集目标",
               "site_name": "站点",
               "ifName": "接口全称",
               "ifDescr": "接口描述",

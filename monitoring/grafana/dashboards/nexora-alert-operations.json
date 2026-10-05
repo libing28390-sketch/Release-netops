@@ -33,12 +33,16 @@
             "mode": "absolute",
             "steps": [
               {
-                "color": "green",
+                "color": "#8A8F98",
                 "value": null
               },
               {
-                "color": "red",
+                "color": "#E0B400",
                 "value": 1
+              },
+              {
+                "color": "#F2495C",
+                "value": 5
               }
             ]
           }
@@ -62,7 +66,8 @@
       "targets": [
         {
           "expr": "sum(nexora_alert_open_events)",
-          "refId": "A"
+          "refId": "A",
+          "instant": true
         }
       ]
     },
@@ -91,11 +96,11 @@
             "mode": "absolute",
             "steps": [
               {
-                "color": "green",
+                "color": "#8A8F98",
                 "value": null
               },
               {
-                "color": "red",
+                "color": "#F2495C",
                 "value": 1
               }
             ]
@@ -120,7 +125,8 @@
       "targets": [
         {
           "expr": "nexora_alert_open_events{severity=\"critical\"}",
-          "refId": "A"
+          "refId": "A",
+          "instant": true
         }
       ]
     },
@@ -149,11 +155,11 @@
             "mode": "absolute",
             "steps": [
               {
-                "color": "green",
+                "color": "#8A8F98",
                 "value": null
               },
               {
-                "color": "red",
+                "color": "#FF9830",
                 "value": 1
               }
             ]
@@ -178,7 +184,8 @@
       "targets": [
         {
           "expr": "nexora_alert_open_events{severity=\"major\"}",
-          "refId": "A"
+          "refId": "A",
+          "instant": true
         }
       ]
     },
@@ -207,11 +214,11 @@
             "mode": "absolute",
             "steps": [
               {
-                "color": "green",
+                "color": "#8A8F98",
                 "value": null
               },
               {
-                "color": "red",
+                "color": "#E0B400",
                 "value": 1
               }
             ]
@@ -236,7 +243,8 @@
       "targets": [
         {
           "expr": "nexora_alert_open_events{severity=\"warning\"}",
-          "refId": "A"
+          "refId": "A",
+          "instant": true
         }
       ]
     },
@@ -265,12 +273,8 @@
             "mode": "absolute",
             "steps": [
               {
-                "color": "green",
+                "color": "#8A8F98",
                 "value": null
-              },
-              {
-                "color": "red",
-                "value": 1
               }
             ]
           }
@@ -294,7 +298,8 @@
       "targets": [
         {
           "expr": "nexora_alert_open_events{severity=\"minor\"}",
-          "refId": "A"
+          "refId": "A",
+          "instant": true
         }
       ]
     },
@@ -323,7 +328,7 @@
             "mode": "absolute",
             "steps": [
               {
-                "color": "#3274D9",
+                "color": "#8A8F98",
                 "value": null
               }
             ]
@@ -359,7 +364,8 @@
       "targets": [
         {
           "expr": "(((sum(nexora_alert_delivery_attempts_24h{status=\"succeeded\"}) / sum(nexora_alert_delivery_attempts_24h{status=~\"succeeded|retrying|failed\"})) and (sum(nexora_alert_delivery_attempts_24h{status=~\"succeeded|retrying|failed\"}) > 0)) or (vector(-1) and on() (count(nexora_alert_delivery_attempts_24h{status=~\"succeeded|retrying|failed\"}) > 0)))",
-          "refId": "A"
+          "refId": "A",
+          "instant": true
         }
       ],
       "description": "按已完成的通知尝试计算；无完成记录时显示无数据。"
@@ -456,7 +462,68 @@
             "showPoints": "never"
           }
         },
-        "overrides": []
+        "overrides": [
+          {
+            "matcher": {
+              "id": "byRegexp",
+              "options": ".*严重.*"
+            },
+            "properties": [
+              {
+                "id": "color",
+                "value": {
+                  "mode": "fixed",
+                  "fixedColor": "#F2495C"
+                }
+              }
+            ]
+          },
+          {
+            "matcher": {
+              "id": "byRegexp",
+              "options": ".*主要.*"
+            },
+            "properties": [
+              {
+                "id": "color",
+                "value": {
+                  "mode": "fixed",
+                  "fixedColor": "#FF9830"
+                }
+              }
+            ]
+          },
+          {
+            "matcher": {
+              "id": "byRegexp",
+              "options": ".*警告.*"
+            },
+            "properties": [
+              {
+                "id": "color",
+                "value": {
+                  "mode": "fixed",
+                  "fixedColor": "#E0B400"
+                }
+              }
+            ]
+          },
+          {
+            "matcher": {
+              "id": "byRegexp",
+              "options": ".*次要.*"
+            },
+            "properties": [
+              {
+                "id": "color",
+                "value": {
+                  "mode": "fixed",
+                  "fixedColor": "#8A8F98"
+                }
+              }
+            ]
+          }
+        ]
       },
       "options": {
         "legend": {
@@ -653,7 +720,7 @@
             "mode": "absolute",
             "steps": [
               {
-                "color": "green",
+                "color": "#8A8F98",
                 "value": null
               },
               {
@@ -661,7 +728,7 @@
                 "value": 3600
               },
               {
-                "color": "red",
+                "color": "#F2495C",
                 "value": 86400
               }
             ]
@@ -686,7 +753,8 @@
       "targets": [
         {
           "expr": "nexora_alert_open_duration_oldest_seconds",
-          "refId": "A"
+          "refId": "A",
+          "instant": true
         }
       ]
     },
@@ -715,7 +783,7 @@
             "mode": "absolute",
             "steps": [
               {
-                "color": "#3274D9",
+                "color": "#8A8F98",
                 "value": null
               }
             ]
@@ -740,7 +808,8 @@
       "targets": [
         {
           "expr": "nexora_alert_open_duration_p95_seconds",
-          "refId": "A"
+          "refId": "A",
+          "instant": true
         }
       ]
     },
@@ -769,7 +838,7 @@
             "mode": "absolute",
             "steps": [
               {
-                "color": "#3274D9",
+                "color": "#8A8F98",
                 "value": null
               }
             ]
@@ -794,7 +863,8 @@
       "targets": [
         {
           "expr": "nexora_alert_mtta_seconds_24h",
-          "refId": "A"
+          "refId": "A",
+          "instant": true
         }
       ],
       "description": "告警创建到首次确认的平均时间。"
@@ -824,7 +894,7 @@
             "mode": "absolute",
             "steps": [
               {
-                "color": "#3274D9",
+                "color": "#8A8F98",
                 "value": null
               }
             ]
@@ -849,7 +919,8 @@
       "targets": [
         {
           "expr": "nexora_alert_mttr_seconds_24h",
-          "refId": "A"
+          "refId": "A",
+          "instant": true
         }
       ],
       "description": "告警创建到恢复的平均时间。"
@@ -879,12 +950,16 @@
             "mode": "absolute",
             "steps": [
               {
-                "color": "green",
+                "color": "#8A8F98",
                 "value": null
               },
               {
-                "color": "red",
+                "color": "#E0B400",
                 "value": 1
+              },
+              {
+                "color": "#F2495C",
+                "value": 5
               }
             ]
           }
@@ -908,7 +983,8 @@
       "targets": [
         {
           "expr": "nexora_alert_duplicate_open_events",
-          "refId": "A"
+          "refId": "A",
+          "instant": true
         }
       ],
       "description": "相同告警未恢复时，重复记录超出 1 条的数量。"
@@ -938,7 +1014,7 @@
             "mode": "absolute",
             "steps": [
               {
-                "color": "#3274D9",
+                "color": "#8A8F98",
                 "value": null
               }
             ]
@@ -963,7 +1039,8 @@
       "targets": [
         {
           "expr": "nexora_alert_retried_deliveries_24h",
-          "refId": "A"
+          "refId": "A",
+          "instant": true
         }
       ]
     },
