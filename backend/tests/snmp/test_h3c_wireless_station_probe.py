@@ -96,12 +96,14 @@ def test_h3c_radio_table_collects_documented_type_status_ssid_and_signal_columns
     radio_suffix = f"{ap_suffix}.1"
     ap_name_oid = f"{probe._H3C_DOT11_AP_OBJECT_TABLE}.8"
     radio_values = {
+        10: "30",
         30: "3",
         31: "1",
         32: "corp-main, guest",
         33: "-62",
         34: "-48",
         35: "-79",
+        26: "45",
     }
     rows = {ap_name_oid: [(ap_suffix, ap_id)]}
     for column, value in radio_values.items():
@@ -123,6 +125,8 @@ def test_h3c_radio_table_collects_documented_type_status_ssid_and_signal_columns
         if sensor["component_class"] == "wireless_radio"
     }
     expected = {
+        "radio_resource_usage": (10, "30", 30.0),
+        "channel_utilization": (26, "45", 45.0),
         "radio_type_code": (30, "3", 3.0),
         "radio_oper_code": (31, "1", 1.0),
         "signal_strength_average_raw": (33, "-62", -62.0),
@@ -145,6 +149,23 @@ def test_h3c_radio_table_collects_documented_type_status_ssid_and_signal_columns
     assert bound_ssids["value"] is None
     assert bound_ssids["quality"] == "good"
     assert bound_ssids["index_labels"]["ap_name"] == ap_id
+
+    assert radio_sensors["radio_resource_usage"]["metadata"]["wireless_sensor_class"] == "radio-resource-usage"
+    assert radio_sensors["channel_utilization"]["metadata"]["wireless_sensor_class"] == "utilization"
+    radio_metrics = inventory.render_hardware_metrics(
+        [
+            {
+                **radio_sensors[variant],
+                "last_value": radio_sensors[variant]["value"],
+                "last_raw_value": radio_sensors[variant]["raw_value"],
+                "last_quality": radio_sensors[variant]["quality"],
+            }
+            for variant in ("radio_resource_usage", "channel_utilization")
+        ],
+        {"device_id": "device-fixture"},
+    )
+    assert 'sensor_class="radio-resource-usage"' in radio_metrics
+    assert radio_metrics.count('sensor_class="utilization"') == 1
 
 
 def test_h3c_radio_text_attributes_poll_as_inventory_values(monkeypatch):

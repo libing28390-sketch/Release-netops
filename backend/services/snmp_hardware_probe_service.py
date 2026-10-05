@@ -1810,7 +1810,7 @@ def _h3c_wireless_sensor(
             "signal_strength_average_raw", "signal_strength_max_raw", "signal_strength_min_raw",
         }
         if number is not None and math.isfinite(number) and (number >= 0 or allow_negative_raw_signal):
-            if sensor_class == "utilization":
+            if sensor_class in {"utilization", "radio-resource-usage"}:
                 if number <= 100:
                     value, quality = number, "good"
             elif measurement_type in {"cpu_usage_percent", "memory_usage_percent"}:
@@ -2361,7 +2361,7 @@ async def _probe_h3c_comware_wireless(
         for column, sensor_class, unit, variant, label in (
             (5, "channel", "channel", "channel", "信道"),
             (6, "tx_power_level", "level", "tx_power_level", "发射功率等级"),
-            (10, "utilization", "percent", "radio_resource_usage", "射频资源使用率"),
+            (10, "radio-resource-usage", "percent", "radio_resource_usage", "射频资源使用率"),
             (11, "radio_mode", "bitmask", "radio_mode_support", "支持模式位图"),
             (12, "tx_power_level", "level", "tx_power_level_current", "当前发射功率等级"),
             (26, "utilization", "percent", "channel_utilization", "主信道利用率"),
@@ -2374,7 +2374,7 @@ async def _probe_h3c_comware_wireless(
             oid = f"{_H3C_DOT11_AP_RADIO_TABLE}.{column}"
             raw = rows.get(oid, {}).get(suffix)
             number = _h3c_dot11_number(raw)
-            if raw is None or number is None or (sensor_class == "utilization" and (number < 0 or number > 100)):
+            if raw is None or number is None or (sensor_class in {"utilization", "radio-resource-usage"} and (number < 0 or number > 100)):
                 continue
             sensor = _h3c_wireless_sensor(
                 rule=rule, component_class="wireless_radio", measurement_type="wireless_sensor_value",

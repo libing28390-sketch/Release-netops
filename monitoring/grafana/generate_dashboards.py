@@ -212,6 +212,7 @@ def stat_panel(
     description=None,
     graph_mode="area",
     value_mappings=None,
+    no_value=None,
 ):
     steps = [{"color": color, "value": None}]
     if thresholds:
@@ -225,7 +226,7 @@ def stat_panel(
         "fieldConfig": {
             "defaults": {
                 "unit": unit,
-                "noValue": NO_VALUE_TEXT,
+                "noValue": NO_VALUE_TEXT if no_value is None else no_value,
                 "color": {"mode": "thresholds"},
                 "thresholds": {"mode": "absolute", "steps": steps}
             },
@@ -1724,100 +1725,145 @@ def build_device_dashboard():
 def build_wireless_dashboard():
     sel = f'{NETWORK_JOB},site_name=~"$site",vendor=~"$vendor",role=~"$role",hostname=~"$device"'
     inventory_sel = f'{HARDWARE_INVENTORY_JOB},site_name=~"$site",vendor=~"$vendor",role=~"$role",hostname=~"$device"'
-    h3c_inventory_sel = f'{inventory_sel},vendor=~"(?i)(h3c|comware)"'
     huawei_inventory_sel = f'{inventory_sel},vendor=~"(?i).*huawei.*"'
     wireless_inventory_sel = f'{inventory_sel},vendor=~"(?i)(h3c|comware|huawei)"'
     # The wireless dashboard combines SNMP-exporter series and normalized
     # hardware-inventory series. Their job labels differ, so device identity
     # must not include `job` when de-duplicating or joining these sources.
     device_labels = "site_name,vendor,role,hostname"
-    # Cisco/Aruba/Ruckus expose active/up APs but not a configured total in the
-    # catalog, so they must not be used as the denominator for offline APs.
-    ap_all = f"sum by ({device_labels}) (hwWlanApTotalNum{{{sel}}} or hh3cDot11TotalAPNum{{{sel}}} or ruijieApcTotalApNum{{{sel}}})"
+    # Prefer the collected per-AP state rows for AP totals and status counts.
+    # The controller-level online counters remain a fallback for platforms
+    # that do not expose a complete AP state inventory.
+    ap_state_selector = f'{inventory_sel},component_class="wireless_access_point"'
+    ap_state_rows = f"nexora_hw_component_state{{{ap_state_selector}}}"
+    ap_state_online_rows = f'nexora_hw_component_state{{{ap_state_selector},state_description=~"^(associated|run)$"}}'
+    ap_state_offline_rows = f'nexora_hw_component_state{{{ap_state_selector},state_description=~"^(deassociated|idle)$"}}'
+    ap_state_known_rows = f'nexora_hw_component_state{{{ap_state_selector},state_description=~"^(associated|run|deassociated|idle|downloading image)$"}}'
+    ap_state_count = f"count by ({device_labels}) ({ap_state_rows})"
+    ap_state_known_count = f"count by ({device_labels}) ({ap_state_known_rows})"
+    ap_state_complete = (
+        f'max by ({device_labels}) '
+        f'(nexora_hw_capability_status{{{inventory_sel},component_class="wireless_access_point",coverage_complete="true"}})'
+    )
+    ap_state_detail_coverage = (
+        f'(({ap_state_known_count}) == on({device_labels}) ({ap_state_count})) '
+        f'and on({device_labels}) ({ap_state_complete})'
+    )
+    ap_state_online_count = f"count by ({device_labels}) ({ap_state_online_rows})"
+    ap_state_offline_count = f"count by ({device_labels}) ({ap_state_offline_rows})"
     legacy_ap_online = f"sum by ({device_labels}) (hh3cDot11CurrOnlineAPNum{{{sel}}} or cLApTotalUpAPs{{{sel}}} or wlsxSysExtAccessPointsNum{{{sel}}} or ruckusZDTotalNumAP{{{sel}}})"
     inventory_ap_online = f'sum by ({device_labels}) (nexora_wireless_sensor_value{{{inventory_sel},component_class="wireless_controller",sensor_class="ap-count"}})'
-    ap_online = f"({legacy_ap_online} unless on({device_labels}) ({inventory_ap_online})) or on({device_labels}) ({inventory_ap_online})"
-    ap_offline = f"clamp_min(({ap_all}) - on({device_labels}) ({ap_online}), 0)"
+    reported_ap_online = f"({legacy_ap_online} unless on({device_labels}) ({inventory_ap_online})) or on({device_labels}) ({inventory_ap_online})"
+    ap_online_from_complete_details = (
+        f"(({ap_state_online_count}) and on({device_labels}) ({ap_state_detail_coverage})) "
+        f"or on({device_labels}) (({ap_state_detail_coverage}) * 0)"
+    )
+    ap_online = (
+        f"({reported_ap_online} unless on({device_labels}) ({ap_state_detail_coverage})) "
+        f"or on({device_labels}) ({ap_online_from_complete_details})"
+    )
+    ap_offline = (
+        f"({ap_state_offline_count}) or on({device_labels}) "
+        f"(({ap_state_detail_coverage}) * 0)"
+    )
     legacy_clients = f"sum by ({device_labels}) (hh3cDot11CurrAssocUserNum{{{sel}}} or cLSysTotalNumOfClients{{{sel}}} or wlsxSysExtStationsNum{{{sel}}} or ruckusZDTotalNumSta{{{sel}}})"
     controller_clients = f'sum by ({device_labels}) (nexora_wireless_sensor_value{{{inventory_sel},component_class="wireless_controller",sensor_class="clients"}})'
     ssid_clients = f'sum by ({device_labels}) (nexora_wireless_sensor_value{{{inventory_sel},component_class="wireless_ssid",sensor_class="clients"}})'
     inventory_clients = f"({controller_clients} or on({device_labels}) {ssid_clients})"
     clients = f"({legacy_clients} unless on({device_labels}) ({inventory_clients})) or on({device_labels}) ({inventory_clients})"
-    client_per_ap = f"({clients}) / clamp_min(({ap_online}), 1)"
     missing_wireless_data_note = "未显示不代表 AP 或客户端数量为 0。"
-    ap_total_description = f"统计已采到 AP 总量的控制器。{missing_wireless_data_note}"
-    ap_online_description = f"显示当前在线 AP 数。{missing_wireless_data_note}"
-    ap_offline_description = f"总量减在线数；缺少任一数据时不显示。{missing_wireless_data_note}"
+    ap_total_description = (
+        f"按实际采集到状态的 AP 明细记录计数；不等同于控制器配置总量，明细发现不完整时可能低于实际数量。"
+        f"{missing_wireless_data_note}"
+    )
+    ap_online_description = (
+        f"AP 状态发现完整且状态均可识别时，按 associated/run 明细计数；否则回退到实际采集的控制器在线计数。"
+        f"{missing_wireless_data_note}"
+    )
+    ap_offline_description = (
+        f"只统计状态明确为 deassociated/idle 的 AP 明细；完整状态明细无离线记录时显示 0，不从总量减在线数推算。"
+        f"{missing_wireless_data_note}"
+    )
     client_count_description = f"显示当前已关联无线终端数。{missing_wireless_data_note}"
-    ap_client_rows = f'topk(20, nexora_wireless_sensor_value{{{h3c_inventory_sel},component_class="wireless_access_point",sensor_class="clients"}})'
-    radio_utilization_rows = f'nexora_wireless_sensor_value{{{inventory_sel},component_class="wireless_radio",sensor_class="utilization"}}'
+    ap_client_rows = f'topk(20, nexora_wireless_sensor_value{{{inventory_sel},component_class="wireless_access_point",sensor_class="clients"}})'
+    radio_utilization_labels = "site_name,vendor,role,hostname,ap_id,ap_name,radio_id"
+    radio_utilization_samples = f'nexora_wireless_sensor_value{{{inventory_sel},component_class="wireless_radio",sensor_class="utilization"}}'
+    radio_utilization_rows = f"max by ({radio_utilization_labels}) ({radio_utilization_samples})"
+    high_utilization_radio_count = (
+        f'count({radio_utilization_rows} >= 75) or on() '
+        f'((count({radio_utilization_rows}) > 0) * 0)'
+    )
     bss_client_rows = f'topk(20, nexora_wireless_sensor_value{{{wireless_inventory_sel},component_class="wireless_bss",sensor_class="clients"}})'
-    ap_state_rows = f'nexora_hw_component_state{{{h3c_inventory_sel},component_class="wireless_access_point"}}'
     huawei_ssid_rows = f'topk(20, sum by ({device_labels},ssid) (nexora_wireless_sensor_value{{{huawei_inventory_sel},component_class="wireless_ssid",sensor_class="clients"}}))'
 
     panels = [
-        stat_panel(1, "已提供总量的 AP 数", f"sum({ap_all})", 0, 0, 6, 4, color="#3274D9", description=ap_total_description),
-        stat_panel(2, "当前在线 AP 总数", f"sum({ap_online})", 6, 0, 6, 4, color="#56A64B", description=ap_online_description),
-        stat_panel(3, "可计算的离线 AP 数", f"sum({ap_offline})", 12, 0, 6, 4, thresholds=[{"color": "green", "value": None}, {"color": "#E0B400", "value": 1}, {"color": "red", "value": 5}], description=ap_offline_description),
-        stat_panel(4, "全网在线关联无线终端", f"sum({clients})", 18, 0, 6, 4, color="#A352CC", description=client_count_description),
-        timeseries_panel(5, "无线 AP 在线规模趋势", [
-            {"expr": f"sum({ap_online})", "legendFormat": "在线 AP 数", "refId": "A"}
-        ], 0, 4, 12, 8, unit="short"),
-        timeseries_panel(6, "关联终端客户数走势", [
-            {"expr": f"sum({clients})", "legendFormat": "关联终端数", "refId": "A"}
-        ], 12, 4, 12, 8, unit="short"),
-        table_panel(
-            7, "无线控制器终端数排行 Top 10",
-            f"topk(10, {clients})",
-            0, 12, 12, 8, unit="short",
-            transformations=clean_organize_transformation("终端数量")
+        stat_panel(1, "采集 AP", f"sum({ap_state_count})", 0, 0, 4, 3, color="#3274D9", description=ap_total_description, no_value="—"),
+        stat_panel(2, "在线 AP", f"sum({ap_online})", 4, 0, 4, 3, color="#56A64B", description=ap_online_description, no_value="—"),
+        stat_panel(3, "明确离线 AP", f"sum({ap_offline})", 8, 0, 4, 3, thresholds=[{"color": "green", "value": None}, {"color": "#E0B400", "value": 1}, {"color": "red", "value": 5}], description=ap_offline_description, no_value="—"),
+        stat_panel(4, "在线终端", f"sum({clients})", 12, 0, 4, 3, color="#A352CC", description=client_count_description, no_value="—"),
+        stat_panel(5, "高利用率 Radio", high_utilization_radio_count, 16, 0, 4, 3, thresholds=[{"color": "green", "value": None}, {"color": "#E0B400", "value": 1}, {"color": "red", "value": 5}], description=f"统计当前利用率不低于 75% 的已采集 Radio；此门槛用于首页热点筛查，不代表告警策略。{missing_wireless_data_note}", no_value="—"),
+        stat_panel(6, "平均 Radio 利用率", f"avg({radio_utilization_rows})", 20, 0, 4, 3, unit="percent", thresholds=UTILIZATION_THRESHOLDS, description=f"对当前已采集 Radio 利用率取平均；只代表有有效样本的 Radio。{missing_wireless_data_note}", no_value="—"),
+        row_panel(900, "趋势与 AP 状态", 3),
+        timeseries_panel(7, "在线 AP 与关联终端趋势", [
+            {"expr": f"sum({ap_online})", "legendFormat": "在线 AP", "refId": "A"},
+            {"expr": f"sum({clients})", "legendFormat": "关联终端", "refId": "B"},
+        ], 0, 4, 14, 7, unit="short"),
+        bar_gauge_panel(
+            8, "采集到的 AP 状态分布", f"count by (state_description) ({ap_state_rows})",
+            14, 4, 10, 7, unit="short", legend_format="{{state_description}}", max_value=None,
+            thresholds=[], color="#3274D9", instant=True,
+            description="按 AP 状态明细中的实际 state_description 统计；不推断 Healthy/Warning/Critical。",
         ),
+        row_panel(901, "AP 明细", 11),
         table_panel(
-            8, "无线控制器客户端 / AP 比例 Top 10",
-            f"topk(10, {client_per_ap})",
-            12, 12, 12, 8, unit="short",
-            transformations=clean_organize_transformation("客户端 / AP")
-        ),
-        stat_panel(9, "在线客户端 / 在线 AP", f"sum({clients}) / clamp_min(sum({ap_online}), 1)", 0, 20, 6, 4, unit="short", color="#A352CC"),
-        table_panel(
-            10, "无线控制器在线 AP 排行 Top 10",
-            f"topk(10, {ap_online})",
-            6, 20, 18, 8, unit="short",
-            transformations=clean_organize_transformation("在线 AP 数")
-        ),
-        table_panel(
-            11, "H3C AP 在线状态",
+            9, "AP 当前状态明细",
             ap_state_rows,
-            0, 28, 12, 8, unit="short",
-            transformations=clean_organize_transformation("状态"),
-            description="显示 H3C AP 名称与状态；无结果表示未采到状态表。",
+            0, 12, 14, 9, unit="short",
+            transformations=clean_organize_transformation(
+                "状态",
+                extra_renames={"ap_name": "AP 名称", "ap_ip": "AP 管理 IP", "ap_model": "型号", "state_description": "状态说明"},
+                extra_indices={"ap_name": 0, "state_description": 1, "ap_ip": 2, "hostname": 3, "vendor": 4, "ap_model": 5, "Value": 6},
+                extra_excludes={"source_type": True, "measurement_type": True, "component_class": True, "source_id": True, "sensor_key": True, "window": True, "raw_state": True, "device_id": True, "ap_id": True, "ap_mac": True, "ap_serial": True, "platform": True, "discovery_status": True, "lifecycle_status": True},
+            ),
+            description=f"展示采集到的 AP 状态明细；状态缺失或发现不完整时不能据此判断全量健康。{missing_wireless_data_note}",
         ),
         table_panel(
-            12, "H3C AP 当前客户端数 Top 20",
+            10, "AP 当前关联客户端 Top 20",
             ap_client_rows,
-            12, 28, 12, 8, unit="short",
-            transformations=clean_organize_transformation("客户端数"),
-            description="显示 AP 当前关联客户端数。",
+            14, 12, 10, 9, unit="short",
+            transformations=clean_organize_transformation(
+                "客户端数",
+                extra_renames={"ap_name": "AP 名称", "ap_ip": "AP 管理 IP", "ap_model": "型号"},
+                extra_indices={"ap_name": 0, "hostname": 1, "vendor": 2, "ap_ip": 3, "ap_model": 4, "Value": 5},
+                extra_excludes={"source_type": True, "measurement_type": True, "component_class": True, "source_id": True, "sensor_key": True, "window": True, "unit": True, "device_id": True, "ap_id": True, "ap_mac": True, "ap_serial": True, "platform": True, "discovery_status": True, "lifecycle_status": True},
+            ),
+            description="仅列出实际采集到 AP 客户端数的 AP；厂商或设备未提供该指标时不生成数据。",
         ),
-        timeseries_panel(
-            13, "无线射频信道利用率",
-            [{"expr": radio_utilization_rows, "legendFormat": "{{ap_name}} / Radio {{radio_id}}", "refId": "A"}],
-            0, 36, 12, 8, unit="percent",
-            description="显示无线 Radio 信道利用率（%）。",
+        row_panel(902, "Radio 热点", 21),
+        bar_gauge_panel(
+            11, "Radio 利用率 Top 10", f"topk(10, {radio_utilization_rows})",
+            0, 22, 24, 8, unit="percent", legend_format="{{hostname}} / {{ap_name}} / Radio {{radio_id}}",
+            thresholds=UTILIZATION_THRESHOLDS, max_value=100, instant=True,
+            description="按实际采集的 Radio 利用率排行；阈值用于视觉定位热点，不创建告警。",
         ),
+        row_panel(903, "SSID / BSS 客户端明细（依厂商采集覆盖）", 30),
         table_panel(
-            14, "H3C / 华为 AP 无线单元客户端数 Top 20",
+            12, "AP 无线单元（BSS）客户端 Top 20",
             bss_client_rows,
-            12, 36, 12, 8, unit="short",
-            transformations=clean_organize_transformation("客户端数"),
-            description="按 AP、射频和 WLAN 显示客户端数；华为显示 WLAN ID。",
+            0, 31, 12, 8, unit="short",
+            transformations=clean_organize_transformation(
+                "客户端数",
+                extra_renames={"ap_name": "AP 名称", "radio_id": "Radio", "ssid": "SSID", "hostname": "设备名称", "wlan_id": "WLAN ID"},
+                extra_excludes={"source_type": True, "measurement_type": True, "component_class": True, "source_id": True, "sensor_key": True, "window": True, "device_id": True, "ap_id": True, "ap_mac": True, "ap_serial": True, "platform": True, "unit": True},
+            ),
+            description="按实际采集到的 AP、Radio 与 BSS 客户端数排行；当前查询覆盖 H3C 与华为标准化数据。",
         ),
         table_panel(
-            15, "华为 SSID 当前客户端数 Top 20",
+            13, "华为 SSID 客户端 Top 20",
             huawei_ssid_rows,
-            0, 44, 24, 8, unit="short",
-            transformations=clean_organize_transformation("客户端数"),
-            description="按 SSID 汇总 2.4 GHz 与 5 GHz 客户端数。",
+            12, 31, 12, 8, unit="short",
+            transformations=clean_organize_transformation("客户端数", extra_renames={"ssid": "SSID"}),
+            description="按 SSID 汇总实际采集的华为 2.4 GHz 与 5 GHz 客户端数。",
         ),
     ]
 

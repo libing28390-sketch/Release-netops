@@ -145,18 +145,14 @@ def test_dashboards_suite_completeness():
         panel = next(panel for panel in wireless_dashboard["panels"] if panel["id"] == panel_id)
         assert "or vector(0)" not in panel["targets"][0]["expr"]
         assert "不代表 AP 或客户端数量为 0" in panel["description"]
-    h3c_panel_queries = " ".join(
-        target["expr"]
-        for panel in wireless_dashboard["panels"]
-        if panel["id"] in {11, 12}
-        for target in panel.get("targets", [])
-    )
-    assert 'vendor=~"(?i)(h3c|comware)"' in h3c_panel_queries
-    huawei_ssid_panel = next(panel for panel in wireless_dashboard["panels"] if panel["id"] == 15)
+    bss_panel = next(panel for panel in wireless_dashboard["panels"] if panel["id"] == 12)
+    assert 'vendor=~"(?i)(h3c|comware|huawei)"' in bss_panel["targets"][0]["expr"]
+    huawei_ssid_panel = next(panel for panel in wireless_dashboard["panels"] if panel["id"] == 13)
     assert 'vendor=~"(?i).*huawei.*"' in huawei_ssid_panel["targets"][0]["expr"]
-    ap_wireless_client_panel = next(panel for panel in wireless_dashboard["panels"] if panel["id"] == 14)
-    assert 'vendor=~"(?i)(h3c|comware|huawei)"' in ap_wireless_client_panel["targets"][0]["expr"]
-    assert "无线单元客户端数" in ap_wireless_client_panel["title"]
+    ap_wireless_client_panel = next(panel for panel in wireless_dashboard["panels"] if panel["id"] == 10)
+    assert 'component_class="wireless_access_point",sensor_class="clients"' in ap_wireless_client_panel["targets"][0]["expr"]
+    assert 'vendor=~"$vendor"' in ap_wireless_client_panel["targets"][0]["expr"]
+    assert "AP 当前关联客户端" in ap_wireless_client_panel["title"]
 
     interface_dashboard_path = os.path.join(dashboard_dir, "nexora-network-interface.json")
     with open(interface_dashboard_path, "r", encoding="utf-8") as f:
@@ -234,26 +230,94 @@ def test_wireless_dashboard_uses_hardware_inventory_job_and_joins_by_device():
         return panels[title]["targets"][0]["expr"]
 
     for title in (
-        "H3C AP 在线状态",
-        "H3C AP 当前客户端数 Top 20",
-        "无线射频信道利用率",
-        "H3C / 华为 AP 无线单元客户端数 Top 20",
-        "华为 SSID 当前客户端数 Top 20",
+        "AP 当前状态明细",
+        "AP 当前关联客户端 Top 20",
+        "Radio 利用率 Top 10",
+        "AP 无线单元（BSS）客户端 Top 20",
+        "华为 SSID 客户端 Top 20",
     ):
         expression = query(title)
         assert 'job="platform_hardware_inventory"' in expression
         assert 'job="network_snmp"' not in expression
 
-    online_ap_expression = query("当前在线 AP 总数")
+    assert 'vendor=~"$vendor"' in query("AP 当前状态明细")
+    assert 'component_class="wireless_access_point"' in query("AP 当前状态明细")
+    assert 'sensor_class="utilization"' in query("Radio 利用率 Top 10")
+    assert 'vendor=~"(?i)(h3c|comware|huawei)"' in query("AP 无线单元（BSS）客户端 Top 20")
+    assert 'vendor=~"(?i).*huawei.*"' in query("华为 SSID 客户端 Top 20")
+
+    online_ap_expression = query("在线 AP")
     assert 'job="network_snmp"' in online_ap_expression
     assert 'job="platform_hardware_inventory"' in online_ap_expression
     assert "unless on(site_name,vendor,role,hostname)" in online_ap_expression
     assert "or on(site_name,vendor,role,hostname)" in online_ap_expression
 
-    clients_expression = query("全网在线关联无线终端")
+    clients_expression = query("在线终端")
     assert 'job="network_snmp"' in clients_expression
     assert 'job="platform_hardware_inventory"' in clients_expression
     assert "unless on(site_name,vendor,role,hostname)" in clients_expression
+
+
+def test_wireless_dashboard_homepage_groups_actual_metrics_by_wireless_layer():
+    dashboard = build_wireless_dashboard()
+    panels = {panel["id"]: panel for panel in dashboard["panels"]}
+
+    for panel_id in range(1, 7):
+        panel = panels[panel_id]
+        assert panel["type"] == "stat"
+        assert panel["gridPos"]["w"] == 4
+        assert panel["gridPos"]["h"] == 3
+        assert panel["fieldConfig"]["defaults"]["noValue"] == "—"
+
+    assert panels[5]["title"] == "高利用率 Radio"
+    assert 'sensor_class="utilization"' in panels[5]["targets"][0]["expr"]
+    assert ">= 75" in panels[5]["targets"][0]["expr"]
+    assert "不代表告警策略" in panels[5]["description"]
+    assert 'max by (site_name,vendor,role,hostname,ap_id,ap_name,radio_id)' in panels[5]["targets"][0]["expr"]
+    assert 'sensor_class="utilization"' in panels[6]["targets"][0]["expr"]
+    assert "avg(" in panels[6]["targets"][0]["expr"]
+
+    trend_targets = panels[7]["targets"]
+    assert len(trend_targets) == 2
+    assert {target["legendFormat"] for target in trend_targets} == {"在线 AP", "关联终端"}
+    assert panels[8]["type"] == "bargauge"
+    assert 'count by (state_description)' in panels[8]["targets"][0]["expr"]
+    assert "Healthy/Warning/Critical" in panels[8]["description"]
+
+    assert panels[9]["gridPos"]["y"] < panels[11]["gridPos"]["y"] < panels[12]["gridPos"]["y"]
+    assert panels[11]["type"] == "bargauge"
+    assert panels[11]["targets"][0]["instant"] is True
+    assert 'max by (site_name,vendor,role,hostname,ap_id,ap_name,radio_id)' in panels[11]["targets"][0]["expr"]
+    assert panels[11]["fieldConfig"]["defaults"]["max"] == 100
+    row_titles = {panel["title"] for panel in dashboard["panels"] if panel["type"] == "row"}
+    assert row_titles == {"趋势与 AP 状态", "AP 明细", "Radio 热点", "SSID / BSS 客户端明细（依厂商采集覆盖）"}
+    assert "无线控制器" not in " ".join(panel["title"] for panel in dashboard["panels"])
+
+
+def test_wireless_ap_counts_use_collected_state_rows_and_explicit_statuses():
+    dashboard = build_wireless_dashboard()
+    panels = {panel["title"]: panel for panel in dashboard["panels"]}
+
+    total_panel = panels["采集 AP"]
+    total_expression = total_panel["targets"][0]["expr"]
+    assert "count by (site_name,vendor,role,hostname)" in total_expression
+    assert 'nexora_hw_component_state{' in total_expression
+    assert 'component_class="wireless_access_point"' in total_expression
+    assert "hwWlanApTotalNum" not in total_expression
+    assert "不等同于控制器配置总量" in total_panel["description"]
+
+    online_expression = panels["在线 AP"]["targets"][0]["expr"]
+    assert 'state_description=~"^(associated|run)$"' in online_expression
+    assert 'coverage_complete="true"' in online_expression
+    assert 'sensor_class="ap-count"' in online_expression  # Actual aggregate fallback for platforms without a complete AP detail set.
+    assert "unless on(site_name,vendor,role,hostname)" in online_expression
+
+    offline_panel = panels["明确离线 AP"]
+    offline_expression = offline_panel["targets"][0]["expr"]
+    assert 'state_description=~"^(deassociated|idle)$"' in offline_expression
+    assert 'coverage_complete="true"' in offline_expression
+    assert "hwWlanApTotalNum" not in offline_expression
+    assert "总量减在线数" in offline_panel["description"]
 
 
 def test_dashboard_device_variables_use_current_up_targets():
