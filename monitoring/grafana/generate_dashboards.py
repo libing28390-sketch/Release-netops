@@ -1157,7 +1157,7 @@ def build_device_dashboard():
             {"color": "#E0B400", "value": 70},
             {"color": "red", "value": 85},
         ],
-        description="先在上方选择设备实际提供的 CPU 采样窗口，再显示该窗口内使用率最高的部件；不会将不同窗口混合。",
+        description="显示所选设备当前窗口中 CPU 使用率最高的部件。",
     )
     cpu_gauge["targets"][0]["legendFormat"] = "{{sensor_name}} · {{group}} · {{window}}"
     memory_gauge = gauge_panel(
@@ -1173,7 +1173,7 @@ def build_device_dashboard():
             {"color": "#E0B400", "value": 75},
             {"color": "red", "value": 90},
         ],
-        description="显示所选设备最高内存池占用及其部件标签，不把不同容量的内存池简单平均成整机使用率。",
+        description="显示使用率最高的内存池，不合并不同内存池。",
     )
     memory_gauge["targets"][0]["legendFormat"] = "{{sensor_name}} · {{group}}"
     temp_stat = stat_panel(
@@ -1186,7 +1186,7 @@ def build_device_dashboard():
         3,
         unit="celsius",
         color="#3274D9",
-        description="优先显示非光模块温度；若仅发现光模块温度则回退显示该读数。具体传感器和分组见图例与明细。",
+        description="显示当前最高温度；传感器名称见图例。",
         graph_mode="none",
     )
     temp_stat["targets"][0]["legendFormat"] = "{{sensor_name}} · {{group}}"
@@ -1249,7 +1249,7 @@ def build_device_dashboard():
                 },
             },
         ],
-        description="三列分别来自同一个内存池的已用字节、总字节和规范使用率，并按设备、名称、分组和硬件类别关联。不会把不同内存池合并。",
+        description="列出各内存池已用量、总量和使用率，不合并不同内存池。",
     )
     memory_detail_table["fieldConfig"]["overrides"].extend([
         {
@@ -1350,7 +1350,7 @@ def build_device_dashboard():
         value_mappings=state_mappings,
         extra_value_mappings={"明确存在性": presence_state_mappings},
         color_mapped_cells=True,
-        description="显示已验证状态映射对应的原始状态值、状态说明、规范状态、采集质量和明确存在性。仅已验证的 active/not-install 描述会映射为已安装/未安装；未知映射不会推断原始说明，明确存在性显示无法判断。",
+        description="显示部件状态、原始值、采集质量和存在性；未验证状态不做推断。",
     )
     component_state_table["fieldConfig"]["overrides"].append({
         "matcher": {"id": "byName", "options": "明确存在性"},
@@ -1458,7 +1458,7 @@ def build_device_dashboard():
                 "options": {"-1": {"text": "无成功记录", "color": "red"}},
             }],
         },
-        description="每行按资产、设备和硬件类别汇总。显示发现状态、活动/最近发现数量及原因；最近成功以距今秒数显示，无历史成功时标为“无成功记录”。",
+        description="显示硬件类别发现状态、传感器数量及最近成功时间。",
     )
     capability_table["fieldConfig"]["overrides"].extend([
         {
@@ -1486,13 +1486,13 @@ def build_device_dashboard():
         stat_panel(
             6, "异常部件数", abnormal_count, 16, 3, 4, 3,
             unit="short", color="#E02F44",
-            description="采集到部件状态后才统计；状态均正常时显示 0，无状态样本显示暂无采集数据。",
+            description="异常部件数；无异常为 0，无状态数据时显示暂无数据。",
             graph_mode="none",
         ),
         stat_panel(
             7, "状态未知部件数", unknown_count, 20, 3, 4, 3,
             unit="short", color="#8A8F98",
-            description="采集到部件状态后才统计；没有未知部件时显示 0，无状态样本显示暂无采集数据。",
+            description="未知状态部件数；无未知为 0，无状态数据时显示暂无数据。",
             graph_mode="none",
         ),
         timeseries_panel(
@@ -1502,13 +1502,13 @@ def build_device_dashboard():
                 "refId": "A",
             }],
             0, 6, 9, 8, unit="percent",
-            description="当前 CPU 窗口内按部件展示，趋势最多返回10条 CPU 部件序列。超过10条时只显示每个时点使用率最高的10条；用上方部件筛选查看其余部件。不同 window 不混合。",
+            description="按采样窗口展示 CPU 部件趋势，最多 10 条。",
         ),
         stat_panel(
             26, "超出10条的 CPU 部件数", cpu_overflow_count,
             9, 6, 3, 8,
             unit="short", color="#E02F44", graph_mode="none",
-            description="按当前所选设备和 CPU window 计数。大于0时，CPU 趋势只展示前10条，其余部件可用上方部件筛选查看。",
+            description="当前采样窗口中未显示的 CPU 部件数。",
         ),
         timeseries_panel(
             9, "各内存池使用率走势", [{
@@ -1517,7 +1517,7 @@ def build_device_dashboard():
                 "refId": "A",
             }],
             12, 6, 12, 8, unit="percent",
-            description="每个内存池单独绘制，不对不同容量的池取平均。",
+            description="按内存池展示使用率，不合并池数据。",
         ),
         timeseries_panel(
             10, "板卡与环境温度走势", [{
@@ -1526,7 +1526,7 @@ def build_device_dashboard():
                 "refId": "A",
             }],
             0, 14, 12, 8, unit="celsius",
-            description="温度按传感器保留，0°C 与负温度均作为有效读数；光模块可用分组筛选。",
+            description="展示有效温度读数；可按分组筛选光模块。",
         ),
         timeseries_panel(
             11, "风扇转速走势", [{
@@ -1535,7 +1535,7 @@ def build_device_dashboard():
                 "refId": "A",
             }],
             12, 14, 12, 8, unit="rpm",
-            description="只有设备明确提供 RPM 数值时绘制转速曲线；仅有运行状态的风扇请查看状态明细。",
+            description="展示风扇 RPM；运行状态请看状态明细。",
         ),
         timeseries_panel(
             12, "电源功率读数走势", [{
@@ -1544,7 +1544,7 @@ def build_device_dashboard():
                 "refId": "A",
             }],
             0, 22, 12, 8, unit="watt",
-            description="只展示功率测量值；它与电源运行状态分开采集和判断。",
+            description="展示功率读数；电源状态见状态明细。",
         ),
         timeseries_panel(
             27, "光模块收发功率走势（dBm）", [{
@@ -1553,46 +1553,46 @@ def build_device_dashboard():
                 "refId": "A",
             }],
             12, 22, 12, 8, unit="dBm",
-            description="展示经 LibreNMS 原生 user_func 转换的光功率读数，保留 dBm 的正负值语义。",
+            description="展示光模块收发功率（dBm）。",
         ),
         current_table(
             13, "CPU 部件当前读数", cpu, 0, 30,
             unit="percent", value_name="CPU 使用率",
-            description="每一行对应独立 CPU/处理单元，并保留 window、传感器名称和分组。",
+            description="按 CPU/处理单元列出使用率和采样窗口。",
         ),
         memory_detail_table,
         current_table(
             15, "温度传感器明细", temperature, 0, 38,
             unit="celsius", value_name="温度",
-            description="含板卡、环境与光模块传感器；使用分组筛选定位部件。",
+            description="列出温度传感器读数；可按分组筛选。",
         ),
         current_table(
             16, "风扇转速当前读数", fan_speed, 12, 38,
             unit="rpm", value_name="转速",
-            description="RPM 与风扇状态是不同测量；设备不提供转速时此表为空。",
+            description="列出风扇转速；未提供 RPM 时无数据。",
         ),
         component_state_table,
         current_table(
             18, "电源功率当前读数", power, 16, 46, 8,
             unit="watt", value_name="功率",
-            description="功率值不会被解释为电源是否正常。",
+            description="列出功率读数，不代表电源状态。",
         ),
         capability_table,
         current_table(
             21, "传感器数据质量", quality, 0, 62, 8,
             value_name="质量值",
-            description="显示采集链路输出的原始质量枚举值；尚未在看板中猜测数值编码。",
+            description="显示采集质量原始值，不推测枚举含义。",
         ),
         current_table(
             22, "距最近一次成功采集", last_success_age, 8, 62, 8,
             unit="s", value_name="距上次成功",
-            description="按传感器显示距最后有效原始样本的秒数；不会用 recording rule 的写入时间替代原始成功时间。",
+            description="显示各传感器距最近成功采集的秒数。",
         ),
         stat_panel(
             24, "全局硬件指标渲染错误数", "nexora_hw_sensor_render_errors",
             16, 62, 8, 8,
             unit="short", color="#E02F44", graph_mode="none",
-            description="这是 exporter 每次抓取汇总的全局错误数，没有 asset_id 标签，因此不代表所选设备的错误数。",
+            description="Exporter 全局抓取错误数，不代表所选设备错误数。",
         ),
         table_panel(
             23, "设备端口实时状态清单",
@@ -1631,12 +1631,12 @@ def build_device_dashboard():
         current_table(
             28, "光模块功率当前读数（dBm）", optical_power, 0, 78, 12,
             unit="dBm", value_name="光功率",
-            description="展示设备当前已采集到的光功率读数，并保留传感器名称和分组。",
+            description="显示光功率读数及传感器分组。",
         ),
         current_table(
             29, "其他 LibreNMS 传感器读数", generic_sensor, 12, 78, 12,
             value_name="当前值",
-            description="保留 Nexora 暂无规范单位换算的 LibreNMS 传感器类别，逐行展示其类别和上游单位。",
+            description="显示尚无规范单位换算的传感器及上游单位。",
         ),
     ]
     # Reserve one additional grid row for the identity table and move all
@@ -1737,14 +1737,17 @@ def build_wireless_dashboard():
     legacy_ap_online = f"sum by ({device_labels}) (hh3cDot11CurrOnlineAPNum{{{sel}}} or cLApTotalUpAPs{{{sel}}} or wlsxSysExtAccessPointsNum{{{sel}}} or ruckusZDTotalNumAP{{{sel}}})"
     inventory_ap_online = f'sum by ({device_labels}) (nexora_wireless_sensor_value{{{inventory_sel},component_class="wireless_controller",sensor_class="ap-count"}})'
     ap_online = f"({legacy_ap_online} unless on({device_labels}) ({inventory_ap_online})) or on({device_labels}) ({inventory_ap_online})"
-    ap_offline = f"({ap_all} - {ap_online})"
+    ap_offline = f"clamp_min(({ap_all}) - on({device_labels}) ({ap_online}), 0)"
     legacy_clients = f"sum by ({device_labels}) (hh3cDot11CurrAssocUserNum{{{sel}}} or cLSysTotalNumOfClients{{{sel}}} or wlsxSysExtStationsNum{{{sel}}} or ruckusZDTotalNumSta{{{sel}}})"
     controller_clients = f'sum by ({device_labels}) (nexora_wireless_sensor_value{{{inventory_sel},component_class="wireless_controller",sensor_class="clients"}})'
     ssid_clients = f'sum by ({device_labels}) (nexora_wireless_sensor_value{{{inventory_sel},component_class="wireless_ssid",sensor_class="clients"}})'
     inventory_clients = f"({controller_clients} or on({device_labels}) {ssid_clients})"
     clients = f"({legacy_clients} unless on({device_labels}) ({inventory_clients})) or on({device_labels}) ({inventory_clients})"
     client_per_ap = f"({clients}) / clamp_min(({ap_online}), 1)"
-    wireless_missing_description = "没有匹配的无线控制器指标时显示暂无采集数据，不代表 AP 或客户端数量为 0。"
+    ap_total_description = "统计已采到 AP 总量的控制器。"
+    ap_online_description = "显示当前在线 AP 数。"
+    ap_offline_description = "总量减在线数；缺少任一数据时不显示。"
+    client_count_description = "显示当前已关联无线终端数。"
     ap_client_rows = f'topk(20, nexora_wireless_sensor_value{{{h3c_inventory_sel},component_class="wireless_access_point",sensor_class="clients"}})'
     radio_utilization_rows = f'nexora_wireless_sensor_value{{{inventory_sel},component_class="wireless_radio",sensor_class="utilization"}}'
     bss_client_rows = f'topk(20, nexora_wireless_sensor_value{{{wireless_inventory_sel},component_class="wireless_bss",sensor_class="clients"}})'
@@ -1752,10 +1755,10 @@ def build_wireless_dashboard():
     huawei_ssid_rows = f'topk(20, sum by ({device_labels},ssid) (nexora_wireless_sensor_value{{{huawei_inventory_sel},component_class="wireless_ssid",sensor_class="clients"}}))'
 
     panels = [
-        stat_panel(1, "已提供总量的 AP 数", f"sum({ap_all})", 0, 0, 6, 4, color="#3274D9", description=wireless_missing_description),
-        stat_panel(2, "当前在线 AP 总数", f"sum({ap_online})", 6, 0, 6, 4, color="#56A64B", description=wireless_missing_description),
-        stat_panel(3, "可计算的离线 AP 数", f"sum({ap_offline})", 12, 0, 6, 4, thresholds=[{"color": "green", "value": None}, {"color": "#E0B400", "value": 1}, {"color": "red", "value": 5}], description=wireless_missing_description),
-        stat_panel(4, "全网在线关联无线终端", f"sum({clients})", 18, 0, 6, 4, color="#A352CC", description=wireless_missing_description),
+        stat_panel(1, "已提供总量的 AP 数", f"sum({ap_all})", 0, 0, 6, 4, color="#3274D9", description=ap_total_description),
+        stat_panel(2, "当前在线 AP 总数", f"sum({ap_online})", 6, 0, 6, 4, color="#56A64B", description=ap_online_description),
+        stat_panel(3, "可计算的离线 AP 数", f"sum({ap_offline})", 12, 0, 6, 4, thresholds=[{"color": "green", "value": None}, {"color": "#E0B400", "value": 1}, {"color": "red", "value": 5}], description=ap_offline_description),
+        stat_panel(4, "全网在线关联无线终端", f"sum({clients})", 18, 0, 6, 4, color="#A352CC", description=client_count_description),
         timeseries_panel(5, "无线 AP 在线规模趋势", [
             {"expr": f"sum({ap_online})", "legendFormat": "在线 AP 数", "refId": "A"}
         ], 0, 4, 12, 8, unit="short"),
@@ -1786,34 +1789,34 @@ def build_wireless_dashboard():
             ap_state_rows,
             0, 28, 12, 8, unit="short",
             transformations=clean_organize_transformation("状态"),
-            description="AP 名称来自 HH3C-DOT11 AP 名称索引；内部 AP element ID 只用于采集关联。没有 AP 状态数据表示未采到该 MIB 表。",
+            description="显示 H3C AP 名称与状态；无结果表示未采到状态表。",
         ),
         table_panel(
             12, "H3C AP 当前客户端数 Top 20",
             ap_client_rows,
             12, 28, 12, 8, unit="short",
             transformations=clean_organize_transformation("客户端数"),
-            description="按官方 HH3C-DOT11 AP 表的当前关联客户端计数展示，不与控制器汇总重复相加。",
+            description="显示 AP 当前关联客户端数。",
         ),
         timeseries_panel(
             13, "无线射频信道利用率",
             [{"expr": radio_utilization_rows, "legendFormat": "{{ap_name}} / Radio {{radio_id}}", "refId": "A"}],
             0, 36, 12, 8, unit="percent",
-            description="展示已接入厂商的无线 Radio 利用率；仅使用官方 MIB 定义为百分比的值，非百分比哨兵值不写入指标。",
+            description="显示无线 Radio 信道利用率（%）。",
         ),
         table_panel(
             14, "H3C / 华为 AP 无线单元客户端数 Top 20",
             bss_client_rows,
             12, 36, 12, 8, unit="short",
             transformations=clean_organize_transformation("客户端数"),
-            description="按 AP 名称、射频和 WLAN ID 展示 H3C BSS 与华为 VAP 当前客户端计数。华为 VAP 表没有由 LibreNMS 关联的 SSID 文本列，因此只显示其 WLAN ID。",
+            description="按 AP、射频和 WLAN 显示客户端数；华为显示 WLAN ID。",
         ),
         table_panel(
             15, "华为 SSID 当前客户端数 Top 20",
             huawei_ssid_rows,
             0, 44, 24, 8, unit="short",
             transformations=clean_organize_transformation("客户端数"),
-            description="按固定 LibreNMS VRP WirelessClientsDiscovery 规则，对同一 SSID 的 2.4 GHz 与 5 GHz 客户端数求和。",
+            description="按 SSID 汇总 2.4 GHz 与 5 GHz 客户端数。",
         ),
     ]
 

@@ -1,6 +1,6 @@
 import type { Device, DeviceConnectionCheckSummary } from '../../types';
 import type { TableExportData } from '../ui/TableExportMenu';
-import { extractSoftwareMajorVersion, getDevicePlatformAdaptation, getProfileAdaptationMajorVersion } from '../../utils/platformVersion';
+import { getDevicePlatformAdaptation } from '../../utils/platformVersion';
 import { normalizeDeviceRecord } from '../../utils/deviceUtils';
 import { CHECK_BADGE, formatCheckTime } from './StatusBadge';
 import type { ColumnVisibility } from './DeviceTable';
@@ -91,20 +91,7 @@ function vendorLabel(device: Device): string {
 function platformAdaptation(device: Device, language: string) {
   const zh = language === 'zh';
   const summary = getDevicePlatformAdaptation(device, zh ? 'zh' : 'en');
-  const softwareMajor = extractSoftwareMajorVersion(device.version);
-  const adaptationMajor = device.platform_binding
-    ? getProfileAdaptationMajorVersion(device.platform_binding)
-    : device.platform_profile_id
-      ? getProfileAdaptationMajorVersion({ id: device.platform_profile_id, platform_code: '' })
-      : null;
-  return {
-    name: summary.label || (zh ? '待自动识别' : 'Awaiting detection'),
-    version: summary.version && !['common', 'unknown'].includes(summary.version.toLowerCase())
-      ? summary.version.toUpperCase()
-      : '',
-    source: summary.explicit ? (zh ? '手动绑定' : 'Bound') : (zh ? '默认' : 'Default'),
-    versionMismatch: softwareMajor !== null && adaptationMajor !== null && softwareMajor !== adaptationMajor,
-  };
+  return summary.label || (zh ? '待自动识别' : 'Awaiting detection');
 }
 
 function tagValue(device: Device, zh: boolean): string {
@@ -146,13 +133,9 @@ export function buildNetworkDeviceExportData(devices: Device[], view: NetworkDev
     { key: 'role', header: zh ? '角色' : 'Role', value: (device) => trim(device.role) || '—' },
     { key: 'connectionMethod', header: zh ? '连接方式' : 'Connection method', value: (device) => trim(device.connection_method).toUpperCase() || '—' },
     { key: 'vendor', header: zh ? '厂商' : 'Vendor', value: vendorLabel },
-    { key: 'platform', header: zh ? '平台' : 'Platform', value: (device) => trim(device.platform) || 'unknown' },
     { key: 'model', header: zh ? '型号' : 'Model', value: (device) => trim(device.model || (device as Device & { asset_model?: string }).asset_model) || '—' },
     { key: 'version', header: zh ? '软件版本' : 'Software version', value: (device) => trim(device.version) || '—' },
-    { key: 'adaptation', header: zh ? '命令/解析适配' : 'Command/parser adaptation', value: (device) => platformAdaptation(device, view.language).name },
-    { key: 'adaptationVersion', header: zh ? '适配版本' : 'Adaptation version', value: (device) => platformAdaptation(device, view.language).version || '—' },
-    { key: 'adaptationSource', header: zh ? '适配来源' : 'Adaptation source', value: (device) => platformAdaptation(device, view.language).source },
-    { key: 'versionMismatch', header: zh ? '版本校验' : 'Version check', value: (device) => platformAdaptation(device, view.language).versionMismatch ? (zh ? '不一致' : 'Mismatch') : (zh ? '一致' : 'Match') },
+    { key: 'adaptation', header: zh ? '命令/解析适配' : 'Command/parser adaptation', value: (device) => platformAdaptation(device, view.language) },
     { key: 'site', header: zh ? '站点' : 'Site', value: (device) => trim(device.datacenter || device.site) || '—' },
     { key: 'rack', header: zh ? '机柜' : 'Rack', value: rackDisplayName },
     { key: 'rackUnit', header: zh ? 'U 位' : 'Rack unit', value: (device) => trim(device.rack_unit) || '—' },

@@ -97,6 +97,64 @@ def test_device_list_search_and_sort_use_cmdb_hostname(isolated_db):
     ]
 
 
+def test_device_list_displays_rack_name_instead_of_internal_rack_identifier(isolated_db):
+    with get_db_connection() as conn:
+        conn.execute(
+            "INSERT INTO sites (id, site_code, site_name) VALUES (?, ?, ?)",
+            ("site-rack-display", "SITE-RACK-DISPLAY", "Rack Display Site"),
+        )
+        conn.execute(
+            """
+            INSERT INTO racks (id, site_id, rack_code, rack_name, name)
+            VALUES (?, ?, ?, ?, ?)
+            """,
+            (
+                "RACK_7606EAF9A973",
+                "site-rack-display",
+                "RACK-CODE-001",
+                "RACK_7606EAF9A973",
+                "WH-DC-02-R01",
+            ),
+        )
+        conn.execute(
+            """
+            INSERT INTO physical_assets (
+                id, asset_type, hostname, site_id, created_at, updated_at
+            ) VALUES (?, ?, ?, ?, ?, ?)
+            """,
+            (
+                "asset-rack-display-001",
+                "network_device",
+                "switch-rack-display",
+                "site-rack-display",
+                "2026-10-01",
+                "2026-10-01",
+            ),
+        )
+        conn.execute(
+            """
+            INSERT INTO devices (id, asset_id, rack_id, hostname, ip_address, platform, status)
+            VALUES (?, ?, ?, ?, ?, ?, ?)
+            """,
+            (
+                "device-rack-display-001",
+                "asset-rack-display-001",
+                "RACK_7606EAF9A973",
+                "switch-rack-display",
+                "192.0.2.30",
+                "h3c_comware",
+                "online",
+            ),
+        )
+        conn.commit()
+
+    devices = _read_devices(mode="light", search="switch-rack-display", page=1, page_size=10)
+
+    assert len(devices["items"]) == 1
+    assert devices["items"][0]["rack_name"] == "WH-DC-02-R01"
+    assert devices["items"][0]["rack_name"] != "RACK_7606EAF9A973"
+
+
 def test_linked_device_update_keeps_current_cmdb_hostname_when_payload_differs_or_omits_it(isolated_db):
     with get_db_connection() as conn:
         conn.execute(

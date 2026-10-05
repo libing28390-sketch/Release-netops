@@ -1,16 +1,15 @@
 export type ColumnKey =
   | 'hostname' | 'assetTag' | 'managementIp' | 'category' | 'role' | 'connectionMethod'
-  | 'vendor' | 'platform' | 'model' | 'version' | 'adaptation' | 'adaptationVersion' | 'adaptationSource' | 'versionMismatch'
+  | 'vendor' | 'model' | 'version' | 'adaptation'
   | 'site' | 'rack' | 'rackUnit' | 'tags' | 'status' | 'health' | 'lifecycle' | 'checkStatus' | 'checkTime' | 'cpu' | 'memory' | 'actions';
 
 export type ColumnVisibility = Record<ColumnKey, boolean>;
 
-export const COLUMN_VISIBILITY_STORAGE_KEY = 'netops:network-devices:columns:v1';
+export const COLUMN_VISIBILITY_STORAGE_KEY = 'netops:network-devices:columns:v2';
 
 export const COLUMN_KEYS: readonly ColumnKey[] = [
   'hostname', 'assetTag', 'managementIp', 'category', 'role', 'connectionMethod',
-  'vendor', 'platform', 'model', 'version', 'adaptation', 'adaptationVersion',
-  'adaptationSource', 'versionMismatch', 'site', 'rack', 'rackUnit', 'tags',
+  'vendor', 'model', 'version', 'adaptation', 'site', 'rack', 'rackUnit', 'tags',
   'status', 'health', 'lifecycle', 'checkStatus', 'checkTime', 'cpu', 'memory',
   'actions',
 ];
@@ -23,13 +22,9 @@ export const DEFAULT_COLUMNS: ColumnVisibility = {
   role: true,
   connectionMethod: false,
   vendor: true,
-  platform: false,
   model: true,
   version: false,
   adaptation: false,
-  adaptationVersion: false,
-  adaptationSource: false,
-  versionMismatch: false,
   site: true,
   rack: true,
   rackUnit: true,

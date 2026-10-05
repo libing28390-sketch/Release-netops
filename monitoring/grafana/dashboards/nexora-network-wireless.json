@@ -61,7 +61,7 @@
           "refId": "A"
         }
       ],
-      "description": "没有匹配的无线控制器指标时显示暂无采集数据，不代表 AP 或客户端数量为 0。"
+      "description": "统计已采到 AP 总量的控制器。"
     },
     {
       "id": 2,
@@ -116,7 +116,7 @@
           "refId": "A"
         }
       ],
-      "description": "没有匹配的无线控制器指标时显示暂无采集数据，不代表 AP 或客户端数量为 0。"
+      "description": "显示当前在线 AP 数。"
     },
     {
       "id": 3,
@@ -175,11 +175,11 @@
       },
       "targets": [
         {
-          "expr": "sum((sum by (site_name,vendor,role,hostname) (hwWlanApTotalNum{job=\"network_snmp\",site_name=~\"$site\",vendor=~\"$vendor\",role=~\"$role\",hostname=~\"$device\"} or hh3cDot11TotalAPNum{job=\"network_snmp\",site_name=~\"$site\",vendor=~\"$vendor\",role=~\"$role\",hostname=~\"$device\"} or ruijieApcTotalApNum{job=\"network_snmp\",site_name=~\"$site\",vendor=~\"$vendor\",role=~\"$role\",hostname=~\"$device\"}) - (sum by (site_name,vendor,role,hostname) (hh3cDot11CurrOnlineAPNum{job=\"network_snmp\",site_name=~\"$site\",vendor=~\"$vendor\",role=~\"$role\",hostname=~\"$device\"} or cLApTotalUpAPs{job=\"network_snmp\",site_name=~\"$site\",vendor=~\"$vendor\",role=~\"$role\",hostname=~\"$device\"} or wlsxSysExtAccessPointsNum{job=\"network_snmp\",site_name=~\"$site\",vendor=~\"$vendor\",role=~\"$role\",hostname=~\"$device\"} or ruckusZDTotalNumAP{job=\"network_snmp\",site_name=~\"$site\",vendor=~\"$vendor\",role=~\"$role\",hostname=~\"$device\"}) unless on(site_name,vendor,role,hostname) (sum by (site_name,vendor,role,hostname) (nexora_wireless_sensor_value{job=\"platform_hardware_inventory\",site_name=~\"$site\",vendor=~\"$vendor\",role=~\"$role\",hostname=~\"$device\",component_class=\"wireless_controller\",sensor_class=\"ap-count\"}))) or on(site_name,vendor,role,hostname) (sum by (site_name,vendor,role,hostname) (nexora_wireless_sensor_value{job=\"platform_hardware_inventory\",site_name=~\"$site\",vendor=~\"$vendor\",role=~\"$role\",hostname=~\"$device\",component_class=\"wireless_controller\",sensor_class=\"ap-count\"}))))",
+          "expr": "sum(clamp_min((sum by (site_name,vendor,role,hostname) (hwWlanApTotalNum{job=\"network_snmp\",site_name=~\"$site\",vendor=~\"$vendor\",role=~\"$role\",hostname=~\"$device\"} or hh3cDot11TotalAPNum{job=\"network_snmp\",site_name=~\"$site\",vendor=~\"$vendor\",role=~\"$role\",hostname=~\"$device\"} or ruijieApcTotalApNum{job=\"network_snmp\",site_name=~\"$site\",vendor=~\"$vendor\",role=~\"$role\",hostname=~\"$device\"})) - on(site_name,vendor,role,hostname) ((sum by (site_name,vendor,role,hostname) (hh3cDot11CurrOnlineAPNum{job=\"network_snmp\",site_name=~\"$site\",vendor=~\"$vendor\",role=~\"$role\",hostname=~\"$device\"} or cLApTotalUpAPs{job=\"network_snmp\",site_name=~\"$site\",vendor=~\"$vendor\",role=~\"$role\",hostname=~\"$device\"} or wlsxSysExtAccessPointsNum{job=\"network_snmp\",site_name=~\"$site\",vendor=~\"$vendor\",role=~\"$role\",hostname=~\"$device\"} or ruckusZDTotalNumAP{job=\"network_snmp\",site_name=~\"$site\",vendor=~\"$vendor\",role=~\"$role\",hostname=~\"$device\"}) unless on(site_name,vendor,role,hostname) (sum by (site_name,vendor,role,hostname) (nexora_wireless_sensor_value{job=\"platform_hardware_inventory\",site_name=~\"$site\",vendor=~\"$vendor\",role=~\"$role\",hostname=~\"$device\",component_class=\"wireless_controller\",sensor_class=\"ap-count\"}))) or on(site_name,vendor,role,hostname) (sum by (site_name,vendor,role,hostname) (nexora_wireless_sensor_value{job=\"platform_hardware_inventory\",site_name=~\"$site\",vendor=~\"$vendor\",role=~\"$role\",hostname=~\"$device\",component_class=\"wireless_controller\",sensor_class=\"ap-count\"}))), 0))",
           "refId": "A"
         }
       ],
-      "description": "没有匹配的无线控制器指标时显示暂无采集数据，不代表 AP 或客户端数量为 0。"
+      "description": "总量减在线数；缺少任一数据时不显示。"
     },
     {
       "id": 4,
@@ -234,7 +234,7 @@
           "refId": "A"
         }
       ],
-      "description": "没有匹配的无线控制器指标时显示暂无采集数据，不代表 AP 或客户端数量为 0。"
+      "description": "显示当前已关联无线终端数。"
     },
     {
       "id": 5,
@@ -857,7 +857,7 @@
           }
         }
       ],
-      "description": "AP 名称来自 HH3C-DOT11 AP 名称索引；内部 AP element ID 只用于采集关联。没有 AP 状态数据表示未采到该 MIB 表。"
+      "description": "显示 H3C AP 名称与状态；无结果表示未采到状态表。"
     },
     {
       "id": 12,
@@ -972,7 +972,7 @@
           }
         }
       ],
-      "description": "按官方 HH3C-DOT11 AP 表的当前关联客户端计数展示，不与控制器汇总重复相加。"
+      "description": "显示 AP 当前关联客户端数。"
     },
     {
       "id": 13,
@@ -1029,7 +1029,7 @@
           "refId": "A"
         }
       ],
-      "description": "展示已接入厂商的无线 Radio 利用率；仅使用官方 MIB 定义为百分比的值，非百分比哨兵值不写入指标。"
+      "description": "显示无线 Radio 信道利用率（%）。"
     },
     {
       "id": 14,
@@ -1144,7 +1144,7 @@
           }
         }
       ],
-      "description": "按 AP 名称、射频和 WLAN ID 展示 H3C BSS 与华为 VAP 当前客户端计数。华为 VAP 表没有由 LibreNMS 关联的 SSID 文本列，因此只显示其 WLAN ID。"
+      "description": "按 AP、射频和 WLAN 显示客户端数；华为显示 WLAN ID。"
     },
     {
       "id": 15,
@@ -1259,7 +1259,7 @@
           }
         }
       ],
-      "description": "按固定 LibreNMS VRP WirelessClientsDiscovery 规则，对同一 SSID 的 2.4 GHz 与 5 GHz 客户端数求和。"
+      "description": "按 SSID 汇总 2.4 GHz 与 5 GHz 客户端数。"
     }
   ],
   "refresh": "30s",

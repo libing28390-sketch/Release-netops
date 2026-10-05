@@ -55,15 +55,19 @@ describe('network device table export', () => {
     const row = result.rows[0].map(String);
 
     expect(result.headers).toEqual([
-      '设备名称', '资产编号', '管理 IP', '设备类别', '角色', '连接方式', '厂商', '平台', '型号', '软件版本',
-      '命令/解析适配', '适配版本', '适配来源', '版本校验', '站点', '机柜', 'U 位', '标签', '在线状态',
+      '设备名称', '资产编号', '管理 IP', '设备类别', '角色', '连接方式', '厂商', '型号', '软件版本',
+      '命令/解析适配', '站点', '机柜', 'U 位', '标签', '在线状态',
       '健康状态', '生命周期', '连通性检查', '检查时间', 'CPU', '内存',
     ]);
-    expect(row.slice(0, 10)).toEqual([
-      'core-sw-01', 'NET-WH-001', '192.168.18.201', 'switch', 'core', 'SSH', 'Cisco', 'cisco_ios', 'C2960', '15.2',
+    expect(row.slice(0, 9)).toEqual([
+      'core-sw-01', 'NET-WH-001', '192.168.18.201', 'switch', 'core', 'SSH', 'Cisco', 'C2960', '15.2',
     ]);
-    expect(row.slice(14, 18)).toEqual(['WH-DC-02J-01', '—', 'U1', '核心']);
-    expect(row.slice(18)).toEqual(['在线', '健康', '已投产', '—', '—', '10%', '45%']);
+    expect(row.slice(10, 14)).toEqual(['WH-DC-02J-01', '—', 'U1', '核心']);
+    expect(row.slice(14)).toEqual(['在线', '健康', '已投产', '—', '—', '10%', '45%']);
+    expect(result.headers).not.toContain('平台');
+    expect(result.headers).not.toContain('适配版本');
+    expect(result.headers).not.toContain('适配来源');
+    expect(result.headers).not.toContain('版本校验');
     expect(result.headers).not.toContain('ID');
     expect(row).not.toContain('internal-device-id');
     expect(row).not.toContain('internal-tag-id');

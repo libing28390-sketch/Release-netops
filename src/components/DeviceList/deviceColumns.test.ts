@@ -24,18 +24,31 @@ describe('network-device column preferences', () => {
       'hostname', 'assetTag', 'managementIp', 'category', 'role',
       'vendor', 'model', 'site', 'rack', 'rackUnit', 'status', 'health', 'actions',
     ]);
-    expect(DEFAULT_COLUMNS.platform).toBe(false);
     expect(DEFAULT_COLUMNS.adaptation).toBe(false);
+    const columnKeys = COLUMN_KEYS.map(String);
+    expect(columnKeys).not.toContain('platform');
+    expect(columnKeys).not.toContain('adaptationVersion');
+    expect(columnKeys).not.toContain('adaptationSource');
+    expect(columnKeys).not.toContain('versionMismatch');
   });
 
   it('round trips visible columns using the versioned storage key', () => {
     const storage = memoryStorage();
-    const customized = { ...DEFAULT_COLUMNS, platform: true, category: false };
+    const customized = { ...DEFAULT_COLUMNS, tags: true, category: false };
 
     saveColumnVisibility(customized, storage);
 
     expect(storage.getItem(COLUMN_VISIBILITY_STORAGE_KEY)).not.toBeNull();
     expect(loadColumnVisibility(storage)).toEqual(customized);
+  });
+
+  it('resets old all-column preferences to the compact defaults after a preference version change', () => {
+    const oldAllColumns = Object.fromEntries(COLUMN_KEYS.map((key) => [key, true]));
+    const storage = memoryStorage({
+      'netops:network-devices:columns:v1': JSON.stringify(oldAllColumns),
+    });
+
+    expect(loadColumnVisibility(storage)).toEqual(DEFAULT_COLUMNS);
   });
 
   it('ignores unknown fields, defaults missing values, and keeps row actions enabled', () => {
@@ -47,7 +60,6 @@ describe('network-device column preferences', () => {
     })).toEqual({
       ...DEFAULT_COLUMNS,
       hostname: false,
-      platform: true,
     });
   });
 

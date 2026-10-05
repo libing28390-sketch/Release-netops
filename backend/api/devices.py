@@ -1008,7 +1008,7 @@ def read_devices(
             's.district AS site_district, '
             'COALESCE(NULLIF(r.id, \'\'), NULLIF(r_legacy.id, \'\'), \'\') AS cmdb_rack_id, '
             'COALESCE(NULLIF(r.rack_code, \'\'), NULLIF(r_legacy.rack_code, \'\'), \'\') AS rack_code, '
-            'COALESCE(NULLIF(r.rack_name, \'\'), NULLIF(r_legacy.rack_name, \'\'), NULLIF(r_legacy.name, \'\'), \'\') AS rack_name, '
+            'COALESCE(NULLIF(TRIM(r.name), \'\'), NULLIF(TRIM(r_legacy.name), \'\'), NULLIF(TRIM(r.rack_name), \'\'), NULLIF(TRIM(r_legacy.rack_name), \'\'), \'\') AS rack_name, '
             'COALESCE(NULLIF(r.datacenter, \'\'), NULLIF(r_legacy.datacenter, \'\'), \'\') AS rack_datacenter, '
             'COALESCE(NULLIF(r.floor, \'\'), NULLIF(r_legacy.floor, \'\'), \'\') AS rack_floor, '
             'COALESCE(NULLIF(r.room, \'\'), NULLIF(r_legacy.room, \'\'), \'\') AS rack_room, '

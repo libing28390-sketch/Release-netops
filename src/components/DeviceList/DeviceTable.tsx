@@ -10,7 +10,7 @@ import type { TableExportData } from '../ui/TableExportMenu';
 import { ActionIconButton, ActionIconGroup } from '../ui/ActionIconButton';
 import { CHECK_BADGE, HEALTH_CFG, LIFECYCLE_CFG, STATUS_CFG, formatCheckTime } from './StatusBadge';
 import DeviceRowExpand from './DeviceRowExpand';
-import { extractSoftwareMajorVersion, getDevicePlatformAdaptation, getProfileAdaptationMajorVersion } from '../../utils/platformVersion';
+import { getDevicePlatformAdaptation } from '../../utils/platformVersion';
 
 import { TableActionCell, TableActionHeader } from '../ui/TableActionColumn';
 import {
@@ -39,26 +39,8 @@ const vendorOf = (platform: string): string => {
   return platform.split('_')[0] || 'Other';
 };
 
-const adaptationVersionLabel = (device: Device): string => {
-  const version = getDevicePlatformAdaptation(device, 'zh').version;
-  return version && !['common', 'unknown'].includes(version.toLowerCase())
-    ? version.toUpperCase()
-    : '';
-};
-
 const platformBindingName = (device: Device, zh: boolean): string => {
   return getDevicePlatformAdaptation(device, zh ? 'zh' : 'en').label;
-};
-
-const hasVersionMismatch = (device: Device): boolean => {
-  if (!device.platform_profile_id && !device.platform_binding) return false;
-  const softwareMajor = extractSoftwareMajorVersion(device.version);
-  const adaptationMajor = device.platform_binding
-    ? getProfileAdaptationMajorVersion(device.platform_binding)
-    : device.platform_profile_id
-      ? getProfileAdaptationMajorVersion({ id: device.platform_profile_id, platform_code: '' })
-      : null;
-  return softwareMajor !== null && adaptationMajor !== null && softwareMajor !== adaptationMajor;
 };
 
 /* ─── SortHeader ─── */
@@ -178,11 +160,6 @@ const DeviceTable: React.FC<DeviceTableProps> = ({
             )}
             {columns.connectionMethod && <th className="px-3 py-3 text-[11px] font-bold uppercase tracking-wider text-gray-400 dark:text-zinc-400">{zh ? '连接方式' : 'Connection method'}</th>}
             {columns.vendor && <th className="px-3 py-3 text-[11px] font-bold uppercase tracking-wider text-gray-400 dark:text-zinc-400">{zh ? '厂商' : 'Vendor'}</th>}
-            {columns.platform && (
-              <SortHeader col="platform" sortConfig={sortConfig} onSort={onSort}>
-                {zh ? '平台' : 'Platform'}
-              </SortHeader>
-            )}
             {columns.model && (
               <SortHeader col="model" sortConfig={sortConfig} onSort={onSort}>
                 {zh ? '型号' : 'Model'}
@@ -190,9 +167,6 @@ const DeviceTable: React.FC<DeviceTableProps> = ({
             )}
             {columns.version && <th className="px-3 py-3 text-[11px] font-bold uppercase tracking-wider text-gray-400 dark:text-zinc-400">{zh ? '软件版本' : 'Software version'}</th>}
             {columns.adaptation && <th className="px-3 py-3 text-[11px] font-bold uppercase tracking-wider text-gray-400 dark:text-zinc-400">{zh ? '命令/解析适配' : 'Command/parser adaptation'}</th>}
-            {columns.adaptationVersion && <th className="px-3 py-3 text-[11px] font-bold uppercase tracking-wider text-gray-400 dark:text-zinc-400">{zh ? '适配版本' : 'Adaptation version'}</th>}
-            {columns.adaptationSource && <th className="px-3 py-3 text-[11px] font-bold uppercase tracking-wider text-gray-400 dark:text-zinc-400">{zh ? '适配来源' : 'Adaptation source'}</th>}
-            {columns.versionMismatch && <th className="px-3 py-3 text-[11px] font-bold uppercase tracking-wider text-gray-400 dark:text-zinc-400">{zh ? '版本校验' : 'Version check'}</th>}
             {columns.site && (
               <SortHeader col="site" sortConfig={sortConfig} onSort={onSort}>
                 {zh ? '站点' : 'Site'}
@@ -229,9 +203,7 @@ const DeviceTable: React.FC<DeviceTableProps> = ({
             const cpu = clampPercent(device.cpu_usage);
             const mem = clampPercent(device.memory_usage);
             const assetMetadata = device as Device & { asset_vendor?: string; asset_model?: string };
-            const adaptation = getDevicePlatformAdaptation(device, zh ? 'zh' : 'en');
             const adaptationName = platformBindingName(device, zh) || (zh ? '待自动识别' : 'Awaiting detection');
-            const adaptationVersion = adaptationVersionLabel(device) || '—';
             const statusConfig = STATUS_CFG[device.status] || STATUS_CFG.pending;
             const healthConfig = HEALTH_CFG[device.health_status || 'unknown'] || HEALTH_CFG.unknown;
             const lifecycleConfig = LIFECYCLE_CFG[device.lifecycle_status || 'staging'] || LIFECYCLE_CFG.staging;
@@ -279,15 +251,9 @@ const DeviceTable: React.FC<DeviceTableProps> = ({
                   {columns.role && <td className="px-3 py-2.5 text-xs text-gray-700 dark:text-zinc-300">{device.role || '—'}</td>}
                   {columns.connectionMethod && <td className="px-3 py-2.5 text-xs font-semibold uppercase text-gray-600 dark:text-zinc-300">{device.connection_method || '—'}</td>}
                   {columns.vendor && <td className="px-3 py-2.5 text-xs text-gray-700 dark:text-zinc-300">{device.vendor || assetMetadata.asset_vendor || vendorOf(device.platform)}</td>}
-                  {columns.platform && (
-                    <td className="px-3 py-2.5 text-xs text-gray-700 dark:text-zinc-300">{device.platform || 'unknown'}</td>
-                  )}
                   {columns.model && <td className="px-3 py-2.5 text-xs text-gray-700 dark:text-zinc-300">{device.model || assetMetadata.asset_model || '—'}</td>}
                   {columns.version && <td className="px-3 py-2.5 text-xs font-mono text-gray-700 dark:text-zinc-300">{device.version || '—'}</td>}
                   {columns.adaptation && <td className="px-3 py-2.5 text-xs text-gray-700 dark:text-zinc-300" title={adaptationName}>{adaptationName}</td>}
-                  {columns.adaptationVersion && <td className="px-3 py-2.5 text-xs text-gray-700 dark:text-zinc-300">{adaptationVersion}</td>}
-                  {columns.adaptationSource && <td className="px-3 py-2.5 text-xs text-gray-700 dark:text-zinc-300">{adaptation.explicit ? (zh ? '手动绑定' : 'Bound') : (zh ? '默认' : 'Default')}</td>}
-                  {columns.versionMismatch && <td className="px-3 py-2.5 text-xs">{hasVersionMismatch(device) ? <span className="text-amber-700 dark:text-amber-300">{zh ? '不一致' : 'Mismatch'}</span> : <span className="text-gray-400 dark:text-zinc-500">{zh ? '一致' : 'Match'}</span>}</td>}
                   {columns.site && (
                     <td className="px-3 py-2.5 text-xs font-medium text-gray-800 dark:text-zinc-200">{device.datacenter || device.site || '—'}</td>
                   )}
