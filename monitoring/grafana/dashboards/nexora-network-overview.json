@@ -30,7 +30,7 @@
         "uid": "victoriametrics"
       },
       "gridPos": {
-        "h": 3,
+        "h": 4,
         "w": 4,
         "x": 0,
         "y": 1
@@ -56,7 +56,7 @@
       },
       "options": {
         "colorMode": "value",
-        "graphMode": "area",
+        "graphMode": "none",
         "justifyMode": "center",
         "orientation": "auto",
         "reduceOptions": {
@@ -85,7 +85,7 @@
         "uid": "victoriametrics"
       },
       "gridPos": {
-        "h": 3,
+        "h": 4,
         "w": 4,
         "x": 4,
         "y": 1
@@ -111,7 +111,7 @@
       },
       "options": {
         "colorMode": "value",
-        "graphMode": "area",
+        "graphMode": "none",
         "justifyMode": "center",
         "orientation": "auto",
         "reduceOptions": {
@@ -140,7 +140,7 @@
         "uid": "victoriametrics"
       },
       "gridPos": {
-        "h": 3,
+        "h": 4,
         "w": 4,
         "x": 8,
         "y": 1
@@ -166,7 +166,7 @@
       },
       "options": {
         "colorMode": "value",
-        "graphMode": "area",
+        "graphMode": "none",
         "justifyMode": "center",
         "orientation": "auto",
         "reduceOptions": {
@@ -195,7 +195,7 @@
         "uid": "victoriametrics"
       },
       "gridPos": {
-        "h": 3,
+        "h": 4,
         "w": 4,
         "x": 12,
         "y": 1
@@ -221,7 +221,7 @@
       },
       "options": {
         "colorMode": "value",
-        "graphMode": "area",
+        "graphMode": "none",
         "justifyMode": "center",
         "orientation": "auto",
         "reduceOptions": {
@@ -250,7 +250,7 @@
         "uid": "victoriametrics"
       },
       "gridPos": {
-        "h": 3,
+        "h": 4,
         "w": 4,
         "x": 16,
         "y": 1
@@ -276,7 +276,7 @@
       },
       "options": {
         "colorMode": "value",
-        "graphMode": "area",
+        "graphMode": "none",
         "justifyMode": "center",
         "orientation": "auto",
         "reduceOptions": {
@@ -305,7 +305,7 @@
         "uid": "victoriametrics"
       },
       "gridPos": {
-        "h": 3,
+        "h": 4,
         "w": 4,
         "x": 20,
         "y": 1
@@ -339,7 +339,7 @@
       },
       "options": {
         "colorMode": "value",
-        "graphMode": "area",
+        "graphMode": "none",
         "justifyMode": "center",
         "orientation": "auto",
         "reduceOptions": {
@@ -369,7 +369,7 @@
         "h": 1,
         "w": 24,
         "x": 0,
-        "y": 4
+        "y": 5
       },
       "panels": []
     },
@@ -385,7 +385,7 @@
         "h": 8,
         "w": 12,
         "x": 0,
-        "y": 5
+        "y": 6
       },
       "fieldConfig": {
         "defaults": {
@@ -438,14 +438,10 @@
       },
       "options": {
         "legend": {
-          "displayMode": "table",
-          "placement": "right",
+          "displayMode": "list",
+          "placement": "bottom",
           "showLegend": true,
-          "calcs": [
-            "lastNotNull",
-            "max",
-            "mean"
-          ]
+          "calcs": []
         },
         "tooltip": {
           "mode": "multi",
@@ -477,7 +473,7 @@
         "h": 8,
         "w": 12,
         "x": 12,
-        "y": 5
+        "y": 6
       },
       "fieldConfig": {
         "defaults": {
@@ -499,14 +495,10 @@
       },
       "options": {
         "legend": {
-          "displayMode": "table",
-          "placement": "right",
+          "displayMode": "list",
+          "placement": "bottom",
           "showLegend": true,
-          "calcs": [
-            "lastNotNull",
-            "max",
-            "mean"
-          ]
+          "calcs": []
         },
         "tooltip": {
           "mode": "multi",
@@ -535,7 +527,7 @@
         "h": 1,
         "w": 24,
         "x": 0,
-        "y": 13
+        "y": 14
       },
       "panels": []
     },
@@ -551,7 +543,7 @@
         "h": 3,
         "w": 8,
         "x": 0,
-        "y": 14
+        "y": 15
       },
       "fieldConfig": {
         "defaults": {
@@ -574,7 +566,7 @@
       },
       "options": {
         "colorMode": "value",
-        "graphMode": "area",
+        "graphMode": "none",
         "justifyMode": "center",
         "orientation": "auto",
         "reduceOptions": {
@@ -606,7 +598,7 @@
         "h": 3,
         "w": 8,
         "x": 8,
-        "y": 14
+        "y": 15
       },
       "fieldConfig": {
         "defaults": {
@@ -629,7 +621,7 @@
       },
       "options": {
         "colorMode": "value",
-        "graphMode": "area",
+        "graphMode": "none",
         "justifyMode": "center",
         "orientation": "auto",
         "reduceOptions": {
@@ -662,7 +654,7 @@
         "h": 3,
         "w": 8,
         "x": 16,
-        "y": 14
+        "y": 15
       },
       "fieldConfig": {
         "defaults": {
@@ -685,7 +677,7 @@
       },
       "options": {
         "colorMode": "value",
-        "graphMode": "area",
+        "graphMode": "none",
         "justifyMode": "center",
         "orientation": "auto",
         "reduceOptions": {
@@ -718,7 +710,7 @@
         "h": 8,
         "w": 8,
         "x": 0,
-        "y": 17
+        "y": 18
       },
       "fieldConfig": {
         "defaults": {
@@ -862,7 +854,7 @@
         "h": 8,
         "w": 8,
         "x": 8,
-        "y": 17
+        "y": 18
       },
       "fieldConfig": {
         "defaults": {
@@ -1009,7 +1001,7 @@
         "h": 8,
         "w": 8,
         "x": 16,
-        "y": 17
+        "y": 18
       },
       "fieldConfig": {
         "defaults": {
@@ -1153,7 +1145,7 @@
         "h": 1,
         "w": 24,
         "x": 0,
-        "y": 25
+        "y": 26
       },
       "panels": []
     },
@@ -1169,7 +1161,7 @@
         "h": 8,
         "w": 12,
         "x": 0,
-        "y": 26
+        "y": 27
       },
       "fieldConfig": {
         "defaults": {
@@ -1284,7 +1276,7 @@
         "h": 8,
         "w": 12,
         "x": 12,
-        "y": 26
+        "y": 27
       },
       "fieldConfig": {
         "defaults": {
@@ -1337,14 +1329,10 @@
       },
       "options": {
         "legend": {
-          "displayMode": "table",
-          "placement": "right",
+          "displayMode": "list",
+          "placement": "bottom",
           "showLegend": true,
-          "calcs": [
-            "lastNotNull",
-            "max",
-            "mean"
-          ]
+          "calcs": []
         },
         "tooltip": {
           "mode": "multi",
@@ -1373,7 +1361,7 @@
         "h": 1,
         "w": 24,
         "x": 0,
-        "y": 34
+        "y": 35
       },
       "panels": []
     },
@@ -1389,7 +1377,7 @@
         "h": 8,
         "w": 24,
         "x": 0,
-        "y": 35
+        "y": 36
       },
       "fieldConfig": {
         "defaults": {

@@ -9,6 +9,19 @@
   "links": [],
   "panels": [
     {
+      "id": 900,
+      "title": "设备身份与健康摘要",
+      "type": "row",
+      "collapsed": false,
+      "gridPos": {
+        "h": 1,
+        "w": 24,
+        "x": 0,
+        "y": 0
+      },
+      "panels": []
+    },
+    {
       "id": 1,
       "title": "设备身份与 SNMP 连通性",
       "type": "table",
@@ -20,7 +33,7 @@
         "h": 4,
         "w": 24,
         "x": 0,
-        "y": 0
+        "y": 1
       },
       "fieldConfig": {
         "defaults": {
@@ -137,10 +150,10 @@
         "uid": "victoriametrics"
       },
       "gridPos": {
-        "h": 3,
+        "h": 4,
         "w": 4,
         "x": 0,
-        "y": 4
+        "y": 5
       },
       "fieldConfig": {
         "defaults": {
@@ -192,10 +205,10 @@
         "uid": "victoriametrics"
       },
       "gridPos": {
-        "h": 3,
+        "h": 4,
         "w": 4,
         "x": 4,
-        "y": 4
+        "y": 5
       },
       "fieldConfig": {
         "defaults": {
@@ -255,10 +268,10 @@
         "uid": "victoriametrics"
       },
       "gridPos": {
-        "h": 3,
+        "h": 4,
         "w": 4,
         "x": 8,
-        "y": 4
+        "y": 5
       },
       "fieldConfig": {
         "defaults": {
@@ -318,10 +331,10 @@
         "uid": "victoriametrics"
       },
       "gridPos": {
-        "h": 3,
+        "h": 4,
         "w": 4,
         "x": 12,
-        "y": 4
+        "y": 5
       },
       "fieldConfig": {
         "defaults": {
@@ -374,10 +387,10 @@
         "uid": "victoriametrics"
       },
       "gridPos": {
-        "h": 3,
+        "h": 4,
         "w": 4,
         "x": 16,
-        "y": 4
+        "y": 5
       },
       "fieldConfig": {
         "defaults": {
@@ -434,10 +447,10 @@
         "uid": "victoriametrics"
       },
       "gridPos": {
-        "h": 3,
+        "h": 4,
         "w": 4,
         "x": 20,
-        "y": 4
+        "y": 5
       },
       "fieldConfig": {
         "defaults": {
@@ -482,7 +495,7 @@
       "description": "没有未知状态时显示 0；没有状态数据时显示 —。"
     },
     {
-      "id": 900,
+      "id": 901,
       "title": "硬件部件趋势",
       "type": "row",
       "collapsed": false,
@@ -490,7 +503,7 @@
         "h": 1,
         "w": 24,
         "x": 0,
-        "y": 7
+        "y": 9
       },
       "panels": []
     },
@@ -506,7 +519,7 @@
         "h": 8,
         "w": 9,
         "x": 0,
-        "y": 8
+        "y": 10
       },
       "fieldConfig": {
         "defaults": {
@@ -562,7 +575,7 @@
         "h": 8,
         "w": 3,
         "x": 9,
-        "y": 8
+        "y": 10
       },
       "fieldConfig": {
         "defaults": {
@@ -621,7 +634,7 @@
         "h": 8,
         "w": 12,
         "x": 12,
-        "y": 8
+        "y": 10
       },
       "fieldConfig": {
         "defaults": {
@@ -677,7 +690,7 @@
         "h": 8,
         "w": 12,
         "x": 0,
-        "y": 16
+        "y": 18
       },
       "fieldConfig": {
         "defaults": {
@@ -733,7 +746,7 @@
         "h": 8,
         "w": 12,
         "x": 12,
-        "y": 16
+        "y": 18
       },
       "fieldConfig": {
         "defaults": {
@@ -789,7 +802,7 @@
         "h": 8,
         "w": 12,
         "x": 0,
-        "y": 24
+        "y": 26
       },
       "fieldConfig": {
         "defaults": {
@@ -845,7 +858,7 @@
         "h": 8,
         "w": 12,
         "x": 12,
-        "y": 24
+        "y": 26
       },
       "fieldConfig": {
         "defaults": {
@@ -890,7 +903,7 @@
       ]
     },
     {
-      "id": 901,
+      "id": 902,
       "title": "硬件部件当前读数",
       "type": "row",
       "collapsed": false,
@@ -898,7 +911,7 @@
         "h": 1,
         "w": 24,
         "x": 0,
-        "y": 32
+        "y": 34
       },
       "panels": []
     },
@@ -914,7 +927,7 @@
         "h": 8,
         "w": 12,
         "x": 0,
-        "y": 33
+        "y": 35
       },
       "fieldConfig": {
         "defaults": {
@@ -1013,7 +1026,7 @@
         "h": 8,
         "w": 12,
         "x": 12,
-        "y": 33
+        "y": 35
       },
       "fieldConfig": {
         "defaults": {
@@ -1182,7 +1195,7 @@
         "h": 8,
         "w": 12,
         "x": 0,
-        "y": 41
+        "y": 43
       },
       "fieldConfig": {
         "defaults": {
@@ -1281,7 +1294,7 @@
         "h": 8,
         "w": 12,
         "x": 12,
-        "y": 41
+        "y": 43
       },
       "fieldConfig": {
         "defaults": {
@@ -1380,7 +1393,7 @@
         "h": 8,
         "w": 16,
         "x": 0,
-        "y": 49
+        "y": 51
       },
       "fieldConfig": {
         "defaults": {
@@ -1595,7 +1608,7 @@
         "h": 8,
         "w": 8,
         "x": 16,
-        "y": 49
+        "y": 51
       },
       "fieldConfig": {
         "defaults": {
@@ -1684,7 +1697,7 @@
       "description": "功率读数不代表电源状态。"
     },
     {
-      "id": 902,
+      "id": 903,
       "title": "发现状态与采集质量",
       "type": "row",
       "collapsed": false,
@@ -1692,7 +1705,7 @@
         "h": 1,
         "w": 24,
         "x": 0,
-        "y": 57
+        "y": 59
       },
       "panels": []
     },
@@ -1708,7 +1721,7 @@
         "h": 8,
         "w": 24,
         "x": 0,
-        "y": 58
+        "y": 60
       },
       "fieldConfig": {
         "defaults": {
@@ -1975,7 +1988,7 @@
         "h": 8,
         "w": 8,
         "x": 0,
-        "y": 66
+        "y": 68
       },
       "fieldConfig": {
         "defaults": {
@@ -2062,7 +2075,7 @@
         "h": 8,
         "w": 8,
         "x": 8,
-        "y": 66
+        "y": 68
       },
       "fieldConfig": {
         "defaults": {
@@ -2161,7 +2174,7 @@
         "h": 8,
         "w": 8,
         "x": 16,
-        "y": 66
+        "y": 68
       },
       "fieldConfig": {
         "defaults": {
@@ -2207,10 +2220,10 @@
           "instant": true
         }
       ],
-      "description": "这是全局采集错误数，不是所选设备错误数。"
+      "description": "这是全局 Grafana 硬件指标渲染错误数，不随当前设备筛选变化；0 表示当前无渲染错误。"
     },
     {
-      "id": 903,
+      "id": 904,
       "title": "接口诊断",
       "type": "row",
       "collapsed": false,
@@ -2218,7 +2231,7 @@
         "h": 1,
         "w": 24,
         "x": 0,
-        "y": 74
+        "y": 76
       },
       "panels": []
     },
@@ -2234,7 +2247,7 @@
         "h": 8,
         "w": 12,
         "x": 0,
-        "y": 75
+        "y": 77
       },
       "fieldConfig": {
         "defaults": {
@@ -2439,7 +2452,7 @@
         "h": 8,
         "w": 12,
         "x": 12,
-        "y": 75
+        "y": 77
       },
       "fieldConfig": {
         "defaults": {
@@ -2531,7 +2544,7 @@
         "h": 8,
         "w": 12,
         "x": 0,
-        "y": 83
+        "y": 85
       },
       "fieldConfig": {
         "defaults": {
@@ -2630,7 +2643,7 @@
         "h": 8,
         "w": 12,
         "x": 12,
-        "y": 83
+        "y": 85
       },
       "fieldConfig": {
         "defaults": {

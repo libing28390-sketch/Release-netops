@@ -9,6 +9,19 @@
   "links": [],
   "panels": [
     {
+      "id": 900,
+      "title": "SNMP 采集概览",
+      "type": "row",
+      "collapsed": false,
+      "gridPos": {
+        "h": 1,
+        "w": 24,
+        "x": 0,
+        "y": 0
+      },
+      "panels": []
+    },
+    {
       "id": 1,
       "title": "SNMP 在线目标",
       "type": "stat",
@@ -20,7 +33,7 @@
         "h": 4,
         "w": 6,
         "x": 0,
-        "y": 0
+        "y": 1
       },
       "fieldConfig": {
         "defaults": {
@@ -43,7 +56,7 @@
       },
       "options": {
         "colorMode": "value",
-        "graphMode": "area",
+        "graphMode": "none",
         "justifyMode": "center",
         "orientation": "auto",
         "reduceOptions": {
@@ -75,7 +88,7 @@
         "h": 4,
         "w": 6,
         "x": 6,
-        "y": 0
+        "y": 1
       },
       "fieldConfig": {
         "defaults": {
@@ -102,7 +115,7 @@
       },
       "options": {
         "colorMode": "value",
-        "graphMode": "area",
+        "graphMode": "none",
         "justifyMode": "center",
         "orientation": "auto",
         "reduceOptions": {
@@ -134,7 +147,7 @@
         "h": 4,
         "w": 6,
         "x": 12,
-        "y": 0
+        "y": 1
       },
       "fieldConfig": {
         "defaults": {
@@ -157,7 +170,7 @@
       },
       "options": {
         "colorMode": "value",
-        "graphMode": "area",
+        "graphMode": "none",
         "justifyMode": "center",
         "orientation": "auto",
         "reduceOptions": {
@@ -189,7 +202,7 @@
         "h": 4,
         "w": 6,
         "x": 18,
-        "y": 0
+        "y": 1
       },
       "fieldConfig": {
         "defaults": {
@@ -220,7 +233,7 @@
       },
       "options": {
         "colorMode": "value",
-        "graphMode": "area",
+        "graphMode": "none",
         "justifyMode": "center",
         "orientation": "auto",
         "reduceOptions": {
@@ -241,8 +254,21 @@
       ]
     },
     {
+      "id": 901,
+      "title": "采集性能趋势",
+      "type": "row",
+      "collapsed": false,
+      "gridPos": {
+        "h": 1,
+        "w": 24,
+        "x": 0,
+        "y": 5
+      },
+      "panels": []
+    },
+    {
       "id": 5,
-      "title": "各设备 SNMP 采集耗时分布 (秒)",
+      "title": "各设备 SNMP 采集耗时趋势 (秒)",
       "type": "timeseries",
       "datasource": {
         "type": "prometheus",
@@ -252,7 +278,7 @@
         "h": 8,
         "w": 12,
         "x": 0,
-        "y": 4
+        "y": 6
       },
       "fieldConfig": {
         "defaults": {
@@ -274,14 +300,10 @@
       },
       "options": {
         "legend": {
-          "displayMode": "table",
+          "displayMode": "list",
           "placement": "right",
           "showLegend": true,
-          "calcs": [
-            "lastNotNull",
-            "max",
-            "mean"
-          ]
+          "calcs": []
         },
         "tooltip": {
           "mode": "multi",
@@ -298,7 +320,7 @@
     },
     {
       "id": 6,
-      "title": "抓取指标量统计 (Samples Scraped)",
+      "title": "抓取样本量趋势 (Samples Scraped)",
       "type": "timeseries",
       "datasource": {
         "type": "prometheus",
@@ -308,7 +330,7 @@
         "h": 8,
         "w": 12,
         "x": 12,
-        "y": 4
+        "y": 6
       },
       "fieldConfig": {
         "defaults": {
@@ -330,14 +352,10 @@
       },
       "options": {
         "legend": {
-          "displayMode": "table",
+          "displayMode": "list",
           "placement": "right",
           "showLegend": true,
-          "calcs": [
-            "lastNotNull",
-            "max",
-            "mean"
-          ]
+          "calcs": []
         },
         "tooltip": {
           "mode": "multi",
@@ -353,6 +371,19 @@
       ]
     },
     {
+      "id": 902,
+      "title": "异常目标定位",
+      "type": "row",
+      "collapsed": false,
+      "gridPos": {
+        "h": 1,
+        "w": 24,
+        "x": 0,
+        "y": 14
+      },
+      "panels": []
+    },
+    {
       "id": 7,
       "title": "采集失败设备清单 (Target Scrape Failure)",
       "type": "table",
@@ -364,7 +395,7 @@
         "h": 8,
         "w": 12,
         "x": 0,
-        "y": 12
+        "y": 15
       },
       "fieldConfig": {
         "defaults": {
@@ -465,7 +496,7 @@
         "h": 8,
         "w": 12,
         "x": 12,
-        "y": 12
+        "y": 15
       },
       "fieldConfig": {
         "defaults": {

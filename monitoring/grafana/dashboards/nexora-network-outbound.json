@@ -9,6 +9,19 @@
   "links": [],
   "panels": [
     {
+      "id": 900,
+      "title": "出口接口概览",
+      "type": "row",
+      "collapsed": false,
+      "gridPos": {
+        "h": 1,
+        "w": 24,
+        "x": 0,
+        "y": 0
+      },
+      "panels": []
+    },
+    {
       "id": 1,
       "title": "出口总入向实时带宽 (Inbound)",
       "type": "stat",
@@ -20,7 +33,7 @@
         "h": 4,
         "w": 4,
         "x": 0,
-        "y": 0
+        "y": 1
       },
       "fieldConfig": {
         "defaults": {
@@ -43,7 +56,7 @@
       },
       "options": {
         "colorMode": "value",
-        "graphMode": "area",
+        "graphMode": "none",
         "justifyMode": "center",
         "orientation": "auto",
         "reduceOptions": {
@@ -75,7 +88,7 @@
         "h": 4,
         "w": 4,
         "x": 4,
-        "y": 0
+        "y": 1
       },
       "fieldConfig": {
         "defaults": {
@@ -98,7 +111,7 @@
       },
       "options": {
         "colorMode": "value",
-        "graphMode": "area",
+        "graphMode": "none",
         "justifyMode": "center",
         "orientation": "auto",
         "reduceOptions": {
@@ -130,7 +143,7 @@
         "h": 4,
         "w": 4,
         "x": 8,
-        "y": 0
+        "y": 1
       },
       "fieldConfig": {
         "defaults": {
@@ -165,7 +178,7 @@
       },
       "options": {
         "colorMode": "value",
-        "graphMode": "area",
+        "graphMode": "none",
         "justifyMode": "center",
         "orientation": "auto",
         "reduceOptions": {
@@ -197,7 +210,7 @@
         "h": 4,
         "w": 4,
         "x": 12,
-        "y": 0
+        "y": 1
       },
       "fieldConfig": {
         "defaults": {
@@ -232,7 +245,7 @@
       },
       "options": {
         "colorMode": "value",
-        "graphMode": "area",
+        "graphMode": "none",
         "justifyMode": "center",
         "orientation": "auto",
         "reduceOptions": {
@@ -264,7 +277,7 @@
         "h": 4,
         "w": 4,
         "x": 16,
-        "y": 0
+        "y": 1
       },
       "fieldConfig": {
         "defaults": {
@@ -295,7 +308,7 @@
       },
       "options": {
         "colorMode": "value",
-        "graphMode": "area",
+        "graphMode": "none",
         "justifyMode": "center",
         "orientation": "auto",
         "reduceOptions": {
@@ -327,7 +340,7 @@
         "h": 4,
         "w": 4,
         "x": 20,
-        "y": 0
+        "y": 1
       },
       "fieldConfig": {
         "defaults": {
@@ -350,7 +363,7 @@
       },
       "options": {
         "colorMode": "value",
-        "graphMode": "area",
+        "graphMode": "none",
         "justifyMode": "center",
         "orientation": "auto",
         "reduceOptions": {
@@ -371,6 +384,19 @@
       ]
     },
     {
+      "id": 901,
+      "title": "进出流量趋势",
+      "type": "row",
+      "collapsed": false,
+      "gridPos": {
+        "h": 1,
+        "w": 24,
+        "x": 0,
+        "y": 5
+      },
+      "panels": []
+    },
+    {
       "id": 7,
       "title": "出口设备入向流量趋势 (Inbound bps)",
       "type": "timeseries",
@@ -382,7 +408,7 @@
         "h": 8,
         "w": 12,
         "x": 0,
-        "y": 4
+        "y": 6
       },
       "fieldConfig": {
         "defaults": {
@@ -454,7 +480,7 @@
         "h": 8,
         "w": 12,
         "x": 12,
-        "y": 4
+        "y": 6
       },
       "fieldConfig": {
         "defaults": {
@@ -515,6 +541,19 @@
       ]
     },
     {
+      "id": 902,
+      "title": "端口利用率热点",
+      "type": "row",
+      "collapsed": false,
+      "gridPos": {
+        "h": 1,
+        "w": 24,
+        "x": 0,
+        "y": 14
+      },
+      "panels": []
+    },
+    {
       "id": 9,
       "title": "出口端口入向利用率 Top 10",
       "type": "timeseries",
@@ -526,7 +565,7 @@
         "h": 8,
         "w": 12,
         "x": 0,
-        "y": 12
+        "y": 15
       },
       "fieldConfig": {
         "defaults": {
@@ -598,7 +637,7 @@
         "h": 8,
         "w": 12,
         "x": 12,
-        "y": 12
+        "y": 15
       },
       "fieldConfig": {
         "defaults": {
@@ -659,6 +698,19 @@
       ]
     },
     {
+      "id": 903,
+      "title": "链路质量与异常排行",
+      "type": "row",
+      "collapsed": false,
+      "gridPos": {
+        "h": 1,
+        "w": 24,
+        "x": 0,
+        "y": 23
+      },
+      "panels": []
+    },
+    {
       "id": 11,
       "title": "出口链路错误与丢弃时序 (PPS)",
       "type": "timeseries",
@@ -670,7 +722,7 @@
         "h": 8,
         "w": 24,
         "x": 0,
-        "y": 20
+        "y": 24
       },
       "fieldConfig": {
         "defaults": {
@@ -723,14 +775,10 @@
       },
       "options": {
         "legend": {
-          "displayMode": "table",
-          "placement": "right",
+          "displayMode": "list",
+          "placement": "bottom",
           "showLegend": true,
-          "calcs": [
-            "lastNotNull",
-            "max",
-            "mean"
-          ]
+          "calcs": []
         },
         "tooltip": {
           "mode": "multi",
@@ -762,7 +810,7 @@
         "h": 8,
         "w": 12,
         "x": 0,
-        "y": 28
+        "y": 32
       },
       "fieldConfig": {
         "defaults": {
@@ -938,7 +986,7 @@
         "h": 8,
         "w": 12,
         "x": 12,
-        "y": 28
+        "y": 32
       },
       "fieldConfig": {
         "defaults": {
@@ -1114,7 +1162,7 @@
         "h": 8,
         "w": 24,
         "x": 0,
-        "y": 36
+        "y": 40
       },
       "fieldConfig": {
         "defaults": {

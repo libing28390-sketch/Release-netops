@@ -9,6 +9,19 @@
   "links": [],
   "panels": [
     {
+      "id": 904,
+      "title": "无线覆盖与终端概览",
+      "type": "row",
+      "collapsed": false,
+      "gridPos": {
+        "h": 1,
+        "w": 24,
+        "x": 0,
+        "y": 0
+      },
+      "panels": []
+    },
+    {
       "id": 1,
       "title": "采集 AP",
       "type": "stat",
@@ -17,15 +30,15 @@
         "uid": "victoriametrics"
       },
       "gridPos": {
-        "h": 3,
+        "h": 4,
         "w": 4,
         "x": 0,
-        "y": 0
+        "y": 1
       },
       "fieldConfig": {
         "defaults": {
           "unit": "",
-          "noValue": "—",
+          "noValue": "暂无采集数据",
           "color": {
             "mode": "thresholds"
           },
@@ -43,7 +56,7 @@
       },
       "options": {
         "colorMode": "value",
-        "graphMode": "area",
+        "graphMode": "none",
         "justifyMode": "center",
         "orientation": "auto",
         "reduceOptions": {
@@ -73,15 +86,15 @@
         "uid": "victoriametrics"
       },
       "gridPos": {
-        "h": 3,
+        "h": 4,
         "w": 4,
         "x": 4,
-        "y": 0
+        "y": 1
       },
       "fieldConfig": {
         "defaults": {
           "unit": "",
-          "noValue": "—",
+          "noValue": "暂无采集数据",
           "color": {
             "mode": "thresholds"
           },
@@ -99,7 +112,7 @@
       },
       "options": {
         "colorMode": "value",
-        "graphMode": "area",
+        "graphMode": "none",
         "justifyMode": "center",
         "orientation": "auto",
         "reduceOptions": {
@@ -129,15 +142,15 @@
         "uid": "victoriametrics"
       },
       "gridPos": {
-        "h": 3,
+        "h": 4,
         "w": 4,
         "x": 8,
-        "y": 0
+        "y": 1
       },
       "fieldConfig": {
         "defaults": {
           "unit": "",
-          "noValue": "—",
+          "noValue": "暂无采集数据",
           "color": {
             "mode": "thresholds"
           },
@@ -163,7 +176,7 @@
       },
       "options": {
         "colorMode": "value",
-        "graphMode": "area",
+        "graphMode": "none",
         "justifyMode": "center",
         "orientation": "auto",
         "reduceOptions": {
@@ -193,10 +206,10 @@
         "uid": "victoriametrics"
       },
       "gridPos": {
-        "h": 3,
+        "h": 4,
         "w": 4,
         "x": 12,
-        "y": 0
+        "y": 1
       },
       "fieldConfig": {
         "defaults": {
@@ -219,7 +232,7 @@
       },
       "options": {
         "colorMode": "value",
-        "graphMode": "area",
+        "graphMode": "none",
         "justifyMode": "center",
         "orientation": "auto",
         "reduceOptions": {
@@ -248,15 +261,15 @@
         "uid": "victoriametrics"
       },
       "gridPos": {
-        "h": 3,
+        "h": 4,
         "w": 4,
         "x": 16,
-        "y": 0
+        "y": 1
       },
       "fieldConfig": {
         "defaults": {
           "unit": "",
-          "noValue": "—",
+          "noValue": "暂无采集数据",
           "color": {
             "mode": "thresholds"
           },
@@ -282,7 +295,7 @@
       },
       "options": {
         "colorMode": "value",
-        "graphMode": "area",
+        "graphMode": "none",
         "justifyMode": "center",
         "orientation": "auto",
         "reduceOptions": {
@@ -312,15 +325,15 @@
         "uid": "victoriametrics"
       },
       "gridPos": {
-        "h": 3,
+        "h": 4,
         "w": 4,
         "x": 20,
-        "y": 0
+        "y": 1
       },
       "fieldConfig": {
         "defaults": {
           "unit": "percent",
-          "noValue": "—",
+          "noValue": "暂无采集数据",
           "color": {
             "mode": "thresholds"
           },
@@ -350,7 +363,7 @@
       },
       "options": {
         "colorMode": "value",
-        "graphMode": "area",
+        "graphMode": "none",
         "justifyMode": "center",
         "orientation": "auto",
         "reduceOptions": {
@@ -379,7 +392,7 @@
         "h": 1,
         "w": 24,
         "x": 0,
-        "y": 3
+        "y": 5
       },
       "panels": []
     },
@@ -395,7 +408,7 @@
         "h": 7,
         "w": 14,
         "x": 0,
-        "y": 4
+        "y": 6
       },
       "fieldConfig": {
         "defaults": {
@@ -448,14 +461,10 @@
       },
       "options": {
         "legend": {
-          "displayMode": "table",
-          "placement": "right",
+          "displayMode": "list",
+          "placement": "bottom",
           "showLegend": true,
-          "calcs": [
-            "lastNotNull",
-            "max",
-            "mean"
-          ]
+          "calcs": []
         },
         "tooltip": {
           "mode": "multi",
@@ -487,7 +496,7 @@
         "h": 7,
         "w": 10,
         "x": 14,
-        "y": 4
+        "y": 6
       },
       "fieldConfig": {
         "defaults": {
@@ -725,7 +734,7 @@
         "h": 1,
         "w": 24,
         "x": 0,
-        "y": 11
+        "y": 13
       },
       "panels": []
     },
@@ -741,7 +750,7 @@
         "h": 9,
         "w": 14,
         "x": 0,
-        "y": 12
+        "y": 14
       },
       "fieldConfig": {
         "defaults": {
@@ -962,7 +971,7 @@
         "h": 9,
         "w": 10,
         "x": 14,
-        "y": 12
+        "y": 14
       },
       "fieldConfig": {
         "defaults": {
@@ -1092,7 +1101,7 @@
         "h": 1,
         "w": 24,
         "x": 0,
-        "y": 21
+        "y": 23
       },
       "panels": []
     },
@@ -1108,7 +1117,7 @@
         "h": 8,
         "w": 24,
         "x": 0,
-        "y": 22
+        "y": 24
       },
       "fieldConfig": {
         "defaults": {
@@ -1171,7 +1180,7 @@
         "h": 1,
         "w": 24,
         "x": 0,
-        "y": 30
+        "y": 32
       },
       "panels": []
     },
@@ -1187,7 +1196,7 @@
         "h": 8,
         "w": 12,
         "x": 0,
-        "y": 31
+        "y": 33
       },
       "fieldConfig": {
         "defaults": {
@@ -1317,7 +1326,7 @@
         "h": 8,
         "w": 12,
         "x": 12,
-        "y": 31
+        "y": 33
       },
       "fieldConfig": {
         "defaults": {

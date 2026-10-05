@@ -321,7 +321,7 @@ def stat_panel(
     color=NEUTRAL_COLOR,
     thresholds=None,
     description=None,
-    graph_mode="area",
+    graph_mode="none",
     value_mappings=None,
     no_value=None,
 ):
@@ -419,6 +419,7 @@ def timeseries_panel(
     legend_placement="right",
     legend_calcs=None,
     description=None,
+    line_interpolation="linear",
 ):
     panel = {
         "id": pid,
@@ -433,7 +434,7 @@ def timeseries_panel(
                 "color": {"mode": "palette-classic"},
                 "custom": {
                     "drawStyle": "line",
-                    "lineInterpolation": "linear",
+                    "lineInterpolation": line_interpolation,
                     "lineWidth": 2,
                     "fillOpacity": 10,
                     "gradientMode": "none",
@@ -685,15 +686,57 @@ def row_panel(pid, title, y):
 def insert_section_rows(panels, sections):
     """Insert visible Grafana row headings at existing grid boundaries."""
     rows = []
-    for index, (title, before_y) in enumerate(sorted(sections, key=lambda item: item[1])):
+    existing_ids = {panel.get("id") for panel in panels}
+    next_row_id = 900
+    for title, before_y in sorted(sections, key=lambda item: item[1]):
         shift = sum(1 for _, prior_y in sections if prior_y < before_y)
         row_y = before_y + shift
-        rows.append(row_panel(900 + index, title, row_y))
+        while next_row_id in existing_ids:
+            next_row_id += 1
+        rows.append(row_panel(next_row_id, title, row_y))
+        existing_ids.add(next_row_id)
+        next_row_id += 1
         for panel in panels:
             grid = panel.get("gridPos") or {}
             if int(grid.get("y", -1)) >= before_y:
                 grid["y"] = int(grid["y"]) + 1
     return sorted([*panels, *rows], key=lambda panel: (panel.get("gridPos", {}).get("y", 0), panel.get("gridPos", {}).get("x", 0)))
+
+
+def normalize_summary_cards(panels, target_height=4):
+    """Give the first row of Stat/Gauge summaries enough vertical room for clear values."""
+    summary_panels = [panel for panel in panels if panel.get("type") in {"stat", "gauge"}]
+    if not summary_panels:
+        return panels
+
+    summary_y = min(int((panel.get("gridPos") or {}).get("y", 0)) for panel in summary_panels)
+    summary_row = [
+        panel for panel in summary_panels
+        if int((panel.get("gridPos") or {}).get("y", 0)) == summary_y
+    ]
+    old_bottom = max(
+        int((panel.get("gridPos") or {}).get("y", 0))
+        + int((panel.get("gridPos") or {}).get("h", 0))
+        for panel in summary_row
+    )
+    target_bottom = summary_y + max(
+        target_height,
+        max(int((panel.get("gridPos") or {}).get("h", 0)) for panel in summary_row),
+    )
+    shift = target_bottom - old_bottom
+
+    for panel in summary_row:
+        grid = panel.setdefault("gridPos", {})
+        grid["h"] = max(target_height, int(grid.get("h", 0)))
+    if shift > 0:
+        summary_ids = {panel.get("id") for panel in summary_row}
+        for panel in panels:
+            if panel.get("id") in summary_ids:
+                continue
+            grid = panel.get("gridPos") or {}
+            if int(grid.get("y", -1)) >= old_bottom:
+                grid["y"] = int(grid["y"]) + shift
+    return panels
 
 def bar_gauge_panel(
     pid,
@@ -974,14 +1017,14 @@ def build_overview_dashboard():
         timeseries_panel(7, "接口总流量趋势", [
             {"expr": f"sum({in_rate}) * 8", "legendFormat": "入流量", "refId": "A"},
             {"expr": f"sum({out_rate}) * 8", "legendFormat": "出流量", "refId": "B"}
-        ], 0, 3, 12, 8, unit="bps", color_overrides=[
+        ], 0, 3, 12, 8, unit="bps", legend_display_mode="list", legend_placement="bottom", legend_calcs=[], color_overrides=[
             timeseries_color_override("byName", "入流量", INBOUND_COLOR),
             timeseries_color_override("byName", "出流量", OUTBOUND_COLOR),
         ]),
         timeseries_panel(8, "全网无线终端与 AP 规模趋势", [
             {"expr": f"sum({client_online_by_device})", "legendFormat": "控制器统计的在线终端", "refId": "A"},
             {"expr": f"sum((hwWlanCurOnlineApNum{{{sel}}} or hh3cDot11CurrOnlineAPNum{{{sel}}} or ruijieApcOnlineApNum{{{sel}}} or ruijieApcTotalApNum{{{sel}}} or cLApTotalUpAPs{{{sel}}} or wlsxSysExtAccessPointsNum{{{sel}}} or ruckusZDTotalNumAP{{{sel}}}))", "legendFormat": "在线 AP 总数", "refId": "B"}
-        ], 12, 3, 12, 8, unit="short"),
+        ], 12, 3, 12, 8, unit="short", legend_display_mode="list", legend_placement="bottom", legend_calcs=[]),
         stat_panel(
             9, "CPU 指标覆盖设备数", online_metric_device_count(cpu_metric), 0, 11, 8, 3,
             description=None,
@@ -1029,7 +1072,7 @@ def build_overview_dashboard():
         timeseries_panel(13, "错误/丢弃趋势", [
             {"expr": f"sum(rate(ifInErrors{{{sel}}}[5m])) + sum(rate(ifOutErrors{{{sel}}}[5m]))", "legendFormat": "错误包/秒", "refId": "A"},
             {"expr": f"sum(rate(ifInDiscards{{{sel}}}[5m])) + sum(rate(ifOutDiscards{{{sel}}}[5m]))", "legendFormat": "丢弃包/秒", "refId": "B"}
-        ], 12, 22, 12, 8, unit="pps", color_overrides=[
+        ], 12, 22, 12, 8, unit="pps", legend_display_mode="list", legend_placement="bottom", legend_calcs=[], color_overrides=[
             timeseries_color_override("byName", "错误包/秒", ERROR_COLOR),
             timeseries_color_override("byName", "丢弃包/秒", DISCARD_COLOR),
         ]),
@@ -1053,6 +1096,7 @@ def build_overview_dashboard():
         ("流量排行与链路质量", 22),
         ("近期链路状态变动", 30),
     ])
+    panels = normalize_summary_cards(panels)
 
     return {
         "annotations": {"list": []},
@@ -1724,7 +1768,7 @@ def build_device_dashboard():
                 {"color": NEUTRAL_COLOR, "value": None},
                 {"color": CRITICAL_COLOR, "value": 1},
             ], graph_mode="none",
-            description="这是全局采集错误数，不是所选设备错误数。",
+            description="这是全局 Grafana 硬件指标渲染错误数，不随当前设备筛选变化；0 表示当前无渲染错误。",
         ),
         table_panel(
             23, "设备端口实时状态清单",
@@ -1779,12 +1823,14 @@ def build_device_dashboard():
     panels = insert_section_rows(
         panels,
         [
+            ("设备身份与健康摘要", 0),
             ("硬件部件趋势", 7),
             ("硬件部件当前读数", 31),
             ("发现状态与采集质量", 55),
             ("接口诊断", 71),
         ],
     )
+    panels = normalize_summary_cards(panels)
 
     asset_query = (
         'query_result(label_join(max by (asset_id,hostname,instance,site_name) '
@@ -1914,17 +1960,17 @@ def build_wireless_dashboard():
     huawei_ssid_rows = f'topk(20, sum by ({device_labels},ssid) (nexora_wireless_sensor_value{{{huawei_inventory_sel},component_class="wireless_ssid",sensor_class="clients"}}))'
 
     panels = [
-        stat_panel(1, "采集 AP", f"sum({ap_state_count})", 0, 0, 4, 3, color=NEUTRAL_COLOR, description=ap_total_description, no_value="—"),
-        stat_panel(2, "在线 AP", f"sum({ap_online})", 4, 0, 4, 3, color=HEALTHY_COLOR, description=ap_online_description, no_value="—"),
-        stat_panel(3, "明确离线 AP", f"sum({ap_offline})", 8, 0, 4, 3, thresholds=OFFLINE_COUNT_THRESHOLDS, description=ap_offline_description, no_value="—"),
+        stat_panel(1, "采集 AP", f"sum({ap_state_count})", 0, 0, 4, 3, color=NEUTRAL_COLOR, description=ap_total_description, no_value=NO_VALUE_TEXT),
+        stat_panel(2, "在线 AP", f"sum({ap_online})", 4, 0, 4, 3, color=HEALTHY_COLOR, description=ap_online_description, no_value=NO_VALUE_TEXT),
+        stat_panel(3, "明确离线 AP", f"sum({ap_offline})", 8, 0, 4, 3, thresholds=OFFLINE_COUNT_THRESHOLDS, description=ap_offline_description, no_value=NO_VALUE_TEXT),
         stat_panel(4, "控制器汇总在线终端数", f"sum({clients})", 12, 0, 4, 3, color=NEUTRAL_COLOR, no_value=NO_VALUE_TEXT),
-        stat_panel(5, "高利用率 Radio", high_utilization_radio_count, 16, 0, 4, 3, thresholds=OFFLINE_COUNT_THRESHOLDS, description="统计利用率达到 75% 的 Radio，仅用于定位热点。", no_value="—"),
-        stat_panel(6, "平均 Radio 利用率", f"avg({radio_utilization_rows})", 20, 0, 4, 3, unit="percent", thresholds=UTILIZATION_THRESHOLDS, description=None, no_value="—"),
+        stat_panel(5, "高利用率 Radio", high_utilization_radio_count, 16, 0, 4, 3, thresholds=OFFLINE_COUNT_THRESHOLDS, description="统计利用率达到 75% 的 Radio，仅用于定位热点。", no_value=NO_VALUE_TEXT),
+        stat_panel(6, "平均 Radio 利用率", f"avg({radio_utilization_rows})", 20, 0, 4, 3, unit="percent", thresholds=UTILIZATION_THRESHOLDS, no_value=NO_VALUE_TEXT),
         row_panel(900, "趋势与 AP 状态", 3),
         timeseries_panel(7, "在线 AP 与关联终端趋势", [
             {"expr": f"sum({ap_online})", "legendFormat": "在线 AP", "refId": "A"},
             {"expr": f"sum({clients})", "legendFormat": "关联终端", "refId": "B"},
-        ], 0, 4, 14, 7, unit="short", color_overrides=[
+        ], 0, 4, 14, 7, unit="short", legend_display_mode="list", legend_placement="bottom", legend_calcs=[], color_overrides=[
             timeseries_color_override("byName", "在线 AP", HEALTHY_COLOR),
             timeseries_color_override("byName", "关联终端", CLIENT_COLOR),
         ]),
@@ -2002,6 +2048,9 @@ def build_wireless_dashboard():
             description=None,
         ),
     ]
+
+    panels = insert_section_rows(panels, [("无线覆盖与终端概览", 0)])
+    panels = normalize_summary_cards(panels)
 
     return {
         "annotations": {"list": []},
@@ -2266,6 +2315,8 @@ def build_interface_dashboard():
         ),
     ]
 
+    panels = normalize_summary_cards(panels)
+
     return {
         "annotations": {"list": []},
         "editable": false,
@@ -2437,7 +2488,7 @@ def build_interface_detail_dashboard():
         ),
         timeseries_panel(9, "入向 / 出向 / 单播 / 组播 / 广播 PPS", [
             {"expr": f"sum by (packet_type) ({packets_by_type})", "legendFormat": "{{packet_type}} PPS", "refId": "A"},
-        ], 0, 27, 12, 7, unit="pps", color_overrides=[
+        ], 0, 27, 12, 7, unit="pps", legend_display_mode="list", legend_placement="bottom", legend_calcs=[], color_overrides=[
             timeseries_color_override("byRegexp", "入向 PPS", INBOUND_COLOR),
             timeseries_color_override("byRegexp", "出向 PPS", OUTBOUND_COLOR),
             timeseries_color_override("byRegexp", "单播 PPS", PPS_COLOR),
@@ -2502,6 +2553,7 @@ def build_interface_detail_dashboard():
             timeseries_color_override("byRegexp", ".*发送$", OUTBOUND_COLOR),
         ]),
     ]
+    panels = normalize_summary_cards(panels)
     return {
         "annotations": {"list": []}, "editable": false, "fiscalYearStartMonth": 0,
         "graphTooltip": 1, "id": None, "links": [], "panels": panels,
@@ -2521,12 +2573,12 @@ def build_health_dashboard():
         stat_panel(2, "SNMP 失败目标", f"count(count by (instance) (up{{{NETWORK_JOB}}} == 0)) or on() ((count(up{{{NETWORK_JOB}}}) > 0) * 0)", 6, 0, 6, 4, thresholds=[{"color": NEUTRAL_COLOR, "value": None}, {"color": CRITICAL_COLOR, "value": 1}]),
         stat_panel(3, "平均 SNMP 采集耗时", f"avg(scrape_duration_seconds{{{NETWORK_JOB}}})", 12, 0, 6, 4, unit="s"),
         stat_panel(4, "最大 SNMP 采集耗时", f"max(scrape_duration_seconds{{{NETWORK_JOB}}})", 18, 0, 6, 4, unit="s", thresholds=[{"color": NEUTRAL_COLOR, "value": None}, {"color": WARNING_COLOR, "value": 5}, {"color": CRITICAL_COLOR, "value": 15}]),
-        timeseries_panel(5, "各设备 SNMP 采集耗时分布 (秒)", [
+        timeseries_panel(5, "各设备 SNMP 采集耗时趋势 (秒)", [
             {"expr": f"scrape_duration_seconds{{{NETWORK_JOB}}}", "legendFormat": "{{site_name}} / {{hostname}}", "refId": "A"}
-        ], 0, 4, 12, 8, unit="s"),
-        timeseries_panel(6, "抓取指标量统计 (Samples Scraped)", [
+        ], 0, 4, 12, 8, unit="s", legend_display_mode="list", legend_calcs=[]),
+        timeseries_panel(6, "抓取样本量趋势 (Samples Scraped)", [
             {"expr": f"scrape_samples_scraped{{{NETWORK_JOB}}}", "legendFormat": "{{site_name}} / {{hostname}}", "refId": "A"}
-        ], 12, 4, 12, 8, unit="short"),
+        ], 12, 4, 12, 8, unit="short", legend_display_mode="list", legend_calcs=[]),
         table_panel(
             7, "采集失败设备清单 (Target Scrape Failure)", f"up{{{NETWORK_JOB}}} == 0", 0, 12, 12, 8,
             transformations=clean_organize_transformation("探测状态")
@@ -2537,6 +2589,13 @@ def build_health_dashboard():
             transformations=clean_organize_transformation("采集耗时 (秒)")
         )
     ]
+
+    panels = insert_section_rows(panels, [
+        ("SNMP 采集概览", 0),
+        ("采集性能趋势", 4),
+        ("异常目标定位", 12),
+    ])
+    panels = normalize_summary_cards(panels)
 
     return {
         "annotations": {"list": []},
@@ -2609,7 +2668,7 @@ def build_outbound_dashboard():
         timeseries_panel(11, "出口链路错误与丢弃时序 (PPS)", [
             {"expr": f"sum by (hostname, site_name) ({error_rate})", "legendFormat": "{{site_name}} / {{hostname}} 错包/秒", "refId": "A"},
             {"expr": f"sum by (hostname, site_name) ({discard_rate})", "legendFormat": "{{site_name}} / {{hostname}} 丢弃/秒", "refId": "B"}
-        ], 0, 20, 24, 8, unit="pps", color_overrides=[
+        ], 0, 20, 24, 8, unit="pps", legend_display_mode="list", legend_placement="bottom", legend_calcs=[], color_overrides=[
             timeseries_color_override("byRegexp", ".*错包/秒$", ERROR_COLOR),
             timeseries_color_override("byRegexp", ".*丢弃/秒$", DISCARD_COLOR),
         ]),
@@ -2639,6 +2698,14 @@ def build_outbound_dashboard():
             value_col_name="错误/丢弃率 (pps)"
         )
     ]
+
+    panels = insert_section_rows(panels, [
+        ("出口接口概览", 0),
+        ("进出流量趋势", 4),
+        ("端口利用率热点", 12),
+        ("链路质量与异常排行", 20),
+    ])
+    panels = normalize_summary_cards(panels)
 
     return {
         "annotations": {"list": []},
@@ -2744,6 +2811,14 @@ def build_linux_dashboard():
         ], 12, 28, 12, 8, unit="short", legend_display_mode="list", legend_placement="bottom", legend_calcs=[])
     ]
 
+    panels = insert_section_rows(panels, [
+        ("Linux 主机概览", 0),
+        ("CPU 与内存", 4),
+        ("系统负载与磁盘 I/O", 12),
+        ("磁盘空间、网络与会话", 20),
+    ])
+    panels = normalize_summary_cards(panels)
+
     return {
         "annotations": {"list": []},
         "editable": false,
@@ -2824,16 +2899,25 @@ def build_windows_dashboard():
         table_panel(
             10, "系统关键服务运行状态",
             f'windows_service_state{{{srv_sel},state="running"}} == 1',
-            12, 20, 12, 8, unit="none",
+            0, 28, 24, 8, unit="none",
             transformations=clean_organize_transformation("服务状态", {"name": "服务名"})
         ),
         table_panel(
             11, "非运行关键服务",
             f'windows_service_state{{{srv_sel},state!="running"}} == 1',
-            0, 28, 24, 8, unit="none",
+            12, 20, 12, 8, unit="none",
             transformations=clean_organize_transformation("服务状态", {"name": "服务名", "state": "服务状态"})
         )
     ]
+
+    panels = insert_section_rows(panels, [
+        ("Windows 主机概览", 0),
+        ("CPU 与内存", 4),
+        ("磁盘与系统进程", 12),
+        ("网络与非运行关键服务", 20),
+        ("关键服务运行清单", 28),
+    ])
+    panels = normalize_summary_cards(panels)
 
     return {
         "annotations": {"list": []},
@@ -2989,6 +3073,7 @@ def build_platform_health_dashboard():
             legend_placement="bottom",
             legend_calcs=[],
             description="1 表示可达，0 表示不可达。",
+            line_interpolation="stepAfter",
         ),
         timeseries_panel(
             8,
@@ -3220,6 +3305,13 @@ def build_platform_health_dashboard():
             description="最后观测时间不代表容器健康状态。",
         ),
     ]
+    panels = insert_section_rows(panels, [
+        ("监控端点概况", 0),
+        ("采集端点趋势与异常", 4),
+        ("存储与 Remote Write", 20),
+        ("容器资源与观测", 40),
+    ])
+    panels = normalize_summary_cards(panels)
     return {
         "annotations": {"list": []},
         "editable": false,
@@ -3577,6 +3669,21 @@ def build_outbound_probe_quality_dashboard():
             description="按采样结果估算，实际故障起点可能不同。",
         ),
     ]
+
+    for panel in panels:
+        grid = panel.get("gridPos") or {}
+        if panel.get("id") in {20, 21}:
+            grid["y"] = 8
+        elif int(grid.get("y", -1)) >= 8:
+            grid["y"] = int(grid["y"]) + 4
+
+    panels = insert_section_rows(panels, [
+        ("1h / 24h 拨测概览", 0),
+        ("当前 WAN 连续故障", 8),
+        ("拨测质量趋势", 12),
+        ("WAN 接口健康与流量", 28),
+    ])
+    panels = normalize_summary_cards(panels)
     return {
         "annotations": {"list": []},
         "editable": false,
@@ -3791,7 +3898,7 @@ def build_alert_operations_dashboard():
             "nexora_alert_open_duration_oldest_seconds",
             0,
             20,
-            6,
+            4,
             4,
             unit="dtdhms",
             graph_mode="none",
@@ -3805,9 +3912,9 @@ def build_alert_operations_dashboard():
             12,
             "未恢复告警时长 P95",
             "nexora_alert_open_duration_p95_seconds",
-            6,
+            4,
             20,
-            6,
+            4,
             4,
             unit="dtdhms",
             graph_mode="none",
@@ -3816,9 +3923,9 @@ def build_alert_operations_dashboard():
             13,
             "24h MTTA",
             "nexora_alert_mtta_seconds_24h",
-            12,
+            8,
             20,
-            3,
+            4,
             4,
             unit="s",
             description="告警创建到首次确认的平均时间。",
@@ -3827,9 +3934,9 @@ def build_alert_operations_dashboard():
             14,
             "24h MTTR",
             "nexora_alert_mttr_seconds_24h",
-            15,
+            12,
             20,
-            3,
+            4,
             4,
             unit="s",
             description="告警创建到恢复的平均时间。",
@@ -3838,9 +3945,9 @@ def build_alert_operations_dashboard():
             15,
             "重复未恢复告警",
             "nexora_alert_duplicate_open_events",
-            18,
+            16,
             20,
-            3,
+            4,
             4,
             unit="none",
             thresholds=open_thresholds,
@@ -3850,9 +3957,9 @@ def build_alert_operations_dashboard():
             16,
             "24h 重试通知数",
             "nexora_alert_retried_deliveries_24h",
-            21,
             20,
-            3,
+            20,
+            4,
             4,
             unit="none",
         ),
@@ -3891,6 +3998,13 @@ def build_alert_operations_dashboard():
             legend_calcs=["lastNotNull", "max"],
         ),
     ]
+    panels = insert_section_rows(panels, [
+        ("告警与通知概览", 0),
+        ("告警生命周期与投递趋势", 4),
+        ("告警处置效率", 20),
+    ])
+    panels = normalize_summary_cards(panels)
+
     return {
         "annotations": {"list": []},
         "editable": false,
@@ -3945,8 +4059,7 @@ def validate_dashboard(source_name, dashboard):
                 occupied[(cell_x, cell_y)] = panel.get("id")
 
 
-def main():
-    DASHBOARDS_DIR.mkdir(parents=True, exist_ok=True)
+def build_dashboard_catalog():
     dashboards = [
         ("nexora-network-overview.json", build_overview_dashboard()),
         ("nexora-network-device.json", build_device_dashboard()),
@@ -3964,6 +4077,12 @@ def main():
     assert len(dashboards) == 12, "dashboard catalog must contain exactly 12 dashboards"
     uids = [data.get("uid") for _, data in dashboards]
     assert len(uids) == len(set(uids)), "dashboard catalog contains duplicate UIDs"
+    return dashboards
+
+
+def main():
+    DASHBOARDS_DIR.mkdir(parents=True, exist_ok=True)
+    dashboards = build_dashboard_catalog()
     for fname, data in dashboards:
         validate_dashboard(fname, data)
         path = DASHBOARDS_DIR / fname

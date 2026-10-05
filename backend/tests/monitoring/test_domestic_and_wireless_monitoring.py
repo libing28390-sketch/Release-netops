@@ -18,10 +18,12 @@ from monitoring.grafana.generate_dashboards import (
     WARNING_COLOR,
     UTILIZATION_THRESHOLDS,
     NO_VALUE_TEXT,
+    build_dashboard_catalog,
     build_interface_dashboard,
     build_interface_detail_dashboard,
     build_overview_dashboard,
     build_wireless_dashboard,
+    validate_dashboard,
 )
 
 
@@ -317,9 +319,8 @@ def test_wireless_dashboard_homepage_groups_actual_metrics_by_wireless_layer():
         panel = panels[panel_id]
         assert panel["type"] == "stat"
         assert panel["gridPos"]["w"] == 4
-        assert panel["gridPos"]["h"] == 3
-        expected_no_value = NO_VALUE_TEXT if panel_id == 4 else "—"
-        assert panel["fieldConfig"]["defaults"]["noValue"] == expected_no_value
+        assert panel["gridPos"]["h"] == 4
+        assert panel["fieldConfig"]["defaults"]["noValue"] == NO_VALUE_TEXT
 
     assert panels[5]["title"] == "高利用率 Radio"
     assert 'sensor_class="utilization"' in panels[5]["targets"][0]["expr"]
@@ -349,7 +350,13 @@ def test_wireless_dashboard_homepage_groups_actual_metrics_by_wireless_layer():
     assert 'max by (site_name,vendor,role,hostname,ap_id,ap_name,radio_id)' in panels[11]["targets"][0]["expr"]
     assert panels[11]["fieldConfig"]["defaults"]["max"] == 100
     row_titles = {panel["title"] for panel in dashboard["panels"] if panel["type"] == "row"}
-    assert row_titles == {"趋势与 AP 状态", "AP 明细", "Radio 热点", "SSID / BSS 客户端明细（依厂商采集覆盖）"}
+    assert row_titles == {
+        "无线覆盖与终端概览",
+        "趋势与 AP 状态",
+        "AP 明细",
+        "Radio 热点",
+        "SSID / BSS 客户端明细（依厂商采集覆盖）",
+    }
     assert "无线控制器" not in " ".join(panel["title"] for panel in dashboard["panels"])
 
 
@@ -553,3 +560,40 @@ def test_dashboard_device_variables_use_current_up_targets():
         assert variables["device"]["regex"] == '/.*hostname="([^\"]+)".*/'
         assert "label_values(" not in device_query
         assert "== 1" not in device_query
+
+
+def test_all_grafana_dashboards_have_consistent_kpi_and_section_layout():
+    catalog = build_dashboard_catalog()
+    assert len(catalog) == 12
+
+    by_uid = {}
+    for filename, dashboard in catalog:
+        validate_dashboard(filename, dashboard)
+        by_uid[dashboard["uid"]] = {panel["id"]: panel for panel in dashboard["panels"]}
+
+        panels = dashboard["panels"]
+        assert any(panel["type"] == "row" for panel in panels)
+        summary_panels = [
+            panel for panel in panels
+            if panel["type"] in {"stat", "gauge"}
+        ]
+        first_summary_y = min(panel["gridPos"]["y"] for panel in summary_panels)
+        first_summary_row = [
+            panel for panel in summary_panels
+            if panel["gridPos"]["y"] == first_summary_y
+        ]
+        assert all(panel["gridPos"]["h"] == 4 for panel in first_summary_row)
+
+        stat_panels = [panel for panel in panels if panel["type"] == "stat"]
+        assert all(panel["options"]["graphMode"] == "none" for panel in stat_panels)
+        assert all(
+            target.get("instant") is True
+            for panel in stat_panels
+            for target in panel["targets"]
+        )
+
+    assert by_uid["nexora-platform-health"][7]["fieldConfig"]["defaults"]["custom"]["lineInterpolation"] == "stepAfter"
+    assert by_uid["nexora-outbound-probe-quality"][20]["gridPos"]["y"] < by_uid["nexora-outbound-probe-quality"][9]["gridPos"]["y"]
+    assert by_uid["nexora-windows-metrics"][11]["gridPos"]["y"] == by_uid["nexora-windows-metrics"][9]["gridPos"]["y"]
+    assert by_uid["nexora-windows-metrics"][11]["gridPos"]["x"] == 12
+    assert by_uid["nexora-interface-detail"][9]["options"]["legend"]["placement"] == "bottom"

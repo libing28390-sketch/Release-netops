@@ -30,7 +30,7 @@
         "uid": "victoriametrics"
       },
       "gridPos": {
-        "h": 3,
+        "h": 4,
         "w": 6,
         "x": 0,
         "y": 1
@@ -56,7 +56,7 @@
       },
       "options": {
         "colorMode": "value",
-        "graphMode": "area",
+        "graphMode": "none",
         "justifyMode": "center",
         "orientation": "auto",
         "reduceOptions": {
@@ -85,7 +85,7 @@
         "uid": "victoriametrics"
       },
       "gridPos": {
-        "h": 3,
+        "h": 4,
         "w": 6,
         "x": 6,
         "y": 1
@@ -111,7 +111,7 @@
       },
       "options": {
         "colorMode": "value",
-        "graphMode": "area",
+        "graphMode": "none",
         "justifyMode": "center",
         "orientation": "auto",
         "reduceOptions": {
@@ -140,7 +140,7 @@
         "uid": "victoriametrics"
       },
       "gridPos": {
-        "h": 3,
+        "h": 4,
         "w": 6,
         "x": 12,
         "y": 1
@@ -166,7 +166,7 @@
       },
       "options": {
         "colorMode": "value",
-        "graphMode": "area",
+        "graphMode": "none",
         "justifyMode": "center",
         "orientation": "auto",
         "reduceOptions": {
@@ -195,7 +195,7 @@
         "uid": "victoriametrics"
       },
       "gridPos": {
-        "h": 3,
+        "h": 4,
         "w": 6,
         "x": 18,
         "y": 1
@@ -221,7 +221,7 @@
       },
       "options": {
         "colorMode": "value",
-        "graphMode": "area",
+        "graphMode": "none",
         "justifyMode": "center",
         "orientation": "auto",
         "reduceOptions": {
@@ -253,7 +253,7 @@
         "h": 7,
         "w": 24,
         "x": 0,
-        "y": 4
+        "y": 5
       },
       "fieldConfig": {
         "defaults": {
@@ -341,7 +341,7 @@
         "h": 1,
         "w": 24,
         "x": 0,
-        "y": 11
+        "y": 12
       },
       "panels": []
     },
@@ -357,7 +357,7 @@
         "h": 7,
         "w": 12,
         "x": 0,
-        "y": 12
+        "y": 13
       },
       "fieldConfig": {
         "defaults": {
@@ -533,7 +533,7 @@
         "h": 7,
         "w": 12,
         "x": 12,
-        "y": 12
+        "y": 13
       },
       "fieldConfig": {
         "defaults": {
@@ -688,7 +688,7 @@
         "h": 7,
         "w": 12,
         "x": 0,
-        "y": 19
+        "y": 20
       },
       "fieldConfig": {
         "defaults": {
@@ -882,7 +882,7 @@
         "h": 7,
         "w": 12,
         "x": 12,
-        "y": 19
+        "y": 20
       },
       "fieldConfig": {
         "defaults": {
@@ -1073,7 +1073,7 @@
         "h": 1,
         "w": 24,
         "x": 0,
-        "y": 26
+        "y": 27
       },
       "panels": []
     },
@@ -1089,7 +1089,7 @@
         "h": 7,
         "w": 12,
         "x": 0,
-        "y": 27
+        "y": 28
       },
       "fieldConfig": {
         "defaults": {
@@ -1134,7 +1134,7 @@
         "h": 7,
         "w": 12,
         "x": 12,
-        "y": 27
+        "y": 28
       },
       "fieldConfig": {
         "defaults": {
@@ -1176,7 +1176,7 @@
         "h": 1,
         "w": 24,
         "x": 0,
-        "y": 34
+        "y": 35
       },
       "panels": []
     },
@@ -1192,7 +1192,7 @@
         "h": 7,
         "w": 12,
         "x": 0,
-        "y": 35
+        "y": 36
       },
       "fieldConfig": {
         "defaults": {
@@ -1318,7 +1318,7 @@
         "h": 7,
         "w": 12,
         "x": 12,
-        "y": 35
+        "y": 36
       },
       "fieldConfig": {
         "defaults": {
@@ -1410,7 +1410,7 @@
         "h": 7,
         "w": 24,
         "x": 0,
-        "y": 42
+        "y": 43
       },
       "fieldConfig": {
         "defaults": {
@@ -1539,7 +1539,7 @@
         "h": 1,
         "w": 24,
         "x": 0,
-        "y": 49
+        "y": 50
       },
       "panels": []
     },
@@ -1555,7 +1555,7 @@
         "h": 7,
         "w": 12,
         "x": 0,
-        "y": 50
+        "y": 51
       },
       "fieldConfig": {
         "defaults": {
@@ -1686,7 +1686,7 @@
         "h": 7,
         "w": 12,
         "x": 12,
-        "y": 50
+        "y": 51
       },
       "fieldConfig": {
         "defaults": {
@@ -1841,7 +1841,7 @@
         "h": 7,
         "w": 24,
         "x": 0,
-        "y": 57
+        "y": 58
       },
       "fieldConfig": {
         "defaults": {

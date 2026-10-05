@@ -9,6 +9,19 @@
   "links": [],
   "panels": [
     {
+      "id": 900,
+      "title": "监控端点概况",
+      "type": "row",
+      "collapsed": false,
+      "gridPos": {
+        "h": 1,
+        "w": 24,
+        "x": 0,
+        "y": 0
+      },
+      "panels": []
+    },
+    {
       "id": 1,
       "title": "平台指标端点在线数",
       "type": "stat",
@@ -20,7 +33,7 @@
         "h": 4,
         "w": 4,
         "x": 0,
-        "y": 0
+        "y": 1
       },
       "fieldConfig": {
         "defaults": {
@@ -43,7 +56,7 @@
       },
       "options": {
         "colorMode": "value",
-        "graphMode": "area",
+        "graphMode": "none",
         "justifyMode": "center",
         "orientation": "auto",
         "reduceOptions": {
@@ -76,7 +89,7 @@
         "h": 4,
         "w": 4,
         "x": 4,
-        "y": 0
+        "y": 1
       },
       "fieldConfig": {
         "defaults": {
@@ -103,7 +116,7 @@
       },
       "options": {
         "colorMode": "value",
-        "graphMode": "area",
+        "graphMode": "none",
         "justifyMode": "center",
         "orientation": "auto",
         "reduceOptions": {
@@ -135,7 +148,7 @@
         "h": 4,
         "w": 4,
         "x": 8,
-        "y": 0
+        "y": 1
       },
       "fieldConfig": {
         "defaults": {
@@ -158,7 +171,7 @@
       },
       "options": {
         "colorMode": "value",
-        "graphMode": "area",
+        "graphMode": "none",
         "justifyMode": "center",
         "orientation": "auto",
         "reduceOptions": {
@@ -190,7 +203,7 @@
         "h": 4,
         "w": 4,
         "x": 12,
-        "y": 0
+        "y": 1
       },
       "fieldConfig": {
         "defaults": {
@@ -221,7 +234,7 @@
       },
       "options": {
         "colorMode": "value",
-        "graphMode": "area",
+        "graphMode": "none",
         "justifyMode": "center",
         "orientation": "auto",
         "reduceOptions": {
@@ -253,7 +266,7 @@
         "h": 4,
         "w": 4,
         "x": 16,
-        "y": 0
+        "y": 1
       },
       "fieldConfig": {
         "defaults": {
@@ -284,7 +297,7 @@
       },
       "options": {
         "colorMode": "value",
-        "graphMode": "area",
+        "graphMode": "none",
         "justifyMode": "center",
         "orientation": "auto",
         "reduceOptions": {
@@ -317,7 +330,7 @@
         "h": 4,
         "w": 4,
         "x": 20,
-        "y": 0
+        "y": 1
       },
       "fieldConfig": {
         "defaults": {
@@ -340,7 +353,7 @@
       },
       "options": {
         "colorMode": "value",
-        "graphMode": "area",
+        "graphMode": "none",
         "justifyMode": "center",
         "orientation": "auto",
         "reduceOptions": {
@@ -361,6 +374,19 @@
       ]
     },
     {
+      "id": 901,
+      "title": "采集端点趋势与异常",
+      "type": "row",
+      "collapsed": false,
+      "gridPos": {
+        "h": 1,
+        "w": 24,
+        "x": 0,
+        "y": 5
+      },
+      "panels": []
+    },
+    {
       "id": 7,
       "title": "平台指标端点状态趋势",
       "type": "timeseries",
@@ -372,7 +398,7 @@
         "h": 8,
         "w": 12,
         "x": 0,
-        "y": 4
+        "y": 6
       },
       "fieldConfig": {
         "defaults": {
@@ -383,7 +409,7 @@
           },
           "custom": {
             "drawStyle": "line",
-            "lineInterpolation": "linear",
+            "lineInterpolation": "stepAfter",
             "lineWidth": 2,
             "fillOpacity": 10,
             "gradientMode": "none",
@@ -425,7 +451,7 @@
         "h": 8,
         "w": 12,
         "x": 12,
-        "y": 4
+        "y": 6
       },
       "fieldConfig": {
         "defaults": {
@@ -477,7 +503,7 @@
         "h": 8,
         "w": 24,
         "x": 0,
-        "y": 12
+        "y": 14
       },
       "fieldConfig": {
         "defaults": {
@@ -583,6 +609,19 @@
       "description": "只反映监控指标端点状态，不代表容器健康。"
     },
     {
+      "id": 902,
+      "title": "存储与 Remote Write",
+      "type": "row",
+      "collapsed": false,
+      "gridPos": {
+        "h": 1,
+        "w": 24,
+        "x": 0,
+        "y": 22
+      },
+      "panels": []
+    },
+    {
       "id": 10,
       "title": "vmagent Remote Write 积压",
       "type": "stat",
@@ -594,7 +633,7 @@
         "h": 4,
         "w": 4,
         "x": 0,
-        "y": 20
+        "y": 23
       },
       "fieldConfig": {
         "defaults": {
@@ -625,7 +664,7 @@
       },
       "options": {
         "colorMode": "value",
-        "graphMode": "area",
+        "graphMode": "none",
         "justifyMode": "center",
         "orientation": "auto",
         "reduceOptions": {
@@ -658,7 +697,7 @@
         "h": 4,
         "w": 4,
         "x": 4,
-        "y": 20
+        "y": 23
       },
       "fieldConfig": {
         "defaults": {
@@ -685,7 +724,7 @@
       },
       "options": {
         "colorMode": "value",
-        "graphMode": "area",
+        "graphMode": "none",
         "justifyMode": "center",
         "orientation": "auto",
         "reduceOptions": {
@@ -717,7 +756,7 @@
         "h": 4,
         "w": 4,
         "x": 8,
-        "y": 20
+        "y": 23
       },
       "fieldConfig": {
         "defaults": {
@@ -744,7 +783,7 @@
       },
       "options": {
         "colorMode": "value",
-        "graphMode": "area",
+        "graphMode": "none",
         "justifyMode": "center",
         "orientation": "auto",
         "reduceOptions": {
@@ -776,7 +815,7 @@
         "h": 4,
         "w": 4,
         "x": 12,
-        "y": 20
+        "y": 23
       },
       "fieldConfig": {
         "defaults": {
@@ -799,7 +838,7 @@
       },
       "options": {
         "colorMode": "value",
-        "graphMode": "area",
+        "graphMode": "none",
         "justifyMode": "center",
         "orientation": "auto",
         "reduceOptions": {
@@ -831,7 +870,7 @@
         "h": 4,
         "w": 4,
         "x": 16,
-        "y": 20
+        "y": 23
       },
       "fieldConfig": {
         "defaults": {
@@ -854,7 +893,7 @@
       },
       "options": {
         "colorMode": "value",
-        "graphMode": "area",
+        "graphMode": "none",
         "justifyMode": "center",
         "orientation": "auto",
         "reduceOptions": {
@@ -887,7 +926,7 @@
         "h": 4,
         "w": 4,
         "x": 20,
-        "y": 20
+        "y": 23
       },
       "fieldConfig": {
         "defaults": {
@@ -914,7 +953,7 @@
       },
       "options": {
         "colorMode": "value",
-        "graphMode": "area",
+        "graphMode": "none",
         "justifyMode": "center",
         "orientation": "auto",
         "reduceOptions": {
@@ -947,7 +986,7 @@
         "h": 8,
         "w": 12,
         "x": 0,
-        "y": 24
+        "y": 27
       },
       "fieldConfig": {
         "defaults": {
@@ -1002,7 +1041,7 @@
         "h": 8,
         "w": 12,
         "x": 12,
-        "y": 24
+        "y": 27
       },
       "fieldConfig": {
         "defaults": {
@@ -1057,7 +1096,7 @@
         "h": 8,
         "w": 24,
         "x": 0,
-        "y": 32
+        "y": 35
       },
       "fieldConfig": {
         "defaults": {
@@ -1106,6 +1145,19 @@
       ]
     },
     {
+      "id": 903,
+      "title": "容器资源与观测",
+      "type": "row",
+      "collapsed": false,
+      "gridPos": {
+        "h": 1,
+        "w": 24,
+        "x": 0,
+        "y": 43
+      },
+      "panels": []
+    },
+    {
       "id": 19,
       "title": "Docker 容器采集观测数",
       "type": "stat",
@@ -1117,7 +1169,7 @@
         "h": 4,
         "w": 4,
         "x": 0,
-        "y": 40
+        "y": 44
       },
       "fieldConfig": {
         "defaults": {
@@ -1140,7 +1192,7 @@
       },
       "options": {
         "colorMode": "value",
-        "graphMode": "area",
+        "graphMode": "none",
         "justifyMode": "center",
         "orientation": "auto",
         "reduceOptions": {
@@ -1173,7 +1225,7 @@
         "h": 8,
         "w": 20,
         "x": 4,
-        "y": 40
+        "y": 44
       },
       "fieldConfig": {
         "defaults": {
